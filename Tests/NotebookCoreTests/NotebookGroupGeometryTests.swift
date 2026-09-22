@@ -48,6 +48,8 @@ struct NotebookGroupGeometryTests {
   @Test func sparseEditsShareOnlyAnUnchangedSourceAndNeverMixAncestorFrames() throws {
     let source=page(),base=source.graphicGraph()
     #expect(base.groupIsSelfContained("outer"))
+    #expect(base.descendantIDs(of:["outer"]) == ["inner","a","b","link"])
+    #expect(base.descendantIDs(of:["inner"]) == ["a"])
     var outer=try #require(base.source("outer"))
     outer.frame = .init(x:193,y:147,width:371,height:617)
     outer.basis = .init(size:.init(x:500,y:300),transform:.init(a:0.6,b:0.23,c:0.31,d:0.7,tx:0.04,ty:0.03))
@@ -68,6 +70,8 @@ struct NotebookGroupGeometryTests {
     let reparented=whole.projecting(placements:["b":leaf])
     #expect(reparented.placement("b")?.ancestors == ["inner","outer"])
     #expect(whole.placement("b")?.ancestors == ["outer"])
+    #expect(reparented.descendantIDs(of:["inner"]) == ["a","b"])
+    #expect(reparented.descendantIDs(of:["outer"]) == ["inner","a","b","link"])
     leaf.parentID="missing"
     #expect(whole.projecting(placements:["b":leaf]).node("b") == nil)
     // A connection crossing the whole boundary cannot reuse its old bounds.
@@ -86,27 +90,45 @@ struct NotebookGroupGeometryTests {
     #expect(open.node("outside")?.frame == outside.frame)
   }
 
+  @Test func reverseAncestryIncludesNativeLeavesAndFollowsAReparentingDraft() throws {
+    let page=PageDocument(size:.init(width:500,height:500),actor:UUID(),elements:[
+      .init(id:"left",kind:.group,frame:.init(x:0,y:0,width:200,height:200),source:"",html:"",basis:.init(size:.init(x:200,y:200))),
+      .init(id:"right",kind:.group,frame:.init(x:250,y:0,width:200,height:200),source:"",html:"",basis:.init(size:.init(x:200,y:200))),
+      .init(id:"text",kind:.nativeText,frame:.init(x:10,y:10,width:80,height:40),source:"Text",html:"",parentID:"left")])
+    let graph=page.graphicGraph()
+    #expect(graph.descendantIDs(of:["left"]) == ["text"])
+    var moved=try #require(graph.source("text"));moved.parentID="right"
+    let projected=graph.projecting(placements:["text":moved])
+    #expect(projected.descendantIDs(of:["left"]).isEmpty)
+    #expect(projected.descendantIDs(of:["right"]) == ["text"])
+  }
+
   @Test func aHundredThousandMembersKeepOneWholeDraftButExposeProjectionCost() throws {
     let graphic=NotebookGraphic(shape:.rectangle,style:.init(strokeWidth:1))
     let boardID=UUID(),stamp=VersionStamp(counter:1,actor:UUID())
     let children=(0..<100_000).map { i in SpatialElement(id:"part-\(i)",surface:.board(boardID),kind:.graphic,
-      frame:.init(x:Double(i%1000),y:Double(i/1000),width:0.8,height:0.8),worldOrigin:.zero,source:"",graphic:graphic,parentID:"whole",stamp:stamp) }
+      frame:.init(x:Double(i%1000),y:Double(i/1000),width:0.8,height:0.8),worldOrigin:.zero,source:"",graphic:graphic,parentID:i<4 ? "small" : "whole",stamp:stamp) }
     let whole=SpatialElement(id:"whole",surface:.board(boardID),kind:.group,frame:.init(x:50,y:60,width:1000,height:100),worldOrigin:.zero,source:"",
       basis:.init(size:.init(x:1000,y:100)),stamp:stamp)
-    let page=BoardDocument(freeItems:[],elements:[whole]+children,stamp:stamp)
+    let small=SpatialElement(id:"small",surface:.board(boardID),kind:.group,frame:.init(x:0,y:0,width:4,height:1),worldOrigin:.zero,source:"",
+      parentID:"whole",basis:.init(size:.init(x:4,y:1)),stamp:stamp)
+    let page=BoardDocument(freeItems:[],elements:[whole,small]+children,stamp:stamp)
     let clock=ContinuousClock(),start=clock.now,graph=page.graphicGraph(),prepared=clock.now
+    let reverseStart=clock.now,descendants=graph.descendantIDs(of:["small"]),reverseEnd=clock.now
+    let scanStart=clock.now,scanned=Set(graph.nodes.values.filter { $0.placement.descends(from:"small") }.map(\.id)),scanEnd=clock.now
+    #expect(descendants == ["part-0","part-1","part-2","part-3"] && scanned == descendants)
     let bounds=try #require(graph.groupBounds("whole")),bounded=clock.now
     let draft=NotebookElementPlacement.Source(frame:.init(x:80,y:100,width:1000,height:100),basis:whole.basis,isGroup:true)
     let next=graph.projecting(placements:["whole":draft]),projected=clock.now
     #expect(next.sharesSource(with:graph));#expect(next.projectedPlacementReadCount == 0)
     for id in ["part-0","part-1","part-2","part-3"] { #expect(next.resolve(id).layout != nil) }
     #expect(next.projectedPlacementReadCount == 4)
-    #expect(graph.nodes.count == 100_000 && next.nodes.count == 100_000 && next.groups.count == 1)
+    #expect(graph.nodes.count == 100_000 && next.nodes.count == 100_000 && next.groups.count == 2)
     let fullStart=clock.now,fullBounds=next.groupBounds("whole"),fullEnd=clock.now
     #expect(try #require(fullBounds) == bounds.offsetBy(dx:30,dy:40))
     #expect(next.node("part-99999")?.frame == graph.node("part-99999")?.frame)
-    #expect(page.elements[100_000] == children.last)
-    print("GUI291 whole 100000: coldGraph=\(start.duration(to:prepared)), bounds=\(prepared.duration(to:bounded)), sparseDraft=\(bounded.duration(to:projected)), explicitFullProjectedBounds=\(fullStart.duration(to:fullEnd)); four addressed placements read before that full query")
+    #expect(page.elements[100_001] == children.last)
+    print("GUI285 whole in 100000: reverse=\(reverseStart.duration(to:reverseEnd)), fullScan=\(scanStart.duration(to:scanEnd)); GUI291 coldGraph=\(start.duration(to:prepared)), bounds=\(prepared.duration(to:bounded)), sparseDraft=\(bounded.duration(to:projected)), explicitFullProjectedBounds=\(fullStart.duration(to:fullEnd)); four addressed placements read before that full query")
   }
 
   @Test func internalBindingsCancelTheSharedOuterFrameNotFloatingPointMatrices() throws {

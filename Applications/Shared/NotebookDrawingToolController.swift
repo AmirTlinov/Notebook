@@ -410,8 +410,8 @@ extension NotebookAppModel {
     return result
   }
 
-  private func nativeElementIntersects(_ presentation:NotebookElementPresentation,id:String,
-    surface:SurfaceID,polygon:[SpatialPoint],from origin:WorldPoint)->Bool {
+  private func nativeElementIntersects(_ presentation:NotebookElementPresentation,
+    polygon:[SpatialPoint],from origin:WorldPoint,erasures:[InkElementErasure])->Bool {
     let transform=presentation.placement.transform
     let determinant=transform.a*transform.d-transform.b*transform.c
     guard determinant.isFinite,determinant != 0 else { return false }
@@ -420,7 +420,7 @@ extension NotebookAppModel {
       CGPoint(x:$0.x-delta.x,y:$0.y-delta.y).applying(inverse)
     }
     return NotebookElementAppearance(graphic:nil,layout:nil,size:presentation.bodySize,
-      erasures:elementErasures(on:surface)[id] ?? []).intersects(local)
+      erasures:erasures).intersects(local)
   }
 
   private func authoredGraphicValues(_ object:NotebookWorkingGraphic,address:NotebookToolAddress)->[String:JSONValue]? {
@@ -591,6 +591,7 @@ extension NotebookAppModel {
       spatialIDs.formUnion(spatial?.delta.ids ?? [])
       candidates=AnySequence(spatialIDs.lazy.compactMap { graph.node($0) })
     }
+    let erasures=elementErasures(on:address.surface)
     return candidates.compactMap { node in
       guard spatial?.delta.excluded.contains(node.id) != true,node.shown,
         node.graphic.freehand != nil,let layout=graph.resolve(node.id).layout else { return nil }
@@ -600,7 +601,7 @@ extension NotebookAppModel {
       guard NotebookToolGeometry.intersects(.init(x:delta.x+frame.x,y:delta.y+frame.y,width:frame.width,height:frame.height),polygon:polygon) else { return nil }
       let local=polygon.compactMap { layout.framePoint($0,from:origin) }
       guard local.count == polygon.count else { return nil }
-      let cuts=elementErasures(on:node.surface)[node.id] ?? []
+      let cuts=erasures[node.id] ?? []
       let appearance=NotebookElementAppearance(graphic:node.graphic,layout:layout,
         size:.init(width:frame.width,height:frame.height),erasures:cuts)
       return appearance.intersects(local.map { .init(x:$0.x,y:$0.y) }) ? reference : nil
@@ -611,6 +612,7 @@ extension NotebookAppModel {
     polygon:[SpatialPoint],origin:WorldPoint,boardID:UUID,graph:NotebookGraphicGraph,
     source:NotebookDrawingToolController.SpatialSelectionSource)->[EditableElementReference] {
     var ids=ids;ids.formUnion(source.delta.ids)
+    let erasures=elementErasures(on:surface)
     var result=Array(ids.lazy.compactMap { graph.node($0) }.filter { node in
       guard !source.delta.excluded.contains(node.id),node.shown,
         let layout=graph.resolve(node.id).layout else { return false }
@@ -619,7 +621,7 @@ extension NotebookAppModel {
       guard NotebookToolGeometry.intersects(.init(x:delta.x+frame.x,y:delta.y+frame.y,width:frame.width,height:frame.height),polygon:polygon) else { return false }
       let local=polygon.compactMap { layout.framePoint($0,from:origin) }
       guard local.count == polygon.count else { return false }
-      let cuts=self.elementErasures(on:node.surface)[node.id] ?? []
+      let cuts=erasures[node.id] ?? []
       return NotebookElementAppearance(graphic:node.graphic,layout:layout,
         size:.init(width:frame.width,height:frame.height),erasures:cuts)
         .intersects(local.map { .init(x:$0.x,y:$0.y) })
@@ -630,8 +632,8 @@ extension NotebookAppModel {
         let element=source.delta.elements[id] ?? source.index.element(id:id,boardID:boardID),
         element.surface == surface,element.kind != .group,element.graphic == nil,
         let placement=graph.placement(element.id) else { return nil }
-      return nativeElementIntersects(.init(element,placement:placement),id:element.id,
-        surface:surface,polygon:polygon,from:origin) ? reference : nil
+      return nativeElementIntersects(.init(element,placement:placement),
+        polygon:polygon,from:origin,erasures:erasures[id] ?? []) ? reference : nil
     }
     return result
   }
@@ -642,13 +644,14 @@ extension NotebookAppModel {
     let origin=address.worldOrigin ?? .zero
     if address.surface.kind == .page,let pageID=address.surface.ownerID,origin == .zero,
       let page=pages[pageID],let visible=try pageSelectionCandidates(polygon,pageID:pageID,graph:graph) {
+      let erasures=elementErasures(on:address.surface)
       var all=Array(visible.layouts.keys.lazy.compactMap { graph.node($0) }.filter { node in
         guard node.shown,let layout=graph.resolve(node.id).layout,node.surface == address.surface else { return false }
         let frame=layout.frame
         guard NotebookToolGeometry.intersects(.init(x:frame.x,y:frame.y,width:frame.width,height:frame.height),polygon:polygon) else { return false }
         let local=polygon.compactMap { layout.framePoint($0,from:origin) }
         guard local.count == polygon.count else { return false }
-        let cuts=self.elementErasures(on:node.surface)[node.id] ?? []
+        let cuts=erasures[node.id] ?? []
         return NotebookElementAppearance(graphic:node.graphic,layout:layout,
           size:.init(width:frame.width,height:frame.height),erasures:cuts)
           .intersects(local.map { .init(x:$0.x,y:$0.y) })
@@ -657,8 +660,8 @@ extension NotebookAppModel {
         let reference=address.reference(id)
         guard elementCommandDrafts[reference]?.removed != true,
           let element=page.element(id:id),element.kind != .group,element.graphic == nil else { return nil }
-        return nativeElementIntersects(.init(element,placement:placement),id:id,surface:address.surface,
-          polygon:polygon,from:origin) ? reference : nil
+        return nativeElementIntersects(.init(element,placement:placement),
+          polygon:polygon,from:origin,erasures:erasures[id] ?? []) ? reference : nil
       }
       return (Array(Set(all)),[])
     }

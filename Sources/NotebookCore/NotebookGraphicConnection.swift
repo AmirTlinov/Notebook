@@ -264,9 +264,21 @@ public struct NotebookGraphicGraph: Sendable {
     let nodes:[String:Node]
     let groups:[String:ElementSource]
     let elements:[String:ElementSource]
+    /// Reverse authored ancestry. A moved whole reads only its descendants;
+    /// unrelated board elements never become an interaction delta.
+    let children:[String:[String]]
     init(_ nodes:[Node],groups:[String:ElementSource],elements:[String:ElementSource]) {
       self.nodes=Dictionary(nodes.map { (collaborationIdentity($0.id),$0) },uniquingKeysWith:{ first,_ in first })
       self.groups=groups;self.elements=elements
+      var children:[String:[String]] = [:]
+      func append(_ id:String,parentID:String?) {
+        guard let parentID else { return }
+        children[collaborationIdentity(parentID),default:[]].append(collaborationIdentity(id))
+      }
+      for (id,node) in self.nodes { append(id,parentID:node.placement.parentID) }
+      for (id,group) in groups { append(id,parentID:group.source.parentID) }
+      for (id,element) in elements { append(id,parentID:element.source.parentID) }
+      self.children=children
     }
   }
   /// Only the small edit dictionaries belong to a new projection. The retained
@@ -276,11 +288,24 @@ public struct NotebookGraphicGraph: Sendable {
     let graphics:[String:NotebookGraphic]
     let additions:[String:Node]
     let rebuildParents:Bool
+    /// Sparse reverse edges introduced or overridden by this live cut. Base
+    /// edges remain shared and are filtered against the current source.
+    let children:[String:[String]]
     private var placementsRead=0
     private let lock=NSLock()
     private var resolvers:[SurfaceID:NotebookElementPlacement.Resolver]=[:]
     init(sources:[String:NotebookElementPlacement.Source],graphics:[String:NotebookGraphic],additions:[String:Node],rebuildParents:Bool = false,resolvers:[SurfaceID:NotebookElementPlacement.Resolver] = [:]) {
       self.sources=sources;self.graphics=graphics;self.additions=additions;self.rebuildParents=rebuildParents;self.resolvers=resolvers
+      var children:[String:[String]] = [:]
+      for (id,source) in sources {
+        guard let parent=source.parentID else { continue }
+        children[collaborationIdentity(parent),default:[]].append(id)
+      }
+      for (id,node) in additions where sources[id] == nil {
+        guard let parent=node.placement.parentID else { continue }
+        children[collaborationIdentity(parent),default:[]].append(id)
+      }
+      self.children=children
     }
     var placementReadCount:Int { lock.lock();defer { lock.unlock() };return placementsRead }
     func placement(_ id:String,source:NotebookElementPlacement.Source,surface:SurfaceID,base:Source) -> NotebookElementPlacement? {
@@ -365,6 +390,23 @@ public struct NotebookGraphicGraph: Sendable {
     let key=collaborationIdentity(id)
     guard let element=base.elements[key],let source=source(key) else { return nil }
     return placementResolver.placement(key,source:source,surface:element.surface,base:base)
+  }
+  /// Exact current descendants of the requested wholes. The immutable graph
+  /// owns reverse ancestry once; a contact walks only the affected subtrees.
+  public func descendantIDs(of groupIDs:Set<String>) -> Set<String> {
+    var pending=groupIDs.map(collaborationIdentity),visited=Set(pending),result=Set<String>()
+    while let parent=pending.popLast() {
+      func admit(_ id:String) {
+        let key=collaborationIdentity(id)
+        guard !result.contains(key),
+          source(key)?.parentID.map(collaborationIdentity) == parent else { return }
+        result.insert(key)
+        if source(key)?.isGroup == true,visited.insert(key).inserted { pending.append(key) }
+      }
+      for id in base.children[parent] ?? [] { admit(id) }
+      for id in projection?.children[parent] ?? [] { admit(id) }
+    }
+    return result
   }
   public func projecting(placements:[String:NotebookElementPlacement.Source] = [:],graphics:[String:NotebookGraphic] = [:],adding:[Node] = []) -> Self {
     guard !placements.isEmpty || !graphics.isEmpty || !adding.isEmpty else { return self }

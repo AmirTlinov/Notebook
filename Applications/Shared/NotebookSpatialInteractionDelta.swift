@@ -23,22 +23,16 @@ extension NotebookAppModel {
     guard !ids.isEmpty else { return .init(ids:[],elements:[:],excluded:[]) }
 
     let groups=ids.filter { graph.groups[$0] != nil }
-    if !groups.isEmpty {
-      // Parent motion changes descendant bounds without rewriting children.
-      for node in graph.nodes.values where groups.contains(where: { node.placement.descends(from:$0) }) {
-        ids.insert(node.id)
-      }
-    }
+    // Parent motion changes descendant bounds without rewriting children. The
+    // retained reverse ancestry visits that subtree, not every graph node.
+    ids.formUnion(graph.descendantIDs(of:groups))
 
     var elements:[String:SpatialElement]=[:],excluded=Set<String>()
     if let board=boardHierarchy?.board(boardID) {
-      // One pass also admits native descendants of a moved whole. Never do a
-      // linear board lookup once for every local broad-phase candidate.
-      for element in board.elements {
-        let descendant = !groups.isEmpty
-          && groups.contains(where: { graph.placement(element.id)?.descends(from:$0) == true })
-        guard ids.contains(element.id) || descendant else { continue }
-        ids.insert(element.id)
+      // BoardDocument owns exact addressed lookup. Accepted local edits no
+      // longer turn the next Pencil contact into a full board traversal.
+      for id in ids {
+        guard let element=board.element(id:id) else { continue }
         let reference=EditableElementReference.spatial(boardID:boardID,elementID:element.id)
         if elementCommandDrafts[reference]?.removed == true { excluded.insert(element.id);continue }
         elements[element.id]=elementCommandDrafts[reference]?.projecting(element) ?? element

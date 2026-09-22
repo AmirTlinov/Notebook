@@ -146,10 +146,31 @@ final class WorkspaceSceneIndexTests: XCTestCase {
     let stamp = VersionStamp(counter: 0, actor: actor)
     let item = WorkspaceItem.notebook(id: itemID, title: "Pinned notebook", pageIDs: [UUID()])
     let workspace = WorkspaceIndex(items: [item], selectedItemID: itemID, selectedPageID: item.pageIDs[0], stamp: stamp)
-    let elements = (0..<(count - 1)).map { element($0, boardID: boardID, origin: .zero, actor: actor) }
+    let group=SpatialElement(id:"metadata-group",surface:.board(boardID),kind:.group,
+      frame:.init(x:0,y:0,width:180,height:160),worldOrigin:.zero,source:"",
+      basis:.init(size:.init(x:180,y:160)),stamp:stamp)
+    let children=(0..<4).map { index in
+      SpatialElement(id:"metadata-\(index)",surface:.board(boardID),kind:.nativeText,
+        frame:.init(x:Double(index)*20,y:0,width:18,height:16),worldOrigin:.zero,
+        source:"Child \(index)",parentID:group.id,stamp:stamp)
+    }
+    let elements = [group] + children + (4..<(count - 1)).map {
+      element($0, boardID: boardID, origin: .zero, actor: actor)
+    }
     mark("sources")
     let board = BoardDocument(freeItems: [.init(itemID: itemID, center: .zero, zIndex: 0, stamp: stamp)],
       elements: elements, stamp: stamp)
+    let graph=board.graphicGraph()
+    let reverseStart=ProcessInfo.processInfo.systemUptime
+    let descendants=graph.descendantIDs(of:[group.id])
+    let reverseSeconds=ProcessInfo.processInfo.systemUptime-reverseStart
+    let ancestryScanStart=ProcessInfo.processInfo.systemUptime
+    let scanned=Set(board.elements.compactMap { element in
+      graph.placement(element.id)?.descends(from:group.id) == true ? element.id : nil
+    })
+    let ancestryScanSeconds=ProcessInfo.processInfo.systemUptime-ancestryScanStart
+    XCTAssertEqual(descendants,Set(children.map(\.id)));XCTAssertEqual(scanned,descendants)
+    print("GUI285 100k live whole delta: retained_us=\(reverseSeconds*1_000_000), full_scan_us=\(ancestryScanSeconds*1_000_000), ratio=\(ancestryScanSeconds/max(reverseSeconds,Double.leastNonzeroMagnitude))");fflush(stdout)
     let lookupID=elements.last!.id,iterations=100
     var lookupChecksum=0,scanChecksum=0
     let lookupStart=ProcessInfo.processInfo.systemUptime
