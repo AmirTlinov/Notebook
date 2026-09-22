@@ -95,6 +95,22 @@ import Testing
       }
     }
   }
+  @Test func reflectedCapturedCutsCannotCancelOpaqueCoverage() {
+    let frame=PageRect(x:0,y:0,width:100,height:100)
+    let samples=[10.0,90.0].map { y in SpatialInkSample(point:.init(x:50,y:y),timeOffset:y/100,
+      width:20,opacity:1,force:1,azimuth:0,altitude:1) }
+    let plain=InkElementErasure(target:.init(elementID:"body",frame:frame),samples:samples)
+    let reflected=InkElementErasure(target:.init(elementID:"body",frame:frame,
+      elementTransform:.init(a:-1,b:0,c:0,d:1,tx:1,ty:0)),samples:samples)
+    let size=CGSize(width:200,height:60)
+    let mask=NotebookElementAppearance.measuredErasurePath([plain,reflected],size:size)
+    #expect(mask.contains(.init(x:100,y:30)),"Opposite capture orientation still erases the overlap")
+    #expect(!mask.contains(.init(x:150,y:30)))
+    let visible=NotebookGraphicMask().capturing([plain,reflected],transform:nil)
+    #expect(!visible.contains(.init(x:0.5,y:0.5)))
+    #expect(visible.contains(.init(x:0.75,y:0.5)))
+  }
+
   @Test func addressedIndexSurvivesMigrationAndUndo() throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at:root) }

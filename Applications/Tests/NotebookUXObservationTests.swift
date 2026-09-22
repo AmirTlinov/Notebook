@@ -29,7 +29,11 @@ enum NotebookUXObservation {
       // must not pass merely because the loop began before the deadline.
       let elapsed = start.duration(to: .now)
       if matched || elapsed >= budget { return .init(matched: matched, elapsed: elapsed, budget: budget) }
-      try await Task.sleep(for: .milliseconds(2))
+      // A window snapshot consumes main-thread time itself. Return a full
+      // display opportunity before taking another one; 2 ms polling can starve
+      // SwiftUI/CA and repeatedly observe the frame the probe kept stale.
+      // The original deadline includes every wait and capture, unchanged.
+      try await Task.sleep(for: .milliseconds(16))
     }
   }
 

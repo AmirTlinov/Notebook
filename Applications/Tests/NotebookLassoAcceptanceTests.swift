@@ -107,9 +107,17 @@ import XCTest
       let point=CGPoint(x:paper.minX+220*presence.camera.scale,y:paper.minY+350*presence.camera.scale)
       let hit=try XCTUnwrap(NotebookAttentionProjection.pointContact(at:point,model:model,presence:presence,cohort:model.compositionTiles.published))
       XCTAssertEqual(hit.elementID,fragment.elementID,"Fresh taps use accepted material, not the last selection or saved page")
-      model.selectElement(fragment)
-      let second=try XCTUnwrap(model.beginElementManipulation(fragment,kind:.move))
-      XCTAssertTrue(model.finishElementManipulation(second,translation:.init(x:30,y:10)))
+      // Use the actual installed iPad adapter, not the shared helper that
+      // previously hid its separate stale agent-snapshot selection route.
+      let receiver=try XCTUnwrap(window.gestureRecognizers?.compactMap { $0 as? SceneSelectionRecognizer }.first)
+      receiver.onPoint?(point,1)
+      XCTAssertEqual(model.selectionSession.element,fragment,"A fresh tap reaches the accepted insertion before SQL")
+      model.clearSelection()
+      let lift=try XCTUnwrap(receiver.onLift?(point),"A fresh body drag must not require a saved agent capture")
+      lift.begin()
+      XCTAssertEqual(model.selectionSession.manipulation?.reference,fragment)
+      let delta=CGPoint(x:30*presence.camera.scale,y:10*presence.camera.scale)
+      lift.change(delta);lift.end(delta)
       model.selectDrawingTool(.lasso)
       let polygon=[SpatialPoint(x:225,y:305),.init(x:275,y:305),.init(x:275,y:405),.init(x:225,y:405)]
       XCTAssertTrue(model.drawingTools.begin(at:polygon[0],address:address,screenScale:1))

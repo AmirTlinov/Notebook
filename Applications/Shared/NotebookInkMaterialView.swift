@@ -116,6 +116,7 @@ final class InkMaterialRenderer {
     let ink: NotebookFreehand
     let target: InkElementTarget?
     let samples: InkMeasurements?
+    var transform:NotebookGraphicTransform?
     var buffers: [Range<Int>: Buffer] = [:]
   }
   private var content: NotebookInkMaterialView.Content?
@@ -135,14 +136,22 @@ final class InkMaterialRenderer {
     var updated: [Source] = []
     if let ink=next.freehand {
       let retained=sources.first.flatMap { $0.target == nil && $0.ink == ink ? $0 : nil }
-      updated.append(retained ?? Source(ink:ink,target:nil,samples:nil))
+      var source=retained ?? Source(ink:ink,target:nil,samples:nil,transform:next.transform)
+      source.transform=next.transform;updated.append(source)
     }
     let offset=next.freehand == nil ? 0 : 1
-    for (i,cut) in next.erasures.enumerated() {
+    var cuts=next.erasures.map { (cut:$0,transform:next.transform) }
+    if next.freehand == nil {
+      cuts += (next.mask?.operations ?? []).flatMap { operation in
+        (operation.erasures ?? []).map { (cut:$0,transform:operation.transform) }
+      }
+    }
+    for (i,entry) in cuts.enumerated() {
+      let cut=entry.cut
       let frame=cut.target.frame
       let ink=NotebookFreehand(layers:[.init(tool:.eraser,color:.black,measured:.init(
         sourceID:cut.samples.revision,measurements:cut.samples,frame:frame,origin:cut.target.worldOrigin))])
-      var source=Source(ink:ink,target:cut.target,samples:cut.samples)
+      var source=Source(ink:ink,target:cut.target,samples:cut.samples,transform:entry.transform)
       if sources.indices.contains(i+offset) {
         let old=sources[i+offset]
         if old.target == cut.target,let previous=old.samples {
@@ -153,7 +162,7 @@ final class InkMaterialRenderer {
           }
         }
       }
-      updated.append(source)
+      source.transform=entry.transform;updated.append(source)
     }
     content=next;sources=updated;return true
   }
@@ -167,7 +176,7 @@ final class InkMaterialRenderer {
         p=target.elementTransform?.unapplying(p) ?? p
         p=(target.graphicTransform ?? .identity).unapplying(p)
       }
-      p=(content?.transform ?? .identity).applying(p)
+      p=(source.transform ?? .identity).applying(p)
       let result=CGPoint(x:p.x*size.width,y:p.y*size.height)
       return layout?.projection.map { result.applying($0.transform) } ?? result
     }
@@ -271,13 +280,14 @@ struct NotebookInkMaterialReadiness {
 extension NotebookInkMaterialView.Content {
   static func required(graphic:NotebookGraphic?,layout:NotebookGraphicLayout?,
     erasures:[InkElementErasure],appearance:NotebookElementAppearance?) -> [Self] {
-    guard appearance?.state != .erased,!erasures.contains(where: { $0.target.wholeElement }) else { return [] }
+    guard appearance?.state != .erased,graphic?.mask?.erasesWholeRegion != true,
+      !erasures.contains(where: { $0.target.wholeElement }) else { return [] }
     var result:[Self]=[]
     if let graphic,graphic.showsGeometry,let freehand=graphic.freehand {
       result.append(.init(freehand:freehand,erasures:[],transform:graphic.transform,layout:layout,mask:graphic.mask))
     }
-    if !erasures.isEmpty {
-      result.append(.init(freehand:nil,erasures:erasures,transform:graphic?.transform,layout:layout))
+    if !erasures.isEmpty || graphic?.mask?.operations.contains(where:{ $0.erasures != nil }) == true {
+      result.append(.init(freehand:nil,erasures:erasures,transform:graphic?.transform,layout:layout,mask:graphic?.mask))
     }
     return result
   }

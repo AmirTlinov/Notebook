@@ -741,6 +741,9 @@ final class PaperInputView: UIView {
     if actionTool != nil {
       finalizeAction()
     }
+    if let settings=toolController?.inputSettings {
+      configure(penStyle:settings.pen,eraserStyle:settings.eraser,drawingTool:settings.tool)
+    }
     if !drawingTool.usesInkJournal {
       guard let controller = toolController, let gate = toolInputGate, let pageID = quickShapePageID else { return }
       let a = convert(CGPoint.zero,to:window), b = convert(CGPoint(x:1,y:0),to:window)

@@ -98,6 +98,15 @@ import Testing
     #expect(erased.state == .erased)
     print("COLD_FREEHAND_FULL_ERASE nodes=100000 elapsed=\(fullStart.duration(to:.now))")
     #expect(fullStart.duration(to:.now) < .seconds(2))
+    var fragment=graphic
+    fragment.mask=NotebookGraphicMask().appending(.intersect,polygon:[.init(x:0.29999,y:0),
+      .init(x:0.30001,y:0),.init(x:0.30001,y:1),.init(x:0.29999,y:1)])
+    let regionStart=ContinuousClock.now
+    let fragmentAppearance=NotebookElementAppearance(graphic:fragment,layout:nil,size:.init(width:100_000,height:100),erasures:cuts)
+    #expect(fragmentAppearance.state == .erased,"Paint outside the retained relative region is not a visibility witness")
+    #expect(fragment.mask?.completePathBuildCount == 0)
+    #expect(regionStart.duration(to:.now) < .milliseconds(250))
+
   }
   @Test func labelSurvivesErasedInkAndInvisibleSourceStaysInvisible() {
     var graphic=ink([sample(5,15),sample(95,15)])

@@ -51,6 +51,11 @@ final class NotebookDrawingToolController {
   @ObservationIgnored private var regionPreparation:NotebookRegionPreparation?
   @ObservationIgnored var onContactCancellation: (() -> Void)?
   init(model: NotebookAppModel) { self.model = model }
+  /// The next contact reads the model now, not the preceding SwiftUI frame.
+  /// Once admitted, the contact retains these values through its own lift.
+  var inputSettings:(tool:DrawingTool,pen:PenStyle,eraser:EraserStyle) {
+    (model.drawingTool,model.activePenStyle,model.eraserStyle)
+  }
   var selectsWorkspaceItems: Bool {
     model.drawingTool == .lasso && model.drawingToolSettings.lassoMode == .elements
       && model.presence?.mode == .board
@@ -155,7 +160,7 @@ final class NotebookDrawingToolController {
       screenScale:screenScale,ink:inkSnapshot(at:address,graph:graph,spatialSelection:spatialSelection),points:[
         .init(x:point.x-radius,y:point.y-radius),.init(x:point.x+radius,y:point.y-radius),
         .init(x:point.x+radius,y:point.y+radius),.init(x:point.x-radius,y:point.y+radius)],
-      materialAdmission:model.pendingMaterialAdmission?.task))
+      materialAdmission:model.pendingMaterialAdmission?.task),presentsContour:false)
   }
 
   private func spatialSelectionSource(at address:NotebookToolAddress)
@@ -237,7 +242,7 @@ final class NotebookDrawingToolController {
     }
   }
 
-  private func finishLasso(_ current: Contact) {
+  private func finishLasso(_ current: Contact,presentsContour:Bool = true) {
     let polygon = simplifiedLasso(current.points,screenScale:current.screenScale)
     guard polygon.count >= 3 else { model.clearSelection(); return }
     pendingLasso=current
@@ -314,7 +319,10 @@ final class NotebookDrawingToolController {
     var pending=NotebookRegionSelection(id:current.id,address:current.address,polygon:polygon,
       frame:frame,rawInk:nil,expectedInkRevision:nil,graphics:[])
     pending.preparation=preparation
-    model.selectRegion(pending)
+    // A real contour owns the next drag while it is being resolved. A point
+    // on paper has not established any material yet: release the previous
+    // choice once, without briefly showing an empty synthetic lasso control.
+    if presentsContour { model.selectRegion(pending) } else { model.clearSelection() }
     let selection=model.selectionSession.id
     lassoTask=Task { [weak self] in
       defer {
@@ -324,10 +332,12 @@ final class NotebookDrawingToolController {
       do {
         let region=try await preparation.task.value
         guard !Task.isCancelled,let self,model.selectionSession.id == selection else { return }
-        if let region { model.resolveRegionPreparation(region) } else { model.clearSelection() }
+        if let region {
+          if presentsContour { model.resolveRegionPreparation(region) } else { model.selectRegion(region) }
+        } else if presentsContour { model.clearSelection() }
       } catch {
         guard !Task.isCancelled,let self,model.selectionSession.id == selection else { return }
-        model.clearSelection()
+        if presentsContour { model.clearSelection() }
         if !(error is CancellationError) { model.showCue(error.localizedDescription) }
       }
     }
@@ -484,15 +494,15 @@ extension NotebookRegionMaterialization {
       guard selectedPolygon.count >= 3,sourcePolygon.count >= 3 else { return nil }
       let inside=(raw.graphic.mask ?? .init()).appending(.intersect,polygon:selectedPolygon)
       let outside=(raw.graphic.mask ?? .init()).appending(.subtract,polygon:sourcePolygon)
-      _ = inside.path(in:.init(x:0,y:0,width:selectedFrame.width,height:selectedFrame.height))
-      _ = outside.path(in:.init(x:0,y:0,width:raw.frame.width,height:raw.frame.height))
+      _ = inside.regionPath(in:.init(x:0,y:0,width:selectedFrame.width,height:selectedFrame.height))
+      _ = outside.regionPath(in:.init(x:0,y:0,width:raw.frame.width,height:raw.frame.height))
       let reference=region.address.reference(region.id.uuidString.lowercased())
       let graphic=copied(reframed(raw.graphic,to:selectedFrame),claims:raw.graphic.sourceInkIDs,mask:inside)
       let object=NotebookWorkingGraphic(id:region.id,surface:region.address.surface,frame:selectedFrame,
         worldOrigin:region.address.worldOrigin,graphic:graphic)
       edits.append(.init(reference:reference,kind:.convertInkToElement,values:try object.authoredValues()))
       working.append(object);selected.append(reference)
-      if !outside.path(in:.init(x:0,y:0,width:1,height:1)).isEmpty {
+      if !outside.regionPath(in:.init(x:0,y:0,width:1,height:1)).isEmpty {
         let id=UUID(),ref=region.address.reference(id.uuidString.lowercased())
         let rest=copied(raw.graphic,claims:[],mask:outside)
         let object=NotebookWorkingGraphic(id:id,surface:region.address.surface,frame:raw.frame,
@@ -515,12 +525,12 @@ extension NotebookRegionMaterialization {
       let visible=(node.graphic.mask ?? .init()).capturing(erasures[reference.elementID] ?? [],
         transform:node.graphic.transform)
       let inside=visible.appending(.intersect,polygon:polygon)
-      guard !inside.path(in:.init(x:0,y:0,width:1,height:1)).isEmpty else { continue }
+      guard !inside.regionPath(in:.init(x:0,y:0,width:1,height:1)).isEmpty else { continue }
       let outside=(node.graphic.mask ?? .init()).appending(.subtract,polygon:polygon)
-      // Prepare once in the material's own basis, shared by paint, controls
-      // and contact. A finger move only projects this immutable coverage.
-      _ = inside.path(in:.init(origin:.zero,size:size))
-      _ = outside.path(in:.init(origin:.zero,size:size))
+      // Only the compact region is needed for controls. Measured absence
+      // stays indexed and goes straight to the live renderer, never a contour.
+      _ = inside.regionPath(in:.init(origin:.zero,size:size))
+      _ = outside.regionPath(in:.init(origin:.zero,size:size))
       var remainder=node.graphic;remainder.mask=outside
       remainders[reference.elementID]=remainder
       let id=UUID(),ref=region.address.reference(id.uuidString.lowercased())

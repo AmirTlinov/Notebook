@@ -63,11 +63,12 @@ struct AgentOverlayView: View {
         let cuts = erasures[element.id] ?? []
         let appearance = appearances[element.id]
         let erased = appearance?.state == .erased
+        let paintsGraphic=graph.nodes[element.id]?.graphic != nil
         EditableElementContainer(reference: reference) {
           NotebookPlacedElement(presentation:presentation) {
           Group {
           if let graphic = graph.nodes[element.id]?.graphic {
-            NotebookGraphicElementView(graphic: graphic, reference: reference, layout: layout)
+            NotebookGraphicElementView(graphic: graphic, reference: reference, layout: layout,erasures:cuts,appearance:appearance)
           } else if element.kind == .nativeText {
             let target=model.nativeTextTarget(reference)
             NotebookNativeTextView(source:target?.source ?? element.source,style:target?.style ?? element.textStyle ?? .standard,reference:reference,
@@ -90,14 +91,14 @@ struct AgentOverlayView: View {
             }
           )
           }
-          }.erased(by:presentation == nil ? [] : cuts,appearance:presentation == nil ? nil : appearance)
+          }.erased(by:presentation == nil || paintsGraphic ? [] : cuts,appearance:presentation == nil || paintsGraphic ? nil : appearance)
           }
         }
         .frame(
           width: frame.width,
           height: frame.height
         )
-        .erased(by:presentation == nil ? cuts : [], appearance:presentation == nil ? appearance : nil,transform:graph.nodes[element.id]?.graphic.transform,layout:layout)
+        .erased(by:presentation == nil && !paintsGraphic ? cuts : [], appearance:presentation == nil && !paintsGraphic ? appearance : nil,transform:graph.nodes[element.id]?.graphic.transform,layout:layout)
         .environment(\.inkMaterialReadiness, .init(id:readinessID,report:{ id,content,ready in
           var next=readiness
           if next.recordMaterial(element.id,id:id,content:content,ready:ready) {

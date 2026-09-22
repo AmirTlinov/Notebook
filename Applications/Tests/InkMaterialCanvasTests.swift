@@ -104,6 +104,52 @@ import XCTest
     let proof=XCTAttachment(image:capture(window));proof.name="live-vector-region-mask";proof.lifetime = .keepAlways;add(proof)
   }
 
+  func testColdCapturedMaskShowsOneHundredThousandMeasurementsWithoutBooleanPreparation() async throws {
+    let scene=try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+    let previous=scene.windows.first(where:\.isKeyWindow),window=UIWindow(windowScene:scene),controller=UIViewController()
+    window.rootViewController=controller;controller.view.backgroundColor = .red;window.makeKeyAndVisible()
+    defer { window.isHidden=true;window.rootViewController=nil;previous?.makeKey() }
+    let frame=PageRect(x:0,y:0,width:300,height:300)
+    let measurements=InkMeasurements((0..<100_000).map { i in
+      SpatialInkSample(point:.init(x:90,y:Double(i%2)*200+50),timeOffset:Double(i)/240,
+        width:24,opacity:1,force:1,azimuth:0,altitude:1)
+    })
+    let cut=InkElementErasure(target:.init(elementID:"source",frame:frame),measurements:measurements)
+    let turn=NotebookGraphicTransform(a:0,b:1,c:-1,d:0,tx:1,ty:0)
+    let mask=NotebookGraphicMask().capturing([cut],transform:turn)
+      .appending(.intersect,polygon:[.zero,.init(x:0.8,y:0),.init(x:0.8,y:1),.init(x:0,y:1)])
+    let graphic=NotebookGraphic(shape:.rectangle,style:.init(fill:.black),mask:mask)
+    let external=InkElementErasure(target:.init(elementID:"source",frame:frame),samples:[
+      .init(point:.init(x:100,y:220),timeOffset:0,width:24,opacity:1,force:1,azimuth:0,altitude:1)])
+    let required=NotebookInkMaterialView.Content.required(graphic:graphic,layout:nil,erasures:[external],appearance:nil)
+    XCTAssertEqual(required.count,1,"Captured and current cuts share one mask renderer")
+    var readiness=NotebookInkMaterialReadiness()
+    let start=ContinuousClock.now
+    let hosted=UIHostingController(rootView:NotebookGraphicView(graphic:graphic,erasures:[external])
+      .environment(\.inkMaterialReadiness,.init(id:UUID(),report:{ id,content,ready in
+        _=readiness.record(id,content:content,ready:ready)
+      })))
+    controller.addChild(hosted);controller.view.addSubview(hosted.view);hosted.didMove(toParent:controller)
+    hosted.view.frame = .init(x:40,y:40,width:300,height:300);hosted.view.backgroundColor = .clear
+    controller.view.layoutIfNeeded()
+    while !readiness.isReady(for:required),start.duration(to:.now) < .seconds(2) { try await Task.sleep(for:.milliseconds(5)) }
+    let readyTime=start.duration(to:.now)
+    XCTAssertTrue(readiness.isReady(for:required))
+    XCTAssertLessThan(readyTime,.milliseconds(500),"First local paint cannot wait for the full 100k Boolean contour")
+    // Observe the mounted window too: readiness alone cannot prove coverage.
+    let hole=try pixel(hosted.view,window:window,x:150,y:90)
+    let currentHole=try pixel(hosted.view,window:window,x:100,y:220)
+    let body=try pixel(hosted.view,window:window,x:100,y:160)
+    let outside=try pixel(hosted.view,window:window,x:270,y:160)
+    for value in [hole,currentHole,outside] {
+      XCTAssertGreaterThan(value[0],220);XCTAssertLessThan(value[1],30,"Exact absence reveals the red surface")
+    }
+    XCTAssertLessThan(body[0],30);XCTAssertLessThan(body[1],30)
+    let report=XCTAttachment(string:"100000 captured erase measurements: first stable mounted layer=\(readyTime); all four window probes verified after \(start.duration(to:.now)), including capture cost; not physical Pencil or FPS.")
+    report.name="cold-captured-mask-100000";report.lifetime = .keepAlways;add(report)
+    let proof=XCTAttachment(image:capture(window));proof.name="cold-captured-mask-shown";proof.lifetime = .keepAlways;add(proof)
+  }
+
   func testColdMeasuredAppearanceAndPickingOnOneHundredThousandPoints() throws {
     let frame=PageRect(x:0,y:0,width:100_000,height:100)
     func point(_ x:Double,_ y:Double,_ width:Double) -> SpatialInkSample {

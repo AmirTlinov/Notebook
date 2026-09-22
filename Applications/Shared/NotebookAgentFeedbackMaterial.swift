@@ -86,14 +86,13 @@ struct NotebookAgentFeedbackMaterial: View {
 
   private func maskBody(_ value:NotebookAgentFeedbackSurface,layer:NotebookGraphicView.PaintLayer) -> some View {
     Group {
-      if let graphic=value.graphic,graphic.freehand != nil {
-        if layer != .fillMask { NotebookGraphicView(graphic:graphic,layout:value.layout) }
-        else { Color.clear }
+      if let graphic=value.graphic {
+        NotebookGraphicView(graphic:graphic,layout:value.layout,erasures:value.erasures,layer:layer)
       } else {
         Canvas { context,_ in Self.paintMask(value,layer:layer,in:context) }
+          .erased(by:value.erasures,layout:value.layout)
       }
     }.frame(width:value.rect.width/value.scale,height:value.rect.height/value.scale)
-      .erased(by:value.erasures,transform:value.graphic?.transform,layout:value.layout)
       .scaleEffect(value.scale,anchor:.topLeading)
       .frame(width:value.rect.width,height:value.rect.height,alignment:.topLeading)
   }
@@ -104,30 +103,26 @@ struct NotebookAgentFeedbackMaterial: View {
     layer: NotebookGraphicView.PaintLayer, in original: GraphicsContext) {
     var context = original
     let localSize = CGSize(width:surface.rect.width/surface.scale,height:surface.rect.height/surface.scale)
-    if let graphic = surface.graphic {
-      NotebookGraphicView.paint(graphic,layout:surface.layout,in:context,size:localSize,layer:layer)
-    } else {
-      if surface.isSurface, layer != .inkMask {
-        context.fill(Path(CGRect(origin:.zero,size:localSize)),with:.color(.white))
-      } else if layer != .fillMask {
-        if let paper = surface.paper {
-          // Invert the actual printed pixels before converting luminance to
-          // alpha: white paper is transparent, letters/contours are the mask.
-          // Borrowing this raster retains its existing resource reservation.
-          if layer != .content { context.addFilter(.luminanceToAlpha) }
-          let geometry = WorkspaceItemGeometry.document(paper.page.artifact.document.paperSize)
-          context.drawLayer { ink in
-            if layer != .content { ink.addFilter(.colorInvert()) }
-            ink.draw(Image(decorative:paper.image,scale:1),
-              in:CGRect(origin:surface.paperOrigin,size:.init(width:geometry.width,height:geometry.height)))
-          }
-        } else if let text = surface.text {
-          context.draw(SpatialTextSnapshot.text(text,mask:layer != .content), in:CGRect(origin:.zero,size:localSize))
-        } else if let ink = surface.ink { context.fill(ink,with:.color(.white)) }
-        else if let raster = surface.raster, !raster.isReleased, let image = raster.sampledImage(for:surface.rect.size) {
-          let crop = raster.source.captureRegion.map { CGRect(x:$0.x,y:$0.y,width:$0.width,height:$0.height) }
-          context.draw(Image(decorative:image,scale:1),in:crop ?? CGRect(origin:.zero,size:localSize))
+    if surface.isSurface, layer != .inkMask {
+      context.fill(Path(CGRect(origin:.zero,size:localSize)),with:.color(.white))
+    } else if layer != .fillMask {
+      if let paper = surface.paper {
+        // Invert the actual printed pixels before converting luminance to
+        // alpha: white paper is transparent, letters/contours are the mask.
+        // Borrowing this raster retains its existing resource reservation.
+        if layer != .content { context.addFilter(.luminanceToAlpha) }
+        let geometry = WorkspaceItemGeometry.document(paper.page.artifact.document.paperSize)
+        context.drawLayer { ink in
+          if layer != .content { ink.addFilter(.colorInvert()) }
+          ink.draw(Image(decorative:paper.image,scale:1),
+            in:CGRect(origin:surface.paperOrigin,size:.init(width:geometry.width,height:geometry.height)))
         }
+      } else if let text = surface.text {
+        context.draw(SpatialTextSnapshot.text(text,mask:layer != .content), in:CGRect(origin:.zero,size:localSize))
+      } else if let ink = surface.ink { context.fill(ink,with:.color(.white)) }
+      else if let raster = surface.raster, !raster.isReleased, let image = raster.sampledImage(for:surface.rect.size) {
+        let crop = raster.source.captureRegion.map { CGRect(x:$0.x,y:$0.y,width:$0.width,height:$0.height) }
+        context.draw(Image(decorative:image,scale:1),in:crop ?? CGRect(origin:.zero,size:localSize))
       }
     }
   }

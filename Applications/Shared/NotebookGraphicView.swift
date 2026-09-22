@@ -9,13 +9,16 @@ struct NotebookGraphicView: View {
   var erasures: [InkElementErasure] = []
   var appearance: NotebookElementAppearance? = nil
   var live = true
+  var layer:PaintLayer = .content
   var body: some View {
     Group {
       if live {
         ZStack {
           if let ink = graphic.freehand, graphic.showsGeometry {
-            NotebookInkMaterialView(freehand:ink,transform:graphic.transform,layout:layout,mask:graphic.mask)
-            if !graphic.label.isEmpty {
+            if layer != .fillMask {
+              NotebookInkMaterialView(freehand:ink,transform:graphic.transform,layout:layout,mask:graphic.mask)
+            }
+            if layer != .fillMask,!graphic.label.isEmpty {
               Canvas { context, size in
                 var context = context
                 if let projection = layout?.projection { context.concatenate(projection.transform) }
@@ -25,13 +28,13 @@ struct NotebookGraphicView: View {
               }
             }
           } else {
-            Canvas { context, size in Self.paint(graphic, layout:layout, in:context, size:size) }
+            Canvas { context, size in Self.paint(graphic, layout:layout, in:context, size:size,layer:layer,clipVisibility:false) }
           }
         }
         .clipShape(NotebookGraphicMaskShape(mask:graphic.mask,projection:layout?.projection),style:FillStyle(eoFill:true))
-        .erased(by:erasures,appearance:appearance,transform:graphic.transform,layout:layout)
+        .erased(by:erasures,appearance:appearance,transform:graphic.transform,layout:layout,visibility:graphic.mask)
       } else {
-        Canvas { context, size in Self.paint(graphic, layout:layout, in:context, size:size, erasures:erasures, appearance:appearance) }
+        Canvas { context, size in Self.paint(graphic, layout:layout, in:context, size:size, erasures:erasures, appearance:appearance,layer:layer) }
       }
     }
     .accessibilityElement(children: .ignore)
@@ -43,19 +46,19 @@ struct NotebookGraphicView: View {
 
   static func paint(_ graphic: NotebookGraphic, layout: NotebookGraphicLayout?,
     in context: GraphicsContext, size: CGSize, erasures: [InkElementErasure] = [],
-    appearance: NotebookElementAppearance? = nil, layer: PaintLayer = .content) {
+    appearance: NotebookElementAppearance? = nil, layer: PaintLayer = .content,clipVisibility:Bool = true) {
       guard graphic.showsGeometry, appearance?.state != .erased else { return }
       var context = context
       if let layout, let projection = layout.projection {
         if let appearance { context.clip(to:Path(appearance.mask),options:.inverse) }
         context.concatenate(projection.transform)
         paint(graphic,layout:layout.localLayout,in:context,size:projection.size,
-          erasures:appearance == nil ? erasures : [],layer:layer)
+          erasures:appearance == nil ? erasures : [],layer:layer,clipVisibility:clipVisibility)
         return
       }
       if let appearance { context.clip(to:Path(appearance.mask),options:.inverse) }
       else { NotebookElementErasurePaint.clip(erasures, context: &context, size: size,transform:graphic.transform) }
-      if let mask=graphic.mask { context.clip(to:Path(mask.path(in:.init(origin:.zero,size:size))),style:.init(eoFill:true)) }
+      if clipVisibility,let mask=graphic.mask { context.clip(to:Path(mask.path(in:.init(origin:.zero,size:size))),style:.init(eoFill:true)) }
       if let ink = graphic.freehand {
         if layer != .fillMask { NotebookFreehandPaint.paint(ink,transform:graphic.transform,context:context,size:size,mask:layer != .content) }
         if !graphic.label.isEmpty, layer != .fillMask {
@@ -108,7 +111,7 @@ struct NotebookGraphicView: View {
 private struct NotebookGraphicMaskShape:Shape {
   let mask:NotebookGraphicMask?
   let projection:NotebookGraphicLayout.Projection?
-  func path(in rect:CGRect)->Path { Path(mask?.projectedPath(in:rect,projection:projection) ?? CGPath(rect:rect,transform:nil)) }
+  func path(in rect:CGRect)->Path { Path(mask?.projectedRegionPath(in:rect,projection:projection) ?? CGPath(rect:rect,transform:nil)) }
 }
 
 extension NotebookGraphic.Shape {
@@ -128,6 +131,8 @@ struct NotebookGraphicElementView: View {
   let graphic: NotebookGraphic
   let reference: EditableElementReference
   var layout: NotebookGraphicLayout? = nil
+  var erasures:[InkElementErasure] = []
+  var appearance:NotebookElementAppearance? = nil
   @State private var draft = ""
   @State private var original = ""
   @State private var hasDraft = false
@@ -142,7 +147,7 @@ struct NotebookGraphicElementView: View {
   }
   var body: some View {
     ZStack {
-      NotebookGraphicView(graphic: editing ? unlabelled : graphic, layout: layout)
+      NotebookGraphicView(graphic: editing ? unlabelled : graphic, layout: layout,erasures:erasures,appearance:appearance)
       if editing {
         TextField("Подпись", text: $draft, axis: .vertical)
           .font(.system(size: 24)).multilineTextAlignment(.center)

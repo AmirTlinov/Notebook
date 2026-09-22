@@ -3099,7 +3099,7 @@ final class NotebookAppModel {
       frame: geometry.frame, bounds: geometry.bounds, identity: geometry.identity, worldOrigin: geometry.worldOrigin,
       connection:connection,layout:graphicGeometry?.body,graphic:graphicElement(reference),placement:graphicGeometry?.placement ?? groupGeometry?.placement ?? nativePlacement,
       displayFrame:graphicGeometry.map { geometry in
-        let f=graphicElement(reference)?.mask.flatMap { geometry.display.visibleFrame(mask:$0) } ?? geometry.display.frame
+        let f=graphicElement(reference)?.mask.flatMap { geometry.display.selectionFrame(mask:$0) } ?? geometry.display.frame
         return .init(x:f.x,y:f.y,width:f.width,height:f.height)
       } ?? groupGeometry?.bounds ?? native?.bounds,text:text)
     if let captured,let source=captured.source(reference.elementID) {

@@ -126,11 +126,12 @@ public struct NotebookGraphicLayout: Equatable, Sendable {
       tx:t.tx/outer.width,ty:t.ty/outer.height)
     return (frame,projection == nil ? nil : .init(size:.init(x:size.width,y:size.height),transform:normalized))
   }
-  /// Exact displayed bounds of a compact visibility relation. Selection UI
-  /// may use this frame without pretending that the retained body was cropped.
-  public func visibleFrame(mask:NotebookGraphicMask)->PageRect? {
+  /// The clipped region owns its control frame, just as an ordinary erased
+  /// body keeps its frame. Interior measured absence never changes that basis
+  /// when the region becomes a detached fragment.
+  public func selectionFrame(mask:NotebookGraphicMask)->PageRect? {
     let outer=CGRect(x:0,y:0,width:frame.width,height:frame.height)
-    let visible=mask.projectedPath(in:outer,projection:projection).boundingBoxOfPath.intersection(outer)
+    let visible=mask.projectedRegionPath(in:outer,projection:projection).boundingBoxOfPath.intersection(outer)
     guard !visible.isNull,!visible.isEmpty else { return nil }
     return .init(x:frame.x+visible.minX,y:frame.y+visible.minY,width:visible.width,height:visible.height)
   }
@@ -172,7 +173,7 @@ public struct NotebookGraphicLayout: Equatable, Sendable {
   }
 
   public func hitTest(_ point: SpatialPoint, graphic: NotebookGraphic, tolerance: Double) -> Bool {
-    if projection != nil {
+    if projection != nil || graphic.mask != nil {
       return NotebookElementAppearance(graphic:graphic,layout:self,
         size:.init(width:frame.width,height:frame.height),erasures:[]).contains(point,tolerance:tolerance)
     }

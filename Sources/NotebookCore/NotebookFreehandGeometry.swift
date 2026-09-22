@@ -180,7 +180,7 @@ public final class NotebookFreehandGeometry: Sendable {
       !clipsToSize || CGRect(origin:.zero,size:size).insetBy(dx:-tolerance,dy:-tolerance).contains(point) else { return false }
     let area = Self.sourceBounds(.init(x:point.x-tolerance,y:point.y-tolerance,width:tolerance*2,height:tolerance*2),size:size,transform:transform)
     let t = transform ?? .identity
-    for id in query(area).indices.reversed() {
+    for id in query(area,allowRangeCoalescing:false).indices.reversed() {
       let cut = tool(at:id) == .eraser, padding = cut ? 0 : max(0,tolerance)
       let vertices = vertices(at:id)
       for start in stride(from:0,to:vertices.count-2,by:3) {
@@ -210,12 +210,13 @@ public final class NotebookFreehandGeometry: Sendable {
   public struct Cut: Sendable {
     let geometry: NotebookFreehandGeometry
     let basis: CGAffineTransform
-    public init(_ cut: InkElementErasure) {
+    public init(_ cut: InkElementErasure,transform:NotebookGraphicTransform? = nil) {
       geometry = NotebookFreehand(layers:[.init(tool:.eraser,color:.black,measured:.init(
         sourceID:cut.samples.revision,measurements:cut.samples,frame:cut.target.frame,origin:cut.target.worldOrigin))]).geometry
       func point(_ p:SpatialPoint) -> CGPoint {
         let body=cut.target.elementTransform?.unapplying(p) ?? p
-        let q=(cut.target.graphicTransform ?? .identity).unapplying(body)
+        let source=(cut.target.graphicTransform ?? .identity).unapplying(body)
+        let q=(transform ?? .identity).applying(source)
         return .init(x:q.x,y:q.y)
       }
       let a=point(.zero),b=point(.init(x:1,y:0)),c=point(.init(x:0,y:1))
@@ -226,7 +227,10 @@ public final class NotebookFreehandGeometry: Sendable {
       return triangles(in:area,prepared:&prepared,visit:visit)
     }
     func triangles(in area:CGRect,prepared:inout [Range<Int>:[NotebookFreehand.Vertex]],visit:([CGPoint])->Bool)->Bool {
-      for id in geometry.query(area.applying(basis.inverted())).indices {
+      // A covered range may contain millions of repeated measurements. A
+      // query needs a witness, not one expanded mesh for that entire range.
+      for id in geometry.query(area.applying(basis.inverted()),allowRangeCoalescing:false).indices {
+        if Task.isCancelled { return false }
         let v:[NotebookFreehand.Vertex]
         if let cached=prepared[id] { v=cached } else { v=geometry.vertices(at:id);prepared[id]=v }
         for start in stride(from:0,to:v.count-2,by:3) {
@@ -236,6 +240,17 @@ public final class NotebookFreehandGeometry: Sendable {
       }
       return false
     }
+    /// Explicit whole-source output streams the same bounded chunks used by
+    /// local queries and Metal. It never retains a full triangle expansion.
+    func forEachTriangle(_ visit:([CGPoint])->Void) {
+      for id in 0..<geometry.chunkCount {
+        if Task.isCancelled { return }
+        let vertices=geometry.vertices(at:id..<(id+1))
+        for start in stride(from:0,to:vertices.count-2,by:3) {
+          visit(vertices[start..<start+3].map { CGPoint(x:$0.x,y:$0.y).applying(basis) })
+        }
+      }
+    }
     func contains(_ point:CGPoint) -> Bool {
       // A zero-area CGRect intersection is empty; one ulp admits boundary
       // candidates without enlarging the exact triangle test.
@@ -244,13 +259,14 @@ public final class NotebookFreehandGeometry: Sendable {
     }
   }
 
-  public func contains(_ point:CGPoint,basis:CGAffineTransform,tolerance:Double,subtracting cuts:[Cut],clippedTo viewport:[CGPoint]) -> Bool {
+  public func contains(_ point:CGPoint,basis:CGAffineTransform,tolerance:Double,subtracting cuts:[Cut],clippedTo viewport:[CGPoint],accepting:(([CGPoint])->Bool)? = nil) -> Bool {
     let source=point.applying(basis.inverted())
     guard !cuts.contains(where:{ $0.contains(source) }) else { return false }
     if tolerance <= 0 { return polygonContains(source,viewport) && contains(source,size:.init(width:1,height:1),transform:nil,tolerance:0,clipsToSize:false) }
     let r=CGRect(x:point.x-tolerance,y:point.y-tolerance,width:tolerance*2,height:tolerance*2)
     let polygon=rectangleCorners(r).map { $0.applying(basis.inverted()) }
     return intersects(polygon,subtracting:cuts,clippedTo:viewport,accepting:{ fragment in
+      guard accepting?(fragment) != false else { return false }
       let p=fragment.map { $0.applying(basis) }
       if p.count == 1 { return hypot(p[0].x-point.x,p[0].y-point.y) <= tolerance }
       return polygonContains(point,p) || zip(p,p.dropFirst()+p.prefix(1)).contains { near(point,$0.0,$0.1,tolerance) }
@@ -261,13 +277,13 @@ public final class NotebookFreehandGeometry: Sendable {
     intersects(polygon,subtracting:external,clippedTo:viewport,accepting:nil)
   }
   /// Exact state witnesses; no global triangle union or pixel approximation.
-  public func appearance(in viewport:[CGPoint],subtracting cuts:[Cut]) -> NotebookElementAppearance.State {
-    guard intersects(viewport,subtracting:cuts,clippedTo:viewport) else { return .erased }
+  public func appearance(in viewport:[CGPoint],subtracting cuts:[Cut],accepting:(([CGPoint])->Bool)? = nil) -> NotebookElementAppearance.State {
+    guard intersects(viewport,subtracting:cuts,clippedTo:viewport,accepting:accepting) else { return .erased }
     let area=polygonBounds(viewport)
     for cut in cuts {
       if cut.triangles(in:area,visit:{ triangle in
         let clipped=clipConvex(triangle,to:viewport)
-        return clipped.count >= 3 && self.intersects(clipped,clippedTo:viewport)
+        return clipped.count >= 3 && self.intersects(clipped,subtracting:[],clippedTo:viewport,accepting:accepting)
       }) { return .partial }
     }
     return .intact
@@ -284,7 +300,7 @@ public final class NotebookFreehandGeometry: Sendable {
     var externalPrepared=Array(repeating:[Range<Int>:[NotebookFreehand.Vertex]](),count:external.count)
     func erased(_ point:CGPoint,after layer:Int)->Bool {
       let pad=max(abs(point.x).ulp,abs(point.y).ulp,Double.ulpOfOne)
-      for id in query(.init(x:point.x-pad,y:point.y-pad,width:pad*2,height:pad*2)).indices
+      for id in query(.init(x:point.x-pad,y:point.y-pad,width:pad*2,height:pad*2),allowRangeCoalescing:false).indices
         where self.layer(at:id) > layer && tool(at:id) == .eraser {
         let vertices:[NotebookFreehand.Vertex]
         if let cached=cuts[id] { vertices=cached } else { vertices=self.vertices(at:id);cuts[id]=vertices }
@@ -294,7 +310,7 @@ public final class NotebookFreehandGeometry: Sendable {
       }
       return false
     }
-    for id in query(area).indices.reversed() where tool(at:id) == .pen {
+    for id in query(area,allowRangeCoalescing:false).indices.reversed() where tool(at:id) == .pen {
       if Task.isCancelled { return false }
       let v = vertices(at:id)
       for start in stride(from:0,to:v.count-2,by:3) {
@@ -313,7 +329,7 @@ public final class NotebookFreehandGeometry: Sendable {
           && triangleOpacity(at:point,triangle[...]) > 0 && !erased(point,after:layer(at:id))
           && (accepting?([point]) ?? true) }) { return true }
         var remaining = [p]
-        for cut in query(polygonBounds(p).intersection(area)).indices
+        for cut in query(polygonBounds(p).intersection(area),allowRangeCoalescing:false).indices
         where layer(at:cut) > layer(at:id) && tool(at:cut) == .eraser {
           let e: [NotebookFreehand.Vertex]
           if let cached = cuts[cut] { e = cached } else { e = vertices(at:cut); cuts[cut] = e }

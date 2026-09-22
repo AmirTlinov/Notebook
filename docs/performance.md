@@ -35,11 +35,17 @@ including pending insertions and cuts, while storage checks exact predecessors
 and captured ink revisions. Native completion does not wait for its own queued
 activity release; foreign contacts and agent admission retain their barriers.
 
-Immutable graphic masks retain their normalized path and one local body-size
-path. Movement projects that coverage and publishes changed poses once per
-surface; only lift constructs the write payload. The prepared remainder enters
-the accepted draft without decoding a cold duplicate. These are derived vector
-paths, not raster approximations or a second source of material.
+Immutable graphic masks keep polygonal regions and indexed measured absence as
+operands of one visibility relation. Live paint, picking and selection controls
+do not request a whole Boolean contour. One Metal mask executes captured and
+current erasures in their respective frozen bases; local exact queries visit
+bounded source chunks and stop at a surviving witness or proven absence.
+Controls follow the clipped region, not a fresh bounding box of its holes.
+Movement projects this material and publishes changed poses once per surface;
+only lift constructs the write payload. Full contours remain explicit export
+derivatives, with a separate lock from live region paths. Each derivative has
+only a normalized and one body-size slot; decoded equal masks borrow completed
+paths without waiting for a build. No raster replaces the authored material.
 
 `PageDocument.prepareInkChange` prepares off-main. Publication rechecks page UUID
 and drawing stamp; a concurrent change retries preparation without losing input.

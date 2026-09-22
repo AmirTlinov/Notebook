@@ -141,7 +141,7 @@ enum NotebookAttentionProjection {
         worldOrigin:region.address.worldOrigin,pageIndex:nil,model:model,presence:presence,minimumSide:0)
     }
     let resolved=layout ?? model.graphicLayout(reference)
-    if let mask=model.graphicElement(reference)?.mask,let local=resolved?.visibleFrame(mask:mask),
+    if let mask=model.graphicElement(reference)?.mask,let local=resolved?.selectionFrame(mask:mask),
       let source=model.nativeElementSource(reference) {
       return frame(target:source.target,elementID:nil,region:local,
         worldOrigin:source.target.kind == .board ? resolved?.origin : nil,pageIndex:nil,

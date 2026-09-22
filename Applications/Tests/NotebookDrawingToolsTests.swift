@@ -461,7 +461,7 @@ import UIKit
       let saved=try XCTUnwrap(savedPage.element(id:selected.elementID))
       XCTAssertNil(saved.parentID);XCTAssertNotNil(saved.basis)
       let placedLayout=try XCTUnwrap(model.graphicGraph(page:savedPage,preview:false).resolve(selected.elementID).layout)
-      let visible=try XCTUnwrap(placedLayout.visibleFrame(mask:try XCTUnwrap(saved.graphic?.mask)))
+      let visible=try XCTUnwrap(placedLayout.selectionFrame(mask:try XCTUnwrap(saved.graphic?.mask)))
       XCTAssertEqual(visible.width,f.width/2,accuracy:0.000001)
       for (actual,wanted) in zip(probes.map { placed($0,placedLayout) },expected) {
         XCTAssertEqual(actual.x,wanted.x,accuracy:0.000001)
@@ -517,28 +517,34 @@ import UIKit
     if stopped { try FileManager.default.removeItem(at:root) }
   }
   func testMarkerRunsThroughMeasuredPageInputWithoutPressureOrQuickShape() async throws {
-    let paper = PaperInputView(frame:.init(x:0,y:0,width:500,height:500))
-    let style = NotebookDrawingToolSettings().marker
-    paper.configure(penStyle:style,eraserStyle:.standard,drawingTool:.marker)
-    let touch = DrawingToolPencilTouch()
-    var accepted: PageInkAction?
-    paper.onDrawingMutation = { accepted = $0 }
-    touch.point = .init(x:50,y:80); touch.pressure = 0.1
-    paper.touchesBegan([touch],with:nil)
-    for i in 1...20 {
-      touch.point.x += 5; touch.sampleTime += 0.01; touch.pressure = CGFloat(i)/20
-      paper.touchesMoved([touch],with:nil)
+    try await fixture { model in
+      let paper = PaperInputView(frame:.init(x:0,y:0,width:500,height:500))
+      paper.toolController = model.drawingTools
+      paper.quickShapePageID = model.activePage?.id
+      // No intervening SwiftUI update: the receiving native view still carries
+      // the previous pen, but the newly admitted contact must use the marker.
+      paper.configure(penStyle:.standard,eraserStyle:.standard,drawingTool:.pen)
+      model.selectDrawingTool(.marker)
+      let touch = DrawingToolPencilTouch()
+      var accepted: PageInkAction?
+      paper.onDrawingMutation = { accepted = $0 }
+      touch.point = .init(x:50,y:80); touch.pressure = 0.1
+      paper.touchesBegan([touch],with:nil)
+      for i in 1...20 {
+        touch.point.x += 5; touch.sampleTime += 0.01; touch.pressure = CGFloat(i)/20
+        paper.touchesMoved([touch],with:nil)
+      }
+      try await Task.sleep(for:.milliseconds(600))
+      XCTAssertNil(paper.completedQuickShape)
+      paper.touchesEnded([touch],with:nil)
+      let ink = try XCTUnwrap(accepted)
+      XCTAssertEqual(ink.tool,.pen); XCTAssertEqual(ink.color.red,1)
+      let opacities = ink.samples.map(\.opacity)
+      XCTAssertEqual(opacities.min()!,opacities.max()!,accuracy:0.000001,"Marker ignores pressure over the whole contact")
+      XCTAssertEqual(opacities[0],0.3,accuracy:1.0/255,"PKStrokePoint quantizes opacity")
+      XCTAssertTrue(ink.samples.allSatisfy { abs($0.width-18) < 0.000001 },"Widths: \(ink.samples.map(\.width))")
+      XCTAssertFalse(paper.hasActiveAction)
     }
-    try await Task.sleep(for:.milliseconds(600))
-    XCTAssertNil(paper.completedQuickShape)
-    paper.touchesEnded([touch],with:nil)
-    let ink = try XCTUnwrap(accepted)
-    XCTAssertEqual(ink.tool,.pen); XCTAssertEqual(ink.color.red,1)
-    let opacities = ink.samples.map(\.opacity)
-    XCTAssertEqual(opacities.min()!,opacities.max()!,accuracy:0.000001,"Marker ignores pressure over the whole contact")
-    XCTAssertEqual(opacities[0],0.3,accuracy:1.0/255,"PKStrokePoint quantizes opacity")
-    XCTAssertTrue(ink.samples.allSatisfy { abs($0.width-18) < 0.000001 },"Widths: \(ink.samples.map(\.width))")
-    XCTAssertFalse(paper.hasActiveAction)
   }
 
   func testNonInkPageContactUsesNoInkReservationAndCancellationReleasesGate() async throws {
@@ -549,10 +555,10 @@ import UIKit
       var reservations = 0, inkActions = 0
       paper.onActionWillBegin = { reservations += 1; return true }
       paper.onDrawingMutation = { _ in inkActions += 1 }
+      paper.configure(penStyle:.standard,eraserStyle:.standard,drawingTool:.pen)
       let touch = DrawingToolPencilTouch()
       for tool in [DrawingTool.shape,.connector,.ruler,.text,.laser,.lasso] {
         model.selectDrawingTool(tool)
-        paper.configure(penStyle:.standard,eraserStyle:.standard,drawingTool:tool)
         touch.point = .init(x:100,y:100); paper.touchesBegan([touch],with:nil)
         XCTAssertTrue(model.inputGate.hasActivePencil)
         touch.point = .init(x:230,y:190); touch.sampleTime += 0.1; paper.touchesMoved([touch],with:nil)

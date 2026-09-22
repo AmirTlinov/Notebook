@@ -84,9 +84,9 @@ struct NotebookGraphicBatchView: View {
       }
       .allowsHitTesting(false)
       if let object = objects.first(where: { $0.id == editingID }) {
-        NotebookGraphicElementView(graphic: graph.nodes[object.id]!.graphic, reference: reference(object.id), layout: object.layout)
+        NotebookGraphicElementView(graphic: graph.nodes[object.id]!.graphic, reference: reference(object.id), layout: object.layout,
+          erasures:erasures[object.id] ?? [],appearance:appearances[object.id])
           .frame(width: object.layout.frame.width, height: object.layout.frame.height)
-          .erased(by: erasures[object.id] ?? [], appearance:appearances[object.id],transform:graph.nodes[object.id]?.graphic.transform,layout:object.layout)
           .environment(\.inkMaterialReadiness,materialReadiness(object.id))
           .scaleEffect(scale)
           .frame(width: object.frame.width, height: object.frame.height)
@@ -109,7 +109,8 @@ struct NotebookGraphicBatchView: View {
   private func paintRuns(_ objects:[Object],erasures:[String:[InkElementErasure]]) -> [PaintRun] {
     var runs:[PaintRun]=[]
     for object in objects {
-      let material=graph.nodes[object.id]?.graphic.freehand != nil || !(erasures[object.id] ?? []).isEmpty
+      let graphic=graph.nodes[object.id]?.graphic
+      let material=graphic?.freehand != nil || graphic?.mask?.operations.contains(where:{ $0.erasures != nil }) == true || !(erasures[object.id] ?? []).isEmpty
       if !material,runs.last?.isMaterial == false { runs[runs.count-1].objects.append(object) }
       else { runs.append(.init(id:object.id,isMaterial:material,objects:[object])) }
     }

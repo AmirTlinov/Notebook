@@ -401,6 +401,9 @@ struct SpatialInkCanvas: UIViewRepresentable {
       guard inputGate.permitsNewContact else { return }
       if actionTool != nil { finishAction() }
       guard let view, let surfaces = admissionSurfaces() else { return }
+      if let settings=toolController?.inputSettings {
+        drawingTool=settings.tool;penStyle=settings.pen;eraserStyle=settings.eraser
+      }
       if !drawingTool.usesInkJournal {
         guard let controller = toolController, let boardID = boardSurface.ownerID else { return }
         let point = touch.preciseLocation(in:view)

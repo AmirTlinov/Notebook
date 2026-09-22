@@ -301,49 +301,29 @@ struct SpatialWorkspaceView: View {
             return
           }
           if let selected = selectedElement(at: end, presence: presence) {
-            if model.selectionSession.addingElements { toggleGraphicSelection(selected,presence:presence,cohort:cohort); return }
+            if model.selectionSession.addingElements { model.toggleGraphicSelection(selected); return }
             if tapCount > 1 { model.selectElement(selected); model.editSelectedElement(selected) }; return
           }
-          guard let capture = NotebookAttentionProjection.capture(start: end, end: end, model: model, presence: presence,
-            cohort: cohort, installedInk: spatialInkSurfaces.installedSources()) else { return }
-          if capture.fragments.allSatisfy({ $0.elementID == nil && $0.target.kind != .cover }) {
-            if let fragment = capture.fragments.first,
-              let contact = NotebookAttentionProjection.toolAddress(at:end,fragment:fragment,model:model,presence:presence) {
-              model.drawingTools.selectInk(at:contact.point,address:contact.address,screenScale:presence.camera.scale)
-            } else { model.clearSelection() }
-            return
+          let fragment:NotebookAttentionSelection.Fragment
+          switch NotebookAttentionProjection.pointResolution(at:end,model:model,presence:presence,cohort:cohort) {
+          case .pending: return
+          case .hit(let hit): fragment=hit
+          case nil: model.clearSelection();return
           }
-          var target = NotebookSelectionSession.Target.context
-          if let fragment = capture.fragments.first {
-            if let reference = editableReference(fragment, boardID: presence.boardID) {
-              if model.selectionSession.addingElements { toggleGraphicSelection(reference,presence:presence,cohort:cohort); return }
-              if model.selectionSession.elements.count > 1, model.selectionSession.contains(reference), tapCount == 1 { return }
-              let focus: InteractiveElementReference
-              switch reference {
-              case .page(let pageID, let id): focus = .page(pageID: pageID, elementID: id)
-              case .spatial(let boardID, let id): focus = .board(boardID: boardID, elementID: id)
-              }
-              if model.interactiveElementFocus == focus { return }
-              if tapCount > 1 {
-                if case .spatial(let boardID, let id) = reference,
-                  model.presentedElement(.spatial(boardID: boardID, elementID: id), cohort: cohort)?.kind == .nativeText {
-                  model.interactiveElementFocus = .board(boardID: boardID, elementID: id)
-                } else { model.interactiveElementFocus = focus }
-                return
-              }
-              target = .element(reference)
-            } else if fragment.target.kind == .cover {
-              target = .item(boardID: presence.boardID, itemID: fragment.target.id)
-            }
-          }
-          model.publishHumanContext(capture, target: target)
+          if let reference=editableReference(fragment,boardID:presence.boardID) {
+            if model.selectionSession.addingElements { model.toggleGraphicSelection(reference);return }
+            model.selectElement(reference)
+            if tapCount > 1 { model.editSelectedElement(reference) }
+          } else if fragment.target.kind == .cover {
+            model.selectWorkspaceItem(fragment.target.id,boardID:presence.boardID)
+          } else if let contact=NotebookAttentionProjection.toolAddress(at:end,fragment:fragment,model:model,presence:presence) {
+            model.drawingTools.selectInk(at:contact.point,address:contact.address,screenScale:presence.camera.scale)
+          } else { model.clearSelection() }
         }, onLift: { point in
           guard cameraGesture == nil, !settling, !model.selectionSession.isInteractive, let cohort else { return nil }
           let selected = selectedElement(at: point, presence: presence)
-          let capture = selected == nil ? NotebookAttentionProjection.capture(start: point, end: point, model: model, presence: presence,
-            cohort: cohort, installedInk: spatialInkSurfaces.installedSources(),
-            acceptsFirstFragment: { editableReference($0, boardID: presence.boardID) != nil }) : nil
-          guard let reference = selected ?? capture?.fragments.first.flatMap({ editableReference($0, boardID: presence.boardID) }) else { return nil }
+          let hit=selected == nil ? NotebookAttentionProjection.pointContact(at:point,model:model,presence:presence,cohort:cohort) : nil
+          guard let reference=selected ?? hit.flatMap({ editableReference($0,boardID:presence.boardID) }) else { return nil }
           if model.selectionSession.addingElements, !model.selectionSession.contains(reference) {
             return SceneSelectionLift(begin:{},change:{ _ in },end:{ _ in },cancel:{})
           }
@@ -351,9 +331,7 @@ struct SpatialWorkspaceView: View {
           var contactID: UUID?
           func translation(_ delta: CGPoint) -> SpatialPoint { .init(x: delta.x / scale, y: delta.y / scale) }
           return SceneSelectionLift( begin: {
-            if let capture, !model.selectionSession.contains(reference) || (model.selectionSession.elements.count == 1 && model.agentQuestion == nil && !model.selectionSession.addingElements) {
-              model.publishHumanContext(capture, target: .element(reference))
-            }
+            if !model.selectionSession.contains(reference) { model.selectElement(reference) }
             contactID = model.beginElementManipulation(reference, kind: .move)
             if contactID != nil { UIImpactFeedbackGenerator(style: .soft).impactOccurred() }
           }, change: {
@@ -527,20 +505,6 @@ struct SpatialWorkspaceView: View {
     case .board, .cover: return .spatial(boardID: boardID, elementID: id)
     default: return nil
     }
-  }
-
-  private func selectItemMaterial(_ itemID: UUID, presence: SessionPresence, cohort: SceneCompositionCohort?) {
-    let target = NotebookSelectionSession.Target.item(boardID: presence.boardID, itemID: itemID)
-    guard model.selectionSession.target != target else { return }
-    if let cohort, let item = model.presentedItem(id: itemID, cohort: cohort, presence: presence) {
-      let box = item.geometry.screenFrame(center: item.center, camera: presence.camera, viewport: presence.viewport)
-      if let capture = NotebookAttentionProjection.capture(start: .init(x: box.x, y: box.y),
-        end: .init(x: box.x + box.width, y: box.y + box.height), model: model, presence: presence,
-        cohort: cohort, installedInk: spatialInkSurfaces.installedSources(), itemID: itemID) {
-        model.publishHumanContext(capture, target: target); return
-      }
-    }
-    model.selectWorkspaceItem(itemID, boardID: presence.boardID)
   }
 
   private struct CompositionRequest: Equatable {
@@ -761,13 +725,13 @@ struct SpatialWorkspaceView: View {
             onSelect: { itemID in
               guard !model.isItemBeingDeleted(itemID) else { return }
               withAnimation(.easeOut(duration: 0.12)) {
-                selectItemMaterial(itemID, presence: presence, cohort: cohort)
+                model.selectWorkspaceItem(itemID,boardID:presence.boardID)
               }
             },
             onLiftChanged: { itemID, lifted in
               if lifted { model.interactiveElementFocus = nil }
               liftedItemIDs.removeAll { $0 == itemID }
-              if lifted { liftedItemIDs.append(itemID); selectItemMaterial(itemID, presence: presence, cohort: cohort) }
+              if lifted { liftedItemIDs.append(itemID); model.selectWorkspaceItem(itemID,boardID:presence.boardID) }
             },
             onOpen: { itemID in
               guard !model.isItemBeingDeleted(itemID), model.presence?.boardID == presence.boardID else { return }
@@ -793,17 +757,6 @@ struct SpatialWorkspaceView: View {
             ?? cohort?.plan.rank(id: .item(rendered.id), in: .board(presence.boardID)) ?? 0)
         }
 
-  }
-
-  private func toggleGraphicSelection(_ reference: EditableElementReference, presence: SessionPresence, cohort: SceneCompositionCohort) {
-    guard let refs = model.graphicSelectionToggling(reference) else { return }
-    guard !refs.isEmpty else { model.clearSelection(); return }
-    guard let capture = NotebookAttentionProjection.capture(start:.zero,end:.zero,model:model,presence:presence,
-      cohort:cohort,installedInk:spatialInkSurfaces.installedSources(),selectedElements:refs) else {
-      model.showCue("Выбранная геометрия ещё сохраняется. Повторите касание после её готовности."); return
-    }
-    model.publishHumanContext(capture,target:refs.count == 1 ? .element(refs[0]) : .elements(refs))
-    model.setMultipleSelectionAdding(true)
   }
 
   private func selectedElement(at point:CGPoint,presence:SessionPresence)->EditableElementReference? {

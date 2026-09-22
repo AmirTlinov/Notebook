@@ -5,6 +5,37 @@ import Testing
 
 @Suite("Graphic local-frame visibility")
 struct NotebookGraphicVisibilityTests {
+  @Test func coldMeasuredRegionUsesLocalWitnessesWithoutBuildingACompleteContour() throws {
+    let frame=PageRect(x:0,y:0,width:400,height:400)
+    let measurements=InkMeasurements((0..<100_000).map { i in
+      SpatialInkSample(point:.init(x:200,y:Double(i%2)*200+100),timeOffset:Double(i)/240,
+        width:24,opacity:1,force:1,azimuth:0,altitude:1)
+    })
+    let mask=NotebookGraphicMask().capturing([.init(target:.init(elementID:"source",frame:frame),measurements:measurements)],transform:nil)
+      .appending(.intersect,polygon:[.zero,.init(x:0.8,y:0),.init(x:0.8,y:1),.init(x:0,y:1)])
+    let graphic=NotebookGraphic(shape:.rectangle,style:.init(fill:.black),mask:mask)
+    let layout=try #require(NotebookGraphicGraph([.init(id:"source",graphic:graphic,frame:frame,surface:.page(UUID()),shown:true)]).resolve("source").layout)
+    let start=ContinuousClock.now
+    let appearance=NotebookElementAppearance(graphic:graphic,layout:layout,size:.init(width:400,height:400),erasures:[])
+    #expect(appearance.state == .intact)
+    #expect(appearance.contains(.init(x:100,y:200),tolerance:3))
+    #expect(!appearance.contains(.init(x:200,y:200),tolerance:3))
+    #expect(!appearance.intersects([.init(x:195,y:190),.init(x:205,y:190),.init(x:205,y:210),.init(x:195,y:210)]))
+    #expect(appearance.intersects([.init(x:95,y:190),.init(x:205,y:190),.init(x:205,y:210),.init(x:95,y:210)]))
+    let controls=try #require(layout.selectionFrame(mask:mask))
+    #expect(abs(controls.x) < 1e-10 && abs(controls.y) < 1e-10)
+    #expect(abs(controls.width-320) < 1e-10 && abs(controls.height-400) < 1e-10)
+    #expect(mask.completePathBuildCount == 0,"A cold local gesture never builds the whole eraser contour")
+    print("COLD_MEASURED_MASK nodes=100000 local query+controls=\(start.duration(to:.now)); complete builds=0")
+    #expect(start.duration(to:.now) < .milliseconds(250))
+    // Erasing one side of a region does not silently rebase its handles when
+    // detached. As before detaching, the measured cut is absence inside it.
+    let copy=try JSONDecoder().decode(NotebookGraphicMask.self,from:JSONEncoder().encode(mask))
+    #expect(copy.retainPreparedPaths(from:mask))
+    #expect(copy.completePathBuildCount == 0)
+    #expect(copy.regionPath(in:.init(x:0,y:0,width:400,height:400)) === mask.regionPath(in:.init(x:0,y:0,width:400,height:400)))
+  }
+
   @Test func immutableMaskReusesExactLocalCoverageAcrossPlacementAndCopy() throws {
     let frame=PageRect(x:100,y:200,width:200,height:100)
     let cuts=[InkElementErasure(target:.init(elementID:"source",frame:frame),measurements:InkMeasurements([210.0,290.0].map {
@@ -60,6 +91,24 @@ struct NotebookGraphicVisibilityTests {
     let large=copied.path(in:.init(x:10,y:20,width:400,height:200))
     #expect(!large.contains(.init(x:90,y:120)))
     #expect(large.contains(.init(x:150,y:120)))
+  }
+
+  @Test func hundredThousandClippedBodiesAreNotCandidatesOutsideTheirRelativeRegions() {
+    let page=UUID(),mask=NotebookGraphicMask().appending(.intersect,
+      polygon:[.zero,.init(x:0.05,y:0),.init(x:0.05,y:0.05),.init(x:0,y:0.05)])
+    let graphic=NotebookGraphic(shape:.freehand,freehand:.init(layers:[.init(color:.black,vertices:[
+      .init(x:0,y:0,opacity:1),.init(x:1,y:0,opacity:1),.init(x:1,y:1,opacity:1)])]),mask:mask)
+    let graph=NotebookGraphicGraph((0..<100_000).map { i in
+      .init(id:"fragment-\(i)",graphic:graphic,frame:.init(x:0,y:0,width:400,height:400),surface:.page(page),shown:true)
+    })
+    let start=ContinuousClock.now
+    let missed=graph.visiblePageGraphics(page,in:.init(x:200,y:200,width:2,height:2))
+    #expect(missed.layouts.isEmpty && missed.resolvedGraphics == 0 && !missed.overflow)
+    #expect(missed.visitedIndexNodes <= 1)
+    #expect(mask.completePathBuildCount == 0)
+    let local=graph.visiblePageGraphics(page,in:.init(x:5,y:5,width:2,height:2),limit:4)
+    #expect(local.overflow,"Narrowing cannot discard visible fragments")
+    print("MASKED_BROAD_PHASE bodies=100000 resolved=\(missed.resolvedGraphics) visits=\(missed.visitedIndexNodes) cold index+query=\(start.duration(to:.now))")
   }
 
   @Test func pageProjectionSharesImmutableSourceButNotChangedClaimsOrElements() async throws {

@@ -41,7 +41,7 @@ import XCTest
       for (i,object) in prepared.working.enumerated() {
         let node=try XCTUnwrap(graph.node(object.id)),layout=try XCTUnwrap(graph.resolve(object.id).layout)
         XCTAssertTrue(try XCTUnwrap(node.graphic.mask).path(in:rect) === paths[i])
-        XCTAssertNotNil(layout.visibleFrame(mask:try XCTUnwrap(node.graphic.mask)))
+        XCTAssertNotNil(layout.selectionFrame(mask:try XCTUnwrap(node.graphic.mask)))
       }
       for (id,path) in remainders { XCTAssertTrue(graph.node(id)?.graphic.mask?.path(in:rect) === path) }
       times.append(Double(start.duration(to:.now).components.attoseconds)/1e15)
@@ -116,7 +116,9 @@ import XCTest
       warm.append(Double(duration.components.seconds)*1000+Double(duration.components.attoseconds)/1e15)
     }
     cold.sort();warm.sort()
-    print("GUI295 100000 cut measurements: cold local coverage p50=\(cold[1]) ms; retained query p50=\(warm[60]) ms max=\(warm.last!) ms; immutable body, two bounded path slots, source and displayed frame costs excluded")
+    let report="GUI295 100000 cut measurements: explicit complete contour p50=\(cold[1]) ms; retained export query p50=\(warm[60]) ms max=\(warm.last!) ms; not the live gesture path or displayed frame timing"
+    print(report)
+    let evidence=XCTAttachment(string:report);evidence.name="complete-mask-export-control";evidence.lifetime = .keepAlways;add(evidence)
     XCTAssertLessThan(warm[60],cold[1])
   }
 

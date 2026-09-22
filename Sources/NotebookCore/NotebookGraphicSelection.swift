@@ -131,7 +131,7 @@ public enum NotebookGraphicSelection {
       body:NotebookGraphicLayout,placement:NotebookElementPlacement) {
       self.id=id;self.frame=frame;self.graphic=graphic;self.layout=layout;self.body=body;self.placement=placement
     }
-    public var visibleFrame: PageRect { graphic.mask.flatMap { layout.visibleFrame(mask:$0) } ?? layout.frame }
+    public var visibleFrame: PageRect { graphic.mask.flatMap { layout.selectionFrame(mask:$0) } ?? layout.frame }
   }
   public struct Edit: Equatable, Sendable {
     public let id: String

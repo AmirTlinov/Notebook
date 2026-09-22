@@ -227,18 +227,24 @@ final class NotebookGraphicVisibility: Sendable {
       return outward(.init(x:layout.frame.x,y:layout.frame.y,width:layout.frame.width,height:layout.frame.height),through:.identity)
     }
     let size=CGSize(width:node.placement.localSize.x,height:node.placement.localSize.y)
-    let body:CGRect
+    var body:CGRect
     if graphic.freehand != nil {
       // Freehand pixels and semantic contact are clipped to this whole frame.
       // A coarse scene bound must never tessellate/Boolean-union every source
       // event merely to decide which whole can intersect the viewport.
       body=CGRect(origin:.zero,size:size)
     } else if graphic.transform != nil || graphic.shape == .path {
-      body=NotebookGraphicGeometry.paintPath(graphic,layout:nil,size:size).boundingBoxOfPath
+      var unmasked=graphic;unmasked.mask=nil
+      body=NotebookGraphicGeometry.paintPath(unmasked,layout:nil,size:size).boundingBoxOfPath
     } else {
       // Round strokes normally lie inside the frame; this also admits the
       // overflow of an unusually thick stroke on a very small object.
       body=CGRect(origin:.zero,size:size).insetBy(dx:-graphic.style.strokeWidth/2,dy:-graphic.style.strokeWidth/2)
+    }
+    if let mask=graphic.mask {
+      // The same relative region narrows disclosure for CPU and GPU. Holes
+      // remain exact-query work; this bound never expands measured cutouts.
+      body=body.intersection(mask.conservativeBounds(in:.init(origin:.zero,size:size),projection:nil))
     }
     return body.isNull ? nil : outward(body,through:t)
   }

@@ -139,6 +139,8 @@ public struct NotebookGraphicMask: Codable, Equatable, Sendable {
   }
   public let operations:[Operation]
   private let preparation = Preparation()
+  // A full export must never hold the lock used by live region queries.
+  private let regionPreparation = Preparation()
   private enum CodingKeys:String,CodingKey { case operations }
   public static func == (lhs:Self,rhs:Self)->Bool {
     lhs.preparation === rhs.preparation || lhs.operations == rhs.operations
@@ -149,6 +151,8 @@ public struct NotebookGraphicMask: Codable, Equatable, Sendable {
     private let lock=NSLock()
     private var unit:CGPath?
     private var body:(CGSize,CGPath)?
+    private var builds=0
+    var buildCount:Int { lock.withLock { builds } }
     func retainReady(from previous:Preparation)->Bool {
       if self === previous { return true }
       // Publication may borrow completed derivatives, never wait behind a
@@ -167,7 +171,7 @@ public struct NotebookGraphicMask: Codable, Equatable, Sendable {
         let normalized=size == CGSize(width:1,height:1)
         if normalized,let unit { return unit }
         if !normalized,let body,body.0 == size { return body.1 }
-        let path=build()
+        let path=build();builds += 1
         // Erasure preparation cooperates with worker cancellation. A partial
         // result may leave that worker, but never becomes retained visibility.
         if !Task.isCancelled {
@@ -177,12 +181,15 @@ public struct NotebookGraphicMask: Codable, Equatable, Sendable {
       }
     }
   }
+  var completePathBuildCount:Int { preparation.buildCount }
   public init(operations:[Operation]=[]) { self.operations=operations }
   /// A decoded publication of the same immutable mask keeps its already
   /// prepared coverage. This changes no authored field, pose, clock or limit.
   @discardableResult public func retainPreparedPaths(from previous:Self)->Bool {
     guard self == previous else { return false }
-    return preparation.retainReady(from:previous.preparation)
+    let complete=preparation.retainReady(from:previous.preparation)
+    let region=regionPreparation.retainReady(from:previous.regionPreparation)
+    return complete || region
   }
   public var isValid:Bool {
     !operations.isEmpty && operations.count <= 64 && operations.allSatisfy {
@@ -262,8 +269,83 @@ public struct NotebookGraphicMask: Codable, Equatable, Sendable {
     else { bounds.origin.x += rect.minX;bounds.origin.y += rect.minY }
     return bounds.intersection(rect)
   }
+  /// The addressed region and its measured absence are operands of the same
+  /// visibility relation. Live paint clips this small polygonal region and
+  /// executes the measured operands directly, without a full Boolean contour.
+  public func regionPath(in rect:CGRect)->CGPath {
+    guard rect.width > 0,rect.height > 0 else { return CGMutablePath() }
+    let path=regionPreparation.path(size:rect.size) {
+      var result:CGPath=CGPath(rect:.init(origin:.zero,size:rect.size),transform:nil)
+      for operation in operations where operation.erasures == nil {
+        let polygon=CGMutablePath()
+        polygon.addLines(between:operation.polygon.map { .init(x:$0.x*rect.width,y:$0.y*rect.height) })
+        polygon.closeSubpath()
+        result=operation.kind == .intersect ? result.intersection(polygon,using:.evenOdd) : result.subtracting(polygon,using:.evenOdd)
+        if result.isEmpty { break }
+      }
+      return result
+    }
+    guard rect.origin != .zero else { return path }
+    var offset=CGAffineTransform(translationX:rect.minX,y:rect.minY)
+    return path.copy(using:&offset)!
+  }
+  public func projectedRegionPath(in rect:CGRect,projection:NotebookGraphicLayout.Projection?)->CGPath {
+    guard let projection else { return regionPath(in:rect) }
+    var transform=projection.transform
+    return regionPath(in:.init(origin:.zero,size:projection.size)).copy(using:&transform)!
+  }
+  public var erasesWholeRegion:Bool {
+    operations.contains { $0.erasures?.contains { $0.target.wholeElement } == true }
+  }
+  private var measuredCuts:[NotebookFreehandGeometry.Cut] {
+    operations.flatMap { operation in
+      (operation.erasures ?? []).map { NotebookFreehandGeometry.Cut($0,transform:operation.transform) }
+    }
+  }
   public func contains(_ point:SpatialPoint)->Bool {
-    path(in:.init(x:0,y:0,width:1,height:1)).contains(.init(x:point.x,y:point.y),using:.evenOdd)
+    let p=CGPoint(x:point.x,y:point.y)
+    return !erasesWholeRegion && regionPath(in:.init(x:0,y:0,width:1,height:1)).contains(p,using:.evenOdd)
+      && !measuredCuts.contains { $0.contains(p) }
+  }
+  /// Exact local paint witness. Positive interior witnesses stop immediately;
+  /// absence is proved by the same indexed measured triangles, not sampling.
+  func intersects(_ query:CGPath,in size:CGSize)->Bool {
+    guard !erasesWholeRegion else { return false }
+    var remaining=regionPath(in:.init(origin:.zero,size:size)).intersection(query,using:.evenOdd)
+    guard !remaining.isEmpty else { return false }
+    let cuts=measuredCuts
+    guard !cuts.isEmpty else { return true }
+    let box=remaining.boundingBoxOfPath
+    for x in [0.25,0.5,0.75] {
+      for y in [0.25,0.5,0.75] {
+        let p=CGPoint(x:box.minX+box.width*x,y:box.minY+box.height*y)
+        if remaining.contains(p,using:.evenOdd),
+          !cuts.contains(where:{ $0.contains(.init(x:p.x/size.width,y:p.y/size.height)) }) { return true }
+      }
+    }
+    for cut in cuts {
+      let box=remaining.boundingBoxOfPath
+      let area=CGRect(x:box.minX/size.width,y:box.minY/size.height,width:box.width/size.width,height:box.height/size.height)
+      var batch=CGMutablePath(),last:[CGPoint]=[],count=0
+      func flush() {
+        guard count > 0 else { return }
+        remaining=remaining.subtracting(batch.normalized());batch=CGMutablePath();count=0
+        // Share actual coverage across independently quantized Boolean batches.
+        batch.addLines(between:last);batch.closeSubpath()
+      }
+      _=cut.triangles(in:area) { triangle in
+        let a=CGPoint(x:triangle[0].x*size.width,y:triangle[0].y*size.height)
+        let b=CGPoint(x:triangle[1].x*size.width,y:triangle[1].y*size.height)
+        let c=CGPoint(x:triangle[2].x*size.width,y:triangle[2].y*size.height)
+        last=(b.x-a.x)*(c.y-a.y)-(b.y-a.y)*(c.x-a.x) >= 0 ? [a,b,c] : [a,c,b]
+        batch.addLines(between:last);batch.closeSubpath();count += 1
+        if count == 128 { flush() }
+        return remaining.isEmpty || Task.isCancelled
+      }
+      flush()
+      if remaining.isEmpty || Task.isCancelled { return false }
+    }
+    return true
   }
 }
 
@@ -303,7 +385,10 @@ public enum NotebookGraphicGeometry {
   public static func hitTest(_ graphic: NotebookGraphic, width: Double, height: Double,
     x: Double, y: Double, tolerance: Double) -> Bool {
     guard graphic.showsGeometry, graphic.shape != .connector, width > 0, height > 0 else { return false }
-    if graphic.mask?.contains(.init(x:x/width,y:y/height)) == false { return false }
+    if graphic.mask != nil {
+      return NotebookElementAppearance(graphic:graphic,layout:nil,size:.init(width:width,height:height),erasures:[])
+        .contains(.init(x:x,y:y),tolerance:tolerance)
+    }
     if let ink = graphic.freehand {
       return ink.contains(.init(x:x,y:y),size:.init(width:width,height:height),transform:graphic.transform,tolerance:tolerance)
     }

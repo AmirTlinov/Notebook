@@ -12,15 +12,15 @@ enum NotebookElementErasurePaint {
 }
 
 extension View {
-  @ViewBuilder func erased(by erasures: [InkElementErasure], appearance: NotebookElementAppearance? = nil,transform:NotebookGraphicTransform? = nil,layout:NotebookGraphicLayout? = nil) -> some View {
-    if erasures.isEmpty { self }
-    else if appearance?.state == .erased || erasures.contains(where: { $0.target.wholeElement }) {
+  @ViewBuilder func erased(by erasures: [InkElementErasure], appearance: NotebookElementAppearance? = nil,transform:NotebookGraphicTransform? = nil,layout:NotebookGraphicLayout? = nil,visibility:NotebookGraphicMask? = nil) -> some View {
+    if erasures.isEmpty && visibility?.operations.contains(where:{ $0.erasures != nil }) != true { self }
+    else if appearance?.state == .erased || visibility?.erasesWholeRegion == true || erasures.contains(where: { $0.target.wholeElement }) {
       // Retire WebKit and its input/capture leases, not a hidden running program.
       Color.clear.allowsHitTesting(false).accessibilityHidden(true)
     }
     else {
       mask {
-        NotebookInkMaterialView(erasures:erasures,transform:transform,layout:layout)
+        NotebookInkMaterialView(erasures:erasures,transform:transform,layout:layout,mask:visibility)
       }
     }
   }

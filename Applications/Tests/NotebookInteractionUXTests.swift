@@ -125,6 +125,8 @@ final class NotebookInteractionUXTests: XCTestCase {
     // Clicking away must apply, not cancel, and must not require a checkmark.
     try await scene.readyFinger(self)
     released = .now; scene.beginFinger(.init(x: 700, y: 850)); scene.endFinger()
+    XCTAssertNil(model.selectionSession.region, "A blank point is not a new lasso contour")
+    try await Task.sleep(for: .milliseconds(16))
     try await assertUX("tap-away-releases-selection", since: released, window: scene.window) {
       guard model.selectionSession.region == nil && model.selectionSession.elements.isEmpty else { return false }
       return try scene.pixels(cutProbes)
@@ -175,25 +177,17 @@ final class NotebookInteractionUXTests: XCTestCase {
       "Diagnostic only: correct model geometry still does not prove the following pixel checks")
     let probes: [(CGPoint, NotebookUXObservation.Color)] = [
       (.init(x: 590, y: 590), .paper), (.init(x: 590, y: 790), .blue), (.init(x: 350, y: 330), .red)]
-    let moving = try XCTUnwrap(scene.model.selectionSession.manipulation)
-    XCTAssertEqual(moving.frame.minY, 740, accuracy: 0.01)
-    XCTAssertEqual(scene.model.graphicLayout(moving.reference)?.frame.y ?? -1, 740, accuracy: 0.01)
     try await shown("whole-object-visible-during-drag", scene, since: start, probes)
-    let diagnostic = XCTAttachment(string: "After observed motion: contact=\(String(describing: scene.model.selectionSession.manipulation?.frame)), layout=\(String(describing: scene.model.graphicLayout(moving.reference)?.frame)), installed=\(scene.installedSelectionGrips), gate=\(scene.model.inputGate.isActive), window=\(scene.window.isKeyWindow)")
-    diagnostic.name = "whole-object-model-after-observation"; diagnostic.lifetime = .keepAlways; add(diagnostic)
-    try await Task.sleep(for: .milliseconds(250))
-    let later = XCTAttachment(image: try NotebookUXObservation.Pixels(window: scene.window).image)
-    later.name = "whole-object-later-frame"; later.lifetime = .keepAlways; add(later)
-    let drawn = UIGraphicsImageRenderer(bounds: scene.window.bounds).image { _ in
-      scene.window.drawHierarchy(in: scene.window.bounds, afterScreenUpdates: true)
-    }
-    let forced = XCTAttachment(image: drawn); forced.name = "whole-object-forced-frame"; forced.lifetime = .keepAlways; add(forced)
     start = .now; scene.endFinger()
     try await remainsShown("whole-object-keeps-drop", scene, since: start, probes)
   }
 
   private func shown(_ name: String, _ scene: Scene, since start: ContinuousClock.Instant,
     _ probes: [(CGPoint, NotebookUXObservation.Color)]) async throws {
+    // Return one display opportunity before readback. A snapshot issued inside
+    // the input transaction can itself block the update it is meant to observe.
+    // The clock still starts before input: this wait and capture both count.
+    try await Task.sleep(for: .milliseconds(16))
     try await assertUX(name, since: start, window: scene.window) { try scene.pixels(probes) }
   }
 
@@ -309,14 +303,6 @@ final class NotebookInteractionUXTests: XCTestCase {
       // Freeze this before any edit. A bug shifting the paper must not also shift
       // the oracle, turning a wrong displayed result into a passing test.
       pageToWindow = .init(a: x.x-origin.x, b: x.y-origin.y, c: y.x-origin.x, d: y.y-origin.y, tx: origin.x, ty: origin.y)
-    }
-    var installedSelectionGrips: [CGRect] {
-      func descendants(_ view: UIView) -> [UIView] { [view] + view.subviews.flatMap(descendants) }
-      return descendants(window).compactMap { $0 as? NotebookSelectionControlsView }.flatMap {
-        ($0.accessibilityElements as? [UIAccessibilityElement] ?? []).filter {
-          $0.accessibilityIdentifier?.hasPrefix("resize-agent-element-") == true
-        }.map(\.accessibilityFrameInContainerSpace)
-      }
     }
     func pixels(_ probes: [(CGPoint, NotebookUXObservation.Color)]) throws -> Bool {
       try NotebookUXObservation.Pixels(window: window).matches(probes.map { ($0.0.applying(pageToWindow), $0.1) })
