@@ -311,6 +311,40 @@ permission to substitute or mutate live app storage.
 `PublicationNoOpTests` cover locks, camera progress, far tiles, buffer reuse, undo
 races and no-op publication. Run the affected native gesture and inspect actual pixels.
 
+### Interactive UX regression gate
+
+`./verify.sh --only --profile interaction-ux` runs on the physical iPad in the
+isolated native-test app. It checks the mounted window through the installed
+Pencil/finger recognizers: ink and erasure during contact and after lift, a cold
+cut of an already erased shape, the next raw-ink cut without confirmation,
+tap/whole-object movement, publication and the first following drag. Frozen
+window probes require both the new material and the unchanged outside; moving
+only a frame or restoring an erased fragment is a failure. Lift checks its first
+capture without an eventual-correctness grace period; publication is sampled
+through the save/reload boundary, not only in a final still image. Board entry checks
+destination pixels; notebook/document opening checks the installed current
+source and retains a window screenshot (not an OCR/content-pixel comparison).
+
+The fixed ceilings are **100 ms** for sampled gesture responses, **250 ms** for
+selection, **1 s** for board/document opening and **2 s** for cold notebook root
+startup. These are conservative regression ceilings, not acceptable end-state
+Pencil latency or a claim of 120 FPS. Each checkpoint must pass; a good median
+cannot hide one long stall. The scheduled replay never shifts its 120 Hz input
+deadlines to accommodate stalls, and reports p50/p95/max of six window samples.
+Capture and scheduling overhead are included. Window probes read the current
+frame (`afterScreenUpdates: false`), without forcing a synchronous screen update.
+The publication monitor yields between snapshots so it cannot starve the writer
+while trying to catch up its own sampling schedule. This is not an OS-presented frame
+or physical input-to-photon measurement. Hardware Pencil calibration, sustained
+system frame/CPU/GPU/memory traces and long-session acceptance remain separate.
+
+The clock begins before input/navigation and is checked after the probe, so a
+blocking handler producing a correct result too late still fails. Negative
+controls reject wrong/missing output and late synchronous success. Existing
+8/15-second opening waits only collect diagnostics; they cannot turn a missed
+UX ceiling green. Do not prewarm lasso materialization, insert persistence waits
+between ordinary gestures, or raise these ceilings to bless a regression.
+
 Historical September 6 measurements, source hashes and negative controls are kept in
 [the original report](https://github.com/AmirTlinov/Notebook/blob/1723ec2be6f6b8dda29e3a575fd6376fff03e093/docs/performance.md).
 They are not current-device performance claims.

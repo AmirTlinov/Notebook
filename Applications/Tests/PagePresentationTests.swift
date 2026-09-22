@@ -30,6 +30,7 @@ final class PagePresentationTests: XCTestCase {
     retainNotebookUntilTeardown(model, removing: model.store.root)
     let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
     let previous = scene.windows.first(where: \.isKeyWindow), window = UIWindow(windowScene: scene)
+    let openingStarted = ContinuousClock.now
     window.rootViewController = UIHostingController(rootView: NotebookRootView().environment(model))
     window.makeKeyAndVisible()
     defer { window.isHidden = true; window.rootViewController = nil; previous?.makeKey() }
@@ -37,6 +38,12 @@ final class PagePresentationTests: XCTestCase {
     func ready() -> Bool { model.activePage.map { model.pagePresentations.isPresented($0) } == true }
     while !ready(), ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(10)) }
     XCTAssertTrue(ready(), "presence=\(String(describing: model.presence)), scenePending=\(model.scenePreparationPending), sceneFailure=\(String(describing: model.compositionTiles.failure)), published=\(model.compositionTiles.published != nil), pages=\(model.pages.keys), failure=\(model.persistenceFailure ?? "none")")
+    // The 8-second diagnostic timeout above is not an acceptable UX latency.
+    // Include startup, source preparation, installation and window capture.
+    let image = try NotebookUXObservation.Pixels(window: window).image
+    try await assertUX("cold-notebook-installed", since: openingStarted,
+      budget: NotebookUXObservation.coldOpening, window: window) { ready() }
+    let shot = XCTAttachment(image: image); shot.name = "cold-notebook-shown"; shot.lifetime = .keepAlways; add(shot)
   }
 
   @MainActor

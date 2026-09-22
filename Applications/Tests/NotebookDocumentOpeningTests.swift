@@ -30,6 +30,7 @@ final class NotebookDocumentOpeningTests: XCTestCase {
     XCTAssertNil(model.documents[destination.id])
     let target = CollaborationTarget(kind: .document, id: destination.id)
     let revision = try await model.performStoreCommand { try $0.referenceRevision(target: target) }
+    let openingStarted = ContinuousClock.now
     model.requestShow(.init(target: target, revision: revision))
     func installed() -> Bool {
       guard let document = model.documents[destination.id], let state = model.documentStates[destination.id] else { return false }
@@ -46,6 +47,10 @@ final class NotebookDocumentOpeningTests: XCTestCase {
     }
     let proof = XCTAttachment(image: image); proof.name = "history-opens-unloaded-document"
     proof.lifetime = .keepAlways; add(proof)
+    // A generous diagnostic wait must not silently bless a slow opening. The
+    // registry checks the installed current source, not just focus/title/model.
+    try await assertUX(onAnotherBoard ? "document-other-board-installed" : "document-installed",
+      since: openingStarted, budget: NotebookUXObservation.opening, window: window) { installed() }
   }
 
   func testOpenedDocumentOwnsPixelsHitTestingAndAttentionAboveAnOverlappingCoverWithoutMovingIt() async throws {

@@ -467,6 +467,19 @@ class SelectionTests(unittest.TestCase):
         self.assertEqual(explicit["checks"]["ipad"], ["NotebookTests/OtherTests/testRegression"])
         self.assertFalse(explicit["checks"]["mac"])
 
+    def test_interaction_ux_selects_negative_controls_and_real_gestures_and_opening(self):
+        plan = verify.make_plan(self.root, profiles=["interaction-ux"], only=True)
+        self.assertEqual(plan["checks"]["ipad"], sorted([
+            "NotebookTests/NotebookUXObservationTests",
+            "NotebookTests/NotebookInteractionUXTests",
+            "NotebookTests/PagePresentationTests/testColdRootInstallsTheStoredInkPageAtTheActualViewport",
+            "NotebookTests/NotebookDocumentOpeningTests/testHistoryReferenceInstallsAnUnloadedDocumentOutsideTheCurrentCamera",
+            "NotebookTests/NotebookDocumentOpeningTests/testHistoryReferenceInstallsAnUnloadedDocumentOnAnotherBoard",
+        ]))
+        self.assertFalse(plan["checks"]["mac"])
+        self.assertFalse(plan["checks"]["core"])
+        self.assertFalse(plan["checks"]["commands"])
+
     def test_native_lookup_keeps_platform_scope_and_missing_tests_visible(self):
         self.change("Applications/MacTests/NewOwnerTests.swift")
         self.git("add", "."); self.git("commit", "-qm", "mac contract")

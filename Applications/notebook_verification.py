@@ -21,6 +21,12 @@ DOCUMENT_BROWSER_CONTRACTS = (
     "Tests/NotebookDocumentAcceptance/test_link_activation.mjs",
 )
 PROFILES = {
+    "interaction-ux": {
+        "ipad": ["NotebookTests/NotebookUXObservationTests", "NotebookTests/NotebookInteractionUXTests",
+                 "NotebookTests/PagePresentationTests/testColdRootInstallsTheStoredInkPageAtTheActualViewport",
+                 "NotebookTests/NotebookDocumentOpeningTests/testHistoryReferenceInstallsAnUnloadedDocumentOutsideTheCurrentCamera",
+                 "NotebookTests/NotebookDocumentOpeningTests/testHistoryReferenceInstallsAnUnloadedDocumentOnAnotherBoard"],
+    },
     "presentation": {
         "core": ["NotebookPresentationTests", "CodexDisplayProjectionTests", "wireCannotChooseRootPathsOrUnknownCommands", "stablePagePreservesExplicitViewportScale",
                  "viewportProjectionIsReversible", "documentCameraUsesItsOwnGeometry", "documentPageSelectionSurvivesViewportProjection"],
