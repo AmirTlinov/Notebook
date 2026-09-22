@@ -9,10 +9,28 @@ struct NotebookElementErasing {
   let samples: InkMeasurements
   let targets: [InkElementTarget]
   var accepted = false
+  /// Broad phase of only the newly measured sweep, supplied by the input owner.
+  var changedTargets: Set<String>? = nil
+  private var retainedCoverage: [String:InkMeasurements] = [:]
+
+  init(id:UUID,surface:SurfaceID,samples:InkMeasurements,targets:[InkElementTarget],
+    accepted:Bool = false,changedTargets:Set<String>? = nil) {
+    self.id=id;self.surface=surface;self.samples=samples;self.targets=targets
+    self.accepted=accepted;self.changedTargets=changedTargets
+  }
+
+  mutating func retainUnchangedCoverage(from previous:Self?) {
+    guard !accepted,let changedTargets,let previous,
+      previous.id == id,previous.surface == surface else { return }
+    let old=Dictionary(uniqueKeysWithValues:previous.targets.map { ($0.elementID,$0) })
+    for target in targets where !changedTargets.contains(target.elementID) && old[target.elementID] == target {
+      retainedCoverage[target.elementID]=previous.retainedCoverage[target.elementID] ?? previous.samples
+    }
+  }
 
   var masks: [String: [InkElementErasure]] {
     Dictionary(uniqueKeysWithValues: targets.map {
-      ($0.elementID, [InkElementErasure(target: $0, measurements: samples)])
+      ($0.elementID, [InkElementErasure(target: $0, measurements: retainedCoverage[$0.elementID] ?? samples)])
     })
   }
 }
@@ -255,6 +273,7 @@ struct NotebookPageEraserSource {
       address.surface.kind == .page && !(address.surface.ownerID.flatMap { owners[$0] }?.contains(address.id) ?? false)
     }
     self.pages = self.pages.filter { pages[$0.key] != nil }
+    projected=projected.filter { $0.key.kind != .page || $0.key.ownerID.flatMap { pages[$0] } != nil }
   }
 
   func retain(hierarchy: BoardHierarchy?) {
@@ -273,7 +292,7 @@ struct NotebookPageEraserSource {
     stopped = true
     let tasks = entries.values.map(\.task)
     for task in tasks { task.cancel() }
-    entries.removeAll(); pages.removeAll(); spatial.removeAll()
+    entries.removeAll(); pages.removeAll(); spatial.removeAll();projected.removeAll();activeTargets=nil
     for task in tasks { await task.value }
   }
 
@@ -307,7 +326,41 @@ struct NotebookPageEraserSource {
   }
   @ObservationIgnored private var pages: [UUID: PageErasures] = [:]
   @ObservationIgnored private var spatial: [SurfaceID: [String: [InkElementErasure]]] = [:]
+  @ObservationIgnored private var projected: [SurfaceID:[String:[InkElementErasure]]] = [:]
+  @ObservationIgnored private var activeTargets: [SurfaceID:Set<String>]?
+  @ObservationIgnored private(set) var projectionBuildCount = 0
+
+  func invalidateWorking() { projected.removeAll();activeTargets=nil }
+
+  func isErasing(_ id:String,on surface:SurfaceID,working:[UUID:[NotebookElementErasing]]) -> Bool {
+    if activeTargets == nil {
+      var ids:[SurfaceID:Set<String>]=[:]
+      for contacts in working.values {
+        for contact in contacts where !contact.accepted {
+          ids[contact.surface,default:[]].formUnion(contact.targets.map(\.elementID))
+        }
+      }
+      activeTargets=ids
+    }
+    return activeTargets?[surface]?.contains(id) == true
+  }
+
+  func projection(on surface:SurfaceID,base:[String:[InkElementErasure]],
+    working:[UUID:[NotebookElementErasing]],retains:Bool = true) -> [String:[InkElementErasure]] {
+    if retains,let cached=projected[surface] { return cached }
+    var result=base
+    for contacts in working.values {
+      for contact in contacts where contact.surface == surface {
+        result.merge(contact.masks) { $0 + $1 }
+      }
+    }
+    projectionBuildCount += 1
+    if retains { projected[surface]=result }
+    return result
+  }
+
   func record(_ change: PreparedPageInkChange) {
+    projected[.page(change.pageID)]=nil
     var entry:PageErasures
     if var cached=pages[change.pageID],cached.stamp == change.baseStamp {
       switch change.mutation {
@@ -320,11 +373,14 @@ struct NotebookPageEraserSource {
   }
   func page(_ page: PageDocument) -> [String: [InkElementErasure]] {
     if let cached=pages[page.id],cached.stamp == page.drawingStamp { return cached.values }
+    projected[.page(page.id)]=nil
     let entry=PageErasures(stamp:page.drawingStamp,drawing:(try? page.inkDrawing()) ?? .init())
     pages[page.id]=entry
     return entry.values
   }
-  func invalidateSpatial() { spatial.removeAll() }
+  func invalidateSpatial() {
+    spatial.removeAll();projected=projected.filter { $0.key.kind == .page }
+  }
   func masks(on surface: SurfaceID, journal: SpatialInkJournal?) -> [String: [InkElementErasure]] {
     if let cached = spatial[surface] { return cached }
     let masks = journal?.elementErasures(on: surface) ?? [:]
@@ -335,9 +391,7 @@ struct NotebookPageEraserSource {
 
 extension NotebookAppModel {
   func isElementErasing(_ id: String, on surface: SurfaceID) -> Bool {
-    workingElementErasures.values.contains { contacts in
-      contacts.contains { !$0.accepted && $0.surface == surface && $0.targets.contains { $0.elementID == id } }
-    }
+    elementErasureCache.isErasing(id,on:surface,working:workingElementErasures)
   }
 
   func pageEraserSource(pageID: UUID) -> NotebookPageEraserSource? {
@@ -371,8 +425,15 @@ extension NotebookAppModel {
     // Once lift transfers this contact to the model, an old paper's refresh
     // or teardown cannot retract it while preparation is still pending.
     guard workingElementErasures[id]?.contains(where: \.accepted) != true else { return }
-    let visible = contact.filter { !$0.targets.isEmpty }
-    if visible.isEmpty {
+    let previous=workingElementErasures[id] ?? []
+    // Preserve segment positions even when an earlier span has no targets.
+    // The renderer receives a new prefix only where the new sweep can matter.
+    let visible = contact.enumerated().map { index,contact in
+      var next=contact
+      next.retainUnchangedCoverage(from:previous.indices.contains(index) ? previous[index] : nil)
+      return next
+    }
+    if visible.allSatisfy({ $0.targets.isEmpty }) {
       // An inactive canvas may cancel during every SwiftUI update. A no-op
       // must not publish another update and strand the opened paper in a loop.
       if workingElementErasures[id] != nil { workingElementErasures[id] = nil }
@@ -386,12 +447,8 @@ extension NotebookAppModel {
     } else if loadedInkSurfaces.contains(surface) || fallback == nil {
       result = elementErasureCache.masks(on: surface, journal: spatialInk)
     } else { result = fallback?.elementErasures(on: surface) ?? [:] }
-    for contacts in workingElementErasures.values {
-      for contact in contacts where contact.surface == surface {
-        result.merge(contact.masks) { $0 + $1 }
-      }
-    }
-    return result
+    return elementErasureCache.projection(on:surface,base:result,working:workingElementErasures,
+      retains:surface.kind == .page || loadedInkSurfaces.contains(surface) || fallback == nil)
   }
 }
 

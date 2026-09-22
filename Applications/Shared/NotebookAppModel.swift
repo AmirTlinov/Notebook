@@ -912,7 +912,9 @@ final class NotebookAppModel {
   @ObservationIgnored private var graphicCommandGeneration = UUID()
   @ObservationIgnored var workingGraphics: [NotebookWorkingGraphic] = []
   @ObservationIgnored var workingGraphicSignals:[SurfaceID:NotebookWorkingGraphicSignal] = [:]
-  var workingElementErasures: [UUID: [NotebookElementErasing]] = [:]
+  var workingElementErasures: [UUID: [NotebookElementErasing]] = [:] {
+    didSet { elementErasureCache.invalidateWorking() }
+  }
   @ObservationIgnored let elementErasureCache = NotebookElementErasureCache()
   // Lift transfers its final draft to the accepted command. It is retired by
   // a scene read at/after the durable cursor, not by lift or receipt delivery.

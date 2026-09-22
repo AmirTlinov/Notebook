@@ -1015,6 +1015,7 @@ final class PaperInputView: UIView {
   private func failElementEraser(_ error:Error,sourceID:UUID) {
     guard !elementEraserFailed else { return }
     elementEraserFailed=true;elementContact=InkElementContact([])
+    onLiveElementErasing(.cancel)
     if !reportedElementTargetIDs.isEmpty { onElementErasing([],sourceID) }
     reportedElementTargetIDs.removeAll(keepingCapacity:true)
     onEraserFailure(error)
@@ -1084,7 +1085,7 @@ final class PaperInputView: UIView {
     guard quickShape.fit == nil else { return }
     if actionTool == .eraser, let activeEraserStroke {
       presentActiveEraser?(activeEraserStroke)
-      onLiveElementErasing(.update(activeEraserStroke))
+      if !elementEraserFailed { onLiveElementErasing(.update(activeEraserStroke)) }
     } else if let activePenStroke {
       activePenStroke.replacePredictions(with: [])
       presentActivePen?(activePenStroke)
@@ -1099,7 +1100,7 @@ final class PaperInputView: UIView {
 
     if actionTool == .eraser, let activeEraserStroke {
       presentActiveEraser?(activeEraserStroke)
-      onLiveElementErasing(.update(activeEraserStroke))
+      if !elementEraserFailed { onLiveElementErasing(.update(activeEraserStroke)) }
     } else if let activePenStroke {
       activePenStroke.replacePredictions(
         with: processedPredictedPenPoints().map(SpatialInkSample.init)

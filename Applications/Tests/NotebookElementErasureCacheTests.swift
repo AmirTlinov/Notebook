@@ -195,6 +195,42 @@ import WebKit
     await cache.stop()
   }
 
+  func testOneProjectionServesAllTouchedObjectsAndInvalidatesOnCancel() async {
+    let cache=NotebookElementErasureCache(),id=UUID(),samples=cuts(full:false,count:4)[0].samples
+    let targets=(0..<4096).map { InkElementTarget(elementID:"object-\($0)",frame:frame) }
+    let working=[id:[NotebookElementErasing(id:id,surface:surface,samples:samples,targets:targets)]]
+    for index in 0..<100_000 {
+      let object="object-\(index % targets.count)"
+      XCTAssertNotNil(cache.projection(on:surface,base:[:],working:working)[object])
+      XCTAssertTrue(cache.isErasing(object,on:surface,working:working))
+    }
+    XCTAssertEqual(cache.projectionBuildCount,1,"Readers share one projection, not a full merge per object")
+    cache.invalidateWorking()
+    XCTAssertTrue(cache.projection(on:surface,base:[:],working:[:]).isEmpty)
+    XCTAssertFalse(cache.isErasing("object-0",on:surface,working:[:]))
+    await cache.stop()
+  }
+
+  func testNewSweepPublishesCoverageOnlyToIntersectedTargets() {
+    let a=InkElementTarget(elementID:"a",frame:frame)
+    let b=InkElementTarget(elementID:"b",frame:.init(x:1000,y:200,width:160,height:100))
+    let id=UUID(),first=cuts(full:false,count:8)[0].samples
+    let previous=NotebookElementErasing(id:id,surface:surface,samples:first,targets:[a,b])
+    var source=InkSampleRelations.Contact(sourceID:id,header:.init(tool:.eraser,color:.black))
+    source.replaceTail(from:0,with:first.materialized())
+    source.replaceTail(from:first.count,with:[.init(point:.init(x:1020,y:240),timeOffset:1,
+      width:20,opacity:1,force:1,azimuth:0,altitude:1)])
+    let latest=source.frozen().measurements
+    var next=NotebookElementErasing(id:id,surface:surface,samples:latest,targets:[a,b],changedTargets:["b"])
+    next.retainUnchangedCoverage(from:previous)
+    XCTAssertEqual(next.masks["a"]?.first?.samples,first)
+    XCTAssertEqual(next.masks["b"]?.first?.samples,latest)
+    var revisited=NotebookElementErasing(id:id,surface:surface,samples:latest,targets:[a,b],changedTargets:["a"])
+    revisited.retainUnchangedCoverage(from:next)
+    XCTAssertEqual(revisited.masks["a"]?.first?.samples,latest)
+    XCTAssertEqual(revisited.masks["b"]?.first?.samples,latest)
+  }
+
   func testAdditionalEraseDoesNotReviveAnAlreadyErasedBody() async throws {
     let cache=NotebookElementErasureCache(),full=cuts(full:true,count:32)
     _ = try await ready(cache,full)

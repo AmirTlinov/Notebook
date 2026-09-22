@@ -186,6 +186,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
     private var activePen: ActiveInkStroke?
     private var activeEraser: ActiveEraserStroke?
     private var elementEraserFailed = false
+    private var changedElementTargets: [Int:Set<String>] = [:]
     private var currentSurface: SurfaceID?
     private var touchedSurfaces: Set<SurfaceID> = []
     private var previousFilteredForce: CGFloat?
@@ -452,6 +453,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
       actionEraserStyle = eraserStyle
       lastActionPoint = nil
       actionSpans = []
+      changedElementTargets.removeAll(keepingCapacity:true)
       routedSegmentCount = 0
       rejectedWorldAddressCount = 0
       currentSurface = nil
@@ -747,6 +749,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
           let bounds = eraserBounds(source: activeEraser.measured, from: start, surface: currentSurface) {
           do {
             let query = try source.query(surface: currentSurface, bounds: bounds)
+            changedElementTargets[actionSpans.count,default:[]].formUnion(query.targets.map(\.elementID))
             elementContact.update(activeEraser.measured, from: start,
               queried: query.targets, visitedNodes: query.visitedNodes)
           } catch {
@@ -800,8 +803,11 @@ struct SpatialInkCanvas: UIViewRepresentable {
       if let surface=currentSurface,let source=segmentSource,source.count > 0 {
         spans.append(measuredSpan(surface:surface,measurements:source.frozen().measurements))
       }
-      onElementErasing(spans.map { .init(id: actionStrokeID, surface: $0.surface,
-        samples: $0.samples, targets: $0.elementTargets ?? []) }, actionStrokeID)
+      onElementErasing(spans.enumerated().map { index,span in
+        .init(id:actionStrokeID,surface:span.surface,samples:span.samples,
+          targets:span.elementTargets ?? [],changedTargets:changedElementTargets[index] ?? [])
+      }, actionStrokeID)
+      changedElementTargets.removeAll(keepingCapacity:true)
     }
 
     private func finishCurrentSegment() {
