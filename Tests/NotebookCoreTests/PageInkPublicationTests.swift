@@ -94,3 +94,19 @@ func decodedInkCachePreservesPageValueSemantics() throws {
   #expect(try first.inkDrawing().activeActions.map(\.id) == [a.id])
   #expect(try second.inkDrawing().activeActions.map(\.id) == [b.id])
 }
+
+@Test("Захваченный источник удерживает свой корень после нового живого штриха")
+func capturedInkSourceCannotBorrowFutureLiveRoot() throws {
+  let actor=UUID(),page=PageDocument(size:.init(width:834,height:1194),actor:actor)
+  let empty=page.inkSource,first=publicationStroke(),second=publicationStroke()
+  let a=try page.prepareInkChange(.append(first),stamp:.init(counter:1,actor:actor))
+  #expect(page.publishLiveInkChange(a))
+  let captured=page.inkSource
+  let b=try page.prepareInkChange(.append(second),stamp:.init(counter:2,actor:actor))
+  #expect(page.publishLiveInkChange(b))
+  #expect(try empty.drawing().actions.isEmpty)
+  #expect(captured.stamp == a.stamp)
+  #expect(try captured.drawing().actions.map(\.id) == [first.id])
+  #expect(page.inkSource.stamp == b.stamp)
+  #expect(try page.inkSource.drawing().actions.map(\.id) == [first.id,second.id])
+}

@@ -70,8 +70,8 @@ extension NotebookStore {
     }
   }
 
-  func requireIdleInput(for targets: [CollaborationTarget]) throws {
-    let activities = try readInputActivities().filter(\.isActive)
+  func requireIdleInput(for targets: [CollaborationTarget], excludingDevice: UUID? = nil) throws {
+    let activities = try readInputActivities().filter { $0.isActive && $0.deviceID != excludingDevice }
     guard !activities.isEmpty else { return }
     var carriers: [CollaborationTarget: UUID] = [:], ancestors: [CollaborationTarget: Set<UUID>] = [:]
     func carrier(_ target: CollaborationTarget) throws -> UUID {

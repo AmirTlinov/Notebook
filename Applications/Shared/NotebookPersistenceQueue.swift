@@ -20,7 +20,7 @@ final class NotebookPersistenceQueue {
   private struct Write {
     let id = UUID()
     let owner: Owner?
-    let operation: @Sendable (NotebookStore) throws -> Outcome
+    let operation: @Sendable (NotebookStore) async throws -> Outcome
     var onBlocked: (@Sendable (String) -> Void)? = nil
     var boardBaseline: BoardHierarchy? = nil
     var notifiesCommit = true
@@ -133,6 +133,33 @@ final class NotebookPersistenceQueue {
     startIfNeeded()
   }
 
+  /// Reserve the ordinary FIFO at lift, before material preparation suspends.
+  /// Later Pencil writes keep their order without blocking their live input.
+  func enqueuePreparedCommand<Value:Sendable>(
+    _ preparation:Task<@Sendable (NotebookStore) throws -> Value,Error>,
+    publishesChanges:Bool = false) -> Task<Value,Error> {
+    let channel=AsyncThrowingStream<Value,Error>.makeStream(bufferingPolicy:.bufferingNewest(1))
+    if let failure { channel.continuation.finish(throwing:Failure(message:failure)) }
+    else {
+      pending.append(Write(owner:nil,operation:{ store in
+        do {
+          let operation=try await preparation.value
+          let value=try operation(store)
+          channel.continuation.yield(value);channel.continuation.finish()
+          return .init(merged:false,succeeded:true)
+        } catch {
+          channel.continuation.finish(throwing:error)
+          return .init(merged:false,succeeded:false)
+        }
+      },onBlocked:{ channel.continuation.finish(throwing:Failure(message:$0)) },notifiesCommit:publishesChanges))
+      startIfNeeded()
+    }
+    return Task {
+      for try await value in channel.stream { return value }
+      throw CancellationError()
+    }
+  }
+
   @discardableResult
   func flush() async -> Bool {
     guard !Task.isCancelled, failure == nil else { return false }
@@ -185,7 +212,8 @@ final class NotebookPersistenceQueue {
       let store = store
       let operation = next.operation
       let result = await Task.detached(priority: .utility) {
-        Result { try operation(store) }
+        do { return .success(try await operation(store)) as Result<Outcome,Error> }
+        catch { return .failure(error) }
       }.value
       executingID = nil
       switch result {

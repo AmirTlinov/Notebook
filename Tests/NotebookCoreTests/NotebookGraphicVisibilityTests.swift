@@ -5,6 +5,37 @@ import Testing
 
 @Suite("Graphic local-frame visibility")
 struct NotebookGraphicVisibilityTests {
+  @Test func immutableMaskReusesExactLocalCoverageAcrossPlacementAndCopy() throws {
+    let frame=PageRect(x:100,y:200,width:200,height:100)
+    let cuts=[InkElementErasure(target:.init(elementID:"source",frame:frame),measurements:InkMeasurements([210.0,290.0].map {
+      .init(point:.init(x:140,y:$0),timeOffset:0,width:20,opacity:1,force:1,azimuth:0,altitude:1)
+    }))]
+    let mask=NotebookGraphicMask().capturing(cuts,transform:nil)
+      .appending(.intersect,polygon:[.zero,.init(x:0.5,y:0),.init(x:0.5,y:1),.init(x:0,y:1)])
+    let rect=CGRect(x:0,y:0,width:200,height:100),unit=CGRect(x:0,y:0,width:1,height:1)
+    let body=mask.path(in:rect),query=mask.path(in:unit),copy=mask
+    let encoder=JSONEncoder();encoder.outputFormatting = [.sortedKeys]
+    let encoded=try encoder.encode(mask)
+    for offset in 0..<120 {
+      #expect(copy.path(in:rect) === body)
+      #expect(copy.path(in:unit) === query)
+      let shift=CGPoint(x:Double(offset),y:Double(offset)*0.3)
+      let placed=copy.path(in:rect.offsetBy(dx:shift.x,dy:shift.y))
+      #expect(placed.contains(.init(x:70+shift.x,y:50+shift.y),using:.evenOdd))
+      #expect(!placed.contains(.init(x:40+shift.x,y:50+shift.y),using:.evenOdd))
+    }
+    #expect(try encoder.encode(copy) == encoded)
+    let changed=copy.appending(.subtract,polygon:[.init(x:0.3,y:0),.init(x:0.4,y:0),.init(x:0.4,y:1),.init(x:0.3,y:1)])
+    #expect(!changed.path(in:rect).contains(.init(x:70,y:50),using:.evenOdd))
+    #expect(mask.path(in:rect) === body)
+    // A new size has its own exact calculation, not a resampled raster or a
+    // scaled quantized unit contour. Returning to it agrees with a fresh mask.
+    let scaled=CGRect(x:0,y:0,width:600,height:50)
+    let fresh=try JSONDecoder().decode(NotebookGraphicMask.self,from:encoded)
+    #expect(mask.path(in:scaled) == fresh.path(in:scaled))
+    #expect(mask.path(in:unit) === query)
+  }
+
   @Test func detachedMaskRetainsMeasuredCutsThroughCodecAndLocalBasis() throws {
     let frame=PageRect(x:100,y:200,width:200,height:100)
     let measurements=InkMeasurements([210.0,290.0].map {

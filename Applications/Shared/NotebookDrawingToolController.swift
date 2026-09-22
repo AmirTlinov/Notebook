@@ -38,6 +38,7 @@ final class NotebookDrawingToolController {
     let screenScale: Double
     let ink: Task<NotebookLassoInkSource.Prepared?,Error>?
     var points: [SpatialPoint]
+    var materialAdmission:Task<Void,Never>? = nil
   }
   private unowned let model: NotebookAppModel
   private(set) var contact: Contact?
@@ -47,6 +48,7 @@ final class NotebookDrawingToolController {
   @ObservationIgnored private var inkSnapshotCache: (surface:SurfaceID,key:String,
     task:Task<NotebookLassoInkSource.Prepared,Error>)?
   @ObservationIgnored private var lassoTask: Task<Void,Never>?
+  @ObservationIgnored private var regionPreparation:NotebookRegionPreparation?
   @ObservationIgnored var onContactCancellation: (() -> Void)?
   init(model: NotebookAppModel) { self.model = model }
   var selectsWorkspaceItems: Bool {
@@ -97,7 +99,7 @@ final class NotebookDrawingToolController {
     }
     contact = .init(id:UUID(),tool:model.drawingTool,settings:model.drawingToolSettings,pen:model.penStyle,
       address:address,graph:graph,spatialSelection:spatialSelection,
-      screenScale:screenScale,ink:ink,points:[point])
+      screenScale:screenScale,ink:ink,points:[point],materialAdmission:model.pendingMaterialAdmission?.task)
     if let contact, contact.tool == .laser {
       laserTraces.append(.init(id:contact.id,address:address,color:contact.settings.laserColor,
         width:4/screenScale,lifetime:contact.settings.laserDuration,
@@ -118,11 +120,12 @@ final class NotebookDrawingToolController {
       let revision=model.lassoMembershipRevision
       raw = Task { .spatial(journal,suppression.ids,membershipRevision:revision) }
     }
+    let claims=Set(model.pendingModelGraphics.filter { $0.surface == address.surface }.flatMap { $0.graphic.sourceInkIDs })
     return Task { [weak self] in
       guard let source = await raw.value, let self else { return nil }
       let key = source.cacheKey(surface:address.surface)
       if let cached = inkSnapshotCache,cached.surface == address.surface,cached.key == key {
-        return try await cached.task.value.excluding(source.suppressed)
+        return try await cached.task.value.excluding(source.suppressed.union(claims))
       }
       let reusable=inkSnapshotCache.flatMap { $0.surface == address.surface ? $0.task : nil }
       let task = Task.detached(priority:.userInitiated) {
@@ -131,7 +134,7 @@ final class NotebookDrawingToolController {
         return try source.prepare(surface:address.surface,origin:address.worldOrigin,reusing:previous)
       }
       inkSnapshotCache = (address.surface,key,task)
-      return try await task.value
+      return try await task.value.excluding(claims)
     }
   }
 
@@ -151,7 +154,8 @@ final class NotebookDrawingToolController {
       spatialSelection:spatialSelection,
       screenScale:screenScale,ink:inkSnapshot(at:address,graph:graph,spatialSelection:spatialSelection),points:[
         .init(x:point.x-radius,y:point.y-radius),.init(x:point.x+radius,y:point.y-radius),
-        .init(x:point.x+radius,y:point.y+radius),.init(x:point.x-radius,y:point.y+radius)]))
+        .init(x:point.x+radius,y:point.y+radius),.init(x:point.x-radius,y:point.y+radius)],
+      materialAdmission:model.pendingMaterialAdmission?.task))
   }
 
   private func spatialSelectionSource(at address:NotebookToolAddress)
@@ -210,6 +214,8 @@ final class NotebookDrawingToolController {
 
   func cancel() {
     lassoTask?.cancel(); lassoTask = nil
+    if let regionPreparation,!regionPreparation.claimed { regionPreparation.task.cancel() }
+    regionPreparation=nil
     if let pendingLasso,model.selectionSession.region?.id == pendingLasso.id,
       model.selectionSession.region?.materialization == nil { model.clearSelection() }
     pendingLasso=nil
@@ -242,53 +248,87 @@ final class NotebookDrawingToolController {
     let box=polygon.reduce(CGRect.null) { $0.union(.init(x:$1.x,y:$1.y,width:0,height:0)) }
     guard !box.isNull,box.width > 0,box.height > 0 else { pendingLasso=nil;model.clearSelection();return }
     let frame=PageRect(x:box.minX,y:box.minY,width:box.width,height:box.height)
-    // The contour names the next contact immediately. Preparation may refine
-    // this same choice, but must never leave the previous object draggable.
-    model.selectRegion(.init(id:current.id,address:current.address,polygon:polygon,
-      frame:frame,rawInk:nil,expectedInkRevision:nil,graphics:[]))
-    let erasures=model.lassoErasureSnapshot(primary:current.address.surface)
-    let selection = model.selectionSession.id
-    let snapshot=model.regionSourceSnapshot(current.address)
-    lassoTask = Task { [weak self] in
-      defer { if self?.pendingLasso?.id == current.id { self?.pendingLasso=nil } }
+    let initialErasures=model.lassoErasureSnapshot(primary:current.address.surface)
+    let initialSnapshot=model.regionSourceSnapshot(current.address)
+    let preparation=NotebookRegionPreparation(Task { [weak self] in
+      // A preceding lift may still disclose its source, but not its disk write.
+      // The next contour is already interactive while this read joins that
+      // accepted material instead of reading the old remainder a second time.
+      await current.materialAdmission?.value
+      try Task.checkCancellation()
+      guard let self else { throw CancellationError() }
+      let graph:NotebookGraphicGraph
+      let spatial:SpatialSelectionSource?,snapshot:NotebookRegionSourceSnapshot
+      if current.materialAdmission != nil {
+        if current.address.surface.kind == .page,let page=model.pages[current.address.surface.ownerID!] {
+          graph=model.graphicGraph(page:page);spatial=nil
+        } else if let source=spatialSelectionSource(at:current.address) { graph=source.graph;spatial=source.source }
+        else { throw CancellationError() }
+        snapshot=model.regionSourceSnapshot(current.address)
+      } else {
+        graph=current.graph;spatial=current.spatialSelection
+        snapshot=initialSnapshot
+      }
+      let graphicPreparation=Task.detached(priority:.userInitiated) {
+        let cuts=try initialErasures.masks(on:current.address.surface)
+        return (try NotebookLassoQuery.references(intersecting:polygon,at:current.address,
+          graph:graph,spatial:spatial,erasures:cuts),cuts)
+      }
+      defer { graphicPreparation.cancel() }
+      // Ink was pinned at this contact, not at worker completion. Only claims
+      // from the preceding accepted material advance; a later stroke cannot
+      // leak into this earlier cut or its captured ink revision.
+      var claims=Set(model.pendingModelGraphics.filter { $0.surface == current.address.surface }.flatMap { $0.graphic.sourceInkIDs })
+      if current.address.surface.kind == .page,let page=model.pages[current.address.surface.ownerID!] {
+        claims.formUnion(page.graphicPresentation.suppressedInkIDs)
+      } else if let spatial,let board=current.address.boardID ?? current.address.surface.ownerID,
+        let suppression=spatial.index.inkSuppression(boardID:board,delta:spatial.delta,graph:graph) {
+        claims.formUnion(suppression.ids)
+      }
+      let source=try await current.ink?.value?.excludingAdditional(claims)
+      let inkPreparation=Task.detached(priority:.userInitiated) {
+        try source?.selection(polygon:polygon,surface:current.address.surface,
+          origin:current.address.worldOrigin,bounds:current.address.bounds)
+      }
+      defer { inkPreparation.cancel() }
+      let (references,cuts)=try await withTaskCancellationHandler { try await graphicPreparation.value }
+        onCancel: { graphicPreparation.cancel() }
+      let result=try await withTaskCancellationHandler { try await inkPreparation.value }
+        onCancel: { inkPreparation.cancel() }
+      try Task.checkCancellation()
+      guard result != nil || !references.isEmpty else { return nil }
+      let descriptor=NotebookRegionSelection(id:current.id,address:current.address,polygon:polygon,
+        frame:frame,rawInk:result,expectedInkRevision:source?.revision,graphics:references)
+      let materialization=Task.detached(priority:.userInitiated) {
+        try NotebookRegionMaterialization.prepare(descriptor,graph:graph,snapshot:snapshot,erasures:cuts)
+      }
+      let prepared=try await withTaskCancellationHandler { try await materialization.value }
+        onCancel: { materialization.cancel() }
+      try Task.checkCancellation()
+      guard let prepared else { return nil }
+      return NotebookRegionSelection(id:descriptor.id,address:descriptor.address,polygon:descriptor.polygon,
+        frame:descriptor.frame,rawInk:descriptor.rawInk,expectedInkRevision:descriptor.expectedInkRevision,
+        graphics:descriptor.graphics,materialization:prepared)
+    })
+    regionPreparation=preparation
+    var pending=NotebookRegionSelection(id:current.id,address:current.address,polygon:polygon,
+      frame:frame,rawInk:nil,expectedInkRevision:nil,graphics:[])
+    pending.preparation=preparation
+    model.selectRegion(pending)
+    let selection=model.selectionSession.id
+    lassoTask=Task { [weak self] in
+      defer {
+        if self?.pendingLasso?.id == current.id { self?.pendingLasso=nil }
+        if self?.regionPreparation === preparation { self?.regionPreparation=nil }
+      }
       do {
-        let graphicPreparation=Task.detached(priority:.userInitiated) {
-          try NotebookLassoQuery.references(intersecting:polygon,at:current.address,
-            graph:current.graph,spatial:current.spatialSelection,
-            erasures:try erasures.masks(on:current.address.surface))
-        }
-        defer { graphicPreparation.cancel() }
-        let source=try await current.ink?.value
-        let preparation=Task.detached(priority:.userInitiated) {
-          try source?.selection(polygon:polygon,surface:current.address.surface,
-            origin:current.address.worldOrigin,bounds:current.address.bounds)
-        }
-        let references=try await withTaskCancellationHandler { try await graphicPreparation.value }
-          onCancel: { graphicPreparation.cancel() }
-        let result = try await withTaskCancellationHandler { try await preparation.value }
-          onCancel: { preparation.cancel() }
-        guard !Task.isCancelled, let self, model.selectionSession.id == selection else { return }
-        guard result != nil || !references.isEmpty else { model.clearSelection();return }
-        let descriptor=NotebookRegionSelection(id:current.id,address:current.address,polygon:polygon,
-          frame:frame,rawInk:result,
-          expectedInkRevision:source?.revision,graphics:references)
-        let graph=current.graph
-        let materialization=Task.detached(priority:.userInitiated) {
-          try NotebookRegionMaterialization.prepare(descriptor,graph:graph,snapshot:snapshot,
-            erasures:try erasures.masks(on:descriptor.address.surface))
-        }
-        let prepared=try await withTaskCancellationHandler { try await materialization.value }
-          onCancel: { materialization.cancel() }
-        guard !Task.isCancelled,model.selectionSession.id == selection else { return }
-        guard let prepared else { model.clearSelection();return }
-        let region=NotebookRegionSelection(id:descriptor.id,address:descriptor.address,
-          polygon:descriptor.polygon,frame:descriptor.frame,rawInk:descriptor.rawInk,
-          expectedInkRevision:descriptor.expectedInkRevision,graphics:descriptor.graphics,
-          materialization:prepared)
-        model.resolveRegionPreparation(region)
-      } catch is CancellationError {} catch {
-        if self?.model.selectionSession.id == selection { self?.model.clearSelection() }
-        self?.model.showCue(error.localizedDescription)
+        let region=try await preparation.task.value
+        guard !Task.isCancelled,let self,model.selectionSession.id == selection else { return }
+        if let region { model.resolveRegionPreparation(region) } else { model.clearSelection() }
+      } catch {
+        guard !Task.isCancelled,let self,model.selectionSession.id == selection else { return }
+        model.clearSelection()
+        if !(error is CancellationError) { model.showCue(error.localizedDescription) }
       }
     }
   }
@@ -432,6 +472,7 @@ extension NotebookRegionMaterialization {
     }
 
     var edits:[NotebookElementEdit]=[],working:[NotebookWorkingGraphic]=[],selected:[EditableElementReference]=[]
+    var remainders:[String:NotebookGraphic]=[:]
     let rawBudget = region.rawInk == nil ? 0 : 2
     guard region.graphics.count <= (32-rawBudget)/2 else {
       throw CollaborationError("selection_limit","Выделите меньшую область: одно изменение содержит не более 32 частей.")
@@ -443,6 +484,8 @@ extension NotebookRegionMaterialization {
       guard selectedPolygon.count >= 3,sourcePolygon.count >= 3 else { return nil }
       let inside=(raw.graphic.mask ?? .init()).appending(.intersect,polygon:selectedPolygon)
       let outside=(raw.graphic.mask ?? .init()).appending(.subtract,polygon:sourcePolygon)
+      _ = inside.path(in:.init(x:0,y:0,width:selectedFrame.width,height:selectedFrame.height))
+      _ = outside.path(in:.init(x:0,y:0,width:raw.frame.width,height:raw.frame.height))
       let reference=region.address.reference(region.id.uuidString.lowercased())
       let graphic=copied(reframed(raw.graphic,to:selectedFrame),claims:raw.graphic.sourceInkIDs,mask:inside)
       let object=NotebookWorkingGraphic(id:region.id,surface:region.address.surface,frame:selectedFrame,
@@ -474,6 +517,12 @@ extension NotebookRegionMaterialization {
       let inside=visible.appending(.intersect,polygon:polygon)
       guard !inside.path(in:.init(x:0,y:0,width:1,height:1)).isEmpty else { continue }
       let outside=(node.graphic.mask ?? .init()).appending(.subtract,polygon:polygon)
+      // Prepare once in the material's own basis, shared by paint, controls
+      // and contact. A finger move only projects this immutable coverage.
+      _ = inside.path(in:.init(origin:.zero,size:size))
+      _ = outside.path(in:.init(origin:.zero,size:size))
+      var remainder=node.graphic;remainder.mask=outside
+      remainders[reference.elementID]=remainder
       let id=UUID(),ref=region.address.reference(id.uuidString.lowercased())
       // A selected connector fragment is an independent visible vector. The
       // untouched outside keeps its endpoint bindings; copying those bindings
@@ -492,12 +541,14 @@ extension NotebookRegionMaterialization {
     guard edits.count <= 32 else {
       throw CollaborationError("selection_limit","Выделите меньшую область: одно изменение содержит не более 32 частей.")
     }
-    return .init(edits:edits,working:working,selected:selected,sources:try snapshot.sources(for:region,graph:graph))
+    let sources=try snapshot.sources(for:region,graph:graph)
+    return .init(edits:edits,working:working,selected:selected,sources:sources,outside:remainders,
+      dependencies:snapshot.dependencies.filter { sources[$0.key] != nil })
   }
 }
 
 private struct NotebookLassoErasureSnapshot: Sendable {
-  let page:PageDocument?
+  let page:(id:UUID,ink:PageInkSource)?
   let spatialInk:SpatialInkJournal?
   let fallback:SpatialInkJournal?
   let loaded:Set<SurfaceID>
@@ -506,7 +557,7 @@ private struct NotebookLassoErasureSnapshot: Sendable {
   func masks(on surface:SurfaceID)throws ->[String:[InkElementErasure]] {
     var result:[String:[InkElementErasure]]
     if surface.kind == .page,let page,page.id == surface.ownerID {
-      result=try page.inkDrawing().elementErasures
+      result=try page.ink.drawing().elementErasures
     } else {
       result=(loaded.contains(surface) || fallback == nil ? spatialInk : fallback)?
         .elementErasures(on:surface) ?? [:]
@@ -737,7 +788,7 @@ extension NotebookAppModel {
         for (id,cuts) in contact.masks { working[contact.surface,default:[:]][id,default:[]] += cuts }
       }
     }
-    return .init(page:surface.kind == .page ? surface.ownerID.flatMap { pages[$0] } : nil,
+    return .init(page:surface.kind == .page ? surface.ownerID.flatMap { pages[$0] }.map { ($0.id,$0.inkSource) } : nil,
       spatialInk:spatialInk,fallback:fallback,loaded:loadedInkSurfaces,working:working)
   }
 

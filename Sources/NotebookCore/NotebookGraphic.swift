@@ -137,7 +137,33 @@ public struct NotebookGraphicMask: Codable, Equatable, Sendable {
       kind = .subtract;polygon=[];self.erasures=erasures;self.transform=transform
     }
   }
-  public var operations:[Operation]
+  public let operations:[Operation]
+  private let preparation = Preparation()
+  private enum CodingKeys:String,CodingKey { case operations }
+  public static func == (lhs:Self,rhs:Self)->Bool {
+    lhs.preparation === rhs.preparation || lhs.operations == rhs.operations
+  }
+  /// Derived coverage belongs to the immutable local mask, not its screen pose.
+  /// Keep the normalized query and one body-size path; zoom cannot grow a cache.
+  private final class Preparation: @unchecked Sendable {
+    private let lock=NSLock()
+    private var unit:CGPath?
+    private var body:(CGSize,CGPath)?
+    func path(size:CGSize,build:()->CGPath)->CGPath {
+      lock.withLock {
+        let normalized=size == CGSize(width:1,height:1)
+        if normalized,let unit { return unit }
+        if !normalized,let body,body.0 == size { return body.1 }
+        let path=build()
+        // Erasure preparation cooperates with worker cancellation. A partial
+        // result may leave that worker, but never becomes retained visibility.
+        if !Task.isCancelled {
+          if normalized { unit=path } else { body=(size,path) }
+        }
+        return path
+      }
+    }
+  }
   public init(operations:[Operation]=[]) { self.operations=operations }
   public var isValid:Bool {
     !operations.isEmpty && operations.count <= 64 && operations.allSatisfy {
@@ -161,6 +187,12 @@ public struct NotebookGraphicMask: Codable, Equatable, Sendable {
   }
   public func path(in rect:CGRect)->CGPath {
     guard rect.width > 0,rect.height > 0 else { return CGMutablePath() }
+    let path=preparation.path(size:rect.size) { buildPath(in:.init(origin:.zero,size:rect.size)) }
+    guard rect.origin != .zero else { return path }
+    var offset=CGAffineTransform(translationX:rect.minX,y:rect.minY)
+    return path.copy(using:&offset)!
+  }
+  private func buildPath(in rect:CGRect)->CGPath {
     var result:CGPath=CGPath(rect:rect,transform:nil)
     for operation in operations {
       if let cuts=operation.erasures {

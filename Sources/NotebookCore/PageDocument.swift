@@ -179,7 +179,9 @@ public struct PageDocument: Codable, Equatable, Identifiable, Sendable {
   public func inkDrawing() throws -> PageInkDrawing {
     try inkDrawingCache.value(for:storedDrawingData,stamp:drawingStamp)
   }
-  public var inkSource:PageInkSource { .init(stamp:drawingStamp,data:storedDrawingData,cache:inkDrawingCache) }
+  public var inkSource:PageInkSource {
+    .init(source:inkDrawingCache.source(data:storedDrawingData,stamp:storedDrawingStamp))
+  }
   private enum CodingKeys: String,CodingKey {
     case format,id,size,drawingData,drawingStamp,elements,agentStamp,collaboration,computations
   }
@@ -520,13 +522,10 @@ public enum PageInkMutation: Sendable {
 /// Opening a cold page still decodes off-main; publishing a contact never has
 /// to serialize it merely to notify the mounted canvas.
 public struct PageInkSource:Sendable {
-  public let stamp:VersionStamp
-  private let data:Data
-  private let cache:PageInkDrawingCache
-  fileprivate init(stamp:VersionStamp,data:Data,cache:PageInkDrawingCache) {
-    self.stamp=stamp;self.data=data;self.cache=cache
-  }
-  public func drawing() throws -> PageInkDrawing { try cache.value(for:data,stamp:stamp) }
+  private let source:PageInkDrawingCache.Source
+  public var stamp:VersionStamp { source.stamp }
+  fileprivate init(source:PageInkDrawingCache.Source) { self.source=source }
+  public func drawing() throws -> PageInkDrawing { try source.drawing() }
 }
 
 private final class PreparedPageInkArchive:@unchecked Sendable {

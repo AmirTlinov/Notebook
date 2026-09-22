@@ -181,7 +181,8 @@ import XCTest
     XCTAssertEqual(model.selectionSession.manipulation?.reference,region.reference,"Next body drag owns the region, not the original rectangle")
     XCTAssertEqual(try model.store.loadPage(page.id).elements,[shape,second])
     receiver.touchesEnded([finger],with:directEvent)
-    XCTAssertTrue(model.selectionSession.manipulation?.regionGestureEnded == true)
+    XCTAssertNil(model.selectionSession.manipulation,"Lift transfers ownership out of cancellable focus")
+    XCTAssertNotNil(model.graphicCommandTask)
     let deadline=ContinuousClock.now + .seconds(5)
     while model.drawingTools.pendingLasso != nil,ContinuousClock.now < deadline { try await Task.sleep(for:.milliseconds(10)) }
     XCTAssertNil(model.drawingTools.pendingLasso)

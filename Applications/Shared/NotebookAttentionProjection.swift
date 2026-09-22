@@ -271,6 +271,8 @@ enum NotebookAttentionProjection {
     var documents: [UUID: DocumentDocument]
     var states: [UUID: DocumentStateJournal]
     let selectedPageID: UUID?
+    var materialGraph: ((UUID)->NotebookGraphicGraph)? = nil
+    var working: [SpatialElement] = []
     let erasures: (SurfaceID) -> [String: [InkElementErasure]]
     let appearance: (SurfaceID, String, NotebookGraphic?, NotebookGraphicLayout?, CGSize, [InkElementErasure]) -> NotebookElementAppearance?
   }
@@ -334,12 +336,18 @@ enum NotebookAttentionProjection {
   /// prepares it, do not retarget the same contact to an owner underneath.
   static func pointResolution(at point: CGPoint, model: NotebookAppModel, presence: SessionPresence,
     cohort: SceneCompositionCohort?) -> PointResolution? {
-    #if os(macOS)
-    // The desktop reader installs paper directly, not a board cohort. Query
-    // that same live source and basis; never borrow a stale board's pixels.
-    if presence.mode == .page {
-      guard let page = model.activePage, presence.notebookPageID == page.id,
-        let box = readingPaperFrame(model:model,presence:presence), box.contains(point) else { return nil }
+    // The installed paper and accepted material share one hit query. Focus
+    // does not decide whether an already accepted fragment exists here.
+    if presence.mode == .page,
+      let id=presence.notebookPageID ?? model.workspace?.selectedPageID,let page=model.pages[id] {
+      let box:CGRect?
+      #if os(macOS)
+      box=readingPaperFrame(model:model,presence:presence)
+      #else
+      box=model.pagePresentations.isPresented(page)
+        ? frame(.init(target:.init(kind:.page,id:id),revision:""),model:model,presence:presence) : nil
+      #endif
+      guard let box,box.contains(point) else { return nil }
       let local = SpatialPoint(x:(point.x-box.minX)/presence.camera.scale,y:(point.y-box.minY)/presence.camera.scale)
       let graph = model.graphicGraph(page:page)
       let working = model.workingGraphics.filter { $0.surface == .page(page.id) }.map(\.pageElement)
@@ -354,8 +362,11 @@ enum NotebookAttentionProjection {
         region:element.flatMap { graph.resolve($0.id).layout?.frame ?? graph.elementPresentation($0.id)?.frame }
           ?? .init(x:local.x,y:local.y,width:1,height:1),worldOrigin:nil,pageIndex:nil,label:element == nil ? "Место" : "Объект"))
     }
-    #endif
-    guard let cohort, let sources = contactSources(model:model,presence:presence,cohort:cohort) else { return nil }
+    guard let cohort, var sources = contactSources(model:model,presence:presence,cohort:cohort) else { return nil }
+    sources.materialGraph={ model.interactionGraphicGraph(boardID:$0,cohort:cohort) }
+    sources.working=model.workingGraphics.filter { value in
+      value.surface.kind != .page && (value.publicationCursor.map { cohort.plan.revision < $0 } ?? true)
+    }.map { $0.spatialElement(stamp:.init(counter:0,actor:model.actorID)) }
     var pending = false
     let hit = fragment(start:point,end:point,sources:sources,presence:presence,dragged:false,
       pending: { pending = true })
@@ -397,25 +408,6 @@ enum NotebookAttentionProjection {
       if path.contains(p,using:.evenOdd) { return region.reference }
     }
     let painted=pointContact(at:point,model:model,presence:presence,cohort:cohort)
-    // Accepted insertions/drafts can precede the scene's persisted receipt.
-    // They still use the common exact picker, never their old bounding box.
-    for reference in model.selectionSession.elements.reversed()
-      where model.acceptedWorkingGraphic(reference) != nil || model.elementCommandDrafts[reference] != nil {
-      guard let graph=model.editingGraphicGraph(reference),let node=graph.node(reference.elementID),
-        let layout=graph.resolve(node.id).layout,let source=model.nativeElementSource(reference),
-        painted?.target == source.target,
-        let screen=frame(target:source.target,elementID:nil,region:layout.frame,
-          worldOrigin:source.target.kind == .board ? layout.origin : nil,pageIndex:nil,
-          model:model,presence:presence,minimumSide:0) else { continue }
-      let local=SpatialPoint(x:layout.frame.x+(point.x-screen.minX)/presence.camera.scale,
-        y:layout.frame.y+(point.y-screen.minY)/presence.camera.scale)
-      let hit=pickElement(in:[node],graph:graph,erasures:model.elementErasures(on:node.surface),
-        appearance:{ model.elementErasureCache.appearance(surface:node.surface,id:$0,graphic:$1,layout:$2,size:$3,erasures:$4) },
-        scale:presence.camera.scale,viewport:presence.viewport,
-        presentation:{ node,placement in .init(AgentElement(id:node.id,kind:.graphic,frame:node.frame,source:"",html:"",graphic:node.graphic),placement:placement) },
-        project:{ ($0.id,$0.graphic,local) })
-      if hit != nil { return reference }
-    }
     guard let hit=painted,
       let id=hit.elementID,[CollaborationTarget.Kind.page,.board,.cover].contains(hit.target.kind) else { return nil }
     let reference:EditableElementReference = hit.target.kind == .page ? .page(pageID:hit.target.id,elementID:id)
@@ -737,11 +729,13 @@ enum NotebookAttentionProjection {
       } else {
         target = .init(kind:.cover,id:item.id,boardID:presence.boardID)
         if !dragged {
-          let graph = board.graphicGraph()
-          if let element = pickElement(in: board.elements.filter { $0.surface == .cover(item.id) }, graph: graph, erasures:sources.erasures(.cover(item.id)),
+          let graph = sources.materialGraph?(presence.boardID) ?? board.graphicGraph()
+          let working=sources.working.filter { $0.surface == .cover(item.id) },ids=Set(working.map(\.id))
+          let elements=board.elements.filter { $0.surface == .cover(item.id) && !ids.contains($0.id) }+working
+          if let element = pickElement(in: elements, graph: graph, erasures:sources.erasures(.cover(item.id)),
             appearance: { sources.appearance(.cover(item.id), $0, $1, $2, $3, $4) },
             scale: presence.camera.scale, viewport: presence.viewport,pending:awaitingAppearance,presentation:{ .init($0,placement:$1) }, project: {
-              ($0.id, $0.graphic,
+              ($0.id, graph.node($0.id)?.graphic ?? $0.graphic,
                 .init(x:region.x,y:region.y))
             }) {
             elementID = element.id
@@ -754,11 +748,13 @@ enum NotebookAttentionProjection {
       origin = presence.camera.screenToWorld(.init(x:rect.minX,y:rect.minY),viewport:presence.viewport)
       region = .init(x:0,y:0,width:rect.width/presence.camera.scale,height:rect.height/presence.camera.scale)
       if !dragged, let pointOrigin = origin {
-        let graph = board.graphicGraph()
-        if let element = pickElement(in: admitted.elements.filter { $0.surface == .board(presence.boardID) }, graph: graph, erasures:sources.erasures(.board(presence.boardID)),
+        let graph = sources.materialGraph?(presence.boardID) ?? board.graphicGraph()
+        let working=sources.working.filter { $0.surface == .board(presence.boardID) },ids=Set(working.map(\.id))
+        let elements=admitted.elements.filter { $0.surface == .board(presence.boardID) && !ids.contains($0.id) }+working
+        if let element = pickElement(in: elements, graph: graph, erasures:sources.erasures(.board(presence.boardID)),
             appearance: { sources.appearance(.board(presence.boardID), $0, $1, $2, $3, $4) },
           scale: presence.camera.scale, viewport: presence.viewport,pending:awaitingAppearance,presentation:{ .init($0,placement:$1) }, project: {
-            ($0.id, $0.graphic,
+            ($0.id, graph.node($0.id)?.graphic ?? $0.graphic,
               (graph.placement($0.id)?.origin ?? $0.worldOrigin ?? .zero).delta(to: pointOrigin))
           }) {
           elementID = element.id

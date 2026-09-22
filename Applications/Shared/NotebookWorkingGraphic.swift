@@ -130,6 +130,22 @@ extension NotebookAppModel {
     didChangeWorkingGraphics(on:changed)
   }
 
+  /// One coherent publication per surface, independent of fragment count.
+  /// Unmoving remainders keep their original value and do not signal changes.
+  func updateWorkingGraphics(_ values:[NotebookWorkingGraphic]) {
+    var updates=Dictionary(uniqueKeysWithValues:values.map { ($0.strokeID,$0) })
+    var changed=Set<SurfaceID>()
+    for index in workingGraphics.indices {
+      let old=workingGraphics[index]
+      guard let value=updates.removeValue(forKey:old.strokeID),!old.accepted,value != old else { continue }
+      workingGraphics[index]=value;changed.insert(old.surface);changed.insert(value.surface)
+    }
+    for value in values where updates[value.strokeID] != nil {
+      workingGraphics.append(value);changed.insert(value.surface)
+    }
+    if !changed.isEmpty { didChangeWorkingGraphics(on:changed) }
+  }
+
   @discardableResult
   func removeWorkingGraphics(where removes:(NotebookWorkingGraphic)->Bool)->Bool {
     let changed=Set(workingGraphics.filter(removes).map(\.surface))

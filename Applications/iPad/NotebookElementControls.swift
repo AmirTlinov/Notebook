@@ -72,9 +72,9 @@ struct NotebookElementControls: UIViewRepresentable {
     var menus: [UIMenuElement] = []
     if graphic != nil || isRegion {
       menus.append(UIMenu(options:.displayInline,children:[
-        UIAction(title:model.selectionSession.addingElements ? "Завершить выбор" : "Выбрать несколько",image:UIImage(systemName:"checkmark.circle"),attributes:isRegion ? .disabled : []) { _ in
+        UIAction(title:model.selectionSession.addingElements ? "Не добавлять касанием" : "Выбрать несколько",image:UIImage(systemName:"plus.circle"),attributes:isRegion ? .disabled : []) { _ in
           guard model.selectionSession.id == selectionID else { return }
-          if model.selectionSession.addingElements { model.finishMultipleSelection() } else { model.beginMultipleSelection() }
+          if model.selectionSession.addingElements { model.setMultipleSelectionAdding(false) } else { model.beginMultipleSelection() }
         },
         UIAction(title:"Дублировать",image:UIImage(systemName:"plus.square.on.square")) { _ in
           guard model.selectionSession.id == selectionID else { return }; model.duplicateGraphicSelection()
@@ -160,7 +160,7 @@ struct NotebookMultipleElementControls: UIViewRepresentable {
         model.finishElementManipulation(contact,translation:.init(x:point.x/scale,y:point.y/scale))
       },cancel:{ model.cancelElementManipulation(contact) })
     }
-    view.editElement = { if model.selectionSession.id == selectionID { model.finishMultipleSelection() } }
+    view.editElement = nil
     view.deleteElement = { if model.selectionSession.id == selectionID { model.deleteGraphicSelection() } }
     if model.selectionSession.items.isEmpty {
       view.setLayerActions(available:model.availableLayerMoves) { move in
@@ -183,7 +183,7 @@ struct NotebookMultipleElementControls: UIViewRepresentable {
         guard model.selectionSession.id == selectionID else { return };model.groupSelectedElements()
       },
       selectionTransformMenu(model:model,selectionID:selectionID),
-      UIAction(title:model.selectionSession.addingElements ? "Завершить выбор" : "Добавить к выбору",image:UIImage(systemName:"checkmark.circle")) { _ in
+      UIAction(title:model.selectionSession.addingElements ? "Не добавлять касанием" : "Добавлять касанием",image:UIImage(systemName:"plus.circle")) { _ in
         guard model.selectionSession.id == selectionID else { return }; model.setMultipleSelectionAdding(!model.selectionSession.addingElements)
       },
       UIAction(title:"Дублировать",image:UIImage(systemName:"plus.square.on.square")) { _ in
@@ -422,10 +422,9 @@ final class NotebookSelectionControlsView: UIControl, UIGestureRecognizerDelegat
       deleteButton.accessibilityLabel = "Удалить элемент"
       deleteButton.accessibilityIdentifier = "delete-agent-element"
       moreButton.isHidden = false
-    case .elements(let count):
-      primary.image = UIImage(systemName:"checkmark")
-      editButton.accessibilityLabel = "Завершить выбор: \(count)"
-      editButton.accessibilityIdentifier = "finish-graphic-selection"
+    case .elements:
+      // Selection is focus, never an uncommitted transaction to confirm.
+      editButton.isHidden = true
       deleteButton.accessibilityLabel = "Удалить выбранные фигуры"
       deleteButton.accessibilityIdentifier = "delete-graphic-selection"
       moreButton.isHidden = false

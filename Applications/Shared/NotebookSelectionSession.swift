@@ -22,6 +22,8 @@ struct NotebookRegionSelection: Equatable, Sendable {
   let expectedInkRevision:String?
   let graphics:[EditableElementReference]
   var materialization:NotebookRegionMaterialization?
+  var preparation:NotebookRegionPreparation?
+  var editingExisting = false
   var reference:EditableElementReference { address.reference("lasso-"+id.uuidString.lowercased()) }
 
   init(id:UUID,address:NotebookToolAddress,polygon:[SpatialPoint],frame:PageRect,
@@ -33,6 +35,15 @@ struct NotebookRegionSelection: Equatable, Sendable {
   }
 }
 
+/// A selection can observe this future; a lifted edit claims it for the
+/// command queue. Cancelling focus only disposes of unclaimed preparation.
+@MainActor final class NotebookRegionPreparation: Equatable {
+  let task:Task<NotebookRegionSelection?,Error>
+  var claimed=false
+  init(_ task:Task<NotebookRegionSelection?,Error>) { self.task=task }
+  nonisolated static func == (lhs:NotebookRegionPreparation,rhs:NotebookRegionPreparation)->Bool { lhs === rhs }
+}
+
 /// Immutable command payload prepared away from the UI actor. The region
 /// already owns the next contact; its edit waits for this payload rather than
 /// expanding retained vector sources under the user's finger.
@@ -41,6 +52,8 @@ struct NotebookRegionMaterialization: Equatable, Sendable {
   let working:[NotebookWorkingGraphic]
   let selected:[EditableElementReference]
   let sources:[EditableElementReference:NotebookNativeElementSource]
+  var outside:[String:NotebookGraphic] = [:]
+  var dependencies:[EditableElementReference:NotebookElementCommand] = [:]
 }
 
 /// Exactly one current choice. Context is evidence for it, not a second selection.

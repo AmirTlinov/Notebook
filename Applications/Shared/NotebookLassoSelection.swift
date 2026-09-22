@@ -4,21 +4,24 @@ import NotebookCore
 
 /// Pins accepted vector content, never a screenshot or a visibility mask.
 enum NotebookLassoInkSource: Sendable {
-  case page(PageDocument, pending: [PageInkMutation] = [])
+  case paper(PageInkSource, Set<UUID>, pending: [PageInkMutation])
+  static func page(_ page:PageDocument,pending:[PageInkMutation] = []) -> Self {
+    .paper(page.inkSource,page.graphicPresentation.suppressedInkIDs,pending:pending)
+  }
   /// A bounded spatial read can gain members without advancing the journal's
   /// maximum stamp. The scene revision identifies that immutable membership.
   case spatial(SpatialInkJournal, Set<UUID>, membershipRevision: UInt64)
   var revision: String {
     switch self {
-    case .page(let p, let pending):
-      guard !pending.isEmpty else { return p.drawingStamp.revision }
-      return p.drawingStamp.revision + ":" + pending.map(Self.mutationIdentity).joined(separator: ",")
+    case .paper(let p, _, let pending):
+      guard !pending.isEmpty else { return p.stamp.revision }
+      return p.stamp.revision + ":" + pending.map(Self.mutationIdentity).joined(separator: ",")
     case .spatial(let j,_,_): return j.stamp.revision
     }
   }
   var suppressed: Set<UUID> {
     switch self {
-    case .page(let p, _): p.graphicPresentation.suppressedInkIDs
+    case .paper(_,let ids,_): ids
     case .spatial(_,let ids,_): ids
     }
   }
@@ -49,8 +52,8 @@ enum NotebookLassoInkSource: Sendable {
   func prepare(surface: SurfaceID, origin: WorldPoint?, reusing previous: Prepared? = nil) throws -> Prepared {
     let suppressed = suppressed
     switch self {
-    case .page(let page, let pending):
-      var drawing = try page.inkDrawing()
+    case .paper(let page, _, let pending):
+      var drawing = try page.drawing()
       for mutation in pending {
         switch mutation {
         case .append(let action): drawing = try drawing.appending(action)
@@ -126,6 +129,7 @@ enum NotebookLassoInkSource: Sendable {
     func excluding(_ ids: Set<UUID>) -> Prepared {
       ids == excluded ? self : Prepared(reusing:self,excluding:ids)
     }
+    func excludingAdditional(_ ids:Set<UUID>) -> Prepared { excluding(excluded.union(ids)) }
     private init(reusing source: Prepared, excluding ids: Set<UUID>) {
       revision = source.revision; entries = source.entries; surface = source.surface; origin = source.origin
       sourceSampleCount = source.sourceSampleCount; indexBlocks = source.indexBlocks

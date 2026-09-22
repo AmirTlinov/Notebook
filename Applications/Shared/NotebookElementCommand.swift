@@ -10,10 +10,49 @@ struct NotebookElementCommandResult: Sendable {
   var boardHeader: BoardDocument? = nil
 }
 
-struct NotebookElementCommand {
+struct NotebookElementCommand: Equatable, Sendable {
   let id: UUID
   let task: Task<NotebookElementCommandResult?, Never>
   var cursor: UInt64?
+  static func == (lhs:Self,rhs:Self)->Bool { lhs.id == rhs.id }
+}
+
+/// A ready or asynchronously prepared edit enters this same causal writer.
+/// Selection lifetime is deliberately absent from an accepted command.
+struct NotebookElementCommandPlan: Sendable {
+  let target:CollaborationTarget
+  let references:[EditableElementReference]
+  let sources:[EditableElementReference:NotebookNativeElementSource]
+  let sourceTasks:[EditableElementReference:Task<NotebookElementCommandResult?,Never>]
+  let operations:[CollaborationOperation]
+  let summary:String
+  let layerMove:NotebookElementLayerMove?
+  let copiedFrom:[String:String]
+  let expectedInkRevision:String?
+}
+
+struct NotebookElementCommandWriteResult:Sendable {
+  let cursor:UInt64
+  let sources:[NotebookNativeElementSource]
+  let header:BoardDocument?
+}
+
+@MainActor final class NotebookElementCommandBatch {
+  let id=UUID(),generation=UUID()
+  var result:Task<[EditableElementReference:NotebookElementCommandResult]?,Never>!
+  private var admission:Result<NotebookElementCommandPlan,Error>?
+  private var waiters:[CheckedContinuation<NotebookElementCommandPlan,Error>]=[]
+  var admittedPlan:NotebookElementCommandPlan? { try? admission?.get() }
+  func prepared() async throws -> NotebookElementCommandPlan {
+    if let admission { return try admission.get() }
+    return try await withCheckedThrowingContinuation { waiters.append($0) }
+  }
+  func resolve(_ result:Result<NotebookElementCommandPlan,Error>) {
+    guard admission == nil else { return }
+    admission=result
+    let pending=waiters;waiters.removeAll()
+    for waiter in pending { waiter.resume(with:result) }
+  }
 }
 
 struct NotebookElementCommandDraft: Equatable {
@@ -27,6 +66,14 @@ struct NotebookElementCommandDraft: Equatable {
   var frame: PageRect { source.frame }
   var basis: NotebookElementBasis? { source.basis }
   var rect: CGRect { .init(x: frame.x, y: frame.y, width: frame.width, height: frame.height) }
+
+  func projecting(_ element:AgentElement) -> AgentElement? {
+    guard !removed else { return nil }
+    return .init(id:element.id,kind:element.kind,frame:frame,
+      source:textSource ?? element.source,html:textHTML ?? element.html,css:element.css,javaScript:element.javaScript,
+      programPackage:element.programPackage,state:element.state,graphic:graphic,textStyle:textStyle ?? element.textStyle,
+      parentID:source.parentID,basis:basis)
+  }
 
   /// Same accepted draft as the native body and controls; its causal stamp
   /// remains unresolved until this command's own writer result is available.
@@ -42,6 +89,18 @@ struct NotebookElementCommandDraft: Equatable {
 }
 
 extension NotebookAppModel {
+  /// Accepted content is independent of focus. The exact writer predecessor
+  /// still supplies its durable stamp; this projection never invents one.
+  func acceptedElementSource(_ reference:EditableElementReference) -> NotebookNativeElementSource? {
+    guard let source=nativeElementSource(reference) else { return nil }
+    let working=acceptedWorkingGraphic(reference),draft=elementCommandDrafts[reference]
+    let page=working?.surface.kind == .page ? working?.pageElement : source.page
+    let spatial=working.map { $0.surface.kind == .page ? nil : $0.spatialElement(stamp:source.spatial?.stamp ?? .init(counter:0,actor:actorID)) } ?? source.spatial
+    return .init(target:source.target,id:source.id,
+      page:page.flatMap { draft == nil ? $0 : draft!.projecting($0) },
+      spatial:spatial.flatMap { draft == nil ? $0 : draft!.projecting($0) })
+  }
+
   func retireGraphicCommands(through cursor: UInt64) {
     for (reference, command) in elementCommandSources {
       guard !editingNativeTextReferences.contains(reference), let accepted = command.cursor, cursor >= accepted else { continue }
@@ -74,6 +133,9 @@ extension NotebookAppModel {
         source.frame = .init(x:contact.frame.minX,y:contact.frame.minY,width:contact.frame.width,height:contact.frame.height)
         source.basis=contact.basis;result[id]=source
       }
+      if let region=contact.region {
+        for (id,pose) in contact.regionPoses where reference(id) == region.address.reference(id) { result[id]=pose }
+      }
     }
     return result
   }
@@ -91,9 +153,8 @@ extension NotebookAppModel {
       if reference(id) == ref,let graphic=draft.graphic { graphics[id]=graphic }
     }
     if let region=selectionSession.manipulation?.region,let prepared=region.materialization {
-      for edit in prepared.edits where edit.kind == .updateElement && reference(edit.reference.elementID) == edit.reference {
-        if let original=graph.node(edit.reference.elementID)?.graphic,let patch=edit.values["graphic"],
-          let outside=try? original.applying(patch) { graphics[edit.reference.elementID]=outside }
+      for (id,outside) in prepared.outside where reference(id) == region.address.reference(id) {
+        graphics[id]=outside
       }
     }
     if let contact=selectionSession.manipulation,contact.selectedMembers.isEmpty,reference(contact.reference.elementID) == contact.reference,

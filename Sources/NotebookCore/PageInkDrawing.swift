@@ -4,41 +4,47 @@ import Foundation
 /// copies. Persistence may still encode off-main, but live readers never need
 /// to decode the same page again merely because a preceding write is pending.
 final class PageInkDrawingCache: @unchecked Sendable {
-  private let lock = NSLock()
-  private var prepared: (stamp:VersionStamp,drawing:PageInkDrawing,data:Data?)?
-
+  /// A captured source pins this persistent root, not the live owner's next
+  /// root. Lazy archive decoding is still shared by all readers of this source.
+  final class Source: @unchecked Sendable {
+    let stamp:VersionStamp
+    private let lock=NSLock()
+    private var value:PageInkDrawing?
+    private var bytes:Data?
+    init(stamp:VersionStamp,drawing:PageInkDrawing? = nil,data:Data? = nil) {
+      self.stamp=stamp;value=drawing;bytes=data
+    }
+    func drawing() throws -> PageInkDrawing {
+      try lock.withLock {
+        if let value { return value }
+        let decoded=try PageInkDrawing.decode(bytes ?? Data());value=decoded;return decoded
+      }
+    }
+    func data() throws -> Data {
+      try lock.withLock {
+        if let bytes { return bytes }
+        let encoded=try value!.dataRepresentation();bytes=encoded;return encoded
+      }
+    }
+  }
+  private let lock=NSLock()
+  private var current:Source?
   init(_ drawing:PageInkDrawing? = nil,stamp:VersionStamp? = nil) {
-    if let drawing,let stamp { prepared=(stamp,drawing,nil) }
+    if let drawing,let stamp { current=Source(stamp:stamp,drawing:drawing) }
   }
-
-  func stamp(fallback: VersionStamp) -> VersionStamp {
-    lock.withLock { prepared?.stamp ?? fallback }
-  }
-
-  func value(for data: Data, stamp: VersionStamp) throws -> PageInkDrawing {
-    try lock.withLock {
-      if let prepared { return prepared.drawing }
-      let value = try PageInkDrawing.decode(data)
-      prepared=(stamp,value,data)
-      return value
-    }
-  }
-
-  func data(fallback: Data, stamp: VersionStamp) throws -> Data {
-    try lock.withLock {
-      guard var prepared else { return fallback }
-      if let data=prepared.data { return data }
-      let data=try prepared.drawing.dataRepresentation()
-      prepared.data=data;self.prepared=prepared
-      return data
-    }
-  }
-
-  func publish(_ change: PreparedPageInkChange) -> Bool {
+  func stamp(fallback:VersionStamp)->VersionStamp { lock.withLock { current?.stamp ?? fallback } }
+  func source(data:Data,stamp:VersionStamp)->Source {
     lock.withLock {
-      guard (prepared?.stamp ?? change.baseStamp) == change.baseStamp else { return false }
-      prepared=(change.stamp,change.drawing,nil)
-      return true
+      if let current { return current }
+      let source=Source(stamp:stamp,data:data);current=source;return source
+    }
+  }
+  func value(for data:Data,stamp:VersionStamp) throws -> PageInkDrawing { try source(data:data,stamp:stamp).drawing() }
+  func data(fallback:Data,stamp:VersionStamp) throws -> Data { try source(data:fallback,stamp:stamp).data() }
+  func publish(_ change:PreparedPageInkChange)->Bool {
+    lock.withLock {
+      guard (current?.stamp ?? change.baseStamp) == change.baseStamp else { return false }
+      current=Source(stamp:change.stamp,drawing:change.drawing);return true
     }
   }
 }

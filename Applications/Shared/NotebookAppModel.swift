@@ -909,6 +909,7 @@ final class NotebookAppModel {
   private var pencilUndoHistory = PencilUndoHistory()
   @ObservationIgnored private var pendingCollaborationCommands:[UUID:Task<Bool,Never>]=[:]
   private(set) var graphicCommandTask: Task<NotebookElementCommandResult?, Never>?
+  @ObservationIgnored var pendingMaterialAdmission:(id:UUID,task:Task<Void,Never>)?
   @ObservationIgnored private var graphicCommandGeneration = UUID()
   @ObservationIgnored var workingGraphics: [NotebookWorkingGraphic] = []
   @ObservationIgnored var workingGraphicSignals:[SurfaceID:NotebookWorkingGraphicSignal] = [:]
@@ -2607,7 +2608,6 @@ final class NotebookAppModel {
       case .append(let action):
         workingElementErasures[action.id]=nil
         pencilUndoHistory.recordAction(ownerID:pageID,actionID:action.id)
-        if let quickShape { acceptQuickShape(quickShape,pageID:pageID,stroke:action) }
       case .remove(let ids):
         pencilUndoHistory.didRemoveContribution(ids,for:pageID)
         // Undo and sync replace visible state; ordinary Pencil-up already
@@ -2618,6 +2618,11 @@ final class NotebookAppModel {
       let command=NotebookPageInkCommand(change)
       persistence.enqueue(owner:.pageInk(pageID)) { store in
         try store.commitPageInk(pageID:pageID,command:command).stamp != change.stamp
+      }
+      if case .append(let action)=change.mutation,let quickShape {
+        // Conversion consumes this accepted ink, so its reservation follows
+        // the ink in the same FIFO rather than depending on a later idle turn.
+        acceptQuickShape(quickShape,pageID:pageID,stroke:action)
       }
       return change
     } catch {
@@ -2631,7 +2636,8 @@ final class NotebookAppModel {
 
   /// Lasso borrows the same retained vector root advanced at Pencil-up.
   func lassoInkSnapshot(_ page: PageDocument) -> Task<NotebookLassoInkSource?,Never> {
-    Task { .page(page,pending:[]) }
+    let source=NotebookLassoInkSource.page(page)
+    return Task { source }
   }
 
   /// Undo resolves its target and writes the inverse into the same journal in
@@ -2775,8 +2781,9 @@ final class NotebookAppModel {
     selectionSession.target = .region(region)
     if var contact=selectionSession.manipulation,contact.reference == region.reference {
       contact.region=region;selectionSession.manipulation=contact
-      if contact.regionGestureEnded { _ = finishRegionManipulation(contact) }
-      else { updateRegionPreview(contact) }
+      updateRegionPreview(contact)
+    } else if region.editingExisting,let material=region.materialization {
+      selectElements(material.selected)
     }
   }
 
@@ -2785,7 +2792,6 @@ final class NotebookAppModel {
     selectionSession.addingElements = true
   }
 
-  func finishMultipleSelection() { selectionSession.addingElements = false }
   func setMultipleSelectionAdding(_ adding: Bool) { selectionSession.addingElements = adding }
 
   /// Additive picking is an explicit editing mode, never a second recognizer.
@@ -3101,6 +3107,7 @@ final class NotebookAppModel {
       if case .spatial(let owner,let id)=reference { closed=spatialGroupReads[owner]?[id]?.isSelfContained } else { closed=nil }
       contact.graphicCapture = .init(graph:captured,source:source,id:reference.elementID,closedGroup:closed)
     }
+    contact.commandSource=elementCommandSources[reference]
     if selectionSession.elements.count > 1 {
       switch kind { case .move,.resize: break; default: return nil }
       guard let members=selectedGraphicMembers(),let origin=members.first?.origin else { return nil }
@@ -3119,10 +3126,9 @@ final class NotebookAppModel {
 
   func beginRegionManipulation(_ region:NotebookRegionSelection,kind:NotebookElementManipulation.Kind) -> UUID? {
     switch kind { case .move,.resize: break; default: return nil }
-    guard selectionSession.manipulation?.regionGestureEnded != true else { return nil }
     if region.materialization != nil {
       guard regionIsCurrent(region) else { showCue("Материал области изменился. Повторите лассо.");return nil }
-    } else if drawingTools.pendingLasso?.id != region.id { return nil }
+    } else if region.preparation == nil { return nil }
     guard inputGate.beginFingerSequence() != nil else { return nil }
     cancelElementManipulation()
     let f=region.frame
@@ -3144,6 +3150,11 @@ final class NotebookAppModel {
     if let contact=selectionSession.manipulation,contact.region != nil { updateRegionPreview(contact) }
   }
 
+  func updateRegionPoses(_ id:UUID,poses:[String:NotebookElementPlacement.Source]) {
+    guard selectionSession.manipulation?.id == id else { return }
+    selectionSession.manipulation?.regionPoses=poses
+  }
+
   @discardableResult
   func finishElementManipulation(_ id: UUID, translation: SpatialPoint) -> Bool {
     guard selectionSession.manipulation?.id == id else { return false }
@@ -3151,9 +3162,7 @@ final class NotebookAppModel {
     guard let contact = selectionSession.manipulation else { return false }
     if let region=contact.region {
       if region.materialization == nil,contact.frame != contact.original {
-        selectionSession.manipulation?.regionGestureEnded=true
-        inputGate.unregisterFingerCancellation(source:id);inputGate.endContact(source:id)
-        return true
+        return acceptPreparingRegion(contact)
       }
       return finishRegionManipulation(contact)
     }
@@ -3166,7 +3175,7 @@ final class NotebookAppModel {
     guard contact.frame != contact.original || contact.basis != contact.originalBasis || contact.connection != contact.originalConnection
       || contact.vertices != contact.originalVertices || contact.cornerRadius != contact.originalCornerRadius,
       let current = elementGeometry(contact.reference), current.frame == contact.original,
-      current.identity == contact.identity,
+      (current.identity == contact.identity || contactOwnSourceWasPublished(contact)),
       graphicElement(contact.reference)?.connection == contact.originalConnection else { return false }
     if let placement=contact.placement {
       if case .spatial(let boardID,let elementID)=contact.reference,let captured=contact.graphicCapture,captured.source.isGroup {
@@ -3187,7 +3196,7 @@ final class NotebookAppModel {
       if contact.frame != contact.original {
         values["frame"] = try? .encode(PageRect(x:contact.frame.minX,y:contact.frame.minY,width:contact.frame.width,height:contact.frame.height))
       }
-      return performElementOperation(.updateElement,reference:contact.reference,values:values,summary:"Изменить геометрию фигуры",readSources:contact.ancestorReferences,capture:contact.graphicCapture?.retaining(bounds:contact.presentedFrame))
+      return performElementOperation(.updateElement,reference:contact.reference,values:values,summary:"Изменить геометрию фигуры",readSources:contact.ancestorReferences,capture:contact.graphicCapture?.retaining(bounds:contact.presentedFrame),dependency:contact.commandSource)
     }
     if let connection = contact.connection, connection != contact.originalConnection {
       guard let original = contact.originalConnection else { return false }
@@ -3202,7 +3211,7 @@ final class NotebookAppModel {
         values["frame"] = try? .encode(PageRect(x:contact.frame.minX,y:contact.frame.minY,width:contact.frame.width,height:contact.frame.height))
       }
       return performElementOperation(.updateElement, reference: contact.reference,
-        values:values,summary:"Изменить связь",readSources:contact.ancestorReferences,capture:contact.graphicCapture?.retaining(bounds:contact.presentedFrame))
+        values:values,summary:"Изменить связь",readSources:contact.ancestorReferences,capture:contact.graphicCapture?.retaining(bounds:contact.presentedFrame),dependency:contact.commandSource)
     }
     return commitElementFrame(contact)
   }
@@ -3219,12 +3228,21 @@ final class NotebookAppModel {
   /// Preview and commit use the same completed rectangle. Storage changes the
   /// addressed material; it does not run a second resize calculation.
   private func commitElementFrame(_ contact: NotebookElementManipulation) -> Bool {
-    guard contact.identity != nil else { return false }
+    guard contact.identity != nil || contact.commandSource != nil else { return false }
     let frame=contact.frame
     return performElementOperation(.updateElement,reference:contact.reference,
       values:["frame":(try? .encode(PageRect(x:frame.minX,y:frame.minY,width:frame.width,height:frame.height))) ?? .null]
         .merging(contact.basis == contact.originalBasis ? [:] : ["basis":(try? .encode(contact.basis)) ?? .null]) { _,new in new },
-      summary:"Изменить положение объекта",readSources:contact.ancestorReferences,capture:contact.graphicCapture?.retaining(bounds:contact.presentedFrame))
+      summary:"Изменить положение объекта",readSources:contact.ancestorReferences,capture:contact.graphicCapture?.retaining(bounds:contact.presentedFrame),dependency:contact.commandSource)
+  }
+
+  private func contactOwnSourceWasPublished(_ contact:NotebookElementManipulation)->Bool {
+    guard let previous=contact.commandSource,let captured=contact.graphicCapture,
+      let current=acceptedElementSource(contact.reference),
+      elementCommandSources[contact.reference].map({ $0.id == previous.id }) ?? true else { return false }
+    return current.placementSource == captured.source
+      && (current.page?.graphic ?? current.spatial?.graphic) == captured.graph.node(contact.reference.elementID)?.graphic
+    // The captured predecessor's exact receipt is still checked by the writer.
   }
 
   func cancelElementManipulation(_ id: UUID? = nil) {
@@ -3373,19 +3391,21 @@ final class NotebookAppModel {
   /// task joins the existing command tail, so navigation/shutdown cannot outrun it.
   func insertClipboardFragment(_ fragment: NotebookPasteFragment, at destination: NotebookPasteDestination) async -> Bool {
     guard fragment.canInsert, await finishPendingInteraction(boundary:.acceptedInput), !isClosing else { return false }
-    let actor = actorID, predecessor = graphicCommandTask, generation = UUID()
+    let actor = actorID,generation = UUID()
+    let operation=Task { () throws -> @Sendable (NotebookStore) throws -> CollaborationReceipt in
+      let operations=try fragment.operations(target:destination.target,offset:destination.offset(for:fragment),worldOrigin:destination.worldOrigin)
+      return { store in
+        let revision=try store.targetContentRevision(target:destination.target)
+        return try store.applyNativeGraphicAction(.init(summary:"Вставить из буфера",
+          expected:[.init(target:destination.target,revision:revision)],operations:operations),actor:actor)
+      }
+    }
+    let saved=persistence.enqueuePreparedCommand(operation,publishesChanges:true)
     let task = Task<NotebookElementCommandResult?, Never> { [weak self] in
       guard let self else { return nil }
       defer { if graphicCommandGeneration == generation { graphicCommandTask = nil } }
-      _ = await predecessor?.value
-      await withCheckedContinuation { continuation in inputGate.performAfterIdle { continuation.resume() } }
       do {
-        let operations = try fragment.operations(target:destination.target,offset:destination.offset(for:fragment),worldOrigin:destination.worldOrigin)
-        let receipt = try await persistence.submit(publishesChanges:true) { store in
-          let revision = try store.targetContentRevision(target:destination.target)
-          return try store.applyNativeGraphicAction(.init(summary:"Вставить из буфера",
-            expected:[.init(target:destination.target,revision:revision)],operations:operations),actor:actor)
-        }
+        let receipt=try await saved.value
         pencilUndoHistory.recordCommand(ownerID:destination.target.id,actionID:receipt.id)
         reloadExternalChanges()
         showCue("Вставлено: \(fragment.elements.count)")
@@ -3400,34 +3420,50 @@ final class NotebookAppModel {
   @discardableResult
   func performElementOperation(_ kind: CollaborationOperation.Kind, reference: EditableElementReference,
     values: [String: JSONValue], summary: String, layerMove: NotebookElementLayerMove? = nil,
-    readSources: [EditableElementReference] = [],capture:NotebookGraphicContactSource? = nil) -> Bool {
-    performElementOperations([.init(reference:reference,kind:kind,values:values)],summary:summary,layerMove:layerMove,readSources:readSources,capture:capture)
+    readSources: [EditableElementReference] = [],capture:NotebookGraphicContactSource? = nil,dependency:NotebookElementCommand? = nil) -> Bool {
+    performElementOperations([.init(reference:reference,kind:kind,values:values)],summary:summary,layerMove:layerMove,readSources:readSources,capture:capture,
+      frozenDependencies:dependency.map { [reference:$0] } ?? [:])
   }
 
   @discardableResult
   func performElementOperations(_ edits: [NotebookElementEdit], summary: String,
     layerMove: NotebookElementLayerMove? = nil, readSources: [EditableElementReference] = [], copiedFrom: [String:String] = [:],
     insertionTarget explicitTarget: CollaborationTarget? = nil, expectedInkRevision: String? = nil, retainedSources: [EditableElementReference:NotebookNativeElementSource] = [:], previews: Bool = true,capture:NotebookGraphicContactSource? = nil,
-    frozenSources:[EditableElementReference:NotebookNativeElementSource] = [:]) -> Bool {
-    guard !edits.isEmpty, edits.count <= 32 else { return false }
+    frozenSources:[EditableElementReference:NotebookNativeElementSource] = [:],
+    frozenDependencies:[EditableElementReference:NotebookElementCommand] = [:]) -> Bool {
+    guard let plan=prepareElementOperations(edits,summary:summary,layerMove:layerMove,readSources:readSources,
+      copiedFrom:copiedFrom,insertionTarget:explicitTarget,expectedInkRevision:expectedInkRevision,
+      retainedSources:retainedSources,previews:previews,capture:capture,frozenSources:frozenSources,
+      frozenDependencies:frozenDependencies) else { return false }
+    enqueueElementCommand(target:plan.target,ready:plan)
+    return true
+  }
+
+  func prepareElementOperations(_ edits: [NotebookElementEdit], summary: String,
+    layerMove: NotebookElementLayerMove? = nil, readSources: [EditableElementReference] = [], copiedFrom: [String:String] = [:],
+    insertionTarget explicitTarget: CollaborationTarget? = nil, expectedInkRevision: String? = nil, retainedSources: [EditableElementReference:NotebookNativeElementSource] = [:], previews: Bool = true,capture:NotebookGraphicContactSource? = nil,
+    frozenSources:[EditableElementReference:NotebookNativeElementSource] = [:],
+    frozenDependencies:[EditableElementReference:NotebookElementCommand] = [:],
+    preparedGraphics:[EditableElementReference:NotebookGraphic] = [:]) -> NotebookElementCommandPlan? {
+    guard !edits.isEmpty, edits.count <= 32 else { return nil }
     let references = Array(Set(edits.map(\.reference) + readSources))
     let insertionTarget = explicitTarget ?? readSources.first.flatMap { nativeElementSource($0)?.target }
     var originals: [EditableElementReference: NotebookNativeElementSource] = [:]
     for reference in references {
       let live = frozenSources[reference] ?? nativeElementSource(reference)
-      guard let source = live?.page != nil || live?.spatial != nil ? live : retainedSources[reference] ?? live else { return false }
+      guard let source = live?.page != nil || live?.spatial != nil ? live : retainedSources[reference] ?? live else { return nil }
       originals[reference] = source.page == nil && source.spatial == nil && insertionTarget != nil
         ? .init(target:insertionTarget!,id:source.id) : source
     }
     guard let target = originals[edits[0].reference]?.target,
-      originals.values.allSatisfy({ $0.target == target }) else { return false }
+      originals.values.allSatisfy({ $0.target == target }) else { return nil }
     let operations = edits.map { edit in
       CollaborationOperation(kind:edit.kind,target:target,id:originals[edit.reference]!.id,values:edit.values)
     }
     let sources = originals
-    let predecessor = graphicCommandTask, actor = actorID, generation = UUID(),commandID=UUID()
     let sourceTasks = references.reduce(into: [EditableElementReference: Task<NotebookElementCommandResult?, Never>]()) {
-      if frozenSources[$1] == nil { $0[$1] = elementCommandSources[$1]?.task }
+      if let dependency=frozenDependencies[$1] { $0[$1]=dependency.task }
+      else if frozenSources[$1] == nil { $0[$1] = elementCommandSources[$1]?.task }
     }
     var drafts: [EditableElementReference: NotebookElementCommandDraft] = [:]
     do {
@@ -3437,12 +3473,14 @@ final class NotebookAppModel {
           let geometry = elementGeometry(edit.reference) else { continue }
         var graphic = graphicElement(edit.reference)
         guard graphic != nil || originals[edit.reference]?.placementSource != nil else { continue }
-        if let patch = edit.values["graphic"] { graphic = try graphic?.applying(patch) }
+        if let prepared=preparedGraphics[edit.reference] { graphic=prepared }
+        else if let patch = edit.values["graphic"] { graphic = try graphic?.applying(patch) }
         if edit.kind == .removeElement { graphic?.visible = false }
         let frame = try edit.values["frame"]?.decode(PageRect.self)
           ?? PageRect(x:geometry.frame.minX,y:geometry.frame.minY,width:geometry.frame.width,height:geometry.frame.height)
-        let basis=try edit.values["basis"]?.decode(NotebookElementBasis.self)
-          ?? elementCommandDrafts[edit.reference]?.basis ?? originals[edit.reference]?.page?.basis ?? originals[edit.reference]?.spatial?.basis
+        let basis:NotebookElementBasis?
+        if let value=edit.values["basis"] { basis=value == .null ? nil : try value.decode(NotebookElementBasis.self) }
+        else { basis=elementCommandDrafts[edit.reference]?.basis ?? originals[edit.reference]?.page?.basis ?? originals[edit.reference]?.spatial?.basis }
         var source=elementCommandDrafts[edit.reference]?.source ?? originals[edit.reference]?.placementSource
           ?? .init(frame:frame,origin:geometry.worldOrigin ?? .zero)
         source.frame=frame;source.basis=basis
@@ -3451,69 +3489,96 @@ final class NotebookAppModel {
           textHTML:try edit.values["html"]?.decode(String.self) ?? elementCommandDrafts[edit.reference]?.textHTML,
           textStyle:try edit.values["textStyle"]?.decode(NativeTextStyle.self) ?? elementCommandDrafts[edit.reference]?.textStyle)
       }
-    } catch { showCue(error.localizedDescription); return false }
+    } catch { showCue(error.localizedDescription); return nil }
     for (reference,draft) in drafts { elementCommandDrafts[reference] = draft }
     if !drafts.isEmpty { collaborationReadEpoch &+= 1;collaborationContentEpoch &+= 1 }
-    let task = Task<[EditableElementReference: NotebookElementCommandResult]?, Never> { [weak self] in
-      guard let self else { return nil }
-      defer { if graphicCommandGeneration == generation { graphicCommandTask = nil } }
-      _ = await predecessor?.value
-      do {
-        var expected: [NotebookNativeElementSource] = []
-        for reference in references {
-          let source = sources[reference]!
-          if let task = sourceTasks[reference] {
-            guard let accepted = await task.value else {
-              throw CollaborationError("revision_conflict","Предыдущее изменение выбранного элемента не было сохранено.")
-            }
-            expected.append(.init(target:target,id:source.id,page:accepted.page,spatial:accepted.spatial))
-          } else { expected.append(source) }
-        }
-        await withCheckedContinuation { continuation in inputGate.performAfterIdle { continuation.resume() } }
-        let admittedSources = expected
-        let (_,cursor,saved,header) = try await persistence.submit(publishesChanges:true) { store in
-          let result = try store.applyNativeElementEdits(operations,summary:summary,sources:admittedSources,layerMove:layerMove,
-            copiedFrom:copiedFrom,expectedInkRevision:expectedInkRevision,actionID:commandID,actor:actor)
-          return (result.receipt,try store.currentChangeCursor(),result.sources,
-            target.kind == .page ? nil : try store.readBoardNodeHeader(target.boardID ?? target.id)?.board)
-        }
-        var results: [EditableElementReference:NotebookElementCommandResult] = [:]
-        for reference in references {
-          if elementCommandSources[reference]?.id == generation { elementCommandSources[reference]?.cursor = cursor }
-          let id = sources[reference]!.id
-          let source = saved.first { $0.id == id }
-          results[reference] = .init(page:source?.page,spatial:source?.spatial,boardHeader:header)
-          if operations.contains(where: { $0.id == id && [.convertInkToElement,.insertElement].contains($0.kind) }),
-            let index = workingGraphics.firstIndex(where: { $0.id == id }) {
-            let surface=workingGraphics[index].surface
-            workingGraphics[index].publicationCursor = cursor;didChangeWorkingGraphics(on:[surface])
+    return .init(target:target,references:references,sources:sources,sourceTasks:sourceTasks,
+      operations:operations,summary:summary,layerMove:layerMove,copiedFrom:copiedFrom,expectedInkRevision:expectedInkRevision)
+  }
+
+  /// Lift accepts one action immediately, including when its immutable source
+  /// is still being prepared. Later focus changes cannot cancel this writer.
+  @discardableResult
+  func enqueueElementCommand(target:CollaborationTarget,ready:NotebookElementCommandPlan? = nil,
+    preparing:Task<NotebookElementCommandPlan,Error>? = nil) -> NotebookElementCommandBatch {
+    let batch=NotebookElementCommandBatch(),actor=actorID
+    let commandID=batch.id,generation=batch.generation
+    let operation=Task { [weak self] () throws -> @Sendable (NotebookStore) throws -> NotebookElementCommandWriteResult in
+      guard let self else { throw CancellationError() }
+      let plan:NotebookElementCommandPlan
+      if let ready { plan=ready }
+      else if let preparing {
+        plan=try await withTaskCancellationHandler { try await preparing.value } onCancel:{ preparing.cancel() }
+      } else { throw CollaborationError("invalid_action","Не подготовлено изменение материала.") }
+      try Task.checkCancellation()
+      guard plan.target == target else { throw CollaborationError("invalid_action","Изменился адрес материала.") }
+      if ready == nil { registerElementCommand(plan,batch:batch);batch.resolve(.success(plan)) }
+      var expected:[NotebookNativeElementSource]=[]
+      for reference in plan.references {
+        let source=plan.sources[reference]!
+        if let task=plan.sourceTasks[reference] {
+          guard let accepted=await task.value else {
+            throw CollaborationError("revision_conflict","Предыдущее изменение выбранного элемента не было сохранено.")
           }
-        }
-        pendingCollaborationCommands[commandID]=nil
-        reloadExternalChanges()
-        return results
-      } catch {
-        pendingCollaborationCommands[commandID]=nil
-        pencilUndoHistory.didUndoCommand(ownerID:target.id,actionID:commandID)
-        for reference in references {
-          if elementCommandSources[reference]?.id == generation { elementCommandDrafts[reference] = nil; elementCommandSources[reference] = nil }
-          cancelElementManipulationForFailedCommand(reference)
-          removeWorkingGraphics { $0.id == sources[reference]!.id }
-        }
-        showCue(error.localizedDescription); reloadExternalChanges(); return nil
+          expected.append(.init(target:target,id:source.id,page:accepted.page,spatial:accepted.spatial))
+        } else { expected.append(source) }
+      }
+      let admittedSources=expected
+      return { store in
+        let result=try store.applyNativeElementEdits(plan.operations,summary:plan.summary,sources:admittedSources,
+          layerMove:plan.layerMove,copiedFrom:plan.copiedFrom,expectedInkRevision:plan.expectedInkRevision,
+          actionID:commandID,actor:actor)
+        return .init(cursor:try store.currentChangeCursor(),sources:result.sources,
+          header:target.kind == .page ? nil : try store.readBoardNodeHeader(target.boardID ?? target.id)?.board)
       }
     }
-    // The visible draft and its undo identity become one accepted action in
-    // this actor segment. Undo below joins this exact write before reverting it.
-    pencilUndoHistory.recordCommand(ownerID:target.id,actionID:commandID)
-    pendingCollaborationCommands[commandID]=Task { await task.value != nil }
-    graphicCommandGeneration = generation
-    graphicCommandTask = Task { await task.value?.values.first }
-    for edit in edits {
-      let reference = edit.reference
-      elementCommandSources[reference] = .init(id:generation,task:Task { await task.value?[reference] })
+    // This reservation is synchronous with acceptance, not an enqueue after
+    // awaiting preparation. Ink, undo and later commands share this same FIFO.
+    let saved=persistence.enqueuePreparedCommand(operation,publishesChanges:true)
+    batch.result=Task { [weak self] in
+      guard let self else { return nil }
+      defer {
+        pendingCollaborationCommands[commandID]=nil
+        if graphicCommandGeneration == generation { graphicCommandTask=nil }
+      }
+      do {
+        let receipt=try await saved.value,plan=try await batch.prepared()
+        var results:[EditableElementReference:NotebookElementCommandResult]=[:]
+        for reference in plan.references {
+          if elementCommandSources[reference]?.id == generation { elementCommandSources[reference]?.cursor=receipt.cursor }
+          let id=plan.sources[reference]!.id,source=receipt.sources.first { $0.id == plan.sources[reference]!.id }
+          results[reference] = .init(page:source?.page,spatial:source?.spatial,boardHeader:receipt.header)
+          if plan.operations.contains(where:{ $0.id == id && [.convertInkToElement,.insertElement].contains($0.kind) }),
+            let index=workingGraphics.firstIndex(where:{ $0.id == id }) {
+            let surface=workingGraphics[index].surface
+            workingGraphics[index].publicationCursor=receipt.cursor;didChangeWorkingGraphics(on:[surface])
+          }
+        }
+        reloadExternalChanges();return results
+      } catch {
+        operation.cancel();preparing?.cancel();batch.resolve(.failure(error))
+        pencilUndoHistory.didUndoCommand(ownerID:target.id,actionID:commandID)
+        for reference in batch.admittedPlan?.references ?? [] {
+          if elementCommandSources[reference]?.id == generation { elementCommandDrafts[reference]=nil;elementCommandSources[reference]=nil }
+          cancelElementManipulationForFailedCommand(reference)
+          removeWorkingGraphics { $0.id == reference.elementID }
+        }
+        showCue(error.localizedDescription);reloadExternalChanges();return nil
+      }
     }
-    return true
+    if let ready { registerElementCommand(ready,batch:batch);batch.resolve(.success(ready)) }
+    pencilUndoHistory.recordCommand(ownerID:target.id,actionID:commandID)
+    pendingCollaborationCommands[commandID]=Task { await batch.result.value != nil }
+    graphicCommandGeneration=generation
+    graphicCommandTask=Task { await batch.result.value?.values.first }
+    return batch
+  }
+
+  private func registerElementCommand(_ plan:NotebookElementCommandPlan,batch:NotebookElementCommandBatch) {
+    for operation in plan.operations {
+      guard let reference=plan.references.first(where:{ $0.elementID == operation.id }) else { continue }
+      elementCommandSources[reference] = .init(id:batch.generation,task:Task { await batch.result.value?[reference] })
+    }
   }
 
   func nativeElementSource(_ reference: EditableElementReference) -> NotebookNativeElementSource? {

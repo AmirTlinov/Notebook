@@ -24,6 +24,23 @@ rasters. A basis change completes layout before installing its new matrix.
 
 ## Ink, masks and publication
 
+A captured `PageInkSource` pins one immutable drawing root and its stamp. Live
+publication replaces the owner's root; a delayed lasso cannot read future ink
+under its earlier revision. Lazy decoding is shared by readers of that root.
+
+A lifted material edit reserves the ordinary persistence FIFO before asynchronous
+preparation. Focus/tool cancellation no longer owns that accepted edit; a later
+stroke cannot overtake it. Subsequent picking and lasso read accepted material,
+including pending insertions and cuts, while storage checks exact predecessors
+and captured ink revisions. Native completion does not wait for its own queued
+activity release; foreign contacts and agent admission retain their barriers.
+
+Immutable graphic masks retain their normalized path and one local body-size
+path. Movement projects that coverage and publishes changed poses once per
+surface; only lift constructs the write payload. The prepared remainder enters
+the accepted draft without decoding a cold duplicate. These are derived vector
+paths, not raster approximations or a second source of material.
+
 `PageDocument.prepareInkChange` prepares off-main. Publication rechecks page UUID
 and drawing stamp; a concurrent change retries preparation without losing input.
 Undo names action UUIDs and does not erase later strokes. Camera waits only for

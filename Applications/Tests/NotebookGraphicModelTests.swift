@@ -49,6 +49,7 @@ import XCTest
     await model.start(pageSize: NotebookAppModel.defaultPageSize)
     let pageID = try XCTUnwrap(model.activePage?.id)
     let saved = await model.finishPendingPersistence(); XCTAssertTrue(saved)
+    let writer=try NotebookSQLWriteBlocker(store:model.store);defer { try? writer.release() }
     let fence = UUID()
     XCTAssertTrue(model.inputGate.beginPencilAction(source: fence))
     defer { model.inputGate.endPencilAction(source: fence) }
@@ -70,6 +71,7 @@ import XCTest
     XCTAssertEqual(model.workingGraphics.map(\.id), ids)
     XCTAssertTrue(model.workingGraphics.allSatisfy { $0.accepted && $0.publicationCursor == nil })
     model.inputGate.endPencilAction(source: fence)
+    try writer.release()
     let closed = await model.shutdown(); XCTAssertTrue(closed)
     let reopened = NotebookStore(root: root), page = try reopened.loadPage(pageID)
     XCTAssertEqual(Set(page.elements.map(\.id)), Set(ids))

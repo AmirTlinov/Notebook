@@ -98,15 +98,16 @@ extension NotebookStore {
     try waitingForInput(waitForInput) { try applyCollaborationActionImmediately(action, actor: actor, requestFingerprint: requestFingerprint, human: false) }
   }
 
-  /// Native selection/Pencil completion uses the same executor and receipts.
-  /// It must release its contact before admission, just like any other writer.
+  /// A lifted native edit already belongs to this device's causal writer. Its
+  /// activity release can follow it in the FIFO; that release (or a subsequent
+  /// local contact) cannot veto accepted content. Peer contacts still hold it.
   @discardableResult
   public func applyNativeGraphicAction(_ action: CollaborationAction, actor: UUID) throws -> CollaborationReceipt {
     guard action.operations.allSatisfy({ [.insertElement, .updateElement, .removeElement,
       .convertInkToElement, .reorderElements].contains($0.kind) }) else {
       throw invalid("Нативная правка схемы содержит только операции элементов.")
     }
-    return try applyCollaborationActionImmediately(action, actor: actor, requestFingerprint: nil, human: true)
+    return try applyCollaborationActionImmediately(action, actor: actor, requestFingerprint: nil, human: true, nativeInputOwner: actor)
   }
 
   /// The next native edit is admitted against the exact element saved by its
@@ -129,7 +130,7 @@ extension NotebookStore {
 
   /// Internal native owners perform their field-level CAS before entering this
   /// same executor. Only the public agent entry point accepts agent authorship.
-  func applyCollaborationActionImmediately(_ action: CollaborationAction, actor: UUID, requestFingerprint: String?, human: Bool) throws -> CollaborationReceipt {
+  func applyCollaborationActionImmediately(_ action: CollaborationAction, actor: UUID, requestFingerprint: String?, human: Bool, nativeInputOwner: UUID? = nil) throws -> CollaborationReceipt {
     try prepare()
     return try commandTransaction(readAllowance: .agentCommand) {
       if try hasStoredValue(actionFile(action.id)) {
@@ -152,7 +153,7 @@ extension NotebookStore {
       }
       let contextReferences = try action.contextID.map { try self.contextReferences($0) }
       let before = try actionSourceProjection(action, references: contextReferences ?? [])
-      try requireIdleInput(for: action.operations.map(\.target))
+      try requireIdleInput(for: action.operations.map(\.target), excludingDevice: nativeInputOwner)
       let scopeReferences = contextReferences ?? action.references
       try validateCollaborationExpectations(action, projection: before)
       let hasLifecycle = action.operations.contains(where: \.isLifecycle)

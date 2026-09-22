@@ -70,6 +70,7 @@ struct NotebookElementManipulation: Equatable, Sendable {
   let displayFrame: CGRect
   private(set) var presentedFrame: CGRect
   var graphicCapture: NotebookGraphicContactSource?
+  var commandSource:NotebookElementCommand?
   var originalBasis: NotebookElementBasis? { placement?.basis }
   private(set) var basis: NotebookElementBasis?
   private(set) var connection: NotebookGraphicConnection?
@@ -86,9 +87,7 @@ struct NotebookElementManipulation: Equatable, Sendable {
     }
   }
   var region: NotebookRegionSelection?
-  /// The physical finger ended before this region's immutable sources resolved.
-  /// Its final placement remains the one pending edit, not a second gesture.
-  var regionGestureEnded = false
+  var regionPoses:[String:NotebookElementPlacement.Source] = [:]
   var selectedMembers: [NotebookGraphicSelection.Member] = []
   var selectedEdits: [NotebookGraphicSelection.Edit] {
     guard let origin=selectedMembers.first?.origin else { return [] }

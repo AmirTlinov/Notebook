@@ -50,9 +50,10 @@ import XCTest
     }
     let end = CGPoint(x:windowStart.x+70*presence.camera.scale,y:windowStart.y-30*presence.camera.scale)
     window.sendEvent(try event(.leftMouseUp,at:end,window:window))
+    XCTAssertEqual(try XCTUnwrap(model.elementCommandDrafts[reference]?.frame.x),170,accuracy:1e-9,"Lift must accept the shown move before persistence: \(model.actionCue ?? "none")")
     let saved = await model.finishPendingInteraction(); XCTAssertTrue(saved)
     let moved = try XCTUnwrap(fixture.store.loadPage(page.id).element(id:"measured"))
-    XCTAssertEqual(moved.frame.x,170,accuracy:1e-9); XCTAssertEqual(moved.frame.y,150,accuracy:1e-9)
+    XCTAssertEqual(moved.frame.x,170,accuracy:1e-9,model.actionCue ?? "none"); XCTAssertEqual(moved.frame.y,150,accuracy:1e-9,model.actionCue ?? "none")
     XCTAssertEqual(moved.frame.width,260); XCTAssertEqual(moved.frame.height,110)
     XCTAssertEqual(moved.graphic,graphic,"Movement cannot rematerialize pressure, color or cuts")
     XCTAssertEqual(model.presence?.camera,presence.camera)
