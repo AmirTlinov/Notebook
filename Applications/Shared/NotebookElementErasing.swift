@@ -21,7 +21,8 @@ struct NotebookElementErasing {
 
   mutating func retainUnchangedCoverage(from previous:Self?) {
     guard !accepted,let changedTargets,let previous,
-      previous.id == id,previous.surface == surface else { return }
+      previous.id == id,previous.surface == surface,
+      samples.unchangedPrefix(comparedTo:previous.samples) == previous.samples.count else { return }
     let old=Dictionary(uniqueKeysWithValues:previous.targets.map { ($0.elementID,$0) })
     for target in targets where !changedTargets.contains(target.elementID) && old[target.elementID] == target {
       retainedCoverage[target.elementID]=previous.retainedCoverage[target.elementID] ?? previous.samples

@@ -231,6 +231,21 @@ import WebKit
     XCTAssertEqual(revisited.masks["b"]?.first?.samples,latest)
   }
 
+  func testCorrectedTailRetractsCoverageEvenOutsideTheNewSweep() {
+    let a=InkElementTarget(elementID:"a",frame:frame),id=UUID()
+    var source=InkSampleRelations.Contact(sourceID:id,header:.init(tool:.eraser,color:.black))
+    let values=cuts(full:false,count:8)[0].samples.materialized()
+    source.replaceTail(from:0,with:values)
+    let previous=NotebookElementErasing(id:id,surface:surface,samples:source.frozen().measurements,targets:[a])
+    source.replaceTail(from:values.count-1,with:[.init(point:.init(x:4000,y:4000),timeOffset:1,
+      width:1,opacity:1,force:1,azimuth:0,altitude:1)])
+    let corrected=source.frozen().measurements
+    var next=NotebookElementErasing(id:id,surface:surface,samples:corrected,targets:[a],changedTargets:[])
+    next.retainUnchangedCoverage(from:previous)
+    XCTAssertEqual(next.masks["a"]?.first?.samples,corrected,
+      "The new sweep misses a, but the old corrected tail must not remain there")
+  }
+
   func testAdditionalEraseDoesNotReviveAnAlreadyErasedBody() async throws {
     let cache=NotebookElementErasureCache(),full=cuts(full:true,count:32)
     _ = try await ready(cache,full)
