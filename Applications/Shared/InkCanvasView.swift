@@ -309,6 +309,30 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
   private var frameSlot = 0
   private var hasRevealedFirstFrame = false
   var onVisibleFrame: (() -> Void)?
+  /// Optional observation only. GPU completion above is not a presentation ACK.
+  /// A receipt identifies the measured contact encoded into this exact drawable;
+  /// predictions and unrelated/older frames cannot acknowledge a newer sample.
+  struct ContactFrame: Equatable, Sendable {
+    let sourceID: UUID
+    let revision: UInt64
+  }
+  struct PresentedContactFrame: Sendable {
+    let frameID: UUID
+    let contact: ContactFrame
+    let tile: Int
+    let tileCount: Int
+    let presentedAt: TimeInterval
+  }
+  var onContactFramePresented: (@MainActor @Sendable (PresentedContactFrame) -> Void)?
+  var activeContactFrame: ContactFrame? {
+    if let stroke = activeInkStroke {
+      return .init(sourceID: stroke.measured.sourceID, revision: stroke.revision)
+    }
+    if let stroke = activeEraserStroke {
+      return .init(sourceID: stroke.measured.sourceID, revision: stroke.revision)
+    }
+    return nil
+  }
   let isErasureMask: Bool
   private var stableContentRevision: UInt64 = 0
   private var presentedStableContentRevision: UInt64?
@@ -994,6 +1018,22 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     }
     presentsWithTransaction = false
     for tile in spatialTarget?.tiles ?? [] { tile.layer.presentsWithTransaction = false }
+    if let observation = onContactFramePresented, let contact = activeContactFrame,
+      active != nil, hasRevealedFirstFrame {
+      let frameID = UUID(), tileCount = passes.count
+      for (tile, pass) in passes.enumerated() {
+        pass.1.addPresentedHandler { [weak self] drawable in
+          // Read the OS timestamp in the callback, not when the main actor next
+          // services us. Zero means unpresented/dropped, never a fast success.
+          let receipt = PresentedContactFrame(frameID: frameID, contact: contact,
+            tile: tile, tileCount: tileCount, presentedAt: drawable.presentedTime)
+          Task { @MainActor [weak self] in
+            guard self?.window != nil else { return }
+            observation(receipt)
+          }
+        }
+      }
+    }
     for (_, drawable, _, _, _) in passes { commandBuffer.present(drawable) }
     let presentedRevision: UInt64? =
       activeInkStroke == nil

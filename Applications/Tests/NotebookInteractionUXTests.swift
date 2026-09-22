@@ -95,35 +95,6 @@ final class NotebookInteractionUXTests: XCTestCase {
     try await survivesPublication("erasures-survive-publication", scene, finalProbes)
   }
 
-  func testPencilReplayCannotHideBacklogBySlowingItsInputSchedule() async throws {
-    let scene = try await fixture()
-    scene.model.selectPenColor(.black); scene.model.selectPenWidth(12)
-    try await scene.readyPencil(self)
-    scene.beginPencil(.init(x: 150, y: 800))
-    let start = ContinuousClock.now, sampleStart = scene.contact.sampleTime
-    var observed: [Double] = []
-    for i in 1...48 {
-      // Deadlines never move to "now" when the main actor stalls. Unlike a
-      // wait-until-ready gesture loop, this exposes accumulated event backlog.
-      let due = start + .nanoseconds(Int64(i) * 8_333_333)
-      let remaining = ContinuousClock.now.duration(to: due)
-      if remaining > .zero { try await Task.sleep(for: remaining) }
-      scene.movePencil(.init(x: 150 + i * 5, y: 800), timestamp: sampleStart + Double(i) / 120)
-      if i.isMultiple(of: 8) {
-        let result = try await assertUX("pencil-scheduled-sample-\(i)", since: due, window: scene.window) {
-          try scene.pixels([(.init(x: 146 + i * 5, y: 800), .black)])
-        }
-        observed.append(result.milliseconds)
-      }
-    }
-    scene.endPencil()
-    observed.sort()
-    XCTAssertEqual(observed.count, 6, "Missing observations cannot pass as an empty series")
-    let p95 = observed[Int(ceil(Double(observed.count) * 0.95)) - 1]
-    let report = XCTAttachment(string: "Fixed 120 Hz synthetic replay, 6 window checkpoints: p50=\(observed[observed.count / 2]) ms, p95=\(p95) ms, max=\(observed.last!) ms. Includes scheduler/capture overhead; not measured display FPS or physical Pencil latency.")
-    report.name = "pencil-scheduled-latency"; report.lifetime = .keepAlways; add(report)
-  }
-
   func testColdLassoCutMovesPixelsBeforeLiftAndAllowsTheNextCutWithoutConfirmation() async throws {
     let scene = try await fixture(erasedShape: true, tool: .lasso)
     let model = scene.model
@@ -269,7 +240,7 @@ final class NotebookInteractionUXTests: XCTestCase {
     try await remainsShown(name + "-final", scene, since: .now, probes)
   }
 
-  private func fixture(erasedShape: Bool = false, tool: DrawingTool = .pen) async throws -> Scene {
+  func fixture(erasedShape: Bool = false, tool: DrawingTool = .pen) async throws -> Scene {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("interaction-ux-\(UUID())")
     let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false,
       preferences: UserDefaults(suiteName: UUID().uuidString)!)
@@ -314,7 +285,7 @@ final class NotebookInteractionUXTests: XCTestCase {
     return scene
   }
 
-  @MainActor private final class Scene {
+  @MainActor final class Scene {
     let model: NotebookAppModel
     let window: UIWindow
     let paper: PaperInputView
@@ -385,13 +356,15 @@ final class NotebookInteractionUXTests: XCTestCase {
       let e = UXDirectEvent(touch: direct)
       observer.touchesBegan([direct], with: e); finger.touchesBegan([direct], with: e)
     }
-    func moveFinger(_ p: CGPoint) {
+    func moveFinger(_ p: CGPoint, expectsManipulation: Bool = true) {
       direct.touchPhase = .moved
       direct.point = p.applying(pageToWindow); direct.sampleTime += 0.02
       let e = UXDirectEvent(touch: direct)
       observer.touchesMoved([direct], with: e); finger.touchesMoved([direct], with: e)
-      XCTAssertNotNil(model.selectionSession.manipulation,
-        "The installed body owner must admit the drag: recognizer=\(finger.state.rawValue), Pencil=\(model.inputGate.hasActivePencil), interactive=\(model.selectionSession.isInteractive)")
+      if expectsManipulation {
+        XCTAssertNotNil(model.selectionSession.manipulation,
+          "The installed body owner must admit the drag: recognizer=\(finger.state.rawValue), Pencil=\(model.inputGate.hasActivePencil), interactive=\(model.selectionSession.isInteractive)")
+      }
     }
     func endFinger() {
       direct.touchPhase = .ended
@@ -401,7 +374,7 @@ final class NotebookInteractionUXTests: XCTestCase {
   }
 }
 
-@MainActor private final class UXTouch: UITouch {
+@MainActor final class UXTouch: UITouch {
   let sourceWindow: UIWindow
   let kind: UITouch.TouchType
   var sourceView: UIView?

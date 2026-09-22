@@ -325,13 +325,45 @@ through the save/reload boundary, not only in a final still image. Board entry c
 destination pixels; notebook/document opening checks the installed current
 source and retains a window screenshot (not an OCR/content-pixel comparison).
 
-The fixed ceilings are **100 ms** for sampled gesture responses, **250 ms** for
-selection, **1 s** for board/document opening and **2 s** for cold notebook root
-startup. These are conservative regression ceilings, not acceptable end-state
-Pencil latency or a claim of 120 FPS. Each checkpoint must pass; a good median
-cannot hide one long stall. The scheduled replay never shifts its 120 Hz input
-deadlines to accommodate stalls, and reports p50/p95/max of six window samples.
-Capture and scheduling overhead are included. Window probes read the current
+Continuous gesture latency has a separate **20 ms maximum for every sample**,
+including the first contact. `NotebookInteractionLatencyTests.swift` replays 120
+events at fixed 120 Hz deadlines through the same mounted scene and recognizers.
+It does not take screenshots, force layout/CA flush, change the display rate or
+wait for each event's output. Scheduled time includes backlog; deadlines never
+move forward after a stall. Reports retain p50/p95/p99/max, and one late or missing
+sample fails even when the percentiles look good. There are two distinct lanes:
+
+- **Input to UIKit update completion:** handler time and the actual
+  `UIUpdateLink.afterUpdateComplete` callback, each capped at 20 ms, for pen,
+  ink/shape erasure, lasso outline, cold cut movement and whole-object dragging.
+  This is necessary app-side responsiveness, **not proof of displayed pixels**.
+- **Input to OS Metal presentation:** pen and ink eraser additionally require
+  `MTLDrawable.addPresentedHandler` / `presentedTime` within 20 ms. The receipt
+  carries the exact encoded contact/revision, and all changed tiles must arrive;
+  stale/unrelated frames, zero/dropped timestamps and missing tiles cannot pass.
+  Neither GPU completion nor a display-link tick substitutes for this receipt.
+  The observer is optional and nil in the ordinary app path; it never drives
+  rendering or changes source/presentation ownership.
+
+The replay measures 120 active-contact samples and the subsequent lift. Metal
+receipts cover the active contact; it remains alive while final receipts are
+collected (late receipts still fail). Lift has a UIKit budget and separate pixel
+continuity checks, not a fabricated Metal receipt for an already retired contact.
+
+SwiftUI shape/lasso composition does not expose a per-content OS presentation
+receipt here. Its 20 ms UIKit lane must not be called a 20 ms displayed result;
+system traces and physical measurement remain required to close that gap. The
+Metal lane also excludes hardware Pencil sensing and physical display scanout.
+See Apple's [drawable timing](https://developer.apple.com/documentation/metal/mtldrawable/presentedtime)
+and [UI update phases](https://developer.apple.com/documentation/uikit/uiupdateactionphase/afterupdatecomplete).
+
+The separate screenshot correctness ceilings remain **100 ms** for gesture
+output, **250 ms** for selection, **1 s** for board/document opening and **2 s**
+for cold notebook root startup. These are observation/diagnostic ceilings, not
+the latency target. Both the latency gate and the correct-pixel scenarios must
+pass; fast model updates alone cannot make a broken interaction green.
+Capture and scheduling overhead are included in these window checks, not in
+the 20 ms lanes. Window probes read the current
 frame (`afterScreenUpdates: false`), without forcing a synchronous screen update.
 The publication monitor yields between snapshots so it cannot starve the writer
 while trying to catch up its own sampling schedule. This is not an OS-presented frame

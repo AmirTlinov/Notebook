@@ -471,6 +471,7 @@ class SelectionTests(unittest.TestCase):
         plan = verify.make_plan(self.root, profiles=["interaction-ux"], only=True)
         self.assertEqual(plan["checks"]["ipad"], sorted([
             "NotebookTests/NotebookUXObservationTests",
+            "NotebookTests/NotebookGestureLatencyTests",
             "NotebookTests/NotebookInteractionUXTests",
             "NotebookTests/PagePresentationTests/testColdRootInstallsTheStoredInkPageAtTheActualViewport",
             "NotebookTests/NotebookDocumentOpeningTests/testHistoryReferenceInstallsAnUnloadedDocumentOutsideTheCurrentCamera",

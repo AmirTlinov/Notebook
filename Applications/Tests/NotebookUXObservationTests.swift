@@ -6,7 +6,7 @@ import XCTest
 /// Keep the clock outside the action: blocking input handlers count as latency.
 @MainActor
 enum NotebookUXObservation {
-  static let response: Duration = .milliseconds(100)
+  static let correctnessTimeout: Duration = .milliseconds(100)
   static let selection: Duration = .milliseconds(250)
   static let opening: Duration = .seconds(1)
   static let coldOpening: Duration = .seconds(2)
@@ -80,7 +80,7 @@ enum NotebookUXObservation {
 extension XCTestCase {
   @MainActor @discardableResult
   func assertUX(_ name: String, since start: ContinuousClock.Instant,
-    budget: Duration = NotebookUXObservation.response, window: UIWindow? = nil,
+    budget: Duration = NotebookUXObservation.correctnessTimeout, window: UIWindow? = nil,
     file: StaticString = #filePath, line: UInt = #line,
     probe: () throws -> Bool) async throws -> NotebookUXObservation.Result {
     let result = try await NotebookUXObservation.observe(since: start, budget: budget, probe: probe)

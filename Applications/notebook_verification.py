@@ -22,7 +22,7 @@ DOCUMENT_BROWSER_CONTRACTS = (
 )
 PROFILES = {
     "interaction-ux": {
-        "ipad": ["NotebookTests/NotebookUXObservationTests", "NotebookTests/NotebookInteractionUXTests",
+        "ipad": ["NotebookTests/NotebookUXObservationTests", "NotebookTests/NotebookGestureLatencyTests", "NotebookTests/NotebookInteractionUXTests",
                  "NotebookTests/PagePresentationTests/testColdRootInstallsTheStoredInkPageAtTheActualViewport",
                  "NotebookTests/NotebookDocumentOpeningTests/testHistoryReferenceInstallsAnUnloadedDocumentOutsideTheCurrentCamera",
                  "NotebookTests/NotebookDocumentOpeningTests/testHistoryReferenceInstallsAnUnloadedDocumentOnAnotherBoard"],
