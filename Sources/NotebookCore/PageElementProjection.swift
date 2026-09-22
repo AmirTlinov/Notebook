@@ -36,4 +36,7 @@ struct PageElementProjection: Sendable {
     let visible=graphicIDs.compactMap { positions[collaborationIdentity($0)] }.filter { source[$0].graphic != nil }
     return (nonGraphics+visible).sorted().map { source[$0] }
   }
+  func elements(ids:Set<String>) -> [AgentElement] {
+    ids.compactMap { positions[collaborationIdentity($0)] }.sorted().map { source[$0] }
+  }
 }

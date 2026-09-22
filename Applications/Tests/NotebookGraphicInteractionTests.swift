@@ -113,6 +113,24 @@ import XCTest
     return (inside,outside)
   }
 
+  func testPageTapUsesOnlyIndexedCandidatesAndKeepsPainterOrder() throws {
+    let actor=UUID(),point=SpatialPoint(x:25,y:25)
+    let bottom=AgentElement(id:"bottom",kind:.nativeText,frame:.init(x:10,y:10,width:30,height:30),source:"bottom",html:"")
+    let noise=(0..<5_000).map { i in
+      AgentElement(id:"noise-\(i)",kind:.nativeText,
+        frame:.init(x:500+Double(i%100),y:500+Double(i/100),width:2,height:2),source:"x",html:"")
+    }
+    let top=AgentElement(id:"top",kind:.nativeText,frame:.init(x:15,y:15,width:20,height:20),source:"top",html:"")
+    let page=PageDocument(size:.init(width:1_000,height:1_000),actor:actor,elements:[bottom]+noise+[top])
+    let graph=page.graphicGraph()
+    let candidates=NotebookAttentionProjection.pageInteractionElements(at:point,page:page,graph:graph,scale:1)
+    XCTAssertEqual(candidates.map(\.id),["bottom","top"])
+    let selected=NotebookAttentionProjection.pickElement(in:candidates,graph:graph,scale:1,
+      viewport:.init(x:834,y:1194),presentation:{ .init($0,placement:$1) },
+      project:{ ($0.id,$0.graphic,point) })
+    XCTAssertEqual(selected?.id,"top","The exact picker retains authored painter order after local admission")
+  }
+
   func testErasedGeometryCannotSelectItsOldContourOrEmptyInterior() {
     let surface = SurfaceID.page(UUID()), frame = PageRect(x:100,y:200,width:160,height:100)
     let graphic = NotebookGraphic(shape:.rectangle,style:.init(strokeWidth:4))

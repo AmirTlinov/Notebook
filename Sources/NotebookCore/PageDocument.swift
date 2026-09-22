@@ -195,6 +195,11 @@ public struct PageDocument: Codable, Equatable, Identifiable, Sendable {
   public func displayElements(graphicIDs:Set<String>) -> [AgentElement] {
     elementProjection.elements(graphicIDs:graphicIDs)
   }
+  /// A local interaction query keeps the authored painter order without
+  /// reading unrelated page elements.
+  public func interactionElements(ids:Set<String>) -> [AgentElement] {
+    elementProjection.elements(ids:ids)
+  }
   /// Absent until a user activates ink; not a second page or editor.
   public internal(set) var computations: [NotebookComputation]?
 

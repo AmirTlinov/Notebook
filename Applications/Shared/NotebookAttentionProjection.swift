@@ -623,7 +623,8 @@ enum NotebookAttentionProjection {
         target = .init(kind:.page,id:pageID)
         let graph = sources.pages[pageID]?.graphicGraph()
         if !dragged, let page = sources.pages[pageID], let graph,
-          let element = pickElement(in: page.elements, graph: graph, erasures:sources.erasures(.page(pageID)),
+          let element = pickElement(in: pageInteractionElements(at:.init(x:region.x,y:region.y),
+            page:page,graph:graph,scale:presence.camera.scale), graph: graph, erasures:sources.erasures(.page(pageID)),
             appearance: { sources.appearance(.page(pageID), $0, $1, $2, $3, $4) }, scale: presence.camera.scale, viewport: presence.viewport,presentation:{ .init($0,placement:$1) },
             project: { ($0.id, $0.graphic, .init(x:region.x,y:region.y)) }) {
           elementID = element.id; region = graph.resolve(element.id).layout?.frame ?? graph.placement(element.id).map { NotebookElementPresentation(element,placement:$0).frame } ?? NotebookTextTypography.frame(element)
@@ -672,6 +673,16 @@ enum NotebookAttentionProjection {
     }
     return .init(target:target,elementID:elementID,region:region,worldOrigin:origin,pageIndex:pageIndex,
       label: dragged ? "Область" : elementID == nil ? "Место" : "Объект")
+  }
+
+  /// The retained page index is the broad-phase owner for taps as well as
+  /// lasso and erasing. Exact picking below still owns paint order and holes.
+  static func pageInteractionElements(at point:SpatialPoint,page:PageDocument,
+    graph:NotebookGraphicGraph,scale:Double)->[AgentElement] {
+    let radius=elementHitPadding/max(0.001,scale)
+    let hit=graph.visiblePageGraphics(page.id,
+      in:.init(x:point.x-radius,y:point.y-radius,width:radius*2,height:radius*2))
+    return page.interactionElements(ids:Set(hit.layouts.keys).union(hit.placements.keys))
   }
 
   /// Paint wins over a hollow interior, then the smallest enclosing figure.
