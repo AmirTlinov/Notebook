@@ -234,38 +234,46 @@ final class NotebookDrawingToolController {
       finishElementSelection(current,polygon:polygon)
       return
     }
-    let references:[EditableElementReference]
-    do {
-      references=try model.regionGraphics(intersecting:polygon,at:current.address,
-        graph:current.graph,spatial:current.spatialSelection)
-    } catch { model.showCue(error.localizedDescription);return }
+    let erasures=model.elementErasures(on:current.address.surface,
+      fallback:model.compositionTiles.published?.liveData.ink)
     let selection = model.selectionSession.id
     lassoTask = Task { [weak self] in
       do {
+        let graphicPreparation=Task.detached(priority:.userInitiated) {
+          try NotebookRegionGraphicQuery.references(intersecting:polygon,at:current.address,
+            graph:current.graph,spatial:current.spatialSelection,erasures:erasures)
+        }
+        defer { graphicPreparation.cancel() }
         let source=try await current.ink?.value
         let preparation=Task.detached(priority:.userInitiated) {
           try source?.selection(polygon:polygon,surface:current.address.surface,
             origin:current.address.worldOrigin,bounds:current.address.bounds)
         }
-        let result = try await withTaskCancellationHandler { try await preparation.value } onCancel: { preparation.cancel() }
+        let references=try await withTaskCancellationHandler { try await graphicPreparation.value }
+          onCancel: { graphicPreparation.cancel() }
+        let result = try await withTaskCancellationHandler { try await preparation.value }
+          onCancel: { preparation.cancel() }
         guard !Task.isCancelled, let self, model.selectionSession.id == selection else { return }
         guard result != nil || !references.isEmpty else { model.clearSelection();return }
         let box=polygon.reduce(CGRect.null) { $0.union(.init(x:$1.x,y:$1.y,width:0,height:0)) }
         guard !box.isNull,box.width > 0,box.height > 0 else { model.clearSelection();return }
-        let region=NotebookRegionSelection(id:current.id,address:current.address,polygon:polygon,
+        let descriptor=NotebookRegionSelection(id:current.id,address:current.address,polygon:polygon,
           frame:.init(x:box.minX,y:box.minY,width:box.width,height:box.height),rawInk:result,
           expectedInkRevision:source?.revision,graphics:references)
-        model.selectRegion(region)
         let graph=current.graph
         let materialization=Task.detached(priority:.userInitiated) {
-          try NotebookRegionMaterialization.prepare(region,graph:graph)
+          try NotebookRegionMaterialization.prepare(descriptor,graph:graph)
         }
         let prepared=try await withTaskCancellationHandler { try await materialization.value }
           onCancel: { materialization.cancel() }
-        guard !Task.isCancelled else { return }
-        self.model.installRegionMaterialization(region.id,prepared:prepared)
+        guard !Task.isCancelled,model.selectionSession.id == selection else { return }
+        guard let prepared else { model.clearSelection();return }
+        let region=NotebookRegionSelection(id:descriptor.id,address:descriptor.address,
+          polygon:descriptor.polygon,frame:descriptor.frame,rawInk:descriptor.rawInk,
+          expectedInkRevision:descriptor.expectedInkRevision,graphics:descriptor.graphics,
+          materialization:prepared)
+        model.selectRegion(region)
       } catch is CancellationError {} catch {
-        self?.model.failRegionMaterialization(current.id,error:error.localizedDescription)
         self?.model.showCue(error.localizedDescription)
       }
     }
@@ -443,6 +451,73 @@ extension NotebookRegionMaterialization {
   }
 }
 
+/// Immutable exact phase for regional lasso selection. The UI actor captures
+/// one scene cut and its erasures; geometry traversal then cannot stall input
+/// or observe a later publication halfway through the query.
+private enum NotebookRegionGraphicQuery {
+  private static func bounds(_ polygon:[SpatialPoint],origin:WorldPoint)
+    -> WorkspaceSpatialBounds? {
+    guard let x=polygon.map(\.x).min(),let y=polygon.map(\.y).min(),
+      let right=polygon.map(\.x).max(),let bottom=polygon.map(\.y).max(),
+      [x,y,right,bottom].allSatisfy(\.isFinite) else { return nil }
+    return .init(origin:origin.offsetBy(x:x,y:y),width:max(0,right-x),height:max(0,bottom-y))
+  }
+
+  private static func spatialCandidates(_ polygon:[SpatialPoint],address:NotebookToolAddress,
+    source:NotebookDrawingToolController.SpatialSelectionSource?,graph:NotebookGraphicGraph)
+    throws -> Set<String> {
+    guard let source,let board=address.boardID ?? address.surface.ownerID,
+      let bounds=bounds(polygon,origin:address.surface.kind == .board ? address.worldOrigin ?? .zero : .zero) else {
+      throw CollaborationError("snapshot_pending","Геометрия сцены ещё готовится.")
+    }
+    let query=try source.index.interactionCandidates(boardID:board,
+      coverID:address.surface.kind == .cover ? address.surface.ownerID : nil,
+      bounds:bounds,kinds:.elements)
+    var ids=Set((query?.entries ?? []).compactMap { entry -> String? in
+      guard case .element(let id)=entry.id else { return nil };return id
+    })
+    ids.formUnion(try source.delta.movedCandidateIDs(surface:address.surface,
+      bounds:bounds,graph:graph).ids)
+    ids.formUnion(source.delta.ids)
+    return ids
+  }
+
+  static func references(intersecting polygon:[SpatialPoint],at address:NotebookToolAddress,
+    graph:NotebookGraphicGraph,spatial:NotebookDrawingToolController.SpatialSelectionSource?,
+    erasures:[String:[InkElementErasure]]) throws ->[EditableElementReference] {
+    let origin=address.worldOrigin ?? .zero
+    let candidates:AnySequence<NotebookGraphicGraph.Node>
+    if address.surface.kind == .page,let pageID=address.surface.ownerID,
+      let x=polygon.map(\.x).min(),let y=polygon.map(\.y).min(),
+      let right=polygon.map(\.x).max(),let bottom=polygon.map(\.y).max(),
+      [x,y,right,bottom].allSatisfy(\.isFinite) {
+      let visible=graph.visiblePageGraphics(pageID,
+        in:.init(x:x,y:y,width:max(0,right-x),height:max(0,bottom-y)),limit:4_096)
+      guard !visible.overflow else {
+        throw CollaborationError("selection_limit","Выделите меньшую область: в ней слишком много объектов.")
+      }
+      candidates=AnySequence(visible.layouts.keys.lazy.compactMap { graph.node($0) })
+    } else if address.surface.kind == .page { candidates=AnySequence([]) }
+    else {
+      let ids=try spatialCandidates(polygon,address:address,source:spatial,graph:graph)
+      candidates=AnySequence(ids.lazy.compactMap { graph.node($0) })
+    }
+    return candidates.compactMap { node in
+      guard spatial?.delta.excluded.contains(node.id) != true,node.shown,
+        node.graphic.shape != .connector,let layout=graph.resolve(node.id).layout,
+        node.surface == address.surface else { return nil }
+      let delta=origin.delta(to:node.origin),frame=layout.frame
+      guard NotebookToolGeometry.intersects(.init(x:delta.x+frame.x,y:delta.y+frame.y,
+        width:frame.width,height:frame.height),polygon:polygon) else { return nil }
+      let local=polygon.compactMap { layout.framePoint($0,from:origin) }
+      guard local.count == polygon.count else { return nil }
+      let appearance=NotebookElementAppearance(graphic:node.graphic,layout:layout,
+        size:.init(width:frame.width,height:frame.height),erasures:erasures[node.id] ?? [])
+      return appearance.intersects(local.map { .init(x:$0.x,y:$0.y) }) ? address.reference(node.id) : nil
+    }
+  }
+}
+
 extension NotebookAppModel {
   private func spatialSelectionBounds(_ polygon:[SpatialPoint],address:NotebookToolAddress)
     -> WorkspaceSpatialBounds? {
@@ -550,10 +625,7 @@ extension NotebookAppModel {
   @discardableResult
   func materializeRegionSelection()->[EditableElementReference]? {
     guard let region=selectionSession.region else { return nil }
-    guard let prepared=region.materialization else {
-      showCue(region.materializationFailure ?? "Область готовится к редактированию…")
-      return nil
-    }
+    guard let prepared=region.materialization else { return nil }
     acceptWorkingGraphics(prepared.working)
     guard performElementOperations(prepared.edits,summary:"Изменить область лассо",insertionTarget:region.address.target,
       expectedInkRevision:region.rawInk == nil ? nil : region.expectedInkRevision) else {
@@ -607,38 +679,8 @@ extension NotebookAppModel {
   func regionGraphics(intersecting polygon:[SpatialPoint],at address:NotebookToolAddress,
     graph:NotebookGraphicGraph,spatial:NotebookDrawingToolController.SpatialSelectionSource? = nil)
     throws ->[EditableElementReference] {
-    let origin=address.worldOrigin ?? .zero
-    let candidates:AnySequence<NotebookGraphicGraph.Node>
-    var spatialIDs=Set<String>()
-    if address.surface.kind == .page,let pageID=address.surface.ownerID,
-      let visible=try pageSelectionCandidates(polygon,pageID:pageID,graph:graph) {
-      candidates=AnySequence(visible.layouts.keys.lazy.compactMap { graph.node($0) })
-    } else if address.surface.kind == .page { candidates=AnySequence([]) }
-    else {
-      let indexed=try spatialCandidates(polygon,address:address,source:spatial,kinds:.elements)
-      spatialIDs=spatialElementIDs(indexed)
-      if let spatial,let bounds=spatialSelectionBounds(polygon,address:address) {
-        spatialIDs.formUnion(try spatial.delta.movedCandidateIDs(surface:address.surface,
-          bounds:bounds,graph:graph).ids)
-      }
-      spatialIDs.formUnion(spatial?.delta.ids ?? [])
-      candidates=AnySequence(spatialIDs.lazy.compactMap { graph.node($0) })
-    }
-    let erasures=elementErasures(on:address.surface)
-    return candidates.compactMap { node in
-      guard spatial?.delta.excluded.contains(node.id) != true,node.shown,
-        node.graphic.shape != .connector,let layout=graph.resolve(node.id).layout else { return nil }
-      guard node.surface == address.surface else { return nil }
-      let reference=address.reference(node.id)
-      let delta=origin.delta(to:node.origin),frame=layout.frame
-      guard NotebookToolGeometry.intersects(.init(x:delta.x+frame.x,y:delta.y+frame.y,width:frame.width,height:frame.height),polygon:polygon) else { return nil }
-      let local=polygon.compactMap { layout.framePoint($0,from:origin) }
-      guard local.count == polygon.count else { return nil }
-      let cuts=erasures[node.id] ?? []
-      let appearance=NotebookElementAppearance(graphic:node.graphic,layout:layout,
-        size:.init(width:frame.width,height:frame.height),erasures:cuts)
-      return appearance.intersects(local.map { .init(x:$0.x,y:$0.y) }) ? reference : nil
-    }
+    try NotebookRegionGraphicQuery.references(intersecting:polygon,at:address,
+      graph:graph,spatial:spatial,erasures:elementErasures(on:address.surface))
   }
 
   private func spatialElementsIntersecting(_ ids:Set<String>,surface:SurfaceID,

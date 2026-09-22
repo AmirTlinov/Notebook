@@ -25,12 +25,7 @@ import UIKit
         while model.selectionSession.id == generation,ContinuousClock.now < deadline {
           try await Task.sleep(for:.milliseconds(10))
         }
-        if mode == .region {
-          while model.selectionSession.region?.materialization == nil,
-            model.selectionSession.region?.materializationFailure == nil,ContinuousClock.now < deadline {
-            try await Task.sleep(for:.milliseconds(10))
-          }
-        }
+        if mode == .region { XCTAssertNotNil(model.selectionSession.region?.materialization) }
       }
 
       try await lasso(.region)
@@ -186,11 +181,8 @@ import UIKit
       lasso(left)
       let deadline = ContinuousClock.now + .seconds(5)
       while model.selectionSession.region == nil,ContinuousClock.now < deadline { try await Task.sleep(for:.milliseconds(10)) }
-      while model.selectionSession.region?.materialization == nil,
-        model.selectionSession.region?.materializationFailure == nil,ContinuousClock.now < deadline {
-        try await Task.sleep(for:.milliseconds(10))
-      }
       let region=try XCTUnwrap(model.selectionSession.region)
+      XCTAssertNotNil(region.materialization)
       XCTAssertEqual(region.rawInk?.graphic.sourceInkIDs,[pen.id])
       XCTAssertEqual(try model.store.loadPage(page.id).drawingData,drawing)
       XCTAssertEqual(try model.store.loadPage(page.id).elements.count,1,"Selection itself must not author content")

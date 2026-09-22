@@ -22,21 +22,20 @@ struct NotebookRegionSelection: Equatable, Sendable {
   let expectedInkRevision:String?
   let graphics:[EditableElementReference]
   var materialization:NotebookRegionMaterialization?
-  var materializationFailure:String?
   var reference:EditableElementReference { address.reference("lasso-"+id.uuidString.lowercased()) }
 
   init(id:UUID,address:NotebookToolAddress,polygon:[SpatialPoint],frame:PageRect,
     rawInk:NotebookLassoInkSource.Result?,expectedInkRevision:String?,graphics:[EditableElementReference],
-    materialization:NotebookRegionMaterialization? = nil,materializationFailure:String? = nil) {
+    materialization:NotebookRegionMaterialization? = nil) {
     self.id=id;self.address=address;self.polygon=polygon;self.frame=frame;self.rawInk=rawInk
     self.expectedInkRevision=expectedInkRevision;self.graphics=graphics
-    self.materialization=materialization;self.materializationFailure=materializationFailure
+    self.materialization=materialization
   }
 }
 
-/// Immutable command payload prepared away from the UI actor. The lasso can
-/// become visible immediately; its first edit only admits this already encoded
-/// delta instead of expanding retained vector sources under the user's finger.
+/// Immutable command payload prepared away from the UI actor. A region is
+/// admitted only with this payload, so its first edit cannot race preparation
+/// or expand retained vector sources under the user's finger.
 struct NotebookRegionMaterialization: Equatable, Sendable {
   let edits:[NotebookElementEdit]
   let working:[NotebookWorkingGraphic]
