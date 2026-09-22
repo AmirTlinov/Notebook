@@ -31,6 +31,16 @@ Evidence: `.build/gui294-mac-window-check-165-final-v2/verification.json`,
 `.build/gui294-mac-window-release-165-final-v2/build.json`,
 `.build/gui294-mac-window-install-165-v2-mac/{before,after-launch,closed-window,reopened-window,final-live}.txt`
 и `.build/gui294-mac-window-install-165-v2-ipad/{apps-before,install,launch,apps}.json`.
+После установки инвентаризация обнаружила на iPad ещё запущенный временный
+`.native-test` build 164 и оставшийся UI-test runner. Оба изолированных тестовых
+приложения удалены; в финальном инвентаре и списке процессов остался один
+`com.amirtlinov.notebook.preview` build 165, PID 2333. Свежий readback через
+helper установленного Mac-владельца вернул `ready`, workspace
+`FAAAC405-8EF9-4FB9-9B93-CBD876FA97A4`, cursor 32100 и текущую board revision
+`7b3fedfbcb8248b66ababd78ba5e0985447ab1c10c02b7c800db2d23d627aac9`.
+При этом iPad presentation была `unavailable`, поэтому полученные данные
+подтверждают живого Mac-владельца, но не received/shown на iPad. Дополнительные
+evidence: `.build/gui294-installed-pair-live-165/{observe,presentation-after-cleanup,apps-after-cleanup,ipad-processes-final}.json`.
 Это восстановило рабочую установленную пару, но не закрывает S9: настоящие
 Pencil/мышь, десять повторов, системные frame/CPU/GPU/memory/energy, адресный
 saved→received→shown и 30 минут совместной работы этим срезом не подтверждены.
