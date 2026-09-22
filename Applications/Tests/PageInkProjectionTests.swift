@@ -70,7 +70,9 @@ final class PageInkProjectionTests: XCTestCase {
     let window = UIWindow(windowScene: scene), controller = UIViewController()
     window.rootViewController = controller; window.makeKeyAndVisible()
     defer { window.isHidden = true; window.rootViewController = nil }
-    let resources = SceneRenderResources(byteLimit: 16 * 1024 * 1024)
+    // Three 600px canvases own drawables plus the accepted-page composite.
+    // MSAA stays tile-local; the retained history is separately accounted.
+    let resources = SceneRenderResources(byteLimit: 24 * 1024 * 1024)
     var pages: [InkCanvasView] = []
     for _ in 0..<3 {
       let canvas = InkCanvasView(frame: .zero, resources: resources)
@@ -80,6 +82,7 @@ final class PageInkProjectionTests: XCTestCase {
       canvas.apply(PageInkDrawing(actions: [line()]))
       try await ready(canvas)
       XCTAssertEqual(canvas.sampleCount, 1, "MTKView must not allocate duplicate MSAA storage")
+      XCTAssertTrue(canvas.hasPageRetainedTexture)
       pages.append(canvas)
     }
     XCTAssertGreaterThan(resources.reservedBytes, 0)

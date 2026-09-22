@@ -87,7 +87,7 @@ extension NotebookStore {
         for record in part.records {
           guard previous.utf8.lexicographicallyPrecedes(record.address.utf8), count < root.recordCount else { throw NotebookStorageError.invalidTransaction("lifecycle inverse stream order") }
           for hash in [record.beforeHash, record.afterHash].compactMap({ $0 }) {
-            let fragment = try store.readLifecycleInverseFragment(hash: hash, address: record.address)
+            let fragment = try store.readLifecycleInverseFragment(hash: hash, address: record.address,expandingInk:false)
             var orderWork = 0
             for root in try store.lifecycleInverseOrderRoots(fragment) {
               let node = try store.readPageOrderNode(root)
@@ -161,9 +161,9 @@ extension NotebookStore {
       record.afterHash.map(NotebookPageOrderRegister.validHash) ?? true else { throw NotebookStorageError.invalidTransaction("lifecycle inverse record") }
   }
 
-  func readLifecycleInverseFragment(hash: String, address: String? = nil) throws -> NotebookStoredFragment {
+  func readLifecycleInverseFragment(hash: String, address: String? = nil,expandingInk:Bool = true) throws -> NotebookStoredFragment {
     let data = try lifecycleInverseBlob(hash, maximumBytes: 256 * 1_024 * 1_024)
-    let fragment = try currentSQL!.decodedStoredFragment(from:data)
+    let fragment = try currentSQL!.decodedStoredFragment(from:data,expandingInk:expandingInk)
     try validateLifecycleInverseRecord(.init(address: fragment.address, beforeHash: hash, afterHash: nil))
     guard address.map({ fragment.address.utf8.elementsEqual($0.utf8) }) ?? true,
       fragment.address.hasPrefix(fragment.file + "#"), !fragment.file.contains("#"),

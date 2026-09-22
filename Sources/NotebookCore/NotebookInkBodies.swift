@@ -110,10 +110,11 @@ extension NotebookSQLConnection {
     return data
   }
 
-  func decodedStoredFragment(from data: Data, remainingBytes: inout Int64, budget: String) throws -> NotebookStoredFragment {
+  func decodedStoredFragment(from data: Data, remainingBytes: inout Int64, budget: String,
+    expandingInk:Bool = true) throws -> NotebookStoredFragment {
     let raw=try JSONDecoder().decode(NotebookStoredFragment.self,from:data)
     _=try raw.inkBodyHashes
-    var value=raw.value,logicalBytes=data.count
+    var value=raw.value
     for path in raw.inkBodies {
       let stored=try raw.value.inkValue(at:path)
       let reference=try stored.decode(NotebookInkBodyReference.self)
@@ -131,13 +132,18 @@ extension NotebookSQLConnection {
           portableBytes=try InkStoredBody.portableByteCount(root!)
         }
       }
-      // Charge the complete logical value BEFORE loading its graph, including
-      // repeated references whose parts are already in this snapshot's cache.
+      // Each referenced body is one bounded value, just like its inline
+      // fragment. A receipt may name before/after/request bodies together:
+      // it is not one larger measurement. The total command lease still pays
+      // EVERY expansion, even repeated references already in this cache.
       let expanded=Int64((portableBytes+2)/3*4)
       guard expanded <= remainingBytes else { throw NotebookStorageError.limitExceeded(budget) }
       remainingBytes -= expanded
-      logicalBytes += Int(expanded)
-      try admitExpandedRead(bytes:Int(expanded),valueBytes:logicalBytes)
+      try admitExpandedRead(bytes:expandingInk ? Int(expanded) : 0,valueBytes:data.count+Int(expanded))
+      // Provenance visits need authenticated record envelopes, not another
+      // base64 copy of paint. Still validate cold bodies with the same codec;
+      // only this connection's already accepted graph may skip that work.
+      if !expandingInk,accepted != nil { continue }
       let encoded:Data
       if let accepted { encoded=InkStoredBody.restoringRevision(reference.revision,body:accepted) }
       else {
@@ -148,9 +154,9 @@ extension NotebookSQLConnection {
         // writer, not be mistaken for today's canonical shared-parts output.
         if graph { inkDecoding.retainStoredOutput(encoded.dropFirst(20),hash:reference.inkBody) }
       }
-      value=try value.replacingInk(at:path[...],with:.string(encoded.base64EncodedString()))
+      if expandingInk { value=try value.replacingInk(at:path[...],with:.string(encoded.base64EncodedString())) }
     }
-    return raw.replacing(value:value)
+    return expandingInk ? raw.replacing(value:value) : raw
   }
 
   private func inkBlobInfo(_ hash: String) throws -> (count:Int,signature:Data) {
@@ -182,9 +188,9 @@ extension NotebookSQLConnection {
     return bytes
   }
 
-  func decodedStoredFragment(from data: Data) throws -> NotebookStoredFragment {
+  func decodedStoredFragment(from data: Data,expandingInk:Bool = true) throws -> NotebookStoredFragment {
     var remaining=max(0,Int64(256*1024*1024-data.count))
-    return try decodedStoredFragment(from:data,remainingBytes:&remaining,budget:"ink body read")
+    return try decodedStoredFragment(from:data,remainingBytes:&remaining,budget:"ink body read",expandingInk:expandingInk)
   }
 }
 

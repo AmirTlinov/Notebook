@@ -76,9 +76,10 @@ extension InkSampleRelations: Codable {
         case .literal(let samples):
           out.byte(0); out.integer(UInt32(samples.count))
           for sample in samples.values { guard sample.isValid else { throw CodingError.invalidSource }; out.sample(sample) }
-        case .fields(let fields, let count):
-          guard Self.valid(fields: fields, count: count) else { throw CodingError.invalidSource }
-          out.byte(1); out.integer(UInt32(count))
+        case .fields(let fields, let count, let tile):
+          guard Self.valid(fields:fields,count:count,tile:tile) else { throw CodingError.invalidSource }
+          out.byte(tile == nil ? 1 : 5);out.integer(UInt32(count))
+          if let tile { out.integer(tile.x);out.integer(tile.y) }
           for field in fields {
             switch field {
             case .constant(let bits): out.byte(0); out.integer(bits)
@@ -103,8 +104,9 @@ extension InkSampleRelations: Codable {
 
   /// Prove affine leaves on their common binary lattice, without walking the
   /// generated events. Only irreducible literal fields need a scalar scan.
-  private static func valid(fields: [Field], count: Int) -> Bool {
-    guard fields.count == 8, (1...blockSize).contains(count) else { return false }
+  private static func valid(fields: [Field], count: Int, tile: Block.Tile? = nil) -> Bool {
+    guard fields.count == (tile == nil ? 8 : 10),tile?.isValid != false,
+      (1...blockSize).contains(count) else { return false }
     for (index, field) in fields.enumerated() {
       let low: Double, high: Double
       switch field {
@@ -133,6 +135,7 @@ extension InkSampleRelations: Codable {
       case 2,5: guard low >= 0 else { return false }
       case 3: guard low > 0 else { return false }
       case 4: guard low >= 0,high <= 1 else { return false }
+      case 8,9: guard low >= 0,high < WorldPoint.tileSize else { return false }
       default: break
       }
     }
@@ -184,7 +187,7 @@ extension InkSampleRelations: Codable {
       }
       var node: Sequence
       switch tag {
-      case 0, 1:
+      case 0, 1, 5:
         let count = Int(try input.integer(UInt32.self))
         guard count <= Self.blockSize else { throw CodingError.invalidSource }
         let block: Block
@@ -192,7 +195,8 @@ extension InkSampleRelations: Codable {
           block = .literal(.init(try (0..<count).map { _ in try input.sample() }))
         } else {
           guard count > 0 else { throw CodingError.invalidSource }
-          let fields: [Field] = try (0..<8).map { _ in
+          let tile:Block.Tile? = tag == 5 ? try .init(x:input.integer(Int64.self),y:input.integer(Int64.self)) : nil
+          let fields: [Field] = try (0..<(tile == nil ? 8 : 10)).map { _ in
             switch try input.byte() {
             case 0: return .constant(try input.integer(UInt64.self))
             case 1: return .progression(try input.dyadic(), try input.dyadic())
@@ -200,8 +204,8 @@ extension InkSampleRelations: Codable {
             default: throw CodingError.invalidSource
             }
           }
-          guard Self.valid(fields: fields, count: count) else { throw CodingError.invalidSource }
-          block = .fields(fields, count)
+          guard Self.valid(fields:fields,count:count,tile:tile) else { throw CodingError.invalidSource }
+          block = .fields(fields,count,tile)
         }
         node = Sequence(block: block)
       case 2:
@@ -504,8 +508,8 @@ struct InkStoredBody {
       var reader=InkRelationReader(data:data)
       guard try reader.bytes(4) == node else { throw InkSampleRelations.CodingError.invalidSource }
       _=try reader.flag();let tag=try reader.byte()
-      guard tag <= 4 else { throw InkSampleRelations.CodingError.invalidSource }
-      let count=tag == 2 ? 2 : tag >= 3 ? 1 : 0
+      guard tag <= 5 else { throw InkSampleRelations.CodingError.invalidSource }
+      let count=tag == 2 ? 2 : (tag == 3 || tag == 4) ? 1 : 0
       var children:[(Int,String)]=[]
       for _ in 0..<count {
         let distance=Int(try reader.integer(UInt32.self))

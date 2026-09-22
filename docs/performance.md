@@ -32,9 +32,19 @@ accepted contact completion; shared edits additionally respect publication fence
 `SpatialInkMesh` keeps tile-local sources. Long, independently renderable ranges
 query `InkSampleRelations.Sequence` bounds before preparing display nodes; repeats
 have virtual chunks, not one allocated descriptor per logical chunk. Neighbour
-halos preserve joins. Coalescing-dependent input uses the existing full normalizer;
+halos preserve joins. Display normalization visits only ranges whose projected
+neighbours may coincide; distinct branches retain their original bodies. A point
+survives when its raw successor is distinct, so returning contours are not
+normalized twice. Exact coincident repeat seams retain one trimmed shared body;
 a proved stationary range reads only its last measurement. Short prepared strokes
 share the existing chunk index instead of retaining one source/index per stroke.
+
+World leaves retain an exact integer tile basis with independent paper and local
+world fields. They never flatten large addresses to absolute Doubles. Field
+generators must reproduce every IEEE bit; mixed tiles remain literal leaves.
+Portable, shared stored bodies and delivery use this same checked graph codec.
+Composite receipts can name several bounded ink bodies; the command still pays
+for every logical expansion, including cached repeats, within its total read lease.
 
 Canonical literal blocks borrow one immutable COW sample buffer. Retention counts
 its actual capacity once; the joint journal/mesh cache adds only unshared bytes.

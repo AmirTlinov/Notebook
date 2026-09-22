@@ -118,20 +118,17 @@ struct NotebookAgentCommandBudgetTests {
       operations: [.init(kind: kind, target: target, id: id, values: values)])
   }
 
-  @Test(arguments: [CollaborationOperation.Kind.insertElement, .removeElement, .reorderElements])
+  @Test(arguments: [CollaborationOperation.Kind.removeElement, .reorderElements])
   func structuralPageCommandsRefuseACompleteOversizedOwnerWithoutWriting(kind: CollaborationOperation.Kind) throws {
     try fixture { store, actor, initial in
       let page = try largePage(initial, actor: actor, store: store)
       let cursor = try store.currentChangeCursor()
       let values: [String: JSONValue]
       switch kind {
-      case .insertElement:
-        values = ["kind": .string("markdown"), "source": .string("New"),
-          "frame": try .encode(PageRect(x: 600, y: 600, width: 100, height: 100))]
       case .reorderElements: values = ["ids": .array([.string("small"), .string("large")])]
       default: values = [:]
       }
-      let operation = action(page, kind: kind, id: kind == .insertElement ? "new" : kind == .removeElement ? "small" : nil,
+      let operation = action(page, kind: kind, id: kind == .removeElement ? "small" : nil,
         values: values)
       #expect(throws: NotebookStorageError.limitExceeded("agent_command_read")) {
         try store.applyCollaborationAction(operation, actor: actor)
@@ -142,10 +139,13 @@ struct NotebookAgentCommandBudgetTests {
     }
   }
 
-  @Test func anAddressedEditOfTheSameLargePageStillCommitsRetriesAndUndoes() throws {
+  @Test(arguments: [CollaborationOperation.Kind.updateElement, .insertElement])
+  func anAddressedEditOfTheSameLargePageStillCommitsRetriesAndUndoes(kind:CollaborationOperation.Kind) throws {
     try fixture { store, actor, initial in
       let page = try largePage(initial, actor: actor, store: store)
-      let change = action(page, kind: .updateElement, id: "small", values: ["source": .string("After")])
+      let values:[String:JSONValue] = kind == .insertElement ? ["kind":.string("markdown"),"source":.string("New"),
+        "frame":try .encode(PageRect(x:600,y:600,width:100,height:100))] : ["source":.string("After")]
+      let change = action(page, kind:kind,id:kind == .insertElement ? "new" : "small",values:values)
       let receipt = try store.applyCollaborationAction(change, actor: actor)
       let cursor = try store.currentChangeCursor()
       #expect(try store.applyCollaborationAction(change, actor: actor) == receipt)

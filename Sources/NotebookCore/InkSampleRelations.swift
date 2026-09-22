@@ -90,32 +90,53 @@ public struct InkSampleRelations: Sendable {
   }
   enum Block: Sendable {
     case literal(Samples)
-    case fields([Field], Int)
-    var count: Int { switch self { case .literal(let a): a.count; case .fields(_,let n): n } }
+    struct Tile: Equatable, Sendable {
+      let x: Int64, y: Int64
+      func point(x:Double,y:Double) -> WorldPoint {
+        // Fields are already normalized and validated. Do not normalize again:
+        // that could destroy signed zero or subnormal local coordinates.
+        WorldPoint(exactTileX:self.x,tileY:self.y,localX:x,localY:y)!
+      }
+      var isValid: Bool {
+        (-WorldPoint.maximumTileIndex...WorldPoint.maximumTileIndex).contains(x)
+          && (-WorldPoint.maximumTileIndex...WorldPoint.maximumTileIndex).contains(y)
+      }
+    }
+    case fields([Field], Int, Tile?)
+    var count: Int { switch self { case .literal(let a): a.count; case .fields(_,let n,_): n } }
     init(_ samples: ArraySlice<SpatialInkSample>) { self.init(Samples(Array(samples))) }
     init(_ view: Samples) {
       let samples=view.values
-      // Tiled coordinates are already a relative, exact type. Preserve them as
-      // literals until their range proof is implemented, never flatten the tile.
-      guard samples.count >= 4, samples.allSatisfy({ $0.worldPoint == nil }) else {
-        self = .literal(view); return
-      }
+      guard samples.count >= 4 else { self = .literal(view); return }
+      let tile:Tile?
+      if let first=samples.first?.worldPoint,first.isValid,
+        samples.allSatisfy({ $0.worldPoint?.isValid == true && $0.worldPoint?.tileX == first.tileX && $0.worldPoint?.tileY == first.tileY }) {
+        tile = .init(x:first.tileX,y:first.tileY)
+      } else if samples.allSatisfy({ $0.worldPoint == nil }) { tile=nil }
+      else { self = .literal(view);return }
+      // One exact integer tile basis per leaf; local world fields and the
+      // independent paper fields retain their original IEEE values.
       // Direct field access avoids dynamic key-path traversal for every event
       // in this cold path. The exact recognition/proof remains field-local.
       let x=Field(samples.map { $0.point.x.bitPattern }),y=Field(samples.map { $0.point.y.bitPattern })
-      let fields: [Field] = [x,y,
+      var fields: [Field] = [x,y,
         .init(samples.map { $0.timeOffset.bitPattern }), .init(samples.map { $0.width.bitPattern }),
         .init(samples.map { $0.opacity.bitPattern }), .init(samples.map { $0.force.bitPattern }),
         .init(samples.map { $0.azimuth.bitPattern }), .init(samples.map { $0.altitude.bitPattern })]
 
+      if tile != nil {
+        fields.append(.init(samples.map { $0.worldPoint!.localX.bitPattern }))
+        fields.append(.init(samples.map { $0.worldPoint!.localY.bitPattern }))
+      }
       let bytes = fields.count * MemoryLayout<Field>.stride + fields.reduce(0) { $0 + $1.payloadBytes }
-      self = bytes < samples.count * MemoryLayout<SpatialInkSample>.stride ? .fields(fields,samples.count) : .literal(view)
+      self = bytes < samples.count * MemoryLayout<SpatialInkSample>.stride ? .fields(fields,samples.count,tile) : .literal(view)
     }
     func sample(at i: Int) -> SpatialInkSample {
       switch self {
       case .literal(let a): return a[i]
-      case .fields(let f,_):
-        return .init(point:.init(x:f[0].value(at:i),y:f[1].value(at:i)),timeOffset:f[2].value(at:i),
+      case .fields(let f,_,let tile):
+        return .init(point:.init(x:f[0].value(at:i),y:f[1].value(at:i)),
+          worldPoint:tile.map { $0.point(x:f[8].value(at:i),y:f[9].value(at:i)) },timeOffset:f[2].value(at:i),
           width:f[3].value(at:i),opacity:f[4].value(at:i),force:f[5].value(at:i),
           azimuth:f[6].value(at:i),altitude:f[7].value(at:i))
       }
@@ -134,7 +155,8 @@ public struct InkSampleRelations: Sendable {
           result=result.union(Sequence.pointBounds(p.point.x,p.point.y,p.width))
         }
         return result
-      case .fields(let fields,_):
+      case .fields(let fields,_,let tile):
+        guard tile == nil else { return .infinite }
         let affine=[0,1,3].allSatisfy { if case .literal=fields[$0] { return false };return true }
         let indices=affine ? [range.lowerBound,range.upperBound-1] : Array(range)
         var result=CGRect.null
@@ -146,13 +168,13 @@ public struct InkSampleRelations: Sendable {
       }
     }
     var hasGenerator: Bool {
-      guard case .fields(let fields,_)=self else { return false }
+      guard case .fields(let fields,_,_)=self else { return false }
       return fields.contains { if case .literal=$0 { return false };return true }
     }
     var payloadBytes: Int {
       switch self {
       case .literal(let a): return a.count * MemoryLayout<SpatialInkSample>.stride
-      case .fields(let f,_): return f.count * MemoryLayout<Field>.stride + f.reduce(0) { $0 + $1.payloadBytes }
+      case .fields(let f,_,_): return f.count * MemoryLayout<Field>.stride + f.reduce(0) { $0 + $1.payloadBytes }
       }
     }
   }

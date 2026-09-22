@@ -97,15 +97,23 @@ import Testing
     #expect(display.prepare(0..<1).decodedPoints == 4)
     #expect(SpatialInkGeometry.compact(source:source(samples,tool:.eraser)).count == samples.count)
   }
-  @Test func repeatSeamsAndNumericalCoalescingRemainUnreduced() throws {
+  @Test func repeatFoldsRemainUnreducedAndCoincidentSeamsNormalizeOnce() throws {
     let body=source((0..<100).map { sample($0) })
     for step in [0.0,99,50] {
       let repeated=try #require(body.settingExit(.init(x:InkDyadic(step)!,y:.zero,time:.one),revision:UUID()).repeated(100,revision:UUID()))
       #expect(!repeated.geometry.isUniformAxisStrip)
-      #expect(SpatialInkGeometry.Source(source:repeated,projection:.init()).chunkCount > 1)
+      let display=SpatialInkGeometry.Source(source:repeated,projection:.init())
+      if step == 99 {
+        // Coincident seams disappear under the existing last-point rule;
+        // the resulting monotone strip has one exact relative description.
+        #expect(display.chunkCount == 1)
+        let nodes=display.prepare(0..<1).chunk.nodes
+        #expect(nodes.first?.position.x == 0);#expect(nodes.last?.position.x == 9900)
+        #expect(nodes.allSatisfy { $0.edge == .init(0,2) && $0.alpha == 0.5 })
+      } else { #expect(display.chunkCount > 1) }
     }
     let close=source((0..<1000).map { sample($0,x:Double($0)/8192) })
-    #expect(SpatialInkGeometry.RelativeSource(close,projection:.init()) == nil)
+    #expect(SpatialInkGeometry.RelativeSource(close,projection:.init())?.prepare(0..<1).chunk.nodes.count == 1)
     var indices:[Int]=[]
     close.forEachIndexedDisplayPoint { i,_,_,_ in indices.append(i) }
     #expect(indices.count == close.count)
@@ -168,7 +176,7 @@ import Testing
       var far=0
       value.forEachDisplayPoint(origin:remote) { _,_,_ in far += 1 }
       #expect(far == samples.count,"Float coalescing must use the requested projection, not the first event's origin")
-      #expect(SpatialInkGeometry.RelativeSource(value,projection:.init(origin:remote)) == nil)
+      #expect(SpatialInkGeometry.RelativeSource(value,projection:.init(origin:remote)) != nil)
     }
     let i=2048,p=samples[i]
     let bend=SpatialInkSample(point:p.point,worldPoint:p.worldPoint!.offsetBy(x:vertical ? 8 : 0,y:vertical ? 0 : 8),

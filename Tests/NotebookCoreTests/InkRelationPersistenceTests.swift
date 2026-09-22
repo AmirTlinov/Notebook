@@ -112,17 +112,22 @@ struct InkRelationPersistenceTests {
     }
   }
 
-  @Test func oneLocalEditDeliversOnlyChangedGraphPartsAndStillUndoesAtThePeer() throws {
+  @Test(arguments:[false,true])
+  func oneLocalEditDeliversOnlyChangedGraphPartsAndStillUndoesAtThePeer(world:Bool) throws {
     try fixture { a,b,actor,_,page in
+      let origin:WorldPoint?=world ? .init(tileX:WorldPoint.maximumTileIndex-1000,
+        tileY:-WorldPoint.maximumTileIndex+1000,localX:20,localY:40) : nil
       let values:[SpatialInkSample]=(0..<100_000).map { i in
         let point=SpatialPoint(x:Double(i)/2,y:64+sin(Double(i)*0.31)*20)
         let force=Double((i*17)%997)/1024
-        return .init(point:point,timeOffset:Double(i)/128,width:4,opacity:0.75,force:force,azimuth:0,altitude:1)
+        return .init(point:point,worldPoint:origin?.offsetBy(x:point.x,y:point.y),
+          timeOffset:Double(i)/128,width:4,opacity:0.75,force:force,azimuth:0,altitude:1)
       }
       let source=InkSampleRelations(sourceID:UUID(),revision:UUID(),samples:values,header:.init(tool:.pen,color:.black))
       let frame=PageRect(x:0,y:0,width:50_000,height:128),target=CollaborationTarget(kind:.page,id:page)
       func freehand(_ source: InkSampleRelations) -> NotebookFreehand {
-        .init(layers:[.init(tool:.pen,color:.black,measured:.init(sourceID:source.sourceID,measurements:source.measurements,frame:frame))])
+        .init(layers:[.init(tool:.pen,color:.black,measured:.init(sourceID:source.sourceID,
+          measurements:source.measurements,frame:frame,origin:origin))])
       }
       let graphic=NotebookGraphic(shape:.freehand,freehand:freehand(source)),start=ContinuousClock.now
       _=try a.applyNativeElementEdits([.init(kind:.insertElement,target:target,id:"source",values:[
@@ -131,7 +136,8 @@ struct InkRelationPersistenceTests {
       try receiveFixtureChanges(from:a,to:b,peerID:actor)
       let initial=start.duration(to:.now),cursor=try a.currentChangeCursor()
       let before=try #require(try a.readPageElement(pageID:page,elementID:"source"))
-      let changed=try source.editing(source.address(at:50_027),to:.init(point:values[50_027].point,timeOffset:values[50_027].timeOffset,
+      let changed=try source.editing(source.address(at:50_027),to:.init(point:values[50_027].point,
+        worldPoint:values[50_027].worldPoint,timeOffset:values[50_027].timeOffset,
         width:12,opacity:1,force:0.5,azimuth:0,altitude:1),revision:UUID())
       let saveStart=ContinuousClock.now
       let receipt=try a.applyNativeElementEdits([.init(kind:.updateElement,target:target,id:"source",values:[
@@ -170,7 +176,7 @@ struct InkRelationPersistenceTests {
       #expect(InkSampleRelations.sameBits(source.sample(at:50_027),values[50_027]))
       _=try peer.undoCollaborationAction(receipt.id,actor:UUID())
       #expect(try peer.readPageElement(pageID:page,elementID:"source")?.graphic == graphic)
-      print("INK_GRAPH_LOCAL_EDIT events=100000 fullBodyBytes=\(portableBytes.count) newParts=\(newParts) sourceTransferredBytes=\(sourceBytes) allTransferredBytes=\(allBytes) initialSaveAndDelivery=\(initial) editSave=\(save) editDelivery=\(transfer)")
+      print("INK_GRAPH_LOCAL_EDIT world=\(world) events=100000 fullBodyBytes=\(portableBytes.count) newParts=\(newParts) sourceTransferredBytes=\(sourceBytes) allTransferredBytes=\(allBytes) initialSaveAndDelivery=\(initial) editSave=\(save) editDelivery=\(transfer)")
     }
   }
 
@@ -229,6 +235,29 @@ struct InkRelationPersistenceTests {
       #expect(try db.encodedStoredFragment(again) == bytes)
       try db.checkReadAllowance()
       #expect(db.inkDecoding.retainedBytes <= db.inkDecoding.byteLimit)
+    }
+  }
+
+  @Test func compositeInkValuesKeepIndividualAndTotalReadLimitsIncludingCachedRepeats() throws {
+    try fixture { a,_,_,_,_ in
+      let portable=try JSONValue.encode(source().measurements),logical=try #require(portable.string).utf8.count
+      let fragment=NotebookStoredFragment(address:"local/composite-ink.json#",file:"local/composite-ink.json",parent:nil,
+        collection:"",member:"",position:0,value:.array([portable,portable,portable]),collections:[])
+      let bytes=try a.commandTransaction { try a.currentSQL!.encodedStoredFragment(fragment) }
+      for warm in [false,true] {
+        let db=try NotebookSQLConnection(url:a.databaseURL,writable:false)
+        if warm { #expect(try db.decodedStoredFragment(from:bytes) == fragment) }
+        try db.limitReads(.init(rows:100,bytes:logical*4,valueBytes:logical+bytes.count,reason:"individual-body"))
+        #expect(try db.decodedStoredFragment(from:bytes) == fragment)
+      }
+      for perValue in [false,true] {
+        let db=try NotebookSQLConnection(url:a.databaseURL,writable:false)
+        _=try db.decodedStoredFragment(from:bytes)
+        try db.limitReads(.init(rows:100,bytes:perValue ? logical*4 : logical*2,
+          valueBytes:perValue ? logical-1 : logical+bytes.count,reason:"bounded-bodies"))
+        #expect(throws:NotebookStorageError.limitExceeded("bounded-bodies")) { try db.decodedStoredFragment(from:bytes) }
+        #expect(throws:NotebookStorageError.limitExceeded("bounded-bodies")) { try db.checkReadAllowance() }
+      }
     }
   }
 

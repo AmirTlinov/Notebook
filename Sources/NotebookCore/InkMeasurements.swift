@@ -103,7 +103,7 @@ extension InkSampleRelations.Sequence {
       if seen.contains(pair) { return true }
       let same:Bool
       switch (a.content,b.content) {
-      case (.block(.fields(let a,let n)),.block(.fields(let b,let m))): same=n == m && a == b
+      case (.block(.fields(let a,let n,let x)),.block(.fields(let b,let m,let y))): same=n == m && a == b && x == y
       case (.block(.literal(let a)),.block(.literal(let b))):
         same=a.count == b.count && zip(a.values,b.values).allSatisfy(InkSampleRelations.sameBits)
       case (.pair(let a,let b),.pair(let c,let d)): same=equal(a,c) && equal(b,d)

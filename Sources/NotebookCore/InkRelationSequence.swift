@@ -145,19 +145,20 @@ extension InkSampleRelations {
       init?(_ block: Block) {
         guard block.count > 0 else { return nil }
         switch block {
-        case .fields(let f,_):
+        case .fields(let f,_,let tile):
+          let x=tile == nil ? 0 : 8,y=x+1
           guard case .constant(let w)=f[3],case .constant(let a)=f[4] else { return nil }
           var direction: UInt8
-          switch (f[0],f[1]) {
+          switch (f[x],f[y]) {
           case (.progression(_,let step),.constant): direction=step.value > 0 ? 1 : step.value < 0 ? 2 : 0
           case (.constant,.progression(_,let step)): direction=step.value > 0 ? 4 : step.value < 0 ? 8 : 0
           default:
             // A literal coordinate (including a preserved negative zero) can
             // still prove this display property. Scan only this bounded leaf.
             direction=15
-            var previous=Coordinate.paper(.init(x:f[0].value(at:0),y:f[1].value(at:0)))
+            var previous=Coordinate.paper(.init(x:f[x].value(at:0),y:f[y].value(at:0)))
             for i in 1..<block.count {
-              let point=Coordinate.paper(.init(x:f[0].value(at:i),y:f[1].value(at:i)))
+              let point=Coordinate.paper(.init(x:f[x].value(at:i),y:f[y].value(at:i)))
               direction &= Self.directions(from:previous,to:point)
               guard direction != 0 else { return nil };previous=point
             }
@@ -205,7 +206,7 @@ extension InkSampleRelations {
         // Translucent composition has no coarse certificate here. Do not pay
         // for contour summaries that its display cannot use.
         switch block {
-        case .fields(let fields,_):
+        case .fields(let fields,_,_):
           guard case .constant(let alpha)=fields[4],alpha == Double(1).bitPattern else { return nil }
         case .literal(let samples): guard samples.values.allSatisfy({ $0.opacity == 1 }) else { return nil }
         }
@@ -216,8 +217,11 @@ extension InkSampleRelations {
         var previous: SIMD2<Double>?
         for i in 0..<block.count {
           let p: SIMD2<Double>,width: Double
-          if case .fields(let fields,_)=block {
-            p = .init(fields[0].value(at:i),fields[1].value(at:i));width=fields[3].value(at:i)
+          if case .fields(let fields,_,let tile)=block {
+            if tile != nil,let origin=first.origin {
+              p = .init(fields[8].value(at:i)-origin.localX,fields[9].value(at:i)-origin.localY)
+            } else { p = .init(fields[0].value(at:i),fields[1].value(at:i)) }
+            width=fields[3].value(at:i)
           } else {
             let sample=block.sample(at:i)
             guard let local=Coordinate(sample).relative(to:first.origin) else { return nil }
@@ -285,18 +289,24 @@ extension InkSampleRelations {
       } else { curve=Curve(block:block,first:first!,last:last!) }
       var cost=AccessCost()
       bounds=Self.bounds(block,in:0..<block.count,origin:first?.origin,cost:&cost)
-      if case .fields(let fields,_)=block {
+      if case .fields(let fields,_,let tile)=block {
+        let offset=tile == nil ? 0 : 8
         func step(_ f: Field) -> Double? {
           switch f { case .constant: return 0;case .progression(_,let d): return d.value;case .literal: return nil }
         }
-        if let x=step(fields[0]),let y=step(fields[1]) {
+        if let x=step(fields[offset]),let y=step(fields[offset+1]) {
           minimumSpacing=block.count == 1 ? .infinity : max(0,hypot(x,y).nextDown);stationary=x == 0 && y == 0;return
         }
       }
-      var spacing=Double.infinity,previous=first!,same=true
+      // Within one tiled leaf, spacing is local-coordinate subtraction. Read
+      // just those fields, not ten reconstructed measurements per neighbour.
+      let fields:[Field]?,offset:Int
+      if case .fields(let f,_,let tile)=block { fields=f;offset=tile == nil ? 0 : 8 }
+      else { fields=nil;offset=0 }
+      var spacing=Double.infinity,previous=fields.map { Coordinate.paper(.init(x:$0[offset].value(at:0),y:$0[offset+1].value(at:0))) } ?? first!,same=true
       for i in 1..<block.count {
         let next: Coordinate
-        if case .fields(let f,_)=block { next = .paper(.init(x:f[0].value(at:i),y:f[1].value(at:i))) }
+        if let fields { next = .paper(.init(x:fields[offset].value(at:i),y:fields[offset+1].value(at:i))) }
         else { next=Coordinate(block.sample(at:i)) }
         spacing=min(spacing,previous.distance(to:next));same = same && previous == next;previous=next
       }
@@ -310,12 +320,22 @@ extension InkSampleRelations {
         return block.bounds(in:range,cost:&cost)
       }
       var result=CGRect.null
-      for i in range {
+      let indices:[Int]
+      if case .fields(let fields,_,.some)=block,
+        [3,8,9].allSatisfy({ if case .literal=fields[$0] { return false };return true }),!range.isEmpty {
+        indices=[range.lowerBound,range.upperBound-1]
+      } else { indices=Array(range) }
+      for i in indices {
         cost.decodedSamples += 1
-        let sample=block.sample(at:i)
-        guard let world=sample.worldPoint else { return .infinite }
-        let point=origin.delta(to:world)
-        result=result.union(Sequence.pointBounds(point.x,point.y,sample.width))
+        let point:SpatialPoint,width:Double
+        if case .fields(let fields,_,let tile?)=block {
+          point=origin.delta(to:tile.point(x:fields[8].value(at:i),y:fields[9].value(at:i)));width=fields[3].value(at:i)
+        } else {
+          let sample=block.sample(at:i)
+          guard let world=sample.worldPoint else { return .infinite }
+          point=origin.delta(to:world);width=sample.width
+        }
+        result=result.union(Sequence.pointBounds(point.x,point.y,width))
       }
       return result
     }
@@ -428,13 +448,15 @@ extension InkSampleRelations {
         worldEvents:Self.worldEvents(in:block),hasVisibleInk:Self.hasVisibleInk(in:block),domain:Self.domain(of:block))
     }
     private static func worldEvents(in block: Block) -> Int {
-      if case .literal(let samples)=block { return samples.values.reduce(0) { $0+($1.worldPoint == nil ? 0 : 1) } }
-      return 0
+      switch block {
+      case .literal(let samples): return samples.values.reduce(0) { $0+($1.worldPoint == nil ? 0 : 1) }
+      case .fields(_,let count,let tile): return tile == nil ? 0 : count
+      }
     }
     private static func hasVisibleInk(in block: Block) -> Bool {
       switch block {
       case .literal(let samples): return samples.values.contains { $0.opacity > 0 }
-      case .fields(let fields,let count):
+      case .fields(let fields,let count,_):
         switch fields[4] {
         case .literal(let bits): return bits.contains { Double(bitPattern:$0) > 0 }
         default: return count > 0 && (fields[4].value(at:0) > 0 || fields[4].value(at:count-1) > 0)
@@ -460,8 +482,8 @@ extension InkSampleRelations {
         }
       }
       switch block {
-      case .fields(let fields,_):
-        return (0..<3).map { fieldDomain(fields[$0]) }
+      case .fields(let fields,_,let tile):
+        return (0..<3).map { tile != nil && $0 < 2 ? nil : fieldDomain(fields[$0]) }
       case .literal(let samples):
         var ranges=[Lattice?](repeating:nil,count:3),valid=[true,true,true]
         for (i,p) in samples.values.enumerated() {
@@ -889,7 +911,11 @@ extension InkSampleRelations {
           case .literal(let a):
             let p=a[i], local=origin.flatMap { start in p.worldPoint.map { start.delta(to:$0) } } ?? p.point
             emit(base+i,local.x,local.y,p.width,p.opacity)
-          case .fields(let f,_): emit(base+i,f[0].value(at:i),f[1].value(at:i),f[3].value(at:i),f[4].value(at:i))
+          case .fields(let f,_,let tile):
+            let p:SpatialPoint
+            if let tile,let origin { p=origin.delta(to:tile.point(x:f[8].value(at:i),y:f[9].value(at:i))) }
+            else { p = .init(x:f[0].value(at:i),y:f[1].value(at:i)) }
+            emit(base+i,p.x,p.y,f[3].value(at:i),f[4].value(at:i))
           }
         }
         for i in range { point(i) }

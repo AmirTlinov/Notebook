@@ -127,39 +127,47 @@ extension SpatialInkGeometry {
     }
   }
 
-  /// Virtual chunks use the source's range tree; there is no second bounds tree
-  /// or per-event display array. Coalescing-ambiguous input uses the same existing
-  /// full normalizer instead: omitting its prefix state would change the stroke.
+  /// Virtual chunks borrow the source's range tree. Only ambiguous branches
+  /// produce a normalized display view; untouched bodies remain shared. The
+  /// original measurements and their logical addresses never change.
   public struct RelativeSource: Sendable {
     public let source: InkSampleRelations
+    private let display: InkSampleRelations
+    public let normalizationCost: InkSampleRelations.AccessCost
     public let projection: InkSampleProjection
     private var uniformStrip=false
     private var minimumSpacing=Double.infinity, maximumSpan=Double.zero
-    public var bounds: CGRect { projected(source.geometry.bounds) }
-    public var chunkCount: Int { source.count == 0 ? 0 : source.geometry.stationary || uniformStrip ? 1 : max(1,(source.count-2)/InkRenderGeometry.maximumSegments+1) }
+    public var bounds: CGRect { projected(display.geometry.bounds) }
+    public var chunkCount: Int { display.count == 0 ? 0 : display.count <= 1 || uniformStrip ? 1 : max(1,(display.count-2)/InkRenderGeometry.maximumSegments+1) }
     public init?(_ source: InkSampleRelations,projection: InkSampleProjection) {
       self.source=source;self.projection=projection
-      let geometry=source.geometry
-      guard geometry.origin == nil || projection.origin != nil else { return nil }
-      let box=projected(geometry.bounds)
-      let magnitude=[box.minX,box.minY,box.maxX,box.maxY].map { abs(Float($0)) }.max() ?? .infinity
-      let error=4*Double(magnitude.ulp)
-      guard source.count <= 1 || geometry.stationary || (error.isFinite && geometry.minimumSpacing*abs(projection.scale)
-        > Double(InkStrokeGeometry.minimumDistanceSquared.squareRoot())+error) else { return nil }
+      guard source.geometry.origin == nil || projection.origin != nil else { return nil }
+      var cost=InkSampleRelations.AccessCost()
+      let root=source.storage.root.normalizedForDisplay(projection:projection,cost:&cost)
+      normalizationCost=cost
+      display=root === source.storage.root ? source : .init(sourceID:source.sourceID,span:source.span,
+        revision:source.revision,count:root.count,storage:.init(root),frames:source.frames,header:source.header)
+      let geometry=display.geometry,error=InkSampleRelations.Sequence.projectionError(geometry,projection:projection)
       minimumSpacing=(Double(InkStrokeGeometry.minimumDistanceSquared.squareRoot())+error)/abs(projection.scale)
       maximumSpan=Double(Float.greatestFiniteMagnitude.squareRoot())/4/abs(projection.scale)
-      uniformStrip=source.header.tool == .pen && geometry.canReduceAxisStrip(minimumSpacing:minimumSpacing,maximumSpan:maximumSpan)
+      uniformStrip=display.header.tool == .pen && geometry.canReduceAxisStrip(minimumSpacing:minimumSpacing,maximumSpan:maximumSpan)
+    }
+    var normalizationBytes: Int {
+      guard display.storage !== source.storage else { return 0 }
+      var seen=Set<ObjectIdentifier>()
+      _ = source.storage.root.allocationSummary(seen:&seen)
+      return display.storage.byteCount+display.storage.root.allocationSummary(seen:&seen).bytes
     }
     public func range(at selection: Range<Int>) -> Range<Int> {
       precondition(!selection.isEmpty && selection.lowerBound >= 0 && selection.upperBound <= chunkCount)
-      if source.geometry.stationary { return (source.count-1)..<source.count }
-      if uniformStrip { return 0..<source.count }
+      if display.count <= 1 { return (display.count-1)..<display.count }
+      if uniformStrip { return 0..<display.count }
       let start=selection.lowerBound*InkRenderGeometry.maximumSegments
-      return start..<min(source.count,selection.upperBound*InkRenderGeometry.maximumSegments+1)
+      return start..<min(display.count,selection.upperBound*InkRenderGeometry.maximumSegments+1)
     }
     private func projected(_ box: CGRect) -> CGRect {
       var box=box
-      if let origin=source.geometry.origin,let target=projection.origin {
+      if let origin=display.geometry.origin,let target=projection.origin {
         let d=target.delta(to:origin);box=InkSampleRelations.Geometry.offset(box,x:d.x,y:d.y)
       }
       let x=box.minX*projection.scale+projection.offset.x,y=box.minY*projection.scale+projection.offset.y
@@ -180,14 +188,14 @@ extension SpatialInkGeometry {
         let padding=8*Double(magnitude.ulp)
         return !padding.isFinite || SpatialInkGeometry.overlaps(bounds.insetBy(dx:-padding,dy:-padding),viewport)
       }
-      if source.geometry.stationary || uniformStrip {
-        let result=try! source.bounds(in:0..<source.count)
+      if display.count <= 1 || uniformStrip {
+        let result=try! display.bounds(in:0..<display.count)
         return (overlaps(result.bounds) ? [0..<1] : [],result.cost)
       }
       // Cancellation stops an obsolete frame, not an alternative renderer.
-      guard let query=try? source.querySegments(maximumSegments:InkRenderGeometry.maximumSegments,intersecting:overlaps,
-        coalescing:(allowRangeCoalescing || detail != nil) && source.header.tool == .pen ? { range,cost in
-          if allowRangeCoalescing && affine.preservesAxisAlignment && source.storage.root.canReduceAxisStrip(in:range,minimumSpacing:minimumSpacing,maximumSpan:maximumSpan,cost:&cost) { return true }
+      guard let query=try? display.querySegments(maximumSegments:InkRenderGeometry.maximumSegments,intersecting:overlaps,
+        coalescing:(allowRangeCoalescing || detail != nil) && display.header.tool == .pen ? { range,cost in
+          if allowRangeCoalescing && affine.preservesAxisAlignment && display.storage.root.canReduceAxisStrip(in:range,minimumSpacing:minimumSpacing,maximumSpan:maximumSpan,cost:&cost) { return true }
           return detail.map { canReduceCurve(range,detail:$0,cost:&cost) } ?? false
         } : nil) else {
         return ([],.init())
@@ -197,7 +205,7 @@ extension SpatialInkGeometry {
     private func canReduceCurve(_ range: Range<Int>,detail: InkRenderGeometry.Detail,cost: inout InkSampleRelations.AccessCost) -> Bool {
       guard projection.scale > 0,detail.pixelsPerUnit.isFinite,detail.pixelsPerUnit > 0,
         detail.minimumPixelsPerUnit.isFinite,detail.minimumPixelsPerUnit > 0 else { return false }
-      let geometry=source.storage.root.geometryCovering(range,cost:&cost)
+      let geometry=display.storage.root.geometryCovering(range,cost:&cost)
       // A contour bound is not a proof of translucent overlap composition.
       // Keep that material detailed; opaque strips cannot accumulate opacity.
       guard let curve=geometry.curve,
@@ -205,8 +213,8 @@ extension SpatialInkGeometry {
       let minimumRadius=max(Double(Float(curve.minimumWidth*projection.scale/2)),0.25)
       let maximumRadius=max(Double(Float(curve.maximumWidth*projection.scale/2)),0.25)
       guard 2*minimumRadius*Double(detail.minimumPixelsPerUnit) >= 1 else { return false }
-      let p=SpatialInkGeometry.renderPoint(from:source.storage.root.sample(at:range.lowerBound+1,cost:&cost),color:.init(repeating:1),projection:projection)
-      let q=SpatialInkGeometry.renderPoint(from:source.storage.root.sample(at:range.upperBound-2,cost:&cost),color:.init(repeating:1),projection:projection)
+      let p=SpatialInkGeometry.renderPoint(from:display.storage.root.sample(at:range.lowerBound+1,cost:&cost),color:.init(repeating:1),projection:projection)
+      let q=SpatialInkGeometry.renderPoint(from:display.storage.root.sample(at:range.upperBound-2,cost:&cost),color:.init(repeating:1),projection:projection)
       let a=SIMD2<Double>(p.position),b=SIMD2<Double>(q.position),chord=b-a,length=hypot(chord.x,chord.y)
       guard length > 0,length.isFinite else { return false }
       let direction=chord/length,normal=SIMD2<Double>(-direction.y,direction.x)
@@ -246,14 +254,14 @@ extension SpatialInkGeometry {
     }
     /// Bounds temporary geometry, not the number of exact source measurements.
     public func preparationPointLimit(_ selection: Range<Int>) -> Int {
-      if source.geometry.stationary { return 1 }
+      if display.count <= 1 { return 1 }
       if uniformStrip { return 4 }
       return selection.count > 1 ? 8 : range(at:selection).count+2
     }
     public func prepare(_ selection: Range<Int>) -> (chunk: PreparedChunk,decodedPoints: Int) {
       let range=range(at:selection)
-      let halo=source.geometry.stationary ? range : max(0,range.lowerBound-1)..<(range.upperBound+(range.upperBound < source.count ? 1 : 0))
-      let c=source.header.color,erase=source.header.tool == .eraser
+      let halo=display.count <= 1 ? range : max(0,range.lowerBound-1)..<(range.upperBound+(range.upperBound < display.count ? 1 : 0))
+      let c=display.header.color,erase=display.header.tool == .eraser
       let color: SIMD4<Float> = erase ? .init(repeating:1) : .init(Float(c.red),Float(c.green),Float(c.blue),1)
       var points:[RenderPoint]=[],owned:[Int]=[]
       func append(_ index: Int,_ p: RenderPoint) {
@@ -264,13 +272,13 @@ extension SpatialInkGeometry {
         // Preserve the four original nodes, their original cross sections,
         // and the two cap tangents. Halo points never become extra geometry.
         let kept=Set([range.lowerBound,range.lowerBound+1,range.upperBound-2,range.upperBound-1])
-        let indices=Set(kept.flatMap { [max(0,$0-1),$0,min(source.count-1,$0+1)] }).sorted()
+        let indices=Set(kept.flatMap { [max(0,$0-1),$0,min(display.count-1,$0+1)] }).sorted()
         for index in indices {
           if kept.contains(index) { owned.append(points.count) }
-          points.append(SpatialInkGeometry.renderPoint(from:source.sample(at:index),color:color,projection:projection))
+          points.append(SpatialInkGeometry.renderPoint(from:display.sample(at:index),color:color,projection:projection))
         }
       } else {
-        source.forEachIndexedDisplayPoint(in:halo,origin:projection.origin,offset:projection.offset,scale:projection.scale) { index,p,r,a in
+        display.forEachIndexedDisplayPoint(in:halo,origin:projection.origin,offset:projection.offset,scale:projection.scale) { index,p,r,a in
           let alpha=min(max(a,0),1)
           append(index,.init(position:p,radius:max(r,0.25),premultipliedColor:.init(color.x*alpha,color.y*alpha,color.z*alpha,alpha)))
         }
@@ -314,11 +322,11 @@ extension SpatialInkGeometry {
       switch storage {
       case .prepared(let n,let c,let index): return n.count*MemoryLayout<SpatialInkGeometry.Node>.stride+(index?.byteCount ?? 0)
         + c.reduce(0) { $0+MemoryLayout<Chunk>.stride+$1.metadataBytes }
-      case .relative(let r): return r.source.payloadBytes+MemoryLayout<RelativeSource>.stride-MemoryLayout<InkSampleRelations>.stride
+      case .relative(let r): return r.source.payloadBytes+r.normalizationBytes+MemoryLayout<RelativeSource>.stride-MemoryLayout<InkSampleRelations>.stride
       }
     }
     public var auxiliaryBytes: Int {
-      if case .relative(let r)=storage { return r.source.auxiliaryBytes+MemoryLayout<RelativeSource>.stride-MemoryLayout<InkSampleRelations>.stride }
+      if case .relative(let r)=storage { return r.source.auxiliaryBytes+r.normalizationBytes+MemoryLayout<RelativeSource>.stride-MemoryLayout<InkSampleRelations>.stride }
       return byteCount
     }
     public func query(viewport: CGRect,affine: InkAffine,allowRangeCoalescing: Bool = true, detail: InkRenderGeometry.Detail? = nil, admitting: ((CGRect) -> Bool)? = nil) -> (chunks: [Range<Int>],cost: InkSampleRelations.AccessCost) {

@@ -114,6 +114,90 @@ struct InkRelationCodecTests {
     _=try check(shifted)
   }
 
+  @Test func tiledFieldsPreserveIndependentPaperAndWorldBitsThroughTheStoredGraph() throws {
+    let points=try (0..<1025).map { i -> SpatialInkSample in
+      let world=try #require(WorldPoint(exactTileX:WorldPoint.maximumTileIndex,tileY:-WorldPoint.maximumTileIndex,
+        localX:i == 0 ? -0.0 : Double(i)/4,localY:i == 0 ? .leastNonzeroMagnitude : 4))
+      return .init(point:.init(x:Double(i)*2,y:12),worldPoint:world,timeOffset:Double(i)/128,
+        width:4,opacity:0.5,force:0.25,azimuth:-0.0,altitude:1)
+    }
+    let original=source(points),reopened=try check(original)
+    for i in points.indices { #expect(InkSampleRelations.sameBits(points[i],reopened.sample(at:i))) }
+    #expect(reopened.measurements.isWorld)
+    #expect(reopened.payloadBytes < points.count*MemoryLayout<SpatialInkSample>.stride/4)
+    let encoded=try original.measurements.encodedRelations(),plan=try InkStoredBody.Plan(encoded)
+    var blobs:[String:Data]=[:]
+    let root=try plan.write { data in
+      let hash=SHA256.hash(data:data).map { String(format:"%02x",$0) }.joined();blobs[hash]=data;return hash
+    }
+    let restored=try InkStoredBody.portable(try #require(blobs[root]),revision:original.revision) { try #require(blobs[$0]) }
+    #expect(restored == encoded)
+    #expect(blobs.values.contains { $0.starts(with:Data("NIN1".utf8)) && $0[5] == 5 })
+    let other=points.map { p in
+      SpatialInkSample(point:p.point,worldPoint:.init(tileX:WorldPoint.maximumTileIndex-1,
+        tileY:-WorldPoint.maximumTileIndex,localX:p.worldPoint!.localX,localY:p.worldPoint!.localY),
+        timeOffset:p.timeOffset,width:p.width,opacity:p.opacity,force:p.force,azimuth:p.azimuth,altitude:p.altitude)
+    }
+    #expect(original.measurements != source(other).measurements,"Tile identity is part of exact source equality")
+  }
+
+  @Test func malformedTiledFieldsCannotReachTheExactWorldConstructor() throws {
+    func leaf(tile:Int64=0,x:Double=0,y:Double=0) -> Data {
+      var result=Data([0,5])+le(UInt32(4))+le(tile)+le(Int64(0))
+      for value in [0.0,0,0,1,1,0,0,0,x,y] { result += Data([0])+le(value.bitPattern) }
+      return result
+    }
+    for invalid in [leaf(tile:WorldPoint.maximumTileIndex+1),leaf(tile:Int64.min),leaf(x:-1),
+      leaf(y:WorldPoint.tileSize),leaf(x:.infinity),leaf(y:.nan)] {
+      #expect(throws:InkSampleRelations.CodingError.self) { try InkSampleRelations(encodedRelations:graph([invalid])) }
+    }
+    let signed=try InkSampleRelations(encodedRelations:graph([leaf(x:-0.0,y:.leastNonzeroMagnitude)]))
+    #expect(signed.sample(at:0).worldPoint?.localX.bitPattern == (-0.0 as Double).bitPattern)
+    #expect(signed.sample(at:0).worldPoint?.localY.bitPattern == Double.leastNonzeroMagnitude.bitPattern)
+  }
+
+  @Test func tiledFieldCostIncludesEncodingRestoreAndTheRetainedSource() throws {
+    func ms(_ start:ContinuousClock.Instant) -> Double {
+      let t=start.duration(to:.now).components;return Double(t.seconds)*1000+Double(t.attoseconds)/1e15
+    }
+    let origin=WorldPoint(tileX:WorldPoint.maximumTileIndex-100,tileY:-WorldPoint.maximumTileIndex+100,localX:20,localY:40)
+    for irregular in [false,true] {
+      let points=(0..<100_000).map { i -> SpatialInkSample in
+        let x=Double(i)/4,y=irregular ? sin(Double(i))*30 : 0
+        return .init(point:.init(x:x,y:y),worldPoint:origin.offsetBy(x:x,y:y),timeOffset:Double(i)/128,
+          width:4,opacity:0.5,force:0.5,azimuth:0,altitude:1)
+      }
+      let buffer=InkSampleRelations.SampleBuffer(points)
+      // This is the representation used for every world leaf before tiled
+      // fields. It is an isolated cost control, not a second production path.
+      let literal:[InkSampleRelations.Block]=stride(from:0,to:points.count,by:256).map {
+        .literal(.init(buffer:buffer,range:$0..<min($0+256,points.count)))
+      }
+      var prepare:[Double]=[],controlPrepare:[Double]=[],encode:[Double]=[],controlEncode:[Double]=[]
+      var decode:[Double]=[],controlDecode:[Double]=[],bytes=0,controlBytes=0,retained=0,controlRetained=0
+      for _ in 0..<3 {
+        var start=ContinuousClock.now
+        let field=InkMeasurements(points);prepare.append(ms(start))
+        start = .now
+        let control=InkMeasurements(storage:.init(.from(literal)),revision:field.revision);controlPrepare.append(ms(start))
+        start = .now
+        let wire=try field.encodedRelations();encode.append(ms(start));bytes=wire.count
+        start = .now
+        let controlWire=try control.encodedRelations();controlEncode.append(ms(start));controlBytes=controlWire.count
+        start = .now
+        let reopened=try InkMeasurements(encodedRelations:wire);decode.append(ms(start));retained=reopened.payloadBytes
+        start = .now
+        let reopenedControl=try InkMeasurements(encodedRelations:controlWire);controlDecode.append(ms(start));controlRetained=reopenedControl.payloadBytes
+        for i in [0,255,256,50_000,99_999] { #expect(InkSampleRelations.sameBits(reopened[i],reopenedControl[i])) }
+      }
+      #expect(bytes < controlBytes/3);#expect(retained < controlRetained/3)
+      let report:[String:Any]=["irregular":irregular,"events":points.count,"fieldPrepareMS":prepare,"literalPrepareMS":controlPrepare,
+        "fieldEncodeMS":encode,"literalEncodeMS":controlEncode,"fieldDecodeMS":decode,"literalDecodeMS":controlDecode,
+        "fieldBytes":bytes,"literalBytes":controlBytes,"fieldRetainedBytes":retained,"literalRetainedBytes":controlRetained]
+      print("EXACT_WORLD_FIELD_COST "+String(decoding:try JSONSerialization.data(withJSONObject:report,options:.sortedKeys),as:UTF8.self))
+    }
+  }
+
   @Test func sharedGraphAndDistinctBindingsOfOneBasisSurvive() throws {
     typealias S=InkSampleRelations.Sequence
     let leaf=S(block:.init(ArraySlice((0..<8).map(sample)))),origin=UUID()
