@@ -48,7 +48,6 @@ enum NotebookLassoInkSource: Sendable {
   }
   func prepare(surface: SurfaceID, origin: WorldPoint?, reusing previous: Prepared? = nil) throws -> Prepared {
     let suppressed = suppressed
-    let entries: [Prepared.Entry]
     switch self {
     case .page(let page, let pending):
       var drawing = try page.inkDrawing()
@@ -58,11 +57,16 @@ enum NotebookLassoInkSource: Sendable {
         case .remove(let ids): drawing = drawing.removing(ids)
         }
       }
-      entries = drawing.actions.filter { $0.isActive }.map {
-        .init(id:$0.id,tool:$0.tool,color:$0.color,sources:[.init($0)])
-      }
+      let cursor=drawing.actionCursor
+      if let previous,let previousCursor=previous.pageCursor,
+        let appended=drawing.appendedActions(after:previousCursor),
+        let updated=try Prepared(revision:revision,appending:Self.pageEntries(appended),pageCursor:cursor,
+          surface:surface,origin:origin,excluding:suppressed,reusing:previous) { return updated }
+      let actions=drawing.actions
+      return try Prepared(revision:revision,entries:Self.pageEntries(actions),pageCursor:cursor,
+        preparationActionCount:actions.count,surface:surface,origin:origin,excluding:suppressed)
     case .spatial(let journal,_,_):
-      entries = journal.actions.filter { $0.isActive
+      let entries:[Prepared.Entry] = journal.actions.filter { $0.isActive
         && ($0.tool == .eraser || $0.spans.allSatisfy { $0.surface == surface }) }.compactMap { action in
           let spans=action.spans.enumerated().filter { $0.element.surface == surface }.map { index,span in
             InkSampleRelations(sourceID:action.id,span:index,measurements:span.samples,
@@ -70,10 +74,16 @@ enum NotebookLassoInkSource: Sendable {
           }
           return spans.isEmpty ? nil : .init(id:action.id,tool:action.tool,color:action.color,sources:spans)
         }
+      if let previous,let updated=try Prepared(revision:revision,entries:entries,surface:surface,
+        origin:origin,excluding:suppressed,reusing:previous) { return updated }
+      return try Prepared(revision:revision,entries:entries,preparationActionCount:journal.actions.count,
+        surface:surface,origin:origin,excluding:suppressed)
     }
-    if let previous,let updated=try Prepared(revision:revision,entries:entries,surface:surface,
-      origin:origin,excluding:suppressed,reusing:previous) { return updated }
-    return try Prepared(revision:revision,entries:entries,surface:surface,origin:origin,excluding:suppressed)
+  }
+  private static func pageEntries(_ actions:[PageInkAction])->[Prepared.Entry] {
+    actions.filter(\.isActive).map {
+        .init(id:$0.id,tool:$0.tool,color:$0.color,sources:[.init($0)])
+      }
   }
 
   /// One bounded snapshot is retained by the tool controller. Its top-level
@@ -99,6 +109,9 @@ enum NotebookLassoInkSource: Sendable {
     let revision: String
     let sourceSampleCount: Int
     let reusedSampleCount:Int
+    /// Actions visited to refresh this snapshot. A live append should be one,
+    /// not the complete page history.
+    let preparationActionCount:Int
     private let indexBlocks:[IndexBlock]
     private let entries: [Entry]
     private let spans: [Span]
@@ -108,6 +121,7 @@ enum NotebookLassoInkSource: Sendable {
     private let surface: SurfaceID
     private let origin: WorldPoint?
     private let excluded: Set<UUID>
+    fileprivate let pageCursor:PageInkDrawing.ActionCursor?
     // Changing presentation claims must not rebuild unchanged measured source.
     func excluding(_ ids: Set<UUID>) -> Prepared {
       ids == excluded ? self : Prepared(reusing:self,excluding:ids)
@@ -117,10 +131,13 @@ enum NotebookLassoInkSource: Sendable {
       sourceSampleCount = source.sourceSampleCount; indexBlocks = source.indexBlocks
       reusedSampleCount=source.reusedSampleCount
       spans = source.spans; entryBounds = source.entryBounds; excluded = ids
-      preparationSampleCount = source.preparationSampleCount
+      preparationSampleCount = source.preparationSampleCount;preparationActionCount=source.preparationActionCount
+      pageCursor=source.pageCursor
     }
-    init(revision: String, entries: [Entry], surface: SurfaceID, origin: WorldPoint?, excluding: Set<UUID>) throws {
+    init(revision: String, entries: [Entry], pageCursor:PageInkDrawing.ActionCursor?=nil,
+      preparationActionCount:Int?=nil,surface: SurfaceID, origin: WorldPoint?, excluding: Set<UUID>) throws {
       self.revision = revision; self.entries = entries; self.surface = surface; self.origin = origin; excluded = excluding
+      self.pageCursor=pageCursor;self.preparationActionCount=preparationActionCount ?? entries.count
       var spans: [Span] = [], boxes: [CGRect] = [], count = 0, prepared = 0
       for (e, entry) in entries.enumerated() {
         try Task.checkCancellation()
@@ -166,14 +183,43 @@ enum NotebookLassoInkSource: Sendable {
       let allBounds=spans.map(\.bounds)
       let blocks=Self.appending(newBounds,to:source.indexBlocks,allBounds:allBounds)
       self.init(revision:revision,sourceSampleCount:count,indexBlocks:blocks,entries:entries,spans:spans,
-        reusedSampleCount:source.sourceSampleCount,preparationSampleCount:prepared,entryBounds:boxes,
+        reusedSampleCount:source.sourceSampleCount,preparationSampleCount:prepared,
+        preparationActionCount:entries.count-source.entries.count,pageCursor:nil,entryBounds:boxes,
+        surface:surface,origin:origin,excluded:excluding)
+    }
+    convenience init?(revision:String,appending added:[Entry],pageCursor:PageInkDrawing.ActionCursor,
+      surface:SurfaceID,origin:WorldPoint?,excluding:Set<UUID>,reusing source:Prepared) throws {
+      guard source.surface == surface,source.origin == origin,source.pageCursor != nil else { return nil }
+      var entries=source.entries;entries.append(contentsOf:added)
+      var spans=source.spans,boxes=source.entryBounds,count=source.sourceSampleCount
+      var prepared=source.preparationSampleCount,newBounds:[CGRect]=[]
+      for offset in added.indices {
+        try Task.checkCancellation()
+        let e=source.entries.count+offset,entry=added[offset]
+        var box=CGRect.null
+        for (s,relation) in entry.sources.enumerated() {
+          count += relation.count
+          let result=try relation.bounds(in:0..<relation.count)
+          prepared += result.cost.decodedSamples
+          let bounds=Self.projected(result.bounds,source:relation,origin:origin)
+          box=box.union(bounds);spans.append(.init(entry:e,span:s,bounds:bounds));newBounds.append(bounds)
+        }
+        boxes.append(box)
+      }
+      let allBounds=spans.map(\.bounds)
+      let blocks=Self.appending(newBounds,to:source.indexBlocks,allBounds:allBounds)
+      self.init(revision:revision,sourceSampleCount:count,indexBlocks:blocks,entries:entries,spans:spans,
+        reusedSampleCount:source.sourceSampleCount,preparationSampleCount:prepared,
+        preparationActionCount:added.count,pageCursor:pageCursor,entryBounds:boxes,
         surface:surface,origin:origin,excluded:excluding)
     }
     private init(revision:String,sourceSampleCount:Int,indexBlocks:[IndexBlock],entries:[Entry],spans:[Span],
-      reusedSampleCount:Int,preparationSampleCount:Int,entryBounds:[CGRect],surface:SurfaceID,origin:WorldPoint?,excluded:Set<UUID>) {
+      reusedSampleCount:Int,preparationSampleCount:Int,preparationActionCount:Int,
+      pageCursor:PageInkDrawing.ActionCursor?,entryBounds:[CGRect],surface:SurfaceID,origin:WorldPoint?,excluded:Set<UUID>) {
       self.revision=revision;self.sourceSampleCount=sourceSampleCount;self.indexBlocks=indexBlocks
       self.reusedSampleCount=reusedSampleCount
       self.entries=entries;self.spans=spans;self.preparationSampleCount=preparationSampleCount
+      self.preparationActionCount=preparationActionCount;self.pageCursor=pageCursor
       self.entryBounds=entryBounds;self.surface=surface;self.origin=origin;self.excluded=excluded
     }
     private static func blocks(_ bounds:[CGRect])->[IndexBlock] {

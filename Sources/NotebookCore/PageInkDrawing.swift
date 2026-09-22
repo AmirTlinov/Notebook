@@ -95,6 +95,14 @@ private final class PersistentMapNode<Key: Comparable & Sendable, Value: Sendabl
     left?.values(into:&result);result.append(value);right?.values(into:&result)
   }
 
+  func values(from lowerBound: Key, into result: inout [Value]) {
+    if key >= lowerBound {
+      left?.values(from:lowerBound,into:&result)
+      result.append(value)
+    }
+    right?.values(from:lowerBound,into:&result)
+  }
+
   static func balanced(_ entries: [(Key,Value)], _ lower: Int, _ upper: Int) -> PersistentMapNode? {
     guard lower < upper else { return nil }
     let middle=lower+(upper-lower)/2,entry=entries[middle]
@@ -104,12 +112,17 @@ private final class PersistentMapNode<Key: Comparable & Sendable, Value: Sendabl
 
 /// Immutable roots make one accepted contact O(log history). Older page
 /// snapshots retain their roots without copying the action array.
+fileprivate final class PageInkActionCursorToken: @unchecked Sendable {}
+
 private final class PageInkActionStorage: @unchecked Sendable {
   let order: PersistentMapNode<Int,PageInkAction>?
   let ids: PersistentMapNode<String,Int>?
   let count: Int
   let activeCount: Int
   let maximumSequence: UInt64
+  let cursorToken:PageInkActionCursorToken
+  let predecessorToken:PageInkActionCursorToken?
+  let predecessorCount:Int?
   let isValid: Bool
   let hasOrderedActions:Bool
 
@@ -123,18 +136,26 @@ private final class PageInkActionStorage: @unchecked Sendable {
     ids=PersistentMapNode.balanced(identifiers,0,identifiers.count)
     count=actions.count;activeCount=actions.reduce(0) { $0+($1.isActive ? 1:0) }
     maximumSequence=actions.map(\.sequence).max() ?? 0
+    cursorToken = .init();predecessorToken=nil;predecessorCount=nil
     isValid=unique && actions.allSatisfy(\.isValid)
     hasOrderedActions=actions.allSatisfy { $0.sequence > 0 }
   }
 
   private init(order: PersistentMapNode<Int,PageInkAction>?, ids: PersistentMapNode<String,Int>?,
-    count:Int,activeCount:Int,maximumSequence:UInt64) {
+    count:Int,activeCount:Int,maximumSequence:UInt64,cursorToken:PageInkActionCursorToken,
+    predecessorToken:PageInkActionCursorToken?,predecessorCount:Int?) {
     self.order=order;self.ids=ids;self.count=count;self.activeCount=activeCount
-    self.maximumSequence=maximumSequence;isValid=true
+    self.maximumSequence=maximumSequence;self.cursorToken=cursorToken
+    self.predecessorToken=predecessorToken;self.predecessorCount=predecessorCount;isValid=true
     hasOrderedActions=true
   }
 
   var actions: [PageInkAction] { var result:[PageInkAction]=[];result.reserveCapacity(count);order?.values(into:&result);return result }
+  func actions(from position:Int)->[PageInkAction] {
+    guard position < count else { return [] }
+    var result:[PageInkAction]=[];result.reserveCapacity(count-position)
+    order?.values(from:position,into:&result);return result
+  }
   func action(_ id:UUID) -> PageInkAction? { ids?.value(for:id.uuidString.lowercased()).flatMap { order?.value(for:$0) } }
 
   func appending(_ action:PageInkAction) throws -> PageInkActionStorage {
@@ -146,7 +167,8 @@ private final class PageInkActionStorage: @unchecked Sendable {
     let accepted=action.ordered(maximumSequence+1),position=count
     return .init(order:order?.inserting(position,accepted) ?? .init(position,accepted),
       ids:ids?.inserting(accepted.id.uuidString.lowercased(),position) ?? .init(accepted.id.uuidString.lowercased(),position),
-      count:count+1,activeCount:activeCount+(accepted.isActive ? 1:0),maximumSequence:accepted.sequence)
+      count:count+1,activeCount:activeCount+(accepted.isActive ? 1:0),maximumSequence:accepted.sequence,
+      cursorToken:.init(),predecessorToken:cursorToken,predecessorCount:count)
   }
 
   func removing(_ identifiers:Set<UUID>) -> PageInkActionStorage {
@@ -156,13 +178,19 @@ private final class PageInkActionStorage: @unchecked Sendable {
       root=root?.inserting(position,action.deactivated());active-=1
     }
     guard root !== order else { return self }
-    return .init(order:root,ids:ids,count:count,activeCount:active,maximumSequence:maximumSequence)
+    return .init(order:root,ids:ids,count:count,activeCount:active,maximumSequence:maximumSequence,
+      cursorToken:.init(),predecessorToken:nil,predecessorCount:nil)
   }
 }
 
 /// A page owns the ordered pen and eraser operations that produced its pixels.
 /// A converted page starts with the final visible PNG of its previous drawing.
 public struct PageInkDrawing: Codable, Equatable, Sendable {
+  public struct ActionCursor:Equatable,Sendable {
+    fileprivate let token:PageInkActionCursorToken
+    fileprivate let count:Int
+    public static func ==(lhs:Self,rhs:Self)->Bool { lhs.token === rhs.token && lhs.count == rhs.count }
+  }
   private static let signature = Data("NotebookInk/3\n".utf8)
   public let baselinePNG: Data?
   public let baselineActionCount: Int
@@ -179,6 +207,18 @@ public struct PageInkDrawing: Codable, Equatable, Sendable {
 
   public var activeActions: [PageInkAction] { actions.filter(\.isActive) }
   public var actionCount: Int { baselineActionCount + storage.activeCount }
+  public var actionCursor:ActionCursor {
+    .init(token:storage.cursorToken,count:storage.count)
+  }
+  /// Returns only actions appended after a retained runtime cursor. Tombstones,
+  /// reopen and merge invalidate the cursor instead of pretending a prefix is
+  /// unchanged.
+  public func appendedActions(after cursor:ActionCursor)->[PageInkAction]? {
+    if cursor.token === storage.cursorToken,cursor.count == storage.count { return [] }
+    guard let predecessorToken=storage.predecessorToken,let predecessorCount=storage.predecessorCount,
+      cursor.token === predecessorToken,cursor.count == predecessorCount else { return nil }
+    return storage.actions(from:cursor.count)
+  }
   public var isEmpty: Bool { baselinePNG == nil && storage.activeCount == 0 }
   public func action(id:UUID) -> PageInkAction? { storage.action(id) }
   public var isValid: Bool {

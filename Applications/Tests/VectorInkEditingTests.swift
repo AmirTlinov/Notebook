@@ -15,7 +15,8 @@ import XCTest
       actions.append(.init(tool:.pen,samples:samples))
     }
     let drawing = PageInkDrawing(actions:actions)
-    let page = PageDocument(size:.init(width:834,height:1194),actor:UUID(),drawingData:try drawing.dataRepresentation())
+    let actor=UUID()
+    let page = PageDocument(size:.init(width:834,height:1194),actor:actor,drawingData:try drawing.dataRepresentation())
     let source = NotebookLassoInkSource.page(page)
     let cold = ContinuousClock.now
     let prepared = try source.prepare(surface:.page(page.id),origin:nil)
@@ -40,13 +41,30 @@ import XCTest
       .init(point:.init(x:10_000+Double(i),y:10_000),timeOffset:Double(i)/240,
         width:2,opacity:1,force:1,azimuth:0,altitude:1)
     })
-    let nextDrawing=try drawing.appending(appended)
-    let nextPage=PageDocument(id:page.id,size:page.size,actor:UUID(),drawingData:try nextDrawing.dataRepresentation())
-    let incrementallyPrepared=try NotebookLassoInkSource.page(nextPage).prepare(
-      surface:.page(nextPage.id),origin:nil,reusing:prepared)
+    let branch=try drawing.appending(appended)
+    XCTAssertEqual(branch.appendedActions(after:drawing.actionCursor)?.map(\.id),[appended.id])
+    let alternative=try drawing.appending(.init(tool:.pen,samples:[
+      .init(point:.init(x:20_000,y:20_000),timeOffset:0,width:2,opacity:1,force:1,azimuth:0,altitude:1)]))
+    XCTAssertNil(alternative.appendedActions(after:branch.actionCursor),
+      "A sibling branch cannot reuse another branch's lasso index")
+    let append=try page.prepareInkChange(.append(appended),
+      stamp:.init(counter:page.drawingStamp.counter+1,actor:actor))
+    XCTAssertTrue(page.publishLiveInkChange(append))
+    let incrementallyPrepared=try NotebookLassoInkSource.page(page).prepare(
+      surface:.page(page.id),origin:nil,reusing:prepared)
     XCTAssertEqual(incrementallyPrepared.sourceSampleCount,100_250)
     XCTAssertEqual(incrementallyPrepared.reusedSampleCount,100_000,
       "Appending one stroke must retain the existing range forest instead of rebuilding it")
+    XCTAssertEqual(incrementallyPrepared.preparationActionCount,1,
+      "A live append must not enumerate the complete page action history")
+    let removal=try page.prepareInkChange(.remove([actions[0].id]),
+      stamp:.init(counter:page.drawingStamp.counter+1,actor:actor))
+    XCTAssertTrue(page.publishLiveInkChange(removal))
+    let rebuilt=try NotebookLassoInkSource.page(page).prepare(
+      surface:.page(page.id),origin:nil,reusing:incrementallyPrepared)
+    XCTAssertEqual(rebuilt.reusedSampleCount,0)
+    XCTAssertEqual(rebuilt.preparationActionCount,actions.count+1,
+      "A tombstone must invalidate append-only reuse instead of retaining a removed stroke")
     let receipt: [String:Any] = ["sourceSamples":selected.sourceSampleCount,"candidateSamplesRead":selected.candidateSampleCount,
       "retainedSelectedSamples":actions[0].samples.count,"selectionMilliseconds":durations,
       "coldPrepareMilliseconds":Double(preparation.components.seconds)*1000+Double(preparation.components.attoseconds)/1e15]
