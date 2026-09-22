@@ -960,7 +960,7 @@ final class NotebookAppModel {
   private(set) var pairedPeers: [NotebookTransportIdentity] = []
   @ObservationIgnored private var peerGenerations: [UUID: UUID] = [:]
   #if os(iOS)
-    @ObservationIgnored private let inputFrameMonitor: InputFrameMonitor
+    @ObservationIgnored private let inputFrameMonitor: InputFrameMonitor?
   #endif
   @ObservationIgnored private var diskRefreshTask: Task<Void, Never>?
   @ObservationIgnored private var headerRefreshTask: Task<Void, Never>?
@@ -1052,7 +1052,8 @@ final class NotebookAppModel {
     persistence = persistenceQueue ?? NotebookPersistenceQueue(store: store)
     compositionTiles = SceneCompositionTiles()
     #if os(iOS)
-      inputFrameMonitor = InputFrameMonitor(root: store.root)
+      inputFrameMonitor = ProcessInfo.processInfo.arguments.contains("--notebook-profile-input")
+        ? InputFrameMonitor(root: store.root) : nil
     #endif
     self.startsNearbySync = startsNearbySync
     penStyle = Self.loadPenStyle(defaults: preferences)
@@ -1089,8 +1090,8 @@ final class NotebookAppModel {
       #if os(macOS)
         if active { previewPublisher?.suspendForInput() }
       #else
-        if active { inputFrameMonitor.begin(mode: presence?.mode.rawValue ?? "unknown") }
-        else { inputFrameMonitor.end() }
+        if active { inputFrameMonitor?.begin(mode: presence?.mode.rawValue ?? "unknown") }
+        else { inputFrameMonitor?.end() }
       #endif
       publishInputActivity()
       if !active {

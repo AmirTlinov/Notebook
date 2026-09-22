@@ -290,7 +290,9 @@ They are not current-device performance claims.
 
 Some UIKit/AppKit snapshots and final composition/crops still run on main.
 Off-main preparation still consumes CPU/memory. Display-callback timing in
-`runtime/input-frames.json` and history timing in `runtime/collaboration-ui.json`
-do not prove actual presented GPU frames or 120 FPS. Physical gestures, system frame/
+`runtime/input-frames.json` is written only by an iOS process launched with
+`--notebook-profile-input`; ordinary Pencil input does not install its display callback
+or rewrite a diagnostic file. That scheduling log and history timing in
+`runtime/collaboration-ui.json` do not prove actual presented GPU frames or 120 FPS. Physical gestures, system frame/
 CPU/GPU/memory traces, repeated scenarios and long-session acceptance are recorded
 separately in [verification](verification.md).
