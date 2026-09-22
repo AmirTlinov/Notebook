@@ -1,5 +1,35 @@
 # Verification record
 
+## 22 сентября — региональное лассо допускается только готовым, build 168
+
+Точная проверка пересечения векторных элементов теперь выполняется вне
+`MainActor` на одном захваченном срезе сцены и больше не удерживает ввод.
+`selectionSession` получает регион только после подготовки неизменяемого payload
+для первого Move/Delete/Copy; промежуточное состояние «выбрано, но рамка ещё не
+редактируется» и отдельные поздние install/fail-владельцы удалены.
+
+На физическом iPad Pro M1 выбранный source прошёл **2/2** проверки без failures,
+skips и runtime warnings: повторное региональное выделение остатка — 0,499255 с,
+точный разрез native shape при отдельном object-selection — 0,222305 с. Это
+проверка общего iPad runtime, но не ручной жест Apple Pencil.
+
+Подписанная пара **0.3.134 (168)** собрана из source SHA-256
+`cdf01e43249bb0577b32f2168c0243c33354dee5f4bf746acdf6f11b788a4e2b`;
+verification SHA-256
+`75f3f3039070d617a6c2bf0893ae00b301a45c7dcda82f91b6376853f5d58d9a`.
+iPad binary UUID — `304807B3-DBDA-3CFF-A01C-092F0C30DDC0`, Mac —
+`1F7C851A-F62F-3646-AD1A-356743F187F5`. Оба приложения обновлены in-place;
+Mac SQLite сохранил inode `783629731` и размер 229 986 304 байта, физический
+iPad после запуска показывает прежнюю пользовательскую страницу и рукопись,
+временный `.native-test` удалён. Evidence:
+`.build/gui294-region-atomic-168-verify/`,
+`.build/gui294-region-atomic-release-168/` и
+`.build/gui294-region-atomic-install-168-{ipad,mac}/`.
+
+Установка и XCTest не закрывают ручную UX-приёмку: на build 168 ещё нужны
+реальные жесты Pencil/ластика/обоих режимов лассо, десять повторов, 30 минут
+совместной работы и системные input-to-present/CPU/GPU/memory/energy измерения.
+
 ## 22 сентября — один владелец admission для лассо-фрагментов и фигур, build 167
 
 `NotebookWorkingGraphic` теперь один формирует durable payload с frame,
