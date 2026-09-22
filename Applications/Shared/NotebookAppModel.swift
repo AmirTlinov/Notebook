@@ -5097,6 +5097,7 @@ final class NotebookAppModel {
   }
 
   private func acceptSceneState(_ state: NotebookSceneState, preservingPresence: SessionPresence? = nil) {
+    retainPreparedGraphicMasks(in:state)
     workspaceHeader = state.header
     sceneContentCursor = state.header.cursor
     for (id, cursor) in completedDeletions where state.header.cursor >= cursor {

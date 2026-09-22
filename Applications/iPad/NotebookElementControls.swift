@@ -53,6 +53,9 @@ struct NotebookElementControls: UIViewRepresentable {
         model.finishElementManipulation(contact, translation: .init(x: point.x / scale, y: point.y / scale))
       }, cancel: { model.cancelElementManipulation(contact) })
     }
+    // configure updates the moving handles and hides the capsule. Its actions
+    // and whole-page paint order do not depend on the current contact pose.
+    guard model.selectionSession.manipulation == nil else { return }
     view.deleteElement = {
       guard model.selectionSession.id == selectionID else { return }
       model.deleteElement(reference)
@@ -160,6 +163,7 @@ struct NotebookMultipleElementControls: UIViewRepresentable {
         model.finishElementManipulation(contact,translation:.init(x:point.x/scale,y:point.y/scale))
       },cancel:{ model.cancelElementManipulation(contact) })
     }
+    guard model.selectionSession.manipulation == nil else { return }
     view.editElement = nil
     view.deleteElement = { if model.selectionSession.id == selectionID { model.deleteGraphicSelection() } }
     if model.selectionSession.items.isEmpty {

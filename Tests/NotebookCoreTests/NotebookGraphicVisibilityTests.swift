@@ -25,7 +25,13 @@ struct NotebookGraphicVisibilityTests {
       #expect(!placed.contains(.init(x:40+shift.x,y:50+shift.y),using:.evenOdd))
     }
     #expect(try encoder.encode(copy) == encoded)
+    let published=try JSONDecoder().decode(NotebookGraphicMask.self,from:encoded)
+    #expect(published.retainPreparedPaths(from:mask))
+    #expect(published.path(in:rect) === body)
+    #expect(published.path(in:unit) === query)
+    #expect(try encoder.encode(published) == encoded)
     let changed=copy.appending(.subtract,polygon:[.init(x:0.3,y:0),.init(x:0.4,y:0),.init(x:0.4,y:1),.init(x:0.3,y:1)])
+    #expect(!changed.retainPreparedPaths(from:mask),"A new cut never inherits stale visibility")
     #expect(!changed.path(in:rect).contains(.init(x:70,y:50),using:.evenOdd))
     #expect(mask.path(in:rect) === body)
     // A new size has its own exact calculation, not a resampled raster or a

@@ -149,6 +149,19 @@ public struct NotebookGraphicMask: Codable, Equatable, Sendable {
     private let lock=NSLock()
     private var unit:CGPath?
     private var body:(CGSize,CGPath)?
+    func retainReady(from previous:Preparation)->Bool {
+      if self === previous { return true }
+      // Publication may borrow completed derivatives, never wait behind a
+      // worker's Boolean build. No source or unfinished result is transferred.
+      guard previous.lock.try() else { return false }
+      let readyUnit=previous.unit,readyBody=previous.body
+      previous.lock.unlock()
+      guard readyUnit != nil || readyBody != nil,lock.try() else { return false }
+      defer { lock.unlock() }
+      if unit == nil { unit=readyUnit }
+      if body == nil { body=readyBody }
+      return true
+    }
     func path(size:CGSize,build:()->CGPath)->CGPath {
       lock.withLock {
         let normalized=size == CGSize(width:1,height:1)
@@ -165,6 +178,12 @@ public struct NotebookGraphicMask: Codable, Equatable, Sendable {
     }
   }
   public init(operations:[Operation]=[]) { self.operations=operations }
+  /// A decoded publication of the same immutable mask keeps its already
+  /// prepared coverage. This changes no authored field, pose, clock or limit.
+  @discardableResult public func retainPreparedPaths(from previous:Self)->Bool {
+    guard self == previous else { return false }
+    return preparation.retainReady(from:previous.preparation)
+  }
   public var isValid:Bool {
     !operations.isEmpty && operations.count <= 64 && operations.allSatisfy {
       operation in

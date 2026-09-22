@@ -109,6 +109,33 @@ extension NotebookAppModel {
     }
   }
 
+  /// SQL decoding replaces values, not the material they describe. Hand ready
+  /// coverage to the equal incoming mask before accepted drafts are retired.
+  /// The same rule covers unchanged material and page/board/cover publications.
+  func retainPreparedGraphicMasks(in state:NotebookSceneState) {
+    let working=Dictionary(uniqueKeysWithValues:workingGraphics.map { ($0.id,$0) })
+    func retain(_ graphic:NotebookGraphic?,reference:EditableElementReference,surface:SurfaceID,
+      previous:NotebookGraphic?) {
+      guard let mask=graphic?.mask else { return }
+      let candidates=[elementCommandDrafts[reference]?.graphic?.mask,
+        working[reference.elementID].flatMap { $0.surface == surface ? $0.graphic.mask : nil },previous?.mask]
+      for case let old? in candidates where mask.retainPreparedPaths(from:old) { return }
+    }
+    for (id,page) in state.pages {
+      for element in page.elements where element.graphic?.mask != nil {
+        retain(element.graphic,reference:.page(pageID:id,elementID:element.id),surface:.page(id),
+          previous:pages[id]?.element(id:element.id)?.graphic)
+      }
+    }
+    for node in state.hierarchy.boards {
+      let old=boardHierarchy?.board(node.id)
+      for element in node.board.elements where element.graphic?.mask != nil {
+        retain(element.graphic,reference:.spatial(boardID:node.id,elementID:element.id),surface:element.surface,
+          previous:old?.element(id:element.id)?.graphic)
+      }
+    }
+  }
+
   func retainedGraphicGraph(includingGroups:Bool = true,reference:(String) -> EditableElementReference) -> NotebookGraphicGraph? {
     if let contact=selectionSession.manipulation,reference(contact.reference.elementID) == contact.reference,
       let captured=contact.graphicCapture,includingGroups || !captured.source.isGroup { return captured.graph }

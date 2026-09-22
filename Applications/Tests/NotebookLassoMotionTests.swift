@@ -66,6 +66,25 @@ import XCTest
       XCTAssertEqual(value.graphic,object.graphic)
       XCTAssertEqual(value.frame.x,object.frame.x+120,accuracy:1e-8)
     }
+    await model.reloadExternalChanges()?.value
+    let installed=try XCTUnwrap(model.activePage)
+    let published=model.graphicGraph(page:installed)
+    for (i,object) in prepared.working.enumerated() {
+      let mask=try XCTUnwrap(published.node(object.id)?.graphic.mask)
+      XCTAssertTrue(mask.path(in:rect) === paths[i],"Decoded publication must not restart the accepted fragment's coverage")
+    }
+    for (id,path) in remainders {
+      XCTAssertTrue(published.node(id)?.graphic.mask?.path(in:rect) === path,"The outside remainder retains the same prepared source too")
+    }
+    // The first controls/query after retiring the draft exercise the installed
+    // page, not the original page value or the warm manipulation snapshot.
+    let next=try XCTUnwrap(prepared.selected.first)
+    model.selectElement(next)
+    let second=try XCTUnwrap(model.beginElementManipulation(next,kind:.move))
+    model.updateElementManipulation(second,translation:.init(x:3,y:2))
+    let index=try XCTUnwrap(prepared.working.firstIndex { $0.id == next.elementID })
+    XCTAssertTrue(model.graphicGraph(page:installed).node(next.elementID)?.graphic.mask?.path(in:rect) === paths[index])
+    model.cancelElementManipulation(second)
   }
 
   func testRetainedMaskAvoidsRebuildingOneHundredThousandMeasurements() throws {
@@ -85,6 +104,11 @@ import XCTest
       XCTAssertFalse(fresh.contains(.init(x:200,y:200)))
     }
     let retained=mask.path(in:rect)
+    let published=try JSONDecoder().decode(NotebookGraphicMask.self,from:JSONEncoder().encode(mask))
+    let handoffStart=ContinuousClock.now
+    XCTAssertTrue(published.retainPreparedPaths(from:mask))
+    XCTAssertTrue(published.path(in:rect) === retained,"A cold decoded 100k mask borrows the ready path without rebuilding")
+    print("GUI295 100000 cut measurements: decoded publication handoff=\(handoffStart.duration(to:.now)); retained exact CGPath identity")
     for _ in 0..<120 {
       let start=ContinuousClock.now
       XCTAssertTrue(mask.path(in:rect) === retained)
