@@ -40,6 +40,7 @@ struct NotebookRegionMaterialization: Equatable, Sendable {
   let edits:[NotebookElementEdit]
   let working:[NotebookWorkingGraphic]
   let selected:[EditableElementReference]
+  let sources:[EditableElementReference:NotebookNativeElementSource]
 }
 
 /// Exactly one current choice. Context is evidence for it, not a second selection.
@@ -48,6 +49,7 @@ struct NotebookSelectionSession: Equatable, Sendable {
     case item(boardID: UUID, itemID: UUID)
     case element(EditableElementReference)
     case elements([EditableElementReference], items: [NotebookSelectedItem] = [])
+    case region(NotebookRegionSelection)
     case context
     case reference(CollaborationReference)
   }
@@ -62,7 +64,9 @@ struct NotebookSelectionSession: Equatable, Sendable {
   var preview: CGRect?
   var manipulation: NotebookElementManipulation?
   var nativeText: NotebookNativeTextTarget?
-  var region: NotebookRegionSelection?
+  var region: NotebookRegionSelection? {
+    if case .region(let value) = target { return value }; return nil
+  }
   var isInteractive = false
   var isResolvingContext = false
 

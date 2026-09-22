@@ -8,7 +8,7 @@ import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
 import {sdkReference,sdkInputs,sdkOutputs} from '../src/sdk-contracts.js';
 import {executionInput,executionOutput} from '../src/server.js';
-import {actionResultSchema} from '../src/sdk-results.js';
+import {actionResultSchema,readDataSchemas} from '../src/sdk-results.js';
 const run=promisify(execFile);
 
 test('SDK v2 declarations type addressed reads, tuples, bases and results without a second hand-written API',async()=>{
@@ -172,6 +172,11 @@ test('SDK v2 declarations type addressed reads, tuples, bases and results withou
       }
       if(choice.data.status==='known') {
         const generation:number=choice.data.generation;
+        if(choice.data.selection.kind==='region') {
+          const polygon:{x:number,y:number}[]=choice.data.selection.region;
+          const tile:number|undefined=choice.data.selection.worldOrigin?.tileX;
+          await emit({polygon,tile});
+        }
         if(choice.data.selection.kind==='element') {
           const exact:string=choice.data.selection.elementID;
           const owner:string=choice.data.selection.target.id;
@@ -225,4 +230,13 @@ test('every method has a generated output schema and start only accepts v2, defa
   assert.equal(parsed.wait_ms,1000);
   assert.equal(executionInput.safeParse({...request,api_version:1}).success,false);
   assert.equal(executionOutput.safeParse({status:'completed',run_id:request.run_id,api_version:2,run_api_version:1,fingerprint:'historic',events:[],next_seq:0,has_more:false,result:42,error:null,effects:[],resume_semantics:'attach_only_no_replay'}).success,true);
+});
+
+
+test('region selection keeps its polygon instead of becoming an unknown UI choice',()=>{
+  const id='11111111-1111-4111-8111-111111111111';
+  const value={status:'known',deviceID:id,sessionID:id,generation:1,selection:{id,kind:'region',
+    surface:{kind:'board',id},target:{kind:'board',id},resolving:false,
+    region:[{x:0,y:0},{x:100,y:0},{x:60,y:100}],worldOrigin:{tileX:1000000,tileY:0,localX:0,localY:0}}};
+  assert.deepEqual(readDataSchemas.selection.parse(value),value);
 });

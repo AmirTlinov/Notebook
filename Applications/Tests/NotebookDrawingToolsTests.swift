@@ -45,13 +45,76 @@ import UIKit
       XCTAssertNil(model.selectionSession.region,"Object mode selects the whole object instead of authoring a clip")
 
       model.clearSelection();try await lasso(.region)
-      let selected=try XCTUnwrap(model.materializeRegionSelection()?.first)
+      let chosen=try XCTUnwrap(model.selectionSession.region)
+      XCTAssertTrue(model.commitRegion(chosen,prepared:try XCTUnwrap(chosen.materialization),summary:"Проверить геометрию области"))
+      let selected=try XCTUnwrap(model.selectionSession.elements.first)
       await assertSaved(model);await model.reloadExternalChanges()?.value
       let saved=try model.store.loadPage(page.id)
       let outside=try XCTUnwrap(saved.element(id:shape.id)?.graphic?.mask)
       let inside=try XCTUnwrap(saved.element(id:selected.elementID)?.graphic?.mask)
       XCTAssertFalse(outside.contains(.init(x:0.1,y:0.5)));XCTAssertTrue(outside.contains(.init(x:0.75,y:0.5)))
       XCTAssertTrue(inside.contains(.init(x:0.1,y:0.5)));XCTAssertFalse(inside.contains(.init(x:0.75,y:0.5)))
+    }
+  }
+
+  func testRegionResizeIsOneActionCancelIsReadOnlyAndStaleSourceIsRejected() async throws {
+    try await fixture { model in
+      var page=try XCTUnwrap(model.activePage)
+      let shape=AgentElement(id:"region-source",kind:.graphic,frame:.init(x:100,y:100,width:200,height:100),
+        source:"",html:"",graphic:.init(shape:.rectangle,style:.init(strokeWidth:2,fill:.init(red:1,green:0,blue:0))))
+      XCTAssertTrue(page.replaceElements([shape],actor:model.actorID));try model.store.savePage(page)
+      await model.reloadExternalChanges()?.value
+      let address=NotebookToolAddress(surface:.page(page.id),boardID:nil,worldOrigin:nil,bounds:nil)
+      let polygon=[SpatialPoint(x:90,y:90),.init(x:200,y:90),.init(x:200,y:210),.init(x:90,y:210)]
+      model.selectDrawingTool(.lasso);model.drawingToolSettings.lassoMode = .region
+      XCTAssertTrue(model.drawingTools.begin(at:polygon[0],address:address,screenScale:1))
+      for point in polygon.dropFirst() { model.drawingTools.move(to:point) };model.drawingTools.finish()
+      XCTAssertNotNil(model.drawingTools.pendingLasso)
+      let deadline=ContinuousClock.now + .seconds(3)
+      while model.selectionSession.region == nil,ContinuousClock.now < deadline { try await Task.sleep(for:.milliseconds(10)) }
+      let region=try XCTUnwrap(model.selectionSession.region)
+      guard case .region = model.selectionSession.target else { return XCTFail("The region is the one selection target") }
+      let cancelled=try XCTUnwrap(model.beginElementManipulation(region.reference,kind:.move))
+      model.updateElementManipulation(cancelled,translation:.init(x:60,y:30))
+      XCTAssertEqual(try model.store.loadPage(page.id).elements,[shape],"A preview does not split content")
+      model.cancelElementManipulation(cancelled)
+      XCTAssertEqual(model.selectionSession.region?.id,region.id)
+      XCTAssertFalse(model.workingGraphics.contains { !$0.accepted })
+      let before=Set(model.collaborationActions.map(\.id))
+      let contact=try XCTUnwrap(model.beginElementManipulation(region.reference,kind:.resize(.bottomTrailing)))
+      XCTAssertTrue(model.finishElementManipulation(contact,translation:.init(x:110,y:120)))
+      await assertSaved(model);await model.reloadExternalChanges()?.value
+      let actions=model.collaborationActions.filter { !before.contains($0.id) && $0.action.operations.contains { $0.kind == .insertElement } }
+      XCTAssertEqual(actions.count,1,"Split and resize are one causal command")
+      let selected=try XCTUnwrap(model.selectionSession.elements.first)
+      let saved=try model.store.loadPage(page.id)
+      let fragment=try XCTUnwrap(saved.element(id:selected.elementID))
+      XCTAssertNotNil(fragment.basis)
+      XCTAssertEqual(fragment.frame.x,110,accuracy:0.000001)
+      XCTAssertEqual(fragment.frame.y,110,accuracy:0.000001)
+      XCTAssertEqual(fragment.frame.width,400,accuracy:0.000001)
+      XCTAssertEqual(fragment.frame.height,200,accuracy:0.000001)
+      let action=try XCTUnwrap(actions.first)
+      model.undoCollaboration(action.id);await assertSaved(model);await model.reloadExternalChanges()?.value
+      XCTAssertEqual(try model.store.loadPage(page.id).element(id:shape.id)?.graphic,shape.graphic)
+      model.selectRegion(region)
+      model.transformGraphicSelection(radians:.pi/2)
+      await assertSaved(model);await model.reloadExternalChanges()?.value
+      let rotated=try model.store.loadPage(page.id)
+      let rotatedRef=try XCTUnwrap(model.selectionSession.elements.first)
+      let rotatedPiece=try XCTUnwrap(rotated.element(id:rotatedRef.elementID))
+      XCTAssertNotNil(rotatedPiece.basis);XCTAssertEqual(rotatedPiece.graphic?.style,shape.graphic?.style)
+      XCTAssertEqual(rotated.element(id:shape.id)?.frame,shape.frame)
+      let rotation=try XCTUnwrap(model.collaborationActions.first { $0.action.summary == "Повернуть область лассо" })
+      model.undoCollaboration(rotation.id);await assertSaved(model);await model.reloadExternalChanges()?.value
+      XCTAssertEqual(try model.store.loadPage(page.id).element(id:shape.id)?.graphic,shape.graphic)
+      model.selectRegion(region)
+      var changed=try model.store.loadPage(page.id)
+      var graphic=try XCTUnwrap(shape.graphic);graphic.style.strokeWidth=7
+      let altered=AgentElement(id:shape.id,kind:shape.kind,frame:shape.frame,source:shape.source,html:shape.html,graphic:graphic)
+      XCTAssertTrue(changed.replaceElements([altered],actor:model.actorID));try model.store.savePage(changed)
+      await model.reloadExternalChanges()?.value
+      XCTAssertNil(model.beginElementManipulation(region.reference,kind:.move),"Old selection cannot rebase onto a new source")
     }
   }
 
@@ -81,7 +144,9 @@ import UIKit
       while model.selectionSession.region == nil,ContinuousClock.now < deadline {
         try await Task.sleep(for:.milliseconds(10))
       }
-      let refs=try XCTUnwrap(model.materializeRegionSelection())
+      let chosen=try XCTUnwrap(model.selectionSession.region)
+      XCTAssertTrue(model.commitRegion(chosen,prepared:try XCTUnwrap(chosen.materialization),summary:"Проверить геометрию области"))
+      let refs=model.selectionSession.elements
       await assertSaved(model);await model.reloadExternalChanges()?.value
       let reopened=try model.store.loadPage(page.id)
       let fragment=try XCTUnwrap(refs.compactMap { reopened.element(id:$0.elementID) }
@@ -126,7 +191,9 @@ import UIKit
       XCTAssertNil(try model.store.loadPage(page.id).element(id:arrow.id)?.graphic?.mask,
         "The lasso descriptor remains read-only until an edit")
 
-      let selected=try XCTUnwrap(model.materializeRegionSelection()?.first)
+      let chosen=try XCTUnwrap(model.selectionSession.region)
+      XCTAssertTrue(model.commitRegion(chosen,prepared:try XCTUnwrap(chosen.materialization),summary:"Проверить геометрию области"))
+      let selected=try XCTUnwrap(model.selectionSession.elements.first)
       await assertSaved(model);await model.reloadExternalChanges()?.value
       let saved=try model.store.loadPage(page.id)
       let outside=try XCTUnwrap(saved.element(id:arrow.id)?.graphic)
@@ -306,6 +373,8 @@ import UIKit
       model.drawingToolSettings.lassoMode = .elements
       let object=[SpatialPoint(x:115,y:115),.init(x:145,y:115),.init(x:145,y:150),.init(x:115,y:150)]
       lasso(object)
+      let objectDeadline=ContinuousClock.now + .seconds(3)
+      while model.drawingTools.pendingLasso != nil,ContinuousClock.now < objectDeadline { try await Task.sleep(for:.milliseconds(10)) }
       XCTAssertTrue(model.selectionSession.contains(address.reference(text)),"Whole-object selection is a separate mode")
 
       var next=try model.store.loadPage(page.id)
@@ -352,9 +421,11 @@ import UIKit
       var region=NotebookRegionSelection(id:UUID(),address:address,polygon:polygon,
         frame:.init(x:f.x,y:f.y,width:f.width/2,height:f.height),rawInk:nil,
         expectedInkRevision:nil,graphics:[source])
-      region.materialization=try NotebookRegionMaterialization.prepare(region,graph:model.graphicGraph(page:page))
+      region.materialization=try NotebookRegionMaterialization.prepare(region,graph:model.graphicGraph(page:page),snapshot:model.regionSourceSnapshot(address))
       model.selectRegion(region)
-      let selected=try XCTUnwrap(model.materializeRegionSelection()?.first)
+      let chosen=try XCTUnwrap(model.selectionSession.region)
+      XCTAssertTrue(model.commitRegion(chosen,prepared:try XCTUnwrap(chosen.materialization),summary:"Проверить геометрию области"))
+      let selected=try XCTUnwrap(model.selectionSession.elements.first)
       let live=try XCTUnwrap(model.acceptedWorkingGraphic(selected))
       XCTAssertNotNil(live.basis,"The accepted preview owns the same detached basis as durable content")
       XCTAssertEqual(live.frame.width,f.width,accuracy:0.000001)
@@ -597,9 +668,10 @@ import UIKit
       XCTAssertEqual(saved.elements[0].graphic?.sourceInkIDs,[stroke.id])
       XCTAssertTrue(saved.elements[1].graphic?.sourceInkIDs.isEmpty == true)
       XCTAssertEqual(saved.elements[0].graphic?.freehand,saved.elements[1].graphic?.freehand)
-      XCTAssertNotNil(saved.elements[0].graphic?.transform)
+      XCTAssertNotNil(saved.elements[0].basis)
       let actualFrame = saved.elements[0].frame
-      let actual = NotebookGraphicGeometry.paintPath(saved.elements[0].graphic!,layout:nil,size:.init(width:actualFrame.width,height:actualFrame.height))
+      let layout=try XCTUnwrap(saved.graphicGraph().resolve(saved.elements[0].id).layout)
+      let actual=NotebookElementAppearance(graphic:saved.elements[0].graphic,layout:layout,size:.init(width:actualFrame.width,height:actualFrame.height),erasures:[]).remaining
       XCTAssertFalse(actual.contains(.init(x:actualFrame.width/2,y:actualFrame.height/2)),"The cut rotates with ink")
       // Ordinary undo owns all three accepted actions: copy, first rotation,
       // then conversion. Returning an optional basis to nil is not adoption.
@@ -634,6 +706,8 @@ import UIKit
       XCTAssertTrue(model.drawingTools.begin(at:enclosing[0],address:address,screenScale:1))
       for point in enclosing.dropFirst() { model.drawingTools.move(to:point) }
       model.drawingTools.finish()
+      let deadline=ContinuousClock.now + .seconds(3)
+      while model.drawingTools.pendingLasso != nil,ContinuousClock.now < deadline { try await Task.sleep(for:.milliseconds(10)) }
       XCTAssertTrue(model.selectionSession.contains(address.reference(text)))
     }
   }

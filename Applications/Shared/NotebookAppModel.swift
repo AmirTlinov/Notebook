@@ -2768,8 +2768,7 @@ final class NotebookAppModel {
 
   func selectRegion(_ region: NotebookRegionSelection) {
     guard region.materialization != nil else { return }
-    replaceSelection(nil)
-    selectionSession.region = region
+    replaceSelection(.region(region))
   }
 
   func beginMultipleSelection() {
@@ -2802,16 +2801,16 @@ final class NotebookAppModel {
 
   private func selectedGraphicMembers() -> [NotebookGraphicSelection.Member]? {
     let refs = selectionSession.elements
-    guard !refs.isEmpty else { return nil }
-    let layouts = graphicLayouts(refs)
+    guard selectionSession.items.isEmpty,let first=refs.first,let target=nativeElementSource(first)?.target,
+      refs.allSatisfy({ nativeElementSource($0)?.target == target }),let graph=editingGraphicGraph(first) else { return nil }
     let members = refs.compactMap { reference -> NotebookGraphicSelection.Member? in
       guard let graphic = graphicElement(reference), graphic.showsGeometry,
-        let geometry = elementGeometry(reference), let layout = layouts[reference],
+        let geometry = elementGeometry(reference),let resolved=graphicManipulationGeometry(reference,in:graph),
         let source = nativeElementSource(reference) else { return nil }
       if case .spatial = reference, let cohort = compositionTiles.published,
         presentedElement(reference,cohort:cohort) == nil,acceptedWorkingGraphic(reference) == nil { return nil }
       return .init(id:source.id,frame:.init(x:geometry.frame.minX,y:geometry.frame.minY,width:geometry.frame.width,height:geometry.frame.height),
-        origin:geometry.worldOrigin ?? .zero,graphic:graphic,layout:layout)
+        graphic:graphic,layout:resolved.display,body:resolved.body,placement:resolved.placement)
     }
     return members.count == refs.count ? members : nil
   }
@@ -2828,6 +2827,9 @@ final class NotebookAppModel {
         var values: [String:JSONValue] = [:]
         let frame = PageRect(x:geometry.frame.minX,y:geometry.frame.minY,width:geometry.frame.width,height:geometry.frame.height)
         if frame != edit.frame { values["frame"] = try .encode(edit.frame) }
+        if (elementCommandDrafts[reference]?.basis ?? nativeElementSource(reference)?.placementSource?.basis) != edit.basis {
+          values["basis"] = try .encode(edit.basis)
+        }
         var patch: [String:JSONValue] = [:]
         if graphic.connection != edit.graphic.connection { patch["connection"] = try .encode(edit.graphic.connection) }
         if graphic.transform != edit.graphic.transform { patch["transform"] = try .encode(edit.graphic.transform) }
@@ -2836,7 +2838,13 @@ final class NotebookAppModel {
         if !patch.isEmpty { values["graphic"] = .object(patch) }
         return values.isEmpty ? nil : .init(reference:reference,kind:.updateElement,values:values)
       }
-      return operations.isEmpty || performElementOperations(operations,summary:summary,readSources:selectionSession.elements)
+      let sources=selectionSession.elements.flatMap { reference in
+        [reference]+(editingGraphicGraph(reference)?.placement(reference.elementID)?.ancestors ?? []).map { id in
+          switch reference { case .page(let owner,_): EditableElementReference.page(pageID:owner,elementID:id)
+            case .spatial(let owner,_): EditableElementReference.spatial(boardID:owner,elementID:id) }
+        }
+      }
+      return operations.isEmpty || performElementOperations(operations,summary:summary,readSources:Array(Set(sources)))
     } catch { showCue(error.localizedDescription); return false }
   }
 
@@ -2846,6 +2854,7 @@ final class NotebookAppModel {
   }
 
   func transformGraphicSelection(radians: Double = 0, scale: Double = 1) {
+    if let region=selectionSession.region { transformRegion(region,radians:radians,scale:scale);return }
     if transformSelectedGroup(radians:radians,scale:scale) { return }
     guard let members = selectedGraphicMembers(), let first = selectionSession.elements.first else { return }
     let edits = NotebookGraphicSelection.transformed(members,radians:radians,scale:scale)
@@ -2857,9 +2866,12 @@ final class NotebookAppModel {
   }
 
   func duplicateGraphicSelection() {
-    if selectionSession.region != nil {
-      guard materializeRegionSelection() != nil else { return }
-      duplicateGraphicSelection();return
+    if let region=selectionSession.region,let prepared=region.materialization {
+      let f=region.frame,bounds=region.address.bounds
+      let offset=SpatialPoint(x:min(24,max(0,bounds.map { $0.maxX-f.x-f.width } ?? 24)),
+        y:min(24,max(0,bounds.map { $0.maxY-f.y-f.height } ?? 24)))
+      do { _ = commitRegion(region,prepared:try prepared.copying(offset:offset,address:region.address),summary:"Дублировать область лассо") }
+      catch { showCue(error.localizedDescription) };return
     }
     guard let members = selectedGraphicMembers(), let first = selectionSession.elements.first else { return }
     let sources = selectionSession.elements
@@ -2879,13 +2891,18 @@ final class NotebookAppModel {
       guard !cuts.isEmpty else { return member }
       var graphic=member.graphic
       graphic.mask=(graphic.mask ?? .init()).capturing(cuts,transform:graphic.transform)
-      return .init(id:member.id,frame:member.frame,origin:member.origin,graphic:graphic,layout:member.layout)
+      return .init(id:member.id,frame:member.frame,graphic:graphic,layout:member.layout,body:member.body,placement:member.placement)
     }
     let edits = NotebookGraphicSelection.duplicated(visibleMembers,namespace:UUID(),offset:offset)
     do {
       let operations = try zip(edits,members).map { edit,member -> NotebookElementEdit in
         let reference: EditableElementReference
         var values: [String:JSONValue] = ["kind":.string("graphic"),"source":.string(""),"frame":try .encode(edit.frame),"graphic":try .encode(edit.graphic)]
+        if let original=sources.first(where:{ $0.elementID == member.id }),
+          let source=nativeElementSource(original)?.placementSource {
+          if let basis=edit.basis { values["basis"]=try .encode(basis) }
+          if let parent=source.parentID { values["parentID"] = .string(parent) }
+        }
         switch first {
         case .page(let owner,_): reference = .page(pageID:owner,elementID:edit.id)
         case .spatial(let owner,_):
@@ -2894,15 +2911,17 @@ final class NotebookAppModel {
         }
         return .init(reference:reference,kind:.insertElement,values:values)
       }
-      _ = performElementOperations(operations,summary:"Дублировать фигуры",readSources:sources,
-        copiedFrom:Dictionary(uniqueKeysWithValues:zip(edits,members).map { ($0.id,$1.id) }))
+      if performElementOperations(operations,summary:"Дублировать фигуры",readSources:sources,
+        copiedFrom:Dictionary(uniqueKeysWithValues:zip(edits,members).map { ($0.id,$1.id) })) {
+        selectElements(operations.map(\.reference))
+      }
     } catch { showCue(error.localizedDescription) }
   }
 
   func deleteSelectedContent() {
-    if selectionSession.region != nil {
-      guard materializeRegionSelection() != nil else { return }
-      deleteSelectedContent();return
+    if let region=selectionSession.region,let prepared=region.materialization {
+      do { _ = commitRegion(region,prepared:try prepared.deleting(),summary:"Удалить область лассо") }
+      catch { showCue(error.localizedDescription) };return
     }
     let elements = selectionSession.elements, items = selectionSession.items, selection = selectionSession.id
     if !elements.isEmpty {
@@ -2955,6 +2974,7 @@ final class NotebookAppModel {
     case .item: kind = .item
     case .element: kind = .element
     case .elements: kind = .elements
+    case .region: kind = .region
     case .context: kind = .context
     case .reference: kind = .reference
     }
@@ -2979,6 +2999,8 @@ final class NotebookAppModel {
         items.allSatisfy({ target.kind == .board && $0.boardID == target.id }) else { return nil }
       value.target = target; value.elementIDs = refs.compactMap { nativeElementSource($0)?.id }
       value.itemIDs = items.isEmpty ? nil : items.map(\.itemID)
+    case .region(let region):
+      value.target=region.address.target;value.region=region.polygon;value.worldOrigin=region.address.worldOrigin
     case .reference(let reference): value.reference = reference
     }
     return value.isValid ? value : nil
@@ -3021,7 +3043,6 @@ final class NotebookAppModel {
     }) == true else { return }
     cancelElementManipulation()
     selectionSession.target = .context
-    selectionSession.region = nil
     selectionSession.addingElements = false
     selectionSession.isInteractive = false
   }
@@ -3036,9 +3057,8 @@ final class NotebookAppModel {
   /// reusable element ID. No late lift can commit a superseded contact.
   func beginElementManipulation(_ reference: EditableElementReference,
     kind: NotebookElementManipulation.Kind) -> UUID? {
-    if selectionSession.region?.reference == reference {
-      guard kind == .move,let first=materializeRegionSelection()?.first else { return nil }
-      return beginElementManipulation(first,kind:kind)
+    if let region=selectionSession.region,region.reference == reference {
+      return beginRegionManipulation(region,kind:kind)
     }
     // A passive raster is selectable, but it is not a live manipulation owner.
     // Selection requests its ordinary scene admission; do not commit an
@@ -3063,15 +3083,23 @@ final class NotebookAppModel {
     var contact = NotebookElementManipulation(reference: reference, kind: kind,
       frame: geometry.frame, bounds: geometry.bounds, identity: geometry.identity, worldOrigin: geometry.worldOrigin,
       connection:connection,layout:graphicGeometry?.body,graphic:graphicElement(reference),placement:graphicGeometry?.placement ?? groupGeometry?.placement ?? nativePlacement,
-      displayFrame:graphicGeometry.map { .init(x:$0.display.frame.x,y:$0.display.frame.y,width:$0.display.frame.width,height:$0.display.frame.height) } ?? groupGeometry?.bounds ?? native?.bounds,text:text)
+      displayFrame:graphicGeometry.map { geometry in
+        let f=graphicElement(reference)?.mask.flatMap { geometry.display.visibleFrame(mask:$0) } ?? geometry.display.frame
+        return .init(x:f.x,y:f.y,width:f.width,height:f.height)
+      } ?? groupGeometry?.bounds ?? native?.bounds,text:text)
     if let captured,let source=captured.source(reference.elementID) {
       let closed:Bool?
       if case .spatial(let owner,let id)=reference { closed=spatialGroupReads[owner]?[id]?.isSelfContained } else { closed=nil }
       contact.graphicCapture = .init(graph:captured,source:source,id:reference.elementID,closedGroup:closed)
     }
     if selectionSession.elements.count > 1 {
-      guard kind == .move, let members = selectedGraphicMembers() else { return nil }
-      contact.selectedMembers = members
+      switch kind { case .move,.resize: break; default: return nil }
+      guard let members=selectedGraphicMembers(),let origin=members.first?.origin else { return nil }
+      let box=NotebookGraphicSelection.bounds(members,relativeTo:origin)
+      guard !box.isNull,box.width>0,box.height>0 else { return nil }
+      let capture=contact.graphicCapture
+      contact=NotebookElementManipulation(reference:reference,kind:kind,frame:box,bounds:geometry.bounds,worldOrigin:origin)
+      contact.graphicCapture=capture;contact.selectedMembers=members
     }
     if !selectionSession.isInteractive { selectionSession.nativeText = nil }
     selectionSession.manipulation = contact
@@ -3080,17 +3108,28 @@ final class NotebookAppModel {
     return contact.id
   }
 
+  func beginRegionManipulation(_ region:NotebookRegionSelection,kind:NotebookElementManipulation.Kind) -> UUID? {
+    switch kind { case .move,.resize: break; default: return nil }
+    guard regionIsCurrent(region) else { showCue("Материал области изменился. Повторите лассо.");return nil }
+    guard inputGate.beginFingerSequence() != nil else { return nil }
+    cancelElementManipulation()
+    let f=region.frame
+    var contact=NotebookElementManipulation(reference:region.reference,kind:kind,
+      frame:.init(x:f.x,y:f.y,width:f.width,height:f.height),bounds:region.address.bounds,
+      worldOrigin:region.address.worldOrigin)
+    contact.region=region;selectionSession.manipulation=contact
+    updateRegionPreview(contact)
+    inputGate.beginContact(source:contact.id)
+    inputGate.registerFingerCancellation(source:contact.id) { [weak self] in self?.cancelElementManipulation(contact.id) }
+    return contact.id
+  }
+
   func updateElementManipulation(_ id: UUID, translation: SpatialPoint) {
     guard selectionSession.manipulation?.id == id else { return }
     let previous = manipulatedBindingTarget?.elementID
-    var delta = translation
-    if let contact = selectionSession.manipulation, !contact.selectedMembers.isEmpty, let bounds = contact.bounds {
-      let frames = contact.selectedMembers.map(\.frame)
-      delta = .init(x:min(bounds.maxX-frames.map { $0.x+$0.width }.max()!,max(bounds.minX-frames.map(\.x).min()!,delta.x)),
-        y:min(bounds.maxY-frames.map { $0.y+$0.height }.max()!,max(bounds.minY-frames.map(\.y).min()!,delta.y)))
-    }
-    selectionSession.manipulation?.update(translation: .init(x: delta.x, y: delta.y))
+    selectionSession.manipulation?.update(translation:.init(x:translation.x,y:translation.y))
     selectionSession.manipulation?.bindEndpoint(manipulatedEndpointBinding(retaining:previous))
+    if let contact=selectionSession.manipulation,contact.region != nil { updateRegionPreview(contact) }
   }
 
   @discardableResult
@@ -3099,9 +3138,14 @@ final class NotebookAppModel {
     updateElementManipulation(id, translation: translation)
     guard let contact = selectionSession.manipulation else { return false }
     cancelElementManipulation(id)
+    if let region=contact.region {
+      guard contact.frame != contact.original,let prepared=try? region.materialization?.transformed(from:region.frame,to:contact.frame,address:region.address) else { return false }
+      return commitRegion(region,prepared:prepared,summary:contact.kind == .move ? "Переместить область лассо" : "Изменить размер области лассо")
+    }
     if !contact.selectedMembers.isEmpty {
       guard selectedGraphicMembers() == contact.selectedMembers else { return false }
-      return applySelectionEdits(contact.selectedEdits,summary:"Переместить выбранные фигуры")
+      guard contact.frame != contact.original,contact.selectedEdits.count == contact.selectedMembers.count else { return false }
+      return applySelectionEdits(contact.selectedEdits,summary:contact.kind == .move ? "Переместить выбранные фигуры" : "Изменить размер выбранных фигур")
     }
     guard contact.frame != contact.original || contact.basis != contact.originalBasis || contact.connection != contact.originalConnection
       || contact.vertices != contact.originalVertices || contact.cornerRadius != contact.originalCornerRadius,
@@ -3161,6 +3205,9 @@ final class NotebookAppModel {
   func cancelElementManipulation(_ id: UUID? = nil) {
     guard let contact = selectionSession.manipulation, id == nil || contact.id == id else { return }
     selectionSession.manipulation = nil
+    if let prepared=contact.region?.materialization {
+      let ids=Set(prepared.working.map(\.id));removeWorkingGraphics { !$0.accepted && ids.contains($0.id) }
+    }
     inputGate.unregisterFingerCancellation(source: contact.id)
     inputGate.endContact(source: contact.id)
   }
@@ -3335,13 +3382,14 @@ final class NotebookAppModel {
   @discardableResult
   func performElementOperations(_ edits: [NotebookElementEdit], summary: String,
     layerMove: NotebookElementLayerMove? = nil, readSources: [EditableElementReference] = [], copiedFrom: [String:String] = [:],
-    insertionTarget explicitTarget: CollaborationTarget? = nil, expectedInkRevision: String? = nil, retainedSources: [EditableElementReference:NotebookNativeElementSource] = [:], previews: Bool = true,capture:NotebookGraphicContactSource? = nil) -> Bool {
+    insertionTarget explicitTarget: CollaborationTarget? = nil, expectedInkRevision: String? = nil, retainedSources: [EditableElementReference:NotebookNativeElementSource] = [:], previews: Bool = true,capture:NotebookGraphicContactSource? = nil,
+    frozenSources:[EditableElementReference:NotebookNativeElementSource] = [:]) -> Bool {
     guard !edits.isEmpty, edits.count <= 32 else { return false }
     let references = Array(Set(edits.map(\.reference) + readSources))
     let insertionTarget = explicitTarget ?? readSources.first.flatMap { nativeElementSource($0)?.target }
     var originals: [EditableElementReference: NotebookNativeElementSource] = [:]
     for reference in references {
-      let live = nativeElementSource(reference)
+      let live = frozenSources[reference] ?? nativeElementSource(reference)
       guard let source = live?.page != nil || live?.spatial != nil ? live : retainedSources[reference] ?? live else { return false }
       originals[reference] = source.page == nil && source.spatial == nil && insertionTarget != nil
         ? .init(target:insertionTarget!,id:source.id) : source
@@ -3354,7 +3402,7 @@ final class NotebookAppModel {
     let sources = originals
     let predecessor = graphicCommandTask, actor = actorID, generation = UUID(),commandID=UUID()
     let sourceTasks = references.reduce(into: [EditableElementReference: Task<NotebookElementCommandResult?, Never>]()) {
-      $0[$1] = elementCommandSources[$1]?.task
+      if frozenSources[$1] == nil { $0[$1] = elementCommandSources[$1]?.task }
     }
     var drafts: [EditableElementReference: NotebookElementCommandDraft] = [:]
     do {

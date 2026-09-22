@@ -1146,6 +1146,53 @@
                               },
                               "kind": {
                                 "type": "string",
+                                "const": "region"
+                              },
+                              "target": {
+                                "$ref": "#/$defs/__schema1"
+                              },
+                              "region": {
+                                "minItems": 3,
+                                "maxItems": 4096,
+                                "type": "array",
+                                "items": {
+                                  "$ref": "#/$defs/__schema25"
+                                }
+                              },
+                              "worldOrigin": {
+                                "$ref": "#/$defs/__schema21"
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "surface",
+                              "resolving",
+                              "kind",
+                              "target",
+                              "region"
+                            ],
+                            "additionalProperties": {}
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "$ref": "#/$defs/__schema4"
+                              },
+                              "surface": {
+                                "$ref": "#/$defs/__schema1"
+                              },
+                              "pageIndex": {
+                                "$ref": "#/$defs/__schema26"
+                              },
+                              "contextID": {
+                                "$ref": "#/$defs/__schema27"
+                              },
+                              "resolving": {
+                                "$ref": "#/$defs/__schema28"
+                              },
+                              "kind": {
+                                "type": "string",
                                 "const": "context"
                               }
                             },
@@ -5796,6 +5843,53 @@
                           "kind",
                           "target",
                           "elementIDs"
+                        ],
+                        "additionalProperties": {}
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "$ref": "#/$defs/__schema6"
+                          },
+                          "surface": {
+                            "$ref": "#/$defs/__schema1"
+                          },
+                          "pageIndex": {
+                            "$ref": "#/$defs/__schema42"
+                          },
+                          "contextID": {
+                            "$ref": "#/$defs/__schema43"
+                          },
+                          "resolving": {
+                            "$ref": "#/$defs/__schema44"
+                          },
+                          "kind": {
+                            "type": "string",
+                            "const": "region"
+                          },
+                          "target": {
+                            "$ref": "#/$defs/__schema1"
+                          },
+                          "region": {
+                            "minItems": 3,
+                            "maxItems": 4096,
+                            "type": "array",
+                            "items": {
+                              "$ref": "#/$defs/__schema40"
+                            }
+                          },
+                          "worldOrigin": {
+                            "$ref": "#/$defs/__schema28"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "surface",
+                          "resolving",
+                          "kind",
+                          "target",
+                          "region"
                         ],
                         "additionalProperties": {}
                       },
@@ -10537,6 +10631,53 @@
                           "kind",
                           "target",
                           "elementIDs"
+                        ],
+                        "additionalProperties": {}
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "$ref": "#/$defs/__schema6"
+                          },
+                          "surface": {
+                            "$ref": "#/$defs/__schema1"
+                          },
+                          "pageIndex": {
+                            "$ref": "#/$defs/__schema42"
+                          },
+                          "contextID": {
+                            "$ref": "#/$defs/__schema43"
+                          },
+                          "resolving": {
+                            "$ref": "#/$defs/__schema44"
+                          },
+                          "kind": {
+                            "type": "string",
+                            "const": "region"
+                          },
+                          "target": {
+                            "$ref": "#/$defs/__schema1"
+                          },
+                          "region": {
+                            "minItems": 3,
+                            "maxItems": 4096,
+                            "type": "array",
+                            "items": {
+                              "$ref": "#/$defs/__schema40"
+                            }
+                          },
+                          "worldOrigin": {
+                            "$ref": "#/$defs/__schema28"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "surface",
+                          "resolving",
+                          "kind",
+                          "target",
+                          "region"
                         ],
                         "additionalProperties": {}
                       },
@@ -32940,6 +33081,53 @@
                         },
                         "kind": {
                           "type": "string",
+                          "const": "region"
+                        },
+                        "target": {
+                          "$ref": "#/$defs/__schema1"
+                        },
+                        "region": {
+                          "minItems": 3,
+                          "maxItems": 4096,
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/$defs/__schema25"
+                          }
+                        },
+                        "worldOrigin": {
+                          "$ref": "#/$defs/__schema21"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "surface",
+                        "resolving",
+                        "kind",
+                        "target",
+                        "region"
+                      ],
+                      "additionalProperties": {}
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "$ref": "#/$defs/__schema4"
+                        },
+                        "surface": {
+                          "$ref": "#/$defs/__schema1"
+                        },
+                        "pageIndex": {
+                          "$ref": "#/$defs/__schema26"
+                        },
+                        "contextID": {
+                          "$ref": "#/$defs/__schema27"
+                        },
+                        "resolving": {
+                          "$ref": "#/$defs/__schema28"
+                        },
+                        "kind": {
+                          "type": "string",
                           "const": "context"
                         }
                       },
@@ -44648,6 +44836,53 @@
                     },
                     "kind": {
                       "type": "string",
+                      "const": "region"
+                    },
+                    "target": {
+                      "$ref": "#/$defs/__schema2"
+                    },
+                    "region": {
+                      "minItems": 3,
+                      "maxItems": 4096,
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/$defs/__schema7"
+                      }
+                    },
+                    "worldOrigin": {
+                      "$ref": "#/$defs/__schema8"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "surface",
+                    "resolving",
+                    "kind",
+                    "target",
+                    "region"
+                  ],
+                  "additionalProperties": {}
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "$ref": "#/$defs/__schema0"
+                    },
+                    "surface": {
+                      "$ref": "#/$defs/__schema2"
+                    },
+                    "pageIndex": {
+                      "$ref": "#/$defs/__schema3"
+                    },
+                    "contextID": {
+                      "$ref": "#/$defs/__schema4"
+                    },
+                    "resolving": {
+                      "$ref": "#/$defs/__schema5"
+                    },
+                    "kind": {
+                      "type": "string",
                       "const": "context"
                     }
                   },
@@ -44722,36 +44957,7 @@
                           "additionalProperties": false
                         },
                         "worldOrigin": {
-                          "type": "object",
-                          "properties": {
-                            "tileX": {
-                              "type": "integer",
-                              "minimum": -9007199254740991,
-                              "maximum": 9007199254740991
-                            },
-                            "tileY": {
-                              "type": "integer",
-                              "minimum": -9007199254740991,
-                              "maximum": 9007199254740991
-                            },
-                            "localX": {
-                              "type": "number",
-                              "minimum": 0,
-                              "exclusiveMaximum": 6651.968503937008
-                            },
-                            "localY": {
-                              "type": "number",
-                              "minimum": 0,
-                              "exclusiveMaximum": 6651.968503937008
-                            }
-                          },
-                          "required": [
-                            "tileX",
-                            "tileY",
-                            "localX",
-                            "localY"
-                          ],
-                          "additionalProperties": false
+                          "$ref": "#/$defs/__schema8"
                         },
                         "pageIndex": {
                           "type": "integer",
@@ -44965,6 +45171,54 @@
         },
         "__schema6": {
           "type": "string"
+        },
+        "__schema7": {
+          "type": "object",
+          "properties": {
+            "x": {
+              "$ref": "#/$defs/__schema1"
+            },
+            "y": {
+              "$ref": "#/$defs/__schema1"
+            }
+          },
+          "required": [
+            "x",
+            "y"
+          ],
+          "additionalProperties": {}
+        },
+        "__schema8": {
+          "type": "object",
+          "properties": {
+            "tileX": {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            },
+            "tileY": {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            },
+            "localX": {
+              "type": "number",
+              "minimum": 0,
+              "exclusiveMaximum": 6651.968503937008
+            },
+            "localY": {
+              "type": "number",
+              "minimum": 0,
+              "exclusiveMaximum": 6651.968503937008
+            }
+          },
+          "required": [
+            "tileX",
+            "tileY",
+            "localX",
+            "localY"
+          ],
+          "additionalProperties": false
         }
       }
     },

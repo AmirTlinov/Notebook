@@ -67,7 +67,7 @@ extension NotebookAppModel {
       switch ref { case .page(_,let value),.spatial(_,let value): id=value }
       if reference(id) == ref { result[id]=draft.source }
     }
-    if let contact=selectionSession.manipulation {
+    if let contact=selectionSession.manipulation,contact.selectedMembers.isEmpty {
       let ref=contact.reference,id:String
       switch ref { case .page(_,let value),.spatial(_,let value): id=value }
       if reference(id) == ref,var source=result[id] ?? contact.graphicCapture?.source ?? nativeElementSource(ref)?.placementSource {
@@ -90,7 +90,13 @@ extension NotebookAppModel {
       let id=ref.elementID
       if reference(id) == ref,let graphic=draft.graphic { graphics[id]=graphic }
     }
-    if let contact=selectionSession.manipulation,reference(contact.reference.elementID) == contact.reference,
+    if let region=selectionSession.manipulation?.region,let prepared=region.materialization {
+      for edit in prepared.edits where edit.kind == .updateElement && reference(edit.reference.elementID) == edit.reference {
+        if let original=graph.node(edit.reference.elementID)?.graphic,let patch=edit.values["graphic"],
+          let outside=try? original.applying(patch) { graphics[edit.reference.elementID]=outside }
+      }
+    }
+    if let contact=selectionSession.manipulation,contact.selectedMembers.isEmpty,reference(contact.reference.elementID) == contact.reference,
       var graphic=graphics[contact.reference.elementID] ?? graph.node(contact.reference.elementID)?.graphic {
       if let connection=contact.connection { graphic.connection=connection }
       if contact.vertices != contact.originalVertices { graphic.vertices=contact.vertices }
@@ -104,7 +110,7 @@ extension NotebookAppModel {
     }
     for selected in selectedEdits where graph.node(selected.id) != nil {
       graphics[selected.id]=selected.graphic
-      if var source=graph.source(selected.id) { source.frame=selected.frame;sources[selected.id]=source }
+      if var source=graph.source(selected.id) { source.frame=selected.frame;source.basis=selected.basis;sources[selected.id]=source }
     }
     return graph.projecting(placements:sources,graphics:graphics)
   }

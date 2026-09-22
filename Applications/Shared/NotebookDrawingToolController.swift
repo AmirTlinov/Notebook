@@ -41,6 +41,7 @@ final class NotebookDrawingToolController {
   }
   private unowned let model: NotebookAppModel
   private(set) var contact: Contact?
+  private(set) var pendingLasso: Contact?
   var ruler: NotebookRuler?
   private(set) var laserTraces: [NotebookLaserTrace] = []
   @ObservationIgnored private var inkSnapshotCache: (surface:SurfaceID,key:String,
@@ -208,7 +209,7 @@ final class NotebookDrawingToolController {
   }
 
   func cancel() {
-    lassoTask?.cancel(); lassoTask = nil
+    lassoTask?.cancel(); lassoTask = nil; pendingLasso=nil
     if let contact {
       model.updateWorkingGraphic(nil,strokeID:contact.id)
       if contact.tool == .laser { expireLaser(contact.id) }
@@ -230,13 +231,16 @@ final class NotebookDrawingToolController {
   private func finishLasso(_ current: Contact) {
     let polygon = simplifiedLasso(current.points,screenScale:current.screenScale)
     guard polygon.count >= 3 else { model.clearSelection(); return }
+    pendingLasso=current
     if current.settings.lassoMode == .elements {
       finishElementSelection(current,polygon:polygon)
       return
     }
     let erasures=model.lassoErasureSnapshot(primary:current.address.surface)
     let selection = model.selectionSession.id
+    let snapshot=model.regionSourceSnapshot(current.address)
     lassoTask = Task { [weak self] in
+      defer { if self?.pendingLasso?.id == current.id { self?.pendingLasso=nil } }
       do {
         let graphicPreparation=Task.detached(priority:.userInitiated) {
           try NotebookLassoQuery.references(intersecting:polygon,at:current.address,
@@ -262,7 +266,7 @@ final class NotebookDrawingToolController {
           expectedInkRevision:source?.revision,graphics:references)
         let graph=current.graph
         let materialization=Task.detached(priority:.userInitiated) {
-          try NotebookRegionMaterialization.prepare(descriptor,graph:graph,
+          try NotebookRegionMaterialization.prepare(descriptor,graph:graph,snapshot:snapshot,
             erasures:try erasures.masks(on:descriptor.address.surface))
         }
         let prepared=try await withTaskCancellationHandler { try await materialization.value }
@@ -289,6 +293,7 @@ final class NotebookDrawingToolController {
     let erasures=model.lassoErasureSnapshot(primary:current.address.surface)
     let removed=model.lassoRemovedPageElements(on:current.address.surface)
     lassoTask=Task { [weak self] in
+      defer { if self?.pendingLasso?.id == current.id { self?.pendingLasso=nil } }
       do {
         let preparation=Task.detached(priority:.userInitiated) {
           try NotebookLassoQuery.objects(intersecting:polygon,at:current.address,
@@ -313,7 +318,8 @@ final class NotebookDrawingToolController {
     func reduced(_ tolerance:Double)->[SpatialPoint] {
       var keep=Array(repeating:false,count:points.count);keep[0]=true;keep[points.count-1]=true
       var stack=[(0,points.count-1)]
-      while let (start,end)=stack.popLast(),end > start+1 {
+      while let (start,end)=stack.popLast() {
+        guard end > start+1 else { continue }
         var far=start,value=0.0
         for index in (start+1)..<end {
           let d=distance(points[index],points[start],points[end]);if d > value { value=d;far=index }
@@ -374,7 +380,7 @@ final class NotebookDrawingToolController {
 }
 
 extension NotebookRegionMaterialization {
-  static func prepare(_ region:NotebookRegionSelection,graph:NotebookGraphicGraph,erasures:[String:[InkElementErasure]] = [:]) throws -> Self? {
+  static func prepare(_ region:NotebookRegionSelection,graph:NotebookGraphicGraph,snapshot:NotebookRegionSourceSnapshot,erasures:[String:[InkElementErasure]] = [:]) throws -> Self? {
     func normalized(_ polygon:[SpatialPoint],in frame:PageRect)->[SpatialPoint] {
       guard frame.width > 0,frame.height > 0 else { return [] }
       return polygon.map { .init(x:($0.x-frame.x)/frame.width,y:($0.y-frame.y)/frame.height) }
@@ -476,7 +482,7 @@ extension NotebookRegionMaterialization {
     guard edits.count <= 32 else {
       throw CollaborationError("selection_limit","Выделите меньшую область: одно изменение содержит не более 32 частей.")
     }
-    return .init(edits:edits,working:working,selected:selected)
+    return .init(edits:edits,working:working,selected:selected,sources:try snapshot.sources(for:region,graph:graph))
   }
 }
 
@@ -746,20 +752,6 @@ extension NotebookAppModel {
       removeWorkingGraphics { $0.id == object.id }; return false
     }
     return true
-  }
-
-  /// The first causal operation materializes a region as compact masked views
-  /// of the same retained vectors. Merely drawing a lasso never writes.
-  @discardableResult
-  func materializeRegionSelection()->[EditableElementReference]? {
-    guard let region=selectionSession.region else { return nil }
-    guard let prepared=region.materialization else { return nil }
-    acceptWorkingGraphics(prepared.working)
-    guard performElementOperations(prepared.edits,summary:"Изменить область лассо",insertionTarget:region.address.target,
-      expectedInkRevision:region.expectedInkRevision) else {
-      let ids=Set(prepared.working.map(\.id));removeWorkingGraphics { ids.contains($0.id) };return nil
-    }
-    selectElements(prepared.selected);return prepared.selected
   }
 
   /// Empty input is a selection-session draft, not a saved invisible object.

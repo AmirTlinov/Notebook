@@ -654,7 +654,7 @@ struct WorkspacePanView: UIViewRepresentable {
 struct NotebookInteractionView: UIViewRepresentable {
   let inputGate: NotebookInputGate
   let ownerIsAvailable: () -> Bool
-  let passthroughFrames: [CGRect]
+  let passesThrough: (CGPoint) -> Bool
   let onTap: (CGPoint, Int) -> Void
   let onLiftChanged: (Bool) -> Void
   let onTranslationChanged: (CGSize) -> Void
@@ -673,7 +673,7 @@ struct NotebookInteractionView: UIViewRepresentable {
     _ view: NotebookInteractionTouchView,
     context: Context
   ) {
-    view.passthroughFrames = passthroughFrames
+    view.passesThrough = passesThrough
     view.useInputGate(inputGate)
     view.onTap = onTap
     view.onLiftChanged = onLiftChanged
@@ -700,7 +700,7 @@ final class NotebookInteractionTouchView: UIView {
   var onTranslationChanged: (CGSize) -> Void = { _ in }
   var onTranslationEnded: (CGSize) -> Void = { _ in }
   var onCancelled: () -> Void = {}
-  var passthroughFrames: [CGRect] = []
+  var passesThrough: (CGPoint) -> Bool = { _ in false }
   private var ownerIsAvailable: () -> Bool = { true }
 
   private weak var activeTouch: UITouch?
@@ -761,7 +761,7 @@ final class NotebookInteractionTouchView: UIView {
 
   override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
     super.point(inside: point, with: event)
-      && !passthroughFrames.contains(where: { $0.contains(point) })
+      && !passesThrough(convert(point,to:window))
   }
 
   override func touchesBegan(

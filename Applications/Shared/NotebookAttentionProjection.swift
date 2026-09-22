@@ -135,7 +135,9 @@ enum NotebookAttentionProjection {
   static func editingFrame(_ reference: EditableElementReference, model: NotebookAppModel, presence: SessionPresence,
     layout: NotebookGraphicLayout? = nil) -> CGRect? {
     if let region=model.selectionSession.region,region.reference == reference {
-      return frame(target:region.address.target,elementID:nil,region:region.frame,
+      let f=model.selectionSession.manipulation.flatMap { $0.reference == reference ? $0.frame : nil }
+      let local=f.map { PageRect(x:$0.minX,y:$0.minY,width:$0.width,height:$0.height) } ?? region.frame
+      return frame(target:region.address.target,elementID:nil,region:local,
         worldOrigin:region.address.worldOrigin,pageIndex:nil,model:model,presence:presence,minimumSide:0)
     }
     let resolved=layout ?? model.graphicLayout(reference)
@@ -169,7 +171,7 @@ enum NotebookAttentionProjection {
     case .spatial(let boardID, let elementID):
       guard boardID == presence.boardID,
         let cohort = model.compositionTiles.published,
-        let element = model.presentedElement(reference, cohort: cohort) ?? cohort.frame.index.element(id:elementID,boardID:boardID).flatMap { $0.kind == .group ? $0 : nil }, let owner = element.surface.ownerID else { return nil }
+        let element = model.presentedElement(reference, cohort: cohort) ?? cohort.frame.index.element(id:elementID,boardID:boardID).flatMap({ $0.kind == .group ? $0 : nil }), let owner = element.surface.ownerID else { return nil }
       target = .init(kind: element.surface.kind == .cover ? .cover : .board, id: owner, boardID: boardID); id = elementID
     }
     return frame(target: target, elementID: id, region: nil, worldOrigin: nil, pageIndex: nil, model: model, presence: presence, minimumSide: 0, graphicLayout:layout)
@@ -185,7 +187,7 @@ enum NotebookAttentionProjection {
       guard target.id == presence.boardID else { return nil }
       var origin = worldOrigin ?? .zero
       if let id = elementID {
-        guard let element = model.presentedElement(.spatial(boardID: presence.boardID, elementID: id), cohort: cohort) ?? index.element(id:id,boardID:presence.boardID).flatMap { $0.kind == .group ? $0 : nil },
+        guard let element = model.presentedElement(.spatial(boardID: presence.boardID, elementID: id), cohort: cohort) ?? index.element(id:id,boardID:presence.boardID).flatMap({ $0.kind == .group ? $0 : nil }),
           element.surface == .board(target.id) else { return nil }
         local = model.elementPresentationFrame(.spatial(boardID:presence.boardID,elementID:id),
           fallback:.init(x:element.frame.x,y:element.frame.y,width:element.frame.width,height:element.frame.height))
@@ -311,12 +313,28 @@ enum NotebookAttentionProjection {
   }
   #endif
 
+  enum PointResolution {
+    case hit(NotebookAttentionSelection.Fragment)
+    case pending
+  }
+
+  /// Missing cut geometry is not empty material. While the canonical worker
+  /// prepares it, do not retarget the same contact to an owner underneath.
+  static func pointResolution(at point: CGPoint, model: NotebookAppModel, presence: SessionPresence,
+    cohort: SceneCompositionCohort) -> PointResolution? {
+    guard let sources = contactSources(model:model,presence:presence,cohort:cohort) else { return nil }
+    var pending = false
+    let hit = fragment(start:point,end:point,sources:sources,presence:presence,dragged:false,
+      pending: { pending = true })
+    return pending ? .pending : hit.map(PointResolution.hit)
+  }
+
   /// Resolve the painted contact without freezing pixels or constructing a
   /// shared attention selection. Local authoring does not borrow the scene.
-  static func textContact(at point: CGPoint, model: NotebookAppModel, presence: SessionPresence,
+  static func pointContact(at point: CGPoint, model: NotebookAppModel, presence: SessionPresence,
     cohort: SceneCompositionCohort) -> NotebookAttentionSelection.Fragment? {
-    guard let sources = contactSources(model:model,presence:presence,cohort:cohort) else { return nil }
-    return fragment(start:point,end:point,sources:sources,presence:presence,dragged:false)
+    guard case .hit(let hit) = pointResolution(at:point,model:model,presence:presence,cohort:cohort) else { return nil }
+    return hit
   }
 
   static func toolAddress(at point: CGPoint, fragment: NotebookAttentionSelection.Fragment,
@@ -331,6 +349,49 @@ enum NotebookAttentionProjection {
     return (.init(surface:fragment.target.kind == .page ? .page(fragment.target.id) : .cover(fragment.target.id),
       boardID:presence.boardID,worldOrigin:nil,bounds:.init(x:0,y:0,width:rect.width/scale,height:rect.height/scale)),
       .init(x:(point.x-rect.minX)/scale,y:(point.y-rect.minY)/scale))
+  }
+
+  /// Selection does not invent a second rectangular hit rule. A region owns
+  /// its contour; ordinary choices use the same painted contact as a fresh tap.
+  static func selectedElement(at point:CGPoint,model:NotebookAppModel,presence:SessionPresence,
+    cohort:SceneCompositionCohort) -> EditableElementReference? {
+    guard !model.selectionSession.isInteractive else { return nil }
+    if let region=model.selectionSession.region,
+      let box=editingFrame(region.reference,model:model,presence:presence),box.width > 0,box.height > 0 {
+      let p=CGPoint(x:region.frame.x+(point.x-box.minX)*region.frame.width/box.width,
+        y:region.frame.y+(point.y-box.minY)*region.frame.height/box.height)
+      let path=CGMutablePath();path.addLines(between:region.polygon.map { CGPoint(x:$0.x,y:$0.y) });path.closeSubpath()
+      if path.contains(p,using:.evenOdd) { return region.reference }
+    }
+    let painted=pointContact(at:point,model:model,presence:presence,cohort:cohort)
+    // Accepted insertions/drafts can precede the scene's persisted receipt.
+    // They still use the common exact picker, never their old bounding box.
+    for reference in model.selectionSession.elements.reversed()
+      where model.acceptedWorkingGraphic(reference) != nil || model.elementCommandDrafts[reference] != nil {
+      guard let graph=model.editingGraphicGraph(reference),let node=graph.node(reference.elementID),
+        let layout=graph.resolve(node.id).layout,let source=model.nativeElementSource(reference),
+        painted?.target == source.target,
+        let screen=frame(target:source.target,elementID:nil,region:layout.frame,
+          worldOrigin:source.target.kind == .board ? layout.origin : nil,pageIndex:nil,
+          model:model,presence:presence,minimumSide:0) else { continue }
+      let local=SpatialPoint(x:layout.frame.x+(point.x-screen.minX)/presence.camera.scale,
+        y:layout.frame.y+(point.y-screen.minY)/presence.camera.scale)
+      let hit=pickElement(in:[node],graph:graph,erasures:model.elementErasures(on:node.surface),
+        appearance:{ model.elementErasureCache.appearance(surface:node.surface,id:$0,graphic:$1,layout:$2,size:$3,erasures:$4) },
+        scale:presence.camera.scale,viewport:presence.viewport,
+        presentation:{ node,placement in .init(AgentElement(id:node.id,kind:.graphic,frame:node.frame,source:"",html:"",graphic:node.graphic),placement:placement) },
+        project:{ ($0.id,$0.graphic,local) })
+      if hit != nil { return reference }
+    }
+    guard let hit=painted,
+      let id=hit.elementID,[CollaborationTarget.Kind.page,.board,.cover].contains(hit.target.kind) else { return nil }
+    let reference:EditableElementReference = hit.target.kind == .page ? .page(pageID:hit.target.id,elementID:id)
+      : .spatial(boardID:hit.target.boardID ?? hit.target.id,elementID:id)
+    if model.selectionSession.contains(reference) { return reference }
+    let ancestors=model.editingGraphicGraph(reference)?.placement(id)?.ancestors ?? []
+    return model.selectionSession.elements.first { selected in
+      ancestors.contains(selected.elementID) && model.nativeElementSource(selected)?.target == hit.target
+    }
   }
 
   private static func contactSources(model: NotebookAppModel, presence: SessionPresence,
@@ -596,7 +657,9 @@ enum NotebookAttentionProjection {
   }
 
   private static func fragment(start: CGPoint, end: CGPoint, sources: CaptureSources, presence: SessionPresence,
-    ownerID: UUID? = nil, dragged: Bool) -> NotebookAttentionSelection.Fragment? {
+    ownerID: UUID? = nil, dragged: Bool, pending: () -> Void = {}) -> NotebookAttentionSelection.Fragment? {
+    var unresolved = false
+    let awaitingAppearance = { unresolved = true; pending() }
     guard let board = sources.hierarchy.board(presence.boardID) else { return nil }
     // Clipping an area to a tiny owner intersection never turns the original
     // drag into a tap that authorizes the whole element or physical cover.
@@ -625,7 +688,7 @@ enum NotebookAttentionProjection {
         if !dragged, let page = sources.pages[pageID], let graph,
           let element = pickElement(in: pageInteractionElements(at:.init(x:region.x,y:region.y),
             page:page,graph:graph,scale:presence.camera.scale), graph: graph, erasures:sources.erasures(.page(pageID)),
-            appearance: { sources.appearance(.page(pageID), $0, $1, $2, $3, $4) }, scale: presence.camera.scale, viewport: presence.viewport,presentation:{ .init($0,placement:$1) },
+            appearance: { sources.appearance(.page(pageID), $0, $1, $2, $3, $4) }, scale: presence.camera.scale, viewport: presence.viewport,pending:awaitingAppearance,presentation:{ .init($0,placement:$1) },
             project: { ($0.id, $0.graphic, .init(x:region.x,y:region.y)) }) {
           elementID = element.id; region = graph.resolve(element.id).layout?.frame ?? graph.placement(element.id).map { NotebookElementPresentation(element,placement:$0).frame } ?? NotebookTextTypography.frame(element)
         }
@@ -644,7 +707,7 @@ enum NotebookAttentionProjection {
           let graph = board.graphicGraph()
           if let element = pickElement(in: board.elements.filter { $0.surface == .cover(item.id) }, graph: graph, erasures:sources.erasures(.cover(item.id)),
             appearance: { sources.appearance(.cover(item.id), $0, $1, $2, $3, $4) },
-            scale: presence.camera.scale, viewport: presence.viewport,presentation:{ .init($0,placement:$1) }, project: {
+            scale: presence.camera.scale, viewport: presence.viewport,pending:awaitingAppearance,presentation:{ .init($0,placement:$1) }, project: {
               ($0.id, $0.graphic,
                 .init(x:region.x,y:region.y))
             }) {
@@ -661,7 +724,7 @@ enum NotebookAttentionProjection {
         let graph = board.graphicGraph()
         if let element = pickElement(in: admitted.elements.filter { $0.surface == .board(presence.boardID) }, graph: graph, erasures:sources.erasures(.board(presence.boardID)),
             appearance: { sources.appearance(.board(presence.boardID), $0, $1, $2, $3, $4) },
-          scale: presence.camera.scale, viewport: presence.viewport,presentation:{ .init($0,placement:$1) }, project: {
+          scale: presence.camera.scale, viewport: presence.viewport,pending:awaitingAppearance,presentation:{ .init($0,placement:$1) }, project: {
             ($0.id, $0.graphic,
               (graph.placement($0.id)?.origin ?? $0.worldOrigin ?? .zero).delta(to: pointOrigin))
           }) {
@@ -671,6 +734,7 @@ enum NotebookAttentionProjection {
         }
       }
     }
+    guard !unresolved else { return nil }
     return .init(target:target,elementID:elementID,region:region,worldOrigin:origin,pageIndex:pageIndex,
       label: dragged ? "Область" : elementID == nil ? "Место" : "Объект")
   }
@@ -689,7 +753,7 @@ enum NotebookAttentionProjection {
   /// The same pick serves tap, direct drag and the resulting shared reference.
   static func pickElement<Element>(in elements: [Element], graph: NotebookGraphicGraph, erasures: [String: [InkElementErasure]] = [:],
     appearance: (String, NotebookGraphic?, NotebookGraphicLayout?, CGSize, [InkElementErasure]) -> NotebookElementAppearance? = { _,_,_,_,_ in nil }, scale: Double,
-    viewport: SpatialPoint, presentation:(Element,NotebookElementPlacement) -> NotebookElementPresentation,
+    viewport: SpatialPoint, pending: () -> Void = {}, presentation:(Element,NotebookElementPlacement) -> NotebookElementPresentation,
     project: (Element) -> (String, NotebookGraphic?, SpatialPoint)) -> Element? {
     var interior: (Element, Double)?
     let tolerance = elementHitPadding / max(0.001, scale)
@@ -700,8 +764,9 @@ enum NotebookAttentionProjection {
         let body=presentation(element,placement)
         let local=CGPoint(x:point.x,y:point.y).applying(placement.transform.inverted())
         if let cuts=erasures[id],!cuts.isEmpty {
-          guard let prepared=appearance(id,nil,nil,body.bodySize,cuts) else { continue }
           let inverseScale=NotebookElementPresentation.maximumScale(placement.transform.inverted())
+          guard body.localBounds.insetBy(dx:-tolerance*inverseScale,dy:-tolerance*inverseScale).contains(local) else { continue }
+          guard let prepared=appearance(id,nil,nil,body.bodySize,cuts) else { pending(); return nil }
           if prepared.contains(.init(x:local.x,y:local.y),tolerance:tolerance*inverseScale) { return element }
         } else if body.localBounds.contains(local) { return element }
         continue
@@ -709,7 +774,9 @@ enum NotebookAttentionProjection {
       guard let graphic,let layout=graph.resolve(id).layout else { continue }
       if let cuts = erasures[id], !cuts.isEmpty {
         let box = layout.frame
-        guard let prepared = appearance(id,graphic,layout,.init(width:box.width,height:box.height),cuts) else { continue }
+        guard CGRect(x:box.x,y:box.y,width:box.width,height:box.height)
+          .insetBy(dx:-tolerance,dy:-tolerance).contains(CGPoint(x:point.x,y:point.y)) else { continue }
+        guard let prepared = appearance(id,graphic,layout,.init(width:box.width,height:box.height),cuts) else { pending(); return nil }
         if prepared.contains(.init(x:point.x-box.x,y:point.y-box.y),tolerance:tolerance) { return element }
         // A cutout is not an intact hollow figure: its empty old interior may
         // not steal selection from the paper or surviving fragments below it.

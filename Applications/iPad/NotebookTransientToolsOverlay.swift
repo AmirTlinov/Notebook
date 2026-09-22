@@ -27,11 +27,25 @@ struct NotebookTransientToolsOverlay: View {
         }
       }.allowsHitTesting(false).accessibilityHidden(true)
     }
+    if let region=model.selectionSession.region,let zero=origin(region.address) {
+      let f=model.selectionSession.manipulation.flatMap { $0.reference == region.reference ? $0.frame : nil }
+        ?? CGRect(x:region.frame.x,y:region.frame.y,width:region.frame.width,height:region.frame.height)
+      contour(region.polygon.map { .init(x:f.minX+($0.x-region.frame.x)*f.width/region.frame.width,
+        y:f.minY+($0.y-region.frame.y)*f.height/region.frame.height) },origin:zero)
+    } else if let pending=model.drawingTools.pendingLasso,let zero=origin(pending.address) {
+      contour(pending.points,origin:zero)
+    }
     if model.drawingTool == .ruler, let ruler = model.drawingTools.ruler, let zero = origin(ruler.address) {
       NotebookRulerControl(model:model,ruler:ruler,origin:zero,scale:presence.camera.scale)
     }
   }
     }
+  private func contour(_ points:[SpatialPoint],origin:CGPoint) -> some View {
+    Path { path in
+      path.addLines(points.map { .init(x:origin.x+$0.x*presence.camera.scale,y:origin.y+$0.y*presence.camera.scale) })
+      path.closeSubpath()
+    }.stroke(.blue,style:.init(lineWidth:1.5,dash:[5,3])).allowsHitTesting(false).accessibilityHidden(true)
+  }
   private func origin(_ address: NotebookToolAddress) -> CGPoint? {
     if address.surface.kind == .board {
       guard address.surface.ownerID == presence.boardID else { return nil }

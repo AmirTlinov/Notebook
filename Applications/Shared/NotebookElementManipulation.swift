@@ -85,9 +85,15 @@ struct NotebookElementManipulation: Equatable, Sendable {
         case .spatial(let owner,_): .spatial(boardID:owner,elementID:ancestor) }
     }
   }
+  var region: NotebookRegionSelection?
   var selectedMembers: [NotebookGraphicSelection.Member] = []
   var selectedEdits: [NotebookGraphicSelection.Edit] {
-    NotebookGraphicSelection.translated(selectedMembers, by: .init(x: movement.x,y: movement.y))
+    guard let origin=selectedMembers.first?.origin else { return [] }
+    if kind == .move { return NotebookGraphicSelection.translated(selectedMembers,by:.init(x:movement.x,y:movement.y)) }
+    let change=CGAffineTransform(translationX:-original.minX,y:-original.minY)
+      .concatenating(.init(scaleX:frame.width/original.width,y:frame.height/original.height))
+      .concatenating(.init(translationX:frame.minX,y:frame.minY))
+    return NotebookGraphicSelection.transformed(selectedMembers,by:change,relativeTo:origin)
   }
 
   init(reference: EditableElementReference, kind: Kind, frame: CGRect, bounds: CGRect?, identity: VersionStamp? = nil,

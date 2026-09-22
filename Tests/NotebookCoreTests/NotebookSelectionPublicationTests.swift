@@ -3,6 +3,17 @@ import Testing
 @testable import NotebookCore
 
 @Suite struct NotebookSelectionPublicationTests {
+  @Test func regionIsOneExplicitReadOnlySelection() throws {
+    let target=CollaborationTarget(kind:.board,id:UUID())
+    var value=NotebookSelection(id:UUID(),kind:.region,surface:target,target:target)
+    value.region=[.init(x:10,y:20),.init(x:50,y:20),.init(x:30,y:70)]
+    value.worldOrigin = .zero
+    #expect(value.isValid)
+    #expect(try JSONDecoder().decode(NotebookSelection.self,from:JSONEncoder().encode(value)) == value)
+    value.elementID="competing-choice"
+    #expect(!value.isValid)
+  }
+
   @Test func connectionLifetimeOrdersClearAndRejectsLateOldProcess() throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }

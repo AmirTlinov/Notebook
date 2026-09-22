@@ -262,7 +262,18 @@ struct WorkspaceItemCoverView: View {
           NotebookInteractionView(
             inputGate: model.inputGate,
             ownerIsAvailable: { ownerIsAvailable },
-            passthroughFrames: model.isItemBeingDeleted(item.id) ? [] : Self.interactionPassthroughFrames(elements:elements,graph:graph),
+            passesThrough: { point in
+              guard !model.isItemBeingDeleted(item.id),let presence=model.presence,let cohort else { return false }
+              if let selected=NotebookAttentionProjection.selectedElement(at:point,model:model,presence:presence,cohort:cohort),
+                (model.selectionSession.region?.address.target ?? model.nativeElementSource(selected)?.target)
+                  == CollaborationTarget(kind:.cover,id:item.id,boardID:boardID) { return true }
+              switch NotebookAttentionProjection.pointResolution(at:point,model:model,presence:presence,cohort:cohort) {
+              case .pending: return true
+              case .hit(let hit):
+                return hit.target == CollaborationTarget(kind:.cover,id:item.id,boardID:boardID) && hit.elementID != nil
+              case nil: return false
+              }
+            },
             onTap: onTap,
             onLiftChanged: { lifted in
               if lifted { pose?.owner?.beginLift() }
@@ -373,13 +384,6 @@ struct WorkspaceItemCoverView: View {
     #endif
   }
 
-  static func interactionPassthroughFrames(elements:[SpatialElement],graph:NotebookGraphicGraph?) -> [CGRect] {
-    elements.compactMap { element in
-      guard element.kind != .group,let placement=graph?.placement(element.id) else { return nil }
-      if element.graphic != nil { return graph?.resolve(element.id).layout.map { CGRect(x:$0.frame.x,y:$0.frame.y,width:$0.frame.width,height:$0.frame.height) } }
-      return NotebookElementPresentation(element,placement:placement).bounds
-    }
-  }
 
 }
 

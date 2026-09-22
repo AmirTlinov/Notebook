@@ -129,6 +129,91 @@ import XCTest
     let shot = XCTAttachment(image:image); shot.name = "lasso-ink-after-long-eraser"; shot.lifetime = .keepAlways; add(shot)
   }
 
+  func testLassoNextFingerDragAndShownResizeHandleOwnOnlyTheFragment() async throws {
+    let root=FileManager.default.temporaryDirectory.appendingPathComponent("lasso-next-gesture-\(UUID())")
+    let model=NotebookAppModel(store:.init(root:root),startsNearbySync:false,preferences:UserDefaults(suiteName:UUID().uuidString)!)
+    retainNotebookUntilTeardown(model,removing:root)
+    await model.start(pageSize:NotebookAppModel.defaultPageSize)
+    let workspace=try XCTUnwrap(model.workspace)
+    var page=try XCTUnwrap(model.activePage)
+    let shape=AgentElement(id:"lasso-next-shape",kind:.graphic,frame:.init(x:200,y:300,width:300,height:160),
+      source:"",html:"",graphic:.init(shape:.rectangle,style:.init(strokeWidth:4,fill:.init(red:1,green:0.2,blue:0.1))))
+    let second=AgentElement(id:"lasso-second-shape",kind:.graphic,frame:.init(x:200,y:420,width:300,height:100),
+      source:"",html:"",graphic:.init(shape:.ellipse,style:.init(strokeWidth:4,fill:.init(red:0.1,green:0.5,blue:1))))
+    XCTAssertTrue(page.replaceElements([shape,second],actor:model.actorID));try model.store.savePage(page)
+    await model.reloadExternalChanges()?.value
+    let viewport=SpatialPoint(x:834,y:1194)
+    let center=model.boardHierarchy?.focusedCenter(of:workspace.selectedItemID,in:workspace.rootBoardID) ?? .zero
+    model.updatePresence(.init(boardID:workspace.rootBoardID,mode:.page,
+      camera:.init(center:center,scale:WorkspaceItemGeometry.notebook.fitScale(viewport:viewport)),viewport:viewport,
+      focusedItemID:workspace.selectedItemID,openProgress:1),settled:true)
+    model.selectDrawingTool(.lasso);model.drawingToolSettings.lassoMode = .region
+    let window=try await mountNotebookScene(model)
+    let paper=try XCTUnwrap(descendants(try XCTUnwrap(window.rootViewController?.view)).compactMap { $0 as? PaperInputView }.first { $0.isUserInteractionEnabled })
+    let pencil=try XCTUnwrap(window.gestureRecognizers?.first { $0.name == "NotebookPaperPencil" })
+    let touch=SceneGraphicTouch(window:window),event=SceneGraphicEvent()
+    for (index,p) in [CGPoint(x:190,y:290),.init(x:340,y:290),.init(x:350,y:380),.init(x:300,y:470),.init(x:190,y:470),.init(x:190,y:290)].enumerated() {
+      touch.point=paper.convert(p,to:window);touch.sampleTime += 0.02
+      if index == 0 { touch.sourceView=window.hitTest(touch.point,with:event);pencil.touchesBegan([touch],with:event) }
+      else { pencil.touchesMoved([touch],with:event) }
+    }
+    pencil.touchesEnded([touch],with:event)
+    let deadline=ContinuousClock.now + .seconds(5)
+    while model.selectionSession.region == nil,ContinuousClock.now < deadline { try await Task.sleep(for:.milliseconds(10)) }
+    let region=try XCTUnwrap(model.selectionSession.region)
+    try await Task.sleep(for:.milliseconds(150))
+    let controls=try XCTUnwrap(descendants(try XCTUnwrap(window.rootViewController?.view)).compactMap { $0 as? NotebookSelectionControlsView }.first)
+    let resize=try XCTUnwrap(controls.beginManipulation?(.resize(.bottomTrailing)))
+    resize.change(.init(x:30,y:40))
+    XCTAssertEqual(model.selectionSession.manipulation?.region?.id,region.id,"The shown handle reaches region resize")
+    resize.cancel()
+    XCTAssertEqual(try model.store.loadPage(page.id).elements,[shape,second],"Cancelling a grip does not cut the document")
+    let finger=SceneGraphicTouch(window:window);finger.kind = .direct
+    finger.point=paper.convert(.init(x:260,y:370),to:window)
+    finger.sourceView=window.hitTest(finger.point,with:event)
+    let receiver=try XCTUnwrap(window.gestureRecognizers?.compactMap { $0 as? SceneSelectionRecognizer }.first)
+    let directEvent=RegionDirectEvent(touch:finger)
+    let presence=try XCTUnwrap(model.presence),cohort=try XCTUnwrap(model.compositionTiles.published)
+    let contactPoint=finger.location(in:receiver.coordinateView)
+    XCTAssertTrue(region.polygon.contains(.init(x:340,y:290)),"Finishing a trivial segment must not abandon the other contour branches")
+    XCTAssertEqual(NotebookAttentionProjection.selectedElement(at:contactPoint,model:model,presence:presence,cohort:cohort),region.reference)
+    receiver.touchesBegan([finger],with:directEvent)
+    finger.point.x += 45;finger.point.y += 35
+    receiver.touchesMoved([finger],with:directEvent)
+    XCTAssertEqual(model.selectionSession.manipulation?.reference,region.reference,"Next body drag owns the region, not the original rectangle")
+    XCTAssertEqual(try model.store.loadPage(page.id).elements,[shape,second])
+    receiver.touchesEnded([finger],with:directEvent)
+    let saved=await model.finishPendingPersistence();XCTAssertTrue(saved)
+    await model.reloadExternalChanges()?.value
+    XCTAssertEqual(model.selectionSession.elements.count,2,"Both enclosed pieces remain one selection")
+    let selected=try XCTUnwrap(model.selectionSession.elements.first)
+    let result=try model.store.loadPage(page.id)
+    XCTAssertNotEqual(selected.elementID,shape.id)
+    XCTAssertEqual(result.element(id:shape.id)?.frame,shape.frame,"The untouched outside stays fixed")
+    XCTAssertNotNil(result.element(id:shape.id)?.graphic?.mask)
+    let fragment=try XCTUnwrap(result.element(id:selected.elementID))
+    XCTAssertNotNil(fragment.basis);XCTAssertGreaterThan(fragment.frame.x,shape.frame.x)
+    try await Task.sleep(for:.milliseconds(200))
+    let multiple=try XCTUnwrap(descendants(try XCTUnwrap(window.rootViewController?.view)).compactMap { $0 as? NotebookSelectionControlsView }.first)
+    XCTAssertTrue((multiple.accessibilityElements as? [UIAccessibilityElement])?.contains {
+      $0.accessibilityIdentifier == "resize-agent-element-bottomTrailing"
+    } == true,"Materialized fragments retain actual resize grips")
+    let nextResize=try XCTUnwrap(multiple.beginManipulation?(.resize(.bottomTrailing)))
+    nextResize.change(.init(x:40,y:40));nextResize.end(.init(x:40,y:40))
+    let resized=await model.finishPendingPersistence();XCTAssertTrue(resized)
+    await model.reloadExternalChanges()?.value
+    let after=try model.store.loadPage(page.id)
+    for reference in model.selectionSession.elements {
+      let before=try XCTUnwrap(result.element(id:reference.elementID)),edited=try XCTUnwrap(after.element(id:reference.elementID))
+      XCTAssertGreaterThan(edited.frame.width,before.frame.width)
+      XCTAssertEqual(edited.graphic,before.graphic,"Resize changes placement, not retained material or masks")
+    }
+    XCTAssertEqual(after.element(id:shape.id),result.element(id:shape.id))
+    XCTAssertEqual(after.element(id:second.id),result.element(id:second.id))
+    let shot=XCTAttachment(image:UIGraphicsImageRenderer(bounds:window.bounds).image { _ in window.drawHierarchy(in:window.bounds,afterScreenUpdates:true) })
+    shot.name="lasso-next-body-drag";shot.lifetime = .keepAlways;add(shot)
+  }
+
   func testTextSelectionFitsContentAndMovesOnceDuringDrag() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("text-bounds-\(UUID())")
     let model = NotebookAppModel(store:.init(root:root),startsNearbySync:false,preferences:UserDefaults(suiteName:UUID().uuidString)!)
@@ -1086,4 +1171,10 @@ import XCTest
 }
 private final class SceneGraphicEvent: UIEvent {
   override var allTouches: Set<UITouch>? { [] }
+}
+
+@MainActor private final class RegionDirectEvent: UIEvent {
+  let touch: UITouch
+  init(touch:UITouch) { self.touch=touch;super.init() }
+  override var allTouches:Set<UITouch>? { [touch] }
 }

@@ -62,7 +62,7 @@ struct NotebookGraphicSelectionTests {
     func members() throws -> [NotebookGraphicSelection.Member] {
       let objects = try ["a","b","link"].map(element)
       let graph = NotebookGraphicGraph(objects.map { .init(id:$0.id,graphic:$0.graphic!,frame:$0.frame,surface:surface,shown:true) })
-      return try objects.map { .init(id:$0.id,frame:$0.frame,graphic:$0.graphic!,layout:try #require(graph.resolve($0.id).layout)) }
+      return try objects.map { .init(id:$0.id,frame:$0.frame,graphic:$0.graphic!,layout:try #require(graph.resolve($0.id).layout),body:try #require(graph.resolve($0.id,space:.body).layout),placement:try #require(graph.placement($0.id))) }
     }
     func commit(_ edits: [NotebookGraphicSelection.Edit]) throws -> CollaborationReceipt {
       let operations: [CollaborationOperation] = try edits.map { edit in
@@ -127,6 +127,46 @@ struct NotebookGraphicSelectionTests {
     #expect(try element("b").graphic?.label == "Agent B")
   }
 
+  @Test func selectionTransformsRelativeBasesWithoutRewritingMaskedMaterialOrBoundCurves() throws {
+    let mask=NotebookGraphicMask().appending(.intersect,polygon:[.zero,.init(x:0.6,y:0),.init(x:0.6,y:1),.init(x:0,y:1)])
+    let page=PageDocument(size:.init(width:1000,height:1000),actor:UUID(),elements:[
+      .init(id:"group",kind:.group,frame:.init(x:80,y:60,width:300,height:200),source:"",html:"",
+        basis:.init(size:.init(x:200,y:100),transform:.init(a:0.7,b:0,c:0.3,d:1,tx:0,ty:0))),
+      .init(id:"a",kind:.graphic,frame:.init(x:10,y:20,width:60,height:50),source:"",html:"",
+        graphic:.init(shape:.rectangle,style:.init(fill:.black),mask:mask),parentID:"group"),
+      .init(id:"b",kind:.graphic,frame:.init(x:500,y:200,width:80,height:100),source:"",html:"",
+        graphic:.init(shape:.ellipse,style:.init(fill:.black),mask:mask)),
+      .init(id:"link",kind:.graphic,frame:.init(x:50,y:50,width:300,height:100),source:"",html:"",
+        graphic:.init(shape:.connector,connection:.init(start:.init(point:.zero,binding:.init(elementID:"a")),
+          end:.init(point:.init(x:300,y:100),binding:.init(elementID:"b")),bend:20)))])
+    let graph=page.graphicGraph()
+    let members=try ["a","b","link"].map { id in
+      let node=try #require(graph.node(id))
+      return NotebookGraphicSelection.Member(id:id,frame:node.frame,graphic:node.graphic,
+        layout:try #require(graph.resolve(id).layout),body:try #require(graph.resolve(id,space:.body).layout),placement:node.placement)
+    }
+    let change=CGAffineTransform(a:1.7,b:0,c:0,d:0.6,tx:35,ty:20)
+    let edits=NotebookGraphicSelection.transformed(members,by:change,relativeTo:.zero)
+    #expect(edits.count == members.count)
+    for (member,edit) in zip(members,edits) {
+      #expect(edit.graphic == member.graphic)
+      let placed=try member.placement.updating(frame:edit.frame,basis:edit.basis)
+      for point in [CGPoint.zero,.init(x:17,y:29),.init(x:member.placement.localSize.x,y:member.placement.localSize.y)] {
+        let expected=point.applying(member.placement.transform).applying(change),actual=point.applying(placed.transform)
+        #expect(abs(actual.x-expected.x)<1e-9 && abs(actual.y-expected.y)<1e-9)
+      }
+    }
+    let moved=NotebookGraphicSelection.translated(members,by:.init(x:40,y:30))
+    for (member,edit) in zip(members,moved) {
+      let placed=try member.placement.updating(frame:edit.frame,basis:edit.basis)
+      let before=CGPoint.zero.applying(member.placement.transform),after=CGPoint.zero.applying(placed.transform)
+      #expect(abs(after.x-before.x-40)<1e-9 && abs(after.y-before.y-30)<1e-9)
+    }
+    let onlyLink=NotebookGraphicSelection.transformed([members[2]],by:change,relativeTo:.zero)
+    #expect(onlyLink[0].graphic.connection?.bindings.isEmpty == true)
+    #expect(onlyLink[0].graphic.style == members[2].graphic.style)
+  }
+
   @Test func copyingAtThePageEdgeDetachesUnselectedNodesWithoutLosingVisibleGeometry() throws {
     let surface = SurfaceID.page(UUID()), node = NotebookGraphic(label:"Outside selection")
     let arrow = NotebookGraphic(shape:.connector,connection:.init(
@@ -136,7 +176,7 @@ struct NotebookGraphicSelectionTests {
       .init(id:"node",graphic:node,frame:.init(x:50,y:50,width:80,height:80),surface:surface,shown:true),
       .init(id:"arrow",graphic:arrow,frame:frame,surface:surface,shown:true)])
     let original = try #require(graph.resolve("arrow").layout)
-    let copies = NotebookGraphicSelection.duplicated([.init(id:"arrow",frame:frame,graphic:arrow,layout:original)],namespace:UUID(),offset:.zero)
+    let copies = NotebookGraphicSelection.duplicated([.init(id:"arrow",frame:frame,graphic:arrow,layout:original,body:try #require(graph.resolve("arrow",space:.body).layout),placement:try #require(graph.placement("arrow")))],namespace:UUID(),offset:.zero)
     let copied = try #require(copies.first)
     #expect(copied.graphic.connection?.bindings.isEmpty == true)
     let resolved = try #require(NotebookGraphicGraph([.init(id:copied.id,graphic:copied.graphic,frame:copied.frame,surface:surface,shown:true)]).resolve(copied.id).layout)
@@ -149,8 +189,9 @@ struct NotebookGraphicSelectionTests {
     let f = PageRect(x:0,y:0,width:40,height:40)
     let graph = NotebookGraphicGraph([.init(id:"a",graphic:graphic,frame:f,surface:surface,shown:true)])
     let layout = try #require(graph.resolve("a").layout)
-    let members: [NotebookGraphicSelection.Member] = [.init(id:"a",frame:f,graphic:graphic,layout:layout),
-      .init(id:"b",frame:f,origin:WorldPoint.zero.offsetBy(x:1000,y:500),graphic:graphic,layout:layout)]
+    let members: [NotebookGraphicSelection.Member] = [.init(id:"a",frame:f,graphic:graphic,layout:layout,body:try #require(graph.resolve("a",space:.body).layout),placement:try #require(graph.placement("a"))),
+      .init(id:"b",frame:f,graphic:graphic,layout:layout,body:try #require(graph.resolve("a",space:.body).layout),
+        placement:.init(id:"b",frame:f,origin:WorldPoint.zero.offsetBy(x:1000,y:500)))]
     #expect(NotebookGraphicSelection.duplicated(members,namespace:UUID(),offset:.init(x:20,y:20)).allSatisfy { $0.graphic.sourceInkIDs.isEmpty })
     let aligned = NotebookGraphicSelection.aligned(members,to:.left)
     #expect(aligned[0].frame.x == 0 && aligned[1].frame.x == -1000)

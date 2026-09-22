@@ -272,7 +272,7 @@ struct SpatialWorkspaceView: View {
             return .init(x:rect.x,y:rect.y,width:rect.width,height:rect.height)
           }
           if frames.count == model.selectionSession.count {
-            NotebookMultipleElementControls(contextMenus:contextMenus,selectionID:model.selectionSession.id,frames:frames)
+            NotebookMultipleElementControls(contextMenus:contextMenus,selectionID:model.selectionSession.id,frames:frames,scale:presence.camera.scale)
               .frame(width:viewport.x,height:viewport.y)
           }
         }
@@ -282,7 +282,7 @@ struct SpatialWorkspaceView: View {
           guard cameraGesture == nil, !settling, let cohort else { return }
           if model.consumeNativeTextCanvasTap(at:end) { return }
           if model.drawingTool == .text {
-            guard let fragment = NotebookAttentionProjection.textContact(at:end,model:model,presence:presence,
+            guard let fragment = NotebookAttentionProjection.pointContact(at:end,model:model,presence:presence,
               cohort:cohort) else { return }
             if let reference = editableReference(fragment,boardID:presence.boardID) {
               let isText: Bool
@@ -806,44 +806,9 @@ struct SpatialWorkspaceView: View {
     model.setMultipleSelectionAdding(true)
   }
 
-  /// A second contact hits accepted geometry, not the older source awaiting
-  /// the writer. It continues selection without inventing a newer source receipt.
-  private func selectedElement(at point: CGPoint, presence: SessionPresence) -> EditableElementReference? {
-    guard !model.selectionSession.isInteractive else { return nil }
-    for reference in model.selectionSession.elements.reversed() {
-      if let hit = selectedElement(reference,at:point,presence:presence) { return hit }
-    }
-    return nil
-  }
-
-  private func selectedElement(_ reference: EditableElementReference, at point: CGPoint, presence: SessionPresence) -> EditableElementReference? {
-    guard let frame = NotebookAttentionProjection.editingFrame(reference, model: model, presence: presence) else { return nil }
-    let surface: SurfaceID, id: String
-    switch reference {
-    case .page(let pageID,let elementID): surface = .page(pageID); id = elementID
-    case .spatial(_,let elementID):
-      guard let cohort = model.compositionTiles.published, let element = model.presentedElement(reference,cohort:cohort) else { return nil }
-      surface = element.surface; id = elementID
-    }
-    let cuts = model.elementErasures(on:surface)[id] ?? []
-    if !cuts.isEmpty {
-      let scale = max(0.001,presence.camera.scale)
-      let layout = model.graphicLayout(reference)
-      let sourceFrame: PageRect?
-      switch reference {
-      case .page(let pageID, let elementID): sourceFrame = model.pages[pageID]?.element(id:elementID)?.frame
-      case .spatial(_, _): sourceFrame = model.compositionTiles.published.flatMap { model.presentedElement(reference,cohort:$0) }.map {
-        .init(x:$0.frame.x,y:$0.frame.y,width:$0.frame.width,height:$0.frame.height)
-      }
-      }
-      guard let localFrame = layout?.frame ?? sourceFrame.map({ model.elementPresentationFrame(reference,fallback:$0) }),
-        let appearance = model.elementErasureCache.appearance(surface:surface,id:id,
-          graphic:model.graphicElement(reference),layout:layout,
-          size:.init(width:localFrame.width,height:localFrame.height),erasures:cuts) else { return nil }
-      return appearance.contains(.init(x:(point.x-frame.minX)/scale,y:(point.y-frame.minY)/scale),tolerance:NotebookAttentionProjection.elementHitPadding/scale) ? reference : nil
-    }
-    return frame.insetBy(dx:-NotebookAttentionProjection.elementHitPadding,
-      dy:-NotebookAttentionProjection.elementHitPadding).contains(point) ? reference : nil
+  private func selectedElement(at point:CGPoint,presence:SessionPresence)->EditableElementReference? {
+    guard let cohort=model.compositionTiles.published else { return nil }
+    return NotebookAttentionProjection.selectedElement(at:point,model:model,presence:presence,cohort:cohort)
   }
 
   private struct ElementPlaneRevision: Equatable {

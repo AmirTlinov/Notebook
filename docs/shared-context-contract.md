@@ -43,14 +43,15 @@ and reference; missing/corrupt indexes reject admission.
 
 ## One selection owner
 
-`NotebookSelectionSession` owns one current target: item, artifact, context region
-or temporarily presented reference. Pending movement, region rectangle, program/text
-focus and pinned references belong to that same selection.
+`NotebookSelectionSession` owns one current target: item, artifact, selected set,
+lasso region, context or temporarily presented reference. A lasso region is an
+explicit target, not an extra choice beside a nil target. Pending movement,
+program/text focus and pinned references belong to that same selection.
 `NotebookAgentQuestion` is its immutable reference value, not another controller.
 
-Finger tap indicates material. Holding an artifact starts manipulation; holding
-empty space starts a region. A region crossing open paper is clipped to that paper,
-not redirected to the hidden board. Camera and scale are fixed at contact start.
+Finger tap indicates material; actual body movement starts manipulation. Pencil
+lasso addresses a region or whole objects according to its selected mode. A region
+crossing open paper is clipped to that paper, not redirected to the hidden board. Camera and scale are fixed at contact start.
 Dragging the same selected source neither adds another indication nor sends a message.
 
 Chat and companion use one small `NotebookContextCounter` for source count, reviewed
@@ -63,7 +64,9 @@ Late saves/history reads recheck selection identity and cannot resurrect replace
 frames. Send waits for new-source persistence; failure never restores an old selection.
 
 Closed covers receive contact through `NotebookInteractionTouchView` only.
-Artifacts, including native text, retain their own input. Spatial element addresses
+Artifacts, including native text, retain their own input. Covers and scene selection
+consult the same exact visible-geometry picker; neither a selected bounding box nor
+an erased hole independently intercepts a contact. Spatial element addresses
 include board ID, so deferred work never substitutes the current camera's board.
 
 ## Session publication
@@ -95,7 +98,12 @@ Cancellation, selection/camera/window change, a second finger or Pencil start
 discards preview without restoring old stored geometry. Completion checks contact,
 bounds, target identity and anchor; Core repeats that check inside SQL. A late
 release cannot resurrect deleted content or move a replacement with the same local ID.
-Only geometry changes; concurrent text/ink merge through their existing owners.
+Transforms change relative placement while retaining measured material and masks.
+A region retains its exact contour during preparation. Its first move, resize,
+rotation, copy or deletion checks the captured native sources, ancestor bases and
+ink revision, then splits/edits in one undoable command. A cancelled contact never
+splits the document. Materialized multi-source fragments keep one selection and
+working resize controls; all members use the same surface transform.
 
 Accepted bounds and the actual owner frontier return together, including concurrent
 neighbors. A truly deleted target clears selection after page admission; a temporary

@@ -137,6 +137,44 @@ final class NotebookInteractionTests: XCTestCase {
     XCTAssertEqual(newEvents, [])
   }
 
+  func testCoverKeepsEmptyCornersAndErasedHolesButYieldsVisiblePaint() {
+    let owner=UUID(),frame=PageRect(x:0,y:0,width:200,height:200)
+    let element=SpatialElement(id:"ellipse",surface:.cover(owner),kind:.graphic,
+      frame:.init(x:0,y:0,width:200,height:200),source:"",graphic:.init(shape:.ellipse,style:.init(fill:.black)),
+      stamp:.init(counter:0,actor:owner))
+    let graph=BoardDocument(freeItems:[],elements:[element],stamp:.init(counter:0,actor:owner)).graphicGraph()
+    let cut=InkElementErasure(target:.init(elementID:element.id,frame:frame),samples:[
+      .init(point:.init(x:100,y:100),timeOffset:0,width:40,opacity:1,force:1,azimuth:0,altitude:1)])
+    let cover=NotebookInteractionTouchView(inputGate:NotebookInputGate())
+    cover.frame = .init(x:0,y:0,width:300,height:300)
+    cover.passesThrough = { point in
+      NotebookAttentionProjection.pickElement(in:[element],graph:graph,erasures:[element.id:[cut]],
+        appearance:{ _,graphic,layout,size,cuts in .init(graphic:graphic,layout:layout,size:size,erasures:cuts) },
+        scale:1,viewport:.init(x:300,y:300),presentation:{ .init($0,placement:$1) },
+        project:{ ($0.id,$0.graphic,.init(x:point.x,y:point.y)) }) != nil
+    }
+    XCTAssertTrue(cover.point(inside:.init(x:5,y:5),with:nil),"An ellipse's bounding box does not steal the cover")
+    XCTAssertTrue(cover.point(inside:.init(x:100,y:100),with:nil),"Erased material is not a second hit owner")
+    XCTAssertFalse(cover.point(inside:.init(x:50,y:100),with:nil),"The surviving object owns its painted body")
+
+    // The background is not a fallback while canonical cut geometry is cold.
+    // Nor should a far-away pending object block the rest of the cover.
+    let underneath=SpatialElement(id:"underneath",surface:.cover(owner),kind:.graphic,
+      frame:.init(x:0,y:0,width:300,height:300),source:"",
+      graphic:.init(shape:.rectangle,style:.init(fill:.black)),stamp:.init(counter:0,actor:owner))
+    let layered=BoardDocument(freeItems:[],elements:[underneath,element],stamp:.init(counter:0,actor:owner)).graphicGraph()
+    var pending=false
+    let cold=NotebookAttentionProjection.pickElement(in:[underneath,element],graph:layered,erasures:[element.id:[cut]],
+      scale:1,viewport:.init(x:300,y:300),pending:{ pending=true },presentation:{ .init($0,placement:$1) },
+      project:{ ($0.id,$0.graphic,.init(x:50,y:100)) })
+    XCTAssertNil(cold);XCTAssertTrue(pending)
+    pending=false
+    let away=NotebookAttentionProjection.pickElement(in:[underneath,element],graph:layered,erasures:[element.id:[cut]],
+      scale:1,viewport:.init(x:300,y:300),pending:{ pending=true },presentation:{ .init($0,placement:$1) },
+      project:{ ($0.id,$0.graphic,.init(x:270,y:100)) })
+    XCTAssertEqual(away?.id,underneath.id);XCTAssertFalse(pending)
+  }
+
   func testCoverPassesEveryArtifactToItsOwnSelectionContact() {
     let id = UUID()
     let elements = [SpatialElementKind.nativeText, .markdown, .web].enumerated().map { index, kind in
@@ -146,7 +184,11 @@ final class NotebookInteractionTests: XCTestCase {
     }
     let cover = NotebookInteractionTouchView(inputGate: NotebookInputGate())
     cover.frame = .init(x: 0, y: 0, width: 400, height: 400)
-    cover.passthroughFrames = WorkspaceItemCoverView.interactionPassthroughFrames(elements:elements,graph:BoardDocument(freeItems:[],elements:elements,stamp:.init(counter:0,actor:id)).graphicGraph())
+    let graph=BoardDocument(freeItems:[],elements:elements,stamp:.init(counter:0,actor:id)).graphicGraph()
+    cover.passesThrough = { point in
+      NotebookAttentionProjection.pickElement(in:elements,graph:graph,scale:1,viewport:.init(x:400,y:400),
+        presentation:{ .init($0,placement:$1) },project:{ ($0.id,$0.graphic,.init(x:point.x,y:point.y)) }) != nil
+    }
     for x in [20.0, 120, 220] { XCTAssertFalse(cover.point(inside: .init(x: x, y: 20), with: nil)) }
     XCTAssertTrue(cover.point(inside: .init(x: 320, y: 20), with: nil))
   }

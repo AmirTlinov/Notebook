@@ -2,7 +2,7 @@ import Foundation
 
 /// Exact author-visible preconditions, not a refreshed owner revision. Both a
 /// single contact and a multi-object action enter the same transaction below.
-public struct NotebookNativeElementSource: Sendable {
+public struct NotebookNativeElementSource: Equatable, Sendable {
   public let target: CollaborationTarget
   public let id: String
   public let page: AgentElement?
@@ -122,132 +122,124 @@ public enum NotebookGraphicSelection {
   public struct Member: Equatable, Sendable {
     public let id: String
     public let frame: PageRect
-    public let origin: WorldPoint
     public let graphic: NotebookGraphic
     public let layout: NotebookGraphicLayout
-    public init(id: String, frame: PageRect, origin: WorldPoint = .zero, graphic: NotebookGraphic, layout: NotebookGraphicLayout) {
-      self.id = id; self.frame = frame; self.origin = origin; self.graphic = graphic; self.layout = layout
+    public let body: NotebookGraphicLayout
+    public let placement: NotebookElementPlacement
+    public var origin: WorldPoint { placement.origin }
+    public init(id:String,frame:PageRect,graphic:NotebookGraphic,layout:NotebookGraphicLayout,
+      body:NotebookGraphicLayout,placement:NotebookElementPlacement) {
+      self.id=id;self.frame=frame;self.graphic=graphic;self.layout=layout;self.body=body;self.placement=placement
     }
+    public var visibleFrame: PageRect { graphic.mask.flatMap { layout.visibleFrame(mask:$0) } ?? layout.frame }
   }
   public struct Edit: Equatable, Sendable {
     public let id: String
     public let frame: PageRect
     public let graphic: NotebookGraphic
+    public let basis: NotebookElementBasis?
   }
 
-  public static func translated(_ members: [Member], by delta: SpatialPoint, detachingExternalBindings: Bool = false) -> [Edit] {
-    let ids = Set(members.map(\.id))
-    return members.map { member in
-      var graphic = member.graphic
-      if delta != .zero || detachingExternalBindings, var connection = graphic.connection {
-        var detached = false
-        for terminal in NotebookGraphicConnection.Terminal.allCases {
-          let endpoint = terminal == .start ? connection.start : connection.end
-          if let binding = endpoint.binding, !ids.contains(binding.elementID) {
-            detached = true
-            let p = terminal == .start ? member.layout.start : member.layout.end
-            let free = NotebookGraphicConnection.Endpoint(point: .init(x: member.layout.frame.x+p.x-member.frame.x,
-              y: member.layout.frame.y+p.y-member.frame.y))
-            if terminal == .start { connection.start = free } else { connection.end = free }
-          }
-        }
-        if detached {
-          let layout = member.layout, dx = layout.end.x-layout.start.x, dy = layout.end.y-layout.start.y
-          let length = max(0.001,hypot(dx,dy))
-          connection.bendPosition = min(1,max(0,((layout.bend.x-layout.start.x)*dx+(layout.bend.y-layout.start.y)*dy)/(length*length)))
-          connection.bend = (-dy*(layout.bend.x-(layout.start.x+layout.end.x)/2)+dx*(layout.bend.y-(layout.start.y+layout.end.y)/2))/length
-        }
-        graphic.connection = connection
+  /// Resolve an external endpoint once in its authored body. Internal bindings
+  /// remain relationships, including when members have different parents.
+  private static func detached(_ member:Member,selected:Set<String>) -> NotebookGraphic {
+    var graphic=member.graphic
+    guard var connection=graphic.connection else { return graphic }
+    var detached=false
+    for terminal in NotebookGraphicConnection.Terminal.allCases {
+      let endpoint=terminal == .start ? connection.start : connection.end
+      if let binding=endpoint.binding,!selected.contains(binding.elementID) {
+        detached=true
+        let p=terminal == .start ? member.body.start : member.body.end
+        let free=NotebookGraphicConnection.Endpoint(point:.init(x:member.body.frame.x+p.x,y:member.body.frame.y+p.y))
+        if terminal == .start { connection.start=free } else { connection.end=free }
       }
-      return .init(id: member.id, frame: .init(x: member.frame.x+delta.x,y: member.frame.y+delta.y,
-        width: member.frame.width,height: member.frame.height), graphic: graphic)
+    }
+    if detached {
+      let l=member.body,dx=l.end.x-l.start.x,dy=l.end.y-l.start.y,length=max(0.001,hypot(dx,dy))
+      connection.bendPosition=min(1,max(0,((l.bend.x-l.start.x)*dx+(l.bend.y-l.start.y)*dy)/(length*length)))
+      connection.bend=(-dy*(l.bend.x-(l.start.x+l.end.x)/2)+dx*(l.bend.y-(l.start.y+l.end.y)/2))/length
+    }
+    graphic.connection=connection;return graphic
+  }
+
+  public static func translated(_ members:[Member],by delta:SpatialPoint,detachingExternalBindings:Bool=false) -> [Edit] {
+    let ids=Set(members.map(\.id))
+    var edits:[Edit]=[]
+    for member in members {
+      guard let local=member.placement.parentVector(delta) else { return [] }
+      edits.append(.init(id:member.id,frame:.init(x:member.frame.x+local.x,y:member.frame.y+local.y,
+        width:member.frame.width,height:member.frame.height),
+        graphic:delta != .zero || detachingExternalBindings ? detached(member,selected:ids) : member.graphic,
+        basis:member.placement.basis))
+    }
+    return edits
+  }
+
+  public static func bounds(_ members:[Member],relativeTo origin:WorldPoint) -> CGRect {
+    members.reduce(CGRect.null) { bounds,member in
+      let f=member.visibleFrame,d=origin.delta(to:member.origin)
+      return bounds.union(.init(x:d.x+f.x,y:d.y+f.y,width:f.width,height:f.height))
     }
   }
 
-  public static func aligned(_ members: [Member], to alignment: Alignment) -> [Edit] {
-    let nodes = members.filter { $0.graphic.connection == nil }
-    guard let origin = nodes.first?.origin else { return [] }
-    let boxes = nodes.map { node -> PageRect in
-      let d = origin.delta(to: node.origin)
-      return .init(x:d.x+node.frame.x,y:d.y+node.frame.y,width:node.frame.width,height:node.frame.height)
+  /// Every transform edits relative placement, not measurement arrays, stroke
+  /// widths or a second graphic transform. The same edits preview and persist.
+  public static func transformed(_ members:[Member],by change:CGAffineTransform,relativeTo origin:WorldPoint) -> [Edit] {
+    let ids=Set(members.map(\.id))
+    var edits:[Edit]=[]
+    for member in members {
+      let d=origin.delta(to:member.origin)
+      let local=CGAffineTransform(translationX:d.x,y:d.y).concatenating(change)
+        .concatenating(.init(translationX:-d.x,y:-d.y))
+      guard let pose=try? member.placement.applyingSurfaceTransform(local) else { return [] }
+      edits.append(.init(id:member.id,frame:pose.frame,graphic:detached(member,selected:ids),basis:pose.basis))
     }
-    let left = boxes.map(\.x).min()!, top = boxes.map(\.y).min()!
-    let right = boxes.map { $0.x+$0.width }.max()!, bottom = boxes.map { $0.y+$0.height }.max()!
-    return zip(nodes,boxes).map { node, box in
-      var x = node.frame.x, y = node.frame.y
+    return edits
+  }
+
+  public static func aligned(_ members:[Member],to alignment:Alignment) -> [Edit] {
+    let nodes=members.filter { $0.graphic.connection == nil }
+    guard let origin=nodes.first?.origin else { return [] }
+    let box=bounds(nodes,relativeTo:origin)
+    return nodes.flatMap { member in
+      let f=member.visibleFrame,d=origin.delta(to:member.origin)
+      let x=d.x+f.x,y=d.y+f.y,delta:SpatialPoint
       switch alignment {
-      case .left: x += left-box.x
-      case .center: x += (left+right-box.width)/2-box.x
-      case .right: x += right-box.width-box.x
-      case .top: y += top-box.y
-      case .middle: y += (top+bottom-box.height)/2-box.y
-      case .bottom: y += bottom-box.height-box.y
+      case .left: delta = .init(x:box.minX-x,y:0)
+      case .center: delta = .init(x:box.midX-x-f.width/2,y:0)
+      case .right: delta = .init(x:box.maxX-x-f.width,y:0)
+      case .top: delta = .init(x:0,y:box.minY-y)
+      case .middle: delta = .init(x:0,y:box.midY-y-f.height/2)
+      case .bottom: delta = .init(x:0,y:box.maxY-y-f.height)
       }
-      return .init(id:node.id,frame:.init(x:x,y:y,width:node.frame.width,height:node.frame.height),graphic:node.graphic)
+      return translated([member],by:delta)
     }
   }
 
-  public static func duplicated(_ members: [Member], namespace: UUID, offset: SpatialPoint) -> [Edit] {
-    let ids = Dictionary(uniqueKeysWithValues: members.map { ($0.id, NotebookStore.submissionID(namespace,suffix:$0.id).uuidString.lowercased()) })
+  public static func duplicated(_ members:[Member],namespace:UUID,offset:SpatialPoint) -> [Edit] {
+    let ids=Dictionary(uniqueKeysWithValues:members.map { ($0.id,NotebookStore.submissionID(namespace,suffix:$0.id).uuidString.lowercased()) })
     return translated(members,by:offset,detachingExternalBindings:true).map { edit in
-      let old = edit.graphic
-      var connection = old.connection
+      let old=edit.graphic
+      var connection=old.connection
       for terminal in NotebookGraphicConnection.Terminal.allCases {
-        guard var endpoint = terminal == .start ? connection?.start : connection?.end,
-          var binding = endpoint.binding, let id = ids[binding.elementID] else { continue }
-        binding.elementID = id; endpoint.binding = binding
-        if terminal == .start { connection?.start = endpoint } else { connection?.end = endpoint }
+        guard var endpoint=terminal == .start ? connection?.start : connection?.end,
+          var binding=endpoint.binding,let id=ids[binding.elementID] else { continue }
+        binding.elementID=id;endpoint.binding=binding
+        if terminal == .start { connection?.start=endpoint } else { connection?.end=endpoint }
       }
-      // Copies are new authored objects, not competing claims on old ink.
-      let graphic = NotebookGraphic(shape:old.shape,style:old.style,label:old.label,
+      let graphic=NotebookGraphic(shape:old.shape,style:old.style,label:old.label,
         connection:connection,vertices:old.vertices,cornerRadius:old.cornerRadius,freehand:old.freehand,transform:old.transform,path:old.path,mask:old.mask)
-      return .init(id:ids[edit.id]!,frame:edit.frame,graphic:graphic)
+      return .init(id:ids[edit.id]!,frame:edit.frame,graphic:graphic,basis:edit.basis)
     }
   }
-}
 
-extension NotebookGraphicSelection {
-  /// A whole selection has one pivot. Internal bindings retain identity;
-  /// external ones detach at their visible endpoint before the transform.
-  public static func transformed(_ members: [Member], radians: Double = 0, scale: Double = 1) -> [Edit] {
-    guard let origin = members.first?.origin, radians.isFinite, scale.isFinite, scale > 0 else { return [] }
-    let boxes = members.map { member -> CGRect in
-      let d = origin.delta(to:member.origin), f = member.layout.frame
-      return .init(x:d.x+f.x,y:d.y+f.y,width:f.width,height:f.height)
-    }
-    let box = boxes.reduce(CGRect.null) { $0.union($1) }, center = CGPoint(x:box.midX,y:box.midY)
-    let cosine = cos(radians)*scale, sine = sin(radians)*scale
-    func moved(_ p: CGPoint) -> CGPoint {
-      let x = p.x-center.x, y = p.y-center.y
-      return .init(x:center.x+x*cosine-y*sine,y:center.y+x*sine+y*cosine)
-    }
-    let detached = translated(members,by:.zero,detachingExternalBindings:true)
-    return zip(members,detached).map { member,edit in
-      var graphic = edit.graphic
-      let d = origin.delta(to:member.origin), old = member.frame
-      func point(_ p: SpatialPoint) -> CGPoint { moved(.init(x:d.x+old.x+p.x,y:d.y+old.y+p.y)) }
-      let basis = graphic.transform ?? .identity
-      let corners = [SpatialPoint.zero,.init(x:1,y:0),.init(x:0,y:1),.init(x:1,y:1)].map { p -> CGPoint in
-        let p = basis.applying(p); return point(.init(x:p.x*old.width,y:p.y*old.height))
-      }
-      let x = corners.map(\.x).min()!, y = corners.map(\.y).min()!
-      let width = max(0.001,corners.map(\.x).max()!-x), height = max(0.001,corners.map(\.y).max()!-y)
-      let frame = PageRect(x:x-d.x,y:y-d.y,width:width,height:height)
-      if var connection = graphic.connection {
-        for terminal in NotebookGraphicConnection.Terminal.allCases {
-          var endpoint = terminal == .start ? connection.start : connection.end
-          let p = point(endpoint.point); endpoint.point = .init(x:p.x-x,y:p.y-y)
-          if terminal == .start { connection.start = endpoint } else { connection.end = endpoint }
-        }
-        connection.bend *= scale; graphic.connection = connection
-      } else {
-        graphic.transform = .init(a:(corners[1].x-corners[0].x)/width,b:(corners[1].y-corners[0].y)/height,
-          c:(corners[2].x-corners[0].x)/width,d:(corners[2].y-corners[0].y)/height,
-          tx:(corners[0].x-x)/width,ty:(corners[0].y-y)/height)
-      }
-      graphic.style.strokeWidth *= scale
-      graphic.cornerRadius = graphic.cornerRadius.map { $0*scale }
-      return .init(id:member.id,frame:frame,graphic:graphic)
-    }
+  public static func transformed(_ members:[Member],radians:Double=0,scale:Double=1) -> [Edit] {
+    guard let origin=members.first?.origin,radians.isFinite,scale.isFinite,scale>0 else { return [] }
+    let box=bounds(members,relativeTo:origin)
+    let change=CGAffineTransform(translationX:-box.midX,y:-box.midY)
+      .concatenating(.init(rotationAngle:radians)).concatenating(.init(scaleX:scale,y:scale))
+      .concatenating(.init(translationX:box.midX,y:box.midY))
+    return transformed(members,by:change,relativeTo:origin)
   }
 }

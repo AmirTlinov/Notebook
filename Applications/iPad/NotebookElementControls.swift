@@ -81,7 +81,7 @@ struct NotebookElementControls: UIViewRepresentable {
         }
       ]))
     }
-    if (graphic != nil && !isRegion) || isGroup { menus.append(selectionTransformMenu(model:model,selectionID:selectionID)) }
+    if graphic != nil || isRegion || isGroup { menus.append(selectionTransformMenu(model:model,selectionID:selectionID)) }
     if let parent=model.parentGroup(reference) {
       menus.append(UIAction(title:"Выбрать группу",image:UIImage(systemName:"square.on.square")) { _ in
         guard model.selectionSession.id == selectionID else { return };model.selectElement(parent)
@@ -129,6 +129,7 @@ struct NotebookElementControls: UIViewRepresentable {
       })
     } else { view.setTextActions(nil) }
     if isGroup { view.setLayerActions();view.setGroupActions() }
+    if isRegion { view.setRegionActions() }
     view.setActionsMenu(menus)
   }
 
@@ -141,11 +142,24 @@ struct NotebookMultipleElementControls: UIViewRepresentable {
   let contextMenus: NotebookContextMenus
   let selectionID: UUID
   let frames: [CGRect]
+  let scale: Double
   func makeUIView(context: Context) -> NotebookSelectionControlsView { .init(gate:model.inputGate,contextMenus:contextMenus) }
   func updateUIView(_ view: NotebookSelectionControlsView, context: Context) {
     view.graphic = nil; view.memberFrames = frames
     let frame = frames.reduce(CGRect.null) { $0.union($1) }
-    view.configure(selectionID:selectionID,frame:frame,manipulating:model.selectionSession.manipulation != nil,subject:.elements(frames.count))
+    let transforms=model.selectionSession.items.isEmpty && model.selectionSession.elements.allSatisfy { model.graphicElement($0) != nil }
+    view.configure(selectionID:selectionID,frame:frame,scale:scale,manipulating:model.selectionSession.manipulation != nil,
+      subject:.elements(frames.count),transformsSelection:transforms)
+    view.beginManipulation = { kind in
+      guard transforms,model.selectionSession.id == selectionID,let reference=model.selectionSession.elements.first,
+        let contact=model.beginElementManipulation(reference,kind:kind) else { return nil }
+      let scale=max(scale,0.001)
+      return .init(begin:{},change:{ point in
+        model.updateElementManipulation(contact,translation:.init(x:point.x/scale,y:point.y/scale))
+      },end:{ point in
+        model.finishElementManipulation(contact,translation:.init(x:point.x/scale,y:point.y/scale))
+      },cancel:{ model.cancelElementManipulation(contact) })
+    }
     view.editElement = { if model.selectionSession.id == selectionID { model.finishMultipleSelection() } }
     view.deleteElement = { if model.selectionSession.id == selectionID { model.deleteGraphicSelection() } }
     if model.selectionSession.items.isEmpty {
@@ -311,6 +325,9 @@ final class NotebookSelectionControlsView: UIControl, UIGestureRecognizerDelegat
     }
     setNeedsLayout()
   }
+  func setRegionActions() {
+    editButton.isHidden=true;setLayerActions();setNeedsLayout()
+  }
   func setGroupActions() {
     editButton.isHidden=true;deleteButton.isHidden=true
     setNeedsLayout()
@@ -391,7 +408,7 @@ final class NotebookSelectionControlsView: UIControl, UIGestureRecognizerDelegat
   }
   required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
-  func configure(selectionID: UUID, frame: CGRect, textWidth:NotebookTextWidthControls? = nil, layout: NotebookGraphicLayout? = nil, scale: Double = 1, hasLabel: Bool = false, mode: NotebookSelectionSession.GeometryMode = .transform, manipulating: Bool = false, subject: Subject = .element) {
+  func configure(selectionID: UUID, frame: CGRect, textWidth:NotebookTextWidthControls? = nil, layout: NotebookGraphicLayout? = nil, scale: Double = 1, hasLabel: Bool = false, mode: NotebookSelectionSession.GeometryMode = .transform, manipulating: Bool = false, subject: Subject = .element, transformsSelection:Bool = false) {
     if self.selectionID != selectionID { cancel(); contextMenus.hide(source:source); self.selectionID = selectionID }
     self.subject = subject
     self.textWidth=textWidth
@@ -437,7 +454,7 @@ final class NotebookSelectionControlsView: UIControl, UIGestureRecognizerDelegat
     modeButton.toolTip = geometryMode.controlTitle
     let next: [ElementHandle]
     if case .item = subject { next = [] }
-    else if case .elements = subject { next = [] }
+    else if case .elements = subject { next = transformsSelection ? NotebookElementResizeHandle.visible(in:frame.size).map(ElementHandle.corner) : [] }
     else if case .group = subject { next = NotebookElementResizeHandle.visible(in:frame.size).map(ElementHandle.corner)+[.move] }
     else if textWidth != nil { next = NotebookElementResizeHandle.textWidth.map(ElementHandle.corner) }
     else if layout != nil { next = [.start,.end,.bend] }
@@ -535,10 +552,9 @@ final class NotebookSelectionControlsView: UIControl, UIGestureRecognizerDelegat
       tintColor.withAlphaComponent(0.7).setStroke()
       for frame in memberFrames { let p = UIBezierPath(rect:frame); p.lineWidth = 1; p.stroke() }
       let union = UIBezierPath(rect:frameRect.insetBy(dx:-4,dy:-4)); union.setLineDash([4,4],count:2,phase:0); union.stroke()
-      return
     }
     tintColor.withAlphaComponent(0.7).setStroke()
-    if connectionLayout == nil {
+    if connectionLayout == nil,memberFrames.isEmpty {
       let outline: UIBezierPath
       if let textWidth {
         outline=UIBezierPath();outline.move(to:textWidth.corners[0])

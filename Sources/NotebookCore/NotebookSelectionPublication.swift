@@ -2,7 +2,7 @@ import Foundation
 
 /// A serialization of the native selection owner, never a command or permission.
 public struct NotebookSelection: Codable, Equatable, Sendable {
-  public enum Kind: String, Codable, Sendable { case empty, item, element, elements, context, reference }
+  public enum Kind: String, Codable, Sendable { case empty, item, element, elements, region, context, reference }
   public let id: UUID
   public let kind: Kind
   public let surface: CollaborationTarget
@@ -12,6 +12,8 @@ public struct NotebookSelection: Codable, Equatable, Sendable {
   public var elementIDs: [String]?
   public var itemID: UUID?
   public var itemIDs: [UUID]?
+  public var region: [SpatialPoint]?
+  public var worldOrigin: WorldPoint?
   public var contextID: UUID?
   public var reference: CollaborationReference?
   public var resolving: Bool
@@ -31,7 +33,8 @@ public struct NotebookSelection: Codable, Equatable, Sendable {
     guard [.board, .cover, .page, .document].contains(surface.kind), validTarget(surface), target.map(validTarget) ?? true,
       pageIndex.map({ surface.kind == .document && (0...100_000).contains($0) }) ?? true,
       elementID.map({ !$0.isEmpty && $0.utf16.count <= 120 }) ?? true else { return false }
-    guard kind == .elements || (elementIDs == nil && itemIDs == nil) else { return false }
+    guard kind == .elements || (elementIDs == nil && itemIDs == nil),
+      kind == .region || (region == nil && worldOrigin == nil) else { return false }
     switch kind {
     case .empty: return target == nil && elementID == nil && itemID == nil && reference == nil && contextID == nil && !resolving
     case .item: return itemID != nil && surface.kind == .board && target == nil && elementID == nil && reference == nil
@@ -41,6 +44,11 @@ public struct NotebookSelection: Codable, Equatable, Sendable {
         && (2...32).contains((elementIDs?.count ?? 0)+(itemIDs?.count ?? 0))
         && elementIDs.map { Set($0).count == $0.count && $0.allSatisfy { !$0.isEmpty && $0.utf16.count <= 120 } } == true
         && (itemIDs.map { target?.kind == .board && Set($0).count == $0.count } ?? true)
+    case .region:
+      return target.map { [.page,.board,.cover].contains($0.kind) } == true
+        && elementID == nil && itemID == nil && reference == nil
+        && region.map { (3...4096).contains($0.count) && $0.allSatisfy { $0.x.isFinite && $0.y.isFinite } } == true
+        && worldOrigin?.isValid != false
     case .context: return (contextID != nil || resolving) && target == nil && elementID == nil && itemID == nil && reference == nil
     case .reference:
       return reference.map {

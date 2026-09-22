@@ -39,23 +39,24 @@ struct NotebookDrawingToolsContentTests {
     let graphic = NotebookGraphic(shape:.rectangle,cornerRadius:20)
     let frame = PageRect(x:0,y:0,width:200,height:80), surface = SurfaceID.page(UUID())
     let graph = NotebookGraphicGraph([.init(id:"a",graphic:graphic,frame:frame,surface:surface,shown:true)])
-    let member = NotebookGraphicSelection.Member(id:"a",frame:frame,graphic:graphic,layout:try #require(graph.resolve("a").layout))
+    let member = NotebookGraphicSelection.Member(id:"a",frame:frame,graphic:graphic,layout:try #require(graph.resolve("a").layout),body:try #require(graph.resolve("a",space:.body).layout),placement:try #require(graph.placement("a")))
     let edit = try #require(NotebookGraphicSelection.transformed([member],radians:.pi/2).first)
-    let path = NotebookGraphicGeometry.outlinePath(edit.graphic,in:.init(x:0,y:0,width:80,height:200))
+    #expect(edit.graphic == graphic)
+    let placement=try member.placement.updating(frame:edit.frame,basis:edit.basis)
+    let layout=try #require(NotebookGraphicGraph([.init(id:"a",graphic:edit.graphic,frame:edit.frame,surface:surface,shown:true,placement:placement)]).resolve("a").layout)
+    let path=NotebookElementAppearance(graphic:edit.graphic,layout:layout,size:.init(width:80,height:200),erasures:[]).remaining
     #expect(!path.contains(.init(x:2,y:2)))
     #expect(!path.contains(.init(x:7,y:4)))
-    #expect(!NotebookGraphicGeometry.containsInterior(edit.graphic,width:80,height:200,x:7,y:4))
     #expect(path.contains(.init(x:7,y:7)))
     #expect(path.contains(.init(x:20,y:2)))
-    let size = try #require(edit.graphic.transform).contentSize(in:.init(width:80,height:200))
-    #expect(abs(size.width-200) < 0.000001 && abs(size.height-80) < 0.000001)
+    #expect(placement.localSize == .init(x:200,y:80))
   }
   @Test func rotatedCutsUseTheBasisAtEraserAdmission() throws {
     let surface = SurfaceID.page(UUID())
     let original = NotebookGraphic(shape:.rectangle,style:.init(fill:.black))
     let frame = PageRect(x:100,y:100,width:200,height:80)
     let graph = NotebookGraphicGraph([.init(id:"a",graphic:original,frame:frame,surface:surface,shown:true)])
-    let member = NotebookGraphicSelection.Member(id:"a",frame:frame,graphic:original,layout:try #require(graph.resolve("a").layout))
+    let member = NotebookGraphicSelection.Member(id:"a",frame:frame,graphic:original,layout:try #require(graph.resolve("a").layout),body:try #require(graph.resolve("a",space:.body).layout),placement:try #require(graph.placement("a")))
     let turned = try #require(NotebookGraphicSelection.transformed([member],radians:.pi/2).first)
     #expect(abs(turned.frame.width-80) < 0.000001)
     #expect(abs(turned.frame.height-200) < 0.000001)
@@ -64,12 +65,14 @@ struct NotebookDrawingToolsContentTests {
     }
     // Vertical cut at original x=150 becomes a horizontal cut at new y=50.
     let cut = InkElementErasure(target:.init(elementID:"a",frame:frame),samples:[sample(150,100),sample(150,180)])
-    let transformed = NotebookElementAppearance(graphic:turned.graphic,layout:nil,size:.init(width:80,height:200),erasures:[cut])
+    let placement=try member.placement.updating(frame:turned.frame,basis:turned.basis)
+    let layout=try #require(NotebookGraphicGraph([.init(id:"a",graphic:turned.graphic,frame:turned.frame,surface:surface,shown:true,placement:placement)]).resolve("a").layout)
+    let transformed = NotebookElementAppearance(graphic:turned.graphic,layout:layout,size:.init(width:80,height:200),erasures:[cut])
     #expect(!transformed.contains(.init(x:40,y:50),tolerance:0))
     #expect(transformed.contains(.init(x:40,y:140),tolerance:0))
-    let second = InkElementErasure(target:.init(elementID:"a",frame:turned.frame,graphicTransform:turned.graphic.transform),
+    let second = InkElementErasure(target:.init(elementID:"a",frame:turned.frame,graphicTransform:turned.graphic.transform,elementTransform:layout.elementTransform),
       samples:[sample(turned.frame.x,turned.frame.y+140),sample(turned.frame.x+80,turned.frame.y+140)])
-    let atAdmission = NotebookElementAppearance(graphic:turned.graphic,layout:nil,size:.init(width:80,height:200),erasures:[second])
+    let atAdmission = NotebookElementAppearance(graphic:turned.graphic,layout:layout,size:.init(width:80,height:200),erasures:[second])
     #expect(!atAdmission.contains(.init(x:40,y:140),tolerance:0))
     #expect(atAdmission.contains(.init(x:40,y:50),tolerance:0))
   }
@@ -115,7 +118,7 @@ struct NotebookDrawingToolsContentTests {
     let mask=NotebookGraphicMask().appending(.intersect,polygon:[.init(x:0,y:0),.init(x:0.6,y:0),.init(x:0.6,y:1),.init(x:0,y:1)])
     let graphic = NotebookGraphic(shape:.freehand,sourceInkIDs:[UUID()],freehand:ink,mask:mask)
     let graph = NotebookGraphicGraph([.init(id:"ink",graphic:graphic,frame:frame,surface:surface,shown:true)])
-    let member = NotebookGraphicSelection.Member(id:"ink",frame:frame,graphic:graphic,layout:try #require(graph.resolve("ink").layout))
+    let member = NotebookGraphicSelection.Member(id:"ink",frame:frame,graphic:graphic,layout:try #require(graph.resolve("ink").layout),body:try #require(graph.resolve("ink",space:.body).layout),placement:try #require(graph.placement("ink")))
     let turned = try #require(NotebookGraphicSelection.transformed([member],radians:.pi/6).first)
     let roundTrip = try JSONValue.encode(turned.graphic).decode(NotebookGraphic.self)
     #expect(roundTrip == turned.graphic && roundTrip.isValid)
