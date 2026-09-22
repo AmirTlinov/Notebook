@@ -1,5 +1,40 @@
 # Verification record
 
+## 22 сентября — одна установленная пара снова открывает рабочее окно Mac, build 165
+
+Mac больше не устанавливает действие открытия из `onAppear` самого рабочего
+окна. Этот порядок был циклическим: если macOS восстановила процесс без окна,
+не существовало view, способного зарегистрировать его повторное открытие.
+Единственный process-lifetime status item теперь устанавливает SwiftUI
+`openWindow`; он же один раз предъявляет окно при обычном запуске и обслуживает
+Dock reopen. Отдельного AppKit-окна, store или второго владельца модели нет.
+
+Финальный source прошёл **1/1** выбранную Mac-проверку без failures, skips и
+runtime warnings; установленный Release дополнительно проверен живым системным
+маршрутом. После запуска появилось окно `Физический документ · семь срезов`;
+его системная кнопка закрытия оставила процесс живым с нулём окон, а повторный
+`open` вернул то же окно. Рабочая база сохранила inode `783629731` и размер
+229 986 304 байта, activation marker сохранил SHA-256
+`37605dc9ace0d413b2007a19972bbc0792428866a960919c3482337b4a274275`.
+
+Подписанная пара `Notebook` **0.3.134 (165)** собрана из source SHA-256
+`690e03b83065e1fb2d63c704838db30afc23f2ae0f2455b366a7526a0d5ea58f`;
+verification SHA-256
+`cb9e74a135e800df621e89cc27f190d008f688fdf2e9fdd79f3ac70790c8403d`.
+Mac build 165 установлен вместо 164 в `/Users/amir/Applications/Notebook.app`
+и запущен как PID 53298; iPad build 165 установлен поверх предыдущего build 165
+без удаления контейнера и запущен как PID 2333. Mac binary UUID
+`5D84E435-7DCE-3FBD-8339-774295399BF8`; iPad binary UUID
+`C64C23E5-0DBE-324F-A91F-FD99CCFD1EAA`.
+
+Evidence: `.build/gui294-mac-window-check-165-final-v2/verification.json`,
+`.build/gui294-mac-window-release-165-final-v2/build.json`,
+`.build/gui294-mac-window-install-165-v2-mac/{before,after-launch,closed-window,reopened-window,final-live}.txt`
+и `.build/gui294-mac-window-install-165-v2-ipad/{apps-before,install,launch,apps}.json`.
+Это восстановило рабочую установленную пару, но не закрывает S9: настоящие
+Pencil/мышь, десять повторов, системные frame/CPU/GPU/memory/energy, адресный
+saved→received→shown и 30 минут совместной работы этим срезом не подтверждены.
+
 ## 22 сентября — региональное лассо режет векторную фигуру, build 164
 
 Режим «Лассо» теперь включает не только исходную рукопись, но и обычные

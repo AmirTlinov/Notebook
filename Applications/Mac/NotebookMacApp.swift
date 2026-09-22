@@ -31,7 +31,7 @@ struct NotebookMacApp: App {
         NotebookMacCodexIntegrationView(model: model)
       } else { Text(lifecycle.launch.message).padding() }
     }.defaultSize(width: 480, height: 280)
-    MenuBarExtra("Notebook", image: "NotebookStatusIcon") {
+    MenuBarExtra {
       Button("Открыть Notebook") { openWindow(id: "workspace"); NSApp.activate() }
       Divider()
       if let model = lifecycle.launch.model {
@@ -70,8 +70,23 @@ struct NotebookMacApp: App {
       ))
       Divider()
       Button("Завершить Notebook") { NSApplication.shared.terminate(nil) }
+    } label: {
+      NotebookMenuBarLabel(lifecycle: lifecycle)
     }
     .menuBarExtraStyle(.menu)
+  }
+}
+
+/// The status item exists for the process lifetime, unlike the optional
+/// workspace window. It therefore installs the one SwiftUI window action used
+/// both by the initial launch and by Dock reopen.
+private struct NotebookMenuBarLabel: View {
+  @Environment(\.openWindow) private var openWindow
+  let lifecycle: NotebookMacLifecycle
+  var body: some View {
+    Image("NotebookStatusIcon")
+      .accessibilityLabel("Notebook")
+      .onAppear { lifecycle.installWorkspacePresenter { openWindow(id: "workspace") } }
   }
 }
 
@@ -81,6 +96,7 @@ struct NotebookMacApp: App {
 final class NotebookMacLifecycle: NSObject, NSApplicationDelegate {
   let launch: NotebookApplicationLaunch
   @ObservationIgnored var openWorkspace: (() -> Void)?
+  @ObservationIgnored private var requestedInitialWorkspace = false
   private var launchTask: Task<Void, Never>?
   @ObservationIgnored private var accountWindow: NSWindow?
   @ObservationIgnored private var workspacesWindow: NSWindow?
@@ -141,6 +157,17 @@ final class NotebookMacLifecycle: NSObject, NSApplicationDelegate {
   func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
     if let openWorkspace { openWorkspace(); sender.activate(); return false }
     return true
+  }
+
+  func installWorkspacePresenter(_ present: @escaping () -> Void) {
+    openWorkspace = present
+    guard !requestedInitialWorkspace,!isRunningTests,!isFixture,!isAcceptance else { return }
+    requestedInitialWorkspace = true
+    Task { @MainActor [weak self] in
+      await Task.yield()
+      guard self?.requestedInitialWorkspace == true else { return }
+      present();NSApplication.shared.activate()
+    }
   }
 
   func showCodexAccount() {

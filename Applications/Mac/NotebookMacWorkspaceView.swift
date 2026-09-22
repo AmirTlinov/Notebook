@@ -6,7 +6,6 @@ import SwiftUI
 struct NotebookMacWorkspaceRoot: View {
   let lifecycle: NotebookMacLifecycle
   @Environment(\.scenePhase) private var scenePhase
-  @Environment(\.openWindow) private var openWindow
 
   var body: some View {
     Group {
@@ -34,7 +33,6 @@ struct NotebookMacWorkspaceRoot: View {
     }
     .frame(minWidth: 760, minHeight: 520)
     .preferredColorScheme(.light)
-    .onAppear { lifecycle.openWorkspace = { openWindow(id: "workspace") } }
     .sheet(isPresented: Binding(get: { lifecycle.launch.showsWorkspaces }, set: { lifecycle.launch.showsWorkspaces = $0 })) {
       NotebookWorkspacesView(launch: lifecycle.launch).frame(width: 560, height: 500)
     }
