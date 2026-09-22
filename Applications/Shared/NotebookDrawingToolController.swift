@@ -394,6 +394,19 @@ extension NotebookRegionMaterialization {
         visible:graphic.visible,sourceInkIDs:graphic.sourceInkIDs,connection:graphic.connection,vertices:graphic.vertices,
         cornerRadius:graphic.cornerRadius,freehand:.init(layers:layers),transform:nil,path:graphic.path,mask:graphic.mask)
     }
+    func detachedConnector(_ graphic:NotebookGraphic,layout:NotebookGraphicLayout)->NotebookGraphic {
+      guard var connection=graphic.connection else { return graphic }
+      let start=layout.start,end=layout.end,dx=end.x-start.x,dy=end.y-start.y
+      let square=max(0.000001,dx*dx+dy*dy),length=sqrt(square)
+      connection.start = .init(point:start);connection.end = .init(point:end)
+      connection.bendPosition=min(1,max(0,((layout.bend.x-start.x)*dx+(layout.bend.y-start.y)*dy)/square))
+      connection.bend=(-dy*(layout.bend.x-(start.x+end.x)/2)+dx*(layout.bend.y-(start.y+end.y)/2))/length
+      connection.routing=connection.resolvedRouting
+      return .init(shape:graphic.shape,style:graphic.style,label:graphic.label,
+        representation:graphic.representation,visible:graphic.visible,sourceInkIDs:graphic.sourceInkIDs,
+        connection:connection,vertices:graphic.vertices,cornerRadius:graphic.cornerRadius,
+        freehand:graphic.freehand,transform:graphic.transform,path:graphic.path,mask:graphic.mask)
+    }
     func belongs(_ reference:EditableElementReference,node:NotebookGraphicGraph.Node)->Bool {
       guard node.surface == region.address.surface else { return false }
       switch reference {
@@ -429,7 +442,7 @@ extension NotebookRegionMaterialization {
       }
     }
     for reference in region.graphics {
-      guard let node=graph.node(reference.elementID),belongs(reference,node:node),node.graphic.shape != .connector,
+      guard let node=graph.node(reference.elementID),belongs(reference,node:node),
         let layout=graph.resolve(reference.elementID).layout,let placement=layout.flattenedPlacement() else { continue }
       let size=layout.projection?.size ?? .init(width:layout.frame.width,height:layout.frame.height)
       let polygon=region.polygon.compactMap { point -> SpatialPoint? in
@@ -443,7 +456,11 @@ extension NotebookRegionMaterialization {
       guard !inside.path(in:.init(x:0,y:0,width:1,height:1)).isEmpty else { continue }
       let outside=(node.graphic.mask ?? .init()).appending(.subtract,polygon:polygon)
       let id=UUID(),ref=region.address.reference(id.uuidString.lowercased())
-      let selectedGraphic=copied(node.graphic,claims:[],mask:inside)
+      // A selected connector fragment is an independent visible vector. The
+      // untouched outside keeps its endpoint bindings; copying those bindings
+      // into the movable fragment would create a second owner of the relation.
+      let selectedSource=detachedConnector(node.graphic,layout:layout)
+      let selectedGraphic=copied(selectedSource,claims:[],mask:inside)
       let frame=placement.frame,worldOrigin=node.surface.kind == .page ? nil : layout.origin
       let object=NotebookWorkingGraphic(id:id,surface:node.surface,frame:frame,
         worldOrigin:worldOrigin,graphic:selectedGraphic,basis:placement.basis)
@@ -545,7 +562,7 @@ private enum NotebookLassoQuery {
     }
     return candidates.compactMap { node in
       guard spatial?.delta.excluded.contains(node.id) != true,node.shown,
-        node.graphic.shape != .connector,let layout=graph.resolve(node.id).layout,
+        let layout=graph.resolve(node.id).layout,
         node.surface == address.surface else { return nil }
       let delta=origin.delta(to:node.origin),frame=layout.frame
       guard NotebookToolGeometry.intersects(.init(x:delta.x+frame.x,y:delta.y+frame.y,

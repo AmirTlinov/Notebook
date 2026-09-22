@@ -55,6 +55,60 @@ import UIKit
     }
   }
 
+  func testRegionLassoClipsAConnectorInsteadOfDroppingOrSelectingItsWhole() async throws {
+    try await fixture { model in
+      var page=try XCTUnwrap(model.activePage)
+      let left=AgentElement(id:"arrow-left",kind:.graphic,
+        frame:.init(x:50,y:100,width:50,height:100),source:"",html:"",graphic:.init(shape:.rectangle))
+      let right=AgentElement(id:"arrow-right",kind:.graphic,
+        frame:.init(x:300,y:100,width:50,height:100),source:"",html:"",graphic:.init(shape:.rectangle))
+      let connection=NotebookGraphicConnection(
+        start:.init(point:.zero,binding:.init(elementID:left.id)),
+        end:.init(point:.zero,binding:.init(elementID:right.id)),endArrowhead:.arrow)
+      let arrow=AgentElement(id:"arrow-region",kind:.graphic,
+        frame:.init(x:0,y:0,width:400,height:300),source:"",html:"",
+        graphic:.init(shape:.connector,style:.init(strokeWidth:8),connection:connection))
+      XCTAssertTrue(page.replaceElements([left,right,arrow],actor:model.actorID));try model.store.savePage(page)
+      await model.reloadExternalChanges()?.value
+      let address=NotebookToolAddress(surface:.page(page.id),boardID:nil,worldOrigin:nil,bounds:nil)
+      let originalLayout=try XCTUnwrap(model.graphicGraph(page:try XCTUnwrap(model.activePage))
+        .resolve(arrow.id).layout)
+      let polygon=[SpatialPoint(x:140,y:130),.init(x:200,y:130),.init(x:200,y:170),.init(x:140,y:170)]
+
+      model.selectDrawingTool(.lasso);model.drawingToolSettings.lassoMode = .region
+      XCTAssertTrue(model.drawingTools.begin(at:polygon[0],address:address,screenScale:1))
+      for point in polygon.dropFirst() { model.drawingTools.move(to:point) }
+      model.drawingTools.finish()
+      let deadline=ContinuousClock.now + .seconds(2)
+      while model.selectionSession.region == nil,ContinuousClock.now < deadline {
+        try await Task.sleep(for:.milliseconds(10))
+      }
+      let region=try XCTUnwrap(model.selectionSession.region)
+      XCTAssertEqual(region.graphics,[address.reference(arrow.id)])
+      XCTAssertNil(try model.store.loadPage(page.id).element(id:arrow.id)?.graphic?.mask,
+        "The lasso descriptor remains read-only until an edit")
+
+      let selected=try XCTUnwrap(model.materializeRegionSelection()?.first)
+      await assertSaved(model);await model.reloadExternalChanges()?.value
+      let saved=try model.store.loadPage(page.id)
+      let outside=try XCTUnwrap(saved.element(id:arrow.id)?.graphic)
+      let inside=try XCTUnwrap(saved.element(id:selected.elementID)?.graphic)
+      XCTAssertEqual(inside.shape,.connector);XCTAssertTrue(inside.connection?.bindings.isEmpty == true,
+        "The movable fragment owns no duplicate endpoint bindings")
+      XCTAssertEqual(outside.connection?.bindings.count,2,
+        "The untouched connector keeps the authored relation")
+      XCTAssertFalse(try XCTUnwrap(outside.mask).contains(.init(x:0.3,y:0.5)))
+      XCTAssertTrue(try XCTUnwrap(outside.mask).contains(.init(x:0.8,y:0.5)))
+      XCTAssertTrue(try XCTUnwrap(inside.mask).contains(.init(x:0.3,y:0.5)))
+      XCTAssertFalse(try XCTUnwrap(inside.mask).contains(.init(x:0.8,y:0.5)))
+      let selectedLayout=try XCTUnwrap(model.graphicGraph(page:saved,preview:false).resolve(selected.elementID).layout)
+      XCTAssertEqual(selectedLayout.frame.x,originalLayout.frame.x,accuracy:0.000001)
+      XCTAssertEqual(selectedLayout.frame.y,originalLayout.frame.y,accuracy:0.000001)
+      XCTAssertEqual(selectedLayout.frame.width,originalLayout.frame.width,accuracy:0.000001)
+      XCTAssertEqual(selectedLayout.frame.height,originalLayout.frame.height,accuracy:0.000001)
+    }
+  }
+
   func testObjectLassoReadsAuthoredCutsWithoutDependingOnPaintCache() async throws {
     try await fixture { model in
       var page = try XCTUnwrap(model.activePage)
