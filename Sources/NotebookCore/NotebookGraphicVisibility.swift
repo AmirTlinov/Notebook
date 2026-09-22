@@ -11,9 +11,19 @@ public struct NotebookGraphicVisibilityResult: Sendable {
   public let boundsIndexBytes:Int
 }
 
-/// Page elements use the same immutable bounds tree as measured ink, in each
+/// Broad-phase leaves inside one retained local frame. A moved whole maps the
+/// contact into that frame and resolves only these IDs against its live graph.
+public struct NotebookGraphicCandidateResult: Sendable {
+  public let ids:Set<String>
+  public let visitedIndexNodes:Int
+  public let overflow:Bool
+  public let boundsIndexBytes:Int
+}
+
+/// Elements use the same immutable bounds tree as measured ink, in each
 /// existing local frame. A whole pose changes the query, not all leaf bounds.
-/// Boards keep their addressed SQL window; this is not another board index.
+/// Durable board windows remain SQL-owned; this tree is retained with a live
+/// scene only so interaction does not expand a moved whole on Pencil-down.
 final class NotebookGraphicVisibility: Sendable {
   private struct Level: Sendable {
     let ids:[String]
@@ -26,17 +36,21 @@ final class NotebookGraphicVisibility: Sendable {
   private let dependents:[String:Set<String>]
   private let labelled:Set<String>
   private let elements:[String:NotebookGraphicGraph.ElementSource]
-  private let pageID:UUID
+  private let surface:SurfaceID
   private let bytes:Int
 
-  init(pageID:UUID,graph:NotebookGraphicGraph,nodes:[NotebookGraphicGraph.Node],
+  init(surface:SurfaceID,graph:NotebookGraphicGraph,nodes:[NotebookGraphicGraph.Node],
     groups:[String:NotebookGraphicGraph.ElementSource],
     elements:[String:NotebookGraphicGraph.ElementSource]) {
-    self.pageID=pageID
-    self.elements=elements.filter { $0.value.surface == .page(pageID) }
-    let nodes=nodes.filter { $0.surface == .page(pageID) }
+    self.surface=surface
+    let includeRoot=surface.kind == .page
+    // Board rendering already owns a world index. Its local-frame companion
+    // retains only grouped leaves, not a second copy of every root element.
+    self.elements=elements.filter { $0.value.surface == surface
+      && (includeRoot || $0.value.source.parentID != nil) }
+    let nodes=nodes.filter { $0.surface == surface }
     let placedGroups=groups.compactMap { id,group -> (String,NotebookElementPlacement)? in
-      guard group.surface == .page(pageID),let value=graph.placement(id) else { return nil };return (id,value)
+      guard group.surface == surface,let value=graph.placement(id) else { return nil };return (id,value)
     }
     let groupIDs=Set(placedGroups.map(\.0));self.groups=groupIDs
     func parent(_ id:String?) -> String? { id.map(collaborationIdentity).flatMap { groupIDs.contains($0) ? $0 : nil } }
@@ -51,6 +65,7 @@ final class NotebookGraphicVisibility: Sendable {
         let target=Set((graph.node(binding.elementID)?.placement.ancestors ?? []).map(collaborationIdentity))
         for ancestor in own.symmetricDifference(target) { edges[ancestor,default:[]].insert(id) }
       }
+      guard includeRoot || parent != nil else { continue }
       // Glyph extents belong to typography, not a guessed character width.
       // Until that owner supplies extents, labels remain conservative candidates.
       if !node.graphic.label.isEmpty { labelled.insert(id);continue }
@@ -68,13 +83,71 @@ final class NotebookGraphicVisibility: Sendable {
     for (id,placement) in placedGroups.sorted(by:{ $0.1.ancestors.count>$1.1.ancestors.count }) {
       let parent=placement.parentID.map(collaborationIdentity);parents[id]=parent
       let level=Level(entries[id] ?? []);levels[id]=level
-      if !level.index.bounds.isNull {
+      if !level.index.bounds.isNull,includeRoot || parent != nil {
         entries[parent,default:[]].append((id,Self.outward(level.index.bounds,through:placement.localTransform)))
       }
     }
-    levels[nil]=Level(entries[nil] ?? [])
+    if includeRoot { levels[nil]=Level(entries[nil] ?? []) }
     self.levels=levels;self.parents=parents;dependents=edges;self.labelled=labelled
     bytes=levels.values.reduce(0) { $0+$1.index.byteCount }
+  }
+
+  /// Traverse only the requested whole's indexed subtree. Leaves are coarse
+  /// owners; exact current geometry is deliberately left to the caller.
+  func candidates(in groupID:String,area:CGRect,graph:NotebookGraphicGraph,
+    changed:Set<String>,limit:Int) -> NotebookGraphicCandidateResult {
+    precondition(limit > 0)
+    let root=collaborationIdentity(groupID)
+    guard groups.contains(root),!area.isNull else { return .init(ids:[],visitedIndexNodes:0,
+      overflow:false,boundsIndexBytes:bytes) }
+    func parent(_ id:String) -> String? {
+      graph.source(id)?.parentID.map(collaborationIdentity).flatMap { groups.contains($0) ? $0 : nil }
+    }
+    var affected=changed
+    for id in changed { affected.formUnion(dependents[id] ?? []) }
+    var forced:[String?:Set<String>]=[:]
+    for id in affected {
+      for current in [false,true] {
+        var next:String?=id,seen=Set<String>()
+        while let key=next,seen.count<65,seen.insert(key).inserted {
+          let owner=current ? parent(key) : parents[key]
+          forced[owner,default:[]].insert(key);next=owner
+        }
+      }
+    }
+    var ids=Set<String>(),visited=0,overflow=false
+    func include(_ id:String) {
+      guard !overflow,!groups.contains(id),ids.insert(id).inserted else { return }
+      if ids.count>limit { overflow=true }
+    }
+    func visit(_ owner:String,area:CGRect,depth:Int) {
+      guard depth<65,!overflow else { return }
+      let level=levels[owner]
+      let query=level?.index.query(area,limit:max(1,limit-ids.count))
+      visited += query?.visitedNodes ?? 0
+      if query?.overflow == true { overflow=true;return }
+      var values=Set((query?.indices ?? []).map { level!.ids[$0] })
+      values.formUnion(forced[owner] ?? [])
+      for id in values {
+        guard !overflow,parent(id) == owner else { continue }
+        if groups.contains(id) {
+          guard let placement=graph.placement(id) else { continue }
+          let transform=placement.localTransform,det=transform.a*transform.d-transform.b*transform.c
+          let inverse=transform.inverted()
+          let query=det.isFinite && det != 0 && [inverse.a,inverse.b,inverse.c,inverse.d,inverse.tx,inverse.ty].allSatisfy(\.isFinite)
+            ? Self.outward(area,through:inverse) : CGRect.infinite
+          visit(id,area:query,depth:depth+1)
+        } else { include(id) }
+      }
+    }
+    visit(root,area:area,depth:0)
+    // A connector crossing the whole boundary changes with the whole although
+    // it is not a descendant. Resolve only those retained reverse bindings.
+    for id in dependents[root] ?? [] where !overflow { include(id) }
+    // Label extents do not yet have a typography-owned coarse box. Preserve
+    // correctness, but constrain that conservative scan to this whole.
+    for id in labelled where !overflow && graph.placement(id)?.descends(from:root) == true { include(id) }
+    return .init(ids:ids,visitedIndexNodes:visited,overflow:overflow,boundsIndexBytes:bytes)
   }
 
   func query(_ area:CGRect,graph:NotebookGraphicGraph,changed:Set<String>,limit:Int) -> NotebookGraphicVisibilityResult {
@@ -102,7 +175,7 @@ final class NotebookGraphicVisibility: Sendable {
     var visited=0,resolved=0,read=Set<String>(),overflow=false
     func include(_ id:String) {
       guard !overflow,read.insert(id).inserted else { return }
-      if let node=graph.node(id),node.surface == .page(pageID) {
+      if let node=graph.node(id),node.surface == surface {
         resolved += 1
         guard let layout=graph.resolve(id).layout else { return }
         if node.graphic.label.isEmpty {
@@ -111,7 +184,7 @@ final class NotebookGraphicVisibility: Sendable {
         guard layouts.count+placements.count < limit else { overflow=true;return }
         layouts[node.id]=layout
       } else if let element=elements[collaborationIdentity(id)],
-        element.surface == .page(pageID),let placement=graph.placement(id) {
+        element.surface == surface,let placement=graph.placement(id) {
         let presentation=NotebookElementPresentation(placement:placement,
           text:element.text,style:element.textStyle)
         guard Self.intersects(presentation.bounds,area) else { return }

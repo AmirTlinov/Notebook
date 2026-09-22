@@ -50,6 +50,14 @@ struct NotebookSpatialEraserSource {
       guard case .element(let id) = entry.id else { return nil }
       return delta.ids.contains(id) ? nil : id
     })
+    let moved: (ids:Set<String>,visitedNodes:Int)
+    do {
+      moved=try delta.movedCandidateIDs(surface:surface,bounds:bounds,graph:graph,limit:limit)
+    } catch {
+      throw CollaborationError("eraser_limit",
+        "Сотрите меньший участок: в нём слишком много объектов.")
+    }
+    ids.formUnion(moved.ids)
     ids.formUnion(delta.ids)
     let targets = ids.sorted().compactMap { target(id: $0, surface: surface) }.filter {
       targetBounds($0).intersects(bounds)
@@ -58,7 +66,7 @@ struct NotebookSpatialEraserSource {
       throw CollaborationError("eraser_limit",
         "Сотрите меньший участок: в нём слишком много объектов.")
     }
-    return .init(targets: targets, visitedNodes: indexed.statistics.visitedNodes)
+    return .init(targets: targets, visitedNodes: indexed.statistics.visitedNodes + moved.visitedNodes)
   }
 
   private func target(id: String, surface: SurfaceID) -> InkElementTarget? {
@@ -342,8 +350,9 @@ extension NotebookAppModel {
 
   func spatialEraserSource(boardID: UUID,
     cohort: SceneCompositionCohort) -> NotebookSpatialEraserSource {
+    let baseGraph=cohort.frame.index.graphicGraph(boardID:boardID)
     let graph = interactionGraphicGraph(boardID: boardID, cohort: cohort)
-    let delta=spatialInteractionDelta(boardID:boardID,graph:graph)
+    let delta=spatialInteractionDelta(boardID:boardID,graph:graph,baseGraph:baseGraph)
     return .init(boardID: boardID, index: cohort.frame.index, graph: graph,
       delta:delta)
   }

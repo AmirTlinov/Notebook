@@ -148,43 +148,58 @@ final class WorkspaceSceneIndexTests: XCTestCase {
     let workspace = WorkspaceIndex(items: [item], selectedItemID: itemID, selectedPageID: item.pageIDs[0], stamp: stamp)
     let group=SpatialElement(id:"metadata-group",surface:.board(boardID),kind:.group,
       frame:.init(x:0,y:0,width:180,height:160),worldOrigin:.zero,source:"",
-      basis:.init(size:.init(x:180,y:160)),stamp:stamp)
-    let children=(0..<4).map { index in
-      SpatialElement(id:"metadata-\(index)",surface:.board(boardID),kind:.nativeText,
-        frame:.init(x:Double(index)*20,y:0,width:18,height:16),worldOrigin:.zero,
-        source:"Child \(index)",parentID:group.id,stamp:stamp)
+      basis:.init(size:.init(x:1000,y:100)),stamp:stamp)
+    let members=(0..<(count-1)).map { index in
+      SpatialElement(id:"member-\(index)",surface:.board(boardID),kind:.graphic,
+        frame:.init(x:Double(index%1000),y:Double(index/1000),width:0.6,height:0.6),
+        worldOrigin:.zero,source:"",graphic:.init(shape:.rectangle,style:.init(strokeWidth:0.1)),
+        parentID:group.id,stamp:stamp)
     }
-    let elements = [group] + children + (4..<(count - 1)).map {
-      element($0, boardID: boardID, origin: .zero, actor: actor)
-    }
+    let elements = [group] + members
     mark("sources")
     let board = BoardDocument(freeItems: [.init(itemID: itemID, center: .zero, zIndex: 0, stamp: stamp)],
       elements: elements, stamp: stamp)
-    let graph=board.graphicGraph()
-    let reverseStart=ProcessInfo.processInfo.systemUptime
-    let descendants=graph.descendantIDs(of:[group.id])
-    let reverseSeconds=ProcessInfo.processInfo.systemUptime-reverseStart
-    let ancestryScanStart=ProcessInfo.processInfo.systemUptime
-    let scanned=Set(board.elements.compactMap { element in
-      graph.placement(element.id)?.descends(from:group.id) == true ? element.id : nil
-    })
-    let ancestryScanSeconds=ProcessInfo.processInfo.systemUptime-ancestryScanStart
-    XCTAssertEqual(descendants,Set(children.map(\.id)));XCTAssertEqual(scanned,descendants)
-    print("GUI285 100k live whole delta: retained_us=\(reverseSeconds*1_000_000), full_scan_us=\(ancestryScanSeconds*1_000_000), ratio=\(ancestryScanSeconds/max(reverseSeconds,Double.leastNonzeroMagnitude))");fflush(stdout)
     let lookupID=elements.last!.id,iterations=100
     var lookupChecksum=0,scanChecksum=0
     let lookupStart=ProcessInfo.processInfo.systemUptime
     for _ in 0..<iterations { lookupChecksum += board.element(id:lookupID)?.id.count ?? 0 }
     let lookupSeconds=ProcessInfo.processInfo.systemUptime-lookupStart
-    let scanStart=ProcessInfo.processInfo.systemUptime
+    let linearScanStart=ProcessInfo.processInfo.systemUptime
     for _ in 0..<iterations { scanChecksum += board.elements.first(where:{ $0.id == lookupID })?.id.count ?? 0 }
-    let scanSeconds=ProcessInfo.processInfo.systemUptime-scanStart
+    let linearScanSeconds=ProcessInfo.processInfo.systemUptime-linearScanStart
     XCTAssertEqual(lookupChecksum,scanChecksum)
-    print("GUI285 100k element source: retained_us=\(lookupSeconds*1_000_000/Double(iterations)), linear_us=\(scanSeconds*1_000_000/Double(iterations)), ratio=\(scanSeconds/max(lookupSeconds,Double.leastNonzeroMagnitude))");fflush(stdout)
+    print("GUI285 100k element source: retained_us=\(lookupSeconds*1_000_000/Double(iterations)), linear_us=\(linearScanSeconds*1_000_000/Double(iterations)), ratio=\(linearScanSeconds/max(lookupSeconds,Double.leastNonzeroMagnitude))");fflush(stdout)
     let hierarchy = BoardHierarchy(rootBoardID: boardID, boards: [.init(id: boardID, board: board)], stamp: stamp)
     mark("hierarchy")
     let index = WorkspaceSceneIndex(workspace: workspace, hierarchy: hierarchy, paperSizes: [:])
     mark("index")
+    let graph=try XCTUnwrap(index.graphicGraph(boardID:boardID))
+    var movedSource=try XCTUnwrap(graph.source(group.id))
+    movedSource.frame = .init(x:1_000_000,y:0,width:movedSource.frame.width,height:movedSource.frame.height)
+    let movedGraph=graph.projecting(placements:[group.id:movedSource])
+    let movedPlacement=try XCTUnwrap(movedGraph.placement(group.id))
+    let movedGroup=NotebookSpatialInteractionDelta.MovedGroup(id:group.id,surface:group.surface,
+      current:movedPlacement)
+    let movedDelta=NotebookSpatialInteractionDelta(ids:[group.id],elements:[group.id:group],excluded:[],movedGroups:[movedGroup])
+    let local=CGRect(x:300.25,y:40.25,width:1.1,height:1.1).applying(movedPlacement.transform)
+    let movedBounds=WorkspaceSpatialBounds(origin:movedPlacement.origin.offsetBy(x:local.minX,y:local.minY),
+      width:local.width,height:local.height)
+    let movedStart=ProcessInfo.processInfo.systemUptime
+    let moved=try movedDelta.movedCandidateIDs(surface:.board(boardID),bounds:movedBounds,graph:movedGraph)
+    let movedSeconds=ProcessInfo.processInfo.systemUptime-movedStart
+    let descendantScanStart=ProcessInfo.processInfo.systemUptime
+    let scanned=Set<String>(board.elements.compactMap { element -> String? in
+      guard let node=movedGraph.node(element.id),node.placement.descends(from:group.id),
+        let layout=movedGraph.resolve(element.id).layout else { return nil }
+      let bounds=WorkspaceSpatialBounds(origin:layout.origin.offsetBy(x:layout.frame.x,y:layout.frame.y),
+        width:layout.frame.width,height:layout.frame.height)
+      return bounds.intersects(movedBounds) ? element.id : nil
+    })
+    let descendantScanSeconds=ProcessInfo.processInfo.systemUptime-descendantScanStart
+    let expected:Set<String>=["member-40300","member-40301","member-41300","member-41301"]
+    XCTAssertEqual(moved.ids,expected);XCTAssertEqual(scanned,expected)
+    XCTAssertLessThan(moved.visitedNodes,256)
+    print("GUI285 100k moved whole query: indexed_us=\(movedSeconds*1_000_000), full_scan_us=\(descendantScanSeconds*1_000_000), ratio=\(descendantScanSeconds/max(movedSeconds,Double.leastNonzeroMagnitude)), visited=\(moved.visitedNodes)");fflush(stdout)
     let presence = SessionPresence(mode: .board, camera: .init(scale: 0.4), viewport: .init(x: 1194, y: 834))
     let limit = 48
     let pins: Set<WorkspaceSpatialID> = [.item(itemID), .element(elements.last!.id)]

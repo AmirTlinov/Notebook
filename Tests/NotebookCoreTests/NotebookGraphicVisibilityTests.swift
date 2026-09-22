@@ -76,6 +76,34 @@ struct NotebookGraphicVisibilityTests {
     #expect(graph.visiblePageGraphics(UUID(),in:.infinite).layouts.isEmpty)
   }
 
+  @Test func boardWholeCandidatesStayLocalAndRetainOnlyCrossBoundaryDependencies() throws {
+    let boardID=UUID(),stamp=VersionStamp(counter:1,actor:UUID())
+    let group=SpatialElement(id:"whole",surface:.board(boardID),kind:.group,
+      frame:.init(x:20,y:30,width:200,height:200),worldOrigin:.zero,source:"",
+      basis:.init(size:.init(x:200,y:200)),stamp:stamp)
+    let child=SpatialElement(id:"child",surface:.board(boardID),kind:.graphic,
+      frame:.init(x:10,y:15,width:30,height:40),worldOrigin:.zero,source:"",
+      graphic:.init(shape:.rectangle),parentID:group.id,stamp:stamp)
+    let outside=SpatialElement(id:"outside",surface:.board(boardID),kind:.graphic,
+      frame:.init(x:500,y:500,width:30,height:40),worldOrigin:.zero,source:"",
+      graphic:.init(shape:.ellipse),stamp:stamp)
+    let link=SpatialElement(id:"link",surface:.board(boardID),kind:.graphic,
+      frame:.init(x:0,y:0,width:1,height:1),worldOrigin:.zero,source:"",
+      graphic:.init(shape:.connector,connection:.init(
+        start:.init(point:.zero,binding:.init(elementID:child.id)),
+        end:.init(point:.zero,binding:.init(elementID:outside.id)))),stamp:stamp)
+    let graph=BoardDocument(freeItems:[],elements:[group,child,outside,link],stamp:stamp).graphicGraph()
+    graph.prepareVisibility(on:.board(boardID))
+    var moved=try #require(graph.source(group.id));moved.frame = .init(x:700,y:800,width:200,height:200)
+    moved.basis = .init(size:.init(x:200,y:200),transform:.init(a:0,b:1,c:-1,d:0,tx:1,ty:0))
+    let projected=graph.projecting(placements:[group.id:moved])
+    let result=projected.visibleGroupCandidates(group.id,on:.board(boardID),
+      in:.init(x:8,y:13,width:34,height:44),limit:16)
+    #expect(result.ids == [child.id,link.id])
+    #expect(!result.overflow)
+    #expect(result.visitedIndexNodes < 8)
+  }
+
   @Test func hundredThousandLeavesAreSkippedAfterOneLocalIndexAdmission() throws {
     let pageID=UUID(),source=NotebookElementPlacement.Source(frame:.init(x:100,y:100,width:1000,height:100),basis:.init(size:.init(x:1000,y:100)),isGroup:true)
     let resolver=NotebookElementPlacement.Resolver { $0 == "whole" ? source : nil }

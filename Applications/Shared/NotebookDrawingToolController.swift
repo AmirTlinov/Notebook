@@ -156,9 +156,10 @@ final class NotebookDrawingToolController {
       let presence=model.presence,presence.boardID == board,
       let cohort=model.compositionTiles.published,
       cohort.frame.index.board(id:board) != nil else { return nil }
+    let baseGraph=cohort.frame.index.graphicGraph(boardID:board)
     let graph=model.interactionGraphicGraph(boardID:board,cohort:cohort)
     return (graph,.init(index:cohort.frame.index,
-      delta:model.spatialInteractionDelta(boardID:board,graph:graph),presence:presence))
+      delta:model.spatialInteractionDelta(boardID:board,graph:graph,baseGraph:baseGraph),presence:presence))
   }
 
   func move(to point: SpatialPoint) {
@@ -342,12 +343,15 @@ final class NotebookDrawingToolController {
 extension NotebookAppModel {
   private func spatialSelectionBounds(_ polygon:[SpatialPoint],address:NotebookToolAddress)
     -> WorkspaceSpatialBounds? {
+    spatialSelectionBounds(polygon,origin:(address.surface.kind == .board ? address.worldOrigin ?? .zero : .zero))
+  }
+
+  private func spatialSelectionBounds(_ polygon:[SpatialPoint],origin:WorldPoint)
+    -> WorkspaceSpatialBounds? {
     guard let x=polygon.map(\.x).min(),let y=polygon.map(\.y).min(),
       let right=polygon.map(\.x).max(),let bottom=polygon.map(\.y).max(),
       [x,y,right,bottom].allSatisfy(\.isFinite) else { return nil }
-    let origin=(address.surface.kind == .board ? address.worldOrigin ?? .zero : .zero)
-      .offsetBy(x:x,y:y)
-    return .init(origin:origin,width:max(0,right-x),height:max(0,bottom-y))
+    return .init(origin:origin.offsetBy(x:x,y:y),width:max(0,right-x),height:max(0,bottom-y))
   }
 
   private func spatialCandidates(_ polygon:[SpatialPoint],address:NotebookToolAddress,
@@ -588,6 +592,11 @@ extension NotebookAppModel {
     else {
       let indexed=try spatialCandidates(polygon,address:address,source:spatial,kinds:.elements)
       spatialIDs=spatialElementIDs(indexed)
+      if let spatial,let board=address.boardID ?? address.surface.ownerID,
+        let bounds=spatialSelectionBounds(polygon,address:address) {
+        spatialIDs.formUnion(try spatial.delta.movedCandidateIDs(surface:address.surface,
+          bounds:bounds,graph:graph).ids)
+      }
       spatialIDs.formUnion(spatial?.delta.ids ?? [])
       candidates=AnySequence(spatialIDs.lazy.compactMap { graph.node($0) })
     }
@@ -610,8 +619,11 @@ extension NotebookAppModel {
 
   private func spatialElementsIntersecting(_ ids:Set<String>,surface:SurfaceID,
     polygon:[SpatialPoint],origin:WorldPoint,boardID:UUID,graph:NotebookGraphicGraph,
-    source:NotebookDrawingToolController.SpatialSelectionSource)->[EditableElementReference] {
+    source:NotebookDrawingToolController.SpatialSelectionSource) throws ->[EditableElementReference] {
     var ids=ids;ids.formUnion(source.delta.ids)
+    if let bounds=spatialSelectionBounds(polygon,origin:origin) {
+      ids.formUnion(try source.delta.movedCandidateIDs(surface:surface,bounds:bounds,graph:graph).ids)
+    }
     let erasures=elementErasures(on:surface)
     var result=Array(ids.lazy.compactMap { graph.node($0) }.filter { node in
       guard !source.delta.excluded.contains(node.id),node.shown,
@@ -669,11 +681,11 @@ extension NotebookAppModel {
       let spatial else { return ([],[]) }
     let indexed=try spatialCandidates(polygon,address:address,source:spatial,kinds:.all)
     let entries=indexed?.entries ?? []
-    var all=spatialElementsIntersecting(spatialElementIDs(indexed),surface:address.surface,
+    var all=try spatialElementsIntersecting(spatialElementIDs(indexed),surface:address.surface,
       polygon:polygon,origin:origin,boardID:board,graph:graph,source:spatial)
     for (surface,local,ids) in try coverSelectionCandidates(polygon,address:address,
       entries:entries,source:spatial) {
-      all += spatialElementsIntersecting(ids,surface:surface,polygon:local,origin:.zero,
+      all += try spatialElementsIntersecting(ids,surface:surface,polygon:local,origin:.zero,
         boardID:board,graph:graph,source:spatial)
     }
     let items:[NotebookSelectedItem]=address.surface.kind == .board ? entries.compactMap { entry in

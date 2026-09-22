@@ -84,6 +84,11 @@ struct WorkspaceSceneIndex: Sendable {
       }
       let graphicPresentation = node.board.graphicPresentation
       let graphicGraph = node.board.graphicGraph()
+      // Whole-pose interaction borrows this local-frame tree. Build it with
+      // the immutable scene cut, never on the first Pencil contact.
+      for surface in Set(node.board.elements.lazy.filter { $0.kind == .group }.map(\.surface)) {
+        graphicGraph.prepareVisibility(on:surface)
+      }
       for (position, element) in node.board.elements.enumerated() {
         // The descriptor is addressable for selection, but is not a painter.
         if element.kind == .group { elements[element.id]=element;continue }
