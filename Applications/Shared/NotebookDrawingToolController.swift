@@ -377,13 +377,6 @@ extension NotebookRegionMaterialization {
         visible:graphic.visible,sourceInkIDs:graphic.sourceInkIDs,connection:graphic.connection,vertices:graphic.vertices,
         cornerRadius:graphic.cornerRadius,freehand:.init(layers:layers),transform:nil,path:graphic.path,mask:graphic.mask)
     }
-    func authoredValues(_ object:NotebookWorkingGraphic)throws->[String:JSONValue] {
-      var values:[String:JSONValue]=["kind":.string("graphic"),"source":.string(""),
-        "frame":try .encode(object.frame),"graphic":try .encode(object.graphic)]
-      if let origin=object.worldOrigin { values["worldOrigin"]=try .encode(origin) }
-      if let basis=object.basis { values["basis"]=try .encode(basis) }
-      return values
-    }
     func belongs(_ reference:EditableElementReference,node:NotebookGraphicGraph.Node)->Bool {
       guard node.surface == region.address.surface else { return false }
       switch reference {
@@ -393,6 +386,10 @@ extension NotebookRegionMaterialization {
     }
 
     var edits:[NotebookElementEdit]=[],working:[NotebookWorkingGraphic]=[],selected:[EditableElementReference]=[]
+    let rawBudget = region.rawInk == nil ? 0 : 2
+    guard region.graphics.count <= (32-rawBudget)/2 else {
+      throw CollaborationError("selection_limit","Выделите меньшую область: одно изменение содержит не более 32 частей.")
+    }
     if let raw=region.rawInk {
       let selectedFrame=raw.selectionFrame
       let selectedPolygon=normalized(region.polygon,in:selectedFrame)
@@ -404,14 +401,14 @@ extension NotebookRegionMaterialization {
       let graphic=copied(reframed(raw.graphic,to:selectedFrame),claims:raw.graphic.sourceInkIDs,mask:inside)
       let object=NotebookWorkingGraphic(id:region.id,surface:region.address.surface,frame:selectedFrame,
         worldOrigin:region.address.worldOrigin,graphic:graphic)
-      edits.append(.init(reference:reference,kind:.convertInkToElement,values:try authoredValues(object)))
+      edits.append(.init(reference:reference,kind:.convertInkToElement,values:try object.authoredValues()))
       working.append(object);selected.append(reference)
       if !outside.path(in:.init(x:0,y:0,width:1,height:1)).isEmpty {
         let id=UUID(),ref=region.address.reference(id.uuidString.lowercased())
         let rest=copied(raw.graphic,claims:[],mask:outside)
         let object=NotebookWorkingGraphic(id:id,surface:region.address.surface,frame:raw.frame,
           worldOrigin:region.address.worldOrigin,graphic:rest)
-        edits.append(.init(reference:ref,kind:.insertElement,values:try authoredValues(object)));working.append(object)
+        edits.append(.init(reference:ref,kind:.insertElement,values:try object.authoredValues()));working.append(object)
       }
     }
     for reference in region.graphics {
@@ -435,7 +432,7 @@ extension NotebookRegionMaterialization {
         worldOrigin:worldOrigin,graphic:selectedGraphic,basis:placement.basis)
       edits.append(.init(reference:reference,kind:.updateElement,
         values:["graphic":.object(["mask":try .encode(outside)])]))
-      edits.append(.init(reference:ref,kind:.insertElement,values:try authoredValues(object)))
+      edits.append(.init(reference:ref,kind:.insertElement,values:try object.authoredValues()))
       working.append(object);selected.append(ref)
     }
     guard !selected.isEmpty,!edits.isEmpty else { return nil }
@@ -533,17 +530,12 @@ extension NotebookAppModel {
       erasures:erasures).intersects(local)
   }
 
-  private func authoredGraphicValues(_ object:NotebookWorkingGraphic,address:NotebookToolAddress)->[String:JSONValue]? {
-    guard var values = try? ["kind":JSONValue.string("graphic"),"source":.string(""),
-      "frame":.encode(object.frame),"graphic":.encode(object.graphic)] else { return nil }
-    if let origin = address.worldOrigin { values["worldOrigin"] = try? .encode(origin) }
-    if let basis=object.basis { values["basis"] = try? .encode(basis) }
-    return values
-  }
-
   @discardableResult
   func acceptAuthoredGraphic(_ object: NotebookWorkingGraphic, at address: NotebookToolAddress, expectedInkRevision: String? = nil) -> Bool {
-    guard let values=authoredGraphicValues(object,address:address) else { return false }
+    guard object.surface == address.surface else { return false }
+    let values: [String: JSONValue]
+    do { values = try object.authoredValues() }
+    catch { showCue(error.localizedDescription); return false }
     var accepted = object; accepted.accepted = true
     if object.graphic.freehand == nil || address.surface.kind == .page { updateWorkingGraphic(accepted,strokeID:object.strokeID) }
     if !performElementOperations([.init(reference:address.reference(object.id),kind:object.graphic.sourceInkIDs.isEmpty ? .insertElement : .convertInkToElement,values:values)],
@@ -625,8 +617,7 @@ extension NotebookAppModel {
     else {
       let indexed=try spatialCandidates(polygon,address:address,source:spatial,kinds:.elements)
       spatialIDs=spatialElementIDs(indexed)
-      if let spatial,let board=address.boardID ?? address.surface.ownerID,
-        let bounds=spatialSelectionBounds(polygon,address:address) {
+      if let spatial,let bounds=spatialSelectionBounds(polygon,address:address) {
         spatialIDs.formUnion(try spatial.delta.movedCandidateIDs(surface:address.surface,
           bounds:bounds,graph:graph).ids)
       }

@@ -3242,13 +3242,19 @@ final class NotebookAppModel {
     var accepted = object
     accepted.accepted = true
     updateWorkingGraphic(accepted,strokeID:object.strokeID)
-    guard var values = try? ["kind": JSONValue.string("graphic"), "source": .string(""),
-      "frame": .encode(object.frame), "graphic": .encode(object.graphic)] else { return }
-    if let origin = object.worldOrigin { values["worldOrigin"] = try? .encode(origin) }
+    let values: [String: JSONValue]
+    do { values = try object.authoredValues() }
+    catch {
+      removeWorkingGraphics { $0.strokeID == object.strokeID }
+      showCue(error.localizedDescription)
+      return
+    }
     let reference: EditableElementReference = object.surface.kind == .page
       ? .page(pageID: owner, elementID: object.id) : .spatial(boardID: owner, elementID: object.id)
-    performElementOperation(.convertInkToElement, reference: reference,
-      values: values, summary: "Преобразовать набросок: " + object.graphic.shape.displayName)
+    if !performElementOperation(.convertInkToElement, reference: reference,
+      values: values, summary: "Преобразовать набросок: " + object.graphic.shape.displayName) {
+      removeWorkingGraphics { $0.strokeID == object.strokeID }
+    }
   }
 
   func setGraphicLabel(_ text: String, reference: EditableElementReference, replacing original: String? = nil) {

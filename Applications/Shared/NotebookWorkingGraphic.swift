@@ -48,6 +48,21 @@ struct NotebookWorkingGraphic: Equatable, Identifiable, Sendable {
     return .init(id: id, graphic: graphic, frame: frame, origin: worldOrigin ?? .zero,
       surface: surface, shown: true,placement:placement)
   }
+
+  /// One durable representation for every accepted working graphic. The
+  /// working object owns its placement; callers only choose the addressed
+  /// command target and must not reconstruct a second origin or basis.
+  func authoredValues() throws -> [String: JSONValue] {
+    var values: [String: JSONValue] = [
+      "kind": .string("graphic"),
+      "source": .string(""),
+      "frame": try .encode(frame),
+      "graphic": try .encode(graphic)
+    ]
+    if let worldOrigin { values["worldOrigin"] = try .encode(worldOrigin) }
+    if let basis { values["basis"] = try .encode(basis) }
+    return values
+  }
 }
 
 extension NotebookAppModel {
