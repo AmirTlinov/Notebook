@@ -519,6 +519,33 @@ import UIKit
     }
   }
 
+  func testWorkspaceObjectLassoQueriesCoverElementsWithoutRetargetingContact() async throws {
+    try await fixture { model in
+      let workspace=try XCTUnwrap(model.workspace),boardID=workspace.rootBoardID
+      let itemID=try XCTUnwrap(workspace.selectedItemID)
+      var hierarchy=try model.store.loadBoard(items:workspace.items)
+      let element=SpatialElement(id:"cover-text",surface:.cover(itemID),kind:.nativeText,
+        frame:.init(x:300,y:580,width:240,height:64),source:"Cover text",
+        stamp:.init(counter:0,actor:model.actorID))
+      XCTAssertTrue(hierarchy.upsertElement(element,in:boardID,expected:nil,actor:model.actorID))
+      let presence=SessionPresence(boardID:boardID,mode:.board,camera:.init(scale:0.5),
+        viewport:.init(x:834,y:1194))
+      let index=WorkspaceSceneIndex(workspace:workspace,hierarchy:hierarchy,paperSizes:[:])
+      let item=try XCTUnwrap(index.renderedItem(id:itemID,presence:presence))
+      let center=WorldPoint.zero.delta(to:item.center),size=item.geometry
+      let x=center.x-size.width/2+element.frame.x,y=center.y-size.height/2+element.frame.y
+      let polygon=[SpatialPoint(x:x-4,y:y-4),.init(x:x+element.frame.width+4,y:y-4),
+        .init(x:x+element.frame.width+4,y:y+element.frame.height+4),.init(x:x-4,y:y+element.frame.height+4)]
+      let address=NotebookToolAddress(surface:.board(boardID),boardID:boardID,worldOrigin:.zero,bounds:nil)
+      let graph=try XCTUnwrap(index.graphicGraph(boardID:boardID))
+      let source=NotebookDrawingToolController.SpatialSelectionSource(index:index,
+        changedElementIDs:[],presence:presence)
+      let selected=try model.elementsIntersecting(polygon,at:address,graph:graph,spatial:source)
+      XCTAssertTrue(selected.contains(.spatial(boardID:boardID,elementID:element.id)),
+        "A board-owned Pencil lasso queries the intersected cover instead of losing its visible elements")
+    }
+  }
+
   func testLaserExpiresFromOldestToNewestAndRetainsWorldWidth() {
     let address = NotebookToolAddress(surface:.board(UUID()),boardID:nil,worldOrigin:.zero,bounds:nil)
     let trace = NotebookLaserTrace(id:UUID(),address:address,color:.red,width:40,lifetime:0.6,
