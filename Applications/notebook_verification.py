@@ -16,6 +16,7 @@ import notebook_release as release
 
 ROOT = Path(__file__).resolve().parents[1]
 UI = "NotebookUITests/DrawingResponsivenessTests/"
+NATIVE_IPAD_BUNDLE = release.CANONICAL + ".native-test"
 DOCUMENT_BROWSER_CONTRACTS = (
     "Tests/NotebookDocumentAcceptance/test_link_activation.mjs",
 )
@@ -467,6 +468,50 @@ def native_ipad_signing_settings():
             "DEVELOPMENT_TEAM=" + release.TEAM, "NOTEBOOK_BUNDLE_SUFFIX=.native-test"]
 
 
+def native_ipad_cleanup_arguments():
+    # xcodebuild leaves its physical-device test host installed and it can keep
+    # running beside the admitted app. Remove only that exact isolated identity;
+    # the production bundle and its container are never addressed here.
+    script = r'''
+import json
+import subprocess
+import sys
+import time
+
+device, bundle = sys.argv[1:]
+
+def installed():
+    result = subprocess.run([
+        "xcrun", "devicectl", "device", "info", "apps",
+        "--device", device, "--include-all-apps", "--bundle-id", bundle,
+        "--timeout", "30", "--json-output", "-",
+    ], capture_output=True, text=True)
+    if result.returncode:
+        sys.stderr.write(result.stderr)
+        raise SystemExit(result.returncode)
+    return [app for app in json.loads(result.stdout)["result"]["apps"]
+            if app.get("bundleIdentifier") == bundle]
+
+found = installed()
+if found:
+    result = subprocess.run([
+        "xcrun", "devicectl", "device", "uninstall", "app",
+        "--device", device, bundle, "--timeout", "60",
+    ], capture_output=True, text=True)
+    if result.returncode:
+        sys.stderr.write(result.stderr)
+        raise SystemExit(result.returncode)
+    for _ in range(20):
+        if not installed():
+            break
+        time.sleep(0.1)
+if installed():
+    raise SystemExit("XCTest bundle остался на физическом iPad: " + bundle)
+print(json.dumps({"bundleIdentifier": bundle, "removed": bool(found)}, sort_keys=True))
+'''
+    return [sys.executable, "-B", "-c", script, release.UDID, NATIVE_IPAD_BUNDLE]
+
+
 def native_mac_signing_settings():
     # Native tests have no persistent worker data. Give their sandbox a stable
     # signed identity separate from both the paired stand and the installed app.
@@ -486,6 +531,8 @@ def run_selected(root, plan, evidence):
     toolchain = release.read_toolchain(command)
     release.write_json(evidence / "toolchain.json", toolchain)
     checks = plan["checks"]
+    if checks["ipad"]:
+        command("ipad-native-test-cleanup-before", native_ipad_cleanup_arguments(), timeout=120)
     # Every Mac host bundles the MCP sidecar, even a document-only XCTest
     # selection from a clean immutable source copy. Prepare its locked build
     # dependencies independently of whether MCP behavioral tests are selected.
@@ -541,15 +588,19 @@ def run_selected(root, plan, evidence):
             release.write_json(evidence / "mac-native-signature.json", {"identity": identity,
                 "workerBundleSuffix": ".native-test", "scope": "isolated stateless native-test workers"})
             args[args.index("test")] = "test-without-building"
-        command(platform, args, cwd=root / "Applications", timeout=1800)
-        summary, _ = command(platform + "-summary", ["xcrun", "xcresulttool", "get", "test-results", "summary", "--path", str(result), "--compact"], read_output=True)
-        summary = json.loads(summary); validate_summary(summary)
-        release.write_json(evidence / (platform + "-summary.json"), summary)
-        tests, _ = command(platform + "-tests", ["xcrun", "xcresulttool", "get", "test-results", "tests", "--path", str(result), "--compact"], read_output=True)
-        tests = json.loads(tests)
-        validate_executed_tests(tests, checks[platform])
-        release.write_json(evidence / (platform + "-tests.json"), tests)
-        release.write_json(evidence / (platform + "-timings.json"), timing_report(tests))
+        try:
+            command(platform, args, cwd=root / "Applications", timeout=1800)
+            summary, _ = command(platform + "-summary", ["xcrun", "xcresulttool", "get", "test-results", "summary", "--path", str(result), "--compact"], read_output=True)
+            summary = json.loads(summary); validate_summary(summary)
+            release.write_json(evidence / (platform + "-summary.json"), summary)
+            tests, _ = command(platform + "-tests", ["xcrun", "xcresulttool", "get", "test-results", "tests", "--path", str(result), "--compact"], read_output=True)
+            tests = json.loads(tests)
+            validate_executed_tests(tests, checks[platform])
+            release.write_json(evidence / (platform + "-tests.json"), tests)
+            release.write_json(evidence / (platform + "-timings.json"), timing_report(tests))
+        finally:
+            if platform == "ipad":
+                command("ipad-native-test-cleanup-after", native_ipad_cleanup_arguments(), timeout=120)
     release.write_json(evidence / "completed.json", checks)
     after = release.source_inputs(root)
     release.write_json(evidence / "source-after.json", after)

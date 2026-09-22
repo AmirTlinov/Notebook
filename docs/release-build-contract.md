@@ -41,8 +41,11 @@ executed commands and the affected platforms' xcresults. Every requested XCTest
 must actually run. Historical reports cannot become receipts retroactively.
 
 Selected iPad verification installs signed Debug `.native-test` on the physical
-release device. Its isolated fixtures do not replace production content, admission
-or Keychain groups. The separate Simulator acceptance route is described below.
+release device. The selector removes that exact test identity before and after the
+run, including a failed test command, so it cannot remain as a second installed app
+or process beside Notebook Lab. Its isolated fixtures do not replace production
+content, admission or Keychain groups. The separate Simulator acceptance route is
+described below.
 
 ## Signed build
 

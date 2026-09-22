@@ -402,6 +402,13 @@ class SelectionTests(unittest.TestCase):
         self.assertIn("DEVELOPMENT_TEAM=" + release.TEAM, args)
         self.assertIn("-allowProvisioningUpdates", args)
         self.assertFalse(any("simctl" in args for _, args in calls))
+        labels = [label for label, _ in calls]
+        self.assertLess(labels.index("ipad-native-test-cleanup-before"), labels.index("ipad"))
+        self.assertLess(labels.index("ipad"), labels.index("ipad-native-test-cleanup-after"))
+        for label in ("ipad-native-test-cleanup-before", "ipad-native-test-cleanup-after"):
+            cleanup = next(args for candidate, args in calls if candidate == label)
+            self.assertEqual(cleanup[-2:], [release.UDID, verify.NATIVE_IPAD_BUNDLE])
+            self.assertEqual(verify.NATIVE_IPAD_BUNDLE, release.CANONICAL + ".native-test")
 
     def test_docs_do_not_start_any_runner(self):
         self.change("docs/contract.md")
