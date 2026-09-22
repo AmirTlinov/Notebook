@@ -86,14 +86,6 @@ struct PageSurface: View {
             inkIsReady = ready
             publishReadiness(ink: ready, overlay: overlayIsReady)
           }.id(page.id)
-          if isVisible,isCurrent,let reference=model.selectionSession.editingElement,
-            case .page(let owner,_) = reference,owner == page.id {
-            let graphic=model.graphicLayout(reference)?.frame
-            let group=model.groupManipulationGeometry(reference)?.bounds
-            if let frame=graphic.map({ CGRect(x:$0.x,y:$0.y,width:$0.width,height:$0.height) }) ?? group {
-              MacElementControls(reference:reference,frame:frame,scale:1)
-            }
-          }
         #endif
 
       }

@@ -27,6 +27,7 @@ final class MacPageInkCanvas: NSView {
   private let source = UUID()
   private var inputEnabled = false
   private var retired = false
+  private var onReady: ((Bool) -> Void)?
   private var sourceStamp: VersionStamp?
   private var suppressed = Set<UUID>()
   private var load: Task<Void, Never>?
@@ -48,6 +49,7 @@ final class MacPageInkCanvas: NSView {
     self.model = model; self.pageID = pageID
     super.init(frame: .zero)
     addSubview(ink)
+    ink.onRenderReadinessChange = { [weak self] _ in self?.publishReadiness() }
     setAccessibilityIdentifier("paper-input")
     setAccessibilityLabel("Лист")
     model.inputGate.registerPageFinisher(source: source) { [weak self] _, done in
@@ -67,7 +69,8 @@ final class MacPageInkCanvas: NSView {
     guard !retired, page.id == pageID else { return }
     inputEnabled = enabled
     model.inputGate.setCurrentPageSource(source, isCurrent: current)
-    ink.onRenderReadinessChange = onReady
+    self.onReady = onReady
+    publishReadiness()
     let cuts = model.pageSuppressedInkIDs(page)
     if let sourceStamp, page.drawingStamp < sourceStamp {
       if cuts != suppressed { suppressed = cuts; ink.setSuppressedPageActions(cuts) }
@@ -83,6 +86,16 @@ final class MacPageInkCanvas: NSView {
       guard !Task.isCancelled,let self,!retired,sourceStamp == source.stamp,stamp == nil,let decoded else { return }
       load = nil
       ink.apply(decoded.presenting(excluding: cuts))
+    }
+  }
+
+  private func publishReadiness() {
+    // NSViewRepresentable updates are not a SwiftUI state-mutation boundary.
+    // Publish the latest installed source after that update, never a captured
+    // old readiness value or a callback belonging to a retired paper.
+    Task { @MainActor [weak self] in
+      guard let self, !retired else { return }
+      onReady?(ink.isStableFramePresented)
     }
   }
 

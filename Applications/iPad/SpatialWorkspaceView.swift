@@ -890,7 +890,7 @@ struct SpatialWorkspaceView: View {
               height: local.height * presence.camera.scale)),
             contentSize: .init(width: local.width, height: local.height),
             observationElementID: element.id, observationElementStamp: element.stamp) {
-            EditableElementContainer(reference: reference, coordinateScale: 1) {
+            EditableElementContainer(reference: reference) {
               NotebookPlacedElement(presentation:presentation) {
                 SpatialElementContent(element: element, boardID: presence.boardID,
                   isTextEditing: editingSpatialText == reference,

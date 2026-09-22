@@ -27,14 +27,14 @@ struct MacReadingSurface: View {
 
   var body: some View {
     if let id = presence.focusedItemID,
-      let center = model.boardHierarchy?.board(presence.boardID)?.focusedCenter(of: id) {
+      model.boardHierarchy?.board(presence.boardID)?.focusedCenter(of: id) != nil {
       let geometry = model.itemGeometry(id)
       SceneCameraPlane(presence: presence,
         revision: Revision(item: id, page: presence.notebookPageID,
           documentPage: presence.documentPageIndex, content: model.collaborationReadEpoch),
         reanchorsOnRevision: false, isCameraActive: model.presencePhase == .active,
-        hitRegions: { anchor in [paperFrame(center: center, geometry: geometry, presence: anchor)] }) { anchor in
-        let frame = paperFrame(center: center, geometry: geometry, presence: anchor)
+        hitRegions: { anchor in [NotebookAttentionProjection.readingPaperFrame(model:model,presence:anchor) ?? .zero] }) { anchor in
+        let frame = NotebookAttentionProjection.readingPaperFrame(model:model,presence:anchor) ?? .zero
         // WebKit owns document projection through pageZoom. Supply its native
         // host in screen points rather than applying a second ancestor scale.
         let projectedDocument = presence.mode == .document
@@ -67,11 +67,7 @@ struct MacReadingSurface: View {
     }
   }
 
-  private func paperFrame(center: WorldPoint, geometry: WorkspaceItemGeometry, presence: SessionPresence) -> CGRect {
-    let point = presence.camera.worldToScreen(center, viewport: presence.viewport)
-    let width = geometry.width * presence.camera.scale, height = geometry.height * presence.camera.scale
-    return .init(x: point.x - width / 2, y: point.y - height / 2, width: width, height: height)
-  }
+
 }
 
 enum MacReadingCamera {
@@ -124,5 +120,16 @@ extension NotebookAppModel {
     guard let p = presence, let id = p.focusedItemID,
       let center = boardHierarchy?.board(p.boardID)?.focusedCenter(of: id) else { return }
     updatePresence(p.replacingCamera(MacReadingCamera.top(p.camera, center: center, geometry: itemGeometry(id), viewport: p.viewport)), settled: true)
+  }
+}
+
+// The reader, contact picker and selection controls share the physical paper
+// projection even when no board composition has ever been installed.
+extension NotebookAttentionProjection {
+  static func readingPaperFrame(model:NotebookAppModel,presence:SessionPresence) -> CGRect? {
+    guard presence.mode == .page || presence.mode == .document, let id = presence.focusedItemID,
+      let center = model.boardHierarchy?.board(presence.boardID)?.focusedCenter(of:id) else { return nil }
+    let box = model.itemGeometry(id).screenFrame(center:center,camera:presence.camera,viewport:presence.viewport)
+    return .init(x:box.x,y:box.y,width:box.width,height:box.height)
   }
 }

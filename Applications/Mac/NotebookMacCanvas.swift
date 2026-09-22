@@ -47,6 +47,7 @@ struct NotebookMacCanvas: View {
               camera: presence.camera, viewport: viewport).allowsHitTesting(false)
             items(workset.items, presence: presence, cohort: cohort)
           } else { ProgressView("Подготовка пространства…") }
+          MacMaterialInput(model: model, presence: presence, cohort: cohort)
           if let reference = model.selectionSession.editingElement,
             let rect = NotebookAttentionProjection.editingFrame(reference, model: model, presence: presence) {
             MacElementControls(reference: reference, frame: rect, scale: presence.camera.scale)
@@ -141,8 +142,8 @@ struct NotebookMacCanvas: View {
             let reference = EditableElementReference.spatial(boardID: presence.boardID, elementID: element.id)
             let frame = presentation?.frame ?? model.elementPresentationFrame(reference, fallback: .init(x: element.frame.x, y: element.frame.y, width: element.frame.width, height: element.frame.height))
             let point = anchor.camera.worldToScreen(origin, viewport: anchor.viewport)
-            EditableElementContainer(reference: reference, coordinateScale: anchor.camera.scale) {
-              if element.graphic != nil || !cohort.plan.allowsLive(.element(element.id), in: .board(presence.boardID)) { Color.clear.contentShape(Rectangle()) }
+            EditableElementContainer(reference: reference) {
+              if element.graphic != nil || !cohort.plan.allowsLive(.element(element.id), in: .board(presence.boardID)) { Color.clear }
               else if let presentation {
                 NotebookPlacedElement(presentation:presentation) {
                   SpatialElementContent(element: element, boardID: presence.boardID,

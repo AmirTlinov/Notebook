@@ -239,7 +239,7 @@ struct WorkspaceItemCoverView: View {
         let presentation=(!isPortalProjection ? model.elementPresentation(reference,graph:graph) : nil) ?? NotebookElementPresentation(element,placement:placement),local=presentation.frame
         let retainsTextInput = !isPortalProjection
           && element.kind == .nativeText && editingTextID == element.id
-        EditableElementContainer(reference: reference, coordinateScale: 1) {
+        EditableElementContainer(reference: reference) {
           NotebookPlacedElement(presentation:presentation) {
           SpatialElementContent(
             element: element, commitsState: !isPortalProjection,

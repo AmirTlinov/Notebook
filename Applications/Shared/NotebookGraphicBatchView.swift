@@ -126,7 +126,7 @@ struct NotebookGraphicBatchView: View {
       .accessibilityLabel(graphic.label.isEmpty ? graphic.shape.displayName : graphic.label)
       .accessibilityAddTraits(.isImage)
     if commitsState {
-      EditableElementContainer(reference: reference(object.id), coordinateScale: scale) { content }
+      EditableElementContainer(reference: reference(object.id)) { content }
     } else { content }
   }
 }

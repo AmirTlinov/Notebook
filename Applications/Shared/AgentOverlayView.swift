@@ -63,7 +63,7 @@ struct AgentOverlayView: View {
         let cuts = erasures[element.id] ?? []
         let appearance = appearances[element.id]
         let erased = appearance?.state == .erased
-        EditableElementContainer(reference: reference, coordinateScale: 1) {
+        EditableElementContainer(reference: reference) {
           NotebookPlacedElement(presentation:presentation) {
           Group {
           if let graphic = graph.nodes[element.id]?.graphic {
