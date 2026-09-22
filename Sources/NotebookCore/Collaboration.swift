@@ -282,6 +282,6 @@ extension JSONValue {
   }
 }
 
-func collaborationIdentity(_ id: String) -> String {
+public func collaborationIdentity(_ id: String) -> String {
   UUID(uuidString: id)?.uuidString.lowercased() ?? id
 }

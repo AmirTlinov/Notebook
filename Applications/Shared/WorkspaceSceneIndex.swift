@@ -27,6 +27,26 @@ struct WorkspaceSceneIndex: Sendable {
     let coverIndices: [UUID: WorkspaceSpatialIndex]
     let index: WorkspaceSpatialIndex
     let graphics: NotebookGraphicGraph
+    let inkClaims: InkClaims
+  }
+
+  private struct InkClaims: Sendable {
+    let candidates:[NotebookGraphicPresentation.Candidate]
+    let indicesByID:[String:Int]
+    let indicesBySource:[UUID:[Int]]
+    let suppressed:Set<UUID>
+    init(_ all:[NotebookGraphicPresentation.Candidate]) {
+      candidates=all.filter { !$0.graphic.sourceInkIDs.isEmpty }
+      indicesByID=Dictionary(uniqueKeysWithValues:candidates.enumerated().map {
+        (collaborationIdentity($0.element.id),$0.offset)
+      })
+      var sources:[UUID:[Int]]=[:]
+      for (index,candidate) in candidates.enumerated() {
+        for source in Set(candidate.graphic.sourceInkIDs) { sources[source,default:[]].append(index) }
+      }
+      indicesBySource=sources
+      suppressed=NotebookGraphicPresentation(candidates).suppressedInkIDs
+    }
   }
 
   private let itemValues: [UUID: WorkspaceItem]
@@ -82,7 +102,9 @@ struct WorkspaceSceneIndex: Sendable {
             height: max(0, offset.y) + size.height / 2 - top), zIndex: item.zIndex))
         }
       }
-      let graphicPresentation = node.board.graphicPresentation
+      let graphicCandidates=node.board.graphicPresentationCandidates
+      let inkClaims=InkClaims(graphicCandidates)
+      let graphicPresentation = NotebookGraphicPresentation(graphicCandidates)
       let graphicGraph = node.board.graphicGraph()
       // Whole-pose interaction borrows this local-frame tree. Build it with
       // the immutable scene cut, never on the first Pencil contact.
@@ -116,7 +138,8 @@ struct WorkspaceSceneIndex: Sendable {
             return .init(id: .element(element.id), bounds: .init(origin: .init(x: frame.x, y: frame.y),
               width: frame.width, height: frame.height), zIndex: Double(offset))
           })
-        }, index: WorkspaceSpatialIndex(entries: entries), graphics: graphicGraph)
+        }, index: WorkspaceSpatialIndex(entries: entries), graphics: graphicGraph,
+        inkClaims:inkClaims)
     }
     boards = prepared
   }
@@ -150,6 +173,48 @@ struct WorkspaceSceneIndex: Sendable {
   func ownerBoard(itemID: UUID) -> UUID? { itemOwners[itemID] }
   func element(id: String, boardID: UUID) -> SpatialElement? { boards[boardID]?.elements[id] }
   func graphicGraph(boardID: UUID) -> NotebookGraphicGraph? { boards[boardID]?.graphics }
+
+  struct InkSuppressionResult:Sendable {
+    let ids:Set<UUID>
+    let examinedCandidates:Int
+  }
+
+  /// Ink visibility comes from the same immutable claim arbitration as the
+  /// renderer. An optimistic edit recomputes only its connected source-claim
+  /// component; Pencil-down never walks every graphic on the board.
+  func inkSuppression(boardID:UUID,delta:NotebookSpatialInteractionDelta,
+    graph:NotebookGraphicGraph)->InkSuppressionResult? {
+    guard let board=boards[boardID] else { return nil }
+    let changed=Set(delta.presentationIDs.map(collaborationIdentity))
+    guard !changed.isEmpty else { return .init(ids:board.inkClaims.suppressed,examinedCandidates:0) }
+    var pending=Set<UUID>(),component=Set<Int>()
+    for id in changed {
+      if let index=board.inkClaims.indicesByID[id] {
+        pending.formUnion(board.inkClaims.candidates[index].graphic.sourceInkIDs)
+      }
+      if !delta.excluded.contains(where:{ collaborationIdentity($0) == id }),let current=graph.node(id) {
+        pending.formUnion(current.graphic.sourceInkIDs)
+      }
+    }
+    var visited=Set<UUID>()
+    while let source=pending.popFirst() {
+      guard visited.insert(source).inserted else { continue }
+      for index in board.inkClaims.indicesBySource[source] ?? [] where component.insert(index).inserted {
+        pending.formUnion(board.inkClaims.candidates[index].graphic.sourceInkIDs)
+      }
+    }
+    let durable=component.map { board.inkClaims.candidates[$0] }
+    let before=NotebookGraphicPresentation(durable).suppressedInkIDs
+    let local=changed.sorted().compactMap { id -> NotebookGraphicPresentation.PrioritizedCandidate? in
+      guard !delta.excluded.contains(where:{ collaborationIdentity($0) == id }),
+        let node=graph.node(id),!node.graphic.sourceInkIDs.isEmpty else { return nil }
+      return .init(id:node.id,graphic:node.graphic)
+    }
+    let remaining=durable.filter { !changed.contains(collaborationIdentity($0.id)) }
+    let after=NotebookGraphicPresentation(prioritizing:local,then:remaining).suppressedInkIDs
+    return .init(ids:board.inkClaims.suppressed.subtracting(before).union(after),
+      examinedCandidates:durable.count+local.count)
+  }
 
   func graphicLayout(id: String, boardID: UUID) -> NotebookGraphicLayout? { boards[boardID]?.graphics.resolve(id).layout }
   func paintEntry(id: WorkspaceSpatialID, boardID: UUID, coverID: UUID? = nil) -> WorkspaceSpatialEntry? {

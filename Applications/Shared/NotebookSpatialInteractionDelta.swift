@@ -7,6 +7,7 @@ import NotebookCore
 /// delta once per contact instead of searching the whole board per candidate.
 struct NotebookSpatialInteractionDelta: Sendable {
   let ids:Set<String>
+  let presentationIDs:Set<String>
   let elements:[String:SpatialElement]
   let excluded:Set<String>
   let movedGroups:[MovedGroup]
@@ -35,9 +36,10 @@ struct NotebookSpatialInteractionDelta: Sendable {
     }
   }
 
-  init(ids:Set<String>,elements:[String:SpatialElement],excluded:Set<String>,
+  init(ids:Set<String>,presentationIDs:Set<String> = [],elements:[String:SpatialElement],excluded:Set<String>,
     movedGroups:[MovedGroup] = []) {
-    self.ids=ids;self.elements=elements;self.excluded=excluded;self.movedGroups=movedGroups
+    self.ids=ids;self.presentationIDs=presentationIDs;self.elements=elements
+    self.excluded=excluded;self.movedGroups=movedGroups
   }
 
   /// A moved whole does not expand into every descendant on Pencil-down.
@@ -66,15 +68,23 @@ struct NotebookSpatialInteractionDelta: Sendable {
 extension NotebookAppModel {
   func spatialInteractionDelta(boardID:UUID,graph:NotebookGraphicGraph,
     baseGraph:NotebookGraphicGraph?)->NotebookSpatialInteractionDelta {
-    var ids=Set(workingGraphics.compactMap { graphic -> String? in
+    let workingIDs=Set(workingGraphics.compactMap { graphic -> String? in
       let belongs=graphic.surface == .board(boardID) || (graphic.surface.kind == .cover
         && graphic.surface.ownerID.flatMap { boardHierarchy?.ownerBoardID(of:$0) } == boardID)
       return belongs ? graphic.id : nil
     })
+    var ids=workingIDs
     ids.formUnion(elementCommandDrafts.keys.compactMap { reference in
       if case .spatial(let owner,let id)=reference,owner == boardID { return id };return nil
     })
     guard !ids.isEmpty else { return .init(ids:[],elements:[:],excluded:[]) }
+
+    var presentationIDs=workingIDs
+    presentationIDs.formUnion(elementCommandDrafts.compactMap { reference,draft in
+      guard case .spatial(let owner,let id)=reference,owner == boardID,
+        draft.graphic != nil || draft.removed else { return nil }
+      return id
+    })
 
     let groups=ids.filter { graph.groups[$0] != nil }
     var elements:[String:SpatialElement]=[:],excluded=Set<String>()
@@ -99,6 +109,7 @@ extension NotebookAppModel {
         elementCommandDrafts[reference]?.removed == true else { continue }
       excluded.insert(id)
     }
-    return .init(ids:ids,elements:elements,excluded:excluded,movedGroups:movedGroups)
+    return .init(ids:ids,presentationIDs:presentationIDs,elements:elements,
+      excluded:excluded,movedGroups:movedGroups)
   }
 }

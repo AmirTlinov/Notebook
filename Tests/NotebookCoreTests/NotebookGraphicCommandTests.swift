@@ -83,3 +83,20 @@ func graphicPresentationArbitratesWholeCandidates() {
     #expect(presentation.suppressedInkIDs == [b, c])
   }
 }
+
+@Test("Локальное причинное изменение пересчитывает только свой конфликтующий компонент")
+func localGraphicPresentationRevealsThePreviousWholeAfterRemoval() {
+  let a=UUID(),b=UUID(),c=UUID(),actor=UUID()
+  let previous=NotebookGraphicPresentation.Candidate(id:"previous",
+    graphic:.init(sourceInkIDs:[a,b]),
+    version:.init(stamp:.init(counter:1,actor:actor),human:true))
+  let winner=NotebookGraphicPresentation.Candidate(id:"winner",
+    graphic:.init(sourceInkIDs:[b,c]),
+    version:.init(stamp:.init(counter:2,actor:actor),human:true))
+  let restored=NotebookGraphicPresentation(prioritizing:[],then:[previous])
+  #expect(NotebookGraphicPresentation([previous,winner]).suppressedInkIDs == [b,c])
+  #expect(restored.suppressedInkIDs == [a,b])
+  let ink=NotebookGraphicPresentation.PrioritizedCandidate(id:"winner",
+    graphic:.init(representation:.ink,sourceInkIDs:[b,c]))
+  #expect(NotebookGraphicPresentation(prioritizing:[ink],then:[previous,winner]).suppressedInkIDs == [a,b])
+}

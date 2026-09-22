@@ -282,6 +282,16 @@ public struct NotebookGraphicPresentation: Equatable, Sendable {
       self.id = id; self.graphic = graphic; self.version = version
     }
   }
+  /// An optimistic local command is already the visible causal successor even
+  /// though its durable field version is not available until the writer
+  /// completes. Only the affected claim component uses this priority.
+  public struct PrioritizedCandidate: Sendable {
+    public let id: String
+    public let graphic: NotebookGraphic
+    public init(id: String, graphic: NotebookGraphic) {
+      self.id = id; self.graphic = graphic
+    }
+  }
   public let geometryIDs: Set<String>
   public let suppressedInkIDs: Set<UUID>
   public init(_ candidates: [Candidate]) {
@@ -290,14 +300,27 @@ public struct NotebookGraphicPresentation: Equatable, Sendable {
       if a.version.stamp != b.version.stamp { return a.version.stamp > b.version.stamp }
       return a.id > b.id
     }
+    self.init(ordered.map { ($0.id,$0.graphic) })
+  }
+  public init(prioritizing candidates: [PrioritizedCandidate], then durable: [Candidate]) {
+    let local = candidates.sorted { collaborationIdentity($0.id) > collaborationIdentity($1.id) }
+    let changed = Set(local.map { collaborationIdentity($0.id) })
+    let ordered = durable.filter { !changed.contains(collaborationIdentity($0.id)) }.sorted { a, b in
+      if a.version.human != b.version.human { return a.version.human }
+      if a.version.stamp != b.version.stamp { return a.version.stamp > b.version.stamp }
+      return a.id > b.id
+    }
+    self.init(local.map { ($0.id,$0.graphic) } + ordered.map { ($0.id,$0.graphic) })
+  }
+  private init(_ ordered: [(String,NotebookGraphic)]) {
     var claimed = Set<UUID>(), geometry = Set<String>(), suppressed = Set<UUID>()
-    for candidate in ordered {
-      let graphic = candidate.graphic, sources = Set(graphic.sourceInkIDs)
+    for (id,graphic) in ordered {
+      let sources = Set(graphic.sourceInkIDs)
       if graphic.visible && graphic.representation == .ink { continue }
       guard claimed.isDisjoint(with: sources) else { continue }
       claimed.formUnion(sources)
       if !graphic.visible || graphic.representation == .geometry { suppressed.formUnion(sources) }
-      if graphic.showsGeometry { geometry.insert(candidate.id) }
+      if graphic.showsGeometry { geometry.insert(id) }
     }
     geometryIDs = geometry; suppressedInkIDs = suppressed
   }
@@ -324,12 +347,15 @@ extension PageDocument {
 }
 
 extension BoardDocument {
-  public var graphicPresentation: NotebookGraphicPresentation {
-    .init(elements.compactMap { element in
+  public var graphicPresentationCandidates: [NotebookGraphicPresentation.Candidate] {
+    elements.compactMap { element in
       guard let graphic = element.graphic else { return nil }
       return .init(id: element.id, graphic: graphic,
         version: collaboration?.fields[fieldKey(["elements", collaborationIdentity(element.id), "graphic", "sourceInkIDs"])]
           ?? .init(stamp: element.stamp, human: true))
-    })
+    }
+  }
+  public var graphicPresentation: NotebookGraphicPresentation {
+    .init(graphicPresentationCandidates)
   }
 }

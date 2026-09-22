@@ -6,6 +6,37 @@ import XCTest
 @testable import Notebook
 
 final class WorkspaceSceneIndexTests: XCTestCase {
+  func testLiveInkSuppressionRecomputesOnlyTheChangedClaimComponent() throws {
+    let actor=UUID(),a=UUID(),b=UUID(),c=UUID(),boardID=WorkspaceRoot.boardID
+    let item=WorkspaceItem.notebook(title:"Claims",pageIDs:[UUID()])
+    let oldStamp=VersionStamp(counter:1,actor:actor),newStamp=VersionStamp(counter:2,actor:actor)
+    let left=SpatialElement(id:"left",surface:.board(boardID),kind:.graphic,
+      frame:.init(x:0,y:0,width:10,height:10),worldOrigin:.zero,source:"",
+      graphic:.init(shape:.rectangle,sourceInkIDs:[a,b]),stamp:oldStamp)
+    let right=SpatialElement(id:"right",surface:.board(boardID),kind:.graphic,
+      frame:.init(x:20,y:0,width:10,height:10),worldOrigin:.zero,source:"",
+      graphic:.init(shape:.rectangle,sourceInkIDs:[b,c]),stamp:newStamp)
+    let workspace=WorkspaceIndex(items:[item],selectedItemID:item.id,
+      selectedPageID:item.pageIDs[0],stamp:newStamp)
+    let board=BoardDocument(freeItems:[.init(itemID:item.id,center:.zero,zIndex:0,stamp:newStamp)],
+      elements:[left,right],stamp:newStamp)
+    let hierarchy=BoardHierarchy(rootBoardID:boardID,
+      boards:[.init(id:boardID,board:board)],stamp:newStamp)
+    let index=WorkspaceSceneIndex(workspace:workspace,hierarchy:hierarchy,paperSizes:[:])
+    let graph=try XCTUnwrap(index.graphicGraph(boardID:boardID))
+    let unchanged=try XCTUnwrap(index.inkSuppression(boardID:boardID,
+      delta:.init(ids:[],elements:[:],excluded:[]),graph:graph))
+    XCTAssertEqual(unchanged.ids,[b,c]);XCTAssertEqual(unchanged.examinedCandidates,0)
+    let removed=try XCTUnwrap(index.inkSuppression(boardID:boardID,
+      delta:.init(ids:[right.id],presentationIDs:[right.id],elements:[:],excluded:[right.id]),graph:graph))
+    XCTAssertEqual(removed.ids,[a,b]);XCTAssertEqual(removed.examinedCandidates,2)
+    let restoredInk=try XCTUnwrap(right.graphic).applying(.object(["representation":.string("ink")]))
+    let undone=try XCTUnwrap(index.inkSuppression(boardID:boardID,
+      delta:.init(ids:[right.id],presentationIDs:[right.id],elements:[:],excluded:[]),
+      graph:graph.projecting(graphics:[right.id:restoredInk])))
+    XCTAssertEqual(undone.ids,[a,b]);XCTAssertEqual(undone.examinedCandidates,3)
+  }
+
   func testCoverEraserQueriesTheRetainedLocalIndexWithoutBoardFallback() throws {
     let actor=UUID(),stamp=VersionStamp(counter:0,actor:actor)
     let boardID=WorkspaceRoot.boardID,itemID=UUID(),pageID=UUID()
@@ -200,6 +231,25 @@ final class WorkspaceSceneIndexTests: XCTestCase {
     XCTAssertEqual(moved.ids,expected);XCTAssertEqual(scanned,expected)
     XCTAssertLessThan(moved.visitedNodes,256)
     print("GUI285 100k moved whole query: indexed_us=\(movedSeconds*1_000_000), full_scan_us=\(descendantScanSeconds*1_000_000), ratio=\(descendantScanSeconds/max(movedSeconds,Double.leastNonzeroMagnitude)), visited=\(moved.visitedNodes)");fflush(stdout)
+    let sourceID=UUID()
+    let localGraphic=NotebookGraphicGraph.Node(id:"working-conversion",
+      graphic:.init(shape:.freehand,sourceInkIDs:[sourceID]),
+      frame:.init(x:0,y:0,width:10,height:10),surface:.board(boardID),shown:true)
+    let presentationGraph=graph.projecting(adding:[localGraphic])
+    let presentationDelta=NotebookSpatialInteractionDelta(ids:[localGraphic.id],
+      presentationIDs:[localGraphic.id],elements:[:],excluded:[])
+    let suppressionStart=ProcessInfo.processInfo.systemUptime
+    let suppression=try XCTUnwrap(index.inkSuppression(boardID:boardID,
+      delta:presentationDelta,graph:presentationGraph))
+    let suppressionSeconds=ProcessInfo.processInfo.systemUptime-suppressionStart
+    let suppressionScanStart=ProcessInfo.processInfo.systemUptime
+    let scannedSuppression=Set(presentationGraph.nodes.values.filter {
+      !$0.graphic.visible || $0.graphic.representation == .geometry
+    }.flatMap(\.graphic.sourceInkIDs))
+    let suppressionScanSeconds=ProcessInfo.processInfo.systemUptime-suppressionScanStart
+    XCTAssertEqual(suppression.ids,[sourceID]);XCTAssertEqual(scannedSuppression,[sourceID])
+    XCTAssertEqual(suppression.examinedCandidates,1)
+    print("GUI285 100k ink claims: retained_us=\(suppressionSeconds*1_000_000), full_scan_us=\(suppressionScanSeconds*1_000_000), ratio=\(suppressionScanSeconds/max(suppressionSeconds,Double.leastNonzeroMagnitude)), examined=\(suppression.examinedCandidates)");fflush(stdout)
     let presence = SessionPresence(mode: .board, camera: .init(scale: 0.4), viewport: .init(x: 1194, y: 834))
     let limit = 48
     let pins: Set<WorkspaceSpatialID> = [.item(itemID), .element(elements.last!.id)]

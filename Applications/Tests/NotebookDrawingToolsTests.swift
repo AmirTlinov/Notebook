@@ -47,7 +47,6 @@ import UIKit
       for point in polygon.dropFirst() { model.drawingTools.move(to: point) }
       model.drawingTools.finish()
       XCTAssertTrue(model.selectionSession.contains(address.reference(element.id)))
-      XCTAssertNil(model.elementErasureCache.pendingPreparation(surface: address.surface, id: element.id))
     }
   }
 

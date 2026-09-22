@@ -90,7 +90,7 @@ final class NotebookDrawingToolController {
     } else { graph = .init([]) }
     if model.drawingTool == .lasso,address.surface.kind != .page,spatialSelection == nil { return false }
     let ink = model.drawingTool == .lasso && model.drawingToolSettings.lassoMode == .region
-      ? inkSnapshot(at:address,graph:graph) : nil
+      ? inkSnapshot(at:address,graph:graph,spatialSelection:spatialSelection) : nil
     if model.drawingTool == .ruler, ruler?.address.surface != address.surface {
       ruler = .init(address:address,start:point,angle:model.drawingToolSettings.rulerAngle,length:PhysicalPaper.pointsPerCentimeter*10)
     }
@@ -105,14 +105,17 @@ final class NotebookDrawingToolController {
     return true
   }
 
-  private func inkSnapshot(at address: NotebookToolAddress, graph: NotebookGraphicGraph) -> Task<NotebookLassoInkSource.Prepared?,Error>? {
+  private func inkSnapshot(at address: NotebookToolAddress, graph: NotebookGraphicGraph,
+    spatialSelection:SpatialSelectionSource?) -> Task<NotebookLassoInkSource.Prepared?,Error>? {
     let raw: Task<NotebookLassoInkSource?,Never>
     if let page = model.pages[address.surface.ownerID!], address.surface.kind == .page { raw = model.lassoInkSnapshot(page) }
     else {
-      guard let journal = model.renderingInk(on:address.surface,fallback:model.compositionTiles.published?.liveData.ink) else { return nil }
-      let suppressed = Set(graph.nodes.values.filter { !$0.graphic.visible || $0.graphic.representation == .geometry }.flatMap { $0.graphic.sourceInkIDs })
+      guard let journal = model.renderingInk(on:address.surface,fallback:model.compositionTiles.published?.liveData.ink),
+        let spatialSelection,let boardID=address.boardID ?? address.surface.ownerID,
+        let suppression=spatialSelection.index.inkSuppression(boardID:boardID,
+          delta:spatialSelection.delta,graph:graph) else { return nil }
       let revision=model.lassoMembershipRevision
-      raw = Task { .spatial(journal,suppressed,membershipRevision:revision) }
+      raw = Task { .spatial(journal,suppression.ids,membershipRevision:revision) }
     }
     return Task { [weak self] in
       guard let source = await raw.value, let self else { return nil }
@@ -145,7 +148,7 @@ final class NotebookDrawingToolController {
     settings.lassoMode = .region; settings.lassoAddsToSelection = false
     finishLasso(.init(id:UUID(),tool:.lasso,settings:settings,pen:model.penStyle,address:address,graph:graph,
       spatialSelection:spatialSelection,
-      screenScale:screenScale,ink:inkSnapshot(at:address,graph:graph),points:[
+      screenScale:screenScale,ink:inkSnapshot(at:address,graph:graph,spatialSelection:spatialSelection),points:[
         .init(x:point.x-radius,y:point.y-radius),.init(x:point.x+radius,y:point.y-radius),
         .init(x:point.x+radius,y:point.y+radius),.init(x:point.x-radius,y:point.y+radius)]))
   }
