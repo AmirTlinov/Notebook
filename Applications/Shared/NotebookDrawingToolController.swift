@@ -782,4 +782,14 @@ extension NotebookAppModel {
     return id
   }
 
+  /// Deterministic query surface for focused geometry checks. Production and
+  /// tests both delegate to the same immutable exact-phase owner.
+  func elementsIntersecting(_ polygon:[SpatialPoint],at address:NotebookToolAddress,
+    graph:NotebookGraphicGraph,spatial:NotebookDrawingToolController.SpatialSelectionSource? = nil)
+    throws ->[EditableElementReference] {
+    try NotebookLassoQuery.objects(intersecting:polygon,at:address,graph:graph,spatial:spatial,
+      erasures:lassoErasureSnapshot(primary:address.surface),
+      removedPageElements:lassoRemovedPageElements(on:address.surface)).elements
+  }
+
 }
