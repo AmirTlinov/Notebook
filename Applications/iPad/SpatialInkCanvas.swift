@@ -45,10 +45,14 @@ struct SpatialInkCanvas: UIViewRepresentable {
     context.coordinator.toolController = model?.drawingTools
     context.coordinator.onQuickShape = onQuickShape
     context.coordinator.appearances = model?.elementErasureCache
-    context.coordinator.resolveEraserTargets = { [weak model] in model?.eraserTargets(boardID: $1, cohort: $0) ?? [:] }
+    context.coordinator.resolveEraserSource = { [weak model] in
+      model?.spatialEraserSource(boardID: $1, cohort: $0)
+    }
+    context.coordinator.onEraserFailure = { [weak model] in model?.showCue($0.localizedDescription) }
     context.coordinator.onElementErasing = { [weak model] in model?.updateElementErasing($0, id: $1) }
     context.coordinator.resolveGraphicGraph = { [weak model] cohort, board in
-      model?.presentedGraphicGraph(boardID:board,cohort:cohort,preview:false) ?? cohort.frame.index.board(id:board)?.graphicGraph() ?? .init([])
+      model?.interactionGraphicGraph(boardID:board,cohort:cohort)
+        ?? cohort.frame.index.graphicGraph(boardID:board) ?? .init([])
     }
     context.coordinator.resolveGraphicErasures = { [weak model] cohort, board in
       model?.elementErasures(on:.board(board),fallback:cohort.liveData.ink) ?? [:]
@@ -79,10 +83,14 @@ struct SpatialInkCanvas: UIViewRepresentable {
     context.coordinator.toolController = model?.drawingTools
     context.coordinator.onQuickShape = onQuickShape
     context.coordinator.appearances = model?.elementErasureCache
-    context.coordinator.resolveEraserTargets = { [weak model] in model?.eraserTargets(boardID: $1, cohort: $0) ?? [:] }
+    context.coordinator.resolveEraserSource = { [weak model] in
+      model?.spatialEraserSource(boardID: $1, cohort: $0)
+    }
+    context.coordinator.onEraserFailure = { [weak model] in model?.showCue($0.localizedDescription) }
     context.coordinator.onElementErasing = { [weak model] in model?.updateElementErasing($0, id: $1) }
     context.coordinator.resolveGraphicGraph = { [weak model] cohort, board in
-      model?.presentedGraphicGraph(boardID:board,cohort:cohort,preview:false) ?? cohort.frame.index.board(id:board)?.graphicGraph() ?? .init([])
+      model?.interactionGraphicGraph(boardID:board,cohort:cohort)
+        ?? cohort.frame.index.graphicGraph(boardID:board) ?? .init([])
     }
     context.coordinator.resolveGraphicErasures = { [weak model] cohort, board in
       model?.elementErasures(on:.board(board),fallback:cohort.liveData.ink) ?? [:]
@@ -119,7 +127,8 @@ struct SpatialInkCanvas: UIViewRepresentable {
     private var surfaceRegistry: SpatialInkSurfaceRegistry
     private let inputSourceID = UUID()
     var onQuickShape: ((NotebookQuickShapeFit, UUID, WorldPoint, SpatialInkAction) -> Void)?
-    var resolveEraserTargets: ((SceneCompositionCohort, UUID) -> [SurfaceID: [InkElementTarget]])?
+    var resolveEraserSource: ((SceneCompositionCohort, UUID) -> NotebookSpatialEraserSource?)?
+    var onEraserFailure: (Error) -> Void = { _ in }
     var onElementErasing: ([NotebookElementErasing], UUID) -> Void = { _, _ in }
     var resolveGraphicErasures: ((SceneCompositionCohort, UUID) -> [String: [InkElementErasure]])?
     var resolveGraphicGraph: ((SceneCompositionCohort, UUID) -> NotebookGraphicGraph)?
@@ -166,7 +175,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
       let leases: [SpatialInkSurfaceRegistry.ContactLease]
       let graphics: NotebookGraphicGraph
       let graphicErasures: [String: [InkElementErasure]]
-      let eraserTargets: [SurfaceID: [InkElementTarget]]
+      let eraserSource: NotebookSpatialEraserSource?
     }
     private var actionGeometry: ContactGeometry?
     private var lastActionPoint: PKStrokePoint?
@@ -176,6 +185,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
     private(set) var rejectedWorldAddressCount = 0
     private var activePen: ActiveInkStroke?
     private var activeEraser: ActiveEraserStroke?
+    private var elementEraserFailed = false
     private var currentSurface: SurfaceID?
     private var touchedSurfaces: Set<SurfaceID> = []
     private var previousFilteredForce: CGFloat?
@@ -421,12 +431,20 @@ struct SpatialInkCanvas: UIViewRepresentable {
       if let lease = surfaceRegistry.acquireContact(on: boardSurface, in: view) { leases.append(lease) }
       // Freeze the installed native pose before any finger cancellation can
       // request a return animation. No sample is deferred or replayed later.
+      let graphics: NotebookGraphicGraph = drawingTool == .pen ? (cohort.flatMap { cohort in
+        boardSurface.ownerID.flatMap { resolveGraphicGraph?(cohort, $0) }
+      } ?? .init([])) : .init([])
+      let eraserSource = drawingTool == .eraser ? cohort.flatMap { cohort in
+        boardSurface.ownerID.flatMap { resolveEraserSource?(cohort, $0) }
+      } : nil
       actionGeometry = .init(camera: camera, viewport: viewport, surfaces: frozen,
         blockedSurfaces: Set(items.filter { isItemBeingDeleted($0.itemID) || surfaceRegistry.isRetired(.cover($0.itemID)) }.map { .cover($0.itemID) }),
         cohort: cohort, leases: leases,
-        graphics:cohort.flatMap { cohort in boardSurface.ownerID.flatMap { resolveGraphicGraph?(cohort,$0) } } ?? .init([]),
-        graphicErasures: cohort.flatMap { cohort in boardSurface.ownerID.flatMap { resolveGraphicErasures?(cohort,$0) } } ?? [:],
-        eraserTargets: drawingTool == .eraser ? (cohort.flatMap { cohort in boardSurface.ownerID.flatMap { resolveEraserTargets?(cohort, $0) } } ?? [:]) : [:])
+        graphics:graphics,
+        graphicErasures: drawingTool == .pen ? (cohort.flatMap { cohort in
+          boardSurface.ownerID.flatMap { resolveGraphicErasures?(cohort,$0) }
+        } ?? [:]) : [:],
+        eraserSource: eraserSource)
       setPencilActionActive(touch.type == .pencil || inputGate.simulatesPencilContacts)
       actionStrokeID = UUID()
       actionTool = drawingTool
@@ -440,6 +458,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
       touchedSurfaces = []
       previousFilteredForce = nil
       previousTimestamp = nil
+      elementEraserFailed = false
       actionStartTimestamp = touch.timestamp
       appendSamples(touch: touch, event: event)
       if actionTool == .pen, currentSurface == boardSurface, let point = lastActionPoint?.location {
@@ -492,7 +511,10 @@ struct SpatialInkCanvas: UIViewRepresentable {
         }
         lastActionPoint = point
       }
-      if actionTool == .eraser, actionGeometry?.eraserTargets.isEmpty == false { publishElementErasing() }
+      if actionTool == .eraser,
+        !elementContact.selected.isEmpty || actionSpans.contains(where: { $0.elementTargets?.isEmpty == false }) {
+        publishElementErasing()
+      }
       guard let lastActionPoint else { return }
       quickShape.move(to: .init(x: lastActionPoint.location.x, y: lastActionPoint.location.y))
 
@@ -691,7 +713,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
         activeEraser = ActiveEraserStroke(sourceID:actionStrokeID,span:actionSpans.count,
           color:.init(red:c.red,green:c.green,blue:c.blue),projection:liveProjection(on:surface))
       }
-      elementContact = InkElementContact(actionGeometry?.eraserTargets[surface] ?? [])
+      elementContact = InkElementContact([])
       appendToCurrentSegment(point)
     }
 
@@ -721,10 +743,51 @@ struct SpatialInkCanvas: UIViewRepresentable {
           from:activeEraser.measured.count,
           with:[sample]
         )
-        elementContact.update(activeEraser.measured, from: start)
+        if !elementEraserFailed, let source = actionGeometry?.eraserSource,
+          let bounds = eraserBounds(source: activeEraser.measured, from: start, surface: currentSurface) {
+          do {
+            let query = try source.query(surface: currentSurface, bounds: bounds)
+            elementContact.update(activeEraser.measured, from: start,
+              queried: query.targets, visitedNodes: query.visitedNodes)
+          } catch {
+            failElementEraser(error)
+          }
+        }
         surfaceRegistry.canvas(for: currentSurface)?
           .displayActiveEraser(activeEraser)
       }
+    }
+
+    private func eraserBounds(source: InkSampleRelations.Contact, from changedIndex: Int,
+      surface: SurfaceID) -> WorkspaceSpatialBounds? {
+      guard source.count > changedIndex else { return nil }
+      let current = source.sample(at: changedIndex)
+      let previous = changedIndex > 0 ? source.sample(at: changedIndex - 1) : current
+      let radius = max(previous.width, current.width) / 2
+      guard radius.isFinite, radius >= 0 else { return nil }
+      if surface.kind == .board {
+        guard let a = previous.worldPoint, let b = current.worldPoint else { return nil }
+        let delta = a.delta(to: b)
+        guard delta.x.isFinite, delta.y.isFinite else { return nil }
+        return .init(origin: a.offsetBy(x: min(0, delta.x) - radius,
+          y: min(0, delta.y) - radius), width: abs(delta.x) + 2 * radius,
+          height: abs(delta.y) + 2 * radius)
+      }
+      let a = previous.point, b = current.point
+      return .init(origin: WorldPoint.zero.offsetBy(x: min(a.x, b.x) - radius,
+        y: min(a.y, b.y) - radius), width: abs(a.x - b.x) + 2 * radius,
+        height: abs(a.y - b.y) + 2 * radius)
+    }
+
+    private func failElementEraser(_ error: Error) {
+      guard !elementEraserFailed else { return }
+      elementEraserFailed = true
+      elementContact = InkElementContact([])
+      actionSpans = actionSpans.map {
+        SpatialInkSpan(surface: $0.surface, measurements: $0.samples)
+      }
+      onElementErasing([], actionStrokeID)
+      onEraserFailure(error)
     }
 
     private func measuredSpan(surface: SurfaceID, measurements: InkMeasurements) -> SpatialInkSpan {

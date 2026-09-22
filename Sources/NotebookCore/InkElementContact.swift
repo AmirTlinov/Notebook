@@ -11,9 +11,15 @@ public struct InkElementContact {
   private let index: InkBoundsIndex
   private let homogeneous: Bool
   private var firstHits: [Int: Int] = [:]
+  private var queriedHits: [String: (target: InkElementTarget, sample: Int)] = [:]
   private(set) var testedSegments = 0
   private(set) var visitedNodes = 0
-  public var selected: [InkElementTarget] { firstHits.keys.sorted().map { targets[$0] } }
+  public var selected: [InkElementTarget] {
+    firstHits.keys.sorted().map { targets[$0] }
+      + queriedHits.values.sorted {
+        $0.sample == $1.sample ? $0.target.elementID < $1.target.elementID : $0.sample < $1.sample
+      }.map(\.target)
+  }
 
   public init(_ targets: [InkElementTarget]) {
     self.targets = targets
@@ -29,6 +35,7 @@ public struct InkElementContact {
 
   public mutating func update(_ source: InkSampleRelations.Contact, from changedIndex: Int) {
     precondition((0...source.count).contains(changedIndex))
+    queriedHits = queriedHits.filter { $0.value.sample < changedIndex }
     guard !targets.isEmpty else { return }
     firstHits = firstHits.filter { $0.value < changedIndex }
     var previous = changedIndex > 0 ? source.sample(at: changedIndex - 1) : nil
@@ -54,6 +61,32 @@ public struct InkElementContact {
       for id in candidates where firstHits[id] == nil {
         testedSegments += 1
         if targets[id].intersects([first, sample]) { firstHits[id] = position }
+      }
+      previous = sample
+      position += 1
+    }
+  }
+
+  /// The workspace already owns a retained spatial index. Its local query can
+  /// feed only nearby immutable targets here, avoiding a second per-contact
+  /// index and avoiding materializing every element on the board at Pencil-down.
+  public mutating func update(_ source: InkSampleRelations.Contact, from changedIndex: Int,
+    queried candidates: [InkElementTarget], visitedNodes: Int = 0) {
+    precondition((0...source.count).contains(changedIndex))
+    self.visitedNodes += visitedNodes
+    queriedHits = queriedHits.filter { $0.value.sample < changedIndex }
+    guard !candidates.isEmpty else { return }
+    let existing = Set(targets.map(\.elementID))
+    let candidates = candidates.filter { !existing.contains($0.elementID) }
+    var previous = changedIndex > 0 ? source.sample(at: changedIndex - 1) : nil
+    var position = changedIndex
+    source.forEach(in: changedIndex..<source.count) { sample in
+      let first = previous ?? sample
+      for target in candidates where queriedHits[target.elementID] == nil {
+        testedSegments += 1
+        if target.intersects([first, sample]) {
+          queriedHits[target.elementID] = (target, position)
+        }
       }
       previous = sample
       position += 1

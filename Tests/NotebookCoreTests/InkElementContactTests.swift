@@ -57,6 +57,22 @@ struct InkElementContactTests {
     contact.update(measured,from:2400)
     #expect(contact.visitedNodes-before < 100, "The 2401st point never rescans the prefix")
   }
+
+  @Test func retainedSceneCandidatesAccumulateAndCorrectWithoutASecondIndex() {
+    let first = InkElementTarget(elementID:"first",frame:.init(x:90,y:90,width:20,height:20),wholeElement:true)
+    let second = InkElementTarget(elementID:"second",frame:.init(x:190,y:90,width:20,height:20),wholeElement:true)
+    var contact=InkElementContact([]),measured=source()
+    measured.replaceTail(from:0,with:[sample(0,100),sample(100,100)])
+    contact.update(measured,from:0,queried:[first],visitedNodes:7)
+    #expect(contact.selected == [first])
+    measured.replaceTail(from:2,with:[sample(200,100)])
+    contact.update(measured,from:2,queried:[second],visitedNodes:5)
+    #expect(contact.selected == [first,second])
+    #expect(contact.visitedNodes == 12)
+    measured.replaceTail(from:1,with:[sample(0,0)])
+    contact.update(measured,from:1,queried:[],visitedNodes:1)
+    #expect(contact.selected.isEmpty, "A corrected suffix retracts hits without retaining all queried targets")
+  }
 }
 
 struct InkMeasurementsPrefixTests {

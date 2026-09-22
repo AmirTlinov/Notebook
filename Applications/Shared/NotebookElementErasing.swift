@@ -17,6 +17,75 @@ struct NotebookElementErasing {
   }
 }
 
+struct NotebookSpatialEraserQuery {
+  let targets: [InkElementTarget]
+  let visitedNodes: Int
+}
+
+/// One immutable contact cut of the installed scene. The renderer's retained
+/// index owns broad phase; only its local candidate IDs are resolved into
+/// exact eraser targets. Accepted insertions and active placement drafts are a
+/// small explicit delta, never a reason to walk the whole board.
+struct NotebookSpatialEraserSource {
+  let boardID: UUID
+  let index: WorkspaceSceneIndex
+  let graph: NotebookGraphicGraph
+  let changedElementIDs: Set<String>
+  let changedElements: [String: SpatialElement]
+  let excludedElementIDs: Set<String>
+
+  func query(surface: SurfaceID, bounds: WorkspaceSpatialBounds,
+    limit: Int = 4_096) throws -> NotebookSpatialEraserQuery {
+    let indexed: WorkspaceSpatialIntersectionQuery
+    do {
+      guard let result = try index.interactionCandidates(boardID: boardID,
+        coverID: surface.kind == .cover ? surface.ownerID : nil,
+        bounds: bounds, kinds: .elements, limit: limit) else {
+        return .init(targets: [], visitedNodes: 0)
+      }
+      indexed = result
+    } catch {
+      throw CollaborationError("eraser_limit",
+        "Сотрите меньший участок: в нём слишком много объектов.")
+    }
+    var ids = Set(indexed.entries.compactMap { entry -> String? in
+      guard case .element(let id) = entry.id else { return nil }
+      return changedElementIDs.contains(id) ? nil : id
+    })
+    ids.formUnion(changedElementIDs)
+    let targets = ids.sorted().compactMap { target(id: $0, surface: surface) }.filter {
+      targetBounds($0).intersects(bounds)
+    }
+    guard targets.count <= limit else {
+      throw CollaborationError("eraser_limit",
+        "Сотрите меньший участок: в нём слишком много объектов.")
+    }
+    return .init(targets: targets, visitedNodes: indexed.statistics.visitedNodes)
+  }
+
+  private func target(id: String, surface: SurfaceID) -> InkElementTarget? {
+    guard !excludedElementIDs.contains(id) else { return nil }
+    if let node = graph.node(id) {
+      guard node.shown, node.surface == surface, let layout = graph.resolve(id).layout else { return nil }
+      return .init(elementID: id, frame: layout.frame,
+        worldOrigin: surface.kind == .board ? node.origin : nil,
+        graphicTransform: node.graphic.transform, elementTransform: layout.elementTransform)
+    }
+    guard let element = changedElements[id] ?? index.element(id: id, boardID: boardID),
+      element.surface == surface, element.kind != .group, element.graphic == nil,
+      let placement = graph.placement(id) else { return nil }
+    return NotebookElementPresentation(element, placement: placement)
+      .eraserTarget(id: id, wholeElement: element.kind == .web,
+        worldOrigin: surface.kind == .board ? placement.origin : nil)
+  }
+
+  private func targetBounds(_ target: InkElementTarget) -> WorkspaceSpatialBounds {
+    let frame = target.frame
+    return .init(origin: (target.worldOrigin ?? .zero).offsetBy(x: frame.x, y: frame.y),
+      width: frame.width, height: frame.height)
+  }
+}
+
 /// One model-owned derived projection for paint, picking and accessibility.
 /// Authored erasures remain in their ink actions. No state is persisted here.
 @MainActor @Observable final class NotebookElementErasureCache {
@@ -240,22 +309,21 @@ extension NotebookAppModel {
     return targets
   }
 
-  func eraserTargets(boardID: UUID, cohort: SceneCompositionCohort) -> [SurfaceID: [InkElementTarget]] {
-    let graph = presentedGraphicGraph(boardID: boardID, cohort: cohort)
-    let board = cohort.frame.index.capturedHierarchy.board(boardID).map { presentedBoard($0, boardID: boardID, cohort: cohort) }
-    var result: [SurfaceID: [InkElementTarget]] = [:]
-    for element in board?.elements ?? [] where element.graphic == nil && element.kind != .group {
-      guard let placement=graph.placement(element.id) else { continue }
-      result[element.surface,default:[]].append(NotebookElementPresentation(element,placement:placement)
-        .eraserTarget(id:element.id,wholeElement:element.kind == .web,
-          worldOrigin:element.surface.kind == .board ? placement.origin : nil))
+  func spatialEraserSource(boardID: UUID,
+    cohort: SceneCompositionCohort) -> NotebookSpatialEraserSource {
+    let graph = interactionGraphicGraph(boardID: boardID, cohort: cohort)
+    let changed = spatialSelectionChanges(boardID: boardID, graph: graph)
+    var elements: [String: SpatialElement] = [:]
+    var excluded: Set<String> = []
+    for id in changed {
+      let reference = EditableElementReference.spatial(boardID: boardID, elementID: id)
+      if elementCommandDrafts[reference]?.removed == true { excluded.insert(id); continue }
+      guard let stored = nativeElementSource(reference)?.spatial else { continue }
+      elements[id] = elementCommandDrafts[reference]?.projecting(stored) ?? stored
     }
-    for node in graph.nodes.values {
-      guard let layout = graph.resolve(node.id).layout else { continue }
-      result[node.surface, default: []].append(.init(elementID: node.id, frame: layout.frame,
-        worldOrigin: node.surface.kind == .board ? node.origin : nil,graphicTransform:node.graphic.transform,elementTransform:layout.elementTransform))
-    }
-    return result
+    return .init(boardID: boardID, index: cohort.frame.index, graph: graph,
+      changedElementIDs: changed, changedElements: elements,
+      excludedElementIDs: excluded)
   }
 
   func updateElementErasing(_ contact: [NotebookElementErasing], id: UUID) {

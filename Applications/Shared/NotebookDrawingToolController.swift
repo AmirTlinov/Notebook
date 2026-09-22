@@ -154,7 +154,7 @@ final class NotebookDrawingToolController {
     guard let board=address.boardID ?? address.surface.ownerID,
       let cohort=model.compositionTiles.published,
       cohort.frame.index.board(id:board) != nil else { return nil }
-    let graph=model.presentedGraphicGraph(boardID:board,cohort:cohort)
+    let graph=model.interactionGraphicGraph(boardID:board,cohort:cohort)
     return (graph,.init(index:cohort.frame.index,
       changedElementIDs:model.spatialSelectionChanges(boardID:board,graph:graph)))
   }
@@ -384,7 +384,7 @@ extension NotebookAppModel {
       let bounds=spatialSelectionBounds(polygon,address:address) else {
       throw CollaborationError("snapshot_pending","Геометрия сцены ещё готовится.")
     }
-    return try source.index.selectionCandidates(boardID:board,
+    return try source.index.interactionCandidates(boardID:board,
       coverID:address.surface.kind == .cover ? address.surface.ownerID : nil,
       bounds:bounds,kinds:kinds)
   }

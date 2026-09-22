@@ -19,6 +19,27 @@ extension WorkspaceSceneProjection {
 }
 
 extension NotebookAppModel {
+  /// Input starts from the renderer's already-built immutable graph. Only the
+  /// visible accepted/draft delta is projected, so Pencil-down never rebuilds
+  /// every native element merely to erase or lasso a local region.
+  func interactionGraphicGraph(boardID: UUID,
+    cohort: SceneCompositionCohort) -> NotebookGraphicGraph {
+    let groups=cohort.plan.groupPoses.filter { $0.key.boardID == boardID }.values
+      .reduce(into:[String:NotebookElementPlacement.Source]()) { result,plane in
+        result.merge(plane) { first,_ in first }
+      }
+    let base=(cohort.frame.index.graphicGraph(boardID:boardID) ?? .init([]))
+      .projecting(placements:groups)
+    _ = workingGraphicRevision(on:.board(boardID))
+    let working=workingGraphics.filter {
+      ($0.surface == .board(boardID) || ($0.surface.kind == .cover
+        && $0.surface.ownerID.flatMap { cohort.frame.index.ownerBoard(itemID:$0) } == boardID))
+        && ($0.publicationCursor.map { cohort.plan.revision < $0 } ?? true)
+    }
+    return projectingGraphicCommands(base.projecting(adding:working.map(\.node)),
+      publishedGroups:groups) { .spatial(boardID:boardID,elementID:$0) }
+  }
+
   func presentedGraphicGraph(boardID: UUID, cohort: SceneCompositionCohort, preview: Bool = true) -> NotebookGraphicGraph {
     guard let captured = cohort.frame.index.capturedHierarchy.board(boardID) else { return .init([]) }
     let retained=preview ? retainedGraphicGraph(includingGroups:false) { .spatial(boardID:boardID,elementID:$0) } : nil

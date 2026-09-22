@@ -156,7 +156,7 @@ struct WorkspaceSceneIndex: Sendable {
   /// Interaction borrows the renderer's immutable spatial generation instead
   /// of walking every retained element. Exact geometry remains in the graph;
   /// this method only narrows the owners which may intersect the gesture.
-  func selectionCandidates(boardID: UUID, coverID: UUID? = nil,
+  func interactionCandidates(boardID: UUID, coverID: UUID? = nil,
     bounds: WorkspaceSpatialBounds, kinds: WorkspaceSpatialKinds,
     limit: Int = 4_096) throws -> WorkspaceSpatialIntersectionQuery? {
     guard let board = boards[boardID] else { return nil }
@@ -165,7 +165,7 @@ struct WorkspaceSceneIndex: Sendable {
     let result = index.intersections(in: bounds, kinds: kinds, limit: limit)
     guard !result.overflow else {
       throw CollaborationError("selection_limit",
-        "Выделите меньшую область: в ней слишком много объектов.")
+        "В этой области слишком много объектов.")
     }
     return result
   }

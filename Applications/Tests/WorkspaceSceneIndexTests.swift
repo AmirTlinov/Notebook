@@ -6,6 +6,27 @@ import XCTest
 @testable import Notebook
 
 final class WorkspaceSceneIndexTests: XCTestCase {
+  func testCoverEraserQueriesTheRetainedLocalIndexWithoutBoardFallback() throws {
+    let actor=UUID(),stamp=VersionStamp(counter:0,actor:actor)
+    let boardID=WorkspaceRoot.boardID,itemID=UUID(),pageID=UUID()
+    let item=WorkspaceItem.notebook(id:itemID,title:"Cover",pageIDs:[pageID])
+    let element=SpatialElement(id:"cover-text",surface:.cover(itemID),kind:.nativeText,
+      frame:.init(x:20,y:30,width:180,height:80),source:"Visible",stamp:stamp)
+    let board=BoardDocument(freeItems:[.init(itemID:itemID,center:.zero,zIndex:0,stamp:stamp)],
+      elements:[element],stamp:stamp)
+    let workspace=WorkspaceIndex(items:[item],selectedItemID:itemID,selectedPageID:pageID,stamp:stamp)
+    let hierarchy=BoardHierarchy(rootBoardID:boardID,boards:[.init(id:boardID,board:board)],stamp:stamp)
+    let index=WorkspaceSceneIndex(workspace:workspace,hierarchy:hierarchy,paperSizes:[:])
+    let eraser=NotebookSpatialEraserSource(boardID:boardID,index:index,
+      graph:try XCTUnwrap(index.graphicGraph(boardID:boardID)),changedElementIDs:[],
+      changedElements:[:],excludedElementIDs:[])
+    let result=try eraser.query(surface:.cover(itemID),
+      bounds:.init(origin:.zero.offsetBy(x:10,y:20),width:40,height:40))
+    XCTAssertEqual(result.targets.map(\.elementID),[element.id])
+    XCTAssertNil(result.targets[0].worldOrigin)
+    XCTAssertLessThan(result.visitedNodes,8)
+  }
+
   func testOutsideStackFanStaysInTheIndexButCannotBecomeACameraDestination() throws {
     let actor = UUID(), first = WorkspaceItem.notebook(title: "Inside", pageIDs: [UUID()])
     let last = WorkspaceItem.notebook(title: "Outside", pageIDs: [UUID()])
@@ -94,7 +115,7 @@ final class WorkspaceSceneIndexTests: XCTestCase {
     let index = WorkspaceSceneIndex(workspace: fixture.workspace, hierarchy: fixture.hierarchy, paperSizes: [:])
     let boardID=WorkspaceRoot.boardID
     let firstBounds=try XCTUnwrap(index.paintEntry(id:.item(fixture.workspace.items[0].id),boardID:boardID)?.bounds)
-    let selection=try XCTUnwrap(index.selectionCandidates(boardID:boardID,bounds:firstBounds,kinds:.items))
+    let selection=try XCTUnwrap(index.interactionCandidates(boardID:boardID,bounds:firstBounds,kinds:.items))
     XCTAssertEqual(selection.entries.map(\.id),[.item(fixture.workspace.items[0].id)])
     XCTAssertLessThan(selection.statistics.visitedNodes,256,
       "A local lasso must borrow the scene index instead of scanning one hundred thousand items")
@@ -146,9 +167,23 @@ final class WorkspaceSceneIndexTests: XCTestCase {
     XCTAssertLessThanOrEqual(visible.examinedEntries, limit)
     XCTAssertLessThanOrEqual(visible.visitedNodes, limit * 8)
 
-    XCTAssertThrowsError(try index.selectionCandidates(boardID:boardID,
+    XCTAssertThrowsError(try index.interactionCandidates(boardID:boardID,
       bounds:.init(origin:.zero,width:180,height:160),kinds:.elements,limit:96)) { error in
       XCTAssertEqual((error as? CollaborationError)?.code,"selection_limit")
+    }
+
+    let eraser = NotebookSpatialEraserSource(boardID: boardID, index: index,
+      graph: try XCTUnwrap(index.graphicGraph(boardID: boardID)),
+      changedElementIDs: [], changedElements: [:], excludedElementIDs: [])
+    let emptyEraser = try eraser.query(surface: .board(boardID),
+      bounds: .init(origin: .init(x: 1_000_000, y: 1_000_000), width: 24, height: 24))
+    XCTAssertTrue(emptyEraser.targets.isEmpty)
+    XCTAssertLessThan(emptyEraser.visitedNodes, 8,
+      "Pencil-down and a local eraser segment borrow the retained tree instead of materializing 100k targets")
+    XCTAssertThrowsError(try eraser.query(surface: .board(boardID),
+      bounds: .init(origin: .zero, width: 180, height: 160), limit: 96)) { error in
+      XCTAssertEqual((error as? CollaborationError)?.code,"eraser_limit",
+        "Dense contact must fail explicitly instead of erasing an arbitrary prefix")
     }
 
     mark("visible query")
