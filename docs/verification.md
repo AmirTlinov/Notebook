@@ -1,5 +1,27 @@
 # Verification record
 
+## September 23 — GUI-295, native repeated history and text-owner checks
+
+Following the Core checks, the combined history correction passed **6 physical-iPad
++ 3 Mac checks**, with zero failures, skips or runtime warnings. Evidence:
+`.build/gui295-native-history-physical/verification.json`; unchanged before/after
+source `613e1dad649b4aa24e2833b5808d7b826d768181d1e50d2ed6bd145ca95ff458`.
+The mounted iPad window performed ink → move → move → ink, cold Undo4, a second
+cold open, Redo4 and another Undo. Actual window pixel probes verified both moved
+and untouched material at every step. The scenario took 1.888 s overall; that is
+test duration, **not** gesture/display latency. It checks the saved boundary and
+resulting pixels, not a human Pencil or full-system acceptance session.
+
+Retained command retry after lost readback and Undo storage failure also passed.
+The obsolete `addNativeText` production method had no UI callers, only three old
+tests; it is removed rather than kept as a second insertion mechanism. Those
+tests now use `beginToolText` → `commitNativeText`: an empty editor has no saved
+object, the first text is one native history command, navigation retains the
+original address, and a new object cannot borrow an old scene's visual admission.
+The corresponding Mac checks include real-window admission and paste/Undo.
+The physical test application was cleaned up; the installed production pair
+remains 187. Native item-drag integration and the remaining S5 acceptance are open.
+
 ## September 23 — GUI-295, causal native placement and repeated history
 
 The existing native action and retained retry owner now accept exact placement
@@ -30,9 +52,9 @@ this single-action scale path is unchanged. The prior scale failure compared the
 proposal to the old obstacle position after the new move; its explicit expected
 coordinates were corrected, not its count, locality or integrity checks.
 
-The real-window cold ink → move → move → ink / Undo4 / Redo4 scenario is extended
-but still awaits the single physical-iPad runner. No new installation or physical
-acceptance is claimed here; native item-drop integration and S5 remain open.
+The subsequent real-window cold ink → move → move → ink / Undo4 / Redo4 results
+are recorded above. Core evidence alone claims no installation or physical
+acceptance; native item-drop integration and S5 remain open.
 
 ## September 23 — matched pair 187 installed, live readback
 

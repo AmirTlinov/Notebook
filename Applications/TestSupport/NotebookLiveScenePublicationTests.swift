@@ -181,7 +181,14 @@ final class NotebookLiveScenePublicationTests: XCTestCase {
     let fixture = try await fixture()
     let model = fixture.model, board = fixture.presence.boardID
     let item = try XCTUnwrap(model.workspace?.selectedItemID)
-    let id = try XCTUnwrap(model.addNativeText(boardID: board, on: item, at: .init(x: 300, y: 300)))
+    let address = NotebookToolAddress(surface: .cover(item), boardID: board, worldOrigin: nil,
+      bounds: .init(x: 0, y: 0, width: WorkspaceItemGeometry.notebook.width, height: WorkspaceItemGeometry.notebook.height))
+    model.clearSelection()
+    let id = try XCTUnwrap(model.beginToolText(at: .init(x: 300, y: 300), address: address, screenScale: 1))
+    model.commitNativeText(reference: address.reference(id), text: "Новый текст", finish: true)
+    let saved = await model.finishPendingPersistence(); XCTAssertTrue(saved)
+    await model.reloadExternalChanges()?.value
+    XCTAssertEqual(model.board?.elements.first { $0.id == id }?.source, "Новый текст")
     let reference = EditableElementReference.spatial(boardID: board, elementID: id)
     model.selectElement(reference)
     XCTAssertNil(model.presentedElement(reference, cohort: fixture.cohort))

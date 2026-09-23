@@ -2490,44 +2490,6 @@ final class NotebookAppModel {
     inputGate.performAfterPageInput(action)
   }
 
-  func addNativeText(boardID: UUID, on itemID: UUID, at point: SpatialPoint) -> String? {
-    guard !isItemBeingDeleted(itemID), !isItemBeingDeleted(boardID), var hierarchy = boardHierarchy,
-      let board = hierarchy.board(boardID),
-      board.itemIDs.contains(itemID)
-    else { return nil }
-    let width = 420.0
-    let height = 120.0
-    let geometry = itemGeometry(itemID)
-    let origin = SpatialPoint(
-      x: min(max(point.x, 0), geometry.width - width),
-      y: min(max(point.y, 0), geometry.height - height)
-    )
-    let id = "text-\(UUID().uuidString.lowercased())"
-    let element = SpatialElement(
-      id: id,
-      surface: .cover(itemID),
-      kind: .nativeText,
-      frame: SpatialRect(
-        x: origin.x,
-        y: origin.y,
-        width: width,
-        height: height
-      ),
-      source: "",
-      stamp: VersionStamp(counter: 0, actor: actorID)
-    )
-    guard hierarchy.upsertElement(
-      element,
-      in: boardID,
-      expected: nil,
-      actor: actorID
-    ) else {
-      return nil
-    }
-    persistBoard(hierarchy)
-    return id
-  }
-
   /// Creation, typing and geometry share the same addressed causal queue.
   /// Late editor teardown can finish its original object, never the new page.
   func commitNativeText(reference: EditableElementReference, text: String, finish: Bool,

@@ -11,7 +11,12 @@ final class AgentStateTests: XCTestCase {
     await model.start(pageSize: PageSize(width: 834, height: 1194))
     let boardA = try XCTUnwrap(model.presence?.boardID)
     let notebook = try XCTUnwrap(model.workspace?.selectedItemID)
-    let elementID = try XCTUnwrap(model.addNativeText(boardID: boardA, on: notebook, at: .init(x: 100, y: 100)))
+    let address = NotebookToolAddress(surface: .cover(notebook), boardID: boardA, worldOrigin: nil,
+      bounds: .init(x: 0, y: 0, width: WorkspaceItemGeometry.notebook.width, height: WorkspaceItemGeometry.notebook.height))
+    let elementID = try XCTUnwrap(model.beginToolText(at: .init(x: 100, y: 100), address: address, screenScale: 1))
+    model.commitNativeText(reference: address.reference(elementID), text: "Начало", finish: false)
+    let initialSaved = await model.finishPendingPersistence(); XCTAssertTrue(initialSaved)
+    await model.reloadExternalChanges()?.value
     let retained = try XCTUnwrap(model.boardHierarchy?.board(boardA)?.elements.first { $0.id == elementID })
     let boardB = try XCTUnwrap(model.createBoard(at: .init(x: 2000, y: 0)))
     model.updatePresence(.init(boardID: boardB, mode: .board, camera: .init(),
@@ -102,16 +107,14 @@ final class AgentStateTests: XCTestCase {
     await model.start(pageSize: PageSize(width: 834, height: 1_194))
     let itemID = try XCTUnwrap(model.workspace?.selectedItemID)
     let boardID = try XCTUnwrap(model.presence?.boardID)
-    let elementID = try XCTUnwrap(model.addNativeText(
-      boardID: boardID, on: itemID,
-      at: SpatialPoint(x: 830, y: 1_190)
-    ))
-
-    let draft = try XCTUnwrap(model.board?.elements.first(where: {
-      $0.id == elementID
-    }))
-    XCTAssertEqual(draft.frame.x, WorkspaceItemGeometry.notebook.width - 420)
-    XCTAssertEqual(draft.frame.y, WorkspaceItemGeometry.notebook.height - 120)
+    let bounds = CGRect(x: 0, y: 0, width: WorkspaceItemGeometry.notebook.width, height: WorkspaceItemGeometry.notebook.height)
+    let address = NotebookToolAddress(surface: .cover(itemID), boardID: boardID, worldOrigin: nil, bounds: bounds)
+    let elementID = try XCTUnwrap(model.beginToolText(at: .init(x: 830, y: 1_190), address: address, screenScale: 1))
+    let draft = try XCTUnwrap(model.selectionSession.nativeText)
+    XCTAssertEqual(draft.reference, address.reference(elementID))
+    XCTAssertEqual(draft.frame, .init(x: 830, y: 1_190, width: bounds.width - 830, height: bounds.height - 1_190))
+    XCTAssertFalse(model.board?.elements.contains { $0.id == elementID } ?? true,
+      "Empty text belongs to the editor, not a second persistent insertion path")
 
     model.commitNativeText(reference:.spatial(boardID:boardID,elementID:elementID),text:"Первая мысль",finish:true)
 
@@ -123,6 +126,8 @@ final class AgentStateTests: XCTestCase {
       savedBoard.elements.first(where: { $0.id == elementID })?.source,
       "Первая мысль"
     )
+    XCTAssertEqual(try store.nativeHistory(domain: .cover(itemID), actor: model.actorID).count, 1,
+      "The first nonempty text is one ordinary native command")
 
     model.commitNativeText(reference:.spatial(boardID:boardID,elementID:elementID),text:"",finish:true)
 

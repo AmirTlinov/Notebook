@@ -273,12 +273,14 @@ final class NotebookInteractionUXTests: XCTestCase {
     scene.beginFinger(.init(x: 590, y: 590)); scene.endFinger()
     try await scene.readyFinger(self)
     scene.beginFinger(.init(x: 590, y: 590)); scene.moveFinger(.init(x: 590, y: 790)); scene.endFinger()
+    try await scene.readyFinger(self)
+    scene.beginFinger(.init(x: 590, y: 790)); scene.moveFinger(.init(x: 590, y: 990)); scene.endFinger()
     model.selectPenColor(.black); model.selectPenWidth(12)
     try await scene.readyPencil(self)
     scene.beginPencil(.init(x: 160, y: 900)); scene.movePencil(.init(x: 440, y: 900)); scene.endPencil()
     let saved = await model.finishPendingPersistence(); XCTAssertTrue(saved)
     let history = try model.store.nativeHistory(domain: .page(pageID), actor: model.actorID)
-    XCTAssertEqual(history.count, 3)
+    XCTAssertEqual(history.count, 4)
     if case .ink? = history.last {} else { XCTFail("The last accepted contact, not the graphic command, owns Undo") }
     let root = model.store.root, actor = model.actorID, presence = try XCTUnwrap(model.presence)
     scene.window.isHidden = true; scene.window.rootViewController = nil
@@ -295,19 +297,21 @@ final class NotebookInteractionUXTests: XCTestCase {
       (.init(x: 230, y: 330), .red), (.init(x: 430, y: 650), .black)]
     try await shown("cold-mixed-history", reopened, since: .now, unaffected + [
       (.init(x: 300, y: 800), .black), (.init(x: 300, y: 900), .black),
-      (.init(x: 590, y: 590), .paper), (.init(x: 590, y: 790), .blue)])
-    for step in 0..<3 {
+      (.init(x: 590, y: 590), .paper), (.init(x: 590, y: 790), .paper), (.init(x: 590, y: 990), .blue)])
+    for step in 0..<4 {
       cold.undoLastSurfaceAction()
       // This scenario verifies the saved causal order and resulting window,
       // not a claim of command-to-photon latency across the save boundary.
       let persisted = await cold.finishPendingPersistence(); XCTAssertTrue(persisted)
       await cold.reloadExternalChanges()?.value
       try await shown("cold-mixed-undo-\(step)", reopened, since: .now, unaffected + [
-        (.init(x: 300, y: 800), step < 2 ? .black : .paper), (.init(x: 300, y: 900), .paper),
-        (.init(x: 590, y: 590), step == 0 ? .paper : .blue), (.init(x: 590, y: 790), step == 0 ? .blue : .paper)])
+        (.init(x: 300, y: 800), step < 3 ? .black : .paper), (.init(x: 300, y: 900), .paper),
+        (.init(x: 590, y: 590), step < 2 ? .paper : .blue),
+        (.init(x: 590, y: 790), step == 1 ? .blue : .paper),
+        (.init(x: 590, y: 990), step == 0 ? .blue : .paper)])
     }
     XCTAssertTrue(try cold.store.nativeHistory(domain: .page(pageID), actor: actor).isEmpty)
-    XCTAssertEqual(try cold.store.nativeRedoHistory(domain:.page(pageID),actor:actor).count,3)
+    XCTAssertEqual(try cold.store.nativeRedoHistory(domain:.page(pageID),actor:actor).count,4)
     window.isHidden=true;window.rootViewController=nil
     let coldStopped=await cold.shutdown();XCTAssertTrue(coldStopped)
     let redone=NotebookAppModel(store:.init(root:root),startsNearbySync:false,preferences:preferences)
@@ -317,22 +321,23 @@ final class NotebookInteractionUXTests: XCTestCase {
     let redoWindow=try await mountNotebookScene(redone)
     let redoScene=try Scene(model:redone,window:redoWindow)
     XCTAssertEqual(redoScene.pageToWindow,scene.pageToWindow)
-    for step in 0..<3 {
+    for step in 0..<4 {
       redone.redoLastSurfaceAction()
       let persisted=await redone.finishPendingPersistence();XCTAssertTrue(persisted)
       await redone.reloadExternalChanges()?.value
       try await shown("cold-mixed-redo-\(step)",redoScene,since:.now,unaffected + [
-        (.init(x:300,y:800),.black),(.init(x:300,y:900),step == 2 ? .black : .paper),
+        (.init(x:300,y:800),.black),(.init(x:300,y:900),step == 3 ? .black : .paper),
         (.init(x:590,y:590),step == 0 ? .blue : .paper),
-        (.init(x:590,y:790),step == 0 ? .paper : .blue)])
+        (.init(x:590,y:790),step == 1 ? .blue : .paper),
+        (.init(x:590,y:990),step >= 2 ? .blue : .paper)])
     }
-    XCTAssertEqual(try redone.store.nativeHistory(domain:.page(pageID),actor:actor).count,3)
+    XCTAssertEqual(try redone.store.nativeHistory(domain:.page(pageID),actor:actor).count,4)
     redone.undoLastSurfaceAction()
     let persisted=await redone.finishPendingPersistence();XCTAssertTrue(persisted)
     await redone.reloadExternalChanges()?.value
     try await shown("cold-mixed-redo-undo",redoScene,since:.now,unaffected + [
       (.init(x:300,y:800),.black),(.init(x:300,y:900),.paper),
-      (.init(x:590,y:590),.paper),(.init(x:590,y:790),.blue)])
+      (.init(x:590,y:590),.paper),(.init(x:590,y:790),.paper),(.init(x:590,y:990),.blue)])
   }
 
   func testHeldUndoPublishesTheRestoredMaterialBeforeEitherFingerLifts() async throws {
