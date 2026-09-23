@@ -75,7 +75,7 @@ struct NotebookSpatialInkCommandTests {
 
   private func state(_ action: SpatialInkAction, active: Bool = false, counter: UInt64,
     journalCounter: UInt64? = nil) -> NotebookSpatialInkCommand {
-    .state(actionID: action.id, creationStamp: action.stamp, isActive: active,
+    .state(actionID: action.id, creationStamp: action.stamp, expectedStateStamp: action.stateStamp, isActive: active,
       stateStamp: .init(counter: counter, actor: action.stamp.actor),
       journalStamp: .init(counter: journalCounter ?? counter, actor: action.stamp.actor))
   }
@@ -83,6 +83,59 @@ struct NotebookSpatialInkCommandTests {
   private func actionAddress(_ id: UUID) -> String { "spatial-ink.json#/actions/@" + id.uuidString.lowercased() }
   private func hash(_ address: String, store: NotebookStore) throws -> String? {
     try store.sqlRead { try $0.rows("SELECT hash FROM records WHERE address=?", [.text(address)]).first?[0].text }
+  }
+
+  @Test func staleNativeInverseCannotReplaceAPeerGateEvenWithALargerClock() throws {
+    try fixture { store, actor, header in
+      let surface = SurfaceID.board(header.rootBoardID)
+      let action = SpatialInkAction(tool: .pen, spans: [span(surface)], stamp: .init(counter: 1, actor: actor))
+      _ = try store.commitSpatialInk(.append(action, journalStamp: action.stamp))
+      let peer = UUID()
+      var previous = action.stateStamp
+      for (counter, active) in [(2, false), (3, true)] {
+        let stamp = VersionStamp(counter: UInt64(counter), actor: peer)
+        _ = try store.publishSpatialInk(.state(actionID: action.id, creationStamp: action.stamp,
+          expectedStateStamp: previous, isActive: active, stateStamp: stamp, journalStamp: stamp), origin: .replication)
+        previous = stamp
+      }
+      let before = try store.loadSpatialInk(), cursor = try store.currentChangeCursor()
+      let history = try store.nativeHistory(domain: .board(header.rootBoardID), actor: actor)
+      do {
+        _ = try store.commitSpatialInk(state(action, counter: 50))
+        Issue.record("A later local clock cannot replace the source of an accepted inverse")
+      } catch let error as CollaborationError { #expect(error.code == "revision_conflict") }
+      #expect(try store.loadSpatialInk() == before)
+      #expect(try store.currentChangeCursor() == cursor)
+      #expect(try store.nativeHistory(domain: .board(header.rootBoardID), actor: actor) == history)
+
+      let current = try #require(before.actions.first)
+      let inverse = state(current, counter: 51)
+      _ = try store.commitSpatialInk(inverse)
+      let undoCursor = try store.currentChangeCursor()
+      _ = try store.commitSpatialInk(inverse)
+      #expect(try store.currentChangeCursor() == undoCursor, "The exact committed inverse remains retryable")
+      let inactive = try #require(store.loadSpatialInk().actions.first)
+      _ = try store.commitSpatialInk(state(inactive, active: true, counter: 52))
+      #expect(try store.nativeHistory(domain: .board(header.rootBoardID), actor: actor) == [.ink([action.id])])
+      #expect(try store.loadSpatialInk().actions.first?.spans == action.spans)
+    }
+  }
+
+  @Test(arguments: [false, true])
+  func anAppendRetryCannotOwnVisibilityRegardlessOfItsClock(active: Bool) throws {
+    try fixture { store, actor, header in
+      let action = SpatialInkAction(tool: .pen, spans: [span(.board(header.rootBoardID))], stamp: .init(counter: 1, actor: actor))
+      _ = try store.commitSpatialInk(.append(action, journalStamp: action.stamp))
+      if !active { _ = try store.commitSpatialInk(state(action, counter: 2)) }
+      let original = try #require(store.loadSpatialInk().actions.first)
+      let bodyHash = try hash(actionAddress(action.id) + "/spans", store: store)
+      let echo = SpatialInkAction(id: action.id, tool: action.tool, color: action.color, spans: action.spans,
+        stamp: action.stamp, isActive: !active, stateStamp: .init(counter: 50, actor: actor))
+      _ = try store.commitSpatialInk(.append(echo, journalStamp: echo.stateStamp))
+      #expect(try store.loadSpatialInk().actions.first == original)
+      #expect(try hash(actionAddress(action.id) + "/spans", store: store) == bodyHash)
+      #expect(try store.nativeHistory(domain: .board(header.rootBoardID), actor: actor) == (active ? [.ink([action.id])] : []))
+    }
   }
 
   @Test func firstAppendStoresOneMultiSurfaceActionAndUndoNeverRepublishesSpans() throws {
@@ -147,7 +200,7 @@ struct NotebookSpatialInkCommandTests {
       let collision = SpatialInkAction(id: action.id, tool: .pen,
         spans: [span(.board(header.rootBoardID), x: 10)], stamp: action.stamp)
       #expect(throws: NotebookStorageError.transactionConflict) { try store.commitSpatialInk(.append(collision, journalStamp: collision.stamp)) }
-      #expect(throws: NotebookStorageError.transactionConflict) { try store.commitSpatialInk(state(action, counter: 1)) }
+      #expect(throws: CollaborationError.self) { try store.commitSpatialInk(state(action, counter: 1)) }
       let missing = SpatialInkAction(tool: .pen, spans: [span(.board(header.rootBoardID)), span(.cover(UUID()))],
         stamp: .init(counter: 2, actor: actor))
       #expect(throws: CollaborationError.self) { try store.commitSpatialInk(.append(missing, journalStamp: missing.stamp)) }
@@ -174,7 +227,8 @@ struct NotebookSpatialInkCommandTests {
       _ = try store.commitSpatialInk(state(action, counter: 2))
       let echo = try store.commitSpatialInk(.append(action, journalStamp: action.stamp))
       #expect(!echo.isActive)
-      #expect(throws: CollaborationError.self) { try store.commitSpatialInk(state(action, active: true, counter: 3)) }
+      let source = try #require(store.readSpatialInk(surfaces: [.board(header.rootBoardID)]).actions.first)
+      #expect(throws: CollaborationError.self) { try store.commitSpatialInk(state(source, active: true, counter: 3)) }
       let next = SpatialInkAction(tool: .pen, spans: action.spans, stamp: .init(counter: 3, actor: actor))
       #expect(throws: CollaborationError.self) { try store.commitSpatialInk(.append(next, journalStamp: next.stamp)) }
       #expect(try store.readItemHeader(deleted) == nil)

@@ -26,6 +26,8 @@ final class NotebookCodeAnnotations {
   @ObservationIgnored private var pending: [UUID: (NotebookCodeFragment, NotebookSpatialInkCommand)] = [:]
   @ObservationIgnored private var visible = [UUID]()
   @ObservationIgnored private var refreshing = false
+  @ObservationIgnored private var refreshRequested = false
+  @ObservationIgnored private var moreRequested = false
   @ObservationIgnored private var nextPageAfter: UUID?
   @ObservationIgnored private var revision: UInt64 = 0
 
@@ -38,17 +40,25 @@ final class NotebookCodeAnnotations {
   func select(_ file: NotebookFileAddress?) async {
     guard !stopped else { return }
     guard self.file != file else { await refresh(); return }
-    self.file = file; ready = false; revision &+= 1; contributionOrder = []; fragments = []; annotations = [:]; visible = []; reviewed = nil; hasMore = false; nextPageAfter = nil
+    self.file = file; ready = false; revision &+= 1; contributionOrder = []; fragments = []; annotations = [:]; visible = []; reviewed = nil; hasMore = false; nextPageAfter = nil; moreRequested = false
     await refresh()
   }
   func refresh(more: Bool = false) async {
-    guard !stopped, let file, !refreshing, !contactActive else { return }
+    if more { moreRequested = true } else { refreshRequested = true }
+    await performRefresh()
+  }
+  private func performRefresh() async {
+    guard !stopped, let file, !refreshing, !contactActive, refreshRequested || moreRequested else { return }
+    let more = !refreshRequested && moreRequested
+    if more { moreRequested = false } else { refreshRequested = false }
     refreshing = true
+    let revision = revision
     defer {
       refreshing = false
-      if !stopped, self.file != file { Task { await refresh() } }
+      if self.file != file || self.revision != revision { refreshRequested = true }
+      resumeRefresh()
     }
-    let after = more ? nextPageAfter : nil, wanted = visible, revision = revision
+    let after = more ? nextPageAfter : nil, wanted = visible
     let retained = more ? [] : fragments.map(\.id)
     do {
       let result = try await persistence.submit { store in
@@ -82,7 +92,7 @@ final class NotebookCodeAnnotations {
         var journal = next[fragment.id]?.ink ?? annotations[fragment.id]?.ink ?? .init(stamp: clock)
         switch command {
         case .append(let action, let stamp): _ = journal.merge(.init(actions: [action], stamp: stamp))
-        case .state(let id, _, let active, let state, _): _ = Self.setState(&journal, id: id, active: active, stamp: state)
+        case .state(let id, _, _, let active, let state, _): _ = Self.setState(&journal, id: id, active: active, stamp: state)
         }
         next[fragment.id] = .init(fragment: fragment, ink: journal)
       }
@@ -108,7 +118,13 @@ final class NotebookCodeAnnotations {
     guard fragment.isValid else { error = "Рассмотренный фрагмент слишком велик для одной пометки."; return nil }
     return fragment
   }
-  func cancelContact() { contactActive = false }
+  // Coalesce reads, not their intent. Reconciliation requested during an older
+  // read or a live contact must run when that owner releases the surface.
+  private func resumeRefresh() {
+    guard !stopped, file != nil, !refreshing, !contactActive, refreshRequested || moreRequested else { return }
+    Task { await performRefresh() }
+  }
+  func cancelContact() { contactActive = false; resumeRefresh() }
   func review(_ fragment: NotebookCodeFragment) async {
     guard !stopped, file == fragment.currentFile else { return }
     revision &+= 1
@@ -160,6 +176,7 @@ final class NotebookCodeAnnotations {
     contributionOrder = Array(contributionOrder.suffix(32))
     enqueue(fragment, .append(action, journalStamp: stamp))
     contactActive = false
+    resumeRefresh()
   }
   func undo() {
     guard !stopped, !contactActive, let id = contributionOrder.last else { return }
@@ -178,14 +195,20 @@ final class NotebookCodeAnnotations {
     var journal = annotation.ink
     for action in journal.actions where ids.contains(action.id) && action.stamp.actor == author && action.isActive {
       _ = Self.setState(&journal, id: action.id, active: false, stamp: stamp)
-      enqueue(annotation.fragment, .state(actionID: action.id, creationStamp: action.stamp, isActive: false, stateStamp: stamp, journalStamp: stamp))
+      enqueue(annotation.fragment, .state(actionID: action.id, creationStamp: action.stamp,
+        expectedStateStamp: action.stateStamp, isActive: false, stateStamp: stamp, journalStamp: stamp))
     }
     clock = stamp; revision &+= 1; annotations[id] = .init(fragment: annotation.fragment, ink: journal)
     history.didRemoveContribution(ids, for: .codeFragment(id)); contributionOrder.removeLast()
   }
   private func enqueue(_ fragment: NotebookCodeFragment, _ command: NotebookSpatialInkCommand) {
     let token = UUID(); pending[token] = (fragment, command)
-    persistence.enqueue(owner: .spatialInk(command.expectedResult.actionID)) { [weak self] store in
+    persistence.enqueue(owner: .spatialInk(command.expectedResult.actionID), onRejected: { [weak self] rejection in
+      guard let self else { return }
+      pending[token] = nil; revision &+= 1
+      error = rejection.localizedDescription
+      Task { await self.refresh() }
+    }) { [weak self] store in
       _ = try store.commitCodeInk(fragment: fragment, command: command)
       Task { @MainActor [weak self] in self?.pending[token] = nil }
       return false

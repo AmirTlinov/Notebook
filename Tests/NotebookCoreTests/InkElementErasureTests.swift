@@ -141,7 +141,7 @@ struct InkElementErasureTests {
     try a.savePage(page)
     let state = VersionStamp(counter: 23, actor: actor)
     try a.commitSpatialInk(.state(actionID: action.id, creationStamp: action.stamp,
-      isActive: false, stateStamp: state, journalStamp: state))
+      expectedStateStamp: action.stateStamp, isActive: false, stateStamp: state, journalStamp: state))
     for record in try a.changeJournal(after: before) { try transfer(record, from: a, to: b, peer: peer) }
     #expect(try PageInkDrawing.decode(reopened.loadPage(pageID).drawingData).elementErasures.isEmpty)
     #expect(try reopened.readSpatialInk(surfaces: [surface]).elementErasures(on: surface).isEmpty)

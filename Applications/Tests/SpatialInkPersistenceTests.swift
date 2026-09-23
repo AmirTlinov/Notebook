@@ -10,6 +10,36 @@ final class SpatialInkPersistenceTests: XCTestCase {
   }
 
   @MainActor
+  func testPeerGateChangeRejectsStaleUndoAndKeepsTheNextAcceptedContact() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
+    retainNotebookUntilTeardown(model, removing: root)
+    await model.start(pageSize: NotebookAppModel.defaultPageSize)
+    let boardID = try XCTUnwrap(model.workspace?.rootBoardID), surface = SurfaceID.board(boardID)
+    model.updatePresence(.init(boardID: boardID, mode: .board, camera: .init(scale: 1),
+      viewport: .init(x: 512, y: 512)), settled: true)
+    let first = try XCTUnwrap(model.appendSpatialInk(tool: .pen, color: .black, spans: [span(surface)]))
+    let initialSaved = await model.finishPendingPersistence(); XCTAssertTrue(initialSaved)
+    let peer = NotebookStore(root: root), actor = UUID()
+    var previous = first.stateStamp
+    for (counter, active) in [(50, false), (51, true)] {
+      let stamp = VersionStamp(counter: UInt64(counter), actor: actor)
+      _ = try peer.commitSpatialInk(.state(actionID: first.id, creationStamp: first.stamp,
+        expectedStateStamp: previous, isActive: active, stateStamp: stamp, journalStamp: stamp))
+      previous = stamp
+    }
+    model.undoLastSurfaceAction()
+    let next = try XCTUnwrap(model.appendSpatialInk(tool: .pen, color: .black, spans: [span(surface, x: 30)]))
+    let saved = await model.finishPendingPersistence(); XCTAssertTrue(saved, model.persistenceFailure ?? "")
+    await model.reloadExternalChanges()?.value
+    XCTAssertNil(model.persistenceFailure)
+    XCTAssertEqual(model.actionCue, "Состояние штриха изменилось до отмены или повтора.")
+    XCTAssertEqual(Set(try peer.readSpatialInk(surfaces: [surface]).actions.filter(\.isActive).map(\.id)), [first.id, next.id])
+    XCTAssertEqual(Set(model.spatialInk?.actions.filter(\.isActive).map(\.id) ?? []), [first.id, next.id],
+      "The rejected inverse cannot remain a second visible material owner")
+  }
+
+  @MainActor
   func testCreationAppendUndoCaptureFenceAndNextAppendKeepEveryAcceptedUUID() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
@@ -23,7 +53,7 @@ final class SpatialInkPersistenceTests: XCTestCase {
     }
     queue.enqueue(owner: .spatialInk(first.id)) { try $0.commitSpatialInk(.append(first, journalStamp: first.stamp)); return false }
     queue.enqueue(owner: .spatialInk(first.id)) {
-      try $0.commitSpatialInk(.state(actionID: first.id, creationStamp: first.stamp, isActive: false,
+      try $0.commitSpatialInk(.state(actionID: first.id, creationStamp: first.stamp, expectedStateStamp: first.stateStamp, isActive: false,
         stateStamp: .init(counter: 2, actor: actor), journalStamp: .init(counter: 2, actor: actor)))
       return false
     }

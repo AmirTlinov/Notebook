@@ -105,7 +105,7 @@ struct InkRelationPersistenceTests {
       }
       #expect(totalBytes < inlineBytes/2)
       let state=VersionStamp(counter:25,actor:actor)
-      _=try a.commitSpatialInk(.state(actionID:actions[0].id,creationStamp:actions[0].stamp,isActive:false,stateStamp:state,journalStamp:state))
+      _=try a.commitSpatialInk(.state(actionID:actions[0].id,creationStamp:actions[0].stamp,expectedStateStamp: actions[0].stateStamp, isActive:false,stateStamp:state,journalStamp:state))
       #expect(try a.blobSize(hash:shared) == bytes)
       #expect(try a.readSpatialInk(surfaces:[.cover(cover)]).actions.filter(\.isActive).count == 23)
       print("INK_DURABLE_SHARED occurrences=48 logicalEvents=48000000 rootBytes=\(bytes) bodyBytes=\(bodyBytes) uniqueBodies=1 transferredBodyBytes=\(bodyBytes) allTransferredBytes=\(totalBytes) inlineControlBytes=\(inlineBytes) save=\(save) delivery=\(transfer)")
@@ -338,7 +338,7 @@ struct InkRelationPersistenceTests {
       #expect(try bound(remote).measurements.encodedRelations() == source.measurements.encodedRelations())
       #expect(try b.readPageInkAction(pageID:page,actionID:source.sourceID)?.action == paper)
       let hash=try bodyHash(a,row(action.id)),state=VersionStamp(counter:2,actor:actor)
-      _=try a.commitSpatialInk(.state(actionID:action.id,creationStamp:stamp,isActive:false,stateStamp:state,journalStamp:state))
+      _=try a.commitSpatialInk(.state(actionID:action.id,creationStamp:stamp,expectedStateStamp: stamp, isActive:false,stateStamp:state,journalStamp:state))
       for change in try a.changeJournal(after:through) {
         try receiveFixtureChanges(.init(source:.init(deviceID:actor,generation:actor),change:change),from:a,to:b)
       }
@@ -374,7 +374,7 @@ struct InkRelationPersistenceTests {
       }
       #expect(try bodyHash(a,row(action.id)) == hash && a.currentChangeCursor() == before)
       let state=VersionStamp(counter:2,actor:actor)
-      _=try a.commitSpatialInk(.state(actionID:action.id,creationStamp:stamp,isActive:false,stateStamp:state,journalStamp:state))
+      _=try a.commitSpatialInk(.state(actionID:action.id,creationStamp:stamp,expectedStateStamp: stamp, isActive:false,stateStamp:state,journalStamp:state))
       #expect(try !a.commitSpatialInk(.append(echo,journalStamp:stamp)).isActive)
       #expect(try bodyHash(a,row(action.id)) == hash)
       let drawing=try PageInkDrawing(actions:[original.restoredAction()]).settingActive(false,for:[original.sourceID],stamp:.init(counter:1,actor:UUID()))

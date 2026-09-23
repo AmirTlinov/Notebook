@@ -100,7 +100,7 @@ struct NotebookNativeHistoryTests {
     #expect(try reopened.nativeHistory(domain: .board(id), actor: f.actor) == [.ink([inner.id])])
     #expect(try reopened.nativeHistory(domain: .cover(id), actor: f.actor) == [.ink([cover.id])])
     #expect(try reopened.nativeHistory(domain: .document(id), actor: f.actor).isEmpty)
-    _ = try reopened.commitSpatialInk(.state(actionID: cover.id, creationStamp: cover.stamp, isActive: false,
+    _ = try reopened.commitSpatialInk(.state(actionID: cover.id, creationStamp: cover.stamp, expectedStateStamp: cover.stateStamp, isActive: false,
       stateStamp: .init(counter: 3, actor: f.actor), journalStamp: .init(counter: 3, actor: f.actor)))
     #expect(try reopened.nativeHistory(domain: .board(id), actor: f.actor) == [.ink([inner.id])])
     #expect(try reopened.nativeHistory(domain: .cover(id), actor: f.actor).isEmpty)

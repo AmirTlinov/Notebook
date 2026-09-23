@@ -1,5 +1,37 @@
 # Verification record
 
+## September 23 — GUI-295, spatial inverse admission and rejected-note reconciliation
+
+Native board/cover/code ink inverses now name the exact accepted visibility
+stamp. A peer's intervening off/on sequence cannot be overwritten by an unrelated
+higher local contact clock. An immutable append retry cannot own visibility;
+valid explicit inverses preserve UUID, measurements and painter position.
+Rejection releases the existing write queue, reconciles the accepted source and
+does not report a false commit or block the next stroke.
+
+The first physical-iPad run reproduced a second real defect: SQL correctly
+rejected the code-note inverse, but its optimistic inactive image remained in
+the model. The requested refresh was dropped behind an earlier read. The same
+refresh owner now coalesces pending reads and resumes after invalidation/contact
+release, including requested directory continuation. No polling or second
+material owner was added. The failed result is retained in
+`.build/gui295-spatial-gate-checked/` (14 PASS, 1 FAIL); it is not acceptance.
+
+Final `.build/gui295-spatial-gate-checked-v2/`: **15 physical-iPad + 3 Mac tests
+PASS**, zero failures/skips/runtime warnings, source
+`a943acc587e8e9d330a6a23d6092325ec87fb71d24c61ebc93618e90fda073e1`.
+Checks include peer gate conflict followed immediately by new ink, code-note
+refresh/file changes, persistence rejection, visible first Pencil after Undo,
+held Undo publication and Mac ink input. Core **47 methods in 8 suites PASS** in
+`.build/gui295-spatial-gate-core.log`; its Core inputs are unchanged by the later
+native refresh fix. The two existing 100,000-action addressed workloads retain
+bounded SQL work: append/Undo/echo **1,997 / 1,761 / 74 VM steps** and addressed
+read **98 steps**. These are storage observations, not gesture latency.
+
+This prerequisite does not implement the remaining mixed Redo branch. No new
+production pair was built or installed; the isolated iPad test app was removed.
+Human Pencil, system-frame measurements and full GUI-295 acceptance remain open.
+
 ## September 23 — GUI-295, deliberate object pickup instead of accidental navigation edits
 
 An unselected element now requires a quiet **250 ms** finger hold before the

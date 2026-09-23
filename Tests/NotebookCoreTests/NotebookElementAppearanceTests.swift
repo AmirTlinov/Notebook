@@ -139,7 +139,7 @@ import Testing
     #expect(try reopened.currentReadCursor() == cursor)
     let undo = try page.prepareInkChange(.setActive([action.id],false),stamp:.init(counter:12,actor:actor))
     let undone = page.publishInkChange(undo); #expect(undone); try reopened.savePage(page)
-    try reopened.commitSpatialInk(.state(actionID:spatial.id,creationStamp:spatial.stamp,isActive:false,
+    try reopened.commitSpatialInk(.state(actionID:spatial.id,creationStamp:spatial.stamp,expectedStateStamp: spatial.stateStamp, isActive:false,
       stateStamp:.init(counter:13,actor:actor),journalStamp:.init(counter:13,actor:actor)))
     #expect(try reopened.readElementErasures(on:.page(pageID),elementID:"box").isEmpty)
     #expect(try reopened.readElementErasures(on:surface,elementID:"box").isEmpty)

@@ -345,10 +345,11 @@ final class SpatialInkHandoffTests: XCTestCase {
     let surface = SurfaceID.board(fixture.childID)
     let ids = fixture.journal.actions.filter { $0.spans.contains { $0.surface == surface } }.map(\.id)
     for id in ids {
+      let source = try XCTUnwrap(fixture.journal.actions.first { $0.id == id })
       XCTAssertTrue(fixture.journal.deactivate(id, actor: fixture.actor))
       let action = try XCTUnwrap(fixture.journal.actions.first { $0.id == id })
       let command = NotebookSpatialInkCommand.state(actionID: id, creationStamp: action.stamp,
-        isActive: false, stateStamp: action.stateStamp, journalStamp: fixture.journal.stamp)
+        expectedStateStamp: source.stateStamp, isActive: false, stateStamp: action.stateStamp, journalStamp: fixture.journal.stamp)
       _ = try await fixture.queue.submit { try $0.commitSpatialInk(command) }
     }
     let empty = try await fixture.registry.prepareSceneInk(plan: fixture.cohort.plan,

@@ -70,6 +70,7 @@ extension NotebookStore {
               try accepted.hasSameInkMeasurements(as: spans) else { throw NotebookStorageError.transactionConflict }
           }
           _ = try publishSpatialInk(.state(actionID: id, creationStamp: header.stamp,
+            expectedStateStamp: previous.stateStamp,
             isActive: header.isActive, stateStamp: header.stateStamp, journalStamp: clock), origin: .replication)
         } else {
           guard let spans, spans.address == spansAddress, spans.parent == actionAddress,

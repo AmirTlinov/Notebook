@@ -21,6 +21,14 @@ their inactive-wins rule until an explicit versioned gate replaces it. Equal
 stamps with opposite states conflict; a delayed archive cannot revive a contact.
 Row position is an order index, not mutable author content.
 
+Spatial ink on boards, covers and code fragments follows the same native gate
+rule. Each inverse supplies its exact prior `stateStamp`; a higher contact clock
+does not authorize overwriting a peer's intervening state. Repeating an append
+cannot change an existing gate. Only replication merges independent causal
+states. A rejected native inverse releases the write queue and reconciles the
+accepted source; it is not a retained storage failure. Code annotations coalesce
+refresh requests without losing one behind an older read or a live contact.
+
 `InkMeasurements` is the immutable accepted body: a shared relation tree, not a
 second representation beside a retained flat array. `NotebookInk/3` and spatial
 journal 2 persist its bounded NIM1 graph with exact IEEE fields, repeat exits and

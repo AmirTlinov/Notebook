@@ -39,7 +39,7 @@ struct NotebookCodeDiscussionTests {
     #expect(source.payload["ink"]?.array.count == 1)
     #expect(source.payload["link"]?.string == NotebookCodeLink.fragment(fragment.id).url.absoluteString)
     let undo = VersionStamp(counter: 3, actor: author)
-    _ = try store.commitCodeInk(fragment: fragment, command: .state(actionID: stroke.id, creationStamp: stroke.stamp, isActive: false, stateStamp: undo, journalStamp: undo))
+    _ = try store.commitCodeInk(fragment: fragment, command: .state(actionID: stroke.id, creationStamp: stroke.stamp, expectedStateStamp: stroke.stateStamp, isActive: false, stateStamp: undo, journalStamp: undo))
     #expect(try store.referenceRevision(target: reference.target) != reference.revision)
     #expect(try store.attentionEvidence(contextID: context.id, referenceID: reference.id) == source)
     #expect(try NotebookStore(root: root).hasAttentionEvidence(contextID: context.id))

@@ -65,7 +65,7 @@ struct SpatialInkReplicationTests {
       try bounded(b) { _ = try b.applyRemoteChange(appended, peerID: actor) }
       let originalRows = try b.storedFragments(address: address(stroke.id))
       let state = VersionStamp(counter: 2, actor: actor)
-      _ = try a.commitSpatialInk(.state(actionID: stroke.id, creationStamp: stroke.stamp, isActive: false, stateStamp: state, journalStamp: state))
+      _ = try a.commitSpatialInk(.state(actionID: stroke.id, creationStamp: stroke.stamp, expectedStateStamp: stroke.stateStamp, isActive: false, stateStamp: state, journalStamp: state))
       let undo = try a.changeJournal(after: 2)[0]
       try stage(undo, a, b)
       try bounded(b) { _ = try b.applyRemoteChange(undo, peerID: actor) }
@@ -163,7 +163,7 @@ struct SpatialInkReplicationTests {
       let old = try b.storedFragments(address: address(strokes[0].id))
       let state = VersionStamp(counter: 132, actor: actor)
       _ = try a.commitSpatialInk(.state(actionID: strokes[0].id, creationStamp: strokes[0].stamp,
-        isActive: false, stateStamp: state, journalStamp: state))
+        expectedStateStamp: strokes[0].stateStamp, isActive: false, stateStamp: state, journalStamp: state))
       try deliver(a.changeJournal(after: 2)[0], a, b, actor)
       let kept = try b.storedFragments(address: address(strokes[1].id)), cursor = try b.currentChangeCursor()
       let root = try NotebookRecordCodec.encode(.encode(SpatialInkJournal(stamp: strokes[0].stamp)), file: "spatial-ink.json").first!

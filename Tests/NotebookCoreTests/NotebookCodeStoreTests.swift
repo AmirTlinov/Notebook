@@ -66,7 +66,7 @@ struct NotebookCodeStoreTests {
       #expect(Set(ink.actions.map(\.id)) == [first.id, id])
       let undoStamp = ink.stamp.advanced(by: human)!
       _ = try store.commitCodeInk(fragment: fragment, command: .state(actionID: first.id,
-        creationStamp: first.stamp, isActive: false, stateStamp: undoStamp, journalStamp: undoStamp))
+        creationStamp: first.stamp, expectedStateStamp: first.stateStamp, isActive: false, stateStamp: undoStamp, journalStamp: undoStamp))
       let later = action(fragment, actor: human, counter: undoStamp.counter + 1)
       _ = try store.commitCodeInk(fragment: fragment, command: .append(later, journalStamp: later.stamp))
       _ = try store.undoCollaborationAction(receipt.id, actor: agent)
@@ -145,7 +145,7 @@ struct NotebookCodeStoreTests {
       #expect(try b.codeAnnotation(fragment.id) == a.codeAnnotation(fragment.id))
       let stamp = VersionStamp(counter: 10, actor: actor)
       _ = try a.commitCodeInk(fragment: fragment, command: .state(actionID: contact.id,
-        creationStamp: contact.stamp, isActive: false, stateStamp: stamp, journalStamp: stamp))
+        creationStamp: contact.stamp, expectedStateStamp: contact.stateStamp, isActive: false, stateStamp: stamp, journalStamp: stamp))
       try deliver(); try deliver()
       #expect(try b.codeAnnotation(fragment.id)?.ink.actions.first?.isActive == false)
       #expect(try b.codeAnnotation(fragment.id)?.ink.actions.first?.spans == contact.spans)

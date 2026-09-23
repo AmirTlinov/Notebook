@@ -2455,6 +2455,7 @@ final class NotebookAppModel {
     }
 
     scheduleSpatialInkSave(.state(actionID: action.id, creationStamp: action.stamp,
+      expectedStateStamp: source.stateStamp,
       isActive: action.isActive, stateStamp: action.stateStamp, journalStamp: journal.stamp))
     showCue("Отменено")
   }
@@ -5255,7 +5256,9 @@ final class NotebookAppModel {
   }
 
   private func scheduleSpatialInkSave(_ command: NotebookSpatialInkCommand) {
-    persistence.enqueue(owner: .spatialInk(command.expectedResult.actionID)) {
+    persistence.enqueue(owner: .spatialInk(command.expectedResult.actionID), onRejected: { [weak self] error in
+      self?.showCue(error.localizedDescription)
+    }) {
       try $0.commitSpatialInk(command) != command.expectedResult
     }
   }

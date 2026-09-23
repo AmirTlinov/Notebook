@@ -5,6 +5,51 @@ import NotebookCore
 
 @MainActor
 final class NotebookCodeAnnotationsTests: XCTestCase {
+  func testStaleInverseWithALaterReservationClockCannotReplaceAPeerOrBlockNewInk() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = NotebookStore(root: root), actor = UUID(), queue = NotebookPersistenceQueue(store: store)
+    _ = try store.initializeWorkspace(actor: actor, pageSize: .init(width: 834, height: 1194))
+    let notes = NotebookCodeAnnotations(persistence: queue, author: actor)
+    defer { notes.stop() }
+    let file = NotebookFileAddress(computer: UUID(), project: "demo", root: "/code", path: "gate.py")
+    await notes.select(file)
+    func reserve() throws -> NotebookCodeFragment {
+      try XCTUnwrap(notes.reserve(file: file, source: "code", offset: 0, text: "code", width: 600, height: 500, fontSize: 15))
+    }
+    func stroke() -> PageInkAction {
+      .init(tool: .pen, samples: [.init(point: .init(x: 30, y: 40), timeOffset: 0,
+        width: 3, opacity: 1, force: 1, azimuth: 0, altitude: 1)])
+    }
+    let fragment = try reserve(), first = stroke()
+    notes.accept(first, fragment: fragment, originY: 0)
+    let initialSaved = await notes.flush(); XCTAssertTrue(initialSaved)
+    notes.show([fragment.id])
+    // Cancelled reservations advance the contact clock, never the history.
+    // They cannot grant an old Undo authority over a newer peer gate.
+    for _ in 0..<4 { _ = try reserve(); notes.cancelContact() }
+    let source = try XCTUnwrap(store.codeAnnotation(fragment.id)?.ink.actions.first)
+    let peer = UUID()
+    var previous = source.stateStamp
+    for active in [false, true] {
+      let stamp = try XCTUnwrap(previous.advanced(by: peer))
+      _ = try store.commitCodeInk(fragment: fragment, command: .state(actionID: first.id, creationStamp: source.stamp,
+        expectedStateStamp: previous, isActive: active, stateStamp: stamp, journalStamp: stamp))
+      previous = stamp
+    }
+    notes.undo()
+    let next = stroke()
+    notes.accept(next, fragment: try reserve(), originY: 0)
+    let saved = await notes.flush(); XCTAssertTrue(saved, queue.failure ?? "")
+    await notes.refresh()
+    let deadline = ContinuousClock.now.advanced(by: .seconds(2))
+    while notes.annotations[fragment.id]?.ink.actions.first(where: { $0.id == first.id })?.isActive != true,
+      ContinuousClock.now < deadline { await Task.yield() }
+    XCTAssertEqual(Set(try store.codeAnnotation(fragment.id)?.ink.actions.filter(\.isActive).map(\.id) ?? []), [first.id, next.id])
+    XCTAssertEqual(notes.annotations[fragment.id]?.ink.actions.first(where: { $0.id == first.id })?.isActive, true)
+    XCTAssertEqual(queue.pendingCount, 0); XCTAssertNil(queue.failure)
+  }
+
   func testLateReviewCannotReappearAfterLeavingAndReturningToTheFile() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }

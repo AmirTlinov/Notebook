@@ -45,7 +45,7 @@ struct NotebookObservationAppearanceTests {
     }
     let undoStamp = VersionStamp(counter: 101, actor: f.actor)
     if board {
-      try f.store.commitSpatialInk(.state(actionID: id, creationStamp: stamp, isActive: false, stateStamp: undoStamp, journalStamp: undoStamp))
+      try f.store.commitSpatialInk(.state(actionID: id, creationStamp: stamp, expectedStateStamp: stamp, isActive: false, stateStamp: undoStamp, journalStamp: undoStamp))
     } else {
       var page = try f.store.loadPage(f.pageID)
       let change = try page.prepareInkChange(.setActive([id],false), stamp: undoStamp)
