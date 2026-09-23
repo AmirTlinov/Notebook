@@ -1,5 +1,26 @@
 # Verification record
 
+## September 23 — matched pair 187 installed, live readback
+
+The verified combined sources below produced signed **0.3.134 (187)** for both
+platforms, `.build/gui295-release-187/build.json`. Both installed versions were
+read back as 187; both applications launched. The installed Mac helper responds
+in the existing workspace `54349F3B-9E0A-4DEA-B990-40CAE04EF45E`.
+Installation evidence: `.build/gui295-install-187/installation.json`.
+
+The Mac was already closed; its verified bundle was replaced with an atomic
+same-volume swap, never while running. Existing database file identities/sizes
+and workspace registry bytes were unchanged before launch. iPad application
+support directories and registry metadata were preserved; no application data,
+identities or keys were deleted. The actual iPad screenshot
+`.build/gui295-install-187/ipad-shown.png` was inspected: the retained
+“Различимость” notebook has the new light cover, readable title/ТЕТРАДЬ and clean
+outline. Mac screen observation remains unavailable with ScreenCaptureKit
+`-3811` (CUA `-10005`); process/version and installed-helper readback are not
+substitutes for a Mac screenshot. This is installed-pair and shown-iPad evidence,
+not human Pencil, forward-latency or full-system acceptance. Native item history
+also remains open in GUI-295.
+
 ## September 23 — GUI-295/GUI-297 integrated pair input 187
 
 The bounded-delivery slice and both verified cover changes are integrated without
