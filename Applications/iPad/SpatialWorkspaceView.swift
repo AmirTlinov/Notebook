@@ -325,12 +325,12 @@ struct SpatialWorkspaceView: View {
           let hit=selected == nil ? NotebookAttentionProjection.pointContact(at:point,model:model,presence:presence,cohort:cohort) : nil
           guard let reference=selected ?? hit.flatMap({ editableReference($0,boardID:presence.boardID) }) else { return nil }
           if model.selectionSession.addingElements, !model.selectionSession.contains(reference) {
-            return SceneSelectionLift(begin:{},change:{ _ in },end:{ _ in },cancel:{})
+            return nil
           }
           let scale = max(presence.camera.scale, 0.001)
           var contactID: UUID?
           func translation(_ delta: CGPoint) -> SpatialPoint { .init(x: delta.x / scale, y: delta.y / scale) }
-          return SceneSelectionLift( begin: {
+          return SceneSelectionLift(requiresHold: selected == nil, begin: {
             if !model.selectionSession.contains(reference) { model.selectElement(reference) }
             contactID = model.beginElementManipulation(reference, kind: .move)
             if contactID != nil { UIImpactFeedbackGenerator(style: .soft).impactOccurred() }

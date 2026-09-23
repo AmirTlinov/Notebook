@@ -8,6 +8,83 @@ import XCTest
 /// model-coordinate-only oracle. Synthetic contacts are not a hardware Pencil test.
 @MainActor
 final class NotebookInteractionUXTests: XCTestCase {
+  func testUnselectedSwipeDoesNotMoveMaterialButHoldingThenDraggingDoes() async throws {
+    let scene = try await fixture(tool: .lasso), model = scene.model
+    let page = try XCTUnwrap(model.activePage), original = try XCTUnwrap(page.element(id: "ux-blue"))
+    let history = try model.store.nativeHistory(domain: .page(page.id), actor: model.actorID)
+    try await scene.readyFinger(self)
+    scene.beginFinger(.init(x: 590, y: 590))
+    XCTAssertNil(model.selectionSession.element)
+    scene.moveFinger(.init(x: 590, y: 620), expectsManipulation: false)
+    try await Task.sleep(for: .milliseconds(320))
+    XCTAssertNil(model.selectionSession.manipulation, "A stopped navigation contact cannot acquire the object")
+    scene.endFinger()
+    XCTAssertEqual(model.activePage?.element(id: original.id)?.frame, original.frame)
+    try await shown("swipe-preserves-unselected-object", scene, since: .now, [
+      (.init(x: 590, y: 590), .blue), (.init(x: 590, y: 790), .paper)])
+
+    try await scene.readyFinger(self)
+    scene.beginFinger(.init(x: 590, y: 590))
+    try await Task.sleep(for: .milliseconds(320))
+    XCTAssertNotNil(model.selectionSession.manipulation, "The quiet hold picks up without a second down event")
+    let start = ContinuousClock.now
+    scene.moveFinger(.init(x: 590, y: 790))
+    let probes: [(CGPoint, NotebookUXObservation.Color)] = [
+      (.init(x: 590, y: 590), .paper), (.init(x: 590, y: 790), .blue), (.init(x: 350, y: 330), .red)]
+    try await shown("held-pickup-moves-the-body", scene, since: start, probes)
+    let released = ContinuousClock.now; scene.endFinger()
+    try await remainsShown("held-pickup-keeps-the-drop", scene, since: released, probes)
+    let saved = await model.finishPendingPersistence(); XCTAssertTrue(saved)
+    XCTAssertEqual(try model.store.nativeHistory(domain: .page(page.id), actor: model.actorID).count, history.count + 1)
+  }
+
+  func testSecondFingerCancelsHeldPreviewWithoutSavingMovementOrUndo() async throws {
+    let scene = try await fixture(tool: .lasso), model = scene.model
+    func capsule(in view: UIView) -> UIView? {
+      if view.accessibilityIdentifier == "notebook-context-menu" { return view }
+      return view.subviews.lazy.compactMap { capsule(in: $0) }.first
+    }
+    let actions = try XCTUnwrap(capsule(in: scene.window))
+    let page = try XCTUnwrap(model.activePage), original = try XCTUnwrap(page.element(id: "ux-blue"))
+    let history = try model.store.nativeHistory(domain: .page(page.id), actor: model.actorID)
+    try await scene.readyFinger(self)
+    scene.beginFinger(.init(x: 590, y: 590))
+    try await Task.sleep(for: .milliseconds(320))
+    scene.moveFinger(.init(x: 590, y: 790))
+    try await shown("held-before-pinch", scene, since: .now, [
+      (.init(x: 590, y: 590), .paper), (.init(x: 590, y: 790), .blue)])
+    let second = UXTouch(window: scene.window, kind: .direct)
+    second.point = CGPoint(x: 690, y: 590).applying(scene.pageToWindow)
+    second.sourceView = scene.window.hitTest(second.point, with: scene.event)
+    let cancellation = ContinuousClock.now
+    scene.observer.touchesBegan([second], with: scene.event)
+    scene.finger.touchesBegan([second], with: scene.event)
+    XCTAssertNil(model.selectionSession.manipulation)
+    second.touchPhase = .ended
+    scene.observer.touchesEnded([second], with: scene.event)
+    scene.moveFinger(.init(x: 590, y: 820), expectsManipulation: false)
+    XCTAssertNil(model.selectionSession.manipulation, "The remaining pinch finger cannot resume the drag")
+    try await Task.sleep(for: .milliseconds(16))
+    XCTAssertTrue(actions.isHidden, "Cancelling into navigation must not reopen actions under the remaining finger")
+    var observations: [String] = []
+    try await assertUX("pinch-cancels-only-the-preview", since: cancellation, window: scene.window) {
+      let capture = ContinuousClock.now
+      let correct = try scene.pixels([(.init(x: 590, y: 590), .blue), (.init(x: 590, y: 790), .paper)])
+      let end = ContinuousClock.now
+      let row = "correct=\(correct) capture=\(capture.duration(to: end)) since-cancel=\(cancellation.duration(to: end))"
+      observations.append(row); print("PICKUP_CANCEL_FRAME \(row)")
+      return correct
+    }
+    let timing = XCTAttachment(string: observations.joined(separator: "\n"))
+    timing.name = "pickup-cancel-frame-timing"; timing.lifetime = .keepAlways; add(timing)
+    scene.endFinger()
+    let saved = await model.finishPendingPersistence(); XCTAssertTrue(saved)
+    try await assertUX("pickup-actions-return-after-all-fingers-lift", since: .now,
+      budget: NotebookUXObservation.selection) { !actions.isHidden }
+    XCTAssertEqual(model.activePage?.element(id: original.id)?.frame, original.frame)
+    XCTAssertEqual(try model.store.nativeHistory(domain: .page(page.id), actor: model.actorID), history)
+  }
+
   func testColdAndWarmBoardEntryShowDestinationMaterialWithinBudget() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("board-opening-ux-\(UUID())")
     let store = NotebookStore(root: root), actor = UUID()
@@ -152,6 +229,10 @@ final class NotebookInteractionUXTests: XCTestCase {
     // The next interaction after source retirement must not rebuild cold masks.
     model.selectDrawingTool(.lasso)
     model.drawingToolSettings.lassoMode = .elements
+    try await scene.readyFinger(self)
+    // This is now an ordinary unselected object, not the still-selected cut.
+    // Explicitly select it before testing the immediate next drag.
+    scene.beginFinger(.init(x: 230, y: 550)); scene.endFinger()
     try await scene.readyFinger(self)
     scene.beginFinger(.init(x: 230, y: 550))
     released = .now; scene.moveFinger(.init(x: 330, y: 550))

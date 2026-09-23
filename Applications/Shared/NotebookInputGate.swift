@@ -18,7 +18,7 @@ final class NotebookInputGate {
   enum ContactKind { case finger, pencil }
   enum FingerContactOwner: Equatable {
     case scene
-    /// A native object reserves this single-finger sequence at touchdown. A
+    /// Selected material or an explicit pickup reserves this finger. A
     /// second finger may navigate, but never revives the cancelled object drag.
     case sceneObject
     /// A recognized Undo hold changes material; it does not freeze the scene
@@ -39,7 +39,13 @@ final class NotebookInputGate {
   // Identity only: neither a UITouch nor its native view is retained. The
   // window contact observer retires these claims at lift/cancellation.
   private var fingerContactOwners: [ObjectIdentifier: FingerContactOwner] = [:]
+  private var fingerSequenceHadMultipleContacts = false
   var admittedFingerContactCount: Int { fingerContactOwners.count }
+  /// A remaining finger after zoom is not a fresh pickup, even if another
+  /// recognizer has already reset. Only the physical observer ends a sequence.
+  var permitsObjectPickup: Bool {
+    permitsNewContact && !hasActivePencil && !fingerSequenceHadMultipleContacts
+  }
   var hasSceneObjectContact: Bool { fingerContactOwners.values.contains(.sceneObject) }
   var hasOnlyHistoryContacts: Bool {
     !hasActivePencil && fingerContactOwners.count == 2
@@ -62,10 +68,14 @@ final class NotebookInputGate {
     }
   }
 
-  /// Selection refines a passive scene hit before movement. Native controls
+  /// Selection refines a selected hit or a deliberate pickup. Native controls
   /// cannot be claimed, and only the window contact observer retires the claim.
   func claimSceneObjectContact(_ contact: ObjectIdentifier) {
-    guard fingerContactOwners[contact] == .scene else { return }
+    guard permitsObjectPickup else { return }
+    switch fingerContactOwners[contact] {
+    case .scene?, .webLink?: break
+    default: return
+    }
     fingerContactOwners[contact] = .sceneObject
   }
 
@@ -84,18 +94,23 @@ final class NotebookInputGate {
     if let owner = fingerContactOwners[contact] { return owner }
     let owner = resolve()
     fingerContactOwners[contact] = owner
+    if fingerContactOwners.count > 1 { fingerSequenceHadMultipleContacts = true }
     return owner
   }
 
   func endFingerContacts(_ contacts: Set<ObjectIdentifier>) {
     for contact in contacts { fingerContactOwners[contact] = nil }
+    if fingerContactOwners.isEmpty { fingerSequenceHadMultipleContacts = false }
   }
 
   func transferFingerContacts(_ contacts: Set<ObjectIdentifier>, to next: NotebookInputGate) {
+    let hadMultipleContacts = fingerSequenceHadMultipleContacts
     for contact in contacts {
       guard let owner = fingerContactOwners.removeValue(forKey: contact) else { continue }
       _ = next.fingerContactOwner(for: contact) { owner }
+      if hadMultipleContacts { next.fingerSequenceHadMultipleContacts = true }
     }
+    if fingerContactOwners.isEmpty { fingerSequenceHadMultipleContacts = false }
   }
   private var controlRegions: [UUID: @MainActor (CGPoint, ContactKind) -> Bool] = [:]
   private var pageFinishers: [UUID: NotebookInputFinisher] = [:]

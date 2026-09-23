@@ -2,8 +2,8 @@ import SwiftUI
 import UIKit
 
 /// Finger selection observes the existing scene without an overlay that can
-/// intercept Pencil. Objects move after drag slop; blank paper belongs to
-/// navigation. Time spent holding a finger never creates a selection.
+/// intercept Pencil. Selected material moves directly; other material must be
+/// picked up with a quiet hold. Motion before pickup belongs to navigation.
 /// A second finger or Pencil cancels selection.
 struct NotebookSelectionGesture: UIViewRepresentable {
   let inputGate: NotebookInputGate
@@ -66,6 +66,7 @@ struct NotebookSelectionGesture: UIViewRepresentable {
 /// Frozen callbacks bind one finger to its original owner and coordinate scale.
 /// NotebookSelectionSession owns the current target and unsaved translation.
 struct SceneSelectionLift {
+  var requiresHold = false
   let begin: () -> Void
   let change: (CGPoint) -> Void
   let end: (CGPoint) -> Void
@@ -84,12 +85,16 @@ final class SceneSelectionRecognizer: UIGestureRecognizer {
   private var dragging = false
   private var nativeTapOwner: ObjectIdentifier?
   private var revision: UInt64?
+  private var holdTask: Task<Void, Never>?
+  private static let pickupDelay = Duration.milliseconds(250)
+  private static let movementThreshold: CGFloat = 4
   override init(target: Any?, action: Selector?) {
     super.init(target: target, action: action)
     allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
     cancelsTouchesInView = false; delaysTouchesBegan = false; delaysTouchesEnded = false
   }
   convenience init() { self.init(target: nil, action: nil) }
+  isolated deinit { holdTask?.cancel() }
   override func canPrevent(_ preventedGestureRecognizer: UIGestureRecognizer) -> Bool {
     if lift != nil, state == .began || state == .changed,
       let scope = view, let other = preventedGestureRecognizer.view,
@@ -111,6 +116,7 @@ final class SceneSelectionRecognizer: UIGestureRecognizer {
   }
   override func canBePrevented(by preventingGestureRecognizer: UIGestureRecognizer) -> Bool { false }
   func cancelSelection() {
+    holdTask?.cancel(); holdTask = nil
     touch = nil
     if dragging { dragging = false; lift?.cancel() }
     lift = nil
@@ -128,36 +134,62 @@ final class SceneSelectionRecognizer: UIGestureRecognizer {
     if let gate, case .webLink(let owner) = NotebookSceneFingerRouting.owner(of: first, gate: gate) {
       nativeTapOwner = owner
     } else { nativeTapOwner = nil }
+    guard gate?.permitsObjectPickup == true else { cancelSelection(); return }
     lift = onLift?(start)
-    // A native link keeps its tap. Only actual movement takes its contact.
+    // A native link keeps its tap until this material is actually picked up.
     cancelsTouchesInView = nativeTapOwner != nil
     if nativeTapOwner != nil && lift == nil { cancelSelection(); return }
-    if lift != nil {
+    if lift?.requiresHold == true {
+      holdTask = Task { [weak self] in
+        do { try await Task.sleep(for: Self.pickupDelay) } catch { return }
+        guard !Task.isCancelled, let self, let touch = self.touch else { return }
+        let point = touch.location(in: self.view)
+        guard hypot(point.x - self.windowStart.x, point.y - self.windowStart.y) < Self.movementThreshold else {
+          self.cancelSelection(); return
+        }
+        self.beginLift()
+      }
+    } else if lift != nil {
       gate?.claimSceneObjectContact(ObjectIdentifier(first))
       if nativeTapOwner == nil { state = .began }
     }
   }
+  private func beginLift() {
+    guard !dragging, let touch, let lift, let revision,
+      gate?.acceptsFingerSequence(revision) == true, gate?.permitsObjectPickup == true else {
+      cancelSelection(); return
+    }
+    holdTask?.cancel(); holdTask = nil
+    gate?.claimSceneObjectContact(ObjectIdentifier(touch))
+    dragging = true
+    if state == .possible { state = .began }
+    lift.begin()
+  }
   override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent) {
-    guard let touch, touches.contains(touch), let revision, gate?.acceptsFingerSequence(revision) == true else { cancelSelection(); return }
+    guard let touch, touches.contains(touch), let revision, gate?.acceptsFingerSequence(revision) == true,
+      gate?.permitsObjectPickup == true else { cancelSelection(); return }
     let point = touch.location(in:view)
     let delta = CGPoint(x:point.x-windowStart.x,y:point.y-windowStart.y)
-    if !dragging, let lift, hypot(delta.x,delta.y) >= 4 {
-      dragging = true; if state == .possible { state = .began }; lift.begin()
+    if !dragging, hypot(delta.x,delta.y) >= Self.movementThreshold {
+      guard let lift, !lift.requiresHold else { cancelSelection(); return }
+      beginLift()
     }
-    guard dragging else {
-      if lift == nil, hypot(delta.x,delta.y) > 8 { cancelSelection() }
-      return
-    }
+    guard dragging else { return }
     state = .changed
     lift?.change(delta)
   }
   override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent) {
-    guard let touch, touches.contains(touch), let revision, gate?.acceptsFingerSequence(revision) == true else { cancelSelection(); return }
+    guard let touch, touches.contains(touch), let revision, gate?.acceptsFingerSequence(revision) == true,
+      gate?.permitsObjectPickup == true else { cancelSelection(); return }
+    holdTask?.cancel(); holdTask = nil
     let end = touch.location(in: coordinateView)
+    let point = touch.location(in: view)
+    if !dragging, hypot(point.x - windowStart.x, point.y - windowStart.y) >= Self.movementThreshold {
+      cancelSelection(); return
+    }
     self.touch = nil
     if dragging, let lift {
       self.lift = nil; dragging = false
-      let point = touch.location(in:view)
       lift.end(CGPoint(x:point.x-windowStart.x,y:point.y-windowStart.y))
     } else if nativeTapOwner != nil {
       self.lift = nil; state = .failed; return
@@ -168,7 +200,7 @@ final class SceneSelectionRecognizer: UIGestureRecognizer {
     state = .ended
   }
   override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent) { cancelSelection() }
-  override func reset() { super.reset(); touch = nil; revision = nil; nativeTapOwner = nil; cancelsTouchesInView = false; if dragging { dragging = false; lift?.cancel() }; lift = nil }
+  override func reset() { super.reset(); holdTask?.cancel(); holdTask = nil; touch = nil; revision = nil; nativeTapOwner = nil; cancelsTouchesInView = false; if dragging { dragging = false; lift?.cancel() }; lift = nil }
 }
 
 /// A window-backed display link supplies an opportunity to inspect the current

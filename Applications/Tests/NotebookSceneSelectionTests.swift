@@ -47,7 +47,7 @@ import XCTest
     XCTAssertEqual(begins,1); XCTAssertEqual(drops,1); XCTAssertEqual(delta,.init(x:40,y:60))
   }
 
-  func testLinkKeepsItsTapAndOnlyDraggingLiftsItsMaterial() async throws {
+  func testLinkKeepsItsTapAndHoldingLiftsItsMaterial() async throws {
     let gate = NotebookInputGate(), recognizer = SceneSelectionRecognizer(), touch = SelectionTouch()
     let view = UIView(); view.addGestureRecognizer(recognizer); recognizer.gate = gate
     let content = UIView(), neighbour = UIView()
@@ -56,7 +56,7 @@ import XCTest
     content.addGestureRecognizer(nativeHold); neighbour.addGestureRecognizer(neighbourHold)
     var begins = 0, drops = 0
     recognizer.onPoint = { _, _ in XCTFail("The original link owns a short tap") }
-    recognizer.onLift = { _ in .init(begin: { begins += 1 }, change: { _ in }, end: { _ in drops += 1 }, cancel: {}) }
+    recognizer.onLift = { _ in .init(requiresHold: true, begin: { begins += 1 }, change: { _ in }, end: { _ in drops += 1 }, cancel: {}) }
     func begin() {
       _ = gate.fingerContactOwner(for: ObjectIdentifier(touch)) { .webLink(ObjectIdentifier(view)) }
       recognizer.touchesBegan([touch], with: UIEvent())
@@ -67,9 +67,11 @@ import XCTest
     // UIKit may already have reset .failed to .possible; observe the effects,
     // not a terminal state that the framework is free to retire immediately.
     XCTAssertEqual(begins, 0); XCTAssertEqual(drops, 0)
+    gate.endFingerContacts([ObjectIdentifier(touch)])
     recognizer.isEnabled = false; recognizer.isEnabled = true
-    begin(); try await Task.sleep(for: .milliseconds(250))
-    XCTAssertEqual(begins,0)
+    try await Task.sleep(for: .milliseconds(16))
+    begin(); try await Task.sleep(for: .milliseconds(320))
+    XCTAssertEqual(begins,1)
     touch.point.x += 20; recognizer.touchesMoved([touch],with:UIEvent())
     XCTAssertTrue(recognizer.cancelsTouchesInView)
     XCTAssertTrue(recognizer.canPrevent(nativeHold), "The lifted material cannot also select text or open a link menu")

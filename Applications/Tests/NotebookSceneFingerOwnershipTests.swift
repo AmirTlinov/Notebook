@@ -23,7 +23,10 @@ final class NotebookSceneFingerOwnershipTests: XCTestCase {
     gate.releaseHistoryContacts(pair)
     gate.endPencilAction(source: pencil)
     XCTAssertFalse(gate.hasOnlyHistoryContacts, "A cancelled pair does not resume after Pencil")
+    gate.endFingerContacts(pair)
+    _ = gate.fingerContactOwner(for: first) { .scene }
     gate.claimSceneObjectContact(first)
+    _ = gate.fingerContactOwner(for: second) { .scene }
     gate.claimHistoryContacts(pair)
     XCTAssertFalse(gate.hasOnlyHistoryContacts, "An object manipulation is not an Undo hold")
     XCTAssertEqual(gate.fingerContactOwner(for: first) { .scene }, .sceneObject)

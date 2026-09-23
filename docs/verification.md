@@ -1,5 +1,40 @@
 # Verification record
 
+## September 23 — GUI-295, deliberate object pickup instead of accidental navigation edits
+
+An unselected element now requires a quiet **250 ms** finger hold before the
+existing selection recognizer acquires its material. Travel of **4 screen points**
+before pickup yields the contact to navigation permanently; stopping that swipe
+cannot later acquire the object. A short tap selects, while an already selected
+element or lasso region still moves immediately. Links retain their short tap.
+The same frozen target and window-space translation survive view publications.
+
+The existing contact ledger remembers a finger pair until every contact lifts,
+including a gate transfer. A second finger cancels the manipulation preview
+without saving movement or adding Undo; the remaining finger cannot restart it.
+Resize handles use that same admission. Cancelling into navigation also keeps
+the action capsule hidden until the sequence ends, rather than reopening it
+under the fingers. This fixed the newly reproduced visual-budget failure:
+correct cancellation initially took **145–153 ms** to observe, including a
+**129 ms** capture with the reappearing glass capsule. Final observation was
+**41.55 ms**, including **24.10 ms** capture; held movement was **58.99 ms**.
+The existing **100 ms** window-observation ceiling was not increased. These are
+bounded synthetic native observations, not hardware input-to-photon timings.
+
+Final `.build/gui295-object-pickup-checked-v3/`: **46 physical-iPad tests PASS**,
+zero failures/skips/runtime warnings, source
+`5d63785b5ad7929b07fb94ad954e8e1dedc01f20774ad4a757b40239c4e5b642`.
+The scope includes the mounted whole-object and cold-lasso pixel scenarios,
+pickup/cancellation/history, both navigation delivery orders, Pencil takeover,
+native controls and original-contact identity. Earlier failed attempts are
+retained separately; fixtures now retire native contacts and explicitly select
+the ordinary object after the lasso has already been dismissed.
+
+No production release or pair installation is claimed for this change. The
+isolated native-test app was installed for verification and removed afterwards;
+the user's installed iPad remains **185**, Mac **180**. Human gesture acceptance
+and the wider GUI-295 performance/release conditions remain open.
+
 ## September 23 — GUI-295, causal page-ink visibility and exact repeat material (187)
 
 The retained page action now owns its causal visibility, independent of its

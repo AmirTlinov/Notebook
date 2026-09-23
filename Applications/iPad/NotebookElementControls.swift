@@ -33,6 +33,8 @@ struct NotebookElementControls: UIViewRepresentable {
 
   func makeUIView(context: Context) -> NotebookSelectionControlsView { .init(gate: model.inputGate,contextMenus:contextMenus) }
   func updateUIView(_ view: NotebookSelectionControlsView, context: Context) {
+    let suppressActions = model.selectionSession.manipulation != nil
+      || (model.inputIsActive && !model.inputGate.permitsObjectPickup)
     let isRegion=model.selectionSession.region?.reference == reference
     var graphic = isRegion ? nil : model.graphicElement(reference)
     if let contact = model.selectionSession.manipulation, contact.reference == reference {
@@ -42,7 +44,7 @@ struct NotebookElementControls: UIViewRepresentable {
     let isGroup=model.isElementGroup(reference)
     view.graphic = graphic
     view.configure(selectionID: selectionID, frame: frame, textWidth:model.textWidthControls(reference,screenFrame:frame,scale:scale), layout: graphic?.connection == nil ? nil : model.graphicLayout(reference), scale:scale,
-      hasLabel: !(graphic?.label.isEmpty ?? true), mode:model.selectionSession.geometryMode, manipulating: model.selectionSession.manipulation != nil,subject:isGroup ? .group : .element)
+      hasLabel: !(graphic?.label.isEmpty ?? true), mode:model.selectionSession.geometryMode, manipulating: suppressActions,subject:isGroup ? .group : .element)
     view.beginManipulation = { kind in
       guard model.selectionSession.id == selectionID,
         let contact = model.beginElementManipulation(reference, kind: kind) else { return nil }
@@ -55,7 +57,9 @@ struct NotebookElementControls: UIViewRepresentable {
     }
     // configure updates the moving handles and hides the capsule. Its actions
     // and whole-page paint order do not depend on the current contact pose.
-    guard model.selectionSession.manipulation == nil else { return }
+    // Cancelling a pickup into a pinch does not finish the physical contact.
+    // Keep its action capsule out of that navigation until all fingers lift.
+    guard !suppressActions else { return }
     view.deleteElement = {
       guard model.selectionSession.id == selectionID else { return }
       model.deleteElement(reference)
@@ -148,10 +152,12 @@ struct NotebookMultipleElementControls: UIViewRepresentable {
   let scale: Double
   func makeUIView(context: Context) -> NotebookSelectionControlsView { .init(gate:model.inputGate,contextMenus:contextMenus) }
   func updateUIView(_ view: NotebookSelectionControlsView, context: Context) {
+    let suppressActions = model.selectionSession.manipulation != nil
+      || (model.inputIsActive && !model.inputGate.permitsObjectPickup)
     view.graphic = nil; view.memberFrames = frames
     let frame = frames.reduce(CGRect.null) { $0.union($1) }
     let transforms=model.selectionSession.items.isEmpty && model.selectionSession.elements.allSatisfy { model.graphicElement($0) != nil }
-    view.configure(selectionID:selectionID,frame:frame,scale:scale,manipulating:model.selectionSession.manipulation != nil,
+    view.configure(selectionID:selectionID,frame:frame,scale:scale,manipulating:suppressActions,
       subject:.elements(frames.count),transformsSelection:transforms)
     view.beginManipulation = { kind in
       guard transforms,model.selectionSession.id == selectionID,let reference=model.selectionSession.elements.first,
@@ -163,7 +169,7 @@ struct NotebookMultipleElementControls: UIViewRepresentable {
         model.finishElementManipulation(contact,translation:.init(x:point.x/scale,y:point.y/scale))
       },cancel:{ model.cancelElementManipulation(contact) })
     }
-    guard model.selectionSession.manipulation == nil else { return }
+    guard !suppressActions else { return }
     view.editElement = nil
     view.deleteElement = { if model.selectionSession.id == selectionID { model.deleteGraphicSelection() } }
     if model.selectionSession.items.isEmpty {
@@ -600,7 +606,7 @@ final class NotebookSelectionControlsView: UIControl, UIGestureRecognizerDelegat
     // SwiftUI can report its hosting view as touch.view even over this drawn
     // handle. The window-space control registry owns admission, not that
     // implementation-specific hit-view identity; other chrome still wins.
-    guard let window = installedWindow, touch.view?.window === window, !isHidden, isEnabled,
+    guard let window = installedWindow, touch.view?.window === window, !isHidden, isEnabled, gate.permitsObjectPickup,
       !contextMenus.hasPresentedMenu,
       gate.permitsSceneContact(at:touch.location(in:window),kind:.finger,excludingControl:source),
       let revision = gate.beginFingerSequence(),
@@ -612,7 +618,7 @@ final class NotebookSelectionControlsView: UIControl, UIGestureRecognizerDelegat
   }
   func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool { true }
   @objc private func resizeChanged() {
-    guard let revision = pencilRevision, gate.acceptsFingerSequence(revision) else { cancel(); return }
+    guard let revision = pencilRevision, gate.acceptsFingerSequence(revision), gate.permitsObjectPickup else { cancel(); return }
     if pan.state == .began, let handle = pointingHandle { contact = beginManipulation?(handle.kind) }
     guard let contact else { if pan.state != .possible { cancel() }; return }
     let point = pan.location(in: installedWindow)
