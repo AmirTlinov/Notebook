@@ -278,7 +278,7 @@ final class AgentStateTests: XCTestCase {
     await model.finishPendingPersistence()
     let peer = NotebookStore(root: root.appendingPathComponent("peer")), peerID = UUID()
     try NotebookPeerFixture.copy(from: store, to: peer, peerID: model.actorID)
-    _ = try peer.deleteWorkspaceItem(itemID: documentID, actor: UUID())
+    _ = try peer.deleteTestItem(itemID: documentID, actor: UUID())
     try await NotebookPeerFixture.deliver(from: peer, to: model, peerID: peerID)
 
     let saved = await model.finishPendingPersistence()

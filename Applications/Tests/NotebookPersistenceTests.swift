@@ -426,11 +426,11 @@ final class NotebookPersistenceTests: XCTestCase {
     defer { try? lock.release() }
     let deletion = Task { await model.deleteItem(first) }
     let deadline = ContinuousClock.now + .seconds(2)
-    while model.workspace?.stamp.counter == counter, ContinuousClock.now < deadline {
+    while !model.isItemBeingDeleted(first), ContinuousClock.now < deadline {
       try await Task.sleep(for: .milliseconds(10))
     }
-    XCTAssertGreaterThan(try XCTUnwrap(model.workspace?.stamp.counter), counter,
-      "A suspended deletion reserves its clock before another human command")
+    XCTAssertEqual(try XCTUnwrap(model.workspace?.stamp.counter), counter,
+      "The accepted FIFO reserves deletion; the UI cannot fabricate a saved causal clock")
     XCTAssertTrue(model.isItemBeingDeleted(first))
     XCTAssertNil(model.selectNotebookPage(1, notebookID: first, expectedRoot: model.notebookPageRoot(first) ?? ""),
       "A deleted notebook cannot accept a new page behind its deletion fence")

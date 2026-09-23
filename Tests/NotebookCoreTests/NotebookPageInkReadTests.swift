@@ -132,7 +132,7 @@ struct NotebookPageInkReadTests {
       .init(kind: .createNotebook, target: board, id: UUID().uuidString,
         values: ["center": try .encode(WorldPoint.zero), "pageID": try .encode(UUID())])
     ]), actor: f.content.actor)
-    _ = try f.store.deleteWorkspaceItem(itemID: f.content.itemID, actor: f.content.actor)
+    _ = try f.store.deleteTestItem(itemID: f.content.itemID, actor: f.content.actor)
     #expect(try f.store.hasStoredValue(pageFile(f.pageID)), "Deletion retains physical sources, not read authority")
     for kind in ["pageInkActions", "pageInkAction"] {
       let query = try f.query(kind, elementID: kind == "pageInkAction" ? f.actions[0].id.uuidString : nil)

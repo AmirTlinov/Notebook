@@ -281,11 +281,11 @@ struct BoardPlacementMigrationTests {
     let added = tree.addItem(nested.item.id, to: child.id, near: .zero, actor: actor)
     #expect(added)
     try store.saveWorkspaceBundle(index: index, page: nested.page, board: tree)
-    _ = try store.deleteWorkspaceItem(itemID: nested.item.id, actor: actor)
+    _ = try store.deleteTestItem(itemID: nested.item.id, actor: actor)
     let old = try #require(try store.loadBoard(items: store.loadIndex().items).board(child.id))
     #expect(old.itemIDs.isEmpty)
     #expect(old.placements.count == 1 && old.placements[0].pose == nil)
-    _ = try store.deleteWorkspaceItem(itemID: child.id, actor: actor)
+    _ = try store.deleteTestItem(itemID: child.id, actor: actor)
     #expect(try store.readBoardNodeHeader(child.id) == nil)
     #expect(try store.loadBoard(items: store.loadIndex().items).isValid(items: store.loadIndex().items))
   }

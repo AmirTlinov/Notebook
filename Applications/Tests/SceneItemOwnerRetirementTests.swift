@@ -35,7 +35,7 @@ final class SceneItemOwnerRetirementTests: XCTestCase {
       _ = try store.saveBoardEdits(before: before, after: after)
       let transferred = try NotebookSceneState.read(store: store, presence: presence,
         viewport: presence.viewport, loadsLiveContent: false, pinnedItems: pins)
-      let deletion = try store.deleteWorkspaceItem(itemID: itemID, actor: actor)
+      let deletion = try store.deleteTestItem(itemID: itemID, actor: actor)
       let deleted = try NotebookSceneState.read(store: store, presence: presence,
         viewport: presence.viewport, loadsLiveContent: false, pinnedItems: pins)
       return (itemID, portal.id, withoutPin, pinned, transferred, deleted, deletion.cursor)
@@ -112,6 +112,11 @@ final class SceneItemOwnerRetirementTests: XCTestCase {
     let saved = await model.finishPendingPersistence()
     XCTAssertTrue(saved)
     await model.reloadExternalChanges()?.value
+    let peer = UUID(), peerStore = NotebookStore(root: model.store.root.appendingPathComponent("peer"))
+    try await model.performStoreCommand { store in
+      try NotebookPeerFixture.copy(from: store, to: peerStore, peerID: UUID())
+      _ = try peerStore.deleteTestItem(itemID: itemID, actor: peer)
+    }
     let presence = try XCTUnwrap(model.presence), pencil = UUID(), binding = UUID()
     var notices: [(UUID, UUID, UInt64)] = []
     model.bindItemOwnerObserver(owner: binding) { notices.append(($0, $1, $2)) }
@@ -120,9 +125,11 @@ final class SceneItemOwnerRetirementTests: XCTestCase {
     // The existing preparation request names the engaged physical owner. An
     // active contact prevents preparation itself, but never discards this pin.
     model.prepareComposition(presence: presence, frame: nil, pinned: [.item(itemID)], displayScale: 1)
-    let peer = UUID()
+    // Exercise publication of an already committed incoming Core receipt.
+    // The app transport admission waits for this lease and is a separate gate.
     let cursor = try await model.performStoreCommand { store in
-      try store.deleteWorkspaceItem(itemID: itemID, actor: peer).cursor
+      try NotebookPeerFixture.copy(from: peerStore, to: store, peerID: peer)
+      return try store.currentChangeCursor()
     }
     XCTAssertNil(model.reloadExternalChanges())
     XCTAssertTrue(notices.isEmpty, "A completed external SQL write cannot mutate a leased physical pose")

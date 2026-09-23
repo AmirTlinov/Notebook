@@ -158,7 +158,7 @@ struct DocumentStateReplicationTests {
 
   @Test func aDelayedStateDoesNotRecreateItsDeletedDocument() throws {
     try fixture { a, b, actor, id in
-      _ = try b.deleteWorkspaceItem(itemID: id, actor: UUID())
+      _ = try b.deleteTestItem(itemID: id, actor: UUID())
       var source = try a.loadDocumentState(id)
       let changed = source.commit(blockID: "body", value: .number(1), actor: actor)
       #expect(changed)
@@ -180,7 +180,7 @@ struct DocumentStateReplicationTests {
   @Test func addressedDeletionAuthorsTheChangedCatalogueOrderAndSurvivesReplay() throws {
     try fixture { a, b, _, id in
       let original = try b.loadIndex(), deletingActor = UUID()
-      _ = try b.deleteWorkspaceItem(itemID: id, actor: deletingActor)
+      _ = try b.deleteTestItem(itemID: id, actor: deletingActor)
       let deleted = try b.loadIndex()
       #expect(deleted.collaboration.fields["items/order"]?.stamp != original.collaboration.fields["items/order"]?.stamp)
       for change in try b.changeJournal(after: 0) { try deliver(change, b, a, deletingActor) }

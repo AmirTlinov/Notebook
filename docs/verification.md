@@ -1,5 +1,51 @@
 # Verification record
 
+## September 23 — GUI-295, native Delete and coherent history publication
+
+Native Delete now uses the retained native command and the existing lifecycle
+executor, with Undo on the surviving board. The separate item-deletion writer
+and fabricated UI clocks are removed. Its complete item extent and placement
+are captured once after accepted writes; storage retries cannot silently adopt
+later peer edits. Cold repeated Undo/Redo preserves invisible page material and
+rejects a same-valued intervening peer write. Pending move → Delete → immediate
+Undo shares one FIFO without waiting on a read queued behind that Undo.
+
+Core history/lifecycle checks passed **23 tests / 4 suites**
+(`.build/gui295-native-delete-history-final.log`). After fixing a fixture that
+assumed every replica had session presence, the affected caller/scale selection
+passed **9 tests / 8 suites** (`.build/gui295-native-delete-scale.log`). At
+100,000 real owners, 1,300,006 records and 500,001 causal fields, DELETE / UNDO /
+REDO used **14,563 / 19,646 / 14,708 SQL VM steps**, respectively
+**18.03 / 25.09 / 17.42 ms** in this local sample; the 200,000-step ceiling is
+unchanged. These are storage measurements, not display or gesture latency.
+
+The mounted Delete/Undo scenario initially failed its unchanged 100-ms visual
+ceiling (103–136 ms). Diagnosis found redundant geometry preparation after the
+coherent disk read, a second source-read handoff, and deferred hosting layout.
+Geometry now travels with that same read, material and static-pixel reuse proof
+share one transaction, and a changed content cut crosses the native layout
+boundary immediately. Camera-only samples do not force layout; publication
+versions, active-input barriers and allocation limits remain in force. Earlier
+focused checks covered whole-window cover pixels, SQL reuse proof, native/raster
+resource limits and the installed held-drop gesture; their unchanged passes
+were not repeated indiscriminately.
+
+Final evidence `.build/gui295-delete-native-191g/verification.json` binds source
+`a4c844db257cc0dc516f15f9237dae504196c59aafede19ab39d1d772be3ef60`:
+**13 physical-iPad + 4 Mac PASS**, no failures, skips or runtime warnings.
+The real mounted Delete control's callback removes the blue-ink cover while
+retaining the red-ink neighbour; two Undo/Redo cycles preserve the actual window
+pixels. Delete was observed at 136.42 ms within its 2-second initial budget;
+Undo at **95.71 / 67.61 ms**, Redo at **17.26 / 18.95 ms**, within the original
+100-ms history ceiling. Exported images were inspected in
+`.build/gui295-delete-native-191g-attachments/`. The same run covers retained
+failure/retry, stale peer basis, owner retirement, stale scene rejection and
+new content during held zoom. The isolated native-test application was removed.
+These are callback-driven native/pixel checks, not a human finger/Pencil or
+system input-to-photon measurement. Build 191 is not installed by this receipt;
+the installed pair remains 190. Code-note Redo, forward delivery latency and
+full-system/joint physical acceptance remain open.
+
 ## September 23 — GUI-298 matched pair 190 installed
 
 Commit `cdfaed9c` produced signed **0.3.134 (190)** from the verified source below.

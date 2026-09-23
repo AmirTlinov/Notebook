@@ -363,7 +363,7 @@ struct NotebookComputationTests {
       let record = try activate(store, actor, notebook, page).computation
       let input = try begin(record, store: store, actor: actor)
       let retained = try store.storedFragments(address: pageFile(page) + "#")
-      try store.deleteWorkspaceItem(itemID: notebook, actor: actor)
+      try store.deleteTestItem(itemID: notebook, actor: actor)
       let cursor = try store.currentChangeCursor()
       #expect(throws: CocoaError.self) { try store.readComputation(pageID: page, id: record.id) }
       #expect(throws: CocoaError.self) { try store.publishComputationRecognition(input.preparing(output()), actor: actor) }

@@ -187,7 +187,7 @@ final class NotebookReferenceNavigationTests: XCTestCase {
     XCTAssertEqual(model.presence, requested)
     XCTAssertNotNil(model.documents[itemID])
     let actor = UUID()
-    try await model.performStoreCommand { store in _ = try store.deleteWorkspaceItem(itemID: itemID, actor: actor) }
+    try await model.performStoreCommand { store in _ = try store.deleteTestItem(itemID: itemID, actor: actor) }
     await model.reloadExternalChanges()?.value
     XCTAssertNotEqual(model.presence?.focusedItemID, itemID, "An actual SQL deletion still invalidates focus")
     XCTAssertNil(model.documents[itemID])

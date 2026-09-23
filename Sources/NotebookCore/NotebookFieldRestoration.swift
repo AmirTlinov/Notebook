@@ -359,6 +359,21 @@ extension NotebookStore {
     SHA256.hash(data: try Self.storageEncoder.encode(placement)).map { String(format: "%02x", $0) }.joined()
   }
 
+  /// Read the existing authenticated inverse proof, not another stored gate.
+  /// Both the original register and Undo's actual output include every head.
+  func nativeDeletedPlacementBasis(receipt: CollaborationReceipt, boardID: UUID, itemID: UUID) throws
+    -> (before: WorkspacePlacement, written: WorkspacePlacement)? {
+    let target = CollaborationTarget(kind: .cover, id: itemID, boardID: boardID)
+    guard receipt.undo?.lifecycleChanges?.contains(where: { $0.kind == .restoreItem && $0.target == target }) == true else { return nil }
+    let address = "collaboration/actions/" + receipt.id.uuidString.lowercased() + ".json#"
+    let field = "placement:" + placementRecordAddress(boardID: boardID, itemID: itemID)
+    guard let data = try currentSQL!.rows("SELECT value FROM action_field_restorations WHERE address=? AND field=?",
+      [.text(address), .text(field)]).first?[0].blob else { return nil }
+    let proof = try JSONDecoder().decode(LifecyclePlacementRestoration.self, from: data)
+    return try (restoredPlacement(hash: proof.restoredHash, boardID: boardID, itemID: itemID),
+      restoredPlacement(hash: proof.writtenHash, boardID: boardID, itemID: itemID))
+  }
+
   private func placementRecordAddress(boardID: UUID, itemID: UUID) -> String {
     "board.json#/boards/@" + boardID.uuidString.lowercased() + "/board/placements/@" + itemID.uuidString.lowercased()
   }

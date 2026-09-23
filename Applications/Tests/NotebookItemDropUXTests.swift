@@ -7,6 +7,53 @@ import XCTest
 /// and whole-window pixels. Synthetic contacts are not hardware-finger latency.
 @MainActor
 final class NotebookItemDropUXTests: XCTestCase {
+  func testInstalledDeleteControlAndRepeatedHistoryPreserveActualCoverInk() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("item-delete-\(UUID())")
+    let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
+    retainNotebookUntilTeardown(model, removing: root)
+    await model.start(pageSize: NotebookAppModel.defaultPageSize)
+    let board = try XCTUnwrap(model.presence?.boardID), a = try XCTUnwrap(model.workspace?.selectedItemID)
+    let aCenter = WorldPoint(x: -900, y: 0), bCenter = WorldPoint(x: 900, y: 0)
+    let b = try XCTUnwrap(model.createNotebook(at: bCenter)), local = CGPoint(x: 417, y: 800)
+    XCTAssertNotNil(model.moveItem(a, to: aCenter))
+    for (id, color) in [(a, SpatialInkColor(red: 0, green: 0.15, blue: 1)), (b, .init(red: 1, green: 0, blue: 0))] {
+      XCTAssertNotNil(model.appendSpatialInk(tool: .pen, color: color, spans: [.init(surface: .cover(id), samples: [
+        .init(point: .init(x: local.x - 30, y: local.y), timeOffset: 0, width: 80, opacity: 1, force: 1, azimuth: 0, altitude: 1),
+        .init(point: .init(x: local.x + 30, y: local.y), timeOffset: 0.1, width: 80, opacity: 1, force: 1, azimuth: 0, altitude: 1)
+      ])]))
+    }
+    let presence = SessionPresence(boardID: board, mode: .board,
+      camera: .init(center: .zero, scale: 0.25), viewport: .init(x: 1194, y: 834))
+    model.updatePresence(presence, settled: true)
+    let saved = await model.finishPendingPersistence(); XCTAssertTrue(saved)
+    let window = try await mountNotebookScene(model)
+    let left = screen(local, center: aCenter, presence: presence), right = screen(local, center: bCenter, presence: presence)
+    try await assertUX("item-delete-original-pixels", since: .now, budget: .seconds(2), window: window) {
+      try NotebookUXObservation.Pixels(window: window).matches([(left, .blue), (right, .red)])
+    }
+    model.selectWorkspaceItem(a, boardID: board)
+    try await assertUX("item-delete-installed-control", since: .now, window: window) { self.findControls(in: window)?.deleteElement != nil }
+    let controls = try XCTUnwrap(findControls(in: window)), remove = try XCTUnwrap(controls.deleteElement)
+    remove() // The installed control's real callback, not a second deletion implementation.
+    try await assertUX("item-delete-no-old-pixels", since: .now, budget: .seconds(2), window: window) {
+      try model.workspace?.item(id: a) == nil && NotebookUXObservation.Pixels(window: window).matches([(left, .paper), (right, .red)])
+    }
+    for _ in 0..<2 {
+      model.undoLastSurfaceAction()
+      let undone = await model.finishPendingPersistence(); XCTAssertTrue(undone)
+      try await assertUX("item-delete-undo-keeps-material", since: .now, window: window) {
+        try NotebookUXObservation.Pixels(window: window).matches([(left, .blue), (right, .red)])
+      }
+      let shot = XCTAttachment(image: try NotebookUXObservation.Pixels(window: window).image)
+      shot.name = "item-delete-undo-actual-window"; shot.lifetime = .keepAlways; add(shot)
+      model.redoLastSurfaceAction()
+      let repeated = await model.finishPendingPersistence(); XCTAssertTrue(repeated)
+      try await assertUX("item-delete-redo-no-resurrection", since: .now, window: window) {
+        try NotebookUXObservation.Pixels(window: window).matches([(left, .paper), (right, .red)])
+      }
+    }
+  }
+
   func testHeldCoverDropKeepsItsInkAndIsOneVisibleUndoRedo() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("item-drop-\(UUID())")
     let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
@@ -91,6 +138,11 @@ final class NotebookItemDropUXTests: XCTestCase {
   private func findFinger(in view: UIView) -> NotebookInteractionTouchView? {
     if let owner = view as? NotebookInteractionTouchView { return owner }
     return view.subviews.lazy.compactMap { self.findFinger(in: $0) }.first
+  }
+
+  private func findControls(in view: UIView) -> NotebookSelectionControlsView? {
+    if let controls = view as? NotebookSelectionControlsView, controls.window != nil, !controls.isHidden { return controls }
+    return view.subviews.lazy.compactMap { self.findControls(in: $0) }.first
   }
 }
 

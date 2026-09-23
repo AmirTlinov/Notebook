@@ -298,6 +298,7 @@ final class NotebookAppModel {
   @ObservationIgnored private var scenePreparationTask: Task<Void, Never>?
   @ObservationIgnored private var scenePreparationRequest: UInt64 = 0
   @ObservationIgnored private var scenePreparationIsCoverageOnly = false
+  @ObservationIgnored private var acceptingSceneState = false
   @ObservationIgnored private var sceneWindowTask: Task<Void, Never>?
   @ObservationIgnored private var requestedScenePresence: SessionPresence?
   @ObservationIgnored private var scenePinnedElements: [UUID: [String]] = [:]
@@ -309,7 +310,7 @@ final class NotebookAppModel {
   /// Coalesce a completed content publication before deriving the spatial
   /// read model. The old generation remains visible until the next is whole.
   private func scheduleScenePreparation(coverageOnly: Bool = false) {
-    guard !isStopped else { return }
+    guard !isStopped, !acceptingSceneState else { return }
     scenePreparationIsCoverageOnly = coverageOnly
     scenePreparationRequest &+= 1
     scenePreparationPending = true
@@ -318,7 +319,7 @@ final class NotebookAppModel {
     scenePreparationTask = Task { [weak self] in
       await Task.yield()
       guard let self else { return }
-      while !Task.isCancelled, let workspace, let boardHierarchy {
+      while !Task.isCancelled, scenePreparationPending, let workspace, let boardHierarchy {
         let request = scenePreparationRequest
         let coverageOnly = scenePreparationIsCoverageOnly
         let paperSizes = documentPaperSizes.merging(documents.mapValues(\.paperSize)) { _, live in live }
@@ -1920,70 +1921,94 @@ final class NotebookAppModel {
       // Admission is synchronous with lift; the writer FIFO now owns it.
       if !inputGate.hasActivePencil, inputGate.pencilGeneration == generation { break }
     }
-    guard !isItemBeingDeleted(itemID), let removed = workspace?.item(id: itemID),
-      let hierarchy = boardHierarchy, let ownerID = hierarchy.ownerBoardID(of: itemID),
-      let owner = hierarchy.board(ownerID) else { return false }
+    guard !isClosing, !isItemBeingDeleted(itemID), let removed = workspace?.item(id: itemID),
+      let ownerID = boardHierarchy?.ownerBoardID(of: itemID),
+      let contact = itemMoveSource(itemID, boardID: ownerID),
+      let placement = contact.placements[itemID] else { return false }
     guard max(workspaceHeader?.itemCount ?? 0, workspace?.items.count ?? 0) > 1 else {
       showCue("Один рабочий элемент должен остаться")
       return false
     }
     let loadedPageIDs = Set(removed.pageIDs).union(pageAddresses.filter { $0.key.itemID == itemID }.values)
     pendingDeletions[itemID] = loadedPageIDs
-    let actor = actorID, expected = owner.stamp
-    // Reserve the exact command clock before yielding. Edits of other visible
-    // members remain admitted and cannot reuse the deletion's causal identity.
-    if let next = expected.advanced(by: actor), var current = boardHierarchy {
-      let frontier = BoardHierarchy(rootBoardID: hierarchy.rootBoardID,
-        boards: [.init(id: ownerID, board: .init(freeItems: [], stamp: next))],
-        stamp: max(hierarchy.stamp, next))
-      current.observeCausalFrontiers(from: frontier)
-      boardHierarchy = current
-    }
-    if var current = workspace, let next = current.stamp.advanced(by: actor) {
-      current.observeCausalFrontier(next)
-      workspace = current
-    }
-    do {
-      let header = try await persistence.submit(publishesChanges: true) {
-        try $0.deleteWorkspaceItem(itemID: itemID, expected: expected, actor: actor)
+    let actor = actorID, actionID = UUID(), previous = contact.dependencies[itemID]
+    // A native Delete names the whole item. Capture its complete maintained
+    // extent once at this FIFO cut, after its accepted local writes. The second
+    // fence retains that exact basis across storage failures, never refreshing
+    // hidden peer material on retry or manufacturing a board clock in the UI.
+    let sourceRead = persistence.enqueuePreparedCommand(Task {
+      let expected: WorkspacePlacement
+      if let previous {
+        guard let saved = await previous.task.value?.placements[itemID] else {
+          throw CollaborationError("revision_conflict", "Предыдущее перемещение не было сохранено.")
+        }
+        expected = saved
+      } else { expected = placement }
+      return { (store: NotebookStore) in
+        try store.readTransaction { store in
+          guard let node = try store.readBoardItem(itemID), node.id == ownerID,
+            node.board.placements.first(where: { $0.id == itemID }) == expected,
+            let source = try store.readItemLifecycle(itemID),
+            source.item.kind == removed.kind, source.item.title == removed.title else {
+            throw CollaborationError("revision_conflict", "Выбранный предмет изменился. Повторите удаление.")
+          }
+          return (source, expected)
+        }
       }
-      completedDeletions[itemID] = header.cursor
-      itemOwnerObserver?.receive(itemID, ownerID, header.cursor)
-      scenePinnedItems = scenePinnedItems.mapValues { $0.filter { $0 != itemID } }
-      for pageID in loadedPageIDs {
-        persistence.discardPending(owner: .page(pageID))
-        pages[pageID] = nil
-        reservedDrawingCounters[pageID] = nil
-        pencilUndoHistory.discardChanges(for: .page(pageID))
+    })
+    let saved = persistence.enqueuePreparedCommand(Task {
+      let (source, placement) = try await sourceRead.value
+      let accepted = NotebookNativeCommand(deleting: source, placement: placement, actionID: actionID, actor: actor)
+      return { (store: NotebookStore) in
+        _ = try accepted.apply(to: store)
+        // Session selection is an adapter effect, never another content writer.
+        let presence = try store.loadPresence()
+        if try store.readItemHeader(itemID) == nil,
+          presence.selectedItemID == itemID, let replacement = try store.readItemHeaders(limit: 1).first {
+          try store.savePresence(presence.selecting(itemID: replacement.id, pageID: replacement.firstPageID))
+        }
+        return try store.workspaceHeader()
       }
-      pageAddresses = pageAddresses.filter { $0.key.itemID != itemID }
-      documents[removed.id] = nil
-      documentStates[removed.id] = nil
-      // The reload follows every already accepted native write. If another
-      // contact is active, keep the deleted owner guarded until publication.
-      if let task = reloadExternalChanges() { await task.value }
-      else { externalReloadPending = true }
-    } catch NotebookStoreError.boardContainsContent {
-      pendingDeletions[itemID] = nil
-      reloadExternalChanges()
-      showCue("Сначала очистите вложенную доску")
-      return false
-    } catch NotebookStorageError.transactionConflict {
-      pendingDeletions[itemID] = nil
-      reloadExternalChanges()
-      showCue("Элемент обновился. Повторите удаление")
-      return false
-    } catch {
-      pendingDeletions[itemID] = nil
-      showCue("Удаление не сохранено: \(error.localizedDescription)")
-      return false
+    }, publishesChanges: true)
+    pencilUndoHistory.recordCommand(domain: .board(ownerID), actionID: actionID)
+    collaborationReadEpoch &+= 1; collaborationContentEpoch &+= 1
+    let completion = Task { [self] in
+      defer { pendingCollaborationCommands[actionID] = nil }
+      do {
+        let header = try await saved.value
+        completedDeletions[itemID] = header.cursor
+        itemOwnerObserver?.receive(itemID, ownerID, header.cursor)
+        scenePinnedItems = scenePinnedItems.mapValues { $0.filter { $0 != itemID } }
+        for pageID in loadedPageIDs {
+          persistence.discardPending(owner: .page(pageID))
+          pages[pageID] = nil
+          reservedDrawingCounters[pageID] = nil
+          pencilUndoHistory.discardChanges(for: .page(pageID))
+        }
+        pageAddresses = pageAddresses.filter { $0.key.itemID != itemID }
+        documents[removed.id] = nil; documentStates[removed.id] = nil
+        collaborationReadEpoch &+= 1; collaborationContentEpoch &+= 1
+        // A queued Undo may already await this accepted command. Publication
+        // can follow it, but completion must not wait for a read behind Undo.
+        if reloadExternalChanges() == nil { externalReloadPending = true }
+        switch removed.kind {
+        case .notebook: showCue("Тетрадь удалена")
+        case .document: showCue("Документ удалён")
+        case .board: showCue("Доска удалена")
+        }
+        return true
+      } catch {
+        pendingDeletions[itemID] = nil
+        pencilUndoHistory.discardCommand(domain: .board(ownerID), actionID: actionID)
+        collaborationReadEpoch &+= 1; collaborationContentEpoch &+= 1
+        reloadExternalChanges(); showCue(error.localizedDescription)
+        return false
+      }
     }
-    switch removed.kind {
-    case .notebook: showCue("Тетрадь удалена")
-    case .document: showCue("Документ удалён")
-    case .board: showCue("Доска удалена")
-    }
-    return true
+    pendingCollaborationCommands[actionID] = completion
+    let deleted = await completion.value
+    if deleted, let publication = reloadExternalChanges() { await publication.value }
+    return deleted
   }
 
   /// One lift enters the same causal FIFO as ink, elements and Undo. The
@@ -4001,6 +4026,7 @@ final class NotebookAppModel {
         let epoch = collaborationReadEpoch
         let draftEpoch = documentDraftEpoch
         let elementPins = scenePinnedElements, itemPins = scenePinnedItems
+        let previousIndex = sceneIndex
         let preparedIDs = preparedNotebookPageIDs(in: presence.selectedItemID)
         let attentionID = agentFeedback.attentionID, attentionReferences = agentFeedback.attention.map(\.reference)
         #if os(iOS)
@@ -4014,13 +4040,14 @@ final class NotebookAppModel {
           let prepared = try await persistence.submit(publishesChanges: receivingDeviceID != nil) { [actor = actorID] store in
             try NotebookDiskRefresh.prepare(store: store, presence: presence, receivingDeviceID: receivingDeviceID,
               pinnedElements: elementPins, pinnedItems: itemPins, preparedPages: preparedIDs,
-              feedbackKnown: feedbackKnown, feedbackTracked: feedbackTracked, attentionReferences: attentionReferences, historyActor: actor)
+              feedbackKnown: feedbackKnown, feedbackTracked: feedbackTracked, attentionReferences: attentionReferences,
+              historyActor: actor, reusing: previousIndex)
           }
           publicationFailure = nil
           if persistence.failure == nil { persistenceFailure = publicationFailure }
           let liveDrafts = documentEditingSessions
           guard acceptExternalScene(prepared.scene, observedEpoch: epoch,
-            observedPresence: presence, itemPins: itemPins) else {
+            observedPresence: presence, itemPins: itemPins, preparedIndex: prepared.sceneIndex) else {
             if !permitsExternalScenePublication { externalReloadPending = true; return }
             diskRefreshRequested = true; continue
           }
@@ -4970,7 +4997,7 @@ final class NotebookAppModel {
       collaborationHistoryTask = nil
       switch result {
       case .success(let receipt):
-        for domain in Set(receipt.action.operations.map { PencilUndoHistory.Domain($0.target) }) {
+        for domain in receipt.action.nativeHistoryDomains {
           pencilUndoHistory.didUndoCommand(domain: domain, actionID: id)
         }
         reloadExternalChanges()
@@ -4994,7 +5021,7 @@ final class NotebookAppModel {
       collaborationHistoryTask = nil
       switch result {
       case .success(let receipt):
-        for domain in Set(receipt.action.operations.map { PencilUndoHistory.Domain($0.target) }) {
+        for domain in receipt.action.nativeHistoryDomains {
           _ = pencilUndoHistory.recordRepeatedCommand(domain: domain, originalID: id, actionID: actionID)
         }
         reloadExternalChanges()
@@ -5224,7 +5251,7 @@ final class NotebookAppModel {
   /// invalidates that read even while the old pixels are still displayed.
   @discardableResult
   func acceptExternalScene(_ state: NotebookSceneState, observedEpoch: UInt64,
-    observedPresence: SessionPresence, itemPins: [UUID: [UUID]]) -> Bool {
+    observedPresence: SessionPresence, itemPins: [UUID: [UUID]], preparedIndex: WorkspaceSceneIndex? = nil) -> Bool {
     guard permitsExternalScenePublication, observedEpoch == collaborationReadEpoch,
       let current = presence, itemPins == scenePinnedItems else { return false }
     let moving = presencePhase == .active
@@ -5236,14 +5263,27 @@ final class NotebookAppModel {
     guard moving ? (withCurrentCamera(observedPresence) == current && withCurrentCamera(state.presence) == current)
       : current == observedPresence else { return false }
     acceptItemOwnerInvalidations(state, requested: itemPins)
-    acceptSceneState(state, preservingPresence: moving ? current : nil)
+    acceptSceneState(state, preservingPresence: moving ? current : nil, preparedIndex: preparedIndex, coverageOnly: moving)
     // This refresh may advance content, but no content contact is admitted.
     // Publish its finite window now, never an old camera from the SQL read.
-    if moving { scheduleScenePreparation(coverageOnly: true) }
     return true
   }
 
-  private func acceptSceneState(_ state: NotebookSceneState, preservingPresence: SessionPresence? = nil) {
+  private func acceptSceneState(_ state: NotebookSceneState, preservingPresence: SessionPresence? = nil,
+    preparedIndex: WorkspaceSceneIndex? = nil, coverageOnly: Bool = false) {
+    acceptingSceneState = true
+    defer {
+      acceptingSceneState = false
+      if let preparedIndex {
+        scenePreparationIsCoverageOnly = coverageOnly
+        scenePreparationRequest &+= 1
+        scenePreparationPending = true
+        preparedScene = (preparedIndex, sceneIndex?.generationID != preparedIndex.generationID,
+          Dictionary(uniqueKeysWithValues: state.hierarchy.boards.map { ($0.id, $0.portalCamera) }),
+          scenePreparationRequest, coverageOnly)
+        publishPreparedSceneIfPossible()
+      } else { scheduleScenePreparation(coverageOnly: coverageOnly) }
+    }
     retainPreparedGraphicMasks(in:state)
     workspaceHeader = state.header
     sceneContentCursor = state.header.cursor

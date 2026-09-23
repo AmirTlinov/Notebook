@@ -959,9 +959,6 @@ final class SceneCompositionTiles {
         for attempt in 0..<maximumAttempts {
           try Task.checkCancellation()
           guard self?.requestID == id, permitsPreparation() else { throw CancellationError() }
-          plan = try await plan.removingEmptyTiles(source: source)
-          try Task.checkCancellation()
-          guard self?.requestID == id, permitsPreparation() else { throw CancellationError() }
           var phase = "live_source"
           var allocation = BudgetAllocation.raster
           let priorRefusal = resources.lastRasterRefusal?.generation
@@ -969,14 +966,11 @@ final class SceneCompositionTiles {
             var nativeInk: SpatialInkSceneLease?
           #endif
           do {
-            let liveData = try await source.liveData(plan: plan, presence: presence, frame: frame,
-              previous: previousLiveData)
+            let candidate = try await source.liveCandidate(plan: plan, presence: presence, frame: frame,
+              previous: previous.map { (plan: $0.plan, data: $0.liveData) }, reusing: previousLiveData)
+            let liveData = candidate.data
             previousLiveData = (plan, liveData)
-            let canCarry: Bool
-            if let previous {
-              canCarry = try await source.canCarryStaticPixels(from: previous.plan, liveData: previous.liveData,
-                to: plan, liveData: liveData)
-            } else { canCarry = false }
+            let canCarry = candidate.canCarry
             try Task.checkCancellation()
             guard self?.requestID == id, permitsPreparation() else { throw CancellationError() }
             let selected = requests.filter { plan.liveOwners.contains($0.owner) }
@@ -1104,7 +1098,9 @@ final class SceneCompositionTiles {
                 presence: presence, frame: frame, displayScale: displayScale, resources: resources),
               smaller.reductionPotential < plan.reductionPotential
             else { throw SceneRenderError.resourceLimit }
-            plan = smaller
+            // Initial preparation already proved populated coverage. Only a
+            // changed allocation candidate needs that addressed probe again.
+            plan = try await smaller.removingEmptyTiles(source: source)
           }
         }
         throw SceneRenderError.resourceLimit

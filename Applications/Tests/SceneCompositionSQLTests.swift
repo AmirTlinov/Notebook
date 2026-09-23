@@ -633,6 +633,11 @@ final class SceneCompositionSQLTests: XCTestCase {
     XCTAssertEqual(crossData.ink.actions.count, 2, "A new SQL revision reads the newly accepted contact")
     let crossesStatic = try await crossSurface.canCarryStaticPixels(from: newPlan, liveData: newData, to: crossPlan, liveData: crossData)
     XCTAssertFalse(crossesStatic, "A contact spanning a non-excluded physical owner invalidates its static pixels")
+    let reduced = try await crossSurface.liveCandidate(plan: crossPlan, presence: presence, frame: frame,
+      previous: (newPlan, newData), reusing: (crossPlan, crossData))
+    XCTAssertEqual(reduced.data.ink, crossData.ink)
+    XCTAssertFalse(reduced.canCarry,
+      "A current unpublished allocation candidate cannot certify the earlier cohort's static pixels")
   }
 
   @MainActor

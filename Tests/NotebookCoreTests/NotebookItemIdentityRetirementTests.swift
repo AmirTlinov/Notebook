@@ -21,7 +21,7 @@ struct NotebookItemIdentityRetirementTests {
         operations: [.init(kind: kind, target: board, id: id.uuidString, values: values)])
     }
     let original = try creation(), created = try f.store.applyCollaborationAction(original, actor: f.actor)
-    if nativeDelete { _ = try f.store.deleteWorkspaceItem(itemID: id, actor: UUID()) }
+    if nativeDelete { _ = try f.store.deleteTestItem(itemID: id, actor: UUID()) }
     else {
       var read = NotebookCommand(command: .read); read.readSnapshots = true
       read.queries = [try JSONValue.object(["kind": .string("itemLifecycle"), "id": try .encode(id)]).decode(NotebookReadQuery.self)]

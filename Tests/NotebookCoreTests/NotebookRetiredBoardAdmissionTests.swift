@@ -39,7 +39,7 @@ struct NotebookRetiredBoardAdmissionTests {
       throw NotebookStorageError.invalidTransaction("retired board fixture closure")
     }
 
-    func retire() throws { _ = try store.deleteWorkspaceItem(itemID: id, actor: actor) }
+    func retire() throws { _ = try store.deleteTestItem(itemID: id, actor: actor) }
 
     func spans(_ board: UUID) -> [SpatialInkSpan] {
       [.init(surface: .board(board), samples: [.init(point: .init(x: 10, y: 20),
