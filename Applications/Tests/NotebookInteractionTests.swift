@@ -5,6 +5,48 @@ import XCTest
 
 @MainActor
 final class NotebookInteractionTests: XCTestCase {
+  func testCoverSwipeYieldsToCameraAndCannotBecomePickupAfterPausing() async throws {
+    let gate = NotebookInputGate()
+    let view = NotebookInteractionTouchView(inputGate:gate)
+    let touch = CoverInteractionTouch()
+    _ = gate.fingerContactOwner(for:ObjectIdentifier(touch)) { .scene }
+    defer { gate.endFingerContacts([ObjectIdentifier(touch)]) }
+    var events:[CoverInteractionEvent] = []
+    view.onLiftChanged = { events.append(.lift($0)) }
+    view.onTap = { _,_ in XCTFail("Navigation is not a tap") }
+    view.touchesBegan([touch],with:nil)
+    XCTAssertTrue(gate.permitsSingleFingerNavigation(ObjectIdentifier(touch)))
+    touch.point.x += 6
+    view.touchesMoved([touch],with:nil)
+    try await Task.sleep(for:.milliseconds(320))
+    XCTAssertTrue(events.isEmpty)
+    XCTAssertTrue(gate.permitsSingleFingerNavigation(ObjectIdentifier(touch)))
+    XCTAssertTrue(view.yieldToCameraPan())
+    view.touchesEnded([touch],with:nil)
+    XCTAssertTrue(events.isEmpty)
+  }
+
+  func testInstalledCameraAdmitsMotionOverCoverInEitherTouchDeliveryOrder() throws {
+    let scene=try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+    let previous=scene.windows.first(where:\.isKeyWindow)
+    for coverFirst in [false,true] {
+      let window=UIWindow(windowScene:scene),root=UIViewController(),gate=NotebookInputGate()
+      window.rootViewController=root;window.makeKeyAndVisible()
+      let cover=NotebookInteractionTouchView(inputGate:gate);cover.frame=root.view.bounds;root.view.addSubview(cover)
+      let camera=WorkspacePanView.Coordinator(isEnabled:true,inputGate:gate,onBegan:{},onChanged:{ _ in },onEnded:{ _ in },onCancelled:{})
+      camera.install(on:window,inside:root.view)
+      defer { cover.cancelInteraction();camera.uninstall();window.isHidden=true;previous?.makeKey() }
+      let pan=try XCTUnwrap(window.gestureRecognizers?.compactMap { $0 as? UIPanGestureRecognizer }.first)
+      let touch=CoverInteractionTouch();touch.hitView=cover
+      if coverFirst { cover.touchesBegan([touch],with:nil) }
+      XCTAssertTrue(camera.gestureRecognizer(pan,shouldReceive:touch))
+      if !coverFirst { cover.touchesBegan([touch],with:nil) }
+      touch.point.x += 12;cover.touchesMoved([touch],with:nil)
+      XCTAssertTrue(camera.gestureRecognizerShouldBegin(pan),"An unpicked cover must not steal camera navigation")
+      cover.touchesEnded([touch],with:nil)
+    }
+  }
+
   func testRemovedOwnerRejectsTheWholeContact() async throws {
     let view = NotebookInteractionTouchView(inputGate: NotebookInputGate())
     let touch = CoverInteractionTouch()
@@ -14,7 +56,7 @@ final class NotebookInteractionTests: XCTestCase {
     view.onTap = { _, count in taps.append(count) }
     view.updateOwnerAvailability { false }
     view.touchesBegan([touch], with: nil)
-    try await Task.sleep(for: .milliseconds(250))
+    try await Task.sleep(for: .milliseconds(320))
     view.touchesEnded([touch], with: nil)
     XCTAssertEqual(lifts, [])
     XCTAssertEqual(taps, [])
@@ -28,15 +70,15 @@ final class NotebookInteractionTests: XCTestCase {
     view.touchesBegan([touch], with: nil)
     view.updateOwnerAvailability { false }
     view.updateOwnerAvailability { true }
-    try await Task.sleep(for: .milliseconds(250))
+    try await Task.sleep(for: .milliseconds(320))
     XCTAssertEqual(lifts, [])
     XCTAssertFalse(view.yieldToCameraPan(), "Removing the physical owner retired its original contact")
 
     view.touchesBegan([touch], with: nil)
-    try await Task.sleep(for: .milliseconds(250))
-    XCTAssertEqual(lifts, [], "Holding never acquires manipulation")
+    try await Task.sleep(for: .milliseconds(320))
+    XCTAssertEqual(lifts, [true], "A quiet hold picks up before the first movement")
     touch.point.x += 10; view.touchesMoved([touch],with:nil)
-    XCTAssertEqual(lifts, [true], "Only actual dragging acquires manipulation")
+    XCTAssertEqual(lifts, [true], "Movement continues the same pickup, without a second lift")
     view.cancelInteraction()
     XCTAssertEqual(lifts, [true, false])
   }
@@ -49,7 +91,7 @@ final class NotebookInteractionTests: XCTestCase {
     view.onTranslationEnded = { events.append(.end($0)) }
     view.onCancelled = { events.append(.cancel) }
     view.touchesBegan([touch], with: nil)
-    try await Task.sleep(for: .milliseconds(250))
+    try await Task.sleep(for: .milliseconds(320))
     touch.point.x += 70
     view.touchesMoved([touch], with: nil)
     XCTAssertEqual(events, [.lift(true)])
@@ -72,7 +114,7 @@ final class NotebookInteractionTests: XCTestCase {
     view.onCancelled = { events.append(.cancel) }
     view.onTap = { _, _ in taps += 1 }
     view.touchesBegan([touch], with: nil)
-    try await Task.sleep(for: .milliseconds(250))
+    try await Task.sleep(for: .milliseconds(320))
     touch.point.x += 70
     view.touchesMoved([touch], with: nil)
     view.updateOwnerAvailability { false }
@@ -91,7 +133,7 @@ final class NotebookInteractionTests: XCTestCase {
     view.onTranslationEnded = { events.append(.end($0)) }
     view.onCancelled = { events.append(.cancel) }
     view.touchesBegan([touch], with: nil)
-    try await Task.sleep(for: .milliseconds(250))
+    try await Task.sleep(for: .milliseconds(320))
     touch.point.x += 70
     touch.point.y -= 20
     view.touchesMoved([touch], with: nil)
@@ -108,7 +150,7 @@ final class NotebookInteractionTests: XCTestCase {
     view.onTranslationEnded = { events.append(.end($0)) }
     view.onCancelled = { events.append(.cancel) }
     view.touchesBegan([touch], with: nil)
-    try await Task.sleep(for: .milliseconds(250))
+    try await Task.sleep(for: .milliseconds(320))
     touch.point.x += 70
     view.touchesMoved([touch], with: nil)
     view.touchesCancelled([touch], with: nil)
@@ -126,6 +168,7 @@ final class NotebookInteractionTests: XCTestCase {
     view.onTranslationEnded = { oldEvents.append(.end($0)) }
     view.onCancelled = { oldEvents.append(.cancel) }
     view.touchesBegan([touch], with: nil)
+    try await Task.sleep(for:.milliseconds(320))
     touch.point.x += 10; view.touchesMoved([touch],with:nil)
     NotebookInteractionView.dismantleUIView(view, coordinator: ())
     XCTAssertEqual(oldEvents, [.lift(true)])
@@ -202,6 +245,8 @@ private enum CoverInteractionEvent: Equatable {
 
 @MainActor
 private final class CoverInteractionTouch: UITouch {
+  var hitView:UIView?
+  override var view:UIView? { hitView }
   var point = CGPoint(x: 100, y: 100)
   override var type: UITouch.TouchType { .direct }
   override var tapCount: Int { 1 }

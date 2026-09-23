@@ -1,4 +1,5 @@
 import SwiftUI
+import Observation
 
 #if os(iOS)
   import UIKit
@@ -19,7 +20,7 @@ extension EnvironmentValues {
 
 /// A small callback object keeps render readiness outside durable page state.
 /// Metal and WebKit report when their exact mounted page has presented once.
-@MainActor
+@Observable @MainActor
 final class PageTurnActivity {
   struct PreparationDemand: Equatable {
     enum Presentation { case snapshot, live }

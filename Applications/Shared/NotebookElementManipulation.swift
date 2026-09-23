@@ -40,6 +40,10 @@ struct NotebookTextWidthControls {
     transform=presentation.transform.concatenating(.init(scaleX:scale,y:scale))
       .concatenating(.init(translationX:screenFrame.minX,y:screenFrame.minY))
   }
+  private init(size:CGSize,transform:CGAffineTransform) { self.size=size;self.transform=transform }
+  func projected(by transform:CGAffineTransform) -> Self {
+    .init(size:size,transform:self.transform.concatenating(transform))
+  }
   func point(_ handle:NotebookElementResizeHandle) -> CGPoint {
     handle.point(in:.init(origin:.zero,size:size)).applying(transform)
   }

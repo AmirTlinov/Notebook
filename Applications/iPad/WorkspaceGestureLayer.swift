@@ -718,7 +718,6 @@ struct NotebookInteractionView: UIViewRepresentable {
 
 @MainActor
 final class NotebookInteractionTouchView: UIView {
-  static let movementTolerance: CGFloat = 18
 
   var onTap: (CGPoint, Int) -> Void = { _, _ in }
   var onLiftChanged: (Bool) -> Void = { _ in }
@@ -733,6 +732,7 @@ final class NotebookInteractionTouchView: UIView {
   private var latestTranslation = CGSize.zero
   private var maximumTravel: CGFloat = 0
   private var isLifted = false
+  private var holdTask: Task<Void, Never>?
   private var hasLiftedDuringContact = false
   private var deferredLiftCancellation: (() -> Void)?
   private var inputGate: NotebookInputGate
@@ -771,7 +771,7 @@ final class NotebookInteractionTouchView: UIView {
     }
   }
 
-  isolated deinit { inputGate.unregisterFingerCancellation(source: inputSource) }
+  isolated deinit { holdTask?.cancel(); inputGate.unregisterFingerCancellation(source: inputSource) }
 
   /// This predicate describes the installed physical owner, not preparation of
   /// another scene. A retired owner cancels its contact; rendering work cannot.
@@ -810,7 +810,19 @@ final class NotebookInteractionTouchView: UIView {
     latestTranslation = .zero
     maximumTravel = 0
     hasLiftedDuringContact = false
-    inputGate.claimSceneObjectContact(ObjectIdentifier(touch))
+    // A cover is navigation material until the stationary finger picks it up.
+    // Capturing at touchdown would prevent the camera pan before it can begin.
+    holdTask = Task { [weak self] in
+      do { try await Task.sleep(for:NotebookObjectPickup.delay) } catch { return }
+      guard !Task.isCancelled, let self, let activeTouch,
+        ownerIsAvailable(), inputGate.acceptsFingerSequence(generation), inputGate.permitsObjectPickup else { return }
+      let point = activeTouch.location(in:window)
+      guard maximumTravel < NotebookObjectPickup.movementThreshold,
+        hypot(point.x-startPoint.x,point.y-startPoint.y) < NotebookObjectPickup.movementThreshold else { return }
+      inputGate.claimSceneObjectContact(ObjectIdentifier(activeTouch))
+      isLifted = true; hasLiftedDuringContact = true
+      contactCallbacks?.liftChanged(true)
+    }
   }
 
   override func touchesMoved(
@@ -833,9 +845,10 @@ final class NotebookInteractionTouchView: UIView {
       maximumTravel,
       hypot(latestTranslation.width, latestTranslation.height)
     )
-    if !isLifted, maximumTravel >= 4 {
-      isLifted = true; hasLiftedDuringContact = true
-      contactCallbacks?.liftChanged(true)
+    if !isLifted, maximumTravel >= NotebookObjectPickup.movementThreshold {
+      // Keep this unclaimed contact until the camera recognizer consumes it;
+      // a later pause in the same swipe must never become a pickup.
+      holdTask?.cancel(); holdTask = nil
     }
     if isLifted { contactCallbacks?.translationChanged(latestTranslation) }
   }
@@ -896,12 +909,13 @@ final class NotebookInteractionTouchView: UIView {
     tapCount: Int,
     deferCallbacks: Bool = false
   ) {
+    holdTask?.cancel(); holdTask = nil
     let callbacks = contactCallbacks
     let wasLifted = isLifted
     let translation = latestTranslation
     let wasTap =
       acceptTap && !hasLiftedDuringContact
-      && maximumTravel <= Self.movementTolerance
+      && maximumTravel < NotebookObjectPickup.movementThreshold
     activeTouch = nil
     fingerGeneration = nil
     contactCallbacks = nil

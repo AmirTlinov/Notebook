@@ -11,7 +11,7 @@ final class NotebookGestureAdmissionTests: XCTestCase {
     var original: [ContactEvent] = [], successor: [ContactEvent] = []
     bind(view) { original.append($0) }
     view.touchesBegan([touch], with: nil)
-    try await Task.sleep(for: .milliseconds(250))
+    try await Task.sleep(for: .milliseconds(320))
     XCTAssertEqual(original, [.lift(true)])
 
     // Preparing a different scene can close new admission, but this finger
@@ -43,7 +43,7 @@ final class NotebookGestureAdmissionTests: XCTestCase {
     var original: [ContactEvent] = [], successor: [ContactEvent] = []
     bind(view) { original.append($0) }
     view.touchesBegan([touch], with: nil)
-    try await Task.sleep(for: .milliseconds(250))
+    try await Task.sleep(for: .milliseconds(320))
     bind(view) { successor.append($0) }
     view.updateOwnerAvailability { false }
     XCTAssertEqual(original, [.lift(true)], "UIKit retires the contact before the deferred SwiftUI notification")
@@ -65,7 +65,7 @@ final class NotebookGestureAdmissionTests: XCTestCase {
     var events: [ContactEvent] = []
     bind(view) { events.append($0) }
     view.touchesBegan([touch], with: nil)
-    try await Task.sleep(for: .milliseconds(250))
+    try await Task.sleep(for: .milliseconds(320))
     XCTAssertTrue(gate.beginPencilAction(source: pencil))
     XCTAssertEqual(events, [.lift(true), .cancel, .lift(false)])
     XCTAssertFalse(view.yieldToCameraPan())
@@ -85,7 +85,7 @@ final class NotebookGestureAdmissionTests: XCTestCase {
     var events: [ContactEvent] = []
     bind(view) { events.append($0) }
     view.touchesBegan([touch], with: nil)
-    try await Task.sleep(for: .milliseconds(250))
+    try await Task.sleep(for: .milliseconds(320))
     gate.bindNewContactAdmission { false }
     view.touchesBegan([GestureAdmissionTouch()], with: nil)
     view.touchesEnded([touch], with: nil)

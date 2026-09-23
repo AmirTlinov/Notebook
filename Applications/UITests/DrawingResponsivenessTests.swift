@@ -3744,6 +3744,16 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertFalse(app.buttons["graphic-style-menu"].exists)
     let proof = XCTAttachment(screenshot:app.screenshot())
     proof.name = "shared-capsule-notebook"; proof.lifetime = .keepAlways; add(proof)
+    for scale in [1.6,0.7] {
+      card.pinch(withScale:scale,velocity:scale < 1 ? -1 : 1)
+      XCTAssertEqual(open.frame.width,44,accuracy:1)
+      XCTAssertEqual(open.frame.height,44,accuracy:1)
+      let capsule=app.otherElements["notebook-context-menu"]
+      XCTAssertEqual(capsule.frame.midX,card.frame.midX,accuracy:3,
+        "The actions follow their physical cover, not the pre-zoom frame")
+      let zoomed=XCTAttachment(screenshot:app.screenshot())
+      zoomed.name="shared-capsule-zoom-\(scale)";zoomed.lifetime = .keepAlways;add(zoomed)
+    }
     open.tap()
     XCTAssertTrue(open.waitForNonExistence(timeout:5))
     XCTAssertTrue(app.otherElements["paper-input"].waitForExistence(timeout:5))

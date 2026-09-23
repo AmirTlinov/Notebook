@@ -21,11 +21,22 @@ import NotebookCore
       let first = initial.page.id
       try store.saveWorkspaceBundle(index: index, page: initial.page,
         board: store.loadOrCreateBoard(workspace: index, actor: actor))
+      // Page selection is an addressed update of the existing device presence.
+      try store.savePresence(.init(boardID:index.rootBoardID,mode:.board,
+        camera:.init(center:.zero,scale:0.5),viewport:.init(x:834,y:1194),
+        selectedItemID:item,notebookPageID:first))
       for number in 0..<6 {
         var page: PageDocument
         if number == 0 { page = initial.page }
         else { page = index.appendPage(in: item, actor: actor, pageSize: NotebookAppModel.defaultPageSize)!.createdPage! }
+        let paths=(0..<120).map { row in
+          let segments=(0..<24).map { column in "L\(column*24) \(row*3+(column%3))" }.joined(separator:" ")
+          return "<path d='M0 \(row*3) \(segments)'/>"
+        }.joined()
         let elements = [
+          AgentElement(id:"svg",kind:.web,frame:.init(x:70,y:75,width:650,height:150),source:"SVG leaf \(number)",
+            html:"<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 650 370'><g fill='none' stroke='#235688'>\(paths)</g><text x='10' y='365'>\(number)</text></svg>",
+            css:"html,body,svg{margin:0;width:100%;height:100%;display:block}"),
           AgentElement(id: "movable", kind: .graphic, frame: .init(x: 160, y: 260, width: 320, height: 180), source: "", html: "",
             graphic: .init(shape: .rectangle, style: .init(fill: .init(red: 1, green: 0.2, blue: 0.1)), label: "Journey movable \(number + 1)")),
           AgentElement(id: "neighbor", kind: .graphic, frame: .init(x: 540, y: 540, width: 100, height: 100), source: "", html: "",
@@ -44,8 +55,6 @@ import NotebookCore
       }
       precondition(index.selectItem(item, pageID: first, actor: actor))
       try store.saveWorkspaceSelection(index: index, createdPage: nil)
-      try store.savePresence(.init(boardID: index.rootBoardID, mode: .board,
-        camera: .init(center: .zero, scale: 0.5), viewport: .init(x: 834, y: 1194)))
       return NotebookAppModel(store: store, startsNearbySync: false)
     } catch { fatalError("Cannot seed isolated workspace journey: \(error)") }
   }

@@ -1,5 +1,40 @@
 # Verification record
 
+## September 23 — GUI-298, selection, pickup and continuous page turns
+
+The unchanged build-188 input passed **40 physical-iPad + 3 Mac checks**, with no
+failures, skips or runtime warnings. Evidence:
+`.build/gui298-release-checks-188/verification.json`, source
+`b788683ae6ef8033c7273d415e10399dba439d790a7ffcfa33e2fd7acecc48d1`.
+The device was iPad Pro 11-inch (3rd generation), iOS 27.0 / 24A435,
+`00008103-001E059934D9001E`; no simulator was used.
+
+Selection geometry, the constant-width cover outline and action capsule now join
+the native camera transaction. Checks cover held zoom, stale SwiftUI publication,
+physical pinch followed by capsule opening, immediate cover drag as camera pan,
+and stationary pickup using the same 250-ms / 4-pt policy as existing objects.
+Pencil takeover, second-finger cancellation and retired contact ownership passed.
+
+SVG neighbours may prepare during the existing bounded curl activity: the next
+SVG completed in **158.07 ms while the finger remained active**. A separate
+ordinary-entry XCUITest initially exposed a second fault: pages 2/3 had ready
+geometry but `resource_limit`, stopping the second swipe. Full-page ink now uses
+a two-drawable pool and retains the history texture only for the input paper,
+not every hidden neighbour. Four 834 x 1194 pages at 2x passed within **192 MiB**;
+the shared 256-MiB limit and native resolution are unchanged. The 100,000-point
+baseline test still avoids re-querying unchanged history during active samples.
+Preparation was not substituted for the OS-presented receipt.
+
+The final ordinary route double-tapped the cover, swiped through six SVG/graphic/
+ink leaves, reversed through all six, left and reopened, then used both page
+buttons. First post-landing screenshots and per-leaf pixel probes passed; exported
+images were inspected. Its two-second native landing deadline and XCTest timing
+are automation watchdogs, not input-to-photon measurements. Diagnostic evidence is
+in `.build/gui298-ink-diagnostic/trace.txt`; temporary logging and the unsuccessful
+page-slot/readiness alternatives were removed rather than retained as fallbacks.
+This is scoped regression evidence, not manual latency acceptance in the user's
+“Различимость”, hardware-Pencil feel, system FPS/CPU/GPU or 30-minute full acceptance.
+
 ## September 23 — matched pair 187 installed, live readback
 
 The verified combined sources below produced signed **0.3.134 (187)** for both
