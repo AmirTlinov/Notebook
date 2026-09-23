@@ -1122,7 +1122,8 @@ final class SceneCompositionTests: XCTestCase {
     let plan = try await SceneCompositionPlan.prepare(source: fixture.source(), presence: fixture.presence,
       frame: frame, pinned: [pin], displayScale: 2, previous: nil)
     XCTAssertLessThanOrEqual(plan.tiles.count, 32)
-    XCTAssertLessThanOrEqual(plan.liveOwners.count + 1, 8)
+    XCTAssertLessThanOrEqual(plan.liveOwners.count + 1, SceneCompositionPlan.maximumLiveOwners)
+    XCTAssertLessThanOrEqual(plan.nativeOwnerCount, SceneCompositionPlan.maximumNativeOwners)
     XCTAssertLessThanOrEqual(plan.primitiveCount, 96)
     XCTAssertTrue(plan.allowsLive(pin, in: .board(fixture.presence.boardID)))
     let bands = plan.bands.filter { $0.plane == .board(fixture.presence.boardID) && $0.range.layer == .elements }

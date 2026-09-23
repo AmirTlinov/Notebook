@@ -25,6 +25,33 @@ import XCTest
     XCTAssertEqual(zoomed.state,.began,"Zoomed paper denies curl from touchdown")
   }
 
+  func testColdSwipeKeepsIntentUntilLiftAndReversalOrPinchCancelsIt() {
+    let view = UIView(), touch = SelectionTouch()
+    var owner = PageTurnAdmissionRecognizer()
+    var directions: [Int] = [], outcomes: [Bool] = []
+    func begin() {
+      view.removeGestureRecognizer(owner); owner = PageTurnAdmissionRecognizer(); view.addGestureRecognizer(owner)
+      owner.prepareDirection = { directions.append($0); return false }
+      owner.finishColdSwipe = { outcomes.append($0) }
+      touch.point = .init(x:200,y:200); owner.touchesBegan([touch],with:UIEvent())
+    }
+    begin(); touch.point.x = 180; owner.touchesMoved([touch],with:UIEvent())
+    XCTAssertEqual(owner.state,.began); XCTAssertEqual(directions,[1]); XCTAssertTrue(outcomes.isEmpty)
+    touch.point.x = 90; owner.touchesEnded([touch],with:UIEvent())
+    XCTAssertEqual(outcomes,[true], "One completed cold gesture must not disappear into a nil neighbour")
+    begin(); touch.point.x = 180; owner.touchesMoved([touch],with:UIEvent())
+    touch.point.x = 200; owner.touchesEnded([touch],with:UIEvent())
+    XCTAssertEqual(outcomes,[true,false], "A reversal is not a deferred page change")
+    begin(); touch.point.x = 180; owner.touchesMoved([touch],with:UIEvent())
+    owner.touchesCancelled([touch],with:UIEvent())
+    XCTAssertEqual(outcomes,[true,false,false])
+    begin(); touch.point.x = 180; owner.touchesMoved([touch],with:UIEvent())
+    let second = SelectionTouch(); second.point = .init(x:220,y:200)
+    owner.touchesBegan([second],with:UIEvent())
+    second.point.x = 320; owner.touchesMoved([second],with:UIEvent())
+    XCTAssertEqual(outcomes,[true,false,false,false], "Pinch must cancel the old page intent before finger-up")
+  }
+
   func testKeyboardLayoutShiftIsNotFingerMotion() {
     let window = UIWindow(frame:.init(x:0,y:0,width:600,height:800)), anchor = UIView(frame:.init(x:0,y:0,width:600,height:800))
     window.addSubview(anchor)

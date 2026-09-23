@@ -308,6 +308,10 @@ enum SceneResourceReclamationPlanner {
 @MainActor
 @Observable
 final class SceneRenderResources {
+  // Visible controls own bounded independent runtimes; passive preparations
+  // still share at most two transient executors. Raster bytes remain separately
+  // accounted: this is an execution ceiling, not a claim about process memory.
+  nonisolated static let maximumVisiblePrograms = 32
   static let shared = SceneRenderResources()
   static let didChange = Notification.Name("NotebookSceneRenderResourcesDidChange")
   static let didGainRasterAdmission = Notification.Name("NotebookSceneRenderResourcesDidGainRasterAdmission")
@@ -528,7 +532,7 @@ final class SceneRenderResources {
   @ObservationIgnored private var accessClock: UInt64 = 0
   @ObservationIgnored private var waiterClock: UInt64 = 0
 
-  init(byteLimit: Int = 256 * 1024 * 1024, profile: SceneResourceProfile = .interactive, maximumWebSurfaces: Int = 6,
+  init(byteLimit: Int = 256 * 1024 * 1024, profile: SceneResourceProfile = .interactive, maximumWebSurfaces: Int = SceneRenderResources.maximumVisiblePrograms + 2,
     maximumBackgroundWebSurfaces: Int = 2, maximumPendingWebRequests: Int = 32,
     diagnosticCapacity: Int = 256, maximumRasterCount: Int = 2048, reservedInteractiveSlots: Int = 2) {
     precondition(byteLimit >= 0 && maximumWebSurfaces > 0 && maximumBackgroundWebSurfaces >= 0
@@ -1109,7 +1113,8 @@ final class SceneRenderResources {
       && (!priority.preparesRaster || activeBackgroundWebSurfaceCount < maximumBackgroundWebSurfaces)
       && (!priority.isPassive || activePassiveWebSurfaceCount < maximumWebSurfaces - reservedInteractiveSlots)
       && (priority != .liveProgram || activeWebSurfaces.count - activeBackgroundWebSurfaceCount
-        < maximumWebSurfaces - (maximumWebSurfaces > 1 && maximumBackgroundWebSurfaces > 0 ? 1 : 0))
+        < min(Self.maximumVisiblePrograms,
+          maximumWebSurfaces - (maximumWebSurfaces > 1 && maximumBackgroundWebSurfaces > 0 ? 1 : 0)))
   }
   private func canAdmit(_ priority: WebPriority, source: WebExecutionSource? = nil) -> Bool {
     hasWebCapacity(priority) && (source.map { !activeWebSources.values.contains($0) } ?? true)

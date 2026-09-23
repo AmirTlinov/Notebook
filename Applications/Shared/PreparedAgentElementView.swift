@@ -59,6 +59,8 @@ struct PreparedAgentElementView: View {
   let requestedCapture: AgentSnapshotPolicy?
   let focus: InteractiveElementReference
   let pageTurnActivity: PageTurnActivity?
+  let rasterPreparation: PageRasterPreparation.Context?
+  let onFailure: (PageTurnPreparationFailure) -> Void
   let onRenderReady: (Bool) -> Void
   let onState: (JSONValue) -> Bool
 
@@ -78,7 +80,10 @@ struct PreparedAgentElementView: View {
 
   init(element: AgentElement, allowsInteraction: Bool, inputEnabled: Bool = true,
     allowsProgramExecution: Bool = true, capturePolicy: AgentSnapshotPolicy? = nil, focus: InteractiveElementReference,
-    pageTurnActivity:PageTurnActivity? = nil, onRenderReady: @escaping (Bool) -> Void, onState: @escaping (JSONValue) -> Bool) {
+    pageTurnActivity:PageTurnActivity? = nil,
+    rasterPreparation:PageRasterPreparation.Context? = nil,
+    onFailure: @escaping (PageTurnPreparationFailure) -> Void = { _ in },
+    onRenderReady: @escaping (Bool) -> Void, onState: @escaping (JSONValue) -> Bool) {
     self.element = element
     self.allowsInteraction = allowsInteraction
     self.inputEnabled = inputEnabled
@@ -86,6 +91,8 @@ struct PreparedAgentElementView: View {
     requestedCapture = capturePolicy
     self.focus = focus
     self.pageTurnActivity = pageTurnActivity
+    self.rasterPreparation = rasterPreparation
+    self.onFailure = onFailure
     self.onRenderReady = onRenderReady
     self.onState = onState
   }
@@ -144,7 +151,9 @@ struct PreparedAgentElementView: View {
       if raster?.entryID != next.entryID { raster = next }
       preparedSource = element
       if runtimeFailure == nil { failure = nil; failedSource = nil }
-      onRenderReady(runtimeFailure == nil)
+      if runtimeFailure != nil { onRenderReady(false) }
+      // Acquiring pixels is not installing them. The native raster callback
+      // below certifies the frame before a waiting page may begin its curl.
       return
     }
     if let raster, !ScenePreparedRasterFallback.hasValidGeometry(raster, for: element) { self.raster = nil }
@@ -191,7 +200,8 @@ struct PreparedAgentElementView: View {
     let demand = Demand(source: element, basis: basis, active: isActive, inputEnabled: inputEnabled, focused: hasFocus,
       // Visible static page material needs camera admission too, not just live
       // programs. Hidden neighbours keep the bounded curl/background route.
-      permitsPreparation: allowsInteraction ? model.permitsScenePreparation
+      permitsPreparation: rasterPreparation != nil ? model.permitsPagePreparation
+        : allowsInteraction ? model.permitsScenePreparation
         : (pageTurnActivity?.isTransitioning == true || model.permitsBackgroundPreparation),
       policy: snapshotPolicy, capture: sourceDemand,
       fallbackEntryID: fallbackEntryID, runtimeFailure: runtimeFailure, retry: retry)
@@ -199,6 +209,15 @@ struct PreparedAgentElementView: View {
       if let raster, !showsLiveProgram {
         AgentElementSnapshotView(raster: raster, onSourceInstalled: { installation, installed in
           recordInstalled(installation, raster: installed)
+          Task { @MainActor in
+            // Installation can originate in updateUIView. Start navigation
+            // after that transaction, and revoke it if the native source left.
+            if installation.isInstalled, runtimeFailure == nil,
+              self.raster?.entryID == installed.entryID, preparedSource == element,
+              installed.image(for:rasterSource,minimumScale:requiredScale) != nil {
+              onRenderReady(true)
+            }
+          }
         })
       }
       if let web {
@@ -213,7 +232,6 @@ struct PreparedAgentElementView: View {
               preparedSource = element
               failure = nil
               failedSource = nil
-              onRenderReady(true)
               // The representable retains the grant until WebKit is dismantled.
               if !isActive && !runtimeWasPresented { retireRuntime(); self.web = nil }
             } else if !ready, preparedSource != element {
@@ -228,7 +246,13 @@ struct PreparedAgentElementView: View {
             if !hasFocus { model.interactiveElementFocus = focus }
           }, onInstalled: { installation in
             if showsLiveProgram, let source = installation.source.agentElement,
-              liveProgram == AgentProgramSource(source) { recordInstalled(installation) }
+              liveProgram == AgentProgramSource(source) {
+              recordInstalled(installation)
+              Task { @MainActor in
+                if installation.isInstalled, self.web?.id == web.id,
+                  liveProgram == AgentProgramSource(element) { onRenderReady(true) }
+              }
+            }
           }, onFailure: { event in
             guard model.shutdownPhase != .stopped, self.web?.id == event.leaseID, web.id == event.leaseID,
               !web.isReleased, SceneRasterSource.agent(event.source) == .agent(element),
@@ -378,7 +402,7 @@ struct PreparedAgentElementView: View {
         return
       }
       runtimeWasPresented = false; retireRuntime(); web = nil; liveProgram = nil
-      onRenderReady(failure == nil && preparedSource == demand.source)
+      if failure != nil || preparedSource != demand.source { onRenderReady(false) }
       return
     }
     if preparedSource != demand.source || raster?.source != rasterSource || (raster?.pixelScale ?? 0) + 0.000_001 < requiredScale {
@@ -388,7 +412,7 @@ struct PreparedAgentElementView: View {
     if failedSource == demand.source, failedCapturePolicy == nil || failedCapturePolicy == demand.policy { return }
     failedSource = nil; failedCapturePolicy = nil; failedCaptureAdmission = nil
     failure = nil
-    onRenderReady(preparedSource == demand.source)
+    if preparedSource != demand.source { onRenderReady(false) }
     if !demand.active && preparedSource == demand.source {
       retireRuntime(); web = nil; liveProgram = nil; runtimeWasPresented = false; return
     }
@@ -398,6 +422,24 @@ struct PreparedAgentElementView: View {
       return
     }
     guard demand.focused || demand.permitsPreparation else { return }
+    if let rasterPreparation, !demand.active {
+      do {
+        let next = try await rasterPreparation.owner.prepare(demand.source, policy: demand.policy,
+          pageIndex: rasterPreparation.pageIndex, store: model.store, permits: { model.permitsPagePreparation })
+        guard !Task.isCancelled, model.shutdownPhase != .stopped else { next.release(); return }
+        raster = next; preparedSource = demand.source
+      } catch is CancellationError { return }
+      catch {
+        guard !Task.isCancelled else { return }
+        failure = "Не удалось подготовить изображение"
+        failedSource = demand.source; failedCapturePolicy = demand.policy
+        onRenderReady(false)
+        onFailure(.init(message: failure!) {
+          failedSource = nil; failure = nil; retry &+= 1
+        })
+      }
+      return
+    }
     if !demand.active, case .board(let boardID, let id) = focus,
       composition.cohort?.sourceReceipts.keys.contains(where: { $0.plane.boardID == boardID && $0.elementID == id }) == true {
       // The addressed scene job is already this static source's producer.

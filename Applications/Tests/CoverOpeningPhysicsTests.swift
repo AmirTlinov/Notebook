@@ -59,7 +59,7 @@ final class CoverOpeningPhysicsTests: XCTestCase {
 
   func testCurlCanvasCarriesTheCoverOutsideTheNotebookFrame() {
     let sheetSize = CGSize(width: 834, height: 1_194)
-    let layout = CoverCurlLayout(sheetSize: sheetSize)
+    let layout = SheetCurlLayout(sheetSize: sheetSize)
 
     XCTAssertEqual(layout.sheetFrame.size, sheetSize)
     XCTAssertGreaterThan(
@@ -80,7 +80,7 @@ final class CoverOpeningPhysicsTests: XCTestCase {
   }
 
   func testCurlCanvasKeepsTheSheetFrameExactAtRetinaScale() {
-    let layout = CoverCurlLayout(
+    let layout = SheetCurlLayout(
       sheetSize: CGSize(width: 834, height: 1_194)
     )
     let drawable = CGSize(

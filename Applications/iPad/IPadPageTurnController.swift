@@ -2,30 +2,16 @@ import NotebookCore
 import SwiftUI
 import UIKit
 
-enum PageTurnPlatformContract {
-  static let animationRate: Float = 1.8
-  @MainActor
-  static func makePageViewController() -> UIPageViewController {
-    let controller = UIPageViewController(
-      transitionStyle: .pageCurl,
-      navigationOrientation: .horizontal,
-      options: [
-        .spineLocation: NSNumber(
-          value: UIPageViewController.SpineLocation.min.rawValue
-        )
-      ]
-    )
-    controller.isDoubleSided = false
-    controller.view.backgroundColor = .clear
-    return controller
-  }
-}
-
-/// Failure dependency for UIKit's curl. It never takes content input: a
+/// Failure dependency for the sheet curl. It never takes content input: a
 /// successful admission blocker only denies the dependent page recognizers.
 /// Resolve after touchdown has let selection reserve its original contact.
 final class PageTurnAdmissionRecognizer: UIGestureRecognizer {
   var canBeginNavigation: () -> Bool = { true }
+  /// Returning false keeps this contact until lift rather than losing a swipe
+  /// to an absent render-ready neighbour.
+  var prepareDirection: (Int) -> Bool = { _ in true }
+  var finishColdSwipe: (Bool) -> Void = { _ in }
+  private var coldDirection: Int?
   private var contacts: [UITouch: CGPoint] = [:]
   private var beganAt: TimeInterval = 0
   override init(target: Any?, action: Selector?) {
@@ -43,12 +29,14 @@ final class PageTurnAdmissionRecognizer: UIGestureRecognizer {
     if !canBeginNavigation() || contacts.count > 2 { state = .began }
   }
   override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent) {
-    guard state == .possible else { return }
-    guard canBeginNavigation() else { state = .began; return }
+    guard state == .possible || coldDirection != nil else { return }
+    guard canBeginNavigation() else { cancelColdSwipe(); state = .began; return }
     let pairs = contacts.map { (start:$0.value, end:$0.key.location(in:view?.window)) }
     let deltas = pairs.map { CGPoint(x:$0.end.x-$0.start.x,y:$0.end.y-$0.start.y) }
     if pairs.count == 1, let delta = deltas.first, hypot(delta.x,delta.y) >= 4 {
-      state = abs(delta.x) > abs(delta.y) ? .failed : .began
+      if coldDirection != nil { return }
+      if abs(delta.x) > abs(delta.y) { resolveHorizontal(delta.x) }
+      else { state = .began }
     } else if pairs.count == 2 {
       let startDistance = hypot(pairs[0].start.x-pairs[1].start.x,pairs[0].start.y-pairs[1].start.y)
       let distance = hypot(pairs[0].end.x-pairs[1].end.x,pairs[0].end.y-pairs[1].end.y)
@@ -56,32 +44,44 @@ final class PageTurnAdmissionRecognizer: UIGestureRecognizer {
         translation:.init(x:(deltas[0].x+deltas[1].x)/2,y:(deltas[0].y+deltas[1].y)/2),
         fingerDisplacements:deltas,magnification:distance/max(1,startDistance),
         elapsed:(touches.map(\.timestamp).max() ?? beganAt)-beganAt)
-      if intent == .navigation { state = .failed }
-      else if intent == .magnification { state = .began }
+      if intent == .navigation, coldDirection == nil { resolveHorizontal((deltas[0].x+deltas[1].x)/2) }
+      else if intent == .magnification { cancelColdSwipe(); state = .began }
     }
   }
-  override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent) { state = .ended }
-  override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent) { state = .cancelled }
-  override func reset() { super.reset(); contacts.removeAll() }
+  private func resolveHorizontal(_ translation: CGFloat) {
+    let direction = translation < 0 ? 1 : -1
+    if prepareDirection(direction) { state = .failed }
+    else { coldDirection = direction; state = .began }
+  }
+  private func cancelColdSwipe() {
+    guard coldDirection != nil else { return }
+    coldDirection = nil; finishColdSwipe(false)
+  }
+  override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent) {
+    if let direction = coldDirection {
+      let delta = contacts.map { $0.key.location(in:view?.window).x - $0.value.x }
+      let distance = delta.reduce(0,+) / CGFloat(max(1,delta.count))
+      coldDirection = nil
+      finishColdSwipe(canBeginNavigation() && -distance * CGFloat(direction) >= IPadSheetCurlController.minimumGestureTravel)
+    }
+    state = .ended
+  }
+  override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent) { cancelColdSwipe(); state = .cancelled }
+  override func reset() { super.reset(); cancelColdSwipe(); contacts.removeAll() }
 }
 
 /// The iPad executor for `PageTurnSurface`.
 ///
-/// UIKit owns the physical curl. This container owns only page identity:
+/// The shared sheet renderer owns physical bending. This container owns page identity:
 /// neighbouring live pages are mounted behind the visible page until Metal and
-/// WebKit have presented them, then that exact controller is handed to UIKit.
+/// WebKit have presented them, and stay mounted through the entire turn.
 @MainActor
-final class IPadPageTurnController: UIViewController,
-  UIPageViewControllerDataSource,
-  UIPageViewControllerDelegate
-{
-  private let prewarmView = UIView()
+final class IPadPageTurnController: UIViewController {
   private let observationID = UUID()
-  let pageViewController = PageTurnPlatformContract.makePageViewController()
+  let sheetController = IPadSheetCurlController()
   private let navigationAdmission = PageTurnAdmissionRecognizer()
 
   private var controllers: [Int: IPadIndexedPageController] = [:]
-  private var retiredControllers: [Int: WeakIPadPageController] = [:]
   private var readyPages: [Int: Bool] = [:]
   private var ownerID: UUID?
   private var sequenceRevision = ""
@@ -109,6 +109,12 @@ final class IPadPageTurnController: UIViewController,
   private var isTransitioning = false
   private var isUpdatingContents = false
   private var pendingExternalIndex: Int?
+  private var sequentialTarget: Int?
+  private var coldGestureTarget: Int?
+  private var notebookNavigation: NotebookPageNavigation?
+  private var notebookStatusRevision: UInt64 = 0
+  private var lastNotebookStatus: String?
+  private var onWindowChange: @MainActor (Set<Int>, String) -> Void = { _, _ in }
   private var anticipatedIndex: Int?
   private var lastTurnDirection: Int?
   private var transitionRevision: UInt64 = 0
@@ -140,6 +146,8 @@ final class IPadPageTurnController: UIViewController,
   isolated deinit {
     pageTurnActivity.prepare(nil)
     documentNavigation?.unbind(documentControllerID)
+    notebookNavigation?.unbind(documentControllerID)
+    onWindowChange([], sequenceRevision)
   }
 
   private func observe(_ stage: String, target: Int? = nil, reason: String? = nil) {
@@ -177,22 +185,51 @@ final class IPadPageTurnController: UIViewController,
     view.isOpaque = false
     view.clipsToBounds = true
 
-    prewarmView.backgroundColor = .clear
-    prewarmView.isOpaque = false
-    prewarmView.isUserInteractionEnabled = false
-    prewarmView.accessibilityElementsHidden = true
-    view.addSubview(prewarmView)
-
-    addChild(pageViewController)
-    view.addSubview(pageViewController.view)
-    pageViewController.didMove(toParent: self)
-    pageViewController.dataSource = self
-    pageViewController.delegate = self
+    addChild(sheetController)
+    view.addSubview(sheetController.view)
+    sheetController.didMove(toParent: self)
+    sheetController.neighbor = { [weak self] current, direction in
+      guard let self else { return nil }
+      return direction == .forward ? self.sheetController(self.sheetController, after: current)
+        : self.sheetController(self.sheetController, before: current)
+    }
+    sheetController.willTurn = { [weak self] target in
+      guard let self else { return false }
+      return self.sheetController(self.sheetController, willTurnTo: target)
+    }
+    sheetController.didTurn = { [weak self] source, completed in
+      guard let self else { return }
+      self.sheetController(self.sheetController, didTurnFrom: source, completed: completed)
+    }
+    sheetController.onFailure = { [weak self] error in
+      guard let self, let target = self.anticipatedIndex else { return }
+      self.pendingExternalIndex = target
+      self.preparationFailures[target] = .init(message: "Не удалось подготовить перелистывание") { [weak self] in
+        guard let self else { return }
+        self.preparationFailures[target] = nil
+        self.requestExternalSelection(target)
+      }
+      self.publishDocumentStatus()
+    }
     navigationAdmission.canBeginNavigation = { [weak self] in
       guard let self else { return false }
       return navigationIsEnabled && canBeginNavigation()
     }
-    pageViewController.view.addGestureRecognizer(navigationAdmission)
+    navigationAdmission.prepareDirection = { [weak self] direction in
+      guard let self, !isTransitioning else { return true }
+      let target = displayedIndex + direction
+      guard (0..<pageCount).contains(target), readyPages[target] != true else { return true }
+      coldGestureTarget = target; anticipatedIndex = target
+      prepareExternalTarget(target); retainNeededControllers(); publishDocumentStatus()
+      return false
+    }
+    navigationAdmission.finishColdSwipe = { [weak self] accepted in
+      guard let self, let target = coldGestureTarget else { return }
+      coldGestureTarget = nil; anticipatedIndex = nil
+      if accepted { sequentialTarget = nil; requestExternalSelection(target) }
+      else { prepareExternalTarget(nil); retainNeededControllers(); publishDocumentStatus() }
+    }
+    sheetController.view.addGestureRecognizer(navigationAdmission)
 
     installDisplayedPage()
     configureSystemGestures()
@@ -200,11 +237,7 @@ final class IPadPageTurnController: UIViewController,
 
   override func viewDidLayoutSubviews() {
     super.viewDidLayoutSubviews()
-    prewarmView.frame = view.bounds
-    pageViewController.view.frame = view.bounds
-    for controller in controllers.values {
-      controller.layoutPrewarmingContent(in: prewarmView)
-    }
+    sheetController.view.frame = view.bounds
   }
 
   func update(
@@ -226,12 +259,18 @@ final class IPadPageTurnController: UIViewController,
     onTransitioningChange: @escaping @MainActor (Bool) -> Void,
     canonicalDocumentLayout: DocumentPageLayout? = nil,
     documentSelection: DocumentPageNavigationRequest? = nil,
-    documentNavigation: DocumentPageNavigationCallbacks? = nil
+    documentNavigation: DocumentPageNavigationCallbacks? = nil,
+    notebookNavigation: NotebookPageNavigation? = nil,
+    onWindowChange: @escaping @MainActor (Set<Int>, String) -> Void = { _, _ in }
   ) {
     let previousResolvedTarget = resolvedDocumentTarget
     self.canonicalDocumentLayout = canonicalDocumentLayout
     let replacesDocument = self.ownerID != ownerID || documentNavigation == nil
     let ownerChanged = self.ownerID != ownerID || self.sequenceRevision != sequenceRevision
+    if ownerChanged {
+      self.notebookNavigation?.unbind(documentControllerID)
+      self.onWindowChange([], self.sequenceRevision)
+    }
     let previousSelectedIndex = self.selectedIndex
     let awaitedLocalAcknowledgement = selection.awaitsLocalAcknowledgement
     self.ownerID = ownerID
@@ -251,7 +290,16 @@ final class IPadPageTurnController: UIViewController,
     self.onCommit = onCommit
     self.onTransitioningChange = onTransitioningChange
     self.documentNavigation = documentNavigation
+    self.notebookNavigation = notebookNavigation
+    self.onWindowChange = onWindowChange
+    notebookNavigation?.bind(documentControllerID, ownerID: ownerID, source: sequenceRevision) { [weak self] command in
+      self?.requestNotebookNavigation(command)
+    }
     documentNavigation?.bind(documentControllerID, ownerID, sequenceRevision)
+    if !navigationIsEnabled, notebookNavigation != nil {
+      sequentialTarget = nil; coldGestureTarget = nil; pendingExternalIndex = nil
+      if !isTransitioning { anticipatedIndex = nil; prepareExternalTarget(nil) }
+    }
 
     if ownerChanged {
       observe("page_turn_owner_changed")
@@ -260,6 +308,9 @@ final class IPadPageTurnController: UIViewController,
       transitionRevision &+= 1
       setTransitioning(false, resetsPublication: true)
       pendingExternalIndex = nil
+      sequentialTarget = nil
+      coldGestureTarget = nil
+      lastNotebookStatus = nil
       anticipatedIndex = nil
       lastTurnDirection = nil
       preparationFailures.removeAll()
@@ -319,9 +370,9 @@ final class IPadPageTurnController: UIViewController,
     }
   }
 
-  func pageViewController(
-    _ pageViewController: UIPageViewController,
-    viewControllerBefore viewController: UIViewController
+  func sheetController(
+    _ sheetController: IPadSheetCurlController,
+    before viewController: UIViewController
   ) -> UIViewController? {
     guard navigationIsEnabled,
       let current = viewController as? IPadIndexedPageController,
@@ -330,9 +381,9 @@ final class IPadPageTurnController: UIViewController,
     return preparedController(at: current.pageIndex - 1)
   }
 
-  func pageViewController(
-    _ pageViewController: UIPageViewController,
-    viewControllerAfter viewController: UIViewController
+  func sheetController(
+    _ sheetController: IPadSheetCurlController,
+    after viewController: UIViewController
   ) -> UIViewController? {
     guard navigationIsEnabled,
       let current = viewController as? IPadIndexedPageController,
@@ -341,76 +392,37 @@ final class IPadPageTurnController: UIViewController,
     return preparedController(at: current.pageIndex + 1)
   }
 
-  func pageViewController(
-    _ pageViewController: UIPageViewController,
-    willTransitionTo pendingViewControllers: [UIViewController]
-  ) {
-    let target = pendingViewControllers.first as? IPadIndexedPageController
-    guard canBeginNavigation(),
-      let target,
-      controllers[target.pageIndex] === target,
-      readyPages[target.pageIndex] == true
-    else {
-      cancelSystemGestures()
-      return
-    }
-    // UIKit may reuse its cached shell without asking the data source again.
-    // Its restored child has earned readiness in prewarm, but is not yet inside
-    // that shell. The delegate handoff must install it too.
-    transferToPageViewController(target)
+  @discardableResult
+  func sheetController(_ sheetController: IPadSheetCurlController, willTurnTo target: UIViewController) -> Bool {
+    guard canBeginNavigation(), let target = target as? IPadIndexedPageController,
+      controllers[target.pageIndex] === target, readyPages[target.pageIndex] == true else { return false }
     anticipatedIndex = target.pageIndex
     retainNeededControllers()
     setTransitioning(true)
     refreshControllerState()
+    return true
   }
 
-  func pageViewController(
-    _ pageViewController: UIPageViewController,
-    didFinishAnimating finished: Bool,
-    previousViewControllers: [UIViewController],
-    transitionCompleted completed: Bool
-  ) {
-    guard previousViewControllers.allSatisfy({ old in
-      guard let old = old as? IPadIndexedPageController else { return false }
-      return controllers[old.pageIndex] === old
-    }), let shown = pageViewController.viewControllers?.first as? IPadIndexedPageController,
+  func sheetController(_ sheetController: IPadSheetCurlController, didTurnFrom previous: UIViewController, completed: Bool) {
+    guard let previous = previous as? IPadIndexedPageController,
+      controllers[previous.pageIndex] === previous,
+      let shown = sheetController.page as? IPadIndexedPageController,
       controllers[shown.pageIndex] === shown else { return }
-    if completed,
-      let visible = pageViewController.viewControllers?.first
-        as? IPadIndexedPageController
-    {
-      let source = displayedIndex
-      let target = visible.pageIndex
-      if target == selectedIndex {
-        selection.recordExternalLanding(at: target)
-      } else {
-        selection.recordLocalLanding(at: target)
-      }
-      if allowsTrailingPageCreation, target == pageCount - 1,
-        pageCount < Int.max
-      {
-        pageCount += 1
-      }
+    if completed {
+      let source = displayedIndex, target = shown.pageIndex
+      if target == selectedIndex { selection.recordExternalLanding(at: target) }
+      else { selection.recordLocalLanding(at: target) }
+      if allowsTrailingPageCreation, target == pageCount - 1, pageCount < Int.max { pageCount += 1 }
       lastTurnDirection = target == source ? nil : (target > source ? 1 : -1)
-    } else if let previous = previousViewControllers.first
-      as? IPadIndexedPageController
-    {
-      if previous.pageIndex != displayedIndex {
-        selection.recordExternalLanding(at: previous.pageIndex)
-      }
-    }
+    } else if previous.pageIndex != displayedIndex { selection.recordExternalLanding(at: previous.pageIndex) }
     anticipatedIndex = nil
-
     setTransitioning(false)
     retainNeededControllers()
     refreshRenderedPages()
     refreshControllerState()
-
     if completed, documentNavigation != nil {
       publishDocumentLanding(at: displayedIndex, requestID: nil, deferred: false)
-    } else if completed, displayedIndex != selectedIndex {
-      onCommit(displayedIndex, sequenceRevision)
-    }
+    } else if completed, displayedIndex != selectedIndex { onCommit(displayedIndex, sequenceRevision) }
     runPendingExternalSelection()
   }
 
@@ -419,9 +431,8 @@ final class IPadPageTurnController: UIViewController,
     hasInstalledPage = true
     isUpdatingContents = true
     guard let controller = controllerForPage(at: displayedIndex) else { isUpdatingContents = false; return }
-    transferToPageViewController(controller)
-    pageViewController.setViewControllers(
-      [controller],
+    sheetController.show(
+      controller,
       direction: .forward,
       animated: false
     )
@@ -434,22 +445,20 @@ final class IPadPageTurnController: UIViewController,
 
   private func replaceOwnerPages() {
     guard isViewLoaded else { return }
+    sheetController.cancelMotion(notify: false)
     let oldControllers = Array(controllers.values)
     controllers.removeAll()
-    retiredControllers.removeAll()
     readyPages.removeAll()
     hasInstalledPage = true
     isUpdatingContents = true
 
-    // UIKit can retain the old shells, but their content must release its
-    // resource before the replacement owner creates its first hosting child.
+    // Release the previous owner's finite window before preparing the new one.
     for oldController in oldControllers {
-      retireContent(of: oldController, preservingUIKitIdentity: false)
+      retireContent(of: oldController)
     }
     guard let controller = controllerForPage(at: displayedIndex) else { isUpdatingContents = false; return }
-    transferToPageViewController(controller)
-    pageViewController.setViewControllers(
-      [controller],
+    sheetController.show(
+      controller,
       direction: .forward,
       animated: false
     )
@@ -466,7 +475,6 @@ final class IPadPageTurnController: UIViewController,
       let controller = controllers[index] else { return nil }
     mountForPrewarming(controller)
     guard readyPages[index] == true else { return nil }
-    transferToPageViewController(controller)
     return controller
   }
 
@@ -480,16 +488,11 @@ final class IPadPageTurnController: UIViewController,
     defer { isUpdatingContents = wasUpdating }
 
     readyPages[index] = false
-    let restored = retiredControllers.removeValue(forKey: index)?.controller
-    let controller = restored ?? IPadIndexedPageController(
-      pageIndex: index,
-      rootView: AnyView(EmptyView())
-    )
-    if restored != nil { controller.renewContentIdentity() }
+    let controller = IPadIndexedPageController(pageIndex: index, rootView: AnyView(EmptyView()))
     controller.view.backgroundColor = .clear
     controller.view.accessibilityIdentifier = "page-turn-page-\(index)"
     controllers[index] = controller
-    observe("page_turn_controller_created", target: index, reason: restored == nil ? "new" : "restored")
+    observe("page_turn_controller_created", target: index, reason: "new")
     controller.rootView = hostedPage(
       at: index,
       isCurrent: index == displayedIndex,
@@ -500,13 +503,13 @@ final class IPadPageTurnController: UIViewController,
   }
 
   private func retainNeededControllers() {
-    // A curl keeps its exact prepared window until UIKit returns both source
+    // A curl keeps its exact prepared window until it returns both source
     // and landing. External requests replace one index, never add live content.
     guard isViewLoaded, !isTransitioning, !isUpdatingContents else { return }
     isUpdatingContents = true
     defer { isUpdatingContents = false }
-    retiredControllers = retiredControllers.filter { $0.value.controller != nil }
     let target = anticipatedIndex ?? pendingExternalIndex.map(clamped)
+    pageTurnActivity.rasters.prioritize(displayed: displayedIndex, target: target)
     let required = PageTurnPrewarmWindow.indices(
       displayedIndex: displayedIndex,
       anticipatedIndex: target,
@@ -514,15 +517,12 @@ final class IPadPageTurnController: UIViewController,
       pageCount: pageCount,
       existingIndices: Set(controllers.keys)
     )
-    // UIKit may retain a controller after its curl finishes. That identity is
-    // not a reason to retain every WebKit/Metal page visited in this document.
-    // Keep the live window and the complete in-flight turn; retire only content
-    // that neither can display. UIKit retains its shells; their offscreen
-    // hosting children return to the same bounded preparation window.
-    let visible = Set((pageViewController.viewControllers ?? []).map(ObjectIdentifier.init))
+    onWindowChange(required, sequenceRevision)
+    // Exactly the finite window owns mounted hosts. No hidden platform cache
+    // retains shells or causes a second content lifetime on reverse turns.
     for index in Array(controllers.keys) where !required.contains(index) {
       guard let controller = controllers[index],
-        !visible.contains(ObjectIdentifier(controller))
+        sheetController.page !== controller
       else { continue }
       controllers[index] = nil
       readyPages[index] = nil
@@ -543,27 +543,18 @@ final class IPadPageTurnController: UIViewController,
     }
   }
 
-  private func retireContent(
-    of controller: IPadIndexedPageController,
-    preservingUIKitIdentity: Bool = true
-  ) {
-    if preservingUIKitIdentity, controller.wasHandedToUIKit {
-      retiredControllers[controller.pageIndex] = WeakIPadPageController(controller)
-    }
-    // The shell can remain in UIKit's private curl cache. Its content is our
-    // bounded resource: remove the child, not UIKit's controller identity.
+  private func retireContent(of controller: IPadIndexedPageController) {
     observe("page_turn_content_retire", target: controller.pageIndex)
-    controller.retireContent()
+    sheetController.retire(controller)
+    controller.rootView = AnyView(EmptyView())
   }
 
-  private func mountForPrewarming(
-    _ controller: IPadIndexedPageController
-  ) {
-    guard controller.pageIndex != displayedIndex else { return }
-    controller.prepareContent(in: self, container: prewarmView)
+  private func mountForPrewarming(_ controller: IPadIndexedPageController) {
+    sheetController.prepare(controller)
   }
 
   private func refreshRenderedPages() {
+    guard !isTransitioning else { return }
     let wasUpdating = isUpdatingContents
     isUpdatingContents = true
     defer { isUpdatingContents = wasUpdating }
@@ -591,7 +582,7 @@ final class IPadPageTurnController: UIViewController,
     hostID: UUID
   ) -> AnyView {
     let sourceRevision = sequenceRevision
-    let readiness = PageTurnReadiness(activity: pageTurnActivity, onFailure: { [weak self] failure in
+    let readiness = PageTurnReadiness(activity: pageTurnActivity, pageIndex: index, onFailure: { [weak self] failure in
       guard let self, self.sequenceRevision == sourceRevision, self.controllers[index]?.hostID == hostID else { return }
       self.preparationFailures[index] = failure
       self.publishDocumentStatus()
@@ -632,6 +623,7 @@ final class IPadPageTurnController: UIViewController,
       return
     }
     retainNeededControllers()
+    guard preparationFailures[target] == nil else { publishDocumentStatus(); return }
     guard let targetController = controllers[target] else { return }
     mountForPrewarming(targetController)
     guard readyPages[target] == true else {
@@ -648,25 +640,40 @@ final class IPadPageTurnController: UIViewController,
     let requestID = documentSelection?.id
     let preparation = pageTurnActivity.preparationDemand
     let adjacent = abs(target - displayedIndex) == 1
-    let direction: UIPageViewController.NavigationDirection =
+    let direction: IPadSheetCurlController.Direction =
       target > displayedIndex ? .forward : .reverse
     setTransitioning(true)
     publishDocumentStatus()
     observe("page_turn_external_begin", target: target)
     refreshControllerState()
-    transferToPageViewController(targetController)
 
-    // Non-curl navigation already owns the prepared live destination. UIKit's
-    // completion confirms its installation; a second cross-dissolve would
-    // snapshot that surface and delay input without contributing readiness.
-    pageViewController.setViewControllers(
-      [targetController],
+    // Adjacent turns confirm the displayed endpoint. A distant prepared
+    // destination installs directly, without an unrelated second animation.
+    sheetController.show(
+      targetController,
       direction: direction,
-      animated: adjacent && pageViewController.viewIfLoaded?.window != nil
+      animated: adjacent && sheetController.viewIfLoaded?.window != nil
     ) { [weak self] finished in
       guard let self, transitionRevision == revision else { return }
       completeExternalSelection(target, finished: finished, requestID: requestID, preparation: preparation)
     }
+  }
+
+  private func requestNotebookNavigation(_ command: NotebookPageNavigation.Command) {
+    // Explicit commands arrive after their caller's input fence. The gesture
+    // predicate rejects native buttons and zoomed paper; it cannot govern the
+    // very arrow that requested navigation or drop taps during a previous curl.
+    guard navigationIsEnabled else { return }
+    switch command {
+    case .step(let delta):
+      guard delta == -1 || delta == 1 else { return }
+      sequentialTarget = clamped((sequentialTarget ?? pendingExternalIndex ?? anticipatedIndex ?? displayedIndex) + delta)
+    case .jump(let index):
+      sequentialTarget = nil
+      requestExternalSelection(index)
+      return
+    }
+    runPendingExternalSelection()
   }
 
   private func completeExternalSelection(_ target: Int, finished: Bool, requestID: UUID?,
@@ -690,14 +697,31 @@ final class IPadPageTurnController: UIViewController,
     refreshControllerState()
     observe("page_turn_external_inputs_published", target: target)
     if finished, documentNavigation != nil { publishDocumentLanding(at: target, requestID: requestID, deferred: false) }
-    else if confirmsSelection { onCommit(target, sequenceRevision) }
+    else if confirmsSelection {
+      isUpdatingContents = true
+      onCommit(target, sequenceRevision)
+      isUpdatingContents = false
+    }
     publishDocumentStatus()
-    runPendingExternalSelection()
+    let completedRevision = transitionRevision
+    Task { @MainActor [weak self] in
+      guard let self, transitionRevision == completedRevision else { return }
+      runPendingExternalSelection()
+    }
   }
 
   private func runPendingExternalSelection() {
-    guard !isTransitioning, !isUpdatingContents,
+    guard !isTransitioning, !isUpdatingContents, coldGestureTarget == nil,
       !selection.awaitsLocalAcknowledgement else { return }
+    if let target = sequentialTarget {
+      if target == displayedIndex {
+        sequentialTarget = nil; pendingExternalIndex = nil
+        pageTurnActivity.prepare(nil); publishDocumentStatus()
+        return
+      }
+      requestExternalSelection(displayedIndex + (target > displayedIndex ? 1 : -1))
+      return
+    }
     let target: Int
     if documentNavigation != nil {
       guard let requested = pendingExternalIndex ?? resolvedDocumentTarget else { return }
@@ -718,16 +742,10 @@ final class IPadPageTurnController: UIViewController,
     pageTurnActivity.prepare(target, presentation: live ? .live : .snapshot)
   }
 
-  private func transferToPageViewController(
-    _ controller: IPadIndexedPageController
-  ) {
-    controller.installPreparedContent()
-  }
-
   private func publishDocumentLanding(at page: Int, requestID: UUID?, deferred: Bool = true) {
     guard let callbacks = documentNavigation, let ownerID,
       pageIsInteractive, viewIfLoaded?.window != nil, hasInstalledPage, readyPages[page] == true,
-      let shown = pageViewController.viewControllers?.first as? IPadIndexedPageController,
+      let shown = sheetController.page as? IPadIndexedPageController,
       shown.pageIndex == page, controllers[page] === shown else { return }
     let pageKey = "\(sequenceRevision)|\(shown.hostID)|\(page)|"
     let key = pageKey + (requestID?.uuidString ?? "local")
@@ -748,6 +766,7 @@ final class IPadPageTurnController: UIViewController,
   }
 
   private func publishDocumentStatus() {
+    publishNotebookStatus()
     guard let callbacks = documentNavigation, let ownerID else { return }
     let request = documentSelection
     let target = request.flatMap { request -> Int? in
@@ -782,28 +801,25 @@ final class IPadPageTurnController: UIViewController,
     }
   }
 
-  private func configureSystemGestures() {
-    let enabled = navigationIsEnabled && pageCount > 1
-    for gesture in pageViewController.gestureRecognizers {
-      gesture.allowedTouchTypes = [
-        NSNumber(value: UITouch.TouchType.direct.rawValue)
-      ]
-      gesture.cancelsTouchesInView = true
-      // A quiet edge tap is selection, never navigation. Keep UIKit's curl
-      // recognizers and delegates, but admit motion before they can begin.
-      let acceptsMotion = enabled && !(gesture is UITapGestureRecognizer)
-      if gesture.isEnabled != acceptsMotion { gesture.isEnabled = acceptsMotion }
-      gesture.require(toFail:navigationAdmission)
+  private func publishNotebookStatus() {
+    guard let notebookNavigation, let ownerID else { return }
+    let target = isTransitioning ? nil : (pendingExternalIndex ?? coldGestureTarget)
+    let failure = target.flatMap { preparationFailures[$0] }
+    let key = "\(sequenceRevision)|\(target.map(String.init) ?? "-")|\(failure?.id.uuidString ?? "-")"
+    guard lastNotebookStatus != key else { return }
+    lastNotebookStatus = key; notebookStatusRevision &+= 1
+    let revision = notebookStatusRevision, source = sequenceRevision
+    let value = target.map { NotebookPageNavigation.Status(ownerID: ownerID, target: $0, failure: failure) }
+    Task { @MainActor [weak self] in
+      guard let self, notebookStatusRevision == revision else { return }
+      notebookNavigation.report(value, ownerID: ownerID, controllerID: documentControllerID, source: source)
     }
   }
 
-  private func cancelSystemGestures() {
-    for gesture in pageViewController.gestureRecognizers {
-      gesture.isEnabled = false
-    }
-    configureSystemGestures()
-    setTransitioning(false)
-    refreshControllerState()
+  private func configureSystemGestures() {
+    let enabled = navigationIsEnabled && pageCount > 1
+    if sheetController.pan.isEnabled != enabled { sheetController.pan.isEnabled = enabled }
+    sheetController.pan.require(toFail: navigationAdmission)
   }
 
   private func setTransitioning(_ value: Bool, resetsPublication: Bool = false) {
@@ -811,13 +827,6 @@ final class IPadPageTurnController: UIViewController,
     // UIKit and input admission change in this event. A SwiftUI observer cannot
     // be called from updateUIViewController, which may initiate an external turn.
     isTransitioning = value
-    // Speed only the native curl, not ordinary animations inside live pages.
-    // Preserve local time when changing the public CALayer playback rate.
-    let layer = pageViewController.view.layer, now = CACurrentMediaTime()
-    let local = layer.convertTime(now,from:nil)
-    let parent = layer.superlayer?.convertTime(now,from:nil) ?? now
-    layer.beginTime = parent; layer.timeOffset = local
-    layer.speed = value ? PageTurnPlatformContract.animationRate : 1
     pageTurnActivity.update(value)
     transitionNotificationRevision &+= 1
     let revision = transitionNotificationRevision, owner = ownerID
@@ -839,130 +848,32 @@ final class IPadPageTurnController: UIViewController,
 
   var preparedPageIndices: Set<Int> { Set(readyPages.compactMap { $0.value ? $0.key : nil }) }
 
+  #if DEBUG
+  var navigationStateDescription: String {
+    "shown=\(displayedIndex),selected=\(selectedIndex),ack=\(selection.awaitsLocalAcknowledgement),pending=\(String(describing:pendingExternalIndex)),queued=\(String(describing:sequentialTarget)),anticipated=\(String(describing:anticipatedIndex)),turning=\(isTransitioning),updating=\(isUpdatingContents),enabled=\(navigationIsEnabled)"
+  }
+  #endif
+
   var cachedPageIdentities: [Int: ObjectIdentifier] {
     controllers.mapValues(ObjectIdentifier.init)
   }
 
   var visiblePageIdentity: ObjectIdentifier? {
-    pageViewController.viewControllers?.first.map(ObjectIdentifier.init)
+    sheetController.page.map(ObjectIdentifier.init)
   }
 }
 
-/// UIKit owns this shell for its entire curl lifetime. The separately owned
-/// hosting child can be retired and prepared again without reparenting the shell.
+/// One hosting lifetime per resident page. Z-order, not reparenting, selects it.
 @MainActor
-private final class IPadIndexedPageController: UIViewController {
+private final class IPadIndexedPageController: UIHostingController<AnyView> {
   let pageIndex: Int
-  private(set) var hostID = UUID()
-  private(set) var wasHandedToUIKit = false
-  private var content: UIHostingController<AnyView>?
-  private var contentHasDisappeared = false
-
-  var rootView: AnyView {
-    get { content?.rootView ?? AnyView(EmptyView()) }
-    set {
-      if let content {
-        content.rootView = newValue
-      } else {
-        let host = UIHostingController(rootView: newValue)
-        host.view.backgroundColor = .clear
-        content = host
-      }
-    }
-  }
-
+  let hostID = UUID()
   init(pageIndex: Int, rootView: AnyView) {
     self.pageIndex = pageIndex
-    super.init(nibName: nil, bundle: nil)
-    self.rootView = rootView
-  }
-
-  override func viewDidLoad() {
-    super.viewDidLoad()
+    super.init(rootView: rootView)
     view.backgroundColor = .clear
-    view.isOpaque = false
+    safeAreaRegions = []
   }
-
-  override func viewDidLayoutSubviews() {
-    super.viewDidLayoutSubviews()
-    if let content, content.parent === self { content.view.frame = view.bounds }
-  }
-
-  override func viewDidDisappear(_ animated: Bool) {
-    super.viewDidDisappear(animated)
-    contentHasDisappeared = true
-  }
-
-  func renewContentIdentity() { hostID = UUID() }
-
-  /// Both new and previously displayed content need a window to prepare.
-  /// UIKit caches its shell offscreen after a curl, while SwiftUI retires the
-  /// child's render readiness on disappearance. Leaving that child in the
-  /// detached shell makes a reverse turn wait for a frame it cannot produce.
-  func prepareContent(in owner: UIViewController, container: UIView) {
-    guard let content,
-      content.parent == nil || (contentHasDisappeared && content.parent === self && viewIfLoaded?.window == nil)
-    else { return }
-    detach(content)
-    owner.addChild(content)
-    container.addSubview(content.view)
-    content.view.frame = container.bounds
-    content.view.isUserInteractionEnabled = false
-    content.view.accessibilityElementsHidden = true
-    content.didMove(toParent: owner)
-    container.setNeedsLayout()
-    content.view.setNeedsLayout()
-  }
-
-  func layoutPrewarmingContent(in container: UIView) {
-    guard let content, content.view.superview === container else { return }
-    content.view.frame = container.bounds
-  }
-
-  /// Transfer the prepared child without replacing it or UIKit's shell.
-  /// A child that UIKit still has in a window is never stolen for prewarming.
-  func installPreparedContent() {
-    wasHandedToUIKit = true
-    // A handed-off destination may not have entered UIKit's window yet. It
-    // belongs to the curl until a real disappearance, not merely a nil window.
-    contentHasDisappeared = false
-    guard let content, content.parent !== self else { return }
-    detach(content)
-    loadViewIfNeeded()
-    addChild(content)
-    view.addSubview(content.view)
-    content.view.frame = view.bounds
-    content.view.isUserInteractionEnabled = true
-    content.view.accessibilityElementsHidden = false
-    content.didMove(toParent: self)
-    view.setNeedsLayout()
-  }
-
-  func retireContent() {
-    guard let content else { return }
-    detach(content)
-    self.content = nil
-  }
-
-  private func detach(_ content: UIViewController) {
-    let hasParent = content.parent != nil
-    if hasParent { content.willMove(toParent: nil) }
-    content.view.removeFromSuperview()
-    if hasParent { content.removeFromParent() }
-  }
-
   @available(*, unavailable)
-  required init?(coder aDecoder: NSCoder) {
-    fatalError("init(coder:) is not supported")
-  }
-}
-
-/// UIKit, not this registry, retains shells handed to a curl.
-@MainActor
-private final class WeakIPadPageController {
-  weak var controller: IPadIndexedPageController?
-
-  init(_ controller: IPadIndexedPageController) {
-    self.controller = controller
-  }
+  required init?(coder: NSCoder) { fatalError("Use init(pageIndex:rootView:)") }
 }

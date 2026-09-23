@@ -4,6 +4,7 @@ import argparse
 import fcntl
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -21,6 +22,25 @@ DOCUMENT_BROWSER_CONTRACTS = (
     "Tests/NotebookDocumentAcceptance/test_link_activation.mjs",
 )
 PROFILES = {
+    "navigation-ux": {
+        "ipad": ["NotebookTests/NotebookUXObservationTests",
+                 "NotebookTests/NotebookNavigationLoadUXTests",
+                 "NotebookTests/PageRasterPreparationTests",
+                 "NotebookTests/PreparedAgentElementViewTests/testZoomReusesAdequateProgramPixelsWithoutSubmittingAnotherCapture",
+                 "NotebookTests/PreparedAgentElementViewTests/testRasterReportsItsFirstLayoutWithoutAnotherSourceUpdate",
+                 "NotebookTests/PreparedAgentElementViewTests/testUnchangedProgramCheckpointDoesNotInvalidateThePageReadWindow",
+                 "NotebookTests/NotebookPageLifecycleUXTests/testPageMountsTheFullSizeErasureMaskOnlyWhileItHasLiveCoverage",
+                 "NotebookTests/NotebookPageMotionUXTests",
+                 "NotebookTests/NotebookSceneSelectionTests/testColdSwipeKeepsIntentUntilLiftAndReversalOrPinchCancelsIt",
+                 "NotebookTests/ZoomOutCoverageTests/testInstalledPinchRevealsPixelsBeforeEitherFingerLifts",
+                 "NotebookTests/ZoomOutCoverageTests/testMixedSceneRefinesPixelsWhileZoomRemainsHeld",
+                 "NotebookTests/PageTurnSelectionTests",
+                 "NotebookUITests/NotebookNavigationLoadUITests/testDenseSVGPagesTurnForwardReverseAndRepeatedArrowsWithoutBlankLanding",
+                 "NotebookUITests/NotebookNavigationLoadUITests/testContinuousZoomWithProgramsMeetsSystemHitchBudget",
+                 "NotebookUITests/NotebookNavigationLoadUITests/testDensePageTurnsMeetSystemHitchBudget",
+                 "NotebookUITests/NotebookNavigationLoadUITests/testTwentyFourPageProgramsAcceptFirstTapAfterZoomAndKeepStateAcrossTurns",
+                 "NotebookUITests/NotebookNavigationLoadUITests/testTwentyFourBoardProgramsStayInteractiveAfterZoomOutAndBack"],
+    },
     "collaboration-ux": {
         "ipad": ["NotebookTests/NotebookCollaborationLatencyTests", "NotebookTests/NotebookUXObservationTests",
                  "NotebookTests/NotebookActionDeliveryTests",
@@ -264,7 +284,7 @@ def owners(path):
     if name in ("DocumentPagePreparation.swift", "SpatialInkSurfaceView.swift", "SpatialBoardInkHandoff.swift") or path == "Applications/TestSupport/DocumentLargeSourceTests.swift":
         return ["paper-resources"]
     if path == "Applications/iPad/SpatialWorkspaceView.swift":
-        return ["scene-composition", "documents"]
+        return ["scene-composition", "documents", "navigation-ux"]
     if name in ("NotebookSubmittedPixels.swift", "NotebookWorkspacePresentation.swift", "NotebookPinnedImageRenderer.swift",
                 "NotebookAttentionProjection.swift", "NotebookAttentionSelection.swift", "NotebookCoverPresentation.swift",
                 "PagePresentation.swift"):
@@ -273,15 +293,19 @@ def owners(path):
                 "PhysicalWebViewport.swift", "NotebookDocumentOpeningTests.swift"):
         return ["documents"]
     if name in ("SceneCompositionTiles.swift", "SceneCompositionSource.swift", "SceneCompositionTests.swift"):
-        return ["scene-composition"]
+        return ["scene-composition", "navigation-ux"]
+    if name in ("AgentWebElementView.swift", "PreparedAgentElementView.swift", "PageRasterPreparation.swift",
+                "SceneWebRasterPreparation.swift", "AgentOverlayView.swift", "PageSurface.swift",
+                "NotebookPageNavigation.swift", "NotebookNavigationView.swift", "SceneRenderResources.swift"):
+        return ["navigation-ux"]
     if name == "NotebookChatPanel.swift":
         return ["chat", "chat-touch"]
     if name in ("NotebookRootView.swift", "NotebookCollaborationView.swift", "NotebookChatWindow.swift"):
         return ["chat", "chat-touch", "workspace-controls"]
     if "Chat" in name or name in ("NotebookCodexSidecar.swift",):
         return ["chat"]
-    if name in ("IPadPageTurnController.swift", "PageTurnSurface.swift"):
-        return ["documents", "page-turn"]
+    if name in ("IPadPageTurnController.swift", "IPadSheetCurlController.swift", "SheetCurlRenderer.swift", "PageTurnSurface.swift"):
+        return ["documents", "page-turn", "navigation-ux"]
     if (name.startswith("Document") or name.startswith("document-")) and path.startswith("Applications/"):
         return ["documents"]
     return None
@@ -441,6 +465,53 @@ def validate_executed_tests(tree, selectors):
                         "Выбранный тест не исполнился: " + selector)
 
 
+NAVIGATION_HITCH_TESTS = (
+    "NotebookNavigationLoadUITests/testContinuousZoomWithProgramsMeetsSystemHitchBudget",
+    "NotebookNavigationLoadUITests/testDensePageTurnsMeetSystemHitchBudget",
+)
+NAVIGATION_HITCH_ITERATIONS = 10
+NAVIGATION_HITCH_RATIO_MS_PER_SECOND = 1.0
+NAVIGATION_HITCH_TOTAL_SECONDS = 0.033
+
+
+def selected_hitch_tests(selectors):
+    return [case for case in NAVIGATION_HITCH_TESTS if any(
+        "NotebookUITests/" + case == selector or ("NotebookUITests/" + case).startswith(selector + "/")
+        for selector in selectors)]
+
+
+def validate_hitch_metrics(metrics, selectors):
+    # XCTest collects the actual system metric. A relative per-machine baseline
+    # cannot bless a slow run, and absent instrumentation is never zero hitches.
+    for case in selected_hitch_tests(selectors):
+        runs = [run for test in metrics if test.get("testIdentifier", "").removesuffix("()") == case
+                for run in test.get("testRuns", [])]
+        release.require(bool(runs), "Нет системного измерения задержек: " + case)
+        for run in runs:
+            def samples(suffix, units, ceiling, label):
+                matches = [metric for metric in run.get("metrics", [])
+                           if metric.get("identifier") == "com.apple.dt.XCTMetric_Hitch-native-test." + suffix]
+                release.require(len(matches) == 1, "Нет однозначного системного " + label + ": " + case)
+                metric = matches[0]
+                release.require(metric.get("unitOfMeasurement") in units,
+                                "Неизвестная единица " + label + ": " + case)
+                values = metric.get("measurements", [])
+                release.require(isinstance(values, list) and len(values) >= NAVIGATION_HITCH_ITERATIONS
+                                and all(type(value) in (int, float) and math.isfinite(value)
+                                        and 0 <= value <= ceiling for value in values),
+                                "Нарушен UX-бюджет " + label + ": " + case + " " + repr(values))
+                return values
+
+            ratios = samples("time.ratio", ("ms/s", "ms per s"),
+                             NAVIGATION_HITCH_RATIO_MS_PER_SECOND, "hitch ratio <= 1 ms/s, 10 повторов")
+            # This is TOTAL hitch time in EACH iteration, not a measured maximum
+            # frame stall. Capping the sum also bounds any individual hitch and
+            # prevents a long gesture/AX wait from diluting a freeze in the ratio.
+            durations = samples("total.duration", ("s",), NAVIGATION_HITCH_TOTAL_SECONDS,
+                                "суммарных hitches <= 33 ms за повтор")
+            release.require(len(ratios) == len(durations), "Неполные пары системных измерений: " + case)
+
+
 def validate_selected(source, evidence, receipt):
     release.require(receipt.get("format") == 1 and receipt.get("status") == "passed", "Выбранный маршрут не завершён.")
     plan = release.read_json(evidence / "selection.json")
@@ -472,6 +543,8 @@ def validate_selected(source, evidence, receipt):
             release.require((evidence / (platform + ".xcresult")).is_dir(), "Отсутствует xcresult выбранной платформы.")
             validate_summary(release.read_json(evidence / (platform + "-summary.json")))
             validate_executed_tests(release.read_json(evidence / (platform + "-tests.json")), completed[platform])
+            if selected_hitch_tests(completed[platform]):
+                validate_hitch_metrics(release.read_json(evidence / (platform + "-metrics.json")), completed[platform])
             command = next((c for c in commands if c["label"] == platform), None)
             release.require(command is not None and sorted(arg.removeprefix("-only-testing:") for arg in command["argv"]
                             if arg.startswith("-only-testing:")) == completed[platform], "Xcode исполнял другой набор тестов.")
@@ -589,6 +662,10 @@ def run_selected(root, plan, evidence):
                 "-configuration", "Debug", "-destination", destination, "-derivedDataPath", str(derived / platform),
                 "-resultBundlePath", str(result), "-parallel-testing-enabled", "NO", "-collect-test-diagnostics", "never",
                 "test"] + ["-only-testing:" + selector for selector in checks[platform]]
+        if plan.get("optimized", False):
+            # Keep the isolated DEBUG fixtures; measure compiled application
+            # code, not -Onone bookkeeping. Record this in selection.json.
+            args.append("SWIFT_OPTIMIZATION_LEVEL=-O")
         if platform == "ipad":
             args.extend(native_ipad_signing_settings())
         runtime = release.prepare_typesetter_runtime(root, command, "macosx" if platform == "mac" else "iphoneos")
@@ -617,6 +694,11 @@ def run_selected(root, plan, evidence):
             validate_executed_tests(tests, checks[platform])
             release.write_json(evidence / (platform + "-tests.json"), tests)
             release.write_json(evidence / (platform + "-timings.json"), timing_report(tests))
+            if selected_hitch_tests(checks[platform]):
+                metrics, _ = command(platform + "-metrics", ["xcrun", "xcresulttool", "get", "test-results", "metrics", "--path", str(result), "--compact"], read_output=True)
+                metrics = json.loads(metrics)
+                release.write_json(evidence / (platform + "-metrics.json"), metrics)
+                validate_hitch_metrics(metrics, checks[platform])
         finally:
             if platform == "ipad":
                 command("ipad-native-test-cleanup-after", native_ipad_cleanup_arguments(), timeout=120)
@@ -634,6 +716,7 @@ def run_selected(root, plan, evidence):
 def main(argv=None):
     parser = argparse.ArgumentParser(description="Проверки по изменениям; --full отдельно запускает всю приёмку.")
     parser.add_argument("--full", action="store_true")
+    parser.add_argument("--optimized", action="store_true", help="оптимизированный native код (-O) с изолированными DEBUG fixtures; режим записывается в свидетельства")
     parser.add_argument("--only", action="store_true", help="только явные --profile/--test, без автоматического добавления наборов")
     parser.add_argument("--plan", action="store_true", help="показать выбор, ничего не запускать")
     parser.add_argument("--base", default="HEAD", help="Git ref начала правки; по умолчанию незакоммиченные изменения")
@@ -642,11 +725,14 @@ def main(argv=None):
     parser.add_argument("--evidence-dir", type=Path)
     parser.add_argument("--timings", type=Path, help="прочитать времена из существующего xcresult без запуска тестов")
     args = parser.parse_args(argv)
+    release.require(not (args.full and args.optimized), "--optimized относится к выбранным проверкам, не к полному маршруту.")
     release.require(not (args.full and args.only), "--full и --only задают разные области проверки.")
     if args.timings:
         tree = json.loads(subprocess.check_output(["xcrun", "xcresulttool", "get", "test-results", "tests", "--path", str(args.timings), "--compact"]))
         print(json.dumps(timing_report(tree), ensure_ascii=False, indent=2)); return
     plan = {"route": "full", "notice": "Все нагрузки, native и UI; не обычная итерация."} if args.full else make_plan(ROOT, args.base, args.profile, args.test, only=args.only)
+    if not args.full:
+        plan["optimized"] = args.optimized
     print(json.dumps(plan, ensure_ascii=False, indent=2), flush=True)
     if args.plan:
         return

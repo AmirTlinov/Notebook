@@ -137,6 +137,8 @@ final class TwoFingerPaperGestureRecognizer: UIGestureRecognizer {
   private(set) var magnification: CGFloat = 1
   private(set) var magnificationVelocity: CGFloat = 0
   private(set) var centroid = CGPoint.zero
+  /// Observation only: actual installed camera action, not touch ingestion.
+  var onCameraHandled: ((CGFloat, TimeInterval, TimeInterval) -> Void)?
 
   var defersHorizontalMotionToPageTurn = false
   private var defersThisPairToPageTurn = false

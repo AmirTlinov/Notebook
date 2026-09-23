@@ -15,6 +15,8 @@ struct AgentOverlayView: View {
   let onState: (String, JSONValue) -> Bool
   var visibleRegion: CGRect? = nil
   var pageTurnActivity: PageTurnActivity? = nil
+  var rasterPreparation: PageRasterPreparation.Context? = nil
+  var onFailure: (PageTurnPreparationFailure) -> Void = { _ in }
 
   @State private var readiness = AgentOverlayReadiness()
   @State private var readinessID = UUID()
@@ -84,6 +86,8 @@ struct AgentOverlayView: View {
             capturePolicy: capturePolicy(for:element,presentation:presentation),
             focus: interactiveReference,
             pageTurnActivity: pageTurnActivity,
+            rasterPreparation: rasterPreparation,
+            onFailure: onFailure,
             onRenderReady: { ready in
               setElement(element, ready: ready)
             },
@@ -127,8 +131,7 @@ struct AgentOverlayView: View {
 
 
   private func setElement(_ element: AgentElement, ready: Bool) {
-    readiness.record(element, ready: ready)
-    publishReadiness()
+    if readiness.record(element, ready: ready) { publishReadiness() }
   }
 
   private func publishReadiness() {
@@ -157,9 +160,15 @@ struct AgentOverlayReadiness {
     materials[element,default:.init()].record(id,content:content,ready:ready)
   }
 
-  mutating func record(_ element: AgentElement, ready: Bool) {
-    if ready { sources[element.id] = element }
-    else if sources[element.id] == element { sources[element.id] = nil }
+  @discardableResult mutating func record(_ element: AgentElement, ready: Bool) -> Bool {
+    if ready {
+      guard sources[element.id] != element else { return false }
+      sources[element.id] = element
+    } else {
+      guard sources[element.id] == element else { return false }
+      sources[element.id] = nil
+    }
+    return true
   }
 
   mutating func retain(_ elements: [AgentElement]) {

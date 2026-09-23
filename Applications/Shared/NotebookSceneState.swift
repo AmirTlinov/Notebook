@@ -65,8 +65,11 @@ struct NotebookSceneState: Sendable {
       viewport: viewport ?? .init(x: pageSize.width, y: pageSize.height), historyActor: actor)
   }
 
-  static func bounds(for presence: SessionPresence, margin: Double = 192) -> WorkspaceSpatialBounds {
-    .init(origin: presence.camera.screenToWorld(.init(x: -margin, y: -margin), viewport: presence.viewport),
+  static func bounds(for presence: SessionPresence, margin requestedMargin: Double? = nil) -> WorkspaceSpatialBounds {
+    // The durable metadata window leads the painter's preparation window.
+    // It must not silently cut off sources the renderer has begun prefetching.
+    let margin = requestedMargin ?? (WorkspaceSceneIndex.preparationMargin(for: presence) + 256)
+    return .init(origin: presence.camera.screenToWorld(.init(x: -margin, y: -margin), viewport: presence.viewport),
       width: (presence.viewport.x + margin * 2) / presence.camera.scale,
       height: (presence.viewport.y + margin * 2) / presence.camera.scale)
   }

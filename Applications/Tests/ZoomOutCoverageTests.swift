@@ -24,7 +24,7 @@ final class ZoomOutCoverageTests: XCTestCase {
   }
 
   func testMixedSceneRefinesPixelsWhileZoomRemainsHeld() async throws {
-    try await checkNewlyVisibleContent(nested: true, mixed: true)
+    try await checkNewlyVisibleContent(nested: true, mixed: true, nativeGesture: true)
   }
 
   private func checkNewlyVisibleContent(nested: Bool, advancesSource: Bool = false, mixed: Bool = false,
@@ -115,7 +115,11 @@ final class ZoomOutCoverageTests: XCTestCase {
       XCTAssertTrue(initial.plan.meetsRequiredDensity)
     }
     XCTAssertFalse(initial.plan.allowsLive(.item(distant), in: .board(boardID)))
-    XCTAssertFalse(initial.plan.allowsLive(.element(diagram.id), in: .board(boardID)))
+    // Preparing offscreen material is the intended solution, not a failure.
+    // Prove that this source really starts outside the camera instead of
+    // forbidding its bounded prefetch owner.
+    XCTAssertTrue(SceneSourceCapture.visibleRect(source: agentElementSnapshotSource(diagram),
+      origin: diagram.worldOrigin ?? .zero, presence: try XCTUnwrap(model.presence)).isNull)
     if advancesSource {
       let before = try model.store.loadBoard(items: fixtureItems)
       var changed = before
@@ -139,7 +143,27 @@ final class ZoomOutCoverageTests: XCTestCase {
     let start = ContinuousClock.now
     var firstShown: Duration?
     var firstVisible: Duration?
+    var probeVisible: ContinuousClock.Instant?, pixelsShown: Duration?
     let address = SceneSourceAddress(plane: .board(boardID), elementID: diagram.id)
+    var committedCoverage = NotebookUXObservation.Coverage()
+    var pixelCoverage = NotebookUXObservation.Coverage()
+    var preparationTimeline: [String] = [], previousPreparation = ""
+    model.compositionTiles.onPreparationPhase = { id, phase in
+      preparationTimeline.append("\(start.duration(to: .now)): request=\(id.uuidString.prefix(6)); phase=\(phase)")
+    }
+    defer { model.compositionTiles.onPreparationPhase = nil }
+    // Observe every UIKit commit without taking a screenshot or forcing a CA
+    // flush inside the render loop. This proves submitted native coverage, NOT
+    // physical scanout/FPS. Separate pixel probes below check its appearance.
+    let coverageLink = UIUpdateLink(view: window)
+    coverageLink.addAction(to: .afterCATransactionCommit) { _, _ in
+      guard model.inputIsActive, let current = model.presence else { return }
+      let point = current.camera.worldToScreen(.init(x: 1900, y: 950), viewport: current.viewport)
+      guard window.bounds.contains(CGPoint(x: point.x, y: point.y)) else { return }
+      committedCoverage.record(model.compositionTiles.published?.hasInstalledPixels(for: address) == true)
+    }
+    coverageLink.isEnabled = nativeGesture
+    defer { coverageLink.isEnabled = false }
     // Keep taking real camera samples. Holding the final view without lifting
     // is not enough: coverage must make progress while samples keep arriving.
     for step in 0..<150 {
@@ -149,7 +173,15 @@ final class ZoomOutCoverageTests: XCTestCase {
       // initial centroid displacement correctly classifies as two-finger pan.
       let translation = nativeGesture ? max(0, (progress - 0.15) / 0.85) : progress
       let center = WorldPoint(x: 1100 * translation + (step > 45 ? sin(Double(step) / 8) * 20 : 0), y: 0)
+      let sampleStart = ContinuousClock.now
       show(center: center, scale: scale, settled: false)
+      if nativeGesture, probeVisible == nil, let current = model.presence {
+        let point = current.camera.worldToScreen(.init(x: 1900, y: 950), viewport: current.viewport)
+        if window.bounds.contains(CGPoint(x: point.x, y: point.y)) {
+          // Include the revealing input handler and the first display wait.
+          probeVisible = sampleStart
+        }
+      }
       if firstVisible == nil, let current = model.presence {
         let visible = SceneSourceCapture.visibleRect(source: agentElementSnapshotSource(diagram),
           origin: diagram.worldOrigin ?? .zero, presence: current)
@@ -157,6 +189,12 @@ final class ZoomOutCoverageTests: XCTestCase {
       }
       try await Task.sleep(for: .milliseconds(16))
       let current = try XCTUnwrap(model.presence)
+      let cohort = model.compositionTiles.published
+      let preparation = "indexed=\(model.sceneIndex?.element(id: diagram.id, boardID: boardID) != nil); receipt=\(cohort?.sourceReceipts[address].map { String(describing: $0.status) } ?? "absent"); installed=\(cohort?.hasInstalledPixels(for: address) == true); scenePending=\(model.scenePreparationPending); preparing=\(model.compositionTiles.isPreparing); web=\(SceneRenderResources.shared.activeWebSurfaceCount); pendingWeb=\(SceneRenderResources.shared.pendingWebRequestCount)"
+      if preparation != previousPreparation {
+        preparationTimeline.append("\(start.duration(to: .now)): scale=\(current.camera.scale); \(preparation)")
+        previousPreparation = preparation
+      }
       XCTAssertEqual(current.camera.scale, scale, accuracy: 0.00001)
       XCTAssertEqual(current.camera.center.delta(to: center).x, 0, accuracy: 0.001)
       XCTAssertEqual(current.camera.center.delta(to: center).y, 0, accuracy: 0.001)
@@ -168,10 +206,27 @@ final class ZoomOutCoverageTests: XCTestCase {
         cohort.nativeInk.owners[.cover(distant)]?.canvas.isDescendant(of: host.view) == true,
         cohort.hasInstalledPixels(for: address),
         firstShown == nil { firstShown = start.duration(to: ContinuousClock.now) }
+      if nativeGesture {
+        let point = current.camera.worldToScreen(.init(x:1900,y:950),viewport:current.viewport)
+        if CGRect(origin:.zero,size:window.bounds.size).contains(CGPoint(x:point.x,y:point.y)) {
+          // UIKit can deliver the recognizer action during the display wait,
+          // after the immediate presence read above. Keep that input's origin.
+          if probeVisible == nil { probeVisible = sampleStart }
+          let visible = try NotebookUXObservation.Pixels(window:window).matches([(.init(x:point.x,y:point.y),.blue)])
+          // No initial 100 ms of blank paper is forgiven. Missing on the first
+          // applicable observation is as much a defect as disappearing later.
+          pixelCoverage.record(visible)
+          if pixelsShown == nil, visible {
+            pixelsShown = try XCTUnwrap(probeVisible).duration(to: .now)
+          }
+        }
+      }
     }
     let shown = model.compositionTiles.published
     let diagnostic = "firstVisible=\(String(describing: firstVisible)); firstShown=\(String(describing: firstShown)); active=\(model.inputIsActive); phase=\(model.presencePhase); scenePending=\(model.scenePreparationPending); preparing=\(model.compositionTiles.isPreparing); failure=\(model.compositionTiles.failure ?? "none"); refusals=\(model.compositionTiles.budgetFailures); diagramLive=\(shown?.plan.allowsLive(.element(diagram.id), in: .board(boardID)) == true); diagramPixels=\(shown?.hasInstalledPixels(for: address) == true); coverMounted=\(shown?.nativeInk.owners[.cover(distant)]?.canvas.isDescendant(of: host.view) == true); rasterViews=\(rasterViews(in: host.view).count); receipts=\(String(describing: shown?.sourceReceipts[address])); items=\(shown?.frame.workset(boardID: boardID).items.map(\.id) ?? [])"
     let report = XCTAttachment(string: diagnostic); report.name = "Zoom-out coverage while camera remains active"; report.lifetime = .keepAlways; add(report)
+    let timeline = XCTAttachment(string: preparationTimeline.joined(separator: "\n"))
+    timeline.name = "Held zoom preparation timeline"; timeline.lifetime = .keepAlways; add(timeline)
     XCTAssertNotNil(firstShown, diagnostic)
     XCTAssertTrue(model.inputIsActive)
     XCTAssertEqual(model.presencePhase, .active)
@@ -180,6 +235,8 @@ final class ZoomOutCoverageTests: XCTestCase {
     let image = UIGraphicsImageRenderer(size: host.view.bounds.size).image { _ in host.view.drawHierarchy(in: host.view.bounds, afterScreenUpdates: true) }
     let pixels = XCTAttachment(image: image); pixels.name = "New notebook and diagram during zoom-out"; pixels.lifetime = .keepAlways; add(pixels)
     if nativeGesture {
+      XCTAssertTrue(pixelCoverage.passed,
+        "Zero blank observations from first exposure: \(pixelCoverage.missing)/\(pixelCoverage.checked) missing. First observed pixels=\(String(describing: pixelsShown)); capture time is not FPS")
       let presence = try XCTUnwrap(model.presence)
       let probe = presence.camera.worldToScreen(.init(x: 1900, y: 950), viewport: presence.viewport)
       XCTAssertTrue(try NotebookUXObservation.Pixels(window: window).matches([
@@ -188,13 +245,27 @@ final class ZoomOutCoverageTests: XCTestCase {
       XCTAssertEqual(pinch?.recognizer.intent, .magnification)
     }
     if mixed {
+      var refinementStart: ContinuousClock.Instant?, refinedAfter: Duration?
       for step in 0..<90 {
         let progress = min(1, Double(step)/45)
+        if step == 45 { refinementStart = .now }
         show(center: .init(x: 2000, y: 530), scale: exp(log(0.2) + (log(0.752)-log(0.2))*progress), settled: false)
         try await Task.sleep(for: .milliseconds(16))
+        if let refinementStart, refinedAfter == nil, let detailed = model.compositionTiles.published,
+          detailed.plan.meetsRequiredDensity,
+          [diagram.id, "thin-lines"].allSatisfy({ id in
+            guard let receipt = detailed.sourceReceipts[.init(plane: .board(boardID), elementID: id)] else { return false }
+            return receipt.hasCurrentPixels && receipt.installedScale * sqrt(2.0) >= 0.752 * 2
+          }), let current = model.presence {
+          let point = current.camera.worldToScreen(.init(x: 1900, y: 950), viewport: current.viewport)
+          if try NotebookUXObservation.Pixels(window: window).matches([(.init(x: point.x, y: point.y), .blue)]) {
+            refinedAfter = refinementStart.duration(to: .now)
+          }
+        }
       }
-      let deadline = ContinuousClock.now + .seconds(5)
-      while model.compositionTiles.isPreparing, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(20)) }
+      XCTAssertLessThanOrEqual(try XCTUnwrap(refinedAfter, "Held zoom never installed current full-density material"),
+        NotebookUXObservation.zoomRefinement,
+        "Refinement gets 250 ms from the input requesting final density, not five seconds after the gesture loop")
       let detailed = try XCTUnwrap(model.compositionTiles.published)
       XCTAssertTrue(model.inputIsActive)
       XCTAssertEqual(model.presencePhase, .active)
@@ -212,6 +283,13 @@ final class ZoomOutCoverageTests: XCTestCase {
       }
       let screenshot = XCTAttachment(image: image)
       screenshot.name = "Mixed scene during held zoom"; screenshot.lifetime = .keepAlways; add(screenshot)
+    }
+    if nativeGesture {
+      coverageLink.isEnabled = false
+      XCTAssertTrue(committedCoverage.passed,
+        "Visible material must have native pixels at EVERY observed UIKit commit, from first exposure through refinement: \(committedCoverage.missing)/\(committedCoverage.checked) holes. No grace period, no average")
+      let note = XCTAttachment(string: "commits=\(committedCoverage.checked); committed holes=\(committedCoverage.missing); pixel probes=\(pixelCoverage.checked); blank pixel probes=\(pixelCoverage.missing). UIKit commits are not OS display acknowledgements.")
+      note.name = "Held zoom zero-hole coverage"; note.lifetime = .keepAlways; add(note)
     }
     if let pinch { pinch.end() }
     else {
@@ -250,7 +328,7 @@ final class ZoomOutCoverageTests: XCTestCase {
 /// Delivers measured fingers to the recognizer and contact observer installed by
 /// SpatialWorkspaceView. No direct presence update or extra preparation call can
 /// conceal a missing camera-to-composition wake-up.
-@MainActor private final class HeldCoveragePinch {
+@MainActor final class HeldCoveragePinch {
   let recognizer: TwoFingerPaperGestureRecognizer
   private let observer: NotebookContactObserver
   private let basis: SessionPresence

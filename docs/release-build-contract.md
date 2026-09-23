@@ -21,6 +21,13 @@ Use `--base HEAD^`, for example, to describe the last committed slice.
 - `--test target/suite/method` and `--profile name` add to automatic selection.
 - `--only --test … --profile …` runs only the explicit scope and records
   `selectionMode: explicit-only`. A single regression may need only one selector.
+- `--optimized` compiles selected native Debug checks with `-O`, preserving their
+  isolated fixtures while measuring optimized app code. The selection and receipt
+  record this choice; it is not a Release artifact or the `--full` route.
+- `navigation-ux` additionally exports system `XCTHitchMetric` samples and rejects
+  any zoom/page-turn ratio above 1 ms/s or total hitch time above 33 ms in each
+  of ten repetitions, or missing measurements. A relative Xcode
+  baseline cannot waive the absolute limit; release validation rechecks it.
 - An unmapped native source seeks a matching `*Tests.swift` on its platform.
   `document-web` covers JavaScript contracts and four native WebKit boundaries;
   `documents` is the broader integration profile.

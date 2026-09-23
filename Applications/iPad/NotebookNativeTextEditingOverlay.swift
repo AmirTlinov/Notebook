@@ -2,7 +2,7 @@ import NotebookCore
 import SwiftUI
 import UIKit
 
-/// The native editor is not a child of UIPageViewController. A page curl cannot
+/// The native editor lives outside the sheet stack. A page curl cannot
 /// take its selection gestures, and creation does not wait for store publication.
 struct NotebookNativeTextEditingOverlay: View {
   @Environment(NotebookAppModel.self) private var model

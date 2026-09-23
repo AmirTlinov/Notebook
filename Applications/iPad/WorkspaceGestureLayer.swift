@@ -238,6 +238,10 @@ struct WorkspaceGestureLayer: UIViewRepresentable {
     }
 
     private func updateCamera(_ recognizer: TwoFingerPaperGestureRecognizer) {
+      let entered = recognizer.onCameraHandled == nil ? nil : CACurrentMediaTime()
+      defer {
+        if let entered { recognizer.onCameraHandled?(recognizer.magnification, entered, CACurrentMediaTime()) }
+      }
       repeatTask?.cancel(); repeatTask = nil
       if !cameraIsActive {
         cameraIsActive = true

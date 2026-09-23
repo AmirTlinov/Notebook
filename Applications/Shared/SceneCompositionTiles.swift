@@ -144,7 +144,8 @@ struct SceneCompositionBand: Identifiable, Sendable {
 /// accounts for the shown cohort and exact candidate rasters; a tile-count
 /// bound alone is not a claim that both sets fit the shared pool.
 struct SceneCompositionPlan: Sendable {
-  static let maximumLiveOwners = 8
+  static let maximumNativeOwners = 8
+  static let maximumLiveOwners = maximumNativeOwners + SceneRenderResources.maximumVisiblePrograms
   static let maximumTiles = 32
   static let maximumPrimitives = 96
   let revision: UInt64
@@ -241,8 +242,7 @@ struct SceneCompositionPlan: Sendable {
         let item = frame.worksets[plane.boardID]?.items.first(where: { $0.id == itemID }) {
         area = .init(origin: .zero, width: item.geometry.width, height: item.geometry.height)
       } else {
-        area = .init(origin: view.camera.screenToWorld(.init(x: -96, y: -96), viewport: view.viewport),
-          width: (view.viewport.x + 192) / view.camera.scale, height: (view.viewport.y + 192) / view.camera.scale)
+        area = NotebookSceneState.bounds(for: view, margin: WorkspaceSceneIndex.preparationMargin(for: view))
       }
       bounds[plane] = area
     }
@@ -366,8 +366,16 @@ struct SceneCompositionPlan: Sendable {
     }
     let physical = candidates.filter { !isVector($0.id, boardID: $0.plane.boardID) }
     let vectors = candidates.filter { isVector($0.id, boardID: $0.plane.boardID) }
-    guard physical.filter(\.pinned).count < maximumLiveOwners else { throw SceneRenderError.snapshotPending("live_owner_budget") }
-    let positioned = try await source.positionedOwners((Array(physical.prefix(maximumLiveOwners - 1)) + vectors)
+    // A small program is not a full-screen ink canvas. Keep the paper/native
+    // workset bounded independently, rather than silently baking visible
+    // controls into screenshots after the seventh element.
+    let programs = physical.filter(\.runtime), ordinary = physical.filter { !$0.runtime }
+    guard ordinary.filter(\.pinned).count < maximumNativeOwners,
+      programs.filter(\.pinned).count <= SceneRenderResources.maximumVisiblePrograms
+    else { throw SceneRenderError.snapshotPending("live_owner_budget") }
+    let admitted = Array(programs.prefix(SceneRenderResources.maximumVisiblePrograms))
+      + Array(ordinary.prefix(maximumNativeOwners - 1))
+    let positioned = try await source.positionedOwners((admitted + vectors)
       .map { (plane: $0.plane, id: $0.id) })
     var owners = positioned.filter { !isVector($0.id, boardID: $0.plane.boardID) }
     let native = positioned.filter { isVector($0.id, boardID: $0.plane.boardID) }
@@ -492,14 +500,16 @@ struct SceneCompositionPlan: Sendable {
       // continues through SceneCompositionRenderer.paintInk independently.
       let inkBoardIDs: Set<UUID> = [presence.boardID]
     #endif
-    guard owners.count + inkBoardIDs.count <= maximumLiveOwners else {
+    let paperCount = owners.filter { if case .item = $0.id { return true }; return false }.count
+    guard owners.count + inkBoardIDs.count <= maximumLiveOwners,
+      paperCount + inkBoardIDs.count <= maximumNativeOwners else {
       throw SceneRenderError.snapshotPending("live_owner_budget")
     }
     for boardID in includedBoards {
       guard let view = frame.presences[boardID] else { throw SceneRenderError.snapshotPending("portal_projection") }
       let plane = SceneCompositionPlane.board(boardID)
       presentations[plane] = view
-      let margin = 96.0
+      let margin = WorkspaceSceneIndex.preparationMargin(for: view)
       bounds[plane] = .init(origin: view.camera.screenToWorld(.init(x: -margin, y: -margin), viewport: view.viewport),
           width: (view.viewport.x + 2 * margin) / view.camera.scale, height: (view.viewport.y + 2 * margin) / view.camera.scale)
       density[plane] = (frame.pixelScales[boardID] ?? view.camera.scale) * displayScale
@@ -736,6 +746,9 @@ final class SceneCompositionTiles {
   private(set) var failure: String?
   private let resources: SceneRenderResources
   let surfaceRegistry: SpatialInkSurfaceRegistry
+  // Optional read-only phase observation; nil in the application. This records
+  // existing awaits without adding a scheduling or publication path.
+  @ObservationIgnored var onPreparationPhase: ((UUID, String) -> Void)?
   @ObservationIgnored private var task: Task<Void, Never>?
   @ObservationIgnored private var inFlight: [UUID: Task<Void, Never>] = [:]
   @ObservationIgnored private var stopped = false
@@ -786,14 +799,17 @@ final class SceneCompositionTiles {
     if var current = runtimeSources[address], current.leaseID == leaseID, SceneRasterSource.agent(current.demand.source) == .agent(source) {
       if current.demand != demand {
         current.demand = demand
-        if let policy = current.failure?.policy, policy != demand.policy { current.failure = nil }
-        runtimeSources[address] = current; runtimeSourceGeneration &+= 1
+        if let policy = current.failure?.policy, policy != demand.policy {
+          current.failure = nil; runtimeSourceGeneration &+= 1
+        }
+        runtimeSources[address] = current
       }
     } else {
       let hadFailure = runtimeSources[address]?.failure != nil
       runtimeSources[address] = .init(leaseID: leaseID, demand: demand)
-      runtimeSourceGeneration &+= 1
-      if hadFailure { dirtySources.insert(address); refreshSources() }
+      // Only failure presentation observes this generation. A successful
+      // admission/density update must not invalidate every other live view.
+      if hadFailure { runtimeSourceGeneration &+= 1; dirtySources.insert(address); refreshSources() }
     }
     return address
   }
@@ -933,6 +949,7 @@ final class SceneCompositionTiles {
     isPreparing = true; failure = nil; budgetFailures = []; preparingRequest = request
     task = Task { [weak self, resources, surfaceRegistry] in
       defer {
+        self?.onPreparationPhase?(id, "finished")
         self?.inFlight[id] = nil
         self?.finishRequest(id)
       }
@@ -948,8 +965,10 @@ final class SceneCompositionTiles {
       do {
         try Task.checkCancellation()
         guard self?.requestID == id, permitsPreparation() else { throw CancellationError() }
+        self?.onPreparationPhase?(id, "plan")
         var plan = try await SceneCompositionPlan.prepare(source: source, presence: presence, frame: frame,
           pinned: pinned, displayScale: displayScale, previous: self?.published?.plan)
+        self?.onPreparationPhase?(id, "source_requests")
         renderer.useSourcePresentation(plan: plan, frame: frame, displayScale: displayScale, refinesDetails: request.refinesDetails)
         let requests = try await renderer.liveRasterRequests(plan: plan, frame: frame, displayScale: displayScale)
         let previous = self?.published
@@ -966,6 +985,7 @@ final class SceneCompositionTiles {
             var nativeInk: SpatialInkSceneLease?
           #endif
           do {
+            self?.onPreparationPhase?(id, "live_source")
             let candidate = try await source.liveCandidate(plan: plan, presence: presence, frame: frame,
               previous: previous.map { (plan: $0.plan, data: $0.liveData) }, reusing: previousLiveData)
             let liveData = candidate.data
@@ -975,6 +995,7 @@ final class SceneCompositionTiles {
             guard self?.requestID == id, permitsPreparation() else { throw CancellationError() }
             let selected = requests.filter { plan.liveOwners.contains($0.owner) }
             let runtimeOwners = Self.runtimeOwners(requests: selected, plan: plan, resources: resources)
+            self?.onPreparationPhase?(id, "discover_sources")
             try await renderer.discoverSources(plan: plan, frame: frame, displayScale: displayScale)
             renderer.onSourceDemand = { [weak self, weak renderer] in
               guard let self, requestID == id, let renderer else { return }
@@ -1002,6 +1023,7 @@ final class SceneCompositionTiles {
               // pool, so recheck rather than treating the first read as credit.
               phase = "native_ink"
               allocation = .nativeInk
+              self?.onPreparationPhase?(id, "native_ink")
               nativeInk = try await surfaceRegistry.prepareSceneInk(plan: plan, frame: frame,
                 liveData: liveData, resources: resources, displayScale: displayScale, refinesDetails: request.refinesDetails)
               phase = "raster_native_preflight"
@@ -1013,6 +1035,7 @@ final class SceneCompositionTiles {
               }
             #endif
             phase = "live_raster"
+            self?.onPreparationPhase?(id, "tiles")
             renderer.carrySources(from: previous, tiles: rasters)
             renderer.useLiveSources(selected)
             for key in plan.tiles where rasters[key] == nil {
@@ -1027,6 +1050,7 @@ final class SceneCompositionTiles {
                 rasters[key] = raster
               }
             }
+            self?.onPreparationPhase?(id, "validate")
             try await source.validate(); try Task.checkCancellation()
             guard self?.requestID == id, permitsPreparation(), rasters.count == plan.tiles.count else { throw CancellationError() }
             var receipts = renderer.receipts()
@@ -1074,6 +1098,7 @@ final class SceneCompositionTiles {
                 runtimeOwners: runtimeOwners,
                 tileSources: renderer.tileSources, tilePresenters: tilePresenters)
             #endif
+            self?.onPreparationPhase?(id, "published")
             rasters.removeAll(); liveRasters.removeAll()
             self?.hasQualityDebt = !plan.meetsRequiredDensity
             self?.scheduleSources(receipts, runtimeOwners: runtimeOwners, presence: presence, frame: frame)

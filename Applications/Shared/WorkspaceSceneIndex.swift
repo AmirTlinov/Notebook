@@ -5,6 +5,13 @@ import NotebookCore
 /// with their BoardDocument; camera queries neither copy nor inspect their text.
 struct WorkspaceSceneIndex: Sendable {
   static let detailLimit = 96
+
+  /// Prepare before a pinch exposes the source, not 32 points before its
+  /// boundary crosses the viewport. This only enlarges the bounded spatial
+  /// query; entry, live-runtime and raster quotas remain unchanged.
+  static func preparationMargin(for presence: SessionPresence) -> Double {
+    max(192, max(presence.viewport.x, presence.viewport.y) * 0.75)
+  }
   let generationID = UUID()
   // Value-shared sources of this exact projection, retained with a shown
   // cohort so a later model publication cannot redirect a pointing contact.
@@ -270,10 +277,11 @@ struct WorkspaceSceneIndex: Sendable {
     pixelScale: Double, limit: Int, pinned: Set<WorkspaceSpatialID> = []) -> WorkspaceSceneWorkset {
     guard let board = boards[presence.boardID], let index = board.coverIndices[item.id] else { return .empty }
     let center = presence.camera.worldToScreen(item.center, viewport: presence.viewport)
-    let left = max(0, item.geometry.width / 2 - (center.x + 96) / presence.camera.scale)
-    let top = max(0, item.geometry.height / 2 - (center.y + 96) / presence.camera.scale)
-    let right = min(item.geometry.width, item.geometry.width / 2 + (presence.viewport.x + 96 - center.x) / presence.camera.scale)
-    let bottom = min(item.geometry.height, item.geometry.height / 2 + (presence.viewport.y + 96 - center.y) / presence.camera.scale)
+    let margin = Self.preparationMargin(for: presence)
+    let left = max(0, item.geometry.width / 2 - (center.x + margin) / presence.camera.scale)
+    let top = max(0, item.geometry.height / 2 - (center.y + margin) / presence.camera.scale)
+    let right = min(item.geometry.width, item.geometry.width / 2 + (presence.viewport.x + margin - center.x) / presence.camera.scale)
+    let bottom = min(item.geometry.height, item.geometry.height / 2 + (presence.viewport.y + margin - center.y) / presence.camera.scale)
     let query = index.query(bounds: .init(origin: .init(x: left, y: top),
       width: max(0, right - left), height: max(0, bottom - top)), limit: limit,
       minimumProjectedExtent: 12, scale: pixelScale, pinned: pinned)
@@ -295,7 +303,7 @@ struct WorkspaceSceneIndex: Sendable {
   func workset(presence: SessionPresence, pinned: Set<WorkspaceSpatialID> = [],
     limit: Int = detailLimit, pixelScale: Double? = nil) -> WorkspaceSceneWorkset {
     guard let board = boards[presence.boardID] else { return .empty }
-    let margin = 96 + WorkspaceCoverRaster.shadowPadding * presence.camera.scale
+    let margin = Self.preparationMargin(for: presence) + WorkspaceCoverRaster.shadowPadding * presence.camera.scale
     let origin = presence.camera.screenToWorld(.init(x: -margin, y: -margin), viewport: presence.viewport)
     let bounds = WorkspaceSpatialBounds(origin: origin,
       width: (presence.viewport.x + 2 * margin) / presence.camera.scale,

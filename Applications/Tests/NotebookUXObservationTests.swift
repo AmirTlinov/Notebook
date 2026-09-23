@@ -9,7 +9,35 @@ enum NotebookUXObservation {
   static let correctnessTimeout: Duration = .milliseconds(100)
   static let selection: Duration = .milliseconds(250)
   static let opening: Duration = .seconds(1)
-  static let coldOpening: Duration = .seconds(2)
+  // Product ceilings, not XCTest/AX transport timeouts. Both cold milestones
+  // share the clock started BEFORE mounting/loading; refinement never resets it.
+  static let firstUsefulFrame: Duration = .milliseconds(150)
+  static let coldOpening: Duration = .milliseconds(1_000)
+  static let zoomRefinement: Duration = .milliseconds(250)
+  static let pageFirstResponse: Duration = .seconds(1.0 / 60)
+  static let pageLanding: Duration = .milliseconds(450)
+  static let cameraSampleMS = 1_000.0 / 60 // Queue + handler, NOT handler execution or FPS.
+  static let cameraHandlerMS = 5.0
+
+  static func acceptsCameraSample(due: TimeInterval, entered: TimeInterval?, handled: TimeInterval) -> Bool {
+    guard let entered, [due, entered, handled].allSatisfy({ $0.isFinite && $0 > 0 }),
+      entered >= due, handled >= entered else { return false }
+    return handled <= due + cameraSampleMS / 1_000 && handled <= entered + cameraHandlerMS / 1_000
+  }
+
+  /// Zero holes is an invariant, not a grace period after material enters view.
+  /// A commit observation proves installed native coverage, not physical FPS;
+  /// window-pixel observations independently check the authored appearance.
+  struct Coverage {
+    private(set) var checked = 0
+    private(set) var missing = 0
+    mutating func record(_ covered: Bool?) {
+      guard let covered else { return } // Nothing expected in this viewport.
+      checked += 1
+      if !covered { missing += 1 }
+    }
+    var passed: Bool { checked > 0 && missing == 0 }
+  }
 
   struct Result {
     let matched: Bool
@@ -24,7 +52,9 @@ enum NotebookUXObservation {
   static func observe(since start: ContinuousClock.Instant, budget: Duration,
     probe: () throws -> Bool) async throws -> Result {
     while true {
-      let matched = try probe()
+      let matched: Bool
+      do { matched = try probe() }
+      catch CaptureError.unavailable { matched = false }
       // Check AFTER the probe too. A synchronous 6-second render returning true
       // must not pass merely because the loop began before the deadline.
       let elapsed = start.duration(to: .now)
@@ -49,6 +79,8 @@ enum NotebookUXObservation {
     }
   }
 
+  enum CaptureError: Error { case unavailable }
+
   @MainActor struct Pixels {
     let image: UIImage
     init(window: UIWindow) throws {
@@ -59,7 +91,10 @@ enum NotebookUXObservation {
         // readback and mislabel snapshot-induced waiting as input latency.
         captured = window.drawHierarchy(in: window.bounds, afterScreenUpdates: false)
       }
-      XCTAssertTrue(captured, "A failed window capture is missing evidence, never a green frame")
+      // A not-yet-committed root is expected during a cold-open observation.
+      // It counts as missing pixels until the SAME deadline, never as success.
+      // A direct/final capture still throws rather than returning blank proof.
+      guard captured else { throw CaptureError.unavailable }
       _ = try XCTUnwrap(image.cgImage)
     }
 
@@ -125,5 +160,59 @@ final class NotebookUXObservationTests: XCTestCase {
     let result = try await NotebookUXObservation.observe(since: .now - .seconds(1),
       budget: .milliseconds(100)) { true }
     XCTAssertFalse(result.passed)
+  }
+
+  func testUnavailableCaptureCannotPassButAnInBudgetCommittedFrameCan() async throws {
+    let missing = try await NotebookUXObservation.observe(since: .now, budget: .milliseconds(5)) {
+      throw NotebookUXObservation.CaptureError.unavailable
+    }
+    XCTAssertFalse(missing.matched); XCTAssertFalse(missing.passed)
+    var attempts = 0
+    let committed = try await NotebookUXObservation.observe(since: .now, budget: .milliseconds(100)) {
+      attempts += 1
+      if attempts == 1 { throw NotebookUXObservation.CaptureError.unavailable }
+      return true
+    }
+    XCTAssertEqual(attempts, 2); XCTAssertTrue(committed.passed)
+    let late = try await NotebookUXObservation.observe(since: .now - .seconds(1), budget: .milliseconds(100)) {
+      throw NotebookUXObservation.CaptureError.unavailable
+    }
+    XCTAssertFalse(late.passed)
+  }
+
+  func testEveryNavigationCeilingRejectsEvenOneLateResult() {
+    for budget in [NotebookUXObservation.firstUsefulFrame, NotebookUXObservation.coldOpening,
+      NotebookUXObservation.zoomRefinement,
+      NotebookUXObservation.pageFirstResponse, NotebookUXObservation.pageLanding] {
+      XCTAssertTrue(NotebookUXObservation.Result(matched: true, elapsed: budget, budget: budget).passed)
+      XCTAssertFalse(NotebookUXObservation.Result(matched: true,
+        elapsed: budget + .nanoseconds(1), budget: budget).passed)
+      XCTAssertFalse(NotebookUXObservation.Result(matched: false, elapsed: .zero, budget: budget).passed)
+    }
+  }
+
+  func testCameraExecutionBudgetCannotHideQueueDelayOrMissingTimestamps() {
+    let due = 100.0, entered = due + 0.002
+    XCTAssertTrue(NotebookUXObservation.acceptsCameraSample(due: due, entered: entered, handled: entered + 0.005))
+    XCTAssertFalse(NotebookUXObservation.acceptsCameraSample(due: due, entered: entered, handled: entered + 0.005_001))
+    XCTAssertFalse(NotebookUXObservation.acceptsCameraSample(due: due, entered: due + 0.020, handled: due + 0.021))
+    XCTAssertFalse(NotebookUXObservation.acceptsCameraSample(due: due, entered: nil, handled: due + 0.001))
+    XCTAssertFalse(NotebookUXObservation.acceptsCameraSample(due: due, entered: entered, handled: due))
+    XCTAssertFalse(NotebookUXObservation.acceptsCameraSample(due: due, entered: entered, handled: .nan))
+  }
+
+  func testFirstBlankOrLaterDisappearanceCannotBeAveragedAway() {
+    var coverage = NotebookUXObservation.Coverage()
+    coverage.record(nil)
+    XCTAssertFalse(coverage.passed, "No applicable observations is missing evidence")
+    coverage.record(false) // Even ONE initially blank committed frame must fail.
+    for _ in 0..<100 { coverage.record(true) }
+    XCTAssertEqual(coverage.checked, 101)
+    XCTAssertFalse(coverage.passed)
+    var stable = NotebookUXObservation.Coverage()
+    stable.record(true)
+    XCTAssertTrue(stable.passed)
+    stable.record(false)
+    XCTAssertFalse(stable.passed, "Already shown material must not disappear either")
   }
 }

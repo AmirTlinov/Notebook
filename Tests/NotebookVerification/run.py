@@ -323,13 +323,15 @@ class SelectionTests(unittest.TestCase):
         self.change(path, json.dumps(old))
         self.assertIn("mcp", verify.make_plan(self.root)["profiles"])
 
-    def test_scene_owner_does_not_select_the_100k_fixture_or_ui(self):
+    def test_scene_owner_selects_visible_navigation_ux_without_unrelated_scale_fixture(self):
         self.change("Applications/Shared/SceneCompositionTiles.swift")
         self.change("Applications/Tests/SceneCompositionTests.swift")
         plan = verify.make_plan(self.root)
         self.assertFalse(plan["unclassified"])
         self.assertTrue(plan["checks"]["ipad"])
-        self.assertTrue(all(s.count("/") == 2 and "HundredThousand" not in s and "UITests" not in s for s in plan["checks"]["ipad"]))
+        self.assertTrue(all("HundredThousand" not in s for s in plan["checks"]["ipad"]))
+        self.assertIn("navigation-ux", plan["profiles"])
+        self.assertIn("NotebookUITests/NotebookNavigationLoadUITests/testTwentyFourBoardProgramsStayInteractiveAfterZoomOutAndBack", plan["checks"]["ipad"])
 
     def test_a_misspelled_selector_cannot_hide_behind_other_passed_tests(self):
         tree = {"testNodes": [{"name": "NotebookTests", "nodeType": "Unit test bundle", "children": [
@@ -617,10 +619,16 @@ class SelectionTests(unittest.TestCase):
         self.assertIn(verify.UI + "testChatMovesResizesAndOpensSettingsWithoutMovingPaper", plan["checks"]["ipad"])
         self.assertIn(verify.UI + "testAgentChangesStayQuietAndHistoryKeepsItsActions", plan["checks"]["ipad"])
 
-    def test_page_turn_owner_adds_only_two_page_turn_gestures(self):
+    def test_page_turn_owner_requires_visible_load_gestures_and_motion_gates(self):
         self.change("Applications/iPad/IPadPageTurnController.swift")
         plan = verify.make_plan(self.root)
         self.assertEqual(sum(s.startswith(verify.UI) for s in plan["checks"]["ipad"]), 2)
+        self.assertIn("navigation-ux", plan["profiles"])
+        self.assertIn("NotebookTests/NotebookPageMotionUXTests", plan["checks"]["ipad"])
+        journeys = [s for s in plan["checks"]["ipad"] if s.startswith("NotebookUITests/NotebookNavigationLoadUITests/")]
+        self.assertEqual(len(journeys), 5)
+        for name in ("AgentWebElementView.swift", "PreparedAgentElementView.swift", "SceneRenderResources.swift"):
+            self.assertIn("navigation-ux", verify.owners("Applications/Shared/" + name))
 
     def test_explicit_only_does_not_append_suites_and_records_unclassified_files(self):
         self.change("Applications/WebResources/document-shell.html")
@@ -840,6 +848,41 @@ class SelectionTests(unittest.TestCase):
         for key, value in [("passedTests", 0), ("failedTests", 1), ("skippedTests", 1), ("runtimeWarnings", ["warning"]), ("runtimeWarnings", None)]:
             with self.subTest(key=key), self.assertRaises(release.ReleaseError):
                 verify.validate_summary(dict(good, **{key: value}))
+
+    def test_navigation_hitches_have_an_absolute_budget_and_missing_data_fails_closed(self):
+        case = verify.NAVIGATION_HITCH_TESTS[0]
+        selectors = ["NotebookUITests/" + case]
+        def metrics(values=None, unit="ms/s", durations=None):
+            return [{"testIdentifier": case + "()", "testRuns": [{"metrics": [
+                {"identifier": "com.apple.dt.XCTMetric_Hitch-native-test.time.ratio",
+                 "unitOfMeasurement": unit, "measurements": [1.0] * 10 if values is None else values},
+                {"identifier": "com.apple.dt.XCTMetric_Hitch-native-test.total.duration",
+                 "unitOfMeasurement": "s", "measurements": [0.033] * 10 if durations is None else durations}]}]}]
+        verify.validate_hitch_metrics(metrics(), selectors)
+        verify.validate_hitch_metrics(metrics(unit="ms per s"), selectors)
+        failures = [[], metrics([]), metrics([0] * 9), metrics([0] * 11), metrics(unit="unknown"),
+                    metrics(durations=[]), metrics(durations=[0] * 9)]
+        for invalid in [1.001, float("nan"), float("inf"), -1, True, "0"]:
+            failures.append(metrics([0] * 9 + [invalid]))
+        for invalid in [0.033001, float("nan"), float("inf"), -1, True, "0"]:
+            # Ten low ratios must not hide even ONE long freeze.
+            failures.append(metrics([0.1] * 10, durations=[0] * 9 + [invalid]))
+        for missing in (0, 1):
+            result = metrics()
+            del result[0]["testRuns"][0]["metrics"][missing]
+            failures.append(result)
+        for field, value in [("identifier", "unrelated.time.ratio"), ("unitOfMeasurement", "ms")]:
+            result = metrics()
+            result[0]["testRuns"][0]["metrics"][1][field] = value
+            failures.append(result)
+        for result in failures:
+            with self.subTest(result=result), self.assertRaises(release.ReleaseError):
+                verify.validate_hitch_metrics(result, selectors)
+
+    def test_optimized_selection_records_its_actual_compilation_mode(self):
+        with patch.object(verify, "ROOT", self.root), contextlib.redirect_stdout(io.StringIO()) as output:
+            verify.main(["--plan", "--only", "--optimized", "--profile", "navigation-ux"])
+        self.assertTrue(json.loads(output.getvalue())["optimized"])
 
     def receipt(self):
         self.change("Applications/notebook_verification.py")

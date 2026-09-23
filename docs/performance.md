@@ -410,6 +410,68 @@ controls reject wrong/missing output and late synchronous success. Existing
 UX ceiling green. Do not prewarm lasso materialization, insert persistence waits
 between ordinary gestures, or raise these ceilings to bless a regression.
 
+### Zoom, page turns and live programs
+
+`./verify.sh --only --optimized --profile navigation-ux` is the physical-iPad
+regression route for held-camera visibility, dense pages and 24 independent
+JavaScript/CSS programs. The optimized Debug fixture uses ordinary app owners
+and an isolated store; it does not alter the installed pair or prefill caches.
+Each cold scene has fresh source identities. The first authored pixels must
+appear within 150 ms; all pixels and 24 usable runtimes within 1000 ms, both
+from the same cold-opening origin before any warm action.
+CSS motion is checked in three actual images, including while both zoom contacts
+remain held. Each camera handler must finish within 5 ms; queue plus handler
+must finish within 16.67 ms from the scheduled input. Newly exposed material
+requires installed coverage at every observed UIKit commit and correct authored
+pixels from the first exposure, with no blank grace period. Missing detail must
+refine within 250 ms without making shown material disappear. Coverage observations
+do not claim physical presentation or FPS.
+
+Real UI journeys enter through the cover, pinch, swipe in both directions and
+rapidly press the folio arrows. They check the requested page's actual pixels,
+all 24 first-tap responses, and state after returning. Source availability,
+accessibility counters and queued work cannot substitute for these images.
+`XCTHitchMetric` records the system hitch ratio for repeated zoom and page-turn
+journeys. The selected verifier requires ten samples, each at most 1 ms/s and
+33 ms total hitch time; missing, non-finite or over-budget data fails regardless of Xcode's
+relative baseline. UIUpdateLink completion is retained as a scheduling diagnostic,
+not used as a substitute for this compositor metric. Pencil retains its separate
+20-ms input/presentation contract. Navigation requires the first changing
+presented frame within 16.67 ms and the complete target within 450 ms of the command.
+Changing Metal presentation timestamps must follow the physical display's maximum
+refresh rate (0.5 ms timing tolerance); MainActor callback delivery is recorded
+separately and cannot stand in for the OS presentation clock.
+The image/shadow lane is separate from presentation timing. XCTest/AX transport
+watchdogs are not application latency budgets. These are blocking criteria,
+not a claim that the current application meets them.
+
+The native turn owner retains at most four stable page hosts. Two bounded sequential
+raster executors prepare passive elements, prioritizing the displayed sheet and
+requested destination. It does not wait for finger-up or for an offscreen browser
+animation frame. Current-page programs keep separate input contexts; only their
+passive neighbours share an executor. Raster readiness follows the first real
+native layout, not cache acquisition alone. Addressed page reads publish in order
+instead of repeatedly invalidating one another through a global read epoch.
+Unchanged program checkpoints still validate storage but do not reload the scene.
+Only an active erasure or its pending handoff mounts a full-page erasure mask;
+idle neighbour pages must not allocate transparent work beneath a white mask.
+Scene source preparation uses a viewport-relative overscan window, with a larger
+durable metadata window behind it. The 96-source, native-owner and runtime quotas
+do not grow; offscreen programs are prepared passively, not admitted for input.
+
+`IPadSheetCurlController` bends one frozen sheet through the same Core Image /
+Metal renderer as covers. It replaces UIKit's fixed binding shadow, not overlays
+or private layer mutations. The mounted source/destination keep one parent;
+only their stacking changes. A presented endpoint, not elapsed animation time,
+confirms the landing. Page progress and drawable submission share one
+`CAMetalDisplayLink`; a dropped drawable never confirms a landing. The turn's
+image and two drawable backings have one bounded
+input reservation, explicitly released at presentation or drained on cancellation.
+Four alternating native turns check intermediate images, final content, a bounded
+left-edge shadow, and return of reserved bytes before the next turn. This route
+is regression evidence, not full sustained CPU/GPU/memory or physical-photon
+acceptance.
+
 ### Ready-link collaboration and iPad priority
 
 `./verify.sh --only --profile collaboration-ux` checks small edits on an already

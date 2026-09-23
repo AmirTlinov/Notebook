@@ -44,10 +44,11 @@ final class SceneWebRasterPreparation {
 
   static func create(resources: SceneRenderResources,
     executionSource: InteractiveElementReference? = nil,
+    priority: WebPriority = .background,
     permitsPreparation: @MainActor () -> Bool) async throws -> SceneWebRasterPreparation {
     try Task.checkCancellation()
     guard permitsPreparation() else { throw CancellationError() }
-    let lease = try await resources.acquireWebSurface(priority: .background, source: executionSource)
+    let lease = try await resources.acquireWebSurface(priority: priority, source: executionSource)
     do {
       try Task.checkCancellation()
       guard permitsPreparation() else { throw CancellationError() }
