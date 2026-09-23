@@ -30,6 +30,7 @@ PROFILES = {
     "interaction-ux": {
         "ipad": ["NotebookTests/NotebookUXObservationTests", "NotebookTests/NotebookGestureLatencyTests",
                  "NotebookTests/NotebookSelectionCompositionTests", "NotebookTests/NotebookInteractionUXTests",
+                 "NotebookTests/NotebookPageLifecycleUXTests",
                  "NotebookTests/PagePresentationTests/testColdRootInstallsTheStoredInkPageAtTheActualViewport",
                  "NotebookTests/NotebookDocumentOpeningTests/testHistoryReferenceInstallsAnUnloadedDocumentOutsideTheCurrentCamera",
                  "NotebookTests/NotebookDocumentOpeningTests/testHistoryReferenceInstallsAnUnloadedDocumentOnAnotherBoard"],
