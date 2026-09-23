@@ -2441,16 +2441,24 @@ final class NotebookAppModel {
       _ = acceptDrawingUndo()
       return
     }
-    guard var journal = spatialInk else { return }
-    let surface: SurfaceID? = presence.flatMap { presence in
-      presence.focusedItemID.map(SurfaceID.cover)
-        ?? .board(presence.boardID)
-    }
-    guard let action = journal.undoLast(actor: actorID, touching: surface)
-      ?? (surface != nil ? journal.undoLast(actor: actorID) : nil)
-    else { return }
+    guard var journal = spatialInk, let presence else { return }
+    let surface = presence.focusedItemID.map(SurfaceID.cover) ?? .board(presence.boardID)
+    guard let owner = surface.ownerID else { return }
+    let contribution = pencilUndoHistory.lastContribution(for: owner)
+    // A peer's later contact is not this user's last action. A cold fallback
+    // is constrained to this author and surface, never the global journal.
+    guard let source = journal.actions.last(where: { action in
+      action.isActive && action.stamp.actor == actorID
+        && action.spans.contains { $0.surface == surface }
+        && (contribution?.contains(action.id) ?? true)
+    }), journal.deactivate(source.id, actor: actorID),
+      let action = journal.actions.first(where: { $0.id == source.id }) else { return }
     spatialInk = journal
-    if let owner = surface?.ownerID { pencilUndoHistory.didRemoveContribution([action.id], for: owner) }
+    // One contact may cross the board and a cover. Its inverse removes that
+    // contribution from every touched history, not just the current focus.
+    for owner in Set(action.spans.compactMap { $0.surface.ownerID }) {
+      pencilUndoHistory.didRemoveContribution([action.id], for: owner)
+    }
 
     scheduleSpatialInkSave(.state(actionID: action.id, creationStamp: action.stamp,
       isActive: action.isActive, stateStamp: action.stateStamp, journalStamp: journal.stamp))

@@ -1,5 +1,27 @@
 # Verification record
 
+## September 23 — GUI-295, Undo keeps its surface and author (183)
+
+Spatial Undo no longer falls back from an empty selected cover to the global
+journal. It deactivates the exact locally accepted contact, not a peer's later
+stroke; the cold ink fallback is constrained to the selected surface and local
+author. A contact crossing board/cover removes its reference from every touched
+local history when undone. This does not yet fix cold mixed command/ink ordering
+or implement Redo.
+
+`.build/gui295-surface-undo-183-checked/`: **11 iPad + 2 Mac PASS**, zero skips
+and runtime warnings, unchanged source
+`63b44e6a72ef6a0786a62ed15032591420709b0c2acd47feb607dfcb6d6f8c25`.
+New regressions cover an empty cover next to board ink and a newer peer stroke;
+existing checks cover blocked storage, the two-finger camera/undo boundary,
+mixed lasso acceptance/undo and Mac paste/undo. These are selected native checks,
+not a new complete visual or Pencil acceptance.
+
+Pair 182 has meanwhile finished its signed build (`.build/gui295-release-182/`)
+and is verified in `/Users/amir/Applications/Notebook.update-182.app`; the obsolete
+181 staging package was removed. **Installed pair remains 180** while its Mac
+process is running. No user storage or running application package was changed.
+
 ## September 23 — GUI-295, retained bodies and local-first cuts (182)
 
 Rendering and the next contact now borrow the same accepted body for a retained

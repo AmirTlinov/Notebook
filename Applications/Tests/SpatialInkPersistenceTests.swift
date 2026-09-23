@@ -75,4 +75,51 @@ final class SpatialInkPersistenceTests: XCTestCase {
     XCTAssertEqual(journal.actions.map(\.isActive), [false, true])
     XCTAssertEqual(journal.actions[0].spans, first.spans)
   }
+
+  @MainActor
+  func testUndoOnAnEmptyCoverCannotReachBoardInk() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
+    retainNotebookUntilTeardown(model, removing: root)
+    await model.start(pageSize: NotebookAppModel.defaultPageSize)
+    let boardID = try XCTUnwrap(model.workspace?.rootBoardID)
+    let coverID = try XCTUnwrap(model.workspace?.selectedItemID)
+    let own = try XCTUnwrap(model.appendSpatialInk(tool: .pen, color: .black, spans: [span(.board(boardID))]))
+    model.updatePresence(.init(boardID: boardID, mode: .board, camera: .init(scale: 1),
+      viewport: .init(x: 512, y: 512), focusedItemID: coverID), settled: true)
+    model.undoLastSurfaceAction()
+    XCTAssertEqual(model.spatialInk?.actions.first(where: { $0.id == own.id })?.isActive, true)
+    let saved = await model.finishPendingPersistence()
+    XCTAssertTrue(saved)
+    XCTAssertEqual(try model.store.readSpatialInk(surfaces: [.board(boardID)]).actions.first?.isActive, true)
+  }
+
+  @MainActor
+  func testUndoTargetsTheAcceptedOwnContactRatherThanTheNewerPeer() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
+    retainNotebookUntilTeardown(model, removing: root)
+    await model.start(pageSize: NotebookAppModel.defaultPageSize)
+    let boardID = try XCTUnwrap(model.workspace?.rootBoardID), surface = SurfaceID.board(boardID)
+    model.updatePresence(.init(boardID: boardID, mode: .board, camera: .init(scale: 1),
+      viewport: .init(x: 512, y: 512)), settled: true)
+    let own = try XCTUnwrap(model.appendSpatialInk(tool: .pen, color: .black, spans: [span(surface)]))
+    let saved = await model.finishPendingPersistence()
+    XCTAssertTrue(saved)
+    let peerStamp = VersionStamp(counter: own.stamp.counter + 1, actor: UUID())
+    let peer = SpatialInkAction(tool: .pen, color: .black, spans: [span(surface, x: 30)], stamp: peerStamp)
+    try model.store.commitSpatialInk(.append(peer, journalStamp: peerStamp))
+    await model.reloadExternalChanges()?.value
+    XCTAssertEqual(model.spatialInk?.actions.count, 2)
+    model.undoLastSurfaceAction()
+    XCTAssertEqual(model.spatialInk?.actions.first(where: { $0.id == own.id })?.isActive, false)
+    XCTAssertEqual(model.spatialInk?.actions.first(where: { $0.id == peer.id })?.isActive, true)
+    model.undoLastSurfaceAction()
+    let undone = await model.finishPendingPersistence()
+    XCTAssertTrue(undone)
+    let journal = try model.store.readSpatialInk(surfaces: [surface])
+    XCTAssertEqual(journal.actions.first(where: { $0.id == own.id })?.isActive, false)
+    XCTAssertEqual(journal.actions.first(where: { $0.id == peer.id })?.isActive, true)
+  }
+
 }
