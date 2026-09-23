@@ -1,5 +1,26 @@
 # Verification record
 
+## September 23 — GUI-298 matched pair 188 installed
+
+Commit `a58f2a39` produced signed **0.3.134 (188)** for iPad and Mac from the
+unchanged verified input below. Both installed versions were read back as 188
+and launched; the Mac process was PID 8980. Evidence:
+`.build/gui298-release-188/build.json`,
+`.build/gui298-install-188/installation.json`, and `observe-after.json` in the
+installation directory. The installed Mac helper answers in the retained
+workspace `54349F3B-9E0A-4DEA-B990-40CAE04EF45E`.
+
+Notebook on Mac quit normally before its atomic same-volume bundle replacement.
+Mac database identities/sizes and workspace registry bytes were unchanged before
+launch; iPad application-support entries and registry metadata were preserved.
+No containers, identities, keys or historical archives were deleted or restored.
+The isolated native-test app and generated UITest runner were removed.
+The physical launch image `.build/gui298-install-188/ipad-shown.png` was inspected:
+the existing board shows “Различимость” and the A4 document. This is live launch
+and content-preservation evidence, not an additional manual gesture/latency pass.
+GUI-298 remains In Review for Amir's ordinary-use check on that notebook; the
+scoped tests below do not claim full acceptance or close GUI-295.
+
 ## September 23 — GUI-298, selection, pickup and continuous page turns
 
 The unchanged build-188 input passed **40 physical-iPad + 3 Mac checks**, with no
