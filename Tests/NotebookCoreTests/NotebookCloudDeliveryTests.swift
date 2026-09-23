@@ -248,7 +248,7 @@ struct NotebookCloudDeliveryTests {
     let created = try #require(creation)
     _ = tree.addItem(created.item.id, to: index.rootBoardID, near: .zero, actor: pair.actorA)
     try pair.a.saveWorkspaceBundle(index: next, page: created.page, board: tree)
-    _ = try pair.a.deleteWorkspaceItem(itemID: removed, actor: pair.actorA)
+    _ = try pair.a.deleteTestItem(itemID: removed, actor: pair.actorA)
     // Prepared replicas can retain causal tombstones but start a fresh journal.
     try pair.a.commandTransaction { try pair.a.currentSQL!.run("DELETE FROM change_records") }
     let cloud = try upload(pair.a, source: pair.sourceA, account: pair.account)

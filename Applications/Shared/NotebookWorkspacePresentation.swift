@@ -121,12 +121,17 @@ final class NotebookWorkspacePresentationController: UIViewController, NotebookS
       self.model = model; model.workspacePresentations.register(self); model.registerScenePresentation(self)
     }
     let contentIdentity = cohort.map { NotebookWorkspaceContentIdentity.current(model: model, cohort: $0) }
-    if self.presence != presence || installedContent != contentIdentity { hasInstalledLayout = false }
+    let contentChanged = installedContent != contentIdentity
+    if self.presence != presence || contentChanged { hasInstalledLayout = false }
     self.presence = presence; self.cohort = cohort; installedContent = contentIdentity
     view.accessibilityIdentifier = model.documentMeasurements.enabled ? "workspace-scene-state" : nil
     view.accessibilityValue = model.scenePreparationDiagnostic
     host?.rootView = content
     host?.view.setNeedsLayout()
+    // A ready content cut must cross this hosting boundary in the same native
+    // update, not wait another frame before the camera planes even see it.
+    // Ordinary camera samples still update projection without forcing layout.
+    if contentChanged { host?.view.layoutIfNeeded() }
   }
 
   func capture(fragment: NotebookAttentionSelection.Fragment, expectedSources: NotebookWorkspacePresentedSources,

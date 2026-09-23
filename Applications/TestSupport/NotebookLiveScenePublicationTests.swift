@@ -81,13 +81,15 @@ final class NotebookLiveScenePublicationTests: XCTestCase {
     let savedBefore = await model.finishPendingPersistence(); XCTAssertTrue(savedBefore)
     let epoch = model.collaborationReadEpoch
     let read = try NotebookSceneState.read(store: model.store, presence: presence, viewport: presence.viewport)
+    let preparedIndex = WorkspaceSceneIndex(workspace: read.workspace, hierarchy: read.hierarchy, paperSizes: read.paperSizes)
     await model.refreshCollaborationDetails()
     XCTAssertTrue(model.collaborationDetailsAreCurrent)
     let historyKey = model.collaborationPreparationKey
     let lock = try NotebookSQLWriteBlocker(store: model.store)
     defer { try? lock.release() }
     XCTAssertTrue(model.commitSpatialElementState(boardID: presence.boardID, rendered: rendered, state: .string("first")))
-    XCTAssertFalse(model.acceptExternalScene(read, observedEpoch: epoch, observedPresence: presence, itemPins: [:]))
+    XCTAssertFalse(model.acceptExternalScene(read, observedEpoch: epoch, observedPresence: presence, itemPins: [:],
+      preparedIndex: preparedIndex), "Prepared geometry cannot bypass the accepted-contact frontier")
     XCTAssertFalse(model.collaborationDetailsAreCurrent, "Accepted input cannot leave old history results current while its write waits")
     XCTAssertNotEqual(model.collaborationPreparationKey, historyKey)
     let firstEpoch = model.collaborationReadEpoch
@@ -105,6 +107,9 @@ final class NotebookLiveScenePublicationTests: XCTestCase {
     let saved = await model.finishPendingPersistence(); XCTAssertTrue(saved)
     XCTAssertEqual(try model.store.readSpatialElement(boardID: presence.boardID, elementID: rendered.id)?.state,
       .string("complete input"))
+    await model.reloadExternalChanges()?.value
+    XCTAssertFalse(model.scenePreparationPending, "The accepted read already carries its derived geometry")
+    XCTAssertEqual(model.sceneIndex?.element(id: rendered.id, boardID: presence.boardID)?.state, .string("complete input"))
     await model.refreshCollaborationDetails()
     XCTAssertTrue(model.collaborationDetailsAreCurrent)
   }

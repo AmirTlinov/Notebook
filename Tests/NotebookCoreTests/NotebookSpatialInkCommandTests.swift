@@ -249,7 +249,7 @@ struct NotebookSpatialInkCommandTests {
       let deleted = before.selectedItemID, action = SpatialInkAction(tool: .pen,
         spans: [span(.board(header.rootBoardID)), span(.cover(before.selectedItemID))], stamp: .init(counter: 1, actor: actor))
       _ = try store.commitSpatialInk(.append(action, journalStamp: action.stamp))
-      _ = try store.deleteWorkspaceItem(itemID: deleted, actor: actor)
+      _ = try store.deleteTestItem(itemID: deleted, actor: actor)
       _ = try store.commitSpatialInk(state(action, counter: 2))
       let echo = try store.commitSpatialInk(.append(action, journalStamp: action.stamp))
       #expect(!echo.isActive)

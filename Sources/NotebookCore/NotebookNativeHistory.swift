@@ -1,5 +1,16 @@
 import Foundation
 
+extension CollaborationAction {
+  /// An item disappears from its cover domain; its inverse remains reachable
+  /// on the surviving parent board. Material edits keep their surface owner.
+  public var nativeHistoryDomains: Set<PencilUndoHistory.Domain> {
+    Set(operations.map { operation in
+      if operation.kind == .deleteItem, let parent = operation.target.boardID { return .board(parent) }
+      return .init(operation.target)
+    })
+  }
+}
+
 /// Device-local history is an ordered directory of native action identities.
 /// The same transaction writes material and its history; replicas never invent
 /// local Undo entries from a peer's receipt or a wall-clock timestamp.
@@ -132,6 +143,11 @@ extension NotebookStore {
     while targets.insert(target.id).inserted {
       guard target.author == .human, target.undo != nil else { break }
       expected += target.changes.filter(ownsField).compactMap(\.beforeVersion)
+      if let owner = placementAddress(change.file, change.path),
+        target.action.operations.contains(where: { $0.kind == .deleteItem && $0.target.id == owner.itemID }),
+        let basis = try nativeDeletedPlacementBasis(receipt: target, boardID: owner.boardID, itemID: owner.itemID) {
+        expected.append(basis.before.winner.version)
+      }
       guard let previous = target.redoOf else { break }
       target = try collaborationAction(previous)
     }

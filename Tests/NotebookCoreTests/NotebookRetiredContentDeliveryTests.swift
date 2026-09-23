@@ -66,7 +66,7 @@ struct NotebookRetiredContentDeliveryTests {
     let placed = nextTree.createBoard(id, in: before.rootBoardID, near: .zero, actor: f.actor)
     #expect(created != nil && placed)
     _ = try f.store.saveWorkspaceEdits(before: before, after: next, boardBefore: tree, boardAfter: nextTree)
-    _ = try f.store.deleteWorkspaceItem(itemID: id, actor: f.actor)
+    _ = try f.store.deleteTestItem(itemID: id, actor: f.actor)
     var local = try f.store.collaborationContent()
     let saved = local, cursor = try f.store.currentChangeCursor()
     let added = local.ink.append(tool: .pen, spans: [.init(surface: .board(id), samples: [

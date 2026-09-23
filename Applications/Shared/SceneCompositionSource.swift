@@ -225,6 +225,24 @@ actor SceneCompositionSource {
     }
   }
 
+  /// Material and permission to carry earlier pixels are one source read.
+  /// Returning between them to the UI executor adds a frame-sized scheduling
+  /// gap and reopens SQLite without acquiring any additional evidence.
+  func liveCandidate(plan: SceneCompositionPlan, presence: SessionPresence, frame: WorkspaceSceneFrame,
+    previous: (plan: SceneCompositionPlan, data: SceneCompositionLiveData)?,
+    reusing: (plan: SceneCompositionPlan, data: SceneCompositionLiveData)?) throws
+    -> (data: SceneCompositionLiveData, canCarry: Bool) {
+    func read() throws -> (SceneCompositionLiveData, Bool) {
+      let data = try liveData(plan: plan, presence: presence, frame: frame, previous: reusing)
+      let carry = try previous.map {
+        try canCarryStaticPixels(from: $0.plan, liveData: $0.data, to: plan, liveData: data)
+      } ?? false
+      return (data, carry)
+    }
+    if case .sql(let store) = origin { return try checked(store) { _ in try read() } }
+    return try read()
+  }
+
   /// A global SQL commit does not invalidate pixels whose sources were not
   /// painted into them. Unknown or oversized changes always rebuild instead.
   func canCarryStaticPixels(from oldPlan: SceneCompositionPlan, liveData oldData: SceneCompositionLiveData,

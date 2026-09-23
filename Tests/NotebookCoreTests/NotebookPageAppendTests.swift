@@ -270,7 +270,7 @@ struct NotebookPageAppendTests {
       let added = board.addItem(created.item.id, to: base.rootBoardID, near: .zero, actor: actor)
       #expect(added)
       try store.saveWorkspaceBundle(index: index, page: created.page, board: board)
-      _ = try store.deleteWorkspaceItem(itemID: base.selectedItemID, actor: actor)
+      _ = try store.deleteTestItem(itemID: base.selectedItemID, actor: actor)
       let cursor = try store.currentChangeCursor(), presence = try store.loadPresence()
       #expect(throws: (any Error).self) { _ = try store.saveWorkspaceSelection(index: intent, createdPage: page) }
       #expect(try store.currentChangeCursor() == cursor)

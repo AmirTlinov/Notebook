@@ -104,8 +104,8 @@ extension NotebookStore {
   @discardableResult
   public func applyNativeAction(_ action: CollaborationAction, actor: UUID) throws -> CollaborationReceipt {
     guard action.operations.allSatisfy({ [.insertElement, .updateElement, .removeElement,
-      .convertInkToElement, .reorderElements, .moveItem, .stackItems].contains($0.kind) }) else {
-      throw invalid("Нативная правка содержит операции элементов или расположения предметов.")
+      .convertInkToElement, .reorderElements, .moveItem, .stackItems, .deleteItem].contains($0.kind) }) else {
+      throw invalid("Нативная правка содержит операции элементов, расположения или удаления предметов.")
     }
     return try applyCollaborationActionImmediately(action, actor: actor, requestFingerprint: nil, human: true, nativeInputOwner: actor)
   }
@@ -130,7 +130,7 @@ extension NotebookStore {
 
   /// Internal native owners perform their field-level CAS before entering this
   /// same executor. Only the public agent entry point accepts agent authorship.
-  func applyCollaborationActionImmediately(_ action: CollaborationAction, actor: UUID, requestFingerprint: String?, human: Bool, nativeInputOwner: UUID? = nil) throws -> CollaborationReceipt {
+  func applyCollaborationActionImmediately(_ action: CollaborationAction, actor: UUID, requestFingerprint: String?, human: Bool, nativeInputOwner: UUID? = nil, repeating originalID: UUID? = nil) throws -> CollaborationReceipt {
     try prepare()
     return try commandTransaction(readAllowance: .agentCommand) {
       if try hasStoredValue(actionFile(action.id)) {
@@ -265,9 +265,12 @@ extension NotebookStore {
       var receipt = CollaborationReceipt(id: action.id, action: action, createdAt: Date(), revisions: [], changes: changes)
       receipt.requestFingerprint = requestFingerprint
       receipt.author = human ? .human : .agent
+      receipt.redoOf = originalID
       if human {
-        for domain in Set(action.operations.map { PencilUndoHistory.Domain($0.target) }) {
-          try recordNativeHistory(.command(action.id), domain: domain, actor: actor)
+        for domain in action.nativeHistoryDomains {
+          if let originalID {
+            try repeatNativeHistoryCommand(originalID: originalID, actionID: action.id, domain: domain, actor: actor)
+          } else { try recordNativeHistory(.command(action.id), domain: domain, actor: actor) }
         }
       }
       if hasLifecycle {
@@ -310,15 +313,20 @@ extension NotebookStore {
       }
       let original=try loadAction(id)
       guard original.author == .human,let inverse=original.undo,
-        inverse.preserved.isEmpty,inverse.preservedLifecycle?.isEmpty ?? true,
-        inverse.lifecycleChanges?.isEmpty ?? true,!original.changes.isEmpty,
+        inverse.preserved.isEmpty,inverse.preservedLifecycle?.isEmpty ?? true else {
+        throw CollaborationError("revision_conflict","Этот ход нельзя безопасно повторить после отмены.")
+      }
+      let domains=original.action.nativeHistoryDomains
+      guard try domains.allSatisfy({ try nativeRedoHead(domain:$0,actor:actor) == .command(id) }) else {
+        throw CollaborationError("revision_conflict","Порядок повтора изменился.")
+      }
+      if original.action.operations.count == 1, original.action.operations[0].kind == .deleteItem {
+        return try redoNativeItemDeletion(original, actionID: actionID, actor: actor)
+      }
+      guard inverse.lifecycleChanges?.isEmpty ?? true, !original.changes.isEmpty,
         original.action.operations.allSatisfy({ [.insertElement,.updateElement,.removeElement,
           .convertInkToElement,.reorderElements,.moveItem,.stackItems].contains($0.kind) }) else {
         throw CollaborationError("revision_conflict","Этот ход нельзя безопасно повторить после отмены.")
-      }
-      let domains=Set(original.action.operations.map { PencilUndoHistory.Domain($0.target) })
-      guard try domains.allSatisfy({ try nativeRedoHead(domain:$0,actor:actor) == .command(id) }) else {
-        throw CollaborationError("revision_conflict","Порядок повтора изменился.")
       }
       let expected=try original.action.expected.map {
         CollaborationExpectation(target:$0.target,revision:try targetContentRevision(target:$0.target))
@@ -550,7 +558,7 @@ extension NotebookStore {
       } else { publication = try publishInverse() }
       // History and the inverse are one durable cut, including a no-op inverse
       // which preserved a later author's work. A retry cannot add it back.
-      for domain in Set(receipt.action.operations.map { PencilUndoHistory.Domain($0.target) }) {
+      for domain in receipt.action.nativeHistoryDomains {
         try recordNativeHistory(.command(id), domain: domain, actor: actor, removing: true)
       }
       // Exactly one receipt/result, outside the closed content capture.

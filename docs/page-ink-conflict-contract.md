@@ -86,6 +86,14 @@ exact current version must belong to an already repeated local predecessor
 whose original result is that field's expected source. Equal geometry, a peer's
 same-valued write, or an unrelated board clock cannot supply that proof.
 
+Item deletion uses the existing lifecycle executor and the surviving parent
+board's history, not the vanished cover's history. The native FIFO captures the
+complete item extent and placement after accepted local writes; storage retry
+retains that exact command. Undo restores the authored material and ordering;
+Redo checks the complete restored extent and the placement's authenticated
+inverse/predecessor proof. A later hidden edit or same-valued peer placement
+cannot authorize another deletion. Session selection remains an adapter effect.
+
 A recognized stationary two-finger Undo hold refines those same physical
 contacts to the history owner in `NotebookInputGate`. It does not keep its own
 restored body waiting for lift: scene read, preparation and publication may

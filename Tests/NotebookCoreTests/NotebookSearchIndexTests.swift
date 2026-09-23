@@ -53,7 +53,7 @@ struct NotebookSearchIndexTests {
       _ = try updateTestNativeText(store:store,boardID: board, elementID: "CamelCaseElement", text: "Новый исходник", finish: false, actor: actor)
       #expect(try store.search("движения").total == 0)
       #expect(try store.search("НОВ").total == 1)
-      _ = try store.deleteWorkspaceItem(itemID: document, actor: actor)
+      _ = try store.deleteTestItem(itemID: document, actor: actor)
       #expect(try store.search("cafe").total == 0)
       #expect(try store.search("каталог").total == 0)
     }

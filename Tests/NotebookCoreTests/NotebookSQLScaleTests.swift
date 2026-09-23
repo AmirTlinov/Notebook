@@ -177,6 +177,14 @@ struct NotebookSQLScaleTests {
         .init(x: 250 - size.width / 2, y: 180 - size.height / 2, width: size.width, height: size.height)])
     #expect(planned.status == .ready && planned.placements.first?.frame == expected)
     print("PLACEMENT_SCALE owners=100000 inspected=\(budget.inspectedObstacles) sql_vm_steps=\(budget.sqlSteps)")
+    let deletion = try NotebookNativeCommand(deleting: #require(try store.readItemLifecycle(firstID)),
+      placement: #require(try store.readBoardItem(firstID)?.board.placements.first { $0.id == firstID }), actor: actor)
+    let deleted = try measured("DELETE") { try deletion.apply(to: store) }
+    #expect(try store.workspaceHeader().itemCount == 99_999)
+    _ = try measured("DELETE_UNDO") { try store.undoNativeAction(deleted.receipt.id, actor: actor) }
+    #expect(try store.workspaceHeader().itemCount == 100_000)
+    _ = try measured("DELETE_REDO") { try store.redoNativeAction(deleted.receipt.id, actionID: UUID(), actor: actor) }
+    #expect(try store.workspaceHeader().itemCount == 99_999)
     print("CATALOG_SCALE_PHASE phase=addressed_checks_completed elapsed=\(started.duration(to: .now))")
   }
 }

@@ -46,7 +46,7 @@ struct NotebookItemDeletionSourceTests {
         collection: "board/elements", member: id, position: 0, value: try .encode(source), collections: []), database: f.store.currentSQL!)
       let indexed = try f.store.currentSQL!.rows("SELECT 1 FROM reference_element_order WHERE address=?", [.text(address)])
       #expect(indexed.isEmpty, "The source-owner refresh is still pending in this outer command")
-      _ = try f.store.deleteWorkspaceItem(itemID: f.itemID, actor: f.actor)
+      _ = try f.store.deleteTestItem(itemID: f.itemID, actor: f.actor)
     }
     #expect(try f.store.storedFragments(address: address, descendants: false).isEmpty)
     #expect(try f.store.readItemHeader(neighborID) != nil)
@@ -75,7 +75,7 @@ struct NotebookItemDeletionSourceTests {
       #expect(try f.store.readSpatialElement(boardID: header.rootBoardID, elementID: id)?.graphic?.visible == false)
       #expect(try f.store.readScenePaintPosition(boardID: header.rootBoardID, coverID: f.itemID, id: .element(id)) == nil)
     }
-    _ = try f.store.deleteWorkspaceItem(itemID: f.itemID, actor: f.actor)
+    _ = try f.store.deleteTestItem(itemID: f.itemID, actor: f.actor)
     #expect(try f.store.readItemHeader(f.itemID) == nil)
     for id in ids {
       #expect(try f.store.readSpatialElement(boardID: header.rootBoardID, elementID: id) == nil)

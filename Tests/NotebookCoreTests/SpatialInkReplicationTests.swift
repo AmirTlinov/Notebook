@@ -140,7 +140,7 @@ struct SpatialInkReplicationTests {
       #expect(added)
       _ = try b.saveWorkspaceEdits(before: before, after: workspace, boardBefore: boardBefore,
         boardAfter: hierarchy, pages: [replacement.page])
-      _ = try b.deleteWorkspaceItem(itemID: deleted, actor: actor)
+      _ = try b.deleteTestItem(itemID: deleted, actor: actor)
       let stroke = action(.cover(deleted), actor)
       _ = try a.commitSpatialInk(.append(stroke, journalStamp: stroke.stamp))
       try deliver(a.changeJournal(after: 1)[0], a, b, actor)

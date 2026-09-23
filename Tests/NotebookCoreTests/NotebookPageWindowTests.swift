@@ -137,14 +137,14 @@ struct NotebookPageWindowTests {
     let before = try fixture.store.workspaceHeader(), presence = try fixture.store.loadPresence()
     enum Failure: Error { case storage }
     let failing = NotebookStore(root: fixture.root) { if $0 == .beforeCommit { throw Failure.storage } }
-    #expect(throws: Failure.self) { try failing.deleteWorkspaceItem(itemID: fixture.itemID, actor: fixture.actor) }
+    #expect(throws: Failure.self) { try failing.deleteTestItem(itemID: fixture.itemID, actor: fixture.actor) }
     #expect(try fixture.store.workspaceHeader() == before)
     #expect(try fixture.store.loadPresence() == presence)
     #expect(try fixture.store.pageCount(in: fixture.itemID) == 129)
     for id in fixture.pages { #expect(try fixture.store.loadPage(id).id == id) }
     // Deletion needs indexed identities, not these unrequested member bytes.
     try fixture.corruptBlob(at: "workspace.json#/items/@" + fixture.itemID.uuidString.lowercased() + "/pageIDs/@" + fixture.pages[17].uuidString.lowercased())
-    _ = try fixture.store.deleteWorkspaceItem(itemID: fixture.itemID, actor: fixture.actor)
+    _ = try fixture.store.deleteTestItem(itemID: fixture.itemID, actor: fixture.actor)
     #expect(try fixture.store.readItemHeader(fixture.itemID) == nil)
     #expect(try fixture.store.loadPresence().selectedItemID == remaining.item.id)
     #expect(try fixture.store.loadPresence().notebookPageID == remaining.page.id)

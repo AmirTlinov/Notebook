@@ -379,26 +379,13 @@ extension NotebookStore {
     return try workspaceHeader()
   }
 
-  @discardableResult
-  public func deleteWorkspaceItem(itemID: UUID, expected: VersionStamp? = nil, actor: UUID) throws -> NotebookWorkspaceHeader {
-    try commandTransaction {
-      try deleteWorkspaceItemContent(itemID: itemID, expected: expected, actor: actor, human: true)
-      if let presence = try? loadPresence(), presence.selectedItemID == itemID,
-        let replacement = try readItemHeaders(limit: 1).first {
-        try savePresence(presence.selecting(itemID: replacement.id, pageID: replacement.firstPageID))
-      }
-    }
-    return try workspaceHeader()
-  }
-
   /// The admitted writer owns physical deletion. Session selection is a native
   /// adapter concern, not a content effect or another execution route.
-  func deleteWorkspaceItemContent(itemID: UUID, expected: VersionStamp? = nil, actor: UUID, human: Bool) throws {
+  func deleteWorkspaceItemContent(itemID: UUID, actor: UUID, human: Bool) throws {
     guard let database = currentSQL, database.writable else { throw NotebookStorageError.readOnlyTransaction }
     let header = try workspaceHeader()
     guard header.itemCount > 1 else { throw NotebookStorageError.invalidTransaction("workspace retains one item") }
     guard let item = try readItemHeader(itemID), let parent = try readBoardItem(itemID) else { throw CocoaError(.fileNoSuchFile) }
-    if let expected, parent.board.stamp != expected { throw NotebookStorageError.transactionConflict }
     // The physical source index must include writes earlier in this same
     // command; paint membership deliberately omits hidden/losing graphics.
     try refreshReferenceIndex(database: currentSQL!)
