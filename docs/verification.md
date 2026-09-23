@@ -5624,7 +5624,7 @@ installed Apple 11-inch iPad Pro (3rd generation) device profile, which includes
 the physical iPad13,4; no Simulator was launched. This is a shared native contour,
 not a claim of measured pixel-for-pixel equivalence to a hardware display mask.
 
-Final application/test input SHA-256:
+The 18-point revision's application/test input SHA-256:
 `9051da678f40175646b462069f9d4284da4bdd9138491dfd0549c380fe4812e9`.
 Core **2/2** passed (paper identity, notebook geometry and whole-sheet zoom).
 Mac **3/3** passed (cached pixel reuse, all six notebook tones, short and long
@@ -5648,6 +5648,19 @@ not match the aggregated PDF page, and the first render assertions rejected
 coloured typography and an ellipsized maximum-length title. The focused render
 checks now measure readable printed ink; long titles keep a readable minimum
 size. No document renderer or interaction threshold was weakened.
+
+Amir then accepted the general appearance but rejected the protruding white
+paper edges. The decorative offset page stack and all its call sites were
+removed, rather than hidden behind another clipping layer. The real page curl,
+shared 18-point contour and existing soft shadow remain. Final input SHA-256:
+`f7b3a409eee22061c78fa34239ff4218f5e42038560063e9b40dfe9db25e04b5`.
+Mac **3/3** passed, including a native pixel regression checking that notebooks,
+A4 and Letter do not paint paper beyond their bottom/right edges. Physical iPad
+curl **1/1** passed; no failures, skips or runtime warnings. Native notebook and
+curl screenshots were inspected. Evidence:
+`.build/gui297-clean-contour/verification.json`,
+`.build/gui297-clean-contour-render/` and
+`.build/gui297-clean-contour-cleanup/`.
 
 Only isolated native-test applications were installed, and both iPad test
 applications were removed after verification. Production Mac/iPad applications,
