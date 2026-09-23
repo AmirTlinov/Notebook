@@ -1,7 +1,8 @@
 import CryptoKit
 import Foundation
 
-/// App integration runs these closures on the existing persistence executor.
+/// Durable writes use the existing persistence executor; immutable offered
+/// blob reads use an independent bounded WAL snapshot, not the native write queue.
 /// `applyRemoteChange` returns only after content, dedupe and incoming cursor
 /// have committed together. Transport receipt never calls it speculatively.
 public struct NotebookTransportStorage: Sendable {
@@ -9,9 +10,9 @@ public struct NotebookTransportStorage: Sendable {
   public var changes: @Sendable (UInt64, Int) async throws -> [NotebookDurableChange]
   public var incomingCursor: @Sendable (NotebookReplicationSource) async throws -> UInt64
   public var acknowledgePeer: @Sendable (UUID, UInt64) async throws -> Void
-  public var readBlobChunk: @Sendable (String, Int64, Int) async throws -> NotebookTransportBlobChunk
+  public var readBlobWindow: @Sendable ([NotebookTransportBlobRequest]) async throws -> [NotebookTransportBlobChunk]
   public var stageBlobs: @Sendable ([NotebookTransportCompletedBlob]) async throws -> Void
-  public var missingBlobHashes: @Sendable (NotebookReplicationDelivery, Int, String?) async throws -> [String]
+  public var prepareIncoming: @Sendable (NotebookReplicationDelivery, [NotebookTransportCompletedBlob]) async throws -> [String]
   public var applyRemoteChange: @Sendable (NotebookReplicationDelivery) async throws -> UInt64
 
   public init(
@@ -19,26 +20,55 @@ public struct NotebookTransportStorage: Sendable {
     changes: @escaping @Sendable (UInt64, Int) async throws -> [NotebookDurableChange],
     incomingCursor: @escaping @Sendable (NotebookReplicationSource) async throws -> UInt64,
     acknowledgePeer: @escaping @Sendable (UUID, UInt64) async throws -> Void,
-    readBlobChunk: @escaping @Sendable (String, Int64, Int) async throws -> NotebookTransportBlobChunk,
+    readBlobWindow: @escaping @Sendable ([NotebookTransportBlobRequest]) async throws -> [NotebookTransportBlobChunk],
     stageBlobs: @escaping @Sendable ([NotebookTransportCompletedBlob]) async throws -> Void,
-    missingBlobHashes: @escaping @Sendable (NotebookReplicationDelivery, Int, String?) async throws -> [String],
+    prepareIncoming: @escaping @Sendable (NotebookReplicationDelivery, [NotebookTransportCompletedBlob]) async throws -> [String],
     applyRemoteChange: @escaping @Sendable (NotebookReplicationDelivery) async throws -> UInt64
   ) {
     self.journalGeneration = journalGeneration
     self.changes = changes; self.incomingCursor = incomingCursor; self.acknowledgePeer = acknowledgePeer
-    self.readBlobChunk = readBlobChunk; self.stageBlobs = stageBlobs
-    self.missingBlobHashes = missingBlobHashes; self.applyRemoteChange = applyRemoteChange
+    self.readBlobWindow = readBlobWindow; self.stageBlobs = stageBlobs
+    self.prepareIncoming = prepareIncoming; self.applyRemoteChange = applyRemoteChange
   }
 }
 
-public struct NotebookTransportCompletedBlob: Sendable {
-  public let hash: String
-  public let file: URL
-  public let byteCount: Int64
+extension NotebookStore {
+  /// One snapshot for up to sixteen hashes, never a
+  /// whole large blob or a transaction held across transport suspension.
+  public func readBlobWindow(_ requests: [NotebookTransportBlobRequest]) throws -> [NotebookTransportBlobChunk] {
+    try NotebookTransportBlobWindow.validate(requests)
+    return try readTransaction { store in
+      var chunks: [NotebookTransportBlobChunk] = []
+      var remaining = NotebookTransportLimits.maximumBlobWindowBytes
+      for request in requests {
+        let count = min(remaining, NotebookTransportLimits.maximumChunkBytes)
+        guard let row = try store.currentSQL!.rows("SELECT length(data),COALESCE(substr(data,?,?),zeroblob(0)) FROM blobs WHERE hash=?",
+          [.integer(request.offset + 1), .integer(Int64(count)), .text(request.hash)]).first,
+          let size = row[0].integer, let data = row[1].blob else { throw NotebookStorageError.blobMissing(request.hash) }
+        chunks.append(.init(hash: request.hash, offset: request.offset, totalBytes: size, data: data))
+        remaining -= data.count
+        if remaining == 0 || request.offset + Int64(data.count) < size { break }
+      }
+      try NotebookTransportBlobWindow.validate(chunks, for: requests)
+      return chunks
+    }
+  }
 }
 
-/// One requested hash owns one temporary file. Incoming chunks never become a
-/// whole Data value; invalid length, offset or final hash removes that file.
+public enum NotebookTransportCompletedBlob: Sendable {
+  case bytes(hash: String, data: Data)
+  case file(hash: String, url: URL, byteCount: Int64)
+  public var hash: String {
+    switch self { case .bytes(let hash, _), .file(let hash, _, _): hash }
+  }
+  public var byteCount: Int64 {
+    switch self { case .bytes(_, let data): Int64(data.count); case .file(_, _, let count): count }
+  }
+}
+
+/// One partial hash owns one temporary file; complete chunks stay bounded in
+/// memory. A large blob never becomes a whole Data value; invalid length, offset
+/// or final hash removes its disposable assembly.
 public actor NotebookTransportBlobAssembly {
   private let directory: URL
   private var hash: String?
@@ -70,6 +100,13 @@ public actor NotebookTransportBlobAssembly {
     else { throw NotebookTransportError.invalidBlob }
     if hash == nil {
       guard chunk.offset == 0 else { throw NotebookTransportError.unexpectedBlob }
+      // An already complete bounded chunk needs no temporary write/read pair.
+      // Large/partial material alone uses the one streaming file below.
+      if chunk.totalBytes == chunk.data.count {
+        let digest = SHA256.hash(data: chunk.data).map { String(format: "%02x", $0) }.joined()
+        guard digest == expectedHash else { throw NotebookTransportError.invalidBlob }
+        return .bytes(hash: expectedHash, data: chunk.data)
+      }
       hash = expectedHash; totalBytes = chunk.totalBytes; offset = 0; hasher = SHA256()
       let file = directory.appendingPathComponent(expectedHash)
       guard FileManager.default.createFile(atPath: file.path, contents: nil, attributes: [.posixPermissions: 0o600]) else {
@@ -94,14 +131,15 @@ public actor NotebookTransportBlobAssembly {
       try? FileManager.default.removeItem(at: file)
       throw NotebookTransportError.invalidBlob
     }
-    return NotebookTransportCompletedBlob(hash: expectedHash, file: file, byteCount: totalBytes)
+    return .file(hash: expectedHash, url: file, byteCount: totalBytes)
   }
 
   public func discardCompleted(_ blob: NotebookTransportCompletedBlob) throws {
-    guard blob.file.deletingLastPathComponent().standardizedFileURL == directory.standardizedFileURL else {
+    guard case .file(_, let file, _) = blob else { return }
+    guard file.deletingLastPathComponent().standardizedFileURL == directory.standardizedFileURL else {
       throw NotebookTransportError.invalidBlob
     }
-    try FileManager.default.removeItem(at: blob.file)
+    try FileManager.default.removeItem(at: file)
   }
 
   public func cancel() {

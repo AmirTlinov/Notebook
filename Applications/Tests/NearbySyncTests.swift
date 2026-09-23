@@ -18,8 +18,8 @@ final class NearbySyncTests: XCTestCase {
     macTrust.records = [.init(identity: padIdentity, credentialID: credentialID, secret: secret)]
     padTrust.records = [.init(identity: macIdentity, credentialID: credentialID, secret: secret)]
     let storage = NotebookTransportStorage(changes: { _, _ in [] }, incomingCursor: { _ in 0 }, acknowledgePeer: { _, _ in },
-      readBlobChunk: { _, _, _ in throw NotebookTransportError.invalidBlob },
-      stageBlobs: { _ in }, missingBlobHashes: { _, _, _ in [] }, applyRemoteChange: { _ in 0 })
+      readBlobWindow: { _ in throw NotebookTransportError.invalidBlob },
+      stageBlobs: { _ in }, prepareIncoming: { _, _ in [] }, applyRemoteChange: { _ in 0 })
     let root = temporaryDirectory(); defer { try? FileManager.default.removeItem(at: root) }
     let mac = NearbySync(role: .macListener, identity: macIdentity, storage: storage, stagingRoot: root.appendingPathComponent("mac"), trustStore: macTrust)
     let pad = NearbySync(role: .iPadConnector, identity: padIdentity, storage: storage, stagingRoot: root.appendingPathComponent("pad"), trustStore: padTrust)
@@ -145,8 +145,8 @@ final class NearbySyncTests: XCTestCase {
   private func makeRecoverableSync(_ trust: RecoverableDeviceStore) -> NearbySync {
     let storage = NotebookTransportStorage(changes: { _, _ in [] }, incomingCursor: { _ in 0 },
       acknowledgePeer: { _, _ in },
-      readBlobChunk: { _, _, _ in throw NotebookTransportError.invalidBlob }, stageBlobs: { _ in },
-      missingBlobHashes: { _, _, _ in [] }, applyRemoteChange: { _ in 0 })
+      readBlobWindow: { _ in throw NotebookTransportError.invalidBlob }, stageBlobs: { _ in },
+      prepareIncoming: { _, _ in [] }, applyRemoteChange: { _ in 0 })
     return NearbySync(role: .iPadConnector,
       identity: .init(deviceID: UUID(), workspaceID: UUID(), displayName: "Acceptance iPad"),
       storage: storage, stagingRoot: temporaryDirectory(), trustStore: trust)
@@ -260,8 +260,8 @@ final class NearbySyncTests: XCTestCase {
     XCTAssertThrowsError(try NotebookTransportFraming.payloadLength(Data([0, 0, 0, 0])))
     XCTAssertThrowsError(try NotebookTransportFraming.payloadLength(Data([0, 0, 1])))
     XCTAssertEqual(try NotebookTransportFraming.payloadLength(Data([0, 3, 255, 252])), 262_140)
-    let frame = try NotebookTransportFraming.encode(.init(sequence: 1, message: .blob(.init(
-      hash: String(repeating: "a", count: 64), offset: 0, totalBytes: 184_320, data: Data(repeating: 42, count: 184_320)))))
+    let frame = try NotebookTransportFraming.encode(.init(sequence: 1, message: .blobs([.init(
+      hash: String(repeating: "a", count: 64), offset: 0, totalBytes: 184_320, data: Data(repeating: 42, count: 184_320))])))
     XCTAssertLessThanOrEqual(frame.count, NotebookTransportLimits.maximumFrameBytes)
     let packet = try NotebookTransportFraming.decode(Data(frame.dropFirst(4)))
     XCTAssertEqual(packet.sequence, 1)
@@ -399,7 +399,8 @@ final class NotebookTransportBlobTests: XCTestCase, @unchecked Sendable {
       if offset + chunk.count < bytes.count { XCTAssertNil(complete) }
     }
     let blob = try XCTUnwrap(complete)
-    XCTAssertEqual(blob.byteCount, Int64(bytes.count)); XCTAssertEqual(try Data(contentsOf: blob.file), bytes)
+    guard case .file(_, let file, _) = blob else { return XCTFail("Partial chunks must stream into one file") }
+    XCTAssertEqual(blob.byteCount, Int64(bytes.count)); XCTAssertEqual(try Data(contentsOf: file), bytes)
     try await assembly.discardCompleted(blob); await assembly.cancel()
     XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: root.path), [])
   }

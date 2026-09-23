@@ -1,5 +1,94 @@
 # Verification record
 
+## September 23 — GUI-295, bounded delivery and display confirmation (in progress)
+
+Wire 42 replaces the per-blob round trip with one ordered request window: at most
+16 hashes, 32 KiB per chunk and 64 KiB per response. Large partial bodies retain
+one streaming assembly; complete small chunks no longer make a disposable file
+write/read pair. Staging and discovery share a SQL commit; unchanged discovery
+counters no longer create writes. Immutable offered bytes use a bounded WAL read
+instead of waiting behind the next native write. Only the existing material
+admission transaction validates and acknowledges content; staging is not an ACK.
+The adapter already publishes the committed scene; the transport notification no
+longer requests a second full scene read for that same commit.
+
+The existing display-confirmation clock wakes for a changed source and awaits
+its real presentation, then returns to 4 Hz idle cadence. Its callback remains
+scheduling evidence, not a GPU/compositor receipt. On the physical iPad the first
+opportunity was **20.43 ms**, source wake **34.69 ms**, and unchanged idle stayed
+within three callbacks in 400 ms. The released-scene, unshown-content and detailed
+content-not-visible-from-overview negative controls passed.
+Completing collaboration preparation now also supplies its existing source
+version to the SwiftUI clock, instead of reading readiness only in a later callback.
+This is a scheduling dependency, not another authority for shown content.
+
+The core window/admission checks passed **27 tests / 4 suites** in
+`.build/gui295-transport-admission-core.log`, including corruption between completed
+staging and material admission, missing inverse bodies, peer echo, rollback and
+full-frame limits. Before the proof split, the page-order no-op guard also passed
+**32 tests / 4 suites** in `.build/gui295-transport-window-core-v4.log`; the
+100,000-page append inspected **7,528 SQL VM steps / 13 changed addresses**.
+
+Physical-iPad latency attempts remain negative evidence, not release receipts:
+
+| Attempt | Passed / failed | Peer durable p50 / max | Correct pixels p50 / max | Shown round trip p50 / max | Pencil peer p50 / max |
+|---|---:|---:|---:|---:|---:|
+| `gui295-window-redo-latency` | 37 / 2 | 219.17 / 237.78 | 280.94 / 305.30 | 502.88 / 734.40 | 147.03 / 158.30 |
+| `gui295-window-staging-latency` | 8 / 2 | 151.20 / 179.58 | 207.41 / 240.99 | 477.23 / 501.29 | 127.18 / 152.86 |
+| `gui295-window-read-and-confirmation` | 9 / 2 | 150.80 / 180.56 | 210.77 / 261.42 | 288.64 / 382.65 | 102.55 / 107.32 |
+| `gui295-window-native-priority` | 10 / 2 | 148.96 / 177.14 | 198.23 / 256.36 | 292.81 / 332.98 | 101.57 / 128.26 |
+| `gui295-window-nonblocking-observation` | 1 / 1 | 128.64 / 167.43 | 195.52 / 239.84 | 267.70 / 334.92 | **69.57 / 86.27** |
+
+All times are ms, ten samples per direction, TLS loopback on the physical iPad.
+The same **100 / 200 / 250 ms** ceilings remain enforced for every sample.
+No runtime warnings or skips occurred; Mac checks were not run because those
+routes stopped at iPad failures. These do not establish radio, photon, full-system
+CPU/GPU or paired long-session acceptance. No production pair was installed.
+
+A separate production-optimizer experiment, `.build/gui295-window-release-latency/`,
+ran the same eleven checks on physical iPad with **Release -O** and testability:
+**10 passed / 1 failed**, no runtime warnings or skips. Durable receive p50/max
+was **122.14 / 137.09 ms**, actual pixels **168.81 / 198.37 ms**, exact shown return
+**259.97 / 1,286.06 ms**; reverse Pencil delivery **71.69 / 93.45 ms** passed all ten.
+Thus the remaining forward latency is not solely Debug overhead. This is not a
+before/after optimizer speedup or a release receipt. The unselected
+`PagePresentationTests.swift` was excluded because it references a Debug-only launch
+fixture; no selected check, clock or threshold changed. Sources were unchanged,
+`23493b07bd73a5eca34748fd14eb1f0bd435238b4805859551865fbb1aa034c9`.
+This run precedes the explicit prepared-source wake described above.
+
+Final unchanged-source correctness checks:
+**20 physical-iPad + 6 Mac tests passed**, no skips or runtime warnings, source
+`91b3eb83b9901ba204a4bde6b6ad84a2567da925b1edff4cca3a2b621ed5c4f6`.
+`.build/gui295-bounded-delivery-final/` executed 17 iPad cases successfully, but
+the route correctly rejected three selectors mistakenly naming `NearbySyncTests`
+instead of their actual `NotebookTransportBlobTests` class and never started Mac.
+`.build/gui295-bounded-delivery-completion/verification.json` then completed only
+those three missing iPad cases and all six Mac cases, without replaying the 17.
+This covers bounded/partial TLS windows, hash/offset rejection, control under
+backpressure, commit-only ACK, late disconnect, exact display negatives, and the
+lasso's selection/move/resize/cold reopen through the native gesture owners.
+The prepared-source-only wake took **17.59 ms** without another content change;
+lasso's pre-drag composition **52.71 ms** (capture **20.28 ms**), with its image
+inspected. Reverse Pencil delivery passed ten samples at **70.13 / 87.73 ms**+p50/max; iPad selection admission to real Mac IPC **7.66 / 17.03 ms**, with no
+Mac camera motion. Forward latency after the prepared-source wake has not been
+remeasured; its earlier failures remain open. This verified transport improvement
+does not close S5 or establish installed-pair/human/full-system acceptance.
+
+The first attempt additionally checked the actual lasso frame **before any drag**:
+**44.31 ms**, all four handles around the enclosed red material, one selection
+capsule, untouched outside material; its window image was inspected. Subsequent
+moves, resize and cold reopen, and mixed Undo/Redo after a cold reopen, passed.
+The priority attempt passed all five accepted-prefix FIFO scenarios but showed
+no reliable QoS speedup. A Swift control confirmed that awaiting the existing
+utility worker already escalates it to the caller's priority (25 → 25), so the
+extra per-write priority field and its redundant test were removed. Full inverse
+proof now belongs to material admission, not both staging and the following
+material commit. The last observation removed
+synchronous SQLite polling from the main actor; all identities, comparisons,
+poll intervals and clocks/ceilings remain unchanged, and awaited reads still
+count toward the measured deadline.
+
 ## September 23 — GUI-295, page identity and first-frame/selection latency
 
 A cold untiled ink canvas now presents its first drawable and visibility in the

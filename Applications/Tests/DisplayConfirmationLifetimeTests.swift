@@ -5,6 +5,43 @@ import XCTest
 
 @MainActor
 final class DisplayConfirmationLifetimeTests: XCTestCase {
+  func testPreparedSourceWakesAnIdleSwiftUISceneWithoutAnotherContentChange() async throws {
+    let source = DisplayPreparedSource()
+    let window = UIWindow(windowScene: try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene))
+    let previous = window.windowScene?.windows.first(where: \.isKeyWindow)
+    window.rootViewController = UIHostingController(rootView: DisplayPreparedScene(source: source))
+    window.makeKeyAndVisible()
+    defer { window.isHidden = true; window.rootViewController = nil; previous?.makeKey() }
+    try await waitUntil("The scene reaches its idle cadence") { source.frames >= 3 }
+    // Just after an idle tick, the next idle opportunity is too late. Only
+    // publishing the prepared source changes; no gesture, timer or remount.
+    try await Task.sleep(for: .milliseconds(20))
+    let prior = source.frames, start = ContinuousClock.now
+    source.revision = 1
+    try await assertUX("prepared-source-wakes-idle-scene", since: start) { source.frames > prior }
+  }
+
+  func testChangedSourceWakesConfirmationButAnIdleSceneKeepsItsLowCadence() async throws {
+    let window = UIWindow(windowScene: try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene))
+    let previous = window.windowScene?.windows.first(where: \.isKeyWindow)
+    let host = UIViewController(), clock = DisplayConfirmationView()
+    host.view.addSubview(clock); window.rootViewController = host
+    var count = 0, pending = false
+    clock.onFrame = { count += 1; return pending }
+    let start = ContinuousClock.now
+    window.makeKeyAndVisible()
+    defer { clock.stop(); window.isHidden = true; window.rootViewController = nil; previous?.makeKey() }
+    try await assertUX("confirmation-first-opportunity", since: start) { count > 0 }
+    let first = count
+    try await Task.sleep(for: .milliseconds(400))
+    XCTAssertLessThanOrEqual(count - first, 3, "An unchanged scene must not poll at rendering cadence")
+    pending = true
+    let resumed = ContinuousClock.now, prior = count
+    clock.onFrame = { count += 1; return pending } // The ordinary SwiftUI source-publication input.
+    try await assertUX("confirmation-after-source-publication", since: resumed) { count >= prior + 2 }
+    pending = false
+  }
+
   func testDisplayClockDoesNotRetainAReleasedSwiftUIScene() async throws {
     let receipt = DisplayLifetimeReceipt()
     var host: UIViewController? = UIHostingController(rootView: DisplayLifetimeScene(receipt: receipt))
@@ -42,6 +79,22 @@ final class DisplayConfirmationLifetimeTests: XCTestCase {
   }
 }
 
+@Observable
+private final class DisplayPreparedSource {
+  var revision: UInt64?
+  @ObservationIgnored var frames = 0
+}
+
+private struct DisplayPreparedScene: View {
+  let source: DisplayPreparedSource
+  var body: some View {
+    NotebookDisplayConfirmation(preparedSource: source.revision) {
+      source.frames += 1
+      return false
+    }
+  }
+}
+
 @MainActor
 private final class DisplayLifetimeReceipt {
   var frames = 0
@@ -54,6 +107,7 @@ private struct DisplayLifetimeScene: View {
     NotebookDisplayConfirmation {
       renderedCallbacks += 1
       receipt.frames = renderedCallbacks
+      return false
     }
   }
 }

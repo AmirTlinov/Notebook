@@ -715,7 +715,7 @@ final class NotebookAppModel {
   /// History preparation follows changed input values, not repeated SQL reads.
   /// This identity does not replace the scene publication frontier above.
   private var collaborationContentEpoch: UInt64 = 0
-  private var preparedCollaborationVersion: UInt64?
+  private(set) var preparedCollaborationVersion: UInt64?
   @ObservationIgnored private var collaborationReadTask: Task<CollaborationReadSnapshot, Error>?
   @ObservationIgnored private var collaborationReadGeneration = 0
   private var deviceActionReceipts: [DeviceActionReceipt] = []
@@ -1185,27 +1185,20 @@ final class NotebookAppModel {
   /// The app's one durable transport adapter. Native integration checks use the
   /// same writer, contact boundary and scene publication as an admitted peer.
   func makeTransportStorage() async throws -> NotebookTransportStorage {
-    let writer = persistence
+    let writer = persistence, store = store
     let source = try await writer.submit { [actorID] in try $0.replicationSource(deviceID: actorID) }
     return NotebookTransportStorage(
       journalGeneration: source.generation,
       changes: { cursor, limit in try await writer.submit { try $0.changeJournal(after: cursor, limit: limit) } },
       incomingCursor: { peer in try await writer.submit { try $0.admitReplicationSource(peer) } },
       acknowledgePeer: { peer, cursor in try await writer.submit { try $0.acknowledgePeer(peerID: peer, through: cursor) } },
-      readBlobChunk: { hash, offset, count in
-        try await writer.submit { store in
-          try store.readTransaction { store in
-            try .init(hash: hash, offset: offset, totalBytes: store.blobSize(hash: hash),
-              data: store.readBlobChunk(hash: hash, offset: offset, maxBytes: count))
-          }
-        }
+      // Offered hashes are already committed and immutable. Their bounded WAL
+      // snapshot cannot sit behind the next native contact or scene reload.
+      readBlobWindow: { requests in
+        try await Task.detached(priority: .userInitiated) { try store.readBlobWindow(requests) }.value
       },
       stageBlobs: { blobs in try await writer.submit { try $0.stageBlobs(blobs) } },
-      missingBlobHashes: { delivery, limit, after in
-        try await writer.submit {
-          try $0.deliveryNeedsContent(delivery) ? $0.missingBlobHashes(for: delivery.change, limit: limit, after: after) : []
-        }
-      },
+      prepareIncoming: { delivery, blobs in try await writer.submit { try $0.prepareIncomingBlobs(delivery, staging: blobs) } },
       applyRemoteChange: { [weak self] delivery in
         guard let self else { throw NotebookTransportError.disconnected }
         return try await self.applyDurableDelivery(delivery)
@@ -1251,10 +1244,8 @@ final class NotebookAppModel {
     connection.onTransient = { [weak self] value, peer, generation in
       self?.receivePeerTransient(value, peerID: peer, generation: generation)
     }
-    connection.onDurableChange = { [weak self] _, peer, generation in
-      guard let self, peerGenerations[peer] == generation else { return }
-      reloadExternalChanges()
-    }
+    // The storage adapter publishes the committed scene in applyDurableDelivery.
+    // A second transport callback must not schedule the same full read again.
     sync = connection
     await connection.start()
     guard !isClosing, sync === connection else { connection.stop(); return }
@@ -4996,8 +4987,11 @@ final class NotebookAppModel {
     }
   }
 
+  /// Returns whether a current on-screen source is still awaiting presentation.
+  /// The display clock uses this for scheduling, never as a shown receipt.
+  @discardableResult
   func confirmVisibleActions(presence visible: SessionPresence, scene: WorkspaceSceneWorkset? = nil,
-    cohort: SceneCompositionCohort? = nil) {
+    cohort: SceneCompositionCohort? = nil) -> Bool {
     #if os(iOS)
       if let cohort { retireWorkingGraphics(in: cohort) }
       confirmAgentFeedback(presence: visible, scene: scene, cohort: cohort)
@@ -5006,9 +5000,10 @@ final class NotebookAppModel {
       }
       guard collaborationActions.contains(where: { action in !deviceActionReceipts.contains(where: { matches($0, action) && $0.displayComplete }) }),
         presencePhase == .settled, presence == visible, !isPointing,
-        collaborationDetailsAreCurrent else { return }
+        collaborationDetailsAreCurrent else { return false }
       let receipts = deviceActionReceipts
       var changed: [DeviceActionReceipt] = []
+      var awaitingPresentation = false
       for action in collaborationActions.prefix(50) {
         guard var receipt = receipts.first(where: { matches($0, action) }), !receipt.displayComplete else { continue }
         let references = results(for:action)
@@ -5036,7 +5031,7 @@ final class NotebookAppModel {
               presence: visible, inkRevision: expected.inkRevision) } ?? false
           case .workspace, .codeFragment: ready = false
           }
-          guard ready else { continue }
+          guard ready else { awaitingPresentation = true; continue }
           if !receipt.shown.contains(expected) { receipt.shown.append(expected) }
           receipt.visibleRegions.append(reference)
         }
@@ -5053,6 +5048,9 @@ final class NotebookAppModel {
         enqueueStoreWrite { store in for receipt in receipts { try store.saveDeviceActionReceipt(receipt) } }
 
       }
+      return awaitingPresentation
+    #else
+      return false
     #endif
   }
 

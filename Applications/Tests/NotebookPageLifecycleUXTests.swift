@@ -330,8 +330,24 @@ import XCTest
     let model = try await modelWithPages(1), scene = try await mount(model)
     model.selectDrawingTool(.lasso); model.drawingToolSettings.lassoMode = .region
     try await scene.readyPencil(self)
+    let selectedAt = ContinuousClock.now
     scene.contour([.init(x: 180, y: 280), .init(x: 280, y: 280), .init(x: 280, y: 400),
       .init(x: 180, y: 400), .init(x: 180, y: 280)])
+    let cut = CGRect(x: 180, y: 280, width: 100, height: 120)
+    // Before any drag, the shown handles must surround this exact partial
+    // material, not its whole parent or a previous selection.
+    try await shown("lasso-selection-before-any-drag", window: scene.window,
+      probes: NotebookSelectionComposition.controls(cut, transform: scene.pageToWindow, visible: true)
+        + [probe("enclosed-body", [(230, 340)], .red, scene.pageToWindow),
+           probe("outside-body", [(350, 340)], .red, scene.pageToWindow)], since: selectedAt)
+    let region = try XCTUnwrap(model.selectionSession.region)
+    XCTAssertEqual(model.selectionSession.editingElement, region.reference)
+    func visibleMenus(_ view: UIView) -> Int {
+      guard !view.isHidden, view.alpha > 0.01 else { return 0 }
+      return (view.accessibilityIdentifier == "notebook-context-menu" ? 1 : 0)
+        + view.subviews.reduce(0) { $0 + visibleMenus($1) }
+    }
+    XCTAssertEqual(visibleMenus(scene.window), 1, "One visible action owner before moving the selected region")
     try await scene.readyFinger(self)
     scene.beginFinger(.init(x: 250, y: 340)); scene.moveFinger(.init(x: 250, y: 560))
     var dropped = ContinuousClock.now; scene.endFinger()

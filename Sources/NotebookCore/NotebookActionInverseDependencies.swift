@@ -83,8 +83,9 @@ extension NotebookStore {
     let totals = try database.rows("SELECT record_count,order_count,order_bytes FROM manifest_inverse_discovery WHERE manifest_hash=?", [.text(manifest)]).first!
     var recordCount = totals[0].integer!, orderCount = totals[1].integer!, orderBytes = totals[2].integer!
     func finish(_ missing: [String]) throws -> [String] {
-      try database.run("UPDATE manifest_inverse_discovery SET record_count=?,order_count=?,order_bytes=? WHERE manifest_hash=?",
-        [.integer(recordCount), .integer(orderCount), .integer(orderBytes), .text(manifest)])
+      try database.run("UPDATE manifest_inverse_discovery SET record_count=?,order_count=?,order_bytes=? WHERE manifest_hash=? AND (record_count!=? OR order_count!=? OR order_bytes!=?)",
+        [.integer(recordCount), .integer(orderCount), .integer(orderBytes), .text(manifest),
+          .integer(recordCount), .integer(orderCount), .integer(orderBytes)])
       return missing
     }
     func present(_ hash: String) throws -> Bool { try !database.rows("SELECT 1 FROM blobs WHERE hash=?", [.text(hash)]).isEmpty }
@@ -157,8 +158,13 @@ extension NotebookStore {
       }
       if !missing.isEmpty { return try finish(missing) }
     }
-    // Expanded is a discovery cache, never a proof. Recheck immutable bytes,
-    // identity, cross-part order/count and canonical closure before every ACK.
+    return try finish([])
+  }
+
+  /// Expanded is a discovery cache, never a proof. The material admission owner
+  /// rechecks identity, immutable bytes and the full closure before every ACK.
+  func validateLifecycleInverseDependencies(manifestHash manifest: String) throws {
+    let database = currentSQL!
     var after = "", afterPurpose: Int64 = -1
     while true {
       try Task.checkCancellation()
@@ -171,7 +177,6 @@ extension NotebookStore {
         try visitLifecycleInverse(reference: reference, actionID: action) { _ in }
       }
     }
-    return try finish([])
   }
 
   func visitLifecycleInverseDependencyHashes(manifestHash: String, _ visit: (String) throws -> Void) throws {

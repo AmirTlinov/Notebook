@@ -206,27 +206,47 @@ final class SceneSelectionRecognizer: UIGestureRecognizer {
 /// A window-backed display link supplies an opportunity to inspect the current
 /// scene. Its callback is scheduling evidence, not a compositor presentation ACK.
 struct NotebookDisplayConfirmation: UIViewRepresentable {
-  let onFrame: () -> Void
+  // Read by the SwiftUI caller, not only inside a later display callback.
+  // Completing metadata preparation must wake the already idle scene too.
+  var preparedSource: UInt64? = nil
+  let onFrame: () -> Bool
   func makeUIView(context: Context) -> DisplayConfirmationView { DisplayConfirmationView() }
-  func updateUIView(_ view: DisplayConfirmationView, context: Context) { view.onFrame = onFrame }
+  func updateUIView(_ view: DisplayConfirmationView, context: Context) {
+    view.onFrame = onFrame; view.preparedSource = preparedSource
+  }
   static func dismantleUIView(_ view: DisplayConfirmationView, coordinator: ()) { view.stop() }
 }
 
 final class DisplayConfirmationView: UIView {
-  var onFrame: (() -> Void)?
+  var preparedSource: UInt64? {
+    didSet { if preparedSource != oldValue { useFastCadence(true) } }
+  }
+  // A source publication wakes this same clock immediately. Once that source
+  // is confirmed (or no current visible result is pending), keep idle work low.
+  var onFrame: (() -> Bool)? { didSet { useFastCadence(true) } }
   private var link: CADisplayLink?
   private var frames = 0
+  private var fastCadence = true
   override func didMoveToWindow() {
     super.didMoveToWindow(); stop()
     guard window != nil else { return }
     let link = CADisplayLink(target:self,selector:#selector(displayFrame))
-    link.preferredFrameRateRange = .init(minimum:4,maximum:4,preferred:4)
+    link.preferredFrameRateRange = .init(minimum:30,maximum:60,preferred:60)
+    fastCadence = true
     link.add(to:.main,forMode:.common); self.link = link
   }
   func stop() { link?.invalidate(); link = nil; frames = 0 }
+  private func useFastCadence(_ fast: Bool) {
+    guard fastCadence != fast else { return }
+    fastCadence = fast
+    link?.preferredFrameRateRange = fast ? .init(minimum:30,maximum:60,preferred:60)
+      : .init(minimum:4,maximum:4,preferred:4)
+  }
   @objc private func displayFrame() {
-    guard window?.isKeyWindow == true, UIApplication.shared.applicationState == .active else { frames = 0; return }
+    guard window?.isKeyWindow == true, UIApplication.shared.applicationState == .active else {
+      frames = 0; useFastCadence(false); return
+    }
     frames += 1
-    if frames >= 2 { onFrame?() }
+    if frames >= 2 { useFastCadence(onFrame?() ?? false) }
   }
 }

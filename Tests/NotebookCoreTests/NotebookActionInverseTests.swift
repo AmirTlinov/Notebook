@@ -217,6 +217,29 @@ struct NotebookActionInverseTests {
       "Admission retains inverse blobs without applying their old content")
   }
 
+  @Test func stagedDiscoveryCannotAuthorizeAnInverseChangedBeforeTheMaterialCommit() throws {
+    let f = try Fixture(), (reference, part, _, _) = try f.bundle()
+    let change = try f.publish(reference)
+    let delivery = NotebookReplicationDelivery(source: .init(deviceID: f.peerID, generation: f.peerID), change: change)
+    let cursor = try f.peer.peerCursor(peerID: f.peerID, direction: .incoming)
+    var missing = try f.peer.prepareIncomingBlobs(delivery, staging: [])
+    for _ in 0..<20 where !missing.isEmpty {
+      let chunks = try f.source.readBlobWindow(missing.map { .init(hash: $0) })
+      #expect(chunks.allSatisfy { $0.offset == 0 && $0.data.count == $0.totalBytes })
+      missing = try f.peer.prepareIncomingBlobs(delivery, staging: chunks.map { .bytes(hash: $0.hash, data: $0.data) })
+    }
+    #expect(missing.isEmpty)
+    #expect(try f.peer.peerCursor(peerID: f.peerID, direction: .incoming) == cursor)
+    #expect(try !f.peer.hasStoredValue("collaboration/actions/" + f.actionID.uuidString.lowercased() + ".json"))
+    try f.peer.commandTransaction {
+      var bytes = try f.peer.currentSQL!.blob(part); bytes[bytes.startIndex] = 32
+      try f.peer.currentSQL!.run("UPDATE blobs SET data=? WHERE hash=?", [.blob(bytes), .text(part)])
+    }
+    #expect(throws: NotebookStorageError.self) { try f.peer.applyDelivery(delivery) }
+    #expect(try f.peer.peerCursor(peerID: f.peerID, direction: .incoming) == cursor)
+    #expect(try !f.peer.hasStoredValue("collaboration/actions/" + f.actionID.uuidString.lowercased() + ".json"))
+  }
+
   @Test func corruptAlreadyDiscoveredPartIsStillRejectedBeforeAck() throws {
     let f = try Fixture(), (reference, part, before, _) = try f.bundle()
     let change = try f.publish(reference), cursor = try f.peer.peerCursor(peerID: f.peerID, direction: .incoming)

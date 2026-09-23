@@ -6,13 +6,29 @@ extension NotebookStore {
   /// One bounded dependency window shares a commit, not one fsync per row.
   /// Hash validation of any member still rolls back the entire staging batch.
   public func stageBlobs(_ blobs: [NotebookTransportCompletedBlob]) throws {
-    guard (1...16).contains(blobs.count), Set(blobs.map(\.hash)).count == blobs.count else {
+    guard (1...NotebookTransportLimits.maximumBlobRequests).contains(blobs.count), Set(blobs.map(\.hash)).count == blobs.count else {
       throw NotebookTransportError.invalidBlob
     }
     try commandTransaction {
       for blob in blobs {
-        try stageBlob(file: blob.file, expectedHash: blob.hash, byteCount: blob.byteCount)
+        switch blob {
+        case .bytes(let hash, let data):
+          guard data.count <= NotebookTransportLimits.maximumChunkBytes else { throw NotebookTransportError.invalidBlob }
+          try stageBlob(data: data, expectedHash: hash)
+        case .file(let hash, let file, let count): try stageBlob(file: file, expectedHash: hash, byteCount: count)
+        }
       }
+    }
+  }
+
+  /// Staging and discovery are one SQL cut. Dependency indexing is not another
+  /// material publication and needs no separate fsync between these operations.
+  public func prepareIncomingBlobs(_ delivery: NotebookReplicationDelivery,
+    staging blobs: [NotebookTransportCompletedBlob]) throws -> [String] {
+    try commandTransaction {
+      if !blobs.isEmpty { try stageBlobs(blobs) }
+      return try deliveryNeedsContent(delivery)
+        ? discoverMissingBlobHashes(for: delivery.change, limit: NotebookTransportLimits.maximumBlobRequests) : []
     }
   }
 
@@ -86,6 +102,16 @@ extension NotebookStore {
   /// A large atomic change is described by bounded immutable manifest parts.
   /// Their SQL index is filled once, then dependency requests are indexed pages.
   public func missingBlobHashes(for change: NotebookDurableChange, limit: Int = 16, after: String? = nil) throws -> [String] {
+    try commandTransaction {
+      let missing = try discoverMissingBlobHashes(for: change, limit: limit, after: after)
+      if missing.isEmpty { try validateLifecycleInverseDependencies(manifestHash: change.manifestHash) }
+      return missing
+    }
+  }
+
+  /// Availability is not admission. Transport stages/indexes dependencies here;
+  /// the material commit rechecks their immutable proof through missingBlobHashes.
+  private func discoverMissingBlobHashes(for change: NotebookDurableChange, limit: Int, after: String? = nil) throws -> [String] {
     guard (1...16).contains(limit) else { throw NotebookStorageError.limitExceeded("blob_dependencies") }
     return try commandTransaction {
       let database = currentSQL!

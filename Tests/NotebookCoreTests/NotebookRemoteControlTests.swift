@@ -35,8 +35,8 @@ import Testing
   }
   @Test func bulkBytesCannotTakeReservedControlCapacity() throws {
     var outgoing = NotebookTransportOutgoing()
-    let chunk = NotebookTransportMessage.blob(.init(hash: String(repeating: "a", count: 64), offset: 0,
-      totalBytes: 1_048_576, data: Data(repeating: 9, count: NotebookTransportLimits.maximumChunkBytes)))
+    let chunk = NotebookTransportMessage.blobs([.init(hash: String(repeating: "a", count: 64), offset: 0,
+      totalBytes: 1_048_576, data: Data(repeating: 9, count: NotebookTransportLimits.maximumChunkBytes))])
     var sent: [UInt64] = []
     for _ in 0..<10 {
       if outgoing.pendingCount < 2 { try outgoing.enqueue(chunk) }

@@ -5,9 +5,9 @@ private directory of one Apple Account and stored in Keychain. Bonjour discovers
 endpoints; access comes from verified keys, identities and account admission.
 See [automatic connection](installation-pairing.md).
 
-## Current compatibility: wire 41, manifest 24
+## Current compatibility: wire 42, manifest 24
 
-Both applications must use the same wire contract. Version 41 and manifest 24
+Both applications must use the same wire contract. Version 42 and manifest 24
 carry causal page-ink visibility as well as exact compact measurement bodies,
 including shared repetitions and tiled fields, rather than flat arrays. An old
 snapshot cannot undo a later explicit repeat. Prior wire versions cannot join.
@@ -22,7 +22,7 @@ Content, local containers, workspace/device identities and keys survive an
 ordinary update. Installed build status belongs in [verification](verification.md);
 a source version alone does not prove installation.
 
-Bonjour advertises `notebook-v41-<UUID>-<generation>`; TXT `workspace` distinguishes
+Bonjour advertises `notebook-v42-<UUID>-<generation>`; TXT `workspace` distinguishes
 background workspace listeners sharing a Mac device ID. One transport owner
 changes the advertisement generation on restart. Metadata grants no trust.
 
@@ -103,7 +103,7 @@ archives are neither read nor deleted by this path.
 | Encoded message queue | 1 MiB |
 | Concurrent durable change offers | 2 |
 | Connections | 8 |
-| Blob transfer chunk | 32 KiB |
+| Blob transfer chunk / response window | 32 KiB / 64 KiB, at most 16 hashes |
 | Manifest / individual blob | 64 MiB / 256 MiB |
 
 The receiver validates the length before requesting the body. Replaceable
@@ -113,13 +113,25 @@ length, order or SHA-256 discards the incomplete assembly. SQL ingests a verifie
 file by streaming; a large owner is not assembled in transport memory. Limits
 produce errors, never silent truncation.
 
-A receiver retains the returned dependency window (at most 16 hashes), rather
-than querying it again after each file. Verified completed files share a staging
-commit at the end of the window or once they reach 512 KiB; a larger streamed
-blob flushes immediately. Temporary assembly is disposable, not another durable
-copy. The SQL commit remains the durability boundary. Sender size and bytes come
-from one read transaction; transport never keeps a SQL transaction across a
-network await.
+A receiver requests the entire returned dependency window (at most 16 hashes).
+One response contains an ordered prefix, at most 64 KiB, with only its last
+chunk allowed to be partial. That partial hash remains first in the next request;
+all other offsets are zero. This keeps one streaming assembly and removes a
+network round trip for every tiny metadata field. Complete chunks of at most
+32 KiB stay in bounded memory; only partial/large blobs use disposable files.
+The retained window is at most 16 completed blobs / 512 KiB of in-memory bytes.
+
+Verified completed blobs and discovery of their next dependencies share one
+staging transaction. A large interim prefix flushes once it reaches 512 KiB;
+no network await retains a SQL transaction. Rechecking an unchanged dependency
+index does not manufacture another write or read revision. Staging alone never
+publishes content, advances the incoming cursor or emits a durable ACK. The
+complete dependency proof still runs in the material admission transaction.
+
+Sender size and bytes for the whole window come from one bounded read snapshot
+(one length/substr query per hash). Offered hashes are already committed and
+immutable: this read does not wait behind the next native write. The existing
+persistence queue still owns all durable writes, journal ordering and ACKs.
 
 Incoming merge protects the native contact's actual page/board/cover material
 and placement (or document content/state), using the existing canonical identity.

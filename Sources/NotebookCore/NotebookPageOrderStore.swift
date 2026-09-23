@@ -121,7 +121,8 @@ extension NotebookStore {
     let totals = try database.rows("SELECT order_node_count,order_node_bytes FROM manifests WHERE hash=?", [.text(manifestHash)]).first!
     var count = Int(totals[0].integer!), bytes = Int(totals[1].integer!), work = 0
     func persistTotals() throws {
-      try database.run("UPDATE manifests SET order_node_count=?,order_node_bytes=? WHERE hash=?", [.integer(Int64(count)), .integer(Int64(bytes)), .text(manifestHash)])
+      try database.run("UPDATE manifests SET order_node_count=?,order_node_bytes=? WHERE hash=? AND (order_node_count!=? OR order_node_bytes!=?)",
+        [.integer(Int64(count)), .integer(Int64(bytes)), .text(manifestHash), .integer(Int64(count)), .integer(Int64(bytes))])
     }
     while true {
       let pending = try database.rows("SELECT hash FROM manifest_order_nodes WHERE manifest_hash=? AND expanded=0 ORDER BY hash LIMIT 256", [.text(manifestHash)]).compactMap { $0[0].text }

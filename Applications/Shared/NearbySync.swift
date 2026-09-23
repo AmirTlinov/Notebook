@@ -717,8 +717,7 @@ final class NotebookTransportSession {
   private var offeredChanges: [NotebookDurableChange] = []
   private var incomingChanges: [NotebookDurableChange] = []
   private var lastIncomingOffer: UInt64 = 0
-  private var requestedBlob: (hash: String, offset: Int64)?
-  private var pendingBlobHashes: [String] = []
+  private var requestedBlobs: [NotebookTransportBlobRequest] = []
   private var completedBlobs: [NotebookTransportCompletedBlob] = []
   private var commitAcknowledgements: [(UUID, UInt64)] = []
 
@@ -763,7 +762,7 @@ final class NotebookTransportSession {
     receiveTask = nil; timeoutTask = nil; readyTask = nil; offerTask = nil
     incomingTask = nil; servingBlobTask = nil; acknowledgingTask = nil
     outgoing = NotebookTransportOutgoing(); incomingChanges.removeAll(); offeredChanges.removeAll(); commitAcknowledgements.removeAll()
-    pendingBlobHashes.removeAll(); completedBlobs.removeAll(); requestedBlob = nil
+    requestedBlobs.removeAll(); completedBlobs.removeAll()
     connection.stateUpdateHandler = nil
     if let requirement,
       let frame = try? NotebookTransportFraming.encode(.init(sequence: 0, message: .contentUnavailable(requirement))) {
@@ -870,8 +869,8 @@ final class NotebookTransportSession {
         guard incomingChanges.count < 16, change.sequence > lastIncomingOffer else { throw NotebookTransportError.invalidSequence }
         lastIncomingOffer = change.sequence; incomingChanges.append(change)
         try consumed(packet.sequence); advanceIncomingChange()
-      case .requestBlob(let hash, let offset): try serveBlob(hash: hash, offset: offset, frameSequence: packet.sequence)
-      case .blob(let chunk): try receiveBlob(chunk, frameSequence: packet.sequence)
+      case .requestBlobs(let requests): try serveBlobs(requests, frameSequence: packet.sequence)
+      case .blobs(let chunks): try receiveBlobs(chunks, frameSequence: packet.sequence)
       case .committed(let transactionID, let cursor):
         guard commitAcknowledgements.count < 16, !commitAcknowledgements.contains(where: { $0.0 == transactionID }),
           offeredChanges.contains(where: { $0.transactionID == transactionID && $0.sequence == cursor }) else {
@@ -933,18 +932,22 @@ final class NotebookTransportSession {
   }
 
   private func advanceIncomingChange() {
-    guard incomingTask == nil, requestedBlob == nil, !isStopped, let change = incomingChanges.first, let peerIdentity else { return }
+    guard incomingTask == nil, requestedBlobs.isEmpty, !isStopped, let change = incomingChanges.first, let peerIdentity else { return }
     incomingTask = Task { [weak self] in
       guard let self else { return }
       do {
         let delivery = NotebookReplicationDelivery(source: .init(deviceID: peerIdentity.deviceID, generation: self.remoteHello!.journalGeneration), change: change)
-        let missing = try await self.storage.missingBlobHashes(delivery, 16, nil)
+        let batch = self.completedBlobs
+        let missing = try await self.storage.prepareIncoming(delivery, batch)
         guard !self.isStopped, !Task.isCancelled else { return }
-        guard missing.count <= 16, Set(missing).count == missing.count,
+        for blob in batch { try await self.assembly.discardCompleted(blob) }
+        self.completedBlobs.removeAll(keepingCapacity: true)
+        guard !self.isStopped, !Task.isCancelled else { return }
+        guard missing.count <= NotebookTransportLimits.maximumBlobRequests, Set(missing).count == missing.count,
           missing.allSatisfy(NotebookTransportFraming.isSHA256) else { throw NotebookTransportError.invalidBlob }
         if !missing.isEmpty {
-          self.pendingBlobHashes = missing
-          self.requestNextBlob()
+          self.requestedBlobs = missing.map { .init(hash: $0) }
+          self.enqueue(.requestBlobs(self.requestedBlobs))
         } else {
           // This await is the only durable receive boundary. A frame credit
           // never advertises that history or an incoming cursor was committed.
@@ -959,66 +962,62 @@ final class NotebookTransportSession {
           self.onDurableChange?(change, peerIdentity)
         }
         self.incomingTask = nil
-        if self.requestedBlob == nil { self.advanceIncomingChange() }
+        if self.requestedBlobs.isEmpty { self.advanceIncomingChange() }
       } catch { self.stop(error) }
     }
   }
 
-  private func requestNextBlob() {
-    guard let hash = pendingBlobHashes.first else { return }
-    pendingBlobHashes.removeFirst()
-    requestedBlob = (hash, 0); enqueue(.requestBlob(hash: hash, offset: 0))
-  }
-
-  private func serveBlob(hash: String, offset: Int64, frameSequence: UInt64) throws {
-    guard servingBlobTask == nil, NotebookTransportFraming.isSHA256(hash), offset >= 0 else { throw NotebookTransportError.unexpectedBlob }
+  private func serveBlobs(_ requests: [NotebookTransportBlobRequest], frameSequence: UInt64) throws {
+    guard servingBlobTask == nil else { throw NotebookTransportError.unexpectedBlob }
+    try NotebookTransportBlobWindow.validate(requests)
     servingBlobTask = Task { [weak self] in
       guard let self else { return }
       do {
-        let chunk = try await self.storage.readBlobChunk(hash, offset, NotebookTransportLimits.maximumChunkBytes)
+        let chunks = try await self.storage.readBlobWindow(requests)
         guard !self.isStopped, !Task.isCancelled else { return }
-        guard chunk.totalBytes >= 0, chunk.totalBytes <= NotebookTransportLimits.maximumBlobBytes,
-          offset <= chunk.totalBytes else { throw NotebookTransportError.blobTooLarge }
-        guard chunk.hash == hash, chunk.offset == offset,
-          chunk.data.count <= NotebookTransportLimits.maximumChunkBytes,
-          Int64(chunk.data.count) <= chunk.totalBytes - offset,
-          !chunk.data.isEmpty || chunk.totalBytes == 0 else { throw NotebookTransportError.invalidBlob }
-        self.enqueue(.blob(chunk))
+        try NotebookTransportBlobWindow.validate(chunks, for: requests)
+        self.enqueue(.blobs(chunks))
         try self.consumed(frameSequence); self.servingBlobTask = nil
       } catch { self.stop(error) }
     }
   }
 
-  private func receiveBlob(_ chunk: NotebookTransportBlobChunk, frameSequence: UInt64) throws {
-    guard incomingTask == nil, let request = requestedBlob, request.hash == chunk.hash, request.offset == chunk.offset,
+  private func receiveBlobs(_ chunks: [NotebookTransportBlobChunk], frameSequence: UInt64) throws {
+    guard incomingTask == nil, !requestedBlobs.isEmpty,
       let change = incomingChanges.first else { throw NotebookTransportError.unexpectedBlob }
-    requestedBlob = nil
+    try NotebookTransportBlobWindow.validate(chunks, for: requestedBlobs)
     incomingTask = Task { [weak self] in
       guard let self else { return }
       do {
-        let maximum = chunk.hash == change.manifestHash ? NotebookTransportLimits.maximumManifestBytes : NotebookTransportLimits.maximumBlobBytes
-        if chunk.hash == change.manifestHash, chunk.totalBytes != Int64(change.byteCount) { throw NotebookTransportError.invalidBlob }
-        let completed = try await self.assembly.append(chunk, expectedHash: request.hash, maximumBytes: maximum)
-        guard !self.isStopped, !Task.isCancelled else { return }
-        if let completed {
-          self.completedBlobs.append(completed)
-          // Retain at most one dependency window and 512 KiB of small files;
-          // a large streamed blob flushes that window immediately. No payload
-          // array or SQL transaction survives a network await.
-          if self.pendingBlobHashes.isEmpty || self.completedBlobs.reduce(Int64(0), { $0 + $1.byteCount }) >= 512 * 1_024 {
-            let batch = self.completedBlobs
-            try await self.storage.stageBlobs(batch)
-            guard !self.isStopped, !Task.isCancelled else { return }
-            for blob in batch { try await self.assembly.discardCompleted(blob) }
-            self.completedBlobs.removeAll(keepingCapacity: true)
+        for chunk in chunks {
+          guard !self.isStopped, !Task.isCancelled else { return }
+          let maximum = chunk.hash == change.manifestHash ? NotebookTransportLimits.maximumManifestBytes : NotebookTransportLimits.maximumBlobBytes
+          if chunk.hash == change.manifestHash, chunk.totalBytes != Int64(change.byteCount) { throw NotebookTransportError.invalidBlob }
+          let completed = try await self.assembly.append(chunk, expectedHash: self.requestedBlobs[0].hash, maximumBytes: maximum)
+          guard !self.isStopped, !Task.isCancelled else { return }
+          if let completed {
+            self.completedBlobs.append(completed)
+            self.requestedBlobs.removeFirst()
+            // Retain at most one dependency window and 512 KiB of small files;
+            // a large streamed blob flushes immediately. Only verified bytes
+            // reach SQL, and no transaction survives a network await.
+            // The end of the window stages together with next discovery in
+            // advanceIncomingChange; only a large interim prefix flushes here.
+            if !self.requestedBlobs.isEmpty && self.completedBlobs.reduce(Int64(0), { $0 + $1.byteCount }) >= 512 * 1_024 {
+              let batch = self.completedBlobs
+              try await self.storage.stageBlobs(batch)
+              guard !self.isStopped, !Task.isCancelled else { return }
+              for blob in batch { try await self.assembly.discardCompleted(blob) }
+              self.completedBlobs.removeAll(keepingCapacity: true)
+            }
+          } else {
+            self.requestedBlobs[0] = .init(hash: chunk.hash, offset: chunk.offset + Int64(chunk.data.count))
           }
-          self.requestNextBlob()
-        } else {
-          self.requestedBlob = (chunk.hash, chunk.offset + Int64(chunk.data.count))
-          self.enqueue(.requestBlob(hash: chunk.hash, offset: chunk.offset + Int64(chunk.data.count)))
         }
+        guard !self.isStopped, !Task.isCancelled else { return }
         try self.consumed(frameSequence); self.incomingTask = nil
-        if completed != nil, self.requestedBlob == nil { self.advanceIncomingChange() }
+        if self.requestedBlobs.isEmpty { self.advanceIncomingChange() }
+        else { self.enqueue(.requestBlobs(self.requestedBlobs)) }
       } catch { self.stop(error) }
     }
   }

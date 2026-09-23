@@ -347,10 +347,10 @@ struct SpatialWorkspaceView: View {
           RoundedRectangle(cornerRadius: 4).stroke(.indigo, style: StrokeStyle(lineWidth: 2, dash: [6, 4]))
             .frame(width: rect.width, height: rect.height).position(x: rect.midX, y: rect.midY).allowsHitTesting(false)
         }
-          NotebookDisplayConfirmation {
-            guard cameraGesture == nil, !settling, !pageTurnIsActive, !contentGestureActive else { return }
+          NotebookDisplayConfirmation(preparedSource: model.preparedCollaborationVersion) {
+            guard cameraGesture == nil, !settling, !pageTurnIsActive, !contentGestureActive else { return false }
             model.prepareCommonDocumentShellIfIdle(presence: presence, cohort: cohort)
-            model.confirmVisibleActions(presence: presence, scene: workset, cohort: cohort)
+            return model.confirmVisibleActions(presence: presence, scene: workset, cohort: cohort)
           }.allowsHitTesting(false)
 
         controls(presence: presence, viewport: viewport)

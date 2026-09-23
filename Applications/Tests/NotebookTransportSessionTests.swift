@@ -288,7 +288,38 @@ final class NotebookTransportSessionTests: XCTestCase {
     let batches = await pair.serverStorage.stagedBatchSizes
     let applied = await pair.serverStorage.appliedCount
     XCTAssertEqual(batches, [1, 16, 16, 1], "One manifest and full dependency windows, not one SQL commit per field")
+    let served = await pair.clientStorage.servedWindowSizes
+    XCTAssertEqual(served, [1, 16, 16, 1], "Four response frames/read submissions, not 34 serial requests")
     XCTAssertEqual(applied, 1)
+  }
+
+  func testPartialHeadStreamsBeforeLaterHashesWithoutBlockingControl() async throws {
+    let committed = expectation(description: "Partial heads and their later hashes all commit")
+    let pair = try NotebookTransportTestPair(withChange: true, contentBytes: 1024 * 1024 + 17, contentBlobCount: 3)
+    defer { pair.stop() }
+    await pair.clientStorage.setAcknowledgementObserver { committed.fulfill() }
+    pair.onFailure = { XCTFail("Partial dependency delivery failed: \($0)") }
+    let ready = expectation(description: "Both TLS sessions ready"); ready.expectedFulfillmentCount = 2
+    pair.onReady = { _, _ in ready.fulfill() }
+    try pair.start(); await fulfillment(of: [ready], timeout: 10)
+    let delivered = expectation(description: "Control crosses the streamed dependency window")
+    let envelope = NotebookChatEnvelope(body: .request(.account(.read)))
+    var roundTrip: Duration?
+    let start = ContinuousClock.now
+    pair.onTransient = { value, peer in
+      guard case .codex(let received) = value, received.id == envelope.id else { return }
+      if peer.deviceID == pair.clientIdentity.deviceID {
+        pair.server?.sendTransient(.codex(.init(id: received.id, body: .reply(.acknowledged))))
+      } else { roundTrip = start.duration(to: .now); delivered.fulfill() }
+    }
+    pair.client?.sendTransient(.codex(envelope))
+    await fulfillment(of: [delivered, committed], timeout: 15)
+    XCTAssertLessThanOrEqual(try XCTUnwrap(roundTrip), .milliseconds(100))
+    let count = await pair.serverStorage.appliedCount, size = await pair.serverStorage.largestStagedBlob
+    let windows = await pair.clientStorage.servedWindowSizes, bytes = await pair.clientStorage.servedWindowBytes
+    XCTAssertEqual(count, 1); XCTAssertEqual(size, 1024 * 1024 + 17)
+    XCTAssertTrue(windows.contains(2), "The final partial head and next hash share a response")
+    XCTAssertTrue(bytes.allSatisfy { $0 <= NotebookTransportLimits.maximumBlobWindowBytes })
   }
 
   func testCloudCheckpointOvertakingAnOfferedLANChangeAcknowledgesOnlyThatOffer() async throws {
@@ -491,6 +522,8 @@ actor NotebookTransportMemoryStore {
   private(set) var appliedCount = 0
   private(set) var largestStagedBlob = 0
   private(set) var stagedBatchSizes: [Int] = []
+  private(set) var servedWindowSizes: [Int] = []
+  private(set) var servedWindowBytes: [Int] = []
   private(set) var requestedJournalCursors: [UInt64] = []
 
   init(changes: [NotebookDurableChange] = [], blobs: [String: Data] = [:], holdCommit: Bool = false,
@@ -504,8 +537,8 @@ actor NotebookTransportMemoryStore {
   nonisolated func adapter() -> NotebookTransportStorage {
     .init(changes: { try await self.changes(after: $0, limit: $1) }, incomingCursor: { _ in await self.cursor() },
       acknowledgePeer: { _, cursor in await self.acknowledge(cursor) },
-      readBlobChunk: { try await self.read($0, offset: $1, count: $2) }, stageBlobs: { try await self.stage($0) },
-      missingBlobHashes: { try await self.missing($0.change, limit: $1, after: $2) }, applyRemoteChange: { try await self.apply($0.change) })
+      readBlobWindow: { try await self.read($0) }, stageBlobs: { try await self.stage($0) },
+      prepareIncoming: { try await self.prepare($0.change, staging: $1) }, applyRemoteChange: { try await self.apply($0.change) })
   }
   private func changes(after cursor: UInt64, limit: Int) throws -> [NotebookDurableChange] {
     requestedJournalCursors.append(cursor)
@@ -514,13 +547,34 @@ actor NotebookTransportMemoryStore {
   }
   private func cursor() -> UInt64 { cursorReads += 1; return incomingCursor }
   private func acknowledge(_ cursor: UInt64) { acknowledgedCursor = cursor; acknowledgementObserver?() }
-  private func read(_ hash: String, offset: Int64, count: Int) throws -> NotebookTransportBlobChunk {
-    guard let data = blobs[hash], offset >= 0, offset <= data.count else { throw NotebookTransportError.invalidBlob }
-    return .init(hash: hash, offset: offset, totalBytes: Int64(data.count), data: data.subdata(in: Int(offset)..<min(data.count, Int(offset) + count)))
+  private func read(_ requests: [NotebookTransportBlobRequest]) throws -> [NotebookTransportBlobChunk] {
+    try NotebookTransportBlobWindow.validate(requests)
+    var chunks: [NotebookTransportBlobChunk] = []
+    var remaining = NotebookTransportLimits.maximumBlobWindowBytes
+    for request in requests {
+      guard let data = blobs[request.hash], request.offset <= data.count else { throw NotebookTransportError.invalidBlob }
+      let end = min(data.count, Int(request.offset) + min(remaining, NotebookTransportLimits.maximumChunkBytes))
+      let bytes = data.subdata(in: Int(request.offset)..<end)
+      chunks.append(.init(hash: request.hash, offset: request.offset, totalBytes: Int64(data.count), data: bytes))
+      remaining -= bytes.count
+      if remaining == 0 || end < data.count { break }
+    }
+    try NotebookTransportBlobWindow.validate(chunks, for: requests)
+    servedWindowSizes.append(chunks.count)
+    servedWindowBytes.append(chunks.reduce(0) { $0 + $1.data.count })
+    return chunks
+  }
+  private func prepare(_ change: NotebookDurableChange, staging: [NotebookTransportCompletedBlob]) throws -> [String] {
+    if !staging.isEmpty { try stage(staging) }
+    return try missing(change, limit: NotebookTransportLimits.maximumBlobRequests, after: nil)
   }
   private func stage(_ batch: [NotebookTransportCompletedBlob]) throws {
     let checked = try batch.map { blob in
-      let data = try Data(contentsOf: blob.file)
+      let data: Data
+      switch blob {
+      case .bytes(_, let value): data = value
+      case .file(_, let file, _): data = try Data(contentsOf: file)
+      }
       guard data.count == blob.byteCount, Self.digest(data) == blob.hash else { throw NotebookTransportError.invalidBlob }
       return (blob.hash, data)
     }

@@ -4,11 +4,13 @@ import Foundation
 /// The transport has no durable content owner. A completed frame grants only
 /// transfer credit; a committed change acknowledges the store's SQL transaction.
 public enum NotebookTransportLimits {
-  // Causal page-ink gates and their portable sources preserve Undo/Redo state.
+  // One bounded dependency window replaces per-blob request round trips.
   // Both applications update together; identities and queued history stay intact.
-  public static let protocolVersion = 41
+  public static let protocolVersion = 42
   public static let maximumFrameBytes = 256 * 1_024
   public static let maximumChunkBytes = 32 * 1_024
+  public static let maximumBlobRequests = 16
+  public static let maximumBlobWindowBytes = 64 * 1_024
   public static let maximumQueuedBytes = 1_024 * 1_024
   public static let maximumUnacknowledgedBytes = 512 * 1_024
   public static let reservedControlBytes = 256 * 1_024
@@ -85,6 +87,12 @@ public struct NotebookTransportHello: Codable, Equatable, Sendable {
   }
 }
 
+public struct NotebookTransportBlobRequest: Codable, Equatable, Sendable {
+  public let hash: String
+  public let offset: Int64
+  public init(hash: String, offset: Int64 = 0) { self.hash = hash; self.offset = offset }
+}
+
 public struct NotebookTransportBlobChunk: Codable, Equatable, Sendable {
   public let hash: String
   public let offset: Int64
@@ -92,6 +100,37 @@ public struct NotebookTransportBlobChunk: Codable, Equatable, Sendable {
   public let data: Data
   public init(hash: String, offset: Int64, totalBytes: Int64, data: Data) {
     self.hash = hash; self.offset = offset; self.totalBytes = totalBytes; self.data = data
+  }
+}
+
+/// Responses are an ordered prefix of the requested window. Only its last
+/// chunk may be partial, so one existing streaming assembly owns all bytes.
+public enum NotebookTransportBlobWindow {
+  public static func validate(_ requests: [NotebookTransportBlobRequest]) throws {
+    guard (1...NotebookTransportLimits.maximumBlobRequests).contains(requests.count),
+      Set(requests.map(\.hash)).count == requests.count,
+      requests.enumerated().allSatisfy({ index, request in
+        NotebookTransportFraming.isSHA256(request.hash) && request.offset >= 0
+          && request.offset < NotebookTransportLimits.maximumBlobBytes && (index == 0 || request.offset == 0)
+      }) else { throw NotebookTransportError.unexpectedBlob }
+  }
+
+  public static func validate(_ chunks: [NotebookTransportBlobChunk], for requests: [NotebookTransportBlobRequest]) throws {
+    try validate(requests)
+    guard !chunks.isEmpty, chunks.count <= requests.count else { throw NotebookTransportError.unexpectedBlob }
+    var bytes = 0
+    for (index, chunk) in chunks.enumerated() {
+      let request = requests[index]
+      guard chunk.hash == request.hash, chunk.offset == request.offset else { throw NotebookTransportError.unexpectedBlob }
+      guard chunk.totalBytes >= 0, chunk.totalBytes <= NotebookTransportLimits.maximumBlobBytes,
+        chunk.offset <= chunk.totalBytes, chunk.data.count <= NotebookTransportLimits.maximumChunkBytes,
+        Int64(chunk.data.count) <= chunk.totalBytes - chunk.offset,
+        !chunk.data.isEmpty || chunk.totalBytes == 0 else { throw NotebookTransportError.invalidBlob }
+      bytes += chunk.data.count
+      guard bytes <= NotebookTransportLimits.maximumBlobWindowBytes,
+        index == chunks.count - 1 || chunk.offset + Int64(chunk.data.count) == chunk.totalBytes
+      else { throw NotebookTransportError.invalidBlob }
+    }
   }
 }
 
@@ -122,8 +161,8 @@ public enum NotebookTransportMessage: Codable, Equatable, Sendable {
   case ready(cursor: UInt64)
   case credit([UInt64])
   case offer(NotebookDurableChange)
-  case requestBlob(hash: String, offset: Int64)
-  case blob(NotebookTransportBlobChunk)
+  case requestBlobs([NotebookTransportBlobRequest])
+  case blobs([NotebookTransportBlobChunk])
   case committed(transactionID: UUID, cursor: UInt64)
   case contentUnavailable(NotebookTransportContentRequirement)
   case transient(NotebookTransportTransient)
@@ -286,14 +325,14 @@ public struct NotebookTransportOutgoing: Sendable {
     let replaced: Int
     if case .transient(let transient) = message { replaced = transients[transient.priority]?.bytes ?? 0 } else { replaced = 0 }
     let control: Bool
-    switch message { case .offer, .blob, .requestBlob: control = false; default: control = true }
+    switch message { case .offer, .blobs, .requestBlobs: control = false; default: control = true }
     let limit = NotebookTransportLimits.maximumQueuedBytes - (control ? 0 : NotebookTransportLimits.reservedControlBytes)
     guard pendingBytes - replaced + value.bytes <= limit else { throw NotebookTransportError.backpressure }
     switch message {
     case .transient(let transient): transients[transient.priority] = value
     case .offer: guard offers.count < 16 else { throw NotebookTransportError.backpressure }; offers.append(value)
-    case .blob: guard blobs.count < 2 else { throw NotebookTransportError.backpressure }; blobs.append(value)
-    case .requestBlob: guard requests.count < 2 else { throw NotebookTransportError.backpressure }; requests.append(value)
+    case .blobs: guard blobs.count < 2 else { throw NotebookTransportError.backpressure }; blobs.append(value)
+    case .requestBlobs: guard requests.count < 2 else { throw NotebookTransportError.backpressure }; requests.append(value)
     default: guard message.isControl, controls.count < 20 else { throw NotebookTransportError.backpressure }; controls.append(value)
     }
     pendingBytes += value.bytes - replaced

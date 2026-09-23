@@ -8,6 +8,37 @@ import XCTest
 /// radio or two-screen measurement. The sending owner has no rendered scene.
 @MainActor
 final class NotebookCollaborationLatencyTests: XCTestCase {
+  func testCommittedTransportBytesDoNotWaitBehindTheNextNativeWrite() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("transport-read-\(UUID())")
+    let store = NotebookStore(root: root), queue = NotebookPersistenceQueue(store: store)
+    let model = NotebookAppModel(store: store, startsNearbySync: false,
+      preferences: UserDefaults(suiteName: UUID().uuidString)!, persistenceQueue: queue)
+    retainNotebookUntilTeardown(model, removing: root)
+    await model.start(pageSize: NotebookAppModel.defaultPageSize)
+    let saved = await model.finishPendingPersistence(); XCTAssertTrue(saved)
+    let storage = try await model.makeTransportStorage()
+    let change = try XCTUnwrap(store.changeJournal(after: 0).last)
+    let pause = AsyncStream<Void>.makeStream()
+    defer { pause.continuation.finish() }
+    let later = queue.enqueuePreparedCommand(Task { () throws -> @Sendable (NotebookStore) throws -> Int in
+      for await _ in pause.stream { break }
+      return { _ in 1 }
+    })
+    await Task.yield()
+    XCTAssertGreaterThan(queue.pendingCount, 0)
+    var received = false
+    let start = ContinuousClock.now
+    let read = Task {
+      let result = try await storage.readBlobWindow([.init(hash: change.manifestHash)])
+      received = true; return result
+    }
+    try await assertUX("committed-bytes-during-native-preparation", since: start) { received }
+    XCTAssertGreaterThan(queue.pendingCount, 0, "The read cannot obtain a fast result by releasing native preparation")
+    pause.continuation.finish()
+    let chunks = try await read.value, value = try await later.value
+    XCTAssertEqual(chunks.first?.hash, change.manifestHash); XCTAssertEqual(value, 1)
+  }
+
   func testHeadlessPeerChangeReachesIPadPixelsAndReturnsExactShownReceipt() async throws {
     let pair = try await fixture()
     var samples: [String] = []
@@ -24,10 +55,22 @@ final class NotebookCollaborationLatencyTests: XCTestCase {
       // the per-stage ceilings or resets the clock after save/receive/render.
       while start.duration(to: .now) < .seconds(2), stages["shown-returned"] == nil || stages["pixels"] == nil {
         if let staged = pair.arrivals.cuts[cut] { stages["staged"] = start.duration(to: staged) }
-        if stages["received"] == nil,
-          try pair.pad.store.collaborationActionIfPresent(id)?.deliveryVersion() == version {
-          stages["received"] = start.duration(to: .now)
-        }
+        // Observe both durable ends in bounded read snapshots off main. A
+        // measuring loop must not freeze the same actor that receives TLS and
+        // installs the page; the clock still includes the entire awaited read.
+        let padStore = pair.pad.store, ownerStore = pair.owner.store, deviceID = pair.pad.actorID
+        let durable = try await Task.detached {
+          let received = try padStore.readTransaction { store in
+            try store.collaborationActionIfPresent(id)?.deliveryVersion() == version
+          }
+          let shown = try ownerStore.readTransaction { store in
+            try store.deviceActionReceipts(actionIDs: [id]).contains {
+              $0.deviceID == deviceID && $0.matches(action, version: version) && $0.displayComplete
+            }
+          }
+          return (received, shown)
+        }.value
+        if stages["received"] == nil, durable.0 { stages["received"] = start.duration(to: .now) }
         if stages["installed"] == nil, pair.pad.activePage?.agentStamp.revision == revision,
           let page = pair.pad.activePage, pair.pad.pagePresentations.isPresented(page) {
           stages["installed"] = start.duration(to: .now)
@@ -36,12 +79,7 @@ final class NotebookCollaborationLatencyTests: XCTestCase {
           try pair.scene.pixels([(.init(x: x + 15, y: 330), .red)]) {
           stages["pixels"] = start.duration(to: .now)
         }
-        if stages["shown-returned"] == nil,
-          try pair.owner.store.deviceActionReceipts(actionIDs: [id]).contains(where: {
-            $0.deviceID == pair.pad.actorID && $0.matches(action, version: version) && $0.displayComplete
-          }) {
-          stages["shown-returned"] = start.duration(to: .now)
-        }
+        if stages["shown-returned"] == nil, durable.1 { stages["shown-returned"] = start.duration(to: .now) }
         try await Task.sleep(for: .milliseconds(16))
       }
       let identity = "sample=\(index),action=\(id),version=\(version),revision=\(revision)"
@@ -75,11 +113,15 @@ final class NotebookCollaborationLatencyTests: XCTestCase {
       let revision = page.drawingStamp.revision
       var elapsed: Duration?
       while start.duration(to: .now) < .seconds(2) {
-        let delivered = try pair.owner.store.loadPage(page.id)
-        if delivered.drawingStamp.revision == revision,
-          try delivered.inkDrawing().actions.contains(where: { $0.id == stroke.id && $0 == stroke }) {
-          elapsed = start.duration(to: .now); break
-        }
+        let store = pair.owner.store, pageID = page.id
+        let matches = try await Task.detached {
+          try store.readTransaction { store in
+            let delivered = try store.loadPage(pageID)
+            guard delivered.drawingStamp.revision == revision else { return false }
+            return try delivered.inkDrawing().actions.contains { $0.id == stroke.id && $0 == stroke }
+          }
+        }.value
+        if matches { elapsed = start.duration(to: .now); break }
         try await Task.sleep(for: .milliseconds(5))
       }
       samples.append("sample=\(index),stroke=\(stroke.id),revision=\(revision),received=\(elapsed.map(ms) ?? -1)ms")
@@ -209,17 +251,17 @@ final class NotebookCollaborationLatencyTests: XCTestCase {
         try await original.stageBlobs(batch)
         await self.record("\(name).stageBlobs.\(batch.count).\(batch.reduce(Int64(0), { $0 + $1.byteCount }))", since: began)
       }
-      result.missingBlobHashes = { delivery, limit, after in
+      result.prepareIncoming = { delivery, batch in
         let began = ContinuousClock.now
-        let hashes = try await original.missingBlobHashes(delivery, limit, after)
-        await self.record("\(name).missing.\(delivery.change.sequence).\(hashes.count)", since: began)
+        let hashes = try await original.prepareIncoming(delivery, batch)
+        await self.record("\(name).prepare.\(delivery.change.sequence).\(batch.count).\(hashes.count)", since: began)
         return hashes
       }
-      result.readBlobChunk = { hash, offset, count in
+      result.readBlobWindow = { requests in
         let began = ContinuousClock.now
-        let data = try await original.readBlobChunk(hash, offset, count)
-        await self.record("\(name).readBlob.\(hash.prefix(8)).\(data.data.count)", since: began)
-        return data
+        let chunks = try await original.readBlobWindow(requests)
+        await self.record("\(name).readBlobs.\(chunks.count).\(chunks.reduce(0) { $0 + $1.data.count })", since: began)
+        return chunks
       }
       return result
     }

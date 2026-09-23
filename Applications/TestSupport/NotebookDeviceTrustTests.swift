@@ -147,8 +147,8 @@ final class NotebookDeviceTrustTests: XCTestCase {
 
   private func makeSync(_ local: NotebookTransportIdentity, _ trust: DeviceMemoryTrust, retired: Set<UUID> = []) -> NearbySync {
     let storage = NotebookTransportStorage(changes: { _, _ in [] }, incomingCursor: { _ in 0 },
-      acknowledgePeer: { _, _ in }, readBlobChunk: { hash, offset, _ in .init(hash: hash, offset: offset, totalBytes: 0, data: Data()) },
-      stageBlobs: { _ in }, missingBlobHashes: { _, _, _ in [] }, applyRemoteChange: { _ in 0 })
+      acknowledgePeer: { _, _ in }, readBlobWindow: { _ in throw NotebookTransportError.invalidBlob },
+      stageBlobs: { _ in }, prepareIncoming: { _, _ in [] }, applyRemoteChange: { _ in 0 })
     return NearbySync(role: .iPadConnector, identity: local, storage: storage,
       stagingRoot: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString), trustStore: trust, retiredPeers: retired)
   }
