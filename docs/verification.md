@@ -1,5 +1,21 @@
 # Verification record
 
+## September 23 — GUI-298 matched pair 190 installed
+
+Commit `cdfaed9c` produced signed **0.3.134 (190)** from the verified source below.
+Both installed applications were read back as 190 and launched; Mac PID 21525.
+Evidence: `.build/gui298-held-zoom-release-190/build.json` and
+`.build/gui298-held-zoom-install-190/installation.json`.
+Mac quit normally and its signed bundle was atomically exchanged. Its database
+identities/sizes and registry bytes were unchanged before launch; the iPad's
+application-support entries and registry metadata were preserved. No containers,
+identities, keys or historical archives were deleted or restored. Native-test
+and UITest runner identities were removed after verification.
+The physical iPad launch image `ipad-shown.png` in the installation directory
+was inspected: the retained board is rendered at its saved overview camera.
+This is installation/launch evidence, separate from the held-contact pixel
+checks below and not an additional natural-gesture acceptance claim.
+
 ## September 23 — GUI-298, new content during held zoom
 
 The camera's native projection no longer leaves scene preparation asleep until
