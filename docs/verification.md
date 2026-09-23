@@ -97,6 +97,50 @@ XCTest/Accessibility имеет отдельные защитные таймау
 Новые критерии ещё **не пройдены на физическом iPad** и не означают устранения
 дефектов приложения. Изменения тестов оставлены с основной задачей
 для совместной проверки; чужие незавершённые изменения не закоммичены.
+## September 23 — GUI-295, committed transport reader and echo work
+
+The transport's committed offers and immutable bytes now share one serialized
+idle SQLite reader, independent of later native preparation. Each call rechecks
+admission and opens a fresh snapshot. FULL durability, ordinary checkpoints,
+wire/manifest formats and the single persistence writer remain unchanged.
+Core admission/window checks passed **20 tests / 2 suites**
+(`.build/gui295-transport-reader-core-fixed.log`), including current cuts,
+70,000-byte chunk reconstruction, unpinned checkpoints, admission changes and
+rejection of a replacement database without harming either isolated store.
+A local 200-edit storage diagnostic reported p50 **34.13 ms**, max **56.54 ms**,
+without cumulative slowdown (`.build/gui295-delivery-core-reader.log`); the
+previous 200-edit diagnostic had p50 **51.80 ms**. These are CLI storage timings,
+not input/display latency. The separate no-checkpoint-on-close flag experiment
+regressed over a long series and was reverted, not shipped.
+
+Initial physical-iPad Release probes, source
+`c0d0149345aede6bec4ff55b0b21c8ae2999f5da4d427f5ca1f66a969a57b03f`,
+passed **2/3 tests**, with zero skips/runtime warnings
+(`.build/gui295-window-release-latency-offer/`). Committed offer+bytes completed
+at **58.57 ms** while the next native preparation was still blocked. Ten
+Pencil-lift deliveries passed at p50 **43.18 ms**, max **46.76 ms**; contacts
+were synthesized through the installed native recognizer, not hardware Pencil.
+The forward scenario still failed: received / window pixels / shown round-trip
+p50 **112.95 / 158.41 / 180.92 ms**, maxima **145.96 / 205.75 / 250.89 ms**,
+against unchanged **100 / 200 / 250 ms** ceilings. Source remained unchanged
+during the run; the isolated test app was removed. The detailed trace identifies
+repeated scene reads after returning known transactions; their durable validation
+and peer-cursor ACK remain necessary, but they do not publish new content.
+
+Skipping only those known-transaction scene reloads passed the direct echo
+regression and committed-read regression (**17.13 ms**) on unchanged source
+`fcfa5f487c74665ec0e4b2883aa16dce68a416174e5fd3ef65a76498f7b718ee`.
+The four-test Release run still passed **2/4**, no skips/runtime warnings
+(`.build/gui295-window-release-latency-echo/`). Forward received / pixels /
+shown now have p50 **92.27 / 139.00 / 179.42 ms**, maxima
+**108.22 / 162.89 / 218.51 ms**: only the first durable observation exceeds
+100 ms, but it remains a failure. Reverse p50 is **40.05 ms**; the second
+contact again incurs **1,056.19 ms**, while the other nine take 34–50 ms.
+Thus the earlier ten-pass reverse run does not close the intermittent stall.
+The trace shows simultaneous delayed UI-actor completions, including the
+independent read; render/drawable waiting is being measured before changing
+that path. These verified storage/echo improvements do not close S5 or establish
+radio, human Pencil or system acceptance. Installed pair remains 190.
 
 ## September 23 — GUI-295, code-note common Undo/Redo
 

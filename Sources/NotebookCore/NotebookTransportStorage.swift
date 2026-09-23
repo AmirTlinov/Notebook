@@ -1,8 +1,8 @@
 import CryptoKit
 import Foundation
 
-/// Durable writes use the existing persistence executor; immutable offered
-/// blob reads use an independent bounded WAL snapshot, not the native write queue.
+/// Durable writes use the existing persistence executor; committed offers and
+/// immutable blob reads use bounded WAL snapshots, not the native write queue.
 /// `applyRemoteChange` returns only after content, dedupe and incoming cursor
 /// have committed together. Transport receipt never calls it speculatively.
 public struct NotebookTransportStorage: Sendable {
@@ -29,6 +29,51 @@ public struct NotebookTransportStorage: Sendable {
     self.changes = changes; self.incomingCursor = incomingCursor; self.acknowledgePeer = acknowledgePeer
     self.readBlobWindow = readBlobWindow; self.stageBlobs = stageBlobs
     self.prepareIncoming = prepareIncoming; self.applyRemoteChange = applyRemoteChange
+  }
+}
+
+/// The trusted transport's bounded committed reads share one serialized handle.
+/// Every call rechecks admission and opens a fresh WAL snapshot. Keeping the
+/// useful reader alive avoids checkpointing the entire WAL between dependency
+/// windows; FULL commits and SQLite's normal automatic checkpoints are unchanged.
+/// Replacing the underlying database requires a new transport, not an offer
+/// from another workspace under the existing peer generation.
+public actor NotebookTransportReader {
+  private let store: NotebookStore
+  private var connection: NotebookSQLConnection?
+  private var identity: FileIdentity?
+
+  public init(store: NotebookStore) { self.store = store }
+
+  public func changes(after cursor: UInt64, limit: Int) throws -> [NotebookDurableChange] {
+    try read { try $0.changeJournal(after: cursor, limit: limit) }
+  }
+
+  public func blobs(_ requests: [NotebookTransportBlobRequest]) throws -> [NotebookTransportBlobChunk] {
+    try read { try $0.readBlobWindow(requests) }
+  }
+
+  private func read<T>(_ operation: (NotebookStore) throws -> T) throws -> T {
+    do {
+      let next = try FileIdentity(store.databaseURL)
+      guard identity == nil || identity == next else { throw NotebookTransportError.storageUnavailable }
+      let admitted = try store.prepareDatabase(reusing: connection)
+      connection = admitted; identity = next
+      return try store.readTransaction(using: admitted, operation)
+    } catch { connection = nil; throw error }
+  }
+
+  private struct FileIdentity: Equatable {
+    let device: UInt64
+    let inode: UInt64
+    init(_ file: URL) throws {
+      let attributes = try FileManager.default.attributesOfItem(atPath: file.path)
+      guard let device = attributes[.systemNumber] as? NSNumber,
+        let inode = attributes[.systemFileNumber] as? NSNumber else {
+        throw NotebookStorageError.invalidTransaction("database file identity")
+      }
+      self.device = device.uint64Value; self.inode = inode.uint64Value
+    }
   }
 }
 

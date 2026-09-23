@@ -23,8 +23,8 @@ struct NotebookSQLReadAllowance {
     valueBytes: 8 * 1_024 * 1_024, reason: "agent_command_read")
 }
 
-/// A connection is owned by one synchronous reader/command segment. Nested
-/// typed APIs borrow it; no connection or SQLite statement crosses an await.
+/// A connection has one owner. Nested typed APIs borrow its synchronous
+/// transaction; no active transaction or statement lease crosses an await.
 final class NotebookSQLConnection {
   let handle: OpaquePointer
   fileprivate(set) var writable: Bool
@@ -379,7 +379,8 @@ extension NotebookStore {
   static let currentDatabaseVersion: Int64 = 21
 
   @discardableResult
-  func prepareDatabase(initialWorkspaceID: UUID? = nil) throws -> NotebookSQLConnection {
+  func prepareDatabase(initialWorkspaceID: UUID? = nil,
+    reusing connection: NotebookSQLConnection? = nil) throws -> NotebookSQLConnection {
     if let currentSQL { guard initialWorkspaceID == nil else { throw NotebookStorageError.invalidTransaction("workspace identity already initialized") }; return currentSQL }
     let manager = FileManager.default
     // Rejection happens before mkdir/open; the external converter is the only
@@ -390,7 +391,8 @@ extension NotebookStore {
     }
     guard initialWorkspaceID == nil || !manager.fileExists(atPath: databaseURL.path) else { throw NotebookStorageError.invalidTransaction("workspace identity already initialized") }
     try manager.createDirectory(at: root, withIntermediateDirectories: true)
-    let database = try NotebookSQLConnection(url: databaseURL, writable: true, create: true)
+    let database = try connection ?? NotebookSQLConnection(url: databaseURL, writable: true, create: true)
+    database.writable = true
     let applicationID = try database.rows("PRAGMA application_id").first?.first?.integer ?? 0
     let version = try database.rows("PRAGMA user_version").first?.first?.integer ?? 0
     guard applicationID == 0 || (applicationID == 1_313_999_665 && (2...Self.currentDatabaseVersion).contains(version)) else { throw NotebookStorageError.unsupportedFormat }
@@ -586,7 +588,14 @@ extension NotebookStore {
   /// transaction cannot be upgraded into a command behind the caller's back.
   public func readTransaction<T>(_ read: (NotebookStore) throws -> T) throws -> T {
     if currentSQL != nil { return try read(self) }
-    let database = try prepareDatabase()
+    return try readTransaction(using: prepareDatabase(), read)
+  }
+
+  /// A transport owner may retain its idle handle, never the prior read cut.
+  /// Admission is performed again before borrowing this synchronous snapshot.
+  func readTransaction<T>(using database: NotebookSQLConnection,
+    _ read: (NotebookStore) throws -> T) throws -> T {
+    precondition(currentSQL == nil)
     database.writable = false
     try database.run("BEGIN DEFERRED")
     Thread.current.threadDictionary[connectionKey] = database
