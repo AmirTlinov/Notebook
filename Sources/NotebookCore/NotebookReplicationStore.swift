@@ -63,7 +63,7 @@ extension NotebookStore {
       }
       let trailing = range == nil ? try input.read(upToCount: 1) : nil
       guard offset == byteCount, trailing?.isEmpty != false,
-        hasher.finalize().map({ String(format: "%02x", $0) }).joined() == expectedHash else { throw NotebookStorageError.blobHashMismatch }
+        NotebookHexEncoding.encode(hasher.finalize()) == expectedHash else { throw NotebookStorageError.blobHashMismatch }
     }
   }
 

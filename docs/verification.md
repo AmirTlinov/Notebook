@@ -1,5 +1,73 @@
 # Verification record
 
+## September 24 — интеграция проверенных срезов, не выпуск
+
+`main` объединяет неизменённые исправления наблюдения камеры `1e2a4032`
+(физический источник `b873ed62`, 12 PASS / 1 FAIL) и кодирование хешей
+`37d6a0da` (физический источник
+`78a41c2f1e0f6e53aa4c63ec932f156839c74d8fc8b8c979a63edb19a0a82fc8`,
+3/3 PASS доставки). Конфликт был только между добавленными разделами этого
+журнала; обе записи сохранены, программные изменения не переписаны.
+Итоговый источник
+`e3c443fac7f799210e7182e5d4b2ab1eef6d2f8d1f936eac685ae07b25e903a4`
+не выдаётся за новый совместный физический прогон. Красные проверки навигации
+остаются открытыми, установленная пара 190 не меняется.
+
+## September 24 — GUI-295, bounded hash encoding and durable timing
+
+The command/storage/delivery path now writes each hexadecimal digest directly
+into one ASCII string instead of allocating 32 Foundation formatters and their
+temporary strings. Cryptographic bytes, identities, validation, transactions,
+FULL durability and wire formats are unchanged. The replaced lifecycle encoder
+was removed. Core **36 tests / 6 suites PASS** cover every byte, nonzero-index
+slices, standard/streaming SHA-256, invalid transport blobs, atomic SQLite writes,
+reference identities, board revisions and lifecycle extents
+(`.build/gui295-hash-encoding-core.log`).
+
+A same-driver local Mac comparison of 200 real insert/stage/apply operations in
+fresh stores gave total median/p95 **32.76/41.13 → 29.95/36.70 ms**; maxima
+**51.84 → 52.84 ms** did not improve. This is storage CPU/I/O evidence, not an
+end-to-end speedup claim. Before/after logs, driver and summary are retained at
+`.build/gui295-delivery-hash-{before,after}-sync.log`,
+`.build/gui295-delivery-hash-probe.swift` and
+`.build/gui295-delivery-hash-comparison.json`.
+
+The physical iPad optimized follow-up `.build/gui295-hash-delivery/verification.json`
+passed **3/3**, zero skips/runtime warnings: forward receipt/pixels/round trip,
+ten reverse deliveries and the known-transaction echo. Forward maxima were
+**94.80/165.30/208.98 ms**, reverse **48.69 ms**; all original 100/200/250 ms
+gates remain in force. This does not satisfy the newer two-device 80/150 ms
+shown-content goal or establish radio/hardware-Pencil acceptance.
+
+A diagnostic-only exact same-cut adapter return is now recorded separately from
+database polling, while the polling gate remains unchanged. On unchanged app
+code, `.build/gui295-durable-boundary/` still failed: first durable return
+**69.94 ms**, detection **103.28 ms**; ten durable returns had max **80.22 ms**.
+After hash encoding, durable returns had median/max **67.00/78.28 ms**. Those
+timestamps require the later exact action/version check and do not stand in for
+shown pixels. Isolated test apps were removed; production pair 190 is unchanged.
+
+## September 24 — GUI-295, combined delivery check
+
+The integrated source
+`7c4783524694cfadf05181df7361e3c0e1ebae68a5b9c2e0d556b062f3ba847d`
+completed `.build/gui295-combined-delivery/` on the physical iPad with the
+standard `--optimized` route (isolated Debug fixtures, Swift `-O`): **1 PASS /
+1 FAIL**, zero skips/runtime warnings, cleanup `removed=true`. Ten reverse
+deliveries passed: median/max **40.11/47.64 ms**. All ten forward changes were
+received and shown, but the first observed durable receipt was **102.39 ms**,
+over the unchanged 100 ms limit. Forward median/max: source save 25.99/30.42 ms,
+staged 49.34/60.33 ms, received 92.32/102.39 ms, installed 111.10/131.56 ms,
+window pixels 135.25/159.86 ms, exact shown round trip 182.57/204.01 ms.
+
+These are two isolated SQLite owners over real TLS loopback on one iPad,
+not radio delivery between the installed pair. Durable receipt is still
+observed through the existing database polling; no deadline or failure was
+removed. The preceding Release measurements use a different build configuration,
+so their small timing difference does not establish a reader-reuse improvement.
+Production pair 190 and user data remain unchanged. Known ink/navigation latency
+failures and physical Pencil/system/joint-work acceptance remain open.
+
 ## September 24 — GUI-298, точный учёт объединённых движений камеры
 
 `.build/gui298-camera-receipts-32/`, физический iPad, `--optimized`, исходники
@@ -366,8 +434,23 @@ receipt (103.31 ms > 100 ms); all ten pixel/round-trip receipts arrived within
 167.65/211.59 ms, not the newer cross-device targets. Eraser OS p95/max remained
 20.31/20.33 ms; pen p95 was 19.05 ms with one 27.23 ms outlier. These failed latency
 checks remain failed; resizing correctness is not performance acceptance. The
-three Mac projection checks will run on integrated main with the already pending
-Mac addressed-target scope, avoiding a duplicate rebuild. No pair is installed.
+three Mac projection checks subsequently passed on integrated main together
+with four addressed-target checks (7 PASS, zero skips/runtime warnings), using
+`.build/gui298-navigation-mac-31/verification.json` in the main checkout, source
+`7c4783524694cfadf05181df7361e3c0e1ebae68a5b9c2e0d556b062f3ba847d`. This
+covers actual pool descriptors and native projection, not full page-pixel or
+hardware-mouse latency acceptance. No pair is installed.
+
+A deadline-late-binding experiment was rejected completely. Source
+`f1ab56c9bfe955baebbb6d593ef8e8942bd5f36f4ccac7cdaa5555d4db22fc8d`
+passed 12/15 checks, including pending-frame resize/cull cancellation, source
+coalescing, zoom quality and reverse delivery, but worsened strict latency:
+eraser OS p95/max 30.75/39.04 ms, pen 58.58/92.01 ms and shape UIKit max 28.55 ms.
+Evidence and attempted diff: `.build/gui295-page-deadline-release/`; zero skips
+or runtime warnings, cleanup `removed=true`. Neither the deferred Task nor its
+new lifecycle test/diagnostic property or presentation-mode experiment remains
+in production. Runtime and tests were restored byte-for-byte to `c3c5cfaf`;
+the known 20 ms failures are not recast as successful physical acceptance.
 
 
 ## September 23 — GUI-295, committed transport reader and echo work

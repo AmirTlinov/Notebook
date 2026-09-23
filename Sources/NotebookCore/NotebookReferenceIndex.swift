@@ -411,7 +411,7 @@ extension NotebookStore {
   }
 
   private static func referenceOwnerKey(_ kind: String, _ id: UUID) -> String { kind + ":" + id.uuidString.lowercased() }
-  private static func referenceHash(_ bytes: Data) -> String { SHA256.hash(data: bytes).map { String(format: "%02x", $0) }.joined() }
+  private static func referenceHash(_ bytes: Data) -> String { NotebookHexEncoding.encode(SHA256.hash(data: bytes)) }
   private static func referenceContribution(_ address: String, _ hash: String) -> Data {
     Data(SHA256.hash(data: Data(("reference-contribution-v2\n" + address + "\n" + hash).utf8)))
   }

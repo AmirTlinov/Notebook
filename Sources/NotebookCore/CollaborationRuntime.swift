@@ -353,7 +353,7 @@ extension NotebookStore {
   public static func pageVisionSourceRevision(_ page: PageDocument) throws -> String {
     var source: [String: JSONValue] = ["id": .string(page.id.uuidString.lowercased()),
       "size": try .encode(page.size), "drawingStamp": try .encode(page.drawingStamp),
-      "ink": .string(SHA256.hash(data: page.drawingData).map { String(format: "%02x", $0) }.joined())]
+      "ink": .string(NotebookHexEncoding.encode(SHA256.hash(data: page.drawingData)))]
     let suppressed = page.graphicPresentation.suppressedInkIDs
     if !suppressed.isEmpty { source["suppressedInkIDs"] = try .encode(suppressed.sorted()) }
     return try collaborationHash(JSONValue.object(source))
@@ -452,5 +452,5 @@ extension NotebookStore {
 
 public func collaborationHash<T: Encodable>(_ value: T) throws -> String {
   let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
-  return SHA256.hash(data: try encoder.encode(value)).map { String(format: "%02x", $0) }.joined()
+  return NotebookHexEncoding.encode(SHA256.hash(data: try encoder.encode(value)))
 }

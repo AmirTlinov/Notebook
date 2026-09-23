@@ -27,7 +27,7 @@ extension NotebookStore {
       let value: JSONValue = .object([
         "format": .number(1), "itemID": .string(itemID),
         "headers": .array(headers.map { .array([.string($0[0].text!), .string($0[1].text!)]) }),
-        "bodyDigest": .string((extent?[0].blob ?? Data(repeating: 0, count: 32)).hexadecimal),
+        "bodyDigest": .string(NotebookHexEncoding.encode(extent?[0].blob ?? Data(repeating: 0, count: 32))),
         "bodyRecordCount": .number(Double(count)), "fileCount": .number(Double(fileCount)),
         "coverRevision": .string(try referenceRevision(target: target)),
         "childBoardRevision": try item.kind == .board ? boardContentRevision(id).map(JSONValue.string) ?? .null : .null
@@ -154,9 +154,5 @@ extension NotebookStore {
     let contribution = SHA256.hash(data: Data(("item-record-v1\n" + address + "\n" + hash).utf8))
     for (index, byte) in contribution.enumerated() { digest[index] ^= byte }
   }
-  private static func lifecycleHash(_ data: Data) -> String { Data(SHA256.hash(data: data)).hexadecimal }
-}
-
-private extension Data {
-  var hexadecimal: String { map { String(format: "%02x", $0) }.joined() }
+  private static func lifecycleHash(_ data: Data) -> String { NotebookHexEncoding.encode(SHA256.hash(data: data)) }
 }
