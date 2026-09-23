@@ -106,6 +106,11 @@ final class TwoFingerPaperGestureRecognizer: UIGestureRecognizer {
     case magnification
   }
 
+  struct CameraInput: Equatable {
+    let contactID: UUID
+    let revision: UInt64
+  }
+
   private static let holdDelay = Duration.milliseconds(340)
   private static let velocityWindow: TimeInterval = 0.08
 
@@ -137,8 +142,9 @@ final class TwoFingerPaperGestureRecognizer: UIGestureRecognizer {
   private(set) var magnification: CGFloat = 1
   private(set) var magnificationVelocity: CGFloat = 0
   private(set) var centroid = CGPoint.zero
+  private(set) var cameraInput: CameraInput?
   /// Observation only: actual installed camera action, not touch ingestion.
-  var onCameraHandled: ((CGFloat, TimeInterval, TimeInterval) -> Void)?
+  var onCameraHandled: ((CameraInput, TimeInterval, TimeInterval) -> Void)?
 
   var defersHorizontalMotionToPageTurn = false
   private var defersThisPairToPageTurn = false
@@ -333,6 +339,7 @@ final class TwoFingerPaperGestureRecognizer: UIGestureRecognizer {
     magnification = 1
     magnificationVelocity = 0
     centroid = .zero
+    cameraInput = nil
     magnificationSamples.removeAll(keepingCapacity: true)
     fingerSequenceRevision = nil
     defersThisPairToPageTurn = false
@@ -352,6 +359,7 @@ final class TwoFingerPaperGestureRecognizer: UIGestureRecognizer {
   /// The second touchdown establishes the pair once. Intent recognition must
   /// retain subsequent measured travel, even if release is the very next sample.
   private func beginTrackingPair() {
+    cameraInput = .init(contactID: UUID(), revision: 0)
     let leavesObject = inputGate?.hasSceneObjectContact == true
     defersThisPairToPageTurn = defersHorizontalMotionToPageTurn && !leavesObject
     if leavesObject { undoIsEligible = false }
@@ -382,6 +390,9 @@ final class TwoFingerPaperGestureRecognizer: UIGestureRecognizer {
 
   private func updateMetrics() {
     guard let startCentroid else { return }
+    if let input = cameraInput {
+      cameraInput = .init(contactID: input.contactID, revision: input.revision + 1)
+    }
     let current = currentCentroid()
     centroid = current
     translation = CGPoint(

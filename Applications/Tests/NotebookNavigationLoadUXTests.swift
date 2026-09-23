@@ -187,17 +187,11 @@ import XCTest
       let basis = try XCTUnwrap(model.presence)
       let pinch = try HeldCoveragePinch(window: window, presence: basis)
       let monitor = NotebookGestureLatency(window: window)
-      struct CameraSample {
-        let due: TimeInterval, scale: Double
-        var requiresAction = false
-        var entered: TimeInterval?, handled: TimeInterval?
-      }
-      var actions: [CameraSample] = []
-      pinch.recognizer.onCameraHandled = { scale, entered, handled in
-        guard let index = actions.indices.last(where: {
-          actions[$0].handled == nil && abs(actions[$0].scale - Double(scale)) < 0.000_001
-        }) else { return }
-        actions[index].entered = entered; actions[index].handled = handled
+      var delivery = NotebookUXObservation.CameraDelivery()
+      pinch.recognizer.onCameraHandled = { input, entered, handled in
+        guard let camera = model.presence?.camera else { return }
+        delivery.receipts.append(.init(id: input, scale: camera.scale, center: camera.center,
+          entered: entered, handled: handled))
       }
       defer { pinch.recognizer.onCameraHandled = nil; pinch.end(); monitor.stop() }
       let origin = CACurrentMediaTime()
@@ -208,9 +202,14 @@ import XCTest
         // Out and in with continuous held contacts, no settle/prewarm between
         // samples and no deadline reset after a stall.
         let scale = 1 - 0.45 * sin(Double(sample) / 119 * .pi)
-        actions.append(.init(due: due, scale: scale / basis.camera.scale))
         monitor.input(due: due, needsPresentation: false) { pinch.move(center: .zero, scale: scale) }
-        actions[sample].requiresAction = pinch.recognizer.intent == .magnification
+        let input = try XCTUnwrap(pinch.recognizer.cameraInput)
+        if let previous = delivery.inputs.last {
+          XCTAssertEqual(input.contactID, previous.id.contactID)
+          XCTAssertEqual(input.revision, previous.id.revision + 1)
+        }
+        delivery.inputs.append(.init(id: input, due: due,
+          scale: scale, center: .zero, requiresAction: pinch.recognizer.intent == .magnification))
       }
       await Task.yield()
       XCTAssertTrue(model.inputIsActive, "The entire replay must precede finger-up")
@@ -227,14 +226,10 @@ import XCTest
       // touchesMoved returns. A fast ingestion call cannot certify that the
       // actual camera handler (including native projection) was prompt.
       XCTAssertEqual(pinch.recognizer.intent, .magnification)
-      XCTAssertFalse(actions.filter(\.requiresAction).isEmpty)
-      XCTAssertTrue(actions.filter(\.requiresAction).allSatisfy { sample in
-        guard let handled = sample.handled else { return false }
-        return NotebookUXObservation.acceptsCameraSample(due: sample.due, entered: sample.entered, handled: handled)
-      }, "Every recognized camera sample must reach the installed action, within the same 5/16.67 ms ceilings")
-      let handling = XCTAttachment(string: actions.enumerated().map { index, sample in
-        "\(index): required=\(sample.requiresAction); entered=\(sample.entered.map { ($0-sample.due)*1000 } ?? -1)ms; handled=\(sample.handled.map { ($0-sample.due)*1000 } ?? -1)ms"
-      }.joined(separator: "\n"))
+      XCTAssertEqual(delivery.inputs.count, 120)
+      XCTAssertTrue(delivery.passed,
+        "Every input needs a same-contact measured pose ACK, within its ORIGINAL 5/16.67 ms ceilings; coalescing never resets time")
+      let handling = XCTAttachment(string: delivery.report)
       handling.name = "Actual camera handler delivery"; handling.lifetime = .keepAlways; add(handling)
       let timing = XCTAttachment(string: monitor.samples.enumerated().map { index, sample in
         "\(index): queue=\(sample.entered.map { ($0-sample.due)*1_000 } ?? -1)ms; execution=\(sample.entered.map { (sample.handled-$0)*1_000 } ?? -1)ms; total=\((sample.handled-sample.due)*1_000)ms; UIKit=\(sample.uiSubmitted.map { ($0-sample.due)*1_000 } ?? -1)ms"

@@ -421,7 +421,11 @@ appear within 150 ms; all pixels and 24 usable runtimes within 1000 ms, both
 from the same cold-opening origin before any warm action.
 CSS motion is checked in three actual images, including while both zoom contacts
 remain held. Each camera handler must finish within 5 ms; queue plus handler
-must finish within 16.67 ms from the scheduled input. Newly exposed material
+must finish within 16.67 ms from the scheduled input. A coalesced UIKit action
+may acknowledge earlier measured revisions of the same contact only when the
+latest measured camera pose is actually applied; every covered input keeps its
+own original deadline. Equal scales and unmeasured future revisions are not
+receipts, and the independent ingestion-queue check remains mandatory. Newly exposed material
 requires installed coverage at every observed UIKit commit and correct authored
 pixels from the first exposure, with no blank grace period. Missing detail must
 refine within 250 ms without making shown material disappear. Coverage observations

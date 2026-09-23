@@ -1,5 +1,7 @@
 import UIKit
 import XCTest
+import NotebookCore
+@testable import Notebook
 
 /// Regression ceilings, not a claim of 100 ms Pencil quality. This observes the
 /// mounted window (including capture cost), NOT the physical input-to-photon path.
@@ -23,6 +25,53 @@ enum NotebookUXObservation {
     guard let entered, [due, entered, handled].allSatisfy({ $0.isFinite && $0 > 0 }),
       entered >= due, handled >= entered else { return false }
     return handled <= due + cameraSampleMS / 1_000 && handled <= entered + cameraHandlerMS / 1_000
+  }
+
+  /// UIKit can combine pending .changed actions. A newer absolute camera pose
+  /// covers earlier measurements of the SAME held pair, but keeps every input's
+  /// original due time. Neither equal scale nor a fast ingestion call is an ACK.
+  @MainActor struct CameraDelivery {
+    struct Input {
+      let id: TwoFingerPaperGestureRecognizer.CameraInput
+      let due: TimeInterval
+      let scale: Double
+      let center: WorldPoint
+      let requiresAction: Bool
+    }
+    struct Receipt {
+      let id: TwoFingerPaperGestureRecognizer.CameraInput
+      let scale: Double
+      let center: WorldPoint
+      let entered: TimeInterval
+      let handled: TimeInterval
+    }
+    var inputs: [Input] = []
+    var receipts: [Receipt] = []
+
+    func receipt(for input: Input) -> Receipt? {
+      receipts.filter { receipt in
+        guard receipt.id.contactID == input.id.contactID, receipt.id.revision >= input.id.revision,
+          let measured = inputs.first(where: { $0.id == receipt.id }),
+          abs(receipt.scale - measured.scale) < 0.000_01 else { return false }
+        let delta = receipt.center.delta(to: measured.center)
+        return abs(delta.x) < 0.001 && abs(delta.y) < 0.001
+      }.min { $0.handled < $1.handled }
+    }
+
+    var passed: Bool {
+      let required = inputs.filter(\.requiresAction)
+      return !required.isEmpty && required.allSatisfy { input in
+        guard let receipt = receipt(for: input) else { return false }
+        return NotebookUXObservation.acceptsCameraSample(due: input.due, entered: receipt.entered, handled: receipt.handled)
+      }
+    }
+
+    var report: String {
+      inputs.enumerated().map { index, sample in
+        let receipt = receipt(for: sample)
+        return "\(index): revision=\(sample.id.revision); required=\(sample.requiresAction); ack=\(receipt.map { String($0.id.revision) } ?? "missing"); entered=\(receipt.map { ($0.entered-sample.due)*1000 } ?? -1)ms; handled=\(receipt.map { ($0.handled-sample.due)*1000 } ?? -1)ms"
+      }.joined(separator: "\n")
+    }
   }
 
   /// Zero holes is an invariant, not a grace period after material enters view.
@@ -199,6 +248,62 @@ final class NotebookUXObservationTests: XCTestCase {
     XCTAssertFalse(NotebookUXObservation.acceptsCameraSample(due: due, entered: nil, handled: due + 0.001))
     XCTAssertFalse(NotebookUXObservation.acceptsCameraSample(due: due, entered: entered, handled: due))
     XCTAssertFalse(NotebookUXObservation.acceptsCameraSample(due: due, entered: entered, handled: .nan))
+  }
+
+  func testCoalescedCameraPoseAcknowledgesEveryIncludedInputWithoutResettingItsClock() {
+    let contact = UUID()
+    var delivery = NotebookUXObservation.CameraDelivery()
+    delivery.inputs = [
+      .init(id: .init(contactID: contact, revision: 1), due: 100, scale: 1, center: .zero, requiresAction: true),
+      .init(id: .init(contactID: contact, revision: 2), due: 100.008, scale: 0.8, center: .zero, requiresAction: true)
+    ]
+    delivery.receipts = [.init(id: delivery.inputs[1].id, scale: 0.8, center: .zero,
+      entered: 100.012, handled: 100.014)]
+    XCTAssertTrue(delivery.passed, "Latest absolute pose covers both measurements before their own deadlines")
+    XCTAssertEqual(delivery.receipt(for: delivery.inputs[0])?.id.revision, 2)
+    delivery.receipts = [.init(id: delivery.inputs[1].id, scale: 0.8, center: .zero,
+      entered: 100.017, handled: 100.019)]
+    XCTAssertTrue(NotebookUXObservation.acceptsCameraSample(due: delivery.inputs[1].due,
+      entered: 100.017, handled: 100.019))
+    XCTAssertFalse(delivery.passed, "A newer timely pose cannot forgive the earlier input's 19-ms queue delay")
+    delivery.receipts = [.init(id: delivery.inputs[1].id, scale: 0.8, center: .zero,
+      entered: 100.008, handled: 100.014)]
+    XCTAssertFalse(delivery.passed, "A coalesced action also keeps the independent 5-ms execution ceiling")
+  }
+
+  func testCameraReceiptMustBelongToThisContactAndAnActuallyMeasuredRevision() {
+    let contact = UUID()
+    var delivery = NotebookUXObservation.CameraDelivery()
+    delivery.inputs = [
+      .init(id: .init(contactID: contact, revision: 1), due: 100, scale: 1, center: .zero, requiresAction: true),
+      .init(id: .init(contactID: contact, revision: 2), due: 100.008, scale: 1, center: .zero, requiresAction: true)
+    ]
+    XCTAssertFalse(delivery.passed, "Missing action is not a fast sample")
+    for id in [TwoFingerPaperGestureRecognizer.CameraInput(contactID: UUID(), revision: 2),
+      .init(contactID: contact, revision: 1), .init(contactID: contact, revision: 3)] {
+      delivery.receipts = [.init(id: id, scale: 1, center: .zero, entered: 100.010, handled: 100.012)]
+      XCTAssertFalse(delivery.passed,
+        "Equal scale cannot authorize a foreign contact, stale pose, or invented future revision")
+    }
+  }
+
+  func testCameraAckRequiresTheAppliedPoseAndValidHandlerTimes() {
+    let input = NotebookUXObservation.CameraDelivery.Input(id: .init(contactID: UUID(), revision: 1),
+      due: 100, scale: 0.8, center: .init(x: 10, y: 20), requiresAction: true)
+    var delivery = NotebookUXObservation.CameraDelivery(inputs: [input])
+    delivery.receipts = [.init(id: input.id, scale: 0.8, center: input.center, entered: 100.001, handled: 100.002)]
+    XCTAssertTrue(delivery.passed)
+    for receipt in [
+      NotebookUXObservation.CameraDelivery.Receipt(id: input.id, scale: 1, center: input.center,
+        entered: 100.001, handled: 100.002),
+      .init(id: input.id, scale: 0.8, center: .zero, entered: 100.001, handled: 100.002),
+      .init(id: input.id, scale: 0.8, center: input.center, entered: .nan, handled: 100.002),
+      .init(id: input.id, scale: 0.8, center: input.center, entered: 100.001, handled: .nan),
+      .init(id: input.id, scale: 0.8, center: input.center, entered: 99.999, handled: 100.002)
+    ] {
+      delivery.receipts = [receipt]
+      XCTAssertFalse(delivery.passed, "Invoking the action is not proof that it applied the measured camera pose")
+    }
   }
 
   func testFirstBlankOrLaterDisappearanceCannotBeAveragedAway() {

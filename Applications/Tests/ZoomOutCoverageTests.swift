@@ -93,9 +93,16 @@ final class ZoomOutCoverageTests: XCTestCase {
     await model.reloadExternalChanges()?.value
     let viewport = SpatialPoint(x: 834, y: 1194)
     var pinch: HeldCoveragePinch?
+    var cameraDelivery = NotebookUXObservation.CameraDelivery(), expectedCameraInputs = 0
     func show(center: WorldPoint, scale: Double, settled: Bool) {
       if let pinch {
+        let due = CACurrentMediaTime()
+        expectedCameraInputs += 1
         pinch.move(center: center, scale: scale)
+        if let input = pinch.recognizer.cameraInput {
+          cameraDelivery.inputs.append(.init(id: input, due: due, scale: scale, center: center,
+            requiresAction: pinch.recognizer.intent == .magnification))
+        }
         return
       }
       model.updatePresence(.init(boardID: boardID, mode: .board,
@@ -135,8 +142,14 @@ final class ZoomOutCoverageTests: XCTestCase {
     let contact = UUID()
     if nativeGesture {
       pinch = try HeldCoveragePinch(window: window, presence: XCTUnwrap(model.presence))
+      pinch?.recognizer.onCameraHandled = { input, entered, handled in
+        guard let camera = model.presence?.camera else { return }
+        cameraDelivery.receipts.append(.init(id: input, scale: camera.scale, center: camera.center,
+          entered: entered, handled: handled))
+      }
     } else { model.inputGate.beginContact(source: contact) }
     defer {
+      pinch?.recognizer.onCameraHandled = nil
       pinch?.end()
       if !nativeGesture { model.inputGate.endContact(source: contact) }
     }
@@ -195,9 +208,11 @@ final class ZoomOutCoverageTests: XCTestCase {
         preparationTimeline.append("\(start.duration(to: .now)): scale=\(current.camera.scale); \(preparation)")
         previousPreparation = preparation
       }
-      XCTAssertEqual(current.camera.scale, scale, accuracy: 0.00001)
-      XCTAssertEqual(current.camera.center.delta(to: center).x, 0, accuracy: 0.001)
-      XCTAssertEqual(current.camera.center.delta(to: center).y, 0, accuracy: 0.001)
+      if !nativeGesture {
+        XCTAssertEqual(current.camera.scale, scale, accuracy: 0.00001)
+        XCTAssertEqual(current.camera.center.delta(to: center).x, 0, accuracy: 0.001)
+        XCTAssertEqual(current.camera.center.delta(to: center).y, 0, accuracy: 0.001)
+      }
       let resources = SceneRenderResources.shared
       XCTAssertLessThanOrEqual(resources.residentBytes + resources.reservedBytes, resources.byteLimit)
       XCTAssertLessThanOrEqual(resources.pendingWebRequestCount, mixed ? 7 : nested ? 2 : 1,
@@ -286,6 +301,11 @@ final class ZoomOutCoverageTests: XCTestCase {
     }
     if nativeGesture {
       coverageLink.isEnabled = false
+      XCTAssertEqual(cameraDelivery.inputs.count, expectedCameraInputs)
+      XCTAssertTrue(cameraDelivery.passed,
+        "Every measured camera pose needs an installed action within its original 5/16.67-ms budgets, before finger-up")
+      let handling = XCTAttachment(string: cameraDelivery.report)
+      handling.name = "Held coverage camera delivery"; handling.lifetime = .keepAlways; add(handling)
       XCTAssertTrue(committedCoverage.passed,
         "Visible material must have native pixels at EVERY observed UIKit commit, from first exposure through refinement: \(committedCoverage.missing)/\(committedCoverage.checked) holes. No grace period, no average")
       let note = XCTAttachment(string: "commits=\(committedCoverage.checked); committed holes=\(committedCoverage.missing); pixel probes=\(pixelCoverage.checked); blank pixel probes=\(pixelCoverage.missing). UIKit commits are not OS display acknowledgements.")
