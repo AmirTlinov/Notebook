@@ -1,5 +1,26 @@
 # Verification record
 
+## September 24 — GUI-295, combined delivery check
+
+The integrated source
+`7c4783524694cfadf05181df7361e3c0e1ebae68a5b9c2e0d556b062f3ba847d`
+completed `.build/gui295-combined-delivery/` on the physical iPad with the
+standard `--optimized` route (isolated Debug fixtures, Swift `-O`): **1 PASS /
+1 FAIL**, zero skips/runtime warnings, cleanup `removed=true`. Ten reverse
+deliveries passed: median/max **40.11/47.64 ms**. All ten forward changes were
+received and shown, but the first observed durable receipt was **102.39 ms**,
+over the unchanged 100 ms limit. Forward median/max: source save 25.99/30.42 ms,
+staged 49.34/60.33 ms, received 92.32/102.39 ms, installed 111.10/131.56 ms,
+window pixels 135.25/159.86 ms, exact shown round trip 182.57/204.01 ms.
+
+These are two isolated SQLite owners over real TLS loopback on one iPad,
+not radio delivery between the installed pair. Durable receipt is still
+observed through the existing database polling; no deadline or failure was
+removed. The preceding Release measurements use a different build configuration,
+so their small timing difference does not establish a reader-reuse improvement.
+Production pair 190 and user data remain unchanged. Known ink/navigation latency
+failures and physical Pencil/system/joint-work acceptance remain open.
+
 ## September 24 — GUI-298, видимые пиксели при удерживаемом зуме
 
 Финальный прицельный физический срез `.build/gui298-navigation-ux-30/`, исходники
