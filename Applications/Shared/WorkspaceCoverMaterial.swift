@@ -219,33 +219,6 @@ struct WorkspaceCoverTitle: View {
   }
 }
 
-/// The page block stays below the moving front cover. Its narrow exposed edge
-/// belongs to depth decoration; camera and input retain the sheet rectangle.
-struct WorkspaceItemDepthView: View {
-  let kind: WorkspaceItemKind
-  let geometry: WorkspaceItemGeometry
-
-  var body: some View {
-    if kind != .board {
-      ZStack(alignment: .topLeading) {
-        ForEach(0..<(kind == .notebook ? 3 : 2), id: \.self) { layer in
-          let distance = Double((kind == .notebook ? 3 : 2) - layer)
-          RoundedRectangle(cornerRadius: geometry.cornerRadius, style: .continuous)
-            .fill(Color(red: 0.978, green: 0.969, blue: 0.939))
-            .overlay {
-              RoundedRectangle(cornerRadius: geometry.cornerRadius, style: .continuous)
-                .strokeBorder(Color(red: 0.56, green: 0.51, blue: 0.40).opacity(0.25), lineWidth: 0.7)
-            }
-            .offset(x: distance * 1.25, y: distance * 1.8)
-        }
-      }
-      .frame(width: geometry.width, height: geometry.height)
-      .allowsHitTesting(false)
-      .accessibilityHidden(true)
-    }
-  }
-}
-
 /// Material and shadow are fixed physical artwork. Camera changes reuse these
 /// exact pixels through a transform, so a pinch never rerasterizes their grain,
 /// rounded clipping, gradients or blur at a new screen-sized resolution.

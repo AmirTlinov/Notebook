@@ -173,7 +173,6 @@ struct WorkspaceItemCoverView: View {
   let portalViewport: SpatialPoint
   let onTap: (CGPoint, Int) -> Void
   let onTextEditingEnded: (String) -> Void
-  var showsDepth = true
   var isPortalProjection = false
   var portalPixelScale: Double = 1
   var remainingPortalPasses = WorkspaceSceneProjection.portalPasses
@@ -282,9 +281,6 @@ struct WorkspaceItemCoverView: View {
         style: .continuous
       )
     )
-    .background {
-      if showsDepth { WorkspaceItemDepthView(kind: item.kind, geometry: geometry) }
-    }
     .overlay {
       if model.isItemBeingDeleted(item.id), !isPortalProjection {
         ProgressView("Удаление")

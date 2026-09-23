@@ -139,6 +139,38 @@ final class WorkspaceAppearanceTests: XCTestCase {
     }
   }
 
+  @MainActor
+  func testClosedCoverHasNoPaperOutsideItsContour() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    let model = NotebookAppModel(store: NotebookStore(root: root), startsNearbySync: false)
+    retainNotebookUntilTeardown(model, removing: root)
+    await model.start(pageSize: NotebookAppModel.defaultPageSize)
+    let cases: [(WorkspaceItem, WorkspaceItemGeometry)] = [
+      (.notebook(title: "Тетрадь", pageIDs: [UUID()]), .notebook),
+      (.document(title: "A4"), .document(.a4)),
+      (.document(title: "Letter"), .document(.letter)),
+    ]
+    for (item, geometry) in cases {
+      let scale = 0.5, padding = 12.0
+      let width = geometry.width * scale, height = geometry.height * scale
+      let size = CGSize(width: width + padding * 2, height: height + padding * 2)
+      let proof = cover(item: item, geometry: geometry, model: model)
+        .scaleEffect(scale, anchor: .topLeading)
+        .frame(width: width, height: height, alignment: .topLeading)
+        .padding(padding).background(Color.black)
+      let image = try attachRendering(proof, size: size, name: "clean-cover-contour-\(item.title)")
+      let sx = Double(image.pixelsWide) / size.width, sy = Double(image.pixelsHigh) / size.height
+      // One point beyond the body excludes its antialiasing. Only the separately
+      // rendered shadow may extend here, never decorative copies of the paper.
+      for point in [CGPoint(x: padding + width / 2, y: padding + height + 1),
+        CGPoint(x: padding + width + 1, y: padding + height / 2)] {
+        let color = try XCTUnwrap(image.colorAt(x: Int(point.x * sx), y: Int(point.y * sy))?.usingColorSpace(.sRGB))
+        XCTAssertLessThan(max(color.redComponent, color.greenComponent, color.blueComponent), 0.02,
+          "The closed cover must not expose paper beyond its bottom or right edge")
+      }
+    }
+  }
+
   private func printedInk(_ color: NSColor) -> Bool {
     // Printed hues are not black. Count their antialiased stems by brightness,
     // below every paper tone, rather than requiring all RGB channels < 0.4.

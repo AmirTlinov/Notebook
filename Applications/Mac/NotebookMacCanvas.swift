@@ -216,7 +216,7 @@ private struct MacWorkspaceMaterial: View {
           spatialInkSurfaces: model.compositionTiles.surfaceRegistry,
           elements: model.presentedCoverElements(cohort: cohort, boardID: presence.boardID, itemID: item.id),
           editingTextID: editingTextID, portalOpenProgress: 0, portalViewport: presence.viewport,
-          onTap: { _, _ in }, onTextEditingEnded: { _ in model.interactiveElementFocus = nil }, showsDepth: false,
+          onTap: { _, _ in }, onTextEditingEnded: { _ in model.interactiveElementFocus = nil },
           portalPixelScale: presence.camera.scale)
       } else { Color.clear }
     }

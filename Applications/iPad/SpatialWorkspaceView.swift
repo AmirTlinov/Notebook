@@ -1383,8 +1383,6 @@ private struct WorkspaceSceneItem: View {
       ZStack {
       WorkspaceItemShadow(geometry: rendered.geometry,
         lifted: isLifted, visibility: restingShadowVisibility)
-      WorkspaceItemDepthView(kind: rendered.item.kind, geometry: rendered.geometry)
-        .opacity(max(0, 1 - openProgress * 2))
       if rendered.item.kind == .board {
         itemCover
       } else if rendered.item.kind == .notebook {
@@ -1397,8 +1395,7 @@ private struct WorkspaceSceneItem: View {
       width: rendered.geometry.width,
       height: rendered.geometry.height
     )
-    // Accessibility follows the same physical body as camera and Pencil;
-    // exposed page edges retain their purely visual depth.
+    // Accessibility follows the same physical body as camera and Pencil.
     .contentShape(.accessibility, RoundedRectangle(
       cornerRadius: rendered.geometry.cornerRadius, style: .continuous
     ))
@@ -1648,7 +1645,6 @@ private struct WorkspaceSceneItem: View {
       portalViewport: viewport,
       onTap: handleTap,
       onTextEditingEnded: onTextEditingEnded,
-      showsDepth: false,
       portalPixelScale: projectedScale
     )
   }

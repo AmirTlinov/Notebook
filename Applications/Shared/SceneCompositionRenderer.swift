@@ -330,10 +330,8 @@ final class SceneCompositionRenderer {
     let size = CGSize(width: item.geometry.width, height: item.geometry.height)
     let projection = frame.width / size.width
     let padding = WorkspaceCoverRaster.shadowPadding
-    let decoration = ZStack {
-      WorkspaceItemShadow(geometry: item.geometry)
-      WorkspaceItemDepthView(kind: item.item.kind, geometry: item.geometry)
-    }.frame(width: size.width, height: size.height).padding(padding)
+    let decoration = WorkspaceItemShadow(geometry: item.geometry)
+      .frame(width: size.width, height: size.height).padding(padding)
     try await canvas.drawView(decoration,
       size: .init(width: size.width + 2 * padding, height: size.height + 2 * padding),
       in: frame.insetBy(dx: -padding * projection, dy: -padding * projection))
