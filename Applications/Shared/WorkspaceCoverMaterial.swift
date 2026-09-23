@@ -3,8 +3,8 @@ import Foundation
 import NotebookCore
 import SwiftUI
 
-/// A quiet dyed-card palette. Its lightness keeps the default black Pencil
-/// readable, and the item's UUID keeps the same material on both devices.
+/// Paper tones and their print colour form one cover. The writable face stays
+/// light; the item's UUID keeps the same material on both devices.
 enum NotebookCoverPalette: Int, CaseIterable {
   case oat, sage, clay, mist, rose, graphite
 
@@ -19,12 +19,23 @@ enum NotebookCoverPalette: Int, CaseIterable {
 
   var rgb: (Double, Double, Double) {
     switch self {
-    case .oat: (0.88, 0.84, 0.73)
-    case .sage: (0.73, 0.79, 0.70)
-    case .clay: (0.84, 0.68, 0.57)
-    case .mist: (0.71, 0.78, 0.81)
-    case .rose: (0.83, 0.70, 0.70)
-    case .graphite: (0.69, 0.71, 0.69)
+    case .oat: (0.93, 0.90, 0.82)
+    case .sage: (0.87, 0.89, 0.83)
+    case .clay: (0.93, 0.86, 0.78)
+    case .mist: (0.86, 0.89, 0.91)
+    case .rose: (0.93, 0.87, 0.84)
+    case .graphite: (0.86, 0.87, 0.84)
+    }
+  }
+
+  var ink: Color {
+    switch self {
+    case .oat: Color(red: 0.20, green: 0.29, blue: 0.25)
+    case .sage: Color(red: 0.23, green: 0.31, blue: 0.25)
+    case .clay: Color(red: 0.39, green: 0.25, blue: 0.19)
+    case .mist: Color(red: 0.22, green: 0.29, blue: 0.36)
+    case .rose: Color(red: 0.36, green: 0.24, blue: 0.25)
+    case .graphite: Color(red: 0.26, green: 0.29, blue: 0.27)
     }
   }
 }
@@ -39,7 +50,7 @@ struct WorkspaceCoverMaterial {
   }
 
   var color: Color {
-    guard kind == .notebook else { return Color(red: 0.982, green: 0.977, blue: 0.951) }
+    guard kind == .notebook else { return Color(red: 0.995, green: 0.992, blue: 0.982) }
     let (r, g, b) = palette.rgb
     return Color(red: r, green: g, blue: b)
   }
@@ -94,49 +105,117 @@ private struct WorkspaceCoverPaint: View {
     ZStack(alignment: .topLeading) {
       shape.fill(material.color)
       shape.fill(LinearGradient(
-        colors: [.white.opacity(0.14), .clear, .black.opacity(0.025)],
+        colors: [.white.opacity(0.10), .clear, .black.opacity(0.035)],
         startPoint: .topLeading, endPoint: .bottomTrailing
       ))
       shape.fill(ImagePaint(image: CoverPaperGrain.image, scale: 1))
-        .opacity(item.kind == .notebook ? 0.48 : 0.2)
+        .opacity(item.kind == .notebook ? 0.20 : 0.12)
       shape.strokeBorder(LinearGradient(
-        colors: [.white.opacity(0.58), .white.opacity(0.10), .black.opacity(0.15)],
+        colors: [.white.opacity(0.65), .white.opacity(0.12), .black.opacity(0.22)],
         startPoint: .topLeading, endPoint: .bottomTrailing
-      ), lineWidth: 1.4)
+      ), lineWidth: 1.5)
 
       if item.kind == .notebook {
         binding
       } else {
-        Text("ДОКУМЕНТ")
-          .font(.system(size: geometry.width * 0.014, weight: .medium))
-          .tracking(geometry.width * 0.003)
-          .foregroundStyle(Color.black.opacity(0.35))
-          .offset(x: geometry.width * 0.105, y: geometry.height * 0.078)
-        Rectangle()
-          .fill(Color.black.opacity(0.14))
-          .frame(width: geometry.width * 0.095, height: 1)
-          .offset(x: geometry.width * 0.105, y: geometry.height * 0.112)
+        LinearGradient(colors: [.black.opacity(0.055), .clear],
+          startPoint: .leading, endPoint: .trailing)
+          .frame(width: geometry.width * 0.018, height: geometry.height - 4)
+          .offset(x: 2, y: 2)
       }
     }
     .frame(width: geometry.width, height: geometry.height)
+    .clipShape(shape)
     .accessibilityHidden(true)
   }
 
   private var binding: some View {
-    ZStack(alignment: .leading) {
+    let width = geometry.width * 0.060
+    return ZStack(alignment: .leading) {
       LinearGradient(stops: [
-        .init(color: .black.opacity(0.09), location: 0),
-        .init(color: .clear, location: 0.25),
-        .init(color: .white.opacity(0.10), location: 0.60),
-        .init(color: .black.opacity(0.07), location: 0.82),
+        .init(color: .black.opacity(0.08), location: 0),
+        .init(color: .white.opacity(0.14), location: 0.12),
+        .init(color: .clear, location: 0.40),
+        .init(color: .black.opacity(0.04), location: 0.68),
+        .init(color: .black.opacity(0.07), location: 0.72),
+        .init(color: .white.opacity(0.18), location: 0.79),
         .init(color: .clear, location: 1),
       ], startPoint: .leading, endPoint: .trailing)
-      Rectangle().fill(.black.opacity(0.10)).frame(width: 0.8).offset(x: 38)
-      Rectangle().fill(.white.opacity(0.24)).frame(width: 0.8).offset(x: 39.2)
+      Rectangle().fill(.black.opacity(0.06)).frame(width: 0.8).offset(x: width * 0.70)
+      Rectangle().fill(.white.opacity(0.18)).frame(width: 0.8).offset(x: width * 0.79)
     }
-    .frame(width: 52, height: geometry.height - 4)
-    .offset(x: 2, y: 2)
-    .clipShape(RoundedRectangle(cornerRadius: 4))
+    .frame(width: width, height: geometry.height)
+  }
+}
+
+/// Printed matter stays separate from the reusable material pixels: a rename
+/// does not repaint paper, and handwritten/content layers still lie above it.
+struct WorkspaceCoverTitle: View {
+  let item: WorkspaceItem
+  let geometry: WorkspaceItemGeometry
+
+  private var ink: Color {
+    item.kind == .notebook ? NotebookCoverPalette(itemID: item.id).ink : Color(red: 0.16, green: 0.19, blue: 0.17)
+  }
+
+  var body: some View {
+    if item.kind == .notebook {
+      ZStack(alignment: .topLeading) {
+        VStack(alignment: .leading, spacing: geometry.width * 0.040) {
+          title(alignment: .leading)
+          Rectangle().fill(ink.opacity(0.65))
+            .frame(width: geometry.width * 0.075, height: 1.5)
+        }
+        .frame(width: geometry.width * 0.70, height: geometry.height * 0.45, alignment: .topLeading)
+        .offset(x: geometry.width * 0.155, y: geometry.height * 0.14)
+        VStack(alignment: .leading, spacing: geometry.width * 0.025) {
+          Rectangle().fill(ink.opacity(0.28)).frame(height: 1)
+          imprint("ТЕТРАДЬ")
+        }
+        .frame(width: geometry.width * 0.70, alignment: .leading)
+        .offset(x: geometry.width * 0.155, y: geometry.height * 0.865)
+      }
+      .frame(width: geometry.width, height: geometry.height, alignment: .topLeading)
+    } else if item.kind == .document {
+      ZStack(alignment: .top) {
+        imprint("ДОКУМЕНТ")
+          .offset(y: geometry.height * 0.10)
+        title(alignment: .center)
+          .frame(width: geometry.width * 0.74, height: geometry.height * 0.30, alignment: .top)
+          .offset(y: geometry.height * 0.28)
+        if let paper = geometry.paperSize {
+          VStack(spacing: geometry.width * 0.026) {
+            Rectangle().fill(ink.opacity(0.24))
+              .frame(width: geometry.width * 0.09, height: 1)
+            Text(paper == .a4 ? "A4" : "Letter")
+              .font(.system(size: geometry.width * 0.030, weight: .medium))
+              .foregroundStyle(ink.opacity(0.65))
+              .accessibilityIdentifier("document-cover-format")
+          }
+          .offset(y: geometry.height * 0.77)
+        }
+      }
+      .frame(width: geometry.width, height: geometry.height, alignment: .top)
+    }
+  }
+
+  private func imprint(_ text: String) -> some View {
+    Text(text)
+      .font(.system(size: geometry.width * 0.020, weight: .medium))
+      .tracking(geometry.width * 0.0035)
+      .foregroundStyle(ink.opacity(0.65))
+      .accessibilityHidden(true)
+  }
+
+  private func title(alignment: TextAlignment) -> some View {
+    Text(item.title)
+      .font(.system(size: geometry.width * (item.kind == .notebook ? 0.082 : 0.071), weight: .regular, design: .serif))
+      .foregroundStyle(ink)
+      .multilineTextAlignment(alignment)
+      .lineSpacing(geometry.width * 0.008)
+      .lineLimit(6)
+      .minimumScaleFactor(0.7)
+      .frame(maxWidth: .infinity, alignment: alignment == .leading ? .leading : .center)
   }
 }
 
@@ -147,16 +226,17 @@ struct WorkspaceItemDepthView: View {
   let geometry: WorkspaceItemGeometry
 
   var body: some View {
-    if kind == .notebook {
-      ZStack {
-        ForEach(0..<3) { layer in
+    if kind != .board {
+      ZStack(alignment: .topLeading) {
+        ForEach(0..<(kind == .notebook ? 3 : 2), id: \.self) { layer in
+          let distance = Double((kind == .notebook ? 3 : 2) - layer)
           RoundedRectangle(cornerRadius: geometry.cornerRadius, style: .continuous)
-            .fill(Color(red: 0.967 - Double(layer) * 0.006, green: 0.954 - Double(layer) * 0.006, blue: 0.915 - Double(layer) * 0.006))
+            .fill(Color(red: 0.978, green: 0.969, blue: 0.939))
             .overlay {
               RoundedRectangle(cornerRadius: geometry.cornerRadius, style: .continuous)
-                .strokeBorder(Color(red: 0.56, green: 0.51, blue: 0.40).opacity(0.20), lineWidth: 0.7)
+                .strokeBorder(Color(red: 0.56, green: 0.51, blue: 0.40).opacity(0.25), lineWidth: 0.7)
             }
-            .offset(x: Double(3 - layer) * 1.25, y: Double(3 - layer) * 1.8)
+            .offset(x: distance * 1.25, y: distance * 1.8)
         }
       }
       .frame(width: geometry.width, height: geometry.height)
@@ -205,9 +285,9 @@ enum WorkspaceCoverRaster {
     let renderer = ImageRenderer(content:
       shape.fill(.black)
         .frame(width: geometry.width, height: geometry.height)
-        .shadow(color: .black.opacity(lifted ? 0.035 : 0.17), radius: 1.8, x: 0, y: 1.4)
-        .shadow(color: .black.opacity(lifted ? 0.22 : 0.115),
-          radius: lifted ? 28 : 14, x: 1.5, y: lifted ? 18 : 7)
+        .shadow(color: .black.opacity(lifted ? 0.035 : 0.18), radius: 2, x: 0, y: 1.8)
+        .shadow(color: .black.opacity(lifted ? 0.22 : 0.14),
+          radius: lifted ? 28 : 18, x: 1.5, y: lifted ? 18 : 10)
         .overlay { shape.fill(.black).blendMode(.destinationOut) }
         .compositingGroup()
         .padding(shadowPadding)

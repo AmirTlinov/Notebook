@@ -7,7 +7,7 @@ public enum DocumentBlockKind: String, Codable, Equatable, Sendable {
   case interactive
 }
 
-public enum DocumentPaperSize: String, Codable, CaseIterable, Equatable,
+public enum DocumentPaperSize: String, Codable, CaseIterable, Hashable,
   Sendable
 {
   case a4

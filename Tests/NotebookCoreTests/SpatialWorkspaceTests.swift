@@ -193,12 +193,15 @@ func paperZoomStopsAtWholeSheet() {
   }
 }
 
-@Test("Угол листа равен восьми физическим миллиметрам")
-func notebookCornerMatchesTheFullSizeIPadSilhouette() {
-  #expect(
-    WorkspaceItemGeometry.notebook.cornerRadius
-      == PhysicalPaper.pointsPerCentimeter * 0.8
-  )
+@Test("Тетрадь повторяет геометрию дисплея iPad; документ сохраняет свой формат")
+func workspaceItemGeometryKeepsPaperIdentityAndPhysicalCorners() {
+  #expect(WorkspaceItemGeometry.notebook.width == 834)
+  #expect(WorkspaceItemGeometry.notebook.height == 1_194)
+  #expect(WorkspaceItemGeometry.notebook.cornerRadius == 18)
+  #expect(WorkspaceItemGeometry.notebook.paperSize == nil)
+  for paper in DocumentPaperSize.allCases {
+    #expect(WorkspaceItemGeometry.document(paper).paperSize == paper)
+  }
 }
 
 @Test("Тетрадь принадлежит либо доске, либо одной стопке")

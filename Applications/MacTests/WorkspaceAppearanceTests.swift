@@ -45,7 +45,7 @@ final class WorkspaceAppearanceTests: XCTestCase {
       ids[NotebookCoverPalette(itemID: id)] = id
     }
     XCTAssertEqual(ids.count, NotebookCoverPalette.allCases.count)
-    let titles = ["Мысли", "Наблюдения", "Черновик", "Исследование", "Заметки", "Замыслы"]
+    let titles = ["Мышление\nАмира", "Наблюдения", "Алгебра\nи геометрия", "Исследование отношений и закономерностей", "Заметки", "Замыслы"]
     let items = NotebookCoverPalette.allCases.map { palette in
       WorkspaceItem.notebook(id: ids[palette]!, title: titles[palette.rawValue], pageIDs: [UUID()])
     }
@@ -83,18 +83,66 @@ final class WorkspaceAppearanceTests: XCTestCase {
       XCTAssertEqual(sample.blueComponent, b, accuracy: 0.08)
       let sx = Double(image.pixelsWide) / size.width, sy = Double(image.pixelsHigh) / size.height
       var titlePixels = 0
-      for py in Int((y + height * 0.148) * sy)..<Int((y + height * 0.148 + 20) * sy) {
+      for py in Int((y + height * 0.14) * sy)..<Int((y + height * 0.52) * sy) {
         for px in Int((x + 260 * 0.145) * sx)..<Int((x + 260 * 0.865) * sx) {
           let color = try XCTUnwrap(image.colorAt(x: px, y: py)?.usingColorSpace(.sRGB))
-          if max(color.redComponent, color.greenComponent, color.blueComponent) < 0.4 { titlePixels += 1 }
+          if printedInk(color) { titlePixels += 1 }
         }
       }
-      // Each 12-point glyph must contribute at least a four-pixel dark stem
-      // at 1x. Scale the coverage with both the text and actual backing density.
+      // Inspect the title area, excluding the footer imprint.
       let minimumTitlePixels = Int(Double(item.title.count * 4) * sx * sy)
       XCTAssertGreaterThanOrEqual(titlePixels, minimumTitlePixels,
         "Every native cover must contain its dark title above the material")
     }
+  }
+
+  @MainActor
+  func testDocumentTitlePagesKeepPaperProportionsAndReadableLongTitles() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    let model = NotebookAppModel(store: NotebookStore(root: root), startsNearbySync: false)
+    retainNotebookUntilTeardown(model, removing: root)
+    await model.start(pageSize: NotebookAppModel.defaultPageSize)
+    let titles = ["Функции\nи графики", "Логарифм и экспонента",
+      "Наблюдения за отношениями: как меняются связи между частями и целым",
+      String(repeating: "Исследование пространства, формы и движения. ", count: 6).prefix(WorkspaceIndex.maximumTitleLength).description]
+    let items = titles.map { WorkspaceItem.document(title: $0) }
+    let width = 260.0, height = 380.0
+    let proof = HStack(alignment: .top, spacing: 30) {
+      ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
+        let geometry = WorkspaceItemGeometry.document(index.isMultiple(of: 2) ? .a4 : .letter)
+        self.cover(item: item, geometry: geometry, model: model)
+          .background { WorkspaceItemShadow(geometry: geometry) }
+          .scaleEffect(width / geometry.width, anchor: .topLeading)
+          .frame(width: width, height: height, alignment: .topLeading)
+      }
+    }.padding(36).background(Color(red: 0.925, green: 0.928, blue: 0.915))
+    let size = CGSize(width: 4 * width + 3 * 30 + 72, height: height + 72)
+    let image = try attachRendering(proof, size: size, name: "document-title-pages")
+    let sx = Double(image.pixelsWide) / size.width, sy = Double(image.pixelsHigh) / size.height
+    for (index, item) in items.enumerated() {
+      let geometry = WorkspaceItemGeometry.document(index.isMultiple(of: 2) ? .a4 : .letter)
+      let x = 36 + Double(index) * (width + 30), paperHeight = geometry.height * width / geometry.width
+      let material = WorkspaceCoverRaster.material(item: item, geometry: geometry)
+      XCTAssertEqual(geometry.paperSize, index.isMultiple(of: 2) ? .a4 : .letter)
+      XCTAssertEqual(Double(material.width) / Double(material.height), geometry.width / geometry.height, accuracy: 0.002)
+      var titlePixels = 0
+      for py in Int((36 + paperHeight * 0.28) * sy)..<Int((36 + paperHeight * 0.60) * sy) {
+        for px in Int((x + width * 0.13) * sx)..<Int((x + width * 0.87) * sx) {
+          let color = try XCTUnwrap(image.colorAt(x: px, y: py)?.usingColorSpace(.sRGB))
+          if printedInk(color) { titlePixels += 1 }
+        }
+      }
+      // The maximum-length name may ellipsize after six readable lines rather
+      // than shrinking into microtext. Its visible ink still must be substantial.
+      XCTAssertGreaterThan(titlePixels, Int(Double(min(item.title.count, 100) * 4) * sx * sy),
+        "The native title page must show its short or long title, not only blank paper")
+    }
+  }
+
+  private func printedInk(_ color: NSColor) -> Bool {
+    // Printed hues are not black. Count their antialiased stems by brightness,
+    // below every paper tone, rather than requiring all RGB channels < 0.4.
+    0.2126 * color.redComponent + 0.7152 * color.greenComponent + 0.0722 * color.blueComponent < 0.60
   }
 
   @MainActor
