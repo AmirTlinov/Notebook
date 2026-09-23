@@ -358,10 +358,35 @@ receipts cover the active contact; it remains alive while final receipts are
 collected (late receipts still fail). Lift has a UIKit budget and separate pixel
 continuity checks, not a fabricated Metal receipt for an already retired contact.
 
-SwiftUI shape/lasso composition does not expose a per-content OS presentation
-receipt here. Its 20 ms UIKit lane must not be called a 20 ms displayed result;
-system traces and physical measurement remain required to close that gap. The
-Metal lane also excludes hardware Pencil sensing and physical display scanout.
+Lasso and ordinary selection additionally run
+`NotebookSelectionCompositionTests.swift`: the existing **100 ms visual
+correctness ceiling**, starting before input and including capture, decoding and comparison.
+One image must simultaneously show the expected source cut, moved material,
+transported pre-existing eraser hole, unchanged neighbors/ink and selection
+handles at the same pose. Old material and retired handles must be absent.
+The probes use coordinates frozen before editing, not the current model or
+control frames. The contour, cold first cut-and-move, ten movement poses, lift
+and tap-away are checked; lift's first image must already be correct. Empty or
+off-screen evidence, one missing component, and correct components appearing in
+different frames cannot pass. A wholly old pose before the update is different
+from a **mixed frame**: new handles with old material, a new body without its
+hole/controls, or lost untouched material fails immediately and stays red even
+if a later frame is correct within 100 ms. Attachments retain whole-window images,
+distinct incomplete compositions, missing components, elapsed time and capture/decode cost.
+
+These sparse window observations deliberately remain separate from the fixed
+120 Hz replay: readback must not slow the replay's input schedule or masquerade
+as natural gesture performance. The 20 ms input/Metal gates remain unchanged;
+passing the visual check does **not** certify 20 ms whole-composition display.
+The observer reports `observed-within-20ms` separately and never subtracts
+capture cost: window readback itself exceeded 20 ms on the physical iPad.
+No production renderer/selection observer or second presentation owner is added.
+The window image proves composed output,
+not an OS compositor acknowledgement: SwiftUI shape/lasso composition still
+does not expose a per-content OS presentation receipt here. Its UIKit lane
+alone must not be called a displayed result; system traces and physical
+measurement remain required for actual display timing. The Metal lane also
+excludes hardware Pencil sensing and physical display scanout.
 See Apple's [drawable timing](https://developer.apple.com/documentation/metal/mtldrawable/presentedtime)
 and [UI update phases](https://developer.apple.com/documentation/uikit/uiupdateactionphase/afterupdatecomplete).
 
@@ -370,8 +395,8 @@ output, **250 ms** for selection, **1 s** for board/document opening and **2 s**
 for cold notebook root startup. These are observation/diagnostic ceilings, not
 the latency target. Both the latency gate and the correct-pixel scenarios must
 pass; fast model updates alone cannot make a broken interaction green.
-Capture and scheduling overhead are included in these window checks, not in
-the 20 ms lanes. Window probes read the current
+Capture and scheduling overhead are included in window checks, not in the
+UIKit/Metal replay lanes. Window probes read the current
 frame (`afterScreenUpdates: false`), without forcing a synchronous screen update.
 The publication monitor yields between snapshots so it cannot starve the writer
 while trying to catch up its own sampling schedule. This is not an OS-presented frame

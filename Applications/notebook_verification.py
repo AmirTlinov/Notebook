@@ -28,7 +28,8 @@ PROFILES = {
         "mac": ["NotebookMacTests/NotebookSelectionPublicationTests"],
     },
     "interaction-ux": {
-        "ipad": ["NotebookTests/NotebookUXObservationTests", "NotebookTests/NotebookGestureLatencyTests", "NotebookTests/NotebookInteractionUXTests",
+        "ipad": ["NotebookTests/NotebookUXObservationTests", "NotebookTests/NotebookGestureLatencyTests",
+                 "NotebookTests/NotebookSelectionCompositionTests", "NotebookTests/NotebookInteractionUXTests",
                  "NotebookTests/PagePresentationTests/testColdRootInstallsTheStoredInkPageAtTheActualViewport",
                  "NotebookTests/NotebookDocumentOpeningTests/testHistoryReferenceInstallsAnUnloadedDocumentOutsideTheCurrentCamera",
                  "NotebookTests/NotebookDocumentOpeningTests/testHistoryReferenceInstallsAnUnloadedDocumentOnAnotherBoard"],

@@ -484,6 +484,7 @@ class SelectionTests(unittest.TestCase):
         self.assertEqual(plan["checks"]["ipad"], sorted([
             "NotebookTests/NotebookUXObservationTests",
             "NotebookTests/NotebookGestureLatencyTests",
+            "NotebookTests/NotebookSelectionCompositionTests",
             "NotebookTests/NotebookInteractionUXTests",
             "NotebookTests/PagePresentationTests/testColdRootInstallsTheStoredInkPageAtTheActualViewport",
             "NotebookTests/NotebookDocumentOpeningTests/testHistoryReferenceInstallsAnUnloadedDocumentOutsideTheCurrentCamera",
