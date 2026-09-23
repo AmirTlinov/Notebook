@@ -610,6 +610,25 @@
           window.project = .init(id: "fixture", name: "Code", roots: ["/fixture"])
           try store.saveFileWindow(window, author: model.actorID)
           try store.saveChatPanel(.init(sidecarID: peer), author: model.actorID)
+          if ProcessInfo.processInfo.arguments.contains("--notebook-code-history-fixture") {
+            // XCUITest delivers fingers on a physical iPad, never Pencil. Seed
+            // a real saved/undone contact; the UI check exercises cold history
+            // and the actual toolbar without relabelling its input as Pencil.
+            let width = size.width - 36
+            let material = text.components(separatedBy: "\n").prefix(50).joined(separator: "\n") + "\n"
+            let fragment = NotebookCodeFragment(file: address, sourceHash: NotebookFileVersion.hash(Data(text.utf8)),
+              utf16Offset: 0, text: material, width: width, height: 1000, fontSize: 15,
+              stamp: .init(counter: 1, actor: model.actorID))
+            let action = SpatialInkAction(tool: .pen, color: .init(red: 0.1, green: 0.3, blue: 0.9),
+              spans: [.init(surface: .codeFragment(fragment.id), samples: (0...30).map { step in
+                .init(point: .init(x: width * (0.5 + Double(step) / 100), y: 160 + Double(step) * 3),
+                  timeOffset: Double(step) / 60, width: 7, opacity: 0.8, force: 1, azimuth: 0, altitude: 1)
+              })], stamp: .init(counter: 2, actor: model.actorID))
+            _ = try store.commitCodeInk(fragment: fragment, command: .append(action, journalStamp: action.stamp))
+            let inverse = VersionStamp(counter: 3, actor: model.actorID)
+            _ = try store.commitSpatialInk(.state(actionID: action.id, creationStamp: action.stamp,
+              expectedStateStamp: action.stateStamp, isActive: false, stateStamp: inverse, journalStamp: inverse))
+          }
         }
         if startsWithCoverEraser {
           model.selectDrawingTool(.eraser)

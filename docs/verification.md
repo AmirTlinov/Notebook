@@ -1,5 +1,61 @@
 # Verification record
 
+## September 23 — GUI-295, code-note common Undo/Redo
+
+Code annotations now use the same durable native history as canvas ink, grouped
+by the full current file address. The warm-only fragment-order array and disabled
+Redo branch are removed. A bounded header snapshot lets an offscreen Undo/Redo
+reserve the normal writer FIFO immediately; neither loading all notes nor a
+later asynchronous callback chooses the action. Measurements, color, opacity,
+text and original coordinates remain unchanged; peer state gates still apply.
+
+Existing Core selection passed **32 tests / 3 suites**, including 100,000 spatial
+contacts (`.build/gui295-code-history-core-initial.log`). The new file-history
+selection passed **5 tests / 1 suite**, including before/after-commit retries,
+cold multi-fragment order, peer ABA, immutable measurements and current binding
+(`.build/gui295-code-history-complete-snapshot.log`). With 100,000 real review
+fragments, 32 history heads and their actual journal clock require
+**2,883 SQL VM steps / 5.19 ms** in this local sample.
+The initial join traversed the file and exceeded the unchanged 200,000-step
+limit (`.build/gui295-code-history-core-final.log`); the corrected query starts
+from the exact action and tests its indexed file membership.
+
+Initial native run `.build/gui295-code-history-native-191/`: **7/8 physical-iPad
+checks passed**, no runtime warnings. The mounted code layer passed two visible
+Undo/Redo cycles at **54.13 / 53.88 ms** and **56.80 / 52.73 ms**, respectively,
+including the action call and whole-window capture under the unchanged 100-ms
+ceiling. The exported blue-stroke/text image was inspected in
+`.build/gui295-code-history-native-191-attachments/`. Cold offscreen ordering,
+file changes, rebind, and immutable review/reflow also passed. The remaining
+assertion counted one coalesced reconciliation read as a blocked write after
+already proving the exact peer and subsequent local ink; its fixture now waits
+for that work within the existing 2-second reconciliation deadline, retaining
+all state, queue-empty and failure assertions. The corrected iPad test and the
+selected Mac document-Undo regression both passed without runtime warnings in
+`.build/gui295-code-history-native-191b/verification.json`, source
+`1cefca7a052f8e017487677b0a8fda8ac8c5b394ed81fb3517211b50e0f50c7d`.
+
+Code text deliberately owns its fingers, so the underlying board's Redo gesture
+is not a reachable code control. A code-toolbar Redo now calls the same model
+owner as Undo. On the final production code, the mounted native scenario passed
+two complete window-observed cycles: Undo **54.94 / 53.39 ms**, Redo
+**52.98 / 52.10 ms**, with the same 100-ms ceiling
+(`.build/gui295-code-history-native-191c/`, source
+`17ba4e3e640c122c16ae6063010467f5d899be15a080e887e62ce9d49a9337ab`).
+The companion old UI scenario failed before history: it synthesized a finger,
+which a physical iPad correctly never relabels as Pencil. Production input was
+not changed. Its replacement opens a real saved/undone fixture contact and taps
+the actual toolbar, checking cold Redo, close/reopen, Undo and Redo against
+whole-window pixels, unchanged underlying paper and the exact prior image.
+
+That physical-iPad UI scenario passed with no runtime warnings in
+`.build/gui295-code-history-native-191d/verification.json`, source
+`ff63ee5d8c7c2c1fbfec5f50e87fca2ebbb06d941a6b143131453486cec6b9ac`.
+Both exported UI screenshots were retained; the final blue stroke, code and
+reachable controls were inspected. The isolated test app was removed. Installed
+pair remains 190; neither seeded UI content nor native callbacks establish a
+human Pencil gesture, delivery to the production pair or complete acceptance.
+
 ## September 23 — GUI-295, native Delete and coherent history publication
 
 Native Delete now uses the retained native command and the existing lifecycle

@@ -2,20 +2,28 @@ import Foundation
 
 /// A completed contact owns only the UUIDs it added, never the whole surface.
 public struct PencilUndoHistory: Sendable {
-  public struct Domain: Codable, Hashable, Sendable {
-    public let kind: CollaborationTarget.Kind
-    public let id: UUID
-    public init(_ target: CollaborationTarget) { kind = target.kind; id = target.id }
+  public enum Domain: Codable, Hashable, Sendable {
+    case target(kind: CollaborationTarget.Kind, id: UUID)
+    case codeFile(NotebookFileAddress)
+
+    public init(_ target: CollaborationTarget) { self = .target(kind: target.kind, id: target.id) }
     public init?(surface: SurfaceID) {
-      guard let owner = surface.ownerID, let kind = CollaborationTarget.Kind(rawValue: surface.kind.rawValue) else { return nil }
-      self.kind = kind; id = owner
+      // A code fragment is material, while its current file owns the contact
+      // order. Only the store can resolve that binding; never invent a UUID.
+      guard surface.kind != .codeFragment, let owner = surface.ownerID,
+        let kind = CollaborationTarget.Kind(rawValue: surface.kind.rawValue) else { return nil }
+      self = .target(kind: kind, id: owner)
     }
-    public var key: String { kind.rawValue + ":" + id.uuidString.lowercased() }
+    public var key: String {
+      switch self {
+      case .target(let kind, let id): return kind.rawValue + ":" + id.uuidString.lowercased()
+      case .codeFile(let file): return "codeFile:" + file.id
+      }
+    }
     public static func page(_ id: UUID) -> Self { .init(.init(kind: .page, id: id)) }
     public static func board(_ id: UUID) -> Self { .init(.init(kind: .board, id: id)) }
     public static func cover(_ id: UUID) -> Self { .init(.init(kind: .cover, id: id)) }
     public static func document(_ id: UUID) -> Self { .init(.init(kind: .document, id: id)) }
-    public static func codeFragment(_ id: UUID) -> Self { .init(.init(kind: .codeFragment, id: id)) }
   }
   private let capacity: Int
   public enum Entry: Codable, Equatable, Sendable {

@@ -2069,10 +2069,11 @@ final class DrawingResponsivenessTests: XCTestCase {
     assertNewChatDoesNotBlockCollapse(transcript: false)
   }
 
-  func testCodePencilPersistsBesideNativeTextAndOwnUndoDoesNotTouchPaper() {
+  func testCodeToolbarRestoresColdHistoryPixelsWithoutTouchingPaper() {
     continueAfterFailure = false
     let app = XCUIApplication()
-    app.launchArguments = ["--notebook-drawing-responsiveness-fixture", "--notebook-code-document-fixture"]
+    app.launchArguments = ["--notebook-drawing-responsiveness-fixture", "--notebook-code-document-fixture",
+      "--notebook-code-history-fixture"]
     launchPortraitFixture(app)
     let paper = app.otherElements["paper-input"], frame = paper.frame, previousInk = paper.value as? String
     openChat(in: app); app.buttons["notebook-file-reopen"].tap()
@@ -2080,12 +2081,23 @@ final class DrawingResponsivenessTests: XCTestCase {
     app.buttons["notebook-chat-toggle"].tap()
     let ink = app.otherElements["notebook-code-ink"]
     XCTAssertTrue(ink.waitForExistence(timeout: 3))
-    ink.coordinate(withNormalizedOffset: .init(dx: 0.5, dy: 0.2)).press(forDuration: 0.1,
-      thenDragTo: ink.coordinate(withNormalizedOffset: .init(dx: 0.8, dy: 0.3)))
+    let area = ink.frame, window = app.frame
+    let inkRegion = CGRect(x: (area.minX + area.width * 0.48) / window.width,
+      y: (area.minY + 150) / window.height,
+      width: area.width * 0.34 / window.width, height: 140 / window.height)
+    let undoneInitially = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "0 действий пера"), object: ink)
+    XCTAssertEqual(XCTWaiter.wait(for: [undoneInitially], timeout: 4), .completed)
+    let empty = app.screenshot()
+    let redo = app.buttons["code-arrow.uturn.forward"]
+    XCTAssertTrue(redo.exists && redo.isHittable, "Code has its own reachable adapter to the common Redo")
+    redo.tap()
     let accepted = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "1 действий пера"), object: ink)
     XCTAssertEqual(XCTWaiter.wait(for: [accepted], timeout: 4), .completed)
     XCTAssertEqual(paper.frame, frame); XCTAssertEqual(paper.value as? String, previousInk)
-    let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "code-native-pencil-contact"; shot.lifetime = .keepAlways; add(shot)
+    let drawn = app.screenshot()
+    XCTAssertGreaterThan(changedPixelShare(from: empty, to: drawn, normalizedRect: inkRegion), 0.002,
+      "A saved contact count without actual code-ink pixels is not acceptance")
+    let shot = XCTAttachment(screenshot: drawn); shot.name = "code-cold-history-restored-pixels"; shot.lifetime = .keepAlways; add(shot)
     app.buttons["code-xmark"].tap()
     openChat(in: app); app.buttons["notebook-file-reopen"].tap()
     XCTAssertTrue(ink.waitForExistence(timeout: 3))
@@ -2094,6 +2106,17 @@ final class DrawingResponsivenessTests: XCTestCase {
     app.buttons["code-arrow.uturn.backward"].tap()
     let undone = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "0 действий пера"), object: ink)
     XCTAssertEqual(XCTWaiter.wait(for: [undone], timeout: 4), .completed)
+    XCTAssertLessThan(changedPixelShare(from: empty, to: app.screenshot(), normalizedRect: inkRegion), 0.002,
+      "Undo must remove the visible contribution, not only change the counter")
+    XCTAssertTrue(redo.exists && redo.isHittable, "Code has its own reachable adapter to the common Redo")
+    redo.tap()
+    let repeated = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "1 действий пера"), object: ink)
+    XCTAssertEqual(XCTWaiter.wait(for: [repeated], timeout: 4), .completed)
+    let redone = app.screenshot()
+    XCTAssertLessThan(changedPixelShare(from: drawn, to: redone, normalizedRect: inkRegion), 0.002,
+      "Redo restores the same measured stroke at the same text coordinates")
+    XCTAssertGreaterThan(changedPixelShare(from: empty, to: redone, normalizedRect: inkRegion), 0.002)
+    let proof = XCTAttachment(screenshot: redone); proof.name = "code-toolbar-redo-actual-pixels"; proof.lifetime = .keepAlways; add(proof)
     XCTAssertEqual(paper.frame, frame); XCTAssertEqual(paper.value as? String, previousInk)
   }
 

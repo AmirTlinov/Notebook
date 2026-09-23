@@ -67,7 +67,7 @@ revision is separate and cannot resolve conflicting action UUIDs through last-wr
 ## Native history
 
 `PencilUndoHistory` is a bounded directory of accepted action identities, addressed
-by actor plus surface kind/UUID. The same core transaction saves its local order
+by actor plus surface kind/UUID or the full code-file address. The same core transaction saves its local order
 with each native ink or human command write. Scene reads restore only the loaded
 domains from that same saved snapshot. A board interior and its cover do not share
 Undo merely because they have one UUID; clipboard and ink follow acceptance order,
@@ -93,6 +93,16 @@ retains that exact command. Undo restores the authored material and ordering;
 Redo checks the complete restored extent and the placement's authenticated
 inverse/predecessor proof. A later hidden edit or same-valued peer placement
 cannot authorize another deletion. Session selection remains an adapter effect.
+
+Code annotations use this same directory across all fragments of the current
+file, not a warm-only fragment stack. A coherent read supplies bounded action
+headers for Undo/Redo, including scrolled-away material; accepting an inverse
+reserves the normal FIFO synchronously without loading ink first. The shared
+spatial writer resolves the fragment's current file binding and writes just that
+history domain. Membership checks start from the action address, not a scan of
+all fragments in the file. File switching/reopening preserves this order;
+rebinding never gives an old file authority over a note now located elsewhere.
+No history operation edits source text, measured ink or its original basis.
 
 A recognized stationary two-finger Undo hold refines those same physical
 contacts to the history owner in `NotebookInputGate`. It does not keep its own
