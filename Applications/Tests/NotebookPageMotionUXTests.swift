@@ -6,6 +6,20 @@ import XCTest
 /// Observe real native curl images, independently of the run-loop latency
 /// check: screenshot work must not be credited as display frames or FPS.
 @MainActor final class NotebookPageMotionUXTests: XCTestCase {
+  func testCurlConfiguresTheActualDrawableLayerBeforeItsFirstDisplayUpdate() throws {
+    let curl = SheetCurlMetalView(frame: .init(x: 0, y: 0, width: 300, height: 300))
+    let layer = try XCTUnwrap(curl.layer as? CAMetalLayer)
+    for side in [600.0, 1200.0, 600.0] {
+      let size = CGSize(width: side, height: side)
+      curl.prepareDrawable(size: size)
+      XCTAssertEqual(curl.drawableSize, size)
+      XCTAssertEqual(layer.drawableSize, size,
+        "A paused MTKView must not leave its custom display clock acquiring old-sized drawables")
+      XCTAssertEqual(curl.submittedFrameCount, 0, "Preparing size is not a fake presentation")
+    }
+    curl.releaseSource()
+  }
+
   func testCurlHasIntermediatePixelsAndDoesNotLeaveABindingShadow() async throws {
     let controller = IPadPageTurnController(), commands = NotebookPageNavigation(), owner = UUID()
     var selected = 0

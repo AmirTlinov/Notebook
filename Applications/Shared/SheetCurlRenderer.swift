@@ -89,30 +89,50 @@ private final class SheetCurlGPU: @unchecked Sendable {
         ]
       )
     }
-    let imageContext = imageContext
+    let imageContext = imageContext, commandQueue = commandQueue
     DispatchQueue.global(qos: .userInitiated).async {
-      Self.prepareCurlProgram(in: imageContext)
+      Self.prepareCurlProgram(in: imageContext, queue: commandQueue)
     }
   }
 
-  private static func prepareCurlProgram(in context: CIContext?) {
-    guard let context else { return }
+  private static func prepareCurlProgram(in context: CIContext?, queue: (any MTLCommandQueue)?) {
+    guard let context, let queue,
+      let bitmap = CGContext(data: nil, width: 64, height: 64, bitsPerComponent: 8,
+        bytesPerRow: 256, space: CGColorSpaceCreateDeviceRGB(),
+        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return }
     let extent = CGRect(x: 0, y: 0, width: 64, height: 64)
-    let input = CIImage(color: CIColor(red: 1, green: 1, blue: 1))
-      .cropped(to: extent)
+    bitmap.setFillColor(CGColor(gray: 1, alpha: 1)); bitmap.fill(extent)
+    guard let pixels = bitmap.makeImage() else { return }
+    // Compile the path actually used by a turn: bitmap upload and BGRA Metal
+    // output. A constant-colour graph rendered to CGImage omits those kernels
+    // and leaves their compilation on the first input event.
+    let descriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .bgra8Unorm,
+      width: 64, height: 64, mipmapped: false)
+    descriptor.usage = [.shaderRead, .shaderWrite, .renderTarget]
+    guard let texture = queue.device.makeTexture(descriptor: descriptor),
+      let command = queue.makeCommandBuffer(),
+      let output = curlImage(input: CIImage(cgImage: pixels),
+        backside: CIImage(color: CoverBacksideColor.document.ciColor).cropped(to: extent),
+        sheetExtent: extent, canvasExtent: extent, progress: 0.1, radius: 2.24) else { return }
+    context.render(output, to: texture, commandBuffer: command, bounds: extent,
+      colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!)
+    command.commit()
+  }
+
+  static func curlImage(input: CIImage, backside: CIImage, sheetExtent: CGRect,
+    canvasExtent: CGRect, progress: Double, radius: Float) -> CIImage? {
     let filter = CIFilter.pageCurlWithShadowTransition()
     filter.inputImage = input
-    filter.targetImage = CIImage(color: .clear).cropped(to: extent)
-    filter.backsideImage = input
-    filter.extent = extent
-    filter.time = 0.01
+    filter.targetImage = CIImage(color: .clear).cropped(to: sheetExtent)
+    filter.backsideImage = backside
+    filter.extent = sheetExtent
+    filter.time = Float(progress)
     filter.angle = .pi
-    filter.radius = 4
+    filter.radius = radius
     filter.shadowSize = CoverOpeningPhysics.systemShadowSize
     filter.shadowAmount = CoverOpeningPhysics.systemShadowAmount
-    filter.shadowExtent = extent
-    guard let output = filter.outputImage?.cropped(to: extent) else { return }
-    _ = context.createCGImage(output, from: extent)
+    filter.shadowExtent = canvasExtent
+    return filter.outputImage?.cropped(to: canvasExtent)
   }
 }
 
@@ -205,6 +225,15 @@ final class SheetCurlMetalView: MTKView, MTKViewDelegate {
     fatalError("init(coder:) is not supported")
   }
 
+  func prepareDrawable(size: CGSize) {
+    autoResizeDrawable = false
+    drawableSize = size
+    // The page's CAMetalDisplayLink acquires from the actual layer without
+    // invoking MetalKit's draw(), which otherwise applies this pending resize.
+    // Update both at the same owner before enabling the presentation clock.
+    (layer as? CAMetalLayer)?.drawableSize = size
+  }
+
   func update(
     cover: CGImage,
     progress: Double,
@@ -283,26 +312,16 @@ final class SheetCurlMetalView: MTKView, MTKViewDelegate {
     let canvasExtent = CGRect(origin: .zero, size: size)
     let sheetExtent = curlLayout.sheetExtent(inDrawableSize: size)
     guard let input = placedCoverImage(in: sheetExtent) else { return }
-    let filter = CIFilter.pageCurlWithShadowTransition()
-    filter.inputImage = input
-    filter.targetImage = CIImage(color: .clear).cropped(to: sheetExtent)
-    filter.backsideImage = roundedBacksideImage(extent: sheetExtent)
-    filter.extent = sheetExtent
-    filter.time = Float(progress)
-    filter.angle = .pi
-    filter.radius = curlLayout.clipsToSheet ? Float(min(sheetExtent.width, sheetExtent.height) * 0.035)
+    let radius = curlLayout.clipsToSheet ? Float(min(sheetExtent.width, sheetExtent.height) * 0.035)
       : CoverOpeningPhysics.curlRadius(for: sheetExtent)
     // CIPageCurlWithShadowTransition's cast shadow includes its opaque output
     // extent. The fold's own lighting is the visual owner while the sheet moves,
     // so these values keep the surrounding Metal canvas transparent.
-    filter.shadowSize = CoverOpeningPhysics.systemShadowSize
-    filter.shadowAmount = CoverOpeningPhysics.systemShadowAmount
-    filter.shadowExtent = canvasExtent
-
     // Build the graph before borrowing a drawable. All temporary Core Image /
     // Metal references leave this frame's autorelease pool after submission,
     // not after every other view has drawn in the same layer transaction.
-    guard let output = filter.outputImage?.cropped(to: canvasExtent),
+    guard let output = SheetCurlGPU.curlImage(input: input, backside: roundedBacksideImage(extent: sheetExtent),
+      sheetExtent: sheetExtent, canvasExtent: canvasExtent, progress: progress, radius: radius),
       let drawable = suppliedDrawable ?? currentDrawable
     else {
       return
@@ -370,7 +389,7 @@ final class SheetCurlMetalView: MTKView, MTKViewDelegate {
   private func requestFrame() {
     #if os(iOS)
       if onDisplayUpdate != nil {
-        guard window != nil, !isHidden, drawableSize.width > 0, drawableSize.height > 0,
+        guard permitsFrameSubmission(), window != nil, !isHidden, drawableSize.width > 0, drawableSize.height > 0,
           let layer = layer as? CAMetalLayer else { return }
         if displayLink == nil {
           let link = CAMetalDisplayLink(metalLayer: layer)
@@ -432,6 +451,7 @@ final class SheetCurlMetalView: MTKView, MTKViewDelegate {
   private func roundedBacksideImage(extent: CGRect) -> CIImage {
     let color = CIImage(color: backsideColor.ciColor).cropped(to: extent)
     let radius = cornerRadius * extent.width / curlLayoutSheetWidth
+    guard radius > 0 else { return color }
     let generator = CIFilter.roundedRectangleGenerator()
     generator.extent = extent
     generator.radius = Float(max(0, radius))

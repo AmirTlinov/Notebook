@@ -524,6 +524,10 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     autoResizeDrawable = false
     frame = region
     drawableSize = pixels
+    // MTKView defers applying drawableSize until its own draw cycle. Projected
+    // pages bypass that cycle: their clock must receive the actual new pool,
+    // not keep vending old-sized drawables which renderFrame correctly rejects.
+    (layer as? CAMetalLayer)?.drawableSize = pixels
     beginStableContentUpdate()
     requestFrame()
   }

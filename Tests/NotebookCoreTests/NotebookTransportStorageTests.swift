@@ -82,7 +82,7 @@ struct NotebookTransportStorageTests {
     #expect(newChanges != original)
     try store.stageBlobs([file(newBytes, in: root)])
     for _ in 0..<2 {
-      await #expect(throws: NotebookTransportError.storageUnavailable) {
+      await #expect(throws: NotebookStorageError.invalidTransaction("database file identity changed")) {
         try await reader.changes(after: 0, limit: 16)
       }
     }

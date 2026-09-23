@@ -310,7 +310,7 @@ struct SceneCompositionPlan: Sendable {
     var pinned = pinned
     if let id = presence.focusedItemID { pinned.insert(.item(id)) }
     guard displayScale.isFinite, displayScale > 0, frame.rootBoardID == presence.boardID else { throw SceneRenderError.resourceLimit }
-    var candidates: [(plane: SceneCompositionPlane, id: WorkspaceSpatialID, pinned: Bool, runtime: Bool, visiblePaper: Bool)] = []
+    var candidates: [(plane: SceneCompositionPlane, id: WorkspaceSpatialID, pinned: Bool, runtime: Bool, program: Bool, visiblePaper: Bool, paper: Bool)] = []
     let boardIDs = [presence.boardID] + frame.worksets.keys.filter { $0 != presence.boardID }.sorted { $0.uuidString < $1.uuidString }
     for boardID in boardIDs {
       guard let workset = frame.worksets[boardID] else { continue }
@@ -322,7 +322,7 @@ struct SceneCompositionPlan: Sendable {
         let visiblePaper = boardID == presence.boardID && item.item.kind != .board
           && rect.x < presence.viewport.x && rect.y < presence.viewport.y
           && rect.x + rect.width > 0 && rect.y + rect.height > 0
-        candidates.append((.board(boardID), .item(item.id), pinned.contains(.item(item.id)), false, visiblePaper))
+        candidates.append((.board(boardID), .item(item.id), pinned.contains(.item(item.id)), false, false, visiblePaper, item.item.kind != .board))
       }
       let erased = try await source.wholeErasedElements(workset.elements)
       for element in workset.elements {
@@ -331,9 +331,10 @@ struct SceneCompositionPlan: Sendable {
         }
         let plane = SceneCompositionPlane.board(boardID)
         let placement = element.kind == .web ? try await source.elementPlacement(element,boardID:boardID) : nil
+        let program = element.kind == .web && agentElementSnapshotSource(element).requiresLiveRuntime
         let runtime = placement.map { plane.demandsRuntime(source:agentElementSnapshotSource(element),
           origin:SceneSourceCapture.origin(placement:$0,plane:plane,frame:frame),transform:SceneSourceCapture.linear($0),in:presence) } ?? false
-        candidates.append((plane, .element(element.id), pinned.contains(.element(element.id)), runtime, false))
+        candidates.append((plane, .element(element.id), pinned.contains(.element(element.id)), runtime, program, false, false))
       }
     }
     // A pin on cover contents pins its physical carrier, then its local element.
@@ -345,7 +346,8 @@ struct SceneCompositionPlan: Sendable {
           pinned.remove(.element(element.id)); continue
         }
         let isPinned = pinned.contains(.element(element.id))
-        candidates.append((.cover(boardID: boardID, itemID: itemID), .element(element.id), isPinned, false, false))
+        candidates.append((.cover(boardID: boardID, itemID: itemID), .element(element.id), isPinned, false,
+          element.kind == .web && agentElementSnapshotSource(element).requiresLiveRuntime, false, false))
         if isPinned, let index = candidates.firstIndex(where: { $0.id == .item(itemID) }) { candidates[index].pinned = true }
       }
     }
@@ -357,6 +359,10 @@ struct SceneCompositionPlan: Sendable {
       // one object. Do not flatten it into viewport tiles just to keep a static
       // label/SVG live: zoom would then expose only the old partial tile window.
       if left.visiblePaper != right.visiblePaper { return left.visiblePaper }
+      // The next paper already inside the bounded preparation window needs
+      // the same physical owner. Flattening it behind optional offscreen labels
+      // made one 500-ms cover-tile pass block every newly visible source.
+      if left.paper != right.paper { return left.paper }
       if (left.plane.boardID == presence.boardID) != (right.plane.boardID == presence.boardID) { return left.plane.boardID == presence.boardID }
       return String(describing: left.id) < String(describing: right.id)
     }
@@ -369,7 +375,10 @@ struct SceneCompositionPlan: Sendable {
     // A small program is not a full-screen ink canvas. Keep the paper/native
     // workset bounded independently, rather than silently baking visible
     // controls into screenshots after the seventh element.
-    let programs = physical.filter(\.runtime), ordinary = physical.filter { !$0.runtime }
+    // Prefetched programs belong to the same bounded program pool before and
+    // after crossing the viewport. Their visibility controls runtime mounting,
+    // not whether they evict the paper/SVG owners into expensive raster tiles.
+    let programs = physical.filter(\.program), ordinary = physical.filter { !$0.program }
     guard ordinary.filter(\.pinned).count < maximumNativeOwners,
       programs.filter(\.pinned).count <= SceneRenderResources.maximumVisiblePrograms
     else { throw SceneRenderError.snapshotPending("live_owner_budget") }
@@ -682,8 +691,8 @@ final class SceneCompositionCohort {
           previous.geometry == current.geometry, previous.center == current.center,
           previous.stackID == current.stackID else { return false }
       case .element(let id):
-        let previous = owner.plane.coverID.flatMap { self.frame.covers[$0] } ?? self.frame.worksets[owner.plane.boardID]
-        let current = owner.plane.coverID.flatMap { frame.covers[$0] } ?? frame.worksets[owner.plane.boardID]
+        let previous = if let id = owner.plane.coverID { self.frame.covers[id] } else { self.frame.worksets[owner.plane.boardID] }
+        let current = if let id = owner.plane.coverID { frame.covers[id] } else { frame.worksets[owner.plane.boardID] }
         guard let old = previous?.elements.first(where: { $0.id == id }),
           let new = current?.elements.first(where: { $0.id == id }), old.frame == new.frame,
           old.worldOrigin == new.worldOrigin, old.surface == new.surface else { return false }
@@ -1043,6 +1052,7 @@ final class SceneCompositionTiles {
               guard self?.requestID == id, permitsPreparation(), let presentation = plan.presentations[key.plane]
               else { throw CancellationError() }
               phase = "tile:\(key.plane):\(key.range.layer.rawValue):\(key.tile.level):\(key.tile.column):\(key.tile.row):\(key.tile.localColumn):\(key.tile.localRow)"
+              self?.onPreparationPhase?(id, phase)
               // Screen tiles can contain explicit local pending/fallback
               // sources. Only the exact renderer uses durable complete PNGs.
               do {
@@ -1229,7 +1239,10 @@ final class SceneCompositionTiles {
       let center = origin.offsetBy(x:localCenter.x,y:localCenter.y)
       let delta = view.camera.center.delta(to: center)
       let hasFallback = entry.value.installedSource != nil
-      return (visible.isEmpty || visible.isNull ? 2 : (hasFallback ? 1 : 0),
+      // A visible program mounts its own runtime. Do not make newly exposed
+      // passive pixels wait behind speculative screenshots of programs still
+      // outside the viewport; those previews use only the remaining capacity.
+      return (visible.isEmpty || visible.isNull ? (demand.source.requiresLiveRuntime ? 3 : 2) : (hasFallback ? 1 : 0),
         delta.x * delta.x + delta.y * delta.y, entry.key.elementID)
     }
     for (address, receipt) in receipts.sorted(by: { priority($0) < priority($1) }) {

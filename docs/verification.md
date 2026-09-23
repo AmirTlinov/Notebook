@@ -1,5 +1,117 @@
 # Verification record
 
+## September 24 — GUI-298, видимые пиксели при удерживаемом зуме
+
+Финальный прицельный физический срез `.build/gui298-navigation-ux-30/`, исходники
+`7c4783524694cfadf05181df7361e3c0e1ebae68a5b9c2e0d556b062f3ba847d`:
+**5 PASS / 2 FAIL**, без пропусков и runtime warnings. Прошли приоритет видимого
+источника, приоритет пассивной подготовки над невидимыми программами, отдельная
+квота программ, подтверждение видимых дочерних элементов за старой границей
+камеры и простой удерживаемый pinch. Последний дал **0/121** пустых оконных проб
+и **0/153** пропусков материала при UIKit commit.
+
+Смешанная доска впервые также дала **0/115** пустых оконных проб и **0/231**
+пропусков материала при commit; лишних плиток и отказов бюджета нет. Но проверка
+целиком остаётся **FAIL**: один отсчёт камеры не дошёл к сроку. На 24 работающих
+программах доставленные обработчики занимали не более **0,525 мс**, ожидание
+вместе с работой — **8,93 мс**, однако **10** обязательных отсчётов потеряны или
+объединены, что также остаётся **FAIL**, а не исключается из измерения.
+Порог первого кадра перелистывания и холодного открытия не ослаблен; их ранее
+зафиксированные провалы этим срезом не перепроверены и не закрыты.
+
+На тех же исходниках Mac `.build/gui298-navigation-mac-31/verification.json`:
+**7/7 PASS**, без пропусков и runtime warnings: четыре адресных рендера и три
+проверки проекции чернил, включая размер настоящего drawable pool.
+Предыдущий Mac30 дал **6 PASS / 1 FAIL**: отрицательная fixture создавала документ
+вне workspace и падала до проверки; теперь она использует обычную атомарную
+запись документа с его владельцем. Допуск приложения и запрет неверного рецепта
+рендера не обходятся.
+
+Проверки выбора и разбора свидетельств — **85/85 PASS**
+(`.build/gui298-verification-parser-current.log`). Профиль `navigation-ux`
+включает новые регрессии; отсутствие нужных измерений не превращается в PASS.
+Изолированное iPad-приложение удалено (`removed=true`); рабочая пара 190 и данные
+Амира не изменены. Это проверенный функциональный срез, **не завершённая
+UX-приёмка и не разрешение на выпуск**.
+
+## September 24 — GUI-298, точечное устранение работы внутри жеста
+
+Последующие физические срезы не считаются полной приёмкой:
+
+- `.build/gui298-navigation-ux-28/`, исходники
+  `92e97f57a01c412faa9f1eb534b192f07340bab0e0d06bd37b69b78dd5209167`:
+  **2 PASS / 2 FAIL**. Прошли обе новые регрессии: отдельная квота для
+  предварительно загружаемых программ и реальные пиксели за прежними границами
+  камеры с отзывом подтверждения при скрытии/отсоединении. Смешанный зум больше
+  не рисует прежние 11 плиток элементов и 7 плиток обложек, но остаются **3/115**
+  пустых оконных проб и **21/232** пропусков при commit; один отсчёт камеры
+  опоздал. На 24 программах обработчик — максимум **0,760 мс**, очередь —
+  **23,54 мс**, три требуемых действия объединены. Ошибочно указанный в команде
+  несуществующий 100k-selector не исполнен и не засчитан; правильный выполнен
+  следующим отдельным срезом.
+- `.build/gui298-navigation-ux-29/`, исходники
+  `51378e124ede1de7096eff98e0a66a4b11637f381483339ad044b43859055bcd`:
+  **3 PASS / 1 FAIL**. Пройдены 100 000 совпадающих источников, видимый изгиб/узкая
+  тень и синхронный размер настоящего `CAMetalLayer` до первого обновления.
+  Последнее исправляет отложенный resize при собственных часах, но не доказывает
+  ускорения: первый изменённый показанный кадр **40,88–68,58 мс**, завершение
+  **322,94–350,33 мс**, есть непоказанные кадры и интервалы **16,67 мс**.
+  Запрошенный Mac-набор не запускался: проверка остановилась на iPad FAIL.
+- Предшествующий `.build/gui298-navigation-ux-27/`, исходники
+  `b33da4c5ba3adab8fef4e10c956b7ac413efb1d9104e26e2760f6a4e5664272b`:
+  **4 PASS / 3 FAIL**. Простой удерживаемый pinch — **0/121** пустых проб и
+  **0/147** пропусков при commit; смешанный — **10/115** и **98/233**.
+  Часть последнего числа была ошибочным подтверждением старых границ камеры,
+  что отдельно исправлено и проверено реальными пикселями в run28.
+  Холодная доска с 24 программами не показала содержимое в исходные 150/1000 мс.
+  Mac `.build/gui298-navigation-mac-27/`: **4 PASS / 1 FAIL**; ошибка `inputActive`
+  оказалась устаревшей fixture, вызывающей preview до запуска владельца.
+  Она переведена на обычный запуск закрытой доски без чтения тел документов,
+  а не на обход допуска подготовки.
+
+Во всех трёх iPad-срезах нет runtime warnings или пропущенных тестов, точное
+изолированное приложение удалено (`removed=true`). Рабочая пара 190 не заменена.
+
+Физический iPad, `.build/gui298-navigation-ux-26/`, исходники
+`bc0822be8dc3583c3d27fd3568e44369936000ab35403e7bda034b9eabd5d421`:
+**5 PASS / 2 FAIL**, без пропусков и runtime warnings. Прошли новая регрессия
+пустой обложки и приоритета соседней бумаги, 100 000 источников, две проверки
+нативной проекции и простой удерживаемый pinch: **0/121** пустых оконных проб,
+**0/149** пропусков при UIKit commit. Пустая обложка больше не запускает второй
+набор программ всей доски; квоты памяти, исполнителей и предметов не увеличены.
+
+После удаления отдельного принудительного commit из каждого обработчика
+измеренная работа самого camera handler на 24 программах — максимум **0,476 мс**,
+вместо прежних 5–8 мс. Но очередь всё ещё задержала два отсчёта до **21,72 / 28,28 мс**,
+восемь требуемых действий были объединены UIKit, поэтому строгий gate остаётся
+красным. Смешанный зум улучшился до **4/115** пустых оконных проб и **15/234**
+пропусков при commit; первое наблюдение пикселей после их входа в кадр — **201,59 мс**.
+Одно обновление камеры также не успело за ожидаемым отсчётом. Это не нулевые
+пропуски и не UX-приёмка. Изолированное приложение удалено (`removed=true`),
+установленная рабочая пара 190 не менялась.
+
+Предыдущие диагностические срезы: `.build/gui298-navigation-ux-24/`
+(`b90110ad1296cfe4781195dbefcf1ae4ce375ad7823c83cf2f17d04529f09914`)
+— **3 PASS / 4 FAIL**; `.build/gui298-navigation-ux-25/`
+(`a725abecc9f60be388f8fa3aeb05daeb7c14a4b137d12d9ca26b335d25f796d2`)
+— **4 PASS / 4 FAIL**, оба без runtime warnings. В run25 маска первого стирания
+прошла за **42,49 мс** с сохранением обоих соседних штрихов. Реальный граф curl
+прогревается вне UI; первая CPU/GPU подготовка сократилась до **6,55 / 3,23 мс**,
+но первый изменённый показанный кадр всё ещё **44–62 мс** при gate 16,67 мс;
+завершение — **323–330 мс**, присутствуют непоказанные начальные кадры.
+Визуальная проверка изгиба, узкой тени и освобождения памяти прошла.
+Run25 исправил неподходящую static-source fixture: вместо живого script,
+не имевшего в этом тесте mounted runtime, она использует настоящий пассивный SVG.
+
+Общий serial SQL reader удерживает только idle connection: каждый синхронный
+вызов открывает новый read cut, вложенные чтения заимствуют его, а бюджеты и
+декодированные чернила сбрасываются при завершении. **13/13 Core** проверок
+прошли (`.build/gui298-reader-core.log`), включая замену файла, свежие коммиты,
+read-only границу и отсутствие удержанного WAL snapshot. На Mac 128 одинаковых
+чтений заголовка заняли **117,32 / 26,52 мс** до/после reuse; это замер хранилища,
+не UI. Физическая проверка вложенных composition reads и отказа старой ревизии
+прошла в run24 и run25.
+
 ## September 23 — GUI-298, завершение raster jobs и независимые часы показа
 
 В `.build/gui298-navigation-ux-23/` физический iPad дал **4 PASS / 2 FAIL**, без
@@ -170,6 +282,59 @@ supersede the failed ink-latency evidence or establish combined-main acceptance.
 Each isolated test app was cleaned up; production containers/processes were not
 used for debugger experiments. No new production installation, hardware-Pencil,
 radio, system frame/CPU/GPU or 30-minute joint acceptance is claimed.
+
+A later input-driven/background-drawable experiment was also rejected rather
+than added beside the working clock. Physical-iPad Release source
+`cfcbeda62d6d03032ac9250c5d9424406583bfd1923a69c23a0a415bd1cf911b`
+passed 8 and failed 4 cases (`.build/gui295-input-driven-page-release/`), with
+2 remaining selectors not reached. Lifecycle, the unchanged 512 KiB refusal,
+100,000-point locality, four Retina pages, mask pixels and reverse delivery passed.
+However eraser/pen OS p95 regressed to 30.66/28.40 ms. Forward receipt also missed
+100 ms (100.0466 ms); held zoom reported `resource_limit` and the test host stopped
+making progress. A bounded attach obtained no application stack: LLDB itself
+crashed during parallel Darwin-module loading, and serial loading did not finish.
+Only the identified isolated test/debugger/runner were stopped; cleanup confirmed
+`removed=true`. The result and attempted diff are retained as failed evidence;
+no debugger failure is attributed to the production renderer. Both experimental
+source files were restored exactly to `de5ac922`, with no asynchronous fallback
+or changed acceptance limit left in production code.
+
+A causal removal of UIKit participation also failed the unchanged latency probes
+(`.build/gui295-single-page-clock-release/`, source
+`b7d8fc1d8b5b628e3bfecc5fe09d950bee614158037670810c45a3a769cd813c`).
+A passive UIKit callback is not itself proof that a Metal-only input froze, but
+this removal did not establish an OS-presentation improvement either. It was
+reverted; no probe or deadline was weakened. The held-zoom check stopped again.
+This time the exact test-process stack was obtained: XCTestCore was resolving
+symbols in CoreSymbolication, not waiting in the renderer. The original readiness
+failure remains separate. Stack and cleanup are retained with the failed run.
+The projection helper now reports a known readiness failure with its actual
+canvas state and stops that test, rather than throwing an unhandled error into
+symbolication; the same failure verdict and five-second diagnostic ceiling remain.
+The unchanged-runtime physical-iPad follow-up now completed normally with one
+failing readiness test and zero runtime warnings (`.build/gui295-page-zoom-readiness-release/`).
+At the first 2x projection, geometry was ready and allocation had not failed,
+but no new frame was encoded in five seconds: view backing requested 1200x1200.
+A standalone Mac MetalKit probe confirmed that assigning `MTKView.drawableSize`
+with its draw loop paused leaves `CAMetalLayer.drawableSize` unapplied. The page
+projection now applies the same size directly to that layer; iPad and Mac
+regressions compare the actual pool size, not only the view property.
+
+The repair passed all five physical-iPad projection checks and all four lifecycle
+checks in Release, including sharp 8x window pixels, zoomed pen/eraser, 100,000-point
+locality, four Retina pages, and unchanged 512 KiB refusal/recovery. Evidence:
+`.build/gui295-page-zoom-pool-release/`, source
+`5b908094cc57d2c74e8e0143029c241a7991071bd1d319bf8db5cd65453116d0`.
+The complete selected run was **10 PASS / 3 FAIL**, zero skips/runtime warnings,
+cleanup `removed=true`. Reverse TLS-loopback delivery passed ten contacts
+(p50 38.72 ms, max 50.43 ms). Forward delivery still failed its first durable
+receipt (103.31 ms > 100 ms); all ten pixel/round-trip receipts arrived within
+167.65/211.59 ms, not the newer cross-device targets. Eraser OS p95/max remained
+20.31/20.33 ms; pen p95 was 19.05 ms with one 27.23 ms outlier. These failed latency
+checks remain failed; resizing correctness is not performance acceptance. The
+three Mac projection checks will run on integrated main with the already pending
+Mac addressed-target scope, avoiding a duplicate rebuild. No pair is installed.
+
 
 ## September 23 — GUI-295, committed transport reader and echo work
 

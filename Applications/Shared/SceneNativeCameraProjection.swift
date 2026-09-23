@@ -46,9 +46,16 @@ final class SceneNativeCameraProjection {
   }
 
   private func transact(_ update: () -> Void) {
-    CATransaction.begin(); CATransaction.setDisableActions(true)
+    // Join UIKit's current transaction rather than committing an independent
+    // render-tree update from every input callback. An explicit outer commit
+    // synchronously flushed all mounted WebKit surfaces (~8 ms for 24 programs),
+    // even though projecting every native owner together took less than 1 ms.
+    // The ordinary end-of-frame transaction publishes the whole camera once;
+    // hit testing already reads these new model-layer coordinates immediately.
+    let disabled = CATransaction.disableActions()
+    CATransaction.setDisableActions(true)
+    defer { CATransaction.setDisableActions(disabled) }
     update()
-    CATransaction.commit()
   }
 }
 #endif

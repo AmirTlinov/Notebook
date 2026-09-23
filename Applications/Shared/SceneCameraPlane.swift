@@ -36,11 +36,12 @@ struct SceneCameraProjection: Equatable {
 
   static func requiresRebase(anchor: SessionPresence, current: SessionPresence) -> Bool {
     guard anchor.boardID == current.boardID, anchor.viewport == current.viewport else { return true }
-    // Native vector/text batches must not become an indefinitely magnified
-    // texture while the fingers remain down. Rebase at a bounded LOD boundary,
-    // not on each sample; canonical WebKit bounds and identity stay unchanged.
+    // Magnification needs fresh vector/text density while fingers remain down.
+    // Zooming OUT does not: the prepared pixels already exceed the requested
+    // density. Rebuilding every hosted program on the way out and again on
+    // return caused main-thread stalls without adding any visible detail.
     let ratio = current.camera.scale / anchor.camera.scale
-    if ratio > sqrt(2.0) || ratio < 1 / sqrt(2.0) { return true }
+    if ratio > sqrt(2.0) { return true }
     let x = anchor.camera.center.tileX.subtractingReportingOverflow(current.camera.center.tileX)
     let y = anchor.camera.center.tileY.subtractingReportingOverflow(current.camera.center.tileY)
     guard !x.overflow, !y.overflow, x.partialValue > -4096, x.partialValue < 4096,
@@ -404,14 +405,13 @@ final class SceneCameraPlaneController<Revision: Equatable>: UIViewController, S
 
   func isShowing(_ installation: SceneCameraPlaneInstallation) -> Bool {
     guard !isRetired, self.installation === installation, hasInstalledLayout,
-      let view = host?.view, let window = view.window, !window.isHidden,
-      !view.bounds.isEmpty, view.convert(view.bounds, to: window).intersects(window.bounds) else { return false }
-    var ancestor: UIView? = view
-    while let current = ancestor {
-      guard !current.isHidden, current.alpha > 0.001 else { return false }
-      ancestor = current.superview
-    }
-    return true
+      let host = host?.view, let window = view.window, host.window === window,
+      host.isDescendant(of: view) else { return false }
+    // The unclipped host retains the old camera basis. Its own rectangle may
+    // leave the viewport while prepared children outside that rectangle enter
+    // it. Plane installation belongs to the fixed viewport; each child's
+    // source/raster installation separately proves its actual visible pixels.
+    return SceneSourceVisibility.isMounted(host) && SceneSourceVisibility.isVisible(view)
   }
 
   /// UIKit may retain an unmounted controller. Its last content is no longer a

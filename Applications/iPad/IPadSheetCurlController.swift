@@ -71,6 +71,7 @@ final class IPadSheetCurlController: UIViewController, UIGestureRecognizerDelega
     prepare(target)
     guard animated, let source = page, source !== target, SceneSourceVisibility.isVisible(view) else {
       page = target; view.bringSubviewToFront(target.view)
+      view.bringSubviewToFront(curl)
       if let completion { Task { @MainActor in completion(true) } }
       return
     }
@@ -100,8 +101,7 @@ final class IPadSheetCurlController: UIViewController, UIGestureRecognizerDelega
     }
     guard let image = snapshot.cgImage else { throw SceneRenderError.snapshotPending("page_capture") }
     curl.frameLease = reservation
-    curl.autoResizeDrawable = false
-    curl.drawableSize = .init(width: image.width, height: image.height)
+    curl.prepareDrawable(size: .init(width: image.width, height: image.height))
     motion = .init(source: source, target: target, image: image, direction: direction,
       completion: completion, gesture: gesture)
     // The old page stays visible until the first submitted curl reaches display.
@@ -184,7 +184,10 @@ final class IPadSheetCurlController: UIViewController, UIGestureRecognizerDelega
   }
 
   private func configureCurl() {
-    curl.isUserInteractionEnabled = false; curl.isHidden = true
+    // The empty transparent layer is already part of the displayed scene.
+    // First input must not wait for a second CA transaction to unhide/mount it.
+    // No drawable or display clock is acquired until motion actually starts.
+    curl.isUserInteractionEnabled = false
     curl.enableSetNeedsDisplay = false
     curl.onDisplayUpdate = { [weak self] timestamp in self?.advanceAnimation(at: timestamp) }
     curl.permitsFrameSubmission = { [weak self] in self?.motion != nil }
