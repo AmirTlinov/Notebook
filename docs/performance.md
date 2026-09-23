@@ -337,7 +337,9 @@ events at fixed 120 Hz deadlines through the same mounted scene and recognizers.
 It does not take screenshots, force layout/CA flush, change the display rate or
 wait for each event's output. Scheduled time includes backlog; deadlines never
 move forward after a stall. Reports retain p50/p95/p99/max, and one late or missing
-sample fails even when the percentiles look good. There are two distinct lanes:
+sample fails even when the percentiles look good. CSV also records `entered_ms`
+at handler entry: `handler_ms - entered_ms` isolates handler work from input
+backlog without rebasing the acceptance clock. There are two distinct lanes:
 
 - **Input to UIKit update completion:** handler time and the actual
   `UIUpdateLink.afterUpdateComplete` callback, each capped at 20 ms, for pen,

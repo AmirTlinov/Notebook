@@ -12,6 +12,8 @@ final class NotebookGestureLatency {
     let handled: TimeInterval
     let needsPresentation: Bool
     let contact: InkCanvasView.ContactFrame?
+    // Diagnostic separation only: acceptance still starts at the fixed due time.
+    var entered: TimeInterval?
     var uiSubmitted: TimeInterval?
     var presented: TimeInterval?
     var complete: Bool { uiSubmitted != nil && (!needsPresentation || presented != nil) }
@@ -55,9 +57,10 @@ final class NotebookGestureLatency {
   isolated deinit { stop() }
 
   func input(due: TimeInterval, needsPresentation: Bool = true, action: () -> Void) {
+    let entered = CACurrentMediaTime()
     action()
     samples.append(.init(due: due, handled: CACurrentMediaTime(), needsPresentation: needsPresentation && canvas != nil,
-      contact: canvas?.activeContactFrame))
+      contact: canvas?.activeContactFrame, entered: entered))
   }
   func submitted(at time: TimeInterval) {
     for i in samples.indices where samples[i].uiSubmitted == nil { samples[i].uiSubmitted = time }
@@ -106,9 +109,9 @@ final class NotebookGestureLatency {
     test.add(attachment)
     let rows = samples.enumerated().map { i, sample in
       func ms(_ time: Double?) -> String { time.map { String(($0 - sample.due) * 1_000) } ?? "missing" }
-      return "\(i),\(ms(sample.handled)),\(ms(sample.uiSubmitted)),\(ms(sample.presented)),\(sample.passed)"
+      return "\(i),\(ms(sample.handled)),\(ms(sample.uiSubmitted)),\(ms(sample.presented)),\(sample.passed),\(ms(sample.entered))"
     }
-    let detail = XCTAttachment(string: "sample,handler_ms,ui_update_ms,metal_present_ms,passed\n" + rows.joined(separator: "\n"))
+    let detail = XCTAttachment(string: "sample,handler_ms,ui_update_ms,metal_present_ms,passed,entered_ms\n" + rows.joined(separator: "\n"))
     detail.name = name + "-samples.csv"; detail.lifetime = .keepAlways; test.add(detail)
     XCTAssertEqual(samples.count, count, "Missing input cannot produce green evidence", file: file, line: line)
     XCTAssertTrue(passed, text, file: file, line: line)
@@ -117,6 +120,18 @@ final class NotebookGestureLatency {
 
 @MainActor
 final class NotebookGestureLatencyTests: XCTestCase {
+  func testSeparatingHandlerTimeDoesNotForgiveTheInputQueue() throws {
+    let monitor = NotebookGestureLatency()
+    let due = CACurrentMediaTime() - 0.030
+    monitor.input(due: due, needsPresentation: false) {}
+    monitor.submitted(at: CACurrentMediaTime())
+    let sample = try XCTUnwrap(monitor.samples.first)
+    let entered = try XCTUnwrap(sample.entered)
+    XCTAssertGreaterThan(entered - due, 0.020)
+    XCTAssertGreaterThanOrEqual(sample.handled, entered)
+    XCTAssertFalse(monitor.passed, "A fast handler cannot forgive waiting in the input queue")
+  }
+
   func testEmptyMissingAndSingleLateSampleCannotHideBehindGoodPercentiles() {
     let empty = NotebookGestureLatency(); XCTAssertFalse(empty.passed)
     var samples = (0..<120).map { _ in
