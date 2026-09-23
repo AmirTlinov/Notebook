@@ -1093,6 +1093,35 @@ final class PreparedAgentElementViewTests: XCTestCase {
   }
 
   @MainActor
+  func testVisiblePageSVGPreparesWhileCameraContactRemainsHeld() async throws {
+    let model = makeModel()
+    await model.start(pageSize: NotebookAppModel.defaultPageSize)
+    let contact = UUID()
+    model.inputGate.beginContact(source: contact)
+    defer { model.inputGate.endContact(source: contact) }
+    model.updatePresence(try XCTUnwrap(model.presence), settled: false)
+    XCTAssertFalse(model.permitsBackgroundPreparation)
+    XCTAssertTrue(model.permitsScenePreparation)
+    let source = AgentElement(id: UUID().uuidString, kind: .web,
+      frame: .init(x: 0, y: 0, width: 160, height: 120), source: "Newly visible static page material",
+      html: "<svg viewBox='0 0 160 120'><rect width='160' height='120' fill='#156dd9'/></svg>")
+    XCTAssertFalse(source.requiresLiveRuntime)
+    var ready = false
+    let host = try SurfaceHost(content: AnyView(
+      PreparedAgentElementView(element: source, allowsInteraction: true, inputEnabled: false,
+        focus: .page(pageID: try XCTUnwrap(model.activePage?.id), elementID: source.id),
+        onRenderReady: { ready = $0 }, onState: { _ in false })
+        .frame(width: 160, height: 120).environment(model)))
+    defer { host.close() }
+    try await waitUntil("Static page pixels cannot wait for the camera finger to lift") {
+      ready && SceneRenderResources.shared.image(for: source) != nil
+        && self.webViews(in: host.controller.view).isEmpty
+    }
+    XCTAssertTrue(model.inputGate.isActive)
+    XCTAssertEqual(model.presencePhase, .active)
+  }
+
+  @MainActor
   func testCurrentPageTemporarilyDisablesInputWithoutRestartingItsProgram() async throws {
     let model = makeModel()
     await model.start(pageSize: NotebookAppModel.defaultPageSize)

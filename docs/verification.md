@@ -1,5 +1,37 @@
 # Verification record
 
+## September 23 — GUI-298, new content during held zoom
+
+The camera's native projection no longer leaves scene preparation asleep until
+finger-up. The existing composition task wakes when the viewport crosses a
+64-point preparation window (inside the workset's 96-point overscan) or its
+bounded scale range. Intermediate samples still project native layers without
+republishing their contents. Visible static page material uses the same camera
+admission as live programs; hidden neighbours retain curl/background admission.
+Pencil, content-contact and peer-input barriers and resource limits are unchanged.
+
+Final evidence `.build/gui298-held-zoom-final-190/verification.json` binds source
+`6c1e723d0289619c2afc2ed8a49e0f01694f9364e8b576c9335ab15abb9aab17`:
+**12 physical-iPad + 1 Mac checks passed**, zero failures/skips/runtime warnings.
+The mounted scene's installed two-finger recognizer and contact observer reveal
+an initially offscreen notebook and SVG before either finger lifts. A fixed blue
+pixel probe also passes with both contacts active. The native sample first
+intersects the SVG at 472 ms and observes its installed receipt at 619 ms; these
+are bounded test observations, not photon latency or system frame measurements.
+Held zoom-out/in, nested ink, external commits, source density, protected input,
+unchanged native camera owners, page SVG/curl preparation, physical XCUITest
+pinch and capsule opening, and retained Mac program identity are covered.
+Exported visual evidence is outside the sealed receipt directory:
+`.build/gui298-held-zoom-visuals-190/`.
+
+Negative control `.build/gui298-held-zoom-negative-190/` disabled only the two
+fixes: neither new board pixels nor visible page SVG completed before finger-up.
+The first positive run passed all pixel checks but exposed a fixture issue:
+initial pair translation classified as two-finger pan. The final fixture starts
+with symmetric pinch, then translates, and requires magnification intent.
+No simulator or full acceptance run was used. This does not claim Amir's natural
+gesture acceptance on “Различимость”; signed installation is recorded separately.
+
 ## September 23 — GUI-295 matched pair 189 installed
 
 Commit `08426bdd` produced signed **0.3.134 (189)** for Mac and physical iPad

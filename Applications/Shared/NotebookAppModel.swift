@@ -536,9 +536,12 @@ final class NotebookAppModel {
 
   /// Camera samples have a native owner on iPad. Keep the accepted value
   /// current for input and persistence, but do not invalidate the entire
-  /// SwiftUI scene for every sample. Semantic changes and the terminal sample
-  /// publish once through `presencePublication`.
+  /// SwiftUI scene for every sample. A finite camera window wakes the existing
+  /// composition task before the viewport leaves the prepared workset. Within
+  /// that window only native projection runs; semantic/terminal changes publish
+  /// normally.
   @ObservationIgnored private var presenceValue: SessionPresence?
+  @ObservationIgnored private var cameraPreparationPresence: SessionPresence?
   private var presencePublication: UInt64 = 0
   private(set) var presence: SessionPresence? {
     get { _ = presencePublication; return presenceValue }
@@ -576,12 +579,26 @@ final class NotebookAppModel {
     // Calling the registry here as well schedules the same visible-region
     // walk twice for every pinch sample.
     #endif
-    if publishes { presencePublication &+= 1 }
+    if publishes || cameraNeedsPreparation(value) {
+      cameraPreparationPresence = value
+      presencePublication &+= 1
+    }
     if previous?.boardID != value?.boardID || previous?.mode != value?.mode
       || previous?.focusedItemID != value?.focusedItemID || previous?.notebookPageID != value?.notebookPageID
       || previous?.documentPageIndex != value?.documentPageIndex {
       publishSelection()
     }
+  }
+
+  private func cameraNeedsPreparation(_ presence: SessionPresence?) -> Bool {
+    guard let presence, let basis = cameraPreparationPresence,
+      basis.boardID == presence.boardID, basis.viewport == presence.viewport else { return true }
+    // The scene workset has at least 96 pt of overscan. Revisit it after 64 pt,
+    // without querying the spatial index or restarting source jobs per sample.
+    // Magnification also has to request detail when the viewport only shrinks.
+    return !(0.6...sqrt(2.0)).contains(presence.camera.scale / basis.camera.scale)
+      || !NotebookSceneState.bounds(for: basis, margin: 64)
+        .contains(NotebookSceneState.bounds(for: presence, margin: 0))
   }
   private(set) var presencePhase = PresencePhase.settled
   private(set) var documentSavePresentation: DocumentSavePresentation?

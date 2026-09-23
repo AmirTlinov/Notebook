@@ -11,6 +11,10 @@ final class ZoomOutCoverageTests: XCTestCase {
     try await checkNewlyVisibleContent(nested: false)
   }
 
+  func testInstalledPinchRevealsPixelsBeforeEitherFingerLifts() async throws {
+    try await checkNewlyVisibleContent(nested: false, nativeGesture: true)
+  }
+
   func testInkedNestedBoardRevealsContentDuringContinuousPinch() async throws {
     try await checkNewlyVisibleContent(nested: true)
   }
@@ -23,7 +27,8 @@ final class ZoomOutCoverageTests: XCTestCase {
     try await checkNewlyVisibleContent(nested: true, mixed: true)
   }
 
-  private func checkNewlyVisibleContent(nested: Bool, advancesSource: Bool = false, mixed: Bool = false) async throws {
+  private func checkNewlyVisibleContent(nested: Bool, advancesSource: Bool = false, mixed: Bool = false,
+    nativeGesture: Bool = false) async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
     let window = UIWindow(windowScene: try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene))
@@ -87,7 +92,12 @@ final class ZoomOutCoverageTests: XCTestCase {
     _ = try model.store.saveBoardEdits(before: before, after: after)
     await model.reloadExternalChanges()?.value
     let viewport = SpatialPoint(x: 834, y: 1194)
+    var pinch: HeldCoveragePinch?
     func show(center: WorldPoint, scale: Double, settled: Bool) {
+      if let pinch {
+        pinch.move(center: center, scale: scale)
+        return
+      }
       model.updatePresence(.init(boardID: boardID, mode: .board,
         camera: .init(center: center, scale: scale), viewport: viewport), settled: settled)
     }
@@ -119,8 +129,13 @@ final class ZoomOutCoverageTests: XCTestCase {
     }
     let originalInk = model.spatialInk
     let contact = UUID()
-    model.inputGate.beginContact(source: contact)
-    defer { model.inputGate.endContact(source: contact) }
+    if nativeGesture {
+      pinch = try HeldCoveragePinch(window: window, presence: XCTUnwrap(model.presence))
+    } else { model.inputGate.beginContact(source: contact) }
+    defer {
+      pinch?.end()
+      if !nativeGesture { model.inputGate.endContact(source: contact) }
+    }
     let start = ContinuousClock.now
     var firstShown: Duration?
     var firstVisible: Duration?
@@ -130,7 +145,10 @@ final class ZoomOutCoverageTests: XCTestCase {
     for step in 0..<150 {
       let progress = min(1, Double(step) / 45)
       let scale = exp(log(initialScale) + (log(0.2) - log(initialScale)) * progress)
-      let center = WorldPoint(x: 1100 * progress + (step > 45 ? sin(Double(step) / 8) * 20 : 0), y: 0)
+      // Establish pinch intent before translating the pair; otherwise the
+      // initial centroid displacement correctly classifies as two-finger pan.
+      let translation = nativeGesture ? max(0, (progress - 0.15) / 0.85) : progress
+      let center = WorldPoint(x: 1100 * translation + (step > 45 ? sin(Double(step) / 8) * 20 : 0), y: 0)
       show(center: center, scale: scale, settled: false)
       if firstVisible == nil, let current = model.presence {
         let visible = SceneSourceCapture.visibleRect(source: agentElementSnapshotSource(diagram),
@@ -138,7 +156,10 @@ final class ZoomOutCoverageTests: XCTestCase {
         if !visible.isNull && !visible.isEmpty { firstVisible = start.duration(to: .now) }
       }
       try await Task.sleep(for: .milliseconds(16))
-      XCTAssertEqual(model.presence?.camera, .init(center: center, scale: scale))
+      let current = try XCTUnwrap(model.presence)
+      XCTAssertEqual(current.camera.scale, scale, accuracy: 0.00001)
+      XCTAssertEqual(current.camera.center.delta(to: center).x, 0, accuracy: 0.001)
+      XCTAssertEqual(current.camera.center.delta(to: center).y, 0, accuracy: 0.001)
       let resources = SceneRenderResources.shared
       XCTAssertLessThanOrEqual(resources.residentBytes + resources.reservedBytes, resources.byteLimit)
       XCTAssertLessThanOrEqual(resources.pendingWebRequestCount, mixed ? 7 : nested ? 2 : 1,
@@ -158,6 +179,14 @@ final class ZoomOutCoverageTests: XCTestCase {
     XCTAssertEqual(try model.store.readSpatialElement(boardID: boardID, elementID: diagram.id)?.html, diagram.html)
     let image = UIGraphicsImageRenderer(size: host.view.bounds.size).image { _ in host.view.drawHierarchy(in: host.view.bounds, afterScreenUpdates: true) }
     let pixels = XCTAttachment(image: image); pixels.name = "New notebook and diagram during zoom-out"; pixels.lifetime = .keepAlways; add(pixels)
+    if nativeGesture {
+      let presence = try XCTUnwrap(model.presence)
+      let probe = presence.camera.worldToScreen(.init(x: 1900, y: 950), viewport: presence.viewport)
+      XCTAssertTrue(try NotebookUXObservation.Pixels(window: window).matches([
+        (.init(x: probe.x, y: probe.y), .blue)
+      ]), "The newly visible SVG must have actual blue pixels before either installed contact ends")
+      XCTAssertEqual(pinch?.recognizer.intent, .magnification)
+    }
     if mixed {
       for step in 0..<90 {
         let progress = min(1, Double(step)/45)
@@ -184,8 +213,11 @@ final class ZoomOutCoverageTests: XCTestCase {
       let screenshot = XCTAttachment(image: image)
       screenshot.name = "Mixed scene during held zoom"; screenshot.lifetime = .keepAlways; add(screenshot)
     }
-    model.inputGate.endContact(source: contact)
-    model.updatePresence(try XCTUnwrap(model.presence), settled: true)
+    if let pinch { pinch.end() }
+    else {
+      model.inputGate.endContact(source: contact)
+      model.updatePresence(try XCTUnwrap(model.presence), settled: true)
+    }
   }
 
   func testScenePreparationKeepsPencilAndContentContactProtected() async throws {
@@ -212,5 +244,48 @@ final class ZoomOutCoverageTests: XCTestCase {
 
   private func rasterViews(in view: UIView) -> [AgentSnapshotRasterView] {
     (view as? AgentSnapshotRasterView).map { [$0] } ?? view.subviews.flatMap { rasterViews(in: $0) }
+  }
+}
+
+/// Delivers measured fingers to the recognizer and contact observer installed by
+/// SpatialWorkspaceView. No direct presence update or extra preparation call can
+/// conceal a missing camera-to-composition wake-up.
+@MainActor private final class HeldCoveragePinch {
+  let recognizer: TwoFingerPaperGestureRecognizer
+  private let observer: NotebookContactObserver
+  private let basis: SessionPresence
+  private let first: UXTouch, second: UXTouch
+  private let event = UIEvent()
+  private var ended = false
+  private var contacts: Set<UITouch> { [first, second] }
+
+  init(window: UIWindow, presence: SessionPresence) throws {
+    recognizer = try XCTUnwrap(window.gestureRecognizers?.compactMap { $0 as? TwoFingerPaperGestureRecognizer }.first)
+    observer = try XCTUnwrap(window.gestureRecognizers?.compactMap { $0 as? NotebookContactObserver }.first)
+    basis = presence
+    first = UXTouch(window: window, kind: .direct); second = UXTouch(window: window, kind: .direct)
+    first.point = .init(x: presence.viewport.x / 2 - 200, y: presence.viewport.y / 2)
+    second.point = .init(x: presence.viewport.x / 2 + 200, y: presence.viewport.y / 2)
+    second.sampleTime = first.sampleTime
+    for touch in [first, second] { touch.sourceView = window.hitTest(touch.point, with: event) }
+    observer.touchesBegan(contacts, with: event)
+    recognizer.touchesBegan(contacts, with: event)
+  }
+
+  func move(center: WorldPoint, scale: Double) {
+    let delta = basis.camera.center.delta(to: center), halfDistance = 200 * scale / basis.camera.scale
+    let centroid = CGPoint(x: basis.viewport.x / 2 - delta.x * scale, y: basis.viewport.y / 2 - delta.y * scale)
+    first.point = .init(x: centroid.x - halfDistance, y: centroid.y)
+    second.point = .init(x: centroid.x + halfDistance, y: centroid.y)
+    first.sampleTime += 0.016; second.sampleTime = first.sampleTime
+    first.touchPhase = .moved; second.touchPhase = .moved
+    recognizer.touchesMoved(contacts, with: event)
+  }
+
+  func end() {
+    guard !ended else { return }; ended = true
+    first.touchPhase = .ended; second.touchPhase = .ended
+    recognizer.touchesEnded(contacts, with: event)
+    observer.touchesEnded(contacts, with: event)
   }
 }

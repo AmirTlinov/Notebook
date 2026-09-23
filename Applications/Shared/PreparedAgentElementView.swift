@@ -189,10 +189,10 @@ struct PreparedAgentElementView: View {
     }()
     let basis = model.programStateBasis(focus: focus, rendered: element)
     let demand = Demand(source: element, basis: basis, active: isActive, inputEnabled: inputEnabled, focused: hasFocus,
-      // A bounded neighbour belongs to the curl's preparation window. Waiting
-      // for its finger to lift defeats prewarming and stalls the following turn.
-      permitsPreparation: isActive ? model.permitsScenePreparation
-        : ((!allowsInteraction && pageTurnActivity?.isTransitioning == true) || model.permitsBackgroundPreparation),
+      // Visible static page material needs camera admission too, not just live
+      // programs. Hidden neighbours keep the bounded curl/background route.
+      permitsPreparation: allowsInteraction ? model.permitsScenePreparation
+        : (pageTurnActivity?.isTransitioning == true || model.permitsBackgroundPreparation),
       policy: snapshotPolicy, capture: sourceDemand,
       fallbackEntryID: fallbackEntryID, runtimeFailure: runtimeFailure, retry: retry)
     ZStack {
