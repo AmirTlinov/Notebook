@@ -122,8 +122,23 @@ receipt (103.31 ms > 100 ms); all ten pixel/round-trip receipts arrived within
 167.65/211.59 ms, not the newer cross-device targets. Eraser OS p95/max remained
 20.31/20.33 ms; pen p95 was 19.05 ms with one 27.23 ms outlier. These failed latency
 checks remain failed; resizing correctness is not performance acceptance. The
-three Mac projection checks will run on integrated main with the already pending
-Mac addressed-target scope, avoiding a duplicate rebuild. No pair is installed.
+three Mac projection checks subsequently passed on integrated main together
+with four addressed-target checks (7 PASS, zero skips/runtime warnings), using
+`.build/gui298-navigation-mac-31/verification.json` in the main checkout, source
+`7c4783524694cfadf05181df7361e3c0e1ebae68a5b9c2e0d556b062f3ba847d`. This
+covers actual pool descriptors and native projection, not full page-pixel or
+hardware-mouse latency acceptance. No pair is installed.
+
+A deadline-late-binding experiment was rejected completely. Source
+`f1ab56c9bfe955baebbb6d593ef8e8942bd5f36f4ccac7cdaa5555d4db22fc8d`
+passed 12/15 checks, including pending-frame resize/cull cancellation, source
+coalescing, zoom quality and reverse delivery, but worsened strict latency:
+eraser OS p95/max 30.75/39.04 ms, pen 58.58/92.01 ms and shape UIKit max 28.55 ms.
+Evidence and attempted diff: `.build/gui295-page-deadline-release/`; zero skips
+or runtime warnings, cleanup `removed=true`. Neither the deferred Task nor its
+new lifecycle test/diagnostic property or presentation-mode experiment remains
+in production. Runtime and tests were restored byte-for-byte to `c3c5cfaf`;
+the known 20 ms failures are not recast as successful physical acceptance.
 
 
 ## September 23 — GUI-295, committed transport reader and echo work
