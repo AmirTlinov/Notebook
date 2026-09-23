@@ -56,8 +56,22 @@ struct NotebookNavigationView: View {
           .accessibilityIdentifier("document-page-navigation-status")
           .frame(maxWidth: .infinity, alignment: .trailing).padding(.trailing, 18)
         }
+        if presence.mode == .page, let status = model.notebookPageNavigation.status,
+          status.ownerID == presence.focusedItemID {
+          HStack(spacing: 8) {
+            if let failure = status.failure {
+              Text("Не удалось открыть лист \(status.target + 1)").font(.caption)
+              Button("Повторить", action: failure.retry)
+            } else {
+              ProgressView().controlSize(.small)
+              Text("Готовим лист \(status.target + 1)…").font(.caption)
+            }
+          }.padding(12).notebookPanel(radius: NotebookChrome.cardRadius)
+            .accessibilityIdentifier("notebook-page-navigation-status")
+            .frame(maxWidth: .infinity, alignment: .trailing).padding(.trailing, 18)
+        }
         HStack(spacing: 0) {
-          Button { select(pageIndex - 1) } label: {
+          Button { step(-1) } label: {
             Image(systemName: "chevron.left").font(.system(size: 11))
               .foregroundStyle(.secondary).frame(width: 44, height: 44).contentShape(Rectangle())
           }
@@ -69,7 +83,7 @@ struct NotebookNavigationView: View {
             .accessibilityLabel(pageCounterLabel)
             .accessibilityHint("Открыть список страниц").accessibilityIdentifier("page-overview")
             .popover(isPresented: $showsPages, arrowEdge: .bottom) { pageOverview }
-          Button { select(pageIndex + 1) } label: {
+          Button { step(1) } label: {
             Image(systemName: "chevron.right").font(.system(size: 11))
               .foregroundStyle(.secondary).frame(width: 44, height: 44).contentShape(Rectangle())
           }
@@ -123,15 +137,38 @@ struct NotebookNavigationView: View {
     model.afterPageInput {
       guard model.navigationGeneration == generation,
         model.presence?.focusedItemID == item.id, model.presence?.mode == presence.mode else { return }
+      model.endSurfaceEditing()
       if presence.mode == .document { _ = model.selectDocumentPage(index, documentID: item.id) }
       else if let root = expectedRoot {
+        #if os(iOS)
+        _ = model.notebookPageNavigation.send(.jump(index), ownerID: item.id, source: root)
+        #else
         if index == model.notebookPageCount(item.id) || model.notebookPage(at: index, in: item.id) != nil {
           _ = model.selectNotebookPage(index, notebookID: item.id, expectedRoot: root)
         } else {
           Task { await model.navigateToNotebookPage(at: index, in: item.id, expectedRoot: root, navigationGeneration: generation) }
         }
+        #endif
       }
     }
+  }
+
+  private func step(_ direction: Int) {
+    #if os(iOS)
+    if presence.mode == .page, let item, let root = model.notebookPageRoot(item.id) {
+      model.cancelRequestedNavigation()
+      // Every arrow is a step, not a replacement reference request. A later
+      // tap cannot revoke an earlier accepted step while ink publication waits.
+      model.inputGate.performAfterIdle {
+        guard model.presence?.mode == .page, model.presence?.focusedItemID == item.id,
+          model.notebookPageRoot(item.id) == root else { return }
+        model.endSurfaceEditing()
+        _ = model.notebookPageNavigation.send(.step(direction), ownerID: item.id, source: root)
+      }
+      return
+    }
+    #endif
+    select(pageIndex + direction)
   }
 }
 

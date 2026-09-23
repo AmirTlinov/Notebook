@@ -79,8 +79,10 @@ does not cause an infinite failure/retry loop.
 
 ## Pool and input priority
 
-The shared allocator defaults to six WebKit surfaces, at most two background
-surfaces, 32 pending requests and two reserved interactive slots. A live input
+The shared allocator admits up to 32 visible program owners and two transient
+preparation surfaces, with 32 pending requests and two reserved interactive slots.
+The board planner keeps its eight native paper/ink owners independent of this
+small-program quota; visible controls do not compete for seven paper positions. A live input
 program does not consume the passive quota that reserves input for it. Persistent
 programs leave preparation capacity. Physical source identity prevents duplicate
 execution until the final submitted borrower releases.
@@ -92,9 +94,11 @@ preserving content and stacking order. Actual exhaustion yields local bounded
 waiting/failure and Retry, never a screenshot pretending to be an interactive button.
 Headless requests prepare sources because they have no mounted input owner.
 
-Only proven static SVG can use a temporary snapshot producer and release WebKit.
-CSS, handlers, external use/image or active/unverified content remain conservative
-live input. This is presentation classification, not another SVG renderer.
+Visible proven-static SVG uses a temporary snapshot producer and releases WebKit.
+CSS, handlers, external use/image or active/unverified visible content remain
+conservative live input. Passive notebook neighbours share at most two sequential executors;
+the current page's programs retain independent contexts and data stores. This is
+presentation classification, not another SVG renderer.
 
 `capturePresented` freezes the actual installed live surface at Send with source,
 state, navigation and visibility guards. `captureCurrent` obtains a later frame

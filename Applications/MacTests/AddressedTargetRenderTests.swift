@@ -28,8 +28,9 @@ final class AddressedTargetRenderTests: XCTestCase {
       expectedRevision: page.agentStamp.revision)
     let model = NotebookAppModel(store: store, startsNearbySync: false)
     retainNotebookUntilTeardown(model, removing: root)
+    let presence = try await startClosedOverview(model)
     XCTAssertTrue(model.pages.isEmpty)
-    XCTAssertNil(model.workspace)
+    XCTAssertTrue(model.documents.isEmpty)
     try await CurrentViewPreviewWriter.writeTarget(request, model: model)
     let receipt = try JSONDecoder().decode(TargetRenderReceipt.self, from: Data(contentsOf: store.targetReceiptURL(request.id)))
     XCTAssertEqual(receipt.status, "ready")
@@ -40,7 +41,7 @@ final class AddressedTargetRenderTests: XCTestCase {
     XCTAssertGreaterThan(pixel.redComponent, 0.95)
     XCTAssertLessThan(pixel.blueComponent, 0.05)
     XCTAssertTrue(model.pages.isEmpty)
-    XCTAssertNil(model.presence)
+    XCTAssertEqual(model.presence, presence)
   }
 
   @MainActor
@@ -62,6 +63,7 @@ final class AddressedTargetRenderTests: XCTestCase {
       expectedRevision: try XCTUnwrap(store.boardContentRevision(workspace.rootBoardID)))
     let model = NotebookAppModel(store: store, startsNearbySync: false)
     retainNotebookUntilTeardown(model, removing: root)
+    let presence = try await startClosedOverview(model)
     try await CurrentViewPreviewWriter.writeTarget(request, model: model)
     let receipt = try JSONDecoder().decode(TargetRenderReceipt.self, from: Data(contentsOf: store.targetReceiptURL(request.id)))
     XCTAssertEqual(receipt.status, "ready", "\(receipt.diagnostics)")
@@ -70,16 +72,19 @@ final class AddressedTargetRenderTests: XCTestCase {
     XCTAssertEqual(receipt.pixelSize?.y, ceil(size.height * 2))
     XCTAssertTrue(model.documents.isEmpty)
     XCTAssertTrue(model.documentStates.isEmpty)
-    XCTAssertNil(model.presence)
+    XCTAssertEqual(model.presence, presence)
     let originalPNG = try Data(contentsOf: store.targetPNGURL(request.id))
     let neighbor = SpatialElement(id: "not-this-cover", surface: .board(workspace.rootBoardID), kind: .web,
       frame: .init(x: 0, y: 0, width: 1800, height: 1800), worldOrigin: .init(x: -900, y: -900),
       source: "Neighbour", html: "<div style='background:red;width:1800px;height:1800px'></div>",
       javaScript: "throw Error('a neighbour is not part of this cover')", stamp: .init(counter: 0, actor: actor))
     XCTAssertTrue(hierarchy.upsertElement(neighbor, in: workspace.rootBoardID, expected: nil, actor: actor))
-    try store.saveBoard(hierarchy, items: workspace.items)
-    let repeated = try store.requestTargetRender(target: target,
-      expectedRevision: try XCTUnwrap(store.boardContentRevision(workspace.rootBoardID)))
+    let changed = hierarchy, items = workspace.items, boardID = workspace.rootBoardID
+    let repeated = try await model.performStoreCommand { store in
+      try store.saveBoard(changed, items: items)
+      return try store.requestTargetRender(target: target,
+        expectedRevision: try XCTUnwrap(store.boardContentRevision(boardID)))
+    }
     XCTAssertEqual(repeated.id, request.id)
     try await CurrentViewPreviewWriter.writeTarget(repeated, model: model)
     let finalPNG = try Data(contentsOf: store.targetPNGURL(request.id))
@@ -125,6 +130,7 @@ final class AddressedTargetRenderTests: XCTestCase {
     let workspace = try store.loadIndex()
     var hierarchy = try store.loadBoard(items: workspace.items)
     let target = CollaborationTarget(kind: .cover, id: portal, boardID: workspace.rootBoardID)
+    let presence = try await startClosedOverview(model)
     var previous: TargetRenderRequest?
     for (counter, color) in ["red", "blue"].enumerated() {
       let element = SpatialElement(id: "child-program", surface: .board(portal), kind: .web,
@@ -132,9 +138,12 @@ final class AddressedTargetRenderTests: XCTestCase {
         source: color, html: "<svg width='500' height='500'><rect width='500' height='500' fill='\(color)'/></svg>",
         stamp: .init(counter: UInt64(counter), actor: actor))
       XCTAssertTrue(hierarchy.upsertElement(element, in: portal, expected: nil, actor: actor))
-      try store.saveBoard(hierarchy, items: workspace.items)
-      let request = try store.requestTargetRender(target: target,
-        expectedRevision: try XCTUnwrap(store.boardContentRevision(workspace.rootBoardID)))
+      let changed = hierarchy
+      let request = try await model.performStoreCommand { store in
+        try store.saveBoard(changed, items: workspace.items)
+        return try store.requestTargetRender(target: target,
+          expectedRevision: try XCTUnwrap(store.boardContentRevision(workspace.rootBoardID)))
+      }
       if let previous {
         XCTAssertNotEqual(request.sourceRevision, previous.sourceRevision)
         XCTAssertNotEqual(request.id, previous.id)
@@ -152,17 +161,22 @@ final class AddressedTargetRenderTests: XCTestCase {
         "Compare encoded sRGB channels, without AppKit's display-colour conversion")
       previous = request
     }
-    XCTAssertNil(model.workspace)
-    XCTAssertNil(model.presence)
+    XCTAssertTrue(model.pages.isEmpty)
+    XCTAssertTrue(model.documents.isEmpty)
+    XCTAssertEqual(model.presence, presence)
   }
 
   @MainActor
   func testAnotherRenderingRecipeIsRefusedBeforeReadingOrPublishingTheTarget() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     let store = NotebookStore(root: root), actor = UUID()
-    _ = try store.loadOrCreate(actor: actor, pageSize: .init(width: 100, height: 140))
-    let document = DocumentDocument(actor: actor, blocks: [.markdown(id: "formula", source: "$x^2$")])
-    try store.saveDocument(document); try store.saveDocumentState(.init(id: document.id, actor: actor))
+    var (workspace, _) = try store.loadOrCreate(actor: actor, pageSize: .init(width: 100, height: 140))
+    var hierarchy = try store.loadBoard(items: workspace.items)
+    let item = try XCTUnwrap(workspace.createDocument(title: "Formula", actor: actor))
+    let document = DocumentDocument(id: item.id, actor: actor, blocks: [.markdown(id: "formula", source: "$x^2$")])
+    XCTAssertTrue(hierarchy.addItem(item.id, to: workspace.rootBoardID, near: .zero, actor: actor))
+    try store.saveDocumentWorkspaceBundle(index: workspace, document: document,
+      state: .init(id: document.id, actor: actor), board: hierarchy)
     let current = try store.requestTargetRender(target: .init(kind: .document, id: document.id), expectedRevision: document.contentStamp.revision)
     var encoded = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(current)) as? [String: Any])
     encoded["id"] = UUID().uuidString
@@ -178,6 +192,20 @@ final class AddressedTargetRenderTests: XCTestCase {
     XCTAssertFalse(FileManager.default.fileExists(atPath: store.targetPNGURL(other.id).path))
     XCTAssertFalse(FileManager.default.fileExists(atPath: store.targetReceiptURL(other.id).path))
     XCTAssertTrue(model.documents.isEmpty); XCTAssertNil(model.workspace)
+  }
+
+  @MainActor
+  private func startClosedOverview(_ model: NotebookAppModel) async throws -> SessionPresence {
+    // A target preview runs through the admitted live writer, never a model
+    // that has not completed bootstrap. The closed overview still must not
+    // load page/document bodies merely to render an addressed target.
+    let header = try model.store.workspaceHeader()
+    try model.store.savePresence(.init(boardID: header.rootBoardID, mode: .board,
+      camera: .init(scale: 0.22), viewport: .init(x: 100, y: 140)))
+    await model.start(pageSize: .init(width: 100, height: 140))
+    XCTAssertEqual(model.loadState, .ready)
+    XCTAssertTrue(model.permitsBackgroundPreparation)
+    return try XCTUnwrap(model.presence)
   }
 
   private func rgba(_ png: Data) throws -> [UInt8] {

@@ -15,6 +15,7 @@ struct PageSurface: View {
 
   @State private var visibleRegion: CGRect?
   @State private var readiness=PageSurfaceReadiness()
+  @State private var rasterPreparation = PageRasterPreparation()
   #if os(iOS)
   @State private var liveElementEraser = NotebookLiveElementEraserPresentation()
   #endif
@@ -130,7 +131,9 @@ struct PageSurface: View {
       },onState:{ elementID,state in
         guard isVisible,isCurrent,model.activePage?.id == page.id else { return false }
         return model.commitElementState(pageID:page.id,elementID:elementID,state:state)
-      },visibleRegion:visibleRegion,pageTurnActivity:onRenderReady.activity)
+      },visibleRegion:visibleRegion,pageTurnActivity:onRenderReady.activity,
+      rasterPreparation:onRenderReady.rasterContext ?? .init(owner:rasterPreparation,pageIndex:0),
+      onFailure:onRenderReady.failed)
   }
 }
 

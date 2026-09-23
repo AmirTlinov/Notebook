@@ -88,6 +88,7 @@ actor SceneCompositionSource {
     case values(WorkspaceSceneIndex, BoardHierarchy, SpatialInkJournal)
   }
   private let origin: Origin
+  private let reader: NotebookReadSession?
   // Only the last painted erased element is retained. Adjacent tiles often
   // revisit it; a source reader must not accumulate an archive of derived paths.
   private var preparedAppearance: (NotebookElementErasureCache.Input, NotebookElementAppearance)?
@@ -98,10 +99,10 @@ actor SceneCompositionSource {
 
   init(store: NotebookStore, revision: UInt64, workspaceID: UUID,
     groupPoses:[SceneCompositionPlane:[String:NotebookElementPlacement.Source]] = [:]) {
-    origin = .sql(store); self.revision = revision; self.workspaceID = workspaceID;self.groupPoses=groupPoses.filter { !$0.value.isEmpty }
+    origin = .sql(store); reader = NotebookReadSession(store: store); self.revision = revision; self.workspaceID = workspaceID;self.groupPoses=groupPoses.filter { !$0.value.isEmpty }
   }
   init(index: WorkspaceSceneIndex, hierarchy: BoardHierarchy, journal: SpatialInkJournal, revision: UInt64 = 0) {
-    origin = .values(index, hierarchy, journal); self.revision = revision; workspaceID = index.generationID;groupPoses=[:]
+    origin = .values(index, hierarchy, journal); reader = nil; self.revision = revision; workspaceID = index.generationID;groupPoses=[:]
   }
 
   func programStore() -> NotebookStore? { if case .sql(let store) = origin { store } else { nil } }
@@ -112,7 +113,8 @@ actor SceneCompositionSource {
   }
   private func checked<Value>(_ store: NotebookStore, _ read: (NotebookStore) throws -> Value) throws -> Value {
     try Task.checkCancellation()
-    return try store.readTransaction { store in
+    guard let reader else { preconditionFailure("SQL composition has one reader") }
+    return try reader.read { store in
       let header = try store.workspaceHeader()
       guard header.cursor == revision, header.workspaceID == workspaceID else { throw NotebookStorageError.transactionConflict }
       return try read(store)

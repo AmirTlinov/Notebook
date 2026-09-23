@@ -234,7 +234,7 @@ import XCTest
       XCTAssertEqual(model.presence?.notebookPageID, ids[index])
       XCTAssertEqual(model.workspace?.selectedPageID, ids[index])
       XCTAssertEqual(owner.displayedIndex, index)
-      XCTAssertEqual(owner.pageViewController.viewControllers?.first?.view.accessibilityIdentifier, "page-turn-page-\(index)")
+      XCTAssertEqual(owner.sheetController.page?.view.accessibilityIdentifier, "page-turn-page-\(index)")
       XCTAssertTrue(model.activePage.map { model.pagePresentations.isPresented($0) } == true,
         "leaf=\(index) must acknowledge its own installed source")
       XCTAssertLessThanOrEqual(owner.cachedPageIdentities.count, 4)
@@ -267,7 +267,7 @@ import XCTest
     scene.moveFinger(.init(x:710,y:1050),expectsManipulation:false)
     defer { scene.endFinger() }
     XCTAssertTrue(model.inputGate.isActive)
-    owner.pageViewController(owner.pageViewController,willTransitionTo:[target])
+    owner.sheetController(owner.sheetController,willTurnTo: target)
     let start = ContinuousClock.now
     while !owner.preparedPageIndices.contains(2), ContinuousClock.now-start < .seconds(2) {
       try await Task.sleep(for:.milliseconds(16))
@@ -277,8 +277,8 @@ import XCTest
     let elapsed = ContinuousClock.now-start
     let evidence = XCTAttachment(string:"nextSVGReady=\(owner.preparedPageIndices.contains(2)); elapsed=\(elapsed); fingerActive=\(model.inputGate.isActive)")
     evidence.name="svg-prewarm-during-curl";evidence.lifetime = .keepAlways;add(evidence)
-    owner.pageViewController.setViewControllers([target],direction:.forward,animated:false)
-    owner.pageViewController(owner.pageViewController,didFinishAnimating:true,previousViewControllers:[previous],transitionCompleted:true)
+    owner.sheetController.show(target,direction:.forward,animated:false)
+    owner.sheetController(owner.sheetController,didTurnFrom: previous, completed:true)
     scene.endFinger()
     let (_,next) = try await turnTarget(owner,forward:true)
     XCTAssertEqual(next.view.accessibilityIdentifier,"page-turn-page-2")
@@ -293,14 +293,14 @@ import XCTest
     let survivor = try appendPeerLeaf(index: 2, notebook: notebook, store: model.store, actor: peer)
     await model.reloadExternalChanges()?.value
     let oldRoot = try XCTUnwrap(model.notebookPageRoot(notebook)), scene = try await mount(model)
-    let owner = try pageOwner(scene.window), native = owner.pageViewController
+    let owner = try pageOwner(scene.window), native = owner.sheetController
     try await shown("peer-directory-original-leaf", window: scene.window,
       probes: leafProbes(0, scene.pageToWindow), budget: NotebookUXObservation.opening)
     let (previous, target) = try await turnTarget(owner, forward: true)
-    owner.pageViewController(native, willTransitionTo: [target])
+    owner.sheetController(native, willTurnTo: target)
     let animation = Task { @MainActor in
       await withCheckedContinuation { continuation in
-        native.setViewControllers([target], direction: .forward, animated: true) {
+        native.show(target, direction: .forward, animated: true) {
           continuation.resume(returning: $0)
         }
       }
@@ -316,10 +316,8 @@ import XCTest
         && owner.cachedPageIdentities[0] != ObjectIdentifier(previous)
     }
     _ = await animation.value // Cancellation is legal when the source was retired.
-    owner.pageViewController(native, didFinishAnimating: true,
-      previousViewControllers: [previous], transitionCompleted: true)
-    owner.pageViewController(native, didFinishAnimating: true,
-      previousViewControllers: [previous], transitionCompleted: false)
+    owner.sheetController(native, didTurnFrom: previous, completed: true)
+    owner.sheetController(native, didTurnFrom: previous, completed: false)
     try await shown("old-curl-cannot-land-on-a-different-uuid", window: scene.window,
       probes: leafProbes(0, scene.pageToWindow), budget: NotebookUXObservation.opening)
     XCTAssertEqual(model.presence?.notebookPageID, first)
@@ -635,23 +633,23 @@ import XCTest
   /// Uses real mounted PageSurface readiness and UIKit animation. The native
   /// delegate's landing is driven here; this is not a hardware finger swipe.
   private func turn(_ owner: IPadPageTurnController, forward: Bool, completes: Bool) async throws {
-    let native = owner.pageViewController, (previous, target) = try await turnTarget(owner, forward: forward)
-    owner.pageViewController(native, willTransitionTo: [target])
+    let native = owner.sheetController, (previous, target) = try await turnTarget(owner, forward: forward)
+    owner.sheetController(native, willTurnTo: target)
     let finished = await withCheckedContinuation { continuation in
-      native.setViewControllers([completes ? target : previous], direction: forward ? .forward : .reverse,
+      native.show(completes ? target : previous, direction: forward ? .forward : .reverse,
         animated: completes) { continuation.resume(returning: $0) }
     }
     XCTAssertTrue(finished)
-    owner.pageViewController(native, didFinishAnimating: true, previousViewControllers: [previous], transitionCompleted: completes)
+    owner.sheetController(native, didTurnFrom: previous, completed: completes)
   }
 
   private func turnTarget(_ owner: IPadPageTurnController, forward: Bool) async throws -> (UIViewController, UIViewController) {
-    let native = owner.pageViewController, previous = try XCTUnwrap(native.viewControllers?.first)
+    let native = owner.sheetController, previous = try XCTUnwrap(native.page)
     let deadline = ContinuousClock.now + NotebookUXObservation.opening
     var next: UIViewController?
     repeat {
-      next = forward ? owner.pageViewController(native, viewControllerAfter: previous)
-        : owner.pageViewController(native, viewControllerBefore: previous)
+      next = forward ? owner.sheetController(native, after: previous)
+        : owner.sheetController(native, before: previous)
       if next == nil { try await Task.sleep(for: .milliseconds(16)) }
     } while next == nil && ContinuousClock.now < deadline
     let target = try XCTUnwrap(next, "The real next sheet did not become ready; a fake ready(true) would hide this failure")

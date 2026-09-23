@@ -22,6 +22,7 @@ extension EnvironmentValues {
 /// Metal and WebKit report when their exact mounted page has presented once.
 @Observable @MainActor
 final class PageTurnActivity {
+  let rasters = PageRasterPreparation()
   struct PreparationDemand: Equatable {
     enum Presentation { case snapshot, live }
     let id: UUID
@@ -81,13 +82,18 @@ final class PageTurnActivity {
 @MainActor
 final class PageTurnReadiness {
   let activity: PageTurnActivity?
+  let pageIndex: Int
+  var rasterContext: PageRasterPreparation.Context? {
+    activity.map { .init(owner: $0.rasters, pageIndex: pageIndex) }
+  }
   private let handler: @MainActor (Bool) -> Void
   private let failureHandler: @MainActor (PageTurnPreparationFailure) -> Void
 
-  init(activity: PageTurnActivity? = nil,
+  init(activity: PageTurnActivity? = nil, pageIndex: Int = 0,
     onFailure: @escaping @MainActor (PageTurnPreparationFailure) -> Void = { _ in },
     _ handler: @escaping @MainActor (Bool) -> Void) {
     self.activity = activity
+    self.pageIndex = pageIndex
     self.handler = handler
     failureHandler = onFailure
   }
@@ -250,6 +256,8 @@ struct PageTurnSurface: View {
   var canonicalDocumentLayout: DocumentPageLayout? = nil
   var documentSelection: DocumentPageNavigationRequest? = nil
   var documentNavigation: DocumentPageNavigationCallbacks? = nil
+  var notebookNavigation: NotebookPageNavigation? = nil
+  var onWindowChange: @MainActor (Set<Int>, String) -> Void = { _, _ in }
 
   var body: some View {
     Group {
@@ -280,7 +288,9 @@ struct PageTurnSurface: View {
           onTransitioningChange: onTransitioningChange,
           canonicalDocumentLayout: canonicalDocumentLayout,
           documentSelection: documentSelection,
-          documentNavigation: documentNavigation
+          documentNavigation: documentNavigation,
+          notebookNavigation: notebookNavigation,
+          onWindowChange: onWindowChange
         )
       }
       #endif
@@ -317,6 +327,8 @@ struct PageTurnSurface: View {
     let canonicalDocumentLayout: DocumentPageLayout?
     let documentSelection: DocumentPageNavigationRequest?
     let documentNavigation: DocumentPageNavigationCallbacks?
+    let notebookNavigation: NotebookPageNavigation?
+    let onWindowChange: @MainActor (Set<Int>, String) -> Void
 
     func makeUIViewController(context: Context) -> IPadPageTurnController {
       let controller = IPadPageTurnController()
@@ -346,7 +358,9 @@ struct PageTurnSurface: View {
         onTransitioningChange: onTransitioningChange,
         canonicalDocumentLayout: canonicalDocumentLayout,
         documentSelection: documentSelection,
-        documentNavigation: documentNavigation
+        documentNavigation: documentNavigation,
+        notebookNavigation: notebookNavigation,
+        onWindowChange: onWindowChange
       )
     }
   }

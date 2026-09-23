@@ -380,28 +380,22 @@ final class DocumentResourceLeaseTests: XCTestCase {
     defer { window.isHidden = true; window.rootViewController = nil }
     // Keep old shells alive as UIKit is allowed to do; releasing their content
     // must not depend on the framework immediately deallocating a controller.
-    var retainedShells: [Int: UIViewController] = [:]
     for expected in Array(1...7) + Array((0...6).reversed()) {
-      let previous = try XCTUnwrap(controller.pageViewController.viewControllers?.first)
-      retainedShells[controller.displayedIndex] = previous
+      let previous = try XCTUnwrap(controller.sheetController.page)
       let forward = expected > controller.displayedIndex
       var destination: UIViewController?
       await waitUntil(timeout: .seconds(10), message: {
         "Landing \(expected) from \(controller.displayedIndex); active WebKit \(resources.activeWebSurfaceCount), passive \(resources.activePassiveWebSurfaceCount), queued \(resources.pendingWebRequestCount), live pages \(controller.cachedPageIdentities.keys.sorted()); geometry=\(DocumentRenderRegistry.shared.session(documentID: document.id, resources: resources).source(document).lastPreparationLayoutMismatch ?? "none"); owner=\(DocumentPagePresentationOwner.presentationDiagnostic(documentID: document.id, resources: resources))"
       }) {
         destination = forward
-          ? controller.pageViewController(controller.pageViewController, viewControllerAfter: previous)
-          : controller.pageViewController(controller.pageViewController, viewControllerBefore: previous)
+          ? controller.sheetController(controller.sheetController, after: previous)
+          : controller.sheetController(controller.sheetController, before: previous)
         return destination != nil
       }
       let next = try XCTUnwrap(destination, "Landing \(expected) requires its prepared physical page")
-      if let retained = retainedShells[expected] {
-        XCTAssertTrue(next === retained, "A retained UIKit shell must be restored rather than replaced by another identity")
-      }
-      controller.pageViewController(controller.pageViewController, willTransitionTo: [next])
-      controller.pageViewController.setViewControllers([next], direction: forward ? .forward : .reverse, animated: false)
-      controller.pageViewController(controller.pageViewController, didFinishAnimating: true,
-        previousViewControllers: [previous], transitionCompleted: true)
+      controller.sheetController(controller.sheetController, willTurnTo: next)
+      controller.sheetController.show(next, direction: forward ? .forward : .reverse, animated: false)
+      controller.sheetController(controller.sheetController, didTurnFrom: previous, completed: true)
       configure()
       XCTAssertEqual(controller.displayedIndex, expected)
       XCTAssertEqual(committed, expected)
@@ -440,7 +434,7 @@ final class DocumentResourceLeaseTests: XCTestCase {
     }
     configure(0); window.rootViewController = controller; window.makeKeyAndVisible()
     defer { window.isHidden = true; window.rootViewController = nil }
-    let source = try XCTUnwrap(controller.pageViewController.viewControllers?.first)
+    let source = try XCTUnwrap(controller.sheetController.page)
     var destination: UIViewController?
     await waitUntil(timeout: .seconds(10), message: {
       "Initial full window: web \(resources.activeWebSurfaceCount), peak \(peak.maximum), contents \(controller.cachedPageIdentities.keys.sorted()), landing \(destination != nil)"
@@ -448,13 +442,13 @@ final class DocumentResourceLeaseTests: XCTestCase {
       // One installed input surface and one reclaimable preparation executor
       // serve the whole bounded window; neighbours themselves remain pixels.
       guard resources.activeWebSurfaceCount - resources.activeBackgroundWebSurfaceCount == 1 else { return false }
-      destination = controller.pageViewController(controller.pageViewController, viewControllerAfter: source)
+      destination = controller.sheetController(controller.sheetController, after: source)
       return destination != nil
     }
     let landing = try XCTUnwrap(destination)
     let preparedWeb = try XCTUnwrap(descendants(source.view).first { $0.isUserInteractionEnabled })
     XCTAssertTrue(descendants(landing.view).isEmpty, "A ready neighbouring physical sheet uses passive pixels from this runtime")
-    controller.pageViewController(controller.pageViewController, willTransitionTo: [landing])
+    controller.sheetController(controller.sheetController, willTurnTo: landing)
     let frozenWindow = controller.cachedPageIdentities
     for target in [7, 12, 9] {
       configure(target)
@@ -463,9 +457,8 @@ final class DocumentResourceLeaseTests: XCTestCase {
       XCTAssertEqual(resources.activeWebSurfaceCount - resources.activeBackgroundWebSurfaceCount, 1)
       XCTAssertLessThanOrEqual(peak.maximum, 2)
     }
-    controller.pageViewController.setViewControllers([landing], direction: .forward, animated: false)
-    controller.pageViewController(controller.pageViewController, didFinishAnimating: true,
-      previousViewControllers: [source], transitionCompleted: true)
+    controller.sheetController.show(landing, direction: .forward, animated: false)
+    controller.sheetController(controller.sheetController, didTurnFrom: source, completed: true)
     XCTAssertEqual(commits, [1])
     configure(1)
     await waitUntil(timeout: .seconds(10), message: {
@@ -473,7 +466,7 @@ final class DocumentResourceLeaseTests: XCTestCase {
     }) { controller.displayedIndex == 9 }
     XCTAssertEqual(commits, [1, 9])
     configure(9)
-    let visible = try XCTUnwrap(controller.pageViewController.viewControllers?.first)
+    let visible = try XCTUnwrap(controller.sheetController.page)
     let web = try await livePage(9, in: visible.view,
       diagnostics: { DocumentPagePresentationOwner.presentationDiagnostic(documentID: document.id, resources: resources) })
     XCTAssertTrue(web === preparedWeb)

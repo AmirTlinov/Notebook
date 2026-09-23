@@ -1444,7 +1444,11 @@ private struct WorkspaceSceneItem: View {
           )
         },
         onCommit: commitNotebookPage,
-        onTransitioningChange: onPageTurnStateChange
+        onTransitioningChange: onPageTurnStateChange,
+        notebookNavigation: model.notebookPageNavigation,
+        onWindowChange: { indices, root in
+          model.retainNotebookPageWindow(indices, in: rendered.id, root: root)
+        }
       )
       .clipShape(
         RoundedRectangle(

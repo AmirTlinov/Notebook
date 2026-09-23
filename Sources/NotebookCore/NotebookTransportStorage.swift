@@ -39,41 +39,16 @@ public struct NotebookTransportStorage: Sendable {
 /// Replacing the underlying database requires a new transport, not an offer
 /// from another workspace under the existing peer generation.
 public actor NotebookTransportReader {
-  private let store: NotebookStore
-  private var connection: NotebookSQLConnection?
-  private var identity: FileIdentity?
+  private let session: NotebookReadSession
 
-  public init(store: NotebookStore) { self.store = store }
+  public init(store: NotebookStore) { session = NotebookReadSession(store: store) }
 
   public func changes(after cursor: UInt64, limit: Int) throws -> [NotebookDurableChange] {
-    try read { try $0.changeJournal(after: cursor, limit: limit) }
+    try session.read { try $0.changeJournal(after: cursor, limit: limit) }
   }
 
   public func blobs(_ requests: [NotebookTransportBlobRequest]) throws -> [NotebookTransportBlobChunk] {
-    try read { try $0.readBlobWindow(requests) }
-  }
-
-  private func read<T>(_ operation: (NotebookStore) throws -> T) throws -> T {
-    do {
-      let next = try FileIdentity(store.databaseURL)
-      guard identity == nil || identity == next else { throw NotebookTransportError.storageUnavailable }
-      let admitted = try store.prepareDatabase(reusing: connection)
-      connection = admitted; identity = next
-      return try store.readTransaction(using: admitted, operation)
-    } catch { connection = nil; throw error }
-  }
-
-  private struct FileIdentity: Equatable {
-    let device: UInt64
-    let inode: UInt64
-    init(_ file: URL) throws {
-      let attributes = try FileManager.default.attributesOfItem(atPath: file.path)
-      guard let device = attributes[.systemNumber] as? NSNumber,
-        let inode = attributes[.systemFileNumber] as? NSNumber else {
-        throw NotebookStorageError.invalidTransaction("database file identity")
-      }
-      self.device = device.uint64Value; self.inode = inode.uint64Value
-    }
+    try session.read { try $0.readBlobWindow(requests) }
   }
 }
 

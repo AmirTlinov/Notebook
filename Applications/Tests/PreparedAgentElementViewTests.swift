@@ -9,6 +9,110 @@ import XCTest
 
 final class PreparedAgentElementViewTests: XCTestCase {
   @MainActor
+  func testUnchangedProgramCheckpointDoesNotInvalidateThePageReadWindow() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("checkpoint-window-\(UUID())")
+    let store = NotebookStore(root: root)
+    try NotebookNavigationLoadFixture.seed(store, programs: true)
+    let model = NotebookAppModel(store: store, startsNearbySync: false)
+    retainNotebookUntilTeardown(model, removing: root)
+    await model.start(pageSize: .init(width: 834, height: 1194))
+    await model.prepareNotebookPage(at: 0, in: NotebookNavigationLoadFixture.notebookID)
+    let page = try XCTUnwrap(model.notebookPage(at: 0, in: NotebookNavigationLoadFixture.notebookID))
+    let source = try XCTUnwrap(page.elements.first { $0.kind == .web })
+    let focus = InteractiveElementReference.page(pageID: page.id, elementID: source.id)
+    let basis = try XCTUnwrap(model.programStateBasis(focus: focus, rendered: source))
+    let readEpoch = model.collaborationReadEpoch
+    let accepted = try await model.checkpointProgramState(focus: focus, rendered: source, value: source.state, basis: basis)
+    XCTAssertEqual(accepted, basis)
+    XCTAssertEqual(model.collaborationReadEpoch, readEpoch)
+    let changed: JSONValue = .object(["count": .number(1)])
+    let updated = try await model.checkpointProgramState(focus: focus, rendered: source, value: changed, basis: basis)
+    XCTAssertNotNil(updated); XCTAssertNotEqual(updated, basis)
+    XCTAssertGreaterThan(model.collaborationReadEpoch, readEpoch)
+    XCTAssertEqual(try store.loadPage(page.id).element(id: source.id)?.state, changed)
+  }
+
+  @MainActor
+  func testRasterReportsItsFirstLayoutWithoutAnotherSourceUpdate() throws {
+    let resources = SceneRenderResources(), source = element(id: UUID().uuidString, source: "Late layout")
+    let image = UIGraphicsImageRenderer(size: .init(width: 160, height: 120)).image { context in
+      UIColor.blue.setFill(); context.fill(.init(x: 0, y: 0, width: 160, height: 120))
+    }
+    XCTAssertTrue(resources.store(image, for: source))
+    let raster = try XCTUnwrap(resources.retainRaster(for: .agent(source)))
+    let window = UIWindow(windowScene: try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene))
+    let previous = window.windowScene?.windows.first(where: \.isKeyWindow)
+    let host = UIViewController(); window.rootViewController = host; window.makeKeyAndVisible()
+    let view = AgentSnapshotRasterView(); host.view.addSubview(view)
+    defer { view.uninstall(); raster.release(); window.isHidden = true; window.rootViewController = nil; previous?.makeKey() }
+    var installed = false
+    view.onRasterInstalled = { installed = view.installation(for: $0).isInstalled }
+    view.updateRaster(raster)
+    XCTAssertFalse(installed, "Empty bounds are not visible pixels")
+    view.frame = .init(x: 100, y: 100, width: 160, height: 120)
+    view.setNeedsLayout(); view.layoutIfNeeded()
+    XCTAssertTrue(installed, "The first layout must finish readiness without an unrelated model edit")
+  }
+
+  @MainActor
+  func testZoomReusesAdequateProgramPixelsWithoutSubmittingAnotherCapture() async throws {
+    let resources = SceneRenderResources(), source = element(id: UUID().uuidString, source: "Zoom reuse")
+    let lease = try await resources.acquireWebSurface(priority: .liveProgram)
+    var ready = false
+    let coordinator = AgentWebCoordinator(lease:lease,resources:resources,
+      onRenderReady:{ready=$0},onState:{_ in true})
+    let web = AgentWebCoordinator.makeWebView(coordinator:coordinator)
+    let window = UIWindow(windowScene:try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene))
+    let host = UIViewController();window.rootViewController=host;window.makeKeyAndVisible()
+    host.view.addSubview(web);web.frame = .init(x:100,y:100,width:160,height:120)
+    defer { coordinator.invalidate();lease.release();window.isHidden=true;window.rootViewController=nil }
+    coordinator.load(source,policy:.exact(scale:2),in:web)
+    try await waitUntil("Initial program pixels") { ready && coordinator.pendingSnapshotCaptures.isEmpty }
+    let token=coordinator.loadToken
+    var published = 0
+    coordinator.use(onSnapshotPrepared: { raster in
+      XCTAssertNotNil(raster.image(for: .agent(source), minimumScale: 2))
+      published += 1; raster.release()
+    })
+    for (index, scale) in [1.0,2.0,1.0,2.0].enumerated() {
+      coordinator.load(source,policy:.exact(scale:scale),in:web)
+      XCTAssertTrue(coordinator.pendingSnapshotCaptures.isEmpty,"A zoom bucket must not recapture adequate immutable source/state")
+      XCTAssertTrue(coordinator.hasLiveSource(source))
+      try await waitUntil("Cached pixels must finish their consumer, not just toggle readiness") { published == index + 1 }
+    }
+    coordinator.load(source,policy:.exact(scale:3),in:web)
+    XCTAssertFalse(coordinator.pendingSnapshotCaptures.isEmpty,"Actually missing detail must still be prepared")
+    try await waitUntil("Higher density") { ready && resources.image(for:.agent(source),minimumScale:3) != nil }
+    XCTAssertEqual(coordinator.loadToken,token)
+  }
+
+  @MainActor
+  func testLateDenserCaptureSatisfiesRetargetedDemandWithoutStrandingItsConsumer() async throws {
+    let resources = SceneRenderResources(), source = element(id: UUID().uuidString, source: "Retargeted pixels")
+    let lease = try await resources.acquireWebSurface(priority: .visible)
+    let coordinator = AgentWebCoordinator(lease: lease, resources: resources, onState: { _ in false })
+    let web = AgentWebCoordinator.makeWebView(coordinator: coordinator)
+    defer { coordinator.invalidate(); lease.release() }
+    coordinator.load(source, policy: .exact(scale: 2), in: web)
+    let token = try XCTUnwrap(coordinator.loadToken)
+    coordinator.load(source, policy: .exact(scale: 1), in: web)
+    let format = UIGraphicsImageRendererFormat(); format.scale = 2
+    let image = UIGraphicsImageRenderer(size: .init(width: 160, height: 120), format: format).image { context in
+      UIColor.blue.setFill(); context.fill(.init(x: 0, y: 0, width: 160, height: 120))
+    }
+    var published: RasterLease?
+    coordinator.use(onSnapshotPrepared: { raster in published?.release(); published = raster })
+    defer { published?.release() }
+    await coordinator.completeSnapshot(image, error: nil, token: token, element: source,
+      reservation: try XCTUnwrap(resources.reserveWebSnapshot(pixelSize: .init(width: 320, height: 240))),
+      policy: .exact(scale: 2))
+    try await waitUntil("An older dense capture must complete the current lower-density reader") { published != nil }
+    XCTAssertNotNil(published?.image(for: .agent(source), minimumScale: 2))
+    XCTAssertNil(coordinator.snapshotFailure)
+    XCTAssertEqual(coordinator.loadToken, token)
+  }
+
+  @MainActor
   func testQueuedStateAndDensityChangeCannotRewindAcceptedProgramInput() async throws {
     let resources = SceneRenderResources()
     let lease = try await resources.acquireWebSurface(priority: .liveProgram)

@@ -35,7 +35,11 @@ final class NotebookSQLConnection {
   var activeActionRecordCapture: NotebookActionRecordCaptureState?
   private var statements: [String: OpaquePointer] = [:]
   // Borrowed by nested addressed reads; released with this SQL snapshot.
-  lazy var inkDecoding=InkRelationDecoding()
+  private var decodedInk: InkRelationDecoding?
+  var inkDecoding: InkRelationDecoding {
+    if let decodedInk { return decodedInk }
+    let value = InkRelationDecoding(); decodedInk = value; return value
+  }
   private var readAllowance: NotebookSQLReadAllowance?
   private var remainingReadRows = 0
   private var remainingReadBytes = 0
@@ -57,6 +61,12 @@ final class NotebookSQLConnection {
 
   func checkReadAllowance() throws {
     if let readRefusal { throw NotebookStorageError.limitExceeded(readRefusal) }
+  }
+
+  fileprivate func endReadSnapshot() {
+    readAllowance = nil; readRefusal = nil
+    remainingReadRows = 0; remainingReadBytes = 0
+    decodedInk = nil
   }
 
   /// SQLite supplies lengths before Swift copies a string or blob. Charge all
@@ -591,7 +601,7 @@ extension NotebookStore {
     return try readTransaction(using: prepareDatabase(), read)
   }
 
-  /// A transport owner may retain its idle handle, never the prior read cut.
+  /// A serial reader may retain its idle handle, never the prior read cut.
   /// Admission is performed again before borrowing this synchronous snapshot.
   func readTransaction<T>(using database: NotebookSQLConnection,
     _ read: (NotebookStore) throws -> T) throws -> T {
@@ -599,7 +609,10 @@ extension NotebookStore {
     database.writable = false
     try database.run("BEGIN DEFERRED")
     Thread.current.threadDictionary[connectionKey] = database
-    defer { Thread.current.threadDictionary.removeObject(forKey: connectionKey) }
+    defer {
+      Thread.current.threadDictionary.removeObject(forKey: connectionKey)
+      database.endReadSnapshot()
+    }
     do { let result = try read(self); try database.checkReadAllowance(); try database.run("COMMIT"); return result }
     catch { try? database.run("ROLLBACK"); throw error }
   }

@@ -457,6 +457,81 @@ final class SceneCameraPlaneTests: XCTestCase {
   }
 
   @MainActor
+  func testHeldZoomOutAndReturnDoNotRebuildAlreadyDenseContent() throws {
+    let controller = SceneCameraPlaneController<Int>()
+    let viewport = SpatialPoint(x: 834, y: 1194)
+    let initial = SessionPresence(mode: .board, camera: .init(scale: 1), viewport: viewport)
+    let window = UIWindow(windowScene: try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene))
+    window.frame = .init(x: 0, y: 0, width: viewport.x, height: viewport.y)
+    window.rootViewController = controller; window.makeKeyAndVisible()
+    defer { controller.uninstall(); window.isHidden = true; window.rootViewController = nil }
+    let world = WorldPoint(x: 310, y: -250)
+    var anchor = initial
+    func content(_ prepared: SessionPresence, _ projection: ScenePlaneProjection) -> AnyView {
+      anchor = prepared
+      let point = prepared.camera.worldToScreen(world, viewport: viewport)
+      return AnyView(Color.red.frame(width: 40, height: 40).position(x: point.x, y: point.y))
+    }
+    controller.update(presence: initial, revision: 1, content: content)
+    let native = controller.contentView
+    for sample in 0..<200 {
+      let scale = exp(-log(20) * sin(Double(sample) / 199 * .pi))
+      let current = initial.replacingCamera(.init(scale: scale))
+      controller.update(presence: current, revision: 1, isCameraActive: true, content: content)
+      let local = anchor.camera.worldToScreen(world, viewport: viewport)
+      let actual = native.convert(CGPoint(x: local.x, y: local.y), to: controller.view)
+      let expected = current.camera.worldToScreen(world, viewport: viewport)
+      XCTAssertEqual(actual.x, expected.x, accuracy: 0.0001)
+      XCTAssertEqual(actual.y, expected.y, accuracy: 0.0001)
+      XCTAssertEqual(controller.contentPublicationCount, 1)
+    }
+    // This is not permission to retain a magnified low-resolution body.
+    controller.update(presence: initial.replacingCamera(.init(scale: 2)), revision: 1,
+      isCameraActive: true, content: content)
+    XCTAssertEqual(controller.contentPublicationCount, 2)
+    XCTAssertTrue(native === controller.contentView)
+  }
+
+  @MainActor
+  func testInstalledPlaneFollowsVisibleChildrenOutsideTheOldAnchorBounds() async throws {
+    let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+    let previous = scene.windows.first(where: \.isKeyWindow), window = UIWindow(windowScene: scene)
+    let viewport = SpatialPoint(x: 512, y: 512)
+    let controller = SceneCameraPlaneController<Int>(), installation = SceneCameraPlaneInstallation()
+    window.frame = .init(x: 0, y: 0, width: viewport.x, height: viewport.y)
+    window.rootViewController = controller; window.makeKeyAndVisible()
+    defer { controller.uninstall(); window.isHidden = true; window.rootViewController = nil; previous?.makeKey() }
+    let initial = SessionPresence(mode: .board, camera: .init(scale: 1), viewport: viewport)
+    let world = WorldPoint(x: 1400, y: 0)
+    func content(_ anchor: SessionPresence, _ projection: ScenePlaneProjection) -> AnyView {
+      let point = anchor.camera.worldToScreen(world, viewport: viewport)
+      return AnyView(Color.blue.frame(width: 80, height: 80).position(x: point.x, y: point.y)
+        .frame(width: viewport.x, height: viewport.y))
+    }
+    controller.update(presence: initial, revision: 1, installation: installation, content: content)
+    window.layoutIfNeeded()
+    XCTAssertTrue(installation.isInstalled)
+    let current = initial.replacingCamera(.init(center: world, scale: 0.25))
+    controller.update(presence: current, revision: 1, isCameraActive: true,
+      installation: installation, content: content)
+    let native = controller.contentView
+    XCTAssertFalse(native.convert(native.bounds, to: window).intersects(window.bounds),
+      "The old camera rectangle is wholly offscreen; the prepared child is not")
+    XCTAssertEqual(controller.contentPublicationCount, 1)
+    try await assertUX("Off-anchor child remains visibly installed", since: .now, window: window) {
+      try NotebookUXObservation.Pixels(window: window).matches([(.init(x: 256, y: 256), .blue)])
+    }
+    XCTAssertTrue(installation.isInstalled, "Visible off-anchor pixels must not be reported as a hole")
+    native.isHidden = true
+    XCTAssertFalse(installation.isInstalled)
+    native.isHidden = false
+    native.removeFromSuperview()
+    XCTAssertFalse(installation.isInstalled, "An installed viewport cannot lend its receipt to a detached child")
+    controller.uninstall()
+    XCTAssertFalse(installation.isInstalled)
+  }
+
+  @MainActor
   func testFarJumpRebasesBeforeSubtractingUnrelatedWorldTiles() {
     let controller = SceneCameraPlaneController<Int>()
     let viewport = SpatialPoint(x: 1194, y: 834)

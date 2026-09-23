@@ -100,7 +100,8 @@ final class SceneCompositionRenderer {
   /// placeholder pass. Deeper painter discoveries join the same scheduler.
   func discoverSources(plan: SceneCompositionPlan, frame: WorkspaceSceneFrame, displayScale: Double) async throws {
     for plane in plan.presentations.keys {
-      let workset = plane.coverID.flatMap { frame.covers[$0] } ?? frame.worksets[plane.boardID]
+      // An empty cover is empty, not a second address for every board source.
+      let workset = if let id = plane.coverID { frame.covers[id] } else { frame.worksets[plane.boardID] }
       let erased = try await source.wholeErasedElements(workset?.elements ?? [])
       for element in workset?.elements ?? [] where element.kind != .nativeText && element.kind != .graphic && element.kind != .group {
         if erased.contains(element.id) { continue }
@@ -334,10 +335,11 @@ final class SceneCompositionRenderer {
     let size = CGSize(width: item.geometry.width, height: item.geometry.height)
     let projection = frame.width / size.width
     let padding = WorkspaceCoverRaster.shadowPadding
-    let decoration = WorkspaceItemShadow(geometry: item.geometry)
-      .frame(width: size.width, height: size.height).padding(padding)
-    try await canvas.drawView(decoration,
-      size: .init(width: size.width + 2 * padding, height: size.height + 2 * padding),
+    // These are the same fixed physical pixels used by the native cover.
+    // Sending them through a new SwiftUI ImageRenderer for every intersecting
+    // tile repeats layout/readback on main. The compositor already owns their
+    // projection and can blend them on its pixel worker directly.
+    try await canvas.drawImage(WorkspaceCoverRaster.shadow(geometry: item.geometry, lifted: false),
       in: frame.insetBy(dx: -padding * projection, dy: -padding * projection))
     let shape = RoundedRectangle(cornerRadius: item.geometry.cornerRadius * projection, style: .continuous)
     try await canvas.pushClip(shape.path(in: frame).cgPath)
@@ -355,10 +357,8 @@ final class SceneCompositionRenderer {
       try await canvas.drawView(RoundedRectangle(cornerRadius: item.geometry.cornerRadius, style: .continuous)
         .stroke(Color.black.opacity(0.16), lineWidth: 2), size: size, in: frame)
     } else {
-      try await canvas.drawView(ZStack(alignment: .topLeading) {
-        WorkspaceCoverSurface(item: item.item, geometry: item.geometry)
-        WorkspaceCoverTitle(item: item.item, geometry: item.geometry)
-      }, size: size, in: frame)
+      try await canvas.drawImage(WorkspaceCoverRaster.material(item: item.item, geometry: item.geometry), in: frame)
+      try await canvas.drawView(WorkspaceCoverTitle(item: item.item, geometry: item.geometry), size: size, in: frame)
     }
     let visible = frame.intersection(visible)
     if !visible.isEmpty, !visible.isNull {

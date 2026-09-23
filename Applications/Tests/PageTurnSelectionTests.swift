@@ -7,6 +7,43 @@ import UIKit
 
 final class PageTurnSelectionTests: XCTestCase {
   @MainActor
+  func testRepeatedNotebookArrowsConfirmEveryAdjacentLandingWithoutChangingPresenceEarly() async throws {
+    let controller = IPadPageTurnController(), commands = NotebookPageNavigation(), owner = UUID()
+    let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+    let previous = scene.windows.first(where: \.isKeyWindow), window = UIWindow(windowScene: scene)
+    window.frame = scene.effectiveGeometry.coordinateSpace.bounds
+    var selected = 0, landed: [Int] = [], readiness: [Int: PageTurnReadiness] = [:]
+    func configure() {
+      controller.update(ownerID: owner, sequenceRevision: "sheets", pageCount: 5, selectedIndex: selected,
+        navigationIsEnabled: true, pageIsInteractive: true, canBeginNavigation: { false },
+        page: { index, _, ready in
+          readiness[index] = ready
+          if index == 0 { ready(true) }
+          return AnyView(Color.white.overlay(Text("Sheet \(index)")))
+        }, onCommit: { index, _ in selected = index; landed.append(index); configure() },
+        onTransitioningChange: { _ in }, notebookNavigation: commands)
+    }
+    configure(); window.rootViewController = controller; window.makeKeyAndVisible()
+    defer { window.isHidden = true; window.rootViewController = nil; previous?.makeKey() }
+    window.layoutIfNeeded()
+    // This is the selection contract, not cold-opening latency. The source
+    // must have reached its first native update before a visible turn starts.
+    try await Task.sleep(for: .milliseconds(32))
+    for _ in 0..<3 { XCTAssertTrue(commands.send(.step(1), ownerID: owner, source: "sheets")) }
+    XCTAssertEqual(selected, 0, "Requested work is not a shown page")
+    XCTAssertEqual(controller.displayedIndex, 0)
+    for target in 1...3 {
+      try XCTUnwrap(readiness[target])(true)
+      let deadline = ContinuousClock.now + .seconds(2)
+      while selected != target, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(8)) }
+      XCTAssertEqual(selected, target)
+      XCTAssertEqual(controller.displayedIndex, target)
+    }
+    XCTAssertEqual(landed, [1, 2, 3], "Arrow repetition cannot silently become an unanimated distant jump")
+    XCTAssertEqual(controller.sheetController.view.layer.speed, 1, "The page subtree must retain the system clock")
+  }
+
+  @MainActor
   func testDocumentIntentFailureRetryAndExternalLandingPreserveConfirmedPage() async throws {
     let controller = IPadPageTurnController(), documentID = UUID()
     let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
@@ -171,28 +208,26 @@ final class PageTurnSelectionTests: XCTestCase {
         }, onCommit: { commits.append(($0, $1)) }, onTransitioningChange: { _ in })
     }
     configure("before"); controller.loadViewIfNeeded()
-    let oldSource = try XCTUnwrap(controller.pageViewController.viewControllers?.first)
-    let oldTarget = try XCTUnwrap(controller.pageViewController(controller.pageViewController, viewControllerAfter: oldSource))
+    let oldSource = try XCTUnwrap(controller.sheetController.page)
+    let oldTarget = try XCTUnwrap(controller.sheetController(controller.sheetController, after: oldSource))
     let oldReady = try XCTUnwrap(readiness["before"]?[1])
-    controller.pageViewController(controller.pageViewController, willTransitionTo: [oldTarget])
+    controller.sheetController(controller.sheetController, willTurnTo: oldTarget)
     configure("after")
-    let current = try XCTUnwrap(controller.pageViewController.viewControllers?.first)
+    let current = try XCTUnwrap(controller.sheetController.page)
     XCTAssertFalse(current === oldSource)
-    XCTAssertTrue(oldTarget.children.isEmpty, "A discarded sequence retains no live content in UIKit's shell")
+    XCTAssertNil(oldTarget.parent, "A discarded sequence retains no mounted content")
     oldReady(true)
-    XCTAssertNil(controller.pageViewController(controller.pageViewController, viewControllerAfter: current))
-    controller.pageViewController(controller.pageViewController, didFinishAnimating: true,
-      previousViewControllers: [oldSource], transitionCompleted: true)
+    XCTAssertNil(controller.sheetController(controller.sheetController, after: current))
+    controller.sheetController(controller.sheetController, didTurnFrom: oldSource, completed: true)
     XCTAssertTrue(commits.isEmpty, "A late curl cannot reinterpret its slot in the replacement order")
     XCTAssertEqual(controller.displayedIndex, 0)
     try XCTUnwrap(readiness["after"]?[1])(true)
-    XCTAssertNil(controller.pageViewController(controller.pageViewController, viewControllerAfter: oldSource))
-    XCTAssertNil(controller.pageViewController(controller.pageViewController, viewControllerBefore: oldTarget))
-    let target = try XCTUnwrap(controller.pageViewController(controller.pageViewController, viewControllerAfter: current))
-    controller.pageViewController(controller.pageViewController, willTransitionTo: [target])
-    controller.pageViewController.setViewControllers([target], direction: .forward, animated: false)
-    controller.pageViewController(controller.pageViewController, didFinishAnimating: true,
-      previousViewControllers: [current], transitionCompleted: true)
+    XCTAssertNil(controller.sheetController(controller.sheetController, after: oldSource))
+    XCTAssertNil(controller.sheetController(controller.sheetController, before: oldTarget))
+    let target = try XCTUnwrap(controller.sheetController(controller.sheetController, after: current))
+    controller.sheetController(controller.sheetController, willTurnTo: target)
+    controller.sheetController.show(target, direction: .forward, animated: false)
+    controller.sheetController(controller.sheetController, didTurnFrom: current, completed: true)
     XCTAssertEqual(commits.map(\.0), [1])
     XCTAssertEqual(commits.map(\.1), ["after"])
     XCTAssertLessThanOrEqual(controller.cachedPageIdentities.count, 4)
@@ -210,8 +245,8 @@ final class PageTurnSelectionTests: XCTestCase {
     controller.loadViewIfNeeded()
     XCTAssertEqual(built, [0, 1], "Spare capacity is not a demand to construct two more pages")
     XCTAssertEqual(Set(controller.cachedPageIdentities.keys), [0, 1])
-    let first = try XCTUnwrap(controller.pageViewController.viewControllers?.first)
-    XCTAssertNotNil(controller.pageViewController(controller.pageViewController, viewControllerAfter: first),
+    let first = try XCTUnwrap(controller.sheetController.page)
+    XCTAssertNotNil(controller.sheetController(controller.sheetController, after: first),
       "The immediately reachable sheet must still be ready for a real curl")
   }
 
@@ -256,10 +291,10 @@ final class PageTurnSelectionTests: XCTestCase {
     }
     configure(4); window.rootViewController = controller; window.makeKeyAndVisible()
     defer { window.isHidden = true; window.rootViewController = nil }
-    let source = try XCTUnwrap(controller.pageViewController.viewControllers?.first)
-    let landing = try XCTUnwrap(controller.pageViewController(controller.pageViewController, viewControllerAfter: source))
-    let preparedChild = try XCTUnwrap(landing.children.first)
-    controller.pageViewController(controller.pageViewController, willTransitionTo: [landing])
+    let source = try XCTUnwrap(controller.sheetController.page)
+    let landing = try XCTUnwrap(controller.sheetController(controller.sheetController, after: source))
+    let preparedChild = landing.view
+    controller.sheetController(controller.sheetController, willTurnTo: landing)
     let frozenWindow = controller.cachedPageIdentities
     for target in [12, 17, 9] {
       configure(target)
@@ -268,11 +303,10 @@ final class PageTurnSelectionTests: XCTestCase {
       XCTAssertFalse(rendered.contains(target))
       XCTAssertFalse(source.view.isUserInteractionEnabled)
     }
-    controller.pageViewController.setViewControllers([landing], direction: .forward, animated: false)
-    controller.pageViewController(controller.pageViewController, didFinishAnimating: true,
-      previousViewControllers: [source], transitionCompleted: true)
+    controller.sheetController.show(landing, direction: .forward, animated: false)
+    controller.sheetController(controller.sheetController, didTurnFrom: source, completed: true)
     XCTAssertEqual(controller.displayedIndex, 5)
-    XCTAssertTrue(landing.children.first === preparedChild, "The hand lands on its original prepared child")
+    XCTAssertTrue(landing.view === preparedChild, "The hand lands on its original prepared child")
     XCTAssertEqual(commits, [5], "The native landing still owns its normal selection publication")
     let targetIdentity = try XCTUnwrap(controller.cachedPageIdentities[9])
     XCTAssertNil(controller.cachedPageIdentities[12]); XCTAssertNil(controller.cachedPageIdentities[17])
@@ -305,31 +339,29 @@ final class PageTurnSelectionTests: XCTestCase {
         }, onCommit: { index, _ in commits.append(index) }, onTransitioningChange: { _ in })
     }
     configure(0); controller.loadViewIfNeeded()
-    let source = try XCTUnwrap(controller.pageViewController.viewControllers?.first)
-    let sourceChild = try XCTUnwrap(source.children.first)
-    let landing = try XCTUnwrap(controller.pageViewController(controller.pageViewController, viewControllerAfter: source))
-    let landingChild = try XCTUnwrap(landing.children.first)
-    controller.pageViewController(controller.pageViewController, willTransitionTo: [landing])
+    let source = try XCTUnwrap(controller.sheetController.page)
+    let sourceChild = source.view
+    let landing = try XCTUnwrap(controller.sheetController(controller.sheetController, after: source))
+    let landingChild = landing.view
+    controller.sheetController(controller.sheetController, willTurnTo: landing)
     let frozenWindow = controller.cachedPageIdentities
     for target in [7, 12, 0] {
       configure(target)
       XCTAssertEqual(activity?.preparationDemand?.pageIndex, target == 0 ? nil : target)
       XCTAssertEqual(controller.cachedPageIdentities, frozenWindow)
     }
-    controller.pageViewController(controller.pageViewController, didFinishAnimating: true,
-      previousViewControllers: [source], transitionCompleted: false)
+    controller.sheetController(controller.sheetController, didTurnFrom: source, completed: false)
     XCTAssertEqual(controller.displayedIndex, 0)
     XCTAssertNil(activity?.preparationDemand)
-    XCTAssertTrue(source.children.first === sourceChild)
+    XCTAssertTrue(source.view === sourceChild)
     XCTAssertTrue(source.view.isUserInteractionEnabled)
     XCTAssertTrue(commits.isEmpty)
     XCTAssertFalse(rendered.contains(7)); XCTAssertFalse(rendered.contains(12))
-    let next = try XCTUnwrap(controller.pageViewController(controller.pageViewController, viewControllerAfter: source))
-    XCTAssertTrue(next === landing); XCTAssertTrue(next.children.first === landingChild)
-    controller.pageViewController(controller.pageViewController, willTransitionTo: [next])
-    controller.pageViewController.setViewControllers([next], direction: .forward, animated: false)
-    controller.pageViewController(controller.pageViewController, didFinishAnimating: true,
-      previousViewControllers: [source], transitionCompleted: true)
+    let next = try XCTUnwrap(controller.sheetController(controller.sheetController, after: source))
+    XCTAssertTrue(next === landing); XCTAssertTrue(next.view === landingChild)
+    controller.sheetController(controller.sheetController, willTurnTo: next)
+    controller.sheetController.show(next, direction: .forward, animated: false)
+    controller.sheetController(controller.sheetController, didTurnFrom: source, completed: true)
     configure(1)
     XCTAssertEqual(controller.displayedIndex, 1, "The next ordinary turn cannot replay the cancelled external jump")
     XCTAssertEqual(commits, [1])
@@ -387,6 +419,8 @@ final class PageTurnSelectionTests: XCTestCase {
   func testExternalTransitionsKeepTheirOwnFourContentsWhileNewerRequestsWait() async throws {
     let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
     let window = UIWindow(windowScene: scene), controller = IPadPageTurnController(), owner = UUID()
+    let previous = scene.windows.first(where: \.isKeyWindow)
+    window.frame = scene.effectiveGeometry.coordinateSpace.bounds
     var rendered = Set<Int>()
     func configure(_ selected: Int) {
       controller.update(ownerID: owner, sequenceRevision: "fixture-order", pageCount: 20, selectedIndex: selected,
@@ -397,7 +431,9 @@ final class PageTurnSelectionTests: XCTestCase {
         }, onCommit: { _, _ in }, onTransitioningChange: { _ in })
     }
     configure(4); window.rootViewController = controller; window.makeKeyAndVisible()
-    defer { window.isHidden = true; window.rootViewController = nil }
+    defer { window.isHidden = true; window.rootViewController = nil; previous?.makeKey() }
+    window.layoutIfNeeded()
+    try await Task.sleep(for: .milliseconds(32))
     // Adjacent pages curl; distant navigation deliberately installs directly
     // without a second crossfade over an already prepared destination.
     configure(5)
@@ -433,15 +469,14 @@ final class PageTurnSelectionTests: XCTestCase {
     }
     configure(3); window.rootViewController = controller; window.makeKeyAndVisible()
     defer { window.isHidden = true; window.rootViewController = nil }
-    let source = try XCTUnwrap(controller.pageViewController.viewControllers?.first)
-    let blank = try XCTUnwrap(controller.pageViewController(controller.pageViewController, viewControllerAfter: source))
-    controller.pageViewController(controller.pageViewController, willTransitionTo: [blank])
+    let source = try XCTUnwrap(controller.sheetController.page)
+    let blank = try XCTUnwrap(controller.sheetController(controller.sheetController, after: source))
+    controller.sheetController(controller.sheetController, willTurnTo: blank)
     let frozenWindow = controller.cachedPageIdentities
     configure(0)
     XCTAssertEqual(controller.cachedPageIdentities, frozenWindow)
-    controller.pageViewController.setViewControllers([blank], direction: .forward, animated: false)
-    controller.pageViewController(controller.pageViewController, didFinishAnimating: true,
-      previousViewControllers: [source], transitionCompleted: true)
+    controller.sheetController.show(blank, direction: .forward, animated: false)
+    controller.sheetController(controller.sheetController, didTurnFrom: source, completed: true)
     XCTAssertEqual(commits, [4])
     XCTAssertEqual(reportedPageCount, 6, "Landing still creates exactly one notebook page")
     XCTAssertTrue(rendered.contains(5), "The next trailing blank is prepared before a later SwiftUI update")
@@ -469,61 +504,25 @@ final class PageTurnSelectionTests: XCTestCase {
         onCommit: { index, _ in committed = index }, onTransitioningChange: { _ in })
     }
     configure(); controller.loadViewIfNeeded()
-    let firstShell = try XCTUnwrap(controller.pageViewController.viewControllers?.first)
-    let firstChild = try XCTUnwrap(firstShell.children.first)
+    let firstHost = try XCTUnwrap(controller.sheetController.page)
+    let firstChild = firstHost.view
     for expected in [1, 2, 1, 0] {
-      let previous = try XCTUnwrap(controller.pageViewController.viewControllers?.first)
+      let previous = try XCTUnwrap(controller.sheetController.page)
       let forward = expected > controller.displayedIndex
       let target = try XCTUnwrap(forward
-        ? controller.pageViewController(controller.pageViewController, viewControllerAfter: previous)
-        : controller.pageViewController(controller.pageViewController, viewControllerBefore: previous))
-      controller.pageViewController(controller.pageViewController, willTransitionTo: [target])
-      controller.pageViewController.setViewControllers([target], direction: forward ? .forward : .reverse, animated: false)
-      controller.pageViewController(controller.pageViewController, didFinishAnimating: true,
-        previousViewControllers: [previous], transitionCompleted: true)
+        ? controller.sheetController(controller.sheetController, after: previous)
+        : controller.sheetController(controller.sheetController, before: previous))
+      controller.sheetController(controller.sheetController, willTurnTo: target)
+      controller.sheetController.show(target, direction: forward ? .forward : .reverse, animated: false)
+      controller.sheetController(controller.sheetController, didTurnFrom: previous, completed: true)
       configure()
       XCTAssertEqual(controller.displayedIndex, expected)
       XCTAssertEqual(Set(controller.cachedPageIdentities.keys), Set([0, 1, 2]))
-      XCTAssertTrue(firstShell.children.contains { $0 === firstChild }
-        || controller.children.contains { $0 === firstChild },
-        "The same child remains owned by its shell or the preparation window, never retired within the four-page budget")
+      XCTAssertTrue(firstHost.parent === controller.sheetController && firstHost.view === firstChild,
+        "The original resident host stays mounted through every direction")
     }
-    XCTAssertTrue(controller.pageViewController.viewControllers?.first === firstShell)
-    XCTAssertTrue(firstShell.children.first === firstChild, "Reverse installs the exact original content, not a replacement")
-  }
-
-  @MainActor
-  func testUIKitCachedShellInstallsItsRestoredChildWithoutASecondDataSourceRequest() throws {
-    let controller = IPadPageTurnController(), owner = UUID()
-    var committed = 0
-    func configure() {
-      controller.update(ownerID: owner, sequenceRevision: "fixture-order", pageCount: 6, selectedIndex: committed,
-        navigationIsEnabled: true, pageIsInteractive: true, canBeginNavigation: { true },
-        page: { index, _, ready in ready(true); return AnyView(Text("Page \(index)")) },
-        onCommit: { index, _ in committed = index }, onTransitioningChange: { _ in })
-    }
-    configure(); controller.loadViewIfNeeded()
-    let firstShell = try XCTUnwrap(controller.pageViewController.viewControllers?.first)
-    for expected in [1, 2, 1] {
-      let previous = try XCTUnwrap(controller.pageViewController.viewControllers?.first)
-      let forward = expected > controller.displayedIndex
-      let target = try XCTUnwrap(forward
-        ? controller.pageViewController(controller.pageViewController, viewControllerAfter: previous)
-        : controller.pageViewController(controller.pageViewController, viewControllerBefore: previous))
-      controller.pageViewController(controller.pageViewController, willTransitionTo: [target])
-      controller.pageViewController.setViewControllers([target], direction: forward ? .forward : .reverse, animated: false)
-      controller.pageViewController(controller.pageViewController, didFinishAnimating: true,
-        previousViewControllers: [previous], transitionCompleted: true)
-      configure()
-    }
-    XCTAssertTrue(firstShell.children.isEmpty, "The replacement child is prepared separately from UIKit's cached shell")
-    let shellParent = firstShell.parent
-    // UIKit is allowed to reuse the shell it already retained, skipping before:.
-    controller.pageViewController(controller.pageViewController, willTransitionTo: [firstShell])
-    let installed = try XCTUnwrap(firstShell.children.first)
-    XCTAssertTrue(installed.view.superview === firstShell.view)
-    XCTAssertTrue(firstShell.parent === shellParent, "The handoff installs the child without reparenting UIKit's shell")
-    XCTAssertLessThanOrEqual(controller.cachedPageIdentities.count, 4)
+    XCTAssertTrue(controller.sheetController.page === firstHost)
+    XCTAssertTrue(firstHost.view === firstChild, "Reverse installs the exact original content, not a replacement")
   }
 
   @MainActor
@@ -565,7 +564,7 @@ final class PageTurnSelectionTests: XCTestCase {
   }
 
   @MainActor
-  func testRetiredUIKitShellReturnsWithNewReadinessWithoutBeingReparented() throws {
+  func testEvictedSheetGetsANewHostAndRejectsOldReadiness() throws {
     let controller = IPadPageTurnController(), owner = UUID()
     var committed = 0
     var preparesImmediately = true
@@ -580,42 +579,41 @@ final class PageTurnSelectionTests: XCTestCase {
         }, onCommit: { index, _ in committed = index }, onTransitioningChange: { _ in })
     }
     func turn(forward: Bool) throws {
-      let current = try XCTUnwrap(controller.pageViewController.viewControllers?.first)
+      let current = try XCTUnwrap(controller.sheetController.page)
       let next = try XCTUnwrap(forward
-        ? controller.pageViewController(controller.pageViewController, viewControllerAfter: current)
-        : controller.pageViewController(controller.pageViewController, viewControllerBefore: current))
-      controller.pageViewController(controller.pageViewController, willTransitionTo: [next])
-      controller.pageViewController.setViewControllers([next], direction: forward ? .forward : .reverse, animated: false)
-      controller.pageViewController(controller.pageViewController, didFinishAnimating: true,
-        previousViewControllers: [current], transitionCompleted: true)
+        ? controller.sheetController(controller.sheetController, after: current)
+        : controller.sheetController(controller.sheetController, before: current))
+      controller.sheetController(controller.sheetController, willTurnTo: next)
+      controller.sheetController.show(next, direction: forward ? .forward : .reverse, animated: false)
+      controller.sheetController(controller.sheetController, didTurnFrom: current, completed: true)
       configure()
     }
     configure(); controller.loadViewIfNeeded()
-    let original = try XCTUnwrap(controller.pageViewController.viewControllers?.first)
+    let original = try XCTUnwrap(controller.sheetController.page)
     let expiredReadiness = try XCTUnwrap(readiness[0]?.last)
     try turn(forward: true)
     try turn(forward: true)
     XCTAssertEqual(controller.displayedIndex, 2)
-    XCTAssertNil(controller.cachedPageIdentities[0], "The far page must release live content even while UIKit retains its shell")
+    XCTAssertNil(controller.cachedPageIdentities[0], "The far page must release live content even while a test retains the retired controller")
 
     preparesImmediately = false
     try turn(forward: false)
     XCTAssertEqual(controller.displayedIndex, 1)
-    XCTAssertEqual(controller.cachedPageIdentities[0], ObjectIdentifier(original))
-    XCTAssertFalse(original.parent === controller, "Restoring content must not steal UIKit's controller back into prewarm")
-    let current = try XCTUnwrap(controller.pageViewController.viewControllers?.first)
-    XCTAssertNil(controller.pageViewController(controller.pageViewController, viewControllerBefore: current))
+    XCTAssertNotEqual(controller.cachedPageIdentities[0], ObjectIdentifier(original))
+    XCTAssertNil(original.parent, "Evicted content must not remain mounted")
+    let current = try XCTUnwrap(controller.sheetController.page)
+    XCTAssertNil(controller.sheetController(controller.sheetController, before: current))
     expiredReadiness(true)
-    XCTAssertNil(controller.pageViewController(controller.pageViewController, viewControllerBefore: current),
+    XCTAssertNil(controller.sheetController(controller.sheetController, before: current),
       "Readiness from the retired content cannot certify the replacement page")
     try XCTUnwrap(readiness[0]?.last)(true)
     expiredReadiness(false)
-    let restored = try XCTUnwrap(controller.pageViewController(controller.pageViewController, viewControllerBefore: current))
-    XCTAssertTrue(restored === original, "UIKit's retained identity is also the prepared reverse candidate")
+    let restored = try XCTUnwrap(controller.sheetController(controller.sheetController, before: current))
+    XCTAssertFalse(restored === original, "A retired host cannot be resurrected with stale readiness")
   }
 
   @MainActor
-  func testRestoredUIKitShellPreparesItsNewChildInTheWindowBeforeReturning() async throws {
+  func testEvictedSheetPreparesItsReplacementInTheWindowBeforeReturning() async throws {
     let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
     let window = UIWindow(windowScene: scene)
     let controller = IPadPageTurnController(), owner = UUID()
@@ -632,36 +630,35 @@ final class PageTurnSelectionTests: XCTestCase {
         }, onCommit: { index, _ in committed = index }, onTransitioningChange: { _ in })
     }
     func turn(forward: Bool) async throws {
-      let current = try XCTUnwrap(controller.pageViewController.viewControllers?.first)
+      let current = try XCTUnwrap(controller.sheetController.page)
       var next: UIViewController?
       let deadline = ContinuousClock.now + .seconds(3)
       repeat {
         next = forward
-          ? controller.pageViewController(controller.pageViewController, viewControllerAfter: current)
-          : controller.pageViewController(controller.pageViewController, viewControllerBefore: current)
+          ? controller.sheetController(controller.sheetController, after: current)
+          : controller.sheetController(controller.sheetController, before: current)
         if next == nil { try await Task.sleep(for: .milliseconds(10)) }
       } while next == nil && ContinuousClock.now < deadline
       let destination = try XCTUnwrap(next, "A restored child must reach the real prewarm window without displaying its retired shell first")
-      controller.pageViewController(controller.pageViewController, willTransitionTo: [destination])
-      controller.pageViewController.setViewControllers([destination], direction: forward ? .forward : .reverse, animated: false)
-      controller.pageViewController(controller.pageViewController, didFinishAnimating: true,
-        previousViewControllers: [current], transitionCompleted: true)
+      controller.sheetController(controller.sheetController, willTurnTo: destination)
+      controller.sheetController.show(destination, direction: forward ? .forward : .reverse, animated: false)
+      controller.sheetController(controller.sheetController, didTurnFrom: current, completed: true)
       configure()
       XCTAssertLessThanOrEqual(controller.cachedPageIdentities.count, 4)
     }
     configure(); window.makeKeyAndVisible()
     defer { window.isHidden = true; window.rootViewController = nil }
-    let originalShell = try XCTUnwrap(controller.pageViewController.viewControllers?.first)
+    let originalHost = try XCTUnwrap(controller.sheetController.page)
     try await turn(forward: true)
     let originalChild = try XCTUnwrap(preparedChildren[0]?.first)
     try await turn(forward: true)
     XCTAssertNil(controller.cachedPageIdentities[0])
     try await turn(forward: false)
-    XCTAssertFalse(originalShell.parent === controller,
-      "Only the newly prepared child, never UIKit's retained shell, belongs to prewarm containment")
+    XCTAssertFalse(originalHost.parent === controller,
+      "Only the newly prepared child, never the retired host, belongs to prewarm containment")
     try await turn(forward: false)
     XCTAssertEqual(controller.displayedIndex, 0)
-    XCTAssertTrue(controller.pageViewController.viewControllers?.first === originalShell)
+    XCTAssertFalse(controller.sheetController.page === originalHost)
     XCTAssertEqual(preparedChildren[0]?.count, 2)
     XCTAssertNotEqual(preparedChildren[0]?.last, originalChild,
       "The far content was released, and its replacement earned readiness from its own mounted view")
@@ -689,7 +686,7 @@ final class PageTurnSelectionTests: XCTestCase {
     defer { window.isHidden = true; window.rootViewController = nil }
     try await Task.sleep(for: .milliseconds(20))
     reported.removeAll()
-    let previous = try XCTUnwrap(controller.pageViewController.viewControllers?.first)
+    let previous = try XCTUnwrap(controller.sheetController.page)
     update(selected: 1)
     XCTAssertTrue(reported.isEmpty)
     XCTAssertFalse(previous.view.isUserInteractionEnabled, "The page under the hand stops accepting content input immediately")
@@ -715,19 +712,18 @@ final class PageTurnSelectionTests: XCTestCase {
     update(owner: firstOwner); controller.loadViewIfNeeded()
     try await Task.sleep(for: .milliseconds(20))
     reported.removeAll()
-    let current = try XCTUnwrap(controller.pageViewController.viewControllers?.first)
-    let next = try XCTUnwrap(controller.pageViewController(controller.pageViewController, viewControllerAfter: current))
+    let current = try XCTUnwrap(controller.sheetController.page)
+    let next = try XCTUnwrap(controller.sheetController(controller.sheetController, after: current))
     let nativeActivity = try XCTUnwrap(activity)
     var acceptedStates: [Bool] = []
     let observation = nativeActivity.observe { acceptedStates.append($0) }
     defer { nativeActivity.removeObserver(observation) }
-    controller.pageViewController(controller.pageViewController, willTransitionTo: [next])
+    controller.sheetController(controller.sheetController, willTurnTo: next)
     XCTAssertTrue(nativeActivity.isTransitioning, "WebKit capture admission changes in the accepted native event")
     XCTAssertEqual(acceptedStates, [true], "A deferred SwiftUI publication cannot leave an unlocked interval")
     XCTAssertFalse(current.view.isUserInteractionEnabled)
     XCTAssertTrue(reported.isEmpty)
-    controller.pageViewController(controller.pageViewController, didFinishAnimating: true,
-      previousViewControllers: [current], transitionCompleted: false)
+    controller.sheetController(controller.sheetController, didTurnFrom: current, completed: false)
     XCTAssertFalse(nativeActivity.isTransitioning)
     XCTAssertEqual(acceptedStates, [true, false])
     update(owner: secondOwner)

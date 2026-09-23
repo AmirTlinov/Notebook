@@ -66,6 +66,14 @@ final class NotebookAppModel {
   private struct PageAddress: Hashable { let itemID: UUID; let index: Int; let root: String }
   @ObservationIgnored private var pageAddresses: [PageAddress: UUID] = [:]
   @ObservationIgnored private var pagePreparationTasks: [PageAddress: Task<Void, Never>] = [:]
+  @ObservationIgnored private var pagePreparationTail: (id: UUID, task: Task<Void, Never>)?
+  @ObservationIgnored private var pagePreparationWindows: [UUID: (root: String, indices: Set<Int>)] = [:]
+  let notebookPageNavigation = NotebookPageNavigation()
+
+  func retainNotebookPageWindow(_ indices: Set<Int>, in itemID: UUID, root: String) {
+    guard notebookPageRoot(itemID) == root else { return }
+    pagePreparationWindows[itemID] = indices.isEmpty ? nil : (root, indices)
+  }
 
   func notebookPageCount(_ itemID: UUID) -> Int {
     workspace?.notebookPageOrder(in: itemID)?.count ?? 0
@@ -97,9 +105,17 @@ final class NotebookAppModel {
     let address = PageAddress(itemID: itemID, index: index, root: root)
     if notebookPage(at: index, in: itemID) != nil { return }
     if let pending = pagePreparationTasks[address] { await pending.value; return }
+    // SQLite already reads through one FIFO. Capture the projection only after
+    // the previous addressed read publishes, rather than making neighbour reads
+    // invalidate and repeat one another's work through the global model epoch.
+    let predecessor = pagePreparationTail?.task, requestID = UUID()
     let task = Task { [weak self] in
       guard let self else { return }
-      defer { pagePreparationTasks[address] = nil }
+      await predecessor?.value
+      defer {
+        pagePreparationTasks[address] = nil
+        if pagePreparationTail?.id == requestID { pagePreparationTail = nil }
+      }
       while !Task.isCancelled, let workspace, let presence, !isItemBeingDeleted(itemID), notebookPageRoot(itemID) == root {
         let epoch = collaborationReadEpoch
         do {
@@ -139,6 +155,7 @@ final class NotebookAppModel {
       }
     }
     pagePreparationTasks[address] = task
+    pagePreparationTail = (requestID, task)
     await task.value
   }
 
@@ -196,12 +213,14 @@ final class NotebookAppModel {
   }
 
   private func retainPreparedPages(near address: PageAddress, selectedPageID: UUID?) {
+    let window = pagePreparationWindows[address.itemID].flatMap { $0.root == address.root ? $0.indices : nil }
     let ordered = pages.keys.sorted { lhs, rhs in
       @MainActor func score(_ id: UUID) -> Int {
         if id == selectedPageID { return 0 }
         if id == pageAddresses[address] { return 1 }
         guard let location = pageAddresses.first(where: { $0.value == id && $0.key.root == address.root })?.key,
           location.itemID == address.itemID else { return 1_000 }
+        if let window { return window.contains(location.index) ? 2 : 1_000 }
         return 2 + abs(location.index - address.index)
       }
       return score(lhs) == score(rhs) ? lhs.uuidString < rhs.uuidString : score(lhs) < score(rhs)
@@ -373,7 +392,8 @@ final class NotebookAppModel {
   func sceneWorkset(presence: SessionPresence, pinned: Set<WorkspaceSpatialID> = [],
     limit: Int = WorkspaceSceneIndex.detailLimit, pixelScale: Double? = nil) -> WorkspaceSceneWorkset {
     sceneQueryCount &+= 1
-    if sceneCoverage[presence.boardID]?.contains(NotebookSceneState.bounds(for: presence, margin: 64)) != true {
+    if sceneCoverage[presence.boardID]?.contains(NotebookSceneState.bounds(for: presence,
+      margin: WorkspaceSceneIndex.preparationMargin(for: presence))) != true {
       requestSceneCoverage(presence)
     }
     return sceneIndex?.workset(presence: presence, pinned: pinned, limit: limit, pixelScale: pixelScale) ?? .empty
@@ -401,7 +421,8 @@ final class NotebookAppModel {
     }
     scenePinnedItems = itemPins
     let missingItemPin = itemIDs.contains { sceneIndex?.item(id: $0) == nil }
-    if missingPin || missingGroup || missingItemPin || sceneCoverage[presence.boardID]?.contains(NotebookSceneState.bounds(for: presence, margin: 64)) != true {
+    if missingPin || missingGroup || missingItemPin || sceneCoverage[presence.boardID]?.contains(NotebookSceneState.bounds(for: presence,
+      margin: WorkspaceSceneIndex.preparationMargin(for: presence))) != true {
       requestSceneCoverage(presence)
     }
     // An addressed pin is still being fetched. Do not turn the previous
@@ -594,7 +615,7 @@ final class NotebookAppModel {
   private func cameraNeedsPreparation(_ presence: SessionPresence?) -> Bool {
     guard let presence, let basis = cameraPreparationPresence,
       basis.boardID == presence.boardID, basis.viewport == presence.viewport else { return true }
-    // The scene workset has at least 96 pt of overscan. Revisit it after 64 pt,
+    // Revisit the viewport-relative preparation window after 64 pt,
     // without querying the spatial index or restarting source jobs per sample.
     // Magnification also has to request detail when the viewport only shrinks.
     return !(0.6...sqrt(2.0)).contains(presence.camera.scale / basis.camera.scale)
@@ -1015,6 +1036,15 @@ final class NotebookAppModel {
   // This admission also changes the history task's key when startup completes.
   var permitsBackgroundPreparation: Bool {
     loadState == .ready && !isStopped && !inputIsActive && !peerInputIsActive && presencePhase == .settled
+  }
+
+  /// A finger navigating paper must not suspend the destination it needs.
+  /// Preparation reads immutable sources and cannot replace accepted ink or
+  /// an active content edit. A focused program must not suspend immutable
+  /// neighbours until the user dismisses its focus.
+  var permitsPagePreparation: Bool {
+    loadState == .ready && preparationIsForeground && !isStopped && !peerInputIsActive
+      && !inputGate.hasActivePencil
   }
 
   /// Moving the camera must not leave newly visible material waiting for lift.
@@ -3785,11 +3815,15 @@ final class NotebookAppModel {
       target = .init(kind: .board, id: boardID)
     }
     let actor = actorID
-    collaborationReadEpoch &+= 1; collaborationContentEpoch &+= 1
-    let accepted = try await persistence.submit(publishesChanges: true) { store in
+    // A stopped runtime often checkpoints state already committed by its last
+    // interaction. Validate that basis in storage, but do not invalidate every
+    // page read/render for a no-op (one per visible program during a turn).
+    let changesState = value != rendered.state
+    if changesState { collaborationReadEpoch &+= 1; collaborationContentEpoch &+= 1 }
+    let accepted = try await persistence.submit(publishesChanges: changesState) { store in
       try store.checkpointProgramState(target: target, rendered: rendered, state: value, basis: basis, actor: actor)
     }
-    if accepted != nil { reloadExternalChanges() }
+    if let accepted, accepted != basis { reloadExternalChanges() }
     return accepted
   }
 

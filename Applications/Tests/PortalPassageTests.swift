@@ -173,7 +173,8 @@ final class PortalPassageTests: XCTestCase {
     XCTAssertGreaterThan(mounted.count, 0)
     XCTAssertLessThanOrEqual(mounted.count, SceneRenderResources.shared.maximumWebSurfaces - 1,
       "Visible input owners leave one transient executor for static neighbours")
-    XCTAssertLessThan(mounted.count, 10, "Entering a board cannot run all of its programs")
+    XCTAssertLessThanOrEqual(mounted.count, SceneRenderResources.maximumVisiblePrograms,
+      "Only visible bounded owners run; visible controls cannot become permanently queued pictures")
     scene.model.inputGate.beginContact(source: input)
     try scene.send(.began(centroid: center))
     try scene.send(.changed(scale: 1.04, velocity: 1, elapsed: 0.2, centroid: center))

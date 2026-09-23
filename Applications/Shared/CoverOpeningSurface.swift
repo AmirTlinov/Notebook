@@ -1,6 +1,4 @@
 import CoreImage
-import CoreImage.CIFilterBuiltins
-import MetalKit
 import NotebookCore
 import SwiftUI
 
@@ -180,62 +178,6 @@ enum CoverOpeningPhysics {
   }
 }
 
-/// Gives the curling cover room to travel while the notebook keeps owning its
-/// canonical sheet-sized frame. The opening side reserves one whole cover;
-/// the smaller margins carry the filter's bend without turning
-/// those pixels into workspace geometry or a new hit target.
-struct CoverCurlLayout: Equatable {
-  static let openingTravelRatio = 1.0
-  static let shadowMarginRatio = 0.04
-
-  let sheetSize: CGSize
-  let shadowMargin: CGFloat
-
-  init(sheetSize: CGSize) {
-    precondition(sheetSize.width > 0 && sheetSize.height > 0)
-    self.sheetSize = sheetSize
-    shadowMargin = min(sheetSize.width, sheetSize.height) * Self.shadowMarginRatio
-  }
-
-  var sheetFrame: CGRect {
-    CGRect(
-      x: sheetSize.width * Self.openingTravelRatio + shadowMargin,
-      y: shadowMargin,
-      width: sheetSize.width,
-      height: sheetSize.height
-    )
-  }
-
-  var canvasSize: CGSize {
-    CGSize(
-      width: sheetFrame.maxX + shadowMargin,
-      height: sheetFrame.maxY + shadowMargin
-    )
-  }
-
-  /// The Metal canvas is a child of the sheet-sized platform view. Its origin
-  /// is shifted so the sheet inside the canvas remains exactly at `(0, 0)`.
-  var canvasFrameAroundSheet: CGRect {
-    CGRect(
-      x: -sheetFrame.minX,
-      y: -sheetFrame.minY,
-      width: canvasSize.width,
-      height: canvasSize.height
-    )
-  }
-
-  func sheetExtent(inDrawableSize drawableSize: CGSize) -> CGRect {
-    let scaleX = drawableSize.width / canvasSize.width
-    let scaleY = drawableSize.height / canvasSize.height
-    return CGRect(
-      x: sheetFrame.minX * scaleX,
-      y: sheetFrame.minY * scaleY,
-      width: sheetFrame.width * scaleX,
-      height: sheetFrame.height * scaleY
-    )
-  }
-}
-
 /// Keeps one frozen cover for one physical curl. Content that arrives while
 /// the sheet is moving waits for an endpoint instead of replacing pixels in
 /// the person's hand halfway through the gesture.
@@ -342,7 +284,7 @@ struct CoverSnapshotLifecycle {
     // Visibility belongs to the wrapper so the captured hosting layer keeps
     // fully opaque pixels while the live cover rests behind the open page.
     private let coverVisibilityView = UIView()
-    private let curlView = CoverCurlMetalView(frame: .zero)
+    private let curlView = SheetCurlMetalView(frame: .zero)
 
     var submittedCurlFrameCount: Int { curlView.submittedFrameCount }
     private(set) var capturedCoverCount = 0
@@ -520,14 +462,14 @@ struct CoverSnapshotLifecycle {
       )
     }
 
-    private func layoutSurfaces() -> CoverCurlLayout? {
+    private func layoutSurfaces() -> SheetCurlLayout? {
       guard view.bounds.width > 0, view.bounds.height > 0 else { return nil }
       coverVisibilityView.frame = view.bounds
       if coverHost.view.frame != view.bounds {
         hasInstalledLayout = false
         coverHost.view.frame = view.bounds
       }
-      let layout = CoverCurlLayout(sheetSize: view.bounds.size)
+      let layout = SheetCurlLayout(sheetSize: view.bounds.size)
       if curlView.frame != layout.canvasFrameAroundSheet {
         curlView.frame = layout.canvasFrameAroundSheet
       }
@@ -658,7 +600,7 @@ struct CoverSnapshotLifecycle {
   @MainActor
   private final class MacCoverOpeningView: NSView {
     private let coverHost = NSHostingView(rootView: AnyView(EmptyView()))
-    private let curlView = CoverCurlMetalView(frame: .zero)
+    private let curlView = SheetCurlMetalView(frame: .zero)
 
     private var lifecycle = CoverSnapshotLifecycle()
     private var backsideColor = CoverBacksideColor.document
@@ -758,12 +700,12 @@ struct CoverSnapshotLifecycle {
       )
     }
 
-    private func layoutSurfaces() -> CoverCurlLayout? {
+    private func layoutSurfaces() -> SheetCurlLayout? {
       guard bounds.width > 0, bounds.height > 0 else { return nil }
       if coverHost.frame != bounds {
         coverHost.frame = bounds
       }
-      let layout = CoverCurlLayout(sheetSize: bounds.size)
+      let layout = SheetCurlLayout(sheetSize: bounds.size)
       if curlView.frame != layout.canvasFrameAroundSheet {
         curlView.frame = layout.canvasFrameAroundSheet
       }
@@ -818,297 +760,3 @@ struct CoverSnapshotLifecycle {
     }
   }
 #endif
-
-/// One shared Core Image executor compiles the physical curl before a finger
-/// can ask for it. Individual covers keep their own drawable and in-flight
-/// limit, while the expensive Metal context and filter program are prepared
-/// once outside the interactive frame.
-private final class CoverCurlGPU: @unchecked Sendable {
-  static let shared = CoverCurlGPU()
-
-  let device: (any MTLDevice)?
-  let commandQueue: (any MTLCommandQueue)?
-  let imageContext: CIContext?
-
-  private init() {
-    let device = MTLCreateSystemDefaultDevice()
-    self.device = device
-    commandQueue = device?.makeCommandQueue()
-    imageContext = device.map {
-      CIContext(
-        mtlDevice: $0,
-        options: [
-          .cacheIntermediates: false,
-          .workingColorSpace: NSNull(),
-        ]
-      )
-    }
-    let imageContext = imageContext
-    DispatchQueue.global(qos: .userInitiated).async {
-      Self.prepareCurlProgram(in: imageContext)
-    }
-  }
-
-  private static func prepareCurlProgram(in context: CIContext?) {
-    guard let context else { return }
-    let extent = CGRect(x: 0, y: 0, width: 64, height: 64)
-    let input = CIImage(color: CIColor(red: 1, green: 1, blue: 1))
-      .cropped(to: extent)
-    let filter = CIFilter.pageCurlWithShadowTransition()
-    filter.inputImage = input
-    filter.targetImage = CIImage(color: .clear).cropped(to: extent)
-    filter.backsideImage = input
-    filter.extent = extent
-    filter.time = 0.01
-    filter.angle = .pi
-    filter.radius = 4
-    filter.shadowSize = CoverOpeningPhysics.systemShadowSize
-    filter.shadowAmount = CoverOpeningPhysics.systemShadowAmount
-    filter.shadowExtent = extent
-    guard let output = filter.outputImage?.cropped(to: extent) else { return }
-    _ = context.createCGImage(output, from: extent)
-  }
-}
-
-/// GPU executor for the physical sheet. Core Image owns curl geometry and
-/// backside illumination; this view supplies the frozen cover pixels, clears
-/// every drawable, and presents the camera-owned progress value.
-@MainActor
-private final class CoverCurlMetalView: MTKView, MTKViewDelegate {
-  var permitsFrameSubmission: @MainActor () -> Bool = { false }
-  private(set) var submittedFrameCount = 0
-  private var framePending = false
-  private let commandQueue: (any MTLCommandQueue)?
-  private let imageContext: CIContext?
-  private let outputColorSpace = CGColorSpace(name: CGColorSpace.sRGB)!
-  private let inFlightSemaphore = DispatchSemaphore(value: 2)
-
-  private var coverImage: CIImage?
-  private var progress = 0.0
-  private var backsideColor = CoverBacksideColor.document
-  private var cornerRadius: CGFloat = 0
-  private var curlLayout: CoverCurlLayout?
-  private var sourceCover: CGImage?
-
-  override init(frame frameRect: CGRect, device: (any MTLDevice)? = nil) {
-    let gpu = CoverCurlGPU.shared
-    let metalDevice = device ?? gpu.device
-    commandQueue = gpu.commandQueue
-    imageContext = gpu.imageContext
-    super.init(frame: frameRect, device: metalDevice)
-
-    delegate = self
-    framebufferOnly = false
-    colorPixelFormat = .bgra8Unorm
-    clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 0)
-    enableSetNeedsDisplay = true
-    isPaused = true
-    autoResizeDrawable = true
-
-    #if os(iOS)
-      isOpaque = false
-      backgroundColor = .clear
-      layer.isOpaque = false
-      (layer as? CAMetalLayer)?.maximumDrawableCount = 2
-    #elseif os(macOS)
-      wantsLayer = true
-      layer?.isOpaque = false
-      layer?.backgroundColor = NSColor.clear.cgColor
-      (layer as? CAMetalLayer)?.maximumDrawableCount = 2
-    #endif
-  }
-
-  @available(*, unavailable)
-  required init(coder: NSCoder) {
-    fatalError("init(coder:) is not supported")
-  }
-
-  func update(
-    cover: CGImage,
-    progress: Double,
-    backsideColor: CoverBacksideColor,
-    cornerRadius: CGFloat,
-    layout: CoverCurlLayout
-  ) {
-    let resolvedProgress = CoverOpeningPhysics.clamped(progress)
-    let changed =
-      sourceCover.map { $0 !== cover } ?? true
-      || self.progress != resolvedProgress
-      || self.backsideColor != backsideColor
-      || self.cornerRadius != cornerRadius
-      || curlLayout != layout
-    guard changed else {
-      if framePending { setNeedsDisplay(bounds) }
-      return
-    }
-    sourceCover = cover
-    coverImage = CIImage(cgImage: cover)
-    self.progress = resolvedProgress
-    self.backsideColor = backsideColor
-    self.cornerRadius = cornerRadius
-    curlLayout = layout
-    framePending = true
-    setNeedsDisplay(bounds)
-  }
-
-  func mtkView(
-    _ view: MTKView,
-    drawableSizeWillChange size: CGSize
-  ) {
-    framePending = true
-    setNeedsDisplay(bounds)
-  }
-
-  #if os(iOS)
-    override func didMoveToWindow() {
-      super.didMoveToWindow()
-      if window != nil, framePending { setNeedsDisplay(bounds) }
-    }
-  #elseif os(macOS)
-    override func viewDidMoveToWindow() {
-      super.viewDidMoveToWindow()
-      if window != nil, framePending { setNeedsDisplay(bounds) }
-    }
-  #endif
-
-  func draw(in view: MTKView) {
-    // A queued warm frame is still background work when a new contact arrives.
-    // Keep it pending, without rescheduling a busy loop, until the next update.
-    // UIKit also requests display during unrelated layer/layout transactions.
-    // Those requests must not consume another drawable for the same cover.
-    guard framePending, window != nil, !isHidden, permitsFrameSubmission() else { return }
-    autoreleasepool { submitPendingFrame() }
-  }
-
-  private func submitPendingFrame() {
-    guard inFlightSemaphore.wait(timeout: .now()) == .success else { return }
-    var mustSignal = true
-    defer {
-      if mustSignal { inFlightSemaphore.signal() }
-    }
-
-    guard drawableSize.width > 0,
-      drawableSize.height > 0,
-      let curlLayout,
-      let commandQueue,
-      let commandBuffer = commandQueue.makeCommandBuffer(),
-      let imageContext
-    else { return }
-
-    let canvasExtent = CGRect(origin: .zero, size: drawableSize)
-    let sheetExtent = curlLayout.sheetExtent(inDrawableSize: drawableSize)
-    guard let input = placedCoverImage(in: sheetExtent) else { return }
-    let filter = CIFilter.pageCurlWithShadowTransition()
-    filter.inputImage = input
-    filter.targetImage = CIImage(color: .clear).cropped(to: sheetExtent)
-    filter.backsideImage = roundedBacksideImage(extent: sheetExtent)
-    filter.extent = sheetExtent
-    filter.time = Float(progress)
-    filter.angle = .pi
-    filter.radius = CoverOpeningPhysics.curlRadius(for: sheetExtent)
-    // CIPageCurlWithShadowTransition's cast shadow includes its opaque output
-    // extent. The fold's own lighting is the visual owner while the sheet moves,
-    // so these values keep the surrounding Metal canvas transparent.
-    filter.shadowSize = CoverOpeningPhysics.systemShadowSize
-    filter.shadowAmount = CoverOpeningPhysics.systemShadowAmount
-    filter.shadowExtent = canvasExtent
-
-    // Build the graph before borrowing a drawable. All temporary Core Image /
-    // Metal references leave this frame's autorelease pool after submission,
-    // not after every other view has drawn in the same layer transaction.
-    guard let output = filter.outputImage?.cropped(to: canvasExtent),
-      let drawable = currentDrawable
-    else {
-      return
-    }
-    guard clear(texture: drawable.texture, with: commandBuffer) else {
-      return
-    }
-    imageContext.render(
-      output,
-      to: drawable.texture,
-      commandBuffer: commandBuffer,
-      bounds: canvasExtent,
-      colorSpace: outputColorSpace
-    )
-    commandBuffer.addCompletedHandler { [weak self, inFlightSemaphore] _ in
-      inFlightSemaphore.signal()
-      Task { @MainActor [weak self] in
-        guard let self, framePending, window != nil, !isHidden,
-          permitsFrameSubmission() else { return }
-        // Capacity becoming free, rather than a display/poll loop, resumes the
-        // most recent camera demand. Intermediate progress values are not queued.
-        setNeedsDisplay(bounds)
-      }
-    }
-    mustSignal = false
-    commandBuffer.present(drawable)
-    commandBuffer.commit()
-    framePending = false
-    submittedFrameCount += 1
-  }
-
-  private func clear(
-    texture: any MTLTexture,
-    with commandBuffer: any MTLCommandBuffer
-  ) -> Bool {
-    let descriptor = MTLRenderPassDescriptor()
-    guard let attachment = descriptor.colorAttachments[0] else {
-      return false
-    }
-    attachment.texture = texture
-    attachment.loadAction = .clear
-    attachment.storeAction = .store
-    attachment.clearColor = clearColor
-    guard
-      let encoder = commandBuffer.makeRenderCommandEncoder(
-        descriptor: descriptor
-      )
-    else { return false }
-    encoder.endEncoding()
-    return true
-  }
-
-  private func placedCoverImage(in sheetExtent: CGRect) -> CIImage? {
-    guard let coverImage else { return nil }
-    let source = coverImage.extent.size
-    guard source.width > 0, source.height > 0 else { return nil }
-    let scaled = coverImage.transformed(
-      by: CGAffineTransform(
-        scaleX: sheetExtent.width / source.width,
-        y: sheetExtent.height / source.height
-      )
-    )
-    return scaled.transformed(
-      by: CGAffineTransform(
-        translationX: sheetExtent.minX - scaled.extent.minX,
-        y: sheetExtent.minY - scaled.extent.minY
-      )
-    ).cropped(
-      to: sheetExtent
-    )
-  }
-
-  private func roundedBacksideImage(extent: CGRect) -> CIImage {
-    let color = CIImage(color: backsideColor.ciColor).cropped(to: extent)
-    let radius = cornerRadius * extent.width / curlLayoutSheetWidth
-    let generator = CIFilter.roundedRectangleGenerator()
-    generator.extent = extent
-    generator.radius = Float(max(0, radius))
-    generator.color = CIColor(red: 1, green: 1, blue: 1, alpha: 1)
-    guard let mask = generator.outputImage?.cropped(to: extent) else {
-      return color
-    }
-    return color.applyingFilter(
-      "CIBlendWithAlphaMask",
-      parameters: [
-        kCIInputBackgroundImageKey: CIImage(color: .clear).cropped(to: extent),
-        kCIInputMaskImageKey: mask,
-      ]
-    )
-  }
-
-  private var curlLayoutSheetWidth: CGFloat {
-    max(curlLayout?.sheetSize.width ?? 0, 1)
-  }
-}

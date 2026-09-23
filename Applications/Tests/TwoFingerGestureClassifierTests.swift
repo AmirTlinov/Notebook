@@ -41,16 +41,12 @@ final class TwoFingerGestureClassifierTests: XCTestCase {
   }
 
   @MainActor
-  func testIPadPageTurnUsesTheSystemPageCurl() {
-    let controller = IPadPageTurnController()
-    controller.loadViewIfNeeded()
-
-    XCTAssertEqual(controller.pageViewController.transitionStyle, .pageCurl)
-    XCTAssertEqual(
-      controller.pageViewController.navigationOrientation,
-      .horizontal
-    )
-    XCTAssertFalse(controller.pageViewController.isDoubleSided)
+  func testIPadPageTurnHasOneMotionRecognizerAndNoTapNavigation() {
+    let controller = IPadPageTurnController(); controller.loadViewIfNeeded()
+    let gestures = controller.sheetController.view.gestureRecognizers ?? []
+    XCTAssertTrue(gestures.contains { $0 === controller.sheetController.pan })
+    XCTAssertFalse(gestures.contains { $0 is UITapGestureRecognizer })
+    XCTAssertEqual(controller.sheetController.view.layer.speed, 1)
   }
 
   @MainActor
@@ -76,24 +72,22 @@ final class TwoFingerGestureClassifierTests: XCTestCase {
       onTransitioningChange: { _ in }
     )
     controller.loadViewIfNeeded()
-    let taps = controller.pageViewController.gestureRecognizers.compactMap { $0 as? UITapGestureRecognizer }
-    XCTAssertFalse(taps.isEmpty)
-    XCTAssertTrue(taps.allSatisfy { !$0.isEnabled },"A paper edge tap never navigates")
+    XCTAssertFalse((controller.sheetController.view.gestureRecognizers ?? []).contains { $0 is UITapGestureRecognizer })
     let current = try XCTUnwrap(
-      controller.pageViewController.viewControllers?.first
+      controller.sheetController.page
     )
     let target = try XCTUnwrap(
-      controller.pageViewController(
-        controller.pageViewController,
-        viewControllerAfter: current
+      controller.sheetController(
+        controller.sheetController,
+        after: current
       )
     )
 
-    controller.pageViewController(
-      controller.pageViewController,
-      willTransitionTo: [target]
+    controller.sheetController(
+      controller.sheetController,
+      willTurnTo: target
     )
-    XCTAssertEqual(controller.pageViewController.view.layer.speed,1.8)
+    XCTAssertEqual(controller.sheetController.view.layer.speed,1)
 
     XCTAssertNotNil(
       controller.cachedPageIdentities[3],
@@ -126,28 +120,25 @@ final class TwoFingerGestureClassifierTests: XCTestCase {
     )
     controller.loadViewIfNeeded()
     let current = try XCTUnwrap(
-      controller.pageViewController.viewControllers?.first
+      controller.sheetController.page
     )
     let target = try XCTUnwrap(
-      controller.pageViewController(
-        controller.pageViewController,
-        viewControllerAfter: current
+      controller.sheetController(
+        controller.sheetController,
+        after: current
       )
     )
-    controller.pageViewController(
-      controller.pageViewController,
-      willTransitionTo: [target]
+    controller.sheetController(
+      controller.sheetController,
+      willTurnTo: target
     )
-    controller.pageViewController.setViewControllers(
-      [target],
+    controller.sheetController.show(target,
       direction: .forward,
       animated: false
     )
-    controller.pageViewController(
-      controller.pageViewController,
-      didFinishAnimating: true,
-      previousViewControllers: [current],
-      transitionCompleted: true
+    controller.sheetController(
+      controller.sheetController,
+      didTurnFrom: current, completed: true
     )
 
     XCTAssertNotNil(
@@ -231,18 +222,18 @@ final class TwoFingerGestureClassifierTests: XCTestCase {
     controller.loadViewIfNeeded()
 
     let current = try XCTUnwrap(
-      controller.pageViewController.viewControllers?.first
+      controller.sheetController.page
     )
     let reverseCandidate = try XCTUnwrap(
-      controller.pageViewController(
-        controller.pageViewController,
-        viewControllerBefore: current
+      controller.sheetController(
+        controller.sheetController,
+        before: current
       )
     )
-    XCTAssertNil(reverseCandidate.parent)
+    XCTAssertTrue(reverseCandidate.parent === controller.sheetController)
 
-    // SwiftUI can update the representable while UIKit still holds this
-    // candidate for a page curl. The outer container must not adopt it again.
+    // Updating the representable must preserve the same mounted sheet owner.
+    // No reparenting is permitted before, during or after a reverse turn.
     controller.update(
       ownerID: ownerID,
       sequenceRevision: "fixture-order",
@@ -256,9 +247,9 @@ final class TwoFingerGestureClassifierTests: XCTestCase {
       onTransitioningChange: { _ in }
     )
 
-    XCTAssertNil(
-      reverseCandidate.parent,
-      "Переданная UIKit страница не должна снова становиться дочерней у prewarm-контейнера"
+    XCTAssertTrue(
+      reverseCandidate.parent === controller.sheetController,
+      "Подготовленная страница сохраняет одного владельца при обратном перелистывании"
     )
   }
 

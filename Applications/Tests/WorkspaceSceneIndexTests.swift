@@ -6,6 +6,28 @@ import XCTest
 @testable import Notebook
 
 final class WorkspaceSceneIndexTests: XCTestCase {
+  func testPreparationLeadsTheViewportWithoutAdmittingOffscreenProgramInput() throws {
+    let stamp = VersionStamp(counter: 0, actor: UUID()), boardID = WorkspaceRoot.boardID
+    let notebook = WorkspaceItem.notebook(title: "Preparation", pageIDs: [UUID()])
+    let element = SpatialElement(id: "approaching-control", surface: .board(boardID), kind: .web,
+      frame: .init(x: 0, y: 0, width: 100, height: 100), worldOrigin: .init(x: 750, y: 0),
+      source: "Button", html: "<button>Input</button>", stamp: stamp)
+    let workspace = WorkspaceIndex(items: [notebook], selectedItemID: notebook.id,
+      selectedPageID: notebook.pageIDs[0], stamp: stamp)
+    let hierarchy = BoardHierarchy(rootBoardID: boardID, boards: [.init(id: boardID,
+      board: .init(freeItems: [], elements: [element], stamp: stamp))], stamp: stamp)
+    let index = WorkspaceSceneIndex(workspace: workspace, hierarchy: hierarchy, paperSizes: [:])
+    let presence = SessionPresence(boardID: boardID, mode: .board, camera: .init(scale: 1),
+      viewport: .init(x: 834, y: 1194))
+    XCTAssertEqual(index.workset(presence: presence).elements.map(\.id), [element.id])
+    XCTAssertFalse(SceneCompositionPlane.board(boardID).demandsRuntime(source: agentElementSnapshotSource(element),
+      origin: element.worldOrigin, transform: .identity, in: presence))
+    let preparation = NotebookSceneState.bounds(for: presence, margin: WorkspaceSceneIndex.preparationMargin(for: presence))
+    XCTAssertTrue(NotebookSceneState.bounds(for: presence).contains(preparation),
+      "The durable source window must lead, not truncate, pixel preparation")
+    XCTAssertEqual(WorkspaceSceneIndex.detailLimit, 96, "Overscan does not expand the source count quota")
+  }
+
   func testLiveInkSuppressionRecomputesOnlyTheChangedClaimComponent() throws {
     let actor=UUID(),a=UUID(),b=UUID(),c=UUID(),boardID=WorkspaceRoot.boardID
     let item=WorkspaceItem.notebook(title:"Claims",pageIDs:[UUID()])
@@ -155,7 +177,13 @@ final class WorkspaceSceneIndexTests: XCTestCase {
         camera: .init(center: .init(x: 500 + Double(offset % 7), y: 700), scale: 0.4),
         viewport: .init(x: 1194, y: 834))
       let visible = index.workset(presence: presence)
-      XCTAssertEqual(visible.items.count, 4)
+      let viewport = CGRect(x: 0, y: 0, width: presence.viewport.x, height: presence.viewport.y)
+      let shown = visible.items.filter {
+        let box = $0.geometry.screenFrame(center: $0.center, camera: presence.camera, viewport: presence.viewport)
+        return CGRect(x: box.x, y: box.y, width: box.width, height: box.height).intersects(viewport)
+      }
+      XCTAssertEqual(shown.count, 4)
+      XCTAssertEqual(visible.items.count, 9, "Five offscreen neighbours lead the camera; they are not nine visible owners")
       XCTAssertTrue(visible.aggregates.isEmpty)
       XCTAssertLessThanOrEqual(visible.examinedEntries, 16,
         "Four visible owners do not require examining one hundred thousand entries")

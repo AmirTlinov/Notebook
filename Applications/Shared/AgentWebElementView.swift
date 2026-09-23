@@ -228,7 +228,13 @@ struct AgentWebSourceFailure: Equatable, Sendable {
       if window != nil { onRasterInstalled?(raster) }
     }
 
-    override func layoutSubviews() { super.layoutSubviews(); layoutRaster(); updateSampling() }
+    override func layoutSubviews() {
+      super.layoutSubviews(); layoutRaster(); updateSampling()
+      // SwiftUI can install the image before assigning the representable its
+      // first nonempty bounds. That earlier callback cannot certify pixels;
+      // layout must deliver the real installation, without an unrelated edit.
+      if let retainedRaster, window != nil { onRasterInstalled?(retainedRaster) }
+    }
 
     private func layoutRaster() {
       guard let raster = retainedRaster, let region = raster.source.captureRegion,
@@ -545,11 +551,26 @@ extension AgentElement {
   var requiresLiveRuntime: Bool {
     guard kind == .web else { return false }
     guard javaScript.isEmpty, css.isEmpty else { return true }
-    let drawing = StaticSVGContent()
-    let parser = XMLParser(data: Data(html.utf8))
-    parser.shouldResolveExternalEntities = false
-    parser.delegate = drawing
-    return !(parser.parse() && drawing.isDrawing)
+    return !StaticSVGClassification.shared.isDrawing(html)
+  }
+}
+
+/// XML proof belongs to immutable source, not a camera frame. The thread-safe
+/// cache uses 128-entry / 4 MiB eviction targets for keys, not rendered content.
+/// Equality is the entire source string; no truncated digest can certify code.
+private final class StaticSVGClassification: @unchecked Sendable {
+  static let shared = StaticSVGClassification()
+  private let results = NSCache<NSString, NSNumber>()
+  private init() { results.countLimit = 128; results.totalCostLimit = 4 * 1024 * 1024 }
+  func isDrawing(_ html: String) -> Bool {
+    let key = html as NSString
+    if let hit = results.object(forKey:key) { return hit.boolValue }
+    let drawing = StaticSVGContent(), bytes = Data(html.utf8)
+    let parser = XMLParser(data:bytes)
+    parser.shouldResolveExternalEntities = false; parser.delegate = drawing
+    let value = parser.parse() && drawing.isDrawing
+    results.setObject(NSNumber(value:value),forKey:key,cost:bytes.count)
+    return value
   }
 }
 
@@ -1137,6 +1158,7 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
     guard loadedElement != element || sourceChanged else {
       if policyChanged, runtimeLoaded, appliedState == element.state, let token = loadToken {
         snapshotFailure = nil
+        if publishPreparedSnapshot(element, token: token) { return }
         setRenderReady(false, token: token)
         beginPreparationDeadline(token: token, policy: snapshotPolicy)
         captureSnapshot(of: webView, token: token)
@@ -1156,6 +1178,9 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
       if policyChanged || previous.state != element.state || previous.frame.width != element.frame.width || previous.frame.height != element.frame.height {
         snapshotFailure = nil
         if let token = loadToken {
+          if previous.state == element.state,
+            previous.frame.width == element.frame.width, previous.frame.height == element.frame.height,
+            publishPreparedSnapshot(element, token: token) { return }
           setRenderReady(false, token: token)
           beginPreparationDeadline(token: token)
         }
@@ -1167,18 +1192,49 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
     beginLoad(element, in: webView)
   }
 
+  /// A camera may ask for less density and then return to the already prepared
+  /// density. That is not a new program frame or state. In particular, dozens
+  /// of visible controls must not all takeSnapshot at every zoom bucket.
+  private func publishPreparedSnapshot(_ element: AgentElement, token: String) -> Bool {
+    guard let raster = resources.retainRaster(for: snapshotPolicy.rasterSource(for: element),
+      minimumScale: snapshotPolicy.minimumScale(for: element)) else { return false }
+    preparationDeadline?.cancel(); preparationDeadline = nil; preparationDeadlineAt = nil
+    lastCaptureFailure = nil; snapshotFailure = nil; needsSnapshot = false
+    if renderIsReady { publishRenderReadiness(true, token: token) }
+    else { setRenderReady(true, token: token) }
+    guard let onSnapshotPrepared else { raster.release(); return true }
+    // Both a completed capture and adequate cached pixels finish the same
+    // consumer. A harmless density retarget must not strand its executor.
+    // Pin now, but let WebKit's submitted capture finish before the reader can
+    // close its window. Check the latest demand, not an obsolete zoom bucket.
+    Task { @MainActor [weak self] in
+      guard let self, accepts(token), renderIsReady, snapshotFailure == nil,
+        let current = loadedElement, appliedState == current.state,
+        SceneRasterSource.agent(current) == .agent(element),
+        raster.image(for: snapshotPolicy.rasterSource(for: current),
+          minimumScale: snapshotPolicy.minimumScale(for: current)) != nil else {
+        raster.release(); return
+      }
+      onSnapshotPrepared(raster)
+    }
+    return true
+  }
+
   /// One leased background executor may navigate between independent raster
   /// jobs. Each navigation receives a fresh nonce; old scripts and snapshots
   /// lose publication rights before the next source enters that same WebKit.
   func loadRasterJob(_ element: AgentElement, policy: AgentSnapshotPolicy, in webView: WKWebView) {
-    precondition(lease.priority == .background)
+    precondition(lease.priority == .background || lease.priority == .visible)
     guard !isInvalidated, !lease.isReleased, attachedWebView === webView else { return }
     snapshotPolicy = policy
     recoveryAttempts = 0
-    beginLoad(element, in: webView)
+    beginLoad(element, in: webView, snapshotOnly: true)
   }
 
-  private func beginLoad(_ element: AgentElement, in webView: WKWebView) {
+  private var snapshotOnly = false
+
+  private func beginLoad(_ element: AgentElement, in webView: WKWebView, snapshotOnly: Bool = false) {
+    self.snapshotOnly = snapshotOnly
     programLoadTask?.cancel(); programLoadTask = nil; programAssets.revokeAll(); packageNavigationURL = nil
     checkpointTask?.cancel(); checkpointTask = nil; checkpointID = nil; checkpointedSource = nil; checkpointSelection = nil; checkpointWasCaptured = false; attentionPauseID = nil
     readinessGeneration &+= 1
@@ -1360,11 +1416,17 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
     guard let navigation, navigation === activeNavigation, attachedWebView === webView,
       let token = loadToken, accepts(token), let element = loadedElement else { return }
     #if os(iOS)
-      let frameReadiness = """
+      // Proven static SVG has no animation clock to advance. WebKit's public
+      // snapshot flushes its paint; waiting two display ticks per diagram made
+      // a dense cold sheet serially pay for frames that could not change it.
+      // A passive neighbour is clipped outside the display. WebKit suspends
+      // its animation clock; waiting for rAF here deadlocks the next sheet.
+      // Its public snapshot flushes paint after the authored ready promise.
+      let frameReadiness = element.requiresLiveRuntime && !snapshotOnly ? """
         await new Promise(resolve => requestAnimationFrame(
           () => requestAnimationFrame(resolve)
         ));
-        """
+        """ : ""
     #else
       // The public snapshot includes pending pixels; it does not advance an
       // arbitrary program's rAF or claim that its computation has finished.
@@ -1466,28 +1528,15 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
       guard stillCurrent() else { prepared?.release(); return }
       if let prepared {
         defer { prepared.release() }
-        // A capture submitted before a density change is a useful fallback,
-        // but cannot acknowledge the newer demand. The one queued capture
-        // uses the latest policy without reloading the running program.
-        if (policy == nil || policy == snapshotPolicy),
-          resources.image(for: source, minimumScale: capturedPolicy.minimumScale(for: element)) != nil {
-          preparationDeadline?.cancel(); preparationDeadline = nil; preparationDeadlineAt = nil; lastCaptureFailure = nil
-          setRenderReady(true, token: token)
-          if let onSnapshotPrepared,
-            let raster = resources.retainRaster(for: source, minimumScale: capturedPolicy.minimumScale(for: element)) {
-            let generation = readinessGeneration
-            // Keep the pixels pinned now, but deliver outside WebKit's capture
-            // callback, like the existing readiness event. A consumer may close
-            // its window immediately; the submitted capture must finish first.
-            Task { @MainActor [weak self] in
-              guard let self, accepts(token), readinessGeneration == generation else { raster.release(); return }
-              onSnapshotPrepared(raster)
-            }
+        // A denser whole-source capture can already satisfy a later zoom-out.
+        // Crops, changed state and insufficient density still require the next
+        // capture; exact policy equality is not a pixel-adequacy criterion.
+        if !publishPreparedSnapshot(element, token: token) {
+          if capturedPolicy != snapshotPolicy { needsSnapshot = true }
+          else {
+            fail(.init(kind: "snapshot_error", elementID: element.id,
+              message: "The completed snapshot does not contain the requested pixel density."), token: token, policy: capturedPolicy)
           }
-        } else if capturedPolicy != snapshotPolicy { needsSnapshot = true }
-        else {
-          fail(.init(kind: "snapshot_error", elementID: element.id,
-            message: "The completed snapshot does not contain the requested pixel density."), token: token, policy: capturedPolicy)
         }
       } else {
         fail(.init(kind: "resource_limit", elementID: element.id,
@@ -1515,7 +1564,7 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
       return
     }
     recoveryAttempts += 1
-    beginLoad(element, in: webView)
+    beginLoad(element, in: webView, snapshotOnly: snapshotOnly)
   }
 
   private func fail(navigation: WKNavigation?, in webView: WKWebView, error: any Error) {

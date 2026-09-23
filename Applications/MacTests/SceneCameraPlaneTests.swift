@@ -98,7 +98,8 @@ final class SceneCameraPlaneTests: XCTestCase {
     XCTAssertFalse(button.visibleRect.isEmpty,
       "Prepared offscreen content becomes visible without waiting for archive or gesture settlement")
     XCTAssertTrue(container.contentView === installed)
-    XCTAssertEqual(container.contentPublicationCount, 2, "The 4x jump rebases density once, retaining its native host")
+    XCTAssertEqual(container.contentPublicationCount, 1,
+      "Zoom-out reuses the already denser pixels without rebuilding the native content")
   }
 
   @MainActor

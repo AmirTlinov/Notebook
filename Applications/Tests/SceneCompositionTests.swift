@@ -6,9 +6,86 @@ import XCTest
 
 final class SceneCompositionTests: XCTestCase {
   @MainActor
+  func testPrefetchedProgramsDoNotEvictPassiveSourcesFromTheirOwnQuota() async throws {
+    let fixture = Fixture(count: 6, side: 32,
+      html: "<svg viewBox='0 0 32 32'><rect width='32' height='32' fill='red'/></svg>")
+    let boardID = fixture.presence.boardID, stamp = fixture.workspace.stamp
+    let next = WorkspaceItem.notebook(title: "Next paper", pageIDs: [UUID()])
+    let programs: [SpatialElement] = (0..<3).map { index in
+      .init(id: "a-prefetch-\(index)", surface: .board(boardID), kind: .web,
+        frame: .init(x: 0, y: 0, width: 80, height: 60),
+        worldOrigin: .init(x: 400, y: Double(index) * 80), source: "Neighbour program",
+        html: "<button onclick='this.textContent=2'>1</button>", stamp: stamp)
+    }
+    let workspace = WorkspaceIndex(items: fixture.workspace.items + [next], selectedItemID: next.id,
+      selectedPageID: next.pageIDs[0], stamp: stamp)
+    let hierarchy = BoardHierarchy(rootBoardID: boardID, boards: [.init(id: boardID,
+      board: .init(freeItems: fixture.hierarchy.boards[0].board.freeItems + [
+        .init(itemID: next.id, center: .init(x: 800, y: 0), zIndex: 0, stamp: stamp)
+      ], elements: programs + fixture.elements, stamp: stamp))], stamp: stamp)
+    let index = WorkspaceSceneIndex(workspace: workspace, hierarchy: hierarchy, paperSizes: [:])
+    let frame = WorkspaceSceneFrame(index: index, presence: fixture.presence, portalCamera: { _ in nil })
+    let source = SceneCompositionSource(index: index, hierarchy: hierarchy, journal: fixture.journal)
+    for program in programs {
+      XCTAssertTrue(frame.worksets[boardID]?.elements.contains { $0.id == program.id } == true)
+      XCTAssertTrue(agentElementSnapshotSource(program).requiresLiveRuntime)
+      XCTAssertFalse(SceneCompositionPlane.board(boardID).demandsRuntime(
+        source: agentElementSnapshotSource(program), origin: try XCTUnwrap(program.worldOrigin), transform: .identity, in: fixture.presence),
+        "Prefetch admission must not grant an offscreen program a visible runtime")
+    }
+    let plan = try await SceneCompositionPlan.prepare(source: source, presence: fixture.presence,
+      frame: frame, pinned: [], displayScale: 2, previous: nil)
+    XCTAssertTrue(plan.allowsLive(.item(next.id), in: .board(boardID)))
+    for element in programs + fixture.elements {
+      XCTAssertTrue(plan.allowsLive(.element(element.id), in: .board(boardID)), element.id)
+    }
+    XCTAssertFalse(plan.tiles.contains { $0.range.layer == .elements || $0.range.layer == .covers },
+      "Offscreen programs cannot push ready SVGs/paper into a blocking tile readback pass")
+    XCTAssertLessThanOrEqual(plan.nativeOwnerCount, SceneCompositionPlan.maximumNativeOwners)
+    XCTAssertLessThanOrEqual(plan.liveOwners.count + 1, SceneCompositionPlan.maximumLiveOwners)
+  }
+
+  @MainActor
+  func testPrefetchedEmptyPaperDoesNotFlattenItsCoverOrDuplicateBoardSources() async throws {
+    let fixture = Fixture(count: 7, side: 32,
+      html: "<svg viewBox='0 0 32 32'><rect width='32' height='32' fill='red'/></svg>")
+    let boardID = fixture.presence.boardID, stamp = fixture.workspace.stamp
+    let next = WorkspaceItem.notebook(title: "Next paper", pageIDs: [UUID()])
+    let workspace = WorkspaceIndex(items: fixture.workspace.items + [next], selectedItemID: next.id,
+      selectedPageID: next.pageIDs[0], stamp: stamp)
+    let hierarchy = BoardHierarchy(rootBoardID: boardID, boards: [.init(id: boardID,
+      board: .init(freeItems: fixture.hierarchy.boards[0].board.freeItems + [
+        .init(itemID: next.id, center: .init(x: 800, y: 0), zIndex: 0, stamp: stamp)
+      ], elements: fixture.elements, stamp: stamp))], stamp: stamp)
+    let index = WorkspaceSceneIndex(workspace: workspace, hierarchy: hierarchy, paperSizes: [:])
+    let frame = WorkspaceSceneFrame(index: index, presence: fixture.presence, portalCamera: { _ in nil })
+    let paper = try XCTUnwrap(frame.worksets[boardID]?.items.first { $0.id == next.id })
+    let rect = paper.geometry.screenFrame(center: paper.center, camera: fixture.presence.camera,
+      viewport: fixture.presence.viewport)
+    XCTAssertGreaterThan(rect.x, fixture.presence.viewport.x, "The cover is prefetched, not already visible")
+    let source = SceneCompositionSource(index: index, hierarchy: hierarchy, journal: fixture.journal)
+    let plan = try await SceneCompositionPlan.prepare(source: source, presence: fixture.presence,
+      frame: frame, pinned: [], displayScale: 2, previous: nil)
+    XCTAssertTrue(plan.allowsLive(.item(next.id), in: .board(boardID)))
+    XCTAssertFalse(plan.tiles.contains { $0.range.layer == .covers },
+      "A nearby physical sheet must not hold the whole scene behind many cover readbacks")
+    XCTAssertLessThanOrEqual(plan.nativeOwnerCount, SceneCompositionPlan.maximumNativeOwners)
+    XCTAssertLessThanOrEqual(plan.liveOwners.count + 1, SceneCompositionPlan.maximumLiveOwners)
+    XCTAssertNil(frame.covers[next.id], "The new paper has no authored cover elements")
+    let renderer = SceneCompositionRenderer(source: source, resources: .init(), usesPreparedSources: true)
+    renderer.useSourcePresentation(plan: plan, frame: frame, displayScale: 2)
+    try await renderer.discoverSources(plan: plan, frame: frame, displayScale: 2)
+    XCTAssertEqual(Set(renderer.sourceDemands.keys), Set(fixture.elements.map {
+      SceneSourceAddress(plane: .board(boardID), elementID: $0.id)
+    }), "Empty paper must not prepare the board's SVG/programs again under cover addresses")
+  }
+
+  @MainActor
   func testStaticSourceStartsBeforeTheFirstCompositionTileCompletes() async throws {
     let fixture = Fixture(count: 8, side: 32,
-      html: "<div style='background:red'>Pending</div><script>window.notebook.ready(new Promise(resolve => setTimeout(resolve,700)))</script>")
+      html: "<svg viewBox='0 0 32 32'><rect width='32' height='32' fill='red'/></svg>")
+    XCTAssertFalse(agentElementSnapshotSource(fixture.elements[0]).requiresLiveRuntime,
+      "This regression exercises passive source preparation, not an unmounted live program")
     let resources = SceneRenderResources(), coordinator = SceneCompositionTiles(resources: resources)
     addTeardownBlock { @MainActor in await coordinator.stop() }
     var sourceWasAlreadyRunning: Bool?
@@ -56,6 +133,46 @@ final class SceneCompositionTests: XCTestCase {
       frame: .init(index: index, presence: presence, portalCamera: { _ in nil }), pinned: [], displayScale: 1)
     try await waitUntil { completed.count == 2 }
     XCTAssertEqual(completed, ["z-visible", "a-neighbour"], "The single background executor serves missing visible pixels before overscan")
+  }
+
+  @MainActor
+  func testPassivePrefetchDoesNotWaitForOffscreenProgramSnapshots() async throws {
+    let fixture = Fixture(count: 0), boardID = fixture.presence.boardID, stamp = fixture.workspace.stamp
+    let elements: [SpatialElement] = [
+      .init(id: "a-near-program", surface: .board(boardID), kind: .web,
+        frame: .init(x: 0, y: 0, width: 32, height: 32), worldOrigin: .init(x: 220, y: 0),
+        source: "Program", html: "<button onclick='this.textContent=2'>1</button>", stamp: stamp),
+      .init(id: "z-passive", surface: .board(boardID), kind: .web,
+        frame: .init(x: 0, y: 0, width: 32, height: 32), worldOrigin: .init(x: 300, y: 0),
+        source: "Diagram", html: "<svg viewBox='0 0 32 32'><rect width='32' height='32' fill='red'/></svg>", stamp: stamp)
+    ]
+    let hierarchy = BoardHierarchy(rootBoardID: boardID,
+      boards: [.init(id: boardID, board: .init(freeItems: fixture.hierarchy.boards[0].board.freeItems,
+        elements: elements, stamp: stamp))], stamp: stamp)
+    let index = WorkspaceSceneIndex(workspace: fixture.workspace, hierarchy: hierarchy, paperSizes: [:])
+    let source = SceneCompositionSource(index: index, hierarchy: hierarchy, journal: fixture.journal)
+    let presence = SessionPresence(boardID: boardID, mode: .board,
+      camera: .init(scale: 1), viewport: .init(x: 320, y: 256))
+    for element in elements {
+      XCTAssertTrue(SceneSourceCapture.visibleRect(source: agentElementSnapshotSource(element),
+        origin: try XCTUnwrap(element.worldOrigin), presence: presence).isNull)
+    }
+    let resources = SceneRenderResources(maximumBackgroundWebSurfaces: 1), coordinator = SceneCompositionTiles(resources: resources)
+    addTeardownBlock { @MainActor in await coordinator.stop() }
+    var completed: [String] = []
+    let observer = NotificationCenter.default.addObserver(forName: SceneRenderResources.didChange,
+      object: nil, queue: .main) { note in
+      guard let id = note.object as? String, elements.contains(where: { $0.id == id }) else { return }
+      MainActor.assumeIsolated { if !completed.contains(id) { completed.append(id) } }
+    }
+    defer { NotificationCenter.default.removeObserver(observer) }
+    coordinator.prepare(source: source, presence: presence,
+      frame: .init(index: index, presence: presence, portalCamera: { _ in nil }), pinned: [], displayScale: 1)
+    try await waitUntil { completed.count == 2 }
+    XCTAssertEqual(completed, ["z-passive", "a-near-program"],
+      "Passive prefetch must not queue behind a closer speculative program preview")
+    XCTAssertTrue(coordinator.published?.runtimeOwners.isEmpty == true,
+      "Priority is not permission to run an offscreen program as a visible control")
   }
 
   @MainActor
@@ -1122,7 +1239,8 @@ final class SceneCompositionTests: XCTestCase {
     let plan = try await SceneCompositionPlan.prepare(source: fixture.source(), presence: fixture.presence,
       frame: frame, pinned: [pin], displayScale: 2, previous: nil)
     XCTAssertLessThanOrEqual(plan.tiles.count, 32)
-    XCTAssertLessThanOrEqual(plan.liveOwners.count + 1, 8)
+    XCTAssertLessThanOrEqual(plan.liveOwners.count + 1, SceneCompositionPlan.maximumLiveOwners)
+    XCTAssertLessThanOrEqual(plan.nativeOwnerCount, SceneCompositionPlan.maximumNativeOwners)
     XCTAssertLessThanOrEqual(plan.primitiveCount, 96)
     XCTAssertTrue(plan.allowsLive(pin, in: .board(fixture.presence.boardID)))
     let bands = plan.bands.filter { $0.plane == .board(fixture.presence.boardID) && $0.range.layer == .elements }
@@ -1182,6 +1300,42 @@ final class SceneCompositionTests: XCTestCase {
     XCTAssertLessThanOrEqual(zip(actual, expected).map { abs(Int($0) - Int($1)) }.max() ?? 256, 2)
     XCTAssertGreaterThan(actual[3], 210, "This is composed transparent paint, not a blank count placeholder")
     XCTAssertEqual(resources.activeWebSurfaceCount, 0, "Ready source rasters need no executor")
+  }
+
+  @MainActor
+  func testReusedSQLReaderKeepsNestedPaintReadsInOneCutAndRejectsLaterEdits() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("composition-reader-\(UUID())")
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = NotebookStore(root: root), actor = UUID()
+    _ = try store.initializeWorkspace(actor: actor, pageSize: .init(width: 834, height: 1194))
+    let workspace = try store.loadIndex(), boardID = workspace.rootBoardID
+    let before = try store.loadBoard(items: workspace.items)
+    var after = before
+    let element = SpatialElement(id: "reader-source", surface: .board(boardID), kind: .web,
+      frame: .init(x: 0, y: 0, width: 100, height: 100), worldOrigin: .zero,
+      source: "Nested paint read", html: "<svg><circle cx='50' cy='50' r='20'/></svg>",
+      stamp: .init(counter: 0, actor: actor))
+    XCTAssertTrue(after.upsertElement(element, in: boardID, expected: nil, actor: actor))
+    _ = try store.saveBoardEdits(before: before, after: after)
+    let header = try store.workspaceHeader()
+    let source = SceneCompositionSource(store: store, revision: header.cursor, workspaceID: header.workspaceID)
+    for _ in 0..<3 {
+      let read = try await source.readElementForPaint(element.id, boardID: boardID)
+      XCTAssertEqual(read?.element.html, element.html)
+      XCTAssertNotNil(read?.placement)
+    }
+    let current = try store.loadBoard(items: workspace.items)
+    var changed = current
+    let updated = SpatialElement(id: element.id, surface: element.surface, kind: element.kind,
+      frame: element.frame, worldOrigin: .zero, source: "Changed source", html: "<svg/>",
+      stamp: element.stamp)
+    XCTAssertTrue(changed.upsertElement(updated, in: boardID,
+      expected: current.board(boardID)?.elements.first(where: { $0.id == element.id })?.stamp, actor: actor))
+    _ = try store.saveBoardEdits(before: current, after: changed)
+    do {
+      _ = try await source.readElementForPaint(element.id, boardID: boardID)
+      XCTFail("An idle connection cannot preserve a stale content cut")
+    } catch NotebookStorageError.transactionConflict { }
   }
 
   @MainActor
