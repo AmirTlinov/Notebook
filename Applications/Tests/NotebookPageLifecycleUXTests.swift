@@ -30,7 +30,9 @@ import XCTest
     // SwiftUI's native mask is not necessarily in UIView.subviews. Its actual
     // held-contact pixels, not an incomplete hierarchy walk, prove activation.
     try await shown("live-eraser-first-contact-pixels", window: scene.window,
-      probes: [probe("live-cut", [(230, 330)], .paper, scene.pageToWindow)], since: began)
+      probes: [probe("live-cut", [(230, 330)], .paper, scene.pageToWindow),
+        probe("untouched-shape", [(350, 330)], .red, scene.pageToWindow),
+        probe("untouched-neighbor", [(590, 590)], .blue, scene.pageToWindow)], since: began)
     scene.endPencil()
     try await shown("lazy-mask-preserves-erased-pixels", window: scene.window,
       probes: [probe("erased-shape", [(230, 330)], .paper, scene.pageToWindow)])

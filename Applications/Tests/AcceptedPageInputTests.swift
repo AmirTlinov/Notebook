@@ -40,6 +40,41 @@ final class AcceptedPageInputTests: XCTestCase {
   }
 
   @MainActor
+  func testInkOnlyEraserCreatesElementCoverageOnlyAfterTheSameContactHitsAnElement() async throws {
+    let paper = PaperInputView(frame: .init(x: 0, y: 0, width: 500, height: 500))
+    let page = PageDocument(size: .init(width: 500, height: 500), actor: UUID(), elements: [
+      .init(id: "object", kind: .graphic, frame: .init(x: 350, y: 350, width: 100, height: 100),
+        source: "", html: "", graphic: .init(shape: .rectangle, style: .init(fill: .black)))])
+    paper.quickShapePageID = page.id
+    paper.configure(penStyle: .standard, eraserStyle: .standard, drawingTool: .eraser)
+    paper.pageEraserSource = {
+      .init(page: page, graph: page.graphicGraph(), changedTargets: [:], excludedElementIDs: [])
+    }
+    let presentation = NotebookLiveElementEraserPresentation()
+    paper.onLiveElementErasing = presentation.display
+    var ink: ActiveEraserStroke?
+    paper.presentActiveEraser = { ink = $0 }
+    let touch = AcceptedInputTouch(); touch.point = .init(x: 20, y: 50)
+    paper.touchesBegan([touch], with: nil)
+    touch.point = .init(x: 200, y: 50); touch.sampleTime += 1.0 / 120
+    paper.touchesMoved([touch], with: nil)
+    XCTAssertFalse(presentation.isActive, "Ink-only erasure must not request a second full-page mask")
+    let source = try XCTUnwrap(ink)
+    XCTAssertEqual(source.measured.count, 2, "Do not skip ink samples to avoid element work")
+    touch.point = .init(x: 400, y: 400); touch.sampleTime += 1.0 / 120
+    paper.touchesMoved([touch], with: nil)
+    XCTAssertTrue(presentation.isActive, "The same contact can enter an element without a new gesture")
+    XCTAssertTrue(source === ink)
+    paper.touchesEnded([touch], with: nil)
+    try await Task.sleep(for: .milliseconds(150))
+    let action = try XCTUnwrap(presentation.pending.first)
+    XCTAssertEqual(action.id, source.measured.sourceID)
+    XCTAssertEqual(action.elementTargets?.map(\.elementID), ["object"])
+    presentation.presented(PageInkDrawing(actions: [action]).elementErasures)
+    XCTAssertFalse(presentation.isActive)
+  }
+
+  @MainActor
   func testPencilLiftPublishesOneJournalDeltaBeforeWaitingInputRuns() async throws {
     let (model,root)=await makeModel()
     let page=try XCTUnwrap(model.activePage)

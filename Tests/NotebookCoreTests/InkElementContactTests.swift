@@ -15,6 +15,7 @@ struct InkElementContactTests {
     var contact = InkElementContact(targets), measured = source()
     measured.replaceTail(from:0,with:[sample(0,110),sample(100,110),sample(200,110)])
     contact.update(measured,from:0)
+    #expect(!contact.isEmpty)
     #expect(contact.selected == Array(targets.prefix(3)))
     measured.replaceTail(from:2,with:[sample(100,0)])
     contact.update(measured,from:2)
@@ -24,6 +25,7 @@ struct InkElementContactTests {
     #expect(contact.selected == targets, "The new crossing includes its preceding sample")
     measured.replaceTail(from:0,with:[sample(0,0)])
     contact.update(measured,from:0)
+    #expect(contact.isEmpty)
     #expect(contact.selected.isEmpty)
   }
 
@@ -49,6 +51,7 @@ struct InkElementContactTests {
       measured.replaceTail(from:start,with:[sample(20+Double(i%10)/10,20)])
       contact.update(measured,from:start)
     }
+    #expect(contact.isEmpty)
     #expect(contact.selected.isEmpty)
     #expect(contact.testedSegments == 0)
     #expect(contact.visitedNodes < 2400*100)
@@ -64,6 +67,7 @@ struct InkElementContactTests {
     var contact=InkElementContact([]),measured=source()
     measured.replaceTail(from:0,with:[sample(0,100),sample(100,100)])
     contact.update(measured,from:0,queried:[first],visitedNodes:7)
+    #expect(!contact.isEmpty)
     #expect(contact.selected == [first])
     measured.replaceTail(from:2,with:[sample(200,100)])
     contact.update(measured,from:2,queried:[second],visitedNodes:5)
@@ -71,6 +75,7 @@ struct InkElementContactTests {
     #expect(contact.visitedNodes == 12)
     measured.replaceTail(from:1,with:[sample(0,0)])
     contact.update(measured,from:1,queried:[],visitedNodes:1)
+    #expect(contact.isEmpty)
     #expect(contact.selected.isEmpty, "A corrected suffix retracts hits without retaining all queried targets")
   }
 }

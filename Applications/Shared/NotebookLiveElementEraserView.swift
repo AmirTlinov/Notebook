@@ -91,10 +91,9 @@ final class NotebookLiveElementEraserMaskView:UIView {
   lazy var projection=PageInkProjection(host:self,canvas:canvas)
   override init(frame:CGRect) {
     super.init(frame:frame);isOpaque=false;isUserInteractionEnabled=false
-    backgroundColor = .white;addSubview(canvas)
-    canvas.onVisibleFrame = { [weak self] in
-      self?.backgroundColor = .clear;self?.canvas.onVisibleFrame=nil
-    }
+    // Neutral white and its first cut are one renderer transaction. Clearing a
+    // separate host background after the presentation callback adds a frame.
+    backgroundColor = .clear;addSubview(canvas)
   }
   @available(*,unavailable) required init?(coder:NSCoder) { fatalError("init(coder:) is unavailable") }
   override func layoutSubviews() { super.layoutSubviews();projection.refresh() }

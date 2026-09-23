@@ -70,7 +70,7 @@ final class ActiveEraserStroke {
 /// Pages and spatial surfaces persist the measured samples. Shared geometry and
 /// Metal shaders own the live line, its settled raster and the agent image.
 @MainActor
-final class InkCanvasView: MTKView, MTKViewDelegate {
+final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisplayLinkDelegate {
   fileprivate enum RenderOperation: Equatable {
     case ink
     case erase
@@ -298,6 +298,20 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
   private(set) var pageCommittedPassCount = 0
   private(set) var pageActivePassCount = 0
 
+  private var pageDisplayLink: CAMetalDisplayLink?
+  #if os(iOS)
+  private var pageUIUpdates: UIUpdateLink?
+  #endif
+  private var usesPageDisplayLink: Bool {
+    pageRenderRegion != nil && spatialDrawableScale == nil && material == nil
+  }
+  var isFrameLoopPaused: Bool {
+    #if os(iOS)
+    isPaused && (pageDisplayLink?.isPaused ?? true) && pageUIUpdates?.isEnabled != true
+    #else
+    isPaused && (pageDisplayLink?.isPaused ?? true)
+    #endif
+  }
   private var activeInkStroke: ActiveInkStroke?
   private var activeEraserStroke: ActiveEraserStroke?
   private var builtActiveIdentity: ObjectIdentifier?
@@ -406,7 +420,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     preferredFramesPerSecond = 120
     autoResizeDrawable = true
     #if os(iOS)
-    backgroundColor = .clear
+    backgroundColor = isErasureMask ? .white : .clear
     isOpaque = false
     isUserInteractionEnabled = false
     let metalLayer = layer as? CAMetalLayer
@@ -415,7 +429,10 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     let metalLayer = layer as? CAMetalLayer
     #endif
     metalLayer?.isOpaque = false
-    metalLayer?.opacity = 0
+    // An unpainted erasure mask is neutral, not a hole through the whole page.
+    // The renderer removes this white background with its first drawable.
+    metalLayer?.opacity = isErasureMask ? 1 : 0
+    if isErasureMask { metalLayer?.backgroundColor = CGColor(gray: 1, alpha: 1) }
     metalLayer?.presentsWithTransaction = false
     metalLayer?.colorspace = CGColorSpace(name: CGColorSpace.sRGB)
     metalLayer?.maximumDrawableCount = Self.framesInFlight
@@ -427,7 +444,13 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     fatalError("init(coder:) is unavailable")
   }
 
-  isolated deinit { pageMeshTask?.cancel() }
+  isolated deinit {
+    pageMeshTask?.cancel()
+    pageDisplayLink?.invalidate()
+    #if os(iOS)
+    pageUIUpdates?.isEnabled = false
+    #endif
+  }
 
   #if os(iOS)
   override func didMoveToWindow() {
@@ -460,6 +483,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
       // UIKit can retain a culled canvas beyond the end of its visible use.
       // Stop its timer even when no drawable arrives to finish the last draw.
       isPaused = true
+      retirePageDisplayLink()
       cancelPendingPageMesh()
       if spatialHandoffRetains == 0 {
         releaseDrawables()
@@ -475,7 +499,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
       // Moving the retained layer out of its preparation window does not
       // invalidate its presented pixels. Its native owner supplies the pose;
       // a second drawable here races the first camera sample after mounting.
-      isPaused = true
+      pauseFrameLoop()
     } else {
       requestFrame()
     }
@@ -490,8 +514,12 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     guard pixels.width.isFinite, pixels.height.isFinite,
       (1...16_384).contains(pixels.width), (1...16_384).contains(pixels.height) else { return }
     guard region != pageRenderRegion || drawableSize != pixels || pageSourceSize != sourceSize else { return }
+    // The system must not allocate a resized pool before its bytes are admitted.
+    pageDisplayLink?.isPaused = true
+    // CAMetalDisplayLink forbids this setter, even with the same value. Fix the
+    // two-slot page pool before its first clock; resizing only changes its size.
+    if pageRenderRegion == nil { (layer as? CAMetalLayer)?.maximumDrawableCount = Self.pageDrawableCount }
     pageRenderRegion = region; pageSourceSize = sourceSize
-    (layer as? CAMetalLayer)?.maximumDrawableCount = Self.pageDrawableCount
     if isErasureMask { spatialDrawableScale = pixelDensity }
     autoResizeDrawable = false
     frame = region
@@ -522,6 +550,9 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
 
   private func admitPageDrawable(samples: Int) -> Bool {
     guard pageRenderRegion != nil, spatialDrawableScale == nil else { return true }
+    // Changing a native frame can request drawing before projectPage installs
+    // its nonzero drawable size. This intermediate layout is not an allocation.
+    guard drawableSize.width > 0, drawableSize.height > 0 else { return false }
     if pageDrawableReservation != nil,pageAdmittedSize == drawableSize { return true }
     pageDrawableReservation = nil; pageMultisample = nil
     pageRetainedTexture = nil; pageRetainedReservation = nil; pageRetainedKey = nil
@@ -591,6 +622,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
   /// work owns both the byte and physical admission until completion.
   func finishSpatialHandoffFrames() async {
     spatialHandoffIsStopping = true
+    retirePageDisplayLink()
     isPaused = true
     if submittedFrameCount > 0 || submittedPresentationCount > 0 {
       await withCheckedContinuation { frameDrainWaiters.append($0) }
@@ -948,10 +980,26 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
   }
 
   func draw(in view: MTKView) {
+    // Projected pages receive an available drawable from the system. Neither a
+    // queued MetalKit tick nor an explicit draw may synchronously acquire one.
+    if usesPageDisplayLink { requestFrame(); return }
+    // Returning from encoding releases Swift references, not Objective-C's
+    // autoreleased drawable/pass objects. Drain them per frame, not at the end
+    // of an outer UIKit run-loop turn: the page's two-slot pool must not retain
+    // prior frames while the main thread asks it for the next drawable.
+    autoreleasepool { renderFrame() }
+  }
+
+  func metalDisplayLink(_ link: CAMetalDisplayLink, needsUpdate update: CAMetalDisplayLink.Update) {
+    guard link === pageDisplayLink, usesPageDisplayLink else { return }
+    autoreleasepool { renderFrame(pageDrawable: update.drawable) }
+  }
+
+  private func renderFrame(pageDrawable: (any CAMetalDrawable)? = nil) {
     #if os(macOS)
     if material != nil, window?.occlusionState.contains(.visible) != true { return }
     #endif
-    guard window != nil, !spatialHandoffIsStopping, spatialStagingID == nil else { isPaused = true; return }
+    guard window != nil, !spatialHandoffIsStopping, spatialStagingID == nil else { pauseFrameLoop(); return }
     if spatialDrawableScale != nil, submittedFrameCount > 0 || submittedPresentationCount > 0 { return }
     if presentEmptyContentIfReady() { return }
     let samples = device?.supportsTextureSampleCount(4) == true ? 4 : 1
@@ -1020,6 +1068,15 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
             clip, tileVisible
           ))
       }
+    } else if usesPageDisplayLink {
+      guard let drawable = pageDrawable,
+        drawable.texture.width == Int(drawableSize.width),
+        drawable.texture.height == Int(drawableSize.height) else { return }
+      let pass = MTLRenderPassDescriptor()
+      pass.colorAttachments[0].texture = pageMultisample ?? drawable.texture
+      pass.colorAttachments[0].resolveTexture = pageMultisample == nil ? nil : drawable.texture
+      pass.colorAttachments[0].storeAction = pageMultisample == nil ? .store : .multisampleResolve
+      passes.append((pass, drawable, nil, nil, visible))
     } else {
       guard let pass = currentRenderPassDescriptor, let drawable = currentDrawable else { return }
       if let pageMultisample {
@@ -1035,7 +1092,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
         drawnTiles = (ObjectIdentifier(target), stableContentRevision, tileStates)
         publishPresentedTilesIfReady()
       }
-      if activeInkStroke == nil, activeEraserStroke == nil { isPaused = true }
+      if activeInkStroke == nil, activeEraserStroke == nil { pauseFrameLoop() }
       return
     }
     drawableRequestCount += 1
@@ -1075,9 +1132,10 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     // A cold page uses the same atomic reveal: its new drawable and opacity
     // enter one compositor transaction. Rendering hidden, revealing on GPU
     // completion and then rendering again adds a full frame to first Pencil.
-    let transactionPresentation = material != nil || (spatialTarget == nil && !hasRevealedFirstFrame)
+    let transactionPresentation = material != nil
+      || (!hasRevealedFirstFrame && (spatialTarget == nil || isErasureMask))
     presentsWithTransaction = transactionPresentation
-    for tile in spatialTarget?.tiles ?? [] { tile.layer.presentsWithTransaction = false }
+    for tile in spatialTarget?.tiles ?? [] { tile.layer.presentsWithTransaction = transactionPresentation }
     if let observation = onContactFramePresented, let contact = activeContactFrame,
       active != nil, hasRevealedFirstFrame {
       let frameID = UUID(), tileCount = passes.count
@@ -1094,7 +1152,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
         }
       }
     }
-    if !transactionPresentation {
+    if !transactionPresentation, pageDrawable == nil {
       for (_, drawable, _, _, _) in passes { commandBuffer.present(drawable) }
     }
     let presentedRevision: UInt64? =
@@ -1151,7 +1209,10 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
         // newer material needed paint, this completion re-admits that latest
         // revision, not another frame of this older submission.
         if transactionPresentation, submittedTransactionalRevision != stableContentRevision { requestFrame() }
-        if !completed { drawnTiles = nil; pageRetainedKey = nil }
+        if !completed {
+          drawnTiles = nil; pageRetainedKey = nil
+          requestFrame()
+        }
         guard completed, !spatialHandoffIsStopping, window != nil,
           stableContentRevision == submittedRevision else { return }
         renderFailure = nil
@@ -1188,17 +1249,24 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
       CATransaction.begin(); CATransaction.setDisableActions(true)
       #if os(iOS)
       layer.opacity = 1
+      if isErasureMask { backgroundColor = .clear }
       #else
       layer?.opacity = 1
+      if isErasureMask { layer?.backgroundColor = nil }
       #endif
       for (_, drawable, _, _, _) in passes { drawable.present() }
       CATransaction.commit()
       hasRevealedFirstFrame = true
+    } else if let pageDrawable {
+      // CAMetalDisplayLink owns this drawable's deadline. Notify it after the
+      // commands are committed, not later from command-buffer scheduling.
+      // The GPU may finish within the clock's remaining frame latency.
+      pageDrawable.present()
     }
     mustSignal = false
     frameSlot = (frameSlot + 1) % Self.framesInFlight
 
-    if activeInkStroke == nil, activeEraserStroke == nil { isPaused = true }
+    if activeInkStroke == nil, activeEraserStroke == nil { pauseFrameLoop() }
   }
 
   private var exposedCanvasRect: CGRect {
@@ -1415,7 +1483,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     try Task.checkCancellation()
     guard !spatialHandoffIsStopping, spatialActionBase == nil, spatialStagingID == nil,
       let commandQueue else { throw CancellationError() }
-    let id = UUID(); spatialStagingID = id; isPaused = true
+    let id = UUID(); spatialStagingID = id; pauseFrameLoop()
     var succeeded = false
     defer { if !succeeded { cancelSpatialStaging(id: id) } }
     if submittedFrameCount > 0 || submittedPresentationCount > 0 {
@@ -1543,7 +1611,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     spatialStagingID = nil
     stagedSpatialFrame = nil
     hasRevealedFirstFrame = !frame.drawables.isEmpty
-    isPaused = true
+    pauseFrameLoop()
   }
 
   private func finishSubmittedFrame() {
@@ -1677,6 +1745,65 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     baselineTexture = texture; baselinePNG = png; baselineReservation = allocation
   }
 
+  private func pauseFrameLoop() {
+    isPaused = true
+    pageDisplayLink?.isPaused = true
+    // A live contact's final UIKit update drains in afterUpdateComplete.
+    // Unmount/terminal teardown retire both links immediately below.
+  }
+
+  private func retirePageDisplayLink() {
+    pageDisplayLink?.invalidate()
+    pageDisplayLink = nil
+    #if os(iOS)
+    pageUIUpdates?.isEnabled = false; pageUIUpdates = nil
+    #endif
+  }
+
+  private func requestPageFrame() {
+    // Admit the same two drawable slots and tile-local MSAA before the system
+    // may allocate them. Only this clock obtains page drawables; MetalKit's
+    // timer and currentRenderPassDescriptor stay out of the page path.
+    let samples = device?.supportsTextureSampleCount(4) == true ? 4 : 1
+    guard admitPageDrawable(samples: samples), let layer = layer as? CAMetalLayer else {
+      pauseFrameLoop(); return
+    }
+    if sampleCount != 1 { sampleCount = 1 }
+    if pageDisplayLink == nil {
+      let link = CAMetalDisplayLink(metalLayer: layer)
+      link.delegate = self
+      link.preferredFrameLatency = 1
+      pageDisplayLink = link
+      link.add(to: .main, forMode: .common)
+    }
+    let rate = Float(preferredFramesPerSecond)
+    if pageDisplayLink?.preferredFrameRateRange.preferred != rate {
+      pageDisplayLink?.preferredFrameRateRange = .init(minimum: rate, maximum: rate, preferred: rate)
+    }
+    if pageDisplayLink?.isPaused == true { pageDisplayLink?.isPaused = false }
+    #if os(iOS)
+    // Metal's page clock does not schedule UIKit updates. Keep the controls
+    // and layer transactions participating while a contact is active, without
+    // another drawing callback or any idle-page update demand.
+    let active = activeInkStroke != nil || activeEraserStroke != nil
+    if active, pageUIUpdates == nil {
+      let updates = UIUpdateLink(view: self)
+      // Continuous participation requires a phase action. Own the drain here,
+      // not in the Metal callback: lift must finish its final UIKit update too.
+      updates.addAction(to: .afterUpdateComplete) { [weak self] link, _ in
+        if self?.pageDisplayLink?.isPaused != false { link.isEnabled = false }
+      }
+      updates.requiresContinuousUpdates = true
+      // Live ink is a bounded GPU composition. Do not add UIKit's extra frame
+      // of compositor latency while the measured contact is active.
+      updates.wantsImmediatePresentation = true
+      updates.preferredFrameRateRange = .init(minimum: rate, maximum: rate, preferred: rate)
+      pageUIUpdates = updates
+    }
+    if active { pageUIUpdates?.isEnabled = true }
+    #endif
+  }
+
   private func requestFrame() {
     if presentEmptyContentIfReady() { return }
     // Mesh/raster completions may arrive after culling. Preserve their ready
@@ -1685,6 +1812,13 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     #if os(macOS)
     if material != nil { mounted = mounted && window?.occlusionState.contains(.visible) == true }
     #endif
+    if usesPageDisplayLink {
+      enableSetNeedsDisplay = false
+      isPaused = true
+      if mounted { requestPageFrame() } else { pauseFrameLoop() }
+      return
+    }
+    retirePageDisplayLink()
     enableSetNeedsDisplay = material != nil
     isPaused = material != nil || !mounted
     if material != nil, mounted {
@@ -1702,6 +1836,10 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
       activeInkStroke == nil, activeEraserStroke == nil,
       committedBatches.allSatisfy({ batch in
         if !batch.pageIsActive { return true }
+        // Absence cannot emit ink. An erase-only journal (for example a cut
+        // through a shape on an otherwise empty page) retains its source and
+        // ordering, but needs no transparent full-page drawable of its own.
+        if batch.operation == .erase { return true }
         if batch.mesh.isEmpty { return true }
         guard spatialDrawableScale != nil, bounds.width > 0, bounds.height > 0 else { return false }
         let transform = batch.mesh.projection.transform(camera: spatialCamera, viewport: spatialViewport)
@@ -1716,6 +1854,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     visibleCommittedVertexCount = 0; visibleCommittedChunkCount = 0
     drawnTiles = nil
     isPaused = true
+    retirePageDisplayLink()
     if sampleCount != 1 { sampleCount = 1 }
     releaseDrawables()
     pageDrawableReservation = nil; pageMultisample = nil

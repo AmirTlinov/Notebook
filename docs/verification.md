@@ -97,6 +97,80 @@ XCTest/Accessibility имеет отдельные защитные таймау
 Новые критерии ещё **не пройдены на физическом iPad** и не означают устранения
 дефектов приложения. Изменения тестов оставлены с основной задачей
 для совместной проверки; чужие незавершённые изменения не закоммичены.
+
+## September 24 — GUI-295, page drawable and live-mask repair
+
+A five-cold-start diagnostic localized the intermittent second-contact delivery
+stall to main-thread drawable acquisition: 4/5 runs passed, but one delivery took
+304.40 ms, including 260.69 ms acquiring the drawable (0.74 ms scheduling Metal).
+Evidence: `.build/gui295-window-release-latency-cold-pairs/`, source
+`b65566d61e1c1f1276a8cd54b323679f4014c8f749a4635d5327187bc3d0a5ee`.
+Per-frame autorelease draining reduced that cost (50/50 contacts, max delivery
+49.12 ms), but did not remove synchronous acquisition from the input thread.
+
+Projected pages now receive available drawables from CAMetalDisplayLink instead
+of the competing MetalKit timer. The same two-slot budget, tile-memory MSAA,
+source material, ordered erasures and GPU-completion resource ownership remain.
+UIKit participates only during live input; its phase action drains the final
+update, not a second renderer. Exact element-contact hits suppress a redundant
+full-page mask for ink-only erasing. Erase-only journals retain all measurements
+without transparent page backing. A lazy live element mask presents its neutral
+white background and first cut atomically; the delayed host reveal was removed.
+
+Two integration crashes were diagnosed, not dismissed as timing noise:
+
+- UIUpdateLink continuous updates require an installed phase action. Interactive
+  LLDB captured the actual UIKit precondition in
+  `.build/gui295-ui-participation-interactive-release/lldb-session.txt`.
+- Resizing reset `maximumDrawableCount` even when unchanged; CAMetalDisplayLink
+  forbids that setter after attaching its clock. XCTest's exception unwind hid
+  this behind a secondary task-local allocator abort. The original Metal
+  exception and successful fixed-size probe are in
+  `.build/gui295-metal-resize-probe.log` and
+  `.build/gui295-metal-resize-admitted-probe.log`. Pool setup now happens only
+  before the first page clock; zero-sized intermediate layouts are not admitted.
+
+Corrected source
+`de5ac922c06c65152101101f08c74ea0024db83337d41ec365c604a62c08dcfe`
+passed **10/12** on the physical iPad, zero skips/runtime warnings
+(`.build/gui295-page-clock-contract-release/`). Both crashes are gone, including
+512 KiB resize refusal followed by recovery of both strokes without raising the
+budget. Coalescing, cull/remount, exact input ownership, erase-only retirement and
+live-cut/remainder/neighbor pixels passed. First mask cut was 35.30 ms, retirement
+17.18 ms; shape-erasing UIKit samples were within 18.03 ms. Ten reverse TLS-loopback
+deliveries passed, maximum 44.21 ms. Core contact checks passed 5 tests / 2 suites,
+including 100,000-target locality and corrected-hit retractions
+(`.build/gui295-eraser-contact-emptiness-core.log`).
+
+**Ink latency remains failed.** Eraser OS presentation p50/p95/p99/max was
+20.76/20.94/20.96/29.04 ms, pen 22.60/22.79/22.81/30.74 ms. A read-only stage trace
+(`.build/gui295-page-clock-stages-release/`, source
+`3b7ee27875a62c3e3f4e2150303d48cb6ea848d32088a742c6c4d8fb1c6aa10f`)
+kept both failures: encoding below 0.5 ms and GPU work up to 1.42 ms, but a ready
+frame still waited about 15 ms for the clock's chosen OS presentation. UIKit
+immediate presentation was not granted in any of 247 updates. These are actual
+OS drawable timestamps, not frame-rate claims from the callback cadence.
+
+Moving that same drawable to UIKit's after-event-dispatch phase made latency
+worse (eraser/pen p95 34.75/28.53 ms; 5/7 functional checks passed), so the experiment
+was fully removed, not retained as a fallback. Evidence:
+`.build/gui295-page-input-phase-release/`, source
+`921c773432cc8afaa93fbf3c9042a1feab147239902ba85ffe5473ae4686b335`.
+Every inventoried file was restored byte-for-byte to verified source `de5ac922`;
+all temporary phase/GPU/clock timing hooks and attach pauses were removed.
+The functional cross-platform follow-up kept the same `de5ac922` source. Two
+physical-iPad pen/eraser and cold-lasso pixel scenarios passed in
+`.build/gui295-page-clock-functional-pair/`; its receipt was correctly rejected
+because two additional selectors named the file rather than their containing
+XCTest extension. Only the missing scope was then run, not the passing cases:
+2 iPad lasso/whole-selection composition checks and 8 Mac input/material/projection
+checks passed with zero skips/runtime warnings. The standard scoped receipt is
+`.build/gui295-page-clock-functional-remaining/verification.json`. It does not
+supersede the failed ink-latency evidence or establish combined-main acceptance.
+Each isolated test app was cleaned up; production containers/processes were not
+used for debugger experiments. No new production installation, hardware-Pencil,
+radio, system frame/CPU/GPU or 30-minute joint acceptance is claimed.
+
 ## September 23 — GUI-295, committed transport reader and echo work
 
 The transport's committed offers and immutable bytes now share one serialized
