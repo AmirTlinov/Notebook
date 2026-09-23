@@ -73,6 +73,11 @@ struct SceneSelectionLift {
   let cancel: () -> Void
 }
 
+enum NotebookObjectPickup {
+  static let delay = Duration.milliseconds(250)
+  static let movementThreshold: CGFloat = 4
+}
+
 final class SceneSelectionRecognizer: UIGestureRecognizer {
   var onPoint: ((CGPoint, Int) -> Void)?
   var onLift: ((CGPoint) -> SceneSelectionLift?)?
@@ -86,8 +91,6 @@ final class SceneSelectionRecognizer: UIGestureRecognizer {
   private var nativeTapOwner: ObjectIdentifier?
   private var revision: UInt64?
   private var holdTask: Task<Void, Never>?
-  private static let pickupDelay = Duration.milliseconds(250)
-  private static let movementThreshold: CGFloat = 4
   override init(target: Any?, action: Selector?) {
     super.init(target: target, action: action)
     allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
@@ -141,10 +144,10 @@ final class SceneSelectionRecognizer: UIGestureRecognizer {
     if nativeTapOwner != nil && lift == nil { cancelSelection(); return }
     if lift?.requiresHold == true {
       holdTask = Task { [weak self] in
-        do { try await Task.sleep(for: Self.pickupDelay) } catch { return }
+        do { try await Task.sleep(for: NotebookObjectPickup.delay) } catch { return }
         guard !Task.isCancelled, let self, let touch = self.touch else { return }
         let point = touch.location(in: self.view)
-        guard hypot(point.x - self.windowStart.x, point.y - self.windowStart.y) < Self.movementThreshold else {
+        guard hypot(point.x - self.windowStart.x, point.y - self.windowStart.y) < NotebookObjectPickup.movementThreshold else {
           self.cancelSelection(); return
         }
         self.beginLift()
@@ -170,7 +173,7 @@ final class SceneSelectionRecognizer: UIGestureRecognizer {
       gate?.permitsObjectPickup == true else { cancelSelection(); return }
     let point = touch.location(in:view)
     let delta = CGPoint(x:point.x-windowStart.x,y:point.y-windowStart.y)
-    if !dragging, hypot(delta.x,delta.y) >= Self.movementThreshold {
+    if !dragging, hypot(delta.x,delta.y) >= NotebookObjectPickup.movementThreshold {
       guard let lift, !lift.requiresHold else { cancelSelection(); return }
       beginLift()
     }
@@ -184,7 +187,7 @@ final class SceneSelectionRecognizer: UIGestureRecognizer {
     holdTask?.cancel(); holdTask = nil
     let end = touch.location(in: coordinateView)
     let point = touch.location(in: view)
-    if !dragging, hypot(point.x - windowStart.x, point.y - windowStart.y) >= Self.movementThreshold {
+    if !dragging, hypot(point.x - windowStart.x, point.y - windowStart.y) >= NotebookObjectPickup.movementThreshold {
       cancelSelection(); return
     }
     self.touch = nil

@@ -58,6 +58,7 @@ struct PreparedAgentElementView: View {
   let allowsProgramExecution: Bool
   let requestedCapture: AgentSnapshotPolicy?
   let focus: InteractiveElementReference
+  let pageTurnActivity: PageTurnActivity?
   let onRenderReady: (Bool) -> Void
   let onState: (JSONValue) -> Bool
 
@@ -77,13 +78,14 @@ struct PreparedAgentElementView: View {
 
   init(element: AgentElement, allowsInteraction: Bool, inputEnabled: Bool = true,
     allowsProgramExecution: Bool = true, capturePolicy: AgentSnapshotPolicy? = nil, focus: InteractiveElementReference,
-    onRenderReady: @escaping (Bool) -> Void, onState: @escaping (JSONValue) -> Bool) {
+    pageTurnActivity:PageTurnActivity? = nil, onRenderReady: @escaping (Bool) -> Void, onState: @escaping (JSONValue) -> Bool) {
     self.element = element
     self.allowsInteraction = allowsInteraction
     self.inputEnabled = inputEnabled
     self.allowsProgramExecution = allowsProgramExecution
     requestedCapture = capturePolicy
     self.focus = focus
+    self.pageTurnActivity = pageTurnActivity
     self.onRenderReady = onRenderReady
     self.onState = onState
   }
@@ -187,7 +189,10 @@ struct PreparedAgentElementView: View {
     }()
     let basis = model.programStateBasis(focus: focus, rendered: element)
     let demand = Demand(source: element, basis: basis, active: isActive, inputEnabled: inputEnabled, focused: hasFocus,
-      permitsPreparation: isActive ? model.permitsScenePreparation : model.permitsBackgroundPreparation,
+      // A bounded neighbour belongs to the curl's preparation window. Waiting
+      // for its finger to lift defeats prewarming and stalls the following turn.
+      permitsPreparation: isActive ? model.permitsScenePreparation
+        : ((!allowsInteraction && pageTurnActivity?.isTransitioning == true) || model.permitsBackgroundPreparation),
       policy: snapshotPolicy, capture: sourceDemand,
       fallbackEntryID: fallbackEntryID, runtimeFailure: runtimeFailure, retry: retry)
     ZStack {

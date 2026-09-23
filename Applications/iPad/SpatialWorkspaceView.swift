@@ -259,7 +259,7 @@ struct SpatialWorkspaceView: View {
           let rect = NotebookAttentionProjection.editingFrame(reference, model: model, presence: presence) {
           NotebookElementControls(contextMenus:contextMenus,reference: reference, selectionID: model.selectionSession.id,
             frame: rect,
-            scale: presence.camera.scale)
+            scale: presence.camera.scale, camera:presence)
             .frame(width: viewport.x, height: viewport.y)
         }
         if model.selectionSession.count > 1 {
@@ -273,7 +273,7 @@ struct SpatialWorkspaceView: View {
             return .init(x:rect.x,y:rect.y,width:rect.width,height:rect.height)
           }
           if frames.count == model.selectionSession.count {
-            NotebookMultipleElementControls(contextMenus:contextMenus,selectionID:model.selectionSession.id,frames:frames,scale:presence.camera.scale)
+            NotebookMultipleElementControls(contextMenus:contextMenus,selectionID:model.selectionSession.id,frames:frames,scale:presence.camera.scale,camera:presence)
               .frame(width:viewport.x,height:viewport.y)
           }
         }
@@ -535,7 +535,7 @@ struct SpatialWorkspaceView: View {
       let box = rendered.geometry.screenFrame(center:rendered.center, camera:presence.camera, viewport:viewport)
       NotebookItemControls(contextMenus:contextMenus,item:rendered.item,boardID:presence.boardID,selectionID:model.selectionSession.id,
         frame:.init(x:box.x,y:box.y,width:box.width,height:box.height),
-        open:{ openItem(selectedItemID,viewport:viewport) })
+        open:{ openItem(selectedItemID,viewport:viewport) },camera:presence,cornerRadius:rendered.geometry.cornerRadius)
         .frame(width:viewport.x,height:viewport.y)
         .zIndex(9_500)
     }
@@ -1412,19 +1412,6 @@ private struct WorkspaceSceneItem: View {
     .contentShape(.accessibility, RoundedRectangle(
       cornerRadius: rendered.geometry.cornerRadius, style: .continuous
     ))
-    .overlay {
-      if openProgress < 0.12, isSelected {
-        RoundedRectangle(
-          cornerRadius: rendered.geometry.cornerRadius,
-          style: .continuous
-        )
-        .stroke(
-          Color.accentColor.opacity(0.72),
-          lineWidth: 2 / max(projectedScale, 0.0125)
-        )
-        .allowsHitTesting(false)
-      }
-    }
     .accessibilityElement(children: .contain)
     .accessibilityLabel(rendered.item.title.isEmpty
       ? (rendered.item.kind == .notebook ? "Тетрадь" : rendered.item.kind == .document ? "Документ" : "Доска")

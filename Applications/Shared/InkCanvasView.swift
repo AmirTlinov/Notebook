@@ -212,6 +212,8 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
   private(set) var committedIndexVisitCount = 0
 
   private static let framesInFlight = 3
+  private static let pageDrawableCount = 2
+  private var pageInputEnabled = true
   /// A retained surface submits one GPU frame at a time beside its shown frame.
   /// Preparation uses that same second slot, never a second full drawable pool.
   nonisolated static let spatialFramesInFlight = 2
@@ -489,11 +491,23 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
       (1...16_384).contains(pixels.width), (1...16_384).contains(pixels.height) else { return }
     guard region != pageRenderRegion || drawableSize != pixels || pageSourceSize != sourceSize else { return }
     pageRenderRegion = region; pageSourceSize = sourceSize
+    (layer as? CAMetalLayer)?.maximumDrawableCount = Self.pageDrawableCount
     if isErasureMask { spatialDrawableScale = pixelDensity }
     autoResizeDrawable = false
     frame = region
     drawableSize = pixels
     beginStableContentUpdate()
+    requestFrame()
+  }
+
+  /// Only the input paper needs a retained history texture for each Pencil
+  /// sample. Curl neighbours already hold their exact drawable and source mesh.
+  func setPageInputEnabled(_ enabled: Bool) {
+    guard pageInputEnabled != enabled else { return }
+    pageInputEnabled = enabled
+    if !enabled {
+      pageRetainedTexture = nil; pageRetainedReservation = nil; pageRetainedKey = nil
+    }
     requestFrame()
   }
 
@@ -525,7 +539,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     msaa.storageMode = device.supportsFamily(.apple1) ? .memoryless : .private
     let attachmentBytes = samples > 1 && msaa.storageMode != .memoryless
       ? textureAllocationSize(msaa,on:device) : 0
-    guard let reservation = resources.reserveDerivedBytes(drawableBytes * Self.framesInFlight + attachmentBytes,
+    guard let reservation = resources.reserveDerivedBytes(drawableBytes * Self.pageDrawableCount + attachmentBytes,
       priority: .input, owner: physicalAdmission) else { renderFailure = .resourceLimit; return false }
     let attachment = samples > 1 ? device.makeTexture(descriptor: msaa) : nil
     guard samples == 1 || attachment != nil else {
@@ -538,7 +552,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
 
   private func admitPageRetainedTexture() -> Bool {
     let hasCommittedPage = baselineTexture != nil || committedBatches.contains { !$0.mesh.isEmpty }
-    let retainsCommittedPage = pageRenderRegion != nil && spatialDrawableScale == nil && material == nil && hasCommittedPage
+    let retainsCommittedPage = pageInputEnabled && pageRenderRegion != nil && spatialDrawableScale == nil && material == nil && hasCommittedPage
     guard retainsCommittedPage else {
       pageRetainedTexture = nil; pageRetainedReservation = nil; pageRetainedKey = nil
       return true

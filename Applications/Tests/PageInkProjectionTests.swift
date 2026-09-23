@@ -110,6 +110,33 @@ final class PageInkProjectionTests: XCTestCase {
     paper.inkView.commitActiveStroke();try await ready(paper.inkView)
   }
 
+  func testFourRetinaCurlPagesFitWithoutDuplicatingInactiveHistory() async throws {
+    let scene=try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+    let window=UIWindow(windowScene:scene),host=UIViewController()
+    window.rootViewController=host;window.makeKeyAndVisible()
+    defer { window.isHidden=true;window.rootViewController=nil }
+    let resources=SceneRenderResources(byteLimit:192 * 1024 * 1024)
+    var pages:[InkCanvasView]=[]
+    for index in 0..<PageTurnPrewarmWindow.capacity {
+      let canvas=InkCanvasView(frame:.zero,resources:resources)
+      canvas.setPageInputEnabled(index == 0)
+      host.view.addSubview(canvas)
+      canvas.projectPage(region:.init(x:0,y:0,width:834,height:1194),
+        sourceSize:.init(width:834,height:1194),pixelDensity:2)
+      canvas.apply(PageInkDrawing(actions:[line()]))
+      try await ready(canvas)
+      XCTAssertEqual(canvas.hasPageRetainedTexture,index == 0)
+      pages.append(canvas)
+    }
+    // Transfer input ownership without retaining a second history backing.
+    pages[0].setPageInputEnabled(false)
+    pages[1].setPageInputEnabled(true)
+    try await ready(pages[1])
+    XCTAssertFalse(pages[0].hasPageRetainedTexture)
+    XCTAssertTrue(pages[1].hasPageRetainedTexture)
+    XCTAssertLessThanOrEqual(resources.reservedBytes,resources.byteLimit)
+  }
+
   private func makePaper() throws -> (UIWindow, PaperCanvasContainerView) {
     let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
     let window = UIWindow(windowScene:scene), controller = UIViewController()

@@ -449,6 +449,7 @@ final class PaperCanvasContainerView: UIView {
   }
 
   func setInputEnabled(_ enabled: Bool) {
+    inkView.setPageInputEnabled(enabled)
     touchView.isUserInteractionEnabled = enabled
     touchView.isAccessibilityElement = enabled
     touchView.accessibilityElementsHidden = !enabled

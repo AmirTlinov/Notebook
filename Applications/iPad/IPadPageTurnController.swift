@@ -837,6 +837,8 @@ final class IPadPageTurnController: UIViewController,
     min(max(0, index), max(0, pageCount - 1))
   }
 
+  var preparedPageIndices: Set<Int> { Set(readyPages.compactMap { $0.value ? $0.key : nil }) }
+
   var cachedPageIdentities: [Int: ObjectIdentifier] {
     controllers.mapValues(ObjectIdentifier.init)
   }

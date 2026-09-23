@@ -14,6 +14,7 @@ struct AgentOverlayView: View {
   let onRenderReady: (Bool) -> Void
   let onState: (String, JSONValue) -> Bool
   var visibleRegion: CGRect? = nil
+  var pageTurnActivity: PageTurnActivity? = nil
 
   @State private var readiness = AgentOverlayReadiness()
   @State private var readinessID = UUID()
@@ -82,6 +83,7 @@ struct AgentOverlayView: View {
             allowsProgramExecution: runningPrograms.contains(element.id),
             capturePolicy: capturePolicy(for:element,presentation:presentation),
             focus: interactiveReference,
+            pageTurnActivity: pageTurnActivity,
             onRenderReady: { ready in
               setElement(element, ready: ready)
             },

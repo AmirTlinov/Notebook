@@ -15,13 +15,13 @@ import XCTest
   func testColdBoardEntryAndRealSwipesShowEveryLeafAfterEvictionAndReturn() throws {
     try launch()
     try open()
-    for number in 1...5 { try step("swipe-to-\(number + 1)", { surface.swipeLeft() }) { try self.leaf(number) } }
-    for number in (0..<5).reversed() { try step("reverse-to-\(number + 1)", { surface.swipeRight() }) { try self.leaf(number) } }
+    for number in 1...5 { try turn("swipe-to-\(number + 1)", to: number) { surface.swipeLeft() } }
+    for number in (0..<5).reversed() { try turn("reverse-to-\(number + 1)", to: number) { surface.swipeRight() } }
     try leave()
     try open()
     // A successful counter change or shell mount alone cannot satisfy a turn.
-    try step("button-next", { app.buttons["next-page"].tap() }) { try self.leaf(1) }
-    try step("button-previous", { app.buttons["previous-page"].tap() }) { try self.leaf(0) }
+    try turn("button-next", to: 1) { app.buttons["next-page"].tap() }
+    try turn("button-previous", to: 0) { app.buttons["previous-page"].tap() }
   }
 
   func testFirstSelectionMoveDeleteAndColdReopenPreserveTheWholeComposition() throws {
@@ -70,7 +70,7 @@ import XCTest
       XCTAssertFalse(self.app.textViews["native-text-editor"].exists)
       XCTAssertTrue(self.app.staticTexts[text].exists)
     }
-    app.buttons["drawing-tool-pen"].tap()
+    app.buttons["pen-controls-toggle"].tap()
     try step("new-text-not-on-previous-leaf", { surface.swipeRight() }) {
       try self.leaf(5); XCTAssertFalse(self.app.staticTexts[text].exists)
     }
@@ -83,7 +83,7 @@ import XCTest
   func testMenusBackgroundAndRotationKeepFirstContactAndPageNavigation() throws {
     defer { XCUIDevice.shared.orientation = .portrait }
     try launch(); try open()
-    for id in ["drawing-tool-eraser", "drawing-tool-lasso", "drawing-tool-pen"] {
+    for id in ["drawing-tool-eraser", "drawing-tool-lasso", "pen-controls-toggle"] {
       app.buttons[id].tap(); app.buttons[id].tap()
       // Dismiss by a real outside tap, never by closing an injected sheet.
       coordinate(720, 900).tap()
@@ -126,10 +126,20 @@ import XCTest
   private func open(deleted: Bool = false) throws {
     try step("ordinary-cover-double-tap", { cover.doubleTap() }) {
       XCTAssertTrue(self.surface.exists)
-      XCTAssertTrue(self.app.buttons["drawing-tool-pen"].isHittable)
+      XCTAssertTrue(self.app.buttons["pen-controls-toggle"].isHittable)
       XCTAssertTrue(self.app.buttons["next-page"].isHittable)
       try self.leaf(0, deleted: deleted)
     }
+  }
+  private func turn(_ name: String, to index: Int, action: () -> Void) throws {
+    try step(name, {
+      action()
+      // XCTest's swipe returns while UIKit's curl is still in flight. Await
+      // that native landing, then inspect its FIRST composition without retry.
+      let landed = XCTNSPredicateExpectation(
+        predicate: NSPredicate(format: "value BEGINSWITH %@", "Страница \(index + 1) из "), object: surface)
+      XCTAssertEqual(XCTWaiter.wait(for: [landed], timeout: 2), .completed, "The native curl did not land")
+    }) { try self.leaf(index) }
   }
   private func leave() throws {
     try step("back-to-board", { app.buttons["leave-nested-board"].tap() }) {

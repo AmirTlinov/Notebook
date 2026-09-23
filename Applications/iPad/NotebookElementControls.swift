@@ -30,6 +30,7 @@ struct NotebookElementControls: UIViewRepresentable {
   let selectionID: UUID
   let frame: CGRect
   let scale: Double
+  var camera: SessionPresence? = nil
 
   func makeUIView(context: Context) -> NotebookSelectionControlsView { .init(gate: model.inputGate,contextMenus:contextMenus) }
   func updateUIView(_ view: NotebookSelectionControlsView, context: Context) {
@@ -44,11 +45,12 @@ struct NotebookElementControls: UIViewRepresentable {
     let isGroup=model.isElementGroup(reference)
     view.graphic = graphic
     view.configure(selectionID: selectionID, frame: frame, textWidth:model.textWidthControls(reference,screenFrame:frame,scale:scale), layout: graphic?.connection == nil ? nil : model.graphicLayout(reference), scale:scale,
-      hasLabel: !(graphic?.label.isEmpty ?? true), mode:model.selectionSession.geometryMode, manipulating: suppressActions,subject:isGroup ? .group : .element)
-    view.beginManipulation = { kind in
+      hasLabel: !(graphic?.label.isEmpty ?? true), mode:model.selectionSession.geometryMode, manipulating: suppressActions,subject:isGroup ? .group : .element,
+      camera:camera, cameraProjection:model.nativeCameraProjection)
+    view.beginManipulation = { [weak view] kind in
       guard model.selectionSession.id == selectionID,
         let contact = model.beginElementManipulation(reference, kind: kind) else { return nil }
-      let scale = max(scale, 0.001)
+      let scale = max(view?.projectionScale ?? scale, 0.001)
       return .init(begin: {}, change: { point in
         model.updateElementManipulation(contact, translation: .init(x: point.x / scale, y: point.y / scale))
       }, end: { point in
@@ -150,19 +152,21 @@ struct NotebookMultipleElementControls: UIViewRepresentable {
   let selectionID: UUID
   let frames: [CGRect]
   let scale: Double
+  var camera: SessionPresence? = nil
   func makeUIView(context: Context) -> NotebookSelectionControlsView { .init(gate:model.inputGate,contextMenus:contextMenus) }
   func updateUIView(_ view: NotebookSelectionControlsView, context: Context) {
     let suppressActions = model.selectionSession.manipulation != nil
       || (model.inputIsActive && !model.inputGate.permitsObjectPickup)
-    view.graphic = nil; view.memberFrames = frames
+    view.graphic = nil
     let frame = frames.reduce(CGRect.null) { $0.union($1) }
     let transforms=model.selectionSession.items.isEmpty && model.selectionSession.elements.allSatisfy { model.graphicElement($0) != nil }
     view.configure(selectionID:selectionID,frame:frame,scale:scale,manipulating:suppressActions,
-      subject:.elements(frames.count),transformsSelection:transforms)
-    view.beginManipulation = { kind in
+      subject:.elements(frames.count),transformsSelection:transforms,memberFrames:frames,
+      camera:camera,cameraProjection:model.nativeCameraProjection)
+    view.beginManipulation = { [weak view] kind in
       guard transforms,model.selectionSession.id == selectionID,let reference=model.selectionSession.elements.first,
         let contact=model.beginElementManipulation(reference,kind:kind) else { return nil }
-      let scale=max(scale,0.001)
+      let scale=max(view?.projectionScale ?? scale,0.001)
       return .init(begin:{},change:{ point in
         model.updateElementManipulation(contact,translation:.init(x:point.x/scale,y:point.y/scale))
       },end:{ point in
@@ -217,11 +221,14 @@ struct NotebookItemControls: UIViewRepresentable {
   let selectionID: UUID
   let frame: CGRect
   let open: () -> Void
+  let camera: SessionPresence
+  let cornerRadius: Double
 
   func makeUIView(context: Context) -> NotebookSelectionControlsView { .init(gate:model.inputGate,contextMenus:contextMenus) }
   func updateUIView(_ view: NotebookSelectionControlsView, context: Context) {
     view.graphic = nil
-    view.configure(selectionID:selectionID,frame:frame,subject:.item(item.kind))
+    view.configure(selectionID:selectionID,frame:frame,scale:camera.camera.scale,subject:.item(item.kind),
+      camera:camera,cameraProjection:model.nativeCameraProjection,cornerRadius:cornerRadius * camera.camera.scale)
     view.isEnabled = !model.isItemBeingDeleted(item.id)
     view.editElement = {
       guard model.selectionSession.id == selectionID,
@@ -267,10 +274,10 @@ private enum ElementHandle: Hashable {
 }
 
 /// Element geometry and actions only. Context presentation belongs to the workspace.
-final class NotebookSelectionControlsView: UIControl, UIGestureRecognizerDelegate {
+final class NotebookSelectionControlsView: UIControl, UIGestureRecognizerDelegate, SceneNativeCameraOwner {
   enum Subject { case element, group, elements(Int), item(WorkspaceItemKind) }
   private var subject: Subject = .element
-  var memberFrames: [CGRect] = []
+  private var memberFrames: [CGRect] = []
   override var isEnabled: Bool {
     didSet { setNeedsLayout() }
   }
@@ -352,7 +359,15 @@ final class NotebookSelectionControlsView: UIControl, UIGestureRecognizerDelegat
   private var handleAccessibility: [ElementHandleAccessibility] = []
   private var handles = NotebookElementResizeHandle.allCases.map(ElementHandle.corner)
   private var connectionLayout: NotebookGraphicLayout?
-  private var projectionScale = 1.0
+  private(set) var projectionScale = 1.0
+  private weak var cameraProjection: SceneNativeCameraProjection?
+  private var cameraAnchor: SessionPresence?
+  private var anchorFrame = CGRect.zero
+  private var anchorMembers: [CGRect] = []
+  private var anchorTextWidth: NotebookTextWidthControls?
+  private var anchorScale = 1.0
+  private var anchorCornerRadius = 0.0
+  private let itemOutline = UIView()
   private var hasLabel = false
   private var geometryMode: NotebookSelectionSession.GeometryMode = .transform
   var beginManipulation: ((NotebookElementManipulation.Kind) -> SceneSelectionLift?)?
@@ -362,6 +377,12 @@ final class NotebookSelectionControlsView: UIControl, UIGestureRecognizerDelegat
     self.gate = gate; self.contextMenus = contextMenus
     super.init(frame: .zero)
     backgroundColor = .clear; isOpaque = false
+    itemOutline.isUserInteractionEnabled = false
+    itemOutline.accessibilityElementsHidden = true
+    itemOutline.layer.cornerCurve = .continuous
+    itemOutline.layer.borderWidth = 2
+    itemOutline.isHidden = true
+    addSubview(itemOutline)
     let buttons: [(UIButton,String,String,String)] = [
       (textFormatButton,"textformat","Формат текста","native-text-format"),
       (clipboardButton,"doc.on.clipboard","Буфер обмена","native-text-clipboard"),
@@ -418,7 +439,7 @@ final class NotebookSelectionControlsView: UIControl, UIGestureRecognizerDelegat
   }
   required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
-  func configure(selectionID: UUID, frame: CGRect, textWidth:NotebookTextWidthControls? = nil, layout: NotebookGraphicLayout? = nil, scale: Double = 1, hasLabel: Bool = false, mode: NotebookSelectionSession.GeometryMode = .transform, manipulating: Bool = false, subject: Subject = .element, transformsSelection:Bool = false) {
+  func configure(selectionID: UUID, frame: CGRect, textWidth:NotebookTextWidthControls? = nil, layout: NotebookGraphicLayout? = nil, scale: Double = 1, hasLabel: Bool = false, mode: NotebookSelectionSession.GeometryMode = .transform, manipulating: Bool = false, subject: Subject = .element, transformsSelection:Bool = false, memberFrames:[CGRect] = [], camera:SessionPresence? = nil, cameraProjection:SceneNativeCameraProjection? = nil, cornerRadius:Double = 0) {
     if self.selectionID != selectionID { cancel(); contextMenus.hide(source:source); self.selectionID = selectionID }
     self.subject = subject
     self.textWidth=textWidth
@@ -473,13 +494,25 @@ final class NotebookSelectionControlsView: UIControl, UIGestureRecognizerDelegat
     if handles != next { handles = next; rebuildAccessibility() }
     else { updateAccessibilityElements() }
     connectionLayout = layout; projectionScale = scale; self.hasLabel = hasLabel
-    frameRect = frame; self.manipulating = manipulating
-    setNeedsLayout(); setNeedsDisplay()
+    self.manipulating = manipulating
+    anchorFrame = frame; anchorMembers = memberFrames; anchorTextWidth = textWidth
+    anchorScale = scale; anchorCornerRadius = cornerRadius; cameraAnchor = camera
+    if self.cameraProjection !== cameraProjection {
+      self.cameraProjection?.remove(self); self.cameraProjection = cameraProjection
+    }
+    if let camera {
+      projectSceneCamera(cameraProjection?.current(for:camera.boardID) ?? camera)
+      if window != nil { cameraProjection?.register(self) }
+    } else {
+      frameRect = frame; self.memberFrames = memberFrames
+      updateProjectedControls(cornerRadius:cornerRadius)
+    }
   }
   override func didMoveToWindow() {
     super.didMoveToWindow(); uninstall()
     guard let window else { return }
     installedWindow = window; window.addGestureRecognizer(pan)
+    cameraProjection?.register(self)
     gate.registerControlRegion(source: source) { [weak self] point, kind in
       guard let self, let window = installedWindow, !isHidden else { return false }
       let local = convert(point, from: window)
@@ -490,8 +523,33 @@ final class NotebookSelectionControlsView: UIControl, UIGestureRecognizerDelegat
     }
   }
   func uninstall() {
+    cameraProjection?.remove(self)
     cancel(); contextMenus.hide(source:source); installedWindow?.removeGestureRecognizer(pan); installedWindow = nil
     gate.unregisterControlRegion(source: source); gate.unregisterFingerCancellation(source: source)
+  }
+  /// Project the original geometry, never a previously rounded screen frame.
+  /// This runs in the same native transaction as the physical scene planes.
+  func projectSceneCamera(_ presence: SessionPresence) {
+    guard let anchor = cameraAnchor, anchor.boardID == presence.boardID else { return }
+    let projection = SceneCameraProjection(anchor:anchor,current:presence)
+    let transform = CGAffineTransform(scaleX:projection.scale,y:projection.scale)
+      .concatenating(.init(translationX:projection.translation.x,y:projection.translation.y))
+    frameRect = anchorFrame.applying(transform)
+    memberFrames = anchorMembers.map { $0.applying(transform) }
+    textWidth = anchorTextWidth?.projected(by:transform)
+    projectionScale = anchorScale * projection.scale
+    updateProjectedControls(cornerRadius:anchorCornerRadius * projection.scale)
+  }
+  private func updateProjectedControls(cornerRadius:Double) {
+    if case .item = subject {
+      itemOutline.isHidden = false
+      itemOutline.frame = frameRect
+      itemOutline.layer.cornerRadius = cornerRadius
+      itemOutline.layer.borderColor = tintColor.withAlphaComponent(0.72).cgColor
+    } else { itemOutline.isHidden = true }
+    setNeedsDisplay(); setNeedsLayout()
+    // Capsule position and hit regions must not wait for a SwiftUI publication.
+    if window != nil { layoutIfNeeded() }
   }
   override func layoutSubviews() {
     super.layoutSubviews()

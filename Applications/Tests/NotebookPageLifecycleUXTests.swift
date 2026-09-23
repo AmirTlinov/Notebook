@@ -220,6 +220,35 @@ import XCTest
     XCTAssertEqual(model.notebookPageCount(notebook), 6, "Only the explicit trailing turn creates a leaf; reverse/cancel must not")
   }
 
+  func testSVGNeighbourPreparesDuringTheCurrentCurlNotAfterFingerLift() async throws {
+    let model = try await modelWithPages(4, distinctLeaves:true, includesSVG:true)
+    let notebook = try XCTUnwrap(model.workspace?.selectedItemID)
+    await model.prepareNotebookPage(at:0,in:notebook)
+    _ = model.selectNotebookPage(0,notebookID:notebook,expectedRoot:model.notebookPageRoot(notebook)!)
+    let scene = try await mount(model), owner = try pageOwner(scene.window)
+    let (previous,target) = try await turnTarget(owner,forward:true)
+    scene.beginFinger(.init(x:730,y:1050))
+    scene.moveFinger(.init(x:710,y:1050),expectsManipulation:false)
+    defer { scene.endFinger() }
+    XCTAssertTrue(model.inputGate.isActive)
+    owner.pageViewController(owner.pageViewController,willTransitionTo:[target])
+    let start = ContinuousClock.now
+    while !owner.preparedPageIndices.contains(2), ContinuousClock.now-start < .seconds(2) {
+      try await Task.sleep(for:.milliseconds(16))
+    }
+    XCTAssertTrue(owner.preparedPageIndices.contains(2),
+      "The page beyond the landing must render its SVG while this curl owns the finger, not wait for input settlement")
+    let elapsed = ContinuousClock.now-start
+    let evidence = XCTAttachment(string:"nextSVGReady=\(owner.preparedPageIndices.contains(2)); elapsed=\(elapsed); fingerActive=\(model.inputGate.isActive)")
+    evidence.name="svg-prewarm-during-curl";evidence.lifetime = .keepAlways;add(evidence)
+    owner.pageViewController.setViewControllers([target],direction:.forward,animated:false)
+    owner.pageViewController(owner.pageViewController,didFinishAnimating:true,previousViewControllers:[previous],transitionCompleted:true)
+    scene.endFinger()
+    let (_,next) = try await turnTarget(owner,forward:true)
+    XCTAssertEqual(next.view.accessibilityIdentifier,"page-turn-page-2")
+    XCTAssertLessThanOrEqual(owner.cachedPageIdentities.count,4)
+  }
+
   func testPeerRemovedLeafCannotCommitAnOldCurlIntoItsReplacementSlot() async throws {
     let model = try await modelWithPages(1, distinctLeaves: true)
     let notebook = try XCTUnwrap(model.workspace?.selectedItemID), first = try XCTUnwrap(model.activePage?.id)
@@ -423,7 +452,7 @@ import XCTest
       budget: NotebookUXObservation.opening)
   }
 
-  private func modelWithPages(_ count: Int, distinctLeaves: Bool = false) async throws -> NotebookAppModel {
+  private func modelWithPages(_ count: Int, distinctLeaves: Bool = false, includesSVG:Bool = false) async throws -> NotebookAppModel {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("page-lifecycle-\(UUID())")
     let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false,
       preferences: UserDefaults(suiteName: UUID().uuidString)!)
@@ -434,12 +463,23 @@ import XCTest
       if index > 0 { XCTAssertEqual(model.selectNotebookPage(index, notebookID: notebook, expectedRoot: model.notebookPageRoot(notebook)!), index) }
       let saved = await model.finishPendingPersistence(); XCTAssertTrue(saved)
       var page = try XCTUnwrap(model.activePage)
-      XCTAssertTrue(page.replaceElements(leafElements(index, distinct: distinctLeaves), actor: model.actorID))
+      XCTAssertTrue(page.replaceElements(leafElements(index, distinct: distinctLeaves) + (includesSVG ? [svgLeaf(index)] : []), actor: model.actorID))
       XCTAssertTrue(page.replaceDrawing(try PageInkDrawing(actions: [line(y: distinctLeaves ? 700 + Double(index) * 35 : 650)]).dataRepresentation(), actor: model.actorID))
       try model.store.savePage(page)
       await model.reloadExternalChanges()?.value
     }
     return model
+  }
+
+  private func svgLeaf(_ index:Int) -> AgentElement {
+    // Static exported handwriting/diagrams, not a live JS program or a blank page.
+    let paths=(0..<120).map { row in
+      let segments=(0..<24).map { column in "L\(column*24) \(row*3+(column%3))" }.joined(separator:" ")
+      return "<path d='M0 \(row*3) \(segments)'/>"
+    }.joined()
+    return .init(id:"svg-\(index)",kind:.web,frame:.init(x:70,y:75,width:650,height:150),source:"Sheet \(index)",
+      html:"<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 650 370'><g fill='none' stroke='#235688' stroke-width='1'>\(paths)</g><text x='10' y='365'>\(index)</text></svg>",
+      css:"html,body,svg{margin:0;width:100%;height:100%;display:block}")
   }
 
   private func leafElements(_ index: Int, distinct: Bool) -> [AgentElement] {

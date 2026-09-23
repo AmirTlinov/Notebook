@@ -131,7 +131,7 @@ struct PageSurface: View {
       },onState:{ elementID,state in
         guard isVisible,isCurrent,model.activePage?.id == page.id else { return false }
         return model.commitElementState(pageID:page.id,elementID:elementID,state:state)
-      },visibleRegion:visibleRegion)
+      },visibleRegion:visibleRegion,pageTurnActivity:onRenderReady.activity)
   }
 }
 
