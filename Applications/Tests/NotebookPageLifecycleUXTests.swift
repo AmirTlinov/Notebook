@@ -11,6 +11,42 @@ import XCTest
   private typealias Scene = NotebookInteractionUXTests.Scene
   private typealias Probe = NotebookSelectionComposition.Probe
 
+  func testPageMountsTheFullSizeErasureMaskOnlyWhileItHasLiveCoverage() async throws {
+    let model = try await modelWithPages(1)
+    var page = try XCTUnwrap(model.activePage)
+    XCTAssertTrue(page.replaceDrawing(try PageInkDrawing(actions: []).dataRepresentation(), actor: model.actorID))
+    try model.store.savePage(page)
+    await model.reloadExternalChanges()?.value
+    let resources = SceneRenderResources.shared, reservedBefore = resources.reservedBytes
+    let scene = try await mount(model)
+    try await shown("idle-page-before-eraser", window: scene.window,
+      probes: [probe("shape", [(230, 330)], .red, scene.pageToWindow)], budget: NotebookUXObservation.opening)
+    XCTAssertLessThanOrEqual(resources.reservedBytes, reservedBefore,
+      "An ink-free idle sheet must not reserve a full-screen white Metal erasure mask")
+    model.selectEraserWidth(28)
+    try await scene.readyPencil(self)
+    let began = ContinuousClock.now
+    scene.beginPencil(.init(x: 230, y: 270)); scene.movePencil(.init(x: 230, y: 410))
+    // SwiftUI's native mask is not necessarily in UIView.subviews. Its actual
+    // held-contact pixels, not an incomplete hierarchy walk, prove activation.
+    try await shown("live-eraser-first-contact-pixels", window: scene.window,
+      probes: [probe("live-cut", [(230, 330)], .paper, scene.pageToWindow),
+        probe("untouched-shape", [(350, 330)], .red, scene.pageToWindow),
+        probe("untouched-neighbor", [(590, 590)], .blue, scene.pageToWindow)], since: began)
+    scene.endPencil()
+    try await shown("lazy-mask-preserves-erased-pixels", window: scene.window,
+      probes: [probe("erased-shape", [(230, 330)], .paper, scene.pageToWindow)])
+    let retired = ContinuousClock.now
+    let oneScreenImage = Int(scene.window.bounds.width * scene.window.bounds.height
+      * pow(scene.window.screen.scale, 2) * 4)
+    try await assertUX("finished-eraser-releases-mask", since: retired,
+      budget: NotebookUXObservation.selection, window: scene.window) {
+      // The small permanent cutout remains; the two full-screen temporary
+      // drawables must retire rather than surviving behind it indefinitely.
+      resources.reservedBytes - reservedBefore < oneScreenImage
+    }
+  }
+
   func testRejectedEraseRestoresTheSameRevisionInsteadOfLeavingFalseDeletedPixels() async throws {
     try await rejectedErase(acceptsLocalTailFirst: false)
   }

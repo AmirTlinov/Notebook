@@ -264,18 +264,19 @@ final class NotebookCollaborationLatencyTests: XCTestCase {
     var cuts: [UInt64: ContinuousClock.Instant] = [:]
     let start = ContinuousClock.now
     var stages: [String] = []
-    func record(_ operation: String, since began: ContinuousClock.Instant) {
+    func record(_ operation: String, since began: ContinuousClock.Instant, completed: ContinuousClock.Instant? = nil) {
       func ms(_ duration: Duration) -> Double {
         Double(duration.components.seconds) * 1_000 + Double(duration.components.attoseconds) / 1e15
       }
-      stages.append("\(operation),start_ms=\(ms(start.duration(to: began))),elapsed_ms=\(ms(began.duration(to: .now)))")
+      let recorded = ContinuousClock.now, finished = completed ?? recorded
+      stages.append("\(operation),start_ms=\(ms(start.duration(to: began))),elapsed_ms=\(ms(began.duration(to: finished))),record_delay_ms=\(ms(finished.duration(to: recorded)))")
     }
     func observing(_ original: NotebookTransportStorage, name: String) -> NotebookTransportStorage {
       var result = original
       result.changes = { cursor, limit in
         let began = ContinuousClock.now
         let changes = try await original.changes(cursor, limit)
-        await self.record("\(name).offer.\(cursor).\(changes.count)", since: began)
+        await self.record("\(name).offer.\(cursor).\(changes.count)", since: began, completed: .now)
         return changes
       }
       result.stageBlobs = { batch in

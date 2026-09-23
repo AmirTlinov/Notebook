@@ -37,11 +37,10 @@ struct PageSurface: View {
             #if os(iOS)
             agentOverlay(renderingScale:scale * displayProjection)
               .mask {
-                ZStack {
+                if liveElementEraser.isActive {
                   NotebookLiveElementEraserMask(presentation:liveElementEraser)
                     .allowsHitTesting(false)
-                  if !liveElementEraser.isActive { Color.white }
-                }
+                } else { Color.white }
               }
             #else
             agentOverlay(renderingScale:scale * displayProjection)

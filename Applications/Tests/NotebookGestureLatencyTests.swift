@@ -99,7 +99,8 @@ final class NotebookGestureLatency {
       return "n=\(values.count) p50=\(percentile(0.5)) p95=\(percentile(0.95)) p99=\(percentile(0.99)) max=\(values.last!) ms"
     }
     let bad = samples.indices.filter { !samples[$0].passed }
-    let text = "\(name), fixed 120 Hz input, EVERY sample <= \(Self.budgetMS) ms; "
+    let state = "thermal=\(ProcessInfo.processInfo.thermalState.rawValue), lowPower=\(ProcessInfo.processInfo.isLowPowerModeEnabled), screenMax=\(canvas?.window?.windowScene?.screen.maximumFramesPerSecond ?? 0)"
+    let text = "\(name), \(state), fixed 120 Hz input, EVERY sample <= \(Self.budgetMS) ms; "
       + "input to handler return: \(statistics { $0.handled }); "
       + "UIKit update completion: \(statistics { $0.uiSubmitted }); "
       + "OS Metal presentation: \(statistics { $0.presented }); failed samples=\(bad). "

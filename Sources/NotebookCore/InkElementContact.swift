@@ -14,6 +14,7 @@ public struct InkElementContact {
   private var queriedHits: [String: (target: InkElementTarget, sample: Int)] = [:]
   private(set) var testedSegments = 0
   private(set) var visitedNodes = 0
+  public var isEmpty: Bool { firstHits.isEmpty && queriedHits.isEmpty }
   public var selected: [InkElementTarget] {
     firstHits.keys.sorted().map { targets[$0] }
       + queriedHits.values.sorted {

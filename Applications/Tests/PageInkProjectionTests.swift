@@ -89,6 +89,23 @@ final class PageInkProjectionTests: XCTestCase {
     XCTAssertLessThanOrEqual(resources.reservedBytes, resources.byteLimit)
     for page in pages { page.apply(PageInkDrawing()); try await ready(page) }
     XCTAssertEqual(resources.reservedBytes, 0, "Empty pages retain routing, not fictitious backing")
+
+    let erase = PageInkAction(tool: .eraser, points: [point(50, 70), point(250, 230)])
+    for page in pages {
+      page.apply(PageInkDrawing(actions: [erase])); try await ready(page)
+      XCTAssertGreaterThan(page.committedEraserSourceNodeCount, 0,
+        "Reclaim the backing, not the accepted measurements or history")
+    }
+    XCTAssertEqual(resources.reservedBytes, 0,
+      "An eraser without earlier ink contributes no visible material")
+    let last = try XCTUnwrap(pages.last)
+    last.apply(PageInkDrawing(actions: [erase, line()])); try await ready(last)
+    XCTAssertGreaterThan(resources.reservedBytes, 0)
+    XCTAssertTrue(try NotebookUXObservation.Pixels(window: window).matches([
+      (last.convert(.init(x: 150, y: 150), to: window), .black)]),
+      "A later pen remains visible: the earlier absence must not erase future material")
+    last.apply(PageInkDrawing(actions: [erase])); try await ready(last)
+    XCTAssertEqual(resources.reservedBytes, 0)
   }
 
   func testActiveSamplesDoNotQueryTheUnchangedHundredThousandPointBaseline() async throws {

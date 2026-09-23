@@ -1087,11 +1087,20 @@ final class PaperInputView: UIView {
     )
   }
 
+  private func presentMeasuredErasure(_ stroke: ActiveEraserStroke) {
+    presentActiveEraser?(stroke)
+    if !elementEraserFailed {
+      // The accepted contact already owns exact hits, including retractions
+      // after corrected measurements. No element hit means no element mask;
+      // the ink renderer still receives every measured eraser sample.
+      onLiveElementErasing(elementContact.isEmpty ? .cancel : .update(stroke))
+    }
+  }
+
   private func showMeasuredActionWithoutPredictions() {
     guard quickShape.fit == nil else { return }
     if actionTool == .eraser, let activeEraserStroke {
-      presentActiveEraser?(activeEraserStroke)
-      if !elementEraserFailed { onLiveElementErasing(.update(activeEraserStroke)) }
+      presentMeasuredErasure(activeEraserStroke)
     } else if let activePenStroke {
       activePenStroke.replacePredictions(with: [])
       presentActivePen?(activePenStroke)
@@ -1105,8 +1114,7 @@ final class PaperInputView: UIView {
     }
 
     if actionTool == .eraser, let activeEraserStroke {
-      presentActiveEraser?(activeEraserStroke)
-      if !elementEraserFailed { onLiveElementErasing(.update(activeEraserStroke)) }
+      presentMeasuredErasure(activeEraserStroke)
     } else if let activePenStroke {
       activePenStroke.replacePredictions(
         with: processedPredictedPenPoints().map(SpatialInkSample.init)
