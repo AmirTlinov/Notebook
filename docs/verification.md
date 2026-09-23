@@ -2,6 +2,18 @@
 
 ## September 23 — GUI-295, native Undo owns its accepted queue position (185)
 
+The signed **0.3.134 (185)** pair is built in `.build/gui295-release-185/`
+from the final unchanged verification input below. Mac binary UUID:
+`7A04BFFE-4002-3038-9971-EADCF137D409`; iPad:
+`D660D32F-E894-3410-A3DF-95656A25A2B8`.
+`/Users/amir/Applications/Notebook.update-185.app` passes strict code-signature
+and full-manifest comparison; the superseded, nonrunning 182 staging package
+was removed. **185 is not installed.** `.build/gui295-install-185/` records the
+staging boundary, live 180 version readback, unchanged Mac SQLite inodes, iPad
+container listing and installed-helper readback of the original page's same 27
+elements/revision. Readback is not evidence of new-version pixels. Exported native
+check attachments are outside the sealed verification directory.
+
 A new physical-iPad regression reproduced a real order inversion: after an
 accepted move and Undo, the immediately following writer fence still saw x=180
 instead of the restored x=20. The old path started a task, waited for the prior
