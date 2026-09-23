@@ -192,7 +192,7 @@ final class NotebookSQLConnection {
 
   func putBlob(_ data: Data) throws -> String {
     guard data.count <= 256 * 1024 * 1024 else { throw NotebookStorageError.limitExceeded("blob_too_large") }
-    let hash = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    let hash = NotebookHexEncoding.encode(SHA256.hash(data: data))
     try run("INSERT OR IGNORE INTO blobs(hash,data) VALUES(?,?)", [.text(hash), .blob(data)])
     return hash
   }
@@ -728,7 +728,7 @@ extension NotebookStore {
         var old = Dictionary(uniqueKeysWithValues: oldRows.map { ($0[0].text!, $0[1].text!) })
         for fragment in fragments {
           let data = try database.encodedStoredFragment(fragment)
-          let hash = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+          let hash = NotebookHexEncoding.encode(SHA256.hash(data: data))
           if old.removeValue(forKey: fragment.address) == hash { continue }
           try writeFragment(fragment, data: data, hash: hash, database: database)
         }

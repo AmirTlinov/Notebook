@@ -19,7 +19,7 @@ extension NotebookStore {
       guard var digest = row[0].blob, digest.count == 32, let hash = row[1].text, let data = row[2].blob else {
         throw NotebookStorageError.corruptRecord(address)
       }
-      guard SHA256.hash(data: data).map({ String(format: "%02x", $0) }).joined() == hash else {
+      guard NotebookHexEncoding.encode(SHA256.hash(data: data)) == hash else {
         throw NotebookStorageError.blobHashMismatch
       }
       let header = try database.decodedStoredFragment(from:data)
@@ -27,19 +27,16 @@ extension NotebookStore {
         throw NotebookStorageError.corruptRecord(address)
       }
       let content = header.replacing(value: header.value.setting("portalCamera", nil).setting("portalStamp", nil))
-      let contentHash = SHA256.hash(data: try Self.storageEncoder.encode(content))
-        .map { String(format: "%02x", $0) }.joined()
+      let contentHash = NotebookHexEncoding.encode(SHA256.hash(data: try Self.storageEncoder.encode(content)))
       for hash in [hash, contentHash] {
         for (offset, byte) in Self.boardRowContribution(address: address, hash: hash).enumerated() { digest[offset] ^= byte }
       }
-      return SHA256.hash(data: Data(("board-content-v1\n" + key + "\n").utf8) + digest)
-        .map { String(format: "%02x", $0) }.joined()
+      return NotebookHexEncoding.encode(SHA256.hash(data: Data(("board-content-v1\n" + key + "\n").utf8) + digest))
     }
   }
 
   private static func boardNodeRevision(id: String, digest: Data) -> String {
-    SHA256.hash(data: Data(("board-node-v1\n" + id + "\n").utf8) + digest)
-      .map { String(format: "%02x", $0) }.joined()
+    NotebookHexEncoding.encode(SHA256.hash(data: Data(("board-node-v1\n" + id + "\n").utf8) + digest))
   }
 
   private static func boardRowContribution(address: String, hash: String) -> SHA256.Digest {
@@ -83,13 +80,13 @@ extension NotebookStore {
       if children.isEmpty { try database.run("DELETE FROM board_frontier WHERE prefix=?", [.text(prefix)]) }
       else {
         let source = children.map { $0[0].text! + ":" + $0[1].text! }.joined(separator: "\n")
-        let hash = SHA256.hash(data: Data(("board-radix-v1\n" + source).utf8)).map { String(format: "%02x", $0) }.joined()
+        let hash = NotebookHexEncoding.encode(SHA256.hash(data: Data(("board-radix-v1\n" + source).utf8)))
         try database.run("INSERT INTO board_frontier(prefix,parent,hash) VALUES(?,?,?) ON CONFLICT(prefix) DO UPDATE SET hash=excluded.hash", [.text(prefix), prefix.isEmpty ? .null : .text(String(prefix.dropLast())), .text(hash)])
       }
     }
     let treeHash = try database.rows("SELECT hash FROM board_frontier WHERE prefix=''").first?[0].text ?? ""
     let rootHash = try database.rows("SELECT hash FROM records WHERE address='board.json#'").first?[0].text ?? ""
-    let revision = SHA256.hash(data: Data(("board-scene-v1\n" + rootHash + "\n" + treeHash).utf8)).map { String(format: "%02x", $0) }.joined()
+    let revision = NotebookHexEncoding.encode(SHA256.hash(data: Data(("board-scene-v1\n" + rootHash + "\n" + treeHash).utf8)))
     try database.run("INSERT INTO metadata(key,value) VALUES('board_revision',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", [.text(revision)])
   }
 }

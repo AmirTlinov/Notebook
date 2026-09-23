@@ -76,6 +76,7 @@ final class NotebookCollaborationLatencyTests: XCTestCase {
       let version = try action.deliveryVersion(), revision = try XCTUnwrap(action.revisions.first).revision
       let cut = try pair.owner.store.currentChangeCursor()
       var stages = ["saved": start.duration(to: .now)]
+      pair.arrivals.record("peer.input.\(index).cut.\(cut).action.\(id)", since: start)
       // A long diagnostic wait records the actual late result. It never changes
       // the per-stage ceilings or resets the clock after save/receive/render.
       while start.duration(to: .now) < .seconds(2), stages["shown-returned"] == nil || stages["pixels"] == nil {
@@ -95,7 +96,15 @@ final class NotebookCollaborationLatencyTests: XCTestCase {
           }
           return (received, shown)
         }.value
-        if stages["received"] == nil, durable.0 { stages["received"] = start.duration(to: .now) }
+        if durable.0 {
+          if stages["received"] == nil { stages["received"] = start.duration(to: .now) }
+          // Diagnostic only: the exact committed action/version above still
+          // gates receipt, with its unchanged observed deadline. Separate the
+          // adapter's durable return from the cost/phase of this polling loop.
+          if let committed = pair.arrivals.commits["pad"]?[cut] {
+            stages["durable-returned"] = start.duration(to: committed)
+          }
+        }
         if stages["installed"] == nil, pair.pad.activePage?.agentStamp.revision == revision,
           let page = pair.pad.activePage, pair.pad.pagePresentations.isPresented(page) {
           stages["installed"] = start.duration(to: .now)
@@ -262,6 +271,7 @@ final class NotebookCollaborationLatencyTests: XCTestCase {
 
   @MainActor private final class Arrivals {
     var cuts: [UInt64: ContinuousClock.Instant] = [:]
+    var commits: [String: [UInt64: ContinuousClock.Instant]] = [:]
     let start = ContinuousClock.now
     var stages: [String] = []
     func record(_ operation: String, since began: ContinuousClock.Instant, completed: ContinuousClock.Instant? = nil) {
@@ -299,10 +309,17 @@ final class NotebookCollaborationLatencyTests: XCTestCase {
       result.applyRemoteChange = { delivery in
         let began = ContinuousClock.now
         let cursor = try await original.applyRemoteChange(delivery)
-        await self.record("\(name).apply.\(delivery.change.sequence)", since: began)
+        let completed = ContinuousClock.now
+        await self.recordApply(name: name, sequence: delivery.change.sequence,
+          cursor: cursor, began: began, completed: completed)
         return cursor
       }
       return result
+    }
+    private func recordApply(name: String, sequence: UInt64, cursor: UInt64,
+      began: ContinuousClock.Instant, completed: ContinuousClock.Instant) {
+      if cursor >= sequence { commits[name, default: [:]][sequence] = completed }
+      record("\(name).apply.\(sequence)", since: began, completed: completed)
     }
   }
 

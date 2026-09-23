@@ -119,7 +119,7 @@ extension NotebookStore {
     guard let size = try database.rows("SELECT length(data) FROM blobs WHERE hash=?", [.text(hash)]).first?[0].integer else { throw NotebookStorageError.blobMissing(hash) }
     guard size > 0, size <= maximumBytes else { throw NotebookStorageError.limitExceeded("lifecycle_inverse_blob_bytes") }
     let data = try database.blob(hash)
-    guard SHA256.hash(data: data).map({ String(format: "%02x", $0) }).joined() == hash else { throw NotebookStorageError.blobHashMismatch }
+    guard NotebookHexEncoding.encode(SHA256.hash(data: data)) == hash else { throw NotebookStorageError.blobHashMismatch }
     return data
   }
 

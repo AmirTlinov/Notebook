@@ -1,5 +1,39 @@
 # Verification record
 
+## September 24 — GUI-295, bounded hash encoding and durable timing
+
+The command/storage/delivery path now writes each hexadecimal digest directly
+into one ASCII string instead of allocating 32 Foundation formatters and their
+temporary strings. Cryptographic bytes, identities, validation, transactions,
+FULL durability and wire formats are unchanged. The replaced lifecycle encoder
+was removed. Core **36 tests / 6 suites PASS** cover every byte, nonzero-index
+slices, standard/streaming SHA-256, invalid transport blobs, atomic SQLite writes,
+reference identities, board revisions and lifecycle extents
+(`.build/gui295-hash-encoding-core.log`).
+
+A same-driver local Mac comparison of 200 real insert/stage/apply operations in
+fresh stores gave total median/p95 **32.76/41.13 → 29.95/36.70 ms**; maxima
+**51.84 → 52.84 ms** did not improve. This is storage CPU/I/O evidence, not an
+end-to-end speedup claim. Before/after logs, driver and summary are retained at
+`.build/gui295-delivery-hash-{before,after}-sync.log`,
+`.build/gui295-delivery-hash-probe.swift` and
+`.build/gui295-delivery-hash-comparison.json`.
+
+The physical iPad optimized follow-up `.build/gui295-hash-delivery/verification.json`
+passed **3/3**, zero skips/runtime warnings: forward receipt/pixels/round trip,
+ten reverse deliveries and the known-transaction echo. Forward maxima were
+**94.80/165.30/208.98 ms**, reverse **48.69 ms**; all original 100/200/250 ms
+gates remain in force. This does not satisfy the newer two-device 80/150 ms
+shown-content goal or establish radio/hardware-Pencil acceptance.
+
+A diagnostic-only exact same-cut adapter return is now recorded separately from
+database polling, while the polling gate remains unchanged. On unchanged app
+code, `.build/gui295-durable-boundary/` still failed: first durable return
+**69.94 ms**, detection **103.28 ms**; ten durable returns had max **80.22 ms**.
+After hash encoding, durable returns had median/max **67.00/78.28 ms**. Those
+timestamps require the later exact action/version check and do not stand in for
+shown pixels. Isolated test apps were removed; production pair 190 is unchanged.
+
 ## September 24 — GUI-295, combined delivery check
 
 The integrated source

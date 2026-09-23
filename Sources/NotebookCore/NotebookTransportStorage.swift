@@ -123,7 +123,7 @@ public actor NotebookTransportBlobAssembly {
       // An already complete bounded chunk needs no temporary write/read pair.
       // Large/partial material alone uses the one streaming file below.
       if chunk.totalBytes == chunk.data.count {
-        let digest = SHA256.hash(data: chunk.data).map { String(format: "%02x", $0) }.joined()
+        let digest = NotebookHexEncoding.encode(SHA256.hash(data: chunk.data))
         guard digest == expectedHash else { throw NotebookTransportError.invalidBlob }
         return .bytes(hash: expectedHash, data: chunk.data)
       }
@@ -146,7 +146,7 @@ public actor NotebookTransportBlobAssembly {
     // transaction fsyncs the verified bytes before content can be committed.
     // Fsyncing this temporary copy as well serializes every tiny dependency.
     try handle.close(); self.handle = nil; hash = nil
-    let digest = hasher.finalize().map { String(format: "%02x", $0) }.joined()
+    let digest = NotebookHexEncoding.encode(hasher.finalize())
     guard digest == expectedHash else {
       try? FileManager.default.removeItem(at: file)
       throw NotebookTransportError.invalidBlob
