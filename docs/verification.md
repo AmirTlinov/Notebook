@@ -1,5 +1,64 @@
 # Verification record
 
+## September 23 — GUI-295, accepted writes survive storage and readback failure (181)
+
+Prepared element commands now use the same failed-write policy as ordinary ink:
+a storage failure keeps the accepted edit and dependent commands in FIFO order
+until explicit retry. A domain/source rejection releases only that failed command;
+it cannot permanently block independent edits. Save/shutdown returns failure
+instead of hanging on the retained command or reporting success.
+
+The existing native transaction has one in-flight command owner. It retains its
+exact result before commit acknowledgement, and retry checks the saved action
+receipt. A committed action is not applied twice, and a later peer edit is not
+substituted for its original result or supplied to a dependent edit. A rolled-back
+attempt must pass the original source checks again. Clipboard insertion also keeps
+one action ID across retries. No new storage format, durable material copy or
+automatic retry loop was introduced.
+
+`swift test --filter NotebookGraphicSelectionTests`: **7 test methods PASS**,
+including six before/after-commit fault cases on page/board and a stale-source
+retry refusal. Log: `.build/gui295-native-command-retry-core-final.log`.
+The two initial runs exposed fixture mistakes (missing ink journal and expecting
+physical deletion instead of retained `visible=false`); those expectations/setup
+were corrected, not the production deletion semantics.
+
+`.build/gui295-accepted-write-181-checked/`: **32 iPad + 7 Mac PASS**, zero
+skips/runtime warnings, source
+`3414ba12ba613f27893068bde7a4eee80e595ed0258592a4691d25b761723dc2`.
+Selected physical-iPad/Mac checks
+cover persistence, FIFO fences, exact accepted lasso predecessors, cold cut/move/
+next cut, clipboard/undo and refused shutdown/retry. The new tests exercise a
+failure inside the prepared write, a command accepted while storage is blocked,
+the real model's retained figure, and lost readback followed by a peer edit.
+The earlier `.build/gui295-accepted-storage-retry/` passed 30 iPad tests before
+adding uncertain-commit/readback recovery; it is not the final build input.
+
+This proves explicit retry of an in-process accepted command, not recovery of
+unsaved RAM after process death, a physically failing disk, human Pencil timing
+or full GUI-295 acceptance. Installed pair 180 still excludes these changes until
+the separate signed-pair installation is completed.
+
+## September 23 — GUI-295, installed pair 180
+
+The signed **0.3.134 (180)** pair from `.build/gui295-release-180/build.json`
+is installed in place and launched on Mac and physical iPad. Its unchanged
+verification input is `.build/gui295-cold-contact-180-checked/`; derived
+attachment exports are outside that sealed directory. Binary UUIDs are
+`EC8CA0E5-9111-3587-B09E-CFB11E59E08D` (Mac) and
+`CF2C62BA-7943-371E-9E51-A79D6E4E6076` (iPad).
+
+`.build/gui295-install-180/` records installed-version readback and container
+continuity: both Mac SQLite inodes and the space catalog's contents are unchanged;
+iPad installation preserved the existing container and space directories. Installed
+MCP readback retains the original page's revision 27, all 27 element IDs and their
+previews/appearance. No user material, identities, keys or archives were replaced.
+
+The iPad screenshot shows its existing board/notebook cover, **not the affected
+page**. After Mac relaunch, CUA capture fails with ScreenCaptureKit `-3811`, so
+the affected page's actual Mac pixels are not verified. Content readback is not
+substituted for this missing visual check, human Pencil or joint acceptance.
+
 ## September 23 — GUI-295, coherent material and cold contact ownership (180)
 
 The accepted ink source now owns rejection recovery on both platforms: rejecting

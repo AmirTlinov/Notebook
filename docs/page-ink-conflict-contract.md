@@ -59,6 +59,16 @@ operands with one Bezier contour preserving holes, through existing causal undo.
 New contact reads accepted logical content and queued drafts, not stale raster cohorts.
 Without an operand it creates a normal shape.
 
+Prepared native commands reserve the ordinary persistence FIFO at acceptance.
+A domain rejection releases that command; a storage failure retains the accepted
+command, its result channel and dependent edits for explicit retry. Failed storage
+releases a save/shutdown wait with failure, not a false saved acknowledgement.
+The in-flight native command retains its exact transaction result. After a lost
+commit/readback response, the durable action receipt proves its own commit;
+retry returns that original result rather than reading newer peer material.
+An absent receipt proves rollback and requires the original source checks again.
+This is recovery of the retained in-process command, not a new durable draft store.
+
 Ruler is temporary owner-local pose, moved by finger and rotated at its round end.
 Pencil uses the ordinary measurer. `PhysicalPaper` defines 1 cm as two grid cells;
 an edge-drawn line becomes normal graphics. Laser writes no content: world points

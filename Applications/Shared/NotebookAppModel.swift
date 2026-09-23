@@ -3413,12 +3413,18 @@ final class NotebookAppModel {
   /// task joins the existing command tail, so navigation/shutdown cannot outrun it.
   func insertClipboardFragment(_ fragment: NotebookPasteFragment, at destination: NotebookPasteDestination) async -> Bool {
     guard fragment.canInsert, await finishPendingInteraction(boundary:.acceptedInput), !isClosing else { return false }
-    let actor = actorID,generation = UUID()
+    let actor = actorID,generation = UUID(),actionID = UUID()
     let operation=Task { () throws -> @Sendable (NotebookStore) throws -> CollaborationReceipt in
       let operations=try fragment.operations(target:destination.target,offset:destination.offset(for:fragment),worldOrigin:destination.worldOrigin)
       return { store in
+        if let saved=try store.collaborationActionIfPresent(actionID) {
+          guard saved.action.operations == operations,saved.author == .human else {
+            throw CollaborationError("action_id_conflict","Этот ID уже принадлежит другой вставке.")
+          }
+          return saved
+        }
         let revision=try store.targetContentRevision(target:destination.target)
-        return try store.applyNativeGraphicAction(.init(summary:"Вставить из буфера",
+        return try store.applyNativeGraphicAction(.init(id:actionID,summary:"Вставить из буфера",
           expected:[.init(target:destination.target,revision:revision)],operations:operations),actor:actor)
       }
     }
@@ -3545,11 +3551,11 @@ final class NotebookAppModel {
           expected.append(.init(target:target,id:source.id,page:accepted.page,spatial:accepted.spatial))
         } else { expected.append(source) }
       }
-      let admittedSources=expected
+      let command=NotebookNativeElementCommand(plan.operations,summary:plan.summary,sources:expected,
+        layerMove:plan.layerMove,copiedFrom:plan.copiedFrom,expectedInkRevision:plan.expectedInkRevision,
+        actionID:commandID,actor:actor)
       return { store in
-        let result=try store.applyNativeElementEdits(plan.operations,summary:plan.summary,sources:admittedSources,
-          layerMove:plan.layerMove,copiedFrom:plan.copiedFrom,expectedInkRevision:plan.expectedInkRevision,
-          actionID:commandID,actor:actor)
+        let result=try command.apply(to:store)
         return .init(cursor:try store.currentChangeCursor(),sources:result.sources,
           header:target.kind == .page ? nil : try store.readBoardNodeHeader(target.boardID ?? target.id)?.board)
       }
@@ -5321,7 +5327,12 @@ final class NotebookAppModel {
     #endif
     repeat {
       guard !Task.isCancelled, continuing() else { return false }
-      if let task = graphicCommandTask { _ = await task.value }
+      if let task = graphicCommandTask {
+        // Its FIFO position was reserved at acceptance. A failed write keeps
+        // the task pending for retry, but must release shutdown/navigation.
+        guard await persistence.flush() else { return false }
+        _ = await task.value
+      }
       if let task = contextPublicationTask { await task.value }
       if let task = collaborationUndoTask { await task.value }
       guard !Task.isCancelled, continuing() else { return false }

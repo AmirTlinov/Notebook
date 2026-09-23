@@ -4,6 +4,93 @@ import Testing
 
 @Suite("Atomic native graphic selections")
 struct NotebookGraphicSelectionTests {
+  private enum Fault: Error { case storage }
+
+  @Test(arguments: [false,true], [NotebookStorageFault.afterRecordWrites,.beforeCommit,.afterCommit])
+  func retainedCommandRetriesItsOwnCommitWithoutBorrowingNewerMaterial(onBoard: Bool, fault: NotebookStorageFault) throws {
+    let root=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at:root) }
+    let store=NotebookStore(root:root),actor=UUID()
+    let (workspace,_)=try store.loadOrCreate(actor:actor,pageSize:.init(width:834,height:1194))
+    _=try store.loadOrCreateSpatialInk(actor:actor)
+    let target=CollaborationTarget(kind:onBoard ? .board : .page,
+      id:onBoard ? workspace.rootBoardID : workspace.selectedPageID!)
+    func source(_ id:String) throws -> NotebookNativeElementSource {
+      try .init(target:target,id:id,page:onBoard ? nil : store.readPageElement(pageID:target.id,elementID:id),
+        spatial:onBoard ? store.readSpatialElement(boardID:target.id,elementID:id) : nil)
+    }
+    let mask=NotebookGraphicMask().appending(.subtract,polygon:[.zero,.init(x:0.3,y:0),.init(x:0.3,y:1),.init(x:0,y:1)])
+    func values(_ x:Double) throws -> [String:JSONValue] {
+      var result:[String:JSONValue]=["kind":.string("graphic"),"source":.string(""),
+        "frame":try .encode(PageRect(x:x,y:20,width:80,height:100)),
+        "graphic":try .encode(NotebookGraphic(shape:.rectangle,style:.init(fill:.black),mask:mask))]
+      if onBoard { result["worldOrigin"]=try .encode(WorldPoint.zero) }
+      return result
+    }
+    _=try store.applyNativeElementEdits(["a","b","read-only"].enumerated().map {
+      .init(kind:.insertElement,target:target,id:$0.element,values:try values(Double($0.offset)*120))
+    },summary:"Original",sources:["a","b","read-only"].map(source),actor:actor)
+    let sources=try ["a","b","copy","read-only"].map(source),actionID=UUID()
+    let command=NotebookNativeElementCommand([
+      .init(kind:.updateElement,target:target,id:"a",values:["frame":try .encode(PageRect(x:45,y:20,width:80,height:100))]),
+      .init(kind:.removeElement,target:target,id:"b"),
+      .init(kind:.insertElement,target:target,id:"copy",values:try values(360))
+    ],summary:"Move, remove and insert",sources:sources,actionID:actionID,actor:actor)
+    let failing=NotebookStore(root:root) { point in
+      if String(describing:point) == String(describing:fault) { throw Fault.storage }
+    }
+    #expect(throws:Fault.self) { try command.apply(to:failing) }
+    let committed:Bool
+    if case .afterCommit = fault { committed=true } else { committed=false }
+    var committedSources:[NotebookNativeElementSource]?
+    if committed {
+      committedSources=try sources.map { try source($0.id) }
+      _=try store.applyNativeElementEdits([
+        .init(kind:.updateElement,target:target,id:"a",values:["graphic":.object(["label":.string("Peer continuation")])])
+      ],summary:"Peer continuation",sources:[source("a")],actor:UUID())
+    }
+    let cursor=try store.currentChangeCursor(),result=try command.apply(to:NotebookStore(root:root))
+    #expect(result.receipt.id == actionID)
+    #expect(try store.currentChangeCursor() == cursor + (committed ? 0 : 1))
+    #expect(try store.collaborationActions().filter { $0.id == actionID }.count == 1)
+    let removed=try #require(result.sources.first { $0.id == "b" })
+    #expect((removed.page?.graphic ?? removed.spatial?.graphic)?.visible == false)
+    if committed {
+      #expect(result.sources == committedSources,"A retry returns the exact saved cut, including spatial stamps and cuts, not peer values")
+      #expect(throws:CollaborationError.self) {
+        try store.applyNativeElementEdits([.init(kind:.removeElement,target:target,id:"a")],summary:"Dependent old cut",
+          sources:[result.sources[0]],actor:actor)
+      }
+      #expect(try source("a").page?.graphic?.label == "Peer continuation"
+        || source("a").spatial?.graphic?.label == "Peer continuation")
+    } else { #expect(try result.sources == sources.map { try source($0.id) }) }
+    let after=try store.currentChangeCursor(),again=try command.apply(to:store)
+    #expect(again.sources == result.sources && again.receipt == result.receipt)
+    #expect(try store.currentChangeCursor() == after)
+  }
+
+  @Test func rolledBackCommandStillRejectsAChangedSourceOnRetry() throws {
+    let root=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at:root) }
+    let store=NotebookStore(root:root),actor=UUID()
+    let (workspace,_)=try store.loadOrCreate(actor:actor,pageSize:.init(width:834,height:1194))
+    _=try store.loadOrCreateSpatialInk(actor:actor)
+    let target=CollaborationTarget(kind:.page,id:workspace.selectedPageID!)
+    let inserted=try store.applyNativeElementEdits([.init(kind:.insertElement,target:target,id:"a",values:[
+      "kind":.string("graphic"),"source":.string(""),"graphic":try .encode(NotebookGraphic(shape:.rectangle)),
+      "frame":try .encode(PageRect(x:0,y:0,width:100,height:100))])],summary:"Original",
+      sources:[.init(target:target,id:"a")],actor:actor)
+    let id=UUID(),command=NotebookNativeElementCommand([.init(kind:.removeElement,target:target,id:"a")],
+      summary:"Delete",sources:inserted.sources,actionID:id,actor:actor)
+    let failing=NotebookStore(root:root) { if case .beforeCommit = $0 { throw Fault.storage } }
+    #expect(throws:Fault.self) { try command.apply(to:failing) }
+    let peer=try store.applyNativeElementEdits([.init(kind:.updateElement,target:target,id:"a",
+      values:["graphic":.object(["label":.string("New source")])])],summary:"Peer",sources:inserted.sources,actor:UUID())
+    #expect(throws:CollaborationError.self) { try command.apply(to:store) }
+    #expect(try store.collaborationActionIfPresent(id) == nil)
+    #expect(try store.readPageElement(pageID:target.id,elementID:"a") == peer.sources[0].page)
+  }
+
   @Test func layerStepsRetainRelativeOrderAndStopAtTheStackEdges() {
     let order = ["a","b","c","d","e"], selected: Set<String> = ["b","d"]
     #expect(NotebookElementLayerMove.lower.applying(to:order,selected:selected) == ["b","a","d","c","e"])

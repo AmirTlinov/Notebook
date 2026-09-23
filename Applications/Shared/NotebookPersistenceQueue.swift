@@ -135,25 +135,31 @@ final class NotebookPersistenceQueue {
 
   /// Reserve the ordinary FIFO at lift, before material preparation suspends.
   /// Later Pencil writes keep their order without blocking their live input.
+  /// A rejected preparation/command releases its caller; a storage failure
+  /// retains this accepted command and its result channel for explicit retry.
   func enqueuePreparedCommand<Value:Sendable>(
     _ preparation:Task<@Sendable (NotebookStore) throws -> Value,Error>,
     publishesChanges:Bool = false) -> Task<Value,Error> {
     let channel=AsyncThrowingStream<Value,Error>.makeStream(bufferingPolicy:.bufferingNewest(1))
-    if let failure { channel.continuation.finish(throwing:Failure(message:failure)) }
-    else {
-      pending.append(Write(owner:nil,operation:{ store in
-        do {
-          let operation=try await preparation.value
-          let value=try operation(store)
-          channel.continuation.yield(value);channel.continuation.finish()
-          return .init(merged:false,succeeded:true)
-        } catch {
-          channel.continuation.finish(throwing:error)
-          return .init(merged:false,succeeded:false)
-        }
-      },onBlocked:{ channel.continuation.finish(throwing:Failure(message:$0)) },notifiesCommit:publishesChanges))
-      startIfNeeded()
-    }
+    pending.append(Write(owner:nil,operation:{ store in
+      let operation: @Sendable (NotebookStore) throws -> Value
+      do { operation=try await preparation.value }
+      catch {
+        channel.continuation.finish(throwing:error)
+        return .init(merged:false,succeeded:false)
+      }
+      do {
+        let value=try operation(store)
+        channel.continuation.yield(value);channel.continuation.finish()
+        return .init(merged:false,succeeded:true)
+      } catch let rejection as CollaborationError {
+        channel.continuation.finish(throwing:rejection)
+        return .init(merged:false,succeeded:false)
+      }
+      // All other execution failures reach the existing failed-write owner.
+      // Do not finish the channel or let a dependent accepted edit overtake it.
+    },notifiesCommit:publishesChanges))
+    startIfNeeded()
     return Task {
       for try await value in channel.stream { return value }
       throw CancellationError()

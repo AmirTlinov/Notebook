@@ -70,6 +70,137 @@ final class NotebookPersistenceTests: XCTestCase {
   }
 
   @MainActor
+  func testPreparedRejectionDoesNotBlockIndependentAcceptedWrites() async throws {
+    let root=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at:root) }
+    let queue=NotebookPersistenceQueue(store:.init(root:root))
+    var commits=0;queue.onCommit={ _ in commits += 1 }
+    let rejected=queue.enqueuePreparedCommand(Task { () throws -> @Sendable (NotebookStore) throws -> Int in
+      { _ in throw CollaborationError("revision_conflict","Changed source") }
+    },publishesChanges:true)
+    let accepted=queue.enqueuePreparedCommand(Task { () throws -> @Sendable (NotebookStore) throws -> Int in
+      { _ in 7 }
+    },publishesChanges:true)
+    let flushed=await queue.flush();XCTAssertTrue(flushed)
+    do { _=try await rejected.value;XCTFail("A stale command must be rejected") }
+    catch let error as CollaborationError { XCTAssertEqual(error.code,"revision_conflict") }
+    let value=try await accepted.value;XCTAssertEqual(value,7)
+    XCTAssertNil(queue.failure);XCTAssertEqual(queue.pendingCount,0);XCTAssertEqual(commits,1)
+  }
+
+  @MainActor
+  func testPreparedStorageFailureRetainsItsResultAndLaterAcceptedCommandsForRetry() async throws {
+    let root=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at:root) }
+    try FileManager.default.createDirectory(at:root,withIntermediateDirectories:true)
+    let ready=root.appendingPathComponent("ready"),first=root.appendingPathComponent("first")
+    let queue=NotebookPersistenceQueue(store:.init(root:root))
+    var commits=0;queue.onCommit={ _ in commits += 1 }
+    let accepted=queue.enqueuePreparedCommand(Task { () throws -> @Sendable (NotebookStore) throws -> Int in
+      { _ in
+        guard FileManager.default.fileExists(atPath:ready.path) else { throw TestFailure.unavailable }
+        try Data("accepted".utf8).write(to:first);return 1
+      }
+    },publishesChanges:true)
+    let failed=await queue.flush();XCTAssertFalse(failed)
+    XCTAssertNotNil(queue.failure);XCTAssertEqual(queue.pendingCount,1);XCTAssertEqual(commits,0)
+    let later=queue.enqueuePreparedCommand(Task { () throws -> @Sendable (NotebookStore) throws -> Int in
+      { _ in
+        guard FileManager.default.fileExists(atPath:first.path) else { throw TestFailure.unavailable }
+        return 2
+      }
+    },publishesChanges:true)
+    XCTAssertEqual(queue.pendingCount,2,"Already blocked storage still retains a new accepted command")
+    try Data().write(to:ready);queue.retry()
+    let saved=await queue.flush();XCTAssertTrue(saved)
+    let firstValue=try await accepted.value,laterValue=try await later.value
+    XCTAssertEqual(firstValue,1);XCTAssertEqual(laterValue,2)
+    XCTAssertEqual(commits,2);XCTAssertEqual(queue.pendingCount,0);XCTAssertNil(queue.failure)
+  }
+
+  @MainActor
+  func testLostReadbackRetriesTheSavedActionAndRejectsAStaleDependentEdit() async throws {
+    let root=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at:root) }
+    let store=NotebookStore(root:root),actor=UUID()
+    let (workspace,_)=try store.loadOrCreate(actor:actor,pageSize:NotebookAppModel.defaultPageSize)
+    _=try store.loadOrCreateSpatialInk(actor:actor)
+    let target=CollaborationTarget(kind:.page,id:try XCTUnwrap(workspace.selectedPageID))
+    let queue=NotebookPersistenceQueue(store:store),readbackReady=root.appendingPathComponent("readback-ready")
+    let actionID=UUID(),command=NotebookNativeElementCommand([.init(kind:.insertElement,target:target,id:"figure",values:[
+      "kind":.string("graphic"),"source":.string(""),"graphic":try .encode(NotebookGraphic(shape:.rectangle)),
+      "frame":try .encode(PageRect(x:20,y:20,width:100,height:100))])],summary:"Accepted figure",
+      sources:[.init(target:target,id:"figure")],actionID:actionID,actor:actor)
+    let saved=queue.enqueuePreparedCommand(Task { () throws -> @Sendable (NotebookStore) throws -> NotebookNativeElementCommand.Output in
+      { store in
+        let result=try command.apply(to:store)
+        guard FileManager.default.fileExists(atPath:readbackReady.path) else { throw TestFailure.unavailable }
+        return result
+      }
+    },publishesChanges:true)
+    let failed=await queue.flush();XCTAssertFalse(failed)
+    let committed=try XCTUnwrap(store.readPageElement(pageID:target.id,elementID:"figure"))
+    XCTAssertEqual(committed.frame.x,20)
+    let peer=try store.applyNativeElementEdits([.init(kind:.updateElement,target:target,id:"figure",values:[
+      "frame":try .encode(PageRect(x:160,y:20,width:100,height:100))])],summary:"Peer move",
+      sources:[.init(target:target,id:"figure",page:committed)],actor:UUID())
+    let dependent=queue.enqueuePreparedCommand(Task { () throws -> @Sendable (NotebookStore) throws -> CollaborationReceipt in
+      let first=try await saved.value
+      return { store in
+        try store.applyNativeElementEdits([.init(kind:.removeElement,target:target,id:"figure")],summary:"Old cut",
+          sources:first.sources,actor:actor).receipt
+      }
+    })
+    try Data().write(to:readbackReady);queue.retry()
+    let retried=await queue.flush();XCTAssertTrue(retried)
+    let result=try await saved.value
+    XCTAssertEqual(result.receipt.id,actionID);XCTAssertEqual(result.sources[0].page,committed)
+    do { _=try await dependent.value;XCTFail("Retry cannot substitute a peer source for the accepted predecessor") }
+    catch let error as CollaborationError { XCTAssertEqual(error.code,"revision_conflict") }
+    XCTAssertEqual(try store.collaborationActions().count,2)
+    XCTAssertEqual(try store.readPageElement(pageID:target.id,elementID:"figure"),peer.sources[0].page)
+    XCTAssertNil(queue.failure);XCTAssertEqual(queue.pendingCount,0)
+  }
+
+  @MainActor
+  func testBlockedStorageKeepsAcceptedFigureAndReleasesTheSaveBoundary() async throws {
+    let root=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    let store=NotebookStore(root:root),queue=NotebookPersistenceQueue(store:store)
+    let model=NotebookAppModel(store:store,startsNearbySync:false,persistenceQueue:queue)
+    retainNotebookUntilTeardown(model,removing:root)
+    await model.start(pageSize:NotebookAppModel.defaultPageSize)
+    let initiallySaved=await model.finishPendingPersistence();XCTAssertTrue(initiallySaved)
+    var page=try XCTUnwrap(model.activePage)
+    let original=PageRect(x:20,y:30,width:100,height:100)
+    XCTAssertTrue(page.replaceElements([.init(id:"retained",kind:.graphic,frame:original,source:"",html:"",
+      graphic:.init(shape:.rectangle))],actor:model.actorID))
+    try store.savePage(page);await model.reloadExternalChanges()?.value
+    let ready=root.appendingPathComponent("ready")
+    queue.enqueue { _ in
+      guard FileManager.default.fileExists(atPath:ready.path) else { throw TestFailure.unavailable }
+      return false
+    }
+    let reference=EditableElementReference.page(pageID:page.id,elementID:"retained")
+    let moved=PageRect(x:180,y:30,width:100,height:100)
+    XCTAssertTrue(model.performElementOperation(.updateElement,reference:reference,
+      values:["frame":try .encode(moved)],summary:"Retained move"))
+    model.clearSelection()
+    let released=expectation(description:"Failed storage releases the save boundary, not the accepted edit")
+    var saved:Bool?
+    let waiting=Task { saved=await model.finishPendingPersistence();released.fulfill() }
+    await fulfillment(of:[released],timeout:2)
+    XCTAssertEqual(saved,false)
+    XCTAssertNotNil(model.persistenceFailure)
+    XCTAssertEqual(model.acceptedElementSource(reference)?.page?.frame,moved)
+    XCTAssertEqual(try store.loadPage(page.id).element(id:"retained")?.frame,original)
+    try Data().write(to:ready);queue.retry()
+    await waiting.value
+    let retried=await model.finishPendingPersistence();XCTAssertTrue(retried)
+    XCTAssertEqual(try store.loadPage(page.id).element(id:"retained")?.frame,moved)
+    XCTAssertNil(model.persistenceFailure)
+  }
+
+  @MainActor
   func testContentCommandDrainsTheLatestPencilGeneration() {
     let gate = NotebookInputGate(), page = UUID(), pencil = UUID()
     var tails: [NotebookInputCompletion] = []
