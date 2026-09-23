@@ -1,5 +1,19 @@
 # Verification record
 
+## September 23 — GUI-295/GUI-297 integrated pair input 187
+
+The bounded-delivery slice and both verified cover changes are integrated without
+retaining the protruding paper decoration or the former title owner. The combined
+source passed **2 Core + 3 physical-iPad + 4 Mac checks**: ordinary double-tap
+entry, cover ink through the physical curl, lasso selection/move/resize/cold reopen,
+clean notebook/A4/Letter contours, native material contact and readable cover
+material. No skips or runtime warnings occurred. Evidence:
+`.build/gui295-covers-integration/verification.json`, source
+`097f99a15e11a401214f46a0aa1dcc5c25c297a0b62785ebce004d75abce0183`;
+Core geometry/whole-sheet checks: `.build/gui295-covers-integration-core.log`.
+This receipt supports a signed pair build, not an installation or completion of
+the still-open forward-latency, native item-history and full-system acceptance work.
+
 ## September 23 — GUI-295, bounded delivery and display confirmation (in progress)
 
 Wire 42 replaces the per-blob round trip with one ordered request window: at most
@@ -70,7 +84,8 @@ backpressure, commit-only ACK, late disconnect, exact display negatives, and the
 lasso's selection/move/resize/cold reopen through the native gesture owners.
 The prepared-source-only wake took **17.59 ms** without another content change;
 lasso's pre-drag composition **52.71 ms** (capture **20.28 ms**), with its image
-inspected. Reverse Pencil delivery passed ten samples at **70.13 / 87.73 ms**+p50/max; iPad selection admission to real Mac IPC **7.66 / 17.03 ms**, with no
+inspected. Reverse Pencil delivery passed ten samples at **70.13 / 87.73 ms**
+p50/max; iPad selection admission to real Mac IPC **7.66 / 17.03 ms**, with no
 Mac camera motion. Forward latency after the prepared-source wake has not been
 remeasured; its earlier failures remain open. This verified transport improvement
 does not close S5 or establish installed-pair/human/full-system acceptance.
