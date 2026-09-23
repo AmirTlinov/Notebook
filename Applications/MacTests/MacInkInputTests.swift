@@ -36,6 +36,39 @@ import XCTest
     XCTAssertEqual(drawing.activeActions.map { $0.samples[0].point.y },(0..<10).map { Double(30+$0*20) })
   }
 
+  func testRejectedEraseRestoresTheAcceptedLocalTailWithoutAWholePagePublication() async throws {
+    let root=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    let fixture=MacCommandFixture(root:root),model=fixture.model
+    retainNotebookUntilTeardown(model,removing:root)
+    try await fixture.start(showingPage:true)
+    let page=try XCTUnwrap(model.activePage),canvas=MacPageInkCanvas(model:model,pageID:page.id)
+    let window=NSWindow(contentRect:.init(x:0,y:0,width:400,height:400),styleMask:[.titled],backing:.buffered,defer:false)
+    window.isReleasedWhenClosed=false;window.contentView=canvas;window.center()
+    NSApp.activate();window.makeKeyAndOrderFront(nil);window.orderFrontRegardless()
+    defer { canvas.uninstall();window.close() }
+    var receipt:PageInkPresentation?
+    canvas.update(page:page,enabled:true,current:true,onReady:{ receipt=$0 })
+    try await fixture.waitUntil { canvas.ink.pageGeometryIsReady }
+    func event(_ type:NSEvent.EventType,_ x:Double,_ y:Double,_ t:Double) throws->NSEvent {
+      try XCTUnwrap(NSEvent.mouseEvent(with:type,location:canvas.convert(.init(x:x,y:y),to:nil),
+        modifierFlags:[],timestamp:t,windowNumber:window.windowNumber,context:nil,eventNumber:1,clickCount:1,pressure:1))
+    }
+    model.selectMacInputTool(.pen)
+    canvas.mouseDown(with:try event(.leftMouseDown,30,200,1))
+    canvas.mouseUp(with:try event(.leftMouseUp,350,200,1.1))
+    let accepted=try XCTUnwrap(model.activePage),stamp=accepted.drawingStamp
+    model.selectMacInputTool(.eraser)
+    let rejected=try XCTUnwrap(stamp.advanced(by:model.actorID))
+    canvas.mouseDown(with:try event(.leftMouseDown,200,170,2))
+    model.releaseDrawingReservation(pageID:page.id,stamp:rejected)
+    canvas.mouseUp(with:try event(.leftMouseUp,200,230,2.1))
+    try await fixture.waitUntil { receipt?.stamp == stamp && canvas.ink.pageGeometryIsReady }
+    XCTAssertEqual(receipt?.pageID,page.id)
+    XCTAssertEqual(try accepted.inkDrawing().activeActions.map(\.tool),[.pen])
+    XCTAssertEqual(canvas.ink.committedSourceNodeCount,2,"No rejected eraser or rollback to the pre-contact empty source")
+    XCTAssertFalse(model.inputGate.hasActivePencil)
+  }
+
   func testNativeMouseContactPersistsItsExactSourceAndEraserUndoKeepsThePen() async throws {
     let root=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     let fixture=MacCommandFixture(root:root),model=fixture.model

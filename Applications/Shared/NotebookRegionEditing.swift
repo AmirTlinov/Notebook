@@ -213,9 +213,9 @@ extension NotebookAppModel {
     let batch=enqueueElementCommand(target:region.address.target,preparing:plan)
     let admission=Task { [weak self] in
       _ = try? await batch.prepared()
-      if self?.pendingMaterialAdmission?.id == batch.id { self?.pendingMaterialAdmission=nil }
+      if self?.pendingMaterialAdmissions[region.address.surface]?.id == batch.id { self?.pendingMaterialAdmissions[region.address.surface]=nil }
     }
-    pendingMaterialAdmission=(batch.id,admission)
+    pendingMaterialAdmissions[region.address.surface]=(batch.id,admission)
 
     // Keep an immediate movable contour. A second lift can chain another
     // placement while the first is preparing; it does not split the source twice.

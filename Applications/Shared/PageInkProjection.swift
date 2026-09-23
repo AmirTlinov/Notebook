@@ -15,7 +15,19 @@ final class PageInkProjection: ScenePlaneProjectionObserver {
   private weak var canvas: InkCanvasView?
   private weak var projection: ScenePlaneProjection?
 
-  init(host: PageInkHost, canvas: InkCanvasView) { self.host = host; self.canvas = canvas }
+  init(host: PageInkHost? = nil, canvas: InkCanvasView? = nil) { self.host = host; self.canvas = canvas }
+
+  func attach(host:PageInkHost,canvas:InkCanvasView) { self.host=host;self.canvas=canvas }
+
+  /// SwiftUI reports its next pose before applying the native ancestor matrix.
+  /// Join the native layout phase of that transaction, not the old conversion.
+  func invalidateLayout() {
+    #if os(iOS)
+    host?.setNeedsLayout()
+    #else
+    host?.needsLayout=true
+    #endif
+  }
 
   func observe(_ value: ScenePlaneProjection?) {
     if projection !== value {

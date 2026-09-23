@@ -7,7 +7,7 @@ struct MacPageInkView: NSViewRepresentable {
   @Environment(\.scenePlaneProjection) private var projection
   let page: PageDocument
   let isInteractive: Bool
-  let onReady: (Bool) -> Void
+  let onReady: (PageInkPresentation?) -> Void
   func makeNSView(context: Context) -> MacPageInkCanvas { .init(model: model, pageID: page.id) }
   func updateNSView(_ view: MacPageInkCanvas, context: Context) {
     view.inkProjection.observe(projection)
@@ -27,8 +27,8 @@ final class MacPageInkCanvas: NSView {
   private let source = UUID()
   private var inputEnabled = false
   private var retired = false
-  private var onReady: ((Bool) -> Void)?
-  private var sourceStamp: VersionStamp?
+  private var onReady: ((PageInkPresentation?) -> Void)?
+  private var modelSource:PageInkSource?
   private var suppressed = Set<UUID>()
   private var load: Task<Void, Never>?
   private var stamp: VersionStamp?
@@ -65,25 +65,29 @@ final class MacPageInkCanvas: NSView {
     return self
   }
 
-  func update(page: PageDocument, enabled: Bool, current: Bool, onReady: @escaping (Bool) -> Void) {
+  func update(page: PageDocument, enabled: Bool, current: Bool, onReady: @escaping (PageInkPresentation?) -> Void) {
     guard !retired, page.id == pageID else { return }
     inputEnabled = enabled
     model.inputGate.setCurrentPageSource(source, isCurrent: current)
     self.onReady = onReady
     publishReadiness()
     let cuts = model.pageSuppressedInkIDs(page)
-    if let sourceStamp, page.drawingStamp < sourceStamp {
+    if let sourceStamp=modelSource?.stamp, page.drawingStamp < sourceStamp {
       if cuts != suppressed { suppressed = cuts; ink.setSuppressedPageActions(cuts) }
       return
     }
-    guard stamp == nil,page.drawingStamp != sourceStamp || cuts != suppressed else { return }
-    sourceStamp=page.drawingStamp;suppressed=cuts
+    guard stamp == nil,page.drawingStamp != modelSource?.stamp || cuts != suppressed else { return }
+    modelSource=page.inkSource;suppressed=cuts
+    replaceDrawing(page.inkSource)
+  }
+
+  private func replaceDrawing(_ source:PageInkSource) {
     load?.cancel()
     ink.prepareForDrawing()
-    let source=page.inkSource
+    let cuts=suppressed
     load = Task { [weak self] in
       let decoded=await Task.detached(priority:.userInitiated) { try? source.drawing() }.value
-      guard !Task.isCancelled,let self,!retired,sourceStamp == source.stamp,stamp == nil,let decoded else { return }
+      guard !Task.isCancelled,let self,!retired,modelSource?.stamp == source.stamp,stamp == nil,let decoded else { return }
       load = nil
       ink.apply(decoded.presenting(excluding: cuts))
     }
@@ -95,7 +99,7 @@ final class MacPageInkCanvas: NSView {
     // old readiness value or a callback belonging to a retired paper.
     Task { @MainActor [weak self] in
       guard let self, !retired else { return }
-      onReady?(ink.isStableFramePresented)
+      onReady?(ink.isStableFramePresented ? modelSource.map { .init(pageID:pageID,stamp:$0.stamp) } : nil)
     }
   }
 
@@ -186,8 +190,12 @@ final class MacPageInkCanvas: NSView {
     let accepted = model.acceptDrawingAction(action, pageID: pageID, stamp: stamp)
     pen = nil; eraser = nil
     if let accepted,!retired {
-      sourceStamp=accepted.stamp
+      modelSource=accepted.inkSource
       ink.settle(accepted,suppressedInkIDs:suppressed)
+    } else if !retired,let modelSource {
+      // Rejected preview has no authority to survive the accepted ink root.
+      model.updateElementErasing([],id:action.id)
+      replaceDrawing(modelSource)
     }
     model.inputGate.endPencilAction(source: source)
   }

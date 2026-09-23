@@ -220,7 +220,7 @@ final class NotebookCodeInkPresenter {
           PageInkAction(id: action.id, tool: action.tool, color: action.color,
             samples: action.spans.flatMap(\.samples), isActive: action.isActive)
         }
-        overlay.paper.touchView.acceptCommittedDrawing(.init(actions: actions))
+        overlay.paper.touchView.apply(.init(actions: actions))
       } catch { /* Cancelled geometry cannot publish over a newer text layout. */ }
     }
   }

@@ -88,7 +88,7 @@ final class AcceptedPageInputTests: XCTestCase {
   }
 
   @MainActor
-  func testCancelledContactReleasesReservationWithoutJournalEntry() async throws {
+  func testSourcePublicationCannotCancelAnAdmittedContact() async throws {
     let (model,_)=await makeModel()
     let page=try XCTUnwrap(model.activePage)
     let coordinator=makeCoordinator(model)
@@ -96,11 +96,43 @@ final class AcceptedPageInputTests: XCTestCase {
     coordinator.attach(to:paper);coordinator.setPageFinisherCurrent(true)
     coordinator.apply(page.inkSource,pageID:page.id,to:paper)
     await waitForSource(paper)
-    paper.touchView.touchesBegan([AcceptedInputTouch()],with:nil)
+    let touch=AcceptedInputTouch()
+    paper.touchView.touchesBegan([touch],with:nil)
     XCTAssertEqual(model.pendingPageDrawingReservationCount,1)
-    paper.touchView.apply(.init())
+    paper.apply(try page.inkDrawing())
+    XCTAssertTrue(paper.touchView.hasActiveAction)
+    XCTAssertTrue(model.inputGate.hasActivePencil)
+    XCTAssertEqual(model.pendingPageDrawingReservationCount,1,"A source update cannot release somebody else's contact")
+    touch.point = .init(x:180,y:240);touch.sampleTime=1.01
+    paper.touchView.touchesEnded([touch],with:nil)
     XCTAssertEqual(model.pendingPageDrawingReservationCount,0)
-    XCTAssertEqual(try model.activePage?.inkDrawing().activeActions.count,0)
+    XCTAssertEqual(try model.activePage?.inkDrawing().activeActions.count,1)
+    coordinator.detach(from:paper)
+  }
+
+  @MainActor
+  func testFirstLiftBeforeColdDecodeKeepsTheStoredBaseAndMeasuredTail() async throws {
+    let (model,_)=await makeModel()
+    let page=try XCTUnwrap(model.activePage),base=stroke(y:100)
+    let stamp=try XCTUnwrap(model.reserveDrawingAction(pageID:page.id))
+    XCTAssertNotNil(model.acceptDrawingAction(base,pageID:page.id,stamp:stamp))
+    let coordinator=makeCoordinator(model),paper=PaperCanvasContainerView()
+    coordinator.attach(to:paper);coordinator.setPageFinisherCurrent(true)
+    coordinator.apply(page.inkSource,pageID:page.id,to:paper)
+    // No suspension: both contact and acceptance beat the queued cold decoder.
+    let touch=AcceptedInputTouch()
+    paper.touchView.touchesBegan([touch],with:nil)
+    touch.point = .init(x:180,y:240);touch.sampleTime=1.01
+    paper.touchView.touchesEnded([touch],with:nil)
+    XCTAssertEqual(try model.activePage?.inkDrawing().activeActions.count,2)
+    let deadline=ContinuousClock.now + .seconds(2)
+    while !paper.inkView.pageGeometryIsReady,ContinuousClock.now < deadline {
+      try await Task.sleep(for:.milliseconds(5))
+    }
+    XCTAssertTrue(paper.inkView.pageGeometryIsReady)
+    XCTAssertEqual(paper.inkView.committedSourceNodeCount,4,"Acceptance must install the old line and the new contact exactly once")
+    XCTAssertFalse(model.inputGate.hasActivePencil)
+    XCTAssertEqual(model.pendingPageDrawingReservationCount,0)
     coordinator.detach(from:paper)
   }
 
@@ -111,13 +143,11 @@ final class AcceptedPageInputTests: XCTestCase {
     let stamp=try XCTUnwrap(model.reserveDrawingAction(pageID:page.id))
     XCTAssertNotNil(model.acceptDrawingAction(action,pageID:page.id,stamp:stamp))
     let polygon=[SpatialPoint(x:0,y:190),.init(x:220,y:190),.init(x:220,y:280),.init(x:0,y:280)]
-    let beforeSnapshot = await model.lassoInkSnapshot(page).value
-    let before=try XCTUnwrap(beforeSnapshot)
+    let before=model.lassoInkSnapshot(page)
     XCTAssertEqual(try before.selection(polygon:polygon,surface:.page(page.id),origin:nil,bounds:nil)?.graphic.sourceInkIDs,[action.id])
     XCTAssertNotNil(model.acceptDrawingUndo())
     let activePage = try XCTUnwrap(model.activePage)
-    let afterSnapshot = await model.lassoInkSnapshot(activePage).value
-    let after=try XCTUnwrap(afterSnapshot)
+    let after=model.lassoInkSnapshot(activePage)
     XCTAssertNil(try after.selection(polygon:polygon,surface:.page(page.id),origin:nil,bounds:nil))
   }
 

@@ -544,6 +544,8 @@ public struct PreparedPageInkChange: Sendable {
   public let stamp: VersionStamp
   public let drawing: PageInkDrawing
   public let mutation:PageInkMutation
+  /// The accepted root, without encoding it or borrowing a previous display.
+  public var inkSource:PageInkSource { .init(source:.init(stamp:stamp,drawing:drawing)) }
   private let archive:PreparedPageInkArchive
   public var data:Data { archive.value() }
 

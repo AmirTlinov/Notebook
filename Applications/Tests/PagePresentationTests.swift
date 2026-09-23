@@ -5,6 +5,13 @@ import XCTest
 @testable import Notebook
 
 final class PagePresentationTests: XCTestCase {
+  @MainActor private func receipt(_ page:PageDocument,ink:Bool,graphics:Bool)->PageSurfaceReadiness {
+    let result=PageSurfaceReadiness()
+    result.recordInk(ink ? .init(pageID:page.id,stamp:page.drawingStamp) : nil)
+    result.recordGraphics(graphics,page:page)
+    return result
+  }
+
   @MainActor
   func testStoredInkPageOpensWithoutAnExistingPresence() async throws {
     let model = NotebookDrawingFixture.makeModel()
@@ -85,7 +92,7 @@ final class PagePresentationTests: XCTestCase {
     retainNotebookUntilTeardown(model, removing: root)
     var page = PageDocument(size: .init(width: 100, height: 100), actor: UUID())
     let view = PagePresentationNativeView(), activity = PageTurnActivity()
-    view.update(model: model, page: page, isCurrent: true, isVisible: true, isReady: true, activity: activity)
+    view.update(model: model, page: page, isCurrent: true, isVisible: true, readiness:receipt(page,ink:true,graphics:true), activity: activity)
     XCTAssertFalse(model.pagePresentations.isPresented(page), "Preparation is not an installed surface")
     let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
     let previous = scene.windows.first(where: \.isKeyWindow)
@@ -99,21 +106,70 @@ final class PagePresentationTests: XCTestCase {
     XCTAssertFalse(model.pagePresentations.isPresented(page), "A curl owns its in-flight surface")
     activity.update(false)
     for state in [(false, true, true), (true, false, true), (true, true, false)] {
-      view.update(model: model, page: page, isCurrent: state.0, isVisible: state.1, isReady: state.2, activity: activity)
+      view.update(model: model, page: page, isCurrent: state.0, isVisible: state.1, readiness:receipt(page,ink:state.2,graphics:state.2), activity: activity)
       XCTAssertFalse(model.pagePresentations.isPresented(page))
     }
-    view.update(model: model, page: page, isCurrent: true, isVisible: true, isReady: true, activity: activity)
+    view.update(model: model, page: page, isCurrent: true, isVisible: true, readiness:receipt(page,ink:true,graphics:true), activity: activity)
     view.removeFromSuperview()
     XCTAssertFalse(model.pagePresentations.isPresented(page), "A retained detached native view is not on screen")
     host.view.addSubview(view)
     XCTAssertTrue(page.replaceElements([.init(id: "new", kind: .markdown,
       frame: .init(x: 0, y: 0, width: 100, height: 40), source: "New", html: "<p>New</p>")], actor: UUID()))
     XCTAssertFalse(model.pagePresentations.isPresented(page), "Old installed pixels cannot acknowledge a changed source")
-    view.update(model: model, page: page, isCurrent: true, isVisible: true, isReady: true, activity: activity)
+    view.update(model: model, page: page, isCurrent: true, isVisible: true, readiness:receipt(page,ink:true,graphics:true), activity: activity)
     XCTAssertTrue(model.pagePresentations.isPresented(page))
     view.uninstall()
     XCTAssertFalse(model.pagePresentations.isPresented(page), "UIKit retaining a retired owner cannot retain its proof")
   }
+  @MainActor
+  func testInstalledGraphicsStayHittableDuringInkButNeverBorrowAnotherSourceOrMount() async throws {
+    let root=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    let model=NotebookAppModel(store:.init(root:root),startsNearbySync:false)
+    retainNotebookUntilTeardown(model,removing:root)
+    let actor=UUID()
+    var page=PageDocument(size:.init(width:100,height:100),actor:actor)
+    let scene=try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+    let previous=scene.windows.first { $0.isKeyWindow },window=UIWindow(windowScene:scene)
+    let host=UIViewController();window.rootViewController=host;window.makeKeyAndVisible()
+    let view=PagePresentationNativeView(),activity=PageTurnActivity()
+    view.frame = .init(x:20,y:20,width:100,height:100);host.view.addSubview(view)
+    defer { view.uninstall();window.isHidden=true;window.rootViewController=nil;previous?.makeKey() }
+    let state=PageSurfaceReadiness()
+    func update(_ ready:Bool,graphics:Bool) {
+      state.recordInk(ready ? .init(pageID:page.id,stamp:page.drawingStamp) : nil)
+      state.recordGraphics(graphics,page:page)
+      view.update(model:model,page:page,isCurrent:true,isVisible:true,readiness:state,activity:activity)
+    }
+    update(false,graphics:false)
+    XCTAssertFalse(model.pagePresentations.hasInstalledGraphics(page),"Never grants hits to unshown graphics")
+    update(true,graphics:true)
+    XCTAssertTrue(model.pagePresentations.hasInstalledGraphics(page))
+    let ink=PageInkAction(tool:.pen,samples:[.init(point:.init(x:20,y:20),timeOffset:0,width:3,opacity:1,force:1,azimuth:0,altitude:1)])
+    let previousInk=PageInkPresentation(pageID:page.id,stamp:page.drawingStamp)
+    let change=try page.prepareInkChange(.append(ink),stamp:try XCTUnwrap(page.drawingStamp.advanced(by:actor)))
+    XCTAssertTrue(page.publishLiveInkChange(change))
+    update(false,graphics:false)
+    XCTAssertTrue(model.pagePresentations.hasInstalledGraphics(page),"New ink cannot revoke unchanged installed bodies")
+    XCTAssertFalse(model.pagePresentations.isPresented(page),"Local hit eligibility is not a full-page receipt")
+    state.recordGraphics(true,page:page)
+    state.recordInk(.init(pageID:page.id,stamp:page.drawingStamp))
+    XCTAssertTrue(model.pagePresentations.isPresented(page),"The native receipt is immediately queryable without another SwiftUI update")
+    state.recordInk(previousInk)
+    XCTAssertFalse(model.pagePresentations.isPresented(page),"An old ink callback cannot acknowledge this revision")
+    state.recordInk(.init(pageID:UUID(),stamp:page.drawingStamp))
+    XCTAssertFalse(model.pagePresentations.isPresented(page),"A different paper cannot acknowledge this revision")
+    activity.update(true);XCTAssertFalse(model.pagePresentations.hasInstalledGraphics(page));activity.update(false)
+    view.removeFromSuperview();XCTAssertFalse(model.pagePresentations.hasInstalledGraphics(page));host.view.addSubview(view)
+    XCTAssertTrue(page.replaceElements([.init(id:"new",kind:.nativeText,frame:.init(x:0,y:0,width:40,height:20),source:"new",html:"")],actor:actor))
+    update(false,graphics:false)
+    XCTAssertFalse(model.pagePresentations.hasInstalledGraphics(page),"An old graphic source cannot acknowledge a newer one")
+    update(true,graphics:true);XCTAssertTrue(model.pagePresentations.hasInstalledGraphics(page))
+    page=PageDocument(size:page.size,actor:actor);update(false,graphics:false)
+    XCTAssertFalse(model.pagePresentations.hasInstalledGraphics(page),"Another page cannot inherit the previous page's receipt")
+    view.uninstall();update(true,graphics:true)
+    XCTAssertFalse(model.pagePresentations.hasInstalledGraphics(page))
+  }
+
   @MainActor
   func testVisibleProgramRegionComesFromThePhysicalClipAfterTheNativeCameraTransaction() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("page-visibility-\(UUID())")
@@ -137,7 +193,7 @@ final class PagePresentationTests: XCTestCase {
       region = $0
       if $0 == first { initialRegion.fulfill() }
     }
-    view.update(model: model, page: page, isCurrent: false, isVisible: true, isReady: false, activity: nil)
+    view.update(model: model, page: page, isCurrent: false, isVisible: true, readiness:receipt(page,ink:false,graphics:false), activity: nil)
     view.scheduleVisibleRegion()
     await fulfillment(of: [initialRegion], timeout: 3)
     XCTAssertEqual(region, first, "A visible neighbouring page keeps its graphics, including the antialias fringe")

@@ -1,5 +1,70 @@
 # Verification record
 
+## September 23 — GUI-295, coherent material and cold contact ownership (180)
+
+The accepted ink source now owns rejection recovery on both platforms: rejecting
+an erase restores that source even at the same stamp and cannot discard an earlier
+accepted, unpublished stroke. Cold decoding updates settled material, not the
+active Pencil contact. A lift before initial decoding/mesh completion prepares
+the complete accepted base while retaining the measured tail; it cannot mark a
+tail-only page ready. The redundant input reset/committed-drawing paths are removed.
+
+Masked material uses on-demand, transaction-aligned Metal presentation instead
+of an independent repeating display/reveal loop. Visibility acknowledgement uses
+the matching drawable's presented event, not GPU completion. Mac window occlusion
+stops material rendering and the native visibility event resumes it. Native crop
+refresh runs after an ancestor's installed pose changes; moving a masked object
+does not remount it or lose its previously clipped half. Lasso preparation captures
+immutable sources without unnecessary main-actor hops and waits only on accepted
+predecessors on its own surface.
+
+Page readiness has one direct native receipt keyed to the ink address/version
+and installed graphics source. SwiftUI state propagation is no longer a second
+readiness gate. A retained leaf republishes to its new page-turn recipient;
+unchanged shown graphics remain hittable while newer ink is pending, but another
+page, new graphic version, hidden/retired host or active curl cannot borrow proof.
+This receipt is not a blanket claim of photon timing for the raw-page renderer.
+
+Selected physical-iPad/Mac evidence (overlapping scopes, not an aggregate suite):
+
+- `.build/gui295-page-receipt-handoff-checked/`: **18 iPad + 6 Mac PASS**, zero
+  skips/runtime warnings, source `049be1451c2f8bef3bf98e36b19161d2c702faa4c4c3827f650137cbdafc9c13`.
+  Includes exact readiness negative boundaries, addressed lasso predecessors,
+  accepted input, Mac rejection and material visibility, and five stored leaves
+  through eviction/reversal/cancellation plus creating/writing/revisiting a sixth.
+- `.build/gui295-coherent-owner-180/`: **12 PASS / 3 FAIL** on iPad, no skips/runtime
+  warnings, source `9f16b6ba2eb1546525e05d3ed2dfa8b8a5663b79e7acd1fdc5bca4f0e64c6fa4`.
+  Material tests include both 100,000-measurement cases; whole-frame lasso,
+  cut/move/next cut, pen/erase, rejected erases, retained crop and stale-save/cold
+  reopen pass. The first-cold-contact loss reproduced and was fixed afterward.
+  The other failures have **correct full-window pixels but late observations**:
+  next-object 157.02 ms, first/second fragment drop 164.72/157.71 ms. Capture alone
+  takes 128.47/131.07/128.66 ms with the visible glass context menu. These are not
+  passes against the unchanged 100 ms ceiling, nor measured Pencil latency.
+- `.build/gui295-cold-contact-180-checked/`: **22 iPad + 3 Mac PASS**, zero skips/
+  runtime warnings; final build-180 source
+  `6d32b1ed144139d23546ddd9d18f4d9749e42354b1f2941212977bece5ca6d09`.
+  Cold visible material 313.17 ms, first contact's correct pixels 64.21 ms, next
+  eraser 56.58 ms, including capture. Contact remains active until lift and both
+  actions persist. Includes a deterministic lift-before-decode regression,
+  12 page-geometry cases, accepted input, live pen/erase and rejection on iPad/Mac.
+  This selected receipt, not the earlier failed scope, is the release build input.
+
+Diagnostic capture alternatives were rejected rather than used to manufacture
+a timing pass: `snapshotView` drew an incorrect empty image; `XCUIScreen` from a
+native host was unauthorized and the bounded runner was interrupted. Temporary
+diagnostic code was removed. No thresholds, quality, transparency or glass UI
+were weakened. The single compile failure during input-API consolidation was an
+unrenamed code-annotation caller; the final run includes the corrected caller.
+
+These are synthetic native contacts on physical hardware, not human Pencil
+acceptance. The two glass-window timing failures, system frame/CPU/GPU/memory
+measurements, all-tool mixed sequences, delivery budgets and full joint acceptance
+remain open. The four system UI journeys still lack execution because of the
+previous automation-mode timeout; they are not counted as passes here. Installation
+and live readback for 180 must be recorded separately; the working pair was still
+179 when these checks finished. GUI-295/GUI-285 are not complete.
+
 ## 23 сентября — GUI-295, первый контакт и обычные пользовательские последовательности
 
 В действующий `interaction-ux` включены **пять новых сценариев**, без новой

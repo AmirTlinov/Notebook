@@ -11,6 +11,38 @@ import XCTest
     func release() { open=true;let pending=waiters;waiters=[];for waiter in pending { waiter.resume() } }
   }
 
+  func testPreparationWaitsOnlyForAcceptedMaterialOnItsOwnSurface() async throws {
+    try await fixture { model,page,_,address,_ in
+      let gate=Gate(),board=try XCTUnwrap(model.workspace?.rootBoardID)
+      let pending=Task { await gate.wait() }
+      defer { model.pendingMaterialAdmissions.removeAll();Task { await gate.release() } }
+      model.selectDrawingTool(.lasso);model.drawingToolSettings.lassoMode = .region
+      model.pendingMaterialAdmissions[.board(board)]=(UUID(),pending)
+      let polygon=[SpatialPoint(x:110,y:110),.init(x:170,y:110),.init(x:170,y:190),.init(x:110,y:190)]
+      @MainActor func cut() throws -> NotebookRegionPreparation {
+        XCTAssertTrue(model.drawingTools.begin(at:polygon[0],address:address,screenScale:1))
+        for p in polygon.dropFirst() { model.drawingTools.move(to:p) }
+        model.drawingTools.finish()
+        return try XCTUnwrap(model.selectionSession.region?.preparation)
+      }
+      _ = try cut()
+      let deadline=ContinuousClock.now + .milliseconds(100)
+      while model.selectionSession.region?.materialization == nil,ContinuousClock.now < deadline {
+        try await Task.sleep(for:.milliseconds(1))
+      }
+      XCTAssertNotNil(model.selectionSession.region?.materialization,
+        "The board's accepted tail cannot hold a read of an independent page")
+      model.clearSelection()
+      model.pendingMaterialAdmissions[.page(page.id)]=(UUID(),pending)
+      let same=try cut()
+      try await Task.sleep(for:.milliseconds(20))
+      XCTAssertNil(model.selectionSession.region?.materialization,"A same-surface predecessor remains causal")
+      await gate.release()
+      let ready=try await same.task.value
+      XCTAssertNotNil(ready?.materialization)
+    }
+  }
+
   func testLiftBeforePreparationSurvivesNewFocusToolAndInkWithoutOvertaking() async throws {
     try await fixture { model,page,shape,address,ready in
       let gate=Gate();defer { Task { await gate.release() } }

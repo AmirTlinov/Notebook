@@ -184,7 +184,7 @@ import XCTest
       XCTAssertEqual(model.workspace?.selectedPageID, ids[index])
       XCTAssertEqual(owner.displayedIndex, index)
       XCTAssertEqual(owner.pageViewController.viewControllers?.first?.view.accessibilityIdentifier, "page-turn-page-\(index)")
-      XCTAssertTrue(model.activePage.map { model.pagePresentations.isPresented($0) } == true)
+      XCTAssertTrue(model.activePage.map { model.pagePresentations.isPresented($0) } == true, "leaf=\(index) must acknowledge its own installed source")
       XCTAssertLessThanOrEqual(owner.cachedPageIdentities.count, 4)
     }
     let owner = try pageOwner(scene.window)
@@ -377,8 +377,11 @@ import XCTest
     witness: Probe? = nil, absence: [Probe] = []) async throws {
     try await Task.sleep(for: .milliseconds(16))
     var failures: [String] = [], last: UIImage?, resurrections: [String] = []
+    var captures:[Duration]=[]
     let result = try await assertUX(name, since: start, budget: budget, window: window) {
+      let captureStart=ContinuousClock.now
       let image = try NotebookUXObservation.Pixels(window: window).image
+      captures.append(captureStart.duration(to:.now))
       let frame = try NotebookSelectionComposition.Frame(image)
       last = image; failures = frame.failures(probes)
       if let witness, frame.failures([witness]).isEmpty, !absence.isEmpty {
@@ -394,7 +397,7 @@ import XCTest
       return failures.isEmpty
     }
     XCTAssertTrue(resurrections.isEmpty, "Previously erased/deleted material appeared during opening: \(resurrections)")
-    let note = XCTAttachment(string: "\(name): \(failures); elapsed including capture=\(result.milliseconds) ms")
+    let note = XCTAttachment(string: "\(name): \(failures); elapsed including capture=\(result.milliseconds) ms; captures=\(captures)")
     note.name = name + "-composition"; note.lifetime = .keepAlways; add(note)
     if let last { let picture = XCTAttachment(image: last); picture.name = name; picture.lifetime = .keepAlways; add(picture) }
   }

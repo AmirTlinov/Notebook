@@ -14,13 +14,11 @@ struct PageSurface: View {
   var displayProjection: Double = 1
 
   @State private var visibleRegion: CGRect?
-  @State private var inkIsReady = false
-  @State private var readyOverlay: ObjectIdentifier?
+  @State private var readiness=PageSurfaceReadiness()
   #if os(iOS)
   @State private var liveElementEraser = NotebookLiveElementEraserPresentation()
   #endif
 
-  private var overlayIsReady: Bool { readyOverlay == page.elementSourceIdentity }
 
   var body: some View {
     GeometryReader { geometry in
@@ -67,9 +65,8 @@ struct PageSurface: View {
             acceptAction: { action, pageID, stamp, fit in
               model.acceptDrawingAction(action, pageID: pageID, stamp: stamp, quickShape: fit)
             },
-            onRenderReady: { ready in
-              inkIsReady = ready
-              publishReadiness(ink: ready, overlay: overlayIsReady)
+            onRenderReady: { receipt in
+              readiness.recordInk(receipt);publishReadiness()
             }, resolveQuickShape: { fit, scale in
               fit.binding(in:page.graphicGraph(),surface:.page(page.id),tolerance:18/scale,
                 erasures:model.elementErasures(on:.page(page.id)),appearance: { id,graphic,layout,size,cuts in
@@ -82,16 +79,15 @@ struct PageSurface: View {
             onElementErasing: model.updateElementErasing
           )
         #else
-          MacPageInkView(page: page, isInteractive: isVisible && isInteractive) { ready in
-            inkIsReady = ready
-            publishReadiness(ink: ready, overlay: overlayIsReady)
+          MacPageInkView(page: page, isInteractive: isVisible && isInteractive) { receipt in
+            readiness.recordInk(receipt);publishReadiness()
           }.id(page.id)
         #endif
 
       }
       .frame(width: page.size.width, height: page.size.height)
       .background(PagePresentationView(page: page, isCurrent: isCurrent,
-        isVisible: isVisible, isReady: inkIsReady && overlayIsReady,
+        isVisible: isVisible, readiness:readiness,
         activity: onRenderReady.activity, onVisibleRegion: { visibleRegion = $0 }).allowsHitTesting(false))
       .clipShape(
         RoundedRectangle(
@@ -112,16 +108,16 @@ struct PageSurface: View {
       )
       .clipped()
     }
-    .onAppear {
-      publishReadiness(ink: inkIsReady, overlay: overlayIsReady)
+    .onChange(of:ObjectIdentifier(onRenderReady),initial:true) { _, _ in
+      publishReadiness()
     }
     .onChange(of: page.elementSourceIdentity) { _, _ in
-      publishReadiness(ink: inkIsReady, overlay: overlayIsReady)
+      publishReadiness()
     }
   }
 
-  private func publishReadiness(ink: Bool, overlay: Bool) {
-    onRenderReady(ink && overlay)
+  private func publishReadiness() {
+    onRenderReady(readiness.isReady(page))
   }
 
   private func agentOverlay(renderingScale:Double) -> some View {
@@ -131,9 +127,7 @@ struct PageSurface: View {
         #if os(iOS)
         if ready { liveElementEraser.presented(model.elementErasures(on:.page(page.id))) }
         #endif
-        if ready { readyOverlay=page.elementSourceIdentity }
-        else if readyOverlay == page.elementSourceIdentity { readyOverlay=nil }
-        publishReadiness(ink:inkIsReady,overlay:overlayIsReady)
+        readiness.recordGraphics(ready,page:page);publishReadiness()
       },onState:{ elementID,state in
         guard isVisible,isCurrent,model.activePage?.id == page.id else { return false }
         return model.commitElementState(pageID:page.id,elementID:elementID,state:state)

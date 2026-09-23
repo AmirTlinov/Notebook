@@ -336,6 +336,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
   let isErasureMask: Bool
   private var stableContentRevision: UInt64 = 0
   private var presentedStableContentRevision: UInt64?
+  private var submittedMaterialRevision: UInt64?
   private(set) var drawableRequestCount = 0
   private(set) var activeUploadedByteCount = 0
   private(set) var visibleCommittedVertexCount = 0
@@ -428,7 +429,20 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
   override func layoutSubviews() { super.layoutSubviews(); schedulePageMeshIfNeeded() }
   #else
   override var isOpaque: Bool { false }
-  override func viewDidMoveToWindow() { super.viewDidMoveToWindow(); mounted() }
+  override func viewDidMoveToWindow() {
+    super.viewDidMoveToWindow()
+    NotificationCenter.default.removeObserver(self, name:NSWindow.didChangeOcclusionStateNotification, object:nil)
+    if let window {
+      NotificationCenter.default.addObserver(self, selector:#selector(windowVisibilityChanged),
+        name:NSWindow.didChangeOcclusionStateNotification, object:window)
+    }
+    mounted()
+  }
+  @objc private func windowVisibilityChanged() {
+    // A dropped, occluded drawable is not a presentation receipt or a reason
+    // to redraw at 120 Hz. The real window's visibility change resumes it.
+    if material != nil, window?.occlusionState.contains(.visible) == true { draw() }
+  }
   override func layout() { super.layout(); schedulePageMeshIfNeeded() }
   #endif
 
@@ -759,7 +773,9 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     schedulePageMeshIfNeeded()
     committedBatches.removeAll(keepingCapacity: true)
     pageBatchIndex.removeAll(keepingCapacity:true)
-    discardActiveAction()
+    // Source preparation owns only settled material. The contact may already
+    // have started while this page was decoding; only input may finish it.
+    requestFrame()
   }
 
   func setSuppressedPageActions(_ ids:Set<UUID>) {
@@ -776,6 +792,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
   /// The measured batch is already resident at lift. Acceptance only binds its
   /// durable identity, while undo toggles the addressed batches in place.
   func settle(_ change:PreparedPageInkChange,suppressedInkIDs:Set<UUID>=[]) {
+    let baseIsInstalled = pageDrawing != nil && pageGeometryIsReady
     cancelPendingPageMesh();pageRevision &+= 1;pageDrawing=change.drawing;drawingIsPreparing=false
     pageSuppressedIDs=suppressedInkIDs
     beginStableContentUpdate()
@@ -795,7 +812,13 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
         committedBatches[index].pageIsActive=false
       }
     }
-    installedPageRevision=pageRevision;pendingPageRevision=nil;requestFrame()
+    if baseIsInstalled { installedPageRevision=pageRevision }
+    else {
+      // A fast first lift can beat initial decode/mesh preparation. Keep the
+      // measured tail, but prepare its complete accepted base before readiness.
+      schedulePageMeshIfNeeded()
+    }
+    requestFrame()
   }
 
   func beginSpatialAction() {
@@ -896,6 +919,9 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
   }
 
   func draw(in view: MTKView) {
+    #if os(macOS)
+    if material != nil, window?.occlusionState.contains(.visible) != true { return }
+    #endif
     guard window != nil, !spatialHandoffIsStopping, spatialStagingID == nil else { isPaused = true; return }
     if spatialDrawableScale != nil, submittedFrameCount > 0 || submittedPresentationCount > 0 { return }
     if presentEmptyContentIfReady() { return }
@@ -1016,7 +1042,11 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
       }
       encoder.endEncoding()
     }
-    presentsWithTransaction = false
+    // A graphic's body, placement and measured absence are one composition.
+    // The retained material child joins UIKit/AppKit's current transaction;
+    // publishing its mask independently can briefly restore erased pixels.
+    let transactionMaterial = material != nil
+    presentsWithTransaction = transactionMaterial
     for tile in spatialTarget?.tiles ?? [] { tile.layer.presentsWithTransaction = false }
     if let observation = onContactFramePresented, let contact = activeContactFrame,
       active != nil, hasRevealedFirstFrame {
@@ -1034,13 +1064,33 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
         }
       }
     }
-    for (_, drawable, _, _, _) in passes { commandBuffer.present(drawable) }
+    if !transactionMaterial {
+      for (_, drawable, _, _, _) in passes { commandBuffer.present(drawable) }
+    }
     let presentedRevision: UInt64? =
       activeInkStroke == nil
         && activeEraserStroke == nil
         && pageGeometryIsReady
       ? stableContentRevision : nil
     let submittedRevision = stableContentRevision
+    if transactionMaterial {
+      submittedMaterialRevision = submittedRevision
+      // Unlike a GPU completion, this receipt belongs to the visible drawable.
+      // A dropped frame never acknowledges the newly installed source.
+      passes[0].1.addPresentedHandler { [weak self] drawable in
+        let presented = drawable.presentedTime > 0
+        Task { @MainActor [weak self] in
+          guard let self, !spatialHandoffIsStopping, window != nil,
+            stableContentRevision == submittedRevision else { return }
+          guard presented else { requestFrame(); return }
+          onVisibleFrame?()
+          if let presentedRevision {
+            presentedStableContentRevision = presentedRevision
+            onRenderReadinessChange?(true)
+          }
+        }
+      }
+    }
     let heldGeometry = materialReservations + visible.compactMap { committedBatches[$0.0].buffers[$0.1]?.reservation }
       + (activeBufferReservations[frameSlot].map { [$0] } ?? [])
       + (baselineReservation.map { [$0] } ?? [])
@@ -1058,10 +1108,17 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
         withExtendedLifetime((heldGeometry, physical, target)) {}
         guard let self else { return }
         finishSubmittedFrame()
+        // setNeedsDisplay is coalesced. If the drawable pool was busy when a
+        // newer material needed paint, this completion re-admits that latest
+        // revision, not another frame of this older submission.
+        if transactionMaterial, submittedMaterialRevision != stableContentRevision { requestFrame() }
         if !completed { drawnTiles = nil; pageRetainedKey = nil }
         guard completed, !spatialHandoffIsStopping, window != nil,
           stableContentRevision == submittedRevision else { return }
         renderFailure = nil
+        // Material visibility was submitted with its parent's transaction. It
+        // needs neither a hidden warm-up frame nor a second reveal frame.
+        if transactionMaterial { return }
         if !hasRevealedFirstFrame {
           hasRevealedFirstFrame = true
           needsRevealedFrame = true
@@ -1091,6 +1148,21 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     if let target = spatialTarget { drawnTiles = (ObjectIdentifier(target), signatures) }
     if let encodedRetainedKey { pageRetainedKey=encodedRetainedKey }
     commandBuffer.commit()
+    if transactionMaterial {
+      // Metal's transaction presentation requires scheduling, not GPU
+      // completion/readback. The compositor waits for this drawable together
+      // with the body and controls in the same layer transaction.
+      commandBuffer.waitUntilScheduled()
+      CATransaction.begin(); CATransaction.setDisableActions(true)
+      #if os(iOS)
+      layer.opacity = 1
+      #else
+      layer?.opacity = 1
+      #endif
+      for (_, drawable, _, _, _) in passes { drawable.present() }
+      CATransaction.commit()
+      hasRevealedFirstFrame = true
+    }
     mustSignal = false
     frameSlot = (frameSlot + 1) % Self.framesInFlight
 
@@ -1530,7 +1602,19 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     if presentEmptyContentIfReady() { return }
     // Mesh/raster completions may arrive after culling. Preserve their ready
     // content, but only a mounted surface can resume display execution.
-    isPaused = window == nil || spatialStagingID != nil || spatialHandoffIsStopping
+    var mounted = window != nil && spatialStagingID == nil && !spatialHandoffIsStopping
+    #if os(macOS)
+    if material != nil { mounted = mounted && window?.occlusionState.contains(.visible) == true }
+    #endif
+    enableSetNeedsDisplay = material != nil
+    isPaused = material != nil || !mounted
+    if material != nil, mounted {
+      #if os(iOS)
+      setNeedsDisplay()
+      #else
+      needsDisplay = true
+      #endif
+    }
   }
 
   @discardableResult

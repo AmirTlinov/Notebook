@@ -344,7 +344,7 @@ enum NotebookAttentionProjection {
       #if os(macOS)
       box=readingPaperFrame(model:model,presence:presence)
       #else
-      box=model.pagePresentations.isPresented(page)
+      box=model.pagePresentations.hasInstalledGraphics(page)
         ? frame(.init(target:.init(kind:.page,id:id),revision:""),model:model,presence:presence) : nil
       #endif
       guard let box,box.contains(point) else { return nil }
@@ -358,6 +358,10 @@ enum NotebookAttentionProjection {
         scale:presence.camera.scale,viewport:presence.viewport,pending:{ pending = true },
         presentation:{ .init($0,placement:$1) },project:{ ($0.id,graph.node($0.id)?.graphic ?? $0.graphic,local) })
       if pending { return .pending }
+      #if os(iOS)
+      // Do not reinterpret an unpresented ink plane as blank paper below it.
+      if element == nil, !model.pagePresentations.isPresented(page) { return .pending }
+      #endif
       return .hit(.init(target:.init(kind:.page,id:page.id),elementID:element?.id,
         region:element.flatMap { graph.resolve($0.id).layout?.frame ?? graph.elementPresentation($0.id)?.frame }
           ?? .init(x:local.x,y:local.y,width:1,height:1),worldOrigin:nil,pageIndex:nil,label:element == nil ? "Место" : "Объект"))

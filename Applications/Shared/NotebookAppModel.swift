@@ -909,7 +909,7 @@ final class NotebookAppModel {
   private var pencilUndoHistory = PencilUndoHistory()
   @ObservationIgnored private var pendingCollaborationCommands:[UUID:Task<Bool,Never>]=[:]
   private(set) var graphicCommandTask: Task<NotebookElementCommandResult?, Never>?
-  @ObservationIgnored var pendingMaterialAdmission:(id:UUID,task:Task<Void,Never>)?
+  @ObservationIgnored var pendingMaterialAdmissions:[SurfaceID:(id:UUID,task:Task<Void,Never>)] = [:]
   @ObservationIgnored private var graphicCommandGeneration = UUID()
   @ObservationIgnored var workingGraphics: [NotebookWorkingGraphic] = []
   @ObservationIgnored var workingGraphicSignals:[SurfaceID:NotebookWorkingGraphicSignal] = [:]
@@ -2660,10 +2660,7 @@ final class NotebookAppModel {
   }
 
   /// Lasso borrows the same retained vector root advanced at Pencil-up.
-  func lassoInkSnapshot(_ page: PageDocument) -> Task<NotebookLassoInkSource?,Never> {
-    let source=NotebookLassoInkSource.page(page)
-    return Task { source }
-  }
+  func lassoInkSnapshot(_ page:PageDocument)->NotebookLassoInkSource { .page(page) }
 
   /// Undo resolves its target and writes the inverse into the same journal in
   /// the button's actor segment; storage follows in the ordinary FIFO.

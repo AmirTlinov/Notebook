@@ -17,7 +17,7 @@ struct PencilCanvasView: UIViewRepresentable {
   let reserveAction: (UUID) -> VersionStamp?
   let releaseAction: (UUID, VersionStamp) -> Void
   let acceptAction: (PageInkAction, UUID, VersionStamp, NotebookQuickShapeFit?) -> PreparedPageInkChange?
-  let onRenderReady: (Bool) -> Void
+  let onRenderReady: (PageInkPresentation?) -> Void
   var resolveQuickShape: (NotebookQuickShapeFit, Double) -> NotebookQuickShapeFit = { fit, _ in fit }
   var onWorkingGraphic: (NotebookWorkingGraphic?, UUID) -> Void = { _, _ in }
   var pageEraserSource: () -> NotebookPageEraserSource? = { nil }
@@ -46,9 +46,7 @@ struct PencilCanvasView: UIViewRepresentable {
     paper.touchView.onEraserFailure = onEraserFailure
     paper.touchView.onLiveElementErasing = onLiveElementErasing
     paper.touchView.onElementErasing = onElementErasing
-    paper.inkView.onRenderReadinessChange = { ready in
-      Task { @MainActor in onRenderReady(ready) }
-    }
+    context.coordinator.onRenderReady = onRenderReady
     paper.setInputEnabled(isInputEnabled)
     context.coordinator.attach(to: paper)
     context.coordinator.setPageFinisherCurrent(isInputEnabled)
@@ -73,9 +71,7 @@ struct PencilCanvasView: UIViewRepresentable {
     paper.touchView.onEraserFailure = onEraserFailure
     paper.touchView.onLiveElementErasing = onLiveElementErasing
     paper.touchView.onElementErasing = onElementErasing
-    paper.inkView.onRenderReadinessChange = { ready in
-      Task { @MainActor in onRenderReady(ready) }
-    }
+    context.coordinator.onRenderReady = onRenderReady
     paper.setInputEnabled(isInputEnabled)
     context.coordinator.use(inputGate)
     context.coordinator.setPageFinisherCurrent(isInputEnabled)
@@ -89,6 +85,7 @@ struct PencilCanvasView: UIViewRepresentable {
       to: paper
     )
     context.coordinator.apply(source, pageID: pageID, to: paper, suppressedIDs: suppressedInkIDs)
+    context.coordinator.publishReadiness()
   }
 
   static func dismantleUIView(
@@ -111,14 +108,13 @@ struct PencilCanvasView: UIViewRepresentable {
     private var suppressedInkIDs = Set<UUID>()
     private var actionReservation: (pageID: UUID, stamp: VersionStamp)?
     var acceptAction: (PageInkAction, UUID, VersionStamp, NotebookQuickShapeFit?) -> PreparedPageInkChange?
+    var onRenderReady:((PageInkPresentation?)->Void)?
 
     private let inputSourceID = UUID()
     private var inputGate: NotebookInputGate
     private var pencilActionIsActive = false
     private var pageID: UUID?
     private var modelSource: PageInkSource?
-    private var modelStamp:VersionStamp?
-    private var appliedDrawing = PageInkDrawing()
     private var appliedPenStyle: PenStyle?
     private var appliedEraserStyle: EraserStyle?
     private var appliedDrawingTool: DrawingTool?
@@ -141,6 +137,7 @@ struct PencilCanvasView: UIViewRepresentable {
 
     func attach(to paper: PaperCanvasContainerView) {
       attachedPaper = paper
+      paper.inkView.onRenderReadinessChange = { [weak self] _ in self?.publishReadiness() }
       paper.touchView.simulatesPencilContacts = inputGate.simulatesPencilContacts
       paper.admitsPencilContact = { [weak self, weak paper] touch in
         guard let self, let paper else { return false }
@@ -159,6 +156,13 @@ struct PencilCanvasView: UIViewRepresentable {
       registerPageFinisher(on: paper)
     }
 
+    func publishReadiness() {
+      Task { @MainActor [weak self] in
+        guard let self,let paper=attachedPaper,let pageID,let source=modelSource else { return }
+        onRenderReady?(paper.inkView.isStableFramePresented ? .init(pageID:pageID,stamp:source.stamp) : nil)
+      }
+    }
+
     /// Admission, renderer delta and Undo registration finish in the same
     /// actor segment as the measured lift. Storage owns only the later append.
     func commit(
@@ -174,13 +178,13 @@ struct PencilCanvasView: UIViewRepresentable {
       let pageID = reservation.pageID, stamp = reservation.stamp
       decodeTask?.cancel()
       decodeTask = nil
-      if let fit { suppressedInkIDs.formUnion(fit.precedingStrokeIDs + [mutation.id]) }
       guard let accepted=acceptAction(mutation,pageID,stamp,fit) else {
         paper.touchView.onLiveElementErasing(.reject(mutation.id))
         restoreModelDrawing(on:paper);return
       }
       guard pageID == self.pageID else { return }
-      modelStamp=accepted.stamp;appliedDrawing=accepted.drawing
+      if let fit { suppressedInkIDs.formUnion(fit.precedingStrokeIDs + [mutation.id]) }
+      modelSource=accepted.inkSource
       paper.settle(accepted,suppressedInkIDs:suppressedInkIDs)
     }
 
@@ -257,6 +261,7 @@ struct PencilCanvasView: UIViewRepresentable {
       inputGate.unregisterPageFinisher(source: inputSourceID)
       pageFinisherIsCurrent = false
       attachedPaper = nil
+      paper.inkView.onRenderReadinessChange=nil;onRenderReady=nil
       decodeTask?.cancel()
       decodeTask = nil
       setPencilActionActive(false)
@@ -303,19 +308,21 @@ struct PencilCanvasView: UIViewRepresentable {
       let presentationChanged = suppressedInkIDs != suppressedIDs
       suppressedInkIDs = suppressedIDs
       let pageChanged = self.pageID != pageID
-      if !pageChanged, let modelStamp, source.stamp < modelStamp {
+      if !pageChanged, let modelStamp=modelSource?.stamp, source.stamp < modelStamp {
         if presentationChanged { paper.inkView.setSuppressedPageActions(suppressedInkIDs) }
         return
       }
-      if !pageChanged, modelStamp == source.stamp {
+      if !pageChanged, modelSource?.stamp == source.stamp {
         if presentationChanged { paper.inkView.setSuppressedPageActions(suppressedInkIDs) }
         return
       }
       if pageChanged { paper.touchView.finishCurrentAction {} }
       self.pageID = pageID
       modelSource = source
-      modelStamp = source.stamp
-      if !pageChanged,paper.touchView.hasActiveAction { return }
+      replaceDrawing(source,on:paper,pageID:pageID)
+    }
+
+    private func replaceDrawing(_ source:PageInkSource,on paper:PaperCanvasContainerView,pageID:UUID) {
       decodeTask?.cancel()
       decodeGeneration &+= 1
       let generation = decodeGeneration
@@ -323,18 +330,19 @@ struct PencilCanvasView: UIViewRepresentable {
       decodeTask = Task { [weak self, weak paper] in
         let prepared=await Task.detached(priority:.userInitiated) { try? source.drawing() }.value
         guard !Task.isCancelled, let self, let paper,
-          decodeGeneration == generation, self.pageID == pageID else { return }
+          decodeGeneration == generation, self.pageID == pageID,
+          modelSource?.stamp == source.stamp else { return }
         decodeTask = nil
         guard let drawing=prepared else { return }
-        appliedDrawing = drawing
         paper.apply(drawing, suppressedInkIDs: suppressedInkIDs)
       }
     }
 
     private func restoreModelDrawing(on paper: PaperCanvasContainerView?) {
       guard let paper, let source = modelSource, let pageID else { return }
-      modelSource = nil
-      apply(source, pageID: pageID, to: paper, suppressedIDs: suppressedInkIDs)
+      // Rejection revokes the provisional GPU tail, not the accepted source.
+      // Its stamp may be unchanged, or newer than the last SwiftUI publication.
+      replaceDrawing(source,on:paper,pageID:pageID)
     }
 
   }
@@ -437,7 +445,7 @@ final class PaperCanvasContainerView: UIView {
 
   func settle(_ change: PreparedPageInkChange, suppressedInkIDs: Set<UUID> = []) {
     inkView.settle(change, suppressedInkIDs:suppressedInkIDs)
-    touchView.acceptCommittedDrawing(change.drawing)
+    touchView.apply(change.drawing)
   }
 
   func setInputEnabled(_ enabled: Bool) {
@@ -605,15 +613,9 @@ final class PaperInputView: UIView {
     self.drawingTool = drawingTool
   }
 
+  /// Loading the accepted base is not a contact boundary. The recognizer owns
+  /// the in-flight measurements even when cold decoding finishes under Pencil.
   func apply(_ drawing: PageInkDrawing) {
-    cancelCurrentAction()
-    self.drawing = drawing
-    updateAccessibilityValue()
-  }
-
-  /// Accepts the durable result without replacing the exact Metal mesh that
-  /// was already committed under the person's hand.
-  func acceptCommittedDrawing(_ drawing: PageInkDrawing) {
     self.drawing = drawing
     updateAccessibilityValue()
   }
@@ -1178,15 +1180,6 @@ final class PaperInputView: UIView {
     for completion in completions {
       completion()
     }
-  }
-
-  private func cancelCurrentAction() {
-    if let contact = toolContact { toolContact = nil; contact.finish(cancelled:true) }
-    finalizationTask?.cancel()
-    finalizationTask = nil
-    let reportedPencilActivity = clearAction()
-    onActionCancelled?()
-    if reportedPencilActivity { onActionActivityChange?(false) }
   }
 
   private func clearAction(preservingShapeHistory: Bool = false) -> Bool {

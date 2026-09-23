@@ -7,7 +7,7 @@ import XCTest
   func testNativeMaterialKeepsItsBuffersAcrossCameraAndStopsWhenDetached() async throws {
     let canvas=InkCanvasView(frame:.zero)
     let window=NSWindow(contentRect:.init(x:0,y:0,width:300,height:300),styleMask:[.titled],backing:.buffered,defer:false)
-    window.isReleasedWhenClosed=false;window.contentView=canvas;window.makeKeyAndOrderFront(nil)
+    window.isReleasedWhenClosed=false;window.contentView=canvas;window.center();NSApp.activate();window.makeKeyAndOrderFront(nil);window.orderFrontRegardless()
     defer { Task { await canvas.finishSpatialHandoffFrames() };window.close() }
     let samples=(0..<2400).map { i in SpatialInkSample(point:.init(x:150+cos(Double(i)*0.2)*30,y:150+sin(Double(i)*0.2)*30),
       timeOffset:Double(i)/240,width:8,opacity:1,force:1,azimuth:0,altitude:1) }
@@ -22,6 +22,14 @@ import XCTest
     canvas.projectPage(region:.init(x:10,y:10,width:280,height:280),sourceSize:.init(width:300,height:300),pixelDensity:2)
     try await ready(canvas,after:frames)
     XCTAssertEqual(canvas.materialUploadedNodeCount,nodes)
+    window.orderOut(nil)
+    try await Task.sleep(for:.milliseconds(40))
+    let hiddenFrames=canvas.drawableRequestCount
+    canvas.projectPage(region:.init(x:20,y:20,width:260,height:260),sourceSize:.init(width:300,height:300),pixelDensity:2)
+    try await Task.sleep(for:.milliseconds(80))
+    XCTAssertEqual(canvas.drawableRequestCount,hiddenFrames,"An occluded window does not spin on dropped drawables")
+    NSApp.activate();window.makeKeyAndOrderFront(nil);window.orderFrontRegardless()
+    try await ready(canvas,after:hiddenFrames)
     window.contentView=nil
     canvas.updateMaterial(.init(freehand:ink,erasures:[],transform:.init(a:1,b:0.1,c:0.2,d:1,tx:0,ty:0),layout:nil))
     XCTAssertTrue(canvas.isPaused)
@@ -48,7 +56,7 @@ import XCTest
   func testReadyNativeMaterialTransfersToANewRecipientWithoutRedrawing() async throws {
     let host=InkMaterialHost()
     let window=NSWindow(contentRect:.init(x:0,y:0,width:300,height:300),styleMask:[.titled],backing:.buffered,defer:false)
-    window.isReleasedWhenClosed=false;window.contentView=host;window.makeKeyAndOrderFront(nil)
+    window.isReleasedWhenClosed=false;window.contentView=host;window.center();NSApp.activate();window.makeKeyAndOrderFront(nil);window.orderFrontRegardless()
     defer { host.stop();window.close() }
     let content=NotebookInkMaterialView.Content(freehand:nil,erasures:[],transform:nil,layout:nil)
     var first=false,second=false
@@ -66,6 +74,6 @@ import XCTest
   private func ready(_ canvas:InkCanvasView,after frames:Int) async throws {
     let deadline=ContinuousClock.now + .seconds(5)
     while !canvas.isStableFramePresented,ContinuousClock.now < deadline { try await Task.sleep(for:.milliseconds(10)) }
-    XCTAssertTrue(canvas.isStableFramePresented)
+    XCTAssertTrue(canvas.isStableFramePresented, "Material readiness: drawables=\(canvas.drawableRequestCount), nodes=\(canvas.materialUploadedNodeCount), paused=\(canvas.isPaused), hidden=\(canvas.isHidden), window=\(canvas.window?.isVisible == true), occlusion=\(String(describing:canvas.window?.occlusionState)), activeSpace=\(canvas.window?.isOnActiveSpace == true), opacity=\(canvas.layer?.opacity ?? -1), failure=\(String(describing:canvas.renderFailure))")
   }
 }

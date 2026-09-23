@@ -6,12 +6,20 @@ import SwiftUI
 /// Export alone uses InkRasterRenderer's explicit CGImage readback. Geometry,
 /// connectivity and blending still belong to the same compact ink renderer.
 struct NotebookInkMaterialView: View {
+  @State private var materialProjection = PageInkProjection()
   var freehand: NotebookFreehand? = nil
   var erasures: [InkElementErasure] = []
   var transform: NotebookGraphicTransform? = nil
   var layout: NotebookGraphicLayout? = nil
   var mask: NotebookGraphicMask? = nil
-  var body: some View { Native(content:.init(freehand:freehand,erasures:erasures,transform:transform,layout:layout,mask:mask)).allowsHitTesting(false) }
+  var body: some View {
+    Native(content:.init(freehand:freehand,erasures:erasures,transform:transform,layout:layout,mask:mask),
+      materialProjection:materialProjection)
+      // An ancestor's SwiftUI offset need not lay out the native child. Its
+      // changed physical pose still invalidates the same screen-sized crop.
+      .onGeometryChange(for:CGRect.self) { $0.frame(in:.global) } action: { _ in materialProjection.invalidateLayout() }
+      .allowsHitTesting(false)
+  }
 
   struct Content: Equatable {
     let freehand: NotebookFreehand?
@@ -28,12 +36,13 @@ struct NotebookInkMaterialView: View {
     @Environment(\.scenePlaneProjection) private var projection
     @Environment(\.inkMaterialReadiness) private var readiness
     let content: Content
+    let materialProjection:PageInkProjection
     #if os(iOS)
-    func makeUIView(context:Context) -> InkMaterialHost { .init() }
+    func makeUIView(context:Context) -> InkMaterialHost { .init(projection:materialProjection) }
     func updateUIView(_ view:InkMaterialHost,context:Context) { view.update(content,projection:projection,report:readiness) }
     static func dismantleUIView(_ view:InkMaterialHost,coordinator:()) { view.stop() }
     #else
-    func makeNSView(context:Context) -> InkMaterialHost { .init() }
+    func makeNSView(context:Context) -> InkMaterialHost { .init(projection:materialProjection) }
     func updateNSView(_ view:InkMaterialHost,context:Context) { view.update(content,projection:projection,report:readiness) }
     static func dismantleNSView(_ view:InkMaterialHost,coordinator:()) { view.stop() }
     #endif
@@ -51,12 +60,11 @@ final class InkMaterialHost: PageInkHost {
   private let id = UUID()
   private var content: NotebookInkMaterialView.Content?
   private var report: NotebookInkMaterialReceiver?
-  lazy var projection = PageInkProjection(host:self,canvas:canvas)
-  init() {
+  let projection:PageInkProjection
+  init(projection:PageInkProjection = .init()) {
+    self.projection=projection
     super.init(frame:.zero); addSubview(canvas)
-    canvas.onVisibleFrame = { [weak self] in
-      self?.setInitialMaskBackground(false);self?.canvas.onVisibleFrame=nil
-    }
+    projection.attach(host:self,canvas:canvas)
     canvas.onRenderReadinessChange = { [weak self] _ in
       Task { @MainActor [weak self] in
         guard let self,let content=self.content else { return }
@@ -67,7 +75,6 @@ final class InkMaterialHost: PageInkHost {
   required init?(coder:NSCoder) { fatalError("Use init()") }
   func update(_ content:NotebookInkMaterialView.Content,projection value:ScenePlaneProjection?,report:NotebookInkMaterialReceiver?) {
     let changedReceiver=self.report?.id != report?.id
-    if self.content == nil { setInitialMaskBackground(content.freehand == nil) }
     self.content=content;self.report=report
     canvas.updateMaterial(content);projection.observe(value)
     if changedReceiver {
@@ -76,13 +83,6 @@ final class InkMaterialHost: PageInkHost {
         self.report?.report(id,content,canvas.isStableFramePresented && canvas.window != nil)
       }
     }
-  }
-  private func setInitialMaskBackground(_ white:Bool) {
-    #if os(iOS)
-    backgroundColor = white ? .white : .clear
-    #else
-    wantsLayer=true;layer?.backgroundColor = (white ? NSColor.white : NSColor.clear).cgColor
-    #endif
   }
   func stop() {
     let report=report,id=id

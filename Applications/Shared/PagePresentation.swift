@@ -1,6 +1,34 @@
 import NotebookCore
 import SwiftUI
 
+/// Readiness identifies the accepted ink root, not just a reusable view.
+struct PageInkPresentation:Equatable {
+  let pageID:UUID
+  let stamp:VersionStamp
+  func matches(_ page:PageDocument)->Bool { page.id == pageID && page.drawingStamp == stamp }
+}
+
+/// Native input and overlay publish into the same mounted paper receipt.
+/// Queries read it directly; a SwiftUI redraw is not another readiness owner.
+@MainActor final class PageSurfaceReadiness {
+  private var ink:PageInkPresentation?
+  private var graphics:ObjectIdentifier?
+  private var shownGraphics:(id:UUID,size:PageSize,stamp:VersionStamp)?
+  func recordInk(_ receipt:PageInkPresentation?) { ink=receipt }
+  func recordGraphics(_ ready:Bool,page:PageDocument) {
+    if ready {
+      graphics=page.elementSourceIdentity
+      shownGraphics=(page.id,page.size,page.agentStamp)
+    } else if graphics == page.elementSourceIdentity { graphics=nil }
+  }
+  func isReady(_ page:PageDocument)->Bool {
+    ink?.matches(page) == true && graphics == page.elementSourceIdentity
+  }
+  func hasInstalledGraphics(_ page:PageDocument)->Bool {
+    shownGraphics?.id == page.id && shownGraphics?.size == page.size && shownGraphics?.stamp == page.agentStamp
+  }
+}
+
 #if os(iOS)
 import UIKit
 import OSLog
@@ -22,6 +50,11 @@ final class NotebookPagePresentationRegistry {
     owners = owners.filter { $0.value.value != nil }
     return owners.values.contains { $0.value?.isPresenting(page) == true }
   }
+
+  func hasInstalledGraphics(_ page:PageDocument) -> Bool {
+    owners = owners.filter { $0.value.value != nil }
+    return owners.values.contains { $0.value?.hasInstalledGraphics(page) == true }
+  }
 }
 
 struct PagePresentationView: UIViewRepresentable {
@@ -30,14 +63,14 @@ struct PagePresentationView: UIViewRepresentable {
   let page: PageDocument
   let isCurrent: Bool
   let isVisible: Bool
-  let isReady: Bool
+  let readiness:PageSurfaceReadiness
   let activity: PageTurnActivity?
   var onVisibleRegion: (CGRect) -> Void = { _ in }
 
   func makeUIView(context: Context) -> PagePresentationNativeView { PagePresentationNativeView() }
   func updateUIView(_ view: PagePresentationNativeView, context: Context) {
     view.update(model: model, page: page, isCurrent: isCurrent, isVisible: isVisible,
-      isReady: isReady, activity: activity)
+      readiness:readiness, activity:activity)
     view.onVisibleRegion = onVisibleRegion
     view.viewport.observe(projection)
     view.scheduleVisibleRegion()
@@ -47,20 +80,12 @@ struct PagePresentationView: UIViewRepresentable {
 
 @MainActor
 final class PagePresentationNativeView: UIView, NotebookScenePresentationOwner {
-  private struct Source: Equatable {
-    let id: UUID
-    let size: PageSize
-    let ink: VersionStamp
-    let elements: VersionStamp
-    init(_ page: PageDocument) {
-      id = page.id; size = page.size; ink = page.drawingStamp; elements = page.agentStamp
-    }
-  }
   private weak var model: NotebookAppModel?
-  private var source: Source?
+  private var pageID:UUID?
+  private var pageSize:PageSize?
   private var isCurrent = false
   private var isVisible = false
-  private var isReady = false
+  private var readiness:PageSurfaceReadiness?
   private var activity: PageTurnActivity?
   private var retired = false
   lazy var viewport = PageViewportProjection(host:self)
@@ -78,9 +103,9 @@ final class PagePresentationNativeView: UIView, NotebookScenePresentationOwner {
   required init?(coder: NSCoder) { fatalError("Use init()") }
 
   func update(model: NotebookAppModel, page: PageDocument, isCurrent: Bool,
-    isVisible: Bool, isReady: Bool, activity: PageTurnActivity?) {
+    isVisible: Bool, readiness:PageSurfaceReadiness, activity: PageTurnActivity?) {
     guard !retired else { return }
-    if source?.id != page.id {
+    if pageID != page.id {
       Logger(subsystem: "com.amirtlinov.notebook", category: "PaperGeometry")
         .notice("Mounted paper size: \(page.size.width) x \(page.size.height)")
     }
@@ -91,8 +116,8 @@ final class PagePresentationNativeView: UIView, NotebookScenePresentationOwner {
       model.pagePresentations.register(self)
       model.registerScenePresentation(self)
     }
-    source = Source(page); self.isCurrent = isCurrent; self.isVisible = isVisible
-    self.isReady = isReady; self.activity = activity
+    pageID=page.id;pageSize=page.size;self.isCurrent=isCurrent;self.isVisible=isVisible
+    self.readiness=readiness;self.activity=activity
     viewport.isVisible = isVisible
   }
 
@@ -102,8 +127,18 @@ final class PagePresentationNativeView: UIView, NotebookScenePresentationOwner {
   func scheduleVisibleRegion() { viewport.refresh() }
 
   func isPresenting(_ page: PageDocument) -> Bool {
-    guard !retired, isCurrent, isVisible, isReady, activity?.isTransitioning != true,
-      source == Source(page), let window, !window.isHidden, !bounds.isEmpty,
+    readiness?.isReady(page) == true && isShowingCurrentPaper(page)
+  }
+
+  /// A new ink contact cannot disable unchanged, installed graphics. This
+  /// grants local hit testing, not a receipt that the whole page was shown.
+  func hasInstalledGraphics(_ page:PageDocument) -> Bool {
+    readiness?.hasInstalledGraphics(page) == true && isShowingCurrentPaper(page)
+  }
+
+  private func isShowingCurrentPaper(_ page:PageDocument) -> Bool {
+    guard !retired, isCurrent, isVisible, activity?.isTransitioning != true,
+      pageID == page.id, pageSize == page.size, let window, !window.isHidden, !bounds.isEmpty,
       convert(bounds, to: window).intersects(window.bounds) else { return false }
     var ancestor: UIView? = self
     while let view = ancestor {
@@ -115,7 +150,7 @@ final class PagePresentationNativeView: UIView, NotebookScenePresentationOwner {
 
   func uninstall() {
     guard !retired else { return }
-    retired = true; source = nil; activity = nil
+    retired = true; pageID=nil;pageSize=nil;readiness=nil;activity=nil
     viewport.stop()
     model?.pagePresentations.remove(self)
     model?.unregisterScenePresentation(self)
@@ -128,7 +163,7 @@ struct PagePresentationView: NSViewRepresentable {
   let page: PageDocument
   let isCurrent: Bool
   let isVisible: Bool
-  let isReady: Bool
+  let readiness:PageSurfaceReadiness
   let activity: PageTurnActivity?
   var onVisibleRegion: (CGRect) -> Void = { _ in }
   func makeNSView(context:Context) -> PagePresentationNativeView { .init(frame:.zero) }
