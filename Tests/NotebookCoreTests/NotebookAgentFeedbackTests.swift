@@ -15,7 +15,7 @@ struct NotebookAgentFeedbackTests {
       operations:[.init(kind:.insertElement,target:target,id:id,values:["kind":.string("graphic"),"source":.string(""),
         "worldOrigin":try .encode(WorldPoint.zero), "frame":try .encode(PageRect(x:100,y:100,width:180,height:120)),
         "graphic":try .encode(NotebookGraphic(shape:.triangle))])])
-    return try human ? store.applyNativeGraphicAction(action,actor:actor) : store.applyCollaborationAction(action,actor:actor)
+    return try human ? store.applyNativeAction(action,actor:actor) : store.applyCollaborationAction(action,actor:actor)
   }
   @Test func feedbackNamesExactCurrentMaterialWithoutPreparingHistory() throws {
     try fixture { store, actor, target in
@@ -34,7 +34,7 @@ struct NotebookAgentFeedbackTests {
   @Test func continuedOrUndoneMaterialCannotMasqueradeAsAnAgentResult() throws {
     try fixture { store, actor, target in
       let agent = try insert("shape",store:store,target:target,actor:UUID())
-      _ = try store.applyNativeGraphicAction(.init(summary:"human continuation",
+      _ = try store.applyNativeAction(.init(summary:"human continuation",
         expected:[.init(target:target,revision:store.targetContentRevision(target:target))],operations:[
           .init(kind:.updateElement,target:target,id:"shape",values:["graphic":.object(["label":.string("human")])])]),actor:actor)
       #expect(try store.agentFeedbackChanges([store.actionReadModel(agent.id)]).isEmpty)
@@ -50,7 +50,7 @@ struct NotebookAgentFeedbackTests {
       let cursor = try store.currentChangeCursor()
       #expect(try store.agentAttentionSubjects([ref]).first?.reference == ref)
       #expect(try store.currentChangeCursor() == cursor)
-      _ = try store.applyNativeGraphicAction(.init(summary:"change",expected:[.init(target:target,revision:store.targetContentRevision(target:target))],operations:[
+      _ = try store.applyNativeAction(.init(summary:"change",expected:[.init(target:target,revision:store.targetContentRevision(target:target))],operations:[
         .init(kind:.updateElement,target:target,id:"shape",values:["graphic":.object(["label":.string("new")])])]),actor:actor)
       #expect(throws: CollaborationError.self) { try store.agentAttentionSubjects([ref]) }
     }

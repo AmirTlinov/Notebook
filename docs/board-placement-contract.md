@@ -37,6 +37,24 @@ A bounded window cannot derive a full revision from its subset. Unpublished loca
 edits invalidate the accepted revision; publication and receipt acquire the new
 revision through the same SQL owner.
 
+## Native drop and history boundary
+
+`NotebookNativeCommand<WorkspacePlacement>` validates the captured registers and
+complete bounded stack membership before obtaining the current board revision
+inside the existing action transaction. An unrelated edit may proceed; a changed
+member, hidden concurrent head, transfer, or added sibling rejects the old contact.
+One drop can contain unstack/move and stack as one action and one history entry.
+New stack identity derives from the action and operation index, rather than a
+second random identity in persistence. The same retained native-command owner
+handles uncertain responses for element and placement edits.
+
+Undo authors a new register. Redo uses the inverse's exact gate (or its proved
+already repeated predecessor), requires the entire placement frontier, and authors
+another register with the retained pose and stack ID. It never reinstalls an old
+register. Both directions retain causal observations, so delayed delivery cannot
+restore an earlier position. Native gesture integration is a separate remaining
+GUI-295 boundary; the Core command alone does not establish installed UI behavior.
+
 ## Historical-format admission
 
 `migrateBoardPlacements` upgrades the former representation transactionally after

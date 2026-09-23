@@ -254,7 +254,8 @@ public struct BoardHierarchy: Codable, Equatable, Sendable {
     moving movingID: UUID,
     onto targetID: UUID,
     in boardID: UUID,
-    actor: UUID
+    actor: UUID,
+    stackID: UUID = UUID()
   ) -> UUID? {
     guard let boardIndex = index(of: boardID),
       let next = stamp.advanced(by: actor)
@@ -263,7 +264,8 @@ public struct BoardHierarchy: Codable, Equatable, Sendable {
     guard let stackID = board.createStack(
       moving: movingID,
       onto: targetID,
-      actor: actor
+      actor: actor,
+      stackID: stackID
     ) else { return nil }
     boards[boardIndex].replace(with: board)
     stamp = next

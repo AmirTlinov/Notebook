@@ -3465,7 +3465,7 @@ final class NotebookAppModel {
           return saved
         }
         let revision=try store.targetContentRevision(target:destination.target)
-        return try store.applyNativeGraphicAction(.init(id:actionID,summary:"Вставить из буфера",
+        return try store.applyNativeAction(.init(id:actionID,summary:"Вставить из буфера",
           expected:[.init(target:destination.target,revision:revision)],operations:operations),actor:actor)
       }
     }
@@ -3600,7 +3600,7 @@ final class NotebookAppModel {
           expected.append(.init(target:target,id:source.id,page:accepted.page,spatial:accepted.spatial))
         } else { expected.append(source) }
       }
-      let command=NotebookNativeElementCommand(plan.operations,summary:plan.summary,sources:expected,
+      let command=NotebookNativeCommand(plan.operations,summary:plan.summary,sources:expected,
         layerMove:plan.layerMove,copiedFrom:plan.copiedFrom,expectedInkRevision:plan.expectedInkRevision,
         actionID:commandID,actor:actor)
       return { store in

@@ -191,7 +191,7 @@ struct NotebookCloudDeliveryTests {
         references: [.init(target: target, revision: revision)],
         expected: [.init(target: target, revision: revision, inkRevision: store.inkRevision(on: target))],
         operations: operations)
-      _ = try store.applyNativeGraphicAction(action, actor: actor)
+      _ = try store.applyNativeAction(action, actor: actor)
     }
     func insert(_ id: String, graphic: NotebookGraphic, x: Double) throws -> CollaborationOperation {
       var values: [String: JSONValue] = ["kind": .string("graphic"), "source": .string(""),

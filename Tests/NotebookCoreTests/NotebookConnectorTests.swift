@@ -38,7 +38,7 @@ private struct ConnectorFixture {
   func write(_ operations: [CollaborationOperation], human: Bool = true) throws -> CollaborationReceipt {
     let action = try CollaborationAction(summary: "Связь", references: [.init(target: target, revision: store.targetContentRevision(target: target))],
       expected: [.init(target: target, revision: store.targetContentRevision(target: target),inkRevision:store.inkRevision(on:target))], operations: operations)
-    return try human ? store.applyNativeGraphicAction(action, actor: actor) : store.applyCollaborationAction(action, actor: actor)
+    return try human ? store.applyNativeAction(action, actor: actor) : store.applyCollaborationAction(action, actor: actor)
   }
   func node(_ id: String, x: Double, y: Double = 80) throws -> CollaborationOperation {
     try insert(id, graphic: .init(label: id), frame: .init(x:x,y:y,width:100,height:100))

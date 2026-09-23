@@ -99,6 +99,50 @@ extension NotebookStore {
     return head
   }
 
+  /// Only the bounded device-local order can authorize the next Redo. The
+  /// receipts remain the evidence; this read creates no replacement clocks,
+  /// mutable acceptance gates or second history. It is needed only when an
+  /// earlier Redo has advanced the original inverse's exact field version.
+  func nativeRepeatedPredecessors(domains: Set<PencilUndoHistory.Domain>, actor: UUID) throws
+    -> [(repeated: CollaborationReceipt, original: CollaborationReceipt)] {
+    var ids = Set<UUID>(), result: [(CollaborationReceipt, CollaborationReceipt)] = []
+    for domain in domains {
+      for case .command(let id) in try nativeHistory(domain: domain, actor: actor) where ids.insert(id).inserted {
+        let repeated = try collaborationAction(id)
+        guard repeated.author == .human, repeated.undo == nil, let source = repeated.redoOf,
+          source != repeated.id else { continue }
+        let original = try collaborationAction(source)
+        guard original.author == .human, original.undo != nil else { continue }
+        result.append((repeated, original))
+      }
+    }
+    return result
+  }
+
+  func nativeRedoRestoresSource(_ change: CollaborationFieldChange, version: ContentFieldVersion,
+    predecessors: [(repeated: CollaborationReceipt, original: CollaborationReceipt)]) throws -> Bool {
+    guard let expected = change.beforeVersion else { return false }
+    let owner = collaborationCausalFieldPath(change.path) ?? change.path
+    func ownsField(_ field: CollaborationFieldChange) -> Bool {
+      field.file == change.file && (collaborationCausalFieldPath(field.path) ?? field.path) == owner
+    }
+    for (repeated, original) in predecessors where repeated.changes.contains(where: {
+      ownsField($0) && $0.afterVersion == version
+    }) {
+      // Undo/Redo of the first repeated step may itself be repeated before
+      // continuing the pending sequence. Follow that action's own addressed
+      // lineage, not unrelated history or a same-valued material snapshot.
+      var source = original, visited: Set<UUID> = [repeated.id]
+      while visited.insert(source.id).inserted {
+        guard source.author == .human, source.undo != nil else { break }
+        if source.changes.contains(where: { ownsField($0) && $0.afterVersion == expected }) { return true }
+        guard let previous = source.redoOf else { break }
+        source = try collaborationAction(previous)
+      }
+    }
+    return false
+  }
+
   func requireNativeInkRedoGate(_ id:UUID,domain:PencilUndoHistory.Domain,
     actor:UUID,expected:VersionStamp) throws {
     let redo=try rawNativeHistory(domain:domain,actor:actor,redo:true)

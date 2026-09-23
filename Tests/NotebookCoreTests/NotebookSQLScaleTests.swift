@@ -1,3 +1,4 @@
+import CSQLite
 import Foundation
 import Testing
 @testable import NotebookCore
@@ -130,6 +131,32 @@ struct NotebookSQLScaleTests {
     #expect(try store.readWorkingSet(itemIDs: [firstID], pageIDs: [initial.items[0].pageIDs[0]], boardIDs: [header.rootBoardID], surfaces: []).pages.count == 1)
 
     let target = CollaborationTarget(kind: .board, id: header.rootBoardID)
+    let source = try #require(try store.readBoardItem(firstID)?.board.placements.first { $0.id == firstID })
+    let command = NotebookNativeCommand([.init(kind: .moveItem, target: target, id: firstID.uuidString,
+      values: ["center": try .encode(WorldPoint(x: 250, y: 180))])], summary: "Native scale move",
+      placements: [source], actor: actor)
+    final class Counter { var steps = 0 }
+    let counter = Counter()
+    func measured<T>(_ label: String, _ operation: () throws -> T) throws -> T {
+      let database = try NotebookSQLConnection(url: store.databaseURL, writable: true)
+      counter.steps = 0
+      sqlite3_progress_handler(database.handle, 1, { raw in
+        let counter = Unmanaged<Counter>.fromOpaque(raw!).takeUnretainedValue()
+        counter.steps += 1; return counter.steps > 200_000 ? 1 : 0
+      }, Unmanaged.passUnretained(counter).toOpaque())
+      defer { sqlite3_progress_handler(database.handle, 0, nil, nil) }
+      let start = ContinuousClock.now
+      let result = try store.commandTransaction(preparedDatabase: database) { try operation() }
+      print("PLACEMENT_SCALE_\(label) owners=100000 vm_steps=\(counter.steps) elapsed=\(start.duration(to: .now))")
+      #expect(counter.steps < 200_000, "One native placement must not visit the whole catalogue")
+      return result
+    }
+    let native = try measured("MOVE") { try command.apply(to: store) }
+    _ = try measured("UNDO") { try store.undoNativeAction(native.receipt.id, actor: actor) }
+    _ = try measured("REDO") { try store.redoNativeAction(native.receipt.id, actionID: UUID(), actor: actor) }
+    #expect(try store.workspaceHeader().itemCount == 100_000)
+    #expect(try store.readBoardItem(firstID)?.board.placement(of: firstID)?.center == .init(x: 250, y: 180))
+
     let request = CollaborationPlacementRequest(target: target, expectedRevision: try store.targetContentRevision(target: target),
       items: [.init(id: "scale-proposal", size: .init(width: 100, height: 80))], worldOrigin: .zero)
     let budget = NotebookPlacementBudget()
@@ -145,7 +172,7 @@ struct NotebookSQLScaleTests {
     let size = WorkspaceItemGeometry.notebook
     let expected = NotebookStore.freeCollaborationFrame(size: .init(width: 100, height: 80), extent: .init(width: 2048, height: 2048),
       anchor: .init(x: 20, y: 20, width: 1, height: 1), direction: "free", obstacles: [
-        .init(x: -100 - size.width / 2, y: 20 - size.height / 2, width: size.width, height: size.height)])
+        .init(x: 250 - size.width / 2, y: 180 - size.height / 2, width: size.width, height: size.height)])
     #expect(planned.status == .ready && planned.placements.first?.frame == expected)
     print("PLACEMENT_SCALE owners=100000 inspected=\(budget.inspectedObstacles) sql_vm_steps=\(budget.sqlSteps)")
     print("CATALOG_SCALE_PHASE phase=addressed_checks_completed elapsed=\(started.duration(to: .now))")

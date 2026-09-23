@@ -143,11 +143,11 @@ final class NotebookPersistenceTests: XCTestCase {
     _=try store.loadOrCreateSpatialInk(actor:actor)
     let target=CollaborationTarget(kind:.page,id:try XCTUnwrap(workspace.selectedPageID))
     let queue=NotebookPersistenceQueue(store:store),readbackReady=root.appendingPathComponent("readback-ready")
-    let actionID=UUID(),command=NotebookNativeElementCommand([.init(kind:.insertElement,target:target,id:"figure",values:[
+    let actionID=UUID(),command=NotebookNativeCommand([.init(kind:.insertElement,target:target,id:"figure",values:[
       "kind":.string("graphic"),"source":.string(""),"graphic":try .encode(NotebookGraphic(shape:.rectangle)),
       "frame":try .encode(PageRect(x:20,y:20,width:100,height:100))])],summary:"Accepted figure",
       sources:[.init(target:target,id:"figure")],actionID:actionID,actor:actor)
-    let saved=queue.enqueuePreparedCommand(Task { () throws -> @Sendable (NotebookStore) throws -> NotebookNativeElementCommand.Output in
+    let saved=queue.enqueuePreparedCommand(Task { () throws -> @Sendable (NotebookStore) throws -> NotebookNativeCommand<NotebookNativeElementSource>.Output in
       { store in
         let result=try command.apply(to:store)
         guard FileManager.default.fileExists(atPath:readbackReady.path) else { throw TestFailure.unavailable }
@@ -272,7 +272,7 @@ final class NotebookPersistenceTests: XCTestCase {
       await model.start(pageSize: NotebookAppModel.defaultPageSize)
       let started = await model.finishPendingPersistence(); XCTAssertTrue(started)
       let pageID = try XCTUnwrap(model.activePage?.id), target = CollaborationTarget(kind: .page, id: pageID)
-      let figure = try store.applyNativeGraphicAction(.init(summary: "Undo storage test", expected: [
+      let figure = try store.applyNativeAction(.init(summary: "Undo storage test", expected: [
         .init(target: target, revision: store.targetContentRevision(target: target))], operations: [
         .init(kind: .insertElement, target: target, id: "undo-fault", values: ["kind": .string("graphic"),
           "source": .string(""), "frame": try .encode(PageRect(x: 20, y: 20, width: 100, height: 100)),

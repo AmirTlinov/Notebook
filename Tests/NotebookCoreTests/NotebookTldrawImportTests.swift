@@ -131,7 +131,7 @@ struct NotebookTldrawImportTests {
     let fragment = try Self.prepare(Self.diagram,bindings:Self.bindings)
     let operations = try fragment.operations(target:target,offset:.init(x:20,y:40),worldOrigin:onBoard ? .zero : nil)
     let action = CollaborationAction(summary:"Вставить из буфера",expected:[.init(target:target,revision:try store.targetContentRevision(target:target))],operations:operations)
-    let receipt = try store.applyNativeGraphicAction(action,actor:actor)
+    let receipt = try store.applyNativeAction(action,actor:actor)
     #expect(receipt.author == .human)
     let reopened = NotebookStore(root:root)
     func ids() throws -> Set<String> {

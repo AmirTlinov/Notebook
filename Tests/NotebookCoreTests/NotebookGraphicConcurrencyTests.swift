@@ -26,7 +26,7 @@ private struct GraphicFixture {
       references: [.init(target: target, elementID: id, revision: store.targetContentRevision(target: target))],
       expected: [.init(target: target, revision: store.targetContentRevision(target: target), inkRevision: store.inkRevision(on: target))],
       operations: [.init(kind: kind, target: target, id: id, values: values)])
-    return try human ? store.applyNativeGraphicAction(action, actor: actor) : store.applyCollaborationAction(action, actor: actor)
+    return try human ? store.applyNativeAction(action, actor: actor) : store.applyCollaborationAction(action, actor: actor)
   }
   func stroke() throws -> UUID {
     let id = UUID()

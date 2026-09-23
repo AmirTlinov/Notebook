@@ -27,7 +27,7 @@ struct NotebookNativeHistoryTests {
     }
     func shape() throws -> CollaborationReceipt {
       let target = CollaborationTarget(kind: .page, id: pageID)
-      return try store.applyNativeGraphicAction(.init(summary: "Figure", expected: [
+      return try store.applyNativeAction(.init(summary: "Figure", expected: [
         .init(target: target, revision: store.targetContentRevision(target: target))], operations: [
           .init(kind: .insertElement, target: target, id: "figure", values: ["kind": .string("graphic"), "source": .string(""),
             "frame": .encode(PageRect(x: 100, y: 100, width: 80, height: 70)), "graphic": .encode(NotebookGraphic())])]), actor: actor)
@@ -94,6 +94,32 @@ struct NotebookNativeHistoryTests {
     #expect(try reopened.loadPage(f.pageID).element(id:"figure") == nil)
   }
 
+  @Test func consecutiveGraphicChangesRepeatTheirCausalOwnerNotTheOldInverseDot() throws {
+    let f = try Fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+    _ = try f.shape()
+    let target = CollaborationTarget(kind: .page, id: f.pageID)
+    let frames = [PageRect(x: 130, y: 100, width: 80, height: 70),
+      PageRect(x: 130, y: 140, width: 80, height: 70), PageRect(x: 190, y: 140, width: 80, height: 70)]
+    var moves: [CollaborationReceipt] = []
+    for frame in frames {
+      let result = try f.store.applyNativeElementEdits([.init(kind: .updateElement, target: target,
+        id: "figure", values: ["frame": try .encode(frame)])], summary: "Move figure",
+        sources: [.init(target: target, id: "figure", page: f.store.readPageElement(pageID: f.pageID, elementID: "figure"))],
+        actor: f.actor)
+      moves.append(result.receipt)
+    }
+    for move in moves.reversed() {
+      let inverse = try f.store.undoNativeAction(move.id, actor: f.actor)
+      #expect(inverse.undo?.preserved.isEmpty == true)
+    }
+    let cold = NotebookStore(root: f.root)
+    for (index, move) in moves.enumerated() {
+      _ = try cold.redoNativeAction(move.id, actionID: UUID(), actor: f.actor)
+      #expect(try cold.loadPage(f.pageID).element(id: "figure")?.frame == frames[index])
+    }
+    #expect(try cold.nativeRedoHistory(domain: .page(f.pageID), actor: f.actor).isEmpty)
+  }
+
   @Test(arguments: [NotebookStorageFault.afterRecordWrites, .beforeCommit, .afterCommit])
   func nativeRedoAndDirectoryCommitAtomicallyAndRetryByTheSameID(_ fault: NotebookStorageFault) throws {
     let f=try Fixture();defer { try? FileManager.default.removeItem(at:f.root) }
@@ -118,7 +144,7 @@ struct NotebookNativeHistoryTests {
     let shape=try f.shape(),domain=PencilUndoHistory.Domain.page(f.pageID)
     _ = try f.store.undoNativeAction(shape.id,actor:f.actor)
     let peer=UUID(),target=CollaborationTarget(kind:.page,id:f.pageID)
-    _ = try f.store.applyNativeGraphicAction(.init(summary:"Peer",expected:[
+    _ = try f.store.applyNativeAction(.init(summary:"Peer",expected:[
       .init(target:target,revision:f.store.targetContentRevision(target:target))],operations:[
         .init(kind:.insertElement,target:target,id:"peer",values:["kind":.string("graphic"),
           "source":.string(""),"frame":.encode(PageRect(x:200,y:100,width:70,height:50)),
@@ -136,7 +162,7 @@ struct NotebookNativeHistoryTests {
     _ = try f.shape()
     let target=CollaborationTarget(kind:.page,id:f.pageID),peer=UUID()
     func update(_ source:String,_ actor:UUID) throws -> CollaborationReceipt {
-      try f.store.applyNativeGraphicAction(.init(summary:"Source",expected:[
+      try f.store.applyNativeAction(.init(summary:"Source",expected:[
         .init(target:target,revision:f.store.targetContentRevision(target:target))],operations:[
           .init(kind:.updateElement,target:target,id:"figure",values:["source":.string(source)])]),actor:actor)
     }

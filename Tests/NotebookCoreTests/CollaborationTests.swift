@@ -1032,7 +1032,7 @@ func acceptedNativeEditDoesNotWaitForItsOwnQueuedRelease() throws {
   do { _ = try f.store.applyCollaborationAction(action,actor:f.human);Issue.record("Agent admission must still wait") }
   catch let error as CollaborationError { #expect(error.code == "input_active") }
   try f.store.saveInputActivity(.init(deviceID:peer,sessionID:UUID(),sequence:1,targets:[f.page]))
-  do { _ = try f.store.applyNativeGraphicAction(action,actor:f.human);Issue.record("Peer input must still hold the edit") }
+  do { _ = try f.store.applyNativeAction(action,actor:f.human);Issue.record("Peer input must still hold the edit") }
   catch let error as CollaborationError { #expect(error.code == "input_active") }
   try f.store.resetInputActivity(deviceID:peer)
   let receipt=try f.store.applyNativeElementEdits([operation],summary:"Принятое касание",

@@ -23,7 +23,7 @@ struct NotebookElementRestorationChainTests {
       let basis = try store.readBasis(targets: [target])
       let action = CollaborationAction(additionalOwners: [target], summary: "Isolated graph ownership",
         expected: basis.owners, operations: operations)
-      return try native ? store.applyNativeGraphicAction(action, actor: human)
+      return try native ? store.applyNativeAction(action, actor: human)
         : store.applyCollaborationAction(action, actor: actor)
     }
     func create() throws -> CollaborationReceipt {

@@ -12,40 +12,16 @@ public struct NotebookNativeElementSource: Equatable, Sendable {
   }
 }
 
-/// One accepted in-flight command retains its exact result until the writer
-/// acknowledges it. A lost commit/readback response must not rebase dependent
-/// edits onto newer peer material or execute this action again.
-public final class NotebookNativeElementCommand: @unchecked Sendable {
-  public typealias Output = (receipt: CollaborationReceipt, sources: [NotebookNativeElementSource])
-  private let lock = NSLock()
-  private var prepared: Output?
-  private let operation: (NotebookStore, (Output) -> Void) throws -> Output
-
-  public init(_ operations: [CollaborationOperation], summary: String,
+extension NotebookNativeCommand where Source == NotebookNativeElementSource {
+  public convenience init(_ operations: [CollaborationOperation], summary: String,
     sources: [NotebookNativeElementSource], layerMove: NotebookElementLayerMove? = nil,
     copiedFrom: [String:String] = [:], expectedInkRevision: String? = nil,
     actionID: UUID = UUID(), actor: UUID) {
-    operation = { store, didPrepare in
+    self.init { store, didPrepare in
       try store.commitNativeElementEdits(operations, summary: summary, sources: sources,
         layerMove: layerMove, copiedFrom: copiedFrom, expectedInkRevision: expectedInkRevision,
         actionID: actionID, actor: actor, didPrepare: didPrepare)
     }
-  }
-
-  public func apply(to store: NotebookStore) throws -> Output {
-    lock.lock(); defer { lock.unlock() }
-    if let prepared {
-      // Absence proves rollback. An unreadable receipt leaves the same command
-      // pending; current element values are never evidence of its own commit.
-      if let saved = try store.collaborationActionIfPresent(prepared.receipt.id) {
-        guard saved.action == prepared.receipt.action, saved.author == prepared.receipt.author else {
-          throw CollaborationError("action_id_conflict", "Этот ID уже принадлежит другому ходу.")
-        }
-        return prepared
-      }
-      self.prepared = nil
-    }
-    return try operation(store) { self.prepared = $0 }
   }
 }
 
@@ -92,7 +68,7 @@ extension NotebookStore {
     sources: [NotebookNativeElementSource], layerMove: NotebookElementLayerMove? = nil, copiedFrom: [String:String] = [:], expectedInkRevision: String? = nil,
     actionID:UUID=UUID(),actor: UUID
   ) throws -> (receipt: CollaborationReceipt, sources: [NotebookNativeElementSource]) {
-    try NotebookNativeElementCommand(operations, summary: summary, sources: sources,
+    try NotebookNativeCommand(operations, summary: summary, sources: sources,
       layerMove: layerMove, copiedFrom: copiedFrom, expectedInkRevision: expectedInkRevision,
       actionID: actionID, actor: actor).apply(to: self)
   }
@@ -100,8 +76,8 @@ extension NotebookStore {
   fileprivate func commitNativeElementEdits(_ operations: [CollaborationOperation], summary: String,
     sources: [NotebookNativeElementSource], layerMove: NotebookElementLayerMove?, copiedFrom: [String:String],
     expectedInkRevision: String?, actionID: UUID, actor: UUID,
-    didPrepare: (NotebookNativeElementCommand.Output) -> Void
-  ) throws -> NotebookNativeElementCommand.Output {
+    didPrepare: (NotebookNativeCommand<NotebookNativeElementSource>.Output) -> Void
+  ) throws -> NotebookNativeCommand<NotebookNativeElementSource>.Output {
     try commandTransaction(readAllowance: .agentCommand) {
       guard let target = operations.first?.target, [.page,.board,.cover].contains(target.kind),
         !operations.isEmpty, operations.count <= 32, !sources.isEmpty, sources.count <= 64,
@@ -150,7 +126,7 @@ extension NotebookStore {
         throw CollaborationError("revision_conflict","Чернила изменились во время выделения. Повторите лассо.")
       }
       let ink = operations.contains { $0.kind == .convertInkToElement } ? try inkRevision(on: target) : nil
-      let receipt = try applyNativeGraphicAction(.init(id:actionID,summary: summary,
+      let receipt = try applyNativeAction(.init(id:actionID,summary: summary,
         references: admitted.map { .init(target:target,elementID:$0.kind == .reorderElements ? nil : $0.id,revision:revision) },
         expected: [.init(target: target, revision: revision, inkRevision: ink)], operations: admitted), actor: actor)
       let result = (receipt, try sources.map { source in

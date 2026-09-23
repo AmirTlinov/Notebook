@@ -1,5 +1,39 @@
 # Verification record
 
+## September 23 — GUI-295, causal native placement and repeated history
+
+The existing native action and retained retry owner now accept exact placement
+registers as well as graphic sources. A move plus stacking is one Core action;
+stack identity derives from that action, and changed membership or causal heads
+reject the captured contact. This is not yet the native item-drag integration:
+the installed applications still use the existing item placement entry points.
+
+Cold multi-step Redo reproduced a real defect: its second move expected the old
+inverse dot even though the preceding Redo correctly authored a new one. The
+same failure occurred after Undo/Redo of that preceding step. The common history
+now proves the exact field owner through active local repeated actions and their
+addressed lineage, without accepting peer same-value writes. Final focused Core
+result: **32 tests / 3 suites PASS**, `.build/gui295-native-placement-core-v7.log`.
+This includes graphic frame changes, retained retry before/after commit, losing
+concurrent placement heads, peer ABA, stack membership, and cold mixed history.
+Input inventory: `.build/gui295-placement-core-v7-inputs.json`.
+
+Before the additional nested-repeat regression, the same addressed placement
+path passed **33 tests / 4 suites**, including 100,000 real notebook owners
+(1,300,006 records), `.build/gui295-native-placement-core-v6.log`. MOVE / UNDO /
+REDO used **9,536 / 9,738 / 9,483 SQL VM steps**, with one local sample of
+**15.25 / 15.67 / 13.81 ms** respectively; proposal lookup inspected one obstacle
+in 505 steps. These are store-command measurements, not input/display latency or
+isolated system profiling. Input inventory: `.build/gui295-placement-core-v6-inputs.json`.
+The later change touches only traversal of an already repeated predecessor;
+this single-action scale path is unchanged. The prior scale failure compared the
+proposal to the old obstacle position after the new move; its explicit expected
+coordinates were corrected, not its count, locality or integrity checks.
+
+The real-window cold ink → move → move → ink / Undo4 / Redo4 scenario is extended
+but still awaits the single physical-iPad runner. No new installation or physical
+acceptance is claimed here; native item-drop integration and S5 remain open.
+
 ## September 23 — matched pair 187 installed, live readback
 
 The verified combined sources below produced signed **0.3.134 (187)** for both

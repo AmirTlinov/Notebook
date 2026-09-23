@@ -102,10 +102,10 @@ extension NotebookStore {
   /// activity release can follow it in the FIFO; that release (or a subsequent
   /// local contact) cannot veto accepted content. Peer contacts still hold it.
   @discardableResult
-  public func applyNativeGraphicAction(_ action: CollaborationAction, actor: UUID) throws -> CollaborationReceipt {
+  public func applyNativeAction(_ action: CollaborationAction, actor: UUID) throws -> CollaborationReceipt {
     guard action.operations.allSatisfy({ [.insertElement, .updateElement, .removeElement,
-      .convertInkToElement, .reorderElements].contains($0.kind) }) else {
-      throw invalid("Нативная правка схемы содержит только операции элементов.")
+      .convertInkToElement, .reorderElements, .moveItem, .stackItems].contains($0.kind) }) else {
+      throw invalid("Нативная правка содержит операции элементов или расположения предметов.")
     }
     return try applyCollaborationActionImmediately(action, actor: actor, requestFingerprint: nil, human: true, nativeInputOwner: actor)
   }
@@ -224,7 +224,8 @@ extension NotebookStore {
               revisedTargets.formUnion(try applyLifecycleOperation(operation, actor: actor, human: human))
               let following = action.operations.dropFirst(index + 1).prefix { !$0.isLifecycle }
               after = try projection(for: Array(following)); segmentBefore = after
-            } else { try after.apply(operation, actor: actor) }
+            } else { try after.apply(operation, actor: actor,
+              stackID: Self.submissionID(action.id, suffix: "stack:\(index)")) }
             createdTargets.formUnion(operation.createdOwners)
           } catch let error as CollaborationError {
             throw error.atOperation(index, operation)
@@ -312,7 +313,7 @@ extension NotebookStore {
         inverse.preserved.isEmpty,inverse.preservedLifecycle?.isEmpty ?? true,
         inverse.lifecycleChanges?.isEmpty ?? true,!original.changes.isEmpty,
         original.action.operations.allSatisfy({ [.insertElement,.updateElement,.removeElement,
-          .convertInkToElement,.reorderElements].contains($0.kind) }) else {
+          .convertInkToElement,.reorderElements,.moveItem,.stackItems].contains($0.kind) }) else {
         throw CollaborationError("revision_conflict","Этот ход нельзя безопасно повторить после отмены.")
       }
       let domains=Set(original.action.operations.map { PencilUndoHistory.Domain($0.target) })
@@ -336,17 +337,44 @@ extension NotebookStore {
         }
       }
       var after=before
+      var repeatedPredecessors: [(repeated: CollaborationReceipt, original: CollaborationReceipt)]?
       for change in original.changes {
         let current=before.files[change.file]?.value(at:change.path[...])
         guard let gate=inverse.redoGates?.first(where: {
           $0.file == change.file && $0.path == change.path
-        }), collaborationFieldVersion(file:before.files[change.file],path:change.path)
-          == gate.writtenVersion else {
+        }), let version = collaborationFieldVersion(file:before.files[change.file],path:change.path) else {
           throw CollaborationError("revision_conflict","Причинный владелец изменился после отмены.")
+        }
+        if version != gate.writtenVersion {
+          // Redo A legitimately writes a new dot where the next undone B
+          // expects A's original result. Follow only an already repeated local
+          // command with that exact result owner, never a same-valued peer edit.
+          if repeatedPredecessors == nil {
+            repeatedPredecessors = try nativeRepeatedPredecessors(domains: domains, actor: actor)
+          }
+          guard try nativeRedoRestoresSource(change, version: version, predecessors: repeatedPredecessors!) else {
+            throw CollaborationError("revision_conflict","Причинный владелец изменился после отмены.")
+          }
         }
         guard collaborationComparable(current,file:change.file,path:change.path)
           == collaborationComparable(change.before,file:change.file,path:change.path) else {
           throw CollaborationError("revision_conflict","Материал изменился после отмены.")
+        }
+        if let address = placementAddress(change.file, change.path) {
+          // The complete register owns placement. An unchanged winner cannot
+          // hide a losing concurrent head; replay authors a new intent rather
+          // than reinstalling the old register and erasing its observations.
+          guard let placement = try current?.decode(WorkspacePlacement.self),
+            placement.heads.count == 1, placement.winner.version == version else {
+            throw CollaborationError("revision_conflict", "Расположение изменилось после отмены.")
+          }
+          var tree = try after.hierarchy
+          let pose = try change.after?.decode(WorkspacePlacement.self).pose
+          guard tree.restorePlacement(itemID: address.itemID, on: address.boardID, pose: pose, actor: actor) else {
+            throw invalid("Не удалось повторить расположение предмета.")
+          }
+          after.files["board.json"] = try .encode(tree)
+          continue
         }
         if change.path.isEmpty { after.files[change.file]=change.after }
         else if let file=after.files[change.file] {
@@ -424,6 +452,7 @@ extension NotebookStore {
             }
             after.files["board.json"] = try .encode(tree)
             restored += 1
+            restoredFields.append(change)
             continue
           }
           let version = collaborationFieldVersion(file: before.files[change.file], path: change.path)
@@ -467,6 +496,9 @@ extension NotebookStore {
         receipt.undo = CollaborationUndoResult(restored: restored, preserved: preserved, completedAt: Date())
         receipt.undo?.dependencies = preservedDependencies.isEmpty ? nil : preservedDependencies
         receipt.undo?.restorations = restoredFields.compactMap { change in
+          // Placement provenance already uses the complete captured register,
+          // not a second scalar-version chain over only its visible winner.
+          guard placementAddress(change.file, change.path) == nil else { return nil }
           let prior = change.beforeVersion
           guard prior != nil || change.before == nil,
             let written = collaborationFieldVersion(file: after.files[change.file], path: change.path),
@@ -791,7 +823,7 @@ struct CollaborationWorkspace {
     operation.requiredOwners(workspaceRootID: try workspace.rootBoardID)
   }
 
-  mutating func apply(_ operation: CollaborationOperation, actor: UUID) throws {
+  mutating func apply(_ operation: CollaborationOperation, actor: UUID, stackID: UUID) throws {
     switch operation.kind {
     case .appendPage, .deleteItem:
       throw invalid("Операция жизненного цикла исполняется адресным владельцем, не проекцией содержания.")
@@ -845,7 +877,7 @@ struct CollaborationWorkspace {
       var tree = try hierarchy
       let boardID = try boardID(for: operation.target)
       for moving in ids.dropLast() {
-        guard tree.createStack(moving: moving, onto: ids.last!, in: boardID, actor: actor) != nil else {
+        guard tree.createStack(moving: moving, onto: ids.last!, in: boardID, actor: actor, stackID: stackID) != nil else {
           throw invalid("Участники должны принадлежать указанной доске.")
         }
       }

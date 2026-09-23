@@ -78,8 +78,13 @@ history. Native Undo reserves the same prepared-command FIFO before returning
 to the next contact, joining its exact predecessor inside that reservation.
 Its own queued contact release cannot veto it; another device's contact still
 can. A storage failure retains the same inverse for explicit retry, while
-Save/shutdown returns failure. This directory currently supports Undo; Redo is
-not yet implemented.
+Save/shutdown returns failure. Undo and Redo share this same durable directory;
+new input cuts only its domain's future. Ink reactivates the exact contribution
+under its inverse's state clock. A command Redo creates a new causal action,
+without changing the original receipt. For successive Redos of one field, its
+exact current version must belong to an already repeated local predecessor
+whose original result is that field's expected source. Equal geometry, a peer's
+same-valued write, or an unrelated board clock cannot supply that proof.
 
 A recognized stationary two-finger Undo hold refines those same physical
 contacts to the history owner in `NotebookInputGate`. It does not keep its own

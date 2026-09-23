@@ -33,7 +33,7 @@ func graphicConversionDeletionUndo(onBoard: Bool, shape: NotebookGraphic.Shape) 
   values = ["kind": .string("graphic"), "source": .string(""), "graphic": try .encode(graphic),
     "frame": try .encode(PageRect(x: 60, y: 60, width: 80, height: 80))]
   if onBoard { values["worldOrigin"] = try .encode(WorldPoint.zero) }
-  let converted = try store.applyNativeGraphicAction(action(.convertInkToElement, id: "circle", values: values, store: store), actor: actor)
+  let converted = try store.applyNativeAction(action(.convertInkToElement, id: "circle", values: values, store: store), actor: actor)
   #expect(converted.author == .human)
   func state(_ store: NotebookStore) throws -> (NotebookGraphic, NotebookGraphicPresentation) {
     if onBoard {
@@ -53,7 +53,7 @@ func graphicConversionDeletionUndo(onBoard: Bool, shape: NotebookGraphic.Shape) 
       .boards.first!.board.elements.filter { $0.graphic != nil }.map(\.id)
   }
   if onBoard { #expect(try indexed(store) == ["circle"]) }
-  let deleted = try store.applyNativeGraphicAction(action(.removeElement, id: "circle", values: [:], store: store), actor: actor)
+  let deleted = try store.applyNativeAction(action(.removeElement, id: "circle", values: [:], store: store), actor: actor)
   #expect(try state(store).1.geometryIDs.isEmpty)
   #expect(try state(store).1.suppressedInkIDs == Set(strokes))
   if onBoard { #expect(try indexed(store).isEmpty) }

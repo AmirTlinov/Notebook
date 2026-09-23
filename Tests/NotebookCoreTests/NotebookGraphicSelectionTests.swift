@@ -31,7 +31,7 @@ struct NotebookGraphicSelectionTests {
       .init(kind:.insertElement,target:target,id:$0.element,values:try values(Double($0.offset)*120))
     },summary:"Original",sources:["a","b","read-only"].map(source),actor:actor)
     let sources=try ["a","b","copy","read-only"].map(source),actionID=UUID()
-    let command=NotebookNativeElementCommand([
+    let command=NotebookNativeCommand([
       .init(kind:.updateElement,target:target,id:"a",values:["frame":try .encode(PageRect(x:45,y:20,width:80,height:100))]),
       .init(kind:.removeElement,target:target,id:"b"),
       .init(kind:.insertElement,target:target,id:"copy",values:try values(360))
@@ -80,7 +80,7 @@ struct NotebookGraphicSelectionTests {
       "kind":.string("graphic"),"source":.string(""),"graphic":try .encode(NotebookGraphic(shape:.rectangle)),
       "frame":try .encode(PageRect(x:0,y:0,width:100,height:100))])],summary:"Original",
       sources:[.init(target:target,id:"a")],actor:actor)
-    let id=UUID(),command=NotebookNativeElementCommand([.init(kind:.removeElement,target:target,id:"a")],
+    let id=UUID(),command=NotebookNativeCommand([.init(kind:.removeElement,target:target,id:"a")],
       summary:"Delete",sources:inserted.sources,actionID:id,actor:actor)
     let failing=NotebookStore(root:root) { if case .beforeCommit = $0 { throw Fault.storage } }
     #expect(throws:Fault.self) { try command.apply(to:failing) }
