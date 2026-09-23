@@ -1,4 +1,4 @@
-import NotebookCore
+@testable import NotebookCore
 import Darwin
 import XCTest
 @testable import Notebook
@@ -198,6 +198,95 @@ final class NotebookPersistenceTests: XCTestCase {
     let retried=await model.finishPendingPersistence();XCTAssertTrue(retried)
     XCTAssertEqual(try store.loadPage(page.id).element(id:"retained")?.frame,moved)
     XCTAssertNil(model.persistenceFailure)
+  }
+
+  @MainActor
+  func testAcceptedUndoReservesItsWriterPositionBeforeTheNextContact() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    let store = NotebookStore(root: root), queue = NotebookPersistenceQueue(store: store)
+    let model = NotebookAppModel(store: store, startsNearbySync: false, persistenceQueue: queue)
+    retainNotebookUntilTeardown(model, removing: root)
+    await model.start(pageSize: NotebookAppModel.defaultPageSize)
+    let initiallySaved = await model.finishPendingPersistence(); XCTAssertTrue(initiallySaved)
+    var page = try XCTUnwrap(model.activePage)
+    let pageID = page.id, original = PageRect(x: 20, y: 30, width: 100, height: 100)
+    XCTAssertTrue(page.replaceElements([.init(id: "ordered", kind: .graphic, frame: original, source: "", html: "",
+      graphic: .init(shape: .rectangle))], actor: model.actorID))
+    try store.savePage(page); await model.reloadExternalChanges()?.value
+    let blocker = try NotebookSQLWriteBlocker(store: store); defer { try? blocker.release() }
+    XCTAssertTrue(model.performElementOperation(.updateElement, reference: .page(pageID: pageID, elementID: "ordered"),
+      values: ["frame": try .encode(PageRect(x: 180, y: 30, width: 100, height: 100))], summary: "Move before Undo"))
+    model.undoLastSurfaceAction()
+    let reached = expectation(description: "A fence after accepted Undo must see the inverse, not the pending move")
+    queue.enqueueCommand({ try $0.readPageElement(pageID: pageID, elementID: "ordered") }) { result in
+      do { let element = try result.get(); XCTAssertEqual(element?.frame, original) }
+      catch { XCTFail("\(error)") }
+      reached.fulfill()
+    }
+    let action = PageInkAction(tool: .pen, samples: [.init(point: .init(x: 400, y: 400), timeOffset: 0,
+      width: 3, opacity: 1, force: 1, azimuth: 0, altitude: 1)])
+    let stamp = try XCTUnwrap(model.reserveDrawingAction(pageID: pageID))
+    XCTAssertNotNil(model.acceptDrawingAction(action, pageID: pageID, stamp: stamp))
+    try blocker.release()
+    let persisted = await model.finishPendingPersistence(); XCTAssertTrue(persisted)
+    await fulfillment(of: [reached], timeout: 2)
+    let cold = NotebookStore(root: root)
+    XCTAssertEqual(try cold.loadPage(pageID).element(id: "ordered")?.frame, original)
+    XCTAssertEqual(try cold.loadPage(pageID).inkDrawing().action(id: action.id)?.isActive, true)
+    XCTAssertEqual(try cold.nativeHistory(domain: .page(pageID), actor: model.actorID), [.ink([action.id])])
+  }
+
+  @MainActor
+  func testAcceptedUndoSurvivesItsOwnStorageFailureAndReleasesTheSaveBoundary() async throws {
+    for committed in [false, true] {
+      let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+      let blocked = root.appendingPathComponent("block-undo")
+      let store = NotebookStore(root: root) { point in
+        let matches: Bool
+        switch point {
+        case .beforeCommit: matches = !committed
+        case .afterCommit: matches = committed
+        default: matches = false
+        }
+        if matches, FileManager.default.fileExists(atPath: blocked.path) { throw TestFailure.unavailable }
+      }
+      let queue = NotebookPersistenceQueue(store: store)
+      let model = NotebookAppModel(store: store, startsNearbySync: false, persistenceQueue: queue)
+      retainNotebookUntilTeardown(model, removing: root)
+      await model.start(pageSize: NotebookAppModel.defaultPageSize)
+      let started = await model.finishPendingPersistence(); XCTAssertTrue(started)
+      let pageID = try XCTUnwrap(model.activePage?.id), target = CollaborationTarget(kind: .page, id: pageID)
+      let figure = try store.applyNativeGraphicAction(.init(summary: "Undo storage test", expected: [
+        .init(target: target, revision: store.targetContentRevision(target: target))], operations: [
+        .init(kind: .insertElement, target: target, id: "undo-fault", values: ["kind": .string("graphic"),
+          "source": .string(""), "frame": try .encode(PageRect(x: 20, y: 20, width: 100, height: 100)),
+          "graphic": try .encode(NotebookGraphic(shape: .rectangle))])]), actor: model.actorID)
+      await model.reloadExternalChanges()?.value
+      let ready = await model.finishPendingPersistence(); XCTAssertTrue(ready)
+      try Data().write(to: blocked)
+      defer { try? FileManager.default.removeItem(at: blocked); queue.retry() }
+      model.undoCollaboration(figure.id)
+      var saved: Bool?
+      let released = expectation(description: "Failed Undo storage releases Save, not the inverse")
+      let waiting = Task { saved = await model.finishPendingPersistence(); released.fulfill() }
+      await fulfillment(of: [released], timeout: 2)
+      XCTAssertEqual(saved, false); XCTAssertNotNil(model.persistenceFailure)
+      XCTAssertEqual(try store.collaborationAction(figure.id).undo != nil, committed)
+      let action = PageInkAction(tool: .pen, samples: [.init(point: .init(x: 400, y: 400), timeOffset: 0,
+        width: 3, opacity: 1, force: 1, azimuth: 0, altitude: 1)])
+      let stamp = try XCTUnwrap(model.reserveDrawingAction(pageID: pageID))
+      XCTAssertNotNil(model.acceptDrawingAction(action, pageID: pageID, stamp: stamp))
+      XCTAssertNil(try store.loadPage(pageID).inkDrawing().action(id: action.id))
+      try FileManager.default.removeItem(at: blocked); queue.retry()
+      await waiting.value
+      let retried = await model.finishPendingPersistence(); XCTAssertTrue(retried)
+      let cold = NotebookStore(root: root)
+      XCTAssertNotNil(try cold.collaborationAction(figure.id).undo)
+      XCTAssertEqual(try cold.loadPage(pageID).inkDrawing().action(id: action.id)?.isActive, true)
+      XCTAssertEqual(try cold.nativeHistory(domain: .page(pageID), actor: model.actorID), [.ink([action.id])])
+      XCTAssertEqual(try cold.collaborationActions().count, 1, "An uncertain inverse never becomes a second action")
+      XCTAssertNil(model.persistenceFailure)
+    }
   }
 
   @MainActor

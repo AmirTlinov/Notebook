@@ -4872,23 +4872,25 @@ final class NotebookAppModel {
   }
 
   func undoCollaboration(_ id: UUID) {
-    guard collaborationUndoTask == nil else { return }
+    guard collaborationUndoTask == nil, inputGate.permitsNewContact,
+      !inputGate.hasActivePencil, selectionSession.manipulation == nil else { return }
+    let pending = pendingCollaborationCommands[id], actor = actorID
+    let operation = Task { () throws -> @Sendable (NotebookStore) throws -> CollaborationReceipt in
+      if let pending, !(await pending.value) {
+        throw CollaborationError("revision_conflict", "Отмена не применяется: исходное действие было отклонено.")
+      }
+      return { try $0.undoNativeAction(id, actor: actor) }
+    }
+    // Reserve before returning to the next contact, not after awaiting the
+    // preceding edit or a later global idle. Storage failures retain this same
+    // idempotent inverse; they cannot drop it and let dependent writes pass.
+    let saved = persistence.enqueuePreparedCommand(operation, publishesChanges: true)
+    collaborationReadEpoch &+= 1
     collaborationUndoTask = Task { [weak self] in
       guard let self else { return }
-      if let pending=pendingCollaborationCommands[id],!(await pending.value) {
-        collaborationUndoTask=nil
-        return
-      }
-      await withCheckedContinuation { continuation in
-        inputGate.performAfterIdle { continuation.resume() }
-      }
-      let actor = actorID
       let result: Result<CollaborationReceipt, Error>
-      do {
-        result = .success(try await persistence.submit(publishesChanges: true) {
-          try $0.undoCollaborationAction(id, actor: actor, waitForInput: 0)
-        })
-      } catch { result = .failure(error) }
+      do { result = .success(try await saved.value) }
+      catch { result = .failure(error) }
       collaborationUndoTask = nil
       switch result {
       case .success(let receipt):
@@ -5345,7 +5347,10 @@ final class NotebookAppModel {
         _ = await task.value
       }
       if let task = contextPublicationTask { await task.value }
-      if let task = collaborationUndoTask { await task.value }
+      if let task = collaborationUndoTask {
+        guard await persistence.flush() else { return false }
+        await task.value
+      }
       guard !Task.isCancelled, continuing() else { return false }
       if boundary == .quiescent {
         if let task = diskRefreshTask { observeNavigation("wait_disk_refresh_begin", fields: trace); await task.value; observeNavigation("wait_disk_refresh_end", fields: trace) }

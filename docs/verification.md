@@ -1,5 +1,41 @@
 # Verification record
 
+## September 23 — GUI-295, native Undo owns its accepted queue position (185)
+
+A new physical-iPad regression reproduced a real order inversion: after an
+accepted move and Undo, the immediately following writer fence still saw x=180
+instead of the restored x=20. The old path started a task, waited for the prior
+command/global idle and only then enqueued the inverse. Its failure is retained
+in `.build/gui295-native-undo-fifo-reproduction/`; the preceding attempt failed
+to compile because the test called a private admission method.
+
+Undo now reserves the existing prepared-command FIFO synchronously. It joins its
+exact predecessor there, and storage failure retains the same idempotent inverse
+rather than dropping it. Save/shutdown returns failure without waiting forever.
+Native admission uses the existing inverse executor and excludes only this
+accepted command's own input owner; another device's contact still blocks it.
+It never clears a newer contact or changes the public agent admission rule.
+An active Pencil or element manipulation does not accept a new native Undo.
+
+`.build/gui295-native-undo-fifo-core.log`: **10 methods PASS**, including three
+before/after-commit inverse fault cases, three ink/history fault cases, and
+native-versus-agent/peer contact admission. Final native receipt
+`.build/gui295-native-undo-185-checked-final/`: **43 iPad + 6 Mac PASS**, zero
+skips/runtime warnings, source
+`1c5a052d376d8505876d176ad50ad8dd57ff57afdfe3259c45df3301950b84b8`.
+The queue regression now passes. A second new model scenario injects failure
+inside Undo both before and after commit, accepts later ink, retries and reopens:
+the inverse and following stroke each remain exactly once in their proper order.
+Existing cold mixed-order window pixels, lasso, immediate QuickShape Undo,
+native document editing, Mac paste and two-finger camera/erasure checks pass.
+The first combined run had 41 PASS and one fixture rejection (missing target
+revision); that fixture was corrected without weakening admission.
+
+These checks do not establish immediate visual feedback while holding Undo,
+human Pencil latency or full acceptance. **Redo is still absent.** Installed pair
+remains 180; read-only CUA access on Mac also failed at 04:17 UTC with
+ScreenCaptureKit `-3811`, and its live process is not forcibly terminated.
+
 ## September 23 — GUI-295, durable mixed surface history (184)
 
 Native ink and commands now save one bounded, actor-local sequence in the same

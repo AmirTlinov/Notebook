@@ -285,12 +285,20 @@ extension NotebookStore {
     try waitingForInput(waitForInput) { try undoCollaborationActionImmediately(id, actor: actor) }
   }
 
-  private func undoCollaborationActionImmediately(_ id: UUID, actor: UUID) throws -> CollaborationReceipt {
+  /// Like a lifted native edit, an accepted Undo owns its existing FIFO cut.
+  /// Its own contact release may follow it; a peer's contact still protects
+  /// that peer's surface. The public agent entry point never borrows this rule.
+  @discardableResult
+  public func undoNativeAction(_ id: UUID, actor: UUID) throws -> CollaborationReceipt {
+    try undoCollaborationActionImmediately(id, actor: actor, nativeInputOwner: actor)
+  }
+
+  private func undoCollaborationActionImmediately(_ id: UUID, actor: UUID, nativeInputOwner: UUID? = nil) throws -> CollaborationReceipt {
     try prepare()
     return try commandTransaction(readAllowance: .agentCommand) {
       var receipt = try loadAction(id)
       if receipt.undo != nil { return receipt }
-      try requireIdleInput(for: receipt.action.operations.map(\.target))
+      try requireIdleInput(for: receipt.action.operations.map(\.target), excludingDevice: nativeInputOwner)
       let hasLifecycle = receipt.lifecycleChanges?.isEmpty == false
       let appended = hasLifecycle ? try prepareAppendedNotebookPageUndo(receipt: receipt) : nil
       let deleted = hasLifecycle ? try prepareDeletedItemUndo(receipt: receipt, actor: actor) : nil

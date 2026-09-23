@@ -119,4 +119,42 @@ struct NotebookNativeHistoryTests {
     #expect(try NotebookStore(root: f.root).nativeHistory(domain: .page(f.pageID), actor: f.actor) == [.ink([first])])
   }
 
+  @Test func nativeUndoKeepsPeerAdmissionButDoesNotWaitForItsOwnQueuedRelease() throws {
+    let f = try Fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+    let figure = try f.shape(), peer = UUID(), target = CollaborationTarget(kind: .page, id: f.pageID)
+    try f.store.saveInputActivity(.init(deviceID: f.actor, sessionID: UUID(), sequence: 1, targets: [target]))
+    do {
+      _ = try f.store.undoCollaborationAction(figure.id, actor: f.actor)
+      Issue.record("The public entry point cannot borrow native input ownership")
+    } catch let error as CollaborationError { #expect(error.code == "input_active") }
+    try f.store.saveInputActivity(.init(deviceID: peer, sessionID: UUID(), sequence: 1, targets: [target]))
+    do {
+      _ = try f.store.undoNativeAction(figure.id, actor: f.actor)
+      Issue.record("A peer's active contact must still prevent the inverse")
+    } catch let error as CollaborationError { #expect(error.code == "input_active") }
+    #expect(try f.store.nativeHistory(domain: .page(f.pageID), actor: f.actor) == [.command(figure.id)])
+    try f.store.resetInputActivity(deviceID: peer)
+    let undone = try f.store.undoNativeAction(figure.id, actor: f.actor)
+    #expect(undone.undo != nil)
+    #expect(try f.store.inputActivities().first?.isActive == true, "Undo cannot release a newer local contact")
+    #expect(try f.store.nativeHistory(domain: .page(f.pageID), actor: f.actor).isEmpty)
+  }
+
+  @Test(arguments: [NotebookStorageFault.afterRecordWrites, .beforeCommit, .afterCommit])
+  func nativeInverseAndHistoryRetryTheSameAtomicOutcome(_ fault: NotebookStorageFault) throws {
+    let f = try Fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+    let figure = try f.shape()
+    let failing = NotebookStore(root: f.root) { point in
+      if String(describing: point) == String(describing: fault) { throw Failure.disk }
+    }
+    #expect(throws: Failure.self) { try failing.undoNativeAction(figure.id, actor: f.actor) }
+    let committed: Bool
+    if case .afterCommit = fault { committed = true } else { committed = false }
+    #expect((try f.store.collaborationAction(figure.id).undo != nil) == committed)
+    #expect(try f.store.nativeHistory(domain: .page(f.pageID), actor: f.actor) == (committed ? [] : [.command(figure.id)]))
+    let saved = try f.store.undoNativeAction(figure.id, actor: f.actor)
+    #expect(try NotebookStore(root: f.root).undoNativeAction(figure.id, actor: f.actor) == saved)
+    #expect(try f.store.nativeHistory(domain: .page(f.pageID), actor: f.actor).isEmpty)
+  }
+
 }

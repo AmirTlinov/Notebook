@@ -45,7 +45,12 @@ Undo merely because they have one UUID; clipboard and ink follow acceptance orde
 not asynchronous completion or separate command/ink priorities. The directory
 contains no material or second inverse engine. Current headers and receipt phase
 exclude a peer's already completed inverse. Older edits are not assigned a guessed
-history. This directory currently supports Undo; Redo is not yet implemented.
+history. Native Undo reserves the same prepared-command FIFO before returning
+to the next contact, joining its exact predecessor inside that reservation.
+Its own queued contact release cannot veto it; another device's contact still
+can. A storage failure retains the same inverse for explicit retry, while
+Save/shutdown returns failure. This directory currently supports Undo; Redo is
+not yet implemented.
 
 ## Tools and accepted contact
 
