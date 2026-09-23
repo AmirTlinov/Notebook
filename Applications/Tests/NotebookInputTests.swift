@@ -74,7 +74,7 @@ final class NotebookInputTests: XCTestCase {
       surfaceRegistry: registry, inputGate: gate, isItemBeingDeleted: { _ in false },
       admitsNewContact: { true }, isEnabled: true, onCommit: commit)
     let camera = WorkspaceGestureLayer.Coordinator(defersHorizontalMotionToPageTurn: false,
-      isEnabled: true, inputGate: gate, onCamera: { _ in }, onUndo: {})
+      isEnabled: true, inputGate: gate, onCamera: { _ in }, onUndo: {}, onRedo: {})
     camera.install(on: window, inside: anchor)
     let pan = WorkspacePanView.Coordinator(isEnabled: true, inputGate: gate,
       onBegan: {}, onChanged: { _ in }, onEnded: { _ in }, onCancelled: {})
@@ -116,7 +116,7 @@ final class NotebookInputTests: XCTestCase {
     let owner = WorkspaceGestureLayer.Coordinator(defersHorizontalMotionToPageTurn: false,
       isEnabled: true, inputGate: gate, onCamera: { phase in
         if case .began = phase { cameraBeginCount += 1 }
-      }, onUndo: { undoCount += 1 })
+      }, onUndo: { undoCount += 1 }, onRedo: {})
     owner.install(on: window, inside: scene)
     defer { owner.uninstall(); gate.endPencilAction(source: pencilSource); window.isHidden = true }
     let recognizer = try XCTUnwrap(window.gestureRecognizers?.compactMap { $0 as? TwoFingerPaperGestureRecognizer }.first)
@@ -175,7 +175,7 @@ final class NotebookInputTests: XCTestCase {
     let owner = WorkspaceGestureLayer.Coordinator(defersHorizontalMotionToPageTurn: false,
       isEnabled: true, inputGate: gate, onCamera: { _ in }, onUndo: {
         undoCount += 1; model.undoLastSurfaceAction()
-      })
+      }, onRedo: {})
     owner.install(on: window, inside: scene)
     defer { owner.uninstall(); window.isHidden = true; window.rootViewController = nil }
     let recognizer = try XCTUnwrap(window.gestureRecognizers?.compactMap { $0 as? TwoFingerPaperGestureRecognizer }.first)
@@ -231,7 +231,7 @@ final class NotebookInputTests: XCTestCase {
       isEnabled: true, inputGate: gate, onCamera: { phase in
         if case .began = phase { begins += 1 }
         if case .ended = phase { ends += 1 }
-      }, onUndo: { undos += 1 })
+      }, onUndo: { undos += 1 }, onRedo: {})
     owner.install(on: window, inside: scene)
     defer { owner.uninstall(); window.isHidden = true; window.rootViewController = nil }
     let recognizer = try XCTUnwrap(window.gestureRecognizers?.compactMap { $0 as? TwoFingerPaperGestureRecognizer }.first)

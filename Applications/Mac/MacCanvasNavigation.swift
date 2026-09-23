@@ -94,6 +94,7 @@ final class MacCanvasNavigationView: NSView {
     }
   }
   @objc func undo(_ sender: Any?) { model?.undoLastSurfaceAction() }
+  @objc func redo(_ sender: Any?) { model?.redoLastSurfaceAction() }
   private func finishCamera() {
     settle?.cancel(); settle = nil
     if let p = model?.presence, model?.presencePhase == .active { model?.updatePresence(p, settled: true) }

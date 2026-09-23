@@ -4,15 +4,15 @@ import Foundation
 /// selected action headers; neither command reconstructs the page archive.
 public enum NotebookPageInkCommand:Sendable {
   case append(PageInkAction,baseStamp:VersionStamp,stamp:VersionStamp)
-  case state([UUID:PageInkVisibility],isActive:Bool,baseStamp:VersionStamp,stamp:VersionStamp)
+  case state([UUID:PageInkVisibility],isActive:Bool,baseStamp:VersionStamp,stamp:VersionStamp,nativeRedo:Bool = false)
 
-  var baseStamp:VersionStamp { switch self { case .append(_,let value,_),.state(_,_,let value,_):value } }
-  var stamp:VersionStamp { switch self { case .append(_,_,let value),.state(_,_,_,let value):value } }
+  var baseStamp:VersionStamp { switch self { case .append(_,let value,_),.state(_,_,let value,_,_):value } }
+  var stamp:VersionStamp { switch self { case .append(_,_,let value),.state(_,_,_,let value,_):value } }
 
-  public init(_ change:PreparedPageInkChange) {
+  public init(_ change:PreparedPageInkChange,nativeRedo:Bool = false) {
     switch change.mutation {
     case .append(let action): self = .append(action,baseStamp:change.baseStamp,stamp:change.stamp)
-    case .setActive(_,let active): self = .state(change.expectedVisibility,isActive:active,baseStamp:change.baseStamp,stamp:change.stamp)
+    case .setActive(_,let active): self = .state(change.expectedVisibility,isActive:active,baseStamp:change.baseStamp,stamp:change.stamp,nativeRedo:nativeRedo)
     }
   }
 }
@@ -62,7 +62,8 @@ extension NotebookStore {
             changed = try writeFragment(retained,database:database) || changed
           } else { changed = try writeFragment(fragment,database:database) || changed }
         }
-      case .state(let expected,let active,_,let stamp):
+      case .state(let expected,let active,_,let stamp,let nativeRedo):
+        guard !nativeRedo || active else { throw NotebookStorageError.invalidTransaction("native redo must activate ink") }
         guard !expected.isEmpty else { break }
         let desired = PageInkVisibility(isActive:active,stateStamp:stamp)
         for (id,source) in expected {
@@ -77,9 +78,14 @@ extension NotebookStore {
             source.stateStamp.map({ stamp > $0 }) ?? true else {
             throw CollaborationError("revision_conflict","Состояние штриха изменилось до отмены или повтора.")
           }
+          if nativeRedo, let gate=source.stateStamp {
+            try requireNativeInkRedoGate(id,domain:.page(pageID),actor:stamp.actor,expected:gate)
+          } else if nativeRedo { throw CollaborationError("revision_conflict","Повтор не имеет сохранённого причинного состояния.")
+          }
           changed = try writeFragment(previous.replacing(value:previous.value.setting("isActive",.bool(active))
             .setting("stateStamp",try .encode(stamp))),database:database) || changed
-          try recordNativeHistory(.ink([id]),domain:.page(pageID),actor:stamp.actor,removing:!active)
+          try recordNativeHistory(.ink([id]),domain:.page(pageID),actor:stamp.actor,
+            removing:!active,stateStamp:stamp)
         }
       }
       let frontier=max(previousStamp,command.stamp)

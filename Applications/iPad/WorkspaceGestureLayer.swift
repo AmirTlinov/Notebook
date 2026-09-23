@@ -41,6 +41,7 @@ struct WorkspaceGestureLayer: UIViewRepresentable {
   let inputGate: NotebookInputGate
   let onCamera: (WorkspaceMagnificationPhase) -> Void
   let onUndo: () -> Void
+  let onRedo: () -> Void
 
   func makeCoordinator() -> Coordinator {
     Coordinator(
@@ -48,7 +49,8 @@ struct WorkspaceGestureLayer: UIViewRepresentable {
       isEnabled: isEnabled,
       inputGate: inputGate,
       onCamera: onCamera,
-      onUndo: onUndo
+      onUndo: onUndo,
+      onRedo: onRedo
     )
   }
 
@@ -65,6 +67,7 @@ struct WorkspaceGestureLayer: UIViewRepresentable {
   func updateUIView(_ view: GestureAnchorView, context: Context) {
     context.coordinator.onCamera = onCamera
     context.coordinator.onUndo = onUndo
+    context.coordinator.onRedo = onRedo
     context.coordinator.defersHorizontalMotionToPageTurn =
       defersHorizontalMotionToPageTurn
     context.coordinator.isEnabled = isEnabled
@@ -88,11 +91,15 @@ struct WorkspaceGestureLayer: UIViewRepresentable {
     }
     var isEnabled: Bool {
       didSet {
-        if oldValue != isEnabled { recognizer?.isEnabled = isEnabled }
+        if oldValue != isEnabled {
+          recognizer?.isEnabled = isEnabled
+          redoRecognizer?.isEnabled = isEnabled
+        }
       }
     }
     var onCamera: (WorkspaceMagnificationPhase) -> Void
     var onUndo: () -> Void
+    var onRedo: () -> Void
     var inputGate: NotebookInputGate {
       didSet {
         recognizer?.inputGate = inputGate
@@ -103,6 +110,7 @@ struct WorkspaceGestureLayer: UIViewRepresentable {
     private weak var hostView: UIView?
     private weak var sceneView: UIView?
     private var recognizer: TwoFingerPaperGestureRecognizer?
+    private var redoRecognizer: UITapGestureRecognizer?
     private var contactObserver: NotebookContactObserver?
     private var repeatTask: Task<Void, Never>?
     private var cameraIsActive = false
@@ -112,7 +120,8 @@ struct WorkspaceGestureLayer: UIViewRepresentable {
       isEnabled: Bool,
       inputGate: NotebookInputGate,
       onCamera: @escaping (WorkspaceMagnificationPhase) -> Void,
-      onUndo: @escaping () -> Void
+      onUndo: @escaping () -> Void,
+      onRedo: @escaping () -> Void
     ) {
       self.defersHorizontalMotionToPageTurn =
         defersHorizontalMotionToPageTurn
@@ -120,6 +129,7 @@ struct WorkspaceGestureLayer: UIViewRepresentable {
       self.inputGate = inputGate
       self.onCamera = onCamera
       self.onUndo = onUndo
+      self.onRedo = onRedo
     }
 
     func install(on hostView: UIView?, inside sceneView: UIView) {
@@ -147,12 +157,21 @@ struct WorkspaceGestureLayer: UIViewRepresentable {
       recognizer.isEnabled = isEnabled
       recognizer.delegate = self
       hostView.addGestureRecognizer(recognizer)
+      let redo = UITapGestureRecognizer(target: self, action: #selector(handleRedo))
+      redo.numberOfTouchesRequired = 3
+      redo.numberOfTapsRequired = 1
+      redo.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
+      redo.cancelsTouchesInView = true
+      redo.delegate = self
+      redo.isEnabled = isEnabled
+      hostView.addGestureRecognizer(redo)
       let observer = NotebookContactObserver(gate: inputGate)
       observer.delegate = self
       hostView.addGestureRecognizer(observer)
       self.hostView = hostView
       self.sceneView = sceneView
       self.recognizer = recognizer
+      redoRecognizer = redo
       contactObserver = observer
     }
 
@@ -161,12 +180,14 @@ struct WorkspaceGestureLayer: UIViewRepresentable {
       repeatTask = nil
       cameraIsActive = false
       if let recognizer { hostView?.removeGestureRecognizer(recognizer) }
+      if let redoRecognizer { hostView?.removeGestureRecognizer(redoRecognizer) }
       if let contactObserver {
         contactObserver.finish()
         hostView?.removeGestureRecognizer(contactObserver)
       }
       contactObserver = nil
       recognizer = nil
+      redoRecognizer = nil
       hostView = nil
       sceneView = nil
     }
@@ -210,6 +231,10 @@ struct WorkspaceGestureLayer: UIViewRepresentable {
       default:
         break
       }
+    }
+
+    @objc private func handleRedo(_ recognizer: UITapGestureRecognizer) {
+      if recognizer.state == .ended { onRedo() }
     }
 
     private func updateCamera(_ recognizer: TwoFingerPaperGestureRecognizer) {

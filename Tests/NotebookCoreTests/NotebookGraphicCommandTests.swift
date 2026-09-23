@@ -68,6 +68,23 @@ func graphicConversionDeletionUndo(onBoard: Bool, shape: NotebookGraphic.Shape) 
   if onBoard { #expect(try indexed(reopened).isEmpty) }
   if onBoard { #expect(try reopened.loadSpatialInk() == rawBoard) }
   else { #expect(try reopened.loadPage(target.id).drawingData == rawPage) }
+  let repeatedConversion = try NotebookStore(root: root).redoNativeAction(converted.id,
+    actionID: UUID(), actor: actor)
+  #expect(repeatedConversion.redoOf == converted.id)
+  #expect(try state(reopened).0 == graphic)
+  #expect(try state(reopened).1.suppressedInkIDs == Set(strokes))
+  let repeatedDeletion = try NotebookStore(root: root).redoNativeAction(deleted.id,
+    actionID: UUID(), actor: actor)
+  #expect(repeatedDeletion.redoOf == deleted.id)
+  #expect(try state(reopened).1.geometryIDs.isEmpty)
+  #expect(try state(reopened).1.suppressedInkIDs == Set(strokes))
+  _ = try reopened.undoNativeAction(repeatedDeletion.id, actor: actor)
+  #expect(try state(reopened).0 == graphic)
+  _ = try reopened.undoNativeAction(repeatedConversion.id, actor: actor)
+  #expect(try state(reopened).0.representation == .ink)
+  #expect(try state(reopened).1.suppressedInkIDs.isEmpty)
+  if onBoard { #expect(try reopened.loadSpatialInk() == rawBoard) }
+  else { #expect(try reopened.loadPage(target.id).drawingData == rawPage) }
 }
 
 @Test("Перекрывающиеся многоштриховые преобразования применяются целиком и независимо от порядка")

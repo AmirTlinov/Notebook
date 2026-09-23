@@ -54,6 +54,141 @@ struct NotebookNativeHistoryTests {
     #expect(try reopened.nativeHistory(domain: .page(f.pageID), actor: UUID()).isEmpty)
   }
 
+  @Test func pageInkRedoKeepsTheExactIdentityAndNewInputCutsOnlyItsOwnFuture() throws {
+    let f=try Fixture();defer { try? FileManager.default.removeItem(at:f.root) }
+    let first=UUID(),last=UUID();_ = try f.append(first);_ = try f.append(last)
+    func change(_ id:UUID,_ active:Bool) throws {
+      let page=try f.store.loadPage(f.pageID)
+      let mutation=try page.prepareInkChange(.setActive([id],active),stamp:page.drawingStamp.advanced(by:f.actor)!)
+      _ = try f.store.commitPageInk(pageID:f.pageID,command:.init(mutation,nativeRedo:active))
+    }
+    try change(last,false)
+    let reopened=NotebookStore(root:f.root),domain=PencilUndoHistory.Domain.page(f.pageID)
+    let gate=try #require(reopened.loadPage(f.pageID).inkDrawing().action(id:last)?.stateStamp)
+    #expect(try reopened.nativeHistory(domain:domain,actor:f.actor) == [.ink([first])])
+    #expect(try reopened.nativeRedoHistory(domain:domain,actor:f.actor) == [.inkRedo([last],gate)])
+    try change(last,true)
+    #expect(try reopened.nativeHistory(domain:domain,actor:f.actor) == [.ink([first]),.ink([last])])
+    #expect(try reopened.nativeRedoHistory(domain:domain,actor:f.actor).isEmpty)
+    try change(last,false)
+    _ = try f.append()
+    #expect(try reopened.nativeRedoHistory(domain:domain,actor:f.actor).isEmpty)
+    #expect(throws:CollaborationError.self) { try change(last,true) }
+    #expect(try reopened.loadPage(f.pageID).inkDrawing().action(id:last)?.isActive == false)
+  }
+
+  @Test func nativeRedoCreatesOneNewReversibleActionWithoutRevivingTheOldReceipt() throws {
+    let f=try Fixture();defer { try? FileManager.default.removeItem(at:f.root) }
+    let shape=try f.shape(),domain=PencilUndoHistory.Domain.page(f.pageID)
+    _ = try f.store.undoNativeAction(shape.id,actor:f.actor)
+    #expect(try f.store.nativeRedoHistory(domain:domain,actor:f.actor) == [.command(shape.id)])
+    let repeatedID=UUID(),reopened=NotebookStore(root:f.root)
+    let repeated=try reopened.redoNativeAction(shape.id,actionID:repeatedID,actor:f.actor)
+    #expect(repeated.redoOf == shape.id)
+    #expect(try reopened.redoNativeAction(shape.id,actionID:repeatedID,actor:f.actor) == repeated)
+    #expect(try reopened.collaborationAction(shape.id).undo != nil)
+    #expect(try reopened.loadPage(f.pageID).element(id:"figure") != nil)
+    #expect(try reopened.nativeHistory(domain:domain,actor:f.actor) == [.command(repeatedID)])
+    #expect(try reopened.nativeRedoHistory(domain:domain,actor:f.actor).isEmpty)
+    _ = try reopened.undoNativeAction(repeatedID,actor:f.actor)
+    #expect(try reopened.loadPage(f.pageID).element(id:"figure") == nil)
+  }
+
+  @Test(arguments: [NotebookStorageFault.afterRecordWrites, .beforeCommit, .afterCommit])
+  func nativeRedoAndDirectoryCommitAtomicallyAndRetryByTheSameID(_ fault: NotebookStorageFault) throws {
+    let f=try Fixture();defer { try? FileManager.default.removeItem(at:f.root) }
+    let shape=try f.shape(),repeatedID=UUID(),domain=PencilUndoHistory.Domain.page(f.pageID)
+    _ = try f.store.undoNativeAction(shape.id,actor:f.actor)
+    let failing=NotebookStore(root:f.root) { point in
+      if String(describing:point) == String(describing:fault) { throw Failure.disk }
+    }
+    #expect(throws:Failure.self) { try failing.redoNativeAction(shape.id,actionID:repeatedID,actor:f.actor) }
+    let committed:Bool
+    if case .afterCommit=fault { committed=true } else { committed=false }
+    #expect((try f.store.loadPage(f.pageID).element(id:"figure") != nil) == committed)
+    #expect(try f.store.nativeHistory(domain:domain,actor:f.actor) == (committed ? [.command(repeatedID)] : []))
+    #expect(try f.store.nativeRedoHistory(domain:domain,actor:f.actor) == (committed ? [] : [.command(shape.id)]))
+    let saved=try f.store.redoNativeAction(shape.id,actionID:repeatedID,actor:f.actor)
+    #expect(saved.redoOf == shape.id)
+    #expect(try f.store.nativeHistory(domain:domain,actor:f.actor) == [.command(repeatedID)])
+  }
+
+  @Test func peerEditOfSharedElementOrderAfterUndoCannotBeOverwrittenByRedo() throws {
+    let f=try Fixture();defer { try? FileManager.default.removeItem(at:f.root) }
+    let shape=try f.shape(),domain=PencilUndoHistory.Domain.page(f.pageID)
+    _ = try f.store.undoNativeAction(shape.id,actor:f.actor)
+    let peer=UUID(),target=CollaborationTarget(kind:.page,id:f.pageID)
+    _ = try f.store.applyNativeGraphicAction(.init(summary:"Peer",expected:[
+      .init(target:target,revision:f.store.targetContentRevision(target:target))],operations:[
+        .init(kind:.insertElement,target:target,id:"peer",values:["kind":.string("graphic"),
+          "source":.string(""),"frame":.encode(PageRect(x:200,y:100,width:70,height:50)),
+          "graphic":.encode(NotebookGraphic())])]),actor:peer)
+    #expect(throws:CollaborationError.self) {
+      try f.store.redoNativeAction(shape.id,actionID:UUID(),actor:f.actor)
+    }
+    #expect(try f.store.loadPage(f.pageID).element(id:"peer") != nil)
+    #expect(try f.store.loadPage(f.pageID).element(id:"figure") == nil)
+    #expect(try f.store.nativeRedoHistory(domain:domain,actor:f.actor) == [.command(shape.id)])
+  }
+
+  @Test func sameValuePeerABAAfterUndoCannotBorrowTheInverseDot() throws {
+    let f=try Fixture();defer { try? FileManager.default.removeItem(at:f.root) }
+    _ = try f.shape()
+    let target=CollaborationTarget(kind:.page,id:f.pageID),peer=UUID()
+    func update(_ source:String,_ actor:UUID) throws -> CollaborationReceipt {
+      try f.store.applyNativeGraphicAction(.init(summary:"Source",expected:[
+        .init(target:target,revision:f.store.targetContentRevision(target:target))],operations:[
+          .init(kind:.updateElement,target:target,id:"figure",values:["source":.string(source)])]),actor:actor)
+    }
+    let changed=try update("before",f.actor)
+    _ = try f.store.undoNativeAction(changed.id,actor:f.actor)
+    _ = try update("other",peer)
+    _ = try update("",peer)
+    #expect(try f.store.loadPage(f.pageID).element(id:"figure")?.source == "")
+    #expect(throws:CollaborationError.self) {
+      try NotebookStore(root:f.root).redoNativeAction(changed.id,actionID:UUID(),actor:f.actor)
+    }
+    #expect(try f.store.loadPage(f.pageID).element(id:"figure")?.source == "")
+  }
+
+  @Test func pageInkRedoRejectsPeerABAOfItsCausalStateAfterColdReopen() throws {
+    let f=try Fixture();defer { try? FileManager.default.removeItem(at:f.root) }
+    let id=UUID(),peer=UUID(),domain=PencilUndoHistory.Domain.page(f.pageID)
+    _ = try f.append(id)
+    func set(_ active:Bool,_ actor:UUID) throws {
+      let page=try f.store.loadPage(f.pageID)
+      let changed=try page.prepareInkChange(.setActive([id],active),stamp:page.drawingStamp.advanced(by:actor)!)
+      _ = try f.store.commitPageInk(pageID:f.pageID,command:.init(changed))
+    }
+    try set(false,f.actor)
+    let ownGate=try #require(f.store.loadPage(f.pageID).inkDrawing().action(id:id)?.stateStamp)
+    try set(true,peer);try set(false,peer)
+    let cold=NotebookStore(root:f.root)
+    #expect(try cold.nativeRedoHistory(domain:domain,actor:f.actor).isEmpty)
+    #expect(try cold.loadPage(f.pageID).inkDrawing().action(id:id)?.isActive == false)
+    let page=try cold.loadPage(f.pageID)
+    let forged=try page.prepareInkChange(.setActive([id],true),stamp:page.drawingStamp.advanced(by:f.actor)!)
+    #expect(forged.expectedVisibility[id]?.stateStamp != ownGate)
+    #expect(throws:CollaborationError.self) {
+      try cold.commitPageInk(pageID:f.pageID,command:.init(forged,nativeRedo:true))
+    }
+  }
+
+  @Test func aStaleRedoHeadDoesNotExposeAnOlderUndoneContact() throws {
+    let f=try Fixture();defer { try? FileManager.default.removeItem(at:f.root) }
+    let first=UUID(),last=UUID(),peer=UUID(),domain=PencilUndoHistory.Domain.page(f.pageID)
+    _ = try f.append(first);_ = try f.append(last)
+    func set(_ id:UUID,_ active:Bool,_ actor:UUID) throws {
+      let page=try f.store.loadPage(f.pageID)
+      let mutation=try page.prepareInkChange(.setActive([id],active),stamp:page.drawingStamp.advanced(by:actor)!)
+      _ = try f.store.commitPageInk(pageID:f.pageID,command:.init(mutation))
+    }
+    try set(last,false,f.actor);try set(first,false,f.actor)
+    #expect(try f.store.nativeRedoHistory(domain:domain,actor:f.actor).count == 2)
+    try set(first,true,peer);try set(first,false,peer)
+    #expect(try NotebookStore(root:f.root).nativeRedoHistory(domain:domain,actor:f.actor).isEmpty)
+  }
+
   @Test(arguments: [NotebookStorageFault.afterRecordWrites, .beforeCommit, .afterCommit])
   func inkHistoryHasTheSameCommitOutcomeAsItsMaterial(_ fault: NotebookStorageFault) throws {
     let f = try Fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
@@ -104,6 +239,26 @@ struct NotebookNativeHistoryTests {
       stateStamp: .init(counter: 3, actor: f.actor), journalStamp: .init(counter: 3, actor: f.actor)))
     #expect(try reopened.nativeHistory(domain: .board(id), actor: f.actor) == [.ink([inner.id])])
     #expect(try reopened.nativeHistory(domain: .cover(id), actor: f.actor).isEmpty)
+    #expect(try reopened.nativeRedoHistory(domain:.cover(id),actor:f.actor)
+      == [.inkRedo([cover.id],.init(counter:3,actor:f.actor))])
+    #expect(try reopened.nativeRedoHistory(domain:.board(id),actor:f.actor).isEmpty)
+    _ = try reopened.commitSpatialInk(.state(actionID:cover.id,creationStamp:cover.stamp,
+      expectedStateStamp:.init(counter:3,actor:f.actor),isActive:true,
+      stateStamp:.init(counter:4,actor:f.actor),journalStamp:.init(counter:4,actor:f.actor),nativeRedo:true))
+    #expect(try reopened.nativeHistory(domain:.cover(id),actor:f.actor) == [.ink([cover.id])])
+    #expect(try reopened.nativeHistory(domain:.board(id),actor:f.actor) == [.ink([inner.id])])
+    _ = try reopened.commitSpatialInk(.state(actionID:cover.id,creationStamp:cover.stamp,
+      expectedStateStamp:.init(counter:4,actor:f.actor),isActive:false,
+      stateStamp:.init(counter:5,actor:f.actor),journalStamp:.init(counter:5,actor:f.actor)))
+    let fresh = try append(.cover(id),counter:6)
+    #expect(try reopened.nativeRedoHistory(domain:.cover(id),actor:f.actor).isEmpty)
+    #expect(throws:CollaborationError.self) {
+      try reopened.commitSpatialInk(.state(actionID:cover.id,creationStamp:cover.stamp,
+        expectedStateStamp:.init(counter:5,actor:f.actor),isActive:true,
+        stateStamp:.init(counter:7,actor:f.actor),journalStamp:.init(counter:7,actor:f.actor),nativeRedo:true))
+    }
+    #expect(try reopened.loadSpatialInk().actions.first(where:{$0.id == cover.id})?.isActive == false)
+    #expect(try reopened.nativeHistory(domain:.cover(id),actor:f.actor) == [.ink([fresh.id])])
   }
 
   @Test func aPeerInverseCannotRemainTheHeadOfLocalUndo() throws {

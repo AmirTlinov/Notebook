@@ -543,7 +543,7 @@ final class TwoFingerGestureClassifierTests: XCTestCase {
       isEnabled: true,
       inputGate: NotebookInputGate(),
       onCamera: { _ in },
-      onUndo: {}
+      onUndo: {}, onRedo: {}
     )
 
     controller.install(on: host, inside: scene)

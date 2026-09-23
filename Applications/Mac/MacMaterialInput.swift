@@ -120,6 +120,7 @@ final class MacMaterialInputView: NSView {
   }
   @objc private func selectMultiple() { model.beginMultipleSelection() }
   @objc func undo(_ sender:Any?) { model.undoLastSurfaceAction() }
+  @objc func redo(_ sender:Any?) { model.redoLastSurfaceAction() }
   override func keyDown(with event:NSEvent) {
     switch event.keyCode {
     case 51,117: deleteElement()

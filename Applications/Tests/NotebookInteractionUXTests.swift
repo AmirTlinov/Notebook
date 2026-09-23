@@ -307,6 +307,32 @@ final class NotebookInteractionUXTests: XCTestCase {
         (.init(x: 590, y: 590), step == 0 ? .paper : .blue), (.init(x: 590, y: 790), step == 0 ? .blue : .paper)])
     }
     XCTAssertTrue(try cold.store.nativeHistory(domain: .page(pageID), actor: actor).isEmpty)
+    XCTAssertEqual(try cold.store.nativeRedoHistory(domain:.page(pageID),actor:actor).count,3)
+    window.isHidden=true;window.rootViewController=nil
+    let coldStopped=await cold.shutdown();XCTAssertTrue(coldStopped)
+    let redone=NotebookAppModel(store:.init(root:root),startsNearbySync:false,preferences:preferences)
+    retainNotebookUntilTeardown(redone,removing:root)
+    await redone.start(pageSize:NotebookAppModel.defaultPageSize)
+    redone.updatePresence(presence,settled:true)
+    let redoWindow=try await mountNotebookScene(redone)
+    let redoScene=try Scene(model:redone,window:redoWindow)
+    XCTAssertEqual(redoScene.pageToWindow,scene.pageToWindow)
+    for step in 0..<3 {
+      redone.redoLastSurfaceAction()
+      let persisted=await redone.finishPendingPersistence();XCTAssertTrue(persisted)
+      await redone.reloadExternalChanges()?.value
+      try await shown("cold-mixed-redo-\(step)",redoScene,since:.now,unaffected + [
+        (.init(x:300,y:800),.black),(.init(x:300,y:900),step == 2 ? .black : .paper),
+        (.init(x:590,y:590),step == 0 ? .blue : .paper),
+        (.init(x:590,y:790),step == 0 ? .paper : .blue)])
+    }
+    XCTAssertEqual(try redone.store.nativeHistory(domain:.page(pageID),actor:actor).count,3)
+    redone.undoLastSurfaceAction()
+    let persisted=await redone.finishPendingPersistence();XCTAssertTrue(persisted)
+    await redone.reloadExternalChanges()?.value
+    try await shown("cold-mixed-redo-undo",redoScene,since:.now,unaffected + [
+      (.init(x:300,y:800),.black),(.init(x:300,y:900),.paper),
+      (.init(x:590,y:590),.paper),(.init(x:590,y:790),.blue)])
   }
 
   func testHeldUndoPublishesTheRestoredMaterialBeforeEitherFingerLifts() async throws {

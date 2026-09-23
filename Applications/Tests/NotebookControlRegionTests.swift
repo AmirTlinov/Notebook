@@ -31,17 +31,20 @@ final class NotebookControlRegionTests: XCTestCase {
     card.frame = .init(x: 100, y: 150, width: 300, height: 320)
     host.view.addSubview(card)
     let camera = WorkspaceGestureLayer.Coordinator(defersHorizontalMotionToPageTurn: false,
-      isEnabled: true, inputGate: gate, onCamera: { _ in XCTFail("Card input must not move camera") }, onUndo: {})
+      isEnabled: true, inputGate: gate, onCamera: { _ in XCTFail("Card input must not move camera") }, onUndo: {}, onRedo: {})
     camera.install(on: window, inside: anchor)
     let pan = WorkspacePanView.Coordinator(isEnabled: true, inputGate: gate,
       onBegan: {}, onChanged: { _ in }, onEnded: { _ in }, onCancelled: {})
     pan.install(on: window, inside: anchor)
     defer { camera.uninstall(); pan.uninstall(); card.unregister(); window.isHidden = true }
     let cameraGesture = try XCTUnwrap(window.gestureRecognizers?.first { $0 is TwoFingerPaperGestureRecognizer })
+    let redoGesture = try XCTUnwrap(window.gestureRecognizers?.compactMap { $0 as? UITapGestureRecognizer }
+      .first { $0.numberOfTouchesRequired == 3 })
     let observer = try XCTUnwrap(window.gestureRecognizers?.first { $0 is NotebookContactObserver })
     let panGesture = try XCTUnwrap(window.gestureRecognizers?.first { $0 is UIPanGestureRecognizer })
     let touch = RegionControlTouch(); touch.source = host.view; touch.point = .init(x: 200, y: 200)
     XCTAssertFalse(camera.gestureRecognizer(cameraGesture, shouldReceive: touch))
+    XCTAssertFalse(camera.gestureRecognizer(redoGesture, shouldReceive: touch))
     XCTAssertFalse(camera.gestureRecognizer(observer, shouldReceive: touch))
     XCTAssertFalse(pan.gestureRecognizer(panGesture, shouldReceive: touch))
     touch.point = .init(x: 50, y: 80)

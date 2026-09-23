@@ -121,6 +121,32 @@ struct NotebookSpatialInkCommandTests {
     }
   }
 
+  @Test func coldRedoCannotBorrowAPeersInactiveABAGate() throws {
+    try fixture { store, actor, header in
+      let surface=SurfaceID.board(header.rootBoardID),peer=UUID()
+      let action=SpatialInkAction(tool:.pen,spans:[span(surface)],stamp:.init(counter:1,actor:actor))
+      _ = try store.commitSpatialInk(.append(action,journalStamp:action.stamp))
+      _ = try store.commitSpatialInk(state(action,counter:2))
+      let ownGate=try #require(store.loadSpatialInk().actions.first?.stateStamp)
+      var previous=ownGate
+      for (counter,active) in [(3,true),(4,false)] {
+        let stamp=VersionStamp(counter:UInt64(counter),actor:peer)
+        _ = try store.publishSpatialInk(.state(actionID:action.id,creationStamp:action.stamp,
+          expectedStateStamp:previous,isActive:active,stateStamp:stamp,journalStamp:stamp),origin:.replication)
+        previous=stamp
+      }
+      let cold=NotebookStore(root:store.root),domain=PencilUndoHistory.Domain.board(header.rootBoardID)
+      #expect(try cold.nativeRedoHistory(domain:domain,actor:actor).isEmpty)
+      #expect(try cold.loadSpatialInk().actions.first?.isActive == false)
+      #expect(throws:CollaborationError.self) {
+        try cold.commitSpatialInk(.state(actionID:action.id,creationStamp:action.stamp,
+          expectedStateStamp:previous,isActive:true,stateStamp:.init(counter:5,actor:actor),
+          journalStamp:.init(counter:5,actor:actor),nativeRedo:true))
+      }
+      #expect(try cold.loadSpatialInk().actions.first?.stateStamp == previous)
+    }
+  }
+
   @Test(arguments: [false, true])
   func anAppendRetryCannotOwnVisibilityRegardlessOfItsClock(active: Bool) throws {
     try fixture { store, actor, header in

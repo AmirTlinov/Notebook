@@ -18,8 +18,11 @@ public struct PencilUndoHistory: Sendable {
     public static func codeFragment(_ id: UUID) -> Self { .init(.init(kind: .codeFragment, id: id)) }
   }
   private let capacity: Int
-  public enum Entry: Codable, Equatable, Sendable { case ink(Set<UUID>), command(UUID) }
+  public enum Entry: Codable, Equatable, Sendable {
+    case ink(Set<UUID>), inkRedo(Set<UUID>, VersionStamp), command(UUID)
+  }
   private var contributions: [Domain: [Entry]] = [:]
+  private var repetitions: [Domain: [Entry]] = [:]
 
   public init(capacity: Int = 32) {
     precondition(capacity > 0)
@@ -27,10 +30,7 @@ public struct PencilUndoHistory: Sendable {
   }
 
   public mutating func recordAction(domain: Domain, actionID: UUID) {
-    var history = contributions[domain, default: []]
-    guard !history.contains(.ink([actionID])) else { return }
-    history.append(.ink([actionID]))
-    contributions[domain] = Array(history.suffix(capacity))
+    record(.ink([actionID]),for:domain)
   }
 
   public func lastContribution(for domain: Domain) -> Set<UUID>? {
@@ -39,29 +39,78 @@ public struct PencilUndoHistory: Sendable {
   public func lastCommand(for domain: Domain) -> UUID? {
     if case .command(let id) = contributions[domain]?.last { return id }; return nil
   }
+  public func lastRedoContribution(for domain: Domain) -> Set<UUID>? {
+    switch repetitions[domain]?.last {
+    case .ink(let ids), .inkRedo(let ids, _): return ids
+    default: return nil
+    }
+  }
+  public func lastRedoStateStamp(for domain: Domain) -> VersionStamp? {
+    if case .inkRedo(_, let stamp) = repetitions[domain]?.last { return stamp }; return nil
+  }
+  public func lastRedoCommand(for domain: Domain) -> UUID? {
+    if case .command(let id) = repetitions[domain]?.last { return id }; return nil
+  }
   public mutating func recordCommand(domain: Domain, actionID: UUID) {
-    var history = contributions[domain, default: []]
-    guard !history.contains(.command(actionID)) else { return }
-    history.append(.command(actionID)); contributions[domain] = Array(history.suffix(capacity))
+    record(.command(actionID),for:domain)
+  }
+  @discardableResult
+  public mutating func recordRepeatedCommand(domain:Domain,originalID:UUID,actionID:UUID)->Bool {
+    guard var redo=repetitions[domain],redo.last == .command(originalID) else { return false }
+    redo.removeLast();repetitions[domain]=redo
+    var history=contributions[domain,default:[]];history.append(.command(actionID))
+    contributions[domain]=Array(history.suffix(capacity))
+    return true
   }
   public mutating func didUndoCommand(domain: Domain, actionID: UUID) {
+    undo(.command(actionID),for:domain)
+  }
+
+  public mutating func didRemoveContribution(_ ids: Set<UUID>, for domain: Domain,
+    stateStamp: VersionStamp? = nil) {
+    undo(.ink(ids),for:domain,redo:stateStamp.map { .inkRedo(ids,$0) })
+  }
+
+  /// A rejected optimistic command never became an inverse and cannot be redone.
+  public mutating func discardCommand(domain: Domain, actionID: UUID) {
     contributions[domain]?.removeAll { $0 == .command(actionID) }
   }
 
-  public mutating func didRemoveContribution(_ ids: Set<UUID>, for domain: Domain) {
-    guard var history = contributions[domain], let index = history.lastIndex(of: .ink(ids)) else { return }
-    history.remove(at: index)
-    contributions[domain] = history
+  private mutating func record(_ entry: Entry,for domain: Domain) {
+    var history=contributions[domain,default:[]]
+    guard !history.contains(entry) else { return }
+    var redo=repetitions[domain,default:[]]
+    let resumesHead: Bool
+    if case .ink(let ids) = entry, case .inkRedo(let redoIDs, _) = redo.last {
+      resumesHead = ids == redoIDs
+    } else { resumesHead = redo.last == entry }
+    if resumesHead { redo.removeLast() } else { redo.removeAll() }
+    history.append(entry)
+    contributions[domain]=Array(history.suffix(capacity))
+    repetitions[domain]=redo
+  }
+
+  private mutating func undo(_ entry: Entry,for domain: Domain,redo repeated:Entry? = nil) {
+    guard var history=contributions[domain],let index=history.lastIndex(of:entry) else { return }
+    history.remove(at:index);contributions[domain]=history
+    guard index == history.count else { return } // An out-of-order inverse is not a Redo head.
+    var redo=repetitions[domain,default:[]];redo.append(repeated ?? entry)
+    repetitions[domain]=Array(redo.suffix(capacity))
   }
 
   /// A scene read restores only bounded identities in the writer's saved order.
   /// It carries no material, pixels or alternate inverse implementation.
   public func entries(for domain: Domain) -> [Entry] { contributions[domain] ?? [] }
+  public func redoEntries(for domain: Domain) -> [Entry] { repetitions[domain] ?? [] }
   public mutating func restore(_ entries: [Entry], for domain: Domain) {
     contributions[domain] = Array(entries.suffix(capacity))
+  }
+  public mutating func restoreRedo(_ entries: [Entry], for domain: Domain) {
+    repetitions[domain] = Array(entries.suffix(capacity))
   }
 
   public mutating func discardChanges(for domain: Domain) {
     contributions[domain] = nil
+    repetitions[domain] = nil
   }
 }

@@ -11,6 +11,7 @@ struct NotebookSceneState: Sendable {
     let drafts: [DocumentEditingSession]
     var reading: DocumentReadingPosition? = nil
     var history: [PencilUndoHistory.Entry] = []
+    var redoHistory: [PencilUndoHistory.Entry] = []
   }
 
   /// An accepted opening is a separate read capability from a closed cover's
@@ -25,7 +26,8 @@ struct NotebookSceneState: Sendable {
       }
       return try .init(header: live.header, document: document, state: state,
         drafts: store.documentEditingSessions(documentID: documentID), reading: store.readDocumentReadingPosition(documentID),
-        history: historyActor.map { try store.nativeHistory(domain: .document(documentID), actor: $0) } ?? [])
+        history: historyActor.map { try store.nativeHistory(domain: .document(documentID), actor: $0) } ?? [],
+        redoHistory: historyActor.map { try store.nativeRedoHistory(domain: .document(documentID), actor: $0) } ?? [])
     }
   }
 
@@ -51,6 +53,7 @@ struct NotebookSceneState: Sendable {
   let transferredPinnedItems: [UUID: UUID]
   var groupReads: [UUID:[String:NotebookElementGroupRead]] = [:]
   var history: [PencilUndoHistory.Domain:[PencilUndoHistory.Entry]] = [:]
+  var redoHistory: [PencilUndoHistory.Domain:[PencilUndoHistory.Entry]] = [:]
 
   static func start(store: NotebookStore, actor: UUID, pageSize: PageSize,
     notebookID: UUID, pageID: UUID, viewport: SpatialPoint? = nil) throws -> Self {
@@ -249,11 +252,15 @@ struct NotebookSceneState: Sendable {
         boardContentRevisions[id] = revision
       }
       var history: [PencilUndoHistory.Domain:[PencilUndoHistory.Entry]] = [:]
+      var redoHistory: [PencilUndoHistory.Domain:[PencilUndoHistory.Entry]] = [:]
       if let historyActor {
         let domains = Set(pages.keys.map(PencilUndoHistory.Domain.page))
           .union(surfaces.compactMap { PencilUndoHistory.Domain(surface: $0) })
           .union(live.documents.keys.map(PencilUndoHistory.Domain.document))
-        for domain in domains { history[domain] = try store.nativeHistory(domain: domain, actor: historyActor) }
+        for domain in domains {
+          history[domain] = try store.nativeHistory(domain: domain, actor: historyActor)
+          redoHistory[domain] = try store.nativeRedoHistory(domain: domain, actor: historyActor)
+        }
       }
       return try Self(header: header, workspace: workspace, pages: pages, pagePositions: pagePositions,
         documents: live.documents, states: live.states,
@@ -261,7 +268,8 @@ struct NotebookSceneState: Sendable {
         reading: selected.kind == .document ? store.readDocumentReadingPosition(selected.id) : nil,
         hierarchy: hierarchy, boardContentRevisions: boardContentRevisions, ink: live.ink, inkSurfaces: Set(surfaces), presence: presence, paperSizes: paper,
         coverage: coverage, truncatedBoards: truncated, completeCoverElementOwners: completeCoverElementOwners, missingPinnedElements: missingPinnedElements,
-        missingPinnedItems: missingPinnedItems, transferredPinnedItems: transferredPinnedItems,groupReads:groupReads,history:history)
+        missingPinnedItems: missingPinnedItems, transferredPinnedItems: transferredPinnedItems,
+        groupReads:groupReads,history:history,redoHistory:redoHistory)
     }
   }
 }

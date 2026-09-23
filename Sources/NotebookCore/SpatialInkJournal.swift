@@ -209,9 +209,18 @@ public struct SpatialInkJournal: Codable, Equatable, Sendable {
 
   @discardableResult
   public mutating func deactivate(_ id: UUID, actor: UUID) -> Bool {
+    setActive(false,id:id,actor:actor)
+  }
+
+  @discardableResult
+  public mutating func activate(_ id: UUID, actor: UUID) -> Bool {
+    setActive(true,id:id,actor:actor)
+  }
+
+  private mutating func setActive(_ active:Bool,id:UUID,actor:UUID)->Bool {
     guard let index = actions.firstIndex(where: { $0.id == id }),
-      actions[index].isActive, let next = stamp.advanced(by: actor) else { return false }
-    guard actions[index].setActive(false, actor: actor) else { return false }
+      actions[index].isActive != active, let next = stamp.advanced(by: actor) else { return false }
+    guard actions[index].setActive(active, actor: actor) else { return false }
     stamp = next
     return true
   }

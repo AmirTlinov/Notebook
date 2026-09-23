@@ -241,7 +241,8 @@ struct SpatialWorkspaceView: View {
               && presence.camera.scale <= model.itemGeometry(presence.focusedItemID).fitScale(viewport: viewport) * 1.001,
             inputGate: model.inputGate,
             onCamera: handleWorkspaceMagnification,
-            onUndo: model.undoLastSurfaceAction
+            onUndo: model.undoLastSurfaceAction,
+            onRedo: model.redoLastSurfaceAction
           )
           .allowsHitTesting(false)
 
