@@ -63,19 +63,19 @@ public struct NotebookElementAppearance: @unchecked Sendable {
       lock.lock();defer { lock.unlock() }
       if let prepared { return prepared }
       var p=projection
-      let mask=NotebookElementAppearance.erasurePath(erasures,size:size,transform:transform).copy(using:&p)!
+      let mask=NotebookElementAppearance.erasurePath(erasures,size:size,transform:transform)
       var visible=paint
       if let visibility {
-        visible=visible.intersection(visibility.projectedPath(in:.init(origin:.zero,size:size),
-          projection:.init(size:size,transform:projection)),using:.evenOdd)
+        visible=visible.intersection(visibility.projectedPath(in:.init(origin:.zero,size:size),projection:nil),using:.evenOdd)
       }
-      let remaining=visible.subtracting(mask)
-      let value=(remaining,mask);prepared=value;return value
+      // Content booleans belong to the authored body. Quantizing them again in
+      // a rotated/stretched camera basis changes the contour rather than its pose.
+      let value=(visible.subtracting(mask).copy(using:&p)!,mask.copy(using:&p)!)
+      prepared=value;return value
     }
     var state:State {
       stateProjection.resolve {
-        var inverse=projection.inverted()
-        let local=paint.copy(using:&inverse)!
+        let local=paint
         guard coverage.intersects(local,in:size) else { return .erased }
         let box=local.boundingBoxOfPath
         let area=CGRect(x:box.minX/size.width,y:box.minY/size.height,width:box.width/size.width,height:box.height/size.height)
@@ -93,12 +93,12 @@ public struct NotebookElementAppearance: @unchecked Sendable {
     var mask:CGPath { complete().mask }
     func intersects(_ query:CGPath)->Bool {
       var inverse=projection.inverted()
-      return coverage.intersects(paint.intersection(query,using:.evenOdd).copy(using:&inverse)!,in:size)
+      return coverage.intersects(paint.intersection(query.copy(using:&inverse)!,using:.evenOdd),in:size)
     }
     func contains(_ p:CGPoint,tolerance:Double)->Bool {
       let local=p.applying(projection.inverted())
       guard coverage.contains(.init(x:local.x/size.width,y:local.y/size.height)) else { return false }
-      if paint.contains(p) { return true }
+      if paint.contains(local) { return true }
       guard tolerance > 0 else { return false }
       let query=CGPath(ellipseIn:.init(x:p.x-tolerance,y:p.y-tolerance,width:2*tolerance,height:2*tolerance),transform:nil)
       return intersects(query)
@@ -188,16 +188,19 @@ public struct NotebookElementAppearance: @unchecked Sendable {
     }
     vector=nil
     var unmasked=graphic;unmasked?.mask=nil
-    let paint=unmasked.map { NotebookGraphicGeometry.paintPath($0,layout:layout,size:size) }
-      ?? CGPath(rect:CGRect(origin:.zero,size:size),transform:nil)
+    let bodySize=layout?.projection?.size ?? size
+    let bodyLayout=layout?.projection == nil ? layout : layout?.localLayout
+    var projection=layout?.projection?.transform ?? .identity
+    let paint=unmasked.map { NotebookGraphicGeometry.paintPath($0,layout:bodyLayout,size:bodySize) }
+      ?? CGPath(rect:CGRect(origin:.zero,size:bodySize),transform:nil)
     if paint.isEmpty {
       paths=(paint,CGMutablePath());knownState = .erased
     } else if erasures.isEmpty && graphic?.mask == nil {
-      paths=(paint,CGMutablePath());knownState = .intact
+      paths=(paint.copy(using:&projection)!,CGMutablePath());knownState = .intact
     } else {
       paths=nil;knownState=nil
-      outline=Outline(paint:paint,visibility:graphic?.mask,erasures:erasures,size:layout?.projection?.size ?? size,
-        transform:graphic?.transform,projection:layout?.projection?.transform ?? .identity)
+      outline=Outline(paint:paint,visibility:graphic?.mask,erasures:erasures,size:bodySize,
+        transform:graphic?.transform,projection:projection)
     }
   }
 

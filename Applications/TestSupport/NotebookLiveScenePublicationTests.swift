@@ -32,6 +32,11 @@ final class NotebookLiveScenePublicationTests: XCTestCase {
     XCTAssertNil(model.elementCommandDrafts[address.reference(id)],"The logical model has admitted the edits")
     XCTAssertEqual(model.presentedGraphicGraph(boardID:board,cohort:fixture.cohort).nodes[id]?.graphic,expected,
       "The retained live host must paint the accepted hole, not resurrect the original rectangle")
+    let interaction=model.interactionGraphicGraph(boardID:board,cohort:fixture.cohort)
+    XCTAssertEqual(interaction.node(id)?.graphic,expected,
+      "The next eraser, lasso and point selection must use the same hole, not the insertion preview")
+    XCTAssertEqual(interaction.node(id)?.placement,
+      model.presentedGraphicGraph(boardID:board,cohort:fixture.cohort).node(id)?.placement)
   }
 
   func testUnadmittedGraphicCannotCommitAnInvisibleMoveOrResize() async throws {

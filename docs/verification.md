@@ -1,5 +1,42 @@
 # Verification record
 
+## September 23 — GUI-295, retained bodies and local-first cuts (182)
+
+Rendering and the next contact now borrow the same accepted body for a retained
+board insertion; the original preview cannot feed an intact figure into the next
+lasso/eraser after its cut was saved. The addressed read resolves only requested
+bodies and their ancestors, with the same node construction as the full graph.
+QuickShape endpoint binding reads the accepted page, including an unpersisted
+move, rather than the captured pre-move page.
+
+Outline visibility/intersection/subtraction now runs in the authored body before
+its final projection, matching vector material. A strict existing regression
+initially failed because cutting after a rotation/stretch changed the contour.
+The implementation was corrected; path equality and quality were not relaxed.
+
+`swift test --filter 'NotebookGroupGeometryTests|NotebookElementAppearanceTests|NotebookAppearanceComplexityTests|NotebookQuickShapeTests'`:
+**31 tests PASS** (`.build/gui295-relative-body-182-core.log`). On the 100,000-member
+board, four addressed nodes took **0.060666 ms**, versus **667.963 ms** for the
+complete graph; the addressed read passes its unchanged 20 ms bound and agrees
+with the full graph's geometry, placement and visibility. This is a Core CPU
+measurement, not Pencil-to-photon or a claim that every graph path is now local.
+Claim-bearing QuickShapes still require full claim arbitration in this API.
+
+`.build/gui295-relative-body-182-checked/`: **22 iPad + 16 Mac PASS**, zero skips
+and runtime warnings, unchanged source
+`e997a047365a2d4337d56e7261ed758f68f7490245012d5a26d82b12f217e4c8`.
+The selected native checks cover retained insertion publication, exact accepted
+interaction geometry, QuickShape's installed binding callback during a blocked
+write, full-window moved/untouched pixels, cold partial cut/move/next cut, board
+object lasso and material rendering on both platforms. They are synthetic native
+contacts on physical hardware, not human Pencil or full GUI-295 acceptance.
+
+Signed pair 181 was built but not installed: Mac 180 is still running and CUA's
+quit command fails with ScreenCaptureKit `-3811`. Pair 182 supersedes that pending
+installation; no running package or user container has been replaced. Undo/Redo,
+the existing latency failures and the remaining all-tool/physical acceptance
+conditions remain open.
+
 ## September 23 — GUI-295, accepted writes survive storage and readback failure (181)
 
 Prepared element commands now use the same failed-write policy as ordinary ink:

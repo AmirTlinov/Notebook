@@ -234,6 +234,31 @@ final class NotebookInteractionUXTests: XCTestCase {
     try await remainsShown(name + "-final", scene, since: .now, probes)
   }
 
+  func testInstalledQuickShapeBindingReadsTheVisibleAcceptedMoveBeforeStorage() async throws {
+    let scene=try await fixture(),model=scene.model
+    let saved=await model.finishPendingPersistence();XCTAssertTrue(saved)
+    let page=try XCTUnwrap(model.activePage),reference=EditableElementReference.page(pageID:page.id,elementID:"ux-red")
+    let lock=try NotebookSQLWriteBlocker(store:model.store)
+    defer { try? lock.release() }
+    let moved=PageRect(x:510,y:260,width:300,height:180)
+    let start=ContinuousClock.now
+    XCTAssertTrue(model.performElementOperation(.updateElement,reference:reference,
+      values:["frame":try .encode(moved)],summary:"Accepted move before binding"))
+    let fit=NotebookQuickShapeFit(frame:.init(x:60,y:350,width:450,height:1),sampleCount:2,
+      connection:.init(start:.init(point:.zero),end:.init(point:.init(x:450,y:0))))
+    XCTAssertNil(fit.binding(in:page.graphicGraph(),surface:.page(page.id),tolerance:18).connection?.end.binding,
+      "The saved page is deliberately too old to own the next binding")
+    XCTAssertEqual(scene.paper.resolveQuickShape(fit,1).connection?.end.binding?.elementID,"ux-red")
+    try await assertUX("accepted-move-before-quickshape",since:start,window:scene.window) {
+      try scene.pixels([(.init(x:600,y:330),.red),(.init(x:230,y:330),.paper),
+        (.init(x:590,y:590),.blue),(.init(x:430,y:650),.black)])
+    }
+    XCTAssertEqual(scene.paper.resolveQuickShape(fit,1).connection?.end.binding?.elementID,"ux-red")
+    try lock.release()
+    let finished=await model.finishPendingPersistence();XCTAssertTrue(finished)
+    XCTAssertEqual(try model.store.loadPage(page.id).element(id:"ux-red")?.frame,moved)
+  }
+
   func fixture(erasedShape: Bool = false, tool: DrawingTool = .pen) async throws -> Scene {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("interaction-ux-\(UUID())")
     let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false,

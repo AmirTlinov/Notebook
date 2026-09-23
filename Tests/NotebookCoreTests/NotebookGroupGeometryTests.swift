@@ -96,7 +96,16 @@ struct NotebookGroupGeometryTests {
     let small=SpatialElement(id:"small",surface:.board(boardID),kind:.group,frame:.init(x:0,y:0,width:4,height:1),worldOrigin:.zero,source:"",
       parentID:"whole",basis:.init(size:.init(x:4,y:1)),stamp:stamp)
     let page=BoardDocument(freeItems:[],elements:[whole,small]+children,stamp:stamp)
-    let clock=ContinuousClock(),start=clock.now,graph=page.graphicGraph(),prepared=clock.now
+    let clock=ContinuousClock(),addressedStart=clock.now
+    let addressed=page.graphicNodes(ids:["part-0","part-1","part-2","part-99999"]),addressedEnd=clock.now
+    #expect(addressed.count == 4)
+    #expect(addressedStart.duration(to:addressedEnd) < .milliseconds(20),"Four retained hosts cannot traverse 100,000 unrelated bodies")
+    let start=clock.now,graph=page.graphicGraph(),prepared=clock.now
+    for node in addressed {
+      #expect(node.graphic == graph.node(node.id)?.graphic)
+      #expect(node.placement == graph.node(node.id)?.placement)
+      #expect(node.shown == graph.node(node.id)?.shown)
+    }
     let bounds=try #require(graph.groupBounds("whole")),bounded=clock.now
     let draft=NotebookElementPlacement.Source(frame:.init(x:80,y:100,width:1000,height:100),basis:whole.basis,isGroup:true)
     let next=graph.projecting(placements:["whole":draft]),projected=clock.now
@@ -108,7 +117,7 @@ struct NotebookGroupGeometryTests {
     #expect(try #require(fullBounds) == bounds.offsetBy(dx:30,dy:40))
     #expect(next.node("part-99999")?.frame == graph.node("part-99999")?.frame)
     #expect(page.elements[100_001] == children.last)
-    print("GUI291 whole 100000: coldGraph=\(start.duration(to:prepared)), bounds=\(prepared.duration(to:bounded)), sparseDraft=\(bounded.duration(to:projected)), explicitFullProjectedBounds=\(fullStart.duration(to:fullEnd)); four addressed placements read before that full query")
+    print("GUI291 whole 100000: addressedNodes=\(addressedStart.duration(to:addressedEnd)), coldGraph=\(start.duration(to:prepared)), bounds=\(prepared.duration(to:bounded)), sparseDraft=\(bounded.duration(to:projected)), explicitFullProjectedBounds=\(fullStart.duration(to:fullEnd)); four addressed placements read before that full query")
   }
 
   @Test func internalBindingsCancelTheSharedOuterFrameNotFloatingPointMatrices() throws {

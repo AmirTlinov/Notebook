@@ -647,6 +647,39 @@ extension PageDocument {
   }
 }
 extension BoardDocument {
+  /// A retained native host needs only its addressed body and ancestors. Do
+  /// not reconstruct the complete board graph for the next local contact.
+  public func graphicNodes(ids:Set<String>) -> [NotebookGraphicGraph.Node] {
+    guard !ids.isEmpty else { return [] }
+    let requested=interactionElements(ids:ids)
+    let claimed=requested.contains { $0.graphic?.sourceInkIDs.isEmpty == false }
+      ? graphicPresentation.geometryIDs : nil
+    var resolvers:[SurfaceID:NotebookElementPlacement.Resolver]=[:]
+    return requested.compactMap { element in
+      let resolver:NotebookElementPlacement.Resolver
+      if let existing=resolvers[element.surface] { resolver=existing }
+      else {
+        resolver = .init { id in
+          guard let group=self.element(id:id),group.kind == .group,group.surface == element.surface else { return nil }
+          return .init(frame:.init(x:group.frame.x,y:group.frame.y,width:group.frame.width,height:group.frame.height),
+            origin:group.worldOrigin ?? .zero,parentID:group.parentID,basis:group.basis,isGroup:true)
+        }
+        resolvers[element.surface]=resolver
+      }
+      return graphicNode(element,resolver:resolver,
+        shown:claimed?.contains(element.id) ?? (element.graphic?.showsGeometry == true))
+    }
+  }
+
+  private func graphicNode(_ element:SpatialElement,resolver:NotebookElementPlacement.Resolver,
+    shown:Bool) -> NotebookGraphicGraph.Node? {
+    guard let graphic=element.graphic else { return nil }
+    let source=NotebookElementPlacement.Source(frame:.init(x:element.frame.x,y:element.frame.y,width:element.frame.width,height:element.frame.height),
+      origin:element.worldOrigin ?? .zero,parentID:element.parentID,basis:element.basis)
+    guard let placement=try? resolver.resolve(element.id,source:source) else { return nil }
+    return .init(id:element.id,graphic:graphic,frame:source.frame,surface:element.surface,shown:shown,placement:placement)
+  }
+
   public func graphicGraph() -> NotebookGraphicGraph {
     let shown=graphicPresentation.geometryIDs
     let groups=Dictionary(elements.filter { $0.kind == .group }.map { (collaborationIdentity($0.id),$0) },uniquingKeysWith:{ first,_ in first })
@@ -661,11 +694,7 @@ extension BoardDocument {
       resolvers[surface]=value;return value
     }
     let nodes:[NotebookGraphicGraph.Node]=elements.compactMap { element in
-      guard let graphic=element.graphic else { return nil }
-      let source=NotebookElementPlacement.Source(frame:.init(x:element.frame.x,y:element.frame.y,width:element.frame.width,height:element.frame.height),
-        origin:element.worldOrigin ?? .zero,parentID:element.parentID,basis:element.basis)
-      guard let placement=try? resolver(element.surface).resolve(element.id,source:source) else { return nil }
-      return .init(id:element.id,graphic:graphic,frame:source.frame,surface:element.surface,shown:shown.contains(element.id),placement:placement)
+      graphicNode(element,resolver:resolver(element.surface),shown:shown.contains(element.id))
     }
     return .init(nodes,groupSources:groups.mapValues { group in
       .init(source:.init(frame:.init(x:group.frame.x,y:group.frame.y,width:group.frame.width,height:group.frame.height),

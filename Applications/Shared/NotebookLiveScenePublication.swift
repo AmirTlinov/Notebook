@@ -30,13 +30,7 @@ extension NotebookAppModel {
       }
     let base=(cohort.frame.index.graphicGraph(boardID:boardID) ?? .init([]))
       .projecting(placements:groups)
-    _ = workingGraphicRevision(on:.board(boardID))
-    let working=workingGraphics.filter {
-      ($0.surface == .board(boardID) || ($0.surface.kind == .cover
-        && $0.surface.ownerID.flatMap { cohort.frame.index.ownerBoard(itemID:$0) } == boardID))
-        && ($0.publicationCursor.map { cohort.plan.revision < $0 } ?? true)
-    }
-    return projectingGraphicCommands(base.projecting(adding:working.map(\.node)),
+    return projectingGraphicCommands(base.projecting(adding:retainedWorkingGraphicNodes(boardID:boardID,cohort:cohort)),
       publishedGroups:groups) { .spatial(boardID:boardID,elementID:$0) }
   }
 
@@ -48,21 +42,25 @@ extension NotebookAppModel {
     }
     let graph = (retained ?? presentedBoard(captured,boardID:boardID,cohort:cohort).graphicGraph()).projecting(placements:groups)
     guard preview else { return graph }
+    let combined = graph.projecting(adding:retainedWorkingGraphicNodes(boardID:boardID,cohort:cohort))
+    return projectingGraphicCommands(combined,publishedGroups:groups) { .spatial(boardID: boardID, elementID: $0) }
+  }
+
+  /// Rendering and input borrow the same accepted body of a retained insertion.
+  /// Its original preview is not a competing source after SQL admission.
+  private func retainedWorkingGraphicNodes(boardID:UUID,cohort:SceneCompositionCohort) -> [NotebookGraphicGraph.Node] {
     _ = workingGraphicRevision(on:.board(boardID))
     let working = workingGraphics.filter {
       ($0.surface == .board(boardID) || ($0.surface.kind == .cover && $0.surface.ownerID.flatMap { cohort.frame.index.ownerBoard(itemID:$0) } == boardID))
         && ($0.publicationCursor.map { cohort.plan.revision < $0 } ?? true)
     }
-    // A retained insertion is a live host, not a frozen copy of its geometry.
-    // SQL may already contain subsequent edits while the original cohort waits.
-    let admitted = working.isEmpty ? nil : boardHierarchy?.board(boardID)?.graphicGraph()
-    let nodes = working.map { object in
+    let ids=Set(working.filter { $0.accepted && ($0.publicationCursor.map { sceneContentCursor >= $0 } ?? false) }.map(\.id))
+    let admitted=Dictionary(uniqueKeysWithValues:boardHierarchy?.board(boardID)?.graphicNodes(ids:ids).map { ($0.id,$0) } ?? [])
+    return working.map { object in
       if object.accepted, let cursor = object.publicationCursor, sceneContentCursor >= cursor,
-        let current = admitted?.nodes[object.id], current.surface == object.surface { return current }
+        let current = admitted[object.id], current.surface == object.surface { return current }
       return object.node
     }
-    let combined = graph.projecting(adding:nodes)
-    return projectingGraphicCommands(combined,publishedGroups:groups) { .spatial(boardID: boardID, elementID: $0) }
   }
   /// The cohort admits physical hosts and excludes their pixels from its tiles.
   /// Its immutable geometry is not another owner of subsequent accepted input.

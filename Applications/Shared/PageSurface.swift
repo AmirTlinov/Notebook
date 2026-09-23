@@ -68,7 +68,7 @@ struct PageSurface: View {
             onRenderReady: { receipt in
               readiness.recordInk(receipt);publishReadiness()
             }, resolveQuickShape: { fit, scale in
-              fit.binding(in:page.graphicGraph(),surface:.page(page.id),tolerance:18/scale,
+              fit.binding(in:model.graphicGraph(page:model.pages[page.id] ?? page),surface:.page(page.id),tolerance:18/scale,
                 erasures:model.elementErasures(on:.page(page.id)),appearance: { id,graphic,layout,size,cuts in
                   model.elementErasureCache.appearance(surface:.page(page.id),id:id,graphic:graphic,layout:layout,size:size,erasures:cuts)
                 })
