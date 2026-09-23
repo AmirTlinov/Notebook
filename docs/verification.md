@@ -1,5 +1,47 @@
 # Verification record
 
+## September 23 — GUI-298 page-turn audit, not a repair
+
+Amir reports severe stalls, missing curl animation and a broad left shadow after
+pair 190. GUI-298 is **In Progress** again; prior landing/pixel checks do not
+establish smooth natural page turns. This audit inspected main `197d2765` and
+read current content through the installed helper, without changing content,
+reinstalling applications or taking the physical-iPad runner from GUI-295.
+
+The current “Различимость” notebook has 20 sheets. Addressed sheets 9–12 contain
+respectively 2, 6, 2 and 13 SVG-backed web elements (11,749 / 172,640 / 129,326 /
+399,108 HTML bytes). All 23 pass the exact `StaticSVGContent` classifier as
+static; these sheets have no page ink or freehand/mask graphic elements.
+Their ordinary page path still creates a WebKit view per cold SVG, awaits font
+and image readiness, two animation frames and a snapshot. All use `.visible`
+priority, which shares just two raster-preparation slots, including the current
+sheet and speculative neighbours. This establishes serialized cold preparation,
+not a measured duration of Amir's freeze.
+
+Confirmed control flow: `preparedController` returns nil until the whole target
+is ready, and `willTransitionTo` cancels unready gestures. Hidden preparation is
+denied during active input unless a curl has already started; the waiting first
+curl does not set that activity. Repeated arrow commands advance model selection
+before native landing, replace one pending target, and explicitly omit animation
+when the final target is nonadjacent. Notebook preparation failures remain inside
+the hidden page rather than the document-only navigation status presentation.
+
+Additional costs/risks: every controller update assigns all retained hosting
+roots, including during a curl; concurrent page reads retry after a shared model
+epoch changes, including publication of another prepared page. Native curl timing
+changes the page-controller root layer's speed to 1.8, affecting its descendant
+timeline too. The broad binding shade belongs to UIKit `.pageCurl` with `.min`
+spine, not `GridPaperView` or the open cover's disabled cast shadow; exact native
+layer state during the reported stuck frame has not been captured.
+
+Host-Mac-only microcheck `.build/gui298-page-turn-audit-190/static-svg-check.json`
+uses the source classifier on those read-only SVGs, 100 runs per sheet. Median
+whole-sheet classification costs are 0.095 / 1.197 / 0.335 / 3.477 ms; this does
+not measure WebKit, page-turn CPU/GPU stalls or iPad frame time. No physical
+gesture/animation profile or new application test ran in this audit. The exact
+blocking stack and the timing override's contribution remain unverified; neither
+resource exhaustion nor a UIKit internal defect is asserted from the screenshot.
+
 ## September 23 — GUI-298 matched pair 190 installed
 
 Commit `cdfaed9c` produced signed **0.3.134 (190)** from the verified source below.
