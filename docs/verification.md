@@ -1,5 +1,25 @@
 # Verification record
 
+## September 23 — GUI-295 matched pair 189 installed
+
+Commit `08426bdd` produced signed **0.3.134 (189)** for Mac and physical iPad
+from source `e40dc8d0f8a3d8134b1af17dde18b488f0c94b21565c966326b75c3dccae7522`.
+Both installed versions were read back as 189 and launched. Evidence:
+`.build/gui295-release-189/build.json`,
+`.build/gui295-install-189/installation.json` and `observe-after.json`.
+Mac quit normally through AppKit before its atomic same-volume replacement;
+database identities/sizes and registry bytes were unchanged before launch.
+iPad application-support registry metadata was preserved. No containers,
+identities, keys or historical archives were removed or restored; test apps
+and the generated runner were removed.
+
+The installed helper answered in workspace
+`54349F3B-9E0A-4DEA-B990-40CAE04EF45E`. The physical launch image
+`.build/gui295-install-189/ipad-shown.png` was inspected: the retained board,
+camera and three existing items are present. This is installed-content evidence,
+not a new human gesture check or full acceptance. Native item deletion/code-note
+Redo, forward latency and full-system/joint acceptance remain open.
+
 ## September 23 — GUI-295, native item drop and retained history
 
 Mac/iPad item movement, unstacking and a drop into another stack now use one
