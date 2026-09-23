@@ -131,8 +131,8 @@ final class NotebookAccountConnectionTests: XCTestCase {
   }
   private func makeSync(_ local: NotebookTransportIdentity, _ trust: AccountMemoryTrust) -> NearbySync {
     let storage = NotebookTransportStorage(changes: { _, _ in [] }, incomingCursor: { _ in 0 },
-      acknowledgePeer: { _, _ in }, blobSize: { _ in 0 }, readBlobChunk: { _, _, _ in Data() },
-      stageBlob: { _, _, _ in }, missingBlobHashes: { _, _, _ in [] }, applyRemoteChange: { _ in 0 })
+      acknowledgePeer: { _, _ in }, readBlobChunk: { hash, offset, _ in .init(hash: hash, offset: offset, totalBytes: 0, data: Data()) },
+      stageBlobs: { _ in }, missingBlobHashes: { _, _, _ in [] }, applyRemoteChange: { _ in 0 })
     return NearbySync(role: .iPadConnector, identity: local, storage: storage,
       stagingRoot: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString), trustStore: trust)
   }

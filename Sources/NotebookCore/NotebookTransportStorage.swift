@@ -9,9 +9,8 @@ public struct NotebookTransportStorage: Sendable {
   public var changes: @Sendable (UInt64, Int) async throws -> [NotebookDurableChange]
   public var incomingCursor: @Sendable (NotebookReplicationSource) async throws -> UInt64
   public var acknowledgePeer: @Sendable (UUID, UInt64) async throws -> Void
-  public var blobSize: @Sendable (String) async throws -> Int64
-  public var readBlobChunk: @Sendable (String, Int64, Int) async throws -> Data
-  public var stageBlob: @Sendable (URL, String, Int64) async throws -> Void
+  public var readBlobChunk: @Sendable (String, Int64, Int) async throws -> NotebookTransportBlobChunk
+  public var stageBlobs: @Sendable ([NotebookTransportCompletedBlob]) async throws -> Void
   public var missingBlobHashes: @Sendable (NotebookReplicationDelivery, Int, String?) async throws -> [String]
   public var applyRemoteChange: @Sendable (NotebookReplicationDelivery) async throws -> UInt64
 
@@ -20,15 +19,14 @@ public struct NotebookTransportStorage: Sendable {
     changes: @escaping @Sendable (UInt64, Int) async throws -> [NotebookDurableChange],
     incomingCursor: @escaping @Sendable (NotebookReplicationSource) async throws -> UInt64,
     acknowledgePeer: @escaping @Sendable (UUID, UInt64) async throws -> Void,
-    blobSize: @escaping @Sendable (String) async throws -> Int64,
-    readBlobChunk: @escaping @Sendable (String, Int64, Int) async throws -> Data,
-    stageBlob: @escaping @Sendable (URL, String, Int64) async throws -> Void,
+    readBlobChunk: @escaping @Sendable (String, Int64, Int) async throws -> NotebookTransportBlobChunk,
+    stageBlobs: @escaping @Sendable ([NotebookTransportCompletedBlob]) async throws -> Void,
     missingBlobHashes: @escaping @Sendable (NotebookReplicationDelivery, Int, String?) async throws -> [String],
     applyRemoteChange: @escaping @Sendable (NotebookReplicationDelivery) async throws -> UInt64
   ) {
     self.journalGeneration = journalGeneration
     self.changes = changes; self.incomingCursor = incomingCursor; self.acknowledgePeer = acknowledgePeer
-    self.blobSize = blobSize; self.readBlobChunk = readBlobChunk; self.stageBlob = stageBlob
+    self.readBlobChunk = readBlobChunk; self.stageBlobs = stageBlobs
     self.missingBlobHashes = missingBlobHashes; self.applyRemoteChange = applyRemoteChange
   }
 }
@@ -87,7 +85,10 @@ public actor NotebookTransportBlobAssembly {
     hasher.update(data: chunk.data); offset += Int64(chunk.data.count)
     guard offset == totalBytes else { return nil }
     let file = directory.appendingPathComponent(expectedHash)
-    try handle.synchronize(); try handle.close(); self.handle = nil; hash = nil
+    // This is disposable assembly, not the durability boundary. The SQL blob
+    // transaction fsyncs the verified bytes before content can be committed.
+    // Fsyncing this temporary copy as well serializes every tiny dependency.
+    try handle.close(); self.handle = nil; hash = nil
     let digest = hasher.finalize().map { String(format: "%02x", $0) }.joined()
     guard digest == expectedHash else {
       try? FileManager.default.removeItem(at: file)

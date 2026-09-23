@@ -125,6 +125,28 @@ final class NotebookCollaborationLatencyTests: XCTestCase {
     }
   }
 
+  func testIncomingSamePageChangeRetainsTheContactUntilItsAcceptedTailFinishes() async throws {
+    let pair = try await fixture(), contact = UUID(), id = UUID()
+    XCTAssertEqual(pair.pad.presence?.mode, .page)
+    XCTAssertTrue(pair.pad.inputGate.beginPencilAction(source: contact))
+    defer { pair.pad.inputGate.endPencilAction(source: contact) }
+    let action = try await insert(pair, id: id, element: "same-page", x: 160)
+    let version = try action.deliveryVersion(), cut = try pair.owner.store.currentChangeCursor()
+    let arrived = try await assertUX("same-page-packet-staged", since: .now, budget: .seconds(2)) {
+      pair.arrivals.cuts[cut] != nil
+    }
+    guard arrived.passed else { return }
+    try await Task.sleep(for: .milliseconds(100))
+    XCTAssertNil(try pair.pad.store.collaborationActionIfPresent(id), "A blocked physical owner has no durable ACK")
+    XCTAssertFalse(pair.pad.activePage?.elements.contains { $0.id == "same-page" } == true)
+    XCTAssertTrue(pair.pad.inputGate.hasActivePencil)
+    let start = ContinuousClock.now
+    pair.pad.inputGate.endPencilAction(source: contact)
+    try await assertUX("same-page-delivery-after-lift", since: start, budget: .milliseconds(100)) {
+      try pair.pad.store.collaborationActionIfPresent(id)?.deliveryVersion() == version
+    }
+  }
+
   func testChatRoundTripDoesNotWaitForABlockedDurableCommit() async throws {
     let pair = try NotebookTransportTestPair(withChange: true, holdCommit: true)
     defer { pair.stop() }
@@ -170,7 +192,38 @@ final class NotebookCollaborationLatencyTests: XCTestCase {
     let arrivals: Arrivals
   }
 
-  @MainActor private final class Arrivals { var cuts: [UInt64: ContinuousClock.Instant] = [:] }
+  @MainActor private final class Arrivals {
+    var cuts: [UInt64: ContinuousClock.Instant] = [:]
+    let start = ContinuousClock.now
+    var stages: [String] = []
+    func record(_ operation: String, since began: ContinuousClock.Instant) {
+      func ms(_ duration: Duration) -> Double {
+        Double(duration.components.seconds) * 1_000 + Double(duration.components.attoseconds) / 1e15
+      }
+      stages.append("\(operation),start_ms=\(ms(start.duration(to: began))),elapsed_ms=\(ms(began.duration(to: .now)))")
+    }
+    func observing(_ original: NotebookTransportStorage, name: String) -> NotebookTransportStorage {
+      var result = original
+      result.stageBlobs = { batch in
+        let began = ContinuousClock.now
+        try await original.stageBlobs(batch)
+        await self.record("\(name).stageBlobs.\(batch.count).\(batch.reduce(Int64(0), { $0 + $1.byteCount }))", since: began)
+      }
+      result.missingBlobHashes = { delivery, limit, after in
+        let began = ContinuousClock.now
+        let hashes = try await original.missingBlobHashes(delivery, limit, after)
+        await self.record("\(name).missing.\(delivery.change.sequence).\(hashes.count)", since: began)
+        return hashes
+      }
+      result.readBlobChunk = { hash, offset, count in
+        let began = ContinuousClock.now
+        let data = try await original.readBlobChunk(hash, offset, count)
+        await self.record("\(name).readBlob.\(hash.prefix(8)).\(data.data.count)", since: began)
+        return data
+      }
+      return result
+    }
+  }
 
   private func fixture() async throws -> Pair {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("collaboration-latency-\(UUID())")
@@ -212,7 +265,7 @@ final class NotebookCollaborationLatencyTests: XCTestCase {
     let window = try await mountNotebookScene(pad, fullRoot: true)
     let scene = try NotebookInteractionUXTests.Scene(model: pad, window: window)
     let arrivals = Arrivals()
-    var receiving = try await pad.makeTransportStorage()
+    var receiving = try await arrivals.observing(pad.makeTransportStorage(), name: "pad")
     let apply = receiving.applyRemoteChange
     receiving.applyRemoteChange = { delivery in
       await MainActor.run { arrivals.cuts[delivery.change.sequence] = .now }
@@ -221,7 +274,11 @@ final class NotebookCollaborationLatencyTests: XCTestCase {
     let pair = try await NotebookTransportTestPair(
       serverIdentity: .init(deviceID: owner.actorID, workspaceID: header.workspaceID, displayName: "Headless source"),
       clientIdentity: .init(deviceID: pad.actorID, workspaceID: header.workspaceID, displayName: "Mounted iPad"),
-      contentBytes: 0, serverAdapter: owner.makeTransportStorage(), clientAdapter: receiving)
+      contentBytes: 0, serverAdapter: arrivals.observing(owner.makeTransportStorage(), name: "peer"), clientAdapter: receiving)
+    addTeardownBlock { @MainActor in
+      let attachment = XCTAttachment(string: arrivals.stages.joined(separator: "\n"))
+      attachment.name = "transport-storage-stages"; attachment.lifetime = .keepAlways; self.add(attachment)
+    }
     let originalA = aWriter.onCommit, originalB = bWriter.onCommit
     aWriter.onCommit = { value in originalA?(value); pair.server?.notifyDurableChanges() }
     bWriter.onCommit = { value in originalB?(value); pair.client?.notifyDurableChanges() }

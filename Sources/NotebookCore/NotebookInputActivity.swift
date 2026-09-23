@@ -19,6 +19,40 @@ public struct NotebookInputActivity: Codable, Equatable, Sendable {
 }
 
 extension NotebookStore {
+  /// Native delivery protects its admitted physical owners inside the same SQL
+  /// transaction as the merge. This is not a second address-to-surface mapper:
+  /// page/board/cover reuse the canonical material identity, including cuts and
+  /// local bases. Document content and state already have their own frontiers.
+  func deliveryInputVersions(_ targets: [CollaborationTarget]) throws -> [JSONValue] {
+    guard targets.count <= 4, Set(targets).count == targets.count else {
+      throw NotebookStorageError.invalidTransaction("delivery input owners")
+    }
+    return try targets.map { target in
+      switch target.kind {
+      case .board, .cover, .page:
+        do {
+          let revision = try referenceIdentities(targets: [target])[0].revision
+          if target.kind == .cover, let address = try currentSQL!.rows(
+            "SELECT address FROM item_owners WHERE item_id=?", [.text(target.id.uuidString.lowercased())]).first?[0].text {
+            return try .array([.string(revision), storedFragments(address: address, descendants: false).first?.value ?? .null])
+          }
+          return .string(revision)
+        }
+        catch let error as CollaborationError where error.code == "target_missing" { return .null }
+      case .document:
+        guard try readItemHeader(target.id)?.kind == .document else { return .null }
+        return try .array([
+          storedFragments(address: documentFile(target.id) + "#", descendants: false).first?.value["contentStamp"] ?? .null,
+          storedFragments(address: stateFile(target.id) + "#", descendants: false).first?.value["stamp"] ?? .null
+        ])
+      case .workspace, .codeFragment:
+        // These are not native scene contact targets. Do not silently admit an
+        // unsupported owner or treat unknown input as an empty protected set.
+        throw NotebookStorageError.invalidTransaction("delivery input surface")
+      }
+    }
+  }
+
   var runtimeURL: URL { root.appendingPathComponent("runtime", isDirectory: true) }
   private var inputActivityURL: URL { runtimeURL.appendingPathComponent("input.json") }
 

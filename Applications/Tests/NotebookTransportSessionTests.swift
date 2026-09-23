@@ -277,6 +277,20 @@ final class NotebookTransportSessionTests: XCTestCase {
     XCTAssertEqual(size, 400_000, "The heavy owner reached SQL through a completed staged file")
   }
 
+  func testSmallDependenciesUseTheWholeBoundedWindowBeforeCommit() async throws {
+    let committed = expectation(description: "All dependency windows precede the durable ACK")
+    let pair = try NotebookTransportTestPair(withChange: true, contentBytes: 512, contentBlobCount: 33)
+    defer { pair.stop() }
+    await pair.clientStorage.setAcknowledgementObserver { committed.fulfill() }
+    pair.onFailure = { XCTFail("Bounded dependency delivery failed: \($0)") }
+    try pair.start()
+    await fulfillment(of: [committed], timeout: 10)
+    let batches = await pair.serverStorage.stagedBatchSizes
+    let applied = await pair.serverStorage.appliedCount
+    XCTAssertEqual(batches, [1, 16, 16, 1], "One manifest and full dependency windows, not one SQL commit per field")
+    XCTAssertEqual(applied, 1)
+  }
+
   func testCloudCheckpointOvertakingAnOfferedLANChangeAcknowledgesOnlyThatOffer() async throws {
     let committing = expectation(description: "LAN waits before its SQL admission")
     let acknowledged = expectation(description: "Covered LAN offer receives its own ACK")
@@ -359,21 +373,24 @@ final class NotebookTransportTestPair {
 
   init(wrongSecret: Bool = false, authorized: Bool = true, withChange: Bool = false, holdCommit: Bool = false,
     serverStorage: NotebookTransportMemoryStore? = nil, clientStorage: NotebookTransportMemoryStore? = nil,
-    serverIdentity: NotebookTransportIdentity? = nil, clientIdentity: NotebookTransportIdentity? = nil, relay: NotebookRelayRoute? = nil, contentBytes: Int = 400_000,
+    serverIdentity: NotebookTransportIdentity? = nil, clientIdentity: NotebookTransportIdentity? = nil, relay: NotebookRelayRoute? = nil, contentBytes: Int = 400_000, contentBlobCount: Int = 1,
     serverAdapter: NotebookTransportStorage? = nil, clientAdapter: NotebookTransportStorage? = nil) throws {
     let workspaceID = serverIdentity?.workspaceID ?? UUID()
     self.serverIdentity = serverIdentity ?? .init(deviceID: UUID(), workspaceID: workspaceID, displayName: "Loopback Mac")
     self.clientIdentity = clientIdentity ?? .init(deviceID: UUID(), workspaceID: workspaceID, displayName: "Loopback iPad")
     self.relay = relay
     self.wrongSecret = wrongSecret; self.authorized = authorized
-    let content = Data(repeating: 7, count: contentBytes), contentHash = Self.digest(content), transactionID = UUID()
+    let contents = (0..<contentBlobCount).map { Data(repeating: UInt8($0 + 7), count: contentBytes) }
+    let transactionID = UUID()
     let manifest = try JSONEncoder().encode(NotebookChangeManifest(transactionID: transactionID, workspaceID: workspaceID,
-      records: [.init(address: "pages/test.json", blobHash: contentHash)]))
+      records: contents.enumerated().map { .init(address: "pages/test-\($0.offset).json", blobHash: Self.digest($0.element)) }))
     let manifestHash = Self.digest(manifest)
     sampleChange = .init(sequence: 1, transactionID: transactionID, manifestHash: manifestHash, byteCount: manifest.count)
     self.serverStorage = serverStorage ?? NotebookTransportMemoryStore(holdCommit: holdCommit)
+    var blobs = Dictionary(uniqueKeysWithValues: contents.map { (Self.digest($0), $0) })
+    blobs[manifestHash] = manifest
     self.clientStorage = clientStorage ?? NotebookTransportMemoryStore(changes: withChange ? [sampleChange] : [],
-      blobs: withChange ? [manifestHash: manifest, contentHash: content] : [:])
+      blobs: withChange ? blobs : [:])
     self.serverAdapter = serverAdapter ?? self.serverStorage.adapter()
     self.clientAdapter = clientAdapter ?? self.clientStorage.adapter()
   }
@@ -473,6 +490,7 @@ actor NotebookTransportMemoryStore {
   private(set) var acknowledgedCursor: UInt64 = 0
   private(set) var appliedCount = 0
   private(set) var largestStagedBlob = 0
+  private(set) var stagedBatchSizes: [Int] = []
   private(set) var requestedJournalCursors: [UInt64] = []
 
   init(changes: [NotebookDurableChange] = [], blobs: [String: Data] = [:], holdCommit: Bool = false,
@@ -485,8 +503,8 @@ actor NotebookTransportMemoryStore {
   func releaseCommit() { holdCommit = false; commitContinuation?.resume(); commitContinuation = nil }
   nonisolated func adapter() -> NotebookTransportStorage {
     .init(changes: { try await self.changes(after: $0, limit: $1) }, incomingCursor: { _ in await self.cursor() },
-      acknowledgePeer: { _, cursor in await self.acknowledge(cursor) }, blobSize: { try await self.size($0) },
-      readBlobChunk: { try await self.read($0, offset: $1, count: $2) }, stageBlob: { try await self.stage($0, hash: $1, byteCount: $2) },
+      acknowledgePeer: { _, cursor in await self.acknowledge(cursor) },
+      readBlobChunk: { try await self.read($0, offset: $1, count: $2) }, stageBlobs: { try await self.stage($0) },
       missingBlobHashes: { try await self.missing($0.change, limit: $1, after: $2) }, applyRemoteChange: { try await self.apply($0.change) })
   }
   private func changes(after cursor: UInt64, limit: Int) throws -> [NotebookDurableChange] {
@@ -496,17 +514,18 @@ actor NotebookTransportMemoryStore {
   }
   private func cursor() -> UInt64 { cursorReads += 1; return incomingCursor }
   private func acknowledge(_ cursor: UInt64) { acknowledgedCursor = cursor; acknowledgementObserver?() }
-  private func size(_ hash: String) throws -> Int64 {
-    guard let data = blobs[hash] else { throw NotebookTransportError.invalidBlob }; return Int64(data.count)
-  }
-  private func read(_ hash: String, offset: Int64, count: Int) throws -> Data {
+  private func read(_ hash: String, offset: Int64, count: Int) throws -> NotebookTransportBlobChunk {
     guard let data = blobs[hash], offset >= 0, offset <= data.count else { throw NotebookTransportError.invalidBlob }
-    return data.subdata(in: Int(offset)..<min(data.count, Int(offset) + count))
+    return .init(hash: hash, offset: offset, totalBytes: Int64(data.count), data: data.subdata(in: Int(offset)..<min(data.count, Int(offset) + count)))
   }
-  private func stage(_ file: URL, hash: String, byteCount: Int64) throws {
-    let data = try Data(contentsOf: file)
-    guard data.count == byteCount, Self.digest(data) == hash else { throw NotebookTransportError.invalidBlob }
-    blobs[hash] = data; largestStagedBlob = max(largestStagedBlob, data.count)
+  private func stage(_ batch: [NotebookTransportCompletedBlob]) throws {
+    let checked = try batch.map { blob in
+      let data = try Data(contentsOf: blob.file)
+      guard data.count == blob.byteCount, Self.digest(data) == blob.hash else { throw NotebookTransportError.invalidBlob }
+      return (blob.hash, data)
+    }
+    for (hash, data) in checked { blobs[hash] = data; largestStagedBlob = max(largestStagedBlob, data.count) }
+    stagedBatchSizes.append(batch.count)
   }
   private func missing(_ change: NotebookDurableChange, limit: Int, after: String?) throws -> [String] {
     guard let data = blobs[change.manifestHash] else { return [change.manifestHash] }

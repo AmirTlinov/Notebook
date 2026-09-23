@@ -284,10 +284,11 @@ extension NotebookStore {
   }
 
   @discardableResult
-  public func applyCloudDelivery(_ delivery: NotebookReplicationDelivery, account: String) throws -> UInt64 {
+  public func applyCloudDelivery(_ delivery: NotebookReplicationDelivery, account: String,
+    protectingInputOn targets: [CollaborationTarget] = []) throws -> UInt64 {
     try commandTransaction {
       try requireCloudAccount(account)
-      let cursor = try applyDelivery(delivery)
+      let cursor = try applyDelivery(delivery, protectingInputOn: targets)
       try currentSQL!.run("DELETE FROM cloud_inbox WHERE account=? AND id=?", [.text(account), .text(NotebookCloudRecord.delivery(delivery).id)])
       return cursor
     }

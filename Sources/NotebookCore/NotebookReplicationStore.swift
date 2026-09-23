@@ -3,6 +3,19 @@ import CryptoKit
 import Foundation
 
 extension NotebookStore {
+  /// One bounded dependency window shares a commit, not one fsync per row.
+  /// Hash validation of any member still rolls back the entire staging batch.
+  public func stageBlobs(_ blobs: [NotebookTransportCompletedBlob]) throws {
+    guard (1...16).contains(blobs.count), Set(blobs.map(\.hash)).count == blobs.count else {
+      throw NotebookTransportError.invalidBlob
+    }
+    try commandTransaction {
+      for blob in blobs {
+        try stageBlob(file: blob.file, expectedHash: blob.hash, byteCount: blob.byteCount)
+      }
+    }
+  }
+
   public func stageBlob(file: URL, expectedHash: String, byteCount: Int64, range: Range<Int64>? = nil) throws {
     guard (0...268_435_456).contains(byteCount), expectedHash.count == 64,
       expectedHash.allSatisfy({ $0.isHexDigit && !$0.isUppercase }) else { throw NotebookStorageError.limitExceeded("blob_too_large") }
@@ -122,7 +135,7 @@ extension NotebookStore {
   }
 
   @discardableResult
-  public func applyDelivery(_ delivery: NotebookReplicationDelivery) throws -> UInt64 {
+  public func applyDelivery(_ delivery: NotebookReplicationDelivery, protectingInputOn targets: [CollaborationTarget] = []) throws -> UInt64 {
     let change = delivery.change, source = delivery.source
     try commandTransaction {
       let database = currentSQL!, peer = source.cursorKey, transaction = change.transactionID.uuidString.lowercased()
@@ -146,6 +159,7 @@ extension NotebookStore {
         return
       }
       guard delivery.isSnapshot || change.sequence == cursor + 1 else { throw NotebookStorageError.invalidTransaction("noncontiguous incoming cursor") }
+      let protected = try deliveryInputVersions(targets)
       let manifest = try validatedManifest(change)
       guard try missingBlobHashes(for: change, limit: 1).isEmpty else { throw NotebookStorageError.blobMissing(change.manifestHash) }
       try validateIncomingPageOrderValues(manifest.pageOrderRoots)
@@ -297,6 +311,12 @@ extension NotebookStore {
         }
       }
       try database.run("DELETE FROM replication_agent_checks")
+      // The same physical identity used by the shown material decides whether
+      // a contact is affected. A page is not its board's painted cover; an
+      // independent page may commit while that board still owns Pencil.
+      guard try deliveryInputVersions(targets) == protected else {
+        throw CollaborationError("input_active", "Изменение затрагивает поверхность текущего касания.")
+      }
       try coverReplicationPrefix(delivery)
       database.receivedChange = change
       try database.run("INSERT INTO received_transactions(transaction_id,manifest_hash,peer_id,sequence) VALUES(?,?,?,?)", [.text(transaction), .text(change.manifestHash), .text(peer), .integer(Int64(change.sequence))])

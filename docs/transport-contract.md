@@ -104,6 +104,21 @@ length, order or SHA-256 discards the incomplete assembly. SQL ingests a verifie
 file by streaming; a large owner is not assembled in transport memory. Limits
 produce errors, never silent truncation.
 
+A receiver retains the returned dependency window (at most 16 hashes), rather
+than querying it again after each file. Verified completed files share a staging
+commit at the end of the window or once they reach 512 KiB; a larger streamed
+blob flushes immediately. Temporary assembly is disposable, not another durable
+copy. The SQL commit remains the durability boundary. Sender size and bytes come
+from one read transaction; transport never keeps a SQL transaction across a
+network await.
+
+Incoming merge protects the native contact's actual page/board/cover material
+and placement (or document content/state), using the existing canonical identity.
+A conflicting merge rolls back content and cursor together and resumes after the
+input owner accepts the tail. An independent page may commit during a board
+contact; an idempotent echo needs no contact barrier. This storage admission is
+not a claim that a new scene has already been presented.
+
 A frame credit releases transport capacity. A durable `committed` response is sent
 only after `NotebookTransportStorage.applyRemoteChange` completes the single SQL
 transaction for content, causal merge, deduplication and incoming cursor.

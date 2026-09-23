@@ -18,8 +18,8 @@ final class NearbySyncTests: XCTestCase {
     macTrust.records = [.init(identity: padIdentity, credentialID: credentialID, secret: secret)]
     padTrust.records = [.init(identity: macIdentity, credentialID: credentialID, secret: secret)]
     let storage = NotebookTransportStorage(changes: { _, _ in [] }, incomingCursor: { _ in 0 }, acknowledgePeer: { _, _ in },
-      blobSize: { _ in throw NotebookTransportError.invalidBlob }, readBlobChunk: { _, _, _ in throw NotebookTransportError.invalidBlob },
-      stageBlob: { _, _, _ in }, missingBlobHashes: { _, _, _ in [] }, applyRemoteChange: { _ in 0 })
+      readBlobChunk: { _, _, _ in throw NotebookTransportError.invalidBlob },
+      stageBlobs: { _ in }, missingBlobHashes: { _, _, _ in [] }, applyRemoteChange: { _ in 0 })
     let root = temporaryDirectory(); defer { try? FileManager.default.removeItem(at: root) }
     let mac = NearbySync(role: .macListener, identity: macIdentity, storage: storage, stagingRoot: root.appendingPathComponent("mac"), trustStore: macTrust)
     let pad = NearbySync(role: .iPadConnector, identity: padIdentity, storage: storage, stagingRoot: root.appendingPathComponent("pad"), trustStore: padTrust)
@@ -144,8 +144,8 @@ final class NearbySyncTests: XCTestCase {
   @MainActor
   private func makeRecoverableSync(_ trust: RecoverableDeviceStore) -> NearbySync {
     let storage = NotebookTransportStorage(changes: { _, _ in [] }, incomingCursor: { _ in 0 },
-      acknowledgePeer: { _, _ in }, blobSize: { _ in throw NotebookTransportError.invalidBlob },
-      readBlobChunk: { _, _, _ in throw NotebookTransportError.invalidBlob }, stageBlob: { _, _, _ in },
+      acknowledgePeer: { _, _ in },
+      readBlobChunk: { _, _, _ in throw NotebookTransportError.invalidBlob }, stageBlobs: { _ in },
       missingBlobHashes: { _, _, _ in [] }, applyRemoteChange: { _ in 0 })
     return NearbySync(role: .iPadConnector,
       identity: .init(deviceID: UUID(), workspaceID: UUID(), displayName: "Acceptance iPad"),

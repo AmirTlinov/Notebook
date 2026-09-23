@@ -1107,10 +1107,7 @@ final class NotebookAppModel {
     }
   }
 
-  private func publishInputActivity() {
-    guard !isStopped else { return }
-    guard loadState == .ready else { return }
-    inputSequence &+= 1
+  private var localInputTargets: [CollaborationTarget] {
     var targets: [CollaborationTarget] = []
     if inputIsActive, let presence {
       let board = CollaborationTarget(kind: .board, id: presence.boardID)
@@ -1121,7 +1118,14 @@ final class NotebookAppModel {
         if presence.mode == .document { targets.append(.init(kind: .document, id: id)) }
       } else { targets = [board] }
     }
-    let activity = NotebookInputActivity(deviceID: actorID, sessionID: presenceSessionID, sequence: inputSequence, targets: targets)
+    return targets
+  }
+
+  private func publishInputActivity() {
+    guard !isStopped else { return }
+    guard loadState == .ready else { return }
+    inputSequence &+= 1
+    let activity = NotebookInputActivity(deviceID: actorID, sessionID: presenceSessionID, sequence: inputSequence, targets: localInputTargets)
     sync?.sendTransient(.inputActivity(activity))
     enqueueStoreWrite(owner: .inputActivity(activity.deviceID)) { try $0.saveInputActivity(activity) }
   }
@@ -1182,9 +1186,15 @@ final class NotebookAppModel {
       changes: { cursor, limit in try await writer.submit { try $0.changeJournal(after: cursor, limit: limit) } },
       incomingCursor: { peer in try await writer.submit { try $0.admitReplicationSource(peer) } },
       acknowledgePeer: { peer, cursor in try await writer.submit { try $0.acknowledgePeer(peerID: peer, through: cursor) } },
-      blobSize: { hash in try await writer.submit { try $0.blobSize(hash: hash) } },
-      readBlobChunk: { hash, offset, count in try await writer.submit { try $0.readBlobChunk(hash: hash, offset: offset, maxBytes: count) } },
-      stageBlob: { file, hash, count in try await writer.submit { try $0.stageBlob(file: file, expectedHash: hash, byteCount: count) } },
+      readBlobChunk: { hash, offset, count in
+        try await writer.submit { store in
+          try store.readTransaction { store in
+            try .init(hash: hash, offset: offset, totalBytes: store.blobSize(hash: hash),
+              data: store.readBlobChunk(hash: hash, offset: offset, maxBytes: count))
+          }
+        }
+      },
+      stageBlobs: { blobs in try await writer.submit { try $0.stageBlobs(blobs) } },
       missingBlobHashes: { delivery, limit, after in
         try await writer.submit {
           try $0.deliveryNeedsContent(delivery) ? $0.missingBlobHashes(for: delivery.change, limit: limit, after: after) : []
@@ -1259,19 +1269,27 @@ final class NotebookAppModel {
 
   func applyDurableDelivery(_ delivery: NotebookReplicationDelivery, cloudAccount: String? = nil) async throws -> UInt64 {
     guard !isClosing else { throw CollaborationError("owner_unavailable", "Notebook завершает работу.") }
-    // Wait outside the writer so the accepted Pencil tail and contact release
-    // can finish. Presence and transfer credits keep their independent lane.
-    while inputIsActive || presencePhase == .active {
+    let cursor: UInt64
+    while true {
       guard !isClosing else { throw CollaborationError("owner_unavailable", "Notebook завершает работу.") }
-      try await Task.sleep(for: .milliseconds(20))
-    }
-    guard !isClosing else { throw CollaborationError("owner_unavailable", "Notebook завершает работу.") }
-    try Task.checkCancellation()
-    let cursor = try await persistence.submit(publishesChanges: true) { store in
-      if let cloudAccount {
-        return try store.applyCloudDelivery(delivery, account: cloudAccount)
+      try Task.checkCancellation()
+      let targets = localInputTargets
+      do {
+        cursor = try await persistence.submit(publishesChanges: true) { store in
+          if let cloudAccount {
+            return try store.applyCloudDelivery(delivery, account: cloudAccount, protectingInputOn: targets)
+          }
+          return try store.applyDelivery(delivery, protectingInputOn: targets)
+        }
+        break
+      } catch let error as CollaborationError where error.code == "input_active" {
+        // A conflicting merge rolled back, including its cursor. Wait outside
+        // the writer for the contact and accepted tail, not on a polling timer.
+        // Independent material does not enter this wait at all.
+        await withCheckedContinuation { continuation in
+          inputGate.performAfterIdle { continuation.resume() }
+        }
       }
-      return try store.applyDelivery(delivery)
     }
     if awaitingAccountContent { resumeAccountContent() } else { reloadExternalChanges() }
     if delivery.isSnapshot { sync?.receivedCheckpoint(from: delivery.source.deviceID) }
