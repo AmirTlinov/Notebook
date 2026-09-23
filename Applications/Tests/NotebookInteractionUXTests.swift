@@ -228,6 +228,114 @@ final class NotebookInteractionUXTests: XCTestCase {
     XCTAssertTrue(try cold.store.nativeHistory(domain: .page(pageID), actor: actor).isEmpty)
   }
 
+  func testHeldUndoPublishesTheRestoredMaterialBeforeEitherFingerLifts() async throws {
+    let scene = try await fixture(), model = scene.model
+    let page = try XCTUnwrap(model.activePage)
+    let reference = EditableElementReference.page(pageID: page.id, elementID: "ux-blue")
+    XCTAssertTrue(model.performElementOperation(.updateElement, reference: reference,
+      values: ["frame": try .encode(PageRect(x: 540, y: 740, width: 100, height: 100))], summary: "Move before held Undo"))
+    let saved = await model.finishPendingPersistence(); XCTAssertTrue(saved)
+    await model.reloadExternalChanges()?.value
+    try await shown("before-held-undo", scene, since: .now, [(.init(x: 590, y: 590), .paper), (.init(x: 590, y: 790), .blue)])
+
+    let gesture = try XCTUnwrap(scene.window.gestureRecognizers?.compactMap { $0 as? TwoFingerPaperGestureRecognizer }.first)
+    let first = UXTouch(window: scene.window, kind: .direct), second = UXTouch(window: scene.window, kind: .direct)
+    first.point = CGPoint(x: 220, y: 850).applying(scene.pageToWindow)
+    second.point = CGPoint(x: 420, y: 850).applying(scene.pageToWindow)
+    second.sampleTime = first.sampleTime
+    for touch in [first, second] { touch.sourceView = scene.window.hitTest(touch.point, with: scene.event) }
+    let contacts: Set<UITouch> = [first, second]
+    scene.observer.touchesBegan(contacts, with: scene.event)
+    gesture.touchesBegan(contacts, with: scene.event)
+    var lifted = false
+    defer {
+      if !lifted {
+        gesture.touchesCancelled(contacts, with: scene.event)
+        scene.observer.touchesCancelled(contacts, with: scene.event)
+      }
+    }
+    try await assertUX("held-undo-recognized", since: .now, budget: .seconds(2), window: scene.window) {
+      gesture.permitsUndoRepetition
+    }
+    // No save/reload call or finger-up can manufacture the observed result.
+    // This is a two-second liveness ceiling, not the 100ms interaction target.
+    try await assertUX("held-undo-shown-before-lift", since: .now, budget: .seconds(2), window: scene.window) {
+      try scene.pixels([(.init(x: 590, y: 590), .blue), (.init(x: 590, y: 790), .paper),
+        (.init(x: 230, y: 330), .red), (.init(x: 430, y: 650), .black)])
+    }
+    XCTAssertTrue(model.inputGate.isActive, "The actual held contacts are still down")
+    XCTAssertTrue(gesture.permitsUndoRepetition)
+    XCTAssertEqual(model.activePage?.element(id: "ux-blue")?.frame, page.element(id: "ux-blue")?.frame,
+      "The next input and the shown body must use the same restored material")
+
+    first.touchPhase = .ended; second.touchPhase = .ended
+    gesture.touchesEnded(contacts, with: scene.event)
+    scene.observer.touchesEnded(contacts, with: scene.event); lifted = true
+    model.selectDrawingTool(.lasso); model.drawingToolSettings.lassoMode = .elements
+    try await scene.readyFinger(self)
+    scene.beginFinger(.init(x: 590, y: 590)); scene.endFinger()
+    try await scene.readyFinger(self)
+    scene.beginFinger(.init(x: 590, y: 590)); scene.moveFinger(.init(x: 680, y: 670))
+    XCTAssertEqual(model.selectionSession.manipulation?.original, CGRect(x: 540, y: 540, width: 100, height: 100),
+      "The next drag must not borrow the pre-Undo body")
+    scene.endFinger()
+    try await assertUX("next-drag-after-held-undo", since: .now, budget: .seconds(2), window: scene.window) {
+      try scene.pixels([(.init(x: 680, y: 670), .blue), (.init(x: 590, y: 590), .paper), (.init(x: 590, y: 790), .paper)])
+    }
+  }
+
+  func testHeldUndoPublishesTheRestoredBoardBodyBeforeLift() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("board-held-undo-\(UUID())")
+    let store = NotebookStore(root: root), actor = UUID()
+    _ = try store.initializeWorkspace(actor: actor, pageSize: NotebookAppModel.defaultPageSize)
+    var workspace = try store.loadIndex(), hierarchy = try store.loadBoard(items: workspace.items)
+    let board = try XCTUnwrap(workspace.createBoard(title: "Held Undo", actor: actor)).id
+    XCTAssertTrue(hierarchy.createBoard(board, in: workspace.rootBoardID, near: .zero, actor: actor))
+    _ = workspace.selectItem(board, actor: actor)
+    let original = SpatialRect(x: -150, y: -100, width: 100, height: 100)
+    let element = SpatialElement(id: "held-board-body", surface: .board(board), kind: .graphic,
+      frame: original, worldOrigin: .zero, source: "",
+      graphic: .init(shape: .rectangle, style: .init(fill: .init(red: 1, green: 0.2, blue: 0.1))),
+      stamp: .init(counter: 0, actor: actor))
+    XCTAssertTrue(hierarchy.upsertElement(element, in: board, expected: nil, actor: actor))
+    try store.saveBoardWorkspaceBundle(index: workspace, board: hierarchy, boardID: board)
+    let model = NotebookAppModel(store: store, startsNearbySync: false)
+    retainNotebookUntilTeardown(model, removing: root)
+    await model.start(pageSize: NotebookAppModel.defaultPageSize)
+    model.updatePresence(.init(boardID: board, mode: .board, camera: .init(scale: 1), viewport: .init(x: 834, y: 1194)), settled: true)
+    let window = try await mountNotebookScene(model)
+    let reference = EditableElementReference.spatial(boardID: board, elementID: element.id)
+    let from = CGPoint(x: window.bounds.midX - 100, y: window.bounds.midY - 50)
+    let to = CGPoint(x: window.bounds.midX + 200, y: window.bounds.midY - 50)
+    try await assertUX("board-before-move", since: .now, budget: .seconds(2), window: window) {
+      try NotebookUXObservation.Pixels(window: window).matches([(from, .red), (to, .paper)])
+    }
+    XCTAssertTrue(model.performElementOperation(.updateElement, reference: reference,
+      values: ["frame": try .encode(PageRect(x: 150, y: -100, width: 100, height: 100))], summary: "Board move before held Undo"))
+    let saved = await model.finishPendingPersistence(); XCTAssertTrue(saved)
+    await model.reloadExternalChanges()?.value
+    try await assertUX("board-before-held-undo", since: .now, budget: .seconds(2), window: window) {
+      try NotebookUXObservation.Pixels(window: window).matches([(from, .paper), (to, .red)])
+    }
+    let gesture = try XCTUnwrap(window.gestureRecognizers?.compactMap { $0 as? TwoFingerPaperGestureRecognizer }.first)
+    let observer = try XCTUnwrap(window.gestureRecognizers?.compactMap { $0 as? NotebookContactObserver }.first)
+    let first = UXTouch(window: window, kind: .direct), second = UXTouch(window: window, kind: .direct), event = UIEvent()
+    first.point = .init(x: window.bounds.midX - 100, y: window.bounds.midY + 200)
+    second.point = .init(x: window.bounds.midX + 100, y: window.bounds.midY + 200)
+    second.sampleTime = first.sampleTime
+    for touch in [first, second] { touch.sourceView = window.hitTest(touch.point, with: event) }
+    let contacts: Set<UITouch> = [first, second]
+    observer.touchesBegan(contacts, with: event); gesture.touchesBegan(contacts, with: event)
+    defer { gesture.touchesCancelled(contacts, with: event); observer.touchesCancelled(contacts, with: event) }
+    try await assertUX("board-held-undo-recognized", since: .now, budget: .seconds(2), window: window) { gesture.permitsUndoRepetition }
+    try await assertUX("board-held-undo-shown-before-lift", since: .now, budget: .seconds(2), window: window) {
+      try NotebookUXObservation.Pixels(window: window).matches([(from, .red), (to, .paper)])
+    }
+    XCTAssertTrue(model.inputGate.isActive)
+    XCTAssertTrue(gesture.permitsUndoRepetition)
+    XCTAssertEqual(model.boardHierarchy?.board(board)?.element(id: element.id)?.frame, original)
+  }
+
   private func shown(_ name: String, _ scene: Scene, since start: ContinuousClock.Instant,
     _ probes: [(CGPoint, NotebookUXObservation.Color)]) async throws {
     // Return one display opportunity before readback. A snapshot issued inside

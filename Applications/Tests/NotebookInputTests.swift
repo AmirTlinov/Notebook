@@ -235,18 +235,23 @@ final class NotebookInputTests: XCTestCase {
     owner.install(on: window, inside: scene)
     defer { owner.uninstall(); window.isHidden = true; window.rootViewController = nil }
     let recognizer = try XCTUnwrap(window.gestureRecognizers?.compactMap { $0 as? TwoFingerPaperGestureRecognizer }.first)
+    let observer = try XCTUnwrap(window.gestureRecognizers?.compactMap { $0 as? NotebookContactObserver }.first)
     let first = InputTouch(), second = InputTouch(), event = UIEvent()
     first.inputType = .direct; second.inputType = .direct
     first.point = .init(x: 100, y: 300); second.point = .init(x: 300, y: 300)
+    observer.touchesBegan([first, second], with: event)
     recognizer.touchesBegan([first, second], with: event)
     for _ in 0..<100 where undos == 0 { try await Task.sleep(for: .milliseconds(10)) }
     XCTAssertGreaterThan(undos, 0)
+    XCTAssertTrue(gate.hasOnlyHistoryContacts)
     let before = undos
     first.point.x -= 40; second.point.x += 40
     first.sampleTime += 0.4; second.sampleTime = first.sampleTime
     recognizer.touchesMoved([first, second], with: event)
+    XCTAssertFalse(gate.hasOnlyHistoryContacts, "Navigation cannot retain the history publication permission")
     try await Task.sleep(for: .milliseconds(250))
     recognizer.touchesEnded([first, second], with: event)
+    observer.touchesEnded([first, second], with: event)
     try await Task.sleep(for: .milliseconds(50))
     XCTAssertEqual(undos, before)
     XCTAssertEqual(begins, 1)

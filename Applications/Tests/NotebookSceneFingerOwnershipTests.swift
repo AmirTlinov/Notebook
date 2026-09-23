@@ -5,6 +5,39 @@ import XCTest
 
 @MainActor
 final class NotebookSceneFingerOwnershipTests: XCTestCase {
+  func testHistoryClaimAllowsOnlyItsQuietPairAndNeverStealsAnotherInputOwner() {
+    let gate = NotebookInputGate(), a = UIView(), b = UIView(), other = UIView(), pencil = UUID()
+    let first = ObjectIdentifier(a), second = ObjectIdentifier(b), third = ObjectIdentifier(other)
+    let pair: Set<ObjectIdentifier> = [first, second]
+    _ = gate.fingerContactOwner(for: first) { .scene }
+    _ = gate.fingerContactOwner(for: second) { .scene }
+    XCTAssertFalse(gate.hasOnlyHistoryContacts)
+    gate.claimHistoryContacts(pair)
+    XCTAssertTrue(gate.hasOnlyHistoryContacts)
+    _ = gate.fingerContactOwner(for: third) { .nativeInput(third) }
+    XCTAssertFalse(gate.hasOnlyHistoryContacts, "A held control cannot borrow the history publication permission")
+    gate.endFingerContacts([third])
+    XCTAssertTrue(gate.hasOnlyHistoryContacts)
+    XCTAssertTrue(gate.beginPencilAction(source: pencil))
+    XCTAssertFalse(gate.hasOnlyHistoryContacts)
+    gate.releaseHistoryContacts(pair)
+    gate.endPencilAction(source: pencil)
+    XCTAssertFalse(gate.hasOnlyHistoryContacts, "A cancelled pair does not resume after Pencil")
+    gate.claimSceneObjectContact(first)
+    gate.claimHistoryContacts(pair)
+    XCTAssertFalse(gate.hasOnlyHistoryContacts, "An object manipulation is not an Undo hold")
+    XCTAssertEqual(gate.fingerContactOwner(for: first) { .scene }, .sceneObject)
+    gate.endFingerContacts(pair)
+    _ = gate.fingerContactOwner(for: first) { .scene }
+    _ = gate.fingerContactOwner(for: second) { .nativeInput(second) }
+    gate.claimHistoryContacts(pair)
+    XCTAssertEqual(gate.fingerContactOwner(for: first) { .scene }, .scene, "Refinement is atomic, not half a pair")
+    XCTAssertEqual(gate.fingerContactOwner(for: second) { .scene }, .nativeInput(second))
+    gate.endFingerContacts(pair)
+    gate.claimHistoryContacts(pair)
+    XCTAssertEqual(gate.admittedFingerContactCount, 0, "A late recognizer cannot recreate lifted contacts")
+  }
+
   func testSelectionCannotPointOrLiftLoadedProgramButStillSelectsPaperAndEmptyCanvas() async throws {
     let fixture = try SceneSelectionOwnershipFixture()
     defer { fixture.close() }

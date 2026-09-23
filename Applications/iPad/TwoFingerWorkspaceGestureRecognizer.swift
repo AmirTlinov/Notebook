@@ -144,6 +144,7 @@ final class TwoFingerPaperGestureRecognizer: UIGestureRecognizer {
     didSet {
       guard oldValue !== inputGate else { return }
       oldValue?.unregisterFingerCancellation(source: inputSource)
+      oldValue?.releaseHistoryContacts(Set(activeTouches.keys))
       cancelForExclusiveInput()
       inputGate?.registerFingerCancellation(source: inputSource) { [weak self] in
         self?.cancelForExclusiveInput()
@@ -158,6 +159,7 @@ final class TwoFingerPaperGestureRecognizer: UIGestureRecognizer {
 
   isolated deinit {
     holdTask?.cancel()
+    inputGate?.releaseHistoryContacts(Set(activeTouches.keys))
     inputGate?.unregisterFingerCancellation(source: inputSource)
   }
 
@@ -221,6 +223,7 @@ final class TwoFingerPaperGestureRecognizer: UIGestureRecognizer {
       switch motionIntent {
       case .navigation:
         cancelHold()
+        inputGate?.releaseHistoryContacts(Set(activeTouches.keys))
         if defersThisPairToPageTurn {
           finishAsInvalid()
           return
@@ -229,11 +232,13 @@ final class TwoFingerPaperGestureRecognizer: UIGestureRecognizer {
         state = state == .possible ? .began : .changed
       case .magnification:
         cancelHold()
+        inputGate?.releaseHistoryContacts(Set(activeTouches.keys))
         intent = .magnification
         state = state == .possible ? .began : .changed
       case .undecided:
         if !undoContactRemainsStationary {
           cancelHold()
+          inputGate?.releaseHistoryContacts(Set(activeTouches.keys))
           if intent == .hold { intent = .undecided }
         }
         break
@@ -307,6 +312,7 @@ final class TwoFingerPaperGestureRecognizer: UIGestureRecognizer {
   override func reset() {
     super.reset()
     cancelHold()
+    inputGate?.releaseHistoryContacts(Set(activeTouches.keys))
     activeTouches.removeAll(keepingCapacity: true)
     startLocations.removeAll(keepingCapacity: true)
     firstContact = nil
@@ -367,6 +373,7 @@ final class TwoFingerPaperGestureRecognizer: UIGestureRecognizer {
         undoContactRemainsStationary
       else { return }
       intent = .hold
+      inputGate?.claimHistoryContacts(Set(activeTouches.keys))
       state = .began
     }
   }
@@ -463,6 +470,7 @@ final class TwoFingerPaperGestureRecognizer: UIGestureRecognizer {
 
   private func finishAsInvalid() {
     cancelHold()
+    inputGate?.releaseHistoryContacts(Set(activeTouches.keys))
     switch state {
     case .began, .changed: state = .cancelled
     case .possible: state = .failed

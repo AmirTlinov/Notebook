@@ -21,6 +21,9 @@ final class NotebookInputGate {
     /// A native object reserves this single-finger sequence at touchdown. A
     /// second finger may navigate, but never revives the cancelled object drag.
     case sceneObject
+    /// A recognized Undo hold changes material; it does not freeze the scene
+    /// it is changing. The contact observer still owns physical lift.
+    case history
     /// A browser link owns a tap, not a drag or material hold. Once native
     /// camera motion or a lift wins, UIKit cancels the original link contact.
     case webLink(ObjectIdentifier)
@@ -29,7 +32,7 @@ final class NotebookInputGate {
     var permitsSceneNavigation: Bool {
       switch self {
       case .scene, .sceneObject, .webLink: true
-      case .nativeInput: false
+      case .history, .nativeInput: false
       }
     }
   }
@@ -38,6 +41,26 @@ final class NotebookInputGate {
   private var fingerContactOwners: [ObjectIdentifier: FingerContactOwner] = [:]
   var admittedFingerContactCount: Int { fingerContactOwners.count }
   var hasSceneObjectContact: Bool { fingerContactOwners.values.contains(.sceneObject) }
+  var hasOnlyHistoryContacts: Bool {
+    !hasActivePencil && fingerContactOwners.count == 2
+      && fingerContactOwners.values.allSatisfy { $0 == .history }
+  }
+
+  func claimHistoryContacts(_ contacts: Set<ObjectIdentifier>) {
+    guard contacts.count == 2, !hasActivePencil, contacts.allSatisfy({ contact in
+      switch fingerContactOwners[contact] {
+      case .scene?, .webLink?: true
+      default: false
+      }
+    }) else { return }
+    for contact in contacts { fingerContactOwners[contact] = .history }
+  }
+
+  func releaseHistoryContacts(_ contacts: Set<ObjectIdentifier>) {
+    for contact in contacts where fingerContactOwners[contact] == .history {
+      fingerContactOwners[contact] = .scene
+    }
+  }
 
   /// Selection refines a passive scene hit before movement. Native controls
   /// cannot be claimed, and only the window contact observer retires the claim.

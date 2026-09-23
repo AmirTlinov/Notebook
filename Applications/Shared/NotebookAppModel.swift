@@ -341,7 +341,8 @@ final class NotebookAppModel {
 
   private func publishPreparedSceneIfPossible() {
     guard let prepared = preparedScene, prepared.request == scenePreparationRequest,
-      !prepared.changed || (!peerInputIsActive && (!inputIsActive || (prepared.coverageOnly && !inputGate.hasActivePencil))) else { return }
+      !prepared.changed || (!peerInputIsActive && (!inputIsActive || historyContactPermitsPublication
+        || (prepared.coverageOnly && !inputGate.hasActivePencil))) else { return }
     scenePortalCameras = prepared.portals
     if prepared.changed { sceneIndex = prepared.index; sceneIndexGeneration &+= 1 }
     preparedScene = nil
@@ -999,7 +1000,7 @@ final class NotebookAppModel {
   /// still waits for settlement through permitsBackgroundPreparation.
   var permitsScenePreparation: Bool {
     preparationIsForeground && !isStopped && !peerInputIsActive && !inputGate.hasActivePencil
-      && (!inputIsActive || presencePhase == .active || hasSpatialGroupContact)
+      && (!inputIsActive || presencePhase == .active || hasSpatialGroupContact || historyContactPermitsPublication)
       && !workingGraphics.contains { $0.surface.kind == .board && $0.accepted
         && ($0.publicationCursor.map { (workspaceHeader?.cursor ?? 0) < $0 } ?? true) }
   }
@@ -3903,11 +3904,19 @@ final class NotebookAppModel {
     return record.valueVersion
   }
 
+  // Undo's recognized contacts must see the material they are changing. This
+  // uses the shared contact owner, not a second "ignore input" publication path.
+  private var historyContactPermitsPublication: Bool {
+    inputGate.hasOnlyHistoryContacts && !peerInputIsActive
+      && presencePhase == .settled && selectionSession.manipulation == nil
+  }
+
   // A camera contact owns its coordinates, not the old content cursor. The
   // same admission as scene preparation still protects Pencil and controls.
   private var permitsExternalScenePublication: Bool {
     (!inputGate.isActive && presencePhase != .active)
       || (presencePhase == .active && permitsScenePreparation)
+      || historyContactPermitsPublication
   }
 
   @discardableResult
@@ -3945,7 +3954,7 @@ final class NotebookAppModel {
           let liveDrafts = documentEditingSessions
           guard acceptExternalScene(prepared.scene, observedEpoch: epoch,
             observedPresence: presence, itemPins: itemPins) else {
-            if inputGate.isActive || presencePhase == .active { externalReloadPending = true; return }
+            if !permitsExternalScenePublication { externalReloadPending = true; return }
             diskRefreshRequested = true; continue
           }
           if draftEpoch != documentDraftEpoch { documentEditingSessions = liveDrafts }

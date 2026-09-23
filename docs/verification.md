@@ -1,5 +1,51 @@
 # Verification record
 
+## September 23 — GUI-295, held Undo publishes material and the next pan takes ownership (186)
+
+A mounted physical-iPad test reproduced saved Undo leaving both the model and
+window on the old figure until the quiet two-finger pair lifted: the window was
+still wrong after **2008.52 ms**. Evidence: `.build/gui295-held-undo-reproduction/`
+and its separately exported failure image. The shared contact ledger now refines
+that recognized pair to the history owner. Scene reads, preparation and
+publication can advance under it, without bypassing the ordinary epoch/cursor,
+Pencil, manipulation, native-control or peer-input guards. A rejected stale read
+retries according to that same permission rather than waiting for generic idle.
+Cancellation, navigation, Pencil takeover and contact retirement release the claim.
+
+The expanded input run also exposed an existing camera handoff defect: the
+settlement animation disabled the very pan recognizer that could interrupt it.
+After removing that prohibition, the first travel still jumped because its
+baseline came from an older SwiftUI closure. Pan now interrupts the existing
+settlement and starts from the current camera owner; the unchanged mounted
+interruption regression passes without a tolerance or timing change.
+
+Final receipt `.build/gui295-held-undo-186-checked-v3/`: **73 iPad + 3 Mac PASS**,
+zero failures, skips and runtime warnings, source
+`2084e1309539b0654f5cd13f7f69e2a0c1025905b7d5e597b8e7d3d3cca1324f`.
+New window checks use the installed gesture handlers and verify restored page
+and board pixels while both contacts remain down, then a real native finger
+callback sequence moves the restored page figure, not its former body. The
+selected scope also covers mixed cold Undo, contact ownership, Pencil/camera
+arbitration, native graphic commands, persistence faults, Mac paste and mouse
+eraser Undo. These are synthetic native contacts on the physical iPad, not human
+Pencil or system-event injection. Earlier attempts include a test-only
+CGRect/PageRect compile mismatch and an explicit-scale omission in the board
+fixture; both were corrected. The 71/2 and 72/1 intermediate runs are not PASS.
+
+The new hold scenarios use an explicit **two-second liveness** ceiling, not a
+claim that the 100 ms interaction target was met. Final window observations,
+including capture, were **148.17 ms** on the page and **110.25 ms** on the board
+after hold recognition; the next drag's post-lift observation was **273.68 ms**.
+Existing 100 ms checks were not relaxed. These results do not establish physical
+input-to-photon latency or full acceptance. Immediate inverse presentation ahead
+of a blocked writer and **Redo remain open**.
+
+Source version is 186; no new release pair was built or installed for this slice.
+The installed Mac was reread as **180**, PID 68193 still running at 04:52 UTC;
+the last installed iPad pair remains 180. Signed 185 stays staged separately and
+does not include these changes. The earlier CUA capture failure/user-quit
+installation boundary remains; no running bundle or user container was replaced.
+
 ## September 23 — GUI-295, native Undo owns its accepted queue position (185)
 
 The signed **0.3.134 (185)** pair is built in `.build/gui295-release-185/`

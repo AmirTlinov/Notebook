@@ -172,13 +172,13 @@ struct SpatialWorkspaceView: View {
             isEnabled: (presence.mode == .board || presence.mode == .cover
               || ((presence.mode == .page || presence.mode == .document)
                 && presence.camera.scale > model.itemGeometry(presence.focusedItemID).fitScale(viewport:viewport) * 1.001))
-              && cameraGesture == nil && !settling && !model.isPointing,
+              && cameraGesture == nil && !model.isPointing,
             inputGate: model.inputGate,
             onBegan: {
               referencePageResolution.cancel()
               interruptSettlementForInput()
               model.cancelElementManipulation()
-              panStart = presenceForNewContact(presence)
+              panStart = model.presence.map { presenceForNewContact($0) }
             },
             onChanged: { translation in
               updateWorkspacePan(translation, viewport: viewport)

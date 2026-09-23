@@ -52,6 +52,14 @@ can. A storage failure retains the same inverse for explicit retry, while
 Save/shutdown returns failure. This directory currently supports Undo; Redo is
 not yet implemented.
 
+A recognized stationary two-finger Undo hold refines those same physical
+contacts to the history owner in `NotebookInputGate`. It does not keep its own
+restored body waiting for lift: scene read, preparation and publication may
+advance under that quiet pair, with the ordinary content-epoch/cursor checks.
+Pencil, an object manipulation, another native control or peer input cannot
+borrow this permission. Motion, cancellation and retirement relinquish the
+history claim; the contact observer alone retires the physical contact IDs.
+
 ## Tools and accepted contact
 
 `DrawingTool` / `NotebookDrawingToolSettings` describe intention and local settings,
