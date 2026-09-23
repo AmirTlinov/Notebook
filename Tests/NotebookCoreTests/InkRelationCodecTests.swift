@@ -46,6 +46,7 @@ struct InkRelationCodecTests {
     #expect(restored.sourceID == original.sourceID && restored.span == original.span && restored.revision == original.revision)
     #expect(restored.header.tool == original.header.tool && restored.header.sequence == original.header.sequence)
     #expect(restored.header.isActive == original.header.isActive && restored.header.elementTargets == original.header.elementTargets)
+    #expect(restored.header.stateStamp == original.header.stateStamp)
     #expect(restored.header.color.red.bitPattern == original.header.color.red.bitPattern)
     #expect(restored.header.color.green.bitPattern == original.header.color.green.bitPattern)
     #expect(restored.header.color.blue.bitPattern == original.header.color.blue.bitPattern)
@@ -86,6 +87,28 @@ struct InkRelationCodecTests {
     let empty=source([]).settingExit(.init(x:.one,y:.zero,time:.one),revision:UUID())
     _=try check(try #require(empty.repeated(17,revision:UUID())))
     _=try check(.init(sourceID:UUID(),revision:UUID(),samples:[],header:.init(tool:.eraser,color:.black,elementTargets:[])))
+  }
+
+  @Test func fullRelationsCarryTheCausalGateAndStillReadExistingUnversionedMaterial() throws {
+    let stamp=VersionStamp(counter:VersionStamp.maximumCounter,actor:UUID())
+    let action=PageInkAction(tool:.eraser,color:.init(red:0.25,green:0.5,blue:0.75),
+      samples:(0..<8).map(sample),sequence:37,isActive:false,
+      elementTargets:[.init(elementID:"shape",frame:.init(x:10,y:10,width:100,height:100))],stateStamp:stamp)
+    let restored=try check(InkSampleRelations(action))
+    #expect(restored.restoredAction() == action)
+    #expect(restored.header.stateStamp == stamp)
+    // In the original NIR1 layout targets immediately follow the active byte;
+    // there was no state-presence flag or clock. Preserve that accepted data.
+    let oldAction=PageInkAction(tool:.pen,samples:(0..<8).map(sample),sequence:17,isActive:false)
+    var old=try InkSampleRelations(oldAction).encodedRelations()
+    #expect(old[58] == 0)
+    old.remove(at:58);old.replaceSubrange(0..<4,with:Data("NIR1".utf8))
+    let existing=try InkSampleRelations(encodedRelations:old)
+    #expect(existing.restoredAction() == oldAction && existing.header.stateStamp == nil)
+    #expect(try existing.encodedRelations().prefix(4) == Data("NIR2".utf8))
+    var malformed=try InkSampleRelations(action).encodedRelations()
+    malformed[58]=2
+    #expect(throws:InkSampleRelations.CodingError.self) { try InkSampleRelations(encodedRelations:malformed) }
   }
 
   @Test func repeatRestoreAndOneOccurrenceEditDoNotExpandTheBody() throws {

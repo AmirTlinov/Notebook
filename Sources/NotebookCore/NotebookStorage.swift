@@ -19,7 +19,9 @@ public struct NotebookRecordMutation: Codable, Equatable, Sendable {
 }
 
 public struct NotebookChangeManifest: Codable, Equatable, Sendable {
-  public static let currentFormat = 23
+  // Page visibility is now a causal gate. Cloud delivery must reject this
+  // format on old clients too, not only during direct wire negotiation.
+  public static let currentFormat = 24
   public let format: Int
   public let transactionID: UUID
   public let workspaceID: UUID

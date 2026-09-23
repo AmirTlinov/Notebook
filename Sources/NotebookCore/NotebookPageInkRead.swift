@@ -8,6 +8,7 @@ public struct NotebookPageInkActionMetadata: Codable, Equatable, Sendable {
   public let color: SpatialInkColor
   public let sequence: UInt64
   public let isActive: Bool
+  public let stateStamp: VersionStamp?
 }
 
 public struct NotebookPageInkBaselineMetadata: Codable, Equatable, Sendable {
@@ -61,6 +62,7 @@ extension NotebookStore {
       let actions = try fragments.map { fragment -> NotebookPageInkActionMetadata in
         let metadata = try fragment.value.decode(NotebookPageInkActionMetadata.self)
         guard metadata.color.isValid, metadata.sequence > 0, metadata.sequence <= VersionStamp.maximumCounter,
+          metadata.stateStamp.map({ $0.counter <= VersionStamp.maximumCounter }) ?? true,
           fragment.file == file, fragment.parent == root, fragment.collection == "actions",
           fragment.member == metadata.id.uuidString.lowercased(),
           fragment.address == root + "/actions/@" + fragment.member,

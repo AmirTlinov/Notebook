@@ -1,5 +1,84 @@
 # Verification record
 
+## September 23 — GUI-295, causal page-ink visibility and exact repeat material (187)
+
+The retained page action now owns its causal visibility, independent of its
+immutable measurements, color, targets and painter position. Native Undo compares
+the exact prior gate; an explicit inverse can reopen that same identity, but old
+drawings and repeated appends cannot. A peer's A→B→A gate change rejects a stale
+local inverse instead of treating equal booleans as equal history. Rejected ink
+requests reconcile through the existing queue/publication owner without blocking
+later accepted input or announcing a false commit. The unused lasso pending-delta
+fold was removed: it reads the already accepted page root.
+
+The new 100,000-sample check initially failed its bounded-read allowance. The
+write itself was addressed, but the reference index rehashed the entire stroke.
+The same index now holds separate header/body contributions; admission 20
+replaces the old derived contribution atomically without changing records, body
+hashes, local history or delivery cursors. Wire 41 / manifest 24 also prevent an
+old direct or cloud peer from interpreting a reopened gate as an old tombstone.
+Existing NIR1 sources remain readable; NIR2 carries the exact gate stamp.
+
+Core final evidence `.build/gui295-page-gate-core-final-v4.log`: **183 methods
+PASS in 18 suites**, source
+`0c3c6a52df09f0fe48abdc8801f163933446359af8b228ebffe9159005b917d7`.
+It covers gate identity/order, unchanged measurement bits, before/after-commit
+retries, stale conflicts, two-store delivery, delayed snapshots, codec admission,
+atomic reference-index conversion, existing eraser/Undo and transport contracts.
+On this Mac, 32 addressed toggles in 100,000 actions took **0.505 ms** total;
+header-only writes beside 100,000 samples took **6.36–6.68 ms**, already-committed
+retries **1.08–1.17 ms**. These are CPU/storage observations, not input-to-photon
+latency. An existing corrupt-order read test exposed zero ordinals being assigned
+an invented order during decoding; accepted decoding now rejects them. Two old
+invalid-page tests were corrected to assert the current typed `DecodingError`,
+not their former filesystem error, without weakening the rejection.
+
+The physical-iPad pixel regression initially failed after warm gate changes:
+GPU completion was acknowledging the previous on-screen frame. Nonempty canvases
+now require OS drawable presentation; tiled surfaces retain one submitted
+signature and exact presentation identity per tile, without uploading unchanged
+pending tiles again. Inactive buffers cannot re-enter tile selection. The same
+check covers ordinary ink, the retained page crop and tiled masks, with the
+unchanged **0.15** mean-pixel-error ceiling and images for every warm transition.
+Cold pen/eraser restoration preserves the original painter order and builds only
+the missing batch.
+
+That correction exposed a real preparation/presentation conflation: a new hidden
+board waited for a visible frame. New and existing physical owners now use the
+same private GPU preparation/atomic installation; hidden-window warm-up, polling,
+parking and their unused predicate were removed. GPU-ready and OS-presented are
+distinct states of that same canvas. Only exposed tiles require presentation;
+clipped overscan cannot stall readiness or cause full-backing redraws. The staged
+rotation test retains its immediate pixel/continuity/memory assertions, then
+separately awaits the actual display receipt; its former transaction-only
+"presented" assertion was false evidence.
+
+Final native evidence `.build/gui295-page-gate-187-final-v3/` has **88 iPad + 2 Mac
+PASS**, zero failures, skips and runtime warnings; the isolated iPad test host
+was removed. Its source is
+`585cc9df940cdac10b1d9cca0559e8bda87c086bc9fb06112203dcd38595b7d2`;
+the only build-input difference from the Core run above is deletion of the unused
+native warm-up predicate. Core inputs are unchanged. This scope includes measured
+ink, stale-inverse reconciliation, persistence, cold/held Undo, actual pixels,
+projection, first post-handoff Pencil callbacks, tile damage, ten retained
+rotations, resource pressure and retirement. Native callbacks on the physical
+hardware are not a human Pencil session or full system frame/CPU/GPU acceptance.
+Intermediate directories are not PASS: `187-checked-v2` found the warm pixel
+failure; `187-final` found hidden preparation waiting for presentation;
+`private-frame-regression` found clipped-tile readiness and overdraw. The focused
+`tile-presentation-regression` then passed all **13** tests. Two setup runs were
+interrupted explicitly (cloud-format admission, then removing the last unused
+warm-up getter); their stale-source evidence is not accepted.
+
+This is the material foundation, **not finished user-facing Redo**: the durable
+mixed-history cursor and command inverse path still need completion. At 10:51 UTC
+live readback confirmed **iPad 0.3.134 (185)**; a separate user-requested installation
+is recorded at `.build/gui295-ipad-185-side-install-20260923T1032Z/installation.json`.
+Mac remains **180**, PID 68193 reread at 10:46 UTC. CUA last failed with
+ScreenCaptureKit **-3811** at 10:20 UTC; no running Mac bundle/container was replaced.
+**187 is not built as a release or installed**, and the installed versions are not
+a newly verified matching pair.
+
 ## September 23 — GUI-295, held Undo publishes material and the next pan takes ownership (186)
 
 A mounted physical-iPad test reproduced saved Undo leaving both the model and

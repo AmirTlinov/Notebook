@@ -5,12 +5,14 @@ private directory of one Apple Account and stored in Keychain. Bonjour discovers
 endpoints; access comes from verified keys, identities and account admission.
 See [automatic connection](installation-pairing.md).
 
-## Current compatibility: wire 39, manifest 20
+## Current compatibility: wire 41, manifest 24
 
-Both applications must use the same wire contract. Version 39 and manifest 20
-carry exact compact measurement bodies, including shared repetitions, rather
-than flat arrays. Prior wire versions cannot join. Current admission rejects
-prior manifest formats; immutable manifests 3–19 remain inspectable as history,
+Both applications must use the same wire contract. Version 41 and manifest 24
+carry causal page-ink visibility as well as exact compact measurement bodies,
+including shared repetitions and tiled fields, rather than flat arrays. An old
+snapshot cannot undo a later explicit repeat. Prior wire versions cannot join.
+Current admission rejects prior manifest formats, including cloud delivery;
+immutable manifests 3–23 remain inspectable as history,
 not relabelled as current input. Already accepted transaction echoes retain
 normal idempotent acknowledgement without applying their bodies again.
 The existing Codex, TeX, package and native-content boundaries remain unchanged.
@@ -20,7 +22,7 @@ Content, local containers, workspace/device identities and keys survive an
 ordinary update. Installed build status belongs in [verification](verification.md);
 a source version alone does not prove installation.
 
-Bonjour advertises `notebook-v39-<UUID>-<generation>`; TXT `workspace` distinguishes
+Bonjour advertises `notebook-v41-<UUID>-<generation>`; TXT `workspace` distinguishes
 background workspace listeners sharing a Mac device ID. One transport owner
 changes the advertisement generation on restart. Metadata grants no trust.
 
@@ -38,6 +40,13 @@ moments are not retargeted. Conversion refuses an unacknowledged peer; rollback
 leaves the old admission version and content intact. The transition publishes
 current-format rows and records its outgoing floor, never imports old archives.
 A repeated open does not repeat conversion or publish another change.
+
+Database admission 20 separates the disposable page-ink reference contribution
+into immutable samples and a causal header, so Undo/Redo never hash an entire
+stroke again. This index rebuild does not rewrite accepted records, body blobs,
+local history or peer cursors. The existing drained-delivery transition records
+the new outgoing floor; both applications still update together, not one old
+writer beside the new gate semantics.
 
 The migration drain check belongs to the replication owner. Incoming cursor keys
 identify a device and possibly a journal generation; outgoing acknowledgements

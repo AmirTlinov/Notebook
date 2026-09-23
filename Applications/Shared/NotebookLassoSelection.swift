@@ -4,31 +4,23 @@ import NotebookCore
 
 /// Pins accepted vector content, never a screenshot or a visibility mask.
 enum NotebookLassoInkSource: Sendable {
-  case paper(PageInkSource, Set<UUID>, pending: [PageInkMutation])
-  static func page(_ page:PageDocument,pending:[PageInkMutation] = []) -> Self {
-    .paper(page.inkSource,page.graphicPresentation.suppressedInkIDs,pending:pending)
+  case paper(PageInkSource, Set<UUID>)
+  static func page(_ page:PageDocument) -> Self {
+    .paper(page.inkSource,page.graphicPresentation.suppressedInkIDs)
   }
   /// A bounded spatial read can gain members without advancing the journal's
   /// maximum stamp. The scene revision identifies that immutable membership.
   case spatial(SpatialInkJournal, Set<UUID>, membershipRevision: UInt64)
   var revision: String {
     switch self {
-    case .paper(let p, _, let pending):
-      guard !pending.isEmpty else { return p.stamp.revision }
-      return p.stamp.revision + ":" + pending.map(Self.mutationIdentity).joined(separator: ",")
+    case .paper(let p, _): return p.stamp.revision
     case .spatial(let j,_,_): return j.stamp.revision
     }
   }
   var suppressed: Set<UUID> {
     switch self {
-    case .paper(_,let ids,_): ids
+    case .paper(_,let ids): ids
     case .spatial(_,let ids,_): ids
-    }
-  }
-  private static func mutationIdentity(_ mutation: PageInkMutation) -> String {
-    switch mutation {
-    case .append(let action): "a:\(action.id.uuidString)"
-    case .remove(let ids): "r:" + ids.map(\.uuidString).sorted().joined(separator: "+")
     }
   }
   func cacheKey(surface: SurfaceID) -> String {
@@ -52,14 +44,8 @@ enum NotebookLassoInkSource: Sendable {
   func prepare(surface: SurfaceID, origin: WorldPoint?, reusing previous: Prepared? = nil) throws -> Prepared {
     let suppressed = suppressed
     switch self {
-    case .paper(let page, _, let pending):
-      var drawing = try page.drawing()
-      for mutation in pending {
-        switch mutation {
-        case .append(let action): drawing = try drawing.appending(action)
-        case .remove(let ids): drawing = drawing.removing(ids)
-        }
-      }
+    case .paper(let page, _):
+      let drawing = try page.drawing()
       let cursor=drawing.actionCursor
       if let previous,let previousCursor=previous.pageCursor,
         let appended=drawing.appendedActions(after:previousCursor),

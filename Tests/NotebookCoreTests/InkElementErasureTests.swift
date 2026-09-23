@@ -24,7 +24,7 @@ struct InkElementErasureTests {
     #expect(appearance.state == .erased)
     #expect(appearance.remaining.isEmpty)
     #expect(!appearance.contains(.init(x: 199, y: 119), tolerance: 20))
-    #expect(decoded.removing([action.id]).elementErasures.isEmpty)
+    #expect(try decoded.settingActive(false,for:[action.id],stamp:.init(counter:1,actor:UUID())).elementErasures.isEmpty)
     #expect(PageInkAction(tool: .eraser, samples: [sample(20, 20)]).erasingElements([object]).elementTargets?.isEmpty != false)
     let old = try JSONDecoder().decode(InkElementTarget.self, from: JSONEncoder().encode(target))
     #expect(!old.wholeElement, "Existing measured cutouts keep their authored meaning")
@@ -66,7 +66,7 @@ struct InkElementErasureTests {
     #expect(decoded == drawing)
     #expect(decoded.elementErasures.keys.sorted() == ["circle"])
     #expect(try decoded.appending(eraser) == decoded)
-    let undone = decoded.removing([eraser.id])
+    let undone = try decoded.settingActive(false,for:[eraser.id],stamp:.init(counter:1,actor:UUID()))
     #expect(undone.elementErasures.isEmpty)
     #expect(try undone.merging(decoded) == undone, "An old peer cannot restore the erase after undo")
     #expect(decoded.elementErasures["created-later"] == nil)
@@ -101,7 +101,7 @@ struct InkElementErasureTests {
     let merged = try first.merging(second)
     #expect(merged.elementErasures["circle"]?.count == 2)
     #expect(try merged.merging(first) == merged)
-    #expect(merged.removing([first.actions[0].id]).elementErasures["circle"]?.count == 1)
+    #expect(try merged.settingActive(false,for:[first.actions[0].id],stamp:.init(counter:1,actor:UUID())).elementErasures["circle"]?.count == 1)
   }
 
   @Test(arguments: [false, true]) func cutoutsSurviveAddressedStorageReplicationReplayAndUndo(whole: Bool) throws {
@@ -136,7 +136,7 @@ struct InkElementErasureTests {
     #expect(try reopened.readElementErasures(on:.page(pageID),elementID:"circle").count == 1)
     #expect(try reopened.readElementErasures(on:surface,elementID:"circle").count == 1)
     let before = try a.currentChangeCursor()
-    let undo = try page.prepareInkChange(.remove([erase.id]), stamp: .init(counter: 22, actor: actor))
+    let undo = try page.prepareInkChange(.setActive([erase.id],false), stamp: .init(counter: 22, actor: actor))
     let removed = page.publishInkChange(undo); #expect(removed)
     try a.savePage(page)
     let state = VersionStamp(counter: 23, actor: actor)
@@ -149,7 +149,7 @@ struct InkElementErasureTests {
     #expect(try reopened.readElementErasures(on:surface,elementID:"circle").isEmpty)
   }
 
-  @Test(arguments:[4,5,6,7,8,9,12,13,14,15,16,17,18]) func oldManifestsRequirePeerUpgradeWithoutChangingContentOrCursor(legacyFormat: Int) throws {
+  @Test(arguments:[4,5,6,7,8,9,12,13,14,15,16,17,18,19,20,21,22,23]) func oldManifestsRequirePeerUpgradeWithoutChangingContentOrCursor(legacyFormat: Int) throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
     let a = NotebookStore(root: root.appendingPathComponent("a")), b = NotebookStore(root: root.appendingPathComponent("b"))

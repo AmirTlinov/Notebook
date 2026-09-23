@@ -85,8 +85,8 @@ existing one. See [archive transfer](archive-transfer.md).
 
 ## Release and verification
 
-The current source uses wire **37**, manifest **18**; see
-[transport](transport-contract.md). Signed builds use team `M94V58FCVP` and
+Current wire/manifest admission is specified by the
+[transport contract](transport-contract.md). Signed builds use team `M94V58FCVP` and
 preserve installed container identities. The `NotebookDevices` schema must be
 deployed to Production.
 

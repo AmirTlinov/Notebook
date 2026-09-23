@@ -4,15 +4,15 @@ import Foundation
 /// selected action headers; neither command reconstructs the page archive.
 public enum NotebookPageInkCommand:Sendable {
   case append(PageInkAction,baseStamp:VersionStamp,stamp:VersionStamp)
-  case deactivate(Set<UUID>,baseStamp:VersionStamp,stamp:VersionStamp)
+  case state([UUID:PageInkVisibility],isActive:Bool,baseStamp:VersionStamp,stamp:VersionStamp)
 
-  var baseStamp:VersionStamp { switch self { case .append(_,let value,_),.deactivate(_,let value,_):value } }
-  var stamp:VersionStamp { switch self { case .append(_,_,let value),.deactivate(_,_,let value):value } }
+  var baseStamp:VersionStamp { switch self { case .append(_,let value,_),.state(_,_,let value,_):value } }
+  var stamp:VersionStamp { switch self { case .append(_,_,let value),.state(_,_,_,let value):value } }
 
   public init(_ change:PreparedPageInkChange) {
     switch change.mutation {
     case .append(let action): self = .append(action,baseStamp:change.baseStamp,stamp:change.stamp)
-    case .remove(let ids): self = .deactivate(ids,baseStamp:change.baseStamp,stamp:change.stamp)
+    case .setActive(_,let active): self = .state(change.expectedVisibility,isActive:active,baseStamp:change.baseStamp,stamp:change.stamp)
     }
   }
 }
@@ -56,24 +56,30 @@ extension NotebookStore {
         for fragment in fragments.sorted(by:{ ($0.address == address ? 1:0) < ($1.address == address ? 1:0) }) {
           if fragment.address == address,let previous {
             guard previous.parent == drawingAddress,previous.collection == "actions",previous.member == member,
-              previous.value.setting("isActive",nil) == fragment.value.setting("isActive",nil),
+              previous.value.setting("isActive",nil).setting("stateStamp",nil) == fragment.value.setting("isActive",nil).setting("stateStamp",nil),
               previous.collections == fragment.collections else { throw NotebookStorageError.transactionConflict }
-            let retained=fragment.replacing(value:fragment.value.setting("isActive",previous.value["isActive"]))
+            let retained=fragment.replacing(value:fragment.value.setting("isActive",previous.value["isActive"]).setting("stateStamp",previous.value["stateStamp"]))
             changed = try writeFragment(retained,database:database) || changed
           } else { changed = try writeFragment(fragment,database:database) || changed }
         }
-      case .deactivate(let ids,_,_):
-        guard !ids.isEmpty else { break }
-        for id in ids {
+      case .state(let expected,let active,_,let stamp):
+        guard !expected.isEmpty else { break }
+        let desired = PageInkVisibility(isActive:active,stateStamp:stamp)
+        for (id,source) in expected {
           let member=id.uuidString.lowercased(),address=drawingAddress+"/actions/@"+member
           guard let previous=try storedFragments(address:address,descendants:false).first,
             previous.parent == drawingAddress,previous.collection == "actions",previous.member == member,
             try previous.value["id"]?.decode(UUID.self) == id,
             [.bool(true),.bool(false)].contains(previous.value["isActive"]) else { throw NotebookStorageError.transactionConflict }
-          if previous.value["isActive"] == .bool(true) {
-            changed = try writeFragment(previous.replacing(value:previous.value.setting("isActive",.bool(false))),database:database) || changed
+          let accepted = try previous.value.decode(PageInkVisibility.self)
+          if accepted == desired { continue } // Exact retry after a committed response was lost.
+          guard source.isValid, accepted == source, source.isActive != active,
+            source.stateStamp.map({ stamp > $0 }) ?? true else {
+            throw CollaborationError("revision_conflict","Состояние штриха изменилось до отмены или повтора.")
           }
-          try recordNativeHistory(.ink([id]), domain: .page(pageID), actor: command.stamp.actor, removing: true)
+          changed = try writeFragment(previous.replacing(value:previous.value.setting("isActive",.bool(active))
+            .setting("stateStamp",try .encode(stamp))),database:database) || changed
+          try recordNativeHistory(.ink([id]),domain:.page(pageID),actor:stamp.actor,removing:!active)
         }
       }
       let frontier=max(previousStamp,command.stamp)

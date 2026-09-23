@@ -182,7 +182,7 @@ struct NotebookGroupGeometryTests {
     #expect(result.mask.contains(.init(x:30,y:42)))
     #expect(!result.mask.contains(.init(x:70,y:18)))
     #expect(!result.contains(.init(x:30,y:42),tolerance:0))
-    #expect(restored.removing([action.id]).elementErasures.isEmpty)
+    #expect(try restored.settingActive(false,for:[action.id],stamp:.init(counter:1,actor:UUID())).elementErasures.isEmpty)
   }
 
   @Test func groupsShareFramesAndMissingOrCyclicAncestryDoesNotInventPlacement() throws {

@@ -12,7 +12,13 @@ transaction, so a failed page also rolls back prepared notebook creation.
 `PageInkDrawing` binds each UUID to measured points, tool, color and assigned order.
 An exact replay retains that order and cannot revive an undone contact.
 Different points under the same UUID or exhausted order fail.
-`writeFragment` validates immutable headers and prevents false→true activity revival.
+`writeFragment` validates immutable material and the one causal visibility gate.
+Undo and its explicit inverse change `isActive` with a newer `stateStamp`, not
+points, color, targets, UUID or painter order. Native state writes compare the
+exact previous gate, including an A→B→A peer edit; the same committed stamp is
+an idempotent retry. Old unversioned accepted contacts remain readable and retain
+their inactive-wins rule until an explicit versioned gate replaces it. Equal
+stamps with opposite states conflict; a delayed archive cannot revive a contact.
 Row position is an order index, not mutable author content.
 
 `InkMeasurements` is the immutable accepted body: a shared relation tree, not a
@@ -21,9 +27,24 @@ journal 2 persist its bounded NIM1 graph with exact IEEE fields, repeat exits an
 address revisions. Contact freezing, journal metadata changes and mesh bindings
 borrow that body. An equivalent replay in another encoding retains the accepted
 body/revision; different bits still conflict. Whole placement remains with the
-existing graphic/group owner, outside local measurements. Full NIR1 relation
+existing graphic/group owner, outside local measurements. Full NIR2 relation
 snapshots retain their enclosing exact frames; a placed snapshot cannot silently
-be restored as an unplaced journal action.
+be restored as an unplaced journal action. They also retain the visibility stamp;
+the reader still preserves existing NIR1 material without inventing a clock.
+
+Page reference identities hash the accepted header and immutable measurement
+row as separate contributions. A gate transition reads/writes only its bounded
+header, never the measured body. Cold canvas restoration uses the same page mesh
+preparer to restore its original position between later pens/erasers; warm
+restoration toggles the resident batch. Neither path appends a replacement copy.
+
+The canvas distinguishes completed GPU preparation from a drawable actually
+presented by the OS. A retained tile keeps one submitted signature and its own
+presentation receipt; a late callback cannot acknowledge its replacement.
+Unchanged pending tiles are not uploaded twice. Only tiles intersecting the
+native visible crop must be presented; clipped overscan is prepared material,
+not missing on-screen content. Suppressed/inactive batches never re-enter tile
+selection through their still-resident buffers.
 
 Explicit command reads export at most 32,768 original samples per ink query,
 plus `relations` (the exact NIM1 body). This is a disposable, bounded observation,

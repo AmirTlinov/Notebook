@@ -190,7 +190,13 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     let tokens: [TileToken]
     let baseline: ObjectIdentifier?
   }
-  private var drawnTiles: (target: ObjectIdentifier, signatures: [TileSignature])?
+  private struct DrawnTile {
+    let signature: TileSignature
+    let submission: UUID
+    // nil is pending; false is a dropped (often clipped) drawable.
+    var presented: Bool?
+  }
+  private var drawnTiles: (target: ObjectIdentifier, revision: UInt64, tiles: [DrawnTile])?
   private var needsRevealedFrame = false
   private var activeRenderID = UUID()
   private(set) var lastRenderedTileCount = 0
@@ -335,6 +341,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
   }
   let isErasureMask: Bool
   private var stableContentRevision: UInt64 = 0
+  private var preparedStableContentRevision: UInt64?
   private var presentedStableContentRevision: UInt64?
   private var submittedMaterialRevision: UInt64?
   private(set) var drawableRequestCount = 0
@@ -351,6 +358,9 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
   var isStableFramePresented: Bool {
     presentedStableContentRevision == stableContentRevision
   }
+  /// Private preparation may complete without any pixels on the display.
+  /// It must never satisfy a page/receipt's visible-frame acknowledgement.
+  var isStableFramePrepared: Bool { preparedStableContentRevision == stableContentRevision }
 
   var onRenderReadinessChange: ((Bool) -> Void)? {
     didSet {
@@ -366,9 +376,6 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     committedBatches.reduce(0) { count, batch in
       count + (batch.operation == .erase ? batch.mesh.sourceNodeCount : 0)
     }
-  }
-  var hasSpatialInkGeometry: Bool {
-    !committedBatches.isEmpty || activeInkStroke != nil || activeEraserStroke != nil
   }
 
   init(frame: CGRect, resources: SceneRenderResources = .shared, isErasureMask: Bool = false) {
@@ -793,6 +800,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
   /// durable identity, while undo toggles the addressed batches in place.
   func settle(_ change:PreparedPageInkChange,suppressedInkIDs:Set<UUID>=[]) {
     let baseIsInstalled = pageDrawing != nil && pageGeometryIsReady
+    var needsRestoredGeometry = false
     cancelPendingPageMesh();pageRevision &+= 1;pageDrawing=change.drawing;drawingIsPreparing=false
     pageSuppressedIDs=suppressedInkIDs
     beginStableContentUpdate()
@@ -806,16 +814,23 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
         batch.pageAction=action;committedBatches.append(batch);pageBatchIndex[action.id]=committedBatches.count-1
       }
       if action.samples.count > InkRenderGeometry.maximumSegments { schedulePageActionMesh(action) }
-    case .remove(let ids):
+    case .setActive(let ids,let active):
       for id in ids {
-        guard let index=pageBatchIndex[id],committedBatches.indices.contains(index) else { continue }
-        committedBatches[index].pageIsActive=false
+        guard let index=pageBatchIndex[id],committedBatches.indices.contains(index) else {
+          needsRestoredGeometry = needsRestoredGeometry || active
+          continue
+        }
+        committedBatches[index].pageAction=change.drawing.action(id:id)
+        committedBatches[index].pageIsActive=active && !suppressedInkIDs.contains(id)
       }
     }
-    if baseIsInstalled { installedPageRevision=pageRevision }
+    if baseIsInstalled && !needsRestoredGeometry { installedPageRevision=pageRevision }
     else {
       // A fast first lift can beat initial decode/mesh preparation. Keep the
       // measured tail, but prepare its complete accepted base before readiness.
+      // A cold repeat has no resident mesh for the inactive action. The same
+      // page preparer restores its original painter position and reuses the
+      // other batches; appending it here would put an old eraser above new ink.
       schedulePageMeshIfNeeded()
     }
     requestFrame()
@@ -965,17 +980,21 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     }
     var passes:
       [(MTLRenderPassDescriptor, any CAMetalDrawable, MTLViewport?, CGRect?, [(Int, Range<Int>)])] = []
-    var signatures: [TileSignature] = []
+    let submission = UUID()
+    var tileStates: [DrawnTile] = [], submittedTiles: [Int] = []
     if let target = spatialTarget {
-      let previous = drawnTiles?.target == ObjectIdentifier(target) ? drawnTiles?.signatures : nil
+      let previous = drawnTiles?.target == ObjectIdentifier(target) ? drawnTiles?.tiles : nil
+      let exposed = exposedCanvasRect
       for (index, tile) in target.tiles.enumerated() {
         let clip = target.logicalRect(index)
         let tileVisible = visibleChunks(in: clip)
         let signature = tileSignature(visible: tileVisible, clip: clip)
-        signatures.append(signature)
-        if !needsRevealedFrame, let previous, index < previous.count, previous[index] == signature {
-          continue
+        if !needsRevealedFrame, let previous, index < previous.count, previous[index].signature == signature,
+          previous[index].presented != false || !clip.intersects(exposed) {
+          tileStates.append(previous[index]); continue
         }
+        tileStates.append(.init(signature: signature, submission: submission))
+        submittedTiles.append(index)
         guard let drawable = tile.layer.nextDrawable(),
           drawable.texture.allocatedSize <= tile.drawableByteCeiling
         else {
@@ -998,17 +1017,11 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     }
     lastRenderedTileCount = passes.count
     guard !passes.isEmpty else {
-      if activeInkStroke == nil, activeEraserStroke == nil, pageGeometryIsReady {
-        isPaused = true
-        let revision = stableContentRevision
-        Task { @MainActor [weak self] in
-          guard let self, stableContentRevision == revision, spatialStagingID == nil, window != nil,
-            activeInkStroke == nil, activeEraserStroke == nil, pageGeometryIsReady,
-            !spatialHandoffIsStopping
-          else { return }
-          presentedStableContentRevision = revision; onRenderReadinessChange?(true)
-        }
+      if let target = spatialTarget {
+        drawnTiles = (ObjectIdentifier(target), stableContentRevision, tileStates)
+        publishPresentedTilesIfReady()
       }
+      if activeInkStroke == nil, activeEraserStroke == nil { isPaused = true }
       return
     }
     drawableRequestCount += 1
@@ -1073,16 +1086,25 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
         && pageGeometryIsReady
       ? stableContentRevision : nil
     let submittedRevision = stableContentRevision
-    if transactionMaterial {
-      submittedMaterialRevision = submittedRevision
-      // Unlike a GPU completion, this receipt belongs to the visible drawable.
-      // A dropped frame never acknowledges the newly installed source.
+    if transactionMaterial { submittedMaterialRevision = submittedRevision }
+    let visibleSubmission = transactionMaterial || hasRevealedFirstFrame
+    if let target = spatialTarget {
+      // Cache each submitted tile once, without confusing submission with
+      // presentation. An unchanged, pending tile is not uploaded again.
+      drawnTiles = (ObjectIdentifier(target), submittedRevision, tileStates)
+      for (pass, index) in zip(passes, submittedTiles) {
+        observePresentation(of: pass.1, tile: index, target: target, submission: submission)
+      }
+    } else if visibleSubmission, presentedRevision != nil || onVisibleFrame != nil {
       passes[0].1.addPresentedHandler { [weak self] drawable in
         let presented = drawable.presentedTime > 0
         Task { @MainActor [weak self] in
           guard let self, !spatialHandoffIsStopping, window != nil,
             stableContentRevision == submittedRevision else { return }
-          guard presented else { requestFrame(); return }
+          guard presented else {
+            if !exposedCanvasRect.isEmpty { requestFrame() }
+            return
+          }
           onVisibleFrame?()
           if let presentedRevision {
             presentedStableContentRevision = presentedRevision
@@ -1116,6 +1138,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
         guard completed, !spatialHandoffIsStopping, window != nil,
           stableContentRevision == submittedRevision else { return }
         renderFailure = nil
+        if let presentedRevision { preparedStableContentRevision = presentedRevision }
         // Material visibility was submitted with its parent's transaction. It
         // needs neither a hidden warm-up frame nor a second reveal frame.
         if transactionMaterial { return }
@@ -1136,16 +1159,8 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
           requestFrame()
           return
         }
-        onVisibleFrame?()
-        guard let presentedRevision,
-          stableContentRevision == presentedRevision,
-          presentedStableContentRevision != presentedRevision
-        else { return }
-        presentedStableContentRevision = presentedRevision
-        onRenderReadinessChange?(true)
       }
     }
-    if let target = spatialTarget { drawnTiles = (ObjectIdentifier(target), signatures) }
     if let encodedRetainedKey { pageRetainedKey=encodedRetainedKey }
     commandBuffer.commit()
     if transactionMaterial {
@@ -1169,10 +1184,55 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     if activeInkStroke == nil, activeEraserStroke == nil { isPaused = true }
   }
 
+  private var exposedCanvasRect: CGRect {
+    #if os(iOS)
+    return SceneSourceVisibility.visibleRect(self)
+    #else
+    guard SceneSourceVisibility.isVisible(self) else { return .null }
+    return visibleRect
+    #endif
+  }
+
+  private func observePresentation(of drawable: any CAMetalDrawable, tile: Int,
+    target: SpatialTarget, submission: UUID) {
+    let identity = ObjectIdentifier(target)
+    drawable.addPresentedHandler { [weak self] drawable in
+      let presented = drawable.presentedTime > 0
+      Task { @MainActor [weak self] in
+        guard let self, !spatialHandoffIsStopping, let current = spatialTarget,
+          ObjectIdentifier(current) == identity, drawnTiles?.target == identity,
+          drawnTiles!.tiles.indices.contains(tile), drawnTiles!.tiles[tile].submission == submission else { return }
+        drawnTiles!.tiles[tile].presented = presented
+        if !presented, hasRevealedFirstFrame, current.logicalRect(tile).intersects(exposedCanvasRect) {
+          requestFrame()
+        }
+        publishPresentedTilesIfReady()
+      }
+    }
+  }
+
+  private func publishPresentedTilesIfReady() {
+    guard let target = spatialTarget, let drawn = drawnTiles,
+      drawn.target == ObjectIdentifier(target), drawn.revision == stableContentRevision,
+      hasRevealedFirstFrame, !spatialHandoffIsStopping, spatialStagingID == nil else { return }
+    let exposed = exposedCanvasRect
+    guard !exposed.isEmpty, !exposed.isNull,
+      target.tiles.indices.allSatisfy({ !target.logicalRect($0).intersects(exposed) || drawn.tiles[$0].presented == true }) else { return }
+    // The oversized backing may contain wholly clipped tiles. They remain
+    // prepared, but cannot prevent the actually exposed material's receipt.
+    onVisibleFrame?()
+    guard activeInkStroke == nil, activeEraserStroke == nil, pageGeometryIsReady,
+      presentedStableContentRevision != stableContentRevision else { return }
+    preparedStableContentRevision = stableContentRevision
+    presentedStableContentRevision = stableContentRevision
+    onRenderReadinessChange?(true)
+  }
+
   private func visibleChunks(in clip: CGRect) -> [(Int, Range<Int>)] {
     // The viewport query already selected and prepared resident chunks. Tiles
     // filter those descriptors; they must not repeat source-range disclosure.
     committedBatches.enumerated().flatMap { b, batch in
+      guard batch.pageIsActive else { return [(Int, Range<Int>)]() }
       var transform=batch.mesh.projection.transform(camera:spatialCamera,viewport:spatialViewport)
       if spatialCamera == nil,let crop=pageRenderRegion { transform.z -= Float(crop.minX);transform.w -= Float(crop.minY) }
       return batch.buffers.keys.sorted { $0.lowerBound < $1.lowerBound }.filter {
@@ -1418,17 +1478,18 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     committedBatches = frame.batches;pageBatchIndex.removeAll(); drawnTiles = nil; discardActiveAction()
     installedSpatialSource = .init(surface: surface, journal: journal, suppressedInkIDs: suppressedInkIDs)
     let revision = stableContentRevision, generation = spatialSourceGeneration
+    preparedStableContentRevision = revision // This exact frame completed GPU preparation before install.
     presentedStableContentRevision = nil
     let retiredTarget = spatialTarget
+    let hasDrawables = !frame.drawables.isEmpty
     submittedPresentationCount += 1
     CATransaction.begin(); CATransaction.setDisableActions(true)
     CATransaction.setCompletionBlock { [weak self, frame, retiredTarget] in
       Task { @MainActor [weak self, frame, retiredTarget] in
         withExtendedLifetime(retiredTarget) {}
-        // A committed layer transaction is stronger than completed GPU work,
-        // but is not an OS drawable-presented timestamp. The Simulator SDK
-        // does not expose MTLDrawable.addPresentedHandler.
-        if let self, !spatialHandoffIsStopping, stableContentRevision == revision,
+        // An empty plane has no drawable to present. Nonempty planes require
+        // their OS presentation receipts, not this transaction's completion.
+        if !hasDrawables, let self, !spatialHandoffIsStopping, stableContentRevision == revision,
           spatialSourceGeneration == generation {
           presentedStableContentRevision = revision
           onRenderReadinessChange?(true)
@@ -1445,13 +1506,14 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     installSpatialTarget(frame.target)
     needsRevealedFrame = false
     if let target = frame.target {
-      drawnTiles = (
-        ObjectIdentifier(target),
-        target.tiles.indices.map { index in
-          let clip = target.logicalRect(index)
-          return tileSignature(visible: visibleChunks(in: clip), clip: clip)
-        }
-      )
+      let submission = UUID()
+      drawnTiles = (ObjectIdentifier(target), revision, target.tiles.indices.map { index in
+        let clip = target.logicalRect(index)
+        return DrawnTile(signature: tileSignature(visible: visibleChunks(in: clip), clip: clip), submission: submission)
+      })
+      for (index, drawable) in frame.drawables.enumerated() {
+        observePresentation(of: drawable, tile: index, target: target, submission: submission)
+      }
     }
     for tile in frame.target?.tiles ?? [] { tile.layer.presentsWithTransaction = true }
     #if os(iOS)
@@ -1652,6 +1714,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     #endif
     CATransaction.commit()
     let revision = stableContentRevision
+    preparedStableContentRevision = revision
     // SwiftUI may be updating this owner now. Empty is a complete transparent
     // result, but readiness is delivered after the current publication pass.
     Task { @MainActor [weak self] in

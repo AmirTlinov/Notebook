@@ -210,27 +210,42 @@ public struct PageDocument: Codable, Equatable, Identifiable, Sendable {
   public func prepareInkChange(_ mutation: PageInkMutation, stamp: VersionStamp) throws -> PreparedPageInkChange {
     try Task.checkCancellation()
     let current = try inkDrawing()
-    let drawing: PageInkDrawing, effective:PageInkMutation,changed:Bool
+    let effective: PageInkMutation, expected: [UUID: PageInkVisibility]
     switch mutation {
     case .append(let action):
-      let previous=current.action(id:action.id)
-      drawing = try current.appending(action)
-      effective = drawing.action(id:action.id).map(PageInkMutation.append) ?? mutation
-      changed = previous == nil
-    case .remove(let ids):
-      let active=Set(ids.filter { current.action(id:$0)?.isActive == true })
-      drawing = current.removing(active);effective = .remove(active)
-      changed = !active.isEmpty
+      if let prior = current.action(id: action.id) {
+        _ = try current.appending(action) // Still validate immutable identity on a retry.
+        return .init(pageID:id,baseStamp:drawingStamp,stamp:drawingStamp,drawing:current,
+          mutation:.append(prior))
+      }
+      guard action.isActive else { throw PageInkDrawing.InkError.invalidDrawing }
+      effective = mutation; expected = [:]
+    case .setActive(let ids, let active):
+      expected = Dictionary(uniqueKeysWithValues:ids.compactMap { id in
+        guard let action = current.action(id:id), action.isActive != active else { return nil }
+        return (id,action.visibility)
+      })
+      effective = .setActive(Set(expected.keys),active)
+      if expected.isEmpty {
+        return .init(pageID:id,baseStamp:drawingStamp,stamp:drawingStamp,drawing:current,
+          mutation:effective)
+      }
     }
-    guard changed else {
-      return PreparedPageInkChange(pageID: id, baseStamp: drawingStamp,
-        stamp: drawingStamp, drawing: current, mutation:effective, data:drawingData)
-    }
-    guard drawingStamp.counter < VersionStamp.maximumCounter,
+    let frontier = max(drawingStamp.counter, expected.values.compactMap { $0.stateStamp?.counter }.max() ?? 0)
+    guard frontier < VersionStamp.maximumCounter,
       stamp.counter <= VersionStamp.maximumCounter else { throw PageInkDrawing.InkError.invalidDrawing }
-    let next = VersionStamp(counter: max(drawingStamp.counter + 1, stamp.counter), actor: stamp.actor)
+    let next = VersionStamp(counter:max(frontier+1,stamp.counter),actor:stamp.actor)
+    let drawing: PageInkDrawing, accepted: PageInkMutation
+    switch effective {
+    case .append(let action):
+      drawing = try current.appending(action.settingVisibility(.init(isActive:true,stateStamp:next)))
+      accepted = .append(drawing.action(id:action.id)!)
+    case .setActive(let ids,let active):
+      drawing = try current.settingActive(active,for:ids,stamp:next); accepted = effective
+    }
     try Task.checkCancellation()
-    return PreparedPageInkChange(pageID: id, baseStamp: drawingStamp, stamp: next, drawing: drawing, mutation:effective)
+    return .init(pageID:id,baseStamp:drawingStamp,stamp:next,drawing:drawing,
+      mutation:accepted,expectedVisibility:expected)
   }
 
   @discardableResult
@@ -365,8 +380,8 @@ public struct PageDocument: Codable, Equatable, Identifiable, Sendable {
     guard let current = try? inkDrawing(),
       let requested = try? PageInkDrawing.decode(data) else { return false }
     do {
-      let next = try current.removing(Set(current.activeActions.map(\.id))
-        .subtracting(requested.activeActions.map(\.id))).merging(requested)
+      let next = try current.settingActive(false,for:Set(current.activeActions.map(\.id))
+        .subtracting(requested.activeActions.map(\.id)),stamp:stamp).merging(requested)
       return try replaceDrawing(next.dataRepresentation(), stamp: stamp)
     } catch PageInkDrawing.InkError.incompatibleBaseline {
       return replaceDrawing(data, stamp: stamp)
@@ -515,7 +530,7 @@ public struct PageDocument: Codable, Equatable, Identifiable, Sendable {
 
 public enum PageInkMutation: Sendable {
   case append(PageInkAction)
-  case remove(Set<UUID>)
+  case setActive(Set<UUID>, Bool)
 }
 
 /// A page source carries the already decoded runtime value when one exists.
@@ -532,7 +547,7 @@ private final class PreparedPageInkArchive:@unchecked Sendable {
   private let lock=NSLock()
   private let drawing:PageInkDrawing
   private var prepared:Data?
-  init(_ drawing:PageInkDrawing,data:Data?=nil) { self.drawing=drawing;prepared=data }
+  init(_ drawing:PageInkDrawing) { self.drawing=drawing }
   func value()->Data { lock.withLock { if let prepared { return prepared };let data=try! drawing.dataRepresentation();prepared=data;return data } }
 }
 
@@ -544,14 +559,15 @@ public struct PreparedPageInkChange: Sendable {
   public let stamp: VersionStamp
   public let drawing: PageInkDrawing
   public let mutation:PageInkMutation
+  public let expectedVisibility: [UUID: PageInkVisibility]
   /// The accepted root, without encoding it or borrowing a previous display.
   public var inkSource:PageInkSource { .init(source:.init(stamp:stamp,drawing:drawing)) }
   private let archive:PreparedPageInkArchive
   public var data:Data { archive.value() }
 
   fileprivate init(pageID: UUID, baseStamp: VersionStamp, stamp: VersionStamp, drawing: PageInkDrawing,
-    mutation:PageInkMutation,data:Data?=nil) {
+    mutation:PageInkMutation,expectedVisibility:[UUID:PageInkVisibility] = [:]) {
     self.pageID = pageID; self.baseStamp = baseStamp; self.stamp = stamp
-    self.drawing = drawing;self.mutation=mutation;archive = .init(drawing,data:data)
+    self.drawing = drawing;self.mutation=mutation;self.expectedVisibility=expectedVisibility;archive = .init(drawing)
   }
 }

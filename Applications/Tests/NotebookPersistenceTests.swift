@@ -70,6 +70,22 @@ final class NotebookPersistenceTests: XCTestCase {
   }
 
   @MainActor
+  func testRejectedAddressedInkReconcilesInsteadOfBlockingOrAnnouncingACommit() async throws {
+    let root=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at:root) }
+    let queue=NotebookPersistenceQueue(store:.init(root:root))
+    var rejected=0,merged=0,commits=0
+    queue.onCommit={ _ in commits += 1 };queue.onContentMerged={ merged += 1 }
+    queue.enqueue(owner:.pageInk(UUID()),onRejected:{ error in
+      XCTAssertEqual(error.code,"revision_conflict");rejected += 1
+    }) { _ in throw CollaborationError("revision_conflict","The peer changed the gate") }
+    queue.enqueue(owner:.pageInk(UUID())) { _ in false }
+    let saved=await queue.flush()
+    XCTAssertTrue(saved);XCTAssertNil(queue.failure);XCTAssertEqual(queue.pendingCount,0)
+    XCTAssertEqual(rejected,1);XCTAssertEqual(merged,1);XCTAssertEqual(commits,1)
+  }
+
+  @MainActor
   func testPreparedRejectionDoesNotBlockIndependentAcceptedWrites() async throws {
     let root=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at:root) }

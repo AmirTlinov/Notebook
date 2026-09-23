@@ -196,6 +196,81 @@ final class PageInkGeometryTests: XCTestCase {
   }
 
   @MainActor
+  func testColdRepeatRestoresPenAndEraserAtTheirOriginalPainterPosition() async throws {
+    let size=CGSize(width:400,height:220),actor=UUID()
+    func measured(_ x:Double,_ y:Double,_ width:Double,_ opacity:Double) -> SpatialInkSample {
+      .init(point:.init(x:x,y:y),timeOffset:0,width:width,opacity:opacity,force:1,azimuth:0,altitude:1)
+    }
+    let pen=PageInkAction(tool:.pen,color:.init(red:0.8,green:0.15,blue:0.1),
+      samples:[measured(20,80,20,0.65),measured(350,80,20,0.65)])
+    let eraser=PageInkAction(tool:.eraser,
+      samples:[measured(160,20,40,1),measured(160,180,40,1)])
+    let later=PageInkAction(tool:.pen,color:.init(red:0.1,green:0.2,blue:0.9),
+      samples:[measured(20,120,12,0.9),measured(350,120,12,0.9)])
+    let source=PageInkDrawing(actions:[pen,eraser,later])
+    let scene=try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+    let window=UIWindow(windowScene:scene);window.frame=CGRect(origin:.zero,size:size)
+    let background=UIView(frame:window.bounds);background.backgroundColor = .white
+    let controller=UIViewController();controller.view=background;window.rootViewController=controller;window.makeKeyAndVisible()
+    defer { window.isHidden=true;window.rootViewController=nil }
+    func capture(_ view:InkCanvasView) async throws -> UIImage {
+      try await prepared(view)
+      let deadline=ContinuousClock.now + .seconds(3)
+      while !view.isStableFramePresented,ContinuousClock.now < deadline { try await Task.sleep(for:.milliseconds(5)) }
+      XCTAssertTrue(view.isStableFramePresented);XCTAssertNil(view.renderFailure)
+      let format=UIGraphicsImageRendererFormat();format.scale=1
+      return UIGraphicsImageRenderer(size:size,format:format).image { _ in
+        background.drawHierarchy(in:background.bounds,afterScreenUpdates:true)
+      }
+    }
+    func difference(_ a:UIImage,_ b:UIImage) throws -> Double {
+      let first=try XCTUnwrap(a.cgImage?.dataProvider?.data) as Data
+      let second=try XCTUnwrap(b.cgImage?.dataProvider?.data) as Data
+      XCTAssertEqual(first.count,second.count)
+      return zip(first,second).reduce(0.0) { $0+abs(Double($1.0)-Double($1.1)) }/Double(first.count)
+    }
+    // Ordinary ink, its cropped retained composite, and the tiled erasure
+    // mask all consume the same gate; retained buffers must not revive it.
+    for mode in ["ink", "crop", "tiled-mask"] {
+      func makeCanvas() -> InkCanvasView {
+        let view=InkCanvasView(frame:background.bounds,isErasureMask:mode == "tiled-mask")
+        background.addSubview(view)
+        if mode != "ink" { view.projectPage(region:background.bounds,sourceSize:size,pixelDensity:4) }
+        return view
+      }
+      let reference=makeCanvas();reference.apply(source)
+      let expected=try await capture(reference)
+      XCTAssertGreaterThan(darkPixelCount(in:expected),100,"The comparison must contain actual mounted ink")
+      reference.removeFromSuperview()
+      for action in [pen,eraser] {
+        let undone=try source.settingActive(false,for:[action.id],stamp:.init(counter:1,actor:actor))
+        var page=PageDocument(size:.init(width:400,height:220),actor:actor,drawingData:try undone.dataRepresentation())
+        let view=makeCanvas();view.apply(undone)
+        let missing=try await capture(view),built=view.pageMeshBuildCount
+        XCTAssertEqual(built,2);XCTAssertGreaterThan(try difference(missing,expected),0.5)
+        let repeatChange=try page.prepareInkChange(.setActive([action.id],true),stamp:.init(counter:2,actor:actor))
+        XCTAssertTrue(page.publishInkChange(repeatChange));view.settle(repeatChange)
+        XCTAssertFalse(view.pageGeometryIsReady,"The missing cold mesh cannot announce a ready frame")
+        let restored=try await capture(view)
+        XCTAssertEqual(view.pageMeshBuildCount,built+1,"The other measured batches remain shared")
+        XCTAssertLessThan(try difference(restored,expected),0.15,
+          "Restoring an old pen must retain later cutouts; restoring an eraser must not cut ink authored after it")
+        let attachment=XCTAttachment(image:restored);attachment.name="\(mode)-cold-repeat-\(action.tool)";attachment.lifetime = .keepAlways;add(attachment)
+        for active in [false,true] {
+          let change=try page.prepareInkChange(.setActive([action.id],active),stamp:page.drawingStamp)
+          XCTAssertTrue(page.publishInkChange(change));view.settle(change)
+          let shown=try await capture(view)
+          let attachment=XCTAttachment(image:shown);attachment.name="\(mode)-warm-repeat-\(action.tool)-\(active)";attachment.lifetime = .keepAlways;add(attachment)
+          XCTAssertLessThan(try difference(shown,active ? expected : missing),0.15,
+            "\(mode): the shown \(action.tool) gate must be \(active), not its previous frame")
+          XCTAssertEqual(view.pageMeshBuildCount,built+1,"A warm gate only toggles its resident batch")
+        }
+        view.removeFromSuperview()
+      }
+    }
+  }
+
+  @MainActor
   func testColdLoadAndDurableDeliveryPreserveANewerMeasuredTailAndUndo() async throws {
     let base = stroke(y: 100), tail = stroke(y: 160)
     let view = InkCanvasView(frame: .init(x: 0, y: 0, width: 400, height: 400))
@@ -363,7 +438,7 @@ final class PageInkGeometryTests: XCTestCase {
       drawingData:try base.dataRepresentation())
     let accepted=try page.prepareInkChange(.append(action),stamp:.init(counter:1,actor:actor))
     XCTAssertTrue(page.publishInkChange(accepted))
-    let undone=try page.prepareInkChange(.remove([action.id]),stamp:.init(counter:2,actor:actor))
+    let undone=try page.prepareInkChange(.setActive([action.id],false),stamp:.init(counter:2,actor:actor))
     return (accepted,undone)
   }
 

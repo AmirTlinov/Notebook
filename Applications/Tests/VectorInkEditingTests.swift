@@ -57,7 +57,7 @@ import XCTest
       "Appending one stroke must retain the existing range forest instead of rebuilding it")
     XCTAssertEqual(incrementallyPrepared.preparationActionCount,1,
       "A live append must not enumerate the complete page action history")
-    let removal=try page.prepareInkChange(.remove([actions[0].id]),
+    let removal=try page.prepareInkChange(.setActive([actions[0].id],false),
       stamp:.init(counter:page.drawingStamp.counter+1,actor:actor))
     XCTAssertTrue(page.publishLiveInkChange(removal))
     let rebuilt=try NotebookLassoInkSource.page(page).prepare(

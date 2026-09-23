@@ -148,7 +148,9 @@ final class SpatialInkPhysicalOwner {
       CATransaction.begin(); CATransaction.setDisableActions(true)
       defer { CATransaction.commit() }
       canvas.transform = .identity
-      registry.parkSceneCanvas(canvas)
+      // Private frames no longer need a hidden window/display loop. The
+      // existing handoff retention keeps this owner's buffers until remount.
+      canvas.removeFromSuperview()
     }
   }
 
@@ -172,10 +174,6 @@ final class SpatialInkPhysicalOwner {
     let wanted = CGRect(x: -marginX, y: -marginY,
       width: viewport.x + marginX * 2, height: viewport.y + marginY * 2)
     return !backing.contains(wanted)
-  }
-  func prepareNew(mesh: SpatialInkMesh, journal: SpatialInkJournal, suppressedInkIDs: Set<UUID> = []) {
-    canvas.applySpatial(mesh); canvas.installSpatialSource(journal, on: surface, suppressedInkIDs: suppressedInkIDs)
-    if mesh.batches.contains(where: { !$0.isEmpty }) { registry?.parkSceneCanvas(canvas) }
   }
   func stop() async {
     await canvas.finishSpatialHandoffFrames()

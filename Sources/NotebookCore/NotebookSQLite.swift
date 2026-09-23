@@ -376,7 +376,7 @@ extension NotebookStore {
   var currentSQL: NotebookSQLConnection? { Thread.current.threadDictionary[connectionKey] as? NotebookSQLConnection }
 
   // SQLite admission is local to this database, independently of wire and content formats.
-  static let currentDatabaseVersion: Int64 = 19
+  static let currentDatabaseVersion: Int64 = 20
 
   @discardableResult
   func prepareDatabase(initialWorkspaceID: UUID? = nil) throws -> NotebookSQLConnection {
@@ -520,6 +520,7 @@ extension NotebookStore {
           }
         }
       }
+      if admittedVersion < 20 { try admitPageInkReferenceParts(database:database) }
       try database.run("PRAGMA user_version=\(Self.currentDatabaseVersion)")
     }
     // Admission published its own command. Its pending changes, ownership

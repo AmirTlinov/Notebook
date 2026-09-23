@@ -27,7 +27,7 @@ struct NotebookPageInkPersistenceTests {
     let accepted=try store.commitPageInk(pageID:pageID,command:.append(action,baseStamp:appended.baseStamp,stamp:appended.stamp))
     #expect(accepted.stamp == appended.stamp)
     let undoStamp=try #require(accepted.stamp.advanced(by:actor))
-    _=try store.commitPageInk(pageID:pageID,command:.deactivate([action.id],baseStamp:accepted.stamp,stamp:undoStamp))
+    _=try store.commitPageInk(pageID:pageID,command:.state([action.id:action.visibility],isActive:false,baseStamp:accepted.stamp,stamp:undoStamp))
     let afterHash=try store.sqlRead { try #require($0.rows("SELECT hash FROM records WHERE address=?",[.text(sampleAddress)]).first?.first?.text) }
     #expect(afterHash == retainedHash)
     page=try store.loadPage(pageID)
@@ -88,7 +88,7 @@ struct NotebookPageInkPersistenceTests {
     #expect(try store.loadPage(pageID).elements == page.elements)
   }
 
-  @Test func staleDrawingMergesUndoIsIrreversibleAndConflictsRollBack() throws {
+  @Test func staleDrawingCannotReplaceTheAcceptedGateAndConflictsRollBack() throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
     let store = NotebookStore(root: root), actor = UUID()
@@ -101,7 +101,7 @@ struct NotebookPageInkPersistenceTests {
     let drawing = try store.loadPage(pageID).inkDrawing()
     #expect(Set(drawing.actions.map(\.id)) == [one.id, two.id])
     let undoStamp = try #require(joined.stamp.advanced(by: actor))
-    _=try store.commitPageInk(pageID:pageID,command:.deactivate([one.id],baseStamp:joined.stamp,stamp:undoStamp))
+    _=try store.commitPageInk(pageID:pageID,command:.state([one.id:try #require(drawing.action(id:one.id)).visibility],isActive:false,baseStamp:joined.stamp,stamp:undoStamp))
     _=try store.commitPageInk(pageID:pageID,command:.init(a))
     #expect(try store.loadPage(pageID).inkDrawing().action(id:one.id)?.isActive == false)
     let cursor = try store.currentChangeCursor()

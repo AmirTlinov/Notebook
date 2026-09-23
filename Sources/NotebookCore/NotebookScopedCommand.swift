@@ -35,12 +35,13 @@ extension NotebookStore {
     if let previousHash, fragment.file.hasPrefix("pages/"), fragment.collection == "actions",
       fragment.parent == fragment.file + "#/drawingData" {
       let accepted = try database.decodedStoredFragment(from:database.blob(previousHash))
-      guard accepted.replacing(value: accepted.value.setting("isActive", nil), position: fragment.position)
-        == fragment.replacing(value: fragment.value.setting("isActive", nil)) else {
+      guard accepted.replacing(value: accepted.value.setting("isActive", nil).setting("stateStamp",nil), position: fragment.position)
+        == fragment.replacing(value: fragment.value.setting("isActive", nil).setting("stateStamp",nil)) else {
         throw NotebookStorageError.invalidTransaction("stroke action header is immutable")
       }
-      guard accepted.value["isActive"] != .bool(false) || fragment.value["isActive"] == .bool(false) else {
-        throw NotebookStorageError.invalidTransaction("stroke tombstone is irreversible")
+      let old = try accepted.value.decode(PageInkVisibility.self), next = try fragment.value.decode(PageInkVisibility.self)
+      guard try old.merging(next) == next else {
+        throw NotebookStorageError.transactionConflict
       }
     }
     if fragment.file.hasPrefix("code-fragments/") {

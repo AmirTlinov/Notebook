@@ -209,7 +209,7 @@ import XCTest
       XCTAssertFalse(dark(shifted, left+100, 120), "A cutout travels with the object, not the old screen position")
       XCTAssertTrue(dark(shifted, right+100, 120))
       let restored = PageDocument(size: page.size, actor: actor,
-        drawingData: try drawing.removing([eraser.id, second.id]).dataRepresentation(), elements: [element])
+        drawingData: try drawing.settingActive(false,for:[eraser.id,second.id],stamp:.init(counter:1,actor:UUID())).dataRepresentation(), elements: [element])
       let uncut = try await image(restored)
       XCTAssertTrue(dark(uncut, left, 120), "Undo restores original native geometry, not a traced bitmap")
     }

@@ -128,7 +128,7 @@ struct NotebookAppendedPageUndoTests {
       return try f.store.currentSQL!.withActionRecordCapture(actionID: UUID()) {
         var page = try f.store.loadPage(pageID)
         let drawing = try PageInkDrawing.decode(page.drawingData)
-        #expect(try page.replaceDrawing(drawing.removing([stroke]).dataRepresentation(), actor: UUID()))
+        #expect(try page.replaceDrawing(drawing.settingActive(false,for:[stroke],stamp:.init(counter:1,actor:UUID())).dataRepresentation(), actor: UUID()))
         _ = try f.store.savePage(page)
         return try f.store.publishAppendedNotebookPageUndo(prepared, actor: UUID())
       }

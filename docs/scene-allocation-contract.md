@@ -36,6 +36,14 @@ need exact `SceneSourceInstallation` / `RasterLease.entryID`; live sources need 
 visible native/WebKit owner. Replacement, hide, unmount or shutdown revokes proof.
 An old callback or retained cohort cannot confirm an absent consumer.
 
+First-time and replacement native ink owners use the same private GPU-frame
+preparation and atomic installation. There is no hidden-window canvas warm-up
+or display-loop polling before a cohort can publish. An unmounted retained
+owner keeps its charged backing without remaining in a hidden view hierarchy.
+Prepared pixels and OS-presented pixels remain distinct states of that canvas;
+layer-transaction completion releases staged resources, not a false visible
+acknowledgement. Empty transparent planes need no drawable.
+
 ## Raster leases and runtime admission
 
 A remounted consumer first takes exact ready pixels at the required density.

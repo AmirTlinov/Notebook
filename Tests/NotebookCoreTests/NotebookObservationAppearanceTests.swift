@@ -48,7 +48,7 @@ struct NotebookObservationAppearanceTests {
       try f.store.commitSpatialInk(.state(actionID: id, creationStamp: stamp, isActive: false, stateStamp: undoStamp, journalStamp: undoStamp))
     } else {
       var page = try f.store.loadPage(f.pageID)
-      let change = try page.prepareInkChange(.remove([id]), stamp: undoStamp)
+      let change = try page.prepareInkChange(.setActive([id],false), stamp: undoStamp)
       let changed = page.publishInkChange(change); #expect(changed); try f.store.savePage(page)
     }
     let restored = try f.store.observeContent(scope: scope, since: delta.checkpoint)

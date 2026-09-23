@@ -259,7 +259,7 @@ struct NotebookPageElementCommandTests {
       let withInk = try checked()
       #expect(withInk != restored)
       drawing = try store.loadPage(page.id)
-      let remove = try drawing.prepareInkChange(.remove([measured.id]), stamp: .init(counter: 21, actor: actor))
+      let remove = try drawing.prepareInkChange(.setActive([measured.id],false), stamp: .init(counter: 21, actor: actor))
       let removed = drawing.publishInkChange(remove)
       #expect(removed); try store.savePage(drawing)
       #expect(try checked() != withInk)

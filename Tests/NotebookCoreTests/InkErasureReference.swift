@@ -6,7 +6,7 @@ extension PageInkAction {
   func erasingElements(_ targets: [InkElementTarget]) -> Self {
     guard tool == .eraser else { return self }
     return Self(id: id, tool: tool, color: color, measurements: samples, sequence: sequence, isActive: isActive,
-      elementTargets: targets.filter { $0.intersects(samples) })
+      elementTargets: targets.filter { $0.intersects(samples) }, stateStamp: stateStamp)
   }
 
 }

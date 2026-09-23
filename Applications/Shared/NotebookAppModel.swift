@@ -2635,15 +2635,18 @@ final class NotebookAppModel {
       case .append(let action):
         workingElementErasures[action.id]=nil
         pencilUndoHistory.recordAction(domain:.page(pageID),actionID:action.id)
-      case .remove(let ids):
-        pencilUndoHistory.didRemoveContribution(ids,for:.page(pageID))
+      case .setActive(let ids, let active):
+        if active { for id in ids { pencilUndoHistory.recordAction(domain:.page(pageID),actionID:id) } }
+        else { pencilUndoHistory.didRemoveContribution(ids,for:.page(pageID)) }
         // Undo and sync replace visible state; ordinary Pencil-up already
         // installed its exact delta in the native canvas.
         if pages[pageID] != nil { pages[pageID]=page }
-        showCue("Отменено")
+        showCue(active ? "Повторено" : "Отменено")
       }
       let command=NotebookPageInkCommand(change)
-      persistence.enqueue(owner:.pageInk(pageID)) { store in
+      persistence.enqueue(owner:.pageInk(pageID),onRejected:{ [weak self] error in
+        self?.showCue(error.localizedDescription)
+      }) { store in
         try store.commitPageInk(pageID:pageID,command:command).stamp != change.stamp
       }
       if case .append(let action)=change.mutation,let quickShape {
@@ -2670,7 +2673,7 @@ final class NotebookAppModel {
     guard inputGate.permitsNewContact, !inputGate.hasActivePencil,
       let page=activePage,let ids=pencilUndoHistory.lastContribution(for:.page(page.id)),
       let stamp=reserveDrawingAction(pageID:page.id) else { return nil }
-    return acceptInkMutation(.remove(ids),pageID:page.id,stamp:stamp)
+    return acceptInkMutation(.setActive(ids,false),pageID:page.id,stamp:stamp)
   }
 
   // The toolbar projects the active tool’s stored color, never a second copy.

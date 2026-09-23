@@ -494,7 +494,7 @@ extension NotebookStore {
       // Clocks of element fields are not printed content. Header frontiers,
       // measured ink, programs and computations retain their physical identity.
       value = fragment.parent == nil ? fragment.value.setting("collaboration", nil)
-        : fragment.collection == "drawingData" ? fragment.value : try read()
+        : ["drawingData", "actions"].contains(fragment.collection) ? fragment.value : try read()
       owners = [referenceOwnerKey("page", id)]
     } else if fragment.file == "workspace.json", fragment.collection == "items", let id = UUID(uuidString: fragment.member) {
       // Page membership is not printed on a cover. A page edit or turn does not
@@ -767,11 +767,30 @@ extension NotebookStore {
   private static func pageReferenceRoot(address: String, file: String) -> String? {
     let root = file + "#"
     if [root, root + "/drawingData", root + "/drawingData/baselinePNG"].contains(address) { return address }
+    // Material is immutable and has its own physical row. A visibility change
+    // updates the action header's contribution, not a hash of its entire body.
+    if address.hasPrefix(root + "/drawingData/actions/@"), address.hasSuffix("/samples") { return address }
     for prefix in [root + "/elements/@", root + "/computations/@", root + "/drawingData/actions/@"] where address.hasPrefix(prefix) {
       guard let member = address.dropFirst(prefix.count).split(separator: "/", maxSplits: 1).first else { return nil }
       return prefix + member
     }
     return nil
+  }
+
+  /// Admission changes only disposable reference contributions. Existing
+  /// content, pinned identities, shared transactions and peer cursors stay put.
+  func admitPageInkReferenceParts(database: NotebookSQLConnection) throws {
+    var after=""
+    while true {
+      let rows=try database.rows("SELECT address FROM records WHERE file LIKE 'pages/%' AND collection='actions' AND address>? ORDER BY address LIMIT 128",[.text(after)])
+      guard let last=rows.last?[0].text else { return }
+      for row in rows {
+        let address=row[0].text!
+        try database.noteOwner(.referenceRoot,address)
+        try database.noteOwner(.referenceRoot,address+"/samples")
+      }
+      after=last
+    }
   }
 
   private static func referenceOrderScope(_ fragment: NotebookStoredFragment) throws

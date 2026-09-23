@@ -70,7 +70,7 @@ func pencilUndoRecordsOneCompletedAction() throws {
   history.recordAction(domain: .page(pageID), actionID: stroke.id)
   let ids = try #require(history.lastContribution(for: .page(pageID)))
   #expect(ids == [stroke.id])
-  let drawing = try PageInkDrawing().appending(stroke).removing(ids)
+  let drawing = try PageInkDrawing().appending(stroke).settingActive(false,for:ids,stamp:.init(counter:1,actor:UUID()))
   #expect(drawing.isEmpty)
   #expect(drawing.actions.first?.isActive == false)
   history.didRemoveContribution(ids, for: .page(pageID))
@@ -582,7 +582,9 @@ func storeRejectsInvalidDecodedPage() throws {
   json["size"] = size
   try store.fixtureWrite(JSONSerialization.data(withJSONObject: json), to: pageURL)
 
-  #expect(throws: CocoaError.self) {
+  // Typed page admission now rejects the invalid dimensions before the
+  // filesystem-era post-decode guard in loadPage can run.
+  #expect(throws: DecodingError.self) {
     try store.loadPage(pageID)
   }
 }
@@ -609,7 +611,7 @@ func storeRejectsAPathologicalPageAllocation() throws {
   json["size"] = size
   try store.fixtureWrite(JSONSerialization.data(withJSONObject: json), to: pageURL)
 
-  #expect(throws: CocoaError.self) {
+  #expect(throws: DecodingError.self) {
     try store.loadPage(pageID)
   }
 }

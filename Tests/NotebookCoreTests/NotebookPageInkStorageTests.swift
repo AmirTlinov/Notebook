@@ -35,7 +35,7 @@ struct NotebookPageInkStorageTests {
     #expect(!appended.addresses.contains(firstAddress))
     #expect(appended.addresses.filter { $0.hasSuffix("/samples") }.count == 1)
     #expect(try PageInkDrawing.decode(store.loadPage(pageID).drawingData) == drawing)
-    let removed = drawing.removing([first.id])
+    let removed = try drawing.settingActive(false,for:[first.id],stamp:.init(counter:3,actor:actor))
     let undoChanged = page.replaceDrawing(try removed.dataRepresentation(), actor: actor)
     #expect(undoChanged)
     _ = try store.savePage(page)

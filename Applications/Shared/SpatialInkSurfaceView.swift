@@ -41,7 +41,6 @@ final class SpatialInkSurfaceRegistry {
     private var installedFocusedCoverID: UUID?
     private var preparingSceneInk: UUID?
     private var sceneInkWaiter: (id: UUID, continuation: CheckedContinuation<Bool, Never>)?
-    private var inkParking: NotebookPreparationHost?
     private(set) var sceneInkIsStopped = false
     var registeredPhysicalInkOwnerCount: Int { physicalInkOwners.count }
     private(set) var activeBoardInkID: UUID?
@@ -92,22 +91,6 @@ final class SpatialInkSurfaceRegistry {
         priorities[owner.resourceIdentity] = surface == .board(rootBoardID) || focused || activeSurfaces.contains(surface) ? .input : .passive
       }
       return sceneResources.updatePhysicalPriorities(priorities)
-    }
-
-    func parkSceneCanvas(_ canvas: InkCanvasView) {
-      guard !sceneInkIsStopped else { return }
-      guard canvas.hasSpatialInkGeometry else { canvas.removeFromSuperview(); return }
-      if inkParking == nil {
-        guard let scene = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene })
-          .first(where: { $0.activationState == .foregroundActive }) else { return }
-        inkParking = try? NotebookPreparationHost(windowScene: scene)
-      }
-      if let parking = inkParking, canvas.superview !== parking.view {
-        let host = parking.view
-        parking.resize(to: .init(width: max(host.bounds.width, canvas.bounds.width),
-          height: max(host.bounds.height, canvas.bounds.height)))
-        host.addSubview(canvas); canvas.center = .init(x: canvas.bounds.midX, y: canvas.bounds.midY)
-      }
     }
 
     /// Only actual native ink allocations consume physical permits. Raster-only
@@ -183,18 +166,10 @@ final class SpatialInkSurfaceRegistry {
               registry: self, resources: resources, displayScale: displayScale, physical: admission)
             created.append(owner)
             physicalInkOwners[surface] = WeakOwner(owner)
-            owner.prepareNew(mesh: prepared.1 ?? .init(batches: []), journal: prepared.0, suppressedInkIDs: suppressed)
-            let deadline = ContinuousClock.now + .seconds(5)
-            while !owner.canvas.isStableFramePresented {
-              try Task.checkCancellation()
-              if let failure = owner.canvas.renderFailure { throw failure }
-              guard !sceneInkIsStopped, ContinuousClock.now < deadline else { throw SceneRenderError.snapshotPending("native_ink_frame") }
-              try await Task.sleep(for: .milliseconds(5))
-            }
           }
           owners[surface] = owner
           let staged: InkCanvasView.PreparedSpatialFrame?
-          if previous != nil, prepared.1 != nil || owner.canvas.needsSpatialTarget(size: size, displayScale: displayScale)
+          if previous == nil || prepared.1 != nil || owner.canvas.needsSpatialTarget(size: size, displayScale: displayScale)
             || (surface.kind == .board && owner.needsProjection(camera: camera,
               viewport: viewport, refinesDetails: refinesDetails)) {
             staged = try await owner.canvas.prepareSpatialFrame(prepared.1, size: size, displayScale: displayScale,
@@ -260,7 +235,6 @@ final class SpatialInkSurfaceRegistry {
       physicalInkOwners.removeAll()
       installedSceneSurfaces.removeAll()
       installedRootBoardID = nil; sceneResources = nil
-      inkParking?.close(); inkParking = nil
     }
 
     func register(_ view: InkCanvasView, for surface: SurfaceID) {

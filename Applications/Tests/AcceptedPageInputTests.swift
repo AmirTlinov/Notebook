@@ -152,6 +152,32 @@ final class AcceptedPageInputTests: XCTestCase {
   }
 
   @MainActor
+  func testPeerGateChangeRejectsStaleUndoWithoutBlockingTheNextStrokeOrKeepingFalseMaterial() async throws {
+    let (model,root)=await makeModel()
+    let page=try XCTUnwrap(model.activePage),first=stroke(y:220),next=stroke(y:270)
+    let stamp=try XCTUnwrap(model.reserveDrawingAction(pageID:page.id))
+    XCTAssertNotNil(model.acceptDrawingAction(first,pageID:page.id,stamp:stamp))
+    let initialSaved=await model.finishPendingPersistence();XCTAssertTrue(initialSaved)
+    // The peer's inverse and repeat are committed, but this mounted source has
+    // not read them yet. Equal final bool is not the same causal gate (ABA).
+    let peer=NotebookStore(root:root),actor=UUID()
+    for active in [false,true] {
+      let source=try peer.loadPage(page.id)
+      let changed=try source.prepareInkChange(.setActive([first.id],active),stamp:.init(counter:50,actor:actor))
+      _=try peer.commitPageInk(pageID:page.id,command:.init(changed))
+    }
+    XCTAssertNotNil(model.acceptDrawingUndo())
+    let nextStamp=try XCTUnwrap(model.reserveDrawingAction(pageID:page.id))
+    XCTAssertNotNil(model.acceptDrawingAction(next,pageID:page.id,stamp:nextStamp))
+    let saved=await model.finishPendingPersistence();XCTAssertTrue(saved,model.persistenceFailure ?? "")
+    await model.reloadExternalChanges()?.value
+    XCTAssertNil(model.persistenceFailure)
+    XCTAssertEqual(try peer.loadPage(page.id).inkDrawing().activeActions.map(\.id),[first.id,next.id])
+    XCTAssertEqual(try model.activePage?.inkDrawing().activeActions.map(\.id),[first.id,next.id],
+      "The refused optimistic inverse must not remain as a second material owner")
+  }
+
+  @MainActor
   private func makeModel() async -> (NotebookAppModel,URL) {
     let root=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     let model=NotebookAppModel(store:.init(root:root),startsNearbySync:false)

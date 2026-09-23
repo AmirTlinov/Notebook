@@ -30,11 +30,16 @@ final class SpatialInkTilePoolTests: XCTestCase {
       await withCheckedContinuation { continuation in frame.afterPresentationTransaction { continuation.resume() } }
       XCTAssertEqual(canvas.spatialTilePoolIDs, pools)
       XCTAssertEqual(canvas.drawableSize, CGSize(width: size.x * 2, height: size.y * 2))
-      XCTAssertTrue(canvas.isStableFramePresented)
+      XCTAssertTrue(canvas.isStableFramePrepared)
       XCTAssertEqual(resources.reservedBytes, held)
       XCTAssertEqual(try canvas.installedSpatialSource?.referenceInk(), try fixture.reference)
       XCTAssertGreaterThan(try blackPixels(canvas), 300, "Retained UUIDs must also have real displayed pixels")
       try assertContinuousCenterLine(canvas)
+      // The original immediate pixel assertions stay above. Completion of
+      // their layer transaction alone is not a drawable presentation receipt.
+      let deadline = ContinuousClock.now + .seconds(1)
+      while !canvas.isStableFramePresented, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(5)) }
+      XCTAssertTrue(canvas.isStableFramePresented)
     }
     let attachment = XCTAttachment(image: capture(canvas)); attachment.name = "near-full-retina-tile-rotation"
     attachment.lifetime = .keepAlways; add(attachment)

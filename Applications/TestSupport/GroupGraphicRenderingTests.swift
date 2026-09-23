@@ -701,7 +701,7 @@ import AppKit
     }
     let uncut=try await render(.init(),page.elements),cut=try await render(drawing,page.elements)
     XCTAssertNotEqual(try pixels(uncut),try pixels(cut),"The saved measured cut changes the actual exported glyph pixels")
-    let undone=try await render(drawing.removing([action.id]),page.elements)
+    let undone=try await render(drawing.settingActive(false,for:[action.id],stamp:.init(counter:1,actor:UUID())),page.elements)
     XCTAssertEqual(try pixels(uncut),try pixels(undone))
     let moved=AgentElement(id:whole.id,kind:.group,frame:.init(x:50,y:50,width:300,height:700),source:"",html:"",basis:whole.basis)
     let movedPage=PageDocument(size:page.size,actor:model.actorID,elements:[moved,text])

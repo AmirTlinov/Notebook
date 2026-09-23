@@ -4,9 +4,9 @@ import Foundation
 /// The transport has no durable content owner. A completed frame grants only
 /// transfer credit; a committed change acknowledges the store's SQL transaction.
 public enum NotebookTransportLimits {
-  // Exact tiled measurement fields share the same portable and stored bodies.
+  // Causal page-ink gates and their portable sources preserve Undo/Redo state.
   // Both applications update together; identities and queued history stay intact.
-  public static let protocolVersion = 40
+  public static let protocolVersion = 41
   public static let maximumFrameBytes = 256 * 1_024
   public static let maximumChunkBytes = 32 * 1_024
   public static let maximumQueuedBytes = 1_024 * 1_024

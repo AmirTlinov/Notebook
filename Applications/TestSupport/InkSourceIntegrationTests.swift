@@ -45,7 +45,7 @@ final class InkSourceIntegrationTests: XCTestCase {
     XCTAssertNotEqual(try XCTUnwrap(after.dataProvider?.data) as Data,try XCTUnwrap(changedImage.dataProvider?.data) as Data)
     XCTAssertTrue(InkSampleRelations.sameBits(reopened.actions[0].samples[31],values[31]))
     XCTAssertTrue(reopened.actions[0].samples.storage === shared)
-    XCTAssertTrue(changed.removing([last.id]).actions.last?.isActive == false)
+    XCTAssertTrue(try changed.settingActive(false,for:[last.id],stamp:.init(counter:1,actor:UUID())).actions.last?.isActive == false)
     XCTAssertTrue(changed.actions[0].samples.storage === shared)
   }
 

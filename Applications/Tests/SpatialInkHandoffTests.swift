@@ -77,7 +77,9 @@ final class SpatialInkHandoffTests: XCTestCase {
     addTeardownBlock { await fixture.close() }
     for id in [fixture.parentID, fixture.childID] {
       let canvas = try XCTUnwrap(fixture.cohort.nativeInk.owners[.board(id)]?.canvas)
-      XCTAssertTrue(canvas.isStableFramePresented)
+      XCTAssertTrue(canvas.isStableFramePrepared)
+      XCTAssertFalse(canvas.isStableFramePresented, "A private GPU frame is not a shown board")
+      XCTAssertNil(canvas.window, "Preparation must not run a hidden display loop")
       XCTAssertEqual(canvas.bounds.size, CGSize(width: 1024, height: 1280),
         "Motion uses the same 4 by 5 Retina tile pools, including their previously unused edge pixels")
       XCTAssertEqual(canvas.drawableSize.width / canvas.bounds.width, 2, accuracy: 0.001)
@@ -85,7 +87,8 @@ final class SpatialInkHandoffTests: XCTestCase {
     }
     XCTAssertFalse(fixture.cohort.rasters.isEmpty, "Native ink must leave room for the visible static materials")
     let cover = try XCTUnwrap(fixture.cohort.nativeInk.owners[.cover(fixture.childID)]?.canvas)
-    XCTAssertTrue(cover.isStableFramePresented)
+    XCTAssertTrue(cover.isStableFramePrepared)
+    XCTAssertFalse(cover.isStableFramePresented)
     XCTAssertGreaterThan(cover.committedSourceNodeCount, 0)
     XCTAssertLessThanOrEqual(fixture.resources.residentBytes + fixture.resources.reservedBytes, 256 * 1024 * 1024)
     try fixture.mountActive(fixture.parentID)
@@ -425,7 +428,7 @@ final class SpatialInkHandoffTests: XCTestCase {
     XCTAssertEqual(canvas.spatialDrawableAccountedBytes, 0)
     XCTAssertEqual(fixture.resources.activePhysicalOwnerCount, 9,
       "The outgoing frame stays retained until its real mount releases it")
-    XCTAssertTrue(old.nativeInk.owners.values.allSatisfy { $0.canvas.isStableFramePresented })
+    XCTAssertTrue(old.nativeInk.owners.values.allSatisfy { $0.canvas.isStableFramePrepared })
     XCTAssertLessThanOrEqual(fixture.resources.residentBytes + fixture.resources.reservedBytes, fixture.resources.byteLimit)
   }
 
@@ -493,8 +496,10 @@ final class SpatialInkHandoffTests: XCTestCase {
     let cohort = fixture.cohort
     let parent = try XCTUnwrap(cohort.nativeInk.owners[.board(fixture.parentID)]?.canvas)
     let child = try XCTUnwrap(cohort.nativeInk.owners[.board(fixture.childID)]?.canvas)
-    XCTAssertTrue(parent.isStableFramePresented && child.isStableFramePresented,
-      "Both nonempty planes finish their native frame before the whole cohort publishes")
+    XCTAssertTrue(parent.isStableFramePrepared && child.isStableFramePrepared,
+      "Both nonempty planes finish their private frame before the whole cohort publishes")
+    XCTAssertFalse(parent.isStableFramePresented || child.isStableFramePresented,
+      "Private preparation is not an acknowledgement of on-screen ink")
     XCTAssertEqual(fixture.registry.canvas(for: .board(fixture.parentID)), parent)
     XCTAssertEqual(fixture.registry.canvas(for: .board(fixture.childID)), child)
     let installs = [parent.spatialMeshInstallCount, child.spatialMeshInstallCount]

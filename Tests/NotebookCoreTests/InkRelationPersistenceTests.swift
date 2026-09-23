@@ -377,7 +377,7 @@ struct InkRelationPersistenceTests {
       _=try a.commitSpatialInk(.state(actionID:action.id,creationStamp:stamp,isActive:false,stateStamp:state,journalStamp:state))
       #expect(try !a.commitSpatialInk(.append(echo,journalStamp:stamp)).isActive)
       #expect(try bodyHash(a,row(action.id)) == hash)
-      let drawing=PageInkDrawing(actions:[original.restoredAction()]).removing([original.sourceID])
+      let drawing=try PageInkDrawing(actions:[original.restoredAction()]).settingActive(false,for:[original.sourceID],stamp:.init(counter:1,actor:UUID()))
       let replay=try drawing.appending(alternate.restoredAction())
       #expect(try replay.dataRepresentation() == drawing.dataRepresentation())
       // Bit identity, not Double ==: signed zero is part of the measurement.

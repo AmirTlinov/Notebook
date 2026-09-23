@@ -38,7 +38,7 @@ func preparedInkRetriesCurrentDrawing() throws {
   #expect(published5)
   #expect(retry.stamp.counter == 6)
   #expect(Set(retry.drawing.activeActions.map(\.id)) == [local.id, remote.id])
-  let undo = try page.prepareInkChange(.remove([local.id]), stamp: .init(counter: 7, actor: actor))
+  let undo = try page.prepareInkChange(.setActive([local.id],false), stamp: .init(counter: 7, actor: actor))
   let published6 = page.publishInkChange(undo)
   #expect(published6)
   #expect(undo.drawing.activeActions.map(\.id) == [remote.id])
@@ -71,7 +71,7 @@ func undoCompletionKeepsNewerContact() throws {
 @Test("Уже удалённый вклад завершает отмену без лишней ревизии чернил")
 func preparedNoOpDoesNotAdvanceDrawing() throws {
   let page = PageDocument(size: .init(width: 834, height: 1194), actor: UUID())
-  let prepared = try page.prepareInkChange(.remove([UUID()]), stamp: .init(counter: 1, actor: UUID()))
+  let prepared = try page.prepareInkChange(.setActive([UUID()],false), stamp: .init(counter: 1, actor: UUID()))
   #expect(prepared.stamp == page.drawingStamp)
   #expect(prepared.data == page.drawingData)
 }

@@ -6,7 +6,7 @@ import Synchronization
 /// IEEE fields are bytes, including signed zero, not JSON's numeric transport.
 extension InkSampleRelations: Codable {
   public enum CodingError: Error { case invalidSource, limitExceeded }
-  private static let signature = Data("NIR1".utf8)
+  private static let signature = Data("NIR2".utf8)
   fileprivate static let maximumBytes = 128 * 1024 * 1024
   private static let maximumNodes = 65_536
   private static let maximumEvents = 1_000_000
@@ -25,6 +25,7 @@ extension InkSampleRelations: Codable {
   public func encodedRelations() throws -> Data {
     guard count <= Self.maximumEvents, span >= 0, span <= Self.maximumEvents,
       frames.count <= Self.maximumNodes, header.sequence <= VersionStamp.maximumCounter,
+      header.stateStamp.map({ $0.counter <= VersionStamp.maximumCounter }) ?? true,
       header.color.isValid, header.elementTargets?.allSatisfy(\.isValid) ?? true,
       header.elementTargets == nil || header.tool == .eraser else { throw CodingError.invalidSource }
     var out = InkRelationWriter(data: Self.signature)
@@ -32,6 +33,8 @@ extension InkSampleRelations: Codable {
     out.byte(header.tool == .pen ? 0 : 1)
     for value in [header.color.red, header.color.green, header.color.blue] { out.double(value) }
     out.integer(header.sequence); out.byte(header.isActive ? 1 : 0)
+    out.byte(header.stateStamp == nil ? 0 : 1)
+    if let stamp = header.stateStamp { out.integer(stamp.counter); out.uuid(stamp.actor) }
     let targets = header.elementTargets ?? []
     guard targets.count <= Self.maximumNodes, Set(targets.map(\.elementID)).count == targets.count else { throw CodingError.invalidSource }
     out.byte(header.elementTargets == nil ? 0 : 1); out.integer(UInt32(targets.count))
@@ -145,7 +148,10 @@ extension InkSampleRelations: Codable {
   public init(encodedRelations data: Data) throws {
     guard data.count <= Self.maximumBytes else { throw CodingError.limitExceeded }
     var input = InkRelationReader(data: data)
-    guard try input.bytes(4) == Self.signature else { throw CodingError.invalidSource }
+    let signature = try input.bytes(4)
+    // Existing authored sources remain readable; only the current format is
+    // written. Measurement bodies (NIM1) are unchanged by a visibility gate.
+    guard signature == Self.signature || signature == Data("NIR1".utf8) else { throw CodingError.invalidSource }
     let sourceID = try input.uuid(), span = Int(try input.integer(UInt32.self))
     guard span <= Self.maximumEvents else { throw CodingError.invalidSource }
     let tool = try input.flag() ? SpatialInkTool.eraser : .pen
@@ -153,6 +159,12 @@ extension InkSampleRelations: Codable {
     guard colors.allSatisfy({ $0.isFinite && (0...1).contains($0) }) else { throw CodingError.invalidSource }
     let sequence = try input.integer(UInt64.self), active = try input.flag()
     guard sequence <= VersionStamp.maximumCounter else { throw CodingError.invalidSource }
+    let stateStamp: VersionStamp?
+    if signature == Self.signature, try input.flag() {
+      let counter = try input.integer(UInt64.self), actor = try input.uuid()
+      guard counter <= VersionStamp.maximumCounter else { throw CodingError.invalidSource }
+      stateStamp = .init(counter:counter,actor:actor)
+    } else { stateStamp = nil }
     let hasTargets = try input.flag(), targetCount = Int(try input.integer(UInt32.self))
     guard targetCount <= Self.maximumNodes, hasTargets || targetCount == 0, !hasTargets || tool == .eraser else { throw CodingError.invalidSource }
     let targets = try (0..<targetCount).map { _ in try input.target() }
@@ -166,7 +178,7 @@ extension InkSampleRelations: Codable {
     guard input.offset == data.count else { throw CodingError.invalidSource }
     self.init(sourceID:sourceID,span:span,measurements:measurements,frames:frames,
       header:.init(tool:tool,color:.init(red:colors[0],green:colors[1],blue:colors[2]),sequence:sequence,isActive:active,
-        elementTargets:hasTargets ? targets : nil))
+        elementTargets:hasTargets ? targets : nil,stateStamp:stateStamp))
   }
 
   fileprivate static func decodeMeasurements(from input: inout InkRelationReader, revision: UUID? = nil, record: ((Range<Int>,[Int]) -> Void)? = nil) throws -> InkMeasurements {

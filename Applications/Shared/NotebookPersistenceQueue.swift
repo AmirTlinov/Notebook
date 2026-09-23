@@ -15,6 +15,7 @@ final class NotebookPersistenceQueue {
   private struct Outcome {
     let merged: Bool
     let succeeded: Bool
+    var rejection: CollaborationError? = nil
   }
 
   private struct Write {
@@ -25,6 +26,7 @@ final class NotebookPersistenceQueue {
     var boardBaseline: BoardHierarchy? = nil
     var notifiesCommit = true
     var onCompleted: (@Sendable () -> Void)? = nil
+    var onRejected: (@MainActor @Sendable (CollaborationError) -> Void)? = nil
   }
 
   struct Failure: LocalizedError, Sendable {
@@ -51,8 +53,17 @@ final class NotebookPersistenceQueue {
   /// A nil owner is an ordering fence (creation, deletion, or publication).
   /// Coalescing never crosses it or replaces a write already executing.
   func enqueue(owner: Owner? = nil, publishesChanges: Bool = true,
+    onRejected: (@MainActor @Sendable (CollaborationError) -> Void)? = nil,
     _ operation: @escaping @Sendable (NotebookStore) throws -> Bool) {
-    let write = Write(owner: owner, operation: { .init(merged: try operation($0), succeeded: true) }, notifiesCommit: publishesChanges)
+    let handlesRejection = onRejected != nil
+    let write = Write(owner: owner, operation: { store in
+      do { return .init(merged: try operation(store), succeeded: true) }
+      catch let rejection as CollaborationError where handlesRejection {
+        // Reconcile accepted presentation with the causal owner. A rejected
+        // inverse is not a disk failure and must not block subsequent ink.
+        return .init(merged: true, succeeded: false, rejection: rejection)
+      }
+    }, notifiesCommit: publishesChanges, onRejected: onRejected)
     if let owner, let index = coalescingIndex(for: owner) {
       pending[index] = write
       startIfNeeded()
@@ -225,6 +236,7 @@ final class NotebookPersistenceQueue {
       switch result {
       case .success(let outcome):
         pending.removeFirst()
+        if let rejection = outcome.rejection { next.onRejected?(rejection) }
         if outcome.merged { onContentMerged?() }
         if next.notifiesCommit && outcome.succeeded { onCommit?(next.owner) }
         next.onCompleted?()

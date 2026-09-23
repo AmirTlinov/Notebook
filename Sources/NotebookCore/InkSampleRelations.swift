@@ -29,16 +29,17 @@ public struct InkSampleRelations: Sendable {
     public let color: SpatialInkColor
     public let sequence: UInt64
     public let isActive: Bool
+    public let stateStamp: VersionStamp?
     public let elementTargets: [InkElementTarget]?
     public init(tool: SpatialInkTool, color: SpatialInkColor, sequence: UInt64 = 0,
-      isActive: Bool = true, elementTargets: [InkElementTarget]? = nil) {
-      self.tool=tool;self.color=color;self.sequence=sequence;self.isActive=isActive;self.elementTargets=elementTargets
+      isActive: Bool = true, elementTargets: [InkElementTarget]? = nil, stateStamp: VersionStamp? = nil) {
+      self.tool=tool;self.color=color;self.sequence=sequence;self.isActive=isActive;self.elementTargets=elementTargets;self.stateStamp=stateStamp
     }
     public func equality(to other: Header) -> InkRelationEquality {
       if self === other { return .equal }
       guard tool == other.tool, color.red.bitPattern == other.color.red.bitPattern,
         color.green.bitPattern == other.color.green.bitPattern, color.blue.bitPattern == other.color.blue.bitPattern,
-        sequence == other.sequence, isActive == other.isActive else { return .different }
+        sequence == other.sequence, isActive == other.isActive, stateStamp == other.stateStamp else { return .different }
       // Cuts targeted at existing elements are retained intact, never silently
       // equated through an approximate geometric/Float comparison.
       return elementTargets == nil && other.elementTargets == nil ? .equal : .notProven
@@ -208,14 +209,14 @@ public struct InkSampleRelations: Sendable {
   public init(_ action: PageInkAction) {
     self.init(sourceID:action.id,measurements:action.samples,
       header:.init(tool:action.tool,color:action.color,sequence:action.sequence,
-        isActive:action.isActive,elementTargets:action.elementTargets))
+        isActive:action.isActive,elementTargets:action.elementTargets,stateStamp:action.stateStamp))
   }
   public func restoredAction() -> PageInkAction {
     // Journal actions own local measurements. Whole placement belongs to the
     // existing graphic/group owner, not a second pose hidden inside ink data.
     precondition(frames.isEmpty, "Persist the enclosing whole, not a flattened placed action")
     return .init(id:sourceID,tool:header.tool,color:header.color,measurements:measurements,sequence:header.sequence,
-      isActive:header.isActive,elementTargets:header.elementTargets)
+      isActive:header.isActive,elementTargets:header.elementTargets,stateStamp:header.stateStamp)
   }
   init(sourceID: UUID, span: Int, revision: UUID, count: Int, storage: Storage, frames: [InkExactFrame], header: Header, lastEdit: EditSummary? = nil) {
     precondition(count == storage.root.count)

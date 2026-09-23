@@ -130,7 +130,6 @@ private final class PageInkActionStorage: @unchecked Sendable {
   let predecessorToken:PageInkActionCursorToken?
   let predecessorCount:Int?
   let isValid: Bool
-  let hasOrderedActions:Bool
 
   init(_ input: [PageInkAction]) {
     let actions=input.enumerated().map { index,action in
@@ -144,7 +143,6 @@ private final class PageInkActionStorage: @unchecked Sendable {
     maximumSequence=actions.map(\.sequence).max() ?? 0
     cursorToken = .init();predecessorToken=nil;predecessorCount=nil
     isValid=unique && actions.allSatisfy(\.isValid)
-    hasOrderedActions=actions.allSatisfy { $0.sequence > 0 }
   }
 
   private init(order: PersistentMapNode<Int,PageInkAction>?, ids: PersistentMapNode<String,Int>?,
@@ -153,7 +151,6 @@ private final class PageInkActionStorage: @unchecked Sendable {
     self.order=order;self.ids=ids;self.count=count;self.activeCount=activeCount
     self.maximumSequence=maximumSequence;self.cursorToken=cursorToken
     self.predecessorToken=predecessorToken;self.predecessorCount=predecessorCount;isValid=true
-    hasOrderedActions=true
   }
 
   var actions: [PageInkAction] { var result:[PageInkAction]=[];result.reserveCapacity(count);order?.values(into:&result);return result }
@@ -177,11 +174,14 @@ private final class PageInkActionStorage: @unchecked Sendable {
       cursorToken:.init(),predecessorToken:cursorToken,predecessorCount:count)
   }
 
-  func removing(_ identifiers:Set<UUID>) -> PageInkActionStorage {
+  func settingVisibility(_ visibility: PageInkVisibility, for identifiers:Set<UUID>) throws -> PageInkActionStorage {
     var root=order,active=activeCount
     for id in identifiers {
-      guard let position=ids?.value(for:id.uuidString.lowercased()),let action=root?.value(for:position),action.isActive else { continue }
-      root=root?.inserting(position,action.deactivated());active-=1
+      guard let position=ids?.value(for:id.uuidString.lowercased()),let action=root?.value(for:position) else { continue }
+      let next = try action.visibility.merging(visibility)
+      guard next != action.visibility else { continue }
+      root=root?.inserting(position,action.settingVisibility(next))
+      active += (next.isActive ? 1 : 0) - (action.isActive ? 1 : 0)
     }
     guard root !== order else { return self }
     return .init(order:root,ids:ids,count:count,activeCount:active,maximumSequence:maximumSequence,
@@ -240,7 +240,11 @@ public struct PageInkDrawing: Codable, Equatable, Sendable {
     let values=try decoder.container(keyedBy:CodingKeys.self)
     baselinePNG=try values.decodeIfPresent(Data.self,forKey:.baselinePNG)
     baselineActionCount=try values.decode(Int.self,forKey:.baselineActionCount)
-    storage = .init(try values.decode([PageInkAction].self,forKey:.actions))
+    let actions=try values.decode([PageInkAction].self,forKey:.actions)
+    // Only a newly measured contact may receive an ordinal. Loading damaged
+    // accepted material must not silently invent a new painter order.
+    guard actions.allSatisfy({ $0.sequence > 0 }) else { throw InkError.invalidDrawing }
+    storage = .init(actions)
     guard isValid else { throw InkError.invalidDrawing }
   }
   public func encode(to encoder:Encoder) throws {
@@ -258,12 +262,12 @@ public struct PageInkDrawing: Codable, Equatable, Sendable {
     if data.isEmpty { return Self() }
     guard data.starts(with: signature) else { throw InkError.invalidDrawing }
     let decoded = try InkRelationDecoding.decoder().decode(Self.self, from: data.dropFirst(signature.count))
-    guard decoded.isValid, decoded.storage.hasOrderedActions else { throw InkError.invalidDrawing }
+    guard decoded.isValid else { throw InkError.invalidDrawing }
     return decoded
   }
 
   public func dataRepresentation() throws -> Data {
-    guard isValid, storage.hasOrderedActions else { throw InkError.invalidDrawing }
+    guard isValid else { throw InkError.invalidDrawing }
     if baselinePNG == nil && storage.count == 0 && baselineActionCount == 0 { return Data() }
     let encoder = JSONEncoder()
     encoder.outputFormatting = [.sortedKeys]
@@ -276,9 +280,10 @@ public struct PageInkDrawing: Codable, Equatable, Sendable {
     return Self(baselinePNG:baselinePNG,baselineActionCount:baselineActionCount,storage:next)
   }
 
-  /// An undo retains a tombstone: an older device cannot resurrect the stroke.
-  public func removing(_ ids: Set<UUID>) -> Self {
-    let next=storage.removing(ids)
+  /// A causal gate keeps identity, painter order and the shared measurement
+  /// root. Old copies cannot overwrite either Undo or its explicit inverse.
+  public func settingActive(_ active: Bool, for ids: Set<UUID>, stamp: VersionStamp) throws -> Self {
+    let next=try storage.settingVisibility(.init(isActive:active,stateStamp:stamp),for:ids)
     guard next !== storage else { return self }
     return Self(baselinePNG:baselinePNG,baselineActionCount:baselineActionCount,storage:next)
   }
@@ -295,7 +300,7 @@ public struct PageInkDrawing: Codable, Equatable, Sendable {
     for incoming in other.actions {
       if let current = byID[incoming.id] {
         guard current.sequence == incoming.sequence, current.hasSameMeasurement(as: incoming) else { throw InkError.actionIDConflict }
-        byID[incoming.id] = current.isActive ? incoming : current
+        byID[incoming.id] = current.settingVisibility(try current.visibility.merging(incoming.visibility))
       } else { byID[incoming.id] = incoming }
     }
     return Self(baselinePNG: baselinePNG, baselineActionCount: baselineActionCount,
@@ -325,18 +330,20 @@ public struct PageInkAction: Codable, Equatable, Identifiable, Sendable {
   public let sequence: UInt64
   public let elementTargets: [InkElementTarget]?
   public let isActive: Bool
+  public let stateStamp: VersionStamp?
+  public var visibility: PageInkVisibility { .init(isActive:isActive,stateStamp:stateStamp) }
 
   public init(
     id: UUID = UUID(), tool: SpatialInkTool, color: SpatialInkColor = .black,
     samples: [SpatialInkSample], sequence: UInt64 = 0, isActive: Bool = true,
-    elementTargets: [InkElementTarget]? = nil
+    elementTargets: [InkElementTarget]? = nil, stateStamp: VersionStamp? = nil
   ) {
-    self.init(id:id,tool:tool,color:color,measurements:.init(samples),sequence:sequence,isActive:isActive,elementTargets:elementTargets)
+    self.init(id:id,tool:tool,color:color,measurements:.init(samples),sequence:sequence,isActive:isActive,elementTargets:elementTargets,stateStamp:stateStamp)
   }
 
   public init(id: UUID = UUID(), tool: SpatialInkTool, color: SpatialInkColor = .black,
     measurements: InkMeasurements, sequence: UInt64 = 0, isActive: Bool = true,
-    elementTargets: [InkElementTarget]? = nil) {
+    elementTargets: [InkElementTarget]? = nil, stateStamp: VersionStamp? = nil) {
     self.id = id
     self.tool = tool
     self.color = color
@@ -344,18 +351,19 @@ public struct PageInkAction: Codable, Equatable, Identifiable, Sendable {
     self.sequence = sequence
     self.elementTargets = elementTargets?.isEmpty == false ? elementTargets : nil
     self.isActive = isActive
+    self.stateStamp = stateStamp
     precondition(isValid)
   }
 
   public var isValid: Bool {
-    sequence <= VersionStamp.maximumCounter && color.isValid && !samples.isEmpty && samples.count <= 1_000_000
+    sequence <= VersionStamp.maximumCounter && visibility.isValid && color.isValid && !samples.isEmpty && samples.count <= 1_000_000
       && samples.isPaper
       && (elementTargets == nil || (tool == .eraser
         && elementTargets!.allSatisfy { $0.isValid && $0.worldOrigin == nil }
         && Set(elementTargets!.map(\.elementID)).count == elementTargets!.count))
   }
 
-  private enum CodingKeys: String, CodingKey { case id, tool, color, samples, sequence, isActive, elementTargets }
+  private enum CodingKeys: String, CodingKey { case id, tool, color, samples, sequence, isActive, elementTargets, stateStamp }
 
   public init(from decoder: Decoder) throws {
     let values = try decoder.container(keyedBy: CodingKeys.self)
@@ -365,19 +373,21 @@ public struct PageInkAction: Codable, Equatable, Identifiable, Sendable {
     samples = try values.decode(InkMeasurements.self, forKey: .samples)
     sequence = try values.decode(UInt64.self, forKey: .sequence)
     isActive = try values.decode(Bool.self, forKey: .isActive)
+    stateStamp = try values.decodeIfPresent(VersionStamp.self, forKey: .stateStamp)
     elementTargets = try values.decodeIfPresent([InkElementTarget].self, forKey: .elementTargets)
     guard isValid else { throw PageInkDrawing.InkError.invalidDrawing }
   }
 
   fileprivate func ordered(_ sequence: UInt64) -> Self {
-    Self(id: id, tool: tool, color: color, measurements: samples, sequence: sequence, isActive: isActive, elementTargets: elementTargets)
+    Self(id: id, tool: tool, color: color, measurements: samples, sequence: sequence, isActive: isActive, elementTargets: elementTargets,stateStamp:stateStamp)
   }
 
   fileprivate func hasSameMeasurement(as other: Self) -> Bool {
     tool == other.tool && color == other.color && samples == other.samples && elementTargets == other.elementTargets
   }
 
-  fileprivate func deactivated() -> Self {
-    isActive ? Self(id: id, tool: tool, color: color, measurements: samples, sequence: sequence, isActive: false, elementTargets: elementTargets) : self
+  func settingVisibility(_ visibility: PageInkVisibility) -> Self {
+    Self(id:id,tool:tool,color:color,measurements:samples,sequence:sequence,
+      isActive:visibility.isActive,elementTargets:elementTargets,stateStamp:visibility.stateStamp)
   }
 }

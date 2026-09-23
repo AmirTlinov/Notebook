@@ -58,7 +58,7 @@ struct PageInkConflictTests {
     let liveReplay = try page.prepareInkChange(.append(measured), stamp: .init(counter: 20, actor: UUID()))
     #expect(liveReplay.data == page.drawingData)
     #expect(liveReplay.stamp == page.drawingStamp)
-    let removed = drawing.removing([accepted.id])
+    let removed = try drawing.settingActive(false,for:[accepted.id],stamp:.init(counter:1,actor:page.drawingStamp.actor))
     let undone = PageDocument(id: page.id, size: page.size, actor: page.drawingStamp.actor,
       drawingData: try removed.dataRepresentation())
     let undoReplay = try undone.prepareInkChange(.append(measured), stamp: .init(counter: 30, actor: UUID()))
@@ -139,7 +139,7 @@ struct PageInkConflictTests {
     _ = try store.savePage(original)
     let drawing = try PageInkDrawing.decode(original.drawingData)
     let undone = PageDocument(id: id, size: original.size, actor: UUID(),
-      drawingData: try drawing.removing(Set(drawing.actions.map(\.id))).dataRepresentation())
+      drawingData: try drawing.settingActive(false,for:Set(drawing.actions.map(\.id)),stamp:.init(counter:1,actor:UUID())).dataRepresentation())
     _ = try store.savePage(undone)
     let before = try store.loadPage(id), cursor = try store.currentChangeCursor()
     #expect(throws: NotebookStorageError.self) { try store.publishRecords(writes: [pageFile(id): .encode(original)]) }

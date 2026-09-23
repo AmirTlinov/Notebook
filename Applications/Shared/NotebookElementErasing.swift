@@ -368,7 +368,9 @@ struct NotebookPageEraserSource {
     if var cached=pages[change.pageID],cached.stamp == change.baseStamp {
       switch change.mutation {
       case .append(let action): cached.append(action)
-      case .remove(let ids): cached.remove(ids)
+      case .setActive(let ids,let active):
+        if active { for id in ids { if let action=change.drawing.action(id:id) { cached.append(action) } } }
+        else { cached.remove(ids) }
       }
       entry=cached
     } else { entry=PageErasures(stamp:change.stamp,drawing:change.drawing) }

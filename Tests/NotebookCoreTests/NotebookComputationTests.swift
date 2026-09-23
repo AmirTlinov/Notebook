@@ -69,7 +69,7 @@ struct NotebookComputationTests {
       let eraser = stroke(.eraser), crossing = stroke(x: 155), outside = stroke(x: 400), undone = stroke(x: 60)
       for action in [eraser, crossing, outside, undone] { try append(action, store: store, pageID: page, actor: actor) }
       var document = try store.loadPage(page)
-      let removed = try document.prepareInkChange(.remove([undone.id]), stamp: .init(counter: 10, actor: actor))
+      let removed = try document.prepareInkChange(.setActive([undone.id],false), stamp: .init(counter: 10, actor: actor))
       let published = document.publishInkChange(removed); #expect(published); try store.savePage(document)
       let capture = try store.readComputationInk(notebookID: notebook, pageID: page, region: region)
       #expect(capture.drawing.actions.map(\.tool) == [.pen, .eraser, .pen])
@@ -126,7 +126,7 @@ struct NotebookComputationTests {
       let record = try activate(store, actor, notebook, page).computation
       let input = try begin(record, store: store, actor: actor)
       var document = try store.loadPage(page)
-      let prepared = try document.prepareInkChange(.remove([second.id]), stamp: .init(counter: 10, actor: actor))
+      let prepared = try document.prepareInkChange(.setActive([second.id],false), stamp: .init(counter: 10, actor: actor))
       let published = document.publishInkChange(prepared); #expect(published)
       try store.savePage(document)
       try append(stroke(x: 80), store: store, pageID: page, actor: actor)

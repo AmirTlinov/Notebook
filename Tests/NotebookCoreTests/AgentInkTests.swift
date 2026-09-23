@@ -157,7 +157,7 @@ func pageInkConcurrentAppendAndUndoConverge() throws {
   #expect(!repeated)
   let drawing = try PageInkDrawing.decode(a.drawingData)
   #expect(Set(drawing.activeActions.map(\.id)) == [human.id, agent.id])
-  a.replaceDrawing(try drawing.removing([agent.id]).dataRepresentation(), actor: actor)
+  a.replaceDrawing(try drawing.settingActive(false,for:[agent.id],stamp:.init(counter:10,actor:actor)).dataRepresentation(), actor: actor)
   let receivedUndo = b.merge(a)
   #expect(receivedUndo)
   _ = b.merge(oldB)
@@ -173,7 +173,7 @@ func pencilUndoKeepsAgentStroke() throws {
   var history = PencilUndoHistory()
   history.recordAction(domain: .page(pageID), actionID: human.id)
   let ids = try #require(history.lastContribution(for: .page(pageID)))
-  let result = drawing.removing(ids)
+  let result = try drawing.settingActive(false,for:ids,stamp:.init(counter:10,actor:UUID()))
   history.didRemoveContribution(ids, for: .page(pageID))
   #expect(result.activeActions.map(\.id) == [agent.id])
 }
