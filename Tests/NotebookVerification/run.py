@@ -467,6 +467,18 @@ class SelectionTests(unittest.TestCase):
         self.assertEqual(explicit["checks"]["ipad"], ["NotebookTests/OtherTests/testRegression"])
         self.assertFalse(explicit["checks"]["mac"])
 
+    def test_collaboration_ux_selects_real_delivery_display_and_agent_context(self):
+        plan = verify.make_plan(self.root, profiles=["collaboration-ux"], only=True)
+        self.assertEqual(plan["checks"]["ipad"], sorted([
+            "NotebookTests/NotebookCollaborationLatencyTests",
+            "NotebookTests/NotebookUXObservationTests",
+            "NotebookTests/NotebookActionDeliveryTests",
+            "NotebookTests/SharedAttentionTests/testDeliveryAndDisplayRequireDifferentEvidence",
+        ]))
+        self.assertEqual(plan["checks"]["mac"], ["NotebookMacTests/NotebookSelectionPublicationTests"])
+        self.assertFalse(plan["checks"]["core"])
+        self.assertFalse(plan["checks"]["commands"])
+
     def test_interaction_ux_selects_negative_controls_and_real_gestures_and_opening(self):
         plan = verify.make_plan(self.root, profiles=["interaction-ux"], only=True)
         self.assertEqual(plan["checks"]["ipad"], sorted([

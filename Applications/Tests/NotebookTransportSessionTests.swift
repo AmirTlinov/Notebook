@@ -328,7 +328,7 @@ final class NotebookTransportSessionTests: XCTestCase {
 }
 
 @MainActor
-private final class NotebookTransportTestPair {
+final class NotebookTransportTestPair {
   let serverIdentity: NotebookTransportIdentity
   let clientIdentity: NotebookTransportIdentity
   let serverStorage: NotebookTransportMemoryStore
@@ -352,12 +352,15 @@ private final class NotebookTransportTestPair {
   private var listener: NWListener?
   private var uplink: NotebookRelayUplink?
   private let relay: NotebookRelayRoute?
+  private let serverAdapter: NotebookTransportStorage
+  private let clientAdapter: NotebookTransportStorage
   private var reportedFailure = false
   private var isStopped = false
 
   init(wrongSecret: Bool = false, authorized: Bool = true, withChange: Bool = false, holdCommit: Bool = false,
     serverStorage: NotebookTransportMemoryStore? = nil, clientStorage: NotebookTransportMemoryStore? = nil,
-    serverIdentity: NotebookTransportIdentity? = nil, clientIdentity: NotebookTransportIdentity? = nil, relay: NotebookRelayRoute? = nil, contentBytes: Int = 400_000) throws {
+    serverIdentity: NotebookTransportIdentity? = nil, clientIdentity: NotebookTransportIdentity? = nil, relay: NotebookRelayRoute? = nil, contentBytes: Int = 400_000,
+    serverAdapter: NotebookTransportStorage? = nil, clientAdapter: NotebookTransportStorage? = nil) throws {
     let workspaceID = serverIdentity?.workspaceID ?? UUID()
     self.serverIdentity = serverIdentity ?? .init(deviceID: UUID(), workspaceID: workspaceID, displayName: "Loopback Mac")
     self.clientIdentity = clientIdentity ?? .init(deviceID: UUID(), workspaceID: workspaceID, displayName: "Loopback iPad")
@@ -371,6 +374,8 @@ private final class NotebookTransportTestPair {
     self.serverStorage = serverStorage ?? NotebookTransportMemoryStore(holdCommit: holdCommit)
     self.clientStorage = clientStorage ?? NotebookTransportMemoryStore(changes: withChange ? [sampleChange] : [],
       blobs: withChange ? [manifestHash: manifest, contentHash: content] : [:])
+    self.serverAdapter = serverAdapter ?? self.serverStorage.adapter()
+    self.clientAdapter = clientAdapter ?? self.clientStorage.adapter()
   }
 
   func start() throws {
@@ -381,7 +386,7 @@ private final class NotebookTransportTestPair {
         guard let self, !self.isStopped else { connection.cancel(); return }
         do {
           let session = try NotebookTransportSession(connection: connection, identity: self.serverIdentity, credential: nil,
-            storage: self.serverStorage.adapter(), stagingRoot: self.root.appendingPathComponent("server"), queue: self.queue)
+            storage: self.serverAdapter, stagingRoot: self.root.appendingPathComponent("server"), queue: self.queue)
           self.server = session
           session.resolveCredential = { hello in
             guard hello.identity == self.clientIdentity, hello.credentialID == self.credentialID else { throw NotebookTransportError.identityMismatch }
@@ -414,7 +419,7 @@ private final class NotebookTransportTestPair {
                 using: try NotebookTransportTLS.parameters(keys: [credential.tlsKey], loopback: true))
             }
             let session = try NotebookTransportSession(connection: connection, identity: self.clientIdentity, credential: credential,
-              storage: self.clientStorage.adapter(), stagingRoot: self.root.appendingPathComponent("client"), queue: self.queue)
+              storage: self.clientAdapter, stagingRoot: self.root.appendingPathComponent("client"), queue: self.queue)
             self.client = session; self.configure(session); session.start()
           } catch { self.failed(error) }
         case .failed(let error): self.failed(error)
@@ -453,7 +458,7 @@ private final class NotebookTransportTestPair {
   private static func digest(_ data: Data) -> String { SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined() }
 }
 
-private actor NotebookTransportMemoryStore {
+actor NotebookTransportMemoryStore {
   private var journal: [NotebookDurableChange]
   private var blobs: [String: Data]
   private var incomingCursor: UInt64 = 0

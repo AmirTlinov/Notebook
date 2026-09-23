@@ -383,6 +383,44 @@ controls reject wrong/missing output and late synchronous success. Existing
 UX ceiling green. Do not prewarm lasso materialization, insert persistence waits
 between ordinary gestures, or raise these ceilings to bless a regression.
 
+### Ready-link collaboration and iPad priority
+
+`./verify.sh --only --profile collaboration-ux` checks small edits on an already
+ready channel, separately from initial pairing/bootstrap, large attachments and
+model inference. Local Pencil retains the independent 20 ms contract above.
+For a small ready-link edit, the regression ceilings are **100 ms** to durable
+receipt, **200 ms** to correct current window pixels, and **250 ms** for the exact
+shown receipt to return. Chat request/reply and iPad context reaching agent IPC
+have **100 ms** ceilings. Every sample must pass; report p50/p95/max, not only an
+average. These are targets, not a claim that the current implementation meets them.
+
+`NotebookCollaborationLatencyTests` uses two fresh SQLite stores, the app's actual
+writer/storage adapter and TLS sessions. Only the iPad's full `NotebookRootView`
+is mounted: a source window or Mac rendering cannot be a prerequisite. The root's
+ordinary detail-preparation task and display-confirmation path produce the shown
+receipt; the test never calls confirmation manually. Ten distinct edits track
+action ID, delivery version, content revision, save, completed blob staging,
+durable receive, installed page, correct pixels and returned shown. All timings
+share the initiator's monotonic clock and include observation overhead. Missing,
+stale and late evidence fails; the two-second diagnostic wait cannot grant grace.
+
+The reverse scenario sends ten strokes through the installed native Pencil
+recognizer and requires the identical durable ink at the headless peer after lift.
+An independent page update must commit while a board contact remains held; that
+specific gate starts after verified blob staging, isolating admission from network
+delay. Chat control is measured while a bulk durable commit is blocked. Mac tests
+read the iPad's exact changing camera/selection through the real agent IPC without
+waiting for a preview or altering the Mac's own camera. Existing negative controls
+also distinguish stored, received and displayed action/undo phases.
+
+This is **TLS loopback on physical iPad plus a separate real Mac IPC test**, not
+a paired Mac/iPad radio or two-screen measurement. Window snapshots are not
+photon timestamps; the reverse ink check ends at durable peer content, not Mac
+pixels. Discovery, local iPad chat rendering, physical cross-device presentation,
+reconnect and concurrent sustained work still need installed-pair acceptance.
+Use locally measured stages and a full round trip on one clock; never subtract
+unsynchronised device timestamps or substitute saved/received for shown.
+
 Historical September 6 measurements, source hashes and negative controls are kept in
 [the original report](https://github.com/AmirTlinov/Notebook/blob/1723ec2be6f6b8dda29e3a575fd6376fff03e093/docs/performance.md).
 They are not current-device performance claims.

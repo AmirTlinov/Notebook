@@ -1172,12 +1172,12 @@ final class NotebookAppModel {
     #endif
   }
 
-  private func startTrustedSync() async throws {
-    guard sync == nil else { return }
-    let workspaceID = try await persistence.submit { try $0.storedWorkspaceID() }
+  /// The app's one durable transport adapter. Native integration checks use the
+  /// same writer, contact boundary and scene publication as an admitted peer.
+  func makeTransportStorage() async throws -> NotebookTransportStorage {
     let writer = persistence
     let source = try await writer.submit { [actorID] in try $0.replicationSource(deviceID: actorID) }
-    let storage = NotebookTransportStorage(
+    return NotebookTransportStorage(
       journalGeneration: source.generation,
       changes: { cursor, limit in try await writer.submit { try $0.changeJournal(after: cursor, limit: limit) } },
       incomingCursor: { peer in try await writer.submit { try $0.admitReplicationSource(peer) } },
@@ -1194,6 +1194,13 @@ final class NotebookAppModel {
         guard let self else { throw NotebookTransportError.disconnected }
         return try await self.applyDurableDelivery(delivery)
       })
+  }
+
+  private func startTrustedSync() async throws {
+    guard sync == nil else { return }
+    let workspaceID = try await persistence.submit { try $0.storedWorkspaceID() }
+    let writer = persistence
+    let storage = try await makeTransportStorage()
     #if os(iOS)
       let role = NearbySync.Role.iPadConnector
       let name = "iPad"

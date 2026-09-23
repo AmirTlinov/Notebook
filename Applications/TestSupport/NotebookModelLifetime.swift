@@ -25,13 +25,14 @@ extension XCTestCase {
   /// and input owners. A prepared cohort alone cannot stand in for this mount.
   @MainActor
   @discardableResult
-  func mountNotebookScene(_ model: NotebookAppModel) async throws -> UIWindow {
+  func mountNotebookScene(_ model: NotebookAppModel, fullRoot: Bool = false) async throws -> UIWindow {
     let presence = try XCTUnwrap(model.presence)
     let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
     let previous = scene.windows.first(where: \.isKeyWindow)
     let window = UIWindow(windowScene: scene)
     window.frame = .init(x: 0, y: 0, width: presence.viewport.x, height: presence.viewport.y)
-    let host = UIHostingController(rootView: SpatialWorkspaceView().environment(model).ignoresSafeArea())
+    let content = fullRoot ? AnyView(NotebookRootView()) : AnyView(SpatialWorkspaceView())
+    let host = UIHostingController(rootView: content.environment(model).ignoresSafeArea())
     window.rootViewController = host; window.makeKeyAndVisible()
     addTeardownBlock { @MainActor in
       window.isHidden = true; window.rootViewController = nil; previous?.makeKey()

@@ -21,6 +21,12 @@ DOCUMENT_BROWSER_CONTRACTS = (
     "Tests/NotebookDocumentAcceptance/test_link_activation.mjs",
 )
 PROFILES = {
+    "collaboration-ux": {
+        "ipad": ["NotebookTests/NotebookCollaborationLatencyTests", "NotebookTests/NotebookUXObservationTests",
+                 "NotebookTests/NotebookActionDeliveryTests",
+                 "NotebookTests/SharedAttentionTests/testDeliveryAndDisplayRequireDifferentEvidence"],
+        "mac": ["NotebookMacTests/NotebookSelectionPublicationTests"],
+    },
     "interaction-ux": {
         "ipad": ["NotebookTests/NotebookUXObservationTests", "NotebookTests/NotebookGestureLatencyTests", "NotebookTests/NotebookInteractionUXTests",
                  "NotebookTests/PagePresentationTests/testColdRootInstallsTheStoredInkPageAtTheActualViewport",
