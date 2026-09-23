@@ -13,13 +13,15 @@ final class PageInkProjectionTests: XCTestCase {
       camera: .init(), viewport: .init(x: window.bounds.width, y: window.bounds.height)))
     paper.inkProjection.observe(projection)
     paper.inkView.apply(PageInkDrawing(actions: [line()]))
-    try await ready(paper.inkView)
+    guard try await ready(paper.inkView) else { return }
     let builds = paper.inkView.pageMeshBuildCount, vertices = paper.inkView.committedSourceNodeCount
     for scale: CGFloat in [1, 2, 4, 8, 3, 1] {
       paper.transform = .init(scaleX: scale, y: scale)
       paper.center = .init(x: window.bounds.midX, y: window.bounds.midY)
       projection.didProject() // Native camera notification, without SwiftUI republishing the page.
-      try await ready(paper.inkView)
+      XCTAssertEqual((paper.inkView.layer as? CAMetalLayer)?.drawableSize, paper.inkView.drawableSize,
+        "The actual Metal pool must follow projection without a MetalKit draw cycle")
+      guard try await ready(paper.inkView) else { return }
       let canvas = paper.inkView
       XCTAssertEqual(canvas.drawableSize.width / canvas.bounds.width, scale * window.screen.scale, accuracy: 0.02)
       XCTAssertEqual(canvas.drawableSize.height / canvas.bounds.height, scale * window.screen.scale, accuracy: 0.02)
@@ -52,14 +54,14 @@ final class PageInkProjectionTests: XCTestCase {
     pen.replaceMeasuredTail(from: 0, with: [point(80,150,width:4),point(220,150,width:4)])
     paper.inkView.displayActiveStroke(pen)
     paper.inkView.commitActiveStroke()
-    try await ready(paper.inkView)
+    guard try await ready(paper.inkView) else { return }
     let before = try centerRow(capture(window))
     XCTAssertLessThan(before[before.count/2], 40)
     let eraser = ActiveEraserStroke()
     eraser.replaceMeasuredTail(from:0,with:[point(150,100,width:12),point(150,200,width:12)])
     paper.inkView.displayActiveEraser(eraser)
     paper.inkView.commitActiveEraser()
-    try await ready(paper.inkView)
+    guard try await ready(paper.inkView) else { return }
     let after = try centerRow(capture(window))
     XCTAssertGreaterThan(after[after.count/2], 240, "The eraser must remove the center in canonical page coordinates")
     XCTAssertLessThan(after[after.count/2+150], 40, "Ink outside the eraser remains in the same place")
@@ -80,31 +82,31 @@ final class PageInkProjectionTests: XCTestCase {
       canvas.projectPage(region: .init(x: 0, y: 0, width: 300, height: 300),
         sourceSize: .init(width: 300, height: 300), pixelDensity: 2)
       canvas.apply(PageInkDrawing(actions: [line()]))
-      try await ready(canvas)
+      guard try await ready(canvas) else { return }
       XCTAssertEqual(canvas.sampleCount, 1, "MTKView must not allocate duplicate MSAA storage")
       XCTAssertTrue(canvas.hasPageRetainedTexture)
       pages.append(canvas)
     }
     XCTAssertGreaterThan(resources.reservedBytes, 0)
     XCTAssertLessThanOrEqual(resources.reservedBytes, resources.byteLimit)
-    for page in pages { page.apply(PageInkDrawing()); try await ready(page) }
+    for page in pages { page.apply(PageInkDrawing()); guard try await ready(page) else { return } }
     XCTAssertEqual(resources.reservedBytes, 0, "Empty pages retain routing, not fictitious backing")
 
     let erase = PageInkAction(tool: .eraser, points: [point(50, 70), point(250, 230)])
     for page in pages {
-      page.apply(PageInkDrawing(actions: [erase])); try await ready(page)
+      page.apply(PageInkDrawing(actions: [erase])); guard try await ready(page) else { return }
       XCTAssertGreaterThan(page.committedEraserSourceNodeCount, 0,
         "Reclaim the backing, not the accepted measurements or history")
     }
     XCTAssertEqual(resources.reservedBytes, 0,
       "An eraser without earlier ink contributes no visible material")
     let last = try XCTUnwrap(pages.last)
-    last.apply(PageInkDrawing(actions: [erase, line()])); try await ready(last)
+    last.apply(PageInkDrawing(actions: [erase, line()])); guard try await ready(last) else { return }
     XCTAssertGreaterThan(resources.reservedBytes, 0)
     XCTAssertTrue(try NotebookUXObservation.Pixels(window: window).matches([
       (last.convert(.init(x: 150, y: 150), to: window), .black)]),
       "A later pen remains visible: the earlier absence must not erase future material")
-    last.apply(PageInkDrawing(actions: [erase])); try await ready(last)
+    last.apply(PageInkDrawing(actions: [erase])); guard try await ready(last) else { return }
     XCTAssertEqual(resources.reservedBytes, 0)
   }
 
@@ -114,7 +116,7 @@ final class PageInkProjectionTests: XCTestCase {
     let samples=(0..<100_000).map { i in SpatialInkSample(point:.init(x:Double(i%1000)/4+20,y:Double(i/1000)*2+20),
       timeOffset:Double(i)/240,width:2,opacity:1,force:1,azimuth:0,altitude:1) }
     paper.inkView.apply(PageInkDrawing(actions:[.init(tool:.pen,samples:samples)]))
-    try await ready(paper.inkView)
+    guard try await ready(paper.inkView) else { return }
     let visits=paper.inkView.committedIndexVisitCount
     XCTAssertGreaterThan(visits,0)
     let pen=ActiveInkStroke(style:.standard)
@@ -124,7 +126,7 @@ final class PageInkProjectionTests: XCTestCase {
       try await Task.sleep(for:.milliseconds(20))
     }
     XCTAssertEqual(paper.inkView.committedIndexVisitCount,visits,"Only the active tail changes at a fixed camera")
-    paper.inkView.commitActiveStroke();try await ready(paper.inkView)
+    paper.inkView.commitActiveStroke();guard try await ready(paper.inkView) else { return }
   }
 
   func testFourRetinaCurlPagesFitWithoutDuplicatingInactiveHistory() async throws {
@@ -141,14 +143,14 @@ final class PageInkProjectionTests: XCTestCase {
       canvas.projectPage(region:.init(x:0,y:0,width:834,height:1194),
         sourceSize:.init(width:834,height:1194),pixelDensity:2)
       canvas.apply(PageInkDrawing(actions:[line()]))
-      try await ready(canvas)
+      guard try await ready(canvas) else { return }
       XCTAssertEqual(canvas.hasPageRetainedTexture,index == 0)
       pages.append(canvas)
     }
     // Transfer input ownership without retaining a second history backing.
     pages[0].setPageInputEnabled(false)
     pages[1].setPageInputEnabled(true)
-    try await ready(pages[1])
+    guard try await ready(pages[1]) else { return }
     XCTAssertFalse(pages[0].hasPageRetainedTexture)
     XCTAssertTrue(pages[1].hasPageRetainedTexture)
     XCTAssertLessThanOrEqual(resources.reservedBytes,resources.byteLimit)
@@ -169,14 +171,25 @@ final class PageInkProjectionTests: XCTestCase {
     .init(location:.init(x:x,y:y),timeOffset:0,size:.init(width:width,height:width),opacity:1,force:1,azimuth:0,altitude:.pi/2)
   }
   private func line() -> PageInkAction { .init(tool:.pen,points:[point(50,70),point(250,230)]) }
-  private func ready(_ view:InkCanvasView) async throws {
-    let until = ContinuousClock.now + .seconds(5)
+  private func ready(_ view: InkCanvasView, file: StaticString = #filePath, line: UInt = #line) async throws -> Bool {
+    let until = ContinuousClock.now + .seconds(5), frames = view.drawableRequestCount
     while !view.isStableFramePresented {
-      if let failure = view.renderFailure { XCTFail("Render failure: \(failure)"); throw failure }
-      guard ContinuousClock.now < until else { throw NSError(domain:"PageInkProjectionTimeout",code:1) }
-      try await Task.sleep(for:.milliseconds(20))
+      if view.renderFailure != nil || ContinuousClock.now >= until {
+        // A known failed readiness check is an assertion, not an unexpected
+        // thrown error. XCTest's error symbolication otherwise obscures the
+        // original failure and can stall this physical-device run for minutes.
+        XCTFail("Page frame not ready: failure=\(String(describing: view.renderFailure)), "
+          + "prepared=\(view.isStableFramePrepared), geometry=\(view.pageGeometryIsReady), "
+          + "newFrames=\(view.drawableRequestCount - frames), paused=\(view.isFrameLoopPaused), "
+          + "window=\(view.window != nil), opacity=\(view.layer.opacity), "
+          + "frame=\(view.frame), pixels=\(view.drawableSize), layerPixels=\(String(describing: (view.layer as? CAMetalLayer)?.drawableSize)), "
+          + "visible=\(SceneSourceVisibility.visibleRect(view))", file: file, line: line)
+        return false
+      }
+      try await Task.sleep(for: .milliseconds(20))
     }
-    try await Task.sleep(for:.milliseconds(60))
+    try await Task.sleep(for: .milliseconds(60))
+    return true
   }
   private func capture(_ window:UIWindow) -> UIImage {
     let format = UIGraphicsImageRendererFormat();format.scale = window.screen.scale;format.opaque = true

@@ -73,6 +73,59 @@ Each isolated test app was cleaned up; production containers/processes were not
 used for debugger experiments. No new production installation, hardware-Pencil,
 radio, system frame/CPU/GPU or 30-minute joint acceptance is claimed.
 
+A later input-driven/background-drawable experiment was also rejected rather
+than added beside the working clock. Physical-iPad Release source
+`cfcbeda62d6d03032ac9250c5d9424406583bfd1923a69c23a0a415bd1cf911b`
+passed 8 and failed 4 cases (`.build/gui295-input-driven-page-release/`), with
+2 remaining selectors not reached. Lifecycle, the unchanged 512 KiB refusal,
+100,000-point locality, four Retina pages, mask pixels and reverse delivery passed.
+However eraser/pen OS p95 regressed to 30.66/28.40 ms. Forward receipt also missed
+100 ms (100.0466 ms); held zoom reported `resource_limit` and the test host stopped
+making progress. A bounded attach obtained no application stack: LLDB itself
+crashed during parallel Darwin-module loading, and serial loading did not finish.
+Only the identified isolated test/debugger/runner were stopped; cleanup confirmed
+`removed=true`. The result and attempted diff are retained as failed evidence;
+no debugger failure is attributed to the production renderer. Both experimental
+source files were restored exactly to `de5ac922`, with no asynchronous fallback
+or changed acceptance limit left in production code.
+
+A causal removal of UIKit participation also failed the unchanged latency probes
+(`.build/gui295-single-page-clock-release/`, source
+`b7d8fc1d8b5b628e3bfecc5fe09d950bee614158037670810c45a3a769cd813c`).
+A passive UIKit callback is not itself proof that a Metal-only input froze, but
+this removal did not establish an OS-presentation improvement either. It was
+reverted; no probe or deadline was weakened. The held-zoom check stopped again.
+This time the exact test-process stack was obtained: XCTestCore was resolving
+symbols in CoreSymbolication, not waiting in the renderer. The original readiness
+failure remains separate. Stack and cleanup are retained with the failed run.
+The projection helper now reports a known readiness failure with its actual
+canvas state and stops that test, rather than throwing an unhandled error into
+symbolication; the same failure verdict and five-second diagnostic ceiling remain.
+The unchanged-runtime physical-iPad follow-up now completed normally with one
+failing readiness test and zero runtime warnings (`.build/gui295-page-zoom-readiness-release/`).
+At the first 2x projection, geometry was ready and allocation had not failed,
+but no new frame was encoded in five seconds: view backing requested 1200x1200.
+A standalone Mac MetalKit probe confirmed that assigning `MTKView.drawableSize`
+with its draw loop paused leaves `CAMetalLayer.drawableSize` unapplied. The page
+projection now applies the same size directly to that layer; iPad and Mac
+regressions compare the actual pool size, not only the view property.
+
+The repair passed all five physical-iPad projection checks and all four lifecycle
+checks in Release, including sharp 8x window pixels, zoomed pen/eraser, 100,000-point
+locality, four Retina pages, and unchanged 512 KiB refusal/recovery. Evidence:
+`.build/gui295-page-zoom-pool-release/`, source
+`5b908094cc57d2c74e8e0143029c241a7991071bd1d319bf8db5cd65453116d0`.
+The complete selected run was **10 PASS / 3 FAIL**, zero skips/runtime warnings,
+cleanup `removed=true`. Reverse TLS-loopback delivery passed ten contacts
+(p50 38.72 ms, max 50.43 ms). Forward delivery still failed its first durable
+receipt (103.31 ms > 100 ms); all ten pixel/round-trip receipts arrived within
+167.65/211.59 ms, not the newer cross-device targets. Eraser OS p95/max remained
+20.31/20.33 ms; pen p95 was 19.05 ms with one 27.23 ms outlier. These failed latency
+checks remain failed; resizing correctness is not performance acceptance. The
+three Mac projection checks will run on integrated main with the already pending
+Mac addressed-target scope, avoiding a duplicate rebuild. No pair is installed.
+
+
 ## September 23 — GUI-295, committed transport reader and echo work
 
 The transport's committed offers and immutable bytes now share one serialized
