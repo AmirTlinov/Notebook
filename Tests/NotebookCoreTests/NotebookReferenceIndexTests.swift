@@ -58,7 +58,7 @@ struct NotebookReferenceIndexTests {
       #expect(throws: CollaborationError.self) { try NotebookStore.referenceRevision(target: target, files: changed) }
     }
     let before = try store.referenceIdentities(targets: targets)
-    #expect(try store.moveWorkspaceItem(itemID: item.id, in: header.rootBoardID, to: .init(x: 4000, y: 5000), actor: actor))
+    #expect(try moveTestItem(store: store, itemID: item.id, in: header.rootBoardID, to: .init(x: 4000, y: 5000), actor: actor))
     let after = try store.referenceIdentities(targets: targets)
     #expect(before[0].revision != after[0].revision)
     #expect(before[1] == after[1])

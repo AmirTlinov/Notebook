@@ -10,6 +10,9 @@ final class NotebookBoardRevisionTests: XCTestCase {
     let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
     retainNotebookUntilTeardown(model, removing: root)
     await model.start(pageSize: NotebookAppModel.defaultPageSize)
+    let board = try XCTUnwrap(model.presence?.boardID)
+    model.updatePresence(.init(boardID: board, mode: .board, camera: .init(),
+      viewport: .init(x: 1194, y: 834)), settled: true)
     let saved = await model.finishPendingPersistence(); XCTAssertTrue(saved)
     let workspace = try XCTUnwrap(model.workspace)
     let boardID = workspace.rootBoardID, itemID = try XCTUnwrap(workspace.selectedItemID)
@@ -54,9 +57,12 @@ final class NotebookBoardRevisionTests: XCTestCase {
     let workspace = try XCTUnwrap(model.workspace)
     let boardID = workspace.rootBoardID, itemID = try XCTUnwrap(workspace.selectedItemID)
     let before = try XCTUnwrap(model.boardContentRevisions[boardID])
+    let original = model.boardHierarchy?.board(boardID)?.placement(of: itemID)?.center
     let destination = WorldPoint(x: 300, y: 400)
     model.moveItem(itemID, to: destination)
-    XCTAssertEqual(model.boardHierarchy?.board(boardID)?.placement(of: itemID)?.center, destination)
+    XCTAssertEqual(model.board?.placement(of: itemID)?.center, destination)
+    XCTAssertEqual(model.boardHierarchy?.board(boardID)?.placement(of: itemID)?.center, original,
+      "An immediate pose does not mint a canonical movement head")
     XCTAssertNil(model.boardContentRevisions[boardID],
       "An optimistic placement must not present an old full-content token as its accepted revision")
     let committed = await model.finishPendingPersistence(); XCTAssertTrue(committed)

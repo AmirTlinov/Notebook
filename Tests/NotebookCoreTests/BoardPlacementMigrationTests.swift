@@ -327,7 +327,7 @@ struct BoardPlacementMigrationTests {
     #expect(try seed.loadBoard(items: seed.loadIndex().items) == store.loadBoard(items: store.loadIndex().items))
     _ = try seed.validateArchiveSnapshot()
     let item = try store.loadIndex().items[0].id
-    let moved = try store.moveWorkspaceItem(itemID: item, in: store.workspaceHeader().rootBoardID,
+    let moved = try moveTestItem(store: store, itemID: item, in: store.workspaceHeader().rootBoardID,
       to: .init(x: 321, y: 654), actor: actor)
     #expect(moved)
     let delta = try #require(try store.changeJournal(after: cursor).first)

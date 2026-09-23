@@ -108,7 +108,7 @@ struct NotebookCloudDeliveryTests {
   @Test func offlineRestartThenCloudOnlyDeliveryMergesInsteadOfReplacing() throws {
     let pair = try Pair(), item = try pair.a.loadIndex().selectedItemID, board = try pair.a.workspaceHeader().rootBoardID
     try rename(pair.a, item: item, title: "На прогулке", actor: pair.actorA)
-    #expect(try pair.b.moveWorkspaceItem(itemID: item, in: board, to: .init(x: 700, y: 99), actor: pair.actorB))
+    #expect(try moveTestItem(store: pair.b, itemID: item, in: board, to: .init(x: 700, y: 99), actor: pair.actorB))
     let reopenedPad = NotebookStore(root: pair.a.root)
     #expect(try reopenedPad.readItemHeader(item)?.title == "На прогулке")
     // The immutable server fixture is all Mac can access; the sender is not

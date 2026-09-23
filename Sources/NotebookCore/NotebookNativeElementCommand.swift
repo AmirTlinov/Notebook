@@ -110,20 +110,6 @@ extension NotebookStore {
     }
   }
 
-  @discardableResult
-  public func moveWorkspaceItem(itemID: UUID, in boardID: UUID, to center: WorldPoint, actor: UUID) throws -> Bool {
-    guard center.isValid else { throw NotebookStorageError.invalidTransaction("item center") }
-    return try commandTransaction {
-      guard let node = try readBoardItem(itemID), node.id == boardID else { return false }
-      let header = try workspaceHeader()
-      let before = BoardHierarchy(rootBoardID: header.rootBoardID, boards: [node], stamp: header.boardStamp ?? node.board.stamp)
-      var after = before
-      guard after.moveItem(itemID, in: boardID, to: center, actor: actor) else { return false }
-      _ = try saveBoardEdits(before: before, after: after)
-      return true
-    }
-  }
-
   private func spatialElementProjection(boardID: UUID, elementID: String) throws -> BoardHierarchy? {
     guard try isLiveBoard(boardID) else { return nil }
     let node = "board.json#/boards/@" + boardID.uuidString.lowercased()

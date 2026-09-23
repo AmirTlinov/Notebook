@@ -109,6 +109,67 @@ struct NotebookNativePlacementTests {
     #expect(try f.store.readBoardItem(a)?.board.stack(containing: a)?.itemIDs.count == 3)
   }
 
+  @Test(arguments: [1, 3], [false, true])
+  func moveThenStackCanRepeatAfterUndoingTheAlreadyRepeatedStack(repeatCount: Int, peerAfterFirstRedo: Bool) throws {
+    let f = try Fixture(); defer { f.clean() }
+    let a = f.items[0], b = f.items[1]
+    let first = try f.command([f.move(a, to: .init(x: 300, y: 100))], ids: [a]).apply(to: f.store)
+    let second = try f.command([f.move(a, to: .init(x: 1400, y: 0)), f.stack(a, onto: b)], ids: [a, b]).apply(to: f.store)
+    var repeated = second.receipt
+    for _ in 0..<repeatCount {
+      _ = try f.store.undoNativeAction(repeated.id, actor: f.actor)
+      repeated = try NotebookStore(root: f.root).redoNativeAction(repeated.id, actionID: UUID(), actor: f.actor)
+    }
+    _ = try f.store.undoNativeAction(repeated.id, actor: f.actor)
+    _ = try f.store.undoNativeAction(first.receipt.id, actor: f.actor)
+    let cold = NotebookStore(root: f.root)
+    _ = try cold.redoNativeAction(first.receipt.id, actionID: UUID(), actor: f.actor)
+    if peerAfterFirstRedo {
+      let current = try f.placement(a)
+      let peer = try WorkspacePlacement.authored(itemID: a, pose: current.pose,
+        stamp: .init(counter: current.stamp.counter + 1, actor: UUID()), human: true, previous: current)
+      try f.publish(peer)
+      #expect(throws: CollaborationError.self) { try cold.redoNativeAction(repeated.id, actionID: UUID(), actor: f.actor) }
+      #expect(try f.placement(a) == peer)
+      return
+    }
+    _ = try cold.redoNativeAction(repeated.id, actionID: UUID(), actor: f.actor)
+    for saved in second.sources { #expect(try f.placement(saved.id).pose == saved.pose) }
+    #expect(try cold.nativeHistory(domain: .board(f.boardID), actor: f.actor).count == 2)
+  }
+
+  @Test func moveKeepsTheBoardsPainterOrderWithoutEditingUnaddressedSiblings() throws {
+    let f = try Fixture(); defer { f.clean() }
+    let moving = f.items[0], siblings = try f.items.dropFirst().map { try f.placement($0) }
+    let result = try f.command([f.move(moving, to: .zero)], ids: [moving]).apply(to: f.store)
+    let accepted = try #require(result.sources.first?.pose)
+    #expect(accepted.zIndex > siblings.compactMap { $0.pose?.zIndex }.max()!)
+    #expect(result.sources.map(\.id) == [moving])
+    for sibling in siblings { #expect(try f.placement(sibling.id) == sibling) }
+    _ = try f.store.undoNativeAction(result.receipt.id, actor: f.actor)
+    for sibling in siblings { #expect(try f.placement(sibling.id) == sibling) }
+    _ = try NotebookStore(root: f.root).redoNativeAction(result.receipt.id, actionID: UUID(), actor: f.actor)
+    #expect(try f.placement(moving).pose == accepted)
+  }
+
+  @Test func painterOrderIndexAdmissionPreservesMaterialAndCursor() throws {
+    let f = try Fixture(); defer { f.clean() }
+    let before = try f.sources(f.items), cursor = try f.store.currentChangeCursor()
+    do {
+      let database = try NotebookSQLConnection(url: f.store.databaseURL, writable: true)
+      try database.run("DROP INDEX spatial_item_order")
+      try database.run("PRAGMA user_version=20")
+    }
+    let admitted = NotebookStore(root: f.root)
+    #expect(try admitted.workspaceHeader().cursor == cursor)
+    for source in before {
+      #expect(try admitted.readBoardItem(source.id)?.board.placements.first { $0.id == source.id } == source)
+    }
+    let command = try f.command([f.move(f.items[0], to: .zero)], ids: [f.items[0]])
+    let result = try command.apply(to: admitted)
+    #expect(result.sources[0].pose!.zIndex > before.compactMap { $0.pose?.zIndex }.max()!)
+  }
+
   @Test(arguments: [false, true], [0, 2])
   func successiveMovesUndoAndRedoInOrderAfterColdReopen(peerAfterFirstRedo: Bool, repeatFirstRedo: Int) throws {
     let f = try Fixture(); defer { f.clean() }

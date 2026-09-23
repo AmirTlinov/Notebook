@@ -78,7 +78,7 @@ extension NotebookAppModel {
     guard let capture = NotebookAttentionProjection.capture(start:start,end:end,model:self,presence:presence,
       cohort:cohort,installedInk:compositionTiles.surfaceRegistry.installedSources())?.freezingSubmissionVisuals() else { return }
     laserContext.append(scope:.init(computer:chat.computerID,thread:thread)) {
-      let ready = try await capture.resolvingAcceptedElements()
+      let ready = try await capture.resolvingAcceptedCommands()
       let references = try await Task.detached { try ready.resolvedReferences() }.value
       let images = try await ready.renderPinnedImages(references:references)
       return references.prefix(5).compactMap { reference in

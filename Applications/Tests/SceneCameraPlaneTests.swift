@@ -176,7 +176,7 @@ final class SceneCameraPlaneTests: XCTestCase {
     controller.update(rendered: rendered, camera: .init(), viewport: .init(x: 512, y: 512),
       boardID: boardID, cohortID: cohort?.id, cohortRevision: cohort?.plan.revision,
       sourceBoard: cohort?.frame.index.board(id: boardID), publishedLiftRank: nil, projection: nil,
-      registry: registry, inputGate: gate, onLiftChanged: { _ in }, onDrop: { _ in nil },
+      registry: registry, inputGate: gate, onLiftChanged: { _ in }, onDrop: { _, _ in nil },
       content: AnyView(AgentElementSnapshotView(raster: raster!)
         .frame(width: rendered.geometry.width, height: rendered.geometry.height)))
     window.layoutIfNeeded()
@@ -346,7 +346,7 @@ final class SceneCameraPlaneTests: XCTestCase {
     controller.update(rendered: rendered, camera: presence.camera, viewport: presence.viewport,
       boardID: boardID, cohortID: cohort?.id, cohortRevision: cohort?.plan.revision,
       sourceBoard: cohort?.frame.index.board(id: boardID), publishedLiftRank: nil, projection: nil,
-      registry: registry, inputGate: gate, onLiftChanged: { _ in }, onDrop: { _ in nil },
+      registry: registry, inputGate: gate, onLiftChanged: { _ in }, onDrop: { _, _ in nil },
       content: AnyView(ScenePlaneLifetimeContent(cohort: try XCTUnwrap(cohort), presence: presence)))
     parent.view.layoutIfNeeded()
     let first = try XCTUnwrap(controller.acquirePose(in: parent.view))
@@ -368,7 +368,7 @@ final class SceneCameraPlaneTests: XCTestCase {
     controller.update(rendered: rendered, camera: presence.camera, viewport: presence.viewport,
       boardID: boardID, cohortID: UUID(), cohortRevision: 999, sourceBoard: nil,
       publishedLiftRank: nil, projection: nil, registry: registry, inputGate: gate,
-      onLiftChanged: { _ in XCTFail("A retired callback cannot run") }, onDrop: { _ in nil }, content: AnyView(Color.red))
+      onLiftChanged: { _ in XCTFail("A retired callback cannot run") }, onDrop: { _, _ in nil }, content: AnyView(Color.red))
     XCTAssertTrue(controller.isContentReleased)
     XCTAssertNil(controller.handle.owner)
     XCTAssertNil(controller.screenSurface(in: parent.view))
@@ -620,7 +620,7 @@ private struct ScenePlaneNestedPoseLifetimeHost: View {
       SceneCameraPlane(presence: presence, revision: cohort.id) { anchor in
         WorkspaceItemPose(rendered: rendered, camera: anchor.camera, viewport: anchor.viewport,
           boardID: presence.boardID, liftRank: nil, registry: registry,
-          onLiftChanged: { _ in }, onDrop: { _ in nil }) {
+          onLiftChanged: { _ in }, onDrop: { _, _ in nil }) {
             ScenePlaneLifetimeContent(cohort: cohort, presence: anchor)
               .frame(width: rendered.geometry.width, height: rendered.geometry.height)
           }

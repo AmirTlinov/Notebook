@@ -212,6 +212,7 @@ private struct MacWorkspaceMaterial: View {
   let cohort: SceneCompositionCohort
   @State private var source = UUID()
   @State private var draggedFrom: WorldPoint?
+  @State private var moveSource: NotebookItemMoveSource?
   @State private var translation = CGSize.zero
   private var isLive: Bool { cohort.plan.allowsLive(.item(item.id), in: .board(presence.boardID)) }
   private var title: String { item.item.title.isEmpty ? (item.item.kind == .notebook ? "Тетрадь" : item.item.kind == .document ? "Документ" : "Доска") : item.item.title }
@@ -238,22 +239,25 @@ private struct MacWorkspaceMaterial: View {
     .onTapGesture { model.selectWorkspaceItem(item.id, boardID: presence.boardID) }
     .gesture(DragGesture(minimumDistance: 4, coordinateSpace: .named(NotebookManipulationSpace.material)).onChanged { value in
       if draggedFrom == nil {
-        guard model.inputGate.beginFingerSequence() != nil else { return }
+        guard model.inputGate.beginFingerSequence() != nil,
+          let captured = model.itemMoveSource(item.id, boardID: presence.boardID,
+            shown: model.presentedHierarchy(cohort: cohort).board(presence.boardID)) else { return }
         if isLive { model.inputGate.beginContact(source: source) }
         model.inputGate.registerFingerCancellation(source: source) {
-          draggedFrom = nil; translation = .zero
+          draggedFrom = nil; moveSource = nil; translation = .zero
           model.inputGate.endContact(source: source)
         }
         draggedFrom = item.center
+        moveSource = captured
         model.selectWorkspaceItem(item.id, boardID: presence.boardID)
       }
       translation = CGSize(width: value.translation.width / presence.camera.scale,
         height: value.translation.height / presence.camera.scale)
     }.onEnded { value in
       if let origin = draggedFrom, let destination = origin.addressOffset(x: value.translation.width / presence.camera.scale, y: value.translation.height / presence.camera.scale) {
-        model.moveItem(item.id, to: destination)
+        model.moveItem(item.id, to: destination, source: moveSource)
       }
-      draggedFrom = nil; translation = .zero
+      draggedFrom = nil; moveSource = nil; translation = .zero
       model.inputGate.unregisterFingerCancellation(source: source)
       model.inputGate.endContact(source: source)
     }, including: editingTextID == nil ? .all : .subviews)

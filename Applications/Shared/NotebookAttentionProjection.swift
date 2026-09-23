@@ -590,11 +590,23 @@ enum NotebookAttentionProjection {
       }
       if relevant && cohort.plan.allowsLive(.element(id),in:plane) { accepted[ref]=command.task }
     }
+    var placements: [UUID: NotebookAttentionSelection.AcceptedPlacement] = [:]
+    for (id, command) in model.itemPlacementCommands {
+      let boardID = command.boardID
+      guard cohort.plan.allowsLive(.item(id), in: .board(boardID)),
+        sources.hierarchy.board(boardID)?.placements.contains(where: { $0.id == id }) == true else { continue }
+      let relevant = fragments.contains { fragment in
+        if fragment.target.kind == .cover { return fragment.target.id == id }
+        return fragment.target.kind == .board
+          && sources.hierarchy.descendantBoardIDs(including: fragment.target.id).contains(boardID)
+      }
+      if relevant { placements[id] = .init(boardID: boardID, task: command.task) }
+    }
     return .init(fragments: fragments, workspace: sources.workspace, hierarchy: sources.hierarchy, ink: sources.ink,
       pages: sources.pages, documents: sources.documents, states: sources.states, visuals: visuals,
       referenceIdentities: cohort.liveData.referenceIdentities,
       installedInk: installedInk.filter { requiredInk.contains($0.key) }, requiredInk: requiredInk,
-      referenceBasis: cohort.liveData.referenceBasis,acceptedElements:accepted)
+      referenceBasis: cohort.liveData.referenceBasis,acceptedElements:accepted,acceptedPlacements:placements)
   }
 
   private static func intersects(_ fragment: NotebookAttentionSelection.Fragment,

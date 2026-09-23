@@ -119,13 +119,23 @@ extension NotebookStore {
     return result
   }
 
-  func nativeRedoRestoresSource(_ change: CollaborationFieldChange, version: ContentFieldVersion,
+  func nativeRedoRestoresSource(_ change: CollaborationFieldChange, receipt: CollaborationReceipt, version: ContentFieldVersion,
     predecessors: [(repeated: CollaborationReceipt, original: CollaborationReceipt)]) throws -> Bool {
-    guard let expected = change.beforeVersion else { return false }
     let owner = collaborationCausalFieldPath(change.path) ?? change.path
     func ownsField(_ field: CollaborationFieldChange) -> Bool {
       field.file == change.file && (collaborationCausalFieldPath(field.path) ?? field.path) == owner
     }
+    // The pending step may itself be a repeated command. Its immediate before
+    // version then names its own older inverse, not the predecessor's original
+    // result. Follow that exact saved lineage as well; equal geometry is not proof.
+    var expected: [ContentFieldVersion] = [], target = receipt, targets = Set<UUID>()
+    while targets.insert(target.id).inserted {
+      guard target.author == .human, target.undo != nil else { break }
+      expected += target.changes.filter(ownsField).compactMap(\.beforeVersion)
+      guard let previous = target.redoOf else { break }
+      target = try collaborationAction(previous)
+    }
+    guard !expected.isEmpty else { return false }
     for (repeated, original) in predecessors where repeated.changes.contains(where: {
       ownsField($0) && $0.afterVersion == version
     }) {
@@ -135,7 +145,9 @@ extension NotebookStore {
       var source = original, visited: Set<UUID> = [repeated.id]
       while visited.insert(source.id).inserted {
         guard source.author == .human, source.undo != nil else { break }
-        if source.changes.contains(where: { ownsField($0) && $0.afterVersion == expected }) { return true }
+        if source.changes.contains(where: { field in
+          ownsField(field) && field.afterVersion.map(expected.contains) == true
+        }) { return true }
         guard let previous = source.redoOf else { break }
         source = try collaborationAction(previous)
       }

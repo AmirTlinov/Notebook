@@ -200,7 +200,7 @@ final class NotebookLiveScenePublicationTests: XCTestCase {
     let fixture = try await fixture(), model = fixture.model, cohort = fixture.cohort
     let presence = fixture.presence, item = try XCTUnwrap(model.workspace?.selectedItemID)
     let peer = try XCTUnwrap(model.createNotebook(at: .init(x: -1_000, y: 120)))
-    XCTAssertNotNil(model.stackItem(item, onto: peer))
+    XCTAssertNotNil(model.moveItem(item, to: .init(x: -1_000, y: 120), onto: peer))
     let stack = try XCTUnwrap(model.board?.stack(containing: item))
     let expected = try XCTUnwrap(WorkspaceItemStackPresentation.focusedCenter(of:item,in:stack))
     let body = try XCTUnwrap(model.presentedItem(id: item, cohort: cohort, presence: presence))
@@ -230,6 +230,9 @@ final class NotebookLiveScenePublicationTests: XCTestCase {
     let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
     retainNotebookUntilTeardown(model, removing: root)
     await model.start(pageSize: NotebookAppModel.defaultPageSize)
+    let board = try XCTUnwrap(model.presence?.boardID)
+    model.updatePresence(.init(boardID: board, mode: .board, camera: .init(),
+      viewport: .init(x: 1194, y: 834)), settled: true)
     let initiallySaved = await model.finishPendingPersistence(); XCTAssertTrue(initiallySaved)
     let presence = try XCTUnwrap(model.presence), item = try XCTUnwrap(model.workspace?.selectedItemID)
     let observed = model.collaborationReadEpoch
@@ -310,7 +313,7 @@ final class NotebookLiveScenePublicationTests: XCTestCase {
       XCTAssertTrue(model.finishElementManipulation(contact,translation:delta))
     }
     let selection=try captureBoard(fixture)
-    XCTAssertTrue(selection.hasAcceptedElements)
+    XCTAssertTrue(selection.hasAcceptedCommands)
     model.publishHumanContext(selection)
     XCTAssertTrue(model.selectionSession.isResolvingContext)
     try lock.release()
@@ -346,7 +349,7 @@ final class NotebookLiveScenePublicationTests: XCTestCase {
   func testReadyCaptureRegistersItsFenceBeforeTheNextAcceptedContact() async throws {
     let fixture=try await fixture(),model=fixture.model
     let selection=try captureBoard(fixture)
-    XCTAssertFalse(selection.hasAcceptedElements)
+    XCTAssertFalse(selection.hasAcceptedCommands)
     let expected=try model.store.referenceRevision(target:.init(kind:.board,id:fixture.presence.boardID))
     model.publishHumanContext(selection)
     let item=try XCTUnwrap(model.workspace?.selectedItemID)
@@ -400,7 +403,7 @@ final class NotebookLiveScenePublicationTests: XCTestCase {
   }
 
   private func seal(_ selection:NotebookAttentionSelection,model:NotebookAppModel) async throws -> NotebookAttentionSelection.Sealed {
-    let ready=try await selection.resolvingAcceptedElements()
+    let ready=try await selection.resolvingAcceptedCommands()
     return try await model.performStoreCommand { try ready.seal(in:$0) }
   }
 

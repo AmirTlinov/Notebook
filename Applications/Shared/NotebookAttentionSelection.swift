@@ -19,6 +19,11 @@ struct NotebookAttentionSelection: Sendable {
   private let workspace: WorkspaceIndex
   private var hierarchy: BoardHierarchy
   private var acceptedElements: [EditableElementReference:Task<NotebookElementCommandResult?,Never>]
+  struct AcceptedPlacement: Sendable {
+    let boardID: UUID
+    let task: Task<NotebookItemPlacementResult?, Never>
+  }
+  private var acceptedPlacements: [UUID: AcceptedPlacement]
   private var ink: SpatialInkJournal
   private let pages: [PageDocument]
   private let documents: [DocumentDocument]
@@ -39,8 +44,9 @@ struct NotebookAttentionSelection: Sendable {
     referenceIdentities: [NotebookReferenceIdentity] = [],
     installedInk: [SurfaceID: SpatialInkInstalledSource] = [:], requiredInk: Set<SurfaceID> = [],
     referenceBasis: NotebookReferenceBasis? = nil,
-    acceptedElements: [EditableElementReference:Task<NotebookElementCommandResult?,Never>] = [:]) {
-    self.acceptedElements=acceptedElements
+    acceptedElements: [EditableElementReference:Task<NotebookElementCommandResult?,Never>] = [:],
+    acceptedPlacements: [UUID: AcceptedPlacement] = [:]) {
+    self.acceptedElements=acceptedElements; self.acceptedPlacements=acceptedPlacements
     self.fragments = fragments
     self.workspace = workspace; self.hierarchy = hierarchy; self.ink = ink
     let pageIDs = Set(fragments.filter { $0.target.kind == .page }.map { $0.target.id })
@@ -56,12 +62,12 @@ struct NotebookAttentionSelection: Sendable {
     workspaceID = referenceBasis?.workspaceID
   }
 
-  var hasAcceptedElements: Bool { !acceptedElements.isEmpty }
+  var hasAcceptedCommands: Bool { !acceptedElements.isEmpty || !acceptedPlacements.isEmpty }
 
   /// Join the exact commands visible at touch-down before entering the writer.
   /// Their own results supply causal stamps, never a later read of current SQL.
-  func resolvingAcceptedElements() async throws -> Self {
-    guard !acceptedElements.isEmpty else { return self }
+  func resolvingAcceptedCommands() async throws -> Self {
+    guard hasAcceptedCommands else { return self }
     var value=self,boards=Dictionary(uniqueKeysWithValues:hierarchy.boards.map { ($0.id,$0) })
     var headers:[UUID:BoardDocument]=[:]
     for (reference,task) in acceptedElements {
@@ -82,17 +88,49 @@ struct NotebookAttentionSelection: Sendable {
       boards[boardID] = .init(id:node.id,board:node.board.projecting(placements:node.board.placements,elements:elements),
         portalCamera:node.portalCamera,portalStamp:node.portalStamp)
     }
+    for (id, accepted) in acceptedPlacements {
+      guard let result = await accepted.task.value, let source = result.placements[id],
+        let node = boards[accepted.boardID],
+        let shown = node.board.placements.first(where: { $0.id == id })?.pose,
+        let actual = source.pose,
+        shown.center == actual.center, shown.stackID == actual.stackID, shown.stackOrder == actual.stackOrder else {
+        throw CollaborationError("capture_source_changed", "Сохранённое перемещение отличается от показанного указания.")
+      }
+      if headers[node.id].map({ $0.stamp < result.header.stamp }) ?? true { headers[node.id] = result.header }
+      boards[node.id] = .init(id: node.id, board: node.board.projecting(
+        placements: node.board.placements.map { $0.id == id ? source : $0 }, elements: node.board.elements),
+        portalCamera: node.portalCamera, portalStamp: node.portalStamp)
+    }
+    // The store may raise a drop above an offscreen maximum. Its numeric rank
+    // can differ, but the complete retained painter order must remain identical.
+    func order(_ board: BoardDocument) -> [UUID] {
+      board.placements.filter { $0.pose != nil }.sorted {
+        let a = $0.pose!, b = $1.pose!
+        if a.zIndex != b.zIndex { return a.zIndex < b.zIndex }
+        if a.stackOrder != b.stackOrder { return a.stackOrder < b.stackOrder }
+        return $0.id.uuidString < $1.id.uuidString
+      }.map(\.id)
+    }
+    for boardID in Set(acceptedPlacements.values.map(\.boardID)) {
+      guard let before = hierarchy.board(boardID), let after = boards[boardID]?.board,
+        order(before) == order(after) else {
+        throw CollaborationError("capture_source_changed", "Порядок сохранённого материала отличается от показанного.")
+      }
+    }
     value.hierarchy = .init(rootBoardID:hierarchy.rootBoardID,boards:hierarchy.boards.map { old in
       let node=boards[old.id]!
       return .init(id:node.id,board:(headers[node.id] ?? node.board).projecting(placements:node.board.placements,elements:node.board.elements),
         portalCamera:node.portalCamera,portalStamp:node.portalStamp)
     },stamp:hierarchy.stamp)
-    value.acceptedElements=[:]
+    value.acceptedElements=[:]; value.acceptedPlacements=[:]
     return value
   }
 
   func sourceFiles() throws -> [String: JSONValue] {
-    try resolvingPresentedSources().encodedSourceFiles()
+    guard !hasAcceptedCommands else {
+      throw CollaborationError("capture_pending", "Указание ещё ожидает свой принятый источник.")
+    }
+    return try resolvingPresentedSources().encodedSourceFiles()
   }
 
   @MainActor

@@ -152,6 +152,8 @@ struct NotebookSQLScaleTests {
       return result
     }
     let native = try measured("MOVE") { try command.apply(to: store) }
+    #expect(native.sources.first?.pose?.zIndex == 100_000,
+      "The bounded command still moves above every offscreen item, not just its source group")
     _ = try measured("UNDO") { try store.undoNativeAction(native.receipt.id, actor: actor) }
     _ = try measured("REDO") { try store.redoNativeAction(native.receipt.id, actionID: UUID(), actor: actor) }
     #expect(try store.workspaceHeader().itemCount == 100_000)

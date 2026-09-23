@@ -1,5 +1,56 @@
 # Verification record
 
+## September 23 — GUI-295, native item drop and retained history
+
+Mac/iPad item movement, unstacking and a drop into another stack now use one
+retained native command, the existing Core placement reducer and one Undo entry.
+The former direct item writer and independent native stack/unstack paths are
+removed. A contact retains the complete source stacks; later contacts and pointer
+captures join that command's exact saved heads, not a fresh peer read. The visible
+pose is a draft, not a fabricated causal write, and remains until the actual
+saved source and rendered position acknowledge it. Before/after-commit storage
+failures retain the accepted pose and dependent drop; terminal conflicts retract
+only their own draft and do not block an unrelated item.
+
+An addressed-move regression exposed z=1 below an untouched sibling at z=2.
+Admission 21 adds the maintained `spatial_item_order` index; the command reads
+only the top painter group, without changing siblings or loading the board.
+The fixed path passed **23 Core tests / 3 suites**, including 100,000 real owners,
+1,300,006 records and 500,001 causal fields. MOVE / UNDO / REDO used
+**9,993 / 9,952 / 9,940 SQL VM steps**, respectively **17.86 / 16.94 / 16.94 ms**
+in this local sample. Evidence: `.build/gui295-placement-native-order-scale.log`;
+negative order control: `.build/gui295-placement-order-regression.log`.
+These are storage measurements, not gesture or display latency. Subsequent
+changes remove an unused writer and repair nested-repeat lineage; this ordinary
+single-action scale path is unchanged.
+
+The initial native run passed 32/35 iPad checks, including the real mounted
+finger-owner drop and ordinary six-leaf XCUITest journey. Its three failures
+identified a nested Redo defect and two board-only fixtures that had implicitly
+started inside the initial open page. Those fixtures now explicitly select the
+board and retain their original camera/publication assertions. Repeating a
+previously repeated stack now follows the pending command's own saved lineage
+as well as its predecessor's; a same-valued peer write still rejects Redo.
+The negative Core reproduction and final **31 tests / 3 suites PASS** are in
+`.build/gui295-nested-stack-redo-{regression,fixed}.log`; current Core/package
+inputs are recorded in `.build/gui295-nested-stack-redo-fixed-inputs.json`.
+The removed writer's callers also passed their selected regressions: the only
+initial fixture failure expected no action contexts after a legitimate native
+move, and now proves the failed stale capture leaves existing contexts unchanged
+(`gui295-placement-native-callers.log`, `gui295-placement-native-context-fixed.log`).
+
+Final unchanged-source checks: **4 physical-iPad + 16 Mac PASS**, no failures,
+skips or runtime warnings, `.build/gui295-placement-native-189d/verification.json`,
+source `e40dc8d0f8a3d8134b1af17dde18b488f0c94b21565c966326b75c3dccae7522`.
+The iPad repeats the repaired cases and the installed finger-owner scenario:
+quiet hold, drag blue-ink cover onto red-ink cover, one Undo, one Redo. Whole-window
+pixels and the exported final image preserve both contributions and the empty
+source position. The 320-ms release settlement is an animation/save boundary;
+the later 18.65 / 21.43 / 64.48-ms pixel observations are not input-to-photon
+measurements. Unaffected passing pose/routing checks were not repeated.
+No production install is claimed here. Native item deletion/code-note Redo,
+forward delivery latency and full-system/joint physical acceptance remain open.
+
 ## September 23 — GUI-298 matched pair 188 installed
 
 Commit `a58f2a39` produced signed **0.3.134 (188)** for iPad and Mac from the

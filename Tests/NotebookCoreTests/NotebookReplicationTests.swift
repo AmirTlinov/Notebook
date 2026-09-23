@@ -65,7 +65,7 @@ struct NotebookReplicationTests {
     #expect(addedDocument)
     try b.saveDocumentWorkspaceBundle(index: remoteIndex, document: .init(id: document.id, actor: peer, blocks: [.markdown(id: "body", source: "Delivered")]), state: .init(id: document.id, actor: peer), board: remoteBoard)
     let center = WorldPoint(x: 370, y: -240)
-    #expect(try a.moveWorkspaceItem(itemID: notebook.item.id, in: child.id, to: center, actor: actor))
+    #expect(try moveTestItem(store: a, itemID: notebook.item.id, in: child.id, to: center, actor: actor))
     let local = try a.workspaceHeader(), node = try #require(try a.readBoardNodeHeader(child.id))
     let before = BoardHierarchy(rootBoardID: header.rootBoardID, boards: [node], stamp: try #require(local.boardStamp))
     var after = before

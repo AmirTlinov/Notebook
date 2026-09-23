@@ -406,7 +406,7 @@ struct NotebookPageAppendTests {
         .init(target: boardTarget, revision: try store.targetContentRevision(target: boardTarget))], operations: [
           .init(kind: .renameItem, target: boardTarget, id: base.selectedItemID.uuidString, values: ["title": .string("Durable title")])])
       _ = try store.applyCollaborationAction(renamed, actor: other)
-      #expect(try store.moveWorkspaceItem(itemID: base.selectedItemID, in: base.rootBoardID, to: .init(x: 911, y: -713), actor: other))
+      #expect(try moveTestItem(store: store, itemID: base.selectedItemID, in: base.rootBoardID, to: .init(x: 911, y: -713), actor: other))
       let physical = try store.readBoardItem(base.selectedItemID), before = try store.currentChangeCursor()
       _ = try store.saveWorkspaceSelection(index: first, createdPage: pageA)
       _ = try store.saveWorkspaceSelection(index: second, createdPage: pageB)

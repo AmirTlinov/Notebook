@@ -189,6 +189,16 @@ extension NotebookStore {
       itemIDs.formUnion(node.board.itemIDs); boardIDs.insert(node.id)
     }
     for id in Array(itemIDs) { try insertPlacement(id) }
+    // A move raises its item above the board, not just above the addressed
+    // source group. Retain the one indexed top group as a read dependency;
+    // the unchanged sibling registers never become fields owned by the move.
+    let movingBoards = Set(action.operations.filter { $0.kind == .moveItem && $0.target.kind == .board }.map { $0.target.id })
+    for board in movingBoards {
+      if let id = try currentSQL!.rows("SELECT owner_id FROM spatial_entries INDEXED BY spatial_item_order WHERE board_id=? AND kind='item' ORDER BY z_index DESC,owner_id LIMIT 1",
+        [.text(board.uuidString.lowercased())]).first?[0].text.flatMap(UUID.init(uuidString:)) {
+        try insertPlacement(id)
+      }
+    }
     // A deleted placement no longer has a live item_owners entry, but its
     // causal tombstone still determines whether an old action owns undo.
     for (board, ids) in placementIDs {

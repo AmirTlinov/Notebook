@@ -491,6 +491,7 @@ final class NotebookAppModel {
             (PageAddress(itemID: $0.itemID, index: $0.index, root: $0.visibleRoot), $0.pageID)
           })
           boardHierarchy = state.hierarchy
+          retireItemPlacementCommands(through: state.header.cursor)
           spatialGroupReads = state.groupReads
           boardContentRevisions = state.boardContentRevisions
           admitDocumentReading(state.reading)
@@ -926,6 +927,7 @@ final class NotebookAppModel {
   // Lift transfers its final draft to the accepted command. It is retired by
   // a scene read at/after the durable cursor, not by lift or receipt delivery.
   var elementCommandDrafts: [EditableElementReference: NotebookElementCommandDraft] = [:]
+  var itemPlacementCommands: [UUID: NotebookItemPlacementCommand] = [:]
   @ObservationIgnored var editingNativeTextReferences: Set<EditableElementReference> = []
   @ObservationIgnored var elementCommandSources: [EditableElementReference: NotebookElementCommand] = [:]
   var graphicCommandPending: Bool {
@@ -1461,9 +1463,8 @@ final class NotebookAppModel {
 
   var board: BoardDocument? {
     guard let boardHierarchy else { return nil }
-    return boardHierarchy.board(
-      presence?.boardID ?? workspace?.rootBoardID ?? WorkspaceRoot.boardID
-    )
+    let id = presence?.boardID ?? workspace?.rootBoardID ?? WorkspaceRoot.boardID
+    return boardHierarchy.board(id).map { acceptedPlacementBoard($0, boardID: id) }
   }
 
   var activeItem: WorkspaceItem? {
@@ -1968,43 +1969,91 @@ final class NotebookAppModel {
     return true
   }
 
-  func moveItem(_ itemID: UUID, to center: WorldPoint) {
-    guard !isItemBeingDeleted(itemID), let presence else { return }
-    if var board = boardHierarchy, board.moveItem(itemID, in: presence.boardID, to: center, actor: actorID) {
-      persistBoard(board)
-    } else {
-      let boardID = presence.boardID, actor = actorID
-      enqueueStoreWrite(reload: true) {
-        _ = try $0.moveWorkspaceItem(itemID: itemID, in: boardID, to: center, actor: actor)
+  /// One lift enters the same causal FIFO as ink, elements and Undo. The
+  /// immediate pose is only a draft; saved heads come from this exact command.
+  @discardableResult
+  func moveItem(_ itemID: UUID, to center: WorldPoint, onto targetID: UUID? = nil,
+    source retained: NotebookItemMoveSource? = nil) -> NotebookItemPlacementCommand? {
+    guard !isClosing, center.isValid, let boardID = presence?.boardID,
+      let source = retained ?? itemMoveSource(itemID, boardID: boardID),
+      source.boardID == boardID, source.itemID == itemID,
+      itemMoveSourceIsCurrent(source),
+      let canonical = boardHierarchy?.board(boardID) else { return nil }
+    var sources = source.placements, dependencies = source.dependencies
+    if let targetID {
+      guard let target = itemMoveSource(targetID, boardID: boardID) else { return nil }
+      sources.merge(target.placements) { first, _ in first }
+      dependencies.merge(target.dependencies) { first, _ in first }
+    }
+    guard (1...10).contains(sources.count), sources.keys.allSatisfy({ !isItemBeingDeleted($0) }) else { return nil }
+    let actionID = UUID(), actor = actorID, target = CollaborationTarget(kind: .board, id: boardID)
+    let operations: [CollaborationOperation], draft: BoardDocument
+    do {
+      var values: [CollaborationOperation] = [.init(kind: .moveItem, target: target,
+        id: itemID.uuidString, values: ["center": try .encode(center)])]
+      if let targetID { values.append(.init(kind: .stackItems, target: target,
+        values: ["itemIDs": try .encode([itemID, targetID])])) }
+      var projection = BoardHierarchy(rootBoardID: boardID,
+        boards: [.init(id: boardID, board: acceptedPlacementBoard(canonical, boardID: boardID))], stamp: canonical.stamp)
+      for (index, operation) in values.enumerated() {
+        try projection.applyPlacementOperation(operation, in: boardID, actor: actor,
+          stackID: NotebookStore.submissionID(actionID, suffix: "stack:\(index)"))
+      }
+      operations = values; draft = projection.board(boardID)!
+    } catch { showCue(error.localizedDescription); return nil }
+    let poses = Dictionary(uniqueKeysWithValues: draft.placements.compactMap { placement -> (UUID, WorkspacePlacementPose)? in
+      guard sources[placement.id] != nil, let pose = placement.pose else { return nil }
+      return (placement.id, pose)
+    })
+    let command = NotebookItemPlacementCommand(id: actionID, boardID: boardID, poses: poses)
+    let captured = sources, predecessors = dependencies
+    let preparation = Task { () throws -> @Sendable (NotebookStore) throws -> NotebookItemPlacementResult in
+      var expected: [WorkspacePlacement] = []
+      for (id, source) in captured {
+        if let previous = predecessors[id] {
+          guard let value = await previous.task.value?.placements[id] else {
+            throw CollaborationError("revision_conflict", "Предыдущее перемещение не было сохранено.")
+          }
+          expected.append(value)
+        } else { expected.append(source) }
+      }
+      let accepted = NotebookNativeCommand(operations, summary: targetID == nil ? "Перенос предмета" : "Перенос в стопку",
+        placements: expected, actionID: actionID, actor: actor)
+      return { store in
+        let result = try accepted.apply(to: store)
+        guard let header = try store.readBoardNodeHeader(boardID)?.board else {
+          throw CollaborationError("target_missing", "Не найдена доска принятого перемещения.")
+        }
+        return .init(cursor: try store.currentChangeCursor(),
+          placements: Dictionary(uniqueKeysWithValues: result.sources.map { ($0.id, $0) }), header: header)
       }
     }
-  }
-
-  @discardableResult
-  func stackItem(_ movingID: UUID, onto targetID: UUID) -> UUID? {
-    guard !isItemBeingDeleted(movingID), !isItemBeingDeleted(targetID), var board = boardHierarchy, let presence,
-      let stackID = board.createStack(
-        moving: movingID,
-        onto: targetID,
-        in: presence.boardID,
-        actor: actorID
-      )
-    else { return nil }
-    persistBoard(board)
-    showCue("Стопка")
-    return stackID
-  }
-
-  func unstackItem(_ itemID: UUID, at center: WorldPoint) {
-    guard !isItemBeingDeleted(itemID), var board = boardHierarchy, let presence,
-      board.unstackItem(
-        itemID,
-        in: presence.boardID,
-        at: center,
-        actor: actorID
-      )
-    else { return }
-    persistBoard(board)
+    let saved = persistence.enqueuePreparedCommand(preparation, publishesChanges: true)
+    command.task = Task { [weak self] in
+      guard let self else { return nil }
+      defer { pendingCollaborationCommands[actionID] = nil }
+      do {
+        let result = try await saved.value
+        command.accepted = result
+        collaborationReadEpoch &+= 1; collaborationContentEpoch &+= 1
+        reloadExternalChanges()
+        return result
+      } catch {
+        preparation.cancel(); command.rejected = true
+        for id in captured.keys where itemPlacementCommands[id]?.id == actionID { itemPlacementCommands[id] = nil }
+        pencilUndoHistory.discardCommand(domain: .board(boardID), actionID: actionID)
+        collaborationReadEpoch &+= 1; collaborationContentEpoch &+= 1
+        showCue(error.localizedDescription); reloadExternalChanges()
+        return nil
+      }
+    }
+    for id in sources.keys { itemPlacementCommands[id] = command }
+    pencilUndoHistory.recordCommand(domain: .board(boardID), actionID: actionID)
+    pendingCollaborationCommands[actionID] = Task { await command.task.value != nil }
+    boardContentRevisions[boardID] = nil
+    collaborationReadEpoch &+= 1; collaborationContentEpoch &+= 1
+    if targetID != nil { showCue("Стопка") }
+    return command
   }
 
   func updatePresence(_ presence: SessionPresence, settled: Bool) {
@@ -4352,10 +4401,10 @@ final class NotebookAppModel {
       }
     }
     let publication:Task<Void,Never>
-    if selection.hasAcceptedElements {
+    if selection.hasAcceptedCommands {
       publication=Task {
         let prepared:Result<NotebookAttentionSelection,Error>
-        do { prepared = .success(try await selection.resolvingAcceptedElements()) }
+        do { prepared = .success(try await selection.resolvingAcceptedCommands()) }
         catch { prepared = .failure(error) }
         await enqueue(prepared).value
       }
@@ -5224,6 +5273,7 @@ final class NotebookAppModel {
       selectionSession.nativeText = target
     }
     retireGraphicCommands(through: state.header.cursor)
+    retireItemPlacementCommands(through: state.header.cursor)
     alignWorkspaceSelection()
     if selectionSession.elements.contains(where: { reference in
       // Accepted creation owns its presentation until its exact publication
@@ -5384,11 +5434,12 @@ final class NotebookAppModel {
     #endif
     repeat {
       guard !Task.isCancelled, continuing() else { return false }
-      if let task = graphicCommandTask {
-        // Its FIFO position was reserved at acceptance. A failed write keeps
-        // the task pending for retry, but must release shutdown/navigation.
+      let commands = Array(pendingCollaborationCommands.values)
+      if !commands.isEmpty {
+        // Positions were reserved at acceptance. A storage failure retains the
+        // commands for retry, but must release shutdown/navigation.
         guard await persistence.flush() else { return false }
-        _ = await task.value
+        for task in commands { _ = await task.value }
       }
       if let task = contextPublicationTask { await task.value }
       if let task = collaborationHistoryTask {
@@ -5411,7 +5462,7 @@ final class NotebookAppModel {
       observeNavigation("writer_flush_end", fields: trace)
       guard !Task.isCancelled, continuing() else { return false }
     } while boundary == .quiescent && (diskRefreshTask != nil || headerRefreshTask != nil || documentOpeningTask != nil || persistence.pendingCount > 0
-      || graphicCommandTask != nil || contextPublicationTask != nil)
+      || !pendingCollaborationCommands.isEmpty || contextPublicationTask != nil)
     return publicationFailure == nil
   }
 

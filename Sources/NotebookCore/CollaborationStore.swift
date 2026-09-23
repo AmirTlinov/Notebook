@@ -352,7 +352,7 @@ extension NotebookStore {
           if repeatedPredecessors == nil {
             repeatedPredecessors = try nativeRepeatedPredecessors(domains: domains, actor: actor)
           }
-          guard try nativeRedoRestoresSource(change, version: version, predecessors: repeatedPredecessors!) else {
+          guard try nativeRedoRestoresSource(change, receipt: original, version: version, predecessors: repeatedPredecessors!) else {
             throw CollaborationError("revision_conflict","Причинный владелец изменился после отмены.")
           }
         }
@@ -854,33 +854,9 @@ struct CollaborationWorkspace {
       if item["title"] == .string(title) { return }
       value = value.setting(at: path[...], to: item.setting("title", .string(title)))!
       files["workspace.json"] = try advancing(value, key: "stamp", actor: actor)
-    case .moveItem:
-      guard let id = operation.id.flatMap(UUID.init(uuidString:)), let center = operation.values["center"] else {
-        throw invalid("Нужны ID предмета и его центр.")
-      }
+    case .moveItem, .stackItems:
       var tree = try hierarchy
-      let boardID = try boardID(for: operation.target), destination = try center.decode(WorldPoint.self)
-      let moved: Bool
-      if tree.board(boardID)?.stack(containing: id) != nil {
-        moved = tree.unstackItem(id, in: boardID, at: destination, actor: actor)
-      } else {
-        moved = tree.moveItem(id, in: boardID, to: destination, actor: actor)
-      }
-      guard moved else {
-        throw invalid("Предмет должен принадлежать указанной доске; нужен допустимый центр.")
-      }
-      files["board.json"] = try .encode(tree)
-    case .stackItems:
-      guard let members = operation.values["itemIDs"] else { throw invalid("Нужны участники стопки.") }
-      let ids = try members.decode([UUID].self)
-      guard (2...5).contains(ids.count), Set(ids).count == ids.count else { throw invalid("В стопке от двух до пяти разных предметов.") }
-      var tree = try hierarchy
-      let boardID = try boardID(for: operation.target)
-      for moving in ids.dropLast() {
-        guard tree.createStack(moving: moving, onto: ids.last!, in: boardID, actor: actor, stackID: stackID) != nil else {
-          throw invalid("Участники должны принадлежать указанной доске.")
-        }
-      }
+      try tree.applyPlacementOperation(operation, in: boardID(for: operation.target), actor: actor, stackID: stackID)
       files["board.json"] = try .encode(tree)
     }
   }

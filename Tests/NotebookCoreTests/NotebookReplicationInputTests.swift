@@ -43,7 +43,7 @@ struct NotebookReplicationInputTests {
     try fixture { a, b, source, header, item, _ in
       let cover = CollaborationTarget(kind: .cover, id: item, boardID: header.rootBoardID)
       let identity = try a.referenceIdentities(targets: [cover])
-      #expect(try a.moveWorkspaceItem(itemID: item, in: header.rootBoardID, to: .init(x: 380, y: 90), actor: source.deviceID))
+      #expect(try moveTestItem(store: a, itemID: item, in: header.rootBoardID, to: .init(x: 380, y: 90), actor: source.deviceID))
       #expect(try a.referenceIdentities(targets: [cover]) == identity)
       let delivery = NotebookReplicationDelivery(source: source, change: try #require(a.changeJournal(after: header.cursor).first))
       try stage(delivery, a, b)

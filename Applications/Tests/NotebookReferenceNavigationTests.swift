@@ -144,7 +144,10 @@ final class NotebookReferenceNavigationTests: XCTestCase {
     await fulfillment(of: [started], timeout: 2)
     let center = WorldPoint(x: 91_000, y: -72_000), actor = UUID()
     try await model.performStoreCommand { store in
-      _ = try store.moveWorkspaceItem(itemID: itemID, in: boardID, to: center, actor: actor)
+      let sources = try XCTUnwrap(store.readBoardItem(itemID)).board.placements
+      _ = try NotebookNativeCommand([.init(kind: .moveItem, target: .init(kind: .board, id: boardID),
+        id: itemID.uuidString, values: ["center": .encode(center)])], summary: "Moved navigation target",
+        placements: sources, actor: actor).apply(to: store)
     }
     XCTAssertNil(result, "A navigation read cannot apply while accepted Pencil is active")
     model.inputGate.endPencilAction(source: pencil)

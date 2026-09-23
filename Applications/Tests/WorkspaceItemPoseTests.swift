@@ -13,9 +13,11 @@ final class WorkspaceItemPoseTests: XCTestCase {
     XCTAssertTrue(before.addItem(neighbor, near: .init(x: 1_000, y: 0), actor: actor))
     var after = before
     XCTAssertTrue(after.moveItem(item, to: .init(x: 420, y: 160), actor: actor))
-    let destination = try XCTUnwrap(WorkspaceItemPoseDestination(itemID: item, before: before, after: after))
+    let destination = try XCTUnwrap(destination(itemID: item, before: before, after: after, confirmed: false))
     XCTAssertEqual(destination.center, WorldPoint(x: 420, y: 160))
     XCTAssertFalse(destination.isObserved(in: before))
+    XCTAssertFalse(destination.isObserved(in: after), "A preview cannot acknowledge its own speculative heads")
+    destination.command.accepted = result(after)
     XCTAssertTrue(destination.isObserved(in: after))
     var unrelated = before
     XCTAssertTrue(unrelated.moveItem(neighbor, to: .init(x: 2_000, y: 0), actor: actor))
@@ -26,13 +28,13 @@ final class WorkspaceItemPoseTests: XCTestCase {
 
     var stacked = after
     XCTAssertNotNil(stacked.createStack(moving: item, onto: neighbor, actor: actor))
-    let stackDestination = try XCTUnwrap(WorkspaceItemPoseDestination(itemID: item, before: after, after: stacked))
+    let stackDestination = try XCTUnwrap(self.destination(itemID: item, before: after, after: stacked))
     XCTAssertNotNil(stackDestination.stack)
     XCTAssertFalse(stackDestination.isObserved(in: after))
     XCTAssertTrue(stackDestination.isObserved(in: stacked))
     XCTAssertTrue(stacked.unstackItem(item, at: .init(x: -200, y: 300), actor: actor))
     XCTAssertTrue(stackDestination.isObserved(in: stacked), "Unstacking observes the same item, not a retired stack field")
-    XCTAssertNil(WorkspaceItemPoseDestination(itemID: item, before: stacked, after: stacked))
+    XCTAssertNil(self.destination(itemID: item, before: stacked, after: stacked))
   }
 
   func testPencilFirstSampleUsesThePartlyLiftedNativeBodyAndCommitsBeforeReturn() async throws {
@@ -292,7 +294,7 @@ final class WorkspaceItemPoseTests: XCTestCase {
       boardID: driver.boardID, cohortID: driver.physical.cohort.id, cohortRevision: driver.physical.cohort.plan.revision,
       sourceBoard: driver.physical.cohort.frame.index.board(id: driver.boardID), publishedLiftRank: nil,
       projection: nil, registry: driver.registry, inputGate: driver.gate,
-      onLiftChanged: { callbacks.append($0) }, onDrop: { _ in XCTFail("Teardown cannot replay a drop"); return nil },
+      onLiftChanged: { callbacks.append($0) }, onDrop: { _, _ in XCTFail("Teardown cannot replay a drop"); return nil },
       content: AnyView(Color.white))
     lease.release()
     XCTAssertTrue(driver.registry.pose(for: .cover(id)) === new)
@@ -313,7 +315,7 @@ final class WorkspaceItemPoseTests: XCTestCase {
     driver.physical.onDrop = { _, point in
       calls += 1
       XCTAssertTrue(local.moveItem(id, to: point, actor: driver.actor))
-      return .init(itemID: id, before: base, after: local)
+      return self.destination(itemID: id, before: base, after: local)
     }
     pose.beginLift(); driver.physical.publish(id)
     pose.endTranslation(.init(width: 60, height: 20))
@@ -389,7 +391,7 @@ final class WorkspaceItemPoseTests: XCTestCase {
     driver.physical.onDrop = { _, point in
       drops += 1
       XCTAssertTrue(local.moveItem(a, to: point, actor: driver.actor))
-      return .init(itemID: a, before: base, after: local)
+      return self.destination(itemID: a, before: base, after: local)
     }
     pose.beginLift(); driver.physical.publish(a)
     pose.endTranslation(.init(width: 30, height: 10))
@@ -440,6 +442,21 @@ final class WorkspaceItemPoseTests: XCTestCase {
     XCTAssertTrue(driver.canBegin(at: point))
     pose.view.removeFromSuperview()
     XCTAssertFalse(driver.canBegin(at: point), "Window removal is a hard physical boundary")
+  }
+
+  private func result(_ board: BoardDocument) -> NotebookItemPlacementResult {
+    .init(cursor: 1, placements: Dictionary(uniqueKeysWithValues: board.placements.map { ($0.id, $0) }), header: board)
+  }
+
+  private func destination(itemID: UUID, before: BoardDocument, after: BoardDocument,
+    confirmed: Bool = true) -> WorkspaceItemPoseDestination? {
+    guard before.placements.first(where: { $0.id == itemID }) != after.placements.first(where: { $0.id == itemID }) else { return nil }
+    let value = result(after)
+    let command = NotebookItemPlacementCommand(id: UUID(), boardID: UUID(), poses: Dictionary(uniqueKeysWithValues:
+      after.placements.compactMap { source in source.pose.map { (source.id, $0) } }))
+    command.task = Task { value }
+    if confirmed { command.accepted = value }
+    return .init(itemID: itemID, board: after, command: command)
   }
 
   private func pause(_ pose: WorkspaceItemPoseController, fraction: CGFloat, in view: UIView) async throws {
@@ -558,7 +575,7 @@ private struct OrderedPoseHost: View {
           onLiftChanged: { value in
             engaged.removeAll { $0 == item.id }
             if value { engaged.append(item.id) }
-          }, onDrop: { _ in nil }) {
+          }, onDrop: { _, _ in nil }) {
             Color.blue.frame(width: item.geometry.width, height: item.geometry.height)
               .overlay { SpatialInkSurfaceView(surface: .cover(item.id), cohort: cohort, boardID: presence.boardID, isActive: true) }
           }

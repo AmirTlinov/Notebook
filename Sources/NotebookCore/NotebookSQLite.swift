@@ -376,7 +376,7 @@ extension NotebookStore {
   var currentSQL: NotebookSQLConnection? { Thread.current.threadDictionary[connectionKey] as? NotebookSQLConnection }
 
   // SQLite admission is local to this database, independently of wire and content formats.
-  static let currentDatabaseVersion: Int64 = 20
+  static let currentDatabaseVersion: Int64 = 21
 
   @discardableResult
   func prepareDatabase(initialWorkspaceID: UUID? = nil) throws -> NotebookSQLConnection {
@@ -531,6 +531,7 @@ extension NotebookStore {
   /// Called only inside the bootstrap or admission writer transaction.
   private func prepareCurrentDatabaseSchema(_ database: NotebookSQLConnection) throws {
     try Self.createElementGroupSpatialIndex(database)
+    try database.run("CREATE INDEX IF NOT EXISTS spatial_item_order ON spatial_entries(board_id,z_index DESC,owner_id) WHERE kind='item'")
     try Self.createItemLifecycleIndex(database)
     try Self.createPageBirthReservationIndex(database)
     try Self.createRetiredNotebookPageIndex(database)

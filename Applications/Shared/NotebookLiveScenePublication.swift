@@ -117,7 +117,7 @@ extension NotebookAppModel {
 
   func presentedBoard(_ captured: BoardDocument, boardID: UUID,
     cohort: SceneCompositionCohort) -> BoardDocument {
-    let current = boardHierarchy?.board(boardID) ?? captured
+    let current = acceptedPlacementBoard(boardHierarchy?.board(boardID) ?? captured, boardID: boardID)
     let liveItems = Set(cohort.plan.liveOwners.compactMap { owner -> UUID? in
       guard owner.plane == .board(boardID), case .item(let id) = owner.id else { return nil }; return id
     })
@@ -152,7 +152,8 @@ extension NotebookAppModel {
     guard !isItemBeingDeleted(admitted.id) else { return nil }
     guard cohort.plan.allowsLive(.item(admitted.id), in: .board(presence.boardID)) else { return admitted }
     if let owner = boardHierarchy?.ownerBoardID(of: admitted.id), owner != presence.boardID { return nil }
-    guard let board = boardHierarchy?.board(presence.boardID) else { return admitted }
+    guard let canonical = boardHierarchy?.board(presence.boardID) else { return admitted }
+    let board = acceptedPlacementBoard(canonical, boardID: presence.boardID)
     if let placement = board.placements.first(where: { $0.id == admitted.id }), placement.pose == nil { return nil }
     let item = workspace?.item(id: admitted.id) ?? admitted.item
     if let placement = board.placement(of: admitted.id) {

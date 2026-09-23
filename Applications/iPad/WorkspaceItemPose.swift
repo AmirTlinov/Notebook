@@ -2,29 +2,35 @@ import NotebookCore
 import SwiftUI
 import UIKit
 
-/// The result of the existing placement command, not another placement owner.
-/// A stack retains its Core presentation rule while the published cohort catches up.
+/// A physical destination retains its exact causal command, not a speculative
+/// clock from the preview. A newer board stamp alone cannot acknowledge it.
+@MainActor
 struct WorkspaceItemPoseDestination: Equatable {
   let center: WorldPoint
   let stack: WorkspaceItemStack?
-  let accepted: WorkspacePlacement
+  let itemID: UUID
+  let command: NotebookItemPlacementCommand
 
-  init?(itemID: UUID, before: BoardDocument, after: BoardDocument) {
-    let free = after.placement(of: itemID), stack = after.stack(containing: itemID)
-    guard free != nil || stack != nil,
-      let accepted = after.placements.first(where: { $0.itemID == itemID }),
-      accepted != before.placements.first(where: { $0.itemID == itemID }) else { return nil }
-    self.accepted = accepted
+  init?(itemID: UUID, board: BoardDocument, command: NotebookItemPlacementCommand) {
+    let free = board.placement(of: itemID), stack = board.stack(containing: itemID)
+    guard command.poses[itemID] != nil, free != nil || stack != nil else { return nil }
+    self.itemID = itemID; self.command = command
     center = stack?.center ?? free!.center
     self.stack = stack
   }
 
   func isObserved(in board: BoardDocument?) -> Bool {
-    board?.placements.first(where: { $0.itemID == accepted.itemID })?.hasObserved(accepted) == true
+    if command.rejected { return true }
+    guard let accepted = command.accepted?.placements[itemID] else { return false }
+    return board?.placements.first(where: { $0.itemID == itemID })?.hasObserved(accepted) == true
   }
 
   func center(itemID: UUID) -> WorldPoint {
     stack.flatMap { WorkspaceItemStackPresentation.focusedCenter(of: itemID, in: $0) } ?? center
+  }
+
+  nonisolated static func == (a: Self, b: Self) -> Bool {
+    a.itemID == b.itemID && a.command === b.command && a.center == b.center && a.stack == b.stack
   }
 }
 
@@ -58,7 +64,7 @@ struct WorkspaceItemPose<Content: View>: UIViewControllerRepresentable {
   let liftRank: Double?
   let registry: SpatialInkSurfaceRegistry
   let onLiftChanged: (Bool) -> Void
-  let onDrop: (WorldPoint) -> WorkspaceItemPoseDestination?
+  let onDrop: (WorldPoint, NotebookItemMoveSource?) -> WorkspaceItemPoseDestination?
   @ViewBuilder let content: () -> Content
 
   func makeUIViewController(context: Context) -> WorkspaceItemPoseController {
@@ -71,6 +77,7 @@ struct WorkspaceItemPose<Content: View>: UIViewControllerRepresentable {
     controller.update(rendered: rendered, camera: camera, viewport: viewport, boardID: boardID,
       cohortID: cohort?.id, cohortRevision: cohort?.plan.revision, sourceBoard: model.boardHierarchy?.board(boardID), publishedLiftRank: liftRank, projection: projection,
       registry: registry, inputGate: model.inputGate, onLiftChanged: onLiftChanged, onDrop: onDrop,
+      moveSource: model.itemMoveSource(rendered.id, boardID: boardID),
       content: AnyView(content().environment(model)
         .environment(\.scenePlaneProjection, projection)
         .environment(\.workspaceSceneFrame, frame)
@@ -111,8 +118,10 @@ final class WorkspaceItemPoseController: UIViewController, NotebookScenePresenta
   private(set) var isEngaged = false
   private var translation = CGSize.zero
   private var pendingDestination: WorkspaceItemPoseDestination?
+  private var moveSource: NotebookItemMoveSource?
+  private var activeMoveSource: NotebookItemMoveSource?
   private var onLiftChanged: (Bool) -> Void = { _ in }
-  private var onDrop: (WorldPoint) -> WorkspaceItemPoseDestination? = { _ in nil }
+  private var onDrop: (WorldPoint, NotebookItemMoveSource?) -> WorkspaceItemPoseDestination? = { _, _ in nil }
   private let activityID = UUID()
   private var ownsActivity = false
   private var generation: UInt64 = 0
@@ -161,7 +170,8 @@ final class WorkspaceItemPoseController: UIViewController, NotebookScenePresenta
     boardID: UUID, cohortID: UUID?, cohortRevision: UInt64?, sourceBoard: BoardDocument?, publishedLiftRank: Double?, projection: ScenePlaneProjection?,
     registry: SpatialInkSurfaceRegistry, inputGate: NotebookInputGate,
     onLiftChanged: @escaping (Bool) -> Void,
-    onDrop: @escaping (WorldPoint) -> WorkspaceItemPoseDestination?, content: AnyView) {
+    onDrop: @escaping (WorldPoint, NotebookItemMoveSource?) -> WorkspaceItemPoseDestination?,
+    moveSource: NotebookItemMoveSource? = nil, content: AnyView) {
     guard !retired else { return }
     if let retiredAtRevision {
       guard let cohortRevision, cohortRevision >= retiredAtRevision,
@@ -176,7 +186,7 @@ final class WorkspaceItemPoseController: UIViewController, NotebookScenePresenta
         guard let self, self.lifetime == lifetime, !self.retired else { return }
         self.update(rendered: rendered, camera: camera, viewport: viewport, boardID: boardID,
           cohortID: cohortID, cohortRevision: cohortRevision, sourceBoard: sourceBoard, publishedLiftRank: publishedLiftRank, projection: projection, registry: registry,
-          inputGate: inputGate, onLiftChanged: onLiftChanged, onDrop: onDrop, content: content)
+          inputGate: inputGate, onLiftChanged: onLiftChanged, onDrop: onDrop, moveSource: moveSource, content: content)
       }
       return
     }
@@ -186,7 +196,7 @@ final class WorkspaceItemPoseController: UIViewController, NotebookScenePresenta
     let oldCamera = self.camera, oldViewport = self.viewport, previousTarget = targetPose
     self.rendered = rendered; self.camera = camera; self.viewport = viewport
     self.boardID = boardID; self.cohortID = cohortID; self.cohortRevision = cohortRevision; self.projection = projection
-    self.onLiftChanged = onLiftChanged; self.onDrop = onDrop
+    self.onLiftChanged = onLiftChanged; self.onDrop = onDrop; self.moveSource = moveSource
     if self.registry !== registry {
       if let surfaceID { self.registry?.unregisterPose(self, for: surfaceID) }
       self.registry = registry
@@ -201,7 +211,10 @@ final class WorkspaceItemPoseController: UIViewController, NotebookScenePresenta
     host.rootView = content
     host.view.bounds = .init(x: 0, y: 0, width: rendered.geometry.width, height: rendered.geometry.height)
     view.bounds = .init(x: 0, y: 0, width: viewport.x, height: viewport.y)
-    if pendingDestination?.isObserved(in: sourceBoard) == true { pendingDestination = nil }
+    if let destination = pendingDestination, destination.isObserved(in: sourceBoard),
+      destination.command.rejected || sourceBoard?.focusedCenter(of: rendered.id) == rendered.center {
+      pendingDestination = nil
+    }
     registry.registerPose(self, for: .cover(rendered.id))
     if !installed {
       installed = true
@@ -221,6 +234,7 @@ final class WorkspaceItemPoseController: UIViewController, NotebookScenePresenta
 
   func beginLift() {
     guard installed, retiredAtRevision == nil, leaseCount == 0, inputGate?.hasActivePencil != true, !wantsLift else { return }
+    activeMoveSource = moveSource
     stopAtPresentation()
     wantsLift = true; awaitsLiftPublication = true; translation = .zero
     beginActivity()
@@ -254,14 +268,16 @@ final class WorkspaceItemPoseController: UIViewController, NotebookScenePresenta
       let base = pendingDestination?.center(itemID: rendered.id) ?? rendered.center
       if let center = base.addressOffset(x: value.width / currentPresence.camera.scale,
         y: value.height / currentPresence.camera.scale) {
-        pendingDestination = onDrop(center)
+        pendingDestination = onDrop(center, activeMoveSource)
       }
     }
+    activeMoveSource = nil
     wantsLift = false; awaitsLiftPublication = false; translation = .zero
     animateToTarget()
   }
 
   func cancelManipulation() {
+    activeMoveSource = nil
     wantsLift = false; awaitsLiftPublication = false; translation = .zero
     // A lease owns the installed pose until the accepted ink tail is installed.
     // Cancellation changes only the destination, never the measured coordinate system.
@@ -292,6 +308,7 @@ final class WorkspaceItemPoseController: UIViewController, NotebookScenePresenta
       if isEngaged && !publishedLift {
         // The requested SwiftUI rank has not been installed. Retract it in
         // this same event, before a queued pass can raise an unfrozen body.
+        activeMoveSource = nil
         wantsLift = false; awaitsLiftPublication = false; translation = .zero; isEngaged = false
         onLiftChanged(false)
       }
@@ -317,6 +334,7 @@ final class WorkspaceItemPoseController: UIViewController, NotebookScenePresenta
     guard (cohortRevision ?? 0) <= revision else { return }
     retiredAtRevision = max(retiredAtRevision ?? 0, revision)
     deferredUpdate = nil
+    activeMoveSource = nil
     wantsLift = false; awaitsLiftPublication = false; translation = .zero; pendingDestination = nil
     stopAtPresentation()
     // Keep the shown native body and painter rank until its old cohort leaves.
@@ -354,7 +372,7 @@ final class WorkspaceItemPoseController: UIViewController, NotebookScenePresenta
       // view. A terminal owner no longer owns that host in the opposite direction.
       self.host = nil
     }
-    onLiftChanged = { _ in }; onDrop = { _ in nil }
+    onLiftChanged = { _ in }; onDrop = { _, _ in nil }; moveSource = nil
     projection = nil; rendered = nil; boardID = nil; cohortRevision = nil
     publishedLiftRank = nil; handle.owner = nil
   }
@@ -365,6 +383,7 @@ final class WorkspaceItemPoseController: UIViewController, NotebookScenePresenta
     if let surfaceID { registry?.unregisterPose(self, for: surfaceID) }
     self.registry = nil; cohortID = nil; installed = false
     stopAtPresentation()
+    activeMoveSource = nil
     wantsLift = false; awaitsLiftPublication = false; translation = .zero; pendingDestination = nil
     endActivity()
     if isEngaged {

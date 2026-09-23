@@ -720,8 +720,8 @@ struct SpatialWorkspaceView: View {
             liftRank: liftRank(of: rendered.id),
             editingTextID: editingTextID(on: presence.boardID),
             spatialInkSurfaces: spatialInkSurfaces,
-            onDrop: { itemID, center in
-              dropItem(itemID, at: center, presence: presence)
+            onDrop: { itemID, center, source in
+              dropItem(itemID, at: center, presence: presence, source: source)
             },
             onSelect: { itemID in
               guard !model.isItemBeingDeleted(itemID) else { return }
@@ -1318,32 +1318,26 @@ struct SpatialWorkspaceView: View {
   private func dropItem(
     _ itemID: UUID,
     at center: WorldPoint,
-    presence: SessionPresence
+    presence: SessionPresence,
+    source: NotebookItemMoveSource?
   ) -> WorkspaceItemPoseDestination? {
-    guard model.presence?.boardID == presence.boardID,
-      !model.isItemBeingDeleted(itemID), let before = model.boardHierarchy?.board(presence.boardID),
-      let cohort = model.compositionTiles.published,
+    guard let source, model.presence?.boardID == presence.boardID,
+      !model.isItemBeingDeleted(itemID), let cohort = model.compositionTiles.published,
       let moving = model.presentedItem(id: itemID, cohort: cohort, presence: presence)
     else { return nil }
     let target = model.presentedWorkset(cohort: cohort, boardID: presence.boardID, presence: presence).items
       .reversed()
       .first { candidate in
         guard candidate.id != itemID else { return false }
+        if let stack = model.board?.stack(containing: candidate.id),
+          stack.itemIDs.count >= WorkspaceItemStack.maximumItemCount, !stack.itemIDs.contains(itemID) { return false }
         let delta = center.delta(to: candidate.center)
         return abs(delta.x) <= (moving.geometry.width + candidate.geometry.width) * 0.3
           && abs(delta.y) <= (moving.geometry.height + candidate.geometry.height) * 0.3
       }
-    if model.board?.stack(containing: itemID) != nil {
-      model.unstackItem(itemID, at: center)
-    } else {
-      model.moveItem(itemID, to: center)
-    }
-
-    if let target {
-      _ = model.stackItem(moving.id, onto: target.id)
-    }
-    guard let board = model.board else { return nil }
-    return .init(itemID: itemID, before: before, after: board)
+    guard let command = model.moveItem(itemID, to: center, onto: target?.id, source: source),
+      let board = model.board else { return nil }
+    return .init(itemID: itemID, board: board, command: command)
   }
 
 }
@@ -1375,7 +1369,7 @@ private struct WorkspaceSceneItem: View {
   private var isLifted: Bool { liftRank != nil }
   let editingTextID: String?
   let spatialInkSurfaces: SpatialInkSurfaceRegistry
-  let onDrop: (UUID, WorldPoint) -> WorkspaceItemPoseDestination?
+  let onDrop: (UUID, WorldPoint, NotebookItemMoveSource?) -> WorkspaceItemPoseDestination?
   let onSelect: (UUID) -> Void
   let onLiftChanged: (UUID, Bool) -> Void
   let onOpen: (UUID) -> Void
@@ -1392,7 +1386,7 @@ private struct WorkspaceSceneItem: View {
       onLiftChanged: { lifted in
         if lifted { UIImpactFeedbackGenerator(style: .medium).impactOccurred() }
         onLiftChanged(rendered.id, lifted)
-      }, onDrop: { onDrop(rendered.id, $0) }) {
+      }, onDrop: { onDrop(rendered.id, $0, $1) }) {
       ZStack {
       WorkspaceItemShadow(geometry: rendered.geometry,
         lifted: isLifted, visibility: restingShadowVisibility)

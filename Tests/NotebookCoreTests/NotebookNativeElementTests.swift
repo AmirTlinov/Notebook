@@ -137,7 +137,7 @@ struct NotebookNativeElementTests {
   @Test func offscreenPinsRetainTheirCarrierAndRejectAnInsufficientBudget() throws {
     try fixture { store, actor, board, element in
       let owner = try #require(element.surface.ownerID)
-      #expect(try store.moveWorkspaceItem(itemID: owner, in: board, to: .init(x: 50_000, y: 60_000), actor: actor))
+      #expect(try moveTestItem(store: store, itemID: owner, in: board, to: .init(x: 50_000, y: 60_000), actor: actor))
       let bounds = WorkspaceSpatialBounds(origin: .init(x: -100, y: -100), width: 200, height: 200)
       let window = try store.readSceneWindow(boardID: board, bounds: bounds, limit: 2, pinnedElementIDs: [element.id])
       #expect(window.items.map(\.id) == [owner])
@@ -147,7 +147,9 @@ struct NotebookNativeElementTests {
       #expect(throws: NotebookStorageError.limitExceeded("scene_pins")) {
         try store.readSceneWindow(boardID: board, bounds: bounds, limit: 1, pinnedElementIDs: [element.id])
       }
-      #expect(try store.moveWorkspaceItem(itemID: owner, in: UUID(), to: .zero, actor: actor) == false)
+      #expect(throws: CollaborationError.self) {
+        try moveTestItem(store: store, itemID: owner, in: UUID(), to: .zero, actor: actor)
+      }
     }
   }
 
@@ -194,4 +196,17 @@ func moveTestElement(store:NotebookStore,source:NotebookNativeElementSource,fram
   let result=try store.applyNativeElementEdits([.init(kind:.updateElement,target:source.target,id:source.id,
     values:["frame":try .encode(frame)])],summary:"Test element move",sources:[source],actor:actor)
   return try #require(result.sources.first)
+}
+
+/// Fixture setup uses the same native action as a physical drop, not a direct
+/// placement writer which omits history and captured-source validation.
+@discardableResult
+func moveTestItem(store: NotebookStore, itemID: UUID, in boardID: UUID,
+  to center: WorldPoint, actor: UUID) throws -> Bool {
+  let sources = try #require(try store.readBoardItem(itemID)).board.placements
+  let command = NotebookNativeCommand([.init(kind: .moveItem, target: .init(kind: .board, id: boardID),
+    id: itemID.uuidString, values: ["center": try .encode(center)])], summary: "Test item move",
+    placements: sources, actor: actor)
+  _ = try command.apply(to: store)
+  return true
 }

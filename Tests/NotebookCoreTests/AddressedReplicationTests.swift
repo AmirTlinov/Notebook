@@ -94,7 +94,7 @@ struct AddressedReplicationTests {
     try b.commandTransaction {
       try b.currentSQL!.run("INSERT INTO peer_cursors VALUES(?,'incoming',?)", [.text(actor.uuidString.lowercased()), .integer(Int64(cursor))])
     }
-    #expect(try measured(a, label: "save_move", count: count) { try a.moveWorkspaceItem(itemID: itemID, in: header.rootBoardID, to: .init(x: 40, y: 60), actor: actor) })
+    #expect(try measured(a, label: "save_move", count: count) { try moveTestItem(store: a, itemID: itemID, in: header.rootBoardID, to: .init(x: 40, y: 60), actor: actor) })
     let moved = try #require(a.changeJournal(after: cursor).first)
     try stage(moved, from: a, to: b)
     _ = try measured(b, label: "apply_move", count: count) { try b.applyRemoteChange(moved, peerID: actor) }

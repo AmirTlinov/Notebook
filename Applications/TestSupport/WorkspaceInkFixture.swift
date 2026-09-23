@@ -119,7 +119,7 @@ final class WorkspaceInkFixture {
         if value { engaged.append(id) }
         onLift?(id, value)
       },
-      onDrop: { [weak self] point in self?.onDrop?(id, point) },
+      onDrop: { [weak self] point, _ in self?.onDrop?(id, point) },
       content: AnyView(ZStack {
         Color.white
         SpatialInkSurfaceView(surface: .cover(id), cohort: cohort, boardID: presence.boardID, isActive: true)
