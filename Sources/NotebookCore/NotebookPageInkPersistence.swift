@@ -45,6 +45,9 @@ extension NotebookStore {
         guard action.isValid,action.sequence > 0 else { throw NotebookStorageError.invalidTransaction("page ink action") }
         let member=action.id.uuidString.lowercased(),address=drawingAddress+"/actions/@"+member
         let previous=try storedFragments(address:address,descendants:false).first
+        if previous == nil {
+          try recordNativeHistory(.ink([action.id]), domain: .page(pageID), actor: command.stamp.actor)
+        }
         let position=previous?.position ?? Int(action.sequence-1)
         let fragments=try NotebookRecordCodec.encode(.encode(action),file:file,address:address,
           parent:drawingAddress,collection:"actions",member:member,position:position)
@@ -70,6 +73,7 @@ extension NotebookStore {
           if previous.value["isActive"] == .bool(true) {
             changed = try writeFragment(previous.replacing(value:previous.value.setting("isActive",.bool(false))),database:database) || changed
           }
+          try recordNativeHistory(.ink([id]), domain: .page(pageID), actor: command.stamp.actor, removing: true)
         }
       }
       let frontier=max(previousStamp,command.stamp)

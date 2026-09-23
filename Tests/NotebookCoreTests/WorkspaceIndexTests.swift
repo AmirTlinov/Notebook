@@ -67,14 +67,14 @@ private func undoTestStroke() -> PageInkAction {
 func pencilUndoRecordsOneCompletedAction() throws {
   let pageID = UUID(), stroke = undoTestStroke()
   var history = PencilUndoHistory()
-  history.recordAction(ownerID: pageID, actionID: stroke.id)
-  let ids = try #require(history.lastContribution(for: pageID))
+  history.recordAction(domain: .page(pageID), actionID: stroke.id)
+  let ids = try #require(history.lastContribution(for: .page(pageID)))
   #expect(ids == [stroke.id])
   let drawing = try PageInkDrawing().appending(stroke).removing(ids)
   #expect(drawing.isEmpty)
   #expect(drawing.actions.first?.isActive == false)
-  history.didRemoveContribution(ids, for: pageID)
-  #expect(history.lastContribution(for: pageID) == nil)
+  history.didRemoveContribution(ids, for: .page(pageID))
+  #expect(history.lastContribution(for: .page(pageID)) == nil)
 }
 
 @Test("История Pencil разделена по листам и ограничена")
@@ -82,26 +82,26 @@ func pencilUndoIsPageLocalAndBounded() throws {
   let firstPage = UUID(), secondPage = UUID()
   var history = PencilUndoHistory(capacity: 2)
   let strokes = (0..<3).map { _ in undoTestStroke() }
-  for stroke in strokes { history.recordAction(ownerID: firstPage, actionID: stroke.id) }
+  for stroke in strokes { history.recordAction(domain: .page(firstPage), actionID: stroke.id) }
   let other = UUID()
-  history.recordAction(ownerID: secondPage, actionID: other)
-  #expect(history.lastContribution(for: secondPage) == [other])
-  history.didRemoveContribution([other], for: secondPage)
-  #expect(history.lastContribution(for: secondPage) == nil)
-  #expect(history.lastContribution(for: firstPage) == [strokes[2].id])
-  history.didRemoveContribution([strokes[2].id], for: firstPage)
-  #expect(history.lastContribution(for: firstPage) == [strokes[1].id])
-  history.didRemoveContribution([strokes[1].id], for: firstPage)
-  #expect(history.lastContribution(for: firstPage) == nil)
+  history.recordAction(domain: .page(secondPage), actionID: other)
+  #expect(history.lastContribution(for: .page(secondPage)) == [other])
+  history.didRemoveContribution([other], for: .page(secondPage))
+  #expect(history.lastContribution(for: .page(secondPage)) == nil)
+  #expect(history.lastContribution(for: .page(firstPage)) == [strokes[2].id])
+  history.didRemoveContribution([strokes[2].id], for: .page(firstPage))
+  #expect(history.lastContribution(for: .page(firstPage)) == [strokes[1].id])
+  history.didRemoveContribution([strokes[1].id], for: .page(firstPage))
+  #expect(history.lastContribution(for: .page(firstPage)) == nil)
 }
 
 @Test("Удаление листа освобождает его локальную историю отмены")
 func pencilUndoCanDiscardAStalePageHistory() {
   let pageID = UUID()
   var history = PencilUndoHistory()
-  history.recordAction(ownerID: pageID, actionID: UUID())
-  history.discardChanges(for: pageID)
-  #expect(history.lastContribution(for: pageID) == nil)
+  history.recordAction(domain: .page(pageID), actionID: UUID())
+  history.discardChanges(for: .page(pageID))
+  #expect(history.lastContribution(for: .page(pageID)) == nil)
 }
 
 @Test("Перелистывание за последний лист создаёт ровно один лист")

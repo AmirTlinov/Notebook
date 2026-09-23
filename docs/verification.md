@@ -1,5 +1,41 @@
 # Verification record
 
+## September 23 — GUI-295, durable mixed surface history (184)
+
+Native ink and commands now save one bounded, actor-local sequence in the same
+SQLite transaction as their material. Cold opening restores that sequence instead
+of prioritizing old graphic commands over newer strokes. A board's interior and
+its portal cover have distinct history domains even though their owner UUID is
+the same. A peer's inverse is checked against current material/receipt phase and
+cannot remain the next Undo. The directory contains at most 32 identities, not
+geometry, measurements or an alternate inverse implementation; command phase is
+read from the existing scalar index rather than decoding all changed fields.
+Clipboard acceptance also reserves its place before waiting for storage.
+
+`.build/gui295-native-history-domain-core-final.log`: **19 test methods PASS**,
+including three history/material fault cases and six native-command retry cases.
+The existing 100,000-sample neighbour probe retained its addressed read ceiling;
+the new contact commit took **4.707084 ms** (Core CPU, not display latency).
+Earlier compilation failures were a duplicate local declaration and a mutating
+call inside a test macro. An intermediate native run executed 38 iPad checks but
+was rejected for an incorrectly named selected test; it is not the final receipt.
+
+`.build/gui295-native-history-domain-184-checked/`: **57 iPad + 6 Mac PASS**, zero
+skips/runtime warnings, unchanged source
+`c33ef0a39a18e3983f54927c8ce4b382f9454d8378678a52ff5d53898cf3fc25`.
+The new physical-iPad window scenario draws ink, moves a figure by finger, draws
+again, saves, shuts down and reopens, then verifies the actual pixels of all three
+Undos in order while untouched ink/figures remain. Existing checks cover lasso,
+clipboard, spatial ink, native document editing, queue faults and accepted input.
+These are synthetic native contacts and functional saved-order checks, not human
+Pencil or an Undo-to-photon measurement.
+
+The durable directory starts with actions accepted by this implementation; no
+order is fabricated for older edits. **Redo remains open.** Installed pair remains
+180 while its Mac process is running; 182 is staged, and no live container or
+application package was replaced. Full latency, page-turn lifecycle, delivery and
+joint physical acceptance remain separate open conditions.
+
 ## September 23 — GUI-295, Undo keeps its surface and author (183)
 
 Spatial Undo no longer falls back from an empty selected cover to the global

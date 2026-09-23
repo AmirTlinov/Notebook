@@ -142,6 +142,21 @@ extension NotebookStore {
       if previous != next { try writeFragment(next, database: database) }
       let changedRoot = root.replacing(value: root.value.setting("stamp", try .encode(nextClock)))
       if storedRoot == nil || changedRoot != root { try writeFragment(changedRoot, database: database) }
+      if origin == .contact {
+        let domains = try database.rows("SELECT kind,owner_id FROM ink_surfaces WHERE address=?", [.text(address)])
+          .compactMap { row -> PencilUndoHistory.Domain? in
+            guard let kind = row[0].text.flatMap(CollaborationTarget.Kind.init(rawValue:)),
+              let id = row[1].text.flatMap(UUID.init(uuidString:)) else { return nil }
+            return .init(.init(kind: kind, id: id))
+          }
+        for domain in domains {
+          if previous == nil {
+            try recordNativeHistory(.ink([header.id]), domain: domain, actor: header.stamp.actor)
+          } else if !header.isActive {
+            try recordNativeHistory(.ink([header.id]), domain: domain, actor: expected.stateStamp.actor, removing: true)
+          }
+        }
+      }
       return .init(actionID: header.id, creationStamp: header.stamp, isActive: header.isActive,
         stateStamp: header.stateStamp, journalStamp: nextClock)
     }

@@ -156,7 +156,7 @@ final class NotebookCodeAnnotations {
     var journal = annotations[fragment.id]?.ink ?? .init(stamp: stamp)
     _ = journal.merge(.init(actions: [action], stamp: stamp))
     annotations[fragment.id] = .init(fragment: fragment, ink: journal)
-    history.recordAction(ownerID: fragment.id, actionID: action.id); contributionOrder.append(fragment.id)
+    history.recordAction(domain: .codeFragment(fragment.id), actionID: action.id); contributionOrder.append(fragment.id)
     contributionOrder = Array(contributionOrder.suffix(32))
     enqueue(fragment, .append(action, journalStamp: stamp))
     contactActive = false
@@ -173,7 +173,7 @@ final class NotebookCodeAnnotations {
       }
       return
     }
-    guard !contactActive, let id = contributionOrder.last, let ids = history.lastContribution(for: id),
+    guard !contactActive, let id = contributionOrder.last, let ids = history.lastContribution(for: .codeFragment(id)),
       let annotation = annotations[id], let stamp = max(clock, annotation.ink.stamp).advanced(by: author) else { return }
     var journal = annotation.ink
     for action in journal.actions where ids.contains(action.id) && action.stamp.actor == author && action.isActive {
@@ -181,7 +181,7 @@ final class NotebookCodeAnnotations {
       enqueue(annotation.fragment, .state(actionID: action.id, creationStamp: action.stamp, isActive: false, stateStamp: stamp, journalStamp: stamp))
     }
     clock = stamp; revision &+= 1; annotations[id] = .init(fragment: annotation.fragment, ink: journal)
-    history.didRemoveContribution(ids, for: id); contributionOrder.removeLast()
+    history.didRemoveContribution(ids, for: .codeFragment(id)); contributionOrder.removeLast()
   }
   private func enqueue(_ fragment: NotebookCodeFragment, _ command: NotebookSpatialInkCommand) {
     let token = UUID(); pending[token] = (fragment, command)

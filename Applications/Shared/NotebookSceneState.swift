@@ -10,11 +10,12 @@ struct NotebookSceneState: Sendable {
     let state: DocumentStateJournal
     let drafts: [DocumentEditingSession]
     var reading: DocumentReadingPosition? = nil
+    var history: [PencilUndoHistory.Entry] = []
   }
 
   /// An accepted opening is a separate read capability from a closed cover's
   /// camera projection. It names one owner and never expands neighbouring books.
-  static func readOpenedDocument(store: NotebookStore, documentID: UUID, boardID: UUID) throws -> OpenedDocument? {
+  static func readOpenedDocument(store: NotebookStore, documentID: UUID, boardID: UUID, historyActor: UUID? = nil) throws -> OpenedDocument? {
     try store.readTransaction { store in
       guard try store.readItemHeader(documentID)?.kind == .document,
         try store.ownerBoardID(of: documentID) == boardID else { return nil }
@@ -23,7 +24,8 @@ struct NotebookSceneState: Sendable {
         throw NotebookStorageError.corruptRecord("opened document source")
       }
       return try .init(header: live.header, document: document, state: state,
-        drafts: store.documentEditingSessions(documentID: documentID), reading: store.readDocumentReadingPosition(documentID))
+        drafts: store.documentEditingSessions(documentID: documentID), reading: store.readDocumentReadingPosition(documentID),
+        history: historyActor.map { try store.nativeHistory(domain: .document(documentID), actor: $0) } ?? [])
     }
   }
 
@@ -48,6 +50,7 @@ struct NotebookSceneState: Sendable {
   let missingPinnedItems: Set<UUID>
   let transferredPinnedItems: [UUID: UUID]
   var groupReads: [UUID:[String:NotebookElementGroupRead]] = [:]
+  var history: [PencilUndoHistory.Domain:[PencilUndoHistory.Entry]] = [:]
 
   static func start(store: NotebookStore, actor: UUID, pageSize: PageSize,
     notebookID: UUID, pageID: UUID, viewport: SpatialPoint? = nil) throws -> Self {
@@ -56,7 +59,7 @@ struct NotebookSceneState: Sendable {
     try store.resetInputActivities()
     try store.resetSelectionPublication()
     return try read(store: store, presence: nil,
-      viewport: viewport ?? .init(x: pageSize.width, y: pageSize.height))
+      viewport: viewport ?? .init(x: pageSize.width, y: pageSize.height), historyActor: actor)
   }
 
   static func bounds(for presence: SessionPresence, margin: Double = 192) -> WorkspaceSpatialBounds {
@@ -65,7 +68,7 @@ struct NotebookSceneState: Sendable {
       height: (presence.viewport.y + margin * 2) / presence.camera.scale)
   }
 
-  static func read(store: NotebookStore, presence requested: SessionPresence?, viewport: SpatialPoint, loadsLiveContent: Bool = true, pinnedElements: [UUID: [String]] = [:], pinnedItems: [UUID: [UUID]] = [:], preparedPages: [UUID] = []) throws -> Self {
+  static func read(store: NotebookStore, presence requested: SessionPresence?, viewport: SpatialPoint, loadsLiveContent: Bool = true, pinnedElements: [UUID: [String]] = [:], pinnedItems: [UUID: [UUID]] = [:], preparedPages: [UUID] = [], historyActor: UUID? = nil) throws -> Self {
     guard requested?.isValid ?? true else { throw NotebookStorageError.corruptRecord("scene presence") }
     guard preparedPages.count <= 4, Set(preparedPages).count == preparedPages.count else {
       throw NotebookStorageError.limitExceeded("scene_page_pins")
@@ -245,13 +248,20 @@ struct NotebookSceneState: Sendable {
         }
         boardContentRevisions[id] = revision
       }
+      var history: [PencilUndoHistory.Domain:[PencilUndoHistory.Entry]] = [:]
+      if let historyActor {
+        let domains = Set(pages.keys.map(PencilUndoHistory.Domain.page))
+          .union(surfaces.compactMap { PencilUndoHistory.Domain(surface: $0) })
+          .union(live.documents.keys.map(PencilUndoHistory.Domain.document))
+        for domain in domains { history[domain] = try store.nativeHistory(domain: domain, actor: historyActor) }
+      }
       return try Self(header: header, workspace: workspace, pages: pages, pagePositions: pagePositions,
         documents: live.documents, states: live.states,
         drafts: needsSelectedContent && selected.kind == .document ? store.documentEditingSessions(documentID: selected.id) : [],
         reading: selected.kind == .document ? store.readDocumentReadingPosition(selected.id) : nil,
         hierarchy: hierarchy, boardContentRevisions: boardContentRevisions, ink: live.ink, inkSurfaces: Set(surfaces), presence: presence, paperSizes: paper,
         coverage: coverage, truncatedBoards: truncated, completeCoverElementOwners: completeCoverElementOwners, missingPinnedElements: missingPinnedElements,
-        missingPinnedItems: missingPinnedItems, transferredPinnedItems: transferredPinnedItems,groupReads:groupReads)
+        missingPinnedItems: missingPinnedItems, transferredPinnedItems: transferredPinnedItems,groupReads:groupReads,history:history)
     }
   }
 }

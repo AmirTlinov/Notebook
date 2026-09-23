@@ -35,6 +35,18 @@ remain metadata-only.
 Failure publishes no content, receipt or delivery cursor. Imported raster-base
 revision is separate and cannot resolve conflicting action UUIDs through last-write-wins.
 
+## Native history
+
+`PencilUndoHistory` is a bounded directory of accepted action identities, addressed
+by actor plus surface kind/UUID. The same core transaction saves its local order
+with each native ink or human command write. Scene reads restore only the loaded
+domains from that same saved snapshot. A board interior and its cover do not share
+Undo merely because they have one UUID; clipboard and ink follow acceptance order,
+not asynchronous completion or separate command/ink priorities. The directory
+contains no material or second inverse engine. Current headers and receipt phase
+exclude a peer's already completed inverse. Older edits are not assigned a guessed
+history. This directory currently supports Undo; Redo is not yet implemented.
+
 ## Tools and accepted contact
 
 `DrawingTool` / `NotebookDrawingToolSettings` describe intention and local settings,

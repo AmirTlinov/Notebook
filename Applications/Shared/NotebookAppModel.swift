@@ -103,7 +103,7 @@ final class NotebookAppModel {
       while !Task.isCancelled, let workspace, let presence, !isItemBeingDeleted(itemID), notebookPageRoot(itemID) == root {
         let epoch = collaborationReadEpoch
         do {
-          let prepared = try await persistence.submit { store -> (NotebookPageWindow, WorkspaceIndex) in
+          let prepared = try await persistence.submit { [actor = actorID] store -> (NotebookPageWindow, WorkspaceIndex, [PencilUndoHistory.Entry]) in
             try store.readTransaction { _ in
               let window = try store.readNotebookPageWindow(itemID: itemID, pages: [.index(index)], expectedVisibleRoot: root)
               let id = window.pages[0].document.id
@@ -114,7 +114,7 @@ final class NotebookAppModel {
               }
               let projection = try store.workspaceProjection(items: items, selectedItemID: workspace.selectedItemID,
                 selectedPageID: workspace.selectedPageID)
-              return (window, projection)
+              return (window, projection, try store.nativeHistory(domain: .page(id), actor: actor))
             }
           }
           guard epoch == collaborationReadEpoch else { continue }
@@ -123,6 +123,7 @@ final class NotebookAppModel {
           let page = prepared.0.pages[0].document
           pageAddresses[address] = page.id
           pages[page.id] = page
+          pencilUndoHistory.restore(prepared.2, for: .page(page.id))
           retainPreparedPages(near: address, selectedPageID: presence.notebookPageID)
           return
         } catch NotebookStorageError.transactionConflict {
@@ -163,7 +164,7 @@ final class NotebookAppModel {
         let presence, isCurrent() else { return false }
       let epoch = collaborationReadEpoch, generation = inputGate.pencilGeneration
       do {
-        let state = try await persistence.submit { store in
+        let state = try await persistence.submit { [actor = actorID] store in
           try store.readTransaction { _ in
             guard let itemID = try store.ownerItemID(ofPage: pageID),
               try store.resolveNotebookPage(pageID, in: itemID) != nil,
@@ -171,7 +172,7 @@ final class NotebookAppModel {
             let selection = SessionPresence(boardID: boardID, mode: .page, camera: presence.camera,
               viewport: presence.viewport, focusedItemID: itemID, openProgress: 1,
               selectedItemID: itemID, notebookPageID: pageID)
-            return try NotebookSceneState.read(store: store, presence: selection, viewport: presence.viewport)
+            return try NotebookSceneState.read(store: store, presence: selection, viewport: presence.viewport, historyActor: actor)
           }
         }
         guard !Task.isCancelled, !isStopped, isCurrent() else { return false }
@@ -466,9 +467,9 @@ final class NotebookAppModel {
             && (documents[$0] == nil || documentStates[$0] == nil)
         } ?? false
         do {
-          let state = try await persistence.submit { store in
+          let state = try await persistence.submit { [actor = actorID] store in
             try NotebookSceneState.read(store: store, presence: requested,
-              viewport: requested.viewport, loadsLiveContent: loadsDocument, pinnedElements: pins, pinnedItems: itemPins, preparedPages: preparedIDs)
+              viewport: requested.viewport, loadsLiveContent: loadsDocument, pinnedElements: pins, pinnedItems: itemPins, preparedPages: preparedIDs, historyActor: actor)
           }
           guard epoch == collaborationReadEpoch, state.header.cursor == workspaceHeader?.cursor else {
             externalReloadPending = true
@@ -503,6 +504,7 @@ final class NotebookAppModel {
           clearRemovedElementPins(state.missingPinnedElements,through:state.header.cursor)
           spatialInk = state.ink
           loadedInkSurfaces = state.inkSurfaces
+          for (owner, entries) in state.history { pencilUndoHistory.restore(entries, for: owner) }
           alignWorkspaceSelection()
           scheduleScenePreparation(coverageOnly: true)
         } catch {
@@ -1835,6 +1837,7 @@ final class NotebookAppModel {
           guard read.epoch == collaborationReadEpoch,
             opened.header.cursor >= (self.workspaceHeader?.cursor ?? 0) else { continue }
           documents[request.documentID] = opened.document
+          pencilUndoHistory.restore(opened.history, for: .document(request.documentID))
           documentStates[request.documentID] = opened.state
           admitDocumentReading(opened.reading)
           if read.draftEpoch == documentDraftEpoch {
@@ -1864,8 +1867,8 @@ final class NotebookAppModel {
       draftEpoch: documentDraftEpoch, result: result)
     observeNavigation("opening_body_read_begin", fields: ["documentID": .string(request.documentID.uuidString),
       "openingID": .string(request.id.uuidString)])
-    persistence.enqueueCommand { store in
-      try NotebookSceneState.readOpenedDocument(store: store, documentID: request.documentID, boardID: request.boardID)
+    persistence.enqueueCommand { [actor = actorID] store in
+      try NotebookSceneState.readOpenedDocument(store: store, documentID: request.documentID, boardID: request.boardID, historyActor: actor)
     } completion: { completion in
       continuation.yield(completion)
       continuation.finish()
@@ -1937,7 +1940,7 @@ final class NotebookAppModel {
         persistence.discardPending(owner: .page(pageID))
         pages[pageID] = nil
         reservedDrawingCounters[pageID] = nil
-        pencilUndoHistory.discardChanges(for: pageID)
+        pencilUndoHistory.discardChanges(for: .page(pageID))
       }
       pageAddresses = pageAddresses.filter { $0.key.itemID != itemID }
       documents[removed.id] = nil
@@ -2408,7 +2411,7 @@ final class NotebookAppModel {
 
     scheduleSpatialInkSave(.append(action, journalStamp: journal.stamp))
     for surface in Set(action.spans.map(\.surface)) {
-      if let owner = surface.ownerID { pencilUndoHistory.recordAction(ownerID: owner, actionID: action.id) }
+      if let domain = PencilUndoHistory.Domain(surface: surface) { pencilUndoHistory.recordAction(domain: domain, actionID: action.id) }
     }
     return action
   }
@@ -2421,43 +2424,33 @@ final class NotebookAppModel {
       }
     #endif
     guard inputGate.permitsNewContact, !inputGate.hasActivePencil else { return }
-    if presence?.mode == .document {
-      guard let owner = presence?.focusedItemID else { return }
-      let restored = collaborationActions.first {
-        $0.author == .human && $0.undo == nil && $0.action.operations.contains {
-          $0.target == CollaborationTarget(kind: .document, id: owner) && [.updateBlock, .setPreamble].contains($0.kind)
-        }
-      }?.id
-      if let command = pencilUndoHistory.lastCommand(for: owner) ?? restored { undoCollaboration(command) }
-      return
-    }
-    if let owner = isPageOpen ? activePage?.id : (presence?.focusedItemID ?? presence?.boardID) {
-      let restored = pencilUndoHistory.hasHistory(for: owner) ? nil : collaborationActions.first {
-        $0.author == .human && $0.undo == nil && $0.action.operations.contains { $0.target.id == owner && [.convertInkToElement, .insertElement, .updateElement, .removeElement].contains($0.kind) }
-      }?.id
-      if let command = pencilUndoHistory.lastCommand(for: owner) ?? restored { undoCollaboration(command); return }
-    }
+    let domain: PencilUndoHistory.Domain?
+    if presence?.mode == .document { domain = presence?.focusedItemID.map(PencilUndoHistory.Domain.document) }
+    else if isPageOpen { domain = activePage.map { .page($0.id) } }
+    else { domain = presence.map { $0.focusedItemID.map(PencilUndoHistory.Domain.cover) ?? .board($0.boardID) } }
+    guard let domain else { return }
+    if let command = pencilUndoHistory.lastCommand(for: domain) { undoCollaboration(command); return }
+    if domain.kind == .document { return }
     if isPageOpen {
       _ = acceptDrawingUndo()
       return
     }
     guard var journal = spatialInk, let presence else { return }
     let surface = presence.focusedItemID.map(SurfaceID.cover) ?? .board(presence.boardID)
-    guard let owner = surface.ownerID else { return }
-    let contribution = pencilUndoHistory.lastContribution(for: owner)
-    // A peer's later contact is not this user's last action. A cold fallback
-    // is constrained to this author and surface, never the global journal.
+    guard let contribution = pencilUndoHistory.lastContribution(for: domain) else { return }
+    // Both warm and cold Undo name the exact entry of one saved mixed order.
+    // A peer's later contact is not this user's last action.
     guard let source = journal.actions.last(where: { action in
       action.isActive && action.stamp.actor == actorID
         && action.spans.contains { $0.surface == surface }
-        && (contribution?.contains(action.id) ?? true)
+        && contribution.contains(action.id)
     }), journal.deactivate(source.id, actor: actorID),
       let action = journal.actions.first(where: { $0.id == source.id }) else { return }
     spatialInk = journal
     // One contact may cross the board and a cover. Its inverse removes that
     // contribution from every touched history, not just the current focus.
-    for owner in Set(action.spans.compactMap { $0.surface.ownerID }) {
-      pencilUndoHistory.didRemoveContribution([action.id], for: owner)
+    for domain in Set(action.spans.compactMap { PencilUndoHistory.Domain(surface: $0.surface) }) {
+      pencilUndoHistory.didRemoveContribution([action.id], for: domain)
     }
 
     scheduleSpatialInkSave(.state(actionID: action.id, creationStamp: action.stamp,
@@ -2640,9 +2633,9 @@ final class NotebookAppModel {
       switch change.mutation {
       case .append(let action):
         workingElementErasures[action.id]=nil
-        pencilUndoHistory.recordAction(ownerID:pageID,actionID:action.id)
+        pencilUndoHistory.recordAction(domain:.page(pageID),actionID:action.id)
       case .remove(let ids):
-        pencilUndoHistory.didRemoveContribution(ids,for:pageID)
+        pencilUndoHistory.didRemoveContribution(ids,for:.page(pageID))
         // Undo and sync replace visible state; ordinary Pencil-up already
         // installed its exact delta in the native canvas.
         if pages[pageID] != nil { pages[pageID]=page }
@@ -2674,7 +2667,7 @@ final class NotebookAppModel {
   /// the button's actor segment; storage follows in the ordinary FIFO.
   func acceptDrawingUndo() -> PreparedPageInkChange? {
     guard inputGate.permitsNewContact, !inputGate.hasActivePencil,
-      let page=activePage,let ids=pencilUndoHistory.lastContribution(for:page.id),
+      let page=activePage,let ids=pencilUndoHistory.lastContribution(for:.page(page.id)),
       let stamp=reserveDrawingAction(pageID:page.id) else { return nil }
     return acceptInkMutation(.remove(ids),pageID:page.id,stamp:stamp)
   }
@@ -3437,17 +3430,25 @@ final class NotebookAppModel {
       }
     }
     let saved=persistence.enqueuePreparedCommand(operation,publishesChanges:true)
+    pencilUndoHistory.recordCommand(domain:.init(destination.target),actionID:actionID)
+    collaborationReadEpoch &+= 1
     let task = Task<NotebookElementCommandResult?, Never> { [weak self] in
       guard let self else { return nil }
-      defer { if graphicCommandGeneration == generation { graphicCommandTask = nil } }
+      defer {
+        pendingCollaborationCommands[actionID] = nil
+        if graphicCommandGeneration == generation { graphicCommandTask = nil }
+      }
       do {
-        let receipt=try await saved.value
-        pencilUndoHistory.recordCommand(ownerID:destination.target.id,actionID:receipt.id)
+        _ = try await saved.value
         reloadExternalChanges()
         showCue("Вставлено: \(fragment.elements.count)")
         return .init(page:nil,spatial:nil)
-      } catch { showCue(error.localizedDescription); return nil }
+      } catch {
+        pencilUndoHistory.didUndoCommand(domain:.init(destination.target),actionID:actionID)
+        showCue(error.localizedDescription); return nil
+      }
     }
+    pendingCollaborationCommands[actionID] = Task { await task.value != nil }
     graphicCommandGeneration = generation
     graphicCommandTask = task
     return await task.value != nil
@@ -3593,7 +3594,7 @@ final class NotebookAppModel {
         reloadExternalChanges();return results
       } catch {
         operation.cancel();preparing?.cancel();batch.resolve(.failure(error))
-        pencilUndoHistory.didUndoCommand(ownerID:target.id,actionID:commandID)
+        pencilUndoHistory.didUndoCommand(domain:.init(target),actionID:commandID)
         for reference in batch.admittedPlan?.references ?? [] {
           if elementCommandSources[reference]?.id == generation { elementCommandDrafts[reference]=nil;elementCommandSources[reference]=nil }
           cancelElementManipulationForFailedCommand(reference)
@@ -3603,7 +3604,8 @@ final class NotebookAppModel {
       }
     }
     if let ready { registerElementCommand(ready,batch:batch);batch.resolve(.success(ready)) }
-    pencilUndoHistory.recordCommand(ownerID:target.id,actionID:commandID)
+    pencilUndoHistory.recordCommand(domain:.init(target),actionID:commandID)
+    collaborationReadEpoch &+= 1
     pendingCollaborationCommands[commandID]=Task { await batch.result.value != nil }
     graphicCommandGeneration=generation
     graphicCommandTask=Task { await batch.result.value?.values.first }
@@ -3704,7 +3706,7 @@ final class NotebookAppModel {
     let inserted = try await persistence.submit(publishesChanges: true) {
       try $0.insertDocumentSource(documentID: documentID, kind: kind, actor: actor)
     }
-    pencilUndoHistory.recordCommand(ownerID: documentID, actionID: inserted.receipt.id)
+    pencilUndoHistory.recordCommand(domain: .document(documentID), actionID: inserted.receipt.id)
     if var current = documents[documentID] { _ = current.merge(inserted.document); documents[documentID] = current }
     else { documents[documentID] = inserted.document }
     reloadExternalChanges()
@@ -3779,7 +3781,7 @@ final class NotebookAppModel {
     }
     documentDraftEpoch &+= 1
     if result.status == .committed {
-      if let actionID = result.actionID { pencilUndoHistory.recordCommand(ownerID: edit.documentID, actionID: actionID) }
+      if let actionID = result.actionID { pencilUndoHistory.recordCommand(domain: .document(edit.documentID), actionID: actionID) }
       documentEditingSessions.removeAll { $0.id == edit.sessionID }
       if !isStopped, !isItemBeingDeleted(edit.documentID),
         let publication = result.publication, var document = documents[edit.documentID] {
@@ -3933,10 +3935,10 @@ final class NotebookAppModel {
           let feedbackKnown: Set<UUID>? = nil, feedbackTracked: Set<UUID> = []
         #endif
         do {
-          let prepared = try await persistence.submit(publishesChanges: receivingDeviceID != nil) { store in
+          let prepared = try await persistence.submit(publishesChanges: receivingDeviceID != nil) { [actor = actorID] store in
             try NotebookDiskRefresh.prepare(store: store, presence: presence, receivingDeviceID: receivingDeviceID,
               pinnedElements: elementPins, pinnedItems: itemPins, preparedPages: preparedIDs,
-              feedbackKnown: feedbackKnown, feedbackTracked: feedbackTracked, attentionReferences: attentionReferences)
+              feedbackKnown: feedbackKnown, feedbackTracked: feedbackTracked, attentionReferences: attentionReferences, historyActor: actor)
           }
           publicationFailure = nil
           if persistence.failure == nil { persistenceFailure = publicationFailure }
@@ -4890,8 +4892,8 @@ final class NotebookAppModel {
       collaborationUndoTask = nil
       switch result {
       case .success(let receipt):
-        for owner in Set(receipt.action.operations.map { $0.target.id }) {
-          pencilUndoHistory.didUndoCommand(ownerID: owner, actionID: id)
+        for domain in Set(receipt.action.operations.map { PencilUndoHistory.Domain($0.target) }) {
+          pencilUndoHistory.didUndoCommand(domain: domain, actionID: id)
         }
         reloadExternalChanges()
         showCue(receipt.undo?.preserved.isEmpty == false ? "Ход отменён. Ваши доработки сохранены" : "Ход отменён")
@@ -5152,6 +5154,7 @@ final class NotebookAppModel {
     spatialInk = state.ink
     loadedInkSurfaces = state.inkSurfaces
     pages = state.pages
+    for (owner, entries) in state.history { pencilUndoHistory.restore(entries, for: owner) }
     removeWorkingGraphics { graphic in
       graphic.surface.kind == .page
         && (graphic.publicationCursor.map { state.header.cursor >= $0 } ?? false)

@@ -171,10 +171,10 @@ func pencilUndoKeepsAgentStroke() throws {
   let pageID = UUID()
   let drawing = try PageInkDrawing().appending(human).appending(agent)
   var history = PencilUndoHistory()
-  history.recordAction(ownerID: pageID, actionID: human.id)
-  let ids = try #require(history.lastContribution(for: pageID))
+  history.recordAction(domain: .page(pageID), actionID: human.id)
+  let ids = try #require(history.lastContribution(for: .page(pageID)))
   let result = drawing.removing(ids)
-  history.didRemoveContribution(ids, for: pageID)
+  history.didRemoveContribution(ids, for: .page(pageID))
   #expect(result.activeActions.map(\.id) == [agent.id])
 }
 

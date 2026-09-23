@@ -60,12 +60,12 @@ func preparedInkCannotCrossPageOwner() throws {
 func undoCompletionKeepsNewerContact() throws {
   let pageID = UUID(), first = UUID(), next = UUID()
   var history = PencilUndoHistory()
-  history.recordAction(ownerID: pageID, actionID: first)
-  history.recordAction(ownerID: pageID, actionID: next)
-  history.didRemoveContribution([first], for: pageID)
-  #expect(history.lastContribution(for: pageID) == [next])
-  history.didRemoveContribution([next], for: pageID)
-  #expect(history.lastContribution(for: pageID) == nil)
+  history.recordAction(domain: .page(pageID), actionID: first)
+  history.recordAction(domain: .page(pageID), actionID: next)
+  history.didRemoveContribution([first], for: .page(pageID))
+  #expect(history.lastContribution(for: .page(pageID)) == [next])
+  history.didRemoveContribution([next], for: .page(pageID))
+  #expect(history.lastContribution(for: .page(pageID)) == nil)
 }
 
 @Test("Уже удалённый вклад завершает отмену без лишней ревизии чернил")

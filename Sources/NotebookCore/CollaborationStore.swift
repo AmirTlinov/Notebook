@@ -264,6 +264,11 @@ extension NotebookStore {
       var receipt = CollaborationReceipt(id: action.id, action: action, createdAt: Date(), revisions: [], changes: changes)
       receipt.requestFingerprint = requestFingerprint
       receipt.author = human ? .human : .agent
+      if human {
+        for domain in Set(action.operations.map { PencilUndoHistory.Domain($0.target) }) {
+          try recordNativeHistory(.command(action.id), domain: domain, actor: actor)
+        }
+      }
       if hasLifecycle {
         receipt.lifecycleChanges = try lifecycleChanges(action, before: initialItems)
         receipt.lifecycleInverse = try saveLifecycleInverse(actionID: action.id)
@@ -416,6 +421,11 @@ extension NotebookStore {
         let inverse = try saveLifecycleInverse(actionID: receipt.id, captureID: captureID)
         receipt.undo?.restorationInverse = inverse
       } else { publication = try publishInverse() }
+      // History and the inverse are one durable cut, including a no-op inverse
+      // which preserved a later author's work. A retry cannot add it back.
+      for domain in Set(receipt.action.operations.map { PencilUndoHistory.Domain($0.target) }) {
+        try recordNativeHistory(.command(id), domain: domain, actor: actor, removing: true)
+      }
       // Exactly one receipt/result, outside the closed content capture.
       return try finishCollaboration(after: publication.after, receipt: receipt,
         revisedTargets: publication.targets, changed: publication.changed)

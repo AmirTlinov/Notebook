@@ -182,6 +182,52 @@ final class NotebookInteractionUXTests: XCTestCase {
     try await remainsShown("whole-object-keeps-drop", scene, since: start, probes)
   }
 
+  func testColdUndoKeepsTheSavedInkObjectInkOrderAndActualPixels() async throws {
+    let scene = try await fixture(), model = scene.model
+    let pageID = try XCTUnwrap(model.activePage?.id)
+    try await scene.readyPencil(self)
+    scene.beginPencil(.init(x: 160, y: 800)); scene.movePencil(.init(x: 440, y: 800)); scene.endPencil()
+    model.selectDrawingTool(.lasso); model.drawingToolSettings.lassoMode = .elements
+    try await scene.readyFinger(self)
+    scene.beginFinger(.init(x: 590, y: 590)); scene.endFinger()
+    try await scene.readyFinger(self)
+    scene.beginFinger(.init(x: 590, y: 590)); scene.moveFinger(.init(x: 590, y: 790)); scene.endFinger()
+    model.selectPenColor(.black); model.selectPenWidth(12)
+    try await scene.readyPencil(self)
+    scene.beginPencil(.init(x: 160, y: 900)); scene.movePencil(.init(x: 440, y: 900)); scene.endPencil()
+    let saved = await model.finishPendingPersistence(); XCTAssertTrue(saved)
+    let history = try model.store.nativeHistory(domain: .page(pageID), actor: model.actorID)
+    XCTAssertEqual(history.count, 3)
+    if case .ink? = history.last {} else { XCTFail("The last accepted contact, not the graphic command, owns Undo") }
+    let root = model.store.root, actor = model.actorID, presence = try XCTUnwrap(model.presence)
+    scene.window.isHidden = true; scene.window.rootViewController = nil
+    let stopped = await model.shutdown(); XCTAssertTrue(stopped)
+    let preferences = UserDefaults(suiteName: UUID().uuidString)!
+    preferences.set(actor.uuidString, forKey: "notebook.actor-id")
+    let cold = NotebookAppModel(store: .init(root: root), startsNearbySync: false, preferences: preferences)
+    retainNotebookUntilTeardown(cold, removing: root)
+    await cold.start(pageSize: NotebookAppModel.defaultPageSize)
+    cold.updatePresence(presence, settled: true)
+    let window = try await mountNotebookScene(cold), reopened = try Scene(model: cold, window: window)
+    XCTAssertEqual(reopened.pageToWindow, scene.pageToWindow, "Reopening cannot move the coordinate oracle")
+    let unaffected: [(CGPoint, NotebookUXObservation.Color)] = [
+      (.init(x: 230, y: 330), .red), (.init(x: 430, y: 650), .black)]
+    try await shown("cold-mixed-history", reopened, since: .now, unaffected + [
+      (.init(x: 300, y: 800), .black), (.init(x: 300, y: 900), .black),
+      (.init(x: 590, y: 590), .paper), (.init(x: 590, y: 790), .blue)])
+    for step in 0..<3 {
+      cold.undoLastSurfaceAction()
+      // This scenario verifies the saved causal order and resulting window,
+      // not a claim of command-to-photon latency across the save boundary.
+      let persisted = await cold.finishPendingPersistence(); XCTAssertTrue(persisted)
+      await cold.reloadExternalChanges()?.value
+      try await shown("cold-mixed-undo-\(step)", reopened, since: .now, unaffected + [
+        (.init(x: 300, y: 800), step < 2 ? .black : .paper), (.init(x: 300, y: 900), .paper),
+        (.init(x: 590, y: 590), step == 0 ? .paper : .blue), (.init(x: 590, y: 790), step == 0 ? .blue : .paper)])
+    }
+    XCTAssertTrue(try cold.store.nativeHistory(domain: .page(pageID), actor: actor).isEmpty)
+  }
+
   private func shown(_ name: String, _ scene: Scene, since start: ContinuousClock.Instant,
     _ probes: [(CGPoint, NotebookUXObservation.Color)]) async throws {
     // Return one display opportunity before readback. A snapshot issued inside
