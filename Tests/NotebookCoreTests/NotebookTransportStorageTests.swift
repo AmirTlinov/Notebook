@@ -5,6 +5,94 @@ import Testing
 
 @Suite("Bounded transport staging has one durable owner")
 struct NotebookTransportStorageTests {
+  @Test func transportReaderSeesEachCommittedCutWithoutPinningThePriorSnapshot() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = NotebookStore(root: root), actor = UUID()
+    _ = try store.initializeWorkspace(actor: actor, pageSize: .init(width: 834, height: 1194))
+    let reader = NotebookTransportReader(store: store)
+    let initial = try await reader.changes(after: 0, limit: 16)
+    #expect(try initial == store.changeJournal(after: 0, limit: 16))
+    let cursor = try #require(initial.last?.sequence)
+    var page = try store.loadPage(#require(store.loadIndex().selectedPageID))
+    page.replaceDrawing(pageDrawingFixture(Data([4, 5])), actor: actor)
+    try store.savePage(page)
+    let changed = try await reader.changes(after: cursor, limit: 16)
+    #expect(try changed == store.changeJournal(after: cursor, limit: 16))
+    #expect(changed.count == 1)
+    let bytes = Data(repeating: 37, count: 70_000), digest = hash(bytes)
+    try store.stageBlobs([file(bytes, in: root)])
+    var restored = Data()
+    while restored.count < bytes.count {
+      let chunk = try #require(await reader.blobs([.init(hash: digest, offset: Int64(restored.count))]).first)
+      #expect(chunk.data.count <= NotebookTransportLimits.maximumChunkBytes)
+      restored.append(chunk.data)
+    }
+    #expect(restored == bytes)
+    // Idle transport keeps the useful handle, not a read transaction. Writers
+    // still use FULL, and even a truncating checkpoint is never pinned by it.
+    let wal = URL(fileURLWithPath: store.databaseURL.path + "-wal")
+    #expect((try FileManager.default.attributesOfItem(atPath: wal.path)[.size] as? NSNumber)?.int64Value ?? 0 > 0)
+    let checkpoint = try store.prepareDatabase()
+    #expect(try checkpoint.rows("PRAGMA synchronous").first?.first?.integer == 2)
+    #expect(try checkpoint.rows("PRAGMA wal_autocheckpoint").first?.first?.integer == 1000)
+    #expect(try checkpoint.rows("PRAGMA wal_checkpoint(TRUNCATE)").first?.first?.integer == 0)
+    #expect(try await reader.changes(after: cursor, limit: 16) == changed)
+    #expect(try await reader.blobs([.init(hash: digest)]).first?.data == bytes.prefix(32_768))
+  }
+
+  @Test func transportReaderRechecksAdmissionAndRecoversOnlyWithinTheSameDatabase() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = NotebookStore(root: root)
+    _ = try store.initializeWorkspace(actor: UUID(), pageSize: .init(width: 834, height: 1194))
+    let reader = NotebookTransportReader(store: store)
+    let expected = try await reader.changes(after: 0, limit: 16)
+    let marker = root.appendingPathComponent("workspace.json"), bytes = Data("not an admitted archive".utf8)
+    try bytes.write(to: marker)
+    await #expect(throws: NotebookStorageError.legacyStoreRequiresConversion) {
+      try await reader.changes(after: 0, limit: 16)
+    }
+    #expect(try Data(contentsOf: marker) == bytes)
+    try FileManager.default.removeItem(at: marker)
+    #expect(try await reader.changes(after: 0, limit: 16) == expected)
+    let database = try store.prepareDatabase()
+    try database.run("PRAGMA user_version=\(NotebookStore.currentDatabaseVersion + 1)")
+    await #expect(throws: NotebookStorageError.unsupportedFormat) {
+      try await reader.changes(after: 0, limit: 16)
+    }
+    try database.run("PRAGMA user_version=\(NotebookStore.currentDatabaseVersion)")
+    #expect(try await reader.changes(after: 0, limit: 16) == expected)
+  }
+
+  @Test func replacingTheDatabaseCannotOfferAnotherWorkspaceUnderTheOldTransport() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let live = root.appendingPathComponent("live"), retired = root.appendingPathComponent("retired")
+    let store = NotebookStore(root: live)
+    _ = try store.initializeWorkspace(actor: UUID(), pageSize: .init(width: 834, height: 1194))
+    let reader = NotebookTransportReader(store: store)
+    let original = try await reader.changes(after: 0, limit: 16)
+    let oldBytes = Data("old committed WAL".utf8), newBytes = Data("new committed WAL".utf8)
+    try store.stageBlobs([file(oldBytes, in: root)])
+    try FileManager.default.moveItem(at: live, to: retired)
+    _ = try store.initializeWorkspace(actor: UUID(), pageSize: .init(width: 834, height: 1194))
+    let replacement = NotebookTransportReader(store: store)
+    let newChanges = try await replacement.changes(after: 0, limit: 16)
+    #expect(newChanges != original)
+    try store.stageBlobs([file(newBytes, in: root)])
+    for _ in 0..<2 {
+      await #expect(throws: NotebookTransportError.storageUnavailable) {
+        try await reader.changes(after: 0, limit: 16)
+      }
+    }
+    #expect(try await replacement.blobs([.init(hash: hash(newBytes))]).first?.data == newBytes)
+    let oldStore = NotebookStore(root: retired)
+    #expect(try oldStore.changeJournal(after: 0, limit: 16) == original)
+    #expect(try oldStore.readBlobWindow([.init(hash: hash(oldBytes))]).first?.data == oldBytes)
+    #expect(try store.readBlobWindow([.init(hash: hash(newBytes))]).first?.data == newBytes)
+  }
+
   @Test func aWindowCommitsTogetherWithoutPublishingContentOrACursor() throws {
     try fixture { store, root in
       let batch = try (0..<16).map { index in

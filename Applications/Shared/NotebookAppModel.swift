@@ -1207,15 +1207,21 @@ final class NotebookAppModel {
   func makeTransportStorage() async throws -> NotebookTransportStorage {
     let writer = persistence, store = store
     let source = try await writer.submit { [actorID] in try $0.replicationSource(deviceID: actorID) }
+    let reader = NotebookTransportReader(store: store)
     return NotebookTransportStorage(
       journalGeneration: source.generation,
-      changes: { cursor, limit in try await writer.submit { try $0.changeJournal(after: cursor, limit: limit) } },
+      // Offering already committed content is a WAL read, just like its blobs.
+      // A later native command may be waiting for preparation in the FIFO; it
+      // cannot hold the preceding accepted change off the trusted connection.
+      changes: { cursor, limit in
+        try await reader.changes(after: cursor, limit: limit)
+      },
       incomingCursor: { peer in try await writer.submit { try $0.admitReplicationSource(peer) } },
       acknowledgePeer: { peer, cursor in try await writer.submit { try $0.acknowledgePeer(peerID: peer, through: cursor) } },
       // Offered hashes are already committed and immutable. Their bounded WAL
       // snapshot cannot sit behind the next native contact or scene reload.
       readBlobWindow: { requests in
-        try await Task.detached(priority: .userInitiated) { try store.readBlobWindow(requests) }.value
+        try await reader.blobs(requests)
       },
       stageBlobs: { blobs in try await writer.submit { try $0.stageBlobs(blobs) } },
       prepareIncoming: { delivery, blobs in try await writer.submit { try $0.prepareIncomingBlobs(delivery, staging: blobs) } },
@@ -1286,17 +1292,21 @@ final class NotebookAppModel {
 
   func applyDurableDelivery(_ delivery: NotebookReplicationDelivery, cloudAccount: String? = nil) async throws -> UInt64 {
     guard !isClosing else { throw CollaborationError("owner_unavailable", "Notebook завершает работу.") }
-    let cursor: UInt64
+    let applied: (cursor: UInt64, changed: Bool)
     while true {
       guard !isClosing else { throw CollaborationError("owner_unavailable", "Notebook завершает работу.") }
       try Task.checkCancellation()
       let targets = localInputTargets
       do {
-        cursor = try await persistence.submit(publishesChanges: true) { store in
+        applied = try await persistence.submit(publishesChanges: true) { store in
+          let needsContent = try store.deliveryNeedsContent(delivery)
+          let cursor: UInt64
           if let cloudAccount {
-            return try store.applyCloudDelivery(delivery, account: cloudAccount, protectingInputOn: targets)
+            cursor = try store.applyCloudDelivery(delivery, account: cloudAccount, protectingInputOn: targets)
+          } else {
+            cursor = try store.applyDelivery(delivery, protectingInputOn: targets)
           }
-          return try store.applyDelivery(delivery, protectingInputOn: targets)
+          return (cursor, needsContent)
         }
         break
       } catch let error as CollaborationError where error.code == "input_active" {
@@ -1308,9 +1318,12 @@ final class NotebookAppModel {
         }
       }
     }
-    if awaitingAccountContent { resumeAccountContent() } else { reloadExternalChanges() }
+    // A returning known transaction still validates and durably advances its
+    // peer cursor. It did not publish content: rebuilding the scene for that
+    // echo queues expensive reads ahead of the next actual peer edit.
+    if awaitingAccountContent { resumeAccountContent() } else if applied.changed { reloadExternalChanges() }
     if delivery.isSnapshot { sync?.receivedCheckpoint(from: delivery.source.deviceID) }
-    return cursor
+    return applied.cursor
   }
 
   /// A new replica receives the existing scene; it must never manufacture a

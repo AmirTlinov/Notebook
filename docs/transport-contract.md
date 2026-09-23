@@ -130,8 +130,17 @@ complete dependency proof still runs in the material admission transaction.
 
 Sender size and bytes for the whole window come from one bounded read snapshot
 (one length/substr query per hash). Offered hashes are already committed and
-immutable: this read does not wait behind the next native write. The existing
-persistence queue still owns all durable writes, journal ordering and ACKs.
+immutable: neither the committed journal offer nor its bytes wait behind the
+next native write. One serialized transport reader retains its idle connection,
+not a transaction or a previous read cut. Each call rechecks database admission
+and opens a fresh snapshot; a replaced database requires a new transport rather
+than offering another workspace under the existing generation. This avoids
+last-handle checkpoints between dependency windows without changing FULL commit
+durability or normal automatic checkpoints. The existing persistence queue still
+owns all durable writes, journal ordering and ACKs.
+The same Core delivery admission classifies a returning known transaction:
+it still validates and commits its peer cursor, but does not schedule another
+scene/history read when no new content was published.
 
 Incoming merge protects the native contact's actual page/board/cover material
 and placement (or document content/state), using the existing canonical identity.

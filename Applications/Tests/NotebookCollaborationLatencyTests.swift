@@ -8,7 +8,30 @@ import XCTest
 /// radio or two-screen measurement. The sending owner has no rendered scene.
 @MainActor
 final class NotebookCollaborationLatencyTests: XCTestCase {
-  func testCommittedTransportBytesDoNotWaitBehindTheNextNativeWrite() async throws {
+  func testReturningKnownChangeAcknowledgesItsPeerWithoutRebuildingTheScene() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("transport-echo-\(UUID())")
+    let store = NotebookStore(root: root)
+    let model = NotebookAppModel(store: store, startsNearbySync: false,
+      preferences: UserDefaults(suiteName: UUID().uuidString)!)
+    retainNotebookUntilTeardown(model, removing: root)
+    await model.start(pageSize: NotebookAppModel.defaultPageSize)
+    let saved = await model.finishPendingPersistence(); XCTAssertTrue(saved)
+    let change = try XCTUnwrap(store.changeJournal(after: 0).first)
+    let peer = NotebookReplicationSource(deviceID: UUID(), generation: UUID())
+    _ = try store.admitReplicationSource(peer)
+    let sceneCursor = model.sceneContentCursor, header = model.workspaceHeader
+    let contentCursor = try store.currentChangeCursor()
+    let received = try await model.applyDurableDelivery(.init(source: peer, change: change))
+    let settled = await model.finishPendingPersistence(); XCTAssertTrue(settled)
+    XCTAssertEqual(received, change.sequence)
+    XCTAssertEqual(try store.incomingCursor(source: peer), change.sequence)
+    XCTAssertEqual(try store.currentChangeCursor(), contentCursor)
+    XCTAssertEqual(model.sceneContentCursor, sceneCursor,
+      "A cursor-only ACK cannot schedule another scene read before the next peer edit")
+    XCTAssertEqual(model.workspaceHeader, header)
+  }
+
+  func testCommittedTransportOffersAndBytesDoNotWaitBehindTheNextNativeWrite() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("transport-read-\(UUID())")
     let store = NotebookStore(root: root), queue = NotebookPersistenceQueue(store: store)
     let model = NotebookAppModel(store: store, startsNearbySync: false,
@@ -29,10 +52,12 @@ final class NotebookCollaborationLatencyTests: XCTestCase {
     var received = false
     let start = ContinuousClock.now
     let read = Task {
+      let offered = try await storage.changes(change.sequence - 1, 16)
+      XCTAssertEqual(offered.first, change, "Committed content must be offered before its bytes can be requested")
       let result = try await storage.readBlobWindow([.init(hash: change.manifestHash)])
       received = true; return result
     }
-    try await assertUX("committed-bytes-during-native-preparation", since: start) { received }
+    try await assertUX("committed-offer-and-bytes-during-native-preparation", since: start) { received }
     XCTAssertGreaterThan(queue.pendingCount, 0, "The read cannot obtain a fast result by releasing native preparation")
     pause.continuation.finish()
     let chunks = try await read.value, value = try await later.value
@@ -108,6 +133,7 @@ final class NotebookCollaborationLatencyTests: XCTestCase {
       pair.scene.movePencil(.init(x: 300, y: y))
       let start = ContinuousClock.now
       pair.scene.endPencil()
+      pair.arrivals.record("pad.lift.\(index)", since: start)
       let page = try XCTUnwrap(pair.pad.activePage)
       let ink = try page.inkDrawing(), stroke = try XCTUnwrap(ink.actions.last)
       let revision = page.drawingStamp.revision
@@ -246,6 +272,12 @@ final class NotebookCollaborationLatencyTests: XCTestCase {
     }
     func observing(_ original: NotebookTransportStorage, name: String) -> NotebookTransportStorage {
       var result = original
+      result.changes = { cursor, limit in
+        let began = ContinuousClock.now
+        let changes = try await original.changes(cursor, limit)
+        await self.record("\(name).offer.\(cursor).\(changes.count)", since: began)
+        return changes
+      }
       result.stageBlobs = { batch in
         let began = ContinuousClock.now
         try await original.stageBlobs(batch)
@@ -262,6 +294,12 @@ final class NotebookCollaborationLatencyTests: XCTestCase {
         let chunks = try await original.readBlobWindow(requests)
         await self.record("\(name).readBlobs.\(chunks.count).\(chunks.reduce(0) { $0 + $1.data.count })", since: began)
         return chunks
+      }
+      result.applyRemoteChange = { delivery in
+        let began = ContinuousClock.now
+        let cursor = try await original.applyRemoteChange(delivery)
+        await self.record("\(name).apply.\(delivery.change.sequence)", since: began)
+        return cursor
       }
       return result
     }
