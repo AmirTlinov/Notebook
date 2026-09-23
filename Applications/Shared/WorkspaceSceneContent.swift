@@ -155,24 +155,6 @@ struct BoardPortalPreview: View {
 
 }
 
-struct WorkspaceCoverTitle: View {
-  let item: WorkspaceItem
-  let geometry: WorkspaceItemGeometry
-
-  var body: some View {
-    if item.kind != .board, !item.title.isEmpty {
-      Text(item.title)
-        .font(.system(size: geometry.width * (item.kind == .document ? 0.056 : 0.048),
-          weight: .medium, design: item.kind == .document ? .serif : .default))
-        .foregroundStyle(Color.black.opacity(0.76))
-        .lineLimit(3)
-        .frame(width: geometry.width * 0.72, alignment: .leading)
-        .offset(x: geometry.width * (item.kind == .document ? 0.105 : 0.145),
-          y: geometry.height * (item.kind == .document ? 0.145 : 0.148))
-    }
-  }
-}
-
 struct WorkspaceItemCoverView: View {
   @Environment(NotebookAppModel.self) private var model
   @Environment(\.sceneComposition) private var composition

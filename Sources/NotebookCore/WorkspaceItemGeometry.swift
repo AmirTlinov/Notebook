@@ -6,10 +6,13 @@ public struct WorkspaceItemGeometry: Equatable, Hashable, Sendable {
   public let width: Double
   public let height: Double
   public let cornerRadius: Double
+  public let paperSize: DocumentPaperSize?
 
+  /// Logical display geometry of the 11-inch iPad Pro, including its 18-point corner.
   public static let notebook = Self(
     width: 834, height: 1_194,
-    cornerRadius: PhysicalPaper.pointsPerCentimeter * 0.8
+    cornerRadius: 18,
+    paperSize: nil
   )
 
   public static func document(_ paper: DocumentPaperSize) -> Self {
@@ -17,7 +20,8 @@ public struct WorkspaceItemGeometry: Equatable, Hashable, Sendable {
     return Self(
       width: paper.widthPoints * pointsPerPostScriptPoint,
       height: paper.heightPoints * pointsPerPostScriptPoint,
-      cornerRadius: PhysicalPaper.pointsPerCentimeter * 0.12
+      cornerRadius: PhysicalPaper.pointsPerCentimeter * 0.12,
+      paperSize: paper
     )
   }
 

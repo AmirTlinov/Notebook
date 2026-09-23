@@ -4,6 +4,52 @@ This record separates code checks, installed builds, live readback, and physical
 acceptance. Linear owns task state. Results apply only to their named source and
 environment; later changes do not inherit acceptance automatically.
 
+## GUI-297 — notebook and document covers, September 23, 2026
+
+This isolated slice starts at `9332808851e28136ee75dfde667a0b667140b2d2`.
+Cover material and printed typography now have one owner; handwritten/content
+layers and title-independent raster caches remain separate. Notebooks have light
+paper tones, a subtle same-colour fold and the Russian notebook imprint, without
+a contrasting spine. Document title pages display their actual A4/Letter format.
+
+The notebook's shared 834×1194 geometry now uses an 18-point continuous corner,
+between the rejected 8 mm and 2 mm variants. The nominal radius comes from the
+installed Apple 11-inch iPad Pro (3rd generation) device profile, which includes
+the physical iPad13,4; no Simulator was launched. This is a shared native contour,
+not a claim of measured pixel-for-pixel equivalence to a hardware display mask.
+
+Final application/test input SHA-256:
+`9051da678f40175646b462069f9d4284da4bdd9138491dfd0549c380fe4812e9`.
+Core **2/2** passed (paper identity, notebook geometry and whole-sheet zoom).
+Mac **3/3** passed (cached pixel reuse, all six notebook tones, short and long
+document titles). Physical iPad Pro 11-inch, iOS 27.0 (24A435), **2/2** passed:
+ordinary double-tap entry and ink travelling with the opening cover. No skips,
+failures or runtime warnings were reported by the native runs. Native Mac title
+renders and the iPad curl screenshot were inspected.
+
+Evidence: `.build/gui297-radius-core/tests.log`,
+`.build/gui297-radius-final/verification.json`,
+`.build/gui297-radius-render/` and `.build/gui297-radius-cleanup/`.
+Before the final notebook-radius-only correction, A4 and Letter cover/page bounds
+also passed opening/closing in both orientations on the physical iPad:
+`.build/gui297-covers-final/verification.json`, input
+`877c5443706db3aa9d4b80a5f71caf601354f1499a7bcda20bfa1a63aca569d8`.
+Document geometry and styling were unchanged by that correction.
+
+Earlier diagnostic runs remain in `.build/gui297-covers-a/` and
+`.build/gui297-covers-b/`: an unrelated standalone-text accessibility lookup did
+not match the aggregated PDF page, and the first render assertions rejected
+coloured typography and an ellipsized maximum-length title. The focused render
+checks now measure readable printed ink; long titles keep a readable minimum
+size. No document renderer or interaction threshold was weakened.
+
+Only isolated native-test applications were installed, and both iPad test
+applications were removed after verification. Production Mac/iPad applications,
+content and identities were not replaced. Integration into the current GUI-295
+branch, a production pair update and Amir's visual acceptance remain pending;
+these scoped checks do not establish full performance or hardware-Pencil
+acceptance.
+
 ## Current recorded state — September 19–20, 2026
 
 - Latest completed installed pair recorded here: **0.3.131 (134)** on Mac and
