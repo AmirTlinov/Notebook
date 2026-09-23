@@ -715,6 +715,14 @@ import UIKit
       XCTAssertTrue(restored.graphicPresentation.suppressedInkIDs.isEmpty)
       XCTAssertEqual(restored.drawingData,data)
       XCTAssertEqual(restored.elements.first?.graphic?.freehand,ink)
+      for _ in 0..<3 {
+        model.redoLastSurfaceAction();await assertSaved(model);await model.reloadExternalChanges()?.value
+      }
+      let repeated=try NotebookStore(root:model.store.root).loadPage(page.id)
+      XCTAssertEqual(repeated.drawingData,data)
+      XCTAssertEqual(repeated.elements.count,2)
+      XCTAssertEqual(repeated.graphicPresentation.suppressedInkIDs,[stroke.id])
+      XCTAssertEqual(repeated.elements[0].graphic?.freehand,repeated.elements[1].graphic?.freehand)
     }
   }
 
@@ -847,6 +855,8 @@ import UIKit
       XCTAssertFalse(paint.contains(.init(x:180-edited.frame.x,y:170-edited.frame.y)))
       model.undoLastSurfaceAction(); await assertSaved(model); await model.reloadExternalChanges()?.value
       XCTAssertEqual(try model.store.loadPage(page.id).elements.first { $0.id == original.id }?.graphic?.shape,.rectangle)
+      model.redoLastSurfaceAction(); await assertSaved(model); await model.reloadExternalChanges()?.value
+      XCTAssertEqual(try model.store.loadPage(page.id).elements.first { $0.id == original.id }?.graphic?.shape,.path)
     }
   }
 

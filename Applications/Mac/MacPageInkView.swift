@@ -127,6 +127,7 @@ final class MacPageInkCanvas: NSView {
     else { super.keyDown(with: event) }
   }
   @objc func undo(_ sender: Any?) { finishStroke(); model.afterPageInput { self.model.undoLastSurfaceAction() } }
+  @objc func redo(_ sender: Any?) { finishStroke(); model.afterPageInput { self.model.redoLastSurfaceAction() } }
 
   private func sample(_ event: NSEvent) {
     let location = convert(event.locationInWindow, from: nil)

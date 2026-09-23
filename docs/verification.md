@@ -35,6 +35,37 @@ receipt wait and capture. Absence/resurrection observations remain unchanged.
 A hidden prepared cover is explicitly not a shown cover. No production pair was
 installed; mixed Redo integration, delivery latency and full acceptance remain open.
 
+## September 23 — GUI-295, durable mixed Undo/Redo
+
+Page and spatial ink repeat the **same saved action identity and measurements**;
+native graphic operations repeat as a **new causal action**, leaving the original
+Undo receipt immutable. The per-actor, per-surface Undo/Redo directory and material
+commit in one transaction, survives a cold reopen, and cuts only the affected
+surface's Redo on new input. The writer checks the exact saved inverse gate, so a
+peer's intervening A→B→A change cannot revive stale ink or overwrite an element.
+Native redo carries explicit intent; after a new contact cuts the branch, an
+already prepared repeat is rejected even if its old ink gate still matches.
+Ordinary explicit state inverses and peer delivery do not borrow that redo
+intent. The iPad three-finger gesture and Mac responder use the same scene
+history owner.
+
+Core: `.build/gui295-redo-cut-core-v2.log` passed **31 tests in 3 suites**,
+including Undo→new contact→rejected stale Redo on page and cover, cold peer-ABA,
+and a 100,000-action addressed spatial workload. The unchanged graphic-conversion
+scenarios passed **10 cases** in `.build/gui295-redo-core-freeze.log`. Selected
+native verification on an iPad Pro 11-inch (3rd generation), iOS 27.0:
+**6/6 PASS**; Mac: **4/4 PASS**; zero failures, skips or runtime warnings in
+`.build/gui295-redo-branch-cut-final/`. The iPad selection checks mounted pixels
+across Undo, cold reopen, Redo and another Undo, lasso/eraser fragments and the
+three-finger control gate. The selected verification's source manifest is
+`14428f3edb8a95d4ae13c220c404a114bacafe6c223868f8f9e79ba6b740ebd3`.
+
+This is an isolated native-test installation, **not** a production-pair install
+or a human Pencil gesture acceptance. Native item move/stack/delete and code-note
+Redo are outside this material slice. Full GUI-295 acceptance still needs the
+installed pair, human eraser/lasso/Undo/Redo repetitions, system frame, CPU/GPU
+and memory measurements, and the specified 30-minute joint session.
+
 ## September 23 — GUI-295, spatial inverse admission and rejected-note reconciliation
 
 Native board/cover/code ink inverses now name the exact accepted visibility

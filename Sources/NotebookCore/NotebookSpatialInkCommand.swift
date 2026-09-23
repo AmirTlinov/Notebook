@@ -6,14 +6,14 @@ import Foundation
 public enum NotebookSpatialInkCommand: Sendable {
   case append(SpatialInkAction, journalStamp: VersionStamp)
   case state(actionID: UUID, creationStamp: VersionStamp, expectedStateStamp: VersionStamp, isActive: Bool,
-    stateStamp: VersionStamp, journalStamp: VersionStamp)
+    stateStamp: VersionStamp, journalStamp: VersionStamp, nativeRedo: Bool = false)
 
   public var expectedResult: NotebookSpatialInkResult {
     switch self {
     case .append(let action, let stamp):
       return .init(actionID: action.id, creationStamp: action.stamp, isActive: action.isActive,
         stateStamp: action.stateStamp, journalStamp: stamp)
-    case .state(let id, let creation, _, let active, let state, let journal):
+    case .state(let id, let creation, _, let active, let state, let journal, _):
       return .init(actionID: id, creationStamp: creation, isActive: active, stateStamp: state, journalStamp: journal)
     }
   }
@@ -73,6 +73,9 @@ extension NotebookStore {
     if case .append(let action, _) = command, !action.isValid {
       throw NotebookStorageError.invalidTransaction("spatial ink action")
     }
+    if case .state(_,_,_,let active,_,_,let nativeRedo) = command, nativeRedo && !active {
+      throw NotebookStorageError.invalidTransaction("native redo must activate ink")
+    }
     return try commandTransaction {
       let database = currentSQL!, file = "spatial-ink.json", rootAddress = "spatial-ink.json#"
       let address = rootAddress + "/actions/@" + expected.actionID.uuidString.lowercased()
@@ -105,7 +108,7 @@ extension NotebookStore {
         // A native inverse names the gate seen at acceptance, not just its
         // desired bool. Even an ABA with a larger local clock is a different
         // source. Delivery alone merges independently authored causal gates.
-        if case .state(_, _, let source, _, _, _) = command, origin == .contact,
+        if case .state(_, _, let source, _, _, _, _) = command, origin == .contact,
           !(header.stateStamp == expected.stateStamp && header.isActive == expected.isActive) {
           guard source.counter <= VersionStamp.maximumCounter, header.stateStamp == source,
             header.isActive != expected.isActive, expected.stateStamp > source else {
@@ -170,7 +173,12 @@ extension NotebookStore {
           if previous == nil {
             try recordNativeHistory(.ink([header.id]), domain: domain, actor: header.stamp.actor)
           } else if changedState {
-            try recordNativeHistory(.ink([header.id]), domain: domain, actor: expected.stateStamp.actor, removing: !header.isActive)
+            if header.isActive,case .state(_,_,let source,_,_,_,true)=command {
+              try requireNativeInkRedoGate(header.id,domain:domain,actor:expected.stateStamp.actor,
+                expected:source)
+            }
+            try recordNativeHistory(.ink([header.id]), domain: domain, actor: expected.stateStamp.actor,
+              removing: !header.isActive,stateStamp:header.stateStamp)
           }
         }
       }

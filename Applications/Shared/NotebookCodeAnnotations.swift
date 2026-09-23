@@ -92,7 +92,7 @@ final class NotebookCodeAnnotations {
         var journal = next[fragment.id]?.ink ?? annotations[fragment.id]?.ink ?? .init(stamp: clock)
         switch command {
         case .append(let action, let stamp): _ = journal.merge(.init(actions: [action], stamp: stamp))
-        case .state(let id, _, _, let active, let state, _): _ = Self.setState(&journal, id: id, active: active, stamp: state)
+        case .state(let id, _, _, let active, let state, _, _): _ = Self.setState(&journal, id: id, active: active, stamp: state)
         }
         next[fragment.id] = .init(fragment: fragment, ink: journal)
       }

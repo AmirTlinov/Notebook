@@ -293,6 +293,81 @@ extension NotebookStore {
     try undoCollaborationActionImmediately(id, actor: actor, nativeInputOwner: actor)
   }
 
+  /// Redo is a new causal action over the fields the inverse actually restored.
+  /// The original receipt remains immutable; a peer edit after Undo invalidates
+  /// this cut instead of letting an old request replay against new material.
+  @discardableResult
+  public func redoNativeAction(_ id:UUID,actionID:UUID,actor:UUID) throws -> CollaborationReceipt {
+    try prepare()
+    return try commandTransaction(readAllowance:.agentCommand) {
+      if try hasStoredValue(actionFile(actionID)) {
+        let saved=try loadAction(actionID)
+        guard saved.redoOf == id,saved.author == .human else {
+          throw CollaborationError("action_id_conflict","Этот ID уже принадлежит другому ходу.")
+        }
+        return saved
+      }
+      let original=try loadAction(id)
+      guard original.author == .human,let inverse=original.undo,
+        inverse.preserved.isEmpty,inverse.preservedLifecycle?.isEmpty ?? true,
+        inverse.lifecycleChanges?.isEmpty ?? true,!original.changes.isEmpty,
+        original.action.operations.allSatisfy({ [.insertElement,.updateElement,.removeElement,
+          .convertInkToElement,.reorderElements].contains($0.kind) }) else {
+        throw CollaborationError("revision_conflict","Этот ход нельзя безопасно повторить после отмены.")
+      }
+      let domains=Set(original.action.operations.map { PencilUndoHistory.Domain($0.target) })
+      guard try domains.allSatisfy({ try nativeRedoHead(domain:$0,actor:actor) == .command(id) }) else {
+        throw CollaborationError("revision_conflict","Порядок повтора изменился.")
+      }
+      let expected=try original.action.expected.map {
+        CollaborationExpectation(target:$0.target,revision:try targetContentRevision(target:$0.target))
+      }
+      let action=CollaborationAction(id:actionID,summary:"Повторить: "+original.summary,
+        references:original.action.references,expected:expected,
+        operations:original.action.operations)
+      let before=try actionSourceProjection(action,receipt:original)
+      try requireIdleInput(for:action.operations.map(\.target),excludingDevice:actor)
+      try validateCollaborationExpectations(action,projection:before)
+      for change in original.changes where change.path.suffix(2) == [.field("graphic"),.field("representation")] {
+        var dependencies:[CollaborationPreservedDependency]=[]
+        guard change.afterVersion != nil,
+          try !graphicConversionIsAdopted(change,receipt:original,files:before.files,preserving:&dependencies) else {
+          throw CollaborationError("revision_conflict","Исходная фигура изменилась после отмены.")
+        }
+      }
+      var after=before
+      for change in original.changes {
+        let current=before.files[change.file]?.value(at:change.path[...])
+        guard let gate=inverse.redoGates?.first(where: {
+          $0.file == change.file && $0.path == change.path
+        }), collaborationFieldVersion(file:before.files[change.file],path:change.path)
+          == gate.writtenVersion else {
+          throw CollaborationError("revision_conflict","Причинный владелец изменился после отмены.")
+        }
+        guard collaborationComparable(current,file:change.file,path:change.path)
+          == collaborationComparable(change.before,file:change.file,path:change.path) else {
+          throw CollaborationError("revision_conflict","Материал изменился после отмены.")
+        }
+        if change.path.isEmpty { after.files[change.file]=change.after }
+        else if let file=after.files[change.file] {
+          after.files[change.file]=file.setting(at:change.path[...],to:change.after)
+        } else { throw CollaborationError("revision_conflict","Владелец материала больше не существует.") }
+      }
+      try after.restampChanges(from:before,actor:actor)
+      try after.recordFieldChanges(from:before,human:true)
+      try after.validateGraphicBindings(action:action,scope:self)
+      try after.validateElementParents(action:action,scope:self)
+      try after.validate(scope:self)
+      let changes=collaborationDiff(before.files,after.files)
+      guard !changes.isEmpty else { throw CollaborationError("revision_conflict","Отменённый ход уже не меняет материал.") }
+      var repeated=CollaborationReceipt(id:actionID,action:action,createdAt:Date(),revisions:[],changes:changes)
+      repeated.author = .human;repeated.redoOf=id
+      for domain in domains { try repeatNativeHistoryCommand(originalID:id,actionID:actionID,domain:domain,actor:actor) }
+      return try commitCollaboration(before:before.files,after:after,receipt:repeated,
+        revisedTargets:after.changedTargets(from:before))
+    }
+  }
+
   private func undoCollaborationActionImmediately(_ id: UUID, actor: UUID, nativeInputOwner: UUID? = nil) throws -> CollaborationReceipt {
     try prepare()
     return try commandTransaction(readAllowance: .agentCommand) {
@@ -300,6 +375,7 @@ extension NotebookStore {
       if receipt.undo != nil { return receipt }
       try requireIdleInput(for: receipt.action.operations.map(\.target), excludingDevice: nativeInputOwner)
       let hasLifecycle = receipt.lifecycleChanges?.isEmpty == false
+      let redoAncestor = try receipt.redoOf.map(loadAction)
       let appended = hasLifecycle ? try prepareAppendedNotebookPageUndo(receipt: receipt) : nil
       let deleted = hasLifecycle ? try prepareDeletedItemUndo(receipt: receipt, actor: actor) : nil
       defer { try? deleted?.clear() }
@@ -352,8 +428,14 @@ extension NotebookStore {
           }
           let version = collaborationFieldVersion(file: before.files[change.file], path: change.path)
           let stillOwned = try fieldIsOwned(version, by: change)
+          // Redo rewrites the representation gate, not the unchanged graphic
+          // body. Its adoption check must follow that body's original dot.
+          let ownershipVersion=redoAncestor?.changes.first(where: {
+            $0.file == change.file && $0.path == change.path
+          })?.afterVersion
           guard !protected.contains(change),
-            try !graphicConversionIsAdopted(change, receipt: receipt, files: before.files, preserving:&preservedDependencies),
+            try !graphicConversionIsAdopted(change, receipt: receipt, files: before.files,
+              preserving:&preservedDependencies,ownershipVersion:ownershipVersion),
             stillOwned,
             collaborationComparable(current, file: change.file, path: change.path) == collaborationComparable(change.after, file: change.file, path: change.path) else {
             preserved.append(change)
@@ -392,6 +474,10 @@ extension NotebookStore {
             written.stamp != prior?.stamp else { return nil }
           return .init(file: change.file, path: change.path, writtenVersion: written, restoredVersion: prior)
         }
+        receipt.undo?.redoGates = restoredFields.compactMap { change in
+          guard let written=collaborationFieldVersion(file:after.files[change.file],path:change.path) else { return nil }
+          return .init(file:change.file,path:change.path,writtenVersion:written)
+        }
         let changed = collaborationDiff(before.files, after.files)
         var targets = Set(try after.changedTargets(from: before))
         try publishCollaborationEdits(before: before.files, after: after.files)
@@ -404,6 +490,7 @@ extension NotebookStore {
           receipt.undo = .init(restored: ordinary.restored + lifecycle.changes.count,
             preserved: ordinary.preserved, completedAt: ordinary.completedAt)
           receipt.undo?.restorations = ordinary.restorations
+          receipt.undo?.redoGates = ordinary.redoGates
           receipt.undo?.dependencies = ordinary.dependencies
           receipt.undo?.lifecycleChanges = lifecycle.changes.isEmpty ? nil : lifecycle.changes
           receipt.undo?.preservedLifecycle = lifecycle.preserved.isEmpty ? nil : lifecycle.preserved

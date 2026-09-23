@@ -379,10 +379,11 @@ extension NotebookStore {
   }
 
   func graphicConversionIsAdopted(_ change: CollaborationFieldChange, receipt: CollaborationReceipt,
-    files: [String: JSONValue], preserving dependencies: inout [CollaborationPreservedDependency]) throws -> Bool {
+    files: [String: JSONValue], preserving dependencies: inout [CollaborationPreservedDependency],
+    ownershipVersion: ContentFieldVersion? = nil) throws -> Bool {
     let conversion = change.path.suffix(2) == [.field("graphic"), .field("representation")] && change.before == .string("ink")
     let creation = change.before == nil && change.after?["graphic"] != nil
-    guard conversion || creation, let version = change.afterVersion else { return false }
+    guard conversion || creation, let version = ownershipVersion ?? change.afterVersion else { return false }
     let prefix = conversion ? Array(change.path.dropLast(2)) : change.path
     guard case .member(let id) = prefix.last,
       let operation = receipt.action.operations.first(where: {

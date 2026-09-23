@@ -176,12 +176,21 @@ public struct CollaborationUndoResult: Codable, Equatable, Sendable {
   public let preserved: [CollaborationFieldChange]
   public let completedAt: Date
   public var restorations: [CollaborationFieldRestoration]? = nil
+  /// Exact versions written by this inverse, including fields with no prior
+  /// version to restore. Redo must not borrow a peer's same-valued ABA write.
+  public var redoGates: [CollaborationRedoGate]? = nil
   public var dependencies: [CollaborationPreservedDependency]? = nil
   public var lifecycleChanges: [NotebookLifecycleUndoChange]? = nil
   public var preservedLifecycle: [CollaborationTarget]? = nil
   /// Bounded evidence for the actual inverse writes, not a replay of the
   /// original action or an unbounded array of membership restorations.
   public var restorationInverse: NotebookLifecycleInverseReference? = nil
+}
+
+public struct CollaborationRedoGate: Codable, Equatable, Sendable {
+  public let file: String
+  public let path: [CollaborationPathComponent]
+  public let writtenVersion: ContentFieldVersion
 }
 
 public struct CollaborationPreservedDependency: Codable, Equatable, Sendable {
@@ -216,13 +225,15 @@ public struct CollaborationReceipt: Codable, Equatable, Sendable, Identifiable {
   /// Addressed pre-action record evidence; unchanged when this action is undone.
   public var lifecycleInverse: NotebookLifecycleInverseReference? = nil
   public var lifecycleChanges: [NotebookLifecycleChange]? = nil
+  /// A new authored action repeats only the fields restored by this inverse.
+  public var redoOf: UUID? = nil
 
   public var summary: String { action.summary }
 
   /// Original content evidence cannot change when a receipt is relayed or
   /// completed by undo. An already published undo has its own immutable cut.
   func hasSameLifecycleIdentity(as other: Self) -> Bool {
-    action == other.action && lifecycleInverse == other.lifecycleInverse
+    action == other.action && redoOf == other.redoOf && lifecycleInverse == other.lifecycleInverse
       && lifecycleChanges == other.lifecycleChanges
       && (undo == nil || other.undo == nil || (
         undo?.restorationInverse == other.undo?.restorationInverse

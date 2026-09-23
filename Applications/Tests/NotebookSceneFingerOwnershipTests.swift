@@ -131,7 +131,7 @@ final class NotebookSceneFingerOwnershipTests: XCTestCase {
     let anchor = GestureAnchorView(frame: root.view.bounds)
     anchor.isUserInteractionEnabled = false; root.view.addSubview(anchor)
     let coordinator = WorkspaceGestureLayer.Coordinator(defersHorizontalMotionToPageTurn: false,
-      isEnabled: true, inputGate: gate, onCamera: { _ in XCTFail("Admission must not synthesize a camera gesture") }, onUndo: {})
+      isEnabled: true, inputGate: gate, onCamera: { _ in XCTFail("Admission must not synthesize a camera gesture") }, onUndo: {}, onRedo: {})
     coordinator.install(on: window, inside: anchor)
     defer {
       coordinator.uninstall(); window.isHidden = true; window.rootViewController = nil
