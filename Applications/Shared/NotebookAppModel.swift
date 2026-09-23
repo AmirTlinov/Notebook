@@ -2519,7 +2519,7 @@ final class NotebookAppModel {
     guard inputGate.permitsNewContact, !inputGate.hasActivePencil else { return }
     guard let domain=activeHistoryDomain else { return }
     if let command = pencilUndoHistory.lastCommand(for: domain) { undoCollaboration(command); return }
-    if domain.kind == .document { return }
+    if case .target(.document, _) = domain { return }
     if isPageOpen {
       _ = acceptDrawingUndo()
       return
@@ -2550,12 +2550,15 @@ final class NotebookAppModel {
 
   func redoLastSurfaceAction() {
     #if os(iOS)
-      if chat?.files.window.isOpen == true { return }
+      if let files = chat?.files, files.window.isOpen {
+        guard inputGate.permitsNewContact, !inputGate.hasActivePencil else { return }
+        files.notes.redo(); return
+      }
     #endif
     guard inputGate.permitsNewContact, !inputGate.hasActivePencil else { return }
     guard let domain=activeHistoryDomain else { return }
     if let command = pencilUndoHistory.lastRedoCommand(for: domain) { redoCollaboration(command); return }
-    if domain.kind == .document { return }
+    if case .target(.document, _) = domain { return }
     if isPageOpen { _ = acceptDrawingRedo(); return }
     guard var journal = spatialInk, let presence,
       let contribution = pencilUndoHistory.lastRedoContribution(for: domain),

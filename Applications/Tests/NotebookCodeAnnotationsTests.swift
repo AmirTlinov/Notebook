@@ -5,6 +5,54 @@ import NotebookCore
 
 @MainActor
 final class NotebookCodeAnnotationsTests: XCTestCase {
+  func testColdUnloadedHistoryReservesUndoRedoBeforeTheNextContact() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("code-history-" + UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = NotebookStore(root: root), actor = UUID(), queue = NotebookPersistenceQueue(store: store)
+    _ = try store.initializeWorkspace(actor: actor, pageSize: .init(width: 834, height: 1194))
+    let file = NotebookFileAddress(computer: UUID(), project: "demo", root: "/code", path: "history.py")
+    let warm = NotebookCodeAnnotations(persistence: queue, author: actor)
+    await warm.select(file)
+    func add(_ notes: NotebookCodeAnnotations, offset: Int) throws -> (NotebookCodeFragment, UUID) {
+      let fragment = try XCTUnwrap(notes.reserve(file: file, source: "first\nsecond\n", offset: offset,
+        text: offset == 0 ? "first" : "second", width: 600, height: 100, fontSize: 15))
+      let action = PageInkAction(tool: .pen, samples: [.init(point: .init(x: 30, y: 40),
+        timeOffset: 0, width: 3, opacity: 1, force: 1, azimuth: 0, altitude: 1)])
+      notes.accept(action, fragment: fragment, originY: 0)
+      return (fragment, action.id)
+    }
+    let x = try add(warm, offset: 0), y = try add(warm, offset: 6), z = try add(warm, offset: 0)
+    let firstSave = await warm.flush(); XCTAssertTrue(firstSave); warm.stop()
+    let cold = NotebookCodeAnnotations(persistence: queue, author: actor)
+    defer { cold.stop() }
+    await cold.select(file)
+    XCTAssertTrue(cold.annotations.isEmpty, "Offscreen history must not load every note's measurements")
+    let lock = try NotebookSQLWriteBlocker(store: store)
+    defer { try? lock.release() }
+    cold.undo(); cold.undo(); cold.redo()
+    let next = try add(cold, offset: 6)
+    cold.redo() // A new contact invalidates the old undone z, not the other file.
+    try lock.release()
+    let saved = await cold.flush(); XCTAssertTrue(saved, queue.failure ?? "")
+    func active() throws -> Set<UUID> {
+      Set(try [x.0.id, y.0.id].flatMap { try store.codeAnnotation($0)?.ink.actions.filter(\.isActive).map(\.id) ?? [] })
+    }
+    XCTAssertEqual(try active(), [x.1, y.1, next.1])
+    XCTAssertFalse(try XCTUnwrap(store.codeAnnotation(z.0.id)?.ink.actions.first { $0.id == z.1 }).isActive)
+    await cold.select(file.child("unrelated")); await cold.select(file)
+    XCTAssertTrue(cold.annotations.isEmpty)
+    cold.undo(); cold.undo()
+    let undone = await cold.flush(); XCTAssertTrue(undone)
+    XCTAssertEqual(try active(), [x.1])
+    await cold.select(nil); await cold.select(file)
+    cold.redo(); cold.redo()
+    let repeated = await cold.flush(); XCTAssertTrue(repeated)
+    XCTAssertEqual(try active(), [x.1, y.1, next.1])
+    XCTAssertEqual(try store.nativeHistory(domain: .codeFile(file), actor: actor),
+      [.ink([x.1]), .ink([y.1]), .ink([next.1])])
+    XCTAssertEqual(queue.pendingCount, 0); XCTAssertNil(queue.failure)
+  }
+
   func testStaleInverseWithALaterReservationClockCannotReplaceAPeerOrBlockNewInk() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
@@ -43,8 +91,10 @@ final class NotebookCodeAnnotationsTests: XCTestCase {
     let saved = await notes.flush(); XCTAssertTrue(saved, queue.failure ?? "")
     await notes.refresh()
     let deadline = ContinuousClock.now.advanced(by: .seconds(2))
-    while notes.annotations[fragment.id]?.ink.actions.first(where: { $0.id == first.id })?.isActive != true,
-      ContinuousClock.now < deadline { await Task.yield() }
+    // Rejection coalesces a reconciliation read. Await that existing work too:
+    // pendingCount includes readers, not only blocked content commands.
+    while (notes.annotations[fragment.id]?.ink.actions.first(where: { $0.id == first.id })?.isActive != true
+      || queue.pendingCount != 0), ContinuousClock.now < deadline { await Task.yield() }
     XCTAssertEqual(Set(try store.codeAnnotation(fragment.id)?.ink.actions.filter(\.isActive).map(\.id) ?? []), [first.id, next.id])
     XCTAssertEqual(notes.annotations[fragment.id]?.ink.actions.first(where: { $0.id == first.id })?.isActive, true)
     XCTAssertEqual(queue.pendingCount, 0); XCTAssertNil(queue.failure)
@@ -151,7 +201,7 @@ final class NotebookCodeAnnotationsTests: XCTestCase {
     files.edit("wrong", address: file, selection: 0, scroll: 0)
     XCTAssertEqual(files.document?.text, source)
     let id = UUID()
-    ink.overlay.paper.touchView.onDrawingMutation?(.init(id: id, tool: .pen, samples: [
+    ink.overlay.paper.touchView.onDrawingMutation?(.init(id: id, tool: .pen, color: .init(red: 0, green: 0.15, blue: 1), samples: [
       .init(point: .init(x: 350, y: 100), timeOffset: 0, width: 10, opacity: 1, force: 1, azimuth: 0, altitude: 1),
       .init(point: .init(x: 480, y: 100), timeOffset: 0.1, width: 10, opacity: 1, force: 1, azimuth: 0, altitude: 1)
     ]))
@@ -159,6 +209,23 @@ final class NotebookCodeAnnotationsTests: XCTestCase {
     let saved = await model.finishPendingPersistence(); XCTAssertTrue(saved)
     let fragment = try XCTUnwrap(files.notes.fragments.first)
     XCTAssertEqual(fragment.range(in: source)?.location, 0)
+    let probe = ink.overlay.convert(CGPoint(x: 400, y: 100), to: window)
+    try await assertUX("code-history-original-ink", since: .now, budget: .seconds(2), window: window) {
+      try NotebookUXObservation.Pixels(window: window).matches([(probe, .blue)])
+    }
+    for _ in 0..<2 {
+      let undoStart = ContinuousClock.now; model.undoLastSurfaceAction()
+      try await assertUX("code-history-undo-visible", since: undoStart, window: window) {
+        try NotebookUXObservation.Pixels(window: window).matches([(probe, .paper)])
+      }
+      let redoStart = ContinuousClock.now; model.redoLastSurfaceAction()
+      try await assertUX("code-history-redo-visible", since: redoStart, window: window) {
+        try NotebookUXObservation.Pixels(window: window).matches([(probe, .blue)])
+      }
+    }
+    let historySaved = await model.finishPendingPersistence(); XCTAssertTrue(historySaved)
+    let historyShot = XCTAttachment(image: try NotebookUXObservation.Pixels(window: window).image)
+    historyShot.name = "code-history-redo-actual-window"; historyShot.lifetime = .keepAlways; add(historyShot)
     text.setContentOffset(.init(x: 0, y: 100), animated: false); text.layoutIfNeeded()
     XCTAssertEqual(ink.overlay.frame.origin.y, 100)
     XCTAssertEqual(model.presence, camera)

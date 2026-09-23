@@ -24,7 +24,10 @@ struct NotebookCodeDocumentView: View {
           control("text.bubble", "Обсудить выбранный код") {
             if let fragment = files.captureSelection?() { model.discussCode(fragment) }
           }
-          control("arrow.uturn.backward", editing ? "Отменить изменение текста" : "Отменить свой штрих") { if editing { undoRequest += 1 } else { files.notes.undo() } }
+          control("arrow.uturn.backward", editing ? "Отменить изменение текста" : "Отменить свой штрих") { if editing { undoRequest += 1 } else { model.undoLastSurfaceAction() } }
+          if !editing {
+            control("arrow.uturn.forward", "Повторить свой штрих") { model.redoLastSurfaceAction() }
+          }
           control(editing ? "keyboard.chevron.compact.down" : "keyboard", editing ? "Скрыть клавиатуру" : "Редактировать код") { editing.toggle() }
           Menu {
             ForEach(files.notes.fragments) { fragment in

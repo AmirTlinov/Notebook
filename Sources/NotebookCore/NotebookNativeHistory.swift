@@ -11,6 +11,19 @@ extension CollaborationAction {
   }
 }
 
+public struct NotebookCodeInkState: Sendable {
+  public let fragmentID: UUID
+  public let result: NotebookSpatialInkResult
+  public init(fragmentID: UUID, result: NotebookSpatialInkResult) { self.fragmentID = fragmentID; self.result = result }
+}
+
+public struct NotebookCodeInkHistory: Sendable {
+  public let stamp: VersionStamp
+  public let undo: [PencilUndoHistory.Entry]
+  public let redo: [PencilUndoHistory.Entry]
+  public let states: [UUID: NotebookCodeInkState]
+}
+
 /// Device-local history is an ordered directory of native action identities.
 /// The same transaction writes material and its history; replicas never invent
 /// local Undo entries from a peer's receipt or a wall-clock timestamp.
@@ -61,18 +74,61 @@ extension NotebookStore {
       return (status == "active") == active
     case .ink(let ids), .inkRedo(let ids,_):
       return try ids.contains { id in
-        let address=domain.kind == .page
-          ? pageFile(domain.id)+"#/drawingData/actions/@"+id.uuidString.lowercased()
-          : "spatial-ink.json#/actions/@"+id.uuidString.lowercased()
+        let address: String
+        if case .target(.page, let pageID) = domain {
+          address = pageFile(pageID) + "#/drawingData/actions/@" + id.uuidString.lowercased()
+        } else { address = "spatial-ink.json#/actions/@" + id.uuidString.lowercased() }
         guard let row=try storedFragments(address:address,descendants:false).first,
           row.value["isActive"] == .bool(active) else { return false }
         if case .inkRedo(_,let stamp)=entry,
           row.value["stateStamp"].flatMap({ try? $0.decode(VersionStamp.self) }) != stamp { return false }
-        if domain.kind == .page { return true }
-        return try !currentSQL!.rows("SELECT 1 FROM ink_surfaces WHERE address=? AND kind=? AND owner_id=?",
-          [.text(address),.text(domain.kind.rawValue),.text(domain.id.uuidString.lowercased())]).isEmpty
+        switch domain {
+        case .target(.page, _): return true
+        case .target(let kind, let owner):
+          return try !currentSQL!.rows("SELECT 1 FROM ink_surfaces WHERE address=? AND kind=? AND owner_id=?",
+            [.text(address), .text(kind.rawValue), .text(owner.uuidString.lowercased())]).isEmpty
+        case .codeFile(let file): return try codeInkOwner(address: address, file: file) != nil
+        }
       }
     }
+  }
+
+  /// The same saved order, with only the bounded action headers needed to
+  /// accept an inverse synchronously. No scan of file fragments or ink samples.
+  public func codeInkHistory(file: NotebookFileAddress, actor: UUID) throws -> NotebookCodeInkHistory {
+    guard file.isValid else { throw NotebookStorageError.invalidTransaction("code history file") }
+    return try readTransaction { _ in
+      let domain = PencilUndoHistory.Domain.codeFile(file)
+      let stamp = try readSpatialInk(surfaces: []).stamp
+      let undo = try nativeHistory(domain: domain, actor: actor)
+      let redo = try nativeRedoHistory(domain: domain, actor: actor)
+      var ids = Set<UUID>(), states: [UUID: NotebookCodeInkState] = [:]
+      for entry in undo + redo {
+        switch entry {
+        case .ink(let actions), .inkRedo(let actions, _): ids.formUnion(actions)
+        case .command: break
+        }
+      }
+      for id in ids {
+        let address = "spatial-ink.json#/actions/@" + id.uuidString.lowercased()
+        guard let owner = try codeInkOwner(address: address, file: file),
+          let record = try storedFragments(address: address, descendants: false).first else { continue }
+        let header = try record.value.decode(SpatialInkActionHeader.self)
+        guard header.isValid, header.id == id else { throw NotebookStorageError.corruptRecord(address) }
+        states[id] = .init(fragmentID: owner, result: .init(actionID: id, creationStamp: header.stamp,
+          isActive: header.isActive, stateStamp: header.stateStamp, journalStamp: stamp))
+      }
+      return .init(stamp: stamp, undo: undo, redo: redo, states: states)
+    }
+  }
+
+  private func codeInkOwner(address: String, file: NotebookFileAddress) throws -> UUID? {
+    try currentSQL!.rows("""
+      SELECT s.owner_id FROM ink_surfaces s
+      WHERE s.address=? AND s.kind='codeFragment' AND EXISTS (
+        SELECT 1 FROM code_fragment_files f WHERE f.file_id=? AND f.fragment_id=s.owner_id
+      ) LIMIT 1
+      """, [.text(address), .text(file.id)]).first?[0].text.flatMap(UUID.init(uuidString:))
   }
 
   func recordNativeHistory(_ entry: PencilUndoHistory.Entry, domain: PencilUndoHistory.Domain,
