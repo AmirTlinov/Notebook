@@ -487,9 +487,14 @@ class SelectionTests(unittest.TestCase):
             "NotebookTests/NotebookSelectionCompositionTests",
             "NotebookTests/NotebookInteractionUXTests",
             "NotebookTests/NotebookPageLifecycleUXTests",
+            "NotebookTests/NotebookColdInputUXTests",
             "NotebookTests/PagePresentationTests/testColdRootInstallsTheStoredInkPageAtTheActualViewport",
             "NotebookTests/NotebookDocumentOpeningTests/testHistoryReferenceInstallsAnUnloadedDocumentOutsideTheCurrentCamera",
             "NotebookTests/NotebookDocumentOpeningTests/testHistoryReferenceInstallsAnUnloadedDocumentOnAnotherBoard",
+            "NotebookUITests/NotebookWorkspaceJourneyUITests/testColdBoardEntryAndRealSwipesShowEveryLeafAfterEvictionAndReturn",
+            "NotebookUITests/NotebookWorkspaceJourneyUITests/testFirstSelectionMoveDeleteAndColdReopenPreserveTheWholeComposition",
+            "NotebookUITests/NotebookWorkspaceJourneyUITests/testNewPageAcceptsFirstTextContactAndKeepsItOnThatPage",
+            "NotebookUITests/NotebookWorkspaceJourneyUITests/testMenusBackgroundAndRotationKeepFirstContactAndPageNavigation",
         ]))
         self.assertFalse(plan["checks"]["mac"])
         self.assertFalse(plan["checks"]["core"])

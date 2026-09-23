@@ -35,6 +35,9 @@
     static let nativeGraphicPageArgument = "--notebook-native-graphic-page"
 
     static func makeModel() -> NotebookAppModel {
+      if ProcessInfo.processInfo.arguments.contains(NotebookWorkspaceJourneyFixture.argument) {
+        return NotebookWorkspaceJourneyFixture.makeModel()
+      }
       let fileManager = FileManager.default
       let packageFixture = ProcessInfo.processInfo.arguments.contains(packageArgument)
       let lcFixture = ProcessInfo.processInfo.arguments.contains(lcArgument)
