@@ -343,7 +343,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
   private var stableContentRevision: UInt64 = 0
   private var preparedStableContentRevision: UInt64?
   private var presentedStableContentRevision: UInt64?
-  private var submittedMaterialRevision: UInt64?
+  private var submittedTransactionalRevision: UInt64?
   private(set) var drawableRequestCount = 0
   private(set) var activeUploadedByteCount = 0
   private(set) var visibleCommittedVertexCount = 0
@@ -1058,8 +1058,11 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     // A graphic's body, placement and measured absence are one composition.
     // The retained material child joins UIKit/AppKit's current transaction;
     // publishing its mask independently can briefly restore erased pixels.
-    let transactionMaterial = material != nil
-    presentsWithTransaction = transactionMaterial
+    // A cold page uses the same atomic reveal: its new drawable and opacity
+    // enter one compositor transaction. Rendering hidden, revealing on GPU
+    // completion and then rendering again adds a full frame to first Pencil.
+    let transactionPresentation = material != nil || (spatialTarget == nil && !hasRevealedFirstFrame)
+    presentsWithTransaction = transactionPresentation
     for tile in spatialTarget?.tiles ?? [] { tile.layer.presentsWithTransaction = false }
     if let observation = onContactFramePresented, let contact = activeContactFrame,
       active != nil, hasRevealedFirstFrame {
@@ -1077,7 +1080,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
         }
       }
     }
-    if !transactionMaterial {
+    if !transactionPresentation {
       for (_, drawable, _, _, _) in passes { commandBuffer.present(drawable) }
     }
     let presentedRevision: UInt64? =
@@ -1086,8 +1089,8 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
         && pageGeometryIsReady
       ? stableContentRevision : nil
     let submittedRevision = stableContentRevision
-    if transactionMaterial { submittedMaterialRevision = submittedRevision }
-    let visibleSubmission = transactionMaterial || hasRevealedFirstFrame
+    if transactionPresentation { submittedTransactionalRevision = submittedRevision }
+    let visibleSubmission = transactionPresentation || hasRevealedFirstFrame
     if let target = spatialTarget {
       // Cache each submitted tile once, without confusing submission with
       // presentation. An unchanged, pending tile is not uploaded again.
@@ -1133,15 +1136,15 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
         // setNeedsDisplay is coalesced. If the drawable pool was busy when a
         // newer material needed paint, this completion re-admits that latest
         // revision, not another frame of this older submission.
-        if transactionMaterial, submittedMaterialRevision != stableContentRevision { requestFrame() }
+        if transactionPresentation, submittedTransactionalRevision != stableContentRevision { requestFrame() }
         if !completed { drawnTiles = nil; pageRetainedKey = nil }
         guard completed, !spatialHandoffIsStopping, window != nil,
           stableContentRevision == submittedRevision else { return }
         renderFailure = nil
         if let presentedRevision { preparedStableContentRevision = presentedRevision }
-        // Material visibility was submitted with its parent's transaction. It
-        // needs neither a hidden warm-up frame nor a second reveal frame.
-        if transactionMaterial { return }
+        // This drawable and its visibility join the same transaction. Neither
+        // a material child nor first page ink needs a hidden warm-up frame.
+        if transactionPresentation { return }
         if !hasRevealedFirstFrame {
           hasRevealedFirstFrame = true
           needsRevealedFrame = true
@@ -1163,7 +1166,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate {
     }
     if let encodedRetainedKey { pageRetainedKey=encodedRetainedKey }
     commandBuffer.commit()
-    if transactionMaterial {
+    if transactionPresentation {
       // Metal's transaction presentation requires scheduling, not GPU
       // completion/readback. The compositor waits for this drawable together
       // with the body and controls in the same layer transaction.

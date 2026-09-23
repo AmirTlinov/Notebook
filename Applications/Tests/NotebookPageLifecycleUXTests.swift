@@ -160,10 +160,20 @@ import XCTest
     for (step, index) in [1, 2, 3, 4, 5, 4, 3, 2, 1, 0].enumerated() {
       let owner = try pageOwner(scene.window)
       let forward = index > owner.displayedIndex
+      if index == 5 {
+        let root = model.notebookPageRoot(notebook)
+        try await turn(owner, forward: true, completes: false)
+        try await shown("cancel-trailing-page-keeps-last-stored-leaf", window: scene.window,
+          probes: leafProbes(4, scene.pageToWindow))
+        XCTAssertEqual(model.notebookPageCount(notebook), 5)
+        XCTAssertEqual(model.notebookPageRoot(notebook), root)
+        XCTAssertEqual(model.presence?.notebookPageID, ids[4])
+      }
       let start = ContinuousClock.now
       try await turn(owner, forward: forward, completes: true)
       try await shown("leaf-\(step)-\(index)", window: scene.window,
-        probes: leafProbes(index, scene.pageToWindow), since: start, budget: NotebookUXObservation.opening)
+        probes: leafProbes(index, scene.pageToWindow), since: start, budget: NotebookUXObservation.opening,
+        acknowledged: { model.activePage.map { model.pagePresentations.isPresented($0) } == true })
       if index == 5 {
         let created = try XCTUnwrap(model.presence?.notebookPageID)
         XCTAssertFalse(ids.contains(created)); ids.append(created)
@@ -173,9 +183,14 @@ import XCTest
         }
         let current = try Scene(model: model, window: scene.window)
         model.selectPenWidth(12); try await current.readyPencil(self)
+        let pencilStart = ContinuousClock.now
         current.beginPencil(.init(x: 180, y: 950)); current.movePencil(.init(x: 480, y: 950)); current.endPencil()
+        // Window capture occupies MainActor while Metal's actual presented
+        // callback is queued. Require pixels AND that exact source receipt in
+        // the same original 100 ms window, not synchronously after one capture.
         try await shown("new-leaf-accepts-its-own-ink", window: scene.window,
-          probes: [probe("new-leaf-line", [(300, 950)], .black, scene.pageToWindow)])
+          probes: [probe("new-leaf-line", [(300, 950)], .black, scene.pageToWindow)], since: pencilStart,
+          acknowledged: { model.activePage.map { model.pagePresentations.isPresented($0) } == true })
       } else {
         try await shown("new-leaf-ink-does-not-leak-\(step)", window: scene.window,
           probes: [probe("other-leaf-stays-empty", [(300, 950)], .paper, scene.pageToWindow)])
@@ -184,7 +199,8 @@ import XCTest
       XCTAssertEqual(model.workspace?.selectedPageID, ids[index])
       XCTAssertEqual(owner.displayedIndex, index)
       XCTAssertEqual(owner.pageViewController.viewControllers?.first?.view.accessibilityIdentifier, "page-turn-page-\(index)")
-      XCTAssertTrue(model.activePage.map { model.pagePresentations.isPresented($0) } == true, "leaf=\(index) must acknowledge its own installed source")
+      XCTAssertTrue(model.activePage.map { model.pagePresentations.isPresented($0) } == true,
+        "leaf=\(index) must acknowledge its own installed source")
       XCTAssertLessThanOrEqual(owner.cachedPageIdentities.count, 4)
     }
     let owner = try pageOwner(scene.window)
@@ -202,6 +218,112 @@ import XCTest
       XCTAssertEqual(model.presence?.notebookPageID, ids[index])
     }
     XCTAssertEqual(model.notebookPageCount(notebook), 6, "Only the explicit trailing turn creates a leaf; reverse/cancel must not")
+  }
+
+  func testPeerRemovedLeafCannotCommitAnOldCurlIntoItsReplacementSlot() async throws {
+    let model = try await modelWithPages(1, distinctLeaves: true)
+    let notebook = try XCTUnwrap(model.workspace?.selectedItemID), first = try XCTUnwrap(model.activePage?.id)
+    let peer = UUID()
+    let removed = try appendPeerLeaf(index: 1, notebook: notebook, store: model.store, actor: peer)
+    let survivor = try appendPeerLeaf(index: 2, notebook: notebook, store: model.store, actor: peer)
+    await model.reloadExternalChanges()?.value
+    let oldRoot = try XCTUnwrap(model.notebookPageRoot(notebook)), scene = try await mount(model)
+    let owner = try pageOwner(scene.window), native = owner.pageViewController
+    try await shown("peer-directory-original-leaf", window: scene.window,
+      probes: leafProbes(0, scene.pageToWindow), budget: NotebookUXObservation.opening)
+    let (previous, target) = try await turnTarget(owner, forward: true)
+    owner.pageViewController(native, willTransitionTo: [target])
+    let animation = Task { @MainActor in
+      await withCheckedContinuation { continuation in
+        native.setViewControllers([target], direction: .forward, animated: true) {
+          continuation.resume(returning: $0)
+        }
+      }
+    }
+    await Task.yield()
+    // The peer removes its still-unadopted leaf while UIKit owns the old curl.
+    // The surviving leaf moves into that numeric slot, but is a different UUID.
+    _ = try model.store.undoCollaborationAction(removed.receipt.id, actor: peer)
+    await model.reloadExternalChanges()?.value
+    try await assertUX("new-root-retires-old-page-shell", since: .now,
+      budget: NotebookUXObservation.opening, window: scene.window) {
+      model.notebookPageRoot(notebook) != oldRoot
+        && owner.cachedPageIdentities[0] != ObjectIdentifier(previous)
+    }
+    _ = await animation.value // Cancellation is legal when the source was retired.
+    owner.pageViewController(native, didFinishAnimating: true,
+      previousViewControllers: [previous], transitionCompleted: true)
+    owner.pageViewController(native, didFinishAnimating: true,
+      previousViewControllers: [previous], transitionCompleted: false)
+    try await shown("old-curl-cannot-land-on-a-different-uuid", window: scene.window,
+      probes: leafProbes(0, scene.pageToWindow), budget: NotebookUXObservation.opening)
+    XCTAssertEqual(model.presence?.notebookPageID, first)
+    XCTAssertEqual(model.workspace?.selectedPageID, first)
+    XCTAssertEqual(owner.displayedIndex, 0)
+    XCTAssertNil(try model.store.resolveNotebookPage(removed.pageID, in: notebook))
+    XCTAssertEqual(try model.store.resolveNotebookPage(survivor.pageID, in: notebook)?.index, 1)
+    XCTAssertNil(model.selectNotebookPage(1, notebookID: notebook, expectedRoot: oldRoot))
+
+    let current = try Scene(model: model, window: scene.window)
+    model.selectPenWidth(12); try await current.readyPencil(self)
+    let pencilStart = ContinuousClock.now
+    current.beginPencil(.init(x: 180, y: 950)); current.movePencil(.init(x: 480, y: 950)); current.endPencil()
+    try await shown("cancelled-root-gives-next-pencil-to-current-uuid", window: scene.window,
+      probes: [probe("new-current-line", [(300, 950)], .black, scene.pageToWindow)], since: pencilStart,
+      acknowledged: { model.activePage.map { model.pagePresentations.isPresented($0) } == true })
+    let saved = await model.finishPendingPersistence(); XCTAssertTrue(saved, model.persistenceFailure ?? "")
+    XCTAssertEqual(try model.store.loadPage(first).inkDrawing().activeActions.count, 2)
+    XCTAssertEqual(try model.store.loadPage(survivor.pageID).inkDrawing().activeActions.count, 1)
+    try await turn(owner, forward: true, completes: true)
+    let survivorProbes = leafProbes(2, scene.pageToWindow)
+      + [probe("neighbor-keeps-its-own-ink", [(300, 950)], .paper, scene.pageToWindow)]
+    try await shown("new-turn-resolves-surviving-uuid", window: scene.window,
+      probes: survivorProbes, budget: NotebookUXObservation.opening,
+      acknowledged: { model.activePage.map { model.pagePresentations.isPresented($0) } == true })
+    XCTAssertEqual(model.presence?.notebookPageID, survivor.pageID)
+    XCTAssertEqual(model.notebookPageIndex(survivor.pageID, in: notebook), 1)
+    XCTAssertEqual(owner.displayedIndex, 1)
+    XCTAssertTrue(model.activePage.map { model.pagePresentations.isPresented($0) } == true)
+    XCTAssertLessThanOrEqual(owner.cachedPageIdentities.count, 4)
+
+    let root = model.store.root
+    scene.window.isHidden = true; scene.window.rootViewController = nil
+    let stopped = await model.shutdown(); XCTAssertTrue(stopped)
+    let reopened = NotebookAppModel(store: .init(root: root), startsNearbySync: false,
+      preferences: UserDefaults(suiteName: UUID().uuidString)!)
+    retainNotebookUntilTeardown(reopened, removing: root)
+    await reopened.start(pageSize: NotebookAppModel.defaultPageSize)
+    XCTAssertEqual(reopened.activePage?.id, survivor.pageID)
+    XCTAssertEqual(reopened.notebookPageIndex(survivor.pageID, in: notebook), 1)
+    preparePagePresence(reopened)
+    let opening = ContinuousClock.now, cold = try openWindow(reopened)
+    try await shown("cold-open-keeps-surviving-leaf-not-old-slot", window: cold,
+      probes: survivorProbes, since: opening, budget: NotebookUXObservation.opening,
+      acknowledged: { reopened.activePage.map { reopened.pagePresentations.isPresented($0) } == true })
+  }
+
+  private func appendPeerLeaf(index: Int, notebook: UUID, store: NotebookStore, actor: UUID) throws
+    -> (receipt: CollaborationReceipt, pageID: UUID) {
+    let extent = try XCTUnwrap(store.readItemLifecycle(notebook)), pageID = UUID()
+    var read = NotebookCommand(command: .read); read.readSnapshots = true
+    read.queries = [try JSONValue.object(["kind": .string("itemLifecycle"), "id": .encode(notebook)]).decode(NotebookReadQuery.self)]
+    let rows = try NotebookCommandDispatcher(store: store).handle(read).decode([JSONValue].self)
+    let basis = try XCTUnwrap(rows.first?["basis"]?.decode(NotebookReadBasis.self))
+    let page = CollaborationTarget(kind: .page, id: pageID)
+    var operations = [CollaborationOperation(kind: .appendPage, target: extent.target, id: pageID.uuidString)]
+    for element in leafElements(index, distinct: true) {
+      operations.append(.init(kind: .insertElement, target: page, id: element.id, values: [
+        "kind": .string("graphic"), "source": .string(""), "frame": try .encode(element.frame),
+        "graphic": try .encode(element.graphic)]))
+    }
+    let y = 700.0 + Double(index) * 35
+    operations.append(.init(kind: .appendInkStroke, target: page, id: UUID().uuidString,
+      values: ["width": .number(16), "points": .array([180.0, 480.0].map {
+        .object(["x": .number($0), "y": .number(y)])
+      })]))
+    let expected = try store.expectations(base: basis, operations: operations)
+    return (try store.applyCollaborationAction(.init(summary: "Peer leaf \(index)", expected: expected,
+      operations: operations), actor: actor), pageID)
   }
 
   func testLassoFragmentKeepsBothSidesThroughSecondMoveResizeAndColdReopen() async throws {
@@ -296,20 +418,23 @@ import XCTest
       if index > 0 { XCTAssertEqual(model.selectNotebookPage(index, notebookID: notebook, expectedRoot: model.notebookPageRoot(notebook)!), index) }
       let saved = await model.finishPendingPersistence(); XCTAssertTrue(saved)
       var page = try XCTUnwrap(model.activePage)
-      let redFrame = distinctLeaves ? PageRect(x: 160 + Double(index) * 70, y: 260, width: 50, height: 100)
-        : PageRect(x: 160, y: 260, width: 320, height: 180)
-      let blueFrame = distinctLeaves ? PageRect(x: 160 + Double(index) * 70, y: 520, width: 50, height: 100)
-        : PageRect(x: 540, y: 540, width: 100, height: 100)
-      XCTAssertTrue(page.replaceElements([
-        .init(id: "red", kind: .graphic, frame: redFrame, source: "", html: "",
-          graphic: .init(shape: .rectangle, style: .init(fill: .init(red: 1, green: 0.2, blue: 0.1)))),
-        .init(id: "blue", kind: .graphic, frame: blueFrame, source: "", html: "",
-          graphic: .init(shape: .rectangle, style: .init(fill: .init(red: 0.1, green: 0.5, blue: 1))))], actor: model.actorID))
+      XCTAssertTrue(page.replaceElements(leafElements(index, distinct: distinctLeaves), actor: model.actorID))
       XCTAssertTrue(page.replaceDrawing(try PageInkDrawing(actions: [line(y: distinctLeaves ? 700 + Double(index) * 35 : 650)]).dataRepresentation(), actor: model.actorID))
       try model.store.savePage(page)
       await model.reloadExternalChanges()?.value
     }
     return model
+  }
+
+  private func leafElements(_ index: Int, distinct: Bool) -> [AgentElement] {
+    let red = distinct ? PageRect(x: 160 + Double(index) * 70, y: 260, width: 50, height: 100)
+      : PageRect(x: 160, y: 260, width: 320, height: 180)
+    let blue = distinct ? PageRect(x: 160 + Double(index) * 70, y: 520, width: 50, height: 100)
+      : PageRect(x: 540, y: 540, width: 100, height: 100)
+    return [.init(id: "red", kind: .graphic, frame: red, source: "", html: "",
+      graphic: .init(shape: .rectangle, style: .init(fill: .init(red: 1, green: 0.2, blue: 0.1)))),
+      .init(id: "blue", kind: .graphic, frame: blue, source: "", html: "",
+      graphic: .init(shape: .rectangle, style: .init(fill: .init(red: 0.1, green: 0.5, blue: 1))))]
   }
 
   private func mount(_ model: NotebookAppModel) async throws -> Scene {
@@ -374,11 +499,16 @@ import XCTest
 
   private func shown(_ name: String, window: UIWindow, probes: [Probe],
     since start: ContinuousClock.Instant = .now, budget: Duration = NotebookUXObservation.correctnessTimeout,
-    witness: Probe? = nil, absence: [Probe] = []) async throws {
+    witness: Probe? = nil, absence: [Probe] = [], acknowledged: () -> Bool = { true }) async throws {
     try await Task.sleep(for: .milliseconds(16))
     var failures: [String] = [], last: UIImage?, resurrections: [String] = []
     var captures:[Duration]=[]
     let result = try await assertUX(name, since: start, budget: budget, window: window) {
+      // When this case also requires the OS presentation receipt, let that
+      // callback run before the expensive window read. Repeated captures while
+      // awaiting it block MainActor and manufacture delay. The original clock
+      // still includes the gesture, receipt wait and final pixel observation.
+      guard acknowledged() else { return false }
       let captureStart=ContinuousClock.now
       let image = try NotebookUXObservation.Pixels(window: window).image
       captures.append(captureStart.duration(to:.now))
@@ -413,6 +543,17 @@ import XCTest
   /// Uses real mounted PageSurface readiness and UIKit animation. The native
   /// delegate's landing is driven here; this is not a hardware finger swipe.
   private func turn(_ owner: IPadPageTurnController, forward: Bool, completes: Bool) async throws {
+    let native = owner.pageViewController, (previous, target) = try await turnTarget(owner, forward: forward)
+    owner.pageViewController(native, willTransitionTo: [target])
+    let finished = await withCheckedContinuation { continuation in
+      native.setViewControllers([completes ? target : previous], direction: forward ? .forward : .reverse,
+        animated: completes) { continuation.resume(returning: $0) }
+    }
+    XCTAssertTrue(finished)
+    owner.pageViewController(native, didFinishAnimating: true, previousViewControllers: [previous], transitionCompleted: completes)
+  }
+
+  private func turnTarget(_ owner: IPadPageTurnController, forward: Bool) async throws -> (UIViewController, UIViewController) {
     let native = owner.pageViewController, previous = try XCTUnwrap(native.viewControllers?.first)
     let deadline = ContinuousClock.now + NotebookUXObservation.opening
     var next: UIViewController?
@@ -422,12 +563,6 @@ import XCTest
       if next == nil { try await Task.sleep(for: .milliseconds(16)) }
     } while next == nil && ContinuousClock.now < deadline
     let target = try XCTUnwrap(next, "The real next sheet did not become ready; a fake ready(true) would hide this failure")
-    owner.pageViewController(native, willTransitionTo: [target])
-    let finished = await withCheckedContinuation { continuation in
-      native.setViewControllers([completes ? target : previous], direction: forward ? .forward : .reverse,
-        animated: completes) { continuation.resume(returning: $0) }
-    }
-    XCTAssertTrue(finished)
-    owner.pageViewController(native, didFinishAnimating: true, previousViewControllers: [previous], transitionCompleted: completes)
+    return (previous, target)
   }
 }

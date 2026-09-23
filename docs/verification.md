@@ -1,5 +1,40 @@
 # Verification record
 
+## September 23 — GUI-295, page identity and first-frame/selection latency
+
+A cold untiled ink canvas now presents its first drawable and visibility in the
+same compositor transaction, using the existing material presentation path.
+It no longer renders a hidden warm-up followed by a second reveal frame. Hot
+Pencil rendering is unchanged; readiness still requires the OS drawable's actual
+presentation, never GPU completion. The shared selection capsule keeps all native
+buttons, menus and touch boundaries, but uses a contrast surface instead of a
+live glass backdrop. Its before/after window images were inspected.
+
+The new native sequence removes a peer-created leaf during a real UIKit curl,
+then delivers both old completion outcomes: neither can select the survivor that
+moved into the deleted numeric slot. Root, UUID, shown ink/graphics, next Pencil,
+cache bounds and cold reopen agree. Cancelling the trailing blank does not create
+a leaf; an explicit completed turn creates exactly one and accepts its own ink.
+
+Final `.build/gui295-page-selection-latency-final/`: **22 physical-iPad + 3 Mac
+tests PASS**, no failures, skips or runtime warnings; source
+`64a4b1356958e20402d70901cb28105568db93c6e26c0705064b496368a20e87`.
+First new-leaf ink plus exact presentation receipt: **76.71 ms**; first ink after
+peer root replacement: **60.99 ms**. Lasso first/second drop: **42.79 / 42.38 ms**
+instead of **161.42 / 157.92 ms**; visible selection after erasure: **40.29 ms**
+instead of **163.24 ms**. The corresponding capture cost fell from **128–130 ms**
+to **19–21 ms**. These include window reads, not physical input-to-photon timing;
+no claim about measured system FPS or CPU/GPU improvement is made.
+
+Negative attempts remain in `.build/gui295-page-root-checked/`,
+`.build/gui295-page-root-reveal-checked/` and
+`.build/gui295-page-selection-latency-checked/`. The final observer waits for the
+required OS receipt before its expensive pixel read instead of blocking that
+callback with repeated captures; the same 100 ms clock still includes input,
+receipt wait and capture. Absence/resurrection observations remain unchanged.
+A hidden prepared cover is explicitly not a shown cover. No production pair was
+installed; mixed Redo integration, delivery latency and full acceptance remain open.
+
 ## September 23 — GUI-295, spatial inverse admission and rejected-note reconciliation
 
 Native board/cover/code ink inverses now name the exact accepted visibility

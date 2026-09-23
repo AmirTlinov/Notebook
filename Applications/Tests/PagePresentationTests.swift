@@ -54,7 +54,7 @@ final class PagePresentationTests: XCTestCase {
   }
 
   @MainActor
-  func testInactiveOpeningWaitsForForegroundThenPresentsTheStoredPageAndCoverInk() async throws {
+  func testInactiveOpeningWaitsForForegroundThenPresentsThePageAndPreparesHiddenCoverInk() async throws {
     let model = NotebookDrawingFixture.makeModel()
     retainNotebookUntilTeardown(model, removing: model.store.root)
     let index = try model.store.loadIndex(), actor = UUID()
@@ -82,7 +82,9 @@ final class PagePresentationTests: XCTestCase {
     XCTAssertTrue(ready(), "Foreground must resume the same requested scene without another camera gesture: \(model.compositionTiles.failure ?? "no diagnostic")")
     let canvas = try XCTUnwrap(model.compositionTiles.surfaceRegistry.canvas(for: .cover(index.selectedItemID)))
     XCTAssertGreaterThan(canvas.committedSourceNodeCount, 0)
-    XCTAssertTrue(canvas.isStableFramePresented)
+    XCTAssertTrue(canvas.isStableFramePrepared)
+    XCTAssertFalse(canvas.isStableFramePresented,
+      "The opened page covers this privately prepared ink; preparation is not a shown cover")
   }
 
   @MainActor

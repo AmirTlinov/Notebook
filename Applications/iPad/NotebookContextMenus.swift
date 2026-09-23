@@ -6,7 +6,9 @@ import UIKit
 @MainActor
 final class NotebookContextMenus: NSObject, UIPopoverPresentationControllerDelegate {
   let view = HostView()
-  private let surface = UIVisualEffectView(effect:UIGlassEffect(style:.regular))
+  // This small control surface must not filter the entire live ink backdrop
+  // whenever selection changes. Keep the same native buttons and geometry.
+  private let surface = UIView()
   private let stack = UIStackView()
   private var source: UUID?
   private weak var anchorView: UIView?
@@ -22,13 +24,17 @@ final class NotebookContextMenus: NSObject, UIPopoverPresentationControllerDeleg
     view.backgroundColor = .clear; view.isOpaque = false
     surface.accessibilityIdentifier = "notebook-context-menu"
     surface.cornerConfiguration = .capsule(); surface.isHidden = true
+    surface.backgroundColor = .secondarySystemGroupedBackground
+    surface.layer.shadowColor = UIColor.black.cgColor
+    surface.layer.shadowOpacity = 0.12; surface.layer.shadowRadius = 6
+    surface.layer.shadowOffset = .init(width:0,height:2)
     stack.axis = .horizontal; stack.alignment = .center; stack.distribution = .fillEqually
     stack.translatesAutoresizingMaskIntoConstraints = false
-    surface.contentView.addSubview(stack); view.addSubview(surface)
-    NSLayoutConstraint.activate([stack.leadingAnchor.constraint(equalTo:surface.contentView.leadingAnchor,constant:4),
-      stack.trailingAnchor.constraint(equalTo:surface.contentView.trailingAnchor,constant:-4),
-      stack.topAnchor.constraint(equalTo:surface.contentView.topAnchor),
-      stack.bottomAnchor.constraint(equalTo:surface.contentView.bottomAnchor)])
+    surface.addSubview(stack); view.addSubview(surface)
+    NSLayoutConstraint.activate([stack.leadingAnchor.constraint(equalTo:surface.leadingAnchor,constant:4),
+      stack.trailingAnchor.constraint(equalTo:surface.trailingAnchor,constant:-4),
+      stack.topAnchor.constraint(equalTo:surface.topAnchor),
+      stack.bottomAnchor.constraint(equalTo:surface.bottomAnchor)])
     view.onLayout = { [weak self] in self?.place() }
   }
   func use(_ gate: NotebookInputGate) {
@@ -125,6 +131,7 @@ final class NotebookContextMenus: NSObject, UIPopoverPresentationControllerDeleg
     }
     surface.frame = candidates.first { !$0.intersects(selected) && !obstacles.contains(where:$0.intersects) }
       ?? candidates.first { candidate in !obstacles.contains(where:candidate.intersects) } ?? candidates[0]
+    surface.layer.shadowPath = UIBezierPath(roundedRect:surface.bounds,cornerRadius:height/2).cgPath
     surface.isHidden = false
   }
   final class HostView: UIView {
