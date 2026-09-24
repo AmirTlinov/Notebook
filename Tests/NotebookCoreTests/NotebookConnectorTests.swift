@@ -314,9 +314,11 @@ func connectorRoutingRoundTripAndUndo(board: Bool) throws {
   let f = try ConnectorFixture(board:board); defer { f.clean() }
   _ = try f.write([f.node("a",x:60),f.node("b",x:400,y:280),f.arrow()])
   let original = try #require(try f.graphic("ab"))
+  let peer=try ConnectorFixture(board:board,seed:f.store,target:f.target);defer { peer.clean() }
+  let peerID=UUID()
   for route in NotebookGraphicConnection.Routing.allCases {
     let edit = try f.write([f.operation(.updateElement,"ab",["graphic":.object(["connection":.object([
-      "routing":.string(route.rawValue),"bend":.number(40),"bendPosition":.number(0.35)])])])])
+      "routing":.string(route.rawValue),"bend":.number(40),"bendPosition":.number(-0.35),"elbowAxis":.string("vertical")])])])])
     let value = try #require(try f.graphic("ab")), layout = try #require(f.resolution().layout)
     #expect(value.connection?.routing == route)
     #expect(value.connection?.bindings == original.connection?.bindings)
@@ -328,7 +330,75 @@ func connectorRoutingRoundTripAndUndo(board: Bool) throws {
     let reopened = NotebookStore(root:f.root)
     let decoded = try reopened.readGraphicResolution(target:f.target,elementID:"ab").layout
     #expect(decoded == layout)
+    try receiveFixtureChanges(from:f.store,to:peer.store,peerID:peerID)
+    #expect(try peer.graphic("ab") == value)
+    #expect(try peer.resolution().layout == layout)
     _ = try reopened.undoCollaborationAction(edit.id,actor:f.actor)
     #expect(try f.graphic("ab") == original)
   }
+}
+
+@Test("Отсоединение стрелки сохраняет весь контур, наконечники и подпись", arguments: NotebookGraphicConnection.Routing.allCases, [0.0,0.5,1.0])
+func connectorDetachmentPreservesResolvedMaterial(routing: NotebookGraphicConnection.Routing, position: Double) throws {
+  let surface=SurfaceID.page(UUID()),delta=SpatialPoint(x:40,y:20)
+  // The second arrangement switches the dominant axis after outline clipping.
+  for targetFrame in [PageRect(x:400,y:0,width:100,height:100),.init(x:300,y:290,width:100,height:20)] {
+    let nodes:[NotebookGraphicGraph.Node]=[
+      .init(id:"a",graphic:.init(shape:.rectangle),frame:.init(x:0,y:0,width:200,height:200),surface:surface,shown:true),
+      .init(id:"b",graphic:.init(shape:.rectangle),frame:targetFrame,surface:surface,shown:true),
+      .init(id:"link",graphic:.init(shape:.connector,style:.init(strokeWidth:8),label:"1:2",connection:.init(
+        start:.init(point:.zero,binding:.init(elementID:"a")),end:.init(point:.zero,binding:.init(elementID:"b")),
+        bend:70,startArrowhead:.diamond,endArrowhead:.arrow,bendPosition:position,routing:routing)),
+        frame:.init(x:30,y:50,width:500,height:300),surface:surface,shown:true)]
+    let graph=NotebookGraphicGraph(nodes),before=try #require(graph.resolve("link").layout)
+    for retained in [Set<String>(),["a"],["b"],["a","b"]] {
+      let selected=retained.union(["link"])
+      let members=try nodes.filter { selected.contains($0.id) }.map { node in
+        NotebookGraphicSelection.Member(id:node.id,frame:node.frame,graphic:node.graphic,
+          layout:try #require(graph.resolve(node.id).layout),body:try #require(graph.resolve(node.id,space:.body).layout),
+          placement:node.placement)
+      }
+      let edits=NotebookGraphicSelection.translated(members,by:delta)
+      let updated=nodes.map { node -> NotebookGraphicGraph.Node in
+        guard let edit=edits.first(where:{$0.id == node.id}) else { return node }
+        return .init(id:node.id,graphic:edit.graphic,frame:edit.frame,surface:surface,shown:true)
+      }
+      let connection=try #require(edits.first { $0.id == "link" }?.graphic.connection)
+      #expect(connection.isValid)
+      #expect(Set(connection.bindings.map(\.elementID)) == retained)
+      let after=try #require(NotebookGraphicGraph(updated).resolve("link").layout)
+      #expect(before.curves.count == after.curves.count)
+      func same(_ a:SpatialPoint,_ b:SpatialPoint) {
+        #expect(abs(a.x+before.frame.x+delta.x-b.x-after.frame.x)<1e-6)
+        #expect(abs(a.y+before.frame.y+delta.y-b.y-after.frame.y)<1e-6)
+      }
+      for (a,b) in zip(before.curves,after.curves) {
+        same(a.start,b.start);same(a.control1,b.control1);same(a.control2,b.control2);same(a.end,b.end)
+      }
+      for (a,b) in zip(before.heads,after.heads) {
+        #expect(a.filled == b.filled && a.closed == b.closed && a.points.count == b.points.count)
+        for (p,q) in zip(a.points,b.points) { same(p,q) }
+      }
+      same(before.label,after.label)
+    }
+  }
+}
+
+
+@Test("Допуск нового формата стрелок не переписывает материал и подтверждения")
+func connectorFormatAdmissionRetainsCurrentContent() throws {
+  let f=try ConnectorFixture(board:false);defer { f.clean() }
+  _=try f.write([f.node("a",x:60),f.node("b",x:400),f.arrow()])
+  let cursor=try f.store.currentChangeCursor(),peer=UUID()
+  try f.store.acknowledgePeer(peerID:peer,through:cursor)
+  let db=try NotebookSQLConnection(url:f.store.databaseURL,writable:true)
+  let records=try db.rows("SELECT address,hash FROM records ORDER BY address").map { "\($0[0].text!)|\($0[1].text!)" }
+  try db.run("PRAGMA user_version=21")
+  let reopened=NotebookStore(root:f.root)
+  #expect(try reopened.workspaceHeader().workspaceID == f.store.workspaceHeader().workspaceID)
+  #expect(try reopened.currentChangeCursor() == cursor)
+  #expect(try reopened.peerCursor(peerID:peer,direction:.outgoing) == cursor)
+  #expect(try db.rows("SELECT address,hash FROM records ORDER BY address").map { "\($0[0].text!)|\($0[1].text!)" } == records)
+  #expect(try db.rows("PRAGMA user_version").first?[0].integer == NotebookStore.currentDatabaseVersion)
+  #expect(try reopened.deliveryFormatFloor(database:db) == cursor)
 }

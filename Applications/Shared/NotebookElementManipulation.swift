@@ -130,19 +130,8 @@ struct NotebookElementManipulation: Equatable, Sendable {
       guard let delta=placement.map({ $0.parentVector(physical) }) ?? physical else { return }
       frame = .init(x:original.minX+delta.x,y:original.minY+delta.y,width:original.width,height:original.height)
       presentedFrame=displayFrame.offsetBy(dx:physical.x,dy:physical.y)
-      if var value = originalConnection, !value.bindings.isEmpty, let layout = originalLayout {
-        // Dragging the body translates it, never secretly bends it. Detach
-        // from the visible terminals, not stale fallback points in the record.
-        if frame == original { connection = originalConnection; return }
-        func point(_ p: SpatialPoint) -> SpatialPoint {
-          .init(x:layout.frame.x+p.x,y:layout.frame.y+p.y)
-        }
-        value.start = .init(point:point(layout.start)); value.end = .init(point:point(layout.end))
-        let midpoint = layout.bend
-        let dx = layout.end.x-layout.start.x, dy = layout.end.y-layout.start.y, length = max(0.001,hypot(dx,dy))
-        value.bendPosition = min(1,max(0,((midpoint.x-layout.start.x)*dx+(midpoint.y-layout.start.y)*dy)/(length*length)))
-        value.bend = (-dy*(midpoint.x-(layout.start.x+layout.end.x)/2)+dx*(midpoint.y-(layout.start.y+layout.end.y)/2))/length
-        connection = value
+      if let value=originalConnection,!value.bindings.isEmpty,let layout=originalLayout {
+        connection=frame == original ? value : value.detachingEndpoints(in:layout)
       }
     case .resize(let corner):
       if let text,let placement {
@@ -215,7 +204,7 @@ struct NotebookElementManipulation: Equatable, Sendable {
       guard let delta=placement.map({ $0.bodyVector(physical) }) ?? physical else { return }
       let translation=CGPoint(x:delta.x,y:delta.y)
       let dx = layout.axisEnd.x-layout.axisStart.x, dy = layout.axisEnd.y-layout.axisStart.y, length = max(0.001,hypot(dx,dy))
-      value.bendPosition = min(1,max(0,(value.bendPosition ?? 0.5)+(dx*translation.x+dy*translation.y)/(length*length)))
+      value.bendPosition = (value.bendPosition ?? 0.5)+(dx*translation.x+dy*translation.y)/(length*length)
       value.bend += (-dy*translation.x+dx*translation.y)/length
       if value.resolvedRouting == .straight { value.routing = .curved }
       connection = value

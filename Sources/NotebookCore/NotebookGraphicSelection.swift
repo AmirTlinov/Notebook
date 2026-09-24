@@ -169,23 +169,10 @@ public enum NotebookGraphicSelection {
   /// remain relationships, including when members have different parents.
   private static func detached(_ member:Member,selected:Set<String>) -> NotebookGraphic {
     var graphic=member.graphic
-    guard var connection=graphic.connection else { return graphic }
-    var detached=false
-    for terminal in NotebookGraphicConnection.Terminal.allCases {
-      let endpoint=terminal == .start ? connection.start : connection.end
-      if let binding=endpoint.binding,!selected.contains(binding.elementID) {
-        detached=true
-        let p=terminal == .start ? member.body.start : member.body.end
-        let free=NotebookGraphicConnection.Endpoint(point:.init(x:member.body.frame.x+p.x,y:member.body.frame.y+p.y))
-        if terminal == .start { connection.start=free } else { connection.end=free }
-      }
-    }
-    if detached {
-      let l=member.body,dx=l.end.x-l.start.x,dy=l.end.y-l.start.y,length=max(0.001,hypot(dx,dy))
-      connection.bendPosition=min(1,max(0,((l.bend.x-l.start.x)*dx+(l.bend.y-l.start.y)*dy)/(length*length)))
-      connection.bend=(-dy*(l.bend.x-(l.start.x+l.end.x)/2)+dx*(l.bend.y-(l.start.y+l.end.y)/2))/length
-    }
-    graphic.connection=connection;return graphic
+    guard let connection=graphic.connection,
+      connection.bindings.contains(where:{ !selected.contains($0.elementID) }) else { return graphic }
+    graphic.connection=connection.detachingEndpoints(in:member.body,retainingBindingsTo:selected)
+    return graphic
   }
 
   public static func translated(_ members:[Member],by delta:SpatialPoint,detachingExternalBindings:Bool=false) -> [Edit] {

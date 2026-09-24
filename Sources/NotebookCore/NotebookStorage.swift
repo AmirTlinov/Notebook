@@ -19,9 +19,9 @@ public struct NotebookRecordMutation: Codable, Equatable, Sendable {
 }
 
 public struct NotebookChangeManifest: Codable, Equatable, Sendable {
-  // Page visibility is now a causal gate. Cloud delivery must reject this
-  // format on old clients too, not only during direct wire negotiation.
-  public static let currentFormat = 24
+  // Detached connectors retain signed bend positions and their elbow axis.
+  // Older readers must not silently reinterpret that material on cloud delivery.
+  public static let currentFormat = 25
   public let format: Int
   public let transactionID: UUID
   public let workspaceID: UUID

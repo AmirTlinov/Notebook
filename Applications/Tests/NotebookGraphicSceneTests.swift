@@ -129,6 +129,82 @@ import XCTest
     let shot = XCTAttachment(image:image); shot.name = "lasso-ink-after-long-eraser"; shot.lifetime = .keepAlways; add(shot)
   }
 
+  func testBoundElbowLassoFingerMoveKeepsItsShownRoute() async throws {
+    let root=FileManager.default.temporaryDirectory.appendingPathComponent("lasso-elbow-\(UUID())")
+    let model=NotebookAppModel(store:.init(root:root),startsNearbySync:false,preferences:UserDefaults(suiteName:UUID().uuidString)!)
+    retainNotebookUntilTeardown(model,removing:root)
+    await model.start(pageSize:NotebookAppModel.defaultPageSize)
+    let workspace=try XCTUnwrap(model.workspace)
+    var page=try XCTUnwrap(model.activePage)
+    let objects:[AgentElement]=[
+      .init(id:"a",kind:.graphic,frame:.init(x:100,y:160,width:200,height:200),source:"",html:"",graphic:.init(shape:.rectangle)),
+      .init(id:"b",kind:.graphic,frame:.init(x:400,y:450,width:100,height:20),source:"",html:"",graphic:.init(shape:.rectangle)),
+      .init(id:"link",kind:.graphic,frame:.init(x:0,y:0,width:600,height:600),source:"",html:"",
+        graphic:.init(shape:.connector,style:.init(stroke:.init(red:0.9,green:0.1,blue:0.1),strokeWidth:12),connection:.init(
+          start:.init(point:.zero,binding:.init(elementID:"a")),end:.init(point:.zero,binding:.init(elementID:"b")),routing:.elbow)))]
+    XCTAssertTrue(page.replaceElements(objects,actor:model.actorID));try model.store.savePage(page)
+    await model.reloadExternalChanges()?.value
+    let viewport=SpatialPoint(x:834,y:1194)
+    let center=model.boardHierarchy?.focusedCenter(of:workspace.selectedItemID,in:workspace.rootBoardID) ?? .zero
+    model.updatePresence(.init(boardID:workspace.rootBoardID,mode:.page,
+      camera:.init(center:center,scale:WorkspaceItemGeometry.notebook.fitScale(viewport:viewport)),viewport:viewport,
+      focusedItemID:workspace.selectedItemID,openProgress:1),settled:true)
+    model.selectDrawingTool(.lasso);model.drawingToolSettings.lassoMode = .region
+    let window=try await mountNotebookScene(model)
+    let paper=try XCTUnwrap(descendants(try XCTUnwrap(window.rootViewController?.view)).compactMap { $0 as? PaperInputView }.first { $0.isUserInteractionEnabled })
+    let pencil=try XCTUnwrap(window.gestureRecognizers?.first { $0.name == "NotebookPaperPencil" })
+    let source=paper.convert(CGPoint(x:325,y:310),to:window)
+    let destination=paper.convert(CGPoint(x:395,y:400),to:window)
+    func pixel(_ image:UIImage,_ point:CGPoint) throws -> [UInt8] {
+      let crop=try XCTUnwrap(image.cgImage?.cropping(to:.init(x:point.x*image.scale,y:point.y*image.scale,width:1,height:1)))
+      var rgba=[UInt8](repeating:0,count:4)
+      try rgba.withUnsafeMutableBytes { bytes in
+        let context=try XCTUnwrap(CGContext(data:bytes.baseAddress,width:1,height:1,bitsPerComponent:8,bytesPerRow:4,
+          space:CGColorSpaceCreateDeviceRGB(),bitmapInfo:CGImageAlphaInfo.premultipliedLast.rawValue))
+        context.draw(crop,in:.init(x:0,y:0,width:1,height:1))
+      }
+      return rgba
+    }
+    func capture(_ name:String)->UIImage {
+      let image=UIGraphicsImageRenderer(bounds:window.bounds).image { _ in window.drawHierarchy(in:window.bounds,afterScreenUpdates:true) }
+      let proof=XCTAttachment(image:image);proof.name=name;proof.lifetime = .keepAlways;add(proof)
+      return image
+    }
+    let before=try pixel(capture("bound-elbow-before"),source)
+    XCTAssertGreaterThan(before[0],180);XCTAssertLessThan(before[1],80)
+    let touch=SceneGraphicTouch(window:window),event=SceneGraphicEvent()
+    for (index,p) in [CGPoint(x:311,y:278),.init(x:339,y:278),.init(x:339,y:342),.init(x:311,y:342),.init(x:311,y:278)].enumerated() {
+      touch.point=paper.convert(p,to:window);touch.sampleTime += 0.02
+      if index == 0 { touch.sourceView=window.hitTest(touch.point,with:event);pencil.touchesBegan([touch],with:event) }
+      else { pencil.touchesMoved([touch],with:event) }
+    }
+    pencil.touchesEnded([touch],with:event)
+    XCTAssertNotNil(model.selectionSession.region,"The cold contour owns the next finger before material preparation")
+    let finger=SceneGraphicTouch(window:window);finger.kind = .direct;finger.point=source
+    finger.sourceView=window.hitTest(source,with:event)
+    let receiver=try XCTUnwrap(window.gestureRecognizers?.compactMap { $0 as? SceneSelectionRecognizer }.first)
+    let direct=RegionDirectEvent(touch:finger)
+    receiver.touchesBegan([finger],with:direct);finger.point=destination
+    receiver.touchesMoved([finger],with:direct);receiver.touchesEnded([finger],with:direct)
+    let deadline=ContinuousClock.now + .seconds(5)
+    while model.drawingTools.pendingLasso != nil,ContinuousClock.now < deadline { try await Task.sleep(for:.milliseconds(10)) }
+    let saved=await model.finishPendingPersistence();XCTAssertTrue(saved)
+    await model.reloadExternalChanges()?.value
+    let selected=try XCTUnwrap(model.selectionSession.elements.first)
+    let reopened=try NotebookStore(root:root).loadPage(page.id)
+    let fragment=try XCTUnwrap(reopened.element(id:selected.elementID)?.graphic)
+    XCTAssertEqual(reopened.element(id:"a"),objects[0]);XCTAssertEqual(reopened.element(id:"b"),objects[1])
+    XCTAssertNotNil(reopened.element(id:"link")?.graphic?.mask)
+    XCTAssertEqual(fragment.connection?.elbowAxis,.horizontal)
+    XCTAssertTrue(fragment.connection?.bindings.isEmpty == true)
+    model.selectDrawingTool(.pen)
+    try await Task.sleep(for:.milliseconds(200))
+    let image=capture("detached-elbow-after-finger-move")
+    let removed=try pixel(image,source),moved=try pixel(image,destination)
+    XCTAssertTrue(removed.prefix(3).allSatisfy { $0>200 },"The selected material leaves the original location: \(removed)")
+    XCTAssertGreaterThan(moved[0],180);XCTAssertLessThan(moved[1],80,"The moved vertical contour stays under the finger: \(moved)")
+  }
+
   func testLassoNextFingerDragAndShownResizeHandleOwnOnlyTheFragment() async throws {
     let root=FileManager.default.temporaryDirectory.appendingPathComponent("lasso-next-gesture-\(UUID())")
     let model=NotebookAppModel(store:.init(root:root),startsNearbySync:false,preferences:UserDefaults(suiteName:UUID().uuidString)!)

@@ -46,6 +46,8 @@ export interface NotebookGraphicConnection {
   end: NotebookGraphicEndpoint;
   bend: number;
   bendPosition?: number;
+  routing?: "straight" | "elbow" | "curved";
+  elbowAxis?: "horizontal" | "vertical";
   startArrowhead: "none" | "arrow" | "triangle" | "square" | "dot" | "pipe" | "diamond" | "inverted" | "bar";
   endArrowhead: NotebookGraphicConnection["startArrowhead"];
   labelPosition: number;

@@ -4,6 +4,50 @@ import XCTest
 @testable import Notebook
 
 @MainActor final class NotebookGraphicRenderingTests: XCTestCase {
+  func testDetachedLassoConnectorKeepsTheActuallyRenderedContour() async throws {
+    for routing in [NotebookGraphicConnection.Routing.curved,.elbow] {
+      let actor=UUID(),size=PageSize(width:640,height:600)
+      let targets:[AgentElement]=[
+        .init(id:"a",kind:.graphic,frame:.init(x:50,y:50,width:200,height:200),source:"",html:"",graphic:.init(shape:.rectangle)),
+        .init(id:"b",kind:.graphic,frame:.init(x:350,y:340,width:100,height:20),source:"",html:"",graphic:.init(shape:.rectangle))]
+      let arrow=AgentElement(id:"link",kind:.graphic,frame:.init(x:20,y:30,width:500,height:500),source:"",html:"",
+        graphic:.init(shape:.connector,style:.init(stroke:.init(red:0.8,green:0.1,blue:0.2),strokeWidth:10),connection:.init(
+          start:.init(point:.zero,binding:.init(elementID:"a")),end:.init(point:.zero,binding:.init(elementID:"b")),
+          bend:routing == .curved ? 70 : 0,bendPosition:routing == .curved ? 1 : 0.5,routing:routing)))
+      let page=PageDocument(size:size,actor:actor,elements:targets+[arrow]),graph=page.graphicGraph()
+      let body=try XCTUnwrap(graph.resolve(arrow.id).layout),f=body.frame
+      let address=NotebookToolAddress(surface:.page(page.id),boardID:nil,worldOrigin:nil,bounds:nil)
+      let region=NotebookRegionSelection(id:UUID(),address:address,
+        polygon:[.init(x:f.x,y:f.y),.init(x:f.x+f.width*0.9,y:f.y),
+          .init(x:f.x+f.width*0.9,y:f.y+f.height),.init(x:f.x,y:f.y+f.height)],
+        frame:.init(x:f.x,y:f.y,width:f.width*0.9,height:f.height),rawInk:nil,expectedInkRevision:nil,
+        graphics:[address.reference(arrow.id)])
+      let prepared=try XCTUnwrap(NotebookRegionMaterialization.prepare(region,graph:graph,snapshot:.init(page:page,board:nil)))
+      let fragment=try XCTUnwrap(prepared.working.first)
+      XCTAssertTrue(fragment.graphic.connection?.bindings.isEmpty == true)
+      var masked=try XCTUnwrap(arrow.graphic);masked.mask=fragment.graphic.mask
+      let source=AgentElement(id:arrow.id,kind:.graphic,frame:arrow.frame,source:"",html:"",graphic:masked)
+      let expected=PageDocument(size:size,actor:actor,elements:targets+[source])
+      let actual=PageDocument(size:size,actor:actor,elements:targets+[fragment.pageElement])
+      func render(_ page:PageDocument,_ name:String) async throws -> NSBitmapImageRep {
+        let image=try await PageCompositionRenderer.render(page,scale:1) { _ in throw CocoaError(.featureUnsupported) }
+        let attachment=XCTAttachment(data:image.png,uniformTypeIdentifier:"public.png")
+        attachment.name=name;attachment.lifetime = .keepAlways;add(attachment)
+        return try XCTUnwrap(NSBitmapImageRep(data:image.png))
+      }
+      let before=try await render(expected,"bound-\(routing)"),after=try await render(actual,"detached-\(routing)")
+      var largest=0.0,redPixels=0
+      for y in 0..<before.pixelsHigh { for x in 0..<before.pixelsWide {
+        let a=try XCTUnwrap(before.colorAt(x:x,y:y)?.usingColorSpace(.deviceRGB))
+        let b=try XCTUnwrap(after.colorAt(x:x,y:y)?.usingColorSpace(.deviceRGB))
+        largest=max(largest,abs(a.redComponent-b.redComponent),abs(a.greenComponent-b.greenComponent),abs(a.blueComponent-b.blueComponent))
+        if a.redComponent>0.6 && a.greenComponent<0.3 { redPixels += 1 }
+      } }
+      XCTAssertGreaterThan(redPixels,500,"An empty render cannot establish preservation")
+      XCTAssertLessThan(largest,0.02,"The rendered curve, head and cut remain in the same local basis")
+    }
+  }
+
   func testRetainedPressureInkAndNativePageTextUseTheNativeExportPlane() async throws {
     let actor = UUID(), size = PageSize(width:300,height:200)
     let samples = (0...30).map { i in SpatialInkSample(point:.init(x:30+Double(i)*7,y:60+sin(Double(i)/5)*25),

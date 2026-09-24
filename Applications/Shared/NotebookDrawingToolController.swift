@@ -461,19 +461,6 @@ extension NotebookRegionMaterialization {
         visible:graphic.visible,sourceInkIDs:graphic.sourceInkIDs,connection:graphic.connection,vertices:graphic.vertices,
         cornerRadius:graphic.cornerRadius,freehand:.init(layers:layers),transform:nil,path:graphic.path,mask:graphic.mask)
     }
-    func detachedConnector(_ graphic:NotebookGraphic,layout:NotebookGraphicLayout)->NotebookGraphic {
-      guard var connection=graphic.connection else { return graphic }
-      let start=layout.start,end=layout.end,dx=end.x-start.x,dy=end.y-start.y
-      let square=max(0.000001,dx*dx+dy*dy),length=sqrt(square)
-      connection.start = .init(point:start);connection.end = .init(point:end)
-      connection.bendPosition=min(1,max(0,((layout.bend.x-start.x)*dx+(layout.bend.y-start.y)*dy)/square))
-      connection.bend=(-dy*(layout.bend.x-(start.x+end.x)/2)+dx*(layout.bend.y-(start.y+end.y)/2))/length
-      connection.routing=connection.resolvedRouting
-      return .init(shape:graphic.shape,style:graphic.style,label:graphic.label,
-        representation:graphic.representation,visible:graphic.visible,sourceInkIDs:graphic.sourceInkIDs,
-        connection:connection,vertices:graphic.vertices,cornerRadius:graphic.cornerRadius,
-        freehand:graphic.freehand,transform:graphic.transform,path:graphic.path,mask:graphic.mask)
-    }
     func belongs(_ reference:EditableElementReference,node:NotebookGraphicGraph.Node)->Bool {
       guard node.surface == region.address.surface else { return false }
       switch reference {
@@ -538,7 +525,8 @@ extension NotebookRegionMaterialization {
       // A selected connector fragment is an independent visible vector. The
       // untouched outside keeps its endpoint bindings; copying those bindings
       // into the movable fragment would create a second owner of the relation.
-      let selectedSource=detachedConnector(node.graphic,layout:layout)
+      var selectedSource=node.graphic
+      selectedSource.connection=node.graphic.connection?.detachingEndpoints(in:layout.localLayout)
       let selectedGraphic=copied(selectedSource,claims:[],mask:inside)
       let frame=placement.frame,worldOrigin=node.surface.kind == .page ? nil : layout.origin
       let object=NotebookWorkingGraphic(id:id,surface:node.surface,frame:frame,

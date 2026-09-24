@@ -62,10 +62,10 @@ test("polygon corners use the same typed action and allow an explicit reset", ()
 });
 
 test("geometry edits admit a physical radius and longitudinal bend position", () => {
-  for (const graphic of [{cornerRadius:24}, {cornerRadius:null}, {connection:{bendPosition:0.7,bend:36}}]) {
+  for (const graphic of [{cornerRadius:24}, {cornerRadius:null}, {connection:{bendPosition:0.7,bend:36}}, {connection:{bendPosition:-0.2,elbowAxis:"horizontal"}}, {connection:{bendPosition:1.1,elbowAxis:"vertical"}}]) {
     assert.doesNotThrow(() => operationSchema.parse({kind:"updateElement",target,id:"shape",values:{graphic}}));
   }
-  for (const graphic of [{cornerRadius:-1}, {cornerRadius:Infinity}, {connection:{bendPosition:1.1}}]) {
+  for (const graphic of [{cornerRadius:-1}, {cornerRadius:Infinity}, {connection:{bendPosition:1_000_001}}, {connection:{elbowAxis:"diagonal"}}]) {
     assert.throws(() => operationSchema.parse({kind:"updateElement",target,id:"shape",values:{graphic}}));
   }
 });

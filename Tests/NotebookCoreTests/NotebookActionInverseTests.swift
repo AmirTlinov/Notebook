@@ -305,7 +305,7 @@ struct NotebookActionInverseTests {
     _ = try f.publish(reference, restoration: restoration)
     let account = "inverse-cloud", source = try f.source.replicationSource(deviceID: UUID())
     try f.source.prepareCloudStorage(); try f.source.enableCloud(account: account, source: source)
-    #expect(NotebookChangeManifest(transactionID: UUID(), workspaceID: f.workspaceID, records: []).format == 24)
+    #expect(NotebookChangeManifest(transactionID: UUID(), workspaceID: f.workspaceID, records: []).format == 25)
     try f.source.prepareCloudUpload(account: account, source: source)
     var hashes = Set<String>()
     for _ in 0..<100 {

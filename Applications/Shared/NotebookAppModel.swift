@@ -3380,6 +3380,7 @@ final class NotebookAppModel {
       if connection.start != original.start { patch["start"] = try? .encode(connection.start) }
       if connection.end != original.end { patch["end"] = try? .encode(connection.end) }
       if connection.bend != original.bend { patch["bend"] = .number(connection.bend) }
+      if connection.elbowAxis != original.elbowAxis { patch["elbowAxis"] = try? .encode(connection.elbowAxis) }
       if connection.routing != original.routing { patch["routing"] = try? .encode(connection.routing) }
       if connection.bendPosition != original.bendPosition { patch["bendPosition"] = try? .encode(connection.bendPosition) }
       var values: [String:JSONValue] = ["graphic": .object(["connection": .object(patch)])]

@@ -404,7 +404,7 @@ extension NotebookStore {
   var currentSQL: NotebookSQLConnection? { Thread.current.threadDictionary[connectionKey] as? NotebookSQLConnection }
 
   // SQLite admission is local to this database, independently of wire and content formats.
-  static let currentDatabaseVersion: Int64 = 21
+  static let currentDatabaseVersion: Int64 = 22
 
   @discardableResult
   func prepareDatabase(initialWorkspaceID: UUID? = nil,

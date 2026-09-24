@@ -5,6 +5,7 @@ import CoreGraphics
 /// Free points belong to the connector's existing element frame / world origin.
 public struct NotebookGraphicConnection: Codable, Equatable, Sendable {
   public enum Routing: String, Codable, CaseIterable, Sendable { case straight, elbow, curved }
+  public enum ElbowAxis: String, Codable, Sendable { case horizontal, vertical }
   public enum Terminal: String, Codable, CaseIterable, Sendable { case start, end }
   public enum Arrowhead: String, Codable, CaseIterable, Sendable { case none, arrow, triangle, square, dot, pipe, diamond, inverted, bar }
   public struct Binding: Codable, Equatable, Sendable {
@@ -36,25 +37,53 @@ public struct NotebookGraphicConnection: Codable, Equatable, Sendable {
   public var end: Endpoint
   /// Signed sagitta of the circular arc. Zero is an exactly straight line.
   public var bend: Double
-  /// Position of the held curve point along the endpoint axis; nil is the midpoint.
+  /// Signed position of the held point along the endpoint axis; nil is the midpoint.
+  /// Clipping an endpoint can leave the held point outside the visible chord.
   public var bendPosition: Double?
   public var routing: Routing?
+  /// Nil follows the endpoint axis; detachment retains the already visible route.
+  public var elbowAxis: ElbowAxis?
   public var resolvedRouting: Routing { routing ?? (bend == 0 ? .straight : .curved) }
   public var startArrowhead: Arrowhead
   public var endArrowhead: Arrowhead
   public var labelPosition: Double
   public init(start: Endpoint, end: Endpoint, bend: Double = 0,
-    startArrowhead: Arrowhead = .none, endArrowhead: Arrowhead = .arrow, labelPosition: Double = 0.5, bendPosition: Double? = nil, routing: Routing? = nil) {
-    self.start = start; self.end = end; self.bend = bend; self.bendPosition = bendPosition; self.routing = routing
+    startArrowhead: Arrowhead = .none, endArrowhead: Arrowhead = .arrow, labelPosition: Double = 0.5, bendPosition: Double? = nil, routing: Routing? = nil, elbowAxis: ElbowAxis? = nil) {
+    self.start = start; self.end = end; self.bend = bend; self.bendPosition = bendPosition; self.routing = routing; self.elbowAxis = elbowAxis
     self.startArrowhead = startArrowhead; self.endArrowhead = endArrowhead; self.labelPosition = labelPosition
   }
-  static let causalFields = ["start", "end", "bend", "startArrowhead", "endArrowhead", "labelPosition", "bendPosition", "routing"]
+  static let causalFields = ["start", "end", "bend", "startArrowhead", "endArrowhead", "labelPosition", "bendPosition", "routing", "elbowAxis"]
   var isValid: Bool {
     start.isValid && end.isValid && bend.isFinite && abs(bend) <= 1_000_000
-      && (bendPosition == nil || (bendPosition!.isFinite && (0...1).contains(bendPosition!)))
+      && (bendPosition == nil || (bendPosition!.isFinite && abs(bendPosition!) <= 1_000_000))
       && labelPosition.isFinite && (0...1).contains(labelPosition)
   }
   public var bindings: [Binding] { [start.binding, end.binding].compactMap { $0 } }
+
+  func usesHorizontalElbow(from a:SpatialPoint,to b:SpatialPoint)->Bool {
+    elbowAxis.map { $0 == .horizontal } ?? (abs(b.x-a.x) >= abs(b.y-a.y))
+  }
+
+  /// Resolve detached terminals in one local body. A retained binding still
+  /// names its original axis anchor, not its clipped outline contact. Using
+  /// that contact as the anchor would bend even the end that remains bound.
+  public func detachingEndpoints(in body:NotebookGraphicLayout,retainingBindingsTo selected:Set<String> = [])->Self {
+    var result=self
+    let keepStart=start.binding.map { selected.contains($0.elementID) } ?? false
+    let keepEnd=end.binding.map { selected.contains($0.elementID) } ?? false
+    let a=keepStart ? body.axisStart : body.start,b=keepEnd ? body.axisEnd : body.end
+    func point(_ p:SpatialPoint)->SpatialPoint { .init(x:body.frame.x+p.x,y:body.frame.y+p.y) }
+    if !keepStart { result.start = .init(point:point(a)) }
+    if !keepEnd { result.end = .init(point:point(b)) }
+    let dx=b.x-a.x,dy=b.y-a.y,length=max(0.001,hypot(dx,dy))
+    result.routing=resolvedRouting
+    result.bendPosition=((body.bend.x-a.x)*dx+(body.bend.y-a.y)*dy)/(length*length)
+    result.bend=(-dy*(body.bend.x-a.x)+dx*(body.bend.y-a.y))/length
+    if resolvedRouting == .elbow {
+      result.elbowAxis=usesHorizontalElbow(from:body.axisStart,to:body.axisEnd) ? .horizontal : .vertical
+    }
+    return result
+  }
 }
 
 /// A derived render / hit-test value, never encoded into content or its journal.
@@ -535,7 +564,7 @@ public struct NotebookGraphicGraph: Sendable {
         size:.init(width:size.x,height:size.y),from:localAnchor,toward:localToward) else { return anchor }
       return node.placement.point(contact,from:target.placement) ?? anchor
     }
-    let horizontal = abs(b.x-a.x) >= abs(b.y-a.y)
+    let horizontal = connection.usesHorizontalElbow(from:a,to:b)
     let startToward = connection.resolvedRouting == .elbow ? (horizontal ? SpatialPoint(x:middle.x,y:a.y) : SpatialPoint(x:a.x,y:middle.y)) : middle
     let endToward = connection.resolvedRouting == .elbow ? (horizontal ? SpatialPoint(x:b.x,y:middle.y) : SpatialPoint(x:middle.x,y:b.y)) : middle
     let start = clipped(connection.start, anchor: a, toward: startToward)
@@ -561,7 +590,7 @@ public struct NotebookGraphicGraph: Sendable {
     if connection.resolvedRouting == .elbow {
       // The held waypoint remains on the line and follows both axes. Redundant
       // collinear/zero segments collapse; no second authored points array.
-      let horizontal = abs(axisEnd.x-axisStart.x) >= abs(axisEnd.y-axisStart.y)
+      let horizontal = connection.usesHorizontalElbow(from:axisStart,to:axisEnd)
       let points: [SpatialPoint] = horizontal
         ? [start,.init(x:middle.x,y:start.y),middle,.init(x:end.x,y:middle.y),end]
         : [start,.init(x:start.x,y:middle.y),middle,.init(x:middle.x,y:end.y),end]
