@@ -5,6 +5,48 @@ import Testing
 
 @Suite("Codex delivery survives lost acknowledgements without a second executor")
 struct NotebookChatStoreTests {
+  @Test(arguments: [false, true])
+  func existingV22OutboxIsAdmittedBeforeReadingFirstMessages(alreadyHasColumn: Bool) throws {
+    try fixture { store, author in
+      let computer = UUID(), creation = NotebookChatInput(author: author, action: .create(title: "Before upgrade"))
+      let first = NotebookChatFirstMessage(text: "Unsent first message", context: "frozen")
+      let oldJob = try store.saveChatSubmission(creation, to: computer, firstMessage: alreadyHasColumn ? first : nil)
+      let panel = NotebookChatPanelState(draft: "Keep my draft", sidecarID: computer)
+      try store.saveChatPanel(panel, author: author)
+      try store.acknowledgePeer(peerID: computer, through: 0)
+      let database = try store.prepareDatabase()
+      let deliveryFloor = try database.rows("SELECT value FROM metadata WHERE key='ink_outgoing_floor'").first?[0].text
+      let identity = try database.rows("SELECT value FROM metadata WHERE key='workspace_id'").first![0].text
+      let records = try database.rows("SELECT address,hash FROM records ORDER BY address").map { $0[0].text! + ":" + $0[1].text! }
+      let cursor = try database.rows("SELECT MAX(sequence) FROM change_log").first![0].integer
+      if !alreadyHasColumn { try database.run("ALTER TABLE chat_jobs DROP COLUMN first_message") }
+      try database.run("PRAGMA user_version=22")
+
+      // Enter through the same first read that failed on the installed iPad,
+      // not through the fresh-workspace schema builder.
+      let upgraded = NotebookStore(root: store.root)
+      #expect(try upgraded.chatFirstMessage(creation.id) == (alreadyHasColumn ? first : nil))
+      #expect(try upgraded.chatPanel(author: author, computer: computer) == panel)
+      #expect(try upgraded.chatJob(creation.id) == oldJob)
+      #expect(try upgraded.chatDestination(creation.id) == computer)
+      #expect(try upgraded.peerCursor(peerID: computer, direction: .outgoing) == 0)
+      #expect(try database.rows("SELECT value FROM metadata WHERE key='ink_outgoing_floor'").first?[0].text == deliveryFloor)
+      #expect(try database.rows("PRAGMA user_version").first![0].integer == NotebookStore.currentDatabaseVersion)
+      #expect(try database.rows("SELECT value FROM metadata WHERE key='workspace_id'").first![0].text == identity)
+      #expect(try database.rows("SELECT address,hash FROM records ORDER BY address").map { $0[0].text! + ":" + $0[1].text! } == records)
+      #expect(try database.rows("SELECT MAX(sequence) FROM change_log").first![0].integer == cursor)
+
+      let next = NotebookChatInput(author: author, action: .create(title: "After upgrade"))
+      let nextMessage = NotebookChatFirstMessage(text: "After upgrade", context: "")
+      _ = try upgraded.saveChatSubmission(next, to: computer, firstMessage: nextMessage)
+      let task = CodexTask(id: UUID().uuidString, title: "After upgrade", cwd: "/fixture")
+      let receipt = NotebookChatJob(input: next, state: .accepted, result: .created(task), revision: 1)
+      _ = try upgraded.receiveChatReceipt(receipt)
+      _ = try NotebookStore(root: store.root).receiveChatReceipt(receipt)
+      #expect(try upgraded.chatJob(nextMessage.id)?.input == nextMessage.input(threadID: task.id, author: author))
+    }
+  }
+
   @Test func firstMessageSurvivesRestartAndCreationReceiptReleasesExactlyOneOrdinarySend() throws {
     try fixture { store, author in
       let computer = UUID(), creation = NotebookChatInput(author: author, action: .create(title: "New"))

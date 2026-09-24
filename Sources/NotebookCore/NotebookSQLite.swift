@@ -404,7 +404,7 @@ extension NotebookStore {
   var currentSQL: NotebookSQLConnection? { Thread.current.threadDictionary[connectionKey] as? NotebookSQLConnection }
 
   // SQLite admission is local to this database, independently of wire and content formats.
-  static let currentDatabaseVersion: Int64 = 22
+  static let currentDatabaseVersion: Int64 = 23
 
   @discardableResult
   func prepareDatabase(initialWorkspaceID: UUID? = nil,
@@ -501,7 +501,9 @@ extension NotebookStore {
         try database.run("CREATE INDEX IF NOT EXISTS reference_element_children ON reference_element_order(owner_key,parent_id,position,member)")
       }
       if admittedVersion == 2 { try migrateStoredBoardPlacements(database: database) }
-      try migrateStoredInkRelations(database: database)
+      // v18 completed the ink wire transition. Local schema updates must not
+      // repeat it, require drained peers or advance the delivery floor.
+      if admittedVersion < 18 { try migrateStoredInkRelations(database: database) }
       // One historical receipt at a time; no whole-history buffer and no
       // rewritten shared content, hashes, identities or replication cursors.
       // Version 12 indexes the current phase's time separately from creation
