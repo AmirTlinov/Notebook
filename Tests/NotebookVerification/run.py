@@ -38,6 +38,100 @@ class FullPrerequisiteTests(unittest.TestCase):
         self.assertLess(route.index(core), route.index("xcodebuild \\\n"))
 
 
+class NativeIPadUIArtifactTests(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        self.products = self.root / "products"; self.products.mkdir()
+        self.evidence = self.root / "evidence"; self.evidence.mkdir()
+        run = {}
+        for target, app, bundle in (("NotebookTests", "Notebook.app", verify.NATIVE_IPAD_BUNDLE),
+                ("NotebookUITests", "NotebookUITests-Runner.app", verify.NATIVE_IPAD_UI_RUNNER)):
+            path = self.products / "Debug-iphoneos" / app; path.mkdir(parents=True)
+            (path / "Info.plist").write_bytes(plistlib.dumps({"CFBundleIdentifier": bundle}))
+            run[target] = {"TestHostBundleIdentifier": bundle,
+                "TestHostPath": "__TESTROOT__/Debug-iphoneos/" + app,
+                "TestBundlePath": "__TESTHOST__/PlugIns/" + target + ".xctest",
+                "DependentProductPaths": ["__TESTROOT__/Debug-iphoneos/" + app]}
+        run["NotebookUITests"].update(IsUITestBundle=True,
+            UITargetAppPath="__TESTROOT__/Debug-iphoneos/Notebook.app")
+        self.run = self.products / "Notebook_iphoneos27.0-arm64.xctestrun"
+        self.run.write_bytes(plistlib.dumps(run))
+
+    def test_install_is_separate_from_cold_launch_and_xcode_cannot_install_again(self):
+        calls = []
+        def command(label, argv, **kwargs):
+            calls.append((label, argv))
+            bundle = verify.NATIVE_IPAD_BUNDLE if label == "ipad-install-app" else verify.NATIVE_IPAD_UI_RUNNER
+            release.write_json(Path(argv[-1]), {"info": {"outcome": "success",
+                "commandType": "devicectl.device.install.app"},
+                "result": {"installedApplications": [{"bundleID": bundle}]}})
+        configured = verify.install_native_ipad_ui_artifacts(self.products, self.evidence, command)
+        self.assertEqual([label for label, _ in calls], ["ipad-install-app", "ipad-install-runner"])
+        for _, argv in calls:
+            self.assertEqual(argv[:5], ["xcrun", "devicectl", "device", "install", "app"])
+            self.assertEqual(argv[6], release.UDID)
+            self.assertNotIn("launch", argv)
+        run = plistlib.loads(configured.read_bytes())
+        for name in ("NotebookTests", "NotebookUITests"):
+            target = run[name]
+            self.assertTrue(target["UseDestinationArtifacts"])
+            self.assertEqual(target["TestBundleDestinationRelativePath"], "__TESTHOST__/PlugIns/" + name + ".xctest")
+            for key in ("TestBundlePath", "TestHostPath", "UITargetAppPath"):
+                self.assertNotIn(key, target)
+            self.assertTrue(all(path.startswith(str(self.products)) for path in target["DependentProductPaths"]))
+        self.assertEqual(run["NotebookUITests"]["UITargetAppBundleIdentifier"], verify.NATIVE_IPAD_BUNDLE)
+        self.assertNotIn("UseDestinationArtifacts", plistlib.loads(self.run.read_bytes())["NotebookUITests"])
+
+    def test_wrong_identity_refuses_before_any_device_mutation(self):
+        path = self.products / "Debug-iphoneos/NotebookUITests-Runner.app/Info.plist"
+        path.write_bytes(plistlib.dumps({"CFBundleIdentifier": release.CANONICAL}))
+        command = Mock()
+        with self.assertRaises(release.ReleaseError):
+            verify.install_native_ipad_ui_artifacts(self.products, self.evidence, command)
+        command.assert_not_called()
+        with self.assertRaises(release.ReleaseError):
+            verify.native_ipad_cleanup_arguments(release.CANONICAL)
+
+    def test_ui_route_builds_then_installs_and_cleans_both_identities_even_on_failure(self):
+        for install_fails, cleanup_fails in ((False, False), (True, False), (False, True)):
+            calls = []
+            def command(label, argv, **kwargs):
+                calls.append((label, argv))
+                if label == "ipad": raise release.ReleaseError("runner failed")
+                if label == "ipad-native-test-cleanup-after" and cleanup_fails:
+                    raise release.ReleaseError("cleanup failed")
+                return b"", None
+            def install(products, evidence, command):
+                calls.append(("preinstall", []))
+                if install_fails: raise release.ReleaseError("install failed")
+                return evidence / "ipad-installed.xctestrun"
+            selector = "NotebookUITests/NotebookNavigationLoadUITests/testContinuousZoomWithProgramsMeetsSystemHitchBudget"
+            plan = {"optimized": True, "checks": {"core": [], "ipad": [selector], "mac": [], "commands": []}}
+            evidence = self.root / ("selected-" + str(install_fails) + "-" + str(cleanup_fails))
+            with patch.object(release, "release_commands", return_value=command), \
+                 patch.object(release, "source_inputs", return_value={"source": "fixture"}), \
+                 patch.object(release, "read_toolchain", return_value={}), \
+                 patch.object(release, "prepare_typesetter_runtime", return_value=self.root), \
+                 patch.object(verify, "install_native_ipad_ui_artifacts", side_effect=install), \
+                 self.assertRaises(release.ReleaseError):
+                verify.run_selected(self.root, plan, evidence)
+            labels = [label for label, _ in calls]
+            self.assertLess(labels.index("ipad-build-for-testing"), labels.index("preinstall"))
+            self.assertEqual(labels[-2:], ["ipad-native-test-cleanup-after", "ipad-ui-runner-cleanup-after"])
+            build = next(argv for label, argv in calls if label == "ipad-build-for-testing")
+            self.assertIn("build-for-testing", build); self.assertIn("SWIFT_OPTIMIZATION_LEVEL=-O", build)
+            self.assertNotIn("test", build)
+            if install_fails:
+                self.assertNotIn("ipad", labels)
+            else:
+                test = next(argv for label, argv in calls if label == "ipad")
+                self.assertIn("test-without-building", test)
+                self.assertEqual(test[test.index("-xctestrun") + 1], str(evidence / "ipad-installed.xctestrun"))
+                self.assertIn("-only-testing:" + selector, test)
+
+
 class SelectionTests(unittest.TestCase):
     def test_mac_scientific_ui_requires_its_exact_private_document_and_platform(self):
         identifier = "adb44de5-5b67-44f8-8371-9d03883e55ec"

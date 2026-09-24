@@ -7,6 +7,7 @@ import json
 import math
 import os
 from pathlib import Path
+import plistlib
 import re
 import subprocess
 import sys
@@ -18,6 +19,7 @@ import notebook_release as release
 ROOT = Path(__file__).resolve().parents[1]
 UI = "NotebookUITests/DrawingResponsivenessTests/"
 NATIVE_IPAD_BUNDLE = release.CANONICAL + ".native-test"
+NATIVE_IPAD_UI_RUNNER = release.CANONICAL + ".uitests.xctrunner"
 DOCUMENT_BROWSER_CONTRACTS = (
     "Tests/NotebookDocumentAcceptance/test_link_activation.mjs",
 )
@@ -563,7 +565,7 @@ def native_ipad_signing_settings():
             "DEVELOPMENT_TEAM=" + release.TEAM, "NOTEBOOK_BUNDLE_SUFFIX=.native-test"]
 
 
-def native_ipad_cleanup_arguments():
+def native_ipad_cleanup_arguments(bundle=NATIVE_IPAD_BUNDLE):
     # xcodebuild leaves its physical-device test host installed and it can keep
     # running beside the admitted app. Remove only that exact isolated identity;
     # the production bundle and its container are never addressed here.
@@ -604,7 +606,50 @@ if installed():
     raise SystemExit("XCTest bundle остался на физическом iPad: " + bundle)
 print(json.dumps({"bundleIdentifier": bundle, "removed": bool(found)}, sort_keys=True))
 '''
-    return [sys.executable, "-B", "-c", script, release.UDID, NATIVE_IPAD_BUNDLE]
+    release.require(bundle in (NATIVE_IPAD_BUNDLE, NATIVE_IPAD_UI_RUNNER), "Удалять можно только test identity.")
+    return [sys.executable, "-B", "-c", script, release.UDID, bundle]
+
+
+def install_native_ipad_ui_artifacts(products, evidence, command):
+    # The first XCUIApplication.launch otherwise installs its target inside the
+    # gesture watchdog. Install the exact built artifacts WITHOUT launching them;
+    # Xcode's documented destination-artifact mode forbids a second installation.
+    runs = list(products.glob("Notebook_iphoneos*.xctestrun"))
+    release.require(len(runs) == 1, "Нужен один xctestrun текущей сборки iPad.")
+    run = plistlib.loads(runs[0].read_bytes())
+    release.require(run.get("NotebookUITests", {}).get("IsUITestBundle") is True,
+                    "Нет ожидаемого UI target в xctestrun.")
+    apps = [("app", "Notebook.app", NATIVE_IPAD_BUNDLE),
+            ("runner", "NotebookUITests-Runner.app", NATIVE_IPAD_UI_RUNNER)]
+    # Validate both identities before the first device mutation.
+    for _, name, bundle in apps:
+        info = plistlib.loads((products / "Debug-iphoneos" / name / "Info.plist").read_bytes())
+        release.require(info.get("CFBundleIdentifier") == bundle, "Preinstall допускает только test identity.")
+    for name, bundle in (("NotebookTests", NATIVE_IPAD_BUNDLE), ("NotebookUITests", NATIVE_IPAD_UI_RUNNER)):
+        target = run[name]
+        release.require(target.get("TestHostBundleIdentifier") == bundle
+                        and target.get("TestBundlePath") == "__TESTHOST__/PlugIns/" + name + ".xctest",
+                        "xctestrun ссылается не на ожидаемый isolated test bundle.")
+        target["UseDestinationArtifacts"] = True
+        target["TestBundleDestinationRelativePath"] = target.pop("TestBundlePath")
+        target.pop("TestHostPath")
+        if name == "NotebookUITests":
+            release.require(target.pop("UITargetAppPath") == "__TESTROOT__/Debug-iphoneos/Notebook.app",
+                            "UI target должен быть приложением текущей сборки.")
+            target["UITargetAppBundleIdentifier"] = NATIVE_IPAD_BUNDLE
+        target["DependentProductPaths"] = [path.replace("__TESTROOT__", str(products))
+                                           for path in target.get("DependentProductPaths", [])]
+    configured = evidence / "ipad-installed.xctestrun"
+    configured.write_bytes(plistlib.dumps(run))
+    for label, name, bundle in apps:
+        receipt = evidence / ("ipad-install-" + label + ".json")
+        command("ipad-install-" + label, ["xcrun", "devicectl", "device", "install", "app",
+                "--device", release.UDID, products / "Debug-iphoneos" / name,
+                "--timeout", "180", "--json-output", receipt], timeout=200)
+        installed = release.successful_json(receipt, "devicectl.device.install.app")
+        release.require(any(app.get("bundleID") == bundle for app in installed.get("installedApplications", [])),
+                        "Установка test bundle не подтверждена.")
+    return configured
 
 
 def native_mac_signing_settings():
@@ -626,8 +671,11 @@ def run_selected(root, plan, evidence):
     toolchain = release.read_toolchain(command)
     release.write_json(evidence / "toolchain.json", toolchain)
     checks = plan["checks"]
+    ipad_ui = any(selector.split("/")[0] == "NotebookUITests" for selector in checks["ipad"])
     if checks["ipad"]:
         command("ipad-native-test-cleanup-before", native_ipad_cleanup_arguments(), timeout=120)
+        if ipad_ui:
+            command("ipad-ui-runner-cleanup-before", native_ipad_cleanup_arguments(NATIVE_IPAD_UI_RUNNER), timeout=120)
     # Every Mac host bundles the MCP sidecar, even a document-only XCTest
     # selection from a clean immutable source copy. Prepare its locked build
     # dependencies independently of whether MCP behavioral tests are selected.
@@ -688,6 +736,14 @@ def run_selected(root, plan, evidence):
                 "workerBundleSuffix": ".native-test", "scope": "isolated stateless native-test workers"})
             args[args.index("test")] = "test-without-building"
         try:
+            if platform == "ipad" and ipad_ui:
+                build_args = [value for value in args if value not in ("-resultBundlePath", str(result), "test")]
+                command("ipad-build-for-testing", build_args + ["build-for-testing"], cwd=root / "Applications", timeout=1800)
+                configured = install_native_ipad_ui_artifacts(derived / "ipad/Build/Products", evidence, command)
+                args = ["xcrun", "xcodebuild", "-quiet", "-xctestrun", str(configured),
+                        "-destination", destination, "-resultBundlePath", str(result),
+                        "-parallel-testing-enabled", "NO", "-collect-test-diagnostics", "never",
+                        "test-without-building"] + ["-only-testing:" + selector for selector in checks[platform]]
             command(platform, args, cwd=root / "Applications", timeout=1800)
             summary, _ = command(platform + "-summary", ["xcrun", "xcresulttool", "get", "test-results", "summary", "--path", str(result), "--compact"], read_output=True)
             summary = json.loads(summary); validate_summary(summary)
@@ -704,7 +760,11 @@ def run_selected(root, plan, evidence):
                 validate_hitch_metrics(metrics, checks[platform])
         finally:
             if platform == "ipad":
-                command("ipad-native-test-cleanup-after", native_ipad_cleanup_arguments(), timeout=120)
+                try:
+                    command("ipad-native-test-cleanup-after", native_ipad_cleanup_arguments(), timeout=120)
+                finally:
+                    if ipad_ui:
+                        command("ipad-ui-runner-cleanup-after", native_ipad_cleanup_arguments(NATIVE_IPAD_UI_RUNNER), timeout=120)
     release.write_json(evidence / "completed.json", checks)
     after = release.source_inputs(root)
     release.write_json(evidence / "source-after.json", after)
