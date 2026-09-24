@@ -7,17 +7,9 @@ unsafe fn string<'a>(p: *const c_char) -> Result<&'a str, String> {
     if p.is_null() { return Err("typesetter_argument".into()); }
     unsafe { CStr::from_ptr(p) }.to_str().map_err(|_| "typesetter_encoding".into())
 }
-fn resource(path: &str, limit: u64) -> Result<Vec<u8>, String> {
-    let file = std::fs::File::open(path).map_err(|e| e.to_string())?;
-    if file.metadata().map_err(|e| e.to_string())?.len() > limit { return Err("typesetter_resource_limit".into()); }
-    use std::io::Read;
-    let mut bytes = Vec::new(); file.take(limit + 1).read_to_end(&mut bytes).map_err(|e| e.to_string())?;
-    if bytes.len() as u64 > limit { return Err("typesetter_resource_limit".into()); }
-    Ok(bytes)
-}
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn nb_typesetter_create(bundle: *const c_char, format: *const c_char, fonts: *const c_char) -> *mut Runtime {
-    let create = || unsafe { Runtime::new(Path::new(string(bundle)?), resource(string(format)?, 32*1024*1024)?, resource(string(fonts)?, 2*1024*1024)?) };
+    let create = || unsafe { Ok::<_, String>(Runtime::new(Path::new(string(bundle)?), Path::new(string(format)?), Path::new(string(fonts)?))) };
     create().map(|v| Box::into_raw(Box::new(v))).unwrap_or(std::ptr::null_mut())
 }
 #[unsafe(no_mangle)]
