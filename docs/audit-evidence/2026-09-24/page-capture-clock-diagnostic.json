@@ -1,0 +1,246 @@
+{
+  "status": "rejected-experiment-not-shipped",
+  "baseCommit": "e5d43398172a7842a7465c4f8997681309671cb9",
+  "sourceSHA256": "7f5c73478c583fc344647b09f777cf110f4035fae3e0d85f6a89501f7a022663",
+  "sourceUnchanged": true,
+  "patchSHA256": "b52329875079d1f3254302e9a27e0004bf7e63c419797b3e474c0755caf24c5f",
+  "evidence": ".build/gui295-paused-clock",
+  "device": {
+    "architecture": "arm64",
+    "deviceId": "00008103-001E059934D9001E",
+    "deviceName": "iPad (Елизавета)",
+    "modelName": "iPad Pro (11-inch) (3rd generation)",
+    "osBuildNumber": "24A435",
+    "osVersion": "27.0",
+    "platform": "iOS"
+  },
+  "scope": [
+    "NotebookTests/NotebookPageClockControlTests",
+    "NotebookTests/NotebookPageLifecycleUXTests/testDenseVectorSheetsKeepTheirOwnPixelsThroughImmediateReversals",
+    "NotebookTests/NotebookPageLifecycleUXTests/testPresentedLandingAdmitsTheNextReverseBeforeSwiftUIRepublishesInput",
+    "NotebookTests/NotebookPageMotionUXTests"
+  ],
+  "passedTests": 8,
+  "failedTests": 1,
+  "skippedTests": 0,
+  "runtimeWarnings": [],
+  "experiment": "Fresh hierarchy capture with afterScreenUpdates=true and a pre-registered paused CAMetalDisplayLink. Separate raw-layer control uses the same device, refresh request and two drawables, but no hierarchy capture or Core Image.",
+  "percentiles": "Median p50; nearest-rank p95/p99. Ten runs do not establish a robust tail distribution.",
+  "statistics": {
+    "page": {
+      "firstMS": {
+        "n": 10,
+        "p50": 61.772083325195126,
+        "p95": 68.86795832542703,
+        "p99": 68.86795832542703,
+        "max": 68.86795832542703
+      },
+      "gapsMS": {
+        "n": 314,
+        "p50": 8.336666680406779,
+        "p95": 8.336874976521358,
+        "p99": 16.67337500839494,
+        "max": 16.673416685080156
+      },
+      "dropped": 17,
+      "commandMS": {
+        "n": 10,
+        "p50": 24.888833329896443,
+        "p95": 34.42191667272709,
+        "p99": 34.42191667272709,
+        "max": 34.42191667272709
+      }
+    },
+    "rawClock": {
+      "firstMS": {
+        "n": 10,
+        "p50": 21.010875003412366,
+        "p95": 41.58020834438503,
+        "p99": 41.58020834438503,
+        "max": 41.58020834438503
+      },
+      "gapsMS": {
+        "n": 388,
+        "p50": 8.336708327988163,
+        "p95": 8.33679168135859,
+        "p99": 8.336874976521358,
+        "max": 16.673416655976325
+      },
+      "dropped": 2
+    }
+  },
+  "pageTurns": [
+    {
+      "turn": 0,
+      "firstMS": 68.86795832542703,
+      "landingMS": 329.04841666459106,
+      "dropped": 1,
+      "commandMS": 34.42191667272709,
+      "firstEncodingMS": 37.13670832803473,
+      "firstCPUMS": 4.603250010404736
+    },
+    {
+      "turn": 1,
+      "firstMS": 45.49358334043063,
+      "landingMS": 321.6682916681748,
+      "dropped": 2,
+      "commandMS": 20.242500002495944,
+      "firstEncodingMS": 22.404541668947786,
+      "firstCPUMS": 1.2559999886434525
+    },
+    {
+      "turn": 2,
+      "firstMS": 62.827124987961724,
+      "landingMS": 323.03216666332446,
+      "dropped": 2,
+      "commandMS": 22.556458337930962,
+      "firstEncodingMS": 24.64049999252893,
+      "firstCPUMS": 3.4487916564103216
+    },
+    {
+      "turn": 3,
+      "firstMS": 52.74737501167692,
+      "landingMS": 328.9962083508726,
+      "dropped": 1,
+      "commandMS": 28.89279168448411,
+      "firstEncodingMS": 32.041250000474975,
+      "firstCPUMS": 2.572166675236076
+    },
+    {
+      "turn": 4,
+      "firstMS": 62.77795834466815,
+      "landingMS": 322.88079167483374,
+      "dropped": 3,
+      "commandMS": 21.043874992756173,
+      "firstEncodingMS": 23.261791677214205,
+      "firstCPUMS": 3.489374998025596
+    },
+    {
+      "turn": 5,
+      "firstMS": 60.809541668277234,
+      "landingMS": 328.84841665509157,
+      "dropped": 2,
+      "commandMS": 27.221208321861923,
+      "firstEncodingMS": 30.13333331909962,
+      "firstCPUMS": 1.7544166767038405
+    },
+    {
+      "turn": 6,
+      "firstMS": 63.07449997984804,
+      "landingMS": 323.2024583267048,
+      "dropped": 3,
+      "commandMS": 22.111958329332992,
+      "firstEncodingMS": 24.217166646849364,
+      "firstCPUMS": 3.5435416793916374
+    },
+    {
+      "turn": 7,
+      "firstMS": 52.91262498940341,
+      "landingMS": 329.1437916632276,
+      "dropped": 1,
+      "commandMS": 30.347041640197858,
+      "firstEncodingMS": 33.628499979386106,
+      "firstCPUMS": 2.161208336474374
+    },
+    {
+      "turn": 8,
+      "firstMS": 62.73462498211302,
+      "landingMS": 322.9206249816343,
+      "dropped": 2,
+      "commandMS": 22.415333340177312,
+      "firstEncodingMS": 24.388624995481223,
+      "firstCPUMS": 3.6042083229403943
+    },
+    {
+      "turn": 9,
+      "firstMS": 43.672499974491075,
+      "landingMS": 328.33391666645184,
+      "dropped": 0,
+      "commandMS": 30.259958322858438,
+      "firstEncodingMS": 33.48729165736586,
+      "firstCPUMS": 1.9831249956041574
+    }
+  ],
+  "rawControlTurns": [
+    {
+      "turn": 0,
+      "firstCallbackMS": 10.954333323752508,
+      "firstMS": 41.58020834438503,
+      "dropped": 2
+    },
+    {
+      "turn": 1,
+      "firstCallbackMS": 4.045416659209877,
+      "firstMS": 20.587041683029383,
+      "dropped": 0
+    },
+    {
+      "turn": 2,
+      "firstCallbackMS": 1.9370833178982139,
+      "firstMS": 18.50841665873304,
+      "dropped": 0
+    },
+    {
+      "turn": 3,
+      "firstCallbackMS": 5.192708340473473,
+      "firstMS": 21.788208337966353,
+      "dropped": 0
+    },
+    {
+      "turn": 4,
+      "firstCallbackMS": 4.460249998373911,
+      "firstMS": 21.055458346381783,
+      "dropped": 0
+    },
+    {
+      "turn": 5,
+      "firstCallbackMS": 5.43395834392868,
+      "firstMS": 22.023833356797695,
+      "dropped": 0
+    },
+    {
+      "turn": 6,
+      "firstCallbackMS": 3.808749985182658,
+      "firstMS": 20.393708313349634,
+      "dropped": 0
+    },
+    {
+      "turn": 7,
+      "firstCallbackMS": 4.18624997837469,
+      "firstMS": 20.777833327883855,
+      "dropped": 0
+    },
+    {
+      "turn": 8,
+      "firstCallbackMS": 4.604208341334015,
+      "firstMS": 21.220750000793487,
+      "dropped": 0
+    },
+    {
+      "turn": 9,
+      "firstCallbackMS": 4.371749993879348,
+      "firstMS": 20.96629166044295,
+      "dropped": 0
+    }
+  ],
+  "renderInspected": "attachments/492B45C4-CFE2-4A13-9D18-5D091EA0A8DD.png",
+  "cleanup": {
+    "bundleIdentifier": "com.amirtlinov.notebook.native-test",
+    "removed": true
+  },
+  "decision": "Fresh pixels and gesture lifecycle pass; command-to-presentation and cadence fail. Do not ship this latency regression. Runtime changes and temporary test/control are removed.",
+  "previousRejectedAttempt": {
+    "evidence": ".build/gui295-current-capture-first-frame",
+    "passedTests": 1,
+    "failedTests": 7,
+    "exception": "CAMetalLayerInvalidOperation: -nextDrawable should not be called when using CAMetalDisplayLink.",
+    "decision": "Direct first-frame submission mixed drawable owners. Removed; timings after app abort/restart are not healthy performance evidence."
+  },
+  "limitations": [
+    "Not human Pencil/finger acceptance",
+    "Not system CPU/GPU/RSS profiling",
+    "No installed production update",
+    "Raw control timing is configuration-specific, not a universal platform limit",
+    "Strict 16.67 ms and 120 Hz checks remain unchanged and failing"
+  ]
+}
