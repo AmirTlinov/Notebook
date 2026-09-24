@@ -11,6 +11,46 @@ import XCTest
   private typealias Scene = NotebookInteractionUXTests.Scene
   private typealias Probe = NotebookSelectionComposition.Probe
 
+  func testPresentedLandingAdmitsTheNextReverseBeforeSwiftUIRepublishesInput() async throws {
+    let model = try await modelWithPages(2, distinctLeaves: true)
+    let notebook = try XCTUnwrap(model.workspace?.selectedItemID)
+    XCTAssertEqual(model.selectNotebookPage(0, notebookID: notebook, expectedRoot: model.notebookPageRoot(notebook)!), 0)
+    let scene = try await mount(model), owner = try pageOwner(scene.window)
+    try await shown("immediate-reverse-source", window: scene.window, probes: leafProbes(0, scene.pageToWindow))
+    _ = try await turnTarget(owner, forward: true)
+    let native = owner.sheetController
+    let curl = try XCTUnwrap(native.view.subviews.compactMap { $0 as? SheetCurlMetalView }.first)
+    let present = curl.onFramePresented, admit = native.willTurn
+    let pan = NotebookCurlPan()
+    var attempted = false, admitted: Bool?
+    native.willTurn = { target in let accepted = admit(target); admitted = accepted; return accepted }
+    defer { native.willTurn = admit }
+    curl.onFramePresented = { image, progress, timestamp in
+      present?(image, progress, timestamp)
+      guard timestamp > 0, progress == 1, owner.displayedIndex == 1, !attempted else { return }
+      attempted = true
+      // The actual landing has released the native owner. A deferred SwiftUI
+      // notification of that same landing must not continue denying its input.
+      pan.phase = .began; pan.offset.x = 20
+      XCTAssertTrue(native.gestureRecognizerShouldBegin(pan))
+      native.perform(NSSelectorFromString("panned:"), with: pan)
+      pan.phase = .changed; pan.offset.x = native.view.bounds.width + 10
+      native.perform(NSSelectorFromString("panned:"), with: pan)
+      pan.phase = .ended; pan.speed.x = 600
+      native.perform(NSSelectorFromString("panned:"), with: pan)
+    }
+    XCTAssertTrue(model.notebookPageNavigation.send(.step(1), ownerID: notebook,
+      source: try XCTUnwrap(model.notebookPageRoot(notebook))))
+    let deadline = CACurrentMediaTime() + 2
+    while (!attempted || owner.displayedIndex != 0), CACurrentMediaTime() < deadline {
+      try await Task.sleep(for: .milliseconds(2))
+    }
+    XCTAssertTrue(attempted)
+    XCTAssertEqual(admitted, true, "The retired curl's deferred SwiftUI state cannot own the next gesture")
+    XCTAssertEqual(owner.displayedIndex, 0)
+    try await shown("immediate-reverse-landed", window: scene.window, probes: leafProbes(0, scene.pageToWindow))
+  }
+
   func testShowReferenceKeepsTheAcceptedColdPageAcrossCameraSettlement() async throws {
     let model = try await modelWithPages(5, distinctLeaves: true, includesSVG: true)
     let notebook = try XCTUnwrap(model.workspace?.selectedItemID)

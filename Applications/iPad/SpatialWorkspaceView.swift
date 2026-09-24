@@ -706,7 +706,6 @@ struct SpatialWorkspaceView: View {
               && !model.isItemBeingDeleted(rendered.id)
               && (presence.mode == .page || presence.mode == .document)
               && !contentGestureActive
-              && !pageTurnIsActive
               && cameraGesture == nil
               && !settling
               && presence.openProgress >= 0.999,
