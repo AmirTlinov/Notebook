@@ -84,10 +84,9 @@ Evidence: `gui295-pair-install-191-20260924T0534/live-fixture-delivery.json`
 экспорт focused xcresult в main `.build/gui298-ui-launch-readonly/diagnostics/`,
 Session-log строки **525, 3272**.
 
-Единственный selected UI-маршрут теперь собирает точные изолированные app/runner,
-проверяет обе identity и устанавливает их **до сценария, без запуска**.
-Затем использует документированный Xcode `UseDestinationArtifacts`: повторная
-установка внутри `app.launch()` запрещена, а не просто ожидается попадание в кэш.
+Единственный selected UI-маршрут собирает точные изолированные app/runner,
+проверяет обе identity и заранее устанавливает приложение **без запуска**.
+Xcode получает свой **неизменённый** `xctestrun` и штатно устанавливает runner.
 Приложение не прогревается, начальная точка часов, все жесты и пределы
 30 s / 150–1000 ms / Pencil неизменны. Обе test identities удаляются и при
 отказе; попытка удалить runner происходит даже при ошибке удаления host.
@@ -115,6 +114,33 @@ packaging fixture в этот прицельный ремонт не включ�
 `.build/gui295-ui-preinstall-final-verification/verification.json`.
 Прежний FAIL сохранён отдельно. Это закрывает локальные контракты проверки
 поставки, не физический UI-повтор, не задержку 20 ms и не общую приёмку пары.
+
+### Физический повтор после освобождения iPad, 10:03–10:13 UTC
+
+Первый вариант `UseDestinationArtifacts` на Xcode 27/CoreDevice оказался
+нерабочим: **Application Bundle Not Found / IDEInstallCoreDeviceWorker**,
+тест не начался. Evidence `gui295-pair191-zoom-preinstalled`, исходник
+`00ba564e…` до/после одинаков. Этот путь удалён, а не оставлен запасным.
+Достаточно обычной предварительной установки приложения и исходного
+`xctestrun`; runner устанавливает сам Xcode до начала сценария.
+
+`gui295-pair191-zoom-stock-preinstalled/verification.json`: **1/1 PASS**, без
+пропусков и runtimeWarnings, исходник до/после
+`75230c3a7b517246a98e1fbcf68fcf56651eceb92f8526282b02922b9e6e4a54`.
+На физическом iPad тест увидел все 24 программы на доске, затем выполнил
+10 измеряемых циклов zoom out/in. Все десять значений **hitches=0,
+total duration=0 s, ratio=0 ms/s**. Изолированный Debug-O, не ручной Pencil
+и не системные CPU/GPU/FPS. Внутри первого `app.launch()` Xcode всё ещё
+проверяет установку, но до automation прошло **2,13 s**, весь launch **4,110 s**
+вместо прежнего 43-секундного разрыва; предположение о запрете любой повторной
+установки не требуется. Cold-launch watchdog и все UX-пороги не менялись.
+
+Отдельно **88/88 verification PASS** (`gui295-ui-stock-run-contracts.log`).
+Обе test identities удалены после прогона; production data не изменялись.
+Экспорты Session-log и activities находятся рядом с evidence в каталогах
+`gui295-pair191-zoom-stock-preinstalled-diagnostics` и `…-activities.json`.
+Это завершает выбранный системный zoom-сценарий, но не отменяет сохранённые
+FAIL непрерывного ввода и не закрывает физическую приёмку всей пары.
 
 ## 24 сентября — GUI-298, чернила не пересобирают неизменные интерактивные элементы
 

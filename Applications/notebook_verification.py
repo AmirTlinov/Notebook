@@ -611,45 +611,28 @@ print(json.dumps({"bundleIdentifier": bundle, "removed": bool(found)}, sort_keys
 
 
 def install_native_ipad_ui_artifacts(products, evidence, command):
-    # The first XCUIApplication.launch otherwise installs its target inside the
-    # gesture watchdog. Install the exact built artifacts WITHOUT launching them;
-    # Xcode's documented destination-artifact mode forbids a second installation.
+    # Keep installation outside the cold-launch watchdog, without prewarming.
+    # Use Xcode's generated run file unchanged: CoreDevice still requires local
+    # runner bundles and rejects UseDestinationArtifacts before starting tests.
     runs = list(products.glob("Notebook_iphoneos*.xctestrun"))
     release.require(len(runs) == 1, "Нужен один xctestrun текущей сборки iPad.")
     run = plistlib.loads(runs[0].read_bytes())
     release.require(run.get("NotebookUITests", {}).get("IsUITestBundle") is True,
                     "Нет ожидаемого UI target в xctestrun.")
-    apps = [("app", "Notebook.app", NATIVE_IPAD_BUNDLE),
-            ("runner", "NotebookUITests-Runner.app", NATIVE_IPAD_UI_RUNNER)]
-    # Validate both identities before the first device mutation.
-    for _, name, bundle in apps:
+    for name, bundle in (("Notebook.app", NATIVE_IPAD_BUNDLE),
+                         ("NotebookUITests-Runner.app", NATIVE_IPAD_UI_RUNNER)):
         info = plistlib.loads((products / "Debug-iphoneos" / name / "Info.plist").read_bytes())
         release.require(info.get("CFBundleIdentifier") == bundle, "Preinstall допускает только test identity.")
-    for name, bundle in (("NotebookTests", NATIVE_IPAD_BUNDLE), ("NotebookUITests", NATIVE_IPAD_UI_RUNNER)):
-        target = run[name]
-        release.require(target.get("TestHostBundleIdentifier") == bundle
-                        and target.get("TestBundlePath") == "__TESTHOST__/PlugIns/" + name + ".xctest",
-                        "xctestrun ссылается не на ожидаемый isolated test bundle.")
-        target["UseDestinationArtifacts"] = True
-        target["TestBundleDestinationRelativePath"] = target.pop("TestBundlePath")
-        target.pop("TestHostPath")
-        if name == "NotebookUITests":
-            release.require(target.pop("UITargetAppPath") == "__TESTROOT__/Debug-iphoneos/Notebook.app",
-                            "UI target должен быть приложением текущей сборки.")
-            target["UITargetAppBundleIdentifier"] = NATIVE_IPAD_BUNDLE
-        target["DependentProductPaths"] = [path.replace("__TESTROOT__", str(products))
-                                           for path in target.get("DependentProductPaths", [])]
-    configured = evidence / "ipad-installed.xctestrun"
-    configured.write_bytes(plistlib.dumps(run))
-    for label, name, bundle in apps:
-        receipt = evidence / ("ipad-install-" + label + ".json")
-        command("ipad-install-" + label, ["xcrun", "devicectl", "device", "install", "app",
-                "--device", release.UDID, products / "Debug-iphoneos" / name,
-                "--timeout", "180", "--json-output", receipt], timeout=200)
-        installed = release.successful_json(receipt, "devicectl.device.install.app")
-        release.require(any(app.get("bundleID") == bundle for app in installed.get("installedApplications", [])),
-                        "Установка test bundle не подтверждена.")
-    return configured
+    release.require(run["NotebookUITests"].get("UITargetAppPath") == "__TESTROOT__/Debug-iphoneos/Notebook.app",
+                    "UI target должен быть приложением текущей сборки.")
+    receipt = evidence / "ipad-install-app.json"
+    command("ipad-install-app", ["xcrun", "devicectl", "device", "install", "app",
+            "--device", release.UDID, products / "Debug-iphoneos/Notebook.app",
+            "--timeout", "180", "--json-output", receipt], timeout=200)
+    installed = release.successful_json(receipt, "devicectl.device.install.app")
+    release.require(any(app.get("bundleID") == NATIVE_IPAD_BUNDLE for app in installed.get("installedApplications", [])),
+                    "Установка test bundle не подтверждена.")
+    return runs[0]
 
 
 def native_mac_signing_settings():

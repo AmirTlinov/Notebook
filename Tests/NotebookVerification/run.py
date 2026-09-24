@@ -59,30 +59,25 @@ class NativeIPadUIArtifactTests(unittest.TestCase):
         self.run = self.products / "Notebook_iphoneos27.0-arm64.xctestrun"
         self.run.write_bytes(plistlib.dumps(run))
 
-    def test_install_is_separate_from_cold_launch_and_xcode_cannot_install_again(self):
+    def test_install_is_separate_from_cold_launch_and_uses_unchanged_xcode_run(self):
         calls = []
+        original = self.run.read_bytes()
         def command(label, argv, **kwargs):
             calls.append((label, argv))
-            bundle = verify.NATIVE_IPAD_BUNDLE if label == "ipad-install-app" else verify.NATIVE_IPAD_UI_RUNNER
+            bundle = verify.NATIVE_IPAD_BUNDLE
             release.write_json(Path(argv[-1]), {"info": {"outcome": "success",
                 "commandType": "devicectl.device.install.app"},
                 "result": {"installedApplications": [{"bundleID": bundle}]}})
         configured = verify.install_native_ipad_ui_artifacts(self.products, self.evidence, command)
-        self.assertEqual([label for label, _ in calls], ["ipad-install-app", "ipad-install-runner"])
+        self.assertEqual([label for label, _ in calls], ["ipad-install-app"])
         for _, argv in calls:
             self.assertEqual(argv[:5], ["xcrun", "devicectl", "device", "install", "app"])
             self.assertEqual(argv[6], release.UDID)
             self.assertNotIn("launch", argv)
-        run = plistlib.loads(configured.read_bytes())
-        for name in ("NotebookTests", "NotebookUITests"):
-            target = run[name]
-            self.assertTrue(target["UseDestinationArtifacts"])
-            self.assertEqual(target["TestBundleDestinationRelativePath"], "__TESTHOST__/PlugIns/" + name + ".xctest")
-            for key in ("TestBundlePath", "TestHostPath", "UITargetAppPath"):
-                self.assertNotIn(key, target)
-            self.assertTrue(all(path.startswith(str(self.products)) for path in target["DependentProductPaths"]))
-        self.assertEqual(run["NotebookUITests"]["UITargetAppBundleIdentifier"], verify.NATIVE_IPAD_BUNDLE)
-        self.assertNotIn("UseDestinationArtifacts", plistlib.loads(self.run.read_bytes())["NotebookUITests"])
+        self.assertEqual(configured, self.run)
+        self.assertEqual(configured.read_bytes(), original,
+                         "Keep Xcode's runner paths and dependency resolution intact")
+        self.assertFalse((self.evidence / "ipad-installed.xctestrun").exists())
 
     def test_wrong_identity_refuses_before_any_device_mutation(self):
         path = self.products / "Debug-iphoneos/NotebookUITests-Runner.app/Info.plist"
