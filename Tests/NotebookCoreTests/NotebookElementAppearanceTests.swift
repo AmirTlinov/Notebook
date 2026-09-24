@@ -13,6 +13,21 @@ import Testing
   func appearance(_ cuts: [InkElementErasure], size: CGSize = .init(width:160,height:100), graphic: NotebookGraphic? = .init(shape:.rectangle,style:.init(strokeWidth:4))) -> NotebookElementAppearance {
     .init(graphic:graphic,layout:nil,size:size,erasures:cuts)
   }
+  @Test func denseRepeatedEraseRemovesEveryLabeledOutline() {
+    let samples = (0..<4096).map { i in
+      let t = Double(i % 64) * 2 * Double.pi / 64
+      return SpatialInkSample(point: .init(x:465+80*cos(t),y:745+70*sin(t)),
+        timeOffset:Double(i)/240,width:260,opacity:1,force:1,azimuth:0,altitude:1)
+    }
+    for i in 0..<16 {
+      let frame = PageRect(x:350+Double(i%4)*65,y:650+Double(i/4)*55,width:40,height:35)
+      let cut = InkElementErasure(target:.init(elementID:"erased-\(i)",frame:frame),samples:samples)
+      let result = NotebookElementAppearance(graphic:.init(shape:.rectangle,label:"Erased \(i)"),
+        layout:nil,size:.init(width:40,height:35),erasures:[cut])
+      #expect(result.state == .erased, "Fully covered labeled shape \(i) cannot remain selectable")
+      #expect(!result.contains(.init(x:20,y:17.5),tolerance:6))
+    }
+  }
   @Test func fullyErasedHollowContourHasNoGhostInterior() {
     let rim = cut([.init(x:0,y:0),.init(x:160,y:0),.init(x:160,y:100),.init(x:0,y:100),.init(x:0,y:0)])
     let result = appearance([rim])

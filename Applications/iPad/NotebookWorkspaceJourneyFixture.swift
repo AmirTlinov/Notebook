@@ -19,8 +19,8 @@ import NotebookCore
       let initial = WorkspaceIndex.initial(actor: actor, pageSize: NotebookAppModel.defaultPageSize, itemID: item)
       var index = initial.index
       let first = initial.page.id
-      try store.saveWorkspaceBundle(index: index, page: initial.page,
-        board: store.loadOrCreateBoard(workspace: index, actor: actor))
+      _ = try store.initializeWorkspace(actor:actor,pageSize:initial.page.size,
+        initialNotebookID:item,initialPageID:first)
       // Page selection is an addressed update of the existing device presence.
       try store.savePresence(.init(boardID:index.rootBoardID,mode:.board,
         camera:.init(center:.zero,scale:0.5),viewport:.init(x:834,y:1194),

@@ -11,35 +11,38 @@ struct NotebookGraphicView: View {
   var live = true
   var layer:PaintLayer = .content
   var body: some View {
-    Group {
-      if live {
-        ZStack {
-          if let ink = graphic.freehand, graphic.showsGeometry {
-            if layer != .fillMask {
-              NotebookInkMaterialView(freehand:ink,transform:graphic.transform,layout:layout,mask:graphic.mask)
-            }
-            if layer != .fillMask,!graphic.label.isEmpty {
-              Canvas { context, size in
-                var context = context
-                if let projection = layout?.projection { context.concatenate(projection.transform) }
-                let size = layout?.projection?.size ?? size
-                context.draw(Text(graphic.label).font(.system(size:24)).foregroundStyle(graphic.style.stroke.swiftUIColor),
-                  at:.init(x:size.width/2,y:size.height/2))
+    // Retire the accessibility node together with the material, not only its pixels.
+    if appearance?.state != .erased {
+      Group {
+        if live {
+          ZStack {
+            if let ink = graphic.freehand, graphic.showsGeometry {
+              if layer != .fillMask {
+                NotebookInkMaterialView(freehand:ink,transform:graphic.transform,layout:layout,mask:graphic.mask)
               }
+              if layer != .fillMask,!graphic.label.isEmpty {
+                Canvas { context, size in
+                  var context = context
+                  if let projection = layout?.projection { context.concatenate(projection.transform) }
+                  let size = layout?.projection?.size ?? size
+                  context.draw(Text(graphic.label).font(.system(size:24)).foregroundStyle(graphic.style.stroke.swiftUIColor),
+                    at:.init(x:size.width/2,y:size.height/2))
+                }
+              }
+            } else {
+              Canvas { context, size in Self.paint(graphic, layout:layout, in:context, size:size,layer:layer,clipVisibility:false) }
             }
-          } else {
-            Canvas { context, size in Self.paint(graphic, layout:layout, in:context, size:size,layer:layer,clipVisibility:false) }
           }
+          .clipShape(NotebookGraphicMaskShape(mask:graphic.mask,projection:layout?.projection),style:FillStyle(eoFill:true))
+          .erased(by:erasures,appearance:appearance,transform:graphic.transform,layout:layout,visibility:graphic.mask)
+        } else {
+          Canvas { context, size in Self.paint(graphic, layout:layout, in:context, size:size, erasures:erasures, appearance:appearance,layer:layer) }
         }
-        .clipShape(NotebookGraphicMaskShape(mask:graphic.mask,projection:layout?.projection),style:FillStyle(eoFill:true))
-        .erased(by:erasures,appearance:appearance,transform:graphic.transform,layout:layout,visibility:graphic.mask)
-      } else {
-        Canvas { context, size in Self.paint(graphic, layout:layout, in:context, size:size, erasures:erasures, appearance:appearance,layer:layer) }
       }
+      .accessibilityElement(children: .ignore)
+      .accessibilityLabel(graphic.label.isEmpty ? graphic.shape.displayName : graphic.label)
+      .accessibilityAddTraits(.isImage)
     }
-    .accessibilityElement(children: .ignore)
-    .accessibilityLabel(graphic.label.isEmpty ? graphic.shape.displayName : graphic.label)
-    .accessibilityAddTraits(.isImage)
   }
 
   enum PaintLayer { case content, inkMask, fillMask }
