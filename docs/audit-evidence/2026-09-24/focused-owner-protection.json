@@ -1,0 +1,50 @@
+{
+  "baseCommit": "c1953103f236b602612e4c23d31a3df7254ea134",
+  "sourceSHA256": "6f95bf50ad986f1d3563f09dde09ae926c0da18f3ea82a06d9ead40720b2cd7d",
+  "patchSHA256": "9b69b9541b7c25ebe590323746f306bdc2a43081cbf8b8adf493b3766f75a4fb",
+  "device": {
+    "architecture": "arm64",
+    "deviceId": "00008103-001E059934D9001E",
+    "deviceName": "iPad (Елизавета)",
+    "modelName": "iPad Pro (11-inch) (3rd generation)",
+    "osBuildNumber": "24A435",
+    "osVersion": "27.0",
+    "platform": "iOS"
+  },
+  "baseline": {
+    "evidence": ".build/gui295-pin-protection-baseline",
+    "failedTests": 2,
+    "programDiagnostic": {
+      "correctRoot": true,
+      "protected": false,
+      "preparing": false,
+      "permitsPreparation": true,
+      "mountedWebViews": 1,
+      "focusedSourceReady": true,
+      "sourceReceipt": "ready",
+      "compositionFailure": null
+    }
+  },
+  "fixed": {
+    "evidence": ".build/gui295-pin-protection-fixed",
+    "passedTests": 2,
+    "failedTests": 0,
+    "skippedTests": 0,
+    "runtimeWarnings": [],
+    "sourceUnchanged": true,
+    "tests": [
+      "NotebookTests/PortalPassageTests/testEnteredBoardKeepsInstalledChildProgramsDuringZoom",
+      "NotebookTests/SceneCompositionTests/testPinningAnAlreadyVisibleOwnerPublishesItsProtectionBeforeReusingPaint"
+    ]
+  },
+  "scope": [
+    "A new pin for an already visible element must publish protection before reusing its composition.",
+    "A ready focused program keeps the same native WebKit owner during the next synthetic zoom on the physical iPad.",
+    "Unchanged pin demand still reuses the installed cohort."
+  ],
+  "limits": [
+    "Native isolated app, not installation of a new production pair.",
+    "Synthetic camera events, not hardware finger/Pencil acceptance.",
+    "Board Back/zoom navigation is being integrated by GUI-300; page-turn timing and full acceptance remain open."
+  ]
+}
