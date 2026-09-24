@@ -36,6 +36,23 @@ final class NotebookSQLConnection {
   private var statements: [String: OpaquePointer] = [:]
   // Borrowed by nested addressed reads; released with this SQL snapshot.
   private var decodedInk: InkRelationDecoding?
+  // A scene/feedback read often visits the same record through several typed
+  // owners. Share only its immutable envelope inside this read cut; ink bodies
+  // still validate and pay their expansion allowance on every visit.
+  private var decodedFragments: [Data: NotebookStoredFragment] = [:]
+  private(set) var decodedFragmentBytes = 0
+  var decodedFragmentCount: Int { decodedFragments.count }
+
+  func decodeFragmentEnvelope(_ data: Data) throws -> NotebookStoredFragment {
+    if !writable, let decoded = decodedFragments[data] { return decoded }
+    let decoded = try JSONDecoder().decode(NotebookStoredFragment.self, from: data)
+    if !writable, decodedFragments.count < 128, data.count <= 524_288 - decodedFragmentBytes {
+      decodedFragments[data] = decoded
+      decodedFragmentBytes += data.count
+    }
+    return decoded
+  }
+
   var inkDecoding: InkRelationDecoding {
     if let decodedInk { return decodedInk }
     let value = InkRelationDecoding(); decodedInk = value; return value
@@ -67,6 +84,7 @@ final class NotebookSQLConnection {
     readAllowance = nil; readRefusal = nil
     remainingReadRows = 0; remainingReadBytes = 0
     decodedInk = nil
+    decodedFragments.removeAll(keepingCapacity: false); decodedFragmentBytes = 0
   }
 
   /// SQLite supplies lengths before Swift copies a string or blob. Charge all

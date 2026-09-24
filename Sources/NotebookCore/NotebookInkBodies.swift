@@ -112,7 +112,7 @@ extension NotebookSQLConnection {
 
   func decodedStoredFragment(from data: Data, remainingBytes: inout Int64, budget: String,
     expandingInk:Bool = true) throws -> NotebookStoredFragment {
-    let raw=try JSONDecoder().decode(NotebookStoredFragment.self,from:data)
+    let raw=try decodeFragmentEnvelope(data)
     _=try raw.inkBodyHashes
     var value=raw.value
     for path in raw.inkBodies {
