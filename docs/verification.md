@@ -1,5 +1,42 @@
 # Verification record
 
+## September 24 — GUI-295, UIKit-phase drawable experiment rejected
+
+A bounded off-main drawable acquisition was tested with UIKit's event phases
+owning submission, rather than another timer or a larger pool. A worker published
+availability directly under a lock so rendering did not depend on a main-queue
+callback being allowed between UIKit phases. Low-latency dispatch was requested;
+its confirmation was read only to choose the corresponding render phase. These
+remain manually replayed contacts, not genuine system-delivered Pencil events.
+
+- `.build/gui295-ui-phase-drawable/`, source
+  `e746c186af67c0876a73b58cb2892a15724dc54df53810ac701aa2a458def61e`:
+  **4 PASS / 3 FAIL**. Transactional warm-page presentation gave eraser p95/max
+  **45.927/45.988 ms**, pen **37.592/37.653 ms**; failed pool admission also left
+  UIKit participation active. Both timing lanes failed unchanged 20 ms limits.
+- `.build/gui295-ui-phase-independent-present/`, source
+  `c053ceead23bc936ec8e736cea7504d3a7812e9259abe4e53533d3a7b0f4ab71`:
+  **5 PASS / 2 FAIL** after correcting that experimental lifecycle and restoring
+  independent warm-page presentation. All four lifecycle cases and the actual
+  pen/eraser/lift pixel scenario passed, but eraser p95/max **29.788/33.801 ms**
+  and pen **21.359/21.399 ms** still failed.
+
+Both runs have zero skips/runtime warnings and matching before/after inventories.
+The second run's pen CSV contains only **61 distinct presentation timestamps for
+120 measured revisions**; consecutive distinct times are about 16.67 ms apart.
+The transactional trial has only 41 distinct times, about 25 ms apart. In contrast,
+the earlier `gui295-ui-metal-clock-probe` pen CSV has 120 distinct times with a
+maximum 8.341 ms gap. This compares the observed contact-presentation receipts,
+not system FPS or photons, and does not prove why the compositor retained a slot.
+Moving submission to UIKit phases did not preserve the existing update cadence.
+
+All phase-owned acquisition code and its test modifications were removed. The
+runtime/test inventory is again exactly `93f48885`; no low-latency dispatch option,
+extra lock/request owner, buffer or fallback from this experiment remains. The
+48/48 combined tools/history receipt still applies to that restored source.
+Production pair 190 remains untouched; 20 ms input/navigation and actual paired
+physical acceptance are not complete.
+
 ## September 24 — GUI-295, combined tools/history and rejected presentation variants
 
 After the bounded storage-reader change, the unchanged source
