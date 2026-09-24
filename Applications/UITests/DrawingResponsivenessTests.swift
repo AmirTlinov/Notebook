@@ -2368,7 +2368,7 @@ final class DrawingResponsivenessTests: XCTestCase {
     field.coordinate(withNormalizedOffset: .init(dx: 0.95, dy: 0.25)).tap()
     field.typeText(" after rotation")
     XCTAssertEqual(field.value as? String, "Keep this draft after rotation")
-    XCTAssertFalse(app.buttons["notebook-chat-send"].isEnabled, "An offline fixture invents neither a task nor an executor")
+    XCTAssertTrue(app.buttons["notebook-chat-send"].isEnabled, "A new-chat draft can be queued without claiming that Codex received it")
     let proof = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
     proof.name = "codex-panel-keyboard-landscape"; proof.lifetime = .keepAlways; add(proof)
   }

@@ -116,7 +116,7 @@ struct NotebookCompanion: View {
     if chat.conversation?.requests.isEmpty == false { return "Нужно ваше решение" }
     if chat.voice.capturing { return chat.voice.status }
     if let work = chat.workStatus { return work.title }
-    if !chat.pendingMessages.isEmpty { return "Сообщение сохранено · ожидаю Codex" }
+    if !chat.pendingMessages.isEmpty { return "Приём сообщения не подтверждён" }
     return ""
   }
   private var controls: some View {

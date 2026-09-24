@@ -138,7 +138,7 @@ struct NotebookCodexRequestView: View {
           }
         }
         if let job {
-          Text(job.error ?? (job.state == .accepted ? "Решение принято Codex" : "Решение сохранено · ожидается Codex"))
+          Text(job.error ?? (job.state == .accepted ? "Решение принято Codex" : "Приём решения не подтверждён"))
             .font(.caption).foregroundStyle(.secondary)
         }
       }

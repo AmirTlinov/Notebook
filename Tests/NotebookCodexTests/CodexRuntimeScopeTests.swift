@@ -14,6 +14,11 @@ struct CodexRuntimeScopeTests {
     let scoped = try CodexNotebookToolPolicy.scoped(endpoint, inheriting: .object(["config": .object(["mcp_servers": .object(["notebook": inherited])])]))
     for key in ["enabled_tools", "disabled_tools", "tool_timeout_sec"] { #expect(scoped[key] == inherited[key]) }
     #expect(scoped["command"] == endpoint["command"]); #expect(scoped["url"] == nil); #expect(scoped["http_headers"] == nil)
+    let unsetTimeout: JSONValue = .object(["tool_timeout_sec": .null, "enabled_tools": .array([.string("notebook_context")])])
+    let withoutNull = try CodexNotebookToolPolicy.scoped(endpoint,
+      inheriting: .object(["config": .object(["mcp_servers": .object(["notebook": unsetTimeout])])]))
+    #expect(withoutNull["tool_timeout_sec"] == nil)
+    #expect(withoutNull["enabled_tools"] == unsetTimeout["enabled_tools"])
     let disabled: JSONValue = .object(["config": .object(["mcp_servers": .object(["notebook": .object(["enabled": .bool(false)])])])])
     #expect(throws: CodexNotebookToolPolicy.disabled) { try CodexNotebookToolPolicy.scoped(endpoint, inheriting: disabled) }
     #expect(try CodexNotebookToolPolicy.scoped(endpoint, inheriting: .object(["config": .object([:])])) == endpoint)

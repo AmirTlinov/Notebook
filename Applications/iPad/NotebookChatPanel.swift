@@ -211,7 +211,7 @@ struct NotebookChatPanel: View {
       if let id = chat.creationID, let first = chat.firstMessages[id] {
         VStack(alignment: .leading, spacing: 8) {
           Text(first.text).textSelection(.enabled)
-          Text(chat.jobs.first(where: { $0.id == id })?.error ?? "Сообщение сохранено · создаётся чат на Mac…")
+          Text(chat.jobs.first(where: { $0.id == id })?.error ?? "Создание чата не подтверждено")
             .font(.caption).foregroundStyle(.secondary)
           if let job = chat.jobs.first(where: { $0.id == id }), job.isTerminal, job.state != .accepted {
             Button("Вернуть в черновик") { chat.restoreFailedCreation(); draftFocused = true }
@@ -243,19 +243,19 @@ struct NotebookChatPanel: View {
   private var outbox: some View {
     ScrollView {
       VStack(alignment: .trailing, spacing: 8) {
-        Text("Исходящие · \(chat.pendingMessages.count)").font(.caption2).foregroundStyle(.secondary)
+        Text("Без подтверждения · \(chat.pendingMessages.count)").font(.caption2).foregroundStyle(.secondary)
         ForEach(chat.pendingMessages.suffix(4)) { job in
           if let (_, text, _) = job.input.action.message {
             VStack(alignment: .trailing, spacing: 4) {
               Text(text).font(.system(size: 15)).lineLimit(3).textSelection(.enabled)
-              Text(job.state == .saved ? "Сохранено на iPad · ожидает Codex" : job.state == .uncertain ? "Принятие проверяется · без повторной отправки" : "Передано Mac · ожидается подтверждение")
+              Text(job.state == .uncertain ? "Приём не подтверждён · повторной отправки нет" : "Приём Codex не подтверждён")
                 .font(.caption2).foregroundStyle(.secondary)
             }
             .padding(12).background(NotebookChrome.insetSurface, in: RoundedRectangle(cornerRadius: NotebookChrome.cardRadius))
             .accessibilityIdentifier("notebook-chat-outgoing-" + job.id.uuidString)
           }
         }
-        if chat.pendingMessages.count > 4 { Text("Ранние сообщения сохранены в очереди.").font(.caption2).foregroundStyle(.secondary) }
+        if chat.pendingMessages.count > 4 { Text("Показаны последние четыре сообщения.").font(.caption2).foregroundStyle(.secondary) }
       }.frame(maxWidth: .infinity, alignment: .trailing).padding(.horizontal, 20)
     }
     .scrollBounceBehavior(.basedOnSize).frame(maxHeight: 105).padding(.vertical, 8)

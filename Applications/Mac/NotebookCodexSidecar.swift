@@ -342,7 +342,18 @@ final class NotebookCodexSidecar {
         guard let snapshot = await bridge.snapshot(threadID: thread), snapshot.ready else { return }
         if case .send = job.input.action, snapshot.busy || !snapshot.requests.isEmpty { return }
       }
-    } catch { return } // No native mutation attempted; saved really means queued.
+    } catch {
+      // Observation happens before native dispatch. A definite refusal cannot
+      // become a permanently queued "saved" job; transient failures still can.
+      let code = error as? CodexBridgeError
+      if error is CodexRequestRejection || code == .externalOwnerUnavailable || code == .staleTurn
+        || code == .staleRequest || code == .unsupportedRequest || code == .invalidInput || code == .signInRequired {
+        _ = try await persistence.submit {
+          try $0.advanceChatJob(job.id, from: .saved, to: .rejected, error: Self.message(error))
+        }
+      }
+      return
+    }
     try await admitAccount()
     guard try await admit(job.input, authorized: admission, attempt: true).state == .attempting else { return }
     guard !stopped else { return }

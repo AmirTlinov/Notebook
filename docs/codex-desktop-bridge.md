@@ -25,6 +25,9 @@ than discarding a late ID after the ordinary 12-second read timeout.
 Unknown create outcomes are not retried. Native writes persist attempts before RPC;
 positive `clientUserMessageId` evidence resolves uncertain sends.
 Ordinary busy-task messages queue; explicit steer and stop target the exact turn.
+An explicit native refusal while attaching a task rejects the saved input before
+dispatch; transient unavailability leaves it queued. The UI reports missing
+confirmation, not an inferred device location or Codex acceptance.
 
 ## Bounded protocol and questions
 
@@ -140,6 +143,9 @@ After initialize and before start/resume, effective enabled servers and exact so
 are checked. Start/resume receive the same private cwd/config. The public API offers
 no atomic config-read plus start transaction: a concurrent global addition strictly
 between checks is not claimed impossible. Actual task tools are checked separately.
+For the ordinary workspace-scoped endpoint, unset optional fields returned as
+`null` by `config/read` are omitted from explicit start/resume overrides; configured
+tool filters, timeouts and disabled state retain their values.
 
 Startup failure exposes stage and exit code, not raw stderr, arguments or account
 data. Optional real-runtime probes require

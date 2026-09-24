@@ -5,6 +5,7 @@ import NotebookCodex
 @testable import Notebook
 
 private actor NativeOwner: NotebookCodexConversationOwner, NotebookCodexCatalogueOwner, NotebookCodexProcessOwner, NotebookCodexVoiceOwner {
+  enum AttachFailure { case requestRejected, externalOwner, unavailable }
   var processStarts = 0, voiceStarts = 0
   func startProcess(id: UUID, request: NotebookRunRequest, publish: @escaping @Sendable (NotebookProcessEvent) async throws -> Void) async throws { processStarts += 1; try await publish(.running) }
   func writeProcess(id: UUID, data: Data) async throws { }
@@ -16,6 +17,7 @@ private actor NativeOwner: NotebookCodexConversationOwner, NotebookCodexCatalogu
 
   let thread = UUID().uuidString, turn = UUID().uuidString
   var busy = false, unknown = false
+  var attachFailure: AttachFailure?
   var projectEdits = 0
   var project: CodexProject?
   var accessMode = CodexAccessMode.workspace
@@ -35,8 +37,16 @@ private actor NativeOwner: NotebookCodexConversationOwner, NotebookCodexCatalogu
   func requireSignIn(_ required: Bool) { needsSignIn = required }
   func finishBeforeStop() { stopIsStale = true }
   func configure(busy: Bool = false, unknown: Bool = false) { self.busy = busy; self.unknown = unknown }
+  func failAttach(_ failure: AttachFailure?) { attachFailure = failure }
   func counts() -> (Int, Int) { (sent.count, interrupted.count) }
-  func attach(threadID: String) { }
+  func attach(threadID: String) throws {
+    switch attachFailure {
+    case .requestRejected: throw CodexRequestRejection(code: -32600)
+    case .externalOwner: throw CodexBridgeError.externalOwnerUnavailable
+    case .unavailable: throw CodexBridgeError.unavailable
+    case nil: break
+    }
+  }
   func detach(threadID: String) { }
   func close() { }
   func snapshot(threadID: String) -> CodexConversation? {
@@ -103,6 +113,25 @@ private actor NativeOwner: NotebookCodexConversationOwner, NotebookCodexCatalogu
 
 @MainActor
 final class NotebookCodexSidecarTests: XCTestCase {
+  func testDefinitiveObserveFailureRejectsSavedMessageWithoutNativeDispatch() async throws {
+    try await fixture { store, queue, native, peer in
+      let service = try sidecar(store, queue, native); service.start()
+      for failure in [NativeOwner.AttachFailure.requestRejected, .externalOwner] {
+        await native.failAttach(failure)
+        let input = NotebookChatInput(author: peer, action: .send(threadID: native.thread, text: "Not dispatched", context: ""))
+        _ = await service.receive(.init(body: .request(.job(input))), peerID: peer)
+        try await wait { try await queue.submit { try $0.chatJob(input.id)?.state == .rejected } }
+        XCTAssertNotNil(try store.chatJob(input.id)?.error)
+      }
+      await native.failAttach(.unavailable)
+      let transient = NotebookChatInput(author: peer, action: .send(threadID: native.thread, text: "Retry when available", context: ""))
+      _ = await service.receive(.init(body: .request(.job(transient))), peerID: peer)
+      try await Task.sleep(for: .milliseconds(250))
+      XCTAssertEqual(try store.chatJob(transient.id)?.state, .saved)
+      let counts = await native.counts(); XCTAssertEqual(counts.0, 0)
+      await service.stop()
+    }
+  }
   func testLaserEvidenceIsResolvedOnlyForItsOneNativeMessage() async throws {
     try await fixture { store, queue, native, peer in
       let reference = CollaborationReference(target:.init(kind:.page,id:UUID()),region:.init(x:0,y:0,width:1,height:1),revision:"frozen")

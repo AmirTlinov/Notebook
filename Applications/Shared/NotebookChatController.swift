@@ -450,7 +450,7 @@ final class NotebookChatController {
   }
   var projectUpdateNotice: String? {
     guard let job = jobs.first(where: { job in if case .updateProject = job.input.action { return !job.isTerminal }; return false }) else { return nil }
-    return job.state == .uncertain ? "Проверяю подтверждение настроек проекта в Codex…" : "Настройки проекта сохранены на iPad · ожидается Codex"
+    return job.state == .uncertain ? "Принятие изменения не подтверждено; повторной отправки нет" : "Изменение проекта не подтверждено"
   }
   func updateProject(_ original: CodexProject, name: String, roots: [String]) async -> Bool {
     guard !projectUpdatePending(original.id) else { return false }

@@ -251,7 +251,7 @@ struct NotebookMacCodexView: View {
         }
         if let failure = chat.failure { Text(failure).foregroundStyle(.red).textSelection(.enabled) }
         if let job = chat.jobs.first, job.state == .uncertain || job.state == .rejected || !job.isTerminal {
-          Text(job.error ?? (job.state == .uncertain ? "Исход команды неизвестен. Автоматического повтора не будет." : "Команда сохранена на Mac · ожидается Codex"))
+          Text(job.error ?? (job.state == .uncertain ? "Исход команды неизвестен. Автоматического повтора не будет." : "Приём команды не подтверждён"))
             .font(.caption).foregroundStyle(.secondary)
         }
         NotebookCodexUncertainJobsView(jobs: chat.jobs, finish: chat.stopWaiting)

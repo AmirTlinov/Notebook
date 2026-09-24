@@ -168,7 +168,7 @@ final class NotebookChatControllerTests: XCTestCase {
     let status = NotebookChatWorkStatus(conversation: value(), connected: true)
     XCTAssertEqual(status?.title, "Проверяю изменение"); XCTAssertEqual(status?.turnID, "turn"); XCTAssertEqual(status?.running, true)
     let offline = NotebookChatWorkStatus(conversation: value(), connected: false)
-    XCTAssertEqual(offline?.running, false); XCTAssertEqual(offline?.title, "Mac не в сети · задача сохранена")
+    XCTAssertEqual(offline?.running, false); XCTAssertEqual(offline?.title, "Mac не в сети · состояние задачи неизвестно")
     let request = CodexUserRequest(nativeID: .number(7), method: "item/tool/requestUserInput", turnID: "turn", parameters: .object([:]))
     let question = NotebookChatWorkStatus(conversation: value(requests: [request]), connected: true)
     XCTAssertEqual(question?.title, "Нужно ваше решение"); XCTAssertEqual(question?.running, false)
