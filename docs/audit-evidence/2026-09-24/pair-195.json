@@ -1,0 +1,41 @@
+{
+  "build": "195",
+  "version": "0.3.138",
+  "status": "matched-pair-installed-and-running",
+  "sourceSHA256": "03bd9e3a68fd13c80e9072279284d0e5d1d098bd0bf4e5526c0156f78e438db0",
+  "verificationRoute": "./verify.sh:selected",
+  "finishedAt": "2026-09-24T16:53:18.762529+00:00",
+  "macInstalledBuild": "195",
+  "ipadInstalledBuild": "195",
+  "macContainerFilesUnchangedBeforeLaunch": true,
+  "ipadContainerRegistryMetadataPreserved": true,
+  "physicalGestureAcceptance": false,
+  "systemGestureAcceptance": "not_run",
+  "currentViewRead": {
+    "runID": "2814f409-1d02-4c7d-bc72-16a1c970e4f2",
+    "status": "completed",
+    "elapsedMS": 5562,
+    "visual": "ready",
+    "pngSHA256": "f7f14a97d9acc49c8d09539e5d4db40eb55100b93ebcdcf98ccfccd38aac495f",
+    "scope": "current iPad page, not Razlichimost page-turn acceptance"
+  },
+  "readLatencyIsolation": {
+    "runID": "4677c3a8-de22-43f6-b0e6-d9028680b6bf",
+    "status": "completed",
+    "intactGraphicMS": 21,
+    "partiallyErasedGraphicMS": 5040,
+    "clockPageMS": 1,
+    "contentMutations": 0,
+    "unresolved": true
+  },
+  "apps": {
+    "iPad": {
+      "manifestSHA256": "419e47553b52456a354519183ad0571f8619f24809ad5e901a3b0ad91f8815f7",
+      "cdhash": "a1619e743c8881ddd6925536cf05355cb0bb4baa"
+    },
+    "mac": {
+      "manifestSHA256": "1b9249fb01029cc7ccd96fb6fe123bf967b17fc396edd3c48f68653a8f8a34e5",
+      "cdhash": "719259ea29f06a5d658d4f03fb6e0bb6418e185d"
+    }
+  }
+}
