@@ -6,6 +6,28 @@ import XCTest
 
 final class SceneCompositionTests: XCTestCase {
   @MainActor
+  func testPinningAnAlreadyVisibleOwnerPublishesItsProtectionBeforeReusingPaint() async throws {
+    let fixture=Fixture(count:1,side:64,kind:.nativeText)
+    let resources=SceneRenderResources(),coordinator=SceneCompositionTiles(resources:resources)
+    addTeardownBlock { @MainActor in await coordinator.stop() }
+    let pin=WorkspaceSpatialID.element(fixture.elements[0].id)
+    let source=fixture.source(),frame=fixture.frame()
+    coordinator.prepare(source:source,presence:fixture.presence,frame:frame,pinned:[],displayScale:1)
+    try await waitUntil { coordinator.published != nil && !coordinator.isPreparing }
+    let initial=try XCTUnwrap(coordinator.published)
+    XCTAssertTrue(initial.plan.presentedOwners.contains { $0.id == pin })
+    XCTAssertFalse(initial.plan.protectedOwners.contains { $0.id == pin })
+    coordinator.prepare(source:source,presence:fixture.presence,frame:fixture.frame(pinned:[pin]),pinned:[pin],displayScale:1)
+    try await waitUntil { !coordinator.isPreparing }
+    let protected=try XCTUnwrap(coordinator.published)
+    XCTAssertTrue(protected.plan.protectedOwners.contains { $0.id == pin },
+      "Visible pixels do not prove that a newly focused input owner is protected")
+    XCTAssertNil(coordinator.failure)
+    coordinator.prepare(source:source,presence:fixture.presence,frame:fixture.frame(pinned:[pin]),pinned:[pin],displayScale:1)
+    XCTAssertTrue(coordinator.published === protected,"Unchanged owner demand still reuses the installed cohort")
+  }
+
+  @MainActor
   func testPrefetchedProgramsDoNotEvictPassiveSourcesFromTheirOwnQuota() async throws {
     let fixture = Fixture(count: 6, side: 32,
       html: "<svg viewBox='0 0 32 32'><rect width='32' height='32' fill='red'/></svg>")

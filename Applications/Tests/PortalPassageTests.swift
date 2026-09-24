@@ -231,7 +231,21 @@ final class PortalPassageTests: XCTestCase {
       }
       try await Task.sleep(for: .milliseconds(20))
     }
-    XCTFail("All admitted visible programs and the focused source must be ready before the next warm contact")
+    let cohort=scene.model.compositionTiles.published
+    let views=agentWebViews(in:scene.host.view)
+    let address=cohort?.sourceReceipts.keys.first { $0.plane.boardID == scene.childID && $0.elementID == focused.id }
+    let diagnostic="""
+      root=\(cohort?.plan.rootBoardID.uuidString ?? "nil") expected=\(scene.childID)
+      protected=\(cohort?.plan.protectedOwners.contains { $0.id == .element(focused.id) } == true)
+      preparing=\(scene.model.compositionTiles.isPreparing) permits=\(scene.model.permitsScenePreparation)
+      runtimeOwners=\(cohort?.runtimeOwners.map(\.elementID).sorted() ?? [])
+      mounted=\(views.count) focusedReady=\(views.contains { ($0.navigationDelegate as? AgentWebCoordinator)?.hasLiveSource(agentElementSnapshotSource(focused)) == true })
+      receipt=\(String(describing:address.flatMap { cohort?.sourceReceipts[$0] }))
+      failure=\(scene.model.compositionTiles.failure ?? "nil")
+      """
+    let attachment=XCTAttachment(string:diagnostic)
+    attachment.name="portal-program-readiness";attachment.lifetime = .keepAlways;add(attachment)
+    XCTFail("All admitted visible programs and the focused source must be ready before the next warm contact: \(diagnostic)")
     return []
   }
 

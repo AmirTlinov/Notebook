@@ -1569,7 +1569,9 @@ final class SceneCompositionTiles {
       // the normal lower LOD bound can reclaim unnecessarily dense backing.
       (refinesDetails ? ((0.6...1).contains(presence.camera.scale / basis.camera.scale) && plan.meetsRequiredDensity)
         : (presence.camera.scale > 0 && presence.camera.scale / basis.camera.scale <= sqrt(2.0))),
-      pinned.allSatisfy({ pin in plan.presentedOwners.contains { $0.id == pin } }), let tiles = plan.coverage[plane]?.tiles,
+      // Existing pixels do not grant a newly focused owner protection from
+      // budget-driven demotion. Reuse only after that input demand is installed.
+      pinned.allSatisfy({ pin in plan.protectedOwners.contains { $0.id == pin } }), let tiles = plan.coverage[plane]?.tiles,
       let first = tiles.first, let last = tiles.last else { return false }
     let visible = WorkspaceSpatialBounds(origin: presence.camera.screenToWorld(.zero, viewport: presence.viewport),
       width: presence.viewport.x / presence.camera.scale, height: presence.viewport.y / presence.camera.scale)
