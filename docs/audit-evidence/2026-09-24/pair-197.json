@@ -1,0 +1,91 @@
+{
+  "build": "197",
+  "finishedAt": "2026-09-24T18:23:02.649967+00:00",
+  "installationAttempted": true,
+  "ipadContainerRegistryMetadataPreserved": true,
+  "ipadInstalledBuild": "197",
+  "macContainerFilesUnchangedBeforeLaunch": true,
+  "macInstalledBuild": "197",
+  "physicalGestureAcceptance": false,
+  "sourceSHA256": "eaa57d26fbf35ece7adaed9504b9821de031baec2098ac3e78dc01ab7d2db63a",
+  "startedAt": "2026-09-24T18:22:16.274240+00:00",
+  "status": "matched-pair-installed-and-running",
+  "verificationRoute": "./verify.sh:selected",
+  "version": "0.3.138",
+  "macPID": 39229,
+  "ipadPID": 10287,
+  "installedMCPReadback": "ready",
+  "readback": {
+    "installedBuild": "197",
+    "clock": {
+      "sameData": true,
+      "sameBasis": true,
+      "beforeCursor": "15489",
+      "afterCursor": "15496",
+      "basis": {
+        "workspaceID": "54349F3B-9E0A-4DEA-B990-40CAE04EF45E",
+        "owners": [
+          {
+            "target": {
+              "kind": "page",
+              "id": "BB00CED9-FB37-43A6-AE9B-99860C97BBD8"
+            },
+            "inkRevision": "0@72ef4fea-5790-44e0-b5cb-3d8a51704ce0",
+            "revision": "2@29dc77fe-8777-41ec-be98-704f4668a2f4"
+          }
+        ]
+      }
+    },
+    "partialElement": {
+      "pageID": "4D7189F5-7819-49BF-8DE0-D9D03CBFF646",
+      "elementID": "693ed9dc-27fa-4096-9084-57b9fd4fd152",
+      "before": {
+        "build": "196",
+        "runID": "d18197da-d8fc-47ec-b593-b50190461970",
+        "milliseconds": [
+          5073,
+          5063,
+          5065
+        ]
+      },
+      "after": {
+        "build": "197",
+        "runID": "70fc1944-dbb6-4c2b-805a-8942aa171978",
+        "milliseconds": [
+          4830,
+          4822,
+          4820
+        ]
+      },
+      "basis": {
+        "workspaceID": "54349F3B-9E0A-4DEA-B990-40CAE04EF45E",
+        "owners": [
+          {
+            "inkRevision": "29@29dc77fe-8777-41ec-be98-704f4668a2f4",
+            "revision": "52@29dc77fe-8777-41ec-be98-704f4668a2f4",
+            "target": {
+              "kind": "page",
+              "id": "4D7189F5-7819-49BF-8DE0-D9D03CBFF646"
+            }
+          }
+        ]
+      },
+      "appearance": {
+        "sourceIsCompleteAppearance": false,
+        "state": "partial"
+      },
+      "fixed": false
+    },
+    "scope": "Read-only installed owner; no user or hardware gesture acceptance."
+  },
+  "verification": {
+    "iPad": 50,
+    "mac": 11,
+    "coreTests": 20,
+    "coreSuites": 4,
+    "skipped": 0,
+    "runtimeWarnings": 0,
+    "nativeEvidence": ".build/gui295-combined-197/native-final",
+    "coreEvidence": ".build/gui295-combined-197/core-final.log"
+  }
+}
