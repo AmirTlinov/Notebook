@@ -17,6 +17,12 @@ Painter occupancy probes share one SQL read transaction. Nested addressed reads
 borrow it and validate the same revision. A transparent offscreen-only board does
 not allocate Metal viewport backing merely because distant strokes exist.
 Chunk intersection uses the installed camera; source mesh remains available.
+The source and paint pagination share one addressed journal proof: at most 64
+intervening delivery-receipt records may advance the journal without changing
+material. Another address, unavailable history or an oversized interval rejects
+the old source. Workspace identity, bounds, group poses and nested WAL-cut checks
+remain mandatory. The source retains only its last proven cursor, never a read
+transaction across awaits or a second material revision.
 
 Unmounting/reparenting a document coordinator removes only its own WKWebView from
 the prior host, never a newly installed neighbor. Hidden parent boards are prepared
