@@ -1,0 +1,52 @@
+{
+  "baseCommit": "a212734402e794ff56c5dd8ffd6465c92dffd262",
+  "sourceSHA256": "93c51f7118334427197fbfc87e39bc538da6489fab7ed8d72fa5281a3f3cfc80",
+  "localEvidence": ".build/gui295-mac-page-change-baseline-v2",
+  "scope": "Diagnostic reproduction; application implementation unchanged; not release acceptance",
+  "xcresultSummary": {
+    "devicesAndConfigurations": [
+      {
+        "device": {
+          "architecture": "arm64",
+          "deviceId": "00006050-001650DA01F9401C",
+          "deviceName": "My Mac",
+          "modelName": "MacBook Pro",
+          "osBuildNumber": "26A428",
+          "osVersion": "27.0",
+          "platform": "macOS"
+        },
+        "expectedFailures": 0,
+        "failedTests": 1,
+        "passedTests": 0,
+        "skippedTests": 0,
+        "testPlanConfiguration": {
+          "configurationId": "1",
+          "configurationName": "Test Scheme Action"
+        }
+      }
+    ],
+    "environmentDescription": "NotebookMac · Built with macOS 27.0",
+    "expectedFailures": 0,
+    "failedTests": 1,
+    "finishTime": 1790264579.403,
+    "passedTests": 0,
+    "result": "Failed",
+    "runtimeWarnings": [],
+    "skippedTests": 0,
+    "startTime": 1790264576.837,
+    "statistics": [],
+    "testFailures": [
+      {
+        "failureText": "XCTAssertFalse failed - The ordinary reader exposes partially prepared static material: [(0.009791, 0), (258.791875, 1), (296.68, 3), (406.299083, 4), (412.038958, 6), (417.58325, 7), (428.322708, 8), (434.280166, 9), (438.615125, 10), (456.092208, 13), (466.309, 14), (474.23175, 16), (480.392416, 17), (491.750666, 18), (498.525041, 19), (504.89975, 20), (511.184875, 21), (515.6165, 22), (524.274625, 23), (532.669041, 24), (537.282583, 25), (544.221833, 26), (551.407041, 28), (557.329375, 29), (571.647333, 31), (578.885583, 33), (585.261041, 34), (591.382041, 35)]",
+        "targetName": "NotebookMacTests",
+        "testIdentifier": 1,
+        "testIdentifierString": "MacPagePublicationTests/testPageChangePublishesStaticMaterialAsOnePage()",
+        "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookMacTests/MacPagePublicationTests/testPageChangePublishesStaticMaterialAsOnePage",
+        "testName": "testPageChangePublishesStaticMaterialAsOnePage()"
+      }
+    ],
+    "title": "Test - NotebookMac",
+    "topInsights": [],
+    "totalTestCount": 1
+  }
+}
