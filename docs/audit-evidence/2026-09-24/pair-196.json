@@ -1,0 +1,39 @@
+{
+  "build": "196",
+  "finishedAt": "2026-09-24T17:34:58.668929+00:00",
+  "installationAttempted": true,
+  "ipadContainerRegistryMetadataPreserved": true,
+  "ipadInstalledBuild": "196",
+  "macContainerFilesUnchangedBeforeLaunch": true,
+  "macInstalledBuild": "196",
+  "physicalGestureAcceptance": false,
+  "sourceSHA256": "46aef8fc92d9e513d10264a9e63e363443c14ac12d6135a0b6359897a4cff07c",
+  "startedAt": "2026-09-24T17:34:10.953051+00:00",
+  "status": "matched-pair-installed-and-running",
+  "verificationRoute": "./verify.sh:selected",
+  "version": "0.3.138",
+  "macProcessIdentifier": 163,
+  "ipadProcessIdentifier": 9950,
+  "liveReadback": {
+    "status": "ready",
+    "workspaceID": "54349F3B-9E0A-4DEA-B990-40CAE04EF45E",
+    "basis": {
+      "owners": [
+        {
+          "inkRevision": "0@72ef4fea-5790-44e0-b5cb-3d8a51704ce0",
+          "target": {
+            "id": "BB00CED9-FB37-43A6-AE9B-99860C97BBD8",
+            "kind": "page"
+          },
+          "revision": "2@29dc77fe-8777-41ec-be98-704f4668a2f4"
+        }
+      ],
+      "workspaceID": "54349F3B-9E0A-4DEA-B990-40CAE04EF45E"
+    },
+    "unchangedPage": false,
+    "differingFields": [
+      "value.cursor"
+    ],
+    "unchangedPageData": true
+  }
+}
