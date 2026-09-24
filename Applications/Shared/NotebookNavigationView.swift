@@ -90,6 +90,13 @@ struct NotebookNavigationView: View {
             .disabled(presence.mode == .document && (documentPageCount == nil || pageIndex + 1 >= pageCount))
             .accessibilityLabel("Следующая страница").accessibilityIdentifier("next-page")
         }.buttonStyle(.plain).padding(.horizontal, 4).contentShape(Rectangle())
+          .background {
+            #if os(iOS)
+            // SwiftUI buttons are not UIControl ancestors. Their finite footer
+            // belongs to native navigation, never the canvas tap/hold recognizer.
+            NotebookControlRegion(gate:model.inputGate)
+            #endif
+          }
           .frame(maxWidth: .infinity, alignment: .trailing).padding(.trailing, 18).padding(.bottom, 18)
       }
     }

@@ -28,7 +28,7 @@ import XCTest
     try launch(); try open()
     let node = app.images["Journey movable 1"]
     try step("first-body-selection", { node.tap() }) {
-      XCTAssertTrue(self.app.buttons["delete-agent-element"].isHittable)
+      XCTAssertTrue(self.app.otherElements["resize-agent-element-topLeading"].isHittable)
       XCTAssertFalse(self.app.buttons["finish-graphic-selection"].exists)
       try self.leaf(0)
     }
@@ -37,13 +37,13 @@ import XCTest
       from.press(forDuration: 0.01, thenDragTo: to, withVelocity: .slow, thenHoldForDuration: 0)
     }) { try self.leaf(0, moved: true) }
     try step("tap-away-auto-applies", { coordinate(700, 900).tap() }) {
-      XCTAssertFalse(self.app.buttons["delete-agent-element"].exists)
+      XCTAssertFalse(self.app.otherElements["resize-agent-element-topLeading"].exists)
       try self.leaf(0, moved: true)
     }
     try step("take-moved-material-again", { coordinate(300, 500).tap() }) {
-      XCTAssertTrue(self.app.buttons["delete-agent-element"].isHittable)
+      XCTAssertTrue(self.app.otherElements["resize-agent-element-topLeading"].isHittable)
     }
-    try step("delete-without-confirmation", { app.buttons["delete-agent-element"].tap() }) { try self.leaf(0, deleted: true) }
+    try step("delete-without-confirmation", { notebookContextAction("Удалить элемент",on:node,in:app) }) { try self.leaf(0, deleted: true) }
     try step("deleted-page-away", { surface.swipeLeft() }) { try self.leaf(1) }
     try step("deleted-page-back", { surface.swipeRight() }) { try self.leaf(0, deleted: true) }
     try leave()
@@ -59,7 +59,7 @@ import XCTest
       XCTAssertTrue((self.surface.value as? String)?.hasPrefix("Страница 7 из ") == true)
       try self.pixels([(300, 300, .paper), (590, 590, .paper), (630, 830, .paper)])
     }
-    app.buttons["drawing-tools-more"].tap(); app.buttons["drawing-tool-text"].tap()
+    app.buttons["drawing-tool-text"].tap()
     try step("first-contact-on-new-page", { coordinate(240, 350).tap() }) {
       XCTAssertTrue(self.app.textViews["native-text-editor"].isHittable)
     }
@@ -70,7 +70,7 @@ import XCTest
       XCTAssertFalse(self.app.textViews["native-text-editor"].exists)
       XCTAssertTrue(self.app.staticTexts[text].exists)
     }
-    app.buttons["pen-controls-toggle"].tap()
+    app.buttons["drawing-group"].tap()
     try step("new-text-not-on-previous-leaf", { surface.swipeRight() }) {
       try self.leaf(5); XCTAssertFalse(self.app.staticTexts[text].exists)
     }
@@ -83,12 +83,12 @@ import XCTest
   func testMenusBackgroundAndRotationKeepFirstContactAndPageNavigation() throws {
     defer { XCUIDevice.shared.orientation = .portrait }
     try launch(); try open()
-    for id in ["drawing-tool-eraser", "drawing-tool-lasso", "pen-controls-toggle"] {
+    for id in ["drawing-tool-eraser", "drawing-tool-lasso", "drawing-group"] {
       app.buttons[id].tap(); app.buttons[id].tap()
       // Dismiss by a real outside tap, never by closing an injected sheet.
       coordinate(720, 900).tap()
       try step("first-selection-after-\(id)", { app.images["Journey movable 1"].tap() }) {
-        XCTAssertTrue(self.app.buttons["delete-agent-element"].isHittable); try self.leaf(0)
+        XCTAssertTrue(self.app.otherElements["resize-agent-element-topLeading"].isHittable); try self.leaf(0)
       }
       coordinate(720, 900).tap()
     }
@@ -101,7 +101,7 @@ import XCTest
     XCUIDevice.shared.orientation = .portrait
     paperFrame = fittedPaper(in: app.frame)
     try step("first-selection-after-rotation", { app.images["Journey movable 1"].tap() }) {
-      XCTAssertTrue(self.app.buttons["delete-agent-element"].isHittable); try self.leaf(0)
+      XCTAssertTrue(self.app.otherElements["resize-agent-element-topLeading"].isHittable); try self.leaf(0)
     }
   }
 
@@ -111,7 +111,7 @@ import XCTest
     app.launchArguments = ["--notebook-drawing-responsiveness-fixture", "--notebook-workspace-journey-fixture"]
     app.launch(); XCUIDevice.shared.orientation = .portrait
     XCTAssertTrue(cover.waitForExistence(timeout: 10), app.debugDescription)
-    XCTAssertTrue(app.buttons["create-workspace-item"].isHittable)
+    XCTAssertTrue(notebookOffersCreation(in:app))
     XCTAssertFalse(surface.exists, "The scenario must start on the board, not on a pre-opened sheet")
     paperFrame = fittedPaper(in: app.frame) // Freeze before input, not from a possibly displaced result.
   }
@@ -126,7 +126,7 @@ import XCTest
   private func open(deleted: Bool = false) throws {
     try step("ordinary-cover-double-tap", { cover.doubleTap() }) {
       XCTAssertTrue(self.surface.exists)
-      XCTAssertTrue(self.app.buttons["pen-controls-toggle"].isHittable)
+      XCTAssertTrue(self.app.buttons["drawing-group"].isHittable)
       XCTAssertTrue(self.app.buttons["next-page"].isHittable)
       try self.leaf(0, deleted: deleted)
     }
@@ -142,9 +142,9 @@ import XCTest
     }) { try self.leaf(index) }
   }
   private func leave() throws {
-    try step("back-to-board", { app.buttons["leave-nested-board"].tap() }) {
+    try step("back-to-board", { notebookBack(in:app) }) {
       XCTAssertFalse(self.surface.exists); XCTAssertTrue(self.cover.isHittable)
-      XCTAssertTrue(self.app.buttons["create-workspace-item"].isHittable)
+      XCTAssertTrue(self.notebookOffersCreation(in:self.app))
     }
   }
   private enum Color {

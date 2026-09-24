@@ -333,6 +333,7 @@ final class NotebookAppModel {
   @ObservationIgnored private var acceptingSceneState = false
   @ObservationIgnored private var sceneWindowTask: Task<Void, Never>?
   @ObservationIgnored private var requestedScenePresence: SessionPresence?
+  @ObservationIgnored private var compositionPreparationPresence: SessionPresence?
   @ObservationIgnored private var scenePinnedElements: [UUID: [String]] = [:]
   @ObservationIgnored private var scenePinnedItems: [UUID: [UUID]] = [:]
   @ObservationIgnored private var preparedScene: (index: WorkspaceSceneIndex?, changed: Bool, portals: [UUID: BoardPortalCamera], request: UInt64, coverageOnly: Bool)?
@@ -375,7 +376,11 @@ final class NotebookAppModel {
   }
 
   private func publishPreparedSceneIfPossible() {
-    guard let prepared = preparedScene, prepared.request == scenePreparationRequest,
+    // A local portal pose cannot publish over geometry whose causal placement
+    // has not reached the same read cut yet. The addressed refresh retires this
+    // command before preparing that whole cut.
+    guard itemPlacementCommands.isEmpty,
+      let prepared = preparedScene, prepared.request == scenePreparationRequest,
       !prepared.changed || (!peerInputIsActive && (!inputIsActive || historyContactPermitsPublication
         || (prepared.coverageOnly && !inputGate.hasActivePencil))) else { return }
     scenePortalCameras = prepared.portals
@@ -416,6 +421,7 @@ final class NotebookAppModel {
   /// The camera can replace one pending coverage request without growing a queue.
   func prepareComposition(presence: SessionPresence, frame: WorkspaceSceneFrame?,
     pinned: Set<WorkspaceSpatialID>, displayScale: Double, installedItemOwners: [UUID: UUID] = [:]) {
+    compositionPreparationPresence = presence
     let elements = pinned.compactMap { id -> String? in
       if case .element(let value) = id { return value }; return nil
     }.sorted()
@@ -440,7 +446,9 @@ final class NotebookAppModel {
     }
     // An addressed pin is still being fetched. Do not turn the previous
     // partial index into a failed complete source for this new request.
-    if missingPin || missingGroup || missingItemPin { compositionTiles.cancelPreparation(); return }
+    if missingPin || missingGroup || missingItemPin || sceneCoverage[presence.boardID] == nil {
+      compositionTiles.cancelPreparation(); return
+    }
     guard permitsScenePreparation else { compositionTiles.cancelPreparation(); return }
     if scenePreparationPending {
       // Extending the same SQL cut must not cancel the image already on its
@@ -515,9 +523,14 @@ final class NotebookAppModel {
             return
           }
           guard !inputGate.hasActivePencil else { externalReloadPending = true; return }
-          guard itemPins == scenePinnedItems else { requestedScenePresence = self.presence; continue }
-          guard self.presence?.boardID == requested.boardID,
-            self.presence?.selectedItemID == requested.selectedItemID else { continue }
+          guard itemPins == scenePinnedItems else { requestedScenePresence = compositionPreparationPresence; continue }
+          // A prepared destination is not yet the accepted location. Only the
+          // latest composition request may publish its addressed read; reversing
+          // or replacing the passage invalidates that request immediately.
+          let current=compositionPreparationPresence ?? self.presence
+          guard current?.boardID == requested.boardID,
+            current?.focusedItemID == requested.focusedItemID,
+            current?.selectedItemID == requested.selectedItemID else { continue }
           acceptItemOwnerInvalidations(state, requested: itemPins)
           workspace = state.workspace
           let retained = Set(state.pagePositions.map(\.pageID))
@@ -621,6 +634,7 @@ final class NotebookAppModel {
     if previous?.boardID != value?.boardID || previous?.mode != value?.mode
       || previous?.focusedItemID != value?.focusedItemID || previous?.notebookPageID != value?.notebookPageID
       || previous?.documentPageIndex != value?.documentPageIndex {
+      drawingTools.releaseGuideIfSurfaceChanged()
       publishSelection()
     }
   }
@@ -1642,11 +1656,7 @@ final class NotebookAppModel {
       #if os(iOS)
         #if DEBUG
         let approvalFixture = try await NotebookApprovalFixture.make(persistence: persistence, author: actorID, directory: store.root)
-        #if targetEnvironment(simulator)
-        let syncFixture = try await SimulatorChatFixture.make(persistence: persistence, author: actorID)
-        #else
-        let syncFixture: NotebookChatController? = nil
-        #endif
+        let syncFixture = try await NotebookChatFixture.make(persistence:persistence,author:actorID)
         let terminalFixture = try await NotebookTerminalFixture.make(persistence: persistence, author: actorID, directory: store.root)
         let fixtureChat = approvalFixture ?? syncFixture ?? terminalFixture
         #else
@@ -2211,43 +2221,13 @@ final class NotebookAppModel {
     return true
   }
 
-  /// Explicit Back stores the child's camera in its parent preview. Zoom never
-  /// transfers navigation ownership.
   @discardableResult
-  func leaveBoard() -> Bool {
-    guard var hierarchy = boardHierarchy, let presence,
-      let parentID = hierarchy.parentBoardID(of: presence.boardID),
-      let center = hierarchy.focusedCenter(of: presence.boardID, in: parentID), center.isValid
-    else { return false }
-    let portalCamera = BoardPortalProjection.portalCamera(from: presence.camera, viewport: presence.viewport)
-    let parentCamera = BoardPortalProjection.parentBoundaryCamera(portalCenter: center, viewport: presence.viewport)
-    // A local passage changes only coordinates. When both physical owners are
-    // already represented, its normalized camera must reach the very first
-    // parent frame, rather than wait for a background metadata comparison.
-    let carriesPreparedGeometry = sceneIndex?.board(id: presence.boardID)?.stamp == hierarchy.board(presence.boardID)?.stamp
-      && sceneIndex?.board(id: parentID)?.stamp == hierarchy.board(parentID)?.stamp
-    if hierarchy.updatePortalCamera(
-      portalCamera,
-      for: presence.boardID,
-      actor: actorID
-    ) {
-      persistBoard(hierarchy)
-    }
-    if carriesPreparedGeometry {
-      scenePortalCameras[presence.boardID] = portalCamera
-    }
-    selectItem(presence.boardID)
-    updatePresence(
-      SessionPresence(
-        boardID: parentID,
-        mode: .cover,
-        camera: parentCamera,
-        viewport: presence.viewport,
-        focusedItemID: presence.boardID,
-        openProgress: 1
-      ),
-      settled: true
-    )
+  func rememberBoardReturn(_ child:SessionPresence,portal:BoardPortalCamera) -> Bool {
+    guard var hierarchy=boardHierarchy,let parent=hierarchy.parentBoardID(of:child.boardID) else { return false }
+    let carriesPreparedGeometry=pendingCollaborationCommands.isEmpty && sceneIndex?.board(id:child.boardID)?.stamp == hierarchy.board(child.boardID)?.stamp
+      && sceneIndex?.board(id:parent)?.stamp == hierarchy.board(parent)?.stamp
+    if hierarchy.updatePortalCamera(portal,for:child.boardID,actor:actorID) { persistBoard(hierarchy) }
+    if carriesPreparedGeometry { scenePortalCameras[child.boardID]=portal }
     return true
   }
 
@@ -2271,7 +2251,7 @@ final class NotebookAppModel {
       readingRestoreTarget = nil
     }
     let resolved: SessionPresence
-    let selectionItem = presence.selectedItemID ?? self.presence?.selectedItemID
+    let selectionItem = presence.selectedItemID ?? presence.focusedItemID ?? self.presence?.selectedItemID
     let selectedPage = presence.notebookPageID
       ?? (selectionItem == self.presence?.selectedItemID ? self.presence?.notebookPageID : nil)
       ?? selectionItem.flatMap { workspace?.item(id: $0)?.pageIDs.first }
@@ -2846,7 +2826,7 @@ final class NotebookAppModel {
     case .text: drawingToolSettings.textColor
     case .connector: drawingToolSettings.connectionColor
     case .laser: drawingToolSettings.laserColor
-    case .pen, .ruler, .eraser, .lasso: penStyle.color
+    case .pen, .eraser, .lasso: penStyle.color
     }
   }
   func selectDrawingColor(_ color: PenColor) {
@@ -2856,7 +2836,7 @@ final class NotebookAppModel {
     case .text: drawingToolSettings.textColor = color
     case .connector: drawingToolSettings.connectionColor = color
     case .laser: drawingToolSettings.laserColor = color
-    case .pen, .ruler:
+    case .pen:
       guard color != penStyle.color else { return }
       penStyle = PenStyle(color:color,width:penStyle.width,minimumOpacity:penStyle.minimumOpacity)
       savePenStyle()
@@ -2915,7 +2895,6 @@ final class NotebookAppModel {
     drawingTools.cancel()
     clearSelection()
     drawingTool = tool
-    if tool == .ruler { drawingTools.placeRuler() }
   }
 
   /// All local admissions invalidate previous asynchronous selection work.
@@ -3069,7 +3048,7 @@ final class NotebookAppModel {
     _ = applySelectionEdits(edits,summary:radians == 0 ? "Масштабировать выделение" : "Повернуть выделение")
   }
 
-  func duplicateGraphicSelection() {
+  func duplicateGraphicMaterial() {
     if let region=selectionSession.region,let prepared=region.materialization {
       let f=region.frame,bounds=region.address.bounds
       let offset=SpatialPoint(x:min(24,max(0,bounds.map { $0.maxX-f.x-f.width } ?? 24)),

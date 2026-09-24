@@ -71,17 +71,6 @@ struct NotebookDrawingToolSettingsView: View {
             selected:(model.drawingToolSettings.connectionDash ?? .solid) == dash) { model.drawingToolSettings.connectionDash = dash }
         }
       }
-    case .ruler:
-      slider("Угол: \(Int(model.drawingToolSettings.rulerAngle))°",path:\.rulerAngle,range:-180...180,id:"ruler-angle",step:1)
-      HStack {
-        ForEach([0.0,45,90],id:\.self) { angle in
-          Button("\(Int(angle))°") { model.drawingToolSettings.rulerAngle = angle }
-        }
-      }
-      Toggle("Привязка длины к сетке",isOn:binding(\.rulerSnapToGrid)).accessibilityIdentifier("ruler-grid")
-      Text("Пальцем перемещайте линейку; круглый конец поворачивает. 1 см = 2 клетки.")
-        .font(.caption).foregroundStyle(.secondary)
-        .onChange(of:model.drawingToolSettings.rulerAngle) { _,angle in model.drawingTools.ruler?.angle = angle }
     case .laser:
       slider("След: \(String(format:"%.1f",model.drawingToolSettings.laserDuration)) с",path:\.laserDuration,range:0.2...2,id:"laser-duration",step:0.1)
     case .pen, .eraser: EmptyView()

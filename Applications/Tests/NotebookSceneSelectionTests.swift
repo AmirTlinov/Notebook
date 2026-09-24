@@ -98,7 +98,7 @@ import XCTest
     recognizer.isEnabled = false; recognizer.isEnabled = true
     try await Task.sleep(for: .milliseconds(16))
     begin(); try await Task.sleep(for: .milliseconds(320))
-    XCTAssertEqual(begins,1)
+    XCTAssertEqual(begins,0,"A quiet hold arms pickup; only movement starts a model edit")
     touch.point.x += 20; recognizer.touchesMoved([touch],with:UIEvent())
     XCTAssertTrue(recognizer.cancelsTouchesInView)
     XCTAssertTrue(recognizer.canPrevent(nativeHold), "The lifted material cannot also select text or open a link menu")
@@ -107,6 +107,38 @@ import XCTest
     recognizer.touchesEnded([touch], with: UIEvent())
     XCTAssertEqual(drops, 1)
     recognizer.cancelSelection(); gate.endFingerContacts([ObjectIdentifier(touch)])
+  }
+
+  func testHoldReleaseOpensMenuButHoldDragCommitsOnlyTheFrozenTarget() async throws {
+    let gate=NotebookInputGate(),recognizer=SceneSelectionRecognizer(),touch=SelectionTouch()
+    let view=UIView();view.addGestureRecognizer(recognizer);recognizer.gate=gate
+    var menus=0,begins=0,drops=0
+    recognizer.onPoint={ _,_ in XCTFail("Hold is not a tap") }
+    recognizer.onHold={ _ in menus += 1 }
+    recognizer.onLift={ _ in .init(requiresHold:true,begin:{ begins += 1 },change:{ _ in },end:{ _ in drops += 1 },cancel:{}) }
+    recognizer.touchesBegan([touch],with:UIEvent())
+    recognizer.onHold={ _ in XCTFail("The accepted menu target cannot change during the contact") }
+    try await Task.sleep(for:.milliseconds(320))
+    XCTAssertEqual(begins,0);XCTAssertEqual(menus,0)
+    recognizer.touchesEnded([touch],with:UIEvent())
+    XCTAssertEqual(menus,1);XCTAssertEqual(drops,0)
+    recognizer.onHold={ _ in menus += 1 }
+    recognizer.isEnabled=false;recognizer.isEnabled=true
+    try await Task.sleep(for:.milliseconds(16))
+    recognizer.touchesBegan([touch],with:UIEvent())
+    try await Task.sleep(for:.milliseconds(320))
+    recognizer.onLift={ _ in XCTFail("The frozen target cannot be replaced");return nil }
+    touch.point.x += 30;recognizer.touchesMoved([touch],with:UIEvent())
+    recognizer.touchesEnded([touch],with:UIEvent())
+    XCTAssertEqual(menus,1);XCTAssertEqual(begins,1);XCTAssertEqual(drops,1)
+    recognizer.onHold={ _ in menus += 1 }
+    recognizer.isEnabled=false;recognizer.isEnabled=true
+    try await Task.sleep(for:.milliseconds(16));recognizer.onLift=nil
+    recognizer.touchesBegan([touch],with:UIEvent())
+    try await Task.sleep(for:.milliseconds(320))
+    recognizer.touchesBegan([SelectionTouch()],with:UIEvent())
+    recognizer.touchesEnded([touch],with:UIEvent())
+    XCTAssertEqual(menus,1,"A second finger cancels the pending context command")
   }
 
   func testFingerTapSelectsOnceAndPaperMotionRemainsNavigation() {

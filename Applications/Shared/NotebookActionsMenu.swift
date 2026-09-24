@@ -30,8 +30,9 @@ struct NotebookActionsMenu: View {
   }
 }
 
-private struct NotebookActionsContent: View {
+struct NotebookActionsContent: View {
   let destination: NotebookPasteDestination
+  var onClose: (() -> Void)? = nil
   @Environment(NotebookAppModel.self) private var model
   @Environment(\.dismiss) private var dismiss
   @State private var presentation: Composition?
@@ -41,6 +42,8 @@ private struct NotebookActionsContent: View {
     let id = UUID()
     let source: String
   }
+
+  private func close() { if let onClose { onClose() } else { dismiss() } }
 
   var body: some View {
     VStack(alignment: .leading, spacing: 8) {
@@ -53,8 +56,8 @@ private struct NotebookActionsContent: View {
             switch try await NotebookClipboard.read(providers, availableSize: destination.availableSize) {
             case .composition(let source): presentation = .init(source: source)
             case .fragment(let fragment):
-              if await model.insertClipboardFragment(fragment, at: destination) { dismiss() }
-              else { failure = "Не удалось сохранить. Попробуйте ещё раз." }
+              if await model.insertClipboardFragment(fragment, at: destination) { close() }
+              else { failure = model.persistenceFailure ?? model.actionCue ?? "Не удалось сохранить. Попробуйте ещё раз." }
             }
           } catch { failure = error.localizedDescription }
         }
@@ -70,7 +73,7 @@ private struct NotebookActionsContent: View {
     }
     .padding(.horizontal, 16).padding(.vertical, 4)
     .frame(width: failure == nil ? 136 : 280).background(NotebookChrome.surface)
-    .sheet(item: $presentation, onDismiss: { dismiss() }) { value in
+    .sheet(item: $presentation, onDismiss: { close() }) { value in
       NotebookTldrawCompositionView(destinations: [destination], initialSource: value.source,
         onClose: { presentation = nil }).environment(model)
     }

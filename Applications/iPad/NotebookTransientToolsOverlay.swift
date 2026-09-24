@@ -35,8 +35,8 @@ struct NotebookTransientToolsOverlay: View {
     } else if let pending=model.drawingTools.pendingLasso,let zero=origin(pending.address) {
       contour(pending.points,origin:zero)
     }
-    if model.drawingTool == .ruler, let ruler = model.drawingTools.ruler, let zero = origin(ruler.address) {
-      NotebookRulerControl(model:model,ruler:ruler,origin:zero,scale:presence.camera.scale)
+    if model.drawingTools.guideEnabled, let guide = model.drawingTools.guide, let zero = origin(guide.address) {
+      NotebookGuideControl(model:model,guide:guide,origin:zero,scale:presence.camera.scale)
     }
   }
     }

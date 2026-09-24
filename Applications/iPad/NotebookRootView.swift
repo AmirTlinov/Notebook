@@ -5,10 +5,14 @@ struct NotebookRootView: View {
   @Environment(NotebookAppModel.self) private var model
   @State private var topBarFrame = CGRect.zero
   @State private var documentMode = DocumentViewMode.paper
-  @State private var backRequest: UInt64 = 0
+  @State private var chromeHidden = false
   #if DEBUG
     @State private var remoteProofPhase: String?
   #endif
+
+  private var chatNeedsAttention: Bool {
+    model.chat?.conversation?.requests.isEmpty == false || model.chat?.voice.error != nil || model.chat?.dictation.notice != nil
+  }
 
   var body: some View {
     ZStack {
@@ -28,7 +32,7 @@ struct NotebookRootView: View {
           } else { Color.clear }
         case .ready:
           DocumentSourceWorkspace(mode: $documentMode, topInset: max(74, topBarFrame.maxY - geometry.frame(in: .global).minY + 8),
-            allowsBeside: geometry.size.width > geometry.size.height) { SpatialWorkspaceView(backRequest: backRequest) }
+            allowsBeside: geometry.size.width > geometry.size.height) { SpatialWorkspaceView(chromeHidden:$chromeHidden,documentMode:$documentMode) }
         case .failed(let message):
           Text(message)
             .font(.footnote)
@@ -63,11 +67,13 @@ struct NotebookRootView: View {
           .accessibilityIdentifier("persistence-failure")
         }
 
-        if let presence = model.presence {
-          NotebookTopBar(presence: presence, documentMode: $documentMode, allowsBeside: geometry.size.width > geometry.size.height) { backRequest &+= 1 }
-            .background(NotebookControlRegion(gate: model.inputGate))
+        if model.presence != nil {
+          NotebookTopBar()
+            .background(NotebookControlRegion(gate:model.inputGate))
+            .opacity(chromeHidden ? 0 : 1).allowsHitTesting(!chromeHidden)
+            .accessibilityHidden(chromeHidden).environment(\.notebookChromeVisible,!chromeHidden)
             .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { topBarFrame = $0 }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
             .padding(.horizontal, 18).padding(.top, 18)
         }
 
@@ -109,7 +115,11 @@ struct NotebookRootView: View {
         // keyboard avoidance never publishes a SessionPresence or remounts paper.
         let available = CGRect(x: 18, y: top, width: max(44, geometry.size.width - 36),
           height: max(44, geometry.size.height - 80 - top))
-        NotebookChatWindow(chat: chat, available: available)
+        NotebookChatWindow(chat:chat,available:available)
+          .opacity(chromeHidden && !chatNeedsAttention ? 0 : 1)
+          .allowsHitTesting(!chromeHidden || chatNeedsAttention)
+          .accessibilityHidden(chromeHidden && !chatNeedsAttention)
+          .environment(\.notebookChromeVisible,!chromeHidden || chatNeedsAttention)
       }
       // Both task presentations use available window space. A widget may own
       // the keyboard while the companion must remain reachable. The separate

@@ -129,11 +129,13 @@ final class NotebookInputGate {
   var permitsNewContact: Bool { newContactAdmission() }
   var onActivityChange: ((Bool) -> Void)?
   var onNewAcceptedContact: (() -> Void)?
+  private(set) var acceptedContactGeneration: UInt64 = 0
 
   /// Native down events are distinct from aggregate activity: an existing
   /// Pencil or a pose animation may keep activity true across another contact.
   func notifyAcceptedContact() {
     guard permitsNewContact else { return }
+    acceptedContactGeneration &+= 1
     onNewAcceptedContact?()
   }
 

@@ -43,10 +43,8 @@ import NotebookCore
     web.stopLoading()
   }
   func testActualWebAudioGateKeepsWaitingLocalAndMuteReleasesTheMicrophoneWithoutASecondPeer() async throws {
-    guard AVCaptureDevice.authorizationStatus(for: .audio) == .denied else {
-      XCTFail("Synthetic WebAudio requires denied hardware capture: simctl privacy <test-device> revoke microphone com.amirtlinov.notebook")
-      return
-    }
+    // Replace getUserMedia before voicePrepare. The production worklet measures
+    // actual synthetic samples; WebKit still owns its native WebRTC permission.
     let config = WKWebViewConfiguration(); config.websiteDataStore = .nonPersistent()
     config.allowsInlineMediaPlayback = true; config.mediaTypesRequiringUserActionForPlayback = []
     let sink = VoiceMessages(); config.userContentController.add(sink, name: "notebookVoice")
@@ -63,14 +61,20 @@ import NotebookCore
       try await Task.sleep(for: .milliseconds(30))
     }
     _ = try await web.callAsyncJavaScript("""
-      window.captures=0;window.synthetic=[];
-      navigator.mediaDevices.getUserMedia=async()=>{
+      window.captures=0;window.synthetic=[];window.inputGain=null;
+      MediaDevices.prototype.getUserMedia=async()=>{
         captures++;const ac=new AudioContext({sampleRate:24000}),dest=ac.createMediaStreamDestination(),osc=ac.createOscillator();
-        osc.connect(dest);osc.start();await ac.resume();synthetic.push(ac);return dest.stream;
+        const gain=ac.createGain();gain.gain.value=.05;osc.connect(gain);gain.connect(dest);window.inputGain=gain;osc.start();await ac.resume();synthetic.push(ac);return dest.stream;
       };
       await window.voicePrepare();
       """, arguments: [:], in: nil, contentWorld: .page)
     XCTAssertGreaterThan(sink.pcm, 0)
+    XCTAssertTrue(sink.levels.contains { $0 > 0.1 && $0 < 0.5 },"The launcher level comes from actual RMS samples")
+    _ = try await web.evaluateJavaScript("window.inputGain.gain.value=0")
+    try await Task.sleep(for:.milliseconds(350))
+    XCTAssertEqual(sink.levels.last,0)
+    let captureCount=try await web.evaluateJavaScript("captures") as? Int;XCTAssertEqual(captureCount,1)
+    _ = try await web.evaluateJavaScript("window.inputGain.gain.value=.05")
     XCTAssertTrue(sink.decodedPCM, "The local owner must receive typed, contiguous Float32 samples, not merely a PCM event")
     let local = try await web.evaluateJavaScript("typeof peer==='undefined' && captures===1") as? Bool
     XCTAssertEqual(local, true, "Before the address there is no connection carrying ambient speech")
@@ -86,18 +90,23 @@ import NotebookCore
     _ = try await web.callAsyncJavaScript("await window.voiceMute(true)", arguments: [:], in: nil, contentWorld: .page)
     let off = try await web.evaluateJavaScript("microphone===null && originalTrack.readyState==='ended' && peer===originalPeer") as? Bool
     XCTAssertEqual(off, true, "Mute stops capture, not just track transmission")
+    try await Task.sleep(for:.milliseconds(150));XCTAssertEqual(sink.levels.last,0)
     let count = sink.pcm; try await Task.sleep(for: .milliseconds(250)); XCTAssertEqual(sink.pcm, count)
     _ = try await web.callAsyncJavaScript("await window.voiceMute(false)", arguments: [:], in: nil, contentWorld: .page)
     let resumed = try await web.evaluateJavaScript("captures===2 && peer===originalPeer") as? Bool
-    XCTAssertEqual(resumed, true)
-    let repeatRejected = try await web.callAsyncJavaScript("try { await window.voiceOffer(0); return false } catch { return true }", arguments: [:], in: nil, contentWorld: .page) as? Bool
-    XCTAssertEqual(repeatRejected, true)
+    let captureState=try await web.evaluateJavaScript("JSON.stringify({captures,unchanged:peer===originalPeer})")
+    XCTAssertEqual(resumed,true,String(describing:captureState))
+    let repeatState = try await web.callAsyncJavaScript("const before=peer;try { await window.voiceOffer(0);return JSON.stringify({rejected:false,unchanged:peer===before}) } catch(error) { return JSON.stringify({rejected:true,unchanged:peer===before,message:String(error)}) }", arguments: [:], in: nil, contentWorld: .page) as? String
+    let repeatData=try XCTUnwrap(repeatState?.data(using:.utf8))
+    let repeatResult=try XCTUnwrap(JSONSerialization.jsonObject(with:repeatData) as? [String:Any])
+    XCTAssertEqual(repeatResult["rejected"] as? Bool,true,repeatState ?? "No result")
+    XCTAssertEqual(repeatResult["unchanged"] as? Bool,true,repeatState ?? "No result")
     _ = try await web.callAsyncJavaScript("await window.voiceEnd();for(const ac of synthetic)await ac.close()", arguments: [:], in: nil, contentWorld: .page)
     let released = try await web.evaluateJavaScript("peer===null && context===null && microphone===null && gate===null") as? Bool
     XCTAssertEqual(released, true); XCTAssertTrue(sink.errors.isEmpty, "\(sink.errors)")
   }
   @MainActor private final class VoiceMessages: NSObject, WKScriptMessageHandler {
-    var pcm = 0; var errors: [String] = []
+    var pcm = 0; var errors: [String] = []; var levels:[Double]=[]
     var decodedPCM = false
     private var nextFrame = 0
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
@@ -111,6 +120,7 @@ import NotebookCore
         }
         nextFrame += data.count / 4; decodedPCM = true
       }
+      if value["type"] as? String == "level",let level=value["value"] as? Double { levels.append(level) }
       if value["type"] as? String == "failed" { errors.append(value["message"] as? String ?? "failed") }
     }
   }

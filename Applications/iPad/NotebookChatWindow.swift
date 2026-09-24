@@ -122,18 +122,17 @@ struct NotebookChatWindow: View {
   @State private var interaction: (frame: CGRect, available: CGRect, layout: NotebookChatWindowLayout)?
   @State private var liveLayout: NotebookChatWindowLayout?
   @State private var interruptedDrag = false
-  @State private var companionControlsSize = CGSize(width: 148, height: NotebookChrome.controlSize)
 
   private var layout: NotebookChatWindowLayout { liveLayout ?? .init(restoring: savedLayout) }
 
   var body: some View {
-    let preferred = NotebookCompanion.preferredSize(chat: chat, available: available.size, contextCount: model.agentQuestion?.references.count ?? 0)
+    let preferred = NotebookCompanion.preferredSize(chat: chat, available: available.size)
     let companion = layout.companion(in: available,
       preferredSize: preferred,
-      controlsSize: .init(width: chat.dictation.busy ? preferred.width : companionControlsSize.width, height: companionControlsSize.height))
+      controlsSize: NotebookCompanion.controlsSize)
     let frame = chat.expanded ? layout.frame(in: available, expanded: true) : companion.frame
     NotebookChatPanel(chat: chat, size: frame.size,
-      companion: companion, onCompanionControlsSize: { if $0.width > 0, $0.height > 0 { companionControlsSize = $0 } },
+      companion: companion,
       move: { update($0, ended: $1, corner: nil, frame: chat.expanded ? frame : companion.movementFrame) },
       resize: { update($0, ended: $1, corner: $2, frame: frame) },
       endInteraction: { interruptedDrag = false; finishInteraction() })

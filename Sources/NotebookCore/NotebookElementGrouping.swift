@@ -142,6 +142,12 @@ public struct NotebookElementPlacement: Equatable, Sendable {
     return (frame,basis)
   }
 
+  /// Exporting a selected root retains its complete body-to-surface transform
+  /// without borrowing ancestors that are not part of the copied material.
+  public func detached() throws -> (frame:PageRect,basis:NotebookElementBasis) {
+    try Self.represented(local:transform,size:localSize)
+  }
+
   public func parentVector(_ vector: SpatialPoint) -> SpatialPoint? { Self.vector(vector,through:parentTransform) }
   public func bodyVector(_ vector: SpatialPoint) -> SpatialPoint? { Self.vector(vector,through:transform) }
   private static func vector(_ v: SpatialPoint,through t: CGAffineTransform) -> SpatialPoint? {

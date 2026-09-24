@@ -7,7 +7,8 @@ import NotebookCore
 /// Clipboard representations are input, never a second document or storage owner.
 /// Only an explicit system paste (or the Mac menu command) calls this reader.
 enum NotebookClipboard {
-  static let types: [UTType] = [.html, .json, .image, .url, .plainText]
+  static let fragmentType = UTType(exportedAs:"com.amirtlinov.notebook.fragment",conformingTo:.json)
+  static let types: [UTType] = [fragmentType, .html, .json, .image, .url, .plainText]
   enum Content: Sendable {
     case composition(String)
     case fragment(NotebookPasteFragment)
@@ -17,12 +18,28 @@ enum NotebookClipboard {
     case image(Data)
   }
 
+  static func representations(_ fragment:NotebookPasteFragment) throws -> [String:Any] {
+    let data=try JSONEncoder().encode(fragment)
+    guard data.count <= 16 * 1_048_576 else { throw failure("Выделение слишком большое для буфера.") }
+    var item:[String:Any]=[fragmentType.identifier:data]
+    if fragment.elements.count == 1,let text=fragment.elements.first,text.kind == .nativeText {
+      item[UTType.utf8PlainText.identifier]=text.source
+    }
+    return item
+  }
+
   @MainActor static func read(_ providers: [NSItemProvider], availableSize: SpatialPoint) async throws -> Content {
     guard !providers.isEmpty else { throw failure("Буфер пуст.") }
     guard providers.count <= 16 else { throw failure("За один раз можно вставить до 16 материалов.") }
     var items: [Item] = []
     var totalImageBytes = 0
     for provider in providers {
+      if provider.hasItemConformingToTypeIdentifier(fragmentType.identifier) {
+        guard providers.count == 1 else { throw failure("Вставьте выделение отдельно от других материалов.") }
+        let bytes = try await data(provider,type:fragmentType,limit:16 * 1_048_576)
+        let fragment = try JSONDecoder().decode(NotebookPasteFragment.self,from:bytes)
+        return .fragment(try fragment.reidentified())
+      }
       // HTML is inspected only for a structured envelope. Ordinary HTML never
       // enters WebKit: use its image/text representation instead, without a fetch.
       for type in [UTType.html, .json] where provider.hasItemConformingToTypeIdentifier(type.identifier) {

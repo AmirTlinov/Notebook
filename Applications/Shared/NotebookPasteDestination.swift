@@ -10,7 +10,13 @@ struct NotebookPasteDestination: Identifiable, Hashable, Sendable {
   let worldOrigin: WorldPoint?
   var id: String { target.kind.rawValue + ":" + target.id.uuidString }
   func offset(for fragment: NotebookPasteFragment) -> SpatialPoint {
-    .init(x:center.x-fragment.size.x/2,y:center.y-fragment.size.y/2)
+    let point=SpatialPoint(x:center.x-fragment.size.x/2,y:center.y-fragment.size.y/2)
+    // A hold near a paper edge still inserts the whole material on that paper.
+    // Boards have no finite edge; oversize paper fragments remain an explicit
+    // validation error instead of being silently resized.
+    guard target.kind != .board else { return point }
+    return .init(x:min(max(0,point.x),max(0,availableSize.x-fragment.size.x)),
+      y:min(max(0,point.y),max(0,availableSize.y-fragment.size.y)))
   }
 }
 

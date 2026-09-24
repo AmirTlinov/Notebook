@@ -78,7 +78,7 @@ struct BoardPortalPreview: View {
       // Passage changes the portal's coordinate projection without changing its
       // physical sources. Keep the prepared pixels, but use the same normalized
       // camera that the continuing contact has just handed back to the parent.
-      let camera = model.scenePortalCamera(boardID: boardID).map {
+      let camera = (composition.portal?.boardID == boardID ? composition.portal?.camera : model.scenePortalCamera(boardID: boardID)).map {
         BoardPortalProjection.entryCamera(portalCamera: $0, viewport: transitionViewport)
       } ?? prepared.camera
       let viewport = prepared.viewport
@@ -176,6 +176,7 @@ struct WorkspaceItemCoverView: View {
   let portalOpenProgress: Double
   let portalViewport: SpatialPoint
   let onTap: (CGPoint, Int) -> Void
+  var onHold: (CGPoint) -> Void = { _ in }
   let onTextEditingEnded: (String) -> Void
   var isPortalProjection = false
   var portalPixelScale: Double = 1
@@ -266,7 +267,8 @@ struct WorkspaceItemCoverView: View {
             onTranslationEnded: { translation in
               pose?.owner?.endTranslation(translation)
             },
-            onCancelled: { pose?.owner?.cancelManipulation() }
+            onCancelled: { pose?.owner?.cancelManipulation() },
+            onHold:onHold
           )
           .frame(
             width: geometry.width,
@@ -530,17 +532,19 @@ struct SpatialBoardGrid: View {
 /// copies may outlive an unmounted view; they locate, but never own, its paint.
 /// The published cohort and concrete tile/ink views retain their actual leases.
 struct SceneCompositionReference: Equatable, Sendable {
+  struct Portal: Equatable,Sendable { let boardID:UUID;let camera:BoardPortalCamera }
+  let portal:Portal?
   let id: UUID?
   private(set) weak var cohort: SceneCompositionCohort?
 
-  init() { id = nil; cohort = nil }
+  init() { id = nil; cohort = nil; portal = nil }
 
   @MainActor
-  init(_ cohort: SceneCompositionCohort?) {
-    id = cohort?.paintID; self.cohort = cohort
+  init(_ cohort: SceneCompositionCohort?,portal:Portal? = nil) {
+    id = cohort?.paintID; self.cohort = cohort;self.portal=portal
   }
 
-  static func == (lhs: Self, rhs: Self) -> Bool { lhs.id == rhs.id }
+  static func == (lhs: Self, rhs: Self) -> Bool { lhs.id == rhs.id && lhs.portal == rhs.portal }
 }
 
 private struct SceneCompositionKey: EnvironmentKey {

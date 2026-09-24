@@ -1,0 +1,264 @@
+{
+  "baseCommit": "f8fb6fb9573d270ec94f58432087fdbc732c597d",
+  "sourceSHA256": "37cec4fb39d08a73929e0baba97f786ac5f264f86cf32a186be04470eba3aa06",
+  "patchSHA256": "f92a41248b62641f10a7e0dc3ccfd9b9e1aef0afae4c74e00056554179e65e2a",
+  "device": {
+    "architecture": "arm64",
+    "deviceId": "00008103-001E059934D9001E",
+    "deviceName": "iPad (Елизавета)",
+    "modelName": "iPad Pro (11-inch) (3rd generation)",
+    "osBuildNumber": "24A435",
+    "osVersion": "27.0",
+    "platform": "iOS"
+  },
+  "cause": "Deferred SwiftUI pageTurnIsActive denied a new reverse after the native landing had already released its page owner.",
+  "change": "Remove its duplicate contentIsInteractive condition; native refreshControllerState keeps synchronous transition input exclusion.",
+  "fixed": {
+    "evidence": ".build/gui295-immediate-reverse-gate-final",
+    "passedTests": 30,
+    "failedTests": 0,
+    "skippedTests": 0,
+    "runtimeWarnings": [],
+    "sourceUnchanged": true,
+    "tests": [
+      "NotebookTests/NotebookPageLifecycleUXTests/testDenseVectorSheetsKeepTheirOwnPixelsThroughImmediateReversals",
+      "NotebookTests/NotebookPageLifecycleUXTests/testNativePageTurnsShowTheStoredLeafAfterEvictionReverseAndCancellation",
+      "NotebookTests/NotebookPageLifecycleUXTests/testPeerRemovedLeafCannotCommitAnOldCurlIntoItsReplacementSlot",
+      "NotebookTests/NotebookPageLifecycleUXTests/testPresentedLandingAdmitsTheNextReverseBeforeSwiftUIRepublishesInput",
+      "NotebookTests/PageTurnSelectionTests"
+    ],
+    "renderInspected": "attachments/11417B49-EE05-4872-B746-1504564D2B13.png"
+  },
+  "diagnostics": [
+    {
+      "experiment": "baseline afterScreenUpdates=false",
+      "evidence": ".build/gui295-page-presentation-probe/native",
+      "sourceSHA256": "aa18841fe1c2355e24de012bf30a9da3eb48b68b9b24b2d5fb5370dcd3c761b8",
+      "passed": 0,
+      "failed": 3,
+      "skipped": 0,
+      "runtimeWarnings": []
+    },
+    {
+      "experiment": "rejected synchronous afterScreenUpdates=true",
+      "evidence": ".build/gui295-page-presentation-probe/current-capture-checked",
+      "sourceSHA256": "53745fb565ba693ac0d8814d7fee0e041b0579dd291011ae7b5425f9f05c7bf0",
+      "passed": 3,
+      "failed": 3,
+      "skipped": 0,
+      "runtimeWarnings": []
+    },
+    {
+      "experiment": "rejected capture after UIUpdateLink CA commit, plus gate fix",
+      "evidence": ".build/gui295-page-presentation-probe/committed-capture",
+      "sourceSHA256": "6003cbde2ce254da9c932479c50e0505a5a153766920566bd62dc9a6e77eaad9",
+      "passed": 7,
+      "failed": 2,
+      "skipped": 0,
+      "runtimeWarnings": []
+    }
+  ],
+  "captureExperiments": {
+    "synchronousScreenUpdates": {
+      "percentileMethod": "nearest-rank p95/p99; median p50",
+      "firstResponseMS": {
+        "count": 10,
+        "p50": 65.35895833803806,
+        "p95": 99.43266666959971,
+        "p99": 99.43266666959971,
+        "max": 99.43266666959971
+      },
+      "landingMS": {
+        "count": 10,
+        "p50": 326.90193750022445,
+        "p95": 329.24608333269134,
+        "p99": 329.24608333269134,
+        "max": 329.24608333269134
+      },
+      "presentedGapsMS": {
+        "count": 304,
+        "p50": 8.336666680406779,
+        "p95": 8.336833358043805,
+        "p99": 12.505000020610169,
+        "max": 16.673500009346753
+      },
+      "droppedFrames": 13,
+      "turns": [
+        {
+          "turn": 0,
+          "commandMs": 44.334708334645256,
+          "frames": 30,
+          "encodingEndLate": 2,
+          "gpuEndLate": 0
+        },
+        {
+          "turn": 1,
+          "commandMs": 26.257458317559212,
+          "frames": 33,
+          "encodingEndLate": 0,
+          "gpuEndLate": 0
+        },
+        {
+          "turn": 2,
+          "commandMs": 23.514000000432134,
+          "frames": 33,
+          "encodingEndLate": 0,
+          "gpuEndLate": 0
+        },
+        {
+          "turn": 3,
+          "commandMs": 30.770041659707204,
+          "frames": 33,
+          "encodingEndLate": 0,
+          "gpuEndLate": 0
+        },
+        {
+          "turn": 4,
+          "commandMs": 23.672625015024096,
+          "frames": 33,
+          "encodingEndLate": 0,
+          "gpuEndLate": 0
+        },
+        {
+          "turn": 5,
+          "commandMs": 28.66287500364706,
+          "frames": 33,
+          "encodingEndLate": 0,
+          "gpuEndLate": 0
+        },
+        {
+          "turn": 6,
+          "commandMs": 23.596916667884216,
+          "frames": 33,
+          "encodingEndLate": 0,
+          "gpuEndLate": 0
+        },
+        {
+          "turn": 7,
+          "commandMs": 29.540333343902603,
+          "frames": 33,
+          "encodingEndLate": 0,
+          "gpuEndLate": 0
+        },
+        {
+          "turn": 8,
+          "commandMs": 23.25670831487514,
+          "frames": 33,
+          "encodingEndLate": 0,
+          "gpuEndLate": 0
+        },
+        {
+          "turn": 9,
+          "commandMs": 29.019000008702278,
+          "frames": 33,
+          "encodingEndLate": 0,
+          "gpuEndLate": 0
+        }
+      ]
+    },
+    "afterCACommit": {
+      "percentileMethod": "nearest-rank p95/p99; median p50",
+      "firstResponseMS": {
+        "count": 10,
+        "p50": 54.66743749275338,
+        "p95": 67.07770834327675,
+        "p99": 67.07770834327675,
+        "max": 67.07770834327675
+      },
+      "landingMS": {
+        "count": 10,
+        "p50": 327.51329167513177,
+        "p95": 329.31654166895896,
+        "p99": 329.31654166895896,
+        "max": 329.31654166895896
+      },
+      "presentedGapsMS": {
+        "count": 318,
+        "p50": 8.336666680406779,
+        "p95": 8.336833328939974,
+        "p99": 16.672875004587695,
+        "max": 16.67337500839494
+      },
+      "droppedFrames": 12,
+      "turns": [
+        {
+          "turn": 0,
+          "commandMS": 0.6092500116210431,
+          "frames": 34,
+          "encodingEndLate": 0,
+          "gpuEndLate": 0
+        },
+        {
+          "turn": 1,
+          "commandMS": 0.19449999672360718,
+          "frames": 34,
+          "encodingEndLate": 0,
+          "gpuEndLate": 0
+        },
+        {
+          "turn": 2,
+          "commandMS": 0.05404168041422963,
+          "frames": 34,
+          "encodingEndLate": 0,
+          "gpuEndLate": 0
+        },
+        {
+          "turn": 3,
+          "commandMS": 0.2060416736640036,
+          "frames": 34,
+          "encodingEndLate": 0,
+          "gpuEndLate": 0
+        },
+        {
+          "turn": 4,
+          "commandMS": 0.12558334856294096,
+          "frames": 34,
+          "encodingEndLate": 0,
+          "gpuEndLate": 0
+        },
+        {
+          "turn": 5,
+          "commandMS": 0.09379169205203652,
+          "frames": 35,
+          "encodingEndLate": 0,
+          "gpuEndLate": 0
+        },
+        {
+          "turn": 6,
+          "commandMS": 0.1089583383873105,
+          "frames": 34,
+          "encodingEndLate": 0,
+          "gpuEndLate": 0
+        },
+        {
+          "turn": 7,
+          "commandMS": 0.20124998991377652,
+          "frames": 34,
+          "encodingEndLate": 0,
+          "gpuEndLate": 0
+        },
+        {
+          "turn": 8,
+          "commandMS": 0.11262501357123256,
+          "frames": 33,
+          "encodingEndLate": 0,
+          "gpuEndLate": 0
+        },
+        {
+          "turn": 9,
+          "commandMS": 0.07475001621060073,
+          "frames": 34,
+          "encodingEndLate": 0,
+          "gpuEndLate": 0
+        }
+      ]
+    }
+  },
+  "limits": [
+    "Installed production pair remains 197; no new installation in this slice.",
+    "Synthetic recognizer actions in an isolated native application on the physical iPad, not human finger/Pencil acceptance.",
+    "Original capture implementation is unchanged in the final gate-only check. Stale capture and strict timing remain open.",
+    "Other outer navigation/camera reads of the deferred transition notification are not removed by this fix.",
+    "Private imported material was read through installed MCP and reproduced only in isolation; no user payload or temporary probe is committed."
+  ]
+}

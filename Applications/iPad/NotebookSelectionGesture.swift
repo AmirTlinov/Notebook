@@ -9,6 +9,7 @@ struct NotebookSelectionGesture: UIViewRepresentable {
   let inputGate: NotebookInputGate
   let onPoint: (CGPoint, Int) -> Void
   let onLift: (CGPoint) -> SceneSelectionLift?
+  var onHold: ((CGPoint) -> Void)? = nil
   func makeCoordinator() -> Coordinator { Coordinator() }
   func makeUIView(context: Context) -> GestureAnchorView {
     let view = GestureAnchorView(); view.isUserInteractionEnabled = false
@@ -21,6 +22,7 @@ struct NotebookSelectionGesture: UIViewRepresentable {
     context.coordinator.gate = inputGate
     context.coordinator.recognizer.onPoint = onPoint
     context.coordinator.recognizer.onLift = onLift
+    context.coordinator.recognizer.onHold = onHold
     context.coordinator.install(view)
   }
   static func dismantleUIView(_ view: GestureAnchorView, coordinator: Coordinator) { coordinator.uninstall() }
@@ -81,6 +83,9 @@ enum NotebookObjectPickup {
 final class SceneSelectionRecognizer: UIGestureRecognizer {
   var onPoint: ((CGPoint, Int) -> Void)?
   var onLift: ((CGPoint) -> SceneSelectionLift?)?
+  var onHold: ((CGPoint) -> Void)?
+  private var held = false
+  private var acceptedHold: ((CGPoint) -> Void)?
   private var lift: SceneSelectionLift?
   weak var coordinateView: UIView?
   var gate: NotebookInputGate?
@@ -120,7 +125,7 @@ final class SceneSelectionRecognizer: UIGestureRecognizer {
   override func canBePrevented(by preventingGestureRecognizer: UIGestureRecognizer) -> Bool { false }
   func cancelSelection() {
     holdTask?.cancel(); holdTask = nil
-    touch = nil
+    touch = nil; acceptedHold = nil; held = false
     if dragging { dragging = false; lift?.cancel() }
     lift = nil
     if state == .possible { state = .failed }
@@ -130,6 +135,7 @@ final class SceneSelectionRecognizer: UIGestureRecognizer {
     guard touch == nil, touches.count == 1,
       event.allTouches?.filter({ $0.phase != .ended && $0.phase != .cancelled }).count ?? 1 == 1,
       let first = touches.first, first.type == .direct, let revision = gate?.beginFingerSequence() else { cancelSelection(); return }
+    held = false; acceptedHold = onHold
     touch = first; start = first.location(in: coordinateView); self.revision = revision
     // The SwiftUI anchor can move while the keyboard or a menu is dismissed.
     // Physical displacement belongs to the stationary window, not that layout.
@@ -142,7 +148,7 @@ final class SceneSelectionRecognizer: UIGestureRecognizer {
     // A native link keeps its tap until this material is actually picked up.
     cancelsTouchesInView = nativeTapOwner != nil
     if nativeTapOwner != nil && lift == nil { cancelSelection(); return }
-    if lift?.requiresHold == true {
+    if lift?.requiresHold == true || acceptedHold != nil {
       holdTask = Task { [weak self] in
         do { try await Task.sleep(for: NotebookObjectPickup.delay) } catch { return }
         guard !Task.isCancelled, let self, let touch = self.touch else { return }
@@ -150,7 +156,9 @@ final class SceneSelectionRecognizer: UIGestureRecognizer {
         guard hypot(point.x - self.windowStart.x, point.y - self.windowStart.y) < NotebookObjectPickup.movementThreshold else {
           self.cancelSelection(); return
         }
-        self.beginLift()
+        self.held = true
+        self.gate?.claimSceneObjectContact(ObjectIdentifier(touch))
+        if self.state == .possible { self.state = .began }
       }
     } else if lift != nil {
       gate?.claimSceneObjectContact(ObjectIdentifier(first))
@@ -174,7 +182,7 @@ final class SceneSelectionRecognizer: UIGestureRecognizer {
     let point = touch.location(in:view)
     let delta = CGPoint(x:point.x-windowStart.x,y:point.y-windowStart.y)
     if !dragging, hypot(delta.x,delta.y) >= NotebookObjectPickup.movementThreshold {
-      guard let lift, !lift.requiresHold else { cancelSelection(); return }
+      guard let lift, !lift.requiresHold || held else { cancelSelection(); return }
       beginLift()
     }
     guard dragging else { return }
@@ -194,6 +202,8 @@ final class SceneSelectionRecognizer: UIGestureRecognizer {
     if dragging, let lift {
       self.lift = nil; dragging = false
       lift.end(CGPoint(x:point.x-windowStart.x,y:point.y-windowStart.y))
+    } else if held, let acceptedHold {
+      self.lift = nil; held = false; self.acceptedHold = nil; acceptedHold(start)
     } else if nativeTapOwner != nil {
       self.lift = nil; state = .failed; return
     } else {
@@ -203,7 +213,7 @@ final class SceneSelectionRecognizer: UIGestureRecognizer {
     state = .ended
   }
   override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent) { cancelSelection() }
-  override func reset() { super.reset(); holdTask?.cancel(); holdTask = nil; touch = nil; revision = nil; nativeTapOwner = nil; cancelsTouchesInView = false; if dragging { dragging = false; lift?.cancel() }; lift = nil }
+  override func reset() { super.reset(); held = false; acceptedHold = nil; holdTask?.cancel(); holdTask = nil; touch = nil; revision = nil; nativeTapOwner = nil; cancelsTouchesInView = false; if dragging { dragging = false; lift?.cancel() }; lift = nil }
 }
 
 /// A window-backed display link supplies an opportunity to inspect the current

@@ -3,35 +3,54 @@ import NotebookCore
 
 struct PenControlsView: View {
   @Environment(NotebookAppModel.self) private var model
-  private enum Panel: Equatable { case tool(DrawingTool), color }
+  private enum Panel: Equatable { case tool(DrawingTool), drawing, figures, geometry, color }
   @State private var panel: Panel?
+  @State private var lastDrawing = DrawingTool.pen
+  @State private var lastFigure = DrawingTool.shape
   var inkOnly = false
-  private var primary: [DrawingTool] { inkOnly ? [.pen,.marker,.eraser] : DrawingTool.primary }
-  private var displayedTools: [DrawingTool] {
-    primary + (!inkOnly && !primary.contains(model.drawingTool) ? [model.drawingTool] : [])
-  }
+  var embedded = false
+  private var drawingTools: [DrawingTool] { inkOnly ? [.pen,.marker] : [.pen,.marker,.laser] }
   private var colorEnabled: Bool { ![DrawingTool.eraser,.lasso].contains(model.drawingTool) }
   private var settingsAnchor: UnitPoint {
-    let count = displayedTools.count+(inkOnly ? 0 : 1)+1
-    let index = panel == .color ? count-1 : displayedTools.firstIndex(of:model.drawingTool) ?? 0
+    let count = inkOnly ? 3 : 7
+    let index: Int
+    switch panel {
+    case .drawing: index = 0
+    case .tool(.eraser): index = 1
+    case .tool(.lasso): index = 2
+    case .tool(.text): index = 3
+    case .figures: index = 4
+    case .geometry: index = 5
+    default: index = count-1
+    }
     return .init(x:(Double(index)+0.5)/Double(count),y:1)
   }
-  var embedded = false
 
   var body: some View {
     HStack(spacing:0) {
-      ForEach(displayedTools,id:\.self) { tool in toolButton(tool) }
+      groupButton(lastDrawing,tools:drawingTools,presentation:.drawing,id:"drawing-group")
+      toolButton(.eraser)
       if !inkOnly {
-        Menu {
-          ForEach(DrawingTool.additional,id:\.self) { tool in
-            Button { model.selectDrawingTool(tool) } label: { Label(tool.title,systemImage:tool.symbol) }
-              .accessibilityIdentifier(tool.accessibilityID)
-          }
-        } label: {
-          Image(systemName:"plus").font(NotebookChrome.iconFont)
-            .frame(width:44,height:44).contentShape(Rectangle())
-        }
-        .accessibilityLabel("Другие инструменты").accessibilityIdentifier("drawing-tools-more")
+        toolButton(.lasso); toolButton(.text)
+        groupButton(lastFigure,tools:[.shape,.connector],presentation:.figures,id:"figure-group")
+        Image(systemName:model.drawingTools.guideKind.symbol)
+          .frame(width:32,height:32)
+          .background(model.drawingTools.guideEnabled ? NotebookChrome.selectionSurface : .clear,in:RoundedRectangle(cornerRadius:8))
+          .frame(width:44,height:44).contentShape(Rectangle())
+          .gesture(LongPressGesture(minimumDuration:0.45).exclusively(before:TapGesture()).onEnded { gesture in
+            switch gesture {
+            case .first(true): panel = .geometry
+            case .second: model.drawingTools.toggleGuide()
+            default: break
+            }
+          })
+          .accessibilityLabel("Геометрия: \(model.drawingTools.guideKind.title)")
+          .disabled(model.drawingTools.currentGuideSurface == nil)
+          .accessibilityValue(model.drawingTools.guideEnabled ? "Включена" : "Выключена")
+          .accessibilityIdentifier("drawing-guide-toggle").accessibilityAddTraits(.isButton)
+          .accessibilityAction { model.drawingTools.toggleGuide() }
+          .accessibilityAction(named:"Выбор и настройки") { panel = .geometry }
+        Divider().frame(height:20).padding(.horizontal,6)
       }
       Button { panel = panel == .color ? nil : .color } label: {
         Circle().fill(model.drawingColor.displayColor).frame(width:22,height:22)
@@ -43,14 +62,47 @@ struct PenControlsView: View {
       .accessibilityIdentifier("drawing-primary-color")
     }
     .font(NotebookChrome.iconFont).buttonStyle(.plain)
-    .background { if !embedded { NotebookSurface(radius: NotebookChrome.barHeight / 2).padding(.vertical, 2) } }
+    .background { if !embedded { NotebookSurface(radius:NotebookChrome.barHeight/2).padding(.vertical,2) } }
     .anchorPreference(key:NotebookToolPanelPreference.self,value:.bounds) { toolbar in
       panel == nil ? nil : .init(toolbar:toolbar,anchor:settingsAnchor,
         content:AnyView(settings.environment(model)),dismiss:{ panel = nil })
     }
-    .onChange(of:model.drawingTool) { _,_ in panel = nil }
+    .onChange(of:model.drawingTool,initial:true) { _,tool in
+      if drawingTools.contains(tool) { lastDrawing = tool }
+      if [.shape,.connector].contains(tool) { lastFigure = tool }
+      if panel == .drawing && drawingTools.contains(tool) || panel == .figures && [.shape,.connector].contains(tool) { return }
+      panel = nil
+    }
     .onChange(of:inkOnly,initial:true) { _,onlyInk in
       if onlyInk && !model.drawingTool.usesInkJournal { panel = nil; model.selectDrawingTool(.pen) }
+    }
+  }
+
+  private func groupButton(_ remembered: DrawingTool, tools: [DrawingTool], presentation: Panel, id: String) -> some View {
+    let selected = tools.contains(model.drawingTool)
+    let tool = selected ? model.drawingTool : remembered
+    return Button {
+      if selected { panel = panel == presentation ? nil : presentation }
+      else { panel = nil; model.selectDrawingTool(remembered) }
+    } label: {
+      Image(systemName:tool.symbol).frame(width:32,height:32)
+        .background(selected ? NotebookChrome.selectionSurface : .clear,in:RoundedRectangle(cornerRadius:8))
+        .frame(width:44,height:44).contentShape(Rectangle())
+    }.accessibilityLabel(presentation == .drawing ? "Рисование" : "Фигуры")
+      .accessibilityValue(tool.title).accessibilityIdentifier(id)
+      .accessibilityAddTraits(selected ? .isSelected : [])
+      .accessibilityHint("Повторное нажатие открывает выбор и настройки")
+  }
+
+  private func choices(_ tools: [DrawingTool]) -> some View {
+    HStack(spacing:4) {
+      ForEach(tools,id:\.self) { tool in
+        Button { model.selectDrawingTool(tool) } label: {
+          VStack(spacing:4) { Image(systemName:tool.symbol); Text(tool.title).font(.caption2) }
+            .frame(maxWidth:.infinity,minHeight:44)
+            .background(model.drawingTool == tool ? NotebookChrome.selectionSurface : .clear,in:RoundedRectangle(cornerRadius:8))
+        }.accessibilityIdentifier(tool.accessibilityID).accessibilityAddTraits(model.drawingTool == tool ? .isSelected : [])
+      }
     }
   }
 
@@ -58,7 +110,11 @@ struct PenControlsView: View {
     VStack(alignment:.leading,spacing:10) {
       if panel == .color {
         NotebookToolColorPalette(selection:Binding(get:{ model.drawingColor },set:{ model.selectDrawingColor($0); panel = nil }),prefix:"drawing")
+      } else if panel == .geometry {
+        NotebookGuideSettingsView()
       } else {
+        if panel == .drawing { choices(drawingTools) }
+        if panel == .figures { choices([.shape,.connector]) }
         switch model.drawingTool {
         case .pen:
           PenStrokePreview(style:model.penStyle).frame(height:28)

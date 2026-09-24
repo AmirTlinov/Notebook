@@ -1,5 +1,108 @@
 # Verification record
 
+## 25 September — GUI-300, unified iPad interaction and pair 198
+
+Version **0.3.139 (198)** preserves the content/sync formats, existing pen styles,
+and the previously integrated cover/scene changes. Drawing groups, independent
+physical guides, captured native context actions, blank-tap chrome, one circular
+48pt chat launcher and the top-right toolbar use the existing model/input owners.
+Zoom uses one reversible passage and the existing portal/native camera path.
+The exclusive ruler and whole-object floating action strips were removed.
+
+Final unchanged source input: **dc429febe48824d53857e4df7f64257d951e447bc1e841ff6b1c1e42e0c838d8**.
+`.build/gui300-delivery-d-198`: **10/10 physical iPad tests and 9/9 Mac tests PASS**,
+no skips or runtime warnings. This checks filled-notebook pinch/Back/double-tap,
+retained camera, cancellation, context opening, independent tool settings, the
+48×48 chat/right-aligned toolbar, popover input release, Mac workspace/paste and
+native mouse ink persistence/eraser Undo. The source still carries the original
+page-curl renderer; the independently verified GUI-295 input-admission repair is
+included, but its renderer/performance experiments are not.
+
+Earlier change-scoped evidence is separate from that final source receipt:
+- `.build/gui300-final-198`: **127/132 PASS**; all selected scene composition and
+  drawing-tool checks passed. Two speech checks required preconfigured system
+  authorization and were not accepted. Portal/document expectations were updated
+  to closed-folder cover ownership and the current native source-block control.
+- `.build/gui300-final-focused-b-198`: **46/47 PASS**. Guides preserve exact native
+  samples through save/Undo/Redo; clipboard groups/bindings and duplication use
+  the existing writer; the real audio worklet measures signal/silence/mute.
+  100,000-item/folder queries and atomic geometry/portal publication passed.
+- The remaining filled-notebook double tap reached its real cover callback and
+  navigation owner, but waited for a page whose elements were still hidden.
+  The admitted target now paints behind its opaque cover before readiness is
+  awaited. The final physical round trip passes; temporary tracing was removed.
+- Footer arrows now register their finite control region before layout expands
+  to the canvas. Programmatic popover dismissal follows actual UIKit lifetime,
+  not a retained dismissed controller. Retired-strip tests now use context menus;
+  an additional expanded run found stale selector/pagination expectations, which
+  were corrected. The complete UI suite has not been rerun.
+- Core clipboard/tldraw: **12 tests PASS** (`.build/gui300-core-198.log`); audio
+  worklet harness: **4 tests PASS** (`.build/gui300-audio-198.log`). Those core/web
+  sources did not change afterward.
+
+Signed pair build: `.build/gui300-release-198/build.json`, **verified-build** for
+that exact source. At **2026-09-24 21:27 UTC**, both installed applications read
+back **0.3.139 (198)**. The existing iPad app was updated in place; Mac was closed
+normally and its signed bundle exchanged atomically. No production uninstall,
+container reset, archive merge or identity/key replacement was performed. Mac
+registry hash and database inodes/sizes were unchanged before launch; the iPad
+registry metadata and existing support entries were preserved.
+
+`.build/gui300-pair-install-198/installation.json` separates installation from
+acceptance. After launching the installed Mac app, the first early IPC read was
+unavailable; a subsequent public `notebook_context.observe` returned **ready**
+from workspace `54349F3B-9E0A-4DEA-B990-40CAE04EF45E` at cursor **15590**.
+The active workspace also published fresh **connected** peer status. This proves
+installed-helper access and the Mac–iPad connection, not a sent chat/voice turn.
+Synthetic native Pencil samples and real-device automated finger gestures do not
+establish manual Pencil or live microphone/conversation acceptance. System
+frame/CPU/GPU/memory measurements, ten repetitions and 30 minutes of joint work
+remain open; no full-acceptance or page-curl responsiveness claim is made.
+
+## 24 сентября — GUI-295, два воспроизведённых дефекта обратного листания
+
+Полная смонтированная сцена воспроизвела отказ обратного жеста в самом событии
+реального Metal landing: сосед готов, native-переход уже завершён, но
+`canBeginNavigation` возвращает `false`. Причина — `contentIsInteractive` читает
+запаздывающее SwiftUI-зеркало `pageTurnIsActive`. Страница уже имеет синхронного
+владельца ввода: `IPadPageTurnController.refreshControllerState` закрывает её
+во время перехода; второй запрет из `contentIsInteractive` удалён.
+
+Отдельно воспроизведена ошибка замораживания рисунка: новый красный raster уже
+стоит в `CALayer.contents`, но `drawHierarchy(afterScreenUpdates: false)` отдаёт
+прежний синий или пустой слой. Все четыре сочетания направления и нового/старого
+mount провалились. Значит установленный материал и результат старого системного
+снимка не эквивалентны; булевого capture=true недостаточно как доказательства
+актуальности изображения.
+
+Два эксперимента отклонены и удалены из runtime. Принудительное обновление
+снимка исправило четыре проверки пикселей, но увеличило медиану первого
+показанного изменения с 47,407 до 65,359 мс, максимум — с 63,472 до 99,433 мс
+(по 10 переходов). Захват после штатного CA commit не устранил старое изображение:
+четыре проверки снова FAIL, медиана 54,667 мс, максимум 67,078 мс. Во всех
+вариантах строгий предел 16,67 мс/120 Гц остаётся FAIL; параметры не ослаблялись.
+Один commit не равен показу, а возврат команды за 0,1 мс не равен отклику экрана.
+
+Два точных листа «Различимости» (81 и 27 элементов) прочитаны установленным MCP
+и воспроизведены в изоляции. После устранения лишнего запрета три цикла
+вперёд/назад прошли, а захваченный/приземлившийся рисунок совпал с исходным в
+границах проверки; это ещё не ручная приёмка всей тетради. Пользовательский
+материал и временный probe находятся только в `.build`, из исходников удалены.
+
+Финальный **отдельный** слайс не содержит этих экспериментов: исходный renderer,
+одно удалённое условие и новая регрессия. На неизменных исходниках
+`37cec4fb39d08a73929e0baba97f786ac5f264f86cf32a186be04470eba3aa06`:
+**30 физических iPad native-тестов PASS**, без пропусков/runtime warnings
+(`.build/gui295-immediate-reverse-gate-final`). Помимо нового события проверены
+плотные векторные листы, вытеснение, отмена, peer replacement и вся
+`PageTurnSelectionTests`; конечный снимок новой проверки просмотрен.
+[Точная область и эксперименты](audit-evidence/2026-09-24/immediate-reverse-gate.json).
+
+Рабочая пара остаётся **197**. Синтетическое действие распознавателя не заменяет
+человеческий жест, а этот PASS не закрывает старые пиксели при захвате и строгую
+плавность. Остальные потребители отложенного флага в навигации/камере остаются
+за рамкой этого изменения; GUI-295/GUI-285 не завершены.
+
 ## 24 сентября — GUI-295, защита уже видимого владельца при фокусировке
 
 Две адресные проверки на физическом iPad воспроизвели прежний FAIL. Диагностика

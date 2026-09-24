@@ -444,10 +444,10 @@ final class SceneCompositionTests: XCTestCase {
   func testPendingSourceBecomesReadyWhileCameraDensityContinuesChanging() async throws {
     let fixture = Fixture(count: 0), stamp = fixture.workspace.stamp, boardID = fixture.presence.boardID
     var elements = (0..<7).map { index in
-      SpatialElement(id: "a-camera-pin-\(index)", surface: .board(boardID), kind: .nativeText,
-        frame: .init(x: 0, y: 0, width: 32, height: 64), worldOrigin: .zero, source: "\(index)", stamp: stamp)
+      SpatialElement(id: "a-camera-pin-\(index)", surface: .board(boardID), kind: .markdown,
+        frame: .init(x: 0, y: 0, width: 32, height: 64), worldOrigin: .zero, source: "\(index)", html:"<p>Pin</p>",stamp: stamp)
     }
-    let delayed = SpatialElement(id: "z-camera-pending", surface: .board(boardID), kind: .web,
+    let delayed = SpatialElement(id: "z-camera-pending", surface: .board(boardID), kind: .markdown,
       frame: .init(x: 0, y: 0, width: 96, height: 96), worldOrigin: .zero,
       source: "A single delayed render", html: "<div style='position:absolute;inset:0;background:red'></div><script>window.notebook.ready(new Promise(resolve => setTimeout(resolve,1300)))</script>", stamp: stamp)
     elements.append(delayed)
@@ -481,14 +481,14 @@ final class SceneCompositionTests: XCTestCase {
     let fixture = Fixture(count: 0), stamp = fixture.workspace.stamp
     let boardID = fixture.presence.boardID
     var elements = (0..<7).map { offset in
-      SpatialElement(id: "a-\(offset)", surface: .board(boardID), kind: .nativeText,
-        frame: .init(x: 0, y: 0, width: 32, height: 32), worldOrigin: .zero, source: "\(offset)", stamp: stamp)
+      SpatialElement(id: "a-\(offset)", surface: .board(boardID), kind: .markdown,
+        frame: .init(x: 0, y: 0, width: 32, height: 32), worldOrigin: .zero, source: "\(offset)",html:"<p>Pin</p>",stamp: stamp)
     }
     elements += [
-      .init(id: "z-slow", surface: .board(boardID), kind: .web,
+      .init(id: "z-slow", surface: .board(boardID), kind: .markdown,
         frame: .init(x: 0, y: 0, width: 96, height: 96), worldOrigin: .zero,
         source: "Delayed neighbour", html: "<script>window.notebook.ready(new Promise(resolve => setTimeout(resolve, 5000)))</script><div style='position:absolute;inset:0;background:blue'></div>", stamp: stamp),
-      .init(id: "z-healthy", surface: .board(boardID), kind: .web,
+      .init(id: "z-healthy", surface: .board(boardID), kind: .markdown,
         frame: .init(x: 0, y: 0, width: 96, height: 96), worldOrigin: .init(x: 64, y: 0),
         source: "Ready neighbour", html: "<div style='position:absolute;inset:0;background:red'></div>", stamp: stamp)
     ]
@@ -501,8 +501,8 @@ final class SceneCompositionTests: XCTestCase {
       camera: .init(center: .init(x: 128, y: 64), scale: 1), viewport: .init(x: 320, y: 256))
     let resources = SceneRenderResources(), coordinator = SceneCompositionTiles(resources: resources)
     addTeardownBlock { @MainActor in await coordinator.stop() }
-    // Keep both Web sources in the same static band rather than relying on
-    // native labels winning the live-owner ordering over interactive programs.
+    // Static document fragments share a painter band. Interactive .web sources
+    // now have their own pool and must not be used to force passive rendering.
     let pins = Set(elements.prefix(7).map { WorkspaceSpatialID.element($0.id) })
     coordinator.prepare(source: source, presence: presence,
       frame: .init(index: index, presence: presence, portalCamera: { _ in nil }, pinned: pins), pinned: pins)
@@ -743,13 +743,25 @@ final class SceneCompositionTests: XCTestCase {
     let source = SceneCompositionSource(index: index, hierarchy: hierarchy, journal: journal)
     let resources = SceneRenderResources(profile: .headless), registry = SpatialInkSurfaceRegistry()
     let tiles = SceneCompositionTiles(resources: resources, surfaceRegistry: registry)
-    addTeardownBlock { @MainActor in await tiles.stop(); await registry.stopSceneInk() }
+    let window=UIWindow(windowScene:try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene))
+    window.rootViewController=UIViewController();window.makeKeyAndVisible()
+    addTeardownBlock { @MainActor in
+      await tiles.stop();await registry.stopSceneInk()
+      window.isHidden=true;window.rootViewController=nil
+    }
     tiles.prepare(source: source, presence: presence, frame: frame, pinned: [], displayScale: 2)
     let deadline = ContinuousClock.now + .seconds(10)
     while tiles.published == nil, tiles.failure == nil, ContinuousClock.now < deadline {
       try await Task.sleep(for: .milliseconds(5))
     }
     let cohort = try XCTUnwrap(tiles.published, tiles.failure ?? "The mixed paper scene must publish: \(tiles.budgetFailures)")
+    for (offset,item) in [notebook,document].enumerated() {
+      let canvas=try XCTUnwrap(cohort.nativeInk.owners[.cover(item.id)]?.canvas)
+      canvas.frame=CGRect(x:20+offset*310,y:20,width:300,height:420)
+      window.rootViewController?.view.addSubview(canvas)
+      canvas.setNeedsDisplay()
+    }
+    try await waitUntil { [notebook,document].allSatisfy { cohort.nativeInk.owners[.cover($0.id)]?.canvas.isStableFramePresented == true } }
     XCTAssertTrue(cohort.rasters.isEmpty, "Empty painter ranges must not consume the space needed by real paper ink")
     for item in [notebook, document] {
       XCTAssertTrue(cohort.plan.allowsLive(.item(item.id), in: .board(presence.boardID)))
@@ -833,7 +845,8 @@ final class SceneCompositionTests: XCTestCase {
       XCTAssertNotNil(cohort.nativeInk.owners[.cover(item.id)])
     }
     XCTAssertLessThanOrEqual(resources.residentBytes + resources.reservedBytes, 256 * 1024 * 1024)
-    XCTAssertLessThanOrEqual(cohort.plan.liveOwners.count + cohort.plan.inkBoardIDs.count, 8)
+    XCTAssertLessThanOrEqual(cohort.plan.nativeOwnerCount, SceneCompositionPlan.maximumNativeOwners)
+    XCTAssertLessThanOrEqual(cohort.plan.liveOwners.count + cohort.plan.inkBoardIDs.count, SceneCompositionPlan.maximumLiveOwners)
   }
 
   @MainActor
@@ -940,8 +953,8 @@ final class SceneCompositionTests: XCTestCase {
       .init(id: childID, board: .init(freeItems: [], elements: elements, stamp: stamp))
     ], stamp: stamp)
     let index = WorkspaceSceneIndex(workspace: workspace, hierarchy: hierarchy, paperSizes: [:])
-    let presence = SessionPresence(boardID: workspace.rootBoardID, mode: .board,
-      camera: .init(scale: 0.35), viewport: .init(x: 834, y: 1194))
+    let presence = SessionPresence(boardID: workspace.rootBoardID, mode: .cover,
+      camera: .init(scale: 0.35), viewport: .init(x: 834, y: 1194),focusedItemID:childID,openProgress:0.2)
     let frame = WorkspaceSceneFrame(index: index, presence: presence, portalCamera: { _ in nil })
     let source = SceneCompositionSource(index: index, hierarchy: hierarchy, journal: .init(stamp: stamp))
     let initial = try await SceneCompositionPlan.prepare(source: source, presence: presence,
@@ -973,7 +986,8 @@ final class SceneCompositionTests: XCTestCase {
     XCTAssertNotNil(cohort.plan.presentations[.board(childID)])
     XCTAssertNotNil(cohort.nativeInk.owners[.board(childID)])
     XCTAssertEqual(cohort.rasters.count, cohort.plan.tiles.count)
-    XCTAssertLessThanOrEqual(cohort.plan.liveOwners.count + cohort.plan.inkBoardIDs.count, 8)
+    XCTAssertLessThanOrEqual(cohort.plan.nativeOwnerCount, SceneCompositionPlan.maximumNativeOwners)
+    XCTAssertLessThanOrEqual(cohort.plan.liveOwners.count + cohort.plan.inkBoardIDs.count, SceneCompositionPlan.maximumLiveOwners)
     XCTAssertLessThanOrEqual(cohort.plan.primitiveCount, 96)
     XCTAssertLessThanOrEqual(resources.rasterAdmission.pinnedBytes + resources.passiveReservedBytes, 128 * 1024 * 1024)
     XCTAssertLessThanOrEqual(resources.residentBytes + resources.reservedBytes, 256 * 1024 * 1024)
@@ -1342,8 +1356,9 @@ final class SceneCompositionTests: XCTestCase {
     ], stamp: stamp)
     let index = WorkspaceSceneIndex(workspace: workspace, hierarchy: hierarchy, paperSizes: [:])
     for viewport in [SpatialPoint(x: 834, y: 1194), .init(x: 1194, y: 834)] {
-      let presence = SessionPresence(boardID: workspace.rootBoardID, mode: .board,
-        camera: BoardPortalProjection.parentBoundaryCamera(portalCenter: .zero, viewport: viewport), viewport: viewport)
+      let presence = SessionPresence(boardID: workspace.rootBoardID, mode: .cover,
+        camera: BoardPortalProjection.parentBoundaryCamera(portalCenter: .zero, viewport: viewport), viewport: viewport,
+        focusedItemID:childID,openProgress:1)
       let frame = WorkspaceSceneFrame(index: index, presence: presence, portalCamera: { _ in portalCamera }, pinned: [.item(childID)])
       let source = SceneCompositionSource(index: index, hierarchy: hierarchy, journal: .init(stamp: .init(counter: 0, actor: actor)))
       let plan = try await SceneCompositionPlan.prepare(source: source, presence: presence, frame: frame,
@@ -1390,8 +1405,8 @@ final class SceneCompositionTests: XCTestCase {
 
   @MainActor
   func testMissingPinAndExcessPhysicalOwnersFailInsteadOfDisappearing() async throws {
-    let fixture = Fixture(count: 10)
-    for pins: Set<WorkspaceSpatialID> in [[.element("absent")], Set(fixture.elements.prefix(8).map { .element($0.id) })] {
+    let fixture = Fixture(count: SceneRenderResources.maximumVisiblePrograms+1)
+    for pins: Set<WorkspaceSpatialID> in [[.element("absent")], Set(fixture.elements.map { .element($0.id) })] {
       do {
         _ = try await SceneCompositionPlan.prepare(source: fixture.source(), presence: fixture.presence,
           frame: fixture.frame(), pinned: pins, displayScale: 2, previous: nil)

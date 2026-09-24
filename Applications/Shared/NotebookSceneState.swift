@@ -100,7 +100,7 @@ struct NotebookSceneState: Sendable {
       catch CocoaError.fileReadNoSuchFile { storedPresence = nil }
       catch CocoaError.fileNoSuchFile { storedPresence = nil }
       let considered = requested ?? storedPresence
-      let selectedID = considered?.selectedItemID ?? header.selectedItemID
+      let selectedID = considered?.selectedItemID ?? considered?.focusedItemID ?? header.selectedItemID
       let selectedHeader = try selectedID.flatMap { try store.readItemHeader($0) }
         ?? store.readItemHeaders(limit: 1).first
       guard let selectedHeader else { throw NotebookStorageError.corruptRecord("empty workspace") }
@@ -216,9 +216,12 @@ struct NotebookSceneState: Sendable {
         else { completeCoverElementOwners.formUnion(pins) }
         remainingEntries -= min(remainingEntries, window.totalMatches)
         for item in window.items where item.kind == .board && coverage[item.id] == nil {
-          guard pending.count + coverage.count < 4,
-            let node = try store.readBoardNodeHeader(item.id) else { continue }
+          // Visible portal metadata is bounded by the window. Only the admitted
+          // target reads a child window; closed folders never prefetch content.
+          guard let node = try store.readBoardNodeHeader(item.id) else { continue }
           nodes[node.id] = node
+          guard item.id == view.focusedItemID, view.openProgress > 0,
+            pending.count + coverage.count < 4 else { continue }
           pending.append(.init(boardID: item.id, mode: .board,
             camera: BoardPortalProjection.entryCamera(portalCamera: node.portalCamera,
               viewport: BoardPortalProjection.viewport), viewport: BoardPortalProjection.viewport))

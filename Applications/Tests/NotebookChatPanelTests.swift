@@ -267,7 +267,7 @@ final class NotebookChatPanelTests: XCTestCase {
 
     let host = UIHostingController(rootView: NotebookChatPanel(chat: chat, size: .init(width: width, height: height),
       companion: .init(frame: .zero, controls: .zero, cards: .zero),
-      onCompanionControlsSize: { _ in }, move: { _, _ in }, resize: { _, _, _ in }, endInteraction: {})
+      move: { _, _ in }, resize: { _, _, _ in }, endInteraction: {})
       .environment(model).padding(20).background(Color(.systemGroupedBackground)).preferredColorScheme(.light))
     let window = UIWindow(windowScene: try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene))
     window.frame = .init(x: 0, y: 0, width: width + 40, height: height + 40)

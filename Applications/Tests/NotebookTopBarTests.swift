@@ -5,7 +5,7 @@ import XCTest
 @testable import Notebook
 
 @MainActor final class NotebookTopBarTests: XCTestCase {
-  func testNarrowWindowWrapsOneToolbarInsteadOfOverlappingItsControls() async throws {
+  func testNarrowWindowScrollsOneCompactToolbarWithoutResizingPaper() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
     retainNotebookUntilTeardown(model, removing: root)
@@ -14,21 +14,18 @@ import XCTest
     let initial = try XCTUnwrap(model.presence)
     model.updatePresence(.init(boardID: initial.boardID, mode: .document, camera: initial.camera,
       viewport: initial.viewport, focusedItemID: id, openProgress: 1), settled: true)
-    let presence = try XCTUnwrap(model.presence)
     XCTAssertNotNil(model.activeDocument)
     let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
     let window = UIWindow(windowScene: scene)
     let previous = scene.windows.first { $0.isKeyWindow }
     defer { window.isHidden = true; window.rootViewController = nil; previous?.makeKey() }
     for width in [284.0, 360.0, 798.0, 1158.0] {
-      let view = NotebookTopBar(presence: presence, documentMode: .constant(.paper), allowsBeside: width >= 1000, onBack: {}).environment(model)
+      let view = NotebookTopBar().environment(model)
       // This is a toolbar-sized window, not a full screen with status-bar insets.
       let host = UIHostingController(rootView: view.ignoresSafeArea())
       let size = host.sizeThatFits(in: CGSize(width: width, height: 200))
       XCTAssertLessThanOrEqual(size.width, width+0.5)
-      XCTAssertLessThan(size.height, 155)
-      if width < 400 { XCTAssertGreaterThan(size.height, 115) }
-      else { XCTAssertLessThan(size.height, 60) }
+      XCTAssertLessThan(size.height, 60)
       window.frame = CGRect(origin: .zero, size: size); window.rootViewController = host; window.makeKeyAndVisible()
       host.view.frame = window.bounds; host.view.layoutIfNeeded()
       let image = UIGraphicsImageRenderer(size: size).image { _ in host.view.drawHierarchy(in: host.view.bounds, afterScreenUpdates: true) }

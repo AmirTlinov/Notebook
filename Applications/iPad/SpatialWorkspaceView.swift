@@ -2,9 +2,53 @@ import NotebookCore
 import SwiftUI
 import UIKit
 
-private struct CameraGestureSnapshot {
+@MainActor @Observable
+private final class CameraGestureSnapshot {
+  let id=UUID()
   let presence: SessionPresence
   let trajectory: CameraGestureTrajectory
+  let entry: NotebookZoomPassage?
+  let exit: NotebookZoomPassage?
+  var passage: NotebookZoomPassage?
+  @ObservationIgnored var choseDirection = false
+  @ObservationIgnored var latestCamera: SpatialCamera
+  @ObservationIgnored var preparedItem = false
+  @ObservationIgnored var magnification:CGFloat = 1
+  @ObservationIgnored var centroid:CGPoint
+  @ObservationIgnored var paperReadiness: (@MainActor () -> Bool)?
+  var passageCamera:SpatialCamera? { passage.map { $0.camera(from:trajectory,magnification:magnification,centroid:centroid) } }
+  init(presence:SessionPresence,trajectory:CameraGestureTrajectory,entry:NotebookZoomPassage?,exit:NotebookZoomPassage?) {
+    self.presence=presence;self.trajectory=trajectory;self.entry=entry;self.exit=exit;latestCamera=presence.camera;centroid=trajectory.startingCentroid
+  }
+  var preparation: SessionPresence? {
+    guard let passage,let camera=passageCamera else { return nil }
+    return passage.presentation(camera:camera,viewport:presence.viewport,page:presence.documentPageIndex)
+  }
+}
+
+@MainActor
+private final class WorkspaceSettlement {
+  let id=UUID()
+  let origin:SessionPresence
+  let target:SessionPresence
+  let handoff:SessionPresence?
+  var preparation:SessionPresence { handoff ?? target }
+  var paperReadiness: (@MainActor () -> Bool)?
+  let duration:TimeInterval
+  let bounce:Double
+  let navigationID:UUID?
+  let portal:(UUID,BoardPortalCamera)?
+  let completion:()->Void
+  var started=false
+  init(origin:SessionPresence,target:SessionPresence,handoff:SessionPresence?,duration:TimeInterval,bounce:Double,navigationID:UUID?,
+    portal:(UUID,BoardPortalCamera)?,completion:@escaping ()->Void) {
+    self.origin=origin;self.target=target;self.handoff=handoff;self.duration=duration;self.bounce=bounce;self.navigationID=navigationID
+    self.portal=portal;self.completion=completion
+  }
+}
+
+private enum WorkspaceNavigationState {
+  case idle, interacting(CameraGestureSnapshot), settling(WorkspaceSettlement)
 }
 
 /// The board background follows the same synchronous native camera sample as
@@ -99,12 +143,46 @@ private final class NativeSpatialBoardGrid: UIView, SceneNativeCameraOwner {
 
 struct SpatialWorkspaceView: View {
   var backRequest: UInt64 = 0
+  @Binding private var chromeHidden: Bool
+  @Binding private var documentMode: DocumentViewMode
+  init(backRequest: UInt64 = 0, chromeHidden: Binding<Bool> = .constant(false), documentMode: Binding<DocumentViewMode> = .constant(.paper)) {
+    self.backRequest=backRequest; self._chromeHidden=chromeHidden; self._documentMode=documentMode
+  }
   @Environment(\.scenePhase) private var scenePhase
   @Environment(\.displayScale) private var displayScale
   @Environment(NotebookAppModel.self) private var model
 
   @State private var contextMenus = NotebookContextMenus()
-  @State private var cameraGesture: CameraGestureSnapshot?
+  @State private var navigation = WorkspaceNavigationState.idle
+  private var cameraGesture: CameraGestureSnapshot? { if case .interacting(let value)=navigation { value } else { nil } }
+  private var settling: Bool { if case .settling=navigation { true } else { false } }
+  private var preparationPresence: SessionPresence? {
+    switch navigation { case .idle: nil;case .interacting(let value):value.preparation;case .settling(let value):value.preparation }
+  }
+  private var transitionPortalOverride: SceneCompositionReference.Portal? {
+    switch navigation {
+    case .interacting(let value):
+      if let passage=value.passage,let camera=passage.returningPortal { return .init(boardID:passage.itemID,camera:camera) }
+    case .settling(let value): if let portal=value.portal { return .init(boardID:portal.0,camera:portal.1) }
+    case .idle: break
+    }
+    return nil
+  }
+  private func transitionPortal(_ boardID:UUID) -> BoardPortalCamera? {
+    if let override=transitionPortalOverride,override.boardID == boardID { return override.camera }
+    return model.scenePortalCamera(boardID:boardID)
+  }
+  private var navigationID:UUID? {
+    switch navigation { case .idle:nil;case .interacting(let value):value.id;case .settling(let value):value.id }
+  }
+  private func bindPaperReadiness(itemID:UUID,transitionID:UUID?,probe:@escaping @MainActor ()->Bool) {
+    guard transitionID == navigationID else { return }
+    switch navigation {
+    case .interacting(let snapshot): if snapshot.passage?.itemID == itemID { snapshot.paperReadiness=probe }
+    case .settling(let pending): if pending.target.focusedItemID == itemID { pending.paperReadiness=probe }
+    case .idle: break
+    }
+  }
   @State private var panStart: SessionPresence?
   private var selectedItemID: UUID? { model.presence.flatMap { model.selectionSession.itemID(on: $0.boardID) } }
   @State private var liftedItemIDs: [UUID] = []
@@ -123,7 +201,6 @@ struct SpatialWorkspaceView: View {
   @State private var pageInputGestureID: UUID?
   @State private var bufferedCameraPhases: [WorkspaceMagnificationPhase] = []
   @State private var documentPageLayouts: [UUID: DocumentPageLayout] = [:]
-  @State private var settling = false
   @State private var cameraSettlement = SceneCameraSettlement()
   @State private var referencePageResolution = NotebookReferencePageResolution()
   private var spatialInkSurfaces: SpatialInkSurfaceRegistry { model.compositionTiles.surfaceRegistry }
@@ -142,18 +219,19 @@ struct SpatialWorkspaceView: View {
         y: geometry.size.height
       )
       let presence = normalizedPresence(for: viewport)
+      let preparing = preparationPresence ?? presence
       let requestedFrame = model.sceneIndex.map {
-        WorkspaceSceneFrame(index: $0, presence: presence, portalCamera: model.scenePortalCamera,
-          pinned: scenePins(presence: presence))
+        WorkspaceSceneFrame(index:$0,presence:preparing,portalCamera:transitionPortal,
+          pinned:scenePins(presence:preparing))
       }
       let cohort = model.compositionTiles.published.flatMap {
         $0.plan.presentations[.board(presence.boardID)] != nil ? $0 : nil
       }
       let frame = cohort?.frame
-      let compositionRequest = CompositionRequest(presence: presence, generation: model.sceneIndex?.generationID,
+      let compositionRequest = CompositionRequest(presence: preparing, generation: model.sceneIndex?.generationID,
         publication: model.scenePublicationGeneration,
-        revision: model.workspaceHeader?.cursor, pinned: scenePins(presence: presence),
-        itemOwners: sceneItemOwners(presence: presence, cohort: cohort),
+        revision:model.workspaceHeader?.cursor,pinned:scenePins(presence:preparing),
+        itemOwners:sceneItemOwners(presence:preparing,cohort:cohort),
         permitsPreparation: model.permitsScenePreparation, refinesDetails: model.presencePhase == .settled,groupPoses:model.compositionGroupPoses)
       let workset = cohort.map { model.presentedWorkset(cohort: $0, boardID: presence.boardID, presence: presence) } ?? .empty
       let rendered = workset.items
@@ -172,7 +250,7 @@ struct SpatialWorkspaceView: View {
             isEnabled: (presence.mode == .board || presence.mode == .cover
               || ((presence.mode == .page || presence.mode == .document)
                 && presence.camera.scale > model.itemGeometry(presence.focusedItemID).fitScale(viewport:viewport) * 1.001))
-              && cameraGesture == nil && !model.isPointing,
+              && cameraGesture == nil && !settling && !model.isPointing,
             inputGate: model.inputGate,
             onBegan: {
               referencePageResolution.cancel()
@@ -281,6 +359,8 @@ struct SpatialWorkspaceView: View {
         NotebookSelectionGesture(inputGate: model.inputGate,
           onPoint: { end, tapCount in
           guard cameraGesture == nil, !settling, let cohort else { return }
+          let contactGeneration=model.inputGate.acceptedContactGeneration
+          let hadSelection=model.selectionSession.target != nil
           if model.consumeNativeTextCanvasTap(at:end) { return }
           if model.drawingTool == .text {
             guard let fragment = NotebookAttentionProjection.pointContact(at:end,model:model,presence:presence,
@@ -309,7 +389,10 @@ struct SpatialWorkspaceView: View {
           switch NotebookAttentionProjection.pointResolution(at:end,model:model,presence:presence,cohort:cohort) {
           case .pending: return
           case .hit(let hit): fragment=hit
-          case nil: model.clearSelection();return
+          case nil:
+            model.clearSelection()
+            if tapCount == 1,!hadSelection { confirmBlankTap(generation:contactGeneration,presence:presence) }
+            return
           }
           if let reference=editableReference(fragment,boardID:presence.boardID) {
             if model.selectionSession.addingElements { model.toggleGraphicSelection(reference);return }
@@ -318,7 +401,9 @@ struct SpatialWorkspaceView: View {
           } else if fragment.target.kind == .cover {
             model.selectWorkspaceItem(fragment.target.id,boardID:presence.boardID)
           } else if let contact=NotebookAttentionProjection.toolAddress(at:end,fragment:fragment,model:model,presence:presence) {
-            model.drawingTools.selectInk(at:contact.point,address:contact.address,screenScale:presence.camera.scale)
+            model.drawingTools.selectInk(at:contact.point,address:contact.address,screenScale:presence.camera.scale) { found in
+              if !found,tapCount == 1,!hadSelection { confirmBlankTap(generation:contactGeneration,presence:presence) }
+            }
           } else { model.clearSelection() }
         }, onLift: { point in
           guard cameraGesture == nil, !settling, !model.selectionSession.isInteractive, let cohort else { return nil }
@@ -342,29 +427,39 @@ struct SpatialWorkspaceView: View {
           }, cancel: {
             if let contactID { model.cancelElementManipulation(contactID) }
           })
-        }).allowsHitTesting(false)
+        }, onHold: { point in showContextMenu(at:point,presence:presence,cohort:cohort) }).allowsHitTesting(false)
         if let rect = model.selectionSession.preview {
           RoundedRectangle(cornerRadius: 4).stroke(.indigo, style: StrokeStyle(lineWidth: 2, dash: [6, 4]))
             .frame(width: rect.width, height: rect.height).position(x: rect.midX, y: rect.midY).allowsHitTesting(false)
         }
-          NotebookDisplayConfirmation(preparedSource: model.preparedCollaborationVersion) {
+          NotebookDisplayConfirmation(preparedSource:model.preparedCollaborationVersion) {
+            advancePreparedNavigation()
             guard cameraGesture == nil, !settling, !pageTurnIsActive, !contentGestureActive else { return false }
             model.prepareCommonDocumentShellIfIdle(presence: presence, cohort: cohort)
             return model.confirmVisibleActions(presence: presence, scene: workset, cohort: cohort)
           }.allowsHitTesting(false)
 
-        controls(presence: presence, viewport: viewport)
+        controls(presence:presence,viewport:viewport)
+          .opacity(chromeHidden && !navigationNeedsAttention ? 0 : 1)
+          .allowsHitTesting(!chromeHidden || navigationNeedsAttention)
+          .accessibilityHidden(chromeHidden && !navigationNeedsAttention)
+          .environment(\.notebookChromeVisible,!chromeHidden || navigationNeedsAttention)
       }
       .clipped()
-      .environment(\.sceneComposition, .init(cohort))
+      .accessibilityAction(named:"Параметры и действия") {
+        showCanvasContext(at:.init(x:viewport.x/2,y:viewport.y/2),presence:presence)
+      }
+      .accessibilityAction(named:"Назад") { returnToParent() }
+      .environment(\.sceneComposition, .init(cohort,portal:transitionPortalOverride))
       .task(id: compositionRequest) {
-        model.prepareComposition(presence: presence, frame: requestedFrame,
+        model.prepareComposition(presence:preparing,frame:requestedFrame,
           pinned: compositionRequest.pinned, displayScale: displayScale, installedItemOwners: compositionRequest.itemOwners)
       }
       .onAppear {
+        contextMenus.selectionActions = { id,point in selectionContextActions(id,at:point) }
         model.stopNavigationPresentation = { requestID in
           referencePageResolution.cancel()
-          guard cameraSettlement.navigationID == requestID else { return }
+          guard case .settling(let pending)=navigation,pending.navigationID == requestID else { return }
           interruptSettlementForInput()
           if model.presencePhase == .active, let current = model.presence {
             model.updatePresence(current, settled: true)
@@ -378,7 +473,7 @@ struct SpatialWorkspaceView: View {
           return true
         }
         model.presentationPlayer.stopCamera = {
-          cameraSettlement.cancel(); settling = false
+          interruptSettlementForInput(interruptPresentation:false)
           if model.presencePhase == .active, let current = model.presence {
             model.updatePresence(current, settled: true)
           }
@@ -398,6 +493,7 @@ struct SpatialWorkspaceView: View {
         defer { model.observeNavigation("view_task_exit", reference: reference) }
         model.presentationPlayer.interrupt("navigation")
         referencePageResolution.cancel()
+        replaceWaitingNavigation()
         while cameraGesture != nil || settling || pageTurnIsActive || contentGestureActive || model.presencePhase != .settled {
           do { try await Task.sleep(for:.milliseconds(40)) } catch { return }
         }
@@ -410,6 +506,7 @@ struct SpatialWorkspaceView: View {
         guard let place = model.requestedReturn else { return }
         model.presentationPlayer.interrupt("navigation")
         referencePageResolution.cancel()
+        replaceWaitingNavigation()
         while cameraGesture != nil || settling || pageTurnIsActive || contentGestureActive || model.presencePhase != .settled {
           do { try await Task.sleep(for: .milliseconds(40)) } catch { return }
         }
@@ -440,14 +537,7 @@ struct SpatialWorkspaceView: View {
         }
       }
       .onChange(of: backRequest) { _, _ in
-        model.cancelRequestedNavigation()
-        referencePageResolution.cancel()
-        if !model.returnPlaces.isEmpty { model.requestReturnToPlace() }
-        else if presence.mode == .board { leaveBoard(viewport: viewport) }
-        else {
-          animateSettlement(to: .init(boardID: presence.boardID, mode: .board,
-            camera: .init(center: presence.camera.center, scale: model.itemGeometry(presence.focusedItemID).coverScale(viewport: viewport)), viewport: viewport), duration: 0.3)
-        }
+        returnToParent()
       }
       .onChange(of: scenePhase) { _, phase in
         if phase != .active {
@@ -466,12 +556,14 @@ struct SpatialWorkspaceView: View {
         if open == true { model.presentationPlayer.interrupt("code_document_opened") }
       }
       .onChange(of: presence.mode) { _, mode in
+        contextMenus.dismissPresentedContent()
         model.endSurfaceEditing()
         if mode != .cover { model.interactiveElementFocus = nil }
         if mode != .page && mode != .document {
           pageTurnIsActive = false
         }
       }
+      .onChange(of: presence.boardID) { _,_ in contextMenus.dismissPresentedContent() }
       .onChange(of: presence.focusedItemID) { _, itemID in
         if referencePageResolution.documentID != itemID { referencePageResolution.cancel() }
         model.endSurfaceEditing()
@@ -487,12 +579,11 @@ struct SpatialWorkspaceView: View {
         model.compositionTiles.cancelPreparation()
         referencePageResolution.cancel()
         cameraSettlement.cancel()
-        cameraGesture = nil
+        navigation = .idle
         contentGestureActive = false
         pageTurnIsActive = false
         pageInputGestureID = nil
         bufferedCameraPhases = []
-        settling = false
         model.interactiveElementFocus = nil
         model.endSurfaceEditing()
       }
@@ -541,80 +632,142 @@ struct SpatialWorkspaceView: View {
     }
   }
 
-  @ViewBuilder
+  private var navigationNeedsAttention: Bool {
+    model.documentPageNavigationStatus?.phase == .failed
+      || model.notebookPageNavigation.status?.failure != nil
+      || model.documentSavePresentation?.phase == .saved
+  }
+
   private func controls(
     presence: SessionPresence,
     viewport: SpatialPoint
   ) -> some View {
-      if presence.mode == .board && !settling {
-        Menu {
-          Button {
-            createItem(
-              kind: .board,
-              presence: presence,
-              viewport: viewport
-            )
-          } label: {
-            Label("Доска", systemImage: "rectangle.3.group")
-          }
-          .accessibilityIdentifier("create-nested-board")
-          Button {
-            createItem(
-              kind: .notebook,
-              presence: presence,
-              viewport: viewport
-            )
-          } label: {
-            Label("Тетрадь", systemImage: "book.closed")
-          }
-          Menu {
-            Button {
-              createItem(
-                kind: .document,
-                paperSize: .a4,
-                presence: presence,
-                viewport: viewport
-              )
-            } label: {
-              Label("A4", systemImage: "doc")
-            }
-            .accessibilityIdentifier("create-document-a4")
-            Button {
-              createItem(
-                kind: .document,
-                paperSize: .letter,
-                presence: presence,
-                viewport: viewport
-              )
-            } label: {
-              Label("Letter", systemImage: "doc")
-            }
-            .accessibilityIdentifier("create-document-letter")
-          } label: {
-            Label("Документ", systemImage: "doc.text")
-          }
-        } label: {
-          Image(systemName: "plus")
-            .font(NotebookChrome.iconFont)
-            .frame(width: 44, height: 44)
-            .background { NotebookSurface().padding(2) }
-            .contentShape(Circle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Создать")
-        .accessibilityIdentifier("create-workspace-item")
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
-        .padding(.trailing, 22)
-        .padding(.bottom, 20)
-        .zIndex(10_000)
-      }
-
     NotebookNavigationView(presence: presence,
       documentPageCount: presence.focusedItemID.flatMap { id in
         model.documents[id].flatMap { documentPageLayouts[id]?.pageCount(for: NotebookAppModel.documentPageSourceRevision($0)) }
       })
       .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
       .padding(.leading, 18).padding(.top, 18).zIndex(10_000)
+  }
+
+  private func contextDestination(at point:CGPoint,presence:SessionPresence) -> NotebookPasteDestination? {
+    guard let destination=model.pasteDestination else { return nil }
+    if destination.target.kind == .board {
+      let origin=presence.camera.screenToWorld(.init(x:point.x,y:point.y),viewport:presence.viewport)
+      return .init(target:destination.target,title:destination.title,center:.zero,
+        availableSize:destination.availableSize,worldOrigin:origin)
+    }
+    guard let frame=NotebookAttentionProjection.frame(.init(target:destination.target,revision:""),model:model,presence:presence) else { return destination }
+    return .init(target:destination.target,title:destination.title,
+      center:.init(x:(point.x-frame.minX)/presence.camera.scale,y:(point.y-frame.minY)/presence.camera.scale),
+      availableSize:destination.availableSize,worldOrigin:nil)
+  }
+
+  private func confirmBlankTap(generation:UInt64,presence:SessionPresence) {
+    Task { @MainActor in
+      try? await Task.sleep(for:.milliseconds(300))
+      guard model.inputGate.acceptedContactGeneration == generation,
+        !model.inputGate.isActive, model.presence?.boardID == presence.boardID,
+        model.presence?.focusedItemID == presence.focusedItemID,
+        model.selectionSession.target == nil, cameraGesture == nil, !settling,
+        !contextMenus.hasPresentedMenu, scenePhase == .active else { return }
+      chromeHidden.toggle()
+    }
+  }
+
+  private func showContextMenu(at point:CGPoint,presence:SessionPresence,cohort:SceneCompositionCohort?) {
+    guard cameraGesture == nil,!settling,!model.inputGate.hasActivePencil else { return }
+    chromeHidden=false
+    if let selected=selectedElement(at:point,presence:presence) {
+      if !model.selectionSession.contains(selected) { model.selectElement(selected) }
+      contextMenus.requestSelectionMenu(model.selectionSession.id,at:point);return
+    }
+    let hit:NotebookAttentionSelection.Fragment?
+    switch NotebookAttentionProjection.pointResolution(at:point,model:model,presence:presence,cohort:cohort) {
+    case .pending: return
+    case .hit(let value): hit=value
+    case nil: hit=nil
+    }
+    if let hit,let reference=editableReference(hit,boardID:presence.boardID) {
+      model.selectElement(reference);contextMenus.requestSelectionMenu(model.selectionSession.id,at:point);return
+    }
+    if let hit,hit.target.kind == .cover {
+      model.selectWorkspaceItem(hit.target.id,boardID:presence.boardID)
+      contextMenus.requestSelectionMenu(model.selectionSession.id,at:point);return
+    }
+    if let hit,let contact=NotebookAttentionProjection.toolAddress(at:point,fragment:hit,model:model,presence:presence) {
+      let generation=model.inputGate.acceptedContactGeneration
+      model.drawingTools.selectInk(at:contact.point,address:contact.address,screenScale:presence.camera.scale) { found in
+        guard model.inputGate.acceptedContactGeneration == generation else { return }
+        if found { contextMenus.requestSelectionMenu(model.selectionSession.id,at:point) }
+        else { showCanvasContext(at:point,presence:presence) }
+      }
+    } else { showCanvasContext(at:point,presence:presence) }
+  }
+
+  private func showCanvasContext(at point:CGPoint,presence:SessionPresence) {
+    model.clearSelection()
+    let center=presence.camera.screenToWorld(.init(x:point.x,y:point.y),viewport:presence.viewport)
+    let canBack = !model.returnPlaces.isEmpty || presence.mode != .board || presence.boardID != model.workspace?.rootBoardID
+    contextMenus.presentContent(NotebookCanvasContextContent(dismiss:{ contextMenus.dismissPresentedContent() },destination:contextDestination(at:point,presence:presence),
+      documentMode:$documentMode,allowsBeside:presence.viewport.x > presence.viewport.y,
+      create:presence.mode == .board ? { kind,paper in
+        guard model.presence?.boardID == presence.boardID,model.presence?.mode == presence.mode else { return }
+        createItem(kind:kind,paperSize:paper,presence:presence,viewport:presence.viewport,at:center)
+      } : nil,
+      back:canBack ? {
+        guard model.presence?.boardID == presence.boardID,model.presence?.focusedItemID == presence.focusedItemID else { return }
+        returnToParent()
+      } : nil).environment(model),at:point)
+  }
+
+  private func selectionContextActions(_ selection:UUID,at point:CGPoint) -> [UIMenuElement] {
+    guard model.selectionSession.id == selection else { return [] }
+    let canCopy=(try? model.clipboardSelectionFragment()) != nil
+    let destination=model.presence.flatMap { contextDestination(at:point,presence:$0) }
+    func copy(cut:Bool) {
+      guard model.selectionSession.id == selection else { return }
+      do {
+        let fragment=try model.clipboardSelectionFragment()
+        UIPasteboard.general.setItems([try NotebookClipboard.representations(fragment)],options:[:])
+        if cut,model.selectionSession.id == selection { model.deleteSelectedContent() }
+      } catch { model.showCue(error.localizedDescription) }
+    }
+    var actions=NotebookContextMenus.clipboardActions(cut:canCopy ? { copy(cut:true) } : nil,
+      copy:canCopy ? { copy(cut:false) } : nil,paste:destination.map { captured in {
+        guard model.selectionSession.id == selection else { return };pasteContext(at:captured,point:point)
+      } })
+    actions.append(UIAction(title:"Дублировать",image:UIImage(systemName:"plus.square.on.square"),attributes:canCopy ? [] : .disabled) { _ in
+      guard model.selectionSession.id == selection else { return }
+      model.duplicateSelectedContent()
+    })
+    return [UIMenu(options:.displayInline,children:actions)]
+  }
+
+  private func pasteContext(at destination:NotebookPasteDestination,point:CGPoint) {
+    let providers=UIPasteboard.general.itemProviders
+    Task {
+      do {
+        switch try await NotebookClipboard.read(providers,availableSize:destination.availableSize) {
+        case .fragment(let fragment): _ = await model.insertClipboardFragment(fragment,at:destination)
+        case .composition(let source):
+          contextMenus.presentContent(NotebookTldrawCompositionView(destinations:[destination],initialSource:source,
+            onClose:{ contextMenus.dismissPresentedContent() }).environment(model).frame(width:600,height:600),at:point)
+        }
+      } catch { model.showCue(error.localizedDescription) }
+    }
+  }
+
+  private func returnToParent() {
+    guard let presence=model.presence else { return }
+    model.cancelRequestedNavigation();referencePageResolution.cancel()
+    if !model.returnPlaces.isEmpty { model.requestReturnToPlace() }
+    else if presence.mode == .board { leaveBoard(viewport:presence.viewport) }
+    else {
+      animateSettlement(to:.init(boardID:presence.boardID,mode:.board,
+        camera:.init(center:presence.camera.center,scale:model.itemGeometry(presence.focusedItemID).coverScale(viewport:presence.viewport)),
+        viewport:presence.viewport),duration:0.3)
+    }
   }
 
   private struct ItemPlaneRevision: Equatable {
@@ -631,6 +784,7 @@ struct SpatialWorkspaceView: View {
     let editingText: EditableElementReference?
     let contentGesture: Bool
     let pageTurn: Bool
+    let navigationID:UUID?
     let isCameraGesture: Bool
     let settling: Bool
     let pointing: Bool
@@ -650,7 +804,7 @@ struct SpatialWorkspaceView: View {
       focused: presence.focusedItemID, open: presence.openProgress,
       selected: selectedItemID, lifted: liftedItemIDs,
       editingText: editingSpatialText, contentGesture: contentGestureActive,
-      pageTurn: pageTurnIsActive, isCameraGesture: cameraGesture != nil, settling: settling,
+      pageTurn: pageTurnIsActive, navigationID:navigationID, isCameraGesture: cameraGesture != nil, settling: settling,
       pointing: model.isPointing, prepares: rendered.map { preparesContent($0.id, presence: presence) },
       page: presence.documentPageIndex, layout: documentPageLayouts,
       dependentCamera: rendered.contains { $0.stackID != nil || $0.item.kind == .board }
@@ -706,7 +860,6 @@ struct SpatialWorkspaceView: View {
               && !model.isItemBeingDeleted(rendered.id)
               && (presence.mode == .page || presence.mode == .document)
               && !contentGestureActive
-              && !pageTurnIsActive
               && cameraGesture == nil
               && !settling
               && presence.openProgress >= 0.999,
@@ -738,6 +891,10 @@ struct SpatialWorkspaceView: View {
               model.endSurfaceEditing()
               openItem(itemID, viewport: viewport)
             },
+            onContext: { itemID,point in
+              model.selectWorkspaceItem(itemID,boardID:presence.boardID)
+              contextMenus.requestSelectionMenu(model.selectionSession.id,at:point)
+            },
             onTextEditingEnded: { [selectionID = model.selectionSession.id] elementID in
               model.finishInteractiveElementInput(.spatial(boardID: presence.boardID, elementID: elementID), selectionID: selectionID)
             },
@@ -750,6 +907,9 @@ struct SpatialWorkspaceView: View {
                 layout,
                 documentID: rendered.id
               )
+            },
+            onPaperReadiness: { [transitionID=navigationID] probe in
+              bindPaperReadiness(itemID:rendered.id,transitionID:transitionID,probe:probe)
             }
           )
           .zIndex(WorkspaceSceneProjection.presentationRank(of: rendered, in: presence, liftRank: liftRank(of: rendered.id))
@@ -953,12 +1113,13 @@ struct SpatialWorkspaceView: View {
     _ itemID: UUID,
     presence: SessionPresence
   ) -> Bool {
+    if preparationPresence?.focusedItemID == itemID { return true }
     if let focusedItemID = presence.focusedItemID {
       return focusedItemID == itemID
         && (presence.openProgress > 0 || presence.mode == .page || presence.mode == .document)
     }
     // Selection keeps the cover address, not an invisible WebKit/page pool.
-    // Only explicit navigation prepares paper content; zoom never acquires it.
+    // Only the one admitted navigation target prepares paper content.
     return false
   }
 
@@ -967,17 +1128,18 @@ struct SpatialWorkspaceView: View {
     case .began(let centroid):
       // A short explicit navigation owns its complete opening/closing curve.
       // A contact during it must not strand the scene on a half-open cover.
-      guard !settling else { return }
+      if case .settling(let pending)=navigation {
+        guard !pending.started else { return }
+        model.updatePresence(pending.origin,settled:true)
+      }
       interruptSettlementForInput()
       model.cancelElementManipulation()
       guard let currentPresence = model.presence else { return }
       let presence = presenceForNewContact(currentPresence)
       contentGestureActive = presence.mode == .page || presence.mode == .document
-      cameraGesture = CameraGestureSnapshot(
-        presence: presence,
-        trajectory: CameraGestureTrajectory(startingCamera: presence.camera,
-          startingCentroid: centroid, viewport: presence.viewport)
-      )
+      navigation = .interacting(CameraGestureSnapshot(presence:presence,
+        trajectory:.init(startingCamera:presence.camera,startingCentroid:centroid,viewport:presence.viewport),
+        entry:entryPassage(at:centroid,presence:presence),exit:exitPassage(presence:presence)))
     case .changed(let scale, _, _, let centroid):
       updateMagnification(
         scale: scale,
@@ -1041,33 +1203,172 @@ struct SpatialWorkspaceView: View {
     }
   }
 
-  /// A pinch owns only the camera. Opening and Back are explicit navigation,
-  /// including nested boards; no threshold may change the gesture's surface.
+  private func entryPassage(at point:CGPoint,presence:SessionPresence) -> NotebookZoomPassage? {
+    guard presence.mode == .board || presence.mode == .cover,
+      let cohort=model.compositionTiles.published else { return nil }
+    let candidates=model.presentedWorkset(cohort:cohort,boardID:presence.boardID,presence:presence).items
+    guard let item=candidates.filter({ value in
+      let box=value.geometry.screenFrame(center:value.center,camera:presence.camera,viewport:presence.viewport)
+      return !model.isItemBeingDeleted(value.id) && CGRect(x:box.x,y:box.y,width:box.width,height:box.height).contains(point)
+    }).max(by:{ $0.zIndex == $1.zIndex ? $0.id.uuidString < $1.id.uuidString : $0.zIndex < $1.zIndex }) else { return nil }
+    let closed=item.geometry.coverScale(viewport:presence.viewport)
+    let open=item.item.kind == .board ? BoardPortalProjection.fillScale(viewport:presence.viewport) : item.geometry.fitScale(viewport:presence.viewport)
+    return .init(itemID:item.id,parentID:presence.boardID,kind:item.item.kind,center:item.center,geometry:item.geometry,
+      opening:true,closedScale:closed,openScale:open,returningPortal:nil)
+  }
+
+  private func exitPassage(presence:SessionPresence) -> NotebookZoomPassage? {
+    if let id=presence.focusedItemID,(presence.mode == .page || presence.mode == .document),
+      let kind=itemKind(id),let center=focusedCenter(itemID:id,boardID:presence.boardID) {
+      let geometry=model.itemGeometry(id)
+      return .init(itemID:id,parentID:presence.boardID,kind:kind,center:center,geometry:geometry,opening:false,
+        closedScale:geometry.coverScale(viewport:presence.viewport),openScale:geometry.fitScale(viewport:presence.viewport),returningPortal:nil)
+    }
+    guard presence.mode == .board,let hierarchy=model.boardHierarchy,
+      let parent=hierarchy.parentBoardID(of:presence.boardID),let center=hierarchy.focusedCenter(of:presence.boardID,in:parent) else { return nil }
+    let fill=BoardPortalProjection.fillScale(viewport:presence.viewport),geometry=WorkspaceItemGeometry.notebook
+    let entry=BoardPortalProjection.entryCamera(portalCamera:hierarchy.portalCamera(presence.boardID) ?? .init(),viewport:presence.viewport)
+    let boundary=min(presence.camera.scale,entry.scale)
+    let portal=BoardPortalCamera(center:presence.camera.center,scale:boundary/fill)
+    return .init(itemID:presence.boardID,parentID:parent,kind:.board,center:center,geometry:geometry,opening:false,
+      closedScale:boundary*geometry.coverScale(viewport:presence.viewport)/fill,
+      openScale:boundary,returningPortal:portal)
+  }
+
+  private func openSurfaceCamera(_ camera:SpatialCamera,for presence:SessionPresence) -> SpatialCamera {
+    guard presence.mode == .page || presence.mode == .document,let item=presence.focusedItemID,
+      let center=focusedCenter(itemID:item,boardID:presence.boardID) else { return camera }
+    return model.itemGeometry(item).readingCamera(camera,centeredOn:center,viewport:presence.viewport)
+  }
+
   private func updateMagnification(scale: CGFloat, centroid: CGPoint) {
-    guard let snapshot = cameraGesture else { return }
-    let camera = snapshot.trajectory.camera(at: scale, centroid: centroid,
-      maximumScale: SpatialCamera.maximumScale)
-    model.updatePresence(snapshot.presence.replacingCamera(camera), settled: false)
+    guard let snapshot=cameraGesture else { return }
+    let camera=snapshot.trajectory.camera(at:scale,centroid:centroid,maximumScale:SpatialCamera.maximumScale)
+    snapshot.latestCamera=openSurfaceCamera(camera,for:snapshot.presence); snapshot.magnification=scale; snapshot.centroid=centroid
+    if !snapshot.choseDirection,abs(log(max(0.001,Double(scale)))) > 0.005 {
+      snapshot.choseDirection=true
+      snapshot.passage = snapshot.entry == nil ? snapshot.exit : snapshot.exit == nil ? snapshot.entry : scale > 1 ? snapshot.entry : snapshot.exit
+    }
+    guard let passage=snapshot.passage else {
+      model.updatePresence(snapshot.presence.replacingCamera(snapshot.latestCamera),settled:false);return
+    }
+    let passageCamera=passage.camera(from:snapshot.trajectory,magnification:scale,centroid:centroid)
+    let progress=passage.progress(camera:passageCamera)
+    if passage.opening && progress <= 0 || !passage.opening && progress >= 1 {
+      model.updatePresence(snapshot.presence.replacingCamera(snapshot.latestCamera),settled:false);return
+    }
+    if passage.opening && !snapshot.preparedItem {
+      snapshot.preparedItem=true;model.selectItem(passage.itemID)
+      if passage.kind == .document { model.prepareDocumentOpening(passage.itemID,pageIndex:documentPageIndex(for:passage.itemID,from:snapshot.presence)) }
+    }
+    let shown=passage.presentation(camera:passageCamera,viewport:snapshot.presence.viewport,page:documentPageIndex(for:passage.itemID,from:snapshot.presence))
+    // The outgoing surface stays mounted until the bounded target cohort is
+    // available. Its camera still follows the same raw gesture while loading.
+    if shown.boardID == model.presence?.boardID || navigationHasPreparedSurface(shown) {
+      model.updatePresence(shown,settled:false)
+    } else { model.updatePresence(snapshot.presence.replacingCamera(camera),settled:false) }
   }
 
   private func settleMagnification() {
-    guard cameraGesture != nil, let presence = model.presence else { return }
-    cameraGesture = nil
-    contentGestureActive = false
-    model.updatePresence(presence, settled: true)
+    guard let snapshot=cameraGesture else { return }
+    guard let passage=snapshot.passage,let camera=snapshot.passageCamera else {
+      navigation = .idle;contentGestureActive=false
+      model.updatePresence(snapshot.presence.replacingCamera(snapshot.latestCamera),settled:true);return
+    }
+    let progress=passage.progress(camera:camera)
+    // A zoom which never reaches a hierarchy boundary remains an ordinary zoom.
+    if passage.opening && progress == 0 || !passage.opening && progress == 1 {
+      navigation = .idle;contentGestureActive=false
+      model.updatePresence(snapshot.presence.replacingCamera(snapshot.latestCamera),settled:true);return
+    }
+    if passage.opening && progress < 0.5 || !passage.opening && progress >= 0.5 {
+      let restored:SessionPresence
+      if passage.opening { restored=passage.closed(viewport:snapshot.presence.viewport,camera:camera) }
+      else { restored=snapshot.presence.replacingCamera(.init(center:snapshot.latestCamera.center,scale:passage.openScale)) }
+      restoreMagnification(snapshot,to:restored);return
+    }
+    if passage.opening {
+      navigation = .idle;contentGestureActive=false
+      openItem(passage.itemID,viewport:snapshot.presence.viewport,rollback:snapshot.presence)
+    } else {
+      let target=passage.closed(viewport:snapshot.presence.viewport,camera:camera)
+      let handoff=passage.returningPortal.map { _ in
+        passage.presentation(camera:camera,viewport:snapshot.presence.viewport)
+      }
+      animateSettlement(to:target,duration:0.24,bounce:0,portal:passage.returningPortal.map { (passage.itemID,$0) },
+        handoff:handoff,rollback:snapshot.presence) {
+        if let portal=passage.returningPortal { model.rememberBoardReturn(snapshot.presence,portal:portal) }
+      }
+    }
+  }
+
+  private func navigationHasPreparedSurface(_ target:SessionPresence) -> Bool {
+    guard let cohort=model.compositionTiles.published,cohort.plan.presentations[.board(target.boardID)] != nil else { return false }
+    if let id=target.focusedItemID {
+      guard cohort.plan.allowsLive(.item(id),in:.board(target.boardID)) else { return false }
+      if itemKind(id) == .board,target.openProgress > 0 {
+        return cohort.plan.presentations[.board(id)] != nil
+      }
+      if target.mode == .page || target.mode == .document {
+        if case .settling(let pending)=navigation { return pending.paperReadiness?() == true }
+        if let snapshot=cameraGesture { return snapshot.paperReadiness?() == true }
+      }
+    }
+    return true
+  }
+
+  private func advancePreparedNavigation() {
+    if case .settling(let pending)=navigation,!pending.started {
+      if let item=pending.preparation.focusedItemID,model.isItemBeingDeleted(item) || itemKind(item) == nil {
+        interruptSettlementForInput()
+        model.showCue("Переход отменён: объект больше недоступен.")
+      } else if navigationHasPreparedSurface(pending.preparation),navigationHasPreparedSurface(pending.target) { startSettlement(pending) }
+      else if model.compositionTiles.failure != nil || model.persistenceFailure != nil {
+        navigation = .idle;contentGestureActive=false
+        model.updatePresence(pending.origin,settled:true)
+        model.showCue("Не удалось подготовить переход. Исходное место сохранено; попробуйте ещё раз.")
+      }
+    } else if let snapshot=cameraGesture,let passage=snapshot.passage,let camera=snapshot.passageCamera,
+      passage.returningPortal != nil,passage.progress(camera:camera) < 1 {
+      let shown=passage.presentation(camera:camera,viewport:snapshot.presence.viewport)
+      if navigationHasPreparedSurface(shown),model.presence?.boardID != shown.boardID { model.updatePresence(shown,settled:false) }
+    }
+  }
+
+  /// Return through the same portal projection before accepting child coordinates.
+  /// Jumping straight from a partially visible parent to the child would skip
+  /// the remaining part of the gesture and expose a different camera in one frame.
+  private func restoreMagnification(_ snapshot:CameraGestureSnapshot,to target:SessionPresence) {
+    if let passage=snapshot.passage,let portal=passage.returningPortal,
+      model.presence?.boardID == passage.parentID {
+      let boundary=passage.presentation(camera:passage.parentCamera(from:target.camera),viewport:target.viewport)
+      animateSettlement(to:boundary,duration:0.26,bounce:0,portal:(passage.itemID,portal),rollback:snapshot.presence) {
+        model.updatePresence(target,settled:true)
+      }
+    } else { animateSettlement(to:target,duration:0.26,bounce:0,rollback:snapshot.presence) }
   }
 
   private func cancelMagnification() {
-    guard let snapshot = cameraGesture else { return }
-    cameraGesture = nil
-    animateSettlement(to: snapshot.presence, duration: 0.26)
+    guard let snapshot=cameraGesture else { return }
+    restoreMagnification(snapshot,to:snapshot.presence)
   }
 
-  private func interruptSettlementForInput() {
-    model.presentationPlayer.interrupt()
+  private func interruptSettlementForInput(interruptPresentation:Bool = true) {
+    if interruptPresentation { model.presentationPlayer.interrupt() }
     cameraSettlement.cancel()
-    if settling { contentGestureActive = false }
-    settling = false
+    let origin:SessionPresence?
+    switch navigation {
+    case .idle: origin=nil
+    case .interacting(let gesture): origin=gesture.presence
+    case .settling(let pending): origin=pending.origin
+    }
+    navigation = .idle;contentGestureActive=false
+    if let origin { model.updatePresence(origin,settled:true) }
+  }
+
+  private func replaceWaitingNavigation() {
+    guard case .settling(let pending)=navigation,!pending.started else { return }
+    interruptSettlementForInput()
   }
 
   private func updateWorkspacePan(
@@ -1160,7 +1461,8 @@ struct SpatialWorkspaceView: View {
 
   private func openItem(
     _ itemID: UUID,
-    viewport: SpatialPoint
+    viewport: SpatialPoint,
+    rollback: SessionPresence? = nil
   ) {
     guard !settling, !model.isItemBeingDeleted(itemID),
       cameraGesture == nil,
@@ -1170,7 +1472,7 @@ struct SpatialWorkspaceView: View {
     model.cancelRequestedNavigation()
     referencePageResolution.cancel()
     if itemKind(itemID) == .board {
-      enterBoard(itemID, center: center, viewport: viewport)
+      enterBoard(itemID, center: center, viewport: viewport,rollback:rollback)
       return
     }
     let previousPresence = model.presence
@@ -1193,31 +1495,32 @@ struct SpatialWorkspaceView: View {
     )
     openingFeedback.prepare()
     performOpeningFeedback()
-    animateSettlement(to: target, duration: 0.3, bounce: 0.025)
+    animateSettlement(to: target, duration: 0.3, bounce: 0.025,rollback:rollback)
   }
 
   private func enterBoard(
     _ itemID: UUID,
     center: WorldPoint,
     viewport: SpatialPoint,
-    duration: TimeInterval = 0.24
+    duration: TimeInterval = 0.24,
+    rollback:SessionPresence? = nil
   ) {
     guard !model.isItemBeingDeleted(itemID), let presence = model.presence else { return }
     model.selectItem(itemID)
     animateSettlement(to: SessionPresence(boardID: presence.boardID, mode: .cover,
       camera: BoardPortalProjection.parentBoundaryCamera(portalCenter: center, viewport: viewport),
-      viewport: viewport, focusedItemID: itemID, openProgress: 1), duration: duration, bounce: 0.025) {
+      viewport: viewport, focusedItemID: itemID, openProgress: 1), duration: duration, bounce: 0.025,rollback:rollback) {
       model.enterBoard(itemID)
     }
   }
 
   private func leaveBoard(viewport: SpatialPoint) {
-    cameraSettlement.cancel()
-    guard model.leaveBoard(), let boundary = model.presence else { return }
-    animateSettlement(to: SessionPresence(boardID: boundary.boardID, mode: .board,
-      camera: SpatialCamera(center: boundary.camera.center,
-        scale: WorkspaceItemGeometry.notebook.coverScale(viewport: viewport)),
-      viewport: viewport), duration: 0.34, bounce: 0.025)
+    guard let child=model.presence,let passage=exitPassage(presence:child),let portal=passage.returningPortal else { return }
+    let target=passage.closed(viewport:viewport,camera:.init(center:passage.center,scale:passage.geometry.coverScale(viewport:viewport)))
+    let handoff=passage.presentation(camera:passage.parentCamera(from:child.camera),viewport:viewport)
+    animateSettlement(to:target,duration:0.34,bounce:0,portal:(passage.itemID,portal),handoff:handoff) {
+      model.rememberBoardReturn(child,portal:portal)
+    }
   }
 
   private func itemKind(_ itemID: UUID) -> WorkspaceItemKind? {
@@ -1229,37 +1532,38 @@ struct SpatialWorkspaceView: View {
     duration: TimeInterval,
     bounce: Double = 0.08,
     navigationID: UUID? = nil,
+    portal: (UUID,BoardPortalCamera)? = nil,
+    handoff:SessionPresence? = nil,
+    rollback:SessionPresence? = nil,
     completion: @escaping () -> Void = {}
   ) {
-    guard let start = model.presence else { return }
-    // A camera transition within the same reader does not own page selection.
-    // Normalise its endpoints and merge each camera sample with the latest
-    // physical landing; otherwise it replays the page captured at its start.
-    let retainsNotebook = start.mode == .page && target.mode == .page
-      && start.focusedItemID == target.focusedItemID
-    let target = retainsNotebook
-      ? target.selecting(itemID: start.selectedItemID, pageID: start.notebookPageID) : target
-    let wasSettling = settling
-    cameraGesture = nil
-    panStart = nil
-    pageInputGestureID = nil
-    bufferedCameraPhases = []
-    settling = true
-    let accepted = cameraSettlement.start(from: start, to: target, duration: duration, bounce: bounce, navigationID: navigationID) { presence, settled in
-      var transaction = Transaction()
-      transaction.disablesAnimations = true
+    guard let origin=model.presence else { return }
+    cameraSettlement.cancel();panStart=nil;pageInputGestureID=nil;bufferedCameraPhases=[]
+    let pending=WorkspaceSettlement(origin:rollback ?? origin,target:target,handoff:handoff,duration:duration,bounce:bounce,navigationID:navigationID,portal:portal,completion:completion)
+    navigation = .settling(pending);contentGestureActive=true
+    if navigationHasPreparedSurface(pending.preparation),navigationHasPreparedSurface(target) { startSettlement(pending) }
+  }
+
+  private func startSettlement(_ pending:WorkspaceSettlement) {
+    guard case .settling(let current)=navigation,current === pending,!pending.started,let currentPresence=model.presence else { return }
+    pending.started=true
+    let start=currentPresence.boardID == pending.target.boardID ? currentPresence : pending.handoff ?? currentPresence
+    if start != currentPresence { model.updatePresence(start,settled:false) }
+    let target=pending.target
+    let retainsNotebook=start.mode == .page && target.mode == .page && start.focusedItemID == target.focusedItemID
+    let destination=retainsNotebook ? target.selecting(itemID:start.selectedItemID,pageID:start.notebookPageID) : target
+    let accepted=cameraSettlement.start(from:start,to:destination,duration:pending.duration,bounce:pending.bounce,navigationID:pending.navigationID) { presence,settled in
+      guard case .settling(let active)=navigation,active === pending else { return }
+      var transaction=Transaction();transaction.disablesAnimations=true
       withTransaction(transaction) {
-        let sample = retainsNotebook
-          ? presence.selecting(itemID: model.presence?.selectedItemID, pageID: model.presence?.notebookPageID)
-          : presence
-        model.updatePresence(sample, settled: settled)
+        let sample=retainsNotebook ? presence.selecting(itemID:model.presence?.selectedItemID,pageID:model.presence?.notebookPageID) : presence
+        model.updatePresence(sample,settled:settled)
       }
     } completion: {
-      contentGestureActive = false
-      settling = false
-      completion()
+      guard case .settling(let active)=navigation,active === pending else { return }
+      contentGestureActive=false;navigation = .idle;pending.completion()
     }
-    if !accepted { settling = wasSettling }
+    if !accepted { contentGestureActive=false;navigation = .idle }
   }
 
   private func performOpeningFeedback() {
@@ -1271,10 +1575,11 @@ struct SpatialWorkspaceView: View {
     kind: WorkspaceItemKind,
     paperSize: DocumentPaperSize = .a4,
     presence: SessionPresence,
-    viewport: SpatialPoint
+    viewport: SpatialPoint,
+    at requestedCenter: WorldPoint? = nil
   ) {
     let offset = Double(model.workspace?.items.count ?? 0) * 28
-    guard let center = presence.camera.center.addressOffset(x: offset, y: offset) else { return }
+    guard let center = requestedCenter ?? presence.camera.center.addressOffset(x: offset, y: offset) else { return }
     model.cancelRequestedNavigation()
     referencePageResolution.cancel()
     let itemID: UUID?
@@ -1384,12 +1689,17 @@ private struct WorkspaceSceneItem: View {
   let onSelect: (UUID) -> Void
   let onLiftChanged: (UUID, Bool) -> Void
   let onOpen: (UUID) -> Void
+  let onContext: (UUID,CGPoint) -> Void
   let onTextEditingEnded: (String) -> Void
   let onPageTurnStateChange: @MainActor @Sendable (Bool) -> Void
   let onDocumentPageLayout: (DocumentPageLayout) -> Void
+  let onPaperReadiness: @MainActor (@escaping @MainActor () -> Bool) -> Void
 
   var body: some View {
-    let contentIsLive = openProgress > 0.001 || contentIsInteractive
+    // The one admitted opening target must paint behind its opaque cover
+    // before navigation can await its readiness. Hiding these elements until
+    // the first opening sample would deadlock a filled page at the closed edge.
+    let contentIsLive = preparesContent || openProgress > 0.001 || contentIsInteractive
     let restingShadowVisibility =
       CoverOpeningPhysics.restingShadowVisibility(openProgress)
     WorkspaceItemPose(rendered: rendered, camera: camera, viewport: viewport, boardID: boardID,
@@ -1458,6 +1768,7 @@ private struct WorkspaceSceneItem: View {
         },
         onCommit: commitNotebookPage,
         onTransitioningChange: onPageTurnStateChange,
+        onReadinessProbe:onPaperReadiness,
         notebookNavigation: model.notebookPageNavigation,
         onWindowChange: { indices, root in
           model.retainNotebookPageWindow(indices, in: rendered.id, root: root)
@@ -1509,6 +1820,7 @@ private struct WorkspaceSceneItem: View {
         },
         onCommit: { _, _ in },
         onTransitioningChange: onPageTurnStateChange,
+        onReadinessProbe:onPaperReadiness,
         canonicalDocumentLayout: documentPageLayout,
         documentSelection: model.documentPageSelection,
         documentNavigation: .init(
@@ -1633,7 +1945,12 @@ private struct WorkspaceSceneItem: View {
       editingTextID: editingTextID,
       portalOpenProgress: openProgress,
       portalViewport: viewport,
-      onTap: handleTap,
+      onTap:handleTap,
+      onHold: { point in
+        let center=camera.worldToScreen(rendered.center,viewport:viewport)
+        onContext(rendered.id,.init(x:center.x+(point.x-rendered.geometry.width/2)*camera.scale,
+          y:center.y+(point.y-rendered.geometry.height/2)*camera.scale))
+      },
       onTextEditingEnded: onTextEditingEnded,
       portalPixelScale: projectedScale
     )

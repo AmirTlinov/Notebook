@@ -79,7 +79,7 @@ struct WorkspaceSceneFrame {
       visits += workset.visitedNodes
       // Keep capacity for the real descendants already visible in this query.
       // Re-querying is bounded by this frame, not by the archive's source count.
-      if workset.items.contains(where: { ($0.item.kind == .board && next.passes > 0)
+      if workset.items.contains(where: { ($0.item.kind == .board && $0.id == next.presence.focusedItemID && next.presence.openProgress > 0 && next.passes > 0)
         || index.hasCoverElements(itemID: $0.id, boardID: next.presence.boardID) }), available > 2 {
         workset = index.workset(presence: next.presence, pinned: pins,
           limit: max(1, available / 2), pixelScale: next.pixelScale)
@@ -124,7 +124,9 @@ struct WorkspaceSceneFrame {
         WorkspaceSceneProjection.showsPortal(pixelScale: next.pixelScale, remainingPasses: next.passes)
       else { continue }
       for item in workset.items where item.item.kind == .board {
-        guard WorkspaceSceneProjection.mountsContent(of: item, in: next.presence) else { continue }
+        // A closed folder has its own paper material. Only the admitted
+        // passage prepares child content, not every visible folder recursively.
+        guard item.id == next.presence.focusedItemID,next.presence.openProgress > 0 else { continue }
         let camera = BoardPortalProjection.entryCamera(portalCamera: portalCamera(item.id) ?? .init(),
           viewport: presence.viewport)
         let viewport = BoardPortalProjection.renderViewport(viewport: presence.viewport)

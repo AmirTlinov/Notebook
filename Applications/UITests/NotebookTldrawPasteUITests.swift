@@ -14,13 +14,11 @@ import XCTest
       + (onPage ? ["--notebook-native-graphic-page"] : [])
     app.launchEnvironment["NOTEBOOK_CLIPBOARD_HTML"]=Self.html
     app.launch()
-    let actions=app.buttons["notebook-actions-open"], paste=app.buttons["clipboard-paste"]
-    XCTAssertTrue(actions.waitForExistence(timeout:12))
-    XCTAssertFalse(paste.exists,"Clipboard control belongs inside Actions, not the navigation bar")
-    actions.tap()
+    let paste=app.buttons["clipboard-paste"]
+    XCTAssertFalse(paste.exists,"Paste belongs to the canvas context")
+    openNotebookCanvasMenu(in:app)
     XCTAssertTrue(paste.waitForExistence(timeout:3))
     XCTAssertFalse(app.staticTexts["Из tldraw"].exists)
-    XCTAssertFalse(app.staticTexts["Добавить"].exists)
     let menu=XCTAttachment(screenshot:app.screenshot());menu.name="notebook-actions-menu-\(onPage)";menu.lifetime = .keepAlways;add(menu)
     XCTAssertTrue(paste.isEnabled)
     paste.tap()
@@ -38,14 +36,14 @@ import XCTest
     XCTAssertTrue(a.waitForExistence(timeout:8));XCTAssertTrue(b.exists);XCTAssertTrue(link.exists)
     let original=b.frame, arrow=link.frame
     b.tap()
-    XCTAssertTrue(app.buttons["delete-agent-element"].waitForExistence(timeout:3))
+    XCTAssertTrue(app.otherElements["resize-agent-element-topLeading"].waitForExistence(timeout:3))
     let from=b.coordinate(withNormalizedOffset:.init(dx:0.5,dy:0.5))
     from.press(forDuration:0.01,thenDragTo:from.withOffset(.init(dx:25,dy:80)),withVelocity:.slow,thenHoldForDuration:0)
     let moved=XCTNSPredicateExpectation(predicate:NSPredicate { _,_ in b.frame.midY > original.midY+60 },object:nil)
     XCTAssertEqual(XCTWaiter.wait(for:[moved],timeout:4),.completed,"Pasted objects use normal manipulation, not a flat image")
     XCTAssertNotEqual(link.frame,arrow,"Internal binding follows the moved node")
     let proof=XCTAttachment(screenshot:app.screenshot());proof.name="tldraw-editable-bound-objects-\(onPage)";proof.lifetime = .keepAlways;add(proof)
-    app.buttons["delete-agent-element"].tap()
+    notebookContextAction("Удалить элемент",on:b,in:app)
     XCTAssertTrue(b.waitForNonExistence(timeout:5))
     XCTAssertTrue(a.exists,"Deleting one imported object must leave its neighbour")
     app.terminate()

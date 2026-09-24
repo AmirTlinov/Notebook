@@ -39,6 +39,40 @@ public struct NotebookPasteFragment: Codable, Sendable {
     self.sourceIDs = sourceIDs; self.diagnostics = diagnostics; self.size = size; self.canInsert = canInsert
   }
 
+  /// Every paste receives fresh identities. Internal links remain internal;
+  /// an imported fragment cannot claim measurements already in the workspace.
+  public func reidentified(namespace: UUID = UUID()) throws -> Self {
+    guard canInsert,(1...32).contains(elements.count),Set(elements.map(\.id)).count == elements.count,
+      size.x.isFinite,size.y.isFinite,size.x > 0,size.y > 0,size.x <= 1_000_000,size.y <= 1_000_000 else {
+      throw CollaborationError("invalid_fragment","Неполный или слишком большой фрагмент буфера.")
+    }
+    let ids=Dictionary(uniqueKeysWithValues:elements.map { ($0.id,NotebookStore.submissionID(namespace,suffix:$0.id).uuidString.lowercased()) })
+    let copies=try elements.map { element -> AgentElement in
+      var values=try JSONValue.encode(element).object
+      values["id"] = .string(ids[element.id]!)
+      if let parent=element.parentID {
+        guard let replacement=ids[parent] else { throw CollaborationError("invalid_fragment","Группа отсутствует в скопированном фрагменте.") }
+        values["parentID"] = .string(replacement)
+      }
+      if let graphic=element.graphic {
+        var content=try JSONValue.encode(graphic).object
+        content["sourceInkIDs"] = .array([])
+        var connection=graphic.connection
+        for terminal in NotebookGraphicConnection.Terminal.allCases {
+          guard var endpoint=terminal == .start ? connection?.start : connection?.end,
+            var binding=endpoint.binding else { continue }
+          if let replacement=ids[binding.elementID] { binding.elementID=replacement;endpoint.binding=binding }
+          else { endpoint.binding=nil }
+          if terminal == .start { connection?.start=endpoint } else { connection?.end=endpoint }
+        }
+        content["connection"]=try connection.map(JSONValue.encode)
+        values["graphic"] = .object(content)
+      }
+      return try JSONValue.object(values).decode(AgentElement.self)
+    }
+    return .init(elements:copies,size:size)
+  }
+
   public func operations(target: CollaborationTarget, offset: SpatialPoint = .init(x:0,y:0),
     worldOrigin: WorldPoint? = nil) throws -> [CollaborationOperation] {
     guard canInsert, [.page,.board,.cover].contains(target.kind), offset.x.isFinite, offset.y.isFinite,
@@ -49,9 +83,9 @@ public struct NotebookPasteFragment: Codable, Sendable {
     return try elements.map { element in
       var values = try JSONValue.encode(element).object
       values.removeValue(forKey:"id")
-      values["frame"] = try .encode(PageRect(x:element.frame.x+offset.x,y:element.frame.y+offset.y,
+      values["frame"] = try .encode(PageRect(x:element.frame.x+(element.parentID == nil ? offset.x : 0),y:element.frame.y+(element.parentID == nil ? offset.y : 0),
         width:element.frame.width,height:element.frame.height))
-      if let worldOrigin { values["worldOrigin"] = try .encode(worldOrigin) }
+      if let worldOrigin { values["worldOrigin"] = try .encode(element.parentID == nil ? worldOrigin : .zero) }
       return .init(kind:.insertElement,target:target,id:element.id,values:values)
     }
   }

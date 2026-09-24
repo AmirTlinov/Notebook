@@ -250,11 +250,17 @@ images can be replaced without changing selection or saved content.
 
 ## Navigation and working sets
 
-Double-tap explicitly opens paper through one 0.3-second reveal/camera transition.
-Back explicitly leaves it. Ordinary zoom neither opens covers nor traverses portals.
-An open iPad page remains at least fit-to-page and pans within its edges when enlarged;
-horizontal movement while zoomed belongs to camera, with explicit page commands
-still available. Board cameras remain free.
+iPad navigation has one `idle / interacting / settling` owner. A pinch locks one
+hierarchy target at the initial centroid; progress follows the immutable starting
+camera between the material's closed/open geometric boundaries. Reversal retraces
+that path, release settles to the nearest endpoint, cancellation restores the
+initial place. Above the opening boundary paper retains its bounded reading zoom
+and pan; horizontal motion while enlarged belongs to camera, not page curl.
+Double tap, links and contextual Back use the same prepared settlement mechanism.
+A stale preparation cannot accept a replaced intent. A cold target delays acceptance,
+not the gesture's camera formula; the outgoing surface remains installed until the
+one target cohort is ready. Closed folders do not prepare hidden child scenes.
+Board cameras remain free outside the chosen passage. Mac navigation is unchanged.
 
 Only two stationary single-finger taps on the same document block open its source.
 Movement, multiple fingers or cancellation breaks that pair; compatible browser

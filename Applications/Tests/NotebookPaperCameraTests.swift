@@ -28,7 +28,7 @@ final class NotebookPaperCameraTests: XCTestCase {
       geometry.readingCamera(camera, centeredOn: center, viewport: start.viewport)
     }
     owner.onCamera(.began(centroid: pair))
-    for scale in [CGFloat(0.96), 1.4, 0.015, 4, 0.15, 1.1] {
+    for scale in [CGFloat(1.02), 1.4, 4, 1.2, 1.1] {
       owner.onCamera(.changed(scale: scale, velocity: 0.2, elapsed: 0.2, centroid: moved))
       try await Task.sleep(for: .milliseconds(35))
       let actual = try XCTUnwrap(model.presence)
@@ -39,7 +39,6 @@ final class NotebookPaperCameraTests: XCTestCase {
       XCTAssertEqual(actual.selectedItemID, start.selectedItemID)
       XCTAssertGreaterThanOrEqual(actual.camera.scale, geometry.fitScale(viewport: start.viewport),
         "Keeping page mode alone is insufficient: the visible sheet must not shrink into the board")
-      if scale < 1 { assertCamera(actual.camera, equals: .init(center: center, scale: geometry.fitScale(viewport: start.viewport))) }
       assertCamera(actual.camera, equals: bounded(start.camera.pinched(by: scale,
         from: .init(x: pair.x, y: pair.y), to: .init(x: moved.x, y: moved.y), viewport: start.viewport)))
     }
@@ -64,50 +63,74 @@ final class NotebookPaperCameraTests: XCTestCase {
       from: .init(x: moved.x, y: moved.y), to: .init(x: panEnd.x, y: panEnd.y), viewport: start.viewport)))
   }
 
-  func testBoardZoomCannotAcquireNotebookContentEvenOnALargeFirstSample() async throws {
-    let (model, window) = try await scene(document: false, startsOnBoard: true)
-    let start = try XCTUnwrap(model.presence)
-    let pair = CGPoint(x: start.viewport.x / 2, y: start.viewport.y / 2)
-    let owner = try coordinator(in: window)
-    owner.onCamera(.began(centroid: pair))
-    for factor: CGFloat in [1.2, 4, 0.01, 2] {
-      owner.onCamera(.changed(scale: factor, velocity: 2, elapsed: 0.2, centroid: pair))
-      let actual = try XCTUnwrap(model.presence)
-      XCTAssertEqual(actual.mode, .board)
-      XCTAssertNil(actual.focusedItemID)
-      XCTAssertEqual(actual.openProgress, 0)
-      assertCamera(actual.camera, equals: start.camera.pinched(by: factor,
-        from: .init(x: pair.x, y: pair.y), to: .init(x: pair.x, y: pair.y), viewport: start.viewport))
-    }
-    owner.onCamera(.ended(scale: 2, velocity: 2, elapsed: 0.3, centroid: pair))
-    try await Task.sleep(for: .milliseconds(450))
-    XCTAssertEqual(model.presence?.mode, .board)
-    XCTAssertEqual(model.presence?.openProgress, 0)
+  func testNotebookZoomCanCloseAndReopenOnlyItsOwnSurface() async throws {
+    try await checkRoundTrip(document:false)
   }
 
-  func testSeparateZoomReversalAndCancellationKeepThePageOwner() async throws {
-    let (model, window) = try await scene(document: false)
-    let start = try XCTUnwrap(model.presence)
-    let owner = try coordinator(in: window)
-    let pair = CGPoint(x: start.viewport.x / 2, y: start.viewport.y / 2)
-    for factor: CGFloat in [0.1, 10, 0.25, 4] {
-      owner.onCamera(.began(centroid: pair))
-      owner.onCamera(.changed(scale: factor, velocity: 1, elapsed: 0.2, centroid: pair))
-      owner.onCamera(.ended(scale: factor, velocity: 1, elapsed: 0.3, centroid: pair))
-      try await Task.sleep(for: .milliseconds(40))
-      XCTAssertEqual(model.presence?.mode, .page)
-      XCTAssertEqual(model.presence?.openProgress, 1)
-      XCTAssertEqual(model.presence?.notebookPageID, start.notebookPageID)
-    }
-    let beforeCancel = try XCTUnwrap(model.presence)
-    owner.onCamera(.began(centroid: pair))
-    owner.onCamera(.changed(scale: 0.01, velocity: -2, elapsed: 0.2, centroid: pair))
+  func testDocumentZoomCanCloseAndReopenOnlyItsOwnSurface() async throws {
+    try await checkRoundTrip(document:true)
+  }
+
+  private func checkRoundTrip(document:Bool) async throws {
+    let (model,window)=try await scene(document:document)
+    let start=try XCTUnwrap(model.presence),item=try XCTUnwrap(start.focusedItemID)
+    let owner=try coordinator(in:window),pair=CGPoint(x:start.viewport.x/2,y:start.viewport.y/2)
+    owner.onCamera(.began(centroid:pair))
+    owner.onCamera(.changed(scale:0.1,velocity:-2,elapsed:0.2,centroid:pair))
+    XCTAssertEqual(model.presence?.focusedItemID,item)
+    owner.onCamera(.ended(scale:0.1,velocity:-2,elapsed:0.3,centroid:pair))
+    try await waitFor(model,mode:.board)
+    XCTAssertNil(model.presence?.focusedItemID)
+    let factor=CGFloat(model.itemGeometry(item).fitScale(viewport:start.viewport)/(try XCTUnwrap(model.presence?.camera.scale)))
+    owner.onCamera(.began(centroid:pair))
+    owner.onCamera(.changed(scale:factor*1.1,velocity:2,elapsed:0.2,centroid:pair))
+    owner.onCamera(.ended(scale:factor*1.1,velocity:2,elapsed:0.3,centroid:pair))
+    try await waitFor(model,mode:start.mode)
+    XCTAssertEqual(model.presence?.focusedItemID,item)
+    XCTAssertEqual(model.presence?.notebookPageID,start.notebookPageID)
+    XCTAssertEqual(model.presence?.documentPageIndex,start.documentPageIndex)
+  }
+
+  func testOneContactCanReverseFromEnlargementIntoExitAndCancelToItsExactStart() async throws {
+    let (model,window)=try await scene(document:false)
+    let start=try XCTUnwrap(model.presence),owner=try coordinator(in:window)
+    let pair=CGPoint(x:start.viewport.x/2,y:start.viewport.y/2)
+    owner.onCamera(.began(centroid:pair))
+    owner.onCamera(.changed(scale:1.5,velocity:1,elapsed:0.2,centroid:pair))
+    XCTAssertEqual(model.presence?.mode,.page)
+    owner.onCamera(.changed(scale:0.2,velocity:-1,elapsed:0.4,centroid:pair))
+    XCTAssertEqual(model.presence?.mode,.cover)
+    XCTAssertEqual(model.presence?.focusedItemID,start.focusedItemID)
     owner.onCamera(.cancelled)
-    try await Task.sleep(for: .milliseconds(400))
-    XCTAssertEqual(model.presence?.mode, .page)
-    XCTAssertEqual(model.presence?.openProgress, 1)
-    XCTAssertEqual(model.presence?.notebookPageID, start.notebookPageID)
-    assertCamera(try XCTUnwrap(model.presence).camera, equals: beforeCancel.camera)
+    try await waitFor(model,mode:.page)
+    XCTAssertEqual(model.presence,start)
+    try await Task.sleep(for:.milliseconds(300))
+    XCTAssertEqual(model.presence,start,"Late preparation cannot finish the cancelled exit")
+  }
+
+  func testClosedCoverOwnsItsHitAndReopensByTheSameTapCallback() async throws {
+    let (model,window)=try await scene(document:false)
+    let start=try XCTUnwrap(model.presence),owner=try coordinator(in:window)
+    let point=CGPoint(x:start.viewport.x/2,y:start.viewport.y/2)
+    owner.onCamera(.began(centroid:point))
+    owner.onCamera(.ended(scale:0.1,velocity:-2,elapsed:0.3,centroid:point))
+    try await waitFor(model,mode:.board)
+    try await Task.sleep(for:.milliseconds(300))
+    let hit=window.hitTest(point,with:nil)
+    var chain:[String]=[];var view=hit
+    while let current=view { chain.append("\(type(of:current)) enabled=\(current.isUserInteractionEnabled)");view=current.superview }
+    XCTAssertTrue(model.inputGate.permitsSceneContact(at:point,kind:.finger),chain.joined(separator:" > "))
+    let cover=try XCTUnwrap(hit as? NotebookInteractionTouchView,chain.joined(separator:" > "))
+    cover.onTap(cover.convert(point,from:window),2)
+    try await waitFor(model,mode:.page)
+  }
+
+  private func waitFor(_ model:NotebookAppModel,mode:WorkspaceSemanticMode) async throws {
+    let deadline=ContinuousClock.now + .seconds(12)
+    while model.presence?.mode != mode || model.presencePhase != .settled {
+      guard ContinuousClock.now < deadline else { XCTFail("Surface did not settle: \(String(describing:model.presence)); \(model.scenePreparationDiagnostic ?? "")");return }
+      try await Task.sleep(for:.milliseconds(20))
+    }
   }
 
   private func scene(document: Bool, startsOnBoard: Bool = false) async throws -> (NotebookAppModel, UIWindow) {

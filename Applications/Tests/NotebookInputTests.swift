@@ -891,7 +891,9 @@ final class NotebookInputTests: XCTestCase {
     XCTAssertTrue(model.inputGate.isActive)
     XCTAssertEqual(try model.store.inputActivities().first?.targets, [.init(kind: .board, id: child)])
 
-    XCTAssertTrue(model.leaveBoard())
+    model.updatePresence(.init(boardID:parent,mode:.cover,
+      camera:BoardPortalProjection.parentBoundaryCamera(portalCenter:.zero,viewport:viewport),
+      viewport:viewport,focusedItemID:child,openProgress:1),settled:true)
     await model.finishPendingPersistence()
     XCTAssertTrue(model.inputGate.isActive)
     XCTAssertEqual(try model.store.inputActivities().first?.targets, [.init(kind: .cover, id: child, boardID: parent)])

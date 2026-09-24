@@ -6,7 +6,8 @@ Nested boards rest as paper folders, without a book spine or child thumbnails.
 A single neutral sheet marks any contained item, element or editable board ink;
 the addressed membership read uses the source cut, not the visible camera window.
 Native and published covers share the same cached material and tab outline. The
-child-board projection remains only for explicit entry/return, not overview zoom.
+child-board projection exists only for the one admitted entry/return target.
+Closed overview folders do not recursively prepare their hidden child scenes.
 
 Board ink reserves backing for the current viewport and full portal in the same
 orientation, not a maximum-side square for every possible rotation. Rotation
@@ -32,7 +33,8 @@ transaction across awaits or a second material revision.
 
 Unmounting/reparenting a document coordinator removes only its own WKWebView from
 the prior host, never a newly installed neighbor. Hidden parent boards are prepared
-only on explicit navigation, not an obsolete zoom-out corridor.
+only for the admitted navigation target. A pinch uses the same portal transforms
+and readiness boundary as double tap and contextual Back, never a parallel corridor.
 
 `SceneCompositionCohort.geometryID` identifies physical owners, geometry and order;
 `paintID` identifies pixel publication. Readiness belongs to the exact

@@ -169,6 +169,32 @@ struct NotebookMacWorkspaceView: View {
 enum MacNotebookInputTool: Hashable { case pointer, pen, eraser }
 
 extension NotebookAppModel {
+  /// An accepted return stores the child camera through the hierarchy owner.
+  @discardableResult
+  func leaveBoard() -> Bool {
+    guard let hierarchy = boardHierarchy, let presence,
+      let parentID = hierarchy.parentBoardID(of: presence.boardID),
+      let center = hierarchy.focusedCenter(of: presence.boardID, in: parentID), center.isValid
+    else { return false }
+    let portalCamera = BoardPortalProjection.portalCamera(from: presence.camera, viewport: presence.viewport)
+    let parentCamera = BoardPortalProjection.parentBoundaryCamera(portalCenter: center, viewport: presence.viewport)
+    guard rememberBoardReturn(presence,portal:portalCamera) else { return false }
+    selectItem(presence.boardID)
+    updatePresence(
+      SessionPresence(
+        boardID: parentID,
+        mode: .cover,
+        camera: parentCamera,
+        viewport: presence.viewport,
+        focusedItemID: presence.boardID,
+        openProgress: 1
+      ),
+      settled: true
+    )
+    return true
+  }
+
+
   func selectMacInputTool(_ tool: MacNotebookInputTool) {
     afterPageInput { [weak self] in
       guard let self else { return }

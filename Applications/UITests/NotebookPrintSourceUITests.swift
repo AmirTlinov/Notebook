@@ -19,7 +19,7 @@ import XCTest
       XCTAssertEqual(app.buttons["Рядом"].exists, landscape)
       let modeButtons = landscape ? [app.buttons["Лист"], app.buttons["Рядом"], code] : [app.buttons["Лист"], code]
       let controls = [app.buttons["leave-nested-board"]] + modeButtons +
-        [app.buttons["pen-controls-toggle"], app.buttons["drawing-tool-eraser"], app.buttons["pen-settings"]]
+        [app.buttons["drawing-group"], app.buttons["drawing-tool-eraser"], app.buttons["pen-settings"]]
       for (index, control) in controls.enumerated() {
         let ready = XCTNSPredicateExpectation(predicate: NSPredicate(format: "hittable == true"), object: control)
         if XCTWaiter.wait(for: [ready], timeout: 8) != .completed {

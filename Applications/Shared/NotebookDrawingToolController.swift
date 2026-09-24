@@ -43,7 +43,9 @@ final class NotebookDrawingToolController {
   private unowned let model: NotebookAppModel
   private(set) var contact: Contact?
   private(set) var pendingLasso: Contact?
-  var ruler: NotebookRuler?
+  private(set) var guide: NotebookDrawingGuide?
+  private(set) var guideEnabled = false
+  private(set) var guideKind = NotebookGuideKind.ruler
   private(set) var laserTraces: [NotebookLaserTrace] = []
   @ObservationIgnored private var inkSnapshotCache: (surface:SurfaceID,key:String,
     task:Task<NotebookLassoInkSource.Prepared,Error>)?
@@ -61,10 +63,10 @@ final class NotebookDrawingToolController {
       && model.presence?.mode == .board
   }
 
-  func placeRuler() {
+  private func placeGuide() {
     guard let presence = model.presence else { return }
     let address: NotebookToolAddress, start: SpatialPoint
-    if presence.mode == .page, let id = model.workspace?.selectedPageID, let page = model.pages[id] {
+    if presence.mode == .page, let id = presence.notebookPageID, let page = model.pages[id] {
       address = .init(surface:.page(id),boardID:nil,worldOrigin:nil,bounds:.init(x:0,y:0,width:page.size.width,height:page.size.height))
       start = .init(x:page.size.width*0.15,y:page.size.height*0.45)
     } else if presence.mode == .cover, let id = presence.focusedItemID {
@@ -76,8 +78,77 @@ final class NotebookDrawingToolController {
       address = .init(surface:.board(presence.boardID),boardID:presence.boardID,worldOrigin:origin,bounds:nil)
       start = .zero
     }
-    ruler = .init(address:address,start:start,angle:model.drawingToolSettings.rulerAngle,
-      length:min(PhysicalPaper.pointsPerCentimeter*10,address.bounds.map { $0.width*0.7 } ?? .infinity))
+    guide = .init(address:address,kind:guideKind,start:start,angle:model.drawingToolSettings.rulerAngle,
+      length:min(PhysicalPaper.pointsPerCentimeter*(guideKind == .ruler ? 10 : 3),address.bounds.map { $0.width*0.7 } ?? .infinity))
+    guide?.snapToGrid = model.drawingToolSettings.rulerSnapToGrid
+  }
+
+  var currentGuideSurface: SurfaceID? {
+    guard let presence=model.presence else { return nil }
+    switch presence.mode {
+    case .page: return presence.notebookPageID.map(SurfaceID.page)
+    case .cover: return presence.focusedItemID.map(SurfaceID.cover)
+    case .board: return .board(presence.boardID)
+    default: return nil
+    }
+  }
+
+  /// Pose is transient. Only a measured contact delays a guide change; ordinary
+  /// finger motion neither flushes the page writer nor waits for persistence.
+  private func changeGuide(_ change: @escaping @MainActor @Sendable () -> Void) {
+    let surface=currentGuideSurface
+    let apply: NotebookInputCompletion = { [weak self] in
+      guard let self, currentGuideSurface == surface else { return }
+      change()
+    }
+    if model.inputGate.hasActivePencil { model.inputGate.performAfterPageInput(apply) }
+    else { apply() }
+  }
+
+  func toggleGuide() {
+    guard currentGuideSurface != nil else { return }
+    changeGuide { [weak self] in
+      guard let self else { return }
+      releaseGuideIfSurfaceChanged()
+      guideEnabled.toggle()
+      if guideEnabled && guide == nil { placeGuide() }
+    }
+  }
+
+  func selectGuide(_ kind: NotebookGuideKind) {
+    guard currentGuideSurface != nil else { return }
+    changeGuide { [weak self] in
+      guard let self else { return }
+      releaseGuideIfSurfaceChanged()
+      if guideKind != kind { guide = nil }
+      guideKind = kind; guideEnabled = true
+      if guide == nil { placeGuide() }
+    }
+  }
+
+  func updateGuide(_ next: NotebookDrawingGuide, persistsPreferences: Bool = true) {
+    guard next.isValid else { return }
+    changeGuide { [weak self] in
+      guard let self, guide?.id == next.id else { return }
+      guide = next
+      if persistsPreferences, next.kind == .ruler {
+        model.drawingToolSettings.rulerAngle = next.angle
+        model.drawingToolSettings.rulerSnapToGrid = next.snapToGrid
+      }
+    }
+  }
+
+  func releaseGuideIfSurfaceChanged() {
+    guard let guide else { return }
+    if currentGuideSurface != guide.address.surface
+      || (guide.address.boardID != nil && guide.address.boardID != model.presence?.boardID) {
+      self.guide = nil; guideEnabled = false
+    }
+  }
+
+  func guideConstraint(at point: SpatialPoint, address: NotebookToolAddress, screenScale: Double) -> GuideConstraintSnapshot? {
+    guard guideEnabled, model.drawingTool.drawsInk else { return nil }
+    return guide?.constraint(at:point,from:address,screenScale:screenScale)
   }
 
   @discardableResult
@@ -88,7 +159,7 @@ final class NotebookDrawingToolController {
     laserTraces.removeAll { $0.expiresAt <= Date.timeIntervalSinceReferenceDate }
     let graph: NotebookGraphicGraph
     var spatialSelection: SpatialSelectionSource? = nil
-    if [.laser,.ruler,.text].contains(model.drawingTool) { graph = .init([]) }
+    if [.laser,.text].contains(model.drawingTool) { graph = .init([]) }
     else if address.surface.kind == .page, let page = model.pages[address.surface.ownerID!] { graph = model.graphicGraph(page:page) }
     else if model.drawingTool == .lasso, let source=spatialSelectionSource(at:address) {
       graph=source.graph;spatialSelection=source.source
@@ -99,9 +170,6 @@ final class NotebookDrawingToolController {
     if model.drawingTool == .lasso,address.surface.kind != .page,spatialSelection == nil { return false }
     let ink = model.drawingTool == .lasso && model.drawingToolSettings.lassoMode == .region
       ? inkSnapshot(at:address,graph:graph,spatialSelection:spatialSelection) : nil
-    if model.drawingTool == .ruler, ruler?.address.surface != address.surface {
-      ruler = .init(address:address,start:point,angle:model.drawingToolSettings.rulerAngle,length:PhysicalPaper.pointsPerCentimeter*10)
-    }
     contact = .init(id:UUID(),tool:model.drawingTool,settings:model.drawingToolSettings,pen:model.penStyle,
       address:address,graph:graph,spatialSelection:spatialSelection,
       screenScale:screenScale,ink:ink,points:[point],materialAdmission:model.pendingMaterialAdmissions[address.surface]?.task)
@@ -143,7 +211,8 @@ final class NotebookDrawingToolController {
     }
   }
 
-  func selectInk(at point: SpatialPoint, address: NotebookToolAddress, screenScale: Double) {
+  func selectInk(at point: SpatialPoint, address: NotebookToolAddress, screenScale: Double,
+    resolved: ((Bool) -> Void)? = nil) {
     cancel()
     let graph:NotebookGraphicGraph, spatialSelection:SpatialSelectionSource?
     if address.surface.kind == .page {
@@ -160,7 +229,7 @@ final class NotebookDrawingToolController {
       screenScale:screenScale,ink:inkSnapshot(at:address,graph:graph,spatialSelection:spatialSelection),points:[
         .init(x:point.x-radius,y:point.y-radius),.init(x:point.x+radius,y:point.y-radius),
         .init(x:point.x+radius,y:point.y+radius),.init(x:point.x-radius,y:point.y+radius)],
-      materialAdmission:model.pendingMaterialAdmissions[address.surface]?.task),presentsContour:false)
+      materialAdmission:model.pendingMaterialAdmissions[address.surface]?.task),presentsContour:false,resolved:resolved)
   }
 
   private func spatialSelectionSource(at address:NotebookToolAddress)
@@ -199,7 +268,7 @@ final class NotebookDrawingToolController {
     contact = nil
     onContactCancellation = nil
     switch current.tool {
-    case .shape, .connector, .ruler:
+    case .shape, .connector:
       if let object = figure(current), hypot(current.points[0].x-current.points.last!.x,current.points[0].y-current.points.last!.y)*current.screenScale >= 4 {
         if current.tool == .shape, let operation = current.settings.shapeOperation, operation != .normal {
           model.combineAuthoredShape(object,at:current.address,graph:current.graph,operation:operation)
@@ -242,7 +311,7 @@ final class NotebookDrawingToolController {
     }
   }
 
-  private func finishLasso(_ current: Contact,presentsContour:Bool = true) {
+  private func finishLasso(_ current: Contact,presentsContour:Bool = true,resolved:((Bool)->Void)? = nil) {
     let polygon = simplifiedLasso(current.points,screenScale:current.screenScale)
     guard polygon.count >= 3 else { model.clearSelection(); return }
     pendingLasso=current
@@ -311,6 +380,7 @@ final class NotebookDrawingToolController {
         if let region {
           if presentsContour { model.resolveRegionPreparation(region) } else { model.selectRegion(region) }
         } else if presentsContour { model.clearSelection() }
+        resolved?(region != nil)
       } catch {
         guard !Task.isCancelled,let self,model.selectionSession.id == selection else { return }
         if presentsContour { model.clearSelection() }
@@ -395,12 +465,12 @@ final class NotebookDrawingToolController {
 
   private func figure(_ current: Contact) -> NotebookWorkingGraphic? {
     let tool = current.tool, settings = current.settings
-    guard [.shape,.connector,.ruler].contains(tool), let last = current.points.last else { return nil }
+    guard [.shape,.connector].contains(tool), let last = current.points.last else { return nil }
     let shape = settings.shape
-    let color = (tool == .shape ? settings.shapeColor : tool == .connector ? settings.connectionColor : current.pen.color).components
-    let width = (tool == .shape ? settings.shapeWidth : tool == .connector ? settings.connectionWidth : current.pen.width)/current.screenScale
-    let start = tool == .ruler ? ruler?.project(current.points[0],from:current.address,snap:settings.rulerSnapToGrid) ?? current.points[0] : current.points[0]
-    var end = tool == .ruler ? ruler?.project(last,from:current.address,snap:settings.rulerSnapToGrid) ?? last : last
+    let color = (tool == .shape ? settings.shapeColor : settings.connectionColor).components
+    let width = (tool == .shape ? settings.shapeWidth : settings.connectionWidth)/current.screenScale
+    let start = current.points[0]
+    var end = last
     if let bounds = current.address.bounds {
       var dx = end.x-start.x, dy = end.y-start.y
       if tool == .shape && settings.preservesAspect {
@@ -429,7 +499,6 @@ final class NotebookDrawingToolController {
       fit.connection?.startArrowhead = settings.connectionStart ?? .none
       fit.connection?.endArrowhead = settings.connectionEnd ?? .arrow
     }
-    if tool == .ruler { fit.connection?.endArrowhead = .none }
     let fill = (settings.shapeFillColor ?? .yellow).components
     let stroke = SpatialInkColor(red:color.red,green:color.green,blue:color.blue)
     let graphic = NotebookGraphic(shape:fit.shape,style:.init(stroke:stroke,strokeWidth:width,

@@ -56,6 +56,11 @@ targets:
       path: iPad/Info.plist
       properties:
         CFBundleDisplayName: $(NOTEBOOK_DISPLAY_NAME)
+        UTExportedTypeDeclarations:
+          - UTTypeIdentifier: com.amirtlinov.notebook.fragment
+            UTTypeDescription: Notebook selection
+            UTTypeConformsTo:
+              - public.json
         NotebookAcceptanceEnabled: $(NOTEBOOK_ACCEPTANCE_ENABLED)
         NotebookCloudContainer: $(NOTEBOOK_CLOUD_CONTAINER)
         CFBundleShortVersionString: $(MARKETING_VERSION)
@@ -80,8 +85,8 @@ targets:
         PRODUCT_NAME: Notebook
         OTHER_LDFLAGS: "$(inherited) $(NOTEBOOK_TYPESETTER_RUNTIME)/$(PLATFORM_NAME)/libnotebook_typesetter_runtime.a -liconv -lresolv -framework Security"
         NOTEBOOK_DISPLAY_NAME: Notebook
-        MARKETING_VERSION: 0.3.138
-        CURRENT_PROJECT_VERSION: 197
+        MARKETING_VERSION: 0.3.139
+        CURRENT_PROJECT_VERSION: 198
         CODE_SIGN_STYLE: Automatic
         CODE_SIGN_ENTITLEMENTS: $(NOTEBOOK_IPAD_ENTITLEMENTS)
         DEVELOPMENT_TEAM: M94V58FCVP
@@ -208,6 +213,11 @@ targets:
       path: Mac/Info.plist
       properties:
         CFBundleDisplayName: Notebook
+        UTExportedTypeDeclarations:
+          - UTTypeIdentifier: com.amirtlinov.notebook.fragment
+            UTTypeDescription: Notebook selection
+            UTTypeConformsTo:
+              - public.json
         NotebookAcceptanceEnabled: $(NOTEBOOK_ACCEPTANCE_ENABLED)
         NotebookCloudContainer: $(NOTEBOOK_CLOUD_CONTAINER)
         NotebookScriptService: com.amirtlinov.notebook.script-service$(NOTEBOOK_SCRIPT_BUNDLE_SUFFIX)
@@ -224,8 +234,8 @@ targets:
         CODE_SIGN_ENTITLEMENTS: $(NOTEBOOK_MAC_ENTITLEMENTS)
         PRODUCT_NAME: Notebook
         OTHER_LDFLAGS: "$(inherited) $(NOTEBOOK_TYPESETTER_RUNTIME)/$(PLATFORM_NAME)/libnotebook_typesetter_runtime.a -liconv -lresolv -framework Security"
-        MARKETING_VERSION: 0.3.138
-        CURRENT_PROJECT_VERSION: 197
+        MARKETING_VERSION: 0.3.139
+        CURRENT_PROJECT_VERSION: 198
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: M94V58FCVP
         GENERATE_INFOPLIST_FILE: false

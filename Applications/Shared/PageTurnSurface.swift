@@ -228,6 +228,7 @@ struct PageTurnSurface: View {
     ) -> AnyView
   let onCommit: @MainActor (Int, String) -> Void
   let onTransitioningChange: @MainActor (Bool) -> Void
+  var onReadinessProbe: (@MainActor (@escaping @MainActor () -> Bool) -> Void)? = nil
   var canonicalDocumentLayout: DocumentPageLayout? = nil
   var documentSelection: DocumentPageNavigationRequest? = nil
   var documentNavigation: DocumentPageNavigationCallbacks? = nil
@@ -262,6 +263,7 @@ struct PageTurnSurface: View {
           page: page,
           onCommit: onCommit,
           onTransitioningChange: onTransitioningChange,
+          onReadinessProbe:onReadinessProbe,
           canonicalDocumentLayout: canonicalDocumentLayout,
           documentSelection: documentSelection,
           documentNavigation: documentNavigation,
@@ -301,6 +303,7 @@ struct PageTurnSurface: View {
       ) -> AnyView
     let onCommit: @MainActor (Int, String) -> Void
     let onTransitioningChange: @MainActor (Bool) -> Void
+    let onReadinessProbe: (@MainActor (@escaping @MainActor () -> Bool) -> Void)?
     let canonicalDocumentLayout: DocumentPageLayout?
     let documentSelection: DocumentPageNavigationRequest?
     let documentNavigation: DocumentPageNavigationCallbacks?
@@ -341,6 +344,7 @@ struct PageTurnSurface: View {
         onWindowChange: onWindowChange,
         inputGate: inputGate
       )
+      onReadinessProbe?({ [weak controller] in controller?.isCurrentPagePrepared == true })
     }
   }
 #endif

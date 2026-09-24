@@ -8,14 +8,15 @@ struct NotebookCompanion: View {
   @Environment(NotebookAppModel.self) private var model
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @Bindable var chat: NotebookChatController
-  let size: CGSize
   let placement: NotebookCompanionPlacement
-  let onControlsSize: (CGSize) -> Void
   let move: (CGSize, Bool) -> Void
   let endInteraction: () -> Void
   @GestureState private var moving = false
 
-  static func preferredSize(chat: NotebookChatController, available: CGSize, contextCount: Int = 0) -> CGSize {
+  static let controlDiameter = NotebookChrome.controlSize + 4
+  static let controlsSize = CGSize(width: controlDiameter, height: controlDiameter)
+
+  static func preferredSize(chat: NotebookChatController, available: CGSize) -> CGSize {
 
     let dictationNotice = chat.dictation.busy || chat.dictation.notice != nil
     let hasCard = chat.conversation?.requests.isEmpty == false || chat.voice.error != nil || chat.voice.capturing || chat.dictation.notice != nil
@@ -26,12 +27,12 @@ struct NotebookCompanion: View {
     } ?? 0
     let cardSections = [hasStatus, chat.conversation?.requests.isEmpty == false,
       chat.voice.error != nil, chat.dictation.notice != nil].filter { $0 }.count
-    let height: CGFloat = NotebookChrome.controlSize + (hasCard ? 16 : 0) + (hasStatus ? 44 : 0)
+    let height: CGFloat = controlDiameter + (hasCard ? 16 : 0) + (hasStatus ? 44 : 0)
       + (chat.conversation?.requests.isEmpty == false ? 160 : 0) + (chat.voice.error != nil ? 90 : 0)
       + noticeHeight + CGFloat(max(0, cardSections - 1)) * 4
       + CGFloat((hasCard ? 1 : 0) + chat.companionReplies.count) * 8
       + chat.companionReplies.reduce(CGFloat(0)) { $0 + 16 + max(40, previewHeight($1, width: min(available.width, 352) - 66)) }
-    return .init(width: min(available.width, hasCard || dictationNotice || !chat.companionReplies.isEmpty ? 352 : (chat.voice.capturing ? 228 : 148) + (contextCount > 0 ? 28 : 0)),
+    return .init(width: min(available.width, hasCard || dictationNotice || !chat.companionReplies.isEmpty ? 352 : controlDiameter),
       height: min(available.height, min(460, height)))
   }
   private var needsDecision: Bool { chat.conversation?.requests.isEmpty == false }
@@ -41,7 +42,7 @@ struct NotebookCompanion: View {
   }
   var body: some View {
     NotebookCompanionLayout(placement: placement) {
-      controls.onGeometryChange(for: CGSize.self) { $0.size } action: { onControlsSize($0) }
+      controls
       cards
     }
     .onChange(of: moving) { if !moving { endInteraction() } }
@@ -121,7 +122,7 @@ struct NotebookCompanion: View {
   private var controls: some View {
     HStack(spacing: 0) {
       Button { chat.revealReply() } label: {
-        Image(systemName: "square.and.pencil").frame(width: 44, height: 44).contentShape(Rectangle())
+        NotebookChatInputGlyph(chat:chat).frame(width:44,height:44).contentShape(Rectangle())
           .overlay(alignment: .topTrailing) {
             if !chat.unreadReplies.isEmpty || !chat.draft.isEmpty || needsDecision || chat.runs.record?.isActive == true {
               Circle().fill(Color.accentColor).frame(width: 5, height: 5).offset(x: -5, y: 8)
@@ -129,34 +130,13 @@ struct NotebookCompanion: View {
           }
       }.accessibilityLabel("Открыть текущий чат")
         .accessibilityIdentifier("notebook-companion-compose")
+        .accessibilityValue(chat.dictation.busy ? "Диктовка" : chat.voice.capturing ? chat.voice.status : "Текст")
         .highPriorityGesture(DragGesture(minimumDistance: 8, coordinateSpace: .named("notebook-window"))
           .updating($moving) { _, state, _ in state = true }
           .onChanged { move($0.translation, false) }.onEnded { move($0.translation, true) })
-      NotebookContextCounter()
-      Divider().frame(height: 18).padding(.horizontal, 2)
-      if chat.dictation.busy {
-        NotebookDictationInput(chat: chat)
-      } else if chat.voice.capturing {
-        Button { Task { await chat.voice.mute() } } label: {
-          Image(systemName: chat.voice.muted ? "mic.slash" : "mic").frame(width: 44, height: 44).contentShape(Rectangle())
-        }.accessibilityLabel(chat.voice.muted ? "Включить микрофон" : "Выключить микрофон")
-          .disabled(chat.voice.ending || chat.voice.changingMute)
-        NotebookVoiceOrb(phase: chat.voice.phase).frame(width: 28, height: 28).padding(.horizontal, 4)
-          .accessibilityLabel(chat.voice.status)
-        Button { Task { await chat.voice.toggleSpeaker() } } label: {
-          Image(systemName: chat.voice.speakerMuted ? "speaker.slash" : "speaker.wave.2").frame(width: 44, height: 44).contentShape(Rectangle())
-        }.accessibilityLabel(chat.voice.speakerMuted ? "Включить звук GPT" : "Выключить звук GPT")
-          .disabled(chat.voice.ending || chat.voice.changingSpeaker || chat.voice.activeID == nil)
-        Button { Task { await chat.voice.end() } } label: {
-          Image(systemName: "phone.down.fill").foregroundStyle(.red).frame(width: 44, height: 44).contentShape(Rectangle())
-        }.accessibilityLabel("Завершить голосовой разговор").disabled(chat.voice.ending)
-      } else {
-        NotebookDictationButton(chat: chat, compact: true)
-        NotebookVoiceStartButton(chat: chat, compact: true)
-      }
-    }.notebookBar()
-      .frame(width: chat.dictation.busy ? size.width : nil)
-      .fixedSize(horizontal: !chat.dictation.busy, vertical: true)
+    }.font(NotebookChrome.iconFont).buttonStyle(.plain)
+      .frame(width:Self.controlDiameter,height:Self.controlDiameter)
+      .notebookPanel(radius:Self.controlDiameter/2).contentShape(Circle()).fixedSize()
       .accessibilityElement(children: .contain).accessibilityIdentifier("notebook-companion-bar")
   }
 }
@@ -176,17 +156,33 @@ private struct NotebookCompanionLayout: Layout {
   }
 }
 
-/// The orb is a bounded, non-interactive indication of the existing audio owner.
-struct NotebookVoiceOrb: View {
-  @Environment(\.accessibilityReduceMotion) private var reduceMotion
-  let phase: NotebookVoiceController.Phase
+/// Observation is bounded to the glyph, not the canvas or chat layout.
+private struct NotebookChatInputGlyph: View {
+  @Bindable var chat: NotebookChatController
   var body: some View {
-    TimelineView(.animation(minimumInterval: 1 / 20, paused: reduceMotion || phase == .off || phase == .muted)) { time in
-      let shift = reduceMotion ? 0 : sin(time.date.timeIntervalSinceReferenceDate * 1.8) * 0.3
-      Circle().fill(LinearGradient(colors: [.indigo.opacity(0.8), .blue.opacity(0.45), .white, .indigo.opacity(0.16)],
-        startPoint: .init(x: 0.3 + shift, y: 0), endPoint: .init(x: 0.7 - shift, y: 1)))
-        .opacity(phase == .muted ? 0.45 : 1)
-    }.allowsHitTesting(false)
+    if chat.dictation.busy {
+      NotebookAudioLevelGlyph(symbol:"mic",level:chat.dictation.level)
+    } else if chat.voice.capturing {
+      NotebookAudioLevelGlyph(symbol:chat.voice.muted ? "mic.slash" : "waveform",level:chat.voice.inputLevel)
+    } else { Image(systemName:"bubble.left") }
+  }
+}
+
+struct NotebookAudioLevelGlyph: View {
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
+  let symbol: String
+  let level: Double
+  var body: some View {
+    let value = level.isFinite ? min(1,max(0,level)) : 0
+    Image(systemName:symbol)
+      .foregroundStyle(.primary.opacity(0.65+0.35*value))
+      .scaleEffect(reduceMotion ? 1 : 1+0.18*value)
+      .background {
+        Circle().stroke(.primary.opacity(0.08+value*0.32),lineWidth:1+value*2)
+          .frame(width:28+value*8,height:28+value*8)
+      }
+      .animation(reduceMotion ? nil : .linear(duration:0.1),value:value)
+      .allowsHitTesting(false)
   }
 }
 

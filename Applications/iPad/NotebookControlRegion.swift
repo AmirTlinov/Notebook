@@ -3,14 +3,24 @@ import UIKit
 
 /// The transparent background supplies a control's actual UIKit bounds to the
 /// input gate. It does not install a recognizer or claim touches outside them.
+private struct NotebookChromeVisibleKey: EnvironmentKey { static let defaultValue = true }
+extension EnvironmentValues {
+  var notebookChromeVisible: Bool {
+    get { self[NotebookChromeVisibleKey.self] }
+    set { self[NotebookChromeVisibleKey.self] = newValue }
+  }
+}
+
 struct NotebookControlRegion: UIViewRepresentable {
+  @Environment(\.notebookChromeVisible) private var visible
   let gate: NotebookInputGate
   func makeUIView(context: Context) -> NotebookControlRegionView { NotebookControlRegionView(gate: gate) }
-  func updateUIView(_ view: NotebookControlRegionView, context: Context) { view.use(gate) }
+  func updateUIView(_ view: NotebookControlRegionView, context: Context) { view.controlEnabled = visible; view.use(gate) }
   static func dismantleUIView(_ view: NotebookControlRegionView, coordinator: ()) { view.unregister() }
 }
 
 final class NotebookControlRegionView: UIView {
+  var controlEnabled = true
   private let source = UUID()
   private var gate: NotebookInputGate
   init(gate: NotebookInputGate) {
@@ -27,7 +37,7 @@ final class NotebookControlRegionView: UIView {
   private func register() {
     guard window != nil else { return }
     gate.registerControlRegion(source: source) { [weak self] point, _ in
-      guard let self, let window, !isHidden, alpha > 0 else { return false }
+      guard let self, controlEnabled, let window, !isHidden, alpha > 0 else { return false }
       return bounds.contains(convert(point, from: window))
     }
   }

@@ -26,7 +26,7 @@ final class NotebookInteractionUXTests: XCTestCase {
     try await scene.readyFinger(self)
     scene.beginFinger(.init(x: 590, y: 590))
     try await Task.sleep(for: .milliseconds(320))
-    XCTAssertNotNil(model.selectionSession.manipulation, "The quiet hold picks up without a second down event")
+    XCTAssertNil(model.selectionSession.manipulation, "A quiet hold arms the menu; only motion starts a model edit")
     let start = ContinuousClock.now
     scene.moveFinger(.init(x: 590, y: 790))
     let probes: [(CGPoint, NotebookUXObservation.Color)] = [
@@ -79,8 +79,7 @@ final class NotebookInteractionUXTests: XCTestCase {
     timing.name = "pickup-cancel-frame-timing"; timing.lifetime = .keepAlways; add(timing)
     scene.endFinger()
     let saved = await model.finishPendingPersistence(); XCTAssertTrue(saved)
-    try await assertUX("pickup-actions-return-after-all-fingers-lift", since: .now,
-      budget: NotebookUXObservation.selection) { !actions.isHidden }
+    XCTAssertTrue(actions.isHidden,"Lift does not resurrect the replaced floating action strip")
     XCTAssertEqual(model.activePage?.element(id: original.id)?.frame, original.frame)
     XCTAssertEqual(try model.store.nativeHistory(domain: .page(page.id), actor: model.actorID), history)
   }
@@ -109,9 +108,15 @@ final class NotebookInteractionUXTests: XCTestCase {
     _ = try XCTUnwrap(model.workspace?.item(id: child), "The portal must be in the mounted scene before testing entry")
     _ = try XCTUnwrap(model.boardHierarchy?.board(child), "The mounted portal must admit its board")
     let center = CGPoint(x: window.bounds.midX, y: window.bounds.midY)
+    let camera=try XCTUnwrap(window.gestureRecognizers?.compactMap { $0.delegate as? WorkspaceGestureLayer.Coordinator }.first)
+    func pinch(_ scale:CGFloat) {
+      camera.onCamera(.began(centroid:center))
+      camera.onCamera(.changed(scale:scale,velocity:1,elapsed:0.2,centroid:center))
+      camera.onCamera(.ended(scale:scale,velocity:1,elapsed:0.3,centroid:center))
+    }
     for pass in 0..<2 {
       let start = ContinuousClock.now
-      XCTAssertTrue(model.enterBoard(child))
+      pinch(CGFloat(BoardPortalProjection.fillScale(viewport:try XCTUnwrap(model.presence?.viewport))/(try XCTUnwrap(model.presence?.camera.scale))*1.1))
       try await assertUX(pass == 0 ? "board-cold-entry" : "board-warm-entry", since: start,
         budget: NotebookUXObservation.opening, window: window) {
         guard model.presence?.boardID == child, let cohort = model.compositionTiles.published,
@@ -120,7 +125,7 @@ final class NotebookInteractionUXTests: XCTestCase {
         return try NotebookUXObservation.Pixels(window: window).matches([(center, .red)])
       }
       let leaving = ContinuousClock.now
-      XCTAssertTrue(model.leaveBoard())
+      pinch(0.2)
       try await assertUX("board-return-\(pass)", since: leaving, budget: NotebookUXObservation.opening, window: window) {
         model.presence?.boardID == workspace.rootBoardID && model.compositionTiles.published?.isPaintInstalled == true
           && model.compositionTiles.published?.plan.rootBoardID == workspace.rootBoardID

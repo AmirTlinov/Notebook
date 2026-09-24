@@ -1,11 +1,12 @@
-#if DEBUG && targetEnvironment(simulator)
+#if DEBUG
 import Foundation
 import NotebookCore
 
 /// A bounded remote transcript for actual scroll and stop gestures. The real
 /// controller still admits stop through its SQLite outbox and native turn ID.
-@MainActor enum SimulatorChatFixture {
+@MainActor enum NotebookChatFixture {
   static func make(persistence: NotebookPersistenceQueue, author: UUID) async throws -> NotebookChatController? {
+    guard ProcessInfo.processInfo.arguments.contains(NotebookDrawingFixture.launchArgument) else { return nil }
     let dictation = ProcessInfo.processInfo.arguments.contains("--notebook-dictation-fixture")
     let compact = dictation || ProcessInfo.processInfo.arguments.contains("--notebook-compact-chat-fixture")
     guard compact || ProcessInfo.processInfo.arguments.contains("--notebook-chat-sync-fixture") else { return nil }
@@ -33,7 +34,7 @@ import NotebookCore
     }
     weak var receiver: NotebookChatController?
     let chat = NotebookChatController(persistence: persistence, author: author,
-      dictationCapture: SimulatorDictationCapture(), preferences: UserDefaults(suiteName: "simulator-dictation-" + UUID().uuidString)!) { envelope, destination in
+      dictationCapture: NotebookFixtureDictationCapture(), preferences: UserDefaults(suiteName: "fixture-dictation-" + UUID().uuidString)!) { envelope, destination in
       guard destination == peer, case .request(let query) = envelope.body else { return }
       let reply: NotebookChatReply
       switch query {
@@ -96,15 +97,15 @@ import NotebookCore
     receiver = chat
     chat.dictation.authorizeAddress = { true }
     chat.dictation.addressAuthorized = { dictation }
-    chat.dictation.makeAddressRecognizer = { _, _, activate, _ in SimulatorAddressRecognizer(activate: activate) }
+    chat.dictation.makeAddressRecognizer = { _, _, activate, _ in NotebookFixtureAddressRecognizer(activate: activate) }
     await chat.start(); await chat.connect(peer); chat.select(task); chat.expanded = !dictation
     return chat
   }
 }
 
-/// Synthetic device input and transcript, isolated to this Simulator fixture.
+/// Synthetic device input and transcript, isolated to this DEBUG fixture.
 /// UI gestures still exercise the production capture lifecycle and send owner.
-@MainActor private final class SimulatorDictationCapture: NotebookDictationCapture {
+@MainActor private final class NotebookFixtureDictationCapture: NotebookDictationCapture {
   private var pump: Task<Void, Never>?
   private var storage: NotebookDictationAudioStorage?
   private var events: (@MainActor (NotebookDictationAudioEvent) -> Void)?
@@ -156,7 +157,7 @@ import NotebookCore
     if let storage { Task { _ = await storage.close() } }; storage = nil
   }
 }
-private actor SimulatorAddressRecognizer: NotebookAddressRecognition {
+private actor NotebookFixtureAddressRecognizer: NotebookAddressRecognition {
   let activate: @Sendable (NotebookWakeActivation) -> Void
   private var stopped = true
   init(activate: @escaping @Sendable (NotebookWakeActivation) -> Void) { self.activate = activate }

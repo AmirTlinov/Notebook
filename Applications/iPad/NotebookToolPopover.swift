@@ -25,6 +25,7 @@ struct NotebookToolPopover: View {
           .fill(.clear,style:.init(eoFill:true))
           .contentShape(OutsideToolbar(toolbar:toolbar),eoFill:true)
           .onTapGesture(perform:panel.dismiss)
+          .background(NotebookControlRegion(gate:model.inputGate))
           .accessibilityHidden(true)
         AnchoredPanel(toolbar:toolbar,anchor:panel.anchor,safeArea:geometry.safeAreaInsets) {
           panel.content

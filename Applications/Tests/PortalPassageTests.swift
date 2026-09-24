@@ -7,68 +7,46 @@ import XCTest
 
 @MainActor
 final class PortalPassageTests: XCTestCase {
-  func testZoomCannotEnterOrLeaveNestedBoard() async throws {
-    let scene = try await makeScene()
-    let parent = try XCTUnwrap(scene.model.presence)
-    let center = CGPoint(x: scene.viewport.x / 2, y: scene.viewport.y / 2)
-    try scene.send(.began(centroid: center))
-    try scene.send(.changed(scale: 6, velocity: 2, elapsed: 0.2, centroid: center))
-    XCTAssertEqual(scene.model.presence?.boardID, parent.boardID, "Zoom cannot acquire the board under the fingers")
-    try scene.send(.ended(scale: 6, velocity: 2, elapsed: 0.3, centroid: center))
-    XCTAssertEqual(scene.model.presence?.boardID, parent.boardID)
-    XCTAssertTrue(scene.model.enterBoard(scene.childID))
-    let inside = try XCTUnwrap(scene.model.presence)
-    for ratio: CGFloat in [0.1, 0.01] {
-      try scene.send(.began(centroid: center))
-      try scene.send(.changed(scale: ratio, velocity: -2, elapsed: 0.2, centroid: center))
-      XCTAssertEqual(scene.model.presence?.boardID, scene.childID, "Zoom cannot leave the current board at any scale")
-      try scene.send(.ended(scale: ratio, velocity: -2, elapsed: 0.3, centroid: center))
-      XCTAssertEqual(scene.model.presence?.boardID, scene.childID)
-    }
-    XCTAssertEqual(scene.model.presence?.mode, inside.mode)
-    await scene.model.finishPendingPersistence()
+  func testOnePinchEntersOneBoardAndTheNextPinchReturns() async throws {
+    let scene=try await makeScene(),parent=try XCTUnwrap(scene.model.presence)
+    let center=CGPoint(x:scene.viewport.x/2,y:scene.viewport.y/2)
+    let crossing=BoardPortalProjection.fillScale(viewport:scene.viewport)/parent.camera.scale
+    try scene.send(.began(centroid:center))
+    try scene.send(.changed(scale:crossing*2,velocity:2,elapsed:0.2,centroid:center))
+    XCTAssertEqual(scene.model.presence?.focusedItemID,scene.childID)
+    XCTAssertEqual(scene.model.presence?.boardID,parent.boardID,"The contact retains one boundary, not a second target behind it")
+    try scene.send(.ended(scale:crossing*2,velocity:2,elapsed:0.3,centroid:center))
+    try await scene.waitFor(board:scene.childID,mode:.board)
+    let inside=try XCTUnwrap(scene.model.presence)
+    try scene.send(.began(centroid:center))
+    try scene.send(.changed(scale:0.2,velocity:-2,elapsed:0.2,centroid:center))
+    try scene.send(.ended(scale:0.2,velocity:-2,elapsed:0.3,centroid:center))
+    try await scene.waitFor(board:parent.boardID,mode:.board)
+    XCTAssertEqual(scene.model.boardHierarchy?.parentBoardID(of:inside.boardID),parent.boardID)
+    XCTAssertNil(scene.model.presence?.focusedItemID)
   }
 
-  func testAllMeasuredApproachesKeepTheDistantNotebookOnTheBoard() async throws {
-    let scene = try await makeScene()
-    let rootID = try XCTUnwrap(scene.model.presence?.boardID)
-    let center = CGPoint(x: scene.viewport.x / 2, y: scene.viewport.y / 2)
-    scene.model.updatePresence(.init(boardID: rootID, mode: .board,
-      camera: .init(center: .init(x: -30_000, y: -30_000), scale: 0.28),
-      viewport: scene.viewport), settled: true)
-    let deadline = ContinuousClock.now + .seconds(5)
-    while scene.model.compositionTiles.published?.frame.workset(boardID: rootID)
-      .items.contains(where: { $0.id == scene.distantID }) != true, ContinuousClock.now < deadline {
-      try await Task.sleep(for: .milliseconds(20))
+  func testSmallOverviewZoomStaysFreeThenCrossingOpensOnlyTheStartingTarget() async throws {
+    let scene=try await makeScene(),root=try XCTUnwrap(scene.model.presence?.boardID)
+    let geometry=scene.model.itemGeometry(scene.distantID),center=CGPoint(x:scene.viewport.x/2,y:scene.viewport.y/2)
+    scene.model.updatePresence(.init(boardID:root,mode:.board,
+      camera:.init(center:.init(x:-30_000,y:-30_000),scale:geometry.coverScale(viewport:scene.viewport)*0.25),viewport:scene.viewport),settled:true)
+    let deadline=ContinuousClock.now + .seconds(10)
+    while scene.model.compositionTiles.published?.frame.workset(boardID:root).items.contains(where:{$0.id == scene.distantID}) != true,
+      ContinuousClock.now < deadline { try await Task.sleep(for:.milliseconds(20)) }
+    for factor:CGFloat in [1.2,1.4] {
+      let before=try XCTUnwrap(scene.model.presence)
+      try scene.send(.began(centroid:center));try scene.send(.changed(scale:factor,velocity:1,elapsed:0.2,centroid:center))
+      try scene.send(.ended(scale:factor,velocity:1,elapsed:0.3,centroid:center))
+      XCTAssertEqual(scene.model.presence?.mode,.board)
+      XCTAssertEqual(try XCTUnwrap(scene.model.presence?.camera.scale),before.camera.scale*Double(factor),accuracy:1e-9)
     }
-    XCTAssertTrue(scene.model.compositionTiles.published?.frame.workset(boardID: rootID)
-      .items.contains { $0.id == scene.distantID } == true)
-
-    for factor in [CGFloat(1.2), 1.4] {
-      let before = try XCTUnwrap(scene.model.presence)
-      try scene.send(.began(centroid: center))
-      try scene.send(.changed(scale: factor, velocity: 0.4, elapsed: 0.2, centroid: center))
-      let measured = try XCTUnwrap(scene.model.presence)
-      XCTAssertEqual(measured.camera.scale, before.camera.scale * Double(factor), accuracy: 1e-10)
-      XCTAssertEqual(measured.mode, .board)
-      XCTAssertEqual(measured.openProgress, 0)
-      try scene.send(.ended(scale: factor, velocity: 0.4, elapsed: 0.3, centroid: center))
-      try await Task.sleep(for: .milliseconds(350))
-      let released = try XCTUnwrap(scene.model.presence)
-      XCTAssertEqual(released.mode, .board, "A small real approach cannot silently dock after release")
-      XCTAssertEqual(released.camera.scale, measured.camera.scale, accuracy: 1e-10)
-    }
-    try scene.send(.began(centroid: center))
-    for scale in [CGFloat(1.5), 2, 3, 4] {
-      try scene.send(.changed(scale: scale, velocity: 2, elapsed: Double(scale) / 10, centroid: center))
-    }
-    try scene.send(.ended(scale: 4, velocity: 2, elapsed: 0.5, centroid: center))
-    try await Task.sleep(for: .milliseconds(400))
-    let released = try XCTUnwrap(scene.model.presence)
-    XCTAssertEqual(released.mode, .board)
-    XCTAssertNil(released.focusedItemID)
-    XCTAssertEqual(released.openProgress, 0)
-
+    let crossing=geometry.fitScale(viewport:scene.viewport)/(try XCTUnwrap(scene.model.presence?.camera.scale))
+    try scene.send(.began(centroid:center))
+    try scene.send(.changed(scale:crossing,velocity:1,elapsed:0.3,centroid:center))
+    try scene.send(.ended(scale:crossing,velocity:1,elapsed:0.4,centroid:center))
+    try await scene.waitFor(board:root,mode:.page)
+    XCTAssertEqual(scene.model.presence?.focusedItemID,scene.distantID)
   }
 
   func testExplicitBoardExitKeepsPreparedContentVisible() async throws {
@@ -111,64 +89,58 @@ final class PortalPassageTests: XCTestCase {
     let input = UUID()
     scene.model.inputGate.beginContact(source: input)
     defer { scene.model.inputGate.endContact(source: input) }
-    XCTAssertTrue(scene.model.leaveBoard())
-    XCTAssertEqual(scene.model.presence?.boardID, parentID)
+    scene.back()
+    try await Task.sleep(for:.milliseconds(80))
+    XCTAssertEqual(scene.model.presence?.boardID,scene.childID,"Back waits for the target instead of publishing an unprepared parent")
     XCTAssertFalse(scene.model.permitsBackgroundPreparation)
-    scene.host.view.setNeedsLayout()
-    scene.host.view.layoutIfNeeded()
-    attachMarkerHistory(in: scene, name: "same-cohort-during-parent-return")
-    let after = try redPoint(in: scene.host.view)
-    XCTAssertEqual(after.x, before.x, accuracy: 2)
-    XCTAssertEqual(after.y, before.y, accuracy: 2)
-    XCTAssertEqual(scene.model.compositionTiles.published?.id, settled.id,
-      "The same complete cohort supplies both sides while preparation is forbidden")
-    XCTAssertTrue(agentWebViews(in: scene.host.view).isEmpty)
-    XCTAssertLessThanOrEqual(settled.plan.primitiveCount, 96)
-    XCTAssertTrue(settled.rasters.values.allSatisfy { !$0.isReleased })
-    scene.model.inputGate.endContact(source: input)
-    let saved = await scene.model.finishPendingPersistence()
-    XCTAssertTrue(saved)
+    scene.host.view.setNeedsLayout();scene.host.view.layoutIfNeeded()
+    let held=try redPoint(in:scene.host.view)
+    XCTAssertEqual(held.x,before.x,accuracy:2);XCTAssertEqual(held.y,before.y,accuracy:2)
+    XCTAssertEqual(scene.model.compositionTiles.published?.id,settled.id)
+    scene.model.inputGate.endContact(source:input)
+    try await scene.waitFor(board:parentID,mode:.board)
+    XCTAssertNil(scene.model.presence?.focusedItemID)
+    XCTAssertEqual(scene.model.boardHierarchy?.portalCamera(scene.childID)?.center,start.camera.center)
+    let saved=await scene.model.finishPendingPersistence();XCTAssertTrue(saved)
   }
 
-  func testZoomKeepsFolderClosedUntilExplicitEntry() async throws {
-    let scene = try await makeScene()
-    let parentID = try XCTUnwrap(scene.model.presence?.boardID)
-    let input = UUID()
-    scene.model.inputGate.beginContact(source: input)
-    defer { scene.model.inputGate.endContact(source: input) }
-    let center = CGPoint(x: scene.viewport.x / 2, y: scene.viewport.y / 2)
-    let crossing = BoardPortalProjection.fillScale(viewport: scene.viewport) / 0.35
-    try scene.send(.began(centroid: center))
-    try scene.send(.changed(scale: crossing * 1.1, velocity: 1, elapsed: 0.2, centroid: center))
-    try await Task.sleep(for: .milliseconds(40))
-    XCTAssertEqual(scene.model.presence?.boardID, parentID)
-    XCTAssertTrue(agentWebViews(in: scene.host.view).isEmpty,
-      "Зум портала не входит в доску и не запускает её программы")
-    _ = try redPoint(in: scene.host.view, expectMarker: false)
-    try scene.send(.changed(scale: crossing * 0.9, velocity: -1, elapsed: 0.3, centroid: center))
-    try await Task.sleep(for: .milliseconds(40))
-    XCTAssertNotEqual(scene.model.presence?.boardID, scene.childID)
-    XCTAssertTrue(agentWebViews(in: scene.host.view).isEmpty,
-      "Отдаление портала также сохраняет пассивное содержание")
-    _ = try redPoint(in: scene.host.view, expectMarker: false)
-    try scene.send(.ended(scale: crossing * 0.9, velocity: -1, elapsed: 0.4, centroid: center))
-    scene.model.inputGate.endContact(source: input)
-    try await Task.sleep(for: .milliseconds(400))
-    XCTAssertTrue(agentWebViews(in: scene.host.view).isEmpty,
-      "Закрытая папка не запускает программу после отпускания")
-    _ = try redPoint(in: scene.host.view, expectMarker: false)
+  func testReversedAndCancelledZoomCannotCompleteItsOldTargetLater() async throws {
+    let scene=try await makeScene(),start=try XCTUnwrap(scene.model.presence)
+    let center=CGPoint(x:scene.viewport.x/2,y:scene.viewport.y/2)
+    let crossing=BoardPortalProjection.fillScale(viewport:scene.viewport)/start.camera.scale
+    try scene.send(.began(centroid:center))
+    try scene.send(.changed(scale:crossing*1.1,velocity:1,elapsed:0.2,centroid:center))
+    try await Task.sleep(for:.milliseconds(40))
+    XCTAssertEqual(scene.model.presence?.focusedItemID,scene.childID)
+    try scene.send(.changed(scale:1,velocity:-1,elapsed:0.3,centroid:center))
+    try scene.send(.cancelled)
+    try await scene.waitFor(board:start.boardID,mode:.board)
+    try await Task.sleep(for:.milliseconds(500))
+    XCTAssertEqual(scene.model.presence,start,"A late prepared cohort cannot complete a cancelled intent")
+    XCTAssertTrue(agentWebViews(in:scene.host.view).isEmpty)
+  }
 
+  func testCancellingAPartialBoardExitFinishesTheInversePortalBeforeRestoringChildCoordinates() async throws {
+    let scene=try await makeScene(),parent=try XCTUnwrap(scene.model.presence?.boardID)
     scene.model.enterBoard(scene.childID)
-    let entryDeadline = ContinuousClock.now + .seconds(10)
-    while (scene.model.compositionTiles.published?.plan.rootBoardID != scene.childID
-      || !scene.hasInstalledMarker() || scene.model.compositionTiles.isPreparing),
-      ContinuousClock.now < entryDeadline {
-      try await Task.sleep(for: .milliseconds(20))
+    let loaded=ContinuousClock.now + .seconds(12)
+    while scene.model.compositionTiles.published?.plan.rootBoardID != scene.childID || !scene.hasInstalledMarker() {
+      guard ContinuousClock.now < loaded else { return XCTFail("Child did not prepare") }
+      try await Task.sleep(for:.milliseconds(20))
     }
-    XCTAssertEqual(scene.model.compositionTiles.published?.plan.rootBoardID, scene.childID)
-    XCTAssertTrue(scene.hasInstalledMarker())
-    _ = try redPoint(in: scene.host.view)
-    await scene.model.finishPendingPersistence()
+    let start=try XCTUnwrap(scene.model.presence),center=CGPoint(x:scene.viewport.x/2,y:scene.viewport.y/2)
+    try scene.send(.began(centroid:center))
+    try scene.send(.changed(scale:0.7,velocity:-1,elapsed:0.2,centroid:center))
+    let ready=ContinuousClock.now + .seconds(10)
+    while scene.model.presence?.boardID != parent {
+      guard ContinuousClock.now < ready else { return XCTFail("Return projection did not prepare: failure=\(scene.model.compositionTiles.failure ?? "nil") pending=\(scene.model.scenePreparationPending) permits=\(scene.model.permitsScenePreparation) composing=\(scene.model.compositionTiles.isPreparing) presence=\(String(describing:scene.model.presence)) plan=\(String(describing:scene.model.compositionTiles.published?.plan.presentations.keys))") }
+      try await Task.sleep(for:.milliseconds(20))
+    }
+    try scene.send(.cancelled)
+    XCTAssertEqual(scene.model.presence?.boardID,parent,"Cancellation animates the remaining parent projection; it cannot jump immediately into child coordinates")
+    try await scene.waitFor(board:scene.childID,mode:.board)
+    XCTAssertEqual(scene.model.presence,start)
+    try await Task.sleep(for:.milliseconds(300));XCTAssertEqual(scene.model.presence,start)
   }
 
   func testEnteredBoardKeepsInstalledChildProgramsDuringZoom() async throws {
@@ -275,13 +247,14 @@ final class PortalPassageTests: XCTestCase {
         XCTAssertTrue(scene.model.compositionTiles.surfaceRegistry.canvas(for: surface) === canvas)
       }
     }
-    let portalSurfaces: Set<SurfaceID> = [.board(start.boardID), .cover(scene.childID), .board(scene.childID)]
-    try assertPhysicalSurfaces([.board(start.boardID), .cover(scene.childID)])
+    let portalSurfaces: Set<SurfaceID> = [.board(start.boardID),.cover(scene.childID)]
+    try assertPhysicalSurfaces(portalSurfaces)
     XCTAssertNil(scene.model.compositionTiles.surfaceRegistry.canvas(for: .cover(scene.distantID)),
       "Подготовка портала не создаёт владельца далёкой тетради")
     scene.model.enterBoard(scene.childID)
     try await Task.sleep(for: .milliseconds(40))
-    scene.model.leaveBoard()
+    scene.back()
+    try await scene.waitFor(board:start.boardID,mode:.board)
     // Parent preparation is asynchronous; immediate-return pixels have their
     // own regression above. This scenario checks the settled mounted owners.
     let returnDeadline = ContinuousClock.now + .seconds(5)
@@ -350,21 +323,20 @@ final class PortalPassageTests: XCTestCase {
       ?? view.subviews.flatMap { agentWebViews(in: $0) }
   }
 
-  func testMinimumZoomCannotLeaveAndCancellationKeepsTheBoard() async throws {
+  func testMinimumZoomCanReverseItsExitAndCancellationKeepsTheBoard() async throws {
     let scene = try await makeScene()
     scene.model.enterBoard(scene.childID)
     scene.model.updatePresence(.init(boardID: scene.childID, mode: .board,
       camera: .init(scale: SpatialCamera.minimumScale), viewport: scene.viewport), settled: true)
     try await Task.sleep(for: .milliseconds(40))
+    let original=try XCTUnwrap(scene.model.presence)
     let center = CGPoint(x: scene.viewport.x * 0.6, y: scene.viewport.y * 0.4)
     try scene.send(.began(centroid: center))
     try scene.send(.changed(scale: 0.8, velocity: -1, elapsed: 0.2, centroid: center))
-    XCTAssertEqual(scene.model.presence?.boardID, scene.childID)
-    let visible = try XCTUnwrap(scene.model.presence)
-    XCTAssertEqual(visible.camera.scale, SpatialCamera.minimumScale, accuracy: 1e-10)
+    XCTAssertNotNil(scene.model.presence)
     try scene.send(.cancelled)
     try await Task.sleep(for: .milliseconds(450))
-    XCTAssertEqual(scene.model.presence, visible)
+    XCTAssertEqual(scene.model.presence, original)
     await scene.model.finishPendingPersistence()
   }
 
@@ -431,6 +403,21 @@ final class PortalPassageTests: XCTestCase {
       // XCTest can retain the completed async test frame and its Scene. The
       // fixture, not model.shutdown, must relinquish this external UI borrower.
       mountedHost = nil
+    }
+
+    private var backRequests:UInt64=0
+    func back() {
+      backRequests += 1
+      mountedHost?.rootView=AnyView(SpatialWorkspaceView(backRequest:backRequests).environment(model).ignoresSafeArea())
+    }
+    func waitFor(board:UUID,mode:WorkspaceSemanticMode) async throws {
+      let deadline=ContinuousClock.now + .seconds(15)
+      while model.presence?.boardID != board || model.presence?.mode != mode || model.presencePhase != .settled {
+        guard ContinuousClock.now < deadline else {
+          XCTFail("Navigation did not settle: \(String(describing:model.presence)); \(model.scenePreparationDiagnostic ?? "")");return
+        }
+        try await Task.sleep(for:.milliseconds(20))
+      }
     }
 
     func send(_ phase: WorkspaceMagnificationPhase) throws {
@@ -529,7 +516,7 @@ final class PortalPassageTests: XCTestCase {
     XCTAssertTrue(cohort.liveData.nonemptyBoardIDs.contains(childID), "Любое содержимое включает лист на папке")
     initialCohort = cohort
     XCTAssertEqual(cohort.rasters.count, cohort.plan.tiles.count)
-    XCTAssertNotNil(cohort.plan.presentations[.board(childID)], "The continuing gesture transfers an already prepared physical plane")
+    XCTAssertNil(cohort.plan.presentations[.board(childID)], "A resting folder must not prepare hidden child content")
     XCTAssertLessThanOrEqual(cohort.plan.nativeOwnerCount, SceneCompositionPlan.maximumNativeOwners)
     XCTAssertLessThanOrEqual(cohort.plan.liveOwners.count + cohort.plan.inkBoardIDs.count, SceneCompositionPlan.maximumLiveOwners)
     XCTAssertLessThanOrEqual(cohort.plan.primitiveCount, 96)

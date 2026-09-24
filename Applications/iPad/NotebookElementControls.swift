@@ -34,6 +34,8 @@ struct NotebookElementControls: UIViewRepresentable {
 
   func makeUIView(context: Context) -> NotebookSelectionControlsView { .init(gate: model.inputGate,contextMenus:contextMenus) }
   func updateUIView(_ view: NotebookSelectionControlsView, context: Context) {
+    view.beginActionsUpdate()
+    defer { view.finishActionsUpdate() }
     let suppressActions = model.selectionSession.manipulation != nil
       || (model.inputIsActive && !model.inputGate.permitsObjectPickup)
     let isRegion=model.selectionSession.region?.reference == reference
@@ -57,10 +59,10 @@ struct NotebookElementControls: UIViewRepresentable {
         model.finishElementManipulation(contact, translation: .init(x: point.x / scale, y: point.y / scale))
       }, cancel: { model.cancelElementManipulation(contact) })
     }
-    // configure updates the moving handles and hides the capsule. Its actions
+    // configure updates the moving handles and hides the context actions. Its actions
     // and whole-page paint order do not depend on the current contact pose.
     // Cancelling a pickup into a pinch does not finish the physical contact.
-    // Keep its action capsule out of that navigation until all fingers lift.
+    // Keep its context actions out of that navigation until all fingers lift.
     guard !suppressActions else { return }
     view.deleteElement = {
       guard model.selectionSession.id == selectionID else { return }
@@ -84,9 +86,6 @@ struct NotebookElementControls: UIViewRepresentable {
         UIAction(title:model.selectionSession.addingElements ? "Не добавлять касанием" : "Выбрать несколько",image:UIImage(systemName:"plus.circle"),attributes:isRegion ? .disabled : []) { _ in
           guard model.selectionSession.id == selectionID else { return }
           if model.selectionSession.addingElements { model.setMultipleSelectionAdding(false) } else { model.beginMultipleSelection() }
-        },
-        UIAction(title:"Дублировать",image:UIImage(systemName:"plus.square.on.square")) { _ in
-          guard model.selectionSession.id == selectionID else { return }; model.duplicateGraphicSelection()
         }
       ]))
     }
@@ -126,16 +125,7 @@ struct NotebookElementControls: UIViewRepresentable {
           guard model.selectionSession.id == selectionID else { return }
           model.formatNativeText(reference) { $0.link = link }
         })
-      }).children,cut:{
-        guard model.selectionSession.id == selectionID else { return }
-        NotebookTextObjectClipboard.copy(text); model.deleteElement(reference)
-      },copy:{
-        guard model.selectionSession.id == selectionID else { return }
-        NotebookTextObjectClipboard.copy(text)
-      },paste:{
-        guard model.selectionSession.id == selectionID else { return }
-        Task { _ = await NotebookTextObjectClipboard.paste(nextTo:text,model:model) }
-      })
+      }).children)
     } else { view.setTextActions(nil) }
     if isGroup { view.setLayerActions();view.setGroupActions() }
     if isRegion { view.setRegionActions() }
@@ -145,7 +135,7 @@ struct NotebookElementControls: UIViewRepresentable {
   static func dismantleUIView(_ view: NotebookSelectionControlsView, coordinator: ()) { view.uninstall() }
 }
 
-/// The same control owner renders one capsule and the installed member frames.
+/// The same control owner owns context actions and the installed member frames.
 struct NotebookMultipleElementControls: UIViewRepresentable {
   @Environment(NotebookAppModel.self) private var model
   let contextMenus: NotebookContextMenus
@@ -155,6 +145,8 @@ struct NotebookMultipleElementControls: UIViewRepresentable {
   var camera: SessionPresence? = nil
   func makeUIView(context: Context) -> NotebookSelectionControlsView { .init(gate:model.inputGate,contextMenus:contextMenus) }
   func updateUIView(_ view: NotebookSelectionControlsView, context: Context) {
+    view.beginActionsUpdate()
+    defer { view.finishActionsUpdate() }
     let suppressActions = model.selectionSession.manipulation != nil
       || (model.inputIsActive && !model.inputGate.permitsObjectPickup)
     view.graphic = nil
@@ -200,9 +192,6 @@ struct NotebookMultipleElementControls: UIViewRepresentable {
       UIAction(title:model.selectionSession.addingElements ? "Не добавлять касанием" : "Добавлять касанием",image:UIImage(systemName:"plus.circle")) { _ in
         guard model.selectionSession.id == selectionID else { return }; model.setMultipleSelectionAdding(!model.selectionSession.addingElements)
       },
-      UIAction(title:"Дублировать",image:UIImage(systemName:"plus.square.on.square")) { _ in
-        guard model.selectionSession.id == selectionID else { return }; model.duplicateGraphicSelection()
-      },
       UIMenu(title:"Выровнять",image:UIImage(systemName:"align.horizontal.left"),children:alignments.map { alignment,title in
         UIAction(title:title) { _ in guard model.selectionSession.id == selectionID else { return }; model.alignGraphicSelection(alignment) }
       })
@@ -226,6 +215,8 @@ struct NotebookItemControls: UIViewRepresentable {
 
   func makeUIView(context: Context) -> NotebookSelectionControlsView { .init(gate:model.inputGate,contextMenus:contextMenus) }
   func updateUIView(_ view: NotebookSelectionControlsView, context: Context) {
+    view.beginActionsUpdate()
+    defer { view.finishActionsUpdate() }
     view.graphic = nil
     view.configure(selectionID:selectionID,frame:frame,scale:camera.camera.scale,subject:.item(item.kind),
       camera:camera,cameraProjection:model.nativeCameraProjection,cornerRadius:cornerRadius * camera.camera.scale)
@@ -301,10 +292,9 @@ final class NotebookSelectionControlsView: UIControl, UIGestureRecognizerDelegat
   private let routingButton = UIButton(type: .system)
   private let endsButton = UIButton(type: .system)
   private let textFormatButton = NotebookContextMenuButton(type:.system)
-  private let clipboardButton = NotebookContextMenuButton(type:.system)
   private let layerButton = NotebookContextMenuButton(type:.system)
   private let moreButton = NotebookContextMenuButton(type: .system)
-  private var toolbarButtons: [UIButton] { [textFormatButton,styleButton,editButton,clipboardButton,modeButton,routingButton,endsButton,layerButton,deleteButton,moreButton] }
+  private var toolbarButtons: [UIButton] { [textFormatButton,styleButton,editButton,modeButton,routingButton,endsButton,layerButton,deleteButton,moreButton] }
   private var palette: NotebookElementStyleController? { contextMenus.presentedPopover(for:source) as? NotebookElementStyleController }
   private var connectionPalette: NotebookConnectionController? { contextMenus.presentedPopover(for:source) as? NotebookConnectionController }
   var changeRouting: ((NotebookGraphicConnection.Routing) -> Void)?
@@ -327,12 +317,10 @@ final class NotebookSelectionControlsView: UIControl, UIGestureRecognizerDelegat
       setNeedsLayout()
     }
   }
-  func setTextActions(_ menu: [UIMenuElement]?, cut: (() -> Void)? = nil,
-    copy: (() -> Void)? = nil, paste: (() -> Void)? = nil) {
-    textFormatButton.isHidden = menu == nil; clipboardButton.isHidden = menu == nil
+  func setTextActions(_ menu: [UIMenuElement]?) {
+    textFormatButton.isHidden = menu == nil
     if case .element = subject { editButton.isHidden = menu != nil }
     textFormatButton.contents = menu ?? []
-    clipboardButton.contents = NotebookContextMenus.clipboardActions(cut:cut,copy:copy,paste:paste)
     setNeedsLayout()
   }
   func setLayerActions(available: Set<NotebookElementLayerMove> = [], move: ((NotebookElementLayerMove) -> Void)? = nil) {
@@ -385,7 +373,6 @@ final class NotebookSelectionControlsView: UIControl, UIGestureRecognizerDelegat
     addSubview(itemOutline)
     let buttons: [(UIButton,String,String,String)] = [
       (textFormatButton,"textformat","Формат текста","native-text-format"),
-      (clipboardButton,"doc.on.clipboard","Буфер обмена","native-text-clipboard"),
       (layerButton,"square.3.layers.3d","Порядок слоёв","element-layer-menu"),
       (styleButton,"paintbrush.pointed","Оформление фигуры","graphic-style-menu"),
       (editButton,"character.cursor.ibeam","Подпись фигуры","edit-agent-element"),
@@ -548,14 +535,17 @@ final class NotebookSelectionControlsView: UIControl, UIGestureRecognizerDelegat
       itemOutline.layer.borderColor = tintColor.withAlphaComponent(0.72).cgColor
     } else { itemOutline.isHidden = true }
     setNeedsDisplay(); setNeedsLayout()
-    // Capsule position and hit regions must not wait for a SwiftUI publication.
+    // Context action position and hit regions must not wait for a SwiftUI publication.
     if window != nil { layoutIfNeeded() }
   }
+  private var updatingActions = false
+  func beginActionsUpdate() { updatingActions=true }
+  func finishActionsUpdate() { updatingActions=false;setNeedsLayout() }
   override func layoutSubviews() {
     super.layoutSubviews()
     if manipulating { contextMenus.hide(source:source) }
-    else { contextMenus.show(source:source,anchor:frameRect,in:self,buttons:toolbarButtons.filter { !$0.isHidden },
-      avoiding:handles.map(handleAccessibilityFrame),enabled:isEnabled) }
+    else if !updatingActions { contextMenus.registerSelectionActions(source:source,selection:selectionID ?? source,anchor:frameRect,in:self,
+      buttons:toolbarButtons.filter { !$0.isHidden },enabled:isEnabled) }
     for (index, handle) in handles.enumerated() {
       handleAccessibility[index].accessibilityFrameInContainerSpace = handleAccessibilityFrame(handle)
     }

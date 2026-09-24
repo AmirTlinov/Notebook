@@ -4,7 +4,7 @@ import UIKit
 /// One workspace presentation owner. Features supply actions and their anchor;
 /// this owner supplies the surface, placement, native-menu lifetime and input boundary.
 @MainActor
-final class NotebookContextMenus: NSObject, UIPopoverPresentationControllerDelegate {
+final class NotebookContextMenus: NSObject, UIPopoverPresentationControllerDelegate, @MainActor UIEditMenuInteractionDelegate {
   let view = HostView()
   // This small control surface must not filter the entire live ink backdrop
   // whenever selection changes. Keep the same native buttons and geometry.
@@ -15,13 +15,26 @@ final class NotebookContextMenus: NSObject, UIPopoverPresentationControllerDeleg
   private var anchor = CGRect.zero
   private var exclusions: [CGRect] = []
   private var buttons: [UIButton] = []
-  private var popover: UIViewController?
+  // UIKit owns the presented controller. SwiftUI dismiss() does not call the
+  // adaptive-presentation delegate; retaining it here would leave an invisible
+  // full-canvas input exclusion after the menu has gone.
+  private weak var popover: UIViewController?
   private weak var gate: NotebookInputGate?
   private let controlSource = UUID()
+  private lazy var editMenu = UIEditMenuInteraction(delegate:self)
+  private var menuConfiguration: UIEditMenuConfiguration?
+  private var menuContents: [UIMenuElement] = []
+  private var afterMenuDismiss: (UIEditMenuConfiguration, () -> Void)?
+  private var inlineControls = false
+  private var registeredSelection: UUID?
+  private var pendingSelection: (id:UUID,point:CGPoint)?
+  var selectionActions: ((UUID,CGPoint) -> [UIMenuElement])?
+
 
   override init() {
     super.init()
     view.backgroundColor = .clear; view.isOpaque = false
+    view.addInteraction(editMenu)
     surface.accessibilityIdentifier = "notebook-context-menu"
     surface.cornerConfiguration = .capsule(); surface.isHidden = true
     surface.backgroundColor = .secondarySystemGroupedBackground
@@ -69,6 +82,7 @@ final class NotebookContextMenus: NSObject, UIPopoverPresentationControllerDeleg
     avoiding exclusions: [CGRect] = [], enabled: Bool = true) {
     guard anchorView.window != nil, view.window == nil || anchorView.window === view.window else { return }
     if self.source != source { dismissCurrent(); self.source = source }
+    inlineControls = true
     self.anchorView = anchorView; self.anchor = anchor; self.exclusions = exclusions
     if self.buttons != buttons {
       for child in stack.arrangedSubviews { stack.removeArrangedSubview(child); child.removeFromSuperview() }
@@ -83,27 +97,94 @@ final class NotebookContextMenus: NSObject, UIPopoverPresentationControllerDeleg
     dismissCurrent(); self.source = nil; anchorView = nil
   }
   func uninstall() {
-    dismissCurrent(); source = nil; anchorView = nil
+    dismissCurrent(); source = nil; anchorView = nil; selectionActions = nil; pendingSelection = nil
     gate?.unregisterControlRegion(source:controlSource); gate = nil
   }
   private func dismissCurrent() {
     dismissPopover()
+    afterMenuDismiss=nil
+    editMenu.dismissMenu(); menuConfiguration=nil; menuContents=[]
+    registeredSelection=nil; inlineControls=false
     for button in buttons { (button as? NotebookContextMenuButton)?.contextMenuInteraction?.dismissMenu() }
     for child in stack.arrangedSubviews { stack.removeArrangedSubview(child); child.removeFromSuperview() }
     buttons = []; surface.isHidden = true
   }
-  var hasPresentedMenu: Bool { popover != nil || buttons.contains { ($0 as? NotebookContextMenuButton)?.isMenuPresented == true } }
-  func presentedPopover(for source: UUID) -> UIViewController? { self.source == source ? popover : nil }
+  var hasPresentedMenu: Bool { menuConfiguration != nil || popover?.presentingViewController != nil || buttons.contains { ($0 as? NotebookContextMenuButton)?.isMenuPresented == true } }
+  func requestSelectionMenu(_ selection: UUID, at point: CGPoint) {
+    pendingSelection = (selection,point)
+    presentRegisteredSelectionIfReady()
+  }
+  func registerSelectionActions(source: UUID, selection: UUID, anchor: CGRect, in anchorView: UIView,
+    buttons: [UIButton], enabled: Bool) {
+    guard anchorView.window != nil else { return }
+    if self.source != source { dismissCurrent(); self.source=source }
+    self.anchorView=anchorView; self.anchor=anchor; self.buttons=buttons
+    registeredSelection=selection; inlineControls=false
+    surface.isHidden=true
+    if enabled { presentRegisteredSelectionIfReady() }
+  }
+  private func presentRegisteredSelectionIfReady() {
+    guard let pending=pendingSelection, registeredSelection == pending.id, view.window != nil else { return }
+    pendingSelection=nil
+    let actions=selectionActions?(pending.id,pending.point) ?? []
+    let parameters=buttons.filter { !$0.isHidden }.flatMap { button -> [UIMenuElement] in
+      if let menu=button as? NotebookContextMenuButton {
+        if button.accessibilityIdentifier == "element-actions-menu" { return menu.contents }
+        return [UIMenu(title:button.accessibilityLabel ?? "",image:button.configuration?.image,children:menu.contents)]
+      }
+      return [UIAction(title:button.accessibilityLabel ?? "",image:button.configuration?.image,
+        attributes:button.isEnabled ? [] : .disabled) { [weak self,weak button] _ in
+          guard self?.registeredSelection == pending.id else { return }
+          guard let self,let configuration=menuConfiguration else { return }
+          afterMenuDismiss=(configuration,{ [weak self,weak button] in
+            guard self?.registeredSelection == pending.id else { return }
+            button?.sendActions(for:.touchUpInside)
+          })
+          editMenu.dismissMenu()
+        }]
+    }
+    presentMenu(actions+parameters,at:pending.point)
+  }
+  func presentMenu(_ actions: [UIMenuElement], at point: CGPoint) {
+    guard view.window != nil,!actions.isEmpty else { return }
+    menuContents=actions
+    let configuration=UIEditMenuConfiguration(identifier:UUID() as NSUUID,sourcePoint:point)
+    menuConfiguration=configuration; editMenu.presentEditMenu(with:configuration)
+  }
+  func editMenuInteraction(_ interaction: UIEditMenuInteraction, menuFor configuration: UIEditMenuConfiguration,
+    suggestedActions: [UIMenuElement]) -> UIMenu? {
+    configuration === menuConfiguration ? UIMenu(children:menuContents) : nil
+  }
+  func editMenuInteraction(_ interaction: UIEditMenuInteraction, willDismissMenuFor configuration: UIEditMenuConfiguration,
+    animator: any UIEditMenuInteractionAnimating) {
+    animator.addCompletion { [weak self] in
+      guard self?.menuConfiguration === configuration else { return }
+      let action=self?.afterMenuDismiss
+      self?.afterMenuDismiss=nil;self?.menuConfiguration=nil;self?.menuContents=[]
+      if action?.0 === configuration { action?.1() }
+    }
+  }
+  func presentContent<Content: View>(_ content: Content, at point: CGPoint) {
+    editMenu.dismissMenu()
+    dismissCurrent()
+    let id=UUID();source=id; anchorView=nil
+    let controller=UIHostingController(rootView:content)
+    controller.modalPresentationStyle = .popover
+    controller.sizingOptions = [.preferredContentSize]
+    presentPopover(controller,source:id,from:view,rect:.init(x:point.x,y:point.y,width:1,height:1))
+  }
+  func dismissPresentedContent() { dismissCurrent(); pendingSelection=nil }
+  func presentedPopover(for source: UUID) -> UIViewController? { self.source == source && popover?.presentingViewController != nil ? popover : nil }
   func dismissPopover(source: UUID) { if self.source == source { dismissPopover() } }
   private func dismissPopover() { let old = popover; popover = nil; old?.dismiss(animated:false) }
   func presentPopover(_ controller: UIViewController, source: UUID, from anchor: UIView, rect: CGRect? = nil) {
-    guard self.source == source, popover == nil else { return }
+    guard self.source == source, popover?.presentingViewController == nil else { return }
     var responder: UIResponder? = view
     while responder != nil && !(responder is UIViewController) { responder = responder?.next }
     guard let owner = responder as? UIViewController else { return }
     controller.popoverPresentationController?.delegate = self
-    controller.popoverPresentationController?.sourceView = anchor
-    controller.popoverPresentationController?.sourceRect = rect ?? anchor.bounds
+    controller.popoverPresentationController?.sourceView = anchor.window == nil ? (anchorView ?? view) : anchor
+    controller.popoverPresentationController?.sourceRect = rect ?? (anchor.window == nil ? self.anchor : anchor.bounds)
     controller.popoverPresentationController?.permittedArrowDirections = .any
     popover = controller; owner.present(controller,animated:true)
   }
@@ -116,7 +197,7 @@ final class NotebookContextMenus: NSObject, UIPopoverPresentationControllerDeleg
     self.source == source && !surface.isHidden ? surface.convert(surface.bounds,to:view) : .null
   }
   private func place() {
-    guard source != nil, !buttons.isEmpty, let anchorView, let window = view.window,
+    guard inlineControls, source != nil, !buttons.isEmpty, let anchorView, let window = view.window,
       anchorView.window === window, !view.bounds.isEmpty else { surface.isHidden = true; return }
     let selected = anchorView.convert(anchor,to:view)
     guard selected.intersects(view.bounds) else { surface.isHidden = true; return }

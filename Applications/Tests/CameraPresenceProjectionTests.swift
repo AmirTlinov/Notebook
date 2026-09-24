@@ -42,7 +42,7 @@ final class CameraPresenceProjectionTests: XCTestCase {
     let cover = try XCTUnwrap(descendants(host.view).compactMap { $0 as? NotebookInteractionTouchView }.first)
     let outline = try XCTUnwrap(controls.subviews.first { $0.layer.borderWidth == 2 })
     let capsule = try XCTUnwrap(descendants(host.view).first { $0.accessibilityIdentifier == "notebook-context-menu" })
-    let capsuleSize = capsule.bounds.size
+    XCTAssertTrue(capsule.isHidden,"Selected material no longer mounts a floating action strip")
     let owners = cameraOwners(in: host)
     XCTAssertGreaterThanOrEqual(owners.count, 2, "The item and element planes are both installed")
     let baseline = Dictionary(uniqueKeysWithValues: owners.map {
@@ -57,8 +57,7 @@ final class CameraPresenceProjectionTests: XCTestCase {
       XCTAssertEqual(outline.frame.width,physical.width,accuracy:0.5)
       XCTAssertEqual(outline.frame.height,physical.height,accuracy:0.5)
       XCTAssertEqual(outline.layer.borderWidth,2)
-      XCTAssertEqual(capsule.bounds.size,capsuleSize)
-      XCTAssertEqual(capsule.convert(capsule.bounds,to:controls).midX,physical.midX,accuracy:0.5)
+      XCTAssertTrue(capsule.isHidden,"Camera projection cannot resurrect replaced floating controls")
       window.layoutIfNeeded()
       try await Task.sleep(for: .milliseconds(8))
     }

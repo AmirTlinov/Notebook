@@ -690,6 +690,7 @@ struct NotebookInteractionView: UIViewRepresentable {
   let onTranslationChanged: (CGSize) -> Void
   let onTranslationEnded: (CGSize) -> Void
   let onCancelled: () -> Void
+  var onHold: (CGPoint) -> Void = { _ in }
 
   func makeUIView(context: Context) -> NotebookInteractionTouchView {
     let view = NotebookInteractionTouchView(inputGate: inputGate)
@@ -706,6 +707,7 @@ struct NotebookInteractionView: UIViewRepresentable {
     view.passesThrough = passesThrough
     view.useInputGate(inputGate)
     view.onTap = onTap
+    view.onHold = onHold
     view.onLiftChanged = onLiftChanged
     view.onTranslationChanged = onTranslationChanged
     view.onTranslationEnded = onTranslationEnded
@@ -724,6 +726,7 @@ struct NotebookInteractionView: UIViewRepresentable {
 @MainActor
 final class NotebookInteractionTouchView: UIView {
 
+  var onHold: (CGPoint) -> Void = { _ in }
   var onTap: (CGPoint, Int) -> Void = { _, _ in }
   var onLiftChanged: (Bool) -> Void = { _ in }
   var onTranslationChanged: (CGSize) -> Void = { _ in }
@@ -745,6 +748,7 @@ final class NotebookInteractionTouchView: UIView {
   private var fingerGeneration: UInt64?
   private struct ContactCallbacks {
     let tap: (CGPoint, Int) -> Void
+    let hold: (CGPoint) -> Void
     let liftChanged: (Bool) -> Void
     let translationChanged: (CGSize) -> Void
     let translationEnded: (CGSize) -> Void
@@ -808,7 +812,7 @@ final class NotebookInteractionTouchView: UIView {
       directTouches.count == 1, let touch = directTouches.first else { return }
     activeTouch = touch
     fingerGeneration = generation
-    contactCallbacks = .init(tap: onTap, liftChanged: onLiftChanged,
+    contactCallbacks = .init(tap:onTap,hold:onHold,liftChanged: onLiftChanged,
       translationChanged: onTranslationChanged, translationEnded: onTranslationEnded,
       cancelled: onCancelled)
     startPoint = touch.location(in: window)
@@ -918,6 +922,7 @@ final class NotebookInteractionTouchView: UIView {
     let callbacks = contactCallbacks
     let wasLifted = isLifted
     let translation = latestTranslation
+    let wasHold = acceptTap && wasLifted && maximumTravel < NotebookObjectPickup.movementThreshold
     let wasTap =
       acceptTap && !hasLiftedDuringContact
       && maximumTravel < NotebookObjectPickup.movementThreshold
@@ -929,7 +934,9 @@ final class NotebookInteractionTouchView: UIView {
     isLifted = false
     hasLiftedDuringContact = false
 
-    if wasLifted {
+    if wasHold {
+      callbacks?.cancelled(); callbacks?.liftChanged(false); callbacks?.hold(tapLocation)
+    } else if wasLifted {
       if acceptTap {
         callbacks?.translationEnded(translation)
         callbacks?.liftChanged(false)

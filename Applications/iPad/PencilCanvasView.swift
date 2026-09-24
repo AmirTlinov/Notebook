@@ -562,6 +562,7 @@ final class PaperInputView: UIView {
 
   private var activeTouch: UITouch?
   private var actionTool: DrawingTool?
+  private var guideConstraint: GuideConstraintSnapshot?
   private var actionPenStyle: PenStyle?
   private var actionEraserStyle: EraserStyle?
   private var actionStrokeID = UUID()
@@ -762,6 +763,13 @@ final class PaperInputView: UIView {
 
     activeTouch = touch
     actionTool = drawingTool
+    if drawingTool.drawsInk, let pageID = quickShapePageID {
+      let a = convert(CGPoint.zero,to:window), b = convert(CGPoint(x:1,y:0),to:window)
+      let point = touch.preciseLocation(in:self)
+      guideConstraint = toolController?.guideConstraint(at:.init(x:point.x,y:point.y),
+        address:.init(surface:.page(pageID),boardID:nil,worldOrigin:nil,bounds:bounds),
+        screenScale:max(0.001,hypot(b.x-a.x,b.y-a.y)))
+    } else { guideConstraint = nil }
     elementContact = InkElementContact([])
     activePageEraserSource = drawingTool == .eraser ? pageEraserSource() : nil
     elementEraserFailed = false
@@ -791,7 +799,7 @@ final class PaperInputView: UIView {
     updatePredictions(for: touch, event: event)
     refreshAction()
     completedQuickShape = nil
-    if actionTool == .pen, let first = samples.first?.point.location {
+    if actionTool == .pen, guideConstraint == nil, let first = samples.first?.point.location {
       let a = convert(CGPoint.zero, to: window), b = convert(CGPoint(x: 1, y: 0), to: window)
       let scale = max(0.001, hypot(b.x-a.x,b.y-a.y)), resolve = resolveQuickShape
       quickShape.begin(at: .init(x: first.x, y: first.y), screenScale:scale,resolve:{ resolve($0,scale) }) { [weak self] in
@@ -902,7 +910,7 @@ final class PaperInputView: UIView {
     default: preconditionFailure("Non-ink contact entered the ink sampler")
     }
     let point = PKStrokePoint(
-      location: touch.preciseLocation(in: self),
+      location: guideConstraint?.project(touch.preciseLocation(in:self)) ?? touch.preciseLocation(in:self),
       timeOffset: timestamp,
       size: CGSize(width: width, height: width),
       opacity: opacity,
@@ -1205,6 +1213,7 @@ final class PaperInputView: UIView {
     elementEraserFailed = false
     activeTouch = nil
     actionTool = nil
+    guideConstraint = nil
     actionPenStyle = nil
     actionEraserStyle = nil
     samples = []

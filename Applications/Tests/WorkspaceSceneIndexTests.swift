@@ -163,6 +163,55 @@ final class WorkspaceSceneIndexTests: XCTestCase {
     XCTAssertThrowsError(try NotebookSceneState.read(store: store, presence: invalid, viewport: viewport))
   }
 
+  @MainActor
+  func testSQLCoverageKeepsVisibleFolderMetadataButReadsOnlyTheOpeningTarget() async throws {
+    let model=await makeModel(),root=try XCTUnwrap(model.workspace?.rootBoardID)
+    let viewport=SpatialPoint(x:1194,y:834)
+    let closed=SessionPresence(boardID:root,mode:.board,camera:.init(scale:0.3),viewport:viewport)
+    model.updatePresence(closed,settled:true)
+    var folders:[UUID]=[]
+    for index in 0..<6 {
+      folders.append(try XCTUnwrap(model.createBoard(at:.init(x:Double(index-3)*300,y:0))))
+    }
+    let saved=await model.finishPendingPersistence();XCTAssertTrue(saved)
+    let snapshot=try NotebookSceneState.read(store:model.store,presence:closed,viewport:viewport)
+    XCTAssertEqual(Set(snapshot.coverage.keys),[root])
+    XCTAssertTrue(folders.allSatisfy { snapshot.hierarchy.board($0) != nil },"A visible closed folder retains its navigation header")
+    let target=try XCTUnwrap(folders.first)
+    // The pending passage has not accepted a new selection yet. Its focused
+    // target, not a previously selected notebook, addresses preparation.
+    let opening=SessionPresence(boardID:root,mode:.cover,camera:.init(scale:0.3),viewport:viewport,
+      focusedItemID:target,openProgress:0.4)
+    let prepared=try NotebookSceneState.read(store:model.store,presence:opening,viewport:viewport)
+    XCTAssertEqual(prepared.presence.focusedItemID,target)
+    XCTAssertEqual(Set(prepared.coverage.keys),[root,target])
+    XCTAssertEqual(Set(prepared.inkSurfaces.filter { $0.kind == .board }.compactMap(\.ownerID)),[root,target])
+  }
+
+  func testHundredThousandFoldersPrepareOnlyTheAdmittedPortal() throws {
+    let stamp=VersionStamp(counter:0,actor:UUID()),root=WorkspaceRoot.boardID
+    let items=(0..<100_000).map { WorkspaceItem.board(title:"Folder \($0)") }
+    let target=items[0].id
+    let workspace=WorkspaceIndex(items:items,selectedItemID:target,selectedPageID:nil,stamp:stamp)
+    let placements=items.enumerated().map { offset,item in
+      FreeItemPlacement(itemID:item.id,center:.init(x:Double(offset%400)*2000,y:Double(offset/400)*2200),zIndex:offset,stamp:stamp)
+    }
+    let hierarchy=BoardHierarchy(rootBoardID:root,boards:[
+      .init(id:root,board:.init(freeItems:placements,stamp:stamp)),
+      .init(id:target,board:.init(freeItems:[],stamp:stamp))],stamp:stamp)
+    let index=WorkspaceSceneIndex(workspace:workspace,hierarchy:hierarchy,paperSizes:[:])
+    let viewport=SpatialPoint(x:1194,y:834),camera=SpatialCamera(scale:0.35)
+    var prepared:[UUID]=[]
+    let closed=WorkspaceSceneFrame(index:index,presence:.init(boardID:root,mode:.board,camera:camera,viewport:viewport),
+      portalCamera:{ prepared.append($0);return .init() })
+    XCTAssertEqual(Set(closed.worksets.keys),[root]);XCTAssertTrue(prepared.isEmpty)
+    let opening=WorkspaceSceneFrame(index:index,presence:.init(boardID:root,mode:.cover,camera:camera,viewport:viewport,
+      focusedItemID:target,openProgress:0.3),portalCamera:{ prepared.append($0);return .init() })
+    XCTAssertEqual(prepared,[target]);XCTAssertEqual(Set(opening.worksets.keys),[root,target])
+    XCTAssertLessThanOrEqual(opening.primitiveCount,WorkspaceSceneIndex.detailLimit)
+    XCTAssertLessThan(opening.visitedNodes,2_000,"Admission cannot scan the folder catalog")
+  }
+
   func testOneHundredThousandStoredItemsResolveFourVisibleOwnersWithoutCatalogScan() throws {
     let fixture = itemFixture(count: 100_000)
     let index = WorkspaceSceneIndex(workspace: fixture.workspace, hierarchy: fixture.hierarchy, paperSizes: [:])
@@ -522,9 +571,13 @@ final class WorkspaceSceneIndexTests: XCTestCase {
     model.updatePresence(childPresence, settled: true)
     let contact = UUID()
     model.inputGate.beginContact(source: contact)
-    let destination = WorldPoint(x: 20_000, y: 10_000)
-    model.moveItem(itemID, to: destination)
-    XCTAssertTrue(model.leaveBoard())
+    let destination = WorldPoint(x: 300, y: 200)
+    XCTAssertNotNil(model.moveItem(itemID,to:destination),"The regression must admit an actual placement command")
+    XCTAssertTrue(model.rememberBoardReturn(childPresence,portal:BoardPortalProjection.portalCamera(from:childPresence.camera,viewport:viewport)))
+    let parentID=try XCTUnwrap(model.boardHierarchy?.parentBoardID(of:childID))
+    model.updatePresence(.init(boardID:parentID,mode:.cover,
+      camera:BoardPortalProjection.parentBoundaryCamera(portalCenter:.zero,viewport:viewport),viewport:viewport,
+      focusedItemID:childID,openProgress:1),settled:true)
     let expectedPortal = try XCTUnwrap(model.boardHierarchy?.portalCamera(childID))
     XCTAssertNotEqual(expectedPortal, oldPortal)
     await assertSaved("Move item and normalize portal during contact")

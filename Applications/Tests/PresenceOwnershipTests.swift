@@ -27,14 +27,9 @@ final class PresenceOwnershipTests: XCTestCase {
     inspected = inspected.selecting(itemID: model.presence?.selectedItemID, pageID: model.presence?.notebookPageID)
     model.updatePresence(inspected, settled: true)
 
-    XCTAssertTrue(model.leaveBoard())
-    XCTAssertEqual(model.presence?.mode, .cover)
-    XCTAssertEqual(model.presence?.focusedItemID, boardID)
-    XCTAssertEqual(
-      try XCTUnwrap(model.presence?.camera.scale),
-      BoardPortalProjection.fillScale(viewport: viewport),
-      accuracy: 0.000_001
-    )
+    let parent=try XCTUnwrap(model.boardHierarchy?.parentBoardID(of:boardID))
+    XCTAssertTrue(model.rememberBoardReturn(inspected,portal:BoardPortalProjection.portalCamera(from:inspected.camera,viewport:viewport)))
+    model.updatePresence(.init(boardID:parent,mode:.board,camera:.init(),viewport:viewport),settled:true)
 
     model.enterBoard(boardID)
 

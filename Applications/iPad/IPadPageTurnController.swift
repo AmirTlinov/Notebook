@@ -862,6 +862,7 @@ final class IPadPageTurnController: UIViewController {
     min(max(0, index), max(0, pageCount - 1))
   }
 
+  var isCurrentPagePrepared:Bool { hasInstalledPage && readyPages[displayedIndex] == true && preparationFailures[displayedIndex] == nil }
   var preparedPageIndices: Set<Int> { Set(readyPages.compactMap { $0.value ? $0.key : nil }) }
 
   #if DEBUG

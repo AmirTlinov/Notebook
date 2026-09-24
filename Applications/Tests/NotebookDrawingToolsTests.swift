@@ -159,7 +159,7 @@ import UIKit
       XCTAssertTrue(page.replaceDrawing(try PageInkDrawing(actions:[cut]).dataRepresentation(),actor:model.actorID))
       try model.store.savePage(page);await model.reloadExternalChanges()?.value
       let address=NotebookToolAddress(surface:.page(page.id),boardID:nil,worldOrigin:nil,bounds:nil)
-      model.selectElement(address.reference(shape.id));model.duplicateGraphicSelection()
+      model.selectElement(address.reference(shape.id));model.duplicateSelectedContent()
       await assertSaved(model);await model.reloadExternalChanges()?.value
       let duplicate=try XCTUnwrap(try model.store.loadPage(page.id).elements.first { $0.id != shape.id })
       XCTAssertFalse(try XCTUnwrap(duplicate.graphic?.mask).contains(.init(x:0.2,y:0.5)))
@@ -476,7 +476,7 @@ import UIKit
     for force in [0.0,0.1,0.5,1,2] { XCTAssertEqual(marker.opacity(force:force),0.3) }
     XCTAssertNotEqual(PenStyle.standard.opacity(force:0),PenStyle.standard.opacity(force:1))
     XCTAssertTrue(DrawingTool.marker.usesInkJournal)
-    for tool in [DrawingTool.lasso,.shape,.text,.connector,.ruler,.laser] { XCTAssertFalse(tool.usesInkJournal) }
+    for tool in [DrawingTool.lasso,.shape,.text,.connector,.laser] { XCTAssertFalse(tool.usesInkJournal) }
   }
 
   func testShapesAndRulerSharePhysicalGeometryInEveryDragDirection() throws {
@@ -490,8 +490,10 @@ import UIKit
     XCTAssertEqual(line.connection?.start.point,.init(x:70,y:50)); XCTAssertEqual(line.connection?.end.point,.zero)
     XCTAssertEqual(line.connection?.endArrowhead,.arrow)
     let address = NotebookToolAddress(surface:.page(UUID()),boardID:nil,worldOrigin:nil,bounds:nil)
-    let ruler = NotebookRuler(address:address,start:.init(x:10,y:20),angle:90,length:PhysicalPaper.pointsPerCentimeter*10)
-    let point = ruler.project(.init(x:87,y:20+PhysicalPaper.pointsPerCentimeter),from:address,snap:true)
+    var ruler = NotebookDrawingGuide(address:address,start:.init(x:10,y:20),angle:90,length:PhysicalPaper.pointsPerCentimeter*10)
+    ruler.snapToGrid = true
+    let constraint = try XCTUnwrap(ruler.constraint(at:.init(x:11,y:20+PhysicalPaper.pointsPerCentimeter),from:address,screenScale:1))
+    let point = constraint.project(SpatialPoint(x:87,y:20+PhysicalPaper.pointsPerCentimeter))
     XCTAssertEqual(point.x,10,accuracy:0.000001)
     XCTAssertEqual(point.y,20+PhysicalPaper.gridSpacing*2,accuracy:0.000001)
   }
@@ -557,7 +559,7 @@ import UIKit
       paper.onDrawingMutation = { _ in inkActions += 1 }
       paper.configure(penStyle:.standard,eraserStyle:.standard,drawingTool:.pen)
       let touch = DrawingToolPencilTouch()
-      for tool in [DrawingTool.shape,.connector,.ruler,.text,.laser,.lasso] {
+      for tool in [DrawingTool.shape,.connector,.text,.laser,.lasso] {
         model.selectDrawingTool(tool)
         touch.point = .init(x:100,y:100); paper.touchesBegan([touch],with:nil)
         XCTAssertTrue(model.inputGate.hasActivePencil)
@@ -637,7 +639,7 @@ import UIKit
         .init(surface:.board(board),boardID:board,worldOrigin:.zero,bounds:nil),
         .init(surface:.cover(item),boardID:board,worldOrigin:nil,bounds:.init(x:0,y:0,width:600,height:800))]
       for address in addresses {
-        for tool in [DrawingTool.shape,.connector,.ruler] {
+        for tool in [DrawingTool.shape,.connector] {
           model.selectDrawingTool(tool)
           XCTAssertTrue(model.drawingTools.begin(at:.init(x:80,y:100),address:address,screenScale:1))
           model.drawingTools.move(to:.init(x:260,y:210)); model.drawingTools.finish()
@@ -654,13 +656,13 @@ import UIKit
         await assertSaved(model); await model.reloadExternalChanges()?.value
       }
       let saved = try model.store.loadPage(page.id)
-      XCTAssertEqual(saved.elements.count,4); XCTAssertEqual(saved.elements.last?.kind,.nativeText)
+      XCTAssertEqual(saved.elements.count,3); XCTAssertEqual(saved.elements.last?.kind,.nativeText)
       XCTAssertEqual(saved.elements.last?.textStyle?.fontSize,24)
-      XCTAssertEqual(try model.store.loadBoard(items:model.store.loadIndex().items).board(board)?.elements.count,8)
+      XCTAssertEqual(try model.store.loadBoard(items:model.store.loadIndex().items).board(board)?.elements.count,6)
       let actions = try model.store.collaborationActions(afterID:nil)
       let action = try XCTUnwrap(actions.first { $0.action.summary == "Добавить текст" })
       model.undoCollaboration(action.id); await assertSaved(model)
-      XCTAssertEqual(try model.store.loadBoard(items:model.store.loadIndex().items).board(board)?.elements.count,7)
+      XCTAssertEqual(try model.store.loadBoard(items:model.store.loadIndex().items).board(board)?.elements.count,5)
     }
   }
 
@@ -693,7 +695,7 @@ import UIKit
       model.selectElements([address.reference(object.id)])
       model.transformGraphicSelection(radians:.pi/2)
       await assertSaved(model); await model.reloadExternalChanges()?.value
-      model.duplicateGraphicSelection()
+      model.duplicateSelectedContent()
       await assertSaved(model); await model.reloadExternalChanges()?.value
       let saved = try model.store.loadPage(page.id)
       XCTAssertEqual(saved.drawingData,data,"Manipulation never rewrites immutable measured samples")
@@ -903,7 +905,7 @@ import UIKit
 
   func testPrimaryColorHasOnePreferenceOwnerAndDoesNotSwitchTools() async throws {
     try await fixture { model in
-      for tool in [DrawingTool.pen,.marker,.shape,.text,.connector,.ruler,.laser] {
+      for tool in [DrawingTool.pen,.marker,.shape,.text,.connector,.laser] {
         model.selectDrawingTool(tool); model.selectDrawingColor(.green)
         XCTAssertEqual(model.drawingTool,tool); XCTAssertEqual(model.drawingColor,.green)
       }

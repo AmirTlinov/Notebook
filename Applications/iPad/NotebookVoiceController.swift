@@ -27,7 +27,8 @@ import NotebookCore
     preferences.removeObject(forKey: "notebook.voice.method")
     address = preferences.string(forKey: "notebook.voice.address." + language) ?? NotebookWakeAddress.localAddress(language: language)
   }
-  private(set) var phase: Phase = .off
+  private(set) var inputLevel = 0.0
+  private(set) var phase: Phase = .off { didSet { if phase == .off || phase == .muted { inputLevel = 0 } } }
   private(set) var taskTitle = ""
   private(set) var captureID: UUID? { didSet { chat?.dictation.environmentChanged() } }
   var capturing: Bool { captureID != nil }
@@ -50,7 +51,7 @@ import NotebookCore
   private(set) var changingSpeaker = false
   private(set) var speakerMuted = false
   private(set) var mediaReady = false
-  private(set) var ending = false
+  private(set) var ending = false { didSet { if ending { inputLevel = 0 } } }
   private(set) var error: String?
   @ObservationIgnored weak var chat: NotebookChatController?
   @ObservationIgnored weak var host: UIView?
@@ -246,7 +247,9 @@ extension NotebookVoiceController: WKNavigationDelegate, WKUIDelegate, WKScriptM
   func webViewWebContentProcessDidTerminate(_ webView: WKWebView) { if webView === web { connectionLost() } }
   func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
     guard message.webView === web, message.frameInfo.isMainFrame, captureID != nil, !ending, let body = message.body as? [String:Any] else { return }
-    if body["type"] as? String == "connection" {
+    if body["type"] as? String == "level", let level = body["value"] as? Double, level.isFinite {
+      inputLevel = muted ? 0 : min(1,max(0,level))
+    } else if body["type"] as? String == "connection" {
       if body["state"] as? String == "connected" { mediaReady = true; phase = .listening; deadline?.cancel(); deadline = nil }
       else if ["failed","disconnected","closed"].contains(body["state"] as? String ?? "") { connectionLost() }
     } else if body["type"] as? String == "pcm", waiting,

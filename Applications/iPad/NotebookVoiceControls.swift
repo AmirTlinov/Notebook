@@ -4,7 +4,6 @@ import NotebookCore
 
 struct NotebookDictationButton: View {
   @Bindable var chat: NotebookChatController
-  var compact = false
   private var dictation: NotebookDictationController { chat.dictation }
   var body: some View {
     Menu {
@@ -32,7 +31,7 @@ struct NotebookDictationButton: View {
     .accessibilityLabel(dictation.microphoneMuted ? "Включить микрофон" : "Диктовать сообщение")
     .accessibilityValue(dictation.status.isEmpty ? "Готова" : dictation.status)
     .accessibilityHint("Нажмите для диктовки с редактируемым черновиком. Удерживайте, чтобы выключить микрофон. Обращение GPT отправляется после паузы.")
-    .accessibilityIdentifier(compact ? "notebook-compact-dictation" : "notebook-chat-dictation")
+    .accessibilityIdentifier("notebook-chat-dictation")
     .accessibilityAction(named: dictation.microphoneMuted ? "Включить микрофон" : "Выключить микрофон") {
       dictation.setMicrophoneMuted(!dictation.microphoneMuted)
     }
@@ -119,7 +118,6 @@ struct NotebookDictationInput: View {
 
 struct NotebookVoiceStartButton: View {
   @Bindable var chat: NotebookChatController
-  var compact = false
   @State private var showsSettings = false
   var body: some View {
     Button {
@@ -131,7 +129,7 @@ struct NotebookVoiceStartButton: View {
     }.accessibilityLabel(chat.voice.capturing ? "Управление голосом" : "Начать голосовой разговор")
       .disabled(chat.dictation.busy)
       .accessibilityHint("Нажмите и говорите. Удерживайте для настройки обращения к GPT.")
-      .accessibilityIdentifier(compact ? "notebook-compact-voice" : "notebook-chat-voice")
+      .accessibilityIdentifier("notebook-chat-voice")
       .highPriorityGesture(LongPressGesture(minimumDuration: 0.6).onEnded { _ in showsSettings = true })
       .accessibilityAction(named: "Параметры голоса") { showsSettings = true }
       .popover(isPresented: $showsSettings) {
@@ -183,7 +181,7 @@ struct NotebookVoiceControls: View {
   var body: some View {
     if voice.capturing {
       HStack(spacing: 8) {
-        NotebookVoiceOrb(phase: voice.phase).frame(width: 20, height: 20)
+        NotebookAudioLevelGlyph(symbol:voice.muted ? "mic.slash" : "waveform",level:voice.inputLevel).frame(width: 20, height: 20)
         Text(voice.status).font(.caption).lineLimit(2)
         Spacer(minLength: 0)
         Button { Task { await voice.mute() } } label: { Image(systemName: voice.muted ? "mic.fill" : "mic.slash").frame(width: 44,height: 44).contentShape(Rectangle()) }

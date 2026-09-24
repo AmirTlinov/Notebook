@@ -46,9 +46,10 @@ struct NotebookNavigationHeader: View {
 struct NotebookNavigationActions: View {
   @Environment(NotebookAppModel.self) private var model
   @State private var showsSearch = false
+  var showsActions = true
   var body: some View {
     HStack(spacing: 0) {
-        if let destination = model.pasteDestination { NotebookActionsMenu(destination:destination) }
+        if showsActions, let destination = model.pasteDestination { NotebookActionsMenu(destination:destination) }
         Button { showsSearch = true } label: { Image(systemName: "magnifyingglass").frame(width: 44, height: 44).contentShape(Rectangle()) }
           .accessibilityLabel("Найти мысль").accessibilityIdentifier("notebook-search")
           .keyboardShortcut("f", modifiers: .command)

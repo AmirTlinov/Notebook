@@ -34,6 +34,9 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertEqual(node.frame.midY-zoomed.midY,25,accuracy:10)
     let proof = XCTAttachment(screenshot:app.screenshot()); proof.name = "zoomed-paper-single-finger-pan"; proof.lifetime = .keepAlways; add(proof)
     node.pinch(withScale:0.1,velocity:-2)
+    XCTAssertTrue(paper.waitForNonExistence(timeout:5))
+    let cover=app.descendants(matching:.any).matching(identifier:"workspace-item-7e7a1000-0000-4000-8000-000000000002").firstMatch
+    cover.doubleTap();XCTAssertTrue(paper.waitForExistence(timeout:5))
     XCTAssertEqual(paper.frame.width,originalPaper.width,accuracy:3)
     surface.swipeLeft()
     wait(for:[XCTNSPredicateExpectation(predicate:NSPredicate(format:"value BEGINSWITH 'Страница 2 из '"),object:surface)],timeout:3)
@@ -49,7 +52,7 @@ final class DrawingResponsivenessTests: XCTestCase {
     launchPortraitFixture(app)
     let paper=app.otherElements["paper-input"]
     XCTAssertTrue(paper.waitForExistence(timeout:5));let originalPaper=paper.frame,ink=paper.value as? String
-    app.buttons["drawing-tools-more"].tap();app.buttons["drawing-tool-text"].tap()
+    app.buttons["drawing-tool-text"].tap()
     app.coordinate(withNormalizedOffset:.init(dx:0.55,dy:0.15)).tap()
     let editor=app.textViews["native-text-editor"]
     XCTAssertTrue(editor.waitForExistence(timeout:3))
@@ -86,7 +89,7 @@ final class DrawingResponsivenessTests: XCTestCase {
     launchPortraitFixture(app)
     let paper = app.otherElements["paper-input"]
     XCTAssertTrue(paper.waitForExistence(timeout:5)); let originalPaper = paper.frame, ink = paper.value as? String
-    app.buttons["drawing-tools-more"].tap(); app.buttons["drawing-tool-text"].tap()
+    app.buttons["drawing-tool-text"].tap()
     app.coordinate(withNormalizedOffset:.init(dx:0.55,dy:0.15)).tap()
     let editor = app.textViews["native-text-editor"]
     XCTAssertTrue(editor.waitForExistence(timeout:2))
@@ -128,11 +131,10 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertTrue(text.waitForExistence(timeout:5)); let before = text.frame
     text.tap()
     XCTAssertFalse(editor.exists,"The first text-tool tap selects the object, never edits it")
-    XCTAssertTrue(format.waitForExistence(timeout:2))
-    XCTAssertTrue(app.buttons["native-text-clipboard"].exists)
-    for id in ["native-text-cut","native-text-copy","native-text-paste"] { XCTAssertFalse(app.buttons[id].exists) }
-    format.tap(); app.buttons["Жирный"].tap()
-    format.tap(); app.buttons["Жирный"].tap()
+    for _ in 0..<2 {
+      notebookContextAction("Формат текста",on:text,in:app)
+      notebookMenuAction("Жирный",in:app)
+    }
     let leading = app.descendants(matching:.any)["resize-agent-element-leadingCenter"]
     let trailing = app.descendants(matching:.any)["resize-agent-element-trailingCenter"]
     XCTAssertTrue(leading.waitForExistence(timeout:2))
@@ -140,26 +142,11 @@ final class DrawingResponsivenessTests: XCTestCase {
     let lineWidth=trailing.frame.midX-leading.frame.midX
     XCTAssertGreaterThan(lineWidth,text.frame.width,"Width grips expose the line constraint rather than the last glyph")
     XCTAssertLessThan(text.frame.width,150,"Short text's painted extent remains fitted")
-    let layers = app.buttons["element-layer-menu"]
-    XCTAssertTrue(layers.exists)
-    XCTAssertFalse(app.buttons["element-send-to-back"].exists)
-    XCTAssertFalse(app.buttons["element-bring-to-front"].exists)
-    layers.tap()
-    XCTAssertTrue(app.buttons["На слой ниже"].waitForExistence(timeout:3))
-    XCTAssertTrue(app.buttons["На слой ниже"].isEnabled)
-    XCTAssertFalse(app.buttons["На слой выше"].isEnabled)
-    XCTAssertTrue(app.buttons["В самый низ"].isEnabled)
-    XCTAssertFalse(app.buttons["В самый верх"].isEnabled)
-    let layerMenu = XCTAttachment(screenshot:app.screenshot()); layerMenu.name = "four-textual-layer-actions"; layerMenu.lifetime = .keepAlways; add(layerMenu)
-    app.buttons["На слой ниже"].tap()
-    for title in ["На слой выше","В самый низ","В самый верх"] {
-      layers.tap()
-      let action = app.buttons[title]; XCTAssertTrue(action.waitForExistence(timeout:3))
-      XCTAssertTrue(action.isEnabled,title)
-      if title == "В самый верх" { XCTAssertFalse(app.buttons["На слой ниже"].isEnabled) }
-      action.tap()
+    for title in ["На слой ниже","На слой выше","В самый низ","В самый верх"] {
+      notebookContextAction("Порядок слоёв",on:text,in:app)
+      let action=notebookMenuItem(title,in:app)
+      XCTAssertTrue(action.waitForExistence(timeout:3));XCTAssertTrue(action.isEnabled,title);action.tap()
     }
-    XCTAssertFalse(app.buttons["element-actions-menu"].exists,"No empty or duplicate action menu for text")
     text.coordinate(withNormalizedOffset:.init(dx:0.5,dy:0.5)).press(forDuration:0.05,thenDragTo:text.coordinate(withNormalizedOffset:.init(dx:0.5,dy:0.5)).withOffset(.init(dx:-60,dy:80)))
     XCTAssertGreaterThan(text.frame.midY,before.midY+40)
     XCTAssertEqual(leading.frame.midX,text.frame.minX,accuracy:2)
@@ -191,35 +178,29 @@ final class DrawingResponsivenessTests: XCTestCase {
   }
 
   func testTextObjectSelectFormatCopyPasteAndCutUseOnePanel() {
-    continueAfterFailure = false
-    let app = XCUIApplication()
-    app.launchArguments = ["--notebook-drawing-responsiveness-fixture","--notebook-native-graphics-fixture","--notebook-native-graphic-page"]
+    continueAfterFailure=false
+    let app=XCUIApplication()
+    app.launchArguments=["--notebook-drawing-responsiveness-fixture","--notebook-native-graphics-fixture","--notebook-native-graphic-page"]
     launchPortraitFixture(app)
-    app.buttons["drawing-tools-more"].tap(); app.buttons["drawing-tool-text"].tap()
+    app.buttons["drawing-tool-text"].tap()
     app.coordinate(withNormalizedOffset:.init(dx:0.55,dy:0.15)).tap()
-    let editor = app.textViews["native-text-editor"]
-    XCTAssertTrue(editor.waitForExistence(timeout:2)); editor.typeText("Object clipboard")
+    let editor=app.textViews["native-text-editor"]
+    XCTAssertTrue(editor.waitForExistence(timeout:3));editor.typeText("Object clipboard")
     app.coordinate(withNormalizedOffset:.init(dx:0.3,dy:0.6)).tap()
     XCTAssertTrue(editor.waitForNonExistence(timeout:3))
-    let texts = app.staticTexts.matching(identifier:"Object clipboard")
-    XCTAssertTrue(texts.firstMatch.waitForExistence(timeout:5)); texts.firstMatch.tap()
-    XCTAssertFalse(editor.exists)
-    let format = app.buttons["native-text-format"]
-    XCTAssertTrue(format.waitForExistence(timeout:2))
-    format.tap(); app.buttons["Курсив"].tap()
-    clipboardAction("Копировать",in:app); clipboardAction("Вставить",in:app)
-    let pasted = waitUntil { texts.count == 2 }
-    let copyProof = XCTAttachment(screenshot:app.screenshot()); copyProof.name = "object-clipboard-paste-result"; copyProof.lifetime = .keepAlways; add(copyProof)
-    if !pasted { let hierarchy = XCTAttachment(string:app.debugDescription); hierarchy.lifetime = .keepAlways; add(hierarchy) }
-    XCTAssertTrue(pasted)
-    XCTAssertEqual(app.otherElements.matching(identifier:"notebook-context-menu").count,1)
-    clipboardAction("Вырезать",in:app)
+    selectNotebookTool("pen",in:app)
+    let texts=app.staticTexts.matching(identifier:"Object clipboard")
+    XCTAssertTrue(texts.firstMatch.waitForExistence(timeout:5))
+    notebookContextAction("Формат текста",on:texts.firstMatch,in:app);notebookMenuAction("Курсив",in:app)
+    notebookContextAction("Копировать",on:texts.firstMatch,in:app)
+    notebookContextAction("Вставить",on:texts.firstMatch,in:app)
+    XCTAssertTrue(waitUntil { texts.count == 2 })
+    notebookContextAction("Вырезать",on:texts.element(boundBy:1),in:app)
     XCTAssertTrue(waitUntil { texts.count == 1 })
-    texts.firstMatch.tap(); format.tap()
-    XCTAssertTrue(app.buttons["Курсив"].isSelected,"Object clipboard keeps formatting")
-    app.buttons["Курсив"].tap()
-    let proof = XCTAttachment(screenshot:app.screenshot()); proof.name = "text-object-common-panel"; proof.lifetime = .keepAlways; add(proof)
-    app.buttons["delete-agent-element"].tap()
+    notebookContextAction("Формат текста",on:texts.firstMatch,in:app)
+    XCTAssertTrue(notebookMenuItem("Курсив",in:app).isSelected,"Object clipboard keeps formatting")
+    notebookMenuAction("Курсив",in:app)
+    notebookContextAction("Удалить элемент",on:texts.firstMatch,in:app)
     XCTAssertTrue(waitUntil { texts.count == 0 })
   }
 
@@ -232,7 +213,7 @@ final class DrawingResponsivenessTests: XCTestCase {
     let app = XCUIApplication()
     app.launchArguments = ["--notebook-drawing-responsiveness-fixture","--notebook-native-graphics-fixture"]
     launchPortraitFixture(app)
-    app.buttons["drawing-tools-more"].tap(); app.buttons["drawing-tool-text"].tap()
+    app.buttons["drawing-tool-text"].tap()
     app.coordinate(withNormalizedOffset:.init(dx:0.55,dy:0.15)).tap()
     let editor = app.textViews["native-text-editor"]
     XCTAssertTrue(editor.waitForExistence(timeout:3)); editor.typeText("First Second")
@@ -263,8 +244,7 @@ final class DrawingResponsivenessTests: XCTestCase {
     continueAfterFailure = false
     let app = XCUIApplication(); app.launchArguments = ["--notebook-drawing-responsiveness-fixture"]
     launchPortraitFixture(app)
-    app.buttons["drawing-tools-more"].tap(); app.buttons["drawing-tool-connector"].tap()
-    app.buttons["drawing-tool-connector"].tap()
+    selectNotebookTool("connector",in:app,settings:true)
     let start = app.buttons["connector-head-start"], end = app.buttons["connector-head-end"]
     XCTAssertTrue(start.waitForExistence(timeout:3)); XCTAssertEqual(start.frame.midY,end.frame.midY,accuracy:1)
     for routing in ["straight","elbow","curved"] {
@@ -289,9 +269,9 @@ final class DrawingResponsivenessTests: XCTestCase {
     app.launchArguments = ["--notebook-drawing-responsiveness-fixture","--notebook-native-graphics-fixture"]
       + (onPage ? ["--notebook-native-graphic-page"] : [])
     launchPortraitFixture(app)
-    XCTAssertTrue(app.buttons["drawing-tools-more"].waitForExistence(timeout:10))
+    XCTAssertTrue(app.buttons["drawing-group"].waitForExistence(timeout:10))
     if deepZoom { app.pinch(withScale:0.1,velocity:-1); app.pinch(withScale:0.4,velocity:-1) }
-    app.buttons["drawing-tools-more"].tap(); app.buttons["drawing-tool-text"].tap()
+    app.buttons["drawing-tool-text"].tap()
     let point = app.coordinate(withNormalizedOffset:.init(dx:0.55,dy:0.15))
     point.tap()
     let editor = app.textViews["native-text-editor"]
@@ -352,11 +332,11 @@ final class DrawingResponsivenessTests: XCTestCase {
     for i in 0..<16 { XCTAssertTrue(app.images["Erased \(i)"].waitForNonExistence(timeout:2),"Erased \(i) must leave the published accessibility tree") }
     for _ in 0..<3 {
       node.coordinate(withNormalizedOffset:.init(dx:0.97,dy:0.5)).tap()
-      XCTAssertTrue(app.buttons["delete-agent-element"].waitForExistence(timeout:2))
+      XCTAssertTrue(app.otherElements["resize-agent-element-topLeading"].waitForExistence(timeout:2))
       // Tap removed paint, not the surviving opposite edge or a shape's interior.
       node.coordinate(withNormalizedOffset:.init(dx:0.01,dy:0.3)).tap()
-      XCTAssertTrue(app.buttons["delete-agent-element"].waitForNonExistence(timeout:2))
-      app.buttons["leave-nested-board"].tap()
+      XCTAssertTrue(app.otherElements["resize-agent-element-topLeading"].waitForNonExistence(timeout:2))
+      notebookBack(in:app)
       let cover = app.descendants(matching:.any).matching(identifier:"workspace-item-7e7a1000-0000-4000-8000-000000000002").firstMatch
       XCTAssertTrue(cover.waitForExistence(timeout:3)); cover.doubleTap()
       XCTAssertTrue(paper.waitForExistence(timeout:3)); XCTAssertTrue(node.waitForExistence(timeout:3))
@@ -377,7 +357,7 @@ final class DrawingResponsivenessTests: XCTestCase {
     launchPortraitFixture(app)
     let line = app.images["Связь"], triangle = app.images["Треугольник"]
     XCTAssertTrue(line.waitForExistence(timeout:10)); XCTAssertTrue(triangle.waitForExistence(timeout:10))
-    let remove = app.buttons["delete-agent-element"]
+    let remove = app.otherElements["resize-agent-element-topLeading"]
     func deselect(at point: XCUICoordinate, name: String) {
       point.tap()
       let gone = XCTNSPredicateExpectation(predicate:NSPredicate { _,_ in !remove.exists },object:nil)
@@ -492,18 +472,15 @@ final class DrawingResponsivenessTests: XCTestCase {
     launchPortraitFixture(app)
     let line = app.images["Стрелка"]
     XCTAssertTrue(line.waitForExistence(timeout:10)); line.tap()
-    let ends = app.buttons["graphic-ends-menu"], routing = app.buttons["graphic-routing-menu"]
-    XCTAssertTrue(ends.waitForExistence(timeout:5)); XCTAssertTrue(routing.isHittable)
-    XCTAssertFalse(app.buttons["graphic-geometry-mode"].exists)
-    XCTAssertEqual(ends.frame.height,44); XCTAssertEqual(routing.frame.width,44)
-    XCTAssertLessThan(app.buttons["element-actions-menu"].frame.maxX-app.buttons["graphic-style-menu"].frame.minX,274)
+    func ends() { notebookContextAction("Концы линии",on:line,in:app) }
+    func routing() { notebookContextAction("Стиль соединения",on:line,in:app) }
     let neighbour = app.webViews.containing(.button,identifier:"Graphic scene counter").firstMatch, neighbourFrame = neighbour.frame
     func outside() { app.coordinate(withNormalizedOffset:.init(dx:0.75,dy:0.18)).tap() }
     func proof(_ name: String) {
       let value = XCTAttachment(screenshot:app.screenshot()); value.name = name + (onPage ? "-page" : "-board")
       value.lifetime = .keepAlways; add(value)
     }
-    ends.tap()
+    ends()
     let start = app.buttons["graphic-start-menu"], end = app.buttons["graphic-end-menu"]
     XCTAssertTrue(start.waitForExistence(timeout:3)); XCTAssertTrue(end.isHittable)
     start.tap(); XCTAssertTrue(app.buttons["Круг"].waitForExistence(timeout:3)); app.buttons["Круг"].tap()
@@ -512,15 +489,15 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertTrue(app.buttons["Треугольник"].waitForNonExistence(timeout:3))
     XCTAssertEqual(end.value as? String,"Треугольник"); XCTAssertEqual(start.value as? String,"Круг")
     proof("connection-ends-graphical-picker"); outside()
-    XCTAssertTrue(start.waitForNonExistence(timeout:3)); XCTAssertTrue(ends.isHittable)
-    routing.tap()
+    XCTAssertTrue(start.waitForNonExistence(timeout:3))
+    routing()
     let curved = app.buttons["connection-route-curved"], elbow = app.buttons["connection-route-elbow"]
     XCTAssertTrue(curved.waitForExistence(timeout:3)); curved.tap()
-    XCTAssertTrue(curved.isSelected); XCTAssertEqual(routing.value as? String,"Кривая")
+    XCTAssertTrue(curved.isSelected)
     proof("connection-curved-picker"); elbow.tap()
-    XCTAssertTrue(elbow.isSelected); XCTAssertEqual(routing.value as? String,"Угловая")
+    XCTAssertTrue(elbow.isSelected)
     proof("connection-elbow-picker"); outside()
-    XCTAssertTrue(curved.waitForNonExistence(timeout:3)); XCTAssertTrue(ends.isHittable)
+    XCTAssertTrue(curved.waitForNonExistence(timeout:3))
     let bend = app.descendants(matching:.any).matching(identifier:"graphic-bend-handle").firstMatch
     XCTAssertTrue(bend.exists)
     let before = bend.frame
@@ -533,8 +510,7 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertTrue(line.waitForExistence(timeout:10))
     // The elbow's bounding-box center is empty paper, not its hit path.
     line.coordinate(withNormalizedOffset:.init(dx:0.1,dy:0.02)).tap()
-    XCTAssertTrue(ends.waitForExistence(timeout:3)); XCTAssertEqual(routing.value as? String,"Угловая")
-    ends.tap(); XCTAssertTrue(start.waitForExistence(timeout:3))
+    ends(); XCTAssertTrue(start.waitForExistence(timeout:3))
     XCTAssertEqual(start.value as? String,"Круг"); XCTAssertEqual(end.value as? String,"Треугольник")
     end.tap(); XCTAssertTrue(app.buttons["Стрелка"].waitForExistence(timeout:3)); app.buttons["Стрелка"].tap()
     XCTAssertTrue(app.buttons["Стрелка"].waitForNonExistence(timeout:3)); XCTAssertEqual(end.value as? String,"Стрелка")
@@ -548,14 +524,16 @@ final class DrawingResponsivenessTests: XCTestCase {
     app.launchArguments = ["--notebook-drawing-responsiveness-fixture","--notebook-native-graphics-fixture",
       "--notebook-native-connector","--notebook-native-geometry-edit"] + (onPage ? ["--notebook-native-graphic-page"] : [])
     launchPortraitFixture(app)
-    let triangle = app.images["Треугольник"], box = app.images["Прямоугольник"], line = app.images["Связь"]
+    let triangle = app.images["Треугольник"], box = app.images["Прямоугольник"], line = app.images["Стрелка"]
     XCTAssertTrue(triangle.waitForExistence(timeout:10)); XCTAssertTrue(box.waitForExistence(timeout:10)); XCTAssertTrue(line.waitForExistence(timeout:10))
     let neighbour = app.webViews.containing(.button,identifier:"Graphic scene counter").firstMatch, neighbourFrame = neighbour.frame
     func handle(_ id: String) -> XCUIElement { app.descendants(matching:.any).matching(identifier:id).firstMatch }
+    var geometryTarget = triangle
     func mode(_ title: String) {
-      let mode = app.buttons["graphic-geometry-mode"]
-      XCTAssertTrue(mode.waitForExistence(timeout:3)); mode.tap()
-      XCTAssertEqual(mode.value as? String,title,"One capsule button cycles the geometry mode directly")
+      notebookContextAction("Режим геометрии",on:geometryTarget,in:app)
+      let expected = title == "Изменить вершины" ? "graphic-vertex-0"
+        : title == "Скруглить углы" ? "graphic-corner-radius-handle" : "resize-agent-element-bottomTrailing"
+      XCTAssertTrue(handle(expected).waitForExistence(timeout:3))
     }
     func drag(_ element: XCUIElement, _ delta: CGVector) {
       let start = element.coordinate(withNormalizedOffset:.init(dx:0.5,dy:0.5))
@@ -583,7 +561,7 @@ final class DrawingResponsivenessTests: XCTestCase {
       width:triangleFrame.width/app.frame.width,height:triangleFrame.height/app.frame.height)),0.001,"The actual contour changes, not just its handle")
     mode("Размер и положение")
     XCTAssertTrue(handle("resize-agent-element-bottomTrailing").waitForExistence(timeout:3))
-    box.coordinate(withNormalizedOffset:.init(dx:0.5,dy:0.5)).tap(); mode("Изменить вершины")
+    box.coordinate(withNormalizedOffset:.init(dx:0.5,dy:0.5)).tap(); geometryTarget=box; mode("Изменить вершины")
     XCTAssertTrue(vertex.waitForExistence(timeout:3))
     let boxFirst = vertex.frame, boxOther = other.frame
     drag(vertex,.init(dx:32,dy:22))
@@ -607,7 +585,7 @@ final class DrawingResponsivenessTests: XCTestCase {
     app.coordinate(withNormalizedOffset:.zero).withOffset(.init(dx:bendAfter.midX,dy:bendAfter.midY)).tap()
     XCTAssertTrue(bend.waitForExistence(timeout:3))
     XCTAssertEqual(bend.frame.midX,bendAfter.midX,accuracy:3); XCTAssertEqual(bend.frame.midY,bendAfter.midY,accuracy:3)
-    triangle.coordinate(withNormalizedOffset:.init(dx:0.5,dy:0.65)).tap(); mode("Изменить вершины")
+    triangle.coordinate(withNormalizedOffset:.init(dx:0.5,dy:0.65)).tap(); geometryTarget=triangle; mode("Изменить вершины")
     XCTAssertTrue(vertex.waitForExistence(timeout:3)); XCTAssertEqual(vertex.frame.midX,changedVertex.midX,accuracy:3); XCTAssertEqual(vertex.frame.midY,changedVertex.midY,accuracy:3)
     app.terminate()
   }
@@ -633,16 +611,11 @@ final class DrawingResponsivenessTests: XCTestCase {
     }
     XCTAssertFalse(companion.frame.intersects(triangle.frame))
     triangle.coordinate(withNormalizedOffset:.init(dx:0.5,dy:0.6)).tap()
-    let style = app.buttons["graphic-style-menu"], more = app.buttons["element-actions-menu"], remove = app.buttons["delete-agent-element"]
-    XCTAssertTrue(style.waitForExistence(timeout:5)); XCTAssertTrue(style.isHittable)
-    XCTAssertEqual(app.otherElements.matching(identifier:"notebook-context-menu").count,1)
-    XCTAssertEqual(style.frame.midY,remove.frame.midY,accuracy:1)
-    XCTAssertEqual(more.frame.midY,remove.frame.midY,accuracy:1)
-    XCTAssertLessThan(more.frame.maxX-style.frame.minX,222)
-    XCTAssertEqual(style.frame.height,44,accuracy:1)
+    func style() { notebookContextAction("Оформление фигуры",on:triangle,in:app) }
+    XCTAssertTrue(app.otherElements["resize-agent-element-topLeading"].waitForExistence(timeout:3))
     let before = triangle.frame
     let controls = XCTAttachment(screenshot:app.screenshot()); controls.name = "compact-element-controls"; controls.lifetime = .keepAlways; add(controls)
-    style.tap()
+    style()
     let blue = app.buttons["element-color-11"]
     XCTAssertTrue(blue.waitForExistence(timeout:5)); blue.tap()
     XCTAssertFalse(app.popovers.firstMatch.frame.intersects(triangle.frame), "The palette leaves the edited shape visible")
@@ -658,18 +631,18 @@ final class DrawingResponsivenessTests: XCTestCase {
     app.coordinate(withNormalizedOffset:.init(dx:0.8,dy:0.7)).tap()
     XCTAssertTrue(blue.waitForNonExistence(timeout:3))
     XCTAssertEqual(triangle.frame,before); XCTAssertEqual(paper.frame,paperFrame)
-    more.tap()
-    XCTAssertTrue(app.buttons["На задний план"].waitForExistence(timeout:3))
+    openNotebookSelectionMenu(on:triangle,in:app)
     let menu = XCTAttachment(screenshot:app.screenshot()); menu.name = "native-element-context-menu"; menu.lifetime = .keepAlways; add(menu)
-    app.buttons["На передний план"].tap()
+    notebookMenuAction("Порядок слоёв",in:app)
+    notebookMenuAction("В самый верх",in:app)
     XCTAssertEqual(triangle.frame,before); XCTAssertEqual(paper.frame,paperFrame)
     // The dismissed palette can be opened again; no retained dead presentation owner.
-    style.tap(); XCTAssertTrue(blue.waitForExistence(timeout:3)); XCTAssertTrue(blue.isSelected)
+    style(); XCTAssertTrue(blue.waitForExistence(timeout:3)); XCTAssertTrue(blue.isSelected)
     XCTAssertEqual(width.value as? String,selectedWidth)
     XCTAssertTrue(app.buttons["element-dash-1"].isSelected)
     app.coordinate(withNormalizedOffset:.init(dx:0.8,dy:0.7)).tap()
     XCTAssertTrue(blue.waitForNonExistence(timeout:3))
-    remove.tap(); XCTAssertTrue(triangle.waitForNonExistence(timeout:5))
+    notebookContextAction("Удалить элемент",on:triangle,in:app); XCTAssertTrue(triangle.waitForNonExistence(timeout:5))
     XCTAssertEqual(paper.frame,paperFrame)
     app.terminate()
   }
@@ -786,8 +759,7 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertTrue(editor.waitForNonExistence(timeout: 3), "Leaving the object commits its label")
     let edited = app.images[label]
     XCTAssertTrue(edited.waitForExistence(timeout: 3))
-    edited.tap()
-    app.buttons["delete-agent-element"].tap()
+    notebookContextAction("Удалить элемент",on:edited,in:app)
     XCTAssertTrue(edited.waitForNonExistence(timeout: 5)); XCTAssertTrue(neighbour.staticTexts["Count 1"].exists)
     if connected { XCTAssertTrue(app.images[editedLinkLabel].waitForNonExistence(timeout:5),"Deleting a node hides its bound connection without detaching it") }
     app.terminate()
@@ -1131,9 +1103,7 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertTrue(material.staticTexts["Место для спокойной работы"].exists, "The hold cannot also follow the link")
     material.coordinate(withNormalizedOffset: .init(dx: 0.5, dy: 0.5)).tap()
     XCTAssertTrue(material.staticTexts["Открыта ссылка 1"].waitForExistence(timeout: 3), "A fresh short tap still follows the native link exactly once")
-    let delete = app.buttons["delete-agent-element"]
-    XCTAssertTrue(delete.waitForExistence(timeout: 3))
-    delete.tap()
+    notebookContextAction("Удалить элемент",on:material,in:app)
     XCTAssertTrue(material.waitForNonExistence(timeout: 5), "Deletion removes the installed material, not just its selection")
     XCTAssertTrue(neighbour.exists); XCTAssertTrue(neighbour.staticTexts["Count 0"].exists)
     let removed = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
@@ -1159,11 +1129,11 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertEqual(material.frame.midY - before.midY, -25, accuracy: 6)
     XCTAssertEqual(neighbour.frame, neighbourBefore)
     XCTAssertEqual(field.value as? String, value); XCTAssertTrue(material.staticTexts["Count 0"].exists)
-    let delete = app.buttons["delete-agent-element"]
-    XCTAssertTrue(delete.waitForExistence(timeout: 3))
+    XCTAssertTrue(app.otherElements["resize-agent-element-topLeading"].exists)
     let lifted = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
     lifted.name = "mixed-program-lift-keeps-edited-input"; lifted.lifetime = .keepAlways; add(lifted)
-    delete.tap()
+    openNotebookSelectionMenu(at:material.coordinate(withNormalizedOffset:.init(dx:0.5,dy:0.12)),in:app)
+    notebookMenuAction("Удалить элемент",in:app)
     XCTAssertTrue(material.waitForNonExistence(timeout: 5)); XCTAssertTrue(neighbour.exists)
     let removed = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
     removed.name = "mixed-program-deleted-neighbour-retained"; removed.lifetime = .keepAlways; add(removed)
@@ -1206,7 +1176,7 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertGreaterThan(mood.frame.width, width * 1.1)
     app.typeText("9")
     XCTAssertTrue((field.value as? String)?.contains("789") == true, "Pinch preserves the editor: \(field.value ?? "missing")")
-    XCTAssertFalse(app.buttons["delete-agent-element"].exists)
+    XCTAssertFalse(app.otherElements["resize-agent-element-topLeading"].exists)
     let proof = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
     proof.name = "mixed-material-controls-camera-and-keyboard"; proof.lifetime = .keepAlways; add(proof)
   }
@@ -1240,7 +1210,7 @@ final class DrawingResponsivenessTests: XCTestCase {
         XCTAssertEqual(frame.size, previous.size)
       }
       XCTAssertTrue(nutrition.staticTexts["Count 0"].exists)
-      XCTAssertFalse(app.buttons["delete-agent-element"].exists)
+      XCTAssertFalse(app.otherElements["resize-agent-element-topLeading"].exists)
     }
   }
 
@@ -1262,14 +1232,14 @@ final class DrawingResponsivenessTests: XCTestCase {
       geometry.name = "passive-svg-hold-\(delta.dx)-geometry"; geometry.lifetime = .keepAlways; add(geometry)
       let pixels = XCTAttachment(screenshot: app.screenshot())
       pixels.name = "passive-svg-after-hold-\(delta.dx)"; pixels.lifetime = .keepAlways; add(pixels)
-      XCTAssertTrue(app.buttons["delete-agent-element"].exists, "The first hold selects the drawing without an activating tap")
+      XCTAssertTrue(app.otherElements["resize-agent-element-topLeading"].exists, "The first hold selects the drawing without an activating tap")
       XCTAssertEqual(after[0].midX - before[0].midX, delta.dx, accuracy: 6)
       XCTAssertEqual(after[0].midY - before[0].midY, delta.dy, accuracy: 6)
       XCTAssertEqual(after[0].size, before[0].size)
       XCTAssertEqual(after[1], before[1], "Lifting the drawing cannot move the camera or its neighbour")
       XCTAssertTrue(controls.staticTexts["Count 0"].exists)
     }
-    app.buttons["delete-agent-element"].tap()
+    notebookContextAction("Удалить элемент",on:svg,in:app)
     XCTAssertTrue(svg.waitForNonExistence(timeout: 5), "Deletion must retire the actual SVG surface")
     XCTAssertTrue(controls.exists); XCTAssertTrue(controls.staticTexts["Count 0"].exists)
     let removed = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
@@ -1314,7 +1284,7 @@ final class DrawingResponsivenessTests: XCTestCase {
       // The outer native image frame, not the inner SVG DOM rectangle, proves
       // scene magnification. Off-screen neighbours may legitimately retire;
       // their independent input is exercised by the pan/control regression.
-      XCTAssertFalse(app.buttons["delete-agent-element"].exists, "A pair cannot also select the drawing")
+      XCTAssertFalse(app.otherElements["resize-agent-element-topLeading"].exists, "A pair cannot also select the drawing")
       XCTAssertFalse(app.staticTexts["Обновление…"].exists,
         "Camera refinement cannot cover unchanged material with a content-update banner")
     }
@@ -1365,7 +1335,7 @@ final class DrawingResponsivenessTests: XCTestCase {
       }
       XCTAssertTrue(controls.staticTexts["Count 1"].exists, "Pan cannot activate a neighbour")
     }
-    XCTAssertFalse(app.buttons["delete-agent-element"].exists, "Immediate movement pans rather than picking up the drawing")
+    XCTAssertFalse(app.otherElements["resize-agent-element-topLeading"].exists, "Immediate movement pans rather than picking up the drawing")
   }
 
   func testCompanionAdditionsOwnPencilAboveTheBoard() {
@@ -1493,8 +1463,8 @@ final class DrawingResponsivenessTests: XCTestCase {
     let taskCard = app.buttons["notebook-companion-task"]
     XCTAssertTrue(waitUntil { taskCard.exists || app.buttons["notebook-companion-reply"].exists }, "Work may already have completed into its reply")
     XCTAssertFalse(app.otherElements["notebook-chat-transcript"].exists)
-    XCTAssertTrue(app.buttons["notebook-compact-dictation"].isHittable)
-    XCTAssertTrue(app.buttons["notebook-compact-voice"].isHittable)
+    XCTAssertEqual(app.otherElements["notebook-companion-bar"].buttons.count,1)
+    XCTAssertTrue(app.buttons["notebook-companion-compose"].isHittable)
     let priorInk = paper.value as? String
     let panel = app.descendants(matching: .any).matching(identifier: "notebook-chat-panel").firstMatch
     // This fixture's addressed journal retains the first notebook, not its
@@ -1550,7 +1520,7 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertTrue(app.buttons["notebook-companion-compose"].waitForExistence(timeout: 5))
     let rotatedProof = XCTAttachment(screenshot: app.screenshot()); rotatedProof.name = "companion-accepted-stroke-after-rotation"; rotatedProof.lifetime = .keepAlways; add(rotatedProof)
     XCTAssertEqual(paper.value as? String, acceptedInk)
-    app.buttons["notebook-compact-voice"].press(forDuration: 0.8)
+    app.buttons["notebook-companion-compose"].tap();app.buttons["notebook-chat-voice"].press(forDuration:0.8)
     XCTAssertTrue(app.staticTexts["Голосовой разговор"].waitForExistence(timeout: 3))
     XCTAssertTrue(app.buttons["notebook-voice-wake"].exists)
     XCTAssertEqual(app.alerts.count, 0)
@@ -1664,38 +1634,25 @@ final class DrawingResponsivenessTests: XCTestCase {
     }
   }
 
-  func testAddressedDictationSendsOnceFromTheCompanionWithoutOpeningOrClearingTheDraft() {
-    continueAfterFailure = false
-    XCUIDevice.shared.orientation = .portrait
-    let app = XCUIApplication()
-    app.launchArguments = ["--notebook-drawing-responsiveness-fixture", "--notebook-dictation-fixture", "--notebook-addressed-dictation-fixture"]
+  func testAddressedDictationKeepsOneLauncherAndSendsOnceWithoutOpeningTheChat() {
+    continueAfterFailure=false
+    let app=XCUIApplication();app.launchArguments=["--notebook-drawing-responsiveness-fixture","--notebook-dictation-fixture","--notebook-addressed-dictation-fixture"]
     launchPortraitFixture(app)
-    let paper = app.otherElements["paper-input"]
-    XCTAssertTrue(paper.waitForExistence(timeout: 8))
-    let frame = paper.frame, ink = paper.value as? String
-    let mic = app.buttons["notebook-compact-dictation"]
-    let bar = app.otherElements["notebook-companion-bar"]
-    let waveform = app.otherElements["notebook-dictation-waveform"]
-    XCTAssertTrue(waveform.waitForExistence(timeout: 8))
-    XCTAssertEqual(bar.frame.height, 48, accuracy: 1)
-    XCTAssertFalse(app.buttons["notebook-chat-toggle"].exists)
-    XCTAssertFalse(app.switches["notebook-dictation-wake-toggle"].exists)
-    XCTAssertTrue(bar.frame.contains(waveform.frame))
+    let paper=app.otherElements["paper-input"]
+    XCTAssertTrue(paper.waitForExistence(timeout:8));let frame=paper.frame,ink=paper.value as? String
+    let bar=app.otherElements["notebook-companion-bar"]
+    XCTAssertEqual(bar.buttons.count,1)
     XCTAssertTrue(app.buttons["notebook-companion-compose"].isHittable)
-    let recordingProof = XCTAttachment(screenshot: app.screenshot()); recordingProof.name = "addressed-dictation-live-microphone"; recordingProof.lifetime = .keepAlways; add(recordingProof)
-    let reply = app.buttons["notebook-companion-reply"]
-    XCTAssertTrue(waitUntil { reply.exists && reply.label == "Принято поручений: 1" })
     XCTAssertFalse(app.otherElements["notebook-chat-transcript"].exists)
-    XCTAssertEqual(paper.frame, frame); XCTAssertEqual(paper.value as? String, ink)
-    XCTAssertTrue(waitUntil { mic.exists && (mic.value as? String)?.contains("Ожидаю GPT") == true })
-    mic.press(forDuration: 0.8)
+    let reply=app.buttons["notebook-companion-reply"]
+    XCTAssertTrue(waitUntil { reply.exists && reply.label == "Принято поручений: 1" })
+    XCTAssertEqual(paper.frame,frame);XCTAssertEqual(paper.value as? String,ink)
+    app.buttons["notebook-companion-compose"].tap()
+    let mic=app.buttons["notebook-chat-dictation"]
+    XCTAssertTrue(mic.waitForExistence(timeout:4));mic.press(forDuration:0.8)
     app.buttons["notebook-microphone-mute"].tap()
     XCTAssertTrue(waitUntil { mic.label == "Включить микрофон" })
-    XCTAssertEqual(reply.label, "Принято поручений: 1")
-    let proof = XCTAttachment(screenshot: app.screenshot()); proof.name = "addressed-dictation-single-answer"; proof.lifetime = .keepAlways; add(proof)
-    XCTAssertTrue(waitUntil(timeout: 16) { !reply.exists }, "The reply expires without opening the chat")
-    XCTAssertFalse(app.buttons["notebook-companion-task"].exists)
-    XCTAssertEqual(paper.frame, frame); XCTAssertEqual(paper.value as? String, ink)
+    let proof=XCTAttachment(screenshot:app.screenshot());proof.name="addressed-dictation-one-chat-owner";proof.lifetime = .keepAlways;add(proof)
   }
 
   func testDictationInputStopsIntoAnEditableExpandedChatAndSendsExactlyOnce() {
@@ -1707,11 +1664,11 @@ final class DrawingResponsivenessTests: XCTestCase {
     let paper = app.otherElements["paper-input"]
     XCTAssertTrue(paper.waitForExistence(timeout: 8))
     let paperFrame = paper.frame, ink = paper.value as? String
-    app.buttons["notebook-compact-dictation"].tap()
-    let input = app.otherElements["notebook-dictation-input"]
+    app.buttons["notebook-companion-compose"].tap();app.buttons["notebook-chat-dictation"].tap()
+    let input = app.otherElements["notebook-chat-composer"]
     let stop = app.buttons["notebook-dictation-review"], send = app.buttons["notebook-dictation-send"]
     XCTAssertTrue(stop.waitForExistence(timeout: 5)); XCTAssertTrue(send.isHittable)
-    XCTAssertFalse(app.buttons["notebook-compact-voice"].exists)
+    XCTAssertFalse(app.buttons["notebook-chat-voice"].exists)
     for control in [stop, send, app.buttons["notebook-dictation-cancel"]] {
       XCTAssertTrue(input.frame.contains(control.frame), "Controls belong inside the single recording input")
       XCTAssertGreaterThanOrEqual(control.frame.width, 44); XCTAssertGreaterThanOrEqual(control.frame.height, 44)
@@ -1731,9 +1688,10 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertTrue(waitUntil { app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Принято поручений: 1")).firstMatch.exists })
     XCTAssertEqual(paper.frame, paperFrame); XCTAssertEqual(paper.value as? String, ink)
     app.buttons["notebook-chat-toggle"].tap()
-    app.buttons["notebook-compact-dictation"].tap()
+    app.buttons["notebook-companion-compose"].tap();app.buttons["notebook-chat-dictation"].tap()
     XCTAssertTrue(send.waitForExistence(timeout: 5)); send.tap()
-    XCTAssertTrue(app.buttons["notebook-compact-dictation"].waitForExistence(timeout: 8))
+    XCTAssertTrue(app.buttons["notebook-chat-dictation"].waitForExistence(timeout:8))
+    app.buttons["notebook-chat-toggle"].tap()
     let preview = app.buttons["notebook-companion-reply"]
     XCTAssertTrue(preview.waitForExistence(timeout: 8)); XCTAssertEqual(preview.label, "Принято поручений: 2")
     XCTAssertFalse(app.otherElements["notebook-chat-transcript"].exists, "Dictation send keeps the chat collapsed and shows the answer itself")
@@ -1757,27 +1715,22 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertEqual(paper.frame, paperFrame); XCTAssertEqual(paper.value as? String, ink)
   }
 
-  func testCompactDictationControlsFitAndCancelWithoutMovingPaper() {
-    continueAfterFailure = false
-    let app = XCUIApplication()
-    app.launchArguments = ["--notebook-drawing-responsiveness-fixture", "--notebook-dictation-fixture"]
+  func testCollapsingDictationKeepsCaptureAndRestoresItsControlsInsideChat() {
+    continueAfterFailure=false
+    let app=XCUIApplication();app.launchArguments=["--notebook-drawing-responsiveness-fixture","--notebook-dictation-fixture"]
     launchPortraitFixture(app)
-    let paper = app.otherElements["paper-input"]
-    XCTAssertTrue(paper.waitForExistence(timeout: 8))
-    let frame = paper.frame, ink = paper.value as? String
-    let mic = app.buttons["notebook-compact-dictation"]
-    XCTAssertTrue(mic.isHittable); mic.tap()
-    let input = app.otherElements["notebook-dictation-input"]
-    XCTAssertTrue(input.waitForExistence(timeout: 5))
-    let compose = app.buttons["notebook-companion-compose"]
-    XCTAssertTrue(compose.isHittable); XCTAssertFalse(compose.frame.intersects(input.frame))
-    for control in [app.buttons["notebook-dictation-review"], app.buttons["notebook-dictation-send"], app.buttons["notebook-dictation-cancel"]] {
-      XCTAssertTrue(control.isHittable); XCTAssertTrue(input.frame.contains(control.frame))
-    }
-    let proof = XCTAttachment(screenshot: app.screenshot()); proof.name = "compact-anchored-dictation-controls"; proof.lifetime = .keepAlways; add(proof)
+    let paper=app.otherElements["paper-input"];XCTAssertTrue(paper.waitForExistence(timeout:8))
+    let frame=paper.frame,ink=paper.value as? String
+    app.buttons["notebook-companion-compose"].tap();app.buttons["notebook-chat-dictation"].tap()
+    let stop=app.buttons["notebook-dictation-review"]
+    XCTAssertTrue(stop.waitForExistence(timeout:5))
+    app.buttons["notebook-chat-toggle"].tap()
+    XCTAssertEqual(app.otherElements["notebook-companion-bar"].buttons.count,1)
+    app.buttons["notebook-companion-compose"].tap()
+    XCTAssertTrue(stop.waitForExistence(timeout:4))
     app.buttons["notebook-dictation-cancel"].tap()
-    XCTAssertTrue(mic.waitForExistence(timeout: 5))
-    XCTAssertEqual(paper.frame, frame); XCTAssertEqual(paper.value as? String, ink)
+    XCTAssertTrue(app.buttons["notebook-chat-dictation"].waitForExistence(timeout:5))
+    XCTAssertEqual(paper.frame,frame);XCTAssertEqual(paper.value as? String,ink)
   }
 
   func testDictationControlBesideVoiceInvokesItsOwnerWithoutLosingTheDraftOrPaper() {
@@ -1823,13 +1776,7 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertEqual(app.alerts.count, 0, "Opening voice settings must not activate a microphone")
     app.buttons["notebook-voice-settings-close"].tap()
     app.buttons["notebook-chat-toggle"].tap()
-    app.buttons["notebook-compact-dictation"].tap()
-    XCTAssertTrue(notice.waitForExistence(timeout: 3))
-    app.buttons["notebook-dictation-dismiss-notice"].tap()
-    XCTAssertEqual(app.buttons["notebook-compact-voice"].label, "Начать голосовой разговор")
-    app.buttons["notebook-compact-voice"].tap()
-    let compactFailure = app.staticTexts["notebook-compact-voice-error"]
-    XCTAssertTrue(compactFailure.waitForExistence(timeout: 3)); XCTAssertTrue(compactFailure.label.contains("Подключите Mac"))
+    XCTAssertEqual(app.otherElements["notebook-companion-bar"].buttons.count,1)
     app.buttons["notebook-companion-compose"].tap()
     XCTAssertEqual(field.value as? String, "Keep this draft")
     XCTAssertEqual(paper.frame, frame); XCTAssertEqual(paper.value as? String, ink)
@@ -2044,7 +1991,7 @@ final class DrawingResponsivenessTests: XCTestCase {
       for expanded in [false, true] {
         if expanded { openChat(in: app) }
         let controls = ["previous-page", "page-overview", "next-page",
-          "pen-controls-toggle", "drawing-tool-eraser"]
+          "drawing-group", "drawing-tool-eraser"]
         let unobstructed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
           let window = app.frame, frame = panel.frame
           guard (window.width > window.height) == landscape,
@@ -2389,67 +2336,87 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertTrue(app.descendants(matching:.any).matching(identifier:"drawing-tool-options").firstMatch.waitForNonExistence(timeout:2))
   }
 
-  func testPhysicalRulerMovesAndRotatesWithFingerWithoutMovingPaper() {
-    continueAfterFailure = false
-    let app = XCUIApplication()
-    app.launchArguments = ["--notebook-drawing-responsiveness-fixture"]
+  func testPhysicalGuidesToggleAndKeepTheirPoseWithoutChangingThePen() {
+    continueAfterFailure=false
+    let app=XCUIApplication();app.launchArguments=["--notebook-drawing-responsiveness-fixture"]
     launchPortraitFixture(app)
-    let paper = app.otherElements["paper-input"], original = paper.frame
-    app.buttons["drawing-tools-more"].tap(); app.buttons["drawing-tool-ruler"].tap()
-    // Preferences survive launches; establish the pose through the real UI.
-    app.buttons["drawing-tool-ruler"].tap(); app.buttons["0°"].tap()
-    dismissDrawingSettings(app)
-    let ruler = app.descendants(matching:.any).matching(identifier:"physical-ruler").firstMatch
-    XCTAssertTrue(ruler.waitForExistence(timeout:5))
-    let before = ruler.frame, previous = ruler.value as? String
-    let center = ruler.coordinate(withNormalizedOffset:.init(dx:0.4,dy:0.5))
+    selectNotebookTool("pen",in:app)
+    let paper=app.otherElements["paper-input"],original=paper.frame
+    let toggle=app.buttons["drawing-guide-toggle"],drawing=app.buttons["drawing-group"]
+    toggle.press(forDuration:0.6);app.buttons["guide-kind-ruler"].tap()
+    let angle=app.textFields["guide-angle-value"]
+    angle.tap();angle.typeText(String(repeating:XCUIKeyboardKey.delete.rawValue,count:12)+"0\n")
+    dismissNotebookToolPanel(in:app)
+    let guide=app.descendants(matching:.any).matching(identifier:"physical-guide").firstMatch
+    XCTAssertTrue(guide.waitForExistence(timeout:5))
+    let before=guide.frame,previous=guide.value as? String
+    let center=guide.coordinate(withNormalizedOffset:.init(dx:0.4,dy:0.5))
     center.press(forDuration:0.05,thenDragTo:center.withOffset(.init(dx:30,dy:50)))
-    XCTAssertTrue(waitUntil { (ruler.value as? String) != previous })
-    XCTAssertEqual(ruler.frame.minX,before.minX+30,accuracy:4)
-    XCTAssertEqual(ruler.frame.minY,before.minY+50,accuracy:4)
-    let end = ruler.coordinate(withNormalizedOffset:.init(dx:0.99,dy:0.5)), moved = ruler.frame
+    XCTAssertTrue(waitUntil { (guide.value as? String) != previous })
+    XCTAssertEqual(guide.frame.minX,before.minX+30,accuracy:4);XCTAssertEqual(guide.frame.minY,before.minY+50,accuracy:4)
+    let end=guide.coordinate(withNormalizedOffset:.init(dx:0.95,dy:0.32)),moved=guide.frame
     end.press(forDuration:0.05,thenDragTo:end.withOffset(.init(dx:-100,dy:140)))
-    XCTAssertTrue(waitUntil { ruler.frame.height > moved.height+60 })
-    XCTAssertEqual(paper.frame,original,"Ruler gestures must not navigate the scene")
-    let shot = XCTAttachment(screenshot:app.screenshot()); shot.name = "physical-ruler-rotated"; shot.lifetime = .keepAlways; add(shot)
+    XCTAssertTrue(waitUntil { guide.frame.height > moved.height+60 })
+    let pose=guide.value as? String
+    toggle.tap();XCTAssertTrue(guide.waitForNonExistence(timeout:2))
+    toggle.tap();XCTAssertTrue(guide.waitForExistence(timeout:2));XCTAssertEqual(guide.value as? String,pose)
+    for kind in ["protractor","compass"] {
+      toggle.press(forDuration:0.6);app.buttons["guide-kind-"+kind].tap()
+      XCTAssertTrue(app.textFields["guide-length-value"].exists)
+      if kind == "protractor" { XCTAssertTrue(app.textFields["guide-opening-value"].exists) }
+      dismissNotebookToolPanel(in:app)
+      XCTAssertEqual(drawing.value as? String,"Ручка");XCTAssertEqual(paper.frame,original)
+    }
+    let shot=XCTAttachment(screenshot:app.screenshot());shot.name="independent-geometry-tools";shot.lifetime = .keepAlways;add(shot)
   }
 
-  func testAllDrawingToolsUseRepeatedTapSettingsWithoutExtraToolbarButton() {
-    continueAfterFailure = false
-    let app = XCUIApplication()
-    app.launchArguments = ["--notebook-drawing-responsiveness-fixture"]
+  func testConfirmedBlankTapHidesChromeWithoutChangingPaperAndFirstClosesToolPanel() {
+    continueAfterFailure=false
+    let app=XCUIApplication();app.launchArguments=["--notebook-drawing-responsiveness-fixture"]
     launchPortraitFixture(app)
-    let marker = app.buttons["drawing-tool-marker"]
-    XCTAssertTrue(marker.waitForExistence(timeout:5))
-    marker.tap(); XCTAssertTrue(marker.isSelected); XCTAssertFalse(app.sliders["marker-width"].exists)
-    app.buttons["drawing-primary-color"].tap(); app.buttons["drawing-color-green"].tap()
-    marker.tap(); XCTAssertTrue(app.sliders["marker-width"].waitForExistence(timeout:2))
+    let paper=app.otherElements["paper-input"],bar=app.otherElements["notebook-top-bar"]
+    XCTAssertTrue(paper.waitForExistence(timeout:5));let frame=paper.frame,ink=paper.value as? String
+    let blank=app.coordinate(withNormalizedOffset:.init(dx:0.94,dy:0.8))
+    selectNotebookTool("pen",in:app,settings:true)
+    blank.tap();XCTAssertTrue(app.sliders["pen-width"].waitForNonExistence(timeout:3));XCTAssertTrue(bar.exists)
+    blank.tap()
+    XCTAssertTrue(waitUntil { !app.buttons["drawing-group"].isHittable },"Invisible controls must stop accepting input without unmounting the canvas")
+    let hidden=XCTAttachment(screenshot:app.screenshot());hidden.name="hidden-chrome-retained-paper";hidden.lifetime = .keepAlways;add(hidden)
+    XCTAssertEqual(paper.frame,frame);XCTAssertEqual(paper.value as? String,ink)
+    blank.tap();XCTAssertTrue(waitUntil { app.buttons["drawing-group"].isHittable })
+    blank.doubleTap();XCTAssertTrue(bar.exists)
+    openNotebookCanvasMenu(in:app);XCTAssertTrue(app.buttons["clipboard-paste"].exists)
+    app.coordinate(withNormalizedOffset:.init(dx:0.04,dy:0.2)).tap()
+    XCTAssertTrue(bar.exists);XCTAssertEqual(paper.frame,frame)
+    let proof=XCTAttachment(screenshot:app.screenshot());proof.name="chrome-after-blank-tap-and-menu";proof.lifetime = .keepAlways;add(proof)
+  }
+
+  func testDrawingGroupsKeepIndependentSettingsAndExposeEveryTool() {
+    continueAfterFailure=false
+    let app=XCUIApplication();app.launchArguments=["--notebook-drawing-responsiveness-fixture"]
+    launchPortraitFixture(app)
+    selectNotebookTool("marker",in:app,settings:true)
     app.sliders["marker-width"].adjust(toNormalizedSliderPosition:0.6)
-    let chosen = app.sliders["marker-width"].value as? String
-    dismissDrawingSettings(app)
-    app.buttons["drawing-tool-eraser"].tap(); marker.tap(); marker.tap()
-    XCTAssertTrue(app.sliders["marker-width"].waitForExistence(timeout:2))
+    let chosen=app.sliders["marker-width"].value as? String
+    dismissNotebookToolPanel(in:app)
+    selectNotebookTool("pen",in:app)
+    selectNotebookTool("marker",in:app,settings:true)
     XCTAssertEqual(app.sliders["marker-width"].value as? String,chosen)
-    XCTAssertEqual(app.buttons["drawing-primary-color"].value as? String,"Зелёная")
-    dismissDrawingSettings(app)
-    for (tool,setting) in [("lasso","lasso-adds-selection"),("shape","shape-width"),("text","text-size"),
-      ("connector","connector-width"),("ruler","ruler-angle"),("laser","laser-duration")] {
-      if tool != "lasso" {
-        app.buttons["drawing-tools-more"].tap()
-        let menuItem = app.buttons["drawing-tool-"+tool].firstMatch
-        XCTAssertTrue(menuItem.waitForExistence(timeout:2)); menuItem.tap()
-      } else { app.buttons["drawing-tool-lasso"].tap() }
-      let button = app.buttons["drawing-tool-"+tool]
-      XCTAssertTrue(button.waitForExistence(timeout:2)); XCTAssertTrue(button.isSelected)
-      XCTAssertFalse(app.descendants(matching:.any).matching(identifier:setting).firstMatch.exists)
-      button.tap()
-      XCTAssertTrue(app.descendants(matching:.any).matching(identifier:setting).firstMatch.waitForExistence(timeout:2))
-      let proof = XCTAttachment(screenshot:app.screenshot()); proof.name = "tool-settings-"+tool; proof.lifetime = .keepAlways; add(proof)
-      dismissDrawingSettings(app)
-      XCTAssertTrue(button.isSelected)
-      XCTAssertFalse(app.buttons["pen-settings"].exists)
+    dismissNotebookToolPanel(in:app)
+    for (tool,setting) in [("pen","pen-width"),("eraser","eraser-width"),("lasso","lasso-mode"),
+      ("text","text-size"),("shape","shape-width"),("connector","connector-width"),("laser","laser-duration")] {
+      selectNotebookTool(tool,in:app,settings:true)
+      XCTAssertTrue(app.descendants(matching:.any).matching(identifier:setting).firstMatch.waitForExistence(timeout:3))
+      dismissNotebookToolPanel(in:app)
     }
-    let proof = XCTAttachment(screenshot:app.screenshot()); proof.name = "compact-drawing-tools-toolbar"; proof.lifetime = .keepAlways; add(proof)
+    XCTAssertFalse(app.buttons["leave-nested-board"].exists)
+    XCTAssertFalse(app.buttons["workspaces-open"].exists)
+    let toolbar=app.otherElements["notebook-top-bar"],chat=app.otherElements["notebook-companion-bar"]
+    XCTAssertTrue(chat.exists)
+    XCTAssertEqual(chat.frame.width,chat.frame.height,accuracy:0.5)
+    XCTAssertEqual(chat.frame.height,toolbar.frame.height,accuracy:0.5)
+    XCTAssertEqual(toolbar.frame.maxX,app.frame.maxX-18,accuracy:1)
+    let proof=XCTAttachment(screenshot:app.screenshot());proof.name="compact-drawing-tools-toolbar";proof.lifetime = .keepAlways;add(proof)
   }
 
   func testShapeAndOperationSelectorsShareTopRowAndKeepIndependentSelections() {
@@ -2457,9 +2424,7 @@ final class DrawingResponsivenessTests: XCTestCase {
     let app = XCUIApplication()
     app.launchArguments = ["--notebook-drawing-responsiveness-fixture"]
     launchPortraitFixture(app)
-    app.buttons["drawing-tools-more"].tap()
-    app.buttons["drawing-tool-shape"].firstMatch.tap()
-    app.buttons["drawing-tool-shape"].tap()
+    selectNotebookTool("shape",in:app,settings:true)
     let shape = app.buttons["drawing-shape-kind"], operation = app.buttons["shape-operation"]
     XCTAssertTrue(shape.waitForExistence(timeout:2))
     XCTAssertTrue(operation.isHittable)
@@ -2475,58 +2440,29 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertEqual(shape.value as? String,"Треугольник")
     XCTAssertEqual(operation.label,"Наложение, Вычитание")
     dismissDrawingSettings(app)
-    app.buttons["drawing-tool-shape"].tap()
+    app.buttons["figure-group"].tap()
     XCTAssertEqual(shape.value as? String,"Треугольник")
     XCTAssertEqual(operation.label,"Наложение, Вычитание")
     let proof = XCTAttachment(screenshot:app.screenshot())
     proof.name = "shape-and-operation-top-row"; proof.lifetime = .keepAlways; add(proof)
   }
 
-  func testOpenToolSettingsLetOneTapSelectAnotherTool() {
-    continueAfterFailure = false
-    let app = XCUIApplication()
-    app.launchArguments = ["--notebook-drawing-responsiveness-fixture"]
+  func testOpenToolPanelSwitchesGroupsWithOnePhysicalTap() {
+    continueAfterFailure=false
+    let app=XCUIApplication();app.launchArguments=["--notebook-drawing-responsiveness-fixture"]
     launchPortraitFixture(app)
-    let eraser = app.buttons["drawing-tool-eraser"], marker = app.buttons["drawing-tool-marker"]
-    let pen = app.buttons["pen-controls-toggle"], color = app.buttons["drawing-primary-color"]
-    XCTAssertTrue(eraser.waitForExistence(timeout:5))
-    // Literal screen taps, not an accessibility activation that could bypass
-    // the panel's outside-tap layer and conceal the two-tap regression.
-    let markerPoint = marker.coordinate(withNormalizedOffset:.init(dx:0.5,dy:0.5))
-    let penPoint = pen.coordinate(withNormalizedOffset:.init(dx:0.5,dy:0.5))
-    eraser.tap(); eraser.tap()
-    XCTAssertTrue(app.sliders["eraser-width"].waitForExistence(timeout:2))
-    markerPoint.tap()
-    XCTAssertTrue(marker.isSelected,"The first tap must select the real toolbar button")
-    XCTAssertTrue(app.sliders["eraser-width"].waitForNonExistence(timeout:2))
-    XCTAssertFalse(app.sliders["marker-width"].exists,"Switching selects, but does not open the new settings")
-    marker.tap()
-    XCTAssertTrue(app.sliders["marker-width"].waitForExistence(timeout:2))
-    color.coordinate(withNormalizedOffset:.init(dx:0.5,dy:0.5)).tap()
-    XCTAssertTrue(app.buttons["drawing-color-green"].waitForExistence(timeout:2))
-    XCTAssertFalse(app.sliders["marker-width"].exists)
-    penPoint.tap()
-    XCTAssertTrue(pen.isSelected)
-    XCTAssertTrue(app.buttons["drawing-color-green"].waitForNonExistence(timeout:2))
-    pen.tap()
-    XCTAssertTrue(app.sliders["pen-width"].waitForExistence(timeout:2))
-    penPoint.tap()
-    XCTAssertTrue(app.sliders["pen-width"].waitForNonExistence(timeout:2),"Repeated tap also closes the current panel")
-    XCTAssertTrue(pen.isSelected)
-    pen.tap()
-    XCTAssertTrue(app.sliders["pen-width"].waitForExistence(timeout:2))
-    app.buttons["drawing-tools-more"].coordinate(withNormalizedOffset:.init(dx:0.5,dy:0.5)).tap()
-    let shape = app.buttons["drawing-tool-shape"].firstMatch
-    XCTAssertTrue(shape.waitForExistence(timeout:2)); shape.tap()
-    XCTAssertTrue(app.buttons["drawing-tool-shape"].isSelected)
-    XCTAssertFalse(app.sliders["pen-width"].exists)
-    app.buttons["drawing-tool-shape"].tap()
-    XCTAssertTrue(app.sliders["shape-width"].waitForExistence(timeout:2))
+    selectNotebookTool("pen",in:app,settings:true)
+    let eraser=app.buttons["drawing-tool-eraser"],figures=app.buttons["figure-group"],drawing=app.buttons["drawing-group"]
     eraser.coordinate(withNormalizedOffset:.init(dx:0.5,dy:0.5)).tap()
-    XCTAssertTrue(eraser.isSelected)
-    XCTAssertTrue(app.sliders["shape-width"].waitForNonExistence(timeout:2))
-    let proof = XCTAttachment(screenshot:app.screenshot())
-    proof.name = "one-tap-tool-switch-through-open-settings"; proof.lifetime = .keepAlways; add(proof)
+    XCTAssertTrue(eraser.isSelected);XCTAssertFalse(app.sliders["pen-width"].exists)
+    eraser.tap();XCTAssertTrue(app.sliders["eraser-width"].waitForExistence(timeout:2))
+    figures.coordinate(withNormalizedOffset:.init(dx:0.5,dy:0.5)).tap()
+    XCTAssertTrue(figures.isSelected);XCTAssertFalse(app.sliders["eraser-width"].exists)
+    figures.tap();XCTAssertTrue(app.sliders["shape-width"].waitForExistence(timeout:2))
+    drawing.coordinate(withNormalizedOffset:.init(dx:0.5,dy:0.5)).tap()
+    XCTAssertTrue(drawing.isSelected);XCTAssertFalse(app.sliders["shape-width"].exists)
+    drawing.tap();XCTAssertTrue(app.sliders["pen-width"].waitForExistence(timeout:2))
+    drawing.tap();XCTAssertTrue(app.sliders["pen-width"].waitForNonExistence(timeout:2))
   }
 
   func testToolSettingsOpenOnRepeatedTapAndPreserveSelection() {
@@ -2535,7 +2471,7 @@ final class DrawingResponsivenessTests: XCTestCase {
     app.launchArguments = ["--notebook-drawing-responsiveness-fixture"]
     launchPortraitFixture(app)
 
-    let pen = app.buttons["pen-controls-toggle"]
+    let pen = app.buttons["drawing-group"]
     let eraser = app.buttons["drawing-tool-eraser"]
     XCTAssertTrue(pen.waitForExistence(timeout: 5))
     XCTAssertTrue(
@@ -2641,7 +2577,7 @@ final class DrawingResponsivenessTests: XCTestCase {
     let toggle = app.buttons["notebook-chat-toggle"]
     if toggle.exists { toggle.tap() }
     element.tap()
-    XCTAssertTrue(app.buttons["delete-agent-element"].waitForExistence(timeout: 4))
+    XCTAssertTrue(app.otherElements["resize-agent-element-topLeading"].waitForExistence(timeout: 4))
     XCTAssertFalse(app.descendants(matching: .any).matching(identifier: "resize-agent-element").firstMatch.exists)
     for (name, leading, top) in [("topLeading", true, true), ("topTrailing", false, true), ("bottomLeading", true, false), ("bottomTrailing", false, false)] {
       let corner = app.descendants(matching: .any).matching(identifier: "resize-agent-element-" + name).firstMatch
@@ -2660,7 +2596,7 @@ final class DrawingResponsivenessTests: XCTestCase {
       XCTAssertEqual(leading ? element.frame.maxX : element.frame.minX, leading ? before.maxX : before.minX, accuracy: 2)
       XCTAssertEqual(top ? element.frame.maxY : element.frame.minY, top ? before.maxY : before.minY, accuracy: 2)
       XCTAssertEqual(paper.frame, paperFrame); XCTAssertEqual(paper.value as? String, drawing)
-      XCTAssertEqual(app.buttons.matching(identifier: "delete-agent-element").count, 1)
+      XCTAssertEqual(app.otherElements.matching(identifier: "resize-agent-element-topLeading").count, 1)
     }
     let proof = XCTAttachment(screenshot: app.screenshot()); proof.name = "four-corners-one-frame"; proof.lifetime = .keepAlways; add(proof)
   }
@@ -2680,12 +2616,12 @@ final class DrawingResponsivenessTests: XCTestCase {
     let edge = CGRect(x: (frame.minX + frame.width * 0.2) / screen.width,
       y: (frame.minY - 2) / screen.height, width: frame.width * 0.5 / screen.width, height: 4 / screen.height)
     first.tap()
-    XCTAssertEqual(app.buttons.matching(identifier: "delete-agent-element").count, 1)
+    XCTAssertEqual(app.otherElements.matching(identifier: "resize-agent-element-topLeading").count, 1)
     let selected = app.screenshot()
     XCTAssertGreaterThan(changedPixelShare(from: baseline, to: selected, normalizedRect: edge), 0.03)
     second.tap()
-    XCTAssertEqual(app.buttons.matching(identifier: "delete-agent-element").count, 1)
-    XCTAssertGreaterThan(app.buttons["delete-agent-element"].frame.midY, second.frame.minY - 65)
+    XCTAssertEqual(app.otherElements.matching(identifier: "resize-agent-element-topLeading").count, 1)
+    XCTAssertGreaterThan(app.otherElements["resize-agent-element-topLeading"].frame.midY, second.frame.minY - 65)
     let replaced = app.screenshot()
     XCTAssertLessThan(changedPixelShare(from: baseline, to: replaced, normalizedRect: edge), 0.02,
       "The previous artifact cannot retain a context outline after the next choice")
@@ -2693,13 +2629,13 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertTrue(count.waitForExistence(timeout: 3)); XCTAssertEqual(count.value as? String, "1")
     count.tap(); app.buttons["notebook-context-clear"].tap()
     XCTAssertTrue(count.waitForNonExistence(timeout: 3))
-    XCTAssertEqual(app.buttons.matching(identifier: "delete-agent-element").count, 0,
+    XCTAssertEqual(app.otherElements.matching(identifier: "resize-agent-element-topLeading").count, 0,
       "Clearing context also clears editing, not just the counter")
     first.tap()
     XCTAssertTrue(count.waitForExistence(timeout: 3))
     paper.coordinate(withNormalizedOffset: .init(dx: 0.86, dy: 0.16)).tap()
     XCTAssertTrue(count.waitForNonExistence(timeout: 3))
-    XCTAssertEqual(app.buttons.matching(identifier: "delete-agent-element").count, 0)
+    XCTAssertEqual(app.otherElements.matching(identifier: "resize-agent-element-topLeading").count, 0)
     XCTAssertEqual(paper.frame, paperFrame); XCTAssertEqual(paper.value as? String, ink)
     let proof = XCTAttachment(screenshot: replaced)
     proof.name = "only-second-artifact-selected"; proof.lifetime = .keepAlways; add(proof)
@@ -2722,11 +2658,7 @@ final class DrawingResponsivenessTests: XCTestCase {
     let paperFrame = paper.frame, drawing = paper.value as? String
 
     sharedElement.tap()
-    let delete = app.buttons["delete-agent-element"]
-    XCTAssertTrue(
-      delete.waitForExistence(timeout: 3),
-      "Выбранный общий элемент должен показать действие удаления"
-    )
+    XCTAssertTrue(app.otherElements["resize-agent-element-topLeading"].waitForExistence(timeout:3))
     XCTAssertFalse(app.descendants(matching: .any)["move-agent-element"].exists)
     XCTAssertFalse(app.descendants(matching: .any)["agent-question-card"].exists)
     let count = app.buttons["notebook-context-count"]
@@ -2757,7 +2689,7 @@ final class DrawingResponsivenessTests: XCTestCase {
     app.buttons["notebook-chat-toggle"].tap()
     XCTAssertEqual(paper.frame, paperFrame)
 
-    app.buttons["delete-agent-element"].tap()
+    notebookContextAction("Удалить элемент",on:sharedElement,in:app)
     XCTAssertFalse(
       sharedElement.waitForExistence(timeout: 2),
       "Удаление должно убрать общий элемент с листа"
@@ -3243,7 +3175,7 @@ final class DrawingResponsivenessTests: XCTestCase {
     let result = app.buttons.matching(NSPredicate(format: "label CONTAINS 'Глава 1'")).firstMatch
     XCTAssertTrue(result.waitForExistence(timeout: 5)); result.tap()
     await fulfillment(of: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "value BEGINSWITH 'Страница 1 из '"), object: surface)], timeout: 6)
-    app.buttons["leave-nested-board"].tap()
+    notebookBack(in:app)
     await fulfillment(of: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "value BEGINSWITH 'Страница 3 из '"), object: surface)], timeout: 5)
   }
 
@@ -3307,8 +3239,8 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertFalse(editor.exists)
     let installed = XCTAttachment(screenshot: app.screenshot())
     installed.name = "full-document-cycle-saved-before-close"; installed.lifetime = .keepAlways; add(installed)
-    app.buttons["leave-nested-board"].tap()
-    XCTAssertTrue(app.buttons["create-workspace-item"].waitForExistence(timeout: 5))
+    notebookBack(in:app)
+    XCTAssertTrue(notebookOffersCreation(in:app))
     app.terminate()
     app.launchArguments.append("--notebook-reopen-fixture")
     launchPortraitFixture(app)
@@ -3385,7 +3317,7 @@ final class DrawingResponsivenessTests: XCTestCase {
   }
 
   private func workspaceWindow(in app: XCUIApplication) -> XCUIElement {
-    app.windows.containing(.button, identifier: "pen-controls-toggle").firstMatch
+    app.windows.containing(.button, identifier: "drawing-group").firstMatch
   }
 
   private func openChat(in app: XCUIApplication) {
@@ -3456,46 +3388,29 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertEqual(restored.height, original.height, accuracy: 2)
   }
 
-  func testZoomCannotEnterOrLeaveTheNotebookButDoubleTapAndBackCan() {
-    continueAfterFailure = false
-    let app = XCUIApplication()
-    app.launchArguments = ["--notebook-drawing-responsiveness-fixture",
-      "--notebook-simulator-finger-gestures", "--notebook-page-turn-content-fixture"]
+  func testZoomLeavesAndReopensTheNotebookWithoutASeparateExitButton() {
+    continueAfterFailure=false
+    let app=XCUIApplication();app.launchArguments=["--notebook-drawing-responsiveness-fixture","--notebook-page-turn-content-fixture"]
     launchPortraitFixture(app)
-    let paper = app.otherElements["paper-input"]
-    XCTAssertTrue(paper.waitForExistence(timeout: 5))
-    let original = paper.frame
-    let marker = app.otherElements["agent-element-page-marker-0"]
-    XCTAssertTrue(marker.waitForExistence(timeout: 5))
-    marker.pinch(withScale: 0.28, velocity: -2)
-    XCTAssertTrue(paper.exists)
-    XCTAssertTrue(marker.exists, "Zoom must retain the same physical page")
-    XCTAssertEqual(paper.frame.width, original.width, accuracy: 2, "The open sheet must stay fitted, not recede into the board")
-    XCTAssertEqual(paper.frame.midX, original.midX, accuracy: 2)
-    XCTAssertEqual(paper.frame.midY, original.midY, accuracy: 2)
-    XCTAssertFalse(app.buttons["create-workspace-item"].exists)
-    XCTAssertTrue(app.buttons["next-page"].exists)
-    app.buttons["next-page"].tap()
-    XCTAssertTrue(app.otherElements["agent-element-page-marker-1"].waitForExistence(timeout: 5))
-    app.buttons["previous-page"].tap()
-    XCTAssertTrue(marker.waitForExistence(timeout: 5))
-    app.buttons["leave-nested-board"].tap()
-    XCTAssertTrue(app.buttons["create-workspace-item"].waitForExistence(timeout: 5))
-    let notebook = app.descendants(matching: .any).matching(
-      identifier: "workspace-item-7e7a1000-0000-4000-8000-000000000002").firstMatch
-    XCTAssertTrue(notebook.waitForExistence(timeout: 3))
-    notebook.pinch(withScale: 1.5, velocity: 0.7)
-    XCTAssertFalse(paper.exists, "Zooming toward a cover cannot open it")
-    XCTAssertTrue(app.buttons["create-workspace-item"].exists)
-    notebook.doubleTap()
-    XCTAssertTrue(paper.waitForExistence(timeout: 3))
-    XCTAssertTrue(marker.exists)
-    XCTAssertEqual(paper.frame.midX, original.midX, accuracy: 2)
-    XCTAssertEqual(paper.frame.midY, original.midY, accuracy: 2)
-    XCTAssertEqual(paper.frame.width, original.width, accuracy: 2)
-    XCTAssertEqual(paper.frame.height, original.height, accuracy: 2)
-    let proof = XCTAttachment(screenshot: app.screenshot())
-    proof.name = "explicit-notebook-entry-after-zoom-and-page-turn"; proof.lifetime = .keepAlways; add(proof)
+    let paper=app.otherElements["paper-input"],marker=app.otherElements["agent-element-page-marker-0"]
+    XCTAssertTrue(marker.waitForExistence(timeout:8));let original=paper.frame
+    marker.pinch(withScale:0.28,velocity:-2)
+    XCTAssertTrue(paper.waitForNonExistence(timeout:5))
+    XCTAssertFalse(app.buttons["leave-nested-board"].exists)
+    let notebook=app.descendants(matching:.any).matching(identifier:"workspace-item-7e7a1000-0000-4000-8000-000000000002").firstMatch
+    XCTAssertTrue(notebook.waitForExistence(timeout:3))
+    notebook.pinch(withScale:4,velocity:2)
+    XCTAssertTrue(paper.waitForExistence(timeout:5));XCTAssertTrue(marker.exists)
+    XCTAssertEqual(paper.frame.width,original.width,accuracy:3)
+    app.buttons["next-page"].tap();XCTAssertTrue(app.otherElements["agent-element-page-marker-1"].waitForExistence(timeout:5))
+    let previous=app.buttons["previous-page"]
+    // The target's native content can mount before its accepted page counter.
+    // Exercise the enabled arrow, not the still-disabled page-one control.
+    XCTAssertTrue(previous.wait(for:\.isEnabled,toEqual:true,timeout:3))
+    previous.tap();XCTAssertTrue(marker.waitForExistence(timeout:5))
+    notebookBack(in:app);XCTAssertTrue(paper.waitForNonExistence(timeout:5))
+    notebook.doubleTap();XCTAssertTrue(paper.waitForExistence(timeout:5))
+    let proof=XCTAttachment(screenshot:app.screenshot());proof.name="notebook-zoom-and-context-return";proof.lifetime = .keepAlways;add(proof)
   }
 
   func testNotebookPinchesZoomTheOpenSheetInsteadOfItsCover() throws {
@@ -3531,18 +3446,10 @@ final class DrawingResponsivenessTests: XCTestCase {
       hierarchy.name = name + "-hierarchy"; hierarchy.lifetime = .keepAlways; add(hierarchy)
       XCTAssertTrue(sheet.waitForExistence(timeout: 2))
       XCTAssertEqual(cover.value as? String, "Обложка 100%", "The same sheet must stay fully open during ordinary zoom")
-      XCTAssertFalse(app.buttons["create-workspace-item"].exists)
+      XCTAssertFalse(notebookOffersCreation(in:app))
       XCTAssertFalse(app.textViews["Исходный Markdown или LaTeX"].exists,
         "The two releases of a pinch are not a double tap on document text")
       XCTAssertFalse(app.keyboards.firstMatch.exists)
-    }
-    for attempt in 0..<2 {
-      gestureSurface.pinch(withScale: 0.28, velocity: -2)
-      assertOpen("paper-strong-reduction-\(document)-\(attempt)")
-      XCTAssertEqual(sheet.frame.width, fitted.width, accuracy: 2, "Zoom-out must stop at the whole sheet")
-      XCTAssertEqual(sheet.frame.height, fitted.height, accuracy: 2)
-      XCTAssertEqual(sheet.frame.midX, fitted.midX, accuracy: 2)
-      XCTAssertEqual(sheet.frame.midY, fitted.midY, accuracy: 2)
     }
     gestureSurface.pinch(withScale: 1.6, velocity: 0.7)
     assertOpen("paper-enlarged-\(document)")
@@ -3551,6 +3458,11 @@ final class DrawingResponsivenessTests: XCTestCase {
     gestureSurface.pinch(withScale: 0.94, velocity: -0.2)
     assertOpen("paper-zoom-retained-\(document)")
     XCTAssertGreaterThan(sheet.frame.width, fitted.width * 1.05)
+    gestureSurface.pinch(withScale:0.28,velocity:-2)
+    XCTAssertTrue(sheet.waitForNonExistence(timeout:5),"Crossing the geometric boundary closes this same surface")
+    XCTAssertTrue(item.waitForExistence(timeout:3))
+    item.pinch(withScale:4,velocity:2)
+    XCTAssertTrue(sheet.waitForExistence(timeout:5));assertOpen("paper-reopened-\(document)")
   }
 
   func testDoubleTapOpensAWholePageImmediately() {
@@ -3565,8 +3477,8 @@ final class DrawingResponsivenessTests: XCTestCase {
     let paper = app.otherElements["paper-input"]
     XCTAssertTrue(paper.waitForExistence(timeout: 5))
     let originalPaperFrame = paper.frame
-    app.buttons["leave-nested-board"].tap()
-    let boardShown = app.buttons["create-workspace-item"].waitForExistence(timeout: 5)
+    notebookBack(in:app)
+    let boardShown = notebookOffersCreation(in:app)
     let hierarchy = XCTAttachment(string: app.debugDescription)
     hierarchy.name = "after-pinch-hierarchy"; hierarchy.lifetime = .keepAlways; add(hierarchy)
     let pixels = XCTAttachment(screenshot: app.screenshot())
@@ -3604,15 +3516,15 @@ final class DrawingResponsivenessTests: XCTestCase {
 
     let paper = app.otherElements["paper-input"]
     XCTAssertTrue(paper.waitForExistence(timeout: 5))
-    app.buttons["leave-nested-board"].tap()
-    XCTAssertTrue(app.buttons["create-workspace-item"].waitForExistence(timeout: 5))
+    notebookBack(in:app)
+    XCTAssertTrue(notebookOffersCreation(in:app))
 
     func createAndEnterBoard() {
       let items = app.descendants(matching: .any).matching(
         NSPredicate(format: "identifier BEGINSWITH 'workspace-item-'")
       )
       let before = Set(items.allElementsBoundByIndex.map(\.identifier))
-      app.buttons["create-workspace-item"].tap()
+      openNotebookCanvasMenu(in:app)
       let createBoard = app.buttons["create-nested-board"]
       XCTAssertTrue(createBoard.waitForExistence(timeout: 2))
       createBoard.tap()
@@ -3630,59 +3542,39 @@ final class DrawingResponsivenessTests: XCTestCase {
       let emptyFolder = XCTAttachment(screenshot: app.screenshot())
       emptyFolder.name = "new-empty-folder"; emptyFolder.lifetime = .keepAlways; add(emptyFolder)
       portal.doubleTap()
-      XCTAssertTrue(app.buttons["leave-nested-board"].waitForExistence(timeout: 3))
-      XCTAssertTrue(app.buttons["create-workspace-item"].exists)
+      openNotebookCanvasMenu(in:app);XCTAssertTrue(app.buttons["leave-nested-board"].exists);app.coordinate(withNormalizedOffset:.init(dx:0.04,dy:0.2)).tap()
+      XCTAssertTrue(notebookOffersCreation(in:app))
     }
 
     createAndEnterBoard()
     createAndEnterBoard()
 
-    app.buttons["leave-nested-board"].tap()
-    XCTAssertTrue(app.buttons["leave-nested-board"].waitForExistence(timeout: 2))
-    app.buttons["leave-nested-board"].tap()
-    XCTAssertTrue(app.buttons["leave-nested-board"].waitForNonExistence(timeout: 2))
-    XCTAssertTrue(app.buttons["create-workspace-item"].exists)
+    notebookBack(in:app)
+    openNotebookCanvasMenu(in:app);XCTAssertTrue(app.buttons["leave-nested-board"].exists);app.coordinate(withNormalizedOffset:.init(dx:0.04,dy:0.2)).tap()
+    notebookBack(in:app)
+    openNotebookCanvasMenu(in:app);XCTAssertFalse(app.buttons["leave-nested-board"].exists);app.coordinate(withNormalizedOffset:.init(dx:0.04,dy:0.2)).tap()
+    XCTAssertTrue(notebookOffersCreation(in:app))
     let portalProof = XCTAttachment(screenshot: app.screenshot())
     portalProof.name = "folder-with-nested-content-after-back"
     portalProof.lifetime = .keepAlways
     add(portalProof)
   }
 
-  func testZoomCannotEnterOrLeaveABoardButDoubleTapAndBackCan() {
-    continueAfterFailure = false
-    let app = XCUIApplication()
-    app.launchArguments = ["--notebook-drawing-responsiveness-fixture",
-      "--notebook-simulator-finger-gestures", "--notebook-nested-board-fixture"]
+  func testOnePinchEntersTheBoardAndTheNextReturnsToItsFolder() {
+    continueAfterFailure=false
+    let app=XCUIApplication();app.launchArguments=["--notebook-drawing-responsiveness-fixture","--notebook-nested-board-fixture"]
     launchPortraitFixture(app)
-    // Navigation gets an existing two-level workspace; the Create menu is a
-    // separate scenario, not a prerequisite for exercising the camera owner.
-    let portal = app.descendants(matching: .any).matching(identifier:
-      "workspace-item-7e7a1000-0000-4000-8000-00000000000d").firstMatch
-    XCTAssertTrue(portal.waitForExistence(timeout: 5))
-    portal.pinch(withScale: 3, velocity: 2)
-    XCTAssertTrue(portal.exists, "Zoom cannot replace a portal with its child board")
-    portal.pinch(withScale: 1.0 / 3.0, velocity: -2)
-    XCTAssertTrue(portal.exists)
-    portal.doubleTap()
-    XCTAssertTrue(portal.waitForNonExistence(timeout: 4), "Only explicit entry changes the board")
-    XCTAssertTrue(app.buttons["leave-nested-board"].waitForExistence(timeout: 4))
-
-    // Pinch a real child cover rather than the entire UIWindow: its bottom
-    // corner is the Create control, which correctly owns that finger itself.
-    let cover = app.descendants(matching: .any).matching(identifier:
-      "workspace-item-7e7a1000-0000-4000-8000-000000000002").firstMatch
-    XCTAssertTrue(cover.waitForExistence(timeout: 3))
-    cover.pinch(withScale: 0.55, velocity: -2)
-    XCTAssertFalse(portal.exists)
-    XCTAssertTrue(cover.exists)
-    cover.pinch(withScale: 0.35, velocity: -2)
-    XCTAssertFalse(portal.exists, "Even repeated zoom-out below the entry scale cannot leave the board")
-    XCTAssertTrue(cover.exists, "The same child material remains on the current board")
-    app.buttons["leave-nested-board"].tap()
-    XCTAssertTrue(portal.waitForExistence(timeout: 4))
-    XCTAssertLessThan(portal.frame.width, workspaceWindow(in: app).frame.width)
-    let proof = XCTAttachment(screenshot: app.screenshot())
-    proof.name = "parent-portal-after-explicit-back-not-zoom"; proof.lifetime = .keepAlways; add(proof)
+    let portal=app.descendants(matching:.any).matching(identifier:"workspace-item-7e7a1000-0000-4000-8000-00000000000d").firstMatch
+    XCTAssertTrue(portal.waitForExistence(timeout:5))
+    portal.pinch(withScale:3,velocity:2)
+    XCTAssertTrue(portal.waitForNonExistence(timeout:5))
+    let cover=app.descendants(matching:.any).matching(identifier:"workspace-item-7e7a1000-0000-4000-8000-000000000002").firstMatch
+    XCTAssertTrue(cover.waitForExistence(timeout:3))
+    cover.pinch(withScale:0.2,velocity:-2)
+    XCTAssertTrue(portal.waitForExistence(timeout:5));XCTAssertFalse(cover.exists)
+    portal.doubleTap();XCTAssertTrue(cover.waitForExistence(timeout:5))
+    notebookBack(in:app);XCTAssertTrue(portal.waitForExistence(timeout:5))
+    let proof=XCTAttachment(screenshot:app.screenshot());proof.name="one-level-per-pinch";proof.lifetime = .keepAlways;add(proof)
   }
 
   func testDoubleTapOpensAnAlreadyFocusedCoverWithoutStartingTextEditing() {
@@ -3702,87 +3594,36 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertFalse(app.descendants(matching: .any).matching(identifier: "native-text-editor").firstMatch.exists)
   }
 
-  func testSingleTapOffersDeletionAndRepairsAStack() {
-    continueAfterFailure = false
-    let app = XCUIApplication()
-    app.launchArguments = [
-      "--notebook-drawing-responsiveness-fixture",
-      "--notebook-simulator-finger-gestures",
-      "--notebook-stacked-board-fixture",
-    ]
-    launchPortraitFixture(app)
-    XCTAssertTrue(app.buttons["create-workspace-item"].waitForExistence(timeout: 5))
-
-    let removed = app.descendants(matching: .any)
-      .matching(
-        identifier: "workspace-item-7e7a1000-0000-4000-8000-000000000004"
-      )
-      .firstMatch
-    let remaining = app.descendants(matching: .any)
-      .matching(
-        identifier: "workspace-item-7e7a1000-0000-4000-8000-000000000002"
-      )
-      .firstMatch
-    XCTAssertTrue(removed.waitForExistence(timeout: 3))
-    XCTAssertTrue(remaining.exists)
-
-    removed.tap()
-    let delete = app.buttons["delete-workspace-item"]
-    XCTAssertTrue(delete.waitForExistence(timeout: 2))
-
-    workspaceWindow(in: app).coordinate(
-      withNormalizedOffset: CGVector(dx: 0.04, dy: 0.08)
-    ).tap()
-    XCTAssertFalse(
-      delete.waitForExistence(timeout: 0.6),
-      "Касание свободной доски должно снять выбор"
-    )
-
-    removed.tap()
-    XCTAssertTrue(delete.waitForExistence(timeout: 2))
-    XCTAssertEqual(delete.frame.width,44,accuracy:1); XCTAssertEqual(delete.frame.height,44,accuracy:1)
-    let open = app.buttons["open-workspace-item"]
-    XCTAssertTrue(open.exists); XCTAssertEqual(open.frame.midY,delete.frame.midY,accuracy:1)
-    XCTAssertEqual(delete.frame.minX-open.frame.minX,44,accuracy:1)
-    let capsule = XCTAttachment(screenshot:app.screenshot())
-    capsule.name = "workspace-item-shared-capsule"; capsule.lifetime = .keepAlways; add(capsule)
-    // The common capsule keeps full 44-point targets, including beside the glyph.
-    delete.coordinate(withNormalizedOffset:.init(dx:0.25,dy:0.5)).tap()
-
-    XCTAssertTrue(remaining.waitForExistence(timeout: 2))
-    XCTAssertFalse(removed.exists)
-  }
-
-  func testSharedCapsuleOpensSelectedNotebook() {
+  func testHoldReleaseOffersDeletionAndRepairsAStack() {
     continueAfterFailure = false
     let app = XCUIApplication()
     app.launchArguments = ["--notebook-drawing-responsiveness-fixture","--notebook-stacked-board-fixture"]
     launchPortraitFixture(app)
-    let card = app.descendants(matching:.any).matching(
-      identifier:"workspace-item-7e7a1000-0000-4000-8000-000000000004").firstMatch
+    let removed = app.descendants(matching:.any).matching(identifier:"workspace-item-7e7a1000-0000-4000-8000-000000000004").firstMatch
+    let remaining = app.descendants(matching:.any).matching(identifier:"workspace-item-7e7a1000-0000-4000-8000-000000000002").firstMatch
+    XCTAssertTrue(removed.waitForExistence(timeout:5)); XCTAssertTrue(remaining.exists)
+    removed.tap()
+    XCTAssertFalse(app.buttons["delete-workspace-item"].exists,"Selection has no floating action strip")
+    openNotebookSelectionMenu(on:removed,in:app)
+    app.coordinate(withNormalizedOffset:.init(dx:0.04,dy:0.2)).tap()
+    XCTAssertTrue(notebookMenuItem("Удалить",in:app).waitForNonExistence(timeout:3))
+    notebookContextAction("Удалить",on:removed,in:app)
+    XCTAssertTrue(removed.waitForNonExistence(timeout:5)); XCTAssertTrue(remaining.exists)
+  }
+
+  func testContextMenuOpensSelectedNotebook() {
+    continueAfterFailure = false
+    let app = XCUIApplication()
+    app.launchArguments = ["--notebook-drawing-responsiveness-fixture","--notebook-stacked-board-fixture"]
+    launchPortraitFixture(app)
+    let card = app.descendants(matching:.any).matching(identifier:"workspace-item-7e7a1000-0000-4000-8000-000000000004").firstMatch
     XCTAssertTrue(card.waitForExistence(timeout:5)); card.tap()
-    let open = app.buttons["open-workspace-item"], remove = app.buttons["delete-workspace-item"]
-    XCTAssertTrue(open.waitForExistence(timeout:3)); XCTAssertTrue(remove.isHittable)
-    XCTAssertEqual(app.otherElements.matching(identifier:"notebook-context-menu").count,1)
-    XCTAssertEqual(open.frame.width,44,accuracy:1); XCTAssertEqual(open.frame.height,44,accuracy:1)
-    XCTAssertEqual(remove.frame.midY,open.frame.midY,accuracy:1)
-    XCTAssertFalse(app.buttons["graphic-style-menu"].exists)
+    XCTAssertFalse(app.buttons["open-workspace-item"].exists)
+    openNotebookSelectionMenu(on:card,in:app)
     let proof = XCTAttachment(screenshot:app.screenshot())
-    proof.name = "shared-capsule-notebook"; proof.lifetime = .keepAlways; add(proof)
-    for scale in [1.6,0.7] {
-      card.pinch(withScale:scale,velocity:scale < 1 ? -1 : 1)
-      XCTAssertEqual(open.frame.width,44,accuracy:1)
-      XCTAssertEqual(open.frame.height,44,accuracy:1)
-      let capsule=app.otherElements["notebook-context-menu"]
-      XCTAssertEqual(capsule.frame.midX,card.frame.midX,accuracy:3,
-        "The actions follow their physical cover, not the pre-zoom frame")
-      let zoomed=XCTAttachment(screenshot:app.screenshot())
-      zoomed.name="shared-capsule-zoom-\(scale)";zoomed.lifetime = .keepAlways;add(zoomed)
-    }
-    open.tap()
-    XCTAssertTrue(open.waitForNonExistence(timeout:5))
+    proof.name = "notebook-context-actions"; proof.lifetime = .keepAlways; add(proof)
+    notebookMenuAction("Открыть тетрадь",in:app)
     XCTAssertTrue(app.otherElements["paper-input"].waitForExistence(timeout:5))
-    app.terminate()
   }
 
   func testImmediateDragFromACoverPansTheWholeBoard() {
@@ -4096,7 +3937,7 @@ final class DrawingResponsivenessTests: XCTestCase {
     )
   }
 
-  func testDocumentClosesOnlyWithBackAndReopensByDoubleTap() {
+  func testDocumentClosesWithPinchAndReopensByDoubleTap() {
     continueAfterFailure = false
     let app = XCUIApplication()
     app.launchArguments = ["--notebook-drawing-responsiveness-fixture",
@@ -4104,13 +3945,11 @@ final class DrawingResponsivenessTests: XCTestCase {
     launchPortraitFixture(app)
     let page = app.otherElements["page-turn-surface"]
     XCTAssertTrue(page.waitForExistence(timeout: 8))
-    let content = page.staticTexts["Документ соединяет текст, формулы и управление."].firstMatch
+    let content = page.buttons.matching(NSPredicate(format:"label BEGINSWITH %@","Исходник: # Живая математика Документ соединяет")).firstMatch
     XCTAssertTrue(content.waitForExistence(timeout: 5))
     content.pinch(withScale: 0.28, velocity: -2)
-    XCTAssertTrue(page.exists)
-    XCTAssertFalse(app.buttons["create-workspace-item"].exists)
-    app.buttons["leave-nested-board"].tap()
-    XCTAssertTrue(app.buttons["create-workspace-item"].waitForExistence(timeout: 5))
+    XCTAssertTrue(page.waitForNonExistence(timeout:5))
+    XCTAssertTrue(notebookOffersCreation(in:app))
     let document = app.descendants(matching: .any).matching(
       identifier: "workspace-item-7e7a1000-0000-4000-8000-000000000006").firstMatch
     XCTAssertTrue(document.waitForExistence(timeout: 3))
@@ -4160,8 +3999,8 @@ final class DrawingResponsivenessTests: XCTestCase {
         openProof.name = "\(letter ? "letter" : "a4")-\(landscape ? "landscape" : "portrait")-paper"
         openProof.lifetime = .keepAlways
         add(openProof)
-        app.buttons["leave-nested-board"].tap()
-        XCTAssertTrue(app.buttons["create-workspace-item"].waitForExistence(timeout: 5))
+        notebookBack(in:app)
+        XCTAssertTrue(notebookOffersCreation(in:app))
         XCTAssertEqual(document.frame.width / document.frame.height, ratio, accuracy: 0.01)
         let coverProof = XCTAttachment(screenshot: app.screenshot())
         coverProof.name = "\(letter ? "letter" : "a4")-\(landscape ? "landscape" : "portrait")-cover"
@@ -4261,7 +4100,7 @@ final class DrawingResponsivenessTests: XCTestCase {
       "--notebook-stacked-board-fixture",
     ]
     launchPortraitFixture(app)
-    XCTAssertTrue(app.buttons["create-workspace-item"].waitForExistence(timeout: 5))
+    XCTAssertTrue(notebookOffersCreation(in:app))
 
     let selected = app.descendants(matching: .any)
       .matching(identifier: "workspace-item-\(selectedID)")
@@ -4590,7 +4429,7 @@ final class DrawingResponsivenessTests: XCTestCase {
     )
     wait(for: [drawingChanged], timeout: 2)
 
-    let controls = app.buttons["pen-controls-toggle"]
+    let controls = app.buttons["drawing-group"]
     XCTAssertTrue(controls.waitForExistence(timeout: 2))
     controls.tap()
     XCTAssertTrue(
@@ -4615,7 +4454,7 @@ final class DrawingResponsivenessTests: XCTestCase {
     app.launchArguments = ["--notebook-drawing-responsiveness-fixture"]
     launchPortraitFixture(app)
 
-    let controls = app.buttons["pen-controls-toggle"]
+    let controls = app.buttons["drawing-group"]
     XCTAssertTrue(controls.waitForExistence(timeout: 5))
 
     let eraser = app.buttons["drawing-tool-eraser"]
@@ -4691,7 +4530,7 @@ final class DrawingResponsivenessTests: XCTestCase {
     ]
     launchPortraitFixture(app)
 
-    let controls = app.buttons["pen-controls-toggle"]
+    let controls = app.buttons["drawing-group"]
     XCTAssertTrue(controls.waitForExistence(timeout: 5))
     let eraser = app.buttons["drawing-tool-eraser"]
     XCTAssertTrue(eraser.waitForExistence(timeout: 2))
@@ -4729,8 +4568,8 @@ final class DrawingResponsivenessTests: XCTestCase {
     // XCTest direct contacts represent Pencil in this launch. Close through
     // the real navigation control, then use a cold finger-only launch rather
     // than pretending the same direct contact is also a physical finger.
-    app.buttons["leave-nested-board"].tap()
-    XCTAssertTrue(app.buttons["create-workspace-item"].waitForExistence(timeout: 5))
+    notebookBack(in:app)
+    XCTAssertTrue(notebookOffersCreation(in:app))
     app.terminate()
     app.launchArguments.removeAll { $0 == "--notebook-simulator-mixed-input" }
     app.launchArguments.append("--notebook-reopen-fixture")

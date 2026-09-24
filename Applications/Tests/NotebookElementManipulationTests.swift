@@ -1,5 +1,6 @@
 import NotebookCore
 import UIKit
+import SwiftUI
 import XCTest
 @testable import Notebook
 
@@ -286,7 +287,8 @@ import XCTest
       let presence = SessionPresence(boardID: root, mode: .board, camera: .init(scale: 0.2), viewport: .init(x: 834, y: 1194))
       let state = try NotebookSceneState.read(store: model.store, presence: presence, viewport: presence.viewport,
         pinnedElements: [root: [element.id], child: [element.id]])
-      XCTAssertEqual(state.missingPinnedElements, [child: [element.id]])
+      XCTAssertTrue(state.missingPinnedElements.isEmpty,"An unopened child is not queried for unrelated stale pins")
+      XCTAssertNil(state.hierarchy.board(child))
       XCTAssertNotNil(state.hierarchy.board(root)?.elements.first { $0.id == element.id })
     }
   }
@@ -398,61 +400,32 @@ import XCTest
     }
   }
 
-  func testCapsuleModesAndEndpointMenusKeepOnePresentationOwner() throws {
+  func testGeometryHandlesDoNotMountWholeObjectActions() throws {
     let window = UIWindow(windowScene:try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene))
     let controller = UIViewController(); window.rootViewController = controller; window.makeKeyAndVisible()
     defer { window.isHidden = true; window.rootViewController = nil }
     let gate = NotebookInputGate(), menus = mountContextMenus(in:controller.view,gate:gate)
     let controls = NotebookSelectionControlsView(gate:gate,contextMenus:menus)
-    controls.frame = .init(x:0,y:0,width:320,height:900)
-    controller.view.addSubview(controls)
+    controls.frame = controller.view.bounds; controller.view.addSubview(controls)
     let selection = UUID(), frame = CGRect(x:80,y:240,width:160,height:120)
-    func button(_ id: String) throws -> UIButton {
-      func descendants(_ view: UIView) -> [UIView] { view.subviews.flatMap { [$0] + descendants($0) } }
-      return try XCTUnwrap(descendants(menus.view).compactMap { $0 as? UIButton }.first { $0.accessibilityIdentifier == id })
-    }
     controls.graphic = .init(shape:.triangle)
-    var selected: [NotebookSelectionSession.GeometryMode] = []
-    controls.changeGeometryMode = { selected.append($0) }
-    controls.configure(selectionID:selection,frame:frame); controls.layoutIfNeeded(); menus.view.layoutIfNeeded()
-    let mode = try button("graphic-geometry-mode")
-    let modes: [(NotebookSelectionSession.GeometryMode,NotebookSelectionSession.GeometryMode)] = [(.transform,.vertices),(.vertices,.rounding),(.rounding,.transform)]
-    for (current,next) in modes {
-      controls.configure(selectionID:selection,frame:frame,mode:current); controls.layoutIfNeeded()
-      XCTAssertFalse(mode.isHidden); XCTAssertNotNil(mode.configuration?.image)
-      mode.sendActions(for:.touchUpInside); XCTAssertEqual(selected.last,next)
+    for mode in [NotebookSelectionSession.GeometryMode.transform,.vertices,.rounding] {
+      controls.configure(selectionID:selection,frame:frame,mode:mode)
+      controls.layoutIfNeeded(); menus.view.layoutIfNeeded()
+      XCTAssertFalse((controls.accessibilityElements ?? []).isEmpty,"Manipulation grips remain available")
+      XCTAssertTrue(menuButtons(menus).isEmpty,"Whole-object actions appear only after hold-up")
+      XCTAssertTrue(menus.view.subviews.allSatisfy(\.isHidden))
+      XCTAssertFalse(menus.hasPresentedMenu)
     }
-    XCTAssertFalse(menuButtons(menus).contains { $0.accessibilityIdentifier == "graphic-routing-menu" })
-    controls.graphic = .init(shape:.connector,connection:.init(start:.init(point:.zero),end:.init(point:.init(x:160,y:120))))
-    controls.configure(selectionID:UUID(),frame:frame); controls.layoutIfNeeded()
-    XCTAssertTrue(mode.isHidden)
-    XCTAssertFalse((controls.accessibilityElements ?? []).contains { ($0 as? UIButton) === mode })
-    let start = try button("graphic-routing-menu"), end = try button("graphic-ends-menu")
-    XCTAssertFalse(start.isHidden); XCTAssertFalse(end.isHidden)
-    XCTAssertEqual(start.accessibilityValue,"Прямая"); XCTAssertEqual(end.accessibilityValue,"Нет, Стрелка")
-    menus.view.layoutIfNeeded()
-    let surfaces = menus.view.subviews.compactMap { $0 as? UIVisualEffectView }
-    XCTAssertEqual(surfaces.count,1); XCTAssertTrue(surfaces.first?.effect is UIGlassEffect)
-    XCTAssertEqual(surfaces.first?.bounds.height,44)
-    XCTAssertLessThan(try XCTUnwrap(surfaces.first).bounds.width,274)
-    XCTAssertTrue(controls.subviews.isEmpty,"Geometry controls no longer own a second context surface")
-    let endpoint = NotebookContextMenuButton(type:.system), menu = NotebookContextMenuButton(type:.system)
-    let identity = endpoint.menu
+    let endpoint = NotebookContextMenuButton(type:.system), identity = endpoint.menu
     for _ in 0..<20 {
       endpoint.contents = [UIAction(title:"Круг") { _ in }]
-      controls.configure(selectionID:selection,frame:frame)
-      XCTAssertTrue(endpoint.menu === identity,"Model/layout updates cannot replace a displayed UIKit menu")
+      XCTAssertTrue(endpoint.menu === identity,"Updates cannot replace an active UIKit menu")
     }
-    XCTAssertNotNil(menu.menu)
-    controls.layoutIfNeeded(); menus.view.layoutIfNeeded()
-    for button in menuButtons(menus) {
-      let rect = button.convert(button.bounds,to:controls)
-      XCTAssertTrue(controls.bounds.contains(rect)); XCTAssertEqual(rect.width,44); XCTAssertEqual(rect.height,44)
-      XCTAssertLessThanOrEqual(try XCTUnwrap(button.imageView?.image).size.height,23,"Compact glyph, not a scaled-down touch target")
-    }
+    XCTAssertTrue(controls.subviews.allSatisfy { !($0 is UIButton) },"Grips do not own another action surface")
   }
 
-  func testWorkspaceCardsUseTheSameCapsuleWithoutInventingResizeHandles() throws {
+  func testWorkspaceCardsKeepBodyInputWithoutFloatingActionsOrResizeHandles() throws {
     let gate = NotebookInputGate()
     let window = UIWindow(windowScene:try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene))
     let controller = UIViewController(); window.rootViewController = controller; window.makeKeyAndVisible()
@@ -460,37 +433,18 @@ import XCTest
     let menus = mountContextMenus(in:controller.view,gate:gate)
     let controls = NotebookSelectionControlsView(gate:gate,contextMenus:menus)
     controls.frame = controller.view.bounds; controller.view.addSubview(controls)
-    func descendants(_ view: UIView) -> [UIView] { view.subviews.flatMap { [$0] + descendants($0) } }
-    let selection = UUID()
     for kind in [WorkspaceItemKind.notebook,.document,.board] {
-      controls.graphic = nil
-      for frame in [CGRect(x:100,y:220,width:260,height:360), controls.bounds.insetBy(dx:-100,dy:-100)] {
-        controls.configure(selectionID:selection,frame:frame,subject:.item(kind)); controls.layoutIfNeeded()
-        menus.view.layoutIfNeeded()
-        let buttons = menuButtons(menus)
-        XCTAssertEqual(buttons.map(\.accessibilityIdentifier),["open-workspace-item","delete-workspace-item"])
+      for frame in [CGRect(x:100,y:220,width:260,height:360),controls.bounds.insetBy(dx:-100,dy:-100)] {
+        controls.configure(selectionID:UUID(),frame:frame,subject:.item(kind))
+        controls.layoutIfNeeded(); menus.view.layoutIfNeeded()
+        XCTAssertTrue(menuButtons(menus).isEmpty)
+        XCTAssertTrue(menus.view.subviews.allSatisfy(\.isHidden))
         XCTAssertEqual(controls.accessibilityElements?.count,0,"Cards expose no unsupported resize handles")
-        let surface = try XCTUnwrap(menus.view.subviews.first { $0 is UIVisualEffectView })
-        XCTAssertEqual(surface.bounds.height,44); XCTAssertEqual(surface.bounds.width,96)
-        for button in buttons {
-          let box = button.convert(button.bounds,to:controls)
-          XCTAssertTrue(controls.bounds.contains(box)); XCTAssertEqual(box.width,44); XCTAssertEqual(box.height,44)
-          let point = button.convert(.init(x:22,y:22),to:window)
-          XCTAssertFalse(gate.permitsSceneContact(at:point,kind:.finger))
-          XCTAssertFalse(gate.permitsSceneContact(at:point,kind:.pencil))
-        }
         let center = controls.convert(.init(x:frame.midX,y:frame.midY),to:window)
-        XCTAssertTrue(gate.permitsSceneContact(at:center,kind:.finger),"Body drag is still owned by WorkspaceItemPose")
+        XCTAssertTrue(gate.permitsSceneContact(at:center,kind:.finger),"Body drag remains with WorkspaceItemPose")
+        XCTAssertTrue(gate.permitsSceneContact(at:center,kind:.pencil))
       }
     }
-    controls.graphic = .init(shape:.triangle)
-    controls.configure(selectionID:UUID(),frame:.init(x:100,y:220,width:260,height:360)); controls.layoutIfNeeded()
-    menus.view.layoutIfNeeded()
-    let buttons = menuButtons(menus)
-    XCTAssertTrue(buttons.contains { $0.accessibilityIdentifier == "graphic-style-menu" })
-    XCTAssertTrue(buttons.contains { $0.accessibilityIdentifier == "edit-agent-element" })
-    XCTAssertTrue(buttons.contains { $0.accessibilityIdentifier == "element-actions-menu" })
-    XCTAssertFalse(buttons.contains { $0.accessibilityIdentifier == "open-workspace-item" })
   }
 
   func testContextMenuReplacementRetiresOnlyItsOwnSource() throws {
@@ -514,6 +468,37 @@ import XCTest
     menus.hide(source:text)
     XCTAssertTrue(menus.frame(for:text,in:controller.view).isNull)
     XCTAssertTrue(gate.permitsSceneContact(at:point,kind:.pencil))
+  }
+
+  func testProgrammaticallyDismissedPopoverReleasesCanvasInput() async throws {
+    let gate = NotebookInputGate()
+    let window = UIWindow(windowScene:try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene))
+    let controller = UIViewController(); window.rootViewController = controller; window.makeKeyAndVisible()
+    defer { window.isHidden = true; window.rootViewController = nil }
+    let menus = mountContextMenus(in:controller.view,gate:gate)
+    menus.presentContent(Text("Context"),at:.init(x:100,y:200))
+    let presented = try XCTUnwrap(controller.presentedViewController)
+    // Wait for UIKit's actual presentation, not a guessed animation duration.
+    if let transition = presented.transitionCoordinator {
+      await withCheckedContinuation { continuation in
+        if !transition.animate(alongsideTransition:nil,completion:{ _ in continuation.resume() }) {
+          continuation.resume()
+        }
+      }
+    }
+    XCTAssertTrue(menus.hasPresentedMenu)
+    XCTAssertFalse(gate.permitsSceneContact(at:.init(x:30,y:600),kind:.finger))
+    await withCheckedContinuation { continuation in
+      presented.dismiss(animated:false) { continuation.resume() }
+    }
+    // Keep the old controller alive: availability follows presentation, not ARC.
+    XCTAssertNil(presented.presentingViewController)
+    XCTAssertFalse(menus.hasPresentedMenu)
+    XCTAssertTrue(gate.permitsSceneContact(at:.init(x:30,y:600),kind:.finger))
+    XCTAssertTrue(gate.permitsSceneContact(at:.init(x:30,y:600),kind:.pencil))
+    menus.presentContent(Text("Next context"),at:.init(x:100,y:200))
+    XCTAssertTrue(menus.hasPresentedMenu)
+    menus.dismissPresentedContent()
   }
 
   private func mountContextMenus(in host: UIView, gate: NotebookInputGate) -> NotebookContextMenus {

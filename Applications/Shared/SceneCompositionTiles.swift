@@ -315,9 +315,8 @@ struct SceneCompositionPlan: Sendable {
     for boardID in boardIDs {
       guard let workset = frame.worksets[boardID] else { continue }
       for item in workset.items {
-        // A live portal must already own its child's physical plane. Otherwise
-        // the streaming painter renders the whole portal, never a placeholder.
-        guard item.item.kind != .board || frame.presences[item.id] != nil else { continue }
+        // A closed folder owns its cover and input, not a child scene. The
+        // frame admits child content only for the one opening portal.
         let rect = item.geometry.screenFrame(center: item.center, camera: presence.camera, viewport: presence.viewport)
         let visiblePaper = boardID == presence.boardID && item.item.kind != .board
           && rect.x < presence.viewport.x && rect.y < presence.viewport.y

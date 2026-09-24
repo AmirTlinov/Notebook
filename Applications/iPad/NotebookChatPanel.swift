@@ -10,7 +10,6 @@ struct NotebookChatPanel: View {
   @Bindable var chat: NotebookChatController
   let size: CGSize
   let companion: NotebookCompanionPlacement
-  let onCompanionControlsSize: (CGSize) -> Void
   let move: (CGSize, Bool) -> Void
   let resize: (CGSize, Bool, NotebookChatResizeCorner) -> Void
   let endInteraction: () -> Void
@@ -67,7 +66,7 @@ struct NotebookChatPanel: View {
         .background(NotebookChrome.surface)
         .notebookPanel()
       } else {
-        NotebookCompanion(chat: chat, size: size, placement: companion, onControlsSize: onCompanionControlsSize,
+        NotebookCompanion(chat: chat, placement: companion,
           move: move, endInteraction: endInteraction)
       }
     }

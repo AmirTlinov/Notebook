@@ -4,25 +4,23 @@ import NotebookCore
 /// User intent, independent of the persisted pen/eraser journal vocabulary.
 /// The input adapters translate contacts; they do not interpret these tools.
 enum DrawingTool: String, CaseIterable, Codable, Sendable {
-  case pen, marker, eraser, lasso, shape, text, connector, ruler, laser
+  case pen, marker, eraser, lasso, shape, text, connector, laser
   var drawsInk: Bool { self == .pen || self == .marker }
   var usesInkJournal: Bool { drawsInk || self == .eraser }
   var title: String {
     switch self {
     case .pen: "Ручка"; case .marker: "Маркер"; case .eraser: "Ластик"; case .lasso: "Лассо / выделение"
-    case .shape: "Фигуры"; case .text: "Текст"; case .connector: "Стрелка"; case .ruler: "Линейка"; case .laser: "Указка"
+    case .shape: "Фигуры"; case .text: "Текст"; case .connector: "Стрелка"; case .laser: "Указка"
     }
   }
   var symbol: String {
     switch self {
     case .pen: "pencil.tip"; case .marker: "highlighter"; case .eraser: "eraser.fill"; case .lasso: "lasso"
     case .shape: "square.on.circle"; case .text: "textformat"; case .connector: "arrow.up.right"
-    case .ruler: "ruler"; case .laser: "cursorarrow.rays"
+    case .laser: "dot.scope"
     }
   }
-  var accessibilityID: String { self == .pen ? "pen-controls-toggle" : "drawing-tool-" + rawValue }
-  static let primary: [Self] = [.pen, .marker, .eraser, .lasso]
-  static let additional: [Self] = [.shape, .text, .connector, .ruler, .laser]
+  var accessibilityID: String { "drawing-tool-" + rawValue }
 }
 
 enum DrawingShape: String, CaseIterable, Codable, Sendable {

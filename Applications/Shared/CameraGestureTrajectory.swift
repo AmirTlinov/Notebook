@@ -4,7 +4,7 @@ import SwiftUI
 /// Owns the geometric camera path for one two-finger gesture.
 ///
 /// Every frame is solved from the same starting camera and finger pair.
-/// No frame becomes the next frame's baseline, and zoom never changes boards.
+/// No frame becomes the next frame's baseline; navigation interprets this raw path.
 struct CameraGestureTrajectory {
   let startingCamera: SpatialCamera
   let startingCentroid: CGPoint

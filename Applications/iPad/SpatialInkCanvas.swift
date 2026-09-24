@@ -164,6 +164,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
     ) -> SpatialInkAction?
 
     private var actionTool: DrawingTool?
+    private var guideConstraint: GuideConstraintSnapshot?
     private var actionPenStyle: PenStyle?
     private var actionEraserStyle: EraserStyle?
     private struct ContactGeometry {
@@ -449,6 +450,22 @@ struct SpatialInkCanvas: UIViewRepresentable {
           boardSurface.ownerID.flatMap { resolveGraphicErasures?(cohort,$0) }
         } ?? [:]) : [:],
         eraserSource: eraserSource)
+      guideConstraint = nil
+      if drawingTool.drawsInk, let boardID = boardSurface.ownerID {
+        let point = touch.preciseLocation(in:view)
+        let surface = SpatialSurfaceRouter.surface(at:point,covers:frozen,board:boardSurface)
+        if let cover = frozen.first(where:{ $0.id == surface }) {
+          let local = cover.localPoint(point)
+          guideConstraint = toolController?.guideConstraint(at:.init(x:local.x,y:local.y),
+            address:.init(surface:surface,boardID:boardID,worldOrigin:nil,bounds:cover.localBounds),
+            screenScale:cover.screenScale)?.projected(using:cover.localToScreen)
+        } else {
+          let origin = camera.screenToWorld(.init(x:point.x,y:point.y),viewport:viewport)
+          guideConstraint = toolController?.guideConstraint(at:.zero,
+            address:.init(surface:boardSurface,boardID:boardID,worldOrigin:origin,bounds:nil),
+            screenScale:camera.scale)?.projected(using:.init(a:camera.scale,b:0,c:0,d:camera.scale,tx:point.x,ty:point.y))
+        }
+      }
       setPencilActionActive(touch.type == .pencil || inputGate.simulatesPencilContacts)
       actionStrokeID = UUID()
       actionTool = drawingTool
@@ -466,7 +483,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
       elementEraserFailed = false
       actionStartTimestamp = touch.timestamp
       appendSamples(touch: touch, event: event)
-      if actionTool == .pen, currentSurface == boardSurface, let point = lastActionPoint?.location {
+      if actionTool == .pen, guideConstraint == nil, currentSurface == boardSurface, let point = lastActionPoint?.location {
         quickShape.begin(at: .init(x: point.x, y: point.y), screenScale: 1, resolve: { [weak self] fit in
           guard let self, let geometry = actionGeometry else { return fit }
           let scale = geometry.camera.scale, screenOrigin = SpatialPoint(x:fit.frame.x,y:fit.frame.y)
@@ -506,7 +523,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
           routeMeasuredSegment(from: previous, to: point)
         } else {
           beginSegment(
-            on: SpatialSurfaceRouter.surface(
+            on: guideConstraint?.surface ?? SpatialSurfaceRouter.surface(
               at: point.location,
               covers: screenSurfaces(),
               board: boardSurface
@@ -566,6 +583,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
       defer {
         for lease in geometry?.leases ?? [] { lease.release() }
         actionGeometry = nil
+        guideConstraint = nil
         setPencilActionActive(false)
         refreshNativeMount()
       }
@@ -630,6 +648,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
       defer {
         for lease in geometry?.leases ?? [] { lease.release() }
         actionGeometry = nil
+        guideConstraint = nil
         setPencilActionActive(false)
         refreshNativeMount()
       }
@@ -679,6 +698,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
         board: boardSurface
       )
       for interval in intervals {
+        if let guideConstraint, interval.surface != guideConstraint.surface { finishCurrentSegment(); continue }
         if actionGeometry?.blockedSurfaces.contains(interval.surface) == true {
           // A pending cover remains an occluder, never exposed writable board.
           // Only actions admitted after deletion began acquire this exclusion.
@@ -863,7 +883,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
       }
       let coordinateView = view ?? window
       return PKStrokePoint(
-        location: touch.preciseLocation(in: coordinateView),
+        location: guideConstraint?.project(touch.preciseLocation(in:coordinateView)) ?? touch.preciseLocation(in:coordinateView),
         timeOffset: timestamp,
         size: CGSize(width: width, height: width),
         opacity: opacity,

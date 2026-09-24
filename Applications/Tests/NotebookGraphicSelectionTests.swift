@@ -38,7 +38,7 @@ import XCTest
       XCTAssertEqual(moved.elements[0].frame.x,before.elements[0].frame.x+30)
       XCTAssertEqual(moved.elements[1].frame.y,before.elements[1].frame.y+40)
       XCTAssertEqual(moved.elements[2].graphic?.connection?.bindings.map(\.elementID),["a","b"])
-      model.duplicateGraphicSelection()
+      model.duplicateSelectedContent()
       let copied = await model.finishPendingPersistence(); XCTAssertTrue(copied)
       await model.reloadExternalChanges()?.value
       let result = try NotebookStore(root:model.store.root).loadPage(pageID)
