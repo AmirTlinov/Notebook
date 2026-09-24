@@ -32,11 +32,11 @@ final class TwoFingerGestureClassifierTests: XCTestCase {
     selection.recordLocalLanding(at: 1)
     selection.recordLocalLanding(at: 2)
 
-    XCTAssertNil(selection.externalTarget(forModelIndex: 0))
+    selection.acknowledge(0)
     XCTAssertEqual(selection.displayedIndex, 2)
-    XCTAssertNil(selection.externalTarget(forModelIndex: 1))
+    selection.acknowledge(1)
     XCTAssertEqual(selection.displayedIndex, 2)
-    XCTAssertNil(selection.externalTarget(forModelIndex: 2))
+    selection.acknowledge(2)
     XCTAssertFalse(selection.awaitsLocalAcknowledgement)
   }
 
@@ -150,7 +150,7 @@ final class TwoFingerGestureClassifierTests: XCTestCase {
   @MainActor
   func testIPadTurnLandsTheAlreadyMountedTargetPage() async throws {
     let controller = IPadPageTurnController()
-    let ownerID = UUID()
+    let ownerID = UUID(), commands = NotebookPageNavigation()
     controller.update(
       ownerID: ownerID,
       sequenceRevision: "fixture-order",
@@ -164,7 +164,7 @@ final class TwoFingerGestureClassifierTests: XCTestCase {
         return AnyView(Text("Page \(index)"))
       },
       onCommit: { _, _ in },
-      onTransitioningChange: { _ in }
+      onTransitioningChange: { _ in }, notebookNavigation: commands
     )
     controller.loadViewIfNeeded()
     controller.view.frame = CGRect(x: 0, y: 0, width: 1_024, height: 1_366)
@@ -172,21 +172,7 @@ final class TwoFingerGestureClassifierTests: XCTestCase {
 
     let targetIdentity = try XCTUnwrap(controller.cachedPageIdentities[1])
 
-    controller.update(
-      ownerID: ownerID,
-      sequenceRevision: "fixture-order",
-      pageCount: 2,
-      selectedIndex: 1,
-      navigationIsEnabled: true,
-      pageIsInteractive: true,
-      canBeginNavigation: { true },
-      page: { index, _, readiness in
-        readiness(true)
-        return AnyView(Text("Page \(index)"))
-      },
-      onCommit: { _, _ in },
-      onTransitioningChange: { _ in }
-    )
+    XCTAssertTrue(commands.send(.jump(1), ownerID: ownerID, source: "fixture-order"))
     try? await Task.sleep(for: .milliseconds(650))
 
     XCTAssertEqual(controller.displayedIndex, 1)

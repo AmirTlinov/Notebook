@@ -133,6 +133,7 @@ final class NotebookReferenceNavigationTests: XCTestCase {
     let boardID = try XCTUnwrap(model.presence?.boardID)
     let itemID = reference.target.id
     XCTAssertTrue(model.inputGate.beginPencilAction(source: pencil))
+    defer { model.inputGate.endPencilAction(source: pencil) }
     model.requestShow(reference)
     let requested = try XCTUnwrap(model.requestedReference)
     let started = expectation(description: "navigation begins while Pencil owns the page")
@@ -143,12 +144,13 @@ final class NotebookReferenceNavigationTests: XCTestCase {
     }
     await fulfillment(of: [started], timeout: 2)
     let center = WorldPoint(x: 91_000, y: -72_000), actor = UUID()
-    try await model.performStoreCommand { store in
-      let sources = try XCTUnwrap(store.readBoardItem(itemID)).board.placements
-      _ = try NotebookNativeCommand([.init(kind: .moveItem, target: .init(kind: .board, id: boardID),
-        id: itemID.uuidString, values: ["center": .encode(center)])], summary: "Moved navigation target",
-        placements: sources, actor: actor).apply(to: store)
-    }
+    // Seed the committed address while this read is fenced. This fixture
+    // controls a stale-location race, not agent/peer write admission (which
+    // correctly rejects this surface while Pencil is held).
+    let items = try model.store.loadIndex().items
+    var board = try model.store.loadBoard(items: items)
+    XCTAssertTrue(board.moveItem(itemID, in: boardID, to: center, actor: actor))
+    try model.store.saveBoard(board, items: items)
     XCTAssertNil(result, "A navigation read cannot apply while accepted Pencil is active")
     model.inputGate.endPencilAction(source: pencil)
     await task.value

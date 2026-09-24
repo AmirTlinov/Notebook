@@ -1,6 +1,35 @@
 import NotebookCore
 import SwiftUI
 
+/// Both native readers demand the same addressed material. A directory slot
+/// is not a blank sheet; only the deliberate trailing creation slot is blank.
+struct NotebookPageView: View {
+  @Environment(NotebookAppModel.self) private var model
+  let notebookID: UUID
+  let index: Int
+  let isCurrent: Bool
+  let isInteractive: Bool
+  let isVisible: Bool
+  let onRenderReady: PageTurnReadiness
+  let displayProjection: Double
+
+  var body: some View {
+    if index < 0 || index >= model.notebookPageCount(notebookID) {
+      BlankPageSurface(fallbackSize: model.notebookPageSize)
+        .onAppear { onRenderReady(index == model.notebookPageCount(notebookID)) }
+    } else if let page = model.notebookPage(at: index, in: notebookID) {
+      PageSurface(page: page, isCurrent: isCurrent, isInteractive: isInteractive,
+        isVisible: isVisible, onRenderReady: onRenderReady, displayProjection: displayProjection)
+    } else {
+      BlankPageSurface(fallbackSize: model.notebookPageSize)
+        .overlay { ProgressView().allowsHitTesting(false) }
+        .onAppear { onRenderReady(false) }
+        .task { await model.prepareNotebookPage(at: index, in: notebookID) }
+        .accessibilityLabel("Загружается лист \(index + 1)")
+    }
+  }
+}
+
 struct PageSurface: View {
   @Environment(NotebookAppModel.self) private var model
 

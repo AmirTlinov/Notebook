@@ -178,21 +178,6 @@ final class NotebookAppModel {
     await task.value
   }
 
-  /// A numbered command is leased to the order seen at the button press.
-  /// It can wait for content/input, but it cannot adopt a new slot occupant.
-  func navigateToNotebookPage(at index: Int, in itemID: UUID, expectedRoot: String,
-    navigationGeneration generation: UInt64) async {
-    guard !Task.isCancelled, navigationGeneration == generation,
-      await finishNavigationInput(isCurrent: { self.navigationGeneration == generation }), !Task.isCancelled, !isStopped,
-      navigationGeneration == generation, notebookPageRoot(itemID) == expectedRoot else { return }
-    await prepareNotebookPage(at: index, in: itemID)
-    afterPageInput { [weak self] in
-      guard let self, !self.isStopped, self.navigationGeneration == generation,
-        self.presence?.focusedItemID == itemID else { return }
-      _ = selectNotebookPage(index, notebookID: itemID, expectedRoot: expectedRoot)
-    }
-  }
-
   /// A reference is a UUID intent, not an old page number. Resolve it and the
   /// physical notebook into one bounded scene, then publish only if no new
   /// input, selection, or cancellation overtook that read.
@@ -216,6 +201,15 @@ final class NotebookAppModel {
         guard !Task.isCancelled, !isStopped, isCurrent() else { return false }
         guard epoch == collaborationReadEpoch, generation == inputGate.pencilGeneration, !inputGate.hasActivePencil else { continue }
         guard let itemID = state.presence.selectedItemID, !isItemBeingDeleted(itemID), state.presence.notebookPageID == pageID else { return false }
+        // An already mounted reader owns visual selection. References use the
+        // same explicit command as its arrows, never an implicit model-index
+        // change. The source sheet and presence stay current until landing.
+        if presence.mode == .page, presence.focusedItemID == itemID, presence.openProgress > 0,
+          let root = notebookPageRoot(itemID), root == state.workspace.notebookPageOrder(in: itemID)?.root,
+          let target = state.pagePositions.first(where: { $0.pageID == pageID }),
+          notebookPageNavigation.isBound(ownerID: itemID, source: root) {
+          return notebookPageNavigation.send(.jump(target.index), ownerID: itemID, source: root)
+        }
         acceptSceneState(state)
         // The caller owns its camera animation. Selection changes now, not the
         // old camera, and the same actor segment returns its prepared target.
@@ -4110,7 +4104,7 @@ final class NotebookAppModel {
         let epoch = collaborationReadEpoch
         let draftEpoch = documentDraftEpoch
         let elementPins = scenePinnedElements, itemPins = scenePinnedItems
-        let previousIndex = sceneIndex
+        let previousIndex = sceneIndex, previousPages = pages
         let preparedIDs = preparedNotebookPageIDs(in: presence.selectedItemID)
         let attentionID = agentFeedback.attentionID, attentionReferences = agentFeedback.attention.map(\.reference)
         #if os(iOS)
@@ -4125,7 +4119,7 @@ final class NotebookAppModel {
             try NotebookDiskRefresh.prepare(store: store, presence: presence, receivingDeviceID: receivingDeviceID,
               pinnedElements: elementPins, pinnedItems: itemPins, preparedPages: preparedIDs,
               feedbackKnown: feedbackKnown, feedbackTracked: feedbackTracked, attentionReferences: attentionReferences,
-              historyActor: actor, reusing: previousIndex)
+              historyActor: actor, reusing: previousIndex, reusingPages: previousPages)
           }
           publicationFailure = nil
           if persistence.failure == nil { persistenceFailure = publicationFailure }
@@ -4863,6 +4857,10 @@ final class NotebookAppModel {
   func cancelRequestedNavigation(reason: String = #function, source: String = #fileID, line: Int = #line) {
     observeNavigation("cancel", fields: ["reason": .string(reason), "source": .string(source), "line": .number(Double(line))])
     let requestID = requestedReference?.id ?? requestedReturn?.id
+    if requestedReference?.target.kind == .page || requestedReturn?.presence.mode == .page,
+      let item = presence?.focusedItemID, let root = notebookPageRoot(item) {
+      notebookPageNavigation.send(.cancel, ownerID: item, source: root)
+    }
     navigationGeneration &+= 1
     requestedReference = nil
     requestedReturn = nil

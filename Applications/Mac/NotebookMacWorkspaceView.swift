@@ -160,8 +160,7 @@ struct NotebookMacWorkspaceView: View {
       model.macReadingTop()
       if p.mode == .document { _ = model.selectDocumentPage(target, documentID: item) }
       else if let root = model.notebookPageRoot(item) {
-        if target == model.notebookPageCount(item) { _ = model.selectNotebookPage(target, notebookID: item, expectedRoot: root) }
-        else { Task { await model.navigateToNotebookPage(at: target, in: item, expectedRoot: root, navigationGeneration: model.navigationGeneration) } }
+        _ = model.notebookPageNavigation.send(.step(delta), ownerID: item, source: root)
       }
     }
   }
@@ -208,10 +207,9 @@ extension NotebookAppModel {
         camera: MacReadingCamera.fitted(center: center, geometry: itemGeometry(itemID), viewport: p.viewport, fit: item.kind == .document ? .width : .page),
         viewport: p.viewport, focusedItemID: itemID, openProgress: 1,
         selectedItemID: itemID, notebookPageID: presence?.notebookPageID), settled: true)
-      if item.kind == .notebook, let root = notebookPageRoot(itemID) {
+      if item.kind == .notebook {
         let index = presence?.notebookPageID.flatMap { notebookPageIndex($0, in: itemID) } ?? 0
-        let generation = navigationGeneration
-        Task { await navigateToNotebookPage(at: index, in: itemID, expectedRoot: root, navigationGeneration: generation) }
+        Task { await prepareNotebookPage(at: index, in: itemID) }
       }
     }
   }

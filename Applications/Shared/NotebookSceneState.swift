@@ -74,7 +74,7 @@ struct NotebookSceneState: Sendable {
       height: (presence.viewport.y + margin * 2) / presence.camera.scale)
   }
 
-  static func read(store: NotebookStore, presence requested: SessionPresence?, viewport: SpatialPoint, loadsLiveContent: Bool = true, pinnedElements: [UUID: [String]] = [:], pinnedItems: [UUID: [UUID]] = [:], preparedPages: [UUID] = [], historyActor: UUID? = nil) throws -> Self {
+  static func read(store: NotebookStore, presence requested: SessionPresence?, viewport: SpatialPoint, loadsLiveContent: Bool = true, pinnedElements: [UUID: [String]] = [:], pinnedItems: [UUID: [UUID]] = [:], preparedPages: [UUID] = [], historyActor: UUID? = nil, reusingPages: [UUID: PageDocument] = [:]) throws -> Self {
     guard requested?.isValid ?? true else { throw NotebookStorageError.corruptRecord("scene presence") }
     guard preparedPages.count <= 4, Set(preparedPages).count == preparedPages.count else {
       throw NotebookStorageError.limitExceeded("scene_page_pins")
@@ -168,7 +168,14 @@ struct NotebookSceneState: Sendable {
         let window = try store.readNotebookPageWindow(itemID: selected.id,
           pages: pagePositions.filter { demanded.contains($0.pageID) }.map { .page($0.pageID) },
           expectedVisibleRoot: notebookRoot)
-        pages = Dictionary(uniqueKeysWithValues: window.pages.map { ($0.document.id, $0.document) })
+        pages = Dictionary(uniqueKeysWithValues: window.pages.map { entry in
+          let incoming = entry.document
+          // Compare the complete immutable material on the read worker. A
+          // metadata-only refresh keeps its graph/index and installed identity;
+          // a changed source (even with the same stamp) must replace it.
+          let page = reusingPages[incoming.id].flatMap { $0 == incoming ? $0 : nil } ?? incoming
+          return (page.id, page)
+        })
       }
       var items: [UUID: WorkspaceItem] = [selected.id: selected]
       var nodes: [UUID: BoardNode] = [:]

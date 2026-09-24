@@ -713,9 +713,7 @@ struct SpatialWorkspaceView: View {
             pageNavigationIsEnabled: !model.isPointing && presence.focusedItemID == rendered.id
               && !model.isItemBeingDeleted(rendered.id)
               && (presence.mode == .page || presence.mode == .document)
-              && presence.openProgress >= 0.999
-              && cameraGesture == nil
-              && !settling,
+              && presence.openProgress >= 0.999,
             isSelected: selectedItemID == rendered.id,
             liftRank: liftRank(of: rendered.id),
             editingTextID: editingTextID(on: presence.boardID),
@@ -1234,6 +1232,13 @@ struct SpatialWorkspaceView: View {
     completion: @escaping () -> Void = {}
   ) {
     guard let start = model.presence else { return }
+    // A camera transition within the same reader does not own page selection.
+    // Normalise its endpoints and merge each camera sample with the latest
+    // physical landing; otherwise it replays the page captured at its start.
+    let retainsNotebook = start.mode == .page && target.mode == .page
+      && start.focusedItemID == target.focusedItemID
+    let target = retainsNotebook
+      ? target.selecting(itemID: start.selectedItemID, pageID: start.notebookPageID) : target
     let wasSettling = settling
     cameraGesture = nil
     panStart = nil
@@ -1243,7 +1248,12 @@ struct SpatialWorkspaceView: View {
     let accepted = cameraSettlement.start(from: start, to: target, duration: duration, bounce: bounce, navigationID: navigationID) { presence, settled in
       var transaction = Transaction()
       transaction.disablesAnimations = true
-      withTransaction(transaction) { model.updatePresence(presence, settled: settled) }
+      withTransaction(transaction) {
+        let sample = retainsNotebook
+          ? presence.selecting(itemID: model.presence?.selectedItemID, pageID: model.presence?.notebookPageID)
+          : presence
+        model.updatePresence(sample, settled: settled)
+      }
     } completion: {
       contentGestureActive = false
       settling = false
@@ -1433,7 +1443,8 @@ private struct WorkspaceSceneItem: View {
         navigationIsEnabled: pageNavigationIsEnabled,
         pageIsInteractive: contentIsInteractive,
         canBeginNavigation: {
-          model.inputGate.permitsPageNavigation && !model.selectionSession.isInteractive && paperFitsViewport
+          contentIsInteractive && model.inputGate.permitsPageNavigation
+            && !model.selectionSession.isInteractive && paperFitsViewport
         },
         page: { index, isCurrent, readiness in
           notebookPage(
@@ -1448,7 +1459,7 @@ private struct WorkspaceSceneItem: View {
         notebookNavigation: model.notebookPageNavigation,
         onWindowChange: { indices, root in
           model.retainNotebookPageWindow(indices, in: rendered.id, root: root)
-        }
+        }, inputGate: model.inputGate
       )
       .clipShape(
         RoundedRectangle(
@@ -1481,7 +1492,8 @@ private struct WorkspaceSceneItem: View {
         navigationIsEnabled: pageNavigationIsEnabled,
         pageIsInteractive: contentIsInteractive,
         canBeginNavigation: {
-          model.inputGate.permitsPageNavigation && !model.selectionSession.isInteractive && paperFitsViewport
+          contentIsInteractive && model.inputGate.permitsPageNavigation
+            && !model.selectionSession.isInteractive && paperFitsViewport
         },
         page: { index, isCurrent, readiness in
           documentPage(
@@ -1503,7 +1515,7 @@ private struct WorkspaceSceneItem: View {
           landed: { landing in
             if model.acceptDocumentPageLanding(landing) { announcePage(landing.pageIndex + 1) }
           },
-          status: model.acceptDocumentPageNavigationStatus)
+          status: model.acceptDocumentPageNavigationStatus), inputGate: model.inputGate
       )
       .background(Color(red: 0.985, green: 0.98, blue: 0.955))
       .clipShape(
@@ -1549,31 +1561,9 @@ private struct WorkspaceSceneItem: View {
     isLive: Bool,
     onRenderReady: PageTurnReadiness
   ) -> AnyView {
-    guard index >= 0, index < model.notebookPageCount(notebookItem.id) else {
-      return AnyView(
-        BlankPageSurface(fallbackSize: model.notebookPageSize)
-          .onAppear { onRenderReady(index == model.notebookPageCount(notebookItem.id)) }
-      )
-    }
-    guard let page = model.notebookPage(at: index, in: notebookItem.id) else {
-      return AnyView(
-        BlankPageSurface(fallbackSize: model.notebookPageSize)
-          .overlay { ProgressView().allowsHitTesting(false) }
-          .onAppear { onRenderReady(false) }
-          .task { await model.prepareNotebookPage(at: index, in: notebookItem.id) }
-          .accessibilityLabel("Загружается лист \(index + 1)")
-      )
-    }
-    return AnyView(
-      PageSurface(
-        page: page,
-        isCurrent: isCurrent,
-        isInteractive: isCurrent && contentIsInteractive,
-        isVisible: isLive,
-        onRenderReady: onRenderReady,
-        displayProjection: rendered.geometry.fitScale(viewport: viewport)
-      )
-    )
+    AnyView(NotebookPageView(notebookID: notebookItem.id, index: index, isCurrent: isCurrent,
+      isInteractive: isCurrent && contentIsInteractive, isVisible: isLive,
+      onRenderReady: onRenderReady, displayProjection: rendered.geometry.fitScale(viewport: viewport)))
   }
 
   private func documentPage(

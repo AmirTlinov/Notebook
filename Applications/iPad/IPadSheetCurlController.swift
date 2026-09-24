@@ -96,10 +96,11 @@ final class IPadSheetCurlController: UIViewController, UIGestureRecognizerDelega
     guard let reservation = SceneRenderResources.shared.reserveDerivedBytes(pixels * 4 * (1 + curl.drawableCount),
       priority: .input) else { throw SceneRenderError.resourceLimit }
     let format = UIGraphicsImageRendererFormat(); format.scale = scale; format.opaque = false
+    var captured = false
     let snapshot = UIGraphicsImageRenderer(size: size, format: format).image { _ in
-      sheet.view.drawHierarchy(in: sheet.view.bounds, afterScreenUpdates: false)
+      captured = sheet.view.drawHierarchy(in: sheet.view.bounds, afterScreenUpdates: false)
     }
-    guard let image = snapshot.cgImage else { throw SceneRenderError.snapshotPending("page_capture") }
+    guard captured, let image = snapshot.cgImage else { throw SceneRenderError.snapshotPending("page_capture") }
     curl.frameLease = reservation
     curl.prepareDrawable(size: .init(width: image.width, height: image.height))
     motion = .init(source: source, target: target, image: image, direction: direction,

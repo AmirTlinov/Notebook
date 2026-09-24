@@ -44,3 +44,29 @@ git apply docs/audit-evidence/2026-09-24/page-publication-regressions.patch
 `.build/`, указанных в JSON. Source hashes различаются из-за версий probe;
 код приложения между этими прогонами не менялся. Переходные системные кадры iPad,
 причинный порядок в жесте Амира и полная performance-приёмка остаются непроверенными.
+
+## Дополнительная регрессия и замер библиотеки
+
+`page-owner/camera-selection-baseline.json` — обычный `requestShow` холодного
+листа в открытой тетради: камера теряет принятый переход. Регрессия находится
+в `NotebookPageLifecycleUXTests`; её предел 1 с включает штатное движение камеры
+0,3 с. Первый вариант probe ошибочно использовал общий предел 100 мс, поэтому
+он не принят как доказательство этого дефекта; здесь сохранён корректный baseline.
+
+`svg-runtime-probe.c`, `svg-runtime-probe.svg`, `svg-runtime-baseline.json` —
+изолированный вызов именно текущего FFI, 10 новых процессов × 35 конвертаций.
+Запуск из корня исходников после подготовки подписываемой runtime-библиотеки:
+
+```sh
+clang -O2 -ISources/CNotebookTypesetter/include \
+  docs/audit-evidence/2026-09-24/svg-runtime-probe.c \
+  .build/notebook-typesetter-runtime/macosx/libnotebook_typesetter_runtime.a \
+  -framework Security -framework SystemConfiguration -liconv -lresolv \
+  -o .build/svg-runtime-probe
+/usr/bin/time -l .build/svg-runtime-probe \
+  .build/notebook-typesetter-runtime/Resources/{texlive.zip,latex.fmt,fonts.tsv} \
+  docs/audit-evidence/2026-09-24/svg-runtime-probe.svg
+```
+
+Это только процесс библиотеки на Mac. Начальное открытие TeX-ресурсов не входит
+в отдельные строки SVG, но входит в totalMS; RSS включает весь процесс.

@@ -140,21 +140,12 @@ struct NotebookNavigationView: View {
       model.endSurfaceEditing()
       if presence.mode == .document { _ = model.selectDocumentPage(index, documentID: item.id) }
       else if let root = expectedRoot {
-        #if os(iOS)
         _ = model.notebookPageNavigation.send(.jump(index), ownerID: item.id, source: root)
-        #else
-        if index == model.notebookPageCount(item.id) || model.notebookPage(at: index, in: item.id) != nil {
-          _ = model.selectNotebookPage(index, notebookID: item.id, expectedRoot: root)
-        } else {
-          Task { await model.navigateToNotebookPage(at: index, in: item.id, expectedRoot: root, navigationGeneration: generation) }
-        }
-        #endif
       }
     }
   }
 
   private func step(_ direction: Int) {
-    #if os(iOS)
     if presence.mode == .page, let item, let root = model.notebookPageRoot(item.id) {
       model.cancelRequestedNavigation()
       // Every arrow is a step, not a replacement reference request. A later
@@ -167,7 +158,6 @@ struct NotebookNavigationView: View {
       }
       return
     }
-    #endif
     select(pageIndex + direction)
   }
 }

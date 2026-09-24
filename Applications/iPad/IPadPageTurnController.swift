@@ -112,6 +112,7 @@ final class IPadPageTurnController: UIViewController {
   private var sequentialTarget: Int?
   private var coldGestureTarget: Int?
   private var notebookNavigation: NotebookPageNavigation?
+  private weak var inputGate: NotebookInputGate?
   private var notebookStatusRevision: UInt64 = 0
   private var lastNotebookStatus: String?
   private var onWindowChange: @MainActor (Set<Int>, String) -> Void = { _, _ in }
@@ -261,7 +262,8 @@ final class IPadPageTurnController: UIViewController {
     documentSelection: DocumentPageNavigationRequest? = nil,
     documentNavigation: DocumentPageNavigationCallbacks? = nil,
     notebookNavigation: NotebookPageNavigation? = nil,
-    onWindowChange: @escaping @MainActor (Set<Int>, String) -> Void = { _, _ in }
+    onWindowChange: @escaping @MainActor (Set<Int>, String) -> Void = { _, _ in },
+    inputGate: NotebookInputGate? = nil
   ) {
     let previousResolvedTarget = resolvedDocumentTarget
     self.canonicalDocumentLayout = canonicalDocumentLayout
@@ -271,8 +273,6 @@ final class IPadPageTurnController: UIViewController {
       self.notebookNavigation?.unbind(documentControllerID)
       self.onWindowChange([], self.sequenceRevision)
     }
-    let previousSelectedIndex = self.selectedIndex
-    let awaitedLocalAcknowledgement = selection.awaitsLocalAcknowledgement
     self.ownerID = ownerID
     self.sequenceRevision = sequenceRevision
     self.allowsTrailingPageCreation = allowsTrailingPageCreation
@@ -291,9 +291,10 @@ final class IPadPageTurnController: UIViewController {
     self.onTransitioningChange = onTransitioningChange
     self.documentNavigation = documentNavigation
     self.notebookNavigation = notebookNavigation
+    self.inputGate = inputGate
     self.onWindowChange = onWindowChange
     notebookNavigation?.bind(documentControllerID, ownerID: ownerID, source: sequenceRevision) { [weak self] command in
-      self?.requestNotebookNavigation(command)
+      self?.requestNotebookNavigation(command) ?? false
     }
     documentNavigation?.bind(documentControllerID, ownerID, sequenceRevision)
     if !navigationIsEnabled, notebookNavigation != nil {
@@ -327,21 +328,7 @@ final class IPadPageTurnController: UIViewController {
           refreshRenderedPages()
         }
       }
-    } else if documentNavigation != nil {
-      // Confirmed model presence only acknowledges native landings. It cannot
-      // become a second external target while an explicit request is waiting.
-      _ = selection.externalTarget(forModelIndex: self.selectedIndex)
-    } else if let target = selection.externalTarget(
-      forModelIndex: self.selectedIndex
-    ) {
-      requestExternalSelection(target)
-    } else if previousSelectedIndex != self.selectedIndex,
-      !awaitedLocalAcknowledgement,
-      isTransitioning || pendingExternalIndex != nil {
-      // Returning to the source is also a new external intent. A repeated
-      // source index during an ordinary curl, or a local acknowledgement, is not.
-      requestExternalSelection(self.selectedIndex)
-    }
+    } else { selection.acknowledge(self.selectedIndex) }
 
     if documentNavigation != nil {
       let next = documentSelection.flatMap { value in
@@ -410,11 +397,10 @@ final class IPadPageTurnController: UIViewController {
       controllers[shown.pageIndex] === shown else { return }
     if completed {
       let source = displayedIndex, target = shown.pageIndex
-      if target == selectedIndex { selection.recordExternalLanding(at: target) }
-      else { selection.recordLocalLanding(at: target) }
+      selection.recordLocalLanding(at: target)
       if allowsTrailingPageCreation, target == pageCount - 1, pageCount < Int.max { pageCount += 1 }
       lastTurnDirection = target == source ? nil : (target > source ? 1 : -1)
-    } else if previous.pageIndex != displayedIndex { selection.recordExternalLanding(at: previous.pageIndex) }
+    } else if previous.pageIndex != displayedIndex { selection.reset(to: previous.pageIndex) }
     anticipatedIndex = nil
     setTransitioning(false)
     retainNeededControllers()
@@ -422,7 +408,7 @@ final class IPadPageTurnController: UIViewController {
     refreshControllerState()
     if completed, documentNavigation != nil {
       publishDocumentLanding(at: displayedIndex, requestID: nil, deferred: false)
-    } else if completed, displayedIndex != selectedIndex { onCommit(displayedIndex, sequenceRevision) }
+    } else if completed { onCommit(displayedIndex, sequenceRevision) }
     runPendingExternalSelection()
   }
 
@@ -632,6 +618,19 @@ final class IPadPageTurnController: UIViewController {
       return
     }
 
+    // Readiness can arrive during a new contact, long after command admission.
+    // The physical input owner fences the actual handoff, not merely the tap.
+    let source = sequenceRevision, hostID = targetController.hostID
+    let install: NotebookInputCompletion = { [weak self, weak targetController] in
+      guard let self, let targetController, sequenceRevision == source, pendingExternalIndex == target,
+        controllers[target]?.hostID == hostID, readyPages[target] == true,
+        !isTransitioning, !isUpdatingContents else { return }
+      beginExternalSelection(target, targetController: targetController)
+    }
+    if let inputGate { inputGate.performAfterIdle(install) } else { install() }
+  }
+
+  private func beginExternalSelection(_ target: Int, targetController: IPadIndexedPageController) {
     pendingExternalIndex = nil
     anticipatedIndex = target
     retainNeededControllers()
@@ -659,33 +658,36 @@ final class IPadPageTurnController: UIViewController {
     }
   }
 
-  private func requestNotebookNavigation(_ command: NotebookPageNavigation.Command) {
+  private func requestNotebookNavigation(_ command: NotebookPageNavigation.Command) -> Bool {
     // Explicit commands arrive after their caller's input fence. The gesture
     // predicate rejects native buttons and zoomed paper; it cannot govern the
     // very arrow that requested navigation or drop taps during a previous curl.
-    guard navigationIsEnabled else { return }
+    guard navigationIsEnabled else { return false }
     switch command {
+    case .cancel:
+      sequentialTarget = nil; coldGestureTarget = nil; pendingExternalIndex = nil
+      sheetController.cancelMotion()
+      anticipatedIndex = nil; prepareExternalTarget(nil)
+      retainNeededControllers(); refreshControllerState(); publishDocumentStatus()
     case .step(let delta):
-      guard delta == -1 || delta == 1 else { return }
+      guard delta == -1 || delta == 1 else { return false }
       sequentialTarget = clamped((sequentialTarget ?? pendingExternalIndex ?? anticipatedIndex ?? displayedIndex) + delta)
     case .jump(let index):
+      guard (0..<pageCount).contains(index) else { return false }
       sequentialTarget = nil
       requestExternalSelection(index)
-      return
+      return true
     }
     runPendingExternalSelection()
+    return true
   }
 
   private func completeExternalSelection(_ target: Int, finished: Bool, requestID: UUID?,
     preparation: PageTurnActivity.PreparationDemand?) {
     observe("page_turn_external_completion", target: target, reason: finished ? "finished" : "interrupted")
-    // A local landing may have published its selection while this external
-    // target waited. Confirm the final target without overwriting a newer one.
-    let confirmsSelection = finished && pendingExternalIndex == nil && target != selectedIndex
     if finished {
       let source = displayedIndex
-      if documentNavigation != nil || confirmsSelection { selection.recordLocalLanding(at: target) }
-      else { selection.recordExternalLanding(at: target) }
+      selection.recordLocalLanding(at: target)
       lastTurnDirection = target > source ? 1 : -1
     }
     anticipatedIndex = nil
@@ -697,7 +699,7 @@ final class IPadPageTurnController: UIViewController {
     refreshControllerState()
     observe("page_turn_external_inputs_published", target: target)
     if finished, documentNavigation != nil { publishDocumentLanding(at: target, requestID: requestID, deferred: false) }
-    else if confirmsSelection {
+    else if finished {
       isUpdatingContents = true
       onCommit(target, sequenceRevision)
       isUpdatingContents = false
@@ -711,8 +713,7 @@ final class IPadPageTurnController: UIViewController {
   }
 
   private func runPendingExternalSelection() {
-    guard !isTransitioning, !isUpdatingContents, coldGestureTarget == nil,
-      !selection.awaitsLocalAcknowledgement else { return }
+    guard !isTransitioning, !isUpdatingContents, coldGestureTarget == nil else { return }
     if let target = sequentialTarget {
       if target == displayedIndex {
         sequentialTarget = nil; pendingExternalIndex = nil
@@ -726,7 +727,10 @@ final class IPadPageTurnController: UIViewController {
     if documentNavigation != nil {
       guard let requested = pendingExternalIndex ?? resolvedDocumentTarget else { return }
       target = requested
-    } else { target = pendingExternalIndex ?? selectedIndex }
+    } else {
+      guard let requested = pendingExternalIndex else { return }
+      target = requested
+    }
     guard target != displayedIndex else {
       pendingExternalIndex = nil
       pageTurnActivity.prepare(nil)
