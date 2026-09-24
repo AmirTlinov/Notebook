@@ -12,7 +12,7 @@ extension Proof {
     let task = try await bridge.create(directory: directory, title: "Notebook — проверка уровней доступа", workspaceID: UUID()) { _ in }
     print("Created disposable permission-settings task \(task.id)")
     do {
-      try await bridge.attach(threadID: task.id)
+      try await bridge.attach(threadID: task.id, observationID: UUID(uuidString: task.id)!)
       var observations: [CodexConversation] = []
       for mode in [CodexAccessMode.readOnly, .full, .workspace] {
         try await bridge.setAccess(threadID: task.id, mode: mode)
@@ -23,7 +23,7 @@ extension Proof {
       await bridge.close()
       let resumed = CodexAppServer(installation: installation)
       do {
-        try await resumed.attach(threadID: task.id)
+        try await resumed.attach(threadID: task.id, observationID: UUID(uuidString: task.id)!)
         guard let state = await resumed.snapshot(threadID: task.id), state.access?.mode == .workspace else { throw CodexBridgeError.invalidResponse }
         observations.append(state)
         await resumed.close()

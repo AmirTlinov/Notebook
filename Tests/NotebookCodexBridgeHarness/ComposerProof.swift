@@ -14,7 +14,7 @@ extension Proof {
     let task = try await bridge.create(directory: directory, title: "Notebook — проверка панели ввода", workspaceID: UUID()) { _ in }
     print("Disposable composer task \(task.id)")
     do {
-      try await bridge.attach(threadID: task.id)
+      try await bridge.attach(threadID: task.id, observationID: UUID(uuidString: task.id)!)
       print("Attached")
       var resources: [String: Int] = [:]
       for kind in CodexResourceKind.allCases {
@@ -37,7 +37,7 @@ extension Proof {
       await bridge.close()
       let resumed = CodexAppServer(installation: installation)
       do {
-        try await resumed.attach(threadID: task.id)
+        try await resumed.attach(threadID: task.id, observationID: UUID(uuidString: task.id)!)
         let cold = try await wait(resumed, threadID: task.id) { $0.ready }
         guard cold.model == selection else { throw CodexBridgeError.invalidResponse }
         struct Receipt: Encodable { let models: [CodexModelOption]; let resources: [String: Int]; let answered: CodexConversation; let resumed: CodexConversation }

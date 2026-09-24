@@ -38,16 +38,23 @@ private actor NativeOwner: NotebookCodexConversationOwner, NotebookCodexCatalogu
   func finishBeforeStop() { stopIsStale = true }
   func configure(busy: Bool = false, unknown: Bool = false) { self.busy = busy; self.unknown = unknown }
   func failAttach(_ failure: AttachFailure?) { attachFailure = failure }
+  var observations: [String: Set<UUID>] = [:]
+  var attachGate: AdmissionGate?
+  func holdAttach(_ gate: AdmissionGate?) { attachGate = gate }
+  func observationCount() -> Int { observations.values.reduce(0) { $0 + $1.count } }
   func counts() -> (Int, Int) { (sent.count, interrupted.count) }
-  func attach(threadID: String) throws {
+  func attach(threadID: String, observationID: UUID) async throws {
     switch attachFailure {
     case .requestRejected: throw CodexRequestRejection(code: -32600)
     case .externalOwner: throw CodexBridgeError.externalOwnerUnavailable
     case .unavailable: throw CodexBridgeError.unavailable
     case nil: break
     }
+    observations[threadID, default: []].insert(observationID)
+    if let gate = attachGate { await gate.wait() }
+    guard observations[threadID]?.contains(observationID) == true else { throw CancellationError() }
   }
-  func detach(threadID: String) { }
+  func detach(threadID: String, observationID: UUID) { observations[threadID]?.remove(observationID) }
   func close() { }
   func snapshot(threadID: String) -> CodexConversation? {
     .init(threadID: threadID, generation: UUID(uuidString: "10000000-0000-0000-0000-000000000000")!, revision: 1, title: "Математика", ready: true, busy: busy, activeTurnID: busy ? turn : nil,
@@ -113,6 +120,119 @@ private actor NativeOwner: NotebookCodexConversationOwner, NotebookCodexCatalogu
 
 @MainActor
 final class NotebookCodexSidecarTests: XCTestCase {
+  func testNewlyAdmittedMessageWakesTheNativeWorkerWithoutThePollingSecond() async throws {
+    try await fixture { store, queue, native, peer in
+      let service = try sidecar(store, queue, native); service.start()
+      try await Task.sleep(for: .milliseconds(150))
+      let input = NotebookChatInput(author: peer,
+        action: .send(threadID: native.thread, text: "Immediate", context: ""))
+      let started = ContinuousClock.now
+      _ = await service.receive(.init(body: .request(.job(input))), peerID: peer)
+      let deadline = started + .milliseconds(650)
+      while await native.counts().0 == 0, .now < deadline {
+        try await Task.sleep(for: .milliseconds(10))
+      }
+      let sent = await native.counts().0
+      XCTAssertEqual(sent, 1)
+      XCTAssertLessThan(started.duration(to: .now), .milliseconds(700))
+      await service.stop()
+    }
+  }
+
+  func testNativeIdleEventWakesAQueuedNextMessage() async throws {
+    try await fixture { store, queue, native, peer in
+      await native.configure(busy: true)
+      let service = try sidecar(store, queue, native); service.start()
+      let input = NotebookChatInput(author: peer,
+        action: .send(threadID: native.thread, text: "Next", context: ""))
+      _ = await service.receive(.init(body: .request(.job(input))), peerID: peer)
+      try await Task.sleep(for: .milliseconds(150))
+      XCTAssertEqual(try store.chatJob(input.id)?.state, .saved)
+      await native.configure(busy: false)
+      let snapshot = await native.snapshot(threadID: native.thread)
+      let state = try XCTUnwrap(snapshot)
+      let started = ContinuousClock.now
+      service.receiveEvent(.conversation(state))
+      let deadline = started + .milliseconds(650)
+      while await native.counts().0 == 0, .now < deadline {
+        try await Task.sleep(for: .milliseconds(10))
+      }
+      let sent = await native.counts().0
+      XCTAssertEqual(sent, 1)
+      XCTAssertLessThan(started.duration(to: .now), .milliseconds(700))
+      await service.stop()
+    }
+  }
+
+  func testClosingSwitchingRevokingAndDetachingReleaseExactObservations() async throws {
+    try await fixture { store, queue, native, peer in
+      let service = try sidecar(store, queue, native); service.start()
+      for _ in 0..<12 {
+        _ = await service.receive(.init(body: .request(.conversation(threadID: UUID().uuidString))), peerID: peer)
+        _ = await service.receive(.init(body: .request(.activity(threadIDs: []))), peerID: peer)
+        try await wait { await native.observationCount() == 0 }
+      }
+      _ = await service.receive(.init(body: .request(.conversation(threadID: native.thread))), peerID: peer)
+      service.detachView()
+      try await wait { await native.observationCount() == 0 }
+      _ = await service.receive(.init(body: .request(.conversation(threadID: native.thread))), peerID: peer)
+      service.revokeDevice(peer)
+      try await wait { await native.observationCount() == 0 }
+      await service.stop()
+    }
+  }
+
+  func testCloseDuringPreparationCannotResurrectObservation() async throws {
+    try await fixture { store, queue, native, peer in
+      let service = try sidecar(store, queue, native), gate = AdmissionGate()
+      service.prepareThread = { _ in await gate.wait() }
+      let opening = Task { await service.receive(.init(body: .request(.conversation(threadID: native.thread))), peerID: peer) }
+      try await wait { gate.entered }
+      _ = await service.receive(.init(body: .request(.activity(threadIDs: []))), peerID: peer)
+      gate.release(); _ = await opening.value
+      let count = await native.observationCount(); XCTAssertEqual(count, 0)
+      await service.stop()
+    }
+  }
+
+  func testCloseDuringNativeAttachCannotReleaseTheReplacementView() async throws {
+    try await fixture { store, queue, native, peer in
+      let gate = AdmissionGate(), service = try sidecar(store, queue, native)
+      await native.holdAttach(gate)
+      let opening = Task { await service.receive(.init(body: .request(.conversation(threadID: native.thread))), peerID: peer) }
+      try await wait { gate.entered }
+      _ = await service.receive(.init(body: .request(.activity(threadIDs: []))), peerID: peer)
+      try await wait { await native.observationCount() == 0 }
+      await native.holdAttach(nil)
+      let next = UUID().uuidString
+      _ = await service.receive(.init(body: .request(.conversation(threadID: next))), peerID: peer)
+      gate.release(); _ = await opening.value
+      let count = await native.observationCount(); XCTAssertEqual(count, 1)
+      let observations = await native.observations
+      XCTAssertEqual(observations[next]?.count, 1)
+      await service.stop()
+      let stoppedCount = await native.observationCount(); XCTAssertEqual(stoppedCount, 0)
+    }
+  }
+
+  func testIdleWorkerWakesForControlWithoutPollingInterval() async throws {
+    try await fixture { store, queue, native, peer in
+      let service = try sidecar(store, queue, native); service.start()
+      await native.configure(busy: true)
+      try await Task.sleep(for: .milliseconds(150))
+      let action = NotebookChatAction.stop(threadID: native.thread, turnID: native.turn)
+      let input = NotebookChatInput(id: try XCTUnwrap(action.controlID(author: peer)), author: peer, action: action)
+      let start = ContinuousClock.now
+      _ = await service.receive(.init(body: .request(.job(input))), peerID: peer)
+      try await wait { await native.counts().1 == 1 }
+      XCTAssertLessThan(start.duration(to: .now), .milliseconds(500), "No one-second scheduling gate")
+      _ = await service.receive(.init(body: .request(.job(input))), peerID: peer)
+      try await Task.sleep(for: .milliseconds(100))
+      let counts = await native.counts(); XCTAssertEqual(counts.1, 1)
+      await service.stop()
+    }
+  }
+
   func testDefinitiveObserveFailureRejectsSavedMessageWithoutNativeDispatch() async throws {
     try await fixture { store, queue, native, peer in
       let service = try sidecar(store, queue, native); service.start()

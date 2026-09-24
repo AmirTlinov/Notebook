@@ -43,6 +43,16 @@ attempt becomes `uncertain`. Reconciliation pages canonical history for the exac
 `clientUserMessageId`; a positive match resolves it. Missing IDs, read failures or
 absence from one page never authorize another execution.
 
+One event-woken drain owns the durable journal. New admission, native state and
+completion wake it; idle has no polling timer. A timer belongs only to a pending
+retry/reconciliation deadline. Stop/approval priority and exact attempts remain
+unchanged.
+
+Every view and in-flight operation owns an observation UUID. It is registered
+before attach waits; close, switch, revoke, detach and shutdown release that exact
+UUID. Late attach cannot reselect a closed view or release its replacement.
+Releasing observation never interrupts an accepted native turn.
+
 The queue admits at most 128 unfinished inputs and fails explicitly when full.
 Ordinary input to a busy task waits. Explicit steer names `expectedTurnId`;
 completion of that turn cannot turn it into a new turn. Stop names one exact turn.

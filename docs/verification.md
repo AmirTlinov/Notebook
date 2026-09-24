@@ -8408,3 +8408,15 @@ corresponding system or physical observation.
 лог `/tmp/notebook-repair-A15-skip-build.log`. Проверены активная и ожидающие
 нормализации, поздний запрос закрытого run и следующий run. Cancel отзывает
 подготовку, не ранее принятые записи. Системная UX-приёмка серии ещё не выполнена.
+
+### A06 / A11 — владение наблюдением и событийная очередь
+
+`NotebookCodexSidecarTests`: **24/24 PASS**, 6.765 s, macOS native XCTest,
+`/tmp/notebook-repair-sidecar-tests/tests.log`. Скомпилированы текущие
+`NotebookCodex`, production Sidecar, persistence и file/run/voice owners;
+нативный RPC в этих проверках заменён управляемым double, рабочая учётная запись
+не использовалась. Проверены 12 последовательных открытий/закрытий, переключение,
+revoke/detach, закрытие до и во время attach, поздний ответ при новом наблюдении,
+немедленный Stop/новое сообщение/idle event, повторы и uncertain reconciliation.
+Таймер в пустой очереди отсутствует; deadline остаётся только у ожидающих попыток.
+Это регрессии владения и доставки, не приёмка реального Codex streaming на Simulator.

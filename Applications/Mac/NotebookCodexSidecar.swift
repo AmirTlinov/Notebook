@@ -4,8 +4,8 @@ import NotebookCodex
 
 protocol NotebookCodexConversationOwner: Sendable {
   func activities(threadIDs: [String]) async throws -> [CodexTaskActivity]
-  func attach(threadID: String) async throws
-  func detach(threadID: String) async
+  func attach(threadID: String, observationID: UUID) async throws
+  func detach(threadID: String, observationID: UUID) async
   func snapshot(threadID: String) async -> CodexConversation?
   func send(threadID: String, clientMessageID: UUID, text: String, context: String?, attachments: [CodexInputAttachment]) async throws -> String
   func steer(threadID: String, turnID: String, clientMessageID: UUID, text: String, context: String?, attachments: [CodexInputAttachment]) async throws -> String
@@ -48,7 +48,12 @@ final class NotebookCodexSidecar {
   private var stopped = false
   private var publishEvents: Task<Void, Never>?
   private var pendingEvents: [String: CodexConversation] = [:]
-  private var subscriptions: [UUID: (id: UUID, thread: String)] = [:]
+  private struct Subscription { let id: UUID; let thread: String; let observationID: UUID }
+  private var subscriptions: [UUID: Subscription] = [:]
+  private var releases: [UUID: Task<Void, Never>] = [:]
+  private let wakeups = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
+  private var retryWakeup: Task<Void, Never>?
+  private var executionAfter: [UUID: Date] = [:]
   private var publish: ((NotebookChatEnvelope, UUID) -> Void)?
   var authorizePeer: (UUID) -> Bool = { _ in true }
   var prepareThread: ((String) async throws -> Void)?
@@ -75,12 +80,15 @@ final class NotebookCodexSidecar {
 
   /// A workspace/window detaches its presentation, not accepted native work.
   func detachView() {
-    publish = nil; subscriptions.removeAll(); pendingEvents.removeAll()
+    publish = nil
+    for peer in Array(subscriptions.keys) { removeSubscription(peer) }
+    pendingEvents.removeAll()
     publishEvents?.cancel(); publishEvents = nil
   }
 
   func receiveEvent(_ event: CodexBridgeEvent) {
     guard !stopped else { return }
+    executionAfter.removeAll(); wakeups.continuation.yield(())
     if case .unavailable(let error) = event {
       publishEvents?.cancel(); publishEvents = nil; pendingEvents.removeAll()
       for (peer, subscription) in subscriptions {
@@ -117,7 +125,8 @@ final class NotebookCodexSidecar {
   }
 
   func start() {
-    guard worker == nil else { return }
+    guard !stopped, worker == nil else { return }
+    wakeups.continuation.yield(())
     worker = Task { [weak self] in
       guard let self else { return }
       // Crash recovery never changes attempting back to saved.
@@ -127,12 +136,15 @@ final class NotebookCodexSidecar {
             _ = try store.advanceChatJob(job.id, from: .attempting, to: .uncertain, error: "Проверяется принятие после перезапуска Mac")
           }
         }
-        while !Task.isCancelled {
+        for await _ in wakeups.stream {
+          guard !Task.isCancelled, !stopped else { break }
+          var nextWakeup: Date?
           do {
             let jobs = try await persistence.submit { try $0.pendingChatJobs() }
             let pending = Set(jobs.map(\.id))
             reconciliationAfter = reconciliationAfter.filter { pending.contains($0.key) }
             historyCursors = historyCursors.filter { pending.contains($0.key) }
+            executionAfter = executionAfter.filter { pending.contains($0.key) }
             // Explicit control of the current turn bypasses queued next-turn text.
             // Preserve journal order within each class and independent thread.
             let ordered = jobs.enumerated().sorted { left, right in
@@ -144,29 +156,41 @@ final class NotebookCodexSidecar {
               if job.input.action.isRunCommand || job.input.action.isVoiceCommand { continue }
               if job.state == .uncertain || job.state == .attempting {
                 guard reconciling[job.id] == nil, reconciling.count < 2,
-                  reconciliationAfter[job.id, default: .distantPast] <= Date() else { continue }
+                  reconciliationAfter[job.id, default: .distantPast] <= Date() else {
+                    if reconciling[job.id] == nil, let due = reconciliationAfter[job.id], due > Date() { nextWakeup = min(nextWakeup ?? due, due) }
+                    continue
+                  }
                 reconciliationAfter[job.id] = Date().addingTimeInterval(15)
                 reconciling[job.id] = Task { [weak self] in
                   guard let self else { return }
                   try? await reconcile(job)
                   reconciling.removeValue(forKey: job.id)
+                  wakeups.continuation.yield(())
                 }
                 continue
               }
               let control = job.input.action.isInteractiveControl
               let key = (job.input.action.threadID ?? job.id.uuidString) + (control ? "/control" : "")
               guard executing[key] == nil, executing.count < (control ? 10 : 8) else { continue }
+              if let due = executionAfter[job.id], due > Date() {
+                nextWakeup = min(nextWakeup ?? due, due); continue
+              }
+              executionAfter[job.id] = Date().addingTimeInterval(1)
               executing[key] = Task { [weak self] in
                 guard let self else { return }
                 do { try await execute(job) } catch { /* The durable receipt remains authoritative. */ }
-                if let thread = job.input.action.threadID, !subscriptions.values.contains(where: { $0.thread == thread }) {
-                  await bridge.detach(threadID: thread)
-                }
                 executing.removeValue(forKey: key)
+                wakeups.continuation.yield(())
               }
             }
-          } catch { /* A subsequent read exposes persistent storage failure. */ }
-          try await Task.sleep(for: .seconds(1))
+          } catch { nextWakeup = Date().addingTimeInterval(1) }
+          retryWakeup?.cancel(); retryWakeup = nil
+          if let due = nextWakeup {
+            retryWakeup = Task { [weak self] in
+              do { try await Task.sleep(for: .seconds(max(0, due.timeIntervalSinceNow))) } catch { return }
+              self?.wakeups.continuation.yield(())
+            }
+          }
         }
       } catch { }
     }
@@ -175,23 +199,37 @@ final class NotebookCodexSidecar {
   func stop() async {
     dictation?.stop()
     stopped = true; files.stop(); worker?.cancel(); publishEvents?.cancel()
-    subscriptions.removeAll(); pendingEvents.removeAll()
+    retryWakeup?.cancel(); retryWakeup = nil; wakeups.continuation.finish()
+    for peer in Array(subscriptions.keys) { removeSubscription(peer) }; pendingEvents.removeAll()
     // Do not cancel a native turn. An in-flight mutation retains its durable attempt.
     await worker?.value; worker = nil
     let tasks = Array(executing.values) + Array(reconciling.values)
     for task in tasks { task.cancel() }
     for task in tasks { await task.value }
     executing.removeAll(); reconciling.removeAll()
+    for task in Array(releases.values) { await task.value }
   }
 
   func revokeDevice(_ peer: UUID) {
     revokedPeers.insert(peer); peerGenerations[peer, default: 0] += 1
-    subscriptions.removeValue(forKey: peer)
+    removeSubscription(peer)
     // Register this fence synchronously: earlier attempts keep their right to
     // finish, but a later admission cannot overtake revocation.
     persistence.enqueueCommand({ try $0.rejectSavedChatInputs(from: peer) }, completion: { _ in })
   }
   func allowDevice(_ peer: UUID) { revokedPeers.remove(peer); peerGenerations[peer, default: 0] += 1 }
+
+  private func releaseObservation(_ thread: String, _ id: UUID) {
+    releases[id] = Task { [self] in
+      await bridge.detach(threadID: thread, observationID: id)
+      releases.removeValue(forKey: id)
+    }
+  }
+
+  private func removeSubscription(_ peer: UUID) {
+    guard let previous = subscriptions.removeValue(forKey: peer) else { return }
+    releaseObservation(previous.thread, previous.observationID)
+  }
 
   private func authorization(_ peer: UUID) throws -> Admission {
     guard !stopped, !revokedPeers.contains(peer), authorizePeer(peer) else { throw CodexBridgeError.unavailable }
@@ -235,6 +273,7 @@ final class NotebookCodexSidecar {
       case .account(let query):
         guard let accountRequest else { throw CodexBridgeError.unavailable }
         reply = .account(try await accountRequest(query))
+        executionAfter.removeAll(); wakeups.continuation.yield(())
       case .requestDetails(let thread, let generation, let id):
         guard let state = await bridge.snapshot(threadID: thread), state.generation == generation,
           let request = state.requests.first(where: { $0.id == id }) else { throw CodexBridgeError.staleRequest }
@@ -283,24 +322,34 @@ final class NotebookCodexSidecar {
         } else if input.action.isRunCommand {
           guard let runs else { throw CodexBridgeError.unavailable }
           reply = .job(try await runs.receive(job, admit: begin))
-        } else { reply = .job(job) }
+        } else { reply = .job(job); wakeups.continuation.yield(()) }
       case .catalogue(let cursor, let project): reply = .catalogue(try await metadata.tasks(cursor: cursor, project: project))
       case .models: reply = .models(try await metadata.models())
       case .resources(let thread, let kind, let cursor): reply = .resources(try await metadata.resources(threadID: thread, kind: kind, cursor: cursor))
       case .projects(let cursor): reply = .projects(try await metadata.projects(cursor: cursor))
       case .activity(let ids):
-        if ids.isEmpty { subscriptions.removeValue(forKey: peerID) }
+        if ids.isEmpty { removeSubscription(peerID) }
         reply = .activity(try await bridge.activities(threadIDs: ids))
       case .history(let thread, let cursor):
         let page = try await metadata.history(threadID: thread, cursor: cursor)
         reply = .history(.init(messages: CodexMessage.transportPage(page.messages), nextCursor: page.nextCursor))
       case .conversation(let thread):
-        try await observe(thread)
-        guard let state = await bridge.snapshot(threadID: thread) else { throw CodexBridgeError.unavailable }
-        let previous = subscriptions.updateValue((envelope.id, thread), forKey: peerID)
-        if let previous, previous.thread != thread, executing[previous.thread] == nil,
-          !subscriptions.values.contains(where: { $0.thread == previous.thread }) { await bridge.detach(threadID: previous.thread) }
-        reply = .conversation(Self.transport(state))
+        let observationID = UUID()
+        removeSubscription(peerID)
+        subscriptions[peerID] = .init(id: envelope.id, thread: thread, observationID: observationID)
+        do {
+          try await prepareThread?(thread)
+          guard subscriptions[peerID]?.observationID == observationID else { throw CancellationError() }
+          try await bridge.attach(threadID: thread, observationID: observationID)
+          guard !stopped, !revokedPeers.contains(peerID), authorizePeer(peerID),
+            subscriptions[peerID]?.observationID == observationID,
+            let state = await bridge.snapshot(threadID: thread) else { throw CodexBridgeError.unavailable }
+          reply = .conversation(Self.transport(state))
+        } catch {
+          if subscriptions[peerID]?.observationID == observationID { removeSubscription(peerID) }
+          await bridge.detach(threadID: thread, observationID: observationID)
+          throw error
+        }
       }
     } catch {
       if error as? CodexBridgeError == .externalOwnerUnavailable, case .conversation(let thread) = query {
@@ -314,12 +363,14 @@ final class NotebookCodexSidecar {
     return response
   }
 
-  private func observe(_ thread: String) async throws {
+  private func observe(_ thread: String, observationID: UUID) async throws {
     try await prepareThread?(thread)
-    try await bridge.attach(threadID: thread)
+    try await bridge.attach(threadID: thread, observationID: observationID)
   }
 
   private func execute(_ job: NotebookChatJob) async throws {
+    let observationID = UUID()
+    defer { if let thread = job.input.action.threadID { releaseObservation(thread, observationID) } }
     guard !stopped else { return }
     guard job.state == .saved else { return }
     guard !revokedPeers.contains(job.input.author), authorizePeer(job.input.author) else {
@@ -338,7 +389,7 @@ final class NotebookCodexSidecar {
     guard let attachments = try await persistence.submit({ try $0.resolvedChatImageAttachments(job.input.attachments ?? []) }) else { return }
     do {
       if let thread = job.input.action.threadID {
-        try await observe(thread)
+        try await observe(thread, observationID: observationID)
         guard let snapshot = await bridge.snapshot(threadID: thread), snapshot.ready else { return }
         if case .send = job.input.action, snapshot.busy || !snapshot.requests.isEmpty { return }
       }
@@ -429,6 +480,8 @@ final class NotebookCodexSidecar {
   }
 
   private func reconcile(_ job: NotebookChatJob) async throws {
+    let observationID = UUID()
+    defer { if let thread = job.input.action.threadID { releaseObservation(thread, observationID) } }
     guard try await persistence.submit({ try $0.chatJob(job.id)?.state }) == job.state else { return }
     if let task = job.createdTask {
       _ = try await persistence.submit { try $0.advanceChatJob(job.id, from: job.state, to: .accepted,
@@ -442,14 +495,14 @@ final class NotebookCodexSidecar {
       return
     }
     if case .setModel(let thread, let selection) = job.input.action {
-      try await observe(thread)
+      try await observe(thread, observationID: observationID)
       if await bridge.snapshot(threadID: thread)?.model == selection {
         _ = try await persistence.submit { try $0.advanceChatJob(job.id, from: job.state, to: .accepted, result: .acknowledged) }
       }
       return // Never repeat a settings write after an unknown response.
     }
     if case .setAccess(let thread, let mode) = job.input.action {
-      try await observe(thread)
+      try await observe(thread, observationID: observationID)
       if await bridge.snapshot(threadID: thread)?.access?.mode == mode {
         _ = try await persistence.submit { try $0.advanceChatJob(job.id, from: job.state, to: .accepted, result: .acknowledged) }
       }

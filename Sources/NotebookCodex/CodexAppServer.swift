@@ -35,7 +35,7 @@ public actor CodexAppServer {
   }
   private var voice: NotebookVoiceState?
   private var processes: [UUID: RunningProcess] = [:]
-  private var selections: Set<String> = []
+  private var selections: [String: Set<UUID>] = [:]
   private var workspaceTools: [UUID: JSONValue] = [:]
   private var threadWorkspaces: [String: UUID] = [:]
 
@@ -51,7 +51,7 @@ public actor CodexAppServer {
     let threads = threadWorkspaces.filter { $0.value == workspace }.map(\.key)
     for thread in threads {
       if states[thread] != nil, let rpc { _ = try await rpc.request("thread/unsubscribe", params: .object(["threadId": .string(thread)])) }
-      states.removeValue(forKey: thread); selections.remove(thread); threadWorkspaces.removeValue(forKey: thread)
+      states.removeValue(forKey: thread); selections.removeValue(forKey: thread); threadWorkspaces.removeValue(forKey: thread)
     }
     workspaceTools.removeValue(forKey: workspace)
   }
@@ -86,26 +86,34 @@ public actor CodexAppServer {
   }
   public func snapshot(threadID: String) -> CodexConversation? { states[threadID]?.view }
 
-  public func attach(threadID: String) async throws {
+  public func attach(threadID: String, observationID: UUID) async throws {
     guard !accountSession.changing else { throw CodexBridgeError.busy }
     guard UUID(uuidString: threadID) != nil else { throw CodexBridgeError.invalidInput }
-    if states[threadID]?.ready == true { selections.insert(threadID); return }
+    try Task.checkCancellation()
+    selections[threadID, default: []].insert(observationID)
+    if states[threadID]?.ready == true { return }
     let epoch = generation
-    if let entry = attaching[threadID] {
-      try await entry.task.value
-      guard epoch == generation, states[threadID]?.ready == true else { throw CodexBridgeError.disconnected }
-      selections.insert(threadID); return
+    let entry: Attachment
+    if let existing = attaching[threadID] { entry = existing }
+    else {
+      entry = Attachment(id: UUID(), task: Task { try await self.load(threadID: threadID, epoch: epoch) })
+      attaching[threadID] = entry
     }
-    let id = UUID()
-    let task = Task { try await self.load(threadID: threadID, epoch: epoch) }
-    attaching[threadID] = Attachment(id: id, task: task)
+    do { try await entry.task.value }
+    catch {
+      detach(threadID: threadID, observationID: observationID)
+      if attaching[threadID]?.id == entry.id {
+        attaching.removeValue(forKey: threadID); states.removeValue(forKey: threadID)
+      }
+      throw error
+    }
+    if attaching[threadID]?.id == entry.id { attaching.removeValue(forKey: threadID) }
     do {
-      try await task.value
-      guard epoch == generation else { throw CodexBridgeError.disconnected }
-      if attaching[threadID]?.id == id { attaching.removeValue(forKey: threadID) }
-      selections.insert(threadID)
+      try Task.checkCancellation()
+      guard epoch == generation, states[threadID]?.ready == true else { throw CodexBridgeError.disconnected }
+      guard selections[threadID]?.contains(observationID) == true else { throw CancellationError() }
     } catch {
-      if attaching[threadID]?.id == id { attaching.removeValue(forKey: threadID); states.removeValue(forKey: threadID) }
+      detach(threadID: threadID, observationID: observationID)
       throw error
     }
   }
@@ -118,7 +126,7 @@ public actor CodexAppServer {
     try Task.checkCancellation()
     guard epoch == generation else { throw CodexBridgeError.disconnected }
     if states.count >= 9 {
-      guard let idle = states.keys.sorted().first(where: { !selections.contains($0) && !(voice?.threadID == $0 && voice?.phase != .ended) && states[$0]?.view.busy == false && states[$0]?.requests.isEmpty == true }) else { throw CodexBridgeError.busy }
+      guard let idle = states.keys.sorted().first(where: { selections[$0]?.isEmpty != false && !(voice?.threadID == $0 && voice?.phase != .ended) && states[$0]?.view.busy == false && states[$0]?.requests.isEmpty == true }) else { throw CodexBridgeError.busy }
       _ = try await rpc.request("thread/unsubscribe", params: .object(["threadId": .string(idle)]))
       guard epoch == generation else { throw CodexBridgeError.disconnected }
       states.removeValue(forKey: idle); threadWorkspaces.removeValue(forKey: idle)
@@ -164,7 +172,10 @@ public actor CodexAppServer {
       """)])])])
 
   /// Removing a view neither unsubscribes an active task nor interrupts its turn.
-  public func detach(threadID: String) { selections.remove(threadID) }
+  public func detach(threadID: String, observationID: UUID) {
+    selections[threadID]?.remove(observationID)
+    if selections[threadID]?.isEmpty == true { selections.removeValue(forKey: threadID) }
+  }
 
   public func activities(threadIDs: [String]) async throws -> [CodexTaskActivity] {
     guard threadIDs.count <= 8, Set(threadIDs).count == threadIDs.count,
@@ -336,7 +347,8 @@ public actor CodexAppServer {
     voice = .init(id: id, threadID: request.threadID)
     var dispatched = false
     do {
-      try await attach(threadID: request.threadID)
+      try await attach(threadID: request.threadID, observationID: id)
+      defer { detach(threadID: request.threadID, observationID: id) }
       guard let rpc else { throw CodexBridgeError.disconnected }
       let account = try await rpc.request("account/read", params: .object(["refreshToken": .bool(false)]))
       guard account["account"]?["type"] == .string("chatgpt") else { throw CodexBridgeError.signInRequired }

@@ -66,7 +66,7 @@ import NotebookCodex
     if args.count == 3, args[1] == "observe" {
       let bridge = metadata
       do {
-        try await bridge.attach(threadID: args[2])
+        try await bridge.attach(threadID: args[2], observationID: UUID(uuidString: args[2])!)
         let state = try await wait(bridge, threadID: args[2]) { $0.ready }
         try write(state); await bridge.close(); return
       } catch { await bridge.close(); throw error }
@@ -87,7 +87,7 @@ import NotebookCodex
     print("Created disposable task \(task.id)")
     let bridge = metadata
     do {
-      try await bridge.attach(threadID: task.id)
+      try await bridge.attach(threadID: task.id, observationID: UUID(uuidString: task.id)!)
       _ = try await wait(bridge, threadID: task.id) { $0.ready && !$0.busy }
       let clientID = UUID()
       let firstTurn = try await bridge.send(threadID: task.id, clientMessageID: clientID,
@@ -99,7 +99,7 @@ import NotebookCodex
       print("Same-task reply and stable message ID passed")
       let foreign = CodexAppServer(installation: installation)
       do {
-        try await foreign.attach(threadID: task.id)
+        try await foreign.attach(threadID: task.id, observationID: UUID(uuidString: task.id)!)
         await foreign.close(); throw CodexBridgeError.invalidResponse
       } catch CodexBridgeError.externalOwnerUnavailable { await foreign.close() }
       guard await bridge.snapshot(threadID: task.id)?.ready == true else { throw CodexBridgeError.invalidResponse }
@@ -110,7 +110,7 @@ import NotebookCodex
       await bridge.close()
       let history = try await metadata.history(threadID: task.id)
       guard history.messages.filter({ $0.clientID == clientID.uuidString.lowercased() }).count == 1 else { throw CodexBridgeError.invalidResponse }
-      try await bridge.attach(threadID: task.id)
+      try await bridge.attach(threadID: task.id, observationID: UUID(uuidString: task.id)!)
       _ = try await wait(bridge, threadID: task.id) { $0.ready && !$0.busy }
       print("Disconnect and canonical paged history passed")
       let permissionTurn = try await bridge.send(threadID: task.id, clientMessageID: UUID(), text: """

@@ -70,7 +70,7 @@ extension Proof {
     guard account.account != nil, !account.requiresSignIn else { throw CodexBridgeError.signInRequired }
     let task = try await bridge.create(directory: root, title: "GUI-183 isolated standalone proof", workspaceID: UUID()) { _ in }
     do {
-      try await bridge.attach(threadID: task.id)
+      try await bridge.attach(threadID: task.id, observationID: UUID(uuidString: task.id)!)
       _ = try await wait(bridge, threadID: task.id) { $0.ready }
       try await bridge.setAccess(threadID: task.id, mode: .workspace)
       let id = UUID()
@@ -86,12 +86,12 @@ extension Proof {
       let duplicate = try await bridge.send(threadID: task.id, clientMessageID: id, text: "same receipt")
       guard duplicate == turn else { throw CodexBridgeError.invalidResponse }
       let foreign = CodexAppServer(installation: installation, scope: scope)
-      do { try await foreign.attach(threadID: task.id); await foreign.close(); throw CodexBridgeError.invalidResponse }
+      do { try await foreign.attach(threadID: task.id, observationID: UUID(uuidString: task.id)!); await foreign.close(); throw CodexBridgeError.invalidResponse }
       catch CodexBridgeError.externalOwnerUnavailable { await foreign.close() }
-      await bridge.detach(threadID: task.id)
+      await bridge.detach(threadID: task.id, observationID: UUID(uuidString: task.id)!)
       guard await bridge.snapshot(threadID: task.id)?.ready == true else { throw CodexBridgeError.invalidResponse }
       await bridge.close()
-      try await bridge.attach(threadID: task.id)
+      try await bridge.attach(threadID: task.id, observationID: UUID(uuidString: task.id)!)
       let history = try await bridge.history(threadID: task.id)
       guard history.messages.filter({ $0.clientID == id.uuidString.lowercased() }).count == 1 else { throw CodexBridgeError.invalidResponse }
       await bridge.close()
