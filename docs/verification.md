@@ -1,5 +1,14 @@
 # Verification record
 
+## September 24 — GUI-298, удаление оставшегося UI-test runner
+
+В 00:43 UTC удалён только `com.amirtlinov.notebook.uitests.xctrunner`,
+оставшийся после пяти UI-сценариев root21; его принадлежность подтверждена
+командой того прогона и `Applications/project.yml`. Повторная проверка установленных
+приложений подтвердила отсутствие runner (`removed=true`), свидетельство
+`.build/gui298-ui-runner-cleanup-20260924T0043.json`. Рабочие приложения и данные
+не затронуты, исходники приложения остались `93f48885`; новый Xcode-прогон не запускался.
+
 ## September 24 — GUI-295, UIKit-phase drawable experiment rejected
 
 A bounded off-main drawable acquisition was tested with UIKit's event phases
