@@ -994,6 +994,7 @@ final class NotebookAppModel {
   var cloudStatus = NotebookCloudStatus.off
   @ObservationIgnored private var cloudSync: NotebookCloudSync?
   @ObservationIgnored private var sync: NearbySync?
+  @ObservationIgnored private var transportReader: NotebookTransportReader?
   private(set) var connectionState = NotebookConnectionState.waiting
   private(set) var accountConnection: NotebookAccountConnection?
   var workspaceName = "Моё пространство"
@@ -1235,9 +1236,10 @@ final class NotebookAppModel {
   /// The app's one durable transport adapter. Native integration checks use the
   /// same writer, contact boundary and scene publication as an admitted peer.
   func makeTransportStorage() async throws -> NotebookTransportStorage {
-    let writer = persistence, store = store
-    let source = try await writer.submit { [actorID] in try $0.replicationSource(deviceID: actorID) }
-    let reader = NotebookTransportReader(store: store)
+    let source = try await performStoreCommand { [actorID] in try $0.replicationSource(deviceID: actorID) }
+    guard !isClosing else { throw CollaborationError("owner_unavailable", "Notebook завершает работу.") }
+    let reader = transportReader ?? NotebookTransportReader(store: store)
+    transportReader = reader
     return NotebookTransportStorage(
       journalGeneration: source.generation,
       // Offering already committed content is a WAL read, just like its blobs.
@@ -1246,15 +1248,27 @@ final class NotebookAppModel {
       changes: { cursor, limit in
         try await reader.changes(after: cursor, limit: limit)
       },
-      incomingCursor: { peer in try await writer.submit { try $0.admitReplicationSource(peer) } },
-      acknowledgePeer: { peer, cursor in try await writer.submit { try $0.acknowledgePeer(peerID: peer, through: cursor) } },
+      incomingCursor: { [weak self] peer in
+        guard let self else { throw NotebookTransportError.disconnected }
+        return try await self.performStoreCommand { try $0.admitReplicationSource(peer) }
+      },
+      acknowledgePeer: { [weak self] peer, cursor in
+        guard let self else { throw NotebookTransportError.disconnected }
+        try await self.performStoreCommand { try $0.acknowledgePeer(peerID: peer, through: cursor) }
+      },
       // Offered hashes are already committed and immutable. Their bounded WAL
       // snapshot cannot sit behind the next native contact or scene reload.
       readBlobWindow: { requests in
         try await reader.blobs(requests)
       },
-      stageBlobs: { blobs in try await writer.submit { try $0.stageBlobs(blobs) } },
-      prepareIncoming: { delivery, blobs in try await writer.submit { try $0.prepareIncomingBlobs(delivery, staging: blobs) } },
+      stageBlobs: { [weak self] blobs in
+        guard let self else { throw NotebookTransportError.disconnected }
+        try await self.performStoreCommand { try $0.stageBlobs(blobs) }
+      },
+      prepareIncoming: { [weak self] delivery, blobs in
+        guard let self else { throw NotebookTransportError.disconnected }
+        return try await self.performStoreCommand { try $0.prepareIncomingBlobs(delivery, staging: blobs) }
+      },
       applyRemoteChange: { [weak self] delivery in
         guard let self else { throw NotebookTransportError.disconnected }
         return try await self.applyDurableDelivery(delivery)
@@ -5640,6 +5654,8 @@ final class NotebookAppModel {
       if let task = collaborationHistoryTask { await task.value }
       await elementErasureCache.stop()
       await compositionTiles.stop()
+      await transportReader?.close()
+      transportReader = nil
       let saved = await persistence.flush()
       if saved {
         shutdownPhase = .stopped

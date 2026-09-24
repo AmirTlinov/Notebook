@@ -39,16 +39,22 @@ public struct NotebookTransportStorage: Sendable {
 /// Replacing the underlying database requires a new transport, not an offer
 /// from another workspace under the existing peer generation.
 public actor NotebookTransportReader {
-  private let session: NotebookReadSession
+  private var session: NotebookReadSession?
 
   public init(store: NotebookStore) { session = NotebookReadSession(store: store) }
 
+  /// Serialized with reads: terminal close joins the current snapshot and
+  /// releases the idle SQLite handle even when an old adapter is retained.
+  public func close() { session = nil }
+
   public func changes(after cursor: UInt64, limit: Int) throws -> [NotebookDurableChange] {
-    try session.read { try $0.changeJournal(after: cursor, limit: limit) }
+    guard let session else { throw NotebookTransportError.disconnected }
+    return try session.read { try $0.changeJournal(after: cursor, limit: limit) }
   }
 
   public func blobs(_ requests: [NotebookTransportBlobRequest]) throws -> [NotebookTransportBlobChunk] {
-    try session.read { try $0.readBlobWindow(requests) }
+    guard let session else { throw NotebookTransportError.disconnected }
+    return try session.read { try $0.readBlobWindow(requests) }
   }
 }
 
