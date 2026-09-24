@@ -1,5 +1,38 @@
 # Verification record
 
+## September 24 — GUI-295, combined tools/history and rejected presentation variants
+
+After the bounded storage-reader change, the unchanged source
+`93f4888559e653995a00606ce353578a4e5f413efc689b8325e376c7d7bddba4`
+passed **48/48 physical-iPad native tests**, with no skips or runtime warnings:
+`.build/gui295-combined-tools-history/verification.json`. The before/after input
+inventories match. This is isolated optimized Debug, not production Release.
+The selection covers all nine authored tools, partial lasso/move/next cut,
+ordinary tap/object drag, copy/rotation/holes, accepted input and persistence
+fences, actual-window mixed Undo/Redo and held Undo, reload, and rejected erasure
+without rolling back earlier accepted unpublished ink. This broadens the
+functional check of the storage change; it does not claim manual Pencil or
+latency acceptance for all nine tools.
+
+Two presentation alternatives were measured and completely removed:
+
+| Evidence directory in `.build/` | Result | Exact failed boundary |
+| --- | --- | --- |
+| `gui295-demand-direct-presentation` | 10 PASS / 2 FAIL | direct drawable presentation after commit: eraser p95/max 37.154/37.194 ms; pen 40.676/40.716 ms |
+| `gui295-demand-input-pool` | 10 PASS / 2 FAIL | active three-slot pool: pen 13.649/13.669 ms passed, eraser 25.389/25.410 ms failed; 512 KiB resize/admission recovery also failed |
+
+The first experiment used source
+`7cd6d0a1a4080e8eac517d915659b7591f1a783dfecc5a1b8b8a695f0936d8bd`,
+the second
+`361510d915bb9fdff9c243349d98efc3dc3ad3dc516885fc84a7dee1843b8db3`.
+Each has its own matching source inventories, xcresult, timing attachments and
+rejected diff. Both had zero skips/runtime warnings. All five projection tests
+passed in each, but that does not excuse the second experiment's memory-lifecycle
+failure. No extra buffer, acquisition path, experimental test, changed deadline
+or raised memory limit remains. The original two-slot page clock remains the
+only page drawable owner. Production pair 190 was not replaced; the known
+20 ms input/navigation failures and final two-device acceptance remain open.
+
 ## September 24 — GUI-295, запрос immediate presentation не означает его получение
 
 После storage-исправления сняты только диагностические отметки первых 12
