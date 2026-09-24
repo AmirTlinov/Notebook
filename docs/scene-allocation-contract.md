@@ -100,11 +100,18 @@ preserving content and stacking order. Actual exhaustion yields local bounded
 waiting/failure and Retry, never a screenshot pretending to be an interactive button.
 Headless requests prepare sources because they have no mounted input owner.
 
-Visible proven-static SVG uses a temporary snapshot producer and releases WebKit.
-CSS, handlers, external use/image or active/unverified visible content remain
-conservative live input. Passive notebook neighbours share at most two sequential executors;
-the current page's programs retain independent contexts and data stores. This is
-presentation classification, not another SVG renderer.
+Self-contained full-viewport SVG without browser text/layout uses the existing
+bounded SVG-to-PDF kernel and Quartz, publishing through the same raster leases,
+crop/density policy and reduction levels. It allocates no WebKit. Admission is
+conservative: percentage viewport width/height, no root offset, no text, CSS,
+handlers or external resources, and the kernel's existing dimension limits.
+Other proven-static SVG retains browser layout preparation; actual programs keep
+independent live contexts. One immutable-source classification selects the path;
+conversion failure cannot silently switch renderers or substitute fonts.
+Passive notebook neighbours share at most two sequential preparation lanes.
+Their finite native page window also owns addressed reads: withdrawing a slot
+cancels its preparation, and a late response cannot evict a currently needed page.
+A re-entering slot gets a new read after the canceled one drains.
 
 `capturePresented` freezes the actual installed live surface at Send with source,
 state, navigation and visibility guards. `captureCurrent` obtains a later frame

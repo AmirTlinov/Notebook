@@ -11,6 +11,49 @@ import XCTest
   private typealias Scene = NotebookInteractionUXTests.Scene
   private typealias Probe = NotebookSelectionComposition.Probe
 
+  func testDenseVectorSheetsKeepTheirOwnPixelsThroughImmediateReversals() async throws {
+    let model = try await modelWithPages(2), notebook = try XCTUnwrap(model.workspace?.selectedItemID)
+    for index in 0..<2 {
+      await model.prepareNotebookPage(at: index, in: notebook)
+      var page = try XCTUnwrap(model.notebookPage(at: index, in: notebook))
+      let vectors: [AgentElement] = (0..<13).map { number in
+        let strokes = (0..<40).map { "<path d='M0 \($0 * 3)L160 \(120 - $0 * 3)'/>" }.joined()
+        return .init(id: "vector-\(index)-\(number)", kind: .web,
+          frame: NotebookNavigationLoadFixture.frame(number, programs: false), source: "",
+          html: "<svg xmlns='http://www.w3.org/2000/svg' width='100%' height='100%' viewBox='0 0 170 160'><g stroke='black' stroke-width='.2' fill='none'>\(strokes)</g></svg>")
+      }
+      XCTAssertTrue(vectors.allSatisfy(\.usesNativeSVGRaster))
+      let marker = AgentElement(id: "leaf-identity", kind: .graphic,
+        frame: .init(x: 100 + Double(index)*100, y: 1080, width: 60, height: 30), source: "", html: "",
+        graphic: .init(shape: .rectangle, style: .init(fill: .init(red: 0.1, green: 0.5, blue: 1))))
+      XCTAssertTrue(page.replaceElements(vectors + [marker], actor: model.actorID))
+      XCTAssertTrue(page.replaceDrawing(try PageInkDrawing(actions: []).dataRepresentation(), actor: model.actorID))
+      try model.store.savePage(page)
+    }
+    await model.reloadExternalChanges()?.value
+    _ = model.selectNotebookPage(0, notebookID: notebook, expectedRoot: model.notebookPageRoot(notebook)!)
+    let scene = try await mount(model), owner = try pageOwner(scene.window)
+    let deadline = ContinuousClock.now + .seconds(10)
+    while !owner.preparedPageIndices.isSuperset(of: [0, 1]), ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(8)) }
+    XCTAssertTrue(owner.preparedPageIndices.isSuperset(of: [0, 1]))
+    let source = try XCTUnwrap(model.notebookPageRoot(notebook))
+    for target in [1, 0, 1, 0, 1, 0] {
+      XCTAssertTrue(model.notebookPageNavigation.send(.step(target == 1 ? 1 : -1), ownerID: notebook, source: source))
+      let limit = ContinuousClock.now + .seconds(2)
+      while owner.displayedIndex != target, ContinuousClock.now < limit { try await Task.sleep(for: .milliseconds(1)) }
+      XCTAssertEqual(owner.displayedIndex, target)
+      for _ in 0..<4 {
+        let pixels = try NotebookUXObservation.Pixels(window: scene.window)
+        let probes = [0, 1].map { index in
+          (CGPoint(x: 130 + Double(index)*100, y: 1095).applying(scene.pageToWindow),
+            index == target ? NotebookUXObservation.Color.blue : .paper)
+        }
+        XCTAssertTrue(try pixels.matches(probes), "A reverse landing reintroduced the other leaf")
+        try await Task.sleep(for: .milliseconds(4))
+      }
+    }
+  }
+
   func testPageMountsTheFullSizeErasureMaskOnlyWhileItHasLiveCoverage() async throws {
     let model = try await modelWithPages(1)
     var page = try XCTUnwrap(model.activePage)

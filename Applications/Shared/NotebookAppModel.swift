@@ -73,6 +73,13 @@ final class NotebookAppModel {
   func retainNotebookPageWindow(_ indices: Set<Int>, in itemID: UUID, root: String) {
     guard notebookPageRoot(itemID) == root else { return }
     pagePreparationWindows[itemID] = indices.isEmpty ? nil : (root, indices)
+    for (address, task) in pagePreparationTasks where address.itemID == itemID
+      && (address.root != root || !indices.contains(address.index)) { task.cancel() }
+  }
+
+  private func permitsPagePreparation(_ address: PageAddress) -> Bool {
+    guard let window = pagePreparationWindows[address.itemID] else { return true }
+    return window.root == address.root && window.indices.contains(address.index)
   }
 
   func notebookPageCount(_ itemID: UUID) -> Int {
@@ -103,8 +110,18 @@ final class NotebookAppModel {
     guard !isStopped, index >= 0, index < notebookPageCount(itemID), !isItemBeingDeleted(itemID),
       let root = notebookPageRoot(itemID) else { return }
     let address = PageAddress(itemID: itemID, index: index, root: root)
+    guard !Task.isCancelled, permitsPagePreparation(address) else { return }
     if notebookPage(at: index, in: itemID) != nil { return }
-    if let pending = pagePreparationTasks[address] { await pending.value; return }
+    if let pending = pagePreparationTasks[address] {
+      await pending.value
+      // An immediate reversal can demand a slot again while its withdrawn read
+      // is draining. Its new consumer must prepare it, not inherit cancellation.
+      if pending.isCancelled, !Task.isCancelled, notebookPageRoot(itemID) == root,
+        pagePreparationWindows[itemID]?.indices.contains(index) == true {
+        await prepareNotebookPage(at: index, in: itemID)
+      }
+      return
+    }
     // SQLite already reads through one FIFO. Capture the projection only after
     // the previous addressed read publishes, rather than making neighbour reads
     // invalidate and repeat one another's work through the global model epoch.
@@ -116,7 +133,7 @@ final class NotebookAppModel {
         pagePreparationTasks[address] = nil
         if pagePreparationTail?.id == requestID { pagePreparationTail = nil }
       }
-      while !Task.isCancelled, let workspace, let presence, !isItemBeingDeleted(itemID), notebookPageRoot(itemID) == root {
+      while !Task.isCancelled, permitsPagePreparation(address), let workspace, let presence, !isItemBeingDeleted(itemID), notebookPageRoot(itemID) == root {
         let epoch = collaborationReadEpoch
         do {
           let prepared = try await persistence.submit { [actor = actorID] store -> (NotebookPageWindow, WorkspaceIndex, [PencilUndoHistory.Entry], [PencilUndoHistory.Entry]) in
@@ -135,7 +152,7 @@ final class NotebookAppModel {
             }
           }
           guard epoch == collaborationReadEpoch else { continue }
-          guard !Task.isCancelled, !isItemBeingDeleted(itemID), notebookPageRoot(itemID) == root else { return }
+          guard !Task.isCancelled, permitsPagePreparation(address), !isItemBeingDeleted(itemID), notebookPageRoot(itemID) == root else { return }
           self.workspace = prepared.1
           let page = prepared.0.pages[0].document
           pageAddresses[address] = page.id
@@ -145,9 +162,11 @@ final class NotebookAppModel {
           retainPreparedPages(near: address, selectedPageID: presence.notebookPageID)
           return
         } catch NotebookStorageError.transactionConflict {
+          guard !Task.isCancelled, permitsPagePreparation(address) else { return }
           reloadExternalChanges()
           return
         } catch {
+          guard !Task.isCancelled, permitsPagePreparation(address) else { return }
           publicationFailure = error.localizedDescription
           persistenceFailure = error.localizedDescription
           return

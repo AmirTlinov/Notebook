@@ -545,14 +545,26 @@ struct AgentProgramSource: Equatable {
 }
 
 extension AgentElement {
-  /// Only a proven static SVG can retire its WebKit after preparation. Empty
+  /// Only a proven static SVG can avoid a persistent WebKit runtime. Empty
   /// JavaScript alone says nothing about HTML controls, links or inline code.
   /// This is a rendering choice, not an HTML sanitizer or another SVG renderer.
   var requiresLiveRuntime: Bool {
     guard kind == .web else { return false }
-    guard javaScript.isEmpty, css.isEmpty else { return true }
-    return !StaticSVGClassification.shared.isDrawing(html)
+    guard javaScript.isEmpty, css.isEmpty, programPackage == nil else { return true }
+    return StaticSVGClassification.shared.kind(html) == .runtime
   }
+
+  /// A self-contained viewport with outlined glyphs has no browser layout or
+  /// font dependency. Keep text/CSS and intrinsic HTML sizing with WebKit rather
+  /// than silently substituting fonts or changing the picture's placement.
+  var usesNativeSVGRaster: Bool {
+    kind == .web && javaScript.isEmpty && css.isEmpty && programPackage == nil
+      && frame.width > 0 && frame.height > 0 && frame.width <= 16_384 && frame.height <= 16_384
+      && frame.width * frame.height <= 16_777_216
+      && html.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("<svg")
+      && StaticSVGClassification.shared.kind(html) == .vector
+  }
+
 }
 
 /// XML proof belongs to immutable source, not a camera frame. The thread-safe
@@ -562,20 +574,22 @@ private final class StaticSVGClassification: @unchecked Sendable {
   static let shared = StaticSVGClassification()
   private let results = NSCache<NSString, NSNumber>()
   private init() { results.countLimit = 128; results.totalCostLimit = 4 * 1024 * 1024 }
-  func isDrawing(_ html: String) -> Bool {
+  enum Kind: Int { case runtime, browser, vector }
+  func kind(_ html: String) -> Kind {
     let key = html as NSString
-    if let hit = results.object(forKey:key) { return hit.boolValue }
+    if let hit = results.object(forKey:key) { return Kind(rawValue: hit.intValue)! }
     let drawing = StaticSVGContent(), bytes = Data(html.utf8)
     let parser = XMLParser(data:bytes)
     parser.shouldResolveExternalEntities = false; parser.delegate = drawing
-    let value = parser.parse() && drawing.isDrawing
-    results.setObject(NSNumber(value:value),forKey:key,cost:bytes.count)
+    let value: Kind = parser.parse() && drawing.isDrawing ? (drawing.isVectorViewport ? .vector : .browser) : .runtime
+    results.setObject(NSNumber(value:value.rawValue),forKey:key,cost:bytes.count)
     return value
   }
 }
 
 private final class StaticSVGContent: NSObject, XMLParserDelegate {
   private(set) var isDrawing = false
+  private(set) var isVectorViewport = false
   private var depth = 0
   private static let elements: Set<String> = ["svg", "g", "defs", "title", "desc", "path", "rect", "circle",
     "ellipse", "line", "polyline", "polygon", "text", "tspan", "textPath", "linearGradient", "radialGradient",
@@ -590,6 +604,11 @@ private final class StaticSVGContent: NSObject, XMLParserDelegate {
         if key == "href" || key == "xlink:href" { return value.hasPrefix("#") }
         return true
       }) else { isDrawing = false; parser.abortParsing(); return }
+    if depth == 0 {
+      isVectorViewport = attributes["width"] == "100%" && attributes["height"] == "100%"
+        && attributes["x"] == nil && attributes["y"] == nil
+    }
+    if ["text", "tspan", "textPath"].contains(name) { isVectorViewport = false }
     depth += 1
     isDrawing = true
   }

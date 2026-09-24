@@ -6,6 +6,62 @@ import XCTest
 
 final class NotebookPageAddressTests: XCTestCase {
   @MainActor
+  func testAWithdrawnNeighbourReadCannotEvictTheCurrentPageWindow() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
+    retainNotebookUntilTeardown(model, removing: root)
+    await model.start(pageSize: NotebookAppModel.defaultPageSize)
+    let item = try XCTUnwrap(model.workspace?.selectedItemID)
+    for index in 1..<8 {
+      XCTAssertEqual(model.selectNotebookPage(index, notebookID: item, expectedRoot: model.notebookPageRoot(item)!), index)
+    }
+    let saved = await model.finishPendingPersistence(); XCTAssertTrue(saved)
+    let order = try XCTUnwrap(model.notebookPageRoot(item))
+    await model.prepareNotebookPage(at: 0, in: item)
+    _ = model.selectNotebookPage(0, notebookID: item, expectedRoot: order)
+    model.retainNotebookPageWindow([0, 1, 2, 3], in: item, root: order)
+    for index in 1...3 { await model.prepareNotebookPage(at: index, in: item) }
+    let drained = await model.finishPendingPersistence(); XCTAssertTrue(drained)
+    let expected = try (0...3).map { try XCTUnwrap(model.notebookPage(at: $0, in: item)?.id) }
+    XCTAssertNil(model.notebookPage(at: 6, in: item))
+
+    for reenter in [false, true] {
+      // Pause storage, not MainActor. A direction change withdraws the old read
+      // while it waits behind an accepted write; the next swipe can demand it again.
+      let (entered, start) = AsyncStream<Void>.makeStream()
+      let release = DispatchSemaphore(value: 0)
+      let writer = Task {
+        try await model.performStoreCommand { _ in
+          start.yield(); start.finish(); _ = release.wait(timeout: .now() + 5)
+        }
+      }
+      defer { release.signal() }
+      for await _ in entered { break }
+      model.retainNotebookPageWindow([0, 1, 3, 6], in: item, root: order)
+      let obsolete = Task { await model.prepareNotebookPage(at: 6, in: item) }
+      await Task.yield()
+      model.retainNotebookPageWindow([0, 1, 2, 3], in: item, root: order)
+      var renewed: Task<Void, Never>?
+      if reenter {
+        model.retainNotebookPageWindow([0, 1, 3, 6], in: item, root: order)
+        renewed = Task { await model.prepareNotebookPage(at: 6, in: item) }
+        await Task.yield()
+      }
+      release.signal(); try await writer.value; await obsolete.value; await renewed?.value
+      if reenter {
+        XCTAssertNotNil(model.notebookPage(at: 6, in: item), "A renewed consumer cannot inherit the withdrawn read's cancellation")
+        XCTAssertTrue([0, 1, 3, 6].allSatisfy { model.notebookPage(at: $0, in: item) != nil })
+      } else {
+        XCTAssertNil(model.notebookPage(at: 6, in: item), "Withdrawn preparation cannot occupy a live page slot")
+        XCTAssertEqual((0...3).compactMap { model.notebookPage(at: $0, in: item)?.id }, expected,
+          "A completed obsolete read must not remove a sheet already admitted for immediate reverse")
+      }
+      XCTAssertEqual(model.activePage?.id, expected[0])
+      XCTAssertEqual(model.pages.count, 4)
+    }
+  }
+
+  @MainActor
   func testColdNotebookReadsCurrentPaperBeforeUnrequestedPageBodies() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     let store = NotebookStore(root: root), actor = UUID()

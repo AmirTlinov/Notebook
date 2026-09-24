@@ -516,6 +516,10 @@ final class SceneCompositionRenderer {
     try checkPreparation()
     let source: SceneRasterSource = region.map { .agentRegion(element, $0) } ?? .agent(element)
     if let cached = resources.retainRaster(for: source, minimumScale: requestedScale) { return cached }
+    if element.usesNativeSVGRaster {
+      return try await resources.prepareRaster(element, requestedScale: requestedScale, region: region,
+        permitsPreparation: permitsPreparation)
+    }
     if webPreparation == nil {
       webPreparation = try await SceneWebRasterPreparation.create(resources: resources, permitsPreparation: permitsPreparation)
     }

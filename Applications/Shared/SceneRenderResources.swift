@@ -1310,6 +1310,10 @@ final class SceneRenderResources {
     let policy = captureRequest?.policy ?? region.map { AgentSnapshotPolicy.region($0, scale: requestedScale) }
       ?? .exact(scale: requestedScale)
     if let raster = retainRaster(for: policy.rasterSource(for: element), minimumScale: policy.minimumScale(for: element)) { return raster }
+    if element.usesNativeSVGRaster {
+      return try await StaticSVGRaster.prepare(element, resources: self, policy: policy,
+        captureRequest: captureRequest, permitsPreparation: permitsPreparation)
+    }
     let preparation = try await SceneWebRasterPreparation.create(resources: self, executionSource: executionSource,
       permitsPreparation: permitsPreparation)
     defer { preparation.close() }

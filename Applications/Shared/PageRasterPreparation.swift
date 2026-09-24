@@ -93,14 +93,20 @@ final class PageRasterPreparation {
       }
       active[request.id] = (request, workerID)
       do {
-        if executor == nil {
-          executor = try await SceneWebRasterPreparation.create(resources: resources,
-            priority: .visible, permitsPreparation: request.permits)
-          executorCount += 1
+        let raster: RasterLease
+        if request.element.usesNativeSVGRaster {
+          raster = try await resources.prepareRaster(request.element,
+            captureRequest: .init(policy: request.policy), permitsPreparation: request.permits)
+        } else {
+          if executor == nil {
+            executor = try await SceneWebRasterPreparation.create(resources: resources,
+              priority: .visible, permitsPreparation: request.permits)
+            executorCount += 1
+          }
+          raster = try await executor!.prepare(request.element,
+            requestedScale: request.policy.minimumScale(for: request.element),
+            captureRequest: .init(policy: request.policy), programStore: request.store, permitsPreparation: request.permits)
         }
-        let raster = try await executor!.prepare(request.element,
-          requestedScale: request.policy.minimumScale(for: request.element),
-          captureRequest: .init(policy: request.policy), programStore: request.store, permitsPreparation: request.permits)
         if active.removeValue(forKey: request.id) != nil {
           completedCount += 1
           request.completion.resume(returning: raster)
