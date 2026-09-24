@@ -1,0 +1,26 @@
+{
+  "runtimeBaseCommit": "004a18b49aa9baf83f4ba61d1ae5fa55e978d5a2",
+  "sourceSHA256": "0408a836243e8da34e372d295bb99474515e0ca8c88294adb4d204f43eea8655",
+  "patchSHA256": "b3d581d520e6785ae36b5d2a51abf059a39779bc857f20c5bf98a7a665147c58",
+  "platform": "macOS arm64, SwiftPM release, synthetic isolated material",
+  "command": "nice -n 10 swift test -c release --jobs 2 --filter NotebookElementAppearanceTests|NotebookFreehandAppearanceTests|MeasuredFreehandTests|NotebookGraphicMask",
+  "baseline": {
+    "samples": 4096,
+    "milliseconds": 582.841708,
+    "result": "1 FAIL at existing 500 ms threshold",
+    "evidence": ".build/gui295-partial-outline-read-baseline"
+  },
+  "fixed": {
+    "passedTests": 17,
+    "suites": 3,
+    "samples4096Milliseconds": 7.103958,
+    "samples100000Milliseconds": 6.068333,
+    "evidence": ".build/gui295-partial-outline-read-bounds"
+  },
+  "limits": [
+    "Not p95 or physical gesture latency",
+    "Not a remeasurement of the live 5-second read",
+    "Installed pair remains 196 without this candidate",
+    "No Xcode/device was used; another task owns the native slot"
+  ]
+}
