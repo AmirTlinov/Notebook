@@ -3627,6 +3627,8 @@ final class DrawingResponsivenessTests: XCTestCase {
       let identifier = Set(items.allElementsBoundByIndex.map(\.identifier)).subtracting(before).sorted().first
       guard let identifier else { return XCTFail("Созданная доска не опубликована") }
       let portal = app.descendants(matching: .any).matching(identifier: identifier).firstMatch
+      let emptyFolder = XCTAttachment(screenshot: app.screenshot())
+      emptyFolder.name = "new-empty-folder"; emptyFolder.lifetime = .keepAlways; add(emptyFolder)
       portal.doubleTap()
       XCTAssertTrue(app.buttons["leave-nested-board"].waitForExistence(timeout: 3))
       XCTAssertTrue(app.buttons["create-workspace-item"].exists)
@@ -3641,7 +3643,7 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertTrue(app.buttons["leave-nested-board"].waitForNonExistence(timeout: 2))
     XCTAssertTrue(app.buttons["create-workspace-item"].exists)
     let portalProof = XCTAttachment(screenshot: app.screenshot())
-    portalProof.name = "nested-board-live-portal"
+    portalProof.name = "folder-with-nested-content-after-back"
     portalProof.lifetime = .keepAlways
     add(portalProof)
   }

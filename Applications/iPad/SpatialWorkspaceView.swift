@@ -1353,6 +1353,7 @@ struct SpatialWorkspaceView: View {
 }
 
 private struct WorkspaceSceneItem: View {
+  @Environment(\.sceneComposition) private var composition
   @Environment(NotebookAppModel.self) private var model
   let rendered: RenderedWorkspaceItem
   let document: DocumentDocument?
@@ -1398,7 +1399,8 @@ private struct WorkspaceSceneItem: View {
         onLiftChanged(rendered.id, lifted)
       }, onDrop: { onDrop(rendered.id, $0, $1) }) {
       ZStack {
-      WorkspaceItemShadow(geometry: rendered.geometry,
+      WorkspaceItemShadow(geometry: rendered.geometry, kind: rendered.item.kind,
+        hasContents: composition.cohort?.liveData.nonemptyBoardIDs.contains(rendered.id) == true,
         lifted: isLifted, visibility: restingShadowVisibility)
       if rendered.item.kind == .board {
         itemCover

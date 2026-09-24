@@ -6,6 +6,56 @@ import XCTest
 
 final class WorkspaceAppearanceTests: XCTestCase {
   @MainActor
+  func testFolderHasOneTabNoSpineAndOnlyTheNonemptyVariantShowsASheet() throws {
+    let item = WorkspaceItem.board(id: UUID(uuidString: "7E7A4000-0000-4000-8000-000000000002")!, title: "Исследования")
+    let geometry = WorkspaceItemGeometry.notebook
+    let empty = WorkspaceCoverRaster.material(item: item, geometry: geometry)
+    let filled = WorkspaceCoverRaster.material(item: item, geometry: geometry, hasContents: true)
+    let renamed = WorkspaceItem.board(id: item.id, title: "Другое название")
+    XCTAssertTrue(empty === WorkspaceCoverRaster.material(item: renamed, geometry: geometry))
+    XCTAssertTrue(filled === WorkspaceCoverRaster.material(item: renamed, geometry: geometry, hasContents: true))
+    XCTAssertFalse(empty === filled)
+    XCTAssertFalse(empty === WorkspaceCoverRaster.material(
+      item: .notebook(id: item.id, title: item.title, pageIDs: [UUID()]), geometry: geometry))
+    let outline = WorkspaceCoverOutline(kind: .board, cornerRadius: geometry.cornerRadius)
+      .path(in: CGRect(x: 40, y: 70, width: geometry.width, height: geometry.height))
+    XCTAssertTrue(outline.contains(.init(x: 40 + geometry.width * 0.2, y: 80)))
+    XCTAssertFalse(outline.contains(.init(x: 40 + geometry.width * 0.8, y: 80)))
+
+    let filledOutline = WorkspaceCoverOutline(kind: .board, cornerRadius: geometry.cornerRadius, hasContents: true)
+      .path(in: CGRect(x: 40, y: 70, width: geometry.width, height: geometry.height))
+    XCTAssertTrue(filledOutline.contains(.init(x: 40 + geometry.width * 0.91, y: 70 + geometry.height * 0.06)),
+      "The raised right corner must not be clipped back into the folder rim")
+
+    let scale = 320.0 / geometry.width, height = geometry.height * scale
+    let proof = HStack(spacing: 52) {
+      ForEach([false, true], id: \.self) { hasContents in
+        ZStack {
+          WorkspaceCoverSurface(item: item, geometry: geometry, hasContents: hasContents)
+          WorkspaceCoverTitle(item: item, geometry: geometry)
+        }
+        .background { WorkspaceItemShadow(geometry: geometry, kind: .board, hasContents: hasContents) }
+        .scaleEffect(scale).frame(width: 320, height: height)
+      }
+    }.padding(48).background(.white)
+    let size = CGSize(width: 788, height: height + 96)
+    let image = try attachRendering(proof, size: size, name: "folders-empty-and-with-content")
+    func color(_ x: Double, _ y: Double) throws -> NSColor {
+      try XCTUnwrap(image.colorAt(x: Int(x * Double(image.pixelsWide) / size.width),
+        y: Int(y * Double(image.pixelsHigh) / size.height))?.usingColorSpace(.sRGB))
+    }
+    let emptyRim = try color(48 + 200, 48 + height * 0.115)
+    let sheet = try color(48 + 372 + 200, 48 + height * 0.115)
+    XCTAssertGreaterThan(sheet.redComponent + sheet.greenComponent + sheet.blueComponent,
+      emptyRim.redComponent + emptyRim.greenComponent + emptyRim.blueComponent + 0.12)
+    // A binding would leave a dark vertical stripe at the notebook's 4.2% seam.
+    let edge = try color(48 + 320 * 0.042, 48 + height * 0.65)
+    let face = try color(48 + 320 * 0.10, 48 + height * 0.65)
+    XCTAssertEqual(edge.redComponent, face.redComponent, accuracy: 0.02)
+    XCTAssertEqual(edge.greenComponent, face.greenComponent, accuracy: 0.02)
+  }
+
+  @MainActor
   func testCameraAndTitleChangesReuseMaterialAndShadowPixels() throws {
     let item = WorkspaceItem.notebook(id: UUID(), title: "First title", pageIDs: [UUID()])
     let geometry = WorkspaceItemGeometry.notebook

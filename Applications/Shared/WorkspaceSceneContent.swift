@@ -58,8 +58,8 @@ enum WorkspaceSceneProjection {
 
 }
 
-/// A portal is a read-only projection of the child board, not a decorative
-/// cover. It uses the same camera that becomes active at handoff. Recursive
+/// During explicit entry/return, the folder hands off a read-only child-board
+/// projection with the active camera. A resting folder hides it. Recursive
 /// drawing follows a pixel threshold and a finite frame budget; the durable
 /// hierarchy itself has no depth bound.
 struct BoardPortalPreview: View {
@@ -139,7 +139,8 @@ struct BoardPortalPreview: View {
               isPortalProjection: true, portalPixelScale: pixelScale * camera.scale / fill,
               remainingPortalPasses: remainingPortalPasses - 1)
               .frame(width: item.geometry.width, height: item.geometry.height)
-              .background { WorkspaceItemShadow(geometry: item.geometry) }
+              .background { WorkspaceItemShadow(geometry: item.geometry, kind: item.item.kind,
+                hasContents: cohort.liveData.nonemptyBoardIDs.contains(item.id)) }
               .scaleEffect(camera.scale).position(x: screen.x, y: screen.y)
               .zIndex(cohort.plan.rank(id: .item(item.id), in: plane) ?? 0)
           }
@@ -188,7 +189,7 @@ struct WorkspaceItemCoverView: View {
       ?? model.boardHierarchy?.board(boardID)?.graphicGraph()
     ZStack(alignment: .topLeading) {
       coverBackground.zIndex(-2)
-      WorkspaceCoverTitle(item: item, geometry: geometry).zIndex(-1)
+      WorkspaceCoverTitle(item: item, geometry: geometry).opacity(portalOverlayOpacity).zIndex(-1)
       if let cohort, let plane, let presentation = cohort.plan.presentations[plane] {
         ForEach(SceneCompositionTileBandView.bands(in: cohort, plane: plane, layer: .elements, presence: presentation)) { band in
           band.zIndex(Double(band.rank)).opacity(portalOverlayOpacity)
@@ -293,10 +294,8 @@ struct WorkspaceItemCoverView: View {
       height: geometry.height
     )
     .clipShape(
-      RoundedRectangle(
-        cornerRadius: portalCornerRadius,
-        style: .continuous
-      )
+      WorkspaceCoverOutline(kind: item.kind == .board && portalOpenProgress > 0 ? .notebook : item.kind,
+        cornerRadius: portalCornerRadius, hasContents: hasContents)
     )
     .overlay {
       if model.isItemBeingDeleted(item.id), !isPortalProjection {
@@ -306,12 +305,11 @@ struct WorkspaceItemCoverView: View {
       }
     }
     .contentShape(
-      RoundedRectangle(
-        cornerRadius: geometry.cornerRadius,
-        style: .continuous
-      )
+      WorkspaceCoverOutline(kind: item.kind, cornerRadius: geometry.cornerRadius, hasContents: hasContents)
     )
   }
+
+  private var hasContents: Bool { cohort?.liveData.nonemptyBoardIDs.contains(item.id) == true }
 
   private var portalOverlayOpacity: Double {
     item.kind == .board ? max(0, 1 - portalOpenProgress) : 1
@@ -326,31 +324,15 @@ struct WorkspaceItemCoverView: View {
 
   @ViewBuilder
   private var coverBackground: some View {
-    if item.kind == .board {
-      if WorkspaceSceneProjection.showsPortal(
-        pixelScale: portalPixelScale, remainingPasses: remainingPortalPasses
-      ) {
-        AnyView(BoardPortalPreview(
-          boardID: item.id,
-          spatialInkSurfaces: spatialInkSurfaces,
-          pixelScale: portalPixelScale,
-          remainingPortalPasses: remainingPortalPasses,
-          transitionViewport: portalViewport
-        ))
-      } else {
-        Color(red: 0.9, green: 0.93, blue: 0.925)
-      }
-      RoundedRectangle(
-        cornerRadius: portalCornerRadius,
-        style: .continuous
-      )
-      .stroke(
-        Color.black.opacity(0.16 * max(0, 1 - portalOpenProgress)),
-        lineWidth: 2
-      )
-    } else {
-      WorkspaceCoverSurface(item: item, geometry: geometry)
+    if item.kind == .board, portalOpenProgress > 0,
+      WorkspaceSceneProjection.showsPortal(pixelScale: portalPixelScale, remainingPasses: remainingPortalPasses) {
+      AnyView(BoardPortalPreview(boardID: item.id, spatialInkSurfaces: spatialInkSurfaces,
+        pixelScale: portalPixelScale, remainingPortalPasses: remainingPortalPasses,
+        transitionViewport: portalViewport))
     }
+    WorkspaceCoverSurface(item: item, geometry: geometry,
+      hasContents: hasContents)
+      .opacity(portalOverlayOpacity)
   }
 
   private var ownerIsAvailable: Bool {

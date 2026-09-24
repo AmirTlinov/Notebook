@@ -50,13 +50,13 @@ struct WorkspaceCoverMaterial {
   }
 
   var color: Color {
-    guard kind == .notebook else { return Color(red: 0.995, green: 0.992, blue: 0.982) }
+    guard kind != .document else { return Color(red: 0.995, green: 0.992, blue: 0.982) }
     let (r, g, b) = palette.rgb
     return Color(red: r, green: g, blue: b)
   }
 
   var backside: CoverBacksideColor {
-    guard kind == .notebook else { return .document }
+    guard kind != .document else { return .document }
     let (r, g, b) = palette.rgb
     return CoverBacksideColor(
       red: r * 0.22 + 0.975 * 0.78,
@@ -69,7 +69,7 @@ struct WorkspaceCoverMaterial {
 /// Grain is generated once at a fixed physical density. The same tiled image
 /// enters a resting cover, its frozen curl raster and every portal projection.
 @MainActor
-private enum CoverPaperGrain {
+enum CoverPaperGrain {
   static let image: Image = {
     let side = 256
     var pixels = [UInt8](repeating: 0, count: side * side * 4)
@@ -98,35 +98,40 @@ private enum CoverPaperGrain {
 private struct WorkspaceCoverPaint: View {
   let item: WorkspaceItem
   let geometry: WorkspaceItemGeometry
+  let hasContents: Bool
 
   var body: some View {
     let material = WorkspaceCoverMaterial(item: item)
     let shape = RoundedRectangle(cornerRadius: geometry.cornerRadius, style: .continuous)
-    ZStack(alignment: .topLeading) {
-      shape.fill(material.color)
-      shape.fill(LinearGradient(
-        colors: [.white.opacity(0.10), .clear, .black.opacity(0.035)],
-        startPoint: .topLeading, endPoint: .bottomTrailing
-      ))
-      shape.fill(ImagePaint(image: CoverPaperGrain.image, scale: 1))
-        .opacity(item.kind == .notebook ? 0.20 : 0.12)
-      shape.strokeBorder(LinearGradient(
-        colors: [.white.opacity(0.65), .white.opacity(0.12), .black.opacity(0.22)],
-        startPoint: .topLeading, endPoint: .bottomTrailing
-      ), lineWidth: 1.5)
+    if item.kind == .board {
+      WorkspaceFolderPaint(material: material, geometry: geometry, hasContents: hasContents)
+    } else {
+      ZStack(alignment: .topLeading) {
+        shape.fill(material.color)
+        shape.fill(LinearGradient(
+          colors: [.white.opacity(0.10), .clear, .black.opacity(0.035)],
+          startPoint: .topLeading, endPoint: .bottomTrailing
+        ))
+        shape.fill(ImagePaint(image: CoverPaperGrain.image, scale: 1))
+          .opacity(item.kind == .notebook ? 0.20 : 0.12)
+        shape.strokeBorder(LinearGradient(
+          colors: [.white.opacity(0.65), .white.opacity(0.12), .black.opacity(0.22)],
+          startPoint: .topLeading, endPoint: .bottomTrailing
+        ), lineWidth: 1.5)
 
-      if item.kind == .notebook {
-        binding
-      } else {
-        LinearGradient(colors: [.black.opacity(0.055), .clear],
-          startPoint: .leading, endPoint: .trailing)
-          .frame(width: geometry.width * 0.018, height: geometry.height - 4)
-          .offset(x: 2, y: 2)
+        if item.kind == .notebook {
+          binding
+        } else {
+          LinearGradient(colors: [.black.opacity(0.055), .clear],
+            startPoint: .leading, endPoint: .trailing)
+            .frame(width: geometry.width * 0.018, height: geometry.height - 4)
+            .offset(x: 2, y: 2)
+        }
       }
+      .frame(width: geometry.width, height: geometry.height)
+      .clipShape(shape)
+      .accessibilityHidden(true)
     }
-    .frame(width: geometry.width, height: geometry.height)
-    .clipShape(shape)
-    .accessibilityHidden(true)
   }
 
   private var binding: some View {
@@ -155,11 +160,28 @@ struct WorkspaceCoverTitle: View {
   let geometry: WorkspaceItemGeometry
 
   private var ink: Color {
-    item.kind == .notebook ? NotebookCoverPalette(itemID: item.id).ink : Color(red: 0.16, green: 0.19, blue: 0.17)
+    item.kind != .document ? NotebookCoverPalette(itemID: item.id).ink : Color(red: 0.16, green: 0.19, blue: 0.17)
   }
 
   var body: some View {
-    if item.kind == .notebook {
+    if item.kind == .board {
+      ZStack(alignment: .topLeading) {
+        VStack(alignment: .leading, spacing: geometry.width * 0.055) {
+          title(alignment: .leading)
+          Rectangle().fill(ink.opacity(0.65))
+            .frame(width: geometry.width * 0.080, height: 1.5)
+        }
+        .frame(width: geometry.width * 0.78, height: geometry.height * 0.45, alignment: .topLeading)
+        .offset(x: geometry.width * 0.12, y: geometry.height * 0.217)
+        VStack(alignment: .leading, spacing: geometry.width * 0.030) {
+          Rectangle().fill(ink.opacity(0.28)).frame(height: 1)
+          imprint("ПАПКА")
+        }
+        .frame(width: geometry.width * 0.78, alignment: .leading)
+        .offset(x: geometry.width * 0.12, y: geometry.height * 0.865)
+      }
+      .frame(width: geometry.width, height: geometry.height, alignment: .topLeading)
+    } else if item.kind == .notebook {
       ZStack(alignment: .topLeading) {
         VStack(alignment: .leading, spacing: geometry.width * 0.040) {
           title(alignment: .leading)
@@ -209,7 +231,7 @@ struct WorkspaceCoverTitle: View {
 
   private func title(alignment: TextAlignment) -> some View {
     Text(item.title)
-      .font(.system(size: geometry.width * (item.kind == .notebook ? 0.082 : 0.071), weight: .regular, design: .serif))
+      .font(.system(size: geometry.width * (item.kind == .board ? 0.088 : item.kind == .notebook ? 0.082 : 0.071), weight: .regular, design: .serif))
       .foregroundStyle(ink)
       .multilineTextAlignment(alignment)
       .lineSpacing(geometry.width * 0.008)
@@ -229,7 +251,8 @@ enum WorkspaceCoverRaster {
     let height: Double
     let radius: Double
     let palette: Int
-    let notebook: Bool
+    let kind: String
+    let hasContents: Bool
     let lifted: Bool
   }
 
@@ -237,24 +260,24 @@ enum WorkspaceCoverRaster {
   private static var materials: [Key: CGImage] = [:]
   private static var shadows: [Key: CGImage] = [:]
 
-  static func material(item: WorkspaceItem, geometry: WorkspaceItemGeometry) -> CGImage {
+  static func material(item: WorkspaceItem, geometry: WorkspaceItemGeometry, hasContents: Bool = false) -> CGImage {
     let key = Key(width: geometry.width, height: geometry.height,
       radius: geometry.cornerRadius,
-      palette: item.kind == .notebook ? NotebookCoverPalette(itemID: item.id).rawValue : 0,
-      notebook: item.kind == .notebook, lifted: false)
+      palette: item.kind != .document ? NotebookCoverPalette(itemID: item.id).rawValue : 0,
+      kind: item.kind.rawValue, hasContents: item.kind == .board && hasContents, lifted: false)
     if let image = materials[key] { return image }
-    let renderer = ImageRenderer(content: WorkspaceCoverPaint(item: item, geometry: geometry))
+    let renderer = ImageRenderer(content: WorkspaceCoverPaint(item: item, geometry: geometry, hasContents: hasContents))
     renderer.scale = 1
     let image = renderer.cgImage!
     materials[key] = image
     return image
   }
 
-  static func shadow(geometry: WorkspaceItemGeometry, lifted: Bool) -> CGImage {
+  static func shadow(geometry: WorkspaceItemGeometry, lifted: Bool, kind: WorkspaceItemKind = .notebook, hasContents: Bool = false) -> CGImage {
     let key = Key(width: geometry.width, height: geometry.height,
-      radius: geometry.cornerRadius, palette: 0, notebook: false, lifted: lifted)
+      radius: geometry.cornerRadius, palette: 0, kind: kind.rawValue, hasContents: kind == .board && hasContents, lifted: lifted)
     if let image = shadows[key] { return image }
-    let shape = RoundedRectangle(cornerRadius: geometry.cornerRadius, style: .continuous)
+    let shape = WorkspaceCoverOutline(kind: kind, cornerRadius: geometry.cornerRadius, hasContents: hasContents)
     let renderer = ImageRenderer(content:
       shape.fill(.black)
         .frame(width: geometry.width, height: geometry.height)
@@ -275,9 +298,10 @@ enum WorkspaceCoverRaster {
 struct WorkspaceCoverSurface: View {
   let item: WorkspaceItem
   let geometry: WorkspaceItemGeometry
+  var hasContents = false
 
   var body: some View {
-    Image(decorative: WorkspaceCoverRaster.material(item: item, geometry: geometry), scale: 1)
+    Image(decorative: WorkspaceCoverRaster.material(item: item, geometry: geometry, hasContents: hasContents), scale: 1)
       .resizable()
       .frame(width: geometry.width, height: geometry.height)
       .accessibilityHidden(true)
@@ -288,11 +312,13 @@ struct WorkspaceCoverSurface: View {
 /// Its fixed local rectangle follows the same camera transform as the item.
 struct WorkspaceItemShadow: View {
   let geometry: WorkspaceItemGeometry
+  var kind: WorkspaceItemKind = .notebook
+  var hasContents = false
   var lifted = false
   var visibility = 1.0
 
   var body: some View {
-    Image(decorative: WorkspaceCoverRaster.shadow(geometry: geometry, lifted: lifted), scale: 1)
+    Image(decorative: WorkspaceCoverRaster.shadow(geometry: geometry, lifted: lifted, kind: kind, hasContents: hasContents), scale: 1)
       .resizable()
       .frame(width: geometry.width + 2 * WorkspaceCoverRaster.shadowPadding,
         height: geometry.height + 2 * WorkspaceCoverRaster.shadowPadding)

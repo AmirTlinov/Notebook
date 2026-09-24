@@ -596,6 +596,33 @@ extension NotebookStore {
     }
   }
 
+  /// Complete membership, independent of the camera's bounded scene window.
+  /// Stop at the first member or editable contact; never load child documents
+  /// or collect the board's entire ink journal to draw a folder cover.
+  public func boardHasContent(_ id: UUID) throws -> Bool {
+    try readTransaction { _ in
+      try requireLiveBoard(id)
+      let key = id.uuidString.lowercased()
+      let address = "board.json#/boards/@" + key
+      if try !currentSQL!.rows("SELECT 1 FROM item_owners WHERE board_id=? UNION ALL SELECT 1 FROM records WHERE parent=? AND collection='board/elements' LIMIT 1",
+        [.text(key), .text(address)]).isEmpty { return true }
+      var after = ""
+      while let row = try currentSQL!.rows("""
+        SELECT s.address FROM ink_surfaces s CROSS JOIN records r ON r.address=s.address
+        CROSS JOIN blobs b ON b.hash=r.hash
+        WHERE s.kind='board' AND s.owner_id=? AND s.address>?
+          AND json_extract(CAST(b.data AS TEXT),'$.value.tool')='pen'
+          AND json_extract(CAST(b.data AS TEXT),'$.value.isActive')=1
+        ORDER BY s.address LIMIT 1
+        """, [.text(key), .text(after)]).first {
+        after = row[0].text!
+        let action = try readSpatialInkAction(after)
+        if action.spans.contains(where: { $0.surface == .board(id) && $0.samples.hasVisibleInk }) { return true }
+      }
+      return false
+    }
+  }
+
   func causalFragments(parent: String, collection: String, memberPrefixes: [String], includeKeys: [String]) throws -> [NotebookStoredFragment] {
     guard !memberPrefixes.isEmpty || !includeKeys.isEmpty else { return [] }
     var rows: [NotebookStoredFragment] = []

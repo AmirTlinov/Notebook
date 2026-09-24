@@ -2,6 +2,12 @@
 
 ## Physical owners and coherent publication
 
+Nested boards rest as paper folders, without a book spine or child thumbnails.
+A single neutral sheet marks any contained item, element or editable board ink;
+the addressed membership read uses the source cut, not the visible camera window.
+Native and published covers share the same cached material and tab outline. The
+child-board projection remains only for explicit entry/return, not overview zoom.
+
 Board ink reserves backing for the current viewport and full portal in the same
 orientation, not a maximum-side square for every possible rotation. Rotation
 privately prepares new dimensions and installs atomically; old bounds/pixels remain
