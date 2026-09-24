@@ -383,6 +383,11 @@ final class IPadPageTurnController: UIViewController {
   func sheetController(_ sheetController: IPadSheetCurlController, willTurnTo target: UIViewController) -> Bool {
     guard canBeginNavigation(), let target = target as? IPadIndexedPageController,
       controllers[target.pageIndex] === target, readyPages[target.pageIndex] == true else { return false }
+    // This human gesture replaces any earlier queued command. In particular,
+    // a completed arrow's deferred drain must not replay its old target after
+    // an immediate reverse swipe. Commands arriving after admission may queue.
+    transitionRevision &+= 1
+    sequentialTarget = nil; pendingExternalIndex = nil; coldGestureTarget = nil
     anticipatedIndex = target.pageIndex
     retainNeededControllers()
     setTransitioning(true)
@@ -396,10 +401,9 @@ final class IPadPageTurnController: UIViewController {
       let shown = sheetController.page as? IPadIndexedPageController,
       controllers[shown.pageIndex] === shown else { return }
     if completed {
-      let source = displayedIndex, target = shown.pageIndex
-      selection.recordLocalLanding(at: target)
+      let target = shown.pageIndex
+      recordLanding(at: target)
       if allowsTrailingPageCreation, target == pageCount - 1, pageCount < Int.max { pageCount += 1 }
-      lastTurnDirection = target == source ? nil : (target > source ? 1 : -1)
     } else if previous.pageIndex != displayedIndex { selection.reset(to: previous.pageIndex) }
     anticipatedIndex = nil
     setTransitioning(false)
@@ -686,9 +690,7 @@ final class IPadPageTurnController: UIViewController {
     preparation: PageTurnActivity.PreparationDemand?) {
     observe("page_turn_external_completion", target: target, reason: finished ? "finished" : "interrupted")
     if finished {
-      let source = displayedIndex
-      selection.recordLocalLanding(at: target)
-      lastTurnDirection = target > source ? 1 : -1
+      recordLanding(at: target)
     }
     anticipatedIndex = nil
     pageTurnActivity.didInstall(finished ? preparation : nil)
@@ -710,6 +712,16 @@ final class IPadPageTurnController: UIViewController {
       guard let self, transitionRevision == completedRevision else { return }
       runPendingExternalSelection()
     }
+  }
+
+  private func recordLanding(at target: Int) {
+    let source = displayedIndex
+    selection.recordLocalLanding(at: target)
+    lastTurnDirection = target == source ? nil : (target > source ? 1 : -1)
+    // Consume the fulfilled intent before publishing selection or enabling a
+    // new contact. A later run-loop task is too late to own this boundary.
+    if sequentialTarget == target { sequentialTarget = nil }
+    if pendingExternalIndex == target { pendingExternalIndex = nil }
   }
 
   private func runPendingExternalSelection() {

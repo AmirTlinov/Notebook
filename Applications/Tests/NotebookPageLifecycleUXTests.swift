@@ -55,7 +55,30 @@ import XCTest
     XCTAssertTrue(owner.preparedPageIndices.isSuperset(of: [0, 1]))
     let source = try XCTUnwrap(model.notebookPageRoot(notebook))
     for target in [1, 0, 1, 0, 1, 0] {
-      XCTAssertTrue(model.notebookPageNavigation.send(.step(target == 1 ? 1 : -1), ownerID: notebook, source: source))
+      if target == 1 {
+        XCTAssertTrue(model.notebookPageNavigation.send(.step(1), ownerID: notebook, source: source))
+      } else {
+        // Exercise the interactive action on the full scene, not a second
+        // commanded animation. Hardware touch arbitration is checked separately.
+        let native = owner.sheetController, pan = NotebookCurlPan()
+        let curl = try XCTUnwrap(native.view.subviews.compactMap { $0 as? SheetCurlMetalView }.first)
+        let presented = curl.onFramePresented
+        var endpointPresented = false
+        curl.onFramePresented = { image, progress, timestamp in
+          if progress == 0, timestamp > 0 { endpointPresented = true }
+          presented?(image, progress, timestamp)
+        }
+        pan.phase = .began; pan.offset.x = 20
+        XCTAssertTrue(native.gestureRecognizerShouldBegin(pan))
+        native.perform(NSSelectorFromString("panned:"), with: pan)
+        pan.phase = .changed; pan.offset.x = native.view.bounds.width + 10
+        native.perform(NSSelectorFromString("panned:"), with: pan)
+        let heldLimit = ContinuousClock.now + .seconds(2)
+        while !endpointPresented, ContinuousClock.now < heldLimit { try await Task.sleep(for: .milliseconds(2)) }
+        XCTAssertTrue(endpointPresented)
+        pan.phase = .ended
+        native.perform(NSSelectorFromString("panned:"), with: pan)
+      }
       let limit = ContinuousClock.now + .seconds(2)
       while owner.displayedIndex != target, ContinuousClock.now < limit { try await Task.sleep(for: .milliseconds(1)) }
       XCTAssertEqual(owner.displayedIndex, target)

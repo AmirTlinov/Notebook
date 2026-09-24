@@ -23,7 +23,7 @@ final class IPadSheetCurlController: UIViewController, UIGestureRecognizerDelega
     let completion: ((Bool) -> Void)?
     let gesture: Bool
     var progress: Double = 0
-    var firstPresented = false
+    var presentation: (progress: Double, timestamp: TimeInterval)?
     var animation: (start: Double, from: Double, to: Double, duration: Double)?
     var terminal: Double?
   }
@@ -124,16 +124,30 @@ final class IPadSheetCurlController: UIViewController, UIGestureRecognizerDelega
 
   private func presented(_ image: CGImage, progress: Double, at timestamp: TimeInterval) {
     guard timestamp.isFinite, timestamp > 0, var motion, motion.image === image else { return }
-    if !motion.firstPresented {
-      motion.firstPresented = true
-      self.motion = motion; poster.isHidden = true; poster.image = nil
-    }
+    if let previous = motion.presentation, timestamp <= previous.timestamp { return }
     let shown = motion.direction == .forward ? progress : 1-progress
-    if let terminal = motion.terminal, abs(shown-terminal) < 0.000_001 { finish(completed: terminal == 1, presented: true) }
+    let first = motion.presentation == nil
+    motion.presentation = (shown, timestamp); self.motion = motion
+    if first { poster.isHidden = true; poster.image = nil }
+    finishPresentedEndpoint()
+  }
+
+  private func finishPresentedEndpoint() {
+    guard let motion, let terminal = motion.terminal, motion.presentation?.progress == terminal else { return }
+    finish(completed: terminal == 1, presented: true)
   }
 
   private func animate(to target: Double, startedAt: Double = CACurrentMediaTime()) {
     guard var motion else { return }
+    // A held finger can already have presented the exact endpoint. Releasing
+    // it accepts that receipt; waiting for a duplicate frame would deadlock
+    // because the renderer correctly does not redraw an unchanged image.
+    if motion.progress == target {
+      motion.animation = nil; motion.terminal = target; self.motion = motion
+      curl.animatesContinuously = false
+      finishPresentedEndpoint()
+      return
+    }
     motion.animation = (startedAt, motion.progress, target, max(0.1, 0.32*abs(target-motion.progress)))
     motion.terminal = nil; self.motion = motion
     curl.animatesContinuously = true
@@ -148,8 +162,8 @@ final class IPadSheetCurlController: UIViewController, UIGestureRecognizerDelega
     let fraction = min(1, max(0, (timestamp-animation.start)/animation.duration))
     let eased = fraction*fraction*(3-2*fraction)
     if fraction == 1 { self.motion?.terminal = animation.to }
-    render(animation.from+(animation.to-animation.from)*eased)
-    if fraction == 1 { curl.animatesContinuously = false }
+    render(fraction == 1 ? animation.to : animation.from+(animation.to-animation.from)*eased)
+    if fraction == 1 { curl.animatesContinuously = false; finishPresentedEndpoint() }
   }
 
   private func finish(completed: Bool, notify: Bool = true, presented: Bool = false) {
@@ -173,7 +187,8 @@ final class IPadSheetCurlController: UIViewController, UIGestureRecognizerDelega
 
   func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
     panDirection = nil
-    guard motion == nil, let page else { return false }
+    guard let pan = gestureRecognizer as? UIPanGestureRecognizer,
+      motion == nil, let page else { return false }
     let translation = pan.translation(in: view)
     guard abs(translation.x) > abs(translation.y) else { return false }
     let direction: Direction = translation.x < 0 ? .forward : .reverse

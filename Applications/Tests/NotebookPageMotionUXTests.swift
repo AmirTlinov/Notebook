@@ -6,6 +6,135 @@ import XCTest
 /// Observe real native curl images, independently of the run-loop latency
 /// check: screenshot work must not be credited as display frames or FPS.
 @MainActor final class NotebookPageMotionUXTests: XCTestCase {
+  func testInteractiveReverseDoesNotResurrectSourceAfterTheTargetAppears() async throws {
+    let controller = IPadPageTurnController(), commands = NotebookPageNavigation(), owner = UUID()
+    var selected = 0
+    func configure() {
+      controller.update(ownerID: owner, sequenceRevision: "interactive-reverse", pageCount: 3, selectedIndex: selected,
+        navigationIsEnabled: true, pageIsInteractive: true, canBeginNavigation: { true },
+        page: { index, _, ready in
+          ready(true)
+          return AnyView(index == 0 ? Color(red: 1, green: 0, blue: 0) : Color(red: 0, green: 0, blue: 1))
+        }, onCommit: { index, _ in selected = index; configure() }, onTransitioningChange: { _ in }, notebookNavigation: commands)
+    }
+    let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+    let previous = scene.windows.first(where: \.isKeyWindow), window = UIWindow(windowScene: scene)
+    window.frame = .init(x: 0, y: 0, width: 834, height: 1194)
+    configure(); window.rootViewController = controller; window.makeKeyAndVisible()
+    defer { window.isHidden = true; window.rootViewController = nil; previous?.makeKey() }
+    try await Task.sleep(for: .milliseconds(100))
+    let native = controller.sheetController
+    let scripted = NotebookCurlPan()
+    for turn in 0..<3 {
+      XCTAssertTrue(commands.send(.step(1), ownerID: owner, source: "interactive-reverse"))
+      let forwardLimit = CACurrentMediaTime() + 2
+      while selected != 1 && CACurrentMediaTime() < forwardLimit { try await Task.sleep(for: .milliseconds(2)) }
+      XCTAssertEqual(selected, 1)
+      scripted.phase = .began; scripted.offset = .init(x: 20, y: 0)
+      guard native.gestureRecognizerShouldBegin(scripted) else {
+        return XCTFail("The prepared neighbour must admit this reverse gesture")
+      }
+      native.perform(NSSelectorFromString("panned:"), with: scripted)
+      var sawTarget = false, returned = false, samples: [String] = []
+      for frame in 0..<55 {
+        if frame < 24 {
+          scripted.phase = .changed
+          scripted.offset = .init(x: CGFloat(frame + 1) * (turn == 1 ? 20 : 40), y: 0)
+          native.perform(NSSelectorFromString("panned:"), with: scripted)
+        } else if frame == 24 {
+          scripted.phase = .ended; scripted.speed = .init(x: 600, y: 0)
+          native.perform(NSSelectorFromString("panned:"), with: scripted)
+        }
+        try await Task.sleep(for: .milliseconds(8))
+        let format = UIGraphicsImageRendererFormat(); format.scale = 0.25
+        let image = UIGraphicsImageRenderer(size: window.bounds.size, format: format).image { _ in
+          window.drawHierarchy(in: window.bounds, afterScreenUpdates: false)
+        }
+        let cg = try XCTUnwrap(image.cgImage)
+        let point = try XCTUnwrap(cg.cropping(to: .init(x: cg.width / 2, y: cg.height / 2, width: 1, height: 1)))
+        var rgba = [UInt8](repeating: 0, count: 4)
+        rgba.withUnsafeMutableBytes { bytes in
+          CGContext(data: bytes.baseAddress, width: 1, height: 1, bitsPerComponent: 8, bytesPerRow: 4,
+            space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+            .draw(point, in: .init(x: 0, y: 0, width: 1, height: 1))
+        }
+        let target = rgba[0] > 220 && rgba[2] < 40, source = rgba[2] > 220 && rgba[0] < 40
+        if sawTarget && source { returned = true }
+        sawTarget = sawTarget || target
+        samples.append("\(frame): \(rgba), selected=\(selected)")
+        let picture = XCTAttachment(image: image); picture.name = "Interactive reverse \(turn) frame \(frame)"
+        picture.lifetime = .keepAlways; add(picture)
+      }
+      XCTAssertTrue(sawTarget)
+      XCTAssertFalse(returned, "The target reached the centre, then the source flashed over it")
+      XCTAssertEqual(selected, 0)
+      let note = XCTAttachment(string: samples.joined(separator: "\n")); note.name = "Interactive reverse samples \(turn)"
+      note.lifetime = .keepAlways; add(note)
+    }
+  }
+
+  func testInteractiveEndpointUsesItsActualPresentationBeforeOrAfterLift() async throws {
+    let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+    let previous = scene.windows.first(where: \.isKeyWindow), window = UIWindow(windowScene: scene)
+    window.frame = .init(x: 0, y: 0, width: 834, height: 1194)
+    defer { window.isHidden = true; window.rootViewController = nil; previous?.makeKey() }
+    for direction in [IPadSheetCurlController.Direction.forward, .reverse] {
+      for completes in [false, true] {
+        for holdsEndpoint in [false, true] {
+          let native = IPadSheetCurlController(), source = UIViewController(), target = UIViewController()
+          source.view.backgroundColor = .blue; target.view.backgroundColor = .red
+          native.neighbor = { _, _ in target }; native.willTurn = { _ in true }
+          var completions: [Bool] = [], endpointPresented = false
+          native.didTurn = { previous, completed in
+            XCTAssertTrue(previous === source); completions.append(completed)
+          }
+          window.rootViewController = native; window.makeKeyAndVisible()
+          native.show(source, direction: direction, animated: false)
+          native.prepare(target)
+          try await Task.sleep(for: .milliseconds(30))
+          let curl = try XCTUnwrap(native.view.subviews.compactMap { $0 as? SheetCurlMetalView }.first)
+          let owner = curl.onFramePresented
+          let endpoint = direction == .forward ? (completes ? 1.0 : 0.0) : (completes ? 0.0 : 1.0)
+          curl.onFramePresented = { image, progress, timestamp in
+            if timestamp > 0, progress == endpoint { endpointPresented = true }
+            owner?(image, progress, timestamp)
+          }
+          let pan = NotebookCurlPan(), sign: CGFloat = direction == .forward ? -1 : 1
+          pan.phase = .began; pan.offset.x = sign * 20
+          XCTAssertTrue(native.gestureRecognizerShouldBegin(pan))
+          native.perform(NSSelectorFromString("panned:"), with: pan)
+          pan.phase = .changed; pan.offset.x = completes ? sign * 900 : 0
+          native.perform(NSSelectorFromString("panned:"), with: pan)
+          if holdsEndpoint {
+            let limit = CACurrentMediaTime() + 2
+            while !endpointPresented, CACurrentMediaTime() < limit { try await Task.sleep(for: .milliseconds(2)) }
+            XCTAssertTrue(endpointPresented)
+          }
+          XCTAssertTrue(completions.isEmpty, "Presented pixels cannot commit an unreleased gesture")
+          pan.phase = completes ? .ended : .cancelled
+          native.perform(NSSelectorFromString("panned:"), with: pan)
+          if holdsEndpoint {
+            XCTAssertEqual(completions, [completes], "Lift must accept the already displayed endpoint without waiting for a duplicate frame")
+          } else {
+            XCTAssertFalse(endpointPresented)
+            XCTAssertTrue(completions.isEmpty, "Lift without a displayed endpoint is not presentation")
+          }
+          let limit = CACurrentMediaTime() + 2
+          while completions.isEmpty, CACurrentMediaTime() < limit { try await Task.sleep(for: .milliseconds(2)) }
+          XCTAssertTrue(endpointPresented)
+          XCTAssertEqual(completions, [completes])
+          XCTAssertTrue(native.page === (completes ? target : source))
+          pan.phase = .began; pan.offset.x = sign * 20
+          XCTAssertTrue(native.gestureRecognizerShouldBegin(pan), "Completion/cancellation must release the next gesture")
+          let count = curl.submittedFrameCount
+          try await Task.sleep(for: .milliseconds(30))
+          XCTAssertEqual(completions, [completes], "Late display callbacks cannot finish the retired gesture twice")
+          XCTAssertEqual(curl.submittedFrameCount, count, "An accepted endpoint must retire its display clock")
+        }
+      }
+    }
+  }
+
   func testCurlConfiguresTheActualDrawableLayerBeforeItsFirstDisplayUpdate() throws {
     let curl = SheetCurlMetalView(frame: .init(x: 0, y: 0, width: 300, height: 300))
     let layer = try XCTUnwrap(curl.layer as? CAMetalLayer)
@@ -177,4 +306,16 @@ import XCTest
     }
     return (0..<160).filter { x in (0..<3).allSatisfy { rgba[x*4+$0] < 220 } }.count
   }
+}
+
+/// Drives the ordinary pan action, not the command-only animation path. UIKit
+/// touch arbitration and capture time are deliberately not claimed as hardware
+/// gesture/FPS evidence by this diagnostic.
+final class NotebookCurlPan: UIPanGestureRecognizer {
+  var phase: UIGestureRecognizer.State = .possible
+  var offset = CGPoint.zero
+  var speed = CGPoint.zero
+  override var state: UIGestureRecognizer.State { get { phase } set { phase = newValue } }
+  override func translation(in view: UIView?) -> CGPoint { offset }
+  override func velocity(in view: UIView?) -> CGPoint { speed }
 }
