@@ -70,8 +70,9 @@ struct SceneCompositionLiveData: Sendable {
 
 /// An addressed reader borrows at most one heavy physical source at a time.
 /// It never reconstructs the archive from the model's bounded display projection.
-/// Each SQL read checks the content cursor inside its read transaction; a changed
-/// revision cancels the entire unpublished cohort rather than mixing its tiles.
+/// Each SQL read checks its source inside the transaction. Only proven delivery
+/// receipt changes may cross the cut; changed material cancels the unpublished
+/// cohort rather than mixing its tiles.
 actor SceneCompositionSource {
   struct ElementPaint: Sendable {
     let element: SpatialElement
@@ -81,6 +82,7 @@ actor SceneCompositionSource {
   }
 
   let revision: UInt64
+  private var validatedRevision: UInt64
   let workspaceID: UUID
   let groupPoses:[SceneCompositionPlane:[String:NotebookElementPlacement.Source]]
   private enum Origin: Sendable {
@@ -99,10 +101,10 @@ actor SceneCompositionSource {
 
   init(store: NotebookStore, revision: UInt64, workspaceID: UUID,
     groupPoses:[SceneCompositionPlane:[String:NotebookElementPlacement.Source]] = [:]) {
-    origin = .sql(store); reader = NotebookReadSession(store: store); self.revision = revision; self.workspaceID = workspaceID;self.groupPoses=groupPoses.filter { !$0.value.isEmpty }
+    origin = .sql(store); reader = NotebookReadSession(store: store); self.revision = revision; validatedRevision = revision; self.workspaceID = workspaceID;self.groupPoses=groupPoses.filter { !$0.value.isEmpty }
   }
   init(index: WorkspaceSceneIndex, hierarchy: BoardHierarchy, journal: SpatialInkJournal, revision: UInt64 = 0) {
-    origin = .values(index, hierarchy, journal); reader = nil; self.revision = revision; workspaceID = index.generationID;groupPoses=[:]
+    origin = .values(index, hierarchy, journal); reader = nil; self.revision = revision; validatedRevision = revision; workspaceID = index.generationID;groupPoses=[:]
   }
 
   func programStore() -> NotebookStore? { if case .sql(let store) = origin { store } else { nil } }
@@ -116,7 +118,13 @@ actor SceneCompositionSource {
     guard let reader else { preconditionFailure("SQL composition has one reader") }
     return try reader.read { store in
       let header = try store.workspaceHeader()
-      guard header.cursor == revision, header.workspaceID == workspaceID else { throw NotebookStorageError.transactionConflict }
+      guard header.workspaceID == workspaceID else { throw NotebookStorageError.transactionConflict }
+      if header.cursor != validatedRevision {
+        guard try store.sceneSourceIsUnchanged(from: validatedRevision, through: header.cursor) else {
+          throw NotebookStorageError.transactionConflict
+        }
+        validatedRevision = header.cursor
+      }
       return try read(store)
     }
   }

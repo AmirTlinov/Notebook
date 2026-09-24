@@ -1339,6 +1339,53 @@ final class SceneCompositionTests: XCTestCase {
   }
 
   @MainActor
+  func testDeliveryReceiptsKeepNestedPaintReadsButNeverAdmitChangedMaterialOrWorkspace() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("composition-receipts-\(UUID())")
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = NotebookStore(root: root), actor = UUID()
+    let initial = try store.initializeWorkspace(actor: actor, pageSize: .init(width: 834, height: 1194))
+    let target = CollaborationTarget(kind: .board, id: initial.rootBoardID)
+    let action = try store.applyCollaborationAction(.init(summary: "Visible source", expected: [
+      .init(target: target, revision: store.targetContentRevision(target: target))], operations: [
+        .init(kind: .insertElement, target: target, id: "receipt-source", values: [
+          "kind": .string("graphic"), "source": .string(""), "worldOrigin": try .encode(WorldPoint.zero),
+          "frame": try .encode(PageRect(x: 0, y: 0, width: 80, height: 60)),
+          "graphic": try .encode(NotebookGraphic(shape: .rectangle))])]), actor: actor)
+    let header = try store.workspaceHeader()
+    let source = SceneCompositionSource(store: store, revision: header.cursor, workspaceID: header.workspaceID)
+    let originalRead = try await source.readElementForPaint("receipt-source", boardID: target.id)
+    let original = try XCTUnwrap(originalRead)
+    XCTAssertNotNil(original.layout, "A graphic uses its relational layout, not a separate element placement")
+    try store.acknowledgeReceivedActions(deviceID: UUID())
+    XCTAssertGreaterThan(try store.currentChangeCursor(), header.cursor)
+    let received = try await source.readElementForPaint("receipt-source", boardID: target.id)
+    XCTAssertEqual(received?.element, original.element)
+    XCTAssertEqual(received?.layout, original.layout)
+    XCTAssertEqual(received?.erasures, original.erasures)
+    var receipt = try XCTUnwrap(store.deviceActionReceipts(actionIDs: [action.id]).first)
+    receipt.shown = receipt.revisions // Source-admission control, not a physical display assertion.
+    _ = try store.saveDeviceActionReceipt(receipt)
+    let shown = try await source.readElementForPaint("receipt-source", boardID: target.id)
+    XCTAssertEqual(shown?.element, original.element)
+    XCTAssertEqual(shown?.layout, original.layout)
+    XCTAssertEqual(shown?.placement, original.placement)
+    let foreign = SceneCompositionSource(store: store, revision: try store.currentChangeCursor(), workspaceID: UUID())
+    do { try await foreign.validate(); XCTFail("Receipt tolerance cannot admit another workspace") }
+    catch NotebookStorageError.transactionConflict { }
+    let current = try store.loadBoard(items: store.loadIndex().items)
+    var changed = current, moved = original.element
+    XCTAssertTrue(moved.update(frame: .init(x: 200, y: 0, width: 80, height: 60), actor: actor))
+    XCTAssertTrue(changed.upsertElement(moved, in: target.id, expected: original.element.stamp, actor: actor))
+    _ = try store.saveBoardEdits(before: current, after: changed)
+    receipt.displayComplete = true
+    _ = try store.saveDeviceActionReceipt(receipt)
+    do {
+      _ = try await source.readElementForPaint("receipt-source", boardID: target.id)
+      XCTFail("An admitted receipt cannot hide a later source edit")
+    } catch NotebookStorageError.transactionConflict { }
+  }
+
+  @MainActor
   func testForeignRevisionIsRejectedBeforeAnyRasterAllocation() async throws {
     let fixture = Fixture(count: 0)
     let resources = SceneRenderResources()

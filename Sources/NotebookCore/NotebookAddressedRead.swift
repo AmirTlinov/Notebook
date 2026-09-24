@@ -449,6 +449,23 @@ extension NotebookStore {
     }
   }
 
+  /// Delivery receipts advance the shared journal but cannot change any paint
+  /// source. Prove that narrow exception from the committed address index in
+  /// this read cut. Unknown or large intervals require a fresh scene; never
+  /// scan an unbounded history or infer safety from the latest receipt alone.
+  public func sceneSourceIsUnchanged(from previous: UInt64, through current: UInt64) throws -> Bool {
+    guard previous <= current, current <= UInt64(Int64.max) else { return false }
+    return try readTransaction { _ in
+      guard current <= (try currentChangeCursor()) else { return false }
+      if previous == current { return true }
+      guard previous >= (try deliveryFormatFloor(database: currentSQL!)) else { return false }
+      let rows = try currentSQL!.rows("SELECT address FROM change_records WHERE sequence>? AND sequence<=? LIMIT 65",
+        [.integer(Int64(previous)), .integer(Int64(current))])
+      return !rows.isEmpty && rows.count <= 64
+        && rows.allSatisfy { $0[0].text?.hasPrefix("collaboration/delivery/") == true }
+    }
+  }
+
   public func readScenePaintOrder(boardID: UUID, coverID: UUID? = nil, bounds: WorkspaceSpatialBounds, after: NotebookScenePaintCursor? = nil, limit: Int = 32,
     groupPoses:[String:NotebookElementPlacement.Source] = [:]) throws -> NotebookScenePaintPage {
     guard (1...32).contains(limit) else { throw NotebookStorageError.limitExceeded("paint_page") }
@@ -458,7 +475,10 @@ extension NotebookStore {
       let target=coverID.map { CollaborationTarget(kind:.cover,id:$0,boardID:boardID) } ?? .init(kind:.board,id:boardID)
       let poses=try checkedGroupPoses(groupPoses,target:target)
       let revision = try currentChangeCursor(), hash = try collaborationHash(["bounds": try JSONValue.encode(bounds), "coverID": coverID.map { .string($0.uuidString.lowercased()) } ?? .null, "groupPoses":try .encode(poses)])
-      if let after, after.revision != revision || after.boardID != boardID || after.boundsHash != hash { throw NotebookStorageError.transactionConflict }
+      if let after {
+        guard after.boardID == boardID, after.boundsHash == hash,
+          try sceneSourceIsUnchanged(from: after.revision, through: revision) else { throw NotebookStorageError.transactionConflict }
+      }
       let rows = try spatialRows(boardID: boardID, coverID: coverID, bounds: bounds, limit: limit + 1, after: after,groupPoses:poses), included = Array(rows.prefix(limit))
       func number(_ value: NotebookSQLValue) -> Double { if case .real(let number) = value { return number }; return Double(value.integer ?? 0) }
       let entries = try included.map { row -> WorkspaceSpatialEntry in
