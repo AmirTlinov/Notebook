@@ -75,6 +75,18 @@ Narrow layouts use another row or an accessible processor icon instead of hiding
 voice actions. Stop replaces send during a turn; the plus menu offers explicit steer
 or send-after-reply. It does not create a second stop owner.
 
+On iPad, New Chat opens a local draft immediately, retaining its text and
+attachments; it performs no remote creation. Sending from the catalogue starts
+a projectless draft rather than sending to the previously selected, hidden chat.
+Only the first Send saves a creation job and its frozen first message atomically.
+The latter is local outbox metadata, not a new transport command. Receiving a
+confirmed creation atomically releases one ordinary send to its actual thread ID,
+using the saved message ID, attention and attachments. A restart, duplicate receipt
+or later selection cannot duplicate or redirect it. Unknown creation outcomes stay
+visible without retry; rejected/explicitly abandoned creations can return their
+message to the editor. A creation receipt selects its chat only while that pending
+draft is still selected.
+
 ## History and quiet updates
 
 One `NotebookChatController.messages` projection merges native IDs. Older

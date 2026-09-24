@@ -39,7 +39,10 @@ import SwiftUI
       try equal(model.deviceRouteTitle(peer), NearbySync.Route.direct.title)
       chat.expanded = true
       let priorJobs = Set(chat.jobs.map(\.id))
-      await chat.create()
+      guard chat.beginDraft(project: chat.selectedProject),
+        await chat.sendMessage(to: chat.messageDestination, text: "Isolated Notebook acceptance. Reply only READY; do not use tools.", context: "") else {
+        throw NotebookPersistenceQueue.Failure(message: "Could not save the first message")
+      }
       func createdThread() -> String? {
         for job in chat.jobs where !priorJobs.contains(job.id) {
           if case .create = job.input.action, case .created(let task) = job.result { return task.id }
@@ -50,11 +53,11 @@ import SwiftUI
       let thread = try unwrap(createdThread())
       recordedThread = thread
       try record("task-created", thread: thread)
-      try await wait(60) { chat.conversation?.threadID == thread && chat.conversation?.access?.available.contains(.workspace) == true }
+      try await wait(60) { chat.conversation?.threadID == thread && chat.conversation?.busy == false && chat.conversation?.access?.available.contains(.workspace) == true }
       await chat.setAccess(.workspace, thread: thread)
       try await wait(30) { chat.jobs.contains { $0.input.action == .setAccess(threadID: thread, mode: .workspace) && $0.state == .accepted } }
       try record("sending-isolated-check", thread: thread)
-      let sent = await chat.sendMessage(threadID: thread, text: """
+      let sent = await chat.sendMessage(to: .thread(thread), text: """
         This is an isolated acceptance project and a fresh private Notebook workspace. Do not access any other project.
         Create \(fileName) containing exactly GUI-183 plus a newline. Run /usr/bin/python3 -c 'from pathlib import Path; assert Path("\(fileName)").read_text() == "GUI-183\\n"; print("GUI-183-CHECK-PASSED")'.
         Then use Notebook MCP notebook_execute to read nb.help('operation/createDocument'), read fresh nb.board({}) basis and create one document titled \(documentTitle) containing the actual check result. Finish with GUI-183-CHECK-PASSED.

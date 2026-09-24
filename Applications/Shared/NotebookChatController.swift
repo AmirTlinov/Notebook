@@ -33,7 +33,29 @@ final class NotebookChatController {
     if expanded { markRepliesRead(); synchronizeVisible() }
     else { activities = [:]; nextConversation = .now }
   } }
-  var browsesChats = false { didSet { if browsesChats != oldValue { synchronizeVisible(); dictation.environmentChanged() } } }
+  var browsesChats = true { didSet {
+    if browsesChats != oldValue {
+      if !browsesChats { restoreCreatedConversation() }
+      synchronizeVisible(); dictation.environmentChanged(); persistPanel()
+    }
+  } }
+  private(set) var creationID: UUID?
+  private(set) var firstMessages: [UUID: NotebookChatFirstMessage] = [:]
+  private var draftID = UUID()
+  enum MessageDestination {
+    case thread(String)
+    case newChat(UUID, CodexProject?)
+    var threadID: String? { if case .thread(let id) = self { id } else { nil } }
+  }
+  var messageDestination: MessageDestination {
+    if let threadID, !browsesChats { return .thread(threadID) }
+    return .newChat(draftID, browsesChats ? nil : selectedProject)
+  }
+  var canSendDraft: Bool {
+    !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !dictation.busy && !saving && !switchingComputer
+      && (browsesChats || (creationID == nil && (threadID == nil || !continuationUnavailable)))
+      && (!voice.capturing || (!browsesChats && threadID != nil))
+  }
   private(set) var browserMode = BrowserMode.chats
   private(set) var expandedProjects = Set<String>()
   private(set) var catalogues: [CatalogueScope: CatalogueWindow] = [:]
@@ -98,6 +120,7 @@ final class NotebookChatController {
   @ObservationIgnored private var nextConversation = ContinuousClock.now
   @ObservationIgnored private var offeredJobs = Set<UUID>()
   @ObservationIgnored private var savingInput: NotebookChatInput?
+  @ObservationIgnored private var savingFirstMessage: NotebookChatFirstMessage?
 
   init(persistence: NotebookPersistenceQueue, author: UUID, dictationCapture: (any NotebookDictationCapture)? = nil, preferences: UserDefaults = .standard, send: @escaping (NotebookChatEnvelope, UUID) -> Void) {
     self.persistence = persistence; self.author = author; self.send = send
@@ -115,6 +138,7 @@ final class NotebookChatController {
       let author = author
       let state = try await persistence.submit { store in try store.prepareChatComputers(author: author); return try store.chatPanel(author: author) }
       threadID = state.threadID; draft = state.draft; attachments = state.attachments ?? []; readPosition = state.readPosition; peer = state.sidecarID
+      creationID = state.creationID; browsesChats = state.browsesChats ?? (threadID == nil && creationID == nil)
       dictationReceipt = state.dictationReceipt
       let recordingDirectory = try await persistence.submit { $0.root.appendingPathComponent("runtime/dictation/" + author.uuidString, isDirectory: true) }
       do { try dictation.restore(directory: recordingDirectory, inserted: state.dictationReceipt) }
@@ -122,6 +146,8 @@ final class NotebookChatController {
       try await refreshJobs()
       try await files.start()
       loaded = true
+      discardUncommittedCreation()
+      restoreCreatedConversation()
       ticker = Task { [weak self, wake] in
         while !Task.isCancelled { self?.refreshCompanionReplies(); wake.continuation.yield(()); do { try await Task.sleep(for: .milliseconds(600)) } catch { break } }
       }
@@ -246,8 +272,11 @@ final class NotebookChatController {
       conversation = nil; messages = []; historyCursor = nil; historyLoaded = false; historyBoundary = nil; projects = []; catalogues = [:]; activities = [:]
       projectCursor = nil; projectPages = 1; nextProjectPage = false; offeredJobs.removeAll(); selectedTask = nil; expandedProjects = []; browserMode = .chats
       conversationSubscription = nil; nextConversation = .now; continuationUnavailable = false
-      browsesChats = threadID == nil
+      creationID = restored.panel.creationID; draftID = UUID(); browsesChats = restored.panel.browsesChats ?? (threadID == nil && creationID == nil)
       jobs = restored.jobs
+      try await refreshJobs()
+      discardUncommittedCreation()
+      restoreCreatedConversation()
       await files.installWindow(restored.window, document: restored.document)
       connected = onlineComputers.contains(id); error = nil
       catalogueProjects(); catalogue(); wake.continuation.yield(())
@@ -360,7 +389,7 @@ final class NotebookChatController {
     if now >= nextCatchUp { catchUpTranscript() }
     guard expanded else { return }
     if nextProjectPage || now >= nextProjects { catalogueProjects() }
-    if threadID == nil || browsesChats {
+    if browsesChats {
       if browserMode == .chats {
         let window = catalogues[.chats]
         if window == nil || window?.needsNext == true || now >= window!.nextRead { catalogue() }
@@ -390,7 +419,7 @@ final class NotebookChatController {
     return projects.first { $0.roots.contains(task.cwd) } ?? (selectedProject?.roots.contains(task.cwd) == true ? selectedProject : nil)
   }
   var visibleTasks: [CodexTask] {
-    guard threadID == nil || browsesChats else { return selectedTask.map { [$0] } ?? tasks.filter { $0.id == threadID } }
+    guard browsesChats else { return selectedTask.map { [$0] } ?? tasks.filter { $0.id == threadID } }
     guard browserMode == .projects else { return tasks }
     var seen = Set<String>()
     return projects.filter { expandedProjects.contains($0.id) }.flatMap { catalogues[.project($0.id)]?.tasks ?? [] }.filter { seen.insert($0.id).inserted }
@@ -405,6 +434,7 @@ final class NotebookChatController {
     guard dictation.allowsThread(task.id) || task.id == threadID else { error = "Завершите диктовку или удалите запись перед выбором другого чата."; return }
     guard !voice.capturing || voice.state?.threadID == task.id else { error = "Микрофон относится к «\(voice.taskTitle)». Завершите разговор перед выбором другой задачи."; return }
     if task.id == threadID { browsesChats = false; return }
+    creationID = nil; draftID = UUID()
     transcriptGeneration = UUID(); catchUpRead?.cancel(); catchUpRead = nil; catchUpBoundary = nil
     nextConversation = .now; conversationSubscription = nil
     selectedTask = task; files.chooseProject(project(for: task))
@@ -428,15 +458,17 @@ final class NotebookChatController {
     guard edit.isValid else { return false }
     return await submit(.updateProject(edit))
   }
-  func create() async {
+  @discardableResult func beginDraft(project: CodexProject?) -> Bool {
+    guard !saving, !switchingComputer else { return false }
     dictation.suspendWaiting()
-    guard !dictation.busy else { error = "Завершите диктовку перед созданием другого чата."; return }
-    guard !voice.capturing else { error = "Завершите разговор с «\(voice.taskTitle)» перед созданием другой задачи."; return }
-    // Selection changes only when Codex acknowledges the new task. Set the
-    // pending presentation before suspension so a fast receipt cannot be
-    // overwritten by the local save completing afterwards.
-    browsesChats = true
-    if await submit(.create(title: "Занятие в Notebook", project: selectedProject)) { catalogue() }
+    guard !dictation.busy else { error = "Завершите диктовку перед созданием другого чата."; return false }
+    guard !voice.capturing else { error = "Завершите разговор с «\(voice.taskTitle)» перед созданием другой задачи."; return false }
+    transcriptGeneration = UUID(); catchUpRead?.cancel(); catchUpRead = nil; catchUpBoundary = nil
+    conversationSubscription = nil; selectedTask = nil; creationID = nil; draftID = UUID()
+    threadID = nil; conversation = nil; messages = []; readPosition = nil; companionReplies = []; revealedMessageID = nil
+    historyCursor = nil; historyLoaded = false; historyBoundary = nil; loadingHistory = false; continuationUnavailable = false
+    files.chooseProject(project); browsesChats = false; expanded = true; error = nil; persistPanel()
+    return true
   }
   func attach(_ value: CodexInputAttachment) {
     guard !switchingComputer, value.isValid, attachments.count < 16, !attachments.contains(where: { $0.id == value.id }) else { return }
@@ -491,8 +523,30 @@ final class NotebookChatController {
     }
   }
 
-  func sendMessage(threadID submittedThread: String, text: String, context: String, attentionContextID: UUID? = nil, steeringTurnID: String? = nil, attachments submittedAttachments: [CodexInputAttachment] = [], dictationID: UUID? = nil) async -> Bool {
+  func restoreFailedCreation() {
+    guard let creationID, let job = jobs.first(where: { $0.id == creationID }), job.isTerminal, job.state != .accepted,
+      let first = firstMessages[creationID], case .create(_, let project) = job.input.action,
+      draft.isEmpty, attachments.isEmpty, beginDraft(project: project) else { return }
+    attachments = first.attachments ?? []; draft = first.text
+  }
+
+  func sendMessage(to destination: MessageDestination, text: String, context: String, attentionContextID: UUID? = nil, steeringTurnID: String? = nil, attachments submittedAttachments: [CodexInputAttachment] = [], dictationID: UUID? = nil) async -> Bool {
     guard !dictation.busy || dictationID == dictation.pending?.id && dictationID != nil else { return false }
+    if case .newChat(let generation, let project) = destination {
+      guard steeringTurnID == nil, dictationID == nil, !voice.capturing, !saving else { return false }
+      let first = savingFirstMessage ?? NotebookChatFirstMessage(text: text, context: context,
+        attentionContextID: attentionContextID, attachments: submittedAttachments.isEmpty ? nil : submittedAttachments)
+      guard first.text == text, first.context == context, first.attentionContextID == attentionContextID,
+        (first.attachments ?? []) == submittedAttachments else { return false }
+      let id = savingInput?.id ?? UUID(), computer = peer
+      if draftID == generation { creationID = id; browsesChats = false; persistPanel() }
+      let saved = await submit(.create(title: "Занятие в Notebook", project: project), firstMessage: first, messageID: id)
+      if saved, computer == peer, draftID == generation, draft == text {
+        let sent = Set(submittedAttachments.map(\.id)); attachments.removeAll { sent.contains($0.id) }; draft = ""
+      } else if !saved, creationID == id { creationID = nil; persistPanel() }
+      return saved
+    }
+    guard case .thread(let submittedThread) = destination else { return false }
     guard submittedThread != threadID || (!continuationUnavailable && !browsesChats) else { return false }
     let computer = peer
     let action: NotebookChatAction = steeringTurnID.map { .steer(threadID: submittedThread, turnID: $0, text: text, context: context) } ?? .send(threadID: submittedThread, text: text, context: context)
@@ -524,7 +578,7 @@ final class NotebookChatController {
     }
   }
 
-  private func submit(_ action: NotebookChatAction, attentionContextID: UUID? = nil, attachments: [CodexInputAttachment]? = nil, messageID: UUID? = nil) async -> Bool {
+  private func submit(_ action: NotebookChatAction, attentionContextID: UUID? = nil, attachments: [CodexInputAttachment]? = nil, firstMessage: NotebookChatFirstMessage? = nil, messageID: UUID? = nil) async -> Bool {
     guard loaded, !stopped, !saving, !switchingComputer else { return false }
     saving = true; defer { saving = false }
     let computer = peer
@@ -544,33 +598,54 @@ final class NotebookChatController {
         }
       } catch { self.error = error.localizedDescription; return false }
     }
-    if let savingInput, savingInput.action != action || savingInput.attentionContextID != attentionContextID || savingInput.attachments != attachments || (messageID != nil && savingInput.id != messageID) {
+    if let savingInput, savingInput.action != action || savingInput.attentionContextID != attentionContextID || savingInput.attachments != attachments || savingFirstMessage != firstMessage || (messageID != nil && savingInput.id != messageID) {
       error = "Сначала завершите сохранение предыдущего сообщения."; return false
     }
     let input = savingInput ?? NotebookChatInput(id: controlID ?? UUID(), author: author, action: action, attentionContextID: attentionContextID, attachments: attachments)
-    savingInput = input
+    savingInput = input; savingFirstMessage = firstMessage
     do {
-      _ = try await persistence.submit { try $0.saveChatSubmission(input, to: computer) }
-      try await refreshJobs(); savingInput = nil; error = nil
+      _ = try await persistence.submit { try $0.saveChatSubmission(input, to: computer, firstMessage: firstMessage) }
+      try await refreshJobs(); savingInput = nil; savingFirstMessage = nil; error = nil
       if action.isInteractiveControl, connected, computer == peer,
         let reply = try? await directQuery(.job(input)) { try await accept(reply, for: .job(input), computer: computer) }
       return true
     } catch {
       // A lost local commit acknowledgement also keeps the same message ID.
-      if let recovered = try? await persistence.submit({ try $0.chatJob(input.id) }), recovered.input == input {
-        try? await refreshJobs(); savingInput = nil; self.error = nil; return true
+      if let recovered = try? await persistence.submit({ try $0.chatJob(input.id) }), recovered.input == input,
+        (try? await persistence.submit({ try $0.chatFirstMessage(input.id) })) == firstMessage {
+        try? await refreshJobs(); savingInput = nil; savingFirstMessage = nil; self.error = nil; return true
       }
       self.error = error.localizedDescription; return false
     }
   }
   private func refreshJobs() async throws {
     let author = author, computer = peer
-    let values = try await persistence.submit { try $0.routedChatJobs(author: author, computer: computer) }
-    guard peer == computer else { return }; jobs = values
+    let values = try await persistence.submit { store in
+      let jobs = try store.routedChatJobs(author: author, computer: computer)
+      var first: [UUID: NotebookChatFirstMessage] = [:]
+      for job in jobs {
+        if case .create = job.input.action, let message = try store.chatFirstMessage(job.id) { first[job.id] = message }
+      }
+      return (jobs, first)
+    }
+    guard peer == computer else { return }; jobs = values.0; firstMessages = values.1
+  }
+  private func restoreCreatedConversation() {
+    if !browsesChats, let creationID, case .created(let task) = jobs.first(where: { $0.id == creationID })?.result { bindCreatedConversation(task) }
+  }
+  private func discardUncommittedCreation() {
+    // The UI may have saved its pending selection before the outbox transaction
+    // began. On restart that is still an editable draft, never a stuck request.
+    if let creationID, firstMessages[creationID] == nil { self.creationID = nil; persistPanel() }
+  }
+  private func bindCreatedConversation(_ task: CodexTask) {
+    let generation = draftID
+    select(task)
+    draftID = generation
   }
   private func persistPanel() {
     guard loaded, !insertingDictation else { return }
-    let state = NotebookChatPanelState(threadID: threadID, draft: draft, sidecarID: peer, attachments: attachments.isEmpty ? nil : attachments, readPosition: readPosition, dictationReceipt: dictationReceipt), author = author
+    let state = NotebookChatPanelState(threadID: threadID, draft: draft, sidecarID: peer, attachments: attachments.isEmpty ? nil : attachments, readPosition: readPosition, dictationReceipt: dictationReceipt, creationID: creationID, browsesChats: browsesChats), author = author
     persistence.enqueue(owner: .chatPanel(peer), publishesChanges: false) { try $0.saveChatPanel(state, author: author); return false }
   }
   func insertDictation(_ text: String, id: UUID, thread: String, computer: UUID) async throws {
@@ -746,7 +821,8 @@ final class NotebookChatController {
       files.receive(received)
       if case .created(let task) = received.result {
         // Bind once; later receipts cannot steal a deliberate task switch.
-        if jobs.first(where: { $0.id == job.id })?.state != .accepted { select(task); catalogue() }
+        if creationID == job.id, !browsesChats { bindCreatedConversation(task) }
+        catalogue()
       }
       if case .project(let project) = received.result {
         if let index = projects.firstIndex(where: { $0.id == project.id }) { projects[index] = project }

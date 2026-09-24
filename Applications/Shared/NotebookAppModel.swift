@@ -4571,8 +4571,13 @@ final class NotebookAppModel {
       case dictation(NotebookDictationController.Pending, String)
     }
     @discardableResult func sendChatMessage(steering: Bool = false, source: ChatMessageSource = .draft, context captured: ChatSubmissionContext? = nil, onSaved: (@MainActor (Bool) -> Void)? = nil) -> Task<Void, Never>? {
-      guard !isClosing, let chat, let submittedThread = chat.threadID, !isSavingAgentQuestion,
+      guard !isClosing, let chat, !isSavingAgentQuestion,
         captured != nil || !selectionSession.isResolvingContext else { onSaved?(false); return nil }
+      if case .draft = source {
+        guard chat.canSendDraft else { onSaved?(false); return nil }
+        if chat.browsesChats, !chat.beginDraft(project: nil) { onSaved?(false); return nil }
+      }
+      let destination = chat.messageDestination, submittedThread = destination.threadID
       let submittedText: String, dictationID: UUID?
       switch source {
       case .draft:
@@ -4589,7 +4594,7 @@ final class NotebookAppModel {
       if steering && submittedTurn == nil { onSaved?(false); return nil }
       isSavingAgentQuestion = true
       let captured = captured ?? captureChatSubmissionContext(chat)
-      let laser = laserContext.take(scope:.init(computer:submittedComputer,thread:submittedThread))
+      let laser = submittedThread.map { laserContext.take(scope:.init(computer:submittedComputer,thread:$0)) } ?? []
       let task = Task { [self] in
         var saved = false
         defer { isSavingAgentQuestion = false; chatSubmissionTask = nil; onSaved?(saved) }
@@ -4602,7 +4607,7 @@ final class NotebookAppModel {
           }
           let attachments = captured.attachments + imageAttachments
           guard chat.computerID == submittedComputer else { throw NotebookTransportError.disconnected }
-          saved = await chat.sendMessage(threadID: submittedThread, text: submittedText, context: context.text,
+          saved = await chat.sendMessage(to: destination, text: submittedText, context: context.text,
             attentionContextID: context.attentionContextID, steeringTurnID: submittedTurn, attachments: attachments,
             dictationID: dictationID)
         } catch { agentRequestError = error.localizedDescription }

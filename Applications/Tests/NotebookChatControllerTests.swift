@@ -45,7 +45,37 @@ final class NotebookChatControllerTests: XCTestCase {
     XCTAssertEqual(try store.chatJob(XCTUnwrap(control?.id))?.state, .accepted)
   }
 
-  func testCreationWaitsForItsReceiptWithoutReopeningThePreviousEmptyConversation() async throws {
+  func testNewDraftOpensImmediatelyAndFirstMessageWaitsDurablyForCreation() async throws {
+    try await firstMessageCreation(changesSelection: false)
+  }
+
+  func testDelayedCreationSendsItsFrozenMessageWithoutStealingAnotherChatOrDraft() async throws {
+    try await firstMessageCreation(changesSelection: true)
+  }
+
+  func testLocalNewDraftRestoresItsProjectAndTextWithoutCreatingRemoteWork() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("new-chat-draft-" + UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = NotebookStore(root: root), author = UUID()
+    _ = try store.initializeWorkspace(actor: author, pageSize: .init(width: 834, height: 1194))
+    let queue = NotebookPersistenceQueue(store: store)
+    let project = CodexProject(id: "fixture", name: "Fixture", roots: ["/fixture"])
+    let chat = NotebookChatController(persistence: queue, author: author) { _, _ in XCTFail("A draft cannot start remote work") }
+    await chat.start(); chat.draft = "Unsent"; XCTAssertTrue(chat.beginDraft(project: project))
+    await chat.stop(); _ = await queue.flush()
+    // Interrupt after the UI records Send but before its durable admission.
+    var panel = try store.chatPanel(author: author)
+    panel.creationID = UUID(); try store.saveChatPanel(panel, author: author)
+    let restored = NotebookChatController(persistence: queue, author: author) { _, _ in XCTFail("Restoring a draft cannot start remote work") }
+    await restored.start()
+    XCTAssertFalse(restored.browsesChats); XCTAssertNil(restored.threadID)
+    XCTAssertNil(restored.creationID)
+    XCTAssertEqual(restored.draft, "Unsent"); XCTAssertEqual(restored.selectedProject, project)
+    XCTAssertTrue(restored.jobs.isEmpty); XCTAssertTrue(restored.canSendDraft)
+    await restored.stop(); _ = await queue.flush()
+  }
+
+  private func firstMessageCreation(changesSelection: Bool) async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("chat-creation-selection-" + UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
     let store = NotebookStore(root: root), author = UUID(), peer = UUID()
@@ -60,8 +90,10 @@ final class NotebookChatControllerTests: XCTestCase {
       let reply: NotebookChatReply
       switch query {
       case .job(let input):
-        guard case .create = input.action else { return XCTFail("Creation cannot send a model turn") }
-        offers += 1; offered = (envelope, input); return
+        if case .create = input.action { offers += 1; offered = (envelope, input); return }
+        guard case .send(let thread, let text, let context) = input.action else { return XCTFail("Unexpected command") }
+        XCTAssertEqual(thread, created.id); XCTAssertEqual(text, "Привет"); XCTAssertEqual(context, "Frozen attention")
+        reply = .job(.init(input: input, state: .accepted, result: .turn(UUID().uuidString), revision: 2))
       case .run: reply = .run(.init(record: nil))
       case .catalogue: reply = .catalogue(.init(tasks: [], nextCursor: nil))
       case .projects: reply = .projects(.init(projects: [], nextCursor: nil))
@@ -83,31 +115,44 @@ final class NotebookChatControllerTests: XCTestCase {
     try await wait { chat.conversation?.threadID == previous.id && chat.catalogues[.chats]?.loaded == true }
     XCTAssertFalse(chat.browsesChats); XCTAssertTrue(chat.tasks.isEmpty)
 
-    // Hold the real persistence lane: the pending presentation must belong to
-    // the accepted UI intent, not to a later asynchronous save completion.
+    chat.draft = "Привет"
+    let attachment = CodexInputAttachment(kind: .skill, name: "Skill", path: "/fixture/SKILL.md")
+    chat.attach(attachment)
+    let project = CodexProject(id: "fixture", name: "Fixture", roots: ["/fixture"])
+    // Even a blocked writer cannot delay opening the local draft.
     let writer = DispatchSemaphore(value: 0)
     defer { writer.signal() }
     queue.enqueue(publishesChanges: false) { _ in _ = writer.wait(timeout: .now() + 8); return false }
-    let saving = Task { await chat.create() }
+    XCTAssertTrue(chat.beginDraft(project: project))
+    XCTAssertFalse(chat.browsesChats); XCTAssertNil(chat.threadID)
+    XCTAssertEqual(chat.draft, "Привет"); XCTAssertEqual(chat.attachments, [attachment])
+    XCTAssertEqual(chat.selectedProject, project); XCTAssertTrue(chat.canSendDraft)
+    XCTAssertNil(offered); XCTAssertTrue(chat.jobs.isEmpty)
+    let destination = chat.messageDestination
+    let saving = Task { await chat.sendMessage(to: destination, text: chat.draft, context: "Frozen attention", attachments: chat.attachments) }
     try await wait { chat.saving }
-    XCTAssertTrue(chat.browsesChats, "The old empty task must not appear as the result of New Chat")
-    XCTAssertEqual(chat.threadID, previous.id, "Only Codex's creation receipt may replace selection")
-    XCTAssertNil(offered)
-    writer.signal(); await saving.value
+    XCTAssertFalse(chat.canSendDraft)
+    let duplicate = await chat.sendMessage(to: destination, text: "Привет", context: "Frozen attention", attachments: [attachment])
+    XCTAssertFalse(duplicate)
+    writer.signal(); let saved = await saving.value; XCTAssertTrue(saved)
     try await wait { offered != nil }
-    XCTAssertTrue(chat.browsesChats); XCTAssertEqual(chat.threadID, previous.id)
+    XCTAssertFalse(chat.browsesChats); XCTAssertNil(chat.threadID)
+    XCTAssertTrue(chat.draft.isEmpty); XCTAssertTrue(chat.attachments.isEmpty)
     let request = try XCTUnwrap(offered)
+    if changesSelection { chat.select(previous); chat.draft = "Newer draft" }
+    let expectedThread = changesSelection ? previous.id : created.id
     let receipt = NotebookChatJob(input: request.1, state: .accepted, result: .created(created), revision: 2)
     chat.receive(.init(id: request.0.id, body: .reply(.job(receipt))), peerID: peer)
-    try await wait { chat.threadID == created.id && chat.jobs.first?.state == .accepted }
+    try await wait { chat.threadID == expectedThread && chat.jobs.count == 2 && chat.jobs.allSatisfy(\.isTerminal) }
     XCTAssertFalse(chat.browsesChats)
     XCTAssertTrue(chat.tasks.isEmpty, "An empty native history catalogue cannot revoke the actual creation receipt")
     XCTAssertEqual(offers, 1); XCTAssertTrue(chat.messages.isEmpty)
     chat.catalogue()
     try await wait { chat.catalogues[.chats]?.loading == false }
-    XCTAssertEqual(chat.threadID, created.id); XCTAssertFalse(chat.browsesChats)
+    XCTAssertEqual(chat.threadID, expectedThread); XCTAssertFalse(chat.browsesChats)
+    XCTAssertEqual(chat.draft, changesSelection ? "Newer draft" : "")
     await chat.stop(); let flushed = await queue.flush(); XCTAssertTrue(flushed)
-    XCTAssertEqual(try store.chatPanel(author: author, computer: peer).threadID, created.id)
+    XCTAssertEqual(try store.chatPanel(author: author, computer: peer).threadID, expectedThread)
     XCTAssertEqual(try store.chatJob(request.1.id)?.result, .created(created))
   }
 
@@ -516,12 +561,12 @@ final class NotebookChatControllerTests: XCTestCase {
     try await wait { chat.conversation?.threadID == task.id }
     XCTAssertTrue(submitted.isEmpty, "Opening the real transcript cannot create a task or start a turn")
     chat.draft = "Продолжай эту работу"
-    let saved = await chat.sendMessage(threadID: task.id, text: chat.draft, context: "")
+    let saved = await chat.sendMessage(to: .thread(task.id), text: chat.draft, context: "")
     XCTAssertTrue(saved)
     try await wait { !submitted.isEmpty }
     XCTAssertEqual(submitted.count, 1); XCTAssertEqual(submitted.first?.action.threadID, task.id)
     chat.browsesChats = true
-    let hidden = await chat.sendMessage(threadID: task.id, text: "Not to a hidden chat", context: "")
+    let hidden = await chat.sendMessage(to: .thread(task.id), text: "Not to a hidden chat", context: "")
     XCTAssertFalse(hidden)
     await chat.stop(); let flushed = await queue.flush(); XCTAssertTrue(flushed)
   }

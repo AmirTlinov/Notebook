@@ -366,6 +366,8 @@ public struct NotebookChatEnvelope: Codable, Equatable, Sendable {
 }
 
 public struct NotebookChatPanelState: Codable, Equatable, Sendable {
+  public var creationID: UUID?
+  public var browsesChats: Bool?
   public var dictationReceipt: UUID?
   public var threadID: String?
   public var draft: String
@@ -373,5 +375,25 @@ public struct NotebookChatPanelState: Codable, Equatable, Sendable {
   public var attachments: [CodexInputAttachment]?
   public var readPosition: NotebookChatReadPosition?
 
-  public init(threadID: String? = nil, draft: String = "", sidecarID: UUID? = nil, attachments: [CodexInputAttachment]? = nil, readPosition: NotebookChatReadPosition? = nil, dictationReceipt: UUID? = nil) { self.threadID = threadID; self.draft = draft; self.sidecarID = sidecarID; self.attachments = attachments; self.readPosition = readPosition; self.dictationReceipt = dictationReceipt }
+  public init(threadID: String? = nil, draft: String = "", sidecarID: UUID? = nil, attachments: [CodexInputAttachment]? = nil, readPosition: NotebookChatReadPosition? = nil, dictationReceipt: UUID? = nil, creationID: UUID? = nil, browsesChats: Bool? = nil) { self.threadID = threadID; self.draft = draft; self.sidecarID = sidecarID; self.attachments = attachments; self.readPosition = readPosition; self.dictationReceipt = dictationReceipt; self.creationID = creationID; self.browsesChats = browsesChats }
+}
+
+/// Local outbox continuation. It is never a wire command or an invented thread:
+/// a confirmed creation releases one ordinary send with this immutable ID.
+public struct NotebookChatFirstMessage: Codable, Equatable, Sendable {
+  public let id: UUID
+  public let text: String
+  public let context: String
+  public let attentionContextID: UUID?
+  public let attachments: [CodexInputAttachment]?
+  public let createdAt: Date
+
+  public init(id: UUID = UUID(), text: String, context: String, attentionContextID: UUID? = nil, attachments: [CodexInputAttachment]? = nil, createdAt: Date = Date()) {
+    self.id = id; self.text = text; self.context = context; self.attentionContextID = attentionContextID
+    self.attachments = attachments; self.createdAt = createdAt
+  }
+  public func input(threadID: String, author: UUID) -> NotebookChatInput {
+    .init(id: id, author: author, action: .send(threadID: threadID, text: text, context: context),
+      createdAt: createdAt, attentionContextID: attentionContextID, attachments: attachments)
+  }
 }

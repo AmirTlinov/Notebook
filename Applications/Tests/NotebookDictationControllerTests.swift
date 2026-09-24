@@ -57,7 +57,7 @@ import NotebookCore
     dictation.captureSubmission = { [weak fixture] in
       { recording, text in
         guard let fixture else { return false }
-        return await fixture.chat.sendMessage(threadID: recording.thread, text: text, context: "frozen material", dictationID: recording.id)
+        return await fixture.chat.sendMessage(to: .thread(recording.thread), text: text, context: "frozen material", dictationID: recording.id)
       }
     }
     dictation.setForeground(true); try await wait { dictation.waiting }
@@ -213,7 +213,7 @@ import NotebookCore
     XCTAssertFalse(fixture.capture.listening); XCTAssertNil(dictation.pending)
     XCTAssertEqual(dictation.notice, "Локальное распознавание недоступно")
     XCTAssertEqual(fixture.chat.draft, "Вопрос:")
-    let submitted = await fixture.chat.sendMessage(threadID: fixture.thread, text: "Текст работает", context: "")
+    let submitted = await fixture.chat.sendMessage(to: .thread(fixture.thread), text: "Текст работает", context: "")
     XCTAssertTrue(submitted)
     XCTAssertEqual(try fixture.store.routedChatJobs(author: fixture.author, computer: fixture.peer).count, 1)
     // Admission is durable before the asynchronous outbox delivers to Mac.
@@ -498,7 +498,7 @@ import NotebookCore
     _ = await fixture.queue.flush()
     let permission = AVCaptureDevice.authorizationStatus(for: .audio), gate = DispatchSemaphore(value: 0)
     fixture.queue.enqueue(publishesChanges: false) { _ in gate.wait(); return false }
-    let sending = Task { await fixture.chat.sendMessage(threadID: fixture.thread, text: fixture.chat.draft, context: "") }
+    let sending = Task { await fixture.chat.sendMessage(to: .thread(fixture.thread), text: fixture.chat.draft, context: "") }
     try await wait { fixture.chat.saving }
     await fixture.chat.dictation.begin()
     XCTAssertFalse(fixture.chat.dictation.busy)

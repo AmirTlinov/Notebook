@@ -66,7 +66,7 @@ import XCTest
     await chat.start(); chat.updateComputers(peers)
     let presence = try store.loadPresence()
     XCTAssertEqual(chat.files.document?.address, addresses[0])
-    let sent = await chat.sendMessage(threadID: thread, text: "draft 0", context: "")
+    let sent = await chat.sendMessage(to: .thread(thread), text: "draft 0", context: "")
     XCTAssertTrue(sent)
     let originalID = try XCTUnwrap(chat.jobs.first?.id)
     await chat.connect(second)

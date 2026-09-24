@@ -596,6 +596,9 @@ extension NotebookStore {
     // Device-local chat delivery is deliberately absent from the shared content manifest.
     try database.run("CREATE TABLE IF NOT EXISTS chat_jobs(ordinal INTEGER PRIMARY KEY AUTOINCREMENT,id TEXT NOT NULL UNIQUE,author TEXT NOT NULL,state TEXT NOT NULL,value BLOB NOT NULL)")
     try database.run("CREATE INDEX IF NOT EXISTS chat_pending ON chat_jobs(state,ordinal)")
+    if !(try database.rows("PRAGMA table_info(chat_jobs)")).contains(where: { $0[1].text == "first_message" }) {
+      try database.run("ALTER TABLE chat_jobs ADD COLUMN first_message BLOB")
+    }
     try database.run("CREATE INDEX IF NOT EXISTS chat_author ON chat_jobs(author,ordinal)")
     try database.run("CREATE TABLE IF NOT EXISTS chat_active_computer(author TEXT PRIMARY KEY,computer TEXT NOT NULL)")
     if !(try database.rows("PRAGMA table_info(chat_jobs)")).contains(where: { $0[1].text == "computer" }) {

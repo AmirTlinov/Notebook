@@ -8,15 +8,16 @@ import NotebookCore
   static func make(persistence: NotebookPersistenceQueue, author: UUID) async throws -> NotebookChatController? {
     guard ProcessInfo.processInfo.arguments.contains(NotebookDrawingFixture.launchArgument) else { return nil }
     let dictation = ProcessInfo.processInfo.arguments.contains("--notebook-dictation-fixture")
-    let compact = dictation || ProcessInfo.processInfo.arguments.contains("--notebook-compact-chat-fixture")
+    let creation = ProcessInfo.processInfo.arguments.contains("--notebook-chat-creation-fixture")
+    let compact = creation || dictation || ProcessInfo.processInfo.arguments.contains("--notebook-compact-chat-fixture")
     guard compact || ProcessInfo.processInfo.arguments.contains("--notebook-chat-sync-fixture") else { return nil }
     let generation = UUID()
     let peer = UUID(uuidString: "7E7A1000-0000-4000-8000-000000000099")!
     let turn = "7e7a1000-0000-4000-8000-000000000077"
-    let task = CodexTask(id: "7e7a1000-0000-4000-8000-000000000088", title: "Непрерывный разговор", cwd: "/fixture", projectID: "fixture")
+    var task = CodexTask(id: "7e7a1000-0000-4000-8000-000000000088", title: "Непрерывный разговор", cwd: "/fixture", projectID: "fixture")
     var accountLogin: CodexAccountState.Login?
     let accountRevision = UUID()
-    var running = !dictation, subscription: UUID?
+    var running = !dictation && !creation, subscription: UUID?
     var recordingID = UUID(), receivedAudio = 0
     var deliveredReply = false, admissions = Set<UUID>(), submittedMessages: [CodexMessage] = []
     var selection = CodexModelSelection(model: "fixture-a", effort: "low"), revision = 1
@@ -29,7 +30,7 @@ import NotebookCore
     let fullReply = (1...16).map { "Объяснение формулы, часть \($0). Материал остаётся в этой же переписке." }.joined(separator: "\n\n")
     func conversation() -> CodexConversation {
       .init(threadID: task.id, generation: generation, revision: revision, title: task.title, ready: true, busy: running,
-        activeTurnID: running ? turn : nil, messages: recent + [user] + (deliveredReply ? [.init(id: "compact-reply", turnID: turn, clientID: nil, role: .assistant, text: fullReply, phase: "final_answer")] : running ? [] : [.init(id: "stopped", turnID: turn, clientID: nil, role: .assistant, text: "Ответ остановлен.")]) + submittedMessages,
+        activeTurnID: running ? turn : nil, messages: (creation ? [] : recent + [user]) + (deliveredReply ? [.init(id: "compact-reply", turnID: turn, clientID: nil, role: .assistant, text: fullReply, phase: "final_answer")] : running ? [] : [.init(id: "stopped", turnID: turn, clientID: nil, role: .assistant, text: "Ответ остановлен.")]) + submittedMessages,
         requests: [], acceptedMessages: [:], turnStatuses: [turn: running ? "inProgress" : deliveredReply ? "completed" : "interrupted"], model: selection, contextUsage: .init(used: 193000, window: 258000))
     }
     weak var receiver: NotebookChatController?
@@ -70,11 +71,16 @@ import NotebookCore
       case .file(.directory): reply = .file(.directory(.init(entries: [.init(name: "example.swift", kind: .file)], next: nil)))
       case .catalogue: reply = .catalogue(.init(tasks: [task], nextCursor: nil))
       case .activity(let ids): reply = .activity(ids.map { .init(id: $0, status: running ? .running : .idle) })
-      case .history(_, let cursor): reply = .history(.init(messages: cursor == nil ? recent + [user] : earlier, nextCursor: cursor == nil ? "earlier" : nil))
+      case .history(_, let cursor): reply = .history(.init(messages: creation ? submittedMessages : cursor == nil ? recent + [user] : earlier, nextCursor: creation ? nil : cursor == nil ? "earlier" : nil))
       case .conversation:
         if compact, receiver?.expanded == false, !deliveredReply { deliveredReply = true; running = false; revision += 1 }
         subscription = envelope.id; reply = .conversation(conversation())
       case .job(let input):
+        if creation, case .create(let title, let project) = input.action {
+          task = .init(id: input.id.uuidString, title: title, cwd: project?.roots.first ?? "/fixture", projectID: project?.id)
+          submittedMessages = []; revision += 1
+          reply = .job(.init(input: input, state: .accepted, result: .created(task), revision: 2)); break
+        }
         if compact, case .send(let thread, let text, _) = input.action, thread == task.id {
           if admissions.insert(input.id).inserted {
             submittedMessages += [.init(id: input.id.uuidString, turnID: input.id.uuidString, clientID: input.id.uuidString, role: .user, text: text),
@@ -99,6 +105,7 @@ import NotebookCore
     chat.dictation.addressAuthorized = { dictation }
     chat.dictation.makeAddressRecognizer = { _, _, activate, _ in NotebookFixtureAddressRecognizer(activate: activate) }
     await chat.start(); await chat.connect(peer); chat.select(task); chat.expanded = !dictation
+    if creation { chat.browse(.chats) }
     return chat
   }
 }

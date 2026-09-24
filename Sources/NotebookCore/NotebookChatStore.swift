@@ -58,16 +58,41 @@ extension NotebookStore {
 
   /// Commit the message and clear only its own editor value atomically. A crash
   /// between enqueue and UI refresh must not restore a sendable duplicate draft.
-  public func saveChatSubmission(_ input: NotebookChatInput, to computer: UUID? = nil) throws -> NotebookChatJob {
+  public func saveChatSubmission(_ input: NotebookChatInput, to computer: UUID? = nil, firstMessage: NotebookChatFirstMessage? = nil) throws -> NotebookChatJob {
     try commandTransaction(advancesReadRevision: false) {
       let job = try saveChatInput(input, to: computer)
+      if let firstMessage {
+        guard case .create = input.action, firstMessage.id != input.id,
+          firstMessage.input(threadID: input.id.uuidString, author: input.author).isValid else {
+          throw NotebookStorageError.invalidTransaction("invalid first chat message")
+        }
+        if let previous = try chatFirstMessage(input.id) {
+          guard previous == firstMessage else { throw NotebookStorageError.invalidTransaction("first message collision") }
+        } else {
+          try currentSQL!.run("UPDATE chat_jobs SET first_message=? WHERE id=?",
+            [.blob(try Self.storageEncoder.encode(firstMessage)), .text(input.id.uuidString)])
+        }
+        var panel = try chatPanel(author: input.author, computer: computer)
+        if panel.creationID == input.id, panel.draft == firstMessage.text,
+          (panel.attachments ?? []) == (firstMessage.attachments ?? []).filter({ $0.kind != .image }) {
+          panel.draft = ""; panel.attachments = nil; try saveChatPanel(panel, author: input.author)
+        }
+      }
       if let (thread, text, _) = input.action.message {
         var panel = try chatPanel(author: input.author, computer: computer)
-        if panel.threadID == thread, panel.draft == text, (panel.attachments ?? []) == (input.attachments ?? []).filter { $0.kind != .image } {
+        if panel.threadID == thread, panel.draft == text, (panel.attachments ?? []) == (input.attachments ?? []).filter({ $0.kind != .image }) {
           panel.draft = ""; panel.attachments = nil; try saveChatPanel(panel, author: input.author)
         }
       }
       return job
+    }
+  }
+
+  public func chatFirstMessage(_ creationID: UUID) throws -> NotebookChatFirstMessage? {
+    try sqlRead { db in
+      try db.rows("SELECT first_message FROM chat_jobs WHERE id=?", [.text(creationID.uuidString)]).first?[0].blob.map {
+        try JSONDecoder().decode(NotebookChatFirstMessage.self, from: $0)
+      }
     }
   }
 
@@ -136,7 +161,13 @@ extension NotebookStore {
         return old
       }
       guard !old.isTerminal else { throw NotebookStorageError.invalidTransaction("terminal chat receipt changed") }
-      try writeChatJob(job); return job
+      try writeChatJob(job)
+      if case .created(let task) = job.result, let first = try chatFirstMessage(job.id) {
+        // Receipt and first send commit together. A restart or repeated receipt
+        // cannot lose the message, clear a newer draft, or mint a second send.
+        _ = try saveChatInput(first.input(threadID: task.id, author: job.input.author), to: chatDestination(job.id))
+      }
+      return job
     }
   }
 

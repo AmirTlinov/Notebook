@@ -114,24 +114,10 @@ import XCTest
     let newChat = app.buttons["notebook-chat-new"]
     XCTAssertTrue(newChat.isHittable); XCTAssertTrue(newChat.isEnabled); newChat.tap()
 
-    // The creation receipt opens its exact task. Codex's history catalogue
-    // need not include a task before its first user turn. Reopening that list
-    // here would navigate away from the successful creation we are observing.
-    let opened = XCTNSPredicateExpectation(predicate: NSPredicate { [self] _, _ in
-      !catalogue.exists && conversations.allElementsBoundByIndex.contains {
-        !previousConversationIDs.contains($0.identifier) &&
-        UUID(uuidString: String($0.identifier.dropFirst(conversationPrefix.count))) != nil
-      }
-    }, object: nil)
-    XCTAssertEqual(XCTWaiter.wait(for: [opened], timeout: 60), .completed,
-      "A real creation receipt must open a new, addressable conversation.")
-    let identifiers = Set(conversations.allElementsBoundByIndex.map(\.identifier))
-    XCTAssertEqual(identifiers.count, 1)
-    let identifier = try XCTUnwrap(identifiers.first)
-    let threadID = String(identifier.dropFirst(conversationPrefix.count))
-    XCTAssertNotNil(UUID(uuidString: threadID))
-    XCTAssertFalse(previousConversationIDs.contains(identifier))
-    XCTAssertFalse(previous.contains("notebook-chat-task-" + threadID))
+    // New Chat opens a local draft; only the first submitted message creates
+    // its native task. This scenario sends that message with selected material.
+    let identifier = conversationPrefix + "none"
+    XCTAssertTrue(app.descendants(matching: .any).matching(identifier: identifier).firstMatch.waitForExistence(timeout: 3))
     XCTAssertTrue(catalogue.waitForNonExistence(timeout: 5))
     XCTAssertTrue(transcript.waitForExistence(timeout: 30), app.debugDescription)
     XCTAssertFalse(app.buttons["notebook-chat-stop"].exists)
@@ -142,7 +128,7 @@ import XCTest
       "A fresh conversation must not inherit another conversation's displayed messages.")
     try attach(["previousCatalogueTaskIdentifiers": previous.sorted(),
       "previousConversationIdentifiers": previousConversationIDs.sorted(),
-      "selectedNewConversationIdentifier": identifier, "threadID": threadID],
+      "selectedNewConversationIdentifier": identifier],
       name: "actual-new-codex-conversation-selection")
     screenshot("collaboration-new-conversation-before-selection")
   }

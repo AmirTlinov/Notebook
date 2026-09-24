@@ -5,6 +5,48 @@ import XCTest
 
 @MainActor
 final class DrawingResponsivenessTests: XCTestCase {
+  func testNewChatPlusOpensDraftImmediatelyAndFirstSendCreatesConversation() {
+    verifyNewChatFirstSend(openDraft: true)
+  }
+
+  func testMessageFromChatBrowserCreatesNewConversationWithoutPlus() {
+    verifyNewChatFirstSend(openDraft: false)
+  }
+
+  private func verifyNewChatFirstSend(openDraft: Bool) {
+    continueAfterFailure = false
+    let app = XCUIApplication()
+    app.launchArguments = ["--notebook-drawing-responsiveness-fixture", "--notebook-chat-creation-fixture"]
+    launchPortraitFixture(app)
+    let browser = app.descendants(matching: .any).matching(identifier: "notebook-chat-recents").firstMatch
+    XCTAssertTrue(browser.waitForExistence(timeout: 10))
+    let field = app.descendants(matching: .any).matching(identifier: "notebook-chat-text").firstMatch
+    field.tap(); field.typeText("Hello new chat")
+    let panel = app.descendants(matching: .any).matching(identifier: "notebook-chat-panel").firstMatch
+    let keyboardSettled = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+      app.keyboards.firstMatch.exists && panel.frame.maxY <= app.keyboards.firstMatch.frame.minY
+    }, object: nil)
+    XCTAssertEqual(XCTWaiter.wait(for: [keyboardSettled], timeout: 5), .completed)
+    let send = app.buttons["notebook-chat-send"]
+    XCTAssertTrue(send.isEnabled, "The browser composer must not require an existing selection")
+    if openDraft {
+      app.buttons["notebook-chat-new"].tap()
+      XCTAssertTrue(browser.waitForNonExistence(timeout: 2))
+      XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "notebook-chat-conversation-none").firstMatch.exists)
+      XCTAssertEqual(field.value as? String, "Hello new chat")
+      XCTAssertTrue(send.isEnabled)
+    }
+    send.tap()
+    XCTAssertTrue(browser.waitForNonExistence(timeout: 3))
+    let received = app.webViews.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Принято поручений: 1")).firstMatch
+    XCTAssertTrue(received.waitForExistence(timeout: 12), app.debugDescription)
+    XCTAssertFalse(app.descendants(matching: .any).matching(identifier: "notebook-chat-conversation-none").firstMatch.exists)
+    XCTAssertTrue((field.value as? String).map { $0.isEmpty || $0 == "Сообщение Codex" } == true)
+    XCTAssertFalse(send.isEnabled)
+    let proof = XCTAttachment(screenshot: app.screenshot()); proof.name = openDraft ? "new-chat-plus-first-send" : "new-chat-browser-first-send"
+    proof.lifetime = .keepAlways; add(proof)
+  }
+
   func testPaperSelectionZoomAndEdgeTapsDoNotTurnPages() {
     continueAfterFailure = false
     let app = XCUIApplication()

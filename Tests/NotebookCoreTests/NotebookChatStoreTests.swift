@@ -5,6 +5,54 @@ import Testing
 
 @Suite("Codex delivery survives lost acknowledgements without a second executor")
 struct NotebookChatStoreTests {
+  @Test func firstMessageSurvivesRestartAndCreationReceiptReleasesExactlyOneOrdinarySend() throws {
+    try fixture { store, author in
+      let computer = UUID(), creation = NotebookChatInput(author: author, action: .create(title: "New"))
+      let attachment = CodexInputAttachment(kind: .skill, name: "Skill", path: "/fixture/SKILL.md")
+      let first = NotebookChatFirstMessage(text: "Привет", context: "frozen", attentionContextID: UUID(), attachments: [attachment])
+      try store.saveChatPanel(.init(draft: first.text, sidecarID: computer, attachments: [attachment], creationID: creation.id), author: author)
+      _ = try store.saveChatSubmission(creation, to: computer, firstMessage: first)
+      #expect(try store.chatPanel(author: author).draft.isEmpty)
+      #expect(try store.pendingChatJobs().map(\.id) == [creation.id])
+      let reopened = NotebookStore(root: store.root)
+      #expect(try reopened.chatFirstMessage(creation.id) == first)
+      let unknown = NotebookChatJob(input: creation, state: .uncertain, error: "Disconnected", revision: 1)
+      _ = try reopened.receiveChatReceipt(unknown)
+      #expect(try reopened.chatJob(first.id) == nil)
+      let other = UUID().uuidString
+      try reopened.saveChatPanel(.init(threadID: other, draft: "Newer draft", sidecarID: computer), author: author)
+      let task = CodexTask(id: UUID().uuidString, title: "New", cwd: "/fixture")
+      let accepted = NotebookChatJob(input: creation, state: .accepted, result: .created(task), revision: 2)
+      _ = try reopened.receiveChatReceipt(accepted)
+      _ = try reopened.receiveChatReceipt(accepted)
+      _ = try reopened.receiveChatReceipt(unknown)
+      #expect(try reopened.chatJob(first.id)?.input == first.input(threadID: task.id, author: author))
+      #expect(try reopened.chatDestination(first.id) == computer)
+      #expect(try reopened.pendingChatJobs().map(\.id) == [first.id])
+      #expect(try reopened.chatPanel(author: author).threadID == other)
+      #expect(try reopened.chatPanel(author: author).draft == "Newer draft")
+    }
+  }
+
+  @Test func invalidOrConflictingFirstMessageCannotPartiallyCommitCreation() throws {
+    try fixture { store, author in
+      let creation = NotebookChatInput(author: author, action: .create(title: "New"))
+      #expect(throws: (any Error).self) {
+        try store.saveChatSubmission(creation, firstMessage: .init(text: " ", context: ""))
+      }
+      #expect(try store.chatJob(creation.id) == nil)
+      let first = NotebookChatFirstMessage(text: "Saved", context: "")
+      _ = try store.saveChatSubmission(creation, firstMessage: first)
+      #expect(throws: (any Error).self) {
+        try store.saveChatSubmission(creation, firstMessage: .init(text: "Different", context: ""))
+      }
+      let rejected = NotebookChatJob(input: creation, state: .rejected, error: "Sign in", revision: 1)
+      _ = try store.receiveChatReceipt(rejected)
+      #expect(try store.chatFirstMessage(creation.id) == first)
+      #expect(try store.chatJob(first.id) == nil)
+    }
+  }
+
   @Test func largeLaserPixelsUseEvidenceBlobsWhileTheJobRemainsASmallPacket() throws {
     try fixture { store, author in
       let region = PageRect(x:0,y:0,width:1,height:1)

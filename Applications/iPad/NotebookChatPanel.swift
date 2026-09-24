@@ -35,11 +35,11 @@ struct NotebookChatPanel: View {
               VStack(spacing: 0) {
                 HStack(spacing: 0) {
                   VStack(spacing: 0) {
-                    if chat.threadID == nil || chat.browsesChats {
+                    if chat.browsesChats {
                       browserToolbar
                       NotebookChatBrowser(chat: chat,
                         editProject: { editingProject = $0 }, createChat: { project in
-                          chat.selectProject(project); createChat()
+                          if chat.beginDraft(project: project) { draftFocused = true }
                         })
                     } else { conversation(height: height) }
                   }
@@ -110,7 +110,6 @@ struct NotebookChatPanel: View {
       if scenePhase == .background { chat.voice.connectionLost() }
       else if scenePhase == .active { chat.synchronizeVisible() }
     }
-    .onChange(of: chat.threadID) { chat.browsesChats = false }
     .onChange(of: moving) { if !moving { endInteraction() } }
     .onChange(of: resizing) { if !resizing { endInteraction() } }
     .onChange(of: draggingTerminal) { if !draggingTerminal { finishTerminalResize() } }
@@ -150,8 +149,8 @@ struct NotebookChatPanel: View {
         chat.browsesChats.toggle()
       } label: {
         HStack(spacing: 6) {
-          Text(chat.browsesChats || chat.threadID == nil ? "Codex" : title).lineLimit(1)
-          if chat.threadID != nil { Image(systemName: "chevron.down").font(.system(size: 9, weight: .medium)) }
+          Text(chat.browsesChats ? "Codex" : title).lineLimit(1)
+          Image(systemName: "chevron.down").font(.system(size: 9, weight: .medium))
         }
         .font(.system(size: 14)).foregroundStyle(.secondary)
         .frame(minHeight: 44, alignment: .leading).contentShape(Rectangle())
@@ -206,6 +205,21 @@ struct NotebookChatPanel: View {
 
   private func conversation(height: CGFloat) -> some View {
     VStack(spacing: 0) {
+      if chat.threadID == nil, let project = chat.selectedProject {
+        Label(project.name, systemImage: "folder").font(.caption).foregroundStyle(.secondary).padding(12)
+      }
+      if let id = chat.creationID, let first = chat.firstMessages[id] {
+        VStack(alignment: .leading, spacing: 8) {
+          Text(first.text).textSelection(.enabled)
+          Text(chat.jobs.first(where: { $0.id == id })?.error ?? "Сообщение сохранено · создаётся чат на Mac…")
+            .font(.caption).foregroundStyle(.secondary)
+          if let job = chat.jobs.first(where: { $0.id == id }), job.isTerminal, job.state != .accepted {
+            Button("Вернуть в черновик") { chat.restoreFailedCreation(); draftFocused = true }
+              .disabled(!chat.draft.isEmpty || !chat.attachments.isEmpty)
+          }
+        }.frame(maxWidth: .infinity, alignment: .leading).padding(20)
+          .accessibilityIdentifier("notebook-chat-first-message")
+      }
       NotebookChatTranscript(messages: chat.messages, work: chat.workStatus, turnStatuses: chat.conversation?.turnStatuses ?? [:], conversationID: chat.threadID, revealMessageID: chat.revealedMessageID,
         canLoadEarlier: chat.canLoadEarlier && !chat.loadingHistory, loadEarlier: chat.loadEarlier,
         openLink: model.openNotebookLink, saveExplanation: { [thread = chat.threadID, computer = chat.computerID] message in
@@ -275,8 +289,7 @@ struct NotebookChatPanel: View {
     chat.conversation?.title ?? chat.tasks.first(where: { $0.id == chat.threadID })?.title ?? (chat.threadID == nil ? "Новый чат" : "Чат Codex")
   }
   private var canSend: Bool {
-    !chat.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && chat.threadID != nil && !chat.dictation.busy
-      && !chat.saving && !chat.switchingComputer && !model.isSavingAgentQuestion && !model.selectionSession.isResolvingContext && !chat.continuationUnavailable && !chat.browsesChats
+    chat.canSendDraft && !model.isSavingAgentQuestion && !model.selectionSession.isResolvingContext
   }
   private var notice: String? {
     if let error = chat.voice.error { return error }
@@ -285,9 +298,6 @@ struct NotebookChatPanel: View {
     if chat.defaultProviderNeedsSignIn { return "Для нового чата войдите в Codex на Mac." }
     if !chat.connected, chat.threadID != nil, !chat.browsesChats { return "Mac недоступен · сообщения сохраняются на iPad" }
     return nil
-  }
-  private func createChat() {
-    Task { await chat.create() }
   }
 }
 
