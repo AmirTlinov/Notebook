@@ -195,6 +195,13 @@ import XCTest
       }
       defer { pinch.recognizer.onCameraHandled = nil; pinch.end(); monitor.stop() }
       let origin = CACurrentMediaTime()
+      var preparationPhases: [(TimeInterval, String)] = []
+      var omittedPhases = 0
+      model.compositionTiles.onPreparationPhase = { _, phase in
+        if preparationPhases.count < 128 { preparationPhases.append((CACurrentMediaTime(), phase)) }
+        else { omittedPhases += 1 }
+      }
+      defer { model.compositionTiles.onPreparationPhase = nil }
       for sample in 0..<120 {
         let due = origin + Double(sample) / 120
         let remaining = due - CACurrentMediaTime()
@@ -231,6 +238,9 @@ import XCTest
         "Every input needs a same-contact measured pose ACK, within its ORIGINAL 5/16.67 ms ceilings; coalescing never resets time")
       let handling = XCTAttachment(string: delivery.report)
       handling.name = "Actual camera handler delivery"; handling.lifetime = .keepAlways; add(handling)
+      let preparation = XCTAttachment(string: "Scene preparation events during held input; wall time, not CPU or FPS; omitted=\(omittedPhases)\n"
+        + preparationPhases.map { "\(($0.0-origin)*1000)ms: \($0.1)" }.joined(separator: "\n"))
+      preparation.name = "Held camera scene preparation"; preparation.lifetime = .keepAlways; add(preparation)
       let timing = XCTAttachment(string: monitor.samples.enumerated().map { index, sample in
         "\(index): queue=\(sample.entered.map { ($0-sample.due)*1_000 } ?? -1)ms; execution=\(sample.entered.map { (sample.handled-$0)*1_000 } ?? -1)ms; total=\((sample.handled-sample.due)*1_000)ms; UIKit=\(sample.uiSubmitted.map { ($0-sample.due)*1_000 } ?? -1)ms"
       }.joined(separator:"\n"))

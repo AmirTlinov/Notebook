@@ -943,13 +943,17 @@ final class SceneCompositionTiles {
       if published?.runtimeOwners.contains(address) == true { return false }
       return true
     } ?? false
-    let containsNativeProjection = containsNativeProjection(for: request)
-    if dirtySources.isEmpty, !needsSourceScheduling, containsNativeProjection, let plan = published?.plan,
-      published?.containsSourceWindows(presence: presence, frame: frame, displayScale: displayScale,
-        refinesDetails: request.refinesDetails) == true,
-      published?.requestedSources == sources,
-      plan.revision == source.revision, plan.workspaceID == source.workspaceID,plan.groupPoses == source.groupPoses,
-      Self.covers(plan, presence: presence, pinned: pinned, refinesDetails: request.refinesDetails) { return }
+    let reusablePaint = published.flatMap { cohort -> SceneCompositionCohort? in
+      guard dirtySources.isEmpty, !needsSourceScheduling,
+        cohort.containsSourceWindows(presence: presence, frame: frame, displayScale: displayScale,
+          refinesDetails: request.refinesDetails), cohort.requestedSources == sources,
+        cohort.plan.revision == source.revision, cohort.plan.workspaceID == source.workspaceID,
+        cohort.plan.groupPoses == source.groupPoses,
+        Self.covers(cohort.plan, presence: presence, pinned: pinned, refinesDetails: request.refinesDetails)
+      else { return nil }
+      return cohort
+    }
+    if reusablePaint != nil, containsNativeProjection(for: request) { return }
     cancelPreparation()
     let id = requestID
     let changedSources = dirtySources
@@ -974,6 +978,26 @@ final class SceneCompositionTiles {
       do {
         try Task.checkCancellation()
         guard self?.requestID == id, permitsPreparation() else { throw CancellationError() }
+        #if os(iOS)
+          if let reusablePaint {
+            // The finite ink backing can need a new basis while every element,
+            // source crop and static tile remains covered. Refill those SAME
+            // physical ink owners without invalidating the live content tree.
+            // liveData contains complete ink for the admitted surfaces, and
+            // source validation plus install's contact/generation checks remain
+            // authoritative; this is not an exemption for an empty canvas.
+            self?.onPreparationPhase?(id, "native_ink")
+            let nativeInk = try await surfaceRegistry.prepareSceneInk(plan: reusablePaint.plan, frame: frame,
+              liveData: reusablePaint.liveData, resources: resources, displayScale: displayScale,
+              refinesDetails: request.refinesDetails)
+            try await source.validate(); try Task.checkCancellation()
+            guard self?.requestID == id, self?.published === reusablePaint, permitsPreparation()
+            else { throw CancellationError() }
+            try nativeInk.install()
+            self?.onPreparationPhase?(id, "native_projection_installed")
+            return
+          }
+        #endif
         self?.onPreparationPhase?(id, "plan")
         var plan = try await SceneCompositionPlan.prepare(source: source, presence: presence, frame: frame,
           pinned: pinned, displayScale: displayScale, previous: self?.published?.plan)
@@ -1540,10 +1564,11 @@ final class SceneCompositionTiles {
     let plane = SceneCompositionPlane.board(presence.boardID)
     guard plan.rootBoardID == presence.boardID, let basis = plan.presentations[plane],
       basis.mode == presence.mode, basis.focusedItemID == presence.focusedItemID, basis.viewport == presence.viewport,
-      // Reuse covered pixels within one bounded LOD. A held pinch still
-      // requests density when magnification would exceed that window.
+      // Minification cannot exhaust pixel density. During contact, only new
+      // spatial coverage or magnification warrants another cohort; after lift
+      // the normal lower LOD bound can reclaim unnecessarily dense backing.
       (refinesDetails ? ((0.6...1).contains(presence.camera.scale / basis.camera.scale) && plan.meetsRequiredDensity)
-        : (0.6...sqrt(2.0)).contains(presence.camera.scale / basis.camera.scale)),
+        : (presence.camera.scale > 0 && presence.camera.scale / basis.camera.scale <= sqrt(2.0))),
       pinned.allSatisfy({ pin in plan.presentedOwners.contains { $0.id == pin } }), let tiles = plan.coverage[plane]?.tiles,
       let first = tiles.first, let last = tiles.last else { return false }
     let visible = WorkspaceSpatialBounds(origin: presence.camera.screenToWorld(.zero, viewport: presence.viewport),

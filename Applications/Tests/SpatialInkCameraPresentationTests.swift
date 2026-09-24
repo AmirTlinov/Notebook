@@ -62,7 +62,9 @@ final class SpatialInkCameraPresentationTests: XCTestCase {
     for index in 0..<80 {
       let current = SessionPresence(boardID: fixture.boardID, mode: .board,
         camera: .init(center: .init(x: Double(index) / 3, y: -Double(index) / 7),
-          scale: 0.41 + Double(index) / 100), viewport: fixture.viewport)
+          // Exceed the ORIGINAL prepared density, not merely return from
+          // minification. Covered zoom-out no longer creates a lower basis.
+          scale: 0.41 + Double(index) / 60), viewport: fixture.viewport)
       projection.update(current)
       // No SwiftUI update, await or layout turn occurs between the accepted
       // sample and these actual native positions / next-contact coordinates.
@@ -166,6 +168,7 @@ final class SpatialInkCameraPresentationTests: XCTestCase {
       fixture.resources.byteLimit - bytes - 4096, priority: .input))
     defer { pressure.release() }
     let held = fixture.resources.reservedBytes
+    let refinementStart = ContinuousClock.now
     let frame = try await canvas.prepareSpatialFrame(nil, size: canvas.spatialViewport,
       displayScale: 1, camera: requested)
     XCTAssertTrue(frame.isValid)
@@ -184,7 +187,12 @@ final class SpatialInkCameraPresentationTests: XCTestCase {
     }
     XCTAssertEqual(canvas.spatialTilePoolIDs, pools)
     XCTAssertEqual(fixture.resources.reservedBytes, held)
-    XCTAssertTrue(canvas.isStableFramePresented)
+    // Transaction completion releases the private candidate; only the OS
+    // drawable receipt proves presentation. Charge BOTH preparation and that
+    // receipt against the existing camera-refinement budget.
+    let shown = try await NotebookUXObservation.observe(since: refinementStart,
+      budget: NotebookUXObservation.zoomRefinement) { canvas.isStableFramePresented }
+    XCTAssertTrue(shown.passed, "Native ink refill must be presented within the original 250 ms: \(shown.milliseconds) ms")
     XCTAssertGreaterThan(try fixture.blackPixelCount(), 150, "The same native owner still displays actual ink")
   }
 

@@ -462,6 +462,12 @@ idle neighbour pages must not allocate transparent work beneath a white mask.
 Scene source preparation uses a viewport-relative overscan window, with a larger
 durable metadata window behind it. The 96-source, native-owner and runtime quotas
 do not grow; offscreen programs are prepared passively, not admitted for input.
+Covered minification does not invalidate denser paint during contact. When only
+the finite native ink backing needs refilling, the same scene producer prepares
+and validates those physical owners at the requested camera, retaining the live
+content publication. Unchanged source, workspace, geometry, pins, source crops
+and static coverage are still required. New material/exposure/magnification uses
+ordinary composition; settlement can reclaim a lower paint LOD.
 
 `IPadSheetCurlController` bends one frozen sheet through the same Core Image /
 Metal renderer as covers. It replaces UIKit's fixed binding shadow, not overlays

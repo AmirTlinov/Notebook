@@ -160,6 +160,7 @@ final class ZoomOutCoverageTests: XCTestCase {
     let address = SceneSourceAddress(plane: .board(boardID), elementID: diagram.id)
     var committedCoverage = NotebookUXObservation.Coverage()
     var pixelCoverage = NotebookUXObservation.Coverage()
+    var firstMissingPixels: (UIImage, String)?
     var preparationTimeline: [String] = [], previousPreparation = ""
     model.compositionTiles.onPreparationPhase = { id, phase in
       preparationTimeline.append("\(start.duration(to: .now)): request=\(id.uuidString.prefix(6)); phase=\(phase)")
@@ -227,7 +228,12 @@ final class ZoomOutCoverageTests: XCTestCase {
           // UIKit can deliver the recognizer action during the display wait,
           // after the immediate presence read above. Keep that input's origin.
           if probeVisible == nil { probeVisible = sampleStart }
-          let visible = try NotebookUXObservation.Pixels(window:window).matches([(.init(x:point.x,y:point.y),.blue)])
+          let pixels = try NotebookUXObservation.Pixels(window: window)
+          let visible = try pixels.matches([(.init(x:point.x,y:point.y),.blue)])
+          if !visible, firstMissingPixels == nil {
+            firstMissingPixels = (pixels.image,
+              "step=\(step); elapsed=\(start.duration(to: .now)); point=\(point); camera=\(current.camera); \(preparation)")
+          }
           // No initial 100 ms of blank paper is forgiven. Missing on the first
           // applicable observation is as much a defect as disappearing later.
           pixelCoverage.record(visible)
@@ -250,6 +256,12 @@ final class ZoomOutCoverageTests: XCTestCase {
     let image = UIGraphicsImageRenderer(size: host.view.bounds.size).image { _ in host.view.drawHierarchy(in: host.view.bounds, afterScreenUpdates: true) }
     let pixels = XCTAttachment(image: image); pixels.name = "New notebook and diagram during zoom-out"; pixels.lifetime = .keepAlways; add(pixels)
     if nativeGesture {
+      if let firstMissingPixels {
+        let pixels = XCTAttachment(image: firstMissingPixels.0)
+        pixels.name = "First missing held-zoom pixels"; pixels.lifetime = .keepAlways; add(pixels)
+        let state = XCTAttachment(string: firstMissingPixels.1)
+        state.name = "First missing held-zoom state"; state.lifetime = .keepAlways; add(state)
+      }
       XCTAssertTrue(pixelCoverage.passed,
         "Zero blank observations from first exposure: \(pixelCoverage.missing)/\(pixelCoverage.checked) missing. First observed pixels=\(String(describing: pixelsShown)); capture time is not FPS")
       let presence = try XCTUnwrap(model.presence)

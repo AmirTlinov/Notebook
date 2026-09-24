@@ -1149,6 +1149,119 @@ final class SceneCompositionTests: XCTestCase {
   }
 
   @MainActor
+  func testNativeInkRefillKeepsUnchangedLiveContentPublication() async throws {
+    let fixture = Fixture(count: 24, side: 64, kind: .nativeText)
+    var journal = fixture.journal
+    let surface = SurfaceID.board(fixture.presence.boardID)
+    XCTAssertNotNil(journal.append(tool: .pen, spans: [.init(surface: surface,
+      samples: [0.0, 60].enumerated().map { index, x in
+        .init(point: .init(x: x, y: 30), worldPoint: .init(x: x, y: 30),
+          timeOffset: Double(index) / 10, width: 4, opacity: 1, force: 1, azimuth: 0, altitude: 1)
+      })], actor: UUID()))
+    let source = SceneCompositionSource(index: fixture.index, hierarchy: fixture.hierarchy, journal: journal)
+    let coordinator = SceneCompositionTiles(resources: SceneRenderResources())
+    addTeardownBlock { @MainActor in await coordinator.stop() }
+    coordinator.prepare(source: source, presence: fixture.presence, frame: fixture.frame(), pinned: [], refinesDetails: false)
+    try await waitUntil { !coordinator.isPreparing }
+    let original = try XCTUnwrap(coordinator.published)
+    let owner = try XCTUnwrap(original.nativeInk.owners[surface])
+    let basis = owner.canvas.spatialCamera
+    let current = SessionPresence(boardID: fixture.presence.boardID, mode: .board,
+      camera: .init(center: fixture.presence.camera.center, scale: 0.55), viewport: fixture.presence.viewport)
+    let frame = WorkspaceSceneFrame(index: fixture.index, presence: current, portalCamera: { _ in nil })
+    let grid = try XCTUnwrap(original.plan.coverage[.board(current.boardID)])
+    let coverage = WorkspaceSpatialBounds(origin: try XCTUnwrap(grid.tiles.first).origin,
+      maximum: try XCTUnwrap(grid.tiles.last).bounds.maximum)
+    XCTAssertEqual(frame.sourceIdentity, original.requestedSources)
+    XCTAssertTrue(coverage.contains(NotebookSceneState.bounds(for: current, margin: 0)))
+    XCTAssertTrue(owner.needsProjection(camera: current.camera, viewport: current.viewport, refinesDetails: false),
+      "The ink's finite backing actually needs to be refilled; it cannot be skipped")
+    coordinator.prepare(source: source, presence: current, frame: frame, pinned: [], refinesDetails: false)
+    XCTAssertTrue(coordinator.isPreparing)
+    try await waitUntil { !coordinator.isPreparing }
+    XCTAssertNil(coordinator.failure)
+    XCTAssertTrue(coordinator.published === original,
+      "Refilling ink cannot republish the unchanged live element hosts")
+    XCTAssertNotEqual(owner.canvas.spatialCamera, basis)
+    XCTAssertEqual(owner.canvas.spatialCamera, current.camera)
+    XCTAssertFalse(owner.needsProjection(camera: current.camera, viewport: current.viewport, refinesDetails: false))
+    XCTAssertEqual(try owner.canvas.installedSpatialSource?.referenceInk(),
+      try NotebookReferenceInk(surface: surface, actions: journal.actions), "Real ink must survive the refill")
+    coordinator.prepare(source: source, presence: current, frame: frame, pinned: [], refinesDetails: false)
+    XCTAssertFalse(coordinator.isPreparing, "The completed finite refill cannot spin another preparation")
+    XCTAssertNotNil(journal.append(tool: .pen, spans: [.init(surface: surface,
+      samples: [0.0, 60].enumerated().map { index, x in
+        .init(point: .init(x: x, y: 50), worldPoint: .init(x: x, y: 50),
+          timeOffset: Double(index) / 10, width: 4, opacity: 1, force: 1, azimuth: 0, altitude: 1)
+      })], actor: UUID()))
+    let changed = SceneCompositionSource(index: fixture.index, hierarchy: fixture.hierarchy, journal: journal, revision: 1)
+    coordinator.prepare(source: changed, presence: current, frame: frame, pinned: [], refinesDetails: false)
+    try await waitUntil { !coordinator.isPreparing }
+    XCTAssertFalse(coordinator.published === original, "An incoming content change still requires its own publication")
+    XCTAssertEqual(try owner.canvas.installedSpatialSource?.referenceInk(),
+      try NotebookReferenceInk(surface: surface, actions: journal.actions))
+  }
+
+  @MainActor
+  func testHeldZoomOutReusesCoveredCohortButNewExposureAndMagnificationStillPrepare() async throws {
+    let fixture = Fixture(count: 24, side: 64, kind: .nativeText)
+    let resources = SceneRenderResources()
+    let coordinator = SceneCompositionTiles(resources: resources)
+    addTeardownBlock { @MainActor in await coordinator.stop() }
+    let source = fixture.source()
+    // A compact viewport fits within the existing native overscan throughout
+    // this zoom. The normal finite ink backing remains a separate requirement.
+    let viewport = SpatialPoint(x: 256, y: 256)
+    func view(_ scale: Double) -> SessionPresence {
+      .init(boardID: fixture.presence.boardID, mode: .board,
+        camera: .init(center: fixture.presence.camera.center, scale: scale), viewport: viewport)
+    }
+    func frame(_ presence: SessionPresence) -> WorkspaceSceneFrame {
+      .init(index: fixture.index, presence: presence, portalCamera: { _ in nil })
+    }
+    func prepare(_ presence: SessionPresence, settled: Bool = false) {
+      coordinator.prepare(source: source, presence: presence, frame: frame(presence), pinned: [],
+        refinesDetails: settled)
+    }
+    prepare(view(1))
+    try await waitUntil { !coordinator.isPreparing }
+    let original = try XCTUnwrap(coordinator.published, coordinator.failure ?? "No initial cohort")
+    XCTAssertTrue(original.liveData.ink.actions.isEmpty)
+    let grid = try XCTUnwrap(original.plan.coverage[.board(fixture.presence.boardID)])
+    let coverage = WorkspaceSpatialBounds(origin: try XCTUnwrap(grid.tiles.first).origin,
+      maximum: try XCTUnwrap(grid.tiles.last).bounds.maximum)
+    // This camera changes no source, geometry, pin or required density. Its
+    // viewport remains inside the already prepared window throughout contact.
+    for scale in [0.8, 0.61, 0.59, 0.55, 0.59, 0.8, 1] {
+      let presence = view(scale)
+      XCTAssertEqual(frame(presence).sourceIdentity, original.requestedSources)
+      XCTAssertTrue(coverage.contains(NotebookSceneState.bounds(for: presence, margin: 0)))
+      XCTAssertTrue(original.nativeInk.containsProjectionWindows(presence: presence,
+        frame: frame(presence), refinesDetails: false), "Native input backing must also cover this camera")
+      prepare(presence)
+      XCTAssertFalse(coordinator.isPreparing, "Covered zoom-out at \(scale) cannot rebuild live hosts")
+      XCTAssertTrue(coordinator.published === original)
+    }
+    // Minification is not an exemption from spatial coverage. A wider viewport
+    // requires preparation even though the same 24 material sources remain.
+    let exposed = view(0.25)
+    XCTAssertEqual(frame(exposed).sourceIdentity, original.requestedSources)
+    XCTAssertFalse(coverage.contains(NotebookSceneState.bounds(for: exposed, margin: 0)))
+    prepare(exposed)
+    XCTAssertTrue(coordinator.isPreparing)
+    try await waitUntil { !coordinator.isPreparing }
+    let wide = try XCTUnwrap(coordinator.published, coordinator.failure ?? "No extended coverage")
+    XCTAssertFalse(wide === original, "New paint coverage must publish; unchanged geometry may retain its identity")
+    prepare(view(1))
+    XCTAssertTrue(coordinator.isPreparing, "Magnification still requires sufficient pixel density")
+    try await waitUntil { !coordinator.isPreparing }
+    let sharp = try XCTUnwrap(coordinator.published, coordinator.failure ?? "No refined coverage")
+    XCTAssertFalse(sharp === wide)
+    prepare(view(0.55), settled: true)
+    XCTAssertTrue(coordinator.isPreparing, "After lift, normal coarse-LOD reclamation remains available")
+  }
+
+  @MainActor
   func testSameCursorAndPixelCoverageCannotKeepAnOldWindowWithoutItsReachedOwner() async throws {
     let fixture = Fixture(count: 1, side: 256)
     let resources = SceneRenderResources()

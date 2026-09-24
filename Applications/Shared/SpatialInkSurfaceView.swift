@@ -101,7 +101,10 @@ final class SpatialInkSurfaceRegistry {
       displayScale: Double, refinesDetails: Bool = true) async throws -> SpatialInkSceneLease {
       let preparation = try await acquireSceneInkPreparation()
       defer { releaseSceneInkPreparation(preparation) }
-      guard !sceneInkIsStopped, let root = plan.presentations[.board(plan.rootBoardID)] else { throw CancellationError() }
+      // The paint plan may remain installed across a native-only refill.
+      // Its admitted owners stay fixed; their backing follows this request's
+      // current camera, never the old paint basis.
+      guard !sceneInkIsStopped, let root = frame.presences[plan.rootBoardID] else { throw CancellationError() }
       guard sceneResources == nil || sceneResources === resources else { throw SceneRenderError.resourceLimit }
       sceneResources = resources
       physicalInkOwners = physicalInkOwners.filter { $0.value.owner != nil }
@@ -119,7 +122,7 @@ final class SpatialInkSurfaceRegistry {
         x: max(root.viewport.x, projected.x), y: max(root.viewport.y, projected.y)), displayScale: displayScale)
       var requested: [(SurfaceID, SpatialPoint, SpatialCamera, SpatialPoint)] = []
       for id in plan.inkBoardIDs.sorted() {
-        guard let presence = plan.presentations[.board(id)] else { throw SceneRenderError.snapshotPending("native_ink_source") }
+        guard let presence = frame.presences[id] else { throw SceneRenderError.snapshotPending("native_ink_source") }
         requested.append((.board(id), boardSize, presence.camera, presence.viewport))
       }
       for live in plan.liveOwners {
