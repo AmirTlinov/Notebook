@@ -4,7 +4,7 @@
 mod files;
 mod ffi;
 mod wasi;
-use files::{Budget, Bundle, Directory, Log};
+use files::{Budget, Bundle, Directory, Log, ResourceFile};
 use std::{path::Path, sync::{Arc, atomic::{AtomicBool, Ordering}}, time::{Duration, Instant}};
 use wasi_common::{WasiCtx, sync::WasiCtxBuilder, pipe::WritePipe};
 
@@ -21,12 +21,12 @@ impl NativeState {
 #[unsafe(no_mangle)]
 unsafe extern "C" fn nb_typesetter_should_stop(state: *mut NativeState) -> i32 { i32::from(unsafe { &mut *state }.check()) }
 unsafe extern "C" { fn nb_engine_run(context: *mut std::ffi::c_void, bytes: *mut u8, capacity: usize, used: *mut usize, format: i32) -> i32; }
-pub struct Runtime { bundle: Arc<Bundle>, format: Vec<u8>, fonts: Vec<u8> }
+pub struct Runtime { bundle: Arc<Bundle>, format: ResourceFile, fonts: ResourceFile }
 pub struct Output { pub pdf: Vec<u8>, pub synctex: Vec<u8>, pub log: String, pub memory_bytes: usize }
 impl Runtime {
-    pub fn new(bundle: &Path, format: Vec<u8>, fonts: Vec<u8>) -> Result<Self, String> {
-        if format.len() > 32*1024*1024 || fonts.len() > 2*1024*1024 { return Err("typesetter_resource_limit".into()); }
-        Ok(Self { bundle: Arc::new(Bundle::open(bundle)?), format, fonts })
+    pub fn new(bundle: &Path, format: &Path, fonts: &Path) -> Self {
+        Self { bundle: Arc::new(Bundle::new(bundle)),
+            format: ResourceFile::new(format, 32*1024*1024), fonts: ResourceFile::new(fonts, 2*1024*1024) }
     }
     pub fn compile(&self, source: &str, assets: Vec<(String, Vec<u8>)>, date: u64,
         timeout: Duration, cancelled: &AtomicBool) -> Result<Output, String> {
@@ -58,9 +58,9 @@ impl Runtime {
         for (name, data) in assets { input.put(&name, data).map_err(|e| e.to_string())?; }
         let output = Directory::new(true, &budget);
         let bundle = Directory::bundle(self.bundle.clone(), false, &budget);
-        if !format && !image { bundle.put("latex.fmt", self.format.clone()).map_err(|e| e.to_string())?; }
+        if !format && !image { bundle.put("latex.fmt", self.format.bytes()?).map_err(|e| e.to_string())?; }
         let fonts = Directory::bundle(self.bundle.clone(), true, &budget);
-        fonts.put("notebook-fonts.tsv", self.fonts.clone()).map_err(|e| e.to_string())?;
+        fonts.put("notebook-fonts.tsv", self.fonts.bytes()?).map_err(|e| e.to_string())?;
         let log = Log::default();
         let mut builder = WasiCtxBuilder::new();
         builder.env("TECTONIC_CACHE_DIR", "/output").map_err(|e| e.to_string())?
@@ -78,6 +78,10 @@ impl Runtime {
         let mut memory_bytes = 0;
         let status = unsafe { nb_engine_run((&mut native as *mut NativeState).cast(), arena.as_mut_ptr(), arena.len(), &mut memory_bytes, operation) };
         drop(arena);
+        // A guest may treat an I/O errno as an optional missing font. Failure
+        // to open the pinned archive is not an optional resource: never accept
+        // its blank/partial PDF as a successful rendering.
+        if let Some(error) = budget.resource_failure() { return Err(error); }
         if let Some(error) = native.failure { return Err(format!("{error}\n{}", String::from_utf8_lossy(&log.0.lock().unwrap()))); }
         drop(native.wasi);
         check()?;

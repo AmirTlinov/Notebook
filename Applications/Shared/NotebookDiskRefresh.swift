@@ -16,7 +16,7 @@ struct NotebookDiskRefresh: Sendable {
     receivingDeviceID: UUID?, pinnedElements: [UUID: [String]] = [:], pinnedItems: [UUID: [UUID]] = [:],
     preparedPages: [UUID] = [], feedbackKnown: Set<UUID>? = nil, feedbackTracked: Set<UUID> = [],
     attentionReferences: [CollaborationReference] = [], historyActor: UUID? = nil,
-    reusing previousIndex: WorkspaceSceneIndex? = nil) throws -> Self {
+    reusing previousIndex: WorkspaceSceneIndex? = nil, reusingPages: [UUID: PageDocument] = [:]) throws -> Self {
     if let receivingDeviceID {
       try store.acknowledgeReceivedActions(deviceID: receivingDeviceID)
     }
@@ -26,7 +26,8 @@ struct NotebookDiskRefresh: Sendable {
       do { attention = try store.agentAttentionSubjects(attentionReferences) }
       catch let error as CollaborationError where error.code == "source_conflict" { attention = nil }
       let scene = try NotebookSceneState.read(store:store,presence:presence,viewport:presence.viewport,
-        pinnedElements:pinnedElements,pinnedItems:pinnedItems,preparedPages:preparedPages,historyActor:historyActor)
+        pinnedElements:pinnedElements,pinnedItems:pinnedItems,preparedPages:preparedPages,historyActor:historyActor,
+        reusingPages:reusingPages)
       var elementsInScene: [String: [String]] = [:]
       for node in scene.hierarchy.boards {
         for element in node.board.elements {

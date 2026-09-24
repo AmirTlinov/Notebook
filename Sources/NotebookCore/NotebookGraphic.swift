@@ -323,6 +323,19 @@ public struct NotebookGraphicMask: Codable, Equatable, Sendable {
           !cuts.contains(where:{ $0.contains(.init(x:p.x/size.width,y:p.y/size.height)) }) { return true }
       }
     }
+    // A hollow contour usually has no paint at the nine interior witnesses.
+    // Material outside every cut's conservative bound is nevertheless intact:
+    // prove that before expanding thousands of overlapping measured triangles.
+    // Bounds are only a positive witness, never an approximation of erasure.
+    var untouched = remaining
+    for cut in cuts {
+      let unit = cut.conservativeBounds
+      let bounds = CGRect(x: unit.minX*size.width, y: unit.minY*size.height,
+        width: unit.width*size.width, height: unit.height*size.height)
+      untouched = untouched.subtracting(CGPath(rect: bounds, transform: nil))
+      if untouched.isEmpty { break }
+    }
+    if !untouched.isEmpty { return true }
     for cut in cuts {
       let box=remaining.boundingBoxOfPath
       let area=CGRect(x:box.minX/size.width,y:box.minY/size.height,width:box.width/size.width,height:box.height/size.height)

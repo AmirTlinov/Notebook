@@ -1,0 +1,61 @@
+{
+  "devicesAndConfigurations" : [
+    {
+      "device" : {
+        "architecture" : "arm64",
+        "deviceId" : "00008103-001E059934D9001E",
+        "deviceName" : "iPad (Елизавета)",
+        "modelName" : "iPad Pro (11-inch) (3rd generation)",
+        "osBuildNumber" : "24A435",
+        "osVersion" : "27.0",
+        "platform" : "iOS"
+      },
+      "expectedFailures" : 0,
+      "failedTests" : 1,
+      "passedTests" : 2,
+      "skippedTests" : 0,
+      "testPlanConfiguration" : {
+        "configurationId" : "1",
+        "configurationName" : "Test Scheme Action"
+      }
+    }
+  ],
+  "environmentDescription" : "Notebook · Built with macOS 27.0",
+  "expectedFailures" : 0,
+  "failedTests" : 1,
+  "finishTime" : 1790270684.623,
+  "passedTests" : 2,
+  "result" : "Failed",
+  "runtimeWarnings" : [
+
+  ],
+  "skippedTests" : 0,
+  "startTime" : 1790270604.684,
+  "statistics" : [
+
+  ],
+  "testFailures" : [
+    {
+      "failureText" : "XCTAssertTrue failed - Zero/dropped, invalid or pre-command timestamps cannot stand in for displayed frames",
+      "targetName" : "NotebookTests",
+      "testIdentifier" : 3,
+      "testIdentifierString" : "NotebookPageMotionUXTests/testTenForwardReverseTurnsMeetFirstPresentationAndLandingDeadlines()",
+      "testIdentifierURL" : "test://com.apple.xcode/Notebook/NotebookTests/NotebookPageMotionUXTests/testTenForwardReverseTurnsMeetFirstPresentationAndLandingDeadlines",
+      "testName" : "testTenForwardReverseTurnsMeetFirstPresentationAndLandingDeadlines()"
+    }
+  ],
+  "title" : "Test - Notebook",
+  "topInsights" : [
+    {
+      "category" : "Common Failures",
+      "impact" : "100% of failures",
+      "text" : "10 runs of 1 test failed with XCTAssertTrue failed - Zero/dropped, invalid or pre-command timestamps cannot stand in for displayed frames"
+    },
+    {
+      "category" : "Common Failures",
+      "impact" : "100% of failures",
+      "text" : "2 runs of 1 test failed with XCTAssertLessThanOrEqual failed: (\"0.012504958343924955\") is greater than (\"0.008833333333333334\") - Changing displayed frames must meet 120 Hz; callback time and average FPS cannot hide a missed interval"
+    }
+  ],
+  "totalTestCount" : 3
+}

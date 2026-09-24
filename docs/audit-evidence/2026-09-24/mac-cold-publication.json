@@ -1,0 +1,52 @@
+{
+  "baseCommit": "a212734402e794ff56c5dd8ffd6465c92dffd262",
+  "sourceSHA256": "8206d90a887b08890d02e196fd2fccbe116ea49e44770e615dc7f24ad808fd70",
+  "localEvidence": ".build/gui295-mac-publication-baseline-v2",
+  "scope": "Diagnostic reproduction; application implementation unchanged; not release acceptance",
+  "xcresultSummary": {
+    "devicesAndConfigurations": [
+      {
+        "device": {
+          "architecture": "arm64",
+          "deviceId": "00006050-001650DA01F9401C",
+          "deviceName": "My Mac",
+          "modelName": "MacBook Pro",
+          "osBuildNumber": "26A428",
+          "osVersion": "27.0",
+          "platform": "macOS"
+        },
+        "expectedFailures": 0,
+        "failedTests": 1,
+        "passedTests": 0,
+        "skippedTests": 0,
+        "testPlanConfiguration": {
+          "configurationId": "1",
+          "configurationName": "Test Scheme Action"
+        }
+      }
+    ],
+    "environmentDescription": "NotebookMac · Built with macOS 27.0",
+    "expectedFailures": 0,
+    "failedTests": 1,
+    "finishTime": 1790264298.481,
+    "passedTests": 0,
+    "result": "Failed",
+    "runtimeWarnings": [],
+    "skippedTests": 0,
+    "startTime": 1790264296.028,
+    "statistics": [],
+    "testFailures": [
+      {
+        "failureText": "XCTAssertFalse failed - The ordinary reader exposes partially prepared static material: [(0.007584, 0), (227.204417, 1), (244.088167, 4), (253.683334, 5), (258.154459, 6), (265.559, 8), (277.008875, 9), (373.052792, 11), (393.830875, 12), (398.972542, 13), (405.043209, 15), (414.902084, 16), (420.187917, 17), (426.198167, 18), (432.28925, 20), (441.683584, 21), (445.845625, 22), (453.682042, 24), (459.325709, 25), (469.36425, 26), (475.23275, 28), (484.4405, 29), (488.962625, 30), (510.036834, 33), (515.848834, 34), (522.018167, 35)]",
+        "targetName": "NotebookMacTests",
+        "testIdentifier": 1,
+        "testIdentifierString": "MacPagePublicationTests/testColdReaderPublishesStaticMaterialAsOnePage()",
+        "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookMacTests/MacPagePublicationTests/testColdReaderPublishesStaticMaterialAsOnePage",
+        "testName": "testColdReaderPublishesStaticMaterialAsOnePage()"
+      }
+    ],
+    "title": "Test - NotebookMac",
+    "topInsights": [],
+    "totalTestCount": 1
+  }
+}

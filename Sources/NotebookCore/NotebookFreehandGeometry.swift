@@ -222,6 +222,10 @@ public final class NotebookFreehandGeometry: Sendable {
       let a=point(.zero),b=point(.init(x:1,y:0)),c=point(.init(x:0,y:1))
       basis = .init(a:b.x-a.x,b:b.y-a.y,c:c.x-a.x,d:c.y-a.y,tx:a.x,ty:a.y)
     }
+    /// The same source index that admits measured triangles bounds all of
+    /// their paint. An affine bounding rectangle may include extra area, never
+    /// exclude a cut; it can prove surviving material, not erased material.
+    var conservativeBounds: CGRect { geometry.layerIndex.bounds.applying(basis) }
     func triangles(in area:CGRect, visit:([CGPoint]) -> Bool) -> Bool {
       var prepared:[Range<Int>:[NotebookFreehand.Vertex]]=[:]
       return triangles(in:area,prepared:&prepared,visit:visit)

@@ -28,6 +28,23 @@ import Testing
       #expect(!result.contains(.init(x:20,y:17.5),tolerance:6))
     }
   }
+  @Test(arguments: [4096, 100_000])
+  func densePartialEraseReadUsesSurvivingOutlineWithoutExpandingEveryCut(_ count: Int) {
+    let samples = (0..<count).map { index in
+      let angle = Double(index % 64) * 2 * Double.pi / 64
+      return SpatialInkSample(point: .init(x: frame.x + 20 + 10*cos(angle), y: frame.y + 50 + 10*sin(angle)),
+        timeOffset: Double(index)/240, width: 30, opacity: 1, force: 1, azimuth: 0, altitude: 1)
+    }
+    let erased = InkElementErasure(target: .init(elementID: "outline", frame: frame), samples: samples)
+    let start = ContinuousClock.now
+    let value = NotebookElementAppearance.readProjection(graphic: .init(shape: .rectangle, style: .init(strokeWidth: 4)),
+      layout: nil, size: .init(width: frame.width, height: frame.height), erasures: [erased])
+    let elapsed = start.duration(to: .now)
+    print("Partial outline, \(count) measured eraser samples: \(elapsed)")
+    #expect(value["state"] == .string("partial"))
+    #expect(value["sourceIsCompleteAppearance"] == .bool(false))
+    #expect(elapsed < .milliseconds(500), "Reading a partial outline must not subtract every repeated cut to find its untouched side")
+  }
   @Test func fullyErasedHollowContourHasNoGhostInterior() {
     let rim = cut([.init(x:0,y:0),.init(x:160,y:0),.init(x:160,y:100),.init(x:0,y:100),.init(x:0,y:0)])
     let result = appearance([rim])

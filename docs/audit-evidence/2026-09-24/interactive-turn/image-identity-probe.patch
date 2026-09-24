@@ -1,0 +1,29 @@
+diff --git a/Applications/Shared/SheetCurlRenderer.swift b/Applications/Shared/SheetCurlRenderer.swift
+index 1b29f17f..87f22b74 100644
+--- a/Applications/Shared/SheetCurlRenderer.swift
++++ b/Applications/Shared/SheetCurlRenderer.swift
+@@ -242,9 +242,9 @@ final class SheetCurlMetalView: MTKView, MTKViewDelegate {
+     layout: SheetCurlLayout
+   ) {
+     let resolvedProgress = CoverOpeningPhysics.clamped(progress)
++    let sourceChanged = sourceCover.map { $0 !== cover } ?? true
+     let changed =
+-      sourceCover.map { $0 !== cover } ?? true
+-      || self.progress != resolvedProgress
++      sourceChanged || self.progress != resolvedProgress
+       || self.backsideColor != backsideColor
+       || self.cornerRadius != cornerRadius
+       || curlLayout != layout
+@@ -252,8 +252,10 @@ final class SheetCurlMetalView: MTKView, MTKViewDelegate {
+       if framePending { requestFrame() }
+       return
+     }
+-    sourceCover = cover
+-    coverImage = CIImage(cgImage: cover)
++    if sourceChanged {
++      sourceCover = cover
++      coverImage = CIImage(cgImage: cover)
++    }
+     self.progress = resolvedProgress
+     self.backsideColor = backsideColor
+     self.cornerRadius = cornerRadius

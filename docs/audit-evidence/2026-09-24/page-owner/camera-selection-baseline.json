@@ -1,0 +1,52 @@
+{
+  "devicesAndConfigurations" : [
+    {
+      "device" : {
+        "architecture" : "arm64",
+        "deviceId" : "00008103-001E059934D9001E",
+        "deviceName" : "iPad (Елизавета)",
+        "modelName" : "iPad Pro (11-inch) (3rd generation)",
+        "osBuildNumber" : "24A435",
+        "osVersion" : "27.0",
+        "platform" : "iOS"
+      },
+      "expectedFailures" : 0,
+      "failedTests" : 1,
+      "passedTests" : 0,
+      "skippedTests" : 0,
+      "testPlanConfiguration" : {
+        "configurationId" : "1",
+        "configurationName" : "Test Scheme Action"
+      }
+    }
+  ],
+  "environmentDescription" : "Notebook · Built with macOS 27.0",
+  "expectedFailures" : 0,
+  "failedTests" : 1,
+  "finishTime" : 1790266618.133,
+  "passedTests" : 0,
+  "result" : "Failed",
+  "runtimeWarnings" : [
+
+  ],
+  "skippedTests" : 0,
+  "startTime" : 1790266548.575,
+  "statistics" : [
+
+  ],
+  "testFailures" : [
+    {
+      "failureText" : "XCTAssertTrue failed - UX reference-after-camera-settlement: correct=false, observed=1007.464833 ms, ceiling=1.0 seconds; window observation, not photon timing",
+      "targetName" : "NotebookTests",
+      "testIdentifier" : 1,
+      "testIdentifierString" : "NotebookPageLifecycleUXTests/testShowReferenceKeepsTheAcceptedColdPageAcrossCameraSettlement()",
+      "testIdentifierURL" : "test://com.apple.xcode/Notebook/NotebookTests/NotebookPageLifecycleUXTests/testShowReferenceKeepsTheAcceptedColdPageAcrossCameraSettlement",
+      "testName" : "testShowReferenceKeepsTheAcceptedColdPageAcrossCameraSettlement()"
+    }
+  ],
+  "title" : "Test - Notebook",
+  "topInsights" : [
+
+  ],
+  "totalTestCount" : 1
+}

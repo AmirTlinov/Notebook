@@ -39,9 +39,8 @@ struct MacReadingSurface: View {
         // host in screen points rather than applying a second ancestor scale.
         let projectedDocument = presence.mode == .document
         Group {
-          if presence.mode == .page, let page = model.activePage {
-            PageSurface(page: page, isCurrent: true, isInteractive: true, isVisible: true,
-              onRenderReady: .init { _ in }, displayProjection: anchor.camera.scale)
+          if presence.mode == .page {
+            MacNotebookPageSurface(notebookID: id, displayProjection: anchor.camera.scale)
           } else if presence.mode == .document, let document = model.documents[id], let state = model.documentStates[id] {
             MacDocumentSurface(document: document, state: state, onLayout: { documentLayout = $0 })
               .environment(\.macDocumentDisplayScale, anchor.camera.scale)

@@ -1,0 +1,1 @@
+Installed visible rasters (ms, count), not physical frame timing: [(0.242125, 0), (134.757875, 35)]

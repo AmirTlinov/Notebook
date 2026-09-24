@@ -3,8 +3,7 @@ use std::{path::Path, sync::atomic::AtomicBool, time::{Duration, Instant}};
 fn main() -> Result<(), String> {
     let args: Vec<String> = std::env::args().collect();
     if args.len() != 7 { return Err("wasm bundle.zip latex.fmt fonts.tsv source.tex output-directory".into()); }
-    let format = std::fs::read(&args[3]).map_err(|e| e.to_string())?;
-    let runtime = Runtime::new(Path::new(&args[2]), format, std::fs::read(&args[4]).map_err(|e| e.to_string())?)?;
+    let runtime = Runtime::new(Path::new(&args[2]), Path::new(&args[3]), Path::new(&args[4]));
     if args[1] == "format" {
         std::fs::write(Path::new(&args[6]).join("latex.fmt"), runtime.generate_format()?).map_err(|e| e.to_string())?;
         return Ok(());

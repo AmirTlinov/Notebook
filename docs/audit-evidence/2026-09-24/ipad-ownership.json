@@ -1,0 +1,60 @@
+{
+  "baseCommit": "a212734402e794ff56c5dd8ffd6465c92dffd262",
+  "sourceSHA256": "b72722e64d6fcde75abe24519c0ffe1c28f5560a3da37b01b625a00d9a7d4644",
+  "localEvidence": ".build/gui295-owner-baseline",
+  "scope": "Diagnostic reproduction; application implementation unchanged; not release acceptance",
+  "xcresultSummary": {
+    "devicesAndConfigurations": [
+      {
+        "device": {
+          "architecture": "arm64",
+          "deviceId": "00008103-001E059934D9001E",
+          "deviceName": "iPad (Елизавета)",
+          "modelName": "iPad Pro (11-inch) (3rd generation)",
+          "osBuildNumber": "24A435",
+          "osVersion": "27.0",
+          "platform": "iOS"
+        },
+        "expectedFailures": 0,
+        "failedTests": 2,
+        "passedTests": 0,
+        "skippedTests": 0,
+        "testPlanConfiguration": {
+          "configurationId": "1",
+          "configurationName": "Test Scheme Action"
+        }
+      }
+    ],
+    "environmentDescription": "Notebook · Built with macOS 27.0",
+    "expectedFailures": 0,
+    "failedTests": 2,
+    "finishTime": 1790263973.541,
+    "passedTests": 0,
+    "result": "Failed",
+    "runtimeWarnings": [],
+    "skippedTests": 0,
+    "startTime": 1790263903.007,
+    "statistics": [],
+    "testFailures": [
+      {
+        "failureText": "XCTAssertEqual failed: (\"1\") is not equal to (\"0\") - An acknowledgement is not another navigation command",
+        "targetName": "NotebookTests",
+        "testIdentifier": 2,
+        "testIdentifierString": "PageTurnSelectionTests/testNotebookAcknowledgementCannotBecomeAnUnrequestedReverseTurn()",
+        "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/PageTurnSelectionTests/testNotebookAcknowledgementCannotBecomeAnUnrequestedReverseTurn",
+        "testName": "testNotebookAcknowledgementCannotBecomeAnUnrequestedReverseTurn()"
+      },
+      {
+        "failureText": "XCTAssertEqual failed: (\"ObjectIdentifier(0x00000001122ea640)\") is not equal to (\"ObjectIdentifier(0x00000001122ea700)\") - An unchanged SQL read cannot invalidate the live page's graph, viewport and installed material receipt",
+        "targetName": "NotebookTests",
+        "testIdentifier": 1,
+        "testIdentifierString": "NotebookPageAddressTests/testUnchangedReloadRetainsThePreparedPageSourceIdentity()",
+        "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/NotebookPageAddressTests/testUnchangedReloadRetainsThePreparedPageSourceIdentity",
+        "testName": "testUnchangedReloadRetainsThePreparedPageSourceIdentity()"
+      }
+    ],
+    "title": "Test - Notebook",
+    "topInsights": [],
+    "totalTestCount": 2
+  }
+}

@@ -5,7 +5,7 @@ import Observation
 /// confirmed landing; pressing an arrow never publishes a page prematurely.
 @Observable @MainActor
 final class NotebookPageNavigation {
-  enum Command { case step(Int), jump(Int) }
+  enum Command { case step(Int), jump(Int), cancel }
   struct Status {
     let ownerID: UUID
     let target: Int
@@ -15,11 +15,11 @@ final class NotebookPageNavigation {
   private struct Binding {
     let id: UUID
     let source: String
-    let send: @MainActor (Command) -> Void
+    let send: @MainActor (Command) -> Bool
   }
   @ObservationIgnored private var bindings: [UUID: Binding] = [:]
 
-  func bind(_ id: UUID, ownerID: UUID, source: String, send: @escaping @MainActor (Command) -> Void) {
+  func bind(_ id: UUID, ownerID: UUID, source: String, send: @escaping @MainActor (Command) -> Bool) {
     bindings[ownerID] = .init(id: id, source: source, send: send)
   }
   func unbind(_ id: UUID) {
@@ -33,8 +33,9 @@ final class NotebookPageNavigation {
   @discardableResult
   func send(_ command: Command, ownerID: UUID, source: String) -> Bool {
     guard let binding = bindings[ownerID], binding.source == source else { return false }
-    binding.send(command); return true
+    return binding.send(command)
   }
+  func isBound(ownerID: UUID, source: String) -> Bool { bindings[ownerID]?.source == source }
   func report(_ value: Status?, ownerID: UUID, controllerID: UUID, source: String) {
     guard let binding = bindings[ownerID], binding.id == controllerID, binding.source == source else { return }
     if let value { status = value }

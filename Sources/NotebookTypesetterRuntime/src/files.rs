@@ -2,15 +2,21 @@
 //! ZIP entries, inputs and outputs share a hard byte/handle budget, released
 //! with their actual buffers. A seek does not allocate and a sparse write is
 //! charged before resizing. Logs are a bounded tail, not an unbounded pipe.
-use std::{any::Any, collections::BTreeMap, fs::File, io::{self, Read, SeekFrom, Write}, sync::{Arc, Mutex, atomic::{AtomicUsize, Ordering}}};
+use std::{any::Any, collections::BTreeMap, fs::File, io::{self, Read, SeekFrom, Write}, path::{Path, PathBuf}, sync::{Arc, Mutex, OnceLock, atomic::{AtomicUsize, Ordering}}};
 use wasi_common::{Error, ErrorExt, WasiDir, WasiFile, dir::{OpenResult, ReaddirCursor, ReaddirEntity}, file::{FdFlags, FileType, Filestat, OFlags}};
 
 const MAX_FILE: usize = 32 * 1024 * 1024;
 const MAX_FILES: usize = 64 * 1024 * 1024;
 const MAX_HANDLES: usize = 128;
 #[derive(Default)]
-pub struct Budget { bytes: AtomicUsize, handles: AtomicUsize }
+pub struct Budget { bytes: AtomicUsize, handles: AtomicUsize, resource_failure: Mutex<Option<String>> }
 impl Budget {
+    fn resource_error(&self, error: impl std::fmt::Display) -> Error {
+        let mut failure = self.resource_failure.lock().unwrap();
+        if failure.is_none() { *failure = Some(format!("typesetter_resources_unavailable: {error}")); }
+        Error::io()
+    }
+    pub fn resource_failure(&self) -> Option<String> { self.resource_failure.lock().unwrap().clone() }
     fn acquire(counter: &AtomicUsize, count: usize, limit: usize) -> Result<(), Error> {
         counter.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |old| old.checked_add(count).filter(|n| *n <= limit))
             .map(|_| ()).map_err(|_| Error::io())
@@ -88,38 +94,77 @@ impl WasiFile for Handle {
     async fn set_fdflags(&mut self, flags: FdFlags) -> Result<(), Error> { if flags.is_empty() { Ok(()) } else { Err(Error::not_supported()) } }
 }
 
-pub struct Bundle { archive: Mutex<zip::ZipArchive<File>>, names: Vec<String> }
-impl Bundle {
-    pub fn open(path: &std::path::Path) -> Result<Self, String> {
-        let archive = zip::ZipArchive::new(File::open(path).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
-        // The shipped distribution is hash-checked by the native resource owner.
-        if archive.len() > 150_000 { return Err("TeX distribution entry limit".into()); }
-        let names = archive.file_names().map(String::from).collect();
-        Ok(Self { archive: Mutex::new(archive), names })
+/// Pinned resources are read only when the guest actually needs them. A path
+/// drawing needs neither the TeX format nor the 134k-entry distribution index.
+pub struct ResourceFile {
+    path: PathBuf,
+    limit: u64,
+    bytes: OnceLock<Result<Vec<u8>, String>>,
+}
+impl ResourceFile {
+    pub fn new(path: &Path, limit: u64) -> Self { Self { path: path.into(), limit, bytes: OnceLock::new() } }
+    pub fn bytes(&self) -> Result<Vec<u8>, String> {
+        self.bytes.get_or_init(|| {
+            let file = File::open(&self.path).map_err(|e| e.to_string())?;
+            if file.metadata().map_err(|e| e.to_string())?.len() > self.limit { return Err("typesetter_resource_limit".into()); }
+            let mut bytes = Vec::new();
+            file.take(self.limit + 1).read_to_end(&mut bytes).map_err(|e| e.to_string())?;
+            if bytes.len() as u64 > self.limit { return Err("typesetter_resource_limit".into()); }
+            Ok(bytes)
+        }).clone()
     }
-    fn size(&self, name: &str) -> Result<u64, Error> {
-        self.archive.lock().unwrap().by_name(name).map(|f| f.size()).map_err(|_| Error::not_found())
+}
+
+pub struct Bundle {
+    path: PathBuf,
+    archive: Mutex<Option<zip::ZipArchive<File>>>,
+    names: [OnceLock<Arc<Vec<String>>>; 2],
+}
+impl Bundle {
+    pub fn new(path: &Path) -> Self { Self { path: path.into(), archive: Mutex::new(None), names: Default::default() } }
+    fn with_archive<T>(&self, budget: &Budget, read: impl FnOnce(&mut zip::ZipArchive<File>) -> Result<T, Error>) -> Result<T, Error> {
+        let mut slot = self.archive.lock().unwrap();
+        if slot.is_none() {
+            let file = File::open(&self.path).map_err(|error| budget.resource_error(error))?;
+            let archive = zip::ZipArchive::new(file).map_err(|error| budget.resource_error(error))?;
+            // The native resource owner verifies the immutable distribution.
+            if archive.len() > 150_000 { return Err(budget.resource_error("TeX distribution entry limit")); }
+            *slot = Some(archive);
+        }
+        read(slot.as_mut().unwrap())
+    }
+    fn names(&self, fonts_only: bool, budget: &Budget) -> Result<Arc<Vec<String>>, Error> {
+        let slot = &self.names[usize::from(fonts_only)];
+        if let Some(names) = slot.get() { return Ok(names.clone()); }
+        let names = self.with_archive(budget, |archive| Ok(Arc::new(archive.file_names()
+            .filter(|name| !fonts_only || name.ends_with(".otf") || name.ends_with(".ttf"))
+            .map(String::from).collect())))?;
+        Ok(slot.get_or_init(|| names).clone())
+    }
+    fn size(&self, name: &str, budget: &Budget) -> Result<u64, Error> {
+        self.with_archive(budget, |archive| archive.by_name(name).map(|f| f.size()).map_err(|_| Error::not_found()))
     }
     fn read(&self, name: &str, budget: &Arc<Budget>) -> Result<SharedBuffer, Error> {
-        let mut zip = self.archive.lock().unwrap(); let mut file = zip.by_name(name).map_err(|_| Error::not_found())?;
-        let size = usize::try_from(file.size()).map_err(|_| Error::io())?;
-        if size > MAX_FILE { return Err(Error::io()); }
-        // Reserve before decompression. Never extract the entire distribution.
-        let mut data = Buffer::new(Vec::new(), budget)?; data.resize(size)?;
-        file.read_exact(&mut data.bytes)?;
-        Ok(Arc::new(Mutex::new(data)))
+        self.with_archive(budget, |zip| {
+            let mut file = zip.by_name(name).map_err(|_| Error::not_found())?;
+            let size = usize::try_from(file.size()).map_err(|_| Error::io())?;
+            if size > MAX_FILE { return Err(Error::io()); }
+            // Charge before decompression; a lazy index does not relax bounds.
+            let mut data = Buffer::new(Vec::new(), budget)?; data.resize(size)?;
+            file.read_exact(&mut data.bytes).map_err(|error| budget.resource_error(error))?;
+            Ok(Arc::new(Mutex::new(data)))
+        })
     }
 }
 #[derive(Clone)]
 pub struct Directory {
     files: Arc<Mutex<BTreeMap<String, SharedBuffer>>>,
-    bundle: Option<Arc<Bundle>>, names: Arc<Vec<String>>, writable: bool, budget: Arc<Budget>,
+    bundle: Option<Arc<Bundle>>, fonts_only: bool, writable: bool, budget: Arc<Budget>,
 }
 impl Directory {
-    pub fn new(writable: bool, budget: &Arc<Budget>) -> Self { Self { files: Default::default(), bundle: None, names: Default::default(), writable, budget: budget.clone() } }
+    pub fn new(writable: bool, budget: &Arc<Budget>) -> Self { Self { files: Default::default(), bundle: None, fonts_only: false, writable, budget: budget.clone() } }
     pub fn bundle(bundle: Arc<Bundle>, fonts_only: bool, budget: &Arc<Budget>) -> Self {
-        let names = if fonts_only { bundle.names.iter().filter(|n| n.ends_with(".otf") || n.ends_with(".ttf")).cloned().collect() } else { bundle.names.clone() };
-        Self { bundle: Some(bundle), names: Arc::new(names), ..Self::new(false, budget) }
+        Self { bundle: Some(bundle), fonts_only, ..Self::new(false, budget) }
     }
     pub fn put(&self, name: &str, bytes: Vec<u8>) -> Result<(), Error> {
         Self::name(name)?;
@@ -146,7 +191,7 @@ impl WasiDir for Directory {
         if name == "." || name.is_empty() { return self.get_filestat().await; }
         let name = Self::name(name)?;
         if let Some(file) = self.files.lock().unwrap().get(name) { return Ok(stat(FileType::RegularFile, file.lock().unwrap().bytes.len() as u64)); }
-        Ok(stat(FileType::RegularFile, self.bundle.as_ref().ok_or_else(Error::not_found)?.size(name)?))
+        Ok(stat(FileType::RegularFile, self.bundle.as_ref().ok_or_else(Error::not_found)?.size(name, &self.budget)?))
     }
     async fn open_file(&self, _: bool, name: &str, flags: OFlags, _: bool, write: bool, fd: FdFlags) -> Result<OpenResult, Error> {
         if name == "." || name.is_empty() { return Ok(OpenResult::Dir(Box::new(self.clone()))); }
@@ -166,7 +211,8 @@ impl WasiDir for Directory {
     }
     async fn readdir(&self, cursor: ReaddirCursor) -> Result<Box<dyn Iterator<Item=Result<ReaddirEntity, Error>> + Send>, Error> {
         let at = u64::from(cursor) as usize;
-        let names = if self.bundle.is_some() { self.names.clone() } else { Arc::new(self.files.lock().unwrap().keys().cloned().collect()) };
+        let names = if let Some(bundle) = &self.bundle { bundle.names(self.fonts_only, &self.budget)? }
+            else { Arc::new(self.files.lock().unwrap().keys().cloned().collect()) };
         Ok(Box::new((at..names.len()).map(move |i| Ok(ReaddirEntity { next: ((i+1) as u64).into(), inode: (i+1) as u64, name: names[i].clone(), filetype: FileType::RegularFile }))))
     }
     async fn create_dir(&self, name: &str) -> Result<(), Error> { if name == "." || name.is_empty() { Ok(()) } else { Err(Error::not_supported()) } }

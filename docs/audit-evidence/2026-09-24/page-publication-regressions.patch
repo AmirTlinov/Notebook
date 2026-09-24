@@ -1,0 +1,140 @@
+diff --git a/Applications/Tests/NotebookPageAddressTests.swift b/Applications/Tests/NotebookPageAddressTests.swift
+index ff9b7cd8..04f3e15e 100644
+--- a/Applications/Tests/NotebookPageAddressTests.swift
++++ b/Applications/Tests/NotebookPageAddressTests.swift
+@@ -5,6 +5,21 @@ import XCTest
+ @testable import Notebook
+ 
+ final class NotebookPageAddressTests: XCTestCase {
++  @MainActor
++  func testUnchangedReloadRetainsThePreparedPageSourceIdentity() async throws {
++    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
++    let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
++    retainNotebookUntilTeardown(model, removing: root)
++    await model.start(pageSize: NotebookAppModel.defaultPageSize)
++    let saved = await model.finishPendingPersistence(); XCTAssertTrue(saved)
++    let page = try XCTUnwrap(model.activePage)
++    _ = page.graphicGraph()
++    await model.reloadExternalChanges()?.value
++    let after = try XCTUnwrap(model.activePage)
++    XCTAssertEqual(after, page)
++    XCTAssertEqual(after.elementSourceIdentity, page.elementSourceIdentity,
++      "An unchanged SQL read cannot invalidate the live page's graph, viewport and installed material receipt")
++  }
+   @MainActor
+   func testAWithdrawnNeighbourReadCannotEvictTheCurrentPageWindow() async throws {
+     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+diff --git a/Applications/Tests/PageTurnSelectionTests.swift b/Applications/Tests/PageTurnSelectionTests.swift
+index 970a5bfa..64c35410 100644
+--- a/Applications/Tests/PageTurnSelectionTests.swift
++++ b/Applications/Tests/PageTurnSelectionTests.swift
+@@ -6,6 +6,33 @@ import UIKit
+ @testable import Notebook
+ 
+ final class PageTurnSelectionTests: XCTestCase {
++  @MainActor
++  func testNotebookAcknowledgementCannotBecomeAnUnrequestedReverseTurn() async throws {
++    let controller = IPadPageTurnController(), navigation = NotebookPageNavigation(), owner = UUID()
++    var commits: [Int] = []
++    func configure(_ selected: Int) {
++      controller.update(ownerID: owner, sequenceRevision: "one-navigation-owner", pageCount: 2,
++        selectedIndex: selected, navigationIsEnabled: true, pageIsInteractive: true,
++        canBeginNavigation: { true }, page: { index, _, ready in
++          ready(true)
++          return AnyView(index == 0 ? Color.blue : Color.red)
++        }, onCommit: { index, _ in commits.append(index) }, onTransitioningChange: { _ in },
++        notebookNavigation: navigation)
++    }
++    configure(0); controller.loadViewIfNeeded()
++    for target in [1, 0] {
++      XCTAssertTrue(navigation.send(.step(target == 1 ? 1 : -1), ownerID: owner, source: "one-navigation-owner"))
++      for _ in 0..<100 where controller.displayedIndex != target { await Task.yield() }
++      XCTAssertEqual(controller.displayedIndex, target)
++      configure(target)
++    }
++    // A retained upstream hosting root can still publish the preceding model
++    // snapshot. Only the bound navigation command can request another turn.
++    configure(1)
++    for _ in 0..<100 { await Task.yield() }
++    XCTAssertEqual(controller.displayedIndex, 0, "An acknowledgement is not another navigation command")
++    XCTAssertEqual(commits, [1, 0])
++  }
+   @MainActor
+   func testRepeatedNotebookArrowsConfirmEveryAdjacentLandingWithoutChangingPresenceEarly() async throws {
+     let controller = IPadPageTurnController(), commands = NotebookPageNavigation(), owner = UUID()
+diff --git a/Applications/MacTests/MacPagePublicationTests.swift b/Applications/MacTests/MacPagePublicationTests.swift
+new file mode 100644
+index 00000000..969bf1dd
+--- /dev/null
++++ b/Applications/MacTests/MacPagePublicationTests.swift
+@@ -0,0 +1,70 @@
++import AppKit
++import NotebookCore
++import SwiftUI
++import XCTest
++@testable import Notebook
++
++@MainActor final class MacPagePublicationTests: XCTestCase {
++  func testPageChangePublishesStaticMaterialAsOnePage() async throws {
++    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
++    let fixture = MacCommandFixture(root: root), model = fixture.model
++    retainNotebookUntilTeardown(model, removing: root)
++    try await fixture.start(showingPage: true)
++    let item = try XCTUnwrap(model.workspace?.selectedItemID)
++    XCTAssertEqual(model.selectNotebookPage(1, notebookID: item, expectedRoot: model.notebookPageRoot(item)!), 1)
++    let appended = await model.finishPendingPersistence(); XCTAssertTrue(appended)
++    var page = try XCTUnwrap(model.activePage)
++    let paths = (0..<250).map { "<path d='M0 \($0 % 120)L150 \(($0 * 7) % 120)'/>" }.joined()
++    let elements = (0..<35).map { n in
++      AgentElement(id: "static-\(n)", kind: .web,
++        frame: .init(x: 30 + Double(n % 5)*155, y: 45 + Double(n / 5)*155, width: 145, height: 140),
++        source: "", html: "<svg xmlns='http://www.w3.org/2000/svg' width='100%' height='100%' viewBox='0 0 150 140'><g stroke='black' stroke-width='.2'>\(paths)</g><rect y='125' width='150' height='15' fill='#2288ff'/></svg>")
++    }
++    XCTAssertTrue(elements.allSatisfy(\.usesNativeSVGRaster))
++    XCTAssertTrue(page.replaceElements(elements, actor: model.actorID))
++    try fixture.store.savePage(page); await model.reloadExternalChanges()?.value
++    await model.navigateToNotebookPage(at: 0, in: item, expectedRoot: model.notebookPageRoot(item)!, navigationGeneration: model.navigationGeneration)
++    let saved = await model.finishPendingPersistence(); XCTAssertTrue(saved)
++    let host = NSHostingView(rootView: NotebookMacCanvas(documentLayout: .constant(nil)).environment(model))
++    let window = NSWindow(contentRect: .init(x: 0, y: 0, width: 900, height: 1250),
++      styleMask: .borderless, backing: .buffered, defer: false)
++    window.isReleasedWhenClosed = false; window.contentView = host; window.orderBack(nil)
++    defer { window.contentView = nil; window.close() }
++    func views(_ root: NSView) -> [NSView] { [root] + root.subviews.flatMap(views) }
++    try await fixture.waitUntil { model.presence?.viewport.x == 900 }
++    host.layoutSubtreeIfNeeded()
++    XCTAssertEqual(views(host).compactMap { $0 as? AgentSnapshotRasterView }.count, 0)
++    let start = ContinuousClock.now
++    let navigation = Task { await model.navigateToNotebookPage(at: 1, in: item, expectedRoot: model.notebookPageRoot(item)!, navigationGeneration: model.navigationGeneration) }
++    defer { navigation.cancel() }
++    var capturedPartial = false
++    var samples: [(Double, Int)] = [], lastCount = -1
++    repeat {
++      let count = views(host).compactMap { $0 as? AgentSnapshotRasterView }
++        .filter { SceneSourceVisibility.isVisible($0) && ($0.image != nil || $0.layer?.sublayers?.contains { $0.contents != nil } == true) }.count
++      if count != lastCount {
++        let elapsed = start.duration(to: .now).components
++        samples.append((Double(elapsed.seconds)*1000 + Double(elapsed.attoseconds)/1e15, count))
++        lastCount = count
++      }
++      if count > 0, !capturedPartial {
++        capturedPartial = true
++        if let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds) {
++          host.cacheDisplay(in: host.bounds, to: rep)
++          if let png = rep.representation(using: .png, properties: [:]) {
++            let shot = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
++            shot.name = "First partial page, \(count) installed rasters (AppKit capture, not display timing)"
++            shot.lifetime = .keepAlways; add(shot)
++          }
++        }
++      }
++      if count == elements.count { break }
++      try await Task.sleep(for: .milliseconds(4))
++    } while start.duration(to: .now) < .seconds(5)
++    let note = XCTAttachment(string: "Installed visible rasters (ms, count), not physical frame timing: \(samples)")
++    note.name = "Whole-page publication"; note.lifetime = .keepAlways; add(note)
++    XCTAssertEqual(lastCount, elements.count)
++    XCTAssertFalse(samples.contains { $0.1 > 0 && $0.1 < elements.count },
++      "The ordinary reader exposes partially prepared static material: \(samples)")
++  }
++}

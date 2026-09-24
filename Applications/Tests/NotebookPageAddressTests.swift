@@ -6,6 +6,37 @@ import XCTest
 
 final class NotebookPageAddressTests: XCTestCase {
   @MainActor
+  func testUnchangedReloadRetainsThePreparedPageSourceIdentity() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
+    retainNotebookUntilTeardown(model, removing: root)
+    await model.start(pageSize: NotebookAppModel.defaultPageSize)
+    let saved = await model.finishPendingPersistence(); XCTAssertTrue(saved)
+    let page = try XCTUnwrap(model.activePage)
+    _ = page.graphicGraph()
+    await model.reloadExternalChanges()?.value
+    let after = try XCTUnwrap(model.activePage)
+    XCTAssertEqual(after, page)
+    XCTAssertEqual(after.elementSourceIdentity, page.elementSourceIdentity,
+      "An unchanged SQL read cannot invalidate the live page's graph, viewport and installed material receipt")
+    let changed = PageDocument(id: page.id, size: page.size, actor: page.agentStamp.actor,
+      elements: [.init(id: "new-source", kind: .nativeText,
+        frame: .init(x: 20, y: 20, width: 200, height: 80), source: "Changed material", html: "")])
+    XCTAssertEqual(changed.agentStamp, page.agentStamp, "Negative control: stamps alone are insufficient")
+    let read = try NotebookSceneState.read(store: model.store, presence: model.presence,
+      viewport: try XCTUnwrap(model.presence).viewport, reusingPages: [page.id: changed])
+    XCTAssertEqual(read.pages[page.id]?.elements, page.elements)
+    XCTAssertNotEqual(read.pages[page.id]?.elementSourceIdentity, changed.elementSourceIdentity,
+      "A different same-stamp candidate must not replace the accepted disk source")
+    var edited = page
+    XCTAssertTrue(edited.replaceElements(changed.elements, actor: model.actorID))
+    try model.store.savePage(edited)
+    await model.reloadExternalChanges()?.value
+    let replaced = try XCTUnwrap(model.activePage)
+    XCTAssertEqual(replaced.elements, changed.elements)
+    XCTAssertNotEqual(replaced.elementSourceIdentity, page.elementSourceIdentity)
+  }
+  @MainActor
   func testAWithdrawnNeighbourReadCannotEvictTheCurrentPageWindow() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)

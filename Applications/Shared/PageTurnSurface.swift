@@ -176,56 +176,31 @@ enum PageTurnPrewarmWindow {
 /// acknowledgement must never pull the visible stack backwards.
 struct PageTurnSelectionTracker {
   private(set) var displayedIndex: Int
-  private(set) var pendingLocalTargets: [Int] = []
-  private var localOrigin: Int?
+  private var pendingLanding: Int?
 
   init(displayedIndex: Int) {
     self.displayedIndex = displayedIndex
   }
 
   var awaitsLocalAcknowledgement: Bool {
-    !pendingLocalTargets.isEmpty
+    pendingLanding != nil
   }
 
   mutating func reset(to index: Int) {
     displayedIndex = index
-    clearPendingLandings()
+    pendingLanding = nil
   }
 
   mutating func recordLocalLanding(at index: Int) {
     guard index != displayedIndex else { return }
-    if pendingLocalTargets.isEmpty { localOrigin = displayedIndex }
     displayedIndex = index
-    pendingLocalTargets.append(index)
+    pendingLanding = index
   }
 
-  mutating func recordExternalLanding(at index: Int) {
-    displayedIndex = index
-    clearPendingLandings()
-  }
-
-  /// Returns a visual target only when the model change came from somewhere
-  /// other than the still-being-acknowledged local page turns.
-  mutating func externalTarget(forModelIndex modelIndex: Int) -> Int? {
-    if modelIndex == displayedIndex {
-      clearPendingLandings()
-      return nil
-    }
-    if !pendingLocalTargets.isEmpty {
-      if modelIndex == localOrigin { return nil }
-      if let acknowledged = pendingLocalTargets.firstIndex(of: modelIndex) {
-        pendingLocalTargets.removeFirst(acknowledged + 1)
-        if pendingLocalTargets.isEmpty { localOrigin = nil }
-        return nil
-      }
-    }
-    clearPendingLandings()
-    return modelIndex
-  }
-
-  private mutating func clearPendingLandings() {
-    pendingLocalTargets.removeAll(keepingCapacity: true)
-    localOrigin = nil
+  /// Model publication acknowledges a landing; it never issues navigation.
+  /// Old configurations cannot clear a newer landing or replay an old page.
+  mutating func acknowledge(_ modelIndex: Int) {
+    if modelIndex == pendingLanding { pendingLanding = nil }
   }
 }
 
@@ -258,6 +233,7 @@ struct PageTurnSurface: View {
   var documentNavigation: DocumentPageNavigationCallbacks? = nil
   var notebookNavigation: NotebookPageNavigation? = nil
   var onWindowChange: @MainActor (Set<Int>, String) -> Void = { _, _ in }
+  var inputGate: NotebookInputGate? = nil
 
   var body: some View {
     Group {
@@ -290,7 +266,8 @@ struct PageTurnSurface: View {
           documentSelection: documentSelection,
           documentNavigation: documentNavigation,
           notebookNavigation: notebookNavigation,
-          onWindowChange: onWindowChange
+          onWindowChange: onWindowChange,
+          inputGate: inputGate
         )
       }
       #endif
@@ -329,6 +306,7 @@ struct PageTurnSurface: View {
     let documentNavigation: DocumentPageNavigationCallbacks?
     let notebookNavigation: NotebookPageNavigation?
     let onWindowChange: @MainActor (Set<Int>, String) -> Void
+    let inputGate: NotebookInputGate?
 
     func makeUIViewController(context: Context) -> IPadPageTurnController {
       let controller = IPadPageTurnController()
@@ -360,7 +338,8 @@ struct PageTurnSurface: View {
         documentSelection: documentSelection,
         documentNavigation: documentNavigation,
         notebookNavigation: notebookNavigation,
-        onWindowChange: onWindowChange
+        onWindowChange: onWindowChange,
+        inputGate: inputGate
       )
     }
   }

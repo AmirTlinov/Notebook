@@ -11,6 +11,23 @@ import XCTest
   private typealias Scene = NotebookInteractionUXTests.Scene
   private typealias Probe = NotebookSelectionComposition.Probe
 
+  func testShowReferenceKeepsTheAcceptedColdPageAcrossCameraSettlement() async throws {
+    let model = try await modelWithPages(5, distinctLeaves: true, includesSVG: true)
+    let notebook = try XCTUnwrap(model.workspace?.selectedItemID)
+    let target = try XCTUnwrap(model.activePage?.id), root = try XCTUnwrap(model.notebookPageRoot(notebook))
+    await model.prepareNotebookPage(at: 0, in: notebook)
+    XCTAssertEqual(model.selectNotebookPage(0, notebookID: notebook, expectedRoot: root), 0)
+    let scene = try await mount(model), owner = try pageOwner(scene.window)
+    try await shown("reference-source", window: scene.window, probes: leafProbes(0, scene.pageToWindow))
+    XCTAssertFalse(owner.preparedPageIndices.contains(4), "Use a genuinely unmounted destination")
+    model.requestShow(.init(target: .init(kind: .page, id: target), revision: "cold-page-reference"))
+    try await shown("reference-after-camera-settlement", window: scene.window,
+      probes: leafProbes(4, scene.pageToWindow), budget: NotebookUXObservation.opening, acknowledged: {
+        owner.displayedIndex == 4 && model.activePage?.id == target && model.requestedReference == nil
+      })
+    XCTAssertEqual(model.presence?.notebookPageID, target)
+  }
+
   func testDenseVectorSheetsKeepTheirOwnPixelsThroughImmediateReversals() async throws {
     let model = try await modelWithPages(2), notebook = try XCTUnwrap(model.workspace?.selectedItemID)
     for index in 0..<2 {
@@ -20,7 +37,7 @@ import XCTest
         let strokes = (0..<40).map { "<path d='M0 \($0 * 3)L160 \(120 - $0 * 3)'/>" }.joined()
         return .init(id: "vector-\(index)-\(number)", kind: .web,
           frame: NotebookNavigationLoadFixture.frame(number, programs: false), source: "",
-          html: "<svg xmlns='http://www.w3.org/2000/svg' width='100%' height='100%' viewBox='0 0 170 160'><g stroke='black' stroke-width='.2' fill='none'>\(strokes)</g></svg>")
+          html: "<svg xmlns='http://www.w3.org/2000/svg' width='100%' height='100%' viewBox='0 0 170 160'><g stroke='black' stroke-width='.2' fill='none'>\(strokes)</g><rect y='130' width='170' height='30' fill='\(index == 0 ? "#ff3322" : "#2288ff")'/></svg>")
       }
       XCTAssertTrue(vectors.allSatisfy(\.usesNativeSVGRaster))
       let marker = AgentElement(id: "leaf-identity", kind: .graphic,
@@ -38,17 +55,45 @@ import XCTest
     XCTAssertTrue(owner.preparedPageIndices.isSuperset(of: [0, 1]))
     let source = try XCTUnwrap(model.notebookPageRoot(notebook))
     for target in [1, 0, 1, 0, 1, 0] {
-      XCTAssertTrue(model.notebookPageNavigation.send(.step(target == 1 ? 1 : -1), ownerID: notebook, source: source))
+      if target == 1 {
+        XCTAssertTrue(model.notebookPageNavigation.send(.step(1), ownerID: notebook, source: source))
+      } else {
+        // Exercise the interactive action on the full scene, not a second
+        // commanded animation. Hardware touch arbitration is checked separately.
+        let native = owner.sheetController, pan = NotebookCurlPan()
+        let curl = try XCTUnwrap(native.view.subviews.compactMap { $0 as? SheetCurlMetalView }.first)
+        let presented = curl.onFramePresented
+        var endpointPresented = false
+        curl.onFramePresented = { image, progress, timestamp in
+          if progress == 0, timestamp > 0 { endpointPresented = true }
+          presented?(image, progress, timestamp)
+        }
+        pan.phase = .began; pan.offset.x = 20
+        XCTAssertTrue(native.gestureRecognizerShouldBegin(pan))
+        native.perform(NSSelectorFromString("panned:"), with: pan)
+        pan.phase = .changed; pan.offset.x = native.view.bounds.width + 10
+        native.perform(NSSelectorFromString("panned:"), with: pan)
+        let heldLimit = ContinuousClock.now + .seconds(2)
+        while !endpointPresented, ContinuousClock.now < heldLimit { try await Task.sleep(for: .milliseconds(2)) }
+        XCTAssertTrue(endpointPresented)
+        pan.phase = .ended
+        native.perform(NSSelectorFromString("panned:"), with: pan)
+      }
       let limit = ContinuousClock.now + .seconds(2)
       while owner.displayedIndex != target, ContinuousClock.now < limit { try await Task.sleep(for: .milliseconds(1)) }
       XCTAssertEqual(owner.displayedIndex, target)
       for _ in 0..<4 {
         let pixels = try NotebookUXObservation.Pixels(window: scene.window)
-        let probes = [0, 1].map { index in
+        var probes = [0, 1].map { index in
           (CGPoint(x: 130 + Double(index)*100, y: 1095).applying(scene.pageToWindow),
             index == target ? NotebookUXObservation.Color.blue : .paper)
         }
-        XCTAssertTrue(try pixels.matches(probes), "A reverse landing reintroduced the other leaf")
+        for number in 0..<13 {
+          let frame = NotebookNavigationLoadFixture.frame(number, programs: false)
+          probes.append((CGPoint(x: frame.x + 80, y: frame.y + 145).applying(scene.pageToWindow),
+            target == 0 ? .red : .blue))
+        }
+        XCTAssertTrue(try pixels.matches(probes), "A reverse landing reintroduced the other leaf's graphic or SVG pixels")
         try await Task.sleep(for: .milliseconds(4))
       }
     }
