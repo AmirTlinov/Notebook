@@ -1,0 +1,68 @@
+{
+  "receipt": ".build/gui295-curl-source-format-probe",
+  "runtime": "unchanged from installed 196",
+  "result": "strict latency failed; diagnostic source format recorded",
+  "sourceSHA256": "6c6424a8dd4b1abbf3cef80d122721dadf64b4912adb316b6ad9c55fd5bede8c",
+  "samples": [
+    {
+      "turn": 0,
+      "source": "Source=1668x2388, 8 bpc, 32 bpp, 6688 bytes/row, Optional(kCGColorSpaceSRGB)",
+      "command": "Command execution=19.079916673945263 ms",
+      "firstSubmission": "start=32.53183333436027ms; CPU=6.522916664835066ms; GPU queue=1.518333301646635ms; GPU=10.543500015046448ms; target=55.85925001651049ms"
+    },
+    {
+      "turn": 1,
+      "source": "Source=1668x2388, 8 bpc, 32 bpp, 6688 bytes/row, Optional(kCGColorSpaceSRGB)",
+      "command": "Command execution=11.67616667225957 ms",
+      "firstSubmission": "start=29.46329166297801ms; CPU=1.5454166859854013ms; GPU queue=0.5329583073034883ms; GPU=1.1705416545737535ms; target=44.95300000417046ms"
+    },
+    {
+      "turn": 2,
+      "source": "Source=1668x2388, 8 bpc, 32 bpp, 6688 bytes/row, Optional(kCGColorSpaceSRGB)",
+      "command": "Command execution=12.174874980701134 ms",
+      "firstSubmission": "start=22.514666663482785ms; CPU=7.326124992687255ms; GPU queue=0.6839999696239829ms; GPU=3.4550416748970747ms; target=37.76041665696539ms"
+    },
+    {
+      "turn": 3,
+      "source": "Source=1668x2388, 8 bpc, 32 bpp, 6688 bytes/row, Optional(kCGColorSpaceSRGB)",
+      "command": "Command execution=17.739875009283423 ms",
+      "firstSubmission": "start=29.19575001578778ms; CPU=1.982458314159885ms; GPU queue=0.7902499637566507ms; GPU=1.1875000200234354ms; target=44.0976666577626ms"
+    },
+    {
+      "turn": 4,
+      "source": "Source=1668x2388, 8 bpc, 32 bpp, 6688 bytes/row, Optional(kCGColorSpaceSRGB)",
+      "command": "Command execution=12.470250017940998 ms",
+      "firstSubmission": "start=22.292666690191254ms; CPU=3.627874975791201ms; GPU queue=0.8529999759048223ms; GPU=3.6714583402499557ms; target=37.76295835268684ms"
+    },
+    {
+      "turn": 5,
+      "source": "Source=1668x2388, 8 bpc, 32 bpp, 6688 bytes/row, Optional(kCGColorSpaceSRGB)",
+      "command": "Command execution=18.60212499741465 ms",
+      "firstSubmission": "start=37.34733333112672ms; CPU=3.017500013811514ms; GPU queue=0.49262496759183705ms; GPU=1.3770000077784061ms; target=51.92920833360404ms"
+    },
+    {
+      "turn": 6,
+      "source": "Source=1668x2388, 8 bpc, 32 bpp, 6688 bytes/row, Optional(kCGColorSpaceSRGB)",
+      "command": "Command execution=12.90758332470432 ms",
+      "firstSubmission": "start=30.44154166127555ms; CPU=3.7925833312328905ms; GPU queue=0.9746666473802179ms; GPU=2.9249999788589776ms; target=46.0028333181981ms"
+    },
+    {
+      "turn": 7,
+      "source": "Source=1668x2388, 8 bpc, 32 bpp, 6688 bytes/row, Optional(kCGColorSpaceSRGB)",
+      "command": "Command execution=18.519583332818 ms",
+      "firstSubmission": "start=29.604083334561437ms; CPU=1.9402916659601033ms; GPU queue=0.7692499784752727ms; GPU=1.2667500122915953ms; target=44.52304166625254ms"
+    },
+    {
+      "turn": 8,
+      "source": "Source=1668x2388, 8 bpc, 32 bpp, 6688 bytes/row, Optional(kCGColorSpaceSRGB)",
+      "command": "Command execution=12.02470832504332 ms",
+      "firstSubmission": "start=22.448250005254522ms; CPU=7.51116665196605ms; GPU queue=1.0085416433867067ms; GPU=3.555541654350236ms; target=37.878333328990266ms"
+    },
+    {
+      "turn": 9,
+      "source": "Source=1668x2388, 8 bpc, 32 bpp, 6688 bytes/row, Optional(kCGColorSpaceSRGB)",
+      "command": "Command execution=17.03262497903779 ms",
+      "firstSubmission": "start=29.63512498536147ms; CPU=1.962583337444812ms; GPU queue=0.776333297835663ms; GPU=1.2060000153724104ms; target=44.36849997728132ms"
+    }
+  ]
+}

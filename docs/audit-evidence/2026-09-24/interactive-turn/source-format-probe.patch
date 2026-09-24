@@ -1,0 +1,25 @@
+diff --git a/Applications/Tests/NotebookPageMotionUXTests.swift b/Applications/Tests/NotebookPageMotionUXTests.swift
+index ecea1483..247b850f 100644
+--- a/Applications/Tests/NotebookPageMotionUXTests.swift
++++ b/Applications/Tests/NotebookPageMotionUXTests.swift
+@@ -232,9 +232,11 @@ import XCTest
+       let forwardPresentation = curl.onFramePresented
+       var frames: [(progress: Double, presented: TimeInterval, delivered: TimeInterval)] = []
+       var submission: [SheetCurlMetalView.FrameTiming] = []
++      var imageFormat = "no source"
+       curl.onFrameMeasured = { submission.append($0) }
+       committedAt = nil
+       curl.onFramePresented = { image, progress, presentedAt in
++        imageFormat = "\(image.width)x\(image.height), \(image.bitsPerComponent) bpc, \(image.bitsPerPixel) bpp, \(image.bytesPerRow) bytes/row, \(String(describing: image.colorSpace?.name))"
+         frames.append((progress, presentedAt, CACurrentMediaTime()))
+         forwardPresentation?(image, progress, presentedAt) // Preserve the completion owner.
+       }
+@@ -246,7 +248,7 @@ import XCTest
+       }
+       curl.onFramePresented = forwardPresentation
+       curl.onFrameMeasured = nil
+-      let encoding = XCTAttachment(string: "Command execution=\((commandReturned-start)*1000) ms\n" + submission.map {
++      let encoding = XCTAttachment(string: "Source=\(imageFormat)\nCommand execution=\((commandReturned-start)*1000) ms\n" + submission.map {
+         "start=\(($0.encodingBegan-start)*1000)ms; CPU=\(($0.submitted-$0.encodingBegan)*1000)ms; GPU queue=\(($0.gpuBegan-$0.submitted)*1000)ms; GPU=\(($0.gpuEnded-$0.gpuBegan)*1000)ms; target=\(($0.targetPresentation-start)*1000)ms"
+       }.joined(separator: "\n"))
+       encoding.name = "Curl submission timing \(turn)"; encoding.lifetime = .keepAlways; add(encoding)

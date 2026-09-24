@@ -30,10 +30,10 @@
       ],
       "workspaceID": "54349F3B-9E0A-4DEA-B990-40CAE04EF45E"
     },
-    "unchangedPage": false,
     "differingFields": [
       "value.cursor"
     ],
-    "unchangedPageData": true
+    "unchangedPageData": true,
+    "unchangedReadSnapshot": false
   }
 }
