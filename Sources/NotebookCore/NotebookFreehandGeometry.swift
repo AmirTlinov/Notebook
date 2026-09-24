@@ -226,14 +226,17 @@ public final class NotebookFreehandGeometry: Sendable {
     /// their paint. An affine bounding rectangle may include extra area, never
     /// exclude a cut; it can prove surviving material, not erased material.
     var conservativeBounds: CGRect { geometry.layerIndex.bounds.applying(basis) }
-    func triangles(in area:CGRect, visit:([CGPoint]) -> Bool) -> Bool {
+    func triangles(in area:CGRect, accepting:(([CGPoint])->Bool)? = nil,visit:([CGPoint]) -> Bool) -> Bool {
       var prepared:[Range<Int>:[NotebookFreehand.Vertex]]=[:]
-      return triangles(in:area,prepared:&prepared,visit:visit)
+      return triangles(in:area,prepared:&prepared,accepting:accepting,visit:visit)
     }
-    func triangles(in area:CGRect,prepared:inout [Range<Int>:[NotebookFreehand.Vertex]],visit:([CGPoint])->Bool)->Bool {
+    func triangles(in area:CGRect,prepared:inout [Range<Int>:[NotebookFreehand.Vertex]],accepting:(([CGPoint])->Bool)? = nil,visit:([CGPoint])->Bool)->Bool {
       // A covered range may contain millions of repeated measurements. A
       // query needs a witness, not one expanded mesh for that entire range.
-      for id in geometry.query(area.applying(basis.inverted()),allowRangeCoalescing:false).indices {
+      let admits:((CGRect,CGSize)->Bool)?=accepting.map { accepts in { bounds,size in
+        accepts(rectangleCorners(bounds).map { CGPoint(x:$0.x/size.width,y:$0.y/size.height).applying(basis) })
+      } }
+      for id in geometry.query(area.applying(basis.inverted()),allowRangeCoalescing:false,admitting:admits).indices {
         if Task.isCancelled { return false }
         let v:[NotebookFreehand.Vertex]
         if let cached=prepared[id] { v=cached } else { v=geometry.vertices(at:id);prepared[id]=v }
@@ -281,13 +284,16 @@ public final class NotebookFreehandGeometry: Sendable {
     intersects(polygon,subtracting:external,clippedTo:viewport,accepting:nil)
   }
   /// Exact state witnesses; no global triangle union or pixel approximation.
+  /// `accepting` intersects a fragment with the immutable visible region.
+  /// A rejected enclosing bound also excludes all of its source fragments.
   public func appearance(in viewport:[CGPoint],subtracting cuts:[Cut],accepting:(([CGPoint])->Bool)? = nil) -> NotebookElementAppearance.State {
     guard intersects(viewport,subtracting:cuts,clippedTo:viewport,accepting:accepting) else { return .erased }
     let area=polygonBounds(viewport)
     for cut in cuts {
-      if cut.triangles(in:area,visit:{ triangle in
+      if cut.triangles(in:area,accepting:accepting,visit:{ triangle in
         let clipped=clipConvex(triangle,to:viewport)
-        return clipped.count >= 3 && self.intersects(clipped,subtracting:[],clippedTo:viewport,accepting:accepting)
+        return clipped.count >= 3 && accepting?(clipped) != false
+          && self.intersects(clipped,subtracting:[],clippedTo:clipped,accepting:accepting)
       }) { return .partial }
     }
     return .intact
@@ -314,7 +320,10 @@ public final class NotebookFreehandGeometry: Sendable {
       }
       return false
     }
-    for id in query(area,allowRangeCoalescing:false).indices.reversed() where tool(at:id) == .pen {
+    let admits:((CGRect,CGSize)->Bool)?=accepting.map { accepts in { bounds,size in
+      accepts(rectangleCorners(bounds).map { CGPoint(x:$0.x/size.width,y:$0.y/size.height) })
+    } }
+    for id in query(area,allowRangeCoalescing:false,admitting:admits).indices.reversed() where tool(at:id) == .pen {
       if Task.isCancelled { return false }
       let v = vertices(at:id)
       for start in stride(from:0,to:v.count-2,by:3) {
@@ -323,15 +332,19 @@ public final class NotebookFreehandGeometry: Sendable {
         let original = triangle.map { CGPoint(x:$0.x,y:$0.y) }
         let p=viewport.map { clipConvex(original,to:$0) } ?? original
         guard p.count >= 3,polygonIntersects(p,polygon) else { continue }
+        // Visibility is an intersection: subtracting ink cannot make an
+        // excluded source fragment visible. Reject that fragment before
+        // expanding its internal and captured erasers, not after the work.
+        guard accepting?(p) != false else { continue }
         // A surviving vector point is a proof, not a sampling approximation:
         // only a positive result exits here; absence still uses exact clipping.
         // Usually a long stroke has an untouched endpoint, so dense unrelated
         // cuts must not force thousands of polygon subtractions to find it.
         let center = CGPoint(x:p.reduce(0) { $0+$1.x }/Double(p.count),y:p.reduce(0) { $0+$1.y }/Double(p.count))
         let witnesses = p + [center] + polygon.prefix(16).filter { polygonContains($0,p) }
-        if external.isEmpty,witnesses.contains(where: { point in polygonContains(point,polygon)
-          && triangleOpacity(at:point,triangle[...]) > 0 && !erased(point,after:layer(at:id))
-          && (accepting?([point]) ?? true) }) { return true }
+        if witnesses.contains(where: { point in polygonContains(point,polygon)
+          && triangleOpacity(at:point,triangle[...]) > 0 && (accepting?([point]) ?? true)
+          && !erased(point,after:layer(at:id)) && !external.contains(where:{ $0.contains(point) }) }) { return true }
         var remaining = [p]
         for cut in query(polygonBounds(p).intersection(area),allowRangeCoalescing:false).indices
         where layer(at:cut) > layer(at:id) && tool(at:cut) == .eraser {

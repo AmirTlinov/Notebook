@@ -1,0 +1,52 @@
+{
+  "baseCommit": "9059217d",
+  "sourceSHA256": "7b7d44b97b7975fa52f32de332e0fb68e16cfc3876856baf42f921310b933848",
+  "patchSHA256": "12347c5bf4d1521e4dc7cfdc0d7d1c5aa12c9799a4f37296ba5a2a2aafdc5fca",
+  "platform": "macOS arm64, SwiftPM Release; isolated material obtained read-only from installed MCP",
+  "exactMaterial": {
+    "decodedBytes": 481468,
+    "measuredLayers": [
+      "pen",
+      "pen",
+      "eraser"
+    ],
+    "externalCutSamples": [
+      1493,
+      2435,
+      1227,
+      376
+    ],
+    "baselineMilliseconds": [
+      4663.0,
+      4704.0,
+      4668.0
+    ],
+    "candidateMilliseconds": [
+      104.126583,
+      101.999625,
+      101.943292
+    ],
+    "stateBeforeAndAfter": "partial",
+    "sourceIsCompleteAppearanceBeforeAndAfter": false,
+    "sourcePayloadCommitted": false
+  },
+  "selectionRegression": {
+    "before": "A lasso wholly inside a subtractive hole selected a broad source triangle whose other part remained visible outside the lasso.",
+    "after": "The hole query is false; a query over surviving paint is true."
+  },
+  "verification": {
+    "command": "nice -n10 swift test -c release --jobs 2 --filter 'NotebookFreehandAppearanceTests|NotebookElementAppearanceTests|MeasuredFreehandTests|NotebookFreehandEraserTests|NotebookMaskedPageFragmentTests'",
+    "passedTests": 24,
+    "suites": 5,
+    "sourceUnchanged": true,
+    "subtractiveLasso4096Milliseconds": 459.840916,
+    "subtractiveLasso100000Milliseconds": 19.262125,
+    "localEvidence": ".build/gui295-live-fragment"
+  },
+  "limits": [
+    "Individual measurements, not p95 or gesture latency.",
+    "Installed pair 197 does not contain this candidate; installed MCP readback awaits the combined next pair.",
+    "No native or physical-device checks in this slice; GUI-300 owns the native slot.",
+    "Page-turn timing, board Back, program readiness and full physical acceptance remain open."
+  ]
+}

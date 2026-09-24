@@ -51,6 +51,16 @@ import Testing
       polygon:[.init(x:0,y:0.1),.init(x:1,y:0.1),.init(x:1,y:0.25),.init(x:0,y:0.25)])
     let visible=NotebookElementAppearance(graphic:graphic,layout:nil,size:.init(width:100,height:100),erasures:[])
     #expect(visible.intersects([.init(x:10,y:10),.init(x:90,y:10),.init(x:90,y:80),.init(x:10,y:80)]))
+
+    // One source triangle crosses both sides of the hole. Paint surviving
+    // elsewhere in that triangle is not paint inside this lasso query.
+    var broad=NotebookGraphic(shape:.freehand,freehand:.init(layers:[.init(color:.black,vertices:[
+      .init(x:0.1,y:0.1,opacity:1),.init(x:0.9,y:0.1,opacity:1),.init(x:0.5,y:0.9,opacity:1)])]))
+    broad.mask=NotebookGraphicMask().appending(.subtract,
+      polygon:[.init(x:0,y:0),.init(x:0.6,y:0),.init(x:0.6,y:1),.init(x:0,y:1)])
+    let split=NotebookElementAppearance(graphic:broad,layout:nil,size:.init(width:100,height:100),erasures:[])
+    #expect(!split.intersects([.init(x:20,y:20),.init(x:30,y:20),.init(x:30,y:30),.init(x:20,y:30)]))
+    #expect(split.intersects([.init(x:70,y:20),.init(x:75,y:20),.init(x:75,y:25),.init(x:70,y:25)]))
   }
 
   @Test func capturedCutSurvivesTurnStretchAndProjectedGroup() throws {
@@ -117,10 +127,67 @@ import Testing
     #expect(value.contains(.init(x:50,y:50),tolerance:0))
     #expect(!value.contains(.init(x:50,y:15),tolerance:0))
     #expect(value.intersects([.init(x:45,y:45),.init(x:55,y:45),.init(x:55,y:55),.init(x:45,y:55)]))
+    var labelOnly=graphic
+    labelOnly.freehand = .init(layers:graphic.freehand!.layers + [.init(tool:.eraser,color:.black,
+      measured:.init(sourceID:UUID(),measurements:.init([sample(0,15,width:24),sample(100,15,width:24)]),frame:frame))])
+    #expect(NotebookElementAppearance(graphic:labelOnly,layout:nil,size:.init(width:100,height:100),erasures:cuts).state == .intact,
+      "Already absent source ink must not turn an untouched label into a partial erasure")
     graphic.visible=false
     let hidden=NotebookElementAppearance(graphic:graphic,layout:nil,size:.init(width:100,height:100),erasures:cuts)
     #expect(hidden.state == .erased)
     #expect(!hidden.contains(.init(x:50,y:50),tolerance:10))
+  }
+
+  @Test(arguments: [4096, 100_000])
+  func subtractiveLassoRejectsHiddenDenseInkBeforeExpandingErasers(_ count:Int) {
+    let scribble=(0..<count).map { sample(20+Double($0%41),35+Double($0%5),width:8) }
+    func layer(_ tool:SpatialInkTool,_ samples:[SpatialInkSample])->NotebookFreehand.Layer {
+      .init(tool:tool,color:.black,measured:.init(sourceID:UUID(),measurements:.init(samples),frame:frame))
+    }
+    var graphic=NotebookGraphic(shape:.freehand,freehand:.init(layers:[
+      layer(.pen,[sample(10,30),sample(90,30)]),layer(.pen,scribble),layer(.eraser,scribble)]))
+    graphic.mask=NotebookGraphicMask().appending(.subtract,
+      polygon:[.init(x:0,y:0),.init(x:0.7,y:0),.init(x:0.7,y:1),.init(x:0,y:1)])
+    let cuts=[cut(scribble+[sample(78,30,width:8)])]
+    let start=ContinuousClock.now
+    let value=NotebookElementAppearance(graphic:graphic,layout:nil,size:.init(width:100,height:100),erasures:cuts)
+    #expect(value.state == .partial)
+    #expect(!value.contains(.init(x:30,y:30),tolerance:0))
+    #expect(!value.contains(.init(x:78,y:30),tolerance:0))
+    #expect(value.contains(.init(x:90,y:30),tolerance:0))
+    #expect(value.intersects([.init(x:88,y:28),.init(x:92,y:28),.init(x:92,y:32),.init(x:88,y:32)]))
+    let elapsed=start.duration(to:.now)
+    print("SUBTRACTIVE_LASSO_APPEARANCE measurements=\(count) elapsed=\(elapsed)")
+    #expect(elapsed < .milliseconds(500),"Excluded material must not expand into a global erase calculation")
+    #expect(graphic.mask?.completePathBuildCount == 0)
+  }
+
+  @Test func subtractiveLassoAndLayeredErasersKeepTheSameVisibleContour() {
+    let samples=[sample(10,30),sample(90,30),sample(90,80)]
+    var graphic=ink(samples)
+    let eraser=NotebookFreehand.Layer(tool:.eraser,color:.black,
+      measured:.init(sourceID:UUID(),measurements:.init([sample(50,25,width:20),sample(50,35,width:20)]),frame:frame))
+    graphic.freehand = .init(layers:graphic.freehand!.layers+[eraser])
+    graphic.mask=NotebookGraphicMask().appending(.subtract,
+      polygon:[.init(x:0.12,y:0.1),.init(x:0.42,y:0.1),.init(x:0.42,y:0.9),.init(x:0.12,y:0.9)])
+    let size=CGSize(width:100,height:100)
+    let cuts=[cut([sample(72,0,width:8),sample(72,100,width:8)])]
+    let value=NotebookElementAppearance(graphic:graphic,layout:nil,size:size,erasures:cuts)
+    let region=graphic.mask!.path(in:.init(origin:.zero,size:size))
+    let erased=NotebookElementAppearance.erasurePath(cuts,size:size)
+    let remaining=graphic.freehand!.paintPath(size:size,transform:nil).intersection(region).subtracting(erased)
+    #expect(value.state == .partial)
+    for x in stride(from:0.31,to:100,by:2.0) {
+      for y in stride(from:0.19,to:100,by:2.0) {
+        let point=CGPoint(x:x,y:y)
+        #expect(value.contains(.init(x:x,y:y),tolerance:0) == remaining.contains(point))
+      }
+    }
+    let sourceOnly=[cut([sample(25,25,width:8),sample(25,35,width:8)])]
+    let untouched=NotebookElementAppearance(graphic:graphic,layout:nil,size:size,erasures:sourceOnly)
+    #expect(untouched.state == .intact,"An eraser intersecting only a lasso hole removes no displayed material")
+    let full=[cut([sample(0,30,width:35),sample(90,30,width:35),sample(90,90,width:35)])]
+    #expect(NotebookElementAppearance(graphic:graphic,layout:nil,size:size,erasures:full).state == .erased)
   }
   @Test func retainedFrameClipsDisplayNotSourceCoordinates() {
     let graphic=NotebookGraphic(shape:.freehand,

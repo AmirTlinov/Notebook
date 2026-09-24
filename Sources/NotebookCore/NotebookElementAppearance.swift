@@ -15,11 +15,19 @@ public struct NotebookElementAppearance: @unchecked Sendable {
     return stateProjection!.resolve {
       let value=vector!
       let sources=[(value.ink,value.viewport)] + (value.label.flatMap { label in value.labelViewport.map { [(label,$0)] } } ?? [])
-      let states=sources.compactMap { ink,viewport -> State? in
-        guard ink.geometry.intersects(viewport,clippedTo:viewport) else { return nil }
-        return ink.geometry.appearance(in:viewport,subtracting:value.cuts,accepting:{ value.visible($0) })
+      let states=sources.map { ink,viewport in
+        ink.geometry.appearance(in:viewport,subtracting:value.cuts,accepting:{ value.visible($0) })
       }
-      return states.allSatisfy({ $0 == .erased }) ? .erased : states.allSatisfy({ $0 == .intact }) ? .intact : .partial
+      if states.allSatisfy({ $0 == .erased }) { return .erased }
+      if states.contains(.partial) { return .partial }
+      // Only mixed intact/absent components need to distinguish an erased
+      // source from an originally empty one (for example ink beside a label).
+      // Do not first expand the unmasked ink merely to classify its visibility.
+      for index in sources.indices where states[index] == .erased {
+        let (ink,viewport)=sources[index]
+        if ink.geometry.intersects(viewport,clippedTo:viewport) { return .partial }
+      }
+      return .intact
     }
   }
   private let knownState: State?
@@ -140,12 +148,13 @@ public struct NotebookElementAppearance: @unchecked Sendable {
       let local=point.applying(projection.inverted())
       return mask.contains(.init(x:local.x/size.width,y:local.y/size.height))
     }
-    func visible(_ fragment:[CGPoint],near point:CGPoint? = nil,tolerance:Double = 0)->Bool {
+    func visible(_ fragment:[CGPoint],near point:CGPoint? = nil,tolerance:Double = 0,intersecting query:CGPath? = nil)->Bool {
       guard let mask=graphic.mask else { return true }
       let points=fragment.map { $0.applying(basis) }
       if points.count == 1 { return visible(points[0]) }
       let triangle=CGMutablePath();triangle.addLines(between:points);triangle.closeSubpath()
       var path:CGPath=triangle
+      if let query { path=path.intersection(query,using:.evenOdd) }
       if let point,tolerance > 0 {
         path=path.intersection(CGPath(ellipseIn:.init(x:point.x-tolerance,y:point.y-tolerance,
           width:2*tolerance,height:2*tolerance),transform:nil))
@@ -223,7 +232,13 @@ public struct NotebookElementAppearance: @unchecked Sendable {
     if let vector {
       let inverse=vector.basis.inverted()
       let source=polygon.map { $0.applying(inverse) }
-      let accepts:(([CGPoint])->Bool)?=vector.graphic.mask == nil ? nil : { vector.visible($0) }
+      // Paint, mask and lasso need one common witness, not three separate
+      // intersections somewhere in a source triangle crossing the lasso hole.
+      let accepts:(([CGPoint])->Bool)?
+      if vector.graphic.mask != nil {
+        let query=CGMutablePath();query.addLines(between:polygon);query.closeSubpath()
+        accepts = { vector.visible($0,intersecting:query) }
+      } else { accepts=nil }
       return vector.ink.geometry.intersects(source,subtracting:vector.cuts,clippedTo:vector.viewport,accepting:accepts)
         || (vector.label.map { $0.geometry.intersects(source,subtracting:vector.cuts,clippedTo:vector.labelViewport!,accepting:accepts) } ?? false)
     }
