@@ -52,6 +52,7 @@ class PairCLI(preview.FakeCLI):
         self.mac_sidecar = True
         self.mac_adhoc = False
         self.mac_fail = False
+        self.codex_prepare_fail = False
         self.xpc_rights = {"com.apple.security.app-sandbox": True}
         self.missing_xpc = False
         self.missing_tex = False
@@ -74,6 +75,11 @@ class PairCLI(preview.FakeCLI):
             assert argv[1:] == ["ci", "--ignore-scripts"]
         elif label.startswith("typesetter-resources-"):
             assert "--prepare" in argv and "--platform" in argv and "--stage" in argv
+        elif label == "codex-resources":
+            snapshot = Path(cwd)
+            assert argv == [sys.executable, "-B", str(snapshot / "Applications/prepare_notebook_codex.py"),
+                            "--stage", str(snapshot / ".build/notebook-codex-runtime")]
+            exit_code = 1 if self.codex_prepare_fail else 0
         elif label == "typescript-resources":
             assert "--prepare" in argv and "--stage-root" in argv
             output = json.dumps({"status": "ready", "stage": str(self.source / ".build/fixture-typescript-runtime")}).encode()
@@ -305,6 +311,9 @@ class ReleaseTests(unittest.TestCase):
         self.assertEqual(release.source_inputs(self.source), self.before)
         builds = [call for call in self.cli.calls if "xcodebuild" in call and "build" == call[-1]]
         self.assertEqual(len(builds), 2)
+        preparation = [call for call in self.cli.calls if any(str(arg).endswith("/prepare_notebook_codex.py") for arg in call)]
+        self.assertEqual(len(preparation), 1)
+        self.assertLess(self.cli.calls.index(preparation[0]), self.cli.calls.index(builds[1]))
         self.assertIn("PRODUCT_BUNDLE_IDENTIFIER=" + release.BUNDLE, builds[0])
         self.assertFalse(any(arg.startswith("PRODUCT_BUNDLE_IDENTIFIER=") for arg in builds[1]))
         self.assertFalse(any(arg.startswith("CODE_SIGN_ENTITLEMENTS=") for arg in builds[1]))
@@ -317,6 +326,13 @@ class ReleaseTests(unittest.TestCase):
         device_calls = [call for call in self.cli.calls if "devicectl" in call]
         self.assertEqual(len(device_calls), 1)
         self.assertEqual(device_calls[0][1:5], ["devicectl", "device", "info", "details"])
+
+    def test_failed_codex_preparation_stops_before_mac_build_or_verified_pair(self):
+        self.cli.codex_prepare_fail = True
+        self.refused("codex-resources")
+        self.assertIsNone(self.cli.mac)
+        self.assertNotIn("apps", release.read_json(self.evidence / "build.json"))
+        self.assertFalse(self.cli.install_calls)
 
     def test_previous_directory_is_not_reused(self):
         receipt = self.build()
