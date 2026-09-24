@@ -3,8 +3,9 @@
 // private domain commands. Each process attaches to the existing Mac owner.
 import {spawn,execFileSync} from "node:child_process";
 import {createHash} from "node:crypto";
-import {mkdir,mkdtemp,readFile,writeFile} from "node:fs/promises";
+import {mkdir,mkdtemp,readFile,realpath,writeFile} from "node:fs/promises";
 import {dirname,isAbsolute,join,resolve} from "node:path";
+import {fileURLToPath} from "node:url";
 
 const tools=["notebook_context","notebook_execute"];
 const maximumMessageBytes=64*1024*1024;
@@ -26,7 +27,9 @@ async function endpoint(path){
   requireValue(value.socket===`/tmp/notebook-acceptance-${value.runID}/bridge.sock`,"Only the private acceptance socket is allowed");
   requireValue(isAbsolute(value.macApp),"Private application path must be absolute");
   const identifier=execFileSync("/usr/bin/plutil",["-extract","CFBundleIdentifier","raw","-o","-",join(value.macApp,"Contents/Info.plist")],{encoding:"utf8"}).trim();
-  requireValue(identifier==="com.amirtlinov.notebook.mac.acceptance","The adapter cannot start a production helper or sidecar");
+  const checkout=await realpath(fileURLToPath(new URL("../",import.meta.url)));
+  const scope=createHash("sha256").update(checkout).digest("hex").slice(0,12);
+  requireValue(identifier===`com.amirtlinov.notebook.mac.acceptance.${scope}`,"The adapter requires this checkout's isolated acceptance application");
   return {...value,entry:join(value.macApp,"Contents/Resources/NotebookTools/dist/index.mjs"),output:join(dirname(path),"output")};
 }
 
@@ -113,7 +116,8 @@ async function main(){
   try{
     await session.initialize();
     const listed=await session.rpc("tools/list",{});
-    requireValue(JSON.stringify(listed.tools.map(tool=>tool.name).sort())===JSON.stringify(tools),"The endpoint must expose exactly the two public Notebook tools");
+    requireValue(Array.isArray(listed.tools)&&tools.every(name=>listed.tools.some(tool=>
+      tool.name===name&&tool.inputSchema?.type==="object")),"The endpoint must expose the public Notebook tools with object input schemas");
     const result=operation==="list-tools"?listed:await publish(configuration,
       await session.rpc("tools/call",{name,arguments:args}),session.stderr);
     process.stdout.write(JSON.stringify(result,null,2)+"\n");

@@ -8386,3 +8386,13 @@ Full acceptance additionally needs system frame/CPU/GPU/memory measurements,
 ten scenario repetitions, and 30 minutes of collaborative work on the named
 build. Video, CADisplayLink, compiled UI, and cached pixels cannot replace the
 corresponding system or physical observation.
+
+## GUI-306 — архитектурный ремонт, A18 (25 сентября 2026)
+
+Изолированный worktree `codex/notebook-architecture-repair`, база `497f6949`.
+Проверочный MCP-клиент отделяет разрешённые вызовы от inventory сервера и принимает
+только `.acceptance.<checkout hash>` своего checkout и private socket своего run.
+`MCP/node_modules/.bin/tsx --test MCP/test/public-transport.test.ts`: **1/1 PASS**,
+реальный собранный MCP объявляет три инструмента; дополнительный инструмент не
+разрешён клиенту, production/чужой checkout/socket и отсутствующие инструменты отвергаются.
+Это проверка транспорта и идентичности, не запуск Mac/iPad и не UX-приёмка всей серии.
