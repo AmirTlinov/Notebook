@@ -48,8 +48,9 @@ final class PortalRenderingTests: XCTestCase {
       let presence = SessionPresence(boardID: childID, mode: .board, camera: camera, viewport: size)
       let sourceIndex = WorkspaceSceneIndex(workspace: workspace, hierarchy: hierarchy, paperSizes: model.documents.mapValues(\.paperSize))
       let painter = SceneCompositionRenderer(source: SceneCompositionSource(index: sourceIndex, hierarchy: hierarchy, journal: ink))
-      let parent = SessionPresence(boardID: workspace.rootBoardID, mode: .board,
-        camera: BoardPortalProjection.parentBoundaryCamera(portalCenter: .zero, viewport: size), viewport: size)
+      let parent = SessionPresence(boardID: workspace.rootBoardID, mode: .cover,
+        camera: BoardPortalProjection.parentBoundaryCamera(portalCenter: .zero, viewport: size), viewport: size,
+        focusedItemID: childID, openProgress: 1)
       let first = try pixels(try await painter.render(presence: parent, scale: 1).png, size: size)
       let second = try pixels(try await painter.render(presence: presence, scale: 1).png, size: size)
       XCTAssertEqual(first.count, second.count)
@@ -179,7 +180,7 @@ final class PortalRenderingTests: XCTestCase {
     XCTAssertNotEqual(afterRevision, beforeRevision, "The SQL owner identity includes the independent child edit, not just the maximum hierarchy clock")
     let after = try await receipt(store: store, revision: afterRevision)
     XCTAssertNotEqual(after.pngSHA256, before.pngSHA256)
-    XCTAssertNotNil(SceneRenderResources.shared.image(for: agentElementSnapshotSource(element)))
+    XCTAssertTrue(try store.boardHasContent(childID), "Arriving content changes the empty folder into the sheet variant")
     XCTAssertEqual(after.pngSHA256, SHA256.hash(data: try Data(contentsOf: store.currentViewPreviewURL))
       .map { String(format: "%02x", $0) }.joined())
   }

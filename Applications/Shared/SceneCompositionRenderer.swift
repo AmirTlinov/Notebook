@@ -285,7 +285,9 @@ final class SceneCompositionRenderer {
             width: item.geometry.width * scale, height: item.geometry.height * scale)
           if rect.insetBy(dx: -padding * scale, dy: -padding * scale).intersects(visible) {
             try await paintCover(item, boardID: presence.boardID, frame: rect, visible: visible,
-              transitionViewport: transitionViewport, passes: passes, canvas: canvas)
+              transitionViewport: transitionViewport, passes: passes,
+              portalProgress: (itemPresentation ?? presence).focusedItemID == id
+                ? (itemPresentation ?? presence).openProgress : 0, canvas: canvas)
           }
         }
       }
@@ -329,9 +331,10 @@ final class SceneCompositionRenderer {
   }
 
   private func paintCover(_ item: RenderedWorkspaceItem, boardID: UUID, frame: CGRect, visible: CGRect,
-    transitionViewport: SpatialPoint, passes: Int,
+    transitionViewport: SpatialPoint, passes: Int, portalProgress: Double = 0,
     canvas: SceneRasterCompositor) async throws {
     try checkPreparation()
+    let hasContents = item.item.kind == .board ? try await source.boardHasContent(item.id) : false
     let size = CGSize(width: item.geometry.width, height: item.geometry.height)
     let projection = frame.width / size.width
     let padding = WorkspaceCoverRaster.shadowPadding
@@ -339,11 +342,12 @@ final class SceneCompositionRenderer {
     // Sending them through a new SwiftUI ImageRenderer for every intersecting
     // tile repeats layout/readback on main. The compositor already owns their
     // projection and can blend them on its pixel worker directly.
-    try await canvas.drawImage(WorkspaceCoverRaster.shadow(geometry: item.geometry, lifted: false),
+    try await canvas.drawImage(WorkspaceCoverRaster.shadow(geometry: item.geometry, lifted: false, kind: item.item.kind, hasContents: hasContents),
       in: frame.insetBy(dx: -padding * projection, dy: -padding * projection))
-    let shape = RoundedRectangle(cornerRadius: item.geometry.cornerRadius * projection, style: .continuous)
+    let shape = WorkspaceCoverOutline(kind: item.item.kind == .board && portalProgress > 0 ? .notebook : item.item.kind,
+      cornerRadius: item.geometry.cornerRadius * projection, hasContents: hasContents)
     try await canvas.pushClip(shape.path(in: frame).cgPath)
-    if item.item.kind == .board {
+    if item.item.kind == .board, portalProgress > 0 {
       if WorkspaceSceneProjection.showsPortal(pixelScale: projection, remainingPasses: passes) {
         let camera = BoardPortalProjection.entryCamera(portalCamera: try await source.portalCamera(item.id),
           viewport: transitionViewport)
@@ -354,11 +358,16 @@ final class SceneCompositionRenderer {
       } else {
         try await canvas.drawView(Color(red: 0.9, green: 0.93, blue: 0.925), size: size, in: frame)
       }
-      try await canvas.drawView(RoundedRectangle(cornerRadius: item.geometry.cornerRadius, style: .continuous)
-        .stroke(Color.black.opacity(0.16), lineWidth: 2), size: size, in: frame)
-    } else {
-      try await canvas.drawImage(WorkspaceCoverRaster.material(item: item.item, geometry: item.geometry), in: frame)
+    }
+    let coverOpacity = item.item.kind == .board ? max(0, 1 - portalProgress) : 1
+    if coverOpacity == 1 {
+      try await canvas.drawImage(WorkspaceCoverRaster.material(item: item.item, geometry: item.geometry, hasContents: hasContents), in: frame)
       try await canvas.drawView(WorkspaceCoverTitle(item: item.item, geometry: item.geometry), size: size, in: frame)
+    } else if coverOpacity > 0 {
+      try await canvas.drawView(ZStack {
+        WorkspaceCoverSurface(item: item.item, geometry: item.geometry, hasContents: hasContents)
+        WorkspaceCoverTitle(item: item.item, geometry: item.geometry)
+      }.opacity(coverOpacity), size: size, in: frame)
     }
     let visible = frame.intersection(visible)
     if !visible.isEmpty, !visible.isNull {

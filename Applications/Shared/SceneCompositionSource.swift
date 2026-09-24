@@ -57,14 +57,17 @@ struct SceneCompositionLiveData: Sendable {
   let referenceIdentities: [NotebookReferenceIdentity]
   let referenceBasis: NotebookReferenceBasis?
   let documentPaperSizes: [UUID: DocumentPaperSize]
+  let nonemptyBoardIDs: Set<UUID>
   init(documents: [UUID: DocumentDocument], states: [UUID: DocumentStateJournal], pages: [UUID: PageDocument],
     ink: SpatialInkJournal, suppressedInkIDs: Set<UUID> = [], referenceIdentities: [NotebookReferenceIdentity] = [],
-    referenceBasis: NotebookReferenceBasis? = nil, documentPaperSizes: [UUID: DocumentPaperSize] = [:]) {
+    referenceBasis: NotebookReferenceBasis? = nil, documentPaperSizes: [UUID: DocumentPaperSize] = [:],
+    nonemptyBoardIDs: Set<UUID> = []) {
     self.documents = documents; self.states = states; self.pages = pages; self.ink = ink
     self.suppressedInkIDs = suppressedInkIDs
     self.referenceIdentities = referenceIdentities
     self.referenceBasis = referenceBasis
     self.documentPaperSizes = documentPaperSizes
+    self.nonemptyBoardIDs = nonemptyBoardIDs
   }
 }
 
@@ -98,6 +101,7 @@ actor SceneCompositionSource {
   private var posePaint: [SceneCompositionPlane:(identity:String,damage:[WorkspaceSpatialBounds])] = [:]
   private var nestedPoseIdentity: String?
   private var erasureProjection: [SurfaceID: [String: [InkElementErasure]]] = [:]
+  private var folderContents: [UUID: Bool] = [:]
 
   init(store: NotebookStore, revision: UInt64, workspaceID: UUID,
     groupPoses:[SceneCompositionPlane:[String:NotebookElementPlacement.Source]] = [:]) {
@@ -142,6 +146,19 @@ actor SceneCompositionSource {
     }
   }
 
+  func boardHasContent(_ id: UUID) throws -> Bool {
+    if let value = folderContents[id] { return value }
+    let value: Bool
+    switch origin {
+    case .sql(let store): value = try checked(store) { try $0.boardHasContent(id) }
+    case .values(_, let hierarchy, let journal):
+      guard hierarchy.board(id) != nil else { throw SceneRenderError.snapshotPending("folder_source") }
+      value = !hierarchy.isEmpty(id, spatialInk: journal)
+    }
+    folderContents[id] = value
+    return value
+  }
+
   func ink(_ surface: SurfaceID) throws -> SpatialInkJournal {
     switch origin {
     case .sql(let store): return try checked(store) {
@@ -162,6 +179,8 @@ actor SceneCompositionSource {
     }).sorted { $0.uuidString < $1.uuidString }
     let surfaces = plan.inkSurfaces
     guard surfaces.count <= SceneCompositionPlan.maximumLiveOwners else { throw SceneRenderError.resourceLimit }
+    let folders = Set(frame.worksets.values.flatMap { $0.items.filter { $0.item.kind == .board }.map(\.id) })
+    let nonemptyBoardIDs = try Set(folders.filter { try boardHasContent($0) })
     switch origin {
     case .sql(let store):
       return try checked(store) { store in
@@ -224,14 +243,16 @@ actor SceneCompositionSource {
         }
         return .init(documents: data.documents, states: data.states, pages: data.pages, ink: ink, suppressedInkIDs: suppressed,
           referenceIdentities: basis.identities, referenceBasis: basis,
-          documentPaperSizes: frame.index.documentPaperSizes.filter { itemIDs.contains($0.key) })
+          documentPaperSizes: frame.index.documentPaperSizes.filter { itemIDs.contains($0.key) },
+          nonemptyBoardIDs: nonemptyBoardIDs)
       }
     case .values(_, let hierarchy, let journal):
       let wanted = Set(surfaces)
       let ink = SpatialInkJournal(actions: journal.actions.filter { $0.spans.contains { wanted.contains($0.surface) } }, stamp: journal.stamp)
       return .init(documents: [:], states: [:], pages: [:], ink: ink,
         suppressedInkIDs: hierarchy.boards.reduce(into: Set<UUID>()) { $0.formUnion($1.board.graphicPresentation.suppressedInkIDs) },
-        documentPaperSizes: frame.index.documentPaperSizes.filter { itemIDs.contains($0.key) })
+        documentPaperSizes: frame.index.documentPaperSizes.filter { itemIDs.contains($0.key) },
+        nonemptyBoardIDs: nonemptyBoardIDs)
     }
   }
 

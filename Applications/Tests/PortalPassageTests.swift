@@ -130,8 +130,8 @@ final class PortalPassageTests: XCTestCase {
     XCTAssertTrue(saved)
   }
 
-  func testZoomKeepsPassivePortalStaticAndPreservesInstalledChildPrograms() async throws {
-    let scene = try await makeScene(elementCount: 10)
+  func testZoomKeepsFolderClosedUntilExplicitEntry() async throws {
+    let scene = try await makeScene()
     let parentID = try XCTUnwrap(scene.model.presence?.boardID)
     let input = UUID()
     scene.model.inputGate.beginContact(source: input)
@@ -144,19 +144,19 @@ final class PortalPassageTests: XCTestCase {
     XCTAssertEqual(scene.model.presence?.boardID, parentID)
     XCTAssertTrue(agentWebViews(in: scene.host.view).isEmpty,
       "Зум портала не входит в доску и не запускает её программы")
-    _ = try redPoint(in: scene.host.view)
+    _ = try redPoint(in: scene.host.view, expectMarker: false)
     try scene.send(.changed(scale: crossing * 0.9, velocity: -1, elapsed: 0.3, centroid: center))
     try await Task.sleep(for: .milliseconds(40))
     XCTAssertNotEqual(scene.model.presence?.boardID, scene.childID)
     XCTAssertTrue(agentWebViews(in: scene.host.view).isEmpty,
       "Отдаление портала также сохраняет пассивное содержание")
-    _ = try redPoint(in: scene.host.view)
+    _ = try redPoint(in: scene.host.view, expectMarker: false)
     try scene.send(.ended(scale: crossing * 0.9, velocity: -1, elapsed: 0.4, centroid: center))
     scene.model.inputGate.endContact(source: input)
     try await Task.sleep(for: .milliseconds(400))
     XCTAssertTrue(agentWebViews(in: scene.host.view).isEmpty,
-      "Пассивный портал не перезапускает десять готовых элементов после отпускания")
-    _ = try redPoint(in: scene.host.view)
+      "Закрытая папка не запускает программу после отпускания")
+    _ = try redPoint(in: scene.host.view, expectMarker: false)
 
     scene.model.enterBoard(scene.childID)
     let entryDeadline = ContinuousClock.now + .seconds(10)
@@ -167,6 +167,24 @@ final class PortalPassageTests: XCTestCase {
     }
     XCTAssertEqual(scene.model.compositionTiles.published?.plan.rootBoardID, scene.childID)
     XCTAssertTrue(scene.hasInstalledMarker())
+    _ = try redPoint(in: scene.host.view)
+    await scene.model.finishPendingPersistence()
+  }
+
+  func testEnteredBoardKeepsInstalledChildProgramsDuringZoom() async throws {
+    let scene = try await makeScene(elementCount: 10)
+    scene.model.enterBoard(scene.childID)
+    let entryDeadline = ContinuousClock.now + .seconds(10)
+    while (scene.model.compositionTiles.published?.plan.rootBoardID != scene.childID
+      || !scene.hasInstalledMarker() || scene.model.compositionTiles.isPreparing),
+      ContinuousClock.now < entryDeadline {
+      try await Task.sleep(for: .milliseconds(20))
+    }
+    XCTAssertEqual(scene.model.compositionTiles.published?.plan.rootBoardID, scene.childID)
+    XCTAssertTrue(scene.hasInstalledMarker())
+    let input = UUID()
+    defer { scene.model.inputGate.endContact(source: input) }
+    let center = CGPoint(x: scene.viewport.x / 2, y: scene.viewport.y / 2)
     let interactive = try XCTUnwrap(scene.model.boardHierarchy?.board(scene.childID)?.elements.first { !$0.javaScript.isEmpty })
     scene.model.interactiveElementFocus = .board(boardID: scene.childID, elementID: interactive.id)
     let mounted = try await preparedRuntimeIdentities(in: scene, focused: interactive)
@@ -244,13 +262,19 @@ final class PortalPassageTests: XCTestCase {
       }
     }
     let portalSurfaces: Set<SurfaceID> = [.board(start.boardID), .cover(scene.childID), .board(scene.childID)]
-    try assertPhysicalSurfaces(portalSurfaces)
+    try assertPhysicalSurfaces([.board(start.boardID), .cover(scene.childID)])
     XCTAssertNil(scene.model.compositionTiles.surfaceRegistry.canvas(for: .cover(scene.distantID)),
       "Подготовка портала не создаёт владельца далёкой тетради")
     scene.model.enterBoard(scene.childID)
     try await Task.sleep(for: .milliseconds(40))
     scene.model.leaveBoard()
-    try await Task.sleep(for: .milliseconds(40))
+    // Parent preparation is asynchronous; immediate-return pixels have their
+    // own regression above. This scenario checks the settled mounted owners.
+    let returnDeadline = ContinuousClock.now + .seconds(5)
+    while Set(inkCanvases(in: scene.host.view).compactMap { $0.installedSpatialSource?.surface }) != portalSurfaces,
+      scene.model.compositionTiles.failure == nil, ContinuousClock.now < returnDeadline {
+      try await Task.sleep(for: .milliseconds(20))
+    }
     try assertPhysicalSurfaces(portalSurfaces)
     XCTAssertNil(scene.model.compositionTiles.surfaceRegistry.canvas(for: .cover(scene.distantID)),
       "Выход из портала не монтирует невидимые предметы родительской доски")
@@ -463,13 +487,13 @@ final class PortalPassageTests: XCTestCase {
       camera: .init(scale: 0.35), viewport: viewport), settled: true)
     window.makeKeyAndVisible()
     let deadline = ContinuousClock.now + .seconds(15)
-    // Geometry publication is deliberately independent of source readiness.
-    // This warm handoff fixture must observe the marker's installed pixels,
-    // not start its gesture on the initial loading composition.
-    func markerIsInstalled() -> Bool {
-      scene.hasInstalledMarker()
+    // A closed folder installs its own material, not the hidden child marker.
+    // Entry/exit tests separately wait for the child's actual installed pixels.
+    func folderIsInstalled() -> Bool {
+      guard let cohort = model.compositionTiles.published else { return false }
+      return cohort.isPaintInstalled && cohort.liveData.nonemptyBoardIDs.contains(childID)
     }
-    while (!markerIsInstalled() || model.compositionTiles.isPreparing || model.scenePreparationPending),
+    while (!folderIsInstalled() || model.compositionTiles.isPreparing || model.scenePreparationPending),
       model.compositionTiles.failure == nil, ContinuousClock.now < deadline {
       try await Task.sleep(for: .milliseconds(30))
     }
@@ -487,11 +511,13 @@ final class PortalPassageTests: XCTestCase {
       tiles=\(cohort.tileSources)
       """)
     sourceEvidence.name = "portal-source-installation"; sourceEvidence.lifetime = .keepAlways; add(sourceEvidence)
-    XCTAssertTrue(markerIsInstalled(), "The exact marker source must be installed before the warm gesture: " + readiness)
+    XCTAssertTrue(folderIsInstalled(), "The folder material must be installed before the gesture: " + readiness)
+    XCTAssertTrue(cohort.liveData.nonemptyBoardIDs.contains(childID), "Любое содержимое включает лист на папке")
     initialCohort = cohort
     XCTAssertEqual(cohort.rasters.count, cohort.plan.tiles.count)
     XCTAssertNotNil(cohort.plan.presentations[.board(childID)], "The continuing gesture transfers an already prepared physical plane")
-    XCTAssertLessThanOrEqual(cohort.plan.liveOwners.count + 1, 8)
+    XCTAssertLessThanOrEqual(cohort.plan.nativeOwnerCount, SceneCompositionPlan.maximumNativeOwners)
+    XCTAssertLessThanOrEqual(cohort.plan.liveOwners.count + cohort.plan.inkBoardIDs.count, SceneCompositionPlan.maximumLiveOwners)
     XCTAssertLessThanOrEqual(cohort.plan.primitiveCount, 96)
     while !agentWebViews(in: host.view).isEmpty, ContinuousClock.now < deadline {
       try await Task.sleep(for: .milliseconds(20))
@@ -511,7 +537,7 @@ final class PortalPassageTests: XCTestCase {
     attachment.name = name; attachment.lifetime = .keepAlways; add(attachment)
   }
 
-  private func redPoint(in view: UIView) throws -> CGPoint {
+  private func redPoint(in view: UIView, expectMarker: Bool = true) throws -> CGPoint {
     let format = UIGraphicsImageRendererFormat(); format.scale = 1
     let image = UIGraphicsImageRenderer(size: view.bounds.size, format: format).image { _ in
       view.drawHierarchy(in: view.bounds, afterScreenUpdates: true)
@@ -534,7 +560,11 @@ final class PortalPassageTests: XCTestCase {
       }
     }}
     let attachment = XCTAttachment(image: image); attachment.name = "portal-camera-frame"; attachment.lifetime = .keepAlways; add(attachment)
-    XCTAssertGreaterThan(count, 10, "При передаче владельца видимый предмет не исчезает")
+    if expectMarker {
+      XCTAssertGreaterThan(count, 10, "При передаче владельца видимый предмет не исчезает")
+    } else {
+      XCTAssertEqual(count, 0, "Закрытая папка не показывает миниатюру содержимого")
+    }
     // A loading/paused control can occlude the circle's interior. Its opposite
     // outer edges still name its geometric center; a red-pixel mean instead
     // moves when the UI overlay appears, even if the circle never moves.

@@ -273,7 +273,8 @@ private struct MacWorkspaceMaterial: View {
       model.inputGate.endContact(source: source)
     }
     .clipShape(RoundedRectangle(cornerRadius: item.geometry.cornerRadius))
-    .background { if isLive { WorkspaceItemShadow(geometry: item.geometry) } }
+    .background { if isLive { WorkspaceItemShadow(geometry: item.geometry, kind: item.item.kind,
+      hasContents: cohort.liveData.nonemptyBoardIDs.contains(item.id)) } }
     .offset(translation)
     .accessibilityElement(children: .contain)
     .accessibilityLabel(title)
