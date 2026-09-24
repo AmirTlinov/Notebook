@@ -1,0 +1,12 @@
+✔ a reverse carrier forwards only opaque bytes, with bounded active pairs (21.941792ms)
+✔ tickets are single-use, expire, and cannot open an arbitrary CONNECT destination (109.2535ms)
+✔ revocation closes both ends and denies old client credentials; re-enrollment rotates them (21.904ms)
+✔ byte quota terminates both streams without retaining their payload (2.778625ms)
+ℹ tests 4
+ℹ suites 0
+ℹ pass 4
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 209.655458

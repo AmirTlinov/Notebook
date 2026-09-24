@@ -1,0 +1,6 @@
+{
+  "test": "actual MCP bundle against checked-in public verification client; no Mac process/socket/store",
+  "exitCode": 1,
+  "stdout": "",
+  "stderr": "{\"transportError\":\"The endpoint must expose exactly the two public Notebook tools\"}"
+}

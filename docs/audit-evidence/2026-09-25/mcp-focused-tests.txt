@@ -1,0 +1,13 @@
+✔ portable import stages original parts then one ordinary transaction without executing author code (11.439458ms)
+✔ portable input rejects altered manifests, missing closure and symlinks before staging (2.586208ms)
+✔ explicit null saved state does not resurrect initialState; failed or cancelled staging creates no document (2.904125ms)
+✔ one import identity survives admission timeout and drains queued output without replaying accepted work (1.844209ms)
+✔ sidecar bundle initializes and exposes shared content tools without node_modules at runtime (132.8615ms)
+ℹ tests 5
+ℹ suites 0
+ℹ pass 5
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 273.929875

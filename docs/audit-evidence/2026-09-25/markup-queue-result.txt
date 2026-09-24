@@ -1,0 +1,1 @@
+exactQueue=true fakeWorker100ms=true workersAtCancel=1 workersAfterCancel=4 results=[0, 1, 2, 3] elapsed=0.409734083 seconds

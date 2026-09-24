@@ -1,0 +1,794 @@
+{
+  "date": "2026-09-25",
+  "verifiedUTC": "2026-09-24T22:43:13.964478+00:00",
+  "head": "29c6a1e7900b0b95f8754bc6d7bf19da228f4424",
+  "startHead": "b772acb235258373ac9c8936ee55dbebd9041da2",
+  "initialInventoryFiles": 1674,
+  "coreBuild": {
+    "sourceFiles": 213,
+    "changedSinceCompilation": 0,
+    "sortedPathHashMapSHA256": "e5dfa27ceae7fee45bea436c52091d3936575f3674152b30a7880206cbaa87fa"
+  },
+  "files": [
+    {
+      "path": "AGENTS.md",
+      "sha256": "bbcca367a465a5ac35595c88115071d2d0351be81d6a2040e967f738db70dcd1",
+      "baseCommitSHA256": "bbcca367a465a5ac35595c88115071d2d0351be81d6a2040e967f738db70dcd1",
+      "bytes": 4302,
+      "lines": 77,
+      "sameAsBaseCommit": true
+    },
+    {
+      "path": "Applications/Mac/MacNotebookDictation.swift",
+      "sha256": "fede78079f7e6a723ed623f701a567b2632ed3207c837fe19e0358a0d8fe1683",
+      "baseCommitSHA256": "fede78079f7e6a723ed623f701a567b2632ed3207c837fe19e0358a0d8fe1683",
+      "bytes": 4960,
+      "lines": 100,
+      "sameAsBaseCommit": true
+    },
+    {
+      "path": "Applications/Mac/MacNotebookProjectFiles.swift",
+      "sha256": "3d739e8645aaad9e7013b2174d9d5292cdce3ce9edaf662e50353919ffe618cb",
+      "baseCommitSHA256": "3d739e8645aaad9e7013b2174d9d5292cdce3ce9edaf662e50353919ffe618cb",
+      "bytes": 21856,
+      "lines": 341,
+      "sameAsBaseCommit": true
+    },
+    {
+      "path": "Applications/Mac/MacNotebookProjectRuns.swift",
+      "sha256": "20d9be246af0f7b8fa0a2b9ba374be399cc4c05830c430441e0548409ad32c89",
+      "baseCommitSHA256": "20d9be246af0f7b8fa0a2b9ba374be399cc4c05830c430441e0548409ad32c89",
+      "bytes": 6866,
+      "lines": 120,
+      "sameAsBaseCommit": true
+    },
+    {
+      "path": "Applications/Mac/MacNotebookVoice.swift",
+      "sha256": "4f861a01728fa58165afe24fbfc8f95ca8a9c90174a59a76f6a017c03d85eacc",
+      "baseCommitSHA256": "4f861a01728fa58165afe24fbfc8f95ca8a9c90174a59a76f6a017c03d85eacc",
+      "bytes": 3477,
+      "lines": 61,
+      "sameAsBaseCommit": true
+    },
+    {
+      "path": "Applications/Mac/MacPreviewPublisher.swift",
+      "sha256": "dbfe3e1e90ebfcbdeb1f2eeeacb5796e06d4c14eb2fd264e41e76e829f3d7a04",
+      "baseCommitSHA256": "dbfe3e1e90ebfcbdeb1f2eeeacb5796e06d4c14eb2fd264e41e76e829f3d7a04",
+      "bytes": 13537,
+      "lines": 332,
+      "sameAsBaseCommit": true
+    },
+    {
+      "path": "Applications/Mac/NotebookCodexSidecar.swift",
+      "sha256": "133d7165d5ca196a2b7fa6f0c95e4d11b8361cd2c65d8638ca2b36d8b814cf44",
+      "baseCommitSHA256": "b0360410f3aca1ee1526cb28023026e89081fd27a30ecc8abdd7885c1db2dfbb",
+      "bytes": 32367,
+      "lines": 535,
+      "sameAsBaseCommit": false
+    },
+    {
+      "path": "Applications/Mac/NotebookMacCodexView.swift",
+      "sha256": "e73e65cc896c5a4fe799d54df7931b506f7a0d871d74055ccb5f9259090c9478",
+      "baseCommitSHA256": "eb6b30f45e11597c7623ce21c2c689794572911bfeedba4f34c601d69cb3098f",
+      "bytes": 15893,
+      "lines": 282,
+      "sameAsBaseCommit": false
+    },
+    {
+      "path": "Applications/MacTests/NotebookCodexSidecarTests.swift",
+      "sha256": "a443098e1e6a68cb5701d0522b3c520b1c47969430fa8383edb3da15d0a6c83d",
+      "baseCommitSHA256": "5fa138e1f8db46a13c31e1b405dd45180f4761c330e1b2ff8f3c867e7e47a52e",
+      "bytes": 31473,
+      "lines": 494,
+      "sameAsBaseCommit": false
+    },
+    {
+      "path": "Applications/Shared/DocumentBlockRuntime.swift",
+      "sha256": "c6f3c571e99d9b1f6b5f7ee96ca2502248ad8870efd9d1e7e3d36ff46b13c3fd",
+      "baseCommitSHA256": "c6f3c571e99d9b1f6b5f7ee96ca2502248ad8870efd9d1e7e3d36ff46b13c3fd",
+      "bytes": 23136,
+      "lines": 393,
+      "sameAsBaseCommit": true
+    },
+    {
+      "path": "Applications/Shared/DocumentCanonicalExport.swift",
+      "sha256": "823538c65038633443b0a7cdfa0e257ad769218857cccd4bb7bc9ad9a00df597",
+      "baseCommitSHA256": "823538c65038633443b0a7cdfa0e257ad769218857cccd4bb7bc9ad9a00df597",
+      "bytes": 19925,
+      "lines": 315,
+      "sameAsBaseCommit": true
+    },
+    {
+      "path": "Applications/Shared/DocumentPagePreparation.swift",
+      "sha256": "42a34012eeb8abaff3e820196a4cb9633cc2915dd2913819287902c017fdcdee",
+      "baseCommitSHA256": "42a34012eeb8abaff3e820196a4cb9633cc2915dd2913819287902c017fdcdee",
+      "bytes": 16770,
+      "lines": 291,
+      "sameAsBaseCommit": true
+    },
+    {
+      "path": "Applications/Shared/DocumentProgramOwner.swift",
+      "sha256": "337fd6ba274d2f863d438a113be37e47304887a71873ae77aa63eb867c25bbdf",
+      "baseCommitSHA256": "337fd6ba274d2f863d438a113be37e47304887a71873ae77aa63eb867c25bbdf",
+      "bytes": 18931,
+      "lines": 394,
+      "sameAsBaseCommit": true
+    },
+    {
+      "path": "Applications/Shared/DocumentWebView.swift",
+      "sha256": "9d6139b493013dc4149eb56b41737d2deacb47f9ff9036cb9864e3daa19e65dc",
+      "baseCommitSHA256": "9d6139b493013dc4149eb56b41737d2deacb47f9ff9036cb9864e3daa19e65dc",
+      "bytes": 132246,
+      "lines": 2591,
+      "sameAsBaseCommit": true
+    },
+    {
+      "path": "Applications/Shared/InkCanvasView.swift",
+      "sha256": "0ddbf2c336e092c68a317d8e18669af8da140db190a1d781f726776e6c1c723a",
+      "baseCommitSHA256": "0ddbf2c336e092c68a317d8e18669af8da140db190a1d781f726776e6c1c723a",
+      "bytes": 103202,
+      "lines": 2157,
+      "sameAsBaseCommit": true
+    },
+    {
+      "path": "Applications/Shared/NotebookAppModel.swift",
+      "sha256": "7162b9f29e5a5eef1d3bb8e94f2d531255b3821118ea0ad461813c624fea4cb2",
+      "baseCommitSHA256": "7162b9f29e5a5eef1d3bb8e94f2d531255b3821118ea0ad461813c624fea4cb2",
+      "bytes": 311051,
+      "lines": 5795,
+      "sameAsBaseCommit": true
+    },
+    {
+      "path": "Applications/Shared/NotebookChatController.swift",
+      "sha256": "5cc7fa5a80dff082460801b1e9a91e30e1df5afbb5a5e2394a56b8f0a2086e1a",
+      "baseCommitSHA256": "ca9cbe2f44553aaf34c411d7c2f1c8b8e3767c10dec9df78ff3c6294dbc96a3d",
+      "bytes": 51632,
+      "lines": 863,
+      "sameAsBaseCommit": false
+    },
+    {
+      "path": "Applications/Shared/NotebookChatWorkStatus.swift",
+      "sha256": "4b2047fd6d0ac340ea9cad5be009e450f5079b95f138630f85a9362842bbc5cc",
+      "baseCommitSHA256": "32a40fe73019a04f9918b5a99780315657dff5abd96886b30f6dabe79de9a242",
+      "bytes": 1354,
+      "lines": 27,
+      "sameAsBaseCommit": false
+    },
+    {
+      "path": "Applications/Shared/NotebookClipboard.swift",
+      "sha256": "40021bbf49a1d7a55878fe032709de411bc0f8fa326d46080cfeac0064731c3c",
+      "baseCommitSHA256": "40021bbf49a1d7a55878fe032709de411bc0f8fa326d46080cfeac0064731c3c",
+      "bytes": 11426,
+      "lines": 173,
+      "sameAsBaseCommit": true
+    },
+    {
+      "path": "Applications/Shared/NotebookCloudSync.swift",
+      "sha256": "c25fe5894ee02682e59baa4354eef376b90af0696ab2c66b9dc55a249fac40e1",
+      "baseCommitSHA256": "c25fe5894ee02682e59baa4354eef376b90af0696ab2c66b9dc55a249fac40e1",
+      "bytes": 24363,
+      "lines": 448,
+      "sameAsBaseCommit": true
+    },
+    {
+      "path": "Applications/Shared/NotebookCodexRequestView.swift",
+      "sha256": "0a99c220d7f017519f0d6bad4e3101c9629a728dba35815ba0268d0114253133",
+      "baseCommitSHA256": "d7362d0b39b20326833e62dda71fbb11516693c2fa6b46410dbd5a2f9c5a30a0",
+      "bytes": 11984,
+      "lines": 213,
+      "sameAsBaseCommit": false
+    },
+    {
+      "path": "Applications/Shared/NotebookDiskRefresh.swift",
+      "sha256": "78d30a940d858c10977225cc13a4ff76e70fa6816050900707dec6e5d164e304",
+      "baseCommitSHA256": "78d30a940d858c10977225cc13a4ff76e70fa6816050900707dec6e5d164e304",
+      "bytes": 3424,
+      "lines": 55,
+      "sameAsBaseCommit": true
+    },
+    {
+      "path": "Applications/Shared/NotebookDrawingToolController.swift",
+      "sha256": "729db9294b285bf193205f36138281c2030ab68cd3517f7bcc0ff21efabf6cfc",
+      "baseCommitSHA256": "729db9294b285bf193205f36138281c2030ab68cd3517f7bcc0ff21efabf6cfc",
+      "bytes": 52864,
+      "lines": 936,
+      "sameAsBaseCommit": true
+    },
+    {
+      "path": "Applications/Shared/NotebookFileController.swift",
+      "sha256": "3b80839f8c8bf55a287fa46d33f99b2781065fbfc3bfca41085aad4d2ba16551",
+      "baseCommitSHA256": "3b80839f8c8bf55a287fa46d33f99b2781065fbfc3bfca41085aad4d2ba16551",
+      "bytes": 22580,
+      "lines": 358,
+      "sameAsBaseCommit": true
+    },
+    {
+      "path": "Applications/Shared/NotebookLiveElementEraserView.swift",
+      "sha256": "b8baf4a6f434ef5d356300a1b02bbc57b1c28ba153382b5f50b297d48f7a0a57",
+      "baseCommitSHA256": "b8baf4a6f434ef5d356300a1b02bbc57b1c28ba153382b5f50b297d48f7a0a57",
+      "bytes": 4197,
+      "lines": 102,
+      "sameAsBaseCommit": true
+    },
+    {
+      "path": "Applications/Shared/NotebookPersistenceQueue.swift",
+      "sha256": "256541e23253031bb694555741ad857a4a9aaa060860fc43d8a538e10ca5f30f",
+      "baseCommitSHA256": "256541e23253031bb694555741ad857a4a9aaa060860fc43d8a538e10ca5f30f",
+      "bytes": 10397,
+      "lines": 254,
+      "sameAsBaseCommit": true
+    },
+    {
+      "path": "Applications/Shared/NotebookSceneState.swift",
+      "sha256": "e411a21b3ba9a71c66b5011248e72b73ac144ab7ba0ec5dcd8756b59d76d2f63",
+      "baseCommitSHA256": "e411a21b3ba9a71c66b5011248e72b73ac144ab7ba0ec5dcd8756b59d76d2f63",
+      "bytes": 18751,
+      "lines": 288,
+      "sameAsBaseCommit": true
+    },
+    {
+      "path": "Applications/Shared/NotebookSelectionClipboard.swift",
+      "sha256": "a7bbd7c110408cf8518ca6cdd38c761f430cdddf7eaffbe0cac6d3fb4fcf0a82",
+      "baseCommitSHA256": "a7bbd7c110408cf8518ca6cdd38c761f430cdddf7eaffbe0cac6d3fb4fcf0a82",
+      "bytes": 7315,
+      "lines": 124,
+      "sameAsBaseCommit": true
+    },
+    {
+      "path": "Applications/Shared/PageInkProjection.swift",
+      "sha256": "ac95b7f6460373bc19424fff9d7d3e9a5df22e07835b13aa3c2d90af44dd1643",
+      "baseCommitSHA256": "ac95b7f6460373bc19424fff9d7d3e9a5df22e07835b13aa3c2d90af44dd1643",
+      "bytes": 2880,
+      "lines": 68,
+      "sameAsBaseCommit": true
+    },
+    {
+      "path": "Applications/Shared/PageSurface.swift",
+      "sha256": "1b11e666f601fdd355bd50078a8debc7aabb64e920e7bd8429ec3953ff6b0af3",
+      "baseCommitSHA256": "1b11e666f601fdd355bd50078a8debc7aabb64e920e7bd8429ec3953ff6b0af3",
+      "bytes": 7815,
+      "lines": 210,
+      "sameAsBaseCommit": true
+    },
+    {
+      "path": "Applications/Shared/SceneCompositionSource.swift",
+      "sha256": "e6fc0a05f996caa96cac4b5b61aa57c1a302264e641427d38c8f4045bfccad33",
+      "baseCommitSHA256": "e6fc0a05f996caa96cac4b5b61aa57c1a302264e641427d38c8f4045bfccad33",
+      "bytes": 35392,
+      "lines": 645,
+      "sameAsBaseCommit": true
+    },
+    {
+      "path": "Applications/Tests/NotebookChatControllerTests.swift",
+      "sha256": "8230cfce0f680d81dc26c49de403dc66b05c981b363eabd7568ce20cc749e353",
+      "baseCommitSHA256": "99e3ae3af37872cb7dece51a653096d06c7c1ab07e311d384fe6badde5d3a357",
+      "bytes": 45949,
+      "lines": 652,
+      "sameAsBaseCommit": false
+    },
+    {
+      "path": "Applications/Tests/PageInkGeometryTests.swift",
+      "sha256": "f12513f7469a75eb4b9fbc4a5b7e21480aaf349ed64952596041ba6a4f3adbad",
+      "baseCommitSHA256": "f12513f7469a75eb4b9fbc4a5b7e21480aaf349ed64952596041ba6a4f3adbad",
+      "bytes": 24516,
+      "lines": 489,
+      "sameAsBaseCommit": true
+    },
+    {
+      "path": "Applications/UITests/DrawingResponsivenessTests.swift",
+      "sha256": "fee3868e7d39f22c7f6d3afc727ba79cd0961e0235b34d993ffc6f5d004dbd8e",
+      "baseCommitSHA256": "efde5b9018f8e901156e057f29c360b09a04662fc4abeb5ec1225a926eceac06",
+      "bytes": 270268,
+      "lines": 4646,
+      "sameAsBaseCommit": false
+    },
+    {
+      "path": "Applications/WebResources/chat-shell.html",
+      "sha256": "a3744769aef255e93dabae67142a072961843be288d440308a870ef3edce7b05",
+      "baseCommitSHA256": "a3744769aef255e93dabae67142a072961843be288d440308a870ef3edce7b05",
+      "bytes": 14607,
+      "lines": 123,
+      "sameAsBaseCommit": true
+    },
+    {
+      "path": "Applications/WebResources/notebook-program.js",
+      "sha256": "3f30c6a77059d9a05254a3e7ac6e60a5f20f1c7ed0b4349bbe6a12f9d0e7d449",
+      "baseCommitSHA256": "3f30c6a77059d9a05254a3e7ac6e60a5f20f1c7ed0b4349bbe6a12f9d0e7d449",
+      "bytes": 10608,
+      "lines": 197,
+      "sameAsBaseCommit": true
+    },
+    {
+      "path": "Applications/iPad/IPadPageTurnController.swift",
+      "sha256": "b7b520be72083e93dcf9bfca1dd768da1d6cff5f8797decf38a117d1e38785a0",
+      "baseCommitSHA256": "b7b520be72083e93dcf9bfca1dd768da1d6cff5f8797decf38a117d1e38785a0",
+      "bytes": 39638,
+      "lines": 896,
+      "sameAsBaseCommit": true
+    },
+    {
+      "path": "Applications/iPad/NotebookChatCompanion.swift",
+      "sha256": "f36cc95aeaaeec2328062d26cdd05452b560123da0f0f069d3ec618c5a8ea09c",
+      "baseCommitSHA256": "94f4c9326d7384bbab1ee88501396f151a8ffa240f26cde574821e7bb8b3def9",
+      "bytes": 11333,
+      "lines": 207,
+      "sameAsBaseCommit": false
+    },
+    {
+      "path": "Applications/iPad/NotebookChatPanel.swift",
+      "sha256": "f8177da909f716ea1f8f829497789a99071d89c999e30b7b408f457d637ba2d5",
+      "baseCommitSHA256": "3412da7b291fd6505468f685ba6cd8a344c4149a76348c679f354c12ee8bdfc3",
+      "bytes": 25084,
+      "lines": 454,
+      "sameAsBaseCommit": false
+    },
+    {
+      "path": "Applications/iPad/NotebookToolInputContact.swift",
+      "sha256": "9fca889bbd32ccb58e036cb25327a255b6284d1de98115db9162776e689ee99b",
+      "baseCommitSHA256": "9fca889bbd32ccb58e036cb25327a255b6284d1de98115db9162776e689ee99b",
+      "bytes": 3944,
+      "lines": 82,
+      "sameAsBaseCommit": true
+    },
+    {
+      "path": "Applications/iPad/PencilCanvasView.swift",
+      "sha256": "10544065ec9261d2eae6e7ff5611542c42a22394322a3a40dc5f4dc7898f6c34",
+      "baseCommitSHA256": "10544065ec9261d2eae6e7ff5611542c42a22394322a3a40dc5f4dc7898f6c34",
+      "bytes": 45724,
+      "lines": 1247,
+      "sameAsBaseCommit": true
+    },
+    {
+      "path": "Applications/iPad/SpatialWorkspaceView.swift",
+      "sha256": "48fa047193f3be7428c66278ec9cbab853bc75fc10bc7cf843080d4f518504b8",
+      "baseCommitSHA256": "48fa047193f3be7428c66278ec9cbab853bc75fc10bc7cf843080d4f518504b8",
+      "bytes": 96127,
+      "lines": 1986,
+      "sameAsBaseCommit": true
+    },
+    {
+      "path": "Applications/notebook_acceptance.py",
+      "sha256": "a9c79b10e47ea46ca17f125cdd565f3d156d66c2a01d4ad6f347352e42c9d547",
+      "baseCommitSHA256": "a9c79b10e47ea46ca17f125cdd565f3d156d66c2a01d4ad6f347352e42c9d547",
+      "bytes": 64206,
+      "lines": 949,
+      "sameAsBaseCommit": true
+    },
+    {
+      "path": "Applications/project.yml",
+      "sha256": "867fc447d283493ab0f70b46f548b708117a9326cbb5448ea3fbb7aebf4e7780",
+      "baseCommitSHA256": "f85f5e9e2ad2ccdf681383f833c2c4db750305ff917419cacaab4d6e8a27fa64",
+      "bytes": 13835,
+      "lines": 370,
+      "sameAsBaseCommit": false
+    },
+    {
+      "path": "MCP/build-sidecar.mjs",
+      "sha256": "4282f5f3a2342c771fb1fc1792790881986bb2b034bdee2f78a2c20fc97e99b5",
+      "baseCommitSHA256": "4282f5f3a2342c771fb1fc1792790881986bb2b034bdee2f78a2c20fc97e99b5",
+      "bytes": 825,
+      "lines": 11,
+      "sameAsBaseCommit": true
+    },
+    {
+      "path": "MCP/package-lock.json",
+      "sha256": "bdcb5236b7316f0ae66af5fd50335e10f8497d651d24dfc5f8df9ea94a71fe74",
+      "baseCommitSHA256": "bdcb5236b7316f0ae66af5fd50335e10f8497d651d24dfc5f8df9ea94a71fe74",
+      "bytes": 71184,
+      "lines": 2085,
+      "sameAsBaseCommit": true
+    },
+    {
+      "path": "MCP/public-transport.mjs",
+      "sha256": "060df7b24e4405faedf75b63cf8fc59afa494bd689fd3511adcaeb55e6753b19",
+      "baseCommitSHA256": "060df7b24e4405faedf75b63cf8fc59afa494bd689fd3511adcaeb55e6753b19",
+      "bytes": 7254,
+      "lines": 122,
+      "sameAsBaseCommit": true
+    },
+    {
+      "path": "MCP/src/document-tex.ts",
+      "sha256": "3cfb1bcd774033877243f12a4a3e1d5255bfe8eaa15d969f2eb4dd2e91244a49",
+      "baseCommitSHA256": "3cfb1bcd774033877243f12a4a3e1d5255bfe8eaa15d969f2eb4dd2e91244a49",
+      "bytes": 21371,
+      "lines": 327,
+      "sameAsBaseCommit": true
+    },
+    {
+      "path": "MCP/src/server.ts",
+      "sha256": "cfb3743e649cb5adfd0a652b183135edebc61301dee2be9ae1bd9e9a52217e16",
+      "baseCommitSHA256": "cfb3743e649cb5adfd0a652b183135edebc61301dee2be9ae1bd9e9a52217e16",
+      "bytes": 12416,
+      "lines": 121,
+      "sameAsBaseCommit": true
+    },
+    {
+      "path": "MCP/test/portable-document.test.ts",
+      "sha256": "dfcb72d4ee528e7e160d6ec431da8193f4f32b4b9f96d80c93d89f21bafdcded",
+      "baseCommitSHA256": "dfcb72d4ee528e7e160d6ec431da8193f4f32b4b9f96d80c93d89f21bafdcded",
+      "bytes": 6937,
+      "lines": 84,
+      "sameAsBaseCommit": true
+    },
+    {
+      "path": "MCP/test/sidecar-bundle.test.ts",
+      "sha256": "000d5cc2855e1dd73f3421af2108328eaa14936b01e623c65d9e8287a8b7ba8b",
+      "baseCommitSHA256": "000d5cc2855e1dd73f3421af2108328eaa14936b01e623c65d9e8287a8b7ba8b",
+      "bytes": 1716,
+      "lines": 26,
+      "sameAsBaseCommit": true
+    },
+    {
+      "path": "PHILOSOPHY.md",
+      "sha256": "4bc5c3e490a14e8688364102d155fc42cf9fd59ac314c661052eb999e7f895c5",
+      "baseCommitSHA256": "4bc5c3e490a14e8688364102d155fc42cf9fd59ac314c661052eb999e7f895c5",
+      "bytes": 1389,
+      "lines": 30,
+      "sameAsBaseCommit": true
+    },
+    {
+      "path": "Relay/relay.mjs",
+      "sha256": "d97153d43e381bee89e300cb1831cb79cb55d3d5376f8b62c67fff318a1abdd7",
+      "baseCommitSHA256": "d97153d43e381bee89e300cb1831cb79cb55d3d5376f8b62c67fff318a1abdd7",
+      "bytes": 9426,
+      "lines": 148,
+      "sameAsBaseCommit": true
+    },
+    {
+      "path": "Relay/relay.test.mjs",
+      "sha256": "86948b36cd2c0c59b8466d44fc89325db4f800558464b32867a4b3be0b1103ad",
+      "baseCommitSHA256": "86948b36cd2c0c59b8466d44fc89325db4f800558464b32867a4b3be0b1103ad",
+      "bytes": 5719,
+      "lines": 88,
+      "sameAsBaseCommit": true
+    },
+    {
+      "path": "Sources/CQuickJS/include/NotebookQuickJS.h",
+      "sha256": "30100b36e5300fc6838fd2be249b861c768c2616ca33e36596b5ae94b86d9c75",
+      "baseCommitSHA256": "30100b36e5300fc6838fd2be249b861c768c2616ca33e36596b5ae94b86d9c75",
+      "bytes": 956,
+      "lines": 21,
+      "sameAsBaseCommit": true
+    },
+    {
+      "path": "Sources/CQuickJS/notebook-quickjs.c",
+      "sha256": "3f5aad4212ad804dd5b46dc2627b6248218472a88fdb224378c4dcec6d2e7ed1",
+      "baseCommitSHA256": "3f5aad4212ad804dd5b46dc2627b6248218472a88fdb224378c4dcec6d2e7ed1",
+      "bytes": 8887,
+      "lines": 172,
+      "sameAsBaseCommit": true
+    },
+    {
+      "path": "Sources/NotebookCodex/CodexAccess.swift",
+      "sha256": "b01a45adf60261c795fd9d598f72e9748388263ff16c4b8a9d4d4a15f23d4ba5",
+      "baseCommitSHA256": "b01a45adf60261c795fd9d598f72e9748388263ff16c4b8a9d4d4a15f23d4ba5",
+      "bytes": 1218,
+      "lines": 23,
+      "sameAsBaseCommit": true
+    },
+    {
+      "path": "Sources/NotebookCodex/CodexAccount.swift",
+      "sha256": "7b5ffd34a2033fca2d204e781e74645e5a58e2f2713cbcc4d293916661c2447a",
+      "baseCommitSHA256": "7b5ffd34a2033fca2d204e781e74645e5a58e2f2713cbcc4d293916661c2447a",
+      "bytes": 7110,
+      "lines": 137,
+      "sameAsBaseCommit": true
+    },
+    {
+      "path": "Sources/NotebookCodex/CodexAppServer.swift",
+      "sha256": "bf58f17ed7841ac447bc99b2f43a17e247665e9863b8d9c9b278a521c709a5e9",
+      "baseCommitSHA256": "bf58f17ed7841ac447bc99b2f43a17e247665e9863b8d9c9b278a521c709a5e9",
+      "bytes": 36736,
+      "lines": 573,
+      "sameAsBaseCommit": true
+    },
+    {
+      "path": "Sources/NotebookCodex/CodexAppServerState.swift",
+      "sha256": "f080128be36a333c3e88d0e726ffd4a18a5c9cb35fbf8f58baf40a81b3838062",
+      "baseCommitSHA256": "f080128be36a333c3e88d0e726ffd4a18a5c9cb35fbf8f58baf40a81b3838062",
+      "bytes": 6980,
+      "lines": 127,
+      "sameAsBaseCommit": true
+    },
+    {
+      "path": "Sources/NotebookCodex/CodexCatalogue.swift",
+      "sha256": "adbae84c363028aac0c563be1120f9fa7b43922b5b3c63bcc071f66820099f27",
+      "baseCommitSHA256": "adbae84c363028aac0c563be1120f9fa7b43922b5b3c63bcc071f66820099f27",
+      "bytes": 13320,
+      "lines": 212,
+      "sameAsBaseCommit": true
+    },
+    {
+      "path": "Sources/NotebookCodex/CodexChannel.swift",
+      "sha256": "e45f16acf0e973e848942427faf240c19c7fdb29070622b868c06b02437c40cf",
+      "baseCommitSHA256": "e45f16acf0e973e848942427faf240c19c7fdb29070622b868c06b02437c40cf",
+      "bytes": 8540,
+      "lines": 203,
+      "sameAsBaseCommit": true
+    },
+    {
+      "path": "Sources/NotebookCodex/CodexComposer.swift",
+      "sha256": "bb873fe4e8b98cf46f6d50f3dbb907a3c2ecf9aa982b4bc87b40db037d899fc4",
+      "baseCommitSHA256": "bb873fe4e8b98cf46f6d50f3dbb907a3c2ecf9aa982b4bc87b40db037d899fc4",
+      "bytes": 7611,
+      "lines": 98,
+      "sameAsBaseCommit": true
+    },
+    {
+      "path": "Sources/NotebookCodex/CodexDictation.swift",
+      "sha256": "ff403ee94d92d4458baae86bca5896005f08ec79fd6196bcaf95d5d4fd40f217",
+      "baseCommitSHA256": "ff403ee94d92d4458baae86bca5896005f08ec79fd6196bcaf95d5d4fd40f217",
+      "bytes": 6351,
+      "lines": 99,
+      "sameAsBaseCommit": true
+    },
+    {
+      "path": "Sources/NotebookCodex/CodexInstallation.swift",
+      "sha256": "d0775529cbc826fd7846516d755f1809c0a8d46462b04030ac3d17947c959a66",
+      "baseCommitSHA256": "d0775529cbc826fd7846516d755f1809c0a8d46462b04030ac3d17947c959a66",
+      "bytes": 2718,
+      "lines": 52,
+      "sameAsBaseCommit": true
+    },
+    {
+      "path": "Sources/NotebookCodex/CodexProcessOutput.swift",
+      "sha256": "27ccf283ddaf76aa6ffdc0b49735cdb6ab7ee96d5c120c8fa03f35518830738b",
+      "baseCommitSHA256": "27ccf283ddaf76aa6ffdc0b49735cdb6ab7ee96d5c120c8fa03f35518830738b",
+      "bytes": 3220,
+      "lines": 75,
+      "sameAsBaseCommit": true
+    },
+    {
+      "path": "Sources/NotebookCodex/CodexProtocol.swift",
+      "sha256": "2157725af4baebeacbac1f1c05119d1302d8dae51ce2f7880820f3f0e0ef5ea5",
+      "baseCommitSHA256": "2157725af4baebeacbac1f1c05119d1302d8dae51ce2f7880820f3f0e0ef5ea5",
+      "bytes": 11499,
+      "lines": 154,
+      "sameAsBaseCommit": true
+    },
+    {
+      "path": "Sources/NotebookCodex/CodexRPC.swift",
+      "sha256": "c38e75a9379372f7c8e36695eb1059b9f5f9c4a91f7f63b8b59e5069edc73a94",
+      "baseCommitSHA256": "c38e75a9379372f7c8e36695eb1059b9f5f9c4a91f7f63b8b59e5069edc73a94",
+      "bytes": 4337,
+      "lines": 94,
+      "sameAsBaseCommit": true
+    },
+    {
+      "path": "Sources/NotebookCodex/CodexRuntimeScope.swift",
+      "sha256": "7144d53d0e45043c2068c33f1cbdf992bb66a486008f94117ab62371c96c0684",
+      "baseCommitSHA256": "7144d53d0e45043c2068c33f1cbdf992bb66a486008f94117ab62371c96c0684",
+      "bytes": 6049,
+      "lines": 121,
+      "sameAsBaseCommit": true
+    },
+    {
+      "path": "Sources/NotebookCodex/CodexToolRegistration.swift",
+      "sha256": "4e467fec353f5b3556190dbc68d9d9d6232fc342aa04540d060ff02f0dbdd4ce",
+      "baseCommitSHA256": "c8324eb26afce826f67d103f7815949c85efd7a905d7eaafdcea3b397a10fe0c",
+      "bytes": 6444,
+      "lines": 101,
+      "sameAsBaseCommit": false
+    },
+    {
+      "path": "Sources/NotebookCodex/CodexUserMessageDisplay.swift",
+      "sha256": "8e05395201976324283d4c64fda2f046f8178558d1839a3cdbd771742962b6f6",
+      "baseCommitSHA256": "8e05395201976324283d4c64fda2f046f8178558d1839a3cdbd771742962b6f6",
+      "bytes": 3265,
+      "lines": 60,
+      "sameAsBaseCommit": true
+    },
+    {
+      "path": "Sources/NotebookCore/CollaborationRuntime.swift",
+      "sha256": "4e8f55924acb5865b56d28e2221365418576b453174b55d438c9cf4e24df6a6a",
+      "baseCommitSHA256": "4e8f55924acb5865b56d28e2221365418576b453174b55d438c9cf4e24df6a6a",
+      "bytes": 27024,
+      "lines": 456,
+      "sameAsBaseCommit": true
+    },
+    {
+      "path": "Sources/NotebookCore/DocumentEditingSession.swift",
+      "sha256": "8a5fbfe3f3c48334655bcce759947b7b62f5abc419b689c407b96ac9f037b707",
+      "baseCommitSHA256": "8a5fbfe3f3c48334655bcce759947b7b62f5abc419b689c407b96ac9f037b707",
+      "bytes": 13584,
+      "lines": 222,
+      "sameAsBaseCommit": true
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookActionDelivery.swift",
+      "sha256": "16a4641f65ea744d7842d2edc7bac853875009503cb803a80e399b4112f80b55",
+      "baseCommitSHA256": "16a4641f65ea744d7842d2edc7bac853875009503cb803a80e399b4112f80b55",
+      "bytes": 2224,
+      "lines": 49,
+      "sameAsBaseCommit": true
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookActionReadModel.swift",
+      "sha256": "431122e2c0761b9680000872af8b343e376df448e9bb6b3d287a99b0362633c8",
+      "baseCommitSHA256": "431122e2c0761b9680000872af8b343e376df448e9bb6b3d287a99b0362633c8",
+      "bytes": 12365,
+      "lines": 228,
+      "sameAsBaseCommit": true
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookAddressedRead.swift",
+      "sha256": "1ffa7538e45f2fbc2419791fb3e8015c7bb0f90ea3115a6a7e039def28fc0787",
+      "baseCommitSHA256": "1ffa7538e45f2fbc2419791fb3e8015c7bb0f90ea3115a6a7e039def28fc0787",
+      "bytes": 50344,
+      "lines": 731,
+      "sameAsBaseCommit": true
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookCloudStorage.swift",
+      "sha256": "a384167c33a752139be05f0f98495e926939dc17edd28d9625294ee654214bb4",
+      "baseCommitSHA256": "a384167c33a752139be05f0f98495e926939dc17edd28d9625294ee654214bb4",
+      "bytes": 18949,
+      "lines": 296,
+      "sameAsBaseCommit": true
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookDocumentStateCommand.swift",
+      "sha256": "db8907edc593b64dfb2861454d2024464d47d9d3a13854b8fc55debe74e4df01",
+      "baseCommitSHA256": "db8907edc593b64dfb2861454d2024464d47d9d3a13854b8fc55debe74e4df01",
+      "bytes": 7912,
+      "lines": 139,
+      "sameAsBaseCommit": true
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookFileStore.swift",
+      "sha256": "372eebc8bba89302bb24fe3e2f9e4e7a3ca24205bd5f76dab87cde1f63aa6c18",
+      "baseCommitSHA256": "372eebc8bba89302bb24fe3e2f9e4e7a3ca24205bd5f76dab87cde1f63aa6c18",
+      "bytes": 12180,
+      "lines": 153,
+      "sameAsBaseCommit": true
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookNativeElementCommand.swift",
+      "sha256": "23a07933cf7edf4e66920ba65549720462a570092d027e9f3408c8814572053b",
+      "baseCommitSHA256": "23a07933cf7edf4e66920ba65549720462a570092d027e9f3408c8814572053b",
+      "bytes": 8938,
+      "lines": 153,
+      "sameAsBaseCommit": true
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookPageOrderStore.swift",
+      "sha256": "be5fa2ac616aafaf02a5fa2cb7dae2600b76213932aa250af223fc1d6560f2cd",
+      "baseCommitSHA256": "be5fa2ac616aafaf02a5fa2cb7dae2600b76213932aa250af223fc1d6560f2cd",
+      "bytes": 10952,
+      "lines": 179,
+      "sameAsBaseCommit": true
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookPageOrderVector.swift",
+      "sha256": "d2905d49dc5d77f1e2b650dd1edc7291280e3f14d88c36fec6c1b40fcab16d73",
+      "baseCommitSHA256": "d2905d49dc5d77f1e2b650dd1edc7291280e3f14d88c36fec6c1b40fcab16d73",
+      "bytes": 19125,
+      "lines": 389,
+      "sameAsBaseCommit": true
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookProjectFile.swift",
+      "sha256": "ea9bc473ff0e5572d30df841e5426efc10f2c3153d643cfef5ffaff63f5161da",
+      "baseCommitSHA256": "ea9bc473ff0e5572d30df841e5426efc10f2c3153d643cfef5ffaff63f5161da",
+      "bytes": 11856,
+      "lines": 220,
+      "sameAsBaseCommit": true
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookReplicationStore.swift",
+      "sha256": "fa5ea38b572c439ac0f94c635f9ca86821cd1819405afc8f7da2b0b44a96dcc1",
+      "baseCommitSHA256": "fa5ea38b572c439ac0f94c635f9ca86821cd1819405afc8f7da2b0b44a96dcc1",
+      "bytes": 24856,
+      "lines": 354,
+      "sameAsBaseCommit": true
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookSQLite.swift",
+      "sha256": "8ed07d03758ff76f230696302a4a3f539ad63872c7ae03925e198c580b7b2068",
+      "baseCommitSHA256": "8ed07d03758ff76f230696302a4a3f539ad63872c7ae03925e198c580b7b2068",
+      "bytes": 58459,
+      "lines": 910,
+      "sameAsBaseCommit": true
+    },
+    {
+      "path": "Sources/NotebookCore/NotebookStore.swift",
+      "sha256": "bf42302fbe572e00110edc83760c5fd05f690fab284082dba74afbbd4e7f9ea3",
+      "baseCommitSHA256": "bf42302fbe572e00110edc83760c5fd05f690fab284082dba74afbbd4e7f9ea3",
+      "bytes": 23013,
+      "lines": 611,
+      "sameAsBaseCommit": true
+    },
+    {
+      "path": "Sources/NotebookMarkupService/Resources/notebook-markup.js",
+      "sha256": "f9a3cded1add784424b123a82d3e25a9d290abcc452685c6e8a544d29746bcbf",
+      "baseCommitSHA256": "f9a3cded1add784424b123a82d3e25a9d290abcc452685c6e8a544d29746bcbf",
+      "bytes": 391273,
+      "lines": 9644,
+      "sameAsBaseCommit": true
+    },
+    {
+      "path": "Sources/NotebookScriptHost/NotebookScriptCoordinator.swift",
+      "sha256": "35f8284e5846df92eb1b7460cd8d461d9cd68e838315e22de5c6d4fa30e003f3",
+      "baseCommitSHA256": "35f8284e5846df92eb1b7460cd8d461d9cd68e838315e22de5c6d4fa30e003f3",
+      "bytes": 19481,
+      "lines": 350,
+      "sameAsBaseCommit": true
+    },
+    {
+      "path": "Sources/NotebookScriptHost/NotebookScriptEffects.swift",
+      "sha256": "8c85ecd15f86738970647c72e8301dfe15e00d4cd323ee805f72110bb334d0e5",
+      "baseCommitSHA256": "8c85ecd15f86738970647c72e8301dfe15e00d4cd323ee805f72110bb334d0e5",
+      "bytes": 11068,
+      "lines": 164,
+      "sameAsBaseCommit": true
+    },
+    {
+      "path": "Sources/NotebookScriptHost/NotebookXPCWorker.swift",
+      "sha256": "bb64b138861361793dc6f1c280751879112e2c4d731851e1101c448834355609",
+      "baseCommitSHA256": "bb64b138861361793dc6f1c280751879112e2c4d731851e1101c448834355609",
+      "bytes": 9822,
+      "lines": 193,
+      "sameAsBaseCommit": true
+    },
+    {
+      "path": "Sources/NotebookTypesetter/NotebookTypesetter.swift",
+      "sha256": "d4a334e2f7f9f4a9474cb9d0ae71fd2deaece3d968990cc9d28911bab24db475",
+      "baseCommitSHA256": "d4a334e2f7f9f4a9474cb9d0ae71fd2deaece3d968990cc9d28911bab24db475",
+      "bytes": 12592,
+      "lines": 228,
+      "sameAsBaseCommit": true
+    },
+    {
+      "path": "Tests/NotebookCodexTests/CodexRuntimeScopeTests.swift",
+      "sha256": "1a758ccc998215dbcb06d8e054ec7ece1a4e1cedb0d6d75545f785bd9c800c38",
+      "baseCommitSHA256": "dce5e08ebe961ca08b1bc1bebe62189623c319b885999418fa3d5345aa64568f",
+      "bytes": 12359,
+      "lines": 185,
+      "sameAsBaseCommit": false
+    },
+    {
+      "path": "docs/page-publication-audit.md",
+      "sha256": "d32336519082a80a3ace55e1491a092d69daea6f1d983a0896bcf329a2344efb",
+      "baseCommitSHA256": "d32336519082a80a3ace55e1491a092d69daea6f1d983a0896bcf329a2344efb",
+      "bytes": 23410,
+      "lines": 231,
+      "sameAsBaseCommit": true
+    },
+    {
+      "path": "verify.sh",
+      "sha256": "410ef4433e782f725253cf9c59e42103ef65f8ff4d0267c366f4c5ef1191bc8b",
+      "baseCommitSHA256": "410ef4433e782f725253cf9c59e42103ef65f8ff4d0267c366f4c5ef1191bc8b",
+      "bytes": 153,
+      "lines": 4,
+      "sameAsBaseCommit": true
+    }
+  ],
+  "branch": "codex/ipad-workspace-ux",
+  "lateParallelWorkingTreeFilesReviewed": [
+    "Applications/Mac/NotebookCodexSidecar.swift",
+    "Applications/Mac/NotebookMacCodexView.swift",
+    "Applications/MacTests/NotebookCodexSidecarTests.swift",
+    "Applications/Shared/NotebookChatController.swift",
+    "Applications/Shared/NotebookChatWorkStatus.swift",
+    "Applications/Shared/NotebookCodexRequestView.swift",
+    "Applications/Tests/NotebookChatControllerTests.swift",
+    "Applications/UITests/DrawingResponsivenessTests.swift",
+    "Applications/iPad/NotebookChatCompanion.swift",
+    "Applications/iPad/NotebookChatPanel.swift",
+    "Applications/project.yml",
+    "Sources/NotebookCodex/CodexToolRegistration.swift",
+    "Tests/NotebookCodexTests/CodexRuntimeScopeTests.swift"
+  ],
+  "sidecarRepeat": {
+    "sourceFiles": 21,
+    "changedAfterCompilation": 0,
+    "sortedPathHashMapSHA256": "714b27f473439a4550a7ee36a636892cec50ca234db0a8822c030b5df3b161c2",
+    "result": "sidecar-latest-result.txt"
+  },
+  "environment": {
+    "system": "macOS 27.0 (26A428)",
+    "architecture": "arm64",
+    "swift": "6.4 (swiftlang-6.4.0.34.1)",
+    "node": "24.8.0"
+  }
+}

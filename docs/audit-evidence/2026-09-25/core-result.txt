@@ -1,0 +1,15 @@
+ACK_WINDOW allActions=71 acknowledgedFirst=64 acknowledgedSecond=64 firstStillMissing=true
+DOCUMENT_SOURCE_GUARD blockChanged=true versionUnchanged=true staleCheckpointAccepted=true currentState=Optional(NotebookCore.JSONValue.number(777.0))
+SPATIAL_EMPTY vm=86 elapsed=0.000600125 seconds
+SPATIAL_2000_OFFSCREEN vm=102086 elapsed=0.105634792 seconds
+SPATIAL_METADATA_ONLY vm=21 elapsed=0.00087075 seconds
+SPATIAL_2000_REPEAT_READ vm=102086 elapsed=0.096772708 seconds
+SPATIAL_READ empty=0 first=2000 second=2000
+PAGE_400x64_READ vm=28154 elapsed=0.053038417 seconds
+PAGE_STATE_MAIN_MODEL elapsed=0.000290875 seconds
+PAGE_STATE_FULL_SAVE vm=57952 elapsed=0.121415084 seconds
+PAGE_STATE_ADDRESSED_CHECKPOINT_CONTROL vm=2447 elapsed=0.0052135 seconds
+PAGE_400x64 bytes=1245048
+INCOMING_PAGE_ORDER_100001_FULL_VALIDATION vm=93641 elapsed=0.534292833 seconds
+PAGE_ORDER_100001_CHANGED_PREFIX_CONTROL vm=203 elapsed=0.002187292 seconds
+PAGE_ORDER changed=1

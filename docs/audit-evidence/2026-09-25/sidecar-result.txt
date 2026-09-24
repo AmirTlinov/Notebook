@@ -1,0 +1,4 @@
+CLOSED_PANELS count=3 retainedSelections=3 detachCalls=0
+DIRECT_SWITCH retainedSelections=4 detachCalls=1
+DETACH_VIEW retainedSelections=4 detachCalls=1
+STOP savedAfter=0.006159291 seconds nativeInterruptAfter=0.817634125 seconds interruptCalls=1

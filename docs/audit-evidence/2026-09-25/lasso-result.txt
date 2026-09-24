@@ -1,0 +1,12 @@
+Run UTC:
+2026-09-24T22:22:19Z
+Apple Swift version 6.4 (swiftlang-6.4.0.34.1 clang-2100.3.34.1)
+Target: arm64-apple-macosx27.0.0
+arm64
+points=1024 result=1020 distance_visits=522747 ms=1.3398750452324748
+points=2048 result=2044 distance_visits=2094075 ms=4.246208351105452
+points=4096 result=2 distance_visits=75426545 ms=162.91595832444727
+points=8192 result=2 distance_visits=301867761 ms=696.6541250003502
+COW points=2048 reallocations=2048 ms=0.6730000022798777
+COW points=4096 reallocations=4096 ms=2.1227917168289423
+COW points=8192 reallocations=8192 ms=11.019916739314795

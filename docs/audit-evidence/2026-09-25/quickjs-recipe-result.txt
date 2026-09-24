@@ -1,0 +1,28 @@
+{"formulas": 4000, "sourceBytes": 137779}
+{"formulas": 8000, "sourceBytes": 277779}
+{"formulas": 16000, "sourceBytes": 569779}
+bundleSHA256=f9a3cded1add784424b123a82d3e25a9d290abcc452685c6e8a544d29746bcbf
+formulas=4000 current
+status=1 cpuSeconds=0.508284 outputBytes=138372 result=ok
+formulas=4000 single-pass-control
+status=1 cpuSeconds=0.146294 outputBytes=138372 result=ok
+formulas=8000 current
+status=1 cpuSeconds=1.748090 outputBytes=278372 result=ok
+formulas=8000 single-pass-control
+status=1 cpuSeconds=0.254738 outputBytes=278372 result=ok
+formulas=16000 current
+status=-1 cpuSeconds=2.976853 outputBytes=289 result=InternalError: interrupted
+    at <anonymous> (notebook-sdk.js:9480:67)
+    at map (native)
+    at documentExport (notebook-sdk.js:9460:30)
+    at notebookMarkup (notebook-sdk.js:9628:41)
+    at <anonymous> (notebook-user.js:2:22)
+    at call (native)
+    at <eval> (notebook-user.js:3:8)
+
+formulas=16000 single-pass-control
+status=1 cpuSeconds=0.513710 outputBytes=570372 result=ok
+{"formulas":4000,"sameExactOutput":true,"outputBytes":138372}
+{"formulas":8000,"sameExactOutput":true,"outputBytes":278372}
+{"formulas":16000,"sameExactOutput":true,"outputBytes":570372}
+Artifacts (temporary only): /var/folders/yx/hdyh02ls1dd_x8fztvp2j1j00000gn/T//notebook-markup-audit.JSb1iv

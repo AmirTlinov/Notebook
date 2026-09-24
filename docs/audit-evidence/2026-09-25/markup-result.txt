@@ -1,0 +1,17 @@
+n=4000
+status=1 cpuSeconds=0.559792 outputBytes=138372 result=ok
+status=1 cpuSeconds=0.143690 outputBytes=138372 result=ok
+n=8000
+status=1 cpuSeconds=1.948009 outputBytes=278372 result=ok
+status=1 cpuSeconds=0.267266 outputBytes=278372 result=ok
+n=16000
+status=-1 cpuSeconds=2.022480 outputBytes=289 result=InternalError: interrupted
+    at <anonymous> (notebook-sdk.js:9480:67)
+    at map (native)
+    at documentExport (notebook-sdk.js:9460:30)
+    at notebookMarkup (notebook-sdk.js:9628:41)
+    at <anonymous> (notebook-user.js:2:22)
+    at call (native)
+    at <eval> (notebook-user.js:3:8)
+
+status=1 cpuSeconds=0.511899 outputBytes=570372 result=ok

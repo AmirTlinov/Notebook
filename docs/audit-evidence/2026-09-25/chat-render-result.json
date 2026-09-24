@@ -1,0 +1,12 @@
+{
+  "test": "actual chat-shell showMessages function with counting DOM and parser doubles; not a WebKit frame benchmark",
+  "messages": 128,
+  "markdownParses": [
+    128,
+    128,
+    128
+  ],
+  "mathJaxClearCalls": 3,
+  "mathJaxFullRootTypesets": 3,
+  "unchangedFirstArticleRetained": false
+}
