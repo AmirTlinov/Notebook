@@ -1,4 +1,5 @@
 import NotebookCore
+import SQLite3
 import UIKit
 import XCTest
 @testable import Notebook
@@ -8,6 +9,56 @@ import XCTest
 /// radio or two-screen measurement. The sending owner has no rendered scene.
 @MainActor
 final class NotebookCollaborationLatencyTests: XCTestCase {
+  func testShutdownClosesRetainedTransportAdaptersBeforeRemovingTheStore() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("transport-lifetime-\(UUID())")
+    let store = NotebookStore(root: root)
+    let model = NotebookAppModel(store: store, startsNearbySync: false,
+      preferences: UserDefaults(suiteName: UUID().uuidString)!)
+    retainNotebookUntilTeardown(model, removing: root)
+    await model.start(pageSize: NotebookAppModel.defaultPageSize)
+    let first = try await model.makeTransportStorage(), second = try await model.makeTransportStorage()
+    let changes = try await first.changes(0, 16)
+    XCTAssertFalse(changes.isEmpty)
+    let hash = try XCTUnwrap(changes.first?.manifestHash)
+    _ = try await second.readBlobWindow([.init(hash: hash)])
+    func exclusiveJournalSwitch() -> Int32 {
+      var database: OpaquePointer?
+      let opened = sqlite3_open_v2(store.databaseURL.path, &database, SQLITE_OPEN_READWRITE, nil)
+      defer { sqlite3_close(database) }
+      guard opened == SQLITE_OK else { return opened }
+      return sqlite3_exec(database, "PRAGMA journal_mode=DELETE", nil, nil, nil)
+    }
+    XCTAssertEqual(exclusiveJournalSwitch(), SQLITE_BUSY, "The control must detect a retained reader")
+    let stopped = await model.shutdown()
+    XCTAssertTrue(stopped)
+    guard stopped else { return }
+    XCTAssertEqual(exclusiveJournalSwitch(), SQLITE_OK,
+      "Shutdown must release idle SQL handles even while old adapters remain retained")
+    let peer = NotebookReplicationSource(deviceID: UUID(), generation: UUID())
+    let delivery = NotebookReplicationDelivery(source: peer, change: try XCTUnwrap(changes.first))
+    for adapter in [first, second] {
+      do { _ = try await adapter.changes(0, 16); XCTFail("A closed owner cannot offer changes") }
+      catch { XCTAssertEqual(error as? NotebookTransportError, .disconnected) }
+      do { _ = try await adapter.readBlobWindow([.init(hash: hash)]); XCTFail("A closed owner cannot disclose blobs") }
+      catch { XCTAssertEqual(error as? NotebookTransportError, .disconnected) }
+      let writes: [() async throws -> Void] = [
+        { _ = try await adapter.incomingCursor(peer) },
+        { try await adapter.acknowledgePeer(peer.deviceID, delivery.change.sequence) },
+        { try await adapter.stageBlobs([]) },
+        { _ = try await adapter.prepareIncoming(delivery, []) },
+        { _ = try await adapter.applyRemoteChange(delivery) }
+      ]
+      for write in writes {
+        do { try await write(); XCTFail("A retained adapter cannot reopen write admission") }
+        catch let error as CollaborationError { XCTAssertEqual(error.code, "owner_unavailable") }
+      }
+    }
+    try FileManager.default.removeItem(at: root)
+    do { _ = try await model.makeTransportStorage(); XCTFail("Shutdown forbids creating a new adapter") }
+    catch let error as CollaborationError { XCTAssertEqual(error.code, "owner_unavailable") }
+    XCTAssertFalse(FileManager.default.fileExists(atPath: root.path), "Refusal cannot recreate the removed store")
+  }
+
   func testReturningKnownChangeAcknowledgesItsPeerWithoutRebuildingTheScene() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("transport-echo-\(UUID())")
     let store = NotebookStore(root: root)

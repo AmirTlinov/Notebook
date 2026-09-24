@@ -1,3 +1,4 @@
+import CSQLite
 import CryptoKit
 import Foundation
 import Testing
@@ -5,6 +6,34 @@ import Testing
 
 @Suite("Bounded transport staging has one durable owner")
 struct NotebookTransportStorageTests {
+  @Test func closingTheReaderReleasesTheDatabaseAndCannotReopenIt() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = NotebookStore(root: root)
+    _ = try store.initializeWorkspace(actor: UUID(), pageSize: .init(width: 834, height: 1194))
+    let reader = NotebookTransportReader(store: store)
+    let changes = try await reader.changes(after: 0, limit: 16)
+    let hash = try #require(changes.first?.manifestHash)
+    _ = try await reader.blobs([.init(hash: hash)])
+    // WAL files may persist after SQLITE_OK close. A journal-mode switch
+    // requires the exclusive lock that an idle WAL reader still prevents.
+    func exclusiveJournalSwitch() -> Int32 {
+      var database: OpaquePointer?
+      let opened = sqlite3_open_v2(store.databaseURL.path, &database, SQLITE_OPEN_READWRITE, nil)
+      defer { sqlite3_close(database) }
+      guard opened == SQLITE_OK else { return opened }
+      return sqlite3_exec(database, "PRAGMA journal_mode=DELETE", nil, nil, nil)
+    }
+    #expect(exclusiveJournalSwitch() == SQLITE_BUSY, "The control must detect this live reader")
+    await reader.close()
+    #expect(exclusiveJournalSwitch() == SQLITE_OK, "No idle handle may survive terminal close")
+    await reader.close()
+    try FileManager.default.removeItem(at: root)
+    await #expect(throws: NotebookTransportError.disconnected) { try await reader.changes(after: 0, limit: 16) }
+    await #expect(throws: NotebookTransportError.disconnected) { try await reader.blobs([.init(hash: hash)]) }
+    #expect(!FileManager.default.fileExists(atPath: root.path))
+  }
+
   @Test func transportReaderSeesEachCommittedCutWithoutPinningThePriorSnapshot() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
