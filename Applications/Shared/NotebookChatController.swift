@@ -606,6 +606,7 @@ final class NotebookChatController {
     do {
       _ = try await persistence.submit { try $0.saveChatSubmission(input, to: computer, firstMessage: firstMessage) }
       try await refreshJobs(); savingInput = nil; savingFirstMessage = nil; error = nil
+      wake.continuation.yield(())
       if action.isInteractiveControl, connected, computer == peer,
         let reply = try? await directQuery(.job(input)) { try await accept(reply, for: .job(input), computer: computer) }
       return true
@@ -613,7 +614,9 @@ final class NotebookChatController {
       // A lost local commit acknowledgement also keeps the same message ID.
       if let recovered = try? await persistence.submit({ try $0.chatJob(input.id) }), recovered.input == input,
         (try? await persistence.submit({ try $0.chatFirstMessage(input.id) })) == firstMessage {
-        try? await refreshJobs(); savingInput = nil; savingFirstMessage = nil; self.error = nil; return true
+        try? await refreshJobs(); savingInput = nil; savingFirstMessage = nil; self.error = nil
+        wake.continuation.yield(())
+        return true
       }
       self.error = error.localizedDescription; return false
     }

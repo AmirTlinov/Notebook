@@ -45,6 +45,8 @@ final class NotebookCodexSidecar {
   private let runs: MacNotebookProjectRuns?
   private let files: MacNotebookProjectFiles
   private var worker: Task<Void, Never>?
+  private var workerTicker: Task<Void, Never>?
+  private let workerWake = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
   private var stopped = false
   private var publishEvents: Task<Void, Never>?
   private var pendingEvents: [String: CodexConversation] = [:]
@@ -88,8 +90,9 @@ final class NotebookCodexSidecar {
       }
       return
     }
-    guard case .conversation(let state) = event,
-      subscriptions.values.contains(where: { $0.thread == state.threadID }) else { return }
+    guard case .conversation(let state) = event else { return }
+    if !state.busy && state.requests.isEmpty { workerWake.continuation.yield(()) }
+    guard subscriptions.values.contains(where: { $0.thread == state.threadID }) else { return }
     pendingEvents[state.threadID] = state
     if publishEvents == nil {
       publishEvents = Task { [weak self] in
@@ -118,6 +121,12 @@ final class NotebookCodexSidecar {
 
   func start() {
     guard worker == nil else { return }
+    workerTicker = Task { [weak self] in
+      while !Task.isCancelled {
+        do { try await Task.sleep(for: .seconds(1)) } catch { break }
+        self?.workerWake.continuation.yield(())
+      }
+    }
     worker = Task { [weak self] in
       guard let self else { return }
       // Crash recovery never changes attempting back to saved.
@@ -127,7 +136,8 @@ final class NotebookCodexSidecar {
             _ = try store.advanceChatJob(job.id, from: .attempting, to: .uncertain, error: "Проверяется принятие после перезапуска Mac")
           }
         }
-        while !Task.isCancelled {
+        for await _ in workerWake.stream {
+          if Task.isCancelled { break }
           do {
             let jobs = try await persistence.submit { try $0.pendingChatJobs() }
             let pending = Set(jobs.map(\.id))
@@ -163,21 +173,23 @@ final class NotebookCodexSidecar {
                   await bridge.detach(threadID: thread)
                 }
                 executing.removeValue(forKey: key)
+                workerWake.continuation.yield(())
               }
             }
           } catch { /* A subsequent read exposes persistent storage failure. */ }
-          try await Task.sleep(for: .seconds(1))
         }
       } catch { }
     }
+    workerWake.continuation.yield(())
   }
 
   func stop() async {
     dictation?.stop()
-    stopped = true; files.stop(); worker?.cancel(); publishEvents?.cancel()
+    stopped = true; files.stop(); workerTicker?.cancel(); worker?.cancel(); publishEvents?.cancel()
     subscriptions.removeAll(); pendingEvents.removeAll()
     // Do not cancel a native turn. An in-flight mutation retains its durable attempt.
     await worker?.value; worker = nil
+    await workerTicker?.value; workerTicker = nil
     let tasks = Array(executing.values) + Array(reconciling.values)
     for task in tasks { task.cancel() }
     for task in tasks { await task.value }
@@ -283,7 +295,10 @@ final class NotebookCodexSidecar {
         } else if input.action.isRunCommand {
           guard let runs else { throw CodexBridgeError.unavailable }
           reply = .job(try await runs.receive(job, admit: begin))
-        } else { reply = .job(job) }
+        } else {
+          reply = .job(job)
+          if job.state == .saved { workerWake.continuation.yield(()) }
+        }
       case .catalogue(let cursor, let project): reply = .catalogue(try await metadata.tasks(cursor: cursor, project: project))
       case .models: reply = .models(try await metadata.models())
       case .resources(let thread, let kind, let cursor): reply = .resources(try await metadata.resources(threadID: thread, kind: kind, cursor: cursor))

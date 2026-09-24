@@ -244,6 +244,30 @@ struct NotebookChatStoreTests {
     #expect(response.priority < event.priority)
   }
 
+  @Test func addressedChatFramesKeepTheirOrderWhileConversationSnapshotsCoalesce() throws {
+    var outgoing = NotebookTransportOutgoing()
+    let first = NotebookChatEnvelope(body: .reply(.acknowledged))
+    let second = NotebookChatEnvelope(body: .reply(.acknowledged))
+    let third = NotebookChatEnvelope(body: .request(.models))
+    let state = CodexConversation(threadID: UUID().uuidString,
+      generation: UUID(), revision: 1, title: "Task", ready: true, busy: false,
+      activeTurnID: nil, messages: [], requests: [], acceptedMessages: [:], turnStatuses: [:])
+    let older = NotebookChatEnvelope(body: .event(subscriptionID: UUID(), conversation: state))
+    let newer = NotebookChatEnvelope(body: .event(subscriptionID: UUID(), conversation: state))
+    for frame in [first, second, third, older, newer] { try outgoing.enqueue(.transient(.codex(frame))) }
+    #expect(outgoing.pendingCount == 4)
+    var delivered: [UUID] = []
+    for _ in 0..<4 {
+      let packet = try outgoing.takeNext()
+      guard case .transient(.codex(let frame)) = try #require(packet).message else {
+        Issue.record("Expected Codex frame"); return
+      }
+      delivered.append(frame.id)
+    }
+    #expect(delivered == [first.id, second.id, third.id, newer.id])
+    #expect(outgoing.pendingCount == 0)
+  }
+
   @Test func projectEditIsNativeScopedAndReplaysTheSameDurableReceipt() throws {
     try fixture { store, author in
       let edit = CodexProjectEdit(id: "native-project", name: "New name", roots: nil)

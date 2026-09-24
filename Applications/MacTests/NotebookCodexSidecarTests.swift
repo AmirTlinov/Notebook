@@ -113,6 +113,50 @@ private actor NativeOwner: NotebookCodexConversationOwner, NotebookCodexCatalogu
 
 @MainActor
 final class NotebookCodexSidecarTests: XCTestCase {
+  func testNewlyAdmittedMessageWakesTheNativeWorkerWithoutThePollingSecond() async throws {
+    try await fixture { store, queue, native, peer in
+      let service = try sidecar(store, queue, native); service.start()
+      try await Task.sleep(for: .milliseconds(150))
+      let input = NotebookChatInput(author: peer,
+        action: .send(threadID: native.thread, text: "Immediate", context: ""))
+      let started = ContinuousClock.now
+      _ = await service.receive(.init(body: .request(.job(input))), peerID: peer)
+      let deadline = started + .milliseconds(650)
+      while await native.counts().0 == 0, .now < deadline {
+        try await Task.sleep(for: .milliseconds(10))
+      }
+      let sent = await native.counts().0
+      XCTAssertEqual(sent, 1)
+      XCTAssertLessThan(started.duration(to: .now), .milliseconds(700))
+      await service.stop()
+    }
+  }
+
+  func testNativeIdleEventWakesAQueuedNextMessage() async throws {
+    try await fixture { store, queue, native, peer in
+      await native.configure(busy: true)
+      let service = try sidecar(store, queue, native); service.start()
+      let input = NotebookChatInput(author: peer,
+        action: .send(threadID: native.thread, text: "Next", context: ""))
+      _ = await service.receive(.init(body: .request(.job(input))), peerID: peer)
+      try await Task.sleep(for: .milliseconds(150))
+      XCTAssertEqual(try store.chatJob(input.id)?.state, .saved)
+      await native.configure(busy: false)
+      let snapshot = await native.snapshot(threadID: native.thread)
+      let state = try XCTUnwrap(snapshot)
+      let started = ContinuousClock.now
+      service.receiveEvent(.conversation(state))
+      let deadline = started + .milliseconds(650)
+      while await native.counts().0 == 0, .now < deadline {
+        try await Task.sleep(for: .milliseconds(10))
+      }
+      let sent = await native.counts().0
+      XCTAssertEqual(sent, 1)
+      XCTAssertLessThan(started.duration(to: .now), .milliseconds(700))
+      await service.stop()
+    }
+  }
+
   func testDefinitiveObserveFailureRejectsSavedMessageWithoutNativeDispatch() async throws {
     try await fixture { store, queue, native, peer in
       let service = try sidecar(store, queue, native); service.start()
