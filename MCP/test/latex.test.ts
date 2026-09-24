@@ -271,3 +271,21 @@ test("maps repeated Markdown paragraphs through math, CRLF and opaque images to 
   assert.ok(!result.source.includes("NOTEBOOKSOURCEOFFSET"));
   assert.ok(range.sourceOffsets.every((offset,index) => offset >= 0 && offset <= source.length && (!index || offset >= range.sourceOffsets[index-1]!)));
 });
+
+test("restores 100000 math tokens in one paragraph without token collisions or lost source addresses", () => {
+  const formulas = Array.from({ length: 100_000 }, (_, index) => `$x_{${index}}$`);
+  const source = `NOTEBOOKTEXMATH0TOKEN\n\n${formulas.join(" ")}`;
+  const result = documentExport(document([markdown("many-formulas", source)]));
+  assert.ok(result.source.includes(formulas.join(" ")));
+  assert.ok(result.source.includes("NOTEBOOKTEXMATH0TOKEN"), "Authored token-like prose remains literal");
+  assert.equal((result.source.match(/\$x_\{/g) ?? []).length, formulas.length);
+  assert.ok(result.sourceRanges[0]!.sourceOffsets.includes(source.indexOf(formulas[0]!)));
+});
+
+test("restores math heading destinations and literal code using the same exact tokens", () => {
+  const result = documentExport(document([markdown("headings", '# Formula $x_1$\n\n[go](#formula-x_1)\n\n`$x_1$` and $x_1$')]));
+  assert.match(result.source, /\\section\{Formula \$x_1\$\}/);
+  assert.match(result.source, /\\hyperlink/);
+  assert.match(result.source, /\\texttt\{\\\$x\\_1\\\$\}/);
+  assert.doesNotMatch(result.source, /NOTEBOOKTEXMATH/);
+});

@@ -66,7 +66,7 @@ extension NotebookScriptCoordinator {
         let preparation = try await send(["command": .string("prepareAction"), "actionID": .string(id.uuidString), "fingerprint": .string(fingerprint)])
         // Distinct XPC service/queue: the user interpreter is awaiting this
         // effect, so normalization can never wait behind its user-run slot.
-        let normalized = try await markup.normalize(.object(["kind": .string("action"), "preparation": preparation]))
+        let normalized = try await markup.normalize(runID: runID, effectID: id, arguments: .object(["kind": .string("action"), "preparation": preparation]))
         prepared = .object(["command": .string("commitAction"), "action": normalized, "fingerprint": .string(fingerprint)])
       }
       if effect.method == "point" {

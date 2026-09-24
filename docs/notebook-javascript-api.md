@@ -174,6 +174,12 @@ returns run_id_conflict. Resume reads the journal; it never replays code or rest
 the heap.
 
 States: queued, running, completed, failed, cancelled, interrupted.
+
+Normalization is preparation owned by one run: `beginRun / normalize / endRun`.
+Its FIFO holds descriptors and one active worker. Cancel, worker completion and
+shutdown close admission, cancel waiting work and the active normalizer; accepted
+native writes and their reconciliation still drain. A late reply cannot reopen
+a finished run or settle the next run's operation.
 Responses include events, next_seq, has_more, result, error and bounded effects.
 Continue with after_seq=next_seq while queued/running **or** has_more.
 Stop only at a terminal state **and** has_more:false. Running with no more current

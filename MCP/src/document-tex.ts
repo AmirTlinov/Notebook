@@ -27,8 +27,7 @@ export function documentExport(document: DocumentDocument, programPointScale = 0
   const anchors = new Set<string>();
   const emittedAnchors = new Set<string>();
   let imageBytes = 0;
-  let currentMath: Array<[string, string]> = [];
-  const restoreMath = (value: string) => currentMath.reduce((text, [placeholder, formula]) => text.split(placeholder).join(formula), value);
+  let restoreMath = (value: string) => value;
   // Base64 is an opaque resource, not millions of HTML tokenizer transitions.
   // Restore the exact attribute/text values before interpreting the parsed DOM,
   // including examples inside code fences. Tokens cannot collide with authored text.
@@ -40,7 +39,7 @@ export function documentExport(document: DocumentDocument, programPointScale = 0
   let markerPrefix = "NOTEBOOKSOURCEOFFSET";
   while (document.blocks.some(block => block.source.includes(markerPrefix))) markerPrefix += "X";
   const rendered = document.blocks.map(block => {
-    if (block.kind !== "markdown") return { block, fragment: null, nodes: [] as Node[], math: [] as Array<[string, string]> };
+    if (block.kind !== "markdown") return { block, fragment: null, nodes: [] as Node[], restoreMath: (value: string) => value };
     const normalized = replaceMapped(block.source, /\r\n|\r/g, () => "\n");
     const compact = replaceMapped(normalized.text, /data:image\/(?:svg\+xml|png|jpeg)(?:;charset=[^;,\s]+)?;base64,[A-Za-z0-9+/=]+/gi, value => {
       const token = `${imageToken}${encodedImages.length}END`; encodedImages.push(value); return token;
@@ -63,7 +62,7 @@ export function documentExport(document: DocumentDocument, programPointScale = 0
       if ("value" in node) node.value = restoreImages(node.value);
       if ("attrs" in node) for (const attr of node.attrs) attr.value = restoreImages(attr.value);
     }
-    return { block, fragment, nodes, math: protectedMath.segments.map(([token, value]) => [token, restoreImages(value)] as [string, string]) };
+    return { block, fragment, nodes, restoreMath: (value: string) => protectedMath.restore(value, restoreImages) };
   });
   // Explicit destinations across the whole document reserve their addresses
   // before implicit headings are named, just like the live document owner.
@@ -73,9 +72,9 @@ export function documentExport(document: DocumentDocument, programPointScale = 0
     if (name) anchors.add(name);
   }
   const suffixes = new Map<string, number>();
-  for (const { nodes, math } of rendered) for (const node of nodes) {
+  for (const { nodes, restoreMath } of rendered) for (const node of nodes) {
     if (!("tagName" in node) || !/^h[1-6]$/.test(node.tagName) || attribute(node, "id")) continue;
-    const headingText = math.reduce((text, [placeholder, formula]) => text.split(placeholder).join(formula), plainText(node));
+    const headingText = restoreMath(plainText(node));
     const stem = headingText.trim().toLowerCase().replace(/[^\p{L}\p{N}\p{M}_\s-]/gu, "").replace(/\s/g, "-") || "section";
     let suffix = suffixes.get(stem) ?? 0, id = suffix ? `${stem}-${suffix}` : stem;
     while (anchors.has(id)) id = `${stem}-${++suffix}`;
@@ -177,7 +176,7 @@ export function documentExport(document: DocumentDocument, programPointScale = 0
   }
 
   const mappedOffsets = new Map<string, number[]>();
-  const body = rendered.map(({ block, fragment, math }) => {
+  const body = rendered.map(({ block, fragment, restoreMath: restore }) => {
     if (block.kind === "tex") return block.source;
     if (block.kind === "latex") {
       // A formula block keeps its historical math semantics. Full LaTeX uses
@@ -202,9 +201,8 @@ export function documentExport(document: DocumentDocument, programPointScale = 0
       for (let y = 0; y < height; y += 12) rows.push(`\\nointerlineskip\\hbox to\\linewidth{\\vrule width0pt height${Math.min(12, height-y).toFixed(6)}bp depth0pt\\hfil}\\penalty0`);
       rows.push("\\par"); return rows.join("\n");
     }
-    currentMath = math;
-    let text = renderNodes(fragment!.childNodes);
-    for (const [placeholder, formula] of math) text = text.split(placeholder).join(formula);
+    restoreMath = restore;
+    let text = restore(renderNodes(fragment!.childNodes));
     const offsets: number[] = [0];
     let currentOffset = 0, generatedLine = 0;
     text = text.replace(new RegExp(`\\uE000${markerPrefix}(\\d+)\\uE001|\\n`, "g"), (value, offset: string | undefined) => {
@@ -313,7 +311,10 @@ function protectMath(source: string) {
   const mapped = replaceMapped(source, /\\\[[\s\S]*?\\\]|\\\([\s\S]*?\\\)|(?<!\\)\$\$[\s\S]+?(?<!\\)\$\$|(?<!\\)\$(?!\$)(?:\\.|[^$\n])+?(?<!\\)\$/g, formula => {
     const placeholder = `${prefix}${segments.length}TOKEN`; segments.push([placeholder, formula]); return placeholder;
   });
-  return { source: mapped.text, segments, originalOffset: mapped.originalOffset };
+  const formulas = new Map(segments), pattern = new RegExp(`${prefix}\\d+TOKEN`, "g");
+  return { source: mapped.text, originalOffset: mapped.originalOffset,
+    restore: (text: string, restoreImages: (value: string) => string) =>
+      text.replace(pattern, token => restoreImages(formulas.get(token) ?? token)) };
 }
 function base64UTF8(value: string): string {
   const bytes = encodeURIComponent(value).replace(/%([0-9A-F]{2})/g, (_, pair: string) => String.fromCharCode(parseInt(pair, 16)));

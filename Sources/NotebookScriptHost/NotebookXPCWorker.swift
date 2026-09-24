@@ -162,32 +162,82 @@ private final class BrokerReply: @unchecked Sendable {
   func send(_ value: NotebookWorkerReply) { reply((try? JSONEncoder().encode(value)) ?? Data("{}".utf8)) }
 }
 
-/// Independent from user-run admission. The previous normalization can finish
-/// even when its caller is cancelled, without holding a SQLite transaction.
+/// A normalization is cancellable preparation, not an accepted native write.
+/// The run owns both waiting descriptors and the one active XPC operation.
+protocol NotebookMarkupWorker: Sendable {
+  func execute(_ request: NotebookWorkerRequest, deadline: ContinuousClock.Instant, timeoutCode: String) async -> NotebookWorkerReply
+  func cancel(_ id: UUID)
+  func invalidate()
+}
+extension NotebookXPCWorker: NotebookMarkupWorker {}
+
 actor NotebookMarkupQueue {
-  private let serviceName: String
-  private var tail: Task<JSONValue, Error>?
-  private var tailID: UUID?
-  init(serviceName: String) { self.serviceName = serviceName }
-  func normalize(_ arguments: JSONValue) async throws -> JSONValue {
-    let id = UUID()
-    let previous = tail, serviceName = serviceName
-    let task = Task<JSONValue, Error> {
-      _ = try? await previous?.value
-      let worker = NotebookXPCWorker(serviceName: serviceName) { _ in .init(code: "host_unavailable") }
-      defer { worker.invalidate() }
-      let reply = await worker.execute(.init(id: UUID(), code: "", arguments: try JSONEncoder().encode(arguments)),
-        deadline: .now + .seconds(8), timeoutCode: "normalization_timeout")
-      if let code = reply.code { throw CollaborationError(code, reply.message ?? "Доверенная нормализация не завершилась.") }
-      guard let value = reply.value else { throw CollaborationError("normalization_failed", "Нет результата нормализации.") }
-      return try JSONDecoder().decode(JSONValue.self, from: value)
-    }
-    tail = task
-    tailID = id
-    // A completed Task retains its result. Drop only our own final tail: a
-    // later normalization may already be waiting on it while this awaits.
-    defer { if tailID == id { tail = nil; tailID = nil } }
-    return try await task.value
+  private struct Job {
+    let runID: UUID
+    let effectID: UUID
+    let arguments: JSONValue
+    let continuation: CheckedContinuation<JSONValue, Error>
+  }
+  private let makeWorker: @Sendable () -> any NotebookMarkupWorker
+  private var runID: UUID?
+  private var waiting: [Job] = []
+  private var active: (job: Job, worker: any NotebookMarkupWorker)?
+
+  init(serviceName: String) {
+    makeWorker = { NotebookXPCWorker(serviceName: serviceName) { _ in .init(code: "host_unavailable") } }
+  }
+  init(makeWorker: @escaping @Sendable () -> any NotebookMarkupWorker) { self.makeWorker = makeWorker }
+
+  func beginRun(_ id: UUID) {
+    if let previous = runID { endRun(previous) }
+    runID = id
   }
 
+  func endRun(_ id: UUID) {
+    guard runID == id else { return }
+    runID = nil
+    let pending = waiting; waiting.removeAll()
+    for job in pending { job.continuation.resume(throwing: NotebookStore.scriptCancellationError) }
+    if let active {
+      self.active = nil
+      active.worker.cancel(active.job.effectID)
+      active.worker.invalidate()
+      active.job.continuation.resume(throwing: NotebookStore.scriptCancellationError)
+    }
+  }
+
+  func normalize(runID: UUID, effectID: UUID, arguments: JSONValue) async throws -> JSONValue {
+    guard self.runID == runID else { throw NotebookStore.scriptCancellationError }
+    return try await withCheckedThrowingContinuation { continuation in
+      waiting.append(.init(runID: runID, effectID: effectID, arguments: arguments, continuation: continuation))
+      drive()
+    }
+  }
+
+  private func drive() {
+    guard active == nil, !waiting.isEmpty else { return }
+    let job = waiting.removeFirst(), worker = makeWorker()
+    active = (job, worker)
+    Task {
+      let result: Result<JSONValue, Error>
+      do {
+        let reply = await worker.execute(.init(id: job.effectID, code: "", arguments: try JSONEncoder().encode(job.arguments)),
+          deadline: .now + .seconds(8), timeoutCode: "normalization_timeout")
+        if let code = reply.code { throw CollaborationError(code, reply.message ?? "Доверенная нормализация не завершилась.") }
+        guard let value = reply.value else { throw CollaborationError("normalization_failed", "Нет результата нормализации.") }
+        result = .success(try JSONDecoder().decode(JSONValue.self, from: value))
+      } catch { result = .failure(error) }
+      worker.invalidate()
+      finish(job, result: result)
+    }
+  }
+
+  private func finish(_ job: Job, result: Result<JSONValue, Error>) {
+    // endRun already settled a cancelled continuation. A late service reply
+    // cannot settle it again or consume a new run's active operation.
+    guard active?.job.runID == job.runID, active?.job.effectID == job.effectID else { return }
+    active = nil
+    job.continuation.resume(with: result)
+    drive()
+  }
 }

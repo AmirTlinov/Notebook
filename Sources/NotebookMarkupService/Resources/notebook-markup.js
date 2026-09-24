@@ -9259,8 +9259,7 @@ Please report this to https://github.com/markedjs/marked.`, e) {
     const anchors = /* @__PURE__ */ new Set();
     const emittedAnchors = /* @__PURE__ */ new Set();
     let imageBytes = 0;
-    let currentMath = [];
-    const restoreMath = (value) => currentMath.reduce((text, [placeholder, formula]) => text.split(placeholder).join(formula), value);
+    let restoreMath = (value) => value;
     let imageToken = "NOTEBOOKEMBEDDEDIMAGE";
     while (document.blocks.some((block) => block.source.includes(imageToken))) imageToken += "X";
     const encodedImages = [];
@@ -9269,7 +9268,7 @@ Please report this to https://github.com/markedjs/marked.`, e) {
     let markerPrefix = "NOTEBOOKSOURCEOFFSET";
     while (document.blocks.some((block) => block.source.includes(markerPrefix))) markerPrefix += "X";
     const rendered = document.blocks.map((block) => {
-      if (block.kind !== "markdown") return { block, fragment: null, nodes: [], math: [] };
+      if (block.kind !== "markdown") return { block, fragment: null, nodes: [], restoreMath: (value) => value };
       const normalized = replaceMapped(block.source, /\r\n|\r/g, () => "\n");
       const compact = replaceMapped(normalized.text, /data:image\/(?:svg\+xml|png|jpeg)(?:;charset=[^;,\s]+)?;base64,[A-Za-z0-9+/=]+/gi, (value) => {
         const token = `${imageToken}${encodedImages.length}END`;
@@ -9292,7 +9291,7 @@ Please report this to https://github.com/markedjs/marked.`, e) {
         if ("value" in node) node.value = restoreImages(node.value);
         if ("attrs" in node) for (const attr of node.attrs) attr.value = restoreImages(attr.value);
       }
-      return { block, fragment, nodes, math: protectedMath.segments.map(([token, value]) => [token, restoreImages(value)]) };
+      return { block, fragment, nodes, restoreMath: (value) => protectedMath.restore(value, restoreImages) };
     });
     for (const { nodes } of rendered) for (const node of nodes) {
       if (!("tagName" in node)) continue;
@@ -9300,9 +9299,9 @@ Please report this to https://github.com/markedjs/marked.`, e) {
       if (name) anchors.add(name);
     }
     const suffixes = /* @__PURE__ */ new Map();
-    for (const { nodes, math } of rendered) for (const node of nodes) {
+    for (const { nodes, restoreMath: restoreMath2 } of rendered) for (const node of nodes) {
       if (!("tagName" in node) || !/^h[1-6]$/.test(node.tagName) || attribute(node, "id")) continue;
-      const headingText = math.reduce((text, [placeholder, formula]) => text.split(placeholder).join(formula), plainText(node));
+      const headingText = restoreMath2(plainText(node));
       const stem = headingText.trim().toLowerCase().replace(/[^\p{L}\p{N}\p{M}_\s-]/gu, "").replace(/\s/g, "-") || "section";
       let suffix = suffixes.get(stem) ?? 0, id = suffix ? `${stem}-${suffix}` : stem;
       while (anchors.has(id)) id = `${stem}-${++suffix}`;
@@ -9457,7 +9456,7 @@ ${prefix}${body2}\\par
       }
     }
     const mappedOffsets = /* @__PURE__ */ new Map();
-    const body = rendered.map(({ block, fragment, math }) => {
+    const body = rendered.map(({ block, fragment, restoreMath: restore }) => {
       if (block.kind === "tex") return block.source;
       if (block.kind === "latex") {
         return /^\s*(\$\$|\\\[|\\begin\s*\{(?:equation|align|alignat|gather|multline|flalign)\*?\})/.test(block.source) ? block.source : `\\[${block.source}\\]`;
@@ -9475,9 +9474,8 @@ End Notebook program source`), "\\par"];
         rows.push("\\par");
         return rows.join("\n");
       }
-      currentMath = math;
-      let text = renderNodes(fragment.childNodes);
-      for (const [placeholder, formula] of math) text = text.split(placeholder).join(formula);
+      restoreMath = restore;
+      let text = restore(renderNodes(fragment.childNodes));
       const offsets = [0];
       let currentOffset = 0, generatedLine = 0;
       text = text.replace(new RegExp(`\\uE000${markerPrefix}(\\d+)\\uE001|\\n`, "g"), (value, offset) => {
@@ -9610,7 +9608,12 @@ End Notebook program source`), "\\par"];
       segments.push([placeholder, formula]);
       return placeholder;
     });
-    return { source: mapped.text, segments, originalOffset: mapped.originalOffset };
+    const formulas = new Map(segments), pattern = new RegExp(`${prefix}\\d+TOKEN`, "g");
+    return {
+      source: mapped.text,
+      originalOffset: mapped.originalOffset,
+      restore: (text, restoreImages) => text.replace(pattern, (token) => restoreImages(formulas.get(token) ?? token))
+    };
   }
   function base64UTF8(value) {
     const bytes = encodeURIComponent(value).replace(/%([0-9A-F]{2})/g, (_2, pair) => String.fromCharCode(parseInt(pair, 16)));

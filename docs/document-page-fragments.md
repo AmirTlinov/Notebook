@@ -114,3 +114,7 @@ source/state cut. Exact raster evidence binds token, generation and installation
 epoch. Ready means an artifact is available, not that it was shown on iPad.
 Historical DOM receipts are not rewritten or reused as current renderer evidence.
 See [verification](verification.md).
+
+Math placeholders use one collision-safe token map and one-pass restoration.
+Heading destinations, literal code, assets and source ranges restore the same
+exact TeX; export does not repeatedly scan the output for each formula.

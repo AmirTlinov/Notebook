@@ -89,7 +89,10 @@ public final class NotebookScriptCoordinator {
       for id in ids { _ = try await reconcileEffect(runID: request.runID, id: id) }
     case .cancel:
       waiting.removeAll { $0.id == request.runID }
-      if active == request.runID { cancelled.insert(request.runID); worker?.cancel(request.runID) }
+      if active == request.runID {
+        cancelled.insert(request.runID); worker?.cancel(request.runID)
+        await markup.endRun(request.runID)
+      }
       try await cancelRun(request.runID)
     }
     return try await readRunAfterCompletion(request, deadline: deadline)
@@ -161,6 +164,7 @@ public final class NotebookScriptCoordinator {
     }
     if let active {
       cancelled.insert(active); worker?.cancel(active)
+      await markup.endRun(active)
       try? await cancelRun(active)
     }
     if admissions > 0 {
@@ -233,6 +237,7 @@ public final class NotebookScriptCoordinator {
 
   private func perform(_ run: NotebookScriptRun) async {
     let deadline = ContinuousClock.now + .seconds(30)
+    await markup.beginRun(run.id)
     do {
       let admitted = try await persistence { try .encode($0.setScriptRunState(run.id, state: .running)) }.decode(NotebookScriptRun.self)
       guard admitted.state == .running, !cancelled.contains(run.id), !closing else { throw CancellationError() }
@@ -268,6 +273,7 @@ public final class NotebookScriptCoordinator {
       worker = service
       let reply = await service.execute(.init(id: run.id, code: code, arguments: try JSONEncoder().encode(admitted.arguments)), deadline: deadline)
       finishedWorkers.insert(run.id)
+      await markup.endRun(run.id)
       // Accepted commits outlive cancellation/disconnection of the worker.
       await drainAcceptedEffects()
       let wasCancelled = cancelled.contains(run.id)
@@ -282,6 +288,7 @@ public final class NotebookScriptCoordinator {
       let state: NotebookScriptRun.State = cancelled.contains(run.id) ? .cancelled : .failed
       try? await finishRun(run.id, state: state, error: value)
     }
+    await markup.endRun(run.id)
     worker?.invalidate(); worker = nil; active = nil; effectTasks.removeAll(); cancelled.remove(run.id); finishedWorkers.remove(run.id); runningTask = nil; drive()
   }
 

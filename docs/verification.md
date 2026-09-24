@@ -8396,3 +8396,15 @@ corresponding system or physical observation.
 реальный собранный MCP объявляет три инструмента; дополнительный инструмент не
 разрешён клиенту, production/чужой checkout/socket и отсутствующие инструменты отвергаются.
 Это проверка транспорта и идентичности, не запуск Mac/iPad и не UX-приёмка всей серии.
+
+### A14 / A15 — формулы и отмена подготовки
+
+Восстановление TeX теперь использует одну collision-safe таблицу и один проход,
+включая заголовки, source ranges и literal code. `tsx --test MCP/test/latex.test.ts`:
+**21/21 PASS**; 100 000 формул в одном абзаце — **206.6 ms** при параллельной сборке,
+без потери формул или адресов (не UX timing guarantee).
+`swift test --scratch-path /tmp/notebook-repair-documents-build --filter NotebookMarkupQueueTests`:
+**1/1 PASS** после сборки; повтор неизменного A15 через `--skip-build`: **1/1 PASS**,
+лог `/tmp/notebook-repair-A15-skip-build.log`. Проверены активная и ожидающие
+нормализации, поздний запрос закрытого run и следующий run. Cancel отзывает
+подготовку, не ранее принятые записи. Системная UX-приёмка серии ещё не выполнена.
