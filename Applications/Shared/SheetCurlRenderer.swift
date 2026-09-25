@@ -153,9 +153,9 @@ final class SheetCurlMetalView: MTKView, MTKViewDelegate {
     let completion: MetalFrameCompletion
   }
   var onFrameResolved: ((CGImage, Double, FrameResolution) -> Void)?
-  /// The first drawable and its native z-order enter the same CA transaction.
-  /// Waiting for display before exposing an occluded layer can deadlock a held turn.
-  var onWillPresentSource: ((CGImage) -> Void)?
+  /// Source reveal and the flat-sheet boundary share their drawable's CA
+  /// transaction. The native owner installs the paper beneath that exact frame.
+  var onWillPresentFrame: ((CGImage, Double) -> Void)?
   // An opt-in, bounded diagnostic at the actual submission owner. It does not
   // alter admission, clock, command ordering or the presentation receipt.
   var onFrameMeasured: ((FrameTiming) -> Void)?
@@ -201,7 +201,7 @@ final class SheetCurlMetalView: MTKView, MTKViewDelegate {
   private var cornerRadius: CGFloat = 0
   private var curlLayout: SheetCurlLayout?
   private var sourceCover: CGImage?
-  private var sourceNeedsReveal = false
+  private var submittedProgress: Double?
 
   override init(frame frameRect: CGRect, device: (any MTLDevice)? = nil) {
     let gpu = SheetCurlGPU.shared
@@ -266,8 +266,8 @@ final class SheetCurlMetalView: MTKView, MTKViewDelegate {
     if sourceCover !== cover {
       sourceCover = cover
       coverImage = CIImage(cgImage: cover)
-      sourceNeedsReveal = onWillPresentSource != nil
-      presentsWithTransaction = sourceNeedsReveal
+      submittedProgress = nil
+      presentsWithTransaction = onWillPresentFrame != nil
     }
     self.progress = resolvedProgress
     self.backsideColor = backsideColor
@@ -382,21 +382,27 @@ final class SheetCurlMetalView: MTKView, MTKViewDelegate {
       }
     }
     mustSignal = false
-    if sourceNeedsReveal {
+    // A flat curl fully covers its live paper. Install that same paper below
+    // it before the frame can be shown, not in its later presentation callback.
+    // Leaving the flat boundary restores the other leaf in the same transaction.
+    let updatesUnderlay = onWillPresentFrame != nil && (submittedProgress == nil
+      || (submittedProgress == 0) != (progress == 0))
+    // Keep this mode for the whole source. A later display-link callback must
+    // not detach presentation from an earlier, still-open UIKit transaction.
+    if presentsWithTransaction {
       commandBuffer.commit()
       commandBuffer.waitUntilScheduled()
       CATransaction.begin(); CATransaction.setDisableActions(true)
-      onWillPresentSource?(source)
+      if updatesUnderlay { onWillPresentFrame?(source, progress) }
       drawable.present()
       CATransaction.commit()
-      sourceNeedsReveal = false
-    } else if suppliedDrawable != nil {
-      commandBuffer.commit()
-      drawable.present()
     } else {
+      // commit() is not a scheduling fence. Let Metal register the drawable's
+      // writes before presenting it; otherwise a recycled/clear image can win.
       commandBuffer.present(drawable)
       commandBuffer.commit()
     }
+    submittedProgress = progress
     framePending = false
     submittedFrameCount += 1
   }
@@ -504,7 +510,6 @@ extension SheetCurlMetalView: @preconcurrency CAMetalDisplayLinkDelegate {
     if framePending {
       autoreleasepool { submitPendingFrame(drawable: update.drawable, targetPresentation: update.targetPresentationTimestamp) }
     }
-    if !sourceNeedsReveal { presentsWithTransaction = false }
     if !animatesContinuously && !framePending { link.isPaused = true }
   }
 }

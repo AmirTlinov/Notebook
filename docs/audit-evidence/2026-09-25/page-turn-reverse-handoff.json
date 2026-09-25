@@ -1,0 +1,652 @@
+{
+  "date": "2026-09-25",
+  "issue": "GUI-295",
+  "baseCommit": "d65085aac16ca04a62db4e72d1018b4dce5a564f",
+  "status": "208: 11/11 functional checks PASS and matched pair installed; 38 reverse + 44 forward original-notebook navigation checks PASS, all 38 reverse endpoints reviewed without old-page flash. Strict latency/cadence FAIL; advanced first forward bend on some dense leaves and user acceptance remain open.",
+  "device": {
+    "model": "iPad13,4",
+    "os": "27.0 (24A435)",
+    "udid": "00008103-001E059934D9001E"
+  },
+  "realContent": {
+    "name": "Различимость",
+    "notebookID": "E04C8778-7E8D-51DD-9B72-240BB4B0AFDF",
+    "historicalArchiveRestored": false,
+    "targetNotebookContentEdited": false,
+    "pagesAtInitialRead": 23,
+    "pagesAtLatestRead": 24
+  },
+  "reproduction204": {
+    "movie": "/Users/amir/.codex/worktrees/page-turn-continuity/Notebook/.build/page-turn-204-installed-reverse-movie/attachments/6805CABC-8272-4EB8-86A6-8A27652934A0.mp4",
+    "sourceBuild": "204",
+    "sequence": "target page7 → whole source page8 → target page7",
+    "originalVFRSeconds": [
+      15.236667,
+      15.286667,
+      15.32
+    ],
+    "sourceFlashDurationMs": 33.333,
+    "testSetupFailure": "Forward setup did not await each landing; first reverse correctly landed7, while the diagnostic incorrectly expected8. This counter failure is not the pixel evidence."
+  },
+  "production205": {
+    "build": "/Users/amir/.codex/worktrees/page-turn-continuity/Notebook/.build/page-turn-205-release/build.json",
+    "installation": "/Users/amir/.codex/worktrees/page-turn-continuity/Notebook/.build/page-turn-205-physical-install/installation.json",
+    "movie": "/Users/amir/.codex/worktrees/page-turn-continuity/Notebook/.build/page-turn-205-installed-reverse-movie/attachments/81ED3DF7-2F9F-4EF8-B07C-E57F3EB14F6D.mp4",
+    "sourceSHA256": "44f801783a0ad7d29333d0696e591934c599f8ca8b8665e94ea20cc2ae0dcec9",
+    "reverseNavigations": 18,
+    "reverseSourceFlashesObserved": 0,
+    "forwardPrematureTargetFlashSeconds": [
+      3.315,
+      72.95,
+      78.151667
+    ],
+    "recordedFrames": 834,
+    "navigationAssertions": "All18 reverse and initial page restoration passed; only final intentional XCTFail retained the system video. This manual diagnostic is not a functional test gate.",
+    "readOnlyMCPAfterInstall": {
+      "workspace": "54349F3B-9E0A-4DEA-B990-40CAE04EF45E",
+      "page": "1E5E9179-522C-597D-B554-DFE51270F7F0",
+      "contentStamp": "25@29dc77fe-8777-41ec-be98-704f4668a2f4",
+      "inkStamp": "0@72ef4fea-5790-44e0-b5cb-3d8a51704ce0",
+      "beforeAfterEqual": true
+    }
+  },
+  "runs": [
+    {
+      "name": "page-turn-205-endpoint-physical",
+      "artifact": "/Users/amir/.codex/worktrees/page-turn-continuity/Notebook/.build/page-turn-205-endpoint-physical/ipad.xcresult",
+      "sourceInputSHA256": "2d7ca718809e6c7aa4496f0981a51132e8be8a5b3d940702f8d0cfd166ab0652",
+      "passed": 6,
+      "failed": 1,
+      "skipped": 0,
+      "runtimeWarnings": [],
+      "failures": [
+        "XCTAssertGreaterThan failed: (\"0\") is not greater than (\"240\") - The current red source was replaced with stale pixels: [0, 0, 255, 255]"
+      ]
+    },
+    {
+      "name": "page-turn-205-final-native",
+      "artifact": "/Users/amir/.codex/worktrees/page-turn-continuity/Notebook/.build/page-turn-205-final-native/ipad.xcresult",
+      "sourceInputSHA256": "2c410e29f2eaad3cfa187f6346421981142a132a27d61e519ee10d31df03ace4",
+      "passed": 11,
+      "failed": 1,
+      "skipped": 0,
+      "runtimeWarnings": [],
+      "failures": [
+        "XCTAssertTrue failed - Zero/dropped, invalid or pre-command timestamps cannot stand in for displayed frames"
+      ]
+    },
+    {
+      "name": "page-turn-205-release-native",
+      "artifact": "/Users/amir/.codex/worktrees/page-turn-continuity/Notebook/.build/page-turn-205-release-native/ipad.xcresult",
+      "sourceInputSHA256": "44f801783a0ad7d29333d0696e591934c599f8ca8b8665e94ea20cc2ae0dcec9",
+      "passed": 8,
+      "failed": 0,
+      "skipped": 0,
+      "runtimeWarnings": [],
+      "failures": []
+    },
+    {
+      "name": "page-turn-206-release-native",
+      "artifact": "/Users/amir/.codex/worktrees/page-turn-continuity/Notebook/.build/page-turn-206-release-native/ipad.xcresult",
+      "sourceInputSHA256": "f2daa11c65eb7b25ecac7581bbd9dc742529c5f4bfc6aa9327ccee1c129fd3da",
+      "passed": 7,
+      "failed": 1,
+      "skipped": 0,
+      "runtimeWarnings": [],
+      "failures": [
+        "XCTAssertGreaterThan failed: (\"0\") is not greater than (\"240\") - The current red source was replaced with stale pixels: [0, 0, 255, 255]"
+      ]
+    },
+    {
+      "name": "page-turn-206-fresh-capture",
+      "artifact": "/Users/amir/.codex/worktrees/page-turn-continuity/Notebook/.build/page-turn-206-fresh-capture/ipad.xcresult",
+      "sourceInputSHA256": "f80f587d34424b971de43ea816c4e444a5d245991dabae5b2dfc0d2bade2c027",
+      "passed": 4,
+      "failed": 1,
+      "skipped": 0,
+      "runtimeWarnings": [],
+      "failures": [
+        "XCTAssertTrue failed - Wrong source or missing SVG on the landed image"
+      ]
+    },
+    {
+      "name": "page-turn-206-deferred-fresh-capture",
+      "artifact": "/Users/amir/.codex/worktrees/page-turn-continuity/Notebook/.build/page-turn-206-deferred-fresh-capture/ipad.xcresult",
+      "sourceInputSHA256": "d24335d27307a65e8a5e7398a37f2f601eca56bf9c59ebf2e27973ea6d28a371",
+      "passed": 5,
+      "failed": 0,
+      "skipped": 0,
+      "runtimeWarnings": [],
+      "failures": []
+    },
+    {
+      "name": "page-turn-206-final-physical",
+      "artifact": "/Users/amir/.codex/worktrees/page-turn-continuity/Notebook/.build/page-turn-206-final-physical/ipad.xcresult",
+      "sourceInputSHA256": "d24335d27307a65e8a5e7398a37f2f601eca56bf9c59ebf2e27973ea6d28a371",
+      "passed": 9,
+      "failed": 2,
+      "skipped": 0,
+      "runtimeWarnings": [],
+      "failures": [
+        "XCTAssertTrue failed - Zero/dropped, invalid or pre-command timestamps cannot stand in for displayed frames",
+        "failed - Diagnostic recording retention only; navigation assertions above passed. Not a functional acceptance failure."
+      ]
+    },
+    {
+      "name": "page-turn-206-actual-layer-mode",
+      "artifact": "/Users/amir/.codex/worktrees/page-turn-continuity/Notebook/.build/page-turn-206-actual-layer-mode/ipad.xcresult",
+      "sourceInputSHA256": "5a604540298d6aeae81c70c7c4b71beac6c5409f85bda9073d13c52157815949",
+      "passed": 1,
+      "failed": 0,
+      "skipped": 0,
+      "runtimeWarnings": [],
+      "failures": []
+    },
+    {
+      "name": "page-turn-206-real-copy-baseline",
+      "artifact": "/Users/amir/.codex/worktrees/page-turn-continuity/Notebook/.build/page-turn-206-real-copy-baseline/ipad.xcresult",
+      "sourceInputSHA256": "7d4aabee7ed952084eb818ef3b0ec57164d7680b224fff5fa24cc9c288b3fad1",
+      "passed": 0,
+      "failed": 1,
+      "skipped": 0,
+      "runtimeWarnings": [],
+      "failures": [
+        "XCTAssertEqual failed: (\"XCTWaiterResult(rawValue: 2)\") is not equal to (\"XCTWaiterResult(rawValue: 1)\")"
+      ]
+    },
+    {
+      "name": "page-turn-206-real-copy-arrows",
+      "artifact": "/Users/amir/.codex/worktrees/page-turn-continuity/Notebook/.build/page-turn-206-real-copy-arrows/ipad.xcresult",
+      "sourceInputSHA256": "17e4f96648a4ba2908596a4b52bdebb33bc2012c1e742b4abea3920607de1b4e",
+      "passed": 0,
+      "failed": 1,
+      "skipped": 0,
+      "runtimeWarnings": [],
+      "failures": [
+        "failed - Diagnostic recording retention only; 10 real-copy reverse/forward cycles passed."
+      ]
+    },
+    {
+      "name": "page-turn-207-first-frame-fence",
+      "artifact": "/Users/amir/.codex/worktrees/page-turn-continuity/Notebook/.build/page-turn-207-first-frame-fence/ipad.xcresult",
+      "sourceInputSHA256": "ecc8e59279034c3c61016ba34ff5e941c3c990ae3d3446480e1d9bb9fa5c9a27",
+      "passed": 8,
+      "failed": 3,
+      "skipped": 0,
+      "runtimeWarnings": [],
+      "failures": [
+        "XCTAssertTrue failed - The first source-backed drawable must actually be shown",
+        "XCTAssertTrue failed - Zero/dropped, invalid or pre-command timestamps cannot stand in for displayed frames",
+        "failed - Diagnostic recording retention only; 10 real-copy reverse/forward cycles passed."
+      ]
+    },
+    {
+      "name": "page-turn-207-source-priming",
+      "artifact": "/Users/amir/.codex/worktrees/page-turn-continuity/Notebook/.build/page-turn-207-source-priming/ipad.xcresult",
+      "sourceInputSHA256": "76f8f7afbad85f7d67c6a26f8384d65fe7585181571a1b74578f5be4a42a51f8",
+      "passed": 3,
+      "failed": 2,
+      "skipped": 0,
+      "runtimeWarnings": [],
+      "failures": [
+        "XCTAssertTrue failed - Zero/dropped, invalid or pre-command timestamps cannot stand in for displayed frames",
+        "failed - Diagnostic recording retention only; 10 real-copy reverse/forward cycles passed."
+      ]
+    },
+    {
+      "name": "page-turn-207-clean-functional",
+      "artifact": "/Users/amir/.codex/worktrees/page-turn-continuity/Notebook/.build/page-turn-207-clean-functional/ipad.xcresult",
+      "sourceInputSHA256": "c7e263b5836ece794804a7ebdd670ac40c30d6571f93b5cd7806c353e219fc0b",
+      "passed": 10,
+      "failed": 0,
+      "skipped": 0,
+      "runtimeWarnings": [],
+      "failures": [],
+      "sealedVerification": "/Users/amir/.codex/worktrees/page-turn-continuity/Notebook/.build/page-turn-207-clean-functional/verification.json"
+    },
+    {
+      "name": "page-turn-207-installed-final",
+      "artifact": "/Users/amir/.codex/worktrees/page-turn-continuity/Notebook/.build/page-turn-207-installed-final/ipad.xcresult",
+      "sourceInputSHA256": "5408524b03315917fe07363b0a878369fe347287ca86bbe3314dbdda45fc6254",
+      "passed": 0,
+      "failed": 2,
+      "skipped": 0,
+      "runtimeWarnings": [],
+      "failures": [
+        "XCTAssertTrue failed - Zero/dropped, invalid or pre-command timestamps cannot stand in for displayed frames",
+        "failed - Diagnostic recording retention only; navigation assertions above passed. Not a functional acceptance failure."
+      ],
+      "scope": "One strict timing test failed. Manual diagnostic completed38reverse and restoration; its sole final intentional failure retained the movie."
+    },
+    {
+      "name": "page-turn-208-serial-bootstrap",
+      "artifact": "/Users/amir/.codex/worktrees/page-turn-continuity/Notebook/.build/page-turn-208-serial-bootstrap/ipad.xcresult",
+      "sourceInputSHA256": "6a05461597acb65428786d32734e2e11abf242eb455d368161695212a50d9fc3",
+      "passed": 1,
+      "failed": 1,
+      "skipped": 0,
+      "runtimeWarnings": [],
+      "failures": [
+        "XCTAssertTrue failed - Zero/dropped, invalid or pre-command timestamps cannot stand in for displayed frames"
+      ]
+    },
+    {
+      "name": "page-turn-208-visible-duration",
+      "artifact": "/Users/amir/.codex/worktrees/page-turn-continuity/Notebook/.build/page-turn-208-visible-duration/ipad.xcresult",
+      "sourceInputSHA256": "a73ab4cd5977dbfdc64ebc1fb2cd9901d4d337bb8a0917206dafb4152f34715f",
+      "passed": 12,
+      "failed": 0,
+      "skipped": 0,
+      "runtimeWarnings": [],
+      "failures": [],
+      "scope": "11 permanent functional tests plus one temporary isolated real-page diagnostic; no original content writes."
+    },
+    {
+      "name": "page-turn-208-clean-functional",
+      "artifact": "/Users/amir/.codex/worktrees/page-turn-continuity/Notebook/.build/page-turn-208-clean-functional/ipad.xcresult",
+      "sourceInputSHA256": "e6e178ac51bbd68c580d7799c2cded60e761883a833cf8c94030110665027e59",
+      "passed": 11,
+      "failed": 0,
+      "skipped": 0,
+      "runtimeWarnings": [],
+      "failures": [],
+      "sealedVerification": "/Users/amir/.codex/worktrees/page-turn-continuity/Notebook/.build/page-turn-208-clean-functional/verification.json"
+    }
+  ],
+  "intermediateTimingBefore205ScheduledPresent": [
+    {
+      "turn": 4,
+      "firstMs": 47.6138333324343,
+      "landingMs": 323.49904166767374
+    },
+    {
+      "turn": 7,
+      "firstMs": 53.92308335285634,
+      "landingMs": 321.2902500235941
+    },
+    {
+      "turn": 2,
+      "firstMs": 38.31612499197945,
+      "landingMs": 322.47579167596996
+    },
+    {
+      "turn": 0,
+      "firstMs": 72.07300001755357,
+      "landingMs": 322.87158333929256
+    },
+    {
+      "turn": 3,
+      "firstMs": 54.34291667188518,
+      "landingMs": 321.6390416782815
+    },
+    {
+      "turn": 9,
+      "firstMs": 54.547166684642434,
+      "landingMs": 321.87595835421234
+    },
+    {
+      "turn": 8,
+      "firstMs": 47.61320832767524,
+      "landingMs": 323.4146249887999
+    },
+    {
+      "turn": 1,
+      "firstMs": 44.04712497489527,
+      "landingMs": 328.11862498056144
+    },
+    {
+      "turn": 5,
+      "firstMs": 54.47474998072721,
+      "landingMs": 321.7629583377857
+    },
+    {
+      "turn": 6,
+      "firstMs": 51.80333333555609,
+      "landingMs": 323.42154168873094
+    }
+  ],
+  "boundaries": [
+    "System recording contains compositor frames, not 120Hz optical input-to-photon or full FPS evidence.",
+    "UIKit drawHierarchy snapshots did not reveal the original OS compositing flash.",
+    "Final 16.67ms first-response target and full acceptance are not claimed.",
+    "Private real-page fixture and production navigation diagnostic remain only local evidence, not committed product sources."
+  ],
+  "rejectedCaptureBarriers": [
+    "beforeCATransactionCommit + afterUpdateComplete still yielded stale blue pixels on physical2067/8. Removed.",
+    "afterScreenUpdates:true in afterUpdateComplete gave fresh pixels4/4 but lost one of3rapid arrow taps. Removed."
+  ],
+  "production206": {
+    "sourceSHA256": "d24335d27307a65e8a5e7398a37f2f601eca56bf9c59ebf2e27973ea6d28a371",
+    "build": "/Users/amir/.codex/worktrees/page-turn-continuity/Notebook/.build/page-turn-206-release-final/build.json",
+    "installation": "/Users/amir/.codex/worktrees/page-turn-continuity/Notebook/.build/page-turn-206-physical-install/installation.json",
+    "movie": "/Users/amir/.codex/worktrees/page-turn-continuity/Notebook/.build/page-turn-206-final-physical/attachments/D9D145BC-091B-476F-A48F-AFC890EAA5B3.mp4",
+    "reverseNavigations": 18,
+    "reverseSourceFlashesObserved": 0,
+    "forwardPrematureTargetFlashSeconds": [
+      80.765
+    ],
+    "recordedFrames": 926,
+    "navigationAssertions": "All reverse navigations and restoration passed. UI failure intentionally retained movie. Separate timing gate failed.",
+    "firstChangedPresentationMs": [
+      90.178,
+      49.559,
+      53.633,
+      67.051,
+      53.984,
+      62.681,
+      54.581,
+      62.201,
+      54.436,
+      46.386
+    ],
+    "readOnlyMCPAfterInstall": "Same workspace, page, content25 and ink0; Mac DB/registry unchanged between quit and launch; iPad nonempty files retained."
+  },
+  "rejected207Fence": "waitUntilCompleted only for first drawable plus suppressing subsequent submissions did not guarantee first OS presentation. Removed; no synchronous GPU wait or receipt-based animation throttling retained.",
+  "sourcePrimingBeforeImmediateBootstrap": {
+    "firstChangedFrameMsRange": [
+      78.71,
+      105.262
+    ],
+    "nativeFunctionalPassed": 3,
+    "isolatedRealCopyArrowCycles": 10,
+    "movieFrames": 517,
+    "automaticABASpikes": 0,
+    "isPositiveProductionControl": false,
+    "timing": "/Users/amir/.codex/worktrees/page-turn-continuity/Notebook/.build/page-turn-207-source-priming-timing.json",
+    "nextChange": "Initial unchanged source surface is submitted immediately after capture, not delayed until first animation tick; same renderer and no extra animation clock."
+  },
+  "production207": {
+    "sourceSHA256": "c7e263b5836ece794804a7ebdd670ac40c30d6571f93b5cd7806c353e219fc0b",
+    "build": "/Users/amir/.codex/worktrees/page-turn-continuity/Notebook/.build/page-turn-207-release/build.json",
+    "installation": "/Users/amir/.codex/worktrees/page-turn-continuity/Notebook/.build/page-turn-207-physical-install/installation.json",
+    "installedAtUTC": "2026-09-25T17:40:59.497851+00:00",
+    "status": "38 reverse navigations and ten repetitions of each actual failing boundary completed; no flash observed in the system recording, but cold timing regressed.",
+    "privateFixtureAbsentFromBothApps": true,
+    "readOnlyMCPAfterInstall": {
+      "workspaceUnchanged": true,
+      "pageUnchanged": true,
+      "contentStampUnchanged": true,
+      "inkStampUnchanged": true,
+      "contentCounter": 25,
+      "inkCounter": 0
+    },
+    "movie": "/Users/amir/.codex/worktrees/page-turn-continuity/Notebook/.build/page-turn-207-installed-final-attachments/DE96A258-9B58-4570-A5C4-BD247FA80047.mp4",
+    "recordedFrames": 2015,
+    "reverseNavigations": 38,
+    "reverseEndpointsVisuallyInspected": 38,
+    "reverseSourceFlashesObserved": 0,
+    "automaticABASpikes": 0,
+    "timing": [
+      {
+        "turn": 9,
+        "firstMs": 86.7547916714102,
+        "landingMs": 320.6454166502226,
+        "maxGapMs": 25.010166689753532,
+        "maxGapAfterPrimeMs": 8.33679168135859,
+        "discarded": "1.0"
+      },
+      {
+        "turn": 8,
+        "firstMs": 95.50945833325386,
+        "landingMs": 321.32716666092165,
+        "maxGapMs": 25.01004165969789,
+        "maxGapAfterPrimeMs": 8.336833328939974,
+        "discarded": "0.0"
+      },
+      {
+        "turn": 7,
+        "firstMs": 86.48141665617004,
+        "landingMs": 328.75799998873845,
+        "maxGapMs": 25.010083336383104,
+        "maxGapAfterPrimeMs": 8.336875005625188,
+        "discarded": "1.0"
+      },
+      {
+        "turn": 6,
+        "firstMs": 92.65550001873635,
+        "landingMs": 322.65016666497104,
+        "maxGapMs": 29.178416676586494,
+        "maxGapAfterPrimeMs": 12.50491666723974,
+        "discarded": "0.0"
+      },
+      {
+        "turn": 5,
+        "firstMs": 90.67079165834002,
+        "landingMs": 328.8336666591931,
+        "maxGapMs": 29.175124975154176,
+        "maxGapAfterPrimeMs": 12.505000020610169,
+        "discarded": "1.0"
+      },
+      {
+        "turn": 4,
+        "firstMs": 83.09837500564754,
+        "landingMs": 321.38229167321697,
+        "maxGapMs": 29.178291675634682,
+        "maxGapAfterPrimeMs": 12.504958314821124,
+        "discarded": "0.0, 0.0"
+      },
+      {
+        "turn": 3,
+        "firstMs": 90.87241665110923,
+        "landingMs": 320.59420831501484,
+        "maxGapMs": 29.178249998949468,
+        "maxGapAfterPrimeMs": 12.505000020610169,
+        "discarded": "1.0"
+      },
+      {
+        "turn": 2,
+        "firstMs": 79.60504165384918,
+        "landingMs": 321.9602916506119,
+        "maxGapMs": 25.010083336383104,
+        "maxGapAfterPrimeMs": 8.336833328939974,
+        "discarded": "0.0"
+      },
+      {
+        "turn": 1,
+        "firstMs": 87.49816665658727,
+        "landingMs": 321.7939583410043,
+        "maxGapMs": 25.009999983012676,
+        "maxGapAfterPrimeMs": 16.673499980242923,
+        "discarded": "1.0"
+      },
+      {
+        "turn": 0,
+        "firstMs": 201.7992083565332,
+        "landingMs": 327.8393333312124,
+        "maxGapMs": 25.01004168880172,
+        "maxGapAfterPrimeMs": 8.33699997747317,
+        "discarded": "0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0"
+      }
+    ],
+    "forwardAnimationLoss": "Closer inspection of20forward starts found several6→7 transitions jumping from source directly to target with no visible bend. Absence of ABA flashes alone was insufficient;207is NOT accepted."
+  },
+  "rejectedDirectBootstrap": "First direct drawable was discarded on every turn even with serialized creation of CAMetalDisplayLink. Serial variant first movement78.84–94.62ms. Both direct acquisition and its extra receipt gate removed; one Metal display-link path remains.",
+  "realCopy208": {
+    "savedOriginalIndices": [
+      0,
+      2,
+      5,
+      6
+    ],
+    "navigation": "6→7→6→7 in isolated store",
+    "captureCPUms": [
+      74.40066666458733,
+      36.01479169446975,
+      45.09712499566376
+    ],
+    "capturePixels": 3983184,
+    "firstDisplayedTravel": [
+      0.017369534728306598,
+      0.0173697598881962,
+      0.01217246603302922
+    ],
+    "sourceImagesVisuallyInspected": true,
+    "sourceMissing": false,
+    "artifacts": "/Users/amir/.codex/worktrees/page-turn-continuity/Notebook/.build/page-turn-208-visible-duration-attachments",
+    "readbackDuringAnimation": false,
+    "isPerformanceAcceptance": false
+  },
+  "production208": {
+    "sourceSHA256": "e6e178ac51bbd68c580d7799c2cded60e761883a833cf8c94030110665027e59",
+    "build": "/Users/amir/.codex/worktrees/page-turn-continuity/Notebook/.build/page-turn-208-release/build.json",
+    "installation": "/Users/amir/.codex/worktrees/page-turn-continuity/Notebook/.build/page-turn-208-physical-install/installation.json",
+    "installedAtUTC": "2026-09-25T18:13:56.844794+00:00",
+    "status": "matched-pair-launched; final original-notebook movie reviewed; returned to production app at 18:51 UTC for Amir",
+    "privateFixtureAbsentFromBothApps": true,
+    "readOnlyMCPAfterInstall": {
+      "workspaceUnchanged": true,
+      "pageUnchanged": true,
+      "contentStampUnchanged": true,
+      "inkStampUnchanged": true,
+      "contentCounter": 25,
+      "inkCounter": 0
+    },
+    "strictTiming": {
+      "status": "FAIL",
+      "resultBundle": "/Users/amir/.codex/worktrees/page-turn-continuity/Notebook/.build/page-turn-208-installed-final/ipad.xcresult",
+      "turns": [
+        {
+          "turn": 0,
+          "firstMs": 155.6059999857098,
+          "landingMs": 456.7082916619256,
+          "maxGapMs": 25.010166660649702,
+          "maxGapAfterPrimeMs": 25.010166660649702,
+          "unpresented": "0.0, 0.16824678062067253, 0.45345938347704584"
+        },
+        {
+          "turn": 1,
+          "firstMs": 99.95295834960416,
+          "landingMs": 400.5803333420772,
+          "maxGapMs": 25.01012501306832,
+          "maxGapAfterPrimeMs": 8.336916682310402,
+          "unpresented": "1.0"
+        },
+        {
+          "turn": 2,
+          "firstMs": 78.79616666468792,
+          "landingMs": 379.5897916716058,
+          "maxGapMs": 25.01025001402013,
+          "maxGapAfterPrimeMs": 8.336833328939974,
+          "unpresented": ""
+        },
+        {
+          "turn": 3,
+          "firstMs": 93.83912500925362,
+          "landingMs": 386.18066668277606,
+          "maxGapMs": 33.346666663419455,
+          "maxGapAfterPrimeMs": 8.339874999364838,
+          "unpresented": "0.9826302401118038"
+        },
+        {
+          "turn": 4,
+          "firstMs": 78.66866665426642,
+          "landingMs": 379.54979165806435,
+          "maxGapMs": 25.010000012116507,
+          "maxGapAfterPrimeMs": 8.336875005625188,
+          "unpresented": ""
+        },
+        {
+          "turn": 5,
+          "firstMs": 86.94925002055243,
+          "landingMs": 387.63129166909494,
+          "maxGapMs": 25.010000012116507,
+          "maxGapAfterPrimeMs": 8.336958329891786,
+          "unpresented": ""
+        },
+        {
+          "turn": 6,
+          "firstMs": 83.30966666107997,
+          "landingMs": 379.9517499865033,
+          "maxGapMs": 29.17837499990128,
+          "maxGapAfterPrimeMs": 12.504999991506338,
+          "unpresented": ""
+        },
+        {
+          "turn": 7,
+          "firstMs": 91.44362501683645,
+          "landingMs": 387.94066666741855,
+          "maxGapMs": 25.009958335431293,
+          "maxGapAfterPrimeMs": 12.50512499245815,
+          "unpresented": ""
+        },
+        {
+          "turn": 8,
+          "firstMs": 79.16654166183434,
+          "landingMs": 380.0108333234675,
+          "maxGapMs": 25.009875011164695,
+          "maxGapAfterPrimeMs": 8.33679168135859,
+          "unpresented": ""
+        },
+        {
+          "turn": 9,
+          "firstMs": 78.36283333017491,
+          "landingMs": 379.00991665082984,
+          "maxGapMs": 25.009958335431293,
+          "maxGapAfterPrimeMs": 8.337041683262214,
+          "unpresented": ""
+        }
+      ],
+      "scope": "Native command-to-first-CHANGED OS-presented frame, not optical input-to-photon. 16.67ms first frame / 350ms landing / 120Hz gates unchanged."
+    },
+    "installedDiagnostic": {
+      "status": "NOT ACCEPTED",
+      "wrongNotebook": "The open notebook was Geometry, not Razlichimost; the unguarded scenario appended eight blank pages, then timed out on a swipe through the open chat. This run is not evidence about Razlichimost.",
+      "subsequentGuardedRuns": "Three search attempts stopped before any page turn: one ambiguous search result, then two exact-result taps that did not dismiss the search sheet. No curl acceptance inferred.",
+      "cleanup": {
+        "at": "2026-09-25T18:35:34Z",
+        "status": "exclusive-core-writer-cleanup-complete",
+        "mechanism": "Current unmodified NotebookCore.deleteWorkspaceBundle; native apps stopped, no direct SQL writes; rehearsal on current-format copy first.",
+        "notebookID": "B318823D-F19E-431A-9D68-B4049C2C8E53",
+        "retainedFirstPage": "59FF8D31-B053-4A3E-A3DE-D8F1BFE93DE0",
+        "firstContentRevision": 6,
+        "firstInkRevision": 478,
+        "removedCount": 8,
+        "nonWorkspaceRecordHashesUnchanged": true,
+        "liveMCPReopenedCount": 1,
+        "currentStateBackup": "/Users/amir/.codex/worktrees/page-turn-continuity/Notebook/.build/page-turn-208-cleanup/before/notebook.sqlite",
+        "helperSHA256": "5de54891f47dd45370bb8e12329cdc36a49ffe8789b31d745980e548559dede6",
+        "helperSourceSHA256": "3d6c7a109d4b62528abf8d22d9cc43b028f8e0860a4b3eb1e358c4d7f0cf3d78",
+        "physicalReceipt": {
+          "status": "shownOnIPad",
+          "image": "/Users/amir/.codex/worktrees/page-turn-continuity/Notebook/.build/page-turn-208-cleanup/ipad-after-cleanup.png",
+          "evidence": "208 installed system recording at0.5s shows original handwritten Geometry page and1/1; later board frame retains Geometry cover."
+        }
+      },
+      "safetyChange": "Temporary diagnostic now addresses the surface under the exact notebook UUID and checks the existing extent; maximum test page9 never appends.",
+      "guardedBoardAttempt": "Stopped before target turns: back reached Geometry cover; Razlichimost is outside camera viewport. No page writes."
+    },
+    "finalInstalledMovie": {
+      "resultBundle": "/Users/amir/.codex/worktrees/page-turn-continuity/Notebook/.build/page-turn-208-installed-board-zoom-guarded/ipad.xcresult",
+      "movie": "/Users/amir/.codex/worktrees/page-turn-continuity/Notebook/.build/page-turn-208-installed-board-zoom-guarded-attachments/2D064324-8D8E-457D-9104-873A3AF6D8FB.mp4",
+      "activities": "/Users/amir/.codex/worktrees/page-turn-continuity/Notebook/.build/page-turn-208-final-activities.json",
+      "analysis": "/Users/amir/.codex/worktrees/page-turn-continuity/Notebook/.build/page-turn-208-final-movie-analysis/analysis.json",
+      "source": "Installed signed 208, original Razlichimost; test-only UI diagnostic removed after the run.",
+      "navigationAssertions": "All passed; the sole deliberate final XCTFail retains the OS movie. Not a functional gate failure.",
+      "reverseNavigations": 38,
+      "forwardNavigations": 44,
+      "forwardSetupNavigations": 6,
+      "densePairRepetitions": {
+        "6-7": 10,
+        "7-8": 10
+      },
+      "restoredOneBasedPage": 7,
+      "originalVFRFrames": 2519,
+      "reverseEndpointSequencesVisuallyReviewed": 38,
+      "reverseOldPageFlashesObserved": 0,
+      "ABACandidatesWithinPageTurns": 0,
+      "excludedABACandidate": {
+        "atSeconds": 3.938333,
+        "reason": "Notebook opening/scale change, before page turns; visually reviewed."
+      },
+      "lateForwardStartsVisuallyReviewed": 20,
+      "lateForwardStartsWithVisibleBend": 20,
+      "limitations": [
+        "Several dense forward turns begin in the recording with a noticeably advanced bend; first-motion jank remains open.",
+        "Approximately 30Hz system recording is neither a 120Hz cadence proof nor optical input-to-photon.",
+        "Amir manual confirmation of 208 is pending."
+      ],
+      "targetContentWrites": false,
+      "restoredSourceSHA256": "e6e178ac51bbd68c580d7799c2cded60e761883a833cf8c94030110665027e59"
+    }
+  }
+}

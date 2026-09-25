@@ -503,21 +503,32 @@ confirms the landing. Page progress and drawable submission share one
 `CAMetalDisplayLink`; a dropped drawable never confirms a landing. The turn's
 image and two drawable backings have one bounded
 input reservation, explicitly released at presentation or drained on cancellation.
-Snapshot capture runs once at UIKit's `UIUpdateLink.afterUpdateComplete` boundary,
-after the new layer tree is committed. It copies that tree without forcing screen
-updates inside input dispatch. The pending motion retains the latest finger
-progress; cancellation disables the observer and invalidates the motion. No timer,
-extra page cache or replacement button owns this handoff. The observer is disabled
-while idle. The snapshot retains UIKit's native colour range; the existing
-Core Image renderer resolves them into its BGRA8 drawable. A full-image SDR
-conversion is not performed on the input thread. Its source (up to eight bytes per pixel) and both
-four-byte drawable rows are admitted together, including row alignment, before
-capture. Resolution follows the sheet's actual window-projected density (at most
-four million pixels), not a larger fitted-offscreen sheet. Live source paper stays in
-front until this turn's first resolved curl frame; a preceding drawable cannot
-become the new turn's placeholder. The Metal view survives turns, its bitmap
-backing retires, and progress changes reuse the same immutable Core Image source.
-A cold swipe retains its original contact and drives this same interactive curl
+Snapshot capture is requested once outside the current input/update callback
+stack. The queued request validates the motion ID, then explicitly captures fresh
+layers with `afterScreenUpdates: true`; a queue hop or CA commit notification is
+not proof of pixel freshness. Calling that forced capture inside UIKit's update
+callback lost rapid button contacts on the physical iPad. Cancellation invalidates
+the motion before the request can acquire backing. No timer, extra page cache or
+replacement button owns this handoff. The snapshot retains UIKit's native colour
+range; Core Image resolves it into the BGRA8 drawable without a separate full-image
+SDR conversion. Source rows (up to eight bytes per pixel) and both four-byte drawable
+rows are admitted together, including alignment, before capture. Resolution follows
+the sheet's actual window-projected density (at most four million pixels), not a
+larger fitted-offscreen sheet.
+
+The first unchanged source surface is submitted on that same Metal display link,
+above the same live source paper. Only its positive OS presentation
+receipt permits the curved pose and a different live underlay. Scheduled or even
+completed GPU writes do not establish that first display. Visible animation time begins at that source presentation, not at the original
+command: preparation must not consume the bend and skip straight to its endpoint.
+The latest finger position is retained independently, including an early lift.
+At a flat-sheet boundary, that exact live sheet is installed beneath the curl in
+its presentation transaction, before the later endpoint receipt can retire Metal.
+Otherwise the compositor can expose the old leaf between retirement and UIKit's
+next commit. Transaction mode remains stable throughout the source. The Metal view
+survives turns, its bitmap backing retires, and later poses reuse one immutable
+Core Image source and the one animation display link. A cold swipe retains its
+original contact and drives this same interactive curl
 as soon as the neighbour is ready; lift/pinch still decide completion/cancellation.
 Simulator advances on an explicitly typed GPU completion because it supplies no
 drawable presentation callback. That receipt has no display timestamp and cannot

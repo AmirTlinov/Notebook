@@ -19,7 +19,6 @@ final class IPadSheetCurlController: UIViewController, UIGestureRecognizerDelega
   private(set) var page: UIViewController?
   let pan = UIPanGestureRecognizer()
   private let curl = SheetCurlMetalView(frame: .zero)
-  private var captureLink: UIUpdateLink?
   private var panDirection: Direction?
   private var motion: Motion?
   private struct Motion {
@@ -44,13 +43,6 @@ final class IPadSheetCurlController: UIViewController, UIGestureRecognizerDelega
     view.addGestureRecognizer(pan)
     configureCurl()
     view.addSubview(curl)
-    let captureLink = UIUpdateLink(view: view)
-    captureLink.addAction(to: .afterUpdateComplete) { [weak self] link, _ in
-      link.isEnabled = false
-      guard let self, let id = self.motion?.id else { return }
-      self.captureCommittedSource(for: id)
-    }
-    self.captureLink = captureLink
   }
 
   override func viewDidLayoutSubviews() {
@@ -88,9 +80,8 @@ final class IPadSheetCurlController: UIViewController, UIGestureRecognizerDelega
       return
     }
     do {
-      let startedAt = CACurrentMediaTime()
       try begin(source: source, target: target, direction: direction, gesture: false, completion: completion)
-      animate(to: 1, startedAt: startedAt)
+      animate(to: 1)
     } catch { onFailure(error); completion?(false) }
   }
 
@@ -101,17 +92,17 @@ final class IPadSheetCurlController: UIViewController, UIGestureRecognizerDelega
     let id = UUID()
     motion = .init(id: id, source: source, target: target, direction: direction,
       completion: completion, gesture: gesture)
-    // Copy only after UIKit has committed this update's layer tree. Forcing
-    // screen updates from inside input dispatch can lose subsequent contacts;
-    // a main-queue hop or CATransaction completion is not a commit boundary.
+    // Snapshot outside both input dispatch and UIKit's update callbacks. A
+    // fresh snapshot inside either stack can recursively update UIKit and lose
+    // later contacts. The snapshot itself requests current layers; a queue hop
+    // is not being treated as evidence that an old cached raster is current.
     // Live paper stays in front while the same motion retains finger progress.
     let sheet = direction == .forward ? source : target
     sheet.view.layoutIfNeeded()
-    captureLink?.isEnabled = true
-    view.setNeedsLayout()
+    DispatchQueue.main.async { [weak self] in self?.captureCurrentSource(for: id) }
   }
 
-  private func captureCommittedSource(for id: UUID) {
+  private func captureCurrentSource(for id: UUID) {
     guard let motion, motion.id == id else { return }
     do {
       let sheet = motion.direction == .forward ? motion.source : motion.target
@@ -158,7 +149,7 @@ final class IPadSheetCurlController: UIViewController, UIGestureRecognizerDelega
     format.preferredRange = .automatic
     var captured = false
     let snapshot = UIGraphicsImageRenderer(size: size, format: format).image { _ in
-      captured = sheet.drawHierarchy(in: sheet.bounds, afterScreenUpdates: false)
+      captured = sheet.drawHierarchy(in: sheet.bounds, afterScreenUpdates: true)
     }
     guard captured, let image = snapshot.cgImage else { throw SceneRenderError.snapshotPending("page_capture") }
     guard image.bytesPerRow * image.height <= imageBytes else { throw SceneRenderError.resourceLimit }
@@ -170,7 +161,13 @@ final class IPadSheetCurlController: UIViewController, UIGestureRecognizerDelega
     motion.progress = min(max(0, progress), 1); self.motion = motion
     guard let image = motion.image else { return }
     curl.update(cover: image,
-      progress: motion.direction == .forward ? motion.progress : 1-motion.progress,
+      // First present the source's unchanged surface above its live paper.
+      // A newly exposed Metal layer can miss its first presentation even when
+      // its writes are scheduled. Until a real receipt, never expose the next
+      // leaf under that still-empty layer. Once primed, the retained drawable
+      // protects the underlay while subsequent frames are being composed.
+      progress: motion.direction == .forward ? (motion.presentation == nil ? 0 : motion.progress)
+        : (motion.presentation == nil ? 1 : 1-motion.progress),
       backsideColor: .document, cornerRadius: 0,
       layout: .init(sheetSize: view.bounds.size, clipsToSheet: true))
   }
@@ -182,8 +179,17 @@ final class IPadSheetCurlController: UIViewController, UIGestureRecognizerDelega
       if let time = receipt.completion.presentationTime,
         let oldTime = previous.receipt.completion.presentationTime, time <= oldTime { return }
     }
+    let first = motion.presentation == nil
     let shown = motion.direction == .forward ? progress : 1-progress
-    motion.presentation = (shown, receipt); self.motion = motion
+    motion.presentation = (shown, receipt)
+    if first, var animation = motion.animation {
+      // Preparation is not visible animation time. Catching up to an old
+      // command timestamp can skip the entire curl on a dense real page.
+      animation.start = receipt.completion.presentationTime ?? CACurrentMediaTime()
+      motion.animation = animation
+    }
+    self.motion = motion
+    if first { render(motion.progress) }
     finishPresentedEndpoint()
   }
 
@@ -192,7 +198,7 @@ final class IPadSheetCurlController: UIViewController, UIGestureRecognizerDelega
     finish(completed: terminal == 1, presented: true)
   }
 
-  private func animate(to target: Double, startedAt: Double = CACurrentMediaTime()) {
+  private func animate(to target: Double) {
     guard var motion else { return }
     // A held finger can already have presented the exact endpoint. Releasing
     // it accepts that receipt; waiting for a duplicate frame would deadlock
@@ -203,17 +209,16 @@ final class IPadSheetCurlController: UIViewController, UIGestureRecognizerDelega
       finishPresentedEndpoint()
       return
     }
-    motion.animation = (startedAt, motion.progress, target, max(0.1, 0.32*abs(target-motion.progress)))
+    motion.animation = (CACurrentMediaTime(), motion.progress, target, max(0.1, 0.32*abs(target-motion.progress)))
     motion.terminal = nil; self.motion = motion
     curl.animatesContinuously = motion.image != nil
   }
 
   private func advanceAnimation(at timestamp: Double) {
-    // The visible source already supplies continuity. Waiting for its
-    // unchanged first GPU frame before advancing added two display intervals
-    // of dead time to every command. The curve follows the command's clock;
-    // only its terminal presentation may confirm the new page.
-    guard let motion, let animation = motion.animation else { return }
+    // Begin timed bending only after the source surface is on screen. Direct
+    // finger progress is retained independently by render(), including a lift
+    // that arrives while preparation is still pending.
+    guard let motion, motion.presentation != nil, let animation = motion.animation else { return }
     let fraction = min(1, max(0, (timestamp-animation.start)/animation.duration))
     let eased = fraction*fraction*(3-2*fraction)
     if fraction == 1 { self.motion?.terminal = animation.to }
@@ -223,7 +228,6 @@ final class IPadSheetCurlController: UIViewController, UIGestureRecognizerDelega
 
   private func finish(completed: Bool, notify: Bool = true, presented: Bool = false) {
     guard let motion else { return }
-    captureLink?.isEnabled = false
     self.motion = nil
     page = completed ? motion.target : motion.source
     view.bringSubviewToFront(page!.view)
@@ -235,7 +239,7 @@ final class IPadSheetCurlController: UIViewController, UIGestureRecognizerDelega
   }
 
   func cancelMotion(notify: Bool = true) { if motion != nil { finish(completed: false, notify: notify) } }
-  isolated deinit { captureLink?.isEnabled = false; curl.releaseSource() }
+  isolated deinit { curl.releaseSource() }
 
   /// Warm pans and a cold contact whose neighbour becomes ready use the same
   /// motion owner. The admission recognizer keeps that original contact.
@@ -284,9 +288,14 @@ final class IPadSheetCurlController: UIViewController, UIGestureRecognizerDelega
     curl.onFrameResolved = { [weak self] image, progress, receipt in
       self?.resolved(image, progress: progress, receipt: receipt)
     }
-    curl.onWillPresentSource = { [weak self] image in
+    curl.onWillPresentFrame = { [weak self] image, progress in
       guard let self, let motion, motion.image === image else { return }
-      view.bringSubviewToFront((motion.direction == .forward ? motion.target : motion.source).view)
+      let sheet = motion.direction == .forward ? motion.source : motion.target
+      let beneath = motion.direction == .forward ? motion.target : motion.source
+      // At the flat endpoint the live sheet must already be beneath its frozen
+      // pixels. Retiring the Metal clock can otherwise expose the old source
+      // for one compositor frame before finish()'s layer changes reach screen.
+      view.bringSubviewToFront((progress == 0 ? sheet : beneath).view)
       view.bringSubviewToFront(curl)
     }
   }
