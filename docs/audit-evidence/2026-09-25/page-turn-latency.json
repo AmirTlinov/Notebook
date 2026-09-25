@@ -2,7 +2,7 @@
   "date": "2026-09-25",
   "issue": "GUI-295",
   "baseCommit": "37499bf1643125a168e03dc9213825d1a168aa3c",
-  "result": "Устранены лишние перераспределения страниц и принудительный SDR-захват; исходный новый лист проходит 10/10. Полная приёмка не закрыта: отдельный сценарий удаления страницы другим участником нестабилен по 100-мс наблюдению.",
+  "result": "Исправлены причины лишней работы перелистывания; выбранные Simulator-регрессии закрыты, включая оба 100-мс наблюдения по 10 повторов. Физическая и полная системная приёмка не заявлены.",
   "evidenceRoot": "/Users/amir/.codex/worktrees/page-turn-continuity/Notebook/.build/page-latency",
   "sourceInputSHA256": "45c8528fdba2591f3da9f498ffe7962684fdfbe788daa195c2301b1ebd9cc081",
   "runtimeInputSHA256": "62c305b5996ca39ffae1df0253b001c35acb4d566c76c90bbc3d4d289a882556",
@@ -472,7 +472,25 @@
     "deadlineMS": 100,
     "pixelsCorrect": true
   },
-  "peerRemovedLeaf": {
+  "discardedExperiments": [
+    "Explicit BGRA8 CGContext: capture 26–27 ms, no improvement; removed.",
+    "Immediate capture instead of UIKit commit boundary: no useful improvement, stale layers unsafe; removed.",
+    "Forcing SDR in test window observer: 29–32 ms/capture instead of 14–17, removed.",
+    "Forced extended range showed 12–14 ms on Simulator but is not shipped: automatic avoids inverse conversion on an SDR device.",
+    "accepted-repeat.xcresult interrupted by us when switching from forced extended to automatic; not a product failure.",
+    "Future-only passive UIUpdateLink observation: both changing-page scenarios 20/20 PASS, but idle window 0/10 at the same 100 ms budget (correct pixels arrived too late). Not shipped; the same sampler now observes the current ready state once before future commits."
+  ],
+  "visualInspection": [
+    "native-range-motion/CC158158-F9EF-4CDC-B7B2-492B4B3B9E83.png",
+    "native-range-motion/6F09A060-1266-4E4F-B3ED-D2E854052A22.png",
+    "native-range-dense/1506D99D-64FB-49A1-8D6E-D2E550A46F70.png"
+  ],
+  "limitations": [
+    "Physical input-to-photon, 120 Hz and sustained CPU/GPU/RSS acceptance not measured.",
+    "No production pair was installed or released.",
+    "50/50 final observer checks close the selected page-lifecycle scope, not global application acceptance. Earlier red observations remain recorded above."
+  ],
+  "peerRemovedLeafBeforePhaseObserver": {
     "passed": 5,
     "failed": 5,
     "observedMS": [
@@ -491,21 +509,73 @@
     "pixelsCorrect": true,
     "status": "Не закрыт бюджет наблюдения окна; не объявлен PASS и не переименован в latency первого пикселя"
   },
-  "discardedExperiments": [
-    "Explicit BGRA8 CGContext: capture 26–27 ms, no improvement; removed.",
-    "Immediate capture instead of UIKit commit boundary: no useful improvement, stale layers unsafe; removed.",
-    "Forcing SDR in test window observer: 29–32 ms/capture instead of 14–17, removed.",
-    "Forced extended range showed 12–14 ms on Simulator but is not shipped: automatic avoids inverse conversion on an SDR device.",
-    "accepted-repeat.xcresult interrupted by us when switching from forced extended to automatic; not a product failure."
-  ],
-  "visualInspection": [
-    "native-range-motion/CC158158-F9EF-4CDC-B7B2-492B4B3B9E83.png",
-    "native-range-motion/6F09A060-1266-4E4F-B3ED-D2E854052A22.png",
-    "native-range-dense/1506D99D-64FB-49A1-8D6E-D2E550A46F70.png"
-  ],
-  "limitations": [
-    "Physical input-to-photon, 120 Hz and sustained CPU/GPU/RSS acceptance not measured.",
-    "The complete selected stress check is not green because peer-removal observation remains unstable.",
-    "No production pair was installed or released."
-  ]
+  "phaseObserverFollowUp": {
+    "artifact": "current-and-committed.xcresult",
+    "sourceInputSHA256": "93d3dfe24e46bad8a11626d7f1ebdc41cc7b62fbe9c93e213cc6b888d8d85126",
+    "runtimeUnchangedFrom": "5ce5759b",
+    "passed": 50,
+    "failed": 0,
+    "skipped": 0,
+    "runtimeWarnings": [],
+    "implementation": "One current ready-state sample, then the same sampler at passive UIUpdateLink.afterUpdateComplete. The former 16 ms capture timer is removed; generic deadline polling only reads a boolean. No forced layout, CA flush or continuous frame requests.",
+    "originalNewLeaf": {
+      "passed": 10,
+      "failed": 0,
+      "observedMS": [
+        58.853792,
+        60.654208,
+        63.185042,
+        68.305792,
+        69.349416,
+        69.362292,
+        71.113792,
+        72.694292,
+        75.667834,
+        81.303875
+      ]
+    },
+    "peerRemovedLeaf": {
+      "passed": 10,
+      "failed": 0,
+      "observedMS": [
+        60.624792,
+        65.120792,
+        68.816959,
+        80.830542,
+        81.588125,
+        82.688917,
+        84.535292,
+        87.927166,
+        95.535875,
+        96.735
+      ]
+    },
+    "alreadyIdleWindow": {
+      "passed": 10,
+      "failed": 0,
+      "observedMS": [
+        14.761208,
+        17.41375,
+        20.232375,
+        23.02425,
+        24.821916,
+        26.163708,
+        26.898792,
+        28.911417,
+        29.428417,
+        31.206667
+      ]
+    },
+    "negativeControls": {
+      "passed": 20,
+      "failed": 0,
+      "tests": [
+        "testCorrectButLateSynchronousOutputCannotPass",
+        "testFastWrongAndMissingOutputCannotPass"
+      ]
+    },
+    "deadlineMS": 100,
+    "unchanged": "Original clocks, exact-source gates, all pixel/absence probes and full screenshots. This reduces observer interference; it is not a claim of faster production rendering or OS display latency."
+  },
+  "latestSourceInputSHA256": "93d3dfe24e46bad8a11626d7f1ebdc41cc7b62fbe9c93e213cc6b888d8d85126"
 }

@@ -366,6 +366,14 @@ backlog without rebasing the acceptance clock. There are two distinct lanes:
   The observer is optional and nil in the ordinary app path; it never drives
   rendering or changes source/presentation ownership.
 
+Page-lifecycle window checks sample the current ready state once, then use the
+same sampler at passive UIKit update completion. A guessed capture timer must
+not compete with the update being measured; deadline polling reads only the
+completed comparison. Native readiness, original deadlines, complete screenshots
+and every frozen material/absence probe remain required. An idle window needs
+no new content update; late and wrong output still fail. This is observation
+plumbing, not a production frame clock or an OS display receipt.
+
 The same optional observer includes the very first drawable of an empty page.
 The cold-contact regression holds the first dot until that exact receipt, without
 moving, lifting, taking snapshots or forcing layout. Simulator reports GPU

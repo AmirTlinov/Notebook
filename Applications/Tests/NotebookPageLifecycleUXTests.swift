@@ -11,6 +11,19 @@ import XCTest
   private typealias Scene = NotebookInteractionUXTests.Scene
   private typealias Probe = NotebookSelectionComposition.Probe
 
+  func testPassiveWindowObservationDoesNotRequireAnotherContentUpdate() async throws {
+    let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+    let previous = scene.windows.first(where: \.isKeyWindow), window = UIWindow(windowScene: scene)
+    let controller = UIViewController(); controller.view.backgroundColor = .blue
+    window.rootViewController = controller; window.makeKeyAndVisible()
+    defer { window.isHidden = true; window.rootViewController = nil; previous?.makeKey() }
+    // Let this ordinary window become idle. The observer must not manufacture
+    // layout, request a drawable or depend on another content change to see it.
+    try await Task.sleep(for: .milliseconds(200))
+    try await shown("already-idle-window", window: window,
+      probes: [.init(name: "unchanged-blue", points: [.init(x: window.bounds.midX, y: window.bounds.midY)], color: .blue)])
+  }
+
   func testPresentedLandingAdmitsTheNextReverseBeforeSwiftUIRepublishesInput() async throws {
     let model = try await modelWithPages(2, distinctLeaves: true)
     let notebook = try XCTUnwrap(model.workspace?.selectedItemID)
@@ -752,33 +765,46 @@ import XCTest
 
   private func shown(_ name: String, window: UIWindow, probes: [Probe],
     since start: ContinuousClock.Instant = .now, budget: Duration = NotebookUXObservation.correctnessTimeout,
-    witness: Probe? = nil, absence: [Probe] = [], acknowledged: () -> Bool = { true }) async throws {
-    try await Task.sleep(for: .milliseconds(16))
+    witness: Probe? = nil, absence: [Probe] = [], acknowledged: @escaping () -> Bool = { true }) async throws {
     var failures: [String] = [], last: UIImage?, resurrections: [String] = []
     var captures:[Duration]=[]
-    let result = try await assertUX(name, since: start, budget: budget, window: window) {
-      // When this case also requires the OS presentation receipt, let that
-      // callback run before the expensive window read. Repeated captures while
-      // awaiting it block MainActor and manufacture delay. The original clock
-      // still includes the gesture, receipt wait and final pixel observation.
-      guard acknowledged() else { return false }
-      let captureStart=ContinuousClock.now
-      let image = try NotebookUXObservation.Pixels(window: window).image
-      captures.append(captureStart.duration(to:.now))
-      let checks = probes + (witness.map { [$0] } ?? []) + absence
-      let frame = try NotebookSelectionComposition.Frame(image, sampling: checks)
-      last = image; failures = frame.failures(probes)
-      if let witness, frame.failures([witness]).isEmpty, !absence.isEmpty {
-        let returned = frame.failures(absence)
-        if !returned.isEmpty {
-          if resurrections.isEmpty {
-            let picture = XCTAttachment(image: image); picture.name = name + "-returned-material"
-            picture.lifetime = .keepAlways; add(picture)
+    var matched = false, captureError: Error?
+    // Sample the current ready state once, then observe actual UIKit commits.
+    // A ready static window needs no future update; new ink has already revoked
+    // its native receipt and cannot authorize this initial read. No guessed
+    // 16 ms capture timer, forced layout or continuous update drives rendering.
+    func sample() {
+      guard !matched, captureError == nil, acknowledged() else { return }
+      do {
+        let captureStart=ContinuousClock.now
+        let image = try NotebookUXObservation.Pixels(window: window).image
+        captures.append(captureStart.duration(to:.now))
+        let checks = probes + (witness.map { [$0] } ?? []) + absence
+        let frame = try NotebookSelectionComposition.Frame(image, sampling: checks)
+        last = image; failures = frame.failures(probes)
+        if let witness, frame.failures([witness]).isEmpty, !absence.isEmpty {
+          let returned = frame.failures(absence)
+          if !returned.isEmpty {
+            if resurrections.isEmpty {
+              let picture = XCTAttachment(image: image); picture.name = name + "-returned-material"
+              picture.lifetime = .keepAlways; self.add(picture)
+            }
+            resurrections += returned
           }
-          resurrections += returned
         }
-      }
-      return failures.isEmpty
+        matched = failures.isEmpty
+      } catch NotebookUXObservation.CaptureError.unavailable {
+        // An uncommitted window is still missing, not a successful blank frame.
+      } catch { captureError = error }
+    }
+    let updates = UIUpdateLink(view: window)
+    updates.addAction(to: .afterUpdateComplete) { _, _ in sample() }
+    sample()
+    updates.isEnabled = !matched && captureError == nil
+    defer { updates.isEnabled = false }
+    let result = try await assertUX(name, since: start, budget: budget, window: window) {
+      if let captureError { throw captureError }
+      return matched
     }
     XCTAssertTrue(resurrections.isEmpty, "Previously erased/deleted material appeared during opening: \(resurrections)")
     let note = XCTAttachment(string: "\(name): \(failures); elapsed including capture=\(result.milliseconds) ms; captures=\(captures)")
