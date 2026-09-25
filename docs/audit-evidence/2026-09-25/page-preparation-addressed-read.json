@@ -1,0 +1,127 @@
+{
+  "version": 1,
+  "createdAt": "2026-09-25T20:07:31.729571+00:00",
+  "base": "bd5c817ffcb00984782b4e936647515c21b63007",
+  "scope": "A09 addressed page preparation outside writer FIFO, immutable job-local exact source reuse, current projection admission",
+  "core": {
+    "command": "swift test --jobs 2 --filter 'NotebookPageWindowTests|WorkspacePageOrderMutationTests'",
+    "passed": 19,
+    "failed": 0,
+    "seconds": 2.87,
+    "log": {
+      "path": "/tmp/notebook-page-preparation-core-46.log",
+      "sha256": "f6f45244e8bf1cac70da5b168d0d87781325fb7682659f525c9a5b43fa0059ef"
+    },
+    "sourceSHA256": {
+      "Sources/NotebookCore/NotebookPageWindow.swift": "6cc870e866875390b5f7a49f09508ad6c98c165e6775a66c6fbf68649bd58dde",
+      "Sources/NotebookCore/WorkspaceIndex.swift": "bc86bd48fd5121dbf69cae208cd69b2444ebc78c23b0d16e6709a6ad368045ec",
+      "Tests/NotebookCoreTests/NotebookPageWindowTests.swift": "d75251e63386829bc877243cf5b6741ee58d8589210e44e6aebfcde47db79dbf",
+      "Tests/NotebookCoreTests/WorkspacePageOrderMutationTests.swift": "4f1cb36f06f6ac0ab36a4bb747343a9e7208abecdeef13eeb950e02bb0d37d45"
+    }
+  },
+  "simulator": [
+    {
+      "run": 45,
+      "passed": 6,
+      "failed": 3,
+      "skipped": 0,
+      "runtimeWarnings": [],
+      "durationSeconds": 3.87,
+      "summary": {
+        "path": "/tmp/notebook-repair-native-cover-45-summary.json",
+        "sha256": "72a839b55f7488ed136f3e72e03889c5cc8e19c9b801e2811eb620edfa005e0b"
+      },
+      "sources": {
+        "path": "/tmp/notebook-repair-native-cover-45-sources.json",
+        "sha256": "b9c672db53be63ce25e668bbeef82c82e8bf938a0f02741df621c35646a5b5a5"
+      },
+      "stability": {
+        "changedSources": []
+      },
+      "selectors": [
+        "NotebookTests/NotebookPageAddressTests",
+        "NotebookTests/AgentStateTests/testAcceptedPageStateAfterEvictionKeepsEveryRevisionWithoutReopeningPaper"
+      ],
+      "excluded": "NotebookPageAddressTests/testOneHundredThousandSheetsUseBoundedSceneAndDistantUUIDNavigation",
+      "note": "Three new fixtures failed setup before exercising the read: initial presence missing; six existing tests passed."
+    },
+    {
+      "run": 46,
+      "passed": 6,
+      "failed": 3,
+      "skipped": 0,
+      "runtimeWarnings": [],
+      "durationSeconds": 9.874,
+      "summary": {
+        "path": "/tmp/notebook-repair-native-cover-46-summary.json",
+        "sha256": "c43abd4d73480f0d563deb56c0c95d994f49680dffcb90251b34f1be007d1348"
+      },
+      "sources": {
+        "path": "/tmp/notebook-repair-native-cover-46-sources.json",
+        "sha256": "21c9ba3508f0187030789a0c0aaee691d75820eb1275954b6c01b4e6039c5af6"
+      },
+      "stability": {
+        "changedSources": []
+      },
+      "selectors": [
+        "NotebookTests/NotebookPageAddressTests",
+        "NotebookTests/AgentStateTests/testAcceptedPageStateAfterEvictionKeepsEveryRevisionWithoutReopeningPaper"
+      ],
+      "excluded": "NotebookPageAddressTests/testOneHundredThousandSheetsUseBoundedSceneAndDistantUUIDNavigation",
+      "note": "Three new SQL trace fixtures used the subtree query instead of actual loadPage file query; invalid0.8 page camera was clamped. Six existing tests passed."
+    },
+    {
+      "run": 47,
+      "passed": 9,
+      "failed": 0,
+      "skipped": 0,
+      "runtimeWarnings": [],
+      "durationSeconds": 3.314,
+      "summary": {
+        "path": "/tmp/notebook-repair-native-cover-47-summary.json",
+        "sha256": "2ccb1df52bb696716659389da5bd39c44e4cf67b0691004d2f6ddaee71c965b1"
+      },
+      "sources": {
+        "path": "/tmp/notebook-repair-native-cover-47-sources.json",
+        "sha256": "7728a1354600aec1a42de8d69745913d368af3332e70c1f1acab8990c5a7135a"
+      },
+      "stability": {
+        "changedSources": []
+      },
+      "selectors": [
+        "NotebookTests/NotebookPageAddressTests",
+        "NotebookTests/AgentStateTests/testAcceptedPageStateAfterEvictionKeepsEveryRevisionWithoutReopeningPaper"
+      ],
+      "excluded": "NotebookPageAddressTests/testOneHundredThousandSheetsUseBoundedSceneAndDistantUUIDNavigation",
+      "note": "All9passed after fixture-only corrections. Same deadlines and actual production route."
+    }
+  ],
+  "remaining": [
+    "Physical device and100000-page updated route not yet rerun",
+    "Global model epoch remains a conservative accepted-write admission fence; unchanged target rechecks only addressed metadata",
+    "No claim that dense page turns, physical20ms budgets or final acceptance are complete"
+  ],
+  "archive": [
+    "/Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/.build/notebook-architecture-repair/evidence-2026-09-25/page-preparation/notebook-repair-native-cover-45-summary.json",
+    "/Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/.build/notebook-architecture-repair/evidence-2026-09-25/page-preparation/notebook-repair-native-cover-45-sources.json",
+    "/Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/.build/notebook-architecture-repair/evidence-2026-09-25/page-preparation/notebook-repair-native-cover-45-stability.json",
+    "/Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/.build/notebook-architecture-repair/evidence-2026-09-25/page-preparation/notebook-repair-native-cover-45-selection.json",
+    "/Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/.build/notebook-architecture-repair/evidence-2026-09-25/page-preparation/notebook-repair-native-cover-45.log",
+    "/Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/.build/notebook-architecture-repair/evidence-2026-09-25/page-preparation/notebook-repair-native-cover-45.xcresult",
+    "/Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/.build/notebook-architecture-repair/evidence-2026-09-25/page-preparation/notebook-repair-native-cover-46-summary.json",
+    "/Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/.build/notebook-architecture-repair/evidence-2026-09-25/page-preparation/notebook-repair-native-cover-46-sources.json",
+    "/Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/.build/notebook-architecture-repair/evidence-2026-09-25/page-preparation/notebook-repair-native-cover-46-stability.json",
+    "/Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/.build/notebook-architecture-repair/evidence-2026-09-25/page-preparation/notebook-repair-native-cover-46-selection.json",
+    "/Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/.build/notebook-architecture-repair/evidence-2026-09-25/page-preparation/notebook-repair-native-cover-46.log",
+    "/Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/.build/notebook-architecture-repair/evidence-2026-09-25/page-preparation/notebook-repair-native-cover-46.xcresult",
+    "/Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/.build/notebook-architecture-repair/evidence-2026-09-25/page-preparation/notebook-repair-native-cover-47-summary.json",
+    "/Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/.build/notebook-architecture-repair/evidence-2026-09-25/page-preparation/notebook-repair-native-cover-47-sources.json",
+    "/Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/.build/notebook-architecture-repair/evidence-2026-09-25/page-preparation/notebook-repair-native-cover-47-stability.json",
+    "/Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/.build/notebook-architecture-repair/evidence-2026-09-25/page-preparation/notebook-repair-native-cover-47-selection.json",
+    "/Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/.build/notebook-architecture-repair/evidence-2026-09-25/page-preparation/notebook-repair-native-cover-47.log",
+    "/Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/.build/notebook-architecture-repair/evidence-2026-09-25/page-preparation/notebook-repair-native-cover-47.xcresult",
+    "/Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/.build/notebook-architecture-repair/evidence-2026-09-25/page-preparation/notebook-page-preparation-core.log",
+    "/Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/.build/notebook-architecture-repair/evidence-2026-09-25/page-preparation/notebook-page-preparation-core-sources.json",
+    "/Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/.build/notebook-architecture-repair/evidence-2026-09-25/page-preparation/notebook-page-preparation-core-46.log"
+  ]
+}

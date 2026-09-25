@@ -124,6 +124,52 @@ struct PageWindowFixture {
 
 @Suite("Notebook read windows follow one immutable page order")
 struct NotebookPageWindowTests {
+  @Test func pageSourceRevisionIncludesCausalOnlyABAAndIgnoresOtherPages() throws {
+    let fixture = try PageWindowFixture(count: 2); defer { fixture.clean() }
+    let store = fixture.store, pageID = fixture.pages[0], otherID = fixture.pages[1]
+    var page = try store.loadPage(pageID)
+    let element = AgentElement(id: "program", kind: .web,
+      frame: .init(x: 20, y: 20, width: 200, height: 120), source: "A", html: "<p>A</p>")
+    let inserted = page.replaceElements([element], actor: fixture.actor); #expect(inserted)
+    try store.savePage(page)
+    let original = try #require(try store.pageSourceRevision(pageID))
+    let other = try #require(try store.pageSourceRevision(otherID))
+    let target = CollaborationTarget(kind: .page, id: pageID)
+    let physical = try store.referenceIdentities(targets: [target])
+    let basis = try #require(page.programStateBasis(element.id))
+    // A replicated frontier can change the author of the same visible value
+    // without changing aggregate material stamps. The physical reference
+    // intentionally excludes this metadata, but a prepared page cannot.
+    let key = fieldKey(["elements", collaborationIdentity(element.id), "content"])
+    let address = pageFile(pageID) + "#/collaboration/fields/@" + fieldKey([key])
+    try store.commandTransaction {
+      let row = try #require(try store.storedFragments(address: address, descendants: false).first)
+      let prior = try row.value.decode(ContentFieldVersion.self)
+      let changed = ContentFieldVersion(stamp: .init(counter: prior.stamp.counter + 1, actor: fixture.actor),
+        human: true, previous: prior)
+      let restored = ContentFieldVersion(stamp: .init(counter: prior.stamp.counter + 2, actor: fixture.actor),
+        human: true, previous: changed)
+      try store.writeFragment(row.replacing(value: .encode(restored)), database: store.currentSQL!)
+    }
+    let revised = try #require(try store.pageSourceRevision(pageID))
+    #expect(revised != original)
+    #expect(try store.referenceIdentities(targets: [target]) == physical)
+    let current = try store.loadPage(pageID)
+    #expect(current.elements == page.elements && current.agentStamp == page.agentStamp)
+    #expect(current.programStateBasis(element.id)?.hasSameSource(as: basis) == false)
+    #expect(try store.pageSourceRevision(otherID) == other)
+    var unrelated = try store.loadPage(otherID)
+    let unrelatedChanged = unrelated.replaceElements([element], actor: fixture.actor); #expect(unrelatedChanged)
+    try store.savePage(unrelated)
+    #expect(try store.pageSourceRevision(pageID) == revised)
+    #expect(try store.pageSourceRevision(otherID) != other)
+    #expect(try store.pageSourceRevision(UUID()) == nil)
+    let (reread, trace) = try measuredPageRead(store) { try store.pageSourceRevision(pageID) }
+    #expect(reread == revised)
+    #expect(trace.queries.filter { $0.hasPrefix("SELECT") }.allSatisfy { $0.contains("FROM lifecycle_files WHERE file=") })
+    #expect(trace.steps < 100, "Source validation reads one indexed digest, never the source body")
+  }
+
   @Test func deletionEnumeratesDurableMembershipsAndRollsBackEveryRemovedPage() throws {
     let fixture = try PageWindowFixture(count: 129); defer { fixture.clean() }
     var workspace = try fixture.store.loadIndex()

@@ -133,6 +133,20 @@ public struct NotebookPageDirectory: Codable, Equatable, Sendable {
 }
 
 extension NotebookStore {
+  /// The exact stored page source, including non-visible causal fields. This
+  /// borrows the existing per-file record digest; it reads no page bodies and
+  /// does not attest current notebook membership or device-local Undo order.
+  public func pageSourceRevision(_ pageID: UUID) throws -> String? {
+    try readTransaction { _ in
+      guard let row = try currentSQL!.rows("SELECT digest,record_count FROM lifecycle_files WHERE file=?",
+        [.text(pageFile(pageID))]).first else { return nil }
+      guard let digest = row[0].blob, digest.count == 32, let count = row[1].integer, count > 0 else {
+        throw NotebookStorageError.corruptRecord("page source revision")
+      }
+      return "page-source-v1:" + pageID.uuidString.lowercased() + ":" + String(count) + ":" + NotebookHexEncoding.encode(digest)
+    }
+  }
+
   /// Resolves every requested identity before reading any PageDocument. Missing
   /// requests and duplicate resolved UUIDs fail; no blank substitute is ready.
   public func readNotebookPageWindow(itemID: UUID, pages: [NotebookPageReadTarget],

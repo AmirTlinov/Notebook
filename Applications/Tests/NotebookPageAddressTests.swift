@@ -5,6 +5,202 @@ import XCTest
 @testable import Notebook
 
 final class NotebookPageAddressTests: XCTestCase {
+  /// Holds an actual WAL read after its requested body/history have been read.
+  /// It neither replaces the read result nor occupies the application's writer.
+  private final class PageReadGate: @unchecked Sendable {
+    let captured: XCTestExpectation
+    private let bodyQuery: String
+    private let lock = NSLock()
+    private let releaseSignal = DispatchSemaphore(value: 0)
+    private var reads = 0
+    private var held = false
+    private var expired = false
+    var bodyReads: Int { lock.withLock { reads } }
+    var didHold: Bool { lock.withLock { held } }
+    var timedOut: Bool { lock.withLock { expired } }
+
+    init(pageID: UUID, captured: XCTestExpectation) {
+      bodyQuery = "SELECT b.data FROM records r JOIN blobs b ON b.hash=r.hash WHERE r.file='pages/"
+        + pageID.uuidString.lowercased() + ".json'"
+      self.captured = captured
+    }
+
+    func release() { releaseSignal.signal() }
+
+    private func visit(_ sql: String) {
+      let shouldHold = lock.withLock { () -> Bool in
+        if sql == bodyQuery { reads += 1 }
+        guard sql == "COMMIT", reads == 1, !held else { return false }
+        held = true
+        return true
+      }
+      if shouldHold {
+        captured.fulfill()
+        let result = releaseSignal.wait(timeout: .now() + 10)
+        lock.withLock { expired = result == .timedOut }
+      }
+    }
+
+    func install(on reader: NotebookSceneReader) async throws {
+      let result = try await reader.read { [self] store in
+        let database = try XCTUnwrap(store.currentSQL)
+        return sqlite3_trace_v2(database.handle, UInt32(SQLITE_TRACE_STMT), { _, context, statement, _ in
+          guard let context, let statement,
+            let text = sqlite3_expanded_sql(OpaquePointer(statement)) else { return 0 }
+          defer { sqlite3_free(text) }
+          Unmanaged<PageReadGate>.fromOpaque(context).takeUnretainedValue().visit(String(cString: text))
+          return 0
+        }, Unmanaged.passUnretained(self).toOpaque())
+      }
+      XCTAssertEqual(result, SQLITE_OK)
+    }
+
+    func uninstall(from reader: NotebookSceneReader) async throws {
+      release()
+      let result = try await reader.read { store in
+        sqlite3_trace_v2(try XCTUnwrap(store.currentSQL).handle, 0, nil, nil)
+      }
+      XCTAssertEqual(result, SQLITE_OK)
+    }
+  }
+
+  @MainActor
+  private func preparationFixture() async throws ->
+    (model: NotebookAppModel, reader: NotebookSceneReader, item: UUID, ids: [UUID], order: String) {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    let store = NotebookStore(root: root), actor = UUID(), size = NotebookAppModel.defaultPageSize
+    _ = try store.initializeWorkspace(actor: actor, pageSize: size)
+    var workspace = try store.loadIndex()
+    let item = workspace.selectedItemID, first = try XCTUnwrap(workspace.selectedPageID)
+    let presence = SessionPresence(boardID: workspace.rootBoardID, mode: .page, camera: .init(),
+      viewport: .init(x: 834, y: 1194), focusedItemID: item, openProgress: 1,
+      selectedItemID: item, notebookPageID: first)
+    try store.savePresence(presence)
+    var ids = [first]
+    for _ in 1..<8 {
+      let appended = try XCTUnwrap(workspace.appendPage(in: item, actor: actor, pageSize: size))
+      _ = try store.saveWorkspaceSelection(index: workspace, createdPage: appended.createdPage)
+      ids.append(appended.pageID)
+    }
+    try store.savePresence(presence)
+    let reader = NotebookSceneReader(store: store)
+    let model = NotebookAppModel(store: store, startsNearbySync: false, sceneReader: reader)
+    retainNotebookUntilTeardown(model, removing: root)
+    await model.start(pageSize: size)
+    await model.prepareNotebookPage(at: 1, in: item)
+    let saved = await model.finishPendingPersistence(); XCTAssertTrue(saved)
+    let order = try XCTUnwrap(model.notebookPageRoot(item))
+    XCTAssertEqual(model.activePage?.id, first)
+    XCTAssertNil(model.notebookPage(at: 6, in: item))
+    model.retainNotebookPageWindow([0, 1, 6], in: item, root: order)
+    return (model, reader, item, ids, order)
+  }
+
+  @MainActor
+  private func installPageReadGate(_ reader: NotebookSceneReader, pageID: UUID) async throws -> PageReadGate {
+    let gate = PageReadGate(pageID: pageID, captured: expectation(description: "Addressed page snapshot captured"))
+    // XCTest tears this down before the model, retaining the callback context
+    // until SQLite no longer references it, even when an assertion throws.
+    addTeardownBlock { try await gate.uninstall(from: reader) }
+    try await gate.install(on: reader)
+    return gate
+  }
+
+  @MainActor
+  func testUnrelatedPresenceAndSelectionReuseThePageBodyWithoutHoldingTheWriter() async throws {
+    let f = try await preparationFixture(), model = f.model
+    let gate = try await installPageReadGate(f.reader, pageID: f.ids[6])
+    defer { gate.release() }
+    let preparation = Task { await model.prepareNotebookPage(at: 6, in: f.item) }
+    await fulfillment(of: [gate.captured], timeout: 2)
+    XCTAssertTrue(gate.didHold, "The requested body must run through the supplied read owner")
+    XCTAssertEqual(model.selectNotebookPage(1, notebookID: f.item, expectedRoot: f.order), 1)
+    let selected = try XCTUnwrap(model.presence), contact = UUID()
+    model.inputGate.beginPencilAction(source: contact)
+    let moved = SessionPresence(boardID: selected.boardID, mode: selected.mode,
+      camera: .init(center: .init(x: 20, y: 30), scale: 1.4), viewport: selected.viewport,
+      focusedItemID: selected.focusedItemID, openProgress: selected.openProgress,
+      selectedItemID: selected.selectedItemID, notebookPageID: selected.notebookPageID)
+    model.updatePresence(moved, settled: false)
+    model.inputGate.endPencilAction(source: contact)
+    model.updatePresence(moved, settled: true)
+    let acceptedPresence = try XCTUnwrap(model.presence)
+    XCTAssertNotEqual(acceptedPresence.camera, selected.camera, "Negative control: a real camera change was accepted")
+    let writerFinished = expectation(description: "Accepted writes are not behind the page read")
+    let writer = Task {
+      defer { writerFinished.fulfill() }
+      return try await model.performStoreCommand { try $0.loadPresence().notebookPageID }
+    }
+    await fulfillment(of: [writerFinished], timeout: 2)
+    XCTAssertFalse(gate.timedOut)
+    gate.release()
+    let savedSelection = try await writer.value
+    XCTAssertEqual(savedSelection, f.ids[1])
+    await preparation.value
+    XCTAssertEqual(gate.bodyReads, 1, "Unrelated epochs may revalidate metadata, not decode the same page again")
+    XCTAssertEqual(model.workspace?.selectedPageID, f.ids[1], "A captured WorkspaceIndex cannot overwrite current selection")
+    XCTAssertEqual(model.presence?.notebookPageID, f.ids[1])
+    XCTAssertEqual(model.presence?.camera, acceptedPresence.camera)
+    XCTAssertEqual(model.notebookPage(at: 6, in: f.item)?.id, f.ids[6])
+  }
+
+  @MainActor
+  func testTargetChangeDuringPagePreparationRejectsTheOldBodyAndUndoHistory() async throws {
+    let f = try await preparationFixture(), model = f.model
+    let gate = try await installPageReadGate(f.reader, pageID: f.ids[6])
+    defer { gate.release() }
+    let preparation = Task { await model.prepareNotebookPage(at: 6, in: f.item) }
+    await fulfillment(of: [gate.captured], timeout: 2)
+    XCTAssertTrue(gate.didHold)
+    let actor = model.actorID, pageID = f.ids[6]
+    let action = PageInkAction(tool: .pen, samples: [.init(point: .init(x: 40, y: 40),
+      timeOffset: 0, width: 4, opacity: 1, force: 1, azimuth: 0, altitude: 1)])
+    let writerFinished = expectation(description: "Target mutation commits while the old WAL snapshot is held")
+    let writer = Task {
+      defer { writerFinished.fulfill() }
+      try await model.performStoreCommand(publishesChanges: true) { store in
+        let page = try store.loadPage(pageID)
+        let stamp = try XCTUnwrap(page.drawingStamp.advanced(by: actor))
+        let change = try page.prepareInkChange(.append(action), stamp: stamp)
+        _ = try store.commitPageInk(pageID: pageID, command: .init(change))
+      }
+    }
+    await fulfillment(of: [writerFinished], timeout: 2)
+    XCTAssertFalse(gate.timedOut)
+    gate.release(); try await writer.value; await preparation.value
+    let page = try XCTUnwrap(model.notebookPage(at: 6, in: f.item))
+    XCTAssertEqual(try page.inkDrawing().action(id: action.id)?.isActive, true,
+      "A completed target write invalidates the captured body even without a SwiftUI echo")
+    XCTAssertEqual(gate.bodyReads, 2, "Only changed source requires another body decode")
+    XCTAssertEqual(model.selectNotebookPage(6, notebookID: f.item, expectedRoot: f.order), 6)
+    let inverse = try XCTUnwrap(model.acceptDrawingUndo(), "History must come from the same current cut as the body")
+    XCTAssertEqual(inverse.drawing.action(id: action.id)?.isActive, false)
+    let saved = await model.finishPendingPersistence(); XCTAssertTrue(saved)
+    XCTAssertEqual(try model.store.loadPage(pageID).inkDrawing().action(id: action.id)?.isActive, false)
+  }
+
+  @MainActor
+  func testWithdrawalDuringTheActualPageReadCannotReplaceTheRetainedWindow() async throws {
+    let f = try await preparationFixture(), model = f.model
+    model.retainNotebookPageWindow([0, 1, 2, 3], in: f.item, root: f.order)
+    for index in 2...3 { await model.prepareNotebookPage(at: index, in: f.item) }
+    let retained = (0...3).compactMap { model.notebookPage(at: $0, in: f.item)?.id }
+    XCTAssertEqual(retained, Array(f.ids.prefix(4)))
+    let gate = try await installPageReadGate(f.reader, pageID: f.ids[6])
+    defer { gate.release() }
+    model.retainNotebookPageWindow([0, 1, 3, 6], in: f.item, root: f.order)
+    let preparation = Task { await model.prepareNotebookPage(at: 6, in: f.item) }
+    await fulfillment(of: [gate.captured], timeout: 2)
+    XCTAssertTrue(gate.didHold)
+    model.retainNotebookPageWindow([0, 1, 2, 3], in: f.item, root: f.order)
+    gate.release(); await preparation.value
+    XCTAssertFalse(gate.timedOut)
+    XCTAssertNil(model.notebookPage(at: 6, in: f.item))
+    XCTAssertEqual((0...3).compactMap { model.notebookPage(at: $0, in: f.item)?.id }, retained)
+    XCTAssertEqual(model.pages.count, 4)
+    XCTAssertEqual(model.workspace?.selectedPageID, f.ids[0])
+  }
+
   @MainActor
   func testUnchangedReloadRetainsThePreparedPageSourceIdentity() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)

@@ -66,7 +66,6 @@ final class NotebookAppModel {
   private struct PageAddress: Hashable { let itemID: UUID; let index: Int; let root: String }
   @ObservationIgnored private var pageAddresses: [PageAddress: UUID] = [:]
   @ObservationIgnored private var pagePreparationTasks: [PageAddress: Task<Void, Never>] = [:]
-  @ObservationIgnored private var pagePreparationTail: (id: UUID, task: Task<Void, Never>)?
   @ObservationIgnored private var pagePreparationWindows: [UUID: (root: String, indices: Set<Int>)] = [:]
   let notebookPageNavigation = NotebookPageNavigation()
   let pageInkPublication = NotebookPageInkPublication()
@@ -123,43 +122,40 @@ final class NotebookAppModel {
       }
       return
     }
-    // SQLite already reads through one FIFO. Capture the projection only after
-    // the previous addressed read publishes, rather than making neighbour reads
-    // invalidate and repeat one another's work through the global model epoch.
-    let predecessor = pagePreparationTail?.task, requestID = UUID()
     let task = Task { [weak self] in
       guard let self else { return }
-      await predecessor?.value
-      defer {
-        pagePreparationTasks[address] = nil
-        if pagePreparationTail?.id == requestID { pagePreparationTail = nil }
-      }
-      while !Task.isCancelled, permitsPagePreparation(address), let workspace, let presence, !isItemBeingDeleted(itemID), notebookPageRoot(itemID) == root {
+      defer { pagePreparationTasks[address] = nil }
+      var previous: NotebookPagePreparation?
+      while !Task.isCancelled, permitsPagePreparation(address), presence != nil,
+        !isItemBeingDeleted(itemID), notebookPageRoot(itemID) == root {
         let epoch = collaborationReadEpoch
         do {
-          let prepared = try await persistence.submit { [actor = actorID] store -> (NotebookPageWindow, WorkspaceIndex, [PencilUndoHistory.Entry], [PencilUndoHistory.Entry]) in
-            try store.readTransaction { _ in
-              let window = try store.readNotebookPageWindow(itemID: itemID, pages: [.index(index)], expectedVisibleRoot: root)
-              let id = window.pages[0].document.id
-              let items = workspace.items.map { item in
-                guard item.id == itemID else { return item }
-                return .notebook(id: item.id, title: item.title,
-                  pageIDs: item.pageIDs.contains(id) ? item.pageIDs : item.pageIDs + [id])
-              }
-              let projection = try store.workspaceProjection(items: items, selectedItemID: workspace.selectedItemID,
-                selectedPageID: workspace.selectedPageID)
-              return (window, projection, try store.nativeHistory(domain: .page(id), actor: actor),
-                try store.nativeRedoHistory(domain: .page(id), actor: actor))
-            }
+          // Only the accepted-write boundary belongs to the writer FIFO. The
+          // existing scene reader owns decoding, alongside other scene reads.
+          let _: Void = try await persistence.submit { _ in () }
+          try Task.checkCancellation()
+          let prepared = try await sceneReader.read { [actor = actorID, previous] store in
+            try NotebookPagePreparation.read(store: store, itemID: itemID, index: index,
+              root: root, actor: actor, reusing: previous)
           }
-          guard epoch == collaborationReadEpoch else { continue }
-          guard !Task.isCancelled, permitsPagePreparation(address), !isItemBeingDeleted(itemID), notebookPageRoot(itemID) == root else { return }
-          self.workspace = prepared.1
-          let page = prepared.0.pages[0].document
+          previous = prepared
+          try Task.checkCancellation()
+          let isCurrent = try await persistence.submit { [actor = actorID] store in
+            try prepared.isCurrent(store: store, actor: actor)
+          }
+          // A local admission may still await durability. Recheck its SQL cut,
+          // retaining this immutable body if the addressed identity is equal.
+          guard isCurrent, epoch == collaborationReadEpoch else { continue }
+          guard !Task.isCancelled, permitsPagePreparation(address), !isItemBeingDeleted(itemID),
+            notebookPageRoot(itemID) == root, var workspace, let presence else { return }
+          if notebookPage(at: index, in: itemID) != nil { return }
+          let page = prepared.page
+          try workspace.includePageProjection(prepared.projection, pageID: page.id, in: itemID)
+          self.workspace = workspace
           pageAddresses[address] = page.id
           pages[page.id] = page
-          pencilUndoHistory.restore(prepared.2, for: .page(page.id))
-          pencilUndoHistory.restoreRedo(prepared.3, for: .page(page.id))
+          pencilUndoHistory.restore(prepared.undo, for: .page(page.id))
+          pencilUndoHistory.restoreRedo(prepared.redo, for: .page(page.id))
           retainPreparedPages(near: address, selectedPageID: presence.notebookPageID)
           return
         } catch NotebookStorageError.transactionConflict {
@@ -175,7 +171,6 @@ final class NotebookAppModel {
       }
     }
     pagePreparationTasks[address] = task
-    pagePreparationTail = (requestID, task)
     await task.value
   }
 
@@ -1138,10 +1133,11 @@ final class NotebookAppModel {
     opensDefaultAccountWorkspace: Bool = false,
     requiresExistingAccountContent: Bool = false,
     acceptance: NotebookAcceptanceConfiguration? = nil,
-    persistenceQueue: NotebookPersistenceQueue? = nil
+    persistenceQueue: NotebookPersistenceQueue? = nil,
+    sceneReader: NotebookSceneReader? = nil
   ) {
     self.store = store
-    sceneReader = NotebookSceneReader(store: store)
+    self.sceneReader = sceneReader ?? NotebookSceneReader(store: store)
     self.allowsCodexRegistration = allowsCodexRegistration
     self.pairingActivationID = pairingActivationID
     self.preferences = preferences
@@ -3919,6 +3915,10 @@ final class NotebookAppModel {
     // An accepted immutable state outlives the page's render window. Eviction
     // removes presentation, not its addressed writer or captured source basis.
     guard var page = pages[pageID] else {
+      // There is no published page value whose didSet could revoke an older
+      // read. Admission still precedes its queued write, including a read's
+      // final validation fence already in flight.
+      collaborationReadEpoch &+= 1; collaborationContentEpoch &+= 1
       let basis = captured, actor = actorID
       persistence.enqueueChange(owner: .elementState(pageID, elementID)) { store in
         let receipt = try store.commitPageProgramState(pageID: pageID, elementID: elementID,

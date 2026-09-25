@@ -1,6 +1,61 @@
 import Foundation
 import NotebookCore
 
+/// One requested slot retains its immutable body only for the lifetime of its
+/// preparation. An unrelated publication can require a fresh SQL cut without
+/// decoding that body again. History is checked anew in that same cut.
+struct NotebookPagePreparation: Sendable {
+  let position: NotebookPagePosition
+  let page: PageDocument
+  let revision: String
+  let projection: WorkspaceIndex
+  let undo: [PencilUndoHistory.Entry]
+  let redo: [PencilUndoHistory.Entry]
+
+  static func read(store: NotebookStore, itemID: UUID, index: Int, root: String,
+    actor: UUID, reusing previous: Self?) throws -> Self {
+    try Task.checkCancellation()
+    return try store.readTransaction { store in
+      let directory = try store.readNotebookPageDirectory(itemID: itemID, from: index,
+        limit: 1, expectedVisibleRoot: root)
+      guard let position = directory.pages.first?.position else { throw NotebookStorageError.transactionConflict }
+      let id = position.pageID
+      guard let revision = try store.pageSourceRevision(id) else { throw NotebookStorageError.transactionConflict }
+      let page: PageDocument
+      if let previous, previous.position.itemID == itemID, previous.position.index == index,
+        previous.position.visibleRoot == root, previous.revision == revision {
+        page = previous.page
+      } else {
+        page = try store.readNotebookPageWindow(itemID: itemID, pages: [.page(id)],
+          expectedVisibleRoot: root).pages[0].document
+      }
+      // Membership causal fields live in the catalog, not the page digest.
+      // Re-read this one-page witness even when its immutable body is reused.
+      let projection = try store.workspaceProjection(items: [.notebook(id: itemID,
+        title: directory.header.item.title, pageIDs: [id])], selectedItemID: itemID, selectedPageID: id)
+      return try Self(position: position, page: page, revision: revision, projection: projection,
+        undo: store.nativeHistory(domain: .page(id), actor: actor),
+        redo: store.nativeRedoHistory(domain: .page(id), actor: actor))
+    }
+  }
+
+  /// A write can finish while the body is decoding without first changing the
+  /// model. Validate only addressed headers at the writer boundary, never move
+  /// that expensive decode back onto the accepted-write queue.
+  func isCurrent(store: NotebookStore, actor: UUID) throws -> Bool {
+    try store.readTransaction { store in
+      guard let current = try store.resolveNotebookPage(page.id, in: position.itemID,
+        expectedVisibleRoot: position.visibleRoot), current.index == position.index,
+        try store.pageSourceRevision(page.id) == revision else { return false }
+      let witness = try store.workspaceProjection(items: projection.items,
+        selectedItemID: position.itemID, selectedPageID: page.id)
+      guard witness.collaboration == projection.collaboration else { return false }
+      return try store.nativeHistory(domain: .page(page.id), actor: actor) == undo
+        && store.nativeRedoHistory(domain: .page(page.id), actor: actor) == redo
+    }
+  }
+}
+
 /// A durable-change notification reads the current scene and a bounded history
 /// page. It never merges a partial scene back into the authoritative store.
 struct NotebookDiskRefresh: Sendable {

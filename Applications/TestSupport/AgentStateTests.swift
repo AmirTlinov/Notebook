@@ -104,8 +104,11 @@ final class AgentStateTests: XCTestCase {
     let cursor = try model.store.currentChangeCursor()
     for value in [1.0, 2.0, 3.0] {
       let accepted = await withCheckedContinuation { (done: CheckedContinuation<Bool, Never>) in
+        let beforeAdmission = model.collaborationReadEpoch
         if !model.commitElementState(pageID: page.id, elementID: element.id, state: .number(value),
           onCommitted: .init(sourceBasis: basis, { done.resume(returning: $0 != nil) })) { done.resume(returning: false) }
+        XCTAssertNotEqual(model.collaborationReadEpoch, beforeAdmission,
+          "Even an evicted page must revoke reads admitted before its still-pending state write")
       }
       XCTAssertTrue(accepted)
       XCTAssertEqual(try model.store.readPageElement(pageID: page.id, elementID: element.id)?.state, .number(value))

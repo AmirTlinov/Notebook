@@ -147,6 +147,15 @@ Passive notebook neighbours share at most two sequential preparation lanes.
 Their finite native page window also owns addressed reads: withdrawing a slot
 cancels its preparation, and a late response cannot evict a currently needed page.
 A re-entering slot gets a new read after the canceled one drains.
+The same `NotebookSceneReader` reads a requested page outside the accepted-write
+FIFO, after a short writer boundary. A preparation keeps its decoded body only
+within that job; reuse checks the existing complete file digest, including causal
+fields, not the paint-only reference identity. The final short writer check
+validates the order/UUID, file digest, membership witness and exact Undo/Redo
+headers. Local admission still revokes an older cut; an unrelated epoch may repeat
+these bounded checks but not the unchanged body decode. Publication adds only the
+validated page witness to the current catalog, preserving current selection and
+other prepared pages. No second page-read tail or long-lived body cache exists.
 
 `capturePresented` freezes the actual installed live surface at Send with source,
 state, navigation and visibility guards. `captureCurrent` obtains a later frame
