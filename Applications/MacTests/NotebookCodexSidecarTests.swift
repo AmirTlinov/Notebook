@@ -120,6 +120,27 @@ private actor NativeOwner: NotebookCodexConversationOwner, NotebookCodexCatalogu
 
 @MainActor
 final class NotebookCodexSidecarTests: XCTestCase {
+  func testStartupStorageFailureRetriesRecoveryWithoutAnotherUserEvent() async throws {
+    try await fixture { store, queue, native, peer in
+      let service = try sidecar(store, queue, native)
+      let input = NotebookChatInput(author: peer,
+        action: .send(threadID: native.thread, text: "Saved before startup", context: ""))
+      _ = await service.receive(.init(body: .request(.job(input))), peerID: peer)
+      let permit = store.root.appendingPathComponent("allow-startup")
+      queue.enqueue { _ in _ = try Data(contentsOf: permit); return false }
+      let blocked = await queue.flush(); XCTAssertFalse(blocked)
+      service.start()
+      try await Task.sleep(for: .milliseconds(100))
+      let before = await native.counts().0; XCTAssertEqual(before, 0)
+      try Data().write(to: permit)
+      queue.retry()
+      let recovered = await queue.flush(); XCTAssertTrue(recovered)
+      try await wait { try await queue.submit { try $0.chatJob(input.id)?.state == .accepted } }
+      let sent = await native.counts().0; XCTAssertEqual(sent, 1)
+      await service.stop()
+    }
+  }
+
   func testNewlyAdmittedMessageWakesTheNativeWorkerWithoutThePollingSecond() async throws {
     try await fixture { store, queue, native, peer in
       let service = try sidecar(store, queue, native); service.start()

@@ -48,4 +48,8 @@ test('chat delta retains unchanged nodes and typesets only changed message bodie
   assert.equal(root.children[0],group);assert.equal(group.open,true);assert.equal(group.children[1],article);
   assert.match(group.querySelector('.work-label')!.textContent,/Остановлено/);
   assert.equal(parses,129);
+  await window.updateMessages({...base,order:['older-tool','tool'],upserts:[{...activity,id:'older-tool'}]});
+  assert.equal(root.children[0],group,'Prepending history extends the same expanded work group');
+  assert.equal(group.open,true);assert.equal(group.children[2],article);
+  assert.equal(parses,129);
 });

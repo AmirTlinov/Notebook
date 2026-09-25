@@ -1,0 +1,469 @@
+{
+  "date": "2026-09-25",
+  "issue": "GUI-295",
+  "result": "Исправления перелистывания проверены; бюджет первого штриха и физическая приёмка остаются открыты",
+  "baseCommit": "bd77838458fc6110763f1dfffa93094d8259ce90",
+  "sourceInputSHA256": "4448149bf852522e895d4f2d71479c91f3aa72379d877ec925c88325e9522713",
+  "inputInventoryFormat": 2,
+  "evidenceRoot": "/Users/amir/.codex/worktrees/page-turn-continuity/Notebook/.build/page-turn-check",
+  "inputInventory": "source-final.json",
+  "app": {
+    "configuration": "Debug",
+    "bundleID": "com.amirtlinov.notebook.page-turn-test",
+    "version": "0.3.143",
+    "build": "203",
+    "releaseArtifact": false,
+    "personalContainersModified": false
+  },
+  "tools": {
+    "xcode": "27.0 (27A266a)"
+  },
+  "checks": {
+    "nativeSingleRun": {
+      "devicesAndConfigurations": [
+        {
+          "device": {
+            "architecture": "arm64",
+            "deviceId": "F559444E-BE55-42AC-83F4-4D641B0FB7BE",
+            "deviceName": "Notebook GUI-295",
+            "modelName": "iPad Pro (11-inch) (3rd generation)",
+            "osBuildNumber": "24A434",
+            "osVersion": "27.0",
+            "platform": "iOS Simulator"
+          },
+          "expectedFailures": 0,
+          "failedTests": 0,
+          "passedTests": 46,
+          "skippedTests": 0,
+          "testPlanConfiguration": {
+            "configurationId": "1",
+            "configurationName": "Test Scheme Action"
+          }
+        }
+      ],
+      "environmentDescription": "Notebook · Built with macOS 27.0",
+      "expectedFailures": 0,
+      "failedTests": 0,
+      "finishTime": 1790294187.648,
+      "passedTests": 46,
+      "result": "Passed",
+      "runtimeWarnings": [],
+      "skippedTests": 0,
+      "startTime": 1790294128.622,
+      "statistics": [],
+      "testFailures": [],
+      "title": "Test - Notebook",
+      "topInsights": [
+        {
+          "category": "Longest Test Runs",
+          "impact": "43% of duration",
+          "text": "2 longest test runs with outlier durations exceeding 5.29s (three standard deviations)"
+        }
+      ],
+      "totalTestCount": 46
+    },
+    "nativeCases": [
+      {
+        "test": "MetalFrameCompletionTests/testDiscardedFrameCannotAdvanceAnInteraction()",
+        "result": "Passed"
+      },
+      {
+        "test": "MetalFrameCompletionTests/testDisplayedFrameKeepsTheOSTimestamp()",
+        "result": "Passed"
+      },
+      {
+        "test": "MetalFrameCompletionTests/testInvalidDisplayTimesCannotAdvanceOrBecomeTimingEvidence()",
+        "result": "Passed"
+      },
+      {
+        "test": "MetalFrameCompletionTests/testSimulatorCompletionCannotBecomeDisplayTiming()",
+        "result": "Passed"
+      },
+      {
+        "test": "NotebookColdPageTurnTests/testColdPageFollowsTheHeldContactWhenReadyAndOnlyCommitsOnLift()",
+        "result": "Passed"
+      },
+      {
+        "test": "NotebookColdPageTurnTests/testPinchCancelsAColdPageThatAlreadyStartedFollowingTheContact()",
+        "result": "Passed"
+      },
+      {
+        "test": "NotebookPageCaptureTests/testCancelledPendingCaptureCannotRevealOrRetainTheRetiredLeaf()",
+        "result": "Passed"
+      },
+      {
+        "test": "NotebookPageCaptureTests/testCurlCapturesChangedAndNewlyInstalledLayersInBothDirections()",
+        "result": "Passed"
+      },
+      {
+        "test": "NotebookPageCaptureTests/testFittedPageCaptureUsesProjectedDensityInsteadOfOffscreenPageSize()",
+        "result": "Passed"
+      },
+      {
+        "test": "NotebookPageLifecycleUXTests/testDenseVectorSheetsDoNotReturnToTheOldLeafAfterObservedSimulatorComposition()",
+        "result": "Passed"
+      },
+      {
+        "test": "NotebookPageLifecycleUXTests/testNativePageTurnsShowTheStoredLeafAfterEvictionReverseAndCancellation()",
+        "result": "Passed"
+      },
+      {
+        "test": "NotebookPageLifecycleUXTests/testPeerRemovedLeafCannotCommitAnOldCurlIntoItsReplacementSlot()",
+        "result": "Passed"
+      },
+      {
+        "test": "NotebookPageLifecycleUXTests/testPresentedLandingAdmitsTheNextReverseBeforeSwiftUIRepublishesInput()",
+        "result": "Passed"
+      },
+      {
+        "test": "NotebookPageLifecycleUXTests/testSVGNeighbourPreparesDuringTheCurrentCurlNotAfterFingerLift()",
+        "result": "Passed"
+      },
+      {
+        "test": "NotebookPageMotionUXTests/testCurlConfiguresTheActualDrawableLayerBeforeItsFirstDisplayUpdate()",
+        "result": "Passed"
+      },
+      {
+        "test": "NotebookPageMotionUXTests/testCurlHasIntermediatePixelsAndDoesNotLeaveABindingShadow()",
+        "result": "Passed"
+      },
+      {
+        "test": "NotebookPageMotionUXTests/testInteractiveEndpointUsesItsActualPresentationBeforeOrAfterLift()",
+        "result": "Passed"
+      },
+      {
+        "test": "NotebookPageMotionUXTests/testInteractiveReverseDoesNotResurrectSourceAfterTheTargetAppears()",
+        "result": "Passed"
+      },
+      {
+        "test": "NotebookSceneSelectionTests/testColdSwipeKeepsIntentUntilLiftAndReversalOrPinchCancelsIt()",
+        "result": "Passed"
+      },
+      {
+        "test": "NotebookSceneSelectionTests/testPageCurlAdmissionResolvesOwnershipBeforeMotion()",
+        "result": "Passed"
+      },
+      {
+        "test": "PageTurnSelectionTests/testAnUnpreparedExternalTargetReleasesThePreviousWindowBeforeCreatingItsReplacement()",
+        "result": "Passed"
+      },
+      {
+        "test": "PageTurnSelectionTests/testBackInvalidatesPendingBlockResolutionBeforeReturningToTheReadPage()",
+        "result": "Passed"
+      },
+      {
+        "test": "PageTurnSelectionTests/testColdFirstPageDoesNotManufactureDistantChildrenToFillFourSlots()",
+        "result": "Passed"
+      },
+      {
+        "test": "PageTurnSelectionTests/testColdReadyPageWaitsForTheNewContactAndCancellationRevokesItsHandoff()",
+        "result": "Passed"
+      },
+      {
+        "test": "PageTurnSelectionTests/testDistantRequestsDuringCurlKeepFourContentsAndOnlyTheLatestTargetSurvivesTheLocalAcknowledgement()",
+        "result": "Passed"
+      },
+      {
+        "test": "PageTurnSelectionTests/testDocumentIntentFailureRetryAndExternalLandingPreserveConfirmedPage()",
+        "result": "Passed"
+      },
+      {
+        "test": "PageTurnSelectionTests/testDocumentLandingAIsAcknowledgedWhileNewerIntentBStillWaits()",
+        "result": "Passed"
+      },
+      {
+        "test": "PageTurnSelectionTests/testEarlyDocumentTargetWaitsForItsCanonicalSourceThenLandsWithinItsRealCount()",
+        "result": "Passed"
+      },
+      {
+        "test": "PageTurnSelectionTests/testEvictedSheetGetsANewHostAndRejectsOldReadiness()",
+        "result": "Passed"
+      },
+      {
+        "test": "PageTurnSelectionTests/testEvictedSheetPreparesItsReplacementInTheWindowBeforeReturning()",
+        "result": "Passed"
+      },
+      {
+        "test": "PageTurnSelectionTests/testExternalPageSelectionPublishesTransitionOutsideTheRepresentableUpdate()",
+        "result": "Passed"
+      },
+      {
+        "test": "PageTurnSelectionTests/testExternalTransitionsKeepTheirOwnFourContentsWhileNewerRequestsWait()",
+        "result": "Passed"
+      },
+      {
+        "test": "PageTurnSelectionTests/testFinitePrewarmWindowRetainsExistingNearestPagesWithinFourSlots()",
+        "result": "Passed"
+      },
+      {
+        "test": "PageTurnSelectionTests/testFiniteThreePageDocumentKeepsTheSameChildThroughAnImmediateReverse()",
+        "result": "Passed"
+      },
+      {
+        "test": "PageTurnSelectionTests/testHumanPageChangeInvalidatesLateBlockResolution()",
+        "result": "Passed"
+      },
+      {
+        "test": "PageTurnSelectionTests/testNewHumanContactCancelsAnAlreadyAdmittedPageReference()",
+        "result": "Passed"
+      },
+      {
+        "test": "PageTurnSelectionTests/testNewShowOwnsResolutionEvenWhenTheCancelledTaskFinishesLater()",
+        "result": "Passed"
+      },
+      {
+        "test": "PageTurnSelectionTests/testNotebookAcknowledgementCannotBecomeAnUnrequestedReverseTurn()",
+        "result": "Passed"
+      },
+      {
+        "test": "PageTurnSelectionTests/testQueuedExternalSelectionPreservesTrailingBlankCreationBeforeItsFinalSelection()",
+        "result": "Passed"
+      },
+      {
+        "test": "PageTurnSelectionTests/testRapidNotebookLandingsAdvanceMemoryBeforePersistenceCatchesUp()",
+        "result": "Passed"
+      },
+      {
+        "test": "PageTurnSelectionTests/testReferenceUsesTheMountedNotebookOwnerWithoutPublishingAnUnpreparedTarget()",
+        "result": "Passed"
+      },
+      {
+        "test": "PageTurnSelectionTests/testReorderedSequenceRevokesPreparedHostsAndRejectsTheirLateLanding()",
+        "result": "Passed"
+      },
+      {
+        "test": "PageTurnSelectionTests/testRepeatedNotebookArrowsConfirmEveryAdjacentLandingWithoutChangingPresenceEarly()",
+        "result": "Passed"
+      },
+      {
+        "test": "PageTurnSelectionTests/testReturningExternalSelectionToTheSourceCancelsTheQueuedJumpWithoutReplacingCurlChildren()",
+        "result": "Passed"
+      },
+      {
+        "test": "PageTurnSelectionTests/testShowCanResolveItsBlockAfterTheCameraCommandHasCompleted()",
+        "result": "Passed"
+      },
+      {
+        "test": "PageTurnSelectionTests/testTransitionNotificationDropsOldStartAfterFinishAndOwnerReplacement()",
+        "result": "Passed"
+      }
+    ],
+    "repeatedRun": {
+      "devicesAndConfigurations": [
+        {
+          "device": {
+            "architecture": "arm64",
+            "deviceId": "F559444E-BE55-42AC-83F4-4D641B0FB7BE",
+            "deviceName": "Notebook GUI-295",
+            "modelName": "iPad Pro (11-inch) (3rd generation)",
+            "osBuildNumber": "24A434",
+            "osVersion": "27.0",
+            "platform": "iOS Simulator"
+          },
+          "expectedFailures": 0,
+          "failedTests": 3,
+          "passedTests": 6,
+          "skippedTests": 0,
+          "testPlanConfiguration": {
+            "configurationId": "1",
+            "configurationName": "Test Scheme Action"
+          }
+        }
+      ],
+      "environmentDescription": "Notebook · Built with macOS 27.0",
+      "expectedFailures": 0,
+      "failedTests": 1,
+      "finishTime": 1790294438.749,
+      "passedTests": 2,
+      "result": "Failed",
+      "runtimeWarnings": [],
+      "skippedTests": 0,
+      "startTime": 1790294211.167,
+      "statistics": [
+        {
+          "subtitle": "9 test runs",
+          "title": "1 configuration ran with test repetitions"
+        }
+      ],
+      "testFailures": [
+        {
+          "failureText": "XCTAssertTrue failed - UX new-leaf-accepts-its-own-ink: correct=true, observed=109.84575 ms, ceiling=0.1 seconds; window observation, not photon timing",
+          "targetName": "NotebookTests",
+          "testIdentifier": 1,
+          "testIdentifierString": "NotebookPageLifecycleUXTests/testNativePageTurnsShowTheStoredLeafAfterEvictionReverseAndCancellation()",
+          "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/NotebookPageLifecycleUXTests/testNativePageTurnsShowTheStoredLeafAfterEvictionReverseAndCancellation",
+          "testName": "testNativePageTurnsShowTheStoredLeafAfterEvictionReverseAndCancellation()"
+        }
+      ],
+      "title": "Test - Notebook",
+      "topInsights": [],
+      "totalTestCount": 3
+    },
+    "repeatedUI": [
+      {
+        "test": "NotebookNavigationLoadUITests/testDenseSVGPagesTurnForwardReverseAndRepeatedArrowsWithoutBlankLanding()",
+        "passed": 3,
+        "failed": 0
+      },
+      {
+        "test": "NotebookWorkspaceJourneyUITests/testColdBoardEntryAndRealSwipesShowEveryLeafAfterEvictionAndReturn()",
+        "passed": 3,
+        "failed": 0
+      }
+    ],
+    "firstInkOnNewLeaf": {
+      "test": "NotebookPageLifecycleUXTests/testNativePageTurnsShowTheStoredLeafAfterEvictionReverseAndCancellation()",
+      "singleRunObservedMS": 67.078417,
+      "repeatObservedMS": [
+        114.10375,
+        112.815,
+        109.84575
+      ],
+      "ceilingMS": 100,
+      "correctPixelsInEveryRun": true,
+      "result": "FAIL в трёх повторениях; порог не изменён",
+      "measurement": "Mounted-window observation including snapshot cost, not physical input-to-photon"
+    },
+    "iphoneosCompilation": {
+      "result": "PASS",
+      "exitCode": 0,
+      "log": "iphoneos-final-build.log",
+      "installed": false
+    },
+    "macosCompilation": {
+      "result": "PASS",
+      "exitCode": 0,
+      "log": "macos-final-build-3.log",
+      "installed": false,
+      "preparationFailures": [
+        "macos-final-build.log: missing NOTEBOOK_TYPESCRIPT_RUNTIME",
+        "macos-final-build-2.log: selected stage root rather than its pinned content directory"
+      ],
+      "resolution": "Prepared the pinned TypeScript stage with Applications/prepare_notebook_typescript.py --prepare; reused the admitted Codex stage read-only."
+    }
+  },
+  "diagnosticControls": [
+    {
+      "artifact": "capture-negative.xcresult",
+      "summary": {
+        "devicesAndConfigurations": [
+          {
+            "device": {
+              "architecture": "arm64",
+              "deviceId": "F559444E-BE55-42AC-83F4-4D641B0FB7BE",
+              "deviceName": "Notebook GUI-295",
+              "modelName": "iPad Pro (11-inch) (3rd generation)",
+              "osBuildNumber": "24A434",
+              "osVersion": "27.0",
+              "platform": "iOS Simulator"
+            },
+            "expectedFailures": 0,
+            "failedTests": 1,
+            "passedTests": 0,
+            "skippedTests": 0,
+            "testPlanConfiguration": {
+              "configurationId": "1",
+              "configurationName": "Test Scheme Action"
+            }
+          }
+        ],
+        "environmentDescription": "Notebook · Built with macOS 27.0",
+        "expectedFailures": 0,
+        "failedTests": 1,
+        "finishTime": 1790289313.226,
+        "passedTests": 0,
+        "result": "Failed",
+        "runtimeWarnings": [],
+        "skippedTests": 0,
+        "startTime": 1790289125.937,
+        "statistics": [],
+        "testFailures": [
+          {
+            "failureText": "XCTAssertGreaterThan failed: (\"0\") is not greater than (\"240\") - The current red source was replaced with stale pixels: [0, 0, 255, 255]",
+            "targetName": "NotebookTests",
+            "testIdentifier": 1,
+            "testIdentifierString": "NotebookPageCaptureTests/testCurlCapturesChangedAndNewlyInstalledLayersInBothDirections()",
+            "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/NotebookPageCaptureTests/testCurlCapturesChangedAndNewlyInstalledLayersInBothDirections",
+            "testName": "testCurlCapturesChangedAndNewlyInstalledLayersInBothDirections()"
+          }
+        ],
+        "title": "Test - Notebook",
+        "topInsights": [],
+        "totalTestCount": 1
+      },
+      "meaning": "Старый синхронный захват без обновления экрана читает синие пиксели вместо только что установленных красных"
+    },
+    {
+      "artifact": "verified-gestures.xcresult",
+      "sourceInputSHA256": "acd766a45423f225d92e68a98e1cd4d3eabcd2841b9d3bb5e922fcb8c583be2a",
+      "meaning": "Отклонённый вариант с afterScreenUpdates=true: три провала быстрых стрелок; одиночный PASS не принят как исправление"
+    },
+    {
+      "artifact": "passive-boundary.xcresult",
+      "summary": {
+        "devicesAndConfigurations": [
+          {
+            "device": {
+              "architecture": "arm64",
+              "deviceId": "F559444E-BE55-42AC-83F4-4D641B0FB7BE",
+              "deviceName": "Notebook GUI-295",
+              "modelName": "iPad Pro (11-inch) (3rd generation)",
+              "osBuildNumber": "24A434",
+              "osVersion": "27.0",
+              "platform": "iOS Simulator"
+            },
+            "expectedFailures": 0,
+            "failedTests": 0,
+            "passedTests": 12,
+            "skippedTests": 0,
+            "testPlanConfiguration": {
+              "configurationId": "1",
+              "configurationName": "Test Scheme Action"
+            }
+          }
+        ],
+        "environmentDescription": "Notebook · Built with macOS 27.0",
+        "expectedFailures": 0,
+        "failedTests": 0,
+        "finishTime": 1790294096.119,
+        "passedTests": 4,
+        "result": "Passed",
+        "runtimeWarnings": [],
+        "skippedTests": 0,
+        "startTime": 1790294012.407,
+        "statistics": [
+          {
+            "subtitle": "12 test runs",
+            "title": "1 configuration ran with test repetitions"
+          }
+        ],
+        "testFailures": [],
+        "title": "Test - Notebook",
+        "topInsights": [],
+        "totalTestCount": 4
+      },
+      "meaning": "Предфинальный вариант UIUpdateLink: три capture-теста и плотный UI-сценарий по три раза, 12/12 PASS"
+    }
+  ],
+  "visualInspection": {
+    "intermediateCurl": [
+      "final-motion-attachments/3CD59DE8-AAD7-464C-91F8-67C030093CF7.png",
+      "final-motion-attachments/9C160220-6282-48F4-B0D1-D1F1DD20CD44.png",
+      "final-motion-attachments/1665C5B2-8658-4409-9287-F3FBE4902594.png"
+    ],
+    "denseLeaves": [
+      "final-dense-attachments/99F57889-02B9-475B-8900-C99038F58B1F.png",
+      "final-dense-attachments/78C69379-0F71-4028-A88A-AAC248A1BF3D.png"
+    ]
+  },
+  "notSelected": [
+    "NotebookPageMotionUXTests/testTenForwardReverseTurnsMeetFirstPresentationAndLandingDeadlines()",
+    "NotebookPageLifecycleUXTests/testDenseVectorSheetsKeepTheirOwnPixelsThroughImmediateReversals()"
+  ],
+  "limitations": [
+    "Simulator uses typed GPU completion, not drawable presentation callbacks or synthetic display timestamps.",
+    "Repeated first-ink window budget is red; the whole selected check is not accepted as PASS.",
+    "Physical first-frame/landing deadlines, 120 Hz, CPU/GPU/memory traces and sustained joint work are not verified.",
+    "No signed pair release or physical device installation was performed; GUI-295 remains open."
+  ]
+}

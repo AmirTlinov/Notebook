@@ -164,10 +164,14 @@ window.updateMessages=function(update){
     const m=messages[i];
     if(!isWorkMessage(m)){children.push(articles.get(m.id));continue;}
     let end=i;while(end+1<messages.length&&isWorkMessage(messages[end+1])&&messages[end+1].turnID===m.turnID)end++;
-    const key='work:'+m.id;usedGroups.add(key);
-    let group=groups.get(key);
+    const items=messages.slice(i,end+1);
+    // Earlier history can extend this same work block. Its first message is
+    // not its DOM identity: retain the group that already owns a member.
+    let group=items.map(x=>articles.get(x.id).parentElement).find(node=>node&&groups.get(node.dataset.key)===node&&!usedGroups.has(node.dataset.key));
+    const key=group?.dataset.key??'work:'+m.id;usedGroups.add(key);
+    group??=groups.get(key);
     if(!group){group=document.createElement('details');group.className='work';group.dataset.key=key;group.open=expanded.has(key);group.append(workHeading('',false));groups.set(key,group);}
-    const items=messages.slice(i,end+1),failed=items.some(x=>['failed','declined'].includes(x.activity?.status));
+    const failed=items.some(x=>['failed','declined'].includes(x.activity?.status));
     const active=work&&work.turnID===m.turnID&&end===messages.findLastIndex(x=>isWorkMessage(x)&&x.turnID===m.turnID);
     const count=items.filter(x=>x.activity).length,word=count%10===1&&count%100!==11?'действие':count%10>=2&&count%10<=4&&(count%100<12||count%100>14)?'действия':'действий';
     const status=turnStatuses[m.turnID],outcome=status==='interrupted'?'Остановлено':status==='failed'?'Есть ошибка':status==='completed'?'Выполнено':failed?'Есть ошибка':'Работа Codex';

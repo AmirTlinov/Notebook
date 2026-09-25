@@ -129,70 +129,73 @@ final class NotebookCodexSidecar {
     wakeups.continuation.yield(())
     worker = Task { [weak self] in
       guard let self else { return }
-      // Crash recovery never changes attempting back to saved.
-      do {
-        _ = try await persistence.submit { store in
-          for job in try store.pendingChatJobs() where job.state == .attempting {
-            _ = try store.advanceChatJob(job.id, from: .attempting, to: .uncertain, error: "Проверяется принятие после перезапуска Mac")
+      var needsRecovery = true
+      for await _ in wakeups.stream {
+        guard !Task.isCancelled, !stopped else { break }
+        var nextWakeup: Date?
+        do {
+          // Recovery shares the journal's retry deadline. A startup storage
+          // failure cannot terminate the only worker and strand saved input.
+          if needsRecovery {
+            _ = try await persistence.submit { store in
+              for job in try store.pendingChatJobs() where job.state == .attempting {
+                _ = try store.advanceChatJob(job.id, from: .attempting, to: .uncertain, error: "Проверяется принятие после перезапуска Mac")
+              }
+            }
+            needsRecovery = false
           }
-        }
-        for await _ in wakeups.stream {
-          guard !Task.isCancelled, !stopped else { break }
-          var nextWakeup: Date?
-          do {
-            let jobs = try await persistence.submit { try $0.pendingChatJobs() }
-            let pending = Set(jobs.map(\.id))
-            reconciliationAfter = reconciliationAfter.filter { pending.contains($0.key) }
-            historyCursors = historyCursors.filter { pending.contains($0.key) }
-            executionAfter = executionAfter.filter { pending.contains($0.key) }
-            // Explicit control of the current turn bypasses queued next-turn text.
-            // Preserve journal order within each class and independent thread.
-            let ordered = jobs.enumerated().sorted { left, right in
-              func priority(_ job: NotebookChatJob) -> Int { if case .send = job.input.action { return 1 }; return 0 }
-              let a = priority(left.element), b = priority(right.element)
-              return a == b ? left.offset < right.offset : a < b
-            }.map(\.element)
-            for job in ordered where !Task.isCancelled {
-              if job.input.action.isRunCommand || job.input.action.isVoiceCommand { continue }
-              if job.state == .uncertain || job.state == .attempting {
-                guard reconciling[job.id] == nil, reconciling.count < 2,
-                  reconciliationAfter[job.id, default: .distantPast] <= Date() else {
-                    if reconciling[job.id] == nil, let due = reconciliationAfter[job.id], due > Date() { nextWakeup = min(nextWakeup ?? due, due) }
-                    continue
-                  }
-                reconciliationAfter[job.id] = Date().addingTimeInterval(15)
-                reconciling[job.id] = Task { [weak self] in
-                  guard let self else { return }
-                  try? await reconcile(job)
-                  reconciling.removeValue(forKey: job.id)
-                  wakeups.continuation.yield(())
+          let jobs = try await persistence.submit { try $0.pendingChatJobs() }
+          let pending = Set(jobs.map(\.id))
+          reconciliationAfter = reconciliationAfter.filter { pending.contains($0.key) }
+          historyCursors = historyCursors.filter { pending.contains($0.key) }
+          executionAfter = executionAfter.filter { pending.contains($0.key) }
+          // Explicit control of the current turn bypasses queued next-turn text.
+          // Preserve journal order within each class and independent thread.
+          let ordered = jobs.enumerated().sorted { left, right in
+            func priority(_ job: NotebookChatJob) -> Int { if case .send = job.input.action { return 1 }; return 0 }
+            let a = priority(left.element), b = priority(right.element)
+            return a == b ? left.offset < right.offset : a < b
+          }.map(\.element)
+          for job in ordered where !Task.isCancelled {
+            if job.input.action.isRunCommand || job.input.action.isVoiceCommand { continue }
+            if job.state == .uncertain || job.state == .attempting {
+              guard reconciling[job.id] == nil, reconciling.count < 2,
+                reconciliationAfter[job.id, default: .distantPast] <= Date() else {
+                  if reconciling[job.id] == nil, let due = reconciliationAfter[job.id], due > Date() { nextWakeup = min(nextWakeup ?? due, due) }
+                  continue
                 }
-                continue
-              }
-              let control = job.input.action.isInteractiveControl
-              let key = (job.input.action.threadID ?? job.id.uuidString) + (control ? "/control" : "")
-              guard executing[key] == nil, executing.count < (control ? 10 : 8) else { continue }
-              if let due = executionAfter[job.id], due > Date() {
-                nextWakeup = min(nextWakeup ?? due, due); continue
-              }
-              executionAfter[job.id] = Date().addingTimeInterval(1)
-              executing[key] = Task { [weak self] in
+              reconciliationAfter[job.id] = Date().addingTimeInterval(15)
+              reconciling[job.id] = Task { [weak self] in
                 guard let self else { return }
-                do { try await execute(job) } catch { /* The durable receipt remains authoritative. */ }
-                executing.removeValue(forKey: key)
+                try? await reconcile(job)
+                reconciling.removeValue(forKey: job.id)
                 wakeups.continuation.yield(())
               }
+              continue
             }
-          } catch { nextWakeup = Date().addingTimeInterval(1) }
-          retryWakeup?.cancel(); retryWakeup = nil
-          if let due = nextWakeup {
-            retryWakeup = Task { [weak self] in
-              do { try await Task.sleep(for: .seconds(max(0, due.timeIntervalSinceNow))) } catch { return }
-              self?.wakeups.continuation.yield(())
+            let control = job.input.action.isInteractiveControl
+            let key = (job.input.action.threadID ?? job.id.uuidString) + (control ? "/control" : "")
+            guard executing[key] == nil, executing.count < (control ? 10 : 8) else { continue }
+            if let due = executionAfter[job.id], due > Date() {
+              nextWakeup = min(nextWakeup ?? due, due); continue
+            }
+            executionAfter[job.id] = Date().addingTimeInterval(1)
+            executing[key] = Task { [weak self] in
+              guard let self else { return }
+              do { try await execute(job) } catch { /* The durable receipt remains authoritative. */ }
+              executing.removeValue(forKey: key)
+              wakeups.continuation.yield(())
             }
           }
+        } catch { nextWakeup = Date().addingTimeInterval(1) }
+        retryWakeup?.cancel(); retryWakeup = nil
+        if let due = nextWakeup {
+          retryWakeup = Task { [weak self] in
+            do { try await Task.sleep(for: .seconds(max(0, due.timeIntervalSinceNow))) } catch { return }
+            self?.wakeups.continuation.yield(())
+          }
         }
-      } catch { }
+      }
     }
   }
 
