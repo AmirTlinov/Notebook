@@ -162,6 +162,10 @@ other prepared pages. No second page-read tail or long-lived body cache exists.
 Withdrawn read-only work checks cancellation between fragment decodes and before
 assembling the final typed page. Accepted writable commands do not inherit that
 UI cancellation and still read their causal base and finish normally.
+Dictionary reconstruction preserves member identities without sorting their SQL
+positions. Transient JSON for typed reads does not canonicalize key order again;
+the durable envelope encoder and content hashes remain canonical and unchanged.
+Array/causal ordering and structural, duplicate-member and typed checks still apply.
 
 Preparing another slot does not create another spatial geometry generation.
 The single scene-index initializer rebinds the finite catalog and page-owner

@@ -634,21 +634,26 @@ final class AgentWebLeaseTests: XCTestCase {
     admitted?.release()
   }
 
+  @MainActor
   func testOverlayReadinessRequiresCurrentSourceAndIgnoresPreviousSourceTeardown() {
-    let previous = element(source: "previous")
-    let current = element(source: "current")
-    var readiness = AgentOverlayReadiness()
-    readiness.record(previous, ready: true)
-    XCTAssertTrue(readiness.isReady(for: [previous]))
-    XCTAssertFalse(readiness.isReady(for: [current]), "Reusing an element ID does not confirm its new source.")
-    readiness.retain([current])
-    XCTAssertFalse(readiness.isReady(for: [current]))
+    let previous = element(source: "previous"), current = element(source: "current")
+    let readiness = AgentOverlayReadiness(), pageID = UUID(), actor = UUID()
+    var ready = false
+    func prepare(_ elements: [AgentElement]) {
+      _ = readiness.prepare(elements: elements, pageSize: .init(width: 32, height: 32),
+        erasure: .init(pageID: pageID, stamp: .init(counter: 0, actor: actor), erasures: [:]),
+        publish: { ready = $0; _ = $1 })
+      readiness.publish()
+    }
+    prepare([previous]); readiness.record(previous, ready: true); readiness.publish()
+    XCTAssertTrue(ready)
+    prepare([current]); XCTAssertFalse(ready, "Reusing an element ID does not confirm its new source")
+    XCTAssertFalse(readiness.record(previous, ready: true), "An old callback cannot replace the current source")
     readiness.record(current, ready: true)
-    readiness.record(previous, ready: false)
-    XCTAssertTrue(readiness.isReady(for: [current]), "An old view's teardown cannot invalidate the current raster.")
-    readiness.record(current, ready: false)
-    XCTAssertFalse(readiness.isReady(for: [current]))
-    XCTAssertTrue(readiness.isReady(for: []))
+    readiness.record(previous, ready: false); readiness.publish()
+    XCTAssertTrue(ready, "An old view's teardown cannot invalidate the current raster")
+    readiness.record(current, ready: false); readiness.publish(); XCTAssertFalse(ready)
+    prepare([]); XCTAssertTrue(ready)
   }
 
   private func element(source: String, width: Double = 32, height: Double = 32) -> AgentElement {

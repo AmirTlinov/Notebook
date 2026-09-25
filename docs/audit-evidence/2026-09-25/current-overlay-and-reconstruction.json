@@ -1,0 +1,101 @@
+{
+  "version": 1,
+  "createdAt": "2026-09-25T21:09:01.438084+00:00",
+  "base": "9615586602f6f41b6c61ef1351279f5d96572bf7",
+  "scope": "Current rendered-tree overlay readiness, unordered dictionary reconstruction and noncanonical transient typed-read encoding; durable byte encoding unchanged",
+  "core": {
+    "passed": 47,
+    "failed": 0,
+    "seconds": 37.983,
+    "sourceUnchanged": true,
+    "command": [
+      "swift",
+      "test",
+      "--jobs",
+      "2",
+      "--filter",
+      "NotebookSQLiteTests|NotebookActionPublicationTests|NotebookActionDeliveryPhaseTests|NotebookReadSessionTests|NotebookPageWindowTests"
+    ],
+    "log": {
+      "path": "/tmp/notebook-repair-core-51.log",
+      "sha256": "29db15b7514eb70eed4b5414cfa943307c18fca20db3d316957952c0689c172b"
+    },
+    "witness": {
+      "path": "/tmp/notebook-repair-core-51-sources.json",
+      "sha256": "bd466a1358c148f4c87015cb43eec63d5678efcf7b9d6c7475d0a1bcafd30a35"
+    },
+    "dictionaryReconstructionSeconds": {
+      "1000": 0.003886917,
+      "100000": 0.635520084
+    },
+    "measurementsScope": "Core debug storage reconstruction, not a proven physical cold-page latency improvement",
+    "additionalRegressions": [
+      "array position and member tie order",
+      "duplicate dictionary members rejected",
+      "exact typed source/data/version/dictionary/array values",
+      "actual durable address/hash/blob bytes unchanged, with canonical encoder still checked",
+      "100000 historical arrival receipts, one pending lookup34SQLiteVMsteps"
+    ]
+  },
+  "physical": {
+    "run": 51,
+    "passed": 12,
+    "failed": 0,
+    "skipped": 0,
+    "runtimeWarnings": [],
+    "xcresultIntervalSeconds": 49.054,
+    "device": {
+      "architecture": "arm64",
+      "deviceId": "00008103-001E059934D9001E",
+      "deviceName": "iPad (Елизавета)",
+      "modelName": "iPad Pro (11-inch) (3rd generation)",
+      "osBuildNumber": "24A435",
+      "osVersion": "27.0",
+      "platform": "iOS"
+    },
+    "bundle": "com.amirtlinov.notebook.architecture-tests",
+    "configuration": "Debug, SWIFT_OPTIMIZATION_LEVEL=-O",
+    "sourceUnchanged": true,
+    "summary": {
+      "path": "/tmp/notebook-repair-native-cover-51-summary.json",
+      "sha256": "851e4a509f36e06a46822e86c82ba55e873ebd9b4146fb9710cb729294f129f0"
+    },
+    "witness": {
+      "path": "/tmp/notebook-repair-native-cover-51-sources.json",
+      "sha256": "8fc4e1ed02dfbc2bf2c75b1681245893d591689e2a94f87566877599fcd87128"
+    },
+    "selectors": [
+      "NotebookTests/NotebookPageEraserProjectionTests",
+      "NotebookTests/AgentWebLeaseTests/testOverlayReadinessRequiresCurrentSourceAndIgnoresPreviousSourceTeardown",
+      "NotebookTests/AcceptedPageInputTests/testAcceptedUndoRevokesLiftedMaskBeforeOverlayReadinessAndOldReceiptCannotHideRedo",
+      "NotebookTests/NotebookInteractionUXTests/testPageLiveEraserHasOnePaintOwnerThroughRetractionCancelAndAcceptedUndoRedo",
+      "NotebookTests/NotebookInteractionUXTests/testPageLiveEraserPreservesAnExistingDurableMaskHostAndItsPixels",
+      "NotebookTests/NotebookInteractionUXTests/testPageWholeProgramEraseUnmountsBeforeLiftAndCancelledInputCanBeUndone",
+      "NotebookTests/NotebookPageLifecycleUXTests/testDenseVectorSheetsKeepTheirOwnPixelsThroughImmediateReversals",
+      "NotebookTests/NotebookPageLifecycleUXTests/testSVGNeighbourPreparesDuringTheCurrentCurlNotAfterFingerLift",
+      "NotebookTests/NotebookPageLifecycleUXTests/testDeletedGraphicAndErasedMaterialStayAbsentAfterStaleSaveAndColdReopen"
+    ],
+    "claims": [
+      "Old tree receipts evaluate only current frozen material/source requirements and current typed erasure receipt",
+      "Unchanged source late readiness is retained when a different element becomes fully erased",
+      "Old source cannot confirm replacement; old renderer teardown cannot revoke new mask",
+      "Existing accepted Undo/Redo and native page eraser pixel scenarios pass",
+      "Dense-vector immediate reversal, SVG prewarming during held curl, erased-material cold reopen pass"
+    ]
+  },
+  "changedSourceSHA256": {
+    "Applications/Shared/AgentOverlayView.swift": "9d4c2f524485e1355e7adb52b315d8405d819429d264597c8b20600a60bec19c",
+    "Applications/Tests/AgentWebLeaseTests.swift": "d3758cf507db93736e6f5b34d4dcdea33d5e8382df8e3ba741ff46f1056cea1a",
+    "Applications/Tests/NotebookPageEraserOwnershipTests.swift": "ba07702bb8ccc3fdab83b96d93edc0aec23b48d5b8a532cbf6ca2cb1b108586d",
+    "Sources/NotebookCore/NotebookSQLite.swift": "1a0789af758dea8f6cbf9c6350752cbefa8931a1e9a1256b5a2d0b8ded969daa",
+    "Tests/NotebookCoreTests/NotebookSQLiteTests.swift": "39d55134916c0566216aae7ab44850b6e51889d5abe57c09a77751bd33c2810f",
+    "Tests/NotebookCoreTests/NotebookActionPublicationTests.swift": "120458de086f87586a0b76bd9231f3b066b410216b8c0419a94684a80d734b79",
+    "Tests/NotebookCoreTests/NotebookActionDeliveryPhaseTests.swift": "d05b30471d92686e8bf59386b6439edde8727cadea31567dc5d6eff5fa50b746"
+  },
+  "archive": "/Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/.build/notebook-architecture-repair/evidence-2026-09-25/current-overlay-and-reconstruction",
+  "remaining": [
+    "Clean neighbour209 curl/burst integration is not included",
+    "No physical cold450ms or fixed120Hz20ms latency PASS is claimed",
+    "Mac source integration build and final clean Release pair/ten journeys/30min still pending"
+  ]
+}

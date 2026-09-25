@@ -242,20 +242,99 @@ extension NotebookInteractionUXTests {
 
 @MainActor
 final class NotebookPageEraserProjectionTests: XCTestCase {
+  func testOverlayLateReceiptsPublishCurrentRequirementsWithoutLosingUnchangedSources() {
+    let source = AgentElement(id: "loading", kind: .web,
+      frame: .init(x: 0, y: 0, width: 100, height: 100), source: "program", html: "body")
+    let graphic = AgentElement(id: "masked", kind: .nativeText, frame: source.frame, source: "text", html: "")
+    let target = InkElementTarget(elementID: graphic.id, frame: graphic.frame)
+    let sample = SpatialInkSample(point: .init(x: 50, y: 50), timeOffset: 0,
+      width: 200, opacity: 1, force: 1, azimuth: 0, altitude: 1)
+    let cut = InkElementErasure(target: target, measurements: .init([sample]))
+    let material = NotebookInkMaterialView.Content(freehand: nil, erasures: [cut], transform: nil, layout: nil)
+    let receipt = PageElementErasurePresentation(pageID: UUID(), stamp: .init(counter: 1, actor: UUID()),
+      erasures: [graphic.id: [cut]])
+    let ledger = AgentOverlayReadiness(), receiver = ledger, materialID = UUID()
+    var oldCalls = 0, current: [(Bool, PageElementErasurePresentation)] = []
+    let previousID = ledger.prepare(elements: [source, graphic], materials: [graphic.id: [material]],
+      pageSize: .init(width: 100, height: 100), erasure: receipt, publish: { _, _ in oldCalls += 1 })
+    XCTAssertTrue(receiver.recordMaterial(graphic.id, id: materialID, content: material, ready: true))
+    // These are the real receipt operations captured by the old rendered body.
+    let lateSource = { if receiver.record(source, ready: true) { receiver.publish() } }
+    let lateTeardown = {
+      if receiver.recordMaterial(graphic.id, id: materialID, content: nil, ready: false) { receiver.publish() }
+    }
+    let currentID = ledger.prepare(elements: [source, graphic], erasedIDs: [graphic.id],
+      pageSize: .init(width: 100, height: 100), erasure: receipt, publish: { current.append(($0, $1)) })
+    XCTAssertNotEqual(previousID, currentID, "Async fully-erased appearance changes requirements without changing stamp")
+    ledger.publish()
+    XCTAssertEqual(current.last?.0, false, "The unchanged program is still preparing")
+    lateSource()
+    XCTAssertEqual(current.last?.0, true, "Its only ready callback must survive the other element's appearance change")
+    lateTeardown()
+    XCTAssertEqual(current.last?.0, true, "An old mask teardown cannot revoke the current empty material set")
+    XCTAssertEqual(oldCalls, 0, "Old callbacks cannot invoke an obsolete body's publisher")
+    XCTAssertEqual(current.last?.1.stamp, receipt.stamp)
+    XCTAssertEqual(current.last?.1.erasures, receipt.erasures)
+    XCTAssertEqual(ledger.prepare(elements: [source, graphic], erasedIDs: [graphic.id],
+      pageSize: .init(width: 100, height: 100), erasure: receipt, publish: { current.append(($0, $1)) }), currentID,
+      "Identical requirements keep their readiness identity")
+  }
+
+  func testOverlayMaterialChangeAndOldSourceCannotAcknowledgeANewRenderedSnapshot() {
+    let oldSource = AgentElement(id: "program", kind: .web,
+      frame: .init(x: 0, y: 0, width: 100, height: 100), source: "old", html: "old")
+    let source = AgentElement(id: oldSource.id, kind: oldSource.kind,
+      frame: oldSource.frame, source: "new", html: "new")
+    let target = InkElementTarget(elementID: source.id, frame: source.frame)
+    func cut(_ x: Double) -> InkElementErasure {
+      .init(target: target, samples: [.init(point: .init(x: x, y: 50), timeOffset: 0,
+        width: 10, opacity: 1, force: 1, azimuth: 0, altitude: 1)])
+    }
+    let oldCut = cut(20), newCut = cut(80)
+    let previous = NotebookInkMaterialView.Content(freehand: nil, erasures: [oldCut], transform: nil, layout: nil)
+    let next = NotebookInkMaterialView.Content(freehand: nil, erasures: [newCut], transform: nil, layout: nil)
+    let pageID = UUID(), actor = UUID(), ledger = AgentOverlayReadiness()
+    let oldReceipt = PageElementErasurePresentation(pageID: pageID, stamp: .init(counter: 1, actor: actor), erasures: [source.id: [oldCut]])
+    let newReceipt = PageElementErasurePresentation(pageID: pageID, stamp: .init(counter: 3, actor: actor), erasures: [source.id: [newCut]])
+    var published: [(Bool, PageElementErasurePresentation)] = []
+    _ = ledger.prepare(elements: [oldSource], materials: [source.id: [previous]], pageSize: .init(width: 100, height: 100),
+      erasure: oldReceipt, publish: { published.append(($0, $1)) })
+    let oldMaterialID = UUID(), newMaterialID = UUID()
+    XCTAssertTrue(ledger.record(oldSource, ready: true))
+    XCTAssertTrue(ledger.recordMaterial(source.id, id: oldMaterialID, content: previous, ready: true))
+    _ = ledger.prepare(elements: [source], materials: [source.id: [next]], pageSize: .init(width: 100, height: 100),
+      erasure: newReceipt, publish: { published.append(($0, $1)) })
+    ledger.publish(); XCTAssertEqual(published.last?.0, false)
+    XCTAssertFalse(ledger.record(oldSource, ready: true), "A late foreign source cannot replace the current source fact")
+    XCTAssertTrue(ledger.record(source, ready: true))
+    ledger.publish(); XCTAssertEqual(published.last?.0, false, "The old cut is not a receipt for new pixels")
+    XCTAssertTrue(ledger.recordMaterial(source.id, id: newMaterialID, content: next, ready: true))
+    ledger.publish(); XCTAssertEqual(published.last?.0, true)
+    XCTAssertTrue(ledger.recordMaterial(source.id, id: oldMaterialID, content: nil, ready: false))
+    ledger.publish(); XCTAssertEqual(published.last?.0, true)
+    XCTAssertTrue(published.allSatisfy { $0.1.stamp == newReceipt.stamp && $0.1.erasures == newReceipt.erasures },
+      "Publication uses the exact current rendered snapshot, never an old callback's receipt or live model")
+  }
+
   func testWholeErasedProgramReadinessDoesNotInventARetiredSourceReceipt() {
     let program = AgentElement(id: "whole-erased", kind: .web,
       frame: .init(x: 0, y: 0, width: 100, height: 100), source: "program", html: "body")
-    var readiness = AgentOverlayReadiness()
-    XCTAssertFalse(readiness.isReady(for: [program]))
-    XCTAssertTrue(readiness.isReady(for: [program], erasedIDs: [program.id]),
-      "A cold erased body never mounts a source that could acknowledge readiness")
-    XCTAssertFalse(readiness.isReady(for: [program]), "Undo still requires the real restored body")
-    XCTAssertTrue(readiness.record(program, ready: true))
-    XCTAssertTrue(readiness.isReady(for: [program]))
-    XCTAssertTrue(readiness.record(program, ready: false))
-    XCTAssertTrue(readiness.isReady(for: [program], erasedIDs: [program.id]),
-      "The retired body's late teardown cannot invalidate the displayed absence")
-    XCTAssertFalse(readiness.isReady(for: [program]))
+    let readiness = AgentOverlayReadiness(), pageID = UUID(), actor = UUID()
+    var ready = false
+    func prepare(erased: Bool) {
+      _ = readiness.prepare(elements: [program], erasedIDs: erased ? [program.id] : [],
+        pageSize: .init(width: 100, height: 100), erasure: .init(pageID: pageID,
+          stamp: .init(counter: 1, actor: actor), erasures: [:]), publish: { ready = $0; _ = $1 })
+      readiness.publish()
+    }
+    prepare(erased: false); XCTAssertFalse(ready)
+    prepare(erased: true); XCTAssertTrue(ready, "A cold erased body never mounts a source that could acknowledge readiness")
+    prepare(erased: false); XCTAssertFalse(ready, "Undo still requires the real restored body")
+    XCTAssertTrue(readiness.record(program, ready: true)); readiness.publish(); XCTAssertTrue(ready)
+    prepare(erased: true)
+    XCTAssertTrue(readiness.record(program, ready: false)); readiness.publish()
+    XCTAssertTrue(ready, "The retired body's late teardown cannot invalidate the displayed absence")
+    prepare(erased: false); XCTAssertFalse(ready)
   }
 
   func testPaintProjectionPreservesWholeHitsAndAcceptedHandoffWithoutActivePartialMasks() throws {

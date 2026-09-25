@@ -7,6 +7,84 @@ private enum SQLTestFault: Error { case injected }
 
 @Suite("SQLite owns atomic addressed publication")
 struct NotebookSQLiteTests {
+  @Test(arguments: [1_000, 100_000])
+  func dictionaryReconstructionIgnoresPositionsAndPreservesArrayOrder(count: Int) throws {
+    let file = "codec.json", root = file + "#"
+    var rows: [NotebookStoredFragment] = [.init(address: root, file: file, parent: nil,
+      collection: "", member: "", position: 0, value: .object(["collaboration": .object([:])]),
+      collections: [.init(path: ["collaboration", "fields"], kind: .dictionary),
+        .init(path: ["elements"], kind: .array)])]
+    rows.reserveCapacity(count + 4)
+    var fields: [String: JSONValue] = [:]
+    fields.reserveCapacity(count)
+    for index in (0..<count).reversed() {
+      let member = "field-\(index)", value = JSONValue.number(Double(index))
+      fields[member] = value
+      rows.append(.init(address: root + "/collaboration/fields/@" + member, file: file, parent: root,
+        collection: "collaboration/fields", member: member, position: (index * 17) % 31 - 15,
+        value: value, collections: []))
+    }
+    for (member, position) in [("z", 0), ("m", 2), ("a", 0)] {
+      rows.append(.init(address: root + "/elements/@" + member, file: file, parent: root,
+        collection: "elements", member: member, position: position,
+        value: .object(["id": .string(member)]), collections: []))
+    }
+    let start = ContinuousClock.now
+    let decoded = try NotebookRecordCodec.decode(rows, root: root)
+    let duration = start.duration(to: .now)
+    #expect(decoded["collaboration"]?["fields"] == .object(fields))
+    #expect(decoded["elements"] == .array(["a", "z", "m"].map { .object(["id": .string($0)]) }))
+    print("Reconstructed \(count) dictionary members and ordered array: \(duration); storage-only, not UI latency")
+  }
+
+  @Test func dictionaryReconstructionRejectsDuplicateMembersAtDifferentAddresses() throws {
+    let file = "codec.json", root = file + "#"
+    let rows: [NotebookStoredFragment] = [
+      .init(address: root, file: file, parent: nil, collection: "", member: "", position: 0,
+        value: .object([:]), collections: [.init(path: ["fields"], kind: .dictionary)]),
+      .init(address: root + "/fields/@first", file: file, parent: root, collection: "fields",
+        member: "duplicate", position: 42, value: .number(1), collections: []),
+      .init(address: root + "/fields/@second", file: file, parent: root, collection: "fields",
+        member: "duplicate", position: -9, value: .number(2), collections: [])
+    ]
+    #expect(throws: NotebookStorageError.self) { try NotebookRecordCodec.decode(rows, root: root) }
+  }
+
+  @Test func transientJSONPreservesTypedContentAndCanonicalDurableEnvelopes() throws {
+    struct Payload: Codable, Equatable {
+      let source: String
+      let data: Data
+      let version: ContentFieldVersion
+      let fields: [String: String]
+      let order: [String]
+    }
+    try fixture { store, actor in
+      let file = "local/reconstruction.json"
+      let payload = Payload(source: "\\alpha / \\frac{a}{b} — Пример <script></script>",
+        data: Data([0, 255, 47, 92]),
+        version: .init(stamp: .init(counter: VersionStamp.maximumCounter, actor: actor), human: true),
+        fields: ["z": "last", "a": "first", "m": "middle"], order: ["z", "a", "m"])
+      try store.publishRecords(writes: [file: .encode(payload)])
+      let before = try store.sqlRead {
+        try $0.rows("SELECT r.address,r.hash,b.data FROM records r JOIN blobs b ON b.hash=r.hash WHERE r.file=? ORDER BY r.address", [.text(file)])
+      }
+      #expect(!before.isEmpty)
+      for row in before {
+        let bytes = try #require(row[2].blob)
+        let envelope = try JSONDecoder().decode(NotebookStoredFragment.self, from: bytes)
+        #expect(try NotebookStore.storageEncoder.encode(envelope) == bytes)
+      }
+      for _ in 0..<3 {
+        #expect(try JSONDecoder().decode(Payload.self, from: store.storedData(file)) == payload)
+      }
+      let after = try store.sqlRead {
+        try $0.rows("SELECT r.address,r.hash,b.data FROM records r JOIN blobs b ON b.hash=r.hash WHERE r.file=? ORDER BY r.address", [.text(file)])
+      }
+      #expect(after.map { [$0[0].text!, $0[1].text!] } == before.map { [$0[0].text!, $0[1].text!] })
+      #expect(after.map { $0[2].blob! } == before.map { $0[2].blob! })
+    }
+  }
+
   @Test func admissionConnectionOwnsTheTransactionWithoutCachingAdmissionAcrossReads() throws {
     try fixture { store, _ in
       func checkAdmissionStatements(_ database: NotebookSQLConnection) {

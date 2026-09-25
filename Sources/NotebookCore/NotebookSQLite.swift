@@ -381,6 +381,10 @@ struct NotebookRecordCodec {
         } else if row.file.hasPrefix("pages/"), row.parent == nil, collection.path == ["computations"] {
           let records = try members.map { ($0, try $0.value.decode(NotebookComputation.self)) }
           matching = records.sorted { NotebookComputation.ordered($0.1, $1.1) }.map(\.0)
+        } else if collection.kind == .dictionary {
+          // Member identity, not SQL position, owns a dictionary. Its keys
+          // are unordered; the assembly below still rejects duplicates.
+          matching = members
         } else {
           matching = members.sorted { $0.position == $1.position ? $0.member < $1.member : $0.position < $1.position }
         }
@@ -760,7 +764,11 @@ extension NotebookStore {
   func storedData(_ file: String) throws -> Data {
     guard let value = try storedValue(file) else { throw CocoaError(.fileNoSuchFile) }
     if currentSQL?.writable != true { try Task.checkCancellation() }
-    return try Self.storageEncoder.encode(value)
+    // This transient JSON is immediately decoded by a typed owner. Only
+    // durable, content-addressed envelopes need canonical key ordering.
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.withoutEscapingSlashes]
+    return try encoder.encode(value)
   }
 
   func hasStoredValue(_ file: String) throws -> Bool {

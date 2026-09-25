@@ -225,6 +225,15 @@ coverage; an old receipt cannot hide the repeated cut. The overlay validates
 source/material readiness before issuing that receipt. Undoing one action
 restores both its ink and element erasure.
 
+The overlay's existing UI-owned readiness ledger freezes requirements, source
+values, page size and the typed erasure receipt with the rendered tree. Late
+callbacks add only their exact source or renderer evidence; publication evaluates
+the current frozen requirements, never an old callback's requirements or a newer
+live-model stamp. An unchanged source's only ready callback remains useful when
+another element changes. A retired mask cannot revoke a now fully erased body.
+Receipt updates neither copy the ledger nor invalidate the SwiftUI overlay;
+changing the rendered requirements publishes through the same ledger.
+
 Exact UUID retries must preserve targets. Independent erasures merge without
 restoring erased pixels. Scene, export and pinned images use one painter.
 Affected passive raster bands cannot carry into a new cohort. Current compatibility

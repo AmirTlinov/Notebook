@@ -210,7 +210,11 @@ struct NotebookActionDeliveryPhaseTests {
     #expect(try f.store.recentActionPhases(limit: 1).first?.actionVersion == undo.deliveryVersion())
     let cursor = try f.store.currentChangeCursor(), readCursor = try f.store.currentReadCursor()
     let workspace = try f.store.workspaceHeader().workspaceID
-    let before = try f.store.storedData("collaboration/actions/" + original.id.uuidString.lowercased() + ".json")
+    let file = "collaboration/actions/" + original.id.uuidString.lowercased() + ".json"
+    let before = try f.store.sqlRead {
+      try $0.rows("SELECT address,hash FROM records WHERE file=? ORDER BY address", [.text(file)])
+        .map { [$0[0].text!, $0[1].text!] }
+    }
     // Existing v11 database: rebuild only the derived phase index on admission.
     try f.store.commandTransaction(advancesReadRevision: false) {
       try f.store.currentSQL!.run("DROP INDEX action_phase_time")
@@ -222,7 +226,10 @@ struct NotebookActionDeliveryPhaseTests {
     #expect(try reopened.recentActionPhases(limit: 1).first?.actionVersion == undo.deliveryVersion())
     #expect(try reopened.currentChangeCursor() == cursor && reopened.currentReadCursor() == readCursor)
     #expect(try reopened.workspaceHeader().workspaceID == workspace)
-    #expect(try reopened.storedData("collaboration/actions/" + original.id.uuidString.lowercased() + ".json") == before)
+    #expect(try reopened.sqlRead {
+      try $0.rows("SELECT address,hash FROM records WHERE file=? ORDER BY address", [.text(file)])
+        .map { [$0[0].text!, $0[1].text!] }
+    } == before)
   }
 
   @Test func lateOldPhaseCannotOverwriteOrUnionTheCurrentReceipt() throws {
@@ -270,12 +277,19 @@ struct NotebookActionDeliveryPhaseTests {
     let encoded = try JSONValue.encode(legacy)
     #expect(encoded["actionVersion"] == nil)
     try f.store.publishRecords(writes: [file: encoded]) // Existing historical data, not the current ACK API.
-    let before = try f.store.storedData(file), cursor = try f.store.currentChangeCursor()
+    let before = try f.store.sqlRead {
+      try $0.rows("SELECT address,hash FROM records WHERE file=? ORDER BY address", [.text(file)])
+        .map { [$0[0].text!, $0[1].text!] }
+    }
+    let cursor = try f.store.currentChangeCursor()
     let read = try f.detail(action)
     #expect(read["publication"]?["receivedByIPad"] == .string("awaiting_device"))
     #expect(read["publication"]?["shownOnIPad"] == .string("awaiting_display"))
     #expect(read["delivery"]?.array.first?["sameActionVersion"] == .bool(false))
-    #expect(try f.store.storedData(file) == before && f.store.currentChangeCursor() == cursor)
+    #expect(try f.store.sqlRead {
+      try $0.rows("SELECT address,hash FROM records WHERE file=? ORDER BY address", [.text(file)])
+        .map { [$0[0].text!, $0[1].text!] }
+    } == before && f.store.currentChangeCursor() == cursor)
     #expect(try !f.store.saveDeviceActionReceipt(legacy))
     try f.store.acknowledgeReceivedActions(deviceID: f.device)
     let fresh = try f.receipt(action)

@@ -55,7 +55,11 @@ struct NotebookActionPublicationTests {
     #expect(undone.undo?.restored == 0 && undone.undo?.preserved.count == 1)
     #expect(undone.revisions.isEmpty)
     if received { try f.delivery(undone) }
-    let receiptBytes = try f.store.storedData(at: f.store.collaborationActionsURL.appendingPathComponent(action.id.uuidString.lowercased() + ".json"))
+    let receiptFile = "collaboration/actions/" + action.id.uuidString.lowercased() + ".json"
+    let receiptRecords = try f.store.sqlRead {
+      try $0.rows("SELECT address,hash FROM records WHERE file=? ORDER BY address", [.text(receiptFile)])
+        .map { [$0[0].text!, $0[1].text!] }
+    }
     let receipts = try f.store.deviceActionReceipts(actionIDs: [action.id])
     let cursor = try f.store.currentChangeCursor()
     let requests = try f.store.targetRenderRequests()
@@ -66,7 +70,10 @@ struct NotebookActionPublicationTests {
       #expect(details["publication"]?["shownOnIPad"] == .string("not_required"))
       #expect(details["publication"]?["shownOnIPadReason"] == .string("undo_without_visual_changes"))
     }
-    #expect(try f.store.storedData(at: f.store.collaborationActionsURL.appendingPathComponent(action.id.uuidString.lowercased() + ".json")) == receiptBytes)
+    #expect(try f.store.sqlRead {
+      try $0.rows("SELECT address,hash FROM records WHERE file=? ORDER BY address", [.text(receiptFile)])
+        .map { [$0[0].text!, $0[1].text!] }
+    } == receiptRecords)
     #expect(try f.store.deviceActionReceipts(actionIDs: [action.id]) == receipts)
     #expect(receipts.allSatisfy { !$0.displayComplete && $0.shown.isEmpty && $0.visibleRegions.isEmpty })
     #expect(try f.store.currentChangeCursor() == cursor)
