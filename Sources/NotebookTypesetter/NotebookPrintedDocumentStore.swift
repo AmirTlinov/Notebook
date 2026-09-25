@@ -10,8 +10,12 @@ public actor NotebookPrintedDocumentStore {
   private let resources: URL
   private struct Job { let id = UUID(); let task: Task<NotebookPrintedDocument, Error>; var readers: Set<UUID>; var saved = false }
   private var jobs: [String: Job] = [:]
+  /// Requests reaching the real artifact owner, including cache reads. This is
+  /// an aggregate diagnostic, not another retained history of document values.
+  public private(set) var artifactRequestCount: UInt64 = 0
   public init(resources: URL, directory: URL) { compiler = .init(resources: resources); self.directory = directory; self.resources = resources }
   public func artifact(for document: DocumentDocument) async throws -> NotebookPrintedDocument {
+    artifactRequestCount &+= 1
     let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
     let revision = try read(resources.appendingPathComponent("revision.txt"), limit: 256)
     let key = SHA256.hash(data: Data(DocumentPrintSourceMap.renderingRecipe.utf8) + revision + (try encoder.encode(document))).map { String(format: "%02x", $0) }.joined()

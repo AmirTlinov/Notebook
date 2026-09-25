@@ -35,8 +35,11 @@ import WebKit
     let options = NotebookExportOptions(format: .png, moment: .presented, attention: .init(contextID: context.id, referenceID: reference.id))
     let cut = try store.readDocumentExportCut(documentID: item.id, options: options), surfaces = SceneRenderResources.shared.activeWebSurfaceCount
     let changes = try store.currentChangeCursor()
+    let artifactRequests=await DocumentCanonicalPrint.store.artifactRequestCount
     let receipt = try await DocumentCanonicalExport.publish(cut: cut, options: options, jobID: UUID(), store: store, persistence: NotebookPersistenceQueue(store: store))
     XCTAssertEqual(try Data(contentsOf: URL(fileURLWithPath: receipt.artifact.path)), png)
+    let preparedArtifacts=await DocumentCanonicalPrint.store.artifactRequestCount-artifactRequests
+    XCTAssertEqual(preparedArtifacts,0,"Presented PNG must not prepare any print source")
     XCTAssertEqual(SceneRenderResources.shared.activeWebSurfaceCount, surfaces)
     XCTAssertEqual(try store.currentChangeCursor(), changes)
     XCTAssertEqual(try store.loadDocument(item.id), cut.document); XCTAssertEqual(try store.loadDocumentState(item.id), cut.state)
@@ -217,6 +220,52 @@ import WebKit
     XCTAssertEqual(publication.source, artifact.source)
     XCTAssertEqual(try readExportBytes(XCTUnwrap(publication.syncTeX), store: store), artifact.syncTeX)
     XCTAssertTrue(try DocumentPrintNavigation.read(pdfBytes).links.contains { $0.href == "https://example.com" })
+  }
+
+  func testRenderedFormatsUseOneArtifactForPreflightAndTheActualPublication() async throws {
+    let store=NotebookStore(root:FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
+    _ = try store.initializeWorkspace(actor:UUID(),pageSize:.init(width:834,height:1194))
+    defer { try? FileManager.default.removeItem(at:store.root) }
+    let persistence=NotebookPersistenceQueue(store:store)
+    for format in [NotebookExportOptions.Format.png,.svg,.mp4] {
+      let document=DocumentDocument(actor:UUID(),blocks:[.markdown(id:"title",source:"# One closed export source"),
+        .interactive(id:"model",html:"<canvas style='width:100%;height:120px'></canvas>",javaScript:"""
+          const canvas=document.querySelector('canvas'),ctx=canvas.getContext('2d');
+          notebook.exportFrame(({format,pixelRatio})=>{
+            if(format==='svg')return '<svg xmlns="http://www.w3.org/2000/svg" width="160" height="120"><rect width="160" height="120" fill="red"/></svg>';
+            if(format!=='raster')throw Error('Unexpected export format');
+            const r=canvas.getBoundingClientRect();canvas.width=Math.round(r.width*pixelRatio);canvas.height=Math.round(r.height*pixelRatio);
+            ctx.fillStyle='red';ctx.fillRect(0,0,canvas.width,canvas.height);return null;
+          },{timeline:true});notebook.ready(Promise.resolve());
+          """,height:120)])
+      let cut=try NotebookExportCut(document:document,state:.init(id:document.id,actor:UUID()))
+      let options=NotebookExportOptions(format:format,pixelWidth:format == .svg ? nil : 160,
+        blockID:format == .png ? nil : "model",video:format == .mp4 ? .init(start:0,end:0.5,framesPerSecond:4) : nil)
+      let before=await DocumentCanonicalPrint.store.artifactRequestCount
+      let publication=try await DocumentCanonicalExport.publication(cut:cut,options:options,jobID:UUID(),store:store,persistence:persistence)
+      let requests=await DocumentCanonicalPrint.store.artifactRequestCount-before
+      XCTAssertEqual(requests,1,"\(format): preflight and actual WebKit output must share one artifact read, not two independent preparations")
+      let bytes=try readExportBytes(publication.artifact,store:store)
+      switch format {
+      case .png:
+        let bitmap=try XCTUnwrap(NSBitmapImageRep(data:bytes));XCTAssertEqual(bitmap.pixelsWide,160)
+        var red=0
+        for y in 0..<bitmap.pixelsHigh { for x in 0..<bitmap.pixelsWide {
+          if let color=bitmap.colorAt(x:x,y:y)?.usingColorSpace(.deviceRGB),color.redComponent > 0.8,color.greenComponent < 0.3,color.blueComponent < 0.3 { red += 1 }
+        } }
+        XCTAssertGreaterThan(red,100,"The actual authored material, not just an empty layout, must be exported")
+      case .svg:
+        try NotebookExportSVG.validate(bytes)
+        XCTAssertTrue(String(decoding:bytes,as:UTF8.self).contains("fill=\"red\""))
+      case .mp4:
+        let url=store.root.appendingPathComponent("prepared-source.mp4");try bytes.write(to:url)
+        let asset=AVURLAsset(url:url),duration=try await asset.load(.duration)
+        XCTAssertEqual(duration.seconds,0.5,accuracy:0.0001)
+        let tracks=try await asset.loadTracks(withMediaType:.video),track=try XCTUnwrap(tracks.first)
+        let extent=try await track.load(.naturalSize);XCTAssertEqual(extent.width,160)
+      default: XCTFail("Unexpected fixture format")
+      }
+    }
   }
 
   func testStaticPNGKeepsCanonicalInkAndRejectsAMissingPage() async throws {
@@ -431,7 +480,7 @@ import WebKit
       for _ in 0..<12 { context.beginPDFPage(nil); context.endPDFPage() }
       context.closePDF(); return try Data(contentsOf: inputURL)
     }.value
-    let composer = try await PrintedPDFComposer.open(bytes, outputURL: outputURL)
+    let composer = try await PrintedPDFComposer.open(DocumentPrintedPDF(bytes), outputURL: outputURL)
     for page in 0..<12 {
       // Incompressible deterministic pixels exercise the actual Quartz sink,
       // not fake PDF bytes or a test-only higher inline limit.

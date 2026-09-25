@@ -8,7 +8,7 @@ import NotebookCore
 /// renderer seeks explicit model times; AVFoundation supplies encoder backpressure.
 @MainActor enum NotebookVideoExport {
   static func write(to url: URL, cut: NotebookExportCut, options: NotebookExportOptions,
-    jobID: UUID, store: NotebookStore) async throws {
+    jobID: UUID, store: NotebookStore, renderSession: DocumentRenderSession) async throws {
     try options.validate()
     guard let video = options.video, let width = options.pixelWidth, let blockID = options.blockID else { throw SceneRenderError.resourceLimit }
     let geometry = WorkspaceItemGeometry.document(cut.document.paperSize)
@@ -24,7 +24,7 @@ import NotebookCore
       do {
         try await encoder.start()
         try await DocumentSnapshotCache.shared.withPreparedPage(document: cut.document, state: cut.state,
-          pageIndex: options.pageIndex ?? 0, resources: resources, programStore: store, isolationID: jobID) { coordinator in
+          pageIndex: options.pageIndex ?? 0, resources: resources, programStore: store, isolationID: jobID, renderSession: renderSession) { coordinator in
           for index in 0..<video.frameCount {
             try Task.checkCancellation()
             let time = video.start + Double(index)/Double(video.framesPerSecond)

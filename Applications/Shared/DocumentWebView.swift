@@ -47,20 +47,12 @@ final class DocumentSnapshotCache {
         }
     }
 
-    func exportSVG(document: DocumentDocument, state: DocumentStateJournal, block: DocumentBlock, pageIndex: Int,
-      programStore: NotebookStore, isolationID: UUID) async throws -> String {
-      try await withPreparedPage(document: document, state: state, pageIndex: pageIndex, resources: .shared,
-        programStore: programStore, isolationID: isolationID) { coordinator in
-          try await coordinator.exportSVG(block: block, state: state.value(for: block.id) ?? block.initialState)
-        }
-    }
-
     func withPreparedPage<T>(document: DocumentDocument, state: DocumentStateJournal, pageIndex: Int,
       resources: SceneRenderResources, programStore: NotebookStore?, isolationID: UUID?,
-      operation: (DocumentWebCoordinator) async throws -> T) async throws -> T {
+      renderSession: DocumentRenderSession? = nil, operation: (DocumentWebCoordinator) async throws -> T) async throws -> T {
       let geometry = WorkspaceItemGeometry.document(document.paperSize)
       let ready = PageTurnReadiness { _ in }
-      let coordinator = DocumentWebCoordinator(resources: resources, onRenderReady: ready, onPageLayout: { _ in }, onStateChange: { _, _ in nil })
+      let coordinator = DocumentWebCoordinator(resources: resources, renderSession: renderSession, onRenderReady: ready, onPageLayout: { _ in }, onStateChange: { _, _ in nil })
       coordinator.programStore = programStore; coordinator.exportSnapshotID = isolationID
       let host = DocumentWebHost()
       let window = NSWindow(contentRect: .init(x: -20_000, y: -20_000, width: geometry.width, height: geometry.height),
@@ -1169,11 +1161,12 @@ final class DocumentWebCoordinator: NSObject,
 
   init(
     resources: SceneRenderResources = .shared,
+    renderSession: DocumentRenderSession? = nil,
     onRenderReady: PageTurnReadiness,
     onPageLayout: @escaping (DocumentPageLayout) -> Void,
     onStateChange: @escaping (String, JSONValue) -> ContentFieldVersion?
   ) {
-    self.resources = resources
+    self.resources = resources; self.renderSession = renderSession
     self.onRenderReady = onRenderReady
     self.onPageLayout = onPageLayout
     self.onStateChange = onStateChange
@@ -1735,7 +1728,7 @@ final class DocumentWebCoordinator: NSObject,
         }
         if receipt["layoutCanonical"] as? Bool == true {
           do {
-            try DocumentRenderRegistry.shared.publish(documentID: payload.documentID, token: payload.renderToken, receipt: receipt,
+            try DocumentRenderRegistry.shared.publish(documentID: payload.documentID, token: payload.renderToken, source: payload.source, receipt: receipt,
               geometry: .document(payload.paper.kind))
             recordPreparation(.layoutReceiptAcceptedAt, trace: trace)
             layoutAccepted = true

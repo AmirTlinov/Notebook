@@ -106,7 +106,6 @@ final class DocumentPagePreparation {
   private var locations: [DocumentPrintLocation] = []
   private var navigation: DocumentPrintNavigation?
   private var browserRegions: [DocumentBrowserRegion] = []
-  private var pdf: CGPDFDocument?
   private(set) var layout: DocumentLayoutRecord?
   private(set) var measurementCount = 0
   private(set) var compiledPageCount = 0
@@ -133,7 +132,7 @@ final class DocumentPagePreparation {
   func retryPage(_ index: Int) { error = nil; if artifact == nil { preparation = nil } }
   func discardIdlePreparation() async {
     guard readers.isEmpty, demand.isEmpty else { return }
-    preparation?.cancel(); preparation = nil; pages.removeAll(); printSource = nil; pdf = nil
+    preparation?.cancel(); preparation = nil; pages.removeAll(); printSource = nil
     locations.removeAll(); browserRegions.removeAll(); navigation = nil
   }
   private func prepare(onAdmissionWait: @escaping (Bool) -> Void) async throws {
@@ -172,25 +171,32 @@ final class DocumentPagePreparation {
     let charge = try await resources.acquirePassiveDerivedBytes(bodyBytes + value.locationDecodeBytes*5 + 24*1024*1024) { onAdmissionWait(true) }
     defer { onAdmissionWait(false) }
     do {
+      let pdf=DocumentPrintedPDF(value.pdf)
       let worker = Task.detached {
-        (try value.locations(), try DocumentPrintNavigation.read(value.pdf))
+        let addresses=try value.locations()
+        let (boxes,navigation)=try await pdf.perform { document,quartz in
+          let boxes=try (1...quartz.numberOfPages).map { index in
+            guard let page=quartz.page(at:index) else { throw DocumentSessionError.invalidLayout }
+            return page.getBoxRect(.mediaBox)
+          }
+          return (boxes,try DocumentPrintNavigation.read(document))
+        }
+        return (addresses,boxes,navigation)
       }
-      let (addresses, navigation) = try await withTaskCancellationHandler { try await worker.value } onCancel: { worker.cancel() }
+      let (addresses, boxes, navigation) = try await withTaskCancellationHandler { try await worker.value } onCancel: { worker.cancel() }
       try Task.checkCancellation()
-      guard let provider = CGDataProvider(data: value.pdf as CFData), let pdf = CGPDFDocument(provider),
-        (1...4096).contains(pdf.numberOfPages) else { throw DocumentSessionError.invalidLayout }
-      try installLayout(value, pdf: pdf, locations: addresses)
+      try installLayout(value, boxes: boxes, locations: addresses)
       let cost = bodyBytes + addresses.count*128 + navigation.pageText.reduce(0, { $0 + $1.utf8.count*2 })
         + navigation.links.reduce(0, { $0 + $1.href.utf8.count*2 + 256 })
       guard resources.resizePassiveDerivedReservation(charge, to: max(1, cost)) else { throw SceneRenderError.resourceLimit }
-      printSource = DocumentPrintedSource(artifact: value, locations: addresses, reservation: charge)
-      self.pdf = pdf; locations = addresses; self.navigation = navigation
+      printSource = DocumentPrintedSource(artifact: value, locations: addresses, pdf: pdf, reservation: charge)
+      locations = addresses; self.navigation = navigation
       let elapsed = start.duration(to: .now).components
       preparationPhasesMS["canonicalPrint"] = Double(elapsed.seconds)*1000 + Double(elapsed.attoseconds)/1e15
       preparation = nil
     } catch { charge.release(); throw error }
   }
-  private func installLayout(_ value: NotebookPrintedDocument, pdf: CGPDFDocument, locations: [DocumentPrintLocation]) throws {
+  private func installLayout(_ value: NotebookPrintedDocument, boxes: [CGRect], locations: [DocumentPrintLocation]) throws {
     let width = message.paper.surfaceWidth, height = message.paper.surfaceHeight
     let scale = width / message.paper.widthPoints
     var regions: [DocumentBrowserRegion] = [], reading: [[Any]] = []
@@ -198,9 +204,7 @@ final class DocumentPagePreparation {
     let byPage = Dictionary(grouping: locations, by: \.pageIndex)
     let order = Dictionary(uniqueKeysWithValues: document.blocks.enumerated().map { ($0.element.id, $0.offset) })
     let ranges = Dictionary(uniqueKeysWithValues: value.sourceMap.ranges.map { ($0.blockID, $0) })
-    for index in 0..<pdf.numberOfPages {
-      guard let page = pdf.page(at: index+1) else { throw DocumentSessionError.invalidLayout }
-      let box = page.getBoxRect(.mediaBox)
+    for (index,box) in boxes.enumerated() {
       guard abs(box.width-message.paper.widthPoints) < 0.1, abs(box.height-message.paper.heightPoints) < 0.1 else {
         throw NotebookTypesetterError("Размер печатной страницы не совпадает с выбранным A4/Letter.")
       }
@@ -235,7 +239,7 @@ final class DocumentPagePreparation {
         y: message.paper.marginPoints*scale, width: width-2*message.paper.marginPoints*scale, height: 24*scale, sourceOffset: 0)]
     }
     let receipt: NSDictionary = ["sourceKey": message.key, "layoutScope": "source", "layoutCanonical": true,
-      "pageCount": pdf.numberOfPages, "width": width, "height": height, "anchors": (0..<pdf.numberOfPages).map { ["name": "notebook-print-page-\($0)", "pageIndex": $0] as [String: Any] }, "reading": reading,
+      "pageCount": boxes.count, "width": width, "height": height, "anchors": boxes.indices.map { ["name": "notebook-print-page-\($0)", "pageIndex": $0] as [String: Any] }, "reading": reading,
       "regions": regions.map { ["id": $0.id, "pageIndex": $0.pageIndex, "x": $0.x, "y": $0.y,
         "width": $0.width, "height": $0.height, "sourceOffset": $0.sourceOffset] as [String: Any] }]
     guard let charge = resources.reserveDerivedBytes(regions.count*384 + reading.count*128 + 4096, priority: .passive) else { throw SceneRenderError.resourceLimit }

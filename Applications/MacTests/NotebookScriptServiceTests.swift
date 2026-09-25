@@ -1326,13 +1326,15 @@ final class NotebookScriptServiceTests: XCTestCase {
     let name = try service("NotebookMarkupService")
     let typed = NotebookXPCWorker(serviceName: name) { _ in .init(code: "unexpected_host") }
     let printer = NotebookTypesetter(resources: Bundle.main.resourceURL!.appendingPathComponent("NotebookTypesetter"))
-    let parser = NotebookMarkupQueue(serviceName: name)
+    let parser = NotebookMarkupQueue(serviceName: name), runID = UUID()
+    await parser.beginRun(runID)
+    addTeardownBlock { await parser.endRun(runID) }
     defer { typed.invalidate() }
     let source = "const values: number[] = [" + String(repeating: "1234,", count: 30_000) + "]; return values.length;"
     async let compilation = typed.compileTypeScript(.init(id: UUID(), source: source,
       compilerVersion: identity.compilerVersion, sdkVersion: identity.sdkVersion))
     async let pdf = printer.compile(DocumentDocument(actor: UUID(), blocks: [.init(id: "body", kind: .tex, source: "Independent PDF")]))
-    async let markup = parser.normalize(.object(["kind": .string("action"), "preparation": .object([
+    async let markup = parser.normalize(runID: runID, effectID: UUID(), arguments: .object(["kind": .string("action"), "preparation": .object([
       "action": .object(["operations": .array([.object(["values": .object(["source": .string("**Independent markup**")])])])]),
       "markdownOperations": .array([.number(0)])])]))
     let (prepared,printed,normalized) = try await (compilation,pdf,markup)

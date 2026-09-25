@@ -8607,3 +8607,21 @@ SHA256 `0e3fcc9fbc2ba8a5f34973579c6bc1da4b1647c6141d287f9cf316b0adfd4c1c`.
 classifier проверены. Sparse100 000: окно701, witness616, append2164, Undo2070,
 echo76 VM steps. Контракт и результаты относятся к Core API/производному индексу;
 переключение native-сцены, attention contributions и общая UX-пара — отдельный срез.
+
+
+### GUI-306 — R03: единая подготовка всех форматов экспорта
+
+Изолированный source от `65449f1b`, 12-file R03 patch плюс одна миграция native
+fixture на уже существующую run-owned normalization API: **33/33 PASS**, 52.082 s,
+без skipped, failures и runtime warnings. `/tmp/notebook-repair-native-mac-owner-33.xcresult`,
+точные SHA — `/tmp/notebook-repair-native-mac-build-33-sources.json`; после тестов
+не изменился ни один source. Предыдущий Mac30 остановился до тестов на старой
+сигнатуре normalize в fixture; production fallback не добавлялся.
+
+Пять export/print/layout/navigation suites проверяют фактическое одно открытие
+PDF, общий source для нескольких страниц, отмену ожидающего raster request,
+освобождение ресурсов и изоляцию программ. Новый тест проходит настоящий
+publication PNG/SVG/MP4: один запрос artifact на формат, точные authored PNG pixels,
+валидный SVG и реальные duration/extent MP4. Presented PNG не читает artifact.
+Дополнительно исполнен исправленный native normalization fixture одновременно
+с TypeScript и PDF. Это самостоятельная проверка R03, не общая UX-приёмка.

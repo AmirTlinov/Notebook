@@ -2,6 +2,8 @@ import Foundation
 import CoreGraphics
 import NotebookCore
 import NotebookTypesetter
+import PDFKit
+import os
 
 /// Canonical print artifacts are shared by the scene and the export adapter.
 /// The source document, not a view mode, chooses the sole printed layout.
@@ -12,13 +14,67 @@ enum DocumentCanonicalPrint {
       .appendingPathComponent("NotebookPrintedPages", isDirectory: true))
 }
 
+/// A source's parsed PDF has one serial Quartz/PDFKit owner. Paper rasters and
+/// an export composer borrow it; neither opens a per-page copy of the document.
+final class DocumentPrintedPDF: @unchecked Sendable {
+  private let data:Data
+  private let queue=DispatchQueue(label:"Notebook.print-source",qos:.userInitiated)
+  private let queueKey=DispatchSpecificKey<Bool>()
+  private var document:PDFDocument?
+  private var quartz:CGPDFDocument?
+  private let pending=OSAllocatedUnfairLock(initialState:0)
+  var pendingOperationCount:Int { pending.withLock { $0 } }
+  private var openings=0
+  init(_ data:Data) { self.data=data;queue.setSpecific(key:queueKey,value:true) }
+
+  func perform<T:Sendable>(_ body:@escaping @Sendable (PDFDocument,CGPDFDocument) throws -> T) async throws -> T {
+    let cancelled=OSAllocatedUnfairLock(initialState:false)
+    return try await withTaskCancellationHandler {
+      try Task.checkCancellation()
+      return try await withCheckedThrowingContinuation { continuation in
+        pending.withLock { $0 += 1 }
+        queue.async { [self] in
+          defer { pending.withLock { $0 -= 1 } }
+          do {
+            let value=try autoreleasepool {
+              guard !cancelled.withLock({ $0 }) else { throw CancellationError() }
+              if document == nil {
+                guard let parsed=PDFDocument(data:data) else { throw DocumentSessionError.invalidLayout }
+                openings += 1
+                guard let pdf=parsed.documentRef,(1...4096).contains(pdf.numberOfPages) else { throw DocumentSessionError.invalidLayout }
+                document=parsed;quartz=pdf
+              }
+              guard let document,let pdf=quartz else { throw DocumentSessionError.invalidLayout }
+              let value=try body(document,pdf)
+              guard !cancelled.withLock({ $0 }) else { throw CancellationError() }
+              return value
+            }
+            continuation.resume(returning:value)
+          } catch { continuation.resume(throwing:error) }
+        }
+      }
+    } onCancel: { cancelled.withLock { $0=true } }
+  }
+
+  func openedDocumentCount() async -> Int {
+    await withCheckedContinuation { continuation in queue.async { [self] in continuation.resume(returning:openings) } }
+  }
+  /// A composer closes its output in the same serialization domain even when
+  /// its caller unwinds through an error/cancellation rather than finish().
+  func finishOnQueue(_ body:() -> Void) {
+    if DispatchQueue.getSpecific(key:queueKey) == true { body() }
+    else { queue.sync(execute:body) }
+  }
+}
+
 @MainActor
 final class DocumentPrintedSource {
   let artifact: NotebookPrintedDocument
   let locations: [DocumentPrintLocation]
+  let pdf: DocumentPrintedPDF
   private let reservation: RasterReservation
-  init(artifact: NotebookPrintedDocument, locations: [DocumentPrintLocation] = [], reservation: RasterReservation) {
-    self.artifact = artifact; self.locations = locations; self.reservation = reservation
+  init(artifact: NotebookPrintedDocument, locations: [DocumentPrintLocation] = [], pdf: DocumentPrintedPDF, reservation: RasterReservation) {
+    self.artifact = artifact; self.locations = locations; self.pdf = pdf; self.reservation = reservation
   }
   func sourceOffset(blockID: String, pageIndex: Int, x: Double, y: Double) -> Int? {
     guard let location = DocumentPrintLocations.nearest(in: locations, blockID: blockID, pageIndex: pageIndex, x: x, y: y),
@@ -58,15 +114,14 @@ struct DocumentPrintedPage {
   /// Raster density is a display concern only. It cannot change line breaks,
   /// source addresses, page count or the ready PDF used for export.
   func image(width pixels: Int, overlay: CGImage? = nil) async throws -> CGImage {
-    let data = artifact.pdf, pageIndex = pageIndex, aspect = height / width
+    let pageIndex = pageIndex, aspect = height / width
     let programs = Set(artifact.document.blocks.filter { $0.kind == .interactive }.map(\.id))
     let regions = source.locations.filter { $0.pageIndex == pageIndex && programs.contains($0.blockID) }
       .map { CGRect(x: $0.x, y: $0.y, width: $0.width, height: $0.height) }
-    let task = Task.detached(priority: .userInitiated) {
-      try Task.checkCancellation()
+    defer { withExtendedLifetime(source) {} }
+    return try await source.pdf.perform { _, document in
       let h = max(1, Int(ceil(Double(pixels) * aspect)))
       guard pixels > 0, pixels <= 8192, h <= 8192, pixels * h <= 16_777_216,
-        let provider = CGDataProvider(data: data as CFData), let document = CGPDFDocument(provider),
         let page = document.page(at: pageIndex + 1),
         let context = CGContext(data: nil, width: pixels, height: h, bitsPerComponent: 8, bytesPerRow: pixels*4,
           space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
@@ -90,10 +145,8 @@ struct DocumentPrintedPage {
         context.clip(to: clips)
         context.draw(overlay, in: rect); context.restoreGState()
       }
-      try Task.checkCancellation()
       guard let image = context.makeImage() else { throw SceneRenderError.resourceLimit }
       return image
     }
-    return try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
   }
 }

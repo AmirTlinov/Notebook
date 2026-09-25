@@ -112,6 +112,17 @@ Navigation confirms installed paper, not a loading UI.
 [Export](document-export-contract.md) shares the canonical artifact and immutable
 source/state cut. Exact raster evidence binds token, generation and installation
 epoch. Ready means an artifact is available, not that it was shown on iPad.
+Each rendered export (PNG, SVG, MP4, or PDF with programs) retains its
+`DocumentRenderSession`, immutable source and printed preparation through the
+whole operation. Preflight and rendering share one artifact read, decoded SyncTeX,
+layout and PDFKit/Quartz parser; paper rasters, normalized program frames and PDF
+composition borrow the printed source's serial executor. Per-page program heaps
+remain isolated and retire after capture. A queued cancellation skips that
+operation; an in-progress Quartz call may finish, but cannot publish its revoked
+result or release its reservation early. Exact presented PNG and static PDF keep
+their direct paths without unnecessary page preparation. Registry publication
+validates the exact supplied source instead of looking for an unrelated globally
+mounted session. There is no global parser/source cache.
 Historical DOM receipts are not rewritten or reused as current renderer evidence.
 See [verification](verification.md).
 

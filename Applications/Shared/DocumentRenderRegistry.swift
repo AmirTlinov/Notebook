@@ -214,10 +214,9 @@ final class DocumentRenderRegistry {
 
   func layoutReferenceCount(documentID: UUID) -> Int { entries[documentID]?.count ?? 0 }
 
-  func publish(documentID: UUID, token: String, receipt: NSDictionary, geometry: WorkspaceItemGeometry) throws {
-    guard let pageIndex = receipt["pageIndex"] as? Int, let key = receipt["sourceKey"] as? String,
-      let source = sessions.values.lazy.compactMap(\.value)
-        .filter({ $0.documentID == documentID }).compactMap({ $0.source(key: key) }).first else {
+  func publish(documentID: UUID, token: String, source: DocumentSourceSnapshot, receipt: NSDictionary, geometry: WorkspaceItemGeometry) throws {
+    guard let pageIndex = receipt["pageIndex"] as? Int,
+      source.message.documentID == documentID, receipt["sourceKey"] as? String == source.message.key else {
       throw DocumentSessionError.invalidLayout
     }
     let layout = try source.acceptLayout(receipt, geometry: geometry)

@@ -6,7 +6,11 @@ struct DocumentPrintNavigation: Sendable {
   let links: [Link]
   let pageText: [String]
   static func read(_ data: Data) throws -> Self {
-    guard let pdf = PDFDocument(data: data), (1...4096).contains(pdf.pageCount) else { throw DocumentSessionError.invalidLayout }
+    guard let pdf = PDFDocument(data: data) else { throw DocumentSessionError.invalidLayout }
+    return try read(pdf)
+  }
+  static func read(_ pdf: PDFDocument) throws -> Self {
+    guard (1...4096).contains(pdf.pageCount) else { throw DocumentSessionError.invalidLayout }
     var links: [Link] = [], text: [String] = [], bytes = 0, linkBytes = 0
     for index in 0..<pdf.pageCount {
       try Task.checkCancellation()

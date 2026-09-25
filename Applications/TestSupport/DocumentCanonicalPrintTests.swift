@@ -11,7 +11,7 @@ final class DocumentCanonicalPrintTests: XCTestCase {
     let artifact = try await DocumentCanonicalPrint.store.artifact(for: document)
     let resources = SceneRenderResources(profile: .interactive)
     let charge = try XCTUnwrap(resources.reserveDerivedBytes(artifact.pdf.count, priority: .passive))
-    let source = DocumentPrintedSource(artifact: artifact, reservation: charge)
+    let source = DocumentPrintedSource(artifact: artifact, pdf: .init(artifact.pdf), reservation: charge)
     let page = DocumentPrintedPage(source: source, pageIndex: 0, width: document.paperSize.widthPoints, height: document.paperSize.heightPoints)
     let locations = try artifact.locations()
     let first = try XCTUnwrap(locations.filter { $0.blockID == "text" && $0.width > 20 && $0.height > 5 }.min { $0.y < $1.y })
@@ -27,8 +27,48 @@ final class DocumentCanonicalPrintTests: XCTestCase {
       let pixels = try XCTUnwrap(crop.dataProvider?.data) as Data
       XCTAssertTrue(pixels.contains { $0 < 100 }, "Printed line missing at its physical coordinates for density \(width)")
     }
+    let openings=await source.pdf.openedDocumentCount()
+    XCTAssertEqual(openings,1,"Changing raster density cannot reopen the whole source PDF")
     let cached = try await DocumentCanonicalPrint.store.artifact(for: document)
     XCTAssertEqual(artifact.pdf, cached.pdf)
+  }
+
+  func testCancelledQueuedRasterDoesNotCancelItsSourceOrLeakTheParserAndAdmission() async throws {
+    let document=DocumentDocument(actor:UUID(),blocks:[.markdown(id:"body",source:"Retained PDF")])
+    let artifact=try await DocumentCanonicalPrint.store.artifact(for:document)
+    let resources=SceneRenderResources(),baseline=resources.reservedBytes
+    weak var observedSource:DocumentPrintedSource?
+    weak var observedPDF:DocumentPrintedPDF?
+    func operation() async throws {
+      let charge=try XCTUnwrap(resources.reserveDerivedBytes(artifact.pdf.count,priority:.passive))
+      let source=DocumentPrintedSource(artifact:artifact,pdf:.init(artifact.pdf),reservation:charge)
+      observedSource=source;observedPDF=source.pdf
+      let page=DocumentPrintedPage(source:source,pageIndex:0,width:document.paperSize.widthPoints,height:document.paperSize.heightPoints)
+      let entered=expectation(description:"The source Quartz executor is occupied"),release=DispatchSemaphore(value:0)
+      let blocker=Task { try await source.pdf.perform { _,_ in
+        entered.fulfill();release.wait()
+      } }
+      defer { release.signal() }
+      await fulfillment(of:[entered],timeout:2)
+      let cancelled=Task { try await page.image(width:160) }
+      let deadline=ContinuousClock.now + .seconds(2)
+      while source.pdf.pendingOperationCount < 2,ContinuousClock.now < deadline { await Task.yield() }
+      XCTAssertEqual(source.pdf.pendingOperationCount,2,"The cancelled raster is queued behind the active Quartz operation")
+      cancelled.cancel();release.signal()
+      try await blocker.value
+      do { _ = try await cancelled.value;XCTFail("Revoked raster returned pixels") }
+      catch { XCTAssertTrue(error is CancellationError,"\(error)") }
+      let image=try await page.image(width:160)
+      XCTAssertEqual(image.width,160,"Cancelling one reader cannot cancel the retained source")
+      let openings=await source.pdf.openedDocumentCount()
+      XCTAssertEqual(openings,1)
+    }
+    try await operation()
+    let deadline=ContinuousClock.now + .seconds(2)
+    while (observedSource != nil || observedPDF != nil),ContinuousClock.now < deadline { await Task.yield() }
+    XCTAssertNil(observedSource,"No global print-source cache retains the export")
+    XCTAssertNil(observedPDF,"The Quartz executor and parsed PDF end with their last operation owner")
+    XCTAssertEqual(resources.reservedBytes,baseline)
   }
 
   func testFormulaAndArbitraryLaTeXKeepDistinctSourceContracts() async throws {
@@ -51,7 +91,7 @@ final class DocumentCanonicalPrintTests: XCTestCase {
       let artifact = try await DocumentCanonicalPrint.store.artifact(for: document)
       let resources = SceneRenderResources(profile: .interactive)
       let charge = try XCTUnwrap(resources.reserveDerivedBytes(artifact.pdf.count, priority: .passive))
-      let source = DocumentPrintedSource(artifact: artifact, locations: try artifact.locations(), reservation: charge)
+      let source = DocumentPrintedSource(artifact: artifact, locations: try artifact.locations(), pdf: .init(artifact.pdf), reservation: charge)
       let offset = (text as NSString).range(of: "Последняя строка").location
       let reference = try XCTUnwrap(source.reference(blockID: "body", sourceOffset: offset))
       XCTAssertEqual(reference.pageIndex, 1)
@@ -70,7 +110,7 @@ final class DocumentCanonicalPrintTests: XCTestCase {
     let document = DocumentDocument(actor: UUID(), blocks: [.markdown(id: "body", source: text)])
     let artifact = try await DocumentCanonicalPrint.store.artifact(for: document)
     let resources = SceneRenderResources(profile: .interactive)
-    let source = DocumentPrintedSource(artifact: artifact, locations: try artifact.locations(),
+    let source = DocumentPrintedSource(artifact: artifact, locations: try artifact.locations(), pdf: .init(artifact.pdf),
       reservation: try XCTUnwrap(resources.reserveDerivedBytes(artifact.pdf.count, priority: .passive)))
     let offset = (text as NSString).range(of: "Last paragraph").location
     let reference = try XCTUnwrap(source.reference(blockID: "body", sourceOffset: offset))

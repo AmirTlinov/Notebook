@@ -26,7 +26,7 @@ import XCTest
       XCTAssertEqual(artifact.assets.count, 1)
       XCTAssertTrue(artifact.assets[0].data.starts(with: Data("%PDF-".utf8)))
       let resources = SceneRenderResources(), charge = try XCTUnwrap(resources.reserveDerivedBytes(artifact.pdf.count, priority: .passive))
-      let source = DocumentPrintedSource(artifact: artifact, reservation: charge)
+      let source = DocumentPrintedSource(artifact: artifact, pdf: .init(artifact.pdf), reservation: charge)
       let page = DocumentPrintedPage(source: source, pageIndex: 0, width: document.paperSize.widthPoints, height: document.paperSize.heightPoints)
       let raster = try await page.image(width: 595)
       let pixels = try XCTUnwrap(raster.dataProvider?.data) as Data

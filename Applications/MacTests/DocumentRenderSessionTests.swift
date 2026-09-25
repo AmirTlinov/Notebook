@@ -16,6 +16,50 @@ final class DocumentRenderSessionTests: XCTestCase {
       onRenderReady: .init { _ in }, onPageLayout: { _ in },  onStateChange: { _, _ in nil })
   }
 
+  func testClosedMultiPageProgramExportSharesOnePDFSyncTeXPreparation() async throws {
+    let document = DocumentDocument(actor: UUID(), blocks: [.interactive(id: "long-program",
+      html: "<div style='height:1800px;background:linear-gradient(red,blue)'></div>",
+      javaScript: "notebook.exportFrame(() => null); notebook.ready(Promise.resolve());", height: 1800)])
+    let state = DocumentStateJournal(id: document.id, actor: UUID())
+    let resources = SceneRenderResources(), session = DocumentRenderSession(documentID: document.id)
+    let source = session.source(document)
+    let printed: DocumentPrintedSource
+    do { printed = try await source.printedSource(resources: resources) }
+    catch {
+      XCTFail("The export-owned PDF/SyncTeX source must prepare before any page heap: \(error)")
+      throw error
+    }
+    let pageCount = try XCTUnwrap(source.layout).pageCount
+    XCTAssertGreaterThan(pageCount, 1)
+    let isolation = UUID()
+    let output=FileManager.default.temporaryDirectory.appendingPathComponent("shared-print-\(UUID()).pdf")
+    defer { try? FileManager.default.removeItem(at:output) }
+    let composer=try await PrintedPDFComposer.open(printed.pdf,outputURL:output)
+    for index in 0..<pageCount {
+      do { try await DocumentSnapshotCache.shared.withPreparedPage(document: document, state: state, pageIndex: index,
+        resources: resources, programStore: nil, isolationID: isolation, renderSession: session) { coordinator in
+        let pixels = try await coordinator.retainPreparedSnapshot(pixelWidth: 160, force: true, waitsForRasterAdmission: true)
+        defer { pixels.release() }
+        XCTAssertTrue(coordinator.payload?.source === source,
+          "The isolated page heap must use the export-owned immutable print source")
+        let rendered=try XCTUnwrap(coordinator.payload?.source)
+        let current=try await rendered.printedSource(resources:resources)
+        XCTAssertTrue(current === printed)
+        XCTAssertTrue(current.pdf === printed.pdf)
+        let openings=await printed.pdf.openedDocumentCount()
+        XCTAssertEqual(openings,1,"Mounted paper and composed snapshots borrow the same actual PDF parser")
+        try await composer.append(pageIndex:index,image:nil,regions:[])
+        XCTAssertEqual(source.preparationCount, 1)
+        XCTAssertEqual(source.measurementCount, 1, "PDF, SyncTeX, navigation and hit regions are decoded once, not once per page")
+      }
+      } catch { XCTFail("Export page \(index) must reuse the prepared source: \(error)"); throw error }
+      XCTAssertEqual(resources.activeWebSurfaceCount, 0, "Each isolated page executor retires while the print source stays owned")
+    }
+    try await composer.finish()
+    let openings=await printed.pdf.openedDocumentCount()
+    XCTAssertEqual(openings,1,"Composition does not open its own copy of the common PDF")
+  }
+
   func testFourPagesShareExactlyOneImmutableSourceAndStateEncodingWithoutAllocatingWebKit() async throws {
     let document = DocumentDocument(actor: UUID(), blocks: (0..<512).map { .markdown(id: "block-\($0)", source: "Source \($0)") })
     let state = DocumentStateJournal(id: document.id, actor: UUID()), resources = SceneRenderResources()
@@ -123,11 +167,11 @@ final class DocumentRenderSessionTests: XCTestCase {
         "regions": [["id": "body", "pageIndex": 0, "x": 70.0, "y": 70.0, "width": 200.0, "height": height, "sourceOffset": 0.0]]]
     }
     let token = DocumentSnapshotCache.token(document: document, state: state, pageIndex: 0)
-    try registry.publish(documentID: document.id, token: token, receipt: receipt(height: 100), geometry: geometry)
+    try registry.publish(documentID: document.id, token: token, source: source, receipt: receipt(height: 100), geometry: geometry)
     let first = try XCTUnwrap(source.layout)
-    try registry.publish(documentID: document.id, token: token, receipt: receipt(height: 100), geometry: geometry)
+    try registry.publish(documentID: document.id, token: token, source: source, receipt: receipt(height: 100), geometry: geometry)
     XCTAssertTrue(source.layout === first)
-    XCTAssertThrowsError(try registry.publish(documentID: document.id, token: token, receipt: receipt(height: 101), geometry: geometry)) { error in
+    XCTAssertThrowsError(try registry.publish(documentID: document.id, token: token, source: source, receipt: receipt(height: 101), geometry: geometry)) { error in
       XCTAssertEqual(error.localizedDescription, "document_layout_inconsistent")
     }
     XCTAssertTrue(source.layout === first)
