@@ -58,15 +58,15 @@ import XCTest
             space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
             .draw(point, in: .init(x: 0, y: 0, width: 1, height: 1))
         }
-        let target = rgba[0] > 220 && rgba[2] < 40, source = rgba[2] > 220 && rgba[0] < 40
-        if sawTarget && source { returned = true }
+        let target = rgba[0] > 220 && rgba[2] < 40
+        if sawTarget && !target { returned = true }
         sawTarget = sawTarget || target
         samples.append("\(frame): \(rgba), selected=\(selected)")
         let picture = XCTAttachment(image: image); picture.name = "Interactive reverse \(turn) frame \(frame)"
         picture.lifetime = .keepAlways; add(picture)
       }
       XCTAssertTrue(sawTarget)
-      XCTAssertFalse(returned, "The target reached the centre, then the source flashed over it")
+      XCTAssertFalse(returned, "After the target reached the centre, neither old paper nor a blank frame may cover it")
       XCTAssertEqual(selected, 0)
       let note = XCTAttachment(string: samples.joined(separator: "\n")); note.name = "Interactive reverse samples \(turn)"
       note.lifetime = .keepAlways; add(note)
@@ -93,11 +93,11 @@ import XCTest
           native.prepare(target)
           try await Task.sleep(for: .milliseconds(30))
           let curl = try XCTUnwrap(native.view.subviews.compactMap { $0 as? SheetCurlMetalView }.first)
-          let owner = curl.onFramePresented
+          let owner = curl.onFrameResolved
           let endpoint = direction == .forward ? (completes ? 1.0 : 0.0) : (completes ? 0.0 : 1.0)
-          curl.onFramePresented = { image, progress, timestamp in
-            if timestamp > 0, progress == endpoint { endpointPresented = true }
-            owner?(image, progress, timestamp)
+          curl.onFrameResolved = { image, progress, receipt in
+            if receipt.completion.permitsProgress, progress == endpoint { endpointPresented = true }
+            owner?(image, progress, receipt)
           }
           let pan = NotebookCurlPan(), sign: CGFloat = direction == .forward ? -1 : 1
           pan.phase = .began; pan.offset.x = sign * 20
@@ -200,6 +200,8 @@ import XCTest
   }
 
   func testTenForwardReverseTurnsMeetFirstPresentationAndLandingDeadlines() async throws {
+    try XCTSkipUnless(MetalFrameCompletion.reportsDisplayTime,
+      "Simulator has no OS drawable presentation timestamps; this is a physical display check")
     let controller = IPadPageTurnController(), commands = NotebookPageNavigation(), owner = UUID()
     var selected = 0, committedAt: TimeInterval?
     func configure() {
@@ -229,14 +231,14 @@ import XCTest
     for turn in 0..<10 {
       let target = turn.isMultiple(of: 2) ? 1 : 0
       let curl = try XCTUnwrap(controller.sheetController.view.subviews.compactMap { $0 as? SheetCurlMetalView }.first)
-      let forwardPresentation = curl.onFramePresented
+      let forwardPresentation = curl.onFrameResolved
       var frames: [(progress: Double, presented: TimeInterval, delivered: TimeInterval)] = []
       var submission: [SheetCurlMetalView.FrameTiming] = []
       curl.onFrameMeasured = { submission.append($0) }
       committedAt = nil
-      curl.onFramePresented = { image, progress, presentedAt in
-        frames.append((progress, presentedAt, CACurrentMediaTime()))
-        forwardPresentation?(image, progress, presentedAt) // Preserve the completion owner.
+      curl.onFrameResolved = { image, progress, receipt in
+        frames.append((progress, receipt.completion.presentationTime ?? 0, CACurrentMediaTime()))
+        forwardPresentation?(image, progress, receipt) // Preserve the completion owner.
       }
       let start = CACurrentMediaTime()
       XCTAssertTrue(commands.send(.step(target == 1 ? 1 : -1), ownerID: owner, source: "motion-timing"))
@@ -244,7 +246,7 @@ import XCTest
       while committedAt == nil, CACurrentMediaTime() - start < 1 {
         try await Task.sleep(for: .milliseconds(1))
       }
-      curl.onFramePresented = forwardPresentation
+      curl.onFrameResolved = forwardPresentation
       curl.onFrameMeasured = nil
       let encoding = XCTAttachment(string: "Command execution=\((commandReturned-start)*1000) ms\n" + submission.map {
         "start=\(($0.encodingBegan-start)*1000)ms; CPU=\(($0.submitted-$0.encodingBegan)*1000)ms; GPU queue=\(($0.gpuBegan-$0.submitted)*1000)ms; GPU=\(($0.gpuEnded-$0.gpuBegan)*1000)ms; target=\(($0.targetPresentation-start)*1000)ms"
@@ -288,9 +290,16 @@ import XCTest
     }
     for y in stride(from: 8, to: h, by: 16) {
       for x in stride(from: 8, to: w, by: 16) {
-        let colour: NotebookUXObservation.Color = (217..<617).contains(x) && (397..<797).contains(y) ? mark : .paper
         let offset = (y*w+x)*4
-        if !colour.matches(Array(rgba[offset..<offset+4])) { return false }
+        let colour = Array(rgba[offset..<offset+4])
+        if (217..<617).contains(x) && (397..<797).contains(y) {
+          if !mark.matches(colour) { return false }
+        } else if !colour.prefix(3).allSatisfy({ $0 >= 252 }) {
+          // This fixture is pure white, not document-coloured paper. The broad
+          // paper tolerance classified the curled ivory backside as settled
+          // whenever its thin shadow fell between the sampled columns.
+          return false
+        }
       }
     }
     return true

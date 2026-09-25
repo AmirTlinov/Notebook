@@ -7,9 +7,9 @@ import UIKit
 /// Resolve after touchdown has let selection reserve its original contact.
 final class PageTurnAdmissionRecognizer: UIGestureRecognizer {
   var canBeginNavigation: () -> Bool = { true }
-  /// Returning false keeps this contact until lift rather than losing a swipe
-  /// to an absent render-ready neighbour.
+  /// Returning false retains this contact while its neighbour prepares.
   var prepareDirection: (Int) -> Bool = { _ in true }
+  var updateColdSwipe: (CGFloat) -> Void = { _ in }
   var finishColdSwipe: (Bool) -> Void = { _ in }
   private var coldDirection: Int?
   private var contacts: [UITouch: CGPoint] = [:]
@@ -26,17 +26,19 @@ final class PageTurnAdmissionRecognizer: UIGestureRecognizer {
   override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
     for touch in touches { contacts[touch] = touch.location(in:view?.window) }
     beganAt = touches.map(\.timestamp).max() ?? 0
-    if !canBeginNavigation() || contacts.count > 2 { state = .began }
+    if !canBeginNavigation() || contacts.count > 2 { cancelColdSwipe(); state = .began }
   }
   override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent) {
     guard state == .possible || coldDirection != nil else { return }
     guard canBeginNavigation() else { cancelColdSwipe(); state = .began; return }
     let pairs = contacts.map { (start:$0.value, end:$0.key.location(in:view?.window)) }
     let deltas = pairs.map { CGPoint(x:$0.end.x-$0.start.x,y:$0.end.y-$0.start.y) }
-    if pairs.count == 1, let delta = deltas.first, hypot(delta.x,delta.y) >= 4 {
-      if coldDirection != nil { return }
-      if abs(delta.x) > abs(delta.y) { resolveHorizontal(delta.x) }
-      else { state = .began }
+    if pairs.count == 1, let delta = deltas.first {
+      if coldDirection != nil { updateColdSwipe(delta.x) }
+      else if hypot(delta.x,delta.y) >= 4 {
+        if abs(delta.x) > abs(delta.y) { resolveHorizontal(delta.x) }
+        else { state = .began }
+      }
     } else if pairs.count == 2 {
       let startDistance = hypot(pairs[0].start.x-pairs[1].start.x,pairs[0].start.y-pairs[1].start.y)
       let distance = hypot(pairs[0].end.x-pairs[1].end.x,pairs[0].end.y-pairs[1].end.y)
@@ -46,12 +48,13 @@ final class PageTurnAdmissionRecognizer: UIGestureRecognizer {
         elapsed:(touches.map(\.timestamp).max() ?? beganAt)-beganAt)
       if intent == .navigation, coldDirection == nil { resolveHorizontal((deltas[0].x+deltas[1].x)/2) }
       else if intent == .magnification { cancelColdSwipe(); state = .began }
+      else if coldDirection != nil { updateColdSwipe((deltas[0].x+deltas[1].x)/2) }
     }
   }
   private func resolveHorizontal(_ translation: CGFloat) {
     let direction = translation < 0 ? 1 : -1
     if prepareDirection(direction) { state = .failed }
-    else { coldDirection = direction; state = .began }
+    else { coldDirection = direction; state = .began; updateColdSwipe(translation) }
   }
   private func cancelColdSwipe() {
     guard coldDirection != nil else { return }
@@ -61,6 +64,7 @@ final class PageTurnAdmissionRecognizer: UIGestureRecognizer {
     if let direction = coldDirection {
       let delta = contacts.map { $0.key.location(in:view?.window).x - $0.value.x }
       let distance = delta.reduce(0,+) / CGFloat(max(1,delta.count))
+      updateColdSwipe(distance)
       coldDirection = nil
       finishColdSwipe(canBeginNavigation() && -distance * CGFloat(direction) >= IPadSheetCurlController.minimumGestureTravel)
     }
@@ -111,6 +115,8 @@ final class IPadPageTurnController: UIViewController {
   private var pendingExternalIndex: Int?
   private var sequentialTarget: Int?
   private var coldGestureTarget: Int?
+  private var coldGestureTranslation: CGFloat = 0
+  private var coldGestureIsTurning = false
   private var notebookNavigation: NotebookPageNavigation?
   private weak var inputGate: NotebookInputGate?
   private var notebookStatusRevision: UInt64 = 0
@@ -220,12 +226,26 @@ final class IPadPageTurnController: UIViewController {
       guard let self, !isTransitioning else { return true }
       let target = displayedIndex + direction
       guard (0..<pageCount).contains(target), readyPages[target] != true else { return true }
-      coldGestureTarget = target; anticipatedIndex = target
+      coldGestureTarget = target; coldGestureTranslation = 0; anticipatedIndex = target
       prepareExternalTarget(target); retainNeededControllers(); publishDocumentStatus()
       return false
     }
+    navigationAdmission.updateColdSwipe = { [weak self] translation in
+      guard let self else { return }
+      let origin = sheetController.view.convert(CGPoint.zero, from: view.window)
+      let point = sheetController.view.convert(CGPoint(x: translation, y: 0), from: view.window)
+      coldGestureTranslation = point.x - origin.x
+      beginPreparedColdTurn()
+      if coldGestureIsTurning { sheetController.updateInteractiveTurn(translation: coldGestureTranslation) }
+    }
     navigationAdmission.finishColdSwipe = { [weak self] accepted in
-      guard let self, let target = coldGestureTarget else { return }
+      guard let self else { return }
+      if coldGestureIsTurning {
+        coldGestureIsTurning = false
+        sheetController.endInteractiveTurn(completed: accepted)
+        return
+      }
+      guard let target = coldGestureTarget else { return }
       coldGestureTarget = nil; anticipatedIndex = nil
       if accepted { sequentialTarget = nil; requestExternalSelection(target) }
       else { prepareExternalTarget(nil); retainNeededControllers(); publishDocumentStatus() }
@@ -311,6 +331,7 @@ final class IPadPageTurnController: UIViewController {
       pendingExternalIndex = nil
       sequentialTarget = nil
       coldGestureTarget = nil
+      coldGestureIsTurning = false
       lastNotebookStatus = nil
       anticipatedIndex = nil
       lastTurnDirection = nil
@@ -350,6 +371,7 @@ final class IPadPageTurnController: UIViewController {
     refreshRenderedPages()
     refreshControllerState()
     configureSystemGestures()
+    beginPreparedColdTurn()
     runPendingExternalSelection()
     if documentNavigation != nil, !isTransitioning {
       publishDocumentLanding(at: displayedIndex,
@@ -597,7 +619,15 @@ final class IPadPageTurnController: UIViewController {
       publishDocumentLanding(at: index, requestID: resolvedDocumentTarget == index ? documentSelection?.id : nil)
     }
     publishDocumentStatus()
+    beginPreparedColdTurn()
     runPendingExternalSelection()
+  }
+
+  private func beginPreparedColdTurn() {
+    guard let target = coldGestureTarget, readyPages[target] == true,
+      !isTransitioning, !isUpdatingContents, navigationIsEnabled, canBeginNavigation() else { return }
+    coldGestureIsTurning = sheetController.beginInteractiveTurn(direction: target > displayedIndex ? .forward : .reverse)
+    if coldGestureIsTurning { sheetController.updateInteractiveTurn(translation: coldGestureTranslation) }
   }
 
   private func requestExternalSelection(_ requestedIndex: Int) {
@@ -670,6 +700,7 @@ final class IPadPageTurnController: UIViewController {
     switch command {
     case .cancel:
       sequentialTarget = nil; coldGestureTarget = nil; pendingExternalIndex = nil
+      coldGestureIsTurning = false
       sheetController.cancelMotion()
       anticipatedIndex = nil; prepareExternalTarget(nil)
       retainNeededControllers(); refreshControllerState(); publishDocumentStatus()

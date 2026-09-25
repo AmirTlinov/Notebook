@@ -109,6 +109,9 @@ import XCTest
     continueAfterFailure = false; executionTimeAllowance = 180
     app = XCUIApplication()
     app.launchArguments = ["--notebook-drawing-responsiveness-fixture", "--notebook-workspace-journey-fixture"]
+    #if targetEnvironment(simulator)
+      app.launchArguments.append("--notebook-simulator-finger-gestures")
+    #endif
     app.launch(); XCUIDevice.shared.orientation = .portrait
     XCTAssertTrue(cover.waitForExistence(timeout: 10), app.debugDescription)
     XCTAssertTrue(notebookOffersCreation(in:app))
@@ -124,7 +127,8 @@ import XCTest
       dy: paperFrame.minY + y * paperFrame.height / 1194 - app.frame.minY))
   }
   private func open(deleted: Bool = false) throws {
-    try step("ordinary-cover-double-tap", { cover.doubleTap() }) {
+    try step("ordinary-cover-double-tap", { cover.doubleTap() },
+      simulatorComposition: leafProbes(0, deleted: deleted)) {
       XCTAssertTrue(self.surface.exists)
       XCTAssertTrue(self.app.buttons["drawing-group"].isHittable)
       XCTAssertTrue(self.app.buttons["next-page"].isHittable)
@@ -139,7 +143,7 @@ import XCTest
       let landed = XCTNSPredicateExpectation(
         predicate: NSPredicate(format: "value BEGINSWITH %@", "Страница \(index + 1) из "), object: surface)
       XCTAssertEqual(XCTWaiter.wait(for: [landed], timeout: 2), .completed, "The native curl did not land")
-    }) { try self.leaf(index) }
+    }, simulatorComposition: leafProbes(index)) { try self.leaf(index) }
   }
   private func leave() throws {
     try step("back-to-board", { notebookBack(in:app) }) {
@@ -163,6 +167,9 @@ import XCTest
     let folio = surface.value as? String
     XCTAssertTrue(folio?.hasPrefix("Страница \(index + 1) из ") == true,
       "Expected leaf \(index + 1), displayed folio: \(folio ?? "missing")")
+    try pixels(leafProbes(index, moved: moved, deleted: deleted))
+  }
+  private func leafProbes(_ index: Int, moved: Bool = false, deleted: Bool = false) -> [(CGFloat, CGFloat, Color)] {
     let dy: CGFloat = moved ? 200 : 0
     var probes: [(CGFloat, CGFloat, Color)] = []
     for x: CGFloat in [180, 220, 440, 460] {
@@ -175,13 +182,18 @@ import XCTest
       probes.append((130 + CGFloat(slot) * 100, 820, slot == index ? .blue : .paper))
       probes.append((220, 660 + CGFloat(slot) * 16, slot == index ? .black : .paper))
     }
-    try pixels(probes)
+    return probes
   }
   private func pixels(_ probes: [(CGFloat, CGFloat, Color)]) throws {
     let shot = currentScreenshot ?? app.screenshot()
+    for (probe, rgba) in zip(probes, try samples(probes, shot: shot)) {
+      XCTAssertTrue(probe.2.matches(rgba), "Wrong displayed material at page (\(probe.0), \(probe.1)): \(rgba)")
+    }
+  }
+  private func samples(_ probes: [(CGFloat, CGFloat, Color)], shot: XCUIScreenshot) throws -> [[UInt8]] {
     let image = try XCTUnwrap(shot.image.cgImage), screen = app.frame
     let sx = CGFloat(image.width) / screen.width, sy = CGFloat(image.height) / screen.height
-    for (x, y, color) in probes {
+    return try probes.map { x, y, _ in
       let point = CGPoint(x: (paperFrame.minX + x * paperFrame.width / 834 - screen.minX) * sx,
         y: (paperFrame.minY + y * paperFrame.height / 1194 - screen.minY) * sy)
       let crop = try XCTUnwrap(image.cropping(to: .init(x: point.x.rounded(), y: point.y.rounded(), width: 1, height: 1)))
@@ -191,13 +203,24 @@ import XCTest
           bytesPerRow: 4, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
         context.draw(crop, in: .init(x: 0, y: 0, width: 1, height: 1))
       }
-      XCTAssertTrue(color.matches(rgba), "Wrong displayed material at page (\(x), \(y)): \(rgba)")
+      return rgba
     }
   }
-  private func step(_ name: String, _ action: () -> Void, verify: () throws -> Void) throws {
+  private func step(_ name: String, _ action: () -> Void,
+    simulatorComposition probes: [(CGFloat, CGFloat, Color)] = [], verify: () throws -> Void) throws {
     let start = ContinuousClock.now
     action()
-    let shot = app.screenshot(); currentScreenshot = shot
+    var shot = app.screenshot()
+    #if targetEnvironment(simulator)
+      // GPU completion and AX idleness cannot acknowledge a Simulator display.
+      // Observe its composition within the existing automation watchdog. Native
+      // continuous pixel checks separately reject old/blank frames after landing;
+      // physical devices retain the FIRST post-action composition check below.
+      while !probes.isEmpty,
+        !zip(probes, try samples(probes, shot: shot)).allSatisfy({ $0.0.2.matches($0.1) }),
+        start.duration(to: .now) < .seconds(10) { shot = app.screenshot() }
+    #endif
+    currentScreenshot = shot
     let image = XCTAttachment(screenshot: shot); image.name = name; image.lifetime = .keepAlways; add(image)
     defer { currentScreenshot = nil }
     let elapsed = start.duration(to: .now)
@@ -208,6 +231,6 @@ import XCTest
     XCTAssertLessThan(elapsed, .seconds(10), "Stalled user sequence: \(name)")
     XCTAssertEqual(app.state, .runningForeground)
     XCTAssertFalse(app.otherElements["persistence-failure"].exists)
-    try verify() // First post-action composition: no eventual-correct retry loop.
+    try verify()
   }
 }

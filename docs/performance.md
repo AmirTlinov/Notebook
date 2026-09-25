@@ -483,6 +483,22 @@ confirms the landing. Page progress and drawable submission share one
 `CAMetalDisplayLink`; a dropped drawable never confirms a landing. The turn's
 image and two drawable backings have one bounded
 input reservation, explicitly released at presentation or drained on cancellation.
+Snapshot capture runs once at UIKit's `UIUpdateLink.afterUpdateComplete` boundary,
+after the new layer tree is committed. It copies that tree without forcing screen
+updates inside input dispatch. The pending motion retains the latest finger
+progress; cancellation disables the observer and invalidates the motion. No timer,
+extra page cache or replacement button owns this handoff. The observer is disabled
+while idle. The snapshot uses standard 32-bit colour and
+the sheet's actual window-projected density (at most four million pixels), not
+the resolution of a larger fitted-offscreen sheet. Live source paper stays in
+front until this turn's first resolved curl frame; a preceding drawable cannot
+become the new turn's placeholder. The Metal view survives turns, its bitmap
+backing retires, and progress changes reuse the same immutable Core Image source.
+A cold swipe retains its original contact and drives this same interactive curl
+as soon as the neighbour is ready; lift/pinch still decide completion/cancellation.
+Simulator advances on an explicitly typed GPU completion because it supplies no
+drawable presentation callback. That receipt has no display timestamp and cannot
+satisfy the physical first-frame, same-event display or FPS checks.
 Four alternating native turns check intermediate images, final content, a bounded
 left-edge shadow, and return of reserved bytes before the next turn. This route
 is regression evidence, not full sustained CPU/GPU/memory or physical-photon

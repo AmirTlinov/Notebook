@@ -148,7 +148,11 @@ final class SheetCurlMetalView: MTKView, MTKViewDelegate {
   private(set) var submittedFrameCount = 0
   let drawableCount = 2
   var frameLease: RasterReservation?
-  var onFramePresented: ((CGImage, Double, TimeInterval) -> Void)?
+  struct FrameResolution: Sendable {
+    let ordinal: Int
+    let completion: MetalFrameCompletion
+  }
+  var onFrameResolved: ((CGImage, Double, FrameResolution) -> Void)?
   // An opt-in, bounded diagnostic at the actual submission owner. It does not
   // alter admission, clock, command ordering or the presentation receipt.
   var onFrameMeasured: ((FrameTiming) -> Void)?
@@ -170,7 +174,10 @@ final class SheetCurlMetalView: MTKView, MTKViewDelegate {
     sourceCover = nil; coverImage = nil; framePending = false
     guard let lease = frameLease else { return }
     frameLease = nil
-    if presented { releaseDrawables(); lease.release(); return }
+    // The view is reused, but idle/cancelled turns do not retain its drawable
+    // backing. Submitted commands still own their textures until the fence.
+    releaseDrawables()
+    if presented { lease.release(); return }
     // Completion handlers can remain retained by a command buffer. Their
     // Swift lifetime is not a release receipt. Drain the ordered GPU queue
     // explicitly before returning this turn's finite backing to admission.
@@ -252,8 +259,10 @@ final class SheetCurlMetalView: MTKView, MTKViewDelegate {
       if framePending { requestFrame() }
       return
     }
-    sourceCover = cover
-    coverImage = CIImage(cgImage: cover)
+    if sourceCover !== cover {
+      sourceCover = cover
+      coverImage = CIImage(cgImage: cover)
+    }
     self.progress = resolvedProgress
     self.backsideColor = backsideColor
     self.cornerRadius = cornerRadius
@@ -338,18 +347,16 @@ final class SheetCurlMetalView: MTKView, MTKViewDelegate {
     )
     let source = sourceCover!, progress = progress
     let submitted = encodingBegan.map { _ in CACurrentMediaTime() }
-    if onFramePresented != nil {
-      drawable.addPresentedHandler { [weak self] drawable in
-        // Capture the OS presentation clock here, before MainActor delivery.
-        // A zero timestamp remains zero (unpresented/dropped), never "now".
-        let presentedAt = drawable.presentedTime
+    if onFrameResolved != nil {
+      let ordinal = submittedFrameCount
+      MetalFrameCompletion.observe(drawable, after: commandBuffer) { [weak self] completion in
         Task { @MainActor [weak self] in
           // A dropped drawable is NOT a landing receipt. Retry the latest
           // required image, including a terminal image, on the same clock.
-          if presentedAt <= 0, let self, self.sourceCover === source, self.progress == progress {
+          if !completion.permitsProgress, let self, self.sourceCover === source, self.progress == progress {
             self.framePending = true
           }
-          self?.onFramePresented?(source, progress, presentedAt)
+          self?.onFrameResolved?(source, progress, .init(ordinal: ordinal, completion: completion))
           self?.resumePendingFrame()
         }
       }

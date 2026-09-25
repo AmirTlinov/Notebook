@@ -1140,15 +1140,17 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
       || (!hasRevealedFirstFrame && (spatialTarget == nil || isErasureMask))
     presentsWithTransaction = transactionPresentation
     for tile in spatialTarget?.tiles ?? [] { tile.layer.presentsWithTransaction = transactionPresentation }
+    #if !targetEnvironment(simulator)
     if let observation = onContactFramePresented, let contact = activeContactFrame,
       active != nil, hasRevealedFirstFrame {
       let frameID = UUID(), tileCount = passes.count
       for (tile, pass) in passes.enumerated() {
-        pass.1.addPresentedHandler { [weak self] drawable in
+        MetalFrameCompletion.observe(pass.1, after: commandBuffer) { [weak self] completion in
+          let time = completion.presentationTime ?? 0
           // Read the OS timestamp in the callback, not when the main actor next
           // services us. Zero means unpresented/dropped, never a fast success.
           let receipt = PresentedContactFrame(frameID: frameID, contact: contact,
-            tile: tile, tileCount: tileCount, presentedAt: drawable.presentedTime)
+            tile: tile, tileCount: tileCount, presentedAt: time)
           Task { @MainActor [weak self] in
             guard self?.window != nil else { return }
             observation(receipt)
@@ -1156,6 +1158,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
         }
       }
     }
+    #endif
     if !transactionPresentation, pageDrawable == nil {
       for (_, drawable, _, _, _) in passes { commandBuffer.present(drawable) }
     }
@@ -1172,11 +1175,11 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
       // presentation. An unchanged, pending tile is not uploaded again.
       drawnTiles = (ObjectIdentifier(target), submittedRevision, tileStates)
       for (pass, index) in zip(passes, submittedTiles) {
-        observePresentation(of: pass.1, tile: index, target: target, submission: submission)
+        observePresentation(of: pass.1, after: commandBuffer, tile: index, target: target, submission: submission)
       }
     } else if visibleSubmission, presentedRevision != nil || onVisibleFrame != nil {
-      passes[0].1.addPresentedHandler { [weak self] drawable in
-        let presented = drawable.presentedTime > 0
+      MetalFrameCompletion.observe(passes[0].1, after: commandBuffer) { [weak self] completion in
+        let presented = completion.permitsProgress
         Task { @MainActor [weak self] in
           guard let self, !spatialHandoffIsStopping, window != nil,
             stableContentRevision == submittedRevision else { return }
@@ -1282,11 +1285,11 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     #endif
   }
 
-  private func observePresentation(of drawable: any CAMetalDrawable, tile: Int,
+  private func observePresentation(of drawable: any CAMetalDrawable, after command: (any MTLCommandBuffer)?, tile: Int,
     target: SpatialTarget, submission: UUID) {
     let identity = ObjectIdentifier(target)
-    drawable.addPresentedHandler { [weak self] drawable in
-      let presented = drawable.presentedTime > 0
+    MetalFrameCompletion.observe(drawable, after: command) { [weak self] completion in
+      let presented = completion.permitsProgress
       Task { @MainActor [weak self] in
         guard let self, !spatialHandoffIsStopping, let current = spatialTarget,
           ObjectIdentifier(current) == identity, drawnTiles?.target == identity,
@@ -1601,7 +1604,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
         return DrawnTile(signature: tileSignature(visible: visibleChunks(in: clip), clip: clip), submission: submission)
       })
       for (index, drawable) in frame.drawables.enumerated() {
-        observePresentation(of: drawable, tile: index, target: target, submission: submission)
+        observePresentation(of: drawable, after: nil, tile: index, target: target, submission: submission)
       }
     }
     for tile in frame.target?.tiles ?? [] { tile.layer.presentsWithTransaction = true }
