@@ -1,3 +1,4 @@
+import CSQLite
 import Foundation
 
 extension NotebookStore {
@@ -55,28 +56,52 @@ extension NotebookStore {
     guard chunk.isValid else { throw NotebookStorageError.invalidTransaction("invalid file upload") }
     return try commandTransaction(advancesReadRevision: false) {
       let db = currentSQL!
-      if let row = try db.rows("SELECT author,digest,total,value FROM file_uploads WHERE id=?", [.text(chunk.id.uuidString)]).first {
-        guard row[0].text == author.uuidString, row[1].text == chunk.digest, row[2].integer == Int64(chunk.total) else { throw NotebookStorageError.invalidTransaction("file upload collision") }
-        let existing = row[3].blob!
-        if chunk.offset < existing.count {
-          guard chunk.offset + chunk.data.count <= existing.count, existing[chunk.offset..<(chunk.offset + chunk.data.count)] == chunk.data else { throw NotebookStorageError.invalidTransaction("file upload changed") }
-          return existing.count
+      let rowID: Int64
+      if let row = try db.rows("SELECT rowid,author,digest,total,received,length(value) FROM file_uploads WHERE id=?", [.text(chunk.id.uuidString)]).first {
+        guard row[1].text == author.uuidString, row[2].text == chunk.digest,
+          row[3].integer == Int64(chunk.total), row[5].integer == Int64(chunk.total),
+          let received = row[4].integer, received >= 0, received <= Int64(chunk.total) else {
+          throw NotebookStorageError.invalidTransaction("file upload collision")
         }
-        guard chunk.offset == existing.count else { throw NotebookStorageError.invalidTransaction("file upload gap") }
-        var next = existing; next.append(chunk.data)
-        try db.run("UPDATE file_uploads SET value=?,touched=? WHERE id=?", [.blob(next), .real(Date().timeIntervalSince1970), .text(chunk.id.uuidString)])
-        return next.count
+        if chunk.offset < received {
+          guard Int64(chunk.offset + chunk.data.count) <= received,
+            try db.rows("SELECT substr(value,?,?) FROM file_uploads WHERE id=?", [.integer(Int64(chunk.offset + 1)), .integer(Int64(chunk.data.count)), .text(chunk.id.uuidString)]).first?[0].blob == chunk.data else {
+            throw NotebookStorageError.invalidTransaction("file upload changed")
+          }
+          return Int(received)
+        }
+        guard chunk.offset == received else { throw NotebookStorageError.invalidTransaction("file upload gap") }
+        rowID = row[0].integer!
+      } else {
+        guard chunk.offset == 0 else { throw NotebookStorageError.invalidTransaction("file upload missing") }
+        try db.run("DELETE FROM file_uploads WHERE touched<? AND id NOT IN (SELECT id FROM chat_jobs WHERE state IN ('saved','attempting','uncertain'))", [.real(Date().addingTimeInterval(-604800).timeIntervalSince1970)])
+        guard try db.rows("SELECT COUNT(*) FROM file_uploads WHERE id NOT IN (SELECT id FROM chat_jobs WHERE state='accepted')")[0][0].integer! < 32 else { throw NotebookStorageError.limitExceeded("unfinished file uploads") }
+        try db.run("INSERT INTO file_uploads(id,author,digest,total,value,received,touched) VALUES(?,?,?,?,zeroblob(?),0,?)", [.text(chunk.id.uuidString), .text(author.uuidString), .text(chunk.digest), .integer(Int64(chunk.total)), .integer(Int64(chunk.total)), .real(Date().timeIntervalSince1970)])
+        rowID = sqlite3_last_insert_rowid(db.handle)
       }
-      guard chunk.offset == 0 else { throw NotebookStorageError.invalidTransaction("file upload missing") }
-      try db.run("DELETE FROM file_uploads WHERE touched<? AND id NOT IN (SELECT id FROM chat_jobs WHERE state IN ('saved','attempting','uncertain'))", [.real(Date().addingTimeInterval(-604800).timeIntervalSince1970)])
-      guard try db.rows("SELECT COUNT(*) FROM file_uploads WHERE id NOT IN (SELECT id FROM chat_jobs WHERE state='accepted')")[0][0].integer! < 32 else { throw NotebookStorageError.limitExceeded("unfinished file uploads") }
-      try db.run("INSERT INTO file_uploads(id,author,digest,total,value,touched) VALUES(?,?,?,?,?,?)", [.text(chunk.id.uuidString), .text(author.uuidString), .text(chunk.digest), .integer(Int64(chunk.total)), .blob(chunk.data), .real(Date().timeIntervalSince1970)])
-      return chunk.data.count
+      // Allocation happens once. Each admitted chunk writes only its own bytes;
+      // the blob handle must close before updating the same row's progress.
+      try Self.writeFileUpload(chunk.data, at: chunk.offset, rowID: rowID, database: db)
+      let received = chunk.offset + chunk.data.count
+      try db.run("UPDATE file_uploads SET received=?,touched=? WHERE rowid=?", [.integer(Int64(received)), .real(Date().timeIntervalSince1970), .integer(rowID)])
+      return received
     }
   }
+
+  private static func writeFileUpload(_ data: Data, at offset: Int, rowID: Int64, database: NotebookSQLConnection) throws {
+    var blob: OpaquePointer?
+    guard sqlite3_blob_open(database.handle, "main", "file_uploads", "value", rowID, 1, &blob) == SQLITE_OK,
+      let blob else { throw NotebookStorageError.corruptRecord("file upload blob") }
+    defer { sqlite3_blob_close(blob) }
+    guard offset >= 0, offset + data.count <= Int(sqlite3_blob_bytes(blob)),
+      data.withUnsafeBytes({ sqlite3_blob_write(blob, $0.baseAddress, Int32(data.count), Int32(offset)) }) == SQLITE_OK else {
+      throw NotebookStorageError.corruptRecord("file upload write")
+    }
+  }
+
   public func stagedFileEdit(_ id: UUID, author: UUID) throws -> NotebookFileEdit {
     try sqlRead { db in
-      guard let row = try db.rows("SELECT digest,total,value FROM file_uploads WHERE id=? AND author=?", [.text(id.uuidString), .text(author.uuidString)]).first,
+      guard let row = try db.rows("SELECT digest,total,value FROM file_uploads WHERE id=? AND author=? AND received=total", [.text(id.uuidString), .text(author.uuidString)]).first,
         let data = row[2].blob, row[1].integer == Int64(data.count), row[0].text == NotebookFileVersion.hash(data) else { throw NotebookStorageError.invalidTransaction("Неполная отправка черновика; рабочий файл не изменён.") }
       let edit = try JSONDecoder().decode(NotebookFileEdit.self, from: data)
       guard edit.isValid else { throw NotebookStorageError.invalidTransaction("invalid file edit") }; return edit

@@ -1,3 +1,4 @@
+import CSQLite
 import Foundation
 import Testing
 @testable import NotebookCore
@@ -35,6 +36,135 @@ struct NotebookActionDeliveryPhaseTests {
     }
   }
 
+  @Test func coldDrainAdmitsEveryPendingPhaseAndMigratesAnOlderBacklog() throws {
+    let f = try Fixture(); defer { f.clean() }
+    var receipts: [CollaborationReceipt] = []
+    for value in 1...137 { receipts.append(try f.set(value)) }
+    let first = try f.store.acknowledgeReceivedActions(deviceID: f.device)
+    #expect(first.processed == 64 && first.published == 64 && first.hasMore)
+    let reopened = NotebookStore(root: f.store.root)
+    let second = try reopened.acknowledgeReceivedActions(deviceID: f.device)
+    let third = try reopened.acknowledgeReceivedActions(deviceID: f.device)
+    #expect(second.processed == 64 && second.hasMore)
+    #expect(third.processed == 10 && !third.hasMore)
+    for receipt in receipts { #expect(try f.receipt(receipt).actionVersion == receipt.deliveryVersion()) }
+    let cursor = try reopened.currentChangeCursor()
+    try reopened.commandTransaction(advancesReadRevision: false) {
+      try reopened.currentSQL!.run("DROP INDEX action_pending_arrivals")
+      try reopened.currentSQL!.run("ALTER TABLE action_read_models DROP COLUMN arrival_receipt_hash")
+      try reopened.currentSQL!.run("PRAGMA user_version=23")
+    }
+    let migrated = NotebookStore(root: f.store.root)
+    var processed = 0
+    while true {
+      let batch = try migrated.acknowledgeReceivedActions(deviceID: f.device)
+      #expect(batch.processed <= 64 && batch.published == 0)
+      processed += batch.processed
+      if !batch.hasMore { break }
+    }
+    #expect(try processed == 138 && migrated.currentChangeCursor() == cursor)
+    let undo = try migrated.undoCollaborationAction(receipts[0].id, actor: f.actor)
+    let next = try migrated.acknowledgeReceivedActions(deviceID: f.device)
+    #expect(next.processed == 1 && next.published == 1 && !next.hasMore)
+    #expect(try f.receipt(undo).actionVersion == undo.deliveryVersion())
+  }
+
+  @Test(arguments: [71, 1_000])
+  func pendingBacklogRestartsAtTheExactCommittedBatchAndRetriesAtomically(count: Int) throws {
+    enum Rollback: Error { case interrupted }
+    let f = try Fixture(); defer { f.clean() }
+    let template = try f.set(0)
+    while try f.store.acknowledgeReceivedActions(deviceID: f.device).hasMore {}
+    var versions: [UUID: String] = [:]
+    // These are valid immutable no-op receipts, admitted by the real fragment
+    // writer. Every one remains pending; no delivery or progress is seeded.
+    try f.store.commandTransaction {
+      for position in 0..<count {
+        let id = UUID(), action = CollaborationAction(id: id, summary: template.action.summary,
+          expected: template.action.expected, operations: template.action.operations)
+        let receipt = CollaborationReceipt(id: id, action: action,
+          createdAt: template.createdAt.addingTimeInterval(Double(position)),
+          revisions: template.revisions, changes: template.changes)
+        let fragment = try #require(NotebookRecordCodec.encode(.encode(receipt),
+          file: "collaboration/actions/" + id.uuidString.lowercased() + ".json").first)
+        try f.store.writeFragment(fragment, database: f.store.currentSQL!)
+        versions[id] = try receipt.deliveryVersion()
+      }
+    }
+    let before = try f.store.currentChangeCursor(), ids = Array(versions.keys)
+    #expect(throws: Rollback.self) {
+      try f.store.commandTransaction {
+        let interrupted = try f.store.acknowledgeReceivedActions(deviceID: f.device)
+        #expect(interrupted.processed == 64 && interrupted.published == 64 && interrupted.hasMore)
+        throw Rollback.interrupted
+      }
+    }
+    #expect(try f.store.currentChangeCursor() == before)
+    #expect(try f.store.deviceActionReceipts(actionIDs: Array(ids.prefix(128))).isEmpty)
+    var store = NotebookStore(root: f.store.root), processed = 0, batches = 0
+    while processed < count {
+      let batch = try store.acknowledgeReceivedActions(deviceID: f.device)
+      #expect(batch.processed == min(64, count - processed) && batch.published == batch.processed)
+      processed += batch.processed; batches += 1
+      #expect(batch.hasMore == (processed < count))
+      // Close the logical owner after its first successful commit. The next
+      // admission must continue from SQLite, not an in-memory watermark.
+      if batches == 1 { store = NotebookStore(root: f.store.root) }
+    }
+    for offset in stride(from: 0, to: ids.count, by: 128) {
+      let page = Array(ids[offset..<min(ids.count, offset + 128)])
+      let receipts = try store.deviceActionReceipts(actionIDs: page)
+      #expect(receipts.count == page.count)
+      for receipt in receipts { #expect(receipt.actionVersion == versions[receipt.id]) }
+    }
+    let cursor = try store.currentChangeCursor()
+    let retry = try NotebookStore(root: f.store.root).acknowledgeReceivedActions(deviceID: f.device)
+    #expect(retry.processed == 0 && retry.published == 0 && !retry.hasMore)
+    #expect(try store.currentChangeCursor() == cursor)
+    #expect(batches == (count + 63) / 64)
+    print("ACTION_ARRIVAL_BACKLOG pending=\(count) processed=\(processed) batches=\(batches) interrupted_batch=64 restart_after=64 retry_published=\(retry.published)")
+  }
+
+  @Test func aPendingArrivalSeeksPastOneHundredThousandAlreadyAdmittedReceipts() throws {
+    let f = try Fixture(); defer { f.clean() }
+    let template = try f.set(0)
+    while try f.store.acknowledgeReceivedActions(deviceID: f.device).hasMore {}
+    let start = ContinuousClock.now
+    // Valid immutable no-op receipts pass through the ordinary fragment/index
+    // writer. Only the local admission marker is populated directly: this test
+    // exercises arrival lookup, not 100000 redundant receipt publications.
+    try f.store.commandTransaction {
+      for position in 0..<100_000 {
+        let id = UUID(), action = CollaborationAction(id: id, summary: template.action.summary,
+          expected: template.action.expected, operations: template.action.operations)
+        let receipt = CollaborationReceipt(id: id, action: action, createdAt: template.createdAt.addingTimeInterval(Double(position)),
+          revisions: template.revisions, changes: template.changes)
+        let fragment = try #require(NotebookRecordCodec.encode(.encode(receipt),
+          file: "collaboration/actions/" + id.uuidString.lowercased() + ".json").first)
+        try f.store.writeFragment(fragment, database: f.store.currentSQL!)
+      }
+      try f.store.currentSQL!.run("UPDATE action_read_models SET arrival_receipt_hash=receipt_hash")
+    }
+    let pending = try f.set(1), trace = ArrivalSQLCounter()
+    let result = try f.store.commandTransaction { () throws -> NotebookActionArrivalDrain in
+      let db = f.store.currentSQL!
+      sqlite3_trace_v2(db.handle, UInt32(SQLITE_TRACE_PROFILE), { _, pointer, raw, _ in
+        guard let pointer, let raw else { return 0 }
+        let statement = OpaquePointer(raw), sql = sqlite3_sql(statement).map { String(cString: $0) } ?? ""
+        if sql.hasPrefix("SELECT"), sql.contains("arrival_receipt_hash IS NOT") {
+          Unmanaged<ArrivalSQLCounter>.fromOpaque(pointer).takeUnretainedValue().steps += Int(sqlite3_stmt_status(statement, SQLITE_STMTSTATUS_VM_STEP, 1))
+        }
+        return 0
+      }, Unmanaged.passUnretained(trace).toOpaque())
+      defer { sqlite3_trace_v2(db.handle, 0, nil, nil) }
+      return try f.store.acknowledgeReceivedActions(deviceID: f.device)
+    }
+    #expect(result.processed == 1 && result.published == 1 && !result.hasMore)
+    #expect(try f.receipt(pending).actionVersion == pending.deliveryVersion())
+    #expect(trace.steps > 0 && trace.steps < 1_000)
+    print("ACTION_ARRIVAL_SCALE valid_receipts=100000 pending=1 lookup_vm_steps=\(trace.steps) fixture_and_probe=\(start.duration(to: .now))")
+  }
+
   @Test func originalEmptyAndUndoEmptyRequireDifferentActualArrivals() throws {
     let f = try Fixture(); defer { f.clean() }
     let initial = try f.set(0)
@@ -69,6 +199,7 @@ struct NotebookActionDeliveryPhaseTests {
     #expect(try !f.store.actionReadModels(limit: 64).contains { $0.id == original.id })
     let undo = try f.store.undoCollaborationAction(original.id, actor: f.actor)
     try f.store.acknowledgeReceivedActions(deviceID: f.device)
+    while try f.store.acknowledgeReceivedActions(deviceID: f.device).hasMore {}
     let received = try f.receipt(undo)
     #expect(received.actionVersion == (try undo.deliveryVersion()))
     #expect(received.actionVersion != old.actionVersion)
@@ -210,3 +341,5 @@ struct NotebookActionDeliveryPhaseTests {
     #expect(try f.detail(undo)["publication"]?["receivedByIPad"] == .string("confirmed"))
   }
 }
+
+private final class ArrivalSQLCounter { var steps = 0 }

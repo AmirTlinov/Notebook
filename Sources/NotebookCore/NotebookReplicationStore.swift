@@ -188,7 +188,6 @@ extension NotebookStore {
       let protected = try deliveryInputVersions(targets)
       let manifest = try validatedManifest(change)
       guard try missingBlobHashes(for: change, limit: 1).isEmpty else { throw NotebookStorageError.blobMissing(change.manifestHash) }
-      try validateIncomingPageOrderValues(manifest.pageOrderRoots)
       try installPageOrderDependencies(manifestHash: change.manifestHash)
       for root in manifest.pageOrderRoots { try database.noteOwner(.orderRoot, root) }
       try applyReplicatedContextEntries(manifestHash: change.manifestHash)
@@ -294,6 +293,7 @@ extension NotebookStore {
       // other content, then placements. A new document's spatial index needs
       // its paper header; intermediate owner mismatches cannot escape commit.
       if try hasIncoming("workspace.json") { try applyFile("workspace.json") }
+      try validateIncomingPageOrderValues(manifest.pageOrderRoots)
       guard try hasStoredValue("workspace.json") else { throw NotebookStorageError.corruptRecord("workspace") }
       var afterFile = "documents/"
       while let address = try database.rows("SELECT address FROM manifest_records WHERE manifest_hash=? AND address>? AND address<'documents0' ORDER BY address LIMIT 1",

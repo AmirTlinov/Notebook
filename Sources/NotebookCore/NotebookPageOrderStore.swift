@@ -102,6 +102,7 @@ extension NotebookStore {
             }
           })
       }
+      try database.run("INSERT OR IGNORE INTO page_order_values(hash) VALUES(?)", [.text(order.visibleRoot)])
     }
     try database.visitOwners(.pageMembership) { address in
       guard let row = try database.rows("SELECT parent,member,position FROM records WHERE address=?", [.text(address)]).first,
@@ -151,21 +152,91 @@ extension NotebookStore {
     }
   }
 
+  /// A root's uniqueness proof is distinct from a node's shape proof. A new
+  /// value compares only changed slots with an already admitted visible owner;
+  /// unchanged subtrees borrow that owner's uniqueness and membership proof.
+  func validatePageOrderValue(_ root: String, previous: String? = nil, itemID: UUID? = nil) throws {
+    let database = currentSQL!
+    if try !database.rows("SELECT 1 FROM page_order_values WHERE hash=?", [.text(root)]).isEmpty { return }
+    try database.run("CREATE TEMP TABLE IF NOT EXISTS page_order_value_changes(page TEXT PRIMARY KEY,position INTEGER NOT NULL UNIQUE)")
+    try database.run("DELETE FROM page_order_value_changes")
+    try NotebookPageOrderVector.visitChangedPages(from: previous, to: root,
+      read: { try readPageOrderNode($0) }, visit: { position, page in
+        try database.run("INSERT INTO page_order_value_changes VALUES(?,?)", [.text(page.uuidString.lowercased()), .integer(Int64(position))])
+      })
+    if let itemID, previous != nil {
+      let count = try readPageOrderNode(root).count
+      let parent = "workspace.json#/items/@" + itemID.uuidString.lowercased()
+      // A changed slot may move an old UUID only when that UUID's old slot is
+      // itself changed or removed. Otherwise it duplicates an unchanged prefix.
+      guard try database.rows("SELECT 1 FROM page_order_value_changes c JOIN records r ON r.address=?||'/pageIDs/@'||c.page WHERE r.position<? AND NOT EXISTS(SELECT 1 FROM page_order_value_changes p WHERE p.position=r.position) LIMIT 1", [.text(parent), .integer(Int64(count))]).isEmpty else {
+        throw NotebookStorageError.invalidTransaction("duplicate page order identity")
+      }
+    }
+    try database.run("DELETE FROM page_order_value_changes")
+    try database.run("INSERT OR IGNORE INTO page_order_values(hash) VALUES(?)", [.text(root)])
+  }
+
   func validateIncomingPageOrderValues(_ roots: [String]) throws {
-    var cache: [String: NotebookPageOrderNode] = [:], bytes = 0, work = 0
-    func read(_ hash: String) throws -> NotebookPageOrderNode {
-      if let node = cache[hash] { return node }
-      let node = try readPageOrderNode(hash)
-      bytes += try node.canonicalData().count
-      guard cache.count < 131_072, bytes <= 64 * 1024 * 1024 else { throw NotebookStorageError.limitExceeded("page_order_admission_nodes") }
-      cache[hash] = node; return node
+    for root in Set(roots) { try validatePageOrderValue(root) }
+  }
+
+  /// The authored winning vector is already the normal form when it names
+  /// exactly the surviving membership. Only genuinely concurrent additions or
+  /// removals require the pure union/order policy to construct a new vector.
+  func normalizeReplicatedPageOrder(_ inputs: [NotebookPageOrderRegister], itemID: UUID,
+    previousRoot: String?) throws -> NotebookPageOrderRegister {
+    let database = currentSQL!, parent = "workspace.json#/items/@" + itemID.uuidString.lowercased()
+    let heads = try NotebookPageOrderRegister.frontier(inputs.flatMap(\.heads))
+    let selected = NotebookPageOrderRegister(heads: heads, visibleRoot: inputs[0].visibleRoot)
+    let preferred = selected.winner.valueRoot, count = try readPageOrderNode(preferred).count
+    var matches = try count == pageCount(in: itemID)
+    try database.run("CREATE TEMP TABLE IF NOT EXISTS page_order_positions(page TEXT PRIMARY KEY,position INTEGER NOT NULL)")
+    try database.run("DELETE FROM page_order_positions")
+    if matches {
+      try NotebookPageOrderVector.visitChangedPages(from: previousRoot, to: preferred,
+        read: { try readPageOrderNode($0) }, visit: { position, page in
+          let id = page.uuidString.lowercased()
+          if try database.rows("SELECT 1 FROM records WHERE address=?", [.text(parent + "/pageIDs/@" + id)]).isEmpty { matches = false }
+          try database.run("INSERT INTO page_order_positions VALUES(?,?)", [.text(id), .integer(Int64(position))])
+        })
+      // The count plus changed-slot proof is complete unless a removed old
+      // member still occupies an unchanged slot of the preferred vector.
+      try database.visitOwners(.pageMembership) { address in
+        guard matches, address.hasPrefix(parent + "/pageIDs/@"),
+          try database.rows("SELECT 1 FROM records WHERE address=?", [.text(address)]).isEmpty,
+          let old = try database.rows("SELECT position FROM replication_page_memberships WHERE address=?", [.text(address)]).first?[0].integer else { return }
+        if try NotebookPageOrderVector.pageID(at: Int(old), in: preferred, read: { try readPageOrderNode($0) })?.uuidString.lowercased() == String(address.dropFirst((parent + "/pageIDs/@").count)) { matches = false }
+      }
     }
-    for root in Set(roots) {
-      let count = try read(root).count
-      guard count <= 4_000_000 - work else { throw NotebookStorageError.limitExceeded("page_order_admission_work") }
-      work += count
-      _ = try NotebookPageOrderVector.materialize(root, read: read)
+    let normalized: NotebookPageOrderRegister
+    if matches {
+      normalized = .init(heads: heads, visibleRoot: preferred)
+    } else {
+      let members = try database.rows("SELECT member FROM records WHERE parent=? AND collection='pageIDs'", [.text(parent)]).compactMap { $0[0].text.flatMap(UUID.init(uuidString:)) }
+      let result = try NotebookPageOrderRegister.normalize(inputs, live: Set(members), validatedRoots: Set(inputs.flatMap { $0.heads.map(\.valueRoot) }),
+        read: { try readPageOrderNode($0) }, write: { try writePageOrderNode($0) })
+      normalized = result.register
+      try database.run("DELETE FROM page_order_positions")
+      try NotebookPageOrderVector.visitChangedPages(from: previousRoot, to: normalized.visibleRoot,
+        read: { try readPageOrderNode($0) }, visit: { position, page in
+          try database.run("INSERT INTO page_order_positions VALUES(?,?)", [.text(page.uuidString.lowercased()), .integer(Int64(position))])
+        })
     }
+    var after = ""
+    while true {
+      let rows = try database.rows("SELECT page,position FROM page_order_positions WHERE page>? ORDER BY page LIMIT 64", [.text(after)])
+      guard let last = rows.last?[0].text else { break }
+      for row in rows {
+        let address = parent + "/pageIDs/@" + row[0].text!
+        guard let member = try storedFragments(address: address, descendants: false).first else { throw NotebookStorageError.corruptRecord(address) }
+        let position = Int(row[1].integer!)
+        if member.position != position { try writeFragment(member.replacing(value: member.value, position: position), database: database) }
+      }
+      after = last
+    }
+    try database.run("DELETE FROM page_order_positions")
+    return normalized
   }
 
   func installPageOrderDependencies(manifestHash: String) throws {

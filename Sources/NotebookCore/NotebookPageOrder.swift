@@ -97,7 +97,7 @@ struct NotebookPageOrderRegister: Codable, Equatable, Sendable {
 
   /// This is the one pure order policy used by snapshots and SQL replication.
   /// The vector normal form makes equivalent merges share one content root.
-  static func normalize(_ inputs: [Self], live: Set<UUID>,
+  static func normalize(_ inputs: [Self], live: Set<UUID>, validatedRoots: Set<String> = [],
     read: (String) throws -> NotebookPageOrderNode,
     write: (NotebookPageOrderNode) throws -> String) throws -> (register: Self, pages: [UUID]) {
     guard !inputs.isEmpty, !live.isEmpty, live.count <= NotebookPageOrderVector.maximumPages else {
@@ -118,6 +118,7 @@ struct NotebookPageOrderRegister: Codable, Equatable, Sendable {
     }
     var preferred: [UUID] = [], validated = Set<String>()
     for head in heads where validated.insert(head.valueRoot).inserted {
+      if validatedRoots.contains(head.valueRoot), head.valueRoot != provisional.winner.valueRoot { continue }
       let count = try checkedRead(head.valueRoot).count
       guard count <= 4_000_000 - visits else { throw NotebookStorageError.limitExceeded("page_order_merge_work") }
       visits += count

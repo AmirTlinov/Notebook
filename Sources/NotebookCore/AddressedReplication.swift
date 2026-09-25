@@ -72,7 +72,7 @@ struct NotebookIncomingRecords {
   }
 
   func validateFieldCount(parent: String, collection: String, maximum: Int = CollaborativeContent.maximumFieldCount) throws {
-    let count = try database.rows("SELECT count(*) FROM records WHERE parent=? AND collection=?", [.text(parent), .text(collection)]).first![0].integer!
+    let count = try database.rows("SELECT count FROM causal_field_counts WHERE parent=? AND collection=?", [.text(parent), .text(collection)]).first?[0].integer ?? 0
     guard count <= maximum else { throw NotebookStorageError.limitExceeded("causal_fields") }
   }
 

@@ -147,6 +147,13 @@ The same Core delivery admission classifies a returning known transaction:
 it still validates and commits its peer cursor, but does not schedule another
 scene/history read when no new content was published.
 
+Action arrival has its own exact pending-phase index, not the most recent history
+page. Each Core writer command processes at most 64 receipts and returns whether
+more remain; the matching device receipt and processed receipt hash commit together.
+A changed phase re-enters this index. Migration admits the old backlog without
+inventing display evidence, and a new installation does not inherit local arrival
+marks. Failure rolls back both receipt publication and its processed marker.
+
 Incoming merge protects the native contact's actual page/board/cover material
 and placement (or document content/state), using the existing canonical identity.
 A conflicting merge rolls back content and cursor together and resumes after the
@@ -182,6 +189,15 @@ not. Responses are routed to the same trusted peer and connection generation.
 LAN, bounded Apple peer-to-peer discovery and relay belong to the same
 `NearbySync` owner. See [agent runtime](agent-runtime-contract.md) and
 [remote work](codex-remote-work.md).
+
+File uploads retain the existing 6 MiB payload and 48 KiB chunk limits. Storage
+allocates one `zeroblob(total)` and writes only the admitted chunk through SQLite's
+incremental BLOB API; `received` advances in the same transaction after closing the
+blob handle. An exact retry compares only its saved byte range, while gaps and
+changed bytes fail. Final decoding requires `received == total` and the original
+digest. Local database admission preserves an older upload's prefix, progress,
+author and identity while allocating its remainder; these local indexes and upload
+changes neither repeat ink-format conversion nor advance the shared delivery floor.
 
 ## Local Mac IPC
 

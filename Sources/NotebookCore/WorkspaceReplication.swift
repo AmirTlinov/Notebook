@@ -128,24 +128,7 @@ extension NotebookStore {
             guard !hasPages, !hasPageOrder else { throw NotebookStorageError.invalidTransaction("non-notebook pages") }
             continue
           }
-          let beforePages = try database.rows("SELECT member,position FROM records WHERE parent=? AND collection='pageIDs' ORDER BY position,member", [.text(address)])
-          var candidatePages = Dictionary(uniqueKeysWithValues: beforePages.map { ($0[0].text!, Int($0[1].integer!)) })
-          try incoming.visit(from: pagePrefix, to: address + "/pageIDs0") { pageAddress in
-            let pageID = String(pageAddress.dropFirst(pagePrefix.count))
-            guard let page = UUID(uuidString: pageID), page.uuidString.lowercased() == pageID else { throw NotebookStorageError.invalidTransaction("page membership identity") }
-            let previous = try incoming.previous(pageAddress), delivered = try incoming.candidate(pageAddress)
-            if let delivered {
-              guard delivered.parent == address, delivered.collection == "pageIDs", delivered.member == pageID,
-                delivered.value.string?.lowercased() == pageID, delivered.collections.isEmpty else { throw NotebookStorageError.corruptRecord(pageAddress) }
-            }
-            candidatePages[pageID] = delivered?.position
-            let key = fieldKey(["items", id, "pageIDs", pageID])
-            let exists = try resolve(key, .bool(previous != nil), .bool(delivered != nil)) == .bool(true)
-            if exists {
-              guard let value = previous ?? delivered else { throw NotebookStorageError.corruptRecord(pageAddress) }
-              try writeFragment(value, database: database)
-            } else { try removeFragment(pageAddress, database: database) }
-          }
+          let previousOrder = try incoming.previous(orderAddress)?.value.decode(NotebookPageOrderRegister.self)
           guard let orderRow = try incoming.candidate(orderAddress) else { throw NotebookStorageError.invalidTransaction("missing authored page order") }
           let candidateOrder = try orderRow.value.decode(NotebookPageOrderRegister.self)
           try candidateOrder.validate()
@@ -154,26 +137,34 @@ extension NotebookStore {
             !hasPageOrder || Set(candidateOrder.heads.map(\.valueRoot) + [candidateOrder.visibleRoot]).isSubset(of: declaredOrderRoots) else {
             throw NotebookStorageError.invalidTransaction("undeclared page order dependencies")
           }
-          let expected = candidatePages.keys.sorted { candidatePages[$0] == candidatePages[$1] ? $0 < $1 : candidatePages[$0]! < candidatePages[$1]! }.compactMap(UUID.init(uuidString:))
-          // Retained local memberships may be concurrent with this sender's
-          // authored vector. The vector is a preference, not permission to
-          // delete those pages; the existing register normalizes their union.
-          let previousOrder = try incoming.previous(orderAddress)?.value.decode(NotebookPageOrderRegister.self)
-          let survivors = try database.rows("SELECT member FROM records WHERE parent=? AND collection='pageIDs'", [.text(address)]).compactMap { $0[0].text.flatMap(UUID.init(uuidString:)) }
-          let normalized = try NotebookPageOrderRegister.normalize([candidateOrder] + (previousOrder.map { [$0] } ?? []), live: Set(survivors),
-            read: { try readPageOrderNode($0) }, write: { node in
-              let hash = try node.hash
-              if try incoming.previous(root + "/pageOrderNodes/@" + hash) == nil { _ = try writePageOrderNode(node) }
-              return hash
-            })
-          for (position, page) in normalized.pages.enumerated() {
-            let row = try incoming.previous(pagePrefix + page.uuidString.lowercased())!
-            if row.position != position { try writeFragment(row.replacing(value: row.value, position: position), database: database) }
+          for value in Set(candidateOrder.heads.map(\.valueRoot) + [candidateOrder.visibleRoot]) {
+            try validatePageOrderValue(value, previous: previousOrder?.visibleRoot, itemID: previousOrder == nil ? nil : uuid)
           }
-          try writePageOrder(normalized.register, itemID: uuid)
-          try put(fieldKey(["items", id, "pageIDs"]), normalized.register.fieldVersion)
-          let newestPages = (oldStamp ?? nextStamp) > nextStamp ? beforePages.compactMap { $0[0].text.flatMap(UUID.init(uuidString:)) } : expected
-          differsFromNewest = differsFromNewest || normalized.pages != newestPages
+          try database.run("CREATE TEMP TABLE IF NOT EXISTS replication_page_memberships(address TEXT PRIMARY KEY,position INTEGER NOT NULL)")
+          try database.run("DELETE FROM replication_page_memberships")
+          try incoming.visit(from: pagePrefix, to: address + "/pageIDs0") { pageAddress in
+            let pageID = String(pageAddress.dropFirst(pagePrefix.count))
+            guard let page = UUID(uuidString: pageID), page.uuidString.lowercased() == pageID else { throw NotebookStorageError.invalidTransaction("page membership identity") }
+            let previous = try incoming.previous(pageAddress), delivered = try incoming.candidate(pageAddress)
+            if let delivered {
+              guard delivered.parent == address, delivered.collection == "pageIDs", delivered.member == pageID,
+                delivered.value.string?.lowercased() == pageID, delivered.collections.isEmpty else { throw NotebookStorageError.corruptRecord(pageAddress) }
+            }
+            if let previous { try database.run("INSERT INTO replication_page_memberships VALUES(?,?)", [.text(pageAddress), .integer(Int64(previous.position))]) }
+            let key = fieldKey(["items", id, "pageIDs", pageID])
+            let exists = try resolve(key, .bool(previous != nil), .bool(delivered != nil)) == .bool(true)
+            if exists {
+              guard let value = previous ?? delivered else { throw NotebookStorageError.corruptRecord(pageAddress) }
+              try writeFragment(value, database: database)
+            } else { try removeFragment(pageAddress, database: database) }
+          }
+          let normalized = try normalizeReplicatedPageOrder([candidateOrder] + (previousOrder.map { [$0] } ?? []),
+            itemID: uuid, previousRoot: previousOrder?.visibleRoot)
+          try writePageOrder(normalized, itemID: uuid)
+          try put(fieldKey(["items", id, "pageIDs"]), normalized.fieldVersion)
+          let newestRoot = (oldStamp ?? nextStamp) > nextStamp ? previousOrder?.visibleRoot : candidateOrder.visibleRoot
+          differsFromNewest = differsFromNewest || normalized.visibleRoot != newestRoot
+          try database.run("DELETE FROM replication_page_memberships")
         }
       }
     }

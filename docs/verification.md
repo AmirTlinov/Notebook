@@ -8570,3 +8570,20 @@ Copy в другом окне и изменение системного `change
 **138 PASS / 12 FAIL / 1 SKIP**. Два физических Metal теста были ошибочно
 выбраны неверным именем класса в skip-selector и не имеют OS timestamps
 на Simulator; остальные отказы оконных/latency-проверок остаются открыты.
+
+
+### GUI-306 — отдельный слой хранения A05/A12/A16
+
+Самостоятельный staged source от `ff0d6635`, без незавершённых native/state/scene
+изменений: **33/33 PASS**, 218.573 s, пять Core suites. Проверены точные
+миграции частичного BLOB и backlog, rollback/reopen/retry, дубликаты старого
+поддерева и конкурирующие порядки. 100 000 обработанных receipts + один pending:
+**34 SQLite VM steps**; файл 5 592 552 bytes / 114 chunks — **9 279 steps**;
+append/receive среди 100 000 страниц — **7 741 / 11 623 steps**, 13 адресов.
+
+Исполнен именно выделяемый срез: `/tmp/notebook-repair-storage-slice-source`,
+manifest `/tmp/notebook-repair-storage-slice.json`, журнал
+`/tmp/notebook-repair-storage-slice-tests.log`. Миграция 24 добавляет локальный
+прогресс и производные доказательства, не конвертирует исторические чернила.
+Native-потребитель backlog, spatial-индекс следующей миграции и общая UX-пара
+в этот коммит не входят; этот PASS не означает завершение всего ремонта.

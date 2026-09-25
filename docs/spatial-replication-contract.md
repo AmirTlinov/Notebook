@@ -41,6 +41,15 @@ Typed placement proofs and retired-page lookup are derived indexes. Rebuilding
 them preserves canonical content, UUIDs, receipts, and read/delivery cursors.
 Current wire and manifest versions are defined in the [transport contract](transport-contract.md).
 
+Page-order shape and unique-value admission are separate derived proofs. A received
+single-root append validates the changed positions against the admitted prefix,
+including a duplicate of a UUID hidden in the unchanged prefix, rather than loading
+every earlier membership. Exact storage-owned causal-field counts replace a scan
+of that same owner during admission. Concurrent union/removal still constructs its
+required ordered value; a partial membership is never declared complete. Proofs,
+counts, material and incoming cursor commit atomically. Rebuilding these local
+indexes preserves accepted content hashes, identities and replication cursors.
+
 `CollaborationContent` represents a live cut. A local/incoming cut containing a
 PAGE/document/state/board source whose owner is absent from the final catalog
 fails with `addressed_delivery_required` before content, context, or ACK publication.

@@ -11,10 +11,14 @@ private final class PageAppendSQLWork: @unchecked Sendable {
   var value: Int64 { lock.withLock { count } }
   func record(_ database: NotebookSQLConnection) {
     var total: Int64 = 0, statement = sqlite3_next_stmt(database.handle, nil)
+    var expensive: [(String, Int64)] = []
     while let current = statement {
-      total += Int64(sqlite3_stmt_status(current, SQLITE_STMTSTATUS_VM_STEP, 0))
+      let steps = Int64(sqlite3_stmt_status(current, SQLITE_STMTSTATUS_VM_STEP, 0))
+      total += steps
+      expensive.append((sqlite3_sql(current).map { String(cString: $0) } ?? "", steps))
       statement = sqlite3_next_stmt(database.handle, current)
     }
+    if total > 30_000 { print("PAGE_SQL_TOP \(expensive.sorted { $0.1 > $1.1 }.prefix(8))") }
     lock.withLock { count = total }
   }
 }
@@ -147,6 +151,20 @@ struct NotebookPageAppendTests {
       }
       #expect(try store.currentChangeCursor() == before)
       #expect(try store.loadIndex().selectedItem.pageIDs == index.selectedItem.pageIDs)
+    }
+  }
+
+  @Test func changedRightSpineCannotRepeatAnIdentityFromItsUnchangedPrefix() throws {
+    try fixture { store, actor, base in
+      try fillNotebookPages(store: store, index: base, count: 65, actor: actor)
+      let order = try store.readTransaction { _ in try store.readPageOrder(base.selectedItemID) }
+      #expect(throws: NotebookStorageError.invalidTransaction("duplicate page order identity")) {
+        try store.commandTransaction {
+          let duplicate = try NotebookPageOrderVector.append(to: order.visibleRoot, pageID: base.selectedPageID!,
+            read: { try store.readPageOrderNode($0) }, write: { try store.writePageOrderNode($0) })
+          try store.validatePageOrderValue(duplicate, previous: order.visibleRoot, itemID: base.selectedItemID)
+        }
+      }
     }
   }
 
@@ -500,26 +518,60 @@ struct NotebookPageAppendTests {
 }
 
 extension NotebookSQLScaleTests {
-  @Test func aNewSheetDoesNotReadOneHundredThousandPreviousMemberships() throws {
+  @Test func receivedAppendUsesAnAdmittedPrefix() throws { try pageAppendScale(count: 1_024) }
+  @Test func aNewSheetDoesNotReadOneHundredThousandPreviousMemberships() throws { try pageAppendScale(count: 100_000) }
+
+  private func pageAppendScale(count: Int) throws {
     let fixture = NotebookPageAppendTests()
     try fixture.fixture { store, actor, base in
-      try fillNotebookPages(store: store, index: base, count: 100_000, actor: actor)
+      try fillNotebookPages(store: store, index: base, count: count, actor: actor)
       #expect(try store.loadIndex().isValid)
       let lifecycle = try store.readTransaction { _ in
-        try store.currentSQL!.limitReads(.init(rows: 80, bytes: 32_768, valueBytes: 8_192, reason: "lifecycle_100000_pages"))
+        try store.currentSQL!.limitReads(.init(rows: 80, bytes: 32_768, valueBytes: 8_192, reason: "lifecycle_\(count)_pages"))
         return try #require(try store.readItemLifecycle(base.selectedItemID))
       }
-      #expect(lifecycle.item.pageCount == 100_000)
-      #expect(lifecycle.bodyRecordCount >= 100_000)
+      #expect(lifecycle.item.pageCount == count)
+      #expect(lifecycle.bodyRecordCount >= count)
+      let replica = NotebookStore(root: store.root.appendingPathComponent("replica")), peer = UUID()
+      try FileManager.default.createDirectory(at: replica.root, withIntermediateDirectories: true)
+      try store.readTransaction { _ in
+        let destination = try NotebookSQLConnection(url: replica.databaseURL, writable: true, create: true)
+        let backup = try #require(sqlite3_backup_init(destination.handle, "main", store.currentSQL!.handle, "main"))
+        let result = sqlite3_backup_step(backup, -1), closed = sqlite3_backup_finish(backup)
+        #expect(result == SQLITE_DONE && closed == SQLITE_OK)
+      }
+      let baseline = try store.currentChangeCursor()
+      try replica.commandTransaction(advancesReadRevision: false) {
+        try replica.currentSQL!.run("INSERT INTO peer_cursors(peer_id,direction,sequence) VALUES(?,'incoming',?)",
+          [.text(peer.uuidString.lowercased()), .integer(Int64(baseline))])
+      }
       let (intent, page) = try fixture.landing(base, actor: UUID())
       let cursor = try store.currentChangeCursor(), steps = try pageAppendSQLSteps(store: store, index: intent, page: page)
       #expect(steps > 0 && steps < 20_000)
-      #expect(try store.pageCount(in: base.selectedItemID) == 100_001)
-      #expect(try store.pageID(at: 100_000, in: base.selectedItemID) == page.id)
+      #expect(try store.pageCount(in: base.selectedItemID) == count + 1)
+      #expect(try store.pageID(at: count, in: base.selectedItemID) == page.id)
       let change = try store.readChangedAddresses(after: cursor, through: store.currentChangeCursor())
       #expect(change.addresses.count < 16)
       #expect(change.addresses.filter { $0.contains("/pageIDs/@") }.count == 1)
-      print("PAGE_APPEND_SCALE pages=100000 sql_vm_steps=\(steps) changed_addresses=\(change.addresses.count)")
+      let delivery = try #require(store.changeJournal(after: baseline).first)
+      while true {
+        let missing = try replica.missingBlobHashes(for: delivery)
+        if missing.isEmpty { break }
+        for hash in missing {
+          let size = try store.blobSize(hash: hash)
+          #expect(size <= 1_048_576)
+          try replica.stageBlob(data: store.readBlobChunk(hash: hash, offset: 0, maxBytes: 1_048_576), expectedHash: hash)
+        }
+      }
+      let work = PageAppendSQLWork()
+      let measured = NotebookStore(root: replica.root) { phase in
+        if phase == .beforeCommit, let database = replica.currentSQL { work.record(database) }
+      }
+      _ = try measured.applyRemoteChange(delivery, peerID: peer)
+      #expect(work.value > 0 && work.value < 30_000)
+      #expect(try replica.pageCount(in: base.selectedItemID) == count + 1)
+      #expect(try replica.pageID(at: count, in: base.selectedItemID) == page.id)
+      print("PAGE_APPEND_SCALE pages=\(count) sql_vm_steps=\(steps) receive_sql_vm_steps=\(work.value) changed_addresses=\(change.addresses.count)")
     }
   }
 }

@@ -404,7 +404,7 @@ extension NotebookStore {
   var currentSQL: NotebookSQLConnection? { Thread.current.threadDictionary[connectionKey] as? NotebookSQLConnection }
 
   // SQLite admission is local to this database, independently of wire and content formats.
-  static let currentDatabaseVersion: Int64 = 23
+  static let currentDatabaseVersion: Int64 = 24
 
   @discardableResult
   func prepareDatabase(initialWorkspaceID: UUID? = nil,
@@ -560,8 +560,23 @@ extension NotebookStore {
     return try NotebookSQLConnection(url: databaseURL, writable: true)
   }
 
+  private static func createCausalFieldCountIndex(_ database: NotebookSQLConnection) throws {
+    if try database.rows("SELECT 1 FROM sqlite_master WHERE type='table' AND name='causal_field_counts'").isEmpty {
+      try database.run("CREATE TABLE causal_field_counts(parent TEXT NOT NULL,collection TEXT NOT NULL,count INTEGER NOT NULL CHECK(count>=0),PRIMARY KEY(parent,collection)) WITHOUT ROWID")
+      try database.run("INSERT INTO causal_field_counts SELECT parent,collection,COUNT(*) FROM records WHERE collection IN ('collaboration/fields','board/collaboration/fields') GROUP BY parent,collection")
+    }
+    let old = "old.collection IN ('collaboration/fields','board/collaboration/fields')"
+    let new = "new.collection IN ('collaboration/fields','board/collaboration/fields')"
+    let remove = "UPDATE causal_field_counts SET count=count-1 WHERE parent=old.parent AND collection=old.collection; DELETE FROM causal_field_counts WHERE parent=old.parent AND collection=old.collection AND count=0;"
+    let insert = "INSERT INTO causal_field_counts(parent,collection,count) SELECT new.parent,new.collection,1 WHERE " + new + " ON CONFLICT(parent,collection) DO UPDATE SET count=count+1;"
+    try database.run("CREATE TRIGGER IF NOT EXISTS causal_count_insert AFTER INSERT ON records WHEN " + new + " BEGIN " + insert + " END")
+    try database.run("CREATE TRIGGER IF NOT EXISTS causal_count_delete AFTER DELETE ON records WHEN " + old + " BEGIN " + remove + " END")
+    try database.run("CREATE TRIGGER IF NOT EXISTS causal_count_update AFTER UPDATE OF parent,collection ON records WHEN old.parent IS NOT new.parent OR old.collection!=new.collection BEGIN " + remove + insert + " END")
+  }
+
   /// Called only inside the bootstrap or admission writer transaction.
   private func prepareCurrentDatabaseSchema(_ database: NotebookSQLConnection) throws {
+    try Self.createCausalFieldCountIndex(database)
     try Self.createElementGroupSpatialIndex(database)
     try database.run("CREATE INDEX IF NOT EXISTS spatial_item_order ON spatial_entries(board_id,z_index DESC,owner_id) WHERE kind='item'")
     try Self.createItemLifecycleIndex(database)
@@ -580,6 +595,12 @@ extension NotebookStore {
       try database.run("ALTER TABLE action_read_models ADD COLUMN phase_at REAL NOT NULL DEFAULT 0")
     }
     try database.run("CREATE INDEX IF NOT EXISTS action_phase_time ON action_read_models(phase_at DESC,address DESC)")
+    if try !database.rows("PRAGMA table_info(action_read_models)").contains(where: { $0[1].text == "arrival_receipt_hash" }) {
+      // NULL marks every old phase pending, including the pre-migration backlog.
+      try database.run("ALTER TABLE action_read_models ADD COLUMN arrival_receipt_hash TEXT")
+    }
+    try database.run("CREATE INDEX IF NOT EXISTS action_pending_arrivals ON action_read_models(address) WHERE arrival_receipt_hash IS NOT receipt_hash")
+    try database.run("CREATE TABLE IF NOT EXISTS page_order_values(hash TEXT PRIMARY KEY REFERENCES blobs(hash))")
     try database.run("CREATE TABLE IF NOT EXISTS file_renames(id TEXT PRIMARY KEY,request BLOB NOT NULL,identity BLOB NOT NULL,completed INTEGER NOT NULL DEFAULT 0)")
     try database.run("CREATE TABLE IF NOT EXISTS code_fragment_files(address TEXT PRIMARY KEY REFERENCES records(address) ON DELETE CASCADE,file_id TEXT NOT NULL,fragment_id TEXT NOT NULL)")
     try database.run("CREATE INDEX IF NOT EXISTS code_fragment_file ON code_fragment_files(file_id,fragment_id)")
@@ -593,7 +614,16 @@ extension NotebookStore {
     try database.run("CREATE TABLE IF NOT EXISTS file_window(id TEXT PRIMARY KEY,value BLOB NOT NULL)")
     try database.run("CREATE TABLE IF NOT EXISTS file_versions(hash TEXT PRIMARY KEY,value BLOB NOT NULL,touched REAL NOT NULL)")
     try database.run("CREATE TABLE IF NOT EXISTS file_version_files(address TEXT NOT NULL,hash TEXT NOT NULL REFERENCES file_versions(hash) ON DELETE CASCADE,PRIMARY KEY(address,hash))")
-    try database.run("CREATE TABLE IF NOT EXISTS file_uploads(id TEXT PRIMARY KEY,author TEXT NOT NULL,digest TEXT NOT NULL,total INTEGER NOT NULL,value BLOB NOT NULL,touched REAL NOT NULL)")
+    try database.run("CREATE TABLE IF NOT EXISTS file_uploads(id TEXT PRIMARY KEY,author TEXT NOT NULL,digest TEXT NOT NULL,total INTEGER NOT NULL,value BLOB NOT NULL,received INTEGER NOT NULL DEFAULT 0,touched REAL NOT NULL)")
+    if try !database.rows("PRAGMA table_info(file_uploads)").contains(where: { $0[1].text == "received" }) {
+      guard try database.rows("SELECT id FROM file_uploads WHERE total<length(value) OR total>6291456 OR total<0 LIMIT 1").isEmpty else {
+        throw NotebookStorageError.corruptRecord("file upload prefix")
+      }
+      try database.run("ALTER TABLE file_uploads ADD COLUMN received INTEGER NOT NULL DEFAULT 0")
+      // One admission transaction retains every exact prefix and its identity.
+      // Both RHS expressions read the old blob; received is not allocated size.
+      try database.run("UPDATE file_uploads SET received=length(value),value=CAST(value || zeroblob(total-length(value)) AS BLOB)")
+    }
     try database.run("CREATE TABLE IF NOT EXISTS file_commits(id TEXT PRIMARY KEY,address BLOB NOT NULL,before_hash TEXT NOT NULL,after_hash TEXT NOT NULL,result BLOB)")
     // Device-local chat delivery is deliberately absent from the shared content manifest.
     try database.run("CREATE TABLE IF NOT EXISTS chat_jobs(ordinal INTEGER PRIMARY KEY AUTOINCREMENT,id TEXT NOT NULL UNIQUE,author TEXT NOT NULL,state TEXT NOT NULL,value BLOB NOT NULL)")

@@ -72,6 +72,7 @@ extension NotebookStore {
         if try !database.rows("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", [.text(table)]).isEmpty { try database.run("DELETE FROM \(table)") }
       }
       if !preservingLocalState {
+        try database.run("UPDATE action_read_models SET arrival_receipt_hash=NULL")
         try database.run("DELETE FROM metadata WHERE key LIKE 'retired_peer:%'")
         for table in ["chat_jobs", "chat_panel", "chat_active_computer", "run_output", "project_runs", "run_commands", "file_drafts", "file_window", "file_version_files", "file_versions", "file_uploads", "file_commits", "file_renames"] { try database.run("DELETE FROM \(table)") }
       }
