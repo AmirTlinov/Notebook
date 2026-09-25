@@ -1770,8 +1770,8 @@ private struct WorkspaceSceneItem: View {
         onTransitioningChange: onPageTurnStateChange,
         onReadinessProbe:onPaperReadiness,
         notebookNavigation: model.notebookPageNavigation,
-        onWindowChange: { indices, root in
-          model.retainNotebookPageWindow(indices, in: rendered.id, root: root)
+        onWindowChange: { indices, target, root in
+          model.retainNotebookPageWindow(indices, in: rendered.id, root: root, target: target)
         }, inputGate: model.inputGate
       )
       .clipShape(

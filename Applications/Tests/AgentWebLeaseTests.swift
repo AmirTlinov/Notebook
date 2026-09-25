@@ -580,21 +580,62 @@ final class AgentWebLeaseTests: XCTestCase {
     admitted?.release()
   }
 
+  @MainActor
   func testOverlayReadinessRequiresCurrentSourceAndIgnoresPreviousSourceTeardown() {
-    let previous = element(source: "previous")
-    let current = element(source: "current")
-    var readiness = AgentOverlayReadiness()
-    readiness.record(previous, ready: true)
-    XCTAssertTrue(readiness.isReady(for: [previous]))
-    XCTAssertFalse(readiness.isReady(for: [current]), "Reusing an element ID does not confirm its new source.")
-    readiness.retain([current])
-    XCTAssertFalse(readiness.isReady(for: [current]))
+    let previous = element(source: "previous"), current = element(source: "current")
+    let readiness = AgentOverlayReadiness(), pageID = UUID(), actor = UUID()
+    var ready = false
+    func prepare(_ elements: [AgentElement], erased: Set<String> = []) {
+      _ = readiness.prepare(elements: elements, erasedIDs: erased, pageID: pageID,
+        pageSize: .init(width: 32, height: 32), drawingStamp: .init(counter: 0, actor: actor),
+        publish: { ready = $0 })
+      readiness.publish()
+    }
+    prepare([previous]); readiness.record(previous, ready: true); readiness.publish()
+    XCTAssertTrue(ready)
+    prepare([current]); XCTAssertFalse(ready, "Reusing an element ID does not confirm its new source")
+    XCTAssertFalse(readiness.record(previous, ready: true), "An old callback cannot replace the current source")
     readiness.record(current, ready: true)
-    readiness.record(previous, ready: false)
-    XCTAssertTrue(readiness.isReady(for: [current]), "An old view's teardown cannot invalidate the current raster.")
-    readiness.record(current, ready: false)
-    XCTAssertFalse(readiness.isReady(for: [current]))
-    XCTAssertTrue(readiness.isReady(for: []))
+    readiness.record(previous, ready: false); readiness.publish()
+    XCTAssertTrue(ready, "An old view's teardown cannot invalidate the current raster")
+    readiness.record(current, ready: false); readiness.publish(); XCTAssertFalse(ready)
+    prepare([current], erased: [current.id]); XCTAssertTrue(ready, "An erased source has no view to acknowledge")
+    prepare([current]); XCTAssertFalse(ready, "Undo requires the real source again")
+    prepare([]); XCTAssertTrue(ready)
+  }
+
+  @MainActor
+  func testOverlayLateReceiptsUseCurrentRequirementsAndPublisher() {
+    let source = element(source: "unchanged")
+    let graphic = AgentElement(id: "masked", kind: .nativeText, frame: source.frame, source: "text", html: "")
+    let target = InkElementTarget(elementID: graphic.id, frame: graphic.frame)
+    let sample = SpatialInkSample(point: .init(x: 16, y: 16), timeOffset: 0,
+      width: 64, opacity: 1, force: 1, azimuth: 0, altitude: 1)
+    let cut = InkElementErasure(target: target, measurements: .init([sample]))
+    let material = NotebookInkMaterialView.Content(freehand: nil, erasures: [cut], transform: nil, layout: nil)
+    let ledger = AgentOverlayReadiness(), materialID = UUID(), pageID = UUID()
+    let size = PageSize(width: 32, height: 32), stamp = VersionStamp(counter: 1, actor: UUID())
+    var oldCalls = 0, current: [Bool] = []
+    let previousID = ledger.prepare(elements: [source, graphic], materials: [graphic.id: [material]],
+      pageID: pageID, pageSize: size, drawingStamp: stamp, publish: { _ in oldCalls += 1 })
+    XCTAssertTrue(ledger.recordMaterial(graphic.id, id: materialID, content: material, ready: true))
+    // These exact operations are retained by the old rendered body's callbacks.
+    let lateSource = { if ledger.record(source, ready: true) { ledger.publish() } }
+    let lateTeardown = {
+      if ledger.recordMaterial(graphic.id, id: materialID, content: nil, ready: false) { ledger.publish() }
+    }
+    let currentID = ledger.prepare(elements: [source, graphic], erasedIDs: [graphic.id],
+      pageID: pageID, pageSize: size, drawingStamp: stamp, publish: { current.append($0) })
+    XCTAssertNotEqual(previousID, currentID, "Async absence changes requirements without changing the page stamp")
+    ledger.publish(); XCTAssertEqual(current.last, false)
+    lateSource(); XCTAssertEqual(current.last, true, "An unchanged source's only completion must not be discarded")
+    lateTeardown(); XCTAssertEqual(current.last, true, "An old mask cannot revoke the current empty material set")
+    XCTAssertEqual(oldCalls, 0, "Late receipts cannot invoke an obsolete body's publisher")
+    XCTAssertEqual(ledger.prepare(elements: [source, graphic], erasedIDs: [graphic.id],
+      pageID: pageID, pageSize: size, drawingStamp: stamp, publish: { current.append($0) }), currentID)
+    _ = ledger.prepare(elements: [source, graphic], materials: [graphic.id: [material]],
+      pageID: pageID, pageSize: size, drawingStamp: stamp, publish: { current.append($0) })
+    ledger.publish(); XCTAssertEqual(current.last, false, "Undo requires the actual restored material")
   }
 
   private func element(source: String, width: Double = 32, height: Double = 32) -> AgentElement {

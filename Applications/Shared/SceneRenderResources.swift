@@ -646,7 +646,7 @@ final class SceneRenderResources {
     return (resident, capture)
   }
 
-  nonisolated private static func mipmapSizes(width: Int, height: Int) -> [(width: Int, height: Int)] {
+  nonisolated static func mipmapSizes(width: Int, height: Int) -> [(width: Int, height: Int)] {
     var width = width, height = height, result: [(Int, Int)] = []
     while width > 1 || height > 1 {
       width = max(1, (width + 1) / 2); height = max(1, (height + 1) / 2)

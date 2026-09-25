@@ -435,6 +435,8 @@ final class SceneCompositionTests: XCTestCase {
     let address = SceneSourceAddress(plane: .board(boardID), elementID: element.id)
     try await waitUntil { coordinator.published?.sourceReceipts[address]?.hasCurrentPixels == true }
     XCTAssertFalse(try XCTUnwrap(coordinator.published).runtimeOwners.contains(address))
+    XCTAssertTrue(try XCTUnwrap(coordinator.published?.sourceRasters[address]).hasMipmaps,
+      "The native vector worker must publish its exact minification levels with the original pixels")
     try await waitUntil { resources.activeWebSurfaceCount == 0 }
     XCTAssertEqual(resources.pendingWebRequestCount, 0)
     XCTAssertLessThanOrEqual(resources.peakAccountedBytes, resources.byteLimit)

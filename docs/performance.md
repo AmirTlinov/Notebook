@@ -475,13 +475,35 @@ The image/shadow lane is separate from presentation timing. XCTest/AX transport
 watchdogs are not application latency budgets. These are blocking criteria,
 not a claim that the current application meets them.
 
-The native turn owner retains at most four stable page hosts. Two bounded sequential
-raster executors prepare passive elements, prioritizing the displayed sheet and
-requested destination. It does not wait for finger-up or for an offscreen browser
-animation frame. Current-page programs keep separate input contexts; only their
-passive neighbours share an executor. Raster readiness follows the first real
-native layout, not cache acquisition alone. Addressed page reads publish in order
-instead of repeatedly invalidating one another through a global read epoch.
+The native turn owner retains at most four stable page hosts. A released curl
+keeps its source and landing pinned; spare slots may prepare the latest accepted
+step while it lands. Repeated steps accumulate a destination, not a queue of
+obsolete full-duration animations. A new swipe during settlement stays with the
+existing admission recognizer, including its translation and release. Warm pans
+and retained cold contacts share one lift rule: travel or forward velocity accepts,
+while a reverse flick cancels. Cold reads cannot silently require a longer swipe.
+Each gesture retains its exact preparation identity through the landing even when
+a subsequent contact has already requested another leaf. A held curl keeps its original window. Superseded landings accelerate continuously from
+their current pose; none bypass the exact-pixel or OS landing receipt.
+
+The actual cold target precedes new speculative hosts, page reads and passive
+rasters. The shared scene reader borrows fresh WAL cuts after short writer fences;
+body decoding no longer occupies the accepted-write FIFO. A retry may reuse only
+its exact immutable page body, after rechecking the complete page digest, addressed
+slot, membership witness and native history. Publication adds that page's witness
+to the current catalog, never restores an old whole workspace. Withdrawn read-only
+work checks cancellation at fragment boundaries; accepted writes remain independent.
+Preparing a finite page slot rebinds the current catalog and page-owner lookups,
+not the unchanged spatial trees, graphic graphs or composition source generation.
+
+Two bounded sequential raster executors prepare passive elements. Current-page
+programs keep separate input contexts; only passive neighbours share an executor.
+Static SVG drawing and exact mipmap construction finish on the same worker before
+one admitted main-actor publication. The existing quota, crop and pixel density
+remain unchanged. Overlay receipts update a non-observable ledger against the
+current immutable requirements; they neither reconstruct every sibling's layout
+nor publish an obsolete body's requirements. Readiness follows actual native
+installation, not cache acquisition alone.
 Unchanged program checkpoints still validate storage but do not reload the scene.
 Only an active erasure or its pending handoff mounts a full-page erasure mask;
 idle neighbour pages must not allocate transparent work beneath a white mask.

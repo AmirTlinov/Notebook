@@ -675,7 +675,7 @@ final class SceneCompositionSQLTests: XCTestCase {
       try store.savePresence(closed)
       let started = try NotebookSceneState.start(store: store, actor: actor, pageSize: pageSize,
         notebookID: notebookID, pageID: pageID)
-      let refreshed = try NotebookDiskRefresh.prepare(store: store, presence: closed, receivingDeviceID: nil).scene
+      let refreshed = try NotebookDiskRefresh.prepare(store: store, presence: closed).scene
       for snapshot in [started, refreshed] {
         XCTAssertEqual(snapshot.presence.mode, .board)
         XCTAssertEqual(snapshot.presence.selectedItemID, selectedID)
@@ -689,7 +689,7 @@ final class SceneCompositionSQLTests: XCTestCase {
       let opened = SessionPresence(boardID: initial.rootBoardID, mode: selectedID == notebookID ? .page : .document,
         camera: closed.camera, viewport: viewport, focusedItemID: selectedID, openProgress: 1,
         selectedItemID: selectedID, notebookPageID: selectedPageID)
-      let openSnapshot = try NotebookDiskRefresh.prepare(store: store, presence: opened, receivingDeviceID: nil).scene
+      let openSnapshot = try NotebookDiskRefresh.prepare(store: store, presence: opened).scene
       if selectedID == notebookID { XCTAssertNotNil(openSnapshot.pages[pageID]) }
       else {
         XCTAssertEqual(openSnapshot.documents[documentID]?.blocks, document.blocks)

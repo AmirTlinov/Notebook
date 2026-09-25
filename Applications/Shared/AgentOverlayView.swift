@@ -53,6 +53,20 @@ struct AgentOverlayView: View {
         erasures:erasures[element.id] ?? [],prepares:!model.isElementErasing(element.id,on:.page(pageID))) else { return nil }
       return (element.id,value)
     })
+    // Requirements belong to this rendered tree. Image receipts only update
+    // the ledger; they must not rebuild every element's layout and erase mask.
+    let expected = Dictionary(uniqueKeysWithValues: visible.map { element in
+      (element.id, NotebookInkMaterialView.Content.required(graphic: graph.nodes[element.id]?.graphic,
+        layout: presentations[element.id] == nil ? display.layouts[element.id] : nil,
+        erasures: erasures[element.id] ?? [], appearance: appearances[element.id]))
+    })
+    let erasedIDs = Set(visible.compactMap { element -> String? in
+      appearances[element.id]?.state == .erased
+        || (erasures[element.id] ?? []).contains(where: { $0.target.wholeElement }) ? element.id : nil
+    })
+    let onReady = onRenderReady
+    let presentationID = readiness.prepare(elements: visible, materials: expected, erasedIDs: erasedIDs,
+      pageID: pageID, pageSize: pageSize, drawingStamp: page.drawingStamp, publish: onReady)
     ZStack(alignment: .topLeading) {
       ForEach(visible) { element in
         let reference = EditableElementReference.page(
@@ -89,7 +103,7 @@ struct AgentOverlayView: View {
             rasterPreparation: rasterPreparation,
             onFailure: onFailure,
             onRenderReady: { ready in
-              setElement(element, ready: ready)
+              if readiness.record(element, ready: ready) { readiness.publish() }
             },
             onState: { state in
               guard allowsInteraction, model.interactiveElementFocus == interactiveReference else { return false }
@@ -106,9 +120,8 @@ struct AgentOverlayView: View {
         )
         .erased(by:presentation == nil && !paintsGraphic ? cuts : [], appearance:presentation == nil && !paintsGraphic ? appearance : nil,transform:graph.nodes[element.id]?.graphic.transform,layout:layout)
         .environment(\.inkMaterialReadiness, .init(id:readinessID,report:{ id,content,ready in
-          var next=readiness
-          if next.recordMaterial(element.id,id:id,content:content,ready:ready) {
-            readiness=next;publishReadiness()
+          if readiness.recordMaterial(element.id,id:id,content:content,ready:ready) {
+            readiness.publish()
           }
         }))
         .offset(x: frame.x, y: frame.y)
@@ -120,67 +133,81 @@ struct AgentOverlayView: View {
     }
     .coordinateSpace(name: NotebookManipulationSpace.material)
     .frame(width:pageSize.width,height:pageSize.height,alignment:.topLeading)
-    .onAppear { publishReadiness() }
-    .onChange(of: page.elementSourceIdentity) { _, _ in
-      readiness.retain(page.elements)
-      publishReadiness()
-    }
-    .onChange(of: page.drawingStamp) { _, _ in publishReadiness() }
-    .onChange(of: pageSize) { _, _ in publishReadiness() }
+    .onChange(of: presentationID, initial: true) { _, _ in readiness.publish() }
   }
 
-
-  private func setElement(_ element: AgentElement, ready: Bool) {
-    if readiness.record(element, ready: ready) { publishReadiness() }
-  }
-
-  private func publishReadiness() {
-    let display=display,cuts=model.elementErasures(on:.page(pageID))
-    let expected=Dictionary(uniqueKeysWithValues:display.elements.map { element in
-      let graphic=display.graph.nodes[element.id]?.graphic
-      let layout=display.layouts[element.id]
-      let presentation=model.elementPresentation(.page(pageID:pageID,elementID:element.id),graph:display.graph)
-      let frame=layout?.frame ?? element.frame
-      let erasures=cuts[element.id] ?? []
-      let appearance=model.elementErasureCache.preparedAppearance(surface:.page(pageID),id:element.id,
-        graphic:graphic,layout:layout,size:presentation?.bodySize ?? .init(width:frame.width,height:frame.height),erasures:erasures)
-      return (element.id,NotebookInkMaterialView.Content.required(graphic:graphic,
-        layout:presentation == nil ? layout : nil,erasures:erasures,appearance:appearance))
-    })
-    onRenderReady(readiness.isReady(for:display.elements,materials:expected))
-  }
 }
 
 /// Readiness names the exact source and state, not just an element whose ID can
 /// survive an edit. A late teardown of the old source cannot clear its successor.
-struct AgentOverlayReadiness {
+// Receipts do not change the element tree. Mutating an observable value here
+// invalidated the entire overlay for every image, delaying the remaining images
+// and navigation behind repeated layout of the same page.
+@MainActor
+final class AgentOverlayReadiness {
+  private struct Presentation {
+    let id = UUID()
+    let elements: [String: AgentElement]
+    let materials: [String: [NotebookInkMaterialView.Content]]
+    let erasedIDs: Set<String>
+    let pageSize: PageSize
+    let pageID: UUID
+    let drawingStamp: VersionStamp
+
+    func matches(elements: [String: AgentElement], materials: [String: [NotebookInkMaterialView.Content]],
+      erasedIDs: Set<String>, pageSize: PageSize, pageID: UUID, drawingStamp: VersionStamp) -> Bool {
+      self.elements == elements && self.materials == materials && self.erasedIDs == erasedIDs
+        && self.pageSize == pageSize && self.pageID == pageID && self.drawingStamp == drawingStamp
+    }
+  }
+  private var presentation: Presentation?
+  private var publisher: ((Bool) -> Void)?
   private var sources: [String: AgentElement] = [:]
-  private var materials: [String:NotebookInkMaterialReadiness] = [:]
-  mutating func recordMaterial(_ element:String,id:UUID,content:NotebookInkMaterialView.Content?,ready:Bool) -> Bool {
-    materials[element,default:.init()].record(id,content:content,ready:ready)
+  private var materials: [String: NotebookInkMaterialReadiness] = [:]
+
+  /// Called once by body. No callback below reads the model or rebuilds layout.
+  /// The publisher captures only the parent's callbacks, never this ledger.
+  func prepare(elements: [AgentElement], materials: [String: [NotebookInkMaterialView.Content]] = [:],
+    erasedIDs: Set<String> = [], pageID: UUID, pageSize: PageSize, drawingStamp: VersionStamp,
+    publish: @escaping (Bool) -> Void) -> UUID {
+    let elements = Dictionary(elements.map { ($0.id, $0) }, uniquingKeysWith: { _, newest in newest })
+    publisher = publish
+    if let presentation, presentation.matches(elements: elements, materials: materials, erasedIDs: erasedIDs,
+      pageSize: pageSize, pageID: pageID, drawingStamp: drawingStamp) { return presentation.id }
+    let next = Presentation(elements: elements, materials: materials, erasedIDs: erasedIDs,
+      pageSize: pageSize, pageID: pageID, drawingStamp: drawingStamp)
+    presentation = next
+    sources = sources.filter { elements[$0.key] == $0.value }
+    self.materials = self.materials.filter { elements[$0.key] != nil }
+    return next.id
   }
 
-  @discardableResult mutating func record(_ element: AgentElement, ready: Bool) -> Bool {
+  func publish() {
+    guard let presentation, let publisher else { return }
+    let ready = presentation.elements.values.allSatisfy { element in
+      // A fully erased body has no source view. Undo requires its real source.
+      (presentation.erasedIDs.contains(element.id) || [.graphic,.nativeText].contains(element.kind)
+        || sources[element.id] == element)
+        && (materials[element.id] ?? .init()).isReady(for: presentation.materials[element.id] ?? [])
+    }
+    publisher(ready)
+  }
+
+  @discardableResult
+  func recordMaterial(_ element: String, id: UUID, content: NotebookInkMaterialView.Content?, ready: Bool) -> Bool {
+    guard presentation?.elements[element] != nil else { return false }
+    return materials[element, default: .init()].record(id, content: content, ready: ready)
+  }
+
+  @discardableResult
+  func record(_ element: AgentElement, ready: Bool) -> Bool {
     if ready {
-      guard sources[element.id] != element else { return false }
+      guard presentation?.elements[element.id] == element, sources[element.id] != element else { return false }
       sources[element.id] = element
     } else {
       guard sources[element.id] == element else { return false }
       sources[element.id] = nil
     }
     return true
-  }
-
-  mutating func retain(_ elements: [AgentElement]) {
-    let current = Dictionary(elements.map { ($0.id, $0) }, uniquingKeysWith: { _, newest in newest })
-    sources = sources.filter { current[$0.key] == $0.value }
-    materials = materials.filter { current[$0.key] != nil }
-  }
-
-  func isReady(for elements: [AgentElement],materials required:[String:[NotebookInkMaterialView.Content]] = [:]) -> Bool {
-    elements.allSatisfy { element in
-      ([.graphic,.nativeText].contains(element.kind) || sources[element.id] == element)
-        && (materials[element.id] ?? .init()).isReady(for:required[element.id] ?? [])
-    }
   }
 }

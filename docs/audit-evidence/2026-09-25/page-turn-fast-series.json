@@ -1,0 +1,407 @@
+{
+  "date": "2026-09-25",
+  "issue": "GUI-295",
+  "baseCommit": "2a84b64d",
+  "status": "Matched209 pair installed. Actual notebook triple-footer series FAILED fourth reverse7to4, stuck5. Dense450ms and first-frame/120Hz also remain open.",
+  "userReport": "Sequential moderately fast swipes/arrows get progressively less responsive, stall, then show the next page late.",
+  "findings": [
+    {
+      "cause": "A new swipe during an existing landing fails admission, then the dependent pan rejects motion != nil; the contact is lost rather than resumed.",
+      "baseline": "Three physical overlap regressions failed; after retaining the contact in the existing admission owner, all five cold/overlap tests passed."
+    },
+    {
+      "cause": "Every step replays another 320ms ease and prepares every intermediate page even when the latest requested destination has moved past it.",
+      "baselineFinalDelayAfter10InputsAt120ms": [
+        2915.6918750086334,
+        2772.015166672645
+      ],
+      "rejectedRateOnlyFinalDelayMs": [
+        934.0445417037699,
+        947.1907083352562,
+        907.6117916556541,
+        830.7570000179112
+      ],
+      "realCopyRateOnlyFinalDelayMs": [
+        5659.981041668216,
+        5128.9214999869
+      ],
+      "action": "One accumulated step destination; coalesce pending obsolete transitions, still animate from the exact current paper and require OS landing receipt. Retain at most four hosts."
+    },
+    {
+      "cause": "A retained speculative page keeps the global pagePreparationTail through repeated stale epoch retries, starving the demanded target even though requests are coalesced. Native read7 retried four times before requested0 was admitted.",
+      "timing": "read-priority: read7 wall2738–4319ms; SQL page decode75–95ms per attempt. Target0 read only22.6ms. Increasing worker QoS alone did not fix starvation.",
+      "action": "Pass the actual preparation target with the bounded host window; cancel speculative reads when target is cold, let their existing consumers resume behind that target. Durable FIFO and exact source validation remain."
+    },
+    {
+      "cause": "Observable value-type per-element readiness repeatedly invalidates the whole overlay while sibling raster jobs need the UI actor to finish.",
+      "timing": "raster-diagnostic: individual CG draw0.15–1.5ms; completed worker waits37–77ms to resume on main; readiness callback reconstructs whole-page requirements in2.0–2.3ms per receipt on118elements.",
+      "action": "Measure non-observable reference readiness before changing raster quality or worker capacity."
+    },
+    {
+      "cause": "Cold/busy swipe admission used distance>=44 alone; warm pan accepted a short velocity>300 flick and rejected velocity<-300 reversals. Same quick24pt swipe could be lost only while loading/settling.",
+      "action": "One lift-decision function shared by warm pan and retained cold contact. Cold recognizer measures recent80ms motion rather than discarding lift velocity; unit contact cases cover short flick, stationary short drag, reverse flick, stationary long drag in both directions.",
+      "status": "Physical focused39/39PASS; contact arithmetic test is a real recognizer fixture, not external touch-to-photon."
+    }
+  ],
+  "runs": [
+    {
+      "name": "overlap-baseline",
+      "resultBundle": "/Users/amir/.codex/worktrees/page-turn-continuity/Notebook/.build/page-turn-209-overlap-baseline/ipad.xcresult",
+      "sourceSHA256": "bc3d65c07fb201baab462907f82c75931e3b09f860e06d8279b70de0a0388cb6",
+      "passed": 2,
+      "failed": 3,
+      "skipped": 0,
+      "runtimeWarnings": [],
+      "failures": [
+        "XCTAssertEqual failed: (\"UIGestureRecognizerState(rawValue: 0)\") is not equal to (\"UIGestureRecognizerState(rawValue: 1)\") - A second physical swipe must not disappear while the earlier sheet lands",
+        "XCTAssertEqual failed: (\"UIGestureRecognizerState(rawValue: 0)\") is not equal to (\"UIGestureRecognizerState(rawValue: 1)\") - A second physical swipe must not disappear while the earlier sheet lands",
+        "XCTAssertEqual failed: (\"UIGestureRecognizerState(rawValue: 0)\") is not equal to (\"UIGestureRecognizerState(rawValue: 1)\") - A second physical swipe must not disappear while the earlier sheet lands"
+      ]
+    },
+    {
+      "name": "series-baseline",
+      "resultBundle": "/Users/amir/.codex/worktrees/page-turn-continuity/Notebook/.build/page-turn-209-series-baseline/ipad.xcresult",
+      "sourceSHA256": "c55432e2962e058e7dca7c6605c88f449e85fe3cdeaab3dadfc1b45c5f70e7b2",
+      "passed": 5,
+      "failed": 2,
+      "skipped": 0,
+      "runtimeWarnings": [],
+      "failures": [
+        "XCTAssertEqual failed: (\"14\") is not equal to (\"10\")",
+        "XCTAssertLessThanOrEqual failed: (\"2915.6918750086334\") is greater than (\"450.0\") - Later arrows cannot wait behind seconds of already obsolete full-duration animations"
+      ]
+    },
+    {
+      "name": "series-paced",
+      "resultBundle": "/Users/amir/.codex/worktrees/page-turn-continuity/Notebook/.build/page-turn-209-series-paced/ipad.xcresult",
+      "sourceSHA256": "a676ee0668d69fbc659a02d6f8f7612f81950e680866159880d68a066c48fea2",
+      "passed": 5,
+      "failed": 3,
+      "skipped": 0,
+      "runtimeWarnings": [],
+      "failures": [
+        "XCTAssertLessThanOrEqual failed: (\"5659.981041668216\") is greater than (\"450.0\")",
+        "XCTAssertLessThanOrEqual failed: (\"0.9340445417037699 seconds\") is greater than (\"0.45 seconds\") - Later arrows cannot wait behind seconds of already obsolete full-duration animations",
+        "XCTAssertLessThanOrEqual failed: (\"0.9076117916556542 seconds\") is greater than (\"0.45 seconds\") - Later arrows cannot wait behind seconds of already obsolete full-duration animations"
+      ]
+    },
+    {
+      "name": "coalesced-series",
+      "resultBundle": "/Users/amir/.codex/worktrees/page-turn-continuity/Notebook/.build/page-turn-209-coalesced-series/ipad.xcresult",
+      "sourceSHA256": "a711ffd30704919e24b4805f5d55f8e1e6e2e5a50a9df8689565c1534054bada",
+      "passed": 33,
+      "failed": 1,
+      "skipped": 0,
+      "runtimeWarnings": [],
+      "simpleArrowTailMs": [
+        353.021375,
+        319.759458
+      ],
+      "simpleSwipeTailMs": [
+        313.468,
+        248.045
+      ],
+      "realCopyTailMs": [
+        1071.03775,
+        1173.4688
+      ],
+      "scope": "All accepted steps reach the correct target; only dense copied-content tail exceeds the unchanged 450ms gate. Native timeline, not external input-to-photon.",
+      "remaining": "Dense target preparation precedes snapshot by hundreds of milliseconds. No growing host/page/raster residency observed."
+    },
+    {
+      "name": "preparation-diagnostic",
+      "sourceSHA256": "e51c3126058365dc973d321ff3b98a34bcefc8887ac9f462fc339f6ed1c5447b",
+      "resultBundle": "/Users/amir/.codex/worktrees/page-turn-continuity/Notebook/.build/page-turn-209-preparation-diagnostic/ipad.xcresult",
+      "passed": 0,
+      "failed": 2,
+      "skipped": 0,
+      "runtimeWarnings": [],
+      "failures": [
+        "XCTAssertLessThanOrEqual failed: (\"1486.1408333398867\") is greater than (\"450.0\")",
+        "XCTAssertEqual failed: (\"UIGestureRecognizerState(rawValue: 3)\") is not equal to (\"UIGestureRecognizerState(rawValue: 1)\")"
+      ],
+      "note": "Cold-series recognizer fixture synchronously replayed ended state without a UIKit run-loop reset; its state failures do not establish an application regression. Final-target assertion is still required after correcting the fixture."
+    },
+    {
+      "name": "read-priority",
+      "sourceSHA256": "5a1c5ac0ab4a9b3794ab77a09a95fb90edeb5c9a5581d5f8b07037fa2dccd5f0",
+      "resultBundle": "/Users/amir/.codex/worktrees/page-turn-continuity/Notebook/.build/page-turn-209-read-priority/ipad.xcresult",
+      "passed": 7,
+      "failed": 2,
+      "skipped": 0,
+      "runtimeWarnings": [],
+      "failures": [
+        "XCTAssertLessThanOrEqual failed: (\"1382.3942500038538\") is greater than (\"450.0\")",
+        "XCTAssertEqual failed: (\"UIGestureRecognizerState(rawValue: 3)\") is not equal to (\"UIGestureRecognizerState(rawValue: 1)\")"
+      ],
+      "note": "Cold-series recognizer fixture synchronously replayed ended state without a UIKit run-loop reset; its state failures do not establish an application regression. Final-target assertion is still required after correcting the fixture."
+    },
+    {
+      "name": "demand-priority",
+      "sourceSHA256": "4560ef4db2890afd3e83d6a38a8741b6d275168d04b51664f21fca25fa97f0ff",
+      "resultBundle": "/Users/amir/.codex/worktrees/page-turn-continuity/Notebook/.build/page-turn-209-demand-priority/ipad.xcresult",
+      "passed": 12,
+      "failed": 1,
+      "skipped": 0,
+      "runtimeWarnings": [],
+      "scope": "All six real-run-loop cold/overlap contact tests and the full addressed-page suite including100000 sheets pass. Dense copied-content tail still fails; preparation must overlap the previous animation and writer FIFO global scene refresh remains a bottleneck."
+    },
+    {
+      "name": "overlapped-preparation",
+      "resultBundle": "/Users/amir/.codex/worktrees/page-turn-continuity/Notebook/.build/page-turn-209-overlapped-preparation/ipad.xcresult",
+      "sourceSHA256": "6de2c1c99ab32fd21d2b7a68cad675f0f56de443887b3a65ab876160501e9f93",
+      "passed": 35,
+      "failed": 1,
+      "skipped": 0,
+      "runtimeWarnings": [],
+      "failures": [
+        "XCTAssertLessThanOrEqual failed: (\"1123.685874992516\") is greater than (\"450.0\")"
+      ]
+    },
+    {
+      "name": "raster-diagnostic",
+      "resultBundle": "/Users/amir/.codex/worktrees/page-turn-continuity/Notebook/.build/page-turn-209-raster-diagnostic/ipad.xcresult",
+      "sourceSHA256": "282a858a1b4ba603ddc018ceb14522febafea42179337ca0345d5aa6f8263612",
+      "passed": 0,
+      "failed": 1,
+      "skipped": 0,
+      "runtimeWarnings": [],
+      "failures": [
+        "XCTAssertLessThanOrEqual failed: (\"1056.7650833562948\") is greater than (\"450.0\")"
+      ]
+    },
+    {
+      "name": "reference-readiness",
+      "resultBundle": "/Users/amir/.codex/worktrees/page-turn-continuity/Notebook/.build/page-turn-209-reference-readiness/ipad.xcresult",
+      "sourceSHA256": "d55b474fdf5610085429f7788fcfd4bec30e9329becfab072b394d48aae9d26e",
+      "passed": 1,
+      "failed": 1,
+      "skipped": 0,
+      "runtimeWarnings": [],
+      "failures": [
+        "XCTAssertLessThanOrEqual failed: (\"1358.873125007376\") is greater than (\"450.0\")"
+      ],
+      "interpretation": "Reference-only readiness did not resolve dense latency: repeated body read and per-receipt projection remained. Do not attribute a measured end-to-end gain to this isolated change."
+    },
+    {
+      "name": "addressed-worker",
+      "resultBundle": "/Users/amir/.codex/worktrees/page-turn-continuity/Notebook/.build/page-turn-209-addressed-worker/ipad.xcresult",
+      "sourceSHA256": "62336a3369c77f0267c5627fdce633569a006eb75dc8d6f0c253958448e6b33e",
+      "passed": 16,
+      "failed": 1,
+      "skipped": 0,
+      "runtimeWarnings": [],
+      "failures": [
+        "XCTAssertLessThanOrEqual failed: (\"1015.2892499917651\") is greater than (\"450.0\")"
+      ],
+      "interpretation": "Three actual WAL race regressions pass physically; read10 repeats only2.02/3.2ms addressed headers after297ms initial decode. Dense tail1015/596ms remains failing. Cancelled read6 still occupied reader628ms; further cancellation is required inside read-only decoding, not accepted writes."
+    },
+    {
+      "name": "cancelled-read",
+      "resultBundle": "/Users/amir/.codex/worktrees/page-turn-continuity/Notebook/.build/page-turn-209-cancelled-read/ipad.xcresult",
+      "sourceSHA256": "0e1193fc83ca7bb5f141e87bea6a354a950c16d2b2d821e00c77ea8d7a1487bc",
+      "passed": 8,
+      "failed": 1,
+      "skipped": 0,
+      "runtimeWarnings": [],
+      "denseFinalDelayMs": [
+        1081.083083,
+        589.64825
+      ],
+      "maxScheduledInputDelayMs": [
+        14.415542,
+        18.412417
+      ],
+      "storage118elements1944envelopesMs": {
+        "query": 2.252625,
+        "envelopes": 102.071417,
+        "assembly": 9.172417,
+        "encode": 20.700792,
+        "typedPage": 39.40525,
+        "validation": 0.814292
+      },
+      "note": "Withdrawn reads no longer finish decoding obsolete bodies, but overall dense450ms criterion still fails. Read cancellation never cancels an accepted writable transaction: Core25/25 PASS."
+    },
+    {
+      "name": "catalog-rebind",
+      "resultBundle": "/Users/amir/.codex/worktrees/page-turn-continuity/Notebook/.build/page-turn-209-catalog-rebind/ipad.xcresult",
+      "sourceSHA256": "0ca5c85cb4a762a97d9b1d3238703f047119326291e83e677c598f456804c00e",
+      "passed": 5,
+      "failed": 1,
+      "skipped": 0,
+      "runtimeWarnings": [],
+      "denseFinalDelayMs": [
+        906.637542,
+        417.71775
+      ],
+      "maxScheduledInputDelayMs": [
+        56.1645,
+        34.424375
+      ],
+      "rebindSeconds": {
+        "objects64": 5.833e-06,
+        "objects100000": 8.333e-06
+      },
+      "note": "All three owner/tree/composition regressions and both simple bursts pass physically. Rebinding the catalog preserves exact spatial tree and frozen owners, with no repeated plan/live_source/native_ink. Dense forward450ms still fails; reverse passes this repetition."
+    },
+    {
+      "name": "current-readiness-b",
+      "resultBundle": "/Users/amir/.codex/worktrees/page-turn-continuity/Notebook/.build/page-turn-209-current-readiness-b/ipad.xcresult",
+      "sourceSHA256": "1dd80d9dd674485fb843bab512a32cd8f5e135cb55740dee9dd6aeb955e996bb",
+      "passed": 12,
+      "failed": 2,
+      "skipped": 0,
+      "runtimeWarnings": [],
+      "failures": [
+        "XCTAssertLessThanOrEqual failed: (\"913.3984999952371\") is greater than (\"450.0\")",
+        "XCTAssertTrue failed - Zero/dropped, invalid or pre-command timestamps cannot stand in for displayed frames"
+      ],
+      "realCopyTailMs": [
+        913.391375,
+        385.275
+      ],
+      "coldFirstOSFrameMs": 132.642,
+      "warmFirstOSFrameMsRange": [
+        79.043,
+        87.016
+      ],
+      "scope": "Ledger2+cold6+burst2+dense reverse pixels+erased cold reopen passed. Strict 16.67ms first-frame/120Hz and dense450ms remain failed."
+    },
+    {
+      "name": "same-page-storage",
+      "resultBundle": "/Users/amir/.codex/worktrees/page-turn-continuity/Notebook/.build/page-turn-209-same-page-storage/ipad.xcresult",
+      "sourceSHA256": "18bdd2ff05ae29fdd8147e5551ea49e077ec61f1b3f2c83164c5f51b5fa373bc",
+      "passed": 2,
+      "failed": 1,
+      "skipped": 0,
+      "runtimeWarnings": [],
+      "failures": [
+        "XCTAssertLessThanOrEqual failed: (\"900.5418750038369\") is greater than (\"450.0\")"
+      ],
+      "realCopyTailMs": [
+        900.541875,
+        563.304583
+      ],
+      "sameTargetStorageMs": {
+        "query": 3.742333,
+        "envelopes": 123.416833,
+        "assembly": 11.309458,
+        "transientEncode": 23.623625,
+        "typedDecode": 73.561458,
+        "revalidate": 0.902667
+      },
+      "scope": "Same UUID page10,118elements,1944fragments measured after both series, no gesture prewarming. Warm diagnostic raw phases differ from actual cold read~295ms threadCPU; not proof of duplicate work."
+    },
+    {
+      "name": "clean-functional",
+      "sourceSHA256": "75486e702e6ad9450ed66c065f889df16123be802371d9ab742ff8ce54e68853",
+      "verification": "/Users/amir/.codex/worktrees/page-turn-continuity/Notebook/.build/page-turn-209-clean-functional/verification.json",
+      "corePassed": 26,
+      "ipadPassed": 75,
+      "macPassed": 10,
+      "failed": 0,
+      "skipped": 0,
+      "runtimeWarnings": [],
+      "scope": "Clean source, no private copied pages/temporary hooks. Includes2rapid-alternating cases, arrow/swipe series, exact100kgeometry, WAL races, SVG/reverse/cold erase pixels and Mac shutdown. Does not supersede dense450/first-frame negatives.",
+      "simpleSeriesTailMsRange": [
+        231.301208,
+        339.152542
+      ],
+      "alternatingTailMsMax": 414.254458,
+      "catalog100kRebindMicroseconds": 9.667
+    },
+    {
+      "name": "clean-final",
+      "sourceSHA256": "0d9e4a72d59046c9be0b8ec8aef5e8464d0395b2e9804c8308fe4cca89cda1bc",
+      "corePassed": 26,
+      "ipadPassed": 77,
+      "failed": 2,
+      "skipped": 0,
+      "failures": [
+        "XCTAssertTrue failed - UX stale-save-does-not-resurrect: correct=true, observed=105.086125 ms, ceiling=0.1 seconds; window observation, not photon timing",
+        "XCTUnwrap failed: expected non-nil value of type \"Int\""
+      ],
+      "scope": "New exact gesture preparation/cold7 and DocumentPageSelection2 passed. Legacy heading-slug fixture failed before navigation; canonical print exposes only notebook-print-page-N anchors. Erase image correct; observer105.086ms failed unchanged100ms."
+    },
+    {
+      "name": "handoff-check",
+      "sourceSHA256": "71f3baf9cef60018f8d7e291712899c625e71c5b9cbe33c7084ee0691d7450a5",
+      "verification": "/Users/amir/.codex/worktrees/page-turn-continuity/Notebook/.build/page-turn-209-handoff-check/verification.json",
+      "ipadPassed": 10,
+      "failed": 0,
+      "skipped": 0,
+      "scope": "Corrected only unrelated heading-index assumption in added WebKit handoff test; actual measured last PDF page and weak runtime/JS/identity/input/pixel contracts preserved. Erase check passed on this run, prior105ms failure remains recorded."
+    },
+    {
+      "name": "flick-check",
+      "sourceSHA256": "050c537bbfb5f60bd99d75c1b5a7468704c4858a1c579a1e3c43619ed7b9111a",
+      "verification": "/Users/amir/.codex/worktrees/page-turn-continuity/Notebook/.build/page-turn-209-flick-check/verification.json",
+      "ipadPassed": 39,
+      "failed": 0,
+      "skipped": 0,
+      "runtimeWarnings": [],
+      "scope": "Same gesture lift acceptance for cold and warm contacts; quick24point flick/stoppedshort/recentreverse/stoppedlong in both directions, cold8, released/alternating bursts, reverse pixels and full selection suite. Readiness does not impose a longer swipe."
+    }
+  ],
+  "scope": {
+    "productionDataEdited": false,
+    "privateRealCopyFixtureShipped": false,
+    "privateFixtureSetupCorrection": "First real-copy series began at its last selected index 11 because page 0 was not loaded. It created three blank pages only in the isolated test store; excluded from real-page performance. Subsequent run explicitly loads page 0 and verifies index 0 and count 12.",
+    "originalSingleTurnLatencyGateRelaxed": false,
+    "opticalInputToPhotonMeasured": false
+  },
+  "installation": {
+    "build": "209",
+    "finishedAt": "2026-09-25T21:31:55.721296+00:00",
+    "installationAttempted": true,
+    "ipadDataContainerRelocated": true,
+    "ipadInstalledBuild": "209",
+    "macDataUnchangedBeforeLaunch": true,
+    "macInstalledBuild": "209",
+    "physicalPageTurnAcceptance": "see separate XCTest evidence; not full acceptance",
+    "sourceSHA256": "050c537bbfb5f60bd99d75c1b5a7468704c4858a1c579a1e3c43619ed7b9111a",
+    "startedAt": "2026-09-25T21:31:09.617156+00:00",
+    "status": "matched-pair-launched"
+  },
+  "productionReadbackAfterInstall": {
+    "workspaceID": "54349F3B-9E0A-4DEA-B990-40CAE04EF45E",
+    "notebookID": "E04C8778-7E8D-51DD-9B72-240BB4B0AFDF",
+    "title": "Различимость",
+    "pageCount": 24,
+    "visibleRoot": "fbc05741c4091a3803c65ad227f1c20257b7d51a4b67f4d5b59ed625f9652026",
+    "sameAsBeforeInstall": true,
+    "readCursorBefore": "47370",
+    "readCursorAfter": "47375",
+    "scope": "Installed Mac helper read; not iPad pixel proof. Workspace/title/extent/root unchanged."
+  },
+  "installedUISeries": {
+    "status": "failed",
+    "build": "209",
+    "sourceSHA256": "050c537bbfb5f60bd99d75c1b5a7468704c4858a1c579a1e3c43619ed7b9111a",
+    "xcresult": "/Users/amir/.codex/worktrees/page-turn-continuity/Notebook/.build/page-turn-209-installed-fast-series/ipad.xcresult",
+    "movie": "/Users/amir/.codex/worktrees/page-turn-continuity/Notebook/.build/page-turn-209-installed-fast-series-attachments/47F61A6D-AAE9-4C9B-8771-DEAD035F3443.mp4",
+    "passedTripleRoundTrips": 3,
+    "failedRequested": {
+      "from": 7,
+      "to": 4,
+      "observed": 5,
+      "waitSeconds": 10
+    },
+    "requestedRapidStepsExecuted": 21,
+    "requestedFullRouteSteps": 100,
+    "synthesizedContactSpacingMs": 250,
+    "scope": "Actual installed app and exact24page notebook. Contacts do not prove each SwiftUI action reached controller. Failure precedes intentional recording retention; full route NOT passed."
+  },
+  "privateFooterTrace": {
+    "status": "pass-not-production-acceptance",
+    "roundTrips": 12,
+    "requestedRapidTaps": 72,
+    "fixture": "isolated12pages cycling4copieddensepages",
+    "verification": "/Users/amir/.codex/worktrees/page-turn-continuity/Notebook/.build/page-turn-209-private-footer-trace-2/verification.json",
+    "observedDeliveredActionSpacingMs": [
+      55,
+      60
+    ],
+    "scope": "All action/fence/command traces delivered; differs from installed250ms synthetic contacts. First private attempt failed beforeUI because added leafmarker exceeded12pagefixture bounds; corrected private marker to leaf%4. Source restored050c, no private content shipped."
+  }
+}

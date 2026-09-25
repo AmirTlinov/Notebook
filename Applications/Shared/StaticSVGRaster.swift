@@ -53,9 +53,16 @@ enum StaticSVGRaster {
         context.drawPDFPage(page)
         try Task.checkCancellation()
         guard let image = context.makeImage() else { throw SceneRenderError.resourceLimit }
-        return image
+        #if os(iOS)
+        let levels = try await CompositionPixels.makeMipmaps(image,
+          sizes: SceneRenderResources.mipmapSizes(width: image.width, height: image.height))
+        #else
+        let levels: [CGImage] = []
+        #endif
+        return (image, levels)
       }
-      let cg = try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
+      let result = try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
+      let cg = result.0
       try Task.checkCancellation()
       guard permitsPreparation() else { throw CancellationError() }
       if let captureRequest, captureRequest.policy != policy { continue }
@@ -64,8 +71,11 @@ enum StaticSVGRaster {
       #else
       let image = NSImage(cgImage: cg, size: crop.size)
       #endif
-      guard let raster = await resources.storeWebSnapshot(image, for: source, reservation: reservation,
-        permitsPublication: { permitsPreparation() && (captureRequest?.policy ?? initialPolicy) == policy }) else {
+      // Pixel work stays on its worker through minification. Returning to the
+      // UI between drawing and mipmaps put every dense-page element behind
+      // another layout cycle. The same reservation admits all exact levels.
+      guard let raster = resources.storeAndRetain(image, for: source, reservation: reservation,
+        mipmaps: result.1) else {
         try Task.checkCancellation()
         guard permitsPreparation() else { throw CancellationError() }
         if let captureRequest, captureRequest.policy != policy { continue }

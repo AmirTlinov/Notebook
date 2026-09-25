@@ -127,7 +127,7 @@ final class PageTurnSelectionTests: XCTestCase {
     XCTAssertEqual(commits, [1, 0])
   }
   @MainActor
-  func testRepeatedNotebookArrowsConfirmEveryAdjacentLandingWithoutChangingPresenceEarly() async throws {
+  func testRepeatedNotebookArrowsPrepareOnlyLatestTargetWithoutChangingPresenceEarly() async throws {
     let controller = IPadPageTurnController(), commands = NotebookPageNavigation(), owner = UUID()
     let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
     let previous = scene.windows.first(where: \.isKeyWindow), window = UIWindow(windowScene: scene)
@@ -152,14 +152,20 @@ final class PageTurnSelectionTests: XCTestCase {
     for _ in 0..<3 { XCTAssertTrue(commands.send(.step(1), ownerID: owner, source: "sheets")) }
     XCTAssertEqual(selected, 0, "Requested work is not a shown page")
     XCTAssertEqual(controller.displayedIndex, 0)
-    for target in 1...3 {
-      try XCTUnwrap(readiness[target])(true)
-      let deadline = ContinuousClock.now + .seconds(2)
-      while selected != target, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(8)) }
-      XCTAssertEqual(selected, target)
-      XCTAssertEqual(controller.displayedIndex, target)
+    let curl = try XCTUnwrap(controller.sheetController.view.subviews.compactMap { $0 as? SheetCurlMetalView }.first)
+    let resolve = curl.onFrameResolved
+    var showedBend = false
+    curl.onFrameResolved = { image, progress, receipt in
+      if receipt.completion.permitsProgress, progress > 0, progress < 1 { showedBend = true }
+      resolve?(image, progress, receipt)
     }
-    XCTAssertEqual(landed, [1, 2, 3], "Arrow repetition cannot silently become an unanimated distant jump")
+    try XCTUnwrap(readiness[3])(true)
+    let deadline = ContinuousClock.now + .seconds(2)
+    while selected != 3, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(8)) }
+    XCTAssertEqual(selected, 3)
+    XCTAssertEqual(controller.displayedIndex, 3)
+    XCTAssertTrue(showedBend, "A coalesced arrow destination still curls from the current paper; it is not a delayed pop")
+    XCTAssertEqual(landed, [3], "Three accepted steps select page 3 without manufacturing obsolete page 1/2 landings")
     XCTAssertEqual(controller.sheetController.view.layer.speed, 1, "The page subtree must retain the system clock")
   }
 
@@ -370,6 +376,24 @@ final class PageTurnSelectionTests: XCTestCase {
       "The immediately reachable sheet must still be ready for a real curl")
   }
 
+  @MainActor
+  func testColdStepPreparesItsPixelsBeforeMountingNewSpeculation() throws {
+    let controller = IPadPageTurnController(), owner = UUID(), commands = NotebookPageNavigation()
+    var callbacks: [Int: PageTurnReadiness] = [:]
+    controller.update(ownerID: owner, sequenceRevision: "cold-priority", pageCount: 6, selectedIndex: 0,
+      navigationIsEnabled: true, pageIsInteractive: true, canBeginNavigation: { true },
+      page: { index, _, ready in
+        callbacks[index] = ready; ready(index == 0); return AnyView(Text("Page \(index)"))
+      }, onCommit: { _, _ in }, onTransitioningChange: { _ in }, notebookNavigation: commands)
+    controller.loadViewIfNeeded()
+    XCTAssertTrue(commands.send(.step(1), ownerID: owner, source: "cold-priority"))
+    XCTAssertEqual(Set(controller.cachedPageIdentities.keys), [0, 1],
+      "Spare hosts must not start layout while the requested first frame is still cold")
+    try XCTUnwrap(callbacks[1])(true)
+    XCTAssertNotNil(controller.cachedPageIdentities[2], "Once the target has pixels, resume the ordinary neighbour window")
+    XCTAssertLessThanOrEqual(controller.cachedPageIdentities.count, 4)
+  }
+
   func testFinitePrewarmWindowRetainsExistingNearestPagesWithinFourSlots() {
     for count in 1...8 {
       for current in 0..<count {
@@ -391,6 +415,33 @@ final class PageTurnSelectionTests: XCTestCase {
       "A distant handoff keeps the source, landing and next sheet without a fifth speculative host")
     XCTAssertEqual(PageTurnPrewarmWindow.indices(displayedIndex: 7,
       anticipatedIndex: 2, lastDirection: nil, pageCount: 10, existingIndices: []), Set([1, 2, 6, 7]))
+  }
+
+  @MainActor
+  func testRapidStepsPrepareTheLatestLeafWithoutReplacingEitherMovingHost() async throws {
+    let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+    let previous = scene.windows.first(where: \.isKeyWindow), window = UIWindow(windowScene: scene)
+    let controller = IPadPageTurnController(), commands = NotebookPageNavigation(), notebook = UUID()
+    controller.update(ownerID: notebook, sequenceRevision: "burst-window", pageCount: 10, selectedIndex: 0,
+      navigationIsEnabled: true, pageIsInteractive: true, canBeginNavigation: { true },
+      page: { index, _, ready in ready(true); return AnyView(Color.white.overlay(Text("Leaf \(index)"))) },
+      onCommit: { _, _ in }, onTransitioningChange: { _ in }, notebookNavigation: commands)
+    window.rootViewController = controller; window.makeKeyAndVisible()
+    defer { controller.sheetController.cancelMotion(); window.isHidden = true; window.rootViewController = nil; previous?.makeKey() }
+    try await Task.sleep(for: .milliseconds(60))
+    XCTAssertTrue(commands.send(.step(1), ownerID: notebook, source: "burst-window"))
+    let original = controller.cachedPageIdentities
+    for target in 2...7 {
+      XCTAssertTrue(commands.send(.step(1), ownerID: notebook, source: "burst-window"))
+      XCTAssertEqual(controller.displayedIndex, 0, "The actual first landing is still pending")
+      XCTAssertEqual(controller.cachedPageIdentities[0], original[0])
+      XCTAssertEqual(controller.cachedPageIdentities[1], original[1])
+      XCTAssertNotNil(controller.cachedPageIdentities[target], "Preparation must overlap the preceding curl")
+      XCTAssertLessThanOrEqual(controller.cachedPageIdentities.count, 4)
+    }
+    let deadline = ContinuousClock.now + .seconds(2)
+    while controller.displayedIndex != 7, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(2)) }
+    XCTAssertEqual(controller.displayedIndex, 7)
   }
 
   @MainActor

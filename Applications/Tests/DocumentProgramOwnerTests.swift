@@ -879,7 +879,9 @@ final class DocumentProgramOwnerTests: XCTestCase {
     }
     try await wait(message: { fixture.diagnostics }) { fixture.ready[0] == true && fixture.hosts[0].isUserInteractionEnabled }
     let source = DocumentRenderRegistry.shared.session(documentID: document.id, resources: fixture.resources).source(document)
-    let destination = try XCTUnwrap(source.layout?.anchorPages["far"])
+    // Canonical print pages own their measured extent; this handoff test does
+    // not depend on the former browser Markdown heading-slug index.
+    let destination = try XCTUnwrap(source.layout).pageCount - 1
     XCTAssertGreaterThan(destination, 1)
     fixture.showPages(current: 0, neighbour: destination)
     phase = "distant-preparation"

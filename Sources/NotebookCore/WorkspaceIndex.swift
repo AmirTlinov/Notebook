@@ -128,6 +128,20 @@ public struct WorkspaceIndex: Codable, Equatable, Sendable {
     precondition(isValid)
   }
 
+  /// Whether these finite views have the same canonical catalog and differ
+  /// at most in prepared notebook slots. The causal order frontier, first
+  /// sheet and all other item values remain exact dependencies.
+  public func hasSameCatalogExceptPreparedPages(as other: Self) -> Bool {
+    guard format == other.format, rootBoardID == other.rootBoardID,
+      pageOrders == other.pageOrders, items.count == other.items.count else { return false }
+    if items == other.items { return true }
+    guard isProjection, other.isProjection else { return false }
+    return zip(items, other.items).allSatisfy { left, right in
+      left.id == right.id && left.kind == right.kind && left.title == right.title
+        && left.pageIDs.first == right.pageIDs.first
+    }
+  }
+
   /// A frozen scene replaces only already presented catalog members. Selection,
   /// causal clocks and page-address branches stay owned by the original cut.
   public func projecting(items: [WorkspaceItem]) -> Self {
@@ -384,6 +398,28 @@ public struct WorkspaceIndex: Codable, Equatable, Sendable {
     guard let order = pageOrders[itemID.uuidString.lowercased()],
       let root = pageOrderNodes[order.visibleRoot] else { return nil }
     return (order.visibleRoot, root.count)
+  }
+
+  /// Admit only the prepared page's membership witness into the current view.
+  /// A read never replaces selection, titles or another prepared slot
+  /// with the catalog snapshot from before its asynchronous work.
+  public mutating func includePageProjection(_ source: Self, pageID: UUID, in itemID: UUID) throws {
+    guard rootBoardID == source.rootBoardID, let index = itemPositions[itemID],
+      items[index].kind == .notebook, source.item(id: itemID)?.pageIDs.contains(pageID) == true,
+      let root = notebookPageOrder(in: itemID)?.root,
+      root == source.notebookPageOrder(in: itemID)?.root,
+      let birth = source.collaboration.fields[Self.pageField(itemID, pageID)] else {
+      throw NotebookStorageError.transactionConflict
+    }
+    let included = items[index].pageIDs.contains(pageID)
+    guard included || isProjection else { throw NotebookStorageError.transactionConflict }
+    guard !included || collaboration.fields[Self.pageField(itemID, pageID)] != birth else { return }
+    if !included { items[index].pageIDs.append(pageID) }
+    var fields = collaboration.fields
+    fields[Self.pageField(itemID, pageID)] = birth
+    collaboration = .init(fields: fields)
+    // Observe the read frontier without ever restoring an older local clock.
+    observeCausalFrontier(source.stamp)
   }
 
   /// Drop prepared read members, never canonical membership. Captured writes

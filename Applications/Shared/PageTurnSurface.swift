@@ -119,11 +119,13 @@ enum PageTurnPrewarmWindow {
     anticipatedIndex: Int?,
     lastDirection: Int?,
     pageCount: Int,
-    existingIndices: Set<Int>
+    existingIndices: Set<Int>,
+    turningIndex: Int? = nil
   ) -> Set<Int> {
     guard pageCount > 0 else { return [] }
     var result = Set<Int>()
     insert(displayedIndex, pageCount: pageCount, into: &result)
+    if let turningIndex { insert(turningIndex, pageCount: pageCount, into: &result) }
 
     // The page under the hand, its landing and the page beyond the landing
     // precede speculative neighbours, including for an explicit distant jump.
@@ -233,7 +235,7 @@ struct PageTurnSurface: View {
   var documentSelection: DocumentPageNavigationRequest? = nil
   var documentNavigation: DocumentPageNavigationCallbacks? = nil
   var notebookNavigation: NotebookPageNavigation? = nil
-  var onWindowChange: @MainActor (Set<Int>, String) -> Void = { _, _ in }
+  var onWindowChange: @MainActor (Set<Int>, Int?, String) -> Void = { _, _, _ in }
   var inputGate: NotebookInputGate? = nil
 
   var body: some View {
@@ -308,7 +310,7 @@ struct PageTurnSurface: View {
     let documentSelection: DocumentPageNavigationRequest?
     let documentNavigation: DocumentPageNavigationCallbacks?
     let notebookNavigation: NotebookPageNavigation?
-    let onWindowChange: @MainActor (Set<Int>, String) -> Void
+    let onWindowChange: @MainActor (Set<Int>, Int?, String) -> Void
     let inputGate: NotebookInputGate?
 
     func makeUIViewController(context: Context) -> IPadPageTurnController {
