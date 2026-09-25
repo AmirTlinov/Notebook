@@ -17,6 +17,7 @@ extension NotebookStore {
           SELECT r.address,r.hash,length(b.data) FROM records r LEFT JOIN blobs b ON b.hash=r.hash
           WHERE r.address>=? AND r.address<? ORDER BY r.address LIMIT ?
           """, [.text(address + "/"), .text(address + "0"), .integer(Int64(maximumCount - metadata.count + 1))]) : []
+        try database.sceneReadRecorder?.records(address, descendants: descendants, rows: point + children)
         for row in point + children {
           guard let bytes = row[2].integer, bytes >= 0 else { throw NotebookStorageError.corruptRecord(row[0].text!) }
           guard metadata.count < maximumCount, bytes <= remainingBytes else {
@@ -43,10 +44,13 @@ extension NotebookStore {
     try sqlRead { database in
       // The addressed subtree drives both joins. Without CROSS JOIN, SQLite
       // can scan every record before filtering this one owner's descendants.
+      let columns = database.sceneReadRecorder == nil ? "b.data" : "r.address,r.hash,b.data"
       let query = descendants
-        ? "WITH RECURSIVE subtree(address) AS (SELECT address FROM records WHERE address=? UNION ALL SELECT r.address FROM subtree s CROSS JOIN records r ON r.parent=s.address) SELECT b.data FROM subtree s CROSS JOIN records r ON r.address=s.address CROSS JOIN blobs b ON b.hash=r.hash"
-        : "SELECT b.data FROM records r JOIN blobs b ON b.hash=r.hash WHERE r.address=?"
-      return try database.rows(query, [.text(address)]).map { try database.decodedStoredFragment(from:$0[0].blob!) }
+        ? "WITH RECURSIVE subtree(address) AS (SELECT address FROM records WHERE address=? UNION ALL SELECT r.address FROM subtree s CROSS JOIN records r ON r.parent=s.address) SELECT " + columns + " FROM subtree s CROSS JOIN records r ON r.address=s.address CROSS JOIN blobs b ON b.hash=r.hash"
+        : "SELECT " + columns + " FROM records r JOIN blobs b ON b.hash=r.hash WHERE r.address=?"
+      let rows = try database.rows(query, [.text(address)])
+      try database.sceneReadRecorder?.records(address, descendants: descendants, rows: rows)
+      return try rows.map { try database.decodedStoredFragment(from:$0.last!.blob!) }
     }
   }
 
@@ -226,14 +230,18 @@ extension NotebookStore {
       try database.run("INSERT INTO metadata_index(address,kind,context_id,created_at) VALUES(?,'context',NULL,?) ON CONFLICT(address) DO UPDATE SET created_at=MAX(created_at,excluded.created_at)", [.text(parent), .real(entry.createdAt.timeIntervalSince1970)])
     }
     if fragment.file == "spatial-ink.json", fragment.collection == "actions" {
-      if try !database.rows("SELECT 1 FROM ink_surfaces WHERE address=? LIMIT 1", [.text(fragment.address)]).isEmpty { return }
-      let action = try NotebookRecordCodec.decode(storedFragments(address: fragment.address), root: fragment.address).decode(SpatialInkAction.self)
-      try indexElementErasures(action, address:fragment.address, database:database)
-      try database.run("DELETE FROM ink_surfaces WHERE address=?", [.text(fragment.address)])
-      for surface in Set(action.spans.map(\.surface)) {
-        guard let id = surface.ownerID else { throw NotebookStorageError.corruptRecord(fragment.address) }
-        try database.run("INSERT INTO ink_surfaces(address,kind,owner_id) VALUES(?,?,?)", [.text(fragment.address), .text(surface.kind.rawValue), .text(id.uuidString.lowercased())])
+      if try !database.rows("SELECT 1 FROM ink_surfaces WHERE address=? LIMIT 1", [.text(fragment.address)]).isEmpty {
+        let active = fragment.value["isActive"] == .bool(true) ? 1 : 0
+        guard let tool = fragment.value["tool"]?.string else { throw NotebookStorageError.corruptRecord(fragment.address) }
+        // Bulk journal replacement may change a header's tool. Measurements
+        // stay immutable, but both query classifiers follow the saved header.
+        try database.run("UPDATE ink_surfaces SET active=?,tool=? WHERE address=? AND (active<>? OR tool IS NOT ?)",
+          [.integer(Int64(active)), .text(tool), .text(fragment.address), .integer(Int64(active)), .text(tool)])
+        return
       }
+      let action = try readSpatialInkAction(fragment.address)
+      try indexElementErasures(action, address: fragment.address, database: database)
+      try indexInkWindow(action, address: fragment.address, database: database)
       return
     }
     guard fragment.file == "board.json", let parent = fragment.parent,
@@ -606,20 +614,7 @@ extension NotebookStore {
       let address = "board.json#/boards/@" + key
       if try !currentSQL!.rows("SELECT 1 FROM item_owners WHERE board_id=? UNION ALL SELECT 1 FROM records WHERE parent=? AND collection='board/elements' LIMIT 1",
         [.text(key), .text(address)]).isEmpty { return true }
-      var after = ""
-      while let row = try currentSQL!.rows("""
-        SELECT s.address FROM ink_surfaces s CROSS JOIN records r ON r.address=s.address
-        CROSS JOIN blobs b ON b.hash=r.hash
-        WHERE s.kind='board' AND s.owner_id=? AND s.address>?
-          AND json_extract(CAST(b.data AS TEXT),'$.value.tool')='pen'
-          AND json_extract(CAST(b.data AS TEXT),'$.value.isActive')=1
-        ORDER BY s.address LIMIT 1
-        """, [.text(key), .text(after)]).first {
-        after = row[0].text!
-        let action = try readSpatialInkAction(after)
-        if action.spans.contains(where: { $0.surface == .board(id) && $0.samples.hasVisibleInk }) { return true }
-      }
-      return false
+      return try !currentSQL!.rows("SELECT 1 FROM ink_surfaces WHERE kind='board' AND owner_id=? AND active=1 AND tool='pen' AND has_ink=1 LIMIT 1", [.text(key)]).isEmpty
     }
   }
 

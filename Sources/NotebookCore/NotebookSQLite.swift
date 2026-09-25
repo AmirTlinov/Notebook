@@ -33,6 +33,7 @@ final class NotebookSQLConnection {
   var pendingOwnersPrepared = false
   var actionRecordCapturesPrepared = false
   var activeActionRecordCapture: NotebookActionRecordCaptureState?
+  var sceneReadRecorder: NotebookSceneReadRecorder?
   private var statements: [String: OpaquePointer] = [:]
   // Borrowed by nested addressed reads; released with this SQL snapshot.
   private var decodedInk: InkRelationDecoding?
@@ -175,13 +176,21 @@ final class NotebookSQLConnection {
   }
 
   func rows(_ sql: String, _ values: [NotebookSQLValue] = []) throws -> [[NotebookSQLValue]] {
+    var result: [[NotebookSQLValue]] = []
+    try forEachRow(sql, values) { result.append($0) }
+    return result
+  }
+
+  /// Walk one statement without retaining its result set. The same row decoder
+  /// and snapshot allowance serve both collected and streaming reads.
+  func forEachRow(_ sql: String, _ values: [NotebookSQLValue] = [],
+    _ consume: ([NotebookSQLValue]) throws -> Void) throws {
     try checkReadAllowance()
     let statement = try statement(sql, values)
     defer { sqlite3_reset(statement) }
-    var result: [[NotebookSQLValue]] = []
     while true {
       let status = sqlite3_step(statement)
-      if status == SQLITE_DONE { return result }
+      if status == SQLITE_DONE { return }
       guard status == SQLITE_ROW else { throw failure(sql) }
       try admitReadRow(statement)
       var row: [NotebookSQLValue] = []
@@ -196,7 +205,7 @@ final class NotebookSQLConnection {
         default: row.append(.null)
         }
       }
-      result.append(row)
+      try consume(row)
     }
   }
 
@@ -404,7 +413,7 @@ extension NotebookStore {
   var currentSQL: NotebookSQLConnection? { Thread.current.threadDictionary[connectionKey] as? NotebookSQLConnection }
 
   // SQLite admission is local to this database, independently of wire and content formats.
-  static let currentDatabaseVersion: Int64 = 24
+  static let currentDatabaseVersion: Int64 = 25
 
   @discardableResult
   func prepareDatabase(initialWorkspaceID: UUID? = nil,
@@ -553,6 +562,13 @@ extension NotebookStore {
         }
       }
       if admittedVersion < 20 { try admitPageInkReferenceParts(database:database) }
+      if admittedVersion < 25 {
+        var after = ""
+        while let address = try database.rows("SELECT DISTINCT address FROM ink_surfaces WHERE address>? ORDER BY address LIMIT 1", [.text(after)]).first?[0].text {
+          try indexInkWindow(readSpatialInkAction(address), address: address, database: database)
+          after = address
+        }
+      }
       try database.run("PRAGMA user_version=\(Self.currentDatabaseVersion)")
     }
     // Admission published its own command. Its pending changes, ownership
@@ -578,6 +594,7 @@ extension NotebookStore {
   private func prepareCurrentDatabaseSchema(_ database: NotebookSQLConnection) throws {
     try Self.createCausalFieldCountIndex(database)
     try Self.createElementGroupSpatialIndex(database)
+    try Self.createInkWindowIndex(database)
     try database.run("CREATE INDEX IF NOT EXISTS spatial_item_order ON spatial_entries(board_id,z_index DESC,owner_id) WHERE kind='item'")
     try Self.createItemLifecycleIndex(database)
     try Self.createPageBirthReservationIndex(database)

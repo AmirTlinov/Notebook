@@ -256,3 +256,32 @@ extension NotebookStore {
     (redo ? "native_redo:" : "native_history:") + actor.uuidString.lowercased() + ":" + domain.key
   }
 }
+
+public struct NotebookSpatialInkHistoryState: Sendable {
+  public let result: NotebookSpatialInkResult
+  public let surfaces: Set<SurfaceID>
+  public init(result: NotebookSpatialInkResult, surfaces: Set<SurfaceID>) { self.result = result; self.surfaces = surfaces }
+}
+
+extension NotebookStore {
+  /// Cold Undo/Redo retains exact gates and physical owners, never old samples.
+  public func spatialInkHistoryStates(ids: Set<UUID>) throws -> [UUID: NotebookSpatialInkHistoryState] {
+    guard ids.count <= 32_768 else { throw NotebookStorageError.limitExceeded("ink_history_headers") }
+    return try readTransaction { _ in
+      let stamp = try readSpatialInk(surfaces: []).stamp
+      var states: [UUID: NotebookSpatialInkHistoryState] = [:]
+      for id in ids {
+        let address = "spatial-ink.json#/actions/@" + id.uuidString.lowercased()
+        guard let record = try storedFragments(address: address, descendants: false).first else { continue }
+        let header = try record.value.decode(SpatialInkActionHeader.self)
+        guard header.isValid, header.id == id else { throw NotebookStorageError.corruptRecord(address) }
+        let surfaces = try currentSQL!.rows("SELECT kind,owner_id FROM ink_surfaces WHERE address=?", [.text(address)]).map { row -> SurfaceID in
+          guard let kind = row[0].text.flatMap(SurfaceKind.init(rawValue:)), let owner = row[1].text.flatMap(UUID.init(uuidString:)) else { throw NotebookStorageError.corruptRecord(address) }
+          return .init(kind: kind, ownerID: owner)
+        }
+        states[id] = .init(result: .init(actionID: id, creationStamp: header.stamp, isActive: header.isActive, stateStamp: header.stateStamp, journalStamp: stamp), surfaces: Set(surfaces))
+      }
+      return states
+    }
+  }
+}

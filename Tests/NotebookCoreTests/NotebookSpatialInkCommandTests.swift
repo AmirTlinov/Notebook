@@ -290,7 +290,13 @@ struct NotebookSpatialInkCommandTests {
 
   @Test func appendUndoAndEchoAmongOneHundredThousandOtherActionsStayAddressed() throws {
     try fixture { store, actor, header in
-      let foreign = try #require(try store.readItemHeaders(limit: 1).first?.id)
+      let before = try store.loadIndex(), treeBefore = try store.loadBoard(items: before.items), foreign = UUID()
+      var workspace = before, tree = treeBefore
+      let created = workspace.createBoard(title: "Large ink owner", actor: actor, boardID: foreign)
+      #expect(created != nil)
+      let placed = tree.createBoard(foreign, in: header.rootBoardID, near: .zero, actor: actor)
+      #expect(placed)
+      _ = try store.saveWorkspaceEdits(before: before, after: workspace, boardBefore: treeBefore, boardAfter: tree)
       let clock = VersionStamp(counter: 100_000, actor: actor)
       let firstID = UUID()
       let seedStarted = ContinuousClock.now
@@ -299,7 +305,7 @@ struct NotebookSpatialInkCommandTests {
       try store.commandTransaction {
         for position in 0..<100_000 {
           let action = SpatialInkAction(id: position == 0 ? firstID : UUID(), tool: .pen,
-            spans: [span(.cover(foreign))], stamp: .init(counter: UInt64(position + 1), actor: actor))
+            spans: [span(.board(foreign), x: position == 0 ? 2 : 10_000 + Double(position) * 20)], stamp: .init(counter: UInt64(position + 1), actor: actor))
           let rows = try NotebookRecordCodec.encode(.encode(SpatialInkJournal(actions: [action], stamp: clock)), file: "spatial-ink.json")
           for row in rows where row.parent != nil {
             try store.writeFragment(row.replacing(value: row.value, position: row.collection == "actions" ? position : 0), database: store.currentSQL!)
@@ -309,20 +315,36 @@ struct NotebookSpatialInkCommandTests {
         try store.writeFragment(root.replacing(value: root.value.setting("stamp", try .encode(clock))), database: store.currentSQL!)
       }
       print("SPATIAL_INK_SEED actions=100000 duration=\(seedStarted.duration(to: .now))")
+      let coverage = [SurfaceID.board(foreign): WorkspaceSpatialBounds(origin: .zero, width: 100, height: 100)]
+      let windowSteps = try measured(store, phase: "interaction_window") {
+        let window = try store.readSpatialInkWindow(coverage: coverage)
+        #expect(window.journal.actions.map(\.id) == [firstID])
+      }
+      let witnessSteps = try measured(store, phase: "window_hash_witness") {
+        let records = try store.readSpatialInkWindowRecords(coverage: coverage)
+        #expect(records.hashes.count == 2)
+      }
+      #expect(windowSteps < 10_000 && witnessSteps < 10_000)
+      print("SPATIAL_WINDOW_SCALE same_owner_actions=100000 decoded_actions=1 window_steps=\(windowSteps) witness_steps=\(witnessSteps)")
+      let contentSteps = try measured(store, phase: "folder_content") {
+        let present = try store.boardHasContent(foreign)
+        #expect(present)
+      }
+      #expect(contentSteps < 500)
       let addressedRead = try measured(store, phase: "descendant_read") {
         let rows = try store.storedFragments(address: actionAddress(firstID))
         #expect(Set(rows.map(\.address)) == [actionAddress(firstID), actionAddress(firstID) + "/spans"])
       }
       #expect(addressedRead < 1_000)
       let action = SpatialInkAction(tool: .pen, spans: [span(.board(header.rootBoardID))], stamp: .init(counter: 100_001, actor: actor))
-      let before = try store.currentChangeCursor()
+      let beforeAppend = try store.currentChangeCursor()
       let append = try measured(store, phase: "append") { try store.commitSpatialInk(.append(action, journalStamp: action.stamp)) }
       let undo = try measured(store, phase: "undo") { try store.commitSpatialInk(state(action, counter: 100_002)) }
       let afterUndo = try store.currentChangeCursor()
       let echo = try measured(store, phase: "echo") { try store.commitSpatialInk(.append(action, journalStamp: action.stamp)) }
       #expect(try store.currentChangeCursor() == afterUndo)
       #expect(try store.readSpatialInk(surfaces: [.board(header.rootBoardID)]).actions.map(\.id) == [action.id])
-      #expect(try store.readChangedAddresses(after: before, through: afterUndo).records.count == 3)
+      #expect(try store.readChangedAddresses(after: beforeAppend, through: afterUndo).records.count == 3)
       for count in [append, undo, echo] { #expect(count > 0 && count < 40_000) }
       print("SPATIAL_INK_SCALE foreign_actions=100000 append_steps=\(append) undo_steps=\(undo) echo_steps=\(echo)")
     }

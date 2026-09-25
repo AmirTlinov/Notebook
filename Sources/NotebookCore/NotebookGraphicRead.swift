@@ -40,14 +40,14 @@ extension NotebookStore {
   func graphicClaimants(on surface: SurfaceID, sourceInkIDs: Set<UUID>) throws -> [GraphicClaimant] {
       guard let owner = surface.ownerID else { return [] }
       let ownerKey = surface.kind.rawValue + ":" + owner.uuidString.lowercased()
-      guard try !currentSQL!.rows("SELECT 1 FROM graphic_sources WHERE owner=? LIMIT 1", [.text(ownerKey)]).isEmpty else { return [] }
       var pending = sourceInkIDs, visited = Set<UUID>(), read = Set<String>()
       var candidates: [GraphicClaimant] = []
       while !pending.isEmpty {
         let batch = Array(pending.prefix(128)); pending.subtract(batch); visited.formUnion(batch)
         let placeholders = Array(repeating: "?", count: batch.count).joined(separator: ",")
-        let rows = try currentSQL!.rows("SELECT DISTINCT address FROM graphic_sources WHERE owner=? AND stroke_id IN (\(placeholders))",
+        let rows = try currentSQL!.rows("SELECT DISTINCT address FROM graphic_sources WHERE owner=? AND stroke_id IN (\(placeholders)) ORDER BY address LIMIT 4097",
           [.text(ownerKey)] + batch.map { .text($0.uuidString.lowercased()) })
+        try currentSQL!.sceneReadRecorder?.claims(owner: ownerKey, strokes: batch, rows: rows)
         for row in rows {
           let address = row[0].text!
           guard read.insert(address).inserted else { continue }

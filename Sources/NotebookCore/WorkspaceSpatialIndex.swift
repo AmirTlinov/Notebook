@@ -116,7 +116,7 @@ public struct WorkspaceSpatialBounds: Codable, Equatable, Sendable {
         localY: maxY ? maximum.localY : other.maximum.localY))
   }
 
-  fileprivate func union(_ other: Self) -> Self {
+  func union(_ other: Self) -> Self {
     let minX = Self.compare(origin.tileX, origin.localX, other.origin.tileX, other.origin.localX) <= 0
     let minY = Self.compare(origin.tileY, origin.localY, other.origin.tileY, other.origin.localY) <= 0
     let maxX = Self.compare(maximum.tileX, maximum.localX, other.maximum.tileX, other.maximum.localX) >= 0

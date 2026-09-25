@@ -56,6 +56,28 @@ fails with `addressed_delivery_required` before content, context, or ACK publica
 Live-only publication preserves retained sources. Remote historical ink uses its
 existing merger; new local ink on a removed board is rejected.
 
+## Local scene read window
+
+`readSpatialInkWindow` reads conservative `ink_surfaces` bounds and their derived
+R-tree in one SQLite read snapshot. Accepted contacts keep their complete immutable
+spans, including pinned/off-window sources and erasers affecting moved elements.
+An expanded pen extent uses one streaming eraser query per surface; exact tiled
+intersection rejects envelope gaps before action admission or body decoding.
+This removes repeated per-pen eraser scans without a second journal or global cache.
+An envelope can still scan unrelated metadata in gaps; the 100,000-candidate test
+records that cost rather than treating a broad-phase query as exact selection.
+
+Window coverage is not ownership completeness. Exceeding the existing action or
+retained-material budget fails the read instead of publishing a partial scene.
+Undo/Redo reads addressed history headers separately from render membership.
+Record/query witnesses revalidate actual source dependencies, including changed
+membership, without using an unrelated global workspace cursor as pixel identity.
+
+Schema 25 rebuilds only the local bounds/index from accepted immutable bodies.
+It preserves content hashes, action identities, upload progress and receipt state;
+it does not repeat the historical ink-format conversion. `rows` and streaming
+`forEachRow` share the same SQLite read allowance and value decoder.
+
 ## Verification
 
 Core scenarios cover 100,000 unrelated actions, multiple manifest pages, old echo,
