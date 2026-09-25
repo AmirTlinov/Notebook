@@ -15,13 +15,21 @@ import NotebookCore
     let deadline = ContinuousClock.now + .seconds(5)
     while !owner.ready, .now < deadline { try await Task.sleep(for: .milliseconds(20)) }
     let web = try XCTUnwrap(owner.web)
-    _ = try await web.callAsyncJavaScript("await window.showMessages(json, 'first')", arguments: ["json": owner.json], in: nil, contentWorld: .page)
+    func waitFor(_ condition: String) async throws {
+      let deadline = ContinuousClock.now + .seconds(8)
+      while .now < deadline {
+        if (try? await web.evaluateJavaScript(condition)) as? Bool == true { return }
+        try await Task.sleep(for: .milliseconds(20))
+      }
+      XCTFail("Transcript did not reach \(condition)")
+    }
+    try await waitFor("!!document.querySelector('[data-item-id=m39]')")
     _ = try await web.evaluateJavaScript("scrollTo(0,document.querySelector('[data-item-id=\"m27\"]').offsetTop+12)")
     let before = try await web.evaluateJavaScript("document.querySelector('[data-item-id=\"m27\"]').getBoundingClientRect().top") as? Double
     let attachment = CodexMessage(id: "user-file", turnID: "next", clientID: nil, role: .user, text: "Добавь диктовку рядом с разговором.", attachments: ["code_image.png", "<script>bad()</script>.swift"])
     let updated = (0..<20).map(message) + latest + [attachment]
     owner.update(messages: updated, conversationID: "first")
-    _ = try await web.callAsyncJavaScript("await window.showMessages(json, 'first')", arguments: ["json": owner.json], in: nil, contentWorld: .page)
+    try await waitFor("!!document.querySelector('[data-item-id=m0]') && !!document.querySelector('[data-item-id=user-file]')")
     // Native publication and this awaited display coalesce through one renderer.
     try await Task.sleep(for: .milliseconds(100))
     let after = try await web.evaluateJavaScript("document.querySelector('[data-item-id=\"m27\"]').getBoundingClientRect().top") as? Double
@@ -30,7 +38,8 @@ import NotebookCore
     XCTAssertEqual(labels, attachment.attachments)
     let scripts = try await web.evaluateJavaScript("document.querySelectorAll('article script').length") as? Int
     XCTAssertEqual(scripts, 0)
-    _ = try await web.callAsyncJavaScript("await window.showMessages(json, 'second')", arguments: ["json": owner.json], in: nil, contentWorld: .page)
+    owner.update(messages: updated, conversationID: "second")
+    try await waitFor("Math.abs(scrollY+innerHeight-document.documentElement.scrollHeight)<2")
     let bottom = try await web.evaluateJavaScript("Math.abs(scrollY+innerHeight-document.documentElement.scrollHeight)<2") as? Bool
     XCTAssertEqual(bottom, true, "Choosing a different conversation starts at its newest message")
   }

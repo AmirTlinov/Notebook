@@ -375,15 +375,20 @@ struct NotebookChatTranscript: UIViewRepresentable {
   static func dismantleUIView(_ container: UIView, coordinator: Coordinator) { coordinator.close() }
   @MainActor final class Coordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler, UIScrollViewDelegate {
     var ready = false, closed = false
-    var json = "[]", sent: String?
-    var workJSON = "null", sentWork: String?
-    var turnStatusesJSON = "{}", sentTurnStatuses: String?
+    private struct Presentation: Equatable {
+      var messages: [CodexMessage], work: NotebookChatWorkStatus?, turnStatuses: [String: String]
+      var conversation: String, focus: String?
+    }
+    private struct Update: Encodable {
+      let reset: Bool, conversation: String, order: [String], upserts: [CodexMessage], removed: [String]
+      let work: NotebookChatWorkStatus?, turnStatuses: [String: String], focus: String?
+    }
+    private var desired = Presentation(messages: [], work: nil, turnStatuses: [:], conversation: "", focus: nil)
+    private var sent: Presentation?
+    private var publication: Task<Void, Never>?
     var web: WKWebView?
     var lease: WebSurfaceLease?
     var preparation: Task<Void, Never>?
-    var messages: [CodexMessage] = []
-    var conversationID: String?
-    var revealMessageID: String?, revealed: String?
     var canLoadEarlier = false
     var loadEarlier: () -> Void = { }
     var openLink: (URL) -> Void = { _ in }
@@ -408,30 +413,37 @@ struct NotebookChatTranscript: UIViewRepresentable {
       }
     }
     func close() {
-      closed = true; preparation?.cancel(); preparation = nil
+      closed = true; preparation?.cancel(); preparation = nil; publication?.cancel(); publication = nil
       web?.configuration.userContentController.removeScriptMessageHandler(forName: "notebookChat")
       web?.stopLoading(); web?.navigationDelegate = nil; web?.scrollView.delegate = nil; web?.removeFromSuperview(); web = nil
       lease?.release(); lease = nil
     }
     func update(messages: [CodexMessage], work: NotebookChatWorkStatus? = nil, turnStatuses: [String: String] = [:], conversationID: String? = nil, revealMessageID: String? = nil) {
-      if self.conversationID != conversationID { self.conversationID = conversationID; sent = nil; revealed = nil }
-      self.revealMessageID = revealMessageID
-      self.messages = messages
-      let encoder = JSONEncoder(); encoder.outputFormatting = .sortedKeys
-      json = (try? String(decoding: encoder.encode(messages), as: UTF8.self)) ?? "[]"
-      workJSON = (try? String(decoding: encoder.encode(work), as: UTF8.self)) ?? "null"
-      turnStatusesJSON = (try? String(decoding: encoder.encode(turnStatuses), as: UTF8.self)) ?? "{}"
+      desired = .init(messages: messages, work: work, turnStatuses: turnStatuses,
+        conversation: conversationID ?? "", focus: revealMessageID)
       if let web { publish(web) }
     }
-    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { ready = true; publish(webView) }
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { ready = true; sent = nil; publish(webView) }
     func publish(_ web: WKWebView) {
-      guard ready, !closed, sent != json || sentWork != workJSON || sentTurnStatuses != turnStatusesJSON || revealed != revealMessageID else { return }
-      sent = json; sentWork = workJSON; sentTurnStatuses = turnStatusesJSON
-      let value = json, work = workJSON, turnStatuses = turnStatusesJSON
-      let conversation = conversationID ?? ""
-      let focus = revealMessageID != revealed ? revealMessageID : nil
-      if let focus, messages.contains(where: { $0.id == focus }) { revealed = focus }
-      Task { _ = try? await web.callAsyncJavaScript("await window.showMessages(json, conversation, focus, JSON.parse(work), JSON.parse(turnStatuses))", arguments: ["json": value, "conversation": conversation, "focus": focus ?? "", "work": work, "turnStatuses": turnStatuses], in: nil, contentWorld: .page) }
+      guard ready, !closed, publication == nil, desired != sent else { return }
+      publication = Task { [weak self, weak web] in
+        guard let self, let web else { return }
+        defer { publication = nil }
+        while !closed, !Task.isCancelled, desired != sent {
+          let next = desired, reset = sent?.conversation != desired.conversation
+          let previous = reset ? [:] : Dictionary(uniqueKeysWithValues: (sent?.messages ?? []).map { ($0.id, $0) })
+          let ids = Set(next.messages.map(\.id))
+          let update = Update(reset: reset, conversation: next.conversation, order: next.messages.map(\.id),
+            upserts: next.messages.filter { previous[$0.id] != $0 }, removed: previous.keys.filter { !ids.contains($0) },
+            work: next.work, turnStatuses: next.turnStatuses, focus: reset || sent?.focus != next.focus ? next.focus : nil)
+          do {
+            let json = String(decoding: try JSONEncoder().encode(update), as: UTF8.self)
+            _ = try await web.callAsyncJavaScript("await window.updateMessages(JSON.parse(json))",
+              arguments: ["json": json], in: nil, contentWorld: .page)
+            sent = next
+          } catch { sent = nil; return }
+        }
+      }
     }
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
       guard !closed, canLoadEarlier, scrollView.isDragging || scrollView.isDecelerating,
@@ -447,7 +459,7 @@ struct NotebookChatTranscript: UIViewRepresentable {
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
       guard !closed, message.webView === web, message.frameInfo.isMainFrame,
         let body = message.body as? [String: String], body["action"] == "save",
-        let value = messages.first(where: { $0.id == body["id"] }), value.role == .assistant, value.activity == nil else { return }
+        let value = desired.messages.first(where: { $0.id == body["id"] }), value.role == .assistant, value.activity == nil else { return }
       saveExplanation(value)
     }
   }

@@ -159,3 +159,13 @@ checks. Installed-pair and physical acceptance remain separate:
 [remote work](codex-remote-work.md).
 
 Protocol reference: [OpenAI App Server](https://learn.chatgpt.com/docs/app-server).
+
+## Transcript publication
+
+The iPad transcript has one sequential publication owner. It sends changed
+messages by stable message ID, separately from turn/work status; an acknowledged
+publication becomes the basis of the next delta. Switching the conversation may
+reset the transcript. Streaming and history pagination retain the existing
+article/group nodes, the reading anchor, open work groups and unchanged text
+selection. Markdown and MathJax run only for changed message contents, never for
+a status-only update. The WebKit surface accepts only this delta route.

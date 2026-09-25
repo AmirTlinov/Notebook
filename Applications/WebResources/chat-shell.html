@@ -72,30 +72,15 @@ function workHeading(labelText,active,disclosure=true){
  if(disclosure){const arrow=document.createElementNS('http://www.w3.org/2000/svg','svg');arrow.setAttribute('viewBox','0 0 12 12');arrow.setAttribute('aria-hidden','true');arrow.classList.add('work-disclosure');arrow.innerHTML='<path d="m2 4 4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.2"/>';summary.append(arrow);}
  return summary;
 }
-let next=null,running=false,shownConversation=null;
-window.revealMessage=id=>{const item=[...document.querySelectorAll('article')].find(x=>x.dataset.itemId===id);if(item){item.querySelectorAll('details').forEach(x=>x.open=true);item.scrollIntoView({block:'start'});}};
-window.showMessages=async function(json,conversation='',focus='',work=null,turnStatuses={}){
- next={messages:JSON.parse(json),conversation,work,turnStatuses,focus:focus||(next?.conversation===conversation?next.focus:'')};if(running)return;running=true;
- try{await MathJax.startup.promise;while(next){const {messages,conversation,focus,work,turnStatuses}=next;next=null;
- const root=document.getElementById('messages'),changed=conversation!==shownConversation;shownConversation=conversation;
- const follows=changed||!root.childElementCount||scrollY+innerHeight>=document.documentElement.scrollHeight-60;
- const anchor=!changed&&[...root.querySelectorAll('article')].find(x=>{const r=x.getBoundingClientRect();return r.height>0&&r.bottom>0});
- const position=anchor?{id:anchor.dataset.itemId,top:anchor.getBoundingClientRect().top}:null;
- const expanded=new Set(changed?[]:[...root.querySelectorAll('details[open]')].map(x=>x.dataset.key));MathJax.typesetClear([root]);root.replaceChildren();
- let group=null,groupEnd=-1,activeWorkShown=false;
- for(let index=0;index<messages.length;index++){const m=messages[index];const article=document.createElement('article');article.dataset.itemId=m.id;
- if(index>groupEnd)group=null;
- if(isWorkMessage(m)&&!group){let end=index;while(end+1<messages.length&&isWorkMessage(messages[end+1])&&messages[end+1].turnID===m.turnID)end++;
-   group=document.createElement('details');group.className='work';group.dataset.key='work:'+m.id;group.open=expanded.has(group.dataset.key);groupEnd=end;
-   const items=messages.slice(index,end+1),failed=items.some(x=>['failed','declined'].includes(x.activity?.status));
-   const active=work&&work.turnID===m.turnID&&end===messages.findLastIndex(x=>isWorkMessage(x)&&x.turnID===m.turnID);
-   const count=items.filter(x=>x.activity).length,word=count%10===1&&count%100!==11?'действие':count%10>=2&&count%10<=4&&(count%100<12||count%100>14)?'действия':'действий';
-   // A tool's completion acknowledges that tool, not the containing Codex turn.
-   const status=turnStatuses[m.turnID],outcome=status==='interrupted'?'Остановлено':status==='failed'?'Есть ошибка':status==='completed'?'Выполнено':failed?'Есть ошибка':'Работа Codex';
-   const title=active?work.title:outcome+(count?' · '+count+' '+word:'');
-   group.append(workHeading(title,!!(active&&work.running)));root.append(group);if(active)activeWorkShown=true;
- }
- const destination=group||root;
+const messagesByID=new Map(),articles=new Map(),groups=new Map();
+let order=[],pending=[],rendering=null,shownConversation=null;
+window.revealMessage=id=>{const item=articles.get(id);if(item){item.querySelectorAll('details').forEach(x=>x.open=true);if(item.parentElement?.matches('details'))item.parentElement.open=true;item.scrollIntoView({block:'start'});}};
+function reconcileChildren(parent,children){
+ for(let i=0;i<children.length;i++)if(parent.children[i]!==children[i])parent.insertBefore(children[i],parent.children[i]||null);
+ while(parent.children.length>children.length)parent.lastElementChild.remove();
+}
+function renderMessage(m,expanded,article=document.createElement('article')){
+ article.replaceChildren();article.className='';delete article.dataset.kind;delete article.dataset.status;delete article.dataset.role;article.dataset.itemId=m.id;
  if(m.activity){
    article.dataset.kind='activity';article.dataset.status=m.activity.status||'';
    if(m.activity.detail){
@@ -106,18 +91,102 @@ window.showMessages=async function(json,conversation='',focus='',work=null,turnS
      const label=document.createElement('div'),text=document.createElement('span');label.className='activity-label';text.textContent=m.text;label.append(activityIcon(m.activity.kind),text);article.append(label);
    }
    if(m.isTruncated){const note=document.createElement('small');note.textContent='Показан фрагмент. Полное содержание — в Codex.';article.append(note);}
-   destination.append(article);continue;
+   return article;
  }
  if(m.phase==='commentary'&&m.role==='assistant'){
-   article.className='work-commentary';article.textContent=m.text;destination.append(article);continue;
+   article.className='work-commentary';article.textContent=m.text;return article;
  }
  article.dataset.role=m.role==='user'?'user':'assistant';const role=document.createElement('b');role.className='role';role.textContent=m.role==='user'?'Вы':'Codex';article.append(role);
- const content=document.createElement('div');content.className='content';content.innerHTML=DOMPurify.sanitize(marked.parse(m.text),{ALLOWED_URI_REGEXP:/^(?:(?:https?|mailto|notebook):|[#/]|[^a-zA-Z])/,FORBID_TAGS:['img','iframe','form','input','button','style'],FORBID_ATTR:['style']});if(m.role==='user'&&m.text.length>900){const full=document.createElement('details');full.className='long-message';full.dataset.key='message:'+m.id;full.open=expanded.has(full.dataset.key);const preview=document.createElement('summary');const previewText=document.createElement('span');previewText.textContent=m.text.slice(0,180)+'…';preview.append(activityIcon('files'),previewText);full.append(preview);while(content.firstChild)full.append(content.firstChild);content.append(full);}if(m.role==='user'&&m.attachments?.length){const list=document.createElement('div');list.className='attachments';list.setAttribute('aria-label','Прикреплённые файлы');for(const name of m.attachments){const file=document.createElement('span'),label=document.createElement('span');file.className='attachment';label.textContent=name;file.append(activityIcon(/\.(png|jpe?g|gif|webp|heic)$/i.test(name)?'image':'files'),label);list.append(file);}content.prepend(list);}article.append(content);if(m.isTruncated){const note=document.createElement('small');note.textContent='Показан фрагмент сообщения. Полный текст — в Codex.';article.append(note);}if(m.role==='assistant'){const save=document.createElement('button');save.type='button';save.className='save-answer';save.innerHTML='<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M13 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v6M7 8h8M7 12h4M18 14v8M14 18h8"/></svg>';save.setAttribute('aria-label','Сохранить ответ в заметках');save.title='Сохранить ответ в заметках';save.addEventListener('click',()=>window.webkit?.messageHandlers?.notebookChat?.postMessage({action:'save',id:m.id}));article.append(save);}root.append(article);}
- if(work&&!activeWorkShown){const status=document.createElement('div');status.className='work';status.append(workHeading(work.title,work.running,false));root.append(status);}
- await MathJax.typesetPromise([root]);
- if(focus)window.revealMessage(focus);
- else if(follows)scrollTo(0,document.documentElement.scrollHeight);
- else if(position){const anchor=[...root.querySelectorAll('article')].find(x=>x.dataset.itemId===position.id);if(anchor)scrollBy(0,anchor.getBoundingClientRect().top-position.top);}
- }}finally{running=false;}
+ const content=document.createElement('div');content.className='content';content.innerHTML=DOMPurify.sanitize(marked.parse(m.text),{ALLOWED_URI_REGEXP:/^(?:(?:https?|mailto|notebook):|[#/]|[^a-zA-Z])/,FORBID_TAGS:['img','iframe','form','input','button','style'],FORBID_ATTR:['style']});if(m.role==='user'&&m.text.length>900){const full=document.createElement('details');full.className='long-message';full.dataset.key='message:'+m.id;full.open=expanded.has(full.dataset.key);const preview=document.createElement('summary');const previewText=document.createElement('span');previewText.textContent=m.text.slice(0,180)+'…';preview.append(activityIcon('files'),previewText);full.append(preview);while(content.firstChild)full.append(content.firstChild);content.append(full);}if(m.role==='user'&&m.attachments?.length){const list=document.createElement('div');list.className='attachments';list.setAttribute('aria-label','Прикреплённые файлы');for(const name of m.attachments){const file=document.createElement('span'),label=document.createElement('span');file.className='attachment';label.textContent=name;file.append(activityIcon(/\.(png|jpe?g|gif|webp|heic)$/i.test(name)?'image':'files'),label);list.append(file);}content.prepend(list);}article.append(content);if(m.isTruncated){const note=document.createElement('small');note.textContent='Показан фрагмент сообщения. Полный текст — в Codex.';article.append(note);}if(m.role==='assistant'){const save=document.createElement('button');save.type='button';save.className='save-answer';save.innerHTML='<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M13 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v6M7 8h8M7 12h4M18 14v8M14 18h8"/></svg>';save.setAttribute('aria-label','Сохранить ответ в заметках');save.title='Сохранить ответ в заметках';save.addEventListener('click',()=>window.webkit?.messageHandlers?.notebookChat?.postMessage({action:'save',id:m.id}));article.append(save);}return article;
+}
+// Keep a human selection in a streamed message at the same rendered text offsets.
+// Unchanged messages keep their actual text nodes and need no reconstruction.
+function textSelection(dirty){
+ const selection=window.getSelection?.();if(!selection||selection.isCollapsed)return null;
+ const endpoint=(node,offset)=>{
+  const item=(node.nodeType===1?node:node.parentElement)?.closest('article');
+  if(!item)return null;
+  const content=item.querySelector('.content'),scope=content?.contains(node)?content:item;
+  const range=document.createRange();range.selectNodeContents(scope);range.setEnd(node,offset);
+  return {id:item.dataset.itemId,content:scope===content,offset:range.toString().length};
+ };
+ const anchor=endpoint(selection.anchorNode,selection.anchorOffset),focus=endpoint(selection.focusNode,selection.focusOffset);
+ return anchor&&focus&&(dirty.has(anchor.id)||dirty.has(focus.id))?{anchor,focus,text:selection.toString()}:null;
+}
+function restoreTextSelection(saved){
+ if(!saved)return;
+ const endpoint=({id,content,offset})=>{
+  const item=articles.get(id);if(!item)return null;
+  const scope=content?item.querySelector('.content'):item;if(!scope)return null;
+  const walker=document.createTreeWalker(scope,NodeFilter.SHOW_TEXT);let node;
+  while(node=walker.nextNode()){if(offset<=node.length)return [node,offset];offset-=node.length;}
+  return null;
+ };
+ const anchor=endpoint(saved.anchor),focus=endpoint(saved.focus);if(!anchor||!focus)return;
+ const selection=window.getSelection();selection.setBaseAndExtent(...anchor,...focus);
+ // A changed prefix is not the same selection: never silently select other text.
+ if(selection.toString()!==saved.text)selection.removeAllRanges();
+}
+window.updateMessages=function(update){
+ pending.push(update);
+ if(rendering)return rendering;
+ rendering=(async()=>{
+  await MathJax.startup.promise;
+  while(pending.length){
+   const root=document.getElementById('messages');
+   let changed=false,latest,dirty=new Set();
+   for(const update of pending.splice(0)){
+    if(update.reset||update.conversation!==shownConversation){
+     changed=true;shownConversation=update.conversation;messagesByID.clear();dirty.clear();
+     MathJax.typesetClear([root]);root.replaceChildren();articles.clear();groups.clear();
+    }
+    for(const id of update.removed)messagesByID.delete(id);
+    for(const m of update.upserts){messagesByID.set(m.id,m);dirty.add(m.id);}
+    order=update.order;latest=update;
+   }
+   const {focus,work,turnStatuses}=latest;
+   const messages=order.map(id=>messagesByID.get(id));
+   if(messages.some(x=>!x))throw new Error('Incomplete transcript delta');
+   const follows=changed||!root.childElementCount||scrollY+innerHeight>=document.documentElement.scrollHeight-60;
+   const anchor=!changed&&[...root.querySelectorAll('article')].find(x=>{const r=x.getBoundingClientRect();return r.height>0&&r.bottom>0});
+   const position=anchor?{id:anchor.dataset.itemId,top:anchor.getBoundingClientRect().top}:null;
+   const expanded=new Set([...root.querySelectorAll('details[open]')].map(x=>x.dataset.key));
+   const selection=changed?null:textSelection(dirty);
+   const live=new Set(order),typeset=[];
+   for(const [id,article] of articles)if(!live.has(id)){MathJax.typesetClear([article]);article.remove();articles.delete(id);}
+   for(const m of messages)if(dirty.has(m.id)||!articles.has(m.id)){
+    const old=articles.get(m.id);if(old)MathJax.typesetClear([old]);
+    const article=renderMessage(m,expanded,old);articles.set(m.id,article);
+    if(!isWorkMessage(m))typeset.push(article);
+   }
+   const children=[],usedGroups=new Set();let activeWorkShown=false;
+   for(let i=0;i<messages.length;i++){
+    const m=messages[i];
+    if(!isWorkMessage(m)){children.push(articles.get(m.id));continue;}
+    let end=i;while(end+1<messages.length&&isWorkMessage(messages[end+1])&&messages[end+1].turnID===m.turnID)end++;
+    const key='work:'+m.id;usedGroups.add(key);
+    let group=groups.get(key);
+    if(!group){group=document.createElement('details');group.className='work';group.dataset.key=key;group.open=expanded.has(key);group.append(workHeading('',false));groups.set(key,group);}
+    const items=messages.slice(i,end+1),failed=items.some(x=>['failed','declined'].includes(x.activity?.status));
+    const active=work&&work.turnID===m.turnID&&end===messages.findLastIndex(x=>isWorkMessage(x)&&x.turnID===m.turnID);
+    const count=items.filter(x=>x.activity).length,word=count%10===1&&count%100!==11?'действие':count%10>=2&&count%10<=4&&(count%100<12||count%100>14)?'действия':'действий';
+    const status=turnStatuses[m.turnID],outcome=status==='interrupted'?'Остановлено':status==='failed'?'Есть ошибка':status==='completed'?'Выполнено':failed?'Есть ошибка':'Работа Codex';
+    const title=active?work.title:outcome+(count?' · '+count+' '+word:'');
+    const label=group.firstElementChild.querySelector('.work-label');
+    if(label.textContent!==title)label.textContent=title;label.dataset.running=String(!!(active&&work.running));
+    reconcileChildren(group,[group.firstElementChild,...items.map(x=>articles.get(x.id))]);children.push(group);
+    if(active)activeWorkShown=true;i=end;
+   }
+   for(const [key,group] of groups)if(!usedGroups.has(key)){group.remove();groups.delete(key);}
+   if(work&&!activeWorkShown){const status=document.createElement('div');status.className='work';status.append(workHeading(work.title,work.running,false));children.push(status);}
+   reconcileChildren(root,children);
+   if(typeset.length)await MathJax.typesetPromise(typeset);
+   restoreTextSelection(selection);
+   if(focus)window.revealMessage(focus);
+   else if(follows)scrollTo(0,document.documentElement.scrollHeight);
+   else if(position){const anchor=articles.get(position.id);if(anchor)scrollBy(0,anchor.getBoundingClientRect().top-position.top);}
+  }
+ })().finally(()=>{rendering=null;});
+ return rendering;
 };
 </script></body></html>

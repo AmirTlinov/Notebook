@@ -8429,3 +8429,18 @@ revoke/detach, закрытие до и во время attach, поздний �
 План SQLite использует `(expanded, hash)`, суммарно **13 000 VM steps** поиска,
 повторная доставка не увеличивает число узлов. Измерение относится к очереди SQL,
 а не к сети CloudKit или полной доставке приложения.
+
+### A10 — адресные изменения чата
+
+Node-регрессия `MCP/test/chat-render.test.ts`: **1/1 PASS**. Для 128 сообщений
+дельта обрабатывает один Markdown-блок, изменение статуса — ни одного; DOM-узлы
+и раскрытая группа сохраняются. Actual macOS WebKit XCTest: **1/1 PASS**,
+`/tmp/notebook-repair-sidecar-tests/webkit.log`; проверены Markdown, MathJax,
+санитизация, детали и сохранение выделения изменяемого сообщения.
+Simulator native: `NotebookChatRenderingTests` **1/1 PASS** и
+`NotebookCodeDiscussionTests` **4/4 PASS**, включая настоящий native coordinator,
+`/tmp/notebook-repair-native-focused-1.xcresult`. Общий срез этого прогона:
+118/128 PASS; десять ошибок `DocumentProgramOwnerTests` остаются открыты и не
+относятся к результату проверки чата. После завершения тестов зависший сборщик
+`simctl diagnose` остановлен; XCTest результаты сохранены, полного sysdiagnose нет.
+Реальная потоковая беседа одновременно с рисованием ещё не принята.
