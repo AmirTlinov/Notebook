@@ -31,16 +31,29 @@ final class NotebookContextMenus: NSObject, UIPopoverPresentationControllerDeleg
   var selectionActions: ((UUID,CGPoint) -> [UIMenuElement])?
   private(set) var clipboardTask:Task<Void,Never>?
   private var clipboardCommand:UUID?
+  // The system clipboard is shared by all Notebook windows. A menu owns its
+  // presentation, but only the latest explicit export owns publication.
+  private static weak var clipboardOwner:NotebookContextMenus?
+
+  private func cancelClipboard() {
+    clipboardTask?.cancel();clipboardTask=nil;clipboardCommand=nil
+    if Self.clipboardOwner === self { Self.clipboardOwner=nil }
+  }
 
   func copySelection(_ model:NotebookAppModel,selection:UUID,cut:Bool) {
     guard model.selectionSession.id == selection else { return }
-    clipboardTask?.cancel()
+    Self.clipboardOwner?.cancelClipboard()
+    Self.clipboardOwner=self
     let command=UUID();clipboardCommand=command
+    let clipboardVersion=UIPasteboard.general.changeCount
     do {
       let snapshot=try model.clipboardSelectionSnapshot()
       clipboardTask=Task { [weak self,weak model] in
         defer {
-          if self?.clipboardCommand == command { self?.clipboardTask=nil;self?.clipboardCommand=nil }
+          if let self, clipboardCommand == command {
+            clipboardTask=nil;clipboardCommand=nil
+            if Self.clipboardOwner === self { Self.clipboardOwner=nil }
+          }
         }
         guard !Task.isCancelled else { return }
         let worker=Task.detached(priority:.userInitiated) {
@@ -49,6 +62,7 @@ final class NotebookContextMenus: NSObject, UIPopoverPresentationControllerDeleg
         do {
           let exported=try await withTaskCancellationHandler { try await worker.value } onCancel: { worker.cancel() }
           guard !Task.isCancelled,let self,let model,clipboardCommand == command else { return }
+          guard Self.clipboardOwner === self, UIPasteboard.general.changeCount == clipboardVersion else { return }
           if cut && !model.selectionStillMatches(snapshot) {
             model.showCue("Выделение изменилось. Повторите вырезание.");return
           }
@@ -59,7 +73,7 @@ final class NotebookContextMenus: NSObject, UIPopoverPresentationControllerDeleg
         }
       }
     } catch {
-      clipboardTask=nil;clipboardCommand=nil;model.showCue(error.localizedDescription)
+      cancelClipboard();model.showCue(error.localizedDescription)
     }
   }
 
@@ -130,7 +144,7 @@ final class NotebookContextMenus: NSObject, UIPopoverPresentationControllerDeleg
     dismissCurrent(); self.source = nil; anchorView = nil
   }
   func uninstall() {
-    clipboardTask?.cancel();clipboardTask=nil;clipboardCommand=nil
+    cancelClipboard()
     dismissCurrent(); source = nil; anchorView = nil; selectionActions = nil; pendingSelection = nil
     gate?.unregisterControlRegion(source:controlSource); gate = nil
   }

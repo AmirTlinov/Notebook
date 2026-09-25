@@ -56,6 +56,39 @@ import XCTest
     XCTAssertNotEqual(element.graphic?.visible,false)
   }
 
+  func testCopyInAnotherWindowRevokesTheOlderMenuExport() async throws {
+    let (model,pageID)=try await clipboardModel()
+    let first=NotebookContextMenus(),second=NotebookContextMenus(),pasteboard=UIPasteboard.general,previous=pasteboard.items
+    defer { first.uninstall();second.uninstall();pasteboard.items=previous }
+    model.selectElement(.page(pageID:pageID,elementID:"first"))
+    first.copySelection(model,selection:model.selectionSession.id,cut:false)
+    let older=try XCTUnwrap(first.clipboardTask)
+    model.selectElement(.page(pageID:pageID,elementID:"second"))
+    second.copySelection(model,selection:model.selectionSession.id,cut:false)
+    let newer=try XCTUnwrap(second.clipboardTask)
+    XCTAssertTrue(older.isCancelled,"All windows share the system clipboard, not the menu instance")
+    first.uninstall() // An old window cannot cancel the newer window's command.
+    await newer.value;await older.value
+    XCTAssertEqual(try clipboardFragment().elements.map(\.id),["second"])
+  }
+
+  func testSystemClipboardChangeRevokesPendingCutWithoutDeletingTheSelection() async throws {
+    let (model,pageID)=try await clipboardModel()
+    let menus=NotebookContextMenus(),pasteboard=UIPasteboard.general,previous=pasteboard.items
+    defer { menus.uninstall();pasteboard.items=previous }
+    model.selectElement(.page(pageID:pageID,elementID:"first"))
+    let selection=model.selectionSession.id
+    menus.copySelection(model,selection:selection,cut:true)
+    let older=try XCTUnwrap(menus.clipboardTask)
+    // UIKit text selection or another app can write without calling this menu.
+    let newer="newer-system-copy-"+UUID().uuidString
+    pasteboard.string=newer
+    await older.value
+    XCTAssertEqual(pasteboard.string,newer)
+    XCTAssertEqual(model.selectionSession.id,selection)
+    XCTAssertNotEqual(try model.store.loadPage(pageID).element(id:"first")?.graphic?.visible,false)
+  }
+
   private func clipboardModel() async throws -> (NotebookAppModel,UUID) {
     let root=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     let model=NotebookAppModel(store:.init(root:root),startsNearbySync:false)
