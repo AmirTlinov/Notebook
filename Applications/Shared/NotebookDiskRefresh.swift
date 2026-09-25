@@ -94,9 +94,8 @@ struct NotebookDiskRefresh: Sendable {
       // geometry here, not through another UI/background/UI round trip after
       // publishing the content that needs that geometry to become visible.
       let sizes = scene.paperSizes.merging(scene.documents.mapValues(\.paperSize)) { _, live in live }
-      let index = previousIndex.flatMap {
-        $0.represents(workspace: scene.workspace, hierarchy: scene.hierarchy, paperSizes: sizes) ? $0 : nil
-      } ?? WorkspaceSceneIndex(workspace: scene.workspace, hierarchy: scene.hierarchy, paperSizes: sizes)
+      let index = WorkspaceSceneIndex(workspace: scene.workspace, hierarchy: scene.hierarchy,
+        paperSizes: sizes, reusing: previousIndex)
       return try Self(scene:scene, sceneIndex: index,
         actions: actions,
         contexts: store.sharedContexts(contextID: nil, limit: 64),

@@ -218,10 +218,9 @@ public struct NotebookStore: Sendable {
     if try hasStoredValue("workspace.json"), try ownerItemID(ofPage: id) == nil {
       throw CocoaError(.fileNoSuchFile)
     }
-    let page = try decoder.decode(
-      PageDocument.self,
-      from: storedData(at: pageURL(id))
-    )
+    let data = try storedData(at: pageURL(id))
+    if currentSQL?.writable != true { try Task.checkCancellation() }
+    let page = try decoder.decode(PageDocument.self, from: data)
     guard page.id == id, page.isValid else {
       throw corruptFile(at: pageURL(id))
     }

@@ -128,6 +128,20 @@ public struct WorkspaceIndex: Codable, Equatable, Sendable {
     precondition(isValid)
   }
 
+  /// Whether these finite views have the same canonical catalog and differ
+  /// at most in prepared notebook slots. The causal order frontier, first
+  /// sheet and all other item values remain exact dependencies.
+  public func hasSameCatalogExceptPreparedPages(as other: Self) -> Bool {
+    guard format == other.format, rootBoardID == other.rootBoardID,
+      pageOrders == other.pageOrders, items.count == other.items.count else { return false }
+    if items == other.items { return true }
+    guard isProjection, other.isProjection else { return false }
+    return zip(items, other.items).allSatisfy { left, right in
+      left.id == right.id && left.kind == right.kind && left.title == right.title
+        && left.pageIDs.first == right.pageIDs.first
+    }
+  }
+
   /// A frozen scene replaces only already presented catalog members. Selection,
   /// causal clocks and page-address branches stay owned by the original cut.
   public func projecting(items: [WorkspaceItem]) -> Self {

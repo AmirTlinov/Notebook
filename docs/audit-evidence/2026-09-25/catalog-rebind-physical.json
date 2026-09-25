@@ -1,0 +1,105 @@
+{
+  "version": 1,
+  "createdAt": "2026-09-25T20:51:19.697586+00:00",
+  "base": "9f33d4b33499b35f1ae703ec561b597724bca94d",
+  "scope": "A09 finite prepared-catalog rebind, cancellation of read-only decode, one-worker static SVG mip preparation",
+  "core": {
+    "passed": 26,
+    "failed": 0,
+    "seconds": 3.517,
+    "command": [
+      "swift",
+      "test",
+      "--jobs",
+      "2",
+      "--filter",
+      "NotebookReadSessionTests|NotebookPageWindowTests|WorkspacePageOrderMutationTests"
+    ],
+    "sourceUnchanged": true,
+    "log": {
+      "path": "/tmp/notebook-repair-core-50.log",
+      "sha256": "9952709b9386ba6f6d7453c5153471169e3ee7442d0510d04651ff01c56cac93"
+    },
+    "witness": {
+      "path": "/tmp/notebook-repair-core-50-sources.json",
+      "sha256": "fa92a0614059d8acb18bbc16dfd000ac1cef6dcbf0abd47795ba26540e40b288"
+    }
+  },
+  "physical": {
+    "run": 50,
+    "passed": 40,
+    "failed": 0,
+    "skipped": 0,
+    "runtimeWarnings": [],
+    "seconds": 370.613,
+    "device": {
+      "architecture": "arm64",
+      "deviceId": "00008103-001E059934D9001E",
+      "deviceName": "iPad (Елизавета)",
+      "modelName": "iPad Pro (11-inch) (3rd generation)",
+      "osBuildNumber": "24A435",
+      "osVersion": "27.0",
+      "platform": "iOS"
+    },
+    "bundle": "com.amirtlinov.notebook.architecture-tests",
+    "configuration": "Debug, SWIFT_OPTIMIZATION_LEVEL=-O",
+    "sourceUnchanged": true,
+    "summary": {
+      "path": "/tmp/notebook-repair-native-cover-50-summary.json",
+      "sha256": "5a5f5f1f519bc23fd44fc701ca9b145b874dcabc26455f52a6e237591528ee35"
+    },
+    "witness": {
+      "path": "/tmp/notebook-repair-native-cover-50-sources.json",
+      "sha256": "5894de0b932fb66cca0377cca5f2238df3bc015e744c0ccd08daf05a46559adc"
+    },
+    "selectors": [
+      "NotebookTests/NotebookPageAddressTests",
+      "NotebookTests/WorkspaceSceneIndexTests",
+      "NotebookTests/SceneCompositionSQLTests/testBoardReturnReusesPixelsAcrossPresenceAndEntryCameraCommitsButNotContentEdits",
+      "NotebookTests/SceneCompositionTests/testWarmReturnReusesCompositionEntriesAndRevisionChangeDoesNot",
+      "NotebookTests/SceneCompositionTests/testHeldZoomOutReusesCoveredCohortButNewExposureAndMagnificationStillPrepare",
+      "NotebookTests/SceneCompositionSQLTests/testNativeVectorRunsUseAuthoredAdjacencyWithoutSpendingLiveHostSlots",
+      "NotebookTests/NotebookPageLifecycleUXTests/testDenseVectorSheetsKeepTheirOwnPixelsThroughImmediateReversals",
+      "NotebookTests/NotebookPageLifecycleUXTests/testSVGNeighbourPreparesDuringTheCurrentCurlNotAfterFingerLift",
+      "NotebookTests/NotebookInteractionUXTests/testPageLiveEraserHasOnePaintOwnerThroughRetractionCancelAndAcceptedUndoRedo",
+      "NotebookTests/NotebookInteractionUXTests/testPageLiveEraserPreservesAnExistingDurableMaskHostAndItsPixels",
+      "NotebookTests/NotebookInteractionUXTests/testPageWholeProgramEraseUnmountsBeforeLiftAndCancelledInputCanBeUndone",
+      "NotebookTests/NotebookPageEraserProjectionTests"
+    ],
+    "measurements": {
+      "catalogRebindObjects": 100000,
+      "catalogRebindSeconds": 8.375e-06,
+      "nextSVGReadyWhileFingerActive": true,
+      "nextSVGReadySeconds": 0.1066035,
+      "storedPagesActuallySeeded": 100000,
+      "storedPagesTestDuration": "3 min 58 s including fixture construction"
+    },
+    "claims": [
+      "Exact prior spatial tree retained, demonstrated with continuation cursor and frozen owner lookup",
+      "Prepared neighbour does not repeat plan/live_source/native_ink; preparation-level check, not a mounted window claim",
+      "Writer proceeds while an addressed read is held; target changes invalidate, unrelated selection/camera do not repeat body decode",
+      "Existing dense-vector reversal and page eraser/Undo/Redo scenarios pass",
+      "Cancelled read-only decoder throws before parsing; accepted writable commands survive the same cancellation"
+    ]
+  },
+  "changedSourceSHA256": {
+    "Applications/Shared/NotebookAppModel.swift": "742cfdd323b2d8c7db3cfea365dd738c46c2035b4a6f2a1d521fe83cfaaa0293",
+    "Applications/Shared/NotebookDiskRefresh.swift": "a8ae42978d6d43e61d38610ce1a4b9d39c46117471e56fde14509298987c9f05",
+    "Applications/Shared/SceneRenderResources.swift": "6e4f27fad159cb08ac54413d4b8b23182f019bdbabfb50fc6751722784ed6507",
+    "Applications/Shared/StaticSVGRaster.swift": "08d609e47c7b0b56dc3e0d91b89c8b03aebdc6b154f0f963131da5340f9f1554",
+    "Applications/Shared/WorkspaceSceneIndex.swift": "22a571f571b35aaf546ab7283961aceee67edb8b7fae724239905ecf22e28a6d",
+    "Applications/Tests/NotebookPageAddressTests.swift": "5fe73d11e4be31648a4f97aa46dd7b081ec65a2b1128623558e62b7737d7a812",
+    "Sources/NotebookCore/NotebookSQLite.swift": "39c1fe6604cab6371f6f3427e70aca64ba958e0f9deb99098aa8c0e7cf1cfc0d",
+    "Sources/NotebookCore/NotebookStore.swift": "82d6d236411fdd5e6c18cbd06a69cb61573ec2b08bacc570de2615e36b215d24",
+    "Sources/NotebookCore/WorkspaceIndex.swift": "dc303f469458c81e622cf5858f2db66ab3901c91aa1f8f66a1f5203306849e60",
+    "Tests/NotebookCoreTests/NotebookReadSessionTests.swift": "106fb0355b28b7ce8df4f7f6ff23a2312b1eab00204528dda2906a352a50d317",
+    "Tests/NotebookCoreTests/WorkspacePageOrderMutationTests.swift": "a04584ac4087214b7c7c5f6930629233cf6a8125105869e9232bbf0bfb02119a"
+  },
+  "archive": "/Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/.build/notebook-architecture-repair/evidence-2026-09-25/catalog-rebind",
+  "remaining": [
+    "Pending overlay-readiness correction is not included in run50",
+    "Neighbour 209 latest-intent burst integration remains separate and pending",
+    "No claim that physical20ms or cold dense450ms thresholds have passed",
+    "Final clean Release pair, ten UX repetitions and30-minute mixed session have not run"
+  ]
+}

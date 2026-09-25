@@ -7,6 +7,37 @@ struct WorkspacePageOrderMutationTests {
   private let actor = UUID(uuidString: "00000000-0000-4000-8000-000000000041")!
   private let pageSize = PageSize(width: 834, height: 1194)
 
+  @Test func catalogComparisonIgnoresOnlyFinitePreparedSlots() throws {
+    let fixture = try PageWindowFixture(count: 8); defer { fixture.clean() }
+    let id = fixture.itemID
+    func projection(_ pages: [UUID], title: String = "Notebook") throws -> WorkspaceIndex {
+      try fixture.store.workspaceProjection(items: [.notebook(id: id, title: title, pageIDs: pages)],
+        selectedItemID: id, selectedPageID: pages[0])
+    }
+    let before = try projection(Array(fixture.pages.prefix(2)))
+    let prepared = try projection(Array(fixture.pages.prefix(2)) + [fixture.pages[6]])
+    #expect(before.hasSameCatalogExceptPreparedPages(as: prepared))
+    #expect(prepared.hasSameCatalogExceptPreparedPages(as: before))
+    #expect(!before.hasSameCatalogExceptPreparedPages(as: try projection([fixture.pages[6]])))
+    #expect(!before.hasSameCatalogExceptPreparedPages(as: try projection(before.selectedItem.pageIDs, title: "Renamed")))
+    #expect(!before.hasSameCatalogExceptPreparedPages(as: before.projecting(items: [.document(id: id, title: "Notebook")])))
+    #expect(!before.hasSameCatalogExceptPreparedPages(as: before.projecting(items: before.items + [.document(title: "Extra")])))
+    var appended = prepared
+    #expect(appended.appendPage(in: id, actor: fixture.actor, pageSize: fixture.size) != nil)
+    #expect(!prepared.hasSameCatalogExceptPreparedPages(as: appended))
+    // Equal visible sequence is not an equal causal order frontier.
+    var causal = prepared
+    let key = id.uuidString.lowercased(), previous = try #require(causal.pageOrders[key])
+    let stamp = try #require(causal.stamp.advanced(by: fixture.actor))
+    causal.pageOrders[key] = try .authored(root: previous.visibleRoot, stamp: stamp,
+      human: true, previous: previous)
+    #expect(causal.items == prepared.items)
+    #expect(!prepared.hasSameCatalogExceptPreparedPages(as: causal))
+    let full = try fixture.store.loadIndex().projecting(items: prepared.items)
+    #expect(full.items == prepared.items)
+    #expect(!full.hasSameCatalogExceptPreparedPages(as: before))
+  }
+
   @Test func preparedPageAddsOnlyItsWitnessToTheCurrentProjection() throws {
     let fixture = try PageWindowFixture(count: 8); defer { fixture.clean() }
     let store = fixture.store, id = fixture.itemID

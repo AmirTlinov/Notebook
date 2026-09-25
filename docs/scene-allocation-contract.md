@@ -143,6 +143,9 @@ handlers or external resources, and the kernel's existing dimension limits.
 Other proven-static SVG retains browser layout preparation; actual programs keep
 independent live contexts. One immutable-source classification selects the path;
 conversion failure cannot silently switch renderers or substitute fonts.
+Quartz drawing and its exact mip levels finish on the same non-UI worker before
+one synchronous raster publication. The existing reservation covers all levels;
+source/crop identity and cancellation are rechecked before publication.
 Passive notebook neighbours share at most two sequential preparation lanes.
 Their finite native page window also owns addressed reads: withdrawing a slot
 cancels its preparation, and a late response cannot evict a currently needed page.
@@ -156,6 +159,16 @@ headers. Local admission still revokes an older cut; an unrelated epoch may repe
 these bounded checks but not the unchanged body decode. Publication adds only the
 validated page witness to the current catalog, preserving current selection and
 other prepared pages. No second page-read tail or long-lived body cache exists.
+Withdrawn read-only work checks cancellation between fragment decodes and before
+assembling the final typed page. Accepted writable commands do not inherit that
+UI cancellation and still read their causal base and finish normally.
+
+Preparing another slot does not create another spatial geometry generation.
+The single scene-index initializer rebinds the finite catalog and page-owner
+lookup when the canonical causal page order, first sheet, other item metadata,
+boards and paper sizes are unchanged. It shares the existing immutable spatial
+trees/graphic graphs; previously published cohorts retain their original catalog.
+Real order, placement, membership or board-source changes still rebuild normally.
 
 `capturePresented` freezes the actual installed live surface at Send with source,
 state, navigation and visibility guards. `captureCurrent` obtains a later frame

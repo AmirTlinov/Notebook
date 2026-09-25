@@ -1,0 +1,678 @@
+{
+  "date": "2026-09-25",
+  "scope": "Physical optimized warm page transaction A/B; not final UX acceptance",
+  "base": "9f33d4b33499b35f1ae703ec561b597724bca94d",
+  "decision": "rejected",
+  "thresholdMS": 20,
+  "iterationsPerSelector": 3,
+  "before": "/tmp/notebook-repair-native-cover-48.xcresult",
+  "after": "/tmp/notebook-repair-native-cover-49b.xcresult",
+  "failedBuildOnly": "/tmp/notebook-repair-native-cover-build-49.log",
+  "sourceStableBefore": true,
+  "sourceStableAfter": true,
+  "temporarySourcesRestored": true,
+  "evidenceRoot": "/Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/.build/notebook-architecture-repair/evidence-2026-09-25/warm-transaction",
+  "measurements": {
+    "sides": {
+      "before": {
+        "totals": {
+          "samples": 726,
+          "contactSamples": 720,
+          "failedSamples": 144,
+          "observedFrames": 720,
+          "positiveFrames": 717,
+          "rawOSZero": 3,
+          "lateRequests": 0,
+          "laneOverBudgetCounts": {
+            "entered_ms": 0,
+            "handler_ms": 0,
+            "ui_update_ms": 2,
+            "metal_present_ms": 142
+          }
+        },
+        "runs": [
+          {
+            "runIndex": 1,
+            "test": "NotebookInteractionUXTests/testInkEraserMeetsTwentyMillisecondPresentationBudget()",
+            "sampleCount": 121,
+            "failedSampleCount": 2,
+            "observedFrames": 119,
+            "positiveFrames": 119,
+            "transactionModes": {
+              "false": 119
+            },
+            "lateRequestCount": 0,
+            "rawOSZeroCount": 0,
+            "overBudgetByLane": {
+              "entered_ms": 0,
+              "handler_ms": 0,
+              "ui_update_ms": 0,
+              "metal_present_ms": 2
+            },
+            "metrics": {
+              "OS_ms": {
+                "n": 120,
+                "p50": 18.564458,
+                "p95": 18.744583,
+                "max": 26.70075
+              },
+              "due_to_callback_ms": {
+                "n": 120,
+                "p50": 2.080917,
+                "p95": 2.541583,
+                "max": 11.111458
+              },
+              "callback_to_target_ms": {
+                "n": 119,
+                "p50": 16.500083,
+                "p95": 16.6175,
+                "max": 16.6575
+              },
+              "scheduled_wait_ms": {
+                "n": 0
+              },
+              "OS_minus_target_ms": {
+                "n": 119,
+                "p50": 0.005542,
+                "p95": 0.010167,
+                "max": 2.860708
+              }
+            }
+          },
+          {
+            "runIndex": 2,
+            "test": "NotebookInteractionUXTests/testInkEraserMeetsTwentyMillisecondPresentationBudget()",
+            "sampleCount": 121,
+            "failedSampleCount": 1,
+            "observedFrames": 120,
+            "positiveFrames": 119,
+            "transactionModes": {
+              "false": 120
+            },
+            "lateRequestCount": 0,
+            "rawOSZeroCount": 1,
+            "overBudgetByLane": {
+              "entered_ms": 0,
+              "handler_ms": 0,
+              "ui_update_ms": 0,
+              "metal_present_ms": 1
+            },
+            "metrics": {
+              "OS_ms": {
+                "n": 120,
+                "p50": 19.801667,
+                "p95": 19.9815,
+                "max": 27.938417
+              },
+              "due_to_callback_ms": {
+                "n": 120,
+                "p50": 3.377292,
+                "p95": 3.9575,
+                "max": 12.308458
+              },
+              "callback_to_target_ms": {
+                "n": 120,
+                "p50": 16.433917,
+                "p95": 16.577833,
+                "max": 24.994
+              },
+              "scheduled_wait_ms": {
+                "n": 0
+              },
+              "OS_minus_target_ms": {
+                "n": 119,
+                "p50": -0.000125,
+                "p95": 0.000125,
+                "max": 0.005417
+              }
+            }
+          },
+          {
+            "runIndex": 3,
+            "test": "NotebookInteractionUXTests/testInkEraserMeetsTwentyMillisecondPresentationBudget()",
+            "sampleCount": 121,
+            "failedSampleCount": 4,
+            "observedFrames": 121,
+            "positiveFrames": 121,
+            "transactionModes": {
+              "false": 121
+            },
+            "lateRequestCount": 0,
+            "rawOSZeroCount": 0,
+            "overBudgetByLane": {
+              "entered_ms": 0,
+              "handler_ms": 0,
+              "ui_update_ms": 1,
+              "metal_present_ms": 3
+            },
+            "metrics": {
+              "OS_ms": {
+                "n": 120,
+                "p50": 19.078833,
+                "p95": 19.258375,
+                "max": 27.269333
+              },
+              "due_to_callback_ms": {
+                "n": 120,
+                "p50": 2.633042,
+                "p95": 3.050833,
+                "max": 11.590958
+              },
+              "callback_to_target_ms": {
+                "n": 121,
+                "p50": 16.488375,
+                "p95": 16.615958,
+                "max": 16.657375
+              },
+              "scheduled_wait_ms": {
+                "n": 0
+              },
+              "OS_minus_target_ms": {
+                "n": 121,
+                "p50": 0.004792,
+                "p95": 0.008458,
+                "max": 5.594875
+              }
+            }
+          },
+          {
+            "runIndex": 4,
+            "test": "NotebookInteractionUXTests/testPencilReplayCannotHideBacklogBySlowingItsInputSchedule()",
+            "sampleCount": 121,
+            "failedSampleCount": 1,
+            "observedFrames": 122,
+            "positiveFrames": 122,
+            "transactionModes": {
+              "false": 122
+            },
+            "lateRequestCount": 0,
+            "rawOSZeroCount": 0,
+            "overBudgetByLane": {
+              "entered_ms": 0,
+              "handler_ms": 0,
+              "ui_update_ms": 1,
+              "metal_present_ms": 0
+            },
+            "metrics": {
+              "OS_ms": {
+                "n": 120,
+                "p50": 18.176583,
+                "p95": 18.356583,
+                "max": 18.376417
+              },
+              "due_to_callback_ms": {
+                "n": 120,
+                "p50": 1.739458,
+                "p95": 2.204792,
+                "max": 5.144458
+              },
+              "callback_to_target_ms": {
+                "n": 122,
+                "p50": 16.50175,
+                "p95": 16.6215,
+                "max": 16.656375
+              },
+              "scheduled_wait_ms": {
+                "n": 0
+              },
+              "OS_minus_target_ms": {
+                "n": 122,
+                "p50": 0.005708,
+                "p95": 0.009875,
+                "max": 0.0105
+              }
+            }
+          },
+          {
+            "runIndex": 5,
+            "test": "NotebookInteractionUXTests/testPencilReplayCannotHideBacklogBySlowingItsInputSchedule()",
+            "sampleCount": 121,
+            "failedSampleCount": 36,
+            "observedFrames": 119,
+            "positiveFrames": 118,
+            "transactionModes": {
+              "false": 119
+            },
+            "lateRequestCount": 0,
+            "rawOSZeroCount": 1,
+            "overBudgetByLane": {
+              "entered_ms": 0,
+              "handler_ms": 0,
+              "ui_update_ms": 0,
+              "metal_present_ms": 36
+            },
+            "metrics": {
+              "OS_ms": {
+                "n": 120,
+                "p50": 17.838542,
+                "p95": 26.052208,
+                "max": 34.2125
+              },
+              "due_to_callback_ms": {
+                "n": 120,
+                "p50": 1.788625,
+                "p95": 10.08125,
+                "max": 17.60525
+              },
+              "callback_to_target_ms": {
+                "n": 119,
+                "p50": 16.2185,
+                "p95": 16.602125,
+                "max": 16.6575
+              },
+              "scheduled_wait_ms": {
+                "n": 0
+              },
+              "OS_minus_target_ms": {
+                "n": 118,
+                "p50": -0.000542,
+                "p95": -8.3e-05,
+                "max": -8.3e-05
+              }
+            }
+          },
+          {
+            "runIndex": 6,
+            "test": "NotebookInteractionUXTests/testPencilReplayCannotHideBacklogBySlowingItsInputSchedule()",
+            "sampleCount": 121,
+            "failedSampleCount": 100,
+            "observedFrames": 119,
+            "positiveFrames": 118,
+            "transactionModes": {
+              "false": 119
+            },
+            "lateRequestCount": 0,
+            "rawOSZeroCount": 1,
+            "overBudgetByLane": {
+              "entered_ms": 0,
+              "handler_ms": 0,
+              "ui_update_ms": 0,
+              "metal_present_ms": 100
+            },
+            "metrics": {
+              "OS_ms": {
+                "n": 120,
+                "p50": 24.854917,
+                "p95": 25.074,
+                "max": 41.388875
+              },
+              "due_to_callback_ms": {
+                "n": 120,
+                "p50": 8.52775,
+                "p95": 8.7965,
+                "max": 24.770375
+              },
+              "callback_to_target_ms": {
+                "n": 119,
+                "p50": 16.347333,
+                "p95": 16.599667,
+                "max": 16.664167
+              },
+              "scheduled_wait_ms": {
+                "n": 0
+              },
+              "OS_minus_target_ms": {
+                "n": 118,
+                "p50": -0.000792,
+                "p95": 0.001167,
+                "max": 6.208875
+              }
+            }
+          }
+        ]
+      },
+      "after": {
+        "totals": {
+          "samples": 726,
+          "contactSamples": 720,
+          "failedSamples": 461,
+          "observedFrames": 722,
+          "positiveFrames": 722,
+          "rawOSZero": 0,
+          "lateRequests": 0,
+          "laneOverBudgetCounts": {
+            "entered_ms": 0,
+            "handler_ms": 0,
+            "ui_update_ms": 3,
+            "metal_present_ms": 458
+          }
+        },
+        "runs": [
+          {
+            "runIndex": 1,
+            "test": "NotebookInteractionUXTests/testInkEraserMeetsTwentyMillisecondPresentationBudget()",
+            "sampleCount": 121,
+            "failedSampleCount": 120,
+            "observedFrames": 120,
+            "positiveFrames": 120,
+            "transactionModes": {
+              "true": 120
+            },
+            "lateRequestCount": 0,
+            "rawOSZeroCount": 0,
+            "overBudgetByLane": {
+              "entered_ms": 0,
+              "handler_ms": 0,
+              "ui_update_ms": 0,
+              "metal_present_ms": 120
+            },
+            "metrics": {
+              "OS_ms": {
+                "n": 120,
+                "p50": 21.400083,
+                "p95": 21.580333,
+                "max": 21.600375
+              },
+              "due_to_callback_ms": {
+                "n": 120,
+                "p50": 4.985583,
+                "p95": 5.387708,
+                "max": 5.609458
+              },
+              "callback_to_target_ms": {
+                "n": 120,
+                "p50": 16.453333,
+                "p95": 16.612875,
+                "max": 16.657708
+              },
+              "scheduled_wait_ms": {
+                "n": 120,
+                "p50": 0.273583,
+                "p95": 0.410875,
+                "max": 0.458958
+              },
+              "OS_minus_target_ms": {
+                "n": 120,
+                "p50": 0.005542,
+                "p95": 0.01025,
+                "max": 0.010792
+              }
+            }
+          },
+          {
+            "runIndex": 2,
+            "test": "NotebookInteractionUXTests/testInkEraserMeetsTwentyMillisecondPresentationBudget()",
+            "sampleCount": 121,
+            "failedSampleCount": 2,
+            "observedFrames": 119,
+            "positiveFrames": 119,
+            "transactionModes": {
+              "true": 119
+            },
+            "lateRequestCount": 0,
+            "rawOSZeroCount": 0,
+            "overBudgetByLane": {
+              "entered_ms": 0,
+              "handler_ms": 0,
+              "ui_update_ms": 0,
+              "metal_present_ms": 2
+            },
+            "metrics": {
+              "OS_ms": {
+                "n": 120,
+                "p50": 18.246833,
+                "p95": 18.426708,
+                "max": 26.383583
+              },
+              "due_to_callback_ms": {
+                "n": 120,
+                "p50": 1.801083,
+                "p95": 2.341875,
+                "max": 10.819917
+              },
+              "callback_to_target_ms": {
+                "n": 119,
+                "p50": 16.456417,
+                "p95": 16.613917,
+                "max": 16.657542
+              },
+              "scheduled_wait_ms": {
+                "n": 119,
+                "p50": 0.2245,
+                "p95": 0.416125,
+                "max": 0.459625
+              },
+              "OS_minus_target_ms": {
+                "n": 119,
+                "p50": -0.000208,
+                "p95": 0.0,
+                "max": 4.963625
+              }
+            }
+          },
+          {
+            "runIndex": 3,
+            "test": "NotebookInteractionUXTests/testInkEraserMeetsTwentyMillisecondPresentationBudget()",
+            "sampleCount": 121,
+            "failedSampleCount": 121,
+            "observedFrames": 122,
+            "positiveFrames": 122,
+            "transactionModes": {
+              "true": 122
+            },
+            "lateRequestCount": 0,
+            "rawOSZeroCount": 0,
+            "overBudgetByLane": {
+              "entered_ms": 0,
+              "handler_ms": 0,
+              "ui_update_ms": 1,
+              "metal_present_ms": 120
+            },
+            "metrics": {
+              "OS_ms": {
+                "n": 120,
+                "p50": 22.819167,
+                "p95": 22.998667,
+                "max": 31.026083
+              },
+              "due_to_callback_ms": {
+                "n": 120,
+                "p50": 6.402333,
+                "p95": 6.801542,
+                "max": 14.486833
+              },
+              "callback_to_target_ms": {
+                "n": 122,
+                "p50": 16.444292,
+                "p95": 16.618,
+                "max": 24.99625
+              },
+              "scheduled_wait_ms": {
+                "n": 122,
+                "p50": 0.236583,
+                "p95": 0.396,
+                "max": 0.450667
+              },
+              "OS_minus_target_ms": {
+                "n": 122,
+                "p50": 0.004542,
+                "p95": 0.008583,
+                "max": 0.008917
+              }
+            }
+          },
+          {
+            "runIndex": 4,
+            "test": "NotebookInteractionUXTests/testPencilReplayCannotHideBacklogBySlowingItsInputSchedule()",
+            "sampleCount": 121,
+            "failedSampleCount": 120,
+            "observedFrames": 122,
+            "positiveFrames": 122,
+            "transactionModes": {
+              "true": 122
+            },
+            "lateRequestCount": 0,
+            "rawOSZeroCount": 0,
+            "overBudgetByLane": {
+              "entered_ms": 0,
+              "handler_ms": 0,
+              "ui_update_ms": 1,
+              "metal_present_ms": 119
+            },
+            "metrics": {
+              "OS_ms": {
+                "n": 120,
+                "p50": 24.142792,
+                "p95": 24.322667,
+                "max": 24.342625
+              },
+              "due_to_callback_ms": {
+                "n": 120,
+                "p50": 7.739583,
+                "p95": 8.176208,
+                "max": 9.956167
+              },
+              "callback_to_target_ms": {
+                "n": 122,
+                "p50": 16.458458,
+                "p95": 16.6165,
+                "max": 16.659042
+              },
+              "scheduled_wait_ms": {
+                "n": 122,
+                "p50": 0.228875,
+                "p95": 0.365958,
+                "max": 0.451083
+              },
+              "OS_minus_target_ms": {
+                "n": 122,
+                "p50": 0.006083,
+                "p95": 0.010542,
+                "max": 5.398792
+              }
+            }
+          },
+          {
+            "runIndex": 5,
+            "test": "NotebookInteractionUXTests/testPencilReplayCannotHideBacklogBySlowingItsInputSchedule()",
+            "sampleCount": 121,
+            "failedSampleCount": 2,
+            "observedFrames": 121,
+            "positiveFrames": 121,
+            "transactionModes": {
+              "true": 121
+            },
+            "lateRequestCount": 0,
+            "rawOSZeroCount": 0,
+            "overBudgetByLane": {
+              "entered_ms": 0,
+              "handler_ms": 0,
+              "ui_update_ms": 1,
+              "metal_present_ms": 1
+            },
+            "metrics": {
+              "OS_ms": {
+                "n": 120,
+                "p50": 18.950542,
+                "p95": 19.130167,
+                "max": 27.094333
+              },
+              "due_to_callback_ms": {
+                "n": 120,
+                "p50": 2.588792,
+                "p95": 2.972667,
+                "max": 10.83125
+              },
+              "callback_to_target_ms": {
+                "n": 121,
+                "p50": 16.409208,
+                "p95": 16.556833,
+                "max": 16.664125
+              },
+              "scheduled_wait_ms": {
+                "n": 121,
+                "p50": 0.268125,
+                "p95": 0.427875,
+                "max": 0.481
+              },
+              "OS_minus_target_ms": {
+                "n": 121,
+                "p50": 0.005667,
+                "p95": 0.009958,
+                "max": 0.231417
+              }
+            }
+          },
+          {
+            "runIndex": 6,
+            "test": "NotebookInteractionUXTests/testPencilReplayCannotHideBacklogBySlowingItsInputSchedule()",
+            "sampleCount": 121,
+            "failedSampleCount": 96,
+            "observedFrames": 118,
+            "positiveFrames": 118,
+            "transactionModes": {
+              "true": 118
+            },
+            "lateRequestCount": 0,
+            "rawOSZeroCount": 0,
+            "overBudgetByLane": {
+              "entered_ms": 0,
+              "handler_ms": 0,
+              "ui_update_ms": 0,
+              "metal_present_ms": 96
+            },
+            "metrics": {
+              "OS_ms": {
+                "n": 120,
+                "p50": 24.888208,
+                "p95": 25.130583,
+                "max": 33.112
+              },
+              "due_to_callback_ms": {
+                "n": 120,
+                "p50": 8.616,
+                "p95": 8.972833,
+                "max": 16.493833
+              },
+              "callback_to_target_ms": {
+                "n": 118,
+                "p50": 16.293167,
+                "p95": 16.592208,
+                "max": 16.65625
+              },
+              "scheduled_wait_ms": {
+                "n": 118,
+                "p50": 0.251875,
+                "p95": 0.400875,
+                "max": 0.478417
+              },
+              "OS_minus_target_ms": {
+                "n": 118,
+                "p50": -0.000917,
+                "p95": -0.000167,
+                "max": 6.217292
+              }
+            }
+          }
+        ]
+      }
+    },
+    "limits": [
+      "No capture of CAMetal callbacks which submit no frame; late covering callback does not identify a blocking main-actor owner.",
+      "No CPU trace in these runs; input entry lateness is measured but not attributed to a function.",
+      "No cold-first-contact test in this A/B. Absence of warm OS0 in AFTER does not establish its resolution.",
+      "Only actual positive OS time supplies a presentation ACK. A lower median from different input phase is not a scheduling mechanism change."
+    ]
+  },
+  "removal": {
+    "removed": true,
+    "expectedBaselineVerified": true,
+    "files": {
+      "Applications/Shared/InkCanvasView.swift": {
+        "baseline": "3161aecafca7559d82c9d3e8934198a556481e6e6387d0be9d4c319c32a26f5a",
+        "before": "ec9d05c3221e779a898b43048daa6b82b69e633afaa39c662cc69178cc41da32",
+        "after": "5e15626c64cfb2a064318d642e8e3ad94593067fbd05ae041fec2d2b0c5a92b7",
+        "afterFailedBuild49": "cb8df349a9064b276a2d66d2a5f2e228878f93eba47f44614c9ef075ea7f8341"
+      },
+      "Applications/Tests/NotebookGestureLatencyTests.swift": {
+        "baseline": "926473af59875dba501096a0ffd2969d64f85bcf5d5154c00838426a3120a957",
+        "before": "934aed2bdd5ff3af679da289c516fa2a047f3e2c3e983a2ea108bffeb73349eb",
+        "after": "934aed2bdd5ff3af679da289c516fa2a047f3e2c3e983a2ea108bffeb73349eb"
+      },
+      "Applications/Tests/NotebookInteractionLatencyTests.swift": {
+        "unchanged": "e4aa7caf34dec051fb4115dc25a6b92ad0e1ea58eefa3c2517bf629ee1271d5a"
+      }
+    }
+  },
+  "rawSummarySHA256": "14d42500e13f8debf695b14e79485bc7d59f149baf9d420d12068c86fa088ebf"
+}

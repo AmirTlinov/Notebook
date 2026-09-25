@@ -45,6 +45,10 @@ final class NotebookSQLConnection {
   var decodedFragmentCount: Int { decodedFragments.count }
 
   func decodeFragmentEnvelope(_ data: Data) throws -> NotebookStoredFragment {
+    // A withdrawn scene must release this serial reader at a record boundary,
+    // not finish decoding the entire old page ahead of the new contact.
+    // Accepted commands keep their independent durable lifetime.
+    if !writable { try Task.checkCancellation() }
     if !writable, let decoded = decodedFragments[data] { return decoded }
     let decoded = try JSONDecoder().decode(NotebookStoredFragment.self, from: data)
     if !writable, decodedFragments.count < 128, data.count <= 524_288 - decodedFragmentBytes {
@@ -755,6 +759,7 @@ extension NotebookStore {
 
   func storedData(_ file: String) throws -> Data {
     guard let value = try storedValue(file) else { throw CocoaError(.fileNoSuchFile) }
+    if currentSQL?.writable != true { try Task.checkCancellation() }
     return try Self.storageEncoder.encode(value)
   }
 

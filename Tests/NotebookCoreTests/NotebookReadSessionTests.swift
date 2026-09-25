@@ -4,6 +4,31 @@ import Testing
 
 @Suite("Addressed rendering reuses one idle reader, never a snapshot")
 struct NotebookReadSessionTests {
+  @Test func cancellationStopsTheNextReadEnvelopeButNeverAnAcceptedCommand() async throws {
+    try await Task.detached {
+      try fixture { store, actor in
+        let pageID = try #require(store.loadIndex().selectedPageID)
+        let reader = NotebookReadSession(store: store)
+        try reader.read { store in
+          let database = try #require(store.currentSQL)
+          _ = try store.loadPage(pageID)
+          withUnsafeCurrentTask { $0?.cancel() }
+          #expect(throws: CancellationError.self) {
+            _ = try database.decodeFragmentEnvelope(Data("not JSON; must not be decoded".utf8))
+          }
+          #expect(throws: CancellationError.self) { _ = try store.loadPage(pageID) }
+        }
+        // This caller is still cancelled. An already accepted write must read
+        // its causal base and commit normally rather than inherit UI lifetime.
+        try store.commandTransaction {
+          var page = try store.loadPage(pageID)
+          page.replaceDrawing(pageDrawingFixture(Data([2, 3, 5])), actor: actor)
+          try store.savePage(page)
+        }
+      }
+    }.value
+  }
+
   @Test func repeatedReadsReuseTheHandleAndObserveNewCommits() throws {
     try fixture { store, actor in
       let session = NotebookReadSession(store: store)

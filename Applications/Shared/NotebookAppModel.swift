@@ -370,8 +370,9 @@ final class NotebookAppModel {
         let previous = sceneIndex
         let result = await Task.detached(priority: .utility) {
           let portals = Dictionary(uniqueKeysWithValues: boardHierarchy.boards.map { ($0.id, $0.portalCamera) })
-          let changed = previous?.represents(workspace: workspace, hierarchy: boardHierarchy, paperSizes: paperSizes) != true
-          let index = changed ? WorkspaceSceneIndex(workspace: workspace, hierarchy: boardHierarchy, paperSizes: paperSizes) : previous
+          let index = WorkspaceSceneIndex(workspace: workspace, hierarchy: boardHierarchy,
+            paperSizes: paperSizes, reusing: previous)
+          let changed = previous?.generationID != index.generationID
           return (index, changed, portals)
         }.value
         // At most one builder exists. Obsolete work cannot publish or enqueue
@@ -395,7 +396,10 @@ final class NotebookAppModel {
       !prepared.changed || (!peerInputIsActive && (!inputIsActive || historyContactPermitsPublication
         || (prepared.coverageOnly && !inputGate.hasActivePencil))) else { return }
     scenePortalCameras = prepared.portals
-    if prepared.changed { sceneIndex = prepared.index; sceneIndexGeneration &+= 1 }
+    // A catalog-only rebind publishes current page owners without changing
+    // the geometry/source identity borrowed by an already shown cohort.
+    sceneIndex = prepared.index
+    if prepared.changed { sceneIndexGeneration &+= 1 }
     preparedScene = nil
     scenePreparationPending = false
     scenePublicationGeneration &+= 1

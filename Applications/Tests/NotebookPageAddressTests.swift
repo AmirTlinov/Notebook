@@ -107,6 +107,122 @@ final class NotebookPageAddressTests: XCTestCase {
   }
 
   @MainActor
+  private func assertPreparedPageRebindReusesGeometry(elementCount: Int) async throws {
+    let f = try await preparationFixture(), model = f.model
+    let workspace = try XCTUnwrap(model.workspace), boardID = workspace.rootBoardID
+    let stamp = workspace.stamp
+    let elements = (0..<elementCount).map { index in
+      SpatialElement(id: "retained-\(index)", surface: .board(boardID), kind: .nativeText,
+        frame: .init(x: 0, y: 0, width: 100, height: 80), worldOrigin: .zero,
+        source: "Retained", html: "", stamp: stamp)
+    }
+    let hierarchy = BoardHierarchy(rootBoardID: boardID, boards: [.init(id: boardID,
+      board: .init(freeItems: [.init(itemID: f.item, center: .zero, zIndex: 0, stamp: stamp)],
+        elements: elements, stamp: stamp))], stamp: stamp)
+    let original = WorkspaceSceneIndex(workspace: workspace, hierarchy: hierarchy, paperSizes: [:])
+    let bounds = WorkspaceSpatialBounds(origin: .init(x: -1000, y: -1000), width: 2000, height: 2000)
+    let first = try XCTUnwrap(original.readPaintOrder(boardID: boardID, bounds: bounds))
+    let cursor = try XCTUnwrap(first.next, "A continuation belongs to the actual spatial tree, not the scene UUID")
+    let presence = try XCTUnwrap(model.presence)
+    let oldFrame = WorkspaceSceneFrame(index: original, presence: presence, portalCamera: { _ in nil })
+    XCTAssertNil(original.pageOwner(pageID: f.ids[6]))
+    await model.prepareNotebookPage(at: 6, in: f.item)
+    let current = try XCTUnwrap(model.workspace)
+    XCTAssertTrue(current.selectedItem.pageIDs.contains(f.ids[6]))
+    let started = ContinuousClock.now
+    let rebound = WorkspaceSceneIndex(workspace: current, hierarchy: hierarchy, paperSizes: [:], reusing: original)
+    let elapsed = started.duration(to: .now)
+    let measurement = XCTAttachment(string: "objects: \(elementCount); catalog rebind: \(elapsed)")
+    measurement.name = "Prepared catalog reuses the retained spatial tree"
+    measurement.lifetime = .keepAlways; add(measurement)
+    XCTAssertEqual(rebound.generationID, original.generationID)
+    XCTAssertEqual(rebound.pageOwner(pageID: f.ids[6]), f.item)
+    XCTAssertNil(original.pageOwner(pageID: f.ids[6]), "A previously shown cohort is an immutable source cut")
+    XCTAssertEqual(original.capturedWorkspace, workspace)
+    XCTAssertEqual(rebound.capturedWorkspace, current)
+    XCTAssertEqual(rebound.renderedItem(id: f.item, presence: presence)?.item, current.item(id: f.item))
+    XCTAssertEqual(original.renderedItem(id: f.item, presence: presence)?.item, workspace.item(id: f.item))
+    let next = try XCTUnwrap(rebound.readPaintOrder(boardID: boardID, bounds: bounds, after: cursor))
+    let expected = try XCTUnwrap(original.readPaintOrder(boardID: boardID, bounds: bounds, after: cursor))
+    XCTAssertEqual(next.entries.map(\.id), expected.entries.map(\.id),
+      "Rebuilding a tree with a copied scene UUID must not satisfy this continuation")
+    let newFrame = WorkspaceSceneFrame(index: rebound, presence: presence, portalCamera: { _ in nil })
+    XCTAssertEqual(newFrame.sourceIdentity, oldFrame.sourceIdentity)
+    if elementCount == 64 {
+      let resized = WorkspaceSceneIndex(workspace: current, hierarchy: hierarchy,
+        paperSizes: [UUID(): .a4], reusing: rebound)
+      XCTAssertNotEqual(resized.generationID, rebound.generationID)
+    }
+  }
+
+  @MainActor
+  func testPreparedPageCatalogRebindPreservesExactTreesAndFrozenOwners() async throws {
+    try await assertPreparedPageRebindReusesGeometry(elementCount: 64)
+  }
+
+  @MainActor
+  func testPreparedPageCatalogRebindReusesTheHundredThousandObjectIndex() async throws {
+    try await assertPreparedPageRebindReusesGeometry(elementCount: 100_000)
+  }
+
+  @MainActor
+  func testPreparedNeighbourReusesThePreparedPageComposition() async throws {
+    let f = try await preparationFixture(), model = f.model
+    let presence = try XCTUnwrap(model.presence)
+    var phases: [String] = []
+    model.compositionTiles.onPreparationPhase = { _, phase in phases.append(phase) }
+    defer { model.compositionTiles.onPreparationPhase = nil; model.compositionTiles.cancelPreparation() }
+    @MainActor func prepare() async throws -> WorkspaceSceneIndex {
+      let deadline = ContinuousClock.now + .seconds(10)
+      while model.scenePreparationPending, ContinuousClock.now < deadline {
+        try await Task.sleep(for: .milliseconds(10))
+      }
+      guard !model.scenePreparationPending, model.permitsScenePreparation else {
+        throw NSError(domain: "NotebookPageAddressTests", code: 1, userInfo: [NSLocalizedDescriptionKey:
+          "The current scene did not admit preparation"])
+      }
+      let index = try XCTUnwrap(model.sceneIndex)
+      let frame = WorkspaceSceneFrame(index: index, presence: presence,
+        portalCamera: { model.scenePortalCamera(boardID: $0) }, pinned: [.item(f.item)])
+      model.prepareComposition(presence: presence, frame: frame, pinned: [.item(f.item)],
+        displayScale: 2, installedItemOwners: [f.item: presence.boardID])
+      while model.compositionTiles.isPreparing, ContinuousClock.now < deadline {
+        try await Task.sleep(for: .milliseconds(10))
+      }
+      guard !model.compositionTiles.isPreparing, model.compositionTiles.failure == nil,
+        model.compositionTiles.published != nil else {
+        throw NSError(domain: "NotebookPageAddressTests", code: 2, userInfo: [NSLocalizedDescriptionKey:
+          model.compositionTiles.failure ?? "The stationary page composition was not prepared"])
+      }
+      return index
+    }
+    // Exercise the production composition owner directly, as the SQL
+    // composition suite does. No mounted PageTurnSurface is given a foreign
+    // prewarm window, and preparation is not claimed as installed pixel proof.
+    let index = try await prepare(), shown = try XCTUnwrap(model.compositionTiles.published)
+    XCTAssertTrue(phases.contains("plan") && phases.contains("live_source") && phases.contains("native_ink"),
+      "Positive control: the observer sees actual initial planning, SQL source work and native preparation: \(phases)")
+    XCTAssertNil(model.notebookPage(at: 6, in: f.item))
+    let geometryGeneration = model.sceneIndexGeneration, publication = model.scenePublicationGeneration
+    let revision = try XCTUnwrap(model.workspaceHeader).cursor
+    let rasters = shown.rasters.mapValues(\.entryID)
+    phases.removeAll()
+    await model.prepareNotebookPage(at: 6, in: f.item)
+    XCTAssertNotNil(model.notebookPage(at: 6, in: f.item))
+    let current = try await prepare()
+    XCTAssertEqual(model.presence, presence, "This admission neither navigates nor moves the camera")
+    XCTAssertEqual(model.sceneIndexGeneration, geometryGeneration)
+    XCTAssertEqual(current.generationID, index.generationID)
+    XCTAssertGreaterThan(model.scenePublicationGeneration, publication)
+    XCTAssertEqual(current.pageOwner(pageID: f.ids[6]), f.item)
+    XCTAssertNil(index.pageOwner(pageID: f.ids[6]))
+    XCTAssertEqual(model.workspaceHeader?.cursor, revision, "This is read projection churn, not a content edit")
+    XCTAssertEqual(model.compositionTiles.published?.id, shown.id)
+    XCTAssertEqual(model.compositionTiles.published?.rasters.mapValues(\.entryID), rasters)
+    XCTAssertTrue(phases.isEmpty, "Catalog-only publication must reuse paint without plan, SQL/live-source or native preparation: \(phases)")
+  }
+
+  @MainActor
   func testUnrelatedPresenceAndSelectionReuseThePageBodyWithoutHoldingTheWriter() async throws {
     let f = try await preparationFixture(), model = f.model
     let gate = try await installPageReadGate(f.reader, pageID: f.ids[6])

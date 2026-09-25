@@ -12,14 +12,13 @@ struct WorkspaceSceneIndex: Sendable {
   static func preparationMargin(for presence: SessionPresence) -> Double {
     max(192, max(presence.viewport.x, presence.viewport.y) * 0.75)
   }
-  let generationID = UUID()
+  let generationID: UUID
   // Value-shared sources of this exact projection, retained with a shown
   // cohort so a later model publication cannot redirect a pointing contact.
   let capturedWorkspace: WorkspaceIndex
   let capturedHierarchy: BoardHierarchy
 
   private struct Item: Sendable {
-    let value: WorkspaceItem
     let geometry: WorkspaceItemGeometry
     let center: WorldPoint
     let zIndex: Double
@@ -67,14 +66,26 @@ struct WorkspaceSceneIndex: Sendable {
   /// parent window. Paper geometry travels unchanged with its existing owners.
   var documentPaperSizes: [UUID: DocumentPaperSize] { paperSizes }
 
-  init(workspace: WorkspaceIndex, hierarchy: BoardHierarchy, paperSizes: [UUID: DocumentPaperSize]) {
+  init(workspace: WorkspaceIndex, hierarchy: BoardHierarchy, paperSizes: [UUID: DocumentPaperSize],
+    reusing previous: Self? = nil) {
+    let reusable = previous.flatMap { previous -> Self? in
+      guard previous.capturedWorkspace.hasSameCatalogExceptPreparedPages(as: workspace),
+        previous.paperSizes == paperSizes, previous.boards.count == hierarchy.boards.count,
+        hierarchy.boards.allSatisfy({ previous.boards[$0.id]?.source == $0.board }) else { return nil }
+      return previous
+    }
+    if let reusable, reusable.catalog == workspace.items { self = reusable; return }
+    generationID = reusable?.generationID ?? UUID()
     capturedWorkspace = workspace; capturedHierarchy = hierarchy
     catalog = workspace.items
     self.paperSizes = paperSizes
     let values = Dictionary(uniqueKeysWithValues: workspace.items.map { ($0.id, $0) })
     itemValues = values
     pageOwners = Dictionary(uniqueKeysWithValues: workspace.items.flatMap { item in item.pageIDs.map { ($0, item.id) } })
-    itemOwners = Dictionary(uniqueKeysWithValues: hierarchy.boards.flatMap { node in node.board.itemIDs.map { ($0, node.id) } })
+    itemOwners = reusable?.itemOwners ?? Dictionary(uniqueKeysWithValues: hierarchy.boards.flatMap { node in node.board.itemIDs.map { ($0, node.id) } })
+    // The prepared-page catalog is not another spatial source. Rebind only
+    // its address lookup, retaining every immutable tree and graphic graph.
+    if let reusable { boards = reusable.boards; return }
     var prepared: [UUID: Board] = [:]
     for node in hierarchy.boards {
       var entries: [WorkspaceSpatialEntry] = []
@@ -86,7 +97,7 @@ struct WorkspaceSceneIndex: Sendable {
       }
       for placement in node.board.freeItems {
         guard let value = values[placement.itemID], let size = geometry(value) else { continue }
-        let item = Item(value: value, geometry: size, center: placement.center,
+        let item = Item(geometry: size, center: placement.center,
           zIndex: Double(placement.zIndex), stack: nil)
         items[value.id] = item
         entries.append(.init(id: .item(value.id), bounds: .init(
@@ -96,7 +107,7 @@ struct WorkspaceSceneIndex: Sendable {
       for stack in node.board.stacks {
         for (position, id) in stack.itemIDs.enumerated() {
           guard let value = values[id], let size = geometry(value) else { continue }
-          let item = Item(value: value, geometry: size, center: stack.center,
+          let item = Item(geometry: size, center: stack.center,
             zIndex: Double(stack.zIndex) + Double(position) / 100, stack: stack)
           items[id] = item
           let center = WorkspaceItemStackPresentation.focusedCenter(of: id, in: stack) ?? stack.center
@@ -157,21 +168,11 @@ struct WorkspaceSceneIndex: Sendable {
     paperSizes: [UUID: DocumentPaperSize], reusing previous: Self?) async throws -> Self {
     let worker = Task.detached(priority: .utility) {
       try Task.checkCancellation()
-      if let previous, previous.represents(workspace: workspace, hierarchy: hierarchy, paperSizes: paperSizes) { return previous }
-      let index = Self(workspace: workspace, hierarchy: hierarchy, paperSizes: paperSizes)
+      let index = Self(workspace: workspace, hierarchy: hierarchy, paperSizes: paperSizes, reusing: previous)
       try Task.checkCancellation()
       return index
     }
     return try await withTaskCancellationHandler { try await worker.value } onCancel: { worker.cancel() }
-  }
-
-  /// Comparison runs on the preparation task, never on a camera frame. A
-  /// selected page and portal camera are not geometry or source changes.
-  func represents(workspace: WorkspaceIndex, hierarchy: BoardHierarchy,
-    paperSizes: [UUID: DocumentPaperSize]) -> Bool {
-    guard catalog == workspace.items, self.paperSizes == paperSizes,
-      boards.count == hierarchy.boards.count else { return false }
-    return hierarchy.boards.allSatisfy { boards[$0.id]?.source == $0.board }
   }
 
   func board(id: UUID) -> BoardDocument? { boards[id]?.source }
@@ -248,8 +249,8 @@ struct WorkspaceSceneIndex: Sendable {
   }
 
   func renderedItem(id: UUID, presence: SessionPresence) -> RenderedWorkspaceItem? {
-    guard let item = boards[presence.boardID]?.items[id] else { return nil }
-    return WorkspaceSceneProjection.renderedItem(item.value, geometry: item.geometry,
+    guard let item = boards[presence.boardID]?.items[id], let value = itemValues[id] else { return nil }
+    return WorkspaceSceneProjection.renderedItem(value, geometry: item.geometry,
       center: item.center, zIndex: item.zIndex, stack: item.stack, presence: presence)
   }
 
