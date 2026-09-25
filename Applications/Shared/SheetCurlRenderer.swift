@@ -353,11 +353,10 @@ final class SheetCurlMetalView: MTKView, MTKViewDelegate {
         Task { @MainActor [weak self] in
           // A dropped drawable is NOT a landing receipt. Retry the latest
           // required image, including a terminal image, on the same clock.
-          if !completion.permitsProgress, let self, self.sourceCover === source, self.progress == progress {
-            self.framePending = true
-          }
-          self?.onFrameResolved?(source, progress, .init(ordinal: ordinal, completion: completion))
-          self?.resumePendingFrame()
+          guard let self, self.sourceCover === source else { return }
+          if !completion.permitsProgress, self.progress == progress { self.framePending = true }
+          self.onFrameResolved?(source, progress, .init(ordinal: ordinal, completion: completion))
+          self.resumePendingFrame()
         }
       }
     }
@@ -372,7 +371,7 @@ final class SheetCurlMetalView: MTKView, MTKViewDelegate {
           gpuEnded: command.gpuEndTime, targetPresentation: targetPresentation)
       }
       Task { @MainActor [weak self] in
-        if let timing { self?.onFrameMeasured?(timing) }
+        if let timing, self?.sourceCover === source { self?.onFrameMeasured?(timing) }
         self?.resumePendingFrame()
       }
     }

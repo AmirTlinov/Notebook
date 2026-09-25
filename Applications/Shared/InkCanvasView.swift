@@ -277,13 +277,18 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
   private var pageActionMeshTokens:[UUID:UUID] = [:]
   private var pageCommit: UInt64 = 0
   private(set) var pageMeshBuildCount = 0
+  private(set) var pageProjectionChangeCount = 0
+  private(set) var pageDrawableResizeCount = 0
+  private(set) var pageDrawableAllocationCount = 0
+  private(set) var pageRetainedAllocationCount = 0
   private var baselineTexture: (any MTLTexture)?
   private var baselineReservation: RasterReservation?
   private var baselinePNG: Data?
   private(set) var pageRenderRegion: CGRect?
-  private var pageSourceSize = CGSize.zero
+  private(set) var pageSourceSize = CGSize.zero
   private var pageDrawableReservation: RasterReservation?
   private var pageAdmittedSize = CGSize.zero
+  private var isProjectingPage = false
   private var pageMultisample: (any MTLTexture)?
   private var pageRetainedTexture: (any MTLTexture)?
   private var pageRetainedReservation: RasterReservation?
@@ -515,6 +520,8 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     guard pixels.width.isFinite, pixels.height.isFinite,
       (1...16_384).contains(pixels.width), (1...16_384).contains(pixels.height) else { return }
     guard region != pageRenderRegion || drawableSize != pixels || pageSourceSize != sourceSize else { return }
+    pageProjectionChangeCount += 1
+    if drawableSize != pixels { pageDrawableResizeCount += 1 }
     // The system must not allocate a resized pool before its bytes are admitted.
     pageDisplayLink?.isPaused = true
     // CAMetalDisplayLink forbids this setter, even with the same value. Fix the
@@ -523,13 +530,18 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     pageRenderRegion = region; pageSourceSize = sourceSize
     if isErasureMask { spatialDrawableScale = pixelDensity }
     autoResizeDrawable = false
+    // MTKView reports drawable changes synchronously while this pair is being
+    // installed. Admit only the final size, not an intermediate old/new pair.
+    isProjectingPage = true
     frame = region
     drawableSize = pixels
     // MTKView defers applying drawableSize until its own draw cycle. Projected
     // pages bypass that cycle: their clock must receive the actual new pool,
     // not keep vending old-sized drawables which renderFrame correctly rejects.
     (layer as? CAMetalLayer)?.drawableSize = pixels
+    isProjectingPage = false
     beginStableContentUpdate()
+    schedulePageMeshIfNeeded()
     requestFrame()
   }
 
@@ -583,6 +595,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     }
     pageDrawableReservation = reservation; pageMultisample = attachment
     pageAdmittedSize = drawableSize
+    pageDrawableAllocationCount += 1
     return true
   }
 
@@ -606,6 +619,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
       renderFailure = .resourceLimit;return false
     }
     pageRetainedReservation=reservation;pageRetainedTexture=texture;pageRetainedKey=nil
+    pageRetainedAllocationCount += 1
     return true
   }
 
@@ -980,6 +994,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     _ view: MTKView,
     drawableSizeWillChange size: CGSize
   ) {
+    guard !isProjectingPage else { return }
     schedulePageMeshIfNeeded()
     requestFrame()
   }

@@ -84,7 +84,11 @@ struct PageSurface: View {
             pageID: page.id,
             source: page.inkSource,
             suppressedInkIDs: model.pageSuppressedInkIDs(page),
-            isInputEnabled: isInteractive,
+            isInputEnabled: isVisible && isInteractive,
+            isVisible: isVisible,
+            isCurrent: isCurrent,
+            pageReadiness: onRenderReady,
+            refinesDetails: model.presencePhase == .settled,
             penStyle: model.activePenStyle,
             eraserStyle: model.eraserStyle,
             drawingTool: model.drawingTool,
@@ -108,7 +112,8 @@ struct PageSurface: View {
             onElementErasing: model.updateElementErasing
           )
         #else
-          MacPageInkView(page: page, isInteractive: isVisible && isInteractive) { receipt in
+          MacPageInkView(page: page, isInteractive: isVisible && isInteractive, isVisible:isVisible,
+            isCurrent:isCurrent,pageReadiness:onRenderReady,refinesDetails:model.presencePhase == .settled) { receipt in
             readiness.recordInk(receipt);publishReadiness()
           }.id(page.id)
         #endif

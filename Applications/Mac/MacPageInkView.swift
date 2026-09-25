@@ -7,9 +7,15 @@ struct MacPageInkView: NSViewRepresentable {
   @Environment(\.scenePlaneProjection) private var projection
   let page: PageDocument
   let isInteractive: Bool
+  var isVisible = true
+  var isCurrent = true
+  var pageReadiness: PageTurnReadiness?
+  var refinesDetails = true
   let onReady: (PageInkPresentation?) -> Void
   func makeNSView(context: Context) -> MacPageInkCanvas { .init(model: model, pageID: page.id) }
   func updateNSView(_ view: MacPageInkCanvas, context: Context) {
+    view.inkProjection.setRefinesDetails(refinesDetails)
+    view.inkProjection.observePage(pageReadiness,isCurrent:isCurrent,isVisible:isVisible)
     view.inkProjection.observe(projection)
     view.update(page: page, enabled: isInteractive && model.macInputTool != .pointer,
       current: isInteractive, onReady: onReady)

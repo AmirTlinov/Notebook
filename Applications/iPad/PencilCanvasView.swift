@@ -10,6 +10,10 @@ struct PencilCanvasView: UIViewRepresentable {
   let source: PageInkSource
   var suppressedInkIDs: Set<UUID> = []
   let isInputEnabled: Bool
+  var isVisible = true
+  var isCurrent = true
+  var pageReadiness: PageTurnReadiness?
+  var refinesDetails = true
   let penStyle: PenStyle
   let eraserStyle: EraserStyle
   let drawingTool: DrawingTool
@@ -36,6 +40,8 @@ struct PencilCanvasView: UIViewRepresentable {
 
   func makeUIView(context: Context) -> PaperCanvasContainerView {
     let paper = PaperCanvasContainerView()
+    paper.inkProjection.setRefinesDetails(refinesDetails)
+    paper.inkProjection.observePage(pageReadiness,isCurrent:isCurrent,isVisible:isVisible)
     paper.inkProjection.observe(projection)
     paper.touchView.toolController = model?.drawingTools
     paper.touchView.toolInputGate = inputGate
@@ -61,6 +67,8 @@ struct PencilCanvasView: UIViewRepresentable {
   }
 
   func updateUIView(_ paper: PaperCanvasContainerView, context: Context) {
+    paper.inkProjection.setRefinesDetails(refinesDetails)
+    paper.inkProjection.observePage(pageReadiness,isCurrent:isCurrent,isVisible:isVisible)
     paper.inkProjection.observe(projection)
     paper.touchView.toolController = model?.drawingTools
     paper.touchView.toolInputGate = inputGate

@@ -67,7 +67,10 @@ import XCTest
         let rgba = pixel(image)
         XCTAssertGreaterThan(rgba[0], 240, "The current red source was replaced with stale pixels: \(rgba)")
         XCTAssertLessThan(rgba[2], 15, "Old blue source leaked into the curl: \(rgba)")
-        XCTAssertEqual(image.bitsPerPixel, 32, "Snapshot allocation must match its four-byte pixel reservation")
+        XCTAssertTrue([32, 64].contains(image.bitsPerPixel), "UIKit chooses its native colour range; both formats are admitted")
+        let drawableBytes = ((image.width * 4 + 255) / 256) * 256 * image.height * curl.drawableCount
+        XCTAssertGreaterThanOrEqual(try XCTUnwrap(curl.frameLease).byteCount,
+          image.bytesPerRow * image.height + drawableBytes, "The larger source must not bypass shared admission")
         native.cancelMotion()
         XCTAssertTrue(native.view.subviews.last === source.view)
         XCTAssertTrue(native.view.subviews.contains { $0 === curl }, "A turn must not rebuild the Metal view")
@@ -105,6 +108,42 @@ import XCTest
     XCTAssertEqual(image.width, Int(400 * window.screen.scale))
     XCTAssertEqual(image.height, Int(600 * window.screen.scale))
     native.cancelMotion()
+  }
+
+  func testFullSizeTurnRecordsCaptureAndFirstFrameWithoutWindowReadback() async throws {
+    let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+    let previous = scene.windows.first(where: \.isKeyWindow), window = UIWindow(windowScene: scene)
+    let native = IPadSheetCurlController(), source = UIViewController(), target = UIViewController()
+    source.view.backgroundColor = .blue; target.view.backgroundColor = .red
+    window.rootViewController = native; window.makeKeyAndVisible()
+    defer { native.cancelMotion(); window.isHidden = true; window.rootViewController = nil; previous?.makeKey() }
+    native.show(source, direction: .forward, animated: false); native.prepare(target)
+    native.view.layoutIfNeeded()
+    try await Task.sleep(for: .milliseconds(30))
+    let curl = try XCTUnwrap(native.view.subviews.compactMap { $0 as? SheetCurlMetalView }.first)
+    let owner = curl.onFrameResolved
+    for direction in [IPadSheetCurlController.Direction.forward, .reverse] {
+      var captures: [IPadSheetCurlController.CaptureTiming] = []
+      var frames: [SheetCurlMetalView.FrameTiming] = []
+      var resolved: TimeInterval?
+      native.onCaptureMeasured = { captures.append($0) }
+      curl.onFrameMeasured = { frames.append($0) }
+      curl.onFrameResolved = { image, progress, receipt in
+        if receipt.completion.permitsProgress, resolved == nil { resolved = CACurrentMediaTime() }
+        owner?(image, progress, receipt)
+      }
+      let start = CACurrentMediaTime()
+      native.show(target, direction: direction, animated: true)
+      let limit = ContinuousClock.now + .seconds(1)
+      while resolved == nil || frames.isEmpty, ContinuousClock.now < limit { try await Task.sleep(for: .milliseconds(1)) }
+      XCTAssertEqual(captures.count, 1)
+      let capture = try XCTUnwrap(captures.first), frame = try XCTUnwrap(frames.first)
+      let end = try XCTUnwrap(resolved)
+      XCTAssertGreaterThanOrEqual(frame.encodingBegan, start, "A cancelled turn cannot publish into its replacement's observer")
+      let note = XCTAttachment(string: "capture starts=\((capture.began-start)*1000) ms; capture CPU=\((capture.ended-capture.began)*1000) ms; pixels=\(capture.pixels); first encode starts=\((frame.encodingBegan-start)*1000) ms; encode CPU=\((frame.submitted-frame.encodingBegan)*1000) ms; first resolution callback=\((end-start)*1000) ms; OS timing available=\(MetalFrameCompletion.reportsDisplayTime)")
+      note.name = "page-turn-start-phases"; note.lifetime = .keepAlways; add(note)
+      native.cancelMotion()
+    }
   }
 
   private func solidImage(_ color: UIColor) -> CGImage {

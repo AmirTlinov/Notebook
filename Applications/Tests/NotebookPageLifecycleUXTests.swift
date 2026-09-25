@@ -377,6 +377,7 @@ import XCTest
           self.hasEnabledPaper(scene.window)
         }
         let current = try Scene(model: model, window: scene.window)
+        let ink = try XCTUnwrap(current.paper.superview as? PaperCanvasContainerView).inkView
         model.selectPenWidth(12); try await current.readyPencil(self)
         let pencilStart = ContinuousClock.now
         current.beginPencil(.init(x: 180, y: 950)); current.movePencil(.init(x: 480, y: 950)); current.endPencil()
@@ -385,7 +386,8 @@ import XCTest
         // the same original 100 ms window, not synchronously after one capture.
         try await shown("new-leaf-accepts-its-own-ink", window: scene.window,
           probes: [probe("new-leaf-line", [(300, 950)], .black, scene.pageToWindow)], since: pencilStart,
-          acknowledged: { model.activePage.map { model.pagePresentations.isPresented($0) } == true })
+          acknowledged: { ink.isStableFramePresented
+            && model.activePage.map { model.pagePresentations.isPresented($0) } == true })
       } else {
         try await shown("new-leaf-ink-does-not-leak-\(step)", window: scene.window,
           probes: [probe("other-leaf-stays-empty", [(300, 950)], .paper, scene.pageToWindow)])
@@ -487,12 +489,14 @@ import XCTest
     XCTAssertNil(model.selectNotebookPage(1, notebookID: notebook, expectedRoot: oldRoot))
 
     let current = try Scene(model: model, window: scene.window)
+    let ink = try XCTUnwrap(current.paper.superview as? PaperCanvasContainerView).inkView
     model.selectPenWidth(12); try await current.readyPencil(self)
     let pencilStart = ContinuousClock.now
     current.beginPencil(.init(x: 180, y: 950)); current.movePencil(.init(x: 480, y: 950)); current.endPencil()
     try await shown("cancelled-root-gives-next-pencil-to-current-uuid", window: scene.window,
       probes: [probe("new-current-line", [(300, 950)], .black, scene.pageToWindow)], since: pencilStart,
-      acknowledged: { model.activePage.map { model.pagePresentations.isPresented($0) } == true })
+      acknowledged: { ink.isStableFramePresented
+        && model.activePage.map { model.pagePresentations.isPresented($0) } == true })
     let saved = await model.finishPendingPersistence(); XCTAssertTrue(saved, model.persistenceFailure ?? "")
     XCTAssertEqual(try model.store.loadPage(first).inkDrawing().activeActions.count, 2)
     XCTAssertEqual(try model.store.loadPage(survivor.pageID).inkDrawing().activeActions.count, 1)
@@ -761,7 +765,8 @@ import XCTest
       let captureStart=ContinuousClock.now
       let image = try NotebookUXObservation.Pixels(window: window).image
       captures.append(captureStart.duration(to:.now))
-      let frame = try NotebookSelectionComposition.Frame(image)
+      let checks = probes + (witness.map { [$0] } ?? []) + absence
+      let frame = try NotebookSelectionComposition.Frame(image, sampling: checks)
       last = image; failures = frame.failures(probes)
       if let witness, frame.failures([witness]).isEmpty, !absence.isEmpty {
         let returned = frame.failures(absence)

@@ -22,6 +22,13 @@ fixed through lift or actual cancellation.
 camera samples update native matrices without rebuilding items or waiting for
 rasters. A basis change completes layout before installing its new matrix.
 
+`PageInkProjection` reuses admitted page coverage within the camera's existing
+movement-density allowance; settlement restores exact density where needed.
+Mounted neighbours do not follow every foreign camera sample. Native page-turn
+demand promotes the target and invalidates its old readiness before capture.
+`InkCanvasView.projectPage` installs frame and drawable dimensions atomically;
+its synchronous MetalKit callback cannot admit an intermediate-size backing.
+
 ## Ink, masks and publication
 
 A captured `PageInkSource` pins one immutable drawing root and its stamp. Live
@@ -359,6 +366,11 @@ backlog without rebasing the acceptance clock. There are two distinct lanes:
   The observer is optional and nil in the ordinary app path; it never drives
   rendering or changes source/presentation ownership.
 
+The same optional observer includes the very first drawable of an empty page.
+The cold-contact regression holds the first dot until that exact receipt, without
+moving, lifting, taking snapshots or forcing layout. Simulator reports GPU
+readiness only; subsequent pixel checks remain separate from first-frame timing.
+
 The replay measures 120 active-contact samples and the subsequent lift. Metal
 receipts cover the active contact; it remains alive while final receipts are
 collected (late receipts still fail). Lift has a UIKit budget and separate pixel
@@ -488,9 +500,12 @@ after the new layer tree is committed. It copies that tree without forcing scree
 updates inside input dispatch. The pending motion retains the latest finger
 progress; cancellation disables the observer and invalidates the motion. No timer,
 extra page cache or replacement button owns this handoff. The observer is disabled
-while idle. The snapshot uses standard 32-bit colour and
-the sheet's actual window-projected density (at most four million pixels), not
-the resolution of a larger fitted-offscreen sheet. Live source paper stays in
+while idle. The snapshot retains UIKit's native colour range; the existing
+Core Image renderer resolves them into its BGRA8 drawable. A full-image SDR
+conversion is not performed on the input thread. Its source (up to eight bytes per pixel) and both
+four-byte drawable rows are admitted together, including row alignment, before
+capture. Resolution follows the sheet's actual window-projected density (at most
+four million pixels), not a larger fitted-offscreen sheet. Live source paper stays in
 front until this turn's first resolved curl frame; a preceding drawable cannot
 become the new turn's placeholder. The Metal view survives turns, its bitmap
 backing retires, and progress changes reuse the same immutable Core Image source.

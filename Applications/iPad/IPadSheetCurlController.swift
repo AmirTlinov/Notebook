@@ -10,6 +10,12 @@ final class IPadSheetCurlController: UIViewController, UIGestureRecognizerDelega
   var willTurn: (UIViewController) -> Bool = { _ in false }
   var didTurn: (UIViewController, Bool) -> Void = { _, _ in }
   var onFailure: (Error) -> Void = { _ in }
+  struct CaptureTiming {
+    let began, ended: TimeInterval
+    let pixels: Int
+  }
+  /// Optional timing at the actual capture owner, never a second render path.
+  var onCaptureMeasured: ((CaptureTiming) -> Void)?
   private(set) var page: UIViewController?
   let pan = UIPanGestureRecognizer()
   private let curl = SheetCurlMetalView(frame: .zero)
@@ -109,7 +115,9 @@ final class IPadSheetCurlController: UIViewController, UIGestureRecognizerDelega
     guard let motion, motion.id == id else { return }
     do {
       let sheet = motion.direction == .forward ? motion.source : motion.target
+      let began = onCaptureMeasured == nil ? nil : CACurrentMediaTime()
       let (image, reservation) = try capture(sheet.view)
+      if let began { onCaptureMeasured?(.init(began: began, ended: CACurrentMediaTime(), pixels: image.width * image.height)) }
       guard var current = self.motion, current.id == id else { return }
       current.image = image; self.motion = current
       curl.frameLease = reservation
@@ -137,16 +145,23 @@ final class IPadSheetCurlController: UIViewController, UIGestureRecognizerDelega
     let scale = min(projection * (view.window?.screen.scale ?? 2), sqrt(4_000_000 / (size.width*size.height)))
     // The accepted gesture owns one image and the bounded drawable pool. This is transient
     // input backing, not a speculative cache entry competing with its own pages.
-    let pixels = Int(ceil(size.width*scale)) * Int(ceil(size.height*scale))
-    guard let reservation = SceneRenderResources.shared.reserveDerivedBytes(pixels * 4 * (1 + curl.drawableCount),
+    let width = Int(ceil(size.width*scale)), height = Int(ceil(size.height*scale))
+    // Keep UIKit's native colour range through capture. Converting the full
+    // window to SDR here blocks input; Core Image already resolves the curl
+    // into its BGRA8 output. Admit the eight-byte source and two four-byte
+    // drawable rows, including their alignment, before taking the snapshot.
+    let imageBytes = ((width * 8 + 63) / 64) * 64 * height
+    let drawableBytes = ((width * 4 + 255) / 256) * 256 * height
+    guard let reservation = SceneRenderResources.shared.reserveDerivedBytes(imageBytes + drawableBytes * curl.drawableCount,
       priority: .input) else { throw SceneRenderError.resourceLimit }
     let format = UIGraphicsImageRendererFormat(); format.scale = scale; format.opaque = false
-    format.preferredRange = .standard
+    format.preferredRange = .automatic
     var captured = false
     let snapshot = UIGraphicsImageRenderer(size: size, format: format).image { _ in
       captured = sheet.drawHierarchy(in: sheet.bounds, afterScreenUpdates: false)
     }
     guard captured, let image = snapshot.cgImage else { throw SceneRenderError.snapshotPending("page_capture") }
+    guard image.bytesPerRow * image.height <= imageBytes else { throw SceneRenderError.resourceLimit }
     return (image, reservation)
   }
 

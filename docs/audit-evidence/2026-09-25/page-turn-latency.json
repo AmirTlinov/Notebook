@@ -1,0 +1,511 @@
+{
+  "date": "2026-09-25",
+  "issue": "GUI-295",
+  "baseCommit": "37499bf1643125a168e03dc9213825d1a168aa3c",
+  "result": "Устранены лишние перераспределения страниц и принудительный SDR-захват; исходный новый лист проходит 10/10. Полная приёмка не закрыта: отдельный сценарий удаления страницы другим участником нестабилен по 100-мс наблюдению.",
+  "evidenceRoot": "/Users/amir/.codex/worktrees/page-turn-continuity/Notebook/.build/page-latency",
+  "sourceInputSHA256": "45c8528fdba2591f3da9f498ffe7962684fdfbe788daa195c2301b1ebd9cc081",
+  "runtimeInputSHA256": "62c305b5996ca39ffae1df0253b001c35acb4d566c76c90bbc3d4d289a882556",
+  "broadRunSourceInputSHA256": "784fa083eb2729b0e3007a97d454f569f64df63928813a3cc89b9102b913457e",
+  "differenceAfterBroadRun": [
+    "Applications/Tests/NotebookPageLifecycleUXTests.swift"
+  ],
+  "differenceMeaning": "Только усиление двух test-only predicates: нативный кадр чернил И прежняя квитанция модели. Runtime после 89 native и двух UI-сценариев не менялся.",
+  "environment": {
+    "device": "iPad Pro 11-inch (3rd generation)",
+    "simulatorID": "F559444E-BE55-42AC-83F4-4D641B0FB7BE",
+    "iOS": "27.0 (24A434)",
+    "Xcode": "27.0 (27A266a)",
+    "bundle": "com.amirtlinov.notebook.page-turn-test",
+    "physicalIPadAvailable": false,
+    "simulatorExplicitlyAuthorized": true,
+    "personalContainersModified": false
+  },
+  "checks": {
+    "native": {
+      "artifact": "native-range-native.xcresult",
+      "result": "Passed",
+      "passed": 89,
+      "failed": 0,
+      "skipped": 0,
+      "runtimeWarnings": [],
+      "failures": []
+    },
+    "UI": {
+      "artifact": "native-range-gestures.xcresult",
+      "result": "Passed",
+      "passed": 2,
+      "failed": 0,
+      "skipped": 0,
+      "runtimeWarnings": [],
+      "failures": []
+    },
+    "initialRepeated": {
+      "artifact": "native-range-repeat.xcresult",
+      "result": "Failed",
+      "passed": 26,
+      "failed": 4,
+      "skipped": 0,
+      "runtimeWarnings": [],
+      "failures": [
+        {
+          "failureText": "XCTAssertTrue failed - UX new-leaf-accepts-its-own-ink: correct=true, observed=102.272583 ms, ceiling=0.1 seconds; window observation, not photon timing",
+          "targetName": "NotebookTests",
+          "testIdentifier": 2,
+          "testIdentifierString": "NotebookPageLifecycleUXTests/testNativePageTurnsShowTheStoredLeafAfterEvictionReverseAndCancellation()",
+          "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/NotebookPageLifecycleUXTests/testNativePageTurnsShowTheStoredLeafAfterEvictionReverseAndCancellation",
+          "testName": "testNativePageTurnsShowTheStoredLeafAfterEvictionReverseAndCancellation()"
+        },
+        {
+          "failureText": "XCTAssertTrue failed - UX cancelled-root-gives-next-pencil-to-current-uuid: correct=true, observed=102.815208 ms, ceiling=0.1 seconds; window observation, not photon timing",
+          "targetName": "NotebookTests",
+          "testIdentifier": 3,
+          "testIdentifierString": "NotebookPageLifecycleUXTests/testPeerRemovedLeafCannotCommitAnOldCurlIntoItsReplacementSlot()",
+          "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/NotebookPageLifecycleUXTests/testPeerRemovedLeafCannotCommitAnOldCurlIntoItsReplacementSlot",
+          "testName": "testPeerRemovedLeafCannotCommitAnOldCurlIntoItsReplacementSlot()"
+        }
+      ]
+    },
+    "strengthenedReceiptRepeated": {
+      "artifact": "native-receipt.xcresult",
+      "result": "Failed",
+      "passed": 25,
+      "failed": 5,
+      "skipped": 0,
+      "runtimeWarnings": [],
+      "failures": [
+        {
+          "failureText": "XCTAssertTrue failed - UX cancelled-root-gives-next-pencil-to-current-uuid: correct=true, observed=103.121375 ms, ceiling=0.1 seconds; window observation, not photon timing",
+          "targetName": "NotebookTests",
+          "testIdentifier": 3,
+          "testIdentifierString": "NotebookPageLifecycleUXTests/testPeerRemovedLeafCannotCommitAnOldCurlIntoItsReplacementSlot()",
+          "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/NotebookPageLifecycleUXTests/testPeerRemovedLeafCannotCommitAnOldCurlIntoItsReplacementSlot",
+          "testName": "testPeerRemovedLeafCannotCommitAnOldCurlIntoItsReplacementSlot()"
+        }
+      ]
+    },
+    "macProjection": {
+      "artifact": "mac-projection.xcresult",
+      "result": "Passed",
+      "passed": 3,
+      "failed": 0,
+      "skipped": 0,
+      "runtimeWarnings": [],
+      "failures": [],
+      "compilerWarnings": "Three pre-existing unnecessary try/await warnings in NotebookGraphicRenderingTests.swift:196,335; runtime warnings empty."
+    },
+    "iphoneosCompilation": {
+      "exitCode": 0,
+      "result": "PASS",
+      "log": "iphoneos-build.log",
+      "installed": false
+    }
+  },
+  "camera": {
+    "provenance": "GUI-306 R01, перенесена одна реализация PageInkProjection и bounded decoder; добавлен atomic install в InkCanvasView, принят обеими задачами",
+    "samples": 30,
+    "mountedSheets": 4,
+    "scale": [
+      1.01,
+      1.3
+    ],
+    "beforeDrawableAllocationsPerPage": [
+      59,
+      59,
+      59,
+      59
+    ],
+    "beforeEvidence": "/tmp/notebook-repair-r01-before.xcresult",
+    "after": [
+      {
+        "drawableAllocations": 0,
+        "drawableResizes": 0,
+        "page": 0,
+        "projectionChanges": 0,
+        "retainedAllocations": 0
+      },
+      {
+        "drawableAllocations": 0,
+        "drawableResizes": 0,
+        "page": 1,
+        "projectionChanges": 0,
+        "retainedAllocations": 0
+      },
+      {
+        "drawableAllocations": 0,
+        "drawableResizes": 0,
+        "page": 2,
+        "projectionChanges": 0,
+        "retainedAllocations": 0
+      },
+      {
+        "drawableAllocations": 1,
+        "drawableResizes": 1,
+        "page": 3,
+        "projectionChanges": 1,
+        "retainedAllocations": 1
+      }
+    ],
+    "measurement": "Счётчики реального admission, не FPS"
+  },
+  "capture": {
+    "beforeSDR": [
+      {
+        "captureStartsMS": 4.303499939851463,
+        "captureMainThreadMS": 27.321958332322538,
+        "pixels": 3983184,
+        "firstEncodingStartsMS": 39.22049992252141,
+        "encodingMainThreadMS": 8.787166676484048,
+        "firstGPUReadinessCallbackMS": 51.26241664402187
+      },
+      {
+        "captureStartsMS": 2.3055417696014047,
+        "captureMainThreadMS": 27.289458317682147,
+        "pixels": 3983184,
+        "firstEncodingStartsMS": 37.098583416081965,
+        "encodingMainThreadMS": 6.038749939762056,
+        "firstGPUReadinessCallbackMS": 45.097375055775046
+      }
+    ],
+    "forcedExtendedExperiment": [
+      {
+        "captureStartsMS": 2.7235415764153004,
+        "captureMainThreadMS": 11.67745841667056,
+        "pixels": 3983184,
+        "firstEncodingStartsMS": 21.10895828809589,
+        "encodingMainThreadMS": 10.109833325259387,
+        "firstGPUReadinessCallbackMS": 33.19049999117851
+      },
+      {
+        "captureStartsMS": 2.354916650801897,
+        "captureMainThreadMS": 12.64270837418735,
+        "pixels": 3983184,
+        "firstEncodingStartsMS": 20.145416725426912,
+        "encodingMainThreadMS": 15.986166661605239,
+        "firstGPUReadinessCallbackMS": 46.987000037916005
+      },
+      {
+        "captureStartsMS": 0.15525007620453835,
+        "captureMainThreadMS": 13.980541611090302,
+        "pixels": 3983184,
+        "firstEncodingStartsMS": 18.587708356790245,
+        "encodingMainThreadMS": 14.854083303362131,
+        "firstGPUReadinessCallbackMS": 44.86104170791805
+      },
+      {
+        "captureStartsMS": 4.054833319969475,
+        "captureMainThreadMS": 12.67529174219817,
+        "pixels": 3983184,
+        "firstEncodingStartsMS": 21.503624971956015,
+        "encodingMainThreadMS": 8.236666675657034,
+        "firstGPUReadinessCallbackMS": 31.549750012345612
+      },
+      {
+        "captureStartsMS": 16.693250043317676,
+        "captureMainThreadMS": 12.14962499216199,
+        "pixels": 3983184,
+        "firstEncodingStartsMS": 35.20204173400998,
+        "encodingMainThreadMS": 14.996791607700288,
+        "firstGPUReadinessCallbackMS": 61.05575000401586
+      },
+      {
+        "captureStartsMS": 2.3124582367017865,
+        "captureMainThreadMS": 12.777124997228384,
+        "pixels": 3983184,
+        "firstEncodingStartsMS": 19.95358325075358,
+        "encodingMainThreadMS": 9.063291712664068,
+        "firstGPUReadinessCallbackMS": 30.567708308808506
+      }
+    ],
+    "finalAutomatic": [
+      {
+        "captureStartsMS": 0.15258335042744875,
+        "captureMainThreadMS": 15.995416673831642,
+        "pixels": 3983184,
+        "firstEncodingStartsMS": 33.3675000583753,
+        "encodingMainThreadMS": 8.830374921672046,
+        "firstGPUReadinessCallbackMS": 43.35587506648153
+      },
+      {
+        "captureStartsMS": 16.13341667689383,
+        "captureMainThreadMS": 16.427083290182054,
+        "pixels": 3983184,
+        "firstEncodingStartsMS": 51.333791692741215,
+        "encodingMainThreadMS": 11.33120828308165,
+        "firstGPUReadinessCallbackMS": 65.17237494699657
+      },
+      {
+        "captureStartsMS": 0.12729165609925985,
+        "captureMainThreadMS": 13.112250017002225,
+        "pixels": 3983184,
+        "firstEncodingStartsMS": 18.52954167407006,
+        "encodingMainThreadMS": 8.998541627079248,
+        "firstGPUReadinessCallbackMS": 28.92262500245124
+      },
+      {
+        "captureStartsMS": 0.8387500420212746,
+        "captureMainThreadMS": 16.057333326898515,
+        "pixels": 3983184,
+        "firstEncodingStartsMS": 37.88449999410659,
+        "encodingMainThreadMS": 15.553875011391938,
+        "firstGPUReadinessCallbackMS": 66.27841666340828
+      },
+      {
+        "captureStartsMS": 16.657958389259875,
+        "captureMainThreadMS": 19.26229160744697,
+        "pixels": 3983184,
+        "firstEncodingStartsMS": 53.542583365924656,
+        "encodingMainThreadMS": 16.362333321012557,
+        "firstGPUReadinessCallbackMS": 83.23829167056829
+      },
+      {
+        "captureStartsMS": 15.115999965928495,
+        "captureMainThreadMS": 16.302875010296702,
+        "pixels": 3983184,
+        "firstEncodingStartsMS": 51.07799998950213,
+        "encodingMainThreadMS": 15.399333322420716,
+        "firstGPUReadinessCallbackMS": 81.1272916616872
+      },
+      {
+        "captureStartsMS": 15.18650003708899,
+        "captureMainThreadMS": 19.230374949984252,
+        "pixels": 3983184,
+        "firstEncodingStartsMS": 50.370916607789695,
+        "encodingMainThreadMS": 16.686375020071864,
+        "firstGPUReadinessCallbackMS": 80.57716663461179
+      },
+      {
+        "captureStartsMS": 0.20224996842443943,
+        "captureMainThreadMS": 16.321166651323438,
+        "pixels": 3983184,
+        "firstEncodingStartsMS": 35.84674990270287,
+        "encodingMainThreadMS": 17.143208417110145,
+        "firstGPUReadinessCallbackMS": 65.7647083280608
+      },
+      {
+        "captureStartsMS": 2.3942500120028853,
+        "captureMainThreadMS": 14.879875001497567,
+        "pixels": 3983184,
+        "firstEncodingStartsMS": 19.881833344697952,
+        "encodingMainThreadMS": 8.295791572891176,
+        "firstGPUReadinessCallbackMS": 29.938749969005585
+      },
+      {
+        "captureStartsMS": 4.002916626632214,
+        "captureMainThreadMS": 15.523833339102566,
+        "pixels": 3983184,
+        "firstEncodingStartsMS": 24.320791708305478,
+        "encodingMainThreadMS": 8.667416637763381,
+        "firstGPUReadinessCallbackMS": 34.04454165138304
+      },
+      {
+        "captureStartsMS": 14.751250040717423,
+        "captureMainThreadMS": 13.155124965123832,
+        "pixels": 3983184,
+        "firstEncodingStartsMS": 31.426541623659432,
+        "encodingMainThreadMS": 8.831333369016647,
+        "firstGPUReadinessCallbackMS": 42.27345832623541
+      },
+      {
+        "captureStartsMS": 16.238749958574772,
+        "captureMainThreadMS": 16.399083309806883,
+        "pixels": 3983184,
+        "firstEncodingStartsMS": 49.541749991476536,
+        "encodingMainThreadMS": 11.706499964930117,
+        "firstGPUReadinessCallbackMS": 62.900916673243046
+      },
+      {
+        "captureStartsMS": 6.501624942757189,
+        "captureMainThreadMS": 18.750916700810194,
+        "pixels": 3983184,
+        "firstEncodingStartsMS": 43.37324993684888,
+        "encodingMainThreadMS": 16.40333340037614,
+        "firstGPUReadinessCallbackMS": 72.97550002112985
+      },
+      {
+        "captureStartsMS": 3.0850833281874657,
+        "captureMainThreadMS": 14.734625001437962,
+        "pixels": 3983184,
+        "firstEncodingStartsMS": 19.31366673670709,
+        "encodingMainThreadMS": 8.356916601769626,
+        "firstGPUReadinessCallbackMS": 29.223666759207845
+      },
+      {
+        "captureStartsMS": 1.2520416639745235,
+        "captureMainThreadMS": 15.549666713923216,
+        "pixels": 3983184,
+        "firstEncodingStartsMS": 19.721666700206697,
+        "encodingMainThreadMS": 8.474583271890879,
+        "firstGPUReadinessCallbackMS": 30.402208329178393
+      },
+      {
+        "captureStartsMS": 1.7275416757911444,
+        "captureMainThreadMS": 15.477916691452265,
+        "pixels": 3983184,
+        "firstEncodingStartsMS": 20.610041683539748,
+        "encodingMainThreadMS": 14.284249977208674,
+        "firstGPUReadinessCallbackMS": 49.01391675230116
+      },
+      {
+        "captureStartsMS": 12.997625046409667,
+        "captureMainThreadMS": 18.1446666829288,
+        "pixels": 3983184,
+        "firstEncodingStartsMS": 48.83541667368263,
+        "encodingMainThreadMS": 14.846333302557468,
+        "firstGPUReadinessCallbackMS": 76.86854165513068
+      },
+      {
+        "captureStartsMS": 3.3101666485890746,
+        "captureMainThreadMS": 14.689958305098116,
+        "pixels": 3983184,
+        "firstEncodingStartsMS": 19.6881250012666,
+        "encodingMainThreadMS": 8.794125053100288,
+        "firstGPUReadinessCallbackMS": 29.57945829257369
+      },
+      {
+        "captureStartsMS": 14.502666774205863,
+        "captureMainThreadMS": 12.98695825971663,
+        "pixels": 3983184,
+        "firstEncodingStartsMS": 33.03429170046002,
+        "encodingMainThreadMS": 15.107291634194553,
+        "firstGPUReadinessCallbackMS": 59.59891667589545
+      },
+      {
+        "captureStartsMS": 0.6502916803583503,
+        "captureMainThreadMS": 17.87891669664532,
+        "pixels": 3983184,
+        "firstEncodingStartsMS": 36.503416718915105,
+        "encodingMainThreadMS": 14.842416625469923,
+        "firstGPUReadinessCallbackMS": 63.51662508677691
+      }
+    ],
+    "finalCaptureRangeMS": [
+      12.98695825971663,
+      19.26229160744697
+    ],
+    "finalCaptureMedianMS": 16.02637500036508,
+    "reservation": "Native 32/64-bit source admitted conservatively at 8 bytes/pixel plus aligned BGRA8 drawable rows. Actual source bytes checked against admission. No cache, resolution reduction, or higher shared byte limit.",
+    "measurement": "CPU labels in original attachments are main-thread wall time, not CPU cycles. Readiness callback is not display or input-to-photon."
+  },
+  "coldFirstDot": {
+    "passed": 10,
+    "failed": 0,
+    "observations": [
+      {
+        "handlerMS": 0.8276250446215272,
+        "GPUReadinessCallbackMS": 10.796416667290032,
+        "isFirstFrame": true,
+        "OSPresentationMS": null
+      },
+      {
+        "handlerMS": 0.8073332719504833,
+        "GPUReadinessCallbackMS": 15.046083368360996,
+        "isFirstFrame": true,
+        "OSPresentationMS": null
+      },
+      {
+        "handlerMS": 0.8445415878668427,
+        "GPUReadinessCallbackMS": 21.492249914444983,
+        "isFirstFrame": true,
+        "OSPresentationMS": null
+      },
+      {
+        "handlerMS": 0.6882499437779188,
+        "GPUReadinessCallbackMS": 5.992999998852611,
+        "isFirstFrame": true,
+        "OSPresentationMS": null
+      },
+      {
+        "handlerMS": 0.7612082408741117,
+        "GPUReadinessCallbackMS": 13.339833240024745,
+        "isFirstFrame": true,
+        "OSPresentationMS": null
+      },
+      {
+        "handlerMS": 0.8419583318755031,
+        "GPUReadinessCallbackMS": 14.965541660785675,
+        "isFirstFrame": true,
+        "OSPresentationMS": null
+      },
+      {
+        "handlerMS": 2.396208350546658,
+        "GPUReadinessCallbackMS": 18.597125075757504,
+        "isFirstFrame": true,
+        "OSPresentationMS": null
+      },
+      {
+        "handlerMS": 0.8172499947249889,
+        "GPUReadinessCallbackMS": 23.85762508492917,
+        "isFirstFrame": true,
+        "OSPresentationMS": null
+      },
+      {
+        "handlerMS": 0.7777499267831445,
+        "GPUReadinessCallbackMS": 12.55295833107084,
+        "isFirstFrame": true,
+        "OSPresentationMS": null
+      },
+      {
+        "handlerMS": 0.6735416827723384,
+        "GPUReadinessCallbackMS": 16.428166651166975,
+        "isFirstFrame": true,
+        "OSPresentationMS": null
+      }
+    ],
+    "measurement": "Первый точный drawable удержанного контакта, без движения/отрыва и без снимков до callback. Simulator GPU readiness, не экран."
+  },
+  "originalNewLeaf": {
+    "passed": 10,
+    "failed": 0,
+    "observedMS": [
+      67.097958,
+      67.1955,
+      67.269541,
+      68.151667,
+      70.746958,
+      72.090667,
+      87.306375,
+      89.450458,
+      93.06925,
+      94.292416
+    ],
+    "deadlineMS": 100,
+    "pixelsCorrect": true
+  },
+  "peerRemovedLeaf": {
+    "passed": 5,
+    "failed": 5,
+    "observedMS": [
+      71.824334,
+      74.105083,
+      75.205208,
+      76.21825,
+      86.093,
+      103.087666,
+      103.121375,
+      106.934917,
+      107.449209,
+      107.967625
+    ],
+    "deadlineMS": 100,
+    "pixelsCorrect": true,
+    "status": "Не закрыт бюджет наблюдения окна; не объявлен PASS и не переименован в latency первого пикселя"
+  },
+  "discardedExperiments": [
+    "Explicit BGRA8 CGContext: capture 26–27 ms, no improvement; removed.",
+    "Immediate capture instead of UIKit commit boundary: no useful improvement, stale layers unsafe; removed.",
+    "Forcing SDR in test window observer: 29–32 ms/capture instead of 14–17, removed.",
+    "Forced extended range showed 12–14 ms on Simulator but is not shipped: automatic avoids inverse conversion on an SDR device.",
+    "accepted-repeat.xcresult interrupted by us when switching from forced extended to automatic; not a product failure."
+  ],
+  "visualInspection": [
+    "native-range-motion/CC158158-F9EF-4CDC-B7B2-492B4B3B9E83.png",
+    "native-range-motion/6F09A060-1266-4E4F-B3ED-D2E854052A22.png",
+    "native-range-dense/1506D99D-64FB-49A1-8D6E-D2E550A46F70.png"
+  ],
+  "limitations": [
+    "Physical input-to-photon, 120 Hz and sustained CPU/GPU/RSS acceptance not measured.",
+    "The complete selected stress check is not green because peer-removal observation remains unstable.",
+    "No production pair was installed or released."
+  ]
+}

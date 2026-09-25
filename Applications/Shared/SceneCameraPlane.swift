@@ -9,6 +9,7 @@ import AppKit
 /// The camera projects a prepared coordinate system. Neither a new sample nor
 /// its screen rounding changes the physical bounds of the hosted content.
 struct SceneCameraProjection: Equatable {
+  static let maximumUnrefinedMagnification = sqrt(2.0)
   let scale: Double
   let translation: SpatialPoint
 
@@ -41,7 +42,7 @@ struct SceneCameraProjection: Equatable {
     // density. Rebuilding every hosted program on the way out and again on
     // return caused main-thread stalls without adding any visible detail.
     let ratio = current.camera.scale / anchor.camera.scale
-    if ratio > sqrt(2.0) { return true }
+    if ratio > maximumUnrefinedMagnification { return true }
     let x = anchor.camera.center.tileX.subtractingReportingOverflow(current.camera.center.tileX)
     let y = anchor.camera.center.tileY.subtractingReportingOverflow(current.camera.center.tileY)
     guard !x.overflow, !y.overflow, x.partialValue > -4096, x.partialValue < 4096,
