@@ -1,0 +1,48 @@
+{
+  "baseCommit": "7b9a4f8c6411eac7f96af12df68918949e60bda9",
+  "status": "verified_package_slice",
+  "sourceSnapshot": "/tmp/notebook-repair-chat-fifo-slice-source",
+  "patch": "/tmp/notebook-repair-chat-fifo-slice.patch",
+  "patchSHA256": "57bf4c7494d824dd095ff95780b69bfe96b2213001acad83a2a969a517e236b4",
+  "selectedSHA256": {
+    "Sources/NotebookCore/NotebookTransportProtocol.swift": "1d9928c92afcd0fe6ff1ade3ce78e308c26c983cc01e4f68406ba4190a9c3cdb",
+    "Tests/NotebookCoreTests/NotebookChatStoreTests.swift": "f66b8014fb37132acc89149287f52fa9dd4f65f4f8bc652d6f2279d0c44d7a71"
+  },
+  "command": [
+    "swift",
+    "test",
+    "--package-path",
+    "/tmp/notebook-repair-chat-fifo-slice-source",
+    "--scratch-path",
+    "/tmp/notebook-repair-chat-fifo-slice-build",
+    "--jobs",
+    "2",
+    "--filter",
+    "NotebookChatStoreTests|NotebookRemoteControlTests|NotebookSelectionPublicationTests|NotebookPresentationTests|NotebookTransportBlobWindowTests|fullBlobWindowFitsTheTransportFrame"
+  ],
+  "verification": {
+    "exitCode": 0,
+    "passedTests": 43,
+    "suites": 6,
+    "testSeconds": 0.567,
+    "log": "/tmp/notebook-repair-chat-fifo-slice-core-retry.log",
+    "logSHA256": "f975a7baad26f5fb295184b359b5b6311cdff6bdbf90c02c79ae2ffc00fd61de",
+    "snapshotSHA256UnchangedAfterRun": true,
+    "reverseApplyCheck": "PASS",
+    "baseline": "Not run; avoided another module rebuild while root resumes native runner. Negative root cause covered by explicit same-priority four-frame order and20-frame admission/credit assertions, not reported as measured baseline.",
+    "warnings": "One unchanged HEAD test warning: NotebookGraphicVisibilityTests.swift151 unnecessary try; no new test warnings in successful retry."
+  },
+  "ownerAudit": {
+    "soleProductionOwner": "Applications/Shared/NearbySync.swift: peer connection outgoing NotebookTransportOutgoing; sendTransient -> enqueue -> pump -> NWConnection.send, incoming credit -> outgoing.acknowledge -> pump. No other production outgoing owner.",
+    "admission": "20 global addressed pending frames and existing queued-byte bound. An error follows existing connection stop/error path; it never silently replaces an admitted request/reply.",
+    "ordering": "FIFO within existing transport priority; Stop/Approval interactive priority remains -1, contact/camera and bulk reservations unchanged. Event/latest-state coalescing remains existing one-slot-per-priority semantics.",
+    "wire": "No Codable field, packet version, public method signature or durable schema changes. Added local classification/storage only.",
+    "dependencies": "Exactly two selected files against base7b9a4f8c; no pending programIdentity, AppModel, scene, JS, native runner or historical-receipt dependency."
+  },
+  "integration": {
+    "productionWorkingFileSHA256": "1d9928c92afcd0fe6ff1ade3ce78e308c26c983cc01e4f68406ba4190a9c3cdb",
+    "testWorkingFileBeforeAdditionalRegressionSHA256": "8a8bb89ff226d194f1d1c55ad05a6f559b43c7d692ee7762ebdde454187fb17e",
+    "instruction": "Root may copy the verified snapshot ChatStoreTests into working tree after checking the recorded current hash, then stage exactly these two files; main two-file patch applies against HEAD7b9a4f8c. No working-tree/index edits were performed by this agent.",
+    "suggestedCommit": "fix(transport): preserve addressed chat frames under backpressure"
+  }
+}

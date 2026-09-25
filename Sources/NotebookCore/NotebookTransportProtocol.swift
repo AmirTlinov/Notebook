@@ -74,6 +74,16 @@ public enum NotebookTransportTransient: Codable, Equatable, Sendable {
     case .selection: 6
     }
   }
+
+  /// State snapshots may supersede one another; addressed Codex exchanges may not.
+  /// Dropping a request or reply here forces the application-level two-second retry.
+  public var isReplaceable: Bool {
+    if case .codex(let envelope) = self {
+      if case .event = envelope.body { return true }
+      return false
+    }
+    return true
+  }
 }
 
 public struct NotebookTransportHello: Codable, Equatable, Sendable {
@@ -289,7 +299,9 @@ public enum NotebookTransportAuthentication {
 
 }
 
-/// Each transient priority has one replaceable slot, beside sixteen durable offers and
+/// Latest-state transients have one replaceable slot per priority. Addressed Codex
+/// requests and replies instead retain FIFO order in the same bounded send window,
+/// beside sixteen durable offers and
 /// two outstanding blob-control/data slots. Bulk never consumes the last two
 /// transfer credits reserved for contact and camera. Credit is not a SQL ACK.
 public struct NotebookTransportOutgoing: Sendable {
@@ -306,13 +318,14 @@ public struct NotebookTransportOutgoing: Sendable {
   private var controls: [Pending] = []
   private var credits: Set<UInt64> = []
   private var transients: [Int: Pending] = [:]
+  private var addressedTransients: [Int: [Pending]] = [:]
   private var offers: [Pending] = []
   private var blobs: [Pending] = []
   private var requests: [Pending] = []
   public private(set) var window = NotebookTransportSendWindow()
   public private(set) var pendingBytes = 0
   public init() {}
-  public var pendingCount: Int { controls.count + (credits.isEmpty ? 0 : 1) + transients.count + offers.count + blobs.count + requests.count }
+  public var pendingCount: Int { controls.count + (credits.isEmpty ? 0 : 1) + transients.count + addressedTransients.values.reduce(0) { $0 + $1.count } + offers.count + blobs.count + requests.count }
 
   public mutating func enqueue(_ message: NotebookTransportMessage) throws {
     if case .credit(let values) = message {
@@ -323,13 +336,18 @@ public struct NotebookTransportOutgoing: Sendable {
     }
     let value = try Pending(message)
     let replaced: Int
-    if case .transient(let transient) = message { replaced = transients[transient.priority]?.bytes ?? 0 } else { replaced = 0 }
+    if case .transient(let transient) = message, transient.isReplaceable { replaced = transients[transient.priority]?.bytes ?? 0 } else { replaced = 0 }
     let control: Bool
     switch message { case .offer, .blobs, .requestBlobs: control = false; default: control = true }
     let limit = NotebookTransportLimits.maximumQueuedBytes - (control ? 0 : NotebookTransportLimits.reservedControlBytes)
     guard pendingBytes - replaced + value.bytes <= limit else { throw NotebookTransportError.backpressure }
     switch message {
-    case .transient(let transient): transients[transient.priority] = value
+    case .transient(let transient):
+      if transient.isReplaceable { transients[transient.priority] = value }
+      else {
+        guard addressedTransients.values.reduce(0, { $0 + $1.count }) < 20 else { throw NotebookTransportError.backpressure }
+        addressedTransients[transient.priority, default: []].append(value)
+      }
     case .offer: guard offers.count < 16 else { throw NotebookTransportError.backpressure }; offers.append(value)
     case .blobs: guard blobs.count < 2 else { throw NotebookTransportError.backpressure }; blobs.append(value)
     case .requestBlobs: guard requests.count < 2 else { throw NotebookTransportError.backpressure }; requests.append(value)
@@ -350,9 +368,14 @@ public struct NotebookTransportOutgoing: Sendable {
       return NotebookTransportPacket(sequence: 0, message: value.message)
     }
     guard window.hasCapacity else { return nil }
-    if let priority = transients.keys.min(), let value = transients[priority] {
+    if let priority = (Array(transients.keys) + Array(addressedTransients.keys)).min(),
+      let value = addressedTransients[priority]?.first ?? transients[priority] {
       guard value.bytes <= NotebookTransportLimits.maximumUnacknowledgedBytes - window.unacknowledgedBytes else { return nil }
-      transients.removeValue(forKey: priority); pendingBytes -= value.bytes
+      if addressedTransients[priority]?.isEmpty == false {
+        addressedTransients[priority]?.removeFirst()
+        if addressedTransients[priority]?.isEmpty == true { addressedTransients.removeValue(forKey: priority) }
+      } else { transients.removeValue(forKey: priority) }
+      pendingBytes -= value.bytes
       return NotebookTransportPacket(sequence: try window.reserve(bytes: value.bytes), message: value.message)
     }
     guard window.unacknowledged.count < NotebookTransportLimits.maximumUnacknowledgedFrames - 2 else { return nil }

@@ -113,6 +113,10 @@ archives are neither read nor deleted by this path.
 
 The receiver validates the length before requesting the body. Replaceable
 transient slots retain the latest state instead of accumulating snapshots.
+Addressed Codex requests and replies are not snapshots: they remain FIFO in
+the bounded authenticated transient queue, while conversation events still
+coalesce to their latest state. A queued request or receipt must not disappear
+and incur the two-second application retry merely because another frame arrived.
 A temporary blob file belongs to one connection generation and hash. Invalid
 length, order or SHA-256 discards the incomplete assembly. SQL ingests a verified
 file by streaming; a large owner is not assembled in transport memory. Limits

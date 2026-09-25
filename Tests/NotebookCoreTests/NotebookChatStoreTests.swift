@@ -244,6 +244,90 @@ struct NotebookChatStoreTests {
     #expect(response.priority < event.priority)
   }
 
+  @Test func addressedChatFramesKeepTheirOrderWhileConversationSnapshotsCoalesce() throws {
+    var outgoing = NotebookTransportOutgoing()
+    let first = NotebookChatEnvelope(body: .reply(.acknowledged))
+    let second = NotebookChatEnvelope(body: .reply(.acknowledged))
+    let third = NotebookChatEnvelope(body: .request(.models))
+    let state = CodexConversation(threadID: UUID().uuidString,
+      generation: UUID(), revision: 1, title: "Task", ready: true, busy: false,
+      activeTurnID: nil, messages: [], requests: [], acceptedMessages: [:], turnStatuses: [:])
+    let older = NotebookChatEnvelope(body: .event(subscriptionID: UUID(), conversation: state))
+    let newer = NotebookChatEnvelope(body: .event(subscriptionID: UUID(), conversation: state))
+    for frame in [first, second, third, older, newer] { try outgoing.enqueue(.transient(.codex(frame))) }
+    #expect(outgoing.pendingCount == 4)
+    var delivered: [UUID] = []
+    for _ in 0..<4 {
+      let packet = try outgoing.takeNext()
+      guard case .transient(.codex(let frame)) = try #require(packet).message else {
+        Issue.record("Expected Codex frame"); return
+      }
+      delivered.append(frame.id)
+    }
+    #expect(delivered == [first.id, second.id, third.id, newer.id])
+    #expect(outgoing.pendingCount == 0)
+  }
+
+  @Test func addressedChatAdmissionIsBoundedAndCreditResumesTheSameFIFO() throws {
+    var outgoing = NotebookTransportOutgoing()
+    let accepted = (0..<20).map { _ in NotebookChatEnvelope(body: .reply(.acknowledged)) }
+    let refused = NotebookChatEnvelope(body: .request(.models))
+    for frame in accepted { try outgoing.enqueue(.transient(.codex(frame))) }
+    let fullBytes = outgoing.pendingBytes
+    #expect(outgoing.pendingCount == 20)
+    #expect(fullBytes > 0)
+    #expect(throws: NotebookTransportError.backpressure) {
+      try outgoing.enqueue(.transient(.codex(refused)))
+    }
+    #expect(outgoing.pendingCount == 20)
+    #expect(outgoing.pendingBytes == fullBytes, "Failed admission must not charge or replace an accepted frame")
+    #expect(outgoing.window.unacknowledged.isEmpty)
+
+    var packets: [NotebookTransportPacket] = []
+    var delivered: [UUID] = []
+    func deliveredID(_ packet: NotebookTransportPacket) throws -> UUID {
+      guard case .transient(.codex(let frame)) = packet.message else {
+        throw NotebookTransportError.invalidFrame
+      }
+      return frame.id
+    }
+    for _ in 0..<NotebookTransportLimits.maximumUnacknowledgedFrames {
+      let next = try outgoing.takeNext()
+      let packet = try #require(next)
+      packets.append(packet); delivered.append(try deliveredID(packet))
+    }
+    #expect(delivered == accepted.prefix(16).map(\.id))
+    #expect(outgoing.window.unacknowledged.count == 16)
+    #expect(outgoing.pendingCount == 4)
+    let blockedBytes = outgoing.pendingBytes
+    #expect(blockedBytes > 0)
+    #expect(try outgoing.takeNext() == nil)
+    #expect(outgoing.pendingCount == 4 && outgoing.pendingBytes == blockedBytes)
+
+    try outgoing.acknowledge(packets.prefix(4).map(\.sequence))
+    for _ in 0..<4 {
+      let next = try outgoing.takeNext()
+      let packet = try #require(next)
+      packets.append(packet); delivered.append(try deliveredID(packet))
+    }
+    #expect(delivered == accepted.map(\.id))
+    #expect(outgoing.pendingCount == 0 && outgoing.pendingBytes == 0)
+    #expect(outgoing.window.unacknowledged.count == 16)
+    try outgoing.acknowledge(packets.dropFirst(4).map(\.sequence))
+    #expect(outgoing.window.unacknowledged.isEmpty)
+    #expect(outgoing.window.unacknowledgedBytes == 0)
+
+    // Rejected work is absent until explicitly re-admitted after capacity frees.
+    #expect(try outgoing.takeNext() == nil)
+    try outgoing.enqueue(.transient(.codex(refused)))
+    let retried = try outgoing.takeNext()
+    let retry = try #require(retried)
+    #expect(try deliveredID(retry) == refused.id)
+    try outgoing.acknowledge([retry.sequence])
+    #expect(outgoing.pendingCount == 0 && outgoing.pendingBytes == 0)
+    #expect(outgoing.window.unacknowledged.isEmpty && outgoing.window.unacknowledgedBytes == 0)
+  }
+
   @Test func projectEditIsNativeScopedAndReplaysTheSameDurableReceipt() throws {
     try fixture { store, author in
       let edit = CodexProjectEdit(id: "native-project", name: "New name", roots: nil)
