@@ -8420,3 +8420,12 @@ revoke/detach, закрытие до и во время attach, поздний �
 немедленный Stop/новое сообщение/idle event, повторы и uncertain reconciliation.
 Таймер в пустой очереди отсутствует; deadline остаётся только у ожидающих попыток.
 Это регрессии владения и доставки, не приёмка реального Codex streaming на Simulator.
+
+### A19 — индекс ожидания Cloud dependencies
+
+`NotebookCloudDependencyQueueTests`: **1/1 PASS**, 0.491 s,
+`/tmp/notebook-repair-cloud.log`. Проверяется production-владелец временной таблицы:
+100 000 раскрытых узлов, затем 1 000 новых узлов с повторным admission каждого.
+План SQLite использует `(expanded, hash)`, суммарно **13 000 VM steps** поиска,
+повторная доставка не увеличивает число узлов. Измерение относится к очереди SQL,
+а не к сети CloudKit или полной доставке приложения.

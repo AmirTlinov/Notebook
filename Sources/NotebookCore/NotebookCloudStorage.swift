@@ -35,6 +35,11 @@ public struct NotebookCloudRecord: Sendable, Equatable {
 }
 
 extension NotebookStore {
+  static func createCloudOrderQueue(_ db: NotebookSQLConnection) throws {
+    try db.run("CREATE TEMP TABLE cloud_order_nodes(hash TEXT PRIMARY KEY,expanded INTEGER NOT NULL DEFAULT 0)")
+    try db.run("CREATE INDEX cloud_order_pending ON cloud_order_nodes(expanded,hash)")
+  }
+
   public func prepareCloudStorage() throws {
     try commandTransaction(advancesReadRevision: false) {
       let db = currentSQL!
@@ -150,7 +155,7 @@ extension NotebookStore {
       }
       // An uploaded root already covers its dependency closure. New roots are
       // expanded on disk, not materialized as the notebook's full page vector.
-      try db.run("CREATE TEMP TABLE cloud_order_nodes(hash TEXT PRIMARY KEY,expanded INTEGER NOT NULL DEFAULT 0)")
+      try Self.createCloudOrderQueue(db)
       let manifest = try validatedManifest(delivery.change)
       for root in manifest.pageOrderRoots { try db.run("INSERT OR IGNORE INTO cloud_order_nodes(hash) VALUES(?)", [.text(root)]) }
       // Locally admitted inverse roots may deliberately omit their already
