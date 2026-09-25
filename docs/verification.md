@@ -8540,3 +8540,18 @@ Simulator native: `NotebookChatRenderingTests` **1/1 PASS** и
 пользовательского события после failed startup. `MCP/test/chat-render.test.ts`:
 **1/1 PASS**, `/tmp/notebook-repair-chat-delta.log`, включая prepend в раскрытую
 группу с сохранением прежнего DOM. Это прицельная проверка, не длительный UX-run.
+
+
+### GUI-306 — A13, единый экспорт выделения
+
+Copy/Cut больше не экспортируют данные для построения меню. Команда удерживает
+один типизированный снимок и кодирует его вне UI; новый Copy отзывает старый, Cut
+повторно проверяет выделение, источники, родительские позы и чернила до удаления.
+Старые синхронный экспорт и JSON-roundtrip объектов удалены.
+
+`NotebookSelectionClipboardTests`: **6/6 PASS** в
+`/tmp/notebook-repair-native-integrated-3.xcresult`, включая 100 000 измерений,
+настоящий UIPasteboard, смену выделения, новый Copy и конфликт Cut. Исходники этих
+владельцев совпадают с `/tmp/notebook-repair-native-integrated-3-sources.json`.
+Это изолированный Simulator с восстановлением clipboard, не финальная
+согласованная приёмка всего ремонта.

@@ -5,7 +5,52 @@ import NotebookCore
 /// A finite export of the selected material. It never writes the source or
 /// reads the system clipboard. Live rendering and selection keep their owners.
 extension NotebookAppModel {
-  func clipboardSelectionFragment() throws -> NotebookPasteFragment { try selectionExport().fragment }
+  /// Menu eligibility only captures bounded metadata; it never serializes source bodies.
+  var canExportSelection: Bool { (try? selectionExportSource()) != nil }
+
+  func clipboardSelectionSnapshot() throws -> NotebookSelectionExport {
+    let source=try selectionExportSource()
+    let checks:[EditableElementReference:NotebookNativeElementSource]
+    if let region=selectionSession.region,let material=region.materialization { checks=material.sources }
+    else {
+      // The exported pose includes its ancestors, not only the child's own
+      // frame. A parent edit during preparation must also revoke a late Cut.
+      var ids=Set(source.sources.map(\.id))
+      for element in source.sources { ids.formUnion(source.graph.placement(element.id)?.ancestors ?? []) }
+      let board=selectionSession.elements.first.map { reference -> UUID in
+        if case .spatial(let board,_) = reference { return board };return source.surface.ownerID!
+      } ?? source.surface.ownerID!
+      var captured:[EditableElementReference:NotebookNativeElementSource]=[:]
+      for id in ids {
+        let reference:EditableElementReference = source.surface.kind == .page
+          ? .page(pageID:source.surface.ownerID!,elementID:id) : .spatial(boardID:board,elementID:id)
+        guard let value=nativeElementSource(reference),elementCommandDrafts[reference] == nil else {
+          throw CollaborationError("selection_not_ready","Выделение изменилось или ещё готовится. Повторите действие.")
+        }
+        captured[reference]=value
+      }
+      checks=captured
+    }
+    return .init(selectionID:selectionSession.id,surface:source.surface,
+      inkRevision:selectionInkRevision(source.surface),sourceChecks:checks,
+      sources:source.sources,graph:source.graph,rootOrigin:source.rootOrigin,
+      erasures:elementErasures(on:source.surface))
+  }
+
+  func selectionStillMatches(_ snapshot:NotebookSelectionExport) -> Bool {
+    guard selectionSession.id == snapshot.selectionID,
+      selectionInkRevision(snapshot.surface) == snapshot.inkRevision else { return false }
+    if let region=selectionSession.region { return regionIsCurrent(region) }
+    return snapshot.sourceChecks.allSatisfy { nativeElementSource($0.key) == $0.value && elementCommandDrafts[$0.key] == nil }
+  }
+
+  private func selectionInkRevision(_ surface:SurfaceID) -> String? {
+    surface.kind == .page ? surface.ownerID.flatMap { pages[$0]?.drawingStamp.revision } : spatialInk?.stamp.revision
+  }
+
+  private func selectionExport() throws -> NotebookSelectionExport.Result {
+    try clipboardSelectionSnapshot().prepare()
+  }
 
   /// Duplication shares the same bounded export and ordinary addressed writer.
   /// Native graphic contacts retain their causal copy operation; text, programs
@@ -44,7 +89,7 @@ extension NotebookAppModel {
     } catch { showCue(error.localizedDescription) }
   }
 
-  private func selectionExport() throws -> (fragment:NotebookPasteFragment,minimum:SpatialPoint,worldOrigin:WorldPoint) {
+  private func selectionExportSource() throws -> (sources:[AgentElement],graph:NotebookGraphicGraph,surface:SurfaceID,rootOrigin:WorldPoint) {
     func unavailable() -> CollaborationError { .init("selection_not_ready","Выделение изменилось или ещё готовится. Повторите действие.") }
     var sources: [AgentElement] = []
     let graph: NotebookGraphicGraph
@@ -81,15 +126,44 @@ extension NotebookAppModel {
       switch first {
       case .page(let owner,_): sources=pages[owner]?.interactionElements(ids:ids) ?? []
       case .spatial(let owner,_):
-        sources=try (boardHierarchy?.board(owner)?.interactionElements(ids:ids) ?? []).map { element in
-          try JSONValue.encode(element).decode(AgentElement.self)
+        sources=(boardHierarchy?.board(owner)?.interactionElements(ids:ids) ?? []).map { element in
+          AgentElement(id:element.id,kind:AgentElementKind(rawValue:element.kind.rawValue)!,
+            frame:.init(x:element.frame.x,y:element.frame.y,width:element.frame.width,height:element.frame.height),
+            source:element.source,html:element.html,css:element.css,javaScript:element.javaScript,
+            programPackage:element.programPackage,state:element.state,graphic:element.graphic,
+            textStyle:element.textStyle,parentID:element.parentID,basis:element.basis)
         }
       }
       guard sources.count == ids.count else { throw unavailable() }
     }
+    guard (1...32).contains(sources.count) else { throw unavailable() }
+    return (sources,graph,surface,rootOrigin)
+  }
+}
+
+/// Immutable captured material; preparation is pure and runs off the UI actor.
+/// Copy consumes it once. Cut checks its selection/content token before deleting.
+struct NotebookSelectionExport: Sendable {
+  struct Result: Sendable {
+    let fragment:NotebookPasteFragment
+    let minimum:SpatialPoint
+    let worldOrigin:WorldPoint
+  }
+  let selectionID:UUID
+  let surface:SurfaceID
+  let inkRevision:String?
+  let sourceChecks:[EditableElementReference:NotebookNativeElementSource]
+  let sources:[AgentElement]
+  let graph:NotebookGraphicGraph
+  let rootOrigin:WorldPoint
+  let erasures:[String:[InkElementErasure]]
+
+  func prepare() throws -> Result {
+    func unavailable() -> CollaborationError { .init("selection_not_ready","Выделение изменилось или ещё готовится. Повторите действие.") }
     let ids=Set(sources.map(\.id))
     var bounds=CGRect.null
     for element in sources {
+      try Task.checkCancellation()
       guard let placement=graph.placement(element.id) else { throw unavailable() }
       let delta=rootOrigin.delta(to:placement.origin)
       let box=CGRect(x:0,y:0,width:placement.localSize.x,height:placement.localSize.y).applying(placement.transform)
@@ -98,27 +172,32 @@ extension NotebookAppModel {
     }
     guard !bounds.isNull,bounds.width > 0,bounds.height > 0 else { throw unavailable() }
     let elements=try sources.map { element -> AgentElement in
-      guard case .object(var values)=try JSONValue.encode(element) else { throw unavailable() }
-      if element.parentID.map({ !ids.contains($0) }) ?? true {
+      try Task.checkCancellation()
+      var frame=element.frame,parent=element.parentID,basis=element.basis
+      if parent.map({ !ids.contains($0) }) ?? true {
         guard let placement=graph.placement(element.id) else { throw unavailable() }
         let pose=try placement.detached(),delta=rootOrigin.delta(to:placement.origin)
-        values.removeValue(forKey:"parentID")
-        values["frame"]=try .encode(PageRect(x:pose.frame.x+delta.x-bounds.minX,y:pose.frame.y+delta.y-bounds.minY,
-          width:pose.frame.width,height:pose.frame.height))
-        values["basis"]=try .encode(pose.basis)
+        parent=nil
+        frame = .init(x:pose.frame.x+delta.x-bounds.minX,y:pose.frame.y+delta.y-bounds.minY,
+          width:pose.frame.width,height:pose.frame.height)
+        basis=pose.basis
       }
-      if var graphic=element.graphic {
-        if let body=graph.resolve(element.id,space:.body).layout {
-          graphic.connection=graphic.connection?.detachingEndpoints(in:body,retainingBindingsTo:ids)
-        }
-        let cuts=elementErasures(on:surface)[element.id] ?? []
-        if !cuts.isEmpty { graphic.mask=(graphic.mask ?? .init()).capturing(cuts,transform:graphic.transform) }
-        guard case .object(var encoded)=try JSONValue.encode(graphic) else { throw unavailable() }
-        encoded["sourceInkIDs"] = .array([])
-        values["graphic"] = .object(encoded)
+      var graphic=element.graphic
+      if let source=graphic {
+        let body=graph.resolve(element.id,space:.body).layout
+        let connection=body.map { source.connection?.detachingEndpoints(in:$0,retainingBindingsTo:ids) } ?? source.connection
+        let cuts=erasures[element.id] ?? []
+        let mask=cuts.isEmpty ? source.mask : (source.mask ?? .init()).capturing(cuts,transform:source.transform)
+        graphic = .init(shape:source.shape,style:source.style,label:source.label,
+          representation:source.representation,visible:source.visible,sourceInkIDs:[],connection:connection,
+          vertices:source.vertices,cornerRadius:source.cornerRadius,freehand:source.freehand,
+          transform:source.transform,path:source.path,mask:mask)
       }
-      return try JSONValue.object(values).decode(AgentElement.self)
+      return .init(id:element.id,kind:element.kind,frame:frame,source:element.source,html:element.html,
+        css:element.css,javaScript:element.javaScript,programPackage:element.programPackage,state:element.state,
+        graphic:graphic,textStyle:element.textStyle,parentID:parent,basis:basis)
     }
-    return (.init(elements:elements,size:.init(x:bounds.width,y:bounds.height)),.init(x:bounds.minX,y:bounds.minY),rootOrigin)
+    return .init(fragment:.init(elements:elements,size:.init(x:bounds.width,y:bounds.height)),
+      minimum:.init(x:bounds.minX,y:bounds.minY),worldOrigin:rootOrigin)
   }
 }

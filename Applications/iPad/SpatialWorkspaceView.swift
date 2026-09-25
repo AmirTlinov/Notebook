@@ -723,16 +723,9 @@ struct SpatialWorkspaceView: View {
 
   private func selectionContextActions(_ selection:UUID,at point:CGPoint) -> [UIMenuElement] {
     guard model.selectionSession.id == selection else { return [] }
-    let canCopy=(try? model.clipboardSelectionFragment()) != nil
+    let canCopy=model.canExportSelection
     let destination=model.presence.flatMap { contextDestination(at:point,presence:$0) }
-    func copy(cut:Bool) {
-      guard model.selectionSession.id == selection else { return }
-      do {
-        let fragment=try model.clipboardSelectionFragment()
-        UIPasteboard.general.setItems([try NotebookClipboard.representations(fragment)],options:[:])
-        if cut,model.selectionSession.id == selection { model.deleteSelectedContent() }
-      } catch { model.showCue(error.localizedDescription) }
-    }
+    func copy(cut:Bool) { contextMenus.copySelection(model,selection:selection,cut:cut) }
     var actions=NotebookContextMenus.clipboardActions(cut:canCopy ? { copy(cut:true) } : nil,
       copy:canCopy ? { copy(cut:false) } : nil,paste:destination.map { captured in {
         guard model.selectionSession.id == selection else { return };pasteContext(at:captured,point:point)

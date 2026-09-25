@@ -18,14 +18,23 @@ enum NotebookClipboard {
     case image(Data)
   }
 
-  static func representations(_ fragment:NotebookPasteFragment) throws -> [String:Any] {
+  struct Export: Sendable {
+    let fragment:Data
+    let plainText:String?
+    @MainActor var representations:[String:Any] {
+      var item:[String:Any]=[fragmentType.identifier:fragment]
+      if let plainText { item[UTType.utf8PlainText.identifier]=plainText }
+      return item
+    }
+  }
+
+  static func prepareExport(_ fragment:NotebookPasteFragment) throws -> Export {
+    try Task.checkCancellation()
     let data=try JSONEncoder().encode(fragment)
     guard data.count <= 16 * 1_048_576 else { throw failure("Выделение слишком большое для буфера.") }
-    var item:[String:Any]=[fragmentType.identifier:data]
-    if fragment.elements.count == 1,let text=fragment.elements.first,text.kind == .nativeText {
-      item[UTType.utf8PlainText.identifier]=text.source
-    }
-    return item
+    try Task.checkCancellation()
+    let text=fragment.elements.count == 1 && fragment.elements[0].kind == .nativeText ? fragment.elements[0].source : nil
+    return .init(fragment:data,plainText:text)
   }
 
   @MainActor static func read(_ providers: [NSItemProvider], availableSize: SpatialPoint) async throws -> Content {

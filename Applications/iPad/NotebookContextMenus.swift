@@ -29,6 +29,39 @@ final class NotebookContextMenus: NSObject, UIPopoverPresentationControllerDeleg
   private var registeredSelection: UUID?
   private var pendingSelection: (id:UUID,point:CGPoint)?
   var selectionActions: ((UUID,CGPoint) -> [UIMenuElement])?
+  private(set) var clipboardTask:Task<Void,Never>?
+  private var clipboardCommand:UUID?
+
+  func copySelection(_ model:NotebookAppModel,selection:UUID,cut:Bool) {
+    guard model.selectionSession.id == selection else { return }
+    clipboardTask?.cancel()
+    let command=UUID();clipboardCommand=command
+    do {
+      let snapshot=try model.clipboardSelectionSnapshot()
+      clipboardTask=Task { [weak self,weak model] in
+        defer {
+          if self?.clipboardCommand == command { self?.clipboardTask=nil;self?.clipboardCommand=nil }
+        }
+        guard !Task.isCancelled else { return }
+        let worker=Task.detached(priority:.userInitiated) {
+          try NotebookClipboard.prepareExport(snapshot.prepare().fragment)
+        }
+        do {
+          let exported=try await withTaskCancellationHandler { try await worker.value } onCancel: { worker.cancel() }
+          guard !Task.isCancelled,let self,let model,clipboardCommand == command else { return }
+          if cut && !model.selectionStillMatches(snapshot) {
+            model.showCue("Выделение изменилось. Повторите вырезание.");return
+          }
+          UIPasteboard.general.setItems([exported.representations],options:[:])
+          if cut { model.deleteSelectedContent() }
+        } catch is CancellationError {} catch {
+          if self?.clipboardCommand == command { model?.showCue(error.localizedDescription) }
+        }
+      }
+    } catch {
+      clipboardTask=nil;clipboardCommand=nil;model.showCue(error.localizedDescription)
+    }
+  }
 
 
   override init() {
@@ -97,6 +130,7 @@ final class NotebookContextMenus: NSObject, UIPopoverPresentationControllerDeleg
     dismissCurrent(); self.source = nil; anchorView = nil
   }
   func uninstall() {
+    clipboardTask?.cancel();clipboardTask=nil;clipboardCommand=nil
     dismissCurrent(); source = nil; anchorView = nil; selectionActions = nil; pendingSelection = nil
     gate?.unregisterControlRegion(source:controlSource); gate = nil
   }

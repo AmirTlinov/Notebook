@@ -25,8 +25,12 @@ formats are unchanged. Tool styles remain independent device preferences.
   selection retains its system editing controls.
 - `NotebookContextMenus` owns menu/popover presentation. Existing model operations
   revalidate captured selection identity and their addressed source when invoked.
-  Copy exports a bounded native fragment; clipboard paste reidentifies it and uses
-  the existing atomic element/history writer. Text also exports plain text for
+  Menu eligibility reads bounded selection metadata without serializing bodies.
+  Explicit Copy captures typed material once and encodes the fragment off the UI
+  actor. Copy publishes that immutable snapshot even if selection changes; a newer
+  copy command cancels the old one. Cut rechecks selection, source/ancestor poses
+  and ink revision, and deletes only after that check and the clipboard write. Clipboard paste
+  reidentifies it through the existing atomic element/history writer. Text also exports plain text for
   other applications. An unavailable target fails, never redirects to a new one.
 - Confirmed blank single taps toggle chrome without resizing/remounting content.
   Open tool/context panels consume their dismissal contact first. Selection,
