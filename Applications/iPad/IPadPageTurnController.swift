@@ -14,6 +14,19 @@ final class PageTurnAdmissionRecognizer: UIGestureRecognizer {
   private var coldDirection: Int?
   private var contacts: [UITouch: CGPoint] = [:]
   private var beganAt: TimeInterval = 0
+  private var motionSamples: [(time: TimeInterval, x: CGFloat)] = []
+
+  private func sampleMotion() -> (distance: CGFloat, velocity: CGFloat) {
+    let distance = contacts.reduce(CGFloat.zero) { $0 + $1.key.location(in: view?.window).x - $1.value.x }
+      / CGFloat(max(1, contacts.count))
+    let time = contacts.keys.map(\.timestamp).max() ?? beganAt
+    // The same short recent-motion interval as workspace gestures. A stopped
+    // finger has zero velocity; a recent reversal can cancel a long drag.
+    motionSamples.removeAll { time - $0.time > 0.08 }
+    if motionSamples.last?.time != time { motionSamples.append((time, distance)) }
+    guard let first = motionSamples.first, time - first.time > 0.001 else { return (distance, 0) }
+    return (distance, (distance - first.x) / (time - first.time))
+  }
   override init(target: Any?, action: Selector?) {
     super.init(target:target,action:action)
     name = "NotebookPageTurnAdmission"
@@ -26,11 +39,13 @@ final class PageTurnAdmissionRecognizer: UIGestureRecognizer {
   override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
     for touch in touches { contacts[touch] = touch.location(in:view?.window) }
     beganAt = touches.map(\.timestamp).max() ?? 0
+    motionSamples.removeAll(); _ = sampleMotion()
     if !canBeginNavigation() || contacts.count > 2 { cancelColdSwipe(); state = .began }
   }
   override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent) {
     guard state == .possible || coldDirection != nil else { return }
     guard canBeginNavigation() else { cancelColdSwipe(); state = .began; return }
+    _ = sampleMotion()
     let pairs = contacts.map { (start:$0.value, end:$0.key.location(in:view?.window)) }
     let deltas = pairs.map { CGPoint(x:$0.end.x-$0.start.x,y:$0.end.y-$0.start.y) }
     if pairs.count == 1, let delta = deltas.first {
@@ -62,16 +77,16 @@ final class PageTurnAdmissionRecognizer: UIGestureRecognizer {
   }
   override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent) {
     if let direction = coldDirection {
-      let delta = contacts.map { $0.key.location(in:view?.window).x - $0.value.x }
-      let distance = delta.reduce(0,+) / CGFloat(max(1,delta.count))
-      updateColdSwipe(distance)
+      let motion = sampleMotion(), sign = -CGFloat(direction)
+      updateColdSwipe(motion.distance)
       coldDirection = nil
-      finishColdSwipe(canBeginNavigation() && -distance * CGFloat(direction) >= IPadSheetCurlController.minimumGestureTravel)
+      finishColdSwipe(IPadSheetCurlController.completesGesture(travel: motion.distance * sign,
+        velocity: motion.velocity * sign, ended: canBeginNavigation()))
     }
     state = .ended
   }
   override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent) { cancelColdSwipe(); state = .cancelled }
-  override func reset() { super.reset(); cancelColdSwipe(); contacts.removeAll() }
+  override func reset() { super.reset(); cancelColdSwipe(); contacts.removeAll(); motionSamples.removeAll() }
 }
 
 /// The iPad executor for `PageTurnSurface`.
@@ -113,15 +128,18 @@ final class IPadPageTurnController: UIViewController {
   private var isTransitioning = false
   private var isUpdatingContents = false
   private var pendingExternalIndex: Int?
-  private var sequentialTarget: Int?
+  // Accumulated step destination, not a queue of obsolete animations.
+  private var stepTarget: Int?
+  private var isNavigationBurst = false
   private var coldGestureTarget: Int?
   private var coldGestureTranslation: CGFloat = 0
   private var coldGestureIsTurning = false
+  private var gesturePreparation: PageTurnActivity.PreparationDemand?
   private var notebookNavigation: NotebookPageNavigation?
   private weak var inputGate: NotebookInputGate?
   private var notebookStatusRevision: UInt64 = 0
   private var lastNotebookStatus: String?
-  private var onWindowChange: @MainActor (Set<Int>, String) -> Void = { _, _ in }
+  private var onWindowChange: @MainActor (Set<Int>, Int?, String) -> Void = { _, _, _ in }
   private var anticipatedIndex: Int?
   private var lastTurnDirection: Int?
   private var transitionRevision: UInt64 = 0
@@ -154,7 +172,7 @@ final class IPadPageTurnController: UIViewController {
     pageTurnActivity.prepare(nil)
     documentNavigation?.unbind(documentControllerID)
     notebookNavigation?.unbind(documentControllerID)
-    onWindowChange([], sequenceRevision)
+    onWindowChange([], nil, sequenceRevision)
   }
 
   private func observe(_ stage: String, target: Int? = nil, reason: String? = nil) {
@@ -223,12 +241,20 @@ final class IPadPageTurnController: UIViewController {
       return navigationIsEnabled && canBeginNavigation()
     }
     navigationAdmission.prepareDirection = { [weak self] direction in
-      guard let self, !isTransitioning else { return true }
-      let target = displayedIndex + direction
+      guard let self else { return true }
+      // A fresh swipe during a released sheet's landing is still a contact,
+      // not a failed pan. Keep it in the same admission path as a cold leaf.
+      // Otherwise the dependent pan refuses motion != nil and loses it forever.
+      let settling = (sheetController.settlingPage as? IPadIndexedPageController)?.pageIndex
+      if isTransitioning && settling == nil { return true }
+      let origin = stepTarget ?? (isTransitioning ? (pendingExternalIndex ?? settling ?? displayedIndex) : displayedIndex)
+      let target = origin + direction
       guard (0..<pageCount).contains(target) else { return true }
       prepareExternalTarget(target)
-      guard readyPages[target] != true else { return true }
-      coldGestureTarget = target; coldGestureTranslation = 0; anticipatedIndex = target
+      guard isTransitioning || origin != displayedIndex || readyPages[target] != true else { return true }
+      coldGestureTarget = target; coldGestureTranslation = 0
+      if !isTransitioning { anticipatedIndex = target }
+      acceleratePendingTurns()
       retainNeededControllers(); publishDocumentStatus()
       return false
     }
@@ -248,9 +274,16 @@ final class IPadPageTurnController: UIViewController {
         return
       }
       guard let target = coldGestureTarget else { return }
-      coldGestureTarget = nil; anticipatedIndex = nil
-      if accepted { sequentialTarget = nil; requestExternalSelection(target) }
-      else { prepareExternalTarget(nil); retainNeededControllers(); publishDocumentStatus() }
+      coldGestureTarget = nil
+      if !isTransitioning { anticipatedIndex = nil }
+      if accepted {
+        stepTarget = target
+        acceleratePendingTurns()
+        runPendingExternalSelection()
+      } else {
+        prepareExternalTarget(pendingExternalIndex); retainNeededControllers(); publishDocumentStatus()
+        runPendingExternalSelection()
+      }
     }
     sheetController.view.addGestureRecognizer(navigationAdmission)
 
@@ -284,7 +317,7 @@ final class IPadPageTurnController: UIViewController {
     documentSelection: DocumentPageNavigationRequest? = nil,
     documentNavigation: DocumentPageNavigationCallbacks? = nil,
     notebookNavigation: NotebookPageNavigation? = nil,
-    onWindowChange: @escaping @MainActor (Set<Int>, String) -> Void = { _, _ in },
+    onWindowChange: @escaping @MainActor (Set<Int>, Int?, String) -> Void = { _, _, _ in },
     inputGate: NotebookInputGate? = nil
   ) {
     let previousResolvedTarget = resolvedDocumentTarget
@@ -293,7 +326,7 @@ final class IPadPageTurnController: UIViewController {
     let ownerChanged = self.ownerID != ownerID || self.sequenceRevision != sequenceRevision
     if ownerChanged {
       self.notebookNavigation?.unbind(documentControllerID)
-      self.onWindowChange([], self.sequenceRevision)
+      self.onWindowChange([], nil, self.sequenceRevision)
     }
     self.ownerID = ownerID
     self.sequenceRevision = sequenceRevision
@@ -320,7 +353,8 @@ final class IPadPageTurnController: UIViewController {
     }
     documentNavigation?.bind(documentControllerID, ownerID, sequenceRevision)
     if !navigationIsEnabled, notebookNavigation != nil {
-      sequentialTarget = nil; coldGestureTarget = nil; pendingExternalIndex = nil
+      stepTarget = nil; coldGestureTarget = nil; pendingExternalIndex = nil
+      isNavigationBurst = false
       if !isTransitioning { anticipatedIndex = nil; prepareExternalTarget(nil) }
     }
 
@@ -331,9 +365,11 @@ final class IPadPageTurnController: UIViewController {
       transitionRevision &+= 1
       setTransitioning(false, resetsPublication: true)
       pendingExternalIndex = nil
-      sequentialTarget = nil
+      stepTarget = nil
+      isNavigationBurst = false
       coldGestureTarget = nil
       coldGestureIsTurning = false
+      gesturePreparation = nil
       lastNotebookStatus = nil
       anticipatedIndex = nil
       lastTurnDirection = nil
@@ -411,8 +447,11 @@ final class IPadPageTurnController: UIViewController {
     // a completed arrow's deferred drain must not replay its old target after
     // an immediate reverse swipe. Commands arriving after admission may queue.
     transitionRevision &+= 1
-    sequentialTarget = nil; pendingExternalIndex = nil; coldGestureTarget = nil
+    if coldGestureTarget == nil { isNavigationBurst = false }
+    stepTarget = nil; pendingExternalIndex = nil; coldGestureTarget = nil
     anticipatedIndex = target.pageIndex
+    prepareExternalTarget(target.pageIndex)
+    gesturePreparation = pageTurnActivity.preparationDemand
     retainNeededControllers()
     setTransitioning(true)
     refreshControllerState()
@@ -429,9 +468,10 @@ final class IPadPageTurnController: UIViewController {
       recordLanding(at: target)
       if allowsTrailingPageCreation, target == pageCount - 1, pageCount < Int.max { pageCount += 1 }
     } else if previous.pageIndex != displayedIndex { selection.reset(to: previous.pageIndex) }
-    pageTurnActivity.didInstall(completed ? pageTurnActivity.preparationDemand : nil)
-    prepareExternalTarget(nil)
+    pageTurnActivity.didInstall(completed ? gesturePreparation : nil)
+    gesturePreparation = nil
     anticipatedIndex = nil
+    prepareExternalTarget(coldGestureTarget ?? pendingExternalIndex)
     setTransitioning(false)
     retainNeededControllers()
     refreshRenderedPages()
@@ -439,6 +479,7 @@ final class IPadPageTurnController: UIViewController {
     if completed, documentNavigation != nil {
       publishDocumentLanding(at: displayedIndex, requestID: nil, deferred: false)
     } else if completed { onCommit(displayedIndex, sequenceRevision) }
+    beginPreparedColdTurn()
     runPendingExternalSelection()
   }
 
@@ -499,7 +540,7 @@ final class IPadPageTurnController: UIViewController {
     at index: Int
   ) -> IPadIndexedPageController? {
     if let controller = controllers[index] { return controller }
-    guard !isTransitioning, controllers.count < PageTurnPrewarmWindow.capacity else { return nil }
+    guard (!isTransitioning || canPrepareFollowingStep), controllers.count < PageTurnPrewarmWindow.capacity else { return nil }
     let wasUpdating = isUpdatingContents
     isUpdatingContents = true
     defer { isUpdatingContents = wasUpdating }
@@ -519,22 +560,35 @@ final class IPadPageTurnController: UIViewController {
     return controller
   }
 
+  private var canPrepareFollowingStep: Bool {
+    isTransitioning && sheetController.settlingPage != nil && (stepTarget != nil || coldGestureTarget != nil)
+  }
+
   private func retainNeededControllers() {
-    // A curl keeps its exact prepared window until it returns both source
-    // and landing. External requests replace one index, never add live content.
-    guard isViewLoaded, !isTransitioning, !isUpdatingContents else { return }
+    // Source and landing stay pinned through their OS receipt. During a burst,
+    // the other two slots can prepare the next demand instead of waiting idle.
+    // Held curls and unrelated explicit jumps retain their original window.
+    guard isViewLoaded, (!isTransitioning || canPrepareFollowingStep), !isUpdatingContents else { return }
     isUpdatingContents = true
     defer { isUpdatingContents = false }
-    let target = anticipatedIndex ?? pendingExternalIndex.map(clamped)
+    let target = canPrepareFollowingStep ? (coldGestureTarget ?? stepTarget)
+      : (anticipatedIndex ?? pendingExternalIndex.map(clamped) ?? coldGestureTarget ?? stepTarget)
     pageTurnActivity.rasters.prioritize(displayed: displayedIndex, target: target)
-    let required = PageTurnPrewarmWindow.indices(
+    var required = PageTurnPrewarmWindow.indices(
       displayedIndex: displayedIndex,
       anticipatedIndex: target,
       lastDirection: lastTurnDirection,
       pageCount: pageCount,
-      existingIndices: Set(controllers.keys)
+      existingIndices: Set(controllers.keys),
+      turningIndex: canPrepareFollowingStep ? anticipatedIndex : nil
     )
-    onWindowChange(required, sequenceRevision)
+    if let target, readyPages[target] != true {
+      // A cold demanded sheet owns preparation before new speculation. Keep
+      // existing paper for reversals, but do not mount another neighbour whose
+      // layout would delay the target's incoming pixels on the UI actor.
+      required = required.filter { $0 == displayedIndex || $0 == target || controllers[$0] != nil }
+    }
+    onWindowChange(required, target, sequenceRevision)
     // Exactly the finite window owns mounted hosts. No hidden platform cache
     // retains shells or causes a second content lifetime on reverse turns.
     for index in Array(controllers.keys) where !required.contains(index) {
@@ -629,9 +683,11 @@ final class IPadPageTurnController: UIViewController {
   }
 
   private func beginPreparedColdTurn() {
-    guard let target = coldGestureTarget, readyPages[target] == true,
+    guard let target = coldGestureTarget, target != displayedIndex, readyPages[target] == true,
+      let controller = controllers[target],
       !isTransitioning, !isUpdatingContents, navigationIsEnabled, canBeginNavigation() else { return }
-    coldGestureIsTurning = sheetController.beginInteractiveTurn(direction: target > displayedIndex ? .forward : .reverse)
+    coldGestureIsTurning = sheetController.beginInteractiveTurn(
+      direction: target > displayedIndex ? .forward : .reverse, target: controller)
     if coldGestureIsTurning { sheetController.updateInteractiveTurn(translation: coldGestureTranslation) }
   }
 
@@ -640,6 +696,7 @@ final class IPadPageTurnController: UIViewController {
     let target = clamped(requestedIndex)
     pendingExternalIndex = target
     prepareExternalTarget(target)
+    acceleratePendingTurns()
     observe("page_turn_external_request", target: target)
     guard isViewLoaded, !isTransitioning, !isUpdatingContents else { return }
     guard target != displayedIndex else {
@@ -685,16 +742,26 @@ final class IPadPageTurnController: UIViewController {
     observe("page_turn_external_begin", target: target)
     refreshControllerState()
 
-    // Adjacent turns confirm the displayed endpoint. A distant prepared
-    // destination installs directly, without an unrelated second animation.
+    // A burst retains its latest requested leaf, not an animation queue for
+    // every superseded index. It still bends from the actual displayed paper.
+    // Distant reference jumps keep their separate direct-install semantics.
     sheetController.show(
       targetController,
       direction: direction,
-      animated: adjacent && sheetController.viewIfLoaded?.window != nil
+      animated: (adjacent || stepTarget != nil) && sheetController.viewIfLoaded?.window != nil
     ) { [weak self] finished in
       guard let self, transitionRevision == revision else { return }
       completeExternalSelection(target, finished: finished, requestID: requestID, preparation: preparation)
     }
+    acceleratePendingTurns()
+  }
+
+  private func acceleratePendingTurns() {
+    guard let landing = sheetController.settlingPage as? IPadIndexedPageController else { return }
+    if let target = coldGestureTarget ?? stepTarget ?? pendingExternalIndex, target != landing.pageIndex {
+      isNavigationBurst = true
+    }
+    if isNavigationBurst { sheetController.accelerateSettlement() }
   }
 
   private func requestNotebookNavigation(_ command: NotebookPageNavigation.Command) -> Bool {
@@ -704,17 +771,20 @@ final class IPadPageTurnController: UIViewController {
     guard navigationIsEnabled else { return false }
     switch command {
     case .cancel:
-      sequentialTarget = nil; coldGestureTarget = nil; pendingExternalIndex = nil
+      stepTarget = nil; coldGestureTarget = nil; pendingExternalIndex = nil
+      isNavigationBurst = false
       coldGestureIsTurning = false
       sheetController.cancelMotion()
       anticipatedIndex = nil; prepareExternalTarget(nil)
       retainNeededControllers(); refreshControllerState(); publishDocumentStatus()
     case .step(let delta):
       guard delta == -1 || delta == 1 else { return false }
-      sequentialTarget = clamped((sequentialTarget ?? pendingExternalIndex ?? anticipatedIndex ?? displayedIndex) + delta)
+      stepTarget = clamped((stepTarget ?? pendingExternalIndex ?? anticipatedIndex ?? displayedIndex) + delta)
+      acceleratePendingTurns()
+      retainNeededControllers()
     case .jump(let index):
       guard (0..<pageCount).contains(index) else { return false }
-      sequentialTarget = nil
+      stepTarget = nil
       requestExternalSelection(index)
       return true
     }
@@ -730,7 +800,7 @@ final class IPadPageTurnController: UIViewController {
     }
     anticipatedIndex = nil
     pageTurnActivity.didInstall(finished ? preparation : nil)
-    prepareExternalTarget(pendingExternalIndex)
+    prepareExternalTarget(coldGestureTarget ?? pendingExternalIndex)
     setTransitioning(false)
     retainNeededControllers()
     refreshRenderedPages()
@@ -743,6 +813,7 @@ final class IPadPageTurnController: UIViewController {
       isUpdatingContents = false
     }
     publishDocumentStatus()
+    beginPreparedColdTurn()
     let completedRevision = transitionRevision
     Task { @MainActor [weak self] in
       guard let self, transitionRevision == completedRevision else { return }
@@ -756,19 +827,20 @@ final class IPadPageTurnController: UIViewController {
     lastTurnDirection = target == source ? nil : (target > source ? 1 : -1)
     // Consume the fulfilled intent before publishing selection or enabling a
     // new contact. A later run-loop task is too late to own this boundary.
-    if sequentialTarget == target { sequentialTarget = nil }
+    if stepTarget == target { stepTarget = nil }
     if pendingExternalIndex == target { pendingExternalIndex = nil }
+    if stepTarget == nil, pendingExternalIndex == nil, coldGestureTarget == nil { isNavigationBurst = false }
   }
 
   private func runPendingExternalSelection() {
     guard !isTransitioning, !isUpdatingContents, coldGestureTarget == nil else { return }
-    if let target = sequentialTarget {
+    if let target = stepTarget {
       if target == displayedIndex {
-        sequentialTarget = nil; pendingExternalIndex = nil
+        stepTarget = nil; pendingExternalIndex = nil; isNavigationBurst = false
         pageTurnActivity.prepare(nil); publishDocumentStatus()
         return
       }
-      requestExternalSelection(displayedIndex + (target > displayedIndex ? 1 : -1))
+      requestExternalSelection(target)
       return
     }
     let target: Int
@@ -903,7 +975,7 @@ final class IPadPageTurnController: UIViewController {
 
   #if DEBUG
   var navigationStateDescription: String {
-    "shown=\(displayedIndex),selected=\(selectedIndex),ack=\(selection.awaitsLocalAcknowledgement),pending=\(String(describing:pendingExternalIndex)),queued=\(String(describing:sequentialTarget)),anticipated=\(String(describing:anticipatedIndex)),turning=\(isTransitioning),updating=\(isUpdatingContents),enabled=\(navigationIsEnabled)"
+    "shown=\(displayedIndex),selected=\(selectedIndex),ack=\(selection.awaitsLocalAcknowledgement),pending=\(String(describing:pendingExternalIndex)),queued=\(String(describing:stepTarget)),anticipated=\(String(describing:anticipatedIndex)),turning=\(isTransitioning),updating=\(isUpdatingContents),enabled=\(navigationIsEnabled)"
   }
   #endif
 

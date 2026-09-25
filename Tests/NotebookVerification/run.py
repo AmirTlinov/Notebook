@@ -117,6 +117,8 @@ class NativeIPadUIArtifactTests(unittest.TestCase):
             self.assertEqual(labels[-2:], ["ipad-native-test-cleanup-after", "ipad-ui-runner-cleanup-after"])
             build = next(argv for label, argv in calls if label == "ipad-build-for-testing")
             self.assertIn("build-for-testing", build); self.assertIn("SWIFT_OPTIMIZATION_LEVEL=-O", build)
+            self.assertIn("GCC_OPTIMIZATION_LEVEL=s", build,
+                          "Optimized Swift alone leaves the sandbox interpreter at -O0")
             self.assertNotIn("test", build)
             if install_fails:
                 self.assertNotIn("ipad", labels)

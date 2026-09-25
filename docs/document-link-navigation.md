@@ -44,6 +44,9 @@ navigation. `DocumentPagePresentationOwner` prepares the target, while
 The current paper remains interactive during preparation. The target gains input
 only after native installation and publication of its current role.
 `didInstall` retains the completed demand identity across SwiftUI updates.
+Both gesture and external navigation capture that identity at admission. A second
+contact may prepare the next sheet before the first one lands, but the first
+completion acknowledges only its own captured preparation, never the newer demand.
 Replacing source/target or closing cancels only that preparation; late completion
 cannot acknowledge a newer demand.
 

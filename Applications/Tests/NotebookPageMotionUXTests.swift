@@ -306,6 +306,103 @@ import XCTest
     }
   }
 
+  func testRapidArrowSeriesDoesNotLeaveAQueueOfFullLengthAnimations() async throws {
+    try await exerciseRapidSeries(swipes: false)
+  }
+
+  func testRapidReleasedSwipesDoNotLosePagesWhileEarlierSheetsLand() async throws {
+    try await exerciseRapidSeries(swipes: true)
+  }
+
+  func testRapidAlternatingArrowsKeepTheirLatestDestination() async throws {
+    try await exerciseRapidSeries(swipes: false, alternating: true)
+  }
+
+  func testRapidAlternatingReleasedSwipesKeepTheirLatestDestination() async throws {
+    try await exerciseRapidSeries(swipes: true, alternating: true)
+  }
+
+  private func exerciseRapidSeries(swipes: Bool, alternating: Bool = false) async throws {
+    let controller = IPadPageTurnController(), commands = NotebookPageNavigation(), owner = UUID()
+    let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+    let previous = scene.windows.first(where: \.isKeyWindow), window = UIWindow(windowScene: scene)
+    var selected = 0, landings: [(Int, TimeInterval)] = []
+    func configure() {
+      controller.update(ownerID: owner, sequenceRevision: "rapid-series", pageCount: 13, selectedIndex: selected,
+        navigationIsEnabled: true, pageIsInteractive: true, canBeginNavigation: { true },
+        page: { index, _, ready in ready(true); return AnyView(Color.white.overlay(Text("Sheet \(index)"))) },
+        onCommit: { index, _ in selected = index; landings.append((index, CACurrentMediaTime())); configure() },
+        onTransitioningChange: { _ in }, notebookNavigation: commands)
+    }
+    configure(); window.rootViewController = controller; window.makeKeyAndVisible()
+    defer { controller.sheetController.cancelMotion(); window.isHidden = true; window.rootViewController = nil; previous?.makeKey() }
+    try await Task.sleep(for: .milliseconds(60))
+    let native = controller.sheetController
+    let curl = try XCTUnwrap(native.view.subviews.compactMap { $0 as? SheetCurlMetalView }.first)
+    let resolve = curl.onFrameReady
+    var origin = CACurrentMediaTime(), phases: [String] = []
+    var lastImage: ObjectIdentifier?, sawBend = false
+    native.onCaptureMeasured = { measurement in
+      phases.append("capture beginMS=\((measurement.began-origin)*1000) durationMS=\((measurement.ended-measurement.began)*1000) pixels=\(measurement.pixels)")
+    }
+    curl.onFrameReady = { image, progress, sequence, readiness in
+      if readiness.isReady {
+        let identity = ObjectIdentifier(image), first = identity != lastImage
+        if first { lastImage = identity; sawBend = false }
+        let bend = progress > 0 && progress < 1
+        if first || (bend && !sawBend) || progress == 0 || progress == 1 {
+          phases.append("frame source=\(identity) sequence=\(sequence) progress=\(progress) callbackMS=\((CACurrentMediaTime()-origin)*1000) presentedMS=\(readiness.presentedTime.map { ($0-origin)*1000 } ?? -1)")
+        }
+        sawBend = sawBend || bend
+      }
+      resolve?(image, progress, sequence, readiness)
+    }
+    defer { native.onCaptureMeasured = nil; curl.onFrameReady = resolve }
+    for direction in [1, -1] {
+      landings = []; phases = []; lastImage = nil; sawBend = false
+      let steps = (alternating ? [1, 1, -1, 1, -1, 1, 1, -1, 1, 1] : Array(repeating: 1, count: 10)).map { $0 * direction }
+      let target = controller.displayedIndex + steps.reduce(0, +)
+      let start = CACurrentMediaTime()
+      origin = start
+      for (input, direction) in steps.enumerated() {
+        let due = start + Double(input) * 0.12
+        if due > CACurrentMediaTime() { try await Task.sleep(for: .seconds(due - CACurrentMediaTime())) }
+        phases.append("input=\(input) direction=\(direction) dueMS=\((due-start)*1000) actualMS=\((CACurrentMediaTime()-start)*1000) \(controller.navigationStateDescription)")
+        if swipes {
+          let native = controller.sheetController
+          let admission = try XCTUnwrap(native.view.gestureRecognizers?.compactMap { $0 as? PageTurnAdmissionRecognizer }.first)
+          let translation = -CGFloat(direction) * native.view.bounds.width * 0.4
+          if admission.prepareDirection(direction) {
+            XCTAssertTrue(native.beginInteractiveTurn(direction: direction == 1 ? .forward : .reverse))
+            native.updateInteractiveTurn(translation: translation)
+            native.endInteractiveTurn(completed: true)
+          } else {
+            admission.updateColdSwipe(translation)
+            admission.finishColdSwipe(true)
+          }
+        } else {
+          XCTAssertTrue(commands.send(.step(direction), ownerID: owner, source: "rapid-series"))
+        }
+      }
+      let lastInput = start + 9 * 0.12
+      let deadline = ContinuousClock.now + .seconds(6)
+      while (controller.displayedIndex != target || controller.sheetController.settlingPage != nil), ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(2)) }
+      let rows = landings.map { "leaf=\($0.0), sinceFirstInputMS=\(($0.1-start)*1000)" }.joined(separator: "\n")
+      let report = XCTAttachment(string: rows + "\nlastInputMS=1080; finalDelayMS=\(((landings.last?.1 ?? .infinity)-lastInput)*1000)\n" + phases.joined(separator: "\n"))
+      report.name = "rapid-\(swipes ? "swipe" : "arrow")-\(alternating ? "alternating" : "series")-\(direction)"; report.lifetime = .keepAlways; add(report)
+      XCTAssertEqual(controller.displayedIndex, target, "Every contact contributes to the destination")
+      XCTAssertEqual(landings.last?.0, target)
+      let visited = landings.map(\.0)
+      if !alternating {
+        XCTAssertTrue(zip(visited, visited.dropFirst()).allSatisfy { direction == 1 ? $0 < $1 : $0 > $1 },
+          "Coalescing may omit obsolete animations, never rewind or reorder the actual landings")
+      }
+      XCTAssertLessThanOrEqual(Duration.seconds(try XCTUnwrap(landings.last).1-lastInput), NotebookUXObservation.pageLanding,
+        "Later arrows cannot wait behind seconds of already obsolete full-duration animations")
+      XCTAssertLessThanOrEqual(controller.cachedPageIdentities.count, 4)
+    }
+  }
+
   func testTenForwardReverseTurnsMeetFirstPresentationAndLandingDeadlines() async throws {
     #if targetEnvironment(simulator)
     throw XCTSkip("Simulator has no OS Metal presentation receipts; GPU completion is not frame-cadence evidence")

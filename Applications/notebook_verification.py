@@ -699,8 +699,9 @@ def run_selected(root, plan, evidence):
                 "test"] + ["-only-testing:" + selector for selector in checks[platform]]
         if plan.get("optimized", False):
             # Keep the isolated DEBUG fixtures; measure compiled application
-            # code, not -Onone bookkeeping. Record this in selection.json.
-            args.append("SWIFT_OPTIMIZATION_LEVEL=-O")
+            # code and the C interpreter with Release optimization, not debug
+            # bookkeeping charged to the same CPU budget. Record the selection.
+            args.extend(["SWIFT_OPTIMIZATION_LEVEL=-O", "GCC_OPTIMIZATION_LEVEL=s"])
         if platform == "ipad":
             args.extend(native_ipad_signing_settings())
         runtime = release.prepare_typesetter_runtime(root, command, "macosx" if platform == "mac" else "iphoneos")

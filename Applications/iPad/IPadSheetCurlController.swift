@@ -6,6 +6,9 @@ import UIKit
 final class IPadSheetCurlController: UIViewController, UIGestureRecognizerDelegate {
   enum Direction { case forward, reverse }
   static let minimumGestureTravel: CGFloat = 44
+  static func completesGesture(travel: CGFloat, velocity: CGFloat, ended: Bool) -> Bool {
+    ended && (travel >= minimumGestureTravel || velocity > 300) && velocity > -300
+  }
   var neighbor: (UIViewController, Direction) -> UIViewController? = { _, _ in nil }
   var willTurn: (UIViewController) -> Bool = { _ in false }
   var didTurn: (UIViewController, Bool) -> Void = { _, _ in }
@@ -21,6 +24,12 @@ final class IPadSheetCurlController: UIViewController, UIGestureRecognizerDelega
   private let curl = SheetCurlMetalView(frame: .zero)
   private var panDirection: Direction?
   private var motion: Motion?
+  /// A new contact can wait for this accepted landing, including cancellation
+  /// back to the source. The page container must not guess from its old index.
+  var settlingPage: UIViewController? {
+    guard let motion, let endpoint = motion.animation?.to ?? motion.terminal else { return nil }
+    return endpoint == 1 ? motion.target : motion.source
+  }
   private struct Motion {
     let id: UUID
     let source: UIViewController, target: UIViewController
@@ -30,7 +39,7 @@ final class IPadSheetCurlController: UIViewController, UIGestureRecognizerDelega
     let gesture: Bool
     var progress: Double = 0
     var presentation: (progress: Double, sequence: Int, readiness: NotebookMetalFrameReadiness)?
-    var animation: (start: Double, from: Double, to: Double, duration: Double)?
+    var animation: (start: Double, from: Double, to: Double, duration: Double, rate: Double)?
     var terminal: Double?
   }
 
@@ -209,9 +218,24 @@ final class IPadSheetCurlController: UIViewController, UIGestureRecognizerDelega
       finishPresentedEndpoint()
       return
     }
-    motion.animation = (CACurrentMediaTime(), motion.progress, target, max(0.1, 0.32*abs(target-motion.progress)))
+    motion.animation = (CACurrentMediaTime(), motion.progress, target, max(0.1, 0.32*abs(target-motion.progress)), 1)
     motion.terminal = nil; self.motion = motion
     curl.animatesContinuously = motion.image != nil
+  }
+
+  /// Give the latest contact room to start instead of finishing a stale full-
+  /// duration ease first. Rebase the same curl at its pose, without a pixel jump.
+  func accelerateSettlement() {
+    guard var motion, var animation = motion.animation,
+      animation.rate == 1 else { return }
+    let remaining = abs(animation.to - motion.progress), travel = abs(animation.to - animation.from)
+    guard remaining > 0, travel > 0 else { return }
+    animation.duration *= remaining / travel / 2
+    animation.from = motion.progress
+    animation.start = CACurrentMediaTime()
+    animation.rate = 2
+    motion.animation = animation
+    self.motion = motion
   }
 
   private func advanceAnimation(at timestamp: Double) {
@@ -244,8 +268,8 @@ final class IPadSheetCurlController: UIViewController, UIGestureRecognizerDelega
   /// Warm pans and a cold contact whose neighbour becomes ready use the same
   /// motion owner. The admission recognizer keeps that original contact.
   @discardableResult
-  func beginInteractiveTurn(direction: Direction) -> Bool {
-    guard motion == nil, let page, let target = neighbor(page, direction), willTurn(target) else { return false }
+  func beginInteractiveTurn(direction: Direction, target: UIViewController? = nil) -> Bool {
+    guard motion == nil, let page, let target = target ?? neighbor(page, direction), willTurn(target) else { return false }
     do {
       try begin(source: page, target: target, direction: direction, gesture: true, completion: nil)
       return true
@@ -313,8 +337,7 @@ final class IPadSheetCurlController: UIViewController, UIGestureRecognizerDelega
       let sign: CGFloat = motion.direction == .forward ? -1 : 1
       let velocity = pan.velocity(in: view.window).x * sign
       let travel = pan.translation(in: view.window).x * sign
-      let completed = pan.state == .ended
-        && (travel >= Self.minimumGestureTravel || velocity > 300) && velocity > -300
+      let completed = Self.completesGesture(travel: travel, velocity: velocity, ended: pan.state == .ended)
       endInteractiveTurn(completed: completed)
     default: break
     }

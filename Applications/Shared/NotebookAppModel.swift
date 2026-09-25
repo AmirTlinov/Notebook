@@ -66,15 +66,18 @@ final class NotebookAppModel {
   private struct PageAddress: Hashable { let itemID: UUID; let index: Int; let root: String }
   @ObservationIgnored private var pageAddresses: [PageAddress: UUID] = [:]
   @ObservationIgnored private var pagePreparationTasks: [PageAddress: Task<Void, Never>] = [:]
-  @ObservationIgnored private var pagePreparationWindows: [UUID: (root: String, indices: Set<Int>)] = [:]
+  @ObservationIgnored private var pagePreparationWindows: [UUID: (root: String, indices: Set<Int>, target: Int?)] = [:]
   let notebookPageNavigation = NotebookPageNavigation()
   let pageInkPublication = NotebookPageInkPublication()
 
-  func retainNotebookPageWindow(_ indices: Set<Int>, in itemID: UUID, root: String) {
+  func retainNotebookPageWindow(_ indices: Set<Int>, in itemID: UUID, root: String, target: Int? = nil) {
     guard notebookPageRoot(itemID) == root else { return }
-    pagePreparationWindows[itemID] = indices.isEmpty ? nil : (root, indices)
+    let target = target.flatMap { indices.contains($0) && $0 < notebookPageCount(itemID) ? $0 : nil }
+    pagePreparationWindows[itemID] = indices.isEmpty ? nil : (root, indices, target)
+    let waitsForTarget = target.map { notebookPage(at: $0, in: itemID) == nil } ?? false
     for (address, task) in pagePreparationTasks where address.itemID == itemID
-      && (address.root != root || !indices.contains(address.index)) { task.cancel() }
+      && (address.root != root || !indices.contains(address.index)
+        || (waitsForTarget && address.index != target)) { task.cancel() }
   }
 
   private func permitsPagePreparation(_ address: PageAddress) -> Bool {
@@ -112,6 +115,14 @@ final class NotebookAppModel {
     let address = PageAddress(itemID: itemID, index: index, root: root)
     guard !Task.isCancelled, permitsPagePreparation(address) else { return }
     if notebookPage(at: index, in: itemID) != nil { return }
+    // A retained neighbour is still speculation. Its existing consumer resumes
+    // only after the latest demanded page has loaded through the shared reader.
+    while let window = pagePreparationWindows[itemID], window.root == root,
+      let target = window.target, target != index, notebookPage(at: target, in: itemID) == nil {
+      await prepareNotebookPage(at: target, in: itemID)
+      guard !Task.isCancelled, permitsPagePreparation(address), notebookPageRoot(itemID) == root else { return }
+      if pagePreparationWindows[itemID]?.target == target, notebookPage(at: target, in: itemID) == nil { return }
+    }
     if let pending = pagePreparationTasks[address] {
       await pending.value
       // An immediate reversal can demand a slot again while its withdrawn read

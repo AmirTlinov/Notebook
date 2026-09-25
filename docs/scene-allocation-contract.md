@@ -150,6 +150,11 @@ Passive notebook neighbours share at most two sequential preparation lanes.
 Their finite native page window also owns addressed reads: withdrawing a slot
 cancels its preparation, and a late response cannot evict a currently needed page.
 A re-entering slot gets a new read after the canceled one drains.
+The window carries its exact requested target. While that target is cold, retained
+neighbours await its addressed read rather than competing with it; obsolete
+speculation is cancelled through the same reader. Source and landing hosts remain
+pinned through a turn, leaving at most two slots to prepare a newer destination.
+New speculative hosts are mounted only after the demanded page has pixels.
 The same `NotebookSceneReader` reads a requested page outside the accepted-write
 FIFO, after a short writer boundary. A preparation keeps its decoded body only
 within that job; reuse checks the existing complete file digest, including causal

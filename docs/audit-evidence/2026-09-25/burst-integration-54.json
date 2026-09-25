@@ -1,0 +1,93 @@
+{
+  "status": "functional_slice_passed_physical_timing_failed",
+  "configuration": {
+    "xcode": "Debug",
+    "Swift": "-O",
+    "CQuickJS": "-Os",
+    "isFullReleasePair": false
+  },
+  "sourceStable": true,
+  "sourceWitnessSHA256": "49770cbd1453ce75cfb18b56c8fc5c4897ead19a4d12fd0130f0f1689dae84d4",
+  "summary": {
+    "devicesAndConfigurations": [
+      {
+        "device": {
+          "architecture": "arm64",
+          "deviceId": "00008103-001E059934D9001E",
+          "deviceName": "iPad (Елизавета)",
+          "modelName": "iPad Pro (11-inch) (3rd generation)",
+          "osBuildNumber": "24A435",
+          "osVersion": "27.0",
+          "platform": "iOS"
+        },
+        "expectedFailures": 0,
+        "failedTests": 1,
+        "passedTests": 69,
+        "skippedTests": 0,
+        "testPlanConfiguration": {
+          "configurationId": "1",
+          "configurationName": "Test Scheme Action"
+        }
+      }
+    ],
+    "environmentDescription": "Notebook · Built with macOS 27.0",
+    "expectedFailures": 0,
+    "failedTests": 1,
+    "finishTime": 1790373771.15,
+    "passedTests": 69,
+    "result": "Failed",
+    "runtimeWarnings": [],
+    "skippedTests": 0,
+    "startTime": 1790373671.753,
+    "statistics": [],
+    "testFailures": [
+      {
+        "failureText": "XCTAssertLessThanOrEqual failed: (\"0.10281487499014476 seconds\") is greater than (\"0.016666666666666666 seconds\")",
+        "targetName": "NotebookTests",
+        "testIdentifier": 42,
+        "testIdentifierString": "NotebookPageMotionUXTests/testTenForwardReverseTurnsMeetFirstPresentationAndLandingDeadlines()",
+        "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/NotebookPageMotionUXTests/testTenForwardReverseTurnsMeetFirstPresentationAndLandingDeadlines",
+        "testName": "testTenForwardReverseTurnsMeetFirstPresentationAndLandingDeadlines()"
+      }
+    ],
+    "title": "Test - Notebook",
+    "topInsights": [
+      {
+        "category": "Common Failures",
+        "impact": "100% of failures",
+        "text": "3 runs of 1 test failed with XCTAssertLessThanOrEqual failed: (\"0.025010166660649702\") is greater than (\"0.008833333333333334\") - Changing displayed frames must meet 120 Hz; callback time and average FPS cannot hide a missed interval"
+      },
+      {
+        "category": "Common Failures",
+        "impact": "100% of failures",
+        "text": "2 runs of 1 test failed with XCTAssertLessThanOrEqual failed: (\"0.02501012501306832\") is greater than (\"0.008833333333333334\") - Changing displayed frames must meet 120 Hz; callback time and average FPS cannot hide a missed interval"
+      },
+      {
+        "category": "Longest Test Runs",
+        "impact": "18% of duration",
+        "text": "2 longest test runs with outlier durations exceeding 4.63s (three standard deviations)"
+      }
+    ],
+    "totalTestCount": 70
+  },
+  "longDocumentLease": {
+    "duration": "4 с",
+    "durationInSeconds": 4.648082971572876,
+    "name": "testRepeatedActualPageCurlLandingsDoNotExhaustTheDocumentPool()",
+    "nodeIdentifier": "DocumentResourceLeaseTests/testRepeatedActualPageCurlLandingsDoNotExhaustTheDocumentPool()",
+    "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/DocumentResourceLeaseTests/testRepeatedActualPageCurlLandingsDoNotExhaustTheDocumentPool",
+    "nodeType": "Test Case",
+    "result": "Passed"
+  },
+  "longDocumentChanged": false,
+  "cpuBudgetSeconds": 2,
+  "mac": "Same affected native production sources passed2/2 in52; no Mac behavior changed afterward.",
+  "optimizedHarnessRegression": "Existing optimized selection now passes both Swift-O and C-Os; Python suite receipt alongside this artifact.",
+  "remaining": [
+    "Original physical first-presentation/cadence gate failed.",
+    "Earlier52 alternating648ms outlier is retained, not causally explained by subsequentPASS.",
+    "Ordinary installed footer triple-tap loss is investigated in the neighboring task.",
+    "Final isolated Release pair,10UIjourneys and30minutes are pending."
+  ],
+  "archive": ".build/notebook-architecture-repair/evidence-2026-09-25/burst-integration-54"
+}

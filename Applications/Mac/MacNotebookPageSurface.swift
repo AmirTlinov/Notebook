@@ -125,7 +125,7 @@ struct MacNotebookPageSurface: NSViewRepresentable {
     activity.rasters.prioritize(displayed: displayed, target: target)
     let needed = PageTurnPrewarmWindow.indices(displayedIndex: displayed, anticipatedIndex: target,
       lastDirection: lastDirection, pageCount: pageCount, existingIndices: Set(slots.keys))
-    model.retainNotebookPageWindow(needed, in: notebookID, root: root)
+    model.retainNotebookPageWindow(needed, in: notebookID, root: root, target: target)
     for index in Array(slots.keys) where !needed.contains(index) {
       if let slot = slots.removeValue(forKey: index) {
         slot.host.removeFromSuperview(); slot.host.rootView = AnyView(EmptyView())

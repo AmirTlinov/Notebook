@@ -1,0 +1,195 @@
+{
+  "status": "not_passed",
+  "physical53": {
+    "executions": 9,
+    "passed": 6,
+    "failed": 3,
+    "skipped": 0,
+    "sourceStable": true,
+    "failure": "Initial document preparation: NotebookTypesetter 2-second CPU interruption in parse5 during documentExport; occurs before the first turn, not a pool exhaustion.",
+    "temporaryOwnerDiagnosticRemoved": true
+  },
+  "rapidAlternating": [
+    {
+      "name": "rapid-arrow-alternating--1_0_151E27C0-93C4-472E-9CF4-B6C26B9C5F03.txt",
+      "finalDelayMS": 397.7021250175312,
+      "captureMS": [
+        30.453708313871175,
+        32.46887499699369,
+        37.148583331145346,
+        34.92308335262351
+      ]
+    },
+    {
+      "name": "rapid-arrow-alternating-1_0_55AD78F4-FF40-4270-9BBC-0ED9E4A5B449.txt",
+      "finalDelayMS": 395.24233335396275,
+      "captureMS": [
+        37.22241666400805,
+        35.5965833296068,
+        40.619875013362616,
+        41.064874996664
+      ]
+    },
+    {
+      "name": "rapid-arrow-alternating--1_0_7F2FAC8F-EBC3-4E8A-AB4C-361A27129F4D.txt",
+      "finalDelayMS": 397.38279167795554,
+      "captureMS": [
+        30.02716667833738,
+        32.21624999423511,
+        37.81733333016746,
+        34.48666667100042
+      ]
+    },
+    {
+      "name": "rapid-arrow-alternating-1_0_E4FB90A5-4FFA-4FE0-A544-FB014D17B3E1.txt",
+      "finalDelayMS": 410.2303333347663,
+      "captureMS": [
+        29.524583340389654,
+        35.02854166436009,
+        41.84770834399387,
+        35.384291666559875
+      ]
+    },
+    {
+      "name": "rapid-arrow-alternating--1_0_14A0350D-42B4-4379-A003-586B07A71819.txt",
+      "finalDelayMS": 389.5114166953135,
+      "captureMS": [
+        30.545499990694225,
+        33.02458333200775,
+        39.098041685065255,
+        28.87812501285225
+      ]
+    },
+    {
+      "name": "rapid-arrow-alternating-1_0_220ABC82-83F4-4CE6-9AEF-F904707C1F8F.txt",
+      "finalDelayMS": 417.77008335338905,
+      "captureMS": [
+        29.753124981652945,
+        38.363458326784894,
+        40.87345834705047,
+        40.62429166515358
+      ]
+    },
+    {
+      "name": "rapid-swipe-alternating--1_0_A9DDB2B3-5399-41A0-88E6-D1B4C3857768.txt",
+      "finalDelayMS": 307.5288333639037,
+      "captureMS": [
+        27.523833326995373,
+        21.99074998497963,
+        30.6481666630134,
+        28.540041676023975,
+        28.802583343349397,
+        23.330416675889865
+      ]
+    },
+    {
+      "name": "rapid-swipe-alternating-1_0_9F84107B-D506-4DAC-ACB9-8B835D1A7AD8.txt",
+      "finalDelayMS": 312.8077500150539,
+      "captureMS": [
+        30.244374996982515,
+        31.688000017311424,
+        40.74395835050382,
+        24.94120830669999,
+        37.42100001545623,
+        23.14162498805672
+      ]
+    },
+    {
+      "name": "rapid-swipe-alternating--1_0_F665D1C2-C483-4AD9-9B5D-BA4DF33935B0.txt",
+      "finalDelayMS": 316.22183334548026,
+      "captureMS": [
+        27.519458322785795,
+        25.773833331186324,
+        31.693583325250074,
+        23.26141667435877,
+        29.295291664311662,
+        22.56370833492838
+      ]
+    },
+    {
+      "name": "rapid-swipe-alternating-1_0_7AD3BD64-E38B-4E5A-9538-06E00ED90A1D.txt",
+      "finalDelayMS": 301.34354167967103,
+      "captureMS": [
+        27.43220832780935,
+        27.872083330294117,
+        31.443500018212944,
+        24.892208341043442,
+        33.82991664693691,
+        24.125833355356008
+      ]
+    },
+    {
+      "name": "rapid-swipe-alternating--1_0_FBBBC2EB-15BA-45FA-B7CA-C953E8F4232F.txt",
+      "finalDelayMS": 315.94545833650045,
+      "captureMS": [
+        27.404416672652587,
+        23.209916689665988,
+        33.91466665198095,
+        29.899583343649283,
+        30.425374978221953,
+        23.20416667498648
+      ]
+    },
+    {
+      "name": "rapid-swipe-alternating-1_0_9E84AE20-4E7A-4047-824B-99ADF2F5D7D9.txt",
+      "finalDelayMS": 323.15004168776795,
+      "captureMS": [
+        29.265541670611128,
+        29.2114166659303,
+        31.692541670054197,
+        27.099500002805144,
+        39.26225000759587,
+        26.678083318984136
+      ]
+    }
+  ],
+  "negative52NotErased": {
+    "reverseFinalDelayMS": 648.3943750208709,
+    "budgetMS": 450,
+    "causeOfOutlier": "not established by passing repetitions"
+  },
+  "profile": {
+    "result": {
+      "status": "failed",
+      "deviceUDID": "00008103-001E059934D9001E",
+      "bundleID": "com.amirtlinov.notebook.architecture-tests",
+      "selector": "NotebookTests/NotebookInteractionUXTests/testPencilReplayCannotHideBacklogBySlowingItsInputSchedule",
+      "iterations": 10,
+      "gated": false,
+      "assessment": "unassessed",
+      "sourceAttributionVerified": false,
+      "clockMappingVerified": false,
+      "mainThreadCoverageVerified": false,
+      "droppedFramesMeasured": false,
+      "traceExit": 21,
+      "testExit": 65,
+      "error": "RuntimeError: Physical exact-PID trace exited before start; see attach-failed.json",
+      "traceCleanupExit": 21
+    },
+    "attachFailure": {
+      "traceExit": 21,
+      "testExitAtFailure": null,
+      "wallUTC": "2026-09-25T21:52:28.400205+00:00",
+      "traceError": "Cannot find process for provided pid: 14210\n",
+      "app": {
+        "appURL": "file:///private/var/containers/Bundle/Application/EB95EB7E-85EB-4BF7-8BD2-9C6F4E6F17C0/Notebook.app/",
+        "executablePath": "/private/var/containers/Bundle/Application/EB95EB7E-85EB-4BF7-8BD2-9C6F4E6F17C0/Notebook.app/Notebook",
+        "bundleVersion": "204",
+        "coreDeviceIdentifier": "9CF2C22D-1CC6-573F-B27D-7EB0C81D2DD9"
+      },
+      "processes": [
+        [
+          14210,
+          "/private/var/containers/Bundle/Application/EB95EB7E-85EB-4BF7-8BD2-9C6F4E6F17C0/Notebook.app/Notebook"
+        ]
+      ],
+      "samePrivateTargetStillListed": true
+    },
+    "penExecutions": 10,
+    "penPassed": 0,
+    "penFailed": 10,
+    "thresholdMS": 20,
+    "scope": "No successful recording; exact private process remained listed after Instruments PID lookup failure. XCTest finalized normally. Not an app-crash diagnosis, CPU attribution or physical Pencil latency proof."
+  },
+  "archive": ".build/notebook-architecture-repair/evidence-2026-09-25/burst-integration-53"
+}

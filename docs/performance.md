@@ -482,8 +482,18 @@ raster executors prepare passive elements, prioritizing the displayed sheet and
 requested destination. It does not wait for finger-up or for an offscreen browser
 animation frame. Current-page programs keep separate input contexts; only their
 passive neighbours share an executor. Raster readiness follows the first real
-native layout, not cache acquisition alone. Addressed page reads publish in order
-instead of repeatedly invalidating one another through a global read epoch.
+native layout, not cache acquisition alone. Repeated arrows and released swipes
+accumulate the latest requested page instead of queuing obsolete full animations.
+Every accepted step contributes to that destination; skipped intermediate pages
+are not reported as landings. The same curl is rebased at its current pose to
+settle faster during a burst. A contact started during an earlier landing stays
+in the existing cold-contact admission path, including reversal and cancellation.
+Warm, cold and busy paper share the same lift rule: 44 points of travel or a
+forward velocity above 300 points/s, with a reverse velocity below −300 cancelling
+the turn. Cold admission measures recent touch motion; readiness does not make a
+short flick disappear or turn a reverse cancellation into a committed page.
+The window prioritizes the requested page's addressed read before neighbours;
+publication still validates its exact source, order and accepted-write boundary.
 Unchanged program checkpoints still validate storage but do not reload the scene.
 Only an active erasure or its pending handoff mounts a full-page erasure mask;
 idle neighbour pages must not allocate transparent work beneath a white mask.

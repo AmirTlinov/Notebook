@@ -1,0 +1,66 @@
+{
+  "status": "not_passed",
+  "base": "4768be4c",
+  "integrationPatchSHA256": "3d36f83ff3fa7e71126c144ed4026c081f330785caeb12471f375f28a7499b90",
+  "flickPatchSHA256": "c78ba99557437d22c07767b82a38619f9f7f75e93c7824f4a7547a8c246d0240",
+  "sourceWitnessSHA256": "ba59f81dc51a2ba6acc580ae008c4e52b3ee2bbaff0155d69393bc60bfa9c228",
+  "sourceStable": true,
+  "physical": {
+    "startTime": 1790372215.65,
+    "finishTime": 1790372321.448,
+    "passedTests": 67,
+    "failedTests": 3,
+    "skippedTests": 0,
+    "runtimeWarnings": [],
+    "testFailures": [
+      {
+        "failureText": "XCTAssertLessThanOrEqual failed: (\"0.6483943750208709 seconds\") is greater than (\"0.45 seconds\") - Later arrows cannot wait behind seconds of already obsolete full-duration animations",
+        "targetName": "NotebookTests",
+        "testIdentifier": 37,
+        "testIdentifierString": "NotebookPageMotionUXTests/testRapidAlternatingArrowsKeepTheirLatestDestination()",
+        "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/NotebookPageMotionUXTests/testRapidAlternatingArrowsKeepTheirLatestDestination",
+        "testName": "testRapidAlternatingArrowsKeepTheirLatestDestination()"
+      },
+      {
+        "failureText": "XCTAssertTrue failed - Landing 1 from 0; active WebKit 0, passive 0, queued 0, live pages [0, 1]; geometry=none; owner=current=Optional(E74B5F7D-1C60-401D-829D-C77E724C0098) mounted=Optional(E74B5F7D-1C60-401D-829D-C77E724C0098) entries=[\"85A10E97-B1D4-47FB-97A1-1FF18D6F257D:page=1,current=false,host=ObjectIdentifier(0x000000013791f600),window=true\", \"E74B5F7D-1C60-401D-829D-C77E724C0098:page=0,current=true,host=ObjectIdentifier(0x000000010dfb8c00),window=true\"] paperPage=Optional(0) canonical=false paper= paperToken=0@f9c621df-34b0-4116-bfe3-f2baf7ba9457|page:0 currentToken=0@f9c621df-34b0-4116-bfe3-f2baf7ba9457|page:0 work=nil needsWork=false passivePage=nil passiveStage=idle passiveCanonical=false passiveError=nil passiveView= pictures=[:] admission=SceneRasterAdmission(pinnedBytes: 0, reservedBytes: 0, pinnedCount: 0, reservedCount: 0, byteLimit: 268435456, countLimit: 2048, passiveReservedBytes: 0, passiveByteLimit: 134217728) pendingReaders=0 gesture=false focused=false terminal=[\"0@f9c621df-34b0-4116-bfe3-f2baf7ba9457|page:0\"] pressure=[]",
+        "targetName": "NotebookTests",
+        "testIdentifier": 7,
+        "testIdentifierString": "DocumentResourceLeaseTests/testRepeatedActualPageCurlLandingsDoNotExhaustTheDocumentPool()",
+        "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/DocumentResourceLeaseTests/testRepeatedActualPageCurlLandingsDoNotExhaustTheDocumentPool",
+        "testName": "testRepeatedActualPageCurlLandingsDoNotExhaustTheDocumentPool()"
+      },
+      {
+        "failureText": "XCTAssertLessThanOrEqual failed: (\"0.11633949997485615 seconds\") is greater than (\"0.016666666666666666 seconds\")",
+        "targetName": "NotebookTests",
+        "testIdentifier": 42,
+        "testIdentifierString": "NotebookPageMotionUXTests/testTenForwardReverseTurnsMeetFirstPresentationAndLandingDeadlines()",
+        "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/NotebookPageMotionUXTests/testTenForwardReverseTurnsMeetFirstPresentationAndLandingDeadlines",
+        "testName": "testTenForwardReverseTurnsMeetFirstPresentationAndLandingDeadlines()"
+      }
+    ]
+  },
+  "mac": {
+    "startTime": 1790372359.758,
+    "finishTime": 1790372362.48,
+    "passedTests": 2,
+    "failedTests": 0,
+    "skippedTests": 0,
+    "runtimeWarnings": []
+  },
+  "timing": {
+    "rapidAlternatingArrowReverseFinalMS": 648.3943750208709,
+    "pageLandingBudgetMS": 450,
+    "rapidAlternatingSwipeFinalMS": [
+      307.8879583335947,
+      308.1110833445564
+    ]
+  },
+  "limitations": [
+    "Physical command-route regressions are not ordinary footer taps.",
+    "Document resource first landing requires investigation, not a test waiver.",
+    "Physical first-presentation/cadence gates failed; thresholds unchanged.",
+    "New test-only capture/frame/input phase diagnostics added after this immutable source witness.",
+    "No final Release pair/ten UI journeys/thirty-minute session yet."
+  ],
+  "archive": ".build/notebook-architecture-repair/evidence-2026-09-25/burst-integration-52"
+}

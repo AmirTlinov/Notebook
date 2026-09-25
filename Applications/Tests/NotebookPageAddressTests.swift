@@ -296,6 +296,24 @@ final class NotebookPageAddressTests: XCTestCase {
   }
 
   @MainActor
+  func testRetainedNeighbourReadsTheDemandedPageBeforeItsOwnBody() async throws {
+    let f = try await preparationFixture(), model = f.model
+    model.retainNotebookPageWindow([0, 1, 2, 6], in: f.item, root: f.order, target: 6)
+    let gate = try await installPageReadGate(f.reader, pageID: f.ids[6])
+    defer { gate.release() }
+    let speculation = Task { await model.prepareNotebookPage(at: 2, in: f.item) }
+    await fulfillment(of: [gate.captured], timeout: 2)
+    XCTAssertTrue(gate.didHold, "A speculative consumer must first prepare the exact current demand")
+    XCTAssertNil(model.notebookPage(at: 2, in: f.item), "The neighbour cannot publish before the target's read completes")
+    gate.release(); await speculation.value
+    XCTAssertFalse(gate.timedOut)
+    XCTAssertEqual(model.notebookPage(at: 6, in: f.item)?.id, f.ids[6])
+    XCTAssertEqual(model.notebookPage(at: 2, in: f.item)?.id, f.ids[2])
+    XCTAssertEqual(model.pages.count, 4)
+    XCTAssertEqual(model.activePage?.id, f.ids[0], "Preparation is not a navigation acknowledgement")
+  }
+
+  @MainActor
   func testWithdrawalDuringTheActualPageReadCannotReplaceTheRetainedWindow() async throws {
     let f = try await preparationFixture(), model = f.model
     model.retainNotebookPageWindow([0, 1, 2, 3], in: f.item, root: f.order)
