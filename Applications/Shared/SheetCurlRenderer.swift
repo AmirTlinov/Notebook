@@ -153,6 +153,9 @@ final class SheetCurlMetalView: MTKView, MTKViewDelegate {
     let completion: MetalFrameCompletion
   }
   var onFrameResolved: ((CGImage, Double, FrameResolution) -> Void)?
+  /// The first drawable and its native z-order enter the same CA transaction.
+  /// Waiting for display before exposing an occluded layer can deadlock a held turn.
+  var onWillPresentSource: ((CGImage) -> Void)?
   // An opt-in, bounded diagnostic at the actual submission owner. It does not
   // alter admission, clock, command ordering or the presentation receipt.
   var onFrameMeasured: ((FrameTiming) -> Void)?
@@ -198,6 +201,7 @@ final class SheetCurlMetalView: MTKView, MTKViewDelegate {
   private var cornerRadius: CGFloat = 0
   private var curlLayout: SheetCurlLayout?
   private var sourceCover: CGImage?
+  private var sourceNeedsReveal = false
 
   override init(frame frameRect: CGRect, device: (any MTLDevice)? = nil) {
     let gpu = SheetCurlGPU.shared
@@ -262,6 +266,8 @@ final class SheetCurlMetalView: MTKView, MTKViewDelegate {
     if sourceCover !== cover {
       sourceCover = cover
       coverImage = CIImage(cgImage: cover)
+      sourceNeedsReveal = onWillPresentSource != nil
+      presentsWithTransaction = sourceNeedsReveal
     }
     self.progress = resolvedProgress
     self.backsideColor = backsideColor
@@ -376,7 +382,15 @@ final class SheetCurlMetalView: MTKView, MTKViewDelegate {
       }
     }
     mustSignal = false
-    if suppliedDrawable != nil {
+    if sourceNeedsReveal {
+      commandBuffer.commit()
+      commandBuffer.waitUntilScheduled()
+      CATransaction.begin(); CATransaction.setDisableActions(true)
+      onWillPresentSource?(source)
+      drawable.present()
+      CATransaction.commit()
+      sourceNeedsReveal = false
+    } else if suppliedDrawable != nil {
       commandBuffer.commit()
       drawable.present()
     } else {
@@ -490,6 +504,7 @@ extension SheetCurlMetalView: @preconcurrency CAMetalDisplayLinkDelegate {
     if framePending {
       autoreleasepool { submitPendingFrame(drawable: update.drawable, targetPresentation: update.targetPresentationTimestamp) }
     }
+    if !sourceNeedsReveal { presentsWithTransaction = false }
     if !animatesContinuously && !framePending { link.isPaused = true }
   }
 }

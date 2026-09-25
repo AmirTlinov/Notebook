@@ -1,0 +1,348 @@
+{
+  "date": "2026-09-25",
+  "issue": "GUI-295",
+  "baseCommit": "fe0b7d8e95cae2ae85bdd1822f083c5ee0d64dd9",
+  "status": "Подтверждённое исправление зависания первого показа установлено в паре204, функциональная регрессия29/29. Целевые задержки16.67/20мс и полная физическая приёмка НЕ закрыты.",
+  "device": {
+    "udid": "00008103-001E059934D9001E",
+    "model": "iPad Pro 11-inch (3rd generation), iPad13,4",
+    "os": "27.0 (24A435)",
+    "maximumFramesPerSecond": 120
+  },
+  "scope": "Подписанный изолированный Debug -O, .native-test; синтетический Pencil не является физическим контактом пера. presentedTime является квитанцией ОС о drawable, а не измерением input-to-photon.",
+  "installedPair": {
+    "before": "203",
+    "after": "204",
+    "productionInstalled": true,
+    "userDataWasNotReset": true,
+    "historicalDataRestored": false,
+    "ipadContainerRelocatedByOS": true,
+    "macDatabaseAndRegistryUnchangedBeforeLaunch": true
+  },
+  "runs": [
+    {
+      "name": "verify",
+      "description": "Исходный fe0b7d8e, только номер сборки 204",
+      "artifact": "/Users/amir/.codex/worktrees/page-turn-continuity/Notebook/.build/page-turn-204-physical-verify/ipad.xcresult",
+      "sourceInputSHA256": "77c0de9fe5530bee8ac9f2893e02e252a4952961873c83c9b3cc8a39a4b6f119",
+      "result": "Failed",
+      "passed": 11,
+      "failed": 4,
+      "skipped": 0,
+      "runtimeWarnings": [],
+      "failures": [
+        {
+          "failureText": "XCTAssertTrue failed",
+          "targetName": "NotebookTests",
+          "testIdentifier": 1,
+          "testIdentifierString": "NotebookColdInputUXTests/testBlankPageReportsItsFirstContactFrameWithoutSnapshotPolling()",
+          "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/NotebookColdInputUXTests/testBlankPageReportsItsFirstContactFrameWithoutSnapshotPolling",
+          "testName": "testBlankPageReportsItsFirstContactFrameWithoutSnapshotPolling()"
+        },
+        {
+          "failureText": "XCTAssertTrue failed",
+          "targetName": "NotebookTests",
+          "testIdentifier": 10,
+          "testIdentifierString": "NotebookPageMotionUXTests/testInteractiveEndpointUsesItsActualPresentationBeforeOrAfterLift()",
+          "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/NotebookPageMotionUXTests/testInteractiveEndpointUsesItsActualPresentationBeforeOrAfterLift",
+          "testName": "testInteractiveEndpointUsesItsActualPresentationBeforeOrAfterLift()"
+        },
+        {
+          "failureText": "XCTAssertTrue failed - Zero/dropped, invalid or pre-command timestamps cannot stand in for displayed frames",
+          "targetName": "NotebookTests",
+          "testIdentifier": 12,
+          "testIdentifierString": "NotebookPageMotionUXTests/testTenForwardReverseTurnsMeetFirstPresentationAndLandingDeadlines()",
+          "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/NotebookPageMotionUXTests/testTenForwardReverseTurnsMeetFirstPresentationAndLandingDeadlines",
+          "testName": "testTenForwardReverseTurnsMeetFirstPresentationAndLandingDeadlines()"
+        },
+        {
+          "failureText": "XCTAssertTrue failed - Wrong displayed material at page (180.0, 280.0): [230, 231, 228, 255]",
+          "targetName": "NotebookUITests",
+          "testIdentifier": 15,
+          "testIdentifierString": "NotebookWorkspaceJourneyUITests/testColdBoardEntryAndRealSwipesShowEveryLeafAfterEvictionAndReturn()",
+          "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookUITests/NotebookWorkspaceJourneyUITests/testColdBoardEntryAndRealSwipesShowEveryLeafAfterEvictionAndReturn",
+          "testName": "testColdBoardEntryAndRealSwipesShowEveryLeafAfterEvictionAndReturn()"
+        }
+      ]
+    },
+    {
+      "name": "reveal",
+      "description": "Первый drawable и порядок native-слоёв в одной транзакции",
+      "artifact": "/Users/amir/.codex/worktrees/page-turn-continuity/Notebook/.build/page-turn-204-physical-reveal/ipad.xcresult",
+      "sourceInputSHA256": "dc009cdf5f154700db3909f807938959cd5a20dd7b4a7b8cb2d622d0ac9642d9",
+      "result": "Failed",
+      "passed": 8,
+      "failed": 1,
+      "skipped": 0,
+      "runtimeWarnings": [],
+      "failures": [
+        {
+          "failureText": "XCTAssertTrue failed - Zero/dropped, invalid or pre-command timestamps cannot stand in for displayed frames",
+          "targetName": "NotebookTests",
+          "testIdentifier": 9,
+          "testIdentifierString": "NotebookPageMotionUXTests/testTenForwardReverseTurnsMeetFirstPresentationAndLandingDeadlines()",
+          "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/NotebookPageMotionUXTests/testTenForwardReverseTurnsMeetFirstPresentationAndLandingDeadlines",
+          "testName": "testTenForwardReverseTurnsMeetFirstPresentationAndLandingDeadlines()"
+        }
+      ]
+    },
+    {
+      "name": "ondemand",
+      "description": "Отклонено: принудительный SDR и on-demand кадр удерживаемой точки",
+      "artifact": "/Users/amir/.codex/worktrees/page-turn-continuity/Notebook/.build/page-turn-204-physical-ondemand/ipad.xcresult",
+      "sourceInputSHA256": "be3258432f6cdc3f770d59a91897e8872c4633db264bdd9b0f2331a2542aea0e",
+      "result": "Failed",
+      "passed": 8,
+      "failed": 2,
+      "skipped": 0,
+      "runtimeWarnings": [],
+      "failures": [
+        {
+          "failureText": "XCTAssertTrue failed",
+          "targetName": "NotebookTests",
+          "testIdentifier": 1,
+          "testIdentifierString": "NotebookColdInputUXTests/testBlankPageReportsItsFirstContactFrameWithoutSnapshotPolling()",
+          "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/NotebookColdInputUXTests/testBlankPageReportsItsFirstContactFrameWithoutSnapshotPolling",
+          "testName": "testBlankPageReportsItsFirstContactFrameWithoutSnapshotPolling()"
+        },
+        {
+          "failureText": "XCTAssertTrue failed - Zero/dropped, invalid or pre-command timestamps cannot stand in for displayed frames",
+          "targetName": "NotebookTests",
+          "testIdentifier": 10,
+          "testIdentifierString": "NotebookPageMotionUXTests/testTenForwardReverseTurnsMeetFirstPresentationAndLandingDeadlines()",
+          "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/NotebookPageMotionUXTests/testTenForwardReverseTurnsMeetFirstPresentationAndLandingDeadlines",
+          "testName": "testTenForwardReverseTurnsMeetFirstPresentationAndLandingDeadlines()"
+        }
+      ]
+    },
+    {
+      "name": "first-mode",
+      "description": "Отклонено: предварительный флаг транзакции InkCanvasView",
+      "artifact": "/Users/amir/.codex/worktrees/page-turn-continuity/Notebook/.build/page-turn-204-physical-first-mode/ipad.xcresult",
+      "sourceInputSHA256": "9788c310b5920000d88614c7b216217de82c49fa0d60dfdee7f0956175eb47ec",
+      "result": "Failed",
+      "passed": 1,
+      "failed": 1,
+      "skipped": 0,
+      "runtimeWarnings": [],
+      "failures": [
+        {
+          "failureText": "XCTAssertTrue failed",
+          "targetName": "NotebookTests",
+          "testIdentifier": 1,
+          "testIdentifierString": "NotebookColdInputUXTests/testBlankPageReportsItsFirstContactFrameWithoutSnapshotPolling()",
+          "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/NotebookColdInputUXTests/testBlankPageReportsItsFirstContactFrameWithoutSnapshotPolling",
+          "testName": "testBlankPageReportsItsFirstContactFrameWithoutSnapshotPolling()"
+        }
+      ]
+    },
+    {
+      "name": "cold-receipts",
+      "description": "Только дополнительное наблюдение первой холодной точки",
+      "artifact": "/Users/amir/.codex/worktrees/page-turn-continuity/Notebook/.build/page-turn-204-physical-cold-receipts/ipad.xcresult",
+      "sourceInputSHA256": "27792970b4ab1dc816036b3393962272f208c32bdc807740bfbb3ed49ff3c36b",
+      "result": "Failed",
+      "passed": 0,
+      "failed": 1,
+      "skipped": 0,
+      "runtimeWarnings": [],
+      "failures": [
+        {
+          "failureText": "XCTAssertLessThanOrEqual failed: (\"38.59962499700487\") is greater than (\"20.0\")",
+          "targetName": "NotebookTests",
+          "testIdentifier": 1,
+          "testIdentifierString": "NotebookColdInputUXTests/testBlankPageReportsItsFirstContactFrameWithoutSnapshotPolling()",
+          "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/NotebookColdInputUXTests/testBlankPageReportsItsFirstContactFrameWithoutSnapshotPolling",
+          "testName": "testBlankPageReportsItsFirstContactFrameWithoutSnapshotPolling()"
+        }
+      ]
+    },
+    {
+      "name": "paused-clock",
+      "description": "Отклонено: сохранение приостановленного Metal display link между жестами",
+      "artifact": "/Users/amir/.codex/worktrees/page-turn-continuity/Notebook/.build/page-turn-204-physical-paused-clock/ipad.xcresult",
+      "sourceInputSHA256": "c3944d74b99d7dd7f551f5fa78eef665595f255345e89a4b747248fd79b02ec5",
+      "result": "Failed",
+      "passed": 8,
+      "failed": 1,
+      "skipped": 0,
+      "runtimeWarnings": [],
+      "failures": [
+        {
+          "failureText": "XCTAssertTrue failed - Zero/dropped, invalid or pre-command timestamps cannot stand in for displayed frames",
+          "targetName": "NotebookTests",
+          "testIdentifier": 9,
+          "testIdentifierString": "NotebookPageMotionUXTests/testTenForwardReverseTurnsMeetFirstPresentationAndLandingDeadlines()",
+          "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/NotebookPageMotionUXTests/testTenForwardReverseTurnsMeetFirstPresentationAndLandingDeadlines",
+          "testName": "testTenForwardReverseTurnsMeetFirstPresentationAndLandingDeadlines()"
+        }
+      ]
+    },
+    {
+      "name": "ui-participation",
+      "description": "Некорректный порядок UIUpdateLink.addAction: измерение не состоялось, fail-fast UIKit",
+      "artifact": "/Users/amir/.codex/worktrees/page-turn-continuity/Notebook/.build/page-turn-204-physical-ui-participation/ipad.xcresult",
+      "sourceInputSHA256": "65bb5788ce9020f3e13846d488822d583bef9ab13305e7d4a8fe688ed8a860c5",
+      "result": "Failed",
+      "passed": 0,
+      "failed": 2,
+      "skipped": 0,
+      "runtimeWarnings": [],
+      "failures": [
+        {
+          "failureText": "Crash: Notebook at IPadSheetCurlController.viewDidLoad(). libsystem_c.dylib: UIUpdateLink without associated phase actions can't request continuous updates.",
+          "targetName": "NotebookTests",
+          "testIdentifier": 1,
+          "testIdentifierString": "NotebookPageMotionUXTests/testInteractiveEndpointUsesItsActualPresentationBeforeOrAfterLift()",
+          "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/NotebookPageMotionUXTests/testInteractiveEndpointUsesItsActualPresentationBeforeOrAfterLift",
+          "testName": "testInteractiveEndpointUsesItsActualPresentationBeforeOrAfterLift()"
+        },
+        {
+          "failureText": "Crash: Notebook at IPadSheetCurlController.viewDidLoad(). libsystem_c.dylib: UIUpdateLink without associated phase actions can't request continuous updates.",
+          "targetName": "NotebookTests",
+          "testIdentifier": 2,
+          "testIdentifierString": "NotebookPageMotionUXTests/testTenForwardReverseTurnsMeetFirstPresentationAndLandingDeadlines()",
+          "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/NotebookPageMotionUXTests/testTenForwardReverseTurnsMeetFirstPresentationAndLandingDeadlines",
+          "testName": "testTenForwardReverseTurnsMeetFirstPresentationAndLandingDeadlines()"
+        }
+      ]
+    },
+    {
+      "name": "ui-drain",
+      "description": "Отклонено и удалено: continuous/immediate UIUpdateLink до первого reveal; stale capture и задержка45.68–77.00мс. Обычный UI journey проходит.",
+      "artifact": "/Users/amir/.codex/worktrees/page-turn-continuity/Notebook/.build/page-turn-204-physical-ui-drain/ipad.xcresult",
+      "sourceInputSHA256": "f7afc82b66680499e51c15be823eb32094cb587333d268ce6523d7c6d1d3e5bc",
+      "result": "Failed",
+      "passed": 5,
+      "failed": 2,
+      "skipped": 0,
+      "runtimeWarnings": [],
+      "failures": [
+        {
+          "failureText": "XCTAssertGreaterThan failed: (\"0\") is not greater than (\"240\") - The current red source was replaced with stale pixels: [0, 0, 255, 255]",
+          "targetName": "NotebookTests",
+          "testIdentifier": 2,
+          "testIdentifierString": "NotebookPageCaptureTests/testCurlCapturesChangedAndNewlyInstalledLayersInBothDirections()",
+          "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/NotebookPageCaptureTests/testCurlCapturesChangedAndNewlyInstalledLayersInBothDirections",
+          "testName": "testCurlCapturesChangedAndNewlyInstalledLayersInBothDirections()"
+        },
+        {
+          "failureText": "XCTAssertTrue failed - Zero/dropped, invalid or pre-command timestamps cannot stand in for displayed frames",
+          "targetName": "NotebookTests",
+          "testIdentifier": 6,
+          "testIdentifierString": "NotebookPageMotionUXTests/testTenForwardReverseTurnsMeetFirstPresentationAndLandingDeadlines()",
+          "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/NotebookPageMotionUXTests/testTenForwardReverseTurnsMeetFirstPresentationAndLandingDeadlines",
+          "testName": "testTenForwardReverseTurnsMeetFirstPresentationAndLandingDeadlines()"
+        }
+      ]
+    }
+  ],
+  "initialHitchMetric": {
+    "iterations": 10,
+    "reportedHitches": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "meaning": "Отдельный системный hitch metric; не доказывает быстрый первый кадр или полный FPS."
+  },
+  "knownFailures": {
+    "pageTurnFirstChangingFrameMS": {
+      "baselineRange": [
+        53,
+        95
+      ],
+      "atomicRevealRange": [
+        40.520125,
+        67.096625
+      ],
+      "budget": 16.666666666666668
+    },
+    "coldFirstDot": "ОС сообщала discarded для первого drawable либо 38.599625 мс при пороге 20 мс; проблема не объявлена исправленной.",
+    "openingScreenshot": "Снимок0.820287с был промежуточным открытием, не подтверждённым зависанием: UI journey с ожиданием композиции прошёл; открытие0.876147625/1.152624208с полного AX+capture. После подтверждённого physical page landing сохранён первый снимок без повторных попыток."
+  },
+  "runtimeRelationshipToAtomicReveal": {
+    "currentSourceInputSHA256": "e57e4bb12c6906ccc5be430ff1be551fffafe9200326a56e1bbdc1e367d7d7f9",
+    "changedInputs": [
+      "Applications/UITests/NotebookWorkspaceJourneyUITests.swift"
+    ],
+    "meaning": "Производственный код совпадает с физическим atomic reveal8/9; изменён только UI-наблюдатель завершения открытия. Задержка40.52–67.10мс остаётся красной."
+  },
+  "finalFunctional": {
+    "artifact": "/Users/amir/.codex/worktrees/page-turn-continuity/Notebook/.build/page-turn-204-physical-functional/ipad.xcresult",
+    "verification": "/Users/amir/.codex/worktrees/page-turn-continuity/Notebook/.build/page-turn-204-physical-functional/verification.json",
+    "sourceInputSHA256": "e57e4bb12c6906ccc5be430ff1be551fffafe9200326a56e1bbdc1e367d7d7f9",
+    "passed": 29,
+    "failed": 0,
+    "skipped": 0,
+    "runtimeWarnings": [],
+    "scope": "27 native regressions and 2 real-gesture UI scenarios. Strict startup latency remains separately failed on identical production sources; this result is not full acceptance."
+  },
+  "releaseBuild": {
+    "artifact": "/Users/amir/.codex/worktrees/page-turn-continuity/Notebook/.build/page-turn-204-release/build.json",
+    "status": "verified-build",
+    "build": "204",
+    "sourceSHA256": "e57e4bb12c6906ccc5be430ff1be551fffafe9200326a56e1bbdc1e367d7d7f9",
+    "verificationRoute": "./verify.sh:selected",
+    "apps": {
+      "iPad": {
+        "path": "derived-data/Build/Products/Release-iphoneos/Notebook.app",
+        "manifestSHA256": "a31a7621931a50ad8a76c45da40ec66a35f0c899a342f1e18d7504d2f7f0dc0b"
+      },
+      "mac": {
+        "path": "derived-mac/Build/Products/Release/Notebook.app",
+        "manifestSHA256": "355f3fdb15d2242a4ac83d3f6edbdef0a6a44c55559ad4d76cf3663eada65c6f"
+      }
+    }
+  },
+  "installation": {
+    "artifact": "/Users/amir/.codex/worktrees/page-turn-continuity/Notebook/.build/page-turn-204-physical-install/installation.json",
+    "build": "204",
+    "finishedAt": "2026-09-25T15:47:43.313476+00:00",
+    "installationAttempted": true,
+    "ipadDataContainerRelocated": true,
+    "ipadInstalledBuild": "204",
+    "macDataUnchangedBeforeLaunch": true,
+    "macInstalledBuild": "204",
+    "physicalPageTurnAcceptance": "see separate XCTest evidence; not full acceptance",
+    "sourceSHA256": "e57e4bb12c6906ccc5be430ff1be551fffafe9200326a56e1bbdc1e367d7d7f9",
+    "startedAt": "2026-09-25T15:46:57.405892+00:00",
+    "status": "matched-pair-launched"
+  },
+  "postInstallRead": {
+    "workspaceID": "54349F3B-9E0A-4DEA-B990-40CAE04EF45E",
+    "preservedPage": {
+      "target": {
+        "id": "CE833916-4FB8-4A76-9202-793643012689",
+        "kind": "page"
+      },
+      "contentStamp": {
+        "actor": "FE3F4542-687E-4827-921B-7CF9D5659BA4",
+        "counter": 33
+      },
+      "inkStamp": {
+        "actor": "72EF4FEA-5790-44E0-B5CB-3D8A51704CE0",
+        "counter": 0
+      },
+      "size": {
+        "width": 834,
+        "height": 1194
+      }
+    },
+    "physicalPresenceDeviceID": "29DC77FE-8777-41EC-BE98-704F4668A2F4",
+    "physicalPresenceViewport": {
+      "y": 1194,
+      "x": 834
+    },
+    "physicalPresenceSessionID": "18299DB8-9A93-4B48-8386-3C65E4724408",
+    "through": "3067",
+    "scope": "Installed Mac MCP responds in the original workspace; the earlier page retains content33/ink0 and physical iPad presence is received. This is not a new optical/gesture test of the production bundle."
+  }
+}

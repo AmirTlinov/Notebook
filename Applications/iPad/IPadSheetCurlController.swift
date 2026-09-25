@@ -183,14 +183,7 @@ final class IPadSheetCurlController: UIViewController, UIGestureRecognizerDelega
         let oldTime = previous.receipt.completion.presentationTime, time <= oldTime { return }
     }
     let shown = motion.direction == .forward ? progress : 1-progress
-    let first = motion.presentation == nil
     motion.presentation = (shown, receipt); self.motion = motion
-    if first {
-      UIView.performWithoutAnimation {
-        view.bringSubviewToFront((motion.direction == .forward ? motion.target : motion.source).view)
-        view.bringSubviewToFront(curl)
-      }
-    }
     finishPresentedEndpoint()
   }
 
@@ -290,6 +283,11 @@ final class IPadSheetCurlController: UIViewController, UIGestureRecognizerDelega
     curl.permitsFrameSubmission = { [weak self] in self?.motion != nil }
     curl.onFrameResolved = { [weak self] image, progress, receipt in
       self?.resolved(image, progress: progress, receipt: receipt)
+    }
+    curl.onWillPresentSource = { [weak self] image in
+      guard let self, let motion, motion.image === image else { return }
+      view.bringSubviewToFront((motion.direction == .forward ? motion.target : motion.source).view)
+      view.bringSubviewToFront(curl)
     }
   }
 

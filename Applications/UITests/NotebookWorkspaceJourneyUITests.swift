@@ -128,7 +128,7 @@ import XCTest
   }
   private func open(deleted: Bool = false) throws {
     try step("ordinary-cover-double-tap", { cover.doubleTap() },
-      simulatorComposition: leafProbes(0, deleted: deleted)) {
+      composition: leafProbes(0, deleted: deleted), waitsForOpening: true) {
       XCTAssertTrue(self.surface.exists)
       XCTAssertTrue(self.app.buttons["drawing-group"].isHittable)
       XCTAssertTrue(self.app.buttons["next-page"].isHittable)
@@ -143,7 +143,7 @@ import XCTest
       let landed = XCTNSPredicateExpectation(
         predicate: NSPredicate(format: "value BEGINSWITH %@", "Страница \(index + 1) из "), object: surface)
       XCTAssertEqual(XCTWaiter.wait(for: [landed], timeout: 2), .completed, "The native curl did not land")
-    }, simulatorComposition: leafProbes(index)) { try self.leaf(index) }
+    }, composition: leafProbes(index)) { try self.leaf(index) }
   }
   private func leave() throws {
     try step("back-to-board", { notebookBack(in:app) }) {
@@ -207,19 +207,25 @@ import XCTest
     }
   }
   private func step(_ name: String, _ action: () -> Void,
-    simulatorComposition probes: [(CGFloat, CGFloat, Color)] = [], verify: () throws -> Void) throws {
+    composition probes: [(CGFloat, CGFloat, Color)] = [], waitsForOpening: Bool = false, verify: () throws -> Void) throws {
     let start = ContinuousClock.now
     action()
     var shot = app.screenshot()
+    // Double-tap delivery is not the end of a manual cover animation. A
+    // prepared page's AX node can exist behind the still-closed cover. Observe
+    // the opening within the original automation watchdog on either platform;
+    // never apply this retry to a physical page turn's confirmed landing.
     #if targetEnvironment(simulator)
-      // GPU completion and AX idleness cannot acknowledge a Simulator display.
-      // Observe its composition within the existing automation watchdog. Native
-      // continuous pixel checks separately reject old/blank frames after landing;
-      // physical devices retain the FIRST post-action composition check below.
-      while !probes.isEmpty,
-        !zip(probes, try samples(probes, shot: shot)).allSatisfy({ $0.0.2.matches($0.1) }),
-        start.duration(to: .now) < .seconds(10) { shot = app.screenshot() }
+      let awaitsComposition = true // GPU completion cannot acknowledge a Simulator display.
+    #else
+      let awaitsComposition = waitsForOpening
     #endif
+    if awaitsComposition, !probes.isEmpty {
+      let first = XCTAttachment(screenshot: shot); first.name = name + "-first-post-action"
+      first.lifetime = .keepAlways; add(first)
+      while !zip(probes, try samples(probes, shot: shot)).allSatisfy({ $0.0.2.matches($0.1) }),
+        start.duration(to: .now) < .seconds(10) { shot = app.screenshot() }
+    }
     currentScreenshot = shot
     let image = XCTAttachment(screenshot: shot); image.name = name; image.lifetime = .keepAlways; add(image)
     defer { currentScreenshot = nil }
