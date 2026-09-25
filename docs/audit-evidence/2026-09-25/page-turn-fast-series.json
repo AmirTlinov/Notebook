@@ -389,8 +389,13 @@
     },
     "requestedRapidStepsExecuted": 21,
     "requestedFullRouteSteps": 100,
-    "synthesizedContactSpacingMs": 250,
-    "scope": "Actual installed app and exact24page notebook. Contacts do not prove each SwiftUI action reached controller. Failure precedes intentional recording retention; full route NOT passed."
+    "scope": "Actual installed app and exact24page notebook. Contacts do not prove each SwiftUI action reached controller. Failure precedes intentional recording retention; full route NOT passed.",
+    "serializedContactOffsetsMs": [
+      0,
+      250,
+      500
+    ],
+    "timingCaveat": "Serialized offsets are not measured delivered touch intervals: isolated replay of the same record was compressed by XCTest to about55ms. Installed contact cadence was not instrumented."
   },
   "privateFooterTrace": {
     "status": "pass-not-production-acceptance",
@@ -402,6 +407,62 @@
       55,
       60
     ],
-    "scope": "All action/fence/command traces delivered; differs from installed250ms synthetic contacts. First private attempt failed beforeUI because added leafmarker exceeded12pagefixture bounds; corrected private marker to leaf%4. Source restored050c, no private content shipped."
+    "scope": "All action/fence/command traces delivered; differs from exact production page sequence and retained causal metadata. First private attempt failed beforeUI because added leafmarker exceeded12pagefixture bounds; corrected private marker to leaf%4. Source restored050c, no private content shipped.",
+    "replayedSerializedRecord": {
+      "verification": "/Users/amir/.codex/worktrees/page-turn-continuity/Notebook/.build/page-turn-209-private-footer-trace-250ms-2/verification.json",
+      "roundTrips": 12,
+      "result": "pass",
+      "deliveredContactIntervalMsApprox": 55,
+      "scope": "Passive UITouch.timestamp proved that raw250ms event offsets were NOT the delivered interval. Not a250ms gesture acceptance. First private replay helper had wrong SPI completion signature and crashed runner, not app; corrected to confirmedBool,NSError ABI."
+    }
+  },
+  "exactCopiedFooterComparison": {
+    "fixture": "First8 current pages in actual order, full PageDocument metadata; 24 isolated slots; no production writes",
+    "baseline": {
+      "result": "failed",
+      "xcresult": "/Users/amir/.codex/worktrees/page-turn-continuity/Notebook/.build/page-turn-209-private-footer-exact/ipad.xcresult",
+      "failure": "Second forward triple4to7 stopped6; only two UITouch down/up pairs, actions, fences, commands; both accepted commands landed"
+    },
+    "withoutForcedUIKitUpdate": {
+      "result": "passed",
+      "verification": "/Users/amir/.codex/worktrees/page-turn-continuity/Notebook/.build/page-turn-209-private-footer-no-force/verification.json",
+      "roundTrips": 12,
+      "rapidTaps": 72,
+      "behaviorDelta": "capture afterScreenUpdates:false; also passive probe lifecycle logging"
+    },
+    "conclusion": "Loss occurs before SwiftUI action/controller queue in failing trace. Removing forced UIKit update prevents that loss in this paired private run; freshness after immediate mutations is a separate required regression, not yet verified.",
+    "caveat": "Synthetic contacts compressed to about55ms; not optical latency or full production acceptance. Private diagnostics and real content removed; no-force change not installed.",
+    "freshnessWithoutForcedUpdate": {
+      "result": "failed",
+      "passed": 2,
+      "failed": 1,
+      "summary": "/Users/amir/.codex/worktrees/page-turn-continuity/Notebook/.build/page-turn-210-capture-freshness-summary.json",
+      "failure": "Immediate SwiftUI mutation captured old red [255,0,0,255] instead of green; naked main.async + false rejected, not installed",
+      "scope": "Actual CGImage consumed by curl, no screenshot or UI flush between mutation and command; existing dense reverse and interactive reverse regressions passed"
+    },
+    "committedCaptureCandidate": {
+      "result": "not-accepted",
+      "xcresult": "/Users/amir/.codex/worktrees/page-turn-continuity/Notebook/.build/page-turn-210-committed-capture-2/ipad.xcresult",
+      "passed": 2,
+      "failed": 3,
+      "scope": "Dense and interactive reverse passed; immediate SwiftUI colour still captured red. Ink/erase source pixels correct, sourceStable=false at admission then true at capture; two tests failed only on aliased pre-stamp fixture (fixed after run). First candidate run crashed at UIUpdateLink property configuration order, fixed before second run. Production209 untouched."
+    },
+    "forcedUpdateFreshnessBaseline": {
+      "result": "passed",
+      "sourceTree": "notebook-architecture-repair",
+      "baseCommit": "b6bf3702",
+      "xcresult": "/tmp/notebook-repair-native-cover-56.xcresult",
+      "summary": "/tmp/notebook-repair-native-cover-56-summary.json",
+      "scope": "Same 46line SwiftUI colour test, adapted only to root typed onFrameReady. Current true passed immediate source and reverse-target changes; root production unchanged. Adjacent tree, not identical whole source fingerprint."
+    },
+    "hostLayoutCandidate": {
+      "result": "rejected",
+      "xcresult": "/Users/amir/.codex/worktrees/page-turn-continuity/Notebook/.build/page-turn-210-host-layout-capture/ipad.xcresult",
+      "sourceSHA256": "ef5bf6324c3590bba5bf9f880b62c38cf00502edf0eaec1fc1f29915367c3e5d",
+      "passed": 4,
+      "failed": 1,
+      "scope": "Explicit setNeedsLayout before commit still captured old red in both directions. SwiftUI body already green before capture (forward mutation246003.0696696,body.0697124,capture.0718522; reverse mutation246003.2970363,body.2970735,capture.3053089). Ink, erase, dense reversal and interactive reversal all passed. This is stale compositor snapshot, not delayed SwiftUI body. Candidate removed from production sources;209 stays installed."
+    },
+    "probeLimitation": "The recorded touch pairs came from a passive window-attached UIGestureRecognizer, not UIApplication.sendEvent. Missing callbacks and the unlogged baseline probe lifecycle do not independently prove the OS discarded a physical event. The confirmed boundary is two SwiftUI actions/two accepted commands; direct event-dispatch observation is still needed."
   }
 }
