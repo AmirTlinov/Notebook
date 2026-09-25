@@ -338,14 +338,15 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     let sourceID: UUID
     let revision: UInt64
   }
-  struct PresentedContactFrame: Sendable {
+  struct ContactFrameResolution: Sendable {
     let frameID: UUID
     let contact: ContactFrame
     let tile: Int
     let tileCount: Int
-    let presentedAt: TimeInterval
+    let completion: MetalFrameCompletion
+    let isFirstFrame: Bool
   }
-  var onContactFramePresented: (@MainActor @Sendable (PresentedContactFrame) -> Void)?
+  var onContactFrameResolved: (@MainActor @Sendable (ContactFrameResolution) -> Void)?
   var activeContactFrame: ContactFrame? {
     if let stroke = activeInkStroke {
       return .init(sourceID: stroke.measured.sourceID, revision: stroke.revision)
@@ -1140,17 +1141,15 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
       || (!hasRevealedFirstFrame && (spatialTarget == nil || isErasureMask))
     presentsWithTransaction = transactionPresentation
     for tile in spatialTarget?.tiles ?? [] { tile.layer.presentsWithTransaction = transactionPresentation }
-    #if !targetEnvironment(simulator)
-    if let observation = onContactFramePresented, let contact = activeContactFrame,
-      active != nil, hasRevealedFirstFrame {
-      let frameID = UUID(), tileCount = passes.count
+    if let observation = onContactFrameResolved, let contact = activeContactFrame, active != nil {
+      let frameID = UUID(), tileCount = passes.count, isFirstFrame = !hasRevealedFirstFrame
       for (tile, pass) in passes.enumerated() {
         MetalFrameCompletion.observe(pass.1, after: commandBuffer) { [weak self] completion in
-          let time = completion.presentationTime ?? 0
-          // Read the OS timestamp in the callback, not when the main actor next
-          // services us. Zero means unpresented/dropped, never a fast success.
-          let receipt = PresentedContactFrame(frameID: frameID, contact: contact,
-            tile: tile, tileCount: tileCount, presentedAt: time)
+          // Observe the cold first drawable too. A later frame cannot be used
+          // to measure its latency. Simulator completion remains explicitly
+          // non-displayed; only the OS can supply a presentation timestamp.
+          let receipt = ContactFrameResolution(frameID: frameID, contact: contact,
+            tile: tile, tileCount: tileCount, completion: completion, isFirstFrame: isFirstFrame)
           Task { @MainActor [weak self] in
             guard self?.window != nil else { return }
             observation(receipt)
@@ -1158,7 +1157,6 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
         }
       }
     }
-    #endif
     if !transactionPresentation, pageDrawable == nil {
       for (_, drawable, _, _, _) in passes { commandBuffer.present(drawable) }
     }

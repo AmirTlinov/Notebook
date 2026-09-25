@@ -8,6 +8,57 @@ import XCTest
 /// for a presentation receipt, force layout, or pre-install a model/page host.
 /// Contacts enter installed recognizers; they are not hardware Pencil evidence.
 @MainActor final class NotebookColdInputUXTests: XCTestCase {
+  func testBlankPageReportsItsFirstContactFrameWithoutSnapshotPolling() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("cold-ink-frame-\(UUID())")
+    let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false,
+      preferences: UserDefaults(suiteName: UUID().uuidString)!)
+    retainNotebookUntilTeardown(model, removing: root)
+    await model.start(pageSize: NotebookAppModel.defaultPageSize)
+    let workspace = try XCTUnwrap(model.workspace), viewport = SpatialPoint(x: 834, y: 1194)
+    let center = model.boardHierarchy?.focusedCenter(of: workspace.selectedItemID, in: workspace.rootBoardID) ?? .zero
+    model.updatePresence(.init(boardID: workspace.rootBoardID, mode: .page,
+      camera: .init(center: center, scale: WorkspaceItemGeometry.notebook.fitScale(viewport: viewport)),
+      viewport: viewport, focusedItemID: workspace.selectedItemID, openProgress: 1), settled: true)
+    model.selectPenColor(.black); model.selectPenWidth(12)
+    let window = try await mountNotebookScene(model)
+    let scene = try NotebookInteractionUXTests.Scene(model: model, window: window)
+    let canvas = try XCTUnwrap(scene.paper.superview as? PaperCanvasContainerView).inkView
+    let requestsBeforeContact = canvas.drawableRequestCount
+    var first: InkCanvasView.ContactFrameResolution?, resolvedAt: TimeInterval?
+    canvas.onContactFrameResolved = { receipt in
+      guard first == nil else { return }
+      first = receipt; resolvedAt = CACurrentMediaTime()
+    }
+    defer { canvas.onContactFrameResolved = nil }
+    let start = CACurrentMediaTime()
+    scene.beginPencil(.init(x: 180, y: 800))
+    let handled = CACurrentMediaTime()
+    let expected = try XCTUnwrap(canvas.activeContactFrame)
+    // No moves, lift, screenshots, forced layout or synchronous CA flush can
+    // manufacture this receipt. The first dot must render while still held.
+    let limit = ContinuousClock.now + .seconds(1)
+    while first == nil, ContinuousClock.now < limit { try await Task.sleep(for: .milliseconds(1)) }
+    let receipt = try XCTUnwrap(first)
+    XCTAssertTrue(receipt.isFirstFrame, "A later warm frame cannot measure the cold first drawable")
+    XCTAssertGreaterThan(canvas.drawableRequestCount, requestsBeforeContact)
+    XCTAssertEqual(receipt.contact, expected)
+    XCTAssertTrue(receipt.completion.permitsProgress)
+    XCTAssertTrue(scene.paper.hasActiveAction)
+    if let presented = receipt.completion.presentationTime {
+      XCTAssertLessThanOrEqual((presented - start) * 1000, NotebookGestureLatency.budgetMS)
+    } else {
+      XCTAssertFalse(MetalFrameCompletion.reportsDisplayTime)
+    }
+    let note = XCTAttachment(string: "cold first dot: handler=\((handled-start)*1000) ms; resolution callback=\((try XCTUnwrap(resolvedAt)-start)*1000) ms; OS display=\(String(describing: receipt.completion.presentationTime.map { ($0-start)*1000 })); firstFrame=\(receipt.isFirstFrame). Simulator callback is GPU readiness, not displayed latency.")
+    note.name = "cold-first-dot-phases"; note.lifetime = .keepAlways; add(note)
+    // Pixel correctness is a separate observation after timing, including the
+    // same held dot (not a later long line at another location).
+    try await assertUX("cold-first-held-dot", since: .now, window: window) {
+      try scene.pixels([(.init(x: 180, y: 800), .black), (.init(x: 300, y: 800), .paper)])
+    }
+    scene.endPencil()
+  }
+
   func testFirstPencilAfterColdOpenWritesAndErasesTheDisplayedPage() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("cold-input-\(UUID())")
     let store = NotebookStore(root: root), actor = UUID()
