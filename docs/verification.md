@@ -9549,3 +9549,23 @@ Swift `-O` и подтверждённый compiler response CQuickJS `-Os`: **6
 и финальная согласованная Release-пара остаются отдельным незавершённым остатком.
 Evidence: `docs/audit-evidence/2026-09-25/burst-integration-54.json`, полный архив54
 содержит result, вложения, источники и compiler flags.
+
+### GUI-306 — реальное изображение curl после принятого изменения, 55/56
+
+На неизменённом production-коде `b6bf3702` добавлены проверки немедленной стрелки
+после native pen и shape-eraser. Oracle читает именно CGImage, переданный curl,
+не переснимает окно и не принуждает UIKit обновиться после lift. Исходный stamp
+фиксируется до контакта, поскольку PageDocument разделяет живой ink cache.
+В обоих случаях при admission stable=false, затем получены текущие принятые пиксели.
+Physical55: **8/8 PASS**, 58,135с; physical56: **1/1 PASS**, 43,033с — немедленное
+SwiftUI-изменение правильно попало в forward и reverse capture. Swift-O/C-Os,
+0 skips/warnings, исходники каждого прогона стабильны.
+
+В55 было запрошено9 selectors, но выполнено8: имя файла eraser ownership ошибочно
+принято за XCTest-класс; метод принадлежит NotebookInteractionUXTests. Девятый PASS
+не приписывается; его отдельная проверка51 остаётся отдельным доказательством.
+Production capture не менялся: кандидат отключения принудительного UIKit update
+не принят без свежих пикселей. Обычная доставка footer taps и физические timing
+отказы по-прежнему открыты. Это регрессия источника изображения, не итоговая
+Release-приёмка. Evidence: `docs/audit-evidence/2026-09-25/curl-source-freshness-55-56.json`;
+полные результаты, вложения и witnesses сохранены в одноимённом локальном архиве.

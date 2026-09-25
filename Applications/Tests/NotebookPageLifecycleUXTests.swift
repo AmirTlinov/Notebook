@@ -11,6 +11,104 @@ import XCTest
   private typealias Scene = NotebookInteractionUXTests.Scene
   private typealias Probe = NotebookSelectionComposition.Probe
 
+  func testAcceptedInkLiftIsPresentInTheImmediatelyRequestedCurlSource() async throws {
+    try await checkImmediateAcceptedCurlSource(erasingShape: false)
+  }
+
+  func testAcceptedShapeEraseIsPresentInTheImmediatelyRequestedCurlSource() async throws {
+    try await checkImmediateAcceptedCurlSource(erasingShape: true)
+  }
+
+  private func checkImmediateAcceptedCurlSource(erasingShape: Bool) async throws {
+    let model = try await modelWithPages(2), notebook = try XCTUnwrap(model.workspace?.selectedItemID)
+    let root = try XCTUnwrap(model.notebookPageRoot(notebook))
+    XCTAssertEqual(model.selectNotebookPage(0, notebookID: notebook, expectedRoot: root), 0)
+    let scene = try await mount(model), owner = try pageOwner(scene.window)
+    let page = try XCTUnwrap(model.activePage)
+    let ink = try XCTUnwrap(scene.paper.superview as? PaperCanvasContainerView).inkView
+    _ = try await turnTarget(owner, forward: true)
+    // Only fixture setup waits for the unchanged source and neighbour. The
+    // accepted mutation below and the real native arrow share one actor turn.
+    try await shown("curl-freshness-unchanged-source", window: scene.window, probes: [
+      probe("source-shape", [(230, 330), (350, 330)], .red, scene.pageToWindow),
+      probe("source-ink", [(300, 650)], .black, scene.pageToWindow),
+      probe("source-witness", [(590, 590)], .blue, scene.pageToWindow)],
+      acknowledged: { model.pagePresentations.isPresented(page) })
+    if erasingShape { model.selectEraserWidth(28) }
+    else { model.selectPenColor(.black); model.selectPenWidth(12) }
+    try await scene.readyPencil(self)
+    let native = owner.sheetController
+    let curl = try XCTUnwrap(native.view.subviews.compactMap { $0 as? SheetCurlMetalView }.first)
+    let receiveFrame = curl.onFrameReady, captureSize = native.view.bounds.size
+    var captured: CGImage?, capturedReadiness: NotebookMetalFrameReadiness?
+    var phases: [String] = []
+    curl.onFrameReady = { image, progress, sequence, readiness in
+      if captured == nil, readiness.isReady {
+        captured = image; capturedReadiness = readiness
+        phases.append("captured source: progress=\(progress) sequence=\(sequence) readiness=\(readiness) sourceStable=\(ink.isStableFramePresented) sourceStamp=\(String(describing: model.pages[page.id]?.drawingStamp))")
+      }
+      receiveFrame?(image, progress, sequence, readiness)
+    }
+    defer {
+      curl.onFrameReady = receiveFrame
+      let note = XCTAttachment(string: phases.joined(separator: "\n"))
+      note.name = erasingShape ? "accepted-erase-curl-source" : "accepted-ink-curl-source"
+      note.lifetime = .keepAlways; add(note)
+      if let captured {
+        let image = XCTAttachment(image: UIImage(cgImage: captured))
+        image.name = "actual-curl-source-image"; image.lifetime = .keepAlways; add(image)
+      }
+    }
+    let points: [(String, CGPoint, NotebookUXObservation.Color)] = [
+      ("unchanged-ink", .init(x: 300, y: 650), .black),
+      ("unchanged-shape", .init(x: 350, y: 330), .red),
+      ("unchanged-witness", .init(x: 590, y: 590), .blue),
+      ("accepted-change", erasingShape ? .init(x: 230, y: 330) : .init(x: 300, y: 950), erasingShape ? .paper : .black)]
+    // Freeze geometry before editing. The oracle samples the exact CGImage
+    // owned by the curl, not a window recapture that could flush pending UI.
+    let capturePoints = points.map { name, point, color in
+      (name, native.view.convert(point.applying(scene.pageToWindow), from: scene.window), color)
+    }
+    XCTAssertEqual(owner.displayedIndex, 0)
+    XCTAssertTrue(scene.paper.isDescendant(of: try XCTUnwrap(native.page).view))
+    let beforeStamp = page.drawingStamp
+    if erasingShape {
+      scene.beginPencil(.init(x: 230, y: 270)); scene.movePencil(.init(x: 230, y: 390))
+    } else {
+      scene.beginPencil(.init(x: 180, y: 950)); scene.movePencil(.init(x: 480, y: 950))
+    }
+    scene.endPencil()
+    let accepted = model.activePage, stableAtAdmission = ink.isStableFramePresented
+    var arrowAccepted: Bool?
+    model.cancelRequestedNavigation()
+    model.inputGate.performAfterIdle {
+      guard model.presence?.mode == .page, model.presence?.focusedItemID == notebook,
+        model.notebookPageRoot(notebook) == root else { arrowAccepted = false; return }
+      model.endSurfaceEditing()
+      arrowAccepted = model.notebookPageNavigation.send(.step(1), ownerID: notebook, source: root)
+    }
+    // No await, yield, screenshot, layout or CA flush lies between lift and
+    // this command. Readiness is recorded, never manufactured by the fixture.
+    phases.append("lift: source=\(page.id) before=\(beforeStamp) accepted=\(String(describing: accepted?.drawingStamp)) sourceStable=\(stableAtAdmission) arrow=\(String(describing: arrowAccepted))")
+    XCTAssertEqual(accepted?.id, page.id)
+    XCTAssertNotEqual(accepted?.drawingStamp, beforeStamp)
+    XCTAssertFalse(stableAtAdmission, "The test must exercise accepted data before its new stable frame")
+    let deadline = ContinuousClock.now + NotebookUXObservation.opening
+    while (captured == nil || owner.displayedIndex != 1), ContinuousClock.now < deadline {
+      try await Task.sleep(for: .milliseconds(2))
+    }
+    XCTAssertEqual(arrowAccepted, true)
+    XCTAssertEqual(owner.displayedIndex, 1)
+    XCTAssertEqual(capturedReadiness?.isReady, true)
+    let image = try XCTUnwrap(captured, "The real curl must capture and present its source")
+    let probes: [Probe] = capturePoints.map { name, point, color in
+      .init(name: name, points: [.init(x: point.x * CGFloat(image.width) / captureSize.width,
+        y: point.y * CGFloat(image.height) / captureSize.height)], color: color)
+    }
+    let failures = try NotebookSelectionComposition.Frame(UIImage(cgImage: image), sampling: probes).failures(probes)
+    XCTAssertTrue(failures.isEmpty, "The curl froze stale accepted content: \(failures)")
+  }
+
   func testPresentedLandingAdmitsTheNextReverseBeforeSwiftUIRepublishesInput() async throws {
     let model = try await modelWithPages(2, distinctLeaves: true)
     let notebook = try XCTUnwrap(model.workspace?.selectedItemID)

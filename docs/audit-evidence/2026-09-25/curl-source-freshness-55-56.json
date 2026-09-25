@@ -1,0 +1,109 @@
+{
+  "status": "passed_native_source_freshness_only",
+  "productionBase": "b6bf3702",
+  "configuration": {
+    "xcode": "Debug",
+    "Swift": "-O",
+    "CQuickJS": "-Os",
+    "bundle": "com.amirtlinov.notebook.architecture-tests"
+  },
+  "runs": [
+    {
+      "number": 55,
+      "summary": {
+        "devicesAndConfigurations": [
+          {
+            "device": {
+              "architecture": "arm64",
+              "deviceId": "00008103-001E059934D9001E",
+              "deviceName": "iPad (Елизавета)",
+              "modelName": "iPad Pro (11-inch) (3rd generation)",
+              "osBuildNumber": "24A435",
+              "osVersion": "27.0",
+              "platform": "iOS"
+            },
+            "expectedFailures": 0,
+            "failedTests": 0,
+            "passedTests": 8,
+            "skippedTests": 0,
+            "testPlanConfiguration": {
+              "configurationId": "1",
+              "configurationName": "Test Scheme Action"
+            }
+          }
+        ],
+        "environmentDescription": "Notebook · Built with macOS 27.0",
+        "expectedFailures": 0,
+        "failedTests": 0,
+        "finishTime": 1790375078.318,
+        "passedTests": 8,
+        "result": "Passed",
+        "runtimeWarnings": [],
+        "skippedTests": 0,
+        "startTime": 1790375020.183,
+        "statistics": [],
+        "testFailures": [],
+        "title": "Test - Notebook",
+        "topInsights": [],
+        "totalTestCount": 8
+      },
+      "sourceWitnessSHA256": "addf82de85e78af8a01b54141eb3b7164aa2d4aaf3714bf753da7e2652ab3ab4",
+      "sourceStable": true,
+      "archive": "/Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/.build/notebook-architecture-repair/evidence-2026-09-25/curl-source-freshness-55-56/55"
+    },
+    {
+      "number": 56,
+      "summary": {
+        "devicesAndConfigurations": [
+          {
+            "device": {
+              "architecture": "arm64",
+              "deviceId": "00008103-001E059934D9001E",
+              "deviceName": "iPad (Елизавета)",
+              "modelName": "iPad Pro (11-inch) (3rd generation)",
+              "osBuildNumber": "24A435",
+              "osVersion": "27.0",
+              "platform": "iOS"
+            },
+            "expectedFailures": 0,
+            "failedTests": 0,
+            "passedTests": 1,
+            "skippedTests": 0,
+            "testPlanConfiguration": {
+              "configurationId": "1",
+              "configurationName": "Test Scheme Action"
+            }
+          }
+        ],
+        "environmentDescription": "Notebook · Built with macOS 27.0",
+        "expectedFailures": 0,
+        "failedTests": 0,
+        "finishTime": 1790375169.558,
+        "passedTests": 1,
+        "result": "Passed",
+        "runtimeWarnings": [],
+        "skippedTests": 0,
+        "startTime": 1790375126.525,
+        "statistics": [],
+        "testFailures": [],
+        "title": "Test - Notebook",
+        "topInsights": [],
+        "totalTestCount": 1
+      },
+      "sourceWitnessSHA256": "b624d0b1835d14494cee60d99318e9fa5bdd91127a54d553fa135697c1b7384c",
+      "sourceStable": true,
+      "archive": "/Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/.build/notebook-architecture-repair/evidence-2026-09-25/curl-source-freshness-55-56/56"
+    }
+  ],
+  "scope": [
+    "Accepted native pen and shape eraser followed by ordinary input-gated arrow; actual curl CGImage sampled without recapturing window.",
+    "Stamp frozen before contact; source stable=false at admission and current stamp preserved at curl receipt.",
+    "Immediate observed SwiftUI mutation is current in actual forward and reverse curl images with unchanged production afterScreenUpdates=true."
+  ],
+  "selectionAccounting": "Run55 requested9 selectors, executed8. NotebookPageEraserOwnershipTests is a file, not an XCTest class: late-receipt method belongs to NotebookInteractionUXTests and was not executed in55. Its prior51 proof remains separate. No ninth result fabricated.",
+  "limits": [
+    "No production capture change; false-capture candidate is not integrated.",
+    "Native commands do not prove footer contact delivery.",
+    "Existing physical cadence and20ms failures remain open; not final Release pair."
+  ]
+}
