@@ -259,12 +259,24 @@ final class SceneCompositionTests: XCTestCase {
     XCTAssertFalse(coordinator.isPreparing)
     XCTAssertTrue(coordinator.published?.sourceReceipts.values.allSatisfy(\.hasCurrentPixels) == true)
     let first = try XCTUnwrap(coordinator.published).rasters.mapValues(\.entryID)
+    for (key, raster) in try XCTUnwrap(coordinator.published).rasters {
+      let receipts = try XCTUnwrap(resources.compositionReceipts(for: raster),
+        "Settled complete paint must retain its bounded cache receipt: \(key)")
+      XCTAssertTrue(receipts.values.allSatisfy(\.hasCurrentPixels))
+      let hit = try XCTUnwrap(resources.retainComposition(key, accepts: { _ in true }))
+      XCTAssertEqual(hit.entryID, raster.entryID); hit.release()
+    }
     weak let retired = coordinator.published
     XCTAssertFalse(first.isEmpty)
     let away = SessionPresence(boardID: fixture.presence.boardID, mode: .board,
       camera: .init(center: .init(x: 12_000, y: 0), scale: 1), viewport: fixture.presence.viewport)
     try await prepare(away)
     try await waitUntil { retired == nil }
+    for (key, entryID) in first {
+      let hit = try XCTUnwrap(resources.retainComposition(key, accepts: { _ in true }),
+        "Leaving the bounded workset must not revoke a ready budgeted composition entry")
+      XCTAssertEqual(hit.entryID, entryID); hit.release()
+    }
     try await prepare(fixture.presence)
     let returned = try XCTUnwrap(coordinator.published)
     XCTAssertEqual(returned.rasters.mapValues(\.entryID), first)
@@ -1222,7 +1234,7 @@ final class SceneCompositionTests: XCTestCase {
     XCTAssertEqual(owner.canvas.spatialCamera, current.camera)
     XCTAssertFalse(owner.needsProjection(camera: current.camera, viewport: current.viewport, refinesDetails: false))
     XCTAssertEqual(try owner.canvas.installedSpatialSource?.referenceInk(),
-      try NotebookReferenceInk(surface: surface, actions: journal.actions), "Real ink must survive the refill")
+      try NotebookReferenceInk(surface: surface, actions: journal.actions, baselineActionIDs: Set(journal.actions.map(\.id))), "Real ink must survive the refill")
     coordinator.prepare(source: source, presence: current, frame: frame, pinned: [], refinesDetails: false)
     XCTAssertFalse(coordinator.isPreparing, "The completed finite refill cannot spin another preparation")
     XCTAssertNotNil(journal.append(tool: .pen, spans: [.init(surface: surface,
@@ -1235,7 +1247,7 @@ final class SceneCompositionTests: XCTestCase {
     try await waitUntil { !coordinator.isPreparing }
     XCTAssertFalse(coordinator.published === original, "An incoming content change still requires its own publication")
     XCTAssertEqual(try owner.canvas.installedSpatialSource?.referenceInk(),
-      try NotebookReferenceInk(surface: surface, actions: journal.actions))
+      try NotebookReferenceInk(surface: surface, actions: journal.actions, baselineActionIDs: Set(journal.actions.map(\.id))))
   }
 
   @MainActor

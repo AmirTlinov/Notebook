@@ -9,18 +9,20 @@ public struct NotebookReferenceIdentity: Codable, Equatable, Sendable {
   public init(target: CollaborationTarget, revision: String) { self.target = target; self.revision = revision }
 }
 
-/// The complete direct ink of one physical owner, not a viewport sample. This
-/// value is prepared off the input actor and includes inactive undo records.
+/// Exact retained ink contributions. Omitted actions remain part of the complete
+/// owner digest; omission from a geometry window never deletes hidden content.
 public struct NotebookReferenceInk: Equatable, Sendable {
   public let surface: SurfaceID
   public let actions: [SpatialInkAction]
+  public let baselineActionIDs: Set<UUID>
 
-  public init(surface: SurfaceID, actions: [SpatialInkAction]) throws {
+  public init(surface: SurfaceID, actions: [SpatialInkAction], baselineActionIDs: Set<UUID> = []) throws {
     guard surface.isValid, surface.kind != .page, Set(actions.map(\.id)).count == actions.count,
       actions.allSatisfy(\.isValid) else {
       throw CollaborationError("capture_source_changed", "Чернила указания не имеют единственного физического владельца.")
     }
     self.surface = surface
+    self.baselineActionIDs = baselineActionIDs
     self.actions = actions.compactMap { action in
       let spans = action.spans.filter { $0.surface == surface }
       guard !spans.isEmpty else { return nil }
@@ -45,7 +47,7 @@ private struct NotebookReferenceNode: Sendable {
   var digest: Data
   var hash: String
   var parent: String?
-  let inkDigest: Data?
+  let inkHashes: [UUID: String]?
 }
 
 private struct NotebookReferenceContribution: Sendable {
@@ -172,13 +174,13 @@ extension NotebookStore {
     }
   }
 
-  /// Reads only hash contributions, in bounded pages. The preparation is linear
-  /// in the addressed owners' ink; it never decodes samples or scans an archive.
+  /// Retains the complete owner digest and only addressed loaded-action hashes.
+  /// Unseen history is neither read nor replaced by the geometry window.
   public func referenceBasis(rootBoardID: UUID, targets: [CollaborationTarget],
-    surfaces: [SurfaceID], liveOwners: [NotebookReferenceLiveOwner] = []) throws -> NotebookReferenceBasis {
+    surfaces: [SurfaceID], inkActionIDs: Set<UUID> = [], liveOwners: [NotebookReferenceLiveOwner] = []) throws -> NotebookReferenceBasis {
     // Native vector batches share the scene's bounded 96-element working set;
     // they are not additional WebKit / paper owners.
-    guard liveOwners.count <= 96, Set(liveOwners).count == liveOwners.count,
+    guard inkActionIDs.count <= 8192, liveOwners.count <= 96, Set(liveOwners).count == liveOwners.count,
       surfaces.count <= 15, Set(surfaces).count == surfaces.count,
       surfaces.allSatisfy({ $0.isValid && $0.kind != .page }) else {
       throw NotebookStorageError.limitExceeded("reference_live_owners")
@@ -188,30 +190,21 @@ extension NotebookStore {
       let root = Self.referenceOwnerKey("board", rootBoardID)
       var nodes: [String: NotebookReferenceNode] = [:]
       func readNode(_ key: String, includesInk: Bool) throws {
-        if let existing = nodes[key], !includesInk || existing.inkDigest != nil { return }
+        if let existing = nodes[key], !includesInk || existing.inkHashes != nil { return }
         guard let row = try currentSQL!.rows("SELECT digest,hash,parent FROM reference_owners WHERE owner_key=?", [.text(key)]).first,
           let digest = row[0].blob, let hash = row[1].text else {
           throw CollaborationError("capture_source_pending", "Основа физической поверхности ещё не готова.")
         }
-        var inkDigest: Data?
+        var inkHashes: [UUID: String]?
         if includesInk {
-          var aggregate = Data(repeating: 0, count: 32)
-          let prefix = "spatial-ink.json#/actions/@"
-          var after = prefix
-          while true {
-            try Task.checkCancellation()
-            let rows = try currentSQL!.rows("SELECT address,hash FROM reference_contributions WHERE owner_key=? AND address>? AND address<? ORDER BY address LIMIT 256",
-              [.text(key), .text(after), .text(prefix + "\u{10ffff}")])
-            for row in rows {
-              guard let address = row[0].text, let hash = row[1].text else { throw NotebookStorageError.corruptRecord(key) }
-              Self.xorReferenceDigest(&aggregate, Self.referenceContribution(address, hash))
-              after = address
-            }
-            if rows.count < 256 { break }
+          var hashes: [UUID: String] = [:]
+          for id in inkActionIDs {
+            let address = "spatial-ink.json#/actions/@" + id.uuidString.lowercased()
+            if let hash = try currentSQL!.rows("SELECT hash FROM reference_contributions WHERE address=? AND owner_key=?", [.text(address), .text(key)]).first?[0].text { hashes[id] = hash }
           }
-          inkDigest = aggregate
+          inkHashes = hashes
         }
-        nodes[key] = .init(digest: digest, hash: hash, parent: key == root ? nil : row[2].text, inkDigest: inkDigest)
+        nodes[key] = .init(digest: digest, hash: hash, parent: key == root ? nil : row[2].text, inkHashes: inkHashes)
       }
       func retainPath(_ key: String) throws {
         try readNode(key, includesInk: false)
@@ -285,17 +278,15 @@ extension NotebookStore {
     for source in ink {
       guard let id = source.surface.ownerID else { throw NotebookStorageError.invalidTransaction("surface owner") }
       let key = referenceOwnerKey(source.surface.kind.rawValue, id)
-      guard var node = nodes[key], let previous = node.inkDigest else {
+      guard let node = nodes[key], let retained = node.inkHashes,
+        source.baselineActionIDs.isSubset(of: Set(retained.keys)) else {
         throw CollaborationError("capture_source_pending", "Поверхность не входила в подготовленное основание указания.")
       }
-      var next = Data(repeating: 0, count: 32)
       for action in source.actions {
         try Task.checkCancellation()
         let address = "spatial-ink.json#/actions/@" + action.id.uuidString.lowercased()
-        xorReferenceDigest(&next, referenceContribution(address, try collaborationHash(JSONValue.encode(action))))
+        try replace(address, owner: key, previous: retained[action.id], next: collaborationHash(JSONValue.encode(action)))
       }
-      xorReferenceDigest(&node.digest, previous); xorReferenceDigest(&node.digest, next)
-      nodes[key] = node; pending.insert(key)
     }
     if let hierarchy {
       // A frozen projection has bounded material. Its non-live rows are never

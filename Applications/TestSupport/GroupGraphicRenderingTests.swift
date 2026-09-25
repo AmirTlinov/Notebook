@@ -89,7 +89,7 @@ import AppKit
       if handle == .trailingCenter {
         let projected=CGRect(x:shown.bounds.minX*0.75,y:shown.bounds.minY*0.75,width:shown.bounds.width*0.75,height:shown.bounds.height*0.75)
         let material=AgentOverlayView(page:page,renderingScale:0.75,allowsInteraction:false,inputEnabled:false,
-          onRenderReady:{ _ in },onState:{ _,_ in false }).frame(width:834,height:1194)
+          onRenderReady:{ _ in },onState: { _, _, _ in false }).frame(width:834,height:1194)
           .scaleEffect(0.75,anchor:.topLeading).frame(width:760,height:760,alignment:.topLeading)
         #if os(iOS)
         let menus=NotebookContextMenus()
@@ -818,15 +818,22 @@ import AppKit
     let address=NotebookToolAddress(surface:.page(pageID),boardID:nil,worldOrigin:nil,bounds:nil)
     model.selectDrawingTool(.lasso)
     model.drawingToolSettings.lassoMode = .elements
-    func lasso(_ min: Double,_ max: Double) {
+    func lasso(_ min: Double,_ max: Double) async throws {
       let local:[SpatialPoint]=[.init(x:min,y:min),.init(x:max,y:min),.init(x:max,y:max),.init(x:min,y:max)]
       let points:[SpatialPoint]=local.map { point in SpatialPoint(x:500.0-4.0*point.y,y:50.0+2.0*point.x) }
       XCTAssertTrue(model.drawingTools.begin(at:points[0],address:address,screenScale:1))
       for point in points.dropFirst() { model.drawingTools.move(to:point) };model.drawingTools.finish()
+      // Exact geometry is resolved off the UI actor. Observe this contour's
+      // completion before checking it or admitting a contact that cancels it.
+      let deadline = ContinuousClock.now + .seconds(1)
+      while model.drawingTools.pendingLasso != nil, ContinuousClock.now < deadline {
+        try await Task.sleep(for: .milliseconds(5))
+      }
+      XCTAssertNil(model.drawingTools.pendingLasso, "The actual selection worker must finish")
     }
-    lasso(2,5)
+    try await lasso(2,5)
     XCTAssertTrue(model.selectionSession.elements.isEmpty,"Touching a descendant never selects its whole transformed frame")
-    lasso(-1,101)
+    try await lasso(-1,101)
     XCTAssertEqual(Set(model.selectionSession.elements),Set([address.reference("ellipse"),address.reference("ink")]))
     XCTAssertFalse(model.selectionSession.contains(address.reference("whole")),"The group descriptor is not a selectable painted element")
   }
@@ -1193,7 +1200,7 @@ import AppKit
     XCTAssertEqual(visible.elements.map(\.id),page.elements.filter { visible.layouts[$0.id] != nil }.map(\.id))
     func render(_ region:CGRect?) throws -> CGImage {
       let painter=ImageRenderer(content:AgentOverlayView(page:page,renderingScale:1,allowsInteraction:false,inputEnabled:false,
-        onRenderReady:{ _ in },onState:{ _,_ in false },visibleRegion:region).environment(model)
+        onRenderReady:{ _ in },onState: { _, _, _ in false },visibleRegion:region).environment(model)
         .frame(width:1000,height:1000).background(Color.white))
       painter.scale=1
       return try XCTUnwrap(painter.cgImage)
@@ -1286,7 +1293,7 @@ private struct MixedWholeProgramPage: View {
   var body: some View {
     if let page=model.pages[pageID] {
       AgentOverlayView(page:page,renderingScale:1,allowsInteraction:true,inputEnabled:true,
-        onRenderReady:{ _ in },onState:{ _,_ in false })
+        onRenderReady:{ _ in },onState: { _, _, _ in false })
         .frame(width:page.size.width,height:page.size.height,alignment:.topLeading).background(.white)
     }
   }

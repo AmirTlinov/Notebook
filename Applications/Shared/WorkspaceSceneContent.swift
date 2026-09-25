@@ -406,9 +406,9 @@ struct SpatialElementContent: View {
       PreparedAgentElementView(element: agentElement,
         allowsInteraction: commitsState && sourceBoardID != nil,
         focus: .board(boardID: sourceBoardID ?? WorkspaceRoot.boardID, elementID: element.id), onRenderReady: { _ in },
-        onState: { state in
-          guard commitsState, let sourceBoardID else { return false }
-          return model.commitSpatialElementState(boardID: sourceBoardID, rendered: element, state: state)
+        onState: { state, completion in
+          guard let sourceBoardID else { return false }
+          return model.commitSpatialElementState(boardID: sourceBoardID, rendered: element, state: state, onCommitted: completion)
         })
     }
   }

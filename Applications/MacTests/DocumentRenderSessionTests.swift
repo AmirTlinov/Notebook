@@ -72,10 +72,10 @@ final class DocumentRenderSessionTests: XCTestCase {
       XCTAssertTrue(page.renderSession === pages[0].renderSession)
       XCTAssertNil(page.webView)
     }
-    async let stateA = first.state.encodedJSON()
-    async let stateB = first.state.encodedJSON()
+    async let stateA = first.state.encodedState(resources: resources)
+    async let stateB = first.state.encodedState(resources: resources)
     let encoded = try await (stateA, stateB)
-    XCTAssertEqual(encoded.0, encoded.1)
+    XCTAssertTrue(encoded.0 === encoded.1)
     XCTAssertEqual(first.state.encodingCount, 1)
     XCTAssertEqual(first.source.preparedSourceBlockCount, 0,
       "Mounting neighbours does not encode or transfer the source before a page demand")

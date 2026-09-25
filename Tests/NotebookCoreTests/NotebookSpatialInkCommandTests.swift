@@ -324,8 +324,14 @@ struct NotebookSpatialInkCommandTests {
         let records = try store.readSpatialInkWindowRecords(coverage: coverage)
         #expect(records.hashes.count == 2)
       }
-      #expect(windowSteps < 10_000 && witnessSteps < 10_000)
-      print("SPATIAL_WINDOW_SCALE same_owner_actions=100000 decoded_actions=1 window_steps=\(windowSteps) witness_steps=\(witnessSteps)")
+      let basisSteps = try measured(store, phase: "window_reference_basis") {
+        let basis = try store.referenceBasis(rootBoardID: header.rootBoardID,
+          targets: [.init(kind: .board, id: foreign)],
+          surfaces: [.board(foreign)], inkActionIDs: [firstID])
+        #expect(basis.identities.count == 1)
+      }
+      #expect(windowSteps < 10_000 && witnessSteps < 10_000 && basisSteps < 5_000)
+      print("SPATIAL_WINDOW_SCALE same_owner_actions=100000 decoded_actions=1 window_steps=\(windowSteps) witness_steps=\(witnessSteps) reference_steps=\(basisSteps)")
       let contentSteps = try measured(store, phase: "folder_content") {
         let present = try store.boardHasContent(foreign)
         #expect(present)

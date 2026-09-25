@@ -78,7 +78,7 @@ import WebKit
     let image = try AgentPinnedImage(referenceID: reference.id, sourceRevision: reference.revision, region: reference.region!, worldOrigin: nil,
       pageIndex: 0, pixelWidth: 1, pixelHeight: 1, pixelsPerPoint: 1, png: png,
       sha256: SHA256.hash(data: png).map { String(format: "%02x", $0) }.joined(),
-      presentation: .init(device: .iOSSimulator, program: .init(blockID: "model", sourceVersion: saved.sourceVersion(blockID: "model"), state: state.value(for: "model")!)))
+      presentation: .init(device: .iOSSimulator, program: .init(blockID: "model", programIdentity: saved.programIdentity(blockID: "model"), state: state.value(for: "model")!)))
     let source = try AgentPinnedSource.capture(requestID: context.id, reference: reference, files: store.referenceSourceFiles(target: target)).withVisual(image)
     try store.saveAttentionEvidence([source], contextID: context.id)
     let cursor = try store.currentChangeCursor()

@@ -11,10 +11,9 @@ final class NotebookToolInputContact {
   private let id: UUID
   private let sourceID = UUID()
   private let toOwner: (CGPoint) -> SpatialPoint
-  private let toFeedback: (CGPoint) -> CGPoint
+  private let toFeedback: (SpatialPoint) -> CGPoint
   private let feedback = CAShapeLayer()
   private let tool: DrawingTool
-  private var points: [CGPoint] = []
   private var path = UIBezierPath()
   private var finished = false
   var onFinish: (() -> Void)?
@@ -31,7 +30,9 @@ final class NotebookToolInputContact {
     let zero = view.convert(CGPoint.zero,to:host)
     let x = view.convert(CGPoint(x:1,y:0),to:host), y = view.convert(CGPoint(x:0,y:1),to:host)
     let transform = CGAffineTransform(a:x.x-zero.x,b:x.y-zero.y,c:y.x-zero.x,d:y.y-zero.y,tx:zero.x,ty:zero.y)
-    toFeedback = { $0.applying(transform) }
+    let a=toOwner(.zero),b=toOwner(.init(x:1,y:0)),c=toOwner(.init(x:0,y:1))
+    let ownerToView=CGAffineTransform(a:b.x-a.x,b:b.y-a.y,c:c.x-a.x,d:c.y-a.y,tx:a.x,ty:a.y).inverted()
+    toFeedback = { CGPoint(x:$0.x,y:$0.y).applying(ownerToView).applying(transform) }
     tool = contact.tool
     guard gate.beginPencilAction(source:sourceID) else { controller.cancel(); return nil }
     controller.onContactCancellation = { [weak self] in self?.finish(cancelled:true) }
@@ -47,8 +48,7 @@ final class NotebookToolInputContact {
     if tool == .lasso { feedback.lineDashPattern = [5/feedbackScale,3/feedbackScale].map(NSNumber.init(value:)) }
     feedback.actions = ["path":NSNull(),"opacity":NSNull()]
     if tool == .lasso { host.layer.addSublayer(feedback) }
-    let feedbackPoint = toFeedback(point)
-    points = [feedbackPoint]
+    let feedbackPoint = toFeedback(toOwner(point))
     path.move(to:feedbackPoint)
     feedback.path = path.cgPath
   }
@@ -56,16 +56,9 @@ final class NotebookToolInputContact {
   func move(to point: CGPoint) {
     guard !finished else { return }
     guard controller.contact?.id == id else { finish(cancelled:true); return }
-    controller.move(to:toOwner(point))
+    guard let accepted=controller.move(to:toOwner(point)) else { return }
     if tool == .lasso {
-      let point = toFeedback(point)
-      guard let last = points.last, hypot(point.x-last.x,point.y-last.y) >= 1 else { return }
-      points.append(point)
-      if points.count > 4096 {
-        points = points.enumerated().filter { $0.offset % 2 == 0 || $0.offset == points.count-1 }.map(\.element)
-        path = UIBezierPath(); path.move(to:points[0])
-        for point in points.dropFirst() { path.addLine(to:point) }
-      } else { path.addLine(to:point) }
+      path.addLine(to:toFeedback(accepted))
       feedback.path = path.cgPath
     }
   }

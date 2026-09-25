@@ -28,6 +28,26 @@ test('one API owns canonical commits, copied JSON state and revision-guarded ext
   assert.deepEqual(json(events[0].detail), {phase:2});
 });
 
+test('native focus admission rejects timers before true and preserves every already accepted snapshot', async () => {
+  const snapshots: any[] = [];
+  const {program, api, events} = fixture({stateTransport:{enabled:false,credit:65536,
+    onSnapshot:(snapshot:unknown)=>snapshots.push(snapshot),requestCredit:()=>{}}});
+  assert.equal(api.commit({phase:1}), false);
+  assert.equal(api.state.phase, 0); assert.equal(snapshots.length, 0);
+  program.setCommitEnabled(true); // The existing trusted-input capture runs before the authored click.
+  assert.equal(api.commit({phase:1}), true);
+  program.setCommitEnabled(false);
+  assert.equal(api.commit({phase:2}), false);
+  assert.equal(JSON.parse(program.readSnapshot({revision:'1',offset:0})).phase, 1);
+  let drained = false;
+  const checkpoint = program.checkpoint().then((value:any)=>{drained=true;return value;});
+  await Promise.resolve(); assert.equal(drained, false);
+  program.acknowledgeSnapshot('1');
+  assert.equal((await checkpoint).phase, 1);
+  assert.equal(snapshots.length, 1);
+  assert.equal(events.filter(event=>event.type==='notebookcapacity').length, 1);
+});
+
 test('missing, rejected and hung ready never complete as ready; static markup needs no declaration', async () => {
   await assert.rejects(fixture().program.start(), /program_completion_unknown/);
   const rejected = fixture(); rejected.api.ready(Promise.reject(new Error('author setup')));
@@ -126,10 +146,10 @@ test('a failed program cannot serialize checkpoints or block an independent prog
   const a = fixture(), b = fixture();
   a.api.lifecycle({checkpoint:() => new Promise(() => {})});
   const failure = assert.rejects(a.program.checkpoint(), /timeout/);
-  await assert.rejects(a.program.checkpoint(), /busy/);
+  const joined = assert.rejects(a.program.checkpoint(), /timeout/);
   b.api.lifecycle({checkpoint:() => ({phase:0.5})});
   assert.equal((await b.program.checkpoint()).phase, 0.5);
-  await failure;
+  await failure; await joined;
 });
 
 test('invalid lifecycle registration and non-JSON state are rejected before mutation', () => {
@@ -243,4 +263,148 @@ test('PDF vectors are opt-in, bounded copied replacement regions; declared autho
   }
   const bad=fixture();bad.api.exportFrame(()=>{throw Error('broken vector')},{vectors:true});
   await assert.rejects(bad.program.exportFrame({format:'pdf',state:null}),/broken vector/);
+});
+
+
+test('explicit retry continues the failed stage without running resume or replaying a completed pause', async () => {
+  for (const failedStage of ['pause', 'checkpoint']) {
+    const {program,api} = fixture(); let pauses = 0, checkpoints = 0, resumes = 0;
+    api.lifecycle({pause:() => { if (++pauses === 1 && failedStage === 'pause') throw Error('pause failed'); },
+      checkpoint:() => { if (++checkpoints === 1 && failedStage === 'checkpoint') throw Error('checkpoint failed'); return {phase:.75}; },
+      resume:() => { resumes++; }});
+    await assert.rejects(program.checkpoint(), /failed/);
+    assert.equal(program.lifecycleState.phase, 'failed');
+    assert.equal(api.commit({phase:9}), false);
+    assert.equal((await program.checkpoint({retry:true})).phase, .75);
+    assert.equal(pauses, failedStage === 'pause' ? 2 : 1);
+    assert.equal(checkpoints, failedStage === 'checkpoint' ? 2 : 1);
+    assert.equal(resumes, 0);
+  }
+});
+
+test('native-timeout retry revokes the old generation before its browser watchdog fires', async () => {
+  const {program,api} = fixture({timeoutMS:1000}); let finish!: (value: unknown) => void, oldSignal!: AbortSignal, calls = 0;
+  api.lifecycle({checkpoint:({signal}:any) => {
+    if (++calls === 1) { oldSignal = signal; return new Promise(resolve => { finish = resolve; }); }
+    return {phase:.5};
+  }});
+  const first = program.checkpoint(); const refused = assert.rejects(first, /superseded/);
+  await new Promise(resolve => setTimeout(resolve,0));
+  assert.equal((await program.checkpoint({retry:true})).phase,.5);
+  await refused; assert.equal(oldSignal.aborted,true);
+  finish({phase:99}); await new Promise(resolve => setTimeout(resolve,0));
+  assert.equal(api.state.phase,.5);
+});
+
+test('resume failure keeps the accepted frozen model and retry never checkpoints it again', async () => {
+  const {program,api} = fixture(); let checkpoints = 0, resumes = 0;
+  api.lifecycle({checkpoint:() => ({phase:++checkpoints}),resume:() => { if (++resumes === 1) throw Error('resume failed'); }});
+  await program.checkpoint(); await assert.rejects(program.resume(), /resume failed/);
+  assert.equal(program.suspended,true); assert.equal(api.commit({phase:9}),false);
+  assert.equal((await program.checkpoint({retry:true})).phase,1);
+  assert.equal(checkpoints,1); await program.resume(); assert.equal(program.suspended,false);
+});
+
+
+test('admitted snapshots are immutable FIFO and overload refuses before true without changing state', async () => {
+  const descriptors:any[] = [], requests:number[] = [];
+  const {program,api,events} = fixture({stateTransport:{credit:512,
+    onSnapshot:(value:any)=>descriptors.push(value),requestCredit:(bytes:number)=>requests.push(bytes)}});
+  const a={phase:1}; assert.equal(api.commit(a),true); a.phase=90;
+  assert.equal(api.commit({phase:2}),true);
+  assert.equal(api.commit({phase:3}),false); assert.equal(api.state.phase,2);
+  assert.equal(requests.length,1);
+  assert.deepEqual(descriptors.map(d=>JSON.parse(program.readSnapshot({revision:d.revision}))),[{phase:1},{phase:2}]);
+  assert.throws(()=>program.acknowledgeSnapshot('2'),/ack_order/);
+  let paused=false;api.lifecycle({pause:()=>{paused=true;},checkpoint:()=>({phase:4})});
+  const checkpoint=program.checkpoint({serialized:true});await new Promise(resolve=>setTimeout(resolve,0));
+  assert.equal(paused,false,'Checkpoint barrier waits for accepted explicit commits');
+  program.acknowledgeSnapshot('1');program.acknowledgeSnapshot('2');
+  const frozen=await checkpoint;assert.equal(JSON.parse(program.readSnapshot({revision:frozen.revision})).phase,4);
+  assert.ok(events.some((event:any)=>event.type==='notebookcapacity'));
+  assert.equal(api.commit({phase:5}),false);
+});
+
+test('large-to-small writes borrow old-state admission until the addressed merge completes', async () => {
+  const text='😀'.repeat(1_100_000), requests:number[]=[], descriptors:any[]=[];
+  const {program,api}=fixture({state:{text},stateTransport:{credit:1024,
+    onSnapshot:(value:any)=>descriptors.push(value),requestCredit:(bytes:number)=>requests.push(bytes)}});
+  assert.equal(api.commit({text:'small'}),false,'Old state is still read by the causal writer');
+  const minimum=Buffer.byteLength(JSON.stringify({text}))*8;
+  assert.ok(requests[0]!>minimum-1024);
+  program.grantStateCredit(requests[0]);assert.equal(api.commit({text:'small'}),true);
+  assert.ok(descriptors[0].cost>=minimum);
+  program.acknowledgeSnapshot('1');
+  api.lifecycle({checkpoint:()=>({text:'checkpoint'})});
+  const frozen=await program.checkpoint({serialized:true});
+  assert.ok(frozen.cost>=Buffer.byteLength(JSON.stringify({text:'checkpoint'}))*8);
+});
+
+test('a model larger than 4MiB acquires credit and transfers exact surrogate-safe bounded windows', async () => {
+  const descriptors:any[] = [], requests:number[] = [];
+  const {program,api}=fixture({stateTransport:{credit:1024,onSnapshot:(d:any)=>descriptors.push(d),requestCredit:(bytes:number)=>requests.push(bytes)}});
+  const value={text:'x'.repeat(4*1024*1024)+'😀'.repeat(200_000)};
+  assert.equal(api.commit(value),false);assert.equal(api.state.phase,0);
+  program.grantStateCredit(requests[0]);assert.equal(api.commit(value),true);
+  const descriptor=descriptors[0];let encoded='',offset=0,count=0;
+  while(offset<descriptor.units){const chunk=program.readSnapshot({revision:descriptor.revision,offset});
+    assert.ok(Buffer.byteLength(chunk)<=1024*1024);assert.equal(chunk.isWellFormed(),true);
+    encoded+=chunk;offset+=chunk.length;count++;}
+  assert.ok(count>4);assert.deepEqual(JSON.parse(encoded),value);
+  await program.dispose();
+  assert.equal(program.readSnapshot({revision:'1',offset:0}).length,262144,'Accepted snapshot survives disposal until native acknowledgement');
+  program.acknowledgeSnapshot('1');await program.drainCommits();
+});
+
+test('native timeout cancels lifecycle immediately, even while accepted commits drain', async () => {
+  const {program,api} = fixture({timeoutMS:1000}); let complete!: (value:any)=>void, signal!:AbortSignal, calls=0;
+  api.lifecycle({checkpoint:({signal:s}:any)=>{signal=s;calls++;return calls===1 ? new Promise(resolve=>complete=resolve) : {phase:2};}});
+  const pending=program.checkpoint();const rejected=assert.rejects(pending,/superseded/);
+  await new Promise(resolve=>setTimeout(resolve,0));
+  assert.equal(program.cancelLifecycle(),true);assert.equal(signal.aborted,true);await rejected;
+  complete({phase:99});await new Promise(resolve=>setTimeout(resolve,0));assert.equal(api.state.phase,0);
+  assert.equal((await program.checkpoint({retry:true})).phase,2);
+
+  const descriptors:any[]=[];
+  const blocked=fixture({stateTransport:{credit:1024,onSnapshot:(d:any)=>descriptors.push(d),requestCredit:()=>{}}});
+  let pauses=0;blocked.api.lifecycle({pause:()=>{pauses++;}});blocked.api.commit({phase:1});
+  const draining=blocked.program.checkpoint();const cancelled=assert.rejects(draining,/superseded/);
+  assert.equal(blocked.program.lifecycleState.phase,'draining');assert.equal(blocked.program.cancelLifecycle(),true);
+  blocked.program.acknowledgeSnapshot(descriptors[0].revision);await cancelled;
+  assert.equal(pauses,0);await blocked.program.checkpoint({retry:true});assert.equal(pauses,1);
+});
+
+test('external state windows publish atomically and stale or replaced presentation never rolls back a commit', async () => {
+  const {program,api}=fixture();
+  const value={payload:'😀'.repeat(1_300_000),phase:9},json=JSON.stringify(value);
+  for(let offset=0;offset<json.length;) {
+    let end=Math.min(json.length,offset+262144);if(end<json.length&&/[\uD800-\uDBFF]/.test(json[end-1]!))end--;
+    assert.equal(await program.receiveStateWindow({transfer:'large',offset,units:json.length,text:json.slice(offset,end),revision:'0'}),true);
+    if(end<json.length)assert.equal(api.state.phase,0);
+    offset=end;
+  }
+  assert.equal(api.state.payload,value.payload);
+  const old='{"phase":90}';
+  await program.receiveStateWindow({transfer:'old',offset:0,units:old.length,text:old.slice(0,5),revision:'0'});
+  assert.equal(api.commit({phase:10}),true);
+  assert.equal(await program.receiveStateWindow({transfer:'old',offset:5,units:old.length,text:old.slice(5),revision:'0'}),false);
+  assert.equal(api.state.phase,10);
+  await program.receiveStateWindow({transfer:'obsolete',units:old.length,text:old.slice(0,5),revision:'1'});
+  assert.equal(await program.receiveStateWindow({transfer:'new',units:2,text:'{}',revision:'1'}),true);
+  assert.equal(await program.receiveStateWindow({transfer:'obsolete',offset:5,units:old.length,text:old.slice(5),revision:'1'}),false);
+  assert.equal(api.state.phase,undefined);
+});
+
+
+test('a lost ACK reply retries idempotently without double credit or removing the next snapshot', async () => {
+  const descriptors:any[]=[];
+  const {program,api}=fixture({stateTransport:{credit:512,onSnapshot:(d:any)=>descriptors.push(d),requestCredit:()=>{}}});
+  assert.equal(api.commit({phase:1}),true);assert.equal(api.commit({phase:2}),true);
+  program.acknowledgeSnapshot('1');program.acknowledgeSnapshot('1');
+  assert.equal(api.commit({phase:3}),true);assert.equal(api.commit({phase:4}),false,'Repeated ACK cannot grant credit twice');
+  assert.equal(JSON.parse(program.readSnapshot({revision:'2'})).phase,2);
+  assert.throws(()=>program.acknowledgeSnapshot('3'),/ack_order/);
+  assert.throws(()=>program.acknowledgeSnapshot('0'),/ack_order/);
+  program.acknowledgeSnapshot('2');program.acknowledgeSnapshot('1');program.acknowledgeSnapshot('3');
+  await program.drainCommits();assert.equal(descriptors.length,3);
 });

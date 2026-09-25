@@ -693,7 +693,15 @@ final class NotebookScriptServiceTests: XCTestCase {
     XCTAssertEqual(value["directory"]?.array("actions").first?.string("id")?.lowercased(), stroke.id.uuidString.lowercased())
     XCTAssertNil(value["directory"]?.array("actions").first?["samples"])
     XCTAssertEqual(value["source"]?["action"], value["retained"]?["action"])
-    XCTAssertEqual(try value["source"]?["action"]?.decode(PageInkAction.self), drawing.actions.first)
+    let sourceAction = try XCTUnwrap(value["source"]?["action"]), expected = try XCTUnwrap(drawing.actions.first)
+    // The public read exports expanded samples for SDK geometry and the exact
+    // relation body separately; it is not the persisted PageInkAction shape.
+    let samples = try XCTUnwrap(sourceAction["samples"]).decode([SpatialInkSample].self)
+    XCTAssertTrue(samples.elementsEqual(expected.samples, by: InkSampleRelations.sameBits))
+    let relations = try XCTUnwrap(sourceAction["relations"])
+    guard case .object(var persistedAction) = sourceAction else { return XCTFail("The public action must be an object") }
+    persistedAction["samples"] = relations
+    XCTAssertEqual(try JSONValue.object(persistedAction).decode(PageInkAction.self), expected)
     XCTAssertEqual(value["edited"]?["element"]?["graphic"]?.string("label"), "Native source")
     XCTAssertEqual(value["restored"]?["element"]?["graphic"]?.string("representation"), "ink")
     XCTAssertEqual(value["converted"]?["publication"]?.string("saved"), "confirmed")
@@ -1037,7 +1045,8 @@ final class NotebookScriptServiceTests: XCTestCase {
       .markdown(id: "print", source: "# Проверка PDF\n\n**Сохранённый** русский источник и формула $x_1$.\n\n<a href='#vector'>К рисунку</a> <a href='https://example.org/notebook'>Сайт</a>"),
       .markdown(id: "vector", source: "<h2 id='vector'>Векторное изображение</h2><img width='240' height='100' src='\(svgURL)'><p><a href='#проверка-pdf'>К началу</a></p>"),
       .latex(id: "math", source: "\\[E=mc^2,\\qquad \\int_0^1 x^2\\,dx=\\frac{1}{3}\\]\n\\begin{tikzpicture}\\draw (0,0) -- (1,1);\\end{tikzpicture}\\num{1234.5}"),
-      .interactive(id: interactiveID, html: "<button>+1</button>")
+      .interactive(id: interactiveID, html: "<button>+1</button>",
+        javaScript: "notebook.exportFrame(() => null); notebook.ready(Promise.resolve());")
     ])
     let actor = UUID()
     var index = try owner.store.loadIndex(), board = try owner.store.loadBoard(items: index.items)

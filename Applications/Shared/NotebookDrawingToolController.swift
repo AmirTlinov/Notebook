@@ -20,6 +20,28 @@ struct NotebookToolAddress: Equatable, Sendable {
   }
 }
 
+/// One mutable contact buffer, frozen by relinquishing the contact at lift.
+/// Preview and semantic selection borrow it; neither owns a decimated contour.
+@MainActor
+final class NotebookToolContour {
+  private(set) var points:[SpatialPoint]
+  private(set) var bounds:CGRect
+  var last:SpatialPoint? { points.last }
+  init(_ points:[SpatialPoint],capacity:Int) {
+    self.points=points;self.points.reserveCapacity(capacity)
+    bounds=points.reduce(CGRect.null) { $0.union(.init(x:$1.x,y:$1.y,width:0,height:0)) }
+  }
+  func append(_ point:SpatialPoint) {
+    points.append(point);bounds=bounds.union(.init(x:point.x,y:point.y,width:0,height:0))
+  }
+  func endpoint(_ point:SpatialPoint,retainingBounds:Bool = false) {
+    if points.count == 1 { points.append(point) } else { points[1]=point }
+    if retainingBounds { bounds=bounds.union(.init(x:point.x,y:point.y,width:0,height:0)) }
+    else { bounds=CGRect(x:min(points[0].x,point.x),y:min(points[0].y,point.y),
+      width:abs(points[0].x-point.x),height:abs(points[0].y-point.y)) }
+  }
+}
+
 @MainActor @Observable
 final class NotebookDrawingToolController {
   struct SpatialSelectionSource: Sendable {
@@ -37,12 +59,38 @@ final class NotebookDrawingToolController {
     let spatialSelection: SpatialSelectionSource?
     let screenScale: Double
     let ink: Task<NotebookLassoInkSource.Prepared?,Error>?
-    var points: [SpatialPoint]
-    var materialAdmission:Task<Void,Never>? = nil
+    let contour:NotebookToolContour
+    @MainActor var points:[SpatialPoint] { contour.points }
+    var materialAdmission:Task<Void,Never>?
+    @MainActor init(id:UUID,tool:DrawingTool,settings:NotebookDrawingToolSettings,pen:PenStyle,
+      address:NotebookToolAddress,graph:NotebookGraphicGraph,spatialSelection:SpatialSelectionSource?,
+      screenScale:Double,ink:Task<NotebookLassoInkSource.Prepared?,Error>?,points:[SpatialPoint],
+      materialAdmission:Task<Void,Never>? = nil) {
+      self.id=id;self.tool=tool;self.settings=settings;self.pen=pen;self.address=address
+      self.graph=graph;self.spatialSelection=spatialSelection;self.screenScale=screenScale;self.ink=ink
+      contour=NotebookToolContour(points,capacity:tool == .lasso ? NotebookGraphicMask.maximumPolygonPoints : max(2,points.count))
+      self.materialAdmission=materialAdmission
+    }
   }
   private unowned let model: NotebookAppModel
   private(set) var contact: Contact?
   private(set) var pendingLasso: Contact?
+  @ObservationIgnored private var lassoSpatialSourceIDs=Set<UUID>()
+  /// A raw window may move, but the admitted contact and chosen material keep
+  /// their exact action identities. The window owner decides how to fetch them.
+  var pinnedSpatialInkActionIDs:Set<UUID> {
+    var ids=Set<UUID>()
+    if let current=contact ?? pendingLasso,current.address.surface.kind != .page {
+      ids.formUnion(lassoSpatialSourceIDs)
+    }
+    if let region=model.selectionSession.region,region.address.surface.kind != .page,let raw=region.rawInk {
+      ids.formUnion(raw.graphic.sourceInkIDs)
+      for layer in raw.graphic.freehand?.layers ?? [] {
+        if let measured=layer.measured { ids.insert(measured.sourceID) }
+      }
+    }
+    return ids
+  }
   private(set) var guide: NotebookDrawingGuide?
   private(set) var guideEnabled = false
   private(set) var guideKind = NotebookGuideKind.ruler
@@ -192,6 +240,7 @@ final class NotebookDrawingToolController {
           delta:spatialSelection.delta,graph:graph) else { return nil }
       let revision=model.lassoMembershipRevision
       raw = .spatial(journal,suppression.ids,membershipRevision:revision)
+      lassoSpatialSourceIDs=Set(journal.actions.lazy.filter { $0.spans.contains { $0.surface == address.surface } }.map(\.id))
     }
     let claims=Set(model.pendingModelGraphics.filter { $0.surface == address.surface }.flatMap { $0.graphic.sourceInkIDs })
     let key=raw.cacheKey(surface:address.surface)
@@ -244,23 +293,29 @@ final class NotebookDrawingToolController {
       delta:model.spatialInteractionDelta(boardID:board,graph:graph,baseGraph:baseGraph),presence:presence))
   }
 
-  func move(to point: SpatialPoint) {
-    guard var current = contact, point.x.isFinite, point.y.isFinite else { return }
+  @discardableResult
+  func move(to point: SpatialPoint) -> SpatialPoint? {
+    guard let current = contact, point.x.isFinite, point.y.isFinite else { return nil }
     var point = point
     if let bounds = current.address.bounds {
       point = .init(x:min(bounds.maxX,max(bounds.minX,point.x)),y:min(bounds.maxY,max(bounds.minY,point.y)))
     }
     if current.tool == .lasso || current.tool == .laser {
-      if let last = current.points.last, hypot(last.x-point.x,last.y-point.y)*current.screenScale < 1 { return }
-      if current.points.count >= 8192 { current.points=simplifiedLasso(current.points,screenScale:current.screenScale,maximum:4096) }
-      current.points.append(point)
-    } else { current.points = [current.points[0],point] }
-    contact = current
+      if let last = current.contour.last, hypot(last.x-point.x,last.y-point.y)*current.screenScale < 1 { return nil }
+      if current.tool == .lasso {
+        guard current.contour.points.count < NotebookGraphicMask.maximumPolygonPoints else {
+          cancel();model.showCue("Контур слишком длинный. Обведите меньшую область; предыдущее выделение сохранено.")
+          return nil
+        }
+        current.contour.append(point)
+      } else { current.contour.endpoint(point,retainingBounds:true) }
+    } else { current.contour.endpoint(point) }
     if current.tool == .laser, let index = laserTraces.firstIndex(where:{ $0.id == current.id }) {
       let now = Date.timeIntervalSinceReferenceDate
       laserTraces[index].append(point,time:now)
     }
     if let object = figure(current) { model.updateWorkingGraphic(object,strokeID:current.id) }
+    return point
   }
 
   func finish() {
@@ -312,16 +367,17 @@ final class NotebookDrawingToolController {
   }
 
   private func finishLasso(_ current: Contact,presentsContour:Bool = true,resolved:((Bool)->Void)? = nil) {
-    let polygon = simplifiedLasso(current.points,screenScale:current.screenScale)
+    let polygon = current.points
     guard polygon.count >= 3 else { model.clearSelection(); return }
     pendingLasso=current
     if current.settings.lassoMode == .elements {
       finishElementSelection(current,polygon:polygon)
       return
     }
-    let box=polygon.reduce(CGRect.null) { $0.union(.init(x:$1.x,y:$1.y,width:0,height:0)) }
+    let box=current.contour.bounds
     guard !box.isNull,box.width > 0,box.height > 0 else { pendingLasso=nil;model.clearSelection();return }
     let frame=PageRect(x:box.minX,y:box.minY,width:box.width,height:box.height)
+    let previousSelection=model.selectionSession
     let initialErasures=model.lassoErasureSnapshot(primary:current.address.surface)
     let initial: RegionSources
     do { initial=try regionSources(current,refreshing:false) }
@@ -345,8 +401,10 @@ final class NotebookDrawingToolController {
       // the accepted predecessor advance; later strokes cannot enter this cut.
       let source=try await current.ink?.value?.excludingAdditional(input.claims)
       let cuts=try initialErasures.masks(on:current.address.surface)
+      let inkCandidates=source?.candidateActionIDs(intersecting:polygon,surface:current.address.surface,
+        origin:current.address.worldOrigin) ?? []
       let references=try NotebookLassoQuery.references(intersecting:polygon,at:current.address,
-        graph:input.graph,spatial:input.spatial,erasures:cuts)
+        graph:input.graph,spatial:input.spatial,erasures:cuts,inkCandidates:inkCandidates)
       let result=try source?.selection(polygon:polygon,surface:current.address.surface,
         origin:current.address.worldOrigin,bounds:current.address.bounds)
       try Task.checkCancellation()
@@ -383,7 +441,11 @@ final class NotebookDrawingToolController {
         resolved?(region != nil)
       } catch {
         guard !Task.isCancelled,let self,model.selectionSession.id == selection else { return }
-        if presentsContour { model.clearSelection() }
+        if presentsContour {
+          if (error as? CollaborationError)?.code == "selection_limit" {
+            model.restoreRejectedRegionSelection(previousSelection,replacing:selection)
+          } else { model.clearSelection() }
+        }
         if !(error is CancellationError) { model.showCue(error.localizedDescription) }
       }
     }
@@ -418,7 +480,7 @@ final class NotebookDrawingToolController {
     let adds=current.settings.lassoAddsToSelection
     let previousReferences=adds ? model.selectionSession.elements : []
     let previousItems=adds ? model.selectionSession.items : []
-    model.clearSelection()
+    // A rejected broad phase never takes ownership away from the prior choice.
     let selection=model.selectionSession.id
     let erasures=model.lassoErasureSnapshot(primary:current.address.surface)
     let removed=model.lassoRemovedPageElements(on:current.address.surface)
@@ -436,31 +498,6 @@ final class NotebookDrawingToolController {
         model.selectElements(result.elements+previousReferences,items:result.items+previousItems)
       } catch is CancellationError {} catch { self?.model.showCue(error.localizedDescription) }
     }
-  }
-
-  private func simplifiedLasso(_ points:[SpatialPoint],screenScale:Double,maximum:Int=2048)->[SpatialPoint] {
-    guard points.count > 3 else { return points }
-    func distance(_ p:SpatialPoint,_ a:SpatialPoint,_ b:SpatialPoint)->Double {
-      let dx=b.x-a.x,dy=b.y-a.y,square=dx*dx+dy*dy
-      let t=square == 0 ? 0 : min(1,max(0,((p.x-a.x)*dx+(p.y-a.y)*dy)/square))
-      return hypot(p.x-a.x-t*dx,p.y-a.y-t*dy)
-    }
-    func reduced(_ tolerance:Double)->[SpatialPoint] {
-      var keep=Array(repeating:false,count:points.count);keep[0]=true;keep[points.count-1]=true
-      var stack=[(0,points.count-1)]
-      while let (start,end)=stack.popLast() {
-        guard end > start+1 else { continue }
-        var far=start,value=0.0
-        for index in (start+1)..<end {
-          let d=distance(points[index],points[start],points[end]);if d > value { value=d;far=index }
-        }
-        if value > tolerance { keep[far]=true;stack.append((start,far));stack.append((far,end)) }
-      }
-      return points.indices.filter { keep[$0] }.map { points[$0] }
-    }
-    var tolerance=0.5/max(screenScale,0.001),result=reduced(tolerance)
-    while result.count > maximum { tolerance *= 1.5;result=reduced(tolerance) }
-    return result
   }
 
   private func figure(_ current: Contact) -> NotebookWorkingGraphic? {
@@ -638,7 +675,27 @@ private struct NotebookLassoErasureSnapshot: Sendable {
 /// Immutable exact phase for both lasso modes. The UI actor captures one scene
 /// cut and its erasures; geometry traversal cannot stall input or observe a
 /// later publication halfway through the query.
-private enum NotebookLassoQuery {
+enum NotebookLassoQuery {
+  static let maximumCandidates=4_096
+
+  struct SurfaceCandidates: Sendable {
+    let surface:SurfaceID
+    let polygon:[SpatialPoint]
+    let origin:WorldPoint
+    let ids:Set<String>
+  }
+  struct ObjectCandidates: Sendable {
+    let surfaces:[SurfaceCandidates]
+    let items:[RenderedWorkspaceItem]
+  }
+
+  static func admitCandidates(elements:Set<EditableElementReference>,
+    items:Set<NotebookSelectedItem> = [],ink:Set<UUID> = []) throws {
+    guard elements.count+items.count+ink.count <= maximumCandidates else {
+      throw CollaborationError("selection_limit","В этой области слишком много объектов.")
+    }
+  }
+
   private static func bounds(_ polygon:[SpatialPoint],origin:WorldPoint)
     -> WorkspaceSpatialBounds? {
     guard let x=polygon.map(\.x).min(),let y=polygon.map(\.y).min(),
@@ -647,21 +704,44 @@ private enum NotebookLassoQuery {
     return .init(origin:origin.offsetBy(x:x,y:y),width:max(0,right-x),height:max(0,bottom-y))
   }
 
-  private static func spatialCandidates(_ polygon:[SpatialPoint],address:NotebookToolAddress,
+  static func spatialCandidates(_ polygon:[SpatialPoint],address:NotebookToolAddress,
     source:NotebookDrawingToolController.SpatialSelectionSource?,graph:NotebookGraphicGraph)
     throws -> Set<String> {
     let query=try spatialQuery(polygon,address:address,source:source,kinds:.elements)
-    var ids=Set((query?.entries ?? []).compactMap { entry -> String? in
+    let ids=Set((query?.entries ?? []).compactMap { entry -> String? in
       guard case .element(let id)=entry.id else { return nil };return id
     })
     guard let source,let bounds=bounds(polygon,
       origin:address.surface.kind == .board ? address.worldOrigin ?? .zero : .zero) else {
       throw CollaborationError("snapshot_pending","Геометрия сцены ещё готовится.")
     }
-    ids.formUnion(try source.delta.movedCandidateIDs(surface:address.surface,
-      bounds:bounds,graph:graph).ids)
+    return try boundedCandidates(ids,surface:address.surface,bounds:bounds,source:source,graph:graph)
+  }
+
+  private static func boundedCandidates(_ base:Set<String>,surface:SurfaceID,bounds:WorkspaceSpatialBounds,
+    source:NotebookDrawingToolController.SpatialSelectionSource,graph:NotebookGraphicGraph) throws -> Set<String> {
+    var ids=base
+    ids.formUnion(try source.delta.movedCandidateIDs(surface:surface,bounds:bounds,graph:graph).ids)
     ids.formUnion(source.delta.ids)
-    return ids
+    var result=Set<String>()
+    for id in ids where !source.delta.excluded.contains(id) {
+      try Task.checkCancellation()
+      let extent:WorkspaceSpatialBounds
+      if let node=graph.node(id),node.shown,node.surface == surface,let layout=graph.resolve(id).layout {
+        extent = .init(origin:layout.origin.offsetBy(x:layout.frame.x,y:layout.frame.y),
+          width:layout.frame.width,height:layout.frame.height)
+      } else if let element=source.delta.elements[id] ?? source.index.element(id:id,boardID:source.presence.boardID),
+        element.surface == surface,element.graphic == nil,let placement=graph.placement(id) {
+        let box=NotebookElementPresentation(element,placement:placement).bounds
+        extent = .init(origin:placement.origin.offsetBy(x:box.minX,y:box.minY),width:box.width,height:box.height)
+      } else { continue }
+      guard extent.intersects(bounds) else { continue }
+      result.insert(id)
+      guard result.count <= maximumCandidates else {
+        throw CollaborationError("selection_limit","В этой области слишком много объектов.")
+      }
+    }
+    return result
   }
 
   private static func spatialQuery(_ polygon:[SpatialPoint],address:NotebookToolAddress,
@@ -680,9 +760,9 @@ private enum NotebookLassoQuery {
 
   static func references(intersecting polygon:[SpatialPoint],at address:NotebookToolAddress,
     graph:NotebookGraphicGraph,spatial:NotebookDrawingToolController.SpatialSelectionSource?,
-    erasures:[String:[InkElementErasure]]) throws ->[EditableElementReference] {
+    erasures:[String:[InkElementErasure]],inkCandidates:Set<UUID> = []) throws ->[EditableElementReference] {
     let origin=address.worldOrigin ?? .zero
-    let candidates:AnySequence<NotebookGraphicGraph.Node>
+    let candidateIDs:Set<String>
     if address.surface.kind == .page,let pageID=address.surface.ownerID,
       let x=polygon.map(\.x).min(),let y=polygon.map(\.y).min(),
       let right=polygon.map(\.x).max(),let bottom=polygon.map(\.y).max(),
@@ -692,17 +772,15 @@ private enum NotebookLassoQuery {
       guard !visible.overflow else {
         throw CollaborationError("selection_limit","Выделите меньшую область: в ней слишком много объектов.")
       }
-      candidates=AnySequence(visible.layouts.keys.lazy.compactMap { graph.node($0) })
-    } else if address.surface.kind == .page { candidates=AnySequence([]) }
-    else {
-      let ids=try spatialCandidates(polygon,address:address,source:spatial,graph:graph)
-      candidates=AnySequence(ids.lazy.compactMap { graph.node($0) })
-    }
-    return candidates.compactMap { node in
+      candidateIDs=Set(visible.layouts.keys)
+    } else if address.surface.kind == .page { candidateIDs=[] }
+    else { candidateIDs=try spatialCandidates(polygon,address:address,source:spatial,graph:graph) }
+    try admitCandidates(elements:Set(candidateIDs.map(address.reference)),ink:inkCandidates)
+    return candidateIDs.compactMap { graph.node($0) }.compactMap { node in
       guard spatial?.delta.excluded.contains(node.id) != true,node.shown,
         let layout=graph.resolve(node.id).layout,
         node.surface == address.surface else { return nil }
-      let delta=origin.delta(to:node.origin),frame=layout.frame
+      let delta=origin.delta(to:layout.origin),frame=layout.frame
       guard NotebookToolGeometry.intersects(.init(x:delta.x+frame.x,y:delta.y+frame.y,
         width:frame.width,height:frame.height),polygon:polygon) else { return nil }
       let local=polygon.compactMap { layout.framePoint($0,from:origin) }
@@ -728,15 +806,11 @@ private enum NotebookLassoQuery {
     polygon:[SpatialPoint],origin:WorldPoint,boardID:UUID,graph:NotebookGraphicGraph,
     source:NotebookDrawingToolController.SpatialSelectionSource,
     erasures:NotebookLassoErasureSnapshot) throws ->[EditableElementReference] {
-    var ids=ids;ids.formUnion(source.delta.ids)
-    if let area=bounds(polygon,origin:origin) {
-      ids.formUnion(try source.delta.movedCandidateIDs(surface:surface,bounds:area,graph:graph).ids)
-    }
     let cuts=try erasures.masks(on:surface)
     var result=Array(ids.lazy.compactMap { graph.node($0) }.filter { node in
       guard !source.delta.excluded.contains(node.id),node.shown,
         let layout=graph.resolve(node.id).layout,node.surface == surface else { return false }
-      let delta=origin.delta(to:node.origin),frame=layout.frame
+      let delta=origin.delta(to:layout.origin),frame=layout.frame
       guard NotebookToolGeometry.intersects(.init(x:delta.x+frame.x,y:delta.y+frame.y,
         width:frame.width,height:frame.height),polygon:polygon) else { return false }
       let local=polygon.compactMap { layout.framePoint($0,from:origin) }
@@ -769,7 +843,10 @@ private enum NotebookLassoQuery {
       let center=origin.delta(to:item.center),size=item.geometry
       let frame=CGRect(x:center.x-size.width/2,y:center.y-size.height/2,
         width:size.width,height:size.height)
-      guard NotebookToolGeometry.intersects(frame,polygon:polygon) else { continue }
+      // Covers participate in admission using bounds only. Exact polygon
+      // intersection starts after every board/cover candidate has been counted.
+      let contour=polygon.reduce(CGRect.null) { $0.union(.init(x:$1.x,y:$1.y,width:0,height:0)) }
+      guard frame.intersects(contour) else { continue }
       let local=polygon.map { SpatialPoint(x:$0.x-frame.minX,y:$0.y-frame.minY) }
       let area=local.reduce(CGRect.null) { $0.union(.init(x:$1.x,y:$1.y,width:0,height:0)) }
         .intersection(.init(origin:.zero,size:.init(width:size.width,height:size.height)))
@@ -785,22 +862,55 @@ private enum NotebookLassoQuery {
     return result
   }
 
-  static func objects(intersecting polygon:[SpatialPoint],at address:NotebookToolAddress,
+  /// This is the whole broad phase, shared by the worker and regression tests.
+  /// No appearance, mask intersection or sample decoding happens before its
+  /// combined, deduplicated physical candidate set is admitted.
+  static func objectCandidates(intersecting polygon:[SpatialPoint],at address:NotebookToolAddress,
+    graph:NotebookGraphicGraph,spatial:NotebookDrawingToolController.SpatialSelectionSource?) throws -> ObjectCandidates {
+    let origin=address.worldOrigin ?? .zero
+    if address.surface.kind == .page,let pageID=address.surface.ownerID,
+      let area=bounds(polygon,origin:.zero) {
+      let delta=WorldPoint.zero.delta(to:area.origin),end=area.origin.delta(to:area.maximum)
+      let visible=graph.visiblePageGraphics(pageID,in:.init(x:delta.x,y:delta.y,width:end.x,height:end.y),limit:maximumCandidates)
+      guard !visible.overflow else { throw CollaborationError("selection_limit","В этой области слишком много объектов.") }
+      let ids=Set(visible.layouts.keys).union(visible.placements.keys)
+      try admitCandidates(elements:Set(ids.map(address.reference)))
+      return .init(surfaces:[.init(surface:address.surface,polygon:polygon,origin:origin,ids:ids)],items:[])
+    }
+    guard address.surface.kind != .page,let board=address.boardID ?? address.surface.ownerID,
+      let spatial,let area=bounds(polygon,origin:origin) else { return .init(surfaces:[],items:[]) }
+    let entries=try spatialQuery(polygon,address:address,source:spatial,kinds:.all)?.entries ?? []
+    let base=Set(entries.compactMap { entry -> String? in
+      guard case .element(let id)=entry.id else { return nil };return id
+    })
+    let ids=try boundedCandidates(base,surface:address.surface,bounds:area,source:spatial,graph:graph)
+    var surfaces:[SurfaceCandidates]=[.init(surface:address.surface,polygon:polygon,origin:origin,ids:ids)]
+    for (surface,local,base) in try coverSelectionCandidates(polygon,address:address,entries:entries,source:spatial) {
+      guard let coverArea=bounds(local,origin:.zero) else { continue }
+      let ids=try boundedCandidates(base,surface:surface,bounds:coverArea,source:spatial,graph:graph)
+      surfaces.append(.init(surface:surface,polygon:local,origin:.zero,ids:ids))
+    }
+    let items:[RenderedWorkspaceItem]=address.surface.kind == .board ? entries.compactMap { entry in
+      guard case .item(let id)=entry.id else { return nil }
+      return spatial.index.renderedItem(id:id,presence:spatial.presence)
+    } : []
+    let elements=Set(surfaces.flatMap { $0.ids.map { EditableElementReference.spatial(boardID:board,elementID:$0) } })
+    try admitCandidates(elements:elements,items:Set(items.map { .init(boardID:board,itemID:$0.id) }))
+    return .init(surfaces:surfaces,items:items)
+  }
+
+  fileprivate static func objects(intersecting polygon:[SpatialPoint],at address:NotebookToolAddress,
     graph:NotebookGraphicGraph,spatial:NotebookDrawingToolController.SpatialSelectionSource?,
     erasures:NotebookLassoErasureSnapshot,removedPageElements:Set<String>)
     throws ->(elements:[EditableElementReference],items:[NotebookSelectedItem]) {
     let origin=address.worldOrigin ?? .zero
-    if address.surface.kind == .page,let pageID=address.surface.ownerID,origin == .zero,
+    let candidates=try objectCandidates(intersecting:polygon,at:address,graph:graph,spatial:spatial)
+    if address.surface.kind == .page,origin == .zero,let page=candidates.surfaces.first,
       let x=polygon.map(\.x).min(),let y=polygon.map(\.y).min(),
       let right=polygon.map(\.x).max(),let bottom=polygon.map(\.y).max(),
       [x,y,right,bottom].allSatisfy(\.isFinite) {
-      let visible=graph.visiblePageGraphics(pageID,
-        in:.init(x:x,y:y,width:max(0,right-x),height:max(0,bottom-y)),limit:4_096)
-      guard !visible.overflow else {
-        throw CollaborationError("selection_limit","Выделите меньшую область: в ней слишком много объектов.")
-      }
       let cuts=try erasures.masks(on:address.surface)
-      var all=Array(visible.layouts.keys.lazy.compactMap { graph.node($0) }.filter { node in
+      var all=Array(page.ids.lazy.compactMap { graph.node($0) }.filter { node in
         guard node.shown,let layout=graph.resolve(node.id).layout,
           node.surface == address.surface else { return false }
         let frame=layout.frame
@@ -812,8 +922,8 @@ private enum NotebookLassoQuery {
           size:.init(width:frame.width,height:frame.height),erasures:cuts[node.id] ?? [])
           .intersects(local.map { .init(x:$0.x,y:$0.y) })
       }.map { address.reference($0.id) })
-      all += visible.placements.keys.compactMap { id -> EditableElementReference? in
-        guard !removedPageElements.contains(id),let presentation=graph.elementPresentation(id) else { return nil }
+      all += page.ids.compactMap { id -> EditableElementReference? in
+        guard graph.node(id) == nil,!removedPageElements.contains(id),let presentation=graph.elementPresentation(id) else { return nil }
         return nativeElementIntersects(presentation,polygon:polygon,from:origin,
           erasures:cuts[id] ?? []) ? address.reference(id) : nil
       }
@@ -821,27 +931,18 @@ private enum NotebookLassoQuery {
     }
     guard address.surface.kind != .page,let board=address.boardID ?? address.surface.ownerID,
       let spatial else { return ([],[]) }
-    let indexed=try spatialQuery(polygon,address:address,source:spatial,kinds:.all)
-    let entries=indexed?.entries ?? []
-    let ids=Set(entries.compactMap { entry -> String? in
-      guard case .element(let id)=entry.id else { return nil };return id
-    })
-    var all=try spatialElementsIntersecting(ids,surface:address.surface,polygon:polygon,
-      origin:origin,boardID:board,graph:graph,source:spatial,erasures:erasures)
-    for (surface,local,ids) in try coverSelectionCandidates(polygon,address:address,
-      entries:entries,source:spatial) {
-      all += try spatialElementsIntersecting(ids,surface:surface,polygon:local,origin:.zero,
-        boardID:board,graph:graph,source:spatial,erasures:erasures)
+    var all:[EditableElementReference]=[]
+    for source in candidates.surfaces {
+      all += try spatialElementsIntersecting(source.ids,surface:source.surface,polygon:source.polygon,
+        origin:source.origin,boardID:board,graph:graph,source:spatial,erasures:erasures)
     }
-    let items:[NotebookSelectedItem]=address.surface.kind == .board ? entries.compactMap { entry in
-      guard case .item(let id)=entry.id,
-        let item=spatial.index.renderedItem(id:id,presence:spatial.presence) else { return nil }
+    let items:[NotebookSelectedItem]=candidates.items.compactMap { item in
       let center=origin.delta(to:item.center),size=item.geometry
       let rect=CGRect(x:center.x-size.width/2,y:center.y-size.height/2,
         width:size.width,height:size.height)
       return NotebookToolGeometry.intersects(rect,polygon:polygon)
         ? .init(boardID:board,itemID:item.id) : nil
-    } : []
+    }
     return (Array(Set(all)),items)
   }
 }

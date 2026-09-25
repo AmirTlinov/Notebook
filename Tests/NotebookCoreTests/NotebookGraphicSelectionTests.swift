@@ -4,6 +4,17 @@ import Testing
 
 @Suite("Atomic native graphic selections")
 struct NotebookGraphicSelectionTests {
+  @Test func exact8192PointMaskRoundTripsAnd8193IsRejected() throws {
+    let polygon=(0..<NotebookGraphicMask.maximumPolygonPoints).map { i in
+      SpatialPoint(x:Double(i)/32,y:i.isMultiple(of:2) ? 0 : 1)
+    }
+    let mask=NotebookGraphicMask(operations:[.init(.intersect,polygon:polygon)])
+    #expect(mask.isValid)
+    let copied=try JSONDecoder().decode(NotebookGraphicMask.self,from:JSONEncoder().encode(mask))
+    #expect(copied.operations[0].polygon == polygon)
+    #expect(!NotebookGraphicMask(operations:[.init(.intersect,polygon:polygon+[.zero])]).isValid)
+  }
+
   private enum Fault: Error { case storage }
 
   @Test(arguments: [false,true], [NotebookStorageFault.afterRecordWrites,.beforeCommit,.afterCommit])

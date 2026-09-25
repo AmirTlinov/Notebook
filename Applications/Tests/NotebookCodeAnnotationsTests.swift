@@ -112,7 +112,7 @@ final class NotebookCodeAnnotationsTests: XCTestCase {
       utf16Offset: 0, text: "code", width: 600, height: 500, fontSize: 15, stamp: .init(counter: 1, actor: actor))
     let hold = DispatchSemaphore(value: 0)
     defer { hold.signal() }
-    queue.enqueue(publishesChanges: false) { _ in hold.wait(); return false }
+    queue.enqueue(owner: .command(.read)) { _ in hold.wait(); return false }
     let review = Task { await notes.review(fragment) }
     while queue.pendingCount < 2 { await Task.yield() }
     let other = Task { await notes.select(file.child("b.py")) }

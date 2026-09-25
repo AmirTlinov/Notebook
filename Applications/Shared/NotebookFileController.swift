@@ -347,12 +347,12 @@ final class NotebookFileController {
   }
   private func persistDocument() {
     guard !stopped, let value = document else { return }
-    persistence.enqueue(owner: .fileDraft(value.address.id), publishesChanges: false) { try $0.saveFileDraft(value); return false }
+    persistence.enqueue(owner: .fileDraft(value.address.id)) { try $0.saveFileDraft(value); return false }
   }
   private func persistWindow() {
     guard !stopped, loaded else { return }
     let value = window, author = author, computer = chat?.computerID
-    persistence.enqueue(owner: .fileWindow(computer), publishesChanges: false) { try $0.saveFileWindow(value, author: author, computer: computer); return false }
+    persistence.enqueue(owner: .fileWindow(computer)) { try $0.saveFileWindow(value, author: author, computer: computer); return false }
   }
 }
 #endif

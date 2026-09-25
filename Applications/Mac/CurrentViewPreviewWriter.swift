@@ -15,8 +15,57 @@ private struct RasterSnapshot {
   }
 }
 
+/// Current-view output is derived and revocable while queued. Once admitted
+/// immediately before I/O its atomic file replacements finish in writer order.
+/// The lock protects only this tiny admission state, never encoding or disk I/O.
+final class CurrentViewPublicationPermit: @unchecked Sendable {
+  private enum State { case queued, revoked, admitted }
+  private let lock = NSLock()
+  private var state = State.queued
+
+  func revoke() {
+    lock.lock(); defer { lock.unlock() }
+    if state == .queued { state = .revoked }
+  }
+
+  func admit() throws {
+    lock.lock(); defer { lock.unlock() }
+    guard state == .queued else { throw CancellationError() }
+    state = .admitted
+  }
+}
+
 enum CurrentViewPreviewWriter {
+  /// Revalidate the already published pixels, then advance only their general
+  /// workspace metadata. Script readers can keep their strict receipt fence
+  /// without making an unrelated edit render the same image again.
+  static func refreshReceipt(store: NotebookStore, presence: SessionPresence,
+    identity: PreviewSourceIdentity, dependencies: ScenePixelDependencies?, permit: CurrentViewPublicationPermit) throws {
+    try store.readTransaction { store in
+      guard let receipt = try store.loadCurrentViewReceipt(),
+        receipt.presence.previewPixelIdentity == presence.previewPixelIdentity else { return }
+      let header = try store.workspaceHeader()
+      guard receipt.workspaceStamp != header.stamp || receipt.boardRevision != header.boardRevision
+        || receipt.spatialInkStamp != header.spatialInkStamp || receipt.presence != presence else { return }
+      if let dependencies {
+        guard try dependencies.isCurrent(store) else { throw PreviewError.sourceChanged }
+      } else {
+        guard try PreviewSourceIdentity.read(store, presence: presence) == identity else { throw PreviewError.sourceChanged }
+      }
+      guard let boardRevision = header.boardRevision, let inkStamp = header.spatialInkStamp else { throw PreviewError.invalidReceipt }
+      let updated = CurrentViewReceipt(workspaceStamp: header.stamp, boardRevision: boardRevision,
+        spatialInkStamp: inkStamp, presence: presence, renderViewport: receipt.renderViewport,
+        surface: receipt.surface, pngSHA256: receipt.pngSHA256)
+      guard updated.isValid else { throw PreviewError.invalidReceipt }
+      let encoder = JSONEncoder(); encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+      let data = try encoder.encode(updated)
+      try permit.admit()
+      try data.write(to: store.currentViewRevisionURL, options: .atomic)
+    }
+  }
+
   @MainActor
+  @discardableResult
   static func write(
     model: NotebookAppModel,
     viewport: CGSize,
@@ -25,27 +74,40 @@ enum CurrentViewPreviewWriter {
     document: DocumentDocument?,
     documentState: DocumentStateJournal?,
     documentRaster: RasterLease?,
+    sourceIdentity: PreviewSourceIdentity? = nil,
     pngURL: URL,
     receiptURL: URL
-  ) async throws {
+  ) async throws -> ScenePixelDependencies? {
     guard viewport.width == presence.viewport.x, viewport.height == presence.viewport.y else { throw PreviewError.invalidSurface }
     let store = model.store
     let reader = Task.detached(priority: .utility) {
       try store.readTransaction { store in
         let header = try store.workspaceHeader()
-        if let page, try store.loadPage(page.id) != page { throw PreviewError.sourceChanged }
-        if let document, try store.loadDocument(document.id) != document { throw PreviewError.sourceChanged }
-        if let documentState, try store.loadDocumentState(documentState.id) != documentState { throw PreviewError.sourceChanged }
-        return header
+        guard try store.readBoardNodeHeader(presence.boardID) != nil else { throw PreviewError.invalidSurface }
+        if let page {
+          let current = try store.readContentHeader(target: .init(kind: .page, id: page.id))
+          guard current.contentStamp == page.agentStamp, current.inkStamp == page.drawingStamp,
+            current.size == page.size else { throw PreviewError.sourceChanged }
+        }
+        if let document, let documentState {
+          let current = try store.readContentHeader(target: .init(kind: .document, id: document.id))
+          guard current.contentStamp == document.contentStamp, current.stateStamp == documentState.stamp else { throw PreviewError.sourceChanged }
+        }
+        let identity = try PreviewSourceIdentity.read(store, presence: presence)
+        guard sourceIdentity == nil || sourceIdentity == identity else { throw PreviewError.sourceChanged }
+        return (header, identity)
       }
     }
-    let header = try await withTaskCancellationHandler { try await reader.value } onCancel: { reader.cancel() }
-    let source = SceneCompositionSource(store: store, revision: header.cursor, workspaceID: header.workspaceID)
-    guard try await source.boardExists(presence.boardID) else { throw PreviewError.invalidSurface }
+    let (header, identity) = try await withTaskCancellationHandler { try await reader.value } onCancel: { reader.cancel() }
+    let identities: [NotebookReferenceIdentity]?
+    if case .scene(let values) = identity { identities = values } else { identities = nil }
+    let source = identities.map { SceneCompositionSource(store: store, revision: header.cursor, workspaceID: header.workspaceID,
+      validationIdentities: $0, recordPixelDependencies: true) }
     let png: Data
     let surface: CurrentViewSurfaceRevision
     switch presence.mode {
     case .board, .cover:
+      guard let source, try await source.boardExists(presence.boardID) else { throw PreviewError.invalidSurface }
       let result = try await SceneCompositionRenderer(source: source,
         permitsPreparation: { model.permitsBackgroundPreparation }).render(presence: presence)
       png = result.png
@@ -69,34 +131,38 @@ enum CurrentViewPreviewWriter {
         pageIndex: presence.documentPageIndex, snapshotPNG_SHA256: snapshot.sha256)
     }
 
-    guard let boardRevision = header.boardRevision, let inkStamp = header.spatialInkStamp else { throw PreviewError.invalidReceipt }
-    let receipt = CurrentViewReceipt(
-      workspaceStamp: header.stamp,
-      boardRevision: boardRevision,
-      spatialInkStamp: inkStamp,
-      presence: presence,
-      renderViewport: SpatialPoint(x: viewport.width, y: viewport.height),
-      surface: surface,
-      pngSHA256: sha256(png)
-    )
-    guard receipt.isValid else { throw PreviewError.invalidReceipt }
-
-    let encoder = JSONEncoder()
-    encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-    let receiptData = try encoder.encode(receipt)
+    let pngHash = sha256(png)
+    let dependencies = try await source?.pixelDependencies()
     try Task.checkCancellation()
-    guard model.permitsBackgroundPreparation, model.observedPresence == presence,
-      model.observedPresencePhase == .settled, model.workspaceHeader?.cursor == header.cursor,
+    guard model.permitsBackgroundPreparation, let currentPresence = model.observedPresence,
+      currentPresence.previewPixelIdentity == presence.previewPixelIdentity,
+      model.observedPresencePhase == .settled,
       model.workspaceHeader?.workspaceID == header.workspaceID
     else { throw PreviewError.sourceChanged }
-    try await model.performStoreCommand { store in
-      try Task.checkCancellation()
-      let latest = try store.workspaceHeader()
-      guard latest.cursor == header.cursor, latest.workspaceID == header.workspaceID else { throw PreviewError.sourceChanged }
-      try FileManager.default.createDirectory(at: pngURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-      try png.write(to: pngURL, options: [.atomic])
-      try receiptData.write(to: receiptURL, options: [.atomic])
-    }
+    let permit = CurrentViewPublicationPermit()
+    try await withTaskCancellationHandler {
+      try await model.performStoreCommand { store in
+        try store.readTransaction { store in
+          let latest = try store.workspaceHeader()
+          let current: Bool
+          if let dependencies { current = try dependencies.isCurrent(store) }
+          else { current = try PreviewSourceIdentity.read(store, presence: presence) == identity }
+          guard latest.workspaceID == header.workspaceID, try store.readBoardNodeHeader(presence.boardID) != nil, current else { throw PreviewError.sourceChanged }
+          guard let boardRevision = latest.boardRevision, let inkStamp = latest.spatialInkStamp else { throw PreviewError.invalidReceipt }
+          let receipt = CurrentViewReceipt(workspaceStamp: latest.stamp, boardRevision: boardRevision,
+            spatialInkStamp: inkStamp, presence: currentPresence,
+            renderViewport: .init(x: viewport.width, y: viewport.height), surface: surface, pngSHA256: pngHash)
+          guard receipt.isValid else { throw PreviewError.invalidReceipt }
+          let encoder = JSONEncoder(); encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+          let receiptData = try encoder.encode(receipt)
+          try permit.admit()
+          try FileManager.default.createDirectory(at: pngURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+          try png.write(to: pngURL, options: [.atomic])
+          try receiptData.write(to: receiptURL, options: [.atomic])
+        }
+      }
+    } onCancel: { permit.revoke() }
+    return dependencies
   }
 
   @MainActor
@@ -135,14 +201,16 @@ enum CurrentViewPreviewWriter {
     guard model.permitsBackgroundPreparation else { throw PreviewError.inputActive }
     let reader = Task.detached(priority: .utility) {
       try store.readTransaction { store in
-        (try store.referenceSourceFiles(target: request.target), try store.workspaceHeader())
+        guard try store.referenceRevision(target: request.target) == request.sourceRevision else {
+          throw PreviewError.sourceChanged
+        }
+        let files = request.target.kind == .page || request.target.kind == .document
+          ? try store.referenceSourceFiles(target: request.target) : [:]
+        return (files, try store.workspaceHeader())
       }
     }
     let (files, header) = try await withTaskCancellationHandler { try await reader.value } onCancel: { reader.cancel() }
     let source = SceneCompositionSource(store: store, revision: header.cursor, workspaceID: header.workspaceID)
-    guard try await Task.detached(priority: .utility, operation: {
-      try NotebookStore.referenceRevision(target: request.target, files: files)
-    }).value == request.sourceRevision else { throw PreviewError.sourceChanged }
     let target = request.target
     let full: RasterSnapshot
     var camera: SpatialCamera?
@@ -204,7 +272,9 @@ enum CurrentViewPreviewWriter {
       guard let image = NSImage(data: result.png) else { throw PreviewError.pngEncoding }
       full = RasterSnapshot(image: image, png: result.png)
       diagnostics = result.diagnostics
-      let journal = try await source.ink(target.kind == .cover ? .cover(target.id) : .board(target.id))
+      let inkBounds = WorkspaceSpatialBounds(origin: target.kind == .cover ? .zero :
+        center.offsetBy(x: -size.width / 2, y: -size.height / 2), width: size.width, height: size.height)
+      let journal = try await source.ink(target.kind == .cover ? .cover(target.id) : .board(target.id), bounds: inkBounds)
       if let ink = try await SpatialInkRasterSnapshot.prepare(
         surface: target.kind == .cover ? .cover(target.id) : .board(target.id),
         camera: target.kind == .board ? projection : nil, size: size, journal: journal,

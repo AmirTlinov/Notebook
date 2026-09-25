@@ -221,7 +221,9 @@ extension NotebookStore {
 
   /// Baseline identity defines the command's scope. Missing unseen members of
   /// either projection are not sent to the writer and cannot become tombstones.
-  func publishProjectionEdits(file: String, before: JSONValue, after: JSONValue) throws {
+  @discardableResult
+  func publishProjectionEdits(file: String, before: JSONValue, after: JSONValue) throws -> Bool {
+    var didChange = false
     let old = Dictionary(uniqueKeysWithValues: try NotebookRecordCodec.encode(before, file: file).map { ($0.address, $0) })
     let next = Dictionary(uniqueKeysWithValues: try NotebookRecordCodec.encode(after, file: file).map { ($0.address, $0) })
     guard let database = currentSQL, database.writable else { throw NotebookStorageError.readOnlyTransaction }
@@ -301,6 +303,7 @@ extension NotebookStore {
         let changed = try writeFragment(edited.replacing(value: value,
           collections: collections.values.sorted { $0.path.lexicographicallyPrecedes($1.path) },
           position: position), database: database)
+        didChange = didChange || changed
         if changed, !file.hasPrefix("documents/"), !edited.member.isEmpty, !edited.collection.hasSuffix("collaboration/fields"), let parent = edited.parent {
           let prefix = fieldKey([edited.collection.components(separatedBy: "/").last!, edited.member]) + "/"
           let collection = edited.collection.hasPrefix("board/") ? "board/collaboration/fields" : "collaboration/fields"
@@ -311,8 +314,10 @@ extension NotebookStore {
       } else if let stored {
         guard stored.value == previous?.value else { throw NotebookStorageError.transactionConflict }
         try removeFragment(address, database: database)
+        didChange = true
       }
     }
+    return didChange
   }
 
   /// New implicit clocks consume the actual content owner's allowance.

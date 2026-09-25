@@ -189,11 +189,11 @@ struct NotebookAttentionSelection: Sendable {
         throw CollaborationError("capture_source_changed", "Рабочее пространство указания изменилось.")
       }
       if !requiredInk.isEmpty {
-        let current = try store.readSpatialInk(surfaces: Array(requiredInk))
         for surface in requiredInk {
           let expected = try installedInk[surface]!.referenceInk()
-          let actual = try NotebookReferenceInk(surface: surface, actions: current.actions)
-          guard expected == actual else {
+          let current = try store.readSpatialInkActions(ids: Set(expected.actions.map(\.id)))
+          let actual = try NotebookReferenceInk(surface: surface, actions: current)
+          guard expected.actions == actual.actions else {
             throw CollaborationError("capture_source_changed", "Установленные чернила отличаются от сохранённого источника. Укажите область после готовности чернил.")
           }
         }

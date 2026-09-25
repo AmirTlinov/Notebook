@@ -606,6 +606,7 @@ final class NotebookChatController {
     do {
       _ = try await persistence.submit { try $0.saveChatSubmission(input, to: computer, firstMessage: firstMessage) }
       try await refreshJobs(); savingInput = nil; savingFirstMessage = nil; error = nil
+      wake.continuation.yield(())
       if action.isInteractiveControl, connected, computer == peer,
         let reply = try? await directQuery(.job(input)) { try await accept(reply, for: .job(input), computer: computer) }
       return true
@@ -613,7 +614,9 @@ final class NotebookChatController {
       // A lost local commit acknowledgement also keeps the same message ID.
       if let recovered = try? await persistence.submit({ try $0.chatJob(input.id) }), recovered.input == input,
         (try? await persistence.submit({ try $0.chatFirstMessage(input.id) })) == firstMessage {
-        try? await refreshJobs(); savingInput = nil; savingFirstMessage = nil; self.error = nil; return true
+        try? await refreshJobs(); savingInput = nil; savingFirstMessage = nil; self.error = nil
+        wake.continuation.yield(())
+        return true
       }
       self.error = error.localizedDescription; return false
     }
@@ -646,7 +649,7 @@ final class NotebookChatController {
   private func persistPanel() {
     guard loaded, !insertingDictation else { return }
     let state = NotebookChatPanelState(threadID: threadID, draft: draft, sidecarID: peer, attachments: attachments.isEmpty ? nil : attachments, readPosition: readPosition, dictationReceipt: dictationReceipt, creationID: creationID, browsesChats: browsesChats), author = author
-    persistence.enqueue(owner: .chatPanel(peer), publishesChanges: false) { try $0.saveChatPanel(state, author: author); return false }
+    persistence.enqueue(owner: .chatPanel(peer)) { try $0.saveChatPanel(state, author: author); return false }
   }
   func insertDictation(_ text: String, id: UUID, thread: String, computer: UUID) async throws {
     guard peer == computer, threadID == thread, !stopped else { throw NotebookTransportError.disconnected }

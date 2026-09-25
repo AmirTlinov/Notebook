@@ -1894,18 +1894,18 @@ private struct WorkspaceSceneItem: View {
           model.activateDocumentLink(activation)
         },
         onStateChange: { blockID, value in
-          model.commitDocumentState(
+          try await model.commitDocumentState(
             documentID: document.id,
             blockID: blockID,
             value: value,
-            sourceVersion: document.sourceVersion(blockID: blockID)
+            programIdentity: document.programIdentity(blockID: blockID)
           )
         },
         isCurrent: isCurrent,
         isVisible: isVisible,
         onStateCheckpoint: { blockID, value, sourceVersion, stateVersion in
           try await model.checkpointDocumentState(documentID: document.id, blockID: blockID,
-            value: value, sourceVersion: sourceVersion, stateVersion: stateVersion)
+            value: value, programIdentity: sourceVersion, stateVersion: stateVersion)
         }, measurements: model.documentMeasurements
       )
     )

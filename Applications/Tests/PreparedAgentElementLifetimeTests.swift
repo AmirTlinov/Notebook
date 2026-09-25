@@ -25,7 +25,7 @@ final class PreparedAgentElementLifetimeTests: XCTestCase {
     var ready = false
     let host = UIHostingController(rootView: PreparedAgentElementView(element: element,
       allowsInteraction: false, focus: .board(boardID: UUID(), elementID: element.id),
-      onRenderReady: { ready = ready || $0 }, onState: { _ in false }).environment(model))
+      onRenderReady: { ready = ready || $0 }, onState: { _, _ in false }).environment(model))
     let window = UIWindow(windowScene: try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene))
     window.rootViewController = host; window.makeKeyAndVisible()
     defer { window.isHidden = true; window.rootViewController = nil }
@@ -47,7 +47,7 @@ final class PreparedAgentElementLifetimeTests: XCTestCase {
     let before = resources.rasterAdmission.pinnedBytes
     let configurations = (0..<100).map { _ in
       PreparedAgentElementView(element: element, allowsInteraction: false,
-        focus: .board(boardID: UUID(), elementID: element.id), onRenderReady: { _ in }, onState: { _ in false })
+        focus: .board(boardID: UUID(), elementID: element.id), onRenderReady: { _ in }, onState: { _, _ in false })
     }
     withExtendedLifetime(configurations) {
       XCTAssertEqual(resources.rasterAdmission.pinnedBytes, before,

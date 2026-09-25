@@ -71,6 +71,32 @@ public struct DocumentSourceCommitResult: Codable, Equatable, Sendable {
   }
 }
 
+/// The executable winning dots, not an aggregate document/text revision. A
+/// losing concurrent edit does not restart a heap; changing any authored input
+/// does, including ABA and a delete/recreate of the same block address.
+public struct DocumentProgramIdentity: Codable, Equatable, Sendable {
+  public let content: VersionStamp
+  public let css: VersionStamp
+  public let javaScript: VersionStamp
+  public let initialState: VersionStamp
+  var isValid: Bool { [content, css, javaScript, initialState].allSatisfy { $0.counter <= VersionStamp.maximumCounter } }
+
+  init(versions: [String: ContentFieldVersion], fallback: VersionStamp) {
+    content = versions["content"]?.stamp ?? fallback
+    css = versions["css"]?.stamp ?? fallback
+    javaScript = versions["javaScript"]?.stamp ?? fallback
+    initialState = versions["initialState"]?.stamp ?? fallback
+  }
+}
+
+extension DocumentDocument {
+  public func programIdentity(blockID: String) -> DocumentProgramIdentity {
+    .init(versions: Dictionary(uniqueKeysWithValues: ["content", "css", "javaScript", "initialState"].compactMap { field in
+      collaboration?.fields[fieldKey(["blocks", collaborationIdentity(blockID), field])].map { (field, $0) }
+    }), fallback: contentStamp)
+  }
+}
+
 extension DocumentDocument {
   public func sourceVersion(blockID: String) -> ContentFieldVersion {
     collaboration?.fields[fieldKey(["blocks", collaborationIdentity(blockID), "content"])]

@@ -65,12 +65,25 @@ final class WorkspaceCoverContinuityTests: XCTestCase {
     for _ in 0..<resources.maximumBackgroundWebSurfaces {
       permits.append(try await resources.acquireWebSurface(priority: .background))
     }
-    model.commitSpatialElementState(boardID: boardID, rendered: delayedElement, state: .object(["revision": .number(1)]))
+    // This passive Markdown source is not a running program. Change its real
+    // rendered content through the content writer, rather than inventing a
+    // program state event whose source basis cannot exist for this kind.
+    let changedHTML = "<svg width='64' height='64'><rect width='64' height='64' fill='#624f38'/></svg>"
+    try await model.performStoreCommand(publishesChanges: true) { store in
+      let before = try store.loadBoard(items: store.loadIndex().items)
+      var after = before
+      var element = try XCTUnwrap(before.board(boardID)?.element(id: delayedElement.id))
+      let expected = element.stamp
+      XCTAssertTrue(element.update(source: "A changed finite unrelated raster dependency", html: changedHTML, actor: actor))
+      XCTAssertTrue(after.upsertElement(element, in: boardID, expected: expected, actor: actor))
+      _ = try store.saveBoardEdits(before: before, after: after)
+    }
+    await model.reloadExternalChanges()?.value
     let sourceSaved = await model.finishPendingPersistence()
     XCTAssertTrue(sourceSaved, model.persistenceFailure ?? "The unrelated source must be durable")
     try await waitUntil {
       !model.scenePreparationPending && resources.pendingWebRequestCount > 0
-        && model.sceneIndex?.element(id: delayedElement.id, boardID: boardID)?.state == .object(["revision": .number(1)])
+        && model.sceneIndex?.element(id: delayedElement.id, boardID: boardID)?.html == changedHTML
     }
     XCTAssertFalse(model.compositionTiles.published?.sourceReceipts[address]?.hasCurrentPixels == true)
     XCTAssertEqual(model.compositionTiles.published?.sourceReceipts[address]?.status, .pending)

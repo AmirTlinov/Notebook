@@ -12,7 +12,8 @@ struct AgentOverlayView: View {
   let allowsInteraction: Bool
   let inputEnabled: Bool
   let onRenderReady: (Bool) -> Void
-  let onState: (String, JSONValue) -> Bool
+  var onErasurePresentation: (PageElementErasurePresentation) -> Void = { _ in }
+  let onState: (String, JSONValue, NotebookProgramStateCompletion) -> Bool
   var visibleRegion: CGRect? = nil
   var pageTurnActivity: PageTurnActivity? = nil
   var rasterPreparation: PageRasterPreparation.Context? = nil
@@ -22,6 +23,14 @@ struct AgentOverlayView: View {
   @State private var readinessID = UUID()
 
   private var display:NotebookPageGraphicDisplay { model.pageGraphicDisplay(page,in:visibleRegion) }
+
+  private var paintedErasures: [String: [InkElementErasure]] {
+    #if os(iOS)
+    model.pagePresentationErasures(page)
+    #else
+    model.elementErasures(on: .page(pageID))
+    #endif
+  }
 
   private func capturePolicy(for element: AgentElement, presentation:NotebookElementPresentation) -> AgentSnapshotPolicy {
     let body=CGRect(origin:.zero,size:presentation.bodySize)
@@ -34,7 +43,7 @@ struct AgentOverlayView: View {
 
   var body: some View {
     let display=display,visible=display.elements,graph=display.graph
-    let erasures = model.elementErasures(on: .page(pageID))
+    let erasures = paintedErasures
     let presentations=Dictionary(uniqueKeysWithValues:visible.compactMap { element -> (String,NotebookElementPresentation)? in
       guard let value=model.elementPresentation(.page(pageID:pageID,elementID:element.id),graph:graph) else { return nil }
       return (element.id,value)
@@ -91,9 +100,10 @@ struct AgentOverlayView: View {
             onRenderReady: { ready in
               setElement(element, ready: ready)
             },
-            onState: { state in
-              guard allowsInteraction, model.interactiveElementFocus == interactiveReference else { return false }
-              return onState(element.id, state)
+            onState: { state, completion in
+              // Focus gates admission inside the program. An already accepted
+              // snapshot keeps its addressed writer through a later focus change.
+              onState(element.id, state, completion)
             }
           )
           }
@@ -135,7 +145,8 @@ struct AgentOverlayView: View {
   }
 
   private func publishReadiness() {
-    let display=display,cuts=model.elementErasures(on:.page(pageID))
+    let display=display,cuts=paintedErasures
+    var erasedIDs=Set<String>()
     let expected=Dictionary(uniqueKeysWithValues:display.elements.map { element in
       let graphic=display.graph.nodes[element.id]?.graphic
       let layout=display.layouts[element.id]
@@ -144,10 +155,17 @@ struct AgentOverlayView: View {
       let erasures=cuts[element.id] ?? []
       let appearance=model.elementErasureCache.preparedAppearance(surface:.page(pageID),id:element.id,
         graphic:graphic,layout:layout,size:presentation?.bodySize ?? .init(width:frame.width,height:frame.height),erasures:erasures)
+      if appearance?.state == .erased || erasures.contains(where: { $0.target.wholeElement }) {
+        erasedIDs.insert(element.id)
+      }
       return (element.id,NotebookInkMaterialView.Content.required(graphic:graphic,
         layout:presentation == nil ? layout : nil,erasures:erasures,appearance:appearance))
     })
-    onRenderReady(readiness.isReady(for:display.elements,materials:expected))
+    let ready = readiness.isReady(for:display.elements,materials:expected,erasedIDs:erasedIDs)
+    onRenderReady(ready)
+    if ready {
+      onErasurePresentation(.init(pageID:pageID,stamp:(model.pages[pageID] ?? page).drawingStamp,erasures:cuts))
+    }
   }
 }
 
@@ -177,9 +195,12 @@ struct AgentOverlayReadiness {
     materials = materials.filter { current[$0.key] != nil }
   }
 
-  func isReady(for elements: [AgentElement],materials required:[String:[NotebookInkMaterialView.Content]] = [:]) -> Bool {
+  func isReady(for elements: [AgentElement],materials required:[String:[NotebookInkMaterialView.Content]] = [:],
+    erasedIDs:Set<String> = []) -> Bool {
     elements.allSatisfy { element in
-      ([.graphic,.nativeText].contains(element.kind) || sources[element.id] == element)
+      // A fully erased body is Color.clear: its retired WebKit/raster cannot
+      // produce a source receipt. Undo must require that real source again.
+      (erasedIDs.contains(element.id) || [.graphic,.nativeText].contains(element.kind) || sources[element.id] == element)
         && (materials[element.id] ?? .init()).isReady(for:required[element.id] ?? [])
     }
   }

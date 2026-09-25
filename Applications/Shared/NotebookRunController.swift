@@ -96,7 +96,7 @@ import NotebookCore
   private func persistCommand() {
     guard !loadingCommand, let root, command.utf8.count <= 8192 else { return }
     let value = command
-    persistence.enqueue(owner: .runCommand(root.id), publishesChanges: false) { try $0.saveRunCommand(value, root: root); return false }
+    persistence.enqueue(owner: .runCommand(root.id)) { try $0.saveRunCommand(value, root: root); return false }
   }
   /// Only an explicit open/new-shell action starts a shell. Mounting a view,
   /// choosing another computer and restoring saved geometry remain reads.

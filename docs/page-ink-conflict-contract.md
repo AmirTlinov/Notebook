@@ -45,6 +45,12 @@ row as separate contributions. A gate transition reads/writes only its bounded
 header, never the measured body. Cold canvas restoration uses the same page mesh
 preparer to restore its original position between later pens/erasers; warm
 restoration toggles the resident batch. Neither path appends a replacement copy.
+`NotebookAppModel` publishes every accepted append and inverse to the mounted
+page consumers through `NotebookPageInkPublication` in that same actor segment.
+The directory owns neither content nor history. Matching bases settle a delta;
+a cold same-page replacement keeps the installed baseline and batches until its
+complete candidate is ready, then swaps both atomically. A different page identity
+clears the previous presentation instead of borrowing its pixels.
 
 The canvas distinguishes completed GPU preparation from a drawable actually
 presented by the OS. A retained tile keeps one submitted signature and its own
@@ -52,7 +58,10 @@ presentation receipt; a late callback cannot acknowledge its replacement.
 Unchanged pending tiles are not uploaded twice. Only tiles intersecting the
 native visible crop must be presented; clipped overscan is prepared material,
 not missing on-screen content. Suppressed/inactive batches never re-enter tile
-selection through their still-resident buffers.
+selection through their still-resident buffers. The Simulator SDK has no OS
+presentation receipt: `NotebookMetalFrameReadiness` distinguishes completed GPU
+work used for its UI readiness from the physical OS presentation clock. Simulator
+completion never enters frame-cadence or Pencil presentation measurements.
 
 Explicit command reads export at most 32,768 original samples per ink query,
 plus `relations` (the exact NIM1 body). This is a disposable, bounded observation,
@@ -154,6 +163,14 @@ lift/cancel until the final point expires.
 
 ## Lasso and native text
 
+The admitted lasso contour has one mutable buffer and at most 8,192 exact points,
+the same limit exposed by `NotebookGraphicMask.maximumPolygonPoints` to native
+input and the saved polygon format. Feedback uses those same admitted points;
+there is no lossy simplification or truncated saved result. Overflow rejects the
+current contact with a cue and preserves the preceding accepted selection.
+Base, moved-group and live-delta candidates share an AABB rejection and a single
+4,096-candidate limit before exact polygon geometry runs off the UI actor.
+
 Lasso selects on any intersection, including boundaries. Items/cards select at lift
 without waiting for ink preparation. Starting inside a closed card on a board does
 not retarget the lasso to its cover. Mixed selection has one
@@ -200,8 +217,13 @@ Points/width live once in that same action, not a second mask journal.
 
 Rendering subtracts measured strips from contour, fill, label and other target
 parts. Masks scale/move with the element; new IDs do not inherit them. Prediction
-never becomes content. Accepted cuts remain visible through lift until durable ink
-publication. Undoing one action restores both its ink and element erasure.
+never becomes content. The temporary lifted mask follows accepted visibility,
+not persistence completion: Undo removes it immediately, and Redo reinstates it
+under its newer state stamp. Only an installed overlay receipt naming the same
+page, sufficient accepted stamp and exact target measurements retires active
+coverage; an old receipt cannot hide the repeated cut. The overlay validates
+source/material readiness before issuing that receipt. Undoing one action
+restores both its ink and element erasure.
 
 Exact UUID retries must preserve targets. Independent erasures merge without
 restoring erased pixels. Scene, export and pinned images use one painter.

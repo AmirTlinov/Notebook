@@ -42,7 +42,8 @@ struct NotebookSceneState: Sendable {
   let hierarchy: BoardHierarchy
   let boardContentRevisions: [UUID: String]
   let ink: SpatialInkJournal
-  let inkSurfaces: Set<SurfaceID>
+  let inkWindow: NotebookSpatialInkWindow
+  let inkHistoryStates: [UUID: NotebookSpatialInkHistoryState]
   let presence: SessionPresence
   let paperSizes: [UUID: DocumentPaperSize]
   let coverage: [UUID: WorkspaceSpatialBounds]
@@ -74,7 +75,7 @@ struct NotebookSceneState: Sendable {
       height: (presence.viewport.y + margin * 2) / presence.camera.scale)
   }
 
-  static func read(store: NotebookStore, presence requested: SessionPresence?, viewport: SpatialPoint, loadsLiveContent: Bool = true, pinnedElements: [UUID: [String]] = [:], pinnedItems: [UUID: [UUID]] = [:], preparedPages: [UUID] = [], historyActor: UUID? = nil, reusingPages: [UUID: PageDocument] = [:]) throws -> Self {
+  static func read(store: NotebookStore, presence requested: SessionPresence?, viewport: SpatialPoint, loadsLiveContent: Bool = true, pinnedElements: [UUID: [String]] = [:], pinnedItems: [UUID: [UUID]] = [:], preparedPages: [UUID] = [], historyActor: UUID? = nil, pinnedInkActionIDs: Set<UUID> = [], reusingPages: [UUID: PageDocument] = [:]) throws -> Self {
     guard requested?.isValid ?? true else { throw NotebookStorageError.corruptRecord("scene presence") }
     guard preparedPages.count <= 4, Set(preparedPages).count == preparedPages.count else {
       throw NotebookStorageError.limitExceeded("scene_page_pins")
@@ -250,7 +251,15 @@ struct NotebookSceneState: Sendable {
       // The chosen document is the only native reader; composition prepares
       // its own admitted passive sources through SceneCompositionSource.
       let live = try store.readWorkingSet(itemIDs: needsSelectedContent && selected.kind == .document ? [selected.id] : [], pageIDs: [],
-        boardIDs: boardIDs, surfaces: Array(surfaces))
+        boardIDs: boardIDs, surfaces: [])
+      var inkCoverage = Dictionary(uniqueKeysWithValues: coverage.map { (SurfaceID.board($0.key), $0.value) })
+      for id in coverIDs {
+        let geometry = paper[id].map(WorkspaceItemGeometry.document) ?? .notebook
+        inkCoverage[.cover(id)] = .init(origin: .zero, width: geometry.width, height: geometry.height)
+      }
+      var inkElements: [SurfaceID: [String]] = [:]
+      for node in nodes.values { for element in node.board.elements { inkElements[element.surface, default: []].append(element.id) } }
+      let inkWindow = try store.readSpatialInkWindow(coverage: inkCoverage, pinnedActionIDs: pinnedInkActionIDs, elementIDs: inkElements)
       for item in live.items where item.id != selected.id { items[item.id] = item.item }
       paper.merge(live.documents.mapValues(\.paperSize)) { _, next in next }
       let workspace = try store.workspaceProjection(items: items.values.sorted { $0.id.uuidString < $1.id.uuidString },
@@ -275,11 +284,17 @@ struct NotebookSceneState: Sendable {
           redoHistory[domain] = try store.nativeRedoHistory(domain: domain, actor: historyActor)
         }
       }
+      var inkHistoryIDs = Set<UUID>()
+      for (domain, entries) in history.merging(redoHistory, uniquingKeysWith: +) {
+        if case .target(.page, _) = domain { continue }
+        for entry in entries { switch entry { case .ink(let ids), .inkRedo(let ids, _): inkHistoryIDs.formUnion(ids); case .command: break } }
+      }
+      let inkHistoryStates = try store.spatialInkHistoryStates(ids: inkHistoryIDs)
       return try Self(header: header, workspace: workspace, pages: pages, pagePositions: pagePositions,
         documents: live.documents, states: live.states,
         drafts: needsSelectedContent && selected.kind == .document ? store.documentEditingSessions(documentID: selected.id) : [],
         reading: selected.kind == .document ? store.readDocumentReadingPosition(selected.id) : nil,
-        hierarchy: hierarchy, boardContentRevisions: boardContentRevisions, ink: live.ink, inkSurfaces: Set(surfaces), presence: presence, paperSizes: paper,
+        hierarchy: hierarchy, boardContentRevisions: boardContentRevisions, ink: inkWindow.journal, inkWindow: inkWindow, inkHistoryStates: inkHistoryStates, presence: presence, paperSizes: paper,
         coverage: coverage, truncatedBoards: truncated, completeCoverElementOwners: completeCoverElementOwners, missingPinnedElements: missingPinnedElements,
         missingPinnedItems: missingPinnedItems, transferredPinnedItems: transferredPinnedItems,
         groupReads:groupReads,history:history,redoHistory:redoHistory)

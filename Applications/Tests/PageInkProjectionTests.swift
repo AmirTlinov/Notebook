@@ -6,6 +6,21 @@ import XCTest
 
 @MainActor
 final class PageInkProjectionTests: XCTestCase {
+  func testSimulatorGPUReadinessCannotBecomeAnOSPresentationMeasurement() {
+    let ready = NotebookMetalFrameReadiness.simulatorCommandCompletion(true)
+    XCTAssertTrue(ready.isReady)
+    XCTAssertNil(ready.presentedTime)
+    XCTAssertFalse(NotebookMetalFrameReadiness.simulatorCommandCompletion(false).isReady)
+    for time in [0, -1, Double.nan, Double.infinity] {
+      let invalid=NotebookMetalFrameReadiness.osPresentation(time)
+      XCTAssertFalse(invalid.isReady)
+      XCTAssertNil(invalid.presentedTime,"Invalid presentation cannot become display timing evidence")
+    }
+    XCTAssertNil(NotebookMetalFrameReadiness.simulatorCommandCompletion(false).presentedTime)
+    XCTAssertTrue(NotebookMetalFrameReadiness.osPresentation(42).isReady)
+    XCTAssertEqual(NotebookMetalFrameReadiness.osPresentation(42).presentedTime, 42)
+  }
+
   func testHeldZoomUsesScreenDensityAndKeepsInputAndSourceCoordinates() async throws {
     let (window, paper) = try makePaper()
     defer { paper.retireInput(); window.isHidden = true; window.rootViewController = nil }
@@ -25,8 +40,11 @@ final class PageInkProjectionTests: XCTestCase {
       let canvas = paper.inkView
       XCTAssertEqual(canvas.drawableSize.width / canvas.bounds.width, scale * window.screen.scale, accuracy: 0.02)
       XCTAssertEqual(canvas.drawableSize.height / canvas.bounds.height, scale * window.screen.scale, accuracy: 0.02)
-      XCTAssertLessThanOrEqual(canvas.drawableSize.width, window.bounds.width * window.screen.scale + 6)
-      XCTAssertLessThanOrEqual(canvas.drawableSize.height, window.bounds.height * window.screen.scale + 6)
+      let guardSize=InkCanvasView.sceneBackingSize(viewport:.init(
+        x:window.bounds.width+4/window.screen.scale,y:window.bounds.height+4/window.screen.scale),
+        displayScale:window.screen.scale)
+      XCTAssertLessThanOrEqual(canvas.drawableSize.width,guardSize.x*window.screen.scale+2)
+      XCTAssertLessThanOrEqual(canvas.drawableSize.height,guardSize.y*window.screen.scale+2)
       XCTAssertEqual(canvas.pageMeshBuildCount, builds)
       XCTAssertEqual(canvas.committedSourceNodeCount, vertices)
       XCTAssertEqual(paper.touchView.bounds.size, CGSize(width: 300, height: 300))
@@ -154,6 +172,86 @@ final class PageInkProjectionTests: XCTestCase {
     XCTAssertFalse(pages[0].hasPageRetainedTexture)
     XCTAssertTrue(pages[1].hasPageRetainedTexture)
     XCTAssertLessThanOrEqual(resources.reservedBytes,resources.byteLimit)
+  }
+
+  func testCameraSweepReportsPageBackingWork() async throws {
+    let scene=try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+    let window=UIWindow(windowScene:scene),host=UIViewController()
+    window.rootViewController=host;window.makeKeyAndVisible()
+    var papers:[PaperCanvasContainerView]=[]
+    let activity=PageTurnActivity()
+    var readiness:[PageTurnReadiness]=[],invalidations:[Int]=[]
+    defer { for paper in papers { paper.retireInput() };window.isHidden=true;window.rootViewController=nil }
+    for index in 0..<PageTurnPrewarmWindow.capacity {
+      let paper=PaperCanvasContainerView(frame:.init(x:0,y:0,width:300,height:300))
+      host.view.addSubview(paper);paper.inkView.setPageInputEnabled(index == PageTurnPrewarmWindow.capacity-1)
+      paper.center = .init(x:window.bounds.midX,y:window.bounds.midY)
+      let pageReady=PageTurnReadiness(activity:activity,pageIndex:index) { ready in
+        if !ready { invalidations.append(index) }
+      }
+      readiness.append(pageReady)
+      // The ordinary stack leaves all sheets mounted/visible. Only the native
+      // current/demand role can distinguish passive neighbours from this page.
+      paper.inkProjection.observePage(pageReady,isCurrent:index == PageTurnPrewarmWindow.capacity-1,isVisible:true)
+      paper.inkProjection.setRefinesDetails(false)
+      paper.inkView.apply(PageInkDrawing(actions:[line()]));paper.inkProjection.refresh()
+      guard try await ready(paper.inkView) else { return };papers.append(paper)
+    }
+    let before=papers.map { ($0.inkView.pageProjectionChangeCount,$0.inkView.pageDrawableResizeCount,
+      $0.inkView.pageDrawableAllocationCount,$0.inkView.pageRetainedAllocationCount,$0.inkView.pageMeshBuildCount) }
+    for step in 1...30 {
+      let scale=CGFloat(1+Double(step)/100)
+      for paper in papers {
+        paper.transform = .init(scaleX:scale,y:scale)
+        paper.center = .init(x:window.bounds.midX+CGFloat(step%3),y:window.bounds.midY)
+        paper.inkProjection.refresh()
+      }
+      for paper in papers { guard try await ready(paper.inkView) else { return } }
+    }
+    for (index,paper) in papers.enumerated() {
+      XCTAssertEqual(paper.inkView.pageProjectionChangeCount,before[index].0,
+        "Thirty covered camera samples stay within the existing movement-density allowance")
+    }
+    let current=try XCTUnwrap(papers.last)
+    current.inkProjection.setRefinesDetails(true)
+    guard try await ready(current.inkView) else { return }
+    XCTAssertEqual(current.inkView.drawableSize.width/current.inkView.bounds.width,
+      1.3*window.screen.scale,accuracy:0.02,"Stationary refinement restores exact detail")
+    let counts=papers.enumerated().map { index,paper in
+      let canvas=paper.inkView,initial=before[index]
+      XCTAssertEqual(canvas.pageMeshBuildCount,initial.4,"Camera reuses canonical geometry")
+      if index < PageTurnPrewarmWindow.capacity-1 {
+        XCTAssertEqual(canvas.pageProjectionChangeCount,initial.0,"Hidden prewarm does not chase another sheet's camera")
+        XCTAssertEqual(canvas.pageDrawableAllocationCount,initial.2)
+      } else {
+        XCTAssertEqual(canvas.pageProjectionChangeCount-initial.0,1,"One stationary refinement, not thirty per-sample resizes")
+        XCTAssertEqual(canvas.pageDrawableAllocationCount-initial.2,1,"One atomic resize admits only the final drawable size")
+        XCTAssertEqual(canvas.pageRetainedAllocationCount-initial.3,1)
+      }
+      return ["page":index,"projectionChanges":canvas.pageProjectionChangeCount-initial.0,
+        "drawableResizes":canvas.pageDrawableResizeCount-initial.1,
+        "drawableAllocations":canvas.pageDrawableAllocationCount-initial.2,
+        "retainedAllocations":canvas.pageRetainedAllocationCount-initial.3]
+    }
+    let data=try JSONSerialization.data(withJSONObject:counts,options:[.sortedKeys])
+    print("PAGE_CAMERA_ALLOCATION_TRACE "+String(decoding:data,as:UTF8.self))
+    let trace=XCTAttachment(data:data,uniformTypeIdentifier:"public.json")
+    trace.name="page-camera-allocation-counters-not-FPS";trace.lifetime = .keepAlways;add(trace)
+    let promoted=try XCTUnwrap(papers.first)
+    invalidations.removeAll()
+    activity.prepare(0)
+    XCTAssertEqual(invalidations,[0],"Demand synchronously revokes only the target's cached readiness before capture")
+    guard try await ready(promoted.inkView) else { return }
+    XCTAssertGreaterThan(promoted.inkView.pageProjectionChangeCount,before[0].0)
+    for index in 1..<(PageTurnPrewarmWindow.capacity-1) {
+      XCTAssertEqual(papers[index].inkView.pageProjectionChangeCount,before[index].0)
+    }
+    activity.didInstall(activity.preparationDemand);activity.prepare(nil)
+    for (index,paper) in papers.enumerated() {
+      paper.inkProjection.observePage(readiness[index],isCurrent:index == 0,isVisible:true)
+    }
+    XCTAssertEqual(promoted.inkView.drawableSize.width/promoted.inkView.bounds.width,
+      1.3*window.screen.scale,accuracy:0.02,"A newly visible sheet immediately regains exact screen density")
   }
 
   private func makePaper() throws -> (UIWindow, PaperCanvasContainerView) {

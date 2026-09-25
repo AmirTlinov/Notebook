@@ -158,6 +158,19 @@ A changed phase re-enters this index. Migration admits the old backlog without
 inventing display evidence, and a new installation does not inherit local arrival
 marks. Failure rolls back both receipt publication and its processed marker.
 
+The iPad drains these batches serially, yielding the writer between commands,
+independently of camera refresh. Restart and explicit Retry continue from saved
+progress, even after a failed quit; an unrelated successful scene read cannot
+clear an arrival failure. Local presence, reading positions and drafts do not wake durable delivery.
+Only successful content writes or explicitly publishing commands do. The writer's
+owner classifies local peer-session and command records; connection retirement,
+action admission and render/placement requests are ordering fences, not content
+publications. `point` still publishes shared context. A program-state receipt
+separates permission to adopt its value from the actual projection write effect:
+a concurrent losing value may add durable causal metadata, while a warm/cold
+identical value may write nothing. Neither outcome is inferred from an optimistic
+post-edit basis. Coalescing cannot cross the typed command or peer-session fence.
+
 Incoming merge protects the native contact's actual page/board/cover material
 and placement (or document content/state), using the existing canonical identity.
 A conflicting merge rolls back content and cursor together and resumes after the

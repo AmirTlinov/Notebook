@@ -162,7 +162,7 @@ func collaborationComparableDocumentStateReceiptAndUndo(stateKey: String) throws
   #expect(committed)
   _ = try f.store.commitDocumentState(.init(documentID: target.id,
     record: #require(state.records.first { $0.id == "confirmation" }), journalStamp: state.stamp,
-    expectedSourceVersion: document.sourceVersion(blockID: "confirmation")))
+    expectedProgramIdentity: document.programIdentity(blockID: "confirmation")))
   state = try f.store.loadDocumentState(target.id)
   let action = try f.action([.init(kind: .setBlockState, target: target, id: "confirmation", values: ["state": edited])], targets: [target])
   let receipt = try f.store.applyCollaborationAction(action, actor: f.agent)
@@ -184,7 +184,7 @@ func collaborationComparableDocumentStateReceiptAndUndo(stateKey: String) throws
   #expect(restored.records[0].fieldVersion?.human == true)
   let afterEcho = try f.store.commitDocumentState(.init(documentID: target.id,
     record: #require(delivered.records.first { $0.id == "confirmation" }), journalStamp: delivered.stamp,
-    expectedSourceVersion: document.sourceVersion(blockID: "confirmation")))
+    expectedProgramIdentity: document.programIdentity(blockID: "confirmation")))
   guard case .committed(let publication) = afterEcho else { Issue.record("Unchanged program rejected its state echo"); return }
   #expect(publication.record.value == initial)
 }
@@ -304,10 +304,11 @@ func collaborationEscapedSpatialCausalOwnerSurvivesAValueRoundTrip(id: String) t
   let receipt = try f.store.applyCollaborationAction(action, actor: f.agent)
   let authored = try #require(receipt.changes.first?.afterVersion)
   var rendered = try #require(try f.store.readSpatialElement(boardID: f.boardID, elementID: id))
+  let programBasis = try #require(f.store.loadBoard(items: f.store.loadIndex().items).board(f.boardID)?.programStateBasis(id))
   rendered = try #require(try f.store.commitSpatialElementState(boardID: f.boardID, rendered: rendered,
-    state: .number(3), actor: f.human))
+    state: .number(3), actor: f.human, expectedProgramBasis: programBasis)).element
   _ = try f.store.commitSpatialElementState(boardID: f.boardID, rendered: rendered,
-    state: .number(2), actor: f.human)
+    state: .number(2), actor: f.human, expectedProgramBasis: programBasis)
   let human = try #require(try f.store.loadBoard(items: f.store.loadIndex().items).board(f.boardID)?.collaboration?.fields[key])
   #expect(human.human && human.includes(authored))
   let undo = try f.store.undoCollaborationAction(action.id, actor: f.human)

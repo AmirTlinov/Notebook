@@ -17,11 +17,12 @@ struct DocumentPagePresentation {
   let pageTurnActive: Bool
   let onRenderReady: PageTurnReadiness
   let onPageLayout: (DocumentPageLayout) -> Void
-  let onStateChange: (String, JSONValue) -> ContentFieldVersion?
+  let onStateChange: (String, JSONValue) async throws -> ContentFieldVersion?
   let onLinkActivation: (DocumentLinkActivation) -> Void
   let snapshotPixelWidth: Int?
   let onPreparationFailure: (Error) -> Void
-  var onStateCheckpoint: (String, JSONValue, ContentFieldVersion, ContentFieldVersion?) async throws -> ContentFieldVersion? = { _, _, _, _ in nil }
+  var onStateCheckpoint: (String, JSONValue, DocumentProgramIdentity, ContentFieldVersion?) async throws -> ContentFieldVersion? = { _, _, _, _ in nil }
+  var onStateDrained: () async -> Void = {}
   var measurements: DocumentPresentationRecorder? = nil
   var programStore: NotebookStore? = nil
   var paperToken: String { DocumentSnapshotCache.paperToken(sourceRevision: document.contentStamp.revision, pageIndex: pageIndex) }
@@ -176,7 +177,7 @@ final class DocumentPagePresentationOwner {
       guard owner.programOwner.runtimes[blockID] === runtime, runtime.value == value else { throw CancellationError() }
       runtime.onChange()
     } catch {
-      if runtime.attentionPauseID == attentionID { await runtime.resume() }
+      if runtime.attentionPauseID == attentionID { await owner.programOwner.resumeAfterAttention(blockID, runtime: runtime, attentionID: attentionID) }
       throw error
     }
     return .init(value: value, isCurrent: { [weak owner, weak runtime] in
@@ -186,7 +187,7 @@ final class DocumentPagePresentationOwner {
     }, resume: { [weak owner, weak runtime] in
       guard let runtime, owner?.programOwner.runtimes[blockID] === runtime, runtime.value == value,
         runtime.attentionPauseID == attentionID else { return }
-      await runtime.resume()
+      await owner?.programOwner.resumeAfterAttention(blockID, runtime: runtime, attentionID: attentionID)
     })
   }
 
@@ -231,11 +232,11 @@ final class DocumentPagePresentationOwner {
     let program: AgentPinnedImage.Presentation.Program?
     if let blockID, let runtime = owner.programOwner.runtimes[blockID],
       runtime.attentionPauseID != nil, runtime.hasFrozenFrame,
-      runtime.sourceVersion == entry.input.document.sourceVersion(blockID: blockID),
+      runtime.programIdentity == entry.input.document.programIdentity(blockID: blockID),
       runtime.value == (entry.input.state.value(for: blockID) ?? runtime.block.initialState),
       let placement = owner.placements(on: entry).first(where: { $0.blockID == blockID }),
       placement.rect.intersects(CGRect(x: region.x, y: region.y, width: region.width, height: region.height)) {
-      program = .init(blockID: blockID, sourceVersion: runtime.sourceVersion, state: runtime.value)
+      program = .init(blockID: blockID, programIdentity: runtime.programIdentity, state: runtime.value)
     } else { program = nil }
     let pixels = try NotebookSubmittedPixels.capture(view: host,
       physicalSize: owner.physicalSize(entry.input), region: region, resources: resources,
@@ -314,7 +315,7 @@ final class DocumentPagePresentationOwner {
     }
     programOwner.onLink = { [weak self] block, version, href in
       guard let self, let current, current.id == mountedID, let host = current.host,
-        current.input.document.sourceVersion(blockID: block) == version,
+        current.input.document.programIdentity(blockID: block) == version,
         let origin = paper.currentLinkOrigin, let layout = origin.source.layout,
         origin.source.matches(current.input.document), origin.pageIndex == current.input.pageIndex,
         layout.blockIDs(on: [origin.pageIndex]).contains(block),
@@ -825,7 +826,11 @@ final class DocumentPagePresentationOwner {
       do {
         let renderer = passiveRenderer(in: host, input: candidate.input)
         observe("passive_page_prepare_start", entryID: candidate.id, page: candidate.input.pageIndex, renderer: renderer)
-        configure(renderer, input: candidate.input, page: candidate.input.pageIndex)
+        // A hidden paper bitmap is preparation backing, not the final native
+        // page picture. Budget both simultaneously before starting its decode;
+        // a fixed 1024px intermediate otherwise defeats low-quality admission.
+        let paperWidth = requestsLivePaper(for: candidate) ? 1024 : max(1, min(1024, captureWidth(candidate, includesPaperBacking: true)))
+        configure(renderer, input: candidate.input, page: candidate.input.pageIndex, paperPixelWidth: paperWidth)
         observe("passive_page_configured", entryID: candidate.id, page: candidate.input.pageIndex, renderer: renderer)
         landingTrace = renderer.pagePreparationTrace
         measurements?.observeLanding(landingTrace, stage: .preparing)
@@ -909,13 +914,13 @@ final class DocumentPagePresentationOwner {
     let renderer = makePaper(); passive = renderer; return renderer
   }
 
-  private func configure(_ renderer: DocumentWebCoordinator, input: DocumentPagePresentation, page: Int) {
+  private func configure(_ renderer: DocumentWebCoordinator, input: DocumentPagePresentation, page: Int, paperPixelWidth: Int = 1024) {
     renderer.programStore = input.programStore
     renderer.update(document: input.document, state: input.state, selectedPageIndex: page, capturesSnapshot: false,
       onRenderReady: .init { _ in }, onPageLayout: { [weak self] layout in
         self?.entries.values.forEach { $0.input.onPageLayout(layout) }
       },  onStateChange: { _, _ in nil },
-      paperPreparationPixelWidth: input.snapshotPixelWidth ?? 1024,
+      paperPreparationPixelWidth: input.snapshotPixelWidth ?? paperPixelWidth,
       onLinkActivation: input.onLinkActivation,
       preparationRequestID: input.measurements?.preparationRequestID(documentID: documentID, pageIndex: page, token: input.token))
     if source !== renderer.payload?.source {
@@ -1203,7 +1208,7 @@ final class DocumentPagePresentationOwner {
   /// Budget the complete capture, including its temporary paper and program
   /// layers, against the actual shared pool before asking WebKit for pixels.
   /// An existing native image remains pinned until the new image is installed.
-  private func captureWidth(_ entry: Entry) -> Int {
+  private func captureWidth(_ entry: Entry, includesPaperBacking: Bool = false) -> Int {
     let admission = resources.rasterAdmission
     let available = min(admission.byteLimit - admission.heldBytes,
       admission.passiveByteLimit - admission.pinnedBytes - admission.passiveReservedBytes)
@@ -1215,8 +1220,8 @@ final class DocumentPagePresentationOwner {
     func cost(_ width: Int) -> Int {
       guard let page = SceneRenderResources.estimatedRasterBytes(pixelWidth: width,
         pixelHeight: Int(ceil(Double(width) * physical.height / physical.width))) else { return Int.max }
-      if allProgramRegions.isEmpty { return page }
-      return programRegions.reduce(page * 2) { sum, region in
+      if allProgramRegions.isEmpty { return page * (includesPaperBacking ? 2 : 1) }
+      return programRegions.reduce(page * (includesPaperBacking ? 3 : 2)) { sum, region in
         sum + (SceneRenderResources.estimatedRasterBytes(
           pixelWidth: max(1, Int(ceil(Double(width) * region.frame.width / physical.width))),
           pixelHeight: max(1, Int(ceil(Double(width) * region.frame.height / physical.width)))) ?? Int.max / 16)

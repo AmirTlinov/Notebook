@@ -56,7 +56,7 @@ final class NotebookLaserContext {
 extension NotebookAppModel {
   func captureLaserContext(_ contact: NotebookDrawingToolController.Contact) {
     guard let chat, let thread = chat.threadID, let presence, let cohort = compositionTiles.published,
-      let first = contact.points.first else { return }
+      !contact.points.isEmpty else { return }
     let origin: CGPoint
     if contact.address.surface.kind == .board {
       guard contact.address.boardID == presence.boardID else { return }
@@ -67,12 +67,7 @@ extension NotebookAppModel {
       origin = rect.origin
     }
     let scale = presence.camera.scale
-    var minX = first.x, maxX = first.x, minY = first.y, maxY = first.y
-    for point in contact.points {
-      minX = min(minX,point.x); maxX = max(maxX,point.x)
-      minY = min(minY,point.y); maxY = max(maxY,point.y)
-    }
-    let box = CGRect(x:minX,y:minY,width:maxX-minX,height:maxY-minY).insetBy(dx:-24/scale,dy:-24/scale)
+    let box = contact.contour.bounds.insetBy(dx:-24/scale,dy:-24/scale)
     let start = CGPoint(x:origin.x+box.minX*scale,y:origin.y+box.minY*scale)
     let end = CGPoint(x:origin.x+box.maxX*scale,y:origin.y+box.maxY*scale)
     guard let capture = NotebookAttentionProjection.capture(start:start,end:end,model:self,presence:presence,

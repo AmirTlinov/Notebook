@@ -210,6 +210,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
   private(set) var preparedCommittedPointCount = 0
   private(set) var queriedCommittedPointCount = 0
   private(set) var committedIndexVisitCount = 0
+  private(set) var committedBatchQueryVisitCount = 0
 
   private static let framesInFlight = 3
   private static let pageDrawableCount = 2
@@ -277,13 +278,20 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
   private var pageActionMeshTokens:[UUID:UUID] = [:]
   private var pageCommit: UInt64 = 0
   private(set) var pageMeshBuildCount = 0
+  private(set) var pageMeshPreparationCount = 0
+  private(set) var pageAcceptedMutationActionVisits = 0
+  private(set) var pageProjectionChangeCount = 0
+  private(set) var pageDrawableResizeCount = 0
+  private(set) var pageDrawableAllocationCount = 0
+  private(set) var pageRetainedAllocationCount = 0
   private var baselineTexture: (any MTLTexture)?
   private var baselineReservation: RasterReservation?
   private var baselinePNG: Data?
   private(set) var pageRenderRegion: CGRect?
-  private var pageSourceSize = CGSize.zero
+  private(set) var pageSourceSize = CGSize.zero
   private var pageDrawableReservation: RasterReservation?
   private var pageAdmittedSize = CGSize.zero
+  private var isProjectingPage = false
   private var pageMultisample: (any MTLTexture)?
   private var pageRetainedTexture: (any MTLTexture)?
   private var pageRetainedReservation: RasterReservation?
@@ -331,6 +339,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
   private var frameSlot = 0
   private var hasRevealedFirstFrame = false
   var onVisibleFrame: (() -> Void)?
+  private(set) var frameReadiness:NotebookMetalFrameReadiness?
   /// Optional observation only. GPU completion above is not a presentation ACK.
   /// A receipt identifies the measured contact encoded into this exact drawable;
   /// predictions and unrelated/older frames cannot acknowledge a newer sample.
@@ -338,14 +347,15 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     let sourceID: UUID
     let revision: UInt64
   }
-  struct PresentedContactFrame: Sendable {
+  struct ContactFrameResolution: Sendable {
     let frameID: UUID
     let contact: ContactFrame
     let tile: Int
     let tileCount: Int
-    let presentedAt: TimeInterval
+    let completion: NotebookMetalFrameReadiness
+    let isFirstFrame: Bool
   }
-  var onContactFramePresented: (@MainActor @Sendable (PresentedContactFrame) -> Void)?
+  var onContactFrameResolved: (@MainActor @Sendable (ContactFrameResolution) -> Void)?
   var activeContactFrame: ContactFrame? {
     if let stroke = activeInkStroke {
       return .init(sourceID: stroke.measured.sourceID, revision: stroke.revision)
@@ -514,6 +524,8 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     guard pixels.width.isFinite, pixels.height.isFinite,
       (1...16_384).contains(pixels.width), (1...16_384).contains(pixels.height) else { return }
     guard region != pageRenderRegion || drawableSize != pixels || pageSourceSize != sourceSize else { return }
+    pageProjectionChangeCount += 1
+    if drawableSize != pixels { pageDrawableResizeCount += 1 }
     // The system must not allocate a resized pool before its bytes are admitted.
     pageDisplayLink?.isPaused = true
     // CAMetalDisplayLink forbids this setter, even with the same value. Fix the
@@ -522,13 +534,18 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     pageRenderRegion = region; pageSourceSize = sourceSize
     if isErasureMask { spatialDrawableScale = pixelDensity }
     autoResizeDrawable = false
+    // MTKView reports drawable changes synchronously while this pair is being
+    // installed. Admit only the final size, not an intermediate old/new pair.
+    isProjectingPage = true
     frame = region
     drawableSize = pixels
     // MTKView defers applying drawableSize until its own draw cycle. Projected
     // pages bypass that cycle: their clock must receive the actual new pool,
     // not keep vending old-sized drawables which renderFrame correctly rejects.
     (layer as? CAMetalLayer)?.drawableSize = pixels
+    isProjectingPage = false
     beginStableContentUpdate()
+    schedulePageMeshIfNeeded()
     requestFrame()
   }
 
@@ -582,6 +599,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     }
     pageDrawableReservation = reservation; pageMultisample = attachment
     pageAdmittedSize = drawableSize
+    pageDrawableAllocationCount += 1
     return true
   }
 
@@ -605,6 +623,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
       renderFailure = .resourceLimit;return false
     }
     pageRetainedReservation=reservation;pageRetainedTexture=texture;pageRetainedKey=nil
+    pageRetainedAllocationCount += 1
     return true
   }
 
@@ -809,7 +828,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     spatialSourceGeneration &+= 1
   }
 
-  /// Replaces the page atomically. This is used for load, undo, and sync.
+  /// Cold load/sync preparation preserves the installed page until replacement.
   func prepareForDrawing() {
     drawingIsPreparing = true
     beginStableContentUpdate()
@@ -822,27 +841,42 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     pageDrawing = drawing
     drawingIsPreparing = false
     beginStableContentUpdate()
-    baselineTexture = nil; baselinePNG = nil; baselineReservation = nil
     installedPageRevision = nil
-    // Capture reusable action meshes before clearing the old page's display.
-    // Shared IDs are validated off-main, so undo/sync reuse surviving history
-    // while a different physical page never displays its predecessor.
+    // Same-page replacement keeps its complete installed material until the
+    // candidate's mesh AND imported baseline are ready. Never submit a blank
+    // intermediate frame just because a worker has not finished yet.
     schedulePageMeshIfNeeded()
-    committedBatches.removeAll(keepingCapacity: true)
-    pageBatchIndex.removeAll(keepingCapacity:true)
     // Source preparation owns only settled material. The contact may already
     // have started while this page was decoding; only input may finish it.
     requestFrame()
   }
 
+  /// A different physical page cannot borrow the predecessor's pixels.
+  func resetPagePresentation() {
+    cancelPendingPageMesh();cancelPendingPageActionMeshes()
+    pageDrawing=nil;installedPageRevision=nil;drawingIsPreparing=false
+    baselineTexture=nil;baselinePNG=nil;baselineReservation=nil
+    committedBatches=[];pageBatchIndex=[:]
+    discardActiveAction();beginStableContentUpdate();requestFrame()
+  }
+
   func setSuppressedPageActions(_ ids:Set<UUID>) {
     let changed=pageSuppressedIDs.symmetricDifference(ids);pageSuppressedIDs=ids
     guard !changed.isEmpty else { return }
+    let retained=committedViewport
+    var indices=Set<Int>()
     beginStableContentUpdate()
+    if changed.contains(where:{ !ids.contains($0) && pageBatchIndex[$0] == nil && pageDrawing?.action(id:$0)?.isActive == true }) {
+      // A converted contact may never have needed a raw mesh. Restore it at
+      // its original painter position as one cold candidate, not at the tail.
+      installedPageRevision=nil;schedulePageMeshIfNeeded();requestFrame();return
+    }
     for id in changed {
       guard let index=pageBatchIndex[id],committedBatches.indices.contains(index) else { continue }
       committedBatches[index].pageIsActive = pageDrawing?.action(id:id)?.isActive == true && !ids.contains(id)
+      indices.insert(index)
     }
+    updateCommittedVisibility(of:indices,retaining:retained)
     requestFrame()
   }
 
@@ -850,32 +884,35 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
   /// durable identity, while undo toggles the addressed batches in place.
   func settle(_ change:PreparedPageInkChange,suppressedInkIDs:Set<UUID>=[]) {
     let baseIsInstalled = pageDrawing != nil && pageGeometryIsReady
-    var needsRestoredGeometry = false
+    let retained=committedViewport
+    var changedIDs=pageSuppressedIDs.symmetricDifference(suppressedInkIDs)
+    var indices=Set<Int>(),needsRestoredGeometry=false
     cancelPendingPageMesh();pageRevision &+= 1;pageDrawing=change.drawing;drawingIsPreparing=false
     pageSuppressedIDs=suppressedInkIDs
     beginStableContentUpdate()
     switch change.mutation {
     case .append(let action):
-      if let index=pageBatchIndex[action.id],committedBatches.indices.contains(index) {
-        committedBatches[index].pageAction=action
-        committedBatches[index].pageIsActive=action.isActive && !suppressedInkIDs.contains(action.id)
-      } else if action.isActive && !suppressedInkIDs.contains(action.id) {
+      changedIDs.insert(action.id)
+      if pageBatchIndex[action.id] == nil,action.isActive,!suppressedInkIDs.contains(action.id) {
         var batch=CommittedBatch(.init(source:InkSampleRelations(action),projection:.local))
         batch.pageAction=action;committedBatches.append(batch);pageBatchIndex[action.id]=committedBatches.count-1
       }
       if action.samples.count > InkRenderGeometry.maximumSegments { schedulePageActionMesh(action) }
-    case .setActive(let ids,let active):
-      for id in ids {
-        guard let index=pageBatchIndex[id],committedBatches.indices.contains(index) else {
-          needsRestoredGeometry = needsRestoredGeometry || active
-          continue
-        }
-        committedBatches[index].pageAction=change.drawing.action(id:id)
-        committedBatches[index].pageIsActive=active && !suppressedInkIDs.contains(id)
-      }
+    case .setActive(let ids,_): changedIDs.formUnion(ids)
     }
-    if baseIsInstalled && !needsRestoredGeometry { installedPageRevision=pageRevision }
-    else {
+    for id in changedIDs {
+      pageAcceptedMutationActionVisits += 1
+      let action=change.drawing.action(id:id),active=action?.isActive == true && !suppressedInkIDs.contains(id)
+      guard let index=pageBatchIndex[id],committedBatches.indices.contains(index) else {
+        needsRestoredGeometry = needsRestoredGeometry || active;continue
+      }
+      committedBatches[index].pageAction=action;committedBatches[index].pageIsActive=active
+      indices.insert(index)
+    }
+    if baseIsInstalled && !needsRestoredGeometry {
+      installedPageRevision=pageRevision
+      updateCommittedVisibility(of:indices,retaining:retained)
+    } else {
       // A fast first lift can beat initial decode/mesh preparation. Keep the
       // measured tail, but prepare its complete accepted base before readiness.
       // A cold repeat has no resident mesh for the inactive action. The same
@@ -979,6 +1016,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     _ view: MTKView,
     drawableSizeWillChange size: CGSize
   ) {
+    guard !isProjectingPage else { return }
     schedulePageMeshIfNeeded()
     requestFrame()
   }
@@ -1140,19 +1178,16 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
       || (!hasRevealedFirstFrame && (spatialTarget == nil || isErasureMask))
     presentsWithTransaction = transactionPresentation
     for tile in spatialTarget?.tiles ?? [] { tile.layer.presentsWithTransaction = transactionPresentation }
-    if let observation = onContactFramePresented, let contact = activeContactFrame,
-      active != nil, hasRevealedFirstFrame {
-      let frameID = UUID(), tileCount = passes.count
+    if let observation = onContactFrameResolved, let contact = activeContactFrame, active != nil {
+      let frameID = UUID(), tileCount = passes.count, isFirstFrame = !hasRevealedFirstFrame
       for (tile, pass) in passes.enumerated() {
-        pass.1.addPresentedHandler { [weak self] drawable in
-          // Read the OS timestamp in the callback, not when the main actor next
-          // services us. Zero means unpresented/dropped, never a fast success.
-          let receipt = PresentedContactFrame(frameID: frameID, contact: contact,
-            tile: tile, tileCount: tileCount, presentedAt: drawable.presentedTime)
-          Task { @MainActor [weak self] in
-            guard self?.window != nil else { return }
-            observation(receipt)
-          }
+        NotebookMetalFrameReadiness.observe(pass.1,commandBuffer:commandBuffer) { [weak self] readiness in
+          // The first cold drawable belongs to this measured contact too.
+          // Preserve the OS time captured by the sole completion owner; its
+          // Simulator GPU result is readiness, never display latency.
+          guard self?.window != nil else { return }
+          observation(.init(frameID:frameID,contact:contact,tile:tile,tileCount:tileCount,
+            completion:readiness,isFirstFrame:isFirstFrame))
         }
       }
     }
@@ -1172,23 +1207,21 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
       // presentation. An unchanged, pending tile is not uploaded again.
       drawnTiles = (ObjectIdentifier(target), submittedRevision, tileStates)
       for (pass, index) in zip(passes, submittedTiles) {
-        observePresentation(of: pass.1, tile: index, target: target, submission: submission)
+        observePresentation(of: pass.1, tile: index, target: target, submission: submission, commandBuffer: commandBuffer)
       }
     } else if visibleSubmission, presentedRevision != nil || onVisibleFrame != nil {
-      passes[0].1.addPresentedHandler { [weak self] drawable in
-        let presented = drawable.presentedTime > 0
-        Task { @MainActor [weak self] in
-          guard let self, !spatialHandoffIsStopping, window != nil,
-            stableContentRevision == submittedRevision else { return }
-          guard presented else {
-            if !exposedCanvasRect.isEmpty { requestFrame() }
-            return
-          }
-          onVisibleFrame?()
-          if let presentedRevision {
-            presentedStableContentRevision = presentedRevision
-            onRenderReadinessChange?(true)
-          }
+      NotebookMetalFrameReadiness.observe(passes[0].1,commandBuffer:commandBuffer) { [weak self] readiness in
+        guard let self,!spatialHandoffIsStopping,window != nil,
+          stableContentRevision == submittedRevision else { return }
+        guard readiness.isReady else {
+          if !exposedCanvasRect.isEmpty { requestFrame() }
+          return
+        }
+        frameReadiness=readiness
+        onVisibleFrame?()
+        if let presentedRevision {
+          presentedStableContentRevision=presentedRevision
+          onRenderReadinessChange?(true)
         }
       }
     }
@@ -1283,20 +1316,16 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
   }
 
   private func observePresentation(of drawable: any CAMetalDrawable, tile: Int,
-    target: SpatialTarget, submission: UUID) {
-    let identity = ObjectIdentifier(target)
-    drawable.addPresentedHandler { [weak self] drawable in
-      let presented = drawable.presentedTime > 0
-      Task { @MainActor [weak self] in
-        guard let self, !spatialHandoffIsStopping, let current = spatialTarget,
-          ObjectIdentifier(current) == identity, drawnTiles?.target == identity,
-          drawnTiles!.tiles.indices.contains(tile), drawnTiles!.tiles[tile].submission == submission else { return }
-        drawnTiles!.tiles[tile].presented = presented
-        if !presented, hasRevealedFirstFrame, current.logicalRect(tile).intersects(exposedCanvasRect) {
-          requestFrame()
-        }
-        publishPresentedTilesIfReady()
-      }
+    target: SpatialTarget, submission: UUID, commandBuffer:(any MTLCommandBuffer)? = nil) {
+    let identity=ObjectIdentifier(target)
+    NotebookMetalFrameReadiness.observe(drawable,commandBuffer:commandBuffer) { [weak self] readiness in
+      guard let self,!spatialHandoffIsStopping,let current=spatialTarget,
+        ObjectIdentifier(current) == identity,drawnTiles?.target == identity,
+        drawnTiles!.tiles.indices.contains(tile),drawnTiles!.tiles[tile].submission == submission else { return }
+      drawnTiles!.tiles[tile].presented=readiness.isReady
+      frameReadiness=readiness
+      if !readiness.isReady,hasRevealedFirstFrame,current.logicalRect(tile).intersects(exposedCanvasRect) { requestFrame() }
+      publishPresentedTilesIfReady()
     }
   }
 
@@ -1633,6 +1662,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
   private func beginStableContentUpdate() {
     cancelSpatialStaging()
     stableContentRevision &+= 1
+    frameReadiness=nil
     onRenderReadinessChange?(false)
   }
 
@@ -1676,8 +1706,10 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
           let entry=mesh.entries.first else { return }
         var batch=CommittedBatch(entry.mesh);batch.pageAction=current
         batch.pageIsActive=current.isActive && !self.pageSuppressedIDs.contains(current.id)
+        let retained=self.committedViewport
         self.committedBatches[index]=batch;self.pageMeshBuildCount += mesh.builtActionCount
-        self.beginStableContentUpdate();self.requestFrame()
+        self.beginStableContentUpdate()
+        self.updateCommittedVisibility(of:[index],retaining:retained);self.requestFrame()
       } catch is CancellationError {} catch { self?.renderFailure=(error as? SceneRenderError) ?? .snapshotPending("page_ink_action_geometry") }
     }
   }
@@ -1686,6 +1718,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     guard let drawing = pageDrawing, installedPageRevision != pageRevision,
       pendingPageRevision != pageRevision else { return }
     let revision = pageRevision, commit = pageCommit
+    pageMeshPreparationCount += 1
     pendingPageRevision = revision
     // The source arrays and mesh buffers are immutable COW values. MainActor
     // neither walks old samples nor copies their vertices at Pencil-up.
@@ -1702,7 +1735,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
       do {
         let mesh = try await withTaskCancellationHandler { try await worker.value } onCancel: { worker.cancel() }
         guard let self, acceptsPageMesh(revision) else { return }
-        try await prepareBaseline(drawing.baselinePNG, revision: revision)
+        let baseline = try await prepareBaseline(drawing.baselinePNG, revision: revision)
         guard acceptsPageMesh(revision) else { return }
         var batches = mesh.entries.map { entry in
           var batch = entry.reusedIndex.map { oldBatches[$0] } ?? CommittedBatch(entry.mesh)
@@ -1714,6 +1747,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
         // and the currently active contact are never replaced by an older cut.
         let ids = Set(drawing.actions.map(\.id))
         batches += committedBatches.filter { $0.pageCommit > commit && ($0.pageAction.map { !ids.contains($0.id) } ?? true) }
+        baselineTexture=baseline.texture;baselinePNG=baseline.png;baselineReservation=baseline.reservation
         committedBatches = batches
         pageBatchIndex=Dictionary(uniqueKeysWithValues:batches.enumerated().compactMap { index,batch in batch.pageAction.map { ($0.id,index) } })
         pageMeshBuildCount += mesh.builtActionCount
@@ -1733,9 +1767,14 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
 
   /// Only a genuinely imported image is a texture. New handwriting never
   /// replaces geometry with a flattened page image or a fixed 2x resolution.
-  private func prepareBaseline(_ png: Data?, revision: UInt64) async throws {
-    guard baselinePNG != png else { return }
-    guard let png else { baselineTexture = nil; baselinePNG = nil; baselineReservation = nil; return }
+  private struct PreparedBaseline {
+    let png:Data?
+    let texture:(any MTLTexture)?
+    let reservation:RasterReservation?
+  }
+  private func prepareBaseline(_ png: Data?, revision: UInt64) async throws -> PreparedBaseline {
+    guard baselinePNG != png else { return .init(png:baselinePNG,texture:baselineTexture,reservation:baselineReservation) }
+    guard let png else { return .init(png:nil,texture:nil,reservation:nil) }
     guard let textureLoader,
       let source = CGImageSourceCreateWithData(png as CFData, [kCGImageSourceShouldCache: false] as CFDictionary),
       let values = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
@@ -1746,7 +1785,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     let texture = try await textureLoader.newTexture(data: png,
       options: [.SRGB: false, .origin: MTKTextureLoader.Origin.topLeft.rawValue])
     guard acceptsPageMesh(revision) else { throw CancellationError() }
-    baselineTexture = texture; baselinePNG = png; baselineReservation = allocation
+    return .init(png:png,texture:texture,reservation:allocation)
   }
 
   private func pauseFrameLoop() {
@@ -2014,8 +2053,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
         nodes: active.nodes, chunks: active.committedChunks, projection: projection))
     pageCommit &+= 1
     batch.pageAction = action; batch.pageCommit = pageCommit
-    let key=CommittedViewport(camera:spatialCamera,viewport:spatialViewport,size:bounds.size,
-      crop:pageRenderRegion,pixels:spatialTarget?.layout.pixelSize ?? drawableSize,scale:spatialDrawableScale)
+    let key=committedViewportKey
     let retained=committedViewport.flatMap { $0.key == key ? $0:nil }
     var addition=[batch]
     let localVisible=retained.flatMap { _ in try? prepareBuffers(in:&addition,camera:spatialCamera,
@@ -2034,9 +2072,40 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     if let action { pageBatchIndex[action.id]=committedBatches.count-1 }
   }
 
-  private func prepareCommittedBuffers() -> [(Int, Range<Int>)]? {
-    let key=CommittedViewport(camera:spatialCamera,viewport:spatialViewport,size:bounds.size,
+  /// A visibility delta cannot invalidate the unrelated 100k-action query.
+  /// Recheck only the changed resident batches and merge their visible chunks
+  /// with the existing camera cut in original painter order.
+  private func updateCommittedVisibility(of indices:Set<Int>,
+    retaining retained:(key:CommittedViewport,visible:[(Int,Range<Int>)])?) {
+    guard let retained,retained.key == committedViewportKey else { return }
+    do {
+      let changed=try prepareBuffers(in:&committedBatches,camera:spatialCamera,
+        viewport:spatialViewport,size:bounds.size,only:indices)
+      let unchanged=retained.visible.filter { !indices.contains($0.0) }
+      var merged:[(Int,Range<Int>)]=[]
+      merged.reserveCapacity(unchanged.count+changed.count)
+      var old=0,new=0
+      while old < unchanged.count || new < changed.count {
+        if new == changed.count || (old < unchanged.count && unchanged[old].0 < changed[new].0) {
+          merged.append(unchanged[old]);old += 1
+        } else { merged.append(changed[new]);new += 1 }
+      }
+      visibleCommittedVertexCount=merged.reduce(0) { total,entry in
+        guard let buffer=committedBatches[entry.0].buffers[entry.1] else { return total }
+        return total+InkRenderGeometry.vertexCount(nodes:buffer.nodeCount,flags:buffer.geometry.chunk.descriptor.flags)
+      }
+      visibleCommittedChunkCount=merged.count
+      committedViewport=(retained.key,merged)
+    } catch { renderFailure = .resourceLimit }
+  }
+
+  private var committedViewportKey:CommittedViewport {
+    .init(camera:spatialCamera,viewport:spatialViewport,size:bounds.size,
       crop:pageRenderRegion,pixels:spatialTarget?.layout.pixelSize ?? drawableSize,scale:spatialDrawableScale)
+  }
+
+  private func prepareCommittedBuffers() -> [(Int, Range<Int>)]? {
+    let key=committedViewportKey
     if let prepared=committedViewport,prepared.key == key { return prepared.visible }
     guard let visible = try? prepareBuffers(in: &committedBatches,
       camera: spatialCamera, viewport: spatialViewport, size: bounds.size) else { return nil }
@@ -2054,7 +2123,8 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
   }
 
   private func prepareBuffers(in batches: inout [CommittedBatch], camera: SpatialCamera?,
-    viewport: SpatialPoint, size: CGSize, pixelScale: Float? = nil, rasterSize: CGSize? = nil
+    viewport: SpatialPoint, size: CGSize, pixelScale: Float? = nil, rasterSize: CGSize? = nil,
+    only indices:Set<Int>? = nil
   ) throws -> [(Int, Range<Int>)] {
     var visible: [(Int, Range<Int>)] = []
     let viewportRect = camera == nil ? (pageRenderRegion ?? CGRect(origin: .zero, size: size)) : CGRect(origin: .zero, size: size)
@@ -2062,8 +2132,9 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
       pixelScale ?? Float(spatialDrawableScale ?? Double(drawableSize.width / max(bounds.width, 1)))
     let grid=InkRasterRenderer.shared.sampleGrid(viewport:size,
       pixels:rasterSize ?? spatialTarget?.layout.pixelSize ?? drawableSize)
-    for batchIndex in batches.indices {
-      if !batches[batchIndex].pageIsActive { continue }
+    func select(_ batchIndex:Int) {
+      committedBatchQueryVisitCount += 1
+      if !batches[batchIndex].pageIsActive { return }
       let mesh = batches[batchIndex].mesh
       let transform = mesh.projection.transform(camera: camera, viewport: viewport)
       var rasterTransform=transform
@@ -2092,6 +2163,8 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
       }
       visible.append(contentsOf: selected.map { (batchIndex, $0) })
     }
+    if let indices { for index in indices.sorted() { select(index) } }
+    else { for index in batches.indices { select(index) } }
     for (batchIndex, chunkIndex) in visible {
       let mesh=batches[batchIndex].mesh
       let geometry: PreparedGeometry

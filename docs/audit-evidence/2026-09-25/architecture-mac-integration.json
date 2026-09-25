@@ -1,0 +1,31 @@
+{
+  "platform": "Mac native Debug",
+  "resultBundle": "/tmp/notebook-repair-native-mac-owner-40.xcresult",
+  "sources": "/tmp/notebook-repair-native-mac-build-40-sources.json",
+  "sourceStability": {
+    "changedSources": []
+  },
+  "selectors": [
+    "DocumentRuntimeTests",
+    "ProgramStateTransferTests",
+    "DocumentCanonicalExportTests",
+    "DocumentRenderSessionTests",
+    "DocumentCanonicalPrintTests",
+    "DocumentPrintImageTests",
+    "PageVisionDemandTests",
+    "NotebookCodexSidecarTests",
+    "NotebookChatRenderingTests",
+    "DocumentProgramIdentityTests",
+    "DocumentProgramSourceTests",
+    "NotebookScriptServiceTests/testTypeScriptPreparationCoexistsWithMarkupAndPDFConnections"
+  ],
+  "summary": {
+    "passedTests": 114,
+    "failedTests": 0,
+    "skippedTests": 0,
+    "runtimeWarnings": [],
+    "startTime": 1790363538.257,
+    "finishTime": 1790363686.72
+  },
+  "scope": "Combined A01 identity/runtime, accepted large-state FIFO/lifecycle, R03 export preparation and real output, R02 preview, Codex journal/observation/chat, real script-worker binding. Not final Release pair, physical frame latency or 30-minute acceptance."
+}

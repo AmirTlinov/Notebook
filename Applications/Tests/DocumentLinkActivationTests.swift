@@ -33,9 +33,9 @@ final class DocumentLinkActivationTests: XCTestCase {
     let fixture = try await fixture()
     defer { fixture.close() }
     let activation = try await fixture.activation()
-    let sourceVersion = try XCTUnwrap(fixture.model.documents[activation.origin.documentID]?.sourceVersion(blockID: "widget"))
-    let changed = fixture.model.commitDocumentState(documentID: activation.origin.documentID,
-      blockID: "widget", value: .string("later user state"), sourceVersion: sourceVersion)
+    let identity = try XCTUnwrap(fixture.model.documents[activation.origin.documentID]?.programIdentity(blockID: "widget"))
+    let changed = try await fixture.model.commitDocumentState(documentID: activation.origin.documentID,
+      blockID: "widget", value: .string("later user state"), programIdentity: identity)
     XCTAssertNotNil(changed)
     XCTAssertEqual(fixture.model.activateDocumentLink(activation), activation.destination)
     if case .page(let target) = activation.destination {

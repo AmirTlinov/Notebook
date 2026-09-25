@@ -75,6 +75,7 @@ struct DocumentSourceMessage: Encodable, Sendable {
   let paper: DocumentPaperLayout
   let blocks: [DocumentBlock]
   let sourceVersions: [String: ContentFieldVersion]
+  let programIdentities: [String: DocumentProgramIdentity]
 }
 
 struct DocumentStateMessage: Encodable, Sendable {
@@ -106,7 +107,8 @@ final class DocumentSourceSnapshot {
     blockIDs = Set(document.blocks.map(\.id))
     message = .init(key: UUID().uuidString, documentID: document.id,
       paper: .init(document.paperSize), blocks: document.blocks,
-      sourceVersions: Dictionary(uniqueKeysWithValues: document.blocks.map { ($0.id, document.sourceVersion(blockID: $0.id)) }))
+      sourceVersions: Dictionary(uniqueKeysWithValues: document.blocks.map { ($0.id, document.sourceVersion(blockID: $0.id)) }),
+      programIdentities: Dictionary(uniqueKeysWithValues: document.blocks.map { ($0.id, document.programIdentity(blockID: $0.id)) }))
   }
 
   func matches(_ document: DocumentDocument) -> Bool { self.document == document }
@@ -209,7 +211,7 @@ final class DocumentSourceSnapshot {
 final class DocumentStateSnapshot {
   let message: DocumentStateMessage
   let records: [DocumentStateRecord]
-  private var encoding: Task<String, Error>?
+  private var encoding: Task<NotebookProgramStateEncoding, Error>?
   private(set) var encodingCount = 0
 
   init(documentID: UUID, records: [DocumentStateRecord]) {
@@ -219,11 +221,15 @@ final class DocumentStateSnapshot {
       versions: Dictionary(uniqueKeysWithValues: records.map { ($0.id, $0.valueVersion) }))
   }
 
-  func encodedJSON() async throws -> String {
+  func encodedState(resources: SceneRenderResources) async throws -> NotebookProgramStateEncoding {
     if encoding == nil {
       encodingCount += 1
       let message = message
-      encoding = Task.detached(priority: .userInitiated) { try canonicalDocumentJSON(message) }
+      encoding = Task { @MainActor in
+        let value: JSONValue = .object(["key": .string(message.key), "documentID": .string(message.documentID.uuidString),
+          "states": .object(message.states), "versions": try .encode(message.versions)])
+        return try await NotebookProgramStateEncoding.prepare(value, resources: resources)
+      }
     }
     return try await encoding!.value
   }

@@ -11,7 +11,7 @@ final class AgentSceneFingerRoutingTests: XCTestCase {
     let lease = try await resources.acquireWebSurface(priority: .liveProgram)
     var ready = false
     let coordinator = AgentWebCoordinator(lease: lease, resources: resources,
-      onInteractionReady: { ready = $0 }, onState: { _ in false })
+      onInteractionReady: { ready = $0 }, onState: { _, _ in false })
     let web = AgentWebCoordinator.makeWebView(coordinator: coordinator)
     let viewport = PhysicalWebViewport(webView: web, contentSize: .init(width: 240, height: 160), holdsFingerInput: true)
     let window = UIWindow(windowScene: try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene))
@@ -69,7 +69,7 @@ final class AgentSceneFingerRoutingTests: XCTestCase {
     let resources = SceneRenderResources(), lease = try await resources.acquireWebSurface(priority: .liveProgram)
     var ready = false
     let coordinator = AgentWebCoordinator(lease: lease, resources: resources,
-      onInteractionReady: { ready = $0 }, onState: { _ in false })
+      onInteractionReady: { ready = $0 }, onState: { _, _ in false })
     let web = AgentWebCoordinator.makeWebView(coordinator: coordinator)
     web.frame = .init(x: 0, y: 0, width: 240, height: 160)
     let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)

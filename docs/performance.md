@@ -223,6 +223,12 @@ reading/uploading vertices. Color and painter order survive spatial traversal.
 longer serializes and decodes all retained source vertices. Validation of the
 immutable source is also reused, not repeated at every pose update.
 
+The transient lasso retains one exact, capacity-bounded contour (8,192 admitted
+points), not copied per-sample arrays or repeated whole-prefix simplification.
+Overflow rejects the contact without replacing the previous selection. Spatial
+base, moved-group and live-delta candidate unions reject world bounds before exact
+geometry and share one 4,096-object bound; exact work remains off-main.
+
 The tool controller retains one prepared accepted lasso snapshot. Its identity
 covers the owner, revision and actual spatial-window action membership. Suppressed
 stroke IDs belong to the pinned query and do not rebuild unchanged measurements.
@@ -236,8 +242,11 @@ Degenerate numerical fragments are rejected at coordinate-ulp precision, not at
 a display-pixel threshold; transparent paint does not become selectable content.
 
 Lifted page actions and queued undo are applied to this same decoded accepted
-vector source before persistence serialization finishes. Lasso preparation does
-not wait behind JSON/SQLite delivery, and `PageDocument` copies replace their
+vector source before persistence serialization finishes. The one accepted-page
+publication routes both to mounted consumers: a warm inverse visits only the
+addressed resident batches, while a cold same-page source keeps its previous
+complete material until the replacement baseline and geometry install together.
+Lasso preparation does not wait behind JSON/SQLite delivery, and `PageDocument` copies replace their
 decoded-cache identity whenever their drawing changes. The cache is a projection
 of the archive value, not mutable shared page state.
 
@@ -245,7 +254,7 @@ Cold decoding/index construction still reads the source once. Converting a newly
 selected whole stroke still visits that stroke's samples; complete export visits
 all visible vectors. Persistence/reload, a dense overlapping scene, and arbitrary
 full-source edits do not become constant-time. The existing selection/content
-budgets remain unchanged. Runtime indexes are disposable and never serialized;
+target budgets remain unchanged. Runtime indexes are disposable and never serialized;
 images can be replaced without changing selection or saved content.
 
 ## Navigation and working sets
@@ -281,6 +290,16 @@ Ancestor metadata does not load all parent ink. Cold notebook opening reads the
 selected sheet; `prepareNotebookPage` requests neighbors against the same order.
 The four-page `PageTurnPrewarmWindow` distinguishes creation from retention:
 unused capacity never creates a distant cold page just to fill the window.
+`PageInkProjection` reads the current sheet and exact native demand through the
+existing `PageTurnActivity` (all sheets share the notebook's visibility). Demand
+promotes the target and synchronously revokes stale readiness before navigation
+can capture it. A passive neighbour prepares its first canonical crop but does
+not resize its drawable for another
+sheet's camera samples. Visible sheets reuse their admitted crop while it covers
+the current viewport and satisfies the scene's existing movement-density allowance;
+stationary publication refines to current detail. Coverage misses use the existing
+512-pixel tile/128-pixel guard policy clamped to the sheet. Promotion refines the
+newly visible page. No page-density bucket, second cache or allocation limit is added.
 
 ## Attention, history and export work
 
@@ -356,6 +375,9 @@ backlog without rebasing the acceptance clock. There are two distinct lanes:
   carries the exact encoded contact/revision, and all changed tiles must arrive;
   stale/unrelated frames, zero/dropped timestamps and missing tiles cannot pass.
   Neither GPU completion nor a display-link tick substitutes for this receipt.
+  On Simulator, typed GPU completion may advance UI readiness only; the OS
+  measurement callback is not invoked, and the physical presentation-timing
+  test is explicitly skipped rather than reporting a synthetic pass.
   The observer is optional and nil in the ordinary app path; it never drives
   rendering or changes source/presentation ownership.
 
@@ -475,6 +497,14 @@ content publication. Unchanged source, workspace, geometry, pins, source crops
 and static coverage are still required. New material/exposure/magnification uses
 ordinary composition; settlement can reclaim a lower paint LOD.
 
+An already open notebook does not prepare a new hidden cover snapshot. A valid
+snapshot from its preceding curl may be reused; changed cover content waits for
+an actual closing gesture. While that first snapshot is pending, the cover owner
+keeps the last settled endpoint visible (open paper or closed cover), then draws
+the current gesture progress. Closed-cover prewarming retains its existing demand
+and admission rules. This removes background main-thread capture rather than
+merely delaying it until the first page frame. No extra snapshot cache is added.
+
 `IPadSheetCurlController` bends one frozen sheet through the same Core Image /
 Metal renderer as covers. It replaces UIKit's fixed binding shadow, not overlays
 or private layer mutations. The mounted source/destination keep one parent;
@@ -483,10 +513,38 @@ confirms the landing. Page progress and drawable submission share one
 `CAMetalDisplayLink`; a dropped drawable never confirms a landing. The turn's
 image and two drawable backings have one bounded
 input reservation, explicitly released at presentation or drained on cancellation.
+Snapshot capture runs once outside input dispatch and UIKit update callbacks,
+using `drawHierarchy(afterScreenUpdates: true)` on the next main-queue turn.
+The queue hop is not evidence of current pixels; the snapshot itself requests the
+current layer tree. A motion ID revokes a cancelled capture. No timer, idle
+observer, extra page cache or replacement button owns this handoff. The snapshot preserves UIKit's native 32/64-bit colour range, avoiding
+a full-frame SDR conversion on MainActor. Admission covers an eight-byte source
+and the aligned rows of both four-byte drawables; the actual captured row size
+is checked before use. It uses
+the sheet's actual window-projected density (at most four million pixels), not
+the resolution of a larger fitted-offscreen sheet. Live source paper stays in
+front until this turn's first resolved curl frame; a preceding drawable cannot
+become the new turn's placeholder. The first source-matching frame primes the
+unchanged sheet before exposing the other leaf. Source reveal and entry/exit at
+the flat boundary install their live underlay in the drawable's transaction.
+Command animation starts at that first receipt, not before capture; an interactive
+turn retains its measured finger progress instead of restarting it. The Metal view survives turns, its bitmap
+backing retires, and progress changes reuse the same immutable Core Image source.
+A cold swipe retains its original contact and drives this same interactive curl
+as soon as the neighbour is ready; lift/pinch still decide completion/cancellation.
+Simulator advances on an explicitly typed GPU completion because it supplies no
+drawable presentation callback. That receipt has no display timestamp and cannot
+satisfy the physical first-frame, same-event display or FPS checks.
 Four alternating native turns check intermediate images, final content, a bounded
 left-edge shadow, and return of reserved bytes before the next turn. This route
 is regression evidence, not full sustained CPU/GPU/memory or physical-photon
 acceptance.
+
+Page projection installs frame, drawable size and layer size atomically before
+requesting a frame. The synchronous MTK size callback cannot allocate an
+intermediate backing with old/new dimensions. The first empty-page contact also
+reports its first drawable's typed completion while the dot remains held; the
+regression does not create a screenshot or subsequent move to obtain that receipt.
 
 ### Ready-link collaboration and iPad priority
 

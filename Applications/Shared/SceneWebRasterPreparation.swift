@@ -65,7 +65,7 @@ final class SceneWebRasterPreparation {
       }
       host = try NotebookPreparationHost(windowScene: scene)
     #endif
-    coordinator = AgentWebCoordinator(lease: lease, resources: resources, onState: { _ in false })
+    coordinator = AgentWebCoordinator(lease: lease, resources: resources, onState: { _, _ in false })
     web = AgentWebCoordinator.makeWebView(coordinator: coordinator)
     #if os(iOS)
       host.view.addSubview(web)

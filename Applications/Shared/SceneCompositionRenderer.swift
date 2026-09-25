@@ -301,7 +301,10 @@ final class SceneCompositionRenderer {
 
   private func paintInk(_ surface: SurfaceID, camera: SpatialCamera?, size: CGSize,
     frame: CGRect, canvas: SceneRasterCompositor) async throws {
-    let journal = try await source.ink(surface)
+    let bounds = camera.map { WorkspaceSpatialBounds(origin: $0.screenToWorld(.zero, viewport: .init(x: size.width, y: size.height)),
+      width: size.width / $0.scale, height: size.height / $0.scale) }
+      ?? .init(origin: .zero, width: size.width, height: size.height)
+    let journal = try await source.ink(surface, bounds: bounds)
     guard journal.actions.contains(where: { $0.isActive && $0.spans.contains(where: { $0.surface == surface }) }) else { return }
     try await canvas.drawInk(surface: surface, journal: journal, camera: camera, size: size, in: frame)
   }

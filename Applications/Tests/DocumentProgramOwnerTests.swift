@@ -7,6 +7,267 @@ import XCTest
 
 @MainActor
 final class DocumentProgramOwnerTests: XCTestCase {
+  func testSameIdentityGeometryReplacementDrainsAcceptedSnapshotBeforeReleasingHeap() async throws {
+    for scenario in ["width", "metadata-retry", "new-source-after-failure", "newer-input", "concurrent-input", "closed-boundary", "closed-writer-retry", "pause-wins", "resume-wins", "parked-boundary", "stopped-boundary"] {
+      let changesMetadata = ["metadata-retry", "closed-writer-retry", "new-source-after-failure"].contains(scenario)
+      let publishesIncoming = scenario == "newer-input" || scenario == "concurrent-input"
+      let actor = UUID(), root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+      defer { try? FileManager.default.removeItem(at: root) }
+      let script = "window.openedWith=notebook.state;notebook.ready(Promise.resolve());"
+      var document = try DocumentDocument(actor: actor, blocks: [.interactive(id: "geometry", html: "<output>State</output>",
+        javaScript: script, initialState: .number(0), height: 120)]).materializingCausalVersions()
+      let identity = document.programIdentity(blockID: "geometry"), store = NotebookStore(root: root)
+      var state = DocumentStateJournal(id: document.id, actor: actor), width = 360.0
+      XCTAssertTrue(state.commit(blockID: "geometry", value: .number(0), actor: actor))
+      let oldPresentation = state
+      var publishedIncoming = false
+      var acceptedWrites: [JSONValue] = []
+      var refusesCheckpoint = changesMetadata, checkpointAttempts = 0
+      try store.saveDocument(document); try store.saveDocumentState(state)
+      let resources = SceneRenderResources(), owner = DocumentProgramOwner(documentID: document.id, resources: resources)
+      let window = UIWindow(windowScene: try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene))
+      let container = UIViewController(); window.rootViewController = container; window.makeKeyAndVisible()
+      defer { owner.stop(); window.isHidden = true; window.rootViewController = nil }
+      owner.onMount = { web, size in web.frame = .init(origin: .zero, size: size); container.view.addSubview(web) }
+      let geometry = WorkspaceItemGeometry.document(document.paperSize), activity = PageTurnActivity()
+      func refresh(presentedState: DocumentStateJournal? = nil, visible: Bool = true, preparationPage: Int? = nil) throws {
+        let layout = try DocumentLayoutRecord(receipt: ["sourceKey": "geometry", "layoutScope": "source",
+          "layoutCanonical": true, "pageCount": 1, "width": geometry.width, "height": geometry.height,
+          "regions": [["id": "geometry", "pageIndex": 0, "x": 0.0, "y": 0.0, "width": width,
+            "height": document.blocks[0].height, "sourceOffset": 0.0]], "anchors": [], "reading": []] as NSDictionary,
+          sourceKey: "geometry", blockIDs: ["geometry"], geometry: geometry)
+        let input = DocumentPagePresentation(document: document, state: presentedState ?? state, pageIndex: 0, isCurrent: true,
+          isVisible: true, isInteractive: true, pageTurnActive: false, onRenderReady: .init(activity: activity) { _ in },
+          onPageLayout: { _ in }, onStateChange: { block, value in
+            acceptedWrites.append(value)
+            _ = state.commit(blockID: block, value: value, actor: actor)
+            try store.saveDocumentState(state)
+            return state.records.first { $0.id == block }?.valueVersion
+          }, onLinkActivation: { _ in }, snapshotPixelWidth: nil, onPreparationFailure: { _ in },
+          onStateCheckpoint: { block, value, source, basis in
+            checkpointAttempts += 1
+            if refusesCheckpoint { throw SceneRenderError.snapshotPending("geometry_writer_unavailable") }
+            guard source == document.programIdentity(blockID: block),
+              state.records.first(where: { $0.id == block })?.valueVersion == basis else { return nil }
+            _ = state.commit(blockID: block, value: value, actor: actor)
+            try store.saveDocumentState(state)
+            let accepted = state.records.first { $0.id == block }?.valueVersion
+            if publishesIncoming, !publishedIncoming {
+              publishedIncoming = true
+              var incoming = scenario == "concurrent-input" ? oldPresentation : state
+              XCTAssertTrue(incoming.commit(blockID: block, value: .object(["acceptedBeforeGeometry": .number(3)]), actor: UUID()))
+              let version = try XCTUnwrap(incoming.records.first { $0.id == block }?.valueVersion)
+              let receipt = try XCTUnwrap(accepted)
+              XCTAssertEqual(version.includes(receipt), scenario == "newer-input")
+              XCTAssertFalse(receipt.includes(version))
+              // An input arriving after this receipt may already have a newer
+              // or concurrent winner. The geometry handoff must not override it.
+              try refresh(presentedState: incoming)
+            }
+            return accepted
+          })
+        owner.update(input: input, layout: layout, pages: [0], currentPage: 0, visibleIDs: visible ? ["geometry"] : [],
+          preparationPage: preparationPage, blocked: false, contacts: [], densities: [:])
+      }
+      try refresh()
+      try await wait(message: { "geometry runtime readiness" }) { owner.runtimes["geometry"]?.ready == true }
+      let original = try XCTUnwrap(owner.runtimes["geometry"]), web = try XCTUnwrap(original.webView)
+      let accepted = try await web.evaluateJavaScript("""
+        const original=documentProgram;
+        window.documentProgram=Object.create(original,{readSnapshot:{value:argument=>{
+          if(window.allowPull)return original.readSnapshot(argument);
+          window.pullStarted=true;
+          return new Promise(resolve=>{window.releasePull=()=>{window.allowPull=true;resolve(original.readSnapshot(argument))}});
+        }}});
+        [notebook.commit({acceptedBeforeGeometry:1}),notebook.commit({acceptedBeforeGeometry:2})];
+        """) as? [Bool]
+      XCTAssertEqual(accepted, [true, true])
+      let deadline = ContinuousClock.now + .seconds(3)
+      var pulling = false
+      while !pulling, ContinuousClock.now < deadline {
+        pulling = try await web.evaluateJavaScript("window.pullStarted===true") as? Bool == true
+        if !pulling { try await Task.sleep(for: .milliseconds(10)) }
+      }
+      XCTAssertTrue(pulling, "The accepted descriptor is held before its first native state read completes")
+      if changesMetadata {
+        XCTAssertTrue(document.replaceContent(blocks: [.interactive(id: "geometry", html: "<output>State</output>",
+          javaScript: script, initialState: .number(0), height: 160)], actor: actor))
+        try store.saveDocument(document)
+      } else { width = 400 }
+      XCTAssertEqual(document.programIdentity(blockID: "geometry"), identity)
+      try refresh()
+      try await Task.sleep(for: .milliseconds(40))
+      XCTAssertTrue(owner.runtimes["geometry"] === original)
+      XCTAssertTrue(original.webView === web, "Same-source geometry cannot revoke an accepted snapshot")
+      XCTAssertEqual(try store.loadDocumentState(document.id).records, oldPresentation.records)
+      let closesBoundary = ["closed-boundary", "closed-writer-retry", "pause-wins", "resume-wins", "parked-boundary", "stopped-boundary"].contains(scenario)
+      var boundaries: [Task<Bool, Never>] = []
+      if closesBoundary {
+        var entered = false
+        boundaries.append(Task { @MainActor in
+          entered = true
+          return await owner.checkpointAll(resume: scenario == "pause-wins")
+        })
+        try await wait(message: { "First explicit boundary admitted" }) { entered }
+        if scenario == "pause-wins" || scenario == "resume-wins" {
+          var latestEntered = false
+          boundaries.append(Task { @MainActor in
+            latestEntered = true
+            return await owner.checkpointAll(resume: scenario == "resume-wins")
+          })
+          try await wait(message: { "Latest explicit boundary admitted" }) { latestEntered }
+        }
+        if scenario == "parked-boundary" { owner.parkForReturn() }
+      }
+      _ = try await web.evaluateJavaScript("window.releasePull();true")
+      for boundary in boundaries {
+        let saved = await boundary.value; XCTAssertEqual(saved, scenario != "closed-writer-retry")
+      }
+      if scenario == "closed-writer-retry" {
+        XCTAssertTrue(owner.runtimes["geometry"] === original)
+        XCTAssertEqual(checkpointAttempts, 1, "Joining a failed job does not implicitly retry its writer")
+        refusesCheckpoint = false; owner.retry("geometry")
+        try await wait(message: { "Retry saved the frozen geometry without starting its replacement" }) { owner.runtimes["geometry"] == nil }
+        XCTAssertEqual(checkpointAttempts, 2)
+      }
+      if closesBoundary, scenario != "resume-wins" {
+        XCTAssertNil(owner.runtimes["geometry"], "A completed global freeze cannot launch the saved geometry replacement")
+        try refresh(presentedState: oldPresentation); owner.retry("geometry")
+        XCTAssertNil(owner.runtimes["geometry"], "Input publication and Retry do not release the execution fence")
+        if scenario == "stopped-boundary" {
+          owner.stop()
+          let resumed = await owner.resumeAll(); XCTAssertFalse(resumed)
+          try refresh(); XCTAssertNil(owner.runtimes["geometry"])
+          XCTAssertEqual(try store.loadDocumentState(document.id).records.first?.value,
+            .object(["acceptedBeforeGeometry": .number(2)]))
+          continue
+        }
+        let resumed = await owner.resumeAll(); XCTAssertTrue(resumed)
+        if scenario == "parked-boundary" {
+          XCTAssertNil(owner.runtimes["geometry"], "Global foreground does not unpark a hidden return document")
+          owner.resumeFromReturn()
+        }
+      }
+      if changesMetadata, !closesBoundary {
+        try await wait(message: { "geometry checkpoint writer refusal" }) { owner.pauseFailures["geometry"] != nil }
+        XCTAssertTrue(owner.runtimes["geometry"] === original && original.webView === web)
+        if scenario == "new-source-after-failure" {
+          XCTAssertTrue(document.replaceContent(blocks: [.interactive(id: "geometry", html: "<output>State</output>",
+            javaScript: script + ";window.newSource=true", initialState: .number(0), height: 160)], actor: actor))
+          XCTAssertNotEqual(document.programIdentity(blockID: "geometry"), identity)
+          try store.saveDocument(document); try refresh()
+        } else { refusesCheckpoint = false; owner.retry("geometry") }
+      }
+      try await wait(message: { "geometry replacement after accepted write" }) {
+        owner.runtimes["geometry"] !== original && owner.runtimes["geometry"]?.ready == true
+      }
+      XCTAssertNil(original.webView)
+      XCTAssertNil(owner.pauseFailures["geometry"], "A replacement cannot inherit its predecessor's failure")
+      XCTAssertEqual(acceptedWrites, [1, 2].map { .object(["acceptedBeforeGeometry": .number(Double($0))]) })
+      XCTAssertEqual(try store.loadDocumentState(document.id).records.first?.value, .object(["acceptedBeforeGeometry": .number(2)]))
+      let replacement = try XCTUnwrap(owner.runtimes["geometry"]?.webView)
+      let restored = try await replacement.evaluateJavaScript("window.openedWith.acceptedBeforeGeometry") as? Int
+      let expected = publishesIncoming ? 3 : 2
+      XCTAssertEqual(restored, expected, "\(scenario): startup must use the accepted handoff unless input is already newer/concurrent")
+      // Persistence has not synchronously refreshed the presentation. A late
+      // causal predecessor must not undo the handoff after author startup.
+      try refresh(presentedState: oldPresentation)
+      try await Task.sleep(for: .milliseconds(40))
+      XCTAssertTrue(owner.runtimes["geometry"]?.webView === replacement)
+      let afterOldEcho = try await replacement.evaluateJavaScript("notebook.state.acceptedBeforeGeometry") as? Int
+      XCTAssertEqual(afterOldEcho, expected, "\(scenario): a delayed old echo cannot roll the model back")
+      if scenario == "width" || scenario == "metadata-retry" {
+        try refresh(visible: false)
+        try await wait(message: { "Captured passive geometry before resize" }) { owner.paused("geometry") != nil }
+        let previous = try XCTUnwrap(owner.paused("geometry"))
+        if scenario == "width" { width += 32 }
+        else {
+          XCTAssertTrue(document.replaceContent(blocks: [.interactive(id: "geometry", html: "<output>State</output>",
+            javaScript: script, initialState: .number(0), height: 200)], actor: actor))
+          try store.saveDocument(document)
+        }
+        XCTAssertEqual(document.programIdentity(blockID: "geometry"), identity)
+        try refresh(visible: false, preparationPage: 0)
+        XCTAssertNil(owner.paused("geometry"), "The old raster cannot be stretched into new metadata dimensions")
+        try await wait(message: { "Regenerated passive preview at new geometry" }) { owner.paused("geometry") != nil }
+        let regenerated = try XCTUnwrap(owner.paused("geometry"))
+        XCTAssertNotEqual(regenerated.size, previous.size)
+        XCTAssertEqual(regenerated.size, CGSize(width: width, height: document.blocks[0].height))
+        XCTAssertEqual(regenerated.raster.image.cgImage?.width, Int(ceil(width * 2)))
+      }
+    }
+  }
+
+  func testSameIdentityGeometryDoesNotRetryAnAlreadyFailedAuthor() async throws {
+    let actor = UUID(), resources = SceneRenderResources()
+    var document = try DocumentDocument(actor: actor, blocks: [.interactive(id: "failed", html: "<output>Failed author</output>",
+      javaScript: "throw Error('author needs explicit Retry')", height: 120)]).materializingCausalVersions()
+    let identity = document.programIdentity(blockID: "failed")
+    let state = DocumentStateJournal(id: document.id, actor: actor)
+    let owner = DocumentProgramOwner(documentID: document.id, resources: resources)
+    let window = UIWindow(windowScene: try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene))
+    let container = UIViewController(); window.rootViewController = container; window.makeKeyAndVisible()
+    defer { owner.stop(); window.isHidden = true; window.rootViewController = nil }
+    var mounts = 0
+    owner.onMount = { web, size in mounts += 1; web.frame = .init(origin: .zero, size: size); container.view.addSubview(web) }
+    let geometry = WorkspaceItemGeometry.document(document.paperSize), activity = PageTurnActivity()
+    func refresh() throws {
+      let layout = try DocumentLayoutRecord(receipt: ["sourceKey": "failed", "layoutScope": "source", "layoutCanonical": true,
+        "pageCount": 1, "width": geometry.width, "height": geometry.height,
+        "regions": [["id": "failed", "pageIndex": 0, "x": 0.0, "y": 0.0, "width": 360.0,
+          "height": document.blocks[0].height, "sourceOffset": 0.0]], "anchors": [], "reading": []] as NSDictionary,
+        sourceKey: "failed", blockIDs: ["failed"], geometry: geometry)
+      let input = DocumentPagePresentation(document: document, state: state, pageIndex: 0, isCurrent: true,
+        isVisible: true, isInteractive: true, pageTurnActive: false, onRenderReady: .init(activity: activity) { _ in },
+        onPageLayout: { _ in }, onStateChange: { _, _ in nil }, onLinkActivation: { _ in }, snapshotPixelWidth: nil,
+        onPreparationFailure: { _ in })
+      owner.update(input: input, layout: layout, pages: [0], currentPage: 0, visibleIDs: ["failed"],
+        preparationPage: nil, blocked: false, contacts: [], densities: [:])
+    }
+    try refresh()
+    try await wait(message: { "Author failure completed its accepted-state boundary" }) {
+      owner.runtimes["failed"]?.failure != nil && owner.runtimes["failed"]?.webView == nil
+    }
+    let failed = try XCTUnwrap(owner.runtimes["failed"])
+    XCTAssertTrue(document.replaceContent(blocks: [.interactive(id: "failed", html: "<output>Failed author</output>",
+      javaScript: "throw Error('author needs explicit Retry')", height: 160)], actor: actor))
+    XCTAssertEqual(document.programIdentity(blockID: "failed"), identity)
+    try refresh()
+    // A real global boundary joins any scheduled lifecycle job. Neither its
+    // explicit foreground return nor geometry constitutes an author Retry.
+    _ = await owner.checkpointAll(resume: true)
+    XCTAssertTrue(owner.runtimes["failed"] === failed)
+    XCTAssertNotNil(failed.failure); XCTAssertNil(failed.webView); XCTAssertEqual(mounts, 1)
+    owner.retry("failed")
+    try await wait(message: { "Only explicit Retry admits another author" }) { mounts > 1 }
+  }
+
+  func testAttentionReleaseCannotResumeAClosedProgramBoundary() async throws {
+    let document = DocumentDocument(actor: UUID(), blocks: [.interactive(id: "program", html: "<output>Model</output>",
+      javaScript: """
+        window.resumes=0;notebook.lifecycle({checkpoint(){return {phase:.5}},resume(){resumes++}});
+        notebook.ready(Promise.resolve());
+      """, height: 100)])
+    let fixture = try ProgramFixture(document: document, showsNeighbour: false)
+    defer { fixture.close() }
+    try await wait(message: { fixture.diagnostics }) { fixture.isPresented && fixture.web(block: "program") != nil }
+    let web = try XCTUnwrap(fixture.web(block: "program"))
+    let paused = try await DocumentPagePresentationOwner.pauseForAttention(documentID: document.id, blockID: "program", resources: fixture.resources)
+    defer { paused.release() }
+    let saved = await DocumentPagePresentationOwner.checkpointPrograms(documentID: document.id, resources: fixture.resources, resume: false)
+    XCTAssertTrue(saved)
+    paused.release()
+    // Join the real lifecycle queue after release's asynchronous callback;
+    // a release cannot become a foreground command between these cuts.
+    let stillSaved = await DocumentPagePresentationOwner.checkpointPrograms(documentID: document.id, resources: fixture.resources, resume: false)
+    XCTAssertTrue(stillSaved)
+    let beforeForeground = try await web.evaluateJavaScript("resumes") as? Int
+    XCTAssertEqual(beforeForeground, 0); XCTAssertFalse(web.isUserInteractionEnabled)
+    await DocumentPagePresentationOwner.resumePrograms(resources: fixture.resources)
+    let afterForeground = try await web.evaluateJavaScript("resumes") as? Int
+    XCTAssertEqual(afterForeground, 1); XCTAssertTrue(web.isUserInteractionEnabled)
+  }
+
   func testShippedSoundOpeningReportsPaperNavigationAndProgramReadinessSeparately() async throws {
     func source(_ name: String, _ ext: String) throws -> String {
       try String(contentsOf: XCTUnwrap(Bundle(for: Self.self).url(forResource: name, withExtension: ext, subdirectory: "science")), encoding: .utf8)
@@ -83,7 +344,7 @@ final class DocumentProgramOwnerTests: XCTestCase {
       token: fixture.currentToken, region: page, resources: fixture.resources, blockID: "probe"))
     let model = try XCTUnwrap(pixels.presentation?.program)
     XCTAssertEqual(model.blockID, "probe")
-    XCTAssertEqual(model.sourceVersion, document.sourceVersion(blockID: "probe"))
+    XCTAssertEqual(model.programIdentity, document.programIdentity(blockID: "probe"))
     XCTAssertEqual(model.state, .object(["phase": .number(0.5)]))
     let selected = try XCTUnwrap(pixels.semanticSelection)
     XCTAssertEqual(selected.model["phase"], .number(0.5))
@@ -346,7 +607,7 @@ final class DocumentProgramOwnerTests: XCTestCase {
     let originalProjection = ObjectIdentifier(try XCTUnwrap(original.superview))
     let originalWindow = try XCTUnwrap(original.window)
     let source = DocumentRenderRegistry.shared.session(documentID: document.id, resources: fixture.resources).source(document)
-    let target = try XCTUnwrap(source.layout?.anchorPages["far"])
+    let target = try XCTUnwrap(source.layout.map { $0.pageCount - 1 })
     XCTAssertGreaterThan(target, 1)
     let measurementCount = source.measurementCount
     let request = measurements.request(documentID: document.id, pageIndex: target, cause: .page)
@@ -413,7 +674,7 @@ final class DocumentProgramOwnerTests: XCTestCase {
     try await wait(message: { fixture.diagnostics }) { fixture.ready[0] == true && fixture.canonicalPaper(in: 0) }
     let current = try XCTUnwrap(fixture.paper(in: 0))
     let source = DocumentRenderRegistry.shared.session(documentID: document.id, resources: fixture.resources).source(document)
-    let target = try XCTUnwrap(source.layout?.anchorPages["far"])
+    let target = try XCTUnwrap(source.layout.map { $0.pageCount - 1 })
     XCTAssertGreaterThan(target, 1)
     let owner = DocumentPagePresentationOwner.shared(documentID: document.id, resources: fixture.resources)
     let thumbnail = DocumentWebHost(), thumbnailCoordinator = DocumentPhysicalPageCoordinator()
@@ -459,7 +720,7 @@ final class DocumentProgramOwnerTests: XCTestCase {
     try await wait(message: { fixture.diagnostics }) { fixture.ready[0] == true && fixture.canonicalPaper(in: 0) }
     let current = try XCTUnwrap(fixture.paper(in: 0))
     let source = DocumentRenderRegistry.shared.session(documentID: document.id, resources: resources).source(document)
-    let target = try XCTUnwrap(source.layout?.anchorPages["far"])
+    let target = try XCTUnwrap(source.layout.map { $0.pageCount - 1 })
     XCTAssertGreaterThan(target, 2)
     let owner = DocumentPagePresentationOwner.shared(documentID: document.id, resources: resources)
     fixture.activity.prepare(target, presentation: .live)
@@ -659,7 +920,7 @@ final class DocumentProgramOwnerTests: XCTestCase {
     try await wait(message: { fixture.diagnostics }) { fixture.ready[0] == true && fixture.canonicalPaper(in: 0) }
     let owner = DocumentPagePresentationOwner.shared(documentID: document.id, resources: resources)
     let layout = try XCTUnwrap(DocumentRenderRegistry.shared.session(documentID: document.id, resources: resources).source(document).layout)
-    let target = try XCTUnwrap(layout.anchorPages["destination"])
+    let target = layout.pageCount - 1
     XCTAssertGreaterThan(target, 2)
     let current = WeakDocumentPaper(fixture.paper(in: 0))
     let identity = ObjectIdentifier(try XCTUnwrap(current.value))
@@ -879,7 +1140,7 @@ final class DocumentProgramOwnerTests: XCTestCase {
     }
     try await wait(message: { fixture.diagnostics }) { fixture.ready[0] == true && fixture.hosts[0].isUserInteractionEnabled }
     let source = DocumentRenderRegistry.shared.session(documentID: document.id, resources: fixture.resources).source(document)
-    let destination = try XCTUnwrap(source.layout?.anchorPages["far"])
+    let destination = try XCTUnwrap(source.layout.map { $0.pageCount - 1 })
     XCTAssertGreaterThan(destination, 1)
     fixture.showPages(current: 0, neighbour: destination)
     phase = "distant-preparation"
@@ -950,7 +1211,7 @@ final class DocumentProgramOwnerTests: XCTestCase {
       try await wait(message: { fixture.diagnostics }) { fixture.ready[0] == true && fixture.hosts[0].isUserInteractionEnabled }
       phase = "resolve_measured_target"
       let destination = try XCTUnwrap(DocumentRenderRegistry.shared.session(documentID: document.id,
-        resources: fixture.resources).source(document).layout?.anchorPages["far"])
+        resources: fixture.resources).source(document).layout.map { $0.pageCount - 1 })
       XCTAssertGreaterThan(destination, 1)
       phase = "prepare_passive_target"
       fixture.showPages(current: 0, neighbour: destination)
@@ -1137,6 +1398,55 @@ final class DocumentProgramOwnerTests: XCTestCase {
     try await wait(message: { fixture.diagnostics }) { fixture.resources.activeWebSurfaceCount == 0 }
     XCTAssertEqual(fixture.number("clock", field: "phase"), 0.75)
     XCTAssertNil(fixture.checkpointValues["clock"], "The superseded heap must not overwrite its successor")
+  }
+
+  func testResumeFailureShowsRetryAndResumesTheSameFrozenHeap() async throws {
+    let document = DocumentDocument(actor: UUID(), blocks: [.interactive(id: "program", html: "<output>model</output>",
+      javaScript: """
+        window.pauses=0;window.checkpoints=0;window.resumes=0;window.nonce=crypto.randomUUID();
+        notebook.lifecycle({pause(){pauses++},checkpoint(){checkpoints++;return {phase:.5}},
+          resume(){if(++resumes===1)throw Error('resume once')}});notebook.ready(Promise.resolve());
+      """, height: 100)])
+    let fixture = try ProgramFixture(document: document, showsNeighbour: false)
+    defer { fixture.close() }
+    try await wait(message: { fixture.diagnostics }) { fixture.isPresented && fixture.web(block: "program") != nil }
+    let web = try XCTUnwrap(fixture.web(block: "program"))
+    let nonce = try await web.evaluateJavaScript("nonce") as? String
+    let accepted = await DocumentPagePresentationOwner.checkpointPrograms(documentID: document.id, resources: fixture.resources, resume: true)
+    XCTAssertFalse(accepted)
+    try await wait(message: { fixture.diagnostics }) { fixture.hasProgramAction("program") }
+    XCTAssertFalse(web.isUserInteractionEnabled)
+    try fixture.retryProgram("program")
+    try await wait(message: { fixture.diagnostics }) { fixture.web(block: "program") === web && web.isUserInteractionEnabled && fixture.isPresented }
+    let finalNonce = try await web.evaluateJavaScript("nonce") as? String
+    let stages = try await web.evaluateJavaScript("[pauses,checkpoints,resumes]") as? [Int]
+    XCTAssertEqual(finalNonce, nonce); XCTAssertEqual(stages, [1, 1, 2])
+  }
+
+  func testFailedPauseAndCheckpointRetryOnlyTheirUnfinishedStage() async throws {
+    for failedStage in ["pause", "checkpoint"] {
+      let document = DocumentDocument(actor: UUID(), blocks: [.interactive(id: "program", html: "<output>model</output>",
+        javaScript: """
+          window.pauses=0;window.checkpoints=0;window.resumes=0;
+          notebook.lifecycle({pause(){if(++pauses===1 && '\(failedStage)'==='pause')throw Error('pause once')},
+            checkpoint(){if(++checkpoints===1 && '\(failedStage)'==='checkpoint')throw Error('checkpoint once');return {phase:.5}},
+            resume(){resumes++}});notebook.ready(Promise.resolve());
+        """, height: 100)])
+      let fixture = try ProgramFixture(document: document, showsNeighbour: false)
+      defer { fixture.close() }
+      try await wait(message: { fixture.diagnostics }) { fixture.isPresented && fixture.web(block: "program") != nil }
+      let web = try XCTUnwrap(fixture.web(block: "program"))
+      let accepted = await DocumentPagePresentationOwner.checkpointPrograms(documentID: document.id, resources: fixture.resources, resume: false)
+      XCTAssertFalse(accepted)
+      try await wait(message: { fixture.diagnostics }) { fixture.hasProgramAction("program") }
+      try fixture.retryProgram("program")
+      try await wait(message: { fixture.diagnostics }) { fixture.web(block: "program") === web && fixture.isPresented }
+      let frozenStages = try await web.evaluateJavaScript("[pauses,checkpoints,resumes]") as? [Int]
+      XCTAssertEqual(frozenStages, failedStage == "pause" ? [2, 1, 0] : [1, 2, 0], "Retry repairs the failed stage without releasing a closed owner boundary")
+      await DocumentPagePresentationOwner.resumePrograms(resources: fixture.resources)
+      let stages = try await web.evaluateJavaScript("[pauses,checkpoints,resumes]") as? [Int]
+      XCTAssertEqual(stages, failedStage == "pause" ? [2, 1, 1] : [1, 2, 1])
+    }
   }
 
   func testClosingDocumentRetainsAnUnacceptedModelUntilExplicitRetry() async throws {
@@ -1329,13 +1639,13 @@ final class DocumentProgramOwnerTests: XCTestCase {
     let source = DocumentRenderRegistry.shared.session(documentID: document.id, resources: fixture.resources).source(document)
     let measuredCount = try XCTUnwrap(source.layout?.pageCount)
     XCTAssertGreaterThan(measuredCount, 1)
-    _ = try await paper.evaluateJavaScript("document.querySelector('a[href=\"#far\"]').click(); true")
+    _ = try await paper.evaluateJavaScript("document.querySelector('a[href^=\"#notebook-print-page-\"]').click(); true")
     try await wait(message: { fixture.diagnostics }) { initialCalls == 1 }
     XCTAssertNil(acceptedPage, "The initial one-page closure rejects the later measured destination")
     fixture.replaceLinkNavigation { destination in
       if case .page(let page) = destination, page >= 0, page < measuredCount { acceptedPage = page }
     }
-    _ = try await paper.evaluateJavaScript("document.querySelector('a[href=\"#far\"]').click(); true")
+    _ = try await paper.evaluateJavaScript("document.querySelector('a[href^=\"#notebook-print-page-\"]').click(); true")
     try await wait(message: { fixture.diagnostics }) { acceptedPage != nil }
     XCTAssertEqual(initialCalls, 1, "The old captured layout callback is retired by the same-entry update")
     XCTAssertGreaterThan(try XCTUnwrap(acceptedPage), 0)
@@ -1607,16 +1917,27 @@ final class DocumentProgramOwnerTests: XCTestCase {
   }
 
   func testStationaryPassivePageRefinesAfterSharedPressureIsReleased() async throws {
-    let resources = SceneRenderResources(byteLimit: 24 * 1024 * 1024)
-    let pressure = try XCTUnwrap(resources.reserveDerivedBytes(8 * 1024 * 1024, priority: .passive))
-    defer { pressure.release() }
+    let resources = SceneRenderResources()
     let document = DocumentDocument(actor: UUID(), blocks: [.markdown(id: "body", source:
       (0..<50).map { "Paragraph \($0). " + String(repeating: "The stationary physical page remains readable. ", count: 8) }.joined(separator: "\n\n"))])
-    let fixture = try ProgramFixture(document: document, resources: resources)
+    let fixture = try ProgramFixture(document: document, resources: resources, showsNeighbour: false)
     defer { fixture.close() }
-    try await wait(message: { fixture.diagnostics }) { fixture.ready[0] == true && fixture.ready[1] == true }
-    let lowWidth = try XCTUnwrap(fixture.snapshot(in: 1)?.cgImage).width
+    try await wait(message: { fixture.diagnostics }) { fixture.ready[0] == true }
     let wanted = Int(ceil(fixture.hosts[1].bounds.width * (fixture.hosts[1].window?.screen.scale ?? 2)))
+    let geometry = WorkspaceItemGeometry.document(document.paperSize)
+    let fullRaster = try XCTUnwrap(SceneRenderResources.estimatedRasterBytes(pixelWidth: wanted,
+      pixelHeight: Int(ceil(Double(wanted) * geometry.height / geometry.width))))
+    let available = resources.rasterAdmission
+    // Pressure begins after the canonical PDF/SyncTeX preparation. Retain only
+    // half one requested raster beside the existing live paper; no invented
+    // tiny scene budget may prevent typesetting before this scenario starts.
+    let bytes = min(available.byteLimit - available.heldBytes,
+      available.passiveByteLimit - available.pinnedBytes - available.passiveReservedBytes) - fullRaster / 2
+    let pressure = try XCTUnwrap(resources.reserveDerivedBytes(bytes, priority: .passive))
+    defer { pressure.release() }
+    fixture.restorePresentation(1)
+    try await wait(message: { fixture.diagnostics }) { fixture.ready[1] == true }
+    let lowWidth = try XCTUnwrap(fixture.snapshot(in: 1)?.cgImage).width
     XCTAssertLessThan(lowWidth, wanted, "The initial image is admitted at the quality available beside real shared pressure")
     XCTAssertTrue(fixture.hosts[0].isUserInteractionEnabled)
     pressure.release()
@@ -1659,7 +1980,7 @@ final class DocumentProgramOwnerTests: XCTestCase {
       notebook.ready(Promise.resolve());
       """, initialState: .object(["count": .number(0)]), height: 90)
     })
-    let fixture = try ProgramFixture(document: document, showsNeighbour: false)
+    let fixture = try ProgramFixture(document: document, resources: SceneRenderResources(maximumWebSurfaces: 10), showsNeighbour: false)
     defer { fixture.close() }
     // One physical paper and one transient-preparation reserve leave the
     // remaining ordinary scene slots to already visible input owners.
@@ -1864,7 +2185,7 @@ final class ProgramFixture {
           guard let self else { return nil }
           await onCheckpoint(block)
           guard acceptsCheckpoints else { throw SceneRenderError.snapshotPending("test_writer_unavailable") }
-          guard document.sourceVersion(blockID: block) == version,
+          guard document.programIdentity(blockID: block) == version,
             state.records.first(where: { $0.id == block })?.valueVersion == stateVersion else { return nil }
           _ = state.commit(blockID: block, value: value, actor: actor)
           checkpoints.insert(block); checkpointValues[block] = value
@@ -1909,10 +2230,13 @@ final class ProgramFixture {
     let geometry = WorkspaceItemGeometry.document(document.paperSize), scale = 340 / geometry.width
     let clip = visibleClip ?? UIView()
     clip.clipsToBounds = true
-    clip.frame = .init(x: 0, y: 0, width: 340, height: (end.frame.y + end.frame.height - first.frame.y) * scale)
+    // Reveal the interior, not a floating-point sliver of the adjacent control
+    // at a PDF-to-native clipping boundary. This is one physical screen pixel.
+    let inset = 1 / window.screen.scale
+    clip.frame = .init(x: 0, y: 0, width: 340, height: max(inset, (end.frame.y + end.frame.height - first.frame.y) * scale - 2 * inset))
     if clip.superview == nil { window.rootViewController!.view.addSubview(clip) }
     clip.addSubview(hosts[0]); visibleClip = clip
-    hosts[0].frame = .init(x: 0, y: -first.frame.y * scale, width: 340, height: 340 * geometry.height / geometry.width)
+    hosts[0].frame = .init(x: 0, y: -first.frame.y * scale - inset, width: 340, height: 340 * geometry.height / geometry.width)
     window.layoutIfNeeded(); refresh()
   }
   func revealAll() {

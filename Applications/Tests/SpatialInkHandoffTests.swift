@@ -106,11 +106,15 @@ final class SpatialInkHandoffTests: XCTestCase {
     addTeardownBlock { await fixture.close() }
     for id in [fixture.parentID, fixture.childID] {
       let canvas = try XCTUnwrap(fixture.cohort.nativeInk.owners[.board(id)]?.canvas)
-      XCTAssertGreaterThan(canvas.committedSourceNodeCount, 0, "The offscreen source is retained, not deleted")
+      XCTAssertEqual(canvas.committedSourceNodeCount, 0, "An unrelated offscreen body is not retained by this bounded window")
       XCTAssertTrue(canvas.isStableFramePresented)
       XCTAssertEqual(canvas.spatialDrawableAccountedBytes, 0, "An empty visible projection does not need full-screen Metal tiles")
       XCTAssertEqual(canvas.residentCommittedBufferBytes, 0)
     }
+    XCTAssertTrue(fixture.cohort.liveData.ink.actions.isEmpty)
+    let durable = try fixture.store.readSpatialInk(surfaces: [.board(fixture.parentID), .board(fixture.childID)])
+    XCTAssertEqual(Set(durable.actions.map(\.id)), Set(fixture.journal.actions.map(\.id)),
+      "Discarding a display window does not delete its durable contacts")
     let camera = SpatialCamera(center: .init(x: 0, y: 100_000), scale: 1)
     let candidate = try await fixture.prepareResize(viewport: viewport, camera: camera, displayScale: 2)
     try candidate.install()
@@ -207,6 +211,51 @@ final class SpatialInkHandoffTests: XCTestCase {
     XCTAssertEqual(fixture.resources.reservedBytes, reserved)
     XCTAssertEqual(canvas.bounds, bounds)
     XCTAssertEqual(try Self.inkPixelCount(fixture.canvas), before)
+  }
+
+  func testCoveredStaticTilesDoNotAuthorizeInkOutsideTheirBoundedRead() async throws {
+    let fixture = try await Fixture.make(viewport: .init(x: 512, y: 512), requiresStaticRaster: true,
+      inkY: 950, staticRasterYOffset: 440)
+    addTeardownBlock { await fixture.close() }
+    let original = fixture.cohort
+    XCTAssertTrue(original.liveData.ink.actions.isEmpty)
+    let presence = SessionPresence(boardID: fixture.childID, mode: .board,
+      camera: .init(center: .init(x: 0, y: 700), scale: 1), viewport: fixture.viewport)
+    let frame = WorkspaceSceneFrame(index: original.frame.index, presence: presence, portalCamera: { _ in nil })
+    XCTAssertEqual(frame.sourceIdentity, original.requestedSources)
+    let tiles = try XCTUnwrap(original.plan.coverage[.board(fixture.childID)]).tiles
+    let coverage = WorkspaceSpatialBounds(origin: try XCTUnwrap(tiles.first).origin,
+      maximum: try XCTUnwrap(tiles.last).bounds.maximum)
+    XCTAssertTrue(coverage.contains(NotebookSceneState.bounds(for: presence, margin: 0)))
+    XCTAssertFalse(original.containsInkWindows(presence: presence, frame: frame))
+    let header = try fixture.store.workspaceHeader()
+    fixture.tiles.prepare(source: .init(store: fixture.store, revision: header.cursor, workspaceID: header.workspaceID),
+      presence: presence, frame: frame, pinned: [], displayScale: 1)
+    try await Self.waitUntil { !fixture.tiles.isPreparing }
+    XCTAssertNil(fixture.tiles.failure)
+    let exposed = try XCTUnwrap(fixture.tiles.published)
+    XCTAssertFalse(exposed === original, "A new ink query is required even though the old static tile window still covers the camera")
+    XCTAssertTrue(exposed.containsInkWindows(presence: presence, frame: frame))
+    XCTAssertEqual(Set(exposed.liveData.ink.actions.map(\.id)),
+      Set(fixture.journal.actions.filter { $0.spans.contains { $0.surface == .board(fixture.childID) } }.map(\.id)))
+    XCTAssertGreaterThan(try XCTUnwrap(exposed.nativeInk.owners[.board(fixture.childID)]).canvas.committedSourceNodeCount, 0)
+  }
+
+  func testRepeatedEqualBoundedWindowKeepsItsInstalledMeshAndCaptureBasis() async throws {
+    let fixture = try await Fixture.make(viewport: .init(x: 512, y: 512))
+    addTeardownBlock { await fixture.close() }
+    try fixture.mountActive(fixture.childID)
+    let canvas = try XCTUnwrap(fixture.canvas.inkView)
+    let installed = try XCTUnwrap(canvas.installedSpatialSource).referenceInk()
+    XCTAssertFalse(installed.baselineActionIDs.isEmpty)
+    let installs = canvas.spatialMeshInstallCount
+    for _ in 0..<4 {
+      let candidate = try await fixture.prepareResize(viewport: fixture.viewport)
+      try candidate.install()
+      XCTAssertEqual(canvas.spatialMeshInstallCount, installs,
+        "Equal measured sources must not rebuild when the new read carries the same baseline provenance")
+      XCTAssertEqual(try canvas.installedSpatialSource?.referenceInk(), installed)
+    }
   }
 
   func testAcceptedPencilRevokesThePreparedResizeWithoutLosingItsFirstSampleOrInstalledTarget() async throws {
@@ -319,7 +368,8 @@ final class SpatialInkHandoffTests: XCTestCase {
     candidate.afterPresentationTransaction { committed.fulfill() }
     try candidate.install()
     await fulfillment(of: [committed], timeout: 5)
-    XCTAssertEqual(try canvas.installedSpatialSource?.referenceInk(), try NotebookReferenceInk(surface: .board(fixture.childID), actions: journal.actions))
+    XCTAssertEqual(try canvas.installedSpatialSource?.referenceInk(), try NotebookReferenceInk(surface: .board(fixture.childID), actions: journal.actions,
+      baselineActionIDs: Set(journal.actions.filter { $0.spans.contains { $0.surface == .board(fixture.childID) } }.map(\.id))))
     XCTAssertGreaterThan(try Self.inkPixelCount(fixture.canvas), original + 500,
       "Installation uses the already completed pixels, not a promised future drawing callback")
 
@@ -583,7 +633,8 @@ final class SpatialInkHandoffTests: XCTestCase {
     var activeCamera: SpatialCamera { cohort.plan.presentations[.board(currentID)]!.camera }
 
     static func make(viewport: SpatialPoint, displayScale: Double = 1, requiresStaticRaster: Bool = false,
-      includesCoverInk: Bool = false, inkY: Double = 0, includesVisibleParent: Bool = false) async throws -> Fixture {
+      includesCoverInk: Bool = false, inkY: Double = 0, includesVisibleParent: Bool = false,
+      staticRasterYOffset: Double = 0) async throws -> Fixture {
       let root = FileManager.default.temporaryDirectory.appendingPathComponent("ink-handoff-" + UUID().uuidString)
       let store = NotebookStore(root: root), actor = UUID()
       let header = try store.initializeWorkspace(actor: actor, pageSize: .init(width: 834, height: 1194))
@@ -602,7 +653,7 @@ final class SpatialInkHandoffTests: XCTestCase {
         for index in 0..<8 {
           let element = SpatialElement(id: "retained-fragment-\(index)", surface: .board(child.id), kind: .nativeText,
             frame: .init(x: 0, y: 0, width: 90, height: 64),
-            worldOrigin: .init(x: Double(index % 4) * 100 - 200, y: Double(index / 4) * 100 - 140),
+            worldOrigin: .init(x: Double(index % 4) * 100 - 200, y: Double(index / 4) * 100 - 140 + staticRasterYOffset),
             source: "Pin \(index)", stamp: .init(counter: 0, actor: actor))
           XCTAssertTrue(hierarchy.upsertElement(element, in: child.id, expected: nil, actor: actor))
         }
@@ -623,10 +674,14 @@ final class SpatialInkHandoffTests: XCTestCase {
       let current = try store.workspaceHeader()
       let source = SceneCompositionSource(store: store, revision: current.cursor, workspaceID: current.workspaceID)
       let index = WorkspaceSceneIndex(workspace: workspace, hierarchy: hierarchy, paperSizes: [:])
-      let presence = SessionPresence(boardID: includesVisibleParent ? header.rootBoardID : child.id, mode: .board,
+      let presence = SessionPresence(boardID: includesVisibleParent ? header.rootBoardID : child.id,
+        mode: includesVisibleParent ? .cover : .board,
         camera: includesVisibleParent ? BoardPortalProjection.parentBoundaryCamera(portalCenter: .zero, viewport: viewport) : .init(scale: 1),
-        viewport: viewport)
+        viewport: viewport, focusedItemID: includesVisibleParent ? child.id : nil, openProgress: includesVisibleParent ? 1 : 0)
       let frame = WorkspaceSceneFrame(index: index, presence: presence, portalCamera: { hierarchy.portalCamera($0) })
+      if includesVisibleParent {
+        XCTAssertNotNil(frame.presences[child.id], "Only an explicitly opening portal, not a closed folder, admits the child plane")
+      }
       let resources = SceneRenderResources(), tiles = SceneCompositionTiles(resources: resources)
       tiles.prepare(source: source, presence: presence, frame: frame, pinned: [], displayScale: displayScale)
       try await waitUntil { tiles.published != nil || tiles.failure != nil }
@@ -649,7 +704,7 @@ final class SpatialInkHandoffTests: XCTestCase {
     }
     func mountActive(_ id: UUID) throws {
       coordinator.uninstall(); physical?.close(); currentID = id
-      let presence = cohort.plan.presentations[.board(id)]!
+      let presence = try XCTUnwrap(cohort.plan.presentations[.board(id)], "Requested physical board was not admitted by this scene")
       physical = try .init(cohort: cohort, presence: presence, canvas: canvas, parent: host, registry: registry, gate: gate)
       let other = id == childID ? parentID : childID
       passive.update(lease: cohort.nativeInk, surface: .board(other), boardID: other,

@@ -6,6 +6,77 @@ import XCTest
 final class NotebookPersistenceTests: XCTestCase {
   private enum TestFailure: Error { case unavailable }
 
+  private final class ReaderConnectionProbe: @unchecked Sendable {
+    weak var connection: NotebookSQLConnection?
+    init(_ connection: NotebookSQLConnection) { self.connection = connection }
+  }
+
+  @MainActor
+  func testSceneReaderCloseReleasesItsIdleHandleAndRefusesLateReads() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    let store = NotebookStore(root: root)
+    _ = try store.initializeWorkspace(actor: UUID(), pageSize: NotebookAppModel.defaultPageSize)
+    let reader = NotebookSceneReader(store: store)
+    let probe = try await reader.read { store in
+      _ = try store.workspaceHeader()
+      return ReaderConnectionProbe(try XCTUnwrap(store.currentSQL))
+    }
+    XCTAssertNotNil(probe.connection, "An idle reader retains only its reusable handle")
+    await reader.close()
+    XCTAssertNil(probe.connection, "Terminal close releases SQLite even while the reader is retained")
+    try FileManager.default.removeItem(at: root)
+    do {
+      _ = try await reader.read { try $0.workspaceHeader() }
+      XCTFail("A late read cannot reopen a closed scene owner")
+    } catch is CancellationError { }
+    XCTAssertFalse(FileManager.default.fileExists(atPath: root.path))
+  }
+
+  #if os(iOS)
+  @MainActor
+  func testArrivalFailureKeepsRetryVisibleAndCanFinishAfterAFailedQuit() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    let plain = NotebookStore(root: root), actor = UUID(), itemID = UUID()
+    let header = try plain.initializeWorkspace(actor: actor, pageSize: NotebookAppModel.defaultPageSize,
+      initialNotebookID: itemID)
+    let target = CollaborationTarget(kind: .board, id: header.rootBoardID)
+    let action = try plain.applyCollaborationAction(.init(summary: "Retry arrival", expected: [
+      .init(target: target, revision: plain.targetContentRevision(target: target)),
+      .init(target: .init(kind: .workspace, id: header.rootBoardID), revision: header.stamp.revision)], operations: [
+      .init(kind: .renameItem, target: target, id: itemID.uuidString,
+        values: ["title": .string("Arrival retry")])]), actor: actor)
+    let address = "collaboration/delivery/" + action.id.uuidString.lowercased() + ".json#"
+    let permitted = root.appendingPathComponent("allow-arrival")
+    let faulted = NotebookStore(root: root, storageFault: { phase in
+      if case .afterRecordWrites = phase, let database = plain.currentSQL,
+        try database.hasChange(address), !FileManager.default.fileExists(atPath: permitted.path) {
+        throw TestFailure.unavailable
+      }
+    })
+    let model = NotebookAppModel(store: faulted, startsNearbySync: false)
+    retainNotebookUntilTeardown(model, removing: root)
+    await model.start(pageSize: NotebookAppModel.defaultPageSize)
+    let failed = await model.finishPendingPersistence()
+    XCTAssertFalse(failed)
+    XCTAssertNotNil(model.persistenceFailure, "The existing retry button must expose a failed arrival command")
+    XCTAssertTrue(try plain.deviceActionReceipts(actionIDs: [action.id]).isEmpty)
+    // A successful independent scene read must not clear this owner's failure.
+    await model.reloadExternalChanges()?.value
+    let stillFailed = await model.finishPendingPersistence()
+    XCTAssertFalse(stillFailed)
+    XCTAssertNotNil(model.persistenceFailure)
+    let quit = await model.shutdown()
+    XCTAssertFalse(quit)
+    try Data().write(to: permitted)
+    model.retryPendingPersistence()
+    let saved = await model.finishPendingPersistence()
+    XCTAssertTrue(saved, "Retry alone drains the pending arrival while failed quit keeps input closed")
+    XCTAssertNil(model.persistenceFailure)
+    let received = try XCTUnwrap(plain.deviceActionReceipts(actionIDs: [action.id]).first)
+    XCTAssertEqual(received.actionVersion, try action.deliveryVersion())
+  }
+  #endif
+
   @MainActor
   func testUnaddressableCreationCannotChangeOptimisticOrDurableOwners() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -39,6 +110,13 @@ final class NotebookPersistenceTests: XCTestCase {
     await model.start(pageSize: NotebookAppModel.defaultPageSize)
     _ = await model.finishPendingPersistence()
     let item = try XCTUnwrap(model.presence?.selectedItemID)
+    let opened = try XCTUnwrap(model.presence)
+    // Items move on the board. An open paper intentionally follows its moved
+    // center through the reading-camera constraint; that is not a board drag.
+    model.updatePresence(.init(boardID: opened.boardID, mode: .board,
+      camera: .init(center: .init(x: -75, y: 45), scale: 0.7), viewport: opened.viewport,
+      focusedItemID: nil, openProgress: 0, selectedItemID: item, notebookPageID: opened.notebookPageID), settled: true)
+    _ = await model.finishPendingPersistence()
     let before = try XCTUnwrap(model.workspaceHeader), presence = model.presence
     let center = WorldPoint(x: 140, y: -110)
     model.moveItem(item, to: center)
@@ -50,6 +128,24 @@ final class NotebookPersistenceTests: XCTestCase {
     XCTAssertEqual(after, try model.store.workspaceHeader())
     XCTAssertEqual(model.board?.focusedCenter(of: item), center)
     XCTAssertEqual(model.presence, presence)
+  }
+
+  @MainActor
+  func testLocalReadingOwnersDoNotWakeDurableDelivery() async throws {
+    let queue = NotebookPersistenceQueue(store: .init(root: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)))
+    var commits = 0
+    queue.onCommit = { _ in commits += 1 }
+    let id = UUID()
+    for owner: NotebookPersistenceQueue.Owner in [.presence, .peerPresence(id), .inputActivity(id),
+      .documentDraft(id), .documentReading(id), .fileDraft("draft"), .fileWindow(nil),
+      .chatPanel(nil), .runCommand("run")] {
+      queue.enqueue(owner: owner) { _ in false }
+    }
+    queue.enqueue(owner: .pageInk(id)) { _ in false }
+    let _: Bool = try await queue.submit(publishesChanges: true) { _ in false }
+    let saved = await queue.flush()
+    XCTAssertTrue(saved)
+    XCTAssertEqual(commits, 2, "Only durable content and explicitly publishing commands wake delivery")
   }
 
   @MainActor

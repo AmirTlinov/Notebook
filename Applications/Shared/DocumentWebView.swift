@@ -137,12 +137,12 @@ struct DocumentWebView: View {
   let onRenderReady: PageTurnReadiness
   let onPageLayout: (DocumentPageLayout) -> Void
   let onLinkActivation: (DocumentLinkActivation) -> DocumentLinkDestination?
-  let onStateChange: (String, JSONValue) -> ContentFieldVersion?
+  let onStateChange: (String, JSONValue) async throws -> ContentFieldVersion?
   var resources: SceneRenderResources = .shared
   var isCurrent = true
   var isVisible = true
   var isPageTurnActive = false
-  var onStateCheckpoint: (String, JSONValue, ContentFieldVersion, ContentFieldVersion?) async throws -> ContentFieldVersion? = { _, _, _, _ in nil }
+  var onStateCheckpoint: (String, JSONValue, DocumentProgramIdentity, ContentFieldVersion?) async throws -> ContentFieldVersion? = { _, _, _, _ in nil }
   var measurements: DocumentPresentationRecorder? = nil
 
   var body: some View {
@@ -166,7 +166,7 @@ struct DocumentWebView: View {
         case .unavailable(let message): linkFailure = message
         }
       }, isCurrent: isCurrent, isVisible: isVisible && paperVisible, isPageTurnActive: isPageTurnActive,
-      onStateCheckpoint: onStateCheckpoint, measurements: measurements, programStore: model?.store
+      onStateCheckpoint: onStateCheckpoint, onStateDrained: { await model?.drainAcceptedProgramWrites() }, measurements: measurements, programStore: model?.store
     )
     .accessibilityIdentifier("document-runtime")
     .alert("Ссылка недоступна", isPresented: Binding(get: { linkFailure != nil }, set: { if !$0 { linkFailure = nil } })) {
@@ -204,6 +204,7 @@ struct DocumentRuntimePayload {
   var blocks: [DocumentBlock] { source.message.blocks }
   var states: [String: JSONValue] { state.message.states }
   var sourceVersions: [String: ContentFieldVersion] { source.message.sourceVersions }
+  var programIdentities: [String: DocumentProgramIdentity] { source.message.programIdentities }
   var editable: Bool
   let renderToken: String
   let pageIndex: Int
@@ -222,10 +223,10 @@ struct DocumentRuntimePayload {
       pageIndex: pageIndex, programIDs: ids)
   }
 
-  func frame(generation: UInt64, programURLs: [String: String] = [:], programsVisible: Bool = true) -> DocumentRuntimeFrame {
+  func frame(generation: UInt64, programURLs: [String: String] = [:], programsVisible: Bool = true, programStateCredit: [String: Int] = [:]) -> DocumentRuntimeFrame {
     .init(documentID: documentID, generation: String(generation), sourceKey: source.message.key, stateKey: state.message.key,
       editable: editable, renderToken: renderToken, pageIndex: pageIndex, runtimeID: runtimeID,
-      blockTokens: blockTokens, programMode: programMode, programURLs: programURLs, programsVisible: programsVisible)
+      blockTokens: blockTokens, programMode: programMode, programURLs: programURLs, programsVisible: programsVisible, programStateCredit: programStateCredit)
   }
 }
 
@@ -242,6 +243,7 @@ struct DocumentRuntimeFrame: Encodable {
   let programMode: String
   var programURLs: [String: String] = [:]
   var programsVisible = true
+  var programStateCredit: [String: Int] = [:]
 }
 
 private struct DocumentPixelPresentation: Equatable, Sendable {
@@ -372,6 +374,8 @@ final class DocumentWebCoordinator: NSObject,
     payload.rasterToken + (exportSnapshotID.map { "|export:" + $0.uuidString.lowercased() } ?? "")
   }
   private var programURLs: [String: (token: String, url: URL)] = [:]
+  private var programInitialStates: [String: NotebookProgramStateEncoding] = [:]
+  private var programStateTransfers: [String: (token: String, owner: NotebookProgramStateTransfer)] = [:]
   private var preparationDeadlineTask: Task<Void, Never>?
   private var preparationDeadlineGeneration: UInt64?
   private var preparationAdmissionGeneration: UInt64?
@@ -827,7 +831,7 @@ final class DocumentWebCoordinator: NSObject,
     acquisitionError = error
     preparationDeadlineTask?.cancel(); preparationDeadlineTask = nil
     setRenderReady(false)
-    releaseWebSurface()
+    finishProgramSurface()
     host?.showFailure("Не удалось подготовить страницу. Ваш черновик сохранён.") { [weak self] in
       self?.retryPreparation()
     }
@@ -836,7 +840,15 @@ final class DocumentWebCoordinator: NSObject,
   }
 
   func retryPreparation() {
+    guard !isInvalidated, host != nil, requestedPriority != nil else { return }
+    programPreparationRetryRequested = true
+    retryAcceptedProgramTransfers()
+    finishProgramSurface()
+  }
+
+  private func restartPreparation() {
     guard !isInvalidated, let host, let priority = requestedPriority else { return }
+    programPreparationRetryRequested = false
     acquisitionError = nil; recoveryAttempts = 0
     onBeforeRuntimeRestart()
     if let payload { payload.source.retryPagePreparation(payload.pageIndex) }
@@ -891,16 +903,25 @@ final class DocumentWebCoordinator: NSObject,
     webView?.evaluateJavaScript("window.notebookRenderer?.setEditingEnabled(true)", completionHandler: nil)
   }
 
-  private struct ProgramCheckpointWrite {
-    let id: UUID
-    let source: ContentFieldVersion
+  @MainActor private final class ProgramCheckpointWrite {
+    let token: String
+    let source: DocumentProgramIdentity
     let state: ContentFieldVersion?
-    let value: JSONValue
-    let task: Task<ContentFieldVersion?, Error>
+    let descriptor: JSONValue
+    var retryRequested = false
+    var snapshot: NotebookProgramStateTransfer.Checkpoint?
+    var hasWritten = false
+    var receipt: ContentFieldVersion?
+    var task: Task<ContentFieldVersion?, Error>?
+    init(token: String, source: DocumentProgramIdentity, state: ContentFieldVersion?, descriptor: JSONValue) {
+      self.token = token; self.source = source; self.state = state; self.descriptor = descriptor
+    }
   }
   private var programCheckpointWrites: [String: ProgramCheckpointWrite] = [:]
   private var programCheckpointTask: Task<Bool, Never>?
   private var programRetirementTask: Task<Void, Never>?
+  private var programRetirementRequested = false
+  private var programPreparationRetryRequested = false
   private var programVisibilityTask: Task<Void, Never>?
   private(set) var programsVisible = true
   private var programResumeBlocked = false
@@ -914,24 +935,31 @@ final class DocumentWebCoordinator: NSObject,
   }
 
   private func reconcileProgramVisibility() {
-    guard !isInvalidated, isReady, ownsProgramState, programVisibilityTask == nil else { return }
+    guard !isInvalidated, isReady, requestedInput || ownsProgramState, programVisibilityTask == nil else { return }
     programVisibilityTask = Task { @MainActor [self] in
       defer { programVisibilityTask = nil }
       repeat {
         let visible = programsVisible
         guard let webView, !isInvalidated else { return }
-        _ = try? await webView.callAsyncJavaScript(
-          "notebookRenderer.setProgramsVisible(visible);return true;",
-          arguments: ["visible": visible], in: nil, contentWorld: .page)
+        do {
+          _ = try await NotebookProgramBridge.request("program_visibility",
+            script: "await notebookRenderer.setProgramsVisible(visible);return true;",
+            arguments: ["visible": visible], in: webView)
+        } catch {
+          failProgramTransfer(error)
+          return
+        }
         guard await checkpointPrograms(resume: false) else {
           onRenderReady.failed(.init(kind: .preparationFailed,
             message: "Состояние программы ещё не сохранено. Она приостановлена; повторите запись.",
-            retry: { [weak self] in self?.reconcileProgramVisibility() }))
+            retry: { [weak self] in
+              self?.retryAcceptedProgramTransfers(); self?.reconcileProgramVisibility()
+            }))
           return
         }
         if visible, programsVisible {
           programResumeBlocked = false
-          await resumePrograms()
+          guard await resumePrograms() else { return }
           onRenderReady(renderIsReady)
         }
         if programsVisible == visible { return }
@@ -939,30 +967,53 @@ final class DocumentWebCoordinator: NSObject,
     }
   }
 
-  private func persistProgramCheckpoint(_ id: String, value: JSONValue,
-    source: ContentFieldVersion, state: ContentFieldVersion?) async throws -> ContentFieldVersion? {
-    if let pending = programCheckpointWrites[id], pending.source == source,
-      pending.state == state, pending.value == value { return try await pending.task.value }
-    let request = UUID(), token = blockTokens[id]
+  private func persistProgramCheckpoint(_ id: String, snapshot descriptor: JSONValue,
+    token: String, source: DocumentProgramIdentity, state: ContentFieldVersion?, in web: WKWebView) async throws -> ContentFieldVersion? {
+    let write: ProgramCheckpointWrite
+    if let pending = programCheckpointWrites[id], pending.token == token, pending.source == source, pending.state == state {
+      if let task = pending.task { return try await task.value }
+      write = pending
+    } else {
+      write = .init(token: token, source: source, state: state, descriptor: descriptor)
+      programCheckpointWrites[id] = write
+    }
+    let transfer = programStateTransfer(id, token: token)
     let task = Task { @MainActor [self] in
-      let accepted = try await onStateCheckpoint(id, value, source, state)
-      // The writer's receipt, not a later SwiftUI projection, advances this
-      // iframe's causal basis. Resume must not apply the pre-checkpoint value.
-      if let accepted, let token, !isInvalidated, blockTokens[id] == token,
-        payload?.sourceVersions[id] == source, let webView {
-        let valueJSON = try canonicalDocumentJSON(value), basisJSON = try canonicalDocumentJSON(state)
-        let versionJSON = try canonicalDocumentJSON(accepted)
-        await withCheckedContinuation { (done: CheckedContinuation<Void, Never>) in
-          webView.callAsyncJavaScript("notebookRenderer.acknowledgeProgramCheckpoint(block,token,JSON.parse(value),JSON.parse(basis),JSON.parse(version));return true;",
-            arguments: ["block": id, "token": token, "value": valueJSON, "basis": basisJSON, "version": versionJSON],
-            in: nil, in: .page, completionHandler: { _ in done.resume() })
+      if write.snapshot == nil {
+        write.snapshot = try await transfer.checkpoint(NotebookProgramBridge.stateSnapshot(descriptor)) { revision, offset in
+          guard case .string(let text) = try await Self.programStateRequest(blockID: id, token: token, operation: "notebook-snapshot",
+            argument: .object(["revision": .string(revision), "offset": .number(Double(offset))]), in: web) else {
+            throw SceneRenderError.snapshotPending("program_state_window")
+          }
+          return text
         }
       }
-      return accepted
+      guard let snapshot = write.snapshot else { throw CancellationError() }
+      if !write.hasWritten {
+        write.receipt = try await onStateCheckpoint(id, snapshot.value, source, state)
+        write.hasWritten = true
+      }
+      // Retry resumes only the failed writer/ACK stage. The frozen value and
+      // its admission survive an I/O failure without another transfer copy.
+      if let accepted = write.receipt, !isInvalidated, blockTokens[id] == token,
+        payload?.programIdentities[id] == source, webView === web {
+        let basisJSON = try canonicalDocumentJSON(state), versionJSON = try canonicalDocumentJSON(accepted)
+        _ = try await NotebookProgramBridge.request("checkpoint_ack",
+          script: "notebookRenderer.acknowledgeProgramCheckpoint(block,token,JSON.parse(basis),JSON.parse(version));return true;",
+          arguments: ["block": id, "token": token, "basis": basisJSON, "version": versionJSON], in: web)
+      }
+      return write.receipt
     }
-    programCheckpointWrites[id] = .init(id: request, source: source, state: state, value: value, task: task)
-    defer { if programCheckpointWrites[id]?.id == request { programCheckpointWrites[id] = nil } }
-    return try await task.value
+    write.task = task
+    do {
+      let accepted = try await task.value
+      if programCheckpointWrites[id] === write { programCheckpointWrites[id] = nil }
+      write.task = nil; write.snapshot?.release(); write.snapshot = nil
+      return accepted
+    } catch {
+      write.task = nil
+      throw error
+    }
   }
 
   func checkpointPrograms(resume: Bool) async -> Bool {
@@ -973,7 +1024,7 @@ final class DocumentWebCoordinator: NSObject,
       programCheckpointTask = task
     }
     let accepted = await task.value; programCheckpointTask = nil
-    if resume { await resumePrograms() }
+    if resume { return await resumePrograms() && accepted }
     return accepted
   }
 
@@ -981,36 +1032,106 @@ final class DocumentWebCoordinator: NSObject,
     guard !isInvalidated, isReady, requestedInput || ownsProgramState, let webView, let before = payload,
       before.programMode != "external", !before.source.programIDs.isEmpty else { return true }
     do {
-      let result = try await NotebookProgramBridge.lifecycle("checkpointPrograms", controller: "notebookRenderer", in: webView)
+      let operation = acquisitionError == nil ? "checkpointPrograms" : "finishAcceptedPrograms"
+      let result = try await NotebookProgramBridge.lifecycle(operation, controller: "notebookRenderer", in: webView)
       guard case .array(let checkpoints) = result, !isInvalidated, payload?.runtimeID == before.runtimeID else { return false }
       var accepted = true
       for checkpoint in checkpoints {
         guard case .string(let id) = checkpoint["blockID"], case .string(let token) = checkpoint["token"],
-          let value = checkpoint["state"], let basis = checkpoint["stateVersion"], token == blockTokens[id],
-          let version = before.sourceVersions[id], payload?.sourceVersions[id] == version else { accepted = false; continue }
+          token == blockTokens[id], let version = before.programIdentities[id],
+          payload?.programIdentities[id] == version else { accepted = false; continue }
+        let transfer = programStateTransfer(id, token: token)
+        if checkpoint["acceptedOnly"] == .bool(true) {
+          try await transfer.drain()
+          if let pending = programCheckpointWrites[id] {
+            guard pending.task != nil || pending.retryRequested else { accepted = false; continue }
+            pending.retryRequested = false
+            if try await persistProgramCheckpoint(id, snapshot: pending.descriptor, token: token,
+              source: pending.source, state: pending.state, in: webView) == nil { accepted = false }
+          }
+          continue
+        }
+        guard let snapshot = checkpoint["snapshot"], let basis = checkpoint["stateVersion"] else { accepted = false; continue }
         let stateVersion = basis == .null ? nil : try basis.decode(ContentFieldVersion.self)
-        _ = try await persistProgramCheckpoint(id, value: value, source: version, state: stateVersion)
+        if try await persistProgramCheckpoint(id, snapshot: snapshot, token: token,
+          source: version, state: stateVersion, in: webView) == nil { accepted = false }
       }
       return accepted
     } catch { return false }
   }
 
+  private func failProgramTransfer(_ error: Error) {
+    onPreparationFailure(error)
+    // A broken author already has the preparation Retry. Transport alone does
+    // not authorize replacing a healthy heap or replaying its startup code.
+    guard acquisitionError == nil else { return }
+    programResumeBlocked = true
+    onRenderReady.failed(.init(kind: .preparationFailed,
+      message: "Состояние программы ещё не сохранено. Повторите запись.",
+      retry: { [weak self] in
+        guard let self else { return }
+        retryAcceptedProgramTransfers()
+        if programRetirementRequested { finishProgramSurface() }
+        else { reconcileProgramVisibility() }
+      }))
+  }
+
+  private func retryAcceptedProgramTransfers() {
+    for entry in programStateTransfers.values { entry.owner.retry() }
+    for write in programCheckpointWrites.values { write.retryRequested = true }
+  }
+
   func retireAfterProgramCheckpoint() {
+    guard !isInvalidated else { return }
+    if programRetirementRequested { retryAcceptedProgramTransfers() }
+    programRetirementRequested = true
+    if let web = webView { DocumentRenderRegistry.shared.retainRetiringProgram(self, web: web, hostID: hostID) }
+    finishProgramSurface()
+  }
+
+  /// One boundary owns close and error teardown. Readiness and rendering may
+  /// fail while an already admitted descriptor is still crossing WebKit IPC.
+  private func finishProgramSurface() {
     guard !isInvalidated, programRetirementTask == nil else { return }
     guard isReady, requestedInput || ownsProgramState, payload?.programMode != "external",
-      payload?.source.programIDs.isEmpty == false, let web = webView else { invalidate(); return }
-    DocumentRenderRegistry.shared.retainRetiringProgram(self, web: web, hostID: hostID)
+      payload?.source.programIDs.isEmpty == false, webView != nil else {
+      if programRetirementRequested { invalidate() }
+      else {
+        releaseWebSurface()
+        if programPreparationRetryRequested { restartPreparation() }
+      }
+      return
+    }
     programRetirementTask = Task { @MainActor [self] in
       defer { programRetirementTask = nil }
-      if await checkpointPrograms(resume: false) { invalidate() }
-      else { onPreparationFailure(SceneRenderError.snapshotPending("document_state_checkpoint_not_accepted")) }
+      if await checkpointPrograms(resume: false) {
+        if programRetirementRequested { invalidate() }
+        else {
+          releaseWebSurface()
+          // Only an explicit UI Retry authorizes a new executor. A successful
+          // transport retry alone merely finishes the previous accepted state.
+          if programPreparationRetryRequested { restartPreparation() }
+        }
+      } else {
+        programPreparationRetryRequested = false
+        onPreparationFailure(SceneRenderError.snapshotPending("document_state_checkpoint_not_accepted"))
+      }
     }
   }
 
-  func resumePrograms() async {
-    guard !isInvalidated, isReady, programsVisible, !programResumeBlocked, let webView else { return }
-    _ = try? await NotebookProgramBridge.lifecycle("resumePrograms", controller: "notebookRenderer", in: webView)
-
+  @discardableResult
+  func resumePrograms() async -> Bool {
+    guard !isInvalidated, isReady, programsVisible, !programResumeBlocked,
+      programCheckpointWrites.isEmpty, !programStateTransfers.values.contains(where: { $0.owner.hasPendingCheckpoint }),
+      let webView else { return false }
+    do { _ = try await NotebookProgramBridge.lifecycle("resumePrograms", controller: "notebookRenderer", in: webView); return true }
+    catch {
+      programResumeBlocked = true
+      onRenderReady.failed(.init(kind: .preparationFailed,
+        message: "Программа не возобновилась. Повторите продолжение.",
+        retry: { [weak self] in self?.reconcileProgramVisibility() }))
+      return false
+    }
   }
 
   private func revokeLiveReceipt() {
@@ -1066,6 +1187,8 @@ final class DocumentWebCoordinator: NSObject,
 
   private func releaseWebSurface() {
     programAssets.revokeAll(); programURLs.removeAll()
+    for entry in programStateTransfers.values { entry.owner.revoke() }
+    programStateTransfers.removeAll(); programCheckpointWrites.removeAll(); programInitialStates.removeAll()
     cancelPresentationWaiters()
     let retiringWeb = webView
     if frameEvaluationID != nil, let retiringWeb, let borrow = try? surfaceLease?.borrow() {
@@ -1154,8 +1277,9 @@ final class DocumentWebCoordinator: NSObject,
   var onRenderReady: PageTurnReadiness
   var onPageLayout: (DocumentPageLayout) -> Void
   var onLinkActivation: (DocumentLinkActivation) -> Void = { _ in }
-  var onStateChange: (String, JSONValue) -> ContentFieldVersion?
-  var onStateCheckpoint: (String, JSONValue, ContentFieldVersion, ContentFieldVersion?) async throws -> ContentFieldVersion? = { _, _, _, _ in nil }
+  var onStateChange: (String, JSONValue) async throws -> ContentFieldVersion?
+  var onStateCheckpoint: (String, JSONValue, DocumentProgramIdentity, ContentFieldVersion?) async throws -> ContentFieldVersion? = { _, _, _, _ in nil }
+  var onStateDrained: () async -> Void = {}
   var pendingSnapshotPayload: DocumentRuntimePayload?
   private var preparedSnapshotLease: RasterLease?
 
@@ -1164,7 +1288,7 @@ final class DocumentWebCoordinator: NSObject,
     renderSession: DocumentRenderSession? = nil,
     onRenderReady: PageTurnReadiness,
     onPageLayout: @escaping (DocumentPageLayout) -> Void,
-    onStateChange: @escaping (String, JSONValue) -> ContentFieldVersion?
+    onStateChange: @escaping (String, JSONValue) async throws -> ContentFieldVersion?
   ) {
     self.resources = resources; self.renderSession = renderSession
     self.onRenderReady = onRenderReady
@@ -1179,7 +1303,7 @@ final class DocumentWebCoordinator: NSObject,
     capturesSnapshot: Bool,
     onRenderReady: PageTurnReadiness,
     onPageLayout: @escaping (DocumentPageLayout) -> Void,
-    onStateChange: @escaping (String, JSONValue) -> ContentFieldVersion?,
+    onStateChange: @escaping (String, JSONValue) async throws -> ContentFieldVersion?,
     snapshotPixelWidth: Int? = nil,
     paperPreparationPixelWidth: Int = 1024,
     onPreparationFailure: @escaping (Error) -> Void = { _ in },
@@ -1256,12 +1380,15 @@ final class DocumentWebCoordinator: NSObject,
       nextTokens.reserveCapacity(document.blocks.count)
       for block in document.blocks {
         if let previous = previousBlocks[block.id], let token = blockTokens[block.id],
-          payload?.sourceVersions[block.id] == nextSource.message.sourceVersions[block.id], Self.sameProgram(previous, block) {
+          payload?.programIdentities[block.id] == nextSource.message.programIdentities[block.id], Self.sameProgram(previous, block) {
           nextTokens[block.id] = token
         } else { nextTokens[block.id] = UUID().uuidString }
       }
+      for (id, entry) in programStateTransfers where nextTokens[id] != entry.token {
+        entry.owner.revoke(); programStateTransfers[id] = nil; programCheckpointWrites[id] = nil
+      }
       for (id, entry) in programURLs where nextTokens[id] != entry.token {
-        programAssets.revoke(entry.url); programURLs[id] = nil
+        programAssets.revoke(entry.url); programURLs[id] = nil; programInitialStates[id] = nil
       }
       blockTokens = nextTokens
       if payload?.source !== nextSource {
@@ -1439,33 +1566,59 @@ final class DocumentWebCoordinator: NSObject,
       NotificationCenter.default.post(name: DocumentSourceRequest.notification,
         object: DocumentSourceRequest(documentID: payload.documentID, block: block, version: version, offset: offset))
     case "programReady":
+      if let id = body["blockID"] as? String, body["blockToken"] as? String == blockTokens[id] { programInitialStates[id] = nil }
       guard body["blockToken"] as? String == blockTokens[blockID] else { return }
       onProgramReady()
     case "programFocus":
       guard body["blockToken"] as? String == blockTokens[blockID], let focused = body["focused"] as? Bool else { return }
       onProgramFocus(focused)
     case "programCheckpoint":
-      guard requestedInput || ownsProgramState, body["blockToken"] as? String == blockTokens[blockID],
-        let source = payload.sourceVersions[blockID], let value: JSONValue = Self.decode(body["value"]),
-        let basis: JSONValue = Self.decode(body["stateVersion"]) else { return }
+      guard requestedInput || ownsProgramState, let token = body["blockToken"] as? String, token == blockTokens[blockID],
+        let source = payload.programIdentities[blockID], let snapshot: JSONValue = Self.decode(body["snapshot"]),
+        let basis: JSONValue = Self.decode(body["stateVersion"]), let web = webView else { return }
       let stateVersion = basis == .null ? nil : try? basis.decode(ContentFieldVersion.self)
       guard basis == .null || stateVersion != nil else { return }
-      Task { @MainActor [weak self] in
-        _ = try? await self?.persistProgramCheckpoint(blockID, value: value, source: source, state: stateVersion)
+      Task { @MainActor [self] in
+        do {
+          _ = try await persistProgramCheckpoint(blockID, snapshot: snapshot, token: token,
+            source: source, state: stateVersion, in: web)
+        } catch { failProgramTransfer(error) }
       }
-
+    case "stateCredit":
+      guard let token = body["blockToken"] as? String, token == blockTokens[blockID],
+        let bytes = body["bytes"] as? Int, let web = webView else { return }
+      programStateTransfer(blockID, token: token).requestCredit(bytes) { bytes in
+        Task { _ = try? await Self.programStateRequest(blockID: blockID, token: token,
+          operation: "notebook-state-credit", argument: .number(Double(bytes)), in: web) }
+      }
     case "state":
-      // Runtime state ownership exists before its first frame. Native hit
-      // admission is a separate decision and cannot discard an initial commit.
-      guard requestedInput || ownsProgramState, body["blockToken"] as? String == blockTokens[blockID],
+      guard let token = body["blockToken"] as? String, token == blockTokens[blockID],
         payload.blocks.contains(where: { $0.id == blockID && $0.kind == .interactive }),
-        let value: JSONValue = Self.decode(body["value"]) else { return }
-      if let version = onStateChange(blockID, value), let revision = body["revision"] as? String,
-        let token = blockTokens[blockID], let encoded = try? canonicalDocumentJSON(version) {
-        webView?.callAsyncJavaScript("notebookRenderer.acknowledgeProgramState(block,token,revision,JSON.parse(version));return true;",
-          arguments: ["block": blockID, "token": token, "revision": revision, "version": encoded],
-          in: nil, in: .page, completionHandler: nil)
-      }
+        let descriptor: NotebookProgramStateTransfer.Snapshot = Self.decode(body["snapshot"]),
+        let web = webView, let borrow = borrowSurfaceForTransfer(web) else { return }
+      let writer = onStateChange, drained = onStateDrained, ownsState = requestedInput || ownsProgramState
+      var receipt: ContentFieldVersion?
+      programStateTransfer(blockID, token: token).receive(descriptor, retaining: borrow,
+        read: { revision, offset in
+          guard case .string(let text) = try await Self.programStateRequest(blockID: blockID, token: token, operation: "notebook-snapshot",
+            argument: .object(["revision": .string(revision), "offset": .number(Double(offset))]), in: web) else {
+            throw SceneRenderError.snapshotPending("program_state_window")
+          }
+          return text
+        }, acknowledge: { revision in
+          let encoded = try receipt.map(canonicalDocumentJSON) ?? "null"
+          _ = try await NotebookProgramBridge.request("state_basis_ack",
+            script: "notebookRenderer.acknowledgeProgramState(block,token,revision,JSON.parse(version),localOnly);return true;",
+            arguments: ["block": blockID, "token": token, "revision": revision, "version": encoded, "localOnly": !ownsState], in: web)
+          _ = try await Self.programStateRequest(blockID: blockID, token: token, operation: "notebook-snapshot-ack",
+            argument: .string(revision), in: web)
+        }, accept: { value, _ in
+          if ownsState {
+            receipt = try await writer(blockID, value)
+            guard receipt != nil else { throw SceneRenderError.snapshotPending("document_state_not_accepted") }
+            await drained()
+          }
+        }, onFailure: { [weak self] in self?.failProgramTransfer($0) })
     default: return
     }
   }
@@ -1522,17 +1675,42 @@ final class DocumentWebCoordinator: NSObject,
     }.value
   }
 
-  // Registration and frame submission share one uninterrupted main-actor turn.
-  // A state update while metadata is read cannot seed a new iframe with stale state.
-  private func registerPrograms(_ packages: [String: NotebookProgramPackage], payload: DocumentRuntimePayload) throws -> [String: String] {
+  private func programStateTransfer(_ blockID: String, token: String) -> NotebookProgramStateTransfer {
+    if let entry = programStateTransfers[blockID], entry.token == token { return entry.owner }
+    let owner = NotebookProgramStateTransfer(resources: resources)
+    programStateTransfers[blockID] = (token, owner)
+    return owner
+  }
+
+  private func programStateCredits(_ payload: DocumentRuntimePayload) -> [String: Int] {
+    guard payload.programMode != "external" else { return [:] }
+    let ids = payload.source.programIDs(on: payload.pageIndex) ?? payload.source.programIDs
+    return Dictionary(uniqueKeysWithValues: ids.compactMap { id in
+      blockTokens[id].map { (id, programStateTransfer(id, token: $0).initialCredit) }
+    })
+  }
+
+  private static func programStateRequest(blockID: String, token: String, operation: String,
+    argument: JSONValue, in web: WKWebView) async throws -> JSONValue {
+    let json = try canonicalDocumentJSON(argument)
+    return try await NotebookProgramBridge.request(operation,
+      script: "return await notebookRenderer.transferProgramState(block,token,operation,JSON.parse(argument));",
+      arguments: ["block": blockID, "token": token, "operation": operation, "argument": json], in: web)
+  }
+
+  // The state is admitted/encoded off the input actor. Recheck the exact
+  // payload before registration so a newer projection cannot seed an old heap.
+  private func registerPrograms(_ packages: [String: NotebookProgramPackage], payload: DocumentRuntimePayload) async throws -> [String: String] {
     if let store = programStore {
       for block in payload.blocks {
         guard let package = packages[block.id], let token = blockTokens[block.id], programURLs[block.id] == nil else { continue }
+        let state = try await NotebookProgramStateEncoding.prepare(payload.states[block.id] ?? block.initialState, resources: resources, forHTML: true)
+        guard !Task.isCancelled, self.payload?.state === payload.state, blockTokens[block.id] == token else { throw CancellationError() }
         let url = try programAssets.register(store: store, package: package) { origin in
-          try NotebookProgramBridge.document(block: block, state: payload.states[block.id] ?? block.initialState,
-            token: token, package: package, origin: origin)
+          try NotebookProgramBridge.document(block: block, stateJSON: state.htmlJSON,
+            token: token, package: package, origin: origin, stateCredit: programStateTransfer(block.id, token: token).initialCredit)
         }
-        programURLs[block.id] = (token, url)
+        programURLs[block.id] = (token, url); programInitialStates[block.id] = state
       }
     }
     return programURLs.mapValues { $0.url.absoluteString }
@@ -1604,7 +1782,7 @@ final class DocumentWebCoordinator: NSObject,
             ? nil : try await prepared.encodedMessage(resources: resources, onAdmissionWait: admissionChanged)
           recordPreparation(.pageSourceEncodedAt, trace: trace)
           defer { withExtendedLifetime(source) {} }
-          let state = sentStateKey == next.state.message.key ? nil : try await next.state.encodedJSON()
+          let state = sentStateKey == next.state.message.key ? nil : try await next.state.encodedState(resources: resources)
           recordPreparation(.stateEncodedAt, trace: trace)
           let packages = try await prepareProgramPackages(next)
           guard !Task.isCancelled, !isInvalidated, frameTaskID == taskID, webView === web else { return }
@@ -1617,11 +1795,16 @@ final class DocumentWebCoordinator: NSObject,
           guard generation == expected else { continue }
           let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
           guard let current = payload else { return }
-          let frame = String(decoding: try encoder.encode(current.frame(generation: expected, programURLs: try registerPrograms(packages, payload: current), programsVisible: programsVisible)), as: UTF8.self)
+          let programURLs = try await registerPrograms(packages, payload: current)
+          guard !Task.isCancelled, generation == expected else { continue }
+          let frame = String(decoding: try encoder.encode(current.frame(generation: expected, programURLs: programURLs, programsVisible: programsVisible, programStateCredit: programStateCredits(current))), as: UTF8.self)
           recordPreparation(.frameEncodedAt, trace: trace)
           var script = ""
           if let source { script += "await window.notebookRenderer.installPageSource(\(source.json));" }
-          if let state { script += "window.notebookRenderer.applyState(\(state));" }
+          if let state {
+            guard try await state.send(controller: "notebookRenderer", in: web) else { throw CancellationError() }
+            guard !Task.isCancelled, generation == expected else { continue }
+          }
           // Keep the submitted page bytes and physical lease charged through the
           // actual serial render, including its non-cancellable image decode tail.
           script += "await window.notebookRenderer.presentPage(\(frame));"
@@ -2414,7 +2597,7 @@ private enum DocumentWebViewFactory {
     let capturesSnapshot: Bool
     let onRenderReady: PageTurnReadiness
     let onPageLayout: (DocumentPageLayout) -> Void
-    let onStateChange: (String, JSONValue) -> ContentFieldVersion?
+    let onStateChange: (String, JSONValue) async throws -> ContentFieldVersion?
     let resources: SceneRenderResources
     var snapshotPixelWidth: Int? = nil
     var onPreparationFailure: (Error) -> Void = { _ in }
@@ -2422,7 +2605,8 @@ private enum DocumentWebViewFactory {
     var isCurrent = true
     var isVisible = true
     var isPageTurnActive = false
-    var onStateCheckpoint: (String, JSONValue, ContentFieldVersion, ContentFieldVersion?) async throws -> ContentFieldVersion? = { _, _, _, _ in nil }
+    var onStateCheckpoint: (String, JSONValue, DocumentProgramIdentity, ContentFieldVersion?) async throws -> ContentFieldVersion? = { _, _, _, _ in nil }
+  var onStateDrained: () async -> Void = {}
     var measurements: DocumentPresentationRecorder? = nil
     var programStore: NotebookStore? = nil
     func makeCoordinator() -> DocumentPhysicalPageCoordinator { DocumentPhysicalPageCoordinator() }
@@ -2434,7 +2618,7 @@ private enum DocumentWebViewFactory {
          onStateChange: onStateChange,
           onLinkActivation: onLinkActivation,
         snapshotPixelWidth: snapshotPixelWidth, onPreparationFailure: onPreparationFailure,
-        onStateCheckpoint: onStateCheckpoint, measurements: measurements, programStore: programStore), in: view, resources: resources)
+        onStateCheckpoint: onStateCheckpoint, onStateDrained: onStateDrained, measurements: measurements, programStore: programStore), in: view, resources: resources)
     }
     static func dismantleUIView(_ view: DocumentWebHost, coordinator: DocumentPhysicalPageCoordinator) { coordinator.invalidate() }
   }
@@ -2542,7 +2726,7 @@ private enum DocumentWebViewFactory {
     let capturesSnapshot: Bool
     let onRenderReady: PageTurnReadiness
     let onPageLayout: (DocumentPageLayout) -> Void
-    let onStateChange: (String, JSONValue) -> ContentFieldVersion?
+    let onStateChange: (String, JSONValue) async throws -> ContentFieldVersion?
     let resources: SceneRenderResources
     var snapshotPixelWidth: Int? = nil
     var onPreparationFailure: (Error) -> Void = { _ in }
@@ -2550,7 +2734,8 @@ private enum DocumentWebViewFactory {
     var isCurrent = true
     var isVisible = true
     var isPageTurnActive = false
-    var onStateCheckpoint: (String, JSONValue, ContentFieldVersion, ContentFieldVersion?) async throws -> ContentFieldVersion? = { _, _, _, _ in nil }
+    var onStateCheckpoint: (String, JSONValue, DocumentProgramIdentity, ContentFieldVersion?) async throws -> ContentFieldVersion? = { _, _, _, _ in nil }
+  var onStateDrained: () async -> Void = {}
     var measurements: DocumentPresentationRecorder? = nil
     var programStore: NotebookStore? = nil
     func makeCoordinator() -> DocumentWebCoordinator {
@@ -2571,6 +2756,7 @@ private enum DocumentWebViewFactory {
       context.coordinator.ownsProgramState = snapshotPixelWidth == nil
       context.coordinator.setProgramsVisible(isVisible)
       context.coordinator.onStateCheckpoint = onStateCheckpoint
+      context.coordinator.onStateDrained = onStateDrained
       context.coordinator.update(document: document, state: state, selectedPageIndex: selectedPageIndex,
         capturesSnapshot: capturesSnapshot, onRenderReady: onRenderReady, onPageLayout: onPageLayout,
          onStateChange: onStateChange, snapshotPixelWidth: snapshotPixelWidth,

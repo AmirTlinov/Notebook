@@ -84,11 +84,16 @@ struct PageSurface: View {
             pageID: page.id,
             source: page.inkSource,
             suppressedInkIDs: model.pageSuppressedInkIDs(page),
-            isInputEnabled: isInteractive,
+            isInputEnabled: isVisible && isInteractive,
+            isVisible: isVisible,
+            isCurrent: isCurrent,
+            pageReadiness: onRenderReady,
+            refinesDetails: model.presencePhase == .settled,
             penStyle: model.activePenStyle,
             eraserStyle: model.eraserStyle,
             drawingTool: model.drawingTool,
             inputGate: model.inputGate,
+            publication: model.pageInkPublication,
             reserveAction: model.reserveDrawingAction,
             releaseAction: { model.releaseDrawingReservation(pageID: $0, stamp: $1) },
             acceptAction: { action, pageID, stamp, fit in
@@ -108,7 +113,8 @@ struct PageSurface: View {
             onElementErasing: model.updateElementErasing
           )
         #else
-          MacPageInkView(page: page, isInteractive: isVisible && isInteractive) { receipt in
+          MacPageInkView(page: page, isInteractive: isVisible && isInteractive, isVisible:isVisible,
+            isCurrent:isCurrent,pageReadiness:onRenderReady,refinesDetails:model.presencePhase == .settled) { receipt in
             readiness.recordInk(receipt);publishReadiness()
           }.id(page.id)
         #endif
@@ -153,13 +159,15 @@ struct PageSurface: View {
     AgentOverlayView(page:page,renderingScale:renderingScale,
       allowsInteraction:isVisible && isCurrent,inputEnabled:isVisible && isInteractive,
       onRenderReady:{ ready in
-        #if os(iOS)
-        if ready { liveElementEraser.presented(model.elementErasures(on:.page(page.id))) }
-        #endif
         readiness.recordGraphics(ready,page:page);publishReadiness()
-      },onState:{ elementID,state in
-        guard isVisible,isCurrent,model.activePage?.id == page.id else { return false }
-        return model.commitElementState(pageID:page.id,elementID:elementID,state:state)
+      },onErasurePresentation: { receipt in
+        #if os(iOS)
+        liveElementEraser.presented(receipt)
+        #endif
+      },onState:{ elementID,state,completion in
+        // Admission belongs to the live program; a turn cannot cancel a
+        // snapshot already accepted before this page lost presentation.
+        model.commitElementState(pageID:page.id,elementID:elementID,state:state,onCommitted:completion)
       },visibleRegion:visibleRegion,pageTurnActivity:onRenderReady.activity,
       rasterPreparation:onRenderReady.rasterContext ?? .init(owner:rasterPreparation,pageIndex:0),
       onFailure:onRenderReady.failed)

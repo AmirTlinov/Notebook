@@ -58,16 +58,81 @@ struct SceneCompositionLiveData: Sendable {
   let referenceBasis: NotebookReferenceBasis?
   let documentPaperSizes: [UUID: DocumentPaperSize]
   let nonemptyBoardIDs: Set<UUID>
+  let inkWindow: NotebookSpatialInkWindow?
   init(documents: [UUID: DocumentDocument], states: [UUID: DocumentStateJournal], pages: [UUID: PageDocument],
     ink: SpatialInkJournal, suppressedInkIDs: Set<UUID> = [], referenceIdentities: [NotebookReferenceIdentity] = [],
     referenceBasis: NotebookReferenceBasis? = nil, documentPaperSizes: [UUID: DocumentPaperSize] = [:],
-    nonemptyBoardIDs: Set<UUID> = []) {
+    nonemptyBoardIDs: Set<UUID> = [], inkWindow: NotebookSpatialInkWindow? = nil) {
     self.documents = documents; self.states = states; self.pages = pages; self.ink = ink
     self.suppressedInkIDs = suppressedInkIDs
     self.referenceIdentities = referenceIdentities
     self.referenceBasis = referenceBasis
     self.documentPaperSizes = documentPaperSizes
     self.nonemptyBoardIDs = nonemptyBoardIDs
+    self.inkWindow = inkWindow
+  }
+}
+
+/// One rendered scene owns its finite dependency witness. Validation repeats
+/// only the admitted index pages and addressed identities, never rendering or
+/// reading ink bodies. Camera is supplied by the publisher's presentation key.
+struct ScenePixelDependencies: Sendable {
+  struct Paint: Sendable {
+    let boardID: UUID
+    let coverID: UUID?
+    let bounds: WorkspaceSpatialBounds
+    let after: NotebookScenePaintPosition?
+    let poses: [String: NotebookElementPlacement.Source]
+    let entries: [WorkspaceSpatialEntry]
+    let positions: [NotebookScenePaintPosition]
+    let hasMore: Bool
+  }
+  struct Item: Sendable {
+    let id: UUID
+    let presence: SessionPresence
+    let value: RenderedWorkspaceItem?
+  }
+  let workspaceID: UUID
+  var records = NotebookSceneRecordDependencies()
+  var paints: [Paint] = []
+  var ink: [NotebookSpatialInkWindowRecords] = []
+  var boards: [UUID: Bool] = [:]
+  var cameras: [UUID: BoardPortalCamera] = [:]
+  var contents: [UUID: Bool] = [:]
+  var items: [Item] = []
+
+  func isCurrent(_ store: NotebookStore) throws -> Bool {
+    try store.readTransaction { store in
+      guard try store.workspaceHeader().workspaceID == workspaceID, try records.isCurrent(store) else { return false }
+      for (id, exists) in boards where try (store.readBoardNodeHeader(id) != nil) != exists { return false }
+      for (id, camera) in cameras where try (store.readBoardNodeHeader(id)?.portalCamera ?? .init()) != camera { return false }
+      for (id, content) in contents where try store.boardHasContent(id) != content { return false }
+      for item in items where try Self.readItem(store, id: item.id, presence: item.presence) != item.value { return false }
+      for query in paints {
+        let page = try store.readCurrentScenePaintOrder(boardID: query.boardID, coverID: query.coverID,
+          bounds: query.bounds, after: query.after, groupPoses: query.poses)
+        guard page.entries == query.entries, page.positions == query.positions, (page.next != nil) == query.hasMore else { return false }
+      }
+      for query in ink where try !query.isCurrent(store) { return false }
+      return true
+    }
+  }
+
+  fileprivate static func readItem(_ store: NotebookStore, id: UUID, presence: SessionPresence) throws -> RenderedWorkspaceItem? {
+    guard let header = try store.readItemHeader(id), let node = try store.readBoardItem(id), node.id == presence.boardID else { return nil }
+    let geometry: WorkspaceItemGeometry
+    if header.kind == .document {
+      guard let paper = try store.readDocumentPaperSize(id) else { throw SceneRenderError.snapshotPending("document_paper") }
+      geometry = .document(paper)
+    } else { geometry = .notebook }
+    if let placement = node.board.freeItems.first(where: { $0.itemID == id }) {
+      return .init(item: header.item, geometry: geometry, center: placement.center, zIndex: Double(placement.zIndex), stackID: nil)
+    }
+    guard let stack = node.board.stacks.first(where: { $0.itemIDs.contains(id) }), let index = stack.itemIDs.firstIndex(of: id) else { return nil }
+    if presence.mode != .board, let focused = presence.focusedItemID, stack.itemIDs.contains(focused), focused != id { return nil }
+    let center = WorkspaceItemStackPresentation.focusedCenter(of: id, in: stack) ?? stack.center
+    return .init(item: header.item, geometry: geometry, center: center,
+      zIndex: Double(stack.zIndex) + Double(index) / 100, stackID: stack.id)
   }
 }
 
@@ -94,6 +159,9 @@ actor SceneCompositionSource {
   }
   private let origin: Origin
   private let reader: NotebookReadSession?
+  private let validationIdentities: [NotebookReferenceIdentity]?
+  private var inkWindow: NotebookSpatialInkWindow?
+  private var pixelWitness: ScenePixelDependencies?
   // Only the last painted erased element is retained. Adjacent tiles often
   // revisit it; a source reader must not accumulate an archive of derived paths.
   private var preparedAppearance: (NotebookElementErasureCache.Input, NotebookElementAppearance)?
@@ -104,11 +172,29 @@ actor SceneCompositionSource {
   private var folderContents: [UUID: Bool] = [:]
 
   init(store: NotebookStore, revision: UInt64, workspaceID: UUID,
-    groupPoses:[SceneCompositionPlane:[String:NotebookElementPlacement.Source]] = [:]) {
+    groupPoses:[SceneCompositionPlane:[String:NotebookElementPlacement.Source]] = [:],
+    validationIdentities: [NotebookReferenceIdentity]? = nil, inkWindow: NotebookSpatialInkWindow? = nil,
+    recordPixelDependencies: Bool = false) {
     origin = .sql(store); reader = NotebookReadSession(store: store); self.revision = revision; validatedRevision = revision; self.workspaceID = workspaceID;self.groupPoses=groupPoses.filter { !$0.value.isEmpty }
+    self.validationIdentities = validationIdentities
+    self.inkWindow = inkWindow?.cursor == revision ? inkWindow : nil
+    pixelWitness = recordPixelDependencies ? .init(workspaceID: workspaceID) : nil
   }
   init(index: WorkspaceSceneIndex, hierarchy: BoardHierarchy, journal: SpatialInkJournal, revision: UInt64 = 0) {
     origin = .values(index, hierarchy, journal); reader = nil; self.revision = revision; validatedRevision = revision; workspaceID = index.generationID;groupPoses=[:]
+    validationIdentities = nil; inkWindow = nil; pixelWitness = nil
+  }
+
+  func pixelDependencies() throws -> ScenePixelDependencies? {
+    try validate()
+    return pixelWitness
+  }
+
+  private func recorded<Value>(_ store: NotebookStore, _ read: () throws -> Value) throws -> Value {
+    guard pixelWitness != nil else { return try read() }
+    let result = try store.readRecordingSceneRecords(read)
+    try pixelWitness!.records.merge(result.dependencies)
+    return result.value
   }
 
   func programStore() -> NotebookStore? { if case .sql(let store) = origin { store } else { nil } }
@@ -124,9 +210,10 @@ actor SceneCompositionSource {
       let header = try store.workspaceHeader()
       guard header.workspaceID == workspaceID else { throw NotebookStorageError.transactionConflict }
       if header.cursor != validatedRevision {
-        guard try store.sceneSourceIsUnchanged(from: validatedRevision, through: header.cursor) else {
-          throw NotebookStorageError.transactionConflict
-        }
+        let unchanged = try pixelWitness.map { try $0.isCurrent(store) } ?? validationIdentities.map { identities in
+          try store.referenceIdentities(targets: identities.map(\.target)) == identities
+        } ?? store.sceneSourceIsUnchanged(from: validatedRevision, through: header.cursor)
+        guard unchanged else { throw NotebookStorageError.transactionConflict }
         validatedRevision = header.cursor
       }
       return try read(store)
@@ -135,13 +222,21 @@ actor SceneCompositionSource {
 
   func boardExists(_ id: UUID) throws -> Bool {
     switch origin {
-    case .sql(let store): try checked(store) { try $0.readBoardNodeHeader(id) != nil }
+    case .sql(let store): try checked(store) {
+      let value = try $0.readBoardNodeHeader(id) != nil
+      pixelWitness?.boards[id] = value
+      return value
+    }
     case .values(let index, _, _): index.board(id: id) != nil
     }
   }
   func portalCamera(_ id: UUID) throws -> BoardPortalCamera {
     switch origin {
-    case .sql(let store): try checked(store) { try $0.readBoardNodeHeader(id)?.portalCamera ?? .init() }
+    case .sql(let store): try checked(store) {
+      let value = try $0.readBoardNodeHeader(id)?.portalCamera ?? .init()
+      pixelWitness?.cameras[id] = value
+      return value
+    }
     case .values(_, let hierarchy, _): hierarchy.portalCamera(id) ?? .init()
     }
   }
@@ -150,7 +245,11 @@ actor SceneCompositionSource {
     if let value = folderContents[id] { return value }
     let value: Bool
     switch origin {
-    case .sql(let store): value = try checked(store) { try $0.boardHasContent(id) }
+    case .sql(let store): value = try checked(store) {
+      let value = try $0.boardHasContent(id)
+      pixelWitness?.contents[id] = value
+      return value
+    }
     case .values(_, let hierarchy, let journal):
       guard hierarchy.board(id) != nil else { throw SceneRenderError.snapshotPending("folder_source") }
       value = !hierarchy.isEmpty(id, spatialInk: journal)
@@ -159,11 +258,30 @@ actor SceneCompositionSource {
     return value
   }
 
-  func ink(_ surface: SurfaceID) throws -> SpatialInkJournal {
+  private func window(_ store: NotebookStore, coverage: [SurfaceID: WorkspaceSpatialBounds],
+    elements: [SurfaceID: [String]] = [:]) throws -> NotebookSpatialInkWindow {
+    if let inkWindow, inkWindow.covers(coverage, elements: elements) {
+      try retainInkWitness(inkWindow.records)
+      return inkWindow
+    }
+    let result = try store.readSpatialInkWindow(coverage: coverage, elementIDs: elements)
+    inkWindow = result
+    try retainInkWitness(result.records)
+    return result
+  }
+
+  private func retainInkWitness(_ value: NotebookSpatialInkWindowRecords) throws {
+    guard pixelWitness != nil, !pixelWitness!.ink.contains(value) else { return }
+    guard pixelWitness!.ink.count < 8192 else { throw SceneRenderError.resourceLimit }
+    pixelWitness!.ink.append(value)
+  }
+
+  func ink(_ surface: SurfaceID, bounds: WorkspaceSpatialBounds) throws -> SpatialInkJournal {
     switch origin {
     case .sql(let store): return try checked(store) {
-      let journal = try $0.readSpatialInk(surfaces: [surface])
-      let presentation = try $0.graphicPresentation(on: surface, sourceInkIDs: Set(journal.actions.map(\.id)))
+      let journal = try window($0, coverage: [surface: bounds]).journal
+      let store = $0
+      let presentation = try recorded(store) { try store.graphicPresentation(on: surface, sourceInkIDs: Set(journal.actions.map(\.id))) }
       return journal.presenting(excluding: presentation.suppressedInkIDs)
     }
     case .values(_, let hierarchy, let journal):
@@ -194,20 +312,25 @@ actor SceneCompositionSource {
         }
         let pageIDs = opensPaper && presence.selectedItemID.map(itemIDs.contains) == true
           ? (presence.notebookPageID.map { [$0] } ?? []) : []
-        // A camera transition or a smaller allocation candidate does not
-        // change measured ink. Borrow the cohort's existing value only at
-        // this exact checked SQL cut and for surfaces it fully loaded.
-        let reusedInk: SpatialInkJournal?
-        if let previous, previous.plan.workspaceID == workspaceID, previous.plan.revision == revision,
-          Set(surfaces).isSubset(of: Set(previous.plan.inkSurfaces)) {
-          let wanted = Set(surfaces)
-          reusedInk = wanted == Set(previous.plan.inkSurfaces) ? previous.data.ink
-            : .init(actions: previous.data.ink.actions.filter { $0.spans.contains { wanted.contains($0.surface) } },
-              stamp: previous.data.ink.stamp)
-        } else { reusedInk = nil }
-        let data = try store.readWorkingSet(itemIDs: documents, pageIDs: pageIDs, boardIDs: [],
-          surfaces: reusedInk == nil ? surfaces : [])
-        let ink = reusedInk ?? data.ink
+        var inkCoverage: [SurfaceID: WorkspaceSpatialBounds] = [:]
+        for surface in surfaces {
+          if surface.kind == .board {
+            guard let view = plan.presentations[.board(surface.ownerID!)] else { throw SceneRenderError.snapshotPending("ink_coverage") }
+            inkCoverage[surface] = NotebookSceneState.bounds(for: view)
+          } else {
+            let geometry = frame.index.documentPaperSizes[surface.ownerID!].map(WorkspaceItemGeometry.document) ?? .notebook
+            inkCoverage[surface] = .init(origin: .zero, width: geometry.width, height: geometry.height)
+          }
+        }
+        var inkElements: [SurfaceID: [String]] = [:]
+        for workset in Array(frame.worksets.values) + Array(frame.covers.values) {
+          for element in workset.elements where inkCoverage[element.surface] != nil { inkElements[element.surface, default: []].append(element.id) }
+        }
+        if let old = previous?.data.inkWindow, previous?.plan.revision == revision,
+          old.covers(inkCoverage, elements: inkElements) { inkWindow = old }
+        let inkSource = try window(store, coverage: inkCoverage, elements: inkElements)
+        let data = try store.readWorkingSet(itemIDs: documents, pageIDs: pageIDs, boardIDs: [], surfaces: [])
+        let ink = inkSource.journal
         guard data.documents.count == documents.count, data.states.count == documents.count,
           data.pages.count == pageIDs.count else { throw SceneRenderError.snapshotPending("live_owner_payload") }
         var targets = Set(plan.presentations.keys.compactMap { plane -> CollaborationTarget? in
@@ -229,7 +352,7 @@ actor SceneCompositionSource {
         // descendants own backing; no invisible ancestor competes for pixels.
         let referenceRoot = plan.rootBoardID
         let basis = try store.referenceBasis(rootBoardID: referenceRoot,
-          targets: targets.sorted { $0.key < $1.key }, surfaces: replaceable,
+          targets: targets.sorted { $0.key < $1.key }, surfaces: replaceable, inkActionIDs: Set(ink.actions.map(\.id)),
           liveOwners: plan.presentedOwners.map { owner in
             switch owner.id {
             case .item(let id): return .item(boardID: owner.plane.boardID, id: id)
@@ -244,7 +367,7 @@ actor SceneCompositionSource {
         return .init(documents: data.documents, states: data.states, pages: data.pages, ink: ink, suppressedInkIDs: suppressed,
           referenceIdentities: basis.identities, referenceBasis: basis,
           documentPaperSizes: frame.index.documentPaperSizes.filter { itemIDs.contains($0.key) },
-          nonemptyBoardIDs: nonemptyBoardIDs)
+          nonemptyBoardIDs: nonemptyBoardIDs, inkWindow: inkSource)
       }
     case .values(_, let hierarchy, let journal):
       let wanted = Set(surfaces)
@@ -348,7 +471,7 @@ actor SceneCompositionSource {
   }
   func element(_ id: String, boardID: UUID) throws -> SpatialElement? {
     switch origin {
-    case .sql(let store): try checked(store) { try $0.readSpatialElement(boardID: boardID, elementID: id) }
+    case .sql(let store): try checked(store) { store in try recorded(store) { try store.readSpatialElement(boardID: boardID, elementID: id) } }
     case .values(let index, _, _): index.element(id: id, boardID: boardID)
     }
   }
@@ -412,8 +535,11 @@ actor SceneCompositionSource {
     if let cached = erasureProjection[element.surface]?[element.id] { return cached }
     let value: [InkElementErasure]
     switch origin {
-    case .sql(let store): value = try store.readElementErasures(on: element.surface, elementID: element.id)
-    case .values: value = try ink(element.surface).elementErasures(on: element.surface)[element.id] ?? []
+    case .sql(let store):
+      let source = try store.readSpatialInkWindow(coverage: [:], elementIDs: [element.surface: [element.id]])
+      try retainInkWitness(source.records)
+      value = source.journal.elementErasures(on: element.surface)[element.id] ?? []
+    case .values(_, _, let journal): value = journal.elementErasures(on: element.surface)[element.id] ?? []
     }
     erasureProjection[element.surface, default: [:]][element.id] = value
     return value
@@ -425,7 +551,8 @@ actor SceneCompositionSource {
         ? CollaborationTarget(kind:.cover,id:element.surface.ownerID!,boardID:boardID) : .init(kind:.board,id:boardID)
       let plane=element.surface.kind == .cover
         ? SceneCompositionPlane.cover(boardID:boardID,itemID:element.surface.ownerID!) : .board(boardID)
-      return try $0.readElementPlacement(target:target,elementID:element.id,groupPoses:groupPoses[plane] ?? [:])
+      let store = $0
+      return try recorded(store) { try store.readElementPlacement(target:target,elementID:element.id,groupPoses:groupPoses[plane] ?? [:]) }
     }
     case .values(let index,_,_):
       let plane=element.surface.kind == .cover ? SceneCompositionPlane.cover(boardID:boardID,itemID:element.surface.ownerID!) : .board(boardID)
@@ -440,7 +567,8 @@ actor SceneCompositionSource {
         ? CollaborationTarget(kind:.cover,id:element.surface.ownerID!,boardID:boardID)
         : CollaborationTarget(kind:.board,id:boardID)
       let plane=element.surface.kind == .cover ? SceneCompositionPlane.cover(boardID:boardID,itemID:element.surface.ownerID!) : .board(boardID)
-      return try $0.readGraphicResolution(target:target,elementID:element.id,groupPoses:groupPoses[plane] ?? [:]).layout
+      let store = $0
+      return try recorded(store) { try store.readGraphicResolution(target:target,elementID:element.id,groupPoses:groupPoses[plane] ?? [:]).layout }
     }
     case .values(let index, _, _): return index.graphicLayout(id:element.id,boardID:boardID)
     }
@@ -450,20 +578,12 @@ actor SceneCompositionSource {
     case .values(let index, _, _): return index.renderedItem(id: id, presence: presence)
     case .sql(let store):
       return try checked(store) { store in
-        guard let header = try store.readItemHeader(id), let node = try store.readBoardItem(id), node.id == presence.boardID else { return nil }
-        let geometry: WorkspaceItemGeometry
-        if header.kind == .document {
-          guard let paper = try store.readDocumentPaperSize(id) else { throw SceneRenderError.snapshotPending("document_paper") }
-          geometry = .document(paper)
-        } else { geometry = .notebook }
-        if let placement = node.board.freeItems.first(where: { $0.itemID == id }) {
-          return .init(item: header.item, geometry: geometry, center: placement.center, zIndex: Double(placement.zIndex), stackID: nil)
+        let value = try ScenePixelDependencies.readItem(store, id: id, presence: presence)
+        if pixelWitness != nil {
+          guard pixelWitness!.items.count < 8192 else { throw SceneRenderError.resourceLimit }
+          pixelWitness!.items.append(.init(id: id, presence: presence, value: value))
         }
-        guard let stack = node.board.stacks.first(where: { $0.itemIDs.contains(id) }), let index = stack.itemIDs.firstIndex(of: id) else { return nil }
-        if presence.mode != .board, let focused = presence.focusedItemID, stack.itemIDs.contains(focused), focused != id { return nil }
-        let center = WorkspaceItemStackPresentation.focusedCenter(of: id, in: stack) ?? stack.center
-        return .init(item: header.item, geometry: geometry, center: center,
-          zIndex: Double(stack.zIndex) + Double(index) / 100, stackID: stack.id)
+        return value
       }
     }
   }
@@ -475,7 +595,16 @@ actor SceneCompositionSource {
         var cursor: NotebookScenePaintCursor?
         if let after { guard case .sql(let value) = after else { throw NotebookStorageError.transactionConflict }; cursor = value }
         let plane=coverID.map { SceneCompositionPlane.cover(boardID:boardID,itemID:$0) } ?? .board(boardID)
-        let page = try store.readScenePaintOrder(boardID: boardID, coverID: coverID, bounds: bounds, after: cursor, limit: 32,groupPoses:groupPoses[plane] ?? [:])
+        let poses = groupPoses[plane] ?? [:]
+        let page: NotebookScenePaintPage
+        if pixelWitness != nil {
+          page = try store.readCurrentScenePaintOrder(boardID: boardID, coverID: coverID, bounds: bounds, after: cursor?.position, groupPoses: poses)
+          guard pixelWitness!.paints.count < 8192 else { throw SceneRenderError.resourceLimit }
+          pixelWitness!.paints.append(.init(boardID: boardID, coverID: coverID, bounds: bounds, after: cursor?.position,
+            poses: poses, entries: page.entries, positions: page.positions, hasMore: page.next != nil))
+        } else {
+          page = try store.readScenePaintOrder(boardID: boardID, coverID: coverID, bounds: bounds, after: cursor, limit: 32, groupPoses: poses)
+        }
         return .init(entries: page.entries, next: page.next.map(SceneCompositionReadCursor.sql))
       }
     case .values(let index, _, _):

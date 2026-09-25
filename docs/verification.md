@@ -8541,6 +8541,314 @@ Simulator native: `NotebookChatRenderingTests` **1/1 PASS** и
 **1/1 PASS**, `/tmp/notebook-repair-chat-delta.log`, включая prepend в раскрытую
 группу с сохранением прежнего DOM. Это прицельная проверка, не длительный UX-run.
 
+### GUI-306 — связанные Core/native проверки ремонта
+
+Проверки ниже относятся к изолированному repair worktree и локальным свежим
+хранилищам, не к рабочему контейнеру Амира. Они не заменяют заключительный
+согласованный Mac/Simulator run. Для изолированной сборки назначен build
+**204**; production build 203 из соседней задачи не заменялся.
+
+| Владелец / регрессия | Фактический результат |
+|---|---|
+| A05: весь pending receipt backlog, rollback, restart, retry | 71 записи — 2 пакета; 1000 — 16; после записанного пакета reopen продолжает остаток; повтор не публикует изменений. Среди 100 000 обработанных и одной pending поиск занимает 34 SQLite VM steps. |
+| A12: BLOB по смещению и миграция prefix | 5 592 552 байта, 114 частей, 9 279 VM steps. Повторы читают только свои диапазоны; суммарное повторное чтение равно payload, а не сумме растущих префиксов. |
+| A16: локальное продолжение и полученный порядок из 100 000 страниц | 13 изменённых адресов; 7 741 VM steps локально, 11 623 при получении вместо 311 467 до исправления счётчика полей. Конкурентный порядок и duplicate leaf/subtree проверены. |
+| A09: одна видимая запись среди 100 000 на той же доске | Окно 844 VM steps; проверка hashes 759; reference basis 304; folder content 156. Append 2164, Undo 2069, echo 76; полные скрытые тела не декодируются. |
+| A01/A08/R04: identity, addressed state и большой JSON | 53/53 PASS: ABA четырёх полей, удаление/создание, последовательные Unicode states >5 MiB, checkpoint/reopen, NIM1/NIB2 lossless expansion и budget−1 rejection. Публичный block read budget не расширен. |
+| A04: warm inverse и viewport cache из 100 000 действий | Нет полного mesh build; Undo/Redo посещает 2 видимых query entries, а не всю историю. |
+| A07/A13: точный контур и immutable typed selection | 8192 точки без упрощения, overflow сохраняет прежнее выделение; 100 000 объектов/измеренных samples проверены, JSON roundtrip подготовки удалён. |
+
+Core журналы: `/tmp/notebook-architecture-core-final-scale.log` — **45/45**,
+8 suites, 239.087 s; `/tmp/notebook-architecture-core-final-arrival.log` —
+**13/13**, 2 suites, 33.563 s; `/tmp/notebook-architecture-core-final-chat.log` —
+**24/24**, 0.515 s; `/tmp/notebook-repair-program-final-core-3.log` — **53/53**,
+5 suites, 17.067 s. Новый state-window reader не меняет SQLite/schema владельцев
+первых трёх наборов. `MCP` после новых state windows/credit: **173/173 PASS** и
+`npm run check` PASS, `/tmp/notebook-repair-mcp-documents-final-3.log`.
+Проверочный Python runner: **89/89 PASS**, 7.727 s,
+`/tmp/notebook-repair-verification-3.log`.
+
+**R01 подтверждён, не профилактическая оптимизация.** В actual Simulator до
+изменений 30 движений камеры на каждом из четырёх mounted листов вызвали
+59 allocations / 30 resizes / 30 projection changes. После изменения через
+реальные current/demanded роли (всем четырём задан общий `isVisible=true`)
+три скрытых листа получили **0/0/0**, текущий — **2/1/1**; подготовленный target
+уточняется при его настоящем запросе до допуска перелистывания. Источники:
+`/tmp/notebook-repair-r01-before.xcresult` и
+`/tmp/notebook-repair-native-focused-4.xcresult`. Это счётчики работы backing,
+не измерение кадров в секунду.
+
+**R02 подтверждён адресной проверкой.** `PageVisionDemandTests` — **3/3 PASS**
+на настоящем Mac app/WebKit: изменение другой страницы оставляет mtime PNG и
+page-vision неизменными, общая metadata квитанции обновляется, shutdown не
+допускает позднего publisher. В final writer header и все pixel dependencies
+проверяются одним SQLite snapshot; page/document больше не проходят global
+scene-cursor fence. `/tmp/notebook-repair-native-mac-focused-4.xcresult`:
+**61/62 PASS**, единственный оставшийся отказ относится к R03 export fixture,
+а не к preview/runtime/Codex.
+
+Промежуточные отрицательные результаты сохранены. Simulator focused-4:
+**92/96**, затем узкий focused-5: **3/3** после исправления arrival fixture и
+реального minimum paper backing под давлением памяти. Native reading-camera
+fixture переносил открытую бумагу, где прежний constraint закономерно следовал
+за ней; fixture теперь проверяет обычный board-move с ненулевой камерой,
+production constraint не ослаблен. Mac R03 сначала выявил реальный поиск export
+source через чужой registry вместо точного coordinator owner; следующий отказ
+показал отсутствие обязательного author exportFrame в fixture.
+
+100-мс new-leaf window gate ещё **не принят**: первая серия десяти повторов
+после неудачного SDR observer experiment дала **0/10**, правильные пиксели.
+Нативные contact/ready фазы — 1–3 / 12–25 ms; window capture/decode входят в тот
+же неизменный deadline и не выдаются за физическую задержку Pencil. Experiment
+удалён; повтор с теми же probes и bounded decode измерителя ещё требуется.
+
+Расширенный связанный Simulator run `notebook-repair-native-integrated-1`:
+**371/396 PASS**, 25 FAIL, 0 skipped; raw `.xcresult`, summary и action log
+сохранены в `/tmp/notebook-repair-native-integrated-1*`. В нём прошли настоящие
+UIKit Copy/Cut, четыре проверки lifetime state-credit, persistence и 49 проверок
+program owner. Отказы затронули checkpoint bridge, unfocused program admission,
+пространственный handoff, повторное использование web raster и несколько старых
+синхронных/полносценовых предположений fixtures. Этот run **не принят**; исправления
+и повтор ниже должны закрыть каждый отказ, а не исключить его из выбранного scope.
+Попытка bounded-observer build-8 остановилась на неоднозначном `CGFloat.nan` в
+новой negative-control проверке; XCTest не запускался. Тип уточнён явно.
+
+Повтор всех suites с отказами `native-integrated-2`: **173/176 PASS**, 3 FAIL,
+0 skipped, `/tmp/notebook-repair-native-integrated-2.xcresult`. Теперь приняты все
+21 SpatialInkHandoff, SceneComposition (включая warm-cache checks), GroupGraphic
+и PageInkGeometry; остаются три program-view проверки. При review найдена ещё одна
+граница A01/R04: перенос старого descriptor при навигации того же WKWebView; до
+её исправления программный срез не считается завершённым.
+
+100-мс gate после исправления измерителя: **10/10 PASS**, 67.299375–88.062375 ms,
+медиана 71.380271 ms. Вместе с проверками полноты и отрицательными контролями:
+**16 тестов × 10 = 160/160 PASS**, `/tmp/notebook-repair-native-bounded-observer-ten.xcresult`.
+Каждый first-stroke run снимал два полных окна, декодировал только точный набор
+probes; тот же набор сравнивается с полным декодером в negative-control tests.
+Съёмка занимала 14.033208–19.718458 ms, decode/check — 0.060333–0.225667 ms.
+Это устранение накладных расходов **измерителя**, не новое ускорение приложения:
+контакт begin→lift 0.979833–3.048791 ms, Simulator GPU-ready 13.73325–21.291625 ms.
+Ни одно из этих чисел не является физическим input-to-photon.
+
+A13 actual UIKit проверки уже выполнены в `native-integrated-1`:
+`testUIKitCopyPublishesItsCapturedMaterialAfterSelectionChanges` — PASS 0.098816 s;
+`testUIKitCutRejectsChangedSourceWithoutWritingClipboardOrDeletingMaterial` —
+PASS 0.086894 s; `testUIKitNewerCopyIsTheOnlyClipboardPublicationOwner` —
+PASS 0.069278 s. Это настоящие Tasks/UIPasteboard в private test app; clipboard
+восстанавливается после каждого теста.
+
+
+### GUI-306 — интеграция границ принятых программных изменений
+
+Core follow-up: **63/63 PASS**, 6 suites, 17.765 s,
+`/tmp/notebook-repair-program-final-core-6.log`. Обязательный captured source basis
+проверяется для spatial events, включая ABA и удаление/создание; event/checkpoint
+имеют общий addressed writer. Page/document events после eviction сохраняют FIFO,
+>4 MiB Unicode и checkpoint/reopen без загрузки соседних элементов или всего
+журнала. Cold document event среди 100 000 записей: **2257 SQL VM instructions**.
+
+Предыдущий Mac follow-up `/tmp/notebook-repair-native-mac-focused-5.xcresult`:
+**61/62 PASS**. R03 multipage export прошёл с явным авторским `exportFrame`;
+оставшийся prewarm test проверял SQL receipt раньше отдельного writer fence —
+fixture теперь ожидает сам receipt, повтор ещё необходим.
+`/tmp/notebook-repair-native-mac-worker-5.xcresult`: **5/6 PASS**, включая отмену
+normalizer и продолжение accepted writes; интерактивному PDF fixture добавлен
+обязательный `exportFrame`, повтор ещё необходим.
+`/tmp/notebook-repair-native-routes-1.xcresult`: **50 PASS / 3 FAIL / 1 skipped**.
+Три fixtures приведены к действующему source/camera/generation контракту;
+physical-presentation-only scenario явно пропущен на Simulator. Это не PASS
+финальной приёмки и не измерение физических кадров iPad.
+
+Перед общей сборкой добавлены регрессии commit-before-ready, author failure после
+accepted commit, page/document eviction и суммарного lasso overflow между
+источниками. Runtime освобождает heap только после accepted tail, а lasso
+проверяет общий budget до точной геометрии и сохраняет прежнее выделение при
+отказе. Нативные результаты этих новых сценариев записываются после выполнения.
+
+
+При повторной проверке warm no-op обнаружен обход durable receipt: старая модель
+могла вернуть версию после source ABA или присвоить версию чужого causal winner.
+No-op теперь проходит того же addressed writer; document callback возвращает
+фактически сохранённую версию только для своего значения, не optimistic version.
+Core follow-up **64/64 PASS**, 22.673 s,
+`/tmp/notebook-repair-program-final-core-7.log`. Новые native blocked-writer и
+shutdown проверки семантически проверены Swift 6, но это ещё не их исполнение.
+Повтор актуального MCP: **174/174 PASS** и `npm run check` PASS,
+`/tmp/notebook-repair-mcp-integrated-4.log`; Python runner **89/89 PASS**, 8.220 s,
+`/tmp/notebook-repair-verification-4.log`.
+
+Соседний `37499bf1` интегрирован с одним `NotebookMetalFrameReadiness`: первая
+холодная точка также получает типизированный completion, а Simulator completion
+не превращается в физическую метку отображения. Новый held-contact тест не делает
+screenshots/move/lift до receipt; пиксели проверяются отдельно после него. Его
+результат из соседней ветки не выдаётся за результат этого интегрированного среза.
+
+
+Mac integrated follow-up: **123/124 PASS**, 123.049 s, без skipped,
+`/tmp/notebook-repair-native-mac-integrated-6.xcresult`. Все выбранные program state,
+receipt/ABA/eviction, document render/runtime, Sidecar, preview и реальные worker
+экспорты прошли. Единственный отказ находился в assertion публичного SDK ink:
+он декодировал `samples: []` как persisted relation string, хотя script уже
+успешно читал и преобразовывал эти samples. Assertion теперь отдельно проверяет
+expanded samples побитово и обязательный `relations` body; production не менялась.
+Адресный повтор **1/1 PASS**, 2.122 s,
+`/tmp/notebook-repair-native-mac-sdk-ink-7.xcresult`.
+
+Для R01 принята дополнительная локальная правка соседнего владельца: размер Metal
+backing устанавливается атомарно; синхронный MTK callback больше не допускает
+промежуточный старый/новый размер. Подготовка материала и один requestFrame идут
+после полной установки. Camera sweep теперь требует ровно одно выделение при
+единственном stationary refinement; нативное исполнение этого уточнения pending.
+
+
+Simulator integrated follow-up `/tmp/notebook-repair-native-integrated-3.xcresult`:
+**484 PASS / 5 FAIL / 1 skipped**, 421.9 s. Новые accepted-before-ready/author-failure,
+cold page/document FIFO, warm no-op ABA/foreign winner, общий lasso overflow и
+R01 с ровно одним refinement allocation прошли; первая held-dot тоже прошла.
+Три отказа локализованы в некорректных fixtures (несохранённые focused controls,
+program-state event для Markdown, ожидание прежнего пустого spatial window) и
+исправлены без изменения production. Остаются два 100 ms pixel-observation
+отказа: cold repeat 167.50 ms и первый холодный held stroke 107.48 ms. Пороги
+не меняются; стоимость наблюдателя и реальная готовность разделяются до повтора.
+Единственный skip относится к физической OS presentation, недоступной Simulator.
+
+Cold-repeat observer выполнял полный `zip/reduce` над 352/704 KB внутри
+100 ms окна в Debug: измерено **23.84–24.56 / 48.14–48.88 ms** на сравнение.
+Замена на точную byte→Double vector operation дала **0.73–1.07 / 1.44–2.16 ms**;
+целочисленная сумма остаётся точной, все байты и границы 0.15/0.5 сохранены.
+Пограничные negative controls прошли в отдельном измерении, native повтор pending.
+`/tmp/notebook-repair-page-ink-difference-benchmark.log`. Это снижение стоимости
+проверки, не доказательство ускорения production.
+
+Независимый финальный review выявил ещё одну причину R04: loaded document
+checkpoint удерживал admission снимка и одновременно запрашивал вторую admission
+для полного readback того же state. При ~9 MiB JSON две оценки ~72 MiB не помещаются
+в passive budget 128 MiB и ждут друг друга. Исправляется единый addressed writer
+receipt, включая no-op, без повторного чтения и reservation; регрессия на >9 MiB
+и удержание accepted receipt при writer failure обязательны до фиксации.
+
+Focused срез build-13: **38/39 PASS**, 32.942 s, без skipped/warnings,
+`/tmp/notebook-repair-native-final-focused-2.xcresult`. Три исправленных fixtures,
+cold-repeat с полным exact comparison, десяти-мегабайтный checkpoint под writer
+failure/Retry, текущая curl capture/admission и R01 прошли. Единственный отказ —
+следующий eraser: правильные пиксели получены за **120.25 ms** при лимите 100 ms.
+Предыдущий `final-focused-1` не выполнил тесты из-за ошибочной передачи списка
+selectors, его exit 0 не считается PASS.
+
+Фазы held stroke в этом же сценарии: handler **0.739 ms**; ранние screenshots
+заняли 0.74–19.26 и 39.66–60.11 ms MainActor; callback первого GPU completion
+получен на **60.49 ms**, окно совпало на **98.36 ms**. Наблюдатель теперь сначала
+требует completion именно измеренного contact source/revision (для законченного
+eraser — актуальную stable frame), затем проверяет прежние пиксели. Обе стадии
+остаются внутри исходного 100 ms clock; новая cold-навигация всё ещё начинает
+контакт при первых видимых данных, без ожидания readiness до ввода. Повтор pending.
+
+Review Mac iframe path дополнительно обнаружил исключение ещё не ready-программ
+из close boundary и отсутствие native deadlines у state read/ACK. Эти причины
+A02/R04 исправляются отдельно до окончательного среза; пройденные Core/native
+проверки ранних событий других runtime-путей не закрывают эту поверхность.
+
+Предъявляемая paused-program metadata теперь также несёт `DocumentProgramIdentity`,
+а не content-only editor version. Core `NotebookExportPublicationTests` **16/16
+PASS**, 0.617 s: export отказывает прежнему кадру после CSS/JS/initialState изменений
+и после восстановления тех же значений (ABA), даже при неизменном HTML/version.
+`/tmp/notebook-repair-presented-identity-core-2.log`. Связанный native metadata
+fixture обновлён; его исполнение вместе с новыми state deadline/FIFO tests pending.
+
+
+## 25 сентября — GUI-295, работа захвата и проекции листа, Simulator
+
+После `eb3b4531` устранена лишняя работа камеры и захвата. Из GUI-306 перенесены
+единая проекция R01 и ограниченное декодирование пиксельных проб: скрытые соседи
+не меняют backing на каждом чужом движении камеры, текущий лист переиспользует
+покрытие в существующем диапазоне детализации. `projectPage` теперь устанавливает
+frame и drawable размер одной операцией без промежуточного admission. На четырёх
+листах и 30 шагах масштаба 1.01–1.30 прежние **59 выделений на каждый лист**
+заменены на **0 у трёх соседей и 1 у текущего** при уточнении после движения;
+исходная геометрия не перестраивается. Это счётчики работы, не FPS.
+
+Захват больше не навязывает полноразмерному снимку преобразование в SDR на главном
+потоке: UIKit выбирает свой 32/64-битный формат, прежний CI-renderer выводит BGRA8.
+Максимальный восьмибайтовый исходник и выровненные строки двух drawables учтены
+до захвата в прежнем общем лимите; разрешение не снижено, кэш страниц не добавлен.
+На Simulator 20 полноразмерных захватов заняли **12.99–19.26 мс, медиана 16.03 мс**;
+предварительный SDR-контроль — 27–33 мс. Это wall time участка на главном потоке,
+не CPU cycles и не полная задержка предъявления: первая CI-кодировка измеряется
+отдельно. Ответы отменённого curl не доставляются наблюдателю следующего источника.
+
+Проверка первого контакта теперь включает именно первый drawable пустого листа,
+пока удерживается первая точка, без движения/отрыва и снимков до квитанции.
+**10/10 PASS**: обработчик 0.67–2.40 мс, callback готовности GPU 5.99–23.86 мс.
+Simulator не даёт timestamp показа; эти числа не являются input-to-photon.
+
+- `native-range-native.xcresult`: **89/89 PASS**, включая готовность, проекцию,
+  100 тысяч исходных измерений, четыре Retina-листа, отмены, свежие слои обоих
+  направлений, ограниченный decoder и отрицательные контроли квитанций.
+- `native-range-gestures.xcresult`: **2/2 PASS**, настоящие свайпы и быстрые стрелки
+  плотных SVG, вход с доски, вытеснение листов и возврат. Снимки осмотрены.
+- Затем усилены только два test-only условия: перед снимком нужен актуальный
+  нативный кадр чернил **и** прежняя квитанция модели; старый source модели не
+  разрешает ранний блокирующий readback. Пороги, часы и пиксельные пробы прежние.
+  `native-receipt.xcresult`: захват **10/10**, исходный новый лист **10/10**,
+  наблюдение после удаления листа другим участником **5/10**. В последнем все
+  пиксели правильны, но пять наблюдений заняли **103.09–107.97 мс** вместо 100 мс
+  и потребовали три снимка по 16–19 мс. Этот остаток **не закрыт**.
+- `mac-projection.xcresult`: **3/3 PASS**; generic iPhoneOS build — **PASS**.
+  Runtime warnings/skips отсутствуют; Mac-компилятор сохранил три прежних
+  предупреждения лишних `try`/`await` в другом тесте графики.
+
+Широкий нативный/UI-срез: input hash `784fa083eb2729b0e3007a97d454f569f64df63928813a3cc89b9102b913457e`.
+Последний срез с усиленным test-only условием:
+`45c8528fdba2591f3da9f498ffe7962684fdfbe788daa195c2301b1ebd9cc081`.
+Runtime между ними не менялся. Предшествующие красные прогоны и удалённые
+эксперименты сохранены в [page-turn-latency.json](audit-evidence/2026-09-25/page-turn-latency.json).
+Физический iPad недоступен; Simulator выбран Амиром явно. 120 Гц, фактический
+показ первого кадра и длительная CPU/GPU/RSS-приёмка не подтверждены. Личные
+контейнеры и установленная рабочая пара не менялись. **GUI-295 остаётся открытой**,
+весь выбранный стресс-прогон не объявлен зелёным.
+
+Расширенный state-срез build-14: **156/162 PASS**, 206.72 s, без skipped/runtime
+warnings, `/tmp/notebook-repair-native-final-state-3.xcresult`. Полная metadata
+идентичность, retained FIFO/partial-read/ACK/revoke, 10 MiB checkpoint и остальные
+выбранные владельцы прошли. Четыре оставшихся state assertions исправлены по
+контракту (typed errors, ожидание retirement, запрет resume до writer Retry),
+исполнение исправленных проверок pending. Два pixel deadline отказа сохраняются:
+cold eraser **125.80 ms** (ещё неверные пиксели), cold repeat **110.48 ms**. Один
+native readiness gate не устраняет стоимость/фазу readback; лимит 100 ms неизменен.
+
+State boundary после финального review: Simulator build-15 исполнил все **25/25**
+`DocumentBlockRuntimeTests` / `ProgramStateTransferTests`, включая исправленные
+четыре assertions; production state-код после этого не менялся. Mac build-9:
+**68/70 PASS**, новые пять проверок настоящего WebKit→SQLite прошли. Два оставшихся
+fixture уточнены: timeout допускает только два возможных владельца одного срока;
+startup marker не требует недоступного `crypto.randomUUID` в about:blank. Повторы
+build-10 и build-11 закрыли соответственно generation timeout и spatial writer
+failure/Retry (**по 1/1 PASS**). Writer refusal не разрешает resume или новый heap;
+accepted FIFO, pause/checkpoint hooks и boot identity проверены явно. Результаты:
+`/tmp/notebook-repair-native-window-phase-1.xcresult`,
+`/tmp/notebook-repair-native-mac-final-state-9.xcresult`,
+`/tmp/notebook-repair-native-mac-final-two-10.xcresult`,
+`/tmp/notebook-repair-native-mac-final-one-11.xcresult`.
+
+Общий эксперимент наблюдения окна только в UIKit afterUpdateComplete отвергнут:
+Metal может завершить правильный кадр без следующей UIKit-фазы. Два варианта дали
+73/88 и 34/46 PASS соответственно, в том числе новые ложные pixel deadline failures;
+оба полностью удалены, прежний 16-мс observer и full-frame exact comparison
+восстановлены. Эти прогоны не объявляются успешной UI-приёмкой. У cold eraser
+последний trace показал stable callback на 16.11 ms, но снимки 31–53 и 53–73 ms ещё
+не содержали нового кадра; причина между GPU completion и наблюдаемым изображением
+остаётся предметом проверки. Порог 100 ms не менялся. Отдельные UI-update replay
+с порогом 20 ms также ещё красные; отсутствующий в Simulator OS Metal presentation
+не подменяется UIKit ACK. Swift 6 typecheck восстановленных helpers — PASS:
+`/tmp/notebook-repair-window-observer-restored-typecheck.log`.
+
+Проверка истории выявила отдельный остаток A01: старые immutable attention receipts
+содержат только content version, а новая presented metadata требует четыре causal
+versions. Такие старые кадры нельзя признавать свежим доказательством либо мигрировать
+выдуманными versions. У Амира запрошено разрешение на узкое чтение прежней истории
+без признания её доказательством; до ответа и регрессии этот вопрос не закрыт.
+Согласованная Release-пара, десять UX-повторов и 30-минутная сессия ещё не выполнялись.
+
 
 ### GUI-306 — A13, единый экспорт выделения
 
@@ -8571,6 +8879,80 @@ Copy в другом окне и изменение системного `change
 выбраны неверным именем класса в skip-selector и не имеют OS timestamps
 на Simulator; остальные отказы оконных/latency-проверок остаются открыты.
 
+### GUI-306 — A17, тип записи и фактическое изменение
+
+Peer disconnect, admission и render/placement requests больше не будят доставку
+общего содержимого; их тип остаётся барьером порядка очереди. Настоящие
+commitAction и shared point будят её. Независимый review нашёл ещё пропуск:
+успешный state event сравнивался с собственной оптимистической конечной версией
+и ошибочно считался no-op. Теперь существующий projection writer возвращает
+фактический эффект записи отдельно от разрешения runtime принять значение.
+Нет дополнительных чтений страницы/cursor и отдельного писателя. Проигравшее
+concurrent значение с новой causal metadata уведомляет доставку, но не получает
+чужой basis; повторный warm/cold no-op ничего не будит.
+
+`NotebookPageElementCommandTests`: **20/20 Core PASS**, 24.200 s,
+`/tmp/notebook-repair-page-state-effects-2.log`, включая causal-only contribution,
+точный повтор, >4 MiB FIFO/checkpoint и адресное чтение при 99 000 прежних полей.
+Simulator build-18: **37/37 PASS**, 0 skipped/runtime warnings,
+`/tmp/notebook-repair-native-owner-18.xcresult` — новые уведомления, настоящий
+state event/no-op, AgentState и persistence. Mac adapter regression закрыта: **15/15 PASS**, без skipped/runtime warnings,
+`/tmp/notebook-repair-native-mac-owner-19.xcresult` (A17, AgentState и три прежние
+PageVision проверки); приватные script services переподписаны штатными
+исходными ограничениями перед запуском.
+
+Отдельно **1/1 PASS**, `/tmp/notebook-repair-native-warm-board-18.xcresult`:
+warm-entry fixture прежде начинал новый pinch до окончания предыдущего выхода.
+Теперь тот же исходный 1-секундный clock включает завершение перехода;
+production guard и бюджеты не менялись. Остальные pixel/20-ms отказы
+из owner-17 и общая финальная приёмка остаются открыты.
+
+Проверка лишней публикации ластика: admission теперь не вставляет пустые
+graphic-targets и не удаляет отсутствующий временный mask. Native observer
+подтвердил pen=0, distant eraser=0 и affected graphic=1 invalidation; Undo и
+точная сохранённая inactive action также прошли. Сам новый тест в
+`/tmp/notebook-repair-native-erasure-19.xcresult` пока красный: он сравнил
+active actionCount с общим числом3 после Undo. Проверка исправлена на
+3 сохранённых / 2 активных, её повтор pending. Общий прогон **3/6 PASS**:
+cold eraser **129.00 ms, false**, live mask **109.25 ms, true** — это не PASS.
+
+Счётчики того же cold-кадра исключили повторный полный mesh/projection/backing:
+meshPreparations=1, builds=0, projections=1, drawable resizes/allocations=1
+не изменились от pen lift до eraser ready. Retained texture выделена один раз,
+committed pass0→1→2. Handler1.32ms, callback ready55.06ms, window captures
+70.58–91.42 и107.56–129.02ms ещё не доказали новый кадр. Время callback
+на MainActor не приравнивается ни к GPU completion, ни к показу.
+
+Новый независимый R02 review нашёл queued cancellation gap: detached writer
+не наследует отмену preview caller, поэтому старые camera PNG/receipt могут
+публиковаться после ожидания FIFO. Также полный SessionPresence включал
+неизображаемый remembered selection в board pixel key. Эти два остатка
+снова открыты, добавляются отрицательные контроли; прежние3 Mac PASS
+не являются доказательством отсутствия этих гонок.
+
+
+### GUI-306 — R02, отрицательные контроли отложенного preview
+
+Изолированный Mac20 воспроизвёл все четыре новых дефекта: queued PNG и receipt
+публиковались после смены камеры, начала ввода и отмены publisher; selection-only
+перезаписывал неизменившийся PNG. **0/4 PASS** — намеренный исходный контроль,
+без ошибок постановки FIFO-барьера, а не успешная приёмка.
+`/tmp/notebook-repair-native-mac-owner-20.xcresult`, точные исходники в
+`/tmp/notebook-repair-native-mac-build-20-sources.json`.
+
+Исправление использует отзыв только производной публикации непосредственно перед
+I/O, не отменяет принятые команды общего writer и отделяет пиксельные зависимости
+от selection metadata. Для metadata-only добавлена отдельная регрессия с input и
+повтором того же запроса. Исполнение исправленного среза ещё ожидается.
+
+Исправленный Mac21: **8/8 PASS**, 10.273 s, без skipped/runtime warnings,
+`/tmp/notebook-repair-native-mac-owner-21.xcresult`. Включены три прежних сценария,
+четыре точных отрицательных контроля и metadata-only retry после input.
+`/tmp/notebook-repair-native-mac-build-21-sources.json` фиксирует исполненный срез.
+Перед новым admission после асинхронного чтения также повторяется проверка input
+budget; отмена производной записи не отменяет принятую selection и FIFO sentinel.
+Это закрывает R02 в данном срезе, но не заменяет финальную согласованную UX-пару.
+
 
 ### GUI-306 — отдельный слой хранения A05/A12/A16
 
@@ -8587,6 +8969,82 @@ manifest `/tmp/notebook-repair-storage-slice.json`, журнал
 прогресс и производные доказательства, не конвертирует исторические чернила.
 Native-потребитель backlog, spatial-индекс следующей миграции и общая UX-пара
 в этот коммит не входят; этот PASS не означает завершение всего ремонта.
+
+Попытка выделить только native A05 поверх этого storage-коммита остановлена на
+сборке: исходный HEAD напрямую вызывает недоступный Simulator SDK 27
+`CAMetalDrawable.addPresentedHandler`. Это существующая предпосылка render-среза,
+уже заменённая единым `NotebookMetalFrameReadiness` в общей рабочей версии.
+`/tmp/notebook-repair-arrival-slice-build.log` — BUILD FAIL, тесты не исполнялись.
+Отдельный A05 native коммит не создан: не добавляем ещё один completion shim ради
+нарезки коммитов. Его 37/37 combined-проверка относится к ранее указанному срезу.
+
+### GUI-306 — холодный ввод: выделен владелец задержки
+
+Исправленная регрессия пустых graphic-erasure публикаций повторена:
+**1/1 PASS**, 2.290 s, без skipped, `/tmp/notebook-repair-native-empty-erasure-23.xcresult`.
+Исходники: `/tmp/notebook-repair-native-profile-23-sources.json`.
+Попытка отдельно собрать native XCTest в Release22 остановилась до выполнения:
+fixture `NotebookDrawingFixture` и diagnostic `navigationStateDescription` доступны
+только в Debug. `/tmp/notebook-repair-native-optimized-build-22.log` — BUILD FAIL,
+не дефект исполненного Release-приложения и не UX PASS; DEBUG не включали скрыто.
+
+Точечный Time Profiler24 записал только проверенный PID приватного приложения,
+сверив Simulator, bundle, executable и Mach-O UUID; соседние приложения не захвачены.
+`/tmp/notebook-cold-app-profile-24/app.trace`, `identity.json`, `time-profile.xml`.
+Холодный сценарий по-прежнему **FAIL: 128.10 ms, correct=true** при неизменном
+пороге100 ms. Eraser handler1.14 ms; stable callback56.28 ms. В интервале trace
+1.244–1.280 s главный поток исполняет production `IPadCoverOpeningController.captureCover`
+и UIKit/Core Animation rasterization скрытой обложки; тестовый pixel readback
+появляется позже, около1.305 s. Retained allocation, mesh и projection не повторяются.
+Отпускание Pencil завершает admission, но не доказывает готовность нового кадра:
+фоновой подготовке нужен существующий точный receipt страницы. Исправление и его
+регрессия ещё не исполнены. Эти samples не являются FPS или touch-to-photon iPad.
+
+### GUI-306 — дополнительный плотный контрпример окна
+
+Самостоятельное Core-основание после `e16cfea7` прошло **11/11** коротких тестов
+за0.384 s: `/tmp/notebook-repair-spatial-foundation-short.log`, точные10 SHA в
+`/tmp/notebook-repair-spatial-foundation-slice.json`. Дополнительно исправлен
+производный tool classifier после разрешённой bulk замены pen↔eraser; actual
+regression включает reopen, off-window eraser и cascade deletion.
+
+Но sparse100 000 проверка не покрывала плотное перекрытие длинных contacts.
+Новый отрицательный контроль `/tmp/notebook-repair-spatial-dense-baseline.log`:
+**0/1 PASS**, 4.645 s, точные возвращённые IDs сохранены. При256→512 pens и
+erasers VM steps растут4 305 023→17 129 599 (3.98×), запросы257→513,
+повторно возвращённые eraser rows65 536→262 144. Это подтверждённая повторная
+работа внутри нового окна; A09 вновь открыт до её устранения. Отдельный raw
+fixture: `/tmp/NotebookSpatialInkWindowScalingTests.swift`.
+
+Проверка памяти отличает бюджеты: существующее раскрытие одного ink body уже
+проверяет ограничение256 MiB до portable decode, codec —128 MiB; window64 MiB
+ограничивает удержанный материал после decode. Это не неограниченная allocation;
+новый постоянный source limit и дублирующий cache не вводятся.
+
+### GUI-306 — повтор native25 и прицельный lasso profile26
+
+`/tmp/notebook-repair-native-cover-25.xcresult`: **21 PASS / 10 FAIL / 2 SKIP**,
+32.049 s. Два skip явно обозначают недоступную в Simulator OS Metal presentation,
+а не успешные20-ms физические измерения. Новый cover exact-stamp test прошёл;
+cold eraser callback теперь12.66 ms вместо56.28, но итоговый pixel deadline
+**104.47 ms FAIL**. Причина оставшейся задержки отдельно проверяется.
+
+У lasso composition все13 этапов теперь без смешанных кадров. Первый кадр cold
+move сохраняет целиком прежний материал и рамку; следующий полностью правильный
+на100.339 ms, поэтому весь тест всё ещё FAIL относительно прежних100 ms.
+Два вновь выбранных lasso unit fixtures неверно задавали projection/menu;
+исправляются без изменения production условий. Прочие100-ms и20-ms отказы
+из данного прогона не считаются закрытыми.
+
+`/tmp/notebook-lasso-app-profile-26/app.trace` — точный приватный PID97406,
+Mach-O UUID в `identity.json`, parsed stacks в `parsed-time-profile.json`.
+82 main-thread profile records (сумма sampled weights410 ms, не точная CPU duty)
+во время finger replay проходят через `XCTAssertNotNil` и рекурсивное описание
+всего `NotebookElementManipulation`. Это диагностическая работа XCTest даже
+на успешной проверке, не geometry/runtime приложения. В timed contact assertion
+заменён эквивалентным `XCTAssertTrue(manipulation != nil)`; смысл admission,
+каждый input sample, clock, pixel composition и пороги не изменены. Повтор ещё
+не исполнялся; этот профиль не объявляется успешной UX-приёмкой.
 
 ### GUI-306 — самостоятельное Core-основание окна, исправлен плотный рост
 
@@ -8608,6 +9066,56 @@ classifier проверены. Sparse100 000: окно701, witness616, append216
 echo76 VM steps. Контракт и результаты относятся к Core API/производному индексу;
 переключение native-сцены, attention contributions и общая UX-пара — отдельный срез.
 
+### GUI-306 — native28 после удаления фоновой съёмки обложки
+
+`/tmp/notebook-repair-native-cover-28.xcresult`: **23 PASS / 8 FAIL / 2 SKIP**,
+33.675 s; точные sources в `...-28-sources.json`. Cold pen91.041ms и следующий
+eraser98.340ms проходят100ms; все кадры lasso composition также без смешанного
+материала. Это один прогон, не10 повторов и не общая приёмка.
+
+Два cover-теста сравнивали Double-константу с alpha, возвращаемой UIKit после
+Float32 storage. Исправлено только Float-сравнение. Полный activities обнаружил
+также first-close submission391.26ms: запись уже случившегося XCTest failure
+лежит внутри того же измерения. Этот срок не считается ни чистой production
+латентностью, ни PASS; необходим повтор без ошибки измерителя.
+
+Три иных pixel deadlines остаютсяFAIL: draw-after-cuts110.989ms,
+stale-save113.842ms и live-eraser101.431ms, все correct=true. Для stale-save
+ранние кадры не видят только новый независимый штрих, а удалённое не возвращается.
+20ms UI-update replay такжеFAIL для shape, whole-object и cold-lasso-drag;
+lasso outline проходит. В опоздавших samples сами handlers занимают менее0.2ms;
+владелец задержки после них ещё устанавливается. Пороги и входной график сохранены.
+Временный gated native profile helper удалён из обоих test sources.
+
+Дополнительный review R03 нашёл повторное открытие PDF в каждом page raster
+и отдельно в composer. Общий source/SyncTeX preparation уже был единым, но его
+счётчик не покрывал эти parsers. Риск снова открыт до operation-owned исправления
+и проверки реальных открытий; прежние export PASS не подменяют эту проверку.
+
+### GUI-306 — проверка владельца задержки и переход к физическому iPad
+
+Профиль29 использует только проверенный PID13121 приватного Simulator-приложения;
+Mach-O UUID и временные границы сохранены в
+`/tmp/notebook-shape-app-profile-29/identity.json` и `main-thread-analysis.json`.
+Десять повторов shape replay: **0 PASS / 10 FAIL**, пороги20ms и график120Hz
+не менялись. Первая итерация не попала в trace, начало второй также пропущено;
+причинный анализ ограничен полностью записанными итерациями3–10. В шестой
+итерации внутри post-handler интервала40.43ms находятся `makeSpatialTarget`,
+240 блокирующих переходов tile `nextDrawable`/IOSurface и `waitUntilScheduled`.
+Это подтверждает вклад live-erasure renderer, но не приписывает ему весь срок:
+есть ожидание run loop/display. Отдельный lift20.56–23.63ms проходит через
+material drawable; устранение первого дублирующего mask host само по себе
+не доказывает устранение задержки lift. System FPS и Pencil-to-photon не измерены.
+
+Амир разрешил физический USB iPad. Проверка добавлена отдельным bundle
+`com.amirtlinov.notebook.architecture-tests`; этот путь не заменяет рабочий
+Notebook и не использует его контейнеры, документы и ключи. Первая попытка31
+остановилась **до установки и выполнения тестов**: отсутствовала библиотека
+`iphoneos/libnotebook_typesetter_runtime.a`. Журнал:
+`/tmp/notebook-repair-native-cover-build-31.log`. Чужой готовый runtime отвергнут
+штатной проверкой input digest; для текущих исходников готовится собственный
+iphoneos runtime. Это BUILD FAIL окружения, не физическая UX-приёмка.
+
 
 ### GUI-306 — R03: единая подготовка всех форматов экспорта
 
@@ -8626,6 +9134,141 @@ publication PNG/SVG/MP4: один запрос artifact на формат, то�
 Дополнительно исполнен исправленный native normalization fixture одновременно
 с TypeScript и PDF. Это самостоятельная проверка R03, не общая UX-приёмка.
 
+### GUI-306 — первый focused прогон физического iPad
+
+`/tmp/notebook-repair-native-cover-32.xcresult`: **50 PASS / 8 FAIL / 0 SKIP**,
+97.202 s; iPad Pro11-inch3rdgen, iPadOS27.0. Приватный bundle и подпись проверены
+до установки; own application identifier, без iCloud/App Groups/чужой Keychain.
+`...-32-sources.json` и `...-32-stability.json` подтверждают неизменные исходники.
+Это native injection через production recognizers, не физический Pencil sensing.
+
+Все16 cover checks, cold open→pen→eraser, stale-save/cold reopen, lasso composition,
+100 000 selection measurements, два ранних runtime-drain, три lifecycle tests и
+14 state-transfer tests прошли. >4MiB Unicode, FIFO нескольких принятых revisions,
+writer/read/ACK Retry и timeout проверены настоящим WebKit→SQLite маршрутом.
+Новый same-identity geometry test прошёл, но последующий независимый review нашёл
+непроверенную границу до presentation echo: replacement мог стартовать со старым
+input после успешной записи. A02 снова открыт до явной передачи causal receipt.
+
+Три новых eraser tests ошибочно ожидали откат UIKit cancellation. Производственный
+контракт и прежняя регрессия сохраняют измеренный контакт ровно один раз;
+восстановление выполняется явным Undo. Исправляется только этот oracle, не routing,
+сохранение или пороги. В исполненных activities first-hit/retraction/reentry были
+правильными за37.17/37.99/17.07ms; whole-program lift/Redo/cold readiness также
+правильны за92.86/91.07/23.40ms. Это отдельные успешные фазы, не PASS упавших тестов.
+
+Остальные отказы остаются реальными: первый cold-dot callback пришёл за13.445ms,
+но не подтвердил положительное OS presentation; pen/eraser сохраняют120Hz выдачу
+с задержкой около24–26ms, не укладываясь в20ms. Это не растущий backlog и не
+измерение фотонов. Shape-lift занимает11.760ms внутри handler и ещё10.390ms до
+UIKit update; lasso-lift —0.800ms внутри handler и25.043ms после. Общего вывода
+«медленный finalizeAction» эти разные границы не допускают. Пороги не изменены.
+
+### GUI-306 — physical34: state handoff и точный контракт отмены
+
+`/tmp/notebook-repair-native-cover-34.xcresult`: **7 PASS / 1 FAIL / 0 SKIP**,
+47.128 s, source стабильный. Новый geometry replacement проверен без синхронного
+presentation echo: ширина; metadata с writer failure/Retry; более новый input;
+concurrent input. Во всех четырёх случаях первый запуск нового heap использует
+правильное состояние, а поздний causal predecessor не откатывает его.
+
+Whole-program cancel→однократное принятие→Undo, последующий lift/Undo/Redo,
+cold reopen и readiness прошли, как и отдельный ранее существовавший cancellation
+контракт. Единственный отказ — ещё один ошибочный pixel oracle нового теста:
+исправление первой точки230→700 с прежним timestamp и затем новая точка230
+образуют непрерывный измеренный отрезок700→230. Изображение34 подтверждает белую
+полосу на350,330, а тест ожидал красный пиксель. Исправлено только ожидание
+этого пикселя; добавлены независимый красный пиксель вне пути и точное число
+двух samples. Routing, все измеренные точки, production и порог100ms неизменны.
+Чистый повтор этого теста ещё требуется; 7/8 не превращается в8/8 по review.
+
+### GUI-306 — решение о старом формате evidence
+
+25 сентября,18:17 UTC: Амир явно отклонил обратную совместимость. Старые immutable
+attention/source records с одним `sourceVersion` не читаются как новый формат и
+не переписываются. Новые records требуют причинную `DocumentProgramIdentity`;
+фиктивная идентичность, legacy decoder и повторное выполнение старого источника
+не добавляются. Это согласованная граница формата, не миграция рабочих документов
+и не утверждение о наличии таких records в рабочем контейнере.
+
+### GUI-306 — physical35b: функциональный eraser и диагностика задержки
+
+Первоначальная35 остановилась до тестов: временное поле измерителя было `UInt`,
+а SDK импортирует `drawableID` как `Int`. Исправлен только тип измерителя.
+35b: **1 PASS / 4 FAIL / 0 SKIP**,48.477 s, без runtime warnings; source неизменен.
+`/tmp/notebook-repair-native-cover-35b.xcresult`, `...-35b-sources.json`,
+`...-35b-stability.json`, attachments `/tmp/notebook-native35b-attachments`.
+
+Исправленный pixel oracle eraser прошёл весь сценарий corrected contact →
+retraction → cancellation с однократным принятием → Undo → новый cut → Undo/Redo.
+Остальные четыре теста оставлены FAIL: cold first OS receipt, pen, ink eraser и
+shape eraser. Pen p50 OS24.528ms; ink eraser20.138ms, даже малое превышение20ms
+не считается PASS. Диагностика сохраняет отрицательные OS receipts и отдельно
+измеряет CPU submission/GPU/assigned deadlines, не изменяя sampling и пороги.
+После прогона все четыре временно инструментированных файла восстановлены
+точными reverse patches; измерительные поля и wrappers не входят в поставку.
+
+Разбор35b по каждому source/revision воспроизвёл исходные120 sample latencies
+с нулевой разницей. Все119 pen и121 ink-eraser submissions получили положительный
+OS receipt и были поданы до deadline; CPU encode→commit p50 0.356/0.467ms,
+GPU0.520/1.369ms. Основная warm-задержка — назначенное clock время показа примерно
+16.5ms после callback плюс ожидание input→callback8.077/3.712ms; OS следует
+назначенному времени. Это не доказательство перегрузки GPU. Отдельный pen выброс
+вошёл в handler уже20.664ms поздно; сам handler0.108ms, причина этого ожидания CSV
+не раскрывает. `/tmp/notebook-native35b-attachments/phase-analysis.md` сохраняет
+raw receipts, формулы, exemplar rows и границы вывода.
+
+Cold drawable0 был подан за19.761ms до deadline24.550ms, GPU завершился23.216ms
+до target41.223ms, но OS вернул0. Следующий drawable тоже пропущен; первый реально
+подтверждённый показ —49.560ms. Проверяется отдельная гипотеза переключения
+transaction presentation до первого показа, а не объявляется подтверждённой.
+Shape lift: синхронное тело3.643ms, затем36.561ms до UIKit completion; accepted
+publication0.494ms включает live-accepted0.079ms. Ускорять этот короткий callback
+как причину всего срока оснований нет. Источник post-handler ожидания ещё открыт.
+
+### GUI-306 — physical35c: отвергнутое объяснение cold skip
+
+Один cold selector ×3, каждый в новом процессе: **0/3 PASS**, source стабильный,
+46.178s. `/tmp/notebook-repair-native-cover-35c.xcresult`. Единственная временная
+переменная — projected-page всегда использует transaction presentation, без
+переключения на втором кадре. В двух повторах первый OS receipt всё равно0;
+в одном первый кадр показан, но за38.785ms вместо20ms. Первые положительные
+receipts оставшихся повторов —35.607/38.439ms. Значит, переключение mode не является
+необходимой причиной пропуска; постоянно transaction mode не является исправлением.
+Control и CSV instrumentation полностью удалены точными обратными patches.
+
+### GUI-306 — physical36: единая закрытая граница программы
+
+**11/11 PASS**,0SKIP,61.844s, без runtime warnings и изменения source.
+`/tmp/notebook-repair-native-cover-36.xcresult`, `...-36-sources.json`,
+`...-36-stability.json`. Тесты исполнялись без временной диагностической
+instrumentation и без отвергнутого presentation-mode control.
+
+Один geometry regression проверяет11 вариантов: задержанный echo; writer Retry;
+новый source после ошибки старого; новый/concurrent input; закрытая граница;
+Retry записи без запуска; последнее явное pause/resume намерение; скрытый return;
+stop без воскрешения. Дополнительно реально перегенерируются frozen previews
+после смены width и height. Отдельно проверены failed-author без неявного Retry,
+Retry неуспешной стадии с нулём resume до foreground, ошибка resume того же heap,
+late attention release после закрытия и неизменный pixel-bound attention.
+
+Все три новых eraser ownership-сценария и две projection/readiness проверки
+прошли на чистом renderer source. Эти11 PASS закрывают указанные функциональные
+границы A02/A03, но не оставшиеся20ms задержки, системный FPS или общую приёмку.
+
+### GUI-306 — physical37: app-only profile не начался
+
+Попытка Time Profiler была ограничена точным приватным bundle/path/PID13430,
+сверенными через device inventory перед attach, и подписанной сборкой36.
+`xctrace` вернул `Cannot find process for provided pid: 13430` (exit21), не прислав
+подтверждения начала записи. Coordinator прекратил только принадлежащие ему
+trace/test процессы; широкая запись устройства или attach по общему имени не
+использовались. `/tmp/notebook-shape-physical-profile-37/result.json` имеет
+`assessment: unassessed`, приёмка и10 повторов не завершены. Эта попытка не даёт
+CPU stack evidence и не доказывает общую недоступность физического profiling.
+Физический iPad передан обратно для ручной проверки установленного приложения;
+новые native-запуски требуют согласованного окна.
+
 ### GUI-306 — адресная очередь чата под давлением
 
 Изолированный срез от `7b9a4f8c` с двумя изменёнными файлами: **43/43 PASS**
@@ -8636,3 +9279,104 @@ ACK без потери очереди. Формат передачи и пуб�
 Команда, SHA исходников/лога и границы проверки:
 `docs/audit-evidence/2026-09-25/chat-addressed-fifo.json`.
 Это пакетная регрессия, не измерение задержки живого чата или физическая приёмка.
+
+### GUI-306 — единый iOS ink clock, Simulator38b
+
+Вместо двух участвующих clocks projected-page использует существующий
+`UIUpdateLink`: он один потребляет актуальный контакт и отправляет кадр.
+Одна off-main acquisition удерживает учтённый pool до возврата; отмена/resize
+отзывают поколение, не создавая параллельного запроса. Готовность prefetched
+слота не означает изменение чернил. Production readiness повторяет пропущенный
+актуальный кадр и без диагностических observers. Это кандидат до физического
+замера, не доказательство20ms по одному выбору API.
+
+Simulator38b: **38 PASS / 2 FAIL / 0 SKIP**, исходники неизменны, runtime warnings0.
+Все7 lifecycle checks (включая idle repaint, unmount и resize ABA) и9 адресных
+curl/capture проверок прошли. Два прежних100ms window-observation порога превышены:
+whole-program cancel→accept100,354ms, cold pen/eraser restore103,001ms; правильные
+пиксели получены, пороги не подняты. Physical проверка нового clock ещё не выполнена.
+Попытка38 остановилась до тестов на `.white` в новой fixture; заменено существующим
+`.paper`, не новый цвет/допуск. Команды/source witnesses и result bundle находятся
+в `/tmp/notebook-repair-native-cover-38b*`; компактный результат —
+`docs/audit-evidence/2026-09-25/ink-ui-clock-simulator.json`.
+
+Соседний2a84b64d адаптирован только в curl renderer/controller/tests с сохранением
+одного `NotebookMetalFrameReadiness`; первый кадр начинает видимый command curl,
+flat boundary и underlay публикуются совместно. Этот Simulator PASS не закрывает
+строгую физическую задержку и новый пользовательский симптом накопительной
+неотзывчивости быстрых перелистываний в установленной208.
+
+### GUI-306 — physical39: замена ink clock отклонена и удалена
+
+На отдельном физическом приложении **10 PASS / 5 FAIL / 0 SKIP**, runtime warnings0,
+исходники неизменны. Все7 lifecycle проверок, cold вход и два прежних100ms pixel
+сценария прошли. Но первое cold OS presentation снова0; pen OS p50/p95/max —
+25,579/33,900/50,320ms, eraser —19,096/35,576/56,361ms. Shape/lasso UI-update gates
+также красные. Это не улучшение, достаточное для замены работающего владельца.
+Весь экспериментальный UIUpdateLink/acquisition delta и его3 добавленных теста
+удалены: два файла возвращены к точным pre-experiment SHA, пороги не менялись.
+Старый и новый пути не оставлены параллельно. Проверенная curl-интеграция208
+сохранена отдельно. Подробности и SHA:
+`docs/audit-evidence/2026-09-25/ink-ui-clock-physical-rejected.json`.
+
+### GUI-306 — согласованный Mac40
+
+**114/114 PASS, 0 SKIP, runtime warnings0**, 148,463s тестового интервала,
+source snapshot неизменен. Один текущий build проверил вместе A01 identity/runtime,
+R04 transfer/lifecycle, R03 canonical preparation/output, R02 preview,
+Sidecar observation/event journal, WebKit chat и настоящий script-worker binding.
+Private Mac и его XPC services проверены и ограничены прежним signed-test путём.
+`/tmp/notebook-repair-native-mac-owner-40.xcresult`, точные selectors/срез:
+`docs/audit-evidence/2026-09-25/architecture-mac-integration.json`.
+Это закрывает пробел между standalone R03 и текущими identity adapters, но не
+подменяет финальную Release-пару, физические20ms и30 минут UX-приёмки.
+
+### GUI-306 — согласованный Core/JS/MCP41
+
+Тот же текущий source: **134/134 Core** в15 suites, **175/175 MCP**, check PASS,
+**13/13 browser**, **89/89 verification**, **18/18 trace harness**. Snapshot до/после
+неизменен. Закрыт найденный пробел проверки: `test_page_phase_observation.mjs`
+теперь входит в существующий `DOCUMENT_BROWSER_CONTRACTS`, вместе с проверкой
+ошибки каждого script и отказом неполного receipt. Второй framework не добавлен.
+Команды и SHA логов: `docs/audit-evidence/2026-09-25/architecture-core-js-integration.json`.
+Проверка не объявляет оставшиеся физические/UX сценарии зелёными.
+
+### GUI-306 — согласованный Simulator42
+
+**213 PASS / 2 FAIL / 0 SKIP**, runtime warnings0,228,229s, source неизменен.
+Прошли связанные state/lifecycle/scene/history/selection/lasso/persistence/chat
+проверки и оба прежних100ms pixel gates. Два отказа — immediate window screenshot
+в lifecycle coalescing/allocation fixtures после Simulator GPU readiness; эта
+граница не обещает compositor presentation. Фикстуры исправляются на существующее
+100ms window observation с теми же точками; повтор ещё требуется, результат42
+не объявлен полным PASS. Evidence: `docs/audit-evidence/2026-09-25/architecture-simulator-integration.json`.
+
+Simulator43 подтвердил две исправленные window observations:57,120/55,208ms
+в прежнем100ms пределе. Из4 tests три прошли; оставшийся отказ — такое же
+мгновенное сравнение окна после remount, строка121, а не неверный source/geometry.
+Для него установлен тот же bounded observer с неизменными точками и цветами;
+production не менялся. Повторная проверка требуется до закрытия среза.
+
+A09 дополнительно открыт по подтверждённому page-preparation маршруту:
+`prepareNotebookPage` ещё делает адресное чтение через writer FIFO и повторяет
+его при изменении общего collaboration epoch. Соседний physical run измерил
+125–582ms на read и повтор251+186ms; основное spatial-window исправление этого
+маршрута не затронуло. Исправление очереди/актуальности согласовано с его владельцем,
+но в настоящий срез пока не внесено. Быстрые плотные перелистывания не закрыты.
+
+### GUI-306 — закрытие связанного функционального среза
+
+Simulator44: все4 lifecycle tests прошли по3 раза (**12/12 executions**),
+без skips/warnings и изменения source. Ранее падавшие coalescing/resize/remount
+проверки теперь наблюдают правильную границу: завершение GPU не подменяет окно.
+Ввод, цвета, координаты и существующий100ms предел сохранены. Вместе с213
+неизменёнными PASS42 это закрывает выбранные функциональные проверки; это не
+повтор всех215 tests и не финальная десятикратная UX-приёмка.
+
+Результаты текущей интеграции и отклонённого эксперимента сохранены также вне
+`/tmp`: `.build/notebook-architecture-repair/evidence-2026-09-25/index.json`
+перечисляет xcresults, source witnesses и журналы. Связанный срез можно фиксировать,
+но **ремонт не завершён**: A09 подготовки плотного соседнего листа, физические20ms,
+быстрые серии перелистываний, согласованная Release-пара и30 минут остаются открыты.
+Совместимое чтение прежних immutable program receipts не добавлено по прямому
+решению Амира; отклонённый frame-clock эксперимент полностью удалён.

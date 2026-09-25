@@ -12,10 +12,10 @@ public struct AgentPinnedImage: Codable, Equatable, Sendable {
     /// not a promise that arbitrary author code is deterministic.
     public struct Program: Codable, Equatable, Sendable {
       public let blockID: String
-      public let sourceVersion: ContentFieldVersion
+      public let programIdentity: DocumentProgramIdentity
       public let state: JSONValue
-      public init(blockID: String, sourceVersion: ContentFieldVersion, state: JSONValue) {
-        self.blockID = blockID; self.sourceVersion = sourceVersion; self.state = state
+      public init(blockID: String, programIdentity: DocumentProgramIdentity, state: JSONValue) {
+        self.blockID = blockID; self.programIdentity = programIdentity; self.state = state
       }
     }
     public let program: Program?
@@ -68,7 +68,7 @@ public struct AgentPinnedImage: Codable, Equatable, Sendable {
       SHA256.hash(data: png).map({ String(format: "%02x", $0) }).joined() == sha256 else { throw invalid() }
     if let program = presentation?.program {
       guard !program.blockID.isEmpty, program.blockID.utf8.count <= 120,
-        program.sourceVersion.isValid, program.state.isValid,
+        program.programIdentity.isValid, program.state.isValid,
         try JSONEncoder().encode(program.state).count <= 1_048_576 else { throw invalid() }
     }
     if let reference {

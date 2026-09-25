@@ -49,11 +49,11 @@ final class NotebookGestureLatency {
       self.link = link
     }
     if let canvas {
-      precondition(canvas.onContactFramePresented == nil, "Do not replace another observer")
-      canvas.onContactFramePresented = { [weak self] in self?.receive($0) }
+      precondition(canvas.onContactFrameResolved == nil, "Do not replace another observer")
+      canvas.onContactFrameResolved = { [weak self] in self?.receive($0) }
     }
   }
-  func stop() { link?.isEnabled = false; link = nil; canvas?.onContactFramePresented = nil }
+  func stop() { link?.isEnabled = false; link = nil; canvas?.onContactFrameResolved = nil }
   isolated deinit { stop() }
 
   func input(due: TimeInterval, needsPresentation: Bool = true, action: () -> Void) {
@@ -65,12 +65,12 @@ final class NotebookGestureLatency {
   func submitted(at time: TimeInterval) {
     for i in samples.indices where samples[i].uiSubmitted == nil { samples[i].uiSubmitted = time }
   }
-  func receive(_ receipt: InkCanvasView.PresentedContactFrame) {
+  func receive(_ receipt: InkCanvasView.ContactFrameResolution) {
     guard receipt.tileCount > 0, (0..<receipt.tileCount).contains(receipt.tile),
-      receipt.presentedAt.isFinite, receipt.presentedAt > 0 else { return }
+      let presentedAt = receipt.completion.presentedTime else { return }
     var frame = frames[receipt.frameID] ?? .init(contact: receipt.contact, tileCount: receipt.tileCount)
     guard frame.contact == receipt.contact, frame.tileCount == receipt.tileCount else { return }
-    frame.times[receipt.tile] = receipt.presentedAt
+    frame.times[receipt.tile] = presentedAt
     frames[receipt.frameID] = frame
     // Every changed drawable must be presented: the fastest tile cannot hide
     // a late/missing tile. A newer revision can include older measured samples.
@@ -161,12 +161,15 @@ final class NotebookGestureLatencyTests: XCTestCase {
     monitor.submitted(at: due + 0.001)
     let expected = canvas.activeContactFrame!
     func receipt(_ contact: InkCanvasView.ContactFrame, _ time: Double,
-      frame: UUID = UUID(), tile: Int = 0, count: Int = 1) -> InkCanvasView.PresentedContactFrame {
-      .init(frameID: frame, contact: contact, tile: tile, tileCount: count, presentedAt: time)
+      frame: UUID = UUID(), tile: Int = 0, count: Int = 1) -> InkCanvasView.ContactFrameResolution {
+      .init(frameID: frame, contact: contact, tile: tile, tileCount: count, completion: .osPresentation(time), isFirstFrame: false)
     }
     monitor.receive(receipt(.init(sourceID: UUID(), revision: expected.revision), due + 0.002))
     monitor.receive(receipt(.init(sourceID: expected.sourceID, revision: expected.revision - 1), due + 0.002))
     monitor.receive(receipt(expected, 0))
+    monitor.receive(.init(frameID: UUID(), contact: expected, tile: 0, tileCount: 1,
+      completion: .simulatorCommandCompletion(true), isFirstFrame: true))
+    XCTAssertNil(monitor.samples.first?.presented, "Even a cold GPU completion is not an OS presentation timestamp")
     XCTAssertFalse(monitor.passed)
     let frame = UUID()
     monitor.receive(receipt(expected, due + 0.010, frame: frame, tile: 0, count: 2))

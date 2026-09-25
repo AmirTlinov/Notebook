@@ -56,7 +56,7 @@ struct NotebookReferenceInkTests {
       let accepted = journal.append(tool: .pen, spans: [span(surface)], actor: actor)
       let first = try #require(accepted)
       try store.saveSpatialInk(journal)
-      let basis = try store.referenceBasis(rootBoardID: header.rootBoardID, targets: targets, surfaces: [surface])
+      let basis = try store.referenceBasis(rootBoardID: header.rootBoardID, targets: targets, surfaces: [surface], inkActionIDs: Set(journal.actions.map(\.id)))
       let deactivated = journal.deactivate(first.id, actor: actor)
       #expect(deactivated)
       try store.saveSpatialInk(journal)

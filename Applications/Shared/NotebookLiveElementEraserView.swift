@@ -9,6 +9,8 @@ enum NotebookLiveElementEraserEvent {
   case commit(PageInkAction)
   case cancel
   case reject(UUID)
+  case accepted(PreparedPageInkChange)
+  case reconciled(UUID, VersionStamp, PageInkDrawing)
 }
 
 /// One page-wide measured mask. Input updates the renderer's existing mutable
@@ -19,6 +21,9 @@ final class NotebookLiveElementEraserPresentation {
   @ObservationIgnored private weak var view: NotebookLiveElementEraserMaskView?
   @ObservationIgnored private var stroke: ActiveEraserStroke?
   @ObservationIgnored private(set) var pending: [PageInkAction] = []
+  @ObservationIgnored private var pageID: UUID?
+  @ObservationIgnored private var acceptedStamp: VersionStamp?
+  @ObservationIgnored private var pendingStamps: [UUID: VersionStamp] = [:]
 
   func display(_ event:NotebookLiveElementEraserEvent) {
     switch event {
@@ -32,19 +37,56 @@ final class NotebookLiveElementEraserPresentation {
     case .cancel:
       stroke=nil;view?.canvas.clearActiveAction()
     case .reject(let id):
-      pending.removeAll { $0.id == id };view?.canvas.retainErasureMaskActions(pending)
+      pending.removeAll { $0.id == id };pendingStamps[id]=nil
+      view?.canvas.retainErasureMaskActions(pending)
+    case .accepted(let change):
+      guard pageID != change.pageID || (acceptedStamp.map({ change.stamp >= $0 }) ?? true) else { return }
+      reconcile(pageID:change.pageID,stamp:change.stamp,drawing:change.drawing)
+      let ids:Set<UUID>
+      switch change.mutation {
+      case .append(let action): ids=[action.id]
+      case .setActive(let changed,_): ids=changed
+      }
+      for id in ids {
+        guard let action=change.drawing.action(id:id),action.isActive,
+          action.elementTargets?.isEmpty == false else { continue }
+        if let index=pending.firstIndex(where: { $0.id == id }) { pending[index]=action }
+        else { pending.append(action) }
+        pendingStamps[id]=change.stamp
+      }
+      view?.canvas.retainErasureMaskActions(pending)
+    case .reconciled(let pageID,let stamp,let drawing):
+      reconcile(pageID:pageID,stamp:stamp,drawing:drawing)
+      view?.canvas.retainErasureMaskActions(pending)
     }
     refreshActivity()
   }
 
-  /// Called only with the current overlay's ready receipt. A mounted mask,
-  /// an older frame or a saved action alone cannot retire the lifted coverage.
-  func presented(_ erasures:[String:[InkElementErasure]]) {
+  private func reconcile(pageID:UUID,stamp:VersionStamp,drawing:PageInkDrawing) {
+    if let current=self.pageID,current != pageID { pending=[];pendingStamps=[:] }
+    guard self.pageID != pageID || (acceptedStamp.map({ stamp >= $0 }) ?? true) else { return }
+    self.pageID=pageID;acceptedStamp=stamp
+    pending=pending.compactMap { previous in
+      guard let action=drawing.action(id:previous.id),action.isActive else {
+        pendingStamps[previous.id]=nil;return nil
+      }
+      pendingStamps[action.id]=action.stateStamp ?? pendingStamps[action.id] ?? stamp
+      return action
+    }
+  }
+
+  /// A source-checked installed receipt may retire active coverage. A newer
+  /// accepted inverse already removed it; absence is not an eternal second gate.
+  func presented(_ receipt:PageElementErasurePresentation) {
+    guard receipt.pageID == pageID else { return }
     let count=pending.count
     pending.removeAll { action in
-      (action.elementTargets ?? []).allSatisfy { target in
-        erasures[target.elementID]?.contains(.init(target:target,measurements:action.samples)) == true
+      guard let stamp=pendingStamps[action.id],receipt.stamp >= stamp else { return false }
+      let shown=(action.elementTargets ?? []).allSatisfy { target in
+        receipt.erasures[target.elementID]?.contains(.init(target:target,measurements:action.samples)) == true
       }
+      if shown { pendingStamps[action.id]=nil }
+      return shown
     }
     guard count != pending.count else { return }
     view?.canvas.retainErasureMaskActions(pending);refreshActivity()

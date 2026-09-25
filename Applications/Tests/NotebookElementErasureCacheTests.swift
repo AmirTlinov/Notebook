@@ -1,5 +1,6 @@
 import CoreGraphics
 import NotebookCore
+import Observation
 import XCTest
 import SwiftUI
 import UIKit
@@ -10,6 +11,48 @@ import WebKit
   private let surface = SurfaceID.page(UUID())
   private let frame = PageRect(x:100,y:200,width:160,height:100)
   private let graphic = NotebookGraphic(shape:.rectangle,style:.init(strokeWidth:4))
+
+  func testUnrelatedPageContactsDoNotPublishGraphicErasureChanges() async throws {
+    let root=FileManager.default.temporaryDirectory.appendingPathComponent("erasure-publication-\(UUID())")
+    let model=NotebookAppModel(store:.init(root:root),startsNearbySync:false,
+      preferences:UserDefaults(suiteName:UUID().uuidString)!)
+    retainNotebookUntilTeardown(model,removing:root)
+    await model.start(pageSize:NotebookAppModel.defaultPageSize)
+    let initialSaved=await model.finishPendingPersistence();XCTAssertTrue(initialSaved)
+    var page=try XCTUnwrap(model.activePage)
+    XCTAssertTrue(page.replaceElements([.init(id:"shape",kind:.graphic,frame:frame,source:"",html:"",
+      graphic:graphic)],actor:model.actorID))
+    try model.store.savePage(page);await model.reloadExternalChanges()?.value
+    let surface=SurfaceID.page(page.id)
+    @MainActor final class Changes { var count=0 }
+    func accept(_ action:PageInkAction) throws -> Int {
+      let changes=Changes(),stamp=try XCTUnwrap(model.reserveDrawingAction(pageID:page.id))
+      withObservationTracking { _=model.elementErasures(on:surface) } onChange: {
+        MainActor.assumeIsolated { changes.count += 1 }
+      }
+      XCTAssertNotNil(model.acceptDrawingAction(action,pageID:page.id,stamp:stamp))
+      XCTAssertTrue(model.workingElementErasures.isEmpty,"Accepted coverage belongs to the ink journal")
+      return changes.count
+    }
+    let distant=[SpatialInkSample(point:.init(x:400,y:800),timeOffset:0,
+      width:12,opacity:1,force:1,azimuth:0,altitude:1)]
+    // The real Pencil action supplies an empty target array, not nil, when
+    // the contact misses graphics. Neither admission nor retirement publishes it.
+    XCTAssertEqual(try accept(.init(tool:.pen,samples:distant,elementTargets:[])),0)
+    XCTAssertEqual(try accept(.init(tool:.eraser,samples:distant,elementTargets:[])),0)
+    XCTAssertTrue(model.elementErasures(on:surface).isEmpty)
+    let affected=PageInkAction(tool:.eraser,measurements:cuts(full:false,count:4)[0].samples,
+      elementTargets:[.init(elementID:"shape",frame:frame)])
+    XCTAssertEqual(try accept(affected),1,"Real graphic coverage must still invalidate its observed projection")
+    XCTAssertEqual(model.elementErasures(on:surface)["shape"]?.count,1)
+    XCTAssertNotNil(model.acceptDrawingUndo())
+    XCTAssertTrue(model.elementErasures(on:surface).isEmpty,"Undo retracts the accepted graphic coverage")
+    let saved=await model.finishPendingPersistence();XCTAssertTrue(saved)
+    let durable=try model.store.loadPage(page.id).inkDrawing()
+    XCTAssertEqual(durable.actions.count,3)
+    XCTAssertEqual(durable.actionCount,2)
+    XCTAssertEqual(durable.action(id:affected.id)?.isActive,false)
+  }
 
   private func cuts(full: Bool, count: Int = 2048) -> [InkElementErasure] {
     let samples = (0..<count).map { i in

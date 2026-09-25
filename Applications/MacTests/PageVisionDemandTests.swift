@@ -10,6 +10,7 @@ final class PageVisionDemandTests: XCTestCase {
     let store = NotebookStore(root: root), actor = UUID()
     let size = PageSize(width: 100, height: 140)
     var (workspace, pages) = try store.loadOrCreate(actor: actor, pageSize: size)
+    _ = try store.loadOrCreateSpatialInk(actor: actor)
     let firstID = try XCTUnwrap(workspace.selectedPageID)
     var first = try XCTUnwrap(pages[firstID])
     XCTAssertTrue(first.replaceElements([.init(id: "not-part-of-ink-\(UUID())", kind: .web,
@@ -49,6 +50,22 @@ final class PageVisionDemandTests: XCTestCase {
     XCTAssertNil(model.pages[firstID])
     try await waitUntil { store.hasCurrentPageVision(selectedPage) }
     XCTAssertEqual(try visionIDs(store), [selectedID.uuidString.lowercased()])
+
+    // A different page advances the workspace cursor, not the selected pixels.
+    try await waitUntil { try store.loadCurrentViewReceipt()?.presence.notebookPageID == selectedID }
+    let pngBefore = try FileManager.default.attributesOfItem(atPath: store.currentViewPreviewURL.path)[.modificationDate] as? Date
+    let visionBefore = try FileManager.default.attributesOfItem(atPath: store.previewVisionReceiptURL(selectedID).path)[.modificationDate] as? Date
+    let beforeIdentity = try PreviewSourceIdentity.read(store, presence: XCTUnwrap(model.observedPresence))
+    var unrelated = first
+    XCTAssertTrue(unrelated.replaceElements([], actor: actor))
+    try store.savePage(unrelated)
+    let afterIdentity = try PreviewSourceIdentity.read(store, presence: XCTUnwrap(model.observedPresence))
+    XCTAssertEqual(beforeIdentity, afterIdentity)
+    await model.reloadExternalChanges()?.value
+    try await Task.sleep(for: .milliseconds(1_200))
+    try await waitUntil { try store.loadCurrentViewReceipt()?.workspaceStamp == store.workspaceHeader().stamp }
+    XCTAssertEqual(try FileManager.default.attributesOfItem(atPath: store.currentViewPreviewURL.path)[.modificationDate] as? Date, pngBefore)
+    XCTAssertEqual(try FileManager.default.attributesOfItem(atPath: store.previewVisionReceiptURL(selectedID).path)[.modificationDate] as? Date, visionBefore)
     let original = model.presence
     let contact = UUID()
     model.inputGate.beginContact(source: contact)
@@ -132,6 +149,205 @@ final class PageVisionDemandTests: XCTestCase {
   }
 
   @MainActor
+  func testQueuedCurrentViewDoesNotPublishAfterCameraChanges() async throws {
+    try await assertQueuedCurrentViewIsRevoked(by: .camera)
+  }
+
+  @MainActor
+  func testQueuedCurrentViewDoesNotPublishDuringNewInput() async throws {
+    try await assertQueuedCurrentViewIsRevoked(by: .input)
+  }
+
+  @MainActor
+  func testQueuedCurrentViewDoesNotPublishAfterPublisherCancellation() async throws {
+    try await assertQueuedCurrentViewIsRevoked(by: .shutdown)
+  }
+
+  @MainActor
+  func testBoardSelectionUpdatesReceiptWithoutRewritingTheSamePixels() async throws {
+    let (model, store, queue, firstItemID) = try await boardPreviewFixture()
+    let before = try XCTUnwrap(store.loadCurrentViewReceipt())
+    let png = try Data(contentsOf: store.currentViewPreviewURL)
+    // A fixed old timestamp makes an unnecessary same-byte atomic rewrite
+    // observable independently of filesystem timestamp resolution.
+    let publishedAt = Date(timeIntervalSince1970: 1_000)
+    try FileManager.default.setAttributes([.modificationDate: publishedAt], ofItemAtPath: store.currentViewPreviewURL.path)
+    model.selectItem(firstItemID)
+    let selected = try XCTUnwrap(model.observedPresence)
+    XCTAssertNotEqual(selected.selectedItemID, before.presence.selectedItemID)
+    XCTAssertEqual(selected.camera, before.presence.camera)
+    XCTAssertEqual(selected.mode, .board)
+    try await waitUntil { try store.loadCurrentViewReceipt()?.presence == selected }
+    try await waitUntil { queue.pendingCount == 0 }
+    let receipt = try XCTUnwrap(store.loadCurrentViewReceipt())
+    XCTAssertEqual(receipt.presence, selected, "Selection is current receipt metadata even when it does not paint a pixel")
+    XCTAssertEqual(receipt.pngSHA256, before.pngSHA256)
+    XCTAssertEqual(try Data(contentsOf: store.currentViewPreviewURL), png)
+    XCTAssertEqual(try FileManager.default.attributesOfItem(atPath: store.currentViewPreviewURL.path)[.modificationDate] as? Date,
+      publishedAt, "Changing a board selection must not encode or replace the same PNG")
+  }
+
+  @MainActor
+  func testRevokedMetadataRefreshRetriesTheSameSelectionAfterInputEnds() async throws {
+    let (model, store, queue, firstItemID) = try await boardPreviewFixture()
+    let beforeReceipt = try Data(contentsOf: store.currentViewRevisionURL)
+    let beforePNG = try Data(contentsOf: store.currentViewPreviewURL)
+    let publishedAt = Date(timeIntervalSince1970: 1_000)
+    try FileManager.default.setAttributes([.modificationDate: publishedAt], ofItemAtPath: store.currentViewPreviewURL.path)
+    // Metadata-only refresh reads its witnesses outside the FIFO. Blocking it
+    // before selection therefore queues the final receipt write, not a render's
+    // preliminary content read.
+    let release = DispatchSemaphore(value: 0)
+    let entered = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
+    let preparation = Task<@Sendable (NotebookStore) throws -> Void, Error> {
+      return { _ in
+        entered.continuation.yield(()); entered.continuation.finish()
+        guard release.wait(timeout: .now() + 10) == .success else { throw PreviewBarrierTimeout() }
+      }
+    }
+    let blocked = queue.enqueuePreparedCommand(preparation)
+    defer { release.signal() }
+    for await _ in entered.stream { break }
+    model.selectItem(firstItemID)
+    let selected = try XCTUnwrap(model.observedPresence)
+    let acceptedSelectionCount = queue.pendingCount
+    XCTAssertGreaterThan(acceptedSelectionCount, 1, "The real selection command is accepted behind the barrier")
+    try await waitUntil { queue.pendingCount > acceptedSelectionCount }
+    let contact = UUID()
+    model.inputGate.beginContact(source: contact)
+    defer { model.inputGate.endContact(source: contact) }
+    XCTAssertFalse(model.permitsBackgroundPreparation)
+    let inspected = AsyncThrowingStream<(Data, SessionPresence), Error>.makeStream(bufferingPolicy: .bufferingNewest(1))
+    queue.enqueueCommand { store in
+      (try Data(contentsOf: store.currentViewRevisionURL), try store.loadPresence())
+    } completion: { result in
+      switch result {
+      case .success(let value): inspected.continuation.yield(value); inspected.continuation.finish()
+      case .failure(let error): inspected.continuation.finish(throwing: error)
+      }
+    }
+    release.signal()
+    try await blocked.value
+    var iterator = inspected.stream.makeAsyncIterator()
+    let inspectedValue = try await iterator.next()
+    let (receiptDuringInput, savedPresence) = try XCTUnwrap(inspectedValue)
+    XCTAssertEqual(savedPresence.selectedItemID, selected.selectedItemID,
+      "The accepted selection still persists: only derived publication is revoked")
+    XCTAssertEqual(receiptDuringInput, beforeReceipt, "A queued metadata-only refresh must respect input revocation")
+    XCTAssertNil(queue.failure)
+
+    // There is deliberately no second selection, camera edit or notification.
+    // The same demand must become eligible again when the contact ends.
+    model.inputGate.endContact(source: contact)
+    try await waitUntil { try store.loadCurrentViewReceipt()?.presence == selected }
+    XCTAssertEqual(model.observedPresence, selected)
+    XCTAssertEqual(try Data(contentsOf: store.currentViewPreviewURL), beforePNG)
+    XCTAssertEqual(try FileManager.default.attributesOfItem(atPath: store.currentViewPreviewURL.path)[.modificationDate] as? Date,
+      publishedAt, "Retrying receipt metadata must not regenerate already current pixels")
+  }
+
+  private enum PreviewRevocation { case camera, input, shutdown }
+  private struct PreviewBarrierTimeout: Error {}
+
+  @MainActor
+  private func assertQueuedCurrentViewIsRevoked(by revocation: PreviewRevocation,
+    file: StaticString = #filePath, line: UInt = #line) async throws {
+    let (model, store, queue, _) = try await boardPreviewFixture()
+    let beforePNG = try Data(contentsOf: store.currentViewPreviewURL)
+    let beforeReceipt = try Data(contentsOf: store.currentViewRevisionURL)
+    let initial = try XCTUnwrap(model.observedPresence)
+    let rendering = initial.replacingCamera(.init(center: initial.camera.center.offsetBy(x: 20, y: 10), scale: initial.camera.scale))
+    model.updatePresence(rendering, settled: true)
+    let persisted = await model.finishPendingPersistence()
+    XCTAssertTrue(persisted)
+    // The publisher's normal delayed render first reads addressed materials on
+    // the FIFO. Put the barrier immediately behind that read, not in front of
+    // it: rendering can finish, while its final publication must wait.
+    let deadline = ContinuousClock.now + .seconds(8)
+    while queue.pendingCount == 0 && ContinuousClock.now < deadline { await Task.yield() }
+    XCTAssertGreaterThan(queue.pendingCount, 0, "The normal publisher must reach its content read", file: file, line: line)
+    let release = DispatchSemaphore(value: 0)
+    let entered = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
+    let preparation = Task<@Sendable (NotebookStore) throws -> Void, Error> {
+      return { _ in
+        entered.continuation.yield(()); entered.continuation.finish()
+        guard release.wait(timeout: .now() + 10) == .success else { throw PreviewBarrierTimeout() }
+      }
+    }
+    let blocked = queue.enqueuePreparedCommand(preparation)
+    defer { release.signal() }
+    for await _ in entered.stream { break }
+    try await waitUntil { queue.pendingCount >= 2 }
+    XCTAssertEqual(try Data(contentsOf: store.currentViewRevisionURL), beforeReceipt,
+      "Fixture barrier must precede publication, not capture an already published frame", file: file, line: line)
+
+    let contact = UUID()
+    var shutdown: Task<Bool, Never>?
+    switch revocation {
+    case .camera:
+      let changed = rendering.replacingCamera(.init(center: rendering.camera.center.offsetBy(x: 40, y: 30), scale: rendering.camera.scale))
+      model.updatePresence(changed, settled: true)
+      // Deliver ordinary Observation callbacks while the derived write is
+      // still queued. This is not a direct cancellation of the render task.
+      for _ in 0..<8 { await Task.yield() }
+    case .input:
+      model.inputGate.beginContact(source: contact)
+      XCTAssertFalse(model.permitsBackgroundPreparation)
+      for _ in 0..<8 { await Task.yield() }
+    case .shutdown:
+      shutdown = Task { await model.shutdown() }
+      while model.shutdownPhase == .running && ContinuousClock.now < deadline { await Task.yield() }
+      XCTAssertNotEqual(model.shutdownPhase, .running)
+    }
+    // This accepted command must still execute. Revoking derived publication
+    // must never cancel the shared FIFO or unrelated accepted work.
+    let inspected = AsyncThrowingStream<(Data, Data), Error>.makeStream(bufferingPolicy: .bufferingNewest(1))
+    queue.enqueueCommand { store in
+      (try Data(contentsOf: store.currentViewPreviewURL), try Data(contentsOf: store.currentViewRevisionURL))
+    } completion: { result in
+      switch result {
+      case .success(let value): inspected.continuation.yield(value); inspected.continuation.finish()
+      case .failure(let error): inspected.continuation.finish(throwing: error)
+      }
+    }
+    release.signal()
+    try await blocked.value
+    var iterator = inspected.stream.makeAsyncIterator()
+    let observed = try await iterator.next()
+    let (png, receipt) = try XCTUnwrap(observed)
+    XCTAssertEqual(png, beforePNG, "A revoked queued render must not publish its old camera PNG", file: file, line: line)
+    XCTAssertEqual(receipt, beforeReceipt, "A revoked queued render must not publish a receipt", file: file, line: line)
+    if revocation == .input { model.inputGate.endContact(source: contact) }
+    if let shutdown { let stopped = await shutdown.value; XCTAssertTrue(stopped) }
+  }
+
+  @MainActor
+  private func boardPreviewFixture() async throws -> (NotebookAppModel, NotebookStore, NotebookPersistenceQueue, UUID) {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    let store = NotebookStore(root: root), actor = UUID()
+    let size = PageSize(width: 100, height: 140)
+    var (workspace, _) = try store.loadOrCreate(actor: actor, pageSize: size)
+    _ = try store.loadOrCreateSpatialInk(actor: actor)
+    let firstItemID = workspace.selectedItemID
+    let before = workspace, beforeBoard = try store.loadBoard(items: workspace.items)
+    var hierarchy = beforeBoard
+    let created = try XCTUnwrap(workspace.createNotebook(title: "Second", actor: actor, pageSize: size))
+    XCTAssertTrue(hierarchy.addItem(created.item.id, to: workspace.rootBoardID, near: .zero, actor: actor))
+    _ = try store.saveWorkspaceEdits(before: before, after: workspace,
+      boardBefore: beforeBoard, boardAfter: hierarchy, pages: [created.page])
+    try store.savePresence(.init(boardID: workspace.rootBoardID, mode: .board,
+      camera: .init(center: .zero, scale: 0.2), viewport: .init(x: 120, y: 160),
+      selectedItemID: created.item.id, notebookPageID: created.page.id))
+    let queue = NotebookPersistenceQueue(store: store)
+    let model = NotebookAppModel(store: store, startsNearbySync: false, persistenceQueue: queue)
+    removeAfterShutdown(model, root: root)
+    await model.start(pageSize: size)
+    try await waitUntil { try store.loadCurrentViewReceipt()?.presence == model.observedPresence }
+    try await waitUntil { store.hasCurrentPageVision(created.page) && queue.pendingCount == 0 }
+    return (model, store, queue, firstItemID)
+  }
+
+  @MainActor
   private func requestVision(_ page: PageDocument, model: NotebookAppModel) async throws -> TargetRenderRequest {
     var command = NotebookCommand(command: .pageVision)
     command.target = .init(kind: .page, id: page.id)
@@ -155,9 +371,9 @@ final class PageVisionDemandTests: XCTestCase {
   }
 
   @MainActor
-  private func waitUntil(_ condition: () throws -> Bool) async throws {
+  private func waitUntil(file: StaticString = #filePath, line: UInt = #line, _ condition: () throws -> Bool) async throws {
     let deadline = ContinuousClock.now + .seconds(8)
     while try !condition() && ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(40)) }
-    XCTAssertTrue(try condition(), "The bounded publisher did not complete the requested page")
+    XCTAssertTrue(try condition(), "The bounded publisher did not complete the requested page", file: file, line: line)
   }
 }

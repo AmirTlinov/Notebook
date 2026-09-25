@@ -18,6 +18,118 @@ struct NotebookNativeElementTests {
     try body(store, actor, header.rootBoardID, element)
   }
 
+  @Test func spatialProgramCommitBorrowsLargeStateAdmissionAndRejectsSourceABA() throws {
+    try fixture(kind: .web) { store, actor, boardID, rendered in
+      let originalBasis = try #require(store.loadBoard(items: store.loadIndex().items).board(boardID)?.programStateBasis(rendered.id))
+      let payload = String(repeating: "😀", count: 1_400_000) // More than 5 MiB UTF-8.
+      let large: JSONValue = .string("first" + payload)
+      let admission = try JSONEncoder().encode(.string("checkpoint" + payload) as JSONValue).count * 8 + 64
+      let first = try #require(try store.commitSpatialElementState(boardID: boardID, rendered: rendered,
+        state: large, actor: actor, expectedProgramBasis: originalBasis, admittedStateBytes: admission))
+      #expect(first.element.state == large)
+      #expect(first.basis.hasSameSource(as: originalBasis))
+      let cursor = try store.currentChangeCursor()
+      #expect(throws: NotebookStorageError.limitExceeded("program_state_admission")) {
+        try store.commitSpatialElementState(boardID: boardID, rendered: first.element,
+          state: .number(2), actor: actor, expectedProgramBasis: originalBasis, admittedStateBytes: 1)
+      }
+      #expect(try store.currentChangeCursor() == cursor)
+      // A queued explicit commit keeps its captured program source but may
+      // follow a newer state from this same program. Old-state credit is held
+      // through this large -> scalar transfer, not reserved a second time.
+      let secondValue: JSONValue = .string("second" + payload)
+      let second = try #require(try store.commitSpatialElementState(boardID: boardID, rendered: first.element,
+        state: secondValue, actor: actor, expectedProgramBasis: originalBasis, admittedStateBytes: admission))
+      #expect(second.element.state == secondValue)
+      #expect(second.basis.hasNewerState(than: first.basis))
+      let checkpointValue: JSONValue = .string("checkpoint" + payload)
+      let checkpointElement = AgentElement(id: rendered.id, kind: .web,
+        frame: .init(x: 0, y: 0, width: rendered.frame.width, height: rendered.frame.height),
+        source: rendered.source, html: rendered.html, state: secondValue)
+      let checkpointBasis = try #require(try store.checkpointProgramState(target: .init(kind: .board, id: boardID),
+        rendered: checkpointElement, state: checkpointValue, basis: second.basis, actor: actor, admittedStateBytes: admission))
+      #expect(checkpointBasis.hasNewerState(than: second.basis))
+      #expect(try store.checkpointProgramState(target: .init(kind: .board, id: boardID),
+        rendered: checkpointElement, state: .null, basis: second.basis, actor: actor, admittedStateBytes: admission) == nil)
+      let reopened = NotebookStore(root: store.root)
+      #expect(try reopened.readSpatialElement(boardID: boardID, elementID: rendered.id)?.state == checkpointValue)
+      let reopenedBasis = try #require(reopened.loadBoard(items: reopened.loadIndex().items).board(boardID)?.programStateBasis(rendered.id))
+      #expect(reopenedBasis == checkpointBasis)
+      // The next FIFO event still uses the original source basis, not a stale
+      // state fence, and can replace a large saved snapshot with a scalar.
+      let scalar = try #require(try store.commitSpatialElementState(boardID: boardID, rendered: first.element,
+        state: .number(2), actor: actor, expectedProgramBasis: originalBasis, admittedStateBytes: admission))
+      #expect(scalar.element.state == .number(2))
+      for source in ["different program", rendered.source] {
+        let before = try store.loadBoard(items: store.loadIndex().items)
+        var element = try #require(before.board(boardID)?.element(id: rendered.id))
+        let stamp = element.stamp
+        let changed = element.update(source: source, actor: actor)
+        #expect(changed)
+        var after = before
+        let updated = after.upsertElement(element, in: boardID, expected: stamp, actor: actor)
+        #expect(updated)
+        _ = try store.saveBoardEdits(before: before, after: after)
+      }
+      let afterABA = try store.currentChangeCursor()
+      #expect(throws: CollaborationError.self) {
+        try store.commitSpatialElementState(boardID: boardID, rendered: rendered,
+          state: .number(3), actor: actor, expectedProgramBasis: originalBasis, admittedStateBytes: admission)
+      }
+      #expect(try store.currentChangeCursor() == afterABA)
+      let current = try #require(store.loadBoard(items: store.loadIndex().items).board(boardID)?.programStateBasis(rendered.id))
+      #expect(!current.hasSameSource(as: originalBasis))
+      let accepted = try #require(try store.commitSpatialElementState(boardID: boardID, rendered: rendered,
+        state: .number(3), actor: actor, expectedProgramBasis: current, admittedStateBytes: admission))
+      #expect(accepted.element.state == .number(3))
+    }
+  }
+
+  @Test func spatialProgramCommitRejectsIdenticalDeletionAndRecreation() throws {
+    try fixture(kind: .web) { store, actor, boardID, rendered in
+      let before = try store.loadBoard(items: store.loadIndex().items)
+      let basis = try #require(before.board(boardID)?.programStateBasis(rendered.id))
+      var removed = before
+      let removedCount = removed.removeElements(ids: [rendered.id], from: boardID, actor: actor)
+      #expect(removedCount == 1)
+      _ = try store.saveBoardEdits(before: before, after: removed)
+      #expect(try store.commitSpatialElementState(boardID: boardID, rendered: rendered,
+        state: .number(1), actor: actor, expectedProgramBasis: basis) == nil)
+      var recreated = removed
+      let inserted = recreated.upsertElement(rendered, in: boardID, expected: nil, actor: actor)
+      #expect(inserted)
+      _ = try store.saveBoardEdits(before: removed, after: recreated)
+      let cursor = try store.currentChangeCursor()
+      #expect(throws: CollaborationError.self) {
+        try store.commitSpatialElementState(boardID: boardID, rendered: rendered,
+          state: .number(2), actor: actor, expectedProgramBasis: basis)
+      }
+      #expect(try store.currentChangeCursor() == cursor)
+      #expect(try store.readSpatialElement(boardID: boardID, elementID: rendered.id)?.state == rendered.state)
+    }
+  }
+
+  @Test func everySpatialProgramWriteReturnsItsExactDurableCheckpointBasis() throws {
+    try fixture(kind: .web) { store, actor, board, original in
+      var element = original
+      let basis = try #require(store.loadBoard(items: store.loadIndex().items).board(board)?.programStateBasis(element.id))
+      var receipts: [NotebookSpatialProgramStateReceipt] = []
+      for value in [1.0, 2.0, 1.0] {
+        let receipt = try #require(try store.commitSpatialElementState(boardID: board, rendered: element,
+          state: .number(value), actor: actor, expectedProgramBasis: basis))
+        element = receipt.element; receipts.append(receipt)
+        let rendered = AgentElement(id: element.id, kind: .web,
+          frame: .init(x: 0, y: 0, width: element.frame.width, height: element.frame.height),
+          source: element.source, html: element.html, state: element.state)
+        // No intervening projection read/reload supplies authority to this checkpoint.
+        #expect(try store.checkpointProgramState(target: .init(kind: .board, id: board), rendered: rendered,
+          state: element.state, basis: receipt.basis, actor: actor) == receipt.basis)
+      }
+      #expect(receipts[0].element.state == receipts[2].element.state)
+      #expect(receipts[0].basis != receipts[2].basis, "An A→B→A receipt cannot adopt a later state clock")
+    }
+  }
+
   @Test func spatialProgramCheckpointCommitsOnlyItsExpectedSourceAndState() throws {
     try fixture(kind: .web) { store, actor, board, element in
       let rendered = AgentElement(id: element.id, kind: .web,
@@ -98,8 +210,9 @@ struct NotebookNativeElementTests {
   }
 
   @Test func stateReadsCurrentGeometryAndRejectsAnOldProgram() throws {
-    try fixture { store, actor, board, rendered in
+    try fixture(kind: .web) { store, actor, board, rendered in
       let index = try store.loadIndex(), before = try store.loadBoard(items: index.items)
+      let basis = try #require(before.board(board)?.programStateBasis(rendered.id))
       var current = try #require(try store.readSpatialElement(boardID: board, elementID: rendered.id))
       let frame = SpatialRect(x: 70, y: 80, width: 240, height: 100)
       _ = current.update(frame: frame, actor: UUID())
@@ -107,11 +220,19 @@ struct NotebookNativeElementTests {
       _ = moved.upsertElement(current, in: board, expected: rendered.stamp, actor: actor)
       _ = try store.saveBoardEdits(before: before, after: moved)
       let state: JSONValue = .object(["value": .number(19)])
-      let committed = try store.commitSpatialElementState(boardID: board, rendered: rendered, state: state, actor: actor)
-      #expect(committed?.state == state && committed?.frame == frame)
-      _ = try updateTestNativeText(store:store,boardID: board, elementID: rendered.id, text: "new source", finish: false, actor: actor)
+      let committed = try store.commitSpatialElementState(boardID: board, rendered: rendered, state: state, actor: actor, expectedProgramBasis: basis)
+      #expect(committed?.element.state == state && committed?.element.frame == frame)
+      let sourceBefore = try store.loadBoard(items: index.items)
+      var changedProgram = try #require(sourceBefore.board(board)?.elements.first { $0.id == rendered.id })
+      let sourceStamp = changedProgram.stamp
+      let sourceChanged = changedProgram.update(source: "new source", actor: actor)
+      #expect(sourceChanged)
+      var sourceAfter = sourceBefore
+      let sourceUpdated = sourceAfter.upsertElement(changedProgram, in: board, expected: sourceStamp, actor: actor)
+      #expect(sourceUpdated)
+      _ = try store.saveBoardEdits(before: sourceBefore, after: sourceAfter)
       let cursor = try store.currentChangeCursor()
-      #expect(throws: CollaborationError.self) { try store.commitSpatialElementState(boardID: board, rendered: rendered, state: .number(20), actor: actor) }
+      #expect(throws: CollaborationError.self) { try store.commitSpatialElementState(boardID: board, rendered: rendered, state: .number(20), actor: actor, expectedProgramBasis: basis) }
       #expect(try store.currentChangeCursor() == cursor)
     }
   }

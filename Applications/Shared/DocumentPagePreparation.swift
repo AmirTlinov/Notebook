@@ -278,7 +278,8 @@ final class DocumentPagePreparation {
       nodeCount: regions.count, utf8Bytes: html.utf8.count)
     let printed = DocumentPrintedPage(source: printSource!, pageIndex: index, width: message.paper.widthPoints, height: message.paper.heightPoints)
     let local = DocumentSourceMessage(key: message.key, documentID: message.documentID, paper: message.paper,
-      blocks: blocks, sourceVersions: message.sourceVersions.filter { ids.contains($0.key) })
+      blocks: blocks, sourceVersions: message.sourceVersions.filter { ids.contains($0.key) },
+      programIdentities: message.programIdentities.filter { ids.contains($0.key) })
     let page = DocumentPreparedPage(fragment: fragment, printed: printed, source: local, pageCount: layout.pageCount, reservation: charge)
     pages[index] = page; compiledPageCount += 1; trim(); return page
   }

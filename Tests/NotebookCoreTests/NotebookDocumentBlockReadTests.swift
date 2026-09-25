@@ -38,7 +38,7 @@ struct NotebookDocumentBlockReadTests {
       let stamp = VersionStamp(counter: clock.counter + 1, actor: actor)
       _ = try store.commitDocumentState(.init(documentID: id, record: .init(id: blockID, value: .number(7), stamp: stamp,
         fieldVersion: .init(stamp: stamp, human: true)), journalStamp: stamp,
-        expectedSourceVersion: try #require(try store.readDocumentBlock(documentID: id, blockID: blockID)).sourceVersion))
+        expectedProgramIdentity: try #require(try store.readDocumentBlock(documentID: id, blockID: blockID)).programIdentity))
       let kept = try store.storedFragments(address: file + "#/records/@retired-75000")
       try poison(store, addresses: [file + "#/records/@retired-50000", documentFile(id) + "#/blocks/@unrequested"])
       let cursor = try store.currentChangeCursor()
@@ -71,7 +71,7 @@ struct NotebookDocumentBlockReadTests {
       let accepted = state.commit(blockID: blockID, value: .null, actor: actor)
       #expect(accepted)
       _ = try store.commitDocumentState(.init(documentID: id, record: #require(state.records.first),
-        journalStamp: state.stamp, expectedSourceVersion: absent.sourceVersion))
+        journalStamp: state.stamp, expectedProgramIdentity: absent.programIdentity))
       let committed = try #require(try store.readDocumentBlock(documentID: id, blockID: blockID))
       #expect(committed.state == .some(.null))
       #expect(committed.stateVersion == state.records.first?.fieldVersion)

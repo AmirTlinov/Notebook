@@ -24,12 +24,39 @@ Painter occupancy probes share one SQL read transaction. Nested addressed reads
 borrow it and validate the same revision. A transparent offscreen-only board does
 not allocate Metal viewport backing merely because distant strokes exist.
 Chunk intersection uses the installed camera; source mesh remains available.
-The source and paint pagination share one addressed journal proof: at most 64
+Ordinary source and paint pagination share one addressed journal proof: at most 64
 intervening delivery-receipt records may advance the journal without changing
 material. Another address, unavailable history or an oversized interval rejects
 the old source. Workspace identity, bounds, group poses and nested WAL-cut checks
 remain mandatory. The source retains only its last proven cursor, never a read
 transaction across awaits or a second material revision.
+
+The interactive ink window retains whole admitted contacts, all erasers intersecting
+their complete pen extents, and addressed figure masks even outside the camera.
+Pins preserve contacts through interaction, not a claim of complete surface history.
+The window caps admission at 8,192 actions and 64 MiB of measurement payload; overflow
+fails instead of silently clipping the interaction basis. Cold Undo/Redo reads the
+existing bounded history directory and exact action headers; reference replacement
+changes only retained contributions and preserves unseen ink. Scene preparation
+uses one fresh WAL cut on its serial reader after a short FIFO writer fence, not a
+heavy writer command. Shutdown joins reads and closes the idle handle permanently.
+
+Mac current-view publication can instead retain the actual renderer's finite pixel
+witness: paint-query membership/order, borrowed source/placement records, graphic
+claimants, nested portal camera/content and ink-window record hashes. Revalidation
+repeats those admitted queries without rendering again or decoding measurement
+bodies; an unseen edit cannot invalidate unchanged visible pixels. Page/document
+publication checks its addressed content/state/ink headers. The workspace cursor
+only discovers possible changes; a still-current witness permits a metadata receipt
+refresh without rewriting the PNG. Workspace identity and the final source cut
+remain mandatory, with no second render traversal or global dependency cache.
+Selection and remembered navigation are receipt metadata, not pixel dependencies:
+board/cover keys retain their painted camera/opening; full fitted page/document keys
+retain their concrete source and viewport. A queued derived PNG or receipt remains
+revocable until its final I/O admission, independently of the shared accepted FIFO.
+Input, changed presentation and shutdown revoke only that derived work. The publisher
+serializes `runtime.json` on its own off-main I/O task, keeps the heartbeat and joins
+in-flight I/O before acknowledging shutdown; late callbacks cannot restart it.
 
 Unmounting/reparenting a document coordinator removes only its own WKWebView from
 the prior host, never a newly installed neighbor. Hidden parent boards are prepared
@@ -215,3 +242,10 @@ first interaction, stale callbacks and release. Historical diagnostic timing is 
 [the original record](https://github.com/AmirTlinov/Notebook/blob/1723ec2be6f6b8dda29e3a575fd6376fff03e093/docs/scene-allocation-contract.md).
 It does not establish current CPU/GPU/RSS or physical acceptance:
 [verification](verification.md).
+
+A page turn captures UIKit's native color range after its committed layer update;
+forcing a whole-sheet SDR conversion on the input actor is not required. The turn
+reserves the maximum eight-byte source rows and its bounded four-byte drawable
+rows, including alignment, before capture, then checks actual source row storage.
+Core Image resolves that same retained source into the existing BGRA8 output.
+Retired source completions cannot notify the next turn's readiness/timing owner.

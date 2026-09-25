@@ -667,6 +667,18 @@ final class SceneCompositionCohort {
     return installation.isInstalled && SceneRasterSource.agent(source) == .agent(receipt.demand.source)
   }
 
+  /// Tile snapping may extend past the admitted ink query. Those pixels do
+  /// not prove that an empty native projection has read the newly visible ink.
+  func containsInkWindows(presence: SessionPresence, frame: WorkspaceSceneFrame) -> Bool {
+    guard let window = liveData.inkWindow else { return true }
+    for boardID in plan.inkBoardIDs {
+      guard let view = boardID == presence.boardID ? presence : frame.presences[boardID],
+        window.coverage[.board(boardID)]?.contains(NotebookSceneState.bounds(for: view, margin: 0)) == true
+      else { return false }
+    }
+    return true
+  }
+
   func containsSourceWindows(presence: SessionPresence, frame: WorkspaceSceneFrame, displayScale: Double,
     refinesDetails: Bool = true) -> Bool {
     for (address, receipt) in sourceReceipts {
@@ -944,6 +956,7 @@ final class SceneCompositionTiles {
     } ?? false
     let reusablePaint = published.flatMap { cohort -> SceneCompositionCohort? in
       guard dirtySources.isEmpty, !needsSourceScheduling,
+        cohort.containsInkWindows(presence: presence, frame: frame),
         cohort.containsSourceWindows(presence: presence, frame: frame, displayScale: displayScale,
           refinesDetails: request.refinesDetails), cohort.requestedSources == sources,
         cohort.plan.revision == source.revision, cohort.plan.workspaceID == source.workspaceID,
@@ -982,9 +995,9 @@ final class SceneCompositionTiles {
             // The finite ink backing can need a new basis while every element,
             // source crop and static tile remains covered. Refill those SAME
             // physical ink owners without invalidating the live content tree.
-            // liveData contains complete ink for the admitted surfaces, and
-            // source validation plus install's contact/generation checks remain
-            // authoritative; this is not an exemption for an empty canvas.
+            // The bounded source still covers every newly visible ink
+            // window. Source validation and install's contact/generation
+            // checks remain authoritative, including an empty canvas.
             self?.onPreparationPhase?(id, "native_ink")
             let nativeInk = try await surfaceRegistry.prepareSceneInk(plan: reusablePaint.plan, frame: frame,
               liveData: reusablePaint.liveData, resources: resources, displayScale: displayScale,
@@ -1379,7 +1392,7 @@ final class SceneCompositionTiles {
     let admission = resources.rasterAdmission
     var resumed = false
     for (address, runtime) in runtimeSources where !runtime.isMounted {
-      guard runtime.failure?.canResumeCapture(with: admission) == true else { continue }
+      guard runtime.failure?.canResumeCapture(with: admission, restartingRuntime: true) == true else { continue }
       // The failed demand and admission baseline belong to the physical source,
       // so consumer remounts cannot lose its stationary refinement wake-up.
       runtimeSources[address] = nil

@@ -1,0 +1,42 @@
+{
+  "sourceCapturedAt": "2026-09-25T19:00:50.460242+00:00",
+  "platform": "iPad Simulator",
+  "sourceSHA256": {
+    "Applications/Shared/InkCanvasView.swift": "fe3dc7a13ac7ad63df9184a350e13e245b3886005b89b8126a43b308bae6a0c1",
+    "Applications/Tests/InkCanvasLifecycleTests.swift": "cf88128e27c490a73f6b6a262f37dad9ef08d9dd99162612b0d83ce0f8defa15",
+    "Applications/Shared/SheetCurlRenderer.swift": "acca5ad1fc0164e2d93d452a8e5cc2281e075670c97337fea673c7899d6ada96",
+    "Applications/iPad/IPadSheetCurlController.swift": "1373406cd8c924ab309dd6eedfa58eabfc0b603b73c8ff77cd87dc4cb69f566b",
+    "Applications/Tests/NotebookPageMotionUXTests.swift": "b88542c678e3c12013e3535177b373a9ea6a5b96bdf0335c5f32c0a41b6e50dc"
+  },
+  "resultBundle": "/tmp/notebook-repair-native-cover-38b.xcresult",
+  "summary": {
+    "passedTests": 38,
+    "failedTests": 2,
+    "skippedTests": 0,
+    "runtimeWarnings": [],
+    "testFailures": [
+      {
+        "failureText": "XCTAssertTrue failed - The full restored window image must appear within 100 ms of readiness, including capture: 103.001083 ms",
+        "targetName": "NotebookTests",
+        "testIdentifier": 27,
+        "testIdentifierString": "PageInkGeometryTests/testColdRepeatRestoresPenAndEraserAtTheirOriginalPainterPosition()",
+        "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/PageInkGeometryTests/testColdRepeatRestoresPenAndEraserAtTheirOriginalPainterPosition",
+        "testName": "testColdRepeatRestoresPenAndEraserAtTheirOriginalPainterPosition()"
+      },
+      {
+        "failureText": "XCTAssertTrue failed - UX cancel-accepts-whole-page-program-erasure: correct=true, observed=100.353583 ms, ceiling=0.1 seconds; window observation, not photon timing",
+        "targetName": "NotebookTests",
+        "testIdentifier": 12,
+        "testIdentifierString": "NotebookInteractionUXTests/testPageWholeProgramEraseUnmountsBeforeLiftAndCancelledInputCanBeUndone()",
+        "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/NotebookInteractionUXTests/testPageWholeProgramEraseUnmountsBeforeLiftAndCancelledInputCanBeUndone",
+        "testName": "testPageWholeProgramEraseUnmountsBeforeLiftAndCancelledInputCanBeUndone()"
+      }
+    ]
+  },
+  "sourceStability": {
+    "changedSources": []
+  },
+  "scope": "Functional clock ownership, accepted geometry, erased program, cold entry and integrated curl priming/capture. No physical OS latency or complete acceptance claim.",
+  "priorAttempt": "38 stopped at test compilation: new pixel fixture used nonexistent .white instead of existing .paper. Production compiled; no tests ran.",
+  "attachments": "/tmp/notebook-native38b-attachments"
+}

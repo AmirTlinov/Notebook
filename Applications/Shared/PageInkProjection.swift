@@ -14,6 +14,34 @@ final class PageInkProjection: ScenePlaneProjectionObserver {
   private weak var host: PageInkHost?
   private weak var canvas: InkCanvasView?
   private weak var projection: ScenePlaneProjection?
+  private var isSceneVisible = true
+  private var refinesDetails = true
+  private weak var pageReadiness: PageTurnReadiness?
+  private weak var activity: PageTurnActivity?
+  private var preparationObserver: UUID?
+  private var pageIsCurrent = true
+  private var notebookIsVisible = true
+
+  /// Native page demand promotes the exact next sheet before its cached ready
+  /// bit can authorize capture. SwiftUI's global notebook visibility is not a
+  /// current/prewarm role: all retained sheets are mounted in that same window.
+  func observePage(_ readiness: PageTurnReadiness?, isCurrent: Bool, isVisible: Bool) {
+    if activity !== readiness?.activity {
+      if let preparationObserver { activity?.removePreparationObserver(preparationObserver) }
+      activity=readiness?.activity
+      preparationObserver=activity?.observePreparation { [weak self] in self?.refreshPageRole() }
+    }
+    pageReadiness=readiness;pageIsCurrent=isCurrent;notebookIsVisible=isVisible
+    refreshPageRole()
+  }
+
+  private func refreshPageRole() {
+    let index=pageReadiness?.pageIndex
+    let demanded=index != nil && activity?.preparationDemand?.pageIndex == index
+    let installed=index != nil && activity?.installedPreparation?.pageIndex == index
+    setSceneVisible(notebookIsVisible && (activity == nil || pageIsCurrent || demanded || installed))
+    if canvas?.isStableFramePresented == false { pageReadiness?(false) }
+  }
 
   init(host: PageInkHost? = nil, canvas: InkCanvasView? = nil) { self.host = host; self.canvas = canvas }
 
@@ -36,11 +64,30 @@ final class PageInkProjection: ScenePlaneProjectionObserver {
     refresh()
   }
 
-  func stop() { projection?.remove(self); projection = nil; host = nil; canvas = nil }
+  /// The page-turn owner already distinguishes visible sheets from retained
+  /// neighbours. A hidden neighbour prepares once, not once per foreign camera
+  /// sample; promotion immediately uses the current native projection.
+  func setSceneVisible(_ visible:Bool) {
+    guard isSceneVisible != visible else { return }
+    isSceneVisible=visible;refresh(refining:visible ? true : nil)
+  }
+
+  func setRefinesDetails(_ refines:Bool) {
+    guard refinesDetails != refines else { return }
+    refinesDetails=refines;refresh()
+  }
+
+  func stop() {
+    if let preparationObserver { activity?.removePreparationObserver(preparationObserver) }
+    preparationObserver=nil;activity=nil;pageReadiness=nil
+    projection?.remove(self);projection=nil;host=nil;canvas=nil
+  }
   func scenePlaneDidProject() { refresh() }
 
-  func refresh() {
+  func refresh(refining:Bool? = nil) {
+    let refinesDetails=refining ?? self.refinesDetails
     guard let host, let canvas, let window = host.window, !host.bounds.isEmpty else { return }
+    guard isSceneVisible || canvas.pageRenderRegion == nil || canvas.pageSourceSize != host.bounds.size else { return }
     #if os(iOS)
     let visible = SceneSourceVisibility.visibleRect(host)
     let origin = host.convert(CGPoint.zero, to: window)
@@ -58,8 +105,22 @@ final class PageInkProjection: ScenePlaneProjectionObserver {
     guard density.isFinite, density > 0 else { return }
     canvas.isHidden = visible.isNull || visible.isEmpty
     guard !canvas.isHidden else { return }
-    // A two-pixel fringe and pixel-grid rounding prevent clipping antialiased edges.
-    let padded = visible.insetBy(dx: -2/density, dy: -2/density).intersection(host.bounds)
+    // A two-pixel fringe is real coverage, not an excuse to resize every
+    // sample. Reuse the already admitted crop at the scene's movement quality;
+    // settled publication refines magnification and reclaims deep minification.
+    let visibleWithFringe=visible.insetBy(dx:-2/density,dy:-2/density).intersection(host.bounds)
+    if let previous=canvas.pageRenderRegion,canvas.pageSourceSize == host.bounds.size,
+      previous.width > 0,previous.height > 0,previous.contains(visibleWithFringe) {
+      let available=min(canvas.drawableSize.width/previous.width,canvas.drawableSize.height/previous.height)
+      let allowance=refinesDetails ? 1.0 : SceneCameraProjection.maximumUnrefinedMagnification
+      if density <= available*allowance+0.000_001,(!refinesDetails || density/available >= 0.6) { return }
+    }
+    // The existing native tile-pool guard is finite and clamped to the sheet;
+    // it buys nearby pan coverage without a second surface or a page cache.
+    let backingSize=InkCanvasView.sceneBackingSize(viewport:.init(x:visibleWithFringe.width,y:visibleWithFringe.height),
+      displayScale:density)
+    let padded=CGRect(x:visibleWithFringe.midX-backingSize.x/2,y:visibleWithFringe.midY-backingSize.y/2,
+      width:backingSize.x,height:backingSize.y).intersection(host.bounds)
     let lo = CGPoint(x: floor(padded.minX*density)/density, y: floor(padded.minY*density)/density)
     let hi = CGPoint(x: ceil(padded.maxX*density)/density, y: ceil(padded.maxY*density)/density)
     canvas.projectPage(region: CGRect(x: lo.x, y: lo.y, width: hi.x-lo.x, height: hi.y-lo.y),

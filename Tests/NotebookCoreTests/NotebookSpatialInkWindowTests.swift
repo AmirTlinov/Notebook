@@ -97,6 +97,29 @@ struct NotebookSpatialInkWindowTests {
     }
   }
 
+  @Test func boundedReferenceReplacementPreservesEveryUnseenContribution() throws {
+    try fixture { store, actor, header in
+      let surface = SurfaceID.board(header.rootBoardID), target = CollaborationTarget(kind: .board, id: header.rootBoardID)
+      var journal = SpatialInkJournal(stamp: .init(counter: 0, actor: actor))
+      let acceptedFirst = journal.append(tool: .pen, spans: [span(surface, 10)], actor: actor)
+      let first = try #require(acceptedFirst)
+      let acceptedHidden = journal.append(tool: .pen, spans: [span(surface, 50_000)], actor: actor)
+      let hidden = try #require(acceptedHidden)
+      try store.saveSpatialInk(journal)
+      let window = try store.readSpatialInkWindow(coverage: [surface: .init(origin: .zero, width: 100, height: 100)])
+      let basis = try store.referenceBasis(rootBoardID: header.rootBoardID, targets: [target], surfaces: [surface], inkActionIDs: [first.id])
+      #expect(try basis.replacing(ink: [.init(surface: surface, actions: window.journal.actions, baselineActionIDs: [first.id])]) == basis.identities)
+      let changed = journal.deactivate(first.id, actor: actor); #expect(changed)
+      try store.saveSpatialInk(journal)
+      let retained = try #require(journal.actions.first { $0.id == first.id })
+      let predicted = try basis.replacing(ink: [.init(surface: surface, actions: [retained], baselineActionIDs: [first.id])])
+      #expect(try predicted == store.referenceIdentities(targets: [target]))
+      #expect(throws: CollaborationError.self) {
+        try basis.replacing(ink: [.init(surface: surface, actions: [hidden], baselineActionIDs: [hidden.id])])
+      }
+    }
+  }
+
   @Test func bulkHeaderToolReplacementUpdatesWindowClassificationWithoutChangingMeasurements() throws {
     try fixture { store, actor, header in
       let before = try store.loadIndex(), treeBefore = try store.loadBoard(items: before.items), child = UUID()

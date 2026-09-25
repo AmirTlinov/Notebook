@@ -4,6 +4,115 @@ import XCTest
 @testable import Notebook
 
 final class SceneCompositionSQLTests: XCTestCase {
+  func testPixelWitnessKeepsUnseenBoardEditsAndRejectsVisibleSourcesMembershipAndInk() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = NotebookStore(root: root), actor = UUID()
+    let header = try store.initializeWorkspace(actor: actor, pageSize: .init(width: 834, height: 1194))
+    let workspace = try store.loadIndex(), initial = try store.loadBoard(items: workspace.items)
+    var tree = initial
+    XCTAssertTrue(tree.moveItem(workspace.selectedItemID, in: header.rootBoardID, to: .init(x: 50_000, y: 50_000), actor: actor))
+    for index in 0...40 {
+      let value = SpatialElement(id: "visible-\(index)", surface: .board(header.rootBoardID), kind: .nativeText,
+        frame: .init(x: Double(index) * 2, y: 10, width: 8, height: 20),
+        worldOrigin: index == 40 ? .init(x: 50_000, y: 0) : .zero,
+        source: "\(index)", stamp: .init(counter: 0, actor: actor))
+      XCTAssertTrue(tree.upsertElement(value, in: header.rootBoardID, expected: nil, actor: actor))
+    }
+    _ = try store.saveBoardEdits(before: initial, after: tree)
+    let bounds = WorkspaceSpatialBounds(origin: .zero, width: 100, height: 100)
+    func source() throws -> SceneCompositionSource {
+      let cut = try store.workspaceHeader()
+      return .init(store: store, revision: cut.cursor, workspaceID: cut.workspaceID, recordPixelDependencies: true)
+    }
+    func readAll(_ source: SceneCompositionSource) async throws -> ScenePixelDependencies {
+      var cursor: SceneCompositionReadCursor?
+      repeat {
+        let page = try await source.readPaintOrder(boardID: header.rootBoardID, bounds: bounds, after: cursor)
+        for case .element(let id) in page.entries.map(\.id) { _ = try await source.readElementForPaint(id, boardID: header.rootBoardID) }
+        cursor = page.next
+      } while cursor != nil
+      _ = try await source.ink(.board(header.rootBoardID), bounds: bounds)
+      let proof = try await source.pixelDependencies()
+      return try XCTUnwrap(proof)
+    }
+    func change(_ id: String, _ text: String) throws {
+      let before = tree
+      var value = try XCTUnwrap(tree.board(header.rootBoardID)?.elements.first { $0.id == id })
+      let stamp = value.stamp
+      XCTAssertTrue(value.update(source: text, actor: actor))
+      XCTAssertTrue(tree.upsertElement(value, in: header.rootBoardID, expected: stamp, actor: actor))
+      _ = try store.saveBoardEdits(before: before, after: tree)
+    }
+    let held = try source(), first = try await held.readPaintOrder(boardID: header.rootBoardID, bounds: bounds)
+    let after = try XCTUnwrap(first.next)
+    for case .element(let id) in first.entries.map(\.id) { _ = try await held.readElementForPaint(id, boardID: header.rootBoardID) }
+    _ = try await held.ink(.board(header.rootBoardID), bounds: bounds)
+    let partialValue = try await held.pixelDependencies(), partial = try XCTUnwrap(partialValue)
+    try change("visible-40", "Offscreen edit")
+    XCTAssertTrue(try partial.isCurrent(store))
+    try await held.validate()
+    let remaining = try await held.readPaintOrder(boardID: header.rootBoardID, bounds: bounds, after: after)
+    XCTAssertEqual(first.entries.count + remaining.entries.count, 40, "Witness-validated continuation must not restart or lose a page after an irrelevant commit")
+    let recorded = try await readAll(source())
+    try change("visible-0", "Visible body change without moving its indexed bounds")
+    XCTAssertFalse(try recorded.isCurrent(store))
+    let beforeInsertion = try await readAll(source()), previous = tree
+    XCTAssertTrue(tree.upsertElement(.init(id: "new-visible", surface: .board(header.rootBoardID), kind: .nativeText,
+      frame: .init(x: 20, y: 20, width: 10, height: 10), worldOrigin: .zero, source: "new", stamp: .init(counter: 0, actor: actor)),
+      in: header.rootBoardID, expected: nil, actor: actor))
+    _ = try store.saveBoardEdits(before: previous, after: tree)
+    XCTAssertFalse(try beforeInsertion.isCurrent(store), "A previously empty tail is a membership dependency")
+    let beforeInk = try await readAll(source())
+    let action = SpatialInkAction(tool: .eraser, spans: [.init(surface: .board(header.rootBoardID), samples: [
+      .init(point: .init(x: 10, y: 10), worldPoint: .init(x: 10, y: 10), timeOffset: 0, width: 4, opacity: 1, force: 1, azimuth: 0, altitude: 1)
+    ])], stamp: .init(counter: 1, actor: actor))
+    _ = try store.commitSpatialInk(.append(action, journalStamp: action.stamp))
+    XCTAssertFalse(try beforeInk.isCurrent(store))
+  }
+
+  func testPixelWitnessIncludesActualNestedPortalCameraAndPaintQueries() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = NotebookStore(root: root), actor = UUID()
+    let header = try store.initializeWorkspace(actor: actor, pageSize: .init(width: 834, height: 1194))
+    let before = try store.loadIndex(), treeBefore = try store.loadBoard(items: before.items)
+    var workspace = before, tree = treeBefore
+    let child = UUID()
+    XCTAssertNotNil(workspace.createBoard(title: "Portal", actor: actor, boardID: child))
+    XCTAssertTrue(tree.createBoard(child, in: header.rootBoardID, near: .zero, actor: actor))
+    for (id, x) in [("inside", 10.0), ("outside", 50_000.0)] {
+      XCTAssertTrue(tree.upsertElement(.init(id: id, surface: .board(child), kind: .nativeText,
+        frame: .init(x: x, y: 10, width: 20, height: 20), worldOrigin: .zero, source: id, stamp: workspace.stamp),
+        in: child, expected: nil, actor: actor))
+    }
+    _ = try store.saveWorkspaceEdits(before: before, after: workspace, boardBefore: treeBefore, boardAfter: tree)
+    func witness() async throws -> ScenePixelDependencies {
+      let cut = try store.workspaceHeader(), bounds = WorkspaceSpatialBounds(origin: .zero, width: 100, height: 100)
+      let source = SceneCompositionSource(store: store, revision: cut.cursor, workspaceID: cut.workspaceID, recordPixelDependencies: true)
+      _ = try await source.boardExists(header.rootBoardID)
+      _ = try await source.boardExists(child)
+      _ = try await source.portalCamera(child)
+      _ = try await source.boardHasContent(child)
+      let page = try await source.readPaintOrder(boardID: child, bounds: bounds)
+      for case .element(let id) in page.entries.map(\.id) { _ = try await source.readElementForPaint(id, boardID: child) }
+      _ = try await source.ink(.board(child), bounds: bounds)
+      let result = try await source.pixelDependencies()
+      return try XCTUnwrap(result)
+    }
+    let old = try await witness(), prior = tree
+    XCTAssertTrue(tree.updatePortalCamera(.init(center: .init(x: 40, y: 50), scale: 1.3), for: child, actor: actor))
+    _ = try store.saveBoardEdits(before: prior, after: tree)
+    XCTAssertFalse(try old.isCurrent(store))
+    let afterCamera = try await witness(), next = tree
+    var hidden = try XCTUnwrap(tree.board(child)?.elements.first { $0.id == "outside" })
+    let stamp = hidden.stamp
+    XCTAssertTrue(hidden.update(source: "Unseen nested material", actor: actor))
+    XCTAssertTrue(tree.upsertElement(hidden, in: child, expected: stamp, actor: actor))
+    _ = try store.saveBoardEdits(before: next, after: tree)
+    XCTAssertTrue(try afterCamera.isCurrent(store))
+  }
+
   @MainActor
   func testBoardReturnReusesPixelsAcrossPresenceAndEntryCameraCommitsButNotContentEdits() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -297,7 +406,7 @@ final class SceneCompositionSQLTests: XCTestCase {
         focusedItemID: item.id, openProgress: mode == .document ? 1 : 0, selectedItemID: item.id)
       let state = try NotebookSceneState.read(store: store, presence: presence, viewport: presence.viewport)
       XCTAssertNotNil(state.hierarchy.board(initial.rootBoardID), "Navigation retains the parent's metadata")
-      XCTAssertFalse(state.inkSurfaces.contains(.board(initial.rootBoardID)), "A metadata ancestor is not a visible ink surface")
+      XCTAssertFalse(state.inkWindow.coverage.keys.contains(.board(initial.rootBoardID)), "A metadata ancestor is not a visible ink surface")
       XCTAssertFalse(state.ink.actions.contains { $0.spans.contains { $0.surface == .board(initial.rootBoardID) } })
       let index = WorkspaceSceneIndex(workspace: state.workspace, hierarchy: state.hierarchy, paperSizes: state.paperSizes)
       let requested = WorkspaceSceneFrame(index: index, presence: presence, portalCamera: { _ in nil })
@@ -316,7 +425,7 @@ final class SceneCompositionSQLTests: XCTestCase {
     let returned = SessionPresence(boardID: initial.rootBoardID, mode: .board,
       camera: .init(scale: 0.5), viewport: .init(x: 834, y: 1194), selectedItemID: item.id)
     let parent = try NotebookSceneState.read(store: store, presence: returned, viewport: returned.viewport)
-    XCTAssertTrue(parent.inkSurfaces.contains(.board(initial.rootBoardID)))
+    XCTAssertTrue(parent.inkWindow.coverage.keys.contains(.board(initial.rootBoardID)))
     XCTAssertEqual(parent.ink.actions.first { $0.id == ink.actions[0].id }, ink.actions[0],
       "Returning reads the same durable ink; excluding an invisible surface does not delete it")
   }
@@ -675,7 +784,7 @@ final class SceneCompositionSQLTests: XCTestCase {
       try store.savePresence(closed)
       let started = try NotebookSceneState.start(store: store, actor: actor, pageSize: pageSize,
         notebookID: notebookID, pageID: pageID)
-      let refreshed = try NotebookDiskRefresh.prepare(store: store, presence: closed, receivingDeviceID: nil).scene
+      let refreshed = try NotebookDiskRefresh.prepare(store: store, presence: closed).scene
       for snapshot in [started, refreshed] {
         XCTAssertEqual(snapshot.presence.mode, .board)
         XCTAssertEqual(snapshot.presence.selectedItemID, selectedID)
@@ -689,7 +798,7 @@ final class SceneCompositionSQLTests: XCTestCase {
       let opened = SessionPresence(boardID: initial.rootBoardID, mode: selectedID == notebookID ? .page : .document,
         camera: closed.camera, viewport: viewport, focusedItemID: selectedID, openProgress: 1,
         selectedItemID: selectedID, notebookPageID: selectedPageID)
-      let openSnapshot = try NotebookDiskRefresh.prepare(store: store, presence: opened, receivingDeviceID: nil).scene
+      let openSnapshot = try NotebookDiskRefresh.prepare(store: store, presence: opened).scene
       if selectedID == notebookID { XCTAssertNotNil(openSnapshot.pages[pageID]) }
       else {
         XCTAssertEqual(openSnapshot.documents[documentID]?.blocks, document.blocks)

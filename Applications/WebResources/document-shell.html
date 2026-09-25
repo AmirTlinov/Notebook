@@ -244,7 +244,8 @@
         const csp = "default-src 'none'; img-src data: blob:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'none'; font-src data:; media-src data: blob:; form-action 'none'; base-uri 'none'; object-src 'none';";
         const html = block.html || '';
         return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,minimum-scale=1,maximum-scale=1,user-scalable=no"><meta http-equiv="Content-Security-Policy" content="${csp}"><style>html,body{margin:0;min-height:100%;background:transparent;color:#171713;font-family:-apple-system,BlinkMacSystemFont,sans-serif}*{box-sizing:border-box}${safeCSS}</style><script>(()=>{
-          (${installNotebookDocumentProgram.toString()})({blockID:${safeID},token:${safeToken},state:${safeState},
+          ${createNotebookStateReceiver.toString()}
+          (${installNotebookDocumentProgram.toString()})({blockID:${safeID},token:${safeToken},state:${safeState},stateCredit:${payload.programStateCredit?.[block.id]||0},
             requiresReady:${!!(String(block.javaScript || '').trim() || /<script/i.test(html))},script:${safeScript}},${createNotebookProgram.toString()});
         })()<\/script></head><body>${html}</body></html>`;
       };
@@ -253,11 +254,16 @@
       // global animation clock. Hidden-page and close fences share one pause.
       const programRequest = (runtime, channel, argument = null) => {
         if(channel==='notebook-suspend' && runtime.checkpointRequest)return runtime.checkpointRequest;
-        const requestID=crypto.randomUUID();runtime.lifecycleRequests??=new Map();
+        const requestID=crypto.randomUUID(),expiresAt=Date.now()+4200;runtime.lifecycleRequests??=new Map();
         const request=new Promise((resolve,reject)=>{
-          const timer=setTimeout(()=>{runtime.lifecycleRequests.delete(requestID);reject(new Error('program_lifecycle_timeout'));},4200);
-          runtime.lifecycleRequests.set(requestID,{resolve:value=>{clearTimeout(timer);resolve(value)},reject:error=>{clearTimeout(timer);reject(error)}});
-          runtime.frame.contentWindow.postMessage({channel,token:runtime.token,requestID,argument},'*');
+          const timer=setTimeout(()=>{runtime.lifecycleRequests.delete(requestID);
+            if(channel==='notebook-suspend'||channel==='notebook-resume')runtime.frame.contentWindow.postMessage({channel:'notebook-cancel-lifecycle',token:runtime.token},'*');
+            reject(new Error('program_lifecycle_timeout'));},4200);
+          const send=()=>runtime.frame.contentWindow.postMessage({channel,token:runtime.token,requestID,argument,expiresAt},'*');
+          runtime.lifecycleRequests.set(requestID,{resolve:value=>{clearTimeout(timer);resolve(value)},reject:error=>{clearTimeout(timer);reject(error)},send});
+          // A closing frame may not have installed its receiver yet. The same
+          // bounded request waits for that transport, never for author readiness.
+          if(runtime.transportReady)send();
         });
         if(channel==='notebook-suspend') {
           runtime.checkpointRequest=request;
@@ -266,16 +272,26 @@
         return request;
       };
       const freezeProgram = async (blockID,runtime) => {
-        const stateVersion=runtime.appliedVersion;
-        const state=await programRequest(runtime,'notebook-suspend');
-        runtime.appliedState=stable(state);
-        return {blockID,token:runtime.token,state,stateVersion};
+        const snapshot=await programRequest(runtime,'notebook-suspend');
+        return {blockID,token:runtime.token,snapshot,stateVersion:runtime.appliedVersion};
       };
       let programsSuspended = false, programsVisible = true;
+      const finishAcceptedProgram = async (blockID,runtime) => {
+        await programRequest(runtime,'notebook-finish-accepted');
+        return {blockID,token:runtime.token,acceptedOnly:true};
+      };
       const checkpointPrograms = async () => {
         programsSuspended = true;
-        return Promise.all([...interactiveFrames].filter(([,runtime])=>runtime.isStarted)
-        .map(async ([blockID,runtime])=>{try{return await freezeProgram(blockID,runtime)}
+        return Promise.all([...interactiveFrames].map(async ([blockID,runtime])=>{
+          try{return await (runtime.isStarted ? freezeProgram(blockID,runtime) : finishAcceptedProgram(blockID,runtime))}
+          catch(error){return {blockID,token:runtime.token,error:String(error)}}}));
+      };
+      // Failure ends presentation, not already accepted explicit state. No
+      // broken author pause/checkpoint hook participates in this boundary.
+      const finishAcceptedPrograms = async () => {
+        programsSuspended = true;
+        return Promise.all([...interactiveFrames].map(async ([blockID,runtime])=>{
+          try{return await finishAcceptedProgram(blockID,runtime)}
           catch(error){return {blockID,token:runtime.token,error:String(error)}}}));
       };
       const exportProgram = async (request) => {
@@ -285,25 +301,27 @@
       };
       const resumePrograms = async () => {
         if(!programsVisible)return true;
-        programsSuspended = false;
         await Promise.all([...interactiveFrames.values()].filter(runtime=>runtime.isStarted && runtime.visible)
           .map(runtime=>programRequest(runtime,'notebook-resume')));
+        programsSuspended = false;
         await applyInteractiveState();return true;
       };
-      const acknowledgeProgramCheckpoint = (blockID,token,state,basis,version) => {
+      const acknowledgeProgramCheckpoint = (blockID,token,basis,version) => {
         const runtime=interactiveFrames.get(blockID);
-        if(runtime?.token!==token || runtime.appliedState!==stable(state)
-          || stable(runtime.appliedVersion)!==stable(basis))return;
-        runtime.appliedVersion=version;
-        const current=payload.stateVersions?.[blockID]??null;
-        if(stable(current)===stable(basis) || stable(current)===stable(version)) {
-          payload.states[blockID]=state;
-          (payload.stateVersions??={})[blockID]=version;
-        }
+        if(runtime?.token!==token || stable(runtime.appliedVersion)!==stable(basis))return;
+        runtime.appliedVersion=version;runtime.awaitingStateVersion=stable(version);
       };
-      const acknowledgeProgramState = (blockID,token,revision,version) => {
+      const acknowledgeProgramState = (blockID,token,revision,version,localOnly) => {
         const runtime=interactiveFrames.get(blockID);
-        if(runtime?.token===token && runtime.revision===revision)runtime.appliedVersion=version;
+        if(runtime?.token!==token)return;
+        if(localOnly){runtime.localOnlyVersion=stable(runtime.appliedVersion);runtime.awaitingStateVersion=null;return;}
+        runtime.appliedVersion=version;
+        if(runtime.revision===revision)runtime.awaitingStateVersion=stable(version);
+      };
+      const transferProgramState = (blockID,token,operation,argument) => {
+        const runtime=interactiveFrames.get(blockID);
+        if(runtime?.token!==token)throw new Error('program_superseded');
+        return programRequest(runtime,operation,argument);
       };
 
       const positionInteractiveFrames = () => {
@@ -322,7 +340,7 @@
               freezeProgram(blockID,runtime).then(checkpoint=>{
                 if((runtime.visible && !programsSuspended) || runtime.retirementID!==requestID)return;
                 bridge({kind:'programCheckpoint',blockID,blockToken:runtime.token,
-                  value:checkpoint.state,stateVersion:checkpoint.stateVersion});
+                  snapshot:checkpoint.snapshot,stateVersion:checkpoint.stateVersion});
                 // Keep the context until the native writer acknowledges it.
               }).catch(error=>diagnostic('program_lifecycle_error',error,blockID));
             }
@@ -358,7 +376,7 @@
           // but cannot expose this file-backed parent or another package's capability.
           frame.setAttribute('sandbox',block.programPackage?'allow-scripts allow-same-origin':'allow-scripts');frame.setAttribute('scrolling','no');frame.dataset.blockId=block.id;
           let resolve,reject;const started=new Promise((yes,no)=>{resolve=yes;reject=no});
-          runtime={container,frame,token,started,resolve,reject,readiness:'unknown',isStarted:false,
+          runtime={container,frame,token,started,resolve,reject,readiness:'unknown',isStarted:false,transportReady:false,
             appliedState:stable(state),appliedVersion:payload.stateVersions?.[block.id]??null,revision:'0',cancel:()=>{
               for(const request of runtime.lifecycleRequests?.values()||[])request.reject(new Error('Interactive surface was superseded'));
               runtime.lifecycleRequests?.clear();frame.contentWindow?.postMessage({channel:'notebook-dispose',token},'*');reject(new Error('Interactive surface was superseded'))}};
@@ -397,15 +415,29 @@
       };
 
       const applyInteractiveState = async () => {
-        await Promise.all([...interactiveFrames].filter(([,runtime])=>runtime.visible).map(([blockID,runtime])=>new Promise((resolve,reject)=>{
+        await Promise.all([...interactiveFrames].filter(([,runtime])=>runtime.visible).map(async ([blockID,runtime])=>{
           const nextState=Object.prototype.hasOwnProperty.call(payload.states,blockID)?payload.states[blockID]:runtime.initialState;
           const stateKey=stable(nextState),nextVersion=payload.stateVersions?.[blockID]??null;
-          if(runtime.appliedState===stateKey){runtime.appliedVersion=nextVersion;resolve();return}
-          const requestID=crypto.randomUUID(); runtime.stateRequestID=requestID; runtime.stateRejected=reject;
-          runtime.stateApplied=accepted=>{if(accepted){runtime.appliedState=stateKey;runtime.appliedVersion=nextVersion}resolve()};
-          runtime.frame.contentWindow.postMessage({channel:'notebook-state',token:runtime.token,
-            requestID,state:nextState,revision:runtime.revision},'*');
-        })));
+          if(runtime.localOnlyVersion!==undefined){
+            if(runtime.localOnlyVersion===stable(nextVersion))return;
+            runtime.localOnlyVersion=undefined;
+          }
+          if(runtime.awaitingStateVersion) {
+            if(stable(nextVersion)!==runtime.awaitingStateVersion)return;
+            runtime.awaitingStateVersion=null;runtime.appliedState=stateKey;
+          }
+          if(runtime.appliedState===stateKey){runtime.appliedVersion=nextVersion;return;}
+          const transfer=crypto.randomUUID(),revision=runtime.revision;
+          for(let offset=0;offset<stateKey.length;) {
+            let end=Math.min(stateKey.length,offset+262144);
+            if(end<stateKey.length && /[\uD800-\uDBFF]/.test(stateKey[end-1]))end--;
+            const accepted=await programRequest(runtime,'notebook-state-window',{
+              transfer,offset,units:stateKey.length,text:stateKey.slice(offset,end),revision});
+            if(!accepted)return;
+            offset=end;
+          }
+          if(runtime.revision===revision){runtime.appliedState=stateKey;runtime.appliedVersion=nextVersion;}
+        }));
       };
 
       const installPhysicalFragment = (job, fragmentDOM) => {
@@ -731,7 +763,11 @@
           runtime.focused=message.focused===true;
           bridge({kind:'programFocus',blockID,blockToken:runtime.token,focused:message.focused===true});return;
         }
-        if(message.channel==='notebook-program-exported'){
+        if(message.channel==='notebook-program-installed'){
+          if(!runtime.transportReady){runtime.transportReady=true;for(const request of runtime.lifecycleRequests?.values()||[])request.send();}
+          return;
+        }
+        if(message.channel==='notebook-program-exported'||message.channel==='notebook-program-reply'){
           const request=runtime.lifecycleRequests?.get(message.requestID);
           runtime.lifecycleRequests?.delete(message.requestID);request?.resolve(message.result);return;
         }
@@ -742,24 +778,26 @@
         if(message.channel==='notebook-diagnostic'){diagnostic(message.kind,message.message,blockID);if(message.kind==='program_ready_error'||message.kind==='javascript_error')runtime.reject(new Error(message.message));return}
         if(message.channel==='notebook-program-started'){runtime.resolve();return}
         if(message.channel==='notebook-program-ready'){runtime.readiness='declared';return}
-        if(message.channel==='notebook-state-applied'){if(message.requestID===runtime.stateRequestID)runtime.stateApplied?.(message.accepted);return}
         if(message.channel==='notebook-program-error'){
           const request=runtime.lifecycleRequests?.get(message.requestID);
           runtime.lifecycleRequests?.delete(message.requestID);request?.reject(new Error(message.message));
-          if(message.requestID===runtime.stateRequestID)runtime.stateRejected?.(new Error(message.message));
-          else if(message.requestID===runtime.retirementID)diagnostic('program_lifecycle_error',message.message,blockID);return;
+          if(message.requestID===runtime.retirementID)diagnostic('program_lifecycle_error',message.message,blockID);return;
+        }
+        if(message.channel==='notebook-state-credit'){
+          bridge({kind:'stateCredit',blockID,blockToken:runtime.token,bytes:message.bytes});return;
         }
         if(message.channel!=='notebook-interactive')return;
-        payload.states[blockID]=message.state;runtime.revision=message.revision;
-        runtime.appliedState=stable(message.state);
-        bridge({kind:'state',documentID:payload.documentID,blockID,blockToken:runtime.token,value:message.state,revision:message.revision});
+        runtime.revision=message.snapshot.revision;
+        runtime.awaitingStateVersion='pending';
+        bridge({kind:'state',documentID:payload.documentID,blockID,blockToken:runtime.token,snapshot:message.snapshot});
       });
       addEventListener('dragstart', event => event.preventDefault());
       window.notebookRenderer = {
         installPageSource, acceptSourceExtent,
         blurPrograms:()=>{for(const runtime of interactiveFrames.values())if(runtime.focused)
           runtime.frame.contentWindow.postMessage({channel:'notebook-navigation-blur',token:runtime.token},'*');return true;},
-        applyState, checkpointPrograms, resumePrograms, exportProgram, setProgramsVisible, acknowledgeProgramState, acknowledgeProgramCheckpoint,
+        cancelLifecycle:()=>{for(const runtime of interactiveFrames.values())runtime.frame.contentWindow.postMessage({channel:'notebook-cancel-lifecycle',token:runtime.token},'*');},
+        receiveStateWindow:createNotebookStateReceiver(state=>{applyState(state);return true;}), checkpointPrograms, finishAcceptedPrograms, resumePrograms, exportProgram, transferProgramState, setProgramsVisible, acknowledgeProgramState, acknowledgeProgramCheckpoint,
         presentPage, requireFrame, retirePresentation, observePreparation, observedPageReceipt,
         setPageIndex,
         pageReceipt,

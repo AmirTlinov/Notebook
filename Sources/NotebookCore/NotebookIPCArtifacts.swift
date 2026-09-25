@@ -113,7 +113,7 @@ public struct NotebookExportOptions: Codable, Equatable, Sendable {
         guard let program = source.image?.presentation?.program,
           let block = cut.document.blocks.first(where: { $0.id == program.blockID && $0.kind == .interactive }),
           program.blockID == source.reference.elementID,
-          program.sourceVersion == cut.document.sourceVersion(blockID: block.id),
+          program.programIdentity == cut.document.programIdentity(blockID: block.id),
           program.state == (cut.state.value(for: block.id) ?? block.initialState) else {
           throw CollaborationError("export_presentation_model_unavailable", "Для этого формата явно остановите программу и отправьте её attention: нужен checkpoint той же модели/source, связанный с показанными пикселями.")
         }

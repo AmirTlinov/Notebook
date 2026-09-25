@@ -22,6 +22,7 @@ NATIVE_IPAD_BUNDLE = release.CANONICAL + ".native-test"
 NATIVE_IPAD_UI_RUNNER = release.CANONICAL + ".uitests.xctrunner"
 DOCUMENT_BROWSER_CONTRACTS = (
     "Tests/NotebookDocumentAcceptance/test_link_activation.mjs",
+    "Tests/NotebookDocumentAcceptance/test_page_phase_observation.mjs",
 )
 PROFILES = {
     "navigation-ux": {

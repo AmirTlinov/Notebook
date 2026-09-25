@@ -274,7 +274,7 @@ func lateHeavyOwnerSaveDoesNotResurrectDeletion(kind: WorkspaceItemKind) throws 
     #expect(accepted)
     let stateCommand = NotebookDocumentStateCommand(documentID: id,
       record: try #require(capturedState.records.first), journalStamp: capturedState.stamp,
-      expectedSourceVersion: capturedDocument.sourceVersion(blockID: "accepted"))
+      expectedProgramIdentity: capturedDocument.programIdentity(blockID: "accepted"))
     let beforeDeletion = index
     _ = index.deleteItem(id, actor: publicationActorA)
     _ = board.deleteItem(id, from: base.rootBoardID, kind: kind,
@@ -286,7 +286,7 @@ func lateHeavyOwnerSaveDoesNotResurrectDeletion(kind: WorkspaceItemKind) throws 
       #expect(!FileManager.default.fileExists(atPath: store.pageURL(capturedPage.id).path))
     } else {
       #expect(throws: CocoaError.self) { _ = try store.saveMergedDocument(capturedDocument) }
-      #expect(try store.commitDocumentState(stateCommand) == .targetChanged(documentID: id, currentSourceVersion: nil))
+      #expect(try store.commitDocumentState(stateCommand) == .targetChanged(documentID: id, currentProgramIdentity: nil))
       #expect(!FileManager.default.fileExists(atPath: store.documentURL(id).path))
       #expect(!FileManager.default.fileExists(atPath: store.documentStateURL(id).path))
     }

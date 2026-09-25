@@ -20,19 +20,40 @@ enum NotebookSelectionComposition {
     let image: UIImage
     private let width: Int
     private let height: Int
+    private let sampledRect: CGRect
     private let rgba: [UInt8]
+    var decodedPixelCount: Int { rgba.count / 4 }
 
-    init(_ image: UIImage) throws {
+    /// Keep the complete captured image as evidence, but only convert the union
+    /// of the caller's frozen probes. This does not omit any requested plane or
+    /// subtract readback/oracle work from the original observation deadline.
+    init(_ image: UIImage, sampling probes: [Probe]? = nil) throws {
       self.image = image
       let cg = try XCTUnwrap(image.cgImage)
       let width = cg.width, height = cg.height
       self.width = width; self.height = height
-      var bytes = [UInt8](repeating: 0, count: width * height * 4)
+      var rect = CGRect(x: 0, y: 0, width: width, height: height)
+      if let probes {
+        let validPoints = probes.flatMap(\.points).filter { point in
+          point.x.isFinite && point.y.isFinite && point.x >= 0 && point.y >= 0
+            && point.x.rounded() < CGFloat(width) && point.y.rounded() < CGFloat(height)
+        }
+        rect = validPoints.reduce(CGRect.null) { bounds, point in
+          bounds.union(CGRect(x: point.x.rounded(), y: point.y.rounded(), width: 1, height: 1))
+        }
+        // Empty/off-screen probes still fail below. A minimal decode lets them
+        // retain the same diagnostic rather than accepting an empty sample.
+        if rect.isNull { rect = CGRect(x: 0, y: 0, width: 1, height: 1) }
+      }
+      sampledRect = rect
+      let source = try XCTUnwrap(cg.cropping(to: rect))
+      let sampleWidth = Int(rect.width), sampleHeight = Int(rect.height)
+      var bytes = [UInt8](repeating: 0, count: sampleWidth * sampleHeight * 4)
       try bytes.withUnsafeMutableBytes { buffer in
-        let context = try XCTUnwrap(CGContext(data: buffer.baseAddress, width: width, height: height,
-          bitsPerComponent: 8, bytesPerRow: width * 4, space: CGColorSpaceCreateDeviceRGB(),
+        let context = try XCTUnwrap(CGContext(data: buffer.baseAddress, width: sampleWidth, height: sampleHeight,
+          bitsPerComponent: 8, bytesPerRow: sampleWidth * 4, space: CGColorSpaceCreateDeviceRGB(),
           bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue))
-        context.draw(cg, in: CGRect(x: 0, y: 0, width: width, height: height))
+        context.draw(source, in: CGRect(x: 0, y: 0, width: sampleWidth, height: sampleHeight))
       }
       rgba = bytes
     }
@@ -46,7 +67,10 @@ enum NotebookSelectionComposition {
           guard point.x.isFinite, point.y.isFinite,
             point.x >= 0, point.y >= 0, point.x.rounded() < CGFloat(width),
             point.y.rounded() < CGFloat(height) else { return probe.name + ": off-screen" }
-          let offset = (Int(point.y.rounded()) * width + Int(point.x.rounded())) * 4
+          let rounded = CGPoint(x: point.x.rounded(), y: point.y.rounded())
+          guard sampledRect.contains(rounded) else { return probe.name + ": not sampled" }
+          let x = Int(rounded.x - sampledRect.minX), y = Int(rounded.y - sampledRect.minY)
+          let offset = (y * Int(sampledRect.width) + x) * 4
           if probe.color.matches(Array(rgba[offset..<(offset + 4)])) { count += 1 }
         }
         let lower = probe.minimum ?? probe.points.count, upper = probe.maximum ?? probe.points.count
@@ -336,6 +360,66 @@ final class NotebookSelectionCompositionTests: XCTestCase {
     XCTAssertFalse(try frame(correct).failures([]).isEmpty)
     XCTAssertFalse(try frame(correct).failures([.init(name: "empty", points: [], color: .red)]).isEmpty)
     XCTAssertFalse(try frame(correct).failures([.init(name: "offscreen", points: [.init(x: 40, y: 5)], color: .red)]).isEmpty)
+  }
+
+  func testBoundedDecodeChecksEveryPlaneWithTheSamePixelsAndCountRules() throws {
+    typealias Probe = NotebookSelectionComposition.Probe
+    let points = [CGPoint(x: 11, y: 11), CGPoint(x: 21, y: 11),
+      CGPoint(x: 11, y: 21), CGPoint(x: 21, y: 21)]
+    let colors: [NotebookUXObservation.Color] = [.red, .blue, .black, .paper]
+    let planes = zip(points, colors).enumerated().map { index, pair in
+      Probe(name: "plane-\(index)", points: [pair.0], color: pair.1)
+    }
+    let checks = planes + [
+      Probe(name: "rounded", points: [.init(x: 18.49, y: 18.49)], color: .red),
+      Probe(name: "count", points: Array(points.prefix(2)), color: .red, minimum: 1, maximum: 1),
+      Probe(name: "bad-count", points: Array(points.prefix(2)), color: .red, minimum: 2),
+      Probe(name: "bad-range", points: [points[0]], color: .red, minimum: 2, maximum: 1)]
+    for range in [UIGraphicsImageRendererFormat.Range.standard, .extended] {
+      let format = UIGraphicsImageRendererFormat(); format.scale = 1; format.preferredRange = range
+      for missing in -1..<planes.count {
+        let image = UIGraphicsImageRenderer(size: .init(width: 64, height: 64), format: format).image { context in
+          UIColor.white.setFill(); context.fill(.init(x: 0, y: 0, width: 64, height: 64))
+          for (index, color) in [UIColor.red, .blue, .black, .white].enumerated() {
+            (index == missing ? (index == 3 ? UIColor.red : .white) : color).setFill()
+            context.fill(.init(x: index % 2 * 10 + 10, y: index / 2 * 10 + 10, width: 10, height: 10))
+          }
+        }
+        let whole = try NotebookSelectionComposition.Frame(image)
+        let sampled = try NotebookSelectionComposition.Frame(image, sampling: checks)
+        XCTAssertTrue(sampled.image === image, "The complete, unchanged window image remains the evidence")
+        XCTAssertEqual(sampled.decodedPixelCount, 121)
+        XCTAssertEqual(whole.decodedPixelCount, 64 * 64)
+        XCTAssertEqual(sampled.failures(checks), whole.failures(checks))
+        XCTAssertEqual(sampled.failures(planes).count, missing < 0 ? 0 : 1,
+          "A missing plane cannot be omitted by limiting only the pixel conversion")
+        XCTAssertEqual(sampled.failures([.init(name: "uncaptured", points: [.init(x: 63, y: 63)], color: .paper)]),
+          ["uncaptured: not sampled"], "An unrequested later probe must never read invented or wrapped pixels")
+      }
+    }
+  }
+
+  func testBoundedDecodePreservesMissingOffscreenAndInvalidProbeFailures() throws {
+    typealias Probe = NotebookSelectionComposition.Probe
+    let format = UIGraphicsImageRendererFormat(); format.scale = 1
+    let image = UIGraphicsImageRenderer(size: .init(width: 64, height: 64), format: format).image { context in
+      UIColor.white.setFill(); context.fill(.init(x: 0, y: 0, width: 64, height: 64))
+    }
+    let invalid: [[Probe]] = [[], [.init(name: "empty", points: [], color: .paper)]]
+      + [CGPoint(x: -0.1, y: 1), .init(x: 64, y: 1), .init(x: 1, y: 63.5),
+        .init(x: CGFloat.nan, y: 1), .init(x: 1, y: CGFloat.infinity)].map { point in
+          [.init(name: "outside", points: [point], color: .paper)]
+        }
+    let whole = try NotebookSelectionComposition.Frame(image)
+    for probes in invalid {
+      let sampled = try NotebookSelectionComposition.Frame(image, sampling: probes)
+      XCTAssertFalse(sampled.failures(probes).isEmpty)
+      XCTAssertEqual(sampled.failures(probes), whole.failures(probes))
+    }
+    let one = Probe(name: "same-pixel", points: [.init(x: 44, y: 39)], color: .paper)
+    let sampled = try NotebookSelectionComposition.Frame(image, sampling: [one])
+    XCTAssertEqual(sampled.decodedPixelCount, 1)
+    XCTAssertTrue(sampled.failures([one]).isEmpty)
   }
 
   func testReadbackAndLaterCorrectFramesCannotForgeLatencyOrHideMixedFrames() {

@@ -28,7 +28,7 @@ final class NotebookPinnedImageTests: XCTestCase {
     let resources = SceneRenderResources.shared, lease = try await resources.acquireWebSurface(priority: .input)
     var ready = false
     let owner = AgentWebCoordinator(lease: lease, resources: resources, snapshotPolicy: .display(scale: 2),
-      onInteractionReady: { ready = $0 }, onState: { _ in true })
+      onInteractionReady: { ready = $0 }, onState: { _, completion in completion(nil); return true })
     owner.programOwner = model
     let focus = InteractiveElementReference.page(pageID: page.id, elementID: source.id)
     owner.bindPresentation(to: focus)
@@ -435,6 +435,13 @@ final class NotebookPinnedImageTests: XCTestCase {
     model.moveItem(try XCTUnwrap(model.workspace?.selectedItemID), to: .init(x: -30_000, y: -30_000))
     await model.finishPendingPersistence()
     let boardID = try XCTUnwrap(model.presence?.boardID)
+    // Moving the initially open paper also moves its reading camera. Admit
+    // this test's board window before loading its sources: there is no live
+    // workspace view yet to resume a cold request made by prepareComposition.
+    let presence = SessionPresence(boardID: boardID, mode: .board, camera: .init(scale: 1), viewport: .init(x: 512, y: 512))
+    model.updatePresence(presence, settled: true)
+    let positioned = await model.finishPendingPersistence()
+    XCTAssertTrue(positioned)
     var hierarchy = try model.store.loadBoard(items: model.store.loadIndex().items)
     let old = SpatialElement(id: "z-visible-svg", surface: .board(boardID), kind: .web,
       frame: .init(x: 0, y: 0, width: 100, height: 60), worldOrigin: .zero,
@@ -450,12 +457,13 @@ final class NotebookPinnedImageTests: XCTestCase {
     XCTAssertTrue(hierarchy.upsertElement(old, in: boardID, expected: nil, actor: model.actorID))
     try model.store.saveBoard(hierarchy, items: model.store.loadIndex().items)
     await model.reloadExternalChanges()?.value
-    let presence = SessionPresence(boardID: boardID, mode: .board, camera: .init(scale: 1), viewport: .init(x: 512, y: 512))
-    model.updatePresence(presence, settled: true)
     await model.finishPendingPersistence()
     var deadline = ContinuousClock.now + .seconds(5)
     while model.scenePreparationPending, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(5)) }
-    let frame = WorkspaceSceneFrame(index: try XCTUnwrap(model.sceneIndex), presence: presence, portalCamera: model.scenePortalCamera)
+    let index = try XCTUnwrap(model.sceneIndex)
+    XCTAssertEqual(index.element(id: old.id, boardID: boardID), old)
+    XCTAssertTrue(fillers.allSatisfy { index.element(id: $0.id, boardID: boardID) != nil })
+    let frame = WorkspaceSceneFrame(index: index, presence: presence, portalCamera: model.scenePortalCamera)
     model.prepareComposition(presence: presence, frame: frame, pinned: Set(fillers.map { .element($0.id) }), displayScale: 2)
     deadline = ContinuousClock.now + .seconds(5)
     let address = SceneSourceAddress(plane: .board(boardID), elementID: old.id)

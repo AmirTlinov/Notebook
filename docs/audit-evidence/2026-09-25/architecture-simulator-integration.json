@@ -1,0 +1,76 @@
+{
+  "platform": "iPad Simulator",
+  "resultBundle": "/tmp/notebook-repair-native-cover-42.xcresult",
+  "sources": "/tmp/notebook-repair-native-cover-42-sources.json",
+  "sourceStability": {
+    "changedSources": []
+  },
+  "selectors": [
+    "NotebookTests/DocumentProgramOwnerTests",
+    "NotebookTests/ProgramStateTransferTests",
+    "NotebookTests/NotebookDocumentStatePersistenceTests",
+    "NotebookTests/NotebookPinnedImageTests",
+    "NotebookTests/NotebookDrawingToolsTests",
+    "NotebookTests/NotebookSelectionCompositionTests",
+    "NotebookTests/NotebookLassoMotionTests",
+    "NotebookTests/SceneCompositionSQLTests",
+    "NotebookTests/SpatialInkHandoffTests",
+    "NotebookTests/NotebookPersistenceTests",
+    "NotebookTests/NotebookDurableNotificationTests",
+    "NotebookTests/NotebookChatControllerTests",
+    "NotebookTests/NotebookChatRenderingTests",
+    "NotebookTests/InkCanvasLifecycleTests",
+    "NotebookTests/PageInkGeometryTests/testColdRepeatRestoresPenAndEraserAtTheirOriginalPainterPosition",
+    "NotebookTests/NotebookInteractionUXTests/testPageWholeProgramEraseUnmountsBeforeLiftAndCancelledInputCanBeUndone"
+  ],
+  "summary": {
+    "passedTests": 213,
+    "failedTests": 2,
+    "skippedTests": 0,
+    "runtimeWarnings": [],
+    "testFailures": [
+      {
+        "failureText": "XCTAssertTrue failed - Presentation must resume with the latest material, not replay queued stale tails",
+        "targetName": "NotebookTests",
+        "testIdentifier": 54,
+        "testIdentifierString": "InkCanvasLifecycleTests/testPageCoalescesNewMaterialUntilTheSystemSuppliesADrawable()",
+        "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/InkCanvasLifecycleTests/testPageCoalescesNewMaterialUntilTheSystemSuppliesADrawable",
+        "testName": "testPageCoalescesNewMaterialUntilTheSystemSuppliesADrawable()"
+      },
+      {
+        "failureText": "XCTAssertTrue failed - A failed allocation cannot discard either the accepted source or the live contact",
+        "targetName": "NotebookTests",
+        "testIdentifier": 55,
+        "testIdentifierString": "InkCanvasLifecycleTests/testPageStopsDrawableProductionWhenAResizedPoolCannotBeAdmitted()",
+        "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/InkCanvasLifecycleTests/testPageStopsDrawableProductionWhenAResizedPoolCannotBeAdmitted",
+        "testName": "testPageStopsDrawableProductionWhenAResizedPoolCannotBeAdmitted()"
+      }
+    ],
+    "startTime": 1790364231.148,
+    "finishTime": 1790364459.377
+  },
+  "scope": "Integrated lifecycle, accepted state, ink history/window/handoff, selection/lasso, persistence/durable wakeups and chat. Two lifecycle fixtures incorrectly treat Simulator GPU readiness as window pixels; focused correction/recheck pending. Physical20ms and final acceptance remain open.",
+  "focused43": {
+    "resultBundle": "/tmp/notebook-repair-native-cover-43.xcresult",
+    "passedTests": 3,
+    "failedTests": 1,
+    "correctedWindowObservationsMS": [
+      57.120416,
+      55.207708
+    ],
+    "remainingFailure": "Same immediate screenshot assumption at remount, InkCanvasLifecycleTests.swift121; probes preserved and existing100ms window observation applied. Repeated check pending."
+  },
+  "focused44": {
+    "resultBundle": "/tmp/notebook-repair-native-cover-44.xcresult",
+    "passedDistinctTests": 4,
+    "runsPerTest": 3,
+    "passedExecutions": 12,
+    "failedTests": 0,
+    "skippedTests": 0,
+    "runtimeWarnings": [],
+    "sourceStability": {
+      "changedSources": []
+    },
+    "meaning": "The 213 distinct passing tests from42 remain unchanged; both failing lifecycle cases now pass their correct window observation boundary in three repetitions. This is combined scoped evidence, not a rerun of215 or final UX acceptance."
+  }
+}

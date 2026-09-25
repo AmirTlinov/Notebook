@@ -477,7 +477,7 @@ import NotebookCore
     let fixture = try Fixture(transcript: "Точный текст диктовки."); await fixture.start()
     _ = await fixture.queue.flush()
     let gate = DispatchSemaphore(value: 0)
-    fixture.queue.enqueue(publishesChanges: false) { _ in gate.wait(); return false }
+    fixture.queue.enqueue(owner: .command(.read)) { _ in gate.wait(); return false }
     let insertion = Task { try await fixture.chat.insertDictation(fixture.result, id: fixture.id,
       thread: fixture.thread, computer: fixture.peer) }
     try await wait { fixture.queue.pendingCount >= 2 }
@@ -497,7 +497,7 @@ import NotebookCore
     let fixture = try Fixture(alreadyInserted: true); await fixture.start()
     _ = await fixture.queue.flush()
     let permission = AVCaptureDevice.authorizationStatus(for: .audio), gate = DispatchSemaphore(value: 0)
-    fixture.queue.enqueue(publishesChanges: false) { _ in gate.wait(); return false }
+    fixture.queue.enqueue(owner: .command(.read)) { _ in gate.wait(); return false }
     let sending = Task { await fixture.chat.sendMessage(to: .thread(fixture.thread), text: fixture.chat.draft, context: "") }
     try await wait { fixture.chat.saving }
     await fixture.chat.dictation.begin()

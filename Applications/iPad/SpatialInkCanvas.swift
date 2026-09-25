@@ -316,6 +316,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
       uninstall()
       refreshNativeMount()
       let recognizer = SpatialPencilGestureRecognizer()
+      recognizer.simulatesPencilContacts = inputGate.simulatesPencilContacts
       recognizer.allowedTouchTypes = [
         NSNumber(value: UITouch.TouchType.pencil.rawValue)
       ]
@@ -1072,6 +1073,7 @@ final class SpatialPencilGestureRecognizer: UIGestureRecognizer {
 
   var onEvent: ((Event) -> Void)?
   var canBeginContact: ((UITouch) -> Bool)?
+  var simulatesPencilContacts = false
   private var activeTouch: UITouch?
 
   override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
@@ -1080,7 +1082,7 @@ final class SpatialPencilGestureRecognizer: UIGestureRecognizer {
       state = .cancelled
       return
     }
-    guard let touch = touches.first else {
+    guard !simulatesPencilContacts || touches.count == 1, let touch = touches.first else {
       state = .failed
       return
     }

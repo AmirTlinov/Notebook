@@ -254,6 +254,28 @@ enum NotebookLassoInkSource: Sendable {
     private static func point(_ sample: SpatialInkSample, origin: WorldPoint?) -> SpatialPoint {
       origin.flatMap { o in sample.worldPoint.map { o.delta(to:$0) } } ?? sample.point
     }
+    /// Broad-phase action identities only. Count each immutable contact once,
+    /// including erasers that the retained pen extent may need outside the
+    /// contour. No sample ranges or exact polygon geometry are visited here.
+    func candidateActionIDs(intersecting polygon:[SpatialPoint],surface:SurfaceID,origin queryOrigin:WorldPoint?) -> Set<UUID> {
+      guard surface == self.surface,polygon.count >= 3 else { return [] }
+      let delta=origin.flatMap { o in queryOrigin.map { o.delta(to:$0) } } ?? .zero
+      let region=polygon.reduce(CGRect.null) { $0.union(.init(x:$1.x+delta.x,y:$1.y+delta.y,width:0,height:0)) }
+      var ids=Set<UUID>(),penBounds=CGRect.null
+      for index in indexedSpans(intersecting:region) {
+        let span=spans[index],entry=entries[span.entry]
+        guard entry.tool == .pen,!excluded.contains(entry.id) else { continue }
+        ids.insert(entry.id);penBounds=penBounds.union(entryBounds[span.entry])
+      }
+      if !penBounds.isNull {
+        for index in indexedSpans(intersecting:penBounds) {
+          let entry=entries[spans[index].entry]
+          if entry.tool == .eraser { ids.insert(entry.id) }
+        }
+      }
+      return ids
+    }
+
     func selection(polygon: [SpatialPoint], surface: SurfaceID, origin queryOrigin: WorldPoint?, bounds: CGRect?) throws -> Result? {
       guard surface == self.surface, polygon.count >= 3 else { return nil }
       let delta = origin.flatMap { o in queryOrigin.map { o.delta(to:$0) } } ?? .zero

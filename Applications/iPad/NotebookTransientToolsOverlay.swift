@@ -28,7 +28,7 @@ struct NotebookTransientToolsOverlay: View {
       }.allowsHitTesting(false).accessibilityHidden(true)
     }
     if let region=model.selectionSession.region,let zero=origin(region.address) {
-      let f=model.selectionSession.manipulation.flatMap { $0.reference == region.reference ? $0.frame : nil }
+      let f=model.selectionSession.manipulation.flatMap { $0.reference == region.reference ? $0.presentedFrame : nil }
         ?? CGRect(x:region.frame.x,y:region.frame.y,width:region.frame.width,height:region.frame.height)
       contour(region.polygon.map { .init(x:f.minX+($0.x-region.frame.x)*f.width/region.frame.width,
         y:f.minY+($0.y-region.frame.y)*f.height/region.frame.height) },origin:zero)

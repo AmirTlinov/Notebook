@@ -28,11 +28,11 @@ struct NotebookDocumentStateCommandTests {
     let accepted = journal.commit(blockID: block, value: value, actor: actor, human: human)
     #expect(accepted)
     return .init(documentID: journal.id, record: try #require(journal.records.first { $0.id == block }),
-      journalStamp: journal.stamp, expectedSourceVersion: try sourceVersion(store, journal.id, block: block))
+      journalStamp: journal.stamp, expectedProgramIdentity: try programIdentity(store, journal.id, block: block))
   }
 
-  private func sourceVersion(_ store: NotebookStore, _ id: UUID, block: String = "body") throws -> ContentFieldVersion {
-    try #require(try store.readDocumentBlock(documentID: id, blockID: block)).sourceVersion
+  private func programIdentity(_ store: NotebookStore, _ id: UUID, block: String = "body") throws -> DocumentProgramIdentity {
+    try #require(try store.readDocumentBlock(documentID: id, blockID: block)).programIdentity
   }
 
   private func committed(_ result: NotebookDocumentStateResult) throws -> NotebookDocumentStatePublication {
@@ -45,16 +45,44 @@ struct NotebookDocumentStateCommandTests {
 
   @Test func detachedCheckpointReturnsItsExactCausalReceiptAndCannotWriteAnOldBasis() throws {
     try fixture { store, actor, id in
-      let source = try sourceVersion(store, id)
+      let source = try programIdentity(store, id)
       let first = try #require(try store.checkpointDocumentState(documentID: id, blockID: "body", value: .number(0.25),
-        sourceVersion: source, stateVersion: nil, actor: actor))
+        programIdentity: source, stateVersion: nil, actor: actor))
       #expect(try store.readDocumentBlock(documentID: id, blockID: "body")?.stateVersion == first)
       let cursor = try store.currentChangeCursor()
       #expect(try store.checkpointDocumentState(documentID: id, blockID: "body", value: .number(0.5),
-        sourceVersion: source, stateVersion: nil, actor: actor) == nil)
+        programIdentity: source, stateVersion: nil, actor: actor) == nil)
       #expect(try store.currentChangeCursor() == cursor)
       #expect(try store.checkpointDocumentState(documentID: id, blockID: "body", value: .number(0.25),
-        sourceVersion: source, stateVersion: first, actor: actor) == first)
+        programIdentity: source, stateVersion: first, actor: actor) == first)
+      #expect(try store.currentChangeCursor() == cursor)
+    }
+  }
+
+  @Test func detachedEventsRetainEveryLargeStateRevisionAndUseTheCheckpointWriter() throws {
+    try fixture { store, actor, id in
+      let source = try programIdentity(store, id)
+      let payload = String(repeating: "😀", count: 1_100_000)
+      let values: [JSONValue] = [.string("first" + payload), .string("second" + payload), .number(3)]
+      var previous: ContentFieldVersion?
+      for value in values {
+        // No DocumentDocument or DocumentStateJournal enters this event.
+        let accepted = try #require(try store.commitDocumentState(documentID: id, blockID: "body", value: value,
+          programIdentity: source, actor: actor))
+        if let previous { #expect(accepted.includes(previous) && !previous.includes(accepted)) }
+        previous = accepted
+        let reopened = NotebookStore(root: store.root)
+        let record = try #require(reopened.loadDocumentState(id).records.first { $0.id == "body" })
+        #expect(record.value == value && record.valueVersion == accepted)
+      }
+      let final = try #require(try store.checkpointDocumentState(documentID: id, blockID: "body", value: .number(4),
+        programIdentity: source, stateVersion: previous, actor: actor))
+      #expect(final.includes(try #require(previous)))
+      #expect(try store.checkpointDocumentState(documentID: id, blockID: "body", value: .number(5),
+        programIdentity: source, stateVersion: previous, actor: actor) == nil)
+      let cursor = try store.currentChangeCursor()
+      #expect(try store.commitDocumentState(documentID: id, blockID: "body", value: .number(4),
+        programIdentity: source, actor: actor) == final)
       #expect(try store.currentChangeCursor() == cursor)
     }
   }
@@ -68,7 +96,7 @@ struct NotebookDocumentStateCommandTests {
       var checkpointState = state
       let proposal = try command(&checkpointState, value: .number(4), actor: actor, store: store)
       let checkpoint = NotebookDocumentStateCommand(documentID: id, record: proposal.record,
-        journalStamp: proposal.journalStamp, expectedSourceVersion: proposal.expectedSourceVersion,
+        journalStamp: proposal.journalStamp, expectedProgramIdentity: proposal.expectedProgramIdentity,
         stateCondition: .matching(basis))
       // A different block is not this executor's causal state.
       _ = try store.commitDocumentState(command(&state, block: "a", value: .number(9), actor: UUID(), store: store))
@@ -95,13 +123,13 @@ struct NotebookDocumentStateCommandTests {
       let first = try command(&state, value: .number(1), actor: actor, store: store)
       _ = try store.commitDocumentState(first)
       let late = NotebookDocumentStateCommand(documentID: id, record: first.record,
-        journalStamp: first.journalStamp, expectedSourceVersion: first.expectedSourceVersion,
+        journalStamp: first.journalStamp, expectedProgramIdentity: first.expectedProgramIdentity,
         stateCondition: .matching(nil))
       // Exact retry is permitted, but a different model from an initial heap is not.
       #expect(try store.commitDocumentState(late) == first.expectedResult)
       let changed = try command(&state, value: .number(2), actor: actor, store: store)
       let stale = NotebookDocumentStateCommand(documentID: id, record: changed.record,
-        journalStamp: changed.journalStamp, expectedSourceVersion: changed.expectedSourceVersion,
+        journalStamp: changed.journalStamp, expectedProgramIdentity: changed.expectedProgramIdentity,
         stateCondition: .matching(nil))
       let cursor = try store.currentChangeCursor()
       #expect(try store.commitDocumentState(stale) == .stateChanged(documentID: id, currentStateVersion: first.record.valueVersion))
@@ -134,14 +162,14 @@ struct NotebookDocumentStateCommandTests {
       let firstStamp = VersionStamp(counter: clock.counter + 1, actor: actor)
       let first = NotebookDocumentStateCommand(documentID: id, record: .init(id: "counter/a~😀", value: .number(1),
         stamp: firstStamp, fieldVersion: .init(stamp: firstStamp, human: true)), journalStamp: firstStamp,
-        expectedSourceVersion: try sourceVersion(store, id, block: "counter/a~😀"))
+        expectedProgramIdentity: try programIdentity(store, id, block: "counter/a~😀"))
       let cursor = try store.currentChangeCursor()
       let (inserted, appendWork) = try bounded(store) { try store.commitDocumentState(first) }
       #expect(inserted == first.expectedResult)
       let nextStamp = VersionStamp(counter: firstStamp.counter + 1, actor: actor)
       let next = NotebookDocumentStateCommand(documentID: id, record: .init(id: first.record.id, value: .number(2),
         stamp: nextStamp, fieldVersion: .init(stamp: nextStamp, human: true, previous: first.record.fieldVersion)), journalStamp: nextStamp,
-        expectedSourceVersion: first.expectedSourceVersion)
+        expectedProgramIdentity: first.expectedProgramIdentity)
       let (edited, editWork) = try bounded(store) { try store.commitDocumentState(next) }
       let (repeated, retryWork) = try bounded(store) { try store.commitDocumentState(next) }
       #expect(edited == next.expectedResult && repeated == edited)
@@ -149,7 +177,12 @@ struct NotebookDocumentStateCommandTests {
       #expect(try store.storedFragments(address: rootAddress + "/records/@retired-75000") == kept)
       let changes = try store.readChangedAddresses(after: cursor, through: store.currentChangeCursor()).addresses
       #expect(Set(changes) == [rootAddress, rootAddress + "/records/@" + fieldKey([first.record.id])])
-      print("Native document state SQL instructions: append=\(appendWork), edit=\(editWork), retry=\(retryWork)")
+      let (coldEvent, coldWork) = try bounded(store) {
+        try store.commitDocumentState(documentID: id, blockID: first.record.id, value: .number(3),
+          programIdentity: first.expectedProgramIdentity, actor: actor)
+      }
+      #expect(coldEvent?.includes(next.record.valueVersion) == true)
+      print("Native document state SQL instructions: append=\(appendWork), edit=\(editWork), retry=\(retryWork), cold=\(coldWork)")
     }
   }
 
@@ -226,10 +259,12 @@ struct NotebookDocumentStateCommandTests {
       }
       _ = try store.saveMergedDocument(document)
       let current = try store.readDocumentBlock(documentID: id, blockID: "body")
-      #expect(current?.sourceVersion != pending.expectedSourceVersion)
+      #expect(current?.programIdentity != pending.expectedProgramIdentity)
       let before = try store.loadDocumentState(id), cursor = try store.currentChangeCursor()
       let revision = try store.currentReadCursor()
-      #expect(try store.commitDocumentState(pending) == .targetChanged(documentID: id, currentSourceVersion: current?.sourceVersion))
+      #expect(try store.commitDocumentState(pending) == .targetChanged(documentID: id, currentProgramIdentity: current?.programIdentity))
+      #expect(try store.commitDocumentState(documentID: id, blockID: "body", value: .number(42),
+        programIdentity: pending.expectedProgramIdentity, actor: actor) == nil)
       #expect(try store.loadDocumentState(id) == before)
       #expect(try store.currentChangeCursor() == cursor)
       #expect(try store.currentReadCursor() == revision)
@@ -247,9 +282,159 @@ struct NotebookDocumentStateCommandTests {
       _ = try store.saveMergedDocument(document)
       let cursor = try store.currentChangeCursor()
       #expect(try store.commitDocumentState(accepted) == .targetChanged(documentID: id,
-        currentSourceVersion: document.sourceVersion(blockID: "body")))
+        currentProgramIdentity: document.programIdentity(blockID: "body")))
       #expect(try store.loadDocumentState(id) == state)
       #expect(try store.currentChangeCursor() == cursor)
+    }
+  }
+
+  @Test(arguments: ["css", "javaScript", "initialState"])
+  func everyExecutableFieldFencesOldCommitAndCheckpoint(field: String) throws {
+    try fixture { store, actor, id in
+      var state = try store.loadDocumentState(id)
+      let old = try command(&state, value: .number(777), actor: actor, store: store)
+      var document = try store.loadDocument(id)
+      let textVersion = document.sourceVersion(blockID: "body")
+      let original = try #require(document.blocks.first { $0.id == "body" })
+      let replacement = DocumentBlock.interactive(id: original.id, html: original.html,
+        css: field == "css" ? "button { color: red }" : original.css,
+        javaScript: field == "javaScript" ? "notebook.ready(Promise.resolve());" : original.javaScript,
+        initialState: field == "initialState" ? .number(9) : original.initialState, height: original.height)
+      let changed = document.replaceContent(blocks: document.blocks.map { $0.id == original.id ? replacement : $0 }, actor: actor)
+      #expect(changed)
+      _ = try store.saveMergedDocument(document)
+      let current = try #require(try store.readDocumentBlock(documentID: id, blockID: "body"))
+      #expect(current.sourceVersion == textVersion)
+      #expect(current.programIdentity != old.expectedProgramIdentity)
+      #expect(current.programIdentity == document.programIdentity(blockID: "body"))
+      #expect(try store.commitDocumentState(old) == .targetChanged(documentID: id, currentProgramIdentity: current.programIdentity))
+      #expect(try store.checkpointDocumentState(documentID: id, blockID: "body", value: .number(777),
+        programIdentity: old.expectedProgramIdentity, stateVersion: nil, actor: actor) == nil)
+      #expect(try store.loadDocumentState(id).records.isEmpty)
+    }
+  }
+
+  @Test(arguments: ["css", "javaScript", "initialState", "delete-recreate"])
+  func programGenerationRejectsExecutableABAAndSameAddressRecreation(field: String) throws {
+    try fixture { store, actor, id in
+      var state = try store.loadDocumentState(id)
+      let pending = try command(&state, value: .number(777), actor: actor, store: store)
+      var document = try store.loadDocument(id)
+      let original = try #require(document.blocks.first { $0.id == "body" })
+      let changed = DocumentBlock.interactive(id: original.id, html: original.html,
+        css: field == "css" ? "button{color:red}" : original.css,
+        javaScript: field == "javaScript" ? "window.changed=true;" : original.javaScript,
+        initialState: field == "initialState" ? .number(9) : original.initialState, height: original.height)
+      let first = document.replaceContent(blocks: document.blocks.compactMap {
+        $0.id != original.id ? $0 : (field == "delete-recreate" ? nil : changed)
+      }, actor: actor)
+      #expect(first); _ = try store.saveMergedDocument(document)
+      if field == "delete-recreate" {
+        #expect(try store.readDocumentBlock(documentID: id, blockID: original.id) == nil)
+        #expect(try store.commitDocumentState(pending) == .targetChanged(documentID: id, currentProgramIdentity: nil))
+      }
+      document = try store.loadDocument(id)
+      let next = document.blocks.contains { $0.id == original.id }
+        ? document.blocks.map { $0.id == original.id ? original : $0 }
+        : document.blocks + [original]
+      let second = document.replaceContent(blocks: next, actor: actor)
+      #expect(second); _ = try store.saveMergedDocument(document)
+      let read = try #require(try store.readDocumentBlock(documentID: id, blockID: original.id))
+      #expect(read.block == original)
+      #expect(read.programIdentity != pending.expectedProgramIdentity)
+      let cursor = try store.currentChangeCursor()
+      #expect(try store.commitDocumentState(pending) == .targetChanged(documentID: id, currentProgramIdentity: read.programIdentity))
+      #expect(try store.commitDocumentState(documentID: id, blockID: original.id, value: .number(42),
+        programIdentity: pending.expectedProgramIdentity, actor: actor) == nil)
+      #expect(try store.checkpointDocumentState(documentID: id, blockID: original.id, value: .number(777),
+        programIdentity: pending.expectedProgramIdentity, stateVersion: nil, actor: actor) == nil)
+      #expect(try store.currentChangeCursor() == cursor)
+      #expect(try store.loadDocumentState(id).records.isEmpty)
+    }
+  }
+
+  @Test func programIdentityIgnoresOtherBlocksAndPhysicalHeight() throws {
+    try fixture { store, actor, id in
+      var document = try store.loadDocument(id)
+      let before = document.programIdentity(blockID: "body")
+      let original = try #require(document.blocks.first { $0.id == "body" })
+      let replacement = DocumentBlock.interactive(id: original.id, html: original.html, height: original.height + 10)
+      let changed = document.replaceContent(blocks: document.blocks.map { $0.id == "body" ? replacement : $0 } + [.markdown(id: "text", source: "Other text")], actor: actor)
+      #expect(changed)
+      _ = try store.saveMergedDocument(document)
+      #expect(document.programIdentity(blockID: "body") == before)
+      #expect(try store.readDocumentBlock(documentID: id, blockID: "body")?.programIdentity == before)
+    }
+  }
+
+  @Test func largeCommittedStateUsesAdmittedWindowsWithoutChangingPublicReadBudget() throws {
+    try fixture { store, actor, id in
+      var state = try store.loadDocumentState(id)
+      let identity = try programIdentity(store, id)
+      let value = JSONValue.string(String(repeating: "x", count: 5 * 1_024 * 1_024))
+      let changed = state.commit(blockID: "body", value: value, actor: actor)
+      #expect(changed)
+      let command = NotebookDocumentStateCommand(documentID: id, record: try #require(state.records.first),
+        journalStamp: state.stamp, expectedProgramIdentity: identity)
+      #expect(try store.commitDocumentState(command) == command.expectedResult)
+      #expect(throws: NotebookStorageError.self) { try store.readDocumentBlock(documentID: id, blockID: "body") }
+      let admission = try store.documentProgramStateReadBytes(documentID: id, blockID: "body")
+      #expect(admission > 5 * 1_024 * 1_024)
+      #expect(throws: NotebookStorageError.self) {
+        try store.readDocumentProgramState(documentID: id, blockID: "body", admittedBytes: admission / 2)
+      }
+      let read = try #require(try store.readDocumentProgramState(documentID: id, blockID: "body", admittedBytes: admission))
+      #expect(read.state == value && read.programIdentity == identity)
+      #expect(try store.checkpointDocumentState(documentID: id, blockID: "body", value: value,
+        programIdentity: identity, stateVersion: read.stateVersion, actor: actor) == read.stateVersion)
+      #expect(try store.commitDocumentState(command) == command.expectedResult)
+      #expect(throws: NotebookStorageError.self) { try store.readDocumentBlock(documentID: id, blockID: "body") }
+    }
+  }
+
+  @Test func everyLargeAcceptedRevisionPersistsInFIFOOrderAndReopensAtTheLastReceipt() throws {
+    try fixture { store, actor, id in
+      let identity = try programIdentity(store, id)
+      var state = try store.loadDocumentState(id)
+      let payload = String(repeating: "x", count: 5 * 1_024 * 1_024)
+      var commands: [NotebookDocumentStateCommand] = []
+      for sequence in 1...3 {
+        let changed = state.commit(blockID: "body", value: .object([
+          "payload": .string(payload), "sequence": .number(Double(sequence))]), actor: actor)
+        #expect(changed)
+        commands.append(.init(documentID: id, record: try #require(state.records.first),
+          journalStamp: state.stamp, expectedProgramIdentity: identity))
+      }
+      var cursor = try store.currentChangeCursor()
+      for command in commands {
+        #expect(try store.commitDocumentState(command) == command.expectedResult)
+        #expect(try store.currentChangeCursor() == cursor + 1); cursor += 1
+        let admitted = try store.documentProgramStateReadBytes(documentID: id, blockID: "body")
+        let read = try #require(try store.readDocumentProgramState(documentID: id, blockID: "body", admittedBytes: admitted))
+        #expect(read.state == command.record.value && read.stateVersion == command.record.valueVersion)
+      }
+      let reopened = NotebookStore(root: store.root)
+      let admission = try reopened.documentProgramStateReadBytes(documentID: id, blockID: "body")
+      let latest = try #require(try reopened.readDocumentProgramState(documentID: id, blockID: "body", admittedBytes: admission))
+      #expect(latest.state == commands[2].record.value && latest.stateVersion == commands[2].record.valueVersion)
+      #expect(try reopened.commitDocumentState(commands[0]) != commands[0].expectedResult)
+      #expect(try reopened.currentChangeCursor() == cursor)
+      #expect(throws: NotebookStorageError.self) { try reopened.readDocumentBlock(documentID: id, blockID: "body") }
+    }
+  }
+
+  @Test func admittedStateWindowsReassembleMoreThan4096AddressedStateFragments() throws {
+    try fixture { store, actor, id in
+      var state = try store.loadDocumentState(id)
+      let value = JSONValue.object(["records": .array((0..<4_200).map {
+        .object(["id": .string("part-\($0)"), "value": .number(Double($0))])
+      })])
+      let command = try command(&state, value: value, actor: actor, store: store)
+      _ = try store.commitDocumentState(command)
+      #expect(throws: NotebookStorageError.self) { try store.readDocumentBlock(documentID: id, blockID: "body") }
+      let admission = try store.documentProgramStateReadBytes(documentID: id, blockID: "body")
+      let read = try store.readDocumentProgramState(documentID: id, blockID: "body", admittedBytes: admission)
+      #expect(read?.state == value)
     }
   }
 
@@ -287,7 +472,7 @@ struct NotebookDocumentStateCommandTests {
       let value = NotebookDocumentStateCommand(documentID: id, record: .init(id: "body", value: .number(5), stamp: stamp,
         fieldVersion: kind == "missing-version" ? nil : .init(stamp: versionStamp, human: true, observed: observations)),
         journalStamp: kind == "future-record" ? .init(counter: 0, actor: actor) : stamp,
-        expectedSourceVersion: try sourceVersion(store, id))
+        expectedProgramIdentity: try programIdentity(store, id))
       let before = try store.loadDocumentState(id), cursor = try store.currentChangeCursor()
       #expect(throws: NotebookStorageError.self) { try store.commitDocumentState(value) }
       #expect(try store.loadDocumentState(id) == before && store.currentChangeCursor() == cursor)
@@ -301,12 +486,12 @@ struct NotebookDocumentStateCommandTests {
       observations[actor.uuidString.lowercased()] = 1
       let initial = NotebookDocumentStateCommand(documentID: id, record: .init(id: "body", value: .number(1), stamp: stamp,
         fieldVersion: .init(stamp: stamp, human: true, observed: observations)), journalStamp: stamp,
-        expectedSourceVersion: try sourceVersion(store, id))
+        expectedProgramIdentity: try programIdentity(store, id))
       _ = try store.commitDocumentState(initial)
       let nextStamp = VersionStamp(counter: 2, actor: UUID())
       let incoming = NotebookDocumentStateCommand(documentID: id, record: .init(id: "body", value: .number(2), stamp: nextStamp,
         fieldVersion: .init(stamp: nextStamp, human: true)), journalStamp: nextStamp,
-        expectedSourceVersion: initial.expectedSourceVersion)
+        expectedProgramIdentity: initial.expectedProgramIdentity)
       let before = try store.loadDocumentState(id), cursor = try store.currentChangeCursor()
       #expect(throws: NotebookStorageError.self) { try store.commitDocumentState(incoming) }
       #expect(try store.loadDocumentState(id) == before && store.currentChangeCursor() == cursor)
@@ -318,12 +503,12 @@ struct NotebookDocumentStateCommandTests {
       let stamp = VersionStamp(counter: VersionStamp.maximumCounter, actor: actor)
       let initial = NotebookDocumentStateCommand(documentID: id, record: .init(id: "a", value: .number(1), stamp: stamp,
         fieldVersion: .init(stamp: stamp, human: true)), journalStamp: stamp,
-        expectedSourceVersion: try sourceVersion(store, id, block: "a"))
+        expectedProgramIdentity: try programIdentity(store, id, block: "a"))
       _ = try store.commitDocumentState(initial)
       let older = VersionStamp(counter: stamp.counter - 1, actor: actor)
       let incoming = NotebookDocumentStateCommand(documentID: id, record: .init(id: "b", value: .number(2), stamp: older,
         fieldVersion: .init(stamp: older, human: true)), journalStamp: older,
-        expectedSourceVersion: try sourceVersion(store, id, block: "b"))
+        expectedProgramIdentity: try programIdentity(store, id, block: "b"))
       let before = try store.loadDocumentState(id), cursor = try store.currentChangeCursor()
       #expect(throws: NotebookStorageError.self) { try store.commitDocumentState(incoming) }
       #expect(try store.loadDocumentState(id) == before && store.currentChangeCursor() == cursor)

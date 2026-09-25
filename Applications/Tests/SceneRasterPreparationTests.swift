@@ -30,7 +30,7 @@ final class SceneRasterPreparationTests: XCTestCase {
     let resources = SceneRenderResources(byteLimit: 4096, profile: .headless, maximumWebSurfaces: 1)
     var lease: WebSurfaceLease? = try await resources.acquireWebSurface(priority: .input)
     var coordinator: AgentWebCoordinator? = AgentWebCoordinator(lease: try XCTUnwrap(lease),
-      resources: resources, onState: { _ in false })
+      resources: resources, onState: { _, _ in false })
     weak let retired = coordinator
     let web = AgentWebCoordinator.makeWebView(coordinator: try XCTUnwrap(coordinator))
     let reservation = try XCTUnwrap(resources.reserveDerivedBytes(4096, priority: .passive))

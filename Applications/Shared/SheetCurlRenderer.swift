@@ -148,7 +148,12 @@ final class SheetCurlMetalView: MTKView, MTKViewDelegate {
   private(set) var submittedFrameCount = 0
   let drawableCount = 2
   var frameLease: RasterReservation?
+  /// Display-only instrumentation; Simulator never sends this callback.
   var onFramePresented: ((CGImage, Double, TimeInterval) -> Void)?
+  var onFrameReady: ((CGImage, Double, Int, NotebookMetalFrameReadiness) -> Void)?
+  /// Source reveal and the flat-sheet boundary share their drawable's CA
+  /// transaction. The native owner installs the paper beneath that exact frame.
+  var onWillPresentFrame: ((CGImage, Double) -> Void)?
   // An opt-in, bounded diagnostic at the actual submission owner. It does not
   // alter admission, clock, command ordering or the presentation receipt.
   var onFrameMeasured: ((FrameTiming) -> Void)?
@@ -168,9 +173,10 @@ final class SheetCurlMetalView: MTKView, MTKViewDelegate {
     #endif
     animatesContinuously = false
     sourceCover = nil; coverImage = nil; framePending = false
+    releaseDrawables()
     guard let lease = frameLease else { return }
     frameLease = nil
-    if presented { releaseDrawables(); lease.release(); return }
+    if presented { lease.release(); return }
     // Completion handlers can remain retained by a command buffer. Their
     // Swift lifetime is not a release receipt. Drain the ordered GPU queue
     // explicitly before returning this turn's finite backing to admission.
@@ -191,6 +197,7 @@ final class SheetCurlMetalView: MTKView, MTKViewDelegate {
   private var cornerRadius: CGFloat = 0
   private var curlLayout: SheetCurlLayout?
   private var sourceCover: CGImage?
+  private var submittedProgress: Double?
 
   override init(frame frameRect: CGRect, device: (any MTLDevice)? = nil) {
     let gpu = SheetCurlGPU.shared
@@ -252,8 +259,12 @@ final class SheetCurlMetalView: MTKView, MTKViewDelegate {
       if framePending { requestFrame() }
       return
     }
-    sourceCover = cover
-    coverImage = CIImage(cgImage: cover)
+    if sourceCover !== cover {
+      sourceCover = cover
+      coverImage = CIImage(cgImage: cover)
+      submittedProgress = nil
+      presentsWithTransaction = onWillPresentFrame != nil
+    }
     self.progress = resolvedProgress
     self.backsideColor = backsideColor
     self.cornerRadius = cornerRadius
@@ -338,20 +349,14 @@ final class SheetCurlMetalView: MTKView, MTKViewDelegate {
     )
     let source = sourceCover!, progress = progress
     let submitted = encodingBegan.map { _ in CACurrentMediaTime() }
-    if onFramePresented != nil {
-      drawable.addPresentedHandler { [weak self] drawable in
-        // Capture the OS presentation clock here, before MainActor delivery.
-        // A zero timestamp remains zero (unpresented/dropped), never "now".
-        let presentedAt = drawable.presentedTime
-        Task { @MainActor [weak self] in
-          // A dropped drawable is NOT a landing receipt. Retry the latest
-          // required image, including a terminal image, on the same clock.
-          if presentedAt <= 0, let self, self.sourceCover === source, self.progress == progress {
-            self.framePending = true
-          }
-          self?.onFramePresented?(source, progress, presentedAt)
-          self?.resumePendingFrame()
-        }
+    if onFrameReady != nil || onFramePresented != nil {
+      let sequence=submittedFrameCount
+      NotebookMetalFrameReadiness.observe(drawable,commandBuffer:commandBuffer) { [weak self] readiness in
+        guard let self, sourceCover === source else { return }
+        if !readiness.isReady,self.progress == progress { framePending=true }
+        onFrameReady?(source,progress,sequence,readiness)
+        if let time=readiness.presentedTime { onFramePresented?(source,progress,time) }
+        resumePendingFrame()
       }
     }
     commandBuffer.addCompletedHandler { [weak self, inFlightSemaphore, frameLease] command in
@@ -365,18 +370,32 @@ final class SheetCurlMetalView: MTKView, MTKViewDelegate {
           gpuEnded: command.gpuEndTime, targetPresentation: targetPresentation)
       }
       Task { @MainActor [weak self] in
-        if let timing { self?.onFrameMeasured?(timing) }
+        if let timing, self?.sourceCover === source { self?.onFrameMeasured?(timing) }
         self?.resumePendingFrame()
       }
     }
     mustSignal = false
-    if suppliedDrawable != nil {
+    // A flat curl fully covers its live paper. Install that same paper below
+    // it before the frame can be shown, not in its later presentation callback.
+    // Leaving the flat boundary restores the other leaf in the same transaction.
+    let updatesUnderlay = onWillPresentFrame != nil && (submittedProgress == nil
+      || (submittedProgress == 0) != (progress == 0))
+    // Keep this mode for the whole source. A later display-link callback must
+    // not detach presentation from an earlier, still-open UIKit transaction.
+    if presentsWithTransaction {
       commandBuffer.commit()
+      commandBuffer.waitUntilScheduled()
+      CATransaction.begin(); CATransaction.setDisableActions(true)
+      if updatesUnderlay { onWillPresentFrame?(source, progress) }
       drawable.present()
+      CATransaction.commit()
     } else {
+      // commit() is not a scheduling fence. Let Metal register the drawable's
+      // writes before presenting it; otherwise a recycled/clear image can win.
       commandBuffer.present(drawable)
       commandBuffer.commit()
     }
+    submittedProgress = progress
     framePending = false
     submittedFrameCount += 1
   }

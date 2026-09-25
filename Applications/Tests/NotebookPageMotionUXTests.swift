@@ -1,3 +1,4 @@
+import QuartzCore
 import SwiftUI
 import UIKit
 import XCTest
@@ -58,19 +59,125 @@ import XCTest
             space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
             .draw(point, in: .init(x: 0, y: 0, width: 1, height: 1))
         }
-        let target = rgba[0] > 220 && rgba[2] < 40, source = rgba[2] > 220 && rgba[0] < 40
-        if sawTarget && source { returned = true }
+        let target = rgba[0] > 220 && rgba[2] < 40
+        if sawTarget && !target { returned = true }
         sawTarget = sawTarget || target
         samples.append("\(frame): \(rgba), selected=\(selected)")
         let picture = XCTAttachment(image: image); picture.name = "Interactive reverse \(turn) frame \(frame)"
         picture.lifetime = .keepAlways; add(picture)
       }
       XCTAssertTrue(sawTarget)
-      XCTAssertFalse(returned, "The target reached the centre, then the source flashed over it")
+      XCTAssertFalse(returned, "After the target reached the centre, neither old paper nor a blank frame may cover it")
       XCTAssertEqual(selected, 0)
       let note = XCTAttachment(string: samples.joined(separator: "\n")); note.name = "Interactive reverse samples \(turn)"
       note.lifetime = .keepAlways; add(note)
     }
+  }
+
+  func testFirstPresentedCurlPrimesTheSourceBeforeExposingTheOtherLeaf() async throws {
+    let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+    let previous = scene.windows.first(where: \.isKeyWindow), window = UIWindow(windowScene: scene)
+    let native = IPadSheetCurlController(), blue = UIViewController(), red = UIViewController()
+    blue.view.backgroundColor = .blue; red.view.backgroundColor = .red
+    window.rootViewController = native; window.makeKeyAndVisible()
+    defer { native.cancelMotion(); window.isHidden = true; window.rootViewController = nil; previous?.makeKey() }
+    native.show(blue, direction: .forward, animated: false); native.prepare(red)
+    try await Task.sleep(for: .milliseconds(30))
+    let curl = try XCTUnwrap(native.view.subviews.compactMap { $0 as? SheetCurlMetalView }.first)
+    let resolve = curl.onFrameReady
+    defer { curl.onFrameReady = resolve }
+    for turn in 0..<6 {
+      var first: NotebookMetalFrameReadiness?, firstProgress: Double?
+      var underlay: UIView?
+      curl.onFrameReady = { image, progress, sequence, readiness in
+        if first == nil, readiness.isReady {
+          first = readiness; firstProgress = progress
+          underlay = native.view.subviews.dropLast().last
+        }
+        resolve?(image, progress, sequence, readiness)
+      }
+      let target = turn.isMultiple(of: 2) ? red : blue
+      native.show(target, direction: turn.isMultiple(of: 2) ? .forward : .reverse, animated: true)
+      let limit = ContinuousClock.now + .seconds(2)
+      while native.page !== target, ContinuousClock.now < limit { try await Task.sleep(for: .milliseconds(2)) }
+      XCTAssertTrue(native.page === target)
+      XCTAssertTrue(try XCTUnwrap(first).isReady)
+      XCTAssertEqual(firstProgress, turn.isMultiple(of: 2) ? 0 : 1,
+        "The first displayed drawable must match the live source, not expose the next page before its pixels exist")
+      XCTAssertTrue(underlay === (turn.isMultiple(of: 2) ? blue.view : red.view))
+    }
+  }
+
+  func testSlowSourcePreparationCannotConsumeTheVisibleCurl() async throws {
+    let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+    let previous = scene.windows.first(where: \.isKeyWindow), window = UIWindow(windowScene: scene)
+    let native = IPadSheetCurlController(), blue = UIViewController(), red = UIViewController()
+    blue.view.backgroundColor = .blue; red.view.backgroundColor = .red
+    window.rootViewController = native; window.makeKeyAndVisible()
+    defer { native.cancelMotion(); window.isHidden = true; window.rootViewController = nil; previous?.makeKey() }
+    native.show(blue, direction: .forward, animated: false); native.prepare(red)
+    try await Task.sleep(for: .milliseconds(30))
+    // Deliberately make preparation longer than the animation's entire 320 ms.
+    // This is a continuity regression, not a latency or performance measurement.
+    native.onCaptureMeasured = { _ in Thread.sleep(forTimeInterval: 0.35) }
+    let curl = try XCTUnwrap(native.view.subviews.compactMap { $0 as? SheetCurlMetalView }.first)
+    let resolve = curl.onFrameReady
+    defer { curl.onFrameReady = resolve }
+    for turn in 0..<2 {
+      var firstBend: Double?
+      curl.onFrameReady = { image, progress, sequence, readiness in
+        let travel = turn == 0 ? progress : 1-progress
+        if readiness.isReady, travel > 0, firstBend == nil { firstBend = travel }
+        resolve?(image, progress, sequence, readiness)
+      }
+      let target = turn == 0 ? red : blue
+      native.show(target, direction: turn == 0 ? .forward : .reverse, animated: true)
+      let limit = ContinuousClock.now + .seconds(2)
+      while native.page !== target, ContinuousClock.now < limit { try await Task.sleep(for: .milliseconds(2)) }
+      XCTAssertTrue(native.page === target)
+      XCTAssertLessThan(try XCTUnwrap(firstBend), 0.25,
+        "Slow capture cannot spend the bend's clock offscreen and turn the page by a source-to-target jump")
+    }
+  }
+
+  func testFlatReverseInstallsItsLiveUnderlayBeforeRetiringTheCurl() async throws {
+    let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+    let previous = scene.windows.first(where: \.isKeyWindow), window = UIWindow(windowScene: scene)
+    let native = IPadSheetCurlController(), source = UIViewController(), target = UIViewController()
+    source.view.backgroundColor = .blue; target.view.backgroundColor = .red
+    native.neighbor = { _, _ in target }; native.willTurn = { _ in true }
+    window.rootViewController = native; window.makeKeyAndVisible()
+    defer { native.cancelMotion(); window.isHidden = true; window.rootViewController = nil; previous?.makeKey() }
+    native.show(source, direction: .forward, animated: false); native.prepare(target)
+    try await Task.sleep(for: .milliseconds(30))
+    let curl = try XCTUnwrap(native.view.subviews.compactMap { $0 as? SheetCurlMetalView }.first)
+    let resolve = curl.onFrameReady
+    defer { curl.onFrameReady = resolve }
+    var shown: Double?
+    curl.onFrameReady = { image, progress, sequence, readiness in
+      if readiness.isReady { shown = progress }
+      resolve?(image, progress, sequence, readiness)
+    }
+    XCTAssertTrue(native.beginInteractiveTurn(direction: .reverse))
+    for progress in [0.4, 0.5, 1, 0.4, 1] {
+      shown = nil
+      native.updateInteractiveTurn(translation: native.view.bounds.width * progress)
+      let limit = ContinuousClock.now + .seconds(2)
+      while shown != 1 - progress, ContinuousClock.now < limit { try await Task.sleep(for: .milliseconds(2)) }
+      XCTAssertEqual(shown, 1 - progress)
+      XCTAssertTrue(curl.presentsWithTransaction,
+        "Interior frames cannot detach an earlier reveal from UIKit's still-open transaction")
+      XCTAssertTrue(try XCTUnwrap(curl.layer as? CAMetalLayer).presentsWithTransaction,
+        "The display link bypasses MTKView.draw; its actual Metal layer must participate in the transaction")
+      XCTAssertTrue(native.page === source, "Holding the endpoint does not accept the gesture")
+      let layers = native.view.subviews
+      XCTAssertTrue(layers.last === curl)
+      XCTAssertTrue(layers.dropLast().last === (progress == 1 ? target.view : source.view),
+        "The exact live underlay must be installed before the curl can retire; otherwise the compositor flashes the old leaf")
+    }
+    native.endInteractiveTurn(completed: true)
+    XCTAssertTrue(native.page === target)
+    XCTAssertTrue(native.view.subviews.last === target.view)
   }
 
   func testInteractiveEndpointUsesItsActualPresentationBeforeOrAfterLift() async throws {
@@ -93,11 +200,11 @@ import XCTest
           native.prepare(target)
           try await Task.sleep(for: .milliseconds(30))
           let curl = try XCTUnwrap(native.view.subviews.compactMap { $0 as? SheetCurlMetalView }.first)
-          let owner = curl.onFramePresented
+          let owner = curl.onFrameReady
           let endpoint = direction == .forward ? (completes ? 1.0 : 0.0) : (completes ? 0.0 : 1.0)
-          curl.onFramePresented = { image, progress, timestamp in
-            if timestamp > 0, progress == endpoint { endpointPresented = true }
-            owner?(image, progress, timestamp)
+          curl.onFrameReady = { image, progress, sequence, readiness in
+            if readiness.isReady, progress == endpoint { endpointPresented = true }
+            owner?(image, progress, sequence, readiness)
           }
           let pan = NotebookCurlPan(), sign: CGFloat = direction == .forward ? -1 : 1
           pan.phase = .began; pan.offset.x = sign * 20
@@ -200,6 +307,9 @@ import XCTest
   }
 
   func testTenForwardReverseTurnsMeetFirstPresentationAndLandingDeadlines() async throws {
+    #if targetEnvironment(simulator)
+    throw XCTSkip("Simulator has no OS Metal presentation receipts; GPU completion is not frame-cadence evidence")
+    #endif
     let controller = IPadPageTurnController(), commands = NotebookPageNavigation(), owner = UUID()
     var selected = 0, committedAt: TimeInterval?
     func configure() {
@@ -236,7 +346,7 @@ import XCTest
       committedAt = nil
       curl.onFramePresented = { image, progress, presentedAt in
         frames.append((progress, presentedAt, CACurrentMediaTime()))
-        forwardPresentation?(image, progress, presentedAt) // Preserve the completion owner.
+        forwardPresentation?(image, progress, presentedAt) // Preserve any independent display observer.
       }
       let start = CACurrentMediaTime()
       XCTAssertTrue(commands.send(.step(target == 1 ? 1 : -1), ownerID: owner, source: "motion-timing"))
@@ -288,9 +398,16 @@ import XCTest
     }
     for y in stride(from: 8, to: h, by: 16) {
       for x in stride(from: 8, to: w, by: 16) {
-        let colour: NotebookUXObservation.Color = (217..<617).contains(x) && (397..<797).contains(y) ? mark : .paper
         let offset = (y*w+x)*4
-        if !colour.matches(Array(rgba[offset..<offset+4])) { return false }
+        let colour = Array(rgba[offset..<offset+4])
+        if (217..<617).contains(x) && (397..<797).contains(y) {
+          if !mark.matches(colour) { return false }
+        } else if !colour.prefix(3).allSatisfy({ $0 >= 252 }) {
+          // This fixture is pure white, not document-coloured paper. The broad
+          // paper tolerance classified the curled ivory backside as settled
+          // whenever its thin shadow fell between the sampled columns.
+          return false
+        }
       }
     }
     return true

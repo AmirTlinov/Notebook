@@ -6,6 +6,95 @@ import XCTest
 
 @MainActor
 final class DocumentBlockRuntimeTests: XCTestCase {
+  func testReadinessFailureRetainsEarlierAcceptedCommitUntilDurable() async throws {
+    let fixture = try RuntimeFixture(block: .interactive(id: "failed-ready", html: "<output>Early</output>", javaScript: """
+      notebook.ready(Promise.reject(new Error('author readiness failure')));
+      window.earlyAccepted=notebook.commit({savedBeforeFailure:1});
+      """, height: 120))
+    defer { fixture.close() }
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = NotebookStore(root: root), queue = NotebookPersistenceQueue(store: store)
+    try store.saveDocument(fixture.document)
+    var journal = DocumentStateJournal(id: fixture.document.id, actor: UUID())
+    try store.saveDocumentState(journal)
+    var held: CheckedContinuation<Void, Never>?
+    fixture.runtime.onStateChange = { value in
+      await withCheckedContinuation { held = $0 }
+      _ = journal.commit(blockID: "failed-ready", value: value, actor: journal.stamp.actor)
+      let accepted = journal, version = journal.records.first { $0.id == "failed-ready" }?.valueVersion
+      await withCheckedContinuation { (done: CheckedContinuation<Void, Never>) in
+        queue.enqueue(owner: .documentState(fixture.document.id)) { store in
+          try store.saveDocumentState(accepted)
+          done.resume()
+          return true
+        }
+      }
+      return version
+    }
+    fixture.runtime.onStateDrained = { await queue.finishAcceptedProgramWrites() }
+    let deadline = ContinuousClock.now + .seconds(5)
+    while (held == nil || fixture.runtime.failure == nil), ContinuousClock.now < deadline {
+      try await Task.sleep(for: .milliseconds(10))
+    }
+    let release = try XCTUnwrap(held)
+    XCTAssertNotNil(fixture.runtime.failure)
+    let web = try XCTUnwrap(fixture.runtime.webView, "An author error cannot dispose an earlier accepted snapshot")
+    let admitted = try await web.evaluateJavaScript("window.earlyAccepted") as? Bool
+    XCTAssertEqual(admitted, true)
+    var saved = false
+    let closing = Task { @MainActor in
+      _ = try await fixture.runtime.checkpoint()
+      saved = true
+    }
+    try await Task.sleep(for: .milliseconds(40))
+    XCTAssertFalse(saved)
+    XCTAssertTrue(try store.loadDocumentState(fixture.document.id).records.isEmpty)
+    release.resume(); held = nil
+    try await closing.value
+    XCTAssertTrue(saved)
+    XCTAssertEqual(try store.loadDocumentState(fixture.document.id).records.first { $0.id == "failed-ready" }?.value,
+      .object(["savedBeforeFailure": .number(1)]))
+    XCTAssertNotNil(fixture.runtime.failure, "Durability does not hide the author's failure or restart it")
+    XCTAssertNil(fixture.runtime.webView, "Only the completed boundary releases the broken executor")
+  }
+
+  func testUnreadyProgramCheckpointJoinsAcceptedStateBeforeRetirement() async throws {
+    let fixture = try RuntimeFixture(block: .interactive(id: "early", html: "<output>Early</output>",
+      javaScript: "notebook.ready(new Promise(()=>{})); window.earlyAccepted=notebook.commit({early:1});", height: 120))
+    defer { fixture.close() }
+    var held: CheckedContinuation<Void, Never>?
+    fixture.runtime.onStateDrained = { await withCheckedContinuation { held = $0 } }
+    let deadline = ContinuousClock.now + .seconds(5)
+    while held == nil, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(10)) }
+    let release = try XCTUnwrap(held, "The accepted event must reach its existing durability fence")
+    let web = try XCTUnwrap(fixture.runtime.webView)
+    let admitted = try await web.evaluateJavaScript("window.earlyAccepted") as? Bool
+    XCTAssertEqual(admitted, true)
+    XCTAssertFalse(fixture.runtime.ready)
+    var completed = false
+    let checkpoint = Task { @MainActor in
+      let value = try await fixture.runtime.checkpoint()
+      completed = true
+      return value
+    }
+    try await Task.sleep(for: .milliseconds(40))
+    XCTAssertFalse(completed)
+    XCTAssertNotNil(fixture.runtime.webView, "Readiness cannot dispose an admitted heap")
+    let rejected = try await web.evaluateJavaScript("notebook.commit({late:2})") as? Bool
+    XCTAssertEqual(rejected, false)
+    release.resume(); held = nil
+    let value = try await checkpoint.value
+    XCTAssertEqual(value, .object(["early": .number(1)]))
+    XCTAssertTrue(completed)
+    XCTAssertFalse(fixture.runtime.ready, "The boundary must not manufacture author readiness")
+    let resumed = await fixture.runtime.resume()
+    XCTAssertTrue(resumed)
+    fixture.runtime.onStateDrained = {}
+    let next = try await web.evaluateJavaScript("notebook.commit({early:2})") as? Bool
+    XCTAssertEqual(next, true, "Returning restores admission in the same heap, without rerunning the author")
+  }
+
   func testLCCircuitQuarterPeriodsAndCheckpointUseTheShippedAuthorSources() async throws {
     func source(_ suffix: String) throws -> String {
       let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "lc", withExtension: suffix, subdirectory: "animation"))
@@ -70,21 +159,48 @@ final class DocumentBlockRuntimeTests: XCTestCase {
 
   func testRejectedCheckpointRetainsTheLiveRuntimeForRecovery() async throws {
     let fixture = try RuntimeFixture(block: .interactive(id: "rejected", html: "<output>0.5</output>", javaScript: """
-      notebook.lifecycle({checkpoint:()=>({phase:0.5})});notebook.ready(Promise.resolve());
+      window.pauses=0;window.checkpoints=0;window.resumes=0;
+      notebook.lifecycle({pause:()=>{window.pauses++},checkpoint:()=>{window.checkpoints++;return {phase:0.5}},
+        resume:()=>{window.resumes++}});notebook.ready(Promise.resolve());
       """, initialState: .object(["phase": .number(0)]), height: 100))
     defer { fixture.close() }
     try await fixture.waitUntilReady()
-    let web = fixture.runtime.webView
-    fixture.runtime.onStateCheckpoint = { _, _ in throw SceneRenderError.snapshotPending("checkpoint_not_accepted") }
-    do { _ = try await fixture.runtime.checkpoint(); XCTFail("Unaccepted state cannot retire the program") }
-    catch { XCTAssertTrue(String(describing:error).contains("checkpoint_not_accepted")) }
+    let web = try XCTUnwrap(fixture.runtime.webView)
+    let persist = fixture.runtime.onStateCheckpoint
+    var attempts: [JSONValue] = []
+    fixture.runtime.onStateCheckpoint = { value, _ in
+      attempts.append(value)
+      throw SceneRenderError.snapshotPending("checkpoint_not_accepted")
+    }
+    for _ in 0..<2 {
+      do { _ = try await fixture.runtime.checkpoint(); XCTFail("Unaccepted state cannot retire the program") }
+      catch { XCTAssertEqual(error as? SceneRenderError, .snapshotPending("checkpoint_not_accepted")) }
+      XCTAssertTrue(fixture.runtime.webView === web)
+      XCTAssertTrue(fixture.runtime.ready)
+      XCTAssertNil(fixture.runtime.failure, "Writer refusal is retained by the checkpoint owner, not an author failure")
+      XCTAssertEqual(fixture.resources.activeWebSurfaceCount, 1)
+      let resumed = await fixture.runtime.resume()
+      XCTAssertFalse(resumed, "Resume cannot silently discard or write an unaccepted frozen state")
+      let suspended = try await web.evaluateJavaScript("documentProgram.suspended") as? Bool
+      XCTAssertEqual(suspended, true)
+      XCTAssertEqual(fixture.runtime.value, .object(["phase": .number(0)]))
+    }
+    XCTAssertEqual(attempts, [.object(["phase": .number(0.5)]), .object(["phase": .number(0.5)])])
+    let hooksBeforeRetry = try await web.evaluateJavaScript("[pauses,checkpoints,resumes]") as? [Int]
+    XCTAssertEqual(hooksBeforeRetry, [1, 1, 0], "A writer retry must not repeat successful pause or checkpoint hooks")
+    // This is the explicit persistence retry used by the existing checkpoint
+    // owner; resume is not a hidden attempt to save or replace the executor.
+    fixture.runtime.onStateCheckpoint = persist
+    let saved = try await fixture.runtime.checkpoint()
+    XCTAssertEqual(saved, .object(["phase": .number(0.5)]))
     XCTAssertTrue(fixture.runtime.webView === web)
-    XCTAssertTrue(fixture.runtime.ready)
-    XCTAssertNil(fixture.runtime.failure)
-    XCTAssertEqual(fixture.resources.activeWebSurfaceCount, 1)
-    await fixture.runtime.resume()
-    let suspended = try await web?.evaluateJavaScript("documentProgram.suspended") as? Bool
+    XCTAssertEqual(fixture.runtime.value, saved)
+    let resumed = await fixture.runtime.resume()
+    XCTAssertTrue(resumed)
+    let suspended = try await web.evaluateJavaScript("documentProgram.suspended") as? Bool
     XCTAssertEqual(suspended, false)
+    let hooksAfterRetry = try await web.evaluateJavaScript("[pauses,checkpoints,resumes]") as? [Int]
+    XCTAssertEqual(hooksAfterRetry, [1, 1, 1])
   }
 
   func testCheckpointCannotOverwriteAnUnobservedExternalState() async throws {
@@ -111,6 +227,11 @@ final class DocumentBlockRuntimeTests: XCTestCase {
       defer { fixture.close() }
       try await wait(seconds: 9) { fixture.runtime.failure != nil }
       XCTAssertFalse(fixture.runtime.ready)
+      // Failure is visible before the asynchronous accepted-state boundary
+      // finishes. Join that actual owner, not a scheduler-dependent UI instant.
+      _ = try await fixture.runtime.checkpoint()
+      XCTAssertNotNil(fixture.runtime.failure)
+      XCTAssertNil(fixture.runtime.webView)
       XCTAssertEqual(fixture.resources.activeWebSurfaceCount, 0)
     }
   }
@@ -233,7 +354,7 @@ private final class RuntimeFixture {
     self.resources = resources
     document = .init(actor: UUID(), blocks: [block])
     journal = .init(id: document.id, actor: UUID())
-    runtime = .init(documentID: document.id, block: block, sourceVersion: document.sourceVersion(blockID: block.id),
+    runtime = .init(documentID: document.id, block: block, programIdentity: document.programIdentity(blockID: block.id),
       value: block.initialState, stateVersion: nil, width: width, resources: resources)
     window = UIWindow(windowScene: try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene))
     let root = UIViewController(); window.rootViewController = root

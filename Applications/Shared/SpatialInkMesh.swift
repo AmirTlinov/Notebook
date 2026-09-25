@@ -32,7 +32,8 @@ struct SpatialInkInstalledSource: Sendable {
       }
       actions[action.id] = action
     }
-    return try .init(surface: surface, actions: Array(actions.values))
+    return try .init(surface: surface, actions: Array(actions.values),
+      baselineActionIDs: Set(baseline.actions.filter { $0.spans.contains { $0.surface == surface } }.map(\.id)))
   }
 
   /// Runs on the mesh worker. Canonical undo wins by the journal's existing

@@ -69,6 +69,7 @@ final class NotebookAppModel {
   @ObservationIgnored private var pagePreparationTail: (id: UUID, task: Task<Void, Never>)?
   @ObservationIgnored private var pagePreparationWindows: [UUID: (root: String, indices: Set<Int>)] = [:]
   let notebookPageNavigation = NotebookPageNavigation()
+  let pageInkPublication = NotebookPageInkPublication()
 
   func retainNotebookPageWindow(_ indices: Set<Int>, in itemID: UUID, root: String) {
     guard notebookPageRoot(itemID) == root else { return }
@@ -305,10 +306,25 @@ final class NotebookAppModel {
     didSet {
       elementErasureCache.invalidateSpatial()
       collaborationReadEpoch &+= 1
-      if oldValue != spatialInk { collaborationContentEpoch &+= 1 }
+      // Action bodies are immutable at admission. Source membership and causal
+      // gates identify this window without comparing sample trees on MainActor.
+      if !Self.sameSpatialInkWindow(oldValue, spatialInk) { collaborationContentEpoch &+= 1 }
     }
   }
-  private(set) var loadedInkSurfaces: Set<SurfaceID> = []
+  private static func sameSpatialInkWindow(_ previous: SpatialInkJournal?, _ current: SpatialInkJournal?) -> Bool {
+    guard let previous, let current else { return previous == nil && current == nil }
+    let before: [SpatialInkAction] = previous.actions
+    let after: [SpatialInkAction] = current.actions
+    guard before.count == after.count else { return false }
+    for index in before.indices {
+      let a = before[index], b = after[index]
+      if a.id != b.id || a.stamp != b.stamp || a.stateStamp != b.stateStamp || a.isActive != b.isActive { return false }
+    }
+    return true
+  }
+  private(set) var spatialInkWindow: NotebookSpatialInkWindow?
+  private(set) var spatialInkHistoryStates: [UUID: NotebookSpatialInkHistoryState] = [:]
+  var loadedInkSurfaces: Set<SurfaceID> { Set(spatialInkWindow?.coverage.keys ?? Dictionary<SurfaceID, WorkspaceSpatialBounds>().keys) }
   func renderingInk(on surface: SurfaceID, fallback: SpatialInkJournal?) -> SpatialInkJournal? {
     loadedInkSurfaces.contains(surface) ? spatialInk : fallback
   }
@@ -457,7 +473,7 @@ final class NotebookAppModel {
       return
     }
     guard let header = workspaceHeader, let frame else { return }
-    let source = SceneCompositionSource(store: store, revision: header.cursor, workspaceID: header.workspaceID,groupPoses:compositionGroupPoses)
+    let source = SceneCompositionSource(store: store, revision: header.cursor, workspaceID: header.workspaceID,groupPoses:compositionGroupPoses, inkWindow: spatialInkWindow)
     compositionTiles.prepare(source: source, presence: presence, frame: frame, pinned: pinned,
       displayScale: displayScale, refinesDetails: presencePhase == .settled,
       permitsPreparation: { [weak self] in self?.permitsScenePreparation == true },
@@ -505,6 +521,7 @@ final class NotebookAppModel {
         let draftEpoch = documentDraftEpoch
         let pins = scenePinnedElements, itemPins = scenePinnedItems
         let preparedIDs = preparedNotebookPageIDs(in: requested.selectedItemID)
+        let inkPins = drawingTools.pinnedSpatialInkActionIDs
         // Selection admits its source through this same addressed read. A
         // cold document cannot wait for an unrelated peer refresh to appear.
         // Ordinary camera coverage still reads headers, not document bodies.
@@ -513,9 +530,10 @@ final class NotebookAppModel {
             && (documents[$0] == nil || documentStates[$0] == nil)
         } ?? false
         do {
-          let state = try await persistence.submit { [actor = actorID] store in
+          let _: Void = try await persistence.submit { _ in () }
+          let state = try await sceneReader.read { [actor = actorID] store in
             try NotebookSceneState.read(store: store, presence: requested,
-              viewport: requested.viewport, loadsLiveContent: loadsDocument, pinnedElements: pins, pinnedItems: itemPins, preparedPages: preparedIDs, historyActor: actor)
+              viewport: requested.viewport, loadsLiveContent: loadsDocument, pinnedElements: pins, pinnedItems: itemPins, preparedPages: preparedIDs, historyActor: actor, pinnedInkActionIDs: inkPins)
           }
           guard epoch == collaborationReadEpoch, state.header.cursor == workspaceHeader?.cursor else {
             externalReloadPending = true
@@ -555,7 +573,8 @@ final class NotebookAppModel {
           missingSceneElements = state.missingPinnedElements
           clearRemovedElementPins(state.missingPinnedElements,through:state.header.cursor)
           spatialInk = state.ink
-          loadedInkSurfaces = state.inkSurfaces
+          spatialInkWindow = state.inkWindow
+          spatialInkHistoryStates = state.inkHistoryStates
           for (owner, entries) in state.history { pencilUndoHistory.restore(entries, for: owner) }
           for (owner, entries) in state.redoHistory { pencilUndoHistory.restoreRedo(entries, for: owner) }
           alignWorkspaceSelection()
@@ -942,6 +961,7 @@ final class NotebookAppModel {
   }
 
   let store: NotebookStore
+  private let sceneReader: NotebookSceneReader
   let actorID: UUID
   let laserContext = NotebookLaserContext()
   let inputGate: NotebookInputGate
@@ -977,6 +997,7 @@ final class NotebookAppModel {
     }
   }
   private var publicationFailure: String?
+  private var arrivalFailure: String?
   private var peerActivities: [UUID: NotebookInputActivity] = [:]
   private var cueTask: Task<Void, Never>?
   private var pencilUndoHistory = PencilUndoHistory()
@@ -1041,6 +1062,8 @@ final class NotebookAppModel {
     @ObservationIgnored private let inputFrameMonitor: InputFrameMonitor?
   #endif
   @ObservationIgnored private var diskRefreshTask: Task<Void, Never>?
+  @ObservationIgnored private var arrivalDrainTask: Task<Void, Never>?
+  @ObservationIgnored private var arrivalDrainRequested = false
   @ObservationIgnored private var headerRefreshTask: Task<Void, Never>?
   @ObservationIgnored private var headerRefreshRequested = false
   @ObservationIgnored private var diskRefreshRequested = false
@@ -1118,6 +1141,7 @@ final class NotebookAppModel {
     persistenceQueue: NotebookPersistenceQueue? = nil
   ) {
     self.store = store
+    sceneReader = NotebookSceneReader(store: store)
     self.allowsCodexRegistration = allowsCodexRegistration
     self.pairingActivationID = pairingActivationID
     self.preferences = preferences
@@ -1154,20 +1178,10 @@ final class NotebookAppModel {
     inputGate.bindNewContactAdmission { [weak self] in self?.shutdownPhase == .running }
     persistence.onFailureChange = { [weak self] message in
       guard let self else { return }
-      persistenceFailure = message ?? publicationFailure
+      persistenceFailure = message ?? arrivalFailure ?? publicationFailure
     }
     persistence.onContentMerged = { [weak self] in self?.reloadExternalChanges() }
-    persistence.onCommit = { [weak self] owner in
-      guard self?.isStopped == false else { return }
-      self?.sync?.notifyDurableChanges()
-      if let cloud = self?.cloudSync { Task { await cloud.notifyLocalChanges() } }
-      switch owner {
-      case .page, .pageInk, .document, .documentState, .board, .spatialInk, .elementState:
-        self?.refreshCommittedHeader()
-      case nil, .presence, .peerPresence, .inputActivity, .documentDraft, .documentReading, .fileDraft, .fileWindow, .chatPanel, .runCommand: break
-      }
-
-    }
+    persistence.onCommit = { [weak self] owner in self?.didCommitDurableChanges(owner: owner) }
     inputGate.onNewAcceptedContact = { [weak self] in self?.cancelRequestedNavigation() }
     inputGate.onActivityChange = { [weak self] active in
       guard let self else { return }
@@ -1205,6 +1219,47 @@ final class NotebookAppModel {
     return targets
   }
 
+  private func didCommitDurableChanges(owner: NotebookPersistenceQueue.Owner?) {
+    guard !isStopped else { return }
+    sync?.notifyDurableChanges()
+    if let cloudSync { Task { await cloudSync.notifyLocalChanges() } }
+    switch owner {
+    case .page, .pageInk, .document, .documentState, .board, .spatialInk, .elementState:
+      refreshCommittedHeader()
+    default: break
+    }
+  }
+
+  /// Arrival belongs to admitted phases, independently of camera/contact refresh.
+  /// Each bounded batch releases the writer before the next one is enqueued.
+  private func requestActionArrivalDrain() {
+    #if os(iOS)
+    guard loadState == .ready, !isStopped else { return }
+    arrivalDrainRequested = true
+    guard arrivalDrainTask == nil else { return }
+    arrivalDrainTask = Task { [weak self] in
+      guard let self else { return }
+      defer { arrivalDrainTask = nil }
+      while arrivalDrainRequested, !Task.isCancelled, !isStopped {
+        arrivalDrainRequested = false
+        do {
+          let result = try await persistence.submit { [deviceID = actorID] in
+            try $0.acknowledgeReceivedActions(deviceID: deviceID)
+          }
+          arrivalFailure = nil
+          persistenceFailure = persistence.failure ?? publicationFailure
+          if result.published > 0 { didCommitDurableChanges(owner: nil) }
+          arrivalDrainRequested = arrivalDrainRequested || result.hasMore
+        } catch {
+          arrivalFailure = error.localizedDescription
+          persistenceFailure = persistence.failure ?? arrivalFailure
+          return
+        }
+      }
+    }
+    #endif
+  }
+
   private func publishInputActivity() {
     guard !isStopped else { return }
     guard loadState == .ready else { return }
@@ -1222,7 +1277,7 @@ final class NotebookAppModel {
       observedPeerID = peer.deviceID
       peerPresenceEnvelope = nil
       presenceSequenceTracker = PresenceSequenceTracker()
-      enqueueStoreWrite(publishesChanges: false) { try $0.beginSelectionPublication(deviceID: peer.deviceID, connectionID: generation) }
+      enqueueStoreWrite(owner: .peerSession(peer.deviceID)) { try $0.beginSelectionPublication(deviceID: peer.deviceID, connectionID: generation) }
     #endif
     isPeerConnected = true
     pairedPeers = sync?.pairedPeers ?? []
@@ -1249,7 +1304,7 @@ final class NotebookAppModel {
     peerActivities[peerID] = nil
     isPeerConnected = !peerGenerations.isEmpty
     peerInputIsActive = peerActivities.values.contains(where: \.isActive)
-    enqueueStoreWrite {
+    enqueueStoreWrite(owner: .peerSession(peerID)) {
       try $0.resetInputActivity(deviceID: peerID)
       try $0.endSelectionPublication(deviceID: peerID, connectionID: generation)
     }
@@ -1644,6 +1699,7 @@ final class NotebookAppModel {
         initialAccountWorkspaceCursor = try await persistence.submit { try $0.currentChangeCursor() }
       }
       loadState = .ready
+      requestActionArrivalDrain()
       publishSelection()
       awaitingAccountContent = false
       reloadCollaborationMetadata()
@@ -2546,7 +2602,9 @@ final class NotebookAppModel {
     else { return nil }
     spatialInk = journal
 
-    scheduleSpatialInkSave(.append(action, journalStamp: journal.stamp))
+    let command = NotebookSpatialInkCommand.append(action, journalStamp: journal.stamp)
+    spatialInkHistoryStates[action.id] = .init(result: command.expectedResult, surfaces: Set(action.spans.map(\.surface)))
+    scheduleSpatialInkSave(command)
     for surface in Set(action.spans.map(\.surface)) {
       if let domain = PencilUndoHistory.Domain(surface: surface) { pencilUndoHistory.recordAction(domain: domain, actionID: action.id) }
     }
@@ -2574,27 +2632,8 @@ final class NotebookAppModel {
       _ = acceptDrawingUndo()
       return
     }
-    guard var journal = spatialInk, let presence else { return }
-    let surface = presence.focusedItemID.map(SurfaceID.cover) ?? .board(presence.boardID)
-    guard let contribution = pencilUndoHistory.lastContribution(for: domain) else { return }
-    // Both warm and cold Undo name the exact entry of one saved mixed order.
-    // A peer's later contact is not this user's last action.
-    guard let source = journal.actions.last(where: { action in
-      action.isActive && action.stamp.actor == actorID
-        && action.spans.contains { $0.surface == surface }
-        && contribution.contains(action.id)
-    }), journal.deactivate(source.id, actor: actorID),
-      let action = journal.actions.first(where: { $0.id == source.id }) else { return }
-    spatialInk = journal
-    // One contact may cross the board and a cover. Its inverse removes that
-    // contribution from every touched history, not just the current focus.
-    for domain in Set(action.spans.compactMap { PencilUndoHistory.Domain(surface: $0.surface) }) {
-      pencilUndoHistory.didRemoveContribution([action.id], for: domain, stateStamp: action.stateStamp)
-    }
-
-    scheduleSpatialInkSave(.state(actionID: action.id, creationStamp: action.stamp,
-      expectedStateStamp: source.stateStamp,
-      isActive: action.isActive, stateStamp: action.stateStamp, journalStamp: journal.stamp))
+    guard let contribution = pencilUndoHistory.lastContribution(for: domain),
+      setSpatialInkContribution(contribution, domain: domain, active: false) else { return }
     showCue("Отменено")
   }
 
@@ -2610,24 +2649,40 @@ final class NotebookAppModel {
     if let command = pencilUndoHistory.lastRedoCommand(for: domain) { redoCollaboration(command); return }
     if case .target(.document, _) = domain { return }
     if isPageOpen { _ = acceptDrawingRedo(); return }
-    guard var journal = spatialInk, let presence,
-      let contribution = pencilUndoHistory.lastRedoContribution(for: domain),
-      let gate = pencilUndoHistory.lastRedoStateStamp(for: domain) else { return }
-    let surface = presence.focusedItemID.map(SurfaceID.cover) ?? .board(presence.boardID)
-    guard let source = journal.actions.last(where: { action in
-      !action.isActive && action.stamp.actor == actorID
-        && action.spans.contains { $0.surface == surface }
-        && contribution.contains(action.id)
-    }), source.stateStamp == gate, journal.activate(source.id, actor: actorID),
-      let action = journal.actions.first(where: { $0.id == source.id }) else { return }
-    spatialInk = journal
-    for domain in Set(action.spans.compactMap { PencilUndoHistory.Domain(surface: $0.surface) }) {
-      pencilUndoHistory.recordAction(domain: domain, actionID: action.id)
-    }
-    scheduleSpatialInkSave(.state(actionID: action.id, creationStamp: action.stamp,
-      expectedStateStamp: gate,
-      isActive: action.isActive, stateStamp: action.stateStamp, journalStamp: journal.stamp,nativeRedo:true))
+    guard let contribution = pencilUndoHistory.lastRedoContribution(for: domain),
+      let gate = pencilUndoHistory.lastRedoStateStamp(for: domain),
+      setSpatialInkContribution(contribution, domain: domain, active: true, redoGate: gate) else { return }
     showCue("Повторено")
+  }
+
+  /// The history directory owns cold inverses; a geometry window is never
+  /// mistaken for the surface's complete action history.
+  private func setSpatialInkContribution(_ ids: Set<UUID>, domain: PencilUndoHistory.Domain,
+    active: Bool, redoGate: VersionStamp? = nil) -> Bool {
+    guard let journal = spatialInk,
+      let source = ids.compactMap({ spatialInkHistoryStates[$0] }).filter({ state in
+        state.result.isActive != active && state.result.creationStamp.actor == actorID
+          && state.surfaces.contains { PencilUndoHistory.Domain(surface: $0) == domain }
+          && (redoGate == nil || state.result.stateStamp == redoGate)
+      }).max(by: { $0.result.creationStamp < $1.result.creationStamp }),
+      let next = source.result.stateStamp.advanced(by: actorID),
+      let journalStamp = max(journal.stamp, next).advanced(by: actorID) else { return false }
+    let prior = source.result
+    let command = NotebookSpatialInkCommand.state(actionID: prior.actionID, creationStamp: prior.creationStamp,
+      expectedStateStamp: prior.stateStamp, isActive: active, stateStamp: next, journalStamp: journalStamp, nativeRedo: active)
+    let actions = journal.actions.map { action in
+      action.id == prior.actionID ? SpatialInkAction(id: action.id, tool: action.tool, color: action.color,
+        spans: action.spans, stamp: action.stamp, isActive: active, stateStamp: next) : action
+    }
+    spatialInk = .init(actions: actions, stamp: journalStamp)
+    spatialInkHistoryStates[prior.actionID] = .init(result: command.expectedResult, surfaces: source.surfaces)
+    for surface in source.surfaces {
+      guard let touched = PencilUndoHistory.Domain(surface: surface) else { continue }
+      if active { pencilUndoHistory.recordAction(domain: touched, actionID: prior.actionID) }
+      else { pencilUndoHistory.didRemoveContribution([prior.actionID], for: touched, stateStamp: next) }
+    }
+    scheduleSpatialInkSave(command)
+    return true
   }
 
   func afterPageInput(_ action: @escaping NotebookInputCompletion) {
@@ -2698,8 +2753,9 @@ final class NotebookAppModel {
   /// Geometry/state changes do not revoke a program's accepted message. A
   /// different program or an explicit deletion does, even if this view is gone.
   @discardableResult
-  func commitSpatialElementState(boardID: UUID, rendered: SpatialElement, state: JSONValue) -> Bool {
-    guard surfaceAcceptsChanges(rendered.surface) else { return false }
+  func commitSpatialElementState(boardID: UUID, rendered: SpatialElement, state: JSONValue,
+    onCommitted: NotebookProgramStateCompletion) -> Bool {
+    guard surfaceAcceptsChanges(rendered.surface), let sourceBasis = onCommitted.sourceBasis else { return false }
     // Admission changes the input frontier before its addressed write can
     // finish. A read queued before this contact must not overwrite the live
     // program with an earlier saved value while that write is still pending.
@@ -2707,10 +2763,12 @@ final class NotebookAppModel {
     collaborationContentEpoch &+= 1
     let actor = actorID
     enqueueStoreWrite(owner: .elementState(boardID, rendered.id), reload: true) { store in
-      do { _ = try store.commitSpatialElementState(boardID: boardID, rendered: rendered, state: state, actor: actor) }
+      do { onCommitted(try store.commitSpatialElementState(boardID: boardID, rendered: rendered, state: state, actor: actor,
+        expectedProgramBasis: sourceBasis, admittedStateBytes: onCommitted.admittedBytes)?.basis) }
       catch let error as CollaborationError where error.code == "source_conflict" {
         // A terminal rejection is not a failed disk write. The replacement
         // program keeps its state; dependent writes must not wait for a retry.
+        onCommitted(nil)
       }
     }
     return true
@@ -2752,27 +2810,29 @@ final class NotebookAppModel {
       return nil
     }
     let page=pages[pageID] ?? retained
-    if case .append(let action)=mutation,let targets=action.elementTargets {
+    if case .append(let action)=mutation,let targets=action.elementTargets,!targets.isEmpty {
       workingElementErasures[action.id] = [.init(id: action.id, surface: .page(pageID),
         samples: action.samples, targets: targets, accepted: true)]
     }
     do {
       let change=try page.prepareInkChange(mutation,stamp:stamp)
       guard change.stamp != change.baseStamp,page.publishLiveInkChange(change) else {
-        if case .append(let action)=mutation { workingElementErasures[action.id]=nil }
+        if case .append(let action)=mutation,workingElementErasures[action.id] != nil {
+          workingElementErasures[action.id]=nil
+        }
         return change
       }
       collaborationReadEpoch &+= 1;collaborationContentEpoch &+= 1
       elementErasureCache.record(change)
       switch change.mutation {
       case .append(let action):
-        workingElementErasures[action.id]=nil
+        if workingElementErasures[action.id] != nil { workingElementErasures[action.id]=nil }
         pencilUndoHistory.recordAction(domain:.page(pageID),actionID:action.id)
       case .setActive(let ids, let active):
         if active { for id in ids { pencilUndoHistory.recordAction(domain:.page(pageID),actionID:id) } }
         else { pencilUndoHistory.didRemoveContribution(ids,for:.page(pageID),stateStamp:change.stamp) }
-        // Undo and sync replace visible state; ordinary Pencil-up already
-        // installed its exact delta in the native canvas.
+        // SwiftUI publishes the accepted source too; mounted canvases receive
+        // this exact delta synchronously through pageInkPublication.
         if pages[pageID] != nil { pages[pageID]=page }
         showCue(active ? "Повторено" : "Отменено")
       }
@@ -2787,10 +2847,16 @@ final class NotebookAppModel {
         // the ink in the same FIFO rather than depending on a later idle turn.
         acceptQuickShape(quickShape,pageID:pageID,stroke:action)
       }
+      var suppressed = pageSuppressedInkIDs(page)
+      if let quickShape, case .append(let action) = change.mutation {
+        suppressed.formUnion(quickShape.precedingStrokeIDs + [action.id])
+      }
+      pageInkPublication.publish(change, suppressedIDs: suppressed)
       return change
     } catch {
       if case .append(let action)=mutation {
-        workingElementErasures[action.id]=nil;updateWorkingGraphic(nil,strokeID:action.id)
+        if workingElementErasures[action.id] != nil { workingElementErasures[action.id]=nil }
+        updateWorkingGraphic(nil,strokeID:action.id)
       }
       persistenceFailure=error.localizedDescription
       return nil
@@ -2942,6 +3008,16 @@ final class NotebookAppModel {
 
   func selectRegion(_ region: NotebookRegionSelection) {
     replaceSelection(.region(region))
+  }
+
+  /// Only a still-current, unmaterialized contour may return the choice it
+  /// borrowed. A later tap/selection must never be overwritten by worker failure.
+  func restoreRejectedRegionSelection(_ previous:NotebookSelectionSession,replacing pendingID:UUID) {
+    guard selectionSession.id == pendingID,let region=selectionSession.region,
+      region.materialization == nil else { return }
+    cancelElementManipulation()
+    selectionSession=previous
+    collaborationReadEpoch &+= 1
   }
 
   func resolveRegionPreparation(_ region:NotebookRegionSelection) {
@@ -3214,7 +3290,7 @@ final class NotebookAppModel {
     #if os(iOS)
     sync?.sendTransient(.selection(envelope))
     #else
-    enqueueStoreWrite(publishesChanges: false) { try $0.saveLocalSelectionPublication(envelope) }
+    enqueueStoreWrite(owner: .peerSession(envelope.deviceID)) { try $0.saveLocalSelectionPublication(envelope) }
     #endif
   }
 
@@ -3810,7 +3886,8 @@ final class NotebookAppModel {
     }
   }
 
-  func checkpointProgramState(focus: InteractiveElementReference, rendered: AgentElement, value: JSONValue, basis: NotebookProgramStateBasis) async throws -> NotebookProgramStateBasis? {
+  func checkpointProgramState(focus: InteractiveElementReference, rendered: AgentElement, value: JSONValue, basis: NotebookProgramStateBasis,
+    admittedStateBytes: Int? = nil) async throws -> NotebookProgramStateBasis? {
     guard !isStopped else { return nil }
     let target: CollaborationTarget
     switch focus {
@@ -3828,24 +3905,44 @@ final class NotebookAppModel {
     let changesState = value != rendered.state
     if changesState { collaborationReadEpoch &+= 1; collaborationContentEpoch &+= 1 }
     let accepted = try await persistence.submit(publishesChanges: changesState) { store in
-      try store.checkpointProgramState(target: target, rendered: rendered, state: value, basis: basis, actor: actor)
+      try store.checkpointProgramState(target: target, rendered: rendered, state: value, basis: basis, actor: actor, admittedStateBytes: admittedStateBytes)
     }
     if let accepted, accepted != basis { reloadExternalChanges() }
     return accepted
   }
 
   @discardableResult
-  func commitElementState(pageID: UUID, elementID: String, state: JSONValue) -> Bool {
-    guard !isPageBeingDeleted(pageID), var page = pages[pageID] else { return false }
-    guard let index = page.elements.firstIndex(where: { $0.id == elementID }) else {
-      return false
+  func commitElementState(pageID: UUID, elementID: String, state: JSONValue,
+    onCommitted: NotebookProgramStateCompletion) -> Bool {
+    guard !isStopped, !isPageBeingDeleted(pageID), state.isValid,
+      let captured = onCommitted.sourceBasis else { return false }
+    // An accepted immutable state outlives the page's render window. Eviction
+    // removes presentation, not its addressed writer or captured source basis.
+    guard var page = pages[pageID] else {
+      let basis = captured, actor = actorID
+      persistence.enqueueChange(owner: .elementState(pageID, elementID)) { store in
+        let receipt = try store.commitPageProgramState(pageID: pageID, elementID: elementID,
+          state: state, basis: basis, actor: actor, admittedStateBytes: onCommitted.admittedBytes)
+        onCommitted(receipt.basis)
+        return .init(merged: receipt.basis != nil && receipt.basis != basis, changed: receipt.changed)
+      }
+      return true
     }
+    guard let index = page.elements.firstIndex(where: { $0.id == elementID && $0.kind == .web }) else { return false }
+    guard let current = page.programStateBasis(elementID), captured.hasSameSource(as: current) else { return false }
+    let before = page
     var elements = page.elements
     elements[index] = elements[index].updating(state: state)
-    let previous = page.agentStamp
     page.replaceElements(elements, actor: actorID)
-    guard previous != page.agentStamp else { return true }
-    page = persistMerged(page)
+    guard let command = NotebookPageProgramStateCommand(before: before, after: page, elementID: elementID) else { return false }
+    if before.agentStamp != page.agentStamp { pages[pageID] = page }
+    // Even a visible no-op crosses the addressed source/causal check after
+    // earlier writes. A FIFO fence alone cannot attest a still-current heap.
+    persistence.enqueueChange(owner: .elementState(pageID, elementID)) {
+      let receipt = try $0.commitPageProgramState(command, admittedStateBytes: onCommitted.admittedBytes)
+      onCommitted(receipt.basis)
+      return .init(merged: receipt.basis != command.expectedBasis, changed: receipt.changed)
+    }
     return true
   }
 
@@ -3987,70 +4084,105 @@ final class NotebookAppModel {
     documentSaveObserver = nil
   }
 
+  func drainAcceptedProgramWrites() async {
+    await persistence.finishAcceptedProgramWrites()
+  }
+
   @discardableResult
   func commitDocumentState(
     documentID: UUID,
     blockID: String,
     value: JSONValue,
-    sourceVersion: ContentFieldVersion
-  ) -> ContentFieldVersion? {
-    guard !isStopped, !isItemBeingDeleted(documentID),
-      let document = documents[documentID], document.sourceVersion(blockID: blockID) == sourceVersion,
+    programIdentity: DocumentProgramIdentity
+  ) async throws -> ContentFieldVersion? {
+    guard value.isValid else { throw NotebookStorageError.invalidTransaction("document state value") }
+    guard !isStopped, !isItemBeingDeleted(documentID) else { return nil }
+    if documents[documentID] == nil || documentStates[documentID] == nil {
+      // A retiring heap may finish its accepted transfer after the document
+      // leaves the working set. Keep its FIFO entry through writer failure;
+      // eviction is neither source revocation nor cancellation of that value.
+      let actor = actorID
+      return await withCheckedContinuation { continuation in
+        persistence.enqueue(owner: .documentState(documentID)) { store in
+          let accepted = try store.commitDocumentState(documentID: documentID, blockID: blockID,
+            value: value, programIdentity: programIdentity, actor: actor)
+          continuation.resume(returning: accepted)
+          return accepted != nil
+        }
+      }
+    }
+    guard let document = documents[documentID], document.programIdentity(blockID: blockID) == programIdentity,
       document.blocks.contains(where: { $0.id == blockID && $0.kind == .interactive }),
       var journal = documentStates[documentID] else { return nil }
-    guard journal.commit(blockID: blockID, value: value, actor: actorID) else {
-      return journal.records.first(where: { $0.id == blockID && $0.value == value })?.valueVersion
+    if journal.commit(blockID: blockID, value: value, actor: actorID) {
+      documentStates[documentID] = journal
     }
-    documentStates[documentID] = journal
-
-    guard let record = journal.records.first(where: { $0.id == blockID }) else { return nil }
+    guard let record = journal.records.first(where: { $0.id == blockID && $0.value == value }) else { return nil }
     let command = NotebookDocumentStateCommand(documentID: documentID, record: record,
-      journalStamp: journal.stamp, expectedSourceVersion: sourceVersion)
-    persistence.enqueue(owner: .documentState(documentID)) { try $0.commitDocumentState(command) != command.expectedResult }
-    // Admission acknowledges this exact human value synchronously. It does
-    // not claim durability; runtime retirement waits for the separate fence.
-    return record.valueVersion
+      journalStamp: journal.stamp, expectedProgramIdentity: programIdentity)
+    // Display is immediate, but JavaScript may only adopt the actual receipt
+    // for its value. A different causal winner cannot authorize this old heap's
+    // next checkpoint. No-op events use the same source/causal check as edits.
+    return await withCheckedContinuation { continuation in
+      persistence.enqueue(owner: .documentState(documentID)) { store in
+        let result = try store.commitDocumentState(command)
+        let version: ContentFieldVersion?
+        if case .committed(let accepted) = result, accepted.record.value == value {
+          version = accepted.record.valueVersion
+        } else { version = nil }
+        continuation.resume(returning: version)
+        return result != command.expectedResult
+      }
+    }
   }
 
   /// Checkpoint admission compares the executor's causal basis before changing
   /// the model, and again inside the sole writer. A delayed animation cannot
   /// adopt a newer human state just because SwiftUI has not echoed it yet.
   func checkpointDocumentState(documentID: UUID, blockID: String, value: JSONValue,
-    sourceVersion: ContentFieldVersion, stateVersion: ContentFieldVersion?) async throws -> ContentFieldVersion? {
+    programIdentity: DocumentProgramIdentity, stateVersion: ContentFieldVersion?) async throws -> ContentFieldVersion? {
     guard value.isValid else { throw NotebookStorageError.invalidTransaction("document checkpoint value") }
     guard !isStopped, !isItemBeingDeleted(documentID) else { return nil }
     if documents[documentID] == nil || documentStates[documentID] == nil {
       let actor = actorID
       let accepted = try await persistence.submit(publishesChanges: true) { store in
         try store.checkpointDocumentState(documentID: documentID, blockID: blockID, value: value,
-          sourceVersion: sourceVersion, stateVersion: stateVersion, actor: actor)
+          programIdentity: programIdentity, stateVersion: stateVersion, actor: actor)
       }
       if accepted != nil { reloadExternalChanges() }
       return accepted
     }
     guard !isStopped, !isItemBeingDeleted(documentID),
-      let document = documents[documentID], document.sourceVersion(blockID: blockID) == sourceVersion,
-      let block = document.blocks.first(where: { $0.id == blockID && $0.kind == .interactive }),
+      let document = documents[documentID], document.programIdentity(blockID: blockID) == programIdentity,
+      document.blocks.contains(where: { $0.id == blockID && $0.kind == .interactive }),
       var journal = documentStates[documentID],
       journal.records.first(where: { $0.id == blockID })?.valueVersion == stateVersion else { return nil }
     if journal.commit(blockID: blockID, value: value, actor: actorID) {
-      let record = journal.records.first { $0.id == blockID }!
-      let command = NotebookDocumentStateCommand(documentID: documentID, record: record,
-        journalStamp: journal.stamp, expectedSourceVersion: sourceVersion, stateCondition: .matching(stateVersion))
       documentStates[documentID] = journal
-      persistence.enqueue(owner: .documentState(documentID)) { try $0.commitDocumentState(command) != command.expectedResult }
     }
     guard let record = journal.records.first(where: { $0.id == blockID }), record.value == value else {
       throw NotebookStorageError.invalidTransaction("document checkpoint admission")
     }
-    let stored = try await persistence.submit { try $0.readDocumentBlock(documentID: documentID, blockID: blockID) }
+    let command = NotebookDocumentStateCommand(documentID: documentID, record: record,
+      journalStamp: journal.stamp, expectedProgramIdentity: programIdentity, stateCondition: .matching(stateVersion))
+    // The admitted snapshot already owns the value's memory through this
+    // callback. Return the addressed writer's exact receipt, including no-op
+    // checkpoints, rather than reserving and decoding the same state again.
+    // Disk failure keeps this command and its receipt in the existing retry
+    // FIFO; the frozen heap cannot release its admission before durability.
+    let result = await withCheckedContinuation { continuation in
+      persistence.enqueue(owner: .documentState(documentID)) { store in
+        let result = try store.commitDocumentState(command)
+        continuation.resume(returning: result)
+        return result != command.expectedResult
+      }
+    }
     try Task.checkCancellation()
-    guard !isStopped, !isItemBeingDeleted(documentID), let stored,
-      stored.block == block, stored.sourceVersion == sourceVersion,
-      stored.stateVersion == record.valueVersion, stored.state == value,
-      documents[documentID]?.sourceVersion(blockID: blockID) == sourceVersion,
+    guard !isStopped, !isItemBeingDeleted(documentID),
+      case .committed(let accepted) = result, accepted.record == record,
+      documents[documentID]?.programIdentity(blockID: blockID) == programIdentity,
       documentStates[documentID]?.records.first(where: { $0.id == blockID }) == record else { return nil }
-    return record.valueVersion
+    return accepted.record.valueVersion
   }
 
   // Undo's recognized contacts must see the material they are changing. This
@@ -4071,6 +4203,7 @@ final class NotebookAppModel {
   @discardableResult
   func reloadExternalChanges() -> Task<Void, Never>? {
     guard loadState == .ready, !isStopped else { return nil }
+    requestActionArrivalDrain()
     guard permitsExternalScenePublication else { externalReloadPending = true; return nil }
     diskRefreshRequested = true
     if let diskRefreshTask { return diskRefreshTask }
@@ -4085,23 +4218,23 @@ final class NotebookAppModel {
         let elementPins = scenePinnedElements, itemPins = scenePinnedItems
         let previousIndex = sceneIndex, previousPages = pages
         let preparedIDs = preparedNotebookPageIDs(in: presence.selectedItemID)
+        let inkPins = drawingTools.pinnedSpatialInkActionIDs
         let attentionID = agentFeedback.attentionID, attentionReferences = agentFeedback.attention.map(\.reference)
         #if os(iOS)
-          let receivingDeviceID: UUID? = actorID
           let feedbackKnown = agentFeedback.knownActions, feedbackTracked = agentFeedback.trackedActions
         #else
-          let receivingDeviceID: UUID? = nil
           let feedbackKnown: Set<UUID>? = nil, feedbackTracked: Set<UUID> = []
         #endif
         do {
-          let prepared = try await persistence.submit(publishesChanges: receivingDeviceID != nil) { [actor = actorID] store in
-            try NotebookDiskRefresh.prepare(store: store, presence: presence, receivingDeviceID: receivingDeviceID,
+          let _: Void = try await persistence.submit { _ in () }
+          let prepared = try await sceneReader.read { [actor = actorID] store in
+            try NotebookDiskRefresh.prepare(store: store, presence: presence,
               pinnedElements: elementPins, pinnedItems: itemPins, preparedPages: preparedIDs,
               feedbackKnown: feedbackKnown, feedbackTracked: feedbackTracked, attentionReferences: attentionReferences,
-              historyActor: actor, reusing: previousIndex, reusingPages: previousPages)
+              historyActor: actor, pinnedInkActionIDs: inkPins, reusing: previousIndex, reusingPages: previousPages)
           }
           publicationFailure = nil
-          if persistence.failure == nil { persistenceFailure = publicationFailure }
+          if persistence.failure == nil { persistenceFailure = arrivalFailure }
           let liveDrafts = documentEditingSessions
           guard acceptExternalScene(prepared.scene, observedEpoch: epoch,
             observedPresence: presence, itemPins: itemPins, preparedIndex: prepared.sceneIndex) else {
@@ -4155,7 +4288,7 @@ final class NotebookAppModel {
     }
     func saveLocalCodexPanel(_ state: NotebookChatPanelState) {
       let author = actorID
-      persistence.enqueue(publishesChanges: false) { try $0.saveChatPanel(state, author: author); return false }
+      persistence.enqueueFence(owner: .chatPanel(author)) { try $0.saveChatPanel(state, author: author); return false }
     }
     func localCodexControl(_ action: NotebookChatAction) async throws -> NotebookChatJob? {
         let author = actorID
@@ -4266,7 +4399,7 @@ final class NotebookAppModel {
         }
         do {
           guard !isClosing else { throw CollaborationError("owner_unavailable", "Notebook завершает работу.") }
-          let result = try await persistence.submit(publishesChanges: command.changesStore) {
+          let result = try await persistence.submit(owner: .command(command.command)) {
             try NotebookCommandDispatcher(store: $0).handle(command)
           }
           if command.changesStore { reloadExternalChanges() }
@@ -4307,7 +4440,7 @@ final class NotebookAppModel {
     case .selection(let value):
       #if os(macOS)
         guard value.deviceID == peerID, value.isValid else { return }
-        enqueueStoreWrite(publishesChanges: false) { _ = try $0.acceptSelectionPublication(value, connectionID: generation) }
+        enqueueStoreWrite(owner: .peerSession(value.deviceID)) { _ = try $0.acceptSelectionPublication(value, connectionID: generation) }
       #endif
     case .presentation(let message):
       #if os(iOS)
@@ -4363,7 +4496,7 @@ final class NotebookAppModel {
         presentationRelay.observe(envelope, from: peerID)
         peerPresenceEnvelope = envelope
         if envelope.phase == .settled {
-          enqueueStoreWrite(owner: .peerPresence(peerID), publishesChanges: false) {
+          enqueueStoreWrite(owner: .peerPresence(peerID)) {
             _ = try $0.acceptPresencePublication(envelope, deviceID: peerID, connectionID: generation)
           }
         }
@@ -4416,9 +4549,9 @@ final class NotebookAppModel {
       case .document:
         guard let document = documents[reference.target.id],
           let block = document.blocks.first(where: { $0.id == id }) else { throw CancellationError() }
-        let sourceVersion = document.sourceVersion(blockID: id)
+        let programIdentity = document.programIdentity(blockID: id)
         acceptsState = { value in
-          self.documents[document.id]?.sourceVersion(blockID: id) == sourceVersion
+          self.documents[document.id]?.programIdentity(blockID: id) == programIdentity
             && self.documents[document.id]?.blocks.first(where: { $0.id == id }) == block
             && self.documentStates[document.id]?.records.first(where: { $0.id == id })?.value == value
         }
@@ -5367,7 +5500,8 @@ final class NotebookAppModel {
     spatialGroupReads = state.groupReads
     boardContentRevisions = state.boardContentRevisions
     spatialInk = state.ink
-    loadedInkSurfaces = state.inkSurfaces
+    spatialInkWindow = state.inkWindow
+    spatialInkHistoryStates = state.inkHistoryStates
     pages = state.pages
     for (owner, entries) in state.history { pencilUndoHistory.restore(entries, for: owner) }
     for (owner, entries) in state.redoHistory { pencilUndoHistory.restoreRedo(entries, for: owner) }
@@ -5493,9 +5627,9 @@ final class NotebookAppModel {
     return page
   }
 
-  private func enqueueStoreWrite(owner: NotebookPersistenceQueue.Owner? = nil, publishesChanges: Bool = true,
+  private func enqueueStoreWrite(owner: NotebookPersistenceQueue.Owner? = nil,
     reload: Bool = false, _ operation: @escaping @Sendable (NotebookStore) throws -> Void) {
-    persistence.enqueue(owner: owner, publishesChanges: publishesChanges) { store in
+    persistence.enqueue(owner: owner) { store in
       try operation(store)
       return reload
     }
@@ -5505,6 +5639,7 @@ final class NotebookAppModel {
     AgentWebCoordinator.retryRetirements(ownedBy: self)
     DocumentRenderRegistry.shared.retryRetiringPrograms()
     persistence.retry()
+    requestActionArrivalDrain()
     if publicationFailure != nil { reloadExternalChanges() }
   }
 
@@ -5571,6 +5706,7 @@ final class NotebookAppModel {
       }
       guard !Task.isCancelled, continuing() else { return false }
       if boundary == .quiescent {
+        if let task = arrivalDrainTask { await task.value }
         if let task = diskRefreshTask { observeNavigation("wait_disk_refresh_begin", fields: trace); await task.value; observeNavigation("wait_disk_refresh_end", fields: trace) }
         guard !Task.isCancelled, continuing() else { return false }
         if let task = sceneWindowTask { observeNavigation("wait_scene_window_begin", fields: trace); await task.value; observeNavigation("wait_scene_window_end", fields: trace) }
@@ -5584,9 +5720,9 @@ final class NotebookAppModel {
       guard await persistence.flush() else { return false }
       observeNavigation("writer_flush_end", fields: trace)
       guard !Task.isCancelled, continuing() else { return false }
-    } while boundary == .quiescent && (diskRefreshTask != nil || headerRefreshTask != nil || documentOpeningTask != nil || persistence.pendingCount > 0
+    } while boundary == .quiescent && (arrivalDrainTask != nil || diskRefreshTask != nil || headerRefreshTask != nil || documentOpeningTask != nil || persistence.pendingCount > 0
       || !pendingCollaborationCommands.isEmpty || contextPublicationTask != nil)
-    return publicationFailure == nil
+    return publicationFailure == nil && arrivalFailure == nil
   }
 
   /// Close service admission, finish accepted input, and join every background
@@ -5641,11 +5777,11 @@ final class NotebookAppModel {
       inputGate.onActivityChange = nil
       inputGate.onNewAcceptedContact = nil
       itemOwnerObserver = nil
-      let readers = [scenePreparationTask, sceneWindowTask, diskRefreshTask, headerRefreshTask, documentOpeningTask]
+      let readers = [scenePreparationTask, sceneWindowTask, diskRefreshTask, arrivalDrainTask, headerRefreshTask, documentOpeningTask]
         .compactMap { $0 } + Array(pagePreparationTasks.values)
       for task in readers { task.cancel() }
       for task in readers { await task.value }
-      scenePreparationTask = nil; sceneWindowTask = nil; diskRefreshTask = nil; headerRefreshTask = nil
+      scenePreparationTask = nil; sceneWindowTask = nil; diskRefreshTask = nil; arrivalDrainTask = nil; headerRefreshTask = nil
       documentOpeningTask = nil
       pagePreparationTasks = [:]
       collaborationReadTask?.cancel()
@@ -5656,6 +5792,7 @@ final class NotebookAppModel {
       if let task = collaborationHistoryTask { await task.value }
       await elementErasureCache.stop()
       await compositionTiles.stop()
+      await sceneReader.close()
       await transportReader?.close()
       transportReader = nil
       let saved = await persistence.flush()

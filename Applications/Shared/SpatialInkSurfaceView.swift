@@ -147,7 +147,10 @@ final class SpatialInkSurfaceRegistry {
             try Task.checkCancellation()
             let source = try installed?.reconciled(with: journal)
               ?? SpatialInkJournal(actions: journal.actions.filter { $0.spans.contains { $0.surface == surface } }, stamp: journal.stamp)
-            let unchanged = try installed?.referenceInk() == NotebookReferenceInk(surface: surface, actions: source.actions)
+            // Baseline IDs prove the addressed read behind a capture, not
+            // paint. An echoed tail or another equal window must not rebuild
+            // the same mesh solely because that provenance moved to SQL.
+            let unchanged = try installed?.referenceInk().actions == NotebookReferenceInk(surface: surface, actions: source.actions).actions
               && installed?.suppressedInkIDs == suppressed
             let mesh = unchanged ? nil : try SpatialInkMesh.prepare(surface: surface, journal: source, suppressedInkIDs: suppressed)
             try Task.checkCancellation()

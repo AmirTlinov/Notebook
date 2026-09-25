@@ -94,17 +94,42 @@ struct NotebookExportPublicationTests {
         video: format == .mp4 ? .init(start: 0, end: 1, framesPerSecond: 4) : nil,
         moment: .presented, attention: .init(contextID: context.id, referenceID: reference.id))
     }
-    let selected = try cut(.init(blockID: "model", sourceVersion: document.sourceVersion(blockID: "model"), state: value))
+    let selected = try cut(.init(blockID: "model", programIdentity: document.programIdentity(blockID: "model"), state: value))
     for format in [NotebookExportOptions.Format.svg, .html, .mp4, .pdf, .package] {
       let option = options(format, blockID: [.svg, .html, .mp4].contains(format) ? "model" : nil)
       try option.validate(cut: selected)
       #expect(throws: CollaborationError.self) { try option.validate(cut: cut(nil)) }
-      #expect(throws: CollaborationError.self) { try option.validate(cut: cut(.init(blockID: "model", sourceVersion: document.sourceVersion(blockID: "model"), state: .null))) }
+      #expect(throws: CollaborationError.self) { try option.validate(cut: cut(.init(blockID: "model", programIdentity: document.programIdentity(blockID: "model"), state: .null))) }
       let other = DocumentDocument(actor: UUID(), blocks: document.blocks)
-      #expect(throws: CollaborationError.self) { try option.validate(cut: cut(.init(blockID: "model", sourceVersion: other.sourceVersion(blockID: "model"), state: value))) }
+      #expect(throws: CollaborationError.self) { try option.validate(cut: cut(.init(blockID: "model", programIdentity: other.programIdentity(blockID: "model"), state: value))) }
+    }
+    // Paused program provenance follows every executable input, not only the
+    // editor's HTML/content version. ABA keeps the same pixels/state values
+    // but belongs to a different authored program generation.
+    let original = document.blocks[0]
+    let alternatives: [DocumentBlock] = [
+      .interactive(id: "model", html: original.html, css: "body{color:red}", initialState: original.initialState),
+      .interactive(id: "model", html: original.html, javaScript: "window.changed=true", initialState: original.initialState),
+      .interactive(id: "model", html: original.html, initialState: .object(["phase": .number(0.75)]))
+    ]
+    for replacement in alternatives {
+      var changed = document
+      let changedSource = changed.replaceContent(blocks: [replacement], actor: UUID()); #expect(changedSource)
+      #expect(changed.sourceVersion(blockID: "model") == document.sourceVersion(blockID: "model"))
+      let identity = changed.programIdentity(blockID: "model")
+      #expect(throws: CollaborationError.self) {
+        try options(.html, blockID: "model").validate(cut: cut(.init(blockID: "model", programIdentity: identity, state: value)))
+      }
+      let restoredSource = changed.replaceContent(blocks: [original], actor: UUID()); #expect(restoredSource)
+      #expect(changed.blocks == document.blocks)
+      #expect(changed.sourceVersion(blockID: "model") == document.sourceVersion(blockID: "model"))
+      #expect(throws: CollaborationError.self) {
+        try options(.html, blockID: "model").validate(cut: cut(.init(blockID: "model",
+          programIdentity: changed.programIdentity(blockID: "model"), state: value)))
+      }
     }
     #expect(throws: CollaborationError.self) { try options(.svg, blockID: "different").validate(cut: selected) }
-    #expect(throws: CollaborationError.self) { try cut(.init(blockID: "different", sourceVersion: document.sourceVersion(blockID: "model"), state: value)) }
+    #expect(throws: CollaborationError.self) { try cut(.init(blockID: "different", programIdentity: document.programIdentity(blockID: "model"), state: value)) }
     // A static checkpoint is not an assertion that an unrelated program was shown.
     var mixed = document
     let appended = mixed.replaceContent(blocks: document.blocks + [.interactive(id: "running", html: "<p>Other model</p>")], actor: UUID())

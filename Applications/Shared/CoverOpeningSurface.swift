@@ -182,7 +182,9 @@ enum CoverOpeningPhysics {
 /// the sheet is moving waits for an endpoint instead of replacing pixels in
 /// the person's hand halfway through the gesture.
 struct CoverSnapshotLifecycle {
+  enum Endpoint { case closed, open }
   private(set) var progress = 0.0
+  private(set) var lastSettledEndpoint = Endpoint.closed
   private(set) var revision: CoverRenderingRevision?
   private(set) var capturedCover: CGImage?
 
@@ -202,8 +204,12 @@ struct CoverSnapshotLifecycle {
     let ownerChanged = self.ownerID != ownerID
     if ownerChanged {
       self.ownerID = ownerID
+      lastSettledEndpoint = .closed
       clearCapture()
     }
+
+    if CoverOpeningPhysics.isClosed(resolvedProgress) { lastSettledEndpoint = .closed }
+    else if CoverOpeningPhysics.isOpen(resolvedProgress) { lastSettledEndpoint = .open }
 
     self.revision = revision
     self.progress = resolvedProgress
@@ -365,6 +371,8 @@ struct CoverSnapshotLifecycle {
     func uninstallPresentation() {
       if let presentationItemID { model?.coverPresentations.remove(self, itemID: presentationItemID) }
       model = nil; presentationItemID = nil; hasInstalledLayout = false; installedRevision = nil
+      preparesCoverMotion = false
+      canPrepare = { false }
     }
 
     /// Only the existing live subtree can fix Send-time pixels. Curl snapshots
@@ -437,7 +445,9 @@ struct CoverSnapshotLifecycle {
         coverVisibilityView.isHidden = false
         coverVisibilityView.alpha = CoverOpeningPhysics.warmCoverOpacity
         coverHost.view.isUserInteractionEnabled = false
-        prepareRestingCoverIfNeeded()
+        // Retain a current snapshot from the preceding curl, but creating a
+        // new one belongs to actual closing, not work behind the open paper.
+        curlView.isHidden = true
         return
       }
 
@@ -445,7 +455,7 @@ struct CoverSnapshotLifecycle {
         scheduleCapture()
       }
       guard let capturedCover = lifecycle.capturedCover else {
-        showLiveCoverUntilSnapshotIsReady()
+        showEndpointUntilSnapshotIsReady()
         return
       }
 
@@ -490,8 +500,10 @@ struct CoverSnapshotLifecycle {
     // InkCanvasView confirms its own GPU frame before the curl freezes those
     // pixels. Pending ink yields a frame between attempts while the cover is live.
     private var needsCaptureNow: Bool {
+      guard let window = view.window, !window.isHidden else { return false }
       if lifecycle.isTransitioning { return lifecycle.capturedCover == nil }
-      return preparesCoverMotion && canPrepare() && lifecycle.needsCurrentSnapshot
+      return CoverOpeningPhysics.isClosed(lifecycle.progress)
+        && preparesCoverMotion && canPrepare() && lifecycle.needsCurrentSnapshot
     }
 
     private func scheduleCapture() {
@@ -554,10 +566,11 @@ struct CoverSnapshotLifecycle {
       )
     }
 
-    private func showLiveCoverUntilSnapshotIsReady() {
+    private func showEndpointUntilSnapshotIsReady() {
       resetCoverHostGeometry()
       coverVisibilityView.isHidden = false
-      coverVisibilityView.alpha = 1
+      coverVisibilityView.alpha = lifecycle.lastSettledEndpoint == .open
+        ? CoverOpeningPhysics.warmCoverOpacity : 1
       coverHost.view.isUserInteractionEnabled = false
       curlView.isHidden = true
     }
@@ -676,7 +689,7 @@ struct CoverSnapshotLifecycle {
         resetCoverHostGeometry()
         coverHost.isHidden = false
         coverHost.alphaValue = CoverOpeningPhysics.warmCoverOpacity
-        prepareRestingCoverIfNeeded()
+        curlView.isHidden = true
         return
       }
 
@@ -684,7 +697,7 @@ struct CoverSnapshotLifecycle {
         lifecycle.storeCapturedCover(captureCover())
       }
       guard let capturedCover = lifecycle.capturedCover else {
-        showLiveCoverUntilSnapshotIsReady()
+        showEndpointUntilSnapshotIsReady()
         return
       }
 
@@ -752,10 +765,11 @@ struct CoverSnapshotLifecycle {
       )
     }
 
-    private func showLiveCoverUntilSnapshotIsReady() {
+    private func showEndpointUntilSnapshotIsReady() {
       resetCoverHostGeometry()
       coverHost.isHidden = false
-      coverHost.alphaValue = 1
+      coverHost.alphaValue = lifecycle.lastSettledEndpoint == .open
+        ? CoverOpeningPhysics.warmCoverOpacity : 1
       curlView.isHidden = true
     }
   }

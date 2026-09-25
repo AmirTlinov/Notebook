@@ -7,9 +7,15 @@ struct MacPageInkView: NSViewRepresentable {
   @Environment(\.scenePlaneProjection) private var projection
   let page: PageDocument
   let isInteractive: Bool
+  var isVisible = true
+  var isCurrent = true
+  var pageReadiness: PageTurnReadiness?
+  var refinesDetails = true
   let onReady: (PageInkPresentation?) -> Void
   func makeNSView(context: Context) -> MacPageInkCanvas { .init(model: model, pageID: page.id) }
   func updateNSView(_ view: MacPageInkCanvas, context: Context) {
+    view.inkProjection.setRefinesDetails(refinesDetails)
+    view.inkProjection.observePage(pageReadiness,isCurrent:isCurrent,isVisible:isVisible)
     view.inkProjection.observe(projection)
     view.update(page: page, enabled: isInteractive && model.macInputTool != .pointer,
       current: isInteractive, onReady: onReady)
@@ -19,7 +25,7 @@ struct MacPageInkView: NSViewRepresentable {
 
 /// Mouse/tablet samples enter the same measured-ink and accepted-write owners
 /// as Pencil. This view owns only the active contact and its Metal presentation.
-final class MacPageInkCanvas: NSView {
+final class MacPageInkCanvas: NSView, NotebookPageInkConsumer {
   let ink = InkCanvasView(frame: .zero)
   lazy var inkProjection = PageInkProjection(host: self, canvas: ink)
   private let model: NotebookAppModel
@@ -49,6 +55,7 @@ final class MacPageInkCanvas: NSView {
     self.model = model; self.pageID = pageID
     super.init(frame: .zero)
     addSubview(ink)
+    model.pageInkPublication.register(self,pageID:pageID)
     ink.onRenderReadinessChange = { [weak self] _ in self?.publishReadiness() }
     setAccessibilityIdentifier("paper-input")
     setAccessibilityLabel("Лист")
@@ -76,9 +83,21 @@ final class MacPageInkCanvas: NSView {
       if cuts != suppressed { suppressed = cuts; ink.setSuppressedPageActions(cuts) }
       return
     }
-    guard stamp == nil,page.drawingStamp != modelSource?.stamp || cuts != suppressed else { return }
+    guard stamp == nil else { return }
+    if page.drawingStamp == modelSource?.stamp {
+      if cuts != suppressed { suppressed=cuts;ink.setSuppressedPageActions(cuts) }
+      return
+    }
     modelSource=page.inkSource;suppressed=cuts
     replaceDrawing(page.inkSource)
+  }
+
+  func receiveAcceptedInk(_ change:PreparedPageInkChange,suppressedIDs:Set<UUID>) {
+    guard !retired,change.pageID == pageID,modelSource.map({ $0.stamp < change.stamp }) ?? true else { return }
+    let canSettle=modelSource?.stamp == change.baseStamp
+    load?.cancel();load=nil;modelSource=change.inkSource;suppressed=suppressedIDs
+    if canSettle { ink.settle(change,suppressedInkIDs:suppressedIDs) }
+    else { replaceDrawing(change.inkSource) }
   }
 
   private func replaceDrawing(_ source:PageInkSource) {
@@ -89,7 +108,7 @@ final class MacPageInkCanvas: NSView {
       let decoded=await Task.detached(priority:.userInitiated) { try? source.drawing() }.value
       guard !Task.isCancelled,let self,!retired,modelSource?.stamp == source.stamp,stamp == nil,let decoded else { return }
       load = nil
-      ink.apply(decoded.presenting(excluding: cuts))
+      ink.setSuppressedPageActions(cuts);ink.apply(decoded)
     }
   }
 
@@ -190,10 +209,7 @@ final class MacPageInkCanvas: NSView {
     if actionTool == .pen { ink.commitActiveStroke(action) } else { ink.commitActiveEraser(action) }
     let accepted = model.acceptDrawingAction(action, pageID: pageID, stamp: stamp)
     pen = nil; eraser = nil
-    if let accepted,!retired {
-      modelSource=accepted.inkSource
-      ink.settle(accepted,suppressedInkIDs:suppressed)
-    } else if !retired,let modelSource {
+    if accepted == nil,!retired,let modelSource {
       // Rejected preview has no authority to survive the accepted ink root.
       model.updateElementErasing([],id:action.id)
       replaceDrawing(modelSource)
@@ -203,6 +219,7 @@ final class MacPageInkCanvas: NSView {
 
   func uninstall() {
     guard !retired else { return }
+    model.pageInkPublication.remove(self)
     finishStroke(); retired = true; inputEnabled = false
     inkProjection.stop()
     load?.cancel(); load = nil; ink.onRenderReadinessChange = nil

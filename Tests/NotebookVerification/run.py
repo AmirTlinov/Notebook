@@ -128,6 +128,21 @@ class NativeIPadUIArtifactTests(unittest.TestCase):
 
 
 class SelectionTests(unittest.TestCase):
+    def test_page_ink_journeys_have_exact_fixture_admission_and_duration(self):
+        identifier = "adb44de5-5b67-44f8-8371-9d03883e55ec"
+        for scenario in acceptance.PAGE_INK_UI_TESTS:
+            value = acceptance.notebook_ui_request("ipad", scenario, identifier, "Контроль")
+            self.assertEqual(value["environment"]["NOTEBOOK_ACCEPTANCE_NOTEBOOK_ID"], identifier)
+            self.assertEqual(acceptance.ui_timeout("ipad", scenario),
+                             1980 if scenario in acceptance.WORKLOAD_UI_TESTS else 660)
+            for platform, identity, title in [("mac",identifier,"Title"),("ipad",None,"Title"),
+                    ("ipad","not-a-uuid","Title"),("ipad",identifier,"bad\x00title")]:
+                with self.assertRaises(release.ReleaseError):
+                    acceptance.notebook_ui_request(platform, scenario, identity, title)
+        with self.assertRaises(release.ReleaseError):
+            acceptance.notebook_ui_request("ipad", "NotebookAcceptanceUITests/testOther", identifier, "Title")
+        self.assertEqual(acceptance.ui_timeout("ipad", "NotebookAcceptanceUITests/testOther"), 240)
+
     def test_mac_scientific_ui_requires_its_exact_private_document_and_platform(self):
         identifier = "adb44de5-5b67-44f8-8371-9d03883e55ec"
         for method in ("testPublicScientificDocumentRetainsARealControlEditAfterReopening",
@@ -522,7 +537,8 @@ class SelectionTests(unittest.TestCase):
         self.assertFalse(any(s.startswith("NotebookUITests") for s in plan["checks"]["ipad"]))
 
     def test_each_browser_contract_selects_web_boundaries_not_all_documents(self):
-        paths = ["Tests/NotebookDocumentAcceptance/test_link_activation.mjs"]
+        paths = ["Tests/NotebookDocumentAcceptance/test_link_activation.mjs",
+                 "Tests/NotebookDocumentAcceptance/test_page_phase_observation.mjs"]
         for path in paths:
             with self.subTest(path=path):
                 self.assertEqual(verify.owners(path), ["document-web"])
@@ -622,7 +638,8 @@ class SelectionTests(unittest.TestCase):
     def test_browser_contract_runner_executes_the_shipped_listener_and_refuses_any_failure(self):
         for path in ("Sources/Fixture.swift", "MCP/fixture.ts", "docs/fixture.md"):
             self.change(path, "source inventory fixture\n")
-        paths = ["Tests/NotebookDocumentAcceptance/test_link_activation.mjs"]
+        paths = ["Tests/NotebookDocumentAcceptance/test_link_activation.mjs",
+                 "Tests/NotebookDocumentAcceptance/test_page_phase_observation.mjs"]
         plan = {"unclassified": [], "manualSelection": True,
                 "checks": {"core": [], "mac": [], "ipad": [], "commands": ["document-browser"]}}
         for failed in (None, *paths):
@@ -1212,7 +1229,7 @@ class UICleanupTests(unittest.TestCase):
             "simulator": {"udid": "private-simulator"}, "ipadApp": "/private/Notebook.app"}))
         (self.evidence / "mac.json").write_text(json.dumps({"actorID": "mac-actor"}))
         args = SimpleNamespace(run=directory, platform="ipad", test="NotebookAcceptanceUITests/testProof",
-                               document_id=None, document_title=None, workload_seconds=1800, trace=None, pencil=False)
+                               document_id=None, document_title=None, notebook_id=None, notebook_title=None, workload_seconds=1800, trace=None, pencil=False)
         original, cleanup = ValueError("UI scenario failed"), RuntimeError("Simulator disconnected")
         recording = Mock()
         with patch.object(acceptance, "installed_ipad_manifest", return_value=(self.evidence,

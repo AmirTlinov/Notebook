@@ -98,12 +98,16 @@ final class InkCanvasLifecycleTests: XCTestCase {
     XCTAssertEqual(canvas.drawableRequestCount, first)
     canvas.commitActiveStroke()
     try await waitForStableFrame(canvas)
+    // Simulator readiness is GPU completion, not UIKit window presentation.
+    let windowObservationStart = ContinuousClock.now
     XCTAssertGreaterThan(canvas.drawableRequestCount, first)
     let probes: [(CGPoint, NotebookUXObservation.Color)] = [
       (.init(x: 80, y: 30), .paper), (.init(x: 80, y: 70), .paper), (.init(x: 80, y: 110), .black)]
-    let pixels = try NotebookUXObservation.Pixels(window: window)
-    XCTAssertTrue(try pixels.matches(probes.map { (canvas.convert($0.0, to: window), $0.1) }),
-      "Presentation must resume with the latest material, not replay queued stale tails")
+    // Presentation must show the latest material, not replay queued stale tails.
+    try await assertUX("page-coalesced-current-material", since: windowObservationStart, window: window) {
+      try NotebookUXObservation.Pixels(window: window).matches(
+        probes.map { (canvas.convert($0.0, to: window), $0.1) })
+    }
 
     canvas.removeFromSuperview()
     XCTAssertTrue(canvas.isFrameLoopPaused, "A retained page must retire its system clock on cull")
@@ -114,9 +118,11 @@ final class InkCanvasLifecycleTests: XCTestCase {
     XCTAssertTrue(canvas.isFrameLoopPaused, "Offscreen source updates cannot resume the clock")
     controller.view.addSubview(canvas)
     try await waitForStableFrame(canvas)
-    XCTAssertTrue(try NotebookUXObservation.Pixels(window: window).matches([
-      (canvas.convert(.init(x: 80, y: 70), to: window), .black),
-      (canvas.convert(.init(x: 80, y: 110), to: window), .black)]))
+    try await assertUX("page-remount-keeps-accepted-material", since: .now, window: window) {
+      try NotebookUXObservation.Pixels(window: window).matches([
+        (canvas.convert(.init(x: 80, y: 70), to: window), .black),
+        (canvas.convert(.init(x: 80, y: 110), to: window), .black)])
+    }
   }
 
   @MainActor
@@ -158,12 +164,16 @@ final class InkCanvasLifecycleTests: XCTestCase {
     XCTAssertLessThanOrEqual(resources.reservedBytes, resources.byteLimit)
     project(160); canvas.commitActiveStroke()
     try await waitForStableFrame(canvas)
+    // Observe UIKit convergence separately from the completed GPU submission.
+    let windowObservationStart = ContinuousClock.now
     XCTAssertNil(canvas.renderFailure)
     XCTAssertEqual((canvas.layer as? CAMetalLayer)?.maximumDrawableCount, 2)
-    XCTAssertTrue(try NotebookUXObservation.Pixels(window: window).matches([
-      (canvas.convert(.init(x: 80, y: 30), to: window), .black),
-      (canvas.convert(.init(x: 80, y: 70), to: window), .black)]),
-      "A failed allocation cannot discard either the accepted source or the live contact")
+    // A failed allocation must retain both the accepted source and live contact.
+    try await assertUX("page-restored-pool-keeps-source-and-contact", since: windowObservationStart, window: window) {
+      try NotebookUXObservation.Pixels(window: window).matches([
+        (canvas.convert(.init(x: 80, y: 30), to: window), .black),
+        (canvas.convert(.init(x: 80, y: 70), to: window), .black)])
+    }
   }
 
   @MainActor

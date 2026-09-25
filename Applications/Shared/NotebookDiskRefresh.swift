@@ -13,13 +13,10 @@ struct NotebookDiskRefresh: Sendable {
   let delivery: [DeviceActionReceipt]
 
   static func prepare(store: NotebookStore, presence: SessionPresence,
-    receivingDeviceID: UUID?, pinnedElements: [UUID: [String]] = [:], pinnedItems: [UUID: [UUID]] = [:],
+    pinnedElements: [UUID: [String]] = [:], pinnedItems: [UUID: [UUID]] = [:],
     preparedPages: [UUID] = [], feedbackKnown: Set<UUID>? = nil, feedbackTracked: Set<UUID> = [],
-    attentionReferences: [CollaborationReference] = [], historyActor: UUID? = nil,
+    attentionReferences: [CollaborationReference] = [], historyActor: UUID? = nil, pinnedInkActionIDs: Set<UUID> = [],
     reusing previousIndex: WorkspaceSceneIndex? = nil, reusingPages: [UUID: PageDocument] = [:]) throws -> Self {
-    if let receivingDeviceID {
-      try store.acknowledgeReceivedActions(deviceID: receivingDeviceID)
-    }
     return try store.readTransaction { store in
       let actions = try store.recentActionPhases(limit: 64)
       let attention: [NotebookAgentFeedbackChange.Subject]?
@@ -27,7 +24,7 @@ struct NotebookDiskRefresh: Sendable {
       catch let error as CollaborationError where error.code == "source_conflict" { attention = nil }
       let scene = try NotebookSceneState.read(store:store,presence:presence,viewport:presence.viewport,
         pinnedElements:pinnedElements,pinnedItems:pinnedItems,preparedPages:preparedPages,historyActor:historyActor,
-        reusingPages:reusingPages)
+        pinnedInkActionIDs:pinnedInkActionIDs,reusingPages:reusingPages)
       var elementsInScene: [String: [String]] = [:]
       for node in scene.hierarchy.boards {
         for element in node.board.elements {
@@ -51,5 +48,19 @@ struct NotebookDiskRefresh: Sendable {
         feedback: try feedbackKnown.map { known in try store.agentFeedbackChanges(actions.filter { !known.contains($0.id) || feedbackTracked.contains($0.id) },elementsInScene:elementsInScene) } ?? [],
         attention: attention, delivery: store.deviceActionReceipts(actionIDs: actions.map(\.id)))
     }
+  }
+}
+
+/// One serial read owner reuses an idle connection. The short writer fence is
+/// acquired by the caller; all scene preparation then borrows a fresh WAL cut
+/// without keeping accepted Pencil writes behind mesh/index/metadata work.
+actor NotebookSceneReader {
+  private var session: NotebookReadSession?
+  init(store: NotebookStore) { session = NotebookReadSession(store: store) }
+  /// Serialized behind active reads; retained models cannot reopen after quit.
+  func close() { session = nil }
+  func read<Value: Sendable>(_ operation: @Sendable (NotebookStore) throws -> Value) throws -> Value {
+    guard let session else { throw CancellationError() }
+    return try session.read(operation)
   }
 }

@@ -5,6 +5,32 @@ import XCTest
 
 final class AcceptedPageInputTests: XCTestCase {
   @MainActor
+  func testSimulatedPencilDoesNotStealSimultaneousUndoRedoOrPinchContacts() {
+    for count in [1, 2, 3] {
+      let contacts=Set((0..<count).map { _ in let touch=AcceptedInputTouch();touch.inputType = .direct;return touch as UITouch })
+      let input=PaperInputView(frame:.init(x:0,y:0,width:400,height:400))
+      input.simulatesPencilContacts=true
+      let paper=PaperPencilGestureRecognizer()
+      paper.input=input;paper.canBeginContact = { _ in true }
+      var pageActions=0
+      input.onActionWillBegin = { pageActions += 1;return true }
+      paper.touchesBegan(contacts,with:UIEvent())
+      // Detached UIGestureRecognizer may reset .failed to .possible in this
+      // test event. The witness is admission, not UIKit's transient state.
+      XCTAssertEqual(pageActions,count == 1 ? 1 : 0)
+      if count > 1 { XCTAssertFalse(input.hasActiveAction) }
+      paper.reset()
+      let spatial=SpatialPencilGestureRecognizer()
+      spatial.simulatesPencilContacts=true;spatial.canBeginContact = { _ in true }
+      var events=0
+      spatial.onEvent = { _ in events += 1 }
+      spatial.touchesBegan(contacts,with:UIEvent())
+      XCTAssertEqual(events,count == 1 ? 1 : 0)
+      spatial.reset()
+    }
+  }
+
+  @MainActor
   func testLiveElementEraserStaysInNativePresentationUntilLift() async throws {
     let paper=PaperInputView(frame:.init(x:0,y:0,width:500,height:500))
     let page=PageDocument(size:.init(width:500,height:500),actor:UUID(),elements:[
@@ -32,9 +58,11 @@ final class AcceptedPageInputTests: XCTestCase {
     try await Task.sleep(for:.milliseconds(150))
     XCTAssertTrue(presentation.isActive,"Lift must keep coverage until the permanent mask is visible")
     let action=try XCTUnwrap(presentation.pending.first)
-    presentation.presented([:])
+    let accepted=try page.prepareInkChange(.append(action),stamp:try XCTUnwrap(page.drawingStamp.advanced(by:UUID())))
+    presentation.display(.accepted(accepted))
+    presentation.presented(.init(pageID:page.id,stamp:accepted.stamp,erasures:[:]))
     XCTAssertTrue(presentation.isActive,"An older ready overlay cannot acknowledge this cut")
-    presentation.presented(PageInkDrawing(actions:[action]).elementErasures)
+    presentation.presented(.init(pageID:page.id,stamp:accepted.stamp,erasures:accepted.drawing.elementErasures))
     XCTAssertFalse(presentation.isActive)
     XCTAssertTrue(presentation.pending.isEmpty)
   }
@@ -70,7 +98,9 @@ final class AcceptedPageInputTests: XCTestCase {
     let action = try XCTUnwrap(presentation.pending.first)
     XCTAssertEqual(action.id, source.measured.sourceID)
     XCTAssertEqual(action.elementTargets?.map(\.elementID), ["object"])
-    presentation.presented(PageInkDrawing(actions: [action]).elementErasures)
+    let accepted=try page.prepareInkChange(.append(action),stamp:try XCTUnwrap(page.drawingStamp.advanced(by:UUID())))
+    presentation.display(.accepted(accepted))
+    presentation.presented(.init(pageID:page.id,stamp:accepted.stamp,erasures:accepted.drawing.elementErasures))
     XCTAssertFalse(presentation.isActive)
   }
 
@@ -213,6 +243,52 @@ final class AcceptedPageInputTests: XCTestCase {
   }
 
   @MainActor
+  func testAcceptedUndoRevokesLiftedMaskBeforeOverlayReadinessAndOldReceiptCannotHideRedo() throws {
+    let actor=UUID(),page=PageDocument(size:.init(width:400,height:400),actor:UUID())
+    let measured=stroke(y:100)
+    let action=PageInkAction(tool:.eraser,measurements:measured.samples,
+      elementTargets:[.init(elementID:"shape",frame:.init(x:0,y:0,width:400,height:400))])
+    let presentation=NotebookLiveElementEraserPresentation()
+    presentation.display(.commit(action))
+    let accepted=try page.prepareInkChange(.append(action),stamp:.init(counter:1,actor:actor))
+    XCTAssertTrue(page.publishLiveInkChange(accepted));presentation.display(.accepted(accepted))
+    let undo=try page.prepareInkChange(.setActive([action.id],false),stamp:.init(counter:2,actor:actor))
+    XCTAssertTrue(page.publishLiveInkChange(undo));presentation.display(.accepted(undo))
+    XCTAssertFalse(presentation.isActive,"Undo is authoritative before any overlay ready callback")
+    let repeatChange=try page.prepareInkChange(.setActive([action.id],true),stamp:.init(counter:3,actor:actor))
+    XCTAssertTrue(page.publishLiveInkChange(repeatChange));presentation.display(.accepted(repeatChange))
+    presentation.presented(.init(pageID:page.id,stamp:accepted.stamp,erasures:accepted.drawing.elementErasures))
+    XCTAssertTrue(presentation.isActive,"An old active frame is not the new accepted state")
+    presentation.presented(.init(pageID:page.id,stamp:repeatChange.stamp,erasures:repeatChange.drawing.elementErasures))
+    XCTAssertFalse(presentation.isActive)
+  }
+
+  @MainActor
+  func testOrdinaryModelUndoAndRedoReachTheMountedIncrementalOwner() async throws {
+    let (model,_)=await makeModel(),page=try XCTUnwrap(model.activePage)
+    let presence=try XCTUnwrap(model.presence),notebook=try XCTUnwrap(model.activeItem)
+    model.updatePresence(.init(boardID:presence.boardID,mode:.page,camera:presence.camera,viewport:presence.viewport,
+      focusedItemID:notebook.id,openProgress:1,notebookPageID:page.id),settled:true)
+    let coordinator=makeCoordinator(model),paper=PaperCanvasContainerView()
+    coordinator.attach(to:paper);coordinator.apply(page.inkSource,pageID:page.id,to:paper)
+    defer { coordinator.detach(from:paper) }
+    let stamp=try XCTUnwrap(model.reserveDrawingAction(pageID:page.id))
+    XCTAssertNotNil(model.acceptDrawingAction(stroke(y:120),pageID:page.id,stamp:stamp))
+    let deadline=ContinuousClock.now + .seconds(5)
+    while !paper.inkView.pageGeometryIsReady,ContinuousClock.now < deadline { try await Task.sleep(for:.milliseconds(5)) }
+    XCTAssertTrue(paper.inkView.pageGeometryIsReady)
+    let preparations=paper.inkView.pageMeshPreparationCount,built=paper.inkView.pageMeshBuildCount
+    model.undoLastSurfaceAction()
+    XCTAssertEqual(paper.inkView.committedSourceNodeCount,0)
+    model.redoLastSurfaceAction()
+    XCTAssertEqual(paper.inkView.committedSourceNodeCount,2)
+    coordinator.apply(try XCTUnwrap(model.activePage).inkSource,pageID:page.id,to:paper)
+    for _ in 0..<20 { await Task.yield() }
+    XCTAssertEqual(paper.inkView.pageMeshPreparationCount,preparations)
+    XCTAssertEqual(paper.inkView.pageMeshBuildCount,built)
+  }
+
+  @MainActor
   private func makeModel() async -> (NotebookAppModel,URL) {
     let root=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     let model=NotebookAppModel(store:.init(root:root),startsNearbySync:false)
@@ -225,7 +301,7 @@ final class AcceptedPageInputTests: XCTestCase {
 
   @MainActor
   private func makeCoordinator(_ model:NotebookAppModel) -> PencilCanvasView.Coordinator {
-    .init(inputGate:model.inputGate,reserveAction:model.reserveDrawingAction,
+    .init(inputGate:model.inputGate,publication:model.pageInkPublication,reserveAction:model.reserveDrawingAction,
       releaseAction:{ model.releaseDrawingReservation(pageID:$0,stamp:$1) },
       acceptAction:{ model.acceptDrawingAction($0,pageID:$1,stamp:$2,quickShape:$3) })
   }

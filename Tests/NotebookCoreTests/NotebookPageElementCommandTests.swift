@@ -40,6 +40,143 @@ struct NotebookPageElementCommandTests {
     try body(store, actor, store.loadPage(pageID))
   }
 
+  @Test func largeCurrentPageStateBorrowsTransferAdmissionAcrossFIFOAndCheckpoint() throws {
+    try fixture { store, actor, page in
+      var current = page
+      let payload = String(repeating: "😀", count: 1_400_000) // More than 5 MiB UTF-8.
+      let values: [JSONValue] = [.string("1" + payload), .string("2" + payload), .number(3)]
+      var previousCost = 0
+      for value in values {
+        let before = current
+        let changed = current.replaceElements(current.elements.map { $0.id == elementID ? $0.updating(state: value) : $0 }, actor: actor)
+        #expect(changed)
+        let command = try #require(NotebookPageProgramStateCommand(before: before, after: current, elementID: elementID))
+        let cost = try JSONEncoder().encode(value).count * 8 + 64
+        let admission = max(previousCost, cost)
+        #expect(try store.commitPageProgramState(command, admittedStateBytes: admission).basis == command.expectedBasis)
+        let rendered = try #require(current.element(id: elementID))
+        #expect(try store.checkpointProgramState(target: .init(kind: .page, id: page.id), rendered: rendered,
+          state: value, basis: command.expectedBasis, actor: actor, admittedStateBytes: admission) == command.expectedBasis)
+        previousCost = cost
+      }
+      let reopened = NotebookStore(root: store.root)
+      #expect(try reopened.loadPage(page.id).element(id: elementID)?.state == .number(3))
+      #expect(try reopened.loadPage(page.id).drawingData == page.drawingData)
+    }
+  }
+
+  @Test func acceptedColdPageEventsUseOnlyTheirAddressedSourceAndRetainLargeFIFOValues() throws {
+    try fixture(largeNeighbour: true) { store, actor, page in
+      let original = try #require(page.programStateBasis(elementID))
+      let rendered = try #require(page.element(id: elementID))
+      let payload = String(repeating: "😀", count: 1_100_000)
+      let values: [JSONValue] = [.string("first" + payload), .string("second" + payload)]
+      let admission = try JSONEncoder().encode(values[1]).count * 8 + 64
+      var latest = original
+      for value in values {
+        let accepted = try #require(try bounded(store) {
+          try store.commitPageProgramState(pageID: page.id, elementID: elementID, state: value,
+            basis: original, actor: actor, admittedStateBytes: admission).basis
+        })
+        #expect(accepted.hasSameSource(as: original))
+        #expect(accepted.hasNewerState(than: latest))
+        latest = accepted
+        let reopened = NotebookStore(root: store.root)
+        #expect(try reopened.loadPage(page.id).element(id: elementID)?.state == value)
+      }
+      #expect(try store.checkpointProgramState(target: .init(kind: .page, id: page.id),
+        rendered: rendered.updating(state: values[1]), state: .number(3), basis: latest,
+        actor: actor, admittedStateBytes: admission) != nil)
+      #expect(try NotebookStore(root: store.root).loadPage(page.id).element(id: elementID)?.state == .number(3))
+      #expect(try store.loadPage(page.id).drawingData == page.drawingData)
+      #expect(try store.loadPage(page.id).element(id: "foreign") == page.element(id: "foreign"))
+      for source in ["changed", rendered.source] {
+        let current = try store.loadPage(page.id)
+        _ = try store.applyCollaborationAction(action(current, values: ["source": .string(source)]), actor: actor)
+      }
+      let cursor = try store.currentChangeCursor()
+      #expect(try store.commitPageProgramState(pageID: page.id, elementID: elementID, state: .number(4),
+        basis: original, actor: actor, admittedStateBytes: admission).basis == nil)
+      #expect(try store.currentChangeCursor() == cursor)
+    }
+  }
+
+  @Test func ordinaryProgramCommitsKeepEveryCausalDotWithoutReadingInkOrOtherElements() throws {
+    try fixture(largeNeighbour: true) { store, actor, page in
+      var current = page
+      var commands: [NotebookPageProgramStateCommand] = []
+      for value in [1.0, 2.0, 3.0] {
+        let before = current
+        let changed = current.replaceElements(current.elements.map { $0.id == elementID ? $0.updating(state: .number(value)) : $0 }, actor: actor)
+        #expect(changed)
+        commands.append(try #require(.init(before: before, after: current, elementID: elementID)))
+      }
+      let root = pageFile(page.id) + "#"
+      let element = root + "/elements/@" + fieldKey([elementID])
+      let clocks = root + "/collaboration/fields/@" + fieldKey([fieldKey(["elements", collaborationIdentity(elementID)])]) + "~1"
+      func unrelated(_ row: [String]) -> Bool {
+        row[0] != root && row[0] != element && !row[0].hasPrefix(element + "/") && !row[0].hasPrefix(clocks)
+      }
+      let preserved = try recordIndex(store, file: pageFile(page.id)).filter(unrelated)
+      for command in commands {
+        #expect(try bounded(store) { try store.commitPageProgramState(command).basis } == command.expectedBasis)
+      }
+      #expect(try store.readPageElement(pageID: page.id, elementID: elementID)?.state == .number(3))
+      #expect(try store.loadPage(page.id).drawingData == page.drawingData)
+      #expect(try recordIndex(store, file: pageFile(page.id)).filter(unrelated) == preserved)
+      let cursor = try store.currentChangeCursor()
+      #expect(try store.commitPageProgramState(commands[0]).basis == nil,
+        "An old value cannot receive the newer winner's basis as its own acknowledgement")
+      #expect(try store.currentChangeCursor() == cursor)
+    }
+  }
+
+  @Test func acceptedPageCommandCannotAdoptAnUnseenWinningHumanValue() throws {
+    try fixture { store, actor, page in
+      var proposal = page
+      let proposed = proposal.replaceElements(proposal.elements.map { $0.id == elementID ? $0.updating(state: .number(1)) : $0 }, actor: actor)
+      #expect(proposed)
+      let command = try #require(NotebookPageProgramStateCommand(before: page, after: proposal, elementID: elementID))
+      var human = page
+      for value in [2.0, 3.0] {
+        let changed = human.replaceElements(human.elements.map { $0.id == elementID ? $0.updating(state: .number(value)) : $0 }, actor: UUID())
+        #expect(changed); try store.savePage(human)
+      }
+      let cursor = try store.currentChangeCursor()
+      let receipt = try store.commitPageProgramState(command)
+      #expect(receipt.basis == nil)
+      #expect(receipt.changed, "A losing concurrent value still publishes its causal contribution")
+      #expect(try store.currentChangeCursor() > cursor)
+      let repeated = try store.commitPageProgramState(command)
+      #expect(repeated.basis == nil && !repeated.changed)
+      let stored = try store.loadPage(page.id)
+      #expect(stored.element(id: elementID)?.state == .number(3))
+      #expect(stored.programStateBasis(elementID)?.hasSameSource(as: command.expectedBasis) == true)
+      let rendered = try #require(proposal.element(id: elementID))
+      #expect(try store.checkpointProgramState(target: .init(kind: .page, id: page.id), rendered: rendered,
+        state: .number(99), basis: command.expectedBasis, actor: actor) == nil)
+      #expect(try store.loadPage(page.id).element(id: elementID)?.state == .number(3))
+    }
+  }
+
+  @Test func stateReceiptReportsTheActualPublicationForWarmAndColdNoOps() throws {
+    try fixture { store, actor, page in
+      var next = page
+      let replaced = next.replaceElements(next.elements.map { $0.id == elementID ? $0.updating(state: .number(1)) : $0 }, actor: actor)
+      #expect(replaced)
+      let command = try #require(NotebookPageProgramStateCommand(before: page, after: next, elementID: elementID))
+      let first = try store.commitPageProgramState(command)
+      #expect(first.basis == command.expectedBasis && first.changed)
+      let cursor = try store.currentChangeCursor()
+      let repeated = try store.commitPageProgramState(command)
+      #expect(repeated.basis == first.basis && !repeated.changed)
+      let cold = try store.commitPageProgramState(pageID: page.id, elementID: elementID, state: .number(1),
+        basis: #require(page.programStateBasis(elementID)), actor: actor)
+      #expect(cold.basis == first.basis && !cold.changed)
+      #expect(try store.currentChangeCursor() == cursor)
+    }
+  }
+
   @Test func programCheckpointIsAddressedAndRejectsStaleStateOrSource() throws {
     try fixture(largeNeighbour: true) { store, actor, page in
       let rendered = try #require(page.elements.first { $0.id == elementID })

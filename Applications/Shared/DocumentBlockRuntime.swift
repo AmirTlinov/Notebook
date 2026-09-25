@@ -11,7 +11,7 @@ import WebKit
 final class DocumentBlockRuntime: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
   let documentID: UUID
   let block: DocumentBlock
-  let sourceVersion: ContentFieldVersion
+  let programIdentity: DocumentProgramIdentity
   let id = UUID()
   let resources: SceneRenderResources
   private(set) var webView: WKWebView?
@@ -20,6 +20,11 @@ final class DocumentBlockRuntime: NSObject, WKScriptMessageHandler, WKNavigation
   private(set) var value: JSONValue
   private(set) var failure: Error?
   private var lease: WebSurfaceLease?
+  private var stateTransfer: NotebookProgramStateTransfer?
+  private var stateTransferFailure = false
+  private var frozenCheckpoint: (snapshot: NotebookProgramStateTransfer.Checkpoint, basis: ContentFieldVersion?, revision: UInt64)?
+  private var commitsClosedBeforeReady = false
+  private var initialStateEncoding: NotebookProgramStateEncoding?
   private var startTask: Task<Void, Never>?
   private var startID: UUID?
   private var requestedPriority: WebPriority?
@@ -40,6 +45,7 @@ final class DocumentBlockRuntime: NSObject, WKScriptMessageHandler, WKNavigation
   private var presentedRevision: UInt64?
   private var appliedValue: JSONValue
   private var observedStateVersion: ContentFieldVersion?
+  var acceptedStateVersion: ContentFieldVersion? { observedStateVersion }
   private var checkpointSelection: ProgramSemanticSelection?
   private var checkpointWasCaptured = false
   private var checkpointFrozen = false
@@ -49,9 +55,11 @@ final class DocumentBlockRuntime: NSObject, WKScriptMessageHandler, WKNavigation
   var hasFrozenFrame: Bool { checkpointFrozen && checkpointWasCaptured }
   var frozenSemanticSelection: ProgramSemanticSelection? { checkpointWasCaptured ? checkpointSelection : nil }
   private var checkpointTask: Task<JSONValue, Error>?
+  private var retriesAfterStateBoundary = false
   var onChange: () -> Void = { }
-  var onStateChange: (JSONValue) -> ContentFieldVersion? = { _ in nil }
+  var onStateChange: (JSONValue) async throws -> ContentFieldVersion? = { _ in nil }
   var onStateCheckpoint: (JSONValue, ContentFieldVersion?) async throws -> ContentFieldVersion? = { _, _ in nil }
+  var onStateDrained: () async -> Void = {}
   var requiresStateAcceptance = true
   var onFocus: (Bool) -> Void = { _ in }
   var onLink: (String) -> Void = { _ in }
@@ -64,17 +72,17 @@ final class DocumentBlockRuntime: NSObject, WKScriptMessageHandler, WKNavigation
       && (version.map { observedStateVersion?.includes($0) == true } ?? true)
   }
 
-  init(documentID: UUID, block: DocumentBlock, sourceVersion: ContentFieldVersion,
+  init(documentID: UUID, block: DocumentBlock, programIdentity: DocumentProgramIdentity,
     value: JSONValue, stateVersion: ContentFieldVersion?, width: Double, resources: SceneRenderResources, programStore: NotebookStore? = nil) {
-    self.documentID = documentID; self.block = block; self.sourceVersion = sourceVersion
+    self.documentID = documentID; self.block = block; self.programIdentity = programIdentity
     self.value = value; appliedValue = value; observedStateVersion = stateVersion; self.resources = resources
     self.programStore = programStore
     size = .init(width: width, height: block.height)
     super.init()
   }
 
-  func matches(_ block: DocumentBlock, sourceVersion: ContentFieldVersion, width: Double) -> Bool {
-    self.sourceVersion == sourceVersion && self.block == block && abs(size.width - width) < 1 / 32
+  func matches(_ block: DocumentBlock, programIdentity: DocumentProgramIdentity, width: Double) -> Bool {
+    self.programIdentity == programIdentity && self.block == block && abs(size.width - width) < 1 / 32
   }
 
   func offerReturnReclamation(_ reclaim: (@MainActor () -> Void)?) {
@@ -103,6 +111,9 @@ final class DocumentBlockRuntime: NSObject, WKScriptMessageHandler, WKNavigation
           documentID: documentID, blockID: block.id)
         guard !stopped, !Task.isCancelled, startID == request else { acquired.release(); return }
         lease = acquired
+        stateTransfer = NotebookProgramStateTransfer(resources: resources)
+        initialStateEncoding = try await NotebookProgramStateEncoding.prepare(value, resources: resources, forHTML: true)
+        guard !stopped, !Task.isCancelled, startID == request else { return }
         observe("program_admitted")
         let content = WKUserContentController(); content.add(self, name: "documentProgram")
         let configuration = WKWebViewConfiguration()
@@ -166,13 +177,12 @@ final class DocumentBlockRuntime: NSObject, WKScriptMessageHandler, WKNavigation
     }
     guard ready, let webView, let lease else { return }
     let borrow = try lease.borrow(); defer { borrow.release() }
-    let data = try JSONEncoder().encode(next)
-    let argument = try JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed])
     let expectedRevision = revision, basis = observedStateVersion
-    let accepted = try await webView.callAsyncJavaScript("return await window.documentProgram.apply(value,revision);", arguments: ["value": argument, "revision": String(expectedRevision)], in: nil, contentWorld: .page)
+    let encoded = try await NotebookProgramStateEncoding.prepare(next, resources: resources)
+    let accepted = try await encoded.send(controller: "documentProgram", revision: String(expectedRevision), in: webView)
     // A later accepted native commit wins even if WebKit's reply to the older
     // state application arrives after that commit's message.
-    if accepted as? Bool == true, !stopped, self.webView === webView, revision == expectedRevision,
+    if accepted, !stopped, self.webView === webView, revision == expectedRevision,
       observedStateVersion == basis {
       checkpointSelection = nil; checkpointWasCaptured = false; checkpointFrozen = false; attentionPauseID = nil
       value = next; appliedValue = next; observedStateVersion = stateVersion
@@ -183,18 +193,73 @@ final class DocumentBlockRuntime: NSObject, WKScriptMessageHandler, WKNavigation
   /// Suspends new commits before reading the exact explicit state. The caller
   /// must confirm persistence and window identity before allowing retirement.
   func checkpoint() async throws -> JSONValue {
-    if let checkpointTask { return try await checkpointTask.value }
-    let task = Task { @MainActor [self] in try await persistCheckpoint() }
+    try await checkpointBoundary().value
+  }
+
+  /// The same boundary belongs to navigation, shutdown and a failed author.
+  /// A script error ends presentation, not an earlier commit's durability.
+  private func checkpointBoundary() -> Task<JSONValue, Error> {
+    if let checkpointTask { return checkpointTask }
+    let task = Task { @MainActor [self] in
+      defer { checkpointTask = nil }
+      if stateTransferFailure { try await stateTransfer?.drain() }
+      if !ready {
+        try await finishAcceptedBeforeReady()
+        if failure != nil { finishFailedSurface(); return value }
+        if !ready { return value }
+      }
+      do { return try await persistCheckpoint() }
+      catch {
+        guard failure != nil, !stateTransferFailure else { throw error }
+        // The author failed while a checkpoint was waiting. Do not call its
+        // broken pause/checkpoint hook again; finish only accepted revisions.
+        try await finishAcceptedBeforeReady()
+        finishFailedSurface()
+        return value
+      }
+    }
     checkpointTask = task
-    defer { checkpointTask = nil }
-    return try await task.value
+    return task
+  }
+
+  private func finishAcceptedBeforeReady() async throws {
+    let starting = startID
+    startTask?.cancel()
+    if let startTask { await startTask.value }
+    if startID == starting { startTask = nil; startID = nil }
+    if let webView, let stateTransfer, let lease {
+      let borrow = try lease.borrow(); defer { borrow.release() }
+      commitsClosedBeforeReady = true
+      let hasHeap = try await stateTransfer.finishAccepted(controller: "documentProgram", in: webView)
+      if !hasHeap { releaseSurface() }
+    }
+  }
+
+  private func finishFailedSurface() {
+    releaseSurface()
+    if retriesAfterStateBoundary, !stopped {
+      retriesAfterStateBoundary = false
+      failure = nil; revision = 0; presentedRevision = nil
+      start(priority: .input)
+    }
+    onChange()
   }
 
   private func persistCheckpoint() async throws -> JSONValue {
     guard ready, !focused, let webView, let lease else { throw CancellationError() }
     let borrow = try lease.borrow(); defer { borrow.release() }
-    let basis = observedStateVersion, expectedRevision = revision
-    let next = try await NotebookProgramBridge.lifecycle("checkpoint", controller: "documentProgram", in: webView)
+    guard let stateTransfer else { throw CancellationError() }
+    try await stateTransfer.drain()
+    if frozenCheckpoint == nil {
+      let descriptor = try await NotebookProgramBridge.lifecycle("checkpoint", controller: "documentProgram",
+        argument: .object(["retry": .bool(true), "serialized": .bool(true)]), in: webView)
+      let snapshot = try await stateTransfer.checkpoint(NotebookProgramBridge.stateSnapshot(descriptor)) { revision, offset in
+        try await NotebookProgramBridge.readState(revision, offset: offset, controller: "documentProgram", in: webView)
+      }
+      frozenCheckpoint = (snapshot, observedStateVersion, revision)
+    }
+    let frozen = frozenCheckpoint!, next = frozen.snapshot.value
+    let basis = frozen.basis, expectedRevision = frozen.revision
     guard !stopped, self.webView === webView, !Task.isCancelled,
       observedStateVersion == basis, revision == expectedRevision else { throw CancellationError() }
     guard let accepted = try await onStateCheckpoint(next, basis) else {
@@ -207,16 +272,37 @@ final class DocumentBlockRuntime: NSObject, WKScriptMessageHandler, WKNavigation
       observedStateVersion == basis || observedStateVersion == accepted else { throw CancellationError() }
     checkpointSelection = selected; checkpointWasCaptured = false; checkpointFrozen = true
     value = next; appliedValue = next; observedStateVersion = accepted
+    frozen.snapshot.release(); frozenCheckpoint = nil
     return next
   }
 
-  func resume() async {
+  @discardableResult
+  func resume() async -> Bool {
+    guard frozenCheckpoint == nil, stateTransfer?.hasPendingCheckpoint != true, stateTransfer?.hasFailure != true else { return false }
+    guard let webView else {
+      guard !stopped else { return false }
+      start(priority: requestedPriority ?? .liveProgram)
+      return true
+    }
+    do {
+      _ = try await NotebookProgramBridge.lifecycle("resume", controller: "documentProgram", in: webView)
+      if commitsClosedBeforeReady {
+        _ = try await NotebookProgramBridge.request("open_commits",
+          script: "window.documentProgram.setCommitEnabled(true);return true;", in: webView)
+        commitsClosedBeforeReady = false
+      }
+    }
+    catch { webView.isUserInteractionEnabled = false; onChange(); return false }
+    frozenCheckpoint = nil
     checkpointSelection = nil; checkpointWasCaptured = false; checkpointFrozen = false; attentionPauseID = nil
-    if let webView { _ = try? await NotebookProgramBridge.lifecycle("resume", controller: "documentProgram", in: webView) }
-    onChange()
+    webView.isUserInteractionEnabled = true
+    onChange(); return true
   }
 
-  func blur() async { _ = try? await webView?.evaluateJavaScript("document.activeElement?.blur();true") }
+  func blur() async {
+    guard let webView else { return }
+    _ = try? await NotebookProgramBridge.request("blur", script: "document.activeElement?.blur();return true;", in: webView)
+  }
 
   func capture(sourceOffset: Double, height: Double, pixelWidth: Int,
     reservation granted: RasterReservation? = nil) async throws -> RasterLease {
@@ -267,21 +353,37 @@ final class DocumentBlockRuntime: NSObject, WKScriptMessageHandler, WKNavigation
       guard failure == nil else { return }
       observe("program_ready")
       readinessDeadline?.cancel(); readinessDeadline = nil
-      ready = true
+      ready = true; initialStateEncoding = nil
       if let value = body["revision"] as? String, UInt64(value) == revision { presentedRevision = revision }
       onChange()
     case "presented":
-      if let value = body["revision"] as? String, UInt64(value) == revision {
-        presentedRevision = revision; onChange()
+      if let value = body["revision"] as? String, let presented = UInt64(value) {
+        presentedRevision = presented; onChange()
       }
+    case "stateCredit":
+      guard let bytes = body["bytes"] as? Int, let web = self.webView else { return }
+      stateTransfer?.requestCredit(bytes) { NotebookProgramBridge.grantStateCredit($0, controller: "documentProgram", in: web) }
     case "state":
-      guard let data = try? JSONSerialization.data(withJSONObject: body["value"] ?? NSNull(), options: [.fragmentsAllowed]),
-        let next = try? JSONDecoder().decode(JSONValue.self, from: data) else { return }
-      value = next; appliedValue = next; revision &+= 1
-      if let accepted = onStateChange(next) { observedStateVersion = accepted }
-      else if requiresStateAcceptance {
-        fail(SceneRenderError.snapshotPending("document_state_not_accepted"))
-      }
+      guard let data = try? JSONSerialization.data(withJSONObject: body["snapshot"] ?? [:]),
+        let descriptor = try? JSONDecoder().decode(NotebookProgramStateTransfer.Snapshot.self, from: data),
+        let web = self.webView, let stateTransfer, let borrow = try? lease?.borrow() else { return }
+      let writer = onStateChange, drained = onStateDrained
+      stateTransfer.receive(descriptor, retaining: borrow,
+        read: { try await NotebookProgramBridge.readState($0, offset: $1, controller: "documentProgram", in: web) },
+        acknowledge: { try await NotebookProgramBridge.acknowledgeState($0, controller: "documentProgram", in: web) },
+        accept: { [self] next, sequence in
+          value = next; appliedValue = next; revision = sequence
+          if let accepted = try await writer(next) { observedStateVersion = accepted }
+          else if requiresStateAcceptance { throw NotebookProgramCheckpointError.superseded }
+          if !stopped { onChange() }
+          await drained()
+        }, onFailure: { [weak self] error in
+          guard let self, !stopped, self.stateTransfer?.hasFailure == true else { return }
+          // A transport deadline is not an author failure. Keep this executor
+          // and every accepted revision for explicit Retry, without reloading.
+          stateTransferFailure = true; failure = error
+          webView?.isUserInteractionEnabled = false; onChange()
+        })
     case "focus": focused = body["value"] as? Bool == true; onFocus(focused)
     case "link": if body["userActivated"] as? Bool == true, let href = body["href"] as? String { onLink(href) }
     case "failure": fail(SceneRenderError.snapshotPending(body["message"] as? String ?? "document_program"))
@@ -322,18 +424,37 @@ final class DocumentBlockRuntime: NSObject, WKScriptMessageHandler, WKNavigation
 
   func retry() {
     guard failure != nil else { return }
-    ready = false; failure = nil; revision = 0; presentedRevision = nil; releaseSurface(); start(priority: .input)
+    if stateTransferFailure, let stateTransfer {
+      stateTransfer.retry()
+      Task { @MainActor [weak self] in
+        do {
+          try await stateTransfer.drain()
+          guard let self, self.stateTransfer === stateTransfer, !stopped else { return }
+          stateTransferFailure = false; failure = nil
+          webView?.isUserInteractionEnabled = attentionPauseID == nil; onChange()
+        } catch { /* The same failed stage remains visible and retains its heap. */ }
+      }
+      return
+    }
+    retriesAfterStateBoundary = true
+    _ = checkpointBoundary()
   }
 
   func stop() { stopped = true; checkpointTask?.cancel(); checkpointTask = nil; startTask?.cancel(); startTask = nil; startID = nil; releaseSurface() }
   private func fail(_ error: Error) {
     failure = error; ready = false; focused = false; presentedRevision = nil
-    // A failed program keeps its accepted explicit state, not a broken slot
-    // which could starve every healthy neighbour. Retry owns a fresh executor.
-    releaseSurface(); onFocus(false); onChange()
+    // Preserve the handler and heap through the accepted-state boundary,
+    // including a descriptor posted just before this error. The broken slot
+    // is released after durability; explicit Retry then owns a fresh executor.
+    _ = checkpointBoundary()
+    onFocus(false); onChange()
   }
   private func releaseSurface() {
+    stateTransfer?.revoke()
+    frozenCheckpoint = nil
+    stateTransferFailure = false
     checkpointSelection = nil; checkpointWasCaptured = false; checkpointFrozen = false; attentionPauseID = nil
+    commitsClosedBeforeReady = false
     programAssets.revokeAll(); packageURL = nil
     readinessDeadline?.cancel(); readinessDeadline = nil
     initialNavigationPending = false
@@ -348,7 +469,7 @@ final class DocumentBlockRuntime: NSObject, WKScriptMessageHandler, WKNavigation
       }
       webView.removeFromSuperview()
     }
-    webView = nil; lease?.release(); lease = nil
+    webView = nil; stateTransfer = nil; initialStateEncoding = nil; lease?.release(); lease = nil
   }
   isolated deinit { startTask?.cancel(); releaseSurface() }
 
@@ -375,9 +496,11 @@ final class DocumentBlockRuntime: NSObject, WKScriptMessageHandler, WKNavigation
       addEventListener('click',event=>{const link=event.target.closest('a[href]');if(!link)return;event.preventDefault();post('link',{href:link.getAttribute('href'),userActivated:event.isTrusted})});
       addEventListener('error',event=>post('failure',{message:String(event.error || event.message)}));
       addEventListener('unhandledrejection',event=>post('failure',{message:String(event.reason)}));
-      window.documentProgram=createNotebookProgram({state:\(try encoded(value)),paint:painted,
-        onCommit:(value,revision)=>{post('state',{value,revision});present(revision)},
-        report:(kind,message)=>{if(!['program_lifecycle_error','program_semantic_unavailable'].includes(kind))post('failure',{message:kind+': '+message})}});
+      window.documentProgram=createNotebookProgram({state:\(initialStateEncoding!.htmlJSON),paint:painted,
+        stateTransport:{credit:\(stateTransfer?.initialCredit ?? 0),
+          onSnapshot:snapshot=>{post('state',{snapshot});present(snapshot.revision)},
+          requestCredit:bytes=>post('stateCredit',{bytes})},
+        report:(kind,message)=>{if(!['program_lifecycle_error','program_semantic_unavailable','program_state_backpressure'].includes(kind))post('failure',{message:kind+': '+message})}});
       window.notebook=documentProgram.api;
       addEventListener('load',async()=>{try{
         await document.fonts.ready;

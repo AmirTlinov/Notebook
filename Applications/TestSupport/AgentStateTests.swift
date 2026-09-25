@@ -53,9 +53,10 @@ final class AgentStateTests: XCTestCase {
     XCTAssertTrue(hierarchy.upsertElement(element, in: boardA, expected: nil, actor: model.actorID))
     try model.store.saveBoard(hierarchy, items: model.store.loadIndex().items)
     await model.reloadExternalChanges()?.value
+    let sourceBasis = try XCTUnwrap(model.boardHierarchy?.board(boardA)?.programStateBasis(element.id))
     model.updatePresence(.init(boardID: boardB, mode: .board, camera: .init(),
       viewport: .init(x: 1194, y: 834)), settled: true)
-    model.commitSpatialElementState(boardID: boardA, rendered: element, state: .number(42))
+    model.commitSpatialElementState(boardID: boardA, rendered: element, state: .number(42), onCommitted: .init(sourceBasis: sourceBasis) { _ in })
     await model.finishPendingPersistence()
     let saved = try model.store.loadBoard(items: model.store.loadIndex().items)
     XCTAssertEqual(saved.board(boardA)?.elements.first { $0.id == element.id }?.state, .number(42))
@@ -67,7 +68,7 @@ final class AgentStateTests: XCTestCase {
     XCTAssertTrue(hierarchy.upsertElement(moved, in: boardA, expected: beforeFrame, actor: model.actorID))
     try model.store.saveBoard(hierarchy, items: model.store.loadIndex().items)
     await model.reloadExternalChanges()?.value
-    model.commitSpatialElementState(boardID: boardA, rendered: element, state: .number(43))
+    model.commitSpatialElementState(boardID: boardA, rendered: element, state: .number(43), onCommitted: .init(sourceBasis: sourceBasis) { _ in })
     await model.finishPendingPersistence()
     XCTAssertEqual(try model.store.readSpatialElement(boardID: boardA, elementID: element.id)?.state, .number(43))
 
@@ -78,7 +79,7 @@ final class AgentStateTests: XCTestCase {
     XCTAssertTrue(hierarchy.upsertElement(changed, in: boardA, expected: beforeSource, actor: model.actorID))
     try model.store.saveBoard(hierarchy, items: model.store.loadIndex().items)
     await model.reloadExternalChanges()?.value
-    model.commitSpatialElementState(boardID: boardA, rendered: element, state: .number(99))
+    model.commitSpatialElementState(boardID: boardA, rendered: element, state: .number(99), onCommitted: .init(sourceBasis: sourceBasis) { _ in })
     await model.finishPendingPersistence()
     let afterLateReply = try model.store.loadBoard(items: model.store.loadIndex().items)
     XCTAssertEqual(afterLateReply.board(boardA)?.elements.first { $0.id == element.id }?.state, .number(43),
@@ -86,14 +87,80 @@ final class AgentStateTests: XCTestCase {
   }
 
   @MainActor
-  func testInteractiveElementCanCommitAnyJSONRoot() {
-    XCTAssertEqual(AgentWebCoordinator.decodeState(7), .number(7))
-    XCTAssertEqual(AgentWebCoordinator.decodeState("готово"), .string("готово"))
-    XCTAssertEqual(AgentWebCoordinator.decodeState(NSNull()), .null)
-    XCTAssertEqual(
-      AgentWebCoordinator.decodeState(["enabled": true]),
-      .object(["enabled": .bool(true)])
-    )
+  func testAcceptedPageStateAfterEvictionKeepsEveryRevisionWithoutReopeningPaper() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
+    retainNotebookUntilTeardown(model, removing: root)
+    await model.start(pageSize: NotebookAppModel.defaultPageSize)
+    var page = try XCTUnwrap(model.activePage)
+    let element = AgentElement(id: "retiring", kind: .web, frame: .init(x: 0, y: 0, width: 160, height: 120), source: "Retiring value", html: "<output>Value</output>")
+    page.replaceElements([element], actor: model.actorID)
+    try model.store.savePage(page); await model.reloadExternalChanges()?.value
+    let basis = try XCTUnwrap(model.pages[page.id]?.programStateBasis(element.id))
+    let other = try XCTUnwrap(model.createNotebook(at: .init(x: 30_000, y: 30_000)))
+    model.selectItem(other)
+    _ = await model.finishPendingPersistence(); await model.reloadExternalChanges()?.value
+    XCTAssertNil(model.pages[page.id], "The retiring page must really leave the loaded scene")
+    let cursor = try model.store.currentChangeCursor()
+    for value in [1.0, 2.0, 3.0] {
+      let accepted = await withCheckedContinuation { (done: CheckedContinuation<Bool, Never>) in
+        if !model.commitElementState(pageID: page.id, elementID: element.id, state: .number(value),
+          onCommitted: .init(sourceBasis: basis, { done.resume(returning: $0 != nil) })) { done.resume(returning: false) }
+      }
+      XCTAssertTrue(accepted)
+      XCTAssertEqual(try model.store.readPageElement(pageID: page.id, elementID: element.id)?.state, .number(value))
+    }
+    _ = await model.finishPendingPersistence(); await model.reloadExternalChanges()?.value
+    let file = "pages/" + page.id.uuidString.lowercased() + ".json"
+    let changes = try model.store.changeJournal(after: cursor).filter { change in
+      try model.store.readChangedAddresses(after: change.sequence - 1, through: change.sequence)
+        .addresses.contains { $0.hasPrefix(file) }
+    }
+    XCTAssertEqual(changes.count, 3)
+    XCTAssertNil(model.pages[page.id]); XCTAssertEqual(model.presence?.selectedItemID, other)
+  }
+
+  @MainActor
+  func testWarmPageNoOpCannotAdoptStoredSourceABAOrANewerState() async throws {
+    for sourceABA in [true, false] {
+      let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+      let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
+      retainNotebookUntilTeardown(model, removing: root)
+      await model.start(pageSize: NotebookAppModel.defaultPageSize)
+      var page = try XCTUnwrap(model.activePage)
+      let element = AgentElement(id: "stale-no-op", kind: .web,
+        frame: .init(x: 0, y: 0, width: 160, height: 120), source: "Original program",
+        html: "<output>Value</output>", state: .number(0))
+      page.replaceElements([element], actor: model.actorID)
+      try model.store.savePage(page); await model.reloadExternalChanges()?.value
+      let observed = try XCTUnwrap(model.pages[page.id])
+      let basis = try XCTUnwrap(observed.programStateBasis(element.id))
+      var durable = try model.store.loadPage(page.id)
+      for index in 1...2 {
+        let next = sourceABA
+          ? AgentElement(id: element.id, kind: .web, frame: element.frame,
+            source: index == 1 ? "Temporary replacement" : element.source, html: element.html, state: element.state)
+          : element.updating(state: .number(Double(index)))
+        XCTAssertTrue(durable.replaceElements([next], actor: model.actorID))
+        try model.store.savePage(durable)
+      }
+      XCTAssertEqual(model.pages[page.id], observed, "The warm model must still be behind the addressed SQL owner")
+      let cursor = try model.store.currentChangeCursor()
+      var admitted = false
+      let receipt = await withCheckedContinuation { (done: CheckedContinuation<NotebookProgramStateBasis?, Never>) in
+        admitted = model.commitElementState(pageID: page.id, elementID: element.id, state: element.state,
+          onCommitted: .init(sourceBasis: basis) { done.resume(returning: $0) })
+        if !admitted { done.resume(returning: nil) }
+      }
+      XCTAssertTrue(admitted, "The stale warm no-op must reach the actual FIFO writer, not bypass this race")
+      XCTAssertNil(receipt, "A no-op cannot borrow the replacement source or another value's durable basis")
+      let saved = await model.finishPendingPersistence()
+      XCTAssertTrue(saved, model.persistenceFailure ?? "")
+      XCTAssertEqual(try model.store.readPageElement(pageID: page.id, elementID: element.id)?.state,
+        sourceABA ? element.state : .number(2))
+      if sourceABA { XCTAssertEqual(try model.store.currentChangeCursor(), cursor) }
+      _ = await model.shutdown()
+    }
   }
 
   @MainActor
@@ -178,11 +245,11 @@ final class AgentStateTests: XCTestCase {
       baseVersion: document.sourceVersion(blockID: "body"), source: "# Отредактировано на iPad", sequence: 1
     ))
     XCTAssertEqual(status, .committed)
-    let stateVersion = model.commitDocumentState(
+    let stateVersion = try await model.commitDocumentState(
       documentID: documentID,
       blockID: "counter",
       value: .object(["count": .number(4)]),
-      sourceVersion: document.sourceVersion(blockID: "counter")
+      programIdentity: document.programIdentity(blockID: "counter")
     )
     XCTAssertNotNil(stateVersion)
 

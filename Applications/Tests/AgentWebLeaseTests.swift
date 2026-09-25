@@ -8,12 +8,52 @@ import XCTest
 
 final class AgentWebLeaseTests: XCTestCase {
   @MainActor
+  func testShutdownJoinsARealCommitAcceptedBeforeAuthorReadiness() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
+    retainNotebookUntilTeardown(model, removing: root)
+    await model.start(pageSize: NotebookAppModel.defaultPageSize)
+    var page = try XCTUnwrap(model.activePage)
+    let source = AgentElement(id: "early", kind: .web, frame: .init(x: 0, y: 0, width: 160, height: 120),
+      source: "Early state", html: "<output>Early</output>", javaScript: "notebook.ready(new Promise(()=>{})); window.earlyAccepted=notebook.commit({early:1});")
+    page.replaceElements([source], actor: model.actorID)
+    try model.store.savePage(page); await model.reloadExternalChanges()?.value
+    let basis = try XCTUnwrap(model.pages[page.id]?.programStateBasis(source.id))
+    let resources = SceneRenderResources(), lease = try await resources.acquireWebSurface(priority: .input)
+    var held: (JSONValue, NotebookProgramStateCompletion)?
+    let owner = AgentWebCoordinator(lease: lease, resources: resources, onState: { value, completion in
+      held = (value, completion); return true
+    })
+    owner.programOwner = model
+    let web = AgentWebCoordinator.makeWebView(coordinator: owner)
+    owner.bindPresentation(to: .page(pageID: page.id, elementID: source.id))
+    owner.load(source, basis: basis, in: web)
+    defer { owner.invalidate(); lease.release() }
+    let deadline = ContinuousClock.now + .seconds(5)
+    while held == nil, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(10)) }
+    let accepted = try XCTUnwrap(held, "An author may commit before its ready promise resolves")
+    let admitted = try await web.evaluateJavaScript("window.earlyAccepted") as? Bool
+    XCTAssertEqual(admitted, true)
+    XCTAssertFalse(owner.hasLiveSource(source))
+    var stopped = false
+    let shutdown = Task { @MainActor in stopped = await model.shutdown() }
+    try await Task.sleep(for: .milliseconds(50))
+    XCTAssertFalse(stopped, "A not-ready presentation cannot let shutdown pass its accepted writer")
+    XCTAssertEqual(model.shutdownPhase, .closing)
+    XCTAssertTrue(model.commitElementState(pageID: page.id, elementID: source.id, state: accepted.0, onCommitted: accepted.1))
+    held = nil
+    await shutdown.value
+    XCTAssertTrue(stopped)
+    XCTAssertEqual(try model.store.readPageElement(pageID: page.id, elementID: source.id)?.state, .object(["early": .number(1)]))
+  }
+
+  @MainActor
   func testCancelledCaptureCannotPublishAfterMipmapYield() async throws {
     let resources = SceneRenderResources()
     let lease = try await resources.acquireWebSurface(priority: .visible)
     var ready: [Bool] = []
     let coordinator = AgentWebCoordinator(lease: lease, resources: resources,
-      onRenderReady: { ready.append($0) }, onState: { _ in false })
+      onRenderReady: { ready.append($0) }, onState: { _, _ in false })
     let web = AgentWebCoordinator.makeWebView(coordinator: coordinator)
     defer { coordinator.invalidate(); lease.release() }
     let source = element(source: "cancelled submitted capture")
@@ -139,7 +179,7 @@ final class AgentWebLeaseTests: XCTestCase {
   func testCurrentFrameCapturesTheInstalledDOMAndRevokesProofOnDetachOrReplacement() async throws {
     let resources = SceneRenderResources()
     let lease = try await resources.acquireWebSurface(priority: .input)
-    let coordinator = AgentWebCoordinator(lease: lease, resources: resources, onState: { _ in false })
+    let coordinator = AgentWebCoordinator(lease: lease, resources: resources, onState: { _, _ in false })
     let web = AgentWebCoordinator.makeWebView(coordinator: coordinator)
     let window = UIWindow(windowScene: try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene))
     let host = UIViewController()
@@ -219,7 +259,7 @@ final class AgentWebLeaseTests: XCTestCase {
   func testLargeSourceCapturesOnlyItsVisibleRegionWithoutChangingLayoutOrReloading() async throws {
     let resources = SceneRenderResources()
     let lease = try await resources.acquireWebSurface(priority: .input)
-    let coordinator = AgentWebCoordinator(lease: lease, resources: resources, onState: { _ in false })
+    let coordinator = AgentWebCoordinator(lease: lease, resources: resources, onState: { _, _ in false })
     let web = AgentWebCoordinator.makeWebView(coordinator: coordinator)
     let window = UIWindow(windowScene: try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene))
     let host = UIViewController()
@@ -233,6 +273,7 @@ final class AgentWebLeaseTests: XCTestCase {
     let first = PageRect(x: 7950, y: 1950, width: 200, height: 200)
     web.frame = CGRect(x: -first.x, y: -first.y, width: source.frame.width, height: source.frame.height)
     coordinator.load(source, policy: .region(first, scale: 1), in: web)
+    let stateAdmission = resources.reservedBytes
     let deadline = ContinuousClock.now + .seconds(8)
     while resources.image(for: .agentRegion(source, first), minimumScale: 1) == nil, ContinuousClock.now < deadline {
       try await Task.sleep(for: .milliseconds(10))
@@ -260,7 +301,8 @@ final class AgentWebLeaseTests: XCTestCase {
     let witness = try await web.evaluateJavaScript("window.cropWitness") as? Int
     XCTAssertEqual(witness, 42)
     XCTAssertNil(resources.image(for: source), "A visible crop is never indexed as the whole canonical source")
-    XCTAssertLessThan(resources.peakAccountedBytes, 2 * 1024 * 1024)
+    XCTAssertLessThan(resources.peakAccountedBytes - stateAdmission, 2 * 1024 * 1024,
+      "Visible-crop pixels remain bounded independently of the runtime's admitted state-transfer window")
     let view = AgentSnapshotRasterView()
     web.isHidden = true
     host.view.backgroundColor = .white
@@ -284,7 +326,7 @@ final class AgentWebLeaseTests: XCTestCase {
   func testDensityChangeRecapturesTheExistingLiveProgramWithoutReloadingIt() async throws {
     let resources = SceneRenderResources()
     let lease = try await resources.acquireWebSurface(priority: .input)
-    let coordinator = AgentWebCoordinator(lease: lease, resources: resources, onState: { _ in false })
+    let coordinator = AgentWebCoordinator(lease: lease, resources: resources, onState: { _, _ in false })
     let web = AgentWebCoordinator.makeWebView(coordinator: coordinator)
     let window = UIWindow(windowScene: try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene))
     let host = UIViewController()
@@ -361,9 +403,12 @@ final class AgentWebLeaseTests: XCTestCase {
     let resources = SceneRenderResources()
     let lease = try await resources.acquireWebSurface(priority: .input)
     var states: [JSONValue] = []
-    let coordinator = AgentWebCoordinator(lease: lease, resources: resources, onState: { states.append($0); return true })
+    let coordinator = AgentWebCoordinator(lease: lease, resources: resources, onState: { value, completion in states.append(value); completion(nil); return true })
     let web = AgentWebCoordinator.makeWebView(coordinator: coordinator)
-    defer { coordinator.invalidate(); lease.release() }
+    let window = UIWindow(windowScene: try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene))
+    let host = UIViewController(); window.rootViewController = host; window.makeKeyAndVisible()
+    host.view.addSubview(web); web.frame = .init(x: 100, y: 100, width: 160, height: 120)
+    defer { coordinator.invalidate(); lease.release(); window.isHidden = true; window.rootViewController = nil }
     let previous = element(source: "first")
     let current = element(source: "second")
     coordinator.load(previous, in: web)
@@ -378,11 +423,20 @@ final class AgentWebLeaseTests: XCTestCase {
     XCTAssertTrue(states.isEmpty)
     XCTAssertTrue(resources.diagnostics(for: [previous, current]).isEmpty)
 
-    coordinator.receive(["token": currentToken, "kind": "state", "revision": "1", "value": ["current": true]])
+    let deadline = ContinuousClock.now + .seconds(8)
+    var installed = false
+    while !installed, ContinuousClock.now < deadline {
+      installed = (try? await web.evaluateJavaScript("typeof window.notebook?.commit==='function'")) as? Bool == true
+      if !installed { try await Task.sleep(for: .milliseconds(10)) }
+    }
+    XCTAssertTrue(installed)
+    _ = try await web.evaluateJavaScript("notebook.commit({current:true})")
+    while states.isEmpty, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(10)) }
+    // The removed whole-value wire cannot bypass the admitted snapshot owner.
     coordinator.receive(["token": currentToken, "kind": "state", "revision": "1", "value": "replayed input"])
     coordinator.receive(["token": currentToken, "kind": "diagnostic", "category": "overflow", "message": "current frame"])
     XCTAssertEqual(states, [.object(["current": .bool(true)])])
-    XCTAssertEqual(resources.diagnostics(for: [current]).map(\.kind), ["overflow"])
+    XCTAssertEqual(resources.diagnostics(for: [current.updating(state: .object(["current": .bool(true)]))]).map(\.kind), ["overflow"])
     XCTAssertTrue(resources.diagnostics(for: [previous]).isEmpty)
   }
 
@@ -393,7 +447,7 @@ final class AgentWebLeaseTests: XCTestCase {
     var ready: [Bool] = []
     var states: [JSONValue] = []
     let coordinator = AgentWebCoordinator(lease: lease, resources: resources,
-      onRenderReady: { ready.append($0) }, onState: { states.append($0); return true })
+      onRenderReady: { ready.append($0) }, onState: { value, completion in states.append(value); completion(nil); return true })
     let web = AgentWebCoordinator.makeWebView(coordinator: coordinator)
     defer { coordinator.invalidate(); lease.release() }
     let source = element(source: "current")
@@ -417,7 +471,7 @@ final class AgentWebLeaseTests: XCTestCase {
   func testSnapshotFromPreviousLoadDoesNotReplaceCurrentSourceRaster() async throws {
     let resources = SceneRenderResources()
     let lease = try await resources.acquireWebSurface(priority: .visible)
-    let coordinator = AgentWebCoordinator(lease: lease, resources: resources, onState: { _ in false })
+    let coordinator = AgentWebCoordinator(lease: lease, resources: resources, onState: { _, _ in false })
     let web = AgentWebCoordinator.makeWebView(coordinator: coordinator)
     defer { coordinator.invalidate(); lease.release() }
     let previous = element(source: "previous")
@@ -443,7 +497,7 @@ final class AgentWebLeaseTests: XCTestCase {
     let resources = SceneRenderResources()
     let lease = try await resources.acquireWebSurface(priority: .visible)
     var states: [JSONValue] = []
-    let coordinator = AgentWebCoordinator(lease: lease, resources: resources, onState: { states.append($0); return true })
+    let coordinator = AgentWebCoordinator(lease: lease, resources: resources, onState: { value, completion in states.append(value); completion(nil); return true })
     let web = AgentWebCoordinator.makeWebView(coordinator: coordinator)
     defer { coordinator.invalidate() }
     let source = element(source: "old owner")
@@ -460,7 +514,7 @@ final class AgentWebLeaseTests: XCTestCase {
   func testOriginOnlyMoveReusesRasterAndAcceptsAnAlreadyRunningSnapshot() async throws {
     let resources = SceneRenderResources()
     let lease = try await resources.acquireWebSurface(priority: .visible)
-    let coordinator = AgentWebCoordinator(lease: lease, resources: resources, onState: { _ in false })
+    let coordinator = AgentWebCoordinator(lease: lease, resources: resources, onState: { _, _ in false })
     let web = AgentWebCoordinator.makeWebView(coordinator: coordinator)
     defer { coordinator.invalidate(); lease.release() }
     let original = element(source: "one physical surface")
@@ -484,7 +538,7 @@ final class AgentWebLeaseTests: XCTestCase {
   func testCurrentSnapshotErrorIsReportedButInvalidatedErrorIsDiscarded() async throws {
     let resources = SceneRenderResources()
     let lease = try await resources.acquireWebSurface(priority: .visible)
-    let coordinator = AgentWebCoordinator(lease: lease, resources: resources, onState: { _ in false })
+    let coordinator = AgentWebCoordinator(lease: lease, resources: resources, onState: { _, _ in false })
     let web = AgentWebCoordinator.makeWebView(coordinator: coordinator)
     defer { coordinator.invalidate(); lease.release() }
     let source = element(source: "current")

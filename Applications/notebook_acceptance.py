@@ -625,6 +625,33 @@ def document_ui_request(platform, test, document_id, document_title):
                             "NOTEBOOK_ACCEPTANCE_DOCUMENT_TITLE": document_title}}
 
 
+PAGE_INK_UI_TESTS = frozenset({
+    "NotebookAcceptanceUITests/testTenPageInkUndoLassoAndNavigationJourneys",
+    "NotebookAcceptanceUITests/testThirtyMinutesOfPageInkUndoLassoAndNavigation",
+})
+WORKLOAD_UI_TESTS = frozenset({
+    "NotebookAcceptanceUITests/testThirtyMinutesOfMixedInteraction",
+    "NotebookAcceptanceUITests/testThirtyMinutesOfPageInkUndoLassoAndNavigation",
+})
+
+
+def notebook_ui_request(platform, test, notebook_id, notebook_title):
+    """Pass an explicit public fixture to ordinary search and page navigation."""
+    if test not in PAGE_INK_UI_TESTS:
+        release.require(notebook_id is None and notebook_title is None,
+                        "Адрес тетради допускается только в сценарии чернил и навигации.")
+        return None
+    release.require(platform == "ipad" and isinstance(notebook_id, str)
+                    and re.fullmatch(r"[0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}", notebook_id)
+                    and uuid.UUID(notebook_id).int != 0,
+                    "Нужен --notebook-id публичной контрольной тетради на iPad Simulator.")
+    release.require(isinstance(notebook_title, str) and notebook_title.strip()
+                    and len(notebook_title) <= 512 and "\x00" not in notebook_title,
+                    "Нужен --notebook-title с точным сохранённым названием.")
+    return {"environment": {"NOTEBOOK_ACCEPTANCE_NOTEBOOK_ID": str(uuid.UUID(notebook_id)),
+                            "NOTEBOOK_ACCEPTANCE_NOTEBOOK_TITLE": notebook_title}}
+
+
 COLLABORATION_UI_TESTS = frozenset({
     "NotebookCollaborationAcceptanceUITests/testCreatedMaterialRetainsHumanEditsThroughAgentUndoAndCancellation",
     "NotebookCollaborationAcceptanceUITests/testConcurrentHumanStateRejectsStaleAgentWriteAndSurvivesItsUndo",
@@ -653,10 +680,13 @@ def ui_timeout(platform, test, *, document=None, workload_seconds=1800):
         return 660
     if document:
         return document["timeoutSeconds"]
-    if test.endswith("/testThirtyMinutesOfMixedInteraction"):
+    if test in WORKLOAD_UI_TESTS:
         release.require(platform == "ipad" and 1800 <= workload_seconds <= 2700,
                         "Смешанная приёмка требует от 30 до 45 минут на iPad Simulator.")
         return workload_seconds + 180
+    if test in PAGE_INK_UI_TESTS:
+        release.require(platform == "ipad", "Проверка чернил выполняется на iPad Simulator.")
+        return 660
     return 240
 
 
@@ -752,11 +782,12 @@ def ui(args):
     release.require(args.trace in (None, "Time Profiler") or allow_host_processes,
                     "Этот инструмент записывает также процессы Mac; нужно явное --allow-host-processes.")
     document = document_ui_request(args.platform, args.test, args.document_id, args.document_title)
+    notebook = notebook_ui_request(args.platform, args.test, args.notebook_id, args.notebook_title)
     interaction_request = interaction_acceptance.request(args)
     scene_request = scene_observation.request(args)
     navigation_request = navigation_observation.request(args)
     directory = args.run.resolve()
-    workload = args.test.endswith("/testThirtyMinutesOfMixedInteraction")
+    workload = args.test in WORKLOAD_UI_TESTS
     timeout = ui_timeout(args.platform, args.test, document=document, workload_seconds=args.workload_seconds)
     value = read(directory / "run.json")
     built = read(Path(value["build"]) / "build.json")
@@ -795,6 +826,8 @@ def ui(args):
         environment.update(interaction["environment"])
     if document:
         environment.update(document["environment"])
+    if notebook:
+        environment.update(notebook["environment"])
     if attached_trace:
         environment.update({"NOTEBOOK_TRACE_SESSION_ID": trace_session,
                             "NOTEBOOK_TRACE_CONTROL_DIRECTORY": str(evidence / "trace-control")})
@@ -937,6 +970,8 @@ def main():
     command.add_argument("--scene-observation-session", help="UUID пассивного журнала nativeText/camera/installed ownership в private Simulator")
     command.add_argument("--document-id", help="UUID контрольного документа, созданного через публичный API")
     command.add_argument("--document-title", help="Точное сохранённое название контрольного документа для настоящего поиска")
+    command.add_argument("--notebook-id", help="UUID контрольной тетради из публичного API")
+    command.add_argument("--notebook-title", help="Точное название тетради для обычного поиска")
     args = parser.parse_args()
     with ExitStack() as locks:
         for name in lock_names(args):

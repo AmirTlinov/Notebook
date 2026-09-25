@@ -103,7 +103,82 @@ import XCTest
   }
 
   func testRealChatReplyThroughConnectedMac() throws {
-    try launch(); openChat()
+    try launch()
+    try sendRealChatReply()
+    try systemTrace?.ended(app)
+  }
+
+  func testRealStreamingKeepsInkAndStopResponsive() throws {
+    try launch()
+    try navigateToAcceptanceControls()
+    try sendRealStreamingWhileDrawing()
+    try systemTrace?.ended(app)
+  }
+
+  /// A busy indicator is not streaming evidence. The actual assistant text must
+  /// grow across a system-routed contact, which must also leave accepted ink.
+  private func sendRealStreamingWhileDrawing() throws {
+    XCTAssertEqual(ProcessInfo.processInfo.environment["NOTEBOOK_ACCEPTANCE_PENCIL_CONTACTS"], "1")
+    try selectBlackPen()
+    openChat()
+    app.buttons["notebook-chat-new"].tap()
+    let transcript = app.descendants(matching: .any).matching(identifier: "notebook-chat-transcript").firstMatch
+    XCTAssertTrue(transcript.waitForExistence(timeout: 30))
+    let marker = "STREAM_" + UUID().uuidString
+    let text = app.descendants(matching: .any).matching(identifier: "notebook-chat-text").firstMatch
+    XCTAssertTrue(text.waitForExistence(timeout: 10)); text.tap()
+    text.typeText("Это проверка изолированного пространства Notebook. Без инструментов напиши 300 отдельных строк простых алгебраических равенств с коротким пояснением каждого. Каждую строку начинай с \(marker), затем её номер. Не сокращай список; я остановлю ответ после проверки рисования.")
+    let send = app.buttons["notebook-chat-send"]
+    XCTAssertTrue(send.isEnabled); send.tap()
+    try dismissSystemKeyboard()
+    let output = app.webViews.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", marker))
+    XCTAssertTrue(output.firstMatch.waitForExistence(timeout: 90), "A real assistant packet must arrive before testing overlap")
+    let stop = app.buttons["notebook-chat-stop"]
+    XCTAssertTrue(stop.exists, "The observed reply must still be running")
+    let ink = app.otherElements["spatial-ink"]
+    XCTAssertTrue(ink.exists)
+    let viewport = ink.frame.intersection(app.windows.firstMatch.frame).insetBy(dx: 48, dy: 96)
+    let panel = app.otherElements["notebook-chat-panel"]
+    XCTAssertTrue(panel.isHittable)
+    let occupied = occupiedCanvasFrames(try app.snapshot())
+    let candidates = [0.15, 0.35, 0.55, 0.75].flatMap { y in
+      [0.15, 0.35, 0.55, 0.75].map { x in CGPoint(x: viewport.minX + viewport.width*x, y: viewport.minY + viewport.height*y) }
+    }
+    let point = try XCTUnwrap(candidates.first { point in
+      let path = CGRect(x: point.x, y: point.y, width: 100, height: 30).insetBy(dx: -8, dy: -8)
+      return viewport.contains(path) && !occupied.contains { $0.intersects(path) }
+    }, "The real layout must expose a free canvas route beside chat")
+    var observations: [[String: Any]] = []
+    var overlapped = false
+    for attempt in 0..<3 where !overlapped {
+      XCTAssertTrue(stop.exists); XCTAssertTrue(panel.isHittable); XCTAssertTrue(transcript.exists)
+      let before = output.allElementsBoundByIndex.map(\.label).joined(separator: "\n")
+      let previous = ink.value as? String
+      let start = point.applying(.init(translationX: 0, y: CGFloat(attempt)*3))
+      let end = CGPoint(x: start.x+100, y: start.y+30)
+      let began = ProcessInfo.processInfo.systemUptime
+      screenCoordinate(start).press(forDuration: 0.02, thenDragTo: screenCoordinate(end), withVelocity: .slow, thenHoldForDuration: 0)
+      let after = output.allElementsBoundByIndex.map(\.label).joined(separator: "\n")
+      let ended = ProcessInfo.processInfo.systemUptime
+      XCTAssertTrue(panel.isHittable); XCTAssertTrue(transcript.exists); XCTAssertTrue(stop.exists)
+      XCTAssertNotEqual(ink.value as? String, previous, "Streaming must not suppress the accepted Pencil contact")
+      XCTAssertGreaterThan(try darkPixels(near: CGPoint(x: start.x+50, y: start.y+15)), 8)
+      overlapped = after.count > before.count && after != before
+      observations.append(["began": began, "ended": ended, "beforeCharacters": before.count,
+        "afterCharacters": after.count, "textGrewAcrossContact": overlapped])
+    }
+    let proof = XCTAttachment(data: try JSONSerialization.data(withJSONObject: observations,
+      options: [.prettyPrinted, .sortedKeys]), uniformTypeIdentifier: "public.json")
+    proof.name = "real-streaming-across-native-ink"; proof.lifetime = .keepAlways; add(proof)
+    XCTAssertTrue(overlapped, "A pending turn without changing assistant text does not establish simultaneous streaming")
+    XCTAssertTrue(stop.isHittable); stop.tap()
+    XCTAssertTrue(stop.waitForNonExistence(timeout: 30))
+    XCTAssertFalse(app.otherElements["persistence-failure"].exists)
+    screenshot("real-streaming-ink-and-stop")
+  }
+
+  private func sendRealChatReply() throws {
+    openChat()
     let create = app.buttons["notebook-chat-new"]
     XCTAssertTrue(create.isEnabled); create.tap()
     let conversation = app.descendants(matching: .any).matching(identifier: "notebook-chat-transcript").firstMatch
@@ -130,7 +205,6 @@ import XCTest
     XCTAssertTrue(reply.waitForExistence(timeout: 90), app.debugDescription)
     screenshot("real-codex-reply-on-ipad")
     XCTAssertFalse(app.otherElements["persistence-failure"].exists)
-    try systemTrace?.ended(app)
   }
 
   /// Run on the private Simulator after its microphone permission was denied.
@@ -478,6 +552,7 @@ import XCTest
           try dismissSystemKeyboard()
         }
         if pencil {
+          try selectBlackPen()
           let start = ink.coordinate(withNormalizedOffset: .init(dx: 0.12, dy: 0.34))
           start.press(forDuration: 0.06, thenDragTo: start.withOffset(.init(dx: 55, dy: 25)))
         } else {
@@ -668,6 +743,25 @@ import XCTest
     }
   }
 
+  private func occupiedCanvasFrames(_ element: XCUIElementSnapshot) -> [CGRect] {
+    let occupies = [.webView, .button, .textView, .textField, .keyboard]
+      .contains(element.elementType) || element.identifier == "notebook-chat-panel"
+    if occupies, element.frame.height > 1 { return [element.frame] }
+    return element.children.flatMap(occupiedCanvasFrames)
+  }
+
+  private func selectBlackPen() throws {
+    let group = app.buttons["drawing-group"]
+    if !group.isSelected { group.tap() }
+    if !app.buttons["drawing-tool-pen"].exists { group.tap() }
+    XCTAssertTrue(app.buttons["drawing-tool-pen"].waitForExistence(timeout: 3))
+    app.buttons["drawing-tool-pen"].tap()
+    app.buttons["drawing-primary-color"].tap()
+    let black = app.buttons["drawing-color-black"]
+    XCTAssertTrue(black.waitForExistence(timeout: 3)); black.tap()
+    XCTAssertTrue(black.waitForNonExistence(timeout: 3))
+  }
+
   private func panFreeBoard(by delta: CGVector, recordsEvidence: Bool = true) throws {
     // Leave the system's edge-gesture area outside the scene-pan route.
     // A narrow visual strip next to a widget is not a proven app touch area.
@@ -675,13 +769,7 @@ import XCTest
     // One immutable AX snapshot keeps transient keyboard children from
     // invalidating positional queries while their individual frames are read.
     let snapshot = try app.snapshot()
-    func occupiedFrames(_ element: XCUIElementSnapshot) -> [CGRect] {
-      let occupies = [.webView, .button, .textView, .textField, .keyboard]
-        .contains(element.elementType) || element.identifier == "notebook-chat-panel"
-      if occupies, element.frame.height > 1 { return [element.frame] }
-      return element.children.flatMap(occupiedFrames)
-    }
-    let occupied = occupiedFrames(snapshot)
+    let occupied = occupiedCanvasFrames(snapshot)
     let fractions: [CGFloat] = [0.5, 0.25, 0.75, 0.08, 0.92, 0.03, 0.97, 0.01, 0.99]
     // A source may leave only a narrow free strip. Move by a feasible portion
     // and let the caller re-read the resulting geometry before the next drag.
@@ -794,6 +882,120 @@ import XCTest
     let labels = app.webViews.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", prefix)).allElementsBoundByIndex
     let value = try XCTUnwrap(labels.first).label
     return try XCTUnwrap(Int(value.dropFirst(prefix.count)), "Unexpected counter: " + value)
+  }
+
+  /// Ordinary navigation and system-routed Simulator contacts. The straight
+  /// lasso tests its real entry/rejection path; XCTest has no public API for a
+  /// multi-segment closed Pencil contour (native contact tests cover that path).
+  func testTenPageInkUndoLassoAndNavigationJourneys() throws {
+    executionTimeAllowance=600
+    try launch(readinessIdentifier:"notebook-search")
+    for iteration in 0..<10 { try pageInkJourney(iteration) }
+    try systemTrace?.ended(app)
+  }
+
+  func testThirtyMinutesOfPageInkUndoLassoAndNavigation() throws {
+    let seconds=try XCTUnwrap(ProcessInfo.processInfo.environment["NOTEBOOK_ACCEPTANCE_WORKLOAD_SECONDS"].flatMap(Double.init))
+    XCTAssertGreaterThanOrEqual(seconds,1800);XCTAssertLessThanOrEqual(seconds,2700)
+    executionTimeAllowance=seconds+120
+    try launch(readinessIdentifier:"notebook-search")
+    let began=ProcessInfo.processInfo.systemUptime
+    var iteration=0, replies=0
+    var lastScreenshot=began-60, lastReply=began-300
+    while ProcessInfo.processInfo.systemUptime-began < seconds {
+      try pageInkJourney(iteration)
+      try navigateToAcceptanceControls()
+      try performMixedIteration(iteration,pencil:true,began:began,lastScreenshot:&lastScreenshot)
+      if ProcessInfo.processInfo.systemUptime-lastReply >= 300 {
+        if replies == 0 { try sendRealStreamingWhileDrawing() }
+        else { try sendRealChatReply() }
+        replies += 1;lastReply=ProcessInfo.processInfo.systemUptime
+      }
+      iteration += 1
+    }
+    XCTAssertGreaterThanOrEqual(iteration,10);XCTAssertGreaterThan(replies,0)
+    let proof=XCTAttachment(string:"elapsedSeconds=\(ProcessInfo.processInfo.systemUptime-began)\ncompletedJourneys=\(iteration)\nrealChatResponses=\(replies)\nEvery cycle uses page ink/history/lasso/navigation and live program controls; first response grows across actual ink and is stopped, subsequent connected replies every five minutes. System-routed Simulator gestures, not physical FPS/Pencil latency. Closed lasso is exercised by native contacts.")
+    proof.name="page-ink-mixed-workload-duration";proof.lifetime = .keepAlways;add(proof)
+    try systemTrace?.ended(app)
+  }
+
+  private func pageInkJourney(_ iteration:Int) throws {
+    try XCTContext.runActivity(named:"page-ink-journey-\(iteration)") { _ in
+      let environment=ProcessInfo.processInfo.environment
+      XCTAssertEqual(environment["NOTEBOOK_ACCEPTANCE_PENCIL_CONTACTS"],"1","Use the existing isolated Simulator Pencil profile")
+      let notebook=try XCTUnwrap(environment["NOTEBOOK_ACCEPTANCE_NOTEBOOK_ID"].flatMap(UUID.init(uuidString:)))
+      let title=try XCTUnwrap(environment["NOTEBOOK_ACCEPTANCE_NOTEBOOK_TITLE"])
+      if XCUIDevice.shared.orientation != .portrait { XCUIDevice.shared.orientation = .portrait }
+      let collapse=app.buttons["notebook-chat-toggle"]
+      if collapse.isHittable { collapse.tap() }
+      app.buttons["notebook-search"].tap()
+      let search=app.searchFields.firstMatch
+      let query="Лист ввода "+notebook.uuidString.lowercased()
+      XCTAssertTrue(search.waitForExistence(timeout:5));search.tap();search.typeText(query)
+      let matches=app.collectionViews.buttons.matching(NSPredicate(format:"label CONTAINS %@ AND label CONTAINS %@",query,title))
+      XCTAssertTrue(matches.firstMatch.waitForExistence(timeout:10));XCTAssertEqual(matches.count,1)
+      screenshot("page-ink-unique-addressed-search-\(iteration)")
+      matches.firstMatch.tap()
+      XCTAssertTrue(search.waitForNonExistence(timeout:10))
+      let surface=app.otherElements["page-turn-surface"]
+      XCTAssertTrue(surface.waitForExistence(timeout:10))
+      var input:XCUIElement?
+      let ready=XCTNSPredicateExpectation(predicate:NSPredicate { [self] _,_ in
+        input=app.otherElements.matching(identifier:"paper-input").allElementsBoundByIndex.first { $0.isHittable }
+        return input != nil
+      },object:nil)
+      XCTAssertEqual(XCTWaiter.wait(for:[ready],timeout:10),.completed)
+      let paper=try XCTUnwrap(input),frame=paper.frame
+      try selectBlackPen()
+      let y=0.32+Double(iteration%5)*0.025
+      let from=paper.coordinate(withNormalizedOffset:.init(dx:0.35,dy:y))
+      let to=paper.coordinate(withNormalizedOffset:.init(dx:0.65,dy:y+0.15))
+      let previous=paper.value as? String
+      from.press(forDuration:0.02,thenDragTo:to,withVelocity:.fast,thenHoldForDuration:0)
+      let written=XCTNSPredicateExpectation(predicate:NSPredicate { _,_ in paper.value as? String != previous },object:nil)
+      XCTAssertEqual(XCTWaiter.wait(for:[written],timeout:5),.completed)
+      let probe=CGPoint(x:frame.midX,y:frame.minY+frame.height*(y+0.075))
+      let ink=try darkPixels(near:probe)
+      XCTAssertGreaterThan(ink,8,"A committed contact must leave actual pixels")
+      app.buttons["drawing-tool-eraser"].tap()
+      let eraseFrom=paper.coordinate(withNormalizedOffset:.init(dx:0.5,dy:y+0.03))
+      eraseFrom.press(forDuration:0.02,thenDragTo:paper.coordinate(withNormalizedOffset:.init(dx:0.5,dy:y+0.12)),
+        withVelocity:.fast,thenHoldForDuration:0)
+      // No artificial settle wait before the accepted inverse/repeat.
+      surface.tap(withNumberOfTaps:1,numberOfTouches:2)
+      XCTAssertGreaterThan(try darkPixels(near:probe),8,"Undo immediately revokes the eraser material")
+      surface.tap(withNumberOfTaps:1,numberOfTouches:3)
+      XCTAssertLessThan(try darkPixels(near:probe),ink,"Redo must restore the cut, not resurrect the line")
+      let actions=paper.value as? String
+      app.buttons["drawing-tool-lasso"].tap()
+      paper.coordinate(withNormalizedOffset:.init(dx:0.18,dy:0.22)).press(forDuration:0.02,
+        thenDragTo:paper.coordinate(withNormalizedOffset:.init(dx:0.25,dy:0.27)),withVelocity:.slow,thenHoldForDuration:0)
+      XCTAssertEqual(paper.value as? String,actions,"A lasso is read-only, including a zero-area contour")
+      XCTAssertFalse(app.buttons["finish-graphic-selection"].exists)
+      let page=try XCTUnwrap((surface.value as? String)?.components(separatedBy:" из ").first)+" из "
+      app.buttons["next-page"].tap()
+      let forward=XCTNSPredicateExpectation(predicate:NSPredicate { _,_ in (surface.value as? String)?.hasPrefix(page) == false },object:nil)
+      XCTAssertEqual(XCTWaiter.wait(for:[forward],timeout:10),.completed)
+      app.buttons["previous-page"].tap()
+      let back=XCTNSPredicateExpectation(predicate:NSPredicate { _,_ in (surface.value as? String)?.hasPrefix(page) == true },object:nil)
+      XCTAssertEqual(XCTWaiter.wait(for:[back],timeout:10),.completed)
+      surface.pinch(withScale:1.08,velocity:0.6)
+      XCTAssertTrue(surface.exists);XCTAssertFalse(app.otherElements["persistence-failure"].exists)
+      screenshot("page-ink-journey-\(iteration)-settled")
+    }
+  }
+
+  private func darkPixels(near point:CGPoint) throws -> Int {
+    let image=try XCTUnwrap(app.screenshot().image.cgImage)
+    let scale=Double(image.width)/app.frame.width
+    let size=17,centerX=Int((point.x-app.frame.minX)*scale),centerY=Int((point.y-app.frame.minY)*scale)
+    let crop=CGRect(x:centerX-size/2,y:centerY-size/2,width:size,height:size)
+    let sample=try XCTUnwrap(image.cropping(to:crop))
+    var bytes=[UInt8](repeating:0,count:size*size*4)
+    let context=try XCTUnwrap(CGContext(data:&bytes,width:size,height:size,bitsPerComponent:8,bytesPerRow:size*4,
+      space:CGColorSpaceCreateDeviceRGB(),bitmapInfo:CGImageAlphaInfo.premultipliedLast.rawValue))
+    context.draw(sample,in:.init(x:0,y:0,width:size,height:size))
+    return (0..<size*size).filter { bytes[$0*4] < 96 && bytes[$0*4+1] < 96 && bytes[$0*4+2] < 96 }.count
   }
 
   func testMeasuredPencilContactsCommitAndEraserRemainsReachable() throws {

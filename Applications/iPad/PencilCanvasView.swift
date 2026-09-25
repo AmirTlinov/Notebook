@@ -10,10 +10,15 @@ struct PencilCanvasView: UIViewRepresentable {
   let source: PageInkSource
   var suppressedInkIDs: Set<UUID> = []
   let isInputEnabled: Bool
+  var isVisible = true
+  var isCurrent = true
+  var pageReadiness: PageTurnReadiness?
+  var refinesDetails = true
   let penStyle: PenStyle
   let eraserStyle: EraserStyle
   let drawingTool: DrawingTool
   let inputGate: NotebookInputGate
+  let publication: NotebookPageInkPublication
   let reserveAction: (UUID) -> VersionStamp?
   let releaseAction: (UUID, VersionStamp) -> Void
   let acceptAction: (PageInkAction, UUID, VersionStamp, NotebookQuickShapeFit?) -> PreparedPageInkChange?
@@ -28,6 +33,7 @@ struct PencilCanvasView: UIViewRepresentable {
   func makeCoordinator() -> Coordinator {
     Coordinator(
       inputGate: inputGate,
+      publication: publication,
       reserveAction: reserveAction,
       releaseAction: releaseAction,
       acceptAction: acceptAction
@@ -36,6 +42,8 @@ struct PencilCanvasView: UIViewRepresentable {
 
   func makeUIView(context: Context) -> PaperCanvasContainerView {
     let paper = PaperCanvasContainerView()
+    paper.inkProjection.setRefinesDetails(refinesDetails)
+    paper.inkProjection.observePage(pageReadiness,isCurrent:isCurrent,isVisible:isVisible)
     paper.inkProjection.observe(projection)
     paper.touchView.toolController = model?.drawingTools
     paper.touchView.toolInputGate = inputGate
@@ -61,6 +69,8 @@ struct PencilCanvasView: UIViewRepresentable {
   }
 
   func updateUIView(_ paper: PaperCanvasContainerView, context: Context) {
+    paper.inkProjection.setRefinesDetails(refinesDetails)
+    paper.inkProjection.observePage(pageReadiness,isCurrent:isCurrent,isVisible:isVisible)
     paper.inkProjection.observe(projection)
     paper.touchView.toolController = model?.drawingTools
     paper.touchView.toolInputGate = inputGate
@@ -102,7 +112,7 @@ struct PencilCanvasView: UIViewRepresentable {
   }
 
   @MainActor
-  final class Coordinator: NSObject {
+  final class Coordinator: NSObject, NotebookPageInkConsumer {
     var reserveAction: (UUID) -> VersionStamp?
     var releaseAction: (UUID, VersionStamp) -> Void
     private var suppressedInkIDs = Set<UUID>()
@@ -112,6 +122,7 @@ struct PencilCanvasView: UIViewRepresentable {
 
     private let inputSourceID = UUID()
     private var inputGate: NotebookInputGate
+    private let publication: NotebookPageInkPublication
     private var pencilActionIsActive = false
     private var pageID: UUID?
     private var modelSource: PageInkSource?
@@ -125,11 +136,13 @@ struct PencilCanvasView: UIViewRepresentable {
 
     init(
       inputGate: NotebookInputGate,
+      publication: NotebookPageInkPublication,
       reserveAction: @escaping (UUID) -> VersionStamp?,
       releaseAction: @escaping (UUID, VersionStamp) -> Void,
       acceptAction: @escaping (PageInkAction, UUID, VersionStamp, NotebookQuickShapeFit?) -> PreparedPageInkChange?
     ) {
       self.inputGate = inputGate
+      self.publication = publication
       self.reserveAction = reserveAction
       self.releaseAction = releaseAction
       self.acceptAction = acceptAction
@@ -178,14 +191,21 @@ struct PencilCanvasView: UIViewRepresentable {
       let pageID = reservation.pageID, stamp = reservation.stamp
       decodeTask?.cancel()
       decodeTask = nil
-      guard let accepted=acceptAction(mutation,pageID,stamp,fit) else {
+      guard acceptAction(mutation,pageID,stamp,fit) != nil else {
         paper.touchView.onLiveElementErasing(.reject(mutation.id))
         restoreModelDrawing(on:paper);return
       }
-      guard pageID == self.pageID else { return }
-      if let fit { suppressedInkIDs.formUnion(fit.precedingStrokeIDs + [mutation.id]) }
-      modelSource=accepted.inkSource
-      paper.settle(accepted,suppressedInkIDs:suppressedInkIDs)
+    }
+
+    func receiveAcceptedInk(_ change: PreparedPageInkChange, suppressedIDs: Set<UUID>) {
+      guard change.pageID == pageID, let paper = attachedPaper,
+        modelSource.map({ $0.stamp < change.stamp }) ?? true else { return }
+      let canSettle = modelSource?.stamp == change.baseStamp
+      decodeTask?.cancel(); decodeTask = nil; decodeGeneration &+= 1
+      modelSource = change.inkSource; suppressedInkIDs = suppressedIDs
+      paper.touchView.onLiveElementErasing(.accepted(change))
+      if canSettle { paper.settle(change, suppressedInkIDs: suppressedIDs) }
+      else { replaceDrawing(change.inkSource, on: paper, pageID: change.pageID) }
     }
 
     private func reserveMeasuredAction() -> Bool {
@@ -260,6 +280,7 @@ struct PencilCanvasView: UIViewRepresentable {
       )
       inputGate.unregisterPageFinisher(source: inputSourceID)
       pageFinisherIsCurrent = false
+      publication.remove(self)
       attachedPaper = nil
       paper.inkView.onRenderReadinessChange=nil;onRenderReady=nil
       decodeTask?.cancel()
@@ -316,8 +337,12 @@ struct PencilCanvasView: UIViewRepresentable {
         if presentationChanged { paper.inkView.setSuppressedPageActions(suppressedInkIDs) }
         return
       }
-      if pageChanged { paper.touchView.finishCurrentAction {} }
+      if pageChanged {
+        paper.touchView.finishCurrentAction {}
+        if self.pageID != nil { paper.inkView.resetPagePresentation() }
+      }
       self.pageID = pageID
+      publication.register(self, pageID: pageID)
       modelSource = source
       replaceDrawing(source,on:paper,pageID:pageID)
     }
@@ -334,6 +359,7 @@ struct PencilCanvasView: UIViewRepresentable {
           modelSource?.stamp == source.stamp else { return }
         decodeTask = nil
         guard let drawing=prepared else { return }
+        paper.touchView.onLiveElementErasing(.reconciled(pageID, source.stamp, drawing))
         paper.apply(drawing, suppressedInkIDs: suppressedInkIDs)
       }
     }
@@ -475,7 +501,7 @@ final class PaperPencilGestureRecognizer: UIGestureRecognizer {
 
   override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
     guard activeTouch == nil else { finishTracking(); state = .cancelled; return }
-    guard let input, let touch = touches.first,
+    guard let input, !input.simulatesPencilContacts || touches.count == 1, let touch = touches.first,
       input.acceptsDrawingTouch(touch), canBeginContact(touch) else {
       finishTracking(); state = .failed; return
     }

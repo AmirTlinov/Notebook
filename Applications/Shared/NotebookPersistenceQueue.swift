@@ -10,17 +10,47 @@ final class NotebookPersistenceQueue {
     case page(UUID), pageInk(UUID), document(UUID), documentState(UUID), documentDraft(UUID), documentReading(UUID)
     case board, spatialInk(UUID), presence, peerPresence(UUID), inputActivity(UUID)
     case elementState(UUID, String)
+    case peerSession(UUID), command(NotebookCommand.Kind)
+
+    var isOrderingFence: Bool {
+      switch self { case .peerSession, .command: true; default: false }
+    }
+
+    var publishesDurableChanges: Bool {
+      switch self {
+      case .page, .pageInk, .document, .documentState, .board, .spatialInk, .elementState: true
+      case .presence, .peerPresence, .inputActivity, .documentDraft, .documentReading,
+        .fileDraft, .fileWindow, .chatPanel, .runCommand, .peerSession: false
+      case .command(let kind):
+        switch kind {
+        case .apply, .commitAction, .undo, .point: true
+        case .admitAction, .prepareAction, .action, .actions, .continuations, .search, .contexts,
+          .delivery, .referenceStatus, .referenceStatuses, .actionDetails, .reference,
+          .placement, .render, .pageVision, .read, .artifact, .presentation,
+          .script, .scriptContext, .scriptArtifact, .importProgram: false
+        }
+      }
+    }
+  }
+
+  /// Whether a successful write actually changed its content, independently
+  /// of whether that owner's content belongs to the durable journal.
+  struct Change: Sendable {
+    let merged: Bool
+    var changed = true
   }
 
   private struct Outcome {
     let merged: Bool
     let succeeded: Bool
+    var changed = true
     var rejection: CollaborationError? = nil
   }
 
   private struct Write {
     let id = UUID()
     let owner: Owner?
+    var isOrderingFence = true
     let operation: @Sendable (NotebookStore) async throws -> Outcome
     var onBlocked: (@Sendable (String) -> Void)? = nil
     var boardBaseline: BoardHierarchy? = nil
@@ -52,19 +82,41 @@ final class NotebookPersistenceQueue {
 
   /// A nil owner is an ordering fence (creation, deletion, or publication).
   /// Coalescing never crosses it or replaces a write already executing.
-  func enqueue(owner: Owner? = nil, publishesChanges: Bool = true,
+  func enqueue(owner: Owner? = nil,
     onRejected: (@MainActor @Sendable (CollaborationError) -> Void)? = nil,
     _ operation: @escaping @Sendable (NotebookStore) throws -> Bool) {
+    enqueueChange(owner: owner, onRejected: onRejected) { .init(merged: try operation($0)) }
+  }
+
+  /// A typed local write can still be an ordering fence, rather than a draft
+  /// that may be replaced by the next value for the same owner.
+  func enqueueFence(owner: Owner,
+    _ operation: @escaping @Sendable (NotebookStore) throws -> Bool) {
+    enqueueChange(owner: owner, isOrderingFence: true) { .init(merged: try operation($0)) }
+  }
+
+  func enqueueChange(owner: Owner?,
+    onRejected: (@MainActor @Sendable (CollaborationError) -> Void)? = nil,
+    _ operation: @escaping @Sendable (NotebookStore) throws -> Change) {
+    enqueueChange(owner: owner, isOrderingFence: owner?.isOrderingFence ?? true,
+      onRejected: onRejected, operation)
+  }
+
+  private func enqueueChange(owner: Owner?, isOrderingFence: Bool,
+    onRejected: (@MainActor @Sendable (CollaborationError) -> Void)? = nil,
+    _ operation: @escaping @Sendable (NotebookStore) throws -> Change) {
     let handlesRejection = onRejected != nil
-    let write = Write(owner: owner, operation: { store in
-      do { return .init(merged: try operation(store), succeeded: true) }
-      catch let rejection as CollaborationError where handlesRejection {
+    let write = Write(owner: owner, isOrderingFence: isOrderingFence, operation: { store in
+      do {
+        let result = try operation(store)
+        return .init(merged: result.merged, succeeded: true, changed: result.changed)
+      } catch let rejection as CollaborationError where handlesRejection {
         // Reconcile accepted presentation with the causal owner. A rejected
         // inverse is not a disk failure and must not block subsequent ink.
-        return .init(merged: true, succeeded: false, rejection: rejection)
+        return .init(merged: true, succeeded: false, changed: false, rejection: rejection)
       }
-    }, notifiesCommit: publishesChanges, onRejected: onRejected)
-    if let owner, let index = coalescingIndex(for: owner) {
+    }, notifiesCommit: owner?.publishesDurableChanges ?? true, onRejected: onRejected)
+    if !isOrderingFence, let owner, let index = coalescingIndex(for: owner) {
       pending[index] = write
       startIfNeeded()
       return
@@ -78,7 +130,7 @@ final class NotebookPersistenceQueue {
   func enqueueBoardEdit(before: BoardHierarchy, after: BoardHierarchy) {
     let index = coalescingIndex(for: .board)
     let baseline = index.flatMap { pending[$0].boardBaseline } ?? before
-    let write = Write(owner: .board, operation: { store in
+    let write = Write(owner: .board, isOrderingFence: false, operation: { store in
       .init(merged: try store.saveBoardEdits(before: baseline, after: after) != after, succeeded: true)
     }, boardBaseline: baseline)
     if let index { pending[index] = write } else { pending.append(write) }
@@ -91,8 +143,9 @@ final class NotebookPersistenceQueue {
       if case .spatialInk = owner { return nil }
       if case .pageInk = owner { return nil }
       if case .documentState = owner { return nil }
+      if case .elementState = owner { return nil }
       for index in pending.indices.reversed() {
-        guard pending[index].owner != nil else { break }
+        guard !pending[index].isOrderingFence else { break }
         // Contact release must not jump ahead of content accepted during that
         // contact. Only consecutive activity updates may replace each other.
         if case .inputActivity = owner, pending[index].owner != owner { break }
@@ -126,20 +179,39 @@ final class NotebookPersistenceQueue {
     }
   }
 
+  func submit<Value: Sendable>(owner: Owner,
+    _ operation: @escaping @Sendable (NotebookStore) throws -> Value) async throws -> Value {
+    try await withCheckedThrowingContinuation { continuation in
+      enqueueCommand(owner: owner, operation) { continuation.resume(with: $0) }
+    }
+  }
+
   /// Registers the fence before returning to UIKit. A later contact may start
   /// immediately, but neither its write nor coalescing can overtake this cut.
   func enqueueCommand<Value: Sendable>(publishesChanges: Bool = false,
     _ operation: @escaping @Sendable (NotebookStore) throws -> Value,
     completion: @escaping @Sendable (Result<Value, Error>) -> Void) {
+    enqueueCommand(owner: nil, notifiesCommit: publishesChanges, operation, completion: completion)
+  }
+
+  func enqueueCommand<Value: Sendable>(owner: Owner,
+    _ operation: @escaping @Sendable (NotebookStore) throws -> Value,
+    completion: @escaping @Sendable (Result<Value, Error>) -> Void) {
+    enqueueCommand(owner: owner, notifiesCommit: owner.publishesDurableChanges, operation, completion: completion)
+  }
+
+  private func enqueueCommand<Value: Sendable>(owner: Owner?, notifiesCommit: Bool,
+    _ operation: @escaping @Sendable (NotebookStore) throws -> Value,
+    completion: @escaping @Sendable (Result<Value, Error>) -> Void) {
     if let failure { completion(.failure(Failure(message: failure))); return }
-    let write = Write(owner: nil, operation: { store in
+    let write = Write(owner: owner, operation: { store in
       let result = Result { try operation(store) }
       completion(result)
       switch result {
       case .success: return .init(merged: false, succeeded: true)
       case .failure: return .init(merged: false, succeeded: false)
       }
-    }, onBlocked: { completion(.failure(Failure(message: $0))) }, notifiesCommit: publishesChanges)
+    }, onBlocked: { completion(.failure(Failure(message: $0))) }, notifiesCommit: notifiesCommit)
     pending.append(write)
     startIfNeeded()
   }
@@ -174,6 +246,17 @@ final class NotebookPersistenceQueue {
     return Task {
       for try await value in channel.stream { return value }
       throw CancellationError()
+    }
+  }
+
+  /// Program transfer credit follows its accepted writer through a disk retry.
+  /// Unlike a navigation waiter, this cut is not cancelled or removed on I/O
+  /// failure: releasing it early would move an unbounded queue into native RAM.
+  func finishAcceptedProgramWrites() async {
+    await withCheckedContinuation { continuation in
+      pending.append(Write(owner: nil, operation: { _ in .init(merged: false, succeeded: true) },
+        notifiesCommit: false, onCompleted: { continuation.resume() }))
+      startIfNeeded()
     }
   }
 
@@ -238,7 +321,7 @@ final class NotebookPersistenceQueue {
         pending.removeFirst()
         if let rejection = outcome.rejection { next.onRejected?(rejection) }
         if outcome.merged { onContentMerged?() }
-        if next.notifiesCommit && outcome.succeeded { onCommit?(next.owner) }
+        if next.notifiesCommit && outcome.succeeded && outcome.changed { onCommit?(next.owner) }
         next.onCompleted?()
       case .failure(let error):
         failure = error.localizedDescription

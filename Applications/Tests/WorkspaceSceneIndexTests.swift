@@ -185,7 +185,7 @@ final class WorkspaceSceneIndexTests: XCTestCase {
     let prepared=try NotebookSceneState.read(store:model.store,presence:opening,viewport:viewport)
     XCTAssertEqual(prepared.presence.focusedItemID,target)
     XCTAssertEqual(Set(prepared.coverage.keys),[root,target])
-    XCTAssertEqual(Set(prepared.inkSurfaces.filter { $0.kind == .board }.compactMap(\.ownerID)),[root,target])
+    XCTAssertEqual(Set(prepared.inkWindow.coverage.keys.filter { $0.kind == .board }.compactMap(\.ownerID)),[root,target])
   }
 
   func testHundredThousandFoldersPrepareOnlyTheAdmittedPortal() throws {
@@ -376,7 +376,15 @@ final class WorkspaceSceneIndexTests: XCTestCase {
     let presence = SessionPresence(mode: .board,
       camera: .init(center: origin.offsetBy(x: 500, y: 700), scale: 0.4), viewport: .init(x: 1194, y: 834))
     let visible = index.workset(presence: presence)
-    XCTAssertEqual(Set(visible.items.map(\.id)), Set([0, 1, 316, 317].map { fixture.workspace.items[$0].id }))
+    // The prepared workset deliberately leads the viewport. Its extra rows
+    // are not additional visible owners, even at a distant physical origin.
+    let viewport = CGRect(x: 0, y: 0, width: presence.viewport.x, height: presence.viewport.y)
+    let onscreen = visible.items.filter { item in
+      let frame = item.geometry.screenFrame(center: item.center, camera: presence.camera, viewport: presence.viewport)
+      return CGRect(x: frame.x, y: frame.y, width: frame.width, height: frame.height).intersects(viewport)
+    }
+    XCTAssertEqual(Set(onscreen.map(\.id)), Set([0, 1, 316, 317].map { fixture.workspace.items[$0].id }))
+    XCTAssertLessThanOrEqual(visible.items.count, WorkspaceSceneIndex.detailLimit)
     let first = try XCTUnwrap(index.renderedItem(id: fixture.workspace.items[0].id, presence: presence))
     XCTAssertEqual(first.center, origin)
     let screen = presence.camera.worldToScreen(first.center, viewport: presence.viewport)
@@ -428,8 +436,9 @@ final class WorkspaceSceneIndexTests: XCTestCase {
     try await waitForIndex(model)
     let openedGeneration = model.sceneIndexGeneration
     document = try XCTUnwrap(model.documents[documentID])
-    XCTAssertNotNil(model.commitDocumentState(documentID: documentID, blockID: "counter",
-      value: .object(["step": .number(2)]), sourceVersion: document.sourceVersion(blockID: "counter")))
+    let stateAdmission1 = try await model.commitDocumentState(documentID: documentID, blockID: "counter",
+      value: .object(["step": .number(2)]), programIdentity: document.programIdentity(blockID: "counter"))
+    XCTAssertNotNil(stateAdmission1)
     await model.finishPendingPersistence()
     try await waitForIndex(model)
     XCTAssertEqual(model.documentStates[documentID]?.value(for: "counter"), .object(["step": .number(2)]))
@@ -535,15 +544,24 @@ final class WorkspaceSceneIndexTests: XCTestCase {
     let contact = UUID()
     model.inputGate.beginContact(source: contact)
     let destination = before.center.offsetBy(x: 20_000, y: 10_000)
-    model.moveItem(itemID, to: destination)
-    await model.finishPendingPersistence()
+    let command = try XCTUnwrap(model.moveItem(itemID, to: destination))
+    let saved = await model.finishPendingPersistence()
+    XCTAssertTrue(saved)
+    XCTAssertNotNil(command.accepted)
+    XCTAssertEqual(try model.store.readBoardItem(itemID)?.board.focusedCenter(of: itemID), destination)
     try await Task.sleep(for: .milliseconds(100))
-    XCTAssertTrue(model.scenePreparationPending)
+    XCTAssertTrue(model.itemPlacementCommands[itemID] === command,
+      "The exact saved command owns the pending pose until contact release admits its scene cut")
     XCTAssertEqual(model.sceneIndexGeneration, generation)
     XCTAssertEqual(model.sceneIndex?.renderedItem(id: itemID, presence: presence)?.center, before.center,
       "Background completion cannot replace the physical composition underneath a live contact")
     model.inputGate.endContact(source: contact)
-    try await waitForIndex(model)
+    // Lift first drains accepted input, then starts the deferred read. An idle
+    // old index is not evidence that this command's publication has arrived.
+    let deadline = ContinuousClock.now + .seconds(10)
+    while model.sceneIndexGeneration <= generation, ContinuousClock.now < deadline {
+      try await Task.sleep(for: .milliseconds(10))
+    }
     XCTAssertGreaterThan(model.sceneIndexGeneration, generation)
     XCTAssertEqual(model.sceneIndex?.renderedItem(id: itemID, presence: presence)?.center, destination)
     await model.finishPendingPersistence()

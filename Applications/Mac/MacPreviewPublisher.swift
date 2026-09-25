@@ -3,18 +3,72 @@ import Foundation
 import NotebookCore
 import Observation
 
-private struct PreviewPageKey: Hashable {
-  let pageID: UUID
-  let cursor: UInt64
+/// Pixel dependencies, separate from the workspace cursor used to discover changes.
+/// Header/reference reads never decode an unrelated page or its ink bodies.
+enum PreviewSourceIdentity: Equatable, Sendable {
+  case content(NotebookContentHeader)
+  case scene([NotebookReferenceIdentity])
+
+  static func read(_ store: NotebookStore, presence: SessionPresence) throws -> Self {
+    try store.readTransaction { store in
+      switch presence.mode {
+      case .page:
+        guard let id = presence.notebookPageID, try store.ownerItemID(ofPage: id) == presence.focusedItemID else {
+          throw NotebookStorageError.transactionConflict
+        }
+        return .content(try store.readContentHeader(target: .init(kind: .page, id: id)))
+      case .document:
+        guard let id = presence.focusedItemID else { throw NotebookStorageError.transactionConflict }
+        return .content(try store.readContentHeader(target: .init(kind: .document, id: id)))
+      case .board:
+        return .scene(try store.referenceIdentities(targets: [.init(kind: .board, id: presence.boardID)]))
+      case .cover:
+        guard let id = presence.focusedItemID else { throw NotebookStorageError.transactionConflict }
+        return .scene(try store.referenceIdentities(targets: [.init(kind: .cover, id: id, boardID: presence.boardID)]))
+      }
+    }
+  }
 }
 
-private struct PreviewCurrentViewKey: Hashable {
-  let workspaceStamp: VersionStamp
-  let cursor: UInt64
-  let boardRevision: String
-  let spatialInkStamp: VersionStamp
+extension SessionPresence {
+  /// Exactly the presentation fields read by the current-view raster paths.
+  /// Selection is receipt metadata; page/document rasters are fitted in full,
+  /// while board/cover pixels also depend on their camera and portal opening.
+  var previewPixelIdentity: SessionPresence {
+    let scene = mode == .board || mode == .cover
+    return .init(boardID: boardID, mode: mode, camera: scene ? camera : .init(), viewport: viewport,
+      focusedItemID: focusedItemID, openProgress: scene ? openProgress : 0,
+      documentPageIndex: mode == .document ? documentPageIndex : 0,
+      notebookPageID: mode == .page ? notebookPageID : nil)
+  }
+}
+
+private struct PreviewPageKey: Equatable {
+  let pageID: UUID
+  let inkStamp: VersionStamp
+  let size: PageSize?
+}
+
+private struct PreviewCurrentViewKey: Equatable, Sendable {
+  let workspaceID: UUID
+  let source: PreviewSourceIdentity
   let presence: SessionPresence
   let presencePhase: PresencePhase
+  let documentSnapshotGeneration: Int
+
+  static func == (lhs: Self, rhs: Self) -> Bool {
+    lhs.workspaceID == rhs.workspaceID && lhs.source == rhs.source
+      && lhs.presence.previewPixelIdentity == rhs.presence.previewPixelIdentity
+      && lhs.presencePhase == rhs.presencePhase
+      && lhs.documentSnapshotGeneration == rhs.documentSnapshotGeneration
+  }
+}
+
+private struct PreviewReadDemand: Equatable, Sendable {
+  let workspaceID: UUID
+  let cursor: UInt64
+  let presence: SessionPresence
+  let phase: PresencePhase
   let documentSnapshotGeneration: Int
 }
 
@@ -63,6 +117,13 @@ final class MacPreviewPublisher {
   private let reconciliationInterval: Duration
   private var currentViewTask: Task<Void, Never>?
   private var pageRequestTask: Task<Void, Never>?
+  private var sourceReadTask: Task<Void, Never>?
+  private var lastReadDemand: PreviewReadDemand?
+  private var receiptRefresh: (demand: PreviewReadDemand, permit: CurrentViewPublicationPermit)?
+  private var sourceKey: PreviewCurrentViewKey?
+  private var sourcePageKey: PreviewPageKey?
+  private var renderedScene: (key: PreviewCurrentViewKey, dependencies: ScenePixelDependencies)?
+  private var healthWriteTask: Task<Void, Never>?
   private var requestedPageKey: PreviewPageKey?
   private var reconciliationTask: Task<Void, Never>?
   private var documentSnapshotObserver: AnyCancellable?
@@ -89,7 +150,7 @@ final class MacPreviewPublisher {
     currentViewTask?.cancel()
     pageRequestTask?.cancel()
     reconciliationTask?.cancel()
-    targetTask?.cancel()
+    targetTask?.cancel(); sourceReadTask?.cancel(); healthWriteTask?.cancel()
   }
 
   func start() {
@@ -97,11 +158,14 @@ final class MacPreviewPublisher {
     started = true
     documentSnapshotObserver = NotificationCenter.default.publisher(
       for: DocumentSnapshotCache.didChange
-    ).sink { [weak self] _ in
+    ).sink { [weak self] notification in
+      let documentID = notification.object as? UUID
       Task { @MainActor [weak self] in
-        guard let self, started else { return }
+        guard let self, started, let documentID,
+          model?.observedPresence?.mode == .document,
+          model?.observedPresence?.focusedItemID == documentID else { return }
         documentSnapshotGeneration &+= 1
-        scheduleCurrentView(for: makeCurrentViewKey())
+        requestSourceIdentity()
       }
     }
     agentSnapshotObserver = NotificationCenter.default.publisher(
@@ -113,7 +177,6 @@ final class MacPreviewPublisher {
       }
     }
     observeCurrentView()
-    observePages()
     let reconciliationInterval = reconciliationInterval
     reconciliationTask = Task { [weak self] in
       while !Task.isCancelled {
@@ -133,14 +196,14 @@ final class MacPreviewPublisher {
     started = false
     documentSnapshotObserver?.cancel(); documentSnapshotObserver = nil
     agentSnapshotObserver?.cancel(); agentSnapshotObserver = nil
-    let tasks = [currentViewTask, pageRequestTask, reconciliationTask, targetTask].compactMap { $0 }
+    let tasks = [currentViewTask, pageRequestTask, reconciliationTask, targetTask, sourceReadTask, healthWriteTask].compactMap { $0 }
     for task in tasks { task.cancel() }
     let drain = Task { @MainActor [weak self] in
       for task in tasks { await task.value }
       guard let self else { return }
       currentViewTask = nil; pageRequestTask = nil; reconciliationTask = nil
-      targetTask = nil
-      targetInProgress = nil; requestedPageKey = nil
+      targetTask = nil; sourceReadTask = nil; healthWriteTask = nil
+      targetInProgress = nil; requestedPageKey = nil; renderedScene = nil
       currentView = .init()
       stoppingTask = nil
     }
@@ -149,6 +212,7 @@ final class MacPreviewPublisher {
   }
 
   func suspendForInput() {
+    receiptRefresh?.permit.revoke()
     currentViewTask?.cancel()
     pageRequestTask?.cancel()
     targetTask?.cancel()
@@ -160,12 +224,21 @@ final class MacPreviewPublisher {
   /// published without reopening the app.
   private func reconcilePublication() {
     guard started else { return }
+    requestSourceIdentity()
     scheduleCurrentView(for: makeCurrentViewKey())
     schedulePagePreview(for: pageKey)
     guard let model else { return }
-    let health: [String: Any] = ["status": model.isPeerConnected ? "connected" : "disconnected", "updatedAt": Date().timeIntervalSince1970]
-    if let data = try? JSONSerialization.data(withJSONObject: health) {
-      try? data.write(to: model.store.root.appendingPathComponent("previews/runtime.json"), options: .atomic)
+    if healthWriteTask == nil {
+      let health = NotebookRuntimeStatus(status: model.isPeerConnected ? "connected" : "disconnected")
+      let url = model.store.root.appendingPathComponent("previews/runtime.json")
+      healthWriteTask = Task { [weak self] in
+        let writer = Task.detached(priority: .utility) {
+          try Task.checkCancellation()
+          try JSONEncoder().encode(health).write(to: url, options: .atomic)
+        }
+        _ = await withTaskCancellationHandler { try? await writer.value } onCancel: { writer.cancel() }
+        self?.healthWriteTask = nil
+      }
     }
     guard model.permitsBackgroundPreparation else { targetTask?.cancel(); return }
     scheduleTargetRender(model)
@@ -204,43 +277,93 @@ final class MacPreviewPublisher {
     }
   }
 
-  private func observeCurrentView() {
-    guard started else { return }
-    let key = withObservationTracking {
-      makeCurrentViewKey()
-    } onChange: { [weak self] in
-      Task { @MainActor [weak self] in
-        self?.observeCurrentView()
-      }
-    }
-    scheduleCurrentView(for: key)
+  private var readDemand: PreviewReadDemand? {
+    guard let model, let header = model.workspaceHeader, let presence = model.observedPresence else { return nil }
+    return .init(workspaceID: header.workspaceID, cursor: header.cursor, presence: presence,
+      phase: model.observedPresencePhase, documentSnapshotGeneration: documentSnapshotGeneration)
   }
 
-  private func observePages() {
+  private func observeCurrentView() {
     guard started else { return }
-    let key = withObservationTracking {
-      pageKey
-    } onChange: { [weak self] in
-      Task { @MainActor [weak self] in
-        self?.observePages()
+    _ = withObservationTracking { readDemand } onChange: { [weak self] in
+      Task { @MainActor [weak self] in self?.observeCurrentView() }
+    }
+    requestSourceIdentity()
+  }
+
+  private func samePresentation(_ key: PreviewCurrentViewKey, _ demand: PreviewReadDemand) -> Bool {
+    key.workspaceID == demand.workspaceID && key.presence.previewPixelIdentity == demand.presence.previewPixelIdentity
+      && key.presencePhase == demand.phase && key.documentSnapshotGeneration == demand.documentSnapshotGeneration
+  }
+
+  private func requestSourceIdentity() {
+    // Revoke queued derived output before waiting for any source read. The
+    // accepted shared writer itself is never cancelled by presentation changes.
+    let demand = readDemand
+    if let pending = currentView.pending,
+      demand.map({ samePresentation(pending, $0) }) != true { currentViewTask?.cancel() }
+    if let refresh = receiptRefresh, refresh.demand != demand { refresh.permit.revoke() }
+    guard started, let model, model.permitsBackgroundPreparation, sourceReadTask == nil,
+      readDemand != lastReadDemand else { return }
+    // The renderer validates its own dependencies during preparation. Discover
+    // unrelated cursor changes after it finishes, not by cancelling that work.
+    if let pending = currentView.pending, let demand = readDemand, samePresentation(pending, demand) { return }
+    let reader = NotebookSceneReader(store: model.store)
+    sourceReadTask = Task { [weak self] in
+      guard let self else { return }
+      defer { sourceReadTask = nil }
+      while started, !Task.isCancelled, let demand = readDemand, demand != lastReadDemand {
+        if let pending = currentView.pending, samePresentation(pending, demand) { break }
+        let previous = renderedScene.flatMap { samePresentation($0.key, demand) ? $0 : nil }
+        let read = Task.detached(priority: .utility) {
+          try await reader.read { store -> (PreviewSourceIdentity, NotebookContentHeader?) in
+            guard try store.workspaceHeader().workspaceID == demand.workspaceID else { throw NotebookStorageError.transactionConflict }
+            let source: PreviewSourceIdentity
+            if let previous, try previous.dependencies.isCurrent(store) { source = previous.key.source }
+            else { source = try PreviewSourceIdentity.read(store, presence: demand.presence) }
+            let page = try demand.presence.notebookPageID.map { try store.readContentHeader(target: .init(kind: .page, id: $0)) }
+            return (source, page)
+          }
+        }
+        do {
+          let (identity, page) = try await withTaskCancellationHandler { try await read.value } onCancel: { read.cancel() }
+          guard started, !Task.isCancelled, model.permitsBackgroundPreparation else { return }
+          lastReadDemand = demand
+          guard readDemand?.workspaceID == demand.workspaceID, readDemand?.presence == demand.presence else { continue }
+          sourceKey = .init(workspaceID: demand.workspaceID, source: identity, presence: demand.presence,
+            presencePhase: demand.phase, documentSnapshotGeneration: demand.documentSnapshotGeneration)
+          sourcePageKey = page.flatMap { header in header.inkStamp.map { .init(pageID: header.target.id, inkStamp: $0, size: header.size) } }
+          if let key = makeCurrentViewKey(), currentView.published == key {
+            let dependencies = renderedScene.flatMap { $0.key == key ? $0.dependencies : nil }
+            let permit = CurrentViewPublicationPermit()
+            receiptRefresh = (demand, permit)
+            defer { if receiptRefresh?.permit === permit { receiptRefresh = nil } }
+            try await withTaskCancellationHandler {
+              try await model.performStoreCommand { store in
+                try CurrentViewPreviewWriter.refreshReceipt(store: store, presence: demand.presence,
+                  identity: key.source, dependencies: dependencies, permit: permit)
+              }
+            } onCancel: { permit.revoke() }
+          }
+          scheduleCurrentView(for: makeCurrentViewKey()); schedulePagePreview(for: pageKey)
+        } catch {
+          if lastReadDemand == demand { lastReadDemand = nil }
+          return
+        }
       }
     }
-    schedulePagePreview(for: key)
   }
 
   private var pageKey: PreviewPageKey? {
-    guard let model, let id = model.observedPresence?.notebookPageID, let header = model.workspaceHeader else { return nil }
-    return .init(pageID: id, cursor: header.cursor)
+    guard sourcePageKey?.pageID == model?.observedPresence?.notebookPageID else { return nil }
+    return sourcePageKey
   }
 
   private func makeCurrentViewKey() -> PreviewCurrentViewKey? {
-    guard let model, let header = model.workspaceHeader,
-      let boardRevision = header.boardRevision, let inkStamp = header.spatialInkStamp,
-      let presence = model.observedPresence else { return nil }
-    return .init(workspaceStamp: header.stamp, cursor: header.cursor,
-      boardRevision: boardRevision, spatialInkStamp: inkStamp,
-      presence: presence, presencePhase: model.observedPresencePhase,
-      documentSnapshotGeneration: documentSnapshotGeneration)
+    guard let sourceKey, let demand = readDemand, demand.workspaceID == sourceKey.workspaceID,
+      demand.presence.previewPixelIdentity == sourceKey.presence.previewPixelIdentity, demand.phase == sourceKey.presencePhase,
+      demand.documentSnapshotGeneration == sourceKey.documentSnapshotGeneration else { return nil }
+    return sourceKey
   }
 
   private func scheduleCurrentView(for key: PreviewCurrentViewKey?) {
@@ -265,7 +388,7 @@ final class MacPreviewPublisher {
         guard let model else { throw PreviewPublicationError.sourceUnavailable }
         // The peer's page may be outside the Mac window's bounded scene cache.
         // Read its addressed materials from the same writer, not a second model.
-        let presence = key.presence
+        guard let presence = model.observedPresence else { throw PreviewPublicationError.sourceUnavailable }
         let content = try await model.performStoreCommand { store in
           try store.readTransaction { _ -> (PageDocument?, DocumentDocument?, DocumentStateJournal?) in
             let page = try presence.mode == .page ? presence.notebookPageID.map { try store.loadPage($0) } : nil
@@ -283,10 +406,11 @@ final class MacPreviewPublisher {
         guard started, !Task.isCancelled, model.permitsBackgroundPreparation, makeCurrentViewKey() == key else {
           throw PreviewPublicationError.sourceChanged
         }
-        try await CurrentViewPreviewWriter.write(model: model,
+        let dependencies = try await CurrentViewPreviewWriter.write(model: model,
           viewport: .init(width: presence.viewport.x, height: presence.viewport.y), presence: presence,
-          page: content.0, document: content.1, documentState: content.2, documentRaster: documentRaster,
+          page: content.0, document: content.1, documentState: content.2, documentRaster: documentRaster, sourceIdentity: key.source,
           pngURL: model.store.currentViewPreviewURL, receiptURL: model.store.currentViewRevisionURL)
+        renderedScene = dependencies.map { (key, $0) }
         finishCurrentViewPublication(key, generation: generation, error: nil)
       } catch {
         finishCurrentViewPublication(key, generation: generation, error: error)
@@ -304,6 +428,7 @@ final class MacPreviewPublisher {
     let wasSuperseded = currentView.desired != key
     currentView.finish(key, generation: generation, error: error)
     currentViewTask = nil
+    if started { requestSourceIdentity() }
     if started, wasSuperseded { scheduleCurrentView(for: makeCurrentViewKey()) }
   }
 
@@ -317,7 +442,8 @@ final class MacPreviewPublisher {
       guard self?.started == true, !Task.isCancelled, let model else { return }
       do {
         _ = try await model.performStoreCommand { store in
-          guard let stamp = try store.readContentHeader(target: .init(kind: .page, id: key.pageID)).inkStamp else {
+          guard let stamp = try store.readContentHeader(target: .init(kind: .page, id: key.pageID)).inkStamp,
+            stamp == key.inkStamp else {
             throw PreviewPublicationError.sourceUnavailable
           }
           return try store.requestPageVision(pageID: key.pageID, expectedRevision: stamp.revision)

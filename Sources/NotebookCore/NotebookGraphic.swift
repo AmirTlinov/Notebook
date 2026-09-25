@@ -122,6 +122,7 @@ public struct NotebookGraphic: Codable, Equatable, Sendable {
 /// Compact exact visibility relation. Repeated lasso edits append operations;
 /// they do not expand immutable measurements into triangles or pixels.
 public struct NotebookGraphicMask: Codable, Equatable, Sendable {
+  public static let maximumPolygonPoints = 8_192
   public struct Operation: Codable, Equatable, Sendable {
     public enum Kind: String, Codable, Sendable { case intersect, subtract }
     public let kind: Kind
@@ -199,7 +200,7 @@ public struct NotebookGraphicMask: Codable, Equatable, Sendable {
           && !cuts.isEmpty && cuts.count <= 2048 && (operation.transform?.isValid ?? true)
           && cuts.allSatisfy { $0.target.isValid && !$0.samples.isEmpty && $0.samples.count <= 1_000_000 }
       }
-      return operation.transform == nil && operation.polygon.count >= 3 && operation.polygon.count <= 2048
+      return operation.transform == nil && operation.polygon.count >= 3 && operation.polygon.count <= Self.maximumPolygonPoints
         && operation.polygon.allSatisfy {
           $0.x.isFinite && $0.y.isFinite && abs($0.x) <= 1_000_000 && abs($0.y) <= 1_000_000
         }

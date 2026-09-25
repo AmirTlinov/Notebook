@@ -85,15 +85,16 @@ final class NotebookLiveScenePublicationTests: XCTestCase {
     await model.refreshCollaborationDetails()
     XCTAssertTrue(model.collaborationDetailsAreCurrent)
     let historyKey = model.collaborationPreparationKey
+    let sourceBasis = try XCTUnwrap(model.boardHierarchy?.board(presence.boardID)?.programStateBasis(rendered.id))
     let lock = try NotebookSQLWriteBlocker(store: model.store)
     defer { try? lock.release() }
-    XCTAssertTrue(model.commitSpatialElementState(boardID: presence.boardID, rendered: rendered, state: .string("first")))
+    XCTAssertTrue(model.commitSpatialElementState(boardID: presence.boardID, rendered: rendered, state: .string("first"), onCommitted: .init(sourceBasis: sourceBasis) { _ in }))
     XCTAssertFalse(model.acceptExternalScene(read, observedEpoch: epoch, observedPresence: presence, itemPins: [:],
       preparedIndex: preparedIndex), "Prepared geometry cannot bypass the accepted-contact frontier")
     XCTAssertFalse(model.collaborationDetailsAreCurrent, "Accepted input cannot leave old history results current while its write waits")
     XCTAssertNotEqual(model.collaborationPreparationKey, historyKey)
     let firstEpoch = model.collaborationReadEpoch
-    XCTAssertTrue(model.commitSpatialElementState(boardID: presence.boardID, rendered: rendered, state: .string("complete input")))
+    XCTAssertTrue(model.commitSpatialElementState(boardID: presence.boardID, rendered: rendered, state: .string("complete input"), onCommitted: .init(sourceBasis: sourceBasis) { _ in }))
     XCTAssertGreaterThan(model.collaborationReadEpoch, firstEpoch)
     XCTAssertFalse(model.acceptExternalScene(read, observedEpoch: firstEpoch, observedPresence: presence, itemPins: [:]))
     let preparing = Task { await model.refreshCollaborationDetails() }

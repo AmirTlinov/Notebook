@@ -87,7 +87,7 @@ final class ProgramAssetTests: XCTestCase {
     for name in ["sound", "linear", "gaussian", "astar", "tensor", "probability"] {
       let resources = SceneRenderResources(), lease = try await resources.acquireWebSurface(priority: .input)
       var ready = false, commits = 0
-      let owner = AgentWebCoordinator(lease: lease, resources: resources, onInteractionReady: { ready = $0 }, onState: { _ in commits += 1; return true })
+      let owner = AgentWebCoordinator(lease: lease, resources: resources, onInteractionReady: { ready = $0 }, onState: { _, completion in commits += 1; completion(nil); return true })
       let web = AgentWebCoordinator.makeWebView(coordinator: owner), close = try mount(web)
       defer { owner.invalidate(); lease.release(); close() }
       owner.load(.init(id: name, kind: .web, frame: .init(x: 0, y: 0, width: 760, height: 960), source: "",
@@ -192,7 +192,7 @@ final class ProgramAssetTests: XCTestCase {
     // unchanged asset program against the imported, saved scientific state.
     let resources = SceneRenderResources(), lease = try await resources.acquireWebSurface(priority: .input)
     var ready = false, commits = 0
-    let owner = AgentWebCoordinator(lease: lease, resources: resources, onInteractionReady: { ready = $0 }, onState: { _ in commits += 1; return true })
+    let owner = AgentWebCoordinator(lease: lease, resources: resources, onInteractionReady: { ready = $0 }, onState: { _, completion in commits += 1; completion(nil); return true })
     owner.programStore = store
     let web = AgentWebCoordinator.makeWebView(coordinator: owner), close = try mount(web)
     defer { owner.invalidate(); lease.release(); close() }
@@ -238,7 +238,7 @@ final class ProgramAssetTests: XCTestCase {
       let f = try compiledFixture(name + "-program"); defer { f.close() }
       let resources = SceneRenderResources(), lease = try await resources.acquireWebSurface(priority: .input)
       var ready = false, commits = 0
-      let owner = AgentWebCoordinator(lease: lease, resources: resources, onInteractionReady: { ready = $0 }, onState: { _ in commits += 1; return true })
+      let owner = AgentWebCoordinator(lease: lease, resources: resources, onInteractionReady: { ready = $0 }, onState: { _, completion in commits += 1; completion(nil); return true })
       owner.programStore = f.store
       let web = AgentWebCoordinator.makeWebView(coordinator: owner), close = try mount(web)
       defer { owner.invalidate(); lease.release(); close() }
@@ -294,7 +294,7 @@ final class ProgramAssetTests: XCTestCase {
     let f = try compiledFixture(); defer { f.close() }
     let resources = SceneRenderResources(), lease = try await resources.acquireWebSurface(priority: .input)
     var ready = false
-    let agent = AgentWebCoordinator(lease: lease, resources: resources, onInteractionReady: { ready = $0 }, onState: { _ in true })
+    let agent = AgentWebCoordinator(lease: lease, resources: resources, onInteractionReady: { ready = $0 }, onState: { _, completion in completion(nil); return true })
     agent.programStore = f.store
     let web = AgentWebCoordinator.makeWebView(coordinator: agent), close = try mount(web)
     defer { agent.invalidate(); lease.release(); close() }
@@ -324,7 +324,12 @@ final class ProgramAssetTests: XCTestCase {
     owner.mount(in: host, physicalSize: .init(width: 595, height: 842), isInteractive: true, priority: .currentPage)
     try await wait { owner.hasCanonicalPixels || owner.acquisitionError != nil }; XCTAssertTrue(owner.hasCanonicalPixels); XCTAssertNil(owner.acquisitionError)
     var checkpoint: JSONValue?
-    owner.onStateCheckpoint = { _, value, _, _ in checkpoint = value; return nil }
+    var checkpointJournal = DocumentStateJournal(id: document.id, actor: UUID())
+    owner.onStateCheckpoint = { id, value, _, _ in
+      checkpoint = value
+      _ = checkpointJournal.commit(blockID: id, value: value, actor: checkpointJournal.stamp.actor)
+      return checkpointJournal.records.first { $0.id == id }?.valueVersion
+    }
     let accepted = await owner.checkpointPrograms(resume: true)
     XCTAssertTrue(accepted); XCTAssertEqual(checkpoint?["x"], .number(2))
   }
@@ -336,7 +341,7 @@ final class ProgramAssetTests: XCTestCase {
     phase = "web acquisition"
     let resources = SceneRenderResources(), lease = try await resources.acquireWebSurface(priority: .input)
     var ready = false
-    let owner = AgentWebCoordinator(lease: lease, resources: resources, onInteractionReady: { ready = $0 }, onState: { _ in true })
+    let owner = AgentWebCoordinator(lease: lease, resources: resources, onInteractionReady: { ready = $0 }, onState: { _, completion in completion(nil); return true })
     owner.programStore = f.store
     let web = AgentWebCoordinator.makeWebView(coordinator: owner), close = try mount(web)
     defer { owner.invalidate(); lease.release(); close() }
@@ -408,7 +413,7 @@ final class ProgramAssetTests: XCTestCase {
     let f = try compiledFixture("gears-program"); defer { f.close() }
     let resources = SceneRenderResources(), lease = try await resources.acquireWebSurface(priority: .input)
     var ready = false
-    let owner = AgentWebCoordinator(lease: lease, resources: resources, onInteractionReady: { ready = $0 }, onState: { _ in true })
+    let owner = AgentWebCoordinator(lease: lease, resources: resources, onInteractionReady: { ready = $0 }, onState: { _, completion in completion(nil); return true })
     owner.programStore = f.store
     let web = AgentWebCoordinator.makeWebView(coordinator: owner), close = try mount(web)
     defer { owner.invalidate(); lease.release(); close() }
@@ -487,7 +492,12 @@ final class ProgramAssetTests: XCTestCase {
     try await wait { docOwner.hasCanonicalPixels || docOwner.acquisitionError != nil }
     XCTAssertTrue(docOwner.hasCanonicalPixels); XCTAssertNil(docOwner.acquisitionError)
     var saved: JSONValue?
-    docOwner.onStateCheckpoint = { _, value, _, _ in saved = value; return nil }
+    var checkpointJournal = DocumentStateJournal(id: document.id, actor: UUID())
+    docOwner.onStateCheckpoint = { id, value, _, _ in
+      saved = value
+      _ = checkpointJournal.commit(blockID: id, value: value, actor: checkpointJournal.stamp.actor)
+      return checkpointJournal.records.first { $0.id == id }?.valueVersion
+    }
     let accepted = await docOwner.checkpointPrograms(resume: true)
     XCTAssertTrue(accepted); XCTAssertEqual(saved?["selected"], .string("output")); XCTAssertEqual(saved?["reveal"], .number(0.8))
   }
@@ -497,7 +507,7 @@ final class ProgramAssetTests: XCTestCase {
     for fault in ["model", "texture", "decode", "unavailable"] {
       let resources = SceneRenderResources(), lease = try await resources.acquireWebSurface(priority: .input)
       var ready = false
-      let owner = AgentWebCoordinator(lease: lease, resources: resources, onInteractionReady: { ready = $0 }, onState: { _ in true })
+      let owner = AgentWebCoordinator(lease: lease, resources: resources, onInteractionReady: { ready = $0 }, onState: { _, completion in completion(nil); return true })
       owner.programStore = f.store
       let web = AgentWebCoordinator.makeWebView(coordinator: owner), close = try mount(web)
       defer { owner.invalidate(); lease.release(); close() }
@@ -553,7 +563,7 @@ final class ProgramAssetTests: XCTestCase {
     let f = try compiledFixture("wave-program"); defer { f.close() }
     let resources = SceneRenderResources(), lease = try await resources.acquireWebSurface(priority: .input)
     var ready = false
-    let owner = AgentWebCoordinator(lease: lease, resources: resources, onInteractionReady: { ready = $0 }, onState: { _ in true })
+    let owner = AgentWebCoordinator(lease: lease, resources: resources, onInteractionReady: { ready = $0 }, onState: { _, completion in completion(nil); return true })
     owner.programStore = f.store
     let web = AgentWebCoordinator.makeWebView(coordinator: owner), close = try mount(web)
     defer { owner.invalidate(); lease.release(); close() }
@@ -755,7 +765,7 @@ final class ProgramAssetTests: XCTestCase {
     for _ in 0..<2 {
       let resources = SceneRenderResources(), lease = try await resources.acquireWebSurface(priority: .input)
       var ready = false
-      let coordinator = AgentWebCoordinator(lease: lease, resources: resources, onInteractionReady: { ready = $0 }, onState: { _ in false })
+      let coordinator = AgentWebCoordinator(lease: lease, resources: resources, onInteractionReady: { ready = $0 }, onState: { _, _ in false })
       // Reopening SQLite, not reusing an in-memory namespace, models a cold owner.
       coordinator.programStore = NotebookStore(root: f.root)
       let web = AgentWebCoordinator.makeWebView(coordinator: coordinator), close = try mount(web)
@@ -877,7 +887,7 @@ final class ProgramAssetTests: XCTestCase {
       let actor = UUID(), document = DocumentDocument(actor: UUID(), blocks: [.interactive(id: name, html: "", programPackage: f.hash, height: 900)])
       let block = try XCTUnwrap(document.blocks.first), resources = SceneRenderResources()
       var journal = DocumentStateJournal(id: document.id, actor: actor)
-      let runtime = DocumentBlockRuntime(documentID: document.id, block: block, sourceVersion: document.sourceVersion(blockID: name),
+      let runtime = DocumentBlockRuntime(documentID: document.id, block: block, programIdentity: document.programIdentity(blockID: name),
         value: block.initialState, stateVersion: nil, width: 600, resources: resources, programStore: f.store)
       let container = UIView(), close = try mount(container)
       defer { runtime.stop(); close() }
@@ -935,7 +945,7 @@ final class ProgramAssetTests: XCTestCase {
     let f = try fixture(); defer { f.close() }
     let document = DocumentDocument(actor: UUID(), blocks: [.interactive(id: "asset", html: "", programPackage: f.hash, height: 180)])
     let block = try XCTUnwrap(document.blocks.first), resources = SceneRenderResources()
-    let runtime = DocumentBlockRuntime(documentID: document.id, block: block, sourceVersion: document.sourceVersion(blockID: block.id),
+    let runtime = DocumentBlockRuntime(documentID: document.id, block: block, programIdentity: document.programIdentity(blockID: block.id),
       value: .object(["restored": .number(7)]), stateVersion: nil, width: 600, resources: resources, programStore: f.store)
     let container = UIView(), close = try mount(container)
     defer { runtime.stop(); close() }
@@ -971,7 +981,12 @@ final class ProgramAssetTests: XCTestCase {
     let started = try await web.evaluateJavaScript("notebookRenderer.pageReceipt().programs[0].readiness") as? String
     XCTAssertEqual(started, "declared", String(describing: receipt))
     var checkpoint: JSONValue?
-    coordinator.onStateCheckpoint = { _, value, _, _ in checkpoint = value; return nil }
+    var checkpointJournal = DocumentStateJournal(id: document.id, actor: UUID())
+    coordinator.onStateCheckpoint = { id, value, _, _ in
+      checkpoint = value
+      _ = checkpointJournal.commit(blockID: id, value: value, actor: checkpointJournal.stamp.actor)
+      return checkpointJournal.records.first { $0.id == id }?.valueVersion
+    }
     let accepted = await coordinator.checkpointPrograms(resume: true)
     XCTAssertTrue(accepted); XCTAssertEqual(checkpoint?["assetAnswer"], .number(42)); XCTAssertEqual(checkpoint?["parentIsolated"], .bool(true))
     let iframeURL = try await web.evaluateJavaScript("document.querySelector('iframe').src") as? String

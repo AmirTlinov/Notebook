@@ -72,7 +72,14 @@ struct NotebookElementManipulation: Equatable, Sendable {
   let originalLayout: NotebookGraphicLayout?
   let placement: NotebookElementPlacement?
   let displayFrame: CGRect
-  private(set) var presentedFrame: CGRect
+  private var projectedFrame: CGRect
+  /// Input keeps its latest pose while a cold lasso resolves. Until the source
+  /// cut and moved material exist, controls must depict the unchanged material,
+  /// not an empty rectangle at a pose that no painter can install yet.
+  var presentedFrame: CGRect {
+    if let region, region.materialization == nil { return displayFrame }
+    return projectedFrame
+  }
   var graphicCapture: NotebookGraphicContactSource?
   var commandSource:NotebookElementCommand?
   var originalBasis: NotebookElementBasis? { placement?.basis }
@@ -109,7 +116,7 @@ struct NotebookElementManipulation: Equatable, Sendable {
     self.reference = reference; self.kind = kind; original = frame
     self.frame = frame; self.bounds = bounds
     self.identity = identity; self.worldOrigin = placement?.origin ?? worldOrigin
-    self.placement=placement;basis=placement?.basis;self.displayFrame=displayFrame ?? frame;presentedFrame=displayFrame ?? frame
+    self.placement=placement;basis=placement?.basis;self.displayFrame=displayFrame ?? frame;projectedFrame=displayFrame ?? frame
     originalConnection = connection; self.connection = connection; originalLayout = layout
     self.graphic = graphic; originalVertices = graphic.flatMap(NotebookGraphicGeometry.polygon); vertices = originalVertices
     self.text=text
@@ -119,7 +126,7 @@ struct NotebookElementManipulation: Equatable, Sendable {
   mutating func update(translation: CGPoint) {
     guard translation.x.isFinite, translation.y.isFinite else { return }
     if translation == .zero {
-      presentedFrame=displayFrame;frame = original; basis=originalBasis; connection = originalConnection; vertices = originalVertices; cornerRadius = originalCornerRadius
+      projectedFrame=displayFrame;frame = original; basis=originalBasis; connection = originalConnection; vertices = originalVertices; cornerRadius = originalCornerRadius
       return
     }
     switch kind {
@@ -129,7 +136,7 @@ struct NotebookElementManipulation: Equatable, Sendable {
       let physical=SpatialPoint(x:x-displayFrame.minX,y:y-displayFrame.minY)
       guard let delta=placement.map({ $0.parentVector(physical) }) ?? physical else { return }
       frame = .init(x:original.minX+delta.x,y:original.minY+delta.y,width:original.width,height:original.height)
-      presentedFrame=displayFrame.offsetBy(dx:physical.x,dy:physical.y)
+      projectedFrame=displayFrame.offsetBy(dx:physical.x,dy:physical.y)
       if let value=originalConnection,!value.bindings.isEmpty,let layout=originalLayout {
         connection=frame == original ? value : value.detachingEndpoints(in:layout)
       }
@@ -151,7 +158,7 @@ struct NotebookElementManipulation: Equatable, Sendable {
         guard maximum>=min(1,width) else { return }
         let nextWidth=min(maximum,max(min(1,width),width+(corner.leading ? -delta.x : delta.x)))
         guard nextWidth != width else {
-          frame=original;basis=originalBasis;presentedFrame=displayFrame;return
+          frame=original;basis=originalBasis;projectedFrame=displayFrame;return
         }
         let fitted=NotebookTextTypography.fittingFrame(text.source,style:text.style,
           in:.init(x:0,y:0,width:nextWidth,height:placement.localSize.y))
@@ -159,7 +166,7 @@ struct NotebookElementManipulation: Equatable, Sendable {
           .resizingBody(to:.init(x:nextWidth,y:min(1_000_000,fitted.height)),offset:.init(x:corner.leading ? width-nextWidth : 0,y:0)),
           let updated=try? placement.updating(frame:pose.frame,basis:pose.basis) else { return }
         frame = .init(x:pose.frame.x,y:pose.frame.y,width:pose.frame.width,height:pose.frame.height);basis=pose.basis
-        presentedFrame=CGRect(x:fitted.x,y:fitted.y,width:fitted.width,height:fitted.height).applying(updated.transform)
+        projectedFrame=CGRect(x:fitted.x,y:fitted.y,width:fitted.width,height:fitted.height).applying(updated.transform)
         return
       }
       let original=displayFrame
@@ -189,7 +196,7 @@ struct NotebookElementManipulation: Equatable, Sendable {
         guard let pose=try? placement.applyingSurfaceTransform(change) else { return }
         frame = .init(x:pose.frame.x,y:pose.frame.y,width:pose.frame.width,height:pose.frame.height);basis=pose.basis
       } else { frame=shown }
-      presentedFrame=shown
+      projectedFrame=shown
     case .endpoint(let terminal):
       guard var value = originalConnection, let layout = originalLayout else { return }
       let p = terminal == .start ? layout.start : layout.end

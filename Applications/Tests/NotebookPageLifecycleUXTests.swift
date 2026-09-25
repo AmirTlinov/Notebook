@@ -20,14 +20,14 @@ import XCTest
     _ = try await turnTarget(owner, forward: true)
     let native = owner.sheetController
     let curl = try XCTUnwrap(native.view.subviews.compactMap { $0 as? SheetCurlMetalView }.first)
-    let present = curl.onFramePresented, admit = native.willTurn
+    let present = curl.onFrameReady, admit = native.willTurn
     let pan = NotebookCurlPan()
     var attempted = false, admitted: Bool?
     native.willTurn = { target in let accepted = admit(target); admitted = accepted; return accepted }
     defer { native.willTurn = admit }
-    curl.onFramePresented = { image, progress, timestamp in
-      present?(image, progress, timestamp)
-      guard timestamp > 0, progress == 1, owner.displayedIndex == 1, !attempted else { return }
+    curl.onFrameReady = { image, progress, sequence, readiness in
+      present?(image, progress, sequence, readiness)
+      guard readiness.isReady, progress == 1, owner.displayedIndex == 1, !attempted else { return }
       attempted = true
       // The actual landing has released the native owner. A deferred SwiftUI
       // notification of that same landing must not continue denying its input.
@@ -69,6 +69,19 @@ import XCTest
   }
 
   func testDenseVectorSheetsKeepTheirOwnPixelsThroughImmediateReversals() async throws {
+    #if targetEnvironment(simulator)
+    throw XCTSkip("Immediate post-display pixels require OS presentation receipts, unavailable in Simulator")
+    #endif
+    try await exerciseDenseVectorSheets(observeSimulatorComposition: false)
+  }
+
+  #if targetEnvironment(simulator)
+  func testDenseVectorSheetsDoNotReturnToTheOldLeafAfterObservedSimulatorComposition() async throws {
+    try await exerciseDenseVectorSheets(observeSimulatorComposition: true)
+  }
+  #endif
+
+  private func exerciseDenseVectorSheets(observeSimulatorComposition: Bool) async throws {
     let model = try await modelWithPages(2), notebook = try XCTUnwrap(model.workspace?.selectedItemID)
     for index in 0..<2 {
       await model.prepareNotebookPage(at: index, in: notebook)
@@ -94,7 +107,7 @@ import XCTest
     while !owner.preparedPageIndices.isSuperset(of: [0, 1]), ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(8)) }
     XCTAssertTrue(owner.preparedPageIndices.isSuperset(of: [0, 1]))
     let source = try XCTUnwrap(model.notebookPageRoot(notebook))
-    for target in [1, 0, 1, 0, 1, 0] {
+    for (turn, target) in [1, 0, 1, 0, 1, 0].enumerated() {
       if target == 1 {
         XCTAssertTrue(model.notebookPageNavigation.send(.step(1), ownerID: notebook, source: source))
       } else {
@@ -102,11 +115,12 @@ import XCTest
         // commanded animation. Hardware touch arbitration is checked separately.
         let native = owner.sheetController, pan = NotebookCurlPan()
         let curl = try XCTUnwrap(native.view.subviews.compactMap { $0 as? SheetCurlMetalView }.first)
-        let presented = curl.onFramePresented
+        let presented = curl.onFrameReady
+        defer { curl.onFrameReady = presented }
         var endpointPresented = false
-        curl.onFramePresented = { image, progress, timestamp in
-          if progress == 0, timestamp > 0 { endpointPresented = true }
-          presented?(image, progress, timestamp)
+        curl.onFrameReady = { image, progress, sequence, readiness in
+          if progress == 0, readiness.isReady { endpointPresented = true }
+          presented?(image, progress, sequence, readiness)
         }
         pan.phase = .began; pan.offset.x = 20
         XCTAssertTrue(native.gestureRecognizerShouldBegin(pan))
@@ -122,18 +136,36 @@ import XCTest
       let limit = ContinuousClock.now + .seconds(2)
       while owner.displayedIndex != target, ContinuousClock.now < limit { try await Task.sleep(for: .milliseconds(1)) }
       XCTAssertEqual(owner.displayedIndex, target)
-      for _ in 0..<4 {
+      var probes = [0, 1].map { index in
+        (CGPoint(x: 130 + Double(index)*100, y: 1095).applying(scene.pageToWindow),
+          index == target ? NotebookUXObservation.Color.blue : .paper)
+      }
+      for number in 0..<13 {
+        let frame = NotebookNavigationLoadFixture.frame(number, programs: false)
+        probes.append((CGPoint(x: frame.x + 80, y: frame.y + 145).applying(scene.pageToWindow),
+          target == 0 ? .red : .blue))
+      }
+      if observeSimulatorComposition {
+        // No OS presentation receipt exists on Simulator. Establish the first
+        // correct image by observation, not a GPU/CA callback or a fixed sleep.
+        // This is NOT the physical same-event landing or input-latency gate.
+        try await assertUX("Simulator dense composition \(turn)", since: .now,
+          budget: NotebookUXObservation.correctnessTimeout, window: scene.window) {
+          try NotebookUXObservation.Pixels(window: scene.window).matches(probes)
+        }
+      }
+      for sample in 0..<4 {
         let pixels = try NotebookUXObservation.Pixels(window: scene.window)
-        var probes = [0, 1].map { index in
-          (CGPoint(x: 130 + Double(index)*100, y: 1095).applying(scene.pageToWindow),
-            index == target ? NotebookUXObservation.Color.blue : .paper)
+        let matches = try pixels.matches(probes)
+        if !matches {
+          let shot = XCTAttachment(image: pixels.image)
+          shot.name = "Dense landing turn=\(turn) target=\(target) sample=\(sample)"
+          shot.lifetime = .keepAlways; add(shot)
+          let missing = try probes.enumerated().filter { try !pixels.matches([$0.element]) }.map(\.offset)
+          let note = XCTAttachment(string: "Failed probes \(missing); owner=\(owner.displayedIndex), target=\(target), sample=\(sample)")
+          note.lifetime = .keepAlways; add(note)
         }
-        for number in 0..<13 {
-          let frame = NotebookNavigationLoadFixture.frame(number, programs: false)
-          probes.append((CGPoint(x: frame.x + 80, y: frame.y + 145).applying(scene.pageToWindow),
-            target == 0 ? .red : .blue))
-        }
-        XCTAssertTrue(try pixels.matches(probes), "A reverse landing reintroduced the other leaf's graphic or SVG pixels")
+        XCTAssertTrue(matches, "Turn \(turn), target \(target), sample \(sample): a landing reintroduced the other leaf's graphic or SVG pixels")
         try await Task.sleep(for: .milliseconds(4))
       }
     }
@@ -192,7 +224,8 @@ import XCTest
     let actor = UUID(), gate = NotebookInputGate()
     var page = PageDocument(size: .init(width: 600, height: 400), actor: actor)
     XCTAssertTrue(page.replaceDrawing(try PageInkDrawing(actions: [line(y: 200)]).dataRepresentation(), actor: actor))
-    let owner = PencilCanvasView.Coordinator(inputGate: gate, reserveAction: { _ in page.drawingStamp.advanced(by: actor) },
+    let publication=NotebookPageInkPublication()
+    let owner = PencilCanvasView.Coordinator(inputGate: gate,publication:publication, reserveAction: { _ in page.drawingStamp.advanced(by: actor) },
       releaseAction: { _, _ in }, acceptAction: { _, _, _, _ in nil })
     owner.attach(to: paper); owner.apply(page.inkSource, pageID: page.id, to: paper)
     defer { owner.detach(from: paper); window.isHidden = true; window.rootViewController = nil; previous?.makeKey() }
@@ -204,7 +237,7 @@ import XCTest
       // repair the gap but incorrectly delete this successful previous stroke.
       owner.acceptAction = { action, _, stamp, _ in
         guard let change = try? page.prepareInkChange(.append(action), stamp: stamp) else { return nil }
-        XCTAssertTrue(page.publishLiveInkChange(change)); return change
+        XCTAssertTrue(page.publishLiveInkChange(change));publication.publish(change); return change
       }
       XCTAssertTrue(paper.touchView.onActionWillBegin?() == true)
       owner.commit(line(y: 300), on: paper)
@@ -348,13 +381,26 @@ import XCTest
         let current = try Scene(model: model, window: scene.window)
         model.selectPenWidth(12); try await current.readyPencil(self)
         let pencilStart = ContinuousClock.now
-        current.beginPencil(.init(x: 180, y: 950)); current.movePencil(.init(x: 480, y: 950)); current.endPencil()
+        let ink=try XCTUnwrap((current.paper.superview as? PaperCanvasContainerView)?.inkView)
+        let receiveReadiness=ink.onRenderReadinessChange
+        var nativeReadiness:[String]=[]
+        ink.onRenderReadinessChange = { ready in
+          nativeReadiness.append("\(pencilStart.duration(to:.now)): ready=\(ready), source=\(ink.pageGeometryIsReady)")
+          receiveReadiness?(ready)
+        }
+        defer { ink.onRenderReadinessChange=receiveReadiness }
+        current.beginPencil(.init(x: 180, y: 950));let began=pencilStart.duration(to:.now)
+        current.movePencil(.init(x: 480, y: 950));let moved=pencilStart.duration(to:.now)
+        current.endPencil();let lifted=pencilStart.duration(to:.now)
         // Window capture occupies MainActor while Metal's actual presented
         // callback is queued. Require pixels AND that exact source receipt in
         // the same original 100 ms window, not synchronously after one capture.
         try await shown("new-leaf-accepts-its-own-ink", window: scene.window,
           probes: [probe("new-leaf-line", [(300, 950)], .black, scene.pageToWindow)], since: pencilStart,
-          acknowledged: { model.activePage.map { model.pagePresentations.isPresented($0) } == true })
+          acknowledged: { ink.isStableFramePresented
+            && model.activePage.map { model.pagePresentations.isPresented($0) } == true })
+        let phases=XCTAttachment(string:"begin=\(began); move=\(moved); lift=\(lifted); native readiness=\(nativeReadiness)")
+        phases.name="new-leaf-first-contact-phases";phases.lifetime = .keepAlways;add(phases)
       } else {
         try await shown("new-leaf-ink-does-not-leak-\(step)", window: scene.window,
           probes: [probe("other-leaf-stays-empty", [(300, 950)], .paper, scene.pageToWindow)])
@@ -456,12 +502,14 @@ import XCTest
     XCTAssertNil(model.selectNotebookPage(1, notebookID: notebook, expectedRoot: oldRoot))
 
     let current = try Scene(model: model, window: scene.window)
+    let ink = try XCTUnwrap(current.paper.superview as? PaperCanvasContainerView).inkView
     model.selectPenWidth(12); try await current.readyPencil(self)
     let pencilStart = ContinuousClock.now
     current.beginPencil(.init(x: 180, y: 950)); current.movePencil(.init(x: 480, y: 950)); current.endPencil()
     try await shown("cancelled-root-gives-next-pencil-to-current-uuid", window: scene.window,
       probes: [probe("new-current-line", [(300, 950)], .black, scene.pageToWindow)], since: pencilStart,
-      acknowledged: { model.activePage.map { model.pagePresentations.isPresented($0) } == true })
+      acknowledged: { ink.isStableFramePresented
+        && model.activePage.map { model.pagePresentations.isPresented($0) } == true })
     let saved = await model.finishPendingPersistence(); XCTAssertTrue(saved, model.persistenceFailure ?? "")
     XCTAssertEqual(try model.store.loadPage(first).inkDrawing().activeActions.count, 2)
     XCTAssertEqual(try model.store.loadPage(survivor.pageID).inkDrawing().activeActions.count, 1)
@@ -533,12 +581,46 @@ import XCTest
            probe("outside-body", [(350, 340)], .red, scene.pageToWindow)], since: selectedAt)
     let region = try XCTUnwrap(model.selectionSession.region)
     XCTAssertEqual(model.selectionSession.editingElement, region.reference)
-    func visibleMenus(_ view: UIView) -> Int {
-      guard !view.isHidden, view.alpha > 0.01 else { return 0 }
-      return (view.accessibilityIdentifier == "notebook-context-menu" ? 1 : 0)
-        + view.subviews.reduce(0) { $0 + visibleMenus($1) }
+    func descendants(_ view: UIView) -> [UIView] { [view] + view.subviews.flatMap(descendants) }
+    let installed = descendants(scene.window)
+    XCTAssertEqual(installed.compactMap { $0 as? NotebookSelectionControlsView }.count, 1,
+      "One installed control owner for the selected region")
+    let menuOwners = installed.compactMap { $0 as? NotebookContextMenus.HostView }
+      .flatMap { $0.interactions.compactMap { ($0 as? UIEditMenuInteraction)?.delegate as? NotebookContextMenus } }
+    XCTAssertEqual(menuOwners.count, 1)
+    let menus = try XCTUnwrap(menuOwners.first), selectionID = model.selectionSession.id
+    let selectionActions = try XCTUnwrap(menus.selectionActions)
+    var requestedSelection: UUID?, offeredActions: [UIAction] = []
+    func actions(in elements: [UIMenuElement]) -> [UIAction] {
+      elements.flatMap { element in
+        if let action = element as? UIAction { return [action] }
+        return (element as? UIMenu).map { actions(in: $0.children) } ?? []
+      }
     }
-    XCTAssertEqual(visibleMenus(scene.window), 1, "One visible action owner before moving the selected region")
+    menus.selectionActions = { id, point in
+      let contents = selectionActions(id, point)
+      requestedSelection = id; offeredActions = actions(in: contents)
+      return contents
+    }
+    defer { menus.selectionActions = selectionActions; menus.dismissPresentedContent() }
+    // Selection installs handles, not an automatic toolbar. Its actions belong
+    // to the same ordinary quiet-hold route as any other selected material.
+    try await scene.readyFinger(self)
+    let heldAt = ContinuousClock.now
+    scene.beginFinger(.init(x: 250, y: 340))
+    try await assertUX("fragment-action-hold-armed", since: heldAt,
+      budget: NotebookObjectPickup.delay + NotebookUXObservation.selection, window: scene.window) {
+        scene.finger.state == .began
+      }
+    scene.endFinger()
+    XCTAssertEqual(requestedSelection, selectionID)
+    XCTAssertTrue(menus.hasPresentedMenu, "The installed owner must offer the selected fragment's actions")
+    let copy = try XCTUnwrap(offeredActions.first { $0.title == "Копировать" })
+    XCTAssertFalse(copy.attributes.contains(.disabled))
+    menus.selectionActions = selectionActions
+    menus.dismissPresentedContent()
+    XCTAssertEqual(model.selectionSession.id, selectionID, "Dismissing actions must not change selection")
+    XCTAssertEqual(model.selectionSession.region?.reference, region.reference)
     try await scene.readyFinger(self)
     scene.beginFinger(.init(x: 250, y: 340)); scene.moveFinger(.init(x: 250, y: 560))
     var dropped = ContinuousClock.now; scene.endFinger()
@@ -720,18 +802,21 @@ import XCTest
     witness: Probe? = nil, absence: [Probe] = [], acknowledged: () -> Bool = { true }) async throws {
     try await Task.sleep(for: .milliseconds(16))
     var failures: [String] = [], last: UIImage?, resurrections: [String] = []
-    var captures:[Duration]=[]
+    var captures:[Duration]=[],phases:[String]=[]
+    let allProbes = probes + (witness.map { [$0] } ?? []) + absence
     let result = try await assertUX(name, since: start, budget: budget, window: window) {
-      // When this case also requires the OS presentation receipt, let that
+      // When this case also requires native source/frame readiness, let that
       // callback run before the expensive window read. Repeated captures while
       // awaiting it block MainActor and manufacture delay. The original clock
       // still includes the gesture, receipt wait and final pixel observation.
-      guard acknowledged() else { return false }
+      guard acknowledged() else { phases.append("\(start.duration(to:.now)): source not acknowledged");return false }
       let captureStart=ContinuousClock.now
       let image = try NotebookUXObservation.Pixels(window: window).image
-      captures.append(captureStart.duration(to:.now))
-      let frame = try NotebookSelectionComposition.Frame(image)
+      let captured=ContinuousClock.now
+      captures.append(captureStart.duration(to:captured))
+      let frame = try NotebookSelectionComposition.Frame(image, sampling: allProbes)
       last = image; failures = frame.failures(probes)
+      phases.append("\(start.duration(to:captureStart)): capture=\(captureStart.duration(to:captured)), decode/check=\(captured.duration(to:.now)), bits=\(image.cgImage?.bitsPerPixel ?? 0), decoded pixels=\(frame.decodedPixelCount), failures=\(failures)")
       if let witness, frame.failures([witness]).isEmpty, !absence.isEmpty {
         let returned = frame.failures(absence)
         if !returned.isEmpty {
@@ -745,7 +830,7 @@ import XCTest
       return failures.isEmpty
     }
     XCTAssertTrue(resurrections.isEmpty, "Previously erased/deleted material appeared during opening: \(resurrections)")
-    let note = XCTAttachment(string: "\(name): \(failures); elapsed including capture=\(result.milliseconds) ms; captures=\(captures)")
+    let note = XCTAttachment(string: "\(name): \(failures); elapsed including capture=\(result.milliseconds) ms; captures=\(captures); phases=\(phases)")
     note.name = name + "-composition"; note.lifetime = .keepAlways; add(note)
     if let last { let picture = XCTAttachment(image: last); picture.name = name; picture.lifetime = .keepAlways; add(picture) }
   }

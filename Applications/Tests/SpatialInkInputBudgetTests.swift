@@ -307,7 +307,15 @@ final class SpatialInkInputBudgetTests: XCTestCase {
     let moved = await model.finishPendingPersistence()
     XCTAssertTrue(moved, model.persistenceFailure ?? "")
 
-    var hierarchy = try XCTUnwrap(model.boardHierarchy)
+    let viewport = SpatialPoint(x: 834, y: 1194)
+    let presence = SessionPresence(boardID: boardID, mode: .board,
+      camera: .init(center: .init(x: 512, y: 512), scale: 1), viewport: viewport)
+    // Moving the initially open paper also moves its reading camera. Admit
+    // the intended board window before loading the cold scene's sources.
+    model.updatePresence(presence, settled: true)
+    var hierarchy = try await model.performStoreCommand { store in
+      try store.loadBoard(items: store.loadIndex().items)
+    }
     let elementIDs = (0..<7).map { "cold-input-panel-\($0)" }
     for (offset, id) in elementIDs.enumerated() {
       // Seven real 1024² transparent sources ask the ordinary planner for
@@ -326,18 +334,19 @@ final class SpatialInkInputBudgetTests: XCTestCase {
     await model.reloadExternalChanges()?.value
     let readyStore = await model.finishPendingPersistence()
     XCTAssertTrue(readyStore, model.persistenceFailure ?? "")
-    let viewport = SpatialPoint(x: 834, y: 1194)
-    let presence = SessionPresence(boardID: boardID, mode: .board,
-      camera: .init(center: .init(x: 512, y: 512), scale: 1), viewport: viewport)
+    let sourceRevision = try await model.performStoreCommand { try $0.workspaceHeader().cursor }
     window.frame = .init(x: 0, y: 0, width: viewport.x, height: viewport.y)
     host.rootView = AnyView(SpatialWorkspaceView().environment(model).environment(\.displayScale, 2).ignoresSafeArea())
     window.rootViewController = host
     model.updatePresence(presence, settled: true)
     window.makeKeyAndVisible()
     let deadline = ContinuousClock.now + .seconds(15)
-    while model.compositionTiles.published == nil, model.compositionTiles.failure == nil,
+    while (model.compositionTiles.published?.plan.revision != sourceRevision
+      || model.scenePreparationPending || model.compositionTiles.isPreparing),
+      model.compositionTiles.failure == nil,
       ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(10)) }
     var cohort = try XCTUnwrap(model.compositionTiles.published, model.compositionTiles.failure ?? "The complete dense scene must precede the first contact")
+    XCTAssertEqual(cohort.plan.revision, sourceRevision)
     XCTAssertEqual(Set(cohort.frame.workset(boardID: boardID).elements.map(\.id)), Set(elementIDs))
     XCTAssertEqual(cohort.rasters.count, cohort.plan.tiles.count)
     XCTAssertTrue(cohort.rasters.values.allSatisfy { !$0.isReleased })
@@ -406,7 +415,9 @@ final class SpatialInkInputBudgetTests: XCTestCase {
     for revision in 0..<2 {
       if revision > 0 {
         let element = try XCTUnwrap(model.sceneIndex?.element(id: elementIDs[0], boardID: boardID))
-        model.commitSpatialElementState(boardID: boardID, rendered: element, state: .object(["revision": .number(1)]))
+        let sourceBasis = try XCTUnwrap(model.boardHierarchy?.board(boardID)?.programStateBasis(element.id))
+        model.commitSpatialElementState(boardID: boardID, rendered: element, state: .object(["revision": .number(1)]),
+          onCommitted: .init(sourceBasis: sourceBasis) { _ in })
         let stateSaved = await model.finishPendingPersistence()
         XCTAssertTrue(stateSaved, model.persistenceFailure ?? "")
       }

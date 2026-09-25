@@ -62,7 +62,7 @@ struct PreparedAgentElementView: View {
   let rasterPreparation: PageRasterPreparation.Context?
   let onFailure: (PageTurnPreparationFailure) -> Void
   let onRenderReady: (Bool) -> Void
-  let onState: (JSONValue) -> Bool
+  let onState: NotebookProgramStateWriter
 
   @State private var raster: RasterLease?
   @State private var web: WebSurfaceLease?
@@ -83,7 +83,7 @@ struct PreparedAgentElementView: View {
     pageTurnActivity:PageTurnActivity? = nil,
     rasterPreparation:PageRasterPreparation.Context? = nil,
     onFailure: @escaping (PageTurnPreparationFailure) -> Void = { _ in },
-    onRenderReady: @escaping (Bool) -> Void, onState: @escaping (JSONValue) -> Bool) {
+    onRenderReady: @escaping (Bool) -> Void, onState: @escaping NotebookProgramStateWriter) {
     self.element = element
     self.allowsInteraction = allowsInteraction
     self.inputEnabled = inputEnabled
@@ -221,7 +221,7 @@ struct PreparedAgentElementView: View {
         })
       }
       if let web {
-        AgentWebElementView(element: element, stateBasis: basis, programOwner: model, lease: web,
+        AgentWebElementView(element: element, stateBasis: basis, programOwner: model, allowsStateCommits: isActive && hasFocus, lease: web,
           snapshotPolicy: snapshotPolicy,
           focus: focus,
           onRenderReady: { ready in
@@ -274,10 +274,7 @@ struct PreparedAgentElementView: View {
               self.web = nil
             }
             onRenderReady(false)
-          }, onState: { value in
-            guard isActive, hasFocus, self.web?.id == web.id, !web.isReleased else { return false }
-            return onState(value)
-          })
+          }, onState: onState)
           .id(web.id)
           .opacity(showsLiveProgram ? 1 : 0)
           .allowsHitTesting(isActive && inputEnabled && liveProgram == AgentProgramSource(element))
@@ -387,8 +384,8 @@ struct PreparedAgentElementView: View {
       // current program frame is retained. No source job boots a second copy;
       // its keyed admission waits for this owner's final submitted borrow.
       do {
-        let (accepted, captured) = try await AgentWebCoordinator.checkpointCurrent(focus: focus, element: demand.source) { value, basis in
-          return try await model.checkpointProgramState(focus: focus, rendered: demand.source, value: value, basis: basis)
+        let (accepted, captured) = try await AgentWebCoordinator.checkpointCurrent(focus: focus, element: demand.source) { value, basis, admittedBytes in
+          return try await model.checkpointProgramState(focus: focus, rendered: demand.source, value: value, basis: basis, admittedStateBytes: admittedBytes)
         }
         guard !Task.isCancelled, self.web?.id == retiring.id, !isActive else {
           captured.release(); await AgentWebCoordinator.resumeCurrent(focus: focus); return

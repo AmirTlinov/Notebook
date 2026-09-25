@@ -4,6 +4,165 @@ import UIKit
 @testable import Notebook
 
 @MainActor final class NotebookDrawingToolsTests: XCTestCase {
+  func testLassoKeepsAll8192AdmittedPointsAndRejectsOverflowWithoutLosingSelection() async throws {
+    try await fixture { model in
+      let page=try XCTUnwrap(model.activePage)
+      let address=NotebookToolAddress(surface:.page(page.id),boardID:nil,worldOrigin:nil,bounds:nil)
+      let polygon=(0..<NotebookGraphicMask.maximumPolygonPoints).map {
+        SpatialPoint(x:100+Double($0)/32,y:$0.isMultiple(of:2) ? 100 : 200)
+      }
+      model.selectDrawingTool(.lasso);model.drawingToolSettings.lassoMode = .region
+      XCTAssertTrue(model.drawingTools.begin(at:polygon[0],address:address,screenScale:1))
+      let buffer=try XCTUnwrap(model.drawingTools.contact?.contour)
+      for point in polygon.dropFirst() { XCTAssertEqual(model.drawingTools.move(to:point),point) }
+      XCTAssertTrue(model.drawingTools.contact?.contour === buffer,"Every sample appends to one owner")
+      XCTAssertEqual(model.drawingTools.contact?.points,polygon)
+      model.drawingTools.finish()
+      XCTAssertEqual(model.selectionSession.region?.polygon,polygon,"Lift must not simplify or truncate topology")
+      model.drawingTools.cancel()
+      // An already materialized selection is not owned by the next contact.
+      let previous=NotebookRegionSelection(id:UUID(),address:address,
+        polygon:[.zero,.init(x:10,y:0),.init(x:10,y:10)],frame:.init(x:0,y:0,width:10,height:10),
+        rawInk:nil,expectedInkRevision:nil,graphics:[])
+      model.selectRegion(previous)
+      let selection=model.selectionSession.id
+      XCTAssertTrue(model.drawingTools.begin(at:polygon[0],address:address,screenScale:1))
+      for point in polygon.dropFirst() { model.drawingTools.move(to:point) }
+      XCTAssertNil(model.drawingTools.move(to:.init(x:400,y:400)))
+      XCTAssertNil(model.drawingTools.contact)
+      model.drawingTools.finish()
+      XCTAssertEqual(model.selectionSession.id,selection)
+      XCTAssertEqual(model.selectionSession.region?.id,previous.id)
+      XCTAssertTrue(model.actionCue?.contains("Контур слишком длинный") == true)
+    }
+  }
+
+  func test8192PointLassoBoundsRejectUnrelated100000ObjectDeltaBeforeExactGeometry() async throws {
+    let result=try await Task.detached(priority:.userInitiated) {
+      let actor=UUID(),board=WorkspaceRoot.boardID,stamp=VersionStamp(counter:1,actor:actor)
+      let item=WorkspaceItem.notebook(title:"Lasso bounds",pageIDs:[UUID()])
+      let elements=(0..<100_000).map { i in
+        SpatialElement(id:"object-\(i)",surface:.board(board),kind:.graphic,
+          frame:.init(x:0,y:0,width:10,height:10),worldOrigin:.zero.offsetBy(x:Double(i)*100,y:0),
+          source:"",graphic:.init(shape:.rectangle,style:.init(fill:.black)),stamp:stamp)
+      }
+      let document=BoardDocument(freeItems:[],elements:elements,stamp:stamp)
+      let workspace=WorkspaceIndex(items:[item],selectedItemID:item.id,selectedPageID:item.pageIDs[0],stamp:stamp)
+      let hierarchy=BoardHierarchy(rootBoardID:board,boards:[.init(id:board,board:document)],stamp:stamp)
+      let index=WorkspaceSceneIndex(workspace:workspace,hierarchy:hierarchy,paperSizes:[:])
+      let graph=document.graphicGraph()
+      let source=NotebookDrawingToolController.SpatialSelectionSource(index:index,
+        delta:.init(ids:Set(elements.map(\.id)),elements:[:],excluded:[]),
+        presence:.init(boardID:board,mode:.board,camera:.init(),viewport:.init(x:834,y:1194)))
+      let polygon=(0..<NotebookGraphicMask.maximumPolygonPoints).map { i in
+        let angle=Double(i)*2*Double.pi/Double(NotebookGraphicMask.maximumPolygonPoints)
+        return SpatialPoint(x:5+20*cos(angle),y:5+20*sin(angle))
+      }
+      let address=NotebookToolAddress(surface:.board(board),boardID:board,worldOrigin:.zero,bounds:nil)
+      let candidates=try NotebookLassoQuery.spatialCandidates(polygon,address:address,source:source,graph:graph)
+      let references=try NotebookLassoQuery.references(intersecting:polygon,at:address,graph:graph,spatial:source,erasures:[:])
+      return (candidates,references)
+    }.value
+    XCTAssertEqual(result.0,["object-0"],"Delta union is spatially bounded, not 8192 × 100000 exact tests")
+    XCTAssertEqual(result.1.map(\.elementID),["object-0"])
+  }
+
+  func testLassoAdmitsTheCombinedBoardCoverAndItemCandidatesBeforeExactGeometry() async throws {
+    let result=try await Task.detached(priority:.userInitiated) {
+      let board=WorkspaceRoot.boardID,actor=UUID(),stamp=VersionStamp(counter:1,actor:actor)
+      let item=WorkspaceItem.notebook(title:"Combined lasso",pageIDs:[UUID()])
+      let geometry=WorkspaceItemGeometry.notebook
+      func prepare(_ coverCount:Int) throws -> NotebookLassoQuery.ObjectCandidates {
+        let boardElements=(0..<3_000).map { i in
+          SpatialElement(id:"board-\(i)",surface:.board(board),kind:.graphic,
+            frame:.init(x:0,y:0,width:10,height:10),worldOrigin:.zero,source:"",
+            graphic:.init(shape:.rectangle,style:.init(fill:.black)),stamp:stamp)
+        }
+        let coverElements=(0..<coverCount).map { i in
+          SpatialElement(id:"cover-\(i)",surface:.cover(item.id),kind:.graphic,
+            frame:.init(x:geometry.width/2,y:geometry.height/2,width:10,height:10),worldOrigin:nil,source:"",
+            graphic:.init(shape:.rectangle,style:.init(fill:.black)),stamp:stamp)
+        }
+        let document=BoardDocument(freeItems:[.init(itemID:item.id,center:.zero,zIndex:0,stamp:stamp)],
+          elements:boardElements+coverElements,stamp:stamp)
+        let workspace=WorkspaceIndex(items:[item],selectedItemID:item.id,selectedPageID:item.pageIDs[0],stamp:stamp)
+        let hierarchy=BoardHierarchy(rootBoardID:board,boards:[.init(id:board,board:document)],stamp:stamp)
+        let index=WorkspaceSceneIndex(workspace:workspace,hierarchy:hierarchy,paperSizes:[:])
+        let source=NotebookDrawingToolController.SpatialSelectionSource(index:index,
+          // The same IDs in SQL and the accepted delta count only once.
+          delta:.init(ids:Set(boardElements.map(\.id)),elements:[:],excluded:[]),
+          presence:.init(boardID:board,mode:.board,camera:.init(),viewport:.init(x:834,y:1194)))
+        return try NotebookLassoQuery.objectCandidates(intersecting:[.init(x:-20,y:-20),.init(x:30,y:-20),
+          .init(x:30,y:30),.init(x:-20,y:30)],
+          at:.init(surface:.board(board),boardID:board,worldOrigin:.zero,bounds:nil),
+          graph:document.graphicGraph(),spatial:source)
+      }
+      let admitted=try prepare(1_095) // 3,000 board + 1,095 cover + the notebook itself.
+      do { _=try prepare(1_096);return (admitted,false) }
+      catch let error as CollaborationError { return (admitted,error.code == "selection_limit") }
+    }.value
+    XCTAssertEqual(result.0.surfaces.map { $0.ids.count }.sorted(),[1_095,3_000])
+    XCTAssertEqual(result.0.items.count,1)
+    XCTAssertTrue(result.1,"The complete broad phase must throw before returning any candidates to the exact worker")
+  }
+
+  func testLassoCountsRawContactsTogetherWithGraphicCandidatesBeforeExactGeometry() async throws {
+    let rejected=try await Task.detached(priority:.userInitiated) {
+      let actor=UUID(),pageID=UUID(),surface=SurfaceID.page(pageID)
+      let elements=(0..<4_096).map { i in
+        AgentElement(id:"graphic-\(i)",kind:.graphic,frame:.init(x:100,y:100,width:10,height:10),
+          source:"",html:"",graphic:.init(shape:.rectangle,style:.init(fill:.black)))
+      }
+      let page=PageDocument(id:pageID,size:.init(width:834,height:1194),actor:actor,elements:elements)
+      let stroke=PageInkAction(tool:.pen,samples:[100.0,110].enumerated().map { i,x in
+        .init(point:.init(x:x,y:100),timeOffset:Double(i),width:3,opacity:1,force:1,azimuth:0,altitude:1)
+      })
+      let source=try NotebookLassoInkSource.Prepared(revision:"candidate-budget",
+        entries:[.init(id:stroke.id,tool:.pen,color:stroke.color,sources:[.init(stroke)])],
+        surface:surface,origin:nil,excluding:[])
+      let polygon=[SpatialPoint(x:90,y:90),.init(x:130,y:90),.init(x:130,y:130),.init(x:90,y:130)]
+      let ink=source.candidateActionIDs(intersecting:polygon,surface:surface,origin:nil)
+      guard ink == [stroke.id] else { return false }
+      do {
+        _=try NotebookLassoQuery.references(intersecting:polygon,
+          at:.init(surface:surface,boardID:nil,worldOrigin:nil,bounds:nil),
+          graph:page.graphicGraph(),spatial:nil,erasures:[:],inkCandidates:ink)
+        return false
+      } catch let error as CollaborationError { return error.code == "selection_limit" }
+    }.value
+    XCTAssertTrue(rejected,"4,096 graphic candidates plus a distinct measured contact exceed the one gesture budget")
+  }
+
+  func testLassoCandidateOverflowKeepsPreviousSelectionInBothModes() async throws {
+    try await fixture { model in
+      var page=try XCTUnwrap(model.activePage)
+      let elements=(0..<4_097).map { i in
+        AgentElement(id:"overflow-\(i)",kind:.graphic,frame:.init(x:100,y:100,width:10,height:10),
+          source:"",html:"",graphic:.init(shape:.rectangle,style:.init(fill:.black)))
+      }
+      XCTAssertTrue(page.replaceElements(elements,actor:model.actorID));try model.store.savePage(page)
+      await model.reloadExternalChanges()?.value
+      let address=NotebookToolAddress(surface:.page(page.id),boardID:nil,worldOrigin:nil,bounds:nil)
+      for mode in [NotebookLassoMode.elements,.region] {
+        model.selectDrawingTool(.lasso);model.drawingToolSettings.lassoMode=mode
+        model.selectElement(address.reference(elements[0].id))
+        let previous=model.selectionSession
+        XCTAssertTrue(model.drawingTools.begin(at:.init(x:90,y:90),address:address,screenScale:1))
+        for point in [SpatialPoint(x:130,y:90),.init(x:130,y:130),.init(x:90,y:130)] {
+          model.drawingTools.move(to:point)
+        }
+        model.drawingTools.finish()
+        let deadline=ContinuousClock.now + .seconds(5)
+        while model.drawingTools.pendingLasso != nil,ContinuousClock.now < deadline {
+          try await Task.sleep(for:.milliseconds(5))
+        }
+        XCTAssertNil(model.drawingTools.pendingLasso)
+        XCTAssertEqual(model.selectionSession,previous,"A rejected \(mode) contour cannot erase the previous selection")
+        XCTAssertTrue(model.actionCue?.contains("слишком много объектов") == true)
+      }
+    }
+  }
+
   func testLassoFragmentsRetainPainterOrderInsteadOfQueryOrderOnEverySurface() throws {
     let actor=UUID(),owner=UUID(),stamp=VersionStamp(counter:0,actor:actor)
     let elements=["back","middle","front"].enumerated().map { index,id in

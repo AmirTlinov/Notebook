@@ -135,7 +135,7 @@ enum NotebookAttentionProjection {
   static func editingFrame(_ reference: EditableElementReference, model: NotebookAppModel, presence: SessionPresence,
     layout: NotebookGraphicLayout? = nil) -> CGRect? {
     if let region=model.selectionSession.region,region.reference == reference {
-      let f=model.selectionSession.manipulation.flatMap { $0.reference == reference ? $0.frame : nil }
+      let f=model.selectionSession.manipulation.flatMap { $0.reference == reference ? $0.presentedFrame : nil }
       let local=f.map { PageRect(x:$0.minX,y:$0.minY,width:$0.width,height:$0.height) } ?? region.frame
       return frame(target:region.address.target,elementID:nil,region:local,
         worldOrigin:region.address.worldOrigin,pageIndex:nil,model:model,presence:presence,minimumSide:0)

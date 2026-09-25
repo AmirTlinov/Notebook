@@ -18,13 +18,15 @@ final class DocumentRuntimeTests: XCTestCase {
   private func surface(document: DocumentDocument, state: DocumentStateJournal,
     resources suppliedResources: SceneRenderResources? = nil, snapshotPixelWidth: Int? = nil,
     interactive: Bool = true, pageIndex: Int = 0,
-    commit: @escaping (String, JSONValue) -> ContentFieldVersion? = { _,_ in nil }) -> Surface {
+    failure: @escaping (Error) -> Void = { _ in },
+    readinessFailure: @escaping @MainActor (PageTurnPreparationFailure) -> Void = { _ in },
+    commit: @escaping (String, JSONValue) async throws -> ContentFieldVersion? = { _,_ in nil }) -> Surface {
     let resources = suppliedResources ?? SceneRenderResources(maximumWebSurfaces: 4)
     let coordinator = DocumentWebCoordinator(resources: resources, onRenderReady: .init { _ in },
       onPageLayout: { _ in },  onStateChange: commit)
     coordinator.update(document: document, state: state, selectedPageIndex: pageIndex, capturesSnapshot: snapshotPixelWidth != nil,
-      onRenderReady: .init { _ in }, onPageLayout: { _ in },  onStateChange: commit,
-      snapshotPixelWidth: snapshotPixelWidth)
+      onRenderReady: .init(onFailure: readinessFailure) { _ in }, onPageLayout: { _ in }, onStateChange: commit,
+      snapshotPixelWidth: snapshotPixelWidth, onPreparationFailure: failure)
     let host = DocumentWebHost(), size = WorkspaceItemGeometry.document(document.paperSize)
     let window = NSWindow(contentRect: .init(x: -20_000, y: -20_000, width: size.width, height: size.height),
       styleMask: .borderless, backing: .buffered, defer: false)
@@ -237,7 +239,7 @@ final class DocumentRuntimeTests: XCTestCase {
     let surface = surface(document: document, state: state)
     defer { surface.close() }
     surface.coordinator.onStateCheckpoint = { id, value, source, basis in
-      guard source == document.sourceVersion(blockID: id), state.records.first(where: { $0.id == id })?.valueVersion == basis else { return nil }
+      guard source == document.programIdentity(blockID: id), state.records.first(where: { $0.id == id })?.valueVersion == basis else { return nil }
       _ = state.commit(blockID: id, value: value, actor: actor)
       return state.records.first { $0.id == id }?.valueVersion
     }
@@ -286,7 +288,15 @@ final class DocumentRuntimeTests: XCTestCase {
     await waitUntil { surface.coordinator.renderIsReady }
     let web = try XCTUnwrap(surface.coordinator.webView)
     func phase() async throws -> Int {
-      let value = try await web.callAsyncJavaScript("return (await notebookRenderer.checkpointPrograms())[0].state.phase;", arguments: [:], in: nil, contentWorld: .page)
+      let value = try await web.callAsyncJavaScript("""
+      const item=(await notebookRenderer.checkpointPrograms())[0];
+      if(item.error)throw new Error(item.error);
+      let json='';while(json.length<item.snapshot.units){
+        json+=await notebookRenderer.transferProgramState(item.blockID,item.token,'notebook-snapshot',
+          {revision:item.snapshot.revision,offset:json.length});
+      }
+      return JSON.parse(json).phase;
+      """, arguments: [:], in: nil, contentWorld: .page)
       return try XCTUnwrap(value as? Int)
     }
     try await Task.sleep(for: .milliseconds(80))
@@ -324,6 +334,234 @@ final class DocumentRuntimeTests: XCTestCase {
     let retried = try await phase()
     XCTAssertGreaterThan(retried, refused)
     XCTAssertTrue(surface.coordinator.webView === web)
+  }
+
+  func testUnreadyProgramRetirementJoinsItsAcceptedStateWithoutCallingAuthorCheckpoint() async throws {
+    let (store, document, actor) = try durableProgram(javaScript: """
+      notebook.lifecycle({checkpoint(){throw new Error('must_not_checkpoint_unready_author')}});
+      notebook.ready(new Promise(()=>{}));
+      if(!notebook.commit({early:1}))throw new Error('early_commit_not_accepted');
+      """)
+    let resources = SceneRenderResources(maximumWebSurfaces: 2), queue = NotebookPersistenceQueue(store: store)
+    var release: CheckedContinuation<Void, Never>?, entered = false
+    defer { release?.resume() }
+    let mounted = surface(document: document, state: try store.loadDocumentState(document.id), resources: resources,
+      commit: { id, value in
+        entered = true
+        await withCheckedContinuation { release = $0 }
+        return try await queue.submit { try $0.commitDocumentState(documentID: document.id, blockID: id,
+          value: value, programIdentity: document.programIdentity(blockID: id), actor: actor) }
+      })
+    defer { mounted.close() }
+    mounted.coordinator.onStateCheckpoint = { _, _, _, _ in
+      XCTFail("A not-ready author only drains its accepted explicit state"); return nil
+    }
+    await waitUntil { entered }
+    let web = try XCTUnwrap(mounted.coordinator.webView)
+    mounted.coordinator.retireAfterProgramCheckpoint()
+    try await Task.sleep(for: .milliseconds(80))
+    XCTAssertFalse(mounted.coordinator.isInvalidated)
+    XCTAssertTrue(mounted.coordinator.webView === web)
+    XCTAssertGreaterThan(resources.activeWebSurfaceCount, 0)
+    XCTAssertNil(try store.loadDocumentState(document.id).value(for: "early"))
+    release?.resume(); release = nil
+    await waitUntil { mounted.coordinator.isInvalidated }
+    XCTAssertEqual(try store.loadDocumentState(document.id).value(for: "early"), .object(["early": .number(1)]))
+    XCTAssertEqual(resources.activeWebSurfaceCount, 0)
+  }
+
+  func testReadinessFailureKeepsAcceptedStateUntilDurableWithoutRestartingAuthor() async throws {
+    let (store, document, actor) = try durableProgram(javaScript: """
+      notebook.lifecycle({pause(){throw new Error('broken_author_pause')}});
+      notebook.ready(Promise.reject(new Error('author_readiness_failed')));
+      if(!notebook.commit({early:2}))throw new Error('early_commit_not_accepted');
+      """)
+    let resources = SceneRenderResources(maximumWebSurfaces: 2), queue = NotebookPersistenceQueue(store: store)
+    var release: CheckedContinuation<Void, Never>?, failures = 0, accepted = 0
+    defer { release?.resume() }
+    let mounted = surface(document: document, state: try store.loadDocumentState(document.id), resources: resources,
+      failure: { _ in failures += 1 }, commit: { id, value in
+        accepted += 1
+        await withCheckedContinuation { release = $0 }
+        return try await queue.submit { try $0.commitDocumentState(documentID: document.id, blockID: id,
+          value: value, programIdentity: document.programIdentity(blockID: id), actor: actor) }
+      })
+    defer { mounted.close() }
+    await waitUntil { release != nil && failures > 0 }
+    let web = try XCTUnwrap(mounted.coordinator.webView)
+    XCTAssertFalse(mounted.coordinator.renderIsReady)
+    XCTAssertFalse(mounted.coordinator.isInvalidated)
+    XCTAssertGreaterThan(resources.activeWebSurfaceCount, 0)
+    try await Task.sleep(for: .milliseconds(60))
+    XCTAssertTrue(mounted.coordinator.webView === web, "A failed frame still owns its accepted writer")
+    release?.resume(); release = nil
+    await waitUntil { mounted.coordinator.webView == nil }
+    XCTAssertEqual(try store.loadDocumentState(document.id).value(for: "early"), .object(["early": .number(2)]))
+    XCTAssertEqual(resources.activeWebSurfaceCount, 0)
+    XCTAssertFalse(mounted.coordinator.isInvalidated, "The failed presentation remains available for explicit Retry")
+    XCTAssertEqual(accepted, 1, "Finishing transport does not restart a broken author")
+    XCTAssertTrue(mounted.host.subviews.contains { $0 is NSStackView }, "The readiness error stays visible after durable release")
+  }
+
+  func testFailedDrainDeadlineKeepsItsHeapUntilExplicitRetry() async throws {
+    let (store, document, actor) = try durableProgram(javaScript: """
+      notebook.ready(Promise.reject(new Error('author_readiness_failed')));
+      if(!notebook.commit({early:3}))throw new Error('early_commit_not_accepted');
+      """)
+    let resources = SceneRenderResources(maximumWebSurfaces: 2), queue = NotebookPersistenceQueue(store: store)
+    var release: CheckedContinuation<Void, Never>?, failures = 0, accepted = 0
+    defer { release?.resume() }
+    let mounted = surface(document: document, state: try store.loadDocumentState(document.id), resources: resources,
+      failure: { _ in failures += 1 }, commit: { id, value in
+        accepted += 1
+        if accepted == 1 { await withCheckedContinuation { release = $0 } }
+        return try await queue.submit { try $0.commitDocumentState(documentID: document.id, blockID: id,
+          value: value, programIdentity: document.programIdentity(blockID: id), actor: actor) }
+      })
+    defer { mounted.close() }
+    await waitUntil { release != nil && failures > 0 }
+    let web = try XCTUnwrap(mounted.coordinator.webView), firstFailure = failures
+    await waitUntil { failures > firstFailure }
+    XCTAssertTrue(mounted.coordinator.webView === web, "A failed drain cannot dispose its accepted state")
+    release?.resume(); release = nil
+    let flushed = await queue.flush()
+    XCTAssertTrue(flushed)
+    await waitUntil { (try? store.loadDocumentState(document.id).value(for: "early")) == .object(["early": .number(3)]) }
+    try await Task.sleep(for: .milliseconds(80))
+    XCTAssertTrue(mounted.coordinator.webView === web, "Late durability cannot silently restart or dismiss the failed boundary")
+    XCTAssertEqual(accepted, 1)
+    mounted.coordinator.retryPreparation()
+    await waitUntil { accepted == 2 }
+    XCTAssertFalse(mounted.coordinator.webView === web, "Explicit Retry releases the old admitted heap before a fresh author")
+  }
+
+  func testCheckpointWriterRetryRetainsItsFrozenSnapshotAndDoesNotRepeatTransfer() async throws {
+    let (store, document, actor) = try durableProgram(javaScript: """
+      notebook.lifecycle({checkpoint:()=>({payload:'x'.repeat(524288)})});
+      notebook.ready(Promise.resolve());
+      """)
+    let resources = SceneRenderResources(maximumWebSurfaces: 2), queue = NotebookPersistenceQueue(store: store)
+    let mounted = surface(document: document, state: try store.loadDocumentState(document.id), resources: resources)
+    defer { mounted.close() }
+    var writes = 0
+    mounted.coordinator.onStateCheckpoint = { id, value, source, basis in
+      writes += 1
+      if writes == 1 { throw CocoaError(.fileWriteUnknown) }
+      return try await queue.submit { try $0.checkpointDocumentState(documentID: document.id, blockID: id,
+        value: value, programIdentity: source, stateVersion: basis, actor: actor) }
+    }
+    await waitUntil { mounted.coordinator.renderIsReady }
+    let web = try XCTUnwrap(mounted.coordinator.webView)
+    _ = try await web.evaluateJavaScript("""
+      window.fixtureSnapshotReads=0;
+      const originalTransfer=notebookRenderer.transferProgramState;
+      notebookRenderer.transferProgramState=(...args)=>{
+        if(args[2]==='notebook-snapshot')fixtureSnapshotReads++;
+        return originalTransfer(...args);
+      };true;
+      """)
+    let first = await mounted.coordinator.checkpointPrograms(resume: false)
+    XCTAssertFalse(first)
+    let reads = try await web.evaluateJavaScript("fixtureSnapshotReads") as? Int
+    XCTAssertGreaterThan(try XCTUnwrap(reads), 1)
+    let held = resources.rasterAdmission.heldBytes
+    let prematureResume = await mounted.coordinator.resumePrograms()
+    XCTAssertFalse(prematureResume, "A frozen checkpoint with a failed writer cannot resume or accept more state")
+    let retried = await mounted.coordinator.checkpointPrograms(resume: false)
+    XCTAssertTrue(retried)
+    XCTAssertEqual(writes, 2)
+    let afterReads = try await web.evaluateJavaScript("fixtureSnapshotReads") as? Int
+    XCTAssertEqual(afterReads, reads, "Retry writes the same admitted immutable snapshot, without another pull")
+    XCTAssertLessThan(resources.rasterAdmission.heldBytes, held, "Durable ACK releases the frozen snapshot's extra admission")
+    XCTAssertEqual(try store.loadDocumentState(document.id).value(for: "early")?["payload"],
+      .string(String(repeating: "x", count: 524288)))
+    let resumed = await mounted.coordinator.resumePrograms()
+    XCTAssertTrue(resumed)
+  }
+
+  func testTransportRetryKeepsBothAcceptedCommitsAndTheSameAuthorHeap() async throws {
+    let (store, document, actor) = try durableProgram(javaScript: """
+      const boot=crypto.randomUUID();
+      addEventListener('message',event=>{if(event.data.fixtureCommit){
+        notebook.commit({boot,sequence:1});notebook.commit({boot,sequence:2});
+      }});
+      notebook.ready(Promise.resolve());
+      """)
+    let resources = SceneRenderResources(maximumWebSurfaces: 2), queue = NotebookPersistenceQueue(store: store)
+    var failure: PageTurnPreparationFailure?, values: [JSONValue] = [], checkpointed = false, checkpointWrites = 0
+    let mounted = surface(document: document, state: try store.loadDocumentState(document.id), resources: resources,
+      readinessFailure: { failure = $0 }, commit: { id, value in
+        let receipt = try await queue.submit { try $0.commitDocumentState(documentID: document.id, blockID: id,
+          value: value, programIdentity: document.programIdentity(blockID: id), actor: actor) }
+        values.append(value); return receipt
+      })
+    defer { mounted.close() }
+    mounted.coordinator.onStateCheckpoint = { id, value, source, basis in
+      let receipt = try await queue.submit { try $0.checkpointDocumentState(documentID: document.id, blockID: id,
+        value: value, programIdentity: source, stateVersion: basis, actor: actor) }
+      checkpointed = receipt != nil; checkpointWrites += 1; return receipt
+    }
+    await waitUntil { mounted.coordinator.renderIsReady }
+    let web = try XCTUnwrap(mounted.coordinator.webView)
+    _ = try await web.evaluateJavaScript("""
+      const originalTransfer=notebookRenderer.transferProgramState;let holdFirst=true;
+      notebookRenderer.transferProgramState=(...args)=>{
+        if(args[2]==='notebook-snapshot' && holdFirst){
+          holdFirst=false;return new Promise(resolve=>{window.fixtureReleaseRead=()=>resolve('stale')});
+        }
+        return originalTransfer(...args);
+      };
+      document.querySelector('iframe').contentWindow.postMessage({fixtureCommit:true},'*');true;
+      """)
+    await waitUntil { failure != nil }
+    XCTAssertTrue(values.isEmpty, "A timed-out first read cannot drop its accepted revision and advance the second")
+    XCTAssertTrue(mounted.coordinator.webView === web)
+    try XCTUnwrap(failure).retry()
+    await waitUntil { values.count == 2 && checkpointed }
+    XCTAssertEqual(values.map { $0["sequence"] }, [.number(1), .number(2)])
+    XCTAssertEqual(values.first?["boot"], values.last?["boot"])
+    XCTAssertTrue(mounted.coordinator.webView === web, "Transport Retry cannot replace the author or rerun its startup")
+    _ = try await web.evaluateJavaScript("fixtureReleaseRead();true")
+    try await Task.sleep(for: .milliseconds(80))
+    XCTAssertEqual(values.count, 2, "A late transport response has no remaining publication rights")
+    XCTAssertEqual(try store.loadDocumentState(document.id).value(for: "early"), values.last)
+    let previousFailure = failure?.id, previousWrites = checkpointWrites
+    _ = try await web.evaluateJavaScript("""
+      const originalVisibility=notebookRenderer.setProgramsVisible;let holdVisibility=true;
+      notebookRenderer.setProgramsVisible=visible=>{
+        if(!visible && holdVisibility){holdVisibility=false;
+          return new Promise(resolve=>{window.fixtureReleaseVisibility=()=>resolve(true)});
+        }
+        return originalVisibility(visible);
+      };true;
+      """)
+    mounted.coordinator.setProgramsVisible(false)
+    await waitUntil { failure?.id != previousFailure }
+    XCTAssertEqual(checkpointWrites, previousWrites,
+      "A timed-out visibility barrier cannot silently proceed to checkpoint")
+    XCTAssertTrue(mounted.coordinator.webView === web)
+    try XCTUnwrap(failure).retry()
+    await waitUntil { checkpointWrites > previousWrites }
+    XCTAssertTrue(mounted.coordinator.webView === web, "Visibility Retry also keeps the accepted author heap")
+    _ = try await web.evaluateJavaScript("fixtureReleaseVisibility();true")
+    try await Task.sleep(for: .milliseconds(80))
+    XCTAssertEqual(values.count, 2)
+    XCTAssertEqual(try store.loadDocumentState(document.id).value(for: "early"), values.last)
+  }
+
+  private func durableProgram(javaScript: String) throws -> (NotebookStore, DocumentDocument, UUID) {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    addTeardownBlock { try? FileManager.default.removeItem(at: root) }
+    let store = NotebookStore(root: root), actor = UUID()
+    let header = try store.initializeWorkspace(actor: actor, pageSize: .init(width: 834, height: 1194))
+    var index = try store.loadIndex(), board = try store.loadBoard(items: index.items)
+    let item = try XCTUnwrap(index.createDocument(title: "Early program", actor: actor))
+    XCTAssertTrue(board.addItem(item.id, to: header.rootBoardID, near: .zero, actor: actor))
+    let document = DocumentDocument(id: item.id, actor: actor, blocks: [.interactive(id: "early", html: "<output>Early state</output>",
+      javaScript: javaScript, initialState: .null, height: 100)])
+    try store.saveDocumentWorkspaceBundle(index: index, document: document,
+      state: .init(id: item.id, actor: actor), board: board)
+    return (store, document, actor)
   }
 
   func testDocumentDismantleKeepsItsBrowserUntilTheWriterAcceptsCheckpoint() async throws {
@@ -443,8 +681,12 @@ final class DocumentRuntimeTests: XCTestCase {
     let blocks = (0..<16).map { index in DocumentBlock.interactive(id: "block-\(index)", html: "<p>\(index)</p>",
       javaScript: "notebook.commit({boot:\(index)});notebook.ready(Promise.resolve());", initialState: .null, height: 280) }
     let document = DocumentDocument(actor: UUID(), blocks: blocks), state = DocumentStateJournal(id: document.id, actor: UUID())
-    var booted = Set<String>()
-    let surface = surface(document: document, state: state, commit: { block, _ in booted.insert(block); return nil })
+    var booted = Set<String>(), acceptedState = state
+    let surface = surface(document: document, state: state, commit: { block, value in
+      booted.insert(block)
+      _ = acceptedState.commit(blockID: block, value: value, actor: acceptedState.stamp.actor)
+      return acceptedState.records.first { $0.id == block }?.valueVersion
+    })
     defer { surface.close() }
     let deadline = ContinuousClock.now + .seconds(8)
     while !surface.coordinator.renderIsReady && surface.coordinator.acquisitionError == nil && ContinuousClock.now < deadline {
@@ -458,6 +700,12 @@ final class DocumentRuntimeTests: XCTestCase {
     let expected = Set(DocumentRenderRegistry.shared.regions(document: document).filter { $0.pageIndex == 0 }.map(\.id))
     XCTAssertFalse(expected.isEmpty)
     XCTAssertLessThan(expected.count, blocks.count)
+    // Pixel readiness is not a durable state receipt. Startup commits now pull
+    // their admitted JSON asynchronously through the same bounded FIFO as input.
+    while booted.count < expected.count, surface.coordinator.acquisitionError == nil, ContinuousClock.now < deadline {
+      try await Task.sleep(for: .milliseconds(10))
+    }
+    XCTAssertNil(surface.coordinator.acquisitionError)
     XCTAssertEqual(booted, expected, "A page host must not run the rest of the document's programs")
     let web = try XCTUnwrap(surface.coordinator.webView)
     let actual7 = try await js("String(document.querySelectorAll('iframe').length)", web)
@@ -605,9 +853,9 @@ final class DocumentRuntimeTests: XCTestCase {
       let frame = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(rawFrame.utf8)) as? [String: Any])
       XCTAssertEqual(frame["same"] as? Bool, true)
       XCTAssertEqual(frame["height"] as? Double, 2048)
-      XCTAssertEqual(frame["offset"] as? Double, region["sourceOffset"] as? Double)
-      XCTAssertEqual(frame["cutHeight"] as? Double, region["height"] as? Double)
-      XCTAssertEqual(frame["cutWidth"] as? Double, region["width"] as? Double)
+      XCTAssertEqual(try XCTUnwrap(frame["offset"] as? Double), try XCTUnwrap(region["sourceOffset"] as? Double), accuracy: 0.000001)
+      XCTAssertEqual(try XCTUnwrap(frame["cutHeight"] as? Double), try XCTUnwrap(region["height"] as? Double), accuracy: 0.000001)
+      XCTAssertEqual(try XCTUnwrap(frame["cutWidth"] as? Double), try XCTUnwrap(region["width"] as? Double), accuracy: 0.000001)
     }
     let after = try await js("JSON.stringify(window.notebookRenderer.pageReceipt().work)", web)
     let firstWork = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(before.utf8)) as? [String: Int])
@@ -687,7 +935,7 @@ final class DocumentRuntimeTests: XCTestCase {
     let lease = try await resources.acquireWebSurface(priority: .input)
     var ready = false
     let coordinator = AgentWebCoordinator(lease: lease, resources: resources, snapshotPolicy: .display(scale: 1),
-      onRenderReady: { ready = $0 }, onState: { _ in true })
+      onRenderReady: { ready = $0 }, onState: { _, completion in completion(nil); return true })
     let web = AgentWebCoordinator.makeWebView(coordinator: coordinator)
     let window = NSWindow(contentRect: .init(x: -20_000, y: -20_000, width: 240, height: 120),
       styleMask: .borderless, backing: .buffered, defer: false)
@@ -715,7 +963,7 @@ final class DocumentRuntimeTests: XCTestCase {
     let lease = try await resources.acquireWebSurface(priority: .input)
     var ready = false
     let coordinator = AgentWebCoordinator(lease: lease, resources: resources, snapshotPolicy: .display(scale: 1),
-      onRenderReady: { ready = $0 }, onState: { _ in true })
+      onRenderReady: { ready = $0 }, onState: { _, completion in completion(nil); return true })
     let web = AgentWebCoordinator.makeWebView(coordinator: coordinator)
     let window = NSWindow(contentRect: .init(x: -20_000, y: -20_000, width: 240, height: 120),
       styleMask: .borderless, backing: .buffered, defer: false)
@@ -723,7 +971,9 @@ final class DocumentRuntimeTests: XCTestCase {
     defer { coordinator.invalidate(); lease.release(); window.orderOut(nil); window.close() }
     let source = AgentElement(id: "phase", kind: .web, frame: .init(x: 0, y: 0, width: 240, height: 120),
       source: "phase", html: "<output>0.5</output>", javaScript: """
-      notebook.lifecycle({pause:()=>{},checkpoint:()=>({phase:0.5})});
+      window.boot=Math.random().toString();window.lifecycleCalls={pause:0,checkpoint:0,resume:0};
+      notebook.lifecycle({pause(){lifecycleCalls.pause++},
+        checkpoint(){lifecycleCalls.checkpoint++;return {phase:0.5}},resume(){lifecycleCalls.resume++}});
       notebook.semantic(()=>({objectID:'gear-a',label:'Gear',anchor:{x:.5,y:.5},values:[],model:{phase:.5}}));
       notebook.ready(Promise.resolve());
       """, state: .object(["phase": .number(0)]))
@@ -732,17 +982,22 @@ final class DocumentRuntimeTests: XCTestCase {
     let originalBasis = try XCTUnwrap(page.programStateBasis(source.id))
     coordinator.bindPresentation(to: focus); coordinator.load(source, basis: originalBasis, in: web)
     await waitUntil { ready }
+    let boot = try await js("window.boot", web)
     do {
-      _ = try await AgentWebCoordinator.checkpointCurrent(focus: focus, element: source, persist: { _, basis in
+      _ = try await AgentWebCoordinator.checkpointCurrent(focus: focus, element: source, persist: { _, basis, _ in
         XCTAssertEqual(basis, originalBasis); return nil
       }, resources: resources)
       XCTFail("Writer refusal is not saved")
     } catch { XCTAssertTrue(String(describing:error).contains("checkpoint_not_accepted")) }
     XCTAssertTrue(coordinator.hasLiveSource(source))
     let suspended = try await js("String(notebookProgram.suspended)", web)
-    XCTAssertEqual(suspended, "false")
+    XCTAssertEqual(suspended, "true", "Writer refusal retains the frozen author until its exact value is durable")
+    let failedCalls = try await js("JSON.stringify(lifecycleCalls)", web)
+    XCTAssertEqual(failedCalls, "{\"pause\":1,\"checkpoint\":1,\"resume\":0}")
+    let furtherCommit = try await js("String(notebook.commit({phase:9}))", web)
+    XCTAssertEqual(furtherCommit, "false", "A refused checkpoint cannot silently resume state admission")
     var persisted: JSONValue?
-    let (accepted, picture) = try await AgentWebCoordinator.checkpointCurrent(focus: focus, element: source, persist: { value, basis in
+    let (accepted, picture) = try await AgentWebCoordinator.checkpointCurrent(focus: focus, element: source, persist: { value, basis, _ in
       XCTAssertEqual(basis, originalBasis)
       persisted = value
       page.replaceElements([source.updating(state: value)], actor: actor)
@@ -751,6 +1006,10 @@ final class DocumentRuntimeTests: XCTestCase {
     defer { picture.release() }
     XCTAssertEqual(persisted, .object(["phase": .number(0.5)]))
     XCTAssertEqual(accepted.state, persisted)
+    let retriedCalls = try await js("JSON.stringify(lifecycleCalls)", web)
+    XCTAssertEqual(retriedCalls, failedCalls, "Writer Retry cannot repeat pause/checkpoint or resume the same frozen heap")
+    let currentBoot = try await js("window.boot", web)
+    XCTAssertEqual(currentBoot, boot, "Retry must not rerun author startup")
     XCTAssertEqual(picture.semanticSelection?.objectID, "gear-a")
     XCTAssertEqual(picture.semanticSelection?.model["phase"], .number(0.5))
     let retained = try XCTUnwrap(picture.retainedCopy()); defer { retained.release() }
@@ -768,7 +1027,7 @@ final class DocumentRuntimeTests: XCTestCase {
     let lease = try await resources.acquireWebSurface(priority: .input)
     var ready = false, commits: [JSONValue] = []
     let coordinator = AgentWebCoordinator(lease: lease, resources: resources, snapshotPolicy: .display(scale: 1),
-      onRenderReady: { ready = $0 }, onState: { commits.append($0); return true })
+      onRenderReady: { ready = $0 }, onState: { value, completion in commits.append(value); completion(nil); return true })
     let web = AgentWebCoordinator.makeWebView(coordinator: coordinator)
     let window = NSWindow(contentRect: .init(x: -20_000, y: -20_000, width: 240, height: 120),
       styleMask: .borderless, backing: .buffered, defer: false)
@@ -786,8 +1045,8 @@ final class DocumentRuntimeTests: XCTestCase {
     _ = try await js("document.querySelector('input').value='UNCOMMITTED INPUT'; document.querySelector('button').click(); 'clicked'", web)
     await waitUntil { commits.count == 1 }
     let echoed = original.updating(state: try XCTUnwrap(commits.last))
-    ready = false; coordinator.load(echoed, in: web)
-    await waitUntil { ready }
+    coordinator.load(echoed, in: web)
+    await waitUntil { ready && resources.image(for: echoed) != nil }
     let moved = echoed.updating(frame: .init(x: 100, y: 200, width: 240, height: 120))
     coordinator.load(moved, in: web)
     let sameBoot = try await js("window.boot", web)
@@ -880,10 +1139,10 @@ final class DocumentRuntimeTests: XCTestCase {
       let regions = try XCTUnwrap(measured["regions"] as? [[String: Any]])
       XCTAssertTrue(regions.allSatisfy { $0["pageIndex"] as? Int == index })
     }
-    XCTAssertEqual(preparationRoots, 1, "One admitted page owns the inert source index; neighbors own only their physical page")
-    XCTAssertEqual(layoutPasses, 1); XCTAssertEqual(typesetPasses, 1)
+    XCTAssertEqual(preparationRoots, 0, "Canonical PDF/SyncTeX owns source layout; no physical WebKit owns an alternate DOM source index")
+    XCTAssertEqual(layoutPasses, 0); XCTAssertEqual(typesetPasses, 0)
     XCTAssertEqual(source.preparationCount, 1)
-    XCTAssertEqual(source.preparationCount, 1)
+    XCTAssertEqual(source.measurementCount, 1)
     XCTAssertEqual(pages[0].coordinator.payload?.state.encodingCount, 1)
     XCTAssertEqual(resources.activeWebSurfaceCount, 4); XCTAssertEqual(resources.pendingWebRequestCount, 0)
   }
@@ -907,20 +1166,28 @@ final class DocumentRuntimeTests: XCTestCase {
     XCTAssertTrue(state.commit(blockID: "never-ready", value: .number(1), actor: actor))
     update()
     let web = try XCTUnwrap(surface.coordinator.webView)
+    XCTAssertEqual(surface.coordinator.payload?.states["never-ready"], .number(1))
     var started = false
     for _ in 0..<200 {
       if try await js("String(document.querySelectorAll('iframe').length)", web) == "1" { started = true; break }
       try await Task.sleep(for: .milliseconds(10))
     }
     XCTAssertTrue(started, "The bounded failure must come from the real pending program, not a missing shell")
-    // The production deadline remains eight seconds. This observation window
-    // allows it to fire; it does not replace WebKit readiness with a test timer.
+    // Both the native preparation and author readiness deadlines remain eight
+    // seconds. Their first real failure wins; neither may wait indefinitely on
+    // a superseded generation or be replaced by this observation window.
     await waitUntil(timeout: .seconds(10)) { surface.coordinator.acquisitionError != nil }
-    XCTAssertEqual(surface.coordinator.acquisitionError as? SceneRenderError,
-      .snapshotPending("document_preparation_timeout"))
+    let error = try XCTUnwrap(surface.coordinator.acquisitionError as? SceneRenderError)
+    XCTAssertTrue(error == .snapshotPending("document_preparation_timeout")
+      || error == .snapshotPending("Error: program_ready_timeout"), "Unexpected first deadline: \(error)")
+    XCTAssertEqual(surface.coordinator.payload?.states["never-ready"], .number(1),
+      "The failure belongs to the newest admitted state generation")
+    XCTAssertEqual(surface.coordinator.payload?.programIdentities["never-ready"], document.programIdentity(blockID: "never-ready"))
     XCTAssertFalse(surface.coordinator.renderIsReady)
+    // Failure is visible before asynchronous accepted-state teardown finishes.
+    // Even this empty heap leaves through the same boundary as authored commits.
+    await waitUntil { surface.coordinator.webView == nil && resources.activeWebSurfaceCount == 0 }
     XCTAssertNil(surface.coordinator.webView)
-    await waitUntil { resources.activeWebSurfaceCount == 0 }
     XCTAssertEqual(resources.activeWebSurfaceCount, 0)
     XCTAssertEqual(resources.pendingWebRequestCount, 0)
   }

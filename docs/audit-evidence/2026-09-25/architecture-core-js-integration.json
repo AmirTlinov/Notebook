@@ -1,0 +1,88 @@
+{
+  "results": [
+    {
+      "scope": "core",
+      "command": [
+        "swift",
+        "test",
+        "--jobs",
+        "2",
+        "--filter",
+        "NotebookDocumentBlockReadTests|NotebookDocumentStateCommandTests|NotebookProgramStateReadTests|NotebookNativeElementTests|NotebookPageElementCommandTests|NotebookActionPublicationTests|NotebookSpatialInkWindowTests|NotebookReferenceInkTests|NotebookExportPublicationTests|NotebookChatStoreTests|NotebookRemoteControlTests|NotebookSelectionPublicationTests|NotebookPresentationTests|NotebookTransportBlobWindowTests|fullBlobWindowFitsTheTransportFrame"
+      ],
+      "exitCode": 0,
+      "log": "/tmp/notebook-repair-integration-41-core.log",
+      "logSHA256": "0cd182dcbf1ef8ae169d2f711346c364c88fe23a4c71764146024724209632f5"
+    },
+    {
+      "scope": "mcp-check",
+      "command": [
+        "npm",
+        "--prefix",
+        "MCP",
+        "run",
+        "check"
+      ],
+      "exitCode": 0,
+      "log": "/tmp/notebook-repair-integration-41-mcp-check.log",
+      "logSHA256": "4ac7455681a2cf3e032df98845dc335f63193508f24dcc1264b5843fd33ae4c3"
+    },
+    {
+      "scope": "mcp-tests",
+      "command": [
+        "npm",
+        "--prefix",
+        "MCP",
+        "test"
+      ],
+      "exitCode": 0,
+      "log": "/tmp/notebook-repair-integration-41-mcp-tests.log",
+      "logSHA256": "a716f00d67654349615750c52dcde3705f878ed1fa58f5388e8f0d5b863df97d"
+    },
+    {
+      "scope": "browser",
+      "command": [
+        "node",
+        "--test",
+        "Tests/NotebookDocumentAcceptance/test_link_activation.mjs",
+        "Tests/NotebookDocumentAcceptance/test_page_phase_observation.mjs"
+      ],
+      "exitCode": 0,
+      "log": "/tmp/notebook-repair-integration-41-browser.log",
+      "logSHA256": "c6f7c23ea9affafe7b91e7428caa04abb00290feda335c4f7264bfad560744f7"
+    },
+    {
+      "scope": "verification",
+      "command": [
+        "python3",
+        "Tests/NotebookVerification/run.py"
+      ],
+      "exitCode": 0,
+      "log": "/tmp/notebook-repair-integration-41-verification.log",
+      "logSHA256": "6fe6762795ad9b9bfdcd19d3a0b36016f2185c895b3dcbadacb8e3bcadc94412"
+    },
+    {
+      "scope": "trace",
+      "command": [
+        "python3",
+        "Tests/NotebookDocumentAcceptance/test_system_trace.py"
+      ],
+      "exitCode": 0,
+      "log": "/tmp/notebook-repair-integration-41-trace.log",
+      "logSHA256": "5a4b2d0540e0a46fb7b12691bd50de793e1ab726aa0467d369790688a717e3c7"
+    }
+  ],
+  "sources": "/tmp/notebook-repair-integration-41-sources.json",
+  "sourceStability": {
+    "changedSources": []
+  },
+  "passed": {
+    "core": 134,
+    "coreSuites": 15,
+    "mcp": 175,
+    "documentBrowser": 13,
+    "verification": 89,
+    "traceHarness": 18
+  },
+  "scope": "Current integrated causal-state/writer/window/source/transport interfaces and JS/MCP/verification bindings. No application UX or system-performance claim."
+}

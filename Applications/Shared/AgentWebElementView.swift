@@ -13,14 +13,16 @@ struct AgentWebSourceFailure: Equatable, Sendable {
   /// only to its submitted crop and density.
   let policy: AgentSnapshotPolicy?
   let rasterAdmission: SceneRasterAdmission?
+  var stateCreditBytes: Int = 0
 
-  func canResumeCapture(with current: SceneRasterAdmission) -> Bool {
+  func canResumeCapture(with current: SceneRasterAdmission, restartingRuntime: Bool = false) -> Bool {
     guard diagnostic.kind == "resource_limit", let policy, let rasterAdmission else { return false }
-    return Self.captureFitsAfterImprovement(source: source, policy: policy, previous: rasterAdmission, current: current)
+    return Self.captureFitsAfterImprovement(source: source, policy: policy, previous: rasterAdmission, current: current,
+      restartingBytes: restartingRuntime ? stateCreditBytes : 0)
   }
 
   static func captureFitsAfterImprovement(source: AgentElement, policy: AgentSnapshotPolicy,
-    previous: SceneRasterAdmission, current: SceneRasterAdmission) -> Bool {
+    previous: SceneRasterAdmission, current: SceneRasterAdmission, restartingBytes: Int = 0) -> Bool {
     guard let pixels = policy.pixelSize(for: source),
       let budget = SceneRenderResources.webSnapshotBudget(pixelSize: pixels)
     else { return false }
@@ -31,7 +33,7 @@ struct AgentWebSourceFailure: Equatable, Sendable {
     let improved = available(current) > available(previous)
       || current.countLimit - current.pinnedCount - current.reservedCount
         > previous.countLimit - previous.pinnedCount - previous.reservedCount
-    return improved && current.fits(additionalBytes: budget.capture, additionalCount: 1)
+    return improved && current.fits(additionalBytes: budget.capture + restartingBytes, additionalCount: 1)
   }
 }
 
@@ -40,6 +42,7 @@ struct AgentWebSourceFailure: Equatable, Sendable {
     let element: AgentElement
     var stateBasis: NotebookProgramStateBasis? = nil
     var programOwner: NotebookAppModel? = nil
+    var allowsStateCommits = true
     let lease: WebSurfaceLease
     let snapshotPolicy: AgentSnapshotPolicy
     var focus: InteractiveElementReference? = nil
@@ -48,7 +51,7 @@ struct AgentWebSourceFailure: Equatable, Sendable {
     var onInteraction: () -> Void = {}
     var onInstalled: (SceneSourceInstallation) -> Void = { _ in }
     var onFailure: (AgentWebSourceFailure) -> Void = { _ in }
-    let onState: (JSONValue) -> Bool
+    let onState: NotebookProgramStateWriter
 
     func makeCoordinator() -> AgentWebCoordinator {
       AgentWebCoordinator(
@@ -93,7 +96,7 @@ struct AgentWebSourceFailure: Equatable, Sendable {
         onInstalled(installation)
       }
       context.coordinator.use(onFailure: onFailure)
-      context.coordinator.use(onState: onState)
+      context.coordinator.use(onState: onState, enabled: allowsStateCommits)
       context.coordinator.programOwner = programOwner
       context.coordinator.load(element, basis: stateBasis, policy: snapshotPolicy, in: webView)
       view.onInstalled?()
@@ -276,6 +279,7 @@ struct AgentWebSourceFailure: Equatable, Sendable {
     let element: AgentElement
     var stateBasis: NotebookProgramStateBasis? = nil
     var programOwner: NotebookAppModel? = nil
+    var allowsStateCommits = true
     let lease: WebSurfaceLease
     let snapshotPolicy: AgentSnapshotPolicy
     var focus: InteractiveElementReference? = nil
@@ -284,7 +288,7 @@ struct AgentWebSourceFailure: Equatable, Sendable {
     var onInteraction: () -> Void = {}
     var onInstalled: (SceneSourceInstallation) -> Void = { _ in }
     var onFailure: (AgentWebSourceFailure) -> Void = { _ in }
-    let onState: (JSONValue) -> Bool
+    let onState: NotebookProgramStateWriter
 
     func makeCoordinator() -> AgentWebCoordinator {
       AgentWebCoordinator(
@@ -310,7 +314,7 @@ struct AgentWebSourceFailure: Equatable, Sendable {
       context.coordinator.use(onInteractionReady: onInteractionReady)
       context.coordinator.use(onInteraction: onInteraction)
       context.coordinator.use(onFailure: onFailure)
-      context.coordinator.use(onState: onState)
+      context.coordinator.use(onState: onState, enabled: allowsStateCommits)
       context.coordinator.programOwner = programOwner
       context.coordinator.load(element, basis: stateBasis, policy: snapshotPolicy, in: webView)
       context.coordinator.bindPresentation(to: focus)
@@ -698,8 +702,14 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
   private static var presentations: [ObjectIdentifier: Presentation] = [:]
   weak var programOwner: NotebookAppModel?
   private var checkpointTask: Task<AgentElement, Error>?
+  private var stateTransfer: NotebookProgramStateTransfer?
+  private var allowsStateCommits = true
+  private var commitsClosedBeforeReady = false
+  private var restartsAfterBoundary = false
+  private var initialStateEncoding: NotebookProgramStateEncoding?
   private var checkpointID: UUID?
   private var checkpointedSource: AgentElement?
+  private var frozenCheckpoint: (snapshot: NotebookProgramStateTransfer.Checkpoint, basis: NotebookProgramStateBasis, rendered: AgentElement, revision: UInt64)?
   private var checkpointSelection: ProgramSemanticSelection?
   private var checkpointWasCaptured = false
   private var attentionPauseID: UUID? {
@@ -720,7 +730,7 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
   private var packageNavigationURL: URL?
   private var snapshotPolicy: AgentSnapshotPolicy
   private(set) var snapshotFailure: SceneRenderError?
-  private var onState: (JSONValue) -> Bool
+  private var onState: NotebookProgramStateWriter
   private var onRenderReady: (Bool) -> Void
   private var onSnapshotPrepared: ((RasterLease) -> Void)?
   private var onInteractionReady: (Bool) -> Void
@@ -734,6 +744,12 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
   private var programBasis: NotebookProgramStateBasis?
   private(set) var loadToken: String?
   private var runtimeLoaded = false
+  private var resumeFailed = false
+  #if os(iOS)
+  private var resumeRetry: UIButton?
+  #else
+  private var resumeRetry: NSButton?
+  #endif
   private var fingerRegions: AgentWebFingerRegions?
   func fingerInput(at point: CGPoint, in size: CGSize) -> AgentWebFingerInput {
     guard runtimeLoaded else { return .input }
@@ -769,7 +785,7 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
     onRenderReady: @escaping (Bool) -> Void = { _ in },
     onInteractionReady: @escaping (Bool) -> Void = { _ in },
     onFailure: @escaping (AgentWebSourceFailure) -> Void = { _ in },
-    onState: @escaping (JSONValue) -> Bool
+    onState: @escaping NotebookProgramStateWriter
   ) {
     self.lease = lease
     self.resources = resources
@@ -877,14 +893,79 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
     }
   }
 
-  private func resumeProgram() async {
-    guard let web = attachedWebView, let token = loadToken else { return }
-    if (try? await NotebookProgramBridge.lifecycle("resume", controller: "notebookProgram", in: web)) != nil,
-      accepts(token), attachedWebView === web {
+  @discardableResult
+  private func resumeProgram() async -> Bool {
+    guard frozenCheckpoint == nil, stateTransfer?.hasPendingCheckpoint != true, stateTransfer?.hasFailure != true else { return false }
+    guard let web = attachedWebView, let token = loadToken else { return false }
+    if restartsAfterBoundary, let element = loadedElement {
+      beginLoad(element, in: web, snapshotOnly: snapshotOnly)
+      return true
+    }
+    do {
+      _ = try await NotebookProgramBridge.lifecycle("resume", controller: "notebookProgram", expectedToken: token, in: web)
+      guard accepts(token), attachedWebView === web else { return false }
+      if commitsClosedBeforeReady {
+        _ = try await NotebookProgramBridge.lifecycle("setCommitEnabled", controller: "notebookProgram",
+          argument: .bool(allowsStateCommits), expectedToken: token, in: web)
+        guard accepts(token), attachedWebView === web else { return false }
+        commitsClosedBeforeReady = false
+      }
+      resumeFailed = false; resumeRetry?.removeFromSuperview(); resumeRetry = nil
+      web.evaluateJavaScript("document.body.inert=false", completionHandler: nil)
+      #if os(iOS)
+      web.isUserInteractionEnabled = true
+      #endif
       checkpointedSource = nil; checkpointSelection = nil; checkpointWasCaptured = false; attentionPauseID = nil
+      publishInteractionReadiness(runtimeLoaded, token: token)
       if let loadedElement, appliedState != loadedElement.state {
         stateToApply = loadedElement.state; applyCurrentState()
-      }
+      } else { captureSnapshot(of: web, token: token) }
+      return true
+    } catch {
+      guard accepts(token), attachedWebView === web else { return false }
+      resumeFailed = true
+      web.evaluateJavaScript("document.body.inert=true", completionHandler: nil)
+      #if os(iOS)
+      web.isUserInteractionEnabled = false
+      #endif
+      publishInteractionReadiness(false, token: token); setRenderReady(false, token: token)
+      if let element = loadedElement { resources.record(.init(kind: "program_resume_error", elementID: element.id,
+        message: String(error.localizedDescription.prefix(2000))), for: element) }
+      showResumeRetry(over: web)
+      return false
+    }
+  }
+
+  private func showResumeRetry(over web: WKWebView) {
+    if let resumeRetry { resumeRetry.isEnabled = true; return }
+    guard let host = web.superview else { return }
+    let title = stateTransfer?.hasFailure == true ? "Повторить сохранение" : "Повторить запуск"
+    #if os(iOS)
+    let button = UIButton(type: .system)
+    button.configuration = .tinted(); button.setTitle(title, for: .normal)
+    button.accessibilityIdentifier = "program-resume-retry-" + (loadedElement?.id ?? "")
+    button.addTarget(self, action: #selector(retryProgramResume), for: .touchUpInside)
+    #else
+    let button = NSButton(title: title, target: self, action: #selector(retryProgramResume))
+    button.identifier = .init("program-resume-retry-" + (loadedElement?.id ?? ""))
+    #endif
+    button.translatesAutoresizingMaskIntoConstraints = false
+    host.addSubview(button); resumeRetry = button
+    NSLayoutConstraint.activate([button.centerXAnchor.constraint(equalTo: host.centerXAnchor),
+      button.centerYAnchor.constraint(equalTo: host.centerYAnchor), button.heightAnchor.constraint(greaterThanOrEqualToConstant: 44)])
+  }
+
+  @objc private func retryProgramResume() {
+    guard resumeFailed || stateTransfer?.hasFailure == true else { return }
+    resumeRetry?.isEnabled = false
+    Task { @MainActor [weak self] in
+      guard let self else { return }
+      stateTransfer?.retry()
+      do {
+        try await stateTransfer?.drain()
+        if resumeFailed { await resumeProgram() }
+        else { resumeRetry?.removeFromSuperview(); resumeRetry = nil }
+      } catch { resumeRetry?.isEnabled = true }
     }
   }
 
@@ -900,20 +981,23 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
   func retireAfterCheckpoint() {
     guard !isInvalidated, retirementTask == nil else { return }
     guard let model = programOwner, let focus = presentationFocus, let element = loadedElement,
-      let basis = programBasis, runtimeLoaded, let web = attachedWebView else { invalidate(); lease.release(); return }
+      programBasis != nil, let web = attachedWebView else { invalidate(); lease.release(); return }
     let entry = Self.presentations[ObjectIdentifier(self)] ?? Presentation(owner: self)
     entry.retiringOwner = self; entry.retiringWeb = web
     Self.presentations[ObjectIdentifier(self)] = entry
     onRenderReady = { _ in }; onInteractionReady = { _ in }
-    onInteraction = {}; onFailure = { _ in }; onState = { _ in false }
+    onInteraction = {}; onFailure = { _ in }
     retirementTask = Task { @MainActor [self, model, web] in
       defer { retirementTask = nil }
       var superseded = false
       do {
-        _ = try await checkpointModel(element: element) { value in
-          let accepted = try await model.checkpointProgramState(focus: focus, rendered: element, value: value, basis: basis)
-          superseded = accepted == nil
-          return accepted
+        if !runtimeLoaded { try await finishAcceptedBeforeReady() }
+        if runtimeLoaded {
+          _ = try await checkpointModel(element: loadedElement ?? element) { rendered, value, basis, admittedBytes in
+            let accepted = try await model.checkpointProgramState(focus: focus, rendered: rendered, value: value, basis: basis, admittedStateBytes: admittedBytes)
+            superseded = accepted == nil
+            return accepted
+          }
         }
         invalidate(); lease.release()
       } catch {
@@ -932,6 +1016,7 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
 
   static func retryRetirements(ownedBy model: NotebookAppModel) {
     for entry in Array(presentations.values) where entry.retiringOwner?.programOwner === model {
+      entry.retiringOwner?.stateTransfer?.retry()
       entry.retiringOwner?.retireAfterCheckpoint()
     }
   }
@@ -940,14 +1025,21 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
     let owners = presentations.values.compactMap(\.owner).filter { $0.programOwner === model && !$0.isInvalidated }
     let tasks = owners.map { owner in Task { @MainActor in
       if let retiring = owner.retirementTask { await retiring.value }
-      guard !owner.isInvalidated, owner.runtimeLoaded, let focus = owner.presentationFocus,
-        let element = owner.loadedElement, let basis = owner.programBasis else { return true }
+      guard !owner.isInvalidated, let focus = owner.presentationFocus,
+        let element = owner.loadedElement, owner.programBasis != nil else { return true }
       do {
-        _ = try await owner.checkpointModel(element: element) { value in
-          try await model.checkpointProgramState(focus: focus, rendered: element, value: value, basis: basis)
+        if !owner.runtimeLoaded {
+          try await owner.finishAcceptedBeforeReady()
+          if !owner.runtimeLoaded {
+            if resume { return await owner.resumeProgram() }
+            return true
+          }
+        }
+        _ = try await owner.checkpointModel(element: owner.loadedElement ?? element) { rendered, value, basis, admittedBytes in
+          try await model.checkpointProgramState(focus: focus, rendered: rendered, value: value, basis: basis, admittedStateBytes: admittedBytes)
         }
         if presentations[ObjectIdentifier(owner)]?.retiringOwner != nil { owner.invalidate(); owner.lease.release() }
-        else if resume { await owner.resumeProgram() }
+        else if resume { return await owner.resumeProgram() }
         return true
       } catch {
         if resume { await owner.resumeProgram() }
@@ -959,32 +1051,55 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
     return accepted
   }
 
+  private func finishAcceptedBeforeReady() async throws {
+    programLoadTask?.cancel()
+    if let programLoadTask { await programLoadTask.value }
+    guard let web = attachedWebView, let token = loadToken, let stateTransfer else { return }
+    let borrow = try lease.borrow(); defer { borrow.release() }
+    commitsClosedBeforeReady = true
+    let hasHeap = try await stateTransfer.finishAccepted(controller: "notebookProgram", expectedToken: token, in: web)
+    restartsAfterBoundary = !hasHeap
+  }
+
   /// One in-flight checkpoint owns the stopped model for navigation, native
   /// dismantle and pixel capture alike. The writer remains the model's writer.
   private func checkpointModel(element: AgentElement,
-    persist: @escaping @MainActor (JSONValue) async throws -> NotebookProgramStateBasis?) async throws -> AgentElement {
+    persist: @escaping @MainActor (AgentElement, JSONValue, NotebookProgramStateBasis, Int) async throws -> NotebookProgramStateBasis?) async throws -> AgentElement {
     if let checkpointTask { return try await checkpointTask.value }
     if let checkpointedSource, checkpointedSource == loadedElement { return checkpointedSource }
     guard let web = attachedWebView, let token = loadToken, hasLiveSource(element) else {
       throw SceneRenderError.snapshotPending("program_checkpoint_owner")
     }
-    let id = UUID(), basis = programBasis, revision = localStateRevision
+    let id = UUID()
     checkpointID = id
     let task = Task { @MainActor [self, web] in
       let borrow = try lease.borrow(); defer { borrow.release() }
-      let value = try await NotebookProgramBridge.lifecycle("checkpoint", controller: "notebookProgram", in: web)
+      guard let stateTransfer else { throw CancellationError() }
+      try await stateTransfer.drain()
+      if frozenCheckpoint == nil {
+        let descriptor = try await NotebookProgramBridge.lifecycle("checkpoint", controller: "notebookProgram",
+          argument: .object(["retry": .bool(true), "serialized": .bool(true)]), expectedToken: token, in: web)
+        let snapshot = try await stateTransfer.checkpoint(NotebookProgramBridge.stateSnapshot(descriptor)) { revision, offset in
+          try await NotebookProgramBridge.readState(revision, offset: offset, controller: "notebookProgram", expectedToken: token, in: web)
+        }
+        guard accepts(token), let basis = programBasis, let rendered = loadedElement,
+          AgentProgramSource(rendered) == AgentProgramSource(element) else { snapshot.release(); throw CancellationError() }
+        frozenCheckpoint = (snapshot, basis, rendered, localStateRevision)
+      }
+      let frozen = frozenCheckpoint!, value = frozen.snapshot.value
+      let basis = frozen.basis, rendered = frozen.rendered, revision = frozen.revision
       try Task.checkCancellation()
-      guard accepts(token), programBasis == basis, localStateRevision == revision, hasLiveSource(element) else { throw CancellationError() }
-      guard let acceptedBasis = try await persist(value) else { throw SceneRenderError.snapshotPending("program_checkpoint_not_accepted") }
+      guard let acceptedBasis = try await persist(rendered, value, basis, frozen.snapshot.admittedBytes) else { throw SceneRenderError.snapshotPending("program_checkpoint_not_accepted") }
       try Task.checkCancellation()
       guard accepts(token), localStateRevision == revision, let current = loadedElement,
         AgentProgramSource(current) == AgentProgramSource(element),
-        current.state == element.state || current.state == value else { throw CancellationError() }
+        current.state == rendered.state || current.state == value else { throw CancellationError() }
       let accepted = current.updating(state: value)
-      let selection = await NotebookProgramBridge.semanticSelection(controller: "notebookProgram", in: web)
+      let selection = await NotebookProgramBridge.semanticSelection(controller: "notebookProgram", expectedToken: token, in: web)
       guard accepts(token), localStateRevision == revision, hasLiveSource(current) else { throw CancellationError() }
       checkpointSelection = selection; checkpointWasCaptured = false
       loadedElement = accepted; appliedState = value; stateToApply = nil; programBasis = acceptedBasis; checkpointedSource = accepted
+      frozen.snapshot.release(); frozenCheckpoint = nil
       return accepted
     }
     checkpointTask = task
@@ -995,19 +1110,19 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
   /// The same spatial checkpoint additionally captures pixels for a passive
   /// replacement; a close/background fence does not allocate an unused raster.
   static func checkpointCurrent(focus: InteractiveElementReference, element: AgentElement,
-    persist: @escaping @MainActor (JSONValue, NotebookProgramStateBasis) async throws -> NotebookProgramStateBasis?,
+    persist: @escaping @MainActor (JSONValue, NotebookProgramStateBasis, Int) async throws -> NotebookProgramStateBasis?,
     resources: SceneRenderResources = .shared) async throws -> (AgentElement, RasterLease) {
     presentations = presentations.filter { $0.value.owner != nil }
     let owners = presentations.values.compactMap(\.owner).filter {
       $0.resources === resources && $0.presentationFocus == focus && $0.hasLiveSource(element)
     }
-    guard owners.count == 1, let owner = owners.first, let basis = owner.programBasis else {
+    guard owners.count == 1, let owner = owners.first, owner.programBasis != nil else {
       throw SceneRenderError.snapshotPending("program_checkpoint_owner")
     }
     do {
       // The executing context owns the source/state it actually observed. A
       // scene read window may already have evicted this body during retirement.
-      let accepted = try await owner.checkpointModel(element: element) { value in try await persist(value, basis) }
+      let accepted = try await owner.checkpointModel(element: element) { _, value, basis, admittedBytes in try await persist(value, basis, admittedBytes) }
       try Task.checkCancellation()
       guard let pixels = try await owner.captureCurrent(element: accepted) else {
         throw SceneRenderError.snapshotPending("program_checkpoint_picture")
@@ -1026,8 +1141,8 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
     guard owners.count == 1, let owner = owners.first,
       let token = owner.loadToken else { throw SceneRenderError.snapshotPending("program_attention_owner") }
     let attentionID = UUID(); owner.attentionPauseID = attentionID
-    let (accepted, pixels) = try await checkpointCurrent(focus: focus, element: element, persist: { value, basis in
-      try await model.checkpointProgramState(focus: focus, rendered: element, value: value, basis: basis)
+    let (accepted, pixels) = try await checkpointCurrent(focus: focus, element: element, persist: { value, basis, admittedBytes in
+      try await model.checkpointProgramState(focus: focus, rendered: element, value: value, basis: basis, admittedStateBytes: admittedBytes)
     })
     pixels.release()
     return .init(value: accepted.state, isCurrent: { [weak owner] in
@@ -1095,15 +1210,24 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
     self.onFailure = onFailure
   }
 
-  func use(onState: @escaping (JSONValue) -> Bool) {
+  func use(onState: @escaping NotebookProgramStateWriter, enabled: Bool = true) {
     guard !isInvalidated else { return }
     self.onState = onState
+    guard allowsStateCommits != enabled else { return }
+    allowsStateCommits = enabled
+    if let web = attachedWebView, let token = loadToken {
+      web.callAsyncJavaScript("if(typeof notebookLoadToken !== 'undefined' && notebookLoadToken===token) window.notebookProgram?.setCommitEnabled(enabled);return true;",
+        arguments: ["token": token, "enabled": enabled], in: nil, in: .page, completionHandler: nil)
+    }
   }
 
   /// Dismantling ends this owner session. Neither a queued script message nor an
   /// already running WebKit completion may publish into its next owner.
   func invalidate() {
-    programLoadTask?.cancel(); programLoadTask = nil; programAssets.revokeAll(); packageNavigationURL = nil
+    stateTransfer?.revoke()
+    frozenCheckpoint = nil
+    programLoadTask?.cancel(); programLoadTask = nil
+    resumeRetry?.removeFromSuperview(); resumeRetry = nil; resumeFailed = false; programAssets.revokeAll(); packageNavigationURL = nil
     checkpointTask?.cancel(); checkpointTask = nil; checkpointID = nil; checkpointedSource = nil; checkpointSelection = nil; checkpointWasCaptured = false; attentionPauseID = nil
     guard !isInvalidated else { return }
     isInvalidated = true
@@ -1126,12 +1250,12 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
     onInteractionReady = { _ in }
     onInteraction = {}
     onFailure = { _ in }
-    onState = { _ in false }
+    onState = { _, _ in false }
     attachedWebView?.evaluateJavaScript("void notebookProgram.dispose().catch(()=>{})", completionHandler: nil)
     attachedWebView?.stopLoading()
     attachedWebView?.navigationDelegate = nil
     attachedWebView?.configuration.userContentController.removeScriptMessageHandler(forName: "notebook")
-    attachedWebView = nil
+    attachedWebView = nil; stateTransfer = nil; initialStateEncoding = nil
     if let admissionObserver { NotificationCenter.default.removeObserver(admissionObserver) }
     admissionObserver = nil
   }
@@ -1158,7 +1282,7 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
     var element = element, basis = basis
     if let current = programBasis, let loadedElement,
       AgentProgramSource(loadedElement) == AgentProgramSource(element),
-      basis == nil || basis.map({ current.hasNewerState(than: $0) }) == true {
+      basis == nil || basis.map({ current == $0 || current.hasNewerState(than: $0) }) == true {
       element = element.updating(state: loadedElement.state); basis = current
     }
     let sourceChanged = programBasis.map { previous in basis.map { !previous.hasSameSource(as: $0) } ?? true } ?? (basis != nil && loadedElement != nil)
@@ -1253,8 +1377,12 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
   private var snapshotOnly = false
 
   private func beginLoad(_ element: AgentElement, in webView: WKWebView, snapshotOnly: Bool = false) {
+    frozenCheckpoint = nil
+    stateTransfer?.revoke()
     self.snapshotOnly = snapshotOnly
-    programLoadTask?.cancel(); programLoadTask = nil; programAssets.revokeAll(); packageNavigationURL = nil
+    commitsClosedBeforeReady = false; restartsAfterBoundary = false
+    programLoadTask?.cancel(); programLoadTask = nil
+    resumeRetry?.removeFromSuperview(); resumeRetry = nil; resumeFailed = false; programAssets.revokeAll(); packageNavigationURL = nil
     checkpointTask?.cancel(); checkpointTask = nil; checkpointID = nil; checkpointedSource = nil; checkpointSelection = nil; checkpointWasCaptured = false; attentionPauseID = nil
     readinessGeneration &+= 1
     stateApplicationID = nil; stateApplication?.cancel(); stateApplication = nil
@@ -1266,6 +1394,8 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
     webView.stopLoading()
     let token = "\(lease.id.uuidString)/\(UUID().uuidString)"
     loadToken = token
+    stateTransfer = NotebookProgramStateTransfer(resources: resources,
+      grantsInitialCredit: !snapshotOnly && (lease.priority == .input || lease.priority == .liveProgram))
     #if os(iOS)
       NotebookInteractionDiagnostics.bind(webView, elementID: element.id, token: token, ready: false)
     #endif
@@ -1277,26 +1407,30 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
     publishRenderReadiness(false, token: token)
     publishInteractionReadiness(false, token: token)
     beginPreparationDeadline(token: token)
-    if let hash = element.programPackage {
-      programLoadTask = Task { @MainActor [weak self, weak webView] in
-        guard let self, let webView else { return }
-        do {
+    programLoadTask = Task { @MainActor [weak self, weak webView] in
+      guard let self, let webView else { return }
+      do {
+        let encoded = try await NotebookProgramStateEncoding.prepare(element.state, resources: resources, forHTML: true)
+        guard !Task.isCancelled, accepts(token), attachedWebView === webView else { return }
+        initialStateEncoding = encoded
+        if let hash = element.programPackage {
           guard let store = programStore ?? programOwner?.store else { throw SceneRenderError.snapshotPending("program_store") }
           let package = try await Task.detached(priority: .userInitiated) { try store.readProgramPackage(hash) }.value
           guard !Task.isCancelled, accepts(token), attachedWebView === webView else { return }
           let url = programAssets.register(store: store, package: package) { origin in
-            Self.document(for: element, token: token, package: package, origin: origin)
+            Self.document(for: element, stateJSON: encoded.htmlJSON, token: token, package: package, origin: origin, stateCredit: stateTransfer?.initialCredit ?? 0, commitsEnabled: !snapshotOnly && allowsStateCommits)
           }
           packageNavigationURL = url
           activeNavigation = webView.load(URLRequest(url: url))
-        } catch {
-          guard !Task.isCancelled, accepts(token) else { return }
-          record(error, kind: "program_asset_error", token: token, source: element)
+        } else {
+          let document = Self.document(for: element, stateJSON: encoded.htmlJSON, token: token, stateCredit: stateTransfer?.initialCredit ?? 0, commitsEnabled: !snapshotOnly && allowsStateCommits)
+          activeNavigation = webView.loadHTMLString(document.before + element.html + document.after, baseURL: nil)
         }
+      } catch {
+        guard !Task.isCancelled, accepts(token) else { return }
+        initialStateEncoding = nil
+        record(error, kind: "program_asset_error", token: token, source: element)
       }
-    } else {
-      let document = Self.document(for: element, token: token)
-      activeNavigation = webView.loadHTMLString(document.before + element.html + document.after, baseURL: nil)
     }
   }
 
@@ -1314,16 +1448,8 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
           NotebookInteractionDiagnostics.state(next, stage: "native_apply_submitted", webView: web, revision: expectedRevision)
         #endif
         do {
-          let state = try JSONSerialization.jsonObject(with: JSONEncoder().encode(next), options: .fragmentsAllowed)
-          let accepted = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Bool, any Error>) in
-            web.callAsyncJavaScript("return await window.notebookProgram.apply(state, revision);",
-              arguments: ["state": state, "revision": String(expectedRevision)], in: nil, in: .page) { result in
-                switch result {
-                case .success(let value): continuation.resume(returning: value as? Bool == true)
-                case .failure(let error): continuation.resume(throwing: error)
-                }
-              }
-          }
+          let encoded = try await NotebookProgramStateEncoding.prepare(next, resources: resources)
+          let accepted = try await encoded.send(controller: "notebookProgram", revision: String(expectedRevision), expectedToken: token, in: web)
           guard accepts(token), !Task.isCancelled else { return }
           #if os(iOS)
             NotebookInteractionDiagnostics.state(next, stage: "native_apply_completed", webView: web, revision: expectedRevision, accepted: accepted)
@@ -1388,34 +1514,45 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
       receiveFingerRegions(value)
     } else if object["kind"] as? String == "interaction", runtimeLoaded {
       onInteraction()
+    } else if object["kind"] as? String == "stateCredit", let bytes = object["bytes"] as? Int,
+      let web = attachedWebView {
+      stateTransfer?.requestCredit(bytes) { NotebookProgramBridge.grantStateCredit($0, controller: "notebookProgram", expectedToken: token, in: web) }
     } else if object["kind"] as? String == "state",
-      let sequence = (object["revision"] as? String).flatMap(UInt64.init), sequence > localStateRevision,
-      let state = object["value"], let value = Self.decodeState(state) {
-      // This is already the program's current value, not a request to apply an
-      // older persistence echo. A queued native application also carries this
-      // revision into WebKit, where even an as-yet-undelivered input can reject it.
-      localStateRevision = sequence
-      // Passive renderers and an unfocused program may compute local state,
-      // but have not admitted a human write. Only the input owner's positive
-      // acknowledgement advances the canonical live value; it is not a save.
-      let admitted = onState(value)
-      #if os(iOS)
-        if let web = attachedWebView {
-          NotebookInteractionDiagnostics.state(value, stage: "program_commit", webView: web, revision: sequence, accepted: admitted)
-        }
-      #endif
-      guard admitted else {
-        if appliedState != loadedElement?.state {
-          stateToApply = loadedElement?.state; applyCurrentState()
-        }
-        return
-      }
-      appliedState = value; stateToApply = nil
-      if runtimeLoaded {
-        preparationDeadline?.cancel(); preparationDeadline = nil; preparationDeadlineAt = nil
-        currentCapture?.cancel()
-      }
-      setRenderReady(false, token: token)
+      let data = try? JSONSerialization.data(withJSONObject: object["snapshot"] ?? [:]),
+      let descriptor = try? JSONDecoder().decode(NotebookProgramStateTransfer.Snapshot.self, from: data),
+      let stateTransfer, let web = attachedWebView, let borrow = try? lease.borrow() {
+      let writer = onState, model = programOwner, sourceBasis = programBasis
+      stateTransfer.receive(descriptor, retaining: borrow,
+        read: { try await NotebookProgramBridge.readState($0, offset: $1, controller: "notebookProgram", expectedToken: token, in: web) },
+        acknowledge: { try await NotebookProgramBridge.acknowledgeState($0, controller: "notebookProgram", expectedToken: token, in: web) },
+        accept: { [self] value, sequence in
+          let (admitted, receipt) = await withCheckedContinuation { continuation in
+            if !writer(value, .init(admittedBytes: descriptor.cost, sourceBasis: sourceBasis) { continuation.resume(returning: (true, $0)) }) {
+              continuation.resume(returning: (false, nil as NotebookProgramStateBasis?))
+            }
+          }
+          guard admitted || model == nil else { throw SceneRenderError.snapshotPending("program_state_not_accepted") }
+          guard receipt != nil || model == nil else { throw NotebookProgramCheckpointError.superseded }
+          if accepts(token) {
+            localStateRevision = sequence; appliedState = value; stateToApply = nil
+            if let current = loadedElement {
+              loadedElement = current.updating(state: value)
+              if let receipt { programBasis = receipt }
+            }
+            if runtimeLoaded { preparationDeadline?.cancel(); preparationDeadline = nil; preparationDeadlineAt = nil; currentCapture?.cancel() }
+            setRenderReady(false, token: token)
+            if runtimeLoaded { applyCurrentState() }
+          }
+          // The exact write receipt and its credit outlive a dismantled view.
+        }, onFailure: { [weak self] error in
+          guard let self, accepts(token), self.stateTransfer?.hasFailure == true else { return }
+          // Transport refusal must not enter fail(), which retires this exact
+          // live executor through the raster owner. Its FIFO still owns state.
+          resources.record(.init(kind: "program_state_error", elementID: element.id,
+            message: String(error.localizedDescription.prefix(2000))), for: element)
+          programOwner?.showCue("Не удалось сохранить состояние программы. Повторите сохранение.")
+          showResumeRetry(over: web)
+        })
     }
   }
 
@@ -1434,29 +1571,13 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
   func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
     guard let navigation, navigation === activeNavigation, attachedWebView === webView,
       let token = loadToken, accepts(token), let element = loadedElement else { return }
-    #if os(iOS)
-      // Proven static SVG has no animation clock to advance. WebKit's public
-      // snapshot flushes its paint; waiting two display ticks per diagram made
-      // a dense cold sheet serially pay for frames that could not change it.
-      // A passive neighbour is clipped outside the display. WebKit suspends
-      // its animation clock; waiting for rAF here deadlocks the next sheet.
-      // Its public snapshot flushes paint after the authored ready promise.
-      let frameReadiness = element.requiresLiveRuntime && !snapshotOnly ? """
-        await new Promise(resolve => requestAnimationFrame(
-          () => requestAnimationFrame(resolve)
-        ));
-        """ : ""
-    #else
-      // The public snapshot includes pending pixels; it does not advance an
-      // arbitrary program's rAF or claim that its computation has finished.
-      let frameReadiness = ""
-    #endif
+    // Authored readiness and the native snapshot are the two real barriers.
+    // Display rAF can be suspended while the native wrapper waits for readiness.
     webView.callAsyncJavaScript(
       """
       await document.fonts.ready;
       await Promise.all([...document.images].map(image => image.decode().catch(() => {})));
       await window.notebookProgram.start({requiresReady:\(element.programPackage != nil || !element.javaScript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || element.html.localizedCaseInsensitiveContains("<script"))});
-      \(frameReadiness)
       for (const image of document.images) if (!image.naturalWidth) window.notebookDiagnostic('load_error', 'Image failed to load');
       if (Math.max(document.body.scrollHeight, document.documentElement.scrollHeight) > innerHeight + 1 || Math.max(document.body.scrollWidth, document.documentElement.scrollWidth) > innerWidth + 1) window.notebookDiagnostic('overflow', 'Content exceeds its frame');
       return window.notebookFingerInput.start();
@@ -1467,7 +1588,7 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
         switch result {
         case .success(let value):
           receiveFingerRegions(value)
-          runtimeLoaded = true
+          runtimeLoaded = true; initialStateEncoding = nil
           #if os(iOS)
             if let element = loadedElement { NotebookInteractionDiagnostics.bind(webView, elementID: element.id, token: token, ready: true) }
           #endif
@@ -1605,7 +1726,8 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
       policy == nil || policy == snapshotPolicy else { return }
     let failure = AgentWebSourceFailure(diagnostic: diagnostic, source: element,
       leaseID: lease.id, loadToken: token, policy: policy,
-      rasterAdmission: policy == nil ? nil : lastCaptureAdmission)
+      rasterAdmission: policy == nil ? nil : lastCaptureAdmission,
+      stateCreditBytes: stateTransfer?.admittedCreditBytes ?? 0)
     lastCaptureFailure = policy == nil ? nil : failure
     if policy == nil {
       // A terminal program/navigation failure revokes live installation too.
@@ -1642,7 +1764,7 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
 
   private func publishInteractionReadiness(_ ready: Bool, token: String) {
     Task { @MainActor [weak self] in
-      guard let self, accepts(token), runtimeLoaded == ready else { return }
+      guard let self, accepts(token), (runtimeLoaded && !resumeFailed) == ready else { return }
       onInteractionReady(ready)
     }
   }
@@ -1704,17 +1826,12 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
     return webView
   }
 
-  private static func document(for element: AgentElement, token: String, package: NotebookProgramPackage? = nil, origin: URL? = nil) -> NotebookProgramAssets.Document {
+  private static func document(for element: AgentElement, stateJSON: String, token: String, package: NotebookProgramPackage? = nil, origin: URL? = nil, stateCredit: Int = 0, commitsEnabled: Bool = true) -> NotebookProgramAssets.Document {
     #if os(iOS)
       let interactionScript = NotebookInteractionDiagnostics.script
     #else
       let interactionScript = ""
     #endif
-    let state = json(element.state).replacingOccurrences(
-      of: "</script>",
-      with: "<\\/script>",
-      options: [.caseInsensitive]
-    )
     let policy = origin.map(NotebookProgramAssets.policy) ?? "default-src 'none'; img-src data: blob:; media-src data: blob:; font-src data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'none';"
     let style = package.flatMap { package in origin.map { NotebookProgramAssets.style(package, origin: $0) } } ?? ""
     let script = package.flatMap { package in origin.map { NotebookProgramAssets.script(package, origin: $0) } }
@@ -1737,15 +1854,19 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
         const notebookLoadToken = '\(token)';
         \(interactionScript)
         for (const kind of ['pointerdown', 'keydown']) addEventListener(kind, event => {
-          if (event.isTrusted && (kind === 'keydown' || window.notebookFingerInput.forEvent(event) === 'input'))
+          if (event.isTrusted && (kind === 'keydown' || window.notebookFingerInput.forEvent(event) === 'input')) {
+            window.notebookProgram?.setCommitEnabled(true);
             window.webkit.messageHandlers.notebook.postMessage({token:notebookLoadToken,kind:'interaction'});
+          }
         }, true);
         window.notebookDiagnostic = (category, message) => window.webkit.messageHandlers.notebook.postMessage({token:notebookLoadToken,kind:'diagnostic',category,message:String(message)});
         addEventListener('error', event => window.notebookDiagnostic('javascript_error', event.message || 'Resource load error'));
         addEventListener('unhandledrejection', event => window.notebookDiagnostic('javascript_error', event.reason));
         \(NotebookProgramBridge.script)
-        window.notebookProgram=createNotebookProgram({state:\(state),
-          onCommit:(value,revision)=>window.webkit.messageHandlers.notebook.postMessage({token:notebookLoadToken,kind:'state',value,revision}),
+        window.notebookProgram=createNotebookProgram({state:\(stateJSON),
+          stateTransport:{credit:\(stateCredit),enabled:\(commitsEnabled),
+            onSnapshot:snapshot=>window.webkit.messageHandlers.notebook.postMessage({token:notebookLoadToken,kind:'state',snapshot}),
+            requestCredit:bytes=>window.webkit.messageHandlers.notebook.postMessage({token:notebookLoadToken,kind:'stateCredit',bytes})},
           report:window.notebookDiagnostic});
         window.notebook=notebookProgram.api;
         \(AgentWebFingerRegions.script)
@@ -1762,13 +1883,5 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
     return String(decoding: data, as: UTF8.self).replacingOccurrences(of: "<", with: "\\u003c")
   }
 
-  static func decodeState(_ object: Any) -> JSONValue? {
-    guard
-      let data = try? JSONSerialization.data(
-        withJSONObject: object,
-        options: [.fragmentsAllowed]
-      )
-    else { return nil }
-    return try? JSONDecoder().decode(JSONValue.self, from: data)
-  }
+
 }

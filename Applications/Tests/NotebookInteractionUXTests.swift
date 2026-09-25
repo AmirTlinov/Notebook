@@ -127,7 +127,8 @@ final class NotebookInteractionUXTests: XCTestCase {
       let leaving = ContinuousClock.now
       pinch(0.2)
       try await assertUX("board-return-\(pass)", since: leaving, budget: NotebookUXObservation.opening, window: window) {
-        model.presence?.boardID == workspace.rootBoardID && model.compositionTiles.published?.isPaintInstalled == true
+        model.presence?.boardID == workspace.rootBoardID && model.presencePhase == .settled
+          && model.compositionTiles.published?.isPaintInstalled == true
           && model.compositionTiles.published?.plan.rootBoardID == workspace.rootBoardID
       }
     }
@@ -644,7 +645,9 @@ final class NotebookInteractionUXTests: XCTestCase {
       let e = UXDirectEvent(touch: direct)
       observer.touchesMoved([direct], with: e); finger.touchesMoved([direct], with: e)
       if expectsManipulation {
-        XCTAssertNotNil(model.selectionSession.manipulation,
+        // XCTest reflects a non-nil value even on success. Compare presence,
+        // not the whole immutable selection graph, inside the timed contact.
+        XCTAssertTrue(model.selectionSession.manipulation != nil,
           "The installed body owner must admit the drag: recognizer=\(finger.state.rawValue), Pencil=\(model.inputGate.hasActivePencil), interactive=\(model.selectionSession.isInteractive)")
       }
     }

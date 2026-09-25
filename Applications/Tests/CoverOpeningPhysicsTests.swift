@@ -115,6 +115,10 @@ final class CoverOpeningPhysicsTests: XCTestCase {
     lifecycle.update(ownerID: ownerID, progress: 0.58, revision: revision)
 
     XCTAssertTrue(lifecycle.capturedCover === snapshot)
+    XCTAssertEqual(lifecycle.lastSettledEndpoint, .open)
+    lifecycle.update(ownerID: ownerID, progress: 0, revision: revision)
+    lifecycle.update(ownerID: ownerID, progress: 0.4, revision: revision)
+    XCTAssertEqual(lifecycle.lastSettledEndpoint, .closed)
   }
 
   func testContentChangeWaitsForAnEndpointBeforeReplacingTheCover() {
@@ -180,7 +184,33 @@ final class CoverOpeningPhysicsTests: XCTestCase {
     }
     update(1)
     try await Task.sleep(for: .milliseconds(250))
+    XCTAssertEqual(controller.capturedCoverCount, 0, "An initially open page has no background cover snapshot demand")
+    let curl = try XCTUnwrap(controller.view.subviews.compactMap { $0 as? SheetCurlMetalView }.first)
+    let liveCover = try XCTUnwrap(controller.view.subviews.first { !($0 is SheetCurlMetalView) })
+    var firstFrame: SheetCurlMetalView.FrameTiming?, readyProgress: Double?
+    curl.onFrameMeasured = { if firstFrame == nil { firstFrame = $0 } }
+    curl.onFrameReady = { _, progress, _, readiness in if readiness.isReady { readyProgress = progress } }
+    defer { curl.onFrameMeasured = nil; curl.onFrameReady = nil }
+    let closing = CACurrentMediaTime()
+    update(0.7)
+    XCTAssertEqual(controller.capturedCoverCount, 0)
+    XCTAssertTrue(curl.isHidden)
+    XCTAssertEqual(Float(liveCover.alpha), Float(CoverOpeningPhysics.warmCoverOpacity),
+      "The pending first curl preserves the open page, not a complete opaque cover")
+    // A newer camera pose arrives while capture is pending; the first curl
+    // must use it without restarting the accepted closing operation.
     update(0.2)
+    let deadline = ContinuousClock.now + .seconds(1)
+    while (firstFrame == nil || readyProgress == nil), ContinuousClock.now < deadline {
+      try await Task.sleep(for: .milliseconds(10))
+    }
+    let timing = try XCTUnwrap(firstFrame)
+    XCTAssertLessThanOrEqual((timing.submitted - closing) * 1_000, 100,
+      "First cold-closing GPU submission includes foreground capture, not OS presentation or photons")
+    XCTAssertEqual(try XCTUnwrap(readyProgress), 0.2)
+    XCTAssertEqual(controller.capturedCoverCount, 1)
+    XCTAssertTrue(liveCover.isHidden, "The opaque result below must belong to the actual curl")
+    XCTAssertFalse(curl.isHidden)
     try await Task.sleep(for: .milliseconds(250))
     let image = UIGraphicsImageRenderer(size: window.bounds.size).image { _ in
       window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
@@ -249,6 +279,42 @@ final class CoverOpeningPhysicsTests: XCTestCase {
     try await Task.sleep(for: .milliseconds(150))
     XCTAssertEqual(controller.capturedCoverCount, 0)
     gate.endContact(source: contact)
+  }
+
+  @MainActor
+  func testFullyOpenCoverRejectsQueuedAndChangedBackgroundSnapshots() async throws {
+    let (window, controller) = try coverWindow()
+    defer { window.isHidden = true }
+    let owner = UUID()
+    func update(_ progress: Double, title: String) {
+      controller.update(ownerID: owner, progress: progress, revision: revision(title: title),
+        backsideColor: .document, preparesCoverMotion: true,
+        canPrepare: { true }, cornerRadius: 12, cover: AnyView(Color.red))
+    }
+    update(0, title: "Before opening")
+    window.layoutIfNeeded()
+    update(1, title: "Before opening")
+    try await Task.sleep(for: .milliseconds(100))
+    XCTAssertEqual(controller.capturedCoverCount, 0, "A queued closed-cover preparation cannot capture behind open paper")
+    update(1, title: "Changed while open")
+    try await Task.sleep(for: .milliseconds(100))
+    XCTAssertEqual(controller.capturedCoverCount, 0, "Changed hidden cover pixels wait for an actual closing demand")
+    update(0.2, title: "Changed while open")
+    XCTAssertEqual(controller.capturedCoverCount, 0)
+    let curl = try XCTUnwrap(controller.view.subviews.compactMap { $0 as? SheetCurlMetalView }.first)
+    let liveCover = try XCTUnwrap(controller.view.subviews.first { !($0 is SheetCurlMetalView) })
+    XCTAssertTrue(curl.isHidden)
+    XCTAssertEqual(Float(liveCover.alpha), Float(CoverOpeningPhysics.warmCoverOpacity),
+      "Pending closing keeps the open endpoint rather than flashing a complete opaque cover")
+    for _ in 0..<100 where controller.submittedCurlFrameCount == 0 {
+      try await Task.sleep(for: .milliseconds(10))
+    }
+    XCTAssertGreaterThan(controller.submittedCurlFrameCount, 0)
+    XCTAssertEqual(controller.capturedCoverCount, 1)
+    update(1, title: "Changed while open")
+    update(0.4, title: "Changed while open")
+    try await Task.sleep(for: .milliseconds(50))
+    XCTAssertEqual(controller.capturedCoverCount, 1, "A valid frozen cover still survives immediate reversal")
   }
 
   @MainActor

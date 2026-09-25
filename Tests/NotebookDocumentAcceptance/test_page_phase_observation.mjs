@@ -6,13 +6,13 @@ import vm from 'node:vm';
 const html = fs.readFileSync(new URL('../../Applications/WebResources/document-shell.html', import.meta.url), 'utf8');
 function section(start, end) {
   const a = html.indexOf(start), b = html.indexOf(end, a);
-  assert(a >= 0 && b > a); return html.slice(a, b);
+  assert(a >= 0 && b > a, `Missing shipped boundary: ${start} … ${end}`); return html.slice(a, b);
 }
-const observationSource = section('      let preparationObservation = null;', '      let sourcePreparation = null;');
+const observationSource = section('      let preparationObservation = null;', '      let presentationEpoch = ');
 const receiptSource = section('      const observedPageReceipt = async', '      // Each pending frame');
 const renderSource = section('      const renderFrame = async', '      const observedPageReceipt');
 const programWaitSource = section('      const waitForProgram = ', '      const retirePresentation = ');
-const fontSource = section('          const observation = preparationObservation?.sourceKey', "          phase('fontsReady');") + "phase('fontsReady');";
+const programSource = fs.readFileSync(new URL('../../Applications/WebResources/document-program.js', import.meta.url), 'utf8');
 const tick = () => new Promise(resolve => setImmediate(resolve));
 const frame = {documentID:'document', runtimeID:'runtime', generation:'18', sourceKey:'source',
   stateKey:'state', renderToken:'token', pageIndex:3};
@@ -27,7 +27,7 @@ function execution() {
     size: {get(){throw new Error('Cannot trigger font/style size work')}}
   });
   const scope = {document, performance:{now:()=>{clockReads++;return now}},
-    sourcePreparation:{host:{isConnected:true}}, payload:{...frame},
+    payload:{...frame},
     requestAnimationFrame:fn=>frames.push(fn),
     setPageIndex:index=>actions.push(['setPageIndex',index]), pageReceipt:()=>({...scope.payload}),
     getComputedStyle:()=>{throw new Error('No observer layout')}, AbortController, DOMException};
@@ -59,7 +59,8 @@ test('receipt phases bound each wait without claiming either callback is an inst
   assert.equal(o.phasesMS.receipt_raf1,30); assert.equal(o.phasesMS.receipt_raf2,80);
   assert.equal(o.phasesMS.receipt_complete,80);
   assert.equal(o.states.receipt_enter.documentHidden,0);
-  assert.equal(o.states.receipt_raf2.sourcePreparationConnected,1);
+  assert.equal(o.states.receipt_raf2.documentReadyState,2);
+  assert.deepEqual(Object.keys(o.states.receipt_raf2).sort(),['documentHidden','documentReadyState']);
   f.api.observePreparation({...frame,attemptID:'a'});
   assert.equal(f.api.observation().attemptID,'a'); // Re-arming the same native attempt retains its source flags.
 });
@@ -77,41 +78,89 @@ test('superseded source, runtime, state, token, page or attempt cannot inherit a
   }
 });
 
-test('actual font ready getter and promise wait remain single operations with separate elapsed times', async () => {
-  const f=execution(); f.api.observePreparation({...frame,attemptID:'font'});
-  let resolve, getters=0;
-  const wait=new Promise(done=>{resolve=done});
-  Object.defineProperty(f.scope.document.fonts,'ready',{get(){getters++;f.time(7);return wait}});
-  Object.assign(f.scope,{source:{key:'source'},preparationPhasesMS:{},phase:name=>f.actions.push(name)});
-  const task=vm.runInNewContext(`(async()=>{${fontSource}})()`,f.scope);
-  await tick(); assert.equal(getters,1); assert.deepEqual(f.actions,[]);
-  f.time(27); resolve(); await task;
-  assert.equal(f.scope.preparationPhasesMS.fontsReadyGetter,7);
-  assert.equal(f.scope.preparationPhasesMS.fontsReadyAwait,20);
-  assert.deepEqual(f.actions,['fontsReady']);
-  assert.equal(f.api.observation().states.fonts_before.sourcePreparationConnected,1);
+test('the shipped program adapter waits on its one font getter and image decode before author readiness', async () => {
+  const handlers=new Map(), messages=[], actions=[];
+  let fontResolve, imageResolve, fontGets=0;
+  const fontsReady=new Promise(resolve=>{fontResolve=resolve});
+  const imageReady=new Promise(resolve=>{imageResolve=resolve});
+  const document={fonts:{}, images:[{naturalWidth:1,decode:()=>{actions.push('decode');return imageReady}}],
+    body:{scrollHeight:10,scrollWidth:10}};
+  Object.defineProperties(document.fonts,{
+    ready:{get(){fontGets++;actions.push('font-get');return fontsReady}},
+    status:{get(){throw new Error('No font status sampling')}},
+    size:{get(){throw new Error('No font size sampling')}}
+  });
+  const scope={document,window:{},innerHeight:10,innerWidth:10,queueMicrotask,
+    parent:{postMessage:value=>messages.push(value)},addEventListener:(name,handler)=>handlers.set(name,handler),
+    createNotebookProgram:()=>({api:{},start:async value=>{actions.push(['start',value.requiresReady])}})};
+  vm.runInNewContext(programSource+`
+    installNotebookDocumentProgram({blockID:'program',token:'token',state:{},requiresReady:true},createNotebookProgram);`,scope);
+  assert.deepEqual(messages.map(value=>value.channel),['notebook-program-installed']);
+  const task=handlers.get('load')();
+  await tick();assert.equal(fontGets,1);assert.deepEqual(actions,['font-get']);
+  assert.equal(messages.some(value=>value.channel==='notebook-program-ready'),false);
+  fontResolve();await tick();assert.deepEqual(actions,['font-get','decode']);
+  assert.equal(messages.some(value=>value.channel==='notebook-program-ready'),false);
+  imageResolve();await task;
+  assert.equal(fontGets,1);assert.deepEqual(actions,['font-get','decode',['start',true]]);
+  assert.deepEqual(messages.map(value=>value.channel),
+    ['notebook-program-installed','notebook-program-ready','notebook-program-started']);
 });
 
-test('render observation measures the real decode barrier and cannot install a superseded fragment', async () => {
-  for(const superseded of [false,true]) {
-    const f=execution(); f.api.observePreparation({...frame,attemptID:'render'});
-    let release, required=true, installed=0;
-    const decode=new Promise(resolve=>{release=resolve});
-    Object.assign(f.scope,{payload:null, installedSourceKey:null, installedFragment:null, appliedStateKey:null,
-      currentPageIndex:()=>0, pendingFrame:null, activeImagePreparation:null, currentFrame:null,
-      presentationIsRendering:false, frameIsRequired:()=>required,
-      notebookDocumentImages:{waitForPixels:()=>decode}, presentationChanged:()=>{}, bridge:()=>{},
-      installPhysicalFragment:()=>{installed++}, prepareInteractiveFrames:async()=>{},
-      activeEditorLayout:null, restoreEditor:()=>{}, work:{stateApplications:0},
-      applyInteractiveState:async()=>{}, runtimeDiagnostics:[], layoutCanonical:true,pageLayout:{pageCount:9}});
-    vm.runInNewContext(renderSource+'\nglobalThis.render=renderFrame;',f.scope);
-    const task=f.scope.render({frame:{...frame},source:{key:'source'},state:{key:'state',states:{}},
-      fragment:{html:'<img>'},mathStyles:'',diagnostics:[]});
-    await tick();assert.equal(installed,0);assert.equal(f.api.observation().phasesMS.render_images,undefined);
-    f.time(200);required=!superseded;release();await task;
-    assert.equal(installed,superseded?0:1);
-    const phases=f.api.observation().phasesMS;
-    assert.equal(phases.render_images,200);
-    assert.equal(phases.render_complete,superseded?undefined:200);
+function renderExecution(observe=true) {
+  const f=execution();if(observe)f.api.observePreparation({...frame,attemptID:'render'});
+  let programResolve,stateResolve,required=true,installed=0;
+  const programs=new Promise(resolve=>{programResolve=resolve});
+  const state=new Promise(resolve=>{stateResolve=resolve});
+  Object.assign(f.scope,{payload:null,installedSourceKey:null,installedFragment:null,appliedStateKey:null,
+    currentPageIndex:()=>3,pendingFrame:null,currentFrame:null,activeProgramPreparation:null,
+    programsVisible:true,presentationIsRendering:false,frameIsRequired:()=>required,
+    presentationChanged:()=>f.actions.push(['presentation',f.scope.presentationIsRendering]),
+    bridge:value=>f.actions.push(['bridge',value.kind]),
+    installPhysicalFragment:()=>{installed++},prepareInteractiveFrames:()=>programs,
+    work:{stateApplications:0},applyInteractiveState:()=>state,
+    runtimeDiagnostics:[],layoutCanonical:true,pageLayout:{pageCount:9}});
+  vm.runInNewContext(renderSource+'\nglobalThis.render=renderFrame;',f.scope);
+  const job={frame:{...frame},source:{key:'source'},state:{key:'state',states:{}},
+    fragment:{html:'<section data-block-id="program"></section>'},diagnostics:[]};
+  return {...f,run:()=>f.scope.render(job),programResolve,stateResolve,
+    supersede:()=>{required=false},installed:()=>installed,
+    rendered:()=>f.actions.filter(value=>value[0]==='bridge'&&value[1]==='rendered').length};
+}
+
+test('render observation times the actual program and state waits, not removed PDF/font work', async () => {
+  for(const observe of [false,true]) {
+    const f=renderExecution(observe),task=f.run();await tick();
+    assert.equal(f.installed(),1); // Only the transparent hit/program fragment, not canonical paper pixels.
+    assert.equal(f.scope.presentationIsRendering,true);assert.equal(f.rendered(),0);
+    assert.equal(f.scope.work.stateApplications,0);
+    if(observe)assert.equal(f.api.observation().phasesMS.render_programs,undefined);
+    f.time(130);f.programResolve();await tick();
+    assert.equal(f.scope.work.stateApplications,1);assert.equal(f.rendered(),0);
+    assert.equal(f.scope.appliedStateKey,null);
+    if(observe)assert.equal(f.api.observation().phasesMS.render_programs,130);
+    f.time(210);f.stateResolve();await task;
+    assert.equal(f.rendered(),1);assert.equal(f.scope.presentationIsRendering,false);
+    assert.equal(f.scope.appliedStateKey,'state');assert.equal(f.scope.activeProgramPreparation,null);
+    if(observe) {
+      const phases=f.api.observation().phasesMS;
+      assert.equal(phases.render_enter,0);assert.equal(phases.render_fragmentDOM,0);
+      assert.equal(phases.render_install,0);assert.equal(phases.render_state,210);
+      assert.equal(phases.render_complete,210);
+    } else assert.equal(f.reads(),0,'Observation-disabled render adds no clock/lifecycle sampling');
+  }
+});
+
+test('a superseded frame cannot publish canonical readiness from either real program dependency', async () => {
+  for(const boundary of ['before-install','programs','state']) {
+    const f=renderExecution();if(boundary==='before-install')f.supersede();
+    const task=f.run();await tick();
+    if(boundary==='state'){f.time(50);f.programResolve();await tick();}
+    f.supersede();f.time(200);f.programResolve();f.stateResolve();await task;
+    assert.equal(f.installed(),boundary==='before-install'?0:1,boundary);
+    assert.equal(f.rendered(),0,boundary);assert.equal(f.scope.appliedStateKey,null,boundary);
+    assert.equal(f.api.observation().phasesMS.render_complete,undefined,boundary);
+    assert.equal(f.scope.activeProgramPreparation,null,boundary);
+    if(boundary!=='before-install')assert.equal(f.scope.presentationIsRendering,true,boundary);
   }
 });

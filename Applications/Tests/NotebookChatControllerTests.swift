@@ -122,7 +122,7 @@ final class NotebookChatControllerTests: XCTestCase {
     // Even a blocked writer cannot delay opening the local draft.
     let writer = DispatchSemaphore(value: 0)
     defer { writer.signal() }
-    queue.enqueue(publishesChanges: false) { _ in _ = writer.wait(timeout: .now() + 8); return false }
+    queue.enqueue(owner: .command(.read)) { _ in _ = writer.wait(timeout: .now() + 8); return false }
     XCTAssertTrue(chat.beginDraft(project: project))
     XCTAssertFalse(chat.browsesChats); XCTAssertNil(chat.threadID)
     XCTAssertEqual(chat.draft, "Привет"); XCTAssertEqual(chat.attachments, [attachment])

@@ -63,7 +63,7 @@ The same decoder serves screen and export. See [cut admission](document-program-
 `DocumentProgramOwner` owns per-program runtimes, state, pause and checkpoint jobs.
 Paper waits only for programs relevant to its demand.
 
-One `DocumentBlockRuntime` executes a block ID/source version in one WebKit.
+One `DocumentBlockRuntime` executes a block ID/program identity in one WebKit.
 `DocumentProgramOverlayHost` mounts its full viewport behind a native clip.
 Retained continuations share the same context; paper coordinators and typesetting
 never start hidden copies. A passive neighbor borrows exact viewport cuts without
@@ -71,13 +71,31 @@ resizing, reparenting or disabling the current program. Ready controls accept th
 first gesture while neighbors prepare. Local preparation/failure/retry occupies only
 the affected region. Native contact, focus and page turns retain placement.
 
+A same-identity viewport or metadata replacement must first drain accepted state
+and finish the existing checkpoint. Its replacement receives the confirmed value
+and causal state version even if the presentation input has not echoed that write.
+This one-shot handoff supersedes only a strict causal predecessor; newer or
+concurrent input remains authoritative. Writer failure retains the same heap and
+unfinished stage until explicit Retry. A source identity change still revokes the
+obsolete author rather than transferring its state into another program.
+
+An explicit background/close checkpoint keeps the program owner's execution gate
+closed until an explicit resume. Geometry replacement, input publication, Retry
+and release of retained attention cannot reopen it. Overlapping checkpoint/resume
+requests follow the latest explicit intent through the same lifecycle jobs;
+accepted state applications finish before freezing. Retry may finish a failed
+freeze or write while the gate stays closed. A failed author requires Retry, not
+a geometry change; a causally new author does not inherit the old heap's failure.
+Paused images also retain their captured viewport dimensions: a changed width or
+height invalidates the image and uses the existing preview preparation path.
+
 Visible geometry determines runtime demand through the existing
 `SceneRenderResources` pool. Document demand comes from native page clipping,
 ordinary paper from `PagePresentationNativeView`, and boards from the admitted
 spatial cohort. Camera motion projects existing planes first, then updates demand.
 Accepted touch and focus pin active programs.
 
-The shared pool defaults to six WebKit surfaces, at most two background surfaces
+The shared pool provides `maximumVisiblePrograms + 2` WebKit surfaces, at most two background surfaces
 and reserved input/preparation capacity; live input programs are not passive work. Other visible programs show local resource waiting, not a
 false ready image or an extra Run button. Real lease release wakes queued demand;
 availability generations replace timer polling. Queue time does not consume the
@@ -93,6 +111,17 @@ Save confirms canonical paper; a block action confirms that block; a full-page
 receipt covers all sources. Image, runtime and input readiness stay distinct.
 
 ## Lifecycle and durable state
+
+`DocumentProgramIdentity` is the winning causal dot of content (including package),
+CSS, JavaScript and initial state. It is not the editor's content-only source
+version or an aggregate clock. Source A → B → A and delete/recreate invalidate the
+old executor; height, placement, current state and another block do not.
+Paused presentation metadata carries this same four-field identity. A presented
+export compares it against the immutable export cut, not the text editor version:
+changing CSS, JavaScript or initial state also revokes an older image's claim.
+Historical immutable evidence containing only `sourceVersion` is not admitted as
+this format. It is neither rewritten nor assigned an invented causal identity;
+backward-compatible decoding was explicitly declined on September 25, 2026.
 
 NotebookProgram/1 is shared by spatial WebKit, iPad blocks, Mac iframes and preview;
 only transport adapters differ. The API is installed before authored HTML.
@@ -114,16 +143,78 @@ arbitrary JavaScript heap.
 
 State application checks the local commit counter in JavaScript and again after
 the native asynchronous reply. Old optimistic echo cannot roll the counter back.
-`onStateChange` acknowledges admission, not disk. `onStateCheckpoint` returns the
-accepted version after SQL, not a Boolean or optimistic SwiftUI state. Another
+The internal `onStateChange` callback is asynchronous; the public JavaScript
+`notebook.commit` remains synchronous and returns its admission Boolean. Loaded
+model admission updates the addressed value immediately; both loaded and retiring
+heaps obtain the actual accepted version from the same addressed SQL writer.
+Neither a model no-op nor a different causal winner may attest an obsolete heap.
+Both retain their FIFO entry through I/O failure; neither hydrates a whole closed
+page or document. `onStateCheckpoint` returns the accepted version after SQL,
+not a Boolean or optimistic SwiftUI state. Another
 block's change does not conflict; ABA in the same field does.
 
 Lifecycle timeout is four seconds in JS and independently 4.5 seconds natively,
 because hidden WebKit can suspend timers. Checkpoint does not await hidden rAF.
+Timeout revokes the lifecycle generation; a late authored promise cannot resume
+or freeze the current generation. Retry repeats only the failed stage: a completed
+pause is not invoked again after checkpoint failure, and failed resume remains
+frozen with an explicit Retry on the same runtime.
+The same native deadline bounds state windows, ACK, external-state application
+and the close-admission boundary. Transport failure retains the head's completed
+windows, accepted writer receipt, heap and admission. Explicit Retry continues
+that stage in the same heap; an ACK retry is idempotent and does not rewrite state
+or grant credit twice. No deadline cancels an already entered durable writer.
+Checkpoint writer failure retains its frozen snapshot and basis, rather than
+pulling, reserving or checkpointing it again. The writer's exact receipt is also
+the loaded-model acknowledgment: there is no second full-state read/admission.
 Coalesced pause is idempotent until resume. Backgrounding, leaving and closing use
 that same checkpoint path, not a periodic autosave. Native removal retains the
 actual WebKit/lease through writer completion. An unloaded document is not deleted:
 its final checkpoint addresses one SQL block without loading the full document.
+
+### State admission and transfer
+
+`notebook-program.js` is the sole state owner; spatial, document and iframe code
+only adapt transport. Every `commit` returning true retains an immutable JSON
+snapshot in FIFO order. Neither presentation replacement nor queue compaction
+may drop these writes. Overload is rejected before true, and capacity release
+wakes waiting authors. A checkpoint first drains all accepted commits.
+For spatial/page controls the same JavaScript owner receives native write-focus
+admission. Unfocused timers return false before accepting a snapshot. The existing
+trusted-input capture grants focus before the authored first click; losing focus
+revokes future admission, not previously accepted writes. Passive raster jobs
+reserve no unused write credit, and restarting a failed runtime cannot mistake
+release of its own credit for enough capacity to recapture.
+
+Current state has no new permanent JSON-size cap. Admission uses the existing
+scene allocation budget, UTF-8 byte size and JSON node cost, including the larger
+of the old and new values needed by an addressed merge. Descriptors cross the
+bridge; the owner then pulls bounded, surrogate-safe windows. Native-to-JavaScript
+presentation windows install atomically and may replace an incomplete older
+presentation, not an accepted authored commit. Native credit is acknowledged only
+after actual writer acceptance; disk failure retains the FIFO entry and its credit
+through retry. Checkpoint admission similarly survives through persistence.
+Each accepted descriptor captures its source basis before asynchronous reading;
+the addressed writer cannot adopt a replacement source, including byte-identical
+ABA. Reads, acknowledgements, credit and lifecycle calls recheck the immutable
+load token inside JavaScript, because the same WebKit object can host a new heap.
+Page visibility and focus never re-decide a previously accepted write.
+Author readiness is independent of accepted-state ownership. Closing an unready
+or failed heap closes new admission, drains posted descriptors and the native
+writer, then releases the heap. It does not wait for an unresolved author-ready
+promise or invoke a broken author's checkpoint again. Retry cannot cancel this
+accepted tail; a source replacement still revokes the obsolete source identity.
+The Mac iframe transport handshake is registered before author readiness, so
+this boundary also covers an early commit whose author never becomes ready.
+
+Internal current-state reads borrow that admission in one SQL snapshot, then
+transfer immutable bytes outside the transaction. This is not a larger public
+read budget: `readDocumentBlock` keeps its 4 MiB complete-result limit. Addressed page
+program commands retain only that element's state and causal fields, never a whole
+page/ink save. Their existing 4 MiB state-free source/header bound is independent
+of the admitted current-state body. Spatial writes return the exact persisted
+program-state basis, so a following checkpoint does not wait for a reload or adopt
+an unrelated newer state clock.
 
 The working window follows admitted mounted/requested pages plus one neighbor on
 each side. Outside it, release follows durable checkpoint and a fresh visibility/
@@ -136,6 +227,9 @@ paper, cuts and result before the first capture; sub-operations borrow that admi
 rather than releasing/reacquiring bytes. Exact integer dimensions include WebKit
 height rounding. Passive density follows scale within the shared pool and retries
 on actual capacity release without a self-triggered loop.
+Passive admission includes both the intermediate paper backing and final raster;
+the hidden backing uses the admitted density instead of always requiring 1024 px.
+Current-page live paper retains its requested density.
 
 `capturePresented` synchronously freezes the installed paper and native programs
 at Send; PNG encoding happens later from those pixels. Hidden/uninstalled/pending

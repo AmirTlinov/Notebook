@@ -10,9 +10,11 @@ final class InputLatencyTests: XCTestCase {
     let page = PageDocument(size: .init(width: 834, height: 1194), actor: UUID())
     let stamp = VersionStamp(counter: 1, actor: UUID())
     var accepted = false
-    let coordinator = PencilCanvasView.Coordinator(inputGate: gate, reserveAction: { _ in stamp }, releaseAction: { _, _ in }, acceptAction: { action, _, _, _ in
+    let publication=NotebookPageInkPublication()
+    let coordinator = PencilCanvasView.Coordinator(inputGate: gate, publication:publication, reserveAction: { _ in stamp }, releaseAction: { _, _ in }, acceptAction: { action, _, _, _ in
       accepted = true
-      return try? page.prepareInkChange(.append(action), stamp: stamp)
+      guard let change=try? page.prepareInkChange(.append(action), stamp: stamp) else { return nil }
+      publication.publish(change);return change
     })
     let paper = PaperCanvasContainerView()
     coordinator.attach(to: paper)

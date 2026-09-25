@@ -383,6 +383,22 @@ struct NotebookPageEraserSource {
     pages[page.id]=entry
     return entry.values
   }
+  /// Partial live cuts belong to the page-wide native mask, not another
+  /// per-element material. Whole-element hits still retire the body immediately
+  /// (without a mask), and accepted cuts keep the existing durable handoff.
+  /// Interaction retains its active-contact projection; no second cache is needed.
+  func pagePresentation(_ page: PageDocument, working: [UUID: [NotebookElementErasing]]) -> [String: [InkElementErasure]] {
+    var result = self.page(page)
+    for contacts in working.values {
+      for contact in contacts where contact.surface == .page(page.id) {
+        guard contact.accepted || contact.targets.contains(where: \.wholeElement) else { continue }
+        let masks = contact.accepted ? contact.masks : contact.masks.filter { $0.value.contains { $0.target.wholeElement } }
+        result.merge(masks) { $0 + $1 }
+      }
+    }
+    return result
+  }
+
   func invalidateSpatial() {
     spatial.removeAll();projected=projected.filter { $0.key.kind == .page }
   }
@@ -397,6 +413,10 @@ struct NotebookPageEraserSource {
 extension NotebookAppModel {
   func isElementErasing(_ id: String, on surface: SurfaceID) -> Bool {
     elementErasureCache.isErasing(id,on:surface,working:workingElementErasures)
+  }
+
+  func pagePresentationErasures(_ page: PageDocument) -> [String: [InkElementErasure]] {
+    elementErasureCache.pagePresentation(pages[page.id] ?? page, working: workingElementErasures)
   }
 
   func pageEraserSource(pageID: UUID) -> NotebookPageEraserSource? {

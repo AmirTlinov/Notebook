@@ -28,8 +28,9 @@ struct NotebookActionPublicationTests {
     }
     func humanSet(_ value: Int) throws {
       let rendered = try #require(try store.readSpatialElement(boardID: target.id, elementID: "control"))
+      let basis = try #require(store.loadBoard(items: store.loadIndex().items).board(target.id)?.programStateBasis(rendered.id))
       let result = try store.commitSpatialElementState(boardID: target.id, rendered: rendered,
-        state: .number(Double(value)), actor: human)
+        state: .number(Double(value)), actor: human, expectedProgramBasis: basis)
       #expect(result != nil)
     }
     func details(_ receipt: CollaborationReceipt) throws -> JSONValue {

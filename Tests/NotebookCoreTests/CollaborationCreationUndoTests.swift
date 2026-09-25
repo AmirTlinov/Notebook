@@ -141,7 +141,7 @@ func creationUndoMixedDocumentsPreservesOnlyAdoptedOwner() throws {
   #expect(changed)
   _ = try f.store.commitDocumentState(.init(documentID: first,
     record: #require(state.records.first { $0.id == "choice" }), journalStamp: state.stamp,
-    expectedSourceVersion: document.sourceVersion(blockID: "choice")))
+    expectedProgramIdentity: document.programIdentity(blockID: "choice")))
   state = try f.store.loadDocumentState(first)
   let undone = try f.store.undoCollaborationAction(action.id, actor: f.human)
   #expect(try f.store.loadDocument(first) == document)

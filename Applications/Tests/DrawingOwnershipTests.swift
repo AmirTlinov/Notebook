@@ -228,8 +228,9 @@ final class DrawingOwnershipTests: XCTestCase {
     var page = PageDocument(id: pageID, size: .init(width: 834, height: 1194), actor: actorID, drawingData: try base.dataRepresentation())
     let baseSource = page.inkSource
     let delivered = expectation(description: "local drawing serialized")
+    let publication=NotebookPageInkPublication()
     let coordinator = PencilCanvasView.Coordinator(
-      inputGate: NotebookInputGate(),
+      inputGate: NotebookInputGate(),publication:publication,
       reserveAction: { _ in
         counter += 1
         return VersionStamp(counter: counter, actor: actorID)
@@ -239,6 +240,7 @@ final class DrawingOwnershipTests: XCTestCase {
         let change = try! page.prepareInkChange(.append(action), stamp: stamp)
         _ = page.publishInkChange(change)
         delivered.fulfill()
+        publication.publish(change)
         return change
       }
     )
@@ -265,8 +267,9 @@ final class DrawingOwnershipTests: XCTestCase {
     let baseSource = page.inkSource
     let delivered = expectation(description: "both erasers serialized")
     delivered.expectedFulfillmentCount = 2
+    let publication=NotebookPageInkPublication()
     let coordinator = PencilCanvasView.Coordinator(
-      inputGate: NotebookInputGate(),
+      inputGate: NotebookInputGate(),publication:publication,
       reserveAction: { _ in
         counter += 1
         return VersionStamp(counter: counter, actor: actorID)
@@ -277,6 +280,7 @@ final class DrawingOwnershipTests: XCTestCase {
         _ = page.publishInkChange(change)
         finalData = change.data
         delivered.fulfill()
+        publication.publish(change)
         return change
       }
     )
