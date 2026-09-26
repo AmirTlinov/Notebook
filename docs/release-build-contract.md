@@ -110,6 +110,28 @@ cores, prepares AOT/host code and the declared fonts/packages. `Runtime.lock.jso
 pins resources, source and toolchain. The full offline distribution is about
 1.48 GB; the lockfile and generated inventory own the exact size and hashes.
 
+To rebuild the TeX guest from its pinned source on Apple Silicon macOS:
+
+```sh
+python3 Sources/NotebookTypesetterRuntime/build/rebuild-tectonic.py \
+  --work .build/typesetter-build/tectonic-rebuild
+```
+
+Use a fresh directory and the explicit Rust toolchain/`wasm32-wasip1` target
+declared in the lockfile. The command verifies a local WASI SDK and dependency
+archives, applies the reviewed patch and runs the existing upstream build with
+locked Cargo dependencies. It does not install a global toolchain, replace the
+tracked kernel or prepare/install either app. Its receipt, logs and source
+snapshots identify the output; admit the checked `tectonic.wasm.gz` and its
+lockfile hashes together, then run the existing runtime preparation above.
+
+Only the immutable `/bundle` and `/fonts` resource owners supply read-only TeX
+handles. They do not hash requested bytes or drain unread tails at close to
+produce discarded digests. Primary source, `/input`, generated auxiliary files
+and outputs retain their digest semantics; TeX convergence still compares
+actual auxiliary bytes. Resource validation, bounded memory and cancellation
+remain owned by the same capability runtime.
+
 `bundle_notebook_typesetter.py` copies only declared, hash-checked resources.
 Release validates the inventory in both apps. `--check` neither downloads nor
 builds. TypeScript uses its separate signed child of the markup XPC service and

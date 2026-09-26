@@ -1,0 +1,44 @@
+{
+  "format": 1,
+  "archive": "/Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/.build/notebook-architecture-repair/evidence-2026-09-25/typesetter-immutable-rebuild-20260926T065013Z",
+  "manifestSHA256": "ae29c2e25f087ef73e1ce2f153bcf33628ca29657a0361ee2473134d17a108f6",
+  "fileCount": 107,
+  "bytes": 22204572,
+  "stageInputSHA256": "0430f838e027726c6c050d83d6319aebf71e0379d69dd2db06e7bf7a2b60be96",
+  "kernelSHA256": "7d9fb91de919ed814e9ea435a9ceacc2a65c9e6f8be467e91e2c29804d5aac01",
+  "results": {
+    "baselineUnit": "5PASS2FAIL(expected negative)",
+    "candidateUnit": "7PASS",
+    "driverWASI": "1PASS",
+    "freshBootstrap": "PASS (pre-guard script)",
+    "finalEnvGuards": "6PASS",
+    "freshKernelFunctionalAndPhysical": "Mac C ABI4PASS + deadline/recovery PASS in related sealed pack; physical acceptance pending"
+  },
+  "relatedCABIControl": {
+    "archive": "/Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/.build/notebook-architecture-repair/evidence-2026-09-25/typesetter-cabi-immutable-read-20260926T0642Z",
+    "manifestSHA256": "646ff6f4e0834b71732e38a653a37d75eeabc8ee8f2ea94bec4e7d128f2821b0",
+    "scope": "72/72 comparisons concern baseline68b9 and candidate89658 only, not rebuilt7d9. Existing sealed pack referenced, not duplicated."
+  },
+  "limitations": [
+    "Physical 1-second document navigation threshold remains unassessed for this repaired kernel.",
+    "No CPU-duty, GPU or physical-FPS claim.",
+    "Node WASI classifier/libc probe complements source ownership review, not full Notebook host gesture acceptance.",
+    "Full bootstrap warnings and initial diagnostic/test failures remain in archived logs.",
+    "No SDK, Cargo cache, dependency objects, AOT archives, private production container or unrelated application data copied."
+  ],
+  "currentKernelCABI": {
+    "archive": "/Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/.build/notebook-architecture-repair/evidence-2026-09-25/typesetter-immutable-fresh-cabi-20260926T065204Z",
+    "manifestSHA256": "1d1650e0186df66ee2508e4255312e9da0657634387e87cb9458b81253572a44",
+    "fileCount": 73,
+    "bytes": 124047,
+    "passed": 4,
+    "failed": 0,
+    "exactPDFRawDecodedSyncTeXLog": true,
+    "deadlineRequestedMs": 250,
+    "deadlineWholeCallMs": 251.902,
+    "sameRuntimeAndUncancelledTokenRecovery": true,
+    "performanceAssessed": false,
+    "deviceAcceptance": false,
+    "preservedHarnessV1Failure": true
+  }
+}

@@ -1,0 +1,85 @@
+{
+  "format": 1,
+  "evidenceDirectory": "/Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/.build/notebook-architecture-repair/evidence-2026-09-25/typesetter-cabi-immutable-read-20260926T0642Z",
+  "manifestSHA256": "646ff6f4e0834b71732e38a653a37d75eeabc8ee8f2ea94bec4e7d128f2821b0",
+  "sourceRevision": "6a5bdf95c359bdbe76e35a646b4e1fecdc24ea7b",
+  "result": {
+    "passedEngineCompiles": 72,
+    "failedEngineCompiles": 0,
+    "identicalPDFAndRawAndDecodedSyncTeX": true,
+    "identicalLogsPerCase": true,
+    "texPasses": 2,
+    "convergenceChanged": false,
+    "sourceWitnessUnchanged": true,
+    "deviceOrUIAcceptance": false
+  },
+  "measurement": "Monotonic duration of current C ABI compile; 2 cold +4 warm samples per case/variant across opposite orders",
+  "caseMediansMs": [
+    {
+      "case": "second-closed-body",
+      "rebuiltBaseline": {
+        "cold": 1098.1745,
+        "warm": 893.774
+      },
+      "fixed": {
+        "cold": 918.4490000000001,
+        "warm": 736.7895000000001
+      },
+      "savingPercent": {
+        "cold": 16.365841676345603,
+        "warm": 17.564227645914954
+      }
+    },
+    {
+      "case": "math",
+      "rebuiltBaseline": {
+        "cold": 1525.471,
+        "warm": 1281.0025
+      },
+      "fixed": {
+        "cold": 1274.684,
+        "warm": 1093.431
+      },
+      "savingPercent": {
+        "cold": 16.439971654656173,
+        "warm": 14.642555342397845
+      }
+    },
+    {
+      "case": "references",
+      "rebuiltBaseline": {
+        "cold": 1436.301,
+        "warm": 1250.0265
+      },
+      "fixed": {
+        "cold": 1255.8625,
+        "warm": 1073.4915
+      },
+      "savingPercent": {
+        "cold": 12.562721880719984,
+        "warm": 14.122500602987209
+      }
+    },
+    {
+      "case": "asset",
+      "rebuiltBaseline": {
+        "cold": 1411.8850000000002,
+        "warm": 1242.0915
+      },
+      "fixed": {
+        "cold": 1230.2395000000001,
+        "warm": 1032.523
+      },
+      "savingPercent": {
+        "cold": 12.865460005595363,
+        "warm": 16.87222720709385
+      }
+    }
+  ],
+  "limitations": [
+    "Small controlled macOS engine sample; not iPad timings or full opening UX.",
+    "No claim of confidence interval or stable system benchmark percentile.",
+    "OS file cache was not purged; variant order reversed in round 1.",
+    "The current pinned kernel differs slightly in bytes from the rebuilt baseline; causal savings are compared against the equally rebuilt baseline."
+  ]
+}

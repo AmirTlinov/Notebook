@@ -1,0 +1,54 @@
+{
+  "format": 1,
+  "sealedAt": "2026-09-26T06:53:22.249925+00:00",
+  "sourceRevisionAtArchive": "fe8fe93c089e5493906f4d91b5ffb0c030f48678",
+  "sourceSnapshotEqualBetweenRuns": true,
+  "sourcesChangedDuringRuns": false,
+  "runtimeInputSHA256": "0430f838e027726c6c050d83d6319aebf71e0379d69dd2db06e7bf7a2b60be96",
+  "kernelSHA256": "7d9fb91de919ed814e9ea435a9ceacc2a65c9e6f8be467e91e2c29804d5aac01",
+  "scope": {
+    "physical96": {
+      "functionalPassed": 11,
+      "functionalFailed": 0,
+      "coldOpeningUXPassed": 0,
+      "coldOpeningUXFailed": 2,
+      "overallPassed": 11,
+      "overallFailed": 2,
+      "skipped": 0,
+      "runtimeWarnings": 0,
+      "platform": "physical iOS",
+      "failures": [
+        {
+          "selector": "NotebookDocumentOpeningTests/testHistoryReferenceInstallsAnUnloadedDocumentOnAnotherBoard()",
+          "correct": true,
+          "observedWindowMs": 2008.090125,
+          "unchangedCeilingMs": 1000.0,
+          "failureText": "XCTAssertTrue failed - UX document-other-board-installed: correct=true, observed=2008.090125 ms, ceiling=1.0 seconds; window observation, not photon timing"
+        },
+        {
+          "selector": "NotebookDocumentOpeningTests/testHistoryReferenceInstallsAnUnloadedDocumentOutsideTheCurrentCamera()",
+          "correct": true,
+          "observedWindowMs": 1835.334625,
+          "unchangedCeilingMs": 1000.0,
+          "failureText": "XCTAssertTrue failed - UX document-installed: correct=true, observed=1835.334625 ms, ceiling=1.0 seconds; window observation, not photon timing"
+        }
+      ]
+    },
+    "mac97": {
+      "functionalPassed": 11,
+      "functionalFailed": 0,
+      "skipped": 0,
+      "runtimeWarnings": 0
+    }
+  },
+  "limitations": [
+    "Physical96 is overall FAIL: both existing 1000ms cold-opening window-observation budgets remain unmet despite correct installed content.",
+    "No new deadline, skipped test, production fallback or timing threshold was introduced.",
+    "Window observation is not photon timing.",
+    "The physical xcodebuild log contains its ordinary duplicate-destination selection warning; XCTest runtimeWarnings is empty.",
+    "These are focused native checks, not full mixed-session or 20ms ink acceptance."
+  ],
+  "evidenceDirectory": "/Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/.build/notebook-architecture-repair/evidence-2026-09-25/typesetter-native-96-97-20260926T0653Z",
+  "manifestSHA256": "26dfbb3dcd42a1515367efd74e06b3fa7bd26bee87b5ecad974c33cbd34a1a7f",
+  "sealedFileCount": 180
+}

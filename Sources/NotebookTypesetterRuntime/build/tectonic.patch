@@ -9,8 +9,176 @@ index 27cad37..00593d7 100644
 -    "-C", "link-args=-Wl,--export=tectonic_compile -Wl,--export=tectonic_compile_defaults -Wl,--export=tectonic_generate_format -Wl,--export=tectonic_abi_version -Wl,--export=malloc -Wl,--export=free -lc++ -lc++abi -lwasi-emulated-mman -lwasi-emulated-signal",
 +    "-C", "link-args=-Wl,--import-memory -Wl,--export-memory -Wl,--max-memory=536870912 -Wl,--export=tectonic_compile -Wl,--export=tectonic_compile_defaults -Wl,--export=tectonic_generate_format -Wl,--export=tectonic_abi_version -Wl,--export=malloc -Wl,--export=free -lc++ -lc++abi -lwasi-emulated-mman -lwasi-emulated-signal",
  ]
+diff --git a/build-wasi.sh b/build-wasi.sh
+index fb7ef6b..227a291 100755
+--- a/build-wasi.sh
++++ b/build-wasi.sh
+@@ -76,7 +76,7 @@ echo "    WASI SDK    : ${WASI_SDK_PATH}"
+ echo "    Sysroot     : ${SYSROOT}"
+ echo ""
+ 
+-cargo build \
++cargo build --locked -j 4 \
+     --target wasm32-wasip1 \
+     -p tectonic_wasi \
+     --release
+diff --git a/crates/io_base/src/lib.rs b/crates/io_base/src/lib.rs
+index 45ce87d..ddad690 100644
+--- a/crates/io_base/src/lib.rs
++++ b/crates/io_base/src/lib.rs
+@@ -161,6 +161,13 @@ impl InputHandle {
+         }
+     }
+ 
++    /// Mark a handle supplied by an immutable resource owner as read-only.
++    /// Its name, origin, position and input features remain unchanged.
++    pub fn into_read_only(mut self) -> Self {
++        self.read_only = true;
++        self
++    }
++
+     /// Get the name associated with this handle.
+     pub fn name(&self) -> &str {
+         &self.name
+@@ -183,6 +190,12 @@ impl InputHandle {
+     /// only part of the file is read, not the entire thing. This seems
+     /// to happen with biblatex XML state files.
+     pub fn scan_remainder(&mut self) -> Result<()> {
++        // Immutable resources cannot participate in read-then-write reruns.
++        // Do not read or hash bytes solely to produce a discarded digest.
++        if self.read_only {
++            return Ok(());
++        }
++
+         const BUFSIZE: usize = 1024;
+         let mut buf: [u8; BUFSIZE] = [0; BUFSIZE];
+ 
+@@ -704,6 +717,123 @@ pub fn normalize_tex_path(path: &str) -> Cow<'_, str> {
+ mod tests {
+     use super::*;
+ 
++    struct ObservedInput {
++        bytes: Cursor<Vec<u8>>,
++        read_count: std::rc::Rc<std::cell::Cell<usize>>,
++        bytes_read: std::rc::Rc<std::cell::Cell<usize>>,
++        fail: std::rc::Rc<std::cell::Cell<bool>>,
++    }
++
++    impl Read for ObservedInput {
++        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
++            self.read_count.set(self.read_count.get() + 1);
++            if self.fail.get() {
++                return Err(io::Error::other("test read failure"));
++            }
++            let n = self.bytes.read(buf)?;
++            self.bytes_read.set(self.bytes_read.get() + n);
++            Ok(n)
++        }
++    }
++
++    impl InputFeatures for ObservedInput {
++        fn get_size(&mut self) -> Result<usize> { Ok(self.bytes.get_ref().len()) }
++        fn try_seek(&mut self, pos: SeekFrom) -> Result<u64> {
++            Ok(self.bytes.seek(pos)?)
++        }
++    }
++
++    fn observed_input(bytes: Vec<u8>, read_only: bool) -> (InputHandle, std::rc::Rc<std::cell::Cell<usize>>,
++        std::rc::Rc<std::cell::Cell<usize>>, std::rc::Rc<std::cell::Cell<bool>>) {
++        let reads = std::rc::Rc::new(std::cell::Cell::new(0));
++        let count = std::rc::Rc::new(std::cell::Cell::new(0));
++        let fail = std::rc::Rc::new(std::cell::Cell::new(false));
++        let input = ObservedInput { bytes: Cursor::new(bytes),
++            read_count: reads.clone(), bytes_read: count.clone(), fail: fail.clone() };
++        let handle = if read_only {
++            InputHandle::new_read_only("resource", input, InputOrigin::Other)
++        } else {
++            InputHandle::new("resource", input, InputOrigin::Other)
++        };
++        (handle, reads, count, fail)
++    }
++
++    fn content_digest(bytes: &[u8]) -> DigestData {
++        let mut computer = digest::create();
++        computer.update(bytes);
++        DigestData::from(computer)
++    }
++
++    #[test]
++    fn immutable_resource_close_does_not_scan_or_hash_remainder() {
++        let (mut handle, reads, count, fail) = observed_input(vec![7; 1024 * 1024], true);
++        assert_eq!(handle.get_size().unwrap(), 1024 * 1024);
++        assert_eq!(handle.origin(), InputOrigin::Other);
++        assert_eq!(handle.getc().unwrap(), 7);
++        let reads_before_close = reads.get();
++        fail.set(true); // Closing must not touch the underlying reader at all.
++        handle.scan_remainder().unwrap();
++        assert_eq!(reads.get(), reads_before_close);
++        assert_eq!(count.get(), 1);
++        assert_eq!(handle.into_name_digest(), ("resource".into(), None));
++    }
++
++    #[test]
++    fn immutable_unread_and_empty_probes_do_not_read_on_close() {
++        for bytes in [vec![], vec![1; 1024 * 1024]] {
++            let (mut handle, reads, count, fail) = observed_input(bytes, true);
++            fail.set(true);
++            handle.scan_remainder().unwrap();
++            assert_eq!((reads.get(), count.get()), (0, 0));
++            assert_eq!(handle.into_name_digest().1, None);
++        }
++    }
++
++    #[test]
++    fn immutable_resource_requested_read_errors_still_propagate() {
++        let (mut handle, reads, _, fail) = observed_input(vec![1], true);
++        fail.set(true);
++        assert!(handle.getc().is_err());
++        assert_eq!(reads.get(), 1);
++    }
++
++    #[test]
++    fn source_and_aux_close_preserve_full_digest() {
++        let bytes = b"source or auxiliary feedback";
++        let (mut handle, _, count, _) = observed_input(bytes.to_vec(), false);
++        assert_eq!(handle.getc().unwrap(), bytes[0]);
++        handle.scan_remainder().unwrap();
++        assert_eq!(count.get(), bytes.len());
++        assert_eq!(handle.into_name_digest().1, Some(content_digest(bytes)));
++    }
++
++    #[test]
++    fn mutable_unread_empty_and_failed_close_keep_existing_semantics() {
++        let (mut unread, _, count, _) = observed_input(vec![1, 2, 3], false);
++        unread.scan_remainder().unwrap();
++        assert_eq!(count.get(), 3);
++        assert_eq!(unread.into_name_digest().1, None);
++
++        let (mut empty, _, _, _) = observed_input(vec![], false);
++        assert_eq!(empty.read(&mut [0]).unwrap(), 0);
++        empty.scan_remainder().unwrap();
++        assert_eq!(empty.into_name_digest().1, Some(DigestData::of_nothing()));
++
++        let (mut failed, _, _, fail) = observed_input(vec![1, 2, 3], false);
++        assert_eq!(failed.getc().unwrap(), 1);
++        fail.set(true);
++        assert!(failed.scan_remainder().is_err());
++    }
++
++    #[test]
++    fn output_digest_and_flush_are_unchanged() {
++        let mut output = OutputHandle::new("document.aux", Vec::new());
++        output.write_all(b"feedback").unwrap();
++        output.flush().unwrap();
++        assert_eq!(output.into_name_digest(),
++            ("document.aux".into(), content_digest(b"feedback")));
++    }
++
+     #[test]
+     fn test_try_normalize_tex_path() {
+         // edge cases
 diff --git a/crates/wasi/src/driver.rs b/crates/wasi/src/driver.rs
-index 72702e2..814d59c 100644
+index 72702e2..aae1ccb 100644
 --- a/crates/wasi/src/driver.rs
 +++ b/crates/wasi/src/driver.rs
 @@ -136,7 +136,7 @@ pub fn compile(input_path: &str, output_dir: &str, bundle_dir: &str) -> Result<(
@@ -31,6 +199,96 @@ index 72702e2..814d59c 100644
          let name = format!("{base_name}.{ext}");
          if let Some(data) = bridge_state.mem.get_file(&name) {
              let _ = std::fs::write(output_path.join(&name), &data);
+@@ -342,6 +342,28 @@ struct WasiBridgeState {
+     events: HashMap<String, ()>,
+ }
+ 
++// Only these sandbox mount owners provide immutable pinned resources.
++// Use the resolved path returned by FilesystemIo, never a basename supplied by
++// TeX: /input/LibertinusSerif-Regular.otf is still an ordinary source input.
++fn is_immutable_resource_path(path: &Path) -> bool {
++    path.components().all(|part| matches!(part,
++        std::path::Component::RootDir | std::path::Component::Normal(_)))
++        && (path.starts_with("/fonts") || path.starts_with("/bundle"))
++}
++
++impl WasiBridgeState {
++    fn input_open_bundle(
++        &mut self,
++        name: &str,
++        status: &mut dyn StatusBackend,
++    ) -> OpenResult<InputHandle> {
++        match self.bundle.input_open_name(name, status) {
++            OpenResult::Ok(handle) => OpenResult::Ok(handle.into_read_only()),
++            other => other,
++        }
++    }
++}
++
+ impl DriverHooks for WasiBridgeState {
+     fn io(&mut self) -> &mut dyn IoProvider {
+         self
+@@ -375,13 +397,20 @@ impl IoProvider for WasiBridgeState {
+             OpenResult::NotAvailable => {}
+         }
+ 
+-        match self.filesystem.input_open_name(&name_norm, status) {
+-            OpenResult::Ok(h) => return OpenResult::Ok(h),
++        match self.filesystem.input_open_name_with_abspath(&name_norm, status) {
++            OpenResult::Ok((handle, path)) => {
++                let handle = if path.as_deref().is_some_and(is_immutable_resource_path) {
++                    handle.into_read_only()
++                } else {
++                    handle
++                };
++                return OpenResult::Ok(handle);
++            }
+             OpenResult::Err(e) => return OpenResult::Err(e),
+             OpenResult::NotAvailable => {}
+         }
+ 
+-        self.bundle.input_open_name(&name_norm, status)
++        self.input_open_bundle(&name_norm, status)
+     }
+ 
+     fn input_open_primary(&mut self, status: &mut dyn StatusBackend) -> OpenResult<InputHandle> {
+@@ -394,7 +423,7 @@ impl IoProvider for WasiBridgeState {
+         status: &mut dyn StatusBackend,
+     ) -> OpenResult<InputHandle> {
+         // Try bundle first for format files
+-        match self.bundle.input_open_name(name, status) {
++        match self.input_open_bundle(name, status) {
+             OpenResult::Ok(h) => return OpenResult::Ok(h),
+             OpenResult::Err(e) => return OpenResult::Err(e),
+             OpenResult::NotAvailable => {}
+@@ -559,3 +588,27 @@ impl IoProvider for FormatBridgeState {
+         Ok(())
+     }
+ }
++
++
++#[cfg(test)]
++mod immutable_resource_tests {
++    use super::*;
++
++    #[test]
++    fn only_resolved_resource_mount_paths_are_immutable() {
++        for name in ["/fonts/LibertinusSerif-Regular.otf", "/bundle/latex.fmt"] {
++            assert!(is_immutable_resource_path(Path::new(name)));
++        }
++        for name in ["/input/LibertinusSerif-Regular.otf", "/input/latex.fmt",
++            "/output/document.aux", "LibertinusSerif-Regular.otf",
++            "/fonts-elsewhere/face.otf", "/bundled/package.sty",
++            "/fonts/../../input/file", "/bundle/../../input/file"] {
++            assert!(!is_immutable_resource_path(Path::new(name)));
++        }
++        // The opening path is normalized before FilesystemIo resolves it.
++        for name in ["/fonts/../input/face.otf", "/bundle/../input/latex.fmt"] {
++            let normalized = normalize_tex_path(name);
++            assert!(!is_immutable_resource_path(Path::new(normalized.as_ref())));
++        }
++    }
++}
 diff --git a/crates/xetex_layout/src/manager.rs b/crates/xetex_layout/src/manager.rs
 index 833f5ba..bf0044a 100644
 --- a/crates/xetex_layout/src/manager.rs
@@ -251,7 +509,7 @@ index 430f3e1..3628e3d 100644
      }
  }
 diff --git a/wasi-deps/build-wasi-deps.sh b/wasi-deps/build-wasi-deps.sh
-index cab0dd2..8d20835 100755
+index cab0dd2..8092a61 100755
 --- a/wasi-deps/build-wasi-deps.sh
 +++ b/wasi-deps/build-wasi-deps.sh
 @@ -30,7 +30,7 @@ SYSROOT="${TECTONIC_ROOT}/wasi-deps/sysroot"
@@ -304,22 +562,22 @@ index cab0dd2..8d20835 100755
      # Replace ICU's old config.sub/config.guess with system versions
      # that know about wasm32-wasi
 -    cp /usr/share/misc/config.sub "${ICU_SRC}/config.sub"
-+    if [ -f /usr/share/misc/config.sub ]; then cp /usr/share/misc/config.sub "${ICU_SRC}/config.sub"; fi
++    cp "${TECTONIC_CONFIG_SUB:?Pinned config.sub is required}" "${ICU_SRC}/config.sub"
      cp /usr/share/misc/config.guess "${ICU_SRC}/config.guess" 2>/dev/null || true
  
      # ICU's mh-unknown stub errors out; always overwrite with mh-linux
-@@ -260,28 +260,6 @@ build_icu() {
+@@ -260,26 +260,13 @@ build_icu() {
      # -----------------------------------------------------------------
      msg "  ICU: building host (native) tools"
  
 -    rm -rf "${ICU_HOST_BUILD}"
--    mkdir -p "${ICU_HOST_BUILD}"
+     mkdir -p "${ICU_HOST_BUILD}"
 -
--    (
+     (
 -        # Unset cross-compile environment for the host build
 -        unset CC CXX AR RANLIB NM STRIP CFLAGS CXXFLAGS
 -
--        cd "${ICU_HOST_BUILD}"
+         cd "${ICU_HOST_BUILD}"
 -        "${ICU_SRC}/configure" \
 -            --disable-shared \
 -            --enable-static \
@@ -330,22 +588,11 @@ index cab0dd2..8d20835 100755
 -            --disable-layoutex \
 -            --prefix="${ICU_HOST_BUILD}/install"
 -
--        make -j "${NPROC}"
++        export CC=/usr/bin/clang CXX=/usr/bin/clang++ AR=/usr/bin/ar RANLIB=/usr/bin/ranlib
++        export NM=/usr/bin/nm STRIP=/usr/bin/strip CFLAGS=-O2 CXXFLAGS=-O2 LDFLAGS=
++        "${ICU_SRC}/configure" --prefix="${ICU_HOST_BUILD}/install"             --disable-shared --enable-static --disable-extras --disable-icuio             --disable-layoutex --disable-tests --disable-samples --with-data-packaging=static
+         make -j "${NPROC}"
 -        make install
--    )
--
-     # -----------------------------------------------------------------
-     # Step 2: Cross-compile ICU for wasm32-wasi
-     # -----------------------------------------------------------------
-@@ -355,11 +333,6 @@ build_sjlj_stub() {
-     echo "  sjlj stub installed to ${SYSROOT}/lib/libsetjmp_stub.a"
- }
+     )
  
--build_sjlj_stub
--build_zlib
--build_libpng
--build_freetype
--build_graphite2
- build_icu
- 
- # ---------------------------------------------------------------------------
+     # -----------------------------------------------------------------
