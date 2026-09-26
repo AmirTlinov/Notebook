@@ -8,10 +8,21 @@ import os
 /// Canonical print artifacts are shared by the scene and the export adapter.
 /// The source document, not a view mode, chooses the sole printed layout.
 enum DocumentCanonicalPrint {
+  static let cacheDirectory = cacheDirectory(bundleIdentifier: Bundle.main.bundleIdentifier!,
+    under: FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0])
   static let store = NotebookPrintedDocumentStore(
     resources: Bundle.main.resourceURL!.appendingPathComponent("NotebookTypesetter", isDirectory: true),
-    directory: FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
-      .appendingPathComponent("NotebookPrintedPages", isDirectory: true))
+    directory: cacheDirectory)
+
+  /// Mac QA and installed applications can share user Caches, not its artifacts.
+  /// Old unscoped entries remain untouched; a miss follows ordinary compilation.
+  static func cacheDirectory(bundleIdentifier: String, under userCaches: URL) -> URL {
+    precondition(!bundleIdentifier.isEmpty && bundleIdentifier != "." && bundleIdentifier != ".."
+      && bundleIdentifier.utf8.allSatisfy { (65...90).contains($0) || (97...122).contains($0)
+        || (48...57).contains($0) || $0 == 45 || $0 == 46 })
+    return userCaches.appendingPathComponent(bundleIdentifier, isDirectory: true)
+      .appendingPathComponent("NotebookPrintedPages", isDirectory: true)
+  }
 }
 
 /// A source's parsed PDF has one serial Quartz/PDFKit owner. Paper rasters and

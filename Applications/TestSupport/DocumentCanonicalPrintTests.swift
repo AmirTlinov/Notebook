@@ -6,6 +6,71 @@ import XCTest
 
 @MainActor
 final class DocumentCanonicalPrintTests: XCTestCase {
+  func testPrintCacheDirectoryBelongsToTheRunningApplicationBundle() throws {
+    let userCaches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+    let bundle = try XCTUnwrap(Bundle.main.bundleIdentifier)
+    XCTAssertEqual(DocumentCanonicalPrint.cacheDirectory,
+      userCaches.appendingPathComponent(bundle, isDirectory: true)
+        .appendingPathComponent("NotebookPrintedPages", isDirectory: true))
+    let identities = ["com.amirtlinov.notebook", "com.amirtlinov.notebook.mac",
+      "com.amirtlinov.notebook.architecture-tests", "com.amirtlinov.notebook.mac.architecture-tests",
+      "com.amirtlinov.notebook.acceptance", "com.amirtlinov.notebook.mac.acceptance.0123456789ab",
+      "com.amirtlinov.notebook.mac.acceptance.abcdef012345"]
+    XCTAssertTrue(NotebookAcceptanceConfiguration.isAcceptanceBundle(identities[5], role: .mac))
+    XCTAssertTrue(NotebookAcceptanceConfiguration.isAcceptanceBundle(identities[6], role: .mac))
+    let paths = identities.map { DocumentCanonicalPrint.cacheDirectory(bundleIdentifier: $0, under: userCaches) }
+    XCTAssertEqual(Set(paths).count, identities.count,
+      "Production, native QA and separate admitted acceptance bundles cannot share an eviction root")
+    XCTAssertFalse(paths.contains(userCaches.appendingPathComponent("NotebookPrintedPages", isDirectory: true)))
+  }
+
+  func testPrintCacheSaveAndEvictionCannotReachAnotherApplicationOrTheLegacyDirectory() async throws {
+    let fm = FileManager.default
+    let userCaches = fm.temporaryDirectory.appendingPathComponent("print-isolation-" + UUID().uuidString, isDirectory: true)
+    defer { try? fm.removeItem(at: userCaches) }
+    let identities = ["com.amirtlinov.notebook.mac", "com.amirtlinov.notebook.mac.architecture-tests",
+      "com.amirtlinov.notebook.mac.acceptance.0123456789ab"]
+    let directories = identities.map { DocumentCanonicalPrint.cacheDirectory(bundleIdentifier: $0, under: userCaches) }
+    let legacy = userCaches.appendingPathComponent("NotebookPrintedPages", isDirectory: true)
+    // One old sparse entry exceeds the unchanged 128 MiB budget. This exercises
+    // the real save/evict route with three compilations, not 100 large documents.
+    func oldEntry(in directory: URL) throws -> URL {
+      let folder = directory.appendingPathComponent(String(repeating: "a", count: 64), isDirectory: true)
+      try fm.createDirectory(at: folder, withIntermediateDirectories: true)
+      let file = folder.appendingPathComponent("pressure.bin")
+      XCTAssertTrue(fm.createFile(atPath: file.path, contents: nil))
+      let handle = try FileHandle(forWritingTo: file)
+      defer { try? handle.close() }
+      try handle.truncate(atOffset: 129 * 1024 * 1024)
+      try fm.setAttributes([.modificationDate: Date(timeIntervalSince1970: 1)], ofItemAtPath: folder.path)
+      return file
+    }
+    let oldFiles = try directories.map(oldEntry)
+    let legacyFile = try oldEntry(in: legacy)
+    let resources = Bundle.main.resourceURL!.appendingPathComponent("NotebookTypesetter", isDirectory: true)
+    let document = DocumentDocument(actor: UUID(), blocks: [.markdown(id: "body", source: "Isolated printed cache.")])
+    var saved: [(URL, Data)] = []
+    for (index, directory) in directories.enumerated() {
+      let store = NotebookPrintedDocumentStore(resources: resources, directory: directory)
+      let artifact = try await store.artifact(for: document)
+      XCTAssertTrue(artifact.pdf.starts(with: Data("%PDF-".utf8)))
+      XCTAssertFalse(fm.fileExists(atPath: oldFiles[index].path), "This application's actual eviction ran")
+      for other in oldFiles.dropFirst(index + 1) {
+        XCTAssertTrue(fm.fileExists(atPath: other.path), "A sibling's older entry was not evicted")
+      }
+      XCTAssertTrue(fm.fileExists(atPath: legacyFile.path), "No migration, eviction or deletion of the old shared cache")
+      let folder = try XCTUnwrap(fm.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil).first)
+      let pdf = folder.appendingPathComponent("document.pdf")
+      XCTAssertEqual(try Data(contentsOf: pdf), artifact.pdf)
+      saved.append((pdf, artifact.pdf))
+      let cached = try await store.artifact(for: document)
+      XCTAssertEqual(cached.pdf, artifact.pdf)
+      XCTAssertEqual(cached.syncTeX, artifact.syncTeX)
+    }
+    for (path, expected) in saved { XCTAssertEqual(try Data(contentsOf: path), expected) }
+    XCTAssertTrue(fm.fileExists(atPath: legacyFile.path))
+  }
+
   func testPaperRasterUsesTheWholePhysicalPageAtEveryPixelDensity() async throws {
     let document = DocumentDocument(actor: UUID(), blocks: [.markdown(id: "text", source: "# Печатный лист\n\nТочный размер текста на бумаге.")])
     let artifact = try await DocumentCanonicalPrint.store.artifact(for: document)

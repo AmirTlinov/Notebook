@@ -1,0 +1,65 @@
+{
+  "format": 1,
+  "sealedAt": "2026-09-26T07:47:17.935957+00:00",
+  "sourceRevision": "3a0a3df685847033698d2bb66cf9aca237302311",
+  "scope": "Application bundle-scoped print cache; existing save/eviction, raster density and physical source-reference contracts",
+  "runs": {
+    "103": {
+      "platform": "macOS",
+      "privateBundleID": "com.amirtlinov.notebook.mac.architecture-tests",
+      "passed": 4,
+      "failed": 0,
+      "skipped": 0,
+      "runtimeWarnings": 0,
+      "testExecutionCount": 1,
+      "buildExecutionCount": 2,
+      "fullTreeSelectors": [
+        "DocumentCanonicalPrintTests/testPaperRasterUsesTheWholePhysicalPageAtEveryPixelDensity()",
+        "DocumentCanonicalPrintTests/testPrintCacheDirectoryBelongsToTheRunningApplicationBundle()",
+        "DocumentCanonicalPrintTests/testPrintCacheSaveAndEvictionCannotReachAnotherApplicationOrTheLegacyDirectory()",
+        "DocumentCanonicalPrintTests/testSourceAndPrintedLineUseOnePhysicalReferenceOnBothPaperSizes()"
+      ]
+    },
+    "104": {
+      "platform": "physical iOS",
+      "privateBundleID": "com.amirtlinov.notebook.architecture-tests",
+      "passed": 4,
+      "failed": 0,
+      "skipped": 0,
+      "runtimeWarnings": 0,
+      "testExecutionCount": 1,
+      "buildExecutionCount": 1,
+      "fullTreeSelectors": [
+        "DocumentCanonicalPrintTests/testPaperRasterUsesTheWholePhysicalPageAtEveryPixelDensity()",
+        "DocumentCanonicalPrintTests/testPrintCacheDirectoryBelongsToTheRunningApplicationBundle()",
+        "DocumentCanonicalPrintTests/testPrintCacheSaveAndEvictionCannotReachAnotherApplicationOrTheLegacyDirectory()",
+        "DocumentCanonicalPrintTests/testSourceAndPrintedLineUseOnePhysicalReferenceOnBothPaperSizes()"
+      ]
+    }
+  },
+  "passedTotal": 8,
+  "failedTotal": 0,
+  "skippedTotal": 0,
+  "sourceMapsEqual": true,
+  "sourcesChanged": false,
+  "inkSourceSHA256": "5c1a15059a6590145a03006835fc77b5944ea459e3b04e0c5852b076e7700f13",
+  "roiInstrumentationAbsent": true,
+  "roiAbsenceProof": "InkCanvas source SHA exactly matches frozen failure-stop-only physical100 source; no ROI patch bytes.",
+  "runtimeInputSHA256": "0430f838e027726c6c050d83d6319aebf71e0379d69dd2db06e7bf7a2b60be96",
+  "macBuildConfirmation": {
+    "reason": "First build-for-testing exited0 but emitted the preserved Xcode phantom SwiftCompile failure marker; repeated BUILD only before signing/tests.",
+    "initialCompilerWarnings": 3,
+    "confirmationExitCode": 0,
+    "confirmationLogBytes": 0,
+    "testsRepeated": false
+  },
+  "limits": [
+    "Mac first build log preserves three existing unnecessary try/await compiler warnings, distinct from zero XCTest runtime warnings.",
+    "No old unscoped native store was run; negative path-collision reproduction is static only.",
+    "Eviction algorithm,128MiB budget and old shared directory are untouched.",
+    "Does not establish cold-opening1000ms, ReleaseRedo, ink20ms or full mixed-session acceptance."
+  ],
+  "evidenceDirectory": "/Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/.build/notebook-architecture-repair/evidence-2026-09-25/print-cache-isolation-103-104-20260926T0746Z",
+  "manifestSHA256": "8bceaf1aa48b8f15a530a2ecf3e59c43164271bfccc7a19c6a68c85342027ffd",
+  "sealedFileCount": 140
+}

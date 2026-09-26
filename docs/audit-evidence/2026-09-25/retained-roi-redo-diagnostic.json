@@ -1,0 +1,293 @@
+{
+  "kind": "retained_ink_roi_boundary",
+  "archive": "/Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/.build/notebook-architecture-repair/evidence-2026-09-25/release-retained-roi-probe-20260926T073442Z",
+  "manifestSHA256": "7c88853df126e9cc2e68fa8ea4350db02a860f32d416da92ec0a26782c51c940",
+  "fileCount": 315,
+  "bytes": 96841271,
+  "sourceRevision": "3a0a3df685847033698d2bb66cf9aca237302311",
+  "sourceSHA256": "3011f25fb8c120268c4653d00353c44c4b5773654a8c3949b0c297151c856396",
+  "sourceUnchanged": true,
+  "frozenFiles": {
+    "Applications/Shared/InkCanvasView.swift": "5b58f4a2f33961930557caa640b86ed3028128607de456f094d678b33bf866bf",
+    "Applications/Shared/DocumentCanonicalPrint.swift": "0ec9b9c45420ca5502723c701278abb455a1c8f0ee0b809f771d2ecfa4cc3d95",
+    "Applications/TestSupport/DocumentCanonicalPrintTests.swift": "bf4a046084de59dea9f6512ebb3120a8f490fe0b9a25521a3218a40ac522c95f"
+  },
+  "diagnosticOnly": true,
+  "productionChangeKept": false,
+  "test": "NotebookAcceptanceUITests/testTenPageInkUndoLassoAndNavigationJourneys",
+  "result": {
+    "passed": 0,
+    "failed": 1,
+    "skipped": 0,
+    "runtimeWarnings": 0,
+    "fullTreeAssertions": 1,
+    "failedIteration": 2
+  },
+  "noResetOrReseed": true,
+  "recording": "/Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/.build/notebook-architecture-repair/evidence-2026-09-25/release-retained-roi-probe-20260926T073442Z/case/simulator.mp4",
+  "probes": 12,
+  "rawRegions": 60,
+  "journal": {
+    "sha256": "5c09c4f4a3c70d392b949e609455c541cefcf9568af9544c497044313a2963c6",
+    "records": 776,
+    "drops": 0,
+    "gaps": false,
+    "truncated": false,
+    "tailFlushProven": false
+  },
+  "comparison": {
+    "undo": {
+      "canvasID": "ObjectIdentifier(0x000000010854b200)",
+      "pageID": "223CE26C-9741-4937-A91B-AFD21FD857EF",
+      "stamp": {
+        "actor": "987736A1-B860-4C4A-874A-27AC6F362879",
+        "counter": "55"
+      },
+      "actionIDs": [
+        "36E5DA3B-94BC-4AC5-8046-45EE765202A0"
+      ],
+      "submissionID": "2452FCDE-A308-4878-8AED-9A3EFAF3DFD6",
+      "sourcePoint": [
+        417,
+        531.33
+      ],
+      "windowPoint": [
+        516,
+        612.32
+      ],
+      "windowProbeDelta": [
+        0,
+        0.0
+      ],
+      "sameTexturePixelCell": true,
+      "textureID": "ObjectIdentifier(0x000000014fbba400)",
+      "textureRegion": [
+        0,
+        0,
+        834.3248546511628,
+        1194
+      ],
+      "pixelRect": [
+        929,
+        1216,
+        64,
+        17
+      ],
+      "sourceRevision": "12",
+      "stableRevision": "44",
+      "retainedGeneration": "59",
+      "superseded": false,
+      "rawFile": "/private/tmp/notebook-retained-roi-probe/analysis-20260926T073442Z/raw/780f1b50-d7cb-466a-96f5-1b115160eb41-2452fcde-a308-4878-8aed-9a3efaf3dfd6-758-roi2.bgra",
+      "rawSHA256": "7a87c48ac7c0b50fd6e377fde14bcfd1097ebea9d61b11a9aa244e95375ccdaa",
+      "center17": {
+        "width": 17,
+        "height": 17,
+        "xOffset": 24,
+        "darkOverWhite": 96,
+        "alphaNonzero": 118,
+        "alphaOpaque": 92
+      },
+      "full64x17": {
+        "width": 64,
+        "height": 17,
+        "xOffset": 0,
+        "darkOverWhite": 136,
+        "alphaNonzero": 168,
+        "alphaOpaque": 131
+      },
+      "acceptedUptime": 930346.6177559167,
+      "gpuCallbackUptimeBounds": [
+        930346.6436189167,
+        930346.6436196251
+      ],
+      "probeUptime": 930346.6436945418,
+      "screenshot": {
+        "appFrameReadsInOrder": [
+          [
+            0,
+            0,
+            1032,
+            1376
+          ],
+          [
+            0,
+            0,
+            1032,
+            1376
+          ],
+          [
+            0,
+            0,
+            1032,
+            1376
+          ]
+        ],
+        "captureEndedUptime": 930346.9325365417,
+        "captureStartedUptime": 930346.8164324583,
+        "cropPixels": [
+          1024,
+          1216,
+          17,
+          17
+        ],
+        "darkPixelCount": 96,
+        "decodedUptime": 930346.9730934168,
+        "imageSizePixels": [
+          2064,
+          2752
+        ],
+        "probe": [
+          516,
+          612.32
+        ],
+        "scale": 2,
+        "stage": "undo"
+      },
+      "acceptedToGPUms": [
+        25.86300007533282,
+        25.863708462566137
+      ],
+      "acceptedToProbeMs": 25.938625098206103,
+      "acceptedToScreenshotMs": [
+        198.6765416804701,
+        314.7806250490248
+      ],
+      "probeToScreenshotMs": [
+        172.737916582264,
+        288.8419999508187
+      ]
+    },
+    "redo": {
+      "canvasID": "ObjectIdentifier(0x000000010854b200)",
+      "pageID": "223CE26C-9741-4937-A91B-AFD21FD857EF",
+      "stamp": {
+        "actor": "987736A1-B860-4C4A-874A-27AC6F362879",
+        "counter": "56"
+      },
+      "actionIDs": [
+        "36E5DA3B-94BC-4AC5-8046-45EE765202A0"
+      ],
+      "submissionID": "BDE8D12C-1063-4755-A7B4-6BAD36B81E2D",
+      "sourcePoint": [
+        417,
+        531.33
+      ],
+      "windowPoint": [
+        516,
+        612.32
+      ],
+      "windowProbeDelta": [
+        0,
+        0.0
+      ],
+      "sameTexturePixelCell": true,
+      "textureID": "ObjectIdentifier(0x000000014fbba400)",
+      "textureRegion": [
+        0,
+        0,
+        834.3248546511628,
+        1194
+      ],
+      "pixelRect": [
+        929,
+        1216,
+        64,
+        17
+      ],
+      "sourceRevision": "13",
+      "stableRevision": "45",
+      "retainedGeneration": "62",
+      "superseded": false,
+      "rawFile": "/private/tmp/notebook-retained-roi-probe/analysis-20260926T073442Z/raw/780f1b50-d7cb-466a-96f5-1b115160eb41-bde8d12c-1063-4755-a7b4-6bad36b81e2d-774-roi2.bgra",
+      "rawSHA256": "6fc74890c52aef57c0b98ace4a7dec52972c8498fbe56e84e68d40b7c8087e4e",
+      "center17": {
+        "width": 17,
+        "height": 17,
+        "xOffset": 24,
+        "darkOverWhite": 0,
+        "alphaNonzero": 0,
+        "alphaOpaque": 0
+      },
+      "full64x17": {
+        "width": 64,
+        "height": 17,
+        "xOffset": 0,
+        "darkOverWhite": 0,
+        "alphaNonzero": 0,
+        "alphaOpaque": 0
+      },
+      "acceptedUptime": 930347.2677267084,
+      "gpuCallbackUptimeBounds": [
+        930347.2896705001,
+        930347.2896712085
+      ],
+      "probeUptime": 930347.2897413333,
+      "screenshot": {
+        "appFrameReadsInOrder": [
+          [
+            0,
+            0,
+            1032,
+            1376
+          ],
+          [
+            0,
+            0,
+            1032,
+            1376
+          ],
+          [
+            0,
+            0,
+            1032,
+            1376
+          ]
+        ],
+        "captureEndedUptime": 930347.5750937084,
+        "captureStartedUptime": 930347.4715993333,
+        "cropPixels": [
+          1024,
+          1216,
+          17,
+          17
+        ],
+        "darkPixelCount": 96,
+        "decodedUptime": 930347.614677625,
+        "imageSizePixels": [
+          2064,
+          2752
+        ],
+        "probe": [
+          516,
+          612.32
+        ],
+        "scale": 2,
+        "stage": "redo"
+      },
+      "acceptedToGPUms": [
+        21.94379165302962,
+        21.944500040262938
+      ],
+      "acceptedToProbeMs": 22.014624904841185,
+      "acceptedToScreenshotMs": [
+        203.87262490112334,
+        307.36699991393834
+      ],
+      "probeToScreenshotMs": [
+        181.85799999628216,
+        285.35237500909716
+      ]
+    }
+  },
+  "finding": "The exact accepted Redo submission has an empty retained ROI at the unchanged failed screenshot probe. Undo negative control has the same96 dark pixels as its screenshot. Remaining causal boundary is retained-texture sampling/final drawable versus compositor/screenshot; neither is established as the culprit.",
+  "limits": [
+    "Retained source texture bytes only; final drawable, ancestors and compositor remain unobserved.",
+    "GPU completion/readiness and probe recorder uptime are not display timestamps.",
+    "The diagnostic adds a blit and CPU serialization; timing is not unchanged-source acceptance evidence.",
+    "Center17x17 is the retained texture pixel grid, not an asserted byte-identical XCTest screenshot crop.",
+    "XCTest captures are intervals; attachment wall time and video PTS are not mapped to systemUptime.",
+    "Absent probe/off_crop/probe_unavailable or an incomplete journal is unassessed, never a blank/correct image."
+  ],
+  "fullAcceptance": false,
+  "physicalAcceptance": false
+}

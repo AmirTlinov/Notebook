@@ -9,7 +9,7 @@ conversion.
 
 `NotebookTypesetter` compiles an immutable document to PDF and SyncTeX off the main
 actor. `NotebookPrintedDocumentStore` shares jobs and maintains a bounded 128 MiB
-derived disk cache keyed by resource version and complete source. PDF, source and
+derived disk cache keyed by resource version and complete source. Its directory belongs to the application bundle: `Caches/<bundleID>/NotebookPrintedPages`. Development and acceptance apps never share the installed app's eviction root; the old unscoped cache is left untouched. PDF, source and
 map are checked on read. Canceling the last reader stops the real job; canceling
 one shared reader preserves the others.
 
