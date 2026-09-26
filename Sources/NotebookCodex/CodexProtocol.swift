@@ -31,7 +31,7 @@ public struct CodexStartupFailure: Error, Sendable, Equatable {
 }
 
 enum CodexProtocol {
-  static let frameLimit = 8 * 1_048_576
+  static let frameLimit = CodexMessageTransfer.maximumBytes
   static let messageLimit = 32_768
 }
 
@@ -54,11 +54,9 @@ extension CodexAppServerState {
     let role: CodexMessage.Role, text: String
     var activity: CodexMessage.Activity?
     var attachments: [String]?
-    var detailTruncated = false
     let status = item["status"]?.string
     func action(_ kind: CodexMessage.Activity.Kind, _ detail: String? = nil) -> CodexMessage.Activity {
-      detailTruncated = detailTruncated || (detail?.count ?? 0) > 8192
-      return .init(kind: kind, status: status, detail: detail.map { String($0.prefix(8192)) })
+      return .init(kind: kind, status: status, detail: detail)
     }
     func pretty(_ value: JSONValue?) -> String? {
       guard let value, value != .null else { return nil }
@@ -109,7 +107,7 @@ extension CodexAppServerState {
     default: return nil
     }
     return CodexMessage(id: id, turnID: turnID, clientID: item["clientId"]?.string, role: role,
-      text: String(text.prefix(16_384)), isTruncated: text.count > 16_384 || detailTruncated, activity: activity, attachments: attachments, phase: item["phase"]?.string)
+      text: text, activity: activity, attachments: attachments, phase: item["phase"]?.string).identifyingContent()
   }
 
   /// Presentation of Notebook's public actions, not another tool dispatcher.

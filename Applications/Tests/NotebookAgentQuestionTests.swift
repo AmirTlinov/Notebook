@@ -152,7 +152,9 @@ final class NotebookAgentQuestionTests: XCTestCase {
       await model.sendChatMessage(context: captured) { saved = $0 }?.value
       let input = try XCTUnwrap(chat.jobs.first?.input)
       XCTAssertTrue(saved); XCTAssertEqual(input.attentionContextID, original.contextID)
-      XCTAssertEqual(input.attachments, [attachment]); XCTAssertEqual(model.agentQuestion?.contextID, next.contextID)
+      XCTAssertEqual(input.attachments?.filter { $0.kind != .image }, [attachment])
+      XCTAssertEqual(input.attachments?.filter { $0.kind == .image }.count,original.references.count)
+      XCTAssertEqual(model.agentQuestion?.contextID, next.contextID)
       guard case .send(_, let text, let context) = input.action else { return XCTFail("Expected the existing message owner") }
       XCTAssertEqual(text, "Результат распознавания"); XCTAssertTrue(context.contains(original.contextID.uuidString))
       XCTAssertFalse(context.contains(next.contextID.uuidString))

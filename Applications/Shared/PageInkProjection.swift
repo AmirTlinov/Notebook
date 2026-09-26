@@ -48,7 +48,11 @@ final class PageInkProjection: ScenePlaneProjectionObserver {
     let index=pageReadiness?.pageIndex
     let demanded=index != nil && activity?.preparationDemand?.pageIndex == index
     let installed=index != nil && activity?.installedPreparation?.pageIndex == index
-    setSceneVisible(notebookIsVisible && (activity == nil || pageIsCurrent || demanded || installed))
+    let required = activity == nil || pageIsCurrent || demanded || installed
+      || pageReadiness?.isInActiveTurn() == true
+    // Install the promoted native crop before un-parking its drawable demand.
+    setSceneVisible(notebookIsVisible && required)
+    canvas?.setPageBackingRequired(required)
     if canvas?.isStableFramePresented == false { pageReadiness?(false) }
   }
 

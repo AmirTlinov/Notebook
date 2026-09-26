@@ -42,7 +42,7 @@ final class NotebookChatController {
   private(set) var creationID: UUID?
   private(set) var firstMessages: [UUID: NotebookChatFirstMessage] = [:]
   private var draftID = UUID()
-  enum MessageDestination {
+  enum MessageDestination: Equatable {
     case thread(String)
     case newChat(UUID, CodexProject?)
     var threadID: String? { if case .thread(let id) = self { id } else { nil } }
@@ -50,6 +50,14 @@ final class NotebookChatController {
   var messageDestination: MessageDestination {
     if let threadID, !browsesChats { return .thread(threadID) }
     return .newChat(draftID, browsesChats ? nil : selectedProject)
+  }
+  var pointingScope: NotebookLaserContext.Scope {
+    let address: String
+    switch messageDestination {
+    case .thread(let id): address = "thread:" + id
+    case .newChat(let id, _): address = "draft:" + id.uuidString
+    }
+    return .init(computer: computerID, thread: address)
   }
   var canSendDraft: Bool {
     !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !dictation.busy && !saving && !switchingComputer
@@ -111,7 +119,19 @@ final class NotebookChatController {
   @ObservationIgnored private var selectedTask: CodexTask?
   @ObservationIgnored private var historyLoaded = false
   @ObservationIgnored private var historyBoundary: String?
-  @ObservationIgnored private var transcriptGeneration = UUID()
+  @ObservationIgnored private var contentRead: Task<Void, Never>?
+  @ObservationIgnored private var failedContents: [String: String] = [:]
+  // Latest requested headers are an addressed queue, not another transcript.
+  // The visible row keeps its completed body while this queue catches up.
+  private struct ContentRequest {
+    let generation: UUID
+    let header: CodexMessage
+  }
+  private var contentRequests: [String: ContentRequest] = [:]
+  @ObservationIgnored private var contentReadError: (id: String, revision: String?, message: String)?
+  @ObservationIgnored private var transcriptGeneration = UUID() {
+    didSet { contentRead?.cancel(); contentRead = nil; failedContents.removeAll(); contentRequests.removeAll(); contentReadError = nil }
+  }
   @ObservationIgnored private var catchUpBoundary: String?
   @ObservationIgnored private var catchUpRead: Task<Void, Never>?
   @ObservationIgnored private var nextCatchUp = ContinuousClock.now
@@ -236,6 +256,7 @@ final class NotebookChatController {
     cancelQueries()
   }
   private func cancelQueries() {
+    contentRead?.cancel(); contentRead = nil; failedContents.removeAll()
     catalogueGeneration = UUID(); catalogueRead?.cancel(); projectsRead?.cancel()
     catalogueRead = nil; projectsRead = nil; loadingHistory = false
     for scope in catalogues.keys { catalogues[scope]?.loading = false }
@@ -569,6 +590,32 @@ final class NotebookChatController {
     return jobs.first { $0.id == id }
   }
 
+  enum FailedMessageRecovery: Equatable { case absent, saved }
+
+  /// Only explicit changed submission intent may release an old local attempt.
+  /// The addressed FIFO read distinguishes rejection from a lost commit receipt;
+  /// a durable message is never rewritten or sent again under a new payload.
+  func reconcileFailedMessageForChangedIntent() async throws -> FailedMessageRecovery {
+    guard loaded, !stopped, !saving, !switchingComputer else { throw NotebookTransportError.disconnected }
+    guard let input = savingInput else { return .absent }
+    let first = savingFirstMessage, computer = peer
+    saving = true; defer { saving = false }
+    let recovered = try await persistence.submit { store -> Bool in
+      guard let job = try store.chatJob(input.id) else { return false }
+      guard job.input == input, try store.chatFirstMessage(input.id) == first,
+        try store.chatDestination(input.id) == computer else { throw NotebookTransportError.invalidAcknowledgement }
+      return true
+    }
+    guard peer == computer, savingInput == input, savingFirstMessage == first else { throw NotebookTransportError.invalidAcknowledgement }
+    if recovered { try await refreshJobs() }
+    savingInput = nil; savingFirstMessage = nil
+    if recovered {
+      error = "Предыдущее сообщение уже сохранено. Изменённый черновик не отправлен; отправьте его отдельно."
+      return .saved
+    }
+    return .absent
+  }
+
   /// Outgoing text remains visible after its editor is cleared. This is the
   /// durable outbox, not a second conversation: a native client ID replaces it.
   var pendingMessages: [NotebookChatJob] {
@@ -782,6 +829,7 @@ final class NotebookChatController {
   }
 
   private func suspendTranscript() {
+    contentRead?.cancel(); contentRead = nil; failedContents.removeAll()
     if catchUpBoundary == nil { catchUpBoundary = messages.last?.id }
     catchUpRead?.cancel(); catchUpRead = nil; nextCatchUp = .now
   }
@@ -807,8 +855,133 @@ final class NotebookChatController {
     }
   }
 
+  var presentationMessages: [CodexMessage] {
+    messages.map { message in
+      guard contentRequests[message.id] != nil, !message.isTruncated else { return message }
+      return .init(id:message.id,turnID:message.turnID,clientID:message.clientID,role:message.role,
+        text:message.text,isTruncated:true,contentRevision:message.contentRevision,
+        activity:message.activity,attachments:message.attachments,phase:message.phase)
+    }
+  }
+
+  private var nextContentRequest: ContentRequest? {
+    for message in messages.reversed() {
+      if let request = contentRequests[message.id], failedContents[message.id] != request.header.contentRevision { return request }
+    }
+    return nil
+  }
+
+  func retryMessageContent(_ id: String) {
+    clearContentReadError(for:id)
+    if contentRequests[id] == nil, let header = messages.first(where: { $0.id == id }),
+      header.isTruncated, header.contentRevision != nil { contentRequests[id] = .init(generation:UUID(),header:header) }
+    failedContents.removeValue(forKey:id); readMessageContents()
+  }
+
+  private func clearContentReadError(for id: String, revision: String? = nil) {
+    guard let owned = contentReadError, owned.id == id,
+      revision == nil || owned.revision == revision else { return }
+    if error == owned.message { error = nil }
+    contentReadError = nil
+  }
+
+  /// A newer ordinary header does not revoke the immutable transfer already
+  /// being read. An explicit error or complete replacement is authoritative,
+  /// however: a preceding body cannot hide its unavailability or replace it.
+  private func permitsContentCompletion(_ request: ContentRequest) -> Bool {
+    guard let latest = contentRequests[request.header.id] else { return false }
+    return latest.generation == request.generation
+  }
+
+  /// One item at a time through the existing normal query lane. Stop and
+  /// Approval keep their independent reserved lane during a large response.
+  private func readMessageContents() {
+    guard connected, !stopped, contentRead == nil, let threadID,
+      nextContentRequest != nil else { return }
+    let generation = transcriptGeneration, computer = peer
+    contentRead = Task { [weak self] in
+      guard let self else { return }
+      defer { if transcriptGeneration == generation, !Task.isCancelled { contentRead = nil } }
+      while connected, !stopped, !Task.isCancelled, transcriptGeneration == generation, peer == computer,
+        let request = nextContentRequest {
+        let pending = request.header
+        let bodyAtStart = messages.first { $0.id == pending.id }
+        do {
+          var assembly = CodexMessageAssembly(), cursor: String?, seen = Set<String>()
+          contentParts: while !Task.isCancelled, permitsContentCompletion(request) {
+            let read = CodexMessageRead(threadID:threadID,turnID:pending.turnID,messageID:pending.id,
+              cursor:cursor,transferID:assembly.transferID,offset:assembly.offset)
+            guard case .message(let reply) = try await directQuery(.message(read)) else { throw NotebookTransportError.invalidAcknowledgement }
+            guard !Task.isCancelled, transcriptGeneration == generation, peer == computer else { return }
+            guard permitsContentCompletion(request) else { break contentParts }
+            switch reply {
+            case .searching(let next):
+              guard assembly.offset == 0, seen.insert(next).inserted else { throw NotebookTransportError.invalidAcknowledgement }
+              cursor = next
+            case .part(let part):
+              guard try assembly.append(part) else { continue }
+              let frozen = assembly
+              let worker = Task.detached(priority:.utility) { try frozen.decode() }
+              let complete = try await withTaskCancellationHandler { try await worker.value } onCancel: { worker.cancel() }
+              guard !Task.isCancelled, transcriptGeneration == generation, peer == computer else { return }
+              guard permitsContentCompletion(request) else { break contentParts }
+              guard complete.id == pending.id, complete.turnID == pending.turnID,
+                complete.role == pending.role else { throw NotebookTransportError.invalidAcknowledgement }
+              if contentRequests[pending.id] != nil,
+                let index = messages.firstIndex(where: { $0.id == pending.id }),
+                messages[index].isTruncated || messages[index].contentRevision == bodyAtStart?.contentRevision
+                  || messages[index].contentRevision == assembly.contentRevision {
+                messages[index] = .init(id:complete.id,turnID:complete.turnID,clientID:complete.clientID,role:complete.role,
+                  text:complete.text,contentRevision:assembly.contentRevision,activity:complete.activity,attachments:complete.attachments,phase:complete.phase)
+                clearContentReadError(for:pending.id, revision:pending.contentRevision)
+                if contentRequests[pending.id]?.header.contentRevision == pending.contentRevision
+                  || contentRequests[pending.id]?.header.contentRevision == assembly.contentRevision {
+                  contentRequests.removeValue(forKey:pending.id)
+                }
+              }
+            }
+            if case .part(let part) = reply, assembly.offset == part.totalBytes { break }
+          }
+        } catch {
+          guard !Task.isCancelled, transcriptGeneration == generation, peer == computer else { return }
+          // Failure of a retired revision cannot poison a newer queued body
+          // or an authoritative replacement that arrived during this request.
+          guard permitsContentCompletion(request), contentRequests[pending.id]?.header.contentRevision == pending.contentRevision else { continue }
+          failedContents[pending.id] = pending.contentRevision
+          let message = "Не удалось загрузить полное сообщение: " + error.localizedDescription + " Нажмите «Загрузить полностью», чтобы повторить."
+          contentReadError = (pending.id,pending.contentRevision,message); self.error = message
+        }
+      }
+    }
+  }
+
   private func mergeMessages(_ incoming: [CodexMessage], preferIncoming: Bool, before boundary: String? = nil) {
-    messages = CodexTranscript.merging(messages, incoming, preferIncoming: preferIncoming, before: boundary)
+    let known = Dictionary(messages.map { ($0.id,$0) },uniquingKeysWith:{ _,last in last })
+    let displayed = incoming.map { header -> CodexMessage in
+      let prior = known[header.id]
+      guard preferIncoming || prior == nil else {
+        // The shared merge may fill an exact truncated row from history even
+        // when history has no authority to replace another live revision.
+        if !header.isTruncated, prior?.isTruncated == true,
+          prior?.contentRevision == header.contentRevision { contentRequests.removeValue(forKey:header.id) }
+        return header
+      }
+      if header.isTruncated, let revision = header.contentRevision,
+        prior?.isTruncated != false || prior?.contentRevision != revision {
+        let current = contentRequests[header.id]
+        let continues = current?.header.turnID == header.turnID && current?.header.role == header.role
+          && (header.activity?.kind != .error || current?.header.contentRevision == revision)
+        contentRequests[header.id] = .init(generation:continues ? current!.generation : UUID(),header:header)
+        // Only this full-content reading owner can retain an older body while
+        // separately queuing its latest header. Other native transcript owners
+        // still consume the shared merge's normal latest-excerpt contract.
+        if let prior, !prior.isTruncated, prior.turnID == header.turnID, prior.role == header.role,
+          header.activity?.kind != .error { return prior }
+      } else { contentRequests.removeValue(forKey:header.id) }
+      return header
+    }
+    messages = CodexTranscript.merging(messages, displayed, preferIncoming: preferIncoming, before: boundary)
+    readMessageContents()
   }
 
   private func accept(_ reply: NotebookChatReply, for query: NotebookChatQuery, computer: UUID?) async throws {

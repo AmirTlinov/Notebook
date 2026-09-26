@@ -124,12 +124,13 @@ extension CodexAppServer {
   }
 
   /// Page native items, not whole turns: a single multi-day turn can contain thousands of commands.
-  public func history(threadID: String, cursor: String? = nil) async throws -> CodexHistoryPage {
+  public func history(threadID: String, cursor: String? = nil, turnID: String? = nil) async throws -> CodexHistoryPage {
     guard UUID(uuidString: threadID) != nil else { throw CodexBridgeError.invalidInput }
     return try await session { rpc in
       try await self.validateThreadScope(threadID, rpc: rpc)
       var params: [String: JSONValue] = ["threadId": .string(threadID), "limit": .number(32), "sortDirection": .string("desc")]
       if let cursor { params["cursor"] = .string(cursor) }
+      if let turnID { params["turnId"] = .string(turnID) }
       let result = try await rpc.request("thread/items/list", params: .object(params))
       guard let items = result["data"]?.array, items.count <= 32 else { throw CodexBridgeError.invalidResponse }
       let messages = try items.reversed().compactMap { entry -> CodexMessage? in

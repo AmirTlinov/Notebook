@@ -25,12 +25,18 @@ final class IPadSheetCurlController: UIViewController, UIGestureRecognizerDelega
   private let curl = SheetCurlMetalView(frame: .zero)
   private var panDirection: Direction?
   private var motion: Motion?
+  private var captureReclamation: Task<Void, Never>?
   /// A new contact can wait for this accepted landing, including cancellation
   /// back to the source. The page container must not guess from its old index.
   var settlingPage: UIViewController? {
     guard let motion, let endpoint = motion.animation?.to ?? motion.terminal else { return nil }
     return endpoint == 1 ? motion.target : motion.source
   }
+  func containsInActiveTurn(_ controller: UIViewController) -> Bool {
+    guard let motion else { return false }
+    return motion.source === controller || motion.target === controller
+  }
+
   private struct Motion {
     let id: UUID
     let source: UIViewController, target: UIViewController
@@ -121,7 +127,7 @@ final class IPadSheetCurlController: UIViewController, UIGestureRecognizerDelega
   }
 
   private func captureCurrentSource(for id: UUID) {
-    guard let motion, motion.id == id, motion.image == nil else { return }
+    guard let motion, motion.id == id, motion.image == nil, captureReclamation == nil else { return }
     let sheet = motion.direction == .forward ? motion.source : motion.target
     guard isSheetReadyForCapture(sheet) else { return }
     do {
@@ -139,6 +145,19 @@ final class IPadSheetCurlController: UIViewController, UIGestureRecognizerDelega
       render(current.progress)
       curl.animatesContinuously = current.animation != nil
     } catch {
+      guard self.motion?.id == id else { return }
+      if case SceneRenderError.resourceLimit = error,
+        SceneRenderResources.shared.pendingReclamationCount > 0 {
+        // Admission may have retired a neighbour whose last GPU frame still
+        // owns its bytes. Retain this motion/finger, not a new navigation request.
+        captureReclamation = Task { @MainActor [weak self] in
+          await SceneRenderResources.shared.finishPendingReclamations()
+          guard !Task.isCancelled, let self, self.motion?.id == id else { return }
+          captureReclamation = nil
+          captureCurrentSource(for: id)
+        }
+        return
+      }
       onFailure(error)
       finish(completed: false)
     }
@@ -265,6 +284,7 @@ final class IPadSheetCurlController: UIViewController, UIGestureRecognizerDelega
   private func finish(completed: Bool, notify: Bool = true, presented: Bool = false) {
     guard let motion else { return }
     self.motion = nil
+    captureReclamation?.cancel(); captureReclamation = nil
     page = completed ? motion.target : motion.source
     view.bringSubviewToFront(page!.view)
     curl.isHidden = true; curl.releaseSource(presented: presented)
@@ -275,7 +295,7 @@ final class IPadSheetCurlController: UIViewController, UIGestureRecognizerDelega
   }
 
   func cancelMotion(notify: Bool = true) { if motion != nil { finish(completed: false, notify: notify) } }
-  isolated deinit { curl.releaseSource() }
+  isolated deinit { captureReclamation?.cancel(); curl.releaseSource() }
 
   /// Warm pans and a cold contact whose neighbour becomes ready use the same
   /// motion owner. The admission recognizer keeps that original contact.
@@ -295,7 +315,10 @@ final class IPadSheetCurlController: UIViewController, UIGestureRecognizerDelega
   }
 
   func endInteractiveTurn(completed: Bool) {
-    guard motion?.gesture == true else { return }
+    guard let motion, motion.gesture else { return }
+    // Nothing has replaced the source yet. A cancelled cold contact must not
+    // wait for future readiness, acquire a snapshot, or hold navigation open.
+    if !completed, motion.image == nil { finish(completed: false); return }
     animate(to: completed ? 1 : 0)
   }
 

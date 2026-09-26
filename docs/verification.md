@@ -10113,3 +10113,118 @@ GPU завершил этот текущий кадр за21,944мс, но сн�
 журнала/runtime warnings; исходники неизменны. Временная instrumentation
 полностью удалена, InkCanvas возвращён к точному SHA physical100.
 Полные captures/recording/trace joins —`retained-roi-redo-diagnostic.json`.
+### GUI-306 — новые замечания пользователя, первый физический прогон105
+
+26 сентября на USB iPad Pro11 M1/iOS27 (24A435) установлен изолированный
+`com.amirtlinov.notebook.native-test`, production-контейнер не использовался.
+Оптимизированный native-код с DEBUG fixtures: **44 PASS / 6 FAIL**,
+0 skips/runtime warnings. UI target не начал ни одного жеста:
+`Timed out while enabling automation mode`; Mac-часть после отказа не запускалась.
+Source SHA `490280316328d7e48862a57d0836570c3618fa7c0a57d17fc9d579d669f997c6`
+совпадает до и после исполнения. Квитанция и полный список отказов:
+`docs/audit-evidence/2026-09-25/user-ux-105-native-failures.json`.
+
+Новые проверки обнаружили три ошибки самих fixtures: принадлежность SwiftUI mask
+нельзя считать по UIKit subviews; settlement модели не является квитанцией
+установленной страницы; общий отказ writer восстанавливается существующим
+«Повторить сохранение», а не удалением fault-файла. Проверка вложений также
+ошибочно ожидала название указки у выбранного фрагмента; адреса остались точными.
+Эти проверки уточнены без удаления pixel/identity assertions и без новых таймеров
+приложения; повторный результат записывается отдельно, не поверх105.
+
+Два performance-условия в105 остаются открытыми:100000 measurements холодной
+маски —546,501мс при500мс; первый Redo после перелистывания —120,965мс до
+правильных пикселей окна при100мс. Остальные три Redo того же запуска дали
+87,955/55,978/89,317мс. Это окно, включая стоимость захвата, не photon timing.
+Причинный runtime-путь уже сохраняет body при снятии последнего cut и не строит
+mesh заново, но это не доказательство устранения всех задержек показа.
+
+Также найден и исправлен пропущенный остаток A07: native publication и read-only
+SDK ещё ограничивали контур4096 точками при renderer8192. Сейчас общий предел8192,
+8193 отвергается с сохранением прежнего выбора; Core/SDK-регрессии прошли отдельно.
+Ремонт A01–A19/R01–R04 и11 замечаний **не объявляется завершённым**: смешанный
+whole-elements lasso, обычные системные жесты, единый финальный build,
+10 повторов и30-минутная смешанная сессия остаются условиями завершения.
+
+### GUI-306 — targeted continuation 106–108 (2026-09-26)
+
+- **106 Mac: 28/28 PASS**, no skips/runtime warnings, unchanged source witness. Full-message transport and chat display were exercised in the isolated native host. Physical iPad: **15 PASS / 1 FAIL**; the remaining cold 100,000-measurement mask takes **547.499 ms > 500 ms**. The four raw-Redo repetitions passed this time, but no timing fix had been made, so the earlier 120.965 ms failure remains open. Exact artifacts: [`user-ux-106-focused.json`](audit-evidence/2026-09-25/user-ux-106-focused.json).
+- Visual review caught an additional gap despite the new first-chat test passing: its page center marker agrees, but the durable full-page PNG does not match the mounted viewport framing. U01 is **not** accepted on the strength of one control pixel; native clipping/capture geometry is being measured separately.
+- **107 diagnostic only:** the cold material submitted three GPU passes before its first completion, although only the first uploaded geometry. Encoding took 8.340 / 0.793 / 0.745 ms; the GPU intervals overlapped and are not additive CPU timings. The final OS-receipt timestamp precedes its own recorded GPU end by 76.524 ms; no OS-bug or correct-display conclusion is inferred from that inconsistency. Temporary attribution code was removed exactly before 108.
+- **108 Simulator selected gestures: 5 PASS / 5 FAIL**, unchanged source, no skips/runtime warnings. Four failing tests accidentally selected DEBUG's simulated-Pencil input instead of the existing ordinary-finger route. The document pinch test searched for an obsolete separate PDF StaticText rather than its actual source-block accessibility element. The input/locator defects are corrected for a rerun without changing product routing or thresholds. Screens, recordings, XCTest result and source witness: [`user-ux-108-selected-ui.json`](audit-evidence/2026-09-25/user-ux-108-selected-ui.json).
+- None of these runs is the final ten-repeat / thirty-minute acceptance. Physical system-gesture execution remains unverified because UI automation initialization timed out; native physical pixels and Simulator gestures are reported separately.
+
+### GUI-306 — контекст, фон бумаги и владение чернилами: 109–117
+
+Доказательства: [`user-ux-109-117.json`](audit-evidence/2026-09-25/user-ux-109-117.json).
+Исправленную маршрутизацию тестовых пальцев подтвердил Simulator110: **9 PASS /
+1 FAIL**, без skips/runtime warnings. Отказ — обратная стрелка после выхода и
+повторного входа в тетрадь; дополнительные112/114/115 подтвердили доставку команды
+правильному владельцу и нехватку памяти для curl, а не потерю нажатия. Для capture
+нужно65 116 800 байт при199 450 624 уже зарезервированных и22 579 328 resident;
+предел256MiB не повышался. Освобождение спекулятивных backing ещё исправляется.
+
+Physical113: **17 PASS / 2 FAIL**. Проверены последовательная отрисовка material,
+актуальная revision при поздних completion, точный remount, изменённый выбор при
+Retry и uncertain/exact durable recovery. Cold100000: первая готовность317,802мс,
+четыре pixel probes426,996мс при прежних500мс. Retained handwriting partial erase /
+Undo / Redo:58,992 /56,199 /36,351мс при100мс. Это не закрывает отдельный raw-page
+Redo: его прежний поздний/неверный конечный кадр остаётся открытым.
+
+Две ошибки113 — настоящий неполный фон, не неверные координаты захвата:
+Canvas получает834×1194, но native transform ограничивает его clip485,628×640.
+Вместо изменения камеры старый Canvas удалён; один Color+Path рисует всю бумагу.
+**Physical116:2/2 PASS**, по9 клеток в native/standalone/captured image и5 маркеров,
+с просмотром mounted и durable PNG. Предыдущая гипотеза о неверном viewport framing
+из106 опровергнута: геометрия была верна, отсутствовали пиксели самого фона.
+
+**Mac116:31/31 PASS** — в том числе refresh одной беседы во время чтения полного
+сообщения, close/switch/revoke и актуальность observation. **Core117:38/38,
+Codex117:20/20, SDK:5/5**, MCP type/generated check PASS. Проверено cumulative
+сообщение ровно8MiB/+1byte, escaping, освобождение overflow и восстановление final.
+Для113/116/117 source maps совпадают;109 имеет честно отмеченный пропущенный
+полный after-witness, а диагностические111/112/114/115 не выдаются за clean run.
+Все временные пробники удалены. Whole-elements lasso, memory arbitration страниц,
+прежние cold-TeX/20ms/cadence условия и итоговые10 повторов/30 минут ещё не закрыты.
+
+### GUI-306 — растущие сообщения и живые страницы: 118–123
+
+Доказательства: [`user-ux-118-123.json`](audit-evidence/2026-09-25/user-ux-118-123.json).
+В118/118b/118c отрицательная проверка потери законченной версии сообщения
+достигла assertion; точечный LLDB backtrace118c показал остановку в оформлении
+ошибки XCTest/CoreSymbolication, не цикл транспорта. Эти попытки отменены и
+сохранены как незавершённые отрицательные контроли, не как completed XCTest run.
+
+**Physical119:75 PASS /3 FAIL.** Пройдены новые проверки растущего сообщения,
+авторитетного error/full superseding и освобождения только спекулятивных страниц.
+Три отказа — fixtures: WebKit assignment возвращал DOM node вместо поддержанного
+скаляра; две очереди рассчитывали на6 слотов при существующих34. Явные6-слотовые
+тестовые владельцы и scalar return сохранили прежние assertions. **Physical120:
+3/3 PASS**; продуктовые лимиты не менялись. Это не единый повтор78/78 на новом tree.
+**Simulator121:3/3 PASS**, включая прежнюю обратную стрелку после повторного
+открытия,20 чередующихся свайпов и следующий жест сразу после посадки листа.
+
+Дополнительный review выявил: demand C мог снять защиту live-подложки B во время
+A→B; отмена ещё не снятого листа ждала будущей готовности. Теперь существующая
+готовность запрашивает обе стороны настоящего Motion с host/sequence identity,
+а cold cancel синхронно освобождает жест без capture. **Physical122:47/48 PASS**;
+единственный отказ нового fixture — переданная вместо source revision подпись
+команды. С точной revision **Physical123:1/1 PASS**. Новая pressure-регрессия
+подтверждает защиту A/B/C и освобождение защиты после отмены, без вечного pin.
+Во всех118–123 source maps совпадают; положительные прогоны без skips/warnings.
+
+Oracle физического первого кадра больше не отбрасывает нулевые/невалидные receipts
+через `onFramePresented`: он проверяет все `onFrameReady` и сохраняет основной
+callback. Пороги не повышались; исправление oracle не считается performance PASS.
+Смешанное whole-elements выделение, прежний raw Redo, cold TeX, физический первый
+кадр/каденс и итоговые10 повторов/30 минут остаются открытыми.
+
+**Physical124:2/2 PASS, Mac124:32/32 PASS**, source maps совпадают,
+0 skips/runtime warnings: [`user-ux-124.json`](audit-evidence/2026-09-25/user-ux-124.json).
+Проверены оба направления ожидания готовности при принятом/отменённом жесте.
+Дополнительный read-only review обнаружил повтор первого сетевого запроса после
+его ответа: он создавал новый transfer и ломал уже начатое продолжение. Тот же
+per-peer владелец теперь удерживает исходную envelope identity и возвращает точные
+уже принятые bytes, без повторного snapshot/encode. Новая намеренная передача,
+другой peer, collision и отзыв разрешения проверены вместе со всем Sidecar suite.
+Нового кэша ответов нет; это завершённый локальный срез, не полная приёмка ремонта.

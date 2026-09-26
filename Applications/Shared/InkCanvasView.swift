@@ -292,6 +292,10 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
   private(set) var pageSourceSize = CGSize.zero
   private var pageDrawableReservation: RasterReservation?
   private var pageAdmittedSize = CGSize.zero
+  private var pageBackingRequired = true
+  private var pageBackingIsReclaimed = false
+  private var pageReclamationOwner: UUID?
+  private var isRenderingFrame = false
   private var isProjectingPage = false
   private var pageMultisample: (any MTLTexture)?
   private var pageRetainedTexture: (any MTLTexture)?
@@ -480,6 +484,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
   }
 
   isolated deinit {
+    if let pageReclamationOwner { resources.unregisterReclamationOwner(pageReclamationOwner) }
     pageMeshTask?.cancel()
     pageDisplayLink?.invalidate()
     #if os(iOS)
@@ -522,6 +527,9 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
       retirePageDisplayLink()
       cancelPendingPageMesh()
       if spatialHandoffRetains == 0 {
+        // A material remount needs a new drawable even when its content and
+        // crop are identical. Revoke the retired layer's pending receipt.
+        if material != nil { beginStableContentUpdate() }
         releaseDrawables()
         pageDrawableReservation = nil; pageMultisample = nil
         pageRetainedTexture = nil; pageRetainedReservation = nil; pageRetainedKey = nil
@@ -591,8 +599,79 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     if material == nil { material = InkMaterialRenderer() }
     guard material!.update(content) else { return }
     clearColor = material!.isMask ? .init(red:1,green:1,blue:1,alpha:1) : .init(red:0,green:0,blue:0,alpha:0)
+    if !hasRevealedFirstFrame {
+      // A newly mounted SwiftUI mask must be neutral until its first cut is
+      // ready. Keep the material's raster mode: isErasureMask also chooses the
+      // page-wide live mask's tiled allocation, which this child does not own.
+      CATransaction.begin(); CATransaction.setDisableActions(true)
+      #if os(iOS)
+      backgroundColor = material!.isMask ? .white : .clear
+      layer.opacity = material!.isMask ? 1 : 0
+      #else
+      layer?.backgroundColor = material!.isMask ? CGColor(gray:1,alpha:1) : nil
+      layer?.opacity = material!.isMask ? 1 : 0
+      #endif
+      CATransaction.commit()
+    }
     beginStableContentUpdate()
     requestFrame()
+  }
+
+  /// The page controller owns current/demanded/installed roles; this canvas
+  /// offers only its own speculative pixels, never its source or measured mesh.
+  func setPageBackingRequired(_ required: Bool) {
+    if pageReclamationOwner == nil {
+      pageReclamationOwner = resources.registerReclamationOwner { [weak self] in
+        self?.pageReclamationOffers() ?? []
+      }
+    }
+    guard pageBackingRequired != required else { return }
+    pageBackingRequired = required
+    if required, pageBackingIsReclaimed {
+      pageBackingIsReclaimed = false
+      requestFrame()
+    }
+    resources.reclamationOffersChanged()
+  }
+
+  private func pageReclamationOffers() -> [SceneResourceReclamationCandidate] {
+    guard let id = pageReclamationOwner, usesPageDisplayLink,
+      !pageBackingRequired, !pageBackingIsReclaimed,
+      !isRenderingFrame, !spatialHandoffIsStopping,
+      activeInkStroke == nil, activeEraserStroke == nil else { return [] }
+    let bytes = (pageDrawableReservation?.byteCount ?? 0) + (pageRetainedReservation?.byteCount ?? 0)
+    guard bytes > 0 else { return [] }
+    return [.init(id: id, bytes: bytes, rasterCount: 0, value: .neighbour,
+      distance: 1, restorationMilliseconds: 1, release: { [weak self] in
+        self?.reclaimPageBacking()
+      })]
+  }
+
+  private func reclaimPageBacking() -> Task<Void, Never>? {
+    // Park before publishing false readiness: a synchronous demand callback
+    // must not be followed by release of its newly promoted backing.
+    pageBackingIsReclaimed = true
+    isPaused = true; retirePageDisplayLink()
+    releaseDrawables()
+    pageDrawableReservation = nil; pageMultisample = nil
+    pageRetainedTexture = nil; pageRetainedReservation = nil; pageRetainedKey = nil
+    hasRevealedFirstFrame = false
+    CATransaction.begin(); CATransaction.setDisableActions(true)
+    #if os(iOS)
+    layer.opacity = 0
+    #else
+    layer?.opacity = 0
+    #endif
+    CATransaction.commit()
+    beginStableContentUpdate()
+    guard submittedFrameCount > 0 || submittedPresentationCount > 0 else { return nil }
+    // Submitted work already retains its exact reservations. Keep this owner
+    // alive until that existing GPU boundary releases them; do not uncharge early.
+    return Task { @MainActor [self] in
+      if submittedFrameCount > 0 || submittedPresentationCount > 0 {
+        await withCheckedContinuation { frameDrainWaiters.append($0) }
+      }
+    }
   }
 
   private func admitPageDrawable(samples: Int) -> Bool {
@@ -1072,8 +1151,17 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     #if os(macOS)
     if material != nil, window?.occlusionState.contains(.visible) != true { return }
     #endif
-    guard window != nil, !spatialHandoffIsStopping, spatialStagingID == nil else { pauseFrameLoop(); return }
-    if spatialDrawableScale != nil, submittedFrameCount > 0 || submittedPresentationCount > 0 { return }
+    guard window != nil, !spatialHandoffIsStopping, spatialStagingID == nil,
+      !pageBackingIsReclaimed else { pauseFrameLoop(); return }
+    isRenderingFrame = true
+    defer { isRenderingFrame = false }
+    if spatialDrawableScale != nil || material != nil,
+      submittedFrameCount > 0 || submittedPresentationCount > 0 { return }
+    // MetalKit may request the same static material more than once during
+    // layout. Its existing submission owns this revision through readiness;
+    // changed content/crop is re-admitted by the completion below, once.
+    if material != nil,submittedTransactionalRevision == stableContentRevision,
+      isStableFramePrepared || isStableFramePresented { return }
     if presentEmptyContentIfReady() { return }
     // A rejected page frame has no work whose completion could drain its
     // clocks. Only a busy slot or a superseded drawable is a frame retry;
@@ -1276,6 +1364,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
         guard let self,!spatialHandoffIsStopping,window != nil,
           stableContentRevision == submittedRevision else { return }
         guard readiness.isReady else {
+          if material != nil { beginStableContentUpdate() }
           if !exposedCanvasRect.isEmpty { requestFrame() }
           return
         }
@@ -1321,6 +1410,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
         // revision, not another frame of this older submission.
         if transactionPresentation, submittedTransactionalRevision != stableContentRevision { requestFrame() }
         if !completed {
+          if material != nil,stableContentRevision == submittedRevision { beginStableContentUpdate() }
           drawnTiles = nil; pageRetainedKey = nil
           requestFrame()
         }
@@ -1360,10 +1450,10 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
       CATransaction.begin(); CATransaction.setDisableActions(true)
       #if os(iOS)
       layer.opacity = 1
-      if isErasureMask { backgroundColor = .clear }
+      if isErasureMask || material != nil { backgroundColor = .clear }
       #else
       layer?.opacity = 1
-      if isErasureMask { layer?.backgroundColor = nil }
+      if isErasureMask || material != nil { layer?.backgroundColor = nil }
       #endif
       for (_, drawable, _, _, _) in passes { drawable.present() }
       CATransaction.commit()
@@ -1927,6 +2017,9 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
 
   private func requestFrame() {
     if presentEmptyContentIfReady() { return }
+    // Layout, mesh and old GPU callbacks cannot reacquire a reclaimed neighbour.
+    // Its existing page-role promotion is the only route back to pixel demand.
+    guard !pageBackingIsReclaimed else { pauseFrameLoop(); return }
     // Mesh/raster completions may arrive after culling. Preserve their ready
     // content, but only a mounted surface can resume display execution.
     var mounted = window != nil && spatialStagingID == nil && !spatialHandoffIsStopping
@@ -2012,6 +2105,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     activeMesh = IncrementalInkMesh()
     activeBufferDirtyStarts = Array(repeating: 0, count: Self.framesInFlight)
     releaseActiveBuffers()
+    resources.reclamationOffersChanged()
   }
 
   private func releaseActiveBuffers() {

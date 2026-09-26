@@ -1,0 +1,60 @@
+{
+  "format": 1,
+  "sealedAt": "2026-09-26T12:36:54.049130+00:00",
+  "result": "Failed",
+  "passed": 5,
+  "failed": 5,
+  "skipped": 0,
+  "runtimeWarnings": [],
+  "sourceMapsEqual": true,
+  "sourceWitness": "/Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/.build/notebook-architecture-repair/evidence-2026-09-25/user-ux-108-selected-ui/source-before.json",
+  "scope": "Existing selected DEBUG UI scenarios in isolated Simulator. Not final Release acceptance; not physical iPad gestures.",
+  "failures": [
+    {
+      "failureText": "XCTAssertTrue failed",
+      "targetName": "NotebookUITests",
+      "testIdentifier": 1,
+      "testIdentifierString": "DrawingResponsivenessTests/testBlankWorkspaceTapKeepsTheExpandedChatVisibleAndInteractive()",
+      "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookUITests/DrawingResponsivenessTests/testBlankWorkspaceTapKeepsTheExpandedChatVisibleAndInteractive",
+      "testName": "testBlankWorkspaceTapKeepsTheExpandedChatVisibleAndInteractive()"
+    },
+    {
+      "failureText": "XCTAssertTrue failed - Invisible controls must stop accepting input without unmounting the canvas",
+      "targetName": "NotebookUITests",
+      "testIdentifier": 2,
+      "testIdentifierString": "DrawingResponsivenessTests/testConfirmedBlankTapHidesChromeWithoutChangingPaperAndFirstClosesToolPanel()",
+      "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookUITests/DrawingResponsivenessTests/testConfirmedBlankTapHidesChromeWithoutChangingPaperAndFirstClosesToolPanel",
+      "testName": "testConfirmedBlankTapHidesChromeWithoutChangingPaperAndFirstClosesToolPanel()"
+    },
+    {
+      "failureText": "XCTAssertTrue failed",
+      "targetName": "NotebookUITests",
+      "testIdentifier": 3,
+      "testIdentifierString": "DrawingResponsivenessTests/testDocumentPinchesZoomTheOpenSheetInsteadOfItsCover()",
+      "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookUITests/DrawingResponsivenessTests/testDocumentPinchesZoomTheOpenSheetInsteadOfItsCover",
+      "testName": "testDocumentPinchesZoomTheOpenSheetInsteadOfItsCover()"
+    },
+    {
+      "failureText": "XCTAssertTrue failed",
+      "targetName": "NotebookUITests",
+      "testIdentifier": 6,
+      "testIdentifierString": "DrawingResponsivenessTests/testNotebookBackAndReopeningKeepItsFittedPageAndPageNavigation()",
+      "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookUITests/DrawingResponsivenessTests/testNotebookBackAndReopeningKeepItsFittedPageAndPageNavigation",
+      "testName": "testNotebookBackAndReopeningKeepItsFittedPageAndPageNavigation()"
+    },
+    {
+      "failureText": "XCTAssertEqualWithAccuracy failed: (\"0.0\") is not equal to (\"160.0\") +/- (\"8.0\")",
+      "targetName": "NotebookUITests",
+      "testIdentifier": 9,
+      "testIdentifierString": "DrawingResponsivenessTests/testPaperSelectionPinchesAndEdgeTapsKeepTheFittedSheet()",
+      "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookUITests/DrawingResponsivenessTests/testPaperSelectionPinchesAndEdgeTapsKeepTheFittedSheet",
+      "testName": "testPaperSelectionPinchesAndEdgeTapsKeepTheFittedSheet()"
+    }
+  ],
+  "findings": [
+    "Four failed scenarios omitted the existing finger-routing fixture flag. DEBUG Simulator defaults these contacts to Pencil, which draws rather than blank-taps, selects or opens the canvas menu. Correct the test input, not production routing.",
+    "Document gesture waited for a separate StaticText that no longer exists in PDF accessibility. The first source block has a real native-accessible button and visible text; use this mounted content for the same system pinch."
+  ],
+  "evidenceDirectory": "/Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/.build/notebook-architecture-repair/evidence-2026-09-25/user-ux-108-selected-ui",
+  "manifestSHA256": "3d8867a78f94550b4002a74acded15b72b86d1be6e040e7bd96b8639d52a37db"
+}

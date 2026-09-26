@@ -278,7 +278,8 @@ final class NotebookDrawingToolController {
       screenScale:screenScale,ink:inkSnapshot(at:address,graph:graph,spatialSelection:spatialSelection),points:[
         .init(x:point.x-radius,y:point.y-radius),.init(x:point.x+radius,y:point.y-radius),
         .init(x:point.x+radius,y:point.y+radius),.init(x:point.x-radius,y:point.y+radius)],
-      materialAdmission:model.pendingMaterialAdmissions[address.surface]?.task),presentsContour:false,resolved:resolved)
+      materialAdmission:model.pendingMaterialAdmissions[address.surface]?.task),presentsContour:false,
+      wholeContacts:true,resolved:resolved)
   }
 
   private func spatialSelectionSource(at address:NotebookToolAddress)
@@ -366,7 +367,8 @@ final class NotebookDrawingToolController {
     }
   }
 
-  private func finishLasso(_ current: Contact,presentsContour:Bool = true,resolved:((Bool)->Void)? = nil) {
+  private func finishLasso(_ current: Contact,presentsContour:Bool = true,wholeContacts:Bool = false,
+    resolved:((Bool)->Void)? = nil) {
     let polygon = current.points
     guard polygon.count >= 3 else { model.clearSelection(); return }
     pendingLasso=current
@@ -403,14 +405,24 @@ final class NotebookDrawingToolController {
       let cuts=try initialErasures.masks(on:current.address.surface)
       let inkCandidates=source?.candidateActionIDs(intersecting:polygon,surface:current.address.surface,
         origin:current.address.worldOrigin) ?? []
-      let references=try NotebookLassoQuery.references(intersecting:polygon,at:current.address,
-        graph:input.graph,spatial:input.spatial,erasures:cuts,inkCandidates:inkCandidates)
+      let references:[EditableElementReference]
+      if wholeContacts {
+        // The point owner already resolved raw handwriting. Its hit tolerance
+        // must not also cut a nearby authored figure as an accidental region.
+        try NotebookLassoQuery.admitCandidates(elements:[],ink:inkCandidates)
+        references=[]
+      } else {
+        references=try NotebookLassoQuery.references(intersecting:polygon,at:current.address,
+          graph:input.graph,spatial:input.spatial,erasures:cuts,inkCandidates:inkCandidates)
+      }
       let result=try source?.selection(polygon:polygon,surface:current.address.surface,
-        origin:current.address.worldOrigin,bounds:current.address.bounds)
+        origin:current.address.worldOrigin,bounds:current.address.bounds,wholeContacts:wholeContacts)
       try Task.checkCancellation()
       guard result != nil || !references.isEmpty else { return nil }
-      let descriptor=NotebookRegionSelection(id:current.id,address:current.address,polygon:polygon,
-        frame:frame,rawInk:result,expectedInkRevision:source?.revision,graphics:references)
+      let descriptor=NotebookRegionSelection(id:current.id,address:current.address,
+        polygon:wholeContacts ? (result?.polygon ?? polygon) : polygon,
+        frame:wholeContacts ? (result?.selectionFrame ?? frame) : frame,
+        rawInk:result,expectedInkRevision:source?.revision,graphics:references)
       guard let material=try NotebookRegionMaterialization.prepare(descriptor,graph:input.graph,
         snapshot:input.snapshot,erasures:cuts) else { return nil }
       try Task.checkCancellation()
@@ -586,17 +598,18 @@ extension NotebookRegionMaterialization {
       let selectedPolygon=normalized(region.polygon,in:selectedFrame)
       let sourcePolygon=normalized(region.polygon,in:raw.frame)
       guard selectedPolygon.count >= 3,sourcePolygon.count >= 3 else { return nil }
-      let inside=(raw.graphic.mask ?? .init()).appending(.intersect,polygon:selectedPolygon)
-      let outside=(raw.graphic.mask ?? .init()).appending(.subtract,polygon:sourcePolygon)
-      _ = inside.regionPath(in:.init(x:0,y:0,width:selectedFrame.width,height:selectedFrame.height))
-      _ = outside.regionPath(in:.init(x:0,y:0,width:raw.frame.width,height:raw.frame.height))
+      let inside=raw.selectsWholeContacts ? nil : (raw.graphic.mask ?? .init()).appending(.intersect,polygon:selectedPolygon)
+      let outside=raw.selectsWholeContacts ? nil : (raw.graphic.mask ?? .init()).appending(.subtract,polygon:sourcePolygon)
+      _ = inside?.regionPath(in:.init(x:0,y:0,width:selectedFrame.width,height:selectedFrame.height))
+      _ = outside?.regionPath(in:.init(x:0,y:0,width:raw.frame.width,height:raw.frame.height))
       let reference=region.address.reference(region.id.uuidString.lowercased())
-      let graphic=copied(reframed(raw.graphic,to:selectedFrame),claims:raw.graphic.sourceInkIDs,mask:inside)
+      let body=reframed(raw.graphic,to:selectedFrame)
+      let graphic=inside.map { copied(body,claims:raw.graphic.sourceInkIDs,mask:$0) } ?? body
       let object=NotebookWorkingGraphic(id:region.id,surface:region.address.surface,frame:selectedFrame,
         worldOrigin:region.address.worldOrigin,graphic:graphic)
       edits.append(.init(reference:reference,kind:.convertInkToElement,values:try object.authoredValues()))
       working.append(object);selected.append(reference)
-      if !outside.regionPath(in:.init(x:0,y:0,width:1,height:1)).isEmpty {
+      if let outside,!outside.regionPath(in:.init(x:0,y:0,width:1,height:1)).isEmpty {
         let id=UUID(),ref=region.address.reference(id.uuidString.lowercased())
         let rest=copied(raw.graphic,claims:[],mask:outside)
         let object=NotebookWorkingGraphic(id:id,surface:region.address.surface,frame:raw.frame,

@@ -1,0 +1,140 @@
+{
+  "format": 1,
+  "date": "2026-09-26",
+  "issue": "GUI-306",
+  "status": "repair_in_progress_not_final_acceptance",
+  "runs": [
+    {
+      "run": "118",
+      "sourceSHA256": "37c65adc7c3ed4fd0d30d9d4730c45bf0d736980a6e9a357f936a952e30b12e9",
+      "sourceUnchanged": true,
+      "summary": null,
+      "scope": "Interrupted negative control; XCTest issue-reporting stall, not a completed regression run"
+    },
+    {
+      "run": "118b",
+      "sourceSHA256": "37c65adc7c3ed4fd0d30d9d4730c45bf0d736980a6e9a357f936a952e30b12e9",
+      "sourceUnchanged": true,
+      "summary": {
+        "result": "Failed",
+        "passedTests": 0,
+        "failedTests": 1,
+        "skippedTests": 0,
+        "runtimeWarnings": [],
+        "totalTestCount": 1
+      },
+      "scope": "Interrupted negative control; XCTest issue-reporting stall, not a completed regression run"
+    },
+    {
+      "run": "118c",
+      "sourceSHA256": "af96eb693eb13c4863fefd01519d7a437ac81450f4f6cbab7e0fa410a8a35093",
+      "sourceUnchanged": true,
+      "summary": {
+        "result": "Failed",
+        "passedTests": 0,
+        "failedTests": 1,
+        "skippedTests": 0,
+        "runtimeWarnings": [],
+        "totalTestCount": 1
+      },
+      "scope": "Interrupted negative control; XCTest issue-reporting stall, not a completed regression run"
+    },
+    {
+      "run": "119",
+      "sourceSHA256": "ec808f04c53ad6719f552dbf8410dbb07b4def34ad020e7bc0d7cac7cea47c1f",
+      "sourceUnchanged": true,
+      "summary": {
+        "result": "Failed",
+        "passedTests": 75,
+        "failedTests": 3,
+        "skippedTests": 0,
+        "runtimeWarnings": [],
+        "totalTestCount": 78
+      },
+      "scope": "Focused optimized native iPad"
+    },
+    {
+      "run": "120",
+      "sourceSHA256": "1836b00ee9418f8601373781a5b68aec612da85ed9281f801f3bd9efc49eb714",
+      "sourceUnchanged": true,
+      "summary": {
+        "result": "Passed",
+        "passedTests": 3,
+        "failedTests": 0,
+        "skippedTests": 0,
+        "runtimeWarnings": [],
+        "totalTestCount": 3
+      },
+      "scope": "Focused optimized native iPad"
+    },
+    {
+      "run": "121",
+      "sourceSHA256": "1836b00ee9418f8601373781a5b68aec612da85ed9281f801f3bd9efc49eb714",
+      "sourceUnchanged": true,
+      "summary": {
+        "result": "Passed",
+        "passedTests": 3,
+        "failedTests": 0,
+        "skippedTests": 0,
+        "runtimeWarnings": [],
+        "totalTestCount": 3
+      },
+      "scope": "Simulator ordinary UI route, three scenarios including20 alternating swipes"
+    },
+    {
+      "run": "122",
+      "sourceSHA256": "b7cdb64ff73a27094ca26c71b7d87b7b76e9d88820afebce5aa2b1a0013abeda",
+      "sourceUnchanged": true,
+      "summary": {
+        "result": "Failed",
+        "passedTests": 47,
+        "failedTests": 1,
+        "skippedTests": 0,
+        "runtimeWarnings": [],
+        "totalTestCount": 48
+      },
+      "scope": "Focused optimized native iPad"
+    },
+    {
+      "run": "123",
+      "sourceSHA256": "058c6d7abefa38d4af0e63f8d38fac6b581d160320c963f21cc1e459c6839274",
+      "sourceUnchanged": true,
+      "summary": {
+        "result": "Passed",
+        "passedTests": 1,
+        "failedTests": 0,
+        "skippedTests": 0,
+        "runtimeWarnings": [],
+        "totalTestCount": 1
+      },
+      "scope": "Focused optimized native iPad"
+    }
+  ],
+  "evidencePacks": [
+    {
+      "evidenceDirectory": "/Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/.build/notebook-architecture-repair/evidence-2026-09-25/user-ux-118-121",
+      "manifestSHA256": "67cd61eb0c62f5c952a8aa04c143c611813abad24e6ca7497bce035fdfc83d6d",
+      "sealedFileCount": 498
+    },
+    {
+      "evidenceDirectory": "/Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/.build/notebook-architecture-repair/evidence-2026-09-25/user-ux-122-123",
+      "manifestSHA256": "8bb53617c2b880af5270f7fe126eeefea5a601e733a59bf593f8dcb414a4ee73",
+      "sealedFileCount": 249
+    }
+  ],
+  "findings": [
+    "118c exact-private-process LLDB backtrace reached the new v1/v2 stream assertion and stalled inside XCTest issue symbolication; the original transport was not in a busy loop. All118 attempts were explicitly cancelled and keep their incomplete results.",
+    "119 completed intermediate long-message revisions remain visible while another ordinary header is queued. Authoritative full/error responses revoke transfers through an owned generation. Status/truncation-only web deltas preserve text nodes/selection without Markdown/MathJax work.",
+    "119 failed three fixtures: assigning a DOM node returned an unsupported WK result; two resource-queue tests assumed six default slots although the production owner already has34. Fixtures now return a scalar/use explicit six-slot test owners.120 passed3/3; product capacity and thresholds unchanged. This is not a claim of a same-tree78/78 rerun.",
+    "121 fixes the prior110 reverse-arrow failure and retains fitted-page geometry across20 forward/reverse swipes. No simulator FPS/Pencil latency claim.",
+    "122 passed47/48, including actual active A-to-B plus next-demand C pressure and cold cancellation. The added hosted-readiness fixture sent a reason instead of its required source revision; using the actual revision passed123. Old host/sequence cannot protect a replacement.",
+    "Physical deadline oracle now records every onFrameReady receipt, including invalid/zero timestamps; prior onFramePresented silently excluded them. Thresholds unchanged; strict performance acceptance remains open."
+  ],
+  "open": [
+    "mixed raw/authored whole-elements lasso and atomic working handoff",
+    "clean Release reproduction of previous raw Redo window failure",
+    "physical cold TeX1s and curl first-response/cadence requirements",
+    "one final unchanged artifact,10 repeats,30-minute mixed session with system CPU/GPU/frame/memory evidence",
+    "first-part transport retry idempotency discovered during final review; being fixed separately"
+  ]
+}

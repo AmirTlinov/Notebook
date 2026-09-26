@@ -10,8 +10,9 @@ struct NotebookRootView: View {
     @State private var remoteProofPhase: String?
   #endif
 
-  private var chatNeedsAttention: Bool {
-    model.chat?.conversation?.requests.isEmpty == false || model.chat?.voice.error != nil || model.chat?.dictation.notice != nil
+  private var chatStaysVisible: Bool {
+    model.chat?.expanded == true || model.chat?.conversation?.requests.isEmpty == false
+      || model.chat?.voice.error != nil || model.chat?.dictation.notice != nil
   }
 
   var body: some View {
@@ -116,10 +117,10 @@ struct NotebookRootView: View {
         let available = CGRect(x: 18, y: top, width: max(44, geometry.size.width - 36),
           height: max(44, geometry.size.height - 80 - top))
         NotebookChatWindow(chat:chat,available:available)
-          .opacity(chromeHidden && !chatNeedsAttention ? 0 : 1)
-          .allowsHitTesting(!chromeHidden || chatNeedsAttention)
-          .accessibilityHidden(chromeHidden && !chatNeedsAttention)
-          .environment(\.notebookChromeVisible,!chromeHidden || chatNeedsAttention)
+          .opacity(chromeHidden && !chatStaysVisible ? 0 : 1)
+          .allowsHitTesting(!chromeHidden || chatStaysVisible)
+          .accessibilityHidden(chromeHidden && !chatStaysVisible)
+          .environment(\.notebookChromeVisible,!chromeHidden || chatStaysVisible)
       }
       // Both task presentations use available window space. A widget may own
       // the keyboard while the companion must remain reachable. The separate

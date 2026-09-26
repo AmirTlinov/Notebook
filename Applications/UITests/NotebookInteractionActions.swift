@@ -3,7 +3,7 @@ import XCTest
 /// System-routed gestures shared by UX scenarios, without model shortcuts.
 @MainActor extension XCTestCase {
   func selectNotebookTool(_ tool:String,in app:XCUIApplication,settings:Bool = false) {
-    let groupID = ["pen","marker","laser"].contains(tool) ? "drawing-group"
+    let groupID = ["pen","marker"].contains(tool) ? "drawing-group"
       : ["shape","connector"].contains(tool) ? "figure-group" : nil
     if let groupID {
       let group=app.buttons[groupID]

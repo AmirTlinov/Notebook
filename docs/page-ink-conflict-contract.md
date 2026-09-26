@@ -242,6 +242,13 @@ which whole-element erasure first appeared.
 
 ## Pencil above agent material
 
+Partial erasure keeps the authored material's view identity across the first cut
+and removal of the last cut by Undo. Only the mask content changes; whole-element
+erasure still retires the body. A newly mounted material mask is neutral opaque
+white until its first actual frame, not transparent black that hides all content.
+An already displayed mask retains its installed pixels until replacement. This
+does not change the page-wide live-mask raster owner or prove final-window latency.
+
 Paper composition is paper → material → final ink. A window-level
 `PaperPencilGestureRecognizer` receives typed Pencil contacts in installed geometry;
 early hitTest does not depend on possibly absent UIEvent touches. Finger reaches
@@ -282,3 +289,13 @@ pixel/readback comparisons. Synthetic contacts are not hardware calibration.
 
 [Historical negative controls and profiles](https://github.com/AmirTlinov/Notebook/blob/1723ec2be6f6b8dda29e3a575fd6376fff03e093/docs/page-ink-conflict-contract.md);
 [current installed evidence](verification.md).
+
+Page backing reclamation belongs to the existing resource owner. Only speculative
+native drawable/retained backing is offered; immutable source and prepared meshes
+remain. Current, installed, demanded pages and active contacts are protected.
+The exact source and target of an active native curl are protected independently
+of a later preparation demand, through a read-only query of that same motion.
+A retired host/sequence cannot pin replacement pages. Reclamation parks passive
+layout/remount work until promotion; admitted GPU work retains its original byte
+charge until completion. Curl admission waits only for an already pending release
+fence and retries its same motion; cancellation cannot revive on a late fence.

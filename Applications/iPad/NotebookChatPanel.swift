@@ -220,8 +220,8 @@ struct NotebookChatPanel: View {
         }.frame(maxWidth: .infinity, alignment: .leading).padding(20)
           .accessibilityIdentifier("notebook-chat-first-message")
       }
-      NotebookChatTranscript(messages: chat.messages, work: chat.workStatus, turnStatuses: chat.conversation?.turnStatuses ?? [:], conversationID: chat.threadID, revealMessageID: chat.revealedMessageID,
-        canLoadEarlier: chat.canLoadEarlier && !chat.loadingHistory, loadEarlier: chat.loadEarlier,
+      NotebookChatTranscript(messages: chat.presentationMessages, work: chat.workStatus, turnStatuses: chat.conversation?.turnStatuses ?? [:], conversationID: chat.threadID, revealMessageID: chat.revealedMessageID,
+        canLoadEarlier: chat.canLoadEarlier && !chat.loadingHistory, loadEarlier: chat.loadEarlier, loadMessage: chat.retryMessageContent,
         openLink: model.openNotebookLink, saveExplanation: { [thread = chat.threadID, computer = chat.computerID] message in
           if let thread, let computer { model.saveChatExplanation(message, thread: thread, computer: computer) }
         })
@@ -265,12 +265,12 @@ struct NotebookChatPanel: View {
     VStack(alignment: .leading, spacing: 8) {
       NotebookCodexUncertainJobsView(jobs: chat.jobs, finish: chat.stopWaiting)
       NotebookVoiceControls(voice: chat.voice)
-      if let thread = chat.threadID, case let count = model.laserContext.count(scope:.init(computer:chat.computerID,thread:thread)), count > 0 {
+      if case let count = model.laserContext.count(scope:chat.pointingScope), count > 0 {
         HStack {
-          Label("Лазер · \(count)",systemImage:"cursorarrow.rays").font(.caption)
+          Label("Указка · \(count)",systemImage:"cursorarrow.rays").font(.caption)
           Spacer()
           Button { model.laserContext.clear() } label: { Image(systemName:"xmark").frame(width:32,height:32) }
-            .accessibilityLabel("Не прикреплять показанное лазером").accessibilityIdentifier("laser-context-clear")
+            .accessibilityLabel("Не прикреплять показанное указкой").accessibilityIdentifier("laser-context-clear")
         }.padding(.horizontal,12).accessibilityIdentifier("laser-context-pending")
       }
       if let notice {
@@ -359,6 +359,7 @@ struct NotebookChatTranscript: UIViewRepresentable {
   var revealMessageID: String? = nil
   var canLoadEarlier = false
   var loadEarlier: () -> Void = { }
+  var loadMessage: (String) -> Void = { _ in }
   var openLink: (URL) -> Void = { _ in }
   var saveExplanation: (CodexMessage) -> Void = { _ in }
   func makeCoordinator() -> Coordinator { Coordinator() }
@@ -369,7 +370,7 @@ struct NotebookChatTranscript: UIViewRepresentable {
   }
   func updateUIView(_ container: UIView, context: Context) {
     context.coordinator.openLink = openLink; context.coordinator.saveExplanation = saveExplanation
-    context.coordinator.loadEarlier = loadEarlier; context.coordinator.canLoadEarlier = canLoadEarlier
+    context.coordinator.loadEarlier = loadEarlier; context.coordinator.loadMessage = loadMessage; context.coordinator.canLoadEarlier = canLoadEarlier
     context.coordinator.update(messages: messages, work: work, turnStatuses: turnStatuses, conversationID: conversationID, revealMessageID: revealMessageID)
   }
   static func dismantleUIView(_ container: UIView, coordinator: Coordinator) { coordinator.close() }
@@ -391,6 +392,7 @@ struct NotebookChatTranscript: UIViewRepresentable {
     var preparation: Task<Void, Never>?
     var canLoadEarlier = false
     var loadEarlier: () -> Void = { }
+    var loadMessage: (String) -> Void = { _ in }
     var openLink: (URL) -> Void = { _ in }
     var saveExplanation: (CodexMessage) -> Void = { _ in }
     func mount(_ container: UIView) {
@@ -458,8 +460,10 @@ struct NotebookChatTranscript: UIViewRepresentable {
     }
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
       guard !closed, message.webView === web, message.frameInfo.isMainFrame,
-        let body = message.body as? [String: String], body["action"] == "save",
-        let value = desired.messages.first(where: { $0.id == body["id"] }), value.role == .assistant, value.activity == nil else { return }
+        let body = message.body as? [String: String],
+        let value = desired.messages.first(where: { $0.id == body["id"] }) else { return }
+      if body["action"] == "load", value.isTruncated { loadMessage(value.id); return }
+      guard body["action"] == "save", value.role == .assistant, value.activity == nil, !value.isTruncated else { return }
       saveExplanation(value)
     }
   }

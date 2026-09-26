@@ -7,6 +7,339 @@ import XCTest
 
 final class NotebookPinnedImageTests: XCTestCase {
   @MainActor
+  func testPaperBackgroundCoversStandaloneAndNativePosedSurface() async throws {
+    let root=FileManager.default.temporaryDirectory.appendingPathComponent("paper-background-"+UUID().uuidString)
+    let model=NotebookAppModel(store:.init(root:root),startsNearbySync:false)
+    retainNotebookUntilTeardown(model,removing:root)
+    await model.start(pageSize:NotebookAppModel.defaultPageSize);await model.finishPendingPersistence()
+    let workspace=try XCTUnwrap(model.workspace),item=try XCTUnwrap(workspace.items.first)
+    let geometry=WorkspaceItemGeometry.notebook,viewport=SpatialPoint(x:512,y:512)
+    let scale=geometry.fitScale(viewport:viewport),camera=SpatialCamera(center:.zero,scale:scale)
+    let rendered=RenderedWorkspaceItem(item:item,geometry:geometry,center:.zero,zIndex:0,stackID:nil)
+    let registry=SpatialInkSurfaceRegistry()
+    let scene=try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+    let previous=scene.keyWindow
+    func attach(_ data:Data,_ name:String,_ type:String) {
+      let attachment=XCTAttachment(data:data,uniformTypeIdentifier:type)
+      attachment.name=name;attachment.lifetime = .keepAlways;add(attachment)
+    }
+    func sample(_ image:CGImage,_ point:CGPoint) throws -> [UInt8] {
+      let crop=try XCTUnwrap(image.cropping(to:.init(x:floor(point.x),y:floor(point.y),width:1,height:1)))
+      let context=try XCTUnwrap(CGContext(data:nil,width:1,height:1,bitsPerComponent:8,bytesPerRow:4,
+        space:CGColorSpaceCreateDeviceRGB(),bitmapInfo:CGImageAlphaInfo.premultipliedLast.rawValue))
+      context.draw(crop,in:.init(x:0,y:0,width:1,height:1))
+      return Array(UnsafeBufferPointer(start:try XCTUnwrap(context.data).assumingMemoryBound(to:UInt8.self),count:4))
+    }
+    let origin=CGPoint(x:(viewport.x-geometry.width*scale)/2,y:(viewport.y-geometry.height*scale)/2)
+    for posed in [false,true] {
+      let name=posed ? "native-pose" : "swiftui-pose"
+      let paper=GridPaperView().frame(width:geometry.width,height:geometry.height)
+      let content:AnyView
+      if posed {
+        content=AnyView(WorkspaceItemPose(rendered:rendered,camera:camera,viewport:viewport,
+          boardID:workspace.rootBoardID,liftRank:nil,registry:registry,onLiftChanged:{ _ in },onDrop:{ _,_ in nil }) {
+          paper
+        }.frame(width:viewport.x,height:viewport.y).environment(model))
+      } else {
+        content=AnyView(paper.scaleEffect(scale,anchor:.topLeading)
+          .frame(width:geometry.width*scale,height:geometry.height*scale,alignment:.topLeading)
+          .frame(width:viewport.x,height:viewport.y))
+      }
+      let window=UIWindow(windowScene:scene);window.frame = .init(x:0,y:0,width:512,height:512)
+      let host=UIHostingController(rootView:content.ignoresSafeArea())
+      host.view.backgroundColor=UIColor(red:0.90,green:0.91,blue:0.90,alpha:1)
+      window.rootViewController=host;window.makeKeyAndVisible()
+      defer { window.isHidden=true;window.rootViewController=nil;previous?.makeKey() }
+      var first:NotebookUXObservation.Pixels?
+      let deadline=ContinuousClock.now + .seconds(8)
+      // This only establishes that Canvas painted the first cell. It does not
+      // wait for the suspected missing far cells and cannot hide that failure.
+      while .now < deadline {
+        window.layoutIfNeeded()
+        if let pixels=try? NotebookUXObservation.Pixels(window:window),let image=pixels.image.cgImage,
+          try sample(image,.init(x:origin.x+5.5*PhysicalPaper.gridSpacing*scale,
+            y:origin.y+5.5*PhysicalPaper.gridSpacing*scale))[0]>245 {
+          first=pixels;break
+        }
+        try await Task.sleep(for:.milliseconds(10))
+      }
+      let pixels=try XCTUnwrap(first),image=try XCTUnwrap(pixels.image.cgImage)
+      attach(try XCTUnwrap(pixels.image.pngData()),"paper-background-"+name,"public.png")
+      func rect(_ r:CGRect)->[Double] { [Double(r.minX),Double(r.minY),Double(r.width),Double(r.height)] }
+      var layers:[[String:Any]]=[]
+      func record(_ layer:CALayer,_ depth:Int) {
+        guard layers.count<256,depth<32 else { return }
+        layers.append(["depth":depth,"type":String(describing:type(of:layer)),"bounds":rect(layer.bounds),
+          "frame":rect(layer.frame),"contentsScale":layer.contentsScale,"contentsRect":rect(layer.contentsRect),
+          "masksToBounds":layer.masksToBounds,"hasContents":layer.contents != nil,
+          "sublayers":layer.sublayers?.count ?? 0])
+        for child in layer.sublayers ?? [] { record(child,depth+1) }
+      }
+      record(window.layer,0)
+      var probes:[[String:Any]]=[]
+      for column in [5.5,15.5,27.5] { for row in [5.5,24.5,43.5] {
+        let point=CGPoint(x:origin.x+column*PhysicalPaper.gridSpacing*scale,y:origin.y+row*PhysicalPaper.gridSpacing*scale)
+        probes.append(["point":[point.x,point.y],"rgba":try sample(image,point)])
+      } }
+      attach(try JSONSerialization.data(withJSONObject:["layers":layers,"probes":probes],options:[.prettyPrinted,.sortedKeys]),
+        "paper-background-"+name,"public.json")
+      for probe in probes {
+        let rgba=try XCTUnwrap(probe["rgba"] as? [UInt8])
+        XCTAssertGreaterThan(rgba[0],245,"The complete background cell must be painted: \(name) \(probe)")
+      }
+    }
+    await registry.stopSceneInk()
+  }
+
+
+  @MainActor
+  func testFirstChatWithoutSelectionAttachesTheMountedBoardAndPagePixels() async throws {
+    for paper in [false,true] {
+      let root = FileManager.default.temporaryDirectory.appendingPathComponent("ambient-chat-"+UUID().uuidString)
+      let model = NotebookAppModel(store:.init(root:root),startsNearbySync:false)
+      retainNotebookUntilTeardown(model,removing:root)
+      await model.start(pageSize:NotebookAppModel.defaultPageSize)
+      await model.finishPendingPersistence()
+      let workspace = try XCTUnwrap(model.workspace), boardID = workspace.rootBoardID
+      var page = try XCTUnwrap(model.activePage)
+      let graphic = NotebookGraphic(shape:.rectangle,style:.init(fill:.init(red:1,green:0,blue:0)))
+      let control: SpatialPoint
+      if paper {
+        control = .init(x:page.size.width/2,y:page.size.height/2)
+        page.replaceElements([.init(id:"visible-red",kind:.graphic,
+          frame:.init(x:control.x-50,y:control.y-30,width:100,height:60),source:"",html:"",graphic:graphic)],actor:model.actorID)
+        try model.store.savePage(page)
+      } else {
+        model.moveItem(workspace.selectedItemID,to:.init(x:-30_000,y:-30_000))
+        await model.finishPendingPersistence()
+        control = .init(x:50,y:30)
+        var hierarchy = try model.store.loadBoard(items:model.store.loadIndex().items)
+        let element = SpatialElement(id:"visible-red",surface:.board(boardID),kind:.graphic,
+          frame:.init(x:0,y:0,width:100,height:60),worldOrigin:.zero,source:"",graphic:graphic,
+          stamp:.init(counter:0,actor:model.actorID))
+        XCTAssertTrue(hierarchy.upsertElement(element,in:boardID,expected:nil,actor:model.actorID))
+        try model.store.saveBoard(hierarchy,items:model.store.loadIndex().items)
+      }
+      await model.reloadExternalChanges()?.value
+      let center = paper ? try XCTUnwrap(model.boardHierarchy?.focusedCenter(of:workspace.selectedItemID,in:boardID)) : WorldPoint.zero
+      model.updatePresence(.init(boardID:boardID,mode:paper ? .page : .board,
+        camera:.init(center:center,scale:paper ? 0.5 : 1),viewport:.init(x:512,y:512),
+        focusedItemID:paper ? workspace.selectedItemID : nil,openProgress:paper ? 1 : 0,
+        notebookPageID:paper ? page.id : nil),settled:true)
+      await model.finishPendingPersistence()
+      let window = try await mountNotebookScene(model)
+      let presence = try XCTUnwrap(model.presence)
+      let screen: CGPoint
+      if paper {
+        let rect = try XCTUnwrap(NotebookAttentionProjection.frame(.init(target:.init(kind:.page,id:page.id),
+          region:.init(x:control.x,y:control.y,width:1,height:1),revision:""),model:model,presence:presence))
+        screen = rect.origin
+      } else {
+        let point = presence.camera.worldToScreen(.zero.offsetBy(x:control.x,y:control.y),viewport:presence.viewport)
+        screen = .init(x:point.x,y:point.y)
+      }
+      var shown: NotebookUXObservation.Pixels?
+      let deadline = ContinuousClock.now + .seconds(8)
+      while .now < deadline {
+        window.layoutIfNeeded()
+        if let pixels = try? NotebookUXObservation.Pixels(window:window),
+          try pixels.matches([(screen,.red)]), model.stopNavigationPresentation != nil,
+          model.compositionTiles.published?.isPaintInstalled == true {
+          shown = pixels; break
+        }
+        try await Task.sleep(for:.milliseconds(10))
+      }
+      let visible = try XCTUnwrap(shown,"The actual mounted window must show the control, not only a prepared model")
+      let chat = try XCTUnwrap(model.chat)
+      XCTAssertNil(chat.threadID); XCTAssertNil(model.agentQuestion); XCTAssertEqual(model.laserContext.count,0)
+      chat.draft = "Что сейчас видно?"
+      var saved = false
+      await model.sendChatMessage { saved = $0 }?.value
+      XCTAssertTrue(saved)
+      let job = try XCTUnwrap(chat.jobs.first), first = try XCTUnwrap(model.store.chatFirstMessage(job.id))
+      let attachments = try XCTUnwrap(first.attachments)
+      XCTAssertEqual(attachments.count,1)
+      let address = try XCTUnwrap(attachments.first?.imageReference)
+      let source = try XCTUnwrap(model.store.attentionEvidence(contextID:address.contextID,referenceID:address.referenceID))
+      let image = try XCTUnwrap(source.image), region = try XCTUnwrap(source.reference.region)
+      XCTAssertEqual(source.reference.target.kind,paper ? .page : .board)
+      XCTAssertEqual(try model.store.resolvedChatImageAttachments(attachments)?.first?.imagePNG,image.png)
+      let local = paper ? control : try XCTUnwrap(source.reference.worldOrigin).delta(to:.zero.offsetBy(x:control.x,y:control.y))
+      let sent = try pixel(image.png,x:Int((local.x-region.x)*image.pixelsPerPoint),y:Int((local.y-region.y)*image.pixelsPerPoint))
+      let visiblePNG = try XCTUnwrap(visible.image.pngData())
+      let actual = try pixel(visiblePNG,x:Int(screen.x),y:Int(screen.y))
+      XCTAssertGreaterThan(sent[0],230); XCTAssertLessThan(sent[1],25); XCTAssertLessThan(sent[2],25)
+      for channel in 0..<3 { XCTAssertLessThanOrEqual(abs(Int(sent[channel])-Int(actual[channel])),12) }
+      for (name,png) in [("mounted",visiblePNG),("durable-native-image",image.png)] {
+        let attachment = XCTAttachment(data:png,uniformTypeIdentifier:"public.png")
+        attachment.name = "first-chat-\(paper ? "page" : "board")-"+name; attachment.lifetime = .keepAlways; add(attachment)
+      }
+    }
+  }
+
+  @MainActor
+  func testFirstChatPageViewportGeometryMatchesMountedCoverage() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("ambient-geometry-"+UUID().uuidString)
+    let model = NotebookAppModel(store:.init(root:root),startsNearbySync:false)
+    retainNotebookUntilTeardown(model,removing:root)
+    await model.start(pageSize:NotebookAppModel.defaultPageSize)
+    await model.finishPendingPersistence()
+    let workspace = try XCTUnwrap(model.workspace), boardID = workspace.rootBoardID
+    var page = try XCTUnwrap(model.activePage)
+    let controls: [(String,SpatialPoint,[UInt8])] = [
+      ("top-left",.init(x:80,y:80),[255,0,0]),
+      ("top-right",.init(x:page.size.width-80,y:80),[0,255,0]),
+      ("bottom-left",.init(x:80,y:page.size.height-80),[0,0,255]),
+      ("bottom-right",.init(x:page.size.width-80,y:page.size.height-80),[255,0,255]),
+      ("center",.init(x:page.size.width/2,y:page.size.height/2),[255,128,0])
+    ]
+    page.replaceElements(controls.map { name,point,rgb in
+      .init(id:name,kind:.graphic,frame:.init(x:point.x-25,y:point.y-25,width:50,height:50),source:"",html:"",
+        graphic:NotebookGraphic(shape:.rectangle,style:.init(fill:.init(
+          red:Double(rgb[0])/255,green:Double(rgb[1])/255,blue:Double(rgb[2])/255))))
+    },actor:model.actorID)
+    try model.store.savePage(page); await model.reloadExternalChanges()?.value
+    let center = try XCTUnwrap(model.boardHierarchy?.focusedCenter(of:workspace.selectedItemID,in:boardID))
+    model.updatePresence(.init(boardID:boardID,mode:.page,camera:.init(center:center,scale:0.5),
+      viewport:.init(x:512,y:512),focusedItemID:workspace.selectedItemID,openProgress:1,notebookPageID:page.id),settled:true)
+    await model.finishPendingPersistence()
+    let window = try await mountNotebookScene(model)
+    func descendants(_ view:UIView) -> [UIView] { [view] + view.subviews.flatMap(descendants) }
+    let deadline = ContinuousClock.now + .seconds(8)
+    func currentPaperIsReady() -> Bool {
+      model.stopNavigationPresentation != nil && model.activePage.map { model.pagePresentations.isPresented($0) } == true
+    }
+    while !currentPaperIsReady(), .now < deadline {
+      window.layoutIfNeeded(); try await Task.sleep(for:.milliseconds(10))
+    }
+    window.layoutIfNeeded()
+    let nativeOwners = descendants(window).compactMap { $0 as? PagePresentationNativeView }
+    let native = nativeOwners.first(where: { owner in model.activePage.map { owner.isPresenting($0) } == true })
+      ?? nativeOwners.first
+    func rect(_ value:CGRect) -> [String:Any] {
+      guard !value.isNull,!value.isInfinite else { return ["unavailable":true] }
+      return ["x":value.minX,"y":value.minY,"width":value.width,"height":value.height]
+    }
+    func json<T:Encodable>(_ value:T) throws -> Any { try JSONSerialization.jsonObject(with:JSONEncoder().encode(value)) }
+    func geometry() throws -> [String:Any] {
+      var ancestors: [[String:Any]] = [], next:UIView? = native
+      while let view = next {
+        let transform = view.transform
+        ancestors.append(["type":String(describing:type(of:view)),"bounds":rect(view.bounds),
+          "windowFrame":rect(view.convert(view.bounds,to:window)),"clipsToBounds":view.clipsToBounds,
+          "masksToBounds":view.layer.masksToBounds,"hidden":view.isHidden,"alpha":view.alpha,
+          "transform":[transform.a,transform.b,transform.c,transform.d,transform.tx,transform.ty],
+          "presentationBounds":view.layer.presentation().map { rect($0.bounds) } ?? [:]])
+        next=view.superview
+      }
+      return ["windowBounds":rect(window.bounds),"windowFrame":rect(window.frame),
+        "presence":try json(model.presence),"cohortPresences":try json(model.compositionTiles.published?.frame.presences),
+        "currentPaperIsReady":currentPaperIsReady(),"nativeOwners":nativeOwners.map { owner in
+          ["bounds":rect(owner.bounds),"windowFrame":rect(owner.convert(owner.bounds,to:window)),
+           "visibleRegion":rect(SceneSourceVisibility.visibleRect(owner)),
+           "presentsCurrentPage":model.activePage.map { owner.isPresenting($0) } == true] as [String:Any]
+        },
+        "nativeBounds":native.map { rect($0.bounds) } ?? [:],
+        "nativeWindowFrame":native.map { rect($0.convert($0.bounds,to:window)) } ?? [:],
+        "nativeVisibleRegion":native.map { rect(SceneSourceVisibility.visibleRect($0)) } ?? [:],"ancestors":ancestors]
+    }
+    func attach(_ data:Data,_ name:String,_ type:String) {
+      let attachment=XCTAttachment(data:data,uniformTypeIdentifier:type)
+      attachment.name=name;attachment.lifetime = .keepAlways;add(attachment)
+    }
+    let before = try geometry(), beforePresence = try XCTUnwrap(model.presence)
+    let mountedPNG = try XCTUnwrap(NotebookUXObservation.Pixels(window:window).image.pngData())
+    attach(try JSONSerialization.data(withJSONObject:before,options:[.prettyPrinted,.sortedKeys]),"first-chat-page-geometry-before","public.json")
+    attach(mountedPNG,"first-chat-page-corners-mounted","public.png")
+    guard currentPaperIsReady(),let native else {
+      XCTFail("The current mounted paper did not become ready; geometry and pixels are attached");return
+    }
+    let beforeFrame = native.convert(native.bounds,to:window), beforeVisible = SceneSourceVisibility.visibleRect(native)
+    let chat=try XCTUnwrap(model.chat)
+    XCTAssertNil(chat.threadID);XCTAssertNil(model.agentQuestion);XCTAssertEqual(model.laserContext.count,0)
+    chat.draft="Что видно у каждого края листа?"
+    var saved=false
+    await model.sendChatMessage { saved=$0 }?.value
+    XCTAssertTrue(saved)
+    let first=try XCTUnwrap(model.store.chatFirstMessage(try XCTUnwrap(chat.jobs.first).id))
+    let address=try XCTUnwrap(first.attachments?.first?.imageReference)
+    let evidence=try XCTUnwrap(model.store.attentionEvidence(contextID:address.contextID,referenceID:address.referenceID))
+    let image=try XCTUnwrap(evidence.image),region=try XCTUnwrap(evidence.reference.region)
+    var after=try geometry()
+    after["reference"]=try json(evidence.reference);after["submittedContext"]=try JSONSerialization.jsonObject(with:Data(first.context.utf8))
+    after["image"]=["width":image.pixelWidth,"height":image.pixelHeight,"pixelsPerPoint":image.pixelsPerPoint]
+    attach(try JSONSerialization.data(withJSONObject:after,options:[.prettyPrinted,.sortedKeys]),"first-chat-page-geometry-after","public.json")
+    attach(image.png,"first-chat-page-corners-durable","public.png")
+    attach(try XCTUnwrap(NotebookUXObservation.Pixels(window:window).image.pngData()),"first-chat-page-corners-mounted-after-send","public.png")
+
+    // A central colored pixel survives a wrong crop. Assert the complete local
+    // coverage and independent controls only after saving the diagnostic facts.
+    let expectedFrame=try XCTUnwrap(NotebookAttentionProjection.frame(.init(target:.init(kind:.page,id:page.id),
+      region:.init(x:0,y:0,width:page.size.width,height:page.size.height),revision:""),model:model,presence:beforePresence))
+    for (a,b) in [(beforeFrame.minX,expectedFrame.minX),(beforeFrame.minY,expectedFrame.minY),
+      (beforeFrame.width,expectedFrame.width),(beforeFrame.height,expectedFrame.height)] {
+      XCTAssertEqual(a,b,accuracy:1,"Native paper projection must match semantic camera projection")
+    }
+    for (a,b) in [(Double(beforeVisible.minX),region.x),(Double(beforeVisible.minY),region.y),
+      (Double(beforeVisible.width),region.width),(Double(beforeVisible.height),region.height)] {
+      XCTAssertEqual(a,b,accuracy:1,"The attached region must equal the actual clipped visible paper")
+    }
+    func sample(_ image:CGImage,_ point:CGPoint) throws -> [UInt8] {
+      let crop=try XCTUnwrap(image.cropping(to:.init(x:floor(point.x),y:floor(point.y),width:1,height:1)))
+      let context=try XCTUnwrap(CGContext(data:nil,width:1,height:1,bitsPerComponent:8,bytesPerRow:4,
+        space:CGColorSpaceCreateDeviceRGB(),bitmapInfo:CGImageAlphaInfo.premultipliedLast.rawValue))
+      context.draw(crop,in:.init(x:0,y:0,width:1,height:1))
+      return Array(UnsafeBufferPointer(start:try XCTUnwrap(context.data).assumingMemoryBound(to:UInt8.self),count:4))
+    }
+    let mounted=try XCTUnwrap(UIImage(data:mountedPNG)?.cgImage),sent=try XCTUnwrap(UIImage(data:image.png)?.cgImage)
+    // Geometry and colored overlays can both be correct while the paper
+    // Canvas retains only an old exposure. Compare blank cells across its area.
+    for column in [5.5,15.5,27.5] { for row in [5.5,24.5,43.5] {
+      let point=CGPoint(x:column*PhysicalPaper.gridSpacing,y:row*PhysicalPaper.gridSpacing)
+      let actual=try sample(mounted,.init(x:expectedFrame.minX+point.x*beforePresence.camera.scale,
+        y:expectedFrame.minY+point.y*beforePresence.camera.scale))
+      let submitted=try sample(sent,.init(x:(point.x-region.x)*image.pixelsPerPoint,y:(point.y-region.y)*image.pixelsPerPoint))
+      for channel in 0..<3 {
+        XCTAssertLessThanOrEqual(abs(Int(actual[channel])-Int(submitted[channel])),12,
+          "Paper background must cover the same local point (\(point.x),\(point.y)); mounted=\(actual), submitted=\(submitted)")
+      }
+    } }
+    for (name,point,rgb) in controls {
+      let screen=CGPoint(x:expectedFrame.minX+point.x*beforePresence.camera.scale,
+        y:expectedFrame.minY+point.y*beforePresence.camera.scale)
+      let actual=try sample(mounted,screen)
+      let submitted=try sample(sent,.init(x:(point.x-region.x)*image.pixelsPerPoint,y:(point.y-region.y)*image.pixelsPerPoint))
+      for channel in 0..<3 {
+        XCTAssertLessThanOrEqual(abs(Int(actual[channel])-Int(rgb[channel])),12,"Mounted \(name)")
+        XCTAssertLessThanOrEqual(abs(Int(submitted[channel])-Int(rgb[channel])),12,"Submitted \(name)")
+      }
+    }
+  }
+
+  @MainActor
+  func testFirstChatWithUnavailableViewportCannotClaimAttachedPixels() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("ambient-unmounted-"+UUID().uuidString)
+    let model = NotebookAppModel(store:.init(root:root),startsNearbySync:false)
+    retainNotebookUntilTeardown(model,removing:root)
+    await model.start(pageSize:NotebookAppModel.defaultPageSize)
+    await model.finishPendingPersistence()
+    let chat = try XCTUnwrap(model.chat)
+    XCTAssertNil(chat.threadID); XCTAssertNil(model.agentQuestion)
+    chat.draft = "Объясни текущий вид"
+    var saved = false
+    await model.sendChatMessage { saved = $0 }?.value
+    XCTAssertTrue(saved,"Unavailable ambient pixels do not forbid an honestly labelled text-only message")
+    let job = try XCTUnwrap(chat.jobs.first), first = try XCTUnwrap(model.store.chatFirstMessage(job.id))
+    XCTAssertTrue((first.attachments ?? []).isEmpty)
+    let context = try JSONDecoder().decode(JSONValue.self,from:Data(first.context.utf8))
+    XCTAssertEqual(context["visibleImages"],.array([]))
+    if case .string(let reason) = context["visibleImageUnavailable"] {
+      XCTAssertFalse(reason.isEmpty)
+    } else { XCTFail("An unavailable viewport must be explicitly described, not claimed as an image") }
+    XCTAssertEqual(context["attention"],.null)
+  }
+
+  @MainActor
   func testExplicitProgramFreezeBindsSemanticObjectToSendPixelsAndResumesAfterSend() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
@@ -60,12 +393,15 @@ final class NotebookPinnedImageTests: XCTestCase {
     let question = try XCTUnwrap(model.agentQuestion), reference = try XCTUnwrap(question.references.first)
     let chat = try XCTUnwrap(model.chat)
     let captured = model.captureChatSubmissionContext(chat)
-    _ = try await captured.prepare()
+    let prepared = try await captured.prepare()
+    XCTAssertEqual(prepared.images.count,1)
     let evidence = try XCTUnwrap(model.store.attentionEvidence(contextID: question.contextID, referenceID: reference.id))
     XCTAssertEqual(evidence.payload["programSemantic"]?["status"], .string("frozen_selection"))
     XCTAssertEqual(evidence.payload["programSemantic"]?["selection"]?["objectID"], .string("node:12:8"))
     XCTAssertEqual(evidence.payload["programSemantic"]?["selection"]?["model"]?["phase"], .number(0.5))
     let image = try XCTUnwrap(evidence.image); try image.validate(reference: reference)
+    XCTAssertEqual(try model.store.resolvedChatImageAttachments(prepared.images)?.first?.imagePNG,image.png,
+      "The native image input receives the exact frame, not just a suggestion to call a tool")
     let red = try pixel(image.png, x: image.pixelWidth / 2, y: image.pixelHeight / 2)
     XCTAssertGreaterThan(red[0], 240); XCTAssertLessThan(red[2], 15)
     try await Task.sleep(for: .milliseconds(100))

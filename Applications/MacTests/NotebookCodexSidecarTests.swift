@@ -28,6 +28,7 @@ private actor NativeOwner: NotebookCodexConversationOwner, NotebookCodexCatalogu
   var accessChanges = 0
   var sent: [UUID] = [], interrupted: [String] = [], decisions: [CodexUserDecision] = []
   var accepted: [CodexMessage] = []
+  func setMessages(_ messages: [CodexMessage]) { accepted = messages }
   var stopIsStale = false
   var needsSignIn = false
   var slowCreation = false
@@ -39,6 +40,10 @@ private actor NativeOwner: NotebookCodexConversationOwner, NotebookCodexCatalogu
   func configure(busy: Bool = false, unknown: Bool = false) { self.busy = busy; self.unknown = unknown }
   func failAttach(_ failure: AttachFailure?) { attachFailure = failure }
   var observations: [String: Set<UUID>] = [:]
+  var snapshotGate: AdmissionGate?
+  func holdSnapshot(_ gate: AdmissionGate?) { snapshotGate = gate }
+  var snapshotEntries = 0
+  func snapshotCount() -> Int { snapshotEntries }
   var attachGate: AdmissionGate?
   func holdAttach(_ gate: AdmissionGate?) { attachGate = gate }
   func observationCount() -> Int { observations.values.reduce(0) { $0 + $1.count } }
@@ -56,8 +61,10 @@ private actor NativeOwner: NotebookCodexConversationOwner, NotebookCodexCatalogu
   }
   func detach(threadID: String, observationID: UUID) { observations[threadID]?.remove(observationID) }
   func close() { }
-  func snapshot(threadID: String) -> CodexConversation? {
-    .init(threadID: threadID, generation: UUID(uuidString: "10000000-0000-0000-0000-000000000000")!, revision: 1, title: "Математика", ready: true, busy: busy, activeTurnID: busy ? turn : nil,
+  func snapshot(threadID: String) async -> CodexConversation? {
+    snapshotEntries += 1
+    if let snapshotGate { await snapshotGate.wait() }
+    return .init(threadID: threadID, generation: UUID(uuidString: "10000000-0000-0000-0000-000000000000")!, revision: 1, title: "Математика", ready: true, busy: busy, activeTurnID: busy ? turn : nil,
       messages: accepted, requests: pendingRequests, acceptedMessages: [:], turnStatuses: [:],
       access: .init(profileID: accessMode.rawValue, approvalPolicy: .string(accessMode.approvalPolicy), available: CodexAccessMode.allCases), model: model)
   }
@@ -107,7 +114,7 @@ private actor NativeOwner: NotebookCodexConversationOwner, NotebookCodexCatalogu
   func resources(threadID: String, kind: CodexResourceKind, cursor: String?) -> CodexResourcePage { .init(resources: []) }
   func projects(cursor: String?) -> CodexProjectPage { .init(projects: [], nextCursor: nil) }
   func tasks(cursor: String?, project: CodexProject?) -> CodexTaskPage { .init(tasks: [.init(id: thread, title: "Математика", cwd: "/tmp")], nextCursor: nil, defaultProviderNeedsSignIn: needsSignIn) }
-  func history(threadID: String, cursor: String?) -> CodexHistoryPage { .init(messages: accepted, nextCursor: nil) }
+  func history(threadID: String, cursor: String?, turnID: String?) -> CodexHistoryPage { .init(messages: accepted, nextCursor: nil) }
   func create(directory: URL, title: String, workspaceID: UUID, project: CodexProject?, onCreated: @escaping @Sendable (CodexTask) async throws -> Void) async throws -> CodexTask {
     if slowCreation { try await Task.sleep(for: .seconds(5)) }
     if needsSignIn { throw CodexBridgeError.signInRequired }
@@ -157,6 +164,204 @@ final class NotebookCodexSidecarTests: XCTestCase {
       XCTAssertEqual(sent, 1)
       XCTAssertLessThan(started.duration(to: .now), .milliseconds(700))
       await service.stop()
+    }
+  }
+
+  func testDetachDuringInitialUnsubscribedMessageReadCannotRestoreTransfer() async throws {
+    try await fixture { store,queue,native,peer in
+      let gate = AdmissionGate()
+      let message = CodexMessage(id:"held",turnID:native.turn,clientID:nil,role:.assistant,text:"exact")
+      await native.setMessages([message]); await native.holdSnapshot(gate)
+      let service = try sidecar(store,queue,native)
+      let reading = Task { await service.receive(.init(body:.request(.message(.init(
+        threadID:native.thread,turnID:native.turn,messageID:message.id)))),peerID:peer) }
+      try await wait { await native.snapshotCount() == 1 }
+      service.detachView(); gate.release()
+      let response = await reading.value
+      guard case .reply(.failure) = response?.body else { return XCTFail("A late initial read must not reinstall a detached transfer") }
+      await service.stop()
+    }
+  }
+
+  func testOneLongNativeMessageReadsInBoundedPartsAndCloseRevokesTransfer() async throws {
+    try await fixture { store,queue,native,peer in
+      let message = CodexMessage(id:"long",turnID:native.turn,clientID:nil,role:.assistant,
+        text:String(repeating:"Полный native ответ🙂 ",count:20_000)).identifyingContent()
+      await native.setMessages([message])
+      let service = try sidecar(store,queue,native)
+      var assembly = CodexMessageAssembly(), complete: CodexMessage?
+      repeat {
+        let query = CodexMessageRead(threadID:native.thread,turnID:native.turn,messageID:message.id,
+          transferID:assembly.transferID,offset:assembly.offset)
+        let response = await service.receive(.init(body:.request(.message(query))),peerID:peer)
+        guard case .reply(.message(.part(let part))) = response?.body else { return XCTFail("Missing exact message part") }
+        XCTAssertTrue(response?.isValid(from:peer) == true)
+        if try assembly.append(part) { complete = try assembly.decode() }
+      } while complete == nil
+      XCTAssertEqual(complete?.text,message.text)
+      service.detachView()
+      let retired = CodexMessageRead(threadID:native.thread,turnID:native.turn,messageID:message.id,
+        transferID:assembly.transferID,offset:0)
+      let response = await service.receive(.init(body:.request(.message(retired))),peerID:peer)
+      guard case .reply(.failure) = response?.body else { return XCTFail("Detached reading cannot retain the old transfer") }
+      await service.stop()
+    }
+  }
+
+  func testRepeatedInitialMessageEnvelopeKeepsExactTransferAcrossNativeGrowth() async throws {
+    try await fixture { store,queue,native,peer in
+      let message = CodexMessage(id:"retry-head",turnID:native.turn,clientID:nil,role:.assistant,
+        text:String(repeating:"Original🙂",count:12_000)).identifyingContent()
+      let newer = CodexMessage(id:message.id,turnID:native.turn,clientID:nil,role:.assistant,
+        text:message.text + "New native tail").identifyingContent()
+      await native.setMessages([message])
+      let service = try sidecar(store,queue,native)
+      let query = CodexMessageRead(threadID:native.thread,turnID:native.turn,messageID:message.id)
+      let initial = NotebookChatEnvelope(body:.request(.message(query)))
+      let first = await service.receive(initial,peerID:peer)
+      guard case .reply(.message(.part(let head))) = first?.body else { return XCTFail("Missing initial part") }
+      let readsBefore = await native.snapshotCount()
+      await native.setMessages([newer])
+      let replay = await service.receive(initial,peerID:peer)
+      guard case .reply(.message(.part(let replayed))) = replay?.body else { return XCTFail("Missing repeated initial part") }
+      XCTAssertEqual(replayed.transferID,head.transferID)
+      XCTAssertEqual(replayed.digest,head.digest); XCTAssertEqual(replayed.contentRevision,head.contentRevision)
+      XCTAssertTrue(replayed.data == head.data,"Repeated part zero is the exact frozen bytes, not a new native read")
+      let readsAfter = await native.snapshotCount(); XCTAssertEqual(readsAfter,readsBefore)
+      var assembly = CodexMessageAssembly(); XCTAssertFalse(try assembly.append(head))
+      while assembly.offset < head.totalBytes {
+        let response = await service.receive(.init(body:.request(.message(.init(
+          threadID:native.thread,turnID:native.turn,messageID:message.id,
+          transferID:head.transferID,offset:assembly.offset)))),peerID:peer)
+        guard case .reply(.message(.part(let part))) = response?.body else { return XCTFail("An initial retry revoked the issued continuation") }
+        _ = try assembly.append(part)
+      }
+      XCTAssertTrue(try assembly.decode().text == message.text,"All parts remain the first immutable native revision")
+      let replacement = await service.receive(.init(body:.request(.message(query))),peerID:peer)
+      guard case .reply(.message(.part(let next))) = replacement?.body else { return XCTFail("A new envelope must start a new transfer") }
+      XCTAssertNotEqual(next.transferID,head.transferID); XCTAssertEqual(next.contentRevision,newer.contentRevision)
+      let stale = await service.receive(.init(body:.request(.message(.init(
+        threadID:native.thread,turnID:native.turn,messageID:message.id,transferID:head.transferID,offset:0)))),peerID:peer)
+      guard case .reply(.failure) = stale?.body else { return XCTFail("A deliberate new transfer must retire the previous continuation") }
+      await service.stop()
+    }
+  }
+
+  func testMessageReadEnvelopeIdentityIsPeerScopedAndRevokedWithItsOwner() async throws {
+    try await fixture { store,queue,native,peer in
+      let message = CodexMessage(id:"peer-head",turnID:native.turn,clientID:nil,role:.assistant,
+        text:String(repeating:"Peer-local exact body",count:5000)).identifyingContent()
+      await native.setMessages([message])
+      let service = try sidecar(store,queue,native), otherPeer = UUID()
+      let initial = NotebookChatEnvelope(body:.request(.message(.init(
+        threadID:native.thread,turnID:native.turn,messageID:message.id))))
+      let a = await service.receive(initial,peerID:peer), b = await service.receive(initial,peerID:otherPeer)
+      guard case .reply(.message(.part(let headA))) = a?.body,
+        case .reply(.message(.part(let headB))) = b?.body else { return XCTFail("Missing peer-local heads") }
+      XCTAssertNotEqual(headA.transferID,headB.transferID)
+      // Reuse of an envelope UUID with another payload is not an intentional
+      // replacement; the original peer-local transfer must remain intact.
+      let collision = await service.receive(.init(id:initial.id,body:.request(.message(.init(
+        threadID:native.thread,turnID:native.turn,messageID:"different")))),peerID:peer)
+      guard case .reply(.failure) = collision?.body else { return XCTFail("Same envelope cannot acquire another message") }
+      let replay = await service.receive(initial,peerID:peer)
+      guard case .reply(.message(.part(let headAgain))) = replay?.body else { return XCTFail("Collision destroyed the original transfer") }
+      XCTAssertEqual(headAgain.transferID,headA.transferID)
+      service.revokeDevice(peer); service.allowDevice(peer)
+      let retired = await service.receive(.init(body:.request(.message(.init(
+        threadID:native.thread,turnID:native.turn,messageID:message.id,
+        transferID:headA.transferID,offset:headA.data.count)))),peerID:peer)
+      guard case .reply(.failure) = retired?.body else { return XCTFail("A previous authorization generation retained its transfer") }
+      let continuation = await service.receive(.init(body:.request(.message(.init(
+        threadID:native.thread,turnID:native.turn,messageID:message.id,
+        transferID:headB.transferID,offset:headB.data.count)))),peerID:otherPeer)
+      guard case .reply(.message(.part(let nextB))) = continuation?.body else { return XCTFail("Revoking one peer revoked another reader") }
+      XCTAssertEqual(nextB.transferID,headB.transferID)
+      let reopened = await service.receive(initial,peerID:peer)
+      guard case .reply(.message(.part(let fresh))) = reopened?.body else { return XCTFail("New authorization could not admit a fresh read") }
+      XCTAssertNotEqual(fresh.transferID,headA.transferID)
+      await service.stop()
+    }
+  }
+
+  func testSameThreadRefreshRetainsObservationAndExactMessageTransfer() async throws {
+    try await fixture { store,queue,native,peer in
+      let message = CodexMessage(id:"refresh",turnID:native.turn,clientID:nil,role:.assistant,
+        text:String(repeating:"Exact continuing body🙂 ",count:5000)).identifyingContent()
+      await native.setMessages([message])
+      let service = try sidecar(store,queue,native)
+      let initial = NotebookChatEnvelope(body:.request(.conversation(threadID:native.thread)))
+      _ = await service.receive(initial,peerID:peer)
+      let before = await native.observations
+      let first = await service.receive(.init(body:.request(.message(.init(
+        threadID:native.thread,turnID:native.turn,messageID:message.id)))),peerID:peer)
+      guard case .reply(.message(.part(let head))) = first?.body else { return XCTFail("Missing initial part") }
+      var assembly = CodexMessageAssembly(); XCTAssertFalse(try assembly.append(head))
+      let refresh = NotebookChatEnvelope(body:.request(.conversation(threadID:native.thread)))
+      let refreshed = await service.receive(refresh,peerID:peer)
+      guard case .reply(.conversation) = refreshed?.body else { return XCTFail("Same-thread refresh failed") }
+      let after = await native.observations
+      XCTAssertEqual(after[native.thread],before[native.thread],"Refresh retains the exact observation token")
+      repeat {
+        let response = await service.receive(.init(body:.request(.message(.init(
+          threadID:native.thread,turnID:native.turn,messageID:message.id,
+          transferID:assembly.transferID,offset:assembly.offset)))),peerID:peer)
+        guard case .reply(.message(.part(let part))) = response?.body else { return XCTFail("Refresh revoked an ongoing transfer") }
+        if try assembly.append(part) { break }
+      } while true
+      XCTAssertEqual(try assembly.decode().text,message.text)
+      await service.stop()
+    }
+  }
+
+  func testInitialConversationPreservesAnUnsubscribedSameThreadMessageRead() async throws {
+    try await fixture { store,queue,native,peer in
+      let message = CodexMessage(id:"initial",turnID:native.turn,clientID:nil,role:.assistant,
+        text:String(repeating:"Frozen",count:20_000)).identifyingContent()
+      await native.setMessages([message])
+      let service = try sidecar(store,queue,native), gate = AdmissionGate()
+      await native.holdSnapshot(gate)
+      let reading = Task { await service.receive(.init(body:.request(.message(.init(
+        threadID:native.thread,turnID:native.turn,messageID:message.id)))),peerID:peer) }
+      try await wait { gate.entered }
+      await native.holdSnapshot(nil)
+      _ = await service.receive(.init(body:.request(.conversation(threadID:native.thread))),peerID:peer)
+      gate.release()
+      let first = await reading.value
+      guard case .reply(.message(.part(let part))) = first?.body else { return XCTFail("Opening revoked the pending same-thread read") }
+      let next = await service.receive(.init(body:.request(.message(.init(
+        threadID:native.thread,turnID:native.turn,messageID:message.id,
+        transferID:part.transferID,offset:part.data.count)))),peerID:peer)
+      guard case .reply(.message(.part)) = next?.body else { return XCTFail("Opening the same conversation revoked its earlier content read") }
+      await service.stop()
+    }
+  }
+
+  func testActualConversationLifetimeChangesRevokeMessageTransfers() async throws {
+    for end in ["switch","close","revoke","detach"] {
+      try await fixture { store,queue,native,peer in
+        let message = CodexMessage(id:"retired",turnID:native.turn,clientID:nil,role:.assistant,
+          text:String(repeating:"Retained",count:20_000)).identifyingContent()
+        await native.setMessages([message])
+        let service = try sidecar(store,queue,native)
+        _ = await service.receive(.init(body:.request(.conversation(threadID:native.thread))),peerID:peer)
+        let first = await service.receive(.init(body:.request(.message(.init(
+          threadID:native.thread,turnID:native.turn,messageID:message.id)))),peerID:peer)
+        guard case .reply(.message(.part(let part))) = first?.body else { return XCTFail("Missing initial part") }
+        switch end {
+        case "switch": _ = await service.receive(.init(body:.request(.conversation(threadID:UUID().uuidString))),peerID:peer)
+        case "close": _ = await service.receive(.init(body:.request(.activity(threadIDs:[]))),peerID:peer)
+        case "revoke": service.revokeDevice(peer)
+        default: service.detachView()
+        }
+        let response = await service.receive(.init(body:.request(.message(.init(
+          threadID:native.thread,turnID:native.turn,messageID:message.id,
+          transferID:part.transferID,offset:part.data.count)))),peerID:peer)
+        if end == "revoke" { XCTAssertNil(response) }
+        else if case .reply(.failure) = response?.body { }
+        else { XCTFail("\(end) retained the previous conversation's transfer") }
+        await service.stop()
+      }
     }
   }
 

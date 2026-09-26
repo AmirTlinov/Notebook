@@ -5,6 +5,78 @@ import XCTest
 @testable import Notebook
 
 @MainActor final class InkMaterialCanvasTests: XCTestCase {
+  func testUnpaintedMaterialMaskIsNeutralAndChangingItsRoleDoesNotBorrowWhiteInk() async {
+    let canvas=InkCanvasView(frame:.zero)
+    let mask=NotebookInkMaterialView.Content(freehand:nil,erasures:[],transform:nil,layout:nil)
+    let ink=NotebookFreehand(layers:[.init(color:.black,vertices:[
+      .init(x:0,y:0,opacity:1),.init(x:1,y:0,opacity:1),.init(x:0,y:1,opacity:1)])])
+    let body=NotebookInkMaterialView.Content(freehand:ink,erasures:[],transform:nil,layout:nil)
+    canvas.updateMaterial(mask)
+    XCTAssertEqual(canvas.layer.opacity,1,"An unpainted erasure mask cannot hide the entire element")
+    XCTAssertEqual(canvas.backgroundColor,.white)
+    XCTAssertFalse(canvas.isStableFramePresented,"Neutral coverage is not the accepted cut's readiness")
+    XCTAssertEqual(canvas.drawableRequestCount,0)
+    canvas.updateMaterial(body)
+    XCTAssertEqual(canvas.layer.opacity,0,"A reusable owner must not paint the mask's neutral white as freehand")
+    XCTAssertEqual(canvas.backgroundColor,.clear)
+    canvas.updateMaterial(mask)
+    XCTAssertEqual(canvas.layer.opacity,1)
+    XCTAssertEqual(canvas.backgroundColor,.white)
+    XCTAssertEqual(canvas.drawableRequestCount,0)
+    await canvas.finishSpatialHandoffFrames()
+  }
+
+  func testPartialEraseUndoRedoRetainsHandwritingBodyAndUntouchedPixels() async throws {
+    let scene=try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+    let window=UIWindow(windowScene:scene),controller=UIViewController()
+    window.rootViewController=controller;controller.view.backgroundColor = .red;window.makeKeyAndVisible()
+    defer { window.isHidden=true;window.rootViewController=nil }
+    let frame=PageRect(x:0,y:0,width:300,height:300)
+    let samples=[30.0,270].map { x in SpatialInkSample(point:.init(x:x,y:150),timeOffset:x/300,
+      width:20,opacity:1,force:1,azimuth:0,altitude:.pi/2) }
+    let ink=NotebookFreehand(layers:[.init(tool:.pen,color:.black,measured:.init(sourceID:UUID(),
+      measurements:.init(samples),frame:frame))])
+    let graphic=NotebookGraphic(shape:.freehand,freehand:ink)
+    let cut=InkElementErasure(target:.init(elementID:"handwriting",frame:frame),samples:[
+      .init(point:.init(x:90,y:150),timeOffset:0,width:30,opacity:1,force:1,azimuth:0,altitude:.pi/2)])
+    var readiness=NotebookInkMaterialReadiness()
+    let receiver=NotebookInkMaterialReceiver(id:UUID(),report:{ id,content,ready in
+      _=readiness.record(id,content:content,ready:ready)
+    })
+    func presented(_ cuts:[InkElementErasure]) -> some View {
+      NotebookGraphicView(graphic:graphic,erasures:cuts).environment(\.inkMaterialReadiness,receiver)
+    }
+    let hosted=UIHostingController(rootView:presented([]))
+    controller.addChild(hosted);controller.view.addSubview(hosted.view);hosted.didMove(toParent:controller)
+    hosted.view.frame = .init(x:40,y:40,width:300,height:300);hosted.view.backgroundColor = .clear
+    controller.view.layoutIfNeeded()
+    func materials(_ view:UIView)->[InkMaterialHost] {
+      (view as? InkMaterialHost).map { [$0] } ?? view.subviews.flatMap(materials)
+    }
+    let initial=ContinuousClock.now + .seconds(5)
+    while (materials(hosted.view).count != 1 || materials(hosted.view).first?.canvas.isStableFramePresented != true),
+      ContinuousClock.now < initial { try await Task.sleep(for:.milliseconds(5)) }
+    let body=try XCTUnwrap(materials(hosted.view).first)
+    XCTAssertTrue(body.canvas.isStableFramePresented)
+    let bodyID=ObjectIdentifier(body)
+    for (name,cuts) in [("partial-erase",[cut]),("undo",[]),("redo",[cut])] {
+      let began=ContinuousClock.now
+      let required=NotebookInkMaterialView.Content.required(graphic:graphic,layout:nil,erasures:cuts,appearance:nil)
+      hosted.rootView=presented(cuts)
+      try await assertUX("retained-handwriting-\(name)",since:began,window:window) {
+        // SwiftUI's mask is not required to be a subview of the body host.
+        // The composition owner reports the exact body and mask contents.
+        guard materials(hosted.view).contains(where:{ ObjectIdentifier($0) == bodyID }),
+          readiness.isReady(for:required) else { return false }
+        return try NotebookUXObservation.Pixels(window:window).matches([
+          (hosted.view.convert(.init(x:230,y:150),to:window),.black),
+          (hosted.view.convert(.init(x:90,y:150),to:window),cuts.isEmpty ? .black : .red)])
+      }
+      XCTAssertTrue(materials(hosted.view).contains(where:{ $0 === body }),
+        "Only the mask's ownership changes; the handwriting source must not remount")
+    }
+  }
+
   func testLiveFreehandAndIncrementalEraserReachPhysicalPixelsWithoutReadback() async throws {
     let scene=try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
     let window=UIWindow(windowScene:scene),controller=UIViewController()
@@ -37,17 +109,99 @@ import XCTest
     }
     let before=canvas.drawableRequestCount
     canvas.updateMaterial(mask());try await ready(canvas,after:before)
+    XCTAssertEqual(canvas.backgroundColor,.clear,"The first actual mask replaces neutral coverage in its presentation transaction")
     let hole=try pixel(canvas,window:window,x:100,y:100),body=try pixel(canvas,window:window,x:200,y:200)
     XCTAssertGreaterThan(hole[0],220);XCTAssertLessThan(hole[1],30,"The transparent erase reveals the red surface")
     XCTAssertGreaterThan(body[1],220,"The rest of the mask remains opaque white")
     let nodes=canvas.materialUploadedNodeCount,frames=canvas.drawableRequestCount
     contact.replaceTail(from:contact.count,with:[point(102,101)])
-    canvas.updateMaterial(mask());try await ready(canvas,after:frames)
+    canvas.updateMaterial(mask())
+    XCTAssertEqual(canvas.layer.opacity,1,"Updating a shown mask retains its installed pixels")
+    XCTAssertEqual(canvas.backgroundColor,.clear,"An update cannot fill the previously shown erasure holes")
+    try await ready(canvas,after:frames)
     XCTAssertLessThan(canvas.materialUploadedNodeCount-nodes,256,"A new sample does not upload the erased prefix again")
     let proof=XCTAttachment(image:capture(window));proof.name="direct-metal-element-mask";proof.lifetime = .keepAlways;add(proof)
     canvas.removeFromSuperview();canvas.updateMaterial(.init(freehand:ink,erasures:[],transform:nil,layout:nil))
     XCTAssertTrue(canvas.isPaused)
   }
+  func testMaterialCoalescesPendingDrawsAndPresentsOnlyTheLatestDirtySource() async throws {
+    let scene=try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+    let window=UIWindow(windowScene:scene),controller=UIViewController(),canvas=InkCanvasView(frame:.zero)
+    window.rootViewController=controller;controller.view.backgroundColor = .red
+    controller.view.addSubview(canvas);window.makeKeyAndVisible()
+    defer { Task { await canvas.finishSpatialHandoffFrames() };window.isHidden=true;window.rootViewController=nil }
+    let frame=PageRect(x:0,y:0,width:300,height:300)
+    canvas.projectPage(region:.init(x:0,y:0,width:300,height:300),sourceSize:.init(width:300,height:300),pixelDensity:2)
+    func source(_ x:Double) -> NotebookInkMaterialView.Content {
+      .init(freehand:nil,erasures:[.init(target:.init(elementID:"mask",frame:frame),samples:[
+        .init(point:.init(x:x,y:150),timeOffset:0,width:30,opacity:1,force:1,azimuth:0,altitude:1)])],
+        transform:nil,layout:nil)
+    }
+    canvas.updateMaterial(source(70));canvas.draw()
+    let first=canvas.drawableRequestCount
+    XCTAssertEqual(first,1)
+    // No actor suspension: the existing completion cannot drain the first
+    // submission while these duplicate and changed requests are admitted.
+    canvas.draw()
+    canvas.updateMaterial(source(130));canvas.draw()
+    canvas.updateMaterial(source(210));canvas.draw()
+    XCTAssertEqual(canvas.drawableRequestCount,first,"Only one material command may be in flight")
+    XCTAssertFalse(canvas.isStableFramePresented)
+    let frameBefore=canvas.frame,boundsBefore=canvas.bounds,cropBefore=canvas.pageRenderRegion
+    let sourceSizeBefore=canvas.pageSourceSize,pixelsBefore=canvas.drawableSize
+    var retryInvalidations=0,observingRetries=false
+    canvas.onRenderReadinessChange = { ready in
+      // Ignore the setter's current false state. No source/crop mutation is
+      // allowed below; another false event is a revoked failed attempt.
+      if observingRetries,!ready { retryInvalidations += 1 }
+    }
+    observingRetries=true
+    try await ready(canvas,after:first)
+    XCTAssertTrue(canvas.isStableFramePresented)
+    XCTAssertEqual(canvas.frame,frameBefore);XCTAssertEqual(canvas.bounds,boundsBefore)
+    XCTAssertEqual(canvas.pageRenderRegion,cropBefore);XCTAssertEqual(canvas.pageSourceSize,sourceSizeBefore)
+    XCTAssertEqual(canvas.drawableSize,pixelsBefore)
+    XCTAssertEqual(canvas.drawableRequestCount,first+1+retryInvalidations,
+      "One latest revision plus only failed-attempt retries, never a duplicate or the superseded middle source")
+    let pixels=try NotebookUXObservation.Pixels(window:window)
+    XCTAssertTrue(try pixels.matches([(canvas.convert(.init(x:70,y:150),to:window),.paper),
+      (canvas.convert(.init(x:130,y:150),to:window),.paper),
+      (canvas.convert(.init(x:210,y:150),to:window),.red)]))
+    let readyFrames=canvas.drawableRequestCount
+    canvas.draw()
+    XCTAssertEqual(canvas.drawableRequestCount,readyFrames,"A ready unchanged material needs no repeated GPU pass")
+    observingRetries=false;canvas.onRenderReadinessChange=nil
+    let report=XCTAttachment(string:"Material submissions=\(readyFrames); failed-attempt invalidations=\(retryInvalidations); unchanged crop=\(String(describing:cropBefore)); pixels=\(pixelsBefore)")
+    report.name="material-admission-revisions";report.lifetime = .keepAlways;add(report)
+  }
+
+  func testPendingMaterialRemountRevokesTheOldReceiptEvenForIdenticalContent() async throws {
+    let scene=try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+    let window=UIWindow(windowScene:scene),controller=UIViewController(),canvas=InkCanvasView(frame:.zero)
+    window.rootViewController=controller;controller.view.backgroundColor = .red
+    controller.view.addSubview(canvas);window.makeKeyAndVisible()
+    defer { Task { await canvas.finishSpatialHandoffFrames() };window.isHidden=true;window.rootViewController=nil }
+    let frame=PageRect(x:0,y:0,width:300,height:300)
+    let source=NotebookInkMaterialView.Content(freehand:nil,erasures:[.init(target:.init(elementID:"mask",frame:frame),samples:[
+      .init(point:.init(x:100,y:150),timeOffset:0,width:30,opacity:1,force:1,azimuth:0,altitude:1)])],
+      transform:nil,layout:nil)
+    canvas.projectPage(region:.init(x:0,y:0,width:300,height:300),sourceSize:.init(width:300,height:300),pixelDensity:2)
+    canvas.updateMaterial(source);canvas.draw()
+    let first=canvas.drawableRequestCount
+    XCTAssertEqual(first,1)
+    canvas.removeFromSuperview()
+    XCTAssertFalse(canvas.isStableFramePresented)
+    controller.view.addSubview(canvas)
+    canvas.projectPage(region:.init(x:0,y:0,width:300,height:300),sourceSize:.init(width:300,height:300),pixelDensity:2)
+    canvas.updateMaterial(source);canvas.draw()
+    XCTAssertEqual(canvas.drawableRequestCount,first,"Remount waits for the retired command, not an extra in-flight copy")
+    try await ready(canvas,after:first)
+    XCTAssertEqual(canvas.drawableRequestCount,first+1,"The identical source still needs the new mounted drawable")
+    let pixels=try NotebookUXObservation.Pixels(window:window)
+    XCTAssertTrue(try pixels.matches([(canvas.convert(.init(x:100,y:150),to:window),.red),
+      (canvas.convert(.init(x:200,y:150),to:window),.paper)]))
+  }
+
   func testSwiftUIMaskPreservesTransformedHolesOnThePhysicalLayer() async throws {
     let scene=try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
     let window=UIWindow(windowScene:scene),controller=UIViewController()

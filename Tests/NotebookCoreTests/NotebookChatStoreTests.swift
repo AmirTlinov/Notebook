@@ -119,6 +119,53 @@ struct NotebookChatStoreTests {
       #expect(try store.resolvedChatImageAttachments([missing]) == nil)
     }
   }
+  @Test func semanticSourceAttentionDoesNotInventAPictureButPhysicalPointingRequiresOne() throws {
+    try fixture { store,author in
+      let source = CollaborationReference(target:.init(kind:.document,id:UUID()),elementID:"source",
+        region:.init(x:0,y:0,width:100,height:100),revision:"source-revision")
+      let context = try store.appendContext(references:[source],author:.human,actor:author,text:"Selected source text")
+      try store.saveAttentionEvidence([.init(id:source.id,requestID:context.id,reference:source,
+        payload:.object(["source":.string("exact selected source")]))],contextID:context.id)
+      #expect(try store.chatAttentionAttachments(contextID:context.id).isEmpty)
+      let paper = CollaborationReference(target:source.target,elementID:source.elementID,region:source.region,
+        pageIndex:0,revision:source.revision)
+      let pointed = try store.appendContext(references:[paper],author:.human,actor:author)
+      try store.saveAttentionEvidence([.init(id:paper.id,requestID:pointed.id,reference:paper,payload:.object([:]))],contextID:pointed.id)
+      let attachments = try store.chatAttentionAttachments(contextID:pointed.id)
+      #expect(attachments.count == 1)
+      #expect(throws:(any Error).self) { try store.resolvedChatImageAttachments(attachments) }
+    }
+  }
+
+  @Test func combinedAttentionAndPointingResolvesAgainstOnePixelBudget() throws {
+    try fixture { store,author in
+      let region = PageRect(x:0,y:0,width:1,height:1)
+      var png = try #require(Data(base64Encoded:"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII="))
+      // Valid bounded image header plus artificial bytes: tests admission, not rendering.
+      png.append(Data(repeating:0,count:1_500_000-png.count))
+      let digest = SHA256.hash(data:png).map { String(format:"%02x",$0) }.joined()
+      func image() throws -> NotebookChatImage {
+        let reference = CollaborationReference(target:.init(kind:.page,id:UUID()),region:region,revision:"frozen")
+        return .init(reference:reference,image:try .init(referenceID:reference.id,sourceRevision:reference.revision,
+          region:region,worldOrigin:nil,pageIndex:nil,pixelWidth:1,pixelHeight:1,pixelsPerPoint:1,png:png,sha256:digest))
+      }
+      let attention = try store.saveChatImageAttachments([image(),image()],author:author)
+      let pointedImage = try image(), before = try store.currentChangeCursor()
+      for _ in 0..<2 {
+        #expect(throws:NotebookStorageError.self) {
+          try store.saveChatImageAttachments([pointedImage],author:author,existingAttachments:attention)
+        }
+        #expect(try store.currentChangeCursor() == before, "Rejected preparation must not publish another context or PNG")
+      }
+      let pointing = try store.saveChatImageAttachments([pointedImage],author:author)
+      let attachments = attention + pointing
+      #expect(CodexInputAttachment.valid(attachments), "Addresses alone do not carry the PNG budget")
+      #expect(throws:NotebookStorageError.self) { try store.resolvedChatImageAttachments(attachments) }
+      #expect(try store.resolvedChatImageAttachments(attention)?.count == 2)
+      #expect(try store.resolvedChatImageAttachments(pointing)?.count == 1)
+    }
+  }
+
   enum Fault: Error { case injected }
   func fixture(_ body: (NotebookStore, UUID) throws -> Void) throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("notebook-chat-" + UUID().uuidString)

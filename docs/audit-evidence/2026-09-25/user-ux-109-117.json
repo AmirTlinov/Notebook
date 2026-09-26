@@ -1,0 +1,86 @@
+{
+  "format": 1,
+  "scope": "Focused physical pixels, existing Simulator system gestures, native Mac chat, Core/Codex and SDK; not full acceptance.",
+  "evidence": [
+    {
+      "evidenceDirectory": "/Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/.build/notebook-architecture-repair/evidence-2026-09-25/user-ux-109-114",
+      "manifestSHA256": "38cdfa18ad9c37008f2263852866bfe8e86d67f6d6c0b5cd4a941a6280472d23",
+      "sealedFileCount": 643
+    },
+    {
+      "evidenceDirectory": "/Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/.build/notebook-architecture-repair/evidence-2026-09-25/user-ux-115-117",
+      "manifestSHA256": "b6f160e5bc2973b04b0b8b125f30fd10c33939ec6665d405b4a710ec894f480d",
+      "sealedFileCount": 364
+    }
+  ],
+  "runs": {
+    "109": {
+      "passed": 8,
+      "failed": 2,
+      "sourceUnchanged": null,
+      "limitation": "Complete immediate after-failure witness missed; next witness differs only in NotebookPinnedImageTests fixture. No full-tree equality claimed."
+    },
+    "110": {
+      "passed": 9,
+      "failed": 1,
+      "sourceUnchanged": true
+    },
+    "111": {
+      "passed": 2,
+      "failed": 0,
+      "sourceUnchanged": true,
+      "scope": "temporary material/page diagnostics only; center/geometry did not prove complete paper background"
+    },
+    "112": {
+      "passed": 0,
+      "failed": 1,
+      "sourceUnchanged": true,
+      "scope": "temporary arrow delivery diagnostic"
+    },
+    "113": {
+      "passed": 17,
+      "failed": 2,
+      "sourceUnchanged": true,
+      "scope": "physical material+laser passed; two full-background tests failed"
+    },
+    "114": {
+      "passed": 0,
+      "failed": 1,
+      "sourceUnchanged": true,
+      "scope": "temporary reverse-capture resource-limit diagnostic"
+    },
+    "115": {
+      "passed": 0,
+      "failed": 1,
+      "sourceUnchanged": true,
+      "scope": "temporary capture admission attribution"
+    },
+    "116": {
+      "macPassed": 31,
+      "ipadPassed": 2,
+      "failed": 0,
+      "sourceUnchanged": true
+    },
+    "117": {
+      "corePassed": 38,
+      "codexPassed": 20,
+      "sdkPassed": 5,
+      "mcpCheck": "PASS",
+      "failed": 0,
+      "sourceUnchanged": true
+    }
+  },
+  "findings": {
+    "paper": "Canonical page/window geometry was correct. Native Canvas clipped its local background to projected exposure. One Color+Path display-list replaces Canvas; physical nine background cells and five markers agree with durable submission. No camera or capture-coordinate change.",
+    "material": "Same source never admits duplicate in-flight draws; coalesced latest revision and real failed-attempt retries share existing owner. Current cold100k first-ready317.802ms, all four window probes426.996ms against500ms.",
+    "chat": "Same-thread refresh retains observation/transfer. Explicit changed pointing/attachment/selection intent cannot reuse prior frozen failed submission; nil/exact/unknown journal recovery preserves exactly-once behavior. Native cumulative encoded message bound8MiB rejects before concatenation with explicit unavailable row and later authoritative recovery.",
+    "navigation": "Reverse command reached mounted owner; capture needed65116800 bytes while199450624 reserved+22579328 resident. Rejected under unchanged256MiB budget. Speculative backing reclamation remains in progress."
+  },
+  "limits": [
+    "Temporary diagnostic probes removed exactly; runs111/112/114/115 do not establish clean final acceptance.",
+    "Raw-page Redo latency/correct final window remains open despite retained-texture correctness.",
+    "Cold TeX1835–2008ms vs1000ms and prior physical20ms/first-frame/cadence budgets remain open.",
+    "Whole-elements raw-ink mixed lasso and final10repeat/30minute system-measured session remain unfinished.",
+    "Physical native pixels are distinct from Simulator system gestures; physical UI automation did not initialize."
+  ]
+}

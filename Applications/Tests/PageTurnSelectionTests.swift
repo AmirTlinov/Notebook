@@ -7,6 +7,31 @@ import UIKit
 
 final class PageTurnSelectionTests: XCTestCase {
   @MainActor
+  func testHostedReadinessQueriesTheActualMotionAndRejectsRetiredHosts() async throws {
+    let controller = IPadPageTurnController(), navigation = NotebookPageNavigation(), owner = UUID()
+    var receipts: [Int: PageTurnReadiness] = [:]
+    func configure(_ revision: String) {
+      controller.update(ownerID: owner, sequenceRevision: revision, pageCount: 3,
+        selectedIndex: 0, navigationIsEnabled: true, pageIsInteractive: true, canBeginNavigation: { true },
+        page: { index, _, ready in receipts[index] = ready; ready(true); return AnyView(Color.white) },
+        onCommit: { _, _ in }, onTransitioningChange: { _ in }, notebookNavigation: navigation)
+    }
+    let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+    let previous = scene.windows.first(where: \.isKeyWindow), window = UIWindow(windowScene: scene)
+    configure("first"); window.rootViewController = controller; window.makeKeyAndVisible(); window.layoutIfNeeded()
+    defer { window.isHidden = true; window.rootViewController = nil; previous?.makeKey() }
+    controller.sheetController.isSheetReadyForCapture = { _ in false }
+    XCTAssertTrue(navigation.send(.step(1), ownerID: owner, source: "first"))
+    let source = try XCTUnwrap(receipts[0]), target = try XCTUnwrap(receipts[1])
+    XCTAssertTrue(source.isInActiveTurn()); XCTAssertTrue(target.isInActiveTurn())
+    XCTAssertTrue(navigation.send(.step(1), ownerID: owner, source: "first"))
+    XCTAssertTrue(source.isInActiveTurn()); XCTAssertTrue(target.isInActiveTurn())
+    configure("replacement")
+    XCTAssertFalse(source.isInActiveTurn()); XCTAssertFalse(target.isInActiveTurn(), "An old page index cannot protect a replacement host")
+    await Task.yield()
+  }
+
+  @MainActor
   func testReferenceUsesTheMountedNotebookOwnerWithoutPublishingAnUnpreparedTarget() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)

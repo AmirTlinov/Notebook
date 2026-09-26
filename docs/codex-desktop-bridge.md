@@ -169,3 +169,45 @@ reset the transcript. Streaming and history pagination retain the existing
 article/group nodes, the reading anchor, open work groups and unchanged text
 selection. Markdown and MathJax run only for changed message contents, never for
 a status-only update. The WebKit surface accepts only this delta route.
+
+### Полный текст в Notebook
+
+Ограничение короткого сетевого кадра не обрезает native history. Mac сохраняет
+полное публичное сообщение в текущем native window; короткий заголовок переносит
+его `contentRevision`. iPad автоматически дочитывает сообщение порциями по 48 КиБ
+через обычную очередь чтения. Для peer одновременно существует один неизменяемый
+перенос; его SHA-256 и смещения проверяются до установки целого текста. Старый
+заголовок той же версии не заменяет уже полученный текст. Ошибка видна и допускает
+«Загрузить полностью» без отправки нового пользовательского сообщения.
+
+Перенос использует существующий предел native App Server frame (8 МиБ); превышение
+не меняет оригинал и сообщает невозможность чтения этим протоколом. Live-delta
+получает поколение/номер native event за O(1), не хеширует весь растущий ответ.
+Закрытие, смена задачи, detach/revoke отзывают также ещё ожидающий первый read.
+Статус и новая версия с неизменным видимым префиксом не пересобирают Markdown.
+
+Повторное чтение той же беседы обновляет адрес ответа подписки, но сохраняет её
+observation token и незавершённое чтение точной версии длинного сообщения.
+Переключение/закрытие/revoke/detach действительно освобождают их; старое завершение
+attach не отзывает уже продолженное наблюдение той же беседы.
+
+Native state учитывает точный суммарный размер encoded сообщения в существующем
+пределе 8 МиБ. При delta проверяются только добавляемые JSON-escaped байты до
+конкатенации; переполнение освобождает тело и оставляет явную недоступную версию,
+не скрытый укороченный ответ. Следующие deltas этого item не копятся и не меняют
+версию; authoritative completion может восстановить допустимое сообщение.
+Другие сообщения и выполняющийся turn продолжаются. Это не новый лимит документа
+или program-state и не writable bulk API.
+
+Full-message reads retain an admitted immutable revision while ordinary newer
+stream headers arrive. The controller queues the newest header separately and
+publishes each completed transfer rather than dropping every body until the turn
+stops. A pending newer revision marks the displayed older body incomplete without
+replacing its real revision or reparsing unchanged Markdown. Authoritative full
+or error replacements revoke the per-message generation; their late predecessors
+cannot resurrect content. Closing/switching still revokes the transcript owner.
+A retransmitted initial message envelope returns the already admitted transfer's
+exact first part. Its request identity lives with that one per-peer MessageRead,
+not in a second response cache. A new envelope replaces the transfer; a collision
+with another payload is rejected. Revoking its peer/observation revokes that
+identity and pending asynchronous admission together.

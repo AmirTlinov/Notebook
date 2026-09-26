@@ -47,7 +47,7 @@ public struct NotebookSelection: Codable, Equatable, Sendable {
     case .region:
       return target.map { [.page,.board,.cover].contains($0.kind) } == true
         && elementID == nil && itemID == nil && reference == nil
-        && region.map { (3...4096).contains($0.count) && $0.allSatisfy { $0.x.isFinite && $0.y.isFinite } } == true
+        && region.map { (3...NotebookGraphicMask.maximumPolygonPoints).contains($0.count) && $0.allSatisfy { $0.x.isFinite && $0.y.isFinite } } == true
         && worldOrigin?.isValid != false
     case .context: return (contextID != nil || resolving) && target == nil && elementID == nil && itemID == nil && reference == nil
     case .reference:

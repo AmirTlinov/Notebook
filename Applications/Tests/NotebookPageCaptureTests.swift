@@ -26,6 +26,101 @@ import XCTest
     XCTAssertEqual(curl.submittedFrameCount, submittedBefore)
   }
 
+  func testCancelledColdInteractiveTurnReleasesMotionWithoutCapturing() async throws {
+    let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+    let previous = scene.windows.first(where: \.isKeyWindow), window = UIWindow(windowScene: scene)
+    let native = IPadSheetCurlController(), source = UIViewController(), target = UIViewController()
+    window.rootViewController = native; window.makeKeyAndVisible()
+    defer { native.cancelMotion(); window.isHidden = true; window.rootViewController = nil; previous?.makeKey() }
+    native.show(source, direction: .forward, animated: false); native.view.layoutIfNeeded()
+    let curl = try XCTUnwrap(native.view.subviews.compactMap { $0 as? SheetCurlMetalView }.first)
+    var ready = false, captures = 0, completions: [Bool] = []
+    native.willTurn = { _ in true }; native.isSheetReadyForCapture = { _ in ready }
+    native.onCaptureMeasured = { _ in captures += 1 }; native.didTurn = { _, completed in completions.append(completed) }
+    XCTAssertTrue(native.beginInteractiveTurn(direction: .forward, target: target))
+    XCTAssertTrue(native.containsInActiveTurn(source)); XCTAssertTrue(native.containsInActiveTurn(target))
+    native.updateInteractiveTurn(translation: -80)
+    native.endInteractiveTurn(completed: false)
+    XCTAssertEqual(completions, [false], "Cancellation releases its original contact synchronously")
+    XCTAssertFalse(native.containsInActiveTurn(source)); XCTAssertFalse(native.containsInActiveTurn(target))
+    XCTAssertTrue(native.page === source); XCTAssertTrue(native.view.subviews.last === source.view)
+    ready = true; native.sheetReadinessDidChange(source)
+    try await Task.sleep(for: .milliseconds(60))
+    XCTAssertEqual(captures, 0); XCTAssertNil(curl.frameLease); XCTAssertTrue(curl.isHidden)
+    XCTAssertEqual(curl.submittedFrameCount, 0, "Neither queued nor late readiness can revive the cancelled capture")
+    XCTAssertTrue(native.beginInteractiveTurn(direction: .forward, target: target), "The next contact is not blocked")
+    native.endInteractiveTurn(completed: false)
+    XCTAssertEqual(completions, [false, false])
+  }
+
+  func testCurlWaitsForTheExistingReclamationFenceWithoutLosingItsMotion() async throws {
+    try await checkReclamationCapture(cancelled: false)
+  }
+
+  func testCancelledCurlCannotRestartWhenTheReclamationFenceFinishes() async throws {
+    try await checkReclamationCapture(cancelled: true)
+  }
+
+  private func checkReclamationCapture(cancelled: Bool) async throws {
+    let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+    let previous = scene.windows.first(where: \.isKeyWindow), window = UIWindow(windowScene: scene)
+    window.frame = .init(x: 0, y: 0, width: 300, height: 400)
+    let native = IPadSheetCurlController(), source = UIViewController(), target = UIViewController()
+    let replacement = UIViewController()
+    source.view.backgroundColor = .blue; target.view.backgroundColor = .red; replacement.view.backgroundColor = .green
+    window.rootViewController = native; window.makeKeyAndVisible()
+    native.show(source, direction: .forward, animated: false); native.prepare(target); native.view.layoutIfNeeded()
+    let resources = SceneRenderResources.shared
+    var retained: RasterReservation? = try XCTUnwrap(resources.reserveDerivedBytes(
+      resources.byteLimit - resources.residentBytes - resources.reservedBytes, priority: .input))
+    let bytes = try XCTUnwrap(retained).byteCount, identity = UUID()
+    var releaseFence: CheckedContinuation<Void, Never>?, releaseStarted = false
+    let owner = resources.registerReclamationOwner {
+      guard !releaseStarted else { return [] }
+      return [.init(id: identity, bytes: bytes, rasterCount: 0, value: .unused,
+        distance: 0, restorationMilliseconds: 0, release: {
+          releaseStarted = true
+          return Task { @MainActor in
+            await withCheckedContinuation { releaseFence = $0 }
+            retained?.release(); retained = nil
+          }
+        })]
+    }
+    defer {
+      releaseFence?.resume(); releaseFence = nil; retained?.release()
+      resources.unregisterReclamationOwner(owner); native.cancelMotion()
+      window.isHidden = true; window.rootViewController = nil; previous?.makeKey()
+    }
+    let curl = try XCTUnwrap(native.view.subviews.compactMap { $0 as? SheetCurlMetalView }.first)
+    var captures = 0, errors: [String] = [], completions: [Bool] = []
+    native.onCaptureMeasured = { _ in captures += 1 }
+    native.onFailure = { errors.append($0.localizedDescription) }
+    native.show(target, direction: .reverse, animated: true) { completions.append($0) }
+    let waitingLimit = ContinuousClock.now + .seconds(2)
+    while releaseFence == nil, ContinuousClock.now < waitingLimit { try await Task.sleep(for: .milliseconds(2)) }
+    XCTAssertNotNil(releaseFence); XCTAssertEqual(resources.pendingReclamationCount, 1)
+    XCTAssertEqual(captures, 0); XCTAssertTrue(errors.isEmpty); XCTAssertTrue(completions.isEmpty)
+    XCTAssertNil(curl.frameLease); XCTAssertTrue(native.page === source)
+    if cancelled {
+      native.cancelMotion(); native.show(replacement, direction: .forward, animated: false)
+      XCTAssertEqual(completions, [false])
+    }
+    releaseFence?.resume(); releaseFence = nil
+    await resources.finishPendingReclamations()
+    if cancelled {
+      await Task.yield()
+      XCTAssertTrue(native.page === replacement); XCTAssertEqual(captures, 0)
+      XCTAssertNil(curl.frameLease); XCTAssertTrue(curl.isHidden)
+      XCTAssertEqual(completions, [false])
+    } else {
+      let finishedLimit = ContinuousClock.now + .seconds(2)
+      while completions.isEmpty, ContinuousClock.now < finishedLimit { try await Task.sleep(for: .milliseconds(2)) }
+      XCTAssertEqual(captures, 1, "The accepted reverse motion captures once, after the same fence")
+      XCTAssertEqual(completions, [true]); XCTAssertTrue(native.page === target)
+    }
+    XCTAssertTrue(errors.isEmpty); XCTAssertEqual(resources.pendingReclamationCount, 0)
+  }
+
   func testCurlCapturesChangedAndNewlyInstalledLayersInBothDirections() async throws {
     let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
     let previous = scene.windows.first(where: \.isKeyWindow), window = UIWindow(windowScene: scene)

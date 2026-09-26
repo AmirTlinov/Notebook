@@ -120,7 +120,7 @@ import XCTest
     XCTAssertTrue(failures.isEmpty, "The curl froze stale accepted content: \(failures)")
   }
 
-  func testRepeatedInkUndoRedoAfterPageTurnsAndZoomKeepsTheAcceptedWarmMaterial() async throws {
+  func testRepeatedInkUndoRedoAfterPageTurnsAndPinchesKeepsTheAcceptedWarmMaterial() async throws {
     let model = try await modelWithPages(2), notebook = try XCTUnwrap(model.workspace?.selectedItemID)
     let root = try XCTUnwrap(model.notebookPageRoot(notebook))
     XCTAssertEqual(model.selectNotebookPage(0, notebookID: notebook, expectedRoot: root), 0)
@@ -131,7 +131,8 @@ import XCTest
     }.first)
     for iteration in 0..<4 {
       // The real retained sheets and mounted camera owner reproduce the pose
-      // changes between acceptance journeys. This is not a hardware tap test.
+      // changes between acceptance journeys. Notebook pinches stay fitted;
+      // this mounted-callback check is not a hardware tap test.
       try await turn(owner, forward: true, completes: true)
       try await turn(owner, forward: false, completes: true)
       let center = CGPoint(x: initial.window.bounds.midX, y: initial.window.bounds.midY)
@@ -146,12 +147,12 @@ import XCTest
           && initial.paper.isUserInteractionEnabled && initial.paper.isDescendant(of: shown)
           && model.activePage.map { model.pagePresentations.isPresented($0) } == true
       }
-      XCTAssertGreaterThan(try XCTUnwrap(model.presence?.camera.scale), scale)
+      XCTAssertEqual(try XCTUnwrap(model.presence?.camera.scale), scale)
       let scene = try Scene(model: model, window: initial.window)
       let ink = try XCTUnwrap((scene.paper.superview as? PaperCanvasContainerView)?.inkView)
       var phase = "setup", phaseStart = ContinuousClock.now, phases: [String] = []
       @MainActor func record(_ event: String) {
-        phases.append("\(phase) +\(phaseStart.duration(to: .now)): \(event); stamp=\(String(describing: model.activePage?.drawingStamp)); meshPrepare=\(ink.pageMeshPreparationCount); meshBuild=\(ink.pageMeshBuildCount); drawables=\(ink.drawableRequestCount); committedPass=\(ink.pageCommittedPassCount); geometryReady=\(ink.pageGeometryIsReady); stable=\(ink.isStableFramePresented)")
+        phases.append("\(phase) +\(phaseStart.duration(to: .now)): \(event); uptime=\(ProcessInfo.processInfo.systemUptime); presentation=\(String(describing: ink.frameReadiness)); stamp=\(String(describing: model.activePage?.drawingStamp)); meshPrepare=\(ink.pageMeshPreparationCount); meshBuild=\(ink.pageMeshBuildCount); drawables=\(ink.drawableRequestCount); committedPass=\(ink.pageCommittedPassCount); geometryReady=\(ink.pageGeometryIsReady); stable=\(ink.isStableFramePresented)")
       }
       let receiveReadiness = ink.onRenderReadinessChange
       ink.onRenderReadinessChange = { ready in

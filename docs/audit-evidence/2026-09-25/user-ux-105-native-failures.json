@@ -1,0 +1,83 @@
+{
+  "format": 1,
+  "sealedAt": "2026-09-26T12:15:40.677202+00:00",
+  "sourceRevision": "487530e0e8bf456c1a5da44e651704254d09d3a6",
+  "sourceSHA256": "490280316328d7e48862a57d0836570c3618fa7c0a57d17fc9d579d669f997c6",
+  "sourceMapsEqual": true,
+  "status": "failed",
+  "platform": "physical iPad",
+  "bundleID": "com.amirtlinov.notebook.native-test",
+  "passedNative": 44,
+  "failedNative": 6,
+  "failedUIInitialization": 1,
+  "executedUI": 0,
+  "executedMac": 0,
+  "skipped": 0,
+  "runtimeWarnings": [],
+  "testFailures": [
+    {
+      "failureText": "XCTAssertLessThan failed: (\"0.546500875 seconds\") is not less than (\"0.5 seconds\") - First local paint cannot wait for the full 100k Boolean contour",
+      "targetName": "NotebookTests",
+      "testIdentifier": 1,
+      "testIdentifierString": "InkMaterialCanvasTests/testColdCapturedMaskShowsOneHundredThousandMeasurementsWithoutBooleanPreparation()",
+      "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/InkMaterialCanvasTests/testColdCapturedMaskShowsOneHundredThousandMeasurementsWithoutBooleanPreparation",
+      "testName": "testColdCapturedMaskShowsOneHundredThousandMeasurementsWithoutBooleanPreparation()"
+    },
+    {
+      "failureText": "XCTAssertEqual failed: (\"Optional([NotebookCore.CodexInputAttachment(kind: NotebookCore.CodexInputAttachment.Kind.image, name: \"Выбранный фрагмент\", path: \"notebook-laser:AC413795-922E-4DC9-88D8-990434672EDA/7A418220-F125-425D-BFAC-FA14865F1C1F\", imagePNG: nil), NotebookCore.CodexInputAttachment(kind: NotebookCore.CodexInputAttachment.Kind.image, name: \"Выбранный фрагмент\", path: \"notebook-laser:AC413795-922E-4DC9-88D8-990434672EDA/117D66E5-A143-40D5-B747-21A899D64E59\", imagePNG: nil)])\") is not equal to (\"Optional([NotebookCore.CodexInputAttachment(kind: NotebookCore.CodexInputAttachment.Kind.image, name: \"Показано указкой\", path: \"notebook-laser:AC413795-922E-4DC9-88D8-990434672EDA/7A418220-F125-425D-BFAC-FA14865F1C1F\", imagePNG: nil), NotebookCore.CodexInputAttachment(kind: NotebookCore.CodexInputAttachment.Kind.image, name: \"Показано указкой\", path: \"notebook-laser:AC413795-922E-4DC9-88D8-990434672EDA/117D66E5-A143-40D5-B747-21A899D64E59\", imagePNG: nil)])\")",
+      "targetName": "NotebookTests",
+      "testIdentifier": 30,
+      "testIdentifierString": "NotebookLaserContextTests/testCombinedImageOverflowKeepsDraftAndCanBeCorrectedBeforeExistingOrNewChatSend()",
+      "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/NotebookLaserContextTests/testCombinedImageOverflowKeepsDraftAndCanBeCorrectedBeforeExistingOrNewChatSend",
+      "testName": "testCombinedImageOverflowKeepsDraftAndCanBeCorrectedBeforeExistingOrNewChatSend()"
+    },
+    {
+      "failureText": "XCTAssertTrue failed",
+      "targetName": "NotebookTests",
+      "testIdentifier": 25,
+      "testIdentifierString": "NotebookGraphicSceneTests/testDoubleTapPreparationKeepsVisibleBoardGraphicsOutsideTheDestinationWindow()",
+      "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/NotebookGraphicSceneTests/testDoubleTapPreparationKeepsVisibleBoardGraphicsOutsideTheDestinationWindow",
+      "testName": "testDoubleTapPreparationKeepsVisibleBoardGraphicsOutsideTheDestinationWindow()"
+    },
+    {
+      "failureText": "XCTAssertTrue failed - UX retained-handwriting-partial-erase: correct=false, observed=102.669125 ms, ceiling=0.1 seconds; window observation, not photon timing",
+      "targetName": "NotebookTests",
+      "testIdentifier": 4,
+      "testIdentifierString": "InkMaterialCanvasTests/testPartialEraseUndoRedoRetainsHandwritingBodyAndUntouchedPixels()",
+      "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/InkMaterialCanvasTests/testPartialEraseUndoRedoRetainsHandwritingBodyAndUntouchedPixels",
+      "testName": "testPartialEraseUndoRedoRetainsHandwritingBodyAndUntouchedPixels()"
+    },
+    {
+      "failureText": "XCTAssertTrue failed",
+      "targetName": "NotebookTests",
+      "testIdentifier": 34,
+      "testIdentifierString": "NotebookLaserContextTests/testPreparedPointingSurvivesJournalFailureForExistingAndNewChat()",
+      "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/NotebookLaserContextTests/testPreparedPointingSurvivesJournalFailureForExistingAndNewChat",
+      "testName": "testPreparedPointingSurvivesJournalFailureForExistingAndNewChat()"
+    },
+    {
+      "failureText": "XCTAssertTrue failed - UX inverse-journey-0-redo: correct=true, observed=120.964542 ms, ceiling=0.1 seconds; window observation, not photon timing",
+      "targetName": "NotebookTests",
+      "testIdentifier": 35,
+      "testIdentifierString": "NotebookPageLifecycleUXTests/testRepeatedInkUndoRedoAfterPageTurnsAndPinchesKeepsTheAcceptedWarmMaterial()",
+      "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/NotebookPageLifecycleUXTests/testRepeatedInkUndoRedoAfterPageTurnsAndPinchesKeepsTheAcceptedWarmMaterial",
+      "testName": "testRepeatedInkUndoRedoAfterPageTurnsAndPinchesKeepsTheAcceptedWarmMaterial()"
+    },
+    {
+      "failureText": "The test runner failed to initialize for UI testing. (Underlying Error: Timed out while enabling automation mode.)",
+      "targetName": "NotebookUITests",
+      "testIdentifier": 51,
+      "testIdentifierString": "NotebookUITests-Runner (15476) encountered an error",
+      "testName": "NotebookUITests-Runner (15476) encountered an error"
+    }
+  ],
+  "evidenceDirectory": "/Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/.build/notebook-architecture-repair/evidence-2026-09-25/user-ux-105-native-failed",
+  "manifestSHA256": "16aff095feef5c579cf7df2894d49c19c0eaa23b71b43f43979aae3569c1d4dc",
+  "sealedFileCount": 360,
+  "limits": [
+    "This is a failed focused run, not full acceptance.",
+    "100ms inverse/window and500ms cold material budgets are unchanged.",
+    "UI initialization timed out before every requested gesture; this is not a UI pass.",
+    "Fixes after this source seal require their own run."
+  ]
+}

@@ -10,6 +10,9 @@ struct CodexAppServerState: Sendable {
   var activeTurnID: String?
   var revision = 0
   var messages: [CodexMessage] = []
+  // Exact full-transfer bytes, not the smaller presentation excerpt. This
+  // accounting belongs to the same bounded native item window as its bodies.
+  private var messageBytes: [String: Int] = [:]
   var requests: [CodexUserRequest] = []
   var turnStatuses: [String: String] = [:]
   var runtimeActive = false
@@ -33,7 +36,11 @@ struct CodexAppServerState: Sendable {
     title = String((thread["name"]?.string ?? thread["preview"]?.string ?? "Codex").prefix(256))
     for message in history { try acceptMessageID(message) }
     let known = Set(messages.map(\.id))
-    messages = Array((history.filter { !known.contains($0.id) } + messages).suffix(64))
+    var admitted: [CodexMessage] = []
+    for message in history where !known.contains(message.id) { admitted.append(try admitMessage(message)) }
+    messages = Array((admitted + messages).suffix(64))
+    let retainedIDs = Set(messages.map(\.id))
+    messageBytes = messageBytes.filter { retainedIDs.contains($0.key) }
     for turn in turns {
       guard let id = turn["id"]?.string, let status = turn["status"]?.string else { throw CodexBridgeError.invalidResponse }
       // Events received during the read own their newer status. A runtime
@@ -90,13 +97,23 @@ struct CodexAppServerState: Sendable {
         try acceptTurn(turn)
       case "item/started", "item/completed":
         guard let item = params["item"], let turn = params["turnId"]?.string else { throw CodexBridgeError.invalidResponse }
-        if let message = Self.displayMessage(item, turnID: turn) { try acceptMessageID(message); upsert(message) }
+        if let message = Self.displayMessage(item, turnID: turn) { try acceptMessageID(message); try upsert(message) }
       case "item/agentMessage/delta":
         guard let id = params["itemId"]?.string, let delta = params["delta"]?.string,
           let index = messages.firstIndex(where: { $0.id == id && $0.turnID == params["turnId"]?.string }) else { return false }
-        let prior = messages[index], text = prior.text + delta
-        messages[index] = CodexMessage(id: prior.id, turnID: prior.turnID, clientID: prior.clientID, role: prior.role,
-          text: String(text.prefix(16_384)), isTruncated: prior.isTruncated || text.count > 16_384, activity: prior.activity, attachments: prior.attachments, phase: prior.phase)
+        let prior = messages[index]
+        // Once this native item is unavailable, further deltas are neither
+        // retained nor published. Only an authoritative item can restore it.
+        guard let bytes = messageBytes[id] else { return false }
+        if let addition = Self.encodedTextBytes(delta, within: CodexMessageTransfer.maximumBytes - bytes) {
+          messageBytes[id] = bytes + addition
+          messages[index] = CodexMessage(id: prior.id, turnID: prior.turnID, clientID: prior.clientID, role: prior.role,
+            text: prior.text + delta, contentRevision: generation.uuidString + ":" + String(revision + 1),
+            activity: prior.activity, attachments: prior.attachments, phase: prior.phase)
+        } else {
+          messageBytes.removeValue(forKey: id)
+          messages[index] = unavailableMessage(prior)
+        }
       default: return false
       }
     }
@@ -120,8 +137,52 @@ struct CodexAppServerState: Sendable {
     accepted[id] = message.turnID; acceptedOrder.append(id)
     if acceptedOrder.count > 128 { accepted.removeValue(forKey: acceptedOrder.removeFirst()) }
   }
-  private mutating func upsert(_ message: CodexMessage) {
-    if let index = messages.firstIndex(where: { $0.id == message.id }) { messages[index] = message }
-    else { messages.append(message); if messages.count > 64 { messages.removeFirst(messages.count - 64) } }
+  /// Matches JSONEncoder with `.withoutEscapingSlashes`: only ASCII controls,
+  /// quote and backslash expand. Counting just the delta avoids re-encoding the
+  /// growing body and rejects overload before allocating its concatenation.
+  static func encodedTextBytes(_ text: String, within limit: Int) -> Int? {
+    var count = 0
+    for byte in text.utf8 {
+      let cost: Int
+      switch byte {
+      case 8, 9, 10, 12, 13, 34, 92: cost = 2
+      case 0..<32: cost = 6
+      default: cost = 1
+      }
+      guard cost <= limit - count else { return nil }
+      count += cost
+    }
+    return count
+  }
+
+  private func unavailableMessage(_ message: CodexMessage) -> CodexMessage {
+    .init(id:message.id,turnID:message.turnID,clientID:message.clientID,role:message.role,
+      text:"Полное сообщение недоступно в Notebook",isTruncated:true,
+      contentRevision:generation.uuidString + ":unavailable:" + String(revision + 1),
+      activity:.init(kind:.error,status:"failed",
+        detail:"Сообщение превышает предел кадра Codex (8 МиБ). Оригинал не изменён; Notebook не может загрузить его этим протоколом."),
+      phase:message.phase)
+  }
+
+  private mutating func admitMessage(_ message: CodexMessage) throws -> CodexMessage {
+    let bytes = try CodexMessageTransfer.encode(message).count
+    guard !message.isTruncated, bytes <= CodexMessageTransfer.maximumBytes else {
+      messageBytes.removeValue(forKey:message.id)
+      return unavailableMessage(message)
+    }
+    messageBytes[message.id] = bytes
+    return message
+  }
+
+  private mutating func upsert(_ message: CodexMessage) throws {
+    let admitted = try admitMessage(message)
+    if let index = messages.firstIndex(where: { $0.id == message.id }) { messages[index] = admitted }
+    else {
+      messages.append(admitted)
+      if messages.count > 64 {
+        for retired in messages.prefix(messages.count - 64) { messageBytes.removeValue(forKey:retired.id) }
+        messages.removeFirst(messages.count - 64)
+      }
+    }
   }
 }

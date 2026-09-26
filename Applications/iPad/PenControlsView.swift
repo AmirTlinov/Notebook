@@ -9,10 +9,10 @@ struct PenControlsView: View {
   @State private var lastFigure = DrawingTool.shape
   var inkOnly = false
   var embedded = false
-  private var drawingTools: [DrawingTool] { inkOnly ? [.pen,.marker] : [.pen,.marker,.laser] }
+  private let drawingTools: [DrawingTool] = [.pen,.marker]
   private var colorEnabled: Bool { ![DrawingTool.eraser,.lasso].contains(model.drawingTool) }
   private var settingsAnchor: UnitPoint {
-    let count = inkOnly ? 3 : 7
+    let count = inkOnly ? 3 : 8
     let index: Int
     switch panel {
     case .drawing: index = 0
@@ -21,6 +21,7 @@ struct PenControlsView: View {
     case .tool(.text): index = 3
     case .figures: index = 4
     case .geometry: index = 5
+    case .tool(.laser): index = 6
     default: index = count-1
     }
     return .init(x:(Double(index)+0.5)/Double(count),y:1)
@@ -50,6 +51,7 @@ struct PenControlsView: View {
           .accessibilityIdentifier("drawing-guide-toggle").accessibilityAddTraits(.isButton)
           .accessibilityAction { model.drawingTools.toggleGuide() }
           .accessibilityAction(named:"Выбор и настройки") { panel = .geometry }
+        toolButton(.laser)
         Divider().frame(height:20).padding(.horizontal,6)
       }
       Button { panel = panel == .color ? nil : .color } label: {

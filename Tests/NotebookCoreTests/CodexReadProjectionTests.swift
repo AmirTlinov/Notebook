@@ -33,4 +33,26 @@ struct CodexReadProjectionTests {
     #expect(read.items.map(\.id) == ["1", "2"])
     #expect(throws: NotebookTransportError.invalidAcknowledgement) { try read.append([], next: "page2") }
   }
+  @Test func longNativeItemTransfersLosslesslyInBoundedPartsAndRepeatedHeaderKeepsBody() throws {
+    let native = CodexMessage(id:"large",turnID:"turn",clientID:nil,role:.assistant,
+      text:String(repeating:"Полный ответ 🙂 ",count:20_000),activity:.init(kind:.command,detail:String(repeating:"output\n",count:20_000))).identifyingContent()
+    let header = try #require(CodexMessage.transportPage([native],byteBudget:2048).first)
+    #expect(header.isTruncated); #expect(header.contentRevision == native.contentRevision)
+    let transfer = try CodexMessageTransfer(threadID:"thread",message:native)
+    var assembly = CodexMessageAssembly(), complete: CodexMessage?
+    repeat {
+      let part = try transfer.part(offset:assembly.offset)
+      #expect(NotebookChatEnvelope(body:.reply(.message(.part(part)))).isValid(from:UUID()))
+      if try assembly.append(part) { complete = try assembly.decode() }
+    } while complete == nil
+    #expect(complete?.text == native.text); #expect(complete?.activity == native.activity)
+    #expect(assembly.digest == native.contentRevision)
+    let full = try #require(complete).identifyingContent()
+    #expect(CodexTranscript.merging([full],[header],preferIncoming:true) == [full])
+    var mixed = CodexMessageAssembly(); _ = try mixed.append(transfer.part(offset:0))
+    let other = try CodexMessageTransfer(threadID:"thread",message:native)
+    #expect(throws:NotebookTransportError.invalidAcknowledgement) { try mixed.append(other.part(offset:mixed.offset)) }
+    #expect(throws:NotebookTransportError.invalidAcknowledgement) { try mixed.append(transfer.part(offset:0)) }
+  }
+
 }

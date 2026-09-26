@@ -13,14 +13,20 @@ enum NotebookElementErasurePaint {
 
 extension View {
   @ViewBuilder func erased(by erasures: [InkElementErasure], appearance: NotebookElementAppearance? = nil,transform:NotebookGraphicTransform? = nil,layout:NotebookGraphicLayout? = nil,visibility:NotebookGraphicMask? = nil) -> some View {
-    if erasures.isEmpty && visibility?.operations.contains(where:{ $0.erasures != nil }) != true { self }
-    else if appearance?.state == .erased || visibility?.erasesWholeRegion == true || erasures.contains(where: { $0.target.wholeElement }) {
+    if appearance?.state == .erased || visibility?.erasesWholeRegion == true || erasures.contains(where: { $0.target.wholeElement }) {
       // Retire WebKit and its input/capture leases, not a hidden running program.
       Color.clear.allowsHitTesting(false).accessibilityHidden(true)
     }
     else {
       mask {
-        NotebookInkMaterialView(erasures:erasures,transform:transform,layout:layout,mask:visibility)
+        // Keep the source's structural identity when Undo removes the last
+        // cut. Switching between `self` and `self.mask` remounts the retained
+        // handwriting body too, blanking all of it before its next drawable.
+        if erasures.isEmpty && visibility?.operations.contains(where:{ $0.erasures != nil }) != true {
+          Color.white
+        } else {
+          NotebookInkMaterialView(erasures:erasures,transform:transform,layout:layout,mask:visibility)
+        }
       }
     }
   }

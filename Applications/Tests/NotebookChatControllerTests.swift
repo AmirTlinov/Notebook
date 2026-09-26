@@ -4,6 +4,154 @@ import XCTest
 
 @MainActor
 final class NotebookChatControllerTests: XCTestCase {
+  func testLongMessageLoadsAutomaticallyRetriesAndKeepsBodyAcrossStatusUpdates() async throws {
+    try await longMessageContent(replacingError:false)
+    try await longMessageContent(replacingError:true)
+  }
+
+  private func longMessageContent(replacingError:Bool) async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("chat-content-"+UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at:root) }
+    let store = NotebookStore(root:root), author = UUID(), peer = UUID(), thread = UUID().uuidString
+    _ = try store.initializeWorkspace(actor:author,pageSize:.init(width:834,height:1194))
+    let queue = NotebookPersistenceQueue(store:store)
+    let native = CodexMessage(id:"long",turnID:UUID().uuidString,clientID:nil,role:.assistant,
+      text:String(repeating:"Полный ответ 🙂\n",count:20_000)).identifyingContent()
+    let header = try XCTUnwrap(CodexMessage.transportPage([native],byteBudget:2048).first)
+    let transfer = try CodexMessageTransfer(threadID:thread,message:native)
+    var chat: NotebookChatController!, fail = true, reads = 0, subscription: UUID?
+    let generation = UUID()
+    func conversation(_ revision:Int) -> CodexConversation {
+      .init(threadID:thread,generation:generation,revision:revision,title:"Task",ready:true,busy:false,activeTurnID:nil,
+        messages:[header],requests:[],acceptedMessages:[:],turnStatuses:[:])
+    }
+    chat = .init(persistence:queue,author:author) { envelope,_ in
+      guard case .request(let query) = envelope.body else { return }
+      let reply: NotebookChatReply
+      switch query {
+      case .projects: reply = .projects(.init(projects:[],nextCursor:nil))
+      case .catalogue: reply = .catalogue(.init(tasks:[],nextCursor:nil))
+      case .activity(let ids): reply = .activity(ids.map { .init(id:$0,status:.idle) })
+      case .run: reply = .run(.init(record:nil))
+      case .history(_, let cursor):
+        reply = cursor == nil ? .history(.init(messages:[header],nextCursor:"earlier")) : .failure("Unrelated history failure")
+      case .conversation: subscription = envelope.id; reply = .conversation(conversation(1))
+      case .message(let read):
+        reads += 1
+        if fail { reply = .failure("Injected interrupted read") }
+        else {
+          if replacingError, read.offset == 0 { chat.loadEarlier() }
+          do { reply = .message(.part(try transfer.part(offset:read.offset))) }
+          catch { return XCTFail("Invalid transfer offset") }
+        }
+      default: return XCTFail("A content read cannot submit native work")
+      }
+      chat.receive(.init(id:envelope.id,body:.reply(reply)),peerID:peer)
+    }
+    func wait(_ condition: () -> Bool) async throws {
+      let deadline = ContinuousClock.now + .seconds(5)
+      while !condition(), .now < deadline { try await Task.sleep(for:.milliseconds(10)) }
+      XCTAssertTrue(condition())
+    }
+    await chat.start(); await chat.connect(peer); chat.expanded = true
+    chat.select(.init(id:thread,title:"Task",cwd:"/fixture"))
+    try await wait { reads > 0 && chat.error?.contains("полное сообщение") == true }
+    XCTAssertTrue(chat.messages.first?.isTruncated == true)
+    fail = false; chat.retryMessageContent(native.id)
+    XCTAssertNil(chat.error,"Manual retry clears only its own visible read failure")
+    try await wait { chat.messages.first?.text == native.text && chat.messages.first?.isTruncated == false }
+    if replacingError {
+      try await wait { chat.error == "Unrelated history failure" }
+      XCTAssertEqual(chat.error,"Unrelated history failure","Successful content loading cannot erase a later history failure")
+      chat.retryMessageContent(native.id)
+      XCTAssertEqual(chat.error,"Unrelated history failure","Retry does not own another operation's error")
+    } else { XCTAssertNil(chat.error,"Successful loading leaves no stale full-message failure") }
+    let before = reads, body = chat.messages
+    if let subscription { chat.receive(.init(body:.event(subscriptionID:subscription,conversation:conversation(2))),peerID:peer) }
+    await Task.yield()
+    XCTAssertEqual(chat.messages,body); XCTAssertEqual(reads,before,"Status-only headers do not download or replace an already assembled body")
+    await chat.stop(); _ = await queue.flush()
+  }
+
+  func testGrowingMessagePublishesCompletedTransferBeforeTheStreamStops() async throws {
+    try await growingMessage(authoritativeError:false)
+  }
+
+  func testUnavailableMessageRevokesEarlierTransferEvenWhenStreamingResumes() async throws {
+    try await growingMessage(authoritativeError:true)
+  }
+
+  private func growingMessage(authoritativeError:Bool) async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("chat-growing-"+UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at:root) }
+    let store = NotebookStore(root:root), author = UUID(), peer = UUID(), thread = UUID().uuidString
+    _ = try store.initializeWorkspace(actor:author,pageSize:.init(width:834,height:1194))
+    let queue = NotebookPersistenceQueue(store:store), turn = UUID().uuidString, generation = UUID()
+    let bodies = (1...3).map { revision in CodexMessage(id:"growing",turnID:turn,clientID:nil,role:.assistant,
+      text:String(repeating:"Продолжающийся ответ 🙂\n",count:3000)+"Revision \(revision)").identifyingContent() }
+    let headers = try bodies.map { try XCTUnwrap(CodexMessage.transportPage([$0],byteBudget:2048).first) }
+    let transfers = try bodies.map { try CodexMessageTransfer(threadID:thread,message:$0) }
+    var chat: NotebookChatController!, subscription: UUID?, transferIndex = 0, observedIntermediate = false
+    var held: (NotebookChatEnvelope,CodexMessagePart)?, replaced = false, staleContinuations = 0
+    func conversation(_ index:Int, complete:CodexMessage? = nil) -> CodexConversation {
+      .init(threadID:thread,generation:generation,revision:index+1,title:"Task",ready:true,busy:complete == nil,
+        activeTurnID:complete == nil ? turn : nil,messages:[complete ?? headers[index]],requests:[],acceptedMessages:[:],turnStatuses:[:])
+    }
+    chat = .init(persistence:queue,author:author) { envelope,_ in
+      guard case .request(let query) = envelope.body else { return }
+      let reply: NotebookChatReply
+      switch query {
+      case .projects: reply = .projects(.init(projects:[],nextCursor:nil))
+      case .catalogue: reply = .catalogue(.init(tasks:[],nextCursor:nil))
+      case .activity(let ids): reply = .activity(ids.map { .init(id:$0,status:.running) })
+      case .run: reply = .run(.init(record:nil))
+      case .history: reply = .history(.init(messages:[],nextCursor:nil))
+      case .conversation: subscription = envelope.id; reply = .conversation(conversation(0))
+      case .message(let read):
+        if read.offset == 0, transferIndex == 1 {
+          XCTAssertTrue(chat.messages.first?.text == bodies[transferIndex-1].text,
+            "A newer header must not starve the preceding completed immutable body")
+          observedIntermediate = true
+        }
+        do {
+          let index = read.transferID.flatMap { id in transfers.firstIndex { $0.id == id } } ?? transferIndex
+          if replaced, index == 1 { staleContinuations += 1 }
+          let part = try transfers[index].part(offset:read.offset)
+          if index == 1, !replaced { held = (envelope,part); return }
+          if index == 0, part.offset + part.data.count == part.totalBytes, let subscription {
+            transferIndex += 1
+            chat.receive(.init(body:.event(subscriptionID:subscription,conversation:conversation(transferIndex))),peerID:peer)
+          }
+          reply = .message(.part(part))
+        } catch { return XCTFail("Invalid exact transfer") }
+      default: return XCTFail("Reading a streaming message cannot execute work")
+      }
+      chat.receive(.init(id:envelope.id,body:.reply(reply)),peerID:peer)
+    }
+    await chat.start(); await chat.connect(peer); chat.expanded = true
+    chat.select(.init(id:thread,title:"Task",cwd:"/fixture"))
+    let deadline = ContinuousClock.now + .seconds(5)
+    while held == nil, .now < deadline { try await Task.sleep(for:.milliseconds(10)) }
+    XCTAssertTrue(observedIntermediate); XCTAssertNotNil(held)
+    XCTAssertTrue(chat.presentationMessages.first?.isTruncated == true,
+      "The completed body remains visible but cannot pretend the latest revision is loaded")
+    let final = CodexMessage(id:"growing",turnID:turn,clientID:nil,role:.assistant,
+      text:"Authoritative replacement",isTruncated:authoritativeError,
+      contentRevision:authoritativeError ? "unavailable-revision" : nil,
+      activity:authoritativeError ? .init(kind:.error,status:"failed",detail:"Native message unavailable") : nil).identifyingContent()
+    if let subscription { chat.receive(.init(body:.event(subscriptionID:subscription,conversation:conversation(2,complete:final))),peerID:peer) }
+    XCTAssertEqual(chat.messages.first?.text,final.text,"An authoritative unavailable message cannot hide behind an older completed body")
+    replaced = true; transferIndex = 2
+    if let subscription { chat.receive(.init(body:.event(subscriptionID:subscription,conversation:conversation(2))),peerID:peer) }
+    if let (envelope,part) = held { chat.receive(.init(id:envelope.id,body:.reply(.message(.part(part)))),peerID:peer) }
+    let completedLimit = ContinuousClock.now + .seconds(5)
+    while chat.messages.first?.text != bodies[2].text, .now < completedLimit { try await Task.sleep(for:.milliseconds(10)) }
+    XCTAssertTrue(chat.messages.first?.text == bodies[2].text)
+    XCTAssertEqual(staleContinuations,0,"Replacement permanently revokes the old transfer, even when another header immediately requeues this ID")
+    XCTAssertFalse(chat.presentationMessages.first?.isTruncated ?? true)
+    await chat.stop(); _ = await queue.flush()
+  }
+
   func testStopUsesReservedControlSlotWhileFileReplyIsMissing() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("control-slot-" + UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
@@ -527,6 +675,7 @@ final class NotebookChatControllerTests: XCTestCase {
       let reply: NotebookChatReply
       switch query {
       case .run: reply = .run(.init(record: nil))
+      case .message: return XCTFail("No truncated message exists in this scenario")
       case .requestDetails, .stopWaiting, .account, .models, .resources, .file, .resizeRun, .voice, .dictation: return XCTFail("File, terminal, and audio panels are closed")
       case .projects: reply = .projects(.init(projects: [project], nextCursor: nil))
       case .catalogue(_, let selected):

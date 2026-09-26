@@ -175,6 +175,145 @@ final class PageInkProjectionTests: XCTestCase {
     XCTAssertLessThanOrEqual(resources.reservedBytes,resources.byteLimit)
   }
 
+  func testPageReclamationKeepsCurrentDemandedInstalledAndContactOwners() async throws {
+    let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+    let previous = scene.windows.first(where: \.isKeyWindow)
+    let window = UIWindow(windowScene: scene), root = UIViewController()
+    window.rootViewController = root; window.makeKeyAndVisible()
+    let resources = SceneRenderResources(byteLimit: 64 * 1024 * 1024)
+    let activity = PageTurnActivity()
+    var hosts: [UIView] = [], pages: [InkCanvasView] = [], projections: [PageInkProjection] = []
+    var receipts: [PageTurnReadiness] = []
+    defer {
+      for projection in projections { projection.stop() }
+      window.isHidden = true; window.rootViewController = nil; previous?.makeKey()
+    }
+    for index in 0..<PageTurnPrewarmWindow.capacity {
+      let host = UIView(frame: .init(x: 0, y: 0, width: 300, height: 300))
+      root.view.addSubview(host)
+      let canvas = InkCanvasView(frame: .zero, resources: resources)
+      canvas.setPageInputEnabled(index == 0); host.addSubview(canvas)
+      let projection = PageInkProjection(host: host, canvas: canvas)
+      let receipt = PageTurnReadiness(activity: activity, pageIndex: index) { _ in }
+      projection.observePage(receipt, isCurrent: index == 0, isVisible: true)
+      canvas.apply(PageInkDrawing(actions: [line()])); projection.refresh()
+      guard try await ready(canvas) else { return }
+      hosts.append(host); pages.append(canvas); projections.append(projection); receipts.append(receipt)
+    }
+    activity.prepare(2); activity.didInstall(activity.preparationDemand); activity.prepare(1)
+    let before = pages.map { ($0.pageMeshBuildCount, $0.pageMeshPreparationCount,
+      $0.pageDrawableAllocationCount, $0.pageProjectionChangeCount, $0.committedSourceNodeCount) }
+    let neighbour = try XCTUnwrap(pages.last)
+    let backing = neighbour.drawableSize, crop = neighbour.pageRenderRegion
+    let pressure = try XCTUnwrap(resources.reserveDerivedBytes(
+      resources.byteLimit - resources.residentBytes - resources.reservedBytes, priority: .input))
+    defer { pressure.release() }
+    let contact = ActiveInkStroke(style: .standard)
+    contact.replaceMeasuredTail(from: 0, with: [point(20, 20), point(40, 40)])
+    neighbour.displayActiveStroke(contact)
+    XCTAssertNil(resources.reserveDerivedBytes(1024 * 1024, priority: .input),
+      "Current, demanded, installed and the one remaining live contact are all protected")
+    XCTAssertEqual(pages.map(\.pageDrawableAllocationCount), before.map { $0.2 })
+    neighbour.clearActiveAction()
+    var capture = resources.reserveDerivedBytes(1024 * 1024, priority: .input)
+    if capture == nil {
+      XCTAssertGreaterThan(resources.pendingReclamationCount, 0, "Only an already submitted GPU frame may defer this release")
+      await resources.finishPendingReclamations()
+      capture = resources.reserveDerivedBytes(1024 * 1024, priority: .input)
+    }
+    let admitted = try XCTUnwrap(capture)
+    defer { admitted.release() }
+    for index in 0..<3 {
+      XCTAssertTrue(pages[index].isStableFramePresented, "Required page \(index) was reclaimed")
+      XCTAssertEqual(pages[index].pageDrawableAllocationCount, before[index].2)
+    }
+    XCTAssertFalse(neighbour.isStableFramePresented)
+    XCTAssertTrue(neighbour.isFrameLoopPaused)
+    XCTAssertEqual(neighbour.layer.opacity, 0)
+    XCTAssertEqual(neighbour.drawableSize, backing); XCTAssertEqual(neighbour.pageRenderRegion, crop)
+    XCTAssertEqual(neighbour.committedSourceNodeCount, before[3].4)
+    let reclaimedBytes = resources.reservedBytes
+    // A late render/layout, repeated passive role and remount cannot re-admit
+    // these speculative pixels while the accepted capture owns the freed bytes.
+    neighbour.draw(in: neighbour)
+    projections[3].observePage(receipts[3], isCurrent: false, isVisible: true)
+    neighbour.removeFromSuperview(); hosts[3].addSubview(neighbour); projections[3].refresh()
+    await Task.yield()
+    XCTAssertTrue(neighbour.isFrameLoopPaused)
+    XCTAssertLessThanOrEqual(resources.reservedBytes, reclaimedBytes, "Remount may release GPU geometry, never re-admit speculative pixels")
+    XCTAssertEqual(neighbour.pageDrawableAllocationCount, before[3].2)
+    XCTAssertEqual(neighbour.pageMeshBuildCount, before[3].0)
+    XCTAssertEqual(neighbour.pageMeshPreparationCount, before[3].1)
+    admitted.release(); pressure.release()
+    activity.prepare(3)
+    guard try await ready(neighbour) else { return }
+    XCTAssertEqual(neighbour.pageDrawableAllocationCount, before[3].2 + 1)
+    XCTAssertEqual(neighbour.pageProjectionChangeCount, before[3].3)
+    XCTAssertEqual(neighbour.pageMeshBuildCount, before[3].0)
+    XCTAssertEqual(neighbour.pageMeshPreparationCount, before[3].1)
+    XCTAssertEqual(neighbour.committedSourceNodeCount, before[3].4)
+    XCTAssertEqual(neighbour.drawableSize, backing); XCTAssertEqual(neighbour.pageRenderRegion, crop)
+  }
+
+  func testNextPreparationCannotReclaimEitherLiveSheetOfTheActiveTurn() async throws {
+    let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+    let previous = scene.windows.first(where: \.isKeyWindow), window = UIWindow(windowScene: scene)
+    let native = IPadSheetCurlController(), activity = PageTurnActivity()
+    let resources = SceneRenderResources(byteLimit: 64 * 1024 * 1024)
+    window.rootViewController = native; window.makeKeyAndVisible()
+    var sheets: [UIViewController] = [], pages: [InkCanvasView] = []
+    var projections: [PageInkProjection] = [], receipts: [PageTurnReadiness] = []
+    defer {
+      native.cancelMotion(); for projection in projections { projection.stop() }
+      window.isHidden = true; window.rootViewController = nil; previous?.makeKey()
+    }
+    for index in 0..<4 {
+      let sheet = UIViewController(); native.prepare(sheet)
+      let host = UIView(frame: .init(x: 0, y: 0, width: 300, height: 300)); sheet.view.addSubview(host)
+      let canvas = InkCanvasView(frame: .zero, resources: resources); host.addSubview(canvas)
+      canvas.setPageInputEnabled(index == 0)
+      let projection = PageInkProjection(host: host, canvas: canvas)
+      let receipt = PageTurnReadiness(activity: activity, pageIndex: index,
+        isInActiveTurn: { [weak native, weak sheet] in
+          guard let sheet else { return false }; return native?.containsInActiveTurn(sheet) == true
+        }) { _ in }
+      projection.observePage(receipt, isCurrent: index == 0, isVisible: true)
+      canvas.apply(PageInkDrawing(actions: [line()])); projection.refresh()
+      guard try await ready(canvas) else { return }
+      sheets.append(sheet); pages.append(canvas); projections.append(projection); receipts.append(receipt)
+    }
+    native.show(sheets[0], direction: .forward, animated: false); native.view.layoutIfNeeded()
+    native.willTurn = { _ in true }; native.isSheetReadyForCapture = { _ in false }
+    activity.prepare(1)
+    XCTAssertTrue(native.beginInteractiveTurn(direction: .forward, target: sheets[1]))
+    native.endInteractiveTurn(completed: true)
+    activity.prepare(2) // A→B is still settling when the next contact demands C.
+    XCTAssertTrue(receipts[0].isInActiveTurn()); XCTAssertTrue(receipts[1].isInActiveTurn())
+    XCTAssertFalse(receipts[2].isInActiveTurn())
+    let pressure = try XCTUnwrap(resources.reserveDerivedBytes(
+      resources.byteLimit - resources.residentBytes - resources.reservedBytes, priority: .input))
+    defer { pressure.release() }
+    var admitted = resources.reserveDerivedBytes(1024 * 1024, priority: .input)
+    if admitted == nil {
+      await resources.finishPendingReclamations()
+      admitted = resources.reserveDerivedBytes(1024 * 1024, priority: .input)
+    }
+    let lease = try XCTUnwrap(admitted); defer { lease.release() }
+    for index in 0..<3 { XCTAssertTrue(pages[index].isStableFramePresented, "Live source, underlay and next demand must survive pressure") }
+    XCTAssertFalse(pages[3].isStableFramePresented, "Only the speculative neighbour may retire")
+    native.cancelMotion(); activity.prepare(nil)
+    XCTAssertFalse(receipts[0].isInActiveTurn()); XCTAssertFalse(receipts[1].isInActiveTurn())
+    // Fill the bytes released by the one neighbour, then demand another byte.
+    let remainder = try XCTUnwrap(resources.reserveDerivedBytes(
+      resources.byteLimit - resources.residentBytes - resources.reservedBytes, priority: .input))
+    defer { remainder.release() }
+    let more = resources.reserveDerivedBytes(1, priority: .input); more?.release()
+    await resources.finishPendingReclamations()
+    XCTAssertTrue(pages[0].isStableFramePresented, "The installed source remains current after cancellation")
+    XCTAssertTrue(!pages[1].isStableFramePresented || !pages[2].isStableFramePresented,
+      "Retired motion protection must not become a permanent pin")
+  }
+
   func testCameraSweepReportsPageBackingWork() async throws {
     let scene=try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
     let window=UIWindow(windowScene:scene),host=UIViewController()

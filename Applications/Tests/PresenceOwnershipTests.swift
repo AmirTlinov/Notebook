@@ -84,7 +84,7 @@ final class PresenceOwnershipTests: XCTestCase {
   }
 
   @MainActor
-  func testSettledPageKeepsTheExplicitInspectionScale() async throws {
+  func testSettledNotebookRestoresItsFittedPhysicalCamera() async throws {
     let root = FileManager.default.temporaryDirectory
       .appendingPathComponent(UUID().uuidString, isDirectory: true)
 
@@ -105,10 +105,39 @@ final class PresenceOwnershipTests: XCTestCase {
 
     model.updatePresence(broken, settled: true)
 
-    XCTAssertEqual(model.presence?.camera.scale, broken.camera.scale)
+    let fit = model.itemGeometry(itemID).fitScale(viewport: broken.viewport)
+    XCTAssertEqual(model.presence?.camera.scale, fit)
     XCTAssertEqual(model.presence?.camera.center, center)
     await model.finishPendingPersistence()
-    XCTAssertEqual(try store.loadPresence().camera.scale, broken.camera.scale)
+    XCTAssertEqual(try store.loadPresence().camera.scale, fit)
+  }
+
+  @MainActor
+  func testCompletedOpeningCanRememberAndRestoreItsCapturedBoardCamera() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
+    retainNotebookUntilTeardown(model, removing: root)
+    await model.start(pageSize: NotebookAppModel.defaultPageSize)
+    let opened = try XCTUnwrap(model.presence)
+    let board = SessionPresence(boardID: opened.boardID, mode: .board,
+      camera: .init(center: .init(x: -820, y: 360), scale: 0.37), viewport: opened.viewport,
+      selectedItemID: opened.selectedItemID, notebookPageID: opened.notebookPageID)
+    // The completion runs after opening, not while its original camera is live.
+    model.rememberReturnPlace(board)
+    model.rememberReturnPlace(board)
+    XCTAssertEqual(model.returnPlaces.count, 1)
+    XCTAssertEqual(model.presence, opened)
+    model.requestReturnToPlace()
+    let request = try XCTUnwrap(model.requestedReturn)
+    var returned: SessionPresence?
+    await model.resolveReturnToPlace(request, viewport: opened.viewport) { destination, complete in
+      returned = destination
+      model.updatePresence(destination, settled: true)
+      complete()
+    }
+    XCTAssertEqual(returned, board)
+    XCTAssertEqual(model.presence, board)
+    XCTAssertTrue(model.returnPlaces.isEmpty)
   }
 
   @MainActor
@@ -167,7 +196,7 @@ final class PresenceOwnershipTests: XCTestCase {
   }
 
   @MainActor
-  func testRestoredStackedPageKeepsTheExplicitCamera() async throws {
+  func testRestoredStackedNotebookFitsTheActualPageInsteadOfAnOldInspectionCamera() async throws {
     let root = FileManager.default.temporaryDirectory
       .appendingPathComponent(UUID().uuidString, isDirectory: true)
 
@@ -232,7 +261,8 @@ final class PresenceOwnershipTests: XCTestCase {
     retainNotebookUntilTeardown(model, removing: root)
     await model.start(pageSize: size)
 
-    XCTAssertEqual(model.presence?.camera.center, stackCenter, "Restoration cannot recenter an explicitly inspected page")
+    XCTAssertEqual(model.presence?.camera.center, expectedCenter)
+    XCTAssertEqual(model.presence?.camera.scale, model.itemGeometry(upperID).fitScale(viewport: .init(x:size.width,y:size.height)))
     XCTAssertNotEqual(expectedCenter, stackCenter)
   }
 

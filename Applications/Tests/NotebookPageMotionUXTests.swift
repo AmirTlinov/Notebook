@@ -66,7 +66,8 @@ import XCTest
         native.updateInteractiveTurn(translation: native.view.bounds.width * (reverse ? 0.65 : -0.65))
         native.endInteractiveTurn(completed: completed)
         try await Task.sleep(for: .milliseconds(20))
-        XCTAssertEqual(captures, 0); XCTAssertTrue(completions.isEmpty)
+        XCTAssertEqual(captures, 0)
+        XCTAssertEqual(completions, completed ? [] : [false], "A cancelled cold contact releases without a future image")
         XCTAssertTrue(native.page === source)
         ready = true
         native.sheetReadinessDidChange(capturedSheet)
@@ -75,7 +76,7 @@ import XCTest
         while completions.isEmpty, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(2)) }
         XCTAssertEqual(completions, [completed], "The original lift, not a new gesture, must finish")
         XCTAssertTrue(native.page === (completed ? target : source))
-        XCTAssertEqual(captures, 1, "Repeated receipts cannot rebuild the same motion image")
+        XCTAssertEqual(captures, completed ? 1 : 0, "Repeated receipts cannot rebuild or revive the same motion image")
       }
     }
   }
@@ -634,14 +635,21 @@ import XCTest
     for turn in 0..<10 {
       let target = turn.isMultiple(of: 2) ? 1 : 0
       let curl = try XCTUnwrap(controller.sheetController.view.subviews.compactMap { $0 as? SheetCurlMetalView }.first)
-      let forwardPresentation = curl.onFramePresented
+      let forwardReadiness = curl.onFrameReady
       var frames: [(progress: Double, presented: TimeInterval, delivered: TimeInterval)] = []
       var submission: [SheetCurlMetalView.FrameTiming] = []
       curl.onFrameMeasured = { submission.append($0) }
       committedAt = nil
-      curl.onFramePresented = { image, progress, presentedAt in
+      curl.onFrameReady = { image, progress, sequence, readiness in
+        // The filtered presentation observer excludes precisely the zero or
+        // invalid receipts this oracle must reject. Keep every native receipt.
+        let presentedAt: TimeInterval
+        switch readiness {
+        case .osPresentation(let time): presentedAt = time
+        case .simulatorCommandCompletion: presentedAt = .nan
+        }
         frames.append((progress, presentedAt, CACurrentMediaTime()))
-        forwardPresentation?(image, progress, presentedAt) // Preserve any independent display observer.
+        forwardReadiness?(image, progress, sequence, readiness)
       }
       let start = CACurrentMediaTime()
       XCTAssertTrue(commands.send(.step(target == 1 ? 1 : -1), ownerID: owner, source: "motion-timing"))
@@ -649,7 +657,7 @@ import XCTest
       while committedAt == nil, CACurrentMediaTime() - start < 1 {
         try await Task.sleep(for: .milliseconds(1))
       }
-      curl.onFramePresented = forwardPresentation
+      curl.onFrameReady = forwardReadiness
       curl.onFrameMeasured = nil
       let encoding = XCTAttachment(string: "Command execution=\((commandReturned-start)*1000) ms\n" + submission.map {
         "start=\(($0.encodingBegan-start)*1000)ms; CPU=\(($0.submitted-$0.encodingBegan)*1000)ms; GPU queue=\(($0.gpuBegan-$0.submitted)*1000)ms; GPU=\(($0.gpuEnded-$0.gpuBegan)*1000)ms; target=\(($0.targetPresentation-start)*1000)ms"

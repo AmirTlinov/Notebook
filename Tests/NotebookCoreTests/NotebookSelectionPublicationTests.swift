@@ -14,6 +14,37 @@ import Testing
     #expect(!value.isValid)
   }
 
+  @Test func regionPublicationPreserves8192PointsAndRejects8193WithoutReplacingSelection() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = NotebookStore(root: root), device = UUID(), session = UUID(), connection = UUID()
+    let header = try store.initializeWorkspace(actor: UUID(), pageSize: .init(width: 834, height: 1194))
+    let target = CollaborationTarget(kind: .board, id: header.rootBoardID)
+    var selection = NotebookSelection(id: UUID(), kind: .region, surface: target, target: target)
+    selection.region = (0..<8192).map { index in
+      let angle = Double(index) * 2 * Double.pi / 8192
+      return SpatialPoint(x: 200 + 100 * cos(angle), y: 200 + 100 * sin(angle))
+    }
+    selection.worldOrigin = .zero
+    let accepted = NotebookSelectionEnvelope(deviceID: device, sessionID: session, sequence: 1, selection: selection)
+    let decoded = try JSONDecoder().decode(NotebookSelectionEnvelope.self, from: JSONEncoder().encode(accepted))
+    #expect(decoded == accepted)
+    try store.saveLocalSelectionPublication(decoded)
+    #expect(try store.readSelectionPublication().selection == selection)
+    try store.beginSelectionPublication(deviceID: device, connectionID: connection)
+    #expect(try store.acceptSelectionPublication(decoded, connectionID: connection))
+    #expect(try store.readSelectionPublication().selection == selection)
+
+    selection.region?.append(.init(x: 301, y: 200))
+    let overflow = NotebookSelectionEnvelope(deviceID: device, sessionID: session, sequence: 2, selection: selection)
+    #expect(!overflow.isValid)
+    #expect(throws: NotebookStorageError.self) { try store.saveLocalSelectionPublication(overflow) }
+    #expect(throws: CollaborationError.self) { try store.acceptSelectionPublication(overflow, connectionID: connection) }
+    #expect(try store.readSelectionPublication().selection == accepted.selection)
+    try store.endSelectionPublication(deviceID: device, connectionID: connection)
+    #expect(try store.readSelectionPublication().selection == accepted.selection)
+  }
+
   @Test func connectionLifetimeOrdersClearAndRejectsLateOldProcess() throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }

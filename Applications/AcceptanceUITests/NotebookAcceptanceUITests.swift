@@ -1005,8 +1005,14 @@ import XCTest
       app.buttons["previous-page"].tap()
       let back=XCTNSPredicateExpectation(predicate:NSPredicate { _,_ in (surface.value as? String)?.hasPrefix(page) == true },object:nil)
       XCTAssertEqual(XCTWaiter.wait(for:[back],timeout:10),.completed)
+      let fitted = paper.frame
       surface.pinch(withScale:1.08,velocity:0.6)
       XCTAssertTrue(surface.exists);XCTAssertFalse(app.otherElements["persistence-failure"].exists)
+      let afterPinch = paper.frame
+      XCTAssertEqual(afterPinch.minX,fitted.minX,accuracy:1,"A notebook pinch keeps the fitted sheet")
+      XCTAssertEqual(afterPinch.minY,fitted.minY,accuracy:1)
+      XCTAssertEqual(afterPinch.width,fitted.width,accuracy:1)
+      XCTAssertEqual(afterPinch.height,fitted.height,accuracy:1)
       screenshot("page-ink-journey-\(iteration)-settled")
     }
   }

@@ -448,7 +448,7 @@ enum NotebookAttentionProjection {
 
   static func capture(start: CGPoint, end: CGPoint, model: NotebookAppModel, presence: SessionPresence,
     cohort: SceneCompositionCohort, installedInk: [SurfaceID: SpatialInkInstalledSource], itemID: UUID? = nil,
-    selectedElements: [EditableElementReference]? = nil,
+    selectedElements: [EditableElementReference]? = nil, compositeRegion: Bool = false,
     acceptsFirstFragment: (NotebookAttentionSelection.Fragment) -> Bool = { _ in true }) -> NotebookAttentionSelection? {
     guard let sources = contactSources(model:model,presence:presence,cohort:cohort) else { return nil }
     let fragments: [NotebookAttentionSelection.Fragment]
@@ -483,7 +483,9 @@ enum NotebookAttentionProjection {
     } else {
       fragments = itemID.map { id in
         fragment(start:start,end:end,sources:sources,presence:presence,ownerID:id,dragged:true).map { [$0] } ?? []
-      } ?? Self.fragments(start:start,end:end,sources:sources,presence:presence)
+      } ?? (compositeRegion && presence.mode == .board
+        ? fragment(start:start,end:end,sources:sources,presence:presence,dragged:true).map { [$0] } ?? []
+        : Self.fragments(start:start,end:end,sources:sources,presence:presence))
     }
     // A contact owner can decline this resolved source before borrowing or
     // copying pixels. In particular, a document link cannot become an element

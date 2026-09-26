@@ -240,3 +240,16 @@ test('region selection keeps its polygon instead of becoming an unknown UI choic
     region:[{x:0,y:0},{x:100,y:0},{x:60,y:100}],worldOrigin:{tileX:1000000,tileY:0,localX:0,localY:0}}};
   assert.deepEqual(readDataSchemas.selection.parse(value),value);
 });
+
+test('region selection publication accepts all 8192 contour points and rejects overflow',()=>{
+  const id='11111111-1111-4111-8111-111111111111';
+  const region=Array.from({length:8192},(_,index)=>{
+    const angle=index*2*Math.PI/8192;
+    return {x:200+100*Math.cos(angle),y:200+100*Math.sin(angle)};
+  });
+  const value={status:'known',deviceID:id,sessionID:id,generation:1,selection:{id,kind:'region',
+    surface:{kind:'board',id},target:{kind:'board',id},resolving:false,region}};
+  assert.deepEqual(readDataSchemas.selection.parse(value),value);
+  assert.equal(readDataSchemas.selection.safeParse({...value,
+    selection:{...value.selection,region:[...region,{x:301,y:200}]}}).success,false);
+});

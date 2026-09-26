@@ -1147,7 +1147,7 @@
                               },
                               "region": {
                                 "minItems": 3,
-                                "maxItems": 4096,
+                                "maxItems": 8192,
                                 "type": "array",
                                 "items": {
                                   "$ref": "#/$defs/__schema24"
@@ -5817,7 +5817,7 @@
                           },
                           "region": {
                             "minItems": 3,
-                            "maxItems": 4096,
+                            "maxItems": 8192,
                             "type": "array",
                             "items": {
                               "$ref": "#/$defs/__schema39"
@@ -10576,7 +10576,7 @@
                           },
                           "region": {
                             "minItems": 3,
-                            "maxItems": 4096,
+                            "maxItems": 8192,
                             "type": "array",
                             "items": {
                               "$ref": "#/$defs/__schema39"
@@ -32630,7 +32630,7 @@
                         },
                         "region": {
                           "minItems": 3,
-                          "maxItems": 4096,
+                          "maxItems": 8192,
                           "type": "array",
                           "items": {
                             "$ref": "#/$defs/__schema24"
@@ -44285,7 +44285,7 @@
                     },
                     "region": {
                       "minItems": 3,
-                      "maxItems": 4096,
+                      "maxItems": 8192,
                       "type": "array",
                       "items": {
                         "$ref": "#/$defs/__schema8"

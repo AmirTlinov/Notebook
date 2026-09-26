@@ -660,7 +660,11 @@ final class IPadPageTurnController: UIViewController {
     hostID: UUID
   ) -> AnyView {
     let sourceRevision = sequenceRevision
-    let readiness = PageTurnReadiness(activity: pageTurnActivity, pageIndex: index, onFailure: { [weak self] failure in
+    let readiness = PageTurnReadiness(activity: pageTurnActivity, pageIndex: index, isInActiveTurn: { [weak self] in
+      guard let self, self.sequenceRevision == sourceRevision,
+        let controller = self.controllers[index], controller.hostID == hostID else { return false }
+      return self.sheetController.containsInActiveTurn(controller)
+    }, onFailure: { [weak self] failure in
       guard let self, self.sequenceRevision == sourceRevision, self.controllers[index]?.hostID == hostID else { return }
       self.preparationFailures[index] = failure
       self.publishDocumentStatus()

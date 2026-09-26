@@ -416,7 +416,7 @@ final class SceneRenderResourcesTests: XCTestCase {
 
   @MainActor
   func testVisibleProgramsCannotPermanentlyOccupyTheRasterExecutor() async throws {
-    let resources = SceneRenderResources()
+    let resources = SceneRenderResources(maximumWebSurfaces:6)
     var programs: [WebSurfaceLease] = []
     for _ in 0..<5 { programs.append(try await resources.acquireWebSurface(priority: .liveProgram)) }
     defer { programs.forEach { $0.release() } }
@@ -747,7 +747,7 @@ final class SceneRenderResourcesTests: XCTestCase {
 
   @MainActor
   func testFullPassiveQueueLeavesTwoSlotsForTheCurrentPageAndInput() async throws {
-    let resources = SceneRenderResources(maximumPendingWebRequests: 1)
+    let resources = SceneRenderResources(maximumWebSurfaces:6, maximumPendingWebRequests:1)
     var passive: [WebSurfaceLease] = []
     for _ in 0..<4 { passive.append(try await resources.acquireWebSurface(priority: .neighbor)) }
     let waiting = Task { try await resources.acquireWebSurface(priority: .visible) }

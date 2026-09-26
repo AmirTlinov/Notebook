@@ -72,11 +72,12 @@ public struct CodexMessage: Codable, Equatable, Sendable, Identifiable {
   public let role: Role
   public let text: String
   public let isTruncated: Bool
+  public let contentRevision: String?
   /// Display labels only. They do not grant access or turn a Mac path into an
   /// iPad URL; the native Codex item remains the attachment owner.
   public let attachments: [String]?
   public let phase: String?
-  public init(id: String, turnID: String, clientID: String?, role: Role, text: String, isTruncated: Bool = false, activity: Activity? = nil, attachments: [String]? = nil, phase: String? = nil) { self.activity = activity; self.isTruncated = isTruncated; self.id = id; self.turnID = turnID; self.clientID = clientID; self.role = role; self.text = text; self.attachments = attachments; self.phase = phase }
+  public init(id: String, turnID: String, clientID: String?, role: Role, text: String, isTruncated: Bool = false, contentRevision: String? = nil, activity: Activity? = nil, attachments: [String]? = nil, phase: String? = nil) { self.activity = activity; self.contentRevision = contentRevision; self.isTruncated = isTruncated; self.id = id; self.turnID = turnID; self.clientID = clientID; self.role = role; self.text = text; self.attachments = attachments; self.phase = phase }
 
 }
 
@@ -103,8 +104,11 @@ extension CodexMessage {
       let text = prefix(item.text, bytes: textBudget)
       let detail = item.activity?.detail.map { prefix($0, bytes: available - text.utf8.count) }
       let activity = item.activity.map { Activity(kind: $0.kind, status: $0.status, detail: detail) }
+      let shortened = text != item.text || detail != item.activity?.detail || attachments != item.attachments
+      guard shortened else { return item }
+      let digest = item.contentRevision ?? (try? CodexMessageTransfer.encode(item)).map(CodexMessageTransfer.digest)
       return CodexMessage(id: item.id, turnID: item.turnID, clientID: item.clientID, role: item.role,
-        text: text, isTruncated: item.isTruncated || text != item.text || detail != item.activity?.detail || attachments != item.attachments, activity: activity, attachments: attachments, phase: item.phase)
+        text: text, isTruncated: true, contentRevision: digest, activity: activity, attachments: attachments, phase: item.phase)
     }
   }
 }
@@ -328,9 +332,11 @@ public enum NotebookChatQuery: Codable, Equatable, Sendable {
   case activity(threadIDs: [String])
   case conversation(threadID: String)
   case history(threadID: String, cursor: String?)
+  case message(CodexMessageRead)
 }
 
 public enum NotebookChatReply: Codable, Equatable, Sendable {
+  case message(CodexMessageReadReply)
   case requestDetails(CodexUserRequest)
   case account(CodexAccountState)
   case dictation(NotebookDictationState)
@@ -355,6 +361,7 @@ public struct NotebookChatEnvelope: Codable, Equatable, Sendable {
   public init(id: UUID = UUID(), body: Body) { self.id = id; self.body = body }
   public func isValid(from deviceID: UUID) -> Bool {
     guard let data = try? JSONEncoder().encode(self), data.count <= 192 * 1024 else { return false }
+    if case .request(.message(let query)) = body { return query.isValid }
     if case .request(.dictation(let query)) = body { return query.isValid }
     if case .reply(.dictation(let state)) = body { return state.isValid }
     if case .request(.file(let query)) = body { return query.isValid }

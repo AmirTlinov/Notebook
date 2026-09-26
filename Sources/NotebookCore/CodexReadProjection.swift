@@ -23,7 +23,15 @@ public enum CodexTranscript {
     for item in messages {
       if lastShared == nil, item.id == boundary { result += pending; pending = [] }
       result += before[item.id] ?? []
-      result.append(preferIncoming ? updates[item.id] ?? item : item)
+      if let incoming = updates[item.id] {
+        // A repeated bounded header cannot replace the exact body already
+        // assembled for this same native content revision.
+        if !item.isTruncated, incoming.isTruncated, item.contentRevision == incoming.contentRevision {
+          result.append(item)
+        } else if item.isTruncated, !incoming.isTruncated, item.contentRevision == incoming.contentRevision {
+          result.append(incoming)
+        } else { result.append(preferIncoming ? incoming : item) }
+      } else { result.append(item) }
       if item.id == lastShared { result += pending; pending = [] }
     }
     return result + pending

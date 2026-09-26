@@ -132,13 +132,13 @@ struct CodexDisplayProjectionTests {
     let noRoots = try CodexProjectTaskCursor(cursor: nil, project: CodexProject(id: "id", name: "name", roots: []))
     #expect(noRoots.foldersDone); #expect(!noRoots.membersDone)
   }
-  @Test func nativeActivityDetailsNameTheirExcerpt() throws {
+  @Test func nativeActivityDetailsRemainCompleteUntilTransport() throws {
     let item: JSONValue = .object(["id": .string("command"), "type": .string("commandExecution"),
       "command": .string("test"), "aggregatedOutput": .string(String(repeating: "x", count: 9000)), "status": .string("completed")])
     let display = try #require(CodexAppServerState.displayMessage(item, turnID: "turn"))
-    #expect(display.activity?.detail?.count == 8192); #expect(display.isTruncated)
+    #expect(display.activity?.detail?.count == 9006); #expect(!display.isTruncated)
     let page = CodexMessage.transportPage([display])
-    #expect(page[0].isTruncated)
+    #expect(!page[0].isTruncated)
   }
   @Test func transportPreservesAllItemsAndNamesEveryTextExcerpt() throws {
     let items = (0..<32).map { i in CodexMessage(id: "item-\(i)", turnID: "turn", clientID: nil, role: .assistant,

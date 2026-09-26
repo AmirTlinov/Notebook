@@ -1,0 +1,52 @@
+{
+  "format": 1,
+  "sealedAt": "2026-09-26T12:25:44.987888+00:00",
+  "sourceRevision": "487530e0e8bf456c1a5da44e651704254d09d3a6",
+  "runs": {
+    "mac": {
+      "result": "Passed",
+      "passed": 28,
+      "failed": 0,
+      "skipped": 0,
+      "runtimeWarnings": [],
+      "sourceSHA256": "2e7fccc20390b60b5599a0a7202583e2cad16c6ee6fa24d880ed851a5cca1c46",
+      "sourceMapsEqual": true,
+      "failures": []
+    },
+    "ipad-compile-fixed": {
+      "result": "Failed",
+      "passed": 15,
+      "failed": 1,
+      "skipped": 0,
+      "runtimeWarnings": [],
+      "sourceSHA256": "afb1070fbb99cd810cf36779d483fdf8725cbfbe64f07bc01d02d2c2dbaa2673",
+      "sourceMapsEqual": true,
+      "failures": [
+        {
+          "failureText": "XCTAssertLessThan failed: (\"0.547499375 seconds\") is not less than (\"0.5 seconds\") - First local paint cannot wait for the full 100k Boolean contour",
+          "targetName": "NotebookTests",
+          "testIdentifier": 1,
+          "testIdentifierString": "InkMaterialCanvasTests/testColdCapturedMaskShowsOneHundredThousandMeasurementsWithoutBooleanPreparation()",
+          "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/InkMaterialCanvasTests/testColdCapturedMaskShowsOneHundredThousandMeasurementsWithoutBooleanPreparation",
+          "testName": "testColdCapturedMaskShowsOneHundredThousandMeasurementsWithoutBooleanPreparation()"
+        }
+      ]
+    }
+  },
+  "pretestCompileFailure": "ipad: a new XCTest used a nonexistent JSONValue.string property; fixed with enum pattern matching before any iPad tests executed.",
+  "imagesReviewed": [
+    "first-chat-board-mounted",
+    "first-chat-board-durable-native-image",
+    "first-chat-page-mounted",
+    "first-chat-page-durable-native-image"
+  ],
+  "openImageFinding": "Board framing agrees; page center marker agrees but page composition bounds differ visually. Native PASS proves the marker, not full viewport framing; investigated separately.",
+  "limits": [
+    "100k cold material remains547.499ms vs500ms and is not cleared.",
+    "Raw Redo passed this execution without a renderer timing fix; previous120.965ms failure is retained, not dismissed.",
+    "No UI gestures executed on physical iPad; selected Simulator gestures and full acceptance pending."
+  ],
+  "evidenceDirectory": "/Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/.build/notebook-architecture-repair/evidence-2026-09-25/user-ux-106-focused",
+  "manifestSHA256": "920232c494e62aa70e28226a73914aab03848ca9e016af92dbef7aa95ef32d7d",
+  "sealedFileCount": 463
+}

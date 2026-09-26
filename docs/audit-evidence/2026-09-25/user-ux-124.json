@@ -1,0 +1,34 @@
+{
+  "format": 1,
+  "date": "2026-09-26",
+  "issue": "GUI-306",
+  "scope": "Focused physical and Mac native checks, not final acceptance",
+  "sourceSHA256": "e8cfb081f548d5f43a87d21fa636e0ad39aa29ada203c5bbf888a2f45d22854b",
+  "sourceUnchanged": true,
+  "evidencePack": {
+    "evidenceDirectory": "/Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/.build/notebook-architecture-repair/evidence-2026-09-25/user-ux-124",
+    "manifestSHA256": "4845acf10f742946f4b31dea00e34b0cde4e9a9d4b088d99e2989f0576ce1e3a",
+    "sealedFileCount": 213
+  },
+  "results": {
+    "ipad": {
+      "result": "Passed",
+      "passedTests": 2,
+      "failedTests": 0,
+      "skippedTests": 0,
+      "runtimeWarnings": []
+    },
+    "mac": {
+      "result": "Passed",
+      "passedTests": 32,
+      "failedTests": 0,
+      "skippedTests": 0,
+      "runtimeWarnings": []
+    }
+  },
+  "regressions": [
+    "Identical initial message envelope reuses its admitted immutable transfer and exact part0, including native growth; intentional new envelope replaces it; peer/generation/collision boundaries preserved.",
+    "Dirty accepted finger/lift waits for its own page; cancelled cold finger releases immediately without a capture or revival.",
+    "Entire affected Mac Sidecar suite."
+  ]
+}

@@ -96,14 +96,18 @@ final class PageTurnReadiness {
   var rasterContext: PageRasterPreparation.Context? {
     activity.map { .init(owner: $0.rasters, pageIndex: pageIndex) }
   }
+  /// The native motion owns its live source and underlay, independently of next-page preparation.
+  let isInActiveTurn: @MainActor () -> Bool
   private let handler: @MainActor (Bool) -> Void
   private let failureHandler: @MainActor (PageTurnPreparationFailure) -> Void
 
   init(activity: PageTurnActivity? = nil, pageIndex: Int = 0,
+    isInActiveTurn: @escaping @MainActor () -> Bool = { false },
     onFailure: @escaping @MainActor (PageTurnPreparationFailure) -> Void = { _ in },
     _ handler: @escaping @MainActor (Bool) -> Void) {
     self.activity = activity
     self.pageIndex = pageIndex
+    self.isInActiveTurn = isInActiveTurn
     self.handler = handler
     failureHandler = onFailure
   }

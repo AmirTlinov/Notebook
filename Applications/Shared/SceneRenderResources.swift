@@ -342,9 +342,16 @@ final class SceneRenderResources {
   private(set) var rasterAdmissionGeneration: UInt64 = 0
   @ObservationIgnored private var admissionNotification: Task<Void, Never>?
   @ObservationIgnored private var reclamationOwners: [UUID: @MainActor () -> [SceneResourceReclamationCandidate]] = [:]
-  @ObservationIgnored private var pendingReclamations: Set<UUID> = []
+  @ObservationIgnored private var pendingReclamations: [UUID: Task<Void, Never>] = [:]
   @ObservationIgnored private var reclamationNotification: Task<Void, Never>?
   var pendingReclamationCount: Int { pendingReclamations.count }
+
+  /// Join only releases already in progress, not an open-ended memory wait.
+  /// Cancelling a capture never cancels the GPU work that owns these bytes.
+  func finishPendingReclamations() async {
+    let pending = Array(pendingReclamations.values)
+    for task in pending { await task.value }
+  }
   @ObservationIgnored private var isReclaimingIdleResources = false
   @ObservationIgnored weak var documentShellPreparation: DocumentShellPreparation?
   @ObservationIgnored private var isReclaimingIdleWeb = false
@@ -1212,11 +1219,10 @@ final class SceneRenderResources {
         let completion = candidate.release()
         isReclaimingIdleResources = false
         if let completion {
-          pendingReclamations.insert(candidate.id)
-          Task { @MainActor [weak self] in
+          pendingReclamations[candidate.id] = Task { @MainActor [weak self] in
             await completion.value
             guard let self else { return }
-            pendingReclamations.remove(candidate.id)
+            pendingReclamations[candidate.id] = nil
             scheduleAdmissionNotification(before)
           }
         }

@@ -944,6 +944,9 @@ final class NotebookAppModel {
 
     private(set) var chat: NotebookChatController?
     @ObservationIgnored private var chatSubmissionTask: Task<Void, Never>?
+    @ObservationIgnored private var chatSubmissionError: String?
+    @ObservationIgnored private var pendingChatSubmission: (computer: UUID?, destination: NotebookChatController.MessageDestination,
+      text: String, steeringTurn: String?, context: ChatSubmissionContext)?
   #endif
 
   private(set) var actionCue: String?
@@ -4744,9 +4747,13 @@ final class NotebookAppModel {
     @discardableResult func sendChatMessage(steering: Bool = false, source: ChatMessageSource = .draft, context captured: ChatSubmissionContext? = nil, onSaved: (@MainActor (Bool) -> Void)? = nil) -> Task<Void, Never>? {
       guard !isClosing, let chat, !isSavingAgentQuestion,
         captured != nil || !selectionSession.isResolvingContext else { onSaved?(false); return nil }
+      var submittedContext = captured
       if case .draft = source {
         guard chat.canSendDraft else { onSaved?(false); return nil }
-        if chat.browsesChats, !chat.beginDraft(project: nil) { onSaved?(false); return nil }
+        if chat.browsesChats {
+          submittedContext = submittedContext ?? captureChatSubmissionContext(chat)
+          guard chat.beginDraft(project:nil) else { onSaved?(false); return nil }
+        }
       }
       let destination = chat.messageDestination, submittedThread = destination.threadID
       let submittedText: String, dictationID: UUID?
@@ -4763,33 +4770,75 @@ final class NotebookAppModel {
       let submittedComputer = chat.computerID
       let submittedTurn = steering ? chat.conversation?.activeTurnID : nil
       if steering && submittedTurn == nil { onSaved?(false); return nil }
+      if let chatSubmissionError, agentRequestError == chatSubmissionError { agentRequestError = nil }
+      chatSubmissionError = nil
       isSavingAgentQuestion = true
-      let captured = captured ?? captureChatSubmissionContext(chat)
-      let laser = submittedThread.map { laserContext.take(scope:.init(computer:submittedComputer,thread:$0)) } ?? []
+      let previous = pendingChatSubmission
+      let keepsIntent = previous.map { pending in
+        pending.computer == submittedComputer && pending.destination == destination
+          && pending.text == submittedText && pending.steeringTurn == submittedTurn
+          && pending.context.attachments == chat.attachments
+          && pending.context.selectionID == selectionSession.id
+          && pending.context.pointing.intentGeneration == laserContext.intentGeneration
+          && (submittedContext == nil || pending.context === submittedContext)
+      } ?? false
+      let captured = keepsIntent ? previous!.context : submittedContext ?? captureChatSubmissionContext(chat)
+      laserContext.reserve(captured.pointing)
+      laserContext.rebind(captured.pointing,to:chat.pointingScope)
       let task = Task { [self] in
         var saved = false
-        defer { isSavingAgentQuestion = false; chatSubmissionTask = nil; onSaved?(saved) }
+        defer {
+          laserContext.finish(captured.pointing, consumed:saved)
+          if saved { pendingChatSubmission = nil }
+          isSavingAgentQuestion = false; chatSubmissionTask = nil; onSaved?(saved)
+        }
         do {
-          let context = try await captured.prepare()
-          let images = Array((await NotebookLaserContext.images(laser)).prefix(max(0,16-captured.attachments.count)))
-          let author = actorID
-          let imageAttachments = images.isEmpty ? [] : try await persistence.submit(publishesChanges:true) {
-            try $0.saveChatImageAttachments(images,author:author)
+          if !keepsIntent, let previous {
+            let recovery = try await chat.reconcileFailedMessageForChangedIntent()
+            pendingChatSubmission = nil
+            if recovery == .saved {
+              // Confirm the prior immutable message, not this changed draft.
+              // Its exact old IDs cannot consume newer pointing.
+              laserContext.finish(previous.context.pointing,consumed:true)
+              return
+            }
           }
-          let attachments = captured.attachments + imageAttachments
+          let context = try await captured.prepare()
+          let attachments = captured.attachments + context.images
+          guard CodexInputAttachment.valid(attachments) else {
+            throw CollaborationError("chat_image_limit", "В сообщение можно включить не более пяти изображений и шестнадцати вложений. Уберите лишние перед отправкой.")
+          }
           guard chat.computerID == submittedComputer else { throw NotebookTransportError.disconnected }
+          pendingChatSubmission = (submittedComputer,destination,submittedText,submittedTurn,captured)
           saved = await chat.sendMessage(to: destination, text: submittedText, context: context.text,
             attentionContextID: context.attentionContextID, steeringTurnID: submittedTurn, attachments: attachments,
             dictationID: dictationID)
-        } catch { agentRequestError = error.localizedDescription }
+        } catch {
+          let message = (error as? NotebookStorageError) == .limitExceeded("chat images")
+            ? "В сообщение можно включить не более пяти изображений общим размером 4 МиБ. Уберите лишние указания перед отправкой."
+            : error.localizedDescription
+          chatSubmissionError = message; agentRequestError = message
+        }
       }
       chatSubmissionTask = task
       return task
     }
 
-    struct ChatSubmissionContext {
+    @MainActor final class ChatSubmissionContext {
+      typealias Prepared = (text: String, attentionContextID: UUID?, images: [CodexInputAttachment])
+      let selectionID: UUID
       let attachments: [CodexInputAttachment]
-      let prepare: @MainActor () async throws -> (text: String, attentionContextID: UUID?)
+      let pointing: NotebookLaserContext.Batch
+      private let preparation: @MainActor () async throws -> Prepared
+      private var prepared: Prepared?
+      init(selectionID: UUID, attachments: [CodexInputAttachment], pointing: NotebookLaserContext.Batch,
+        prepare: @escaping @MainActor () async throws -> Prepared) {
+        self.selectionID = selectionID; self.attachments = attachments; self.pointing = pointing; preparation = prepare
+      }
+      func prepare() async throws -> Prepared {
+        if let prepared { return prepared }
+        let result = try await preparation(); prepared = result; return result
+      }
     }
     /// The send gesture freezes attention and attachments before transcription
     /// or image rendering can suspend. Both text and dictation use this owner.
@@ -4800,7 +4849,23 @@ final class NotebookAppModel {
       retainedSource?.resumePrograms()
       let capturedPresence = presence, capturedWorkspace = workspaceHeader?.workspaceID
       let capturedFile = chat.files.window.isOpen ? chat.files.document : nil
-      return .init(attachments: chat.attachments) { [self] in
+      let pointing = laserContext.snapshot(scope: chat.pointingScope)
+      // Reuse the installed attention owner. No offscreen render or later
+      // camera can substitute pixels for the view at the Send gesture.
+      let viewport: NotebookAttentionSelection?
+      if question == nil, pointing.isEmpty, capturedFile == nil,
+        let presence = capturedPresence, let cohort = compositionTiles.published {
+        viewport = NotebookAttentionProjection.capture(start:.zero,
+          end:.init(x:presence.viewport.x,y:presence.viewport.y),model:self,presence:presence,
+          cohort:cohort,installedInk:compositionTiles.surfaceRegistry.installedSources(),compositeRegion:true)?.freezingSubmissionVisuals()
+      } else { viewport = nil }
+      let persistence = self.persistence, actor = actorID, attachments = chat.attachments
+      return .init(selectionID: selectionSession.id, attachments: attachments, pointing: pointing) {
+        var imageAttachments: [CodexInputAttachment] = []
+        var imageAdmissionValidated = false
+        var viewReferences: [CollaborationReference] = []
+        var viewUnavailable: String?
+
         if let question {
           let visual = try await retained?.renderPinnedImages(references: question.references)
           try await persistence.submit(publishesChanges: true) { store in
@@ -4814,6 +4879,47 @@ final class NotebookAppModel {
             }
             try store.saveAttentionEvidence(sources, contextID: question.contextID)
           }
+          imageAttachments = try await persistence.submit { try $0.chatAttentionAttachments(contextID:question.contextID) }
+        }
+        let pointingImages = try await NotebookLaserContext.images(pointing)
+        if !pointingImages.isEmpty {
+          let existingAttachments = attachments + imageAttachments
+          imageAttachments += try await persistence.submit(publishesChanges:true) {
+            try $0.saveChatImageAttachments(pointingImages,author:actor,existingAttachments:existingAttachments)
+          }
+          imageAdmissionValidated = true
+          viewReferences = pointingImages.map(\.reference)
+        } else if question == nil, capturedFile == nil {
+          if let viewport {
+            do {
+              let ready = try await viewport.resolvingAcceptedCommands()
+              let references = try await Task.detached { try ready.resolvedReferences() }.value
+              let rendered = try await ready.renderPinnedImages(references:references)
+              let images = try references.map { reference -> NotebookChatImage in
+                guard let image = rendered.images[reference.id] else {
+                  throw CollaborationError("view_pixels_missing", rendered.unavailable[reference.id] ?? "Видимое изображение ещё не готово.")
+                }
+                return .init(reference:reference,image:image)
+              }
+              imageAttachments = try await persistence.submit(publishesChanges:true) {
+                try $0.saveChatImageAttachments(images,author:actor,name:"Текущий вид Notebook",existingAttachments:attachments)
+              }
+              imageAdmissionValidated = true
+              viewReferences = references
+            } catch { viewUnavailable = error.localizedDescription }
+          } else { viewUnavailable = "Видимое изображение ещё не установлено. Presence описывает положение камеры, но не доказывает видимые пиксели." }
+        }
+        let combinedAttachments = attachments + imageAttachments
+        if !imageAdmissionValidated, combinedAttachments.contains(where: { $0.kind == .image }) {
+          try await persistence.submit { store in
+            do {
+              guard try store.resolvedChatImageAttachments(combinedAttachments) != nil else {
+                throw CollaborationError("attention_pixels_missing", "Изображение выбранного фрагмента не готово. Укажите его снова.")
+              }
+            } catch NotebookStorageError.limitExceeded("chat images") {
+              throw CollaborationError("chat_image_limit", "В сообщение можно включить не более пяти изображений общим размером 4 МиБ. Уберите лишние указания перед отправкой.")
+            }
+          }
         }
         let context: JSONValue = .object([
           "workspaceID": capturedWorkspace.map { .string($0.uuidString) } ?? .null,
@@ -4821,14 +4927,16 @@ final class NotebookAppModel {
           "file": try capturedFile.map { try .encode($0.address) } ?? .null,
           "fileLink": capturedFile.map { .string(NotebookCodeLink.file($0.address, line: 1).url.absoluteString) } ?? .null,
           "fileHasLocalDraft": capturedFile.map { .bool($0.text != $0.base) } ?? .null,
+          "visibleImages": try .encode(viewReferences),
+          "visibleImageUnavailable": viewUnavailable.map(JSONValue.string) ?? .null,
           "attention": try question.map { question in
             .object(["contextID": .string(question.contextID.uuidString),
               "entryID": .string(question.entryID.uuidString), "references": try .encode(question.references)])
           } ?? .null,
-          "meaning": .string("Read frozen attention inside notebook_execute with await nb.attention({contextID, referenceID}); use emitImage(result.data.artifact) when present. notebook_context gives compact current context; Reads return {data,basis,coverage,cursor}; nb.transaction(key,{base:snapshot.basis,summary,operations}) returns immutable ActionResult. Consult nb.help(topic) only when needed. Shared Notebook workspace. Selection directs attention, not permissions. Use nb.reference, nb.transaction, nb.undo and nb.action for source/version checks, undoable edits and separate saved/received/shown receipts. For code notes use nb.code and the appendInkStroke operation on codeFragment. Use notebook://code/UUID for the read fragment, or fileLink with the required 1-based line query, in Markdown references. These links scroll only the document. A local draft is not yet the working file on Mac. Do not move the board camera.")
+          "meaning": .string("Attached images show the exact frozen Notebook view or explicit pointing at submission; presence alone is not visual evidence. If visibleImageUnavailable is non-null, say that the image was unavailable instead of claiming to see it. Read frozen attention inside notebook_execute with await nb.attention({contextID, referenceID}); use emitImage(result.data.artifact) when present. notebook_context gives compact current context; Reads return {data,basis,coverage,cursor}; nb.transaction(key,{base:snapshot.basis,summary,operations}) returns immutable ActionResult. Consult nb.help(topic) only when needed. Shared Notebook workspace. Selection directs attention, not permissions. Use nb.reference, nb.transaction, nb.undo and nb.action for source/version checks, undoable edits and separate saved/received/shown receipts. For code notes use nb.code and the appendInkStroke operation on codeFragment. Use notebook://code/UUID for the read fragment, or fileLink with the required 1-based line query, in Markdown references. These links scroll only the document. A local draft is not yet the working file on Mac. Do not move the board camera.")
         ])
         let text = String(decoding: try JSONEncoder().encode(context), as: UTF8.self)
-        return (text, question?.contextID)
+        return (text, question?.contextID, imageAttachments)
       }
     }
   #endif
@@ -5108,8 +5216,8 @@ final class NotebookAppModel {
     }
   }
 
-  func rememberReturnPlace() {
-    guard let presence, returnPlaces.last?.presence != presence else { return }
+  func rememberReturnPlace(_ captured: SessionPresence? = nil) {
+    guard let presence = captured ?? presence, returnPlaces.last?.presence != presence else { return }
     returnPlaces.append(.init(presence: presence, pageID: presence.notebookPageID,
       reading: presence.focusedItemID.flatMap { documentReadingPositions[$0] }))
     returnPlaces = Array(returnPlaces.suffix(32))
@@ -5921,8 +6029,11 @@ final class NotebookAppModel {
     guard (presence.mode == .page || presence.mode == .document), presence.openProgress == 1,
       let id = presence.focusedItemID,
       let center = boardHierarchy?.board(presence.boardID)?.focusedCenter(of: id) else { return presence }
-    return presence.replacingCamera(itemGeometry(id).readingCamera(presence.camera,
-      centeredOn: center, viewport: presence.viewport))
+    let geometry = itemGeometry(id)
+    let camera = presence.mode == .page
+      ? SpatialCamera(center: center, scale: geometry.fitScale(viewport: presence.viewport))
+      : geometry.readingCamera(presence.camera, centeredOn: center, viewport: presence.viewport)
+    return presence.replacingCamera(camera)
     #else
     return presence
     #endif

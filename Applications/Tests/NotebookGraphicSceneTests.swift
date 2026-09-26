@@ -527,6 +527,115 @@ import XCTest
     XCTAssertEqual(model.selectionSession.element, .spatial(boardID: board, elementID: text.id))
   }
 
+  func testCompositionPreparationKeepsTheVisibleWindowAndExactDestinationIdentity() {
+    let board = UUID(), item = UUID(), page = UUID()
+    let visible = SessionPresence(boardID: board, mode: .board,
+      camera: .init(center: .init(x: -3000, y: 800), scale: 0.1), viewport: .init(x: 834, y: 1194))
+    let target = SessionPresence(boardID: board, mode: .page,
+      camera: .init(center: .init(x: 2000, y: 500), scale: 1), viewport: .init(x: 1194, y: 834),
+      focusedItemID: item, openProgress: 1, selectedItemID: item, notebookPageID: page)
+    let preparation = NotebookWorkspaceCompositionRequest.preparationPresence(target: target, visible: visible)
+    XCTAssertEqual(preparation.camera, visible.camera); XCTAssertEqual(preparation.viewport, visible.viewport)
+    XCTAssertEqual(preparation.focusedItemID, item); XCTAssertEqual(preparation.selectedItemID, item)
+    XCTAssertEqual(preparation.notebookPageID, page); XCTAssertEqual(preparation.mode, .page)
+    XCTAssertEqual(preparation.openProgress, 1)
+    XCTAssertEqual(NotebookWorkspaceCompositionRequest.preparationPresence(target: nil, visible: visible), visible)
+    let foreign = SessionPresence(boardID: UUID(), mode: .document, camera: target.camera,
+      viewport: target.viewport, focusedItemID: item, openProgress: 1, documentPageIndex: 7)
+    XCTAssertEqual(NotebookWorkspaceCompositionRequest.preparationPresence(target: foreign, visible: visible), foreign,
+      "A child/parent board's coordinates must not borrow the outgoing camera")
+  }
+
+  func testDoubleTapPreparationKeepsVisibleBoardGraphicsOutsideTheDestinationWindow() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("opening-coverage-\(UUID())")
+    let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false,
+      preferences: UserDefaults(suiteName: UUID().uuidString)!)
+    retainNotebookUntilTeardown(model, removing: root)
+    await model.start(pageSize: NotebookAppModel.defaultPageSize)
+    let workspace = try XCTUnwrap(model.workspace), itemID = workspace.selectedItemID
+    let board = workspace.rootBoardID, viewport = SpatialPoint(x: 834, y: 1194)
+    let center = try XCTUnwrap(model.boardHierarchy?.focusedCenter(of: itemID, in: board))
+    let saved = await model.finishPendingPersistence(); XCTAssertTrue(saved)
+    let before = try model.store.loadBoard(items: workspace.items)
+    var after = before
+    let colors = [SpatialInkColor(red: 1, green: 0, blue: 0), SpatialInkColor(red: 0, green: 0, blue: 1)]
+    let ids = ["opening-left", "opening-right"]
+    for (index, x) in [-3000.0, 3000].enumerated() {
+      let graphic = NotebookGraphic(shape: .rectangle, style: .init(stroke: colors[index], strokeWidth: 1, fill: colors[index]))
+      let element = SpatialElement(id: ids[index], surface: .board(board), kind: .graphic,
+        frame: .init(x: -100, y: -100, width: 200, height: 200), worldOrigin: center.offsetBy(x: x, y: 0),
+        source: "", graphic: graphic, stamp: .init(counter: 0, actor: model.actorID))
+      XCTAssertTrue(after.upsertElement(element, in: board, expected: nil, actor: model.actorID))
+    }
+    _ = try model.store.saveBoardEdits(before: before, after: after)
+    let origin = SessionPresence(boardID: board, mode: .board, camera: .init(center: center, scale: 0.1),
+      viewport: viewport, selectedItemID: itemID, notebookPageID: workspace.selectedPageID)
+    model.updatePresence(origin, settled: true)
+    await model.reloadExternalChanges()?.value
+    let window = try await mountNotebookScene(model)
+    let initial = try XCTUnwrap(model.compositionTiles.published)
+    XCTAssertTrue(Set(ids).isSubset(of: Set(initial.frame.workset(boardID: board).elements.map(\.id))))
+    let destination = SessionPresence(boardID: board, mode: .page,
+      camera: .init(center: center, scale: WorkspaceItemGeometry.notebook.fitScale(viewport: viewport)),
+      viewport: viewport, focusedItemID: itemID, openProgress: 1,
+      selectedItemID: itemID, notebookPageID: workspace.selectedPageID)
+    XCTAssertTrue(Set(ids).isDisjoint(with: Set(initial.frame.index.workset(presence: destination).elements.map(\.id))),
+      "The outgoing witnesses must lie outside the destination's preparation window")
+    let probes: [(CGPoint, NotebookUXObservation.Color)] = [(-3000.0, NotebookUXObservation.Color.red), (3000, .blue)].map { x, color in
+      let point = origin.camera.worldToScreen(center.offsetBy(x: x, y: 0), viewport: viewport)
+      return (.init(x: point.x, y: point.y), color)
+    }
+    _ = try await assertUX("opening-board-witnesses", since: .now, window: window) {
+      try NotebookUXObservation.Pixels(window: window).matches(probes)
+    }
+    var preparedBeforeMovement = false
+    var retainedBeforeMovement = false
+    var phases: [String] = []
+    model.compositionTiles.onPreparationPhase = { _, phase in
+      guard phase == "published", let cohort = model.compositionTiles.published,
+        cohort.plan.presentations[.board(board)]?.focusedItemID == itemID else { return }
+      let actual = model.presence
+      phases.append("published: camera=\(String(describing: actual?.camera)), entries=\(cohort.frame.workset(boardID: board).elements.map(\.id))")
+      if actual?.camera == origin.camera {
+        preparedBeforeMovement = true
+        retainedBeforeMovement = Set(ids).isSubset(of: Set(cohort.frame.workset(boardID: board).elements.map(\.id)))
+      }
+    }
+    defer {
+      model.compositionTiles.onPreparationPhase = nil
+      let evidence = XCTAttachment(string: phases.joined(separator: "\n"))
+      evidence.name = "double-tap-composition-coverage"; evidence.lifetime = .keepAlways; add(evidence)
+    }
+    let observer = try XCTUnwrap(window.gestureRecognizers?.compactMap { $0 as? NotebookContactObserver }.first)
+    let tap = SceneGraphicTouch(window: window)
+    tap.kind = .direct; tap.taps = 2; tap.point = .init(x: window.bounds.midX, y: window.bounds.midY)
+    let cover = try XCTUnwrap(window.hitTest(tap.point, with: UIEvent()) as? NotebookInteractionTouchView)
+    tap.sourceView = cover
+    let openingBegan = ContinuousClock.now
+    observer.touchesBegan([tap], with: UIEvent()); cover.touchesBegan([tap], with: UIEvent())
+    cover.touchesEnded([tap], with: UIEvent()); observer.touchesEnded([tap], with: UIEvent())
+    let deadline = openingBegan + NotebookUXObservation.opening
+    var lastOpeningState = ""
+    // Camera settlement and the installed paper are separate receipts. Both
+    // must arrive inside the original opening budget, not in one actor turn.
+    while true {
+      let settled = model.presence?.mode == .page && model.presencePhase == .settled
+      let presented = model.activePage.map { model.pagePresentations.isPresented($0) } == true
+      let state = "modelSettled=\(settled), exactPaperPresented=\(presented)"
+      if state != lastOpeningState {
+        phases.append("\(openingBegan.duration(to: .now)): \(state)"); lastOpeningState = state
+      }
+      if settled && presented || ContinuousClock.now >= deadline { break }
+      try await Task.sleep(for: .milliseconds(5))
+    }
+    XCTAssertLessThanOrEqual(openingBegan.duration(to: .now), NotebookUXObservation.opening)
+    XCTAssertTrue(preparedBeforeMovement, "The actual opening must prepare while its outgoing camera is still visible")
+    XCTAssertTrue(retainedBeforeMovement, "A prepared destination cannot evict the board sources still on screen")
+    XCTAssertEqual(model.presence?.mode, .page); XCTAssertEqual(model.presencePhase, .settled)
+    XCTAssertEqual(model.presence?.focusedItemID, itemID)
+    XCTAssertTrue(model.activePage.map { model.pagePresentations.isPresented($0) } == true)
+  }
+
   func testRestingHandDoesNotStrandDoubleTapOpeningBetweenBoardAndPaper() async throws {
     try await exerciseOpening(.doubleTap)
   }

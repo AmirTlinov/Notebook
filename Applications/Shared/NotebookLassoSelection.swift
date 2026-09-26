@@ -34,6 +34,7 @@ enum NotebookLassoInkSource: Sendable {
     let selectionFrame: PageRect
     let polygon: [SpatialPoint]
     let graphic: NotebookGraphic
+    let selectsWholeContacts: Bool
     /// Candidate traversal only; excludes exact semantic geometry preparation.
     let candidateSampleCount: Int
     let sourceSampleCount: Int
@@ -276,7 +277,8 @@ enum NotebookLassoInkSource: Sendable {
       return ids
     }
 
-    func selection(polygon: [SpatialPoint], surface: SurfaceID, origin queryOrigin: WorldPoint?, bounds: CGRect?) throws -> Result? {
+    func selection(polygon: [SpatialPoint], surface: SurfaceID, origin queryOrigin: WorldPoint?, bounds: CGRect?,
+      wholeContacts: Bool = false) throws -> Result? {
       guard surface == self.surface, polygon.count >= 3 else { return nil }
       let delta = origin.flatMap { o in queryOrigin.map { o.delta(to:$0) } } ?? .zero
       let polygon = polygon.map { SpatialPoint(x:$0.x+delta.x,y:$0.y+delta.y) }
@@ -330,13 +332,20 @@ enum NotebookLassoInkSource: Sendable {
       guard ink.isValid else { throw CollaborationError("selection_limit","Выделите меньшую часть рукописи.") }
       let clip = polygon.map { CGPoint(x:($0.x-frame.x)/frame.width,y:($0.y-frame.y)/frame.height) }
       guard ink.geometry.intersects(clip) else { return nil }
-      var selectedBox=region.intersection(box)
+      // A point's hit tolerance finds a contact; it is not an authored cut.
+      // The action directory, not a render chunk or intersected span, owns the
+      // whole measured body. Explicit region lassos keep their exact contour.
+      var selectedBox=wholeContacts ? box : region.intersection(box)
       if let bounds { selectedBox=selectedBox.intersection(bounds.offsetBy(dx:delta.x,dy:delta.y)) }
       guard !selectedBox.isNull,selectedBox.width > 0,selectedBox.height > 0 else { return nil }
+      let selectedPolygon=wholeContacts ? [
+        SpatialPoint(x:selectedBox.minX,y:selectedBox.minY),.init(x:selectedBox.maxX,y:selectedBox.minY),
+        .init(x:selectedBox.maxX,y:selectedBox.maxY),.init(x:selectedBox.minX,y:selectedBox.maxY)] : polygon
       return .init(frame:.init(x:frame.x-delta.x,y:frame.y-delta.y,width:frame.width,height:frame.height),
         selectionFrame:.init(x:selectedBox.minX-delta.x,y:selectedBox.minY-delta.y,width:selectedBox.width,height:selectedBox.height),
-        polygon:polygon.map { .init(x:$0.x-delta.x,y:$0.y-delta.y) },
+        polygon:selectedPolygon.map { .init(x:$0.x-delta.x,y:$0.y-delta.y) },
         graphic:.init(shape:.freehand,sourceInkIDs:chosen.sorted().map { entries[$0].id },freehand:ink),
+        selectsWholeContacts:wholeContacts,
         candidateSampleCount:examined,sourceSampleCount:sourceSampleCount)
     }
   }

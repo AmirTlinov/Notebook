@@ -33,6 +33,18 @@ struct NotebookWorkspacePresentation<Content: View>: UIViewControllerRepresentab
 /// hosting update that delivers them to its single preparation task.
 @MainActor
 struct NotebookWorkspaceCompositionRequest: Equatable {
+  /// Preparation admits the destination body, not its future camera window.
+  /// Same-board motion keeps the ordinary bounded coverage of the actual view;
+  /// another board has different world coordinates and retains its own demand.
+  static func preparationPresence(target: SessionPresence?, visible: SessionPresence) -> SessionPresence {
+    guard let target else { return visible }
+    guard target.boardID == visible.boardID else { return target }
+    return .init(boardID: target.boardID, mode: target.mode, camera: visible.camera,
+      viewport: visible.viewport, focusedItemID: target.focusedItemID,
+      openProgress: target.openProgress, documentPageIndex: target.documentPageIndex,
+      selectedItemID: target.selectedItemID, notebookPageID: target.notebookPageID)
+  }
+
   let presence: SessionPresence
   let generation: UUID?
   let publication: UInt64

@@ -136,6 +136,30 @@ final class NotebookChatRenderingTests: XCTestCase {
     _ = try await web.callAsyncJavaScript("await window.updateMessages({conversation:'fixture',reset:false,order:window.many.map(m=>m.id),upserts:[],removed:[],work:{turnID:'working',title:'Working',running:true},turnStatuses:{},focus:null})", arguments: [:], in: nil, contentWorld: .page)
     let countAfterStatus = try await web.evaluateJavaScript("window.parseCount") as? Int
     XCTAssertEqual(countAfterStatus, 1, "Status does not parse transcript bodies")
+    _ = try await web.callAsyncJavaScript("window.many[127].contentRevision='new-stream-revision';await window.fixtureMessages(JSON.stringify(window.many))",arguments:[:],in:nil,contentWorld:.page)
+    let countAfterHeader = try await web.evaluateJavaScript("window.parseCount") as? Int
+    XCTAssertEqual(countAfterHeader,1,"A changed transfer revision with an identical visible prefix does not rebuild Markdown")
+
+    _ = try await web.evaluateJavaScript("window.completedTextNode=document.querySelector('[data-item-id=\"many-127\"] .content p').firstChild;true")
+    for pending in [true,false] {
+      _ = try await web.callAsyncJavaScript("window.many[127].isTruncated=pending;await window.fixtureMessages(JSON.stringify(window.many))",
+        arguments:["pending":pending],in:nil,contentWorld:.page)
+      let controls = try await web.evaluateJavaScript("""
+        (()=>{const article=document.querySelector('[data-item-id="many-127"]');return {
+          parses:window.parseCount,typesets:window.typesetCounts,
+          sameTextNode:window.completedTextNode===article.querySelector('.content p').firstChild,
+          selection:window.getSelection().toString(),
+          load:article.querySelectorAll(':scope > .load-message').length,
+          save:article.querySelectorAll(':scope > .save-answer').length};})()
+        """) as? [String:Any]
+      XCTAssertEqual(controls?["parses"] as? Int,1,"Pending-body controls cannot parse an unchanged completed body")
+      XCTAssertEqual(controls?["typesets"] as? [Int],[1])
+      XCTAssertEqual(controls?["sameTextNode"] as? Bool,true)
+      XCTAssertEqual(controls?["selection"] as? String,"Message")
+      XCTAssertEqual(controls?["load"] as? Int,pending ? 1 : 0)
+      XCTAssertEqual(controls?["save"] as? Int,pending ? 0 : 1)
+    }
+
 
   }
 }

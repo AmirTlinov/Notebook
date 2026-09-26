@@ -47,10 +47,11 @@ final class DrawingResponsivenessTests: XCTestCase {
     proof.lifetime = .keepAlways; add(proof)
   }
 
-  func testPaperSelectionZoomAndEdgeTapsDoNotTurnPages() {
+  func testPaperSelectionPinchesAndEdgeTapsKeepTheFittedSheet() {
     continueAfterFailure = false
     let app = XCUIApplication()
     app.launchArguments = ["--notebook-drawing-responsiveness-fixture","--notebook-native-graphics-fixture","--notebook-native-graphic-page"]
+    app.launchArguments.append("--notebook-simulator-finger-gestures")
     launchPortraitFixture(app)
     let surface = app.otherElements["page-turn-surface"], paper = app.otherElements["paper-input"]
     let node = app.images["Узел +"]
@@ -66,20 +67,11 @@ final class DrawingResponsivenessTests: XCTestCase {
       app.coordinate(withNormalizedOffset:.init(dx:x,dy:0.72)).tap()
       XCTAssertEqual(surface.value as? String,page,"An edge tap cannot curl the sheet")
     }
-    node.pinch(withScale:1.6,velocity:0.7)
-    XCTAssertGreaterThan(paper.frame.width,originalPaper.width*1.25)
-    let zoomed = node.frame
-    let blank = app.coordinate(withNormalizedOffset:.init(dx:0.5,dy:0.72))
-    blank.press(forDuration:0.05,thenDragTo:blank.withOffset(.init(dx:70,dy:25)),withVelocity:.slow,thenHoldForDuration:0)
-    XCTAssertEqual(surface.value as? String,page,"A zoomed sheet owns single-finger camera motion")
-    XCTAssertEqual(node.frame.midX-zoomed.midX,70,accuracy:10)
-    XCTAssertEqual(node.frame.midY-zoomed.midY,25,accuracy:10)
-    let proof = XCTAttachment(screenshot:app.screenshot()); proof.name = "zoomed-paper-single-finger-pan"; proof.lifetime = .keepAlways; add(proof)
-    node.pinch(withScale:0.1,velocity:-2)
-    XCTAssertTrue(paper.waitForNonExistence(timeout:5))
-    let cover=app.descendants(matching:.any).matching(identifier:"workspace-item-7e7a1000-0000-4000-8000-000000000002").firstMatch
-    cover.doubleTap();XCTAssertTrue(paper.waitForExistence(timeout:5))
-    XCTAssertEqual(paper.frame.width,originalPaper.width,accuracy:3)
+    for scale in [1.6, 0.1] {
+      node.pinch(withScale:scale,velocity:scale > 1 ? 0.7 : -2)
+      XCTAssertEqual(paper.frame,originalPaper,"Notebook pinches cannot zoom or close the fitted page")
+      XCTAssertEqual(surface.value as? String,page)
+    }
     surface.swipeLeft()
     wait(for:[XCTNSPredicateExpectation(predicate:NSPredicate(format:"value BEGINSWITH 'Страница 2 из '"),object:surface)],timeout:3)
     surface.swipeRight()
@@ -2412,9 +2404,33 @@ final class DrawingResponsivenessTests: XCTestCase {
     let shot=XCTAttachment(screenshot:app.screenshot());shot.name="independent-geometry-tools";shot.lifetime = .keepAlways;add(shot)
   }
 
+  func testBlankWorkspaceTapKeepsTheExpandedChatVisibleAndInteractive() {
+    continueAfterFailure = false
+    let app = XCUIApplication(); app.launchArguments = ["--notebook-drawing-responsiveness-fixture"]
+    app.launchArguments.append("--notebook-simulator-finger-gestures")
+    launchPortraitFixture(app)
+    let paper = app.otherElements["paper-input"]
+    XCTAssertTrue(paper.waitForExistence(timeout: 5)); let frame = paper.frame
+    openChat(in: app)
+    let collapse = app.buttons["notebook-chat-toggle"]
+    let blank = app.coordinate(withNormalizedOffset: .init(dx: 0.04, dy: 0.55))
+    blank.tap()
+    XCTAssertTrue(waitUntil { !app.buttons["drawing-group"].isHittable })
+    XCTAssertTrue(collapse.isHittable, "Only the explicit collapse control closes an expanded conversation")
+    XCTAssertEqual(paper.frame, frame)
+    blank.tap()
+    XCTAssertTrue(waitUntil { app.buttons["drawing-group"].isHittable })
+    XCTAssertTrue(collapse.isHittable)
+    collapse.tap()
+    XCTAssertTrue(app.buttons["notebook-companion-compose"].waitForExistence(timeout: 3))
+    let proof = XCTAttachment(screenshot: app.screenshot())
+    proof.name = "chat-collapses-only-explicitly"; proof.lifetime = .keepAlways; add(proof)
+  }
+
   func testConfirmedBlankTapHidesChromeWithoutChangingPaperAndFirstClosesToolPanel() {
     continueAfterFailure=false
     let app=XCUIApplication();app.launchArguments=["--notebook-drawing-responsiveness-fixture"]
+    app.launchArguments.append("--notebook-simulator-finger-gestures")
     launchPortraitFixture(app)
     let paper=app.otherElements["paper-input"],bar=app.otherElements["notebook-top-bar"]
     XCTAssertTrue(paper.waitForExistence(timeout:5));let frame=paper.frame,ink=paper.value as? String
@@ -2459,6 +2475,55 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertEqual(chat.frame.height,toolbar.frame.height,accuracy:0.5)
     XCTAssertEqual(toolbar.frame.maxX,app.frame.maxX-18,accuracy:1)
     let proof=XCTAttachment(screenshot:app.screenshot());proof.name="compact-drawing-tools-toolbar";proof.lifetime = .keepAlways;add(proof)
+  }
+
+  func testPointerIsIndependentOfDrawingGroupAndKeepsItsSettings() {
+    continueAfterFailure = false
+    let app = XCUIApplication()
+    app.launchArguments = ["--notebook-drawing-responsiveness-fixture"]
+    launchPortraitFixture(app)
+    let toolbar = app.otherElements["notebook-top-bar"]
+    let drawing = app.buttons["drawing-group"], pointer = app.buttons["drawing-tool-laser"]
+    let options = app.descendants(matching:.any).matching(identifier:"drawing-tool-options").firstMatch
+    XCTAssertTrue(pointer.waitForExistence(timeout:5))
+    XCTAssertTrue(pointer.isHittable, "Pointer is a direct toolbar action, not a pen setting")
+    XCTAssertTrue(toolbar.frame.contains(pointer.frame))
+    XCTAssertEqual(app.buttons.matching(identifier:"drawing-tool-laser").count,1)
+    XCTAssertTrue(drawing.isSelected)
+
+    pointer.tap()
+    XCTAssertTrue(pointer.isSelected); XCTAssertFalse(drawing.isSelected)
+    XCTAssertFalse(options.exists, "Selecting a different tool must not require its settings")
+    pointer.tap()
+    let duration = app.sliders["laser-duration"]
+    XCTAssertTrue(duration.waitForExistence(timeout:3))
+    XCTAssertFalse(app.buttons["drawing-tool-pen"].exists)
+    XCTAssertFalse(app.buttons["drawing-tool-marker"].exists)
+    duration.adjust(toNormalizedSliderPosition:0.7)
+    let chosenDuration = duration.value as? String
+    dismissNotebookToolPanel(in:app)
+
+    drawing.tap()
+    XCTAssertTrue(drawing.isSelected); XCTAssertFalse(pointer.isSelected)
+    XCTAssertEqual(drawing.value as? String,"Ручка")
+    drawing.tap()
+    XCTAssertTrue(app.buttons["drawing-tool-marker"].waitForExistence(timeout:3))
+    XCTAssertFalse(options.buttons["drawing-tool-laser"].exists)
+    XCTAssertEqual(app.buttons.matching(identifier:"drawing-tool-laser").count,1)
+    app.buttons["drawing-tool-marker"].tap()
+    dismissNotebookToolPanel(in:app)
+
+    pointer.tap(); pointer.tap()
+    XCTAssertTrue(duration.waitForExistence(timeout:3))
+    XCTAssertEqual(duration.value as? String,chosenDuration)
+    drawing.coordinate(withNormalizedOffset:.init(dx:0.5,dy:0.5)).tap()
+    XCTAssertTrue(drawing.isSelected); XCTAssertFalse(pointer.isSelected)
+    XCTAssertEqual(drawing.value as? String,"Маркер", "Pointer must not replace the drawing group's remembered tool")
+    XCTAssertTrue(duration.waitForNonExistence(timeout:3))
+    drawing.tap()
+    XCTAssertTrue(app.sliders["marker-width"].waitForExistence(timeout:3))
+    let proof = XCTAttachment(screenshot:app.screenshot())
+    proof.name = "pointer-independent-toolbar-action"; proof.lifetime = .keepAlways; add(proof)
   }
 
   func testShapeAndOperationSelectorsShareTopRowAndKeepIndependentSelections() {
@@ -3430,13 +3495,14 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertEqual(restored.height, original.height, accuracy: 2)
   }
 
-  func testZoomLeavesAndReopensTheNotebookWithoutASeparateExitButton() {
+  func testNotebookBackAndReopeningKeepItsFittedPageAndPageNavigation() {
     continueAfterFailure=false
     let app=XCUIApplication();app.launchArguments=["--notebook-drawing-responsiveness-fixture","--notebook-page-turn-content-fixture"]
+    app.launchArguments.append("--notebook-simulator-finger-gestures")
     launchPortraitFixture(app)
     let paper=app.otherElements["paper-input"],marker=app.otherElements["agent-element-page-marker-0"]
     XCTAssertTrue(marker.waitForExistence(timeout:8));let original=paper.frame
-    marker.pinch(withScale:0.28,velocity:-2)
+    notebookBack(in:app)
     XCTAssertTrue(paper.waitForNonExistence(timeout:5))
     XCTAssertFalse(app.buttons["leave-nested-board"].exists)
     let notebook=app.descendants(matching:.any).matching(identifier:"workspace-item-7e7a1000-0000-4000-8000-000000000002").firstMatch
@@ -3452,34 +3518,46 @@ final class DrawingResponsivenessTests: XCTestCase {
     previous.tap();XCTAssertTrue(marker.waitForExistence(timeout:5))
     notebookBack(in:app);XCTAssertTrue(paper.waitForNonExistence(timeout:5))
     notebook.doubleTap();XCTAssertTrue(paper.waitForExistence(timeout:5))
-    let proof=XCTAttachment(screenshot:app.screenshot());proof.name="notebook-zoom-and-context-return";proof.lifetime = .keepAlways;add(proof)
+    let proof=XCTAttachment(screenshot:app.screenshot());proof.name="notebook-context-return";proof.lifetime = .keepAlways;add(proof)
   }
 
-  func testNotebookPinchesZoomTheOpenSheetInsteadOfItsCover() throws {
-    try checkOpenSheetPinches(document: false)
+  func testNotebookPinchesKeepTheSameFittedSheetAndPage() {
+    continueAfterFailure = false
+    let app = XCUIApplication()
+    app.launchArguments = ["--notebook-drawing-responsiveness-fixture", "--notebook-page-turn-content-fixture"]
+    app.launchArguments.append("--notebook-simulator-finger-gestures")
+    launchPortraitFixture(app)
+    let paper = app.otherElements["paper-input"], marker = app.otherElements["agent-element-page-marker-0"]
+    let turn = app.otherElements["page-turn-surface"]
+    XCTAssertTrue(marker.waitForExistence(timeout: 8))
+    let fitted = paper.frame, page = turn.value as? String
+    for scale in [1.6, 0.28, 1.2] {
+      marker.pinch(withScale: scale, velocity: scale > 1 ? 0.7 : -2)
+      XCTAssertTrue(paper.exists)
+      XCTAssertEqual(paper.frame, fitted)
+      XCTAssertEqual(turn.value as? String, page)
+      XCTAssertTrue(marker.exists)
+    }
+    let proof = XCTAttachment(screenshot: app.screenshot())
+    proof.name = "notebook-pinches-retain-fitted-page"; proof.lifetime = .keepAlways; add(proof)
   }
 
   func testDocumentPinchesZoomTheOpenSheetInsteadOfItsCover() throws {
-    try checkOpenSheetPinches(document: true)
-  }
-
-  private func checkOpenSheetPinches(document: Bool) throws {
     continueAfterFailure = false
     let app = XCUIApplication()
     app.launchArguments = ["--notebook-drawing-responsiveness-fixture", "--notebook-simulator-finger-gestures"]
-    app.launchArguments.append(document ? "--notebook-document-runtime-fixture" : "--notebook-page-turn-content-fixture")
+    app.launchArguments.append("--notebook-document-runtime-fixture")
     launchPortraitFixture(app)
-    let sheet = app.otherElements[document ? "page-turn-surface" : "paper-input"].firstMatch
+    let sheet = app.otherElements["page-turn-surface"].firstMatch
     XCTAssertTrue(sheet.waitForExistence(timeout: 8))
     let fitted = sheet.frame
     // Full-window XCTest pinch starts one finger on the top-left Back button.
     // Use real visible content so both contacts belong to the paper.
-    let gestureSurface = document
-      ? sheet.staticTexts["Документ соединяет текст, формулы и управление."].firstMatch
-      : app.otherElements["agent-element-page-marker-0"]
+    let gestureSurface = sheet.buttons.matching(NSPredicate(format: "label BEGINSWITH %@",
+      "Исходник: # Живая математика")).firstMatch
     XCTAssertTrue(gestureSurface.waitForExistence(timeout: 5))
     let item = app.descendants(matching: .any).matching(identifier:
-      "workspace-item-7e7a1000-0000-4000-8000-00000000000\(document ? 6 : 2)").firstMatch
+      "workspace-item-7e7a1000-0000-4000-8000-000000000006").firstMatch
     let cover = item.otherElements["cover-opening-surface"].firstMatch
     func assertOpen(_ name: String) {
       let proof = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
@@ -3494,17 +3572,17 @@ final class DrawingResponsivenessTests: XCTestCase {
       XCTAssertFalse(app.keyboards.firstMatch.exists)
     }
     gestureSurface.pinch(withScale: 1.6, velocity: 0.7)
-    assertOpen("paper-enlarged-\(document)")
+    assertOpen("paper-enlarged-document")
     XCTAssertGreaterThan(sheet.frame.width, fitted.width * 1.1,
       "Lifting the pair must retain real paper magnification, not snap back to fit")
     gestureSurface.pinch(withScale: 0.94, velocity: -0.2)
-    assertOpen("paper-zoom-retained-\(document)")
+    assertOpen("paper-zoom-retained-document")
     XCTAssertGreaterThan(sheet.frame.width, fitted.width * 1.05)
     gestureSurface.pinch(withScale:0.28,velocity:-2)
     XCTAssertTrue(sheet.waitForNonExistence(timeout:5),"Crossing the geometric boundary closes this same surface")
     XCTAssertTrue(item.waitForExistence(timeout:3))
     item.pinch(withScale:4,velocity:2)
-    XCTAssertTrue(sheet.waitForExistence(timeout:5));assertOpen("paper-reopened-\(document)")
+    XCTAssertTrue(sheet.waitForExistence(timeout:5));assertOpen("paper-reopened-document")
   }
 
   func testDoubleTapOpensAWholePageImmediately() {
@@ -3899,6 +3977,7 @@ final class DrawingResponsivenessTests: XCTestCase {
     let window = workspaceWindow(in: app)
     XCTAssertTrue(notebook.waitForExistence(timeout: 3))
     XCTAssertTrue(window.exists)
+    let boardFrame = notebook.frame
     notebook.doubleTap()
 
     let paper = app.otherElements["paper-input"]
@@ -3913,6 +3992,18 @@ final class DrawingResponsivenessTests: XCTestCase {
     proof.name = "double-tap-opening-centers-notebook"
     proof.lifetime = .keepAlways
     add(proof)
+    for _ in 0..<2 {
+      notebookBack(in: app)
+      XCTAssertTrue(paper.waitForNonExistence(timeout: 5))
+      XCTAssertTrue(waitUntil {
+        abs(notebook.frame.midX - boardFrame.midX) < 3
+          && abs(notebook.frame.midY - boardFrame.midY) < 3
+          && abs(notebook.frame.width - boardFrame.width) < 3
+      }, "Back restores the board camera before entry, not a cover-centred zoom")
+      notebook.doubleTap()
+      XCTAssertTrue(paper.waitForExistence(timeout: 5))
+      XCTAssertTrue(waitUntil { abs(paper.frame.midX - window.frame.midX) < 3 })
+    }
   }
 
   func testCoverInkTravelsWithThePhysicalCurl() async throws {

@@ -54,6 +54,12 @@ lasso addresses a region or whole objects according to its selected mode. A regi
 crossing open paper is clipped to that paper, not redirected to the hidden board. Camera and scale are fixed at contact start.
 Dragging the same selected source neither adds another indication nor sends a message.
 
+A tap's small ink-hit tolerance is not a clipping polygon. It selects the complete
+accepted contact, including its same-surface spans and later erasures. The first
+edit uses the existing conversion command without creating an outside remainder;
+selection itself writes nothing. An explicit region lasso still clips its exact
+contour.
+
 Chat and companion use one small `NotebookContextCounter` for source count, reviewed
 version and clearing. Paper shows a thin contour, without a floating question editor.
 Chat size and counter actions do not change the Pencil contact or send destination.
@@ -130,10 +136,12 @@ references remain available. New HTML becomes shown only after its image is read
 ## One-shot laser context
 
 `NotebookLaserContext` retains the last five completed local indications for a
-specific Mac/chat, each expiring after 30 monotonic seconds. Drawing alone writes
-nothing. The next nonempty message consumes the packet once; starting dictation does
-not. A different chat/computer never inherits it, and the crop-count clear action
-discards pending captures.
+specific Mac and draft/task, each expiring after 30 monotonic seconds before
+submission. Drawing alone writes nothing. Send reserves its exact batch through
+preparation and consumes it only after durable admission; a failed write keeps the
+prepared image addresses for Retry. Starting dictation does not consume it. A
+different chat/computer never inherits it, and the crop-count clear action discards
+unsent captures.
 
 A message carries at most five frozen displayed images / 4 MiB total. Missing
 evidence is not replaced with newly captured pixels. Persistence uses SharedContext
@@ -151,3 +159,36 @@ drafts or automatic context.
 hashes, concurrent order, cross-batch parents, rejection and external index rebuilding.
 These contracts do not establish physical display or whole-system performance.
 See [verification](verification.md).
+
+## Изображение при отправке в чат
+
+Явное указание и выбранный физический фрагмент отправляются в native Codex как
+реальный image input по существующему immutable evidence/blob пути, а не только
+как инструкция вызвать `nb.attention`. Без явного указания отправка фиксирует
+текущую установленную область Notebook тем же владельцем attention capture.
+Если этот обычный вид ещё не готов, контекст явно сообщает отсутствие изображения;
+метаданные камеры не выдаются за доказательство видимых пикселей. Выделение исходника
+(document block без номера печатной страницы) и codeFragment остаются смысловым
+контекстом, а не выдуманной картинкой.
+
+Указка относится к точному Mac и local draft либо native thread, включая первую
+отправку нового чата. Один contact переносит один композиционный кроп, без дублирующих
+картинок обложек внутри него. Ошибка обязательного кропа запрещает отправку без него.
+Подготовленный пакет сохраняет те же адреса изображений при повторе неудавшейся
+записи сообщения; только подтверждённая локальная запись потребляет указания.
+Выделение и указка проверяются вместе в общем бюджете изображений до приёма
+сообщения. Превышение откатывает новый контекст и не оставляет бесхозных PNG;
+пользователь может убрать лишнее и повторить тот же текст. Это локальная подготовка,
+а не новый запрет принимать доставляемый запрос раньше его изображений на Mac.
+
+Повтор использует прежний immutable пакет только при прежнем явном намерении:
+тот же адрес беседы/текст, вложения, selection ID и поколение указки. Снятие выбора
+или удаление указания не воскрешает прежнюю картинку. Перед заменой неудавшейся
+отправки существующий writer FIFO проверяет её точный durable ID: отсутствие
+разрешает новый пакет, подтверждённая прежняя запись восстанавливает её квитанцию
+без отправки изменённого черновика, неизвестный исход запрещает дубликат.
+Истечение указки само по себе не меняет уже зафиксированное намерение Retry.
+
+Фон бумаги — один векторный display-list (`Color` и линии `Path`), а не локальный
+Canvas с неверным exposure под native camera transform. Координаты страницы,
+масштабирование и immutable image capture от этого не получают нового владельца.

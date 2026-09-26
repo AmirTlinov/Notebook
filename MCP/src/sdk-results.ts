@@ -97,7 +97,7 @@ const selected=z.discriminatedUnion("kind",[
   object({...selectionFields,kind:z.literal("item"),itemID:id}),
   object({...selectionFields,kind:z.literal("element"),target:targetSchema,elementID:text}),
   object({...selectionFields,kind:z.literal("elements"),target:targetSchema,elementIDs:z.array(text).max(32),itemIDs:z.array(id).max(32).optional()}),
-  object({...selectionFields,kind:z.literal("region"),target:targetSchema,region:z.array(point).min(3).max(4096),worldOrigin:worldPointSchema.optional()}),
+  object({...selectionFields,kind:z.literal("region"),target:targetSchema,region:z.array(point).min(3).max(8192),worldOrigin:worldPointSchema.optional()}),
   object({...selectionFields,kind:z.literal("context")}),
   object({...selectionFields,kind:z.literal("reference"),reference:referenceSchema})]);
 const selection=z.discriminatedUnion("status",[

@@ -211,8 +211,6 @@ struct SpatialWorkspaceView: View {
   }
   @State private var contentGestureActive = false
   @State private var pageTurnIsActive = false
-  @State private var pageInputGestureID: UUID?
-  @State private var bufferedCameraPhases: [WorkspaceMagnificationPhase] = []
   @State private var documentPageLayouts: [UUID: DocumentPageLayout] = [:]
   @State private var cameraSettlement = SceneCameraSettlement()
   @State private var referencePageResolution = NotebookReferencePageResolution()
@@ -232,7 +230,7 @@ struct SpatialWorkspaceView: View {
         y: geometry.size.height
       )
       let presence = normalizedPresence(for: viewport)
-      let preparing = preparationPresence ?? presence
+      let preparing = NotebookWorkspaceCompositionRequest.preparationPresence(target: preparationPresence, visible: presence)
       let requestedFrame = model.sceneIndex.map {
         WorkspaceSceneFrame(index:$0,presence:preparing,portalCamera:transitionPortal,
           pinned:scenePins(presence:preparing))
@@ -264,7 +262,7 @@ struct SpatialWorkspaceView: View {
 
           WorkspacePanView(
             isEnabled: (presence.mode == .board || presence.mode == .cover
-              || ((presence.mode == .page || presence.mode == .document)
+              || (presence.mode == .document
                 && presence.camera.scale > model.itemGeometry(presence.focusedItemID).fitScale(viewport:viewport) * 1.001))
               && cameraGesture == nil && !settling && !model.isPointing,
             inputGate: model.inputGate,
@@ -509,7 +507,6 @@ struct SpatialWorkspaceView: View {
             let remaining = actual.boardID == boardID ? actual : gesture?.presence ?? actual
             cameraSettlement.cancel(); navigation = .idle; panStart = nil
             contentGestureActive = false; pageTurnIsActive = false
-            pageInputGestureID = nil; bufferedCameraPhases = []
             referencePageResolution.cancel(); owner?.cancelRequestedNavigation()
             owner?.updatePresence(.init(boardID: remaining.boardID, mode: .board,
               camera: remaining.camera, viewport: remaining.viewport,
@@ -617,8 +614,6 @@ struct SpatialWorkspaceView: View {
         navigation = .idle
         contentGestureActive = false
         pageTurnIsActive = false
-        pageInputGestureID = nil
-        bufferedCameraPhases = []
         model.interactiveElementFocus = nil
         model.endSurfaceEditing()
       }
@@ -1188,47 +1183,12 @@ struct SpatialWorkspaceView: View {
   private func handleWorkspaceMagnification(
     _ phase: WorkspaceMagnificationPhase
   ) {
+    // A notebook is a physical fitted sheet, not another zoomable board. The
+    // same recognizer still owns two-finger Undo/Redo; only its camera route is
+    // unavailable here. Documents and closed covers retain their own zoom.
+    guard model.presence?.mode != .page else { return }
     if case .began = phase { referencePageResolution.cancel() }
-    if pageInputGestureID != nil {
-      bufferCameraPhase(phase)
-      return
-    }
-    if case .began = phase, model.presence?.mode == .page {
-      let gestureID = UUID()
-      pageInputGestureID = gestureID
-      bufferedCameraPhases = [phase]
-      model.inputGate.performAfterPageContact {
-        guard pageInputGestureID == gestureID else { return }
-        let phases = bufferedCameraPhases
-        pageInputGestureID = nil
-        bufferedCameraPhases = []
-        for buffered in phases {
-          handleBoardMagnification(buffered)
-        }
-      }
-      return
-    }
     handleBoardMagnification(phase)
-  }
-
-  /// While the page finishes a Pencil action, the two-finger recognizer keeps
-  /// measuring. Its newest complete state is enough to resume the same closed
-  /// camera formula without inventing a second gesture.
-  private func bufferCameraPhase(_ phase: WorkspaceMagnificationPhase) {
-    switch phase {
-    case .began:
-      bufferedCameraPhases = [phase]
-    case .changed:
-      if bufferedCameraPhases.count > 1 {
-        bufferedCameraPhases.removeSubrange(1...)
-      }
-      bufferedCameraPhases.append(phase)
-    case .ended, .cancelled:
-      if bufferedCameraPhases.count > 1 {
-        bufferedCameraPhases.removeSubrange(1...)
-      }
-      bufferedCameraPhases.append(phase)
-    }
   }
 
   private func entryPassage(at point:CGPoint,presence:SessionPresence) -> NotebookZoomPassage? {
@@ -1246,7 +1206,7 @@ struct SpatialWorkspaceView: View {
   }
 
   private func exitPassage(presence:SessionPresence) -> NotebookZoomPassage? {
-    if let id=presence.focusedItemID,(presence.mode == .page || presence.mode == .document),
+    if let id=presence.focusedItemID,presence.mode == .document,
       let kind=itemKind(id),let center=focusedCenter(itemID:id,boardID:presence.boardID) {
       let geometry=model.itemGeometry(id)
       return .init(itemID:id,parentID:presence.boardID,kind:kind,center:center,geometry:geometry,opening:false,
@@ -1264,7 +1224,7 @@ struct SpatialWorkspaceView: View {
   }
 
   private func openSurfaceCamera(_ camera:SpatialCamera,for presence:SessionPresence) -> SpatialCamera {
-    guard presence.mode == .page || presence.mode == .document,let item=presence.focusedItemID,
+    guard presence.mode == .document,let item=presence.focusedItemID,
       let center=focusedCenter(itemID:item,boardID:presence.boardID) else { return camera }
     return model.itemGeometry(item).readingCamera(camera,centeredOn:center,viewport:presence.viewport)
   }
@@ -1435,7 +1395,7 @@ struct SpatialWorkspaceView: View {
     guard let start = panStart else { return }
     var camera = start.camera
     camera.pan(screenX: translation.x, screenY: translation.y)
-    if start.mode == .page || start.mode == .document, let item = start.focusedItemID,
+    if start.mode == .document, let item = start.focusedItemID,
       let center = model.boardHierarchy?.focusedCenter(of:item,in:start.boardID) {
       camera = model.itemGeometry(item).readingCamera(camera,centeredOn:center,viewport:viewport)
     }
@@ -1552,7 +1512,12 @@ struct SpatialWorkspaceView: View {
     )
     openingFeedback.prepare()
     performOpeningFeedback()
-    animateSettlement(to: target, duration: 0.3, bounce: 0.025,rollback:rollback)
+    let returnPresence = rollback ?? previousPresence
+    animateSettlement(to: target, duration: 0.3, bounce: 0.025,rollback:rollback) {
+      if let returnPresence, returnPresence.mode == .board || returnPresence.mode == .cover {
+        model.rememberReturnPlace(returnPresence)
+      }
+    }
   }
 
   private func enterBoard(
@@ -1614,7 +1579,7 @@ struct SpatialWorkspaceView: View {
       // remains part of every preparation/read cut throughout both stages.
       destination=target.selecting(itemID:itemID,pageID:origin.notebookPageID)
     } else { destination=target }
-    cameraSettlement.cancel();panStart=nil;pageInputGestureID=nil;bufferedCameraPhases=[]
+    cameraSettlement.cancel();panStart=nil
     let pending=WorkspaceSettlement(origin:rollback ?? origin,target:destination,handoff:handoff,approach:closedApproach(to:destination,from:origin),duration:duration,bounce:bounce,navigationID:navigationID,portal:portal,completion:completion)
     navigation = .settling(pending);contentGestureActive=true
     // Preparation already owns navigation, although its camera has not moved.

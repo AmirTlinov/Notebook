@@ -4,6 +4,88 @@ import UIKit
 @testable import Notebook
 
 @MainActor final class NotebookDrawingToolsTests: XCTestCase {
+  func testTapSelectsAndMovesTheWholeMeasuredContactWithoutCreatingARemainder() async throws {
+    try await fixture { model in
+      var page=try XCTUnwrap(model.activePage)
+      let samples=(0..<4_097).map { i in
+        SpatialInkSample(point:.init(x:100+600*Double(i)/4_096,y:200),timeOffset:Double(i)/240,
+          width:8,opacity:1,force:1,azimuth:0,altitude:.pi/2)
+      }
+      let pen=PageInkAction(tool:.pen,samples:samples)
+      let cut=PageInkAction(tool:.eraser,samples:[180.0,220].map { y in
+        .init(point:.init(x:500,y:y),timeOffset:0,width:20,opacity:1,force:1,azimuth:0,altitude:.pi/2)
+      })
+      let drawing=try PageInkDrawing(actions:[pen,cut]).dataRepresentation()
+      XCTAssertTrue(page.replaceDrawing(drawing,actor:model.actorID));try model.store.savePage(page)
+      await model.reloadExternalChanges()?.value
+      let presence=try XCTUnwrap(model.presence),itemID=try XCTUnwrap(model.workspace?.selectedItemID)
+      model.updatePresence(.init(boardID:presence.boardID,mode:.page,camera:presence.camera,
+        viewport:presence.viewport,focusedItemID:itemID,openProgress:1,
+        selectedItemID:itemID,notebookPageID:page.id),settled:true)
+      let address=NotebookToolAddress(surface:.page(page.id),boardID:nil,worldOrigin:nil,
+        bounds:.init(x:0,y:0,width:page.size.width,height:page.size.height))
+      model.selectDrawingTool(.lasso);model.drawingToolSettings.lassoMode = .elements
+      model.drawingTools.selectInk(at:.init(x:200,y:200),address:address,screenScale:1)
+      let deadline=ContinuousClock.now + .seconds(5)
+      while model.drawingTools.pendingLasso != nil,ContinuousClock.now < deadline {
+        try await Task.sleep(for:.milliseconds(5))
+      }
+      let region=try XCTUnwrap(model.selectionSession.region),raw=try XCTUnwrap(region.rawInk)
+      let prepared=try XCTUnwrap(region.materialization)
+      XCTAssertTrue(raw.selectsWholeContacts)
+      XCTAssertLessThan(region.frame.x,100);XCTAssertGreaterThan(region.frame.x+region.frame.width,700)
+      XCTAssertEqual(raw.graphic.sourceInkIDs,[pen.id])
+      XCTAssertEqual(raw.graphic.freehand?.layers.first?.measured?.measurements,pen.samples)
+      XCTAssertEqual(raw.graphic.freehand?.layers.last?.measured?.measurements,cut.samples,
+        "Selecting the whole preserves later erasure, including outside the hit tolerance")
+      XCTAssertEqual(prepared.edits.map(\.kind),[.convertInkToElement])
+      XCTAssertEqual(prepared.working.count,1,"A tap must not author an outside fragment")
+      XCTAssertNil(prepared.working.first?.graphic.mask,"The 12-point hit tolerance is not a saved clipping polygon")
+      XCTAssertEqual(try model.store.loadPage(page.id).drawingData,drawing)
+      XCTAssertTrue(try model.store.loadPage(page.id).elements.isEmpty,"Selection is read-only")
+
+      let movement=try XCTUnwrap(model.beginElementManipulation(region.reference,kind:.move))
+      XCTAssertTrue(model.finishElementManipulation(movement,translation:.init(x:0,y:40)))
+      await assertSaved(model)
+      let moved=try model.store.loadPage(page.id),element=try XCTUnwrap(moved.elements.first)
+      XCTAssertEqual(moved.elements.count,1)
+      XCTAssertEqual(element.frame.y,raw.selectionFrame.y+40,accuracy:1e-8)
+      XCTAssertEqual(element.graphic?.sourceInkIDs,[pen.id])
+      XCTAssertNil(element.graphic?.mask)
+      XCTAssertEqual(moved.drawingData,drawing,"Moving a whole retains the immutable measured journal")
+      model.undoLastSurfaceAction();await assertSaved(model)
+      let restored=try model.store.loadPage(page.id)
+      XCTAssertEqual(restored.elements.map(\.id),[element.id],"Undo retains the conversion's durable identity")
+      XCTAssertTrue(restored.graphicPresentation.geometryIDs.isEmpty)
+      XCTAssertTrue(restored.graphicPresentation.suppressedInkIDs.isEmpty,"The same complete measured contact becomes visible again")
+      XCTAssertEqual(restored.drawingData,drawing)
+    }
+  }
+
+  func testWholeContactSelectionIncludesAllSpansButRegionSelectionKeepsItsContour() throws {
+    let surface=SurfaceID.board(UUID()),id=UUID()
+    func samples(_ x:Double)->InkMeasurements {
+      .init([x,x+80].map { x in .init(point:.init(x:x,y:100),timeOffset:0,
+        width:8,opacity:1,force:1,azimuth:0,altitude:.pi/2) })
+    }
+    let spans=[samples(100),samples(500)]
+    let source=try NotebookLassoInkSource.Prepared(revision:"whole-contact",
+      entries:[.init(id:id,tool:.pen,color:.black,sources:spans.enumerated().map { index,values in
+        .init(sourceID:id,span:index,measurements:values,header:.init(tool:.pen,color:.black))
+      })],surface:surface,origin:nil,excluding:[])
+    let polygon=[SpatialPoint(x:125,y:94),.init(x:137,y:94),.init(x:137,y:106),.init(x:125,y:106)]
+    let whole=try XCTUnwrap(source.selection(polygon:polygon,surface:surface,origin:nil,bounds:nil,wholeContacts:true))
+    XCTAssertEqual(whole.graphic.sourceInkIDs,[id])
+    XCTAssertEqual(whole.graphic.freehand?.layers.compactMap(\.measured?.span),[0,1])
+    XCTAssertLessThan(whole.selectionFrame.x,100)
+    XCTAssertGreaterThan(whole.selectionFrame.x+whole.selectionFrame.width,580)
+    XCTAssertEqual(whole.graphic.freehand?.layers.compactMap(\.measured?.measurements),spans)
+    let region=try XCTUnwrap(source.selection(polygon:polygon,surface:surface,origin:nil,bounds:nil))
+    XCTAssertFalse(region.selectsWholeContacts)
+    XCTAssertEqual(region.polygon,polygon)
+    XCTAssertEqual(region.selectionFrame.width,12,accuracy:1e-8)
+  }
+
   func testLassoKeepsAll8192AdmittedPointsAndRejectsOverflowWithoutLosingSelection() async throws {
     try await fixture { model in
       let page=try XCTUnwrap(model.activePage)

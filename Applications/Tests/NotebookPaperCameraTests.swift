@@ -7,16 +7,27 @@ import XCTest
 /// tests separately exercise the hardware recognizers on the physical iPad.
 @MainActor
 final class NotebookPaperCameraTests: XCTestCase {
-  func testOpenNotebookKeepsAnchoredZoomAndPanAfterRelease() async throws {
-    try await checkPaperCamera(document: false)
+  func testOpenNotebookRejectsCameraPhasesWithoutChangingPageOrNavigation() async throws {
+    let (model, window) = try await scene(document: false)
+    let start = try XCTUnwrap(model.presence), owner = try coordinator(in: window)
+    let pair = CGPoint(x: start.viewport.x * 0.4, y: start.viewport.y * 0.43)
+    for scale in [CGFloat(1.6), 0.1, 4, 1] {
+      let moved = CGPoint(x: pair.x + 42, y: pair.y + 27)
+      owner.onCamera(.began(centroid: pair))
+      owner.onCamera(.changed(scale: scale, velocity: 0.2, elapsed: 0.2, centroid: moved))
+      XCTAssertEqual(model.presence, start)
+      owner.onCamera(.ended(scale: scale, velocity: 0, elapsed: 0.3, centroid: moved))
+      owner.onCamera(.cancelled)
+      try await Task.sleep(for: .milliseconds(35))
+      XCTAssertEqual(model.presence, start)
+      XCTAssertEqual(model.presencePhase, .settled)
+      XCTAssertTrue(owner.defersHorizontalMotionToPageTurn)
+      XCTAssertTrue(model.returnPlaces.isEmpty)
+    }
   }
 
   func testOpenDocumentKeepsAnchoredZoomAndPanAfterRelease() async throws {
-    try await checkPaperCamera(document: true)
-  }
-
-  private func checkPaperCamera(document: Bool) async throws {
-    let (model, window) = try await scene(document: document)
+    let (model, window) = try await scene(document: true)
     let start = try XCTUnwrap(model.presence)
     let pair = CGPoint(x: start.viewport.x * 0.4, y: start.viewport.y * 0.43)
     let moved = CGPoint(x: pair.x + 42, y: pair.y + 27)
@@ -63,16 +74,8 @@ final class NotebookPaperCameraTests: XCTestCase {
       from: .init(x: moved.x, y: moved.y), to: .init(x: panEnd.x, y: panEnd.y), viewport: start.viewport)))
   }
 
-  func testNotebookZoomCanCloseAndReopenOnlyItsOwnSurface() async throws {
-    try await checkRoundTrip(document:false)
-  }
-
   func testDocumentZoomCanCloseAndReopenOnlyItsOwnSurface() async throws {
-    try await checkRoundTrip(document:true)
-  }
-
-  private func checkRoundTrip(document:Bool) async throws {
-    let (model,window)=try await scene(document:document)
+    let (model,window)=try await scene(document:true)
     let start=try XCTUnwrap(model.presence),item=try XCTUnwrap(start.focusedItemID)
     let owner=try coordinator(in:window),pair=CGPoint(x:start.viewport.x/2,y:start.viewport.y/2)
     owner.onCamera(.began(centroid:pair))
@@ -91,30 +94,10 @@ final class NotebookPaperCameraTests: XCTestCase {
     XCTAssertEqual(model.presence?.documentPageIndex,start.documentPageIndex)
   }
 
-  func testOneContactCanReverseFromEnlargementIntoExitAndCancelToItsExactStart() async throws {
-    let (model,window)=try await scene(document:false)
-    let start=try XCTUnwrap(model.presence),owner=try coordinator(in:window)
-    let pair=CGPoint(x:start.viewport.x/2,y:start.viewport.y/2)
-    owner.onCamera(.began(centroid:pair))
-    owner.onCamera(.changed(scale:1.5,velocity:1,elapsed:0.2,centroid:pair))
-    XCTAssertEqual(model.presence?.mode,.page)
-    owner.onCamera(.changed(scale:0.2,velocity:-1,elapsed:0.4,centroid:pair))
-    XCTAssertEqual(model.presence?.mode,.cover)
-    XCTAssertEqual(model.presence?.focusedItemID,start.focusedItemID)
-    owner.onCamera(.cancelled)
-    try await waitFor(model,mode:.page)
-    XCTAssertEqual(model.presence,start)
-    try await Task.sleep(for:.milliseconds(300))
-    XCTAssertEqual(model.presence,start,"Late preparation cannot finish the cancelled exit")
-  }
-
   func testClosedCoverOwnsItsHitAndReopensByTheSameTapCallback() async throws {
-    let (model,window)=try await scene(document:false)
-    let start=try XCTUnwrap(model.presence),owner=try coordinator(in:window)
+    let (model,window)=try await scene(document:false, startsOnBoard:true)
+    let start=try XCTUnwrap(model.presence)
     let point=CGPoint(x:start.viewport.x/2,y:start.viewport.y/2)
-    owner.onCamera(.began(centroid:point))
-    owner.onCamera(.ended(scale:0.1,velocity:-2,elapsed:0.3,centroid:point))
-    try await waitFor(model,mode:.board)
     try await Task.sleep(for:.milliseconds(300))
     let hit=window.hitTest(point,with:nil)
     var chain:[String]=[];var view=hit
@@ -123,6 +106,7 @@ final class NotebookPaperCameraTests: XCTestCase {
     let cover=try XCTUnwrap(hit as? NotebookInteractionTouchView,chain.joined(separator:" > "))
     cover.onTap(cover.convert(point,from:window),2)
     try await waitFor(model,mode:.page)
+    XCTAssertEqual(model.returnPlaces.last?.presence, start, "The opening retains its actual board camera")
   }
 
   private func waitFor(_ model:NotebookAppModel,mode:WorkspaceSemanticMode) async throws {
