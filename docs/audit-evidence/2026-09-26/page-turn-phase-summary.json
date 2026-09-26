@@ -1,0 +1,158 @@
+{
+  "scope": "Reanalysis of existing physical-device JSON, not a new device run. Both lanes predate integrated 487530e0. Per-stage medians must not be added as if they described a single observation.",
+  "quantile": "p95 nearest rank ceil(0.95*n)",
+  "lanes": {
+    "baseline": {
+      "sourceArtifact": ".build/page-motion-evidence/baseline/attachments/F9F8B11A-0140-4408-B257-5AB350457B54.json",
+      "artifactSHA256": "86baa3f38c023a076162fb9a4c049fceed0dca68ddd3460132879ad80bfded30",
+      "turns": 20,
+      "invalidReceipts": 10,
+      "metrics": {
+        "command": {
+          "n": 20,
+          "p50ms": 0.079042,
+          "p95ms": 0.125708,
+          "maxms": 0.781458
+        },
+        "startToCapture": {
+          "n": 20,
+          "p50ms": 0.128563,
+          "p95ms": 0.194583,
+          "maxms": 6.165375
+        },
+        "capture": {
+          "n": 20,
+          "p50ms": 28.770104,
+          "p95ms": 34.475875,
+          "maxms": 36.571167
+        },
+        "captureEndToFirstEncode": {
+          "n": 20,
+          "p50ms": 6.520104,
+          "p95ms": 16.572417,
+          "maxms": 16.806458
+        },
+        "captureEndToFirstShown": {
+          "n": 20,
+          "p50ms": 33.600229,
+          "p95ms": 42.81225,
+          "maxms": 86.901042
+        },
+        "firstShownToFirstChanged": {
+          "n": 20,
+          "p50ms": 25.010229,
+          "p95ms": 29.1785,
+          "maxms": 29.1785
+        },
+        "firstChanged": {
+          "n": 20,
+          "p50ms": 86.038083,
+          "p95ms": 93.672375,
+          "maxms": 149.202833
+        },
+        "landing": {
+          "n": 20,
+          "p50ms": 384.815542,
+          "p95ms": 394.423,
+          "maxms": 450.413708
+        },
+        "callbackDelay": {
+          "n": 755,
+          "p50ms": 4.638375,
+          "p95ms": 6.237917,
+          "maxms": 8.358417
+        },
+        "gpuFrame": {
+          "n": 765,
+          "p50ms": 3.083167,
+          "p95ms": 3.82925,
+          "maxms": 12.987625
+        },
+        "cpuEncode": {
+          "n": 765,
+          "p50ms": 2.889958,
+          "p95ms": 4.169792,
+          "maxms": 7.240625
+        }
+      },
+      "sourceManifestSHA256": "7384e452537d4a60ab36cf4974e0903078b2b5523de8c8228a673a833ecc923f",
+      "manifestSourceSHA256": "296561164da9382e5dace967e14f1980305f96bcd6b5039f2ce5bffc047ca577"
+    },
+    "candidate02": {
+      "sourceArtifact": ".build/page-motion-evidence/candidate-02-performance/attachments/1701376E-6F77-4F77-8BF5-FFEF0FDE4477.json",
+      "artifactSHA256": "3f6e66ac66a8e8e44e351ab69141a59f70b5ca05ca6d2600ae9531d66ea3c0ab",
+      "turns": 20,
+      "invalidReceipts": 15,
+      "metrics": {
+        "command": {
+          "n": 20,
+          "p50ms": 0.234271,
+          "p95ms": 0.393583,
+          "maxms": 0.7555
+        },
+        "startToCapture": {
+          "n": 20,
+          "p50ms": 0.504625,
+          "p95ms": 0.885208,
+          "maxms": 5.915708
+        },
+        "capture": {
+          "n": 20,
+          "p50ms": 64.789688,
+          "p95ms": 67.735833,
+          "maxms": 74.86975
+        },
+        "captureEndToFirstEncode": {
+          "n": 20,
+          "p50ms": 22.218604,
+          "p95ms": 24.867917,
+          "maxms": 25.529292
+        },
+        "captureEndToFirstShown": {
+          "n": 20,
+          "p50ms": 40.071583,
+          "p95ms": 44.631458,
+          "maxms": 48.449833
+        },
+        "firstShownToFirstChanged": {
+          "n": 20,
+          "p50ms": 0.0,
+          "p95ms": 0.0,
+          "maxms": 0.0
+        },
+        "firstChanged": {
+          "n": 20,
+          "p50ms": 106.421792,
+          "p95ms": 115.255125,
+          "maxms": 116.4135
+        },
+        "landing": {
+          "n": 20,
+          "p50ms": 418.920396,
+          "p95ms": 427.104625,
+          "maxms": 433.078792
+        },
+        "callbackDelay": {
+          "n": 763,
+          "p50ms": 0.5425,
+          "p95ms": 0.764083,
+          "maxms": 2.65125
+        },
+        "gpuFrame": {
+          "n": 778,
+          "p50ms": 1.674417,
+          "p95ms": 2.427,
+          "maxms": 2.934625
+        },
+        "cpuEncode": {
+          "n": 778,
+          "p50ms": 0.082083,
+          "p95ms": 0.15475,
+          "maxms": 0.421083
+        }
+      },
+      "sourceManifestSHA256": "60716ff0edba65e99f3869afd14d757d410880d24503b795fbaa4752ea4c2072",
+      "manifestSourceSHA256": "3baf98c34d28afa019346fdae2255df9d2f1eb94a720b3f57513f681f30e93cb"
+    }
+  }
+}
