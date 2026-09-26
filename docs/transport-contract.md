@@ -27,6 +27,13 @@ Bonjour advertises `notebook-v43-<UUID>-<generation>`; TXT `workspace` distingui
 background workspace listeners sharing a Mac device ID. One transport owner
 changes the advertisement generation on restart. Metadata grants no trust.
 
+A terminal listener failure releases that exact listener and schedules recovery
+through the transport owner's existing bounded backoff. A live process is not
+proof of a listening socket. Listener recovery preserves authenticated sessions,
+trust and peer cursors; callbacks from a retired listener cannot cancel its
+replacement. Stop cancels pending recovery. A healthy listener needs no idle
+retry when a peer disconnects.
+
 Before a format transition, outgoing shared writes must be acknowledged. Old
 journal entries retain their format. A peer behind the transition floor needs a
 current checkpoint; its cursor is never advanced artificially. Authenticated

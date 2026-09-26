@@ -1,0 +1,127 @@
+{
+  "status": "native_regressions_passed_live_recovery_pending",
+  "localArchive": "/Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/.build/notebook-architecture-repair/evidence-2026-09-25/listener-recovery-63-64",
+  "rootCause": "A terminal Mac NWListener failure retained the nonnil discovery slot; the process remained alive but never recreated its listener.",
+  "diagnosticStageCut": "iPad creation F6B481CE-21DF-4822-BF10-AA99C434AFFA saved; no corresponding Mac job. Existing authenticated connection outlived failed advertisement then disconnected.",
+  "runs": [
+    {
+      "number": 63,
+      "summary": {
+        "devicesAndConfigurations": [
+          {
+            "device": {
+              "architecture": "arm64",
+              "deviceId": "29BEF8B8-E3C5-4943-8408-9A616ECC863D",
+              "deviceName": "Notebook Architecture QA",
+              "modelName": "iPad Pro 13-inch (M5)",
+              "osBuildNumber": "24A434",
+              "osVersion": "27.0",
+              "platform": "iOS Simulator"
+            },
+            "expectedFailures": 0,
+            "failedTests": 1,
+            "passedTests": 18,
+            "skippedTests": 0,
+            "testPlanConfiguration": {
+              "configurationId": "1",
+              "configurationName": "Test Scheme Action"
+            }
+          }
+        ],
+        "environmentDescription": "Notebook · Built with macOS 27.0",
+        "expectedFailures": 0,
+        "failedTests": 1,
+        "finishTime": 1790390088.484,
+        "passedTests": 18,
+        "result": "Failed",
+        "runtimeWarnings": [],
+        "skippedTests": 0,
+        "startTime": 1790390073.439,
+        "statistics": [],
+        "testFailures": [
+          {
+            "failureText": "XCTAssertEqual failed: (\"1\") is not equal to (\"0\")",
+            "targetName": "NotebookTests",
+            "testIdentifier": 18,
+            "testIdentifierString": "NearbySyncTests/testTenAuthenticatedHandoversKeepOneCommandIdentityAndRejectStaleDisconnects()",
+            "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/NearbySyncTests/testTenAuthenticatedHandoversKeepOneCommandIdentityAndRejectStaleDisconnects",
+            "testName": "testTenAuthenticatedHandoversKeepOneCommandIdentityAndRejectStaleDisconnects()"
+          }
+        ],
+        "title": "Test - Notebook",
+        "topInsights": [
+          {
+            "category": "Longest Test Runs",
+            "impact": "55% of duration",
+            "text": "1 longest test run with outlier durations exceeding 5.70s (three standard deviations)"
+          }
+        ],
+        "totalTestCount": 19
+      },
+      "changedSources": [],
+      "selection": [
+        "NotebookTests/NearbySyncTests",
+        "NotebookTests/AcceptedPageInputTests/testOrdinaryModelUndoAndRedoReachTheMountedIncrementalOwner"
+      ],
+      "sourceWitnessSHA256": "21b831064cbe200be69359162f8aab94af7d665033e39b31e53cdff0f16bd214"
+    },
+    {
+      "number": 64,
+      "summary": {
+        "devicesAndConfigurations": [
+          {
+            "device": {
+              "architecture": "arm64",
+              "deviceId": "29BEF8B8-E3C5-4943-8408-9A616ECC863D",
+              "deviceName": "Notebook Architecture QA",
+              "modelName": "iPad Pro 13-inch (M5)",
+              "osBuildNumber": "24A434",
+              "osVersion": "27.0",
+              "platform": "iOS Simulator"
+            },
+            "expectedFailures": 0,
+            "failedTests": 0,
+            "passedTests": 19,
+            "skippedTests": 0,
+            "testPlanConfiguration": {
+              "configurationId": "1",
+              "configurationName": "Test Scheme Action"
+            }
+          }
+        ],
+        "environmentDescription": "Notebook · Built with macOS 27.0",
+        "expectedFailures": 0,
+        "failedTests": 0,
+        "finishTime": 1790390193.679,
+        "passedTests": 19,
+        "result": "Passed",
+        "runtimeWarnings": [],
+        "skippedTests": 0,
+        "startTime": 1790390179.359,
+        "statistics": [],
+        "testFailures": [],
+        "title": "Test - Notebook",
+        "topInsights": [
+          {
+            "category": "Longest Test Runs",
+            "impact": "58% of duration",
+            "text": "1 longest test run with outlier durations exceeding 5.59s (three standard deviations)"
+          }
+        ],
+        "totalTestCount": 19
+      },
+      "changedSources": [],
+      "selection": [
+        "NotebookTests/NearbySyncTests",
+        "NotebookTests/AcceptedPageInputTests/testOrdinaryModelUndoAndRedoReachTheMountedIncrementalOwner"
+      ],
+      "sourceWitnessSHA256": "08963b75f09e82fda39edcd6f0acccf7bd7e94563d336621025aaadf4a6a29a3"
+    }
+  ],
+  "negativeControl": "63 failed only an incorrect total trust-save assertion: normal initial relay advertisement persists an empty route dictionary. 64 compares the actual pre-failure trust cut; all connection, command and retry assertions unchanged.",
+  "limitations": [
+    "Controlled OS failure through the actual listener callback, not forcing a system DNS daemon failure.",
+    "A live private-pair upgrade and streaming repeat are still required.",
+    "Not final ten journeys, 30-minute session or system performance acceptance."
+  ]
+}

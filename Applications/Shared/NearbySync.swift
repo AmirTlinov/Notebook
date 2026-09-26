@@ -153,7 +153,7 @@ final class NearbySync {
     trust.records.filter { !trust.blocked.contains($0.identity.deviceID) && !retiredPeers.contains($0.identity.deviceID) }
   }
   var savedTrust: NotebookDeviceTrustState { trust }
-  private var listener: NWListener?
+  private(set) var listener: NWListener?
   private(set) var browser: NWBrowser?
   private var endpointByPeer: [UUID: NWEndpoint] = [:]
   private let discoveryGeneration = UUID()
@@ -437,15 +437,24 @@ final class NearbySync {
         }
       }
       listener.stateUpdateHandler = { [weak self, weak listener] state in
-        if case .ready = state { Task { @MainActor in
-          guard let self, let listener, self.listener === listener else { return }; self.refreshUplinks()
-        } }
-        if case .failed(let error) = state {
-          Task { @MainActor in guard let self, let listener, self.listener === listener else { return }; self.report(error) }
+        Task { @MainActor in
+          guard let self, let listener, self.isStarted, self.listener === listener else { return }
+          switch state {
+          case .ready:
+            self.retryTask?.cancel(); self.retryTask = nil; self.reconnectFailures = 0
+            self.refreshUplinks()
+          case .failed(let error):
+            // A failed NWListener is terminal. Keeping it in this slot makes
+            // every later discovery refresh mistake it for a listening owner.
+            // Existing authenticated sessions survive advertisement recovery.
+            self.listener = nil; listener.cancel()
+            self.report(error); self.scheduleReconnect()
+          default: break
+          }
         }
       }
       listener.start(queue: queue)
-    } catch { report(error) }
+    } catch { report(error); scheduleReconnect() }
   }
 
   private func connectDiscoveredPeers() {
@@ -647,7 +656,9 @@ final class NearbySync {
   }
 
   private func scheduleReconnect() {
-    guard isStarted, role == .iPadConnector, retryTask == nil else { return }
+    // Only a failed listener needs a Mac retry. A healthy listener accepts a
+    // reconnect itself; it must not poll or be replaced when a peer goes away.
+    guard isStarted, role == .iPadConnector || listener == nil, retryTask == nil else { return }
     retryTask = Task { [weak self] in
       do { try await Task.sleep(for: .seconds(Double(1 << min(5, self?.reconnectFailures ?? 1)))) } catch { return }
       guard let self else { return }; self.retryTask = nil

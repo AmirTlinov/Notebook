@@ -85,6 +85,83 @@ final class NearbySyncTests: XCTestCase {
     XCTAssertEqual(retiredFailures, 0, "An old goodbye must not report the replacement channel as failed")
     XCTAssertEqual(disconnected, 0, "A retired generation cannot disconnect the new selected route")
     XCTAssertEqual(try journal.recentChatJobs(author: padID).count, 1)
+
+    // Losing Bonjour advertisement must retire only the listener, not the
+    // authenticated socket that already owns this peer's selected generation.
+    let retiredListener = try XCTUnwrap(mac.listener)
+    // The initial relay advertisement can persist nil → empty routes. Recovery
+    // must preserve the already established trust cut, not rewrite that setup.
+    let macTrustBefore = (macTrust.loads, macTrust.saves, macTrust.records)
+    let padTrustBefore = (padTrust.loads, padTrust.saves, padTrust.records)
+    let failed = expectation(description: "The Mac listener reports its terminal failure")
+    mac.onStateChange = { if case .failed = $0 { failed.fulfill() } }
+    try XCTUnwrap(retiredListener.stateUpdateHandler)(.failed(.dns(Int32(kDNSServiceErr_ServiceNotRunning))))
+    await fulfillment(of: [failed], timeout: 1)
+    XCTAssertNil(mac.listener)
+    XCTAssertEqual(mac.routeTitle(for: padID), NearbySync.Route.direct.title)
+    let recoveryDeadline = ContinuousClock.now + .seconds(2)
+    while mac.listener == nil, .now < recoveryDeadline { try await Task.sleep(for: .milliseconds(20)) }
+    XCTAssertFalse(try XCTUnwrap(mac.listener) === retiredListener)
+    pad.sendTransient(.codex(.init(body: .request(.job(input)))), to: macID)
+    let receiptDeadline = ContinuousClock.now + .seconds(5)
+    while receipts < 12, .now < receiptDeadline { try await Task.sleep(for: .milliseconds(20)) }
+    XCTAssertEqual(receipts, 12, "The existing authenticated session still carries commands and their replies")
+    XCTAssertEqual(executed, 1); XCTAssertEqual(generations.count, 11); XCTAssertEqual(disconnected, 0)
+    XCTAssertEqual(macTrust.loads, macTrustBefore.0); XCTAssertEqual(macTrust.saves, macTrustBefore.1)
+    XCTAssertEqual(padTrust.loads, padTrustBefore.0); XCTAssertEqual(padTrust.saves, padTrustBefore.1)
+    XCTAssertEqual(macTrust.records, macTrustBefore.2); XCTAssertEqual(padTrust.records, padTrustBefore.2)
+  }
+
+  @MainActor
+  func testFailedMacListenerRecoversWithoutRestartAndRejectsRetiredCallbacks() async throws {
+    let trust = RecoverableDeviceStore(); trust.unavailable = false
+    let sync = makeRecoverableSync(trust, role: .macListener); defer { sync.stop() }
+    let peer = confirmedPeer(for: sync); trust.records = [peer]
+    await sync.start()
+    let retired = try XCTUnwrap(sync.listener)
+    let callback = try XCTUnwrap(retired.stateUpdateHandler)
+    let failed = expectation(description: "Terminal advertisement failure is reported")
+    sync.onStateChange = { if case .failed = $0 { failed.fulfill() } }
+    callback(.failed(.dns(Int32(kDNSServiceErr_ServiceNotRunning))))
+    await fulfillment(of: [failed], timeout: 1)
+    XCTAssertNil(sync.listener, "A terminal listener cannot occupy the live discovery slot")
+    let staleFailure = expectation(description: "Retired listener callbacks remain silent"); staleFailure.isInverted = true
+    sync.onStateChange = { if case .failed = $0 { staleFailure.fulfill() } }
+    callback(.ready) // A late ready must not cancel the pending recovery.
+    // This deadline precedes the initial path monitor's three-second refresh;
+    // only the failed-listener retry can supply the replacement here.
+    let deadline = ContinuousClock.now + .seconds(2)
+    while sync.listener == nil, .now < deadline { try await Task.sleep(for: .milliseconds(20)) }
+    let replacement = try XCTUnwrap(sync.listener)
+    XCTAssertFalse(replacement === retired)
+    callback(.failed(.dns(Int32(kDNSServiceErr_ServiceNotRunning))))
+    callback(.ready)
+    await fulfillment(of: [staleFailure], timeout: 0.3)
+    XCTAssertTrue(sync.listener === replacement, "A retired callback cannot replace or clear the new listener")
+    XCTAssertEqual(sync.pairedPeers, [peer.identity]); XCTAssertEqual(trust.records, [peer])
+    XCTAssertEqual(trust.loads, 1); XCTAssertEqual(trust.saves, 0)
+  }
+
+  @MainActor
+  func testStoppingFailedMacListenerCancelsItsPendingRecovery() async throws {
+    let trust = RecoverableDeviceStore(); trust.unavailable = false
+    let sync = makeRecoverableSync(trust, role: .macListener); defer { sync.stop() }
+    let peer = confirmedPeer(for: sync); trust.records = [peer]
+    await sync.start()
+    let callback = try XCTUnwrap(try XCTUnwrap(sync.listener).stateUpdateHandler)
+    let failed = expectation(description: "Listener failure scheduled its retry")
+    sync.onStateChange = { if case .failed = $0 { failed.fulfill() } }
+    callback(.failed(.dns(Int32(kDNSServiceErr_ServiceNotRunning))))
+    await fulfillment(of: [failed], timeout: 1)
+    XCTAssertNil(sync.listener)
+    sync.stop()
+    let stoppedFailure = expectation(description: "Stopped listener cannot publish a late failure"); stoppedFailure.isInverted = true
+    sync.onStateChange = { if case .failed = $0 { stoppedFailure.fulfill() } }
+    callback(.ready); callback(.failed(.dns(Int32(kDNSServiceErr_ServiceNotRunning))))
+    // Observe beyond the one-second retry rather than just before its deadline.
+    await fulfillment(of: [stoppedFailure], timeout: 1.3)
+    XCTAssertNil(sync.listener, "A stopped transport must not resurrect its listener")
+    XCTAssertEqual(trust.records, [peer]); XCTAssertEqual(trust.loads, 1); XCTAssertEqual(trust.saves, 0)
   }
 
   @MainActor
@@ -142,13 +219,13 @@ final class NearbySyncTests: XCTestCase {
   }
 
   @MainActor
-  private func makeRecoverableSync(_ trust: RecoverableDeviceStore) -> NearbySync {
+  private func makeRecoverableSync(_ trust: RecoverableDeviceStore, role: NearbySync.Role = .iPadConnector) -> NearbySync {
     let storage = NotebookTransportStorage(changes: { _, _ in [] }, incomingCursor: { _ in 0 },
       acknowledgePeer: { _, _ in },
       readBlobWindow: { _ in throw NotebookTransportError.invalidBlob }, stageBlobs: { _ in },
       prepareIncoming: { _, _ in [] }, applyRemoteChange: { _ in 0 })
-    return NearbySync(role: .iPadConnector,
-      identity: .init(deviceID: UUID(), workspaceID: UUID(), displayName: "Acceptance iPad"),
+    return NearbySync(role: role,
+      identity: .init(deviceID: UUID(), workspaceID: UUID(), displayName: "Acceptance peer"),
       storage: storage, stagingRoot: temporaryDirectory(), trustStore: trust)
   }
 

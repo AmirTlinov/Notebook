@@ -9662,3 +9662,90 @@ Evidence: `docs/audit-evidence/2026-09-25/final-release-ca3ac898.json`;
 отмену новым сбоем. Сигналы,35-секундный timeout и область записи не изменены.
 CPU-регрессии: trace **19/19 PASS**, UI cleanup **12/12 PASS**. Это исправление
 достоверности результата, а не исправление зависания Instruments или Redo.
+
+### GUI-306 — локализация повторного Redo, physical60 / Simulator61–62
+
+UI-only diagnostic runner сохранил исходные три снимка и точную геометрию без
+дополнительного ожидания перед Undo/Redo. На неизменённом ca3ac898 снова **FAIL**
+третьего journey: baseline/Undo/Redo по96 тёмных пикселей, совпадающий paper frame,
+уже видимый текст «Повторено» и ещё целая линия. Поздние видеокадры показывают
+правильный разрез; video PTS не привязан к uptime XCTest, поэтому точное время
+первого показа из этой записи не заявляется.
+
+Новый native сценарий четырежды повторяет pen/erase/immediate Undo/Redo после
+обычных native page turns и camera-owner zoom. Physical60 **3/3 PASS**, включая
+mounted incremental owner и единственного владельца маски; подготовки/build
+mesh остаются1/1. Это не системная доставка multi-finger и не Pencil latency.
+Simulator61 **2/3 PASS**: повторный Redo наблюдается правильным через114–118мс,
+за прежним100мс пределом. GPU readiness приходит раньше, а последовательные
+снимки занимают MainActor; окно наблюдения не устанавливает photon timing.
+
+Кандидат62 удерживал существующий UIKit update demand до готового принятого
+кадра, не добавляя второго render clock. Он дал только **1/3 PASS**, не устранил
+задержку и полностью удалён. Пороги, пиксельный oracle и production renderer
+не ослаблены; финальная приёмка остаётся открытой.
+Evidence: `docs/audit-evidence/2026-09-25/redo-diagnostic-60-62.json`; полный архив
+содержит три native results, source witnesses, исходные изображения, UI video,
+точный диагностический runner manifest и отвергнутый diff.
+
+### GUI-306 — независимые streaming и короткий trace, ca3ac898
+
+Вход streaming-теста исправлен на общий штатный поиск вместо предположения,
+что прошлый сценарий оставил открытую доску. После обычного перехода к controls
+создание настоящего чата осталось неподтверждённым: **0/1 FAIL** по прежнему90с
+ожиданию первого ответа. Рисование одновременно с ответом и Stop ещё не начались;
+прежний single reply PASS не закрывает этот маршрут. Проверяется доставка
+команды между той же изолированной парой, без повторного создания fixtures.
+
+Короткий trace-контроль прошёл запуск, attach, десять секунд настоящих жестов
+и отправку END, но **0/1 FAIL** на остановке recorder: после SIGINT xctrace
+не завершился за35с. Таким образом, зависание не объясняется только отменой
+после Redo FAIL; внешняя квитанция теперь честно сохраняет и этот отказ.
+Изменение test surface selection сохраняет текущую навигацию: берётся показанная
+страница либо доска, контейнер не сбрасывается. CPU/GPU/frame/memory не объявлены
+измеренными; это отдельный диагностический UI runner поверх прежнего приложения,
+не финальный единый Release artifact.
+
+### GUI-306 — восстановление терминального Mac listener, native63–64
+
+Причина неподтверждённого чата установлена по адресному журналу процесса и
+read-only срезу двух private stores: после Bonjour ServiceNotRunning Mac
+сохранял failed NWListener как действующего владельца. Старое соединение ещё
+некоторое время работало, но после его закрытия новые уже не принимались.
+Creation job остался `saved` только на iPad; выполнение Codex не начиналось.
+
+Терминальный listener теперь освобождает свой slot и использует существующий
+backoff восстановления. Ready сбрасывает retry; остановка владельца его отменяет;
+поздние callbacks старого listener не меняют нового. Trust, курсоры и уже
+аутентифицированные соединения сохраняются. Native63 **18/19 PASS**: единственный
+отказ — неверное ожидание нуля всех trust saves, включая первоначальное принятие
+relay advertisement. Проверка исправлена на неизменность фактического среза перед
+ошибкой, не на обнуление истории. Native64 **19/19 PASS**,0 skips/runtime warnings,
+неизменные исходники. После11 настоящих TLS handovers listener fault/recovery
+сохраняет те же sessions:12 command/replies, один execution,0 disconnects.
+Это регрессия причины; повтор живого streaming после upgrade ещё требуется.
+Evidence: `docs/audit-evidence/2026-09-25/listener-recovery-63-64.json`.
+
+Пассивный private-Simulator журнал дополнен причинной цепочкой accepted ink →
+settle/cold apply → конкретная Metal submission → completion. GPU callback time
+снят до перехода на MainActor; intent не выдаётся за installed material, GPU
+completion не выдаётся за показ. Новый recorder, clock или render path не добавлен;
+действуют прежние лимиты/очередь. Collector CPU **16/16 PASS**, verification
+CPU **90/90 PASS**. Живая запись требует нового native приложения, не UI overlay.
+
+### GUI-306 — почему не завершался Time Profiler
+
+Одно адресное sample записано с PID принадлежащего проверке xctrace во время
+неизменённого35-секундного stop.1544/1545 samples находятся во вставке символов
+CoreSymbolication; это не deadlock Python PIPE. В app и совпадающем по UUID dSYM
+обнаружены390689 cold aliases generated wasm2c по одному адресу. Какой именно
+Mach-O импортировался в sampled вызове, не установлено; позднее завершение
+профилировщика не превращается в PASS.
+
+UI-only acceptance ошибочно собирала приложение с ENABLE_TESTABILITY=YES и
+без deployment stripping. Она не импортирует internals приложения: теперь
+запрашивает обычный Release product без testability, с системным stripping и
+сохранённым внешним dSYM. Это не удаление диагностических символов и не изменение
+сроков. Следующая чистая сборка и короткий trace должны проверить гипотезу;
+устранение зависания пока не заявляется. RCA и exact sample сохранены в локальном
+архиве `streaming-trace-diagnostic-ca3ac898`.
