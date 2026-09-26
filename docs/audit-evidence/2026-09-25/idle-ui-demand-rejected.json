@@ -1,0 +1,19 @@
+{
+  "scope": "Rejected idle UIKit-demand candidate; no new drawing clock or readback. Not final acceptance.",
+  "baseCommit": "77773f84e00022f654c4033afcdb4258f69aa93a",
+  "sourceSHA256": "116f71b72e95514bac2992bd26037b3d217067a9871a1c603a5c586fbba83710",
+  "framebufferOnly": true,
+  "candidate": "UIUpdateLink enabled for every page request; drain only after paused Metal clock and submittedFrameCount==0",
+  "result": {
+    "passed": 0,
+    "failed": 1,
+    "failure": "Third journey: Redo 96 dark pixels equals Undo 96",
+    "testSeconds": 75.434,
+    "droppedObservationRows": 0
+  },
+  "removedFromProductionSource": true,
+  "samePrivateIdentitiesAndDataPreserved": true,
+  "rawEvidence": ".build/notebook-architecture-repair/evidence-2026-09-25/idle-ui-demand-rejected-20260926T1604Z",
+  "rawManifestSHA256": "c8d019b0ae993504d9e36c377760dfce9949103457e712143cec88daf93acde8",
+  "nextBoundary": "Subsequent idle-only transaction candidate also reproduced the failure; see idle-transaction-rejected.json."
+}

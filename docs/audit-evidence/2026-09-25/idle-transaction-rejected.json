@@ -1,0 +1,25 @@
+{
+  "scope": "Rejected idle-only Core Animation transaction candidate. Not final acceptance.",
+  "baseCommit": "77773f84e00022f654c4033afcdb4258f69aa93a",
+  "sourceSHA256": "77df8cf5d02cdf39d4d23f59dba53372a2c3e834c09df6193a9f78b4b0caf9c8",
+  "framebufferOnly": true,
+  "candidate": "Idle, geometry-ready raw page submission joins the existing Core Animation transaction; active contact stays asynchronous.",
+  "result": {
+    "passed": 0,
+    "failed": 1,
+    "failure": "Third journey: Redo 96 dark pixels equals Undo 96",
+    "testSeconds": 75.107
+  },
+  "actualFailingRedo": {
+    "submissionID": "661C8E73-7E09-49E1-9DAC-11CA9B8734BB",
+    "pageRevision": 13,
+    "stableRevision": 21,
+    "active": false,
+    "transactionPresentation": true
+  },
+  "removedFromProductionSource": true,
+  "samePrivateIdentitiesAndDataPreserved": true,
+  "rawEvidence": ".build/notebook-architecture-repair/evidence-2026-09-25/idle-transaction-rejected-20260926T1620Z",
+  "rawManifestSHA256": "b21ef553277c8ab55d86a92e698619aa04035a5ebdb8cd3354da7083aca24f35",
+  "nextBoundary": "One bounded diagnostic control of the existing Metal clock lifetime, without extra GPU frames; not a production fix."
+}

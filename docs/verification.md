@@ -56,6 +56,10 @@ backlog/uploads/page order, notifications, export/clipboard, preview и worker c
 | **Первый кадр curl ≤16,67 мс и cadence 120 Гц** | **USB iPad125: строгий десятикратный curl — FAIL**: нулевые/невалидные OS receipts и интервалы до **25,010 мс при пределе 8,833 мс**. Они не исключаются из oracle. Защитный первый кадр сохраняется: его удаление показывало чужую страницу. [125–126](audit-evidence/2026-09-25/user-ux-125-126.json), [priming](audit-evidence/2026-09-25/physical-curl-priming-93-95.json). |
 | **Единый финальный build: 10 journey + 30 минут** | Не пройдены. Последний ten-journey запуск остановлен на Redo, 30-минутная сессия после него не начиналась. Нужны согласованная пара, неизменные источники, обычные жесты, записи экрана и системные frame/CPU/GPU/memory измерения. |
 
+Два последующих контроля raw Redo также дали третий `96 == 96`: продлённое участие UIKit и транзакция неподвижного кадра. Во втором журнал подтверждает `transactionPresentation=true`; оба кандидата удалены. [UIKit](audit-evidence/2026-09-25/idle-ui-demand-rejected.json), [транзакция](audit-evidence/2026-09-25/idle-transaction-rejected.json).
+
+Контроль Metal-clock также отвергнут: 121 реальный пустой callback за две секунды, без повторного GPU frame, не изменил тот же отказ. Временный код удалён; [точное окно](audit-evidence/2026-09-25/metal-keepalive-rejected.json).
+
 Пороговые значения не повышены; правильные пиксели после deadline остаются FAIL.
 Новый успешный узкий повтор не отменяет несвязанный предыдущий отказ.
 
@@ -97,6 +101,8 @@ cache нет, TeX-проходы и memory ceiling прежние.
 Mac fresh median 790,241 → 684,856 мс. Физический127 выше подтверждает
 правильный документ, но не закрывает секунду.
 [Квитанция чтения](audit-evidence/2026-09-25/typesetter-fontmap-stream.json).
+
+Текущий app-only профиль относит 86,57% Running samples к TeX, 12,68% к PDF; лишний запуск подготовки не найден. Проба `-O3` сохранила 50 exact/functional controls, но timing загрязнён параллельной компиляцией; policy не изменена. [Профиль и ограничение](audit-evidence/2026-09-25/typesetter-current-profile-policy.json).
 
 Сборка из изолированного source snapshot теперь берёт закреплённый TeX distribution
 из выбранного runtime stage, а не повторно загружает 2,88 GB в каждый snapshot.

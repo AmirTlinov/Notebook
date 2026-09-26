@@ -1321,7 +1321,9 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
         }
       }
     }
-    if !transactionPresentation, pageDrawable == nil {
+    // Presentation follows scheduling of these writes, including drawables
+    // supplied by CAMetalDisplayLink. Commit alone is not that boundary.
+    if !transactionPresentation {
       for (_, drawable, _, _, _) in passes { commandBuffer.present(drawable) }
     }
     let presentedRevision: UInt64? =
@@ -1458,11 +1460,6 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
       for (_, drawable, _, _, _) in passes { drawable.present() }
       CATransaction.commit()
       hasRevealedFirstFrame = true
-    } else if let pageDrawable {
-      // CAMetalDisplayLink owns this drawable's deadline. Notify it after the
-      // commands are committed, not later from command-buffer scheduling.
-      // The GPU may finish within the clock's remaining frame latency.
-      pageDrawable.present()
     }
     if let fields = observedSubmission {
       NotebookNavigationObservation.recordInk("ink_submitted", canvasID: observedCanvasID, fields: fields)

@@ -1,0 +1,24 @@
+{
+  "scope": "Rejected bounded Metal clock lifetime control, not a production fix or final acceptance.",
+  "baseCommit": "ed60c1116254c4f27c11110d3d32ce7afca33656",
+  "sourceSHA256": "be10ab488655184ea258d48b4f55e928836781c4f0b8d87ea95ae3113d49a3b9",
+  "candidate": "Existing Metal link kept active for 2 seconds after stable submission; unchanged revision is not re-encoded. UIKit demand drains independently after logical pause and GPU completion.",
+  "result": "Third ordinary journey fails: Redo96 equals Undo96. Paired0s unnecessary because2s did not change failure.",
+  "actualFailingRedo": {
+    "submissionID": "87D2BEAE-1FFA-4070-8944-BABBD3518CF5",
+    "pageRevision": 13,
+    "stableRevision": 21,
+    "gpuEndUptime": 962525.1255095417,
+    "firstNoopUptime": 962525.1376867086,
+    "lastNoopUptime": 962527.1344048335,
+    "noopCallbacks": 121,
+    "endReason": "expired",
+    "drawablesStayedAt": 78
+  },
+  "observation": "Runner copied635rows before deadline; later read of the same private native journal adds only the genuine terminal expiry receipt636. No instrumentation was re-entered and no new GPU frame submitted.",
+  "droppedRows": 0,
+  "removedFromProductionSource": true,
+  "samePrivateIdentitiesAndDataPreserved": true,
+  "rawEvidence": ".build/notebook-architecture-repair/evidence-2026-09-25/metal-keepalive-rejected-20260926T1641Z",
+  "rawManifestSHA256": "c567801581f868ac7b87200df1f65d72f43cb0775077f681995e8f092aad4ba0"
+}
