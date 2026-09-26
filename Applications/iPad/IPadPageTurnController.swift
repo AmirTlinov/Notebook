@@ -226,6 +226,10 @@ final class IPadPageTurnController: UIViewController {
       guard let self else { return }
       self.sheetController(self.sheetController, didTurnFrom: source, completed: completed)
     }
+    sheetController.isSheetReadyForCapture = { [weak self] sheet in
+      guard let self, let sheet = sheet as? IPadIndexedPageController else { return false }
+      return controllers[sheet.pageIndex] === sheet && readyPages[sheet.pageIndex] == true
+    }
     sheetController.onFailure = { [weak self] error in
       guard let self, let target = self.anticipatedIndex else { return }
       self.pendingExternalIndex = target
@@ -381,6 +385,9 @@ final class IPadPageTurnController: UIViewController {
         else {
           // A source revision changes page readiness, not the window's native
           // editing session. Existing paper stays until its replacement is ready.
+          // Retaining hosts must not retain a curl admitted by the old source;
+          // its pending capture could otherwise resume from the new receipt.
+          sheetController.cancelMotion(notify: false)
           readyPages.removeAll()
           refreshRenderedPages()
         }
@@ -671,6 +678,7 @@ final class IPadPageTurnController: UIViewController {
     if ready { preparationFailures[index] = nil }
     observe("page_turn_readiness", target: index, reason: ready ? "ready" : "not_ready")
     guard ready else { return }
+    if let controller = controllers[index] { sheetController.sheetReadinessDidChange(controller) }
     if documentNavigation != nil, index == displayedIndex, hasInstalledPage {
       publishDocumentLanding(at: index, requestID: resolvedDocumentTarget == index ? documentSelection?.id : nil)
     }

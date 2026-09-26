@@ -165,6 +165,12 @@ struct PencilCanvasView: UIViewRepresentable {
     }
 
     func publishReadiness() {
+      // A lift can release the input fence in this actor turn. Invalidate its
+      // old sheet receipt now; a queued Task is too late to prevent capture.
+      if attachedPaper?.inkView.isStableFramePresented != true {
+        onRenderReady?(nil)
+        return
+      }
       Task { @MainActor [weak self] in
         guard let self,let paper=attachedPaper,let pageID,let source=modelSource else { return }
         onRenderReady?(paper.inkView.isStableFramePresented ? .init(pageID:pageID,stamp:source.stamp) : nil)

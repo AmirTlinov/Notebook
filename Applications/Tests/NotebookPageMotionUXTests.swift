@@ -7,6 +7,110 @@ import XCTest
 /// Observe real native curl images, independently of the run-loop latency
 /// check: screenshot work must not be credited as display frames or FPS.
 @MainActor final class NotebookPageMotionUXTests: XCTestCase {
+  func testDirtyCapturedSheetWaitsForItsOwnReceiptAndCancellationDropsTheWait() async throws {
+    let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+    let previous = scene.windows.first(where: \.isKeyWindow)
+    for reverse in [false, true] {
+      let window = UIWindow(windowScene: scene), native = IPadSheetCurlController()
+      let source = UIViewController(), target = UIViewController()
+      source.view.backgroundColor = .red; target.view.backgroundColor = .green
+      window.rootViewController = native; window.makeKeyAndVisible()
+      defer { native.cancelMotion(); window.isHidden = true; window.rootViewController = nil; previous?.makeKey() }
+      native.show(source, direction: .forward, animated: false)
+      native.prepare(target)
+      let capturedSheet = reverse ? target : source, otherSheet = reverse ? source : target
+      var ready = false, captures = 0
+      native.isSheetReadyForCapture = { $0 !== capturedSheet || ready }
+      native.onCaptureMeasured = { _ in captures += 1 }
+      native.show(target, direction: reverse ? .reverse : .forward, animated: true)
+      // Give the queued capture a chance to run. This is a negative assertion,
+      // not a production debounce or evidence of the sheet's readiness.
+      try await Task.sleep(for: .milliseconds(20))
+      XCTAssertEqual(captures, 0)
+      native.sheetReadinessDidChange(otherSheet)
+      try await Task.sleep(for: .milliseconds(20))
+      XCTAssertEqual(captures, 0, "A neighbour's receipt cannot authorize this sheet")
+      native.cancelMotion()
+      ready = true
+      native.sheetReadinessDidChange(capturedSheet)
+      try await Task.sleep(for: .milliseconds(20))
+      XCTAssertEqual(captures, 0, "A retired wait must not revive its curl")
+      native.show(target, direction: reverse ? .reverse : .forward, animated: true)
+      let deadline = ContinuousClock.now + .seconds(2)
+      while captures == 0, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(2)) }
+      XCTAssertEqual(captures, 1)
+    }
+  }
+
+  func testDirtySheetRetainsTheSameFingerProgressAndLiftUntilItsReceipt() async throws {
+    let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+    let previous = scene.windows.first(where: \.isKeyWindow)
+    for reverse in [false, true] {
+      for completed in [false, true] {
+        let window = UIWindow(windowScene: scene), native = IPadSheetCurlController()
+        let source = UIViewController(), target = UIViewController()
+        source.view.backgroundColor = .red; target.view.backgroundColor = .green
+        window.rootViewController = native; window.makeKeyAndVisible()
+        defer { native.cancelMotion(); window.isHidden = true; window.rootViewController = nil; previous?.makeKey() }
+        native.show(source, direction: .forward, animated: false)
+        native.prepare(target)
+        let capturedSheet = reverse ? target : source
+        var ready = false, captures = 0, completions: [Bool] = []
+        native.isSheetReadyForCapture = { $0 !== capturedSheet || ready }
+        native.onCaptureMeasured = { _ in captures += 1 }
+        native.willTurn = { $0 === target }
+        native.didTurn = { from, completed in
+          XCTAssertTrue(from === source); completions.append(completed)
+        }
+        XCTAssertTrue(native.beginInteractiveTurn(direction: reverse ? .reverse : .forward, target: target))
+        native.updateInteractiveTurn(translation: native.view.bounds.width * (reverse ? 0.65 : -0.65))
+        native.endInteractiveTurn(completed: completed)
+        try await Task.sleep(for: .milliseconds(20))
+        XCTAssertEqual(captures, 0); XCTAssertTrue(completions.isEmpty)
+        XCTAssertTrue(native.page === source)
+        ready = true
+        native.sheetReadinessDidChange(capturedSheet)
+        native.sheetReadinessDidChange(capturedSheet)
+        let deadline = ContinuousClock.now + .seconds(2)
+        while completions.isEmpty, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(2)) }
+        XCTAssertEqual(completions, [completed], "The original lift, not a new gesture, must finish")
+        XCTAssertTrue(native.page === (completed ? target : source))
+        XCTAssertEqual(captures, 1, "Repeated receipts cannot rebuild the same motion image")
+      }
+    }
+  }
+
+  func testReadinessRevokedDuringCaptureDiscardsTheImageUntilItsNewReceipt() async throws {
+    let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+    let previous = scene.windows.first(where: \.isKeyWindow), window = UIWindow(windowScene: scene)
+    let native = IPadSheetCurlController(), source = UIViewController(), target = UIViewController()
+    source.view.backgroundColor = .red; target.view.backgroundColor = .green
+    window.rootViewController = native; window.makeKeyAndVisible()
+    defer { native.cancelMotion(); window.isHidden = true; window.rootViewController = nil; previous?.makeKey() }
+    native.show(source, direction: .forward, animated: false); native.prepare(target)
+    let curl = try XCTUnwrap(native.view.subviews.compactMap { $0 as? SheetCurlMetalView }.first)
+    var ready = true, captures = 0, completion: Bool?
+    native.isSheetReadyForCapture = { $0 !== source || ready }
+    // Exercise the exact return boundary of the synchronous UIKit capture.
+    // In the app its layout can revoke coverage before the image is installed.
+    native.onCaptureMeasured = { _ in
+      captures += 1
+      if captures == 1 { ready = false }
+    }
+    native.show(target, direction: .forward, animated: true) { completion = $0 }
+    let first = ContinuousClock.now + .seconds(2)
+    while captures == 0, ContinuousClock.now < first { try await Task.sleep(for: .milliseconds(2)) }
+    XCTAssertEqual(captures, 1)
+    XCTAssertTrue(curl.isHidden, "A revoked image must not enter the curl")
+    XCTAssertNil(completion); XCTAssertTrue(native.page === source)
+    ready = true
+    native.sheetReadinessDidChange(source)
+    let second = ContinuousClock.now + .seconds(2)
+    while completion == nil, ContinuousClock.now < second { try await Task.sleep(for: .milliseconds(2)) }
+    XCTAssertEqual(captures, 2)
+    XCTAssertEqual(completion, true); XCTAssertTrue(native.page === target)
+  }
+
   func testCapturedCurlContainsTheImmediatelyUpdatedSwiftUISheet() async throws {
     let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
     let previous = scene.windows.first(where: \.isKeyWindow)
