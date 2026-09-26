@@ -41,13 +41,28 @@ import XCTest
   }
 
   private func openChat() {
-    if !app.buttons["notebook-chat-menu"].isHittable {
-      if app.buttons["notebook-chat-toggle"].isHittable { app.buttons["notebook-chat-toggle"].tap() }
-      if app.buttons["notebook-companion-compose"].waitForExistence(timeout: 5) {
-        app.buttons["notebook-companion-compose"].tap()
-      }
+    let tasks = app.buttons["notebook-chat-tasks"]
+    if !tasks.isHittable {
+      let companion = app.buttons["notebook-companion-compose"]
+      XCTAssertTrue(companion.waitForExistence(timeout: 5)); XCTAssertTrue(companion.isHittable)
+      companion.tap()
     }
-    XCTAssertTrue(app.buttons["notebook-chat-menu"].waitForExistence(timeout: 5))
+    XCTAssertTrue(tasks.waitForExistence(timeout: 5)); XCTAssertTrue(tasks.isHittable)
+  }
+
+  private func beginNewChat() {
+    openChat()
+    // The header opens the catalogue; its Chats tab owns the projectless
+    // creation button. Expanding the companion alone opens the current chat.
+    let mode = app.segmentedControls["notebook-chat-browser-mode"]
+    if !mode.exists { app.buttons["notebook-chat-tasks"].tap() }
+    XCTAssertTrue(mode.waitForExistence(timeout: 5))
+    let chats = mode.buttons["Чаты"]
+    XCTAssertTrue(chats.isHittable)
+    if !chats.isSelected { chats.tap() }
+    let create = app.buttons["notebook-chat-new"]
+    XCTAssertTrue(create.waitForExistence(timeout: 5))
+    XCTAssertTrue(create.isHittable); XCTAssertTrue(create.isEnabled); create.tap()
   }
 
   private func screenshot(_ name: String) {
@@ -120,8 +135,7 @@ import XCTest
   private func sendRealStreamingWhileDrawing() throws {
     XCTAssertEqual(ProcessInfo.processInfo.environment["NOTEBOOK_ACCEPTANCE_PENCIL_CONTACTS"], "1")
     try selectBlackPen()
-    openChat()
-    app.buttons["notebook-chat-new"].tap()
+    beginNewChat()
     let transcript = app.descendants(matching: .any).matching(identifier: "notebook-chat-transcript").firstMatch
     XCTAssertTrue(transcript.waitForExistence(timeout: 30))
     let marker = "STREAM_" + UUID().uuidString
@@ -178,9 +192,7 @@ import XCTest
   }
 
   private func sendRealChatReply() throws {
-    openChat()
-    let create = app.buttons["notebook-chat-new"]
-    XCTAssertTrue(create.isEnabled); create.tap()
+    beginNewChat()
     let conversation = app.descendants(matching: .any).matching(identifier: "notebook-chat-transcript").firstMatch
     XCTAssertTrue(conversation.waitForExistence(timeout: 30), app.debugDescription)
     let marker = try XCTUnwrap(ProcessInfo.processInfo.environment["NOTEBOOK_ACCEPTANCE_REPLY_MARKER"]) + "_" + UUID().uuidString
@@ -211,9 +223,7 @@ import XCTest
   /// The notice comes from the real audio owner after a real button gesture;
   /// neither the error, the draft nor the assistant reply is injected.
   func testDeniedDictationRetainsDraftAndTextSend() throws {
-    try launch(); openChat()
-    let create = app.buttons["notebook-chat-new"]
-    XCTAssertTrue(create.isEnabled); create.tap()
+    try launch(); beginNewChat()
     XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "notebook-chat-transcript")
       .firstMatch.waitForExistence(timeout: 30), app.debugDescription)
     let marker = try XCTUnwrap(ProcessInfo.processInfo.environment["NOTEBOOK_ACCEPTANCE_REPLY_MARKER"]) + "_MIC_DENIED_" + UUID().uuidString
@@ -373,7 +383,7 @@ import XCTest
     XCTAssertLessThanOrEqual(companion.frame.maxY, keyboard.frame.minY,
       "The user must be able to return to the agent while editing a widget")
     XCTAssertTrue(companion.isHittable); companion.tap()
-    XCTAssertTrue(app.buttons["notebook-chat-menu"].waitForExistence(timeout: 5))
+    XCTAssertTrue(app.buttons["notebook-chat-tasks"].waitForExistence(timeout: 5))
     XCTAssertEqual(field.value as? String, originalText)
     XCTAssertEqual(paper.frame, originalPaper)
     screenshot("chat-opened-from-widget-keyboard-with-paper-preserved")
