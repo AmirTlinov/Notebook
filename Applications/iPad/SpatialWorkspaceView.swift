@@ -1551,7 +1551,11 @@ struct SpatialWorkspaceView: View {
 
   private func closedApproach(to target:SessionPresence, from origin:SessionPresence) -> SessionPresence? {
     guard target.mode == .page || target.mode == .document, let itemID=target.focusedItemID else { return nil }
-    if origin.boardID == target.boardID,
+    // A partly visible closed document can approach its reading pose while
+    // that same paper prepares. Opening still waits for its exact ready owner.
+    let positionsClosedDocument = target.mode == .document && origin.openProgress == 0
+      && (origin.boardID != target.boardID || origin.camera != target.camera || origin.viewport != target.viewport)
+    if !positionsClosedDocument, origin.boardID == target.boardID,
       let center=model.boardHierarchy?.focusedCenter(of:itemID,in:target.boardID) {
       let rect=model.itemGeometry(itemID).screenFrame(center:center,camera:origin.camera,viewport:origin.viewport)
       if rect.x < origin.viewport.x,rect.y < origin.viewport.y,rect.x + rect.width > 0,rect.y + rect.height > 0 { return nil }

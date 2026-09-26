@@ -36,6 +36,45 @@ final class NotebookDocumentOpeningTests: XCTestCase {
     XCTAssertNil(model.documents[destination.id])
     let target = CollaborationTarget(kind: .document, id: destination.id)
     let revision = try await model.performStoreCommand { try $0.referenceRevision(target: target) }
+    let viewport = try XCTUnwrap(model.presence?.viewport)
+    let geometry = WorkspaceItemGeometry.document(destination.paperSize)
+    let destinationCamera = SpatialCamera(center: .init(x: 2_000, y: 0), scale: geometry.fitScale(viewport: viewport))
+    if !onAnotherBoard {
+      let origin = try XCTUnwrap(model.presence)
+      let visible = geometry.screenFrame(center: destinationCamera.center, camera: origin.camera, viewport: viewport)
+      XCTAssertTrue(visible.x < viewport.x && visible.x + visible.width > 0
+        && visible.y < viewport.y && visible.y + visible.height > 0,
+        "A visible closed cover must approach while preparing; it need not straddle the viewport edge")
+      XCTAssertNotEqual(origin.camera, destinationCamera)
+    }
+    func paperReady() -> Bool {
+      guard model.documents[destination.id] == destination, let state = model.documentStates[destination.id] else { return false }
+      return DocumentRenderRegistry.shared.hasLiveSurface(document: destination, state: state, pageIndex: 0, scope: .paper)
+    }
+    let readyAtRequest = paperReady()
+    XCTAssertFalse(readyAtRequest)
+    var closedAt: TimeInterval?, closedWhilePreparing = false, firstOpeningAt: TimeInterval?
+    var openedBeforeReady = false
+    let observation = DocumentOpeningCameraObservation { sample in
+      guard sample.focusedItemID == destination.id else { return }
+      if closedAt == nil, sample.mode == .cover, sample.camera == destinationCamera,
+        sample.viewport == viewport, sample.openProgress == 0 {
+        closedAt = ProcessInfo.processInfo.systemUptime
+        closedWhilePreparing = !paperReady()
+      }
+      if firstOpeningAt == nil, sample.openProgress > 0 {
+        firstOpeningAt = ProcessInfo.processInfo.systemUptime
+        openedBeforeReady = !paperReady()
+      }
+    }
+    // The registry holds distinct weak ObjectIdentifiers: this passive fixture
+    // observes the ordinary broadcast without replacing a mounted native plane.
+    model.nativeCameraProjection.register(observation)
+    defer {
+      model.nativeCameraProjection.remove(observation)
+      let phase = XCTAttachment(string: "closedAt=\(String(describing: closedAt)); closedWhilePreparing=\(closedWhilePreparing); firstOpeningAt=\(String(describing: firstOpeningAt)); openedBeforeReady=\(openedBeforeReady)")
+      phase.name = "document-closed-approach"; phase.lifetime = .keepAlways; add(phase)
+    }
     let openingStarted = ContinuousClock.now
     model.requestShow(.init(target: target, revision: revision))
     func installed() -> Bool {
@@ -48,15 +87,35 @@ final class NotebookDocumentOpeningTests: XCTestCase {
     while !installed(), ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(20)) }
     XCTAssertTrue(installed(), "A history reference must install the actual document, not only change the title: \(model.persistenceFailure ?? model.compositionTiles.failure ?? "no failure reported"); document=\(model.documents[destination.id] != nil), indexed=\(model.sceneIndex?.item(id: destination.id) != nil), scenePending=\(model.scenePreparationPending), permits=\(model.permitsScenePreparation), preparing=\(model.compositionTiles.isPreparing), presence=\(String(describing: model.presence))")
     XCTAssertEqual(model.documents[destination.id], destination)
+    if !readyAtRequest {
+      XCTAssertNotNil(closedAt, "The closed destination camera must not wait behind canonical paper preparation")
+    }
+    XCTAssertNotNil(firstOpeningAt)
+    XCTAssertFalse(openedBeforeReady, "A positive opening sample requires the exact installed current paper")
+    if let closedAt, let firstOpeningAt { XCTAssertLessThanOrEqual(closedAt, firstOpeningAt) }
+    let captureStarted = ProcessInfo.processInfo.systemUptime
     let image = UIGraphicsImageRenderer(size: window.bounds.size).image { _ in
       window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
     }
+    let captureEnded = ProcessInfo.processInfo.systemUptime
     let proof = XCTAttachment(image: image); proof.name = "history-opens-unloaded-document"
     proof.lifetime = .keepAlways; add(proof)
+    let attachmentEnded = ProcessInfo.processInfo.systemUptime
     // A generous diagnostic wait must not silently bless a slow opening. The
     // registry checks the installed current source, not just focus/title/model.
     try await assertUX(onAnotherBoard ? "document-other-board-installed" : "document-installed",
       since: openingStarted, budget: NotebookUXObservation.opening, window: window) { installed() }
+    let capturePhases = XCTAttachment(string: "captureMS=\((captureEnded-captureStarted)*1000); attachmentMS=\((attachmentEnded-captureEnded)*1000); both remain included in the unchanged opening oracle")
+    capturePhases.name = "document-window-observation-cost"; capturePhases.lifetime = .keepAlways; add(capturePhases)
+    if model.documentMeasurements.enabled {
+      let record = try XCTUnwrap(model.documentMeasurements.records.last { $0.documentID == destination.id })
+      XCTAssertEqual(record.sourcePreparationMeasurement, 1)
+      // Pending at the closed endpoint is evidence, not a required delay: a
+      // faster compiler may legitimately finish during the closed approach.
+      if let closedAt, let contentReadyAt = record.contentReadyAt, closedWhilePreparing {
+        XCTAssertLessThanOrEqual(closedAt, contentReadyAt)
+      }
+    }
   }
 
   func testAcceptedNavigationDoesNotStartAnOptionalShellBeforeItsResolverRuns() async throws {
@@ -357,4 +416,13 @@ final class NotebookDocumentOpeningTests: XCTestCase {
     XCTAssertTrue(model.documents.isEmpty)
     return (model, documents.0, documents.1)
   }
+}
+
+/// A test-only listener to the existing native camera owner, not a new clock or
+/// a replacement plane. It never projects, requests, or acknowledges content.
+@MainActor
+private final class DocumentOpeningCameraObservation: SceneNativeCameraOwner {
+  private let receive: (SessionPresence) -> Void
+  init(_ receive: @escaping (SessionPresence) -> Void) { self.receive = receive }
+  func projectSceneCamera(_ presence: SessionPresence) { receive(presence) }
 }

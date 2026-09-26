@@ -44,8 +44,10 @@ navigation. `DocumentPagePresentationOwner` prepares the target, while
 An addressed offscreen notebook/document keeps one workspace settlement. Its
 closed cover first approaches the actual viewport; only then can its mounted
 paper establish render readiness and authorize opening. Both animation stages
-share the original duration, request identity and rollback origin. The admitted
-preparation target is not culled by the old board camera. Offscreen preparation
+share the original duration, request identity and rollback origin. A closed document
+also approaches while preparing when its cover is already partly visible but its
+reading camera differs; visibility alone cannot serialize these independent stages.
+The admitted preparation target is not culled by the old board camera. Offscreen preparation
 is never reported as a displayed page, and cancellation retires both stages.
 The prepared source demand is checked separately from the actual camera. A
 canonical deletion/transfer proof is installed before retiring its mounted owner;
