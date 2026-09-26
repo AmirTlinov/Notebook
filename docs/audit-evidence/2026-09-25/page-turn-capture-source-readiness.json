@@ -1,0 +1,186 @@
+{
+  "date": "2026-09-26",
+  "candidateBuild": 210,
+  "sourceSHA256": "b16165524820f8449a19865c76359947affcac7195c60cf1e1b37fa5ecc541e9",
+  "scope": "Capture only the currently presented material of the exact mounted source sheet; preserve pending finger progress/lift, discard revoked capture, cancel a document-source replacement without recreating its hosts.",
+  "verification": {
+    "route": "./verify.sh:selected",
+    "receipt": "/Users/amir/.codex/worktrees/page-turn-continuity/Notebook/.build/page-turn-210-clean/verification.json",
+    "summary": {
+      "devicesAndConfigurations": [
+        {
+          "device": {
+            "architecture": "arm64",
+            "deviceId": "00008103-001E059934D9001E",
+            "deviceName": "iPad (Елизавета)",
+            "modelName": "iPad Pro (11-inch) (3rd generation)",
+            "osBuildNumber": "24A435",
+            "osVersion": "27.0",
+            "platform": "iOS"
+          },
+          "expectedFailures": 0,
+          "failedTests": 0,
+          "passedTests": 14,
+          "skippedTests": 0,
+          "testPlanConfiguration": {
+            "configurationId": "1",
+            "configurationName": "Test Scheme Action"
+          }
+        }
+      ],
+      "environmentDescription": "Notebook · Built with macOS 27.0",
+      "expectedFailures": 0,
+      "failedTests": 0,
+      "finishTime": 1790385021.52,
+      "passedTests": 14,
+      "result": "Passed",
+      "runtimeWarnings": [],
+      "skippedTests": 0,
+      "startTime": 1790384878.069,
+      "statistics": [],
+      "testFailures": [],
+      "title": "Test - Notebook",
+      "topInsights": [],
+      "totalTestCount": 14
+    }
+  },
+  "reproduction": {
+    "bundle": "/Users/amir/.codex/worktrees/page-turn-continuity/Notebook/.build/page-turn-210-direct-stored-page/ipad.xcresult",
+    "failure": "Actual curl CGImage omitted the just-accepted stroke while the old ink and witnesses remained. Later presentation readiness did not prove capture-time freshness.",
+    "limitation": "This diagnostic also contained a direct-decoder candidate; causality between decoding speed and the race was not established."
+  },
+  "priorFixedProbe": {
+    "bundle": "/Users/amir/.codex/worktrees/page-turn-continuity/Notebook/.build/page-turn-210-ready-source-and-direct-page/ipad.xcresult",
+    "result": "Five UI regressions passed, including the actual accepted stroke. Separate full-store benchmark was killed, not a speed acceptance.",
+    "admission": "First attempt ready=false/sourceStable=false; subsequent ready=true/sourceStable=true captured the accepted material."
+  },
+  "storageExperiment": "Excluded from production and final clean verification: physical speed and full-store parity were not established.",
+  "installation": {
+    "build": "210",
+    "finishedAt": "2026-09-26T01:15:58.279830+00:00",
+    "installationAttempted": true,
+    "ipadDataContainerRelocated": true,
+    "ipadInstalledBuild": "210",
+    "macDataUnchangedBeforeLaunch": true,
+    "macInstalledBuild": "210",
+    "physicalPageTurnAcceptance": "see separate XCTest evidence; not full acceptance",
+    "sourceSHA256": "b16165524820f8449a19865c76359947affcac7195c60cf1e1b37fa5ecc541e9",
+    "startedAt": "2026-09-26T01:15:12.481343+00:00",
+    "status": "matched-pair-launched"
+  },
+  "remaining": "The installed real-book100step route was not exercised: two setup failures before page-turning. Prior production209 dropped-contact reproduction and strict speed failures remain open. Native motion replacement is owned by the separately user-approved prototype thread on common base53ca7f5e.",
+  "commit": "53ca7f5e",
+  "cleanAdmissionTrace": {
+    "acceptedInk": "First capture attempt refused while native source was unstable; later true-before/true-after capture, actual image contains the new stroke.",
+    "inkCaptureMs": 20.2688333,
+    "eraseCaptureMs": 21.5115833,
+    "meaning": "Individual synchronous capture durations only; not end-to-end latency or FPS."
+  },
+  "installationReceipt": "/Users/amir/.codex/worktrees/page-turn-continuity/Notebook/.build/page-turn-210-physical-install/installation.json",
+  "buildReceipt": "/Users/amir/.codex/worktrees/page-turn-continuity/Notebook/.build/page-turn-210-release/build.json",
+  "installedSetupFailure": {
+    "resultBundle": "/Users/amir/.codex/worktrees/page-turn-continuity/Notebook/.build/page-turn-210-installed-fast-series/ipad.xcresult",
+    "summary": {
+      "devicesAndConfigurations": [
+        {
+          "device": {
+            "architecture": "arm64e",
+            "deviceId": "00008103-001E059934D9001E",
+            "deviceName": "iPad (Елизавета)",
+            "modelName": "iPad Pro (11-inch) (3rd generation)",
+            "osBuildNumber": "24A435",
+            "osVersion": "27.0",
+            "platform": "iOS"
+          },
+          "expectedFailures": 0,
+          "failedTests": 1,
+          "passedTests": 0,
+          "skippedTests": 0,
+          "testPlanConfiguration": {
+            "configurationId": "1",
+            "configurationName": "Test Scheme Action"
+          }
+        }
+      ],
+      "environmentDescription": "Notebook · Built with macOS 27.0",
+      "expectedFailures": 0,
+      "failedTests": 1,
+      "finishTime": 1790385436.106,
+      "passedTests": 0,
+      "result": "Failed",
+      "runtimeWarnings": [],
+      "skippedTests": 0,
+      "startTime": 1790385422.095,
+      "statistics": [],
+      "testFailures": [
+        {
+          "failureText": "XCTAssertTrue failed",
+          "targetName": "NotebookUITests",
+          "testIdentifier": 1,
+          "testIdentifierString": "NotebookInstalledReverseDiagnosticUITests/testInstalledNotebookReverseNavigation()",
+          "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookUITests/NotebookInstalledReverseDiagnosticUITests/testInstalledNotebookReverseNavigation",
+          "testName": "testInstalledNotebookReverseNavigation()"
+        }
+      ],
+      "title": "Test - Notebook",
+      "topInsights": [],
+      "totalTestCount": 1
+    },
+    "interpretation": "Test setup assumed an existing cover AX node meant the notebook was open. Production was focused on a different document, target cover was offscreen. No page-turn gesture was executed. Corrected private setup enters board via pinch and double-taps the exact cover; app sources unchanged."
+  },
+  "installedSetupRetry": {
+    "resultBundle": "/Users/amir/.codex/worktrees/page-turn-continuity/Notebook/.build/page-turn-210-installed-fast-series-retry/ipad.xcresult",
+    "summary": {
+      "devicesAndConfigurations": [
+        {
+          "device": {
+            "architecture": "arm64e",
+            "deviceId": "00008103-001E059934D9001E",
+            "deviceName": "iPad (Елизавета)",
+            "modelName": "iPad Pro (11-inch) (3rd generation)",
+            "osBuildNumber": "24A435",
+            "osVersion": "27.0",
+            "platform": "iOS"
+          },
+          "expectedFailures": 0,
+          "failedTests": 1,
+          "passedTests": 0,
+          "skippedTests": 0,
+          "testPlanConfiguration": {
+            "configurationId": "1",
+            "configurationName": "Test Scheme Action"
+          }
+        }
+      ],
+      "environmentDescription": "Notebook · Built with macOS 27.0",
+      "expectedFailures": 0,
+      "failedTests": 1,
+      "finishTime": 1790385578.831,
+      "passedTests": 0,
+      "result": "Failed",
+      "runtimeWarnings": [],
+      "skippedTests": 0,
+      "startTime": 1790385573.628,
+      "statistics": [],
+      "testFailures": [
+        {
+          "failureText": "XCTAssertTrue failed - The intended cover must be on screen",
+          "targetName": "NotebookUITests",
+          "testIdentifier": 1,
+          "testIdentifierString": "NotebookInstalledReverseDiagnosticUITests/testInstalledNotebookReverseNavigation()",
+          "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookUITests/NotebookInstalledReverseDiagnosticUITests/testInstalledNotebookReverseNavigation",
+          "testName": "testInstalledNotebookReverseNavigation()"
+        }
+      ],
+      "title": "Test - Notebook",
+      "topInsights": [],
+      "totalTestCount": 1
+    },
+    "interpretation": "Board zoom did not make the exact target cover hittable. Stopped before opening the book or executing any page-turn. This is a setup/navigation-precondition failure, not a page-turn result. No claim of the planned100steps.",
+    "restoration": {
+      "afterSHA256": "b16165524820f8449a19865c76359947affcac7195c60cf1e1b37fa5ecc541e9",
+      "beforeSHA256": "b16165524820f8449a19865c76359947affcac7195c60cf1e1b37fa5ecc541e9",
+      "privateTestRemoved": true
+    }
+  }
+}
