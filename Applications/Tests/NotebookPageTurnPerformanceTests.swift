@@ -8,7 +8,9 @@ import XCTest
 /// lane. OS display time, callback delay, capture, CPU encode and GPU are separate.
 @MainActor final class NotebookPageTurnPerformanceTests: XCTestCase {
   func testRecordTwentyPhysicalPageTurns() async throws {
-    XCTAssertTrue(MetalFrameCompletion.reportsDisplayTime, "Physical iPad only")
+    #if targetEnvironment(simulator)
+    throw XCTSkip("This measurement requires OS presentation receipts on a physical iPad")
+    #endif
     let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
     let previous = scene.windows.first(where: \.isKeyWindow), window = UIWindow(windowScene: scene)
     let controller = IPadPageTurnController(), commands = NotebookPageNavigation(), ownerID = UUID()
@@ -33,7 +35,7 @@ import XCTest
     try await Task.sleep(for: .milliseconds(100)) // Only mount; no curl warmup.
     let native = controller.sheetController
     let curl = try XCTUnwrap(native.view.subviews.compactMap { $0 as? SheetCurlMetalView }.first)
-    let resolve = curl.onFrameResolved
+    let resolve = curl.onFrameReady
     var rows: [[String: Any]] = []
     let idleBytes = footprint(), reservedBefore = SceneRenderResources.shared.reservedBytes
     for turn in 0..<20 {
@@ -45,12 +47,12 @@ import XCTest
         submits.append(["encodeStart": frame.encodingBegan, "submitted": frame.submitted,
           "gpuStart": frame.gpuBegan, "gpuEnd": frame.gpuEnded, "targetDisplay": frame.targetPresentation])
       }
-      curl.onFrameResolved = { image, progress, receipt in
-        frames.append(["progress": progress, "displayed": receipt.completion.presentationTime ?? 0,
+      curl.onFrameReady = { image, progress, sequence, readiness in
+        frames.append(["progress": progress, "displayed": readiness.presentedTime ?? 0,
           "callback": CACurrentMediaTime()])
         peak = max(peak, self.footprint())
         reservedPeak = max(reservedPeak, SceneRenderResources.shared.reservedBytes)
-        resolve?(image, progress, receipt)
+        resolve?(image, progress, sequence, readiness)
       }
       committedAt = nil
       let start = CACurrentMediaTime(), target = turn.isMultiple(of: 2) ? 1 : 0
@@ -58,6 +60,7 @@ import XCTest
       let commandEnd = CACurrentMediaTime(), deadline = start + 3
       while committedAt == nil, CACurrentMediaTime() < deadline { try await Task.sleep(for: .milliseconds(2)) }
       XCTAssertEqual(selected, target); XCTAssertNotNil(committedAt)
+      XCTAssertTrue(frames.contains { ($0["displayed"] ?? 0) > start }, "A callback without an OS display timestamp is not a physical sample")
       rows.append(["turn": turn, "coldCurl": turn == 0, "start": start, "commandEnd": commandEnd,
         "landed": committedAt ?? 0, "captures": captures.map { ["begin": $0.began, "end": $0.ended, "pixels": Double($0.pixels)] },
         "frames": frames, "submits": submits, "peakFootprintSampleBytes": peak,
