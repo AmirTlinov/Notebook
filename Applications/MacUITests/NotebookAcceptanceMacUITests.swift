@@ -33,15 +33,17 @@ import XCTest
   private func devicesWindow() throws -> XCUIElement {
     continueAfterFailure = false
     try activatePrivateApplication()
-    let window = application.windows["notebook.devices.window"]
-    if !window.exists {
+    // SwiftUI's status menu exposes its title through AppKit, not the Button's
+    // accessibilityIdentifier. This action selects Devices in the shared window.
+    let devices = application.menuItems["Устройства…"]
+    if !devices.isHittable {
       let item = application.menuBars.statusItems.firstMatch
       XCTAssertTrue(item.waitForExistence(timeout: 15), application.debugDescription)
       item.click()
-      let devices = application.menuItems["notebook.devices.open"]
-      XCTAssertTrue(devices.waitForExistence(timeout: 5), application.debugDescription)
-      devices.click()
     }
+    XCTAssertTrue(devices.waitForExistence(timeout: 5), application.debugDescription)
+    devices.click()
+    let window = application.windows["notebook.workspaces.window"]
     XCTAssertTrue(window.waitForExistence(timeout: 5), application.debugDescription)
     return window
   }
@@ -50,7 +52,9 @@ import XCTest
     let previous = NSPasteboard.general.changeCount
     let window = try devicesWindow()
     XCTAssertTrue(window.descendants(matching: .any).matching(identifier: "notebook.devices.status").firstMatch.waitForExistence(timeout: 5))
-    XCTAssertFalse(window.textFields.firstMatch.exists)
+    XCTAssertTrue(window.searchFields.firstMatch.waitForExistence(timeout: 5))
+    XCTAssertFalse(window.textFields["Приглашение Notebook"].exists)
+    XCTAssertFalse(window.buttons["Подключиться"].exists)
     XCTAssertFalse(window.buttons["Скопировать приглашение для iPad"].exists)
     XCTAssertEqual(NSPasteboard.general.changeCount, previous)
     let proof = XCTAttachment(screenshot: application.screenshot())
