@@ -1,0 +1,327 @@
+{
+  "format": 1,
+  "scope": "Диагностическая локализация третьего raw-page Redo: фазы UIKit, точный видимый native owner и сохранённый Simulator framebuffer. Не исправление, не физическая или финальная Release-приёмка.",
+  "baseCommit": "fcbc788818c43d69603b2db5428570524541fc3e",
+  "rawEvidence": ".build/notebook-architecture-repair/evidence-2026-09-25/raw-redo-phase-identity-20260926T1929Z",
+  "rawManifestSHA256": "b39ccfbbe7edfdbdc9eddbb1f4b29ae0c78f26d3babafd9ebfcae0c162a796d5",
+  "runs": [
+    {
+      "run": "phase",
+      "sourceSHA256": "2a2ead9423f02a0cfae68f7b4bdf21d643307b733d0920020bc4ef065555e080",
+      "sourceUnchanged": true,
+      "developmentBuild": true,
+      "configuration": "Release, private Mac + iOS Simulator; diagnostic patch, not clean final acceptance",
+      "result": {
+        "passed": 0,
+        "failed": 1,
+        "skipped": 0,
+        "runtimeWarnings": 0,
+        "completeJourneys": 2,
+        "failedIterationZeroBased": 2,
+        "undoDarkPixels": 96,
+        "redoDarkPixels": 96
+      },
+      "sourceManifest": "phase/build/source.json",
+      "buildIdentity": "phase/build/build.json",
+      "dataAndIdentityReceipts": "phase/run",
+      "rawCase": "phase/case",
+      "analysis": "phase/analysis/decision.json",
+      "journalSHA256": "e87b872fa58a739a8b05aa4d088fc4aa9b7c9c30dc65cfb71ecb77bc840df7e5",
+      "journalRows": 757,
+      "journalGapsOrDrops": false,
+      "patches": [
+        {
+          "path": "phase/01-per-request-baseline.patch",
+          "sha256": "a5e8d99be637393ead6a016a82cdfc19968d914f0079ffe1dd1af47d0bade3cf"
+        },
+        {
+          "path": "phase/02-phase-observation.patch",
+          "sha256": "74e64a9266d21529d1ccdaaf38b7acb7f8fd78037c347c3c2117a435493db547"
+        }
+      ]
+    },
+    {
+      "run": "identity",
+      "sourceSHA256": "e5905e3ea716c847a93a565384e6d910f4dfb454dd1a3e7c6a49b8df6efc5b0a",
+      "sourceUnchanged": true,
+      "developmentBuild": true,
+      "configuration": "Release, private Mac + iOS Simulator; diagnostic patch, not clean final acceptance",
+      "result": {
+        "passed": 0,
+        "failed": 1,
+        "skipped": 0,
+        "runtimeWarnings": 0,
+        "completeJourneys": 2,
+        "failedIterationZeroBased": 2,
+        "undoDarkPixels": 96,
+        "redoDarkPixels": 96
+      },
+      "sourceManifest": "identity/build/source.json",
+      "buildIdentity": "identity/build/build.json",
+      "dataAndIdentityReceipts": "identity/run",
+      "rawCase": "identity/case",
+      "analysis": "identity/analysis/decision.json",
+      "journalSHA256": "b896409a425285919852a858723e3b7b4a8e133805db047cbaa714abf4f0cbec",
+      "journalRows": 650,
+      "journalGapsOrDrops": false,
+      "patches": [
+        {
+          "path": "identity/identity-only.patch",
+          "sha256": "969bdc3c1eca4198aeab3b5826b6f2b8ccc0d13dcac69dba5dff32bf62c902da"
+        }
+      ]
+    }
+  ],
+  "negativeCompile": {
+    "raw": "identity-compile-negative",
+    "result": "BUILD FAIL before tests",
+    "error": "CAMetalDrawable.drawableID unavailable on Simulator",
+    "correction": "Only diagnostic scalar changed to ObjectIdentifier(drawable) within exact submission UUID; no global drawable identity claim."
+  },
+  "phaseCut": {
+    "allSixUndoRedoWindowsReachedPostGPUCACommitAndUpdateComplete": true,
+    "failedRedo": {
+      "stamp": {
+        "counter": "140",
+        "actor": "987736A1-B860-4C4A-874A-27AC6F362879"
+      },
+      "canvasID": "ObjectIdentifier(0x000000010979a400)",
+      "submissionID": "52D85B3A-6E57-495D-8D53-D512A5611090",
+      "acceptedUptime": 970200.8010137083,
+      "acceptedToSubmissionMs": 20.24212502874434,
+      "acceptedToGPUCallbackMsBounds": [
+        21.265125018544495,
+        21.265833405777812
+      ],
+      "acceptedToCACommitAfterGPUActorMs": 34.27854191977531,
+      "acceptedToDrainMs": 34.29687523748726,
+      "captureStartAfterGPUCallbackMsBounds": [
+        175.12408329639584,
+        175.12479168362916
+      ],
+      "captureStartAfterCACommitMs": 162.11137478239834,
+      "failedCapture": {
+        "appFrameReadsInOrder": [
+          [
+            0,
+            0,
+            1032,
+            1376
+          ],
+          [
+            0,
+            0,
+            1032,
+            1376
+          ],
+          [
+            0,
+            0,
+            1032,
+            1376
+          ]
+        ],
+        "captureEndedUptime": 970201.106432875,
+        "captureStartedUptime": 970200.997403625,
+        "cropPixels": [
+          1024,
+          1216,
+          17,
+          17
+        ],
+        "darkPixelCount": 96,
+        "decodedUptime": 970201.1529478751,
+        "imageSizePixels": [
+          2064,
+          2752
+        ],
+        "probe": [
+          516,
+          612.32
+        ],
+        "scale": 2,
+        "stage": "redo"
+      }
+    },
+    "interpretation": "Отсутствие post-GPU CA after-commit/update-complete не объясняет этот отказ: снимок начался ещё через 162.111 ms после commit. Это не доказывает включение exact drawable в transaction или его consumption compositor."
+  },
+  "visibleOwnerCut": {
+    "failedStamp": {
+      "actor": "987736A1-B860-4C4A-874A-27AC6F362879",
+      "counter": "152"
+    },
+    "submissionID": "846F0A5A-08A8-4963-A107-684E82D81B10",
+    "canvasID": "ObjectIdentifier(0x000000010936a400)",
+    "drawableLayerID": "ObjectIdentifier(0x000000010c45eb40)",
+    "canvasLayerID": "ObjectIdentifier(0x000000010c45eb40)",
+    "allThreeExactLayerJoins": [
+      true,
+      true,
+      true
+    ],
+    "layerCount": 23,
+    "allModelAndPresentationLayersVisibleOpaqueUnmaskedUnrasterized": true,
+    "layerAncestryEqualAcrossAllThree": true,
+    "directSiblingsEqualBetweenSecondAndThird": true,
+    "allModelClipsContainProbe": true,
+    "actualPageReadinessUptime": 971452.6558680834,
+    "captureStartAfterGPUCallbackMSBounds": [
+      180.34629162866622,
+      180.34737498965114
+    ],
+    "captureStartAfterActualPageIdentityMS": 180.17995834816247,
+    "failedCapture": {
+      "appFrameReadsInOrder": [
+        [
+          0,
+          0,
+          1032,
+          1376
+        ],
+        [
+          0,
+          0,
+          1032,
+          1376
+        ],
+        [
+          0,
+          0,
+          1032,
+          1376
+        ]
+      ],
+      "captureEndedUptime": 971452.9532521251,
+      "captureStartedUptime": 971452.8360480417,
+      "cropPixels": [
+        1024,
+        1216,
+        17,
+        17
+      ],
+      "darkPixelCount": 96,
+      "decodedUptime": 971452.9941341251,
+      "imageSizePixels": [
+        2064,
+        2752
+      ],
+      "probe": [
+        516,
+        612.32
+      ],
+      "scale": 2,
+      "stage": "redo"
+    },
+    "interpretation": "Submitted layer положительно совпадает с чернильным слоем actual displayed page. Wrong prewarmed/detached canvas и наблюдённые различия opacity/mask/rasterization/clip/curl не объясняют отличие успешного второго и отказавшего третьего Redo. Срез сделан на ready callback, не непрерывно до screenshot."
+  },
+  "videoCut": {
+    "sourceVideoSHA256": "314efdaf356daf15226467d392373147ee9ae3d6d0ae5a5f8e17fac9dafac5cd",
+    "analysisSHA256": "06e92ed873dce7e7f60ed4a9463c6c68945e58cd58504368874a465eedabfeb3",
+    "dimensions": [
+      2064,
+      2752
+    ],
+    "frames": 1800,
+    "failedScreenshotSHA256": "f9eb03f412d686135407f08ba334d31eac30aa4eba3fdb6bf2d63f8b8fbf42a4",
+    "probePixels": [
+      1024,
+      1216,
+      17,
+      17
+    ],
+    "controls": [
+      {
+        "journey": "first",
+        "firstRedoToastPTS": 26.698333,
+        "lastUncutFramePTS": 26.71,
+        "firstCutFramePTS": 26.741667,
+        "lastUncutToFirstCutSampleMS": 31.667,
+        "toastToFirstCutSampleMS": 43.334
+      },
+      {
+        "journey": "second",
+        "firstRedoToastPTS": 52.348333,
+        "lastUncutFramePTS": 52.361667,
+        "firstCutFramePTS": 52.503333,
+        "lastUncutToFirstCutSampleMS": 141.666,
+        "toastToFirstCutSampleMS": 155.0
+      },
+      {
+        "journey": "third",
+        "firstRedoToastPTS": 78.231667,
+        "lastUncutFramePTS": 78.245,
+        "firstCutFramePTS": 78.493333,
+        "lastUncutToFirstCutSampleMS": 248.333,
+        "toastToFirstCutSampleMS": 261.666
+      }
+    ],
+    "thirdOldROI": {
+      "file": "/tmp/notebook-redo-phase-video-review/tail-crops/0090.png",
+      "pts": 78.231667,
+      "dark17": 96,
+      "roiSHA256": "de5a9a38ff286dfbc7845d0de3d2fc78dbd30e0f0c471a1396e234f9d9bfbadf",
+      "deltaFromPreToastUndoSum": 0,
+      "deltaFromPreToastUndoMax": 0,
+      "coreBlackPixelCount": 92,
+      "coreRGBMin": 0,
+      "coreRGBMax": 20,
+      "coreRGBMean": 2.25
+    },
+    "thirdNextCutROI": {
+      "file": "/tmp/notebook-redo-phase-video-review/tail-crops/0092.png",
+      "pts": 78.493333,
+      "dark17": 0,
+      "roiSHA256": "e93116e07b772187fe46adf86f601250bbfdba3d9ba1d3ecf21e08630090a742",
+      "deltaFromPreToastUndoSum": 78101,
+      "deltaFromPreToastUndoMax": 250,
+      "coreBlackPixelCount": 92,
+      "coreRGBMin": 235,
+      "coreRGBMax": 250,
+      "coreRGBMean": 246.02173913043478
+    },
+    "interpretation": "Video тоже показывает свежий toast «Повторено» и целую нижнюю линию. Старый ROI после toast побайтово равен Undo (delta=0); следующий сохранённый кадр имеет cut и тот же toast. Screenshot-only cached snapshot не объясняет весь эффект. Промежуточного alpha fade в сохранённых кадрах нет; VFR gap 248.333 ms не позволяет исключить изменение между кадрами."
+  },
+  "scheduledTargets": {
+    "count": 6,
+    "acceptedToTargetPresentationMSBounds": [
+      48.935166792944074,
+      49.035750213079154
+    ],
+    "callbackToTargetPresentationMSBounds": [
+      28.855166863650084,
+      29.663291876204312
+    ],
+    "gpuCallbackToTargetPresentationMSBounds": [
+      27.59622933808714,
+      28.068708488717675
+    ],
+    "targetTimestampToTargetPresentationMSBounds": [
+      16.666666720993817,
+      16.666666720993817
+    ],
+    "interpretation": "Записанные targetPresentation не накапливают примерно 110 ms на journey; это назначенные сроки, не фактические display receipts."
+  },
+  "parserEvidence": {
+    "phase": "phase/analysis/parser-tests.log (5/5 existing PASS)",
+    "identity": "identity/analysis/parser-tests.log (9/9 existing PASS)",
+    "newExecutionDuringSeal": false
+  },
+  "limits": [
+    "В phase применены временный UI-demand baseline и bounded phase observation; identity-only не меняет scheduling. Их нельзя объединить в один source run.",
+    "Оба UI запуска developmentBuild=true; ни один не является чистым финальным Release acceptance.",
+    "Здесь нет readback final drawable. Ранее сохранённый final-drawable probe — другой source cut, не присваивается этим кадрам.",
+    "Нет PTS→systemUptime mapping, physical scanout/FPS/Pencil или доказательства конкретной ошибки ОС.",
+    "Identity ограничен actual page subtree и direct sheet siblings; не всем содержимым всех sibling layers и не непрерывным наблюдением.",
+    "10 journeys и 30 min не завершены. Поздний правильный video frame не отменяет исходный FAIL."
+  ],
+  "relatedEvidence": [
+    "final-drawable-redo-probe.json",
+    "release-8abb-redo.json"
+  ],
+  "preservationBoundary": {
+    "secretConfigurationCopied": false,
+    "privateMacOrIPadJSONCopied": false,
+    "preserved": "Public endpoint identity, upgrade/data inventories, source/build witnesses, diagnostics, raw XCTest artifacts. No live containers, keys, app bundles or DerivedData.",
+    "manifestMapsOriginalToArchivedPaths": true
+  }
+}
