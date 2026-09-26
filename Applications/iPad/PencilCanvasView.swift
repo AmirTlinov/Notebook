@@ -9,6 +9,7 @@ struct PencilCanvasView: UIViewRepresentable {
   let pageID: UUID
   let source: PageInkSource
   var suppressedInkIDs: Set<UUID> = []
+  var orderedInput:NotebookPageOrderedInkInput = .empty
   let isInputEnabled: Bool
   var isVisible = true
   var isCurrent = true
@@ -64,6 +65,7 @@ struct PencilCanvasView: UIViewRepresentable {
       tool: drawingTool,
       to: paper
     )
+    context.coordinator.applyOrdered(orderedInput,source:source,on:paper)
     context.coordinator.apply(source, pageID: pageID, to: paper, suppressedIDs: suppressedInkIDs)
     return paper
   }
@@ -94,6 +96,7 @@ struct PencilCanvasView: UIViewRepresentable {
       tool: drawingTool,
       to: paper
     )
+    context.coordinator.applyOrdered(orderedInput,source:source,on:paper)
     context.coordinator.apply(source, pageID: pageID, to: paper, suppressedIDs: suppressedInkIDs)
     context.coordinator.publishReadiness()
   }
@@ -133,6 +136,11 @@ struct PencilCanvasView: UIViewRepresentable {
     private var decodeGeneration: UInt64 = 0
     private weak var attachedPaper: PaperCanvasContainerView?
     private var pageFinisherIsCurrent = false
+    var currentSelectionCanvas:InkCanvasView? {
+      guard pageFinisherIsCurrent,!pencilActionIsActive,decodeTask == nil,
+        let canvas=attachedPaper?.inkView,canvas.window != nil else { return nil }
+      return canvas
+    }
 
     init(
       inputGate: NotebookInputGate,
@@ -173,7 +181,7 @@ struct PencilCanvasView: UIViewRepresentable {
     func publishReadiness() {
       // A lift can release the input fence in this actor turn. Invalidate its
       // old sheet receipt now; a queued Task is too late to prevent capture.
-      if attachedPaper?.inkView.isStableFramePresented != true {
+      if orderedTask != nil || attachedPaper?.inkView.isStableFramePresented != true {
         onRenderReady?(nil)
         return
       }
@@ -204,6 +212,25 @@ struct PencilCanvasView: UIViewRepresentable {
       }
     }
 
+    private var orderedInput:NotebookPageOrderedInkInput = .empty
+    private var orderedTask:Task<Void,Never>?
+    private var orderedSourceStamp:VersionStamp?
+    func applyOrdered(_ input:NotebookPageOrderedInkInput,source:PageInkSource,on paper:PaperCanvasContainerView) {
+      guard input != orderedInput || orderedSourceStamp != source.stamp else {return}
+      orderedInput=input;orderedSourceStamp=source.stamp;orderedTask?.cancel()
+      paper.inkView.prepareOrderedSourceIDs(Set(input.candidates.compactMap{$0.graphic.sourceInkContactID}))
+      orderedTask=Task { [weak self,weak paper] in
+        let worker=Task.detached(priority:.userInitiated) {try input.plan(drawing:source.drawing())}
+        let plan=try? await withTaskCancellationHandler {try await worker.value} onCancel:{worker.cancel()}
+        guard !Task.isCancelled,let self,orderedInput == input,orderedSourceStamp == source.stamp,let paper else {return}
+        orderedTask=nil
+        guard let plan,modelSource?.stamp == source.stamp else {orderedSourceStamp=nil;publishReadiness();return}
+        paper.inkView.updateOrderedInk(plan);publishReadiness()
+      }
+    }
+
+    func receiveOrderedErasing(_ contacts:[NotebookElementErasing],id:UUID) {attachedPaper?.inkView.updateOrderedErasing(contacts,id:id)}
+
     func receiveAcceptedInk(_ change: PreparedPageInkChange, suppressedIDs: Set<UUID>) {
       if NotebookNavigationObservation.enabled, let paper = attachedPaper {
         observeInk("ink_delivery", on: paper, fields: [
@@ -216,6 +243,7 @@ struct PencilCanvasView: UIViewRepresentable {
       let canSettle = modelSource?.stamp == change.baseStamp
       decodeTask?.cancel(); decodeTask = nil; decodeGeneration &+= 1
       modelSource = change.inkSource; suppressedInkIDs = suppressedIDs
+      paper.inkView.acceptOrderedPageChange(change)
       paper.touchView.onLiveElementErasing(.accepted(change))
       if canSettle {
         paper.settle(change, suppressedInkIDs: suppressedIDs)
@@ -301,6 +329,7 @@ struct PencilCanvasView: UIViewRepresentable {
       attachedPaper = nil
       paper.inkView.onRenderReadinessChange=nil;onRenderReady=nil
       decodeTask?.cancel()
+      orderedTask?.cancel();orderedTask=nil
       decodeTask = nil
       setPencilActionActive(false)
     }

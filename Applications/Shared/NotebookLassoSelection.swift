@@ -34,10 +34,24 @@ enum NotebookLassoInkSource: Sendable {
     let selectionFrame: PageRect
     let polygon: [SpatialPoint]
     let graphic: NotebookGraphic
-    let selectsWholeContacts: Bool
     /// Candidate traversal only; excludes exact semantic geometry preparation.
     let candidateSampleCount: Int
     let sourceSampleCount: Int
+  }
+  struct PaintOrder: Equatable, Comparable, Sendable {
+    let counter:UInt64
+    let actor:String
+    let id:UUID
+    static func < (lhs:Self,rhs:Self)->Bool {
+      if lhs.counter != rhs.counter { return lhs.counter<rhs.counter }
+      if lhs.actor != rhs.actor { return lhs.actor<rhs.actor }
+      return lhs.id.uuidString<rhs.id.uuidString
+    }
+  }
+  struct WholeContact: Equatable, Sendable {
+    let actionID: UUID
+    let painterOrder: PaintOrder
+    let material: Result
   }
   func selection(polygon: [SpatialPoint], surface: SurfaceID, origin: WorldPoint?, bounds: CGRect?) throws -> Result? {
     try prepare(surface:surface,origin:origin).selection(polygon:polygon,surface:surface,origin:origin,bounds:bounds)
@@ -56,13 +70,14 @@ enum NotebookLassoInkSource: Sendable {
       return try Prepared(revision:revision,entries:Self.pageEntries(actions),pageCursor:cursor,
         preparationActionCount:actions.count,surface:surface,origin:origin,excluding:suppressed)
     case .spatial(let journal,_,_):
-      let entries:[Prepared.Entry] = journal.actions.filter { $0.isActive
-        && ($0.tool == .eraser || $0.spans.allSatisfy { $0.surface == surface }) }.compactMap { action in
+      let entries:[Prepared.Entry] = journal.actions.filter(\.isActive).compactMap { action in
           let spans=action.spans.enumerated().filter { $0.element.surface == surface }.map { index,span in
             InkSampleRelations(sourceID:action.id,span:index,measurements:span.samples,
               header:.init(tool:action.tool,color:action.color))
           }
-          return spans.isEmpty ? nil : .init(id:action.id,tool:action.tool,color:action.color,sources:spans)
+          return spans.isEmpty ? nil : .init(id:action.id,tool:action.tool,color:action.color,sources:spans,
+            allowsWholeContact:action.spans.allSatisfy { $0.surface == surface },
+            painterOrder:.init(counter:action.stamp.counter,actor:action.stamp.actor.uuidString,id:action.id))
         }
       if let previous,let updated=try Prepared(revision:revision,entries:entries,surface:surface,
         origin:origin,excluding:suppressed,reusing:previous) { return updated }
@@ -72,7 +87,8 @@ enum NotebookLassoInkSource: Sendable {
   }
   private static func pageEntries(_ actions:[PageInkAction])->[Prepared.Entry] {
     actions.filter(\.isActive).map {
-        .init(id:$0.id,tool:$0.tool,color:$0.color,sources:[.init($0)])
+        .init(id:$0.id,tool:$0.tool,color:$0.color,sources:[.init($0)],
+          painterOrder:.init(counter:$0.sequence,actor:"",id:$0.id))
       }
   }
 
@@ -85,6 +101,8 @@ enum NotebookLassoInkSource: Sendable {
       let tool: SpatialInkTool
       let color: SpatialInkColor
       let sources: [InkSampleRelations]
+      var allowsWholeContact = true
+      var painterOrder:PaintOrder? = nil
     }
     struct Span: Sendable {
       let entry: Int
@@ -148,7 +166,8 @@ enum NotebookLassoInkSource: Sendable {
       indexBlocks = Self.blocks(spans.map(\.bounds))
     }
     private static func sameSource(_ lhs:Entry,_ rhs:Entry)->Bool {
-      lhs.id == rhs.id && lhs.tool == rhs.tool && lhs.color == rhs.color && lhs.sources.count == rhs.sources.count
+      lhs.id == rhs.id && lhs.tool == rhs.tool && lhs.color == rhs.color && lhs.allowsWholeContact == rhs.allowsWholeContact && lhs.painterOrder == rhs.painterOrder
+        && lhs.sources.count == rhs.sources.count
         && zip(lhs.sources,rhs.sources).allSatisfy {
           $0.sourceID == $1.sourceID && $0.span == $1.span && $0.revision == $1.revision && $0.count == $1.count
         }
@@ -277,50 +296,59 @@ enum NotebookLassoInkSource: Sendable {
       return ids
     }
 
-    func selection(polygon: [SpatialPoint], surface: SurfaceID, origin queryOrigin: WorldPoint?, bounds: CGRect?,
-      wholeContacts: Bool = false) throws -> Result? {
-      guard surface == self.surface, polygon.count >= 3 else { return nil }
-      let delta = origin.flatMap { o in queryOrigin.map { o.delta(to:$0) } } ?? .zero
-      let polygon = polygon.map { SpatialPoint(x:$0.x+delta.x,y:$0.y+delta.y) }
-      let region = polygon.reduce(CGRect.null) { $0.union(.init(x:$1.x,y:$1.y,width:0,height:0)) }
-      var chosen = Set<Int>(), examined = 0
-      for id in indexedSpans(intersecting:region) {
-        let f = spans[id], entry = entries[f.entry]
-        guard entry.tool == .pen, !excluded.contains(entry.id), !chosen.contains(f.entry) else { continue }
+    private struct Query {
+      let polygon: [SpatialPoint]
+      let region: CGRect
+      let delta: SpatialPoint
+      let candidates: [Int]
+    }
+
+    private func query(_ polygon:[SpatialPoint],surface:SurfaceID,origin queryOrigin:WorldPoint?) -> Query? {
+      guard surface == self.surface,polygon.count >= 3 else { return nil }
+      let delta=origin.flatMap { o in queryOrigin.map { o.delta(to:$0) } } ?? .zero
+      let polygon=polygon.map { SpatialPoint(x:$0.x+delta.x,y:$0.y+delta.y) }
+      let region=polygon.reduce(CGRect.null) { $0.union(.init(x:$1.x,y:$1.y,width:0,height:0)) }
+      return .init(polygon:polygon,region:region,delta:delta,candidates:indexedSpans(intersecting:region))
+    }
+
+    /// Shared exact contact test. The range tree, not the stored measurement
+    /// count, determines how much source needs decoding for this contour.
+    private func intersects(_ span:Span,query:Query,examined:inout Int) throws -> Bool {
+      let entry=entries[span.entry]
+      for candidate in try ranges(span,intersecting:query.region,examined:&examined) {
         try Task.checkCancellation()
-        for candidate in try ranges(f,intersecting:region,examined:&examined) {
-          let samples=entry.sources[f.span].decoded(in:candidate),range=samples.indices
-          examined += range.count
-          func point(_ i: Int) -> SpatialPoint { Self.point(samples[i],origin:origin) }
-          let intersects = range.contains { i in
-            let p=point(i),r=max(0.25,samples[i].width/2)*Double(InkStrokeGeometry.maximumCrossSectionScale)
-            return NotebookToolGeometry.intersects(.init(x:p.x-r,y:p.y-r,width:max(0.01,2*r),height:max(0.01,2*r)),polygon:polygon)
-          } || range.dropLast().contains { NotebookToolGeometry.intersects(from:point($0),to:point($0+1),polygon:polygon) }
-          if intersects {
-            chosen.insert(f.entry);break
-          }
-        }
+        let samples=entry.sources[span.span].decoded(in:candidate),range=samples.indices
+        examined += range.count
+        func point(_ i:Int)->SpatialPoint { Self.point(samples[i],origin:origin) }
+        if range.contains(where:{ i in
+          let p=point(i),r=max(0.25,samples[i].width/2)*Double(InkStrokeGeometry.maximumCrossSectionScale)
+          return NotebookToolGeometry.intersects(.init(x:p.x-r,y:p.y-r,width:max(0.01,2*r),height:max(0.01,2*r)),polygon:query.polygon)
+        }) || range.dropLast().contains(where:{
+          NotebookToolGeometry.intersects(from:point($0),to:point($0+1),polygon:query.polygon)
+        }) { return true }
       }
-      guard let first = chosen.min() else { return nil }
-      guard chosen.count <= 1024 else {
-        throw CollaborationError("selection_limit","Выделите меньшую часть рукописи: это выделение слишком большое.")
-      }
-      var box = chosen.reduce(CGRect.null) { $0.union(entryBounds[$1]) }
-      if let bounds { box = box.intersection(bounds.offsetBy(dx:delta.x,dy:delta.y)) }
-      guard !box.isNull, box.width > 0, box.height > 0 else { return nil }
-      let frame = PageRect(x:box.minX,y:box.minY,width:box.width,height:box.height)
-      // Select eraser spans through the same range tree, then retain their
-      // original body. The graphic's frame clips display, not source measurements.
-      var cuts: [Int:Set<Int>] = [:]
+      return false
+    }
+
+    /// Material retains complete immutable contacts and subsequent erasers.
+    /// A selected pen never inherits an eraser which preceded that pen.
+    private func material(_ chosen:Set<Int>,query:Query,bounds:CGRect?,whole:Bool,
+      examined:inout Int) throws -> Result? {
+      guard let first=chosen.min() else { return nil }
+      var box=chosen.reduce(CGRect.null) { $0.union(entryBounds[$1]) }
+      if let bounds { box=box.intersection(bounds.offsetBy(dx:query.delta.x,dy:query.delta.y)) }
+      guard !box.isNull,box.width>0,box.height>0 else { return nil }
+      let frame=PageRect(x:box.minX,y:box.minY,width:box.width,height:box.height)
+      var cuts:[Int:Set<Int>]=[:]
       for id in indexedSpans(intersecting:box) {
-        let f=spans[id]
-        if f.entry > first,entries[f.entry].tool == .eraser,
-          try !ranges(f,intersecting:box,examined:&examined).isEmpty {
-          cuts[f.entry,default:[]].insert(f.span)
+        let span=spans[id]
+        if span.entry>first,entries[span.entry].tool == .eraser,
+          try !ranges(span,intersecting:box,examined:&examined).isEmpty {
+          cuts[span.entry,default:[]].insert(span.span)
         }
       }
       var layers:[NotebookFreehand.Layer]=[]
-      for e in Set(chosen).union(cuts.keys).sorted() {
+      for e in chosen.union(cuts.keys).sorted() {
         try Task.checkCancellation()
         let entry=entries[e]
         for (span,source) in entry.sources.enumerated() where chosen.contains(e) || cuts[e]?.contains(span) == true {
@@ -328,25 +356,68 @@ enum NotebookLassoInkSource: Sendable {
             measured:.init(sourceID:source.sourceID,span:source.span,measurements:source.measurements,frame:frame,origin:origin)))
         }
       }
-      let ink = NotebookFreehand(layers:layers)
+      let ink=NotebookFreehand(layers:layers)
       guard ink.isValid else { throw CollaborationError("selection_limit","Выделите меньшую часть рукописи.") }
-      let clip = polygon.map { CGPoint(x:($0.x-frame.x)/frame.width,y:($0.y-frame.y)/frame.height) }
+      let clip=query.polygon.map { CGPoint(x:($0.x-frame.x)/frame.width,y:($0.y-frame.y)/frame.height) }
       guard ink.geometry.intersects(clip) else { return nil }
-      // A point's hit tolerance finds a contact; it is not an authored cut.
-      // The action directory, not a render chunk or intersected span, owns the
-      // whole measured body. Explicit region lassos keep their exact contour.
-      var selectedBox=wholeContacts ? box : region.intersection(box)
-      if let bounds { selectedBox=selectedBox.intersection(bounds.offsetBy(dx:delta.x,dy:delta.y)) }
-      guard !selectedBox.isNull,selectedBox.width > 0,selectedBox.height > 0 else { return nil }
-      let selectedPolygon=wholeContacts ? [
-        SpatialPoint(x:selectedBox.minX,y:selectedBox.minY),.init(x:selectedBox.maxX,y:selectedBox.minY),
-        .init(x:selectedBox.maxX,y:selectedBox.maxY),.init(x:selectedBox.minX,y:selectedBox.maxY)] : polygon
-      return .init(frame:.init(x:frame.x-delta.x,y:frame.y-delta.y,width:frame.width,height:frame.height),
-        selectionFrame:.init(x:selectedBox.minX-delta.x,y:selectedBox.minY-delta.y,width:selectedBox.width,height:selectedBox.height),
-        polygon:selectedPolygon.map { .init(x:$0.x-delta.x,y:$0.y-delta.y) },
+      let selectedBox=whole ? box : query.region.intersection(box)
+      guard !selectedBox.isNull,selectedBox.width>0,selectedBox.height>0 else { return nil }
+      let polygon=whole ? [
+        SpatialPoint(x:box.minX,y:box.minY),.init(x:box.maxX,y:box.minY),
+        .init(x:box.maxX,y:box.maxY),.init(x:box.minX,y:box.maxY)] : query.polygon
+      let d=query.delta
+      return .init(frame:.init(x:frame.x-d.x,y:frame.y-d.y,width:frame.width,height:frame.height),
+        selectionFrame:.init(x:selectedBox.minX-d.x,y:selectedBox.minY-d.y,width:selectedBox.width,height:selectedBox.height),
+        polygon:polygon.map { .init(x:$0.x-d.x,y:$0.y-d.y) },
         graphic:.init(shape:.freehand,sourceInkIDs:chosen.sorted().map { entries[$0].id },freehand:ink),
-        selectsWholeContacts:wholeContacts,
         candidateSampleCount:examined,sourceSampleCount:sourceSampleCount)
+    }
+
+    func selection(polygon:[SpatialPoint],surface:SurfaceID,origin queryOrigin:WorldPoint?,bounds:CGRect?) throws -> Result? {
+      guard let query=query(polygon,surface:surface,origin:queryOrigin) else { return nil }
+      var chosen=Set<Int>(),examined=0
+      for id in query.candidates {
+        let span=spans[id],entry=entries[span.entry]
+        guard entry.tool == .pen,entry.allowsWholeContact,!excluded.contains(entry.id),!chosen.contains(span.entry) else { continue }
+        if try intersects(span,query:query,examined:&examined) { chosen.insert(span.entry) }
+      }
+      guard chosen.count<=1024 else {
+        throw CollaborationError("selection_limit","Выделите меньшую часть рукописи: это выделение слишком большое.")
+      }
+      return try material(chosen,query:query,bounds:bounds,whole:false,examined:&examined)
+    }
+
+    /// One result per accepted contact. Point picking visits reverse painter
+    /// order and stops at the first surviving contact; a lasso keeps them all.
+    /// Unsupported multi-surface contacts reject the choice, never disappear.
+    func wholeContacts(polygon:[SpatialPoint],surface:SurfaceID,origin queryOrigin:WorldPoint?,
+      bounds:CGRect?,topmostOnly:Bool = false,maximumCount:Int = 32,alreadySelected:Set<UUID> = []) throws -> [WholeContact] {
+      guard let query=query(polygon,surface:surface,origin:queryOrigin) else { return [] }
+      var byEntry:[Int:[Span]]=[:],examined=0
+      for id in query.candidates {
+        let span=spans[id],entry=entries[span.entry]
+        if entry.tool == .pen,!excluded.contains(entry.id) { byEntry[span.entry,default:[]].append(span) }
+      }
+      let order=topmostOnly ? byEntry.keys.sorted(by:>) : byEntry.keys.sorted()
+      var result:[WholeContact]=[],newCount=0
+      for index in order {
+        try Task.checkCancellation()
+        var hit=false
+        for span in byEntry[index]! where !hit { hit=try intersects(span,query:query,examined:&examined) }
+        guard hit,let value=try material([index],query:query,bounds:bounds,whole:true,examined:&examined) else { continue }
+        guard entries[index].allowsWholeContact else {
+          throw CollaborationError("unsupported_selection","Этот штрих проходит по нескольким поверхностям. Выделение целого такого штриха пока не поддерживается.")
+        }
+        if !alreadySelected.contains(entries[index].id) {
+          guard newCount<maximumCount else {
+            throw CollaborationError("selection_limit","Выберите не более 32 объектов за один раз.")
+          }
+          newCount += 1
+        }
+        result.append(.init(actionID:entries[index].id,painterOrder:entries[index].painterOrder ?? .init(counter:UInt64(index),actor:"",id:entries[index].id),material:value))
+        if topmostOnly { break }
+      }
+      return result
     }
   }
 }

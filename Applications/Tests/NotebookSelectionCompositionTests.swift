@@ -1,3 +1,4 @@
+import NotebookCore
 import UIKit
 import XCTest
 @testable import Notebook
@@ -230,6 +231,112 @@ extension NotebookInteractionUXTests {
         + NotebookSelectionComposition.controls(final, transform: scene.pageToWindow, visible: false)))
     XCTAssertEqual(results.count, 13)
     XCTAssertTrue(results.allSatisfy(\.passed), "A fast frame/pose without the whole composition is not a passing selection")
+  }
+
+  func testClosedWholeLassoRoutesRawAndAuthoredMaterialThroughTwoInstalledDragsAndCancel() async throws {
+    let scene = try await fixture(tool: .lasso), model = scene.model
+    model.drawingToolSettings.lassoMode = .elements
+    let page = try XCTUnwrap(model.activePage), originalDrawing = page.drawingData
+    let raw = try XCTUnwrap(page.inkSource.drawing().actions.first)
+    XCTAssertEqual(raw.samples.count, 2)
+    let originalActions = Set(try model.store.actionReadModels().map(\.id))
+    // The immutable fixture line runs from (180,650) to (480,650), width 16.
+    // Its conservative measured bounds, NOT the live selection/model pose,
+    // fix all four expected control corners before the first input event.
+    let radius = 8 * Double(InkStrokeGeometry.maximumCrossSectionScale)
+    let original = CGRect(x: 180-radius, y: 540, width: 640-(180-radius), height: 650+radius-540)
+    func picture(dy: Double, previous: [Double], controls: Bool) -> [NotebookSelectionComposition.Probe] {
+      let pose = original.offsetBy(dx: 0, dy: dy)
+      var result = [
+        probe("untouched-red", grid(.init(x: 180, y: 280, width: 180, height: 120)), .red, scene),
+        // The left end lies outside the Pencil contour: a whole contact may
+        // not turn into a clipped fragment or a second raw remainder.
+        probe("moved-material", [200.0,300,460].map { .init(x: $0, y: 650+dy) }, .black, scene),
+        probe("blue-material", [.init(x: 590, y: 590+dy), .init(x: 590, y: 545+dy),
+          .init(x: 590, y: 635+dy), .init(x: 545, y: 590+dy), .init(x: 635, y: 590+dy)], .blue, scene),
+        probe("ellipse-not-a-bounding-box", [.init(x: 548, y: 548+dy), .init(x: 632, y: 632+dy)], .paper, scene)]
+      for old in Set(previous) where old != dy {
+        result.append(probe("no-raw-ghost-\(old)", [200.0,300,460].map { .init(x: $0, y: 650+old) }, .paper, scene))
+        result.append(probe("no-blue-ghost-\(old)", [.init(x: 590, y: 590+old)], .paper, scene))
+      }
+      result += NotebookSelectionComposition.controls(pose, transform: scene.pageToWindow, visible: controls)
+      result += retiredControls(previous.filter { $0 != dy }.map { original.offsetBy(dx: 0, dy: $0) }, except: pose, scene)
+      return result
+    }
+    var results: [NotebookSelectionComposition.Sample] = []
+    try await scene.readyPencil(self)
+    let selected = CACurrentMediaTime()
+    // Existing Scene.contour delivers native touches to the window-installed
+    // NotebookPaperPencil owner. No model selection or pre-materialization.
+    scene.contour([.init(x: 320, y: 525), .init(x: 660, y: 525), .init(x: 660, y: 680),
+      .init(x: 320, y: 680), .init(x: 320, y: 525)])
+    results.append(try await composition("whole-route-closed-contour", scene, since: selected,
+      probes: picture(dy: 0, previous: [], controls: true)))
+    XCTAssertNil(model.selectionSession.region)
+    XCTAssertEqual(model.selectionSession.ink.map(\.actionID), [raw.id])
+    XCTAssertEqual(model.selectionSession.elements.map(\.elementID), ["ux-blue"])
+    let convertedID = try XCTUnwrap(model.selectionSession.ink.first).memberID
+
+    try await scene.readyFinger(self)
+    scene.beginFinger(.init(x: 350, y: 650))
+    var started = CACurrentMediaTime()
+    scene.moveFinger(.init(x: 350, y: 770))
+    results.append(try await composition("whole-route-first-drag", scene, since: started, moving: true,
+      probes: picture(dy: 120, previous: [0], controls: true)))
+    XCTAssertTrue(model.selectionSession.manipulation?.inkPresentation?.installed == true)
+    started = CACurrentMediaTime(); scene.endFinger()
+    results.append(try await composition("whole-route-first-lift", scene, since: started, immediate: true,
+      probes: picture(dy: 120, previous: [0], controls: true)))
+
+    // This boundary deliberately exercises a second drag of the now canonical
+    // member, rather than another sample of the first unaccepted raw preview.
+    let saved = await model.finishPendingPersistence(); XCTAssertTrue(saved)
+    try await assertUX("whole-route-canonical-installed", since: .now, budget: NotebookUXObservation.selection, window: scene.window) {
+      model.workingGraphics.isEmpty && model.pageInkPublication.currentCanvas(on: page.id)?.isStableFramePresented == true
+        && model.pageInkPublication.currentCanvas(on: page.id)?.orderedInkPlan.elementIDs.contains(convertedID) == true
+    }
+    XCTAssertTrue(model.selectionSession.ink.isEmpty)
+    let acceptedHistory = try model.store.nativeHistory(domain: .page(page.id), actor: model.actorID)
+    let first = try model.store.loadPage(page.id)
+    let material = try XCTUnwrap(first.element(id: convertedID))
+    XCTAssertEqual(material.graphic?.sourceInkIDs, [raw.id])
+    XCTAssertEqual(material.graphic?.freehand?.layers.first?.measured?.measurements, raw.samples)
+    XCTAssertNil(material.graphic?.mask)
+    XCTAssertEqual(first.element(id: "ux-blue")?.frame.y, 660)
+    XCTAssertEqual(first.drawingData, originalDrawing)
+    let actions = try model.store.actionReadModels().filter { !originalActions.contains($0.id) }
+    XCTAssertEqual(actions.count, 1)
+    XCTAssertEqual(actions.first?.action.operations.filter { $0.kind == .convertInkToElement }.map(\.id), [convertedID])
+    XCTAssertEqual(actions.first?.action.operations.filter { $0.kind == .updateElement }.map(\.id), ["ux-blue"])
+
+    try await scene.readyFinger(self)
+    scene.beginFinger(.init(x: 350, y: 770))
+    started = CACurrentMediaTime(); scene.moveFinger(.init(x: 350, y: 870))
+    XCTAssertTrue(model.selectionSession.manipulation?.selectionSource?.ink.isEmpty == true)
+    XCTAssertNotNil(model.selectionSession.manipulation?.inkPresentation)
+    results.append(try await composition("whole-route-second-canonical-drag", scene, since: started, moving: true,
+      probes: picture(dy: 220, previous: [0,120], controls: true)))
+    started = CACurrentMediaTime()
+    scene.direct.touchPhase = .cancelled
+    scene.finger.touchesCancelled([scene.direct], with: scene.event)
+    scene.observer.touchesCancelled([scene.direct], with: scene.event)
+    results.append(try await composition("whole-route-cancel-second", scene, since: started, moving: true,
+      probes: picture(dy: 120, previous: [0,220], controls: true)))
+    XCTAssertNil(model.selectionSession.manipulation)
+
+    try await scene.readyFinger(self)
+    started = CACurrentMediaTime(); scene.beginFinger(.init(x: 700, y: 950)); scene.endFinger()
+    results.append(try await composition("whole-route-deselect", scene, since: started,
+      probes: picture(dy: 120, previous: [0,220], controls: false)))
+    XCTAssertNil(model.selectionSession.target)
+    let complete = await model.finishPendingPersistence(); XCTAssertTrue(complete)
+    let final = try model.store.loadPage(page.id)
+    XCTAssertEqual(final.elements, first.elements)
+    XCTAssertEqual(final.drawingData, originalDrawing)
+    XCTAssertEqual(try model.store.nativeHistory(domain: .page(page.id), actor: model.actorID), acceptedHistory,
+      "Native cancellation and deselection must not create another saved move or conversion")
+    XCTAssertEqual(results.count, 6)
+    XCTAssertTrue(results.allSatisfy(\.passed), "Every frame includes raw material, authored peer, four controls and untouched pixels; see stage attachments")
   }
 
   private func composition(_ name: String, _ scene: Scene, since start: TimeInterval,

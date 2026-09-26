@@ -132,6 +132,31 @@ enum NotebookAttentionProjection {
       width:presentation.bounds.width*scale,height:presentation.bounds.height*scale)
   }
 
+  /// Project every typed member through its real physical surface. Raw member
+  /// IDs are never passed to an authored-element lookup to obtain a rectangle.
+  static func selectionFrames(model:NotebookAppModel,presence:SessionPresence) -> [CGRect]? {
+    var frames:[CGRect]=[]
+    for reference in model.selectionSession.elements {
+      guard let frame=editingFrame(reference,model:model,presence:presence) else { return nil }
+      frames.append(frame)
+    }
+    let poses=Dictionary(uniqueKeysWithValues:(model.selectionSession.manipulation?.presentedSelectedEdits ?? []).map { ($0.id,$0) })
+    for raw in model.selectionSession.ink {
+      let local=poses[raw.memberID]?.frame ?? raw.material.frame
+      guard let value=frame(target:raw.address.target,elementID:nil,region:local,
+        worldOrigin:raw.address.worldOrigin,pageIndex:nil,model:model,presence:presence,minimumSide:0) else { return nil }
+      frames.append(value)
+    }
+    for selected in model.selectionSession.items {
+      guard selected.boardID == presence.boardID,let cohort=model.compositionTiles.published,
+        let item=model.presentedItem(id:selected.itemID,cohort:cohort,presence:presence)
+          ?? cohort.frame.index.renderedItem(id:selected.itemID,presence:presence) else { return nil }
+      let frame=item.geometry.screenFrame(center:item.center,camera:presence.camera,viewport:presence.viewport)
+      frames.append(.init(x:frame.x,y:frame.y,width:frame.width,height:frame.height))
+    }
+    return frames
+  }
+
   static func editingFrame(_ reference: EditableElementReference, model: NotebookAppModel, presence: SessionPresence,
     layout: NotebookGraphicLayout? = nil) -> CGRect? {
     if let region=model.selectionSession.region,region.reference == reference {
@@ -397,6 +422,32 @@ enum NotebookAttentionProjection {
     return (.init(surface:fragment.target.kind == .page ? .page(fragment.target.id) : .cover(fragment.target.id),
       boardID:presence.boardID,worldOrigin:nil,bounds:.init(x:0,y:0,width:rect.width/scale,height:rect.height/scale)),
       .init(x:(point.x-rect.minX)/scale,y:(point.y-rect.minY)/scale))
+  }
+
+  /// Lift an already selected measured body, not a new point selection. The
+  /// installed contact query chooses its visible physical surface; raw ink is
+  /// above that surface's authored material, so an authored ID is not a veto.
+  /// Captured cuts and the current ink revision prevent a hole or stale source
+  /// from acquiring a drag. Fresh choices remain with the drawing-tool owner.
+  static func selectedInk(at point:CGPoint,model:NotebookAppModel,presence:SessionPresence,
+    cohort:SceneCompositionCohort?) -> NotebookSelectedInk.Key? {
+    guard !model.selectionSession.isInteractive,!model.selectionSession.ink.isEmpty,
+      presence.boardID == model.presence?.boardID,
+      let hit=pointContact(at:point,model:model,presence:presence,cohort:cohort) else { return nil }
+    let scale=max(presence.camera.scale,0.001)
+    let poses=model.selectionSession.manipulation?.presentedSelectedEdits ?? []
+    for raw in model.selectionSession.ink.reversed() {
+      guard raw.address.target == hit.target,model.selectionAddressIsCurrent(raw.address),
+        model.selectionInkRevision(raw.address.surface) == raw.revision else { continue }
+      let pose=poses.first { $0.id == raw.memberID },local=pose?.frame ?? raw.material.frame
+      guard let box=frame(target:raw.address.target,elementID:nil,region:local,
+        worldOrigin:raw.address.worldOrigin,pageIndex:nil,model:model,presence:presence,minimumSide:0),
+        box.insetBy(dx:-elementHitPadding,dy:-elementHitPadding).contains(point) else { continue }
+      if NotebookGraphicGeometry.hitTest(pose?.graphic ?? raw.material.graphic,
+        width:local.width,height:local.height,x:(point.x-box.minX)/scale,y:(point.y-box.minY)/scale,
+        tolerance:elementHitPadding/scale) { return raw.key }
+    }
+    return nil
   }
 
   /// Selection does not invent a second rectangular hit rule. A region owns

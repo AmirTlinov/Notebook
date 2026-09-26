@@ -62,6 +62,111 @@ import XCTest
     XCTAssertEqual(try fixture.store.loadPage(page.id).element(id:"measured")?.frame,page.element(id:"measured")?.frame)
   }
 
+  func testSelectedRawBodyUsesRealMouseRouteWithCutsAndVisibleTargetGuards() async throws {
+    let root=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    let fixture=MacCommandFixture(root:root),model=fixture.model
+    retainNotebookUntilTeardown(model,removing:root)
+    try await fixture.start(showingPage:true)
+    var page=try XCTUnwrap(model.activePage)
+    let samples=(0..<4_097).map { i in
+      SpatialInkSample(point:.init(x:100+260*Double(i)/4_096,y:175),timeOffset:Double(i)/240,
+        width:8,opacity:1,force:1,azimuth:0,altitude:.pi/2)
+    } + [.init(point:.init(x:360,y:220),timeOffset:18,width:8,opacity:1,force:1,azimuth:0,altitude:.pi/2)]
+    let pen=PageInkAction(tool:.pen,samples:samples,sequence:1)
+    let cut=PageInkAction(tool:.eraser,samples:[150.0,200].map { y in
+      .init(point:.init(x:230,y:y),timeOffset:0,width:30,opacity:1,force:1,azimuth:0,altitude:.pi/2)
+    },sequence:2)
+    let below=AgentElement(id:"below",kind:.graphic,frame:.init(x:100,y:120,width:100,height:110),source:"",html:"",
+      graphic:.init(shape:.rectangle,style:.init(stroke:.black,strokeWidth:1,fill:.black)))
+    let peer=AgentElement(id:"peer",kind:.graphic,frame:.init(x:400,y:150,width:50,height:50),source:"",html:"",
+      graphic:.init(shape:.ellipse,style:.init(stroke:.black,strokeWidth:1,fill:.black)))
+    XCTAssertTrue(page.replaceElements([below,peer],actor:model.actorID))
+    XCTAssertTrue(page.replaceDrawing(try PageInkDrawing(actions:[pen,cut]).dataRepresentation(),actor:model.actorID))
+    try fixture.store.savePage(page);await model.reloadExternalChanges()?.value
+    let host=NSHostingView(rootView:NotebookMacCanvas(documentLayout:.constant(nil)).environment(model))
+    let window=NSWindow(contentRect:.init(x:0,y:0,width:900,height:800),styleMask:.borderless,backing:.buffered,defer:false)
+    window.isReleasedWhenClosed=false;window.contentView=host;window.center()
+    NSApp.activate();window.makeKeyAndOrderFront(nil);window.orderFrontRegardless()
+    defer { window.contentView=nil;window.close() }
+    try await fixture.waitUntil {
+      self.descendant(MacMaterialInputView.self,in:host) != nil && model.presence?.viewport.x == 900
+        && model.pageInkPublication.currentCanvas(on:page.id)?.isStableFramePresented == true
+    }
+    let input=try XCTUnwrap(descendant(MacMaterialInputView.self,in:host))
+    let address=NotebookToolAddress(surface:.page(page.id),boardID:nil,worldOrigin:nil,
+      bounds:.init(x:0,y:0,width:page.size.width,height:page.size.height))
+    // The ordinary closed contour chooses the contact's right side and its
+    // authored peer. The rectangle under its left side remains unselected.
+    model.selectDrawingTool(.lasso);model.drawingToolSettings.lassoMode = .elements
+    let contour=[SpatialPoint(x:300,y:130),.init(x:480,y:130),.init(x:480,y:250),.init(x:300,y:250),.init(x:300,y:130)]
+    XCTAssertTrue(model.drawingTools.begin(at:contour[0],address:address,screenScale:input.presence.camera.scale))
+    for point in contour.dropFirst() { model.drawingTools.move(to:point) };model.drawingTools.finish()
+    try await fixture.waitUntil { model.drawingTools.pendingLasso == nil }
+    let raw=try XCTUnwrap(model.selectionSession.ink.first),selectionID=model.selectionSession.id
+    XCTAssertEqual(raw.actionID,pen.id)
+    XCTAssertEqual(model.selectionSession.elements,[address.reference(peer.id)])
+    let p=input.presence,box=try XCTUnwrap(NotebookAttentionProjection.readingPaperFrame(model:model,presence:p))
+    func point(_ x:Double,_ y:Double)->CGPoint { .init(x:box.minX+x*p.camera.scale,y:box.minY+y*p.camera.scale) }
+    func selected(_ point:CGPoint,_ presence:SessionPresence)->NotebookSelectedInk.Key? {
+      NotebookAttentionProjection.selectedInk(at:point,model:model,presence:presence,cohort:nil)
+    }
+    XCTAssertEqual(NotebookAttentionProjection.pointContact(at:point(140,175),model:model,presence:p,cohort:nil)?.elementID,below.id)
+    XCTAssertEqual(selected(point(140,175),p),raw.key,"The physical raw plane is above the authored rectangle")
+    XCTAssertNil(selected(point(230,175),p),"Captured erasure is not a draggable bounding box")
+    XCTAssertNil(selected(point(200,210),p),"The empty interior of the L-shaped contact is not its body")
+    let otherPage=SessionPresence(boardID:p.boardID,mode:.page,camera:p.camera,viewport:p.viewport,
+      focusedItemID:p.focusedItemID,openProgress:1,selectedItemID:p.selectedItemID,notebookPageID:UUID())
+    let otherBoard=SessionPresence(boardID:UUID(),mode:.board,camera:p.camera,viewport:p.viewport)
+    XCTAssertNil(selected(point(140,175),otherPage));XCTAssertNil(selected(point(140,175),otherBoard))
+    let start=input.convert(point(140,175),to:nil),end=input.convert(point(140,215),to:nil)
+    XCTAssertTrue(input.hitTest(input.superview!.convert(start,from:nil)) === input)
+    for location in [start,input.convert(point(425,175),to:nil)] {
+      let menu=try XCTUnwrap(input.menu(for:try event(.rightMouseDown,at:location,window:window)))
+      XCTAssertEqual(menu.items.map(\.title),["Дублировать","Удалить","Снять выделение"])
+      XCTAssertTrue(menu.items.allSatisfy(\.isEnabled))
+      XCTAssertEqual(model.selectionSession.id,selectionID,"Menu on either member preserves the whole mixed selection")
+      XCTAssertEqual(model.selectionSession.ink.map(\.actionID),[pen.id])
+      XCTAssertEqual(model.selectionSession.elements,[address.reference(peer.id)])
+    }
+    window.sendEvent(try event(.leftMouseDown,at:start,window:window))
+    window.sendEvent(try event(.leftMouseUp,at:start,window:window))
+    XCTAssertEqual(model.selectionSession.id,selectionID,"A click on the selected raw member cannot replace the whole choice")
+    window.sendEvent(try event(.leftMouseDown,at:start,window:window))
+    window.sendEvent(try event(.leftMouseDragged,at:end,window:window))
+    XCTAssertEqual(try XCTUnwrap(model.selectionSession.manipulation?.movement.y),40,accuracy:1e-8)
+    XCTAssertEqual(model.selectionSession.count,2)
+    try await fixture.waitUntil {
+      guard model.selectionSession.manipulation?.inkPresentation?.installed == true,
+        let body=model.pageInkPublication.currentCanvas(on:page.id)?.orderedInkPlan.bodies.first else { return false }
+      return abs(body.layout.frame.y-(raw.material.frame.y+40))<1e-8
+    }
+    window.sendEvent(try event(.leftMouseUp,at:end,window:window))
+    let saved=await model.finishPendingInteraction();XCTAssertTrue(saved)
+    let moved=try fixture.store.loadPage(page.id),body=try XCTUnwrap(moved.element(id:raw.memberID))
+    XCTAssertEqual(body.frame.y,raw.material.frame.y+40,accuracy:1e-8)
+    XCTAssertEqual(body.graphic?.freehand,raw.material.graphic.freehand,"Move retains the complete contact and captured cut")
+    XCTAssertEqual(try XCTUnwrap(moved.element(id:peer.id)?.frame.y),peer.frame.y+40,accuracy:1e-8)
+    XCTAssertEqual(moved.element(id:below.id)?.frame,below.frame)
+    XCTAssertEqual(moved.drawingData,page.drawingData)
+    XCTAssertEqual(model.presence?.camera,p.camera)
+    input.undo(nil)
+    let undone=await model.finishPendingInteraction();XCTAssertTrue(undone)
+    let restored=try fixture.store.loadPage(page.id)
+    XCTAssertTrue(restored.graphicPresentation.suppressedInkIDs.isEmpty)
+    XCTAssertEqual(restored.element(id:peer.id)?.frame,peer.frame)
+    XCTAssertTrue(model.drawingTools.begin(at:contour[0],address:address,screenScale:p.camera.scale))
+    for point in contour.dropFirst() {model.drawingTools.move(to:point)};model.drawingTools.finish()
+    try await fixture.waitUntil {model.drawingTools.pendingLasso == nil}
+    XCTAssertEqual(model.selectionSession.ink.map(\.actionID),[pen.id])
+    model.setMultipleSelectionAdding(true)
+    window.sendEvent(try event(.leftMouseDown,at:start,window:window))
+    window.sendEvent(try event(.leftMouseUp,at:start,window:window))
+    XCTAssertTrue(model.selectionSession.ink.isEmpty)
+    XCTAssertEqual(model.selectionSession.elements,[address.reference(peer.id)])
+    XCTAssertTrue(model.selectionSession.addingElements,"Removing one raw member keeps additive picking with the selection owner")
+    XCTAssertNil(model.selectionSession.manipulation)
+  }
+
   func testCutAndHollowInteriorRespectLowerPaintAndEmptyMaterialPassesThrough() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     let fixture = MacCommandFixture(root:root), model = fixture.model

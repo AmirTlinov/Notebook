@@ -286,7 +286,7 @@ struct WorkspaceItemCoverView: View {
             .allowsHitTesting(false).opacity(portalOverlayOpacity).zIndex(1_000)
         }
       #elseif os(macOS)
-        SpatialInkSurfaceView(surface: .cover(item.id), journal: model.renderingInk(on: .cover(item.id), fallback: cohort?.liveData.ink ?? model.spatialInk))
+        SpatialInkSurfaceView(surface:.cover(item.id),journal:cohort?.liveData.ink,ordered:cohort?.liveData.orderedInk[.cover(item.id)] ?? .init())
           .allowsHitTesting(false).opacity(portalOverlayOpacity).zIndex(1_000)
       #endif
     }

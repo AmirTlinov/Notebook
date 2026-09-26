@@ -12,17 +12,14 @@ import AppKit
 /// each physical surface. The registry routes samples; it never draws them.
 @MainActor
 final class SpatialInkSurfaceRegistry {
+  private final class WeakCanvas {
+    weak var view:InkCanvasView?
+    #if os(iOS)
+    weak var pose:WorkspaceItemPoseController?
+    #endif
+  }
+  private var canvases:[SurfaceID:WeakCanvas]=[:]
   #if os(iOS)
-    private final class WeakCanvas {
-      weak var view: InkCanvasView?
-      weak var pose: WorkspaceItemPoseController?
-
-      init(_ view: InkCanvasView? = nil) {
-        self.view = view
-      }
-    }
-
-    private var canvases: [SurfaceID: WeakCanvas] = [:]
     private var retainedCanvases: [SurfaceID: (view: InkCanvasView, count: Int)] = [:]
     private var activeSurfaces: Set<SurfaceID> = []
     private struct PreparedSource {
@@ -141,6 +138,7 @@ final class SpatialInkSurfaceRegistry {
           let installed = previous?.canvas.installedSpatialSource
           let generation = previous?.canvas.spatialSourceGeneration ?? 0
           let journal = liveData.ink
+          let ordered=liveData.orderedInk[surface] ?? .init()
           let suppressed = liveData.suppressedInkIDs.isEmpty ? Set<UUID>() : liveData.suppressedInkIDs.intersection(
             journal.actions.filter { $0.spans.contains { $0.surface == surface } }.map(\.id))
           let worker = Task.detached(priority: .userInitiated) {
@@ -174,12 +172,11 @@ final class SpatialInkSurfaceRegistry {
             physicalInkOwners[surface] = WeakOwner(owner)
           }
           owners[surface] = owner
-          let staged: InkCanvasView.PreparedSpatialFrame?
-          if previous == nil || prepared.1 != nil || owner.canvas.needsSpatialTarget(size: size, displayScale: displayScale)
+          let staged: InkCanvasView.PreparedFrame?
+          if previous == nil || prepared.1 != nil || owner.canvas.orderedInkPlan != ordered || owner.canvas.needsSpatialTarget(size: size, displayScale: displayScale)
             || (surface.kind == .board && owner.needsProjection(camera: camera,
               viewport: viewport, refinesDetails: refinesDetails)) {
-            staged = try await owner.canvas.prepareSpatialFrame(prepared.1, size: size, displayScale: displayScale,
-              camera: surface.kind == .board ? camera : nil)
+            staged = try await owner.canvas.prepareFrame(.spatial(prepared.1,size:size,displayScale:displayScale,camera:surface.kind == .board ? camera : nil,ordered:ordered))
           }
           else { staged = nil }
           updates.append(.init(owner: owner, generation: owner.canvas.spatialSourceGeneration,
@@ -241,32 +238,6 @@ final class SpatialInkSurfaceRegistry {
       physicalInkOwners.removeAll()
       installedSceneSurfaces.removeAll()
       installedRootBoardID = nil; sceneResources = nil
-    }
-
-    func register(_ view: InkCanvasView, for surface: SurfaceID) {
-      canvases = canvases.filter { $0.value.view != nil || $0.value.pose != nil }
-      let entry = canvases[surface] ?? WeakCanvas()
-      entry.view = view; canvases[surface] = entry
-      if !activeSurfaces.contains(surface),
-        let layers = deferredLayers.removeValue(forKey: surface)
-      {
-        install(layers, on: surface, in: view)
-      }
-    }
-
-    func unregister(_ view: InkCanvasView, for surface: SurfaceID) {
-      guard canvases[surface]?.view === view else { return }
-      canvases[surface]?.view = nil
-      if canvases[surface]?.pose == nil { canvases.removeValue(forKey: surface) }
-    }
-
-    func canvas(for surface: SurfaceID) -> InkCanvasView? {
-      if let retained = retainedCanvases[surface] { return retained.view }
-      guard let view = canvases[surface]?.view else {
-        if canvases[surface]?.pose == nil { canvases.removeValue(forKey: surface) }
-        return nil
-      }
-      return view
     }
 
     func registerPose(_ pose: WorkspaceItemPoseController, for surface: SurfaceID) {
@@ -393,6 +364,33 @@ final class SpatialInkSurfaceRegistry {
       view.installSpatialSource(prepared.journal, on: surface)
     }
   #endif
+
+  func register(_ view:InkCanvasView,for surface:SurfaceID) {
+    let entry=canvases[surface] ?? WeakCanvas();entry.view=view;canvases[surface]=entry
+    #if os(iOS)
+    if !activeSurfaces.contains(surface),let layers=deferredLayers.removeValue(forKey:surface) {
+      install(layers,on:surface,in:view)
+    }
+    #endif
+  }
+  func unregister(_ view:InkCanvasView,for surface:SurfaceID) {
+    guard canvases[surface]?.view === view else {return}
+    canvases[surface]?.view=nil
+    #if os(iOS)
+    if canvases[surface]?.pose != nil {return}
+    #endif
+    canvases.removeValue(forKey:surface)
+  }
+  func canvas(for surface:SurfaceID)->InkCanvasView? {
+    #if os(iOS)
+    if let retained=retainedCanvases[surface] {return retained.view}
+    #endif
+    if let view=canvases[surface]?.view {return view}
+    #if os(iOS)
+    if canvases[surface]?.pose != nil {return nil}
+    #endif
+    canvases.removeValue(forKey:surface);return nil
+  }
 }
 
 #if os(iOS)
@@ -420,22 +418,86 @@ struct SpatialInkSurfaceView: UIViewRepresentable {
 }
 #elseif os(macOS)
 struct SpatialInkSurfaceView: NSViewRepresentable {
+  @Environment(NotebookAppModel.self) private var model
   let surface: SurfaceID
   let journal: SpatialInkJournal?
+  var ordered:NotebookOrderedInkPlan = .init()
   var camera: SpatialCamera? = nil
   var viewport: SpatialPoint? = nil
 
-  func makeCoordinator() -> SpatialInkMeshPreparation { SpatialInkMeshPreparation() }
-  func makeNSView(context: Context) -> InkCanvasView { InkCanvasView(frame: .zero) }
-  func updateNSView(_ view: InkCanvasView, context: Context) {
-    view.project(camera: camera, viewport: viewport ?? .init(x: view.bounds.width, y: view.bounds.height))
-    let pending = context.coordinator.update(surface: surface, journal: journal) { [weak view] mesh, source in
-      if let mesh { view?.applySpatial(mesh) } else { view?.finishSpatialPreparation() }
-      view?.installSpatialSource(source, on: surface)
+  @MainActor final class Coordinator {
+    let mesh=SpatialInkMeshPreparation()
+    private var task:Task<Void,Never>?
+    private var generation=UUID()
+    private var prepared:SpatialInkMesh?
+    private var source:SpatialInkJournal?
+    private var sourcePending=false
+    private var plan=NotebookOrderedInkPlan()
+    private var projection:SpatialCamera?
+    private var size=SpatialPoint.zero
+    private var scale:Double=1
+    private var surface:SurfaceID?
+    private weak var registry:SpatialInkSurfaceRegistry?
+    private weak var canvas:InkCanvasView?
+
+    func update(_ view:InkCanvasView,surface:SurfaceID,journal:SpatialInkJournal?,ordered:NotebookOrderedInkPlan,
+      camera:SpatialCamera?,viewport:SpatialPoint,registry:SpatialInkSurfaceRegistry) {
+      if let previous=self.surface,previous != surface {self.registry?.unregister(view,for:previous)}
+      self.registry=registry;canvas=view;registry.register(view,for:surface)
+      let scale=view.window?.backingScaleFactor ?? view.layer?.contentsScale ?? 1
+      let changed=plan != ordered || projection != camera || size != viewport || self.scale != scale
+      plan=ordered;projection=camera;size=viewport;self.scale=scale;self.surface=surface
+      if changed,task != nil {generation=UUID();task?.cancel();task=nil}
+      view.project(camera:camera,viewport:viewport)
+      _=mesh.update(surface:surface,journal:journal) { [weak self,weak view] next,source in
+        guard let self,let view,self.surface == surface else {return}
+        if let next {prepared=next};self.source=source;sourcePending=true
+        generation=UUID();task?.cancel();task=nil
+        installIfNeeded(view)
+      }
+      installIfNeeded(view)
     }
-    if pending { view.prepareForDrawing() }
+    private func installIfNeeded(_ view:InkCanvasView) {
+      guard task == nil,let surface,size.x>0,size.y>0,
+        sourcePending || plan != view.orderedInkPlan else {return}
+      guard source != nil || plan == .init() else {return}
+      // The established raw-only path remains free of ordered staging on
+      // camera motion. A represented contact replaces one whole physical frame.
+      if plan == .init(),view.orderedInkPlan == .init() {
+        if let prepared {view.applySpatial(prepared)} else {view.finishSpatialPreparation()}
+        view.installSpatialSource(source,on:surface,suppressedInkIDs:plan.suppressedInkIDs)
+        view.updateOrderedInk(plan);prepared=nil;sourcePending=false;return
+      }
+      let id=UUID();generation=id
+      let plan=plan,prepared=prepared,source=source,size=size,scale=scale,camera=projection
+      task=Task { [weak self,weak view] in
+        guard let self,let view else {return}
+        defer {if generation == id {task=nil}}
+        do {
+          let frame=try await view.prepareFrame(.spatial(prepared,size:size,displayScale:scale,camera:camera,ordered:plan))
+          try Task.checkCancellation()
+          guard generation == id,frame.isValid else {frame.cancel();return}
+          view.installPreparedFrame(frame,spatialSource:source.map { .init(surface:surface,journal:$0,suppressedInkIDs:plan.suppressedInkIDs) })
+          self.prepared=nil;sourcePending=false
+        } catch { /* The next ordinary update retries; the displayed frame remains whole. */ }
+      }
+    }
+    func cancel() {
+      generation=UUID();task?.cancel();task=nil;mesh.cancel();prepared=nil;source=nil
+      if let canvas,let surface {registry?.unregister(canvas,for:surface)}
+      registry=nil;canvas=nil
+    }
+    isolated deinit {task?.cancel()}
   }
-  static func dismantleNSView(_ view: InkCanvasView, coordinator: SpatialInkMeshPreparation) { coordinator.cancel() }
+  func makeCoordinator() -> Coordinator {Coordinator()}
+  func makeNSView(context: Context) -> InkCanvasView {InkCanvasView(frame:.zero)}
+  func updateNSView(_ view: InkCanvasView, context: Context) {
+    context.coordinator.update(view,surface:surface,journal:journal,ordered:ordered,camera:camera,
+      viewport:viewport ?? .init(x:view.bounds.width,y:view.bounds.height),registry:model.compositionTiles.surfaceRegistry)
+  }
+  static func dismantleNSView(_ view:InkCanvasView,coordinator:Coordinator) {
+    coordinator.cancel();Task {await view.finishSpatialHandoffFrames()}
+  }
 }
 
 #endif

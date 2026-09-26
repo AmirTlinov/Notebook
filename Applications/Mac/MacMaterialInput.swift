@@ -20,7 +20,7 @@ final class MacMaterialInputView: NSView {
   var presence: SessionPresence
   var cohort: SceneCompositionCohort?
   private let source = UUID()
-  private var down: (reference:EditableElementReference,point:CGPoint,scale:Double)?
+  private var down: (contact:Contact,selectionID:UUID,point:CGPoint,scale:Double)?
   private var manipulation: UUID?
   override var isFlipped: Bool { true }
   override var acceptsFirstResponder: Bool { true }
@@ -32,10 +32,13 @@ final class MacMaterialInputView: NSView {
   }
   required init?(coder: NSCoder) { fatalError("Use init(model:presence:cohort:)") }
 
-  private enum Contact { case element(EditableElementReference), pending }
+  private enum Contact { case element(EditableElementReference), selectedInk(NotebookSelectedInk.Key), pending }
   private func contact(at point:CGPoint) -> Contact? {
     guard bounds.contains(point), model.macInputTool == .pointer,
       model.inputGate.beginFingerSequence() != nil else { return nil }
+    if let raw=NotebookAttentionProjection.selectedInk(at:point,model:model,presence:presence,cohort:cohort) {
+      return .selectedInk(raw)
+    }
     if model.selectionSession.count > 0, let selected = NotebookAttentionProjection.selectedElement(at:point,model:model,presence:presence,cohort:cohort) {
       return .element(selected)
     }
@@ -60,17 +63,23 @@ final class MacMaterialInputView: NSView {
     contact(at:convert(point,from:superview)) == nil ? nil : self
   }
   override func mouseDown(with event:NSEvent) {
-    guard case .element(let reference) = contact(at:convert(event.locationInWindow,from:nil)) else { return }
+    guard let contact=contact(at:convert(event.locationInWindow,from:nil)) else { return }
+    if case .pending=contact { return }
     window?.makeFirstResponder(self)
     model.inputGate.notifyAcceptedContact()
-    if model.selectionSession.addingElements {
-      model.toggleGraphicSelection(reference)
-      return
+    switch contact {
+    case .element(let reference):
+      if model.selectionSession.addingElements { model.toggleGraphicSelection(reference);return }
+      if !model.selectionSession.contains(reference) { model.selectElement(reference) }
+      if event.clickCount > 1 { model.editSelectedElement(reference);return }
+    case .selectedInk(let raw):
+      if model.selectionSession.addingElements {
+        model.removeInkFromMultipleSelection(raw);return
+      }
+    case .pending: return
     }
-    if !model.selectionSession.contains(reference) { model.selectElement(reference) }
-    if event.clickCount > 1 { model.editSelectedElement(reference); return }
     // The window is stationary when the object and its camera carrier move.
-    down = (reference,event.locationInWindow,presence.camera.scale)
+    down = (contact,model.selectionSession.id,event.locationInWindow,presence.camera.scale)
     model.inputGate.beginContact(source:source)
     model.inputGate.registerFingerCancellation(source:source) { [weak self] in self?.cancel() }
   }
@@ -82,7 +91,14 @@ final class MacMaterialInputView: NSView {
   override func mouseDragged(with event:NSEvent) {
     guard let down, let delta = translation(event) else { return }
     if manipulation == nil, hypot(delta.x,delta.y)*down.scale >= 3 {
-      manipulation = model.beginElementManipulation(down.reference,kind:.move)
+      switch down.contact {
+      case .element(let reference): manipulation=model.beginElementManipulation(reference,kind:.move)
+      case .selectedInk(let raw):
+        guard model.selectionSession.id == down.selectionID,
+          model.selectionSession.ink.contains(where:{ $0.key == raw }) else { endContact();return }
+        manipulation=model.beginSelectionManipulation(kind:.move)
+      case .pending: return
+      }
     }
     if let manipulation { model.updateElementManipulation(manipulation,translation:delta) }
   }
@@ -102,19 +118,35 @@ final class MacMaterialInputView: NSView {
   override func viewDidMoveToWindow() { super.viewDidMoveToWindow(); if window == nil { cancel() } }
 
   override func menu(for event:NSEvent) -> NSMenu? {
-    guard case .element(let reference) = contact(at:convert(event.locationInWindow,from:nil)) else { return nil }
-    model.selectElement(reference)
-    let menu = NSMenu()
-    func add(_ title:String,_ action:Selector) {
-      let item = NSMenuItem(title:title,action:action,keyEquivalent:""); item.target = self; menu.addItem(item)
+    guard let contact=contact(at:convert(event.locationInWindow,from:nil)) else { return nil }
+    let menu=NSMenu();menu.autoenablesItems=false
+    func add(_ title:String,_ action:Selector,enabled:Bool = true) {
+      let item=NSMenuItem(title:title,action:action,keyEquivalent:"")
+      item.target=self;item.isEnabled=enabled;menu.addItem(item)
     }
-    add("Редактировать",#selector(editElement)); add("Удалить",#selector(deleteElement))
-    if model.parentGroup(reference) != nil { add("Выбрать группу",#selector(selectParent)) }
-    if model.graphicElement(reference) != nil { add("Выбрать несколько",#selector(selectMultiple)) }
+    func addSelectionActions() {
+      add("Дублировать",#selector(duplicateSelection),enabled:model.canExportSelection)
+      add("Удалить",#selector(deleteElement),enabled:model.canDeleteSelection)
+      add("Снять выделение",#selector(clearSelection))
+    }
+    switch contact {
+    case .element(let reference):
+      if !model.selectionSession.contains(reference) { model.selectElement(reference) }
+      if model.selectionSession.count>1 || !model.selectionSession.ink.isEmpty { addSelectionActions() }
+      else {
+        add("Редактировать",#selector(editElement));add("Удалить",#selector(deleteElement))
+        if model.parentGroup(reference) != nil { add("Выбрать группу",#selector(selectParent)) }
+        if model.graphicElement(reference) != nil { add("Выбрать несколько",#selector(selectMultiple)) }
+      }
+    case .selectedInk: addSelectionActions()
+    case .pending: return nil
+    }
     return menu
   }
   @objc private func editElement() { if let reference = model.selectionSession.element { model.editSelectedElement(reference) } }
-  @objc private func deleteElement() { if let reference = model.selectionSession.element { model.deleteElement(reference) } }
+  @objc private func deleteElement() { if model.canDeleteSelection { model.deleteSelectedContent() } }
+  @objc private func duplicateSelection() { if model.canExportSelection { model.duplicateSelectedContent() } }
+  @objc private func clearSelection() { model.clearSelection() }
   @objc private func selectParent() {
     if let reference = model.selectionSession.element, let parent = model.parentGroup(reference) { model.selectElement(parent) }
   }

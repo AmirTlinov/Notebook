@@ -33,10 +33,17 @@ final class MacPageInkCanvas: NSView, NotebookPageInkConsumer {
   private let source = UUID()
   private var inputEnabled = false
   private var retired = false
+  private var isCurrent = false
+  var currentSelectionCanvas:InkCanvasView? {
+    isCurrent && !retired && load == nil && measured == nil && ink.window != nil ? ink : nil
+  }
   private var onReady: ((PageInkPresentation?) -> Void)?
   private var modelSource:PageInkSource?
   private var suppressed = Set<UUID>()
   private var load: Task<Void, Never>?
+  private var orderedInput:NotebookPageOrderedInkInput = .empty
+  private var orderedTask:Task<Void,Never>?
+  private var orderedSourceStamp:VersionStamp?
   private var stamp: VersionStamp?
   private var pen: ActiveInkStroke?
   private var eraser: ActiveEraserStroke?
@@ -74,11 +81,25 @@ final class MacPageInkCanvas: NSView, NotebookPageInkConsumer {
 
   func update(page: PageDocument, enabled: Bool, current: Bool, onReady: @escaping (PageInkPresentation?) -> Void) {
     guard !retired, page.id == pageID else { return }
-    inputEnabled = enabled
+    inputEnabled = enabled;isCurrent=current
     model.inputGate.setCurrentPageSource(source, isCurrent: current)
     self.onReady = onReady
     publishReadiness()
     let cuts = model.pageSuppressedInkIDs(page)
+    let input=model.pageOrderedInk(page,display:model.pageGraphicDisplay(page,in:nil))
+    if input != orderedInput || orderedSourceStamp != page.inkSource.stamp {
+      orderedInput=input;orderedSourceStamp=page.inkSource.stamp;orderedTask?.cancel()
+      ink.prepareOrderedSourceIDs(Set(input.candidates.compactMap{$0.graphic.sourceInkContactID}))
+      let source=page.inkSource
+      orderedTask=Task { [weak self] in
+        let worker=Task.detached(priority:.userInitiated) {try input.plan(drawing:source.drawing())}
+        let plan=try? await withTaskCancellationHandler {try await worker.value} onCancel:{worker.cancel()}
+        guard !Task.isCancelled,let self,!retired,orderedInput == input,orderedSourceStamp == source.stamp else {return}
+        orderedTask=nil
+        guard let plan,modelSource?.stamp == source.stamp else {orderedSourceStamp=nil;publishReadiness();return}
+        ink.updateOrderedInk(plan);publishReadiness()
+      }
+    }
     if let sourceStamp=modelSource?.stamp, page.drawingStamp < sourceStamp {
       if cuts != suppressed { suppressed = cuts; ink.setSuppressedPageActions(cuts) }
       return
@@ -92,10 +113,13 @@ final class MacPageInkCanvas: NSView, NotebookPageInkConsumer {
     replaceDrawing(page.inkSource)
   }
 
+  func receiveOrderedErasing(_ contacts:[NotebookElementErasing],id:UUID) {ink.updateOrderedErasing(contacts,id:id)}
+
   func receiveAcceptedInk(_ change:PreparedPageInkChange,suppressedIDs:Set<UUID>) {
     guard !retired,change.pageID == pageID,modelSource.map({ $0.stamp < change.stamp }) ?? true else { return }
     let canSettle=modelSource?.stamp == change.baseStamp
     load?.cancel();load=nil;modelSource=change.inkSource;suppressed=suppressedIDs
+    ink.acceptOrderedPageChange(change)
     if canSettle { ink.settle(change,suppressedInkIDs:suppressedIDs) }
     else { replaceDrawing(change.inkSource) }
   }
@@ -118,7 +142,7 @@ final class MacPageInkCanvas: NSView, NotebookPageInkConsumer {
     // old readiness value or a callback belonging to a retired paper.
     Task { @MainActor [weak self] in
       guard let self, !retired else { return }
-      onReady?(ink.isStableFramePresented ? modelSource.map { .init(pageID:pageID,stamp:$0.stamp) } : nil)
+      onReady?(orderedTask == nil && ink.isStableFramePresented ? modelSource.map { .init(pageID:pageID,stamp:$0.stamp) } : nil)
     }
   }
 
@@ -222,6 +246,7 @@ final class MacPageInkCanvas: NSView, NotebookPageInkConsumer {
     model.pageInkPublication.remove(self)
     finishStroke(); retired = true; inputEnabled = false
     inkProjection.stop()
+    orderedTask?.cancel();orderedTask=nil
     load?.cancel(); load = nil; ink.onRenderReadinessChange = nil
     model.inputGate.unregisterPageFinisher(source: source)
   }

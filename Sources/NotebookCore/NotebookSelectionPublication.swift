@@ -10,6 +10,7 @@ public struct NotebookSelection: Codable, Equatable, Sendable {
   public var target: CollaborationTarget?
   public var elementID: String?
   public var elementIDs: [String]?
+  public var inkActionIDs: [UUID]?
   public var itemID: UUID?
   public var itemIDs: [UUID]?
   public var region: [SpatialPoint]?
@@ -20,10 +21,10 @@ public struct NotebookSelection: Codable, Equatable, Sendable {
 
   public init(id: UUID, kind: Kind, surface: CollaborationTarget, pageIndex: Int? = nil,
     target: CollaborationTarget? = nil, elementID: String? = nil, itemID: UUID? = nil,
-    elementIDs: [String]? = nil, contextID: UUID? = nil, reference: CollaborationReference? = nil, resolving: Bool = false) {
+    elementIDs: [String]? = nil, inkActionIDs:[UUID]? = nil, contextID: UUID? = nil, reference: CollaborationReference? = nil, resolving: Bool = false) {
     self.id = id; self.kind = kind; self.surface = surface; self.pageIndex = pageIndex
     self.target = target; self.elementID = elementID; self.itemID = itemID
-    self.elementIDs = elementIDs; self.contextID = contextID; self.reference = reference; self.resolving = resolving
+    self.elementIDs = elementIDs; self.inkActionIDs=inkActionIDs; self.contextID = contextID; self.reference = reference; self.resolving = resolving
   }
 
   public var isValid: Bool {
@@ -33,7 +34,7 @@ public struct NotebookSelection: Codable, Equatable, Sendable {
     guard [.board, .cover, .page, .document].contains(surface.kind), validTarget(surface), target.map(validTarget) ?? true,
       pageIndex.map({ surface.kind == .document && (0...100_000).contains($0) }) ?? true,
       elementID.map({ !$0.isEmpty && $0.utf16.count <= 120 }) ?? true else { return false }
-    guard kind == .elements || (elementIDs == nil && itemIDs == nil),
+    guard kind == .elements || (elementIDs == nil && itemIDs == nil && inkActionIDs == nil),
       kind == .region || (region == nil && worldOrigin == nil) else { return false }
     switch kind {
     case .empty: return target == nil && elementID == nil && itemID == nil && reference == nil && contextID == nil && !resolving
@@ -41,7 +42,8 @@ public struct NotebookSelection: Codable, Equatable, Sendable {
     case .element: return target.map { [.page, .board, .cover].contains($0.kind) } == true && elementID != nil && itemID == nil && reference == nil
     case .elements:
       return target.map { [.page,.board,.cover].contains($0.kind) } == true && elementID == nil && itemID == nil && reference == nil
-        && (2...32).contains((elementIDs?.count ?? 0)+(itemIDs?.count ?? 0))
+        && ((inkActionIDs?.isEmpty == false ? 1 : 2)...32).contains((elementIDs?.count ?? 0)+(itemIDs?.count ?? 0)+(inkActionIDs?.count ?? 0))
+        && (inkActionIDs.map { !$0.isEmpty && Set($0).count == $0.count } ?? true)
         && elementIDs.map { Set($0).count == $0.count && $0.allSatisfy { !$0.isEmpty && $0.utf16.count <= 120 } } == true
         && (itemIDs.map { target?.kind == .board && Set($0).count == $0.count } ?? true)
     case .region:

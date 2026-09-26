@@ -7,6 +7,7 @@ struct AgentOverlayView: View {
 
   let page:PageDocument
   let renderingScale: Double
+  var preparedDisplay:NotebookPageGraphicDisplay? = nil
   private var pageID:UUID { page.id }
   private var pageSize:PageSize { page.size }
   let allowsInteraction: Bool
@@ -22,7 +23,7 @@ struct AgentOverlayView: View {
   @State private var readiness = AgentOverlayReadiness()
   @State private var readinessID = UUID()
 
-  private var display:NotebookPageGraphicDisplay { model.pageGraphicDisplay(page,in:visibleRegion) }
+  private var display:NotebookPageGraphicDisplay { preparedDisplay ?? model.pageGraphicDisplay(page,in:visibleRegion) }
 
   private var paintedErasures: [String: [InkElementErasure]] {
     #if os(iOS)
@@ -30,6 +31,11 @@ struct AgentOverlayView: View {
     #else
     model.elementErasures(on: .page(pageID))
     #endif
+  }
+
+  private func ordered(_ id:String,graph:NotebookGraphicGraph)->Bool {
+    guard let node=graph.node(id),node.placement.parentID == nil else {return false}
+    return node.graphic.sourceInkContactID != nil
   }
 
   private func capturePolicy(for element: AgentElement, presentation:NotebookElementPresentation) -> AgentSnapshotPolicy {
@@ -65,7 +71,7 @@ struct AgentOverlayView: View {
     // Requirements and receipts describe this tree, not a later model version.
     // Image completion only updates exact facts in the non-observable ledger.
     let expected = Dictionary(uniqueKeysWithValues: visible.map { element in
-      (element.id, NotebookInkMaterialView.Content.required(graphic: graph.nodes[element.id]?.graphic,
+      (element.id, ordered(element.id,graph:graph) ? []:NotebookInkMaterialView.Content.required(graphic: graph.nodes[element.id]?.graphic,
         layout: presentations[element.id] == nil ? display.layouts[element.id] : nil,
         erasures: erasures[element.id] ?? [], appearance: appearances[element.id]))
     })
@@ -99,7 +105,7 @@ struct AgentOverlayView: View {
           NotebookPlacedElement(presentation:presentation) {
           Group {
           if let graphic = graph.nodes[element.id]?.graphic {
-            NotebookGraphicElementView(graphic: graphic, reference: reference, layout: layout,erasures:cuts,appearance:appearance)
+            NotebookGraphicElementView(graphic: graphic, reference: reference, layout: layout,erasures:cuts,appearance:appearance,paintsMeasuredBody:!ordered(element.id,graph:graph))
           } else if element.kind == .nativeText {
             let target=model.nativeTextTarget(reference)
             NotebookNativeTextView(source:target?.source ?? element.source,style:target?.style ?? element.textStyle ?? .standard,reference:reference,

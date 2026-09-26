@@ -542,7 +542,7 @@ private struct RetainedLiveScene: View {
       SpatialInkSurfaceView(surface:.board(presence.boardID),cohort:cohort,boardID:presence.boardID,isActive:false)
         .allowsHitTesting(false)
       #else
-      SpatialInkSurfaceView(surface:.board(presence.boardID),journal:cohort.liveData.ink,camera:presence.camera,viewport:presence.viewport)
+      SpatialInkSurfaceView(surface:.board(presence.boardID),journal:cohort.liveData.ink,ordered:cohort.liveData.orderedInk[.board(presence.boardID)] ?? .init(),camera:presence.camera,viewport:presence.viewport)
         .allowsHitTesting(false)
       #endif
       plane(.covers)

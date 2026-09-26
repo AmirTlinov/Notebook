@@ -1,4 +1,5 @@
 import AppKit
+import CryptoKit
 import NotebookCore
 import XCTest
 @testable import Notebook
@@ -163,6 +164,125 @@ final class AddressedTargetRenderTests: XCTestCase {
     }
     XCTAssertTrue(model.pages.isEmpty)
     XCTAssertTrue(model.documents.isEmpty)
+    XCTAssertEqual(model.presence, presence)
+  }
+
+  @MainActor
+  func testTargetInkProofIncludesAMovedContactOutsideItsOriginalRawWindow() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    let store = NotebookStore(root: root), actor = UUID()
+    let header = try store.initializeWorkspace(actor: actor, pageSize: .init(width: 100, height: 140))
+    let surface = SurfaceID.board(header.rootBoardID), far = WorldPoint(x: 20_000, y: 20_000)
+    func sample(_ point: WorldPoint, width: Double = 8) -> SpatialInkSample {
+      .init(point: .zero, worldPoint: point, timeOffset: 0, width: width, opacity: 1,
+        force: 1, azimuth: 0, altitude: 1)
+    }
+    let blue = SpatialInkColor(red: 0, green: 0, blue: 1)
+    let raw = SpatialInkAction(tool: .pen, color: blue, spans: [.init(surface: surface, samples: [
+      sample(far.offsetBy(x: 0, y: 10)), sample(far.offsetBy(x: 80, y: 10))
+    ])], stamp: .init(counter: 1, actor: actor))
+    _ = try store.commitSpatialInk(.append(raw, journalStamp: raw.stamp))
+    let body = NotebookFreehand(layers: [.init(tool: .pen, color: blue, measured: .init(sourceID: raw.id,
+      measurements: raw.spans[0].samples, frame: .init(x: 0, y: 0, width: 80, height: 20), origin: far))])
+    let graphic = NotebookGraphic(shape: .freehand, sourceInkIDs: [raw.id], freehand: body)
+    let workspace = try store.loadIndex(), before = try store.loadBoard(items: workspace.items)
+    var hierarchy = before
+    XCTAssertTrue(hierarchy.moveItem(workspace.selectedItemID, in: header.rootBoardID, to: far, actor: actor))
+    let element = SpatialElement(id: "moved-contact", surface: surface, kind: .graphic,
+      frame: .init(x: 20, y: 20, width: 80, height: 20), worldOrigin: .zero, source: "",
+      graphic: graphic, stamp: .init(counter: 0, actor: actor))
+    XCTAssertTrue(hierarchy.upsertElement(element, in: header.rootBoardID, expected: nil, actor: actor))
+    _ = try store.saveBoardEdits(before: before, after: hierarchy)
+    let target = InkElementTarget(elementID: element.id,
+      frame: .init(x: 20, y: 20, width: 80, height: 20), worldOrigin: .zero)
+    let cut = SpatialInkAction(tool: .eraser, spans: [.init(surface: surface,
+      samples: [sample(.init(x: 60, y: 10), width: 16), sample(.init(x: 60, y: 50), width: 16)],
+      elementTargets: [target])], stamp: .init(counter: 2, actor: actor))
+    _ = try store.commitSpatialInk(.append(cut, journalStamp: cut.stamp))
+    let address = CollaborationTarget(kind: .board, id: header.rootBoardID)
+    let request = try store.requestTargetRender(target: address,
+      expectedRevision: try store.targetContentRevision(target: address),
+      region: .init(x: 0, y: 0, width: 120, height: 60), worldOrigin: .zero)
+    let model = NotebookAppModel(store: store, startsNearbySync: false)
+    retainNotebookUntilTeardown(model, removing: root)
+    let presence = try await startClosedOverview(model)
+    try await CurrentViewPreviewWriter.writeTarget(request, model: model)
+    let receipt = try JSONDecoder().decode(TargetRenderReceipt.self,
+      from: Data(contentsOf: store.targetReceiptURL(request.id)))
+    XCTAssertEqual(receipt.status, "ready")
+    XCTAssertFalse(receipt.inkRegions.isEmpty, "The visible contact is ink even when its raw measurements are offscreen")
+    let image = try XCTUnwrap(NSBitmapImageRep(data: Data(contentsOf: store.targetPNGURL(request.id))))
+    let bodyPixel = try XCTUnwrap(image.colorAt(x: 80, y: 60)?.usingColorSpace(.deviceRGB))
+    let cutPixel = try XCTUnwrap(image.colorAt(x: 120, y: 60)?.usingColorSpace(.deviceRGB))
+    XCTAssertGreaterThan(bodyPixel.blueComponent, 0.9)
+    XCTAssertLessThan(bodyPixel.redComponent, 0.1)
+    XCTAssertGreaterThan(cutPixel.redComponent, 0.7, "Targeted cuts use the same plan in full image and transparent proof")
+    let current = try store.workspaceHeader()
+    let source = SceneCompositionSource(store: store, revision: current.cursor, workspaceID: current.workspaceID)
+    let proof = try await SceneCompositionRenderer(source: source).renderInk(presence: .init(
+      boardID: header.rootBoardID, mode: .board, camera: .init(center: .init(x: 60, y: 30), scale: 1),
+      viewport: .init(x: 120, y: 60)))
+    let ink = try XCTUnwrap(proof)
+    let inkImage = try XCTUnwrap(NSBitmapImageRep(data: ink.png))
+    XCTAssertGreaterThan(try XCTUnwrap(inkImage.colorAt(x: 80, y: 60)).alphaComponent, 0.9)
+    XCTAssertLessThan(try XCTUnwrap(inkImage.colorAt(x: 120, y: 60)).alphaComponent, 0.01)
+    XCTAssertEqual(receipt.referenceFingerprint,
+      try store.regionalFingerprint(request, inkFingerprint: SHA256.hash(data: ink.png).map { String(format: "%02x", $0) }.joined()))
+    XCTAssertEqual(model.presence, presence)
+  }
+
+  @MainActor
+  func testTargetPageInkProofUsesTheMovedContactAndItsCutsNotTheSuppressedRawPosition() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    let store = NotebookStore(root: root), actor = UUID()
+    let (_, pages) = try store.loadOrCreate(actor: actor, pageSize: .init(width: 128, height: 128))
+    _ = try store.loadOrCreateSpatialInk(actor: actor)
+    var page = try XCTUnwrap(pages.values.first)
+    let blue = SpatialInkColor(red: 0, green: 0, blue: 1)
+    func action(_ sequence: UInt64, _ tool: SpatialInkTool, _ points: [CGPoint],
+      targets: [InkElementTarget]? = nil) -> PageInkAction {
+      .init(tool: tool, color: blue, samples: points.enumerated().map { index, point in
+        .init(point: .init(x: point.x, y: point.y), timeOffset: Double(index), width: 8,
+          opacity: 1, force: 1, azimuth: 0, altitude: 1)
+      }, sequence: sequence, elementTargets: targets)
+    }
+    let raw = action(1, .pen, [.init(x: 16, y: 10), .init(x: 16, y: 110)])
+    let frame = PageRect(x: 80, y: 0, width: 32, height: 120)
+    let target = InkElementTarget(elementID: "moved-page-contact", frame: frame)
+    let cut = action(2, .eraser, [.init(x: 90, y: 64), .init(x: 102, y: 64)], targets: [target])
+    let drawing = PageInkDrawing(actions: [raw, cut])
+    let graphic = NotebookGraphic(shape: .freehand, sourceInkIDs: [raw.id], freehand: .init(layers: [
+      .init(tool: .pen, color: blue, measured: .init(sourceID: raw.id, measurements: raw.samples,
+        frame: .init(x: 0, y: 0, width: 32, height: 120)))
+    ]))
+    XCTAssertTrue(page.replaceDrawing(try drawing.dataRepresentation(), actor: actor))
+    XCTAssertTrue(page.replaceElements([.init(id: target.elementID, kind: .graphic, frame: frame,
+      source: "", html: "", graphic: graphic)], actor: actor))
+    try store.savePage(page)
+    let address = CollaborationTarget(kind: .page, id: page.id)
+    let request = try store.requestTargetRender(target: address,
+      expectedRevision: page.agentStamp.revision, region: .init(x: 0, y: 0, width: 128, height: 128))
+    let model = NotebookAppModel(store: store, startsNearbySync: false)
+    retainNotebookUntilTeardown(model, removing: root)
+    let presence = try await startClosedOverview(model)
+    try await CurrentViewPreviewWriter.writeTarget(request, model: model)
+    let receipt = try JSONDecoder().decode(TargetRenderReceipt.self,
+      from: Data(contentsOf: store.targetReceiptURL(request.id)))
+    XCTAssertEqual(receipt.status, "ready")
+    XCTAssertTrue(receipt.inkRegions.contains { $0.x <= 96 && $0.x + $0.width > 96 && $0.y <= 40 && $0.y + $0.height > 40 })
+    XCTAssertFalse(receipt.inkRegions.contains { $0.x <= 16 && $0.x + $0.width > 16 },
+      "The suppressed raw position is not another contact in the regional proof")
+    let proof = try await PageCompositionRenderer.renderInk(page)
+    let ink = try XCTUnwrap(NSBitmapImageRep(data: proof.png))
+    XCTAssertGreaterThan(try XCTUnwrap(ink.colorAt(x: 192, y: 80)).alphaComponent, 0.9)
+    XCTAssertLessThan(try XCTUnwrap(ink.colorAt(x: 192, y: 128)).alphaComponent, 0.01)
+    XCTAssertLessThan(try XCTUnwrap(ink.colorAt(x: 32, y: 80)).alphaComponent, 0.01)
+    // Page targets certify the requested crop's PNG, not the full-page PNG
+    // metadata. Apply the existing crop encoding even for this complete region.
+    let cropped = try XCTUnwrap(try XCTUnwrap(ink.cgImage).cropping(to: .init(x: 0, y: 0, width: 256, height: 256)))
+    let croppedPNG = try XCTUnwrap(NSBitmapImageRep(cgImage: cropped).representation(using: .png, properties: [:]))
+    XCTAssertEqual(receipt.referenceFingerprint,
+      try store.regionalFingerprint(request, inkFingerprint: SHA256.hash(data: croppedPNG).map { String(format: "%02x", $0) }.joined()))
     XCTAssertEqual(model.presence, presence)
   }
 

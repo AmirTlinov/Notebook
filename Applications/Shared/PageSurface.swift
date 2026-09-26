@@ -63,12 +63,14 @@ struct PageSurface: View {
         width: page.size.width * scale,
         height: page.size.height * scale
       )
+      let graphicDisplay=model.pageGraphicDisplay(page,in:visibleRegion)
+      let orderedInput=model.pageOrderedInk(page,display:graphicDisplay)
       ZStack(alignment: .topLeading) {
         GridPaperView()
         if scale > 0 {
           Group {
             #if os(iOS)
-            agentOverlay(renderingScale:scale * displayProjection)
+            agentOverlay(renderingScale:scale * displayProjection,display:graphicDisplay)
               .mask {
                 if liveElementEraser.isActive {
                   NotebookLiveElementEraserMask(presentation:liveElementEraser)
@@ -76,7 +78,7 @@ struct PageSurface: View {
                 } else { Color.white }
               }
             #else
-            agentOverlay(renderingScale:scale * displayProjection)
+            agentOverlay(renderingScale:scale * displayProjection,display:graphicDisplay)
             #endif
           }
           .opacity(isVisible ? 1 : 0)
@@ -87,6 +89,7 @@ struct PageSurface: View {
             pageID: page.id,
             source: page.inkSource,
             suppressedInkIDs: model.pageSuppressedInkIDs(page),
+            orderedInput:orderedInput,
             isInputEnabled: isVisible && isInteractive,
             isVisible: isVisible,
             isCurrent: isCurrent,
@@ -103,6 +106,7 @@ struct PageSurface: View {
               model.acceptDrawingAction(action, pageID: pageID, stamp: stamp, quickShape: fit)
             },
             onRenderReady: { receipt in
+              model.canonicalPageInkInstalled(receipt,elementSource:page.elementSourceIdentity,input:orderedInput)
               readiness.recordInk(receipt);publishReadiness()
             }, resolveQuickShape: { fit, scale in
               fit.binding(in:model.graphicGraph(page:model.pages[page.id] ?? page),surface:.page(page.id),tolerance:18/scale,
@@ -118,6 +122,7 @@ struct PageSurface: View {
         #else
           MacPageInkView(page: page, isInteractive: isVisible && isInteractive, isVisible:isVisible,
             isCurrent:isCurrent,pageReadiness:onRenderReady,refinesDetails:refinesDetails) { receipt in
+            model.canonicalPageInkInstalled(receipt,elementSource:page.elementSourceIdentity,input:orderedInput)
             readiness.recordInk(receipt);publishReadiness()
           }.id(page.id)
         #endif
@@ -158,8 +163,8 @@ struct PageSurface: View {
     onRenderReady(readiness.isReady(page))
   }
 
-  private func agentOverlay(renderingScale:Double) -> some View {
-    AgentOverlayView(page:page,renderingScale:renderingScale,
+  private func agentOverlay(renderingScale:Double,display:NotebookPageGraphicDisplay) -> some View {
+    AgentOverlayView(page:page,renderingScale:renderingScale,preparedDisplay:display,
       allowsInteraction:isVisible && isCurrent,inputEnabled:isVisible && isInteractive,
       onRenderReady:{ ready in
         readiness.recordGraphics(ready,page:page);publishReadiness()

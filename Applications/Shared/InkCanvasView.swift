@@ -171,9 +171,16 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     let renderID = UUID()
     let mesh: SpatialInkMesh.Batch
     var buffers: [Range<Int>: GeometryBuffer] = [:]
+    var spatialPaintKey:NotebookInkPaintKey?
     var pageAction: PageInkAction?
     var pageCommit: UInt64 = 0
     var pageIsActive = true
+    var suppressedChunks:[Range<Int>]=[]
+    func suppresses(_ range:Range<Int>)->Bool {
+      var low=0,high=suppressedChunks.count
+      while low<high { let mid=(low+high)/2;if suppressedChunks[mid].upperBound<=range.lowerBound { low=mid+1 } else { high=mid } }
+      return low<suppressedChunks.count && suppressedChunks[low].overlaps(range)
+    }
     var operation: RenderOperation { mesh.tool == .pen ? .ink : .erase }
     init(_ mesh: SpatialInkMesh.Batch) {
       self.mesh = mesh
@@ -190,6 +197,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
   private struct TileSignature: Equatable {
     let tokens: [TileToken]
     let baseline: ObjectIdentifier?
+    let orderedRevision:UInt64?
   }
   private struct DrawnTile {
     let signature: TileSignature
@@ -232,6 +240,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
 
   /// The coordinate basis of the installed drawable. A physical scene mount
   /// projects these already presented pixels while another basis is prepared.
+  var hasMaterialProjection:Bool { pageRenderRegion != nil }
   private(set) var spatialCamera: SpatialCamera?
   private(set) var spatialViewport = SpatialPoint(x: 1, y: 1)
   private struct CommittedViewport: Equatable {
@@ -265,9 +274,24 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
   private var frameDrainWaiters: [CheckedContinuation<Void, Never>] = []
   private var spatialHandoffIsStopping = false
   private var spatialStagingID: UUID?
-  private weak var stagedSpatialFrame: PreparedSpatialFrame?
+  private weak var stagedSpatialFrame: PreparedFrame?
+  private var stagedPageDrawable: (id:UUID, continuation:CheckedContinuation<Bool,Never>)?
+  private var suppliedPageDrawable:(id:UUID,drawable:any CAMetalDrawable)?
+  private var liveOrderedErasures:[UUID:[String:[InkElementErasure]]]=[:]
+  private var orderedGeometry:InkOrderedGeometry?
+  private var orderedPreparation:Task<Void,Never>?
+  private var orderedPreparationID=UUID()
+  private var orderedRequest:NotebookOrderedInkPlan?
+  private(set) var orderedInkPlan=NotebookOrderedInkPlan()
+  private var pendingOrderedSourceIDs=Set<UUID>()
+  func prepareOrderedSourceIDs(_ ids:Set<UUID>) {pendingOrderedSourceIDs=ids}
+  private func effectivePageSuppression(_ proposed:Set<UUID>)->Set<UUID> {
+    proposed.subtracting(pendingOrderedSourceIDs.subtracting(orderedInkPlan.suppressedInkIDs))
+  }
   private var material: InkMaterialRenderer?
   var materialUploadedNodeCount: Int { material?.uploadedNodes ?? 0 }
+  private var spatialActionRanges:[UUID:[SpatialInkMesh.ActionRange]]=[:]
+  private var spatialTailRanges:[UUID:[SpatialInkMesh.ActionRange]]=[:]
   private var pageDrawing: PageInkDrawing?
   private var pageSuppressedIDs=Set<UUID>()
   private var drawingIsPreparing = false
@@ -387,7 +411,9 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
   }
 
   var isStableFramePresented: Bool {
-    presentedStableContentRevision == stableContentRevision
+    presentedStableContentRevision == stableContentRevision && orderedPreparation == nil
+      && pendingOrderedSourceIDs.isSubset(of:orderedInkPlan.suppressedInkIDs)
+      && (orderedRequest == nil || orderedRequest == orderedInkPlan)
   }
   /// Private preparation may complete without any pixels on the display.
   /// It must never satisfy a page/receipt's visible-frame acknowledgement.
@@ -521,6 +547,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
   private func mounted() {
     recordPageInkObservation("ink_mount_changed")
     guard window != nil else {
+      abandonFrameDependants()
       // UIKit can retain a culled canvas beyond the end of its visible use.
       // Stop its timer even when no drawable arrives to finish the last draw.
       isPaused = true
@@ -637,7 +664,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
   private func pageReclamationOffers() -> [SceneResourceReclamationCandidate] {
     guard let id = pageReclamationOwner, usesPageDisplayLink,
       !pageBackingRequired, !pageBackingIsReclaimed,
-      !isRenderingFrame, !spatialHandoffIsStopping,
+      !isRenderingFrame, spatialStagingID == nil, !spatialHandoffIsStopping,
       activeInkStroke == nil, activeEraserStroke == nil else { return [] }
     let bytes = (pageDrawableReservation?.byteCount ?? 0) + (pageRetainedReservation?.byteCount ?? 0)
     guard bytes > 0 else { return [] }
@@ -749,7 +776,10 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
   /// Cancellation may revoke a candidate immediately, but its submitted Metal
   /// work owns both the byte and physical admission until completion.
   func finishSpatialHandoffFrames() async {
+    abandonFrameDependants()
     spatialHandoffIsStopping = true
+    orderedPreparationID=UUID();orderedPreparation?.cancel();orderedPreparation=nil
+    cancelSpatialStaging()
     retirePageDisplayLink()
     isPaused = true
     if submittedFrameCount > 0 || submittedPresentationCount > 0 {
@@ -761,6 +791,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     // parking never enter this terminal path.
     cancelPendingPageMesh();cancelPendingPageActionMeshes()
     material = nil
+    orderedGeometry=nil;orderedRequest=nil;orderedInkPlan = .init();pendingOrderedSourceIDs=[];liveOrderedErasures=[:]
     pageDrawableReservation = nil; pageMultisample = nil
     pageRetainedTexture = nil; pageRetainedReservation = nil; pageRetainedKey = nil
     pageDrawing = nil; baselineTexture = nil; baselinePNG = nil; baselineReservation = nil
@@ -904,6 +935,8 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
   func finishSpatialPreparation() { drawingIsPreparing = false; requestFrame() }
 
   func applySpatial(_ mesh: SpatialInkMesh) {
+    orderedPreparationID=UUID();orderedPreparation?.cancel();orderedPreparation=nil
+    orderedGeometry=nil;orderedRequest=nil;orderedInkPlan = .init();pendingOrderedSourceIDs=[];liveOrderedErasures=[:]
     installedSpatialSource = nil
     spatialSourceGeneration &+= 1
     drawingIsPreparing = false
@@ -916,6 +949,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     pageDrawing = nil; baselineTexture = nil; baselinePNG = nil; baselineReservation = nil
     installedPageRevision = nil; pendingPageRevision = nil
     committedBatches = mesh.batches.map(CommittedBatch.init)
+    spatialActionRanges=mesh.actionRanges;spatialTailRanges=[:]
     pageBatchIndex.removeAll()
     discardActiveAction()
     requestFrame()
@@ -929,6 +963,23 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
   }
 
   func appendInstalledSpatialAction(_ action: SpatialInkAction) {
+    for range in spatialTailRanges[action.id] ?? [] {
+      committedBatches[range.batch].spatialPaintKey = .spatial(stamp:action.stamp,id:action.id)
+    }
+    liveOrderedErasures[action.id]=nil
+    if let geometry=orderedGeometry,let source=installedSpatialSource {
+      var cuts:[String:[InkElementErasure]]=[:]
+      for span in action.spans where span.surface == source.surface {
+        for target in span.elementTargets ?? [] {
+          guard let body=geometry.plan.bodies.first(where:{$0.elementID == target.elementID}) else {continue}
+          var values=cuts[target.elementID] ?? body.erasures
+          values.removeAll{$0.samples.revision == span.samples.revision}
+          if action.isActive {values.append(.init(target:target,measurements:span.samples))}
+          cuts[target.elementID]=values
+        }
+      }
+      if !cuts.isEmpty {orderedGeometry=geometry.replacingErasures(cuts);orderedInkPlan=orderedGeometry?.plan ?? .init();orderedRequest=orderedInkPlan}
+    }
     installedSpatialSource = installedSpatialSource?.appending(action)
     spatialSourceGeneration &+= 1
   }
@@ -958,6 +1009,10 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
 
   /// A different physical page cannot borrow the predecessor's pixels.
   func resetPagePresentation() {
+    orderedPreparation?.cancel();orderedPreparation=nil;orderedGeometry=nil;orderedRequest=nil;orderedInkPlan = .init();pendingOrderedSourceIDs=[]
+    abandonFrameDependants()
+    spatialSourceGeneration &+= 1
+    spatialActionRanges=[:];spatialTailRanges=[:]
     cancelPendingPageMesh();cancelPendingPageActionMeshes()
     pageDrawing=nil;installedPageRevision=nil;drawingIsPreparing=false
     baselineTexture=nil;baselinePNG=nil;baselineReservation=nil
@@ -965,7 +1020,8 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     discardActiveAction();beginStableContentUpdate();requestFrame()
   }
 
-  func setSuppressedPageActions(_ ids:Set<UUID>) {
+  func setSuppressedPageActions(_ proposed:Set<UUID>) {
+    let ids=effectivePageSuppression(proposed)
     let changed=pageSuppressedIDs.symmetricDifference(ids);pageSuppressedIDs=ids
     guard !changed.isEmpty else { return }
     let retained=committedViewport
@@ -987,7 +1043,8 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
 
   /// The measured batch is already resident at lift. Acceptance only binds its
   /// durable identity, while undo toggles the addressed batches in place.
-  func settle(_ change:PreparedPageInkChange,suppressedInkIDs:Set<UUID>=[]) {
+  func settle(_ change:PreparedPageInkChange,suppressedInkIDs proposed:Set<UUID>=[]) {
+    let suppressedInkIDs=effectivePageSuppression(proposed)
     let baseIsInstalled = pageDrawing != nil && pageGeometryIsReady
     let retained=committedViewport
     var changedIDs=pageSuppressedIDs.symmetricDifference(suppressedInkIDs)
@@ -1035,7 +1092,11 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     spatialActionBase = committedBatches
   }
   func finishSpatialAction(keepingCommittedMesh: Bool) {
-    if !keepingCommittedMesh, let base = spatialActionBase { committedBatches = base; requestFrame() }
+    if !keepingCommittedMesh, let base = spatialActionBase {
+      committedBatches=base
+      spatialTailRanges=spatialTailRanges.mapValues { $0.filter { $0.batch<base.count } }.filter { !$0.value.isEmpty }
+      requestFrame()
+    }
     spatialActionBase = nil
   }
 
@@ -1091,7 +1152,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     } else { return }
     if builtActiveIdentity != identity { activeMesh = IncrementalInkMesh(eraser:operation == .erase) }
     activeMesh.update(measured:measured,changedFrom:builtActiveIdentity == identity ? changed : 0,color:color,projection:projection)
-    appendCommitted(activeMesh, operation: operation, action: action)
+    appendCommitted(activeMesh, operation: operation, action: action,sourceID:measured.sourceID)
     discardActiveAction()
     requestFrame()
   }
@@ -1139,6 +1200,12 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
 
   func metalDisplayLink(_ link: CAMetalDisplayLink, needsUpdate update: CAMetalDisplayLink.Update) {
     guard link === pageDisplayLink, usesPageDisplayLink else { return }
+    if let waiting=stagedPageDrawable,waiting.id == spatialStagingID {
+      stagedPageDrawable=nil;pauseFrameLoop()
+      suppliedPageDrawable=(waiting.id,update.drawable)
+      waiting.continuation.resume(returning:true)
+      return
+    }
     if NotebookNavigationObservation.enabled {
       recordPageInkObservation("ink_display_update", fields: [
         "targetTimestamp": .number(update.targetTimestamp),
@@ -1195,7 +1262,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     }
     guard let commandQueue, let commandBuffer = commandQueue.makeCommandBuffer() else { return }
     let retainedPageKey = pageRenderRegion.flatMap { region -> PageRetainedKey? in
-      guard spatialTarget == nil, material == nil, pageRetainedTexture != nil else { return nil }
+      guard spatialTarget == nil, material == nil, orderedGeometry == nil, pageRetainedTexture != nil else { return nil }
       return .init(generation:committedGeneration,
         baseline:baselineTexture.map { ObjectIdentifier($0) },region:region,pixels:drawableSize)
     }
@@ -1205,7 +1272,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
       guard let encoder=commandBuffer.makeRenderCommandEncoder(descriptor:descriptor) else { return }
       encodeTexture(baselineTexture, croppedTo:pageRenderRegion, label:"Imported Notebook Ink Baseline", with:encoder)
       encodeSpatial(batches:committedBatches,visible:visible,active:nil,camera:spatialCamera,
-        viewport:spatialViewport,size:bounds.size,encoder:encoder)
+        viewport:spatialViewport,size:bounds.size,suppressedInkIDs:orderedInkPlan.suppressedInkIDs,encoder:encoder)
       encoder.endEncoding()
       encodedRetainedKey=key
       pageCommittedPassCount += 1
@@ -1272,6 +1339,14 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     needsRevealedFrame = false
     var materialReservations: [RasterReservation] = []
     for (descriptor, _, viewport, clip, tileVisible) in passes {
+      if let orderedGeometry {
+        do {
+          materialReservations += try encodeOrderedFrame(batches:committedBatches,visible:tileVisible,active:active,
+            geometry:orderedGeometry,camera:spatialCamera,viewport:spatialViewport,size:bounds.size,clip:clip,
+            descriptor:descriptor,metalViewport:viewport,command:commandBuffer)
+        } catch {renderFailure = .resourceLimit;return}
+        continue
+      }
       descriptor.colorAttachments[0].loadAction = .clear
       descriptor.colorAttachments[0].clearColor = clearColor
       guard let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: descriptor) else { return }
@@ -1284,7 +1359,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
       } else {
         encodeTexture(baselineTexture,croppedTo:pageRenderRegion,label:"Imported Notebook Ink Baseline",with:encoder)
         encodeSpatial(batches:committedBatches,visible:tileVisible,active:active,
-          camera:spatialCamera,viewport:spatialViewport,size:bounds.size,clip:clip,encoder:encoder)
+          camera:spatialCamera,viewport:spatialViewport,size:bounds.size,clip:clip,suppressedInkIDs:orderedInkPlan.suppressedInkIDs,encoder:encoder)
       }
       if let material, let device {
         do {
@@ -1304,7 +1379,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     // A cold page uses the same atomic reveal: its new drawable and opacity
     // enter one compositor transaction. Rendering hidden, revealing on GPU
     // completion and then rendering again adds a full frame to first Pencil.
-    let transactionPresentation = material != nil
+    let transactionPresentation = frameInstallation != nil || material != nil
       || (!hasRevealedFirstFrame && (spatialTarget == nil || isErasureMask))
     presentsWithTransaction = transactionPresentation
     for tile in spatialTarget?.tiles ?? [] { tile.layer.presentsWithTransaction = transactionPresentation }
@@ -1458,6 +1533,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
       if isErasureMask || material != nil { layer?.backgroundColor = nil }
       #endif
       for (_, drawable, _, _, _) in passes { drawable.present() }
+      installFrameDependants()
       CATransaction.commit()
       hasRevealedFirstFrame = true
     }
@@ -1569,18 +1645,22 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
           source: activeRenderID, chunk: c..<(c+1), revision: activeMesh.chunkRevisions[c], level: -1,
           transform: activeTransform))
     }
-    return .init(tokens: tokens, baseline: baselineTexture.map { ObjectIdentifier($0) })
+    return .init(tokens: tokens, baseline: baselineTexture.map { ObjectIdentifier($0) },orderedRevision:orderedGeometry == nil ? nil:stableContentRevision)
   }
 
   private func encodeSpatial(batches: [CommittedBatch], visible: [(Int, Range<Int>)],
     active: (buffer: any MTLBuffer, operation: RenderOperation)?, camera: SpatialCamera?,
-    viewport: SpatialPoint, size: CGSize, clip: CGRect? = nil, encoder: any MTLRenderCommandEncoder) {
+    viewport: SpatialPoint, size: CGSize, clip: CGRect? = nil, suppressedInkIDs:Set<UUID> = [], encoder: any MTLRenderCommandEncoder) {
     guard inkPipelineState != nil, eraserPipelineState != nil else { return }
     encoder.label = "Notebook Ink"
     var viewportSize = SIMD2<Float>(Float(max(size.width, 1)), Float(max(size.height, 1)))
     encoder.setVertexBytes(&viewportSize, length: MemoryLayout<SIMD2<Float>>.stride, index: 1)
     for (batchIndex, chunkIndex) in visible {
       let batch = batches[batchIndex]
+      if !suppressedInkIDs.isEmpty {
+        let id=batch.pageAction?.id ?? batch.spatialPaintKey?.actionID ?? batch.mesh.paintKey(for:chunkIndex)?.actionID
+        if let id,suppressedInkIDs.contains(id) {continue}
+      }
       var transform = batch.mesh.projection.transform(camera: camera, viewport: viewport)
       if camera == nil, let crop = pageRenderRegion {
         transform.z -= Float(crop.minX); transform.w -= Float(crop.minY)
@@ -1610,21 +1690,204 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     }
   }
 
+  /// One ordered plane; raw buffers are borrowed by address from the existing
+  /// resident mesh, while body buffers belong to its immutable prepared plan.
+  private func encodeOrderedFrame(batches:[CommittedBatch],visible:[(Int,Range<Int>)],
+    active:(buffer:any MTLBuffer,operation:RenderOperation)?,geometry:InkOrderedGeometry,
+    camera:SpatialCamera?,viewport:SpatialPoint,size:CGSize,clip:CGRect?,
+    descriptor:MTLRenderPassDescriptor,metalViewport:MTLViewport?,command:any MTLCommandBuffer) throws -> [RasterReservation] {
+    guard let device,let output=descriptor.colorAttachments[0],let texture=output.texture else {throw SceneRenderError.resourceLimit}
+    let renderer=InkRasterRenderer.shared
+    let scratch=try InkRasterRenderer.OrderedAttachments(device:device,width:texture.width,height:texture.height,samples:texture.sampleCount)
+    let crop=camera == nil ? pageRenderRegion?.origin ?? .zero:.zero
+    let region=CGRect(origin:crop,size:size)
+    var raw:[(NotebookInkPaintKey,InkRasterRenderer.Draw)]=[]
+    for (index,range) in visible {
+      let batch=batches[index]
+      let key=batch.pageAction.map{NotebookInkPaintKey.page(sequence:$0.sequence,id:$0.id)}
+        ?? batch.spatialPaintKey ?? batch.mesh.paintKey(for:range)
+      guard let key else {throw SceneRenderError.snapshotPending("ordered_ink_painter")}
+      guard !geometry.plan.suppressedInkIDs.contains(key.actionID),let prepared=batch.buffers[range] else {continue}
+      var transform=batch.mesh.projection.transform(camera:camera,viewport:viewport)
+      transform.z -= Float(crop.x);transform.w -= Float(crop.y)
+      let chunk=prepared.geometry.chunk.descriptor
+      if let clip,!chunk.intersects(viewport:clip,transform:transform) {continue}
+      raw.append((key,.init(buffer:prepared.buffer,offset:0,count:prepared.nodeCount,flags:chunk.flags,color:chunk.color,
+        affine:.init(transform),viewport:.init(Float(size.width),Float(size.height)),tool:batch.mesh.tool)))
+    }
+    let prepared=try geometry.events(raw:raw,camera:camera,viewport:viewport,region:region,pixels:drawableSize,
+      device:device,resources:resources,owner:physicalAdmission,liveCuts:liveOrderedErasures.values.reduce(into:[:]){result,cuts in
+        for (id,values) in cuts {result[id,default:[]] += values}
+      })
+    var events=prepared.events
+    if let active {
+      let affine=InkAffine(x:.init(1,0,-Float(crop.x),0),y:.init(0,1,-Float(crop.y),0))
+      for chunk in activeMesh.chunks {
+        if let clip,!chunk.intersects(viewport:clip,transform:.init(1,1,affine.x.z,affine.y.z)) {continue}
+        events.append(.raw(.init(buffer:active.buffer,offset:chunk.nodes.lowerBound*MemoryLayout<Node>.stride,
+          count:chunk.nodes.count,flags:chunk.flags,color:chunk.color,affine:affine,
+          viewport:.init(Float(size.width),Float(size.height)),tool:active.operation == .erase ? .eraser:.pen)))
+      }
+    }
+    guard let encoder=command.makeRenderCommandEncoder(descriptor:scratch.descriptor(output:output)) else {throw SceneRenderError.resourceLimit}
+    if let metalViewport {encoder.setViewport(metalViewport)}
+    var textureRect=SIMD4<Float>(0,0,1,1)
+    if let crop=pageRenderRegion,pageSourceSize.width>0,pageSourceSize.height>0 {
+      textureRect = .init(Float(crop.minX/pageSourceSize.width),Float(crop.minY/pageSourceSize.height),Float(crop.width/pageSourceSize.width),Float(crop.height/pageSourceSize.height))
+    }
+    try renderer.encodeOrdered(events,baseline:baselineTexture,textureRect:textureRect,encoder:encoder)
+    encoder.endEncoding()
+    // Metal retains referenced attachments; geometry reservations are returned
+    // to the sole command owner and remain charged through its completion.
+    return prepared.reservations
+  }
+
+  func updateOrderedErasing(_ contacts:[NotebookElementErasing],id:UUID) {
+    guard orderedGeometry != nil else {return}
+    var cuts:[String:[InkElementErasure]]=[:]
+    for contact in contacts {for (element,values) in contact.masks {cuts[element,default:[]] += values}}
+    liveOrderedErasures[id]=cuts.isEmpty ? nil:cuts
+    beginStableContentUpdate();requestFrame()
+  }
+  func acceptOrderedPageChange(_ change:PreparedPageInkChange) {
+    let ids:Set<UUID>
+    switch change.mutation {case .append(let action):ids=[action.id];case .setActive(let changed,_):ids=changed}
+    for id in ids {liveOrderedErasures[id]=nil}
+    guard let geometry=orderedGeometry else {return}
+    var cuts:[String:[InkElementErasure]]=[:]
+    for id in ids {
+      guard let action=change.drawing.action(id:id),action.tool == .eraser else {continue}
+      for target in action.elementTargets ?? [] {
+        guard let body=geometry.plan.bodies.first(where:{$0.elementID == target.elementID}) else {continue}
+        var values=cuts[target.elementID] ?? body.erasures
+        values.removeAll{$0.samples.revision == action.samples.revision}
+        if action.isActive {values.append(.init(target:target,measurements:action.samples))}
+        cuts[target.elementID]=values
+      }
+    }
+    if !cuts.isEmpty {orderedGeometry=geometry.replacingErasures(cuts);orderedInkPlan=orderedGeometry?.plan ?? .init();orderedRequest=orderedInkPlan;beginStableContentUpdate();requestFrame()}
+  }
+
+  /// Canonical page body changes share the existing prepared installation cut.
+  /// Selection supplies its exact plan directly and retains the current frame
+  /// until both the desired controls and these pixels can be installed together.
+  func updateOrderedInk(_ plan:NotebookOrderedInkPlan) {
+    guard orderedRequest != plan else {return}
+    orderedRequest=plan;orderedPreparationID=UUID();orderedPreparation?.cancel();orderedPreparation=nil
+    startOrderedPreparationIfNeeded()
+  }
+  private func startOrderedPreparationIfNeeded() {
+    guard let plan=orderedRequest,plan != orderedInkPlan,orderedPreparation == nil,pageGeometryIsReady,
+      activeInkStroke == nil,activeEraserStroke == nil,spatialActionBase == nil,spatialStagingID == nil,window != nil else {return}
+    let requestID=orderedPreparationID
+    orderedPreparation=Task { [weak self] in
+      guard let self else {return}
+      do {
+        let frame=try await prepareFrame(.ordered(plan))
+        try Task.checkCancellation()
+        guard orderedPreparationID == requestID,orderedRequest == plan,frame.isValid else {frame.cancel();return}
+        installPreparedFrame(frame)
+      } catch {
+        // A current contact/source/layout owns progress. Its normal next
+        // publication may retry; never spin or discard that contact here.
+        // Retain this demand for the next ordinary source/layout/input request.
+      }
+      if orderedPreparationID == requestID {orderedPreparation=nil}
+    }
+  }
+
   private func cancelSpatialStaging(id: UUID? = nil) {
     guard let current = spatialStagingID, id == nil || current == id else { return }
     spatialStagingID = nil
+    let waiting=stagedPageDrawable;stagedPageDrawable=nil
+    waiting?.continuation.resume(returning:false)
+    if suppliedPageDrawable?.id == current {suppliedPageDrawable=nil}
     stagedSpatialFrame?.revoke()
     stagedSpatialFrame = nil
     requestFrame()
   }
 
+  /// Returning an unaccepted edit removes only that edit's ordered bodies.
+  /// The current page/journal and new Pencil contacts are never replaced.
+  @MainActor final class SourceRestoration {
+    fileprivate weak var canvas:InkCanvasView?
+    private let original:InkOrderedGeometry?
+    private let originalPlan:NotebookOrderedInkPlan
+    private let sourceIDs:Set<UUID>
+    private var changed=Set<UUID>()
+    private var witness:[UUID:NotebookOrderedInkPlan.Body]=[:]
+    private var suppressionWitness=Set<UUID>()
+    fileprivate init(_ canvas:InkCanvasView,sourceIDs:Set<UUID>) {
+      self.canvas=canvas;original=canvas.orderedGeometry;originalPlan=canvas.orderedInkPlan;self.sourceIDs=sourceIDs
+    }
+    func installed() {
+      guard let canvas else {return}
+      let before=Dictionary(uniqueKeysWithValues:originalPlan.bodies.map{($0.sourceID,$0)})
+      let after=Dictionary(uniqueKeysWithValues:canvas.orderedInkPlan.bodies.map{($0.sourceID,$0)})
+      changed=sourceIDs.filter{before[$0] != after[$0]
+        || originalPlan.suppressedInkIDs.contains($0) != canvas.orderedInkPlan.suppressedInkIDs.contains($0)}
+      witness=after.filter{changed.contains($0.key)}
+      suppressionWitness=canvas.orderedInkPlan.suppressedInkIDs.intersection(changed)
+    }
+    func restore(install:@escaping @MainActor ()->Void,abandon:@escaping @MainActor ()->Void) {
+      guard let canvas,!canvas.spatialHandoffIsStopping,canvas.window != nil,
+        canvas.frameInstallation == nil,!changed.isEmpty else {abandon();return}
+      // A new canonical cohort may already have removed/replaced this edit.
+      // It owns those pixels; a late cancellation cannot resurrect old bodies.
+      let current=Dictionary(uniqueKeysWithValues:canvas.orderedInkPlan.bodies.map{($0.sourceID,$0)})
+      guard canvas.orderedInkPlan.suppressedInkIDs.intersection(changed) == suppressionWitness,
+        changed.allSatisfy({current[$0] == witness[$0]}) else {abandon();return}
+      canvas.orderedGeometry=InkOrderedGeometry.restoring(original,originalPlan:originalPlan,in:canvas.orderedGeometry,removing:changed)
+      canvas.orderedInkPlan=canvas.orderedGeometry?.plan ?? .init(suppressedInkIDs:
+        canvas.orderedInkPlan.suppressedInkIDs.subtracting(changed).union(originalPlan.suppressedInkIDs.intersection(changed)))
+      canvas.orderedRequest=canvas.orderedInkPlan
+      if let source=canvas.installedSpatialSource {
+        canvas.installedSpatialSource=source.suppressing(canvas.orderedInkPlan.suppressedInkIDs);canvas.spatialSourceGeneration &+= 1
+      } else {canvas.setSuppressedPageActions(canvas.orderedInkPlan.suppressedInkIDs)}
+      canvas.frameInstallation=(install,abandon)
+      canvas.beginStableContentUpdate();canvas.drawnTiles=nil;canvas.pageRetainedKey=nil
+      canvas.requestFrame()
+      changed=[]
+    }
+  }
+  func captureSourceRestoration(for sourceIDs:Set<UUID>)->SourceRestoration? {
+    guard material == nil,!spatialHandoffIsStopping,window != nil,
+      activeInkStroke == nil,activeEraserStroke == nil,spatialActionBase == nil else {return nil}
+    return .init(self,sourceIDs:sourceIDs)
+  }
+  private var frameInstallation:(install:@MainActor ()->Void,abandon:@MainActor ()->Void)?
+  private func installFrameDependants() {
+    let pending=frameInstallation;frameInstallation=nil;pending?.install()
+  }
+  private func abandonFrameDependants() {
+    let pending=frameInstallation;frameInstallation=nil;pending?.abandon()
+  }
+
+  enum FramePreparation {
+    case spatial(SpatialInkMesh?, size:SpatialPoint, displayScale:Double, camera:SpatialCamera?, ordered:NotebookOrderedInkPlan = .init())
+    case ordered(NotebookOrderedInkPlan)
+  }
+
   @MainActor
-  final class PreparedSpatialFrame {
+  final class PreparedFrame {
+    fileprivate enum Installation {
+      case spatial
+      case ordered
+    }
+    fileprivate var installation:Installation
+    fileprivate var ordered:InkOrderedGeometry?
+    fileprivate var orderedPlan=NotebookOrderedInkPlan()
+    fileprivate var actionRanges:[UUID:[SpatialInkMesh.ActionRange]]?
+    fileprivate var reservations:[RasterReservation] = []
+    fileprivate var physical:ScenePhysicalOwnerLease?
+
     fileprivate let id: UUID
     fileprivate weak var canvas: InkCanvasView?
     fileprivate let sourceGeneration: UInt64
     fileprivate let contentRevision: UInt64
+    private let windowID:ObjectIdentifier?
     fileprivate var batches: [CommittedBatch]
+    fileprivate let visible:[(Int,Range<Int>)]
     fileprivate let replacesMesh: Bool
     fileprivate let layout: SpatialTargetLayout
     fileprivate let viewport: SpatialPoint
@@ -1645,121 +1908,223 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
       transactionCommitted = true
       // The installed Canvas now owns its pools. A retained scene receipt must
       // not occupy a drawable slot or keep retired pools alive indefinitely.
-      drawables.removeAll(); target = nil; batches.removeAll()
+      releasePreparedResources()
       let completion = transactionCompletion; transactionCompletion = nil
       completion?()
     }
+    private func releasePreparedResources() {
+      drawables.removeAll();target=nil;batches.removeAll();reservations.removeAll();physical=nil
+      ordered=nil
+    }
     fileprivate func revoke() {
       revoked = true
-      if gpuCompleted { drawables.removeAll(); target = nil; batches.removeAll() }
+      if gpuCompleted { releasePreparedResources() }
     }
     fileprivate func completeGPU() {
       gpuCompleted = true
-      if revoked { drawables.removeAll(); target = nil; batches.removeAll() }
+      if revoked { releasePreparedResources() }
     }
-    fileprivate init(id: UUID, canvas: InkCanvasView, batches: [CommittedBatch], replacesMesh: Bool,
+    fileprivate init(id: UUID, canvas: InkCanvasView, batches: [CommittedBatch], visible:[(Int,Range<Int>)], replacesMesh: Bool,
       layout: SpatialTargetLayout, viewport: SpatialPoint, camera: SpatialCamera?,
-      target: SpatialTarget?, drawables: [any CAMetalDrawable]) {
-      self.id = id; self.canvas = canvas; self.batches = batches; self.drawables = drawables
+      target: SpatialTarget?, drawables: [any CAMetalDrawable], installation:Installation = .spatial) {
+      self.id = id; self.canvas = canvas; self.batches = batches; self.visible=visible; self.drawables = drawables;self.installation=installation
       self.replacesMesh = replacesMesh; self.layout = layout; self.viewport = viewport; self.camera = camera; self.target = target
       sourceGeneration = canvas.spatialSourceGeneration; contentRevision = canvas.stableContentRevision
+      windowID=canvas.window.map(ObjectIdentifier.init)
     }
     var isValid: Bool {
-      guard let canvas else { return false }
-      return ready && !revoked && !installed && !canvas.spatialHandoffIsStopping && canvas.spatialStagingID == id
-        && canvas.spatialSourceGeneration == sourceGeneration && canvas.stableContentRevision == contentRevision
-        && canvas.spatialActionBase == nil
+      guard let canvas,ready,!revoked,!installed,!canvas.spatialHandoffIsStopping,canvas.spatialStagingID == id,
+        canvas.spatialSourceGeneration == sourceGeneration,canvas.stableContentRevision == contentRevision,
+        canvas.spatialActionBase == nil,canvas.activeInkStroke == nil,canvas.activeEraserStroke == nil else { return false }
+      switch installation {
+      case .spatial: return true
+      case .ordered: return windowID != nil && canvas.window.map(ObjectIdentifier.init) == windowID
+      }
     }
+    func cancel() { canvas?.cancelSpatialStaging(id:id) }
     isolated deinit { if !installed { canvas?.cancelSpatialStaging(id: id) } }
   }
 
   /// Source and layout changes borrow fixed pools. Only growth allocates new
   /// tiles. No installed layer moves or presents before the whole candidate
   /// validates; cancellation releases private drawables, not displayed pixels.
-  func prepareSpatialFrame(_ mesh: SpatialInkMesh?, size: SpatialPoint, displayScale: Double,
-    camera requestedCamera: SpatialCamera? = nil) async throws -> PreparedSpatialFrame {
+  /// All live ink roles borrow their own current pool. Preparation never
+  /// changes the installed source, its visibility, or a native input mode.
+  func prepareFrame(_ request:FramePreparation) async throws -> PreparedFrame {
     try Task.checkCancellation()
-    guard !spatialHandoffIsStopping, spatialActionBase == nil, spatialStagingID == nil,
+    guard !spatialHandoffIsStopping,!pageBackingIsReclaimed,spatialActionBase == nil,
+      activeInkStroke == nil,activeEraserStroke == nil,spatialStagingID == nil,
       let commandQueue else { throw CancellationError() }
-    let id = UUID(); spatialStagingID = id; pauseFrameLoop()
-    var succeeded = false
-    defer { if !succeeded { cancelSpatialStaging(id: id) } }
-    if submittedFrameCount > 0 || submittedPresentationCount > 0 {
+    let id=UUID();spatialStagingID=id;pauseFrameLoop()
+    var succeeded=false
+    defer { if !succeeded { cancelSpatialStaging(id:id) } }
+    if submittedFrameCount>0 || submittedPresentationCount>0 {
       await withCheckedContinuation { frameDrainWaiters.append($0) }
     }
     try Task.checkCancellation()
-    guard spatialStagingID == id, !spatialHandoffIsStopping else { throw CancellationError() }
-    let oldSource = spatialSourceGeneration, oldProjection = stableContentRevision
-    let layout = SpatialTargetLayout(size: .init(width: size.x, height: size.y), displayScale: displayScale)
-    _ = try layout.tileGrid()
-    let viewport = size, camera = requestedCamera ?? spatialCamera
-    var batches = mesh?.batches.map(CommittedBatch.init) ?? committedBatches
-    let visible = try prepareBuffers(
-      in: &batches, camera: camera, viewport: viewport, size: layout.size,
-      pixelScale: Float(displayScale),rasterSize:layout.pixelSize)
-    if visible.isEmpty {
-      let result = PreparedSpatialFrame(id: id, canvas: self, batches: batches, replacesMesh: mesh != nil,
-        layout: layout, viewport: viewport, camera: camera, target: nil, drawables: [])
-      result.completeGPU(); result.ready = true; succeeded = true; stagedSpatialFrame = result
-      return result
+    guard spatialStagingID == id,!spatialHandoffIsStopping else { throw CancellationError() }
+    let oldSource=spatialSourceGeneration,oldProjection=stableContentRevision
+    let installation:PreparedFrame.Installation,layout:SpatialTargetLayout,viewport:SpatialPoint,camera:SpatialCamera?
+    var batches:[CommittedBatch],replacesMesh=false
+    let candidatePlan:NotebookOrderedInkPlan
+    switch request {
+    case .spatial(let mesh,let size,let scale,let requestedCamera,let plan):
+      candidatePlan=plan
+      installation = .spatial;layout = .init(size:.init(width:size.x,height:size.y),displayScale:scale)
+      _=try layout.tileGrid();viewport=size;camera=requestedCamera ?? spatialCamera
+      batches=mesh?.batches.map(CommittedBatch.init) ?? committedBatches;replacesMesh=mesh != nil
+    case .ordered(let plan):
+      guard material == nil,pageGeometryIsReady else {throw CancellationError()}
+      candidatePlan=plan;installation = .ordered
+      layout = .init(size:bounds.size,displayScale:spatialDrawableScale ?? Double(drawableSize.width/max(bounds.width,1)))
+      viewport=spatialViewport;camera=spatialCamera;batches=[]
     }
-    let samples = device?.supportsTextureSampleCount(4) == true ? 4 : 1
-    let target: SpatialTarget
-    if let installed = spatialTarget, installed.layout == layout { target = installed }
-    else { target = try makeSpatialTarget(layout: layout, samples: samples) }
-    guard let command = commandQueue.makeCommandBuffer() else { throw SceneRenderError.resourceLimit }
-    var drawables: [any CAMetalDrawable] = []
-    for (index, tile) in target.tiles.enumerated() {
-      guard let drawable = tile.layer.nextDrawable(), drawable.texture.allocatedSize <= tile.drawableByteCeiling else {
-        throw SceneRenderError.resourceLimit
+    let geometry:InkOrderedGeometry?
+    if candidatePlan.isEmpty {geometry=nil}
+    else {
+      guard let device else {throw SceneRenderError.resourceLimit}
+      geometry=try await InkOrderedGeometry(candidatePlan,reusing:orderedGeometry,device:device,resources:resources,owner:physicalAdmission)
+    }
+    let visible:[(Int,Range<Int>)]
+    if case .ordered=installation {
+      // Sparse plan changes borrow resident raw buffers; no whole-array COW.
+      guard let prepared=prepareCommittedBuffers() else {throw SceneRenderError.resourceLimit}
+      // A rollback must include the addressed raw contacts absent from the
+      // CURRENT suppressed viewport. Borrow/prepare those resident ranges
+      // without changing the shown source before this candidate installs.
+      let returning = Set(pageSuppressedIDs.subtracting(candidatePlan.suppressedInkIDs).compactMap { id -> Int? in
+        guard pageDrawing?.action(id:id)?.isActive == true else { return nil }
+        return pageBatchIndex[id]
+      })
+      if returning.isEmpty { visible=prepared }
+      else {
+        let retained=committedViewport
+        defer { committedViewport=retained }
+        let restored=try prepareBuffers(in:&committedBatches,camera:camera,viewport:viewport,size:layout.size,
+          pixelScale:Float(layout.displayScale),rasterSize:layout.pixelSize,only:returning,includingInactive:true)
+        visible=Self.mergingVisible(prepared.filter { !returning.contains($0.0) },restored)
       }
-      drawables.append(drawable)
-      let descriptor = spatialRenderPass(target: tile, drawable: drawable)
-      guard let encoder = command.makeRenderCommandEncoder(descriptor: descriptor) else { throw SceneRenderError.resourceLimit }
-      encoder.setViewport(target.viewport(index))
-      encodeSpatial(batches: batches, visible: visible, active: nil,
-        camera: camera, viewport: viewport, size: layout.size, clip: target.logicalRect(index), encoder: encoder)
-      encoder.endEncoding()
+    } else {
+      visible=try prepareBuffers(in:&batches,camera:camera,viewport:viewport,size:layout.size,
+        pixelScale:Float(layout.displayScale),rasterSize:layout.pixelSize)
     }
-    let result = PreparedSpatialFrame(id: id, canvas: self, batches: batches, replacesMesh: mesh != nil,
-      layout: layout, viewport: viewport, camera: camera, target: target, drawables: drawables)
-    drawables.removeAll(); stagedSpatialFrame = result
+    let samples=device?.supportsTextureSampleCount(4) == true ? 4 : 1
+    let target:SpatialTarget?
+    var passes:[(MTLRenderPassDescriptor,any CAMetalDrawable,MTLViewport?,CGRect?)]=[]
+    if spatialDrawableScale != nil || {if case .spatial=installation {return true};return false}() {
+      if visible.isEmpty && candidatePlan.isEmpty { target=nil }
+      else {
+        if let installed=spatialTarget,installed.layout == layout { target=installed }
+        else { target=try makeSpatialTarget(layout:layout,samples:samples) }
+        for (index,tile) in target!.tiles.enumerated() {
+          guard let drawable=tile.layer.nextDrawable(),drawable.texture.allocatedSize<=tile.drawableByteCeiling else { throw SceneRenderError.resourceLimit }
+          passes.append((spatialRenderPass(target:tile,drawable:drawable),drawable,target!.viewport(index),target!.logicalRect(index)))
+        }
+      }
+    } else {
+      target=nil
+      guard admitPageDrawable(samples:samples),let layer=layer as? CAMetalLayer else { throw SceneRenderError.resourceLimit }
+      let drawable:(any CAMetalDrawable)?
+      if usesPageDisplayLink {
+        let supplied=await withTaskCancellationHandler {
+          await withCheckedContinuation { continuation in
+            guard !Task.isCancelled,spatialStagingID == id else { continuation.resume(returning:false);return }
+            stagedPageDrawable=(id,continuation);requestPageFrame()
+            if pageDisplayLink?.isPaused != false { stagedPageDrawable=nil;continuation.resume(returning:false) }
+          }
+        } onCancel: { Task { @MainActor [weak self] in self?.cancelSpatialStaging(id:id) } }
+        drawable=supplied && suppliedPageDrawable?.id == id ? suppliedPageDrawable?.drawable:nil
+        if suppliedPageDrawable?.id == id {suppliedPageDrawable=nil}
+      } else { drawable=layer.nextDrawable() }
+      try Task.checkCancellation()
+      guard let drawable,drawable.texture.width == Int(drawableSize.width),drawable.texture.height == Int(drawableSize.height),
+        spatialStagingID == id else { throw CancellationError() }
+      let pass=pageRetainedRenderPass(texture:drawable.texture)
+      passes.append((pass,drawable,nil,nil))
+    }
+    let result=PreparedFrame(id:id,canvas:self,batches:batches,visible:visible,replacesMesh:replacesMesh,
+      layout:layout,viewport:viewport,camera:camera,target:target,drawables:passes.map { $0.1 },installation:installation)
+    if case .spatial(let mesh,_,_,_,_)=request { result.actionRanges=mesh?.actionRanges }
+    result.ordered=geometry;result.orderedPlan=candidatePlan
+    result.physical=physicalAdmission
+    var renderingBatches: [CommittedBatch]
+    if case .ordered=installation {renderingBatches=committedBatches} else {renderingBatches=batches}
+    result.reservations=visible.compactMap { renderingBatches[$0.0].buffers[$0.1]?.reservation }
+      + (pageDrawableReservation.map { [$0] } ?? []) + (baselineReservation.map { [$0] } ?? [])
+    stagedSpatialFrame=result
+    if passes.isEmpty {
+      result.completeGPU();result.ready=true;succeeded=true;return result
+    }
+    guard let command=commandQueue.makeCommandBuffer() else { throw SceneRenderError.resourceLimit }
+    for (descriptor,_,viewport,clip) in passes {
+      if let geometry {
+        result.reservations += try encodeOrderedFrame(batches:renderingBatches,visible:visible,active:nil,
+          geometry:geometry,camera:camera,viewport:result.viewport,size:layout.size,clip:clip,
+          descriptor:descriptor,metalViewport:viewport,command:command)
+      } else {
+        guard let encoder=command.makeRenderCommandEncoder(descriptor:descriptor) else {throw SceneRenderError.resourceLimit}
+        if let viewport {encoder.setViewport(viewport)}
+        if spatialDrawableScale == nil {encodeTexture(baselineTexture,croppedTo:pageRenderRegion,label:"Notebook Page Handoff",with:encoder)}
+        encodeSpatial(batches:renderingBatches,visible:visible,active:nil,camera:camera,viewport:result.viewport,
+          size:layout.size,clip:clip,suppressedInkIDs:candidatePlan.suppressedInkIDs,encoder:encoder)
+        encoder.endEncoding()
+      }
+    }
+    // Drop the whole-array borrow before suspension. A new accepted Pencil
+    // append must not COW 100k resident batch records while this GPU drains.
+    renderingBatches=[]
     submittedFrameCount += 1
-    let completed = await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
-      command.addCompletedHandler { [weak self, result] command in
-        let completed = command.status == .completed
-        Task { @MainActor [weak self, result] in
-          result.completeGPU()
-          if let self { finishSubmittedFrame() }
-          continuation.resume(returning: completed)
+    let completed=await withCheckedContinuation { (continuation:CheckedContinuation<Bool,Never>) in
+      command.addCompletedHandler { [weak self,result] command in
+        let completed=command.status == .completed
+        Task { @MainActor [weak self,result] in
+          result.completeGPU();self?.finishSubmittedFrame();continuation.resume(returning:completed)
         }
       }
       command.commit()
     }
     try Task.checkCancellation()
     guard completed else { throw SceneRenderError.resourceLimit }
-    guard spatialStagingID == id, spatialSourceGeneration == oldSource,
-      stableContentRevision == oldProjection, spatialActionBase == nil else { throw CancellationError() }
-    result.ready = true; succeeded = true
-    return result
+    guard spatialStagingID == id,spatialSourceGeneration == oldSource,stableContentRevision == oldProjection,
+      spatialActionBase == nil,activeInkStroke == nil,activeEraserStroke == nil else { throw CancellationError() }
+    result.ready=true;succeeded=true;return result
   }
 
   /// Called only after every source/projection in the candidate validated in
   /// this main-actor turn. GPU work is complete; this is not an observed-frame
   /// receipt. The caller publishes its matching static cohort in the same turn.
-  func installSpatialFrame(_ frame: PreparedSpatialFrame, journal: SpatialInkJournal, surface: SurfaceID, suppressedInkIDs: Set<UUID> = []) {
+  func installPreparedFrame(_ frame:PreparedFrame,spatialSource:SpatialInkInstalledSource? = nil) {
     precondition(frame.canvas === self && frame.isValid)
     frame.installed = true
-    spatialSourceGeneration &+= 1; stableContentRevision &+= 1
-    if frame.replacesMesh { spatialMeshInstallCount += 1 }
-    cancelPendingPageMesh();cancelPendingPageActionMeshes()
-    material = nil
-    pageDrawableReservation = nil; pageMultisample = nil
-    pageRetainedTexture = nil; pageRetainedReservation = nil; pageRetainedKey = nil
-    pageDrawing = nil; baselineTexture = nil; baselinePNG = nil; baselineReservation = nil; drawingIsPreparing = false
-    installedPageRevision = nil; pendingPageRevision = nil
-    committedBatches = frame.batches;pageBatchIndex.removeAll(); drawnTiles = nil; discardActiveAction()
-    installedSpatialSource = .init(surface: surface, journal: journal, suppressedInkIDs: suppressedInkIDs)
+    // Ownership has passed from the cancellable candidate to this install.
+    // Addressed visibility changes below invalidate future preparation; they
+    // must not revoke this already accepted frame and empty its drawables.
+    spatialStagingID = nil
+    stagedSpatialFrame = nil
+    stableContentRevision &+= 1
+    switch frame.installation {
+    case .spatial:
+      precondition(spatialSource != nil)
+      spatialSourceGeneration &+= 1
+      if frame.replacesMesh { spatialMeshInstallCount += 1 }
+      cancelPendingPageMesh();cancelPendingPageActionMeshes();material=nil
+      pageDrawableReservation=nil;pageMultisample=nil
+      pageRetainedTexture=nil;pageRetainedReservation=nil;pageRetainedKey=nil
+      pageDrawing=nil;baselineTexture=nil;baselinePNG=nil;baselineReservation=nil;drawingIsPreparing=false
+      installedPageRevision=nil;pendingPageRevision=nil;pageBatchIndex.removeAll()
+      installedSpatialSource=spatialSource
+      if let index=frame.actionRanges { spatialActionRanges=index;spatialTailRanges=[:] }
+    case .ordered:
+      if let source=installedSpatialSource,source.suppressedInkIDs != frame.orderedPlan.suppressedInkIDs {
+        installedSpatialSource=source.suppressing(frame.orderedPlan.suppressedInkIDs);spatialSourceGeneration &+= 1
+      }
+    }
+    orderedGeometry=frame.ordered;orderedInkPlan=frame.orderedPlan;orderedRequest=frame.orderedPlan
+    if case .ordered=frame.installation,spatialDrawableScale == nil {
+      setSuppressedPageActions(frame.orderedPlan.suppressedInkIDs)
+    }
+    if case .spatial=frame.installation {committedBatches=frame.batches;discardActiveAction()}
+    drawnTiles=nil;pageRetainedKey=nil
     let revision = stableContentRevision, generation = spatialSourceGeneration
     preparedStableContentRevision = revision // This exact frame completed GPU preparation before install.
     presentedStableContentRevision = nil
@@ -1784,9 +2149,14 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
         }
       }
     }
-    bounds.size = frame.layout.size
-    spatialCamera = frame.camera; spatialViewport = frame.viewport; spatialDrawableScale = frame.layout.displayScale
-    installSpatialTarget(frame.target)
+    switch frame.installation {
+    case .spatial:
+      bounds.size=frame.layout.size
+      spatialCamera=frame.camera;spatialViewport=frame.viewport;spatialDrawableScale=frame.layout.displayScale
+      installSpatialTarget(frame.target)
+    default:break
+    }
+    if case .spatial=frame.installation {committedViewport=(committedViewportKey,frame.visible)}
     needsRevealedFrame = false
     if let target = frame.target {
       let submission = UUID()
@@ -1798,16 +2168,27 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
         observePresentation(of: drawable, tile: index, target: target, submission: submission)
       }
     }
+    if frame.target == nil,let drawable=frame.drawables.first {
+      NotebookMetalFrameReadiness.observe(drawable,commandBuffer:nil) { [weak self] readiness in
+        guard let self,!spatialHandoffIsStopping,stableContentRevision == revision,
+          spatialSourceGeneration == generation,window != nil else { return }
+        frameReadiness=readiness
+        if readiness.isReady {
+          presentedStableContentRevision=revision;onVisibleFrame?();onRenderReadinessChange?(true)
+        } else { beginStableContentUpdate();requestFrame() }
+      }
+    }
+    presentsWithTransaction=true
     for tile in frame.target?.tiles ?? [] { tile.layer.presentsWithTransaction = true }
     #if os(iOS)
       layer.opacity = frame.drawables.isEmpty ? 0 : 1
+      if material != nil { backgroundColor = .clear }
     #else
       layer?.opacity = frame.drawables.isEmpty ? 0 : 1
+      if material != nil { layer?.backgroundColor = nil }
     #endif
     for drawable in frame.drawables { drawable.present() }
     CATransaction.commit()
-    spatialStagingID = nil
-    stagedSpatialFrame = nil
     hasRevealedFirstFrame = !frame.drawables.isEmpty
     pauseFrameLoop()
   }
@@ -1961,6 +2342,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
   }
 
   private func retirePageDisplayLink() {
+    if let pending=stagedPageDrawable { cancelSpatialStaging(id:pending.id) }
     pageDisplayLink?.invalidate()
     pageDisplayLink = nil
     #if os(iOS)
@@ -2013,6 +2395,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
   }
 
   private func requestFrame() {
+    startOrderedPreparationIfNeeded()
     if presentEmptyContentIfReady() { return }
     // Layout, mesh and old GPU callbacks cannot reacquire a reclaimed neighbour.
     // Its existing page-role promotion is the only route back to pixel demand.
@@ -2043,7 +2426,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
 
   @discardableResult
   private func presentEmptyContentIfReady() -> Bool {
-    guard !isErasureMask, material == nil, !spatialHandoffIsStopping, spatialStagingID == nil, pageGeometryIsReady, baselineTexture == nil,
+    guard !isErasureMask, material == nil, orderedGeometry == nil, !spatialHandoffIsStopping, spatialStagingID == nil, pageGeometryIsReady, baselineTexture == nil,
       activeInkStroke == nil, activeEraserStroke == nil,
       committedBatches.allSatisfy({ batch in
         if !batch.pageIsActive { return true }
@@ -2079,6 +2462,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     #else
     layer?.opacity = 0
     #endif
+    installFrameDependants()
     CATransaction.commit()
     let revision = stableContentRevision
     preparedStableContentRevision = revision
@@ -2212,7 +2596,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
   private func appendCommitted(
     _ active: IncrementalInkMesh,
     operation: RenderOperation,
-    action: PageInkAction?
+    action: PageInkAction?,sourceID:UUID
   ) {
     guard !active.nodes.isEmpty else { return }
     let projection = spatialCamera.map { SpatialInkMesh.Projection.screen($0, spatialViewport) } ?? .local
@@ -2229,6 +2613,9 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
       viewport:spatialViewport,size:bounds.size) }
     batch=addition[0];let index=committedBatches.count
     committedBatches.append(batch)
+    if installedSpatialSource != nil {
+      spatialTailRanges[sourceID,default:[]].append(.init(batch:index,chunks:0..<batch.mesh.chunkCount))
+    }
     if let retained,let localVisible {
       let appended=localVisible.map { (index,$0.1) }
       committedViewport=(key,retained.visible+appended)
@@ -2251,14 +2638,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
       let changed=try prepareBuffers(in:&committedBatches,camera:spatialCamera,
         viewport:spatialViewport,size:bounds.size,only:indices)
       let unchanged=retained.visible.filter { !indices.contains($0.0) }
-      var merged:[(Int,Range<Int>)]=[]
-      merged.reserveCapacity(unchanged.count+changed.count)
-      var old=0,new=0
-      while old < unchanged.count || new < changed.count {
-        if new == changed.count || (old < unchanged.count && unchanged[old].0 < changed[new].0) {
-          merged.append(unchanged[old]);old += 1
-        } else { merged.append(changed[new]);new += 1 }
-      }
+      let merged=Self.mergingVisible(unchanged,changed)
       visibleCommittedVertexCount=merged.reduce(0) { total,entry in
         guard let buffer=committedBatches[entry.0].buffers[entry.1] else { return total }
         return total+InkRenderGeometry.vertexCount(nodes:buffer.nodeCount,flags:buffer.geometry.chunk.descriptor.flags)
@@ -2266,6 +2646,17 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
       visibleCommittedChunkCount=merged.count
       committedViewport=(retained.key,merged)
     } catch { renderFailure = .resourceLimit }
+  }
+
+  private static func mergingVisible(_ unchanged:[(Int,Range<Int>)],_ changed:[(Int,Range<Int>)])->[(Int,Range<Int>)] {
+    var merged:[(Int,Range<Int>)]=[];merged.reserveCapacity(unchanged.count+changed.count)
+    var old=0,new=0
+    while old<unchanged.count || new<changed.count {
+      if new == changed.count || (old<unchanged.count && unchanged[old].0<changed[new].0) {
+        merged.append(unchanged[old]);old += 1
+      } else { merged.append(changed[new]);new += 1 }
+    }
+    return merged
   }
 
   private var committedViewportKey:CommittedViewport {
@@ -2293,7 +2684,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
 
   private func prepareBuffers(in batches: inout [CommittedBatch], camera: SpatialCamera?,
     viewport: SpatialPoint, size: CGSize, pixelScale: Float? = nil, rasterSize: CGSize? = nil,
-    only indices:Set<Int>? = nil
+    only indices:Set<Int>? = nil, includingInactive:Bool = false
   ) throws -> [(Int, Range<Int>)] {
     var visible: [(Int, Range<Int>)] = []
     let viewportRect = camera == nil ? (pageRenderRegion ?? CGRect(origin: .zero, size: size)) : CGRect(origin: .zero, size: size)
@@ -2303,7 +2694,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
       pixels:rasterSize ?? spatialTarget?.layout.pixelSize ?? drawableSize)
     func select(_ batchIndex:Int) {
       committedBatchQueryVisitCount += 1
-      if !batches[batchIndex].pageIsActive { return }
+      if !includingInactive && !batches[batchIndex].pageIsActive { return }
       let mesh = batches[batchIndex].mesh
       let transform = mesh.projection.transform(camera: camera, viewport: viewport)
       var rasterTransform=transform
@@ -2316,7 +2707,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
         admitting:grid.map { grid in { grid.mayCover($0,affine:affine) } })
       committedIndexVisitCount += query.cost.visitedNodes
       queriedCommittedPointCount += query.cost.decodedSamples
-      let selected=query.chunks
+      let selected=query.chunks.filter { !batches[batchIndex].suppresses($0) }
       let selectedIDs = Set(selected)
       // A sample-free overview must not discard the already admitted detail
       // of its last nonempty view, then decode it again on every zoom toggle.
@@ -2324,6 +2715,9 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
       // nonempty selection or geometric exit retires it normally.
       for chunkIndex in batches[batchIndex].buffers.keys {
         if selectedIDs.contains(chunkIndex) { batches[batchIndex].buffers[chunkIndex]?.isVisible=true;continue }
+        // A temporary whole-contact representation borrows resident geometry.
+        // Suppression changes its visibility, not its accepted mesh or buffers.
+        if batches[batchIndex].suppresses(chunkIndex) { batches[batchIndex].buffers[chunkIndex]?.isVisible=false;continue }
         let bounds=batches[batchIndex].buffers[chunkIndex]!.geometry.chunk.descriptor.bounds
         if selected.isEmpty,grid?.mayCover(bounds,affine:affine) == false,
           InkAffine(transform).bounds(bounds).intersects(viewportRect.insetBy(dx:-1,dy:-1)) {

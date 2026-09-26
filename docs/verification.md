@@ -13,7 +13,7 @@
   приёмки всех A01–A19/R01–R04 и новых замечаний пользователя ещё нет.
 - [GUI-295](https://linear.app/main-cluster/issue/GUI-295): **не закрыта**.
   Отдельные пути перелистывания и чернил исправлены, но raw-page Redo, полный
-  смешанный выбор/перенос и строгие физические условия ниже остаются открытыми.
+  смешанный выбор/перенос в финальной Release-паре и строгие физические условия ниже остаются открытыми.
 - Установка private-сборок и focused PASS не означают обновление/приёмку рабочей пары.
   Текущие документы, контейнеры, идентичности и ключи сохраняются; исторические
   архивы не являются входом проверки. Совместимое чтение старых program receipts
@@ -35,6 +35,8 @@
 | Принятые чернила, laser/Retry и большой контур | Physical113: material/laser **17 PASS**; cold 100 000 measurements: готовность 317,802 мс, pixel probes 426,996 мс при 500 мс. Core117 **38/38**, Codex **20/20**, SDK **5/5**, MCP type/generated check PASS. Не подменяет raw-page/whole-elements сценарий. | [109–117](audit-evidence/2026-09-25/user-ux-109-117.json) |
 | Раздельный PDF cache проверочных и рабочих приложений | **Mac103 и USB iPad104: по 4/4 PASS**: bundle-scoped каталог, save/load/eviction и неприкосновенность соседей. Старый общий каталог не переносится и не удаляется. | [Изоляция cache](audit-evidence/2026-09-25/print-cache-isolation-103-104.json) |
 
+U10: просмотренные изображения подтверждают целые позы и рамки без смешанных кадров; два переноса и откат — **76,994 / 74,065 / 70,104 мс** при прежнем лимите 100 мс. Copy/Delete прошли пиксельные проверки, но их успешные PNG не сохранялись. Последние Core-проверки порядка копий — **10 функций PASS**; прежние 24 Core/ScriptHost и 6 SDK относятся к своим срезам. Mac133 не получил готовность окна позади других окон; при единственном изменении тестовой установки окна на передний план Mac134 прошёл все пять проверок, production-код совпадает. Отрицательные результаты и ошибки компиляции не удалены; [точные исходники и материалы](audit-evidence/2026-09-25/whole-contact-selection-128-134.json).
+
 Для базовых архитектурных изменений сохранены отдельные интеграционные квитанции:
 [Core/JS/MCP](audit-evidence/2026-09-25/architecture-core-js-integration.json),
 [Mac](audit-evidence/2026-09-25/architecture-mac-integration.json),
@@ -50,10 +52,10 @@ backlog/uploads/page order, notifications, export/clipboard, preview и worker c
 |---|---|
 | **Raw-page Redo: правильный конечный кадр** | Чистая Release-пара `8abb746f`, source SHA `12ef6656…`: два полных journey завершены, третий остановлен — Undo/Redo оба 96 тёмных пикселей; **0/1 XCTest PASS**, 0 skips/warnings. Данные и идентичности private-пары сохранены; 30 минут не запускались. Поздний отдельный LLDB/readback спустя около 12 минут: retained ROI с нулевой alpha и окно с 0 тёмных пикселей — не свидетельство исходного кадра и не отмена FAIL. [Отказ и архив](audit-evidence/2026-09-25/release-8abb-redo.json). |
 | **Raw-page inverse ≤100 мс** | Правильный retained ink ещё не доказывает своевременный drawable/кадр окна. Есть физический отказ 120,965 мс и последующие отдельные PASS без доказанного timing-fix. В новом том же GPU command buffer retained и итоговый drawable дают пустой cut (Undo — 118 alpha pixels), положительный контроль — 117; окно остаётся со старой линией спустя 185,038–315,377 мс. Это диагностический `framebufferOnly=false`, не production fix; граница drawable→показ/снимок ещё открыта. [Итоговый drawable](audit-evidence/2026-09-25/final-drawable-redo-probe.json). [ROI](audit-evidence/2026-09-25/retained-roi-redo-diagnostic.json), [physical105](audit-evidence/2026-09-25/user-ux-105-native-failures.json). |
-| **U10: целое смешанное выделение/перенос** | Требуется полный путь raw handwriting + authored elements, лассо, атомарный перенос и продолжение следующего действия. Проверки отдельных material/selection владельцев его не заменяют. |
+| **U10: финальная Release-пара** | Полный native-маршрут исправлен: физический iPad133 — **12/12 PASS**, Mac134 — **5/5 PASS**. Замкнутое лассо выбирает целый контакт вместе с фигурой; два переноса, отмена, Copy/Duplicate и Delete→Undo/Redo сохраняют весь материал и порядок. Нужен этот же путь в финальной паре. [128–134](audit-evidence/2026-09-25/whole-contact-selection-128-134.json). |
 | **Холодный документ ≤1000 мс** | **USB iPad127: 1450,877 мс (тот же board), 1650,673 мс (другой board) — оба FAIL**. Закрытая цель достигается во время подготовки; открытие ждёт точную бумагу, source готовится один раз. Artifact 991–1027 мс, content-ready→installation около 170 мс вместо прежних 321 мс; request→installation 1221/1389 мс уже превышает секунду без capture/attachment. [127](audit-evidence/2026-09-25/document-closed-approach-127.json), [125–126](audit-evidence/2026-09-25/user-ux-125-126.json). |
 | **Физический ink response ≤20 мс** | Предыдущие pen/eraser replay timing FAIL не закрыты; GPU-ready/логический commit не заменяют показ ОС. [Отрицательный A/B](audit-evidence/2026-09-25/warm-transaction-rejected.json). |
-| **Первый кадр curl ≤16,67 мс и cadence 120 Гц** | **USB iPad125: строгий десятикратный curl — FAIL**: нулевые/невалидные OS receipts и интервалы до **25,010 мс при пределе 8,833 мс**. Они не исключаются из oracle. Защитный первый кадр сохраняется: его удаление показывало чужую страницу. [125–126](audit-evidence/2026-09-25/user-ux-125-126.json), [priming](audit-evidence/2026-09-25/physical-curl-priming-93-95.json). |
+| **Первый кадр curl ≤16,67 мс и cadence 120 Гц** | **USB iPad125: строгий десятикратный curl — FAIL**: нулевые/невалидные OS receipts и интервалы до **29,178 мс при пределе 8,833 мс**. Они не исключаются из oracle. Защитный первый кадр сохраняется: его удаление показывало чужую страницу. [125–126](audit-evidence/2026-09-25/user-ux-125-126.json), [priming](audit-evidence/2026-09-25/physical-curl-priming-93-95.json). |
 | **Единый финальный build: 10 journey + 30 минут** | Не пройдены. Последний ten-journey запуск остановлен на Redo, 30-минутная сессия после него не начиналась. Нужны согласованная пара, неизменные источники, обычные жесты, записи экрана и системные frame/CPU/GPU/memory измерения. |
 
 Два последующих контроля raw Redo также дали третий `96 == 96`: продлённое участие UIKit и транзакция неподвижного кадра. Во втором журнал подтверждает `transactionPresentation=true`; оба кандидата удалены. [UIKit](audit-evidence/2026-09-25/idle-ui-demand-rejected.json), [транзакция](audit-evidence/2026-09-25/idle-transaction-rejected.json).
@@ -102,7 +104,7 @@ Mac fresh median 790,241 → 684,856 мс. Физический127 выше по
 правильный документ, но не закрывает секунду.
 [Квитанция чтения](audit-evidence/2026-09-25/typesetter-fontmap-stream.json).
 
-Текущий app-only профиль относит 86,57% Running samples к TeX, 12,68% к PDF; лишний запуск подготовки не найден. Проба `-O3` сохранила 50 exact/functional controls, но timing загрязнён параллельной компиляцией; policy не изменена. [Профиль и ограничение](audit-evidence/2026-09-25/typesetter-current-profile-policy.json).
+Текущий app-only профиль относит 86,57% Running samples к TeX, 12,68% к PDF; лишний запуск подготовки не найден. [Профиль](audit-evidence/2026-09-25/typesetter-current-profile-policy.json). В последующем тихом контроле `-O3` ухудшил fresh-компиляцию во всех шести парах (median −8,485%); перенос двух TLS-полей дал лишь неустойчивые +3,035% при росте кода на 1,38%. Оба кандидата отклонены, runtime и safety-проверки не изменены; точные outputs и отрицательные пары сохранены. [Контроли](audit-evidence/2026-09-25/typesetter-execution-rejected.json).
 
 Сборка из изолированного source snapshot теперь берёт закреплённый TeX distribution
 из выбранного runtime stage, а не повторно загружает 2,88 GB в каждый snapshot.

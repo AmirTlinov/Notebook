@@ -226,10 +226,14 @@ enum CurrentViewPreviewWriter {
         return try raw.decode(PageDocument.self)
       }.value
       full = try await pageCompositeSnapshot(page, programStore: model.store, permitsPreparation: { model.permitsBackgroundPreparation })
-      inkRegions = try await Task.detached(priority: .utility) { try PageVisionRenderer.render(page).regions.map { $0.receipt.contentPoints } }.value
-      await PageInkRasterCache.shared.prepare(page)
-      guard let ink = PageInkRasterCache.shared.image(for: page) else { throw PreviewError.agentSnapshotPending }
-      inkRaster = try await raster(NSImage(cgImage: ink, size: .init(width: page.size.width, height: page.size.height)))
+      let inkResult = try await PageCompositionRenderer.renderInk(page,
+        permitsPreparation: { model.permitsBackgroundPreparation })
+      let ink = try await SpatialInkRasterSnapshot.prepare(png: inkResult.png,
+        size: .init(width: page.size.width, height: page.size.height),
+        permitsPreparation: { model.permitsBackgroundPreparation })
+      guard let image = NSImage(data: ink.png) else { throw PreviewError.pngEncoding }
+      inkRegions = ink.regions
+      inkRaster = RasterSnapshot(image: image, png: ink.png)
       diagnostics = full.diagnostics
     case .document:
       let (document, state) = try await Task.detached(priority: .utility) {
@@ -272,13 +276,10 @@ enum CurrentViewPreviewWriter {
       guard let image = NSImage(data: result.png) else { throw PreviewError.pngEncoding }
       full = RasterSnapshot(image: image, png: result.png)
       diagnostics = result.diagnostics
-      let inkBounds = WorkspaceSpatialBounds(origin: target.kind == .cover ? .zero :
-        center.offsetBy(x: -size.width / 2, y: -size.height / 2), width: size.width, height: size.height)
-      let journal = try await source.ink(target.kind == .cover ? .cover(target.id) : .board(target.id), bounds: inkBounds)
-      if let ink = try await SpatialInkRasterSnapshot.prepare(
-        surface: target.kind == .cover ? .cover(target.id) : .board(target.id),
-        camera: target.kind == .board ? projection : nil, size: size, journal: journal,
-        permitsPreparation: { model.permitsBackgroundPreparation }) {
+      if let inkResult = try await renderer.renderInk(presence: presence,
+        coverID: target.kind == .cover ? target.id : nil) {
+        let ink = try await SpatialInkRasterSnapshot.prepare(png: inkResult.png, size: size,
+          permitsPreparation: { model.permitsBackgroundPreparation })
         guard let image = NSImage(data: ink.png) else { throw PreviewError.pngEncoding }
         inkRegions = ink.regions
         inkRaster = RasterSnapshot(image: image, png: ink.png)

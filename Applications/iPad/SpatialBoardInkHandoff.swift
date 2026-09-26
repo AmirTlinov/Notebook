@@ -10,7 +10,7 @@ final class SpatialInkSceneLease {
   struct Update {
     let owner: SpatialInkPhysicalOwner
     let generation: UInt64
-    let frame: InkCanvasView.PreparedSpatialFrame?
+    let frame: InkCanvasView.PreparedFrame?
     let journal: SpatialInkJournal
     var suppressedInkIDs: Set<UUID> = []
   }
@@ -38,7 +38,7 @@ final class SpatialInkSceneLease {
     defer { CATransaction.commit() }
     for update in updates {
       if let frame = update.frame {
-        update.owner.canvas.installSpatialFrame(frame, journal: update.journal, surface: update.owner.surface, suppressedInkIDs: update.suppressedInkIDs)
+        update.owner.canvas.installPreparedFrame(frame,spatialSource:.init(surface:update.owner.surface,journal:update.journal,suppressedInkIDs:update.suppressedInkIDs))
         update.owner.refreshMount()
       }
     }

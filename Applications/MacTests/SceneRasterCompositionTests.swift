@@ -102,17 +102,21 @@ final class SceneRasterCompositionTests: XCTestCase {
           width: width, opacity: 1, force: 1, azimuth: 0, altitude: 1)
       })], actor: actor)
     }
-    let result = try await SpatialInkRasterSnapshot.prepare(surface: surface,
-      camera: .init(center: .init(x: 1024, y: 1024), scale: 1), size: .init(width: 2048, height: 2048),
-      journal: journal, resources: resources, permitsPreparation: { true })
-    let png = try XCTUnwrap(result).png, image = try pixels(png)
+    let size = CGSize(width: 2048, height: 2048)
+    let canvas = try await SceneRasterCompositor.create(size: size, scale: 2, resources: resources)
+    try await canvas.drawInk(surface: surface, journal: journal,
+      camera: .init(center: .init(x: 1024, y: 1024), scale: 1), size: size,
+      in: .init(origin: .zero, size: size))
+    let result = try await SpatialInkRasterSnapshot.prepare(png: canvas.finishPNG(),
+      size: size, resources: resources, permitsPreparation: { true })
+    let png = result.png, image = try pixels(png)
     XCTAssertEqual(image.pixelsWide, 4096); XCTAssertEqual(image.pixelsHigh, 4096)
     for x in [512, 1024, 2048, 3072] {
       XCTAssertLessThan(try XCTUnwrap(image.colorAt(x: x, y: 2048)).alphaComponent, 0.01)
       XCTAssertGreaterThan(try XCTUnwrap(image.colorAt(x: x, y: 2020)).alphaComponent, 0.99)
       XCTAssertGreaterThan(try XCTUnwrap(image.colorAt(x: x, y: 2076)).alphaComponent, 0.99)
     }
-    XCTAssertFalse(try XCTUnwrap(result).regions.isEmpty)
+    XCTAssertFalse(result.regions.isEmpty)
     XCTAssertEqual(resources.reservedBytes, 0)
     XCTAssertLessThanOrEqual(resources.peakAccountedBytes, resources.byteLimit)
   }
@@ -369,9 +373,11 @@ final class SceneRasterCompositionTests: XCTestCase {
     CGImageDestinationAddImage(destination, whole,
       [kCGImagePropertyDPIWidth: 144.0, kCGImagePropertyDPIHeight: 144.0] as CFDictionary)
     XCTAssertTrue(CGImageDestinationFinalize(destination))
-    let prepared = try await SpatialInkRasterSnapshot.prepare(surface: surface, camera: camera,
-      size: size, journal: journal, permitsPreparation: { true })
-    let result = try XCTUnwrap(prepared)
+    let canvas = try await SceneRasterCompositor.create(size: size, scale: 2, resources: .shared)
+    try await canvas.drawInk(surface: surface, journal: journal, camera: camera,
+      size: size, in: .init(origin: .zero, size: size))
+    let result = try await SpatialInkRasterSnapshot.prepare(png: canvas.finishPNG(),
+      size: size, permitsPreparation: { true })
     XCTAssertEqual(SHA256.hash(data: result.png).description, SHA256.hash(data: encoded as Data).description,
       "Changing preparation must not mark an unchanged historical source as edited")
     XCTAssertEqual(result.regions, try SpatialInkRasterSnapshot.occupiedRegions(whole, size: size))

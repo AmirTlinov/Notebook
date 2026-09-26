@@ -1,0 +1,566 @@
+{
+  "format": 1,
+  "preparedAtUTC": "2026-09-26T18:32:18.609843+00:00",
+  "issue": "GUI-226",
+  "aggregateIssue": "GUI-306",
+  "baseCommit": "72168366af268fbcd371186fcb220f58dcd5308e",
+  "status": "Addressed physical U10 controls passed; Mac134 recorded separately; no final whole-app acceptance",
+  "scope": "Whole raw/contact and authored selection, atomic writes, ordered native/export composition, resource/lifecycle handoff; private optimized native checks only.",
+  "portable": {
+    "coreAndScriptHost": {
+      "passed": 24,
+      "breakdown": {
+        "CoreSelectionAndPublication": 17,
+        "ScriptHostSelectionAndHistory": 7
+      },
+      "log": {
+        "path": "/tmp/notebook-u10-integrated-20260926T1709Z/core-3.log",
+        "sha256": "b0be7888fc593f3539f9b58b7f175c8321f89e238a5d99d222325d859912942d"
+      },
+      "sourceWitness": {
+        "path": "/tmp/notebook-u10-native-128/source-before.json",
+        "sha256": "ebc654712f5044ace654c4bfbc45e4d3a71ad1b21dc83e92590702f18da5f2da"
+      },
+      "sourceWitnessBoundary": "Subsequent native128 source witness after two test-only compilation corrections. The older integration/source.json differs in those two test files and must not label core-3 as that exact earlier tree. No fresh Core before/after equality receipt is asserted.",
+      "compilerWarnings": [
+        "NotebookGraphicVisibilityTests.swift:151 unnecessary try",
+        "NotebookProgramStateReadTests.swift:29 unused commandTransaction result"
+      ]
+    },
+    "sdk": {
+      "passed": 6,
+      "failed": 0,
+      "skipped": 0,
+      "commands": [
+        "npm run check",
+        "node --import tsx --test test/sdk-types.test.ts"
+      ],
+      "result": {
+        "path": "/tmp/notebook-u10-integrated-20260926T1709Z/mcp-result.json",
+        "sha256": "88546669908a45dbde3a97293d0b70eecc7a09060f6cfd6b3eb19ac4c434b986"
+      },
+      "initialIntegrationSource": {
+        "path": "/tmp/notebook-u10-integrated-20260926T1709Z/source.json",
+        "sha256": "675646c82a0d4891c4a5dbb5733b6a6ebe28380fdfbb7f110ca17219af5779a5"
+      },
+      "scope": "Selection SDK types and exact generated declaration/reference contract; not full MCP suite"
+    },
+    "latestCoreCopyOrder": {
+      "passedTestFunctions": 10,
+      "failed": 0,
+      "parameterized": true,
+      "log": {
+        "path": "/tmp/notebook-u10-integrated-20260926T1709Z/core-copy-order.log",
+        "sha256": "6e34f729004c994392d668d45ee4410787a495f9d0f2c070f588069faca79a0d"
+      },
+      "matches133CorePatchHashes": [
+        {
+          "path": "Sources/NotebookCore/NotebookGraphicSelection.swift",
+          "beforeSHA256": "5502c326075ab2f51ff506b04cae33e976f4cd7b57c1b8f62ab5297518665a76",
+          "afterSHA256": "276a2ea51213b1f6a3d4e07af3b8a5a0254eea367c2c0c82a2ff603102b04504"
+        },
+        {
+          "path": "Sources/NotebookCore/NotebookInkPaintKey.swift",
+          "beforeSHA256": null,
+          "afterSHA256": "5d62468b4e0136d06a5b3909d681701aeb18ad13a0793372350bcb7b16f52324"
+        },
+        {
+          "path": "Tests/NotebookCoreTests/NotebookGraphicSelectionTests.swift",
+          "beforeSHA256": "a2268424c226af5c1056d93ec7dd8fac9346fb81b1b06f7661c5a27fc78438ab",
+          "afterSHA256": "39c9f32ac3b92aeed5bced613de05365b21bd30f14ac64afbeaf10eb41b03d6f"
+        }
+      ],
+      "sourceBoundary": "No invented whole-tree before/after for this package command; named Core inputs match133 witness. This is not24+10 newly unique tests."
+    }
+  },
+  "runs": [
+    {
+      "run": "128",
+      "platform": "physical iPad",
+      "source": {
+        "sha256": "3a392d4385cd6525d108b8bc73310221b1178ecddcbc86a3c16a56341484d75a",
+        "unchanged": true,
+        "before": {
+          "path": "/tmp/notebook-u10-native-128/source-before.json",
+          "sha256": "ebc654712f5044ace654c4bfbc45e4d3a71ad1b21dc83e92590702f18da5f2da"
+        },
+        "after": {
+          "path": "/tmp/notebook-u10-native-128/source-after-manual.json",
+          "sha256": "ebc654712f5044ace654c4bfbc45e4d3a71ad1b21dc83e92590702f18da5f2da"
+        }
+      },
+      "testExitCode": 65,
+      "passedTests": 8,
+      "failedTests": 9,
+      "skippedTests": 0,
+      "runtimeWarnings": [],
+      "runtimeWarningsScope": "exported summary",
+      "summary": {
+        "path": "/tmp/notebook-u10-native-128/summary.json",
+        "sha256": "f66fae2154d5f240286d7d0b4cdf6737ea1c0c5dbf12ec74da6051ed83190e7e"
+      },
+      "testTree": {
+        "path": "/tmp/notebook-u10-native-128/tests.json",
+        "sha256": "2cd0e7e0492a94e35e7808dc0e85fad4bae163ac600c43b4db423026b286d9c9"
+      },
+      "selection": {
+        "path": "/tmp/notebook-u10-native-128/selection.json",
+        "sha256": "0f9a029e2062477ad7eeb68b641bc36a380459a57ffc3afd48b62009b02fe81f"
+      },
+      "resultBundle": "/tmp/notebook-u10-native-128/ipad.xcresult",
+      "failures": [
+        {
+          "test": "InkCanvasLifecycleTests/testAbandonedAndSourceChangedPreparedPageFramesCannotSuppressCurrentInk()",
+          "message": "XCTAssertTrue failed - UX new-source-handoff-stays-addressed: correct=false, observed=132.704458 ms, ceiling=0.1 seconds; window observation, not photon timing"
+        },
+        {
+          "test": "NotebookDrawingToolsTests/testClaimedWholeMoveKeepsItsPictureUntilTheCanonicalPlanActuallyInstalls()",
+          "message": "XCTAssertTrue failed - UX claimed-whole-move-canonical-handoff: correct=false, observed=271.300709 ms, ceiling=0.25 seconds; window observation, not photon timing"
+        },
+        {
+          "test": "InkCanvasLifecycleTests/testOrderedContactPreservesCrossingRankAndScopesHistoricalCuts()",
+          "message": "XCTAssertTrue failed - UX ordered-contact-crossing-and-cuts: correct=false, observed=136.503375 ms, ceiling=0.1 seconds; window observation, not photon timing"
+        },
+        {
+          "test": "SceneCompositionSQLTests/testOrderedExportPreservesFractionalRawErasureAroundTheMovedBody()",
+          "message": "Test crashed with signal trap."
+        },
+        {
+          "test": "InkCanvasLifecycleTests/testPreparedPageAndMaterialKeepTheOldPixelsUntilTheirCommonInstall()",
+          "message": "XCTAssertTrue failed - UX whole-contact-native-handoff: correct=false, observed=135.865167 ms, ceiling=0.1 seconds; window observation, not photon timing"
+        },
+        {
+          "test": "InkCanvasLifecycleTests/testReturningTheRawSourceJoinsTheNextPencilFrameWithoutDroppingTheContact()",
+          "message": "XCTAssertTrue failed - UX selection-before-pencil-cancel: correct=false, observed=101.982542 ms, ceiling=0.1 seconds; window observation, not photon timing"
+        },
+        {
+          "test": "NotebookDrawingToolsTests/testSecondWholeMoveKeepsControlsWithPixelsAndCancelPreservesNewAcceptedContact()",
+          "message": "XCTAssertTrue failed - UX first-whole-move-canonical-installed: correct=false, observed=250.02675 ms, ceiling=0.25 seconds; window observation, not photon timing"
+        },
+        {
+          "test": "SpatialInkTilePoolTests/testWholeContactSuppressionBorrowsIndexedChunksWithoutRebuildingOneHundredThousandActions()",
+          "message": "XCTAssertEqual failed: (\"837\") is not equal to (\"0\") - Each contact has its own chunk interval even inside one prepared batch"
+        },
+        {
+          "test": "NotebookDrawingToolsTests/testWholeElementsKeepsTwoContactsAndTheirAuthoredPeerThroughOneMoveAndCopy()",
+          "message": "XCTAssertTrue failed - UX whole-contacts-and-authored-peer-move: correct=false, observed=251.559334 ms, ceiling=0.25 seconds; window observation, not photon timing"
+        }
+      ]
+    },
+    {
+      "run": "129",
+      "platform": "physical iPad",
+      "source": {
+        "sha256": "fd40da34abb508e4043edd13772bdbbc975bdfe2951f9d6b668a21cc178a4806",
+        "unchanged": true,
+        "before": {
+          "path": "/tmp/notebook-u10-native-129/source-before.json",
+          "sha256": "89692b4d0036f36ed4ee64960dd6565b6fef159f4a4bfa1a754ebc648c78e1eb"
+        },
+        "after": {
+          "path": "/tmp/notebook-u10-native-129/source-after-manual.json",
+          "sha256": "89692b4d0036f36ed4ee64960dd6565b6fef159f4a4bfa1a754ebc648c78e1eb"
+        }
+      },
+      "testExitCode": 65,
+      "passedTests": 19,
+      "failedTests": 1,
+      "skippedTests": 0,
+      "runtimeWarnings": [],
+      "runtimeWarningsScope": "exported summary",
+      "summary": {
+        "path": "/tmp/notebook-u10-native-129/summary.json",
+        "sha256": "e79b3d9b6d63bfb6b9ed366c0cc09edeecf5b38983b0ce2bc6aeea89d9d8a502"
+      },
+      "testTree": {
+        "path": "/tmp/notebook-u10-native-129/tests.json",
+        "sha256": "84113b635753ff794edc48e3cdcbd54bdc811cdac593e42c00be70a13276a158"
+      },
+      "selection": {
+        "path": "/tmp/notebook-u10-native-129/selection.json",
+        "sha256": "0119d2dfc31b2c7e14b84c15f7fcc894ea0b0387aa276c1496b95a001884ed1f"
+      },
+      "resultBundle": "/tmp/notebook-u10-native-129/ipad.xcresult",
+      "failures": [
+        {
+          "test": "NotebookInteractionUXTests/testClosedWholeLassoRoutesRawAndAuthoredMaterialThroughTwoInstalledDragsAndCancel()",
+          "message": "XCTAssertTrue failed - The installed body owner must admit the drag: recognizer=0, Pencil=false, interactive=false"
+        }
+      ]
+    },
+    {
+      "run": "130",
+      "platform": "macOS",
+      "source": {
+        "sha256": "fd40da34abb508e4043edd13772bdbbc975bdfe2951f9d6b668a21cc178a4806",
+        "unchanged": true,
+        "before": {
+          "path": "/tmp/notebook-u10-mac-130/source-before.json",
+          "sha256": "89692b4d0036f36ed4ee64960dd6565b6fef159f4a4bfa1a754ebc648c78e1eb"
+        },
+        "after": {
+          "path": "/tmp/notebook-u10-mac-130/source-after.json",
+          "sha256": "89692b4d0036f36ed4ee64960dd6565b6fef159f4a4bfa1a754ebc648c78e1eb"
+        }
+      },
+      "testExitCode": 0,
+      "passedTests": 4,
+      "failedTests": 0,
+      "skippedTests": 0,
+      "runtimeWarnings": [],
+      "runtimeWarningsScope": "exported summary",
+      "summary": {
+        "path": "/tmp/notebook-u10-mac-130/mac-summary.json",
+        "sha256": "773e488d4966b01c9809574110d8a2b585d1e116561a4c52e5c1b12ddfccf268"
+      },
+      "testTree": {
+        "path": "/tmp/notebook-u10-mac-130/mac-tests.json",
+        "sha256": "4d1aa7497bd73ca564f4ff61f70175bb30d8bbe00a66a6cea1002a3c0117b77a"
+      },
+      "selection": {
+        "path": "/tmp/notebook-u10-mac-130/selection.json",
+        "sha256": "52c21f60bc25dfb33bc49d2d2de01560a8011eb1cbe6658bc4768a7333b10dd4"
+      },
+      "resultBundle": "/tmp/notebook-u10-mac-130/mac.xcresult",
+      "failures": []
+    },
+    {
+      "run": "133",
+      "platform": "physical iPad",
+      "source": {
+        "sha256": "017e5eb09c5e721c51d3417f31c4786eef8d0a01d45f3fa714added068ff7c1f",
+        "unchanged": true,
+        "before": {
+          "path": "/tmp/notebook-u10-native-133/source-before.json",
+          "sha256": "5eba7479291f0d7b38d5eb2533f357137f95353a779cab8c2383ced5448af384"
+        },
+        "after": {
+          "path": "/tmp/notebook-u10-native-133/source-after-manual.json",
+          "sha256": "5eba7479291f0d7b38d5eb2533f357137f95353a779cab8c2383ced5448af384"
+        }
+      },
+      "testExitCode": 0,
+      "passedTests": 12,
+      "failedTests": 0,
+      "skippedTests": 0,
+      "runtimeWarnings": [],
+      "runtimeWarningsScope": "exported summary",
+      "summary": {
+        "path": "/tmp/notebook-u10-native-133/ipad-summary.json",
+        "sha256": "972b86c1b1d018468bfa5d650e29dad217caf5369199772e360b421cb0ad5e9a"
+      },
+      "testTree": {
+        "path": "/tmp/notebook-u10-native-133/ipad-tests.json",
+        "sha256": "deb25bcc68b85b5c3d312840aba18e923048f01b856b564a5284ad55231ecaa3"
+      },
+      "selection": {
+        "path": "/tmp/notebook-u10-native-133/selection.json",
+        "sha256": "ae597ec8b8b7296aa50430c609e17ad12caba8226664743c351cd6a62c057477"
+      },
+      "resultBundle": "/tmp/notebook-u10-native-133/ipad.xcresult",
+      "failures": []
+    },
+    {
+      "run": "133",
+      "platform": "macOS",
+      "source": {
+        "sha256": "017e5eb09c5e721c51d3417f31c4786eef8d0a01d45f3fa714added068ff7c1f",
+        "unchanged": true,
+        "before": {
+          "path": "/tmp/notebook-u10-native-133/source-before.json",
+          "sha256": "5eba7479291f0d7b38d5eb2533f357137f95353a779cab8c2383ced5448af384"
+        },
+        "after": {
+          "path": "/tmp/notebook-u10-native-133/source-after-manual.json",
+          "sha256": "5eba7479291f0d7b38d5eb2533f357137f95353a779cab8c2383ced5448af384"
+        }
+      },
+      "testExitCode": 65,
+      "passedTests": 4,
+      "failedTests": 1,
+      "skippedTests": 0,
+      "runtimeWarnings": null,
+      "runtimeWarningsScope": "not exported; do not infer zero",
+      "summary": null,
+      "testTree": {
+        "path": "/tmp/notebook-u10-native-133/mac-tests.json",
+        "sha256": "346db2fb616a8ebaff434bab8a3d8a12d3327882901a2dfd012c4462ccb4dd0a"
+      },
+      "selection": {
+        "path": "/tmp/notebook-u10-native-133/selection.json",
+        "sha256": "ae597ec8b8b7296aa50430c609e17ad12caba8226664743c351cd6a62c057477"
+      },
+      "resultBundle": "/tmp/notebook-u10-native-133/mac.xcresult",
+      "failures": [
+        {
+          "test": "MacMaterialInputTests/testSelectedRawBodyUsesRealMouseRouteWithCutsAndVisibleTargetGuards()",
+          "messages": [
+            "XCTAssertTrue failed - The committed IPC action must notify its bounded native projection",
+            "XCTUnwrap failed: expected non-nil value of type \"CGFloat\"",
+            "XCTAssertEqual failed: threw error \"UnwrappingOptional(errorCode: 105, errorUserInfo: [\"XCTestErrorUserInfoKeyShouldIgnore\": true])\"",
+            "XCTAssertTrue failed - The committed IPC action must notify its bounded native projection",
+            "XCTUnwrap failed: expected non-nil value of type \"AgentElement\""
+          ]
+        }
+      ]
+    },
+    {
+      "run": "134",
+      "platform": "macOS",
+      "source": {
+        "sha256": "b23d58e15e8ec85461b3fe956754b8f59e84e2e783cdfd77c0b0e47a5b56d76e",
+        "unchanged": true,
+        "before": {
+          "path": "/tmp/notebook-u10-mac-134/source-before.json",
+          "sha256": "60f5245cdd27e15b5c286c973bc3eb95182062101dfcbe0cc72cdd7a09a2f916"
+        },
+        "after": {
+          "path": "/tmp/notebook-u10-mac-134/source-after.json",
+          "sha256": "60f5245cdd27e15b5c286c973bc3eb95182062101dfcbe0cc72cdd7a09a2f916"
+        }
+      },
+      "testExitCode": 0,
+      "passedTests": 5,
+      "failedTests": 0,
+      "skippedTests": 0,
+      "runtimeWarnings": [],
+      "runtimeWarningsScope": "exported summary",
+      "summary": {
+        "path": "/tmp/notebook-u10-mac-134/mac-summary.json",
+        "sha256": "943a629b457642a17e6b1a2ff5b8ff581e0ad3e298ef149c96fd72b4f34a2c78"
+      },
+      "testTree": {
+        "path": "/tmp/notebook-u10-mac-134/mac-tests.json",
+        "sha256": "b36033683bcb890fd18c49d079a523652834e5017b89a7b13a72739371ea39bf"
+      },
+      "selection": {
+        "path": "/tmp/notebook-u10-mac-134/selection.json",
+        "sha256": "9f88be606eb50f6c99bcc62e917275dbff5487db27b117116b2c0a67b1abad1e"
+      },
+      "resultBundle": "/tmp/notebook-u10-mac-134/mac.xcresult",
+      "failures": []
+    }
+  ],
+  "buildFailures": [
+    {
+      "run": "131",
+      "status": "build_failed_before_tests",
+      "executedTests": false,
+      "source": {
+        "sha256": "dd38d1e9e553bee6eab3917f9d2df36967e0a54efe679c254afd1cad4c41d494",
+        "unchanged": true,
+        "before": {
+          "path": "/tmp/notebook-u10-native-131/source-before.json",
+          "sha256": "15836dedf65db04e8c1f8881a2a1835526a07dbe48e34e907d4c83f3ee97fd5b"
+        },
+        "after": {
+          "path": "/tmp/notebook-u10-native-131/source-after-manual.json",
+          "sha256": "15836dedf65db04e8c1f8881a2a1835526a07dbe48e34e907d4c83f3ee97fd5b"
+        }
+      },
+      "compilerDiagnostics": [
+        "error: the following command failed with exit code 1 but produced no further output",
+        "/Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/Applications/iPad/SpatialWorkspaceView.swift:290:11: error: the compiler is unable to type-check this expression in reasonable time; try breaking up the expression into distinct sub-expressions"
+      ],
+      "stdout": {
+        "path": "/tmp/notebook-u10-native-131/ipad.stdout.log",
+        "sha256": "9c5a73f4715e8094d10c768ab1f163df8a67fdd4824edc516764b50bd0a59626"
+      },
+      "stderr": {
+        "path": "/tmp/notebook-u10-native-131/ipad.stderr.log",
+        "sha256": "b280d27e1a2bf1e9990e0e863a00ebbc3d4afd49ff4de1355d0efbbfc777fd3d"
+      },
+      "rawPartialResultBundle": "/tmp/notebook-u10-native-131/ipad.xcresult"
+    },
+    {
+      "run": "132",
+      "status": "build_failed_before_tests",
+      "executedTests": false,
+      "source": {
+        "sha256": "c04fdecbf456fdd79b8331eb68bb707495d7b244198d91a92b6c1204bd31d481",
+        "unchanged": true,
+        "before": {
+          "path": "/tmp/notebook-u10-native-132/source-before.json",
+          "sha256": "96ea711d3f6ff3ce857986537bc83480c025fc31c035d23730e0ff1a41773ab6"
+        },
+        "after": {
+          "path": "/tmp/notebook-u10-native-132/source-after-manual.json",
+          "sha256": "96ea711d3f6ff3ce857986537bc83480c025fc31c035d23730e0ff1a41773ab6"
+        }
+      },
+      "compilerDiagnostics": [
+        "error: the following command failed with exit code 1 but produced no further output",
+        "/Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/Applications/iPad/SpatialWorkspaceView.swift:553:12: error: the compiler is unable to type-check this expression in reasonable time; try breaking up the expression into distinct sub-expressions"
+      ],
+      "stdout": {
+        "path": "/tmp/notebook-u10-native-132/ipad.stdout.log",
+        "sha256": "8f87819f2c95e210819344322b06aa23d8cbf118833c7100850d18532c311866"
+      },
+      "stderr": {
+        "path": "/tmp/notebook-u10-native-132/ipad.stderr.log",
+        "sha256": "b280d27e1a2bf1e9990e0e863a00ebbc3d4afd49ff4de1355d0efbbfc777fd3d"
+      },
+      "rawPartialResultBundle": "/tmp/notebook-u10-native-132/ipad.xcresult"
+    }
+  ],
+  "latestMac134": {
+    "run": "134",
+    "platform": "macOS",
+    "source": {
+      "sha256": "b23d58e15e8ec85461b3fe956754b8f59e84e2e783cdfd77c0b0e47a5b56d76e",
+      "unchanged": true,
+      "before": {
+        "path": "/tmp/notebook-u10-mac-134/source-before.json",
+        "sha256": "60f5245cdd27e15b5c286c973bc3eb95182062101dfcbe0cc72cdd7a09a2f916"
+      },
+      "after": {
+        "path": "/tmp/notebook-u10-mac-134/source-after.json",
+        "sha256": "60f5245cdd27e15b5c286c973bc3eb95182062101dfcbe0cc72cdd7a09a2f916"
+      }
+    },
+    "testExitCode": 0,
+    "passedTests": 5,
+    "failedTests": 0,
+    "skippedTests": 0,
+    "runtimeWarnings": [],
+    "runtimeWarningsScope": "exported summary",
+    "summary": {
+      "path": "/tmp/notebook-u10-mac-134/mac-summary.json",
+      "sha256": "943a629b457642a17e6b1a2ff5b8ff581e0ad3e298ef149c96fd72b4f34a2c78"
+    },
+    "testTree": {
+      "path": "/tmp/notebook-u10-mac-134/mac-tests.json",
+      "sha256": "b36033683bcb890fd18c49d079a523652834e5017b89a7b13a72739371ea39bf"
+    },
+    "selection": {
+      "path": "/tmp/notebook-u10-mac-134/selection.json",
+      "sha256": "9f88be606eb50f6c99bcc62e917275dbff5487db27b117116b2c0a67b1abad1e"
+    },
+    "resultBundle": "/tmp/notebook-u10-mac-134/mac.xcresult",
+    "failures": []
+  },
+  "causalCorrections": [
+    {
+      "cut": "128 →129 native handoff",
+      "cause": "Installation invalidated its own cancellable prepared frame; restoring raw ink also omitted resident contacts excluded by the previously suppressed viewport. Install takes ownership before visibility invalidation and borrows exact returning ranges.",
+      "patch": {
+        "path": "/tmp/notebook-u10-live-handoff-128/fix.patch",
+        "sha256": "ee376f455c546d98c777304b674e33103b46cee5900826f5a66eb73431db462e"
+      }
+    },
+    {
+      "cut": "128 100k observation",
+      "cause": "Transaction completion was treated as a window-pixel receipt. The same full-image zero-pixel assertion now uses the existing100ms window oracle timed from installation; no production budget change."
+    },
+    {
+      "cut": "128 export trap",
+      "cause": "Fractional-alpha fixture violated PageDocument geometry before entering the renderer: source width128 and moved x32/width128 exceeded page128. Source/body width96 keeps moved maxX128. Renderer and shader are byte-identical in128/129;129 verifies premultiplied RGBA [1/16,1/4,3/8,11/16]. This is a corrected fixture precondition, not a renderer trap fix."
+    },
+    {
+      "cut": "129 partial mixed Delete review",
+      "cause": "Raw A + already-converted B could remove only raw material from the private frame. Addressed selected identities now include B and retire its omitted working representation on the same installation. Mounted Delete→Undo/Redo test passes in129.",
+      "patch": {
+        "path": "/tmp/notebook-u10-delete-selection/delete.patch",
+        "sha256": "88122dd2091d858c3c04884c24399345e8972717599918bd410541ebb00a9c1d"
+      }
+    },
+    {
+      "cut": "129 only remaining failure",
+      "cause": "Closed Pencil lasso selects complete raw+authored set; subsequent actual finger drag requires an authored element reference, so no raw body lift is admitted. Shared exact selected raw key now routes iPad and Mac through existing selection manipulation; no fabricated authored ID.",
+      "patch": {
+        "path": "/tmp/notebook-u10-selected-body-routing/fix.patch",
+        "sha256": "4054cea6d21d3bdffe40d8b900a03d7ac936301f9643a38d4ad0efdbb4ae1ef3"
+      },
+      "review": {
+        "path": "/tmp/notebook-u10-selected-body-routing/REVIEW.md",
+        "sha256": "f2bb7ec7fe5b29cae14cb1752a8c2c52fdf9b2724bfe2524b85310d58ab62d78"
+      },
+      "verification": "Physical133 production-touch lasso/drag/second-drag/cancel passed; Mac133 raw-route test failed as recorded;134 is separate."
+    },
+    {
+      "cut": "131/132 compile failures",
+      "observed": "131 ViewBuilder at290 and132 at553 could not be type-checked; no tests ran. Agent patch extracts only onLift; root then extracted onPoint and found inaccessible selectionSession setter.",
+      "agentOnLiftOnlyPatch": {
+        "path": "/tmp/notebook-u10-routing-typecheck-131/fix.patch",
+        "sha256": "f3a46e108045e7b050210692545e136a4cd1d7e77f498e64360ed50236112413"
+      },
+      "privateSetterDiagnostic": {
+        "path": "/tmp/notebook-u10-routing-typecheck-131/root-point-lift-compile.log",
+        "sha256": "2e1a9bc4941fde9ef42c19aa87898368696028cb5d95f3fb87e6604faff00389"
+      },
+      "diagnosticCommand": {
+        "path": "/tmp/notebook-u10-routing-typecheck-131/root-point-lift-compile-command.json",
+        "sha256": "28075f3920d8b33bfc157eccc3f0842706f5860c0029409dd29645f4f21b97bb"
+      },
+      "correctedCompileLog": {
+        "path": "/tmp/notebook-u10-routing-typecheck-131/root-owner-corrected-compile.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "correction": "Selection mutation goes through sole model.removeInkFromMultipleSelection owner. Empty corrected compile log is not a standalone exit-code receipt; actual133 build and12 physical tests prove the corrected cut compiled."
+    },
+    {
+      "cut": "Final Copy/Duplicate + canonical-only Delete",
+      "cause": "Detached copies previously used authored conversion order instead of original accepted contact order; canonical-only mixed Delete bypassed whole-frame handoff.",
+      "fix": "One existing paint-key owner moved to Core; captured/addressed keys preserve copy order. Canonical measured selections use the existing whole-selection Delete presentation, not a second renderer.",
+      "patch": {
+        "path": "/tmp/notebook-u10-final-review-fixes/fix.patch",
+        "sha256": "a4cfe00ac3e3014d3f926037e89efaddc24119b5d5c08edb87897f9661c53c25"
+      },
+      "review": {
+        "path": "/tmp/notebook-u10-final-review-fixes/REVIEW.md",
+        "sha256": "478bc611edaaa78fe2da1c4c5a5bc62908b3af591406b0f4d60a4ef2757854e9"
+      },
+      "manifest": {
+        "path": "/tmp/notebook-u10-final-review-fixes/manifest.json",
+        "sha256": "404628bbf5e4d02def0ebce105a7906127909e6f1eb73cbca6a39dca996d026e"
+      },
+      "verification": "Core10 functions + physical133 copy/duplicate/delete/clipboard controls; not a whole-app acceptance claim."
+    },
+    {
+      "cut": "Mac133 →134 fixture-only",
+      "observed": "133 raw-route fixture put the test window behind another app/window; bounded projection did not install.134 fronts the same real window with NSApp.activate/makeKeyAndOrderFront/orderFrontRegardless instead of orderBack.",
+      "change": "Only Applications/MacTests/MacMaterialInputTests.swift differs in source witnesses; production byte-identical. This is not a production bootstrap fix.",
+      "verification": "134 actual macOS native: 5 PASS/0 FAIL; sourceUnchanged=True"
+    }
+  ],
+  "physical133Inspection": {
+    "report": {
+      "path": "/tmp/notebook-u10-native-133/inspected-ipad/INSPECTION.md",
+      "sha256": "aac4563d02a8b02a8d779845aee6d282433fc3df1791afa4e2dde5a79424e4ea"
+    },
+    "receipts": {
+      "path": "/tmp/notebook-u10-native-133/inspected-ipad/inspection-summary.json",
+      "sha256": "650fb58dc4e545ef12f4044db63d85bb07aab48cd6ac30be7636a04e84cf616f"
+    },
+    "scope": "Mounted closed Pencil contour; entire contact+authored peer; first/second finger drag, cancel/deselect. Pending frames retain previous complete pose; pictures inspected by the root/team, as recorded; root also viewed the first-drag PNG. No device FPS claim."
+  },
+  "limitations": [
+    "128/129/130/133/134 are separate source cuts; counts are never summed into same-tree PASS.",
+    "133 source-before equals manual source-after;124/older successes do not establish current unchanged-source acceptance.",
+    "131/132 are compile failures, not failed executed-test counts.133 Mac4PASS/1FAIL remains preserved even if134 passes.",
+    "Mac134 cannot silently close physical performance gates. Native private-app controls are not installed Release ordinary journeys.",
+    "Raw-page Redo, cold document1000ms, physical ink20ms, strict curl/120Hz, ten ordinary journeys and30-minute system-measured joint session remain open."
+  ],
+  "priorDraft": {
+    "path": "/tmp/notebook-u10-evidence-draft/receipt.json",
+    "sha256": "6ff4c389f593e7ae8994d194dc62732b4f828f5829225b690940133d13e1851c"
+  },
+  "archive": "/Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/.build/notebook-architecture-repair/evidence-2026-09-25/u10-native-128-134-20260926T1831Z",
+  "sourceDelta133to134": [
+    {
+      "path": "Applications/MacTests/MacMaterialInputTests.swift",
+      "before": "894320f13c8da82756d9915ae45decbc3e4836b7e72fed1a1f0e98dc9e3bb002",
+      "after": "c5e1feb79ee2f65f5a67a2d691ea866065d8926ab47a0d27fc3109ed581c4007"
+    }
+  ],
+  "productionSourcesIdentical133to134": true,
+  "sealedEvidence": {
+    "archive": "/Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/.build/notebook-architecture-repair/evidence-2026-09-25/u10-native-128-134-20260926T1831Z",
+    "manifest": {
+      "path": "/Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/.build/notebook-architecture-repair/evidence-2026-09-25/u10-native-128-134-20260926T1831Z/MANIFEST.json",
+      "sha256": "a5ac0bd807d469f55d25af8674ddf19cdf8d428441b96497fc8fda279a88a8c5"
+    },
+    "files": 1070,
+    "bytes": 11824053
+  }
+}

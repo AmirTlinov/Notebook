@@ -354,93 +354,16 @@ struct SpatialWorkspaceView: View {
             scale: presence.camera.scale, camera:presence)
             .frame(width: viewport.x, height: viewport.y)
         }
-        if model.selectionSession.count > 1 {
-          let frames = model.selectionSession.elements.compactMap { reference in
-            NotebookAttentionProjection.editingFrame(reference,model:model,presence:presence)
-          } + model.selectionSession.items.compactMap { selected -> CGRect? in
-            guard selected.boardID == presence.boardID, let cohort,
-              let item = model.presentedItem(id:selected.itemID,cohort:cohort,presence:presence)
-                ?? cohort.frame.index.renderedItem(id:selected.itemID,presence:presence) else { return nil }
-            let rect = item.geometry.screenFrame(center:item.center,camera:presence.camera,viewport:presence.viewport)
-            return .init(x:rect.x,y:rect.y,width:rect.width,height:rect.height)
-          }
-          if frames.count == model.selectionSession.count {
-            NotebookMultipleElementControls(contextMenus:contextMenus,selectionID:model.selectionSession.id,frames:frames,scale:presence.camera.scale,camera:presence)
-              .frame(width:viewport.x,height:viewport.y)
-          }
+        if model.selectionSession.count>1 || !model.selectionSession.ink.isEmpty,
+          let frames=NotebookAttentionProjection.selectionFrames(model:model,presence:presence),
+          frames.count == model.selectionSession.count {
+          NotebookMultipleElementControls(contextMenus:contextMenus,selectionID:model.selectionSession.id,frames:frames,scale:presence.camera.scale,camera:presence)
+            .frame(width:viewport.x,height:viewport.y)
         }
         NotebookContextMenuHost(owner:contextMenus,gate:model.inputGate).zIndex(9_600)
         NotebookSelectionGesture(inputGate: model.inputGate,
-          onPoint: { end, tapCount in
-          guard cameraGesture == nil, !settling, let cohort else { return }
-          let contactGeneration=model.inputGate.acceptedContactGeneration
-          let hadSelection=model.selectionSession.target != nil
-          if model.consumeNativeTextCanvasTap(at:end) { return }
-          if model.drawingTool == .text {
-            guard let fragment = NotebookAttentionProjection.pointContact(at:end,model:model,presence:presence,
-              cohort:cohort) else { return }
-            if let reference = editableReference(fragment,boardID:presence.boardID) {
-              let isText: Bool
-              switch reference {
-              case .page(let page,let id): isText = model.pages[page]?.element(id:id)?.kind == .nativeText
-              case .spatial: isText = model.presentedElement(reference,cohort:cohort)?.kind == .nativeText
-              }
-              if isText {
-                model.selectElement(reference)
-                if tapCount > 1 { model.editSelectedElement(reference) }
-                return
-              }
-            }
-            guard let contact = NotebookAttentionProjection.toolAddress(at:end,fragment:fragment,model:model,presence:presence) else { return }
-            model.beginToolText(at:contact.point,address:contact.address,screenScale:presence.camera.scale)
-            return
-          }
-          if let selected = selectedElement(at: end, presence: presence) {
-            if model.selectionSession.addingElements { model.toggleGraphicSelection(selected); return }
-            if tapCount > 1 { model.selectElement(selected); model.editSelectedElement(selected) }; return
-          }
-          let fragment:NotebookAttentionSelection.Fragment
-          switch NotebookAttentionProjection.pointResolution(at:end,model:model,presence:presence,cohort:cohort) {
-          case .pending: return
-          case .hit(let hit): fragment=hit
-          case nil:
-            model.clearSelection()
-            if tapCount == 1,!hadSelection { confirmBlankTap(generation:contactGeneration,presence:presence) }
-            return
-          }
-          if let reference=editableReference(fragment,boardID:presence.boardID) {
-            if model.selectionSession.addingElements { model.toggleGraphicSelection(reference);return }
-            model.selectElement(reference)
-            if tapCount > 1 { model.editSelectedElement(reference) }
-          } else if fragment.target.kind == .cover {
-            model.selectWorkspaceItem(fragment.target.id,boardID:presence.boardID)
-          } else if let contact=NotebookAttentionProjection.toolAddress(at:end,fragment:fragment,model:model,presence:presence) {
-            model.drawingTools.selectInk(at:contact.point,address:contact.address,screenScale:presence.camera.scale) { found in
-              if !found,tapCount == 1,!hadSelection { confirmBlankTap(generation:contactGeneration,presence:presence) }
-            }
-          } else { model.clearSelection() }
-        }, onLift: { point in
-          guard cameraGesture == nil, !settling, !model.selectionSession.isInteractive, let cohort else { return nil }
-          let selected = selectedElement(at: point, presence: presence)
-          let hit=selected == nil ? NotebookAttentionProjection.pointContact(at:point,model:model,presence:presence,cohort:cohort) : nil
-          guard let reference=selected ?? hit.flatMap({ editableReference($0,boardID:presence.boardID) }) else { return nil }
-          if model.selectionSession.addingElements, !model.selectionSession.contains(reference) {
-            return nil
-          }
-          let scale = max(presence.camera.scale, 0.001)
-          var contactID: UUID?
-          func translation(_ delta: CGPoint) -> SpatialPoint { .init(x: delta.x / scale, y: delta.y / scale) }
-          return SceneSelectionLift(requiresHold: selected == nil, begin: {
-            if !model.selectionSession.contains(reference) { model.selectElement(reference) }
-            contactID = model.beginElementManipulation(reference, kind: .move)
-            if contactID != nil { UIImpactFeedbackGenerator(style: .soft).impactOccurred() }
-          }, change: {
-            if let contactID { model.updateElementManipulation(contactID, translation: translation($0)) }
-          }, end: { delta in
-            if let contactID { model.finishElementManipulation(contactID, translation: translation(delta)) }
-          }, cancel: {
-            if let contactID { model.cancelElementManipulation(contactID) }
-          })
+          onPoint: { point, tapCount in selectionPoint(at:point,tapCount:tapCount,presence:presence,cohort:cohort)
+        }, onLift: { point in selectionLift(at:point,presence:presence,cohort:cohort)
         }, onHold: { point in showContextMenu(at:point,presence:presence,cohort:cohort) }).allowsHitTesting(false)
         if let rect = model.selectionSession.preview {
           RoundedRectangle(cornerRadius: 4).stroke(.indigo, style: StrokeStyle(lineWidth: 2, dash: [6, 4]))
@@ -703,9 +626,97 @@ struct SpatialWorkspaceView: View {
     }
   }
 
+  private func selectionPoint(at end:CGPoint,tapCount:Int,presence:SessionPresence,cohort:SceneCompositionCohort?) {
+    guard cameraGesture == nil, !settling, let cohort else { return }
+    let contactGeneration=model.inputGate.acceptedContactGeneration
+    let hadSelection=model.selectionSession.target != nil
+    if model.consumeNativeTextCanvasTap(at:end) { return }
+    if model.drawingTool == .text {
+      guard let fragment = NotebookAttentionProjection.pointContact(at:end,model:model,presence:presence,
+        cohort:cohort) else { return }
+      if let reference = editableReference(fragment,boardID:presence.boardID) {
+        let isText: Bool
+        switch reference {
+        case .page(let page,let id): isText = model.pages[page]?.element(id:id)?.kind == .nativeText
+        case .spatial: isText = model.presentedElement(reference,cohort:cohort)?.kind == .nativeText
+        }
+        if isText {
+          model.selectElement(reference)
+          if tapCount > 1 { model.editSelectedElement(reference) }
+          return
+        }
+      }
+      guard let contact = NotebookAttentionProjection.toolAddress(at:end,fragment:fragment,model:model,presence:presence) else { return }
+      model.beginToolText(at:contact.point,address:contact.address,screenScale:presence.camera.scale)
+      return
+    }
+    if let raw=NotebookAttentionProjection.selectedInk(at:end,model:model,presence:presence,cohort:cohort) {
+      if model.selectionSession.addingElements {
+        model.removeInkFromMultipleSelection(raw)
+      }
+      return
+    }
+    if let selected = selectedElement(at: end, presence: presence) {
+      if model.selectionSession.addingElements { model.toggleGraphicSelection(selected); return }
+      if tapCount > 1 { model.selectElement(selected); model.editSelectedElement(selected) }; return
+    }
+    let fragment:NotebookAttentionSelection.Fragment
+    switch NotebookAttentionProjection.pointResolution(at:end,model:model,presence:presence,cohort:cohort) {
+    case .pending: return
+    case .hit(let hit): fragment=hit
+    case nil:
+      model.clearSelection()
+      if tapCount == 1,!hadSelection { confirmBlankTap(generation:contactGeneration,presence:presence) }
+      return
+    }
+    if let reference=editableReference(fragment,boardID:presence.boardID) {
+      if model.selectionSession.addingElements { model.toggleGraphicSelection(reference);return }
+      model.selectElement(reference)
+      if tapCount > 1 { model.editSelectedElement(reference) }
+    } else if fragment.target.kind == .cover {
+      model.selectWorkspaceItem(fragment.target.id,boardID:presence.boardID)
+    } else if let contact=NotebookAttentionProjection.toolAddress(at:end,fragment:fragment,model:model,presence:presence) {
+      model.drawingTools.selectInk(at:contact.point,address:contact.address,screenScale:presence.camera.scale) { found in
+        if !found,tapCount == 1,!hadSelection { confirmBlankTap(generation:contactGeneration,presence:presence) }
+      }
+    } else { model.clearSelection() }
+  }
+
+  private func selectionLift(at point:CGPoint,presence:SessionPresence,cohort:SceneCompositionCohort?) -> SceneSelectionLift? {
+    guard cameraGesture == nil, !settling, !model.selectionSession.isInteractive, let cohort else { return nil }
+    let raw=NotebookAttentionProjection.selectedInk(at:point,model:model,presence:presence,cohort:cohort)
+    let selected = raw == nil ? selectedElement(at:point,presence:presence) : nil
+    let hit=raw == nil && selected == nil ? NotebookAttentionProjection.pointContact(at:point,model:model,presence:presence,cohort:cohort) : nil
+    let reference=selected ?? hit.flatMap({ editableReference($0,boardID:presence.boardID) })
+    guard raw != nil || reference != nil else { return nil }
+    if raw == nil,let reference,model.selectionSession.addingElements,!model.selectionSession.contains(reference) { return nil }
+    let selectionID=model.selectionSession.id,scale=max(presence.camera.scale,0.001)
+    var contactID: UUID?
+    func translation(_ delta: CGPoint) -> SpatialPoint { .init(x: delta.x / scale, y: delta.y / scale) }
+    return SceneSelectionLift(requiresHold:raw == nil && selected == nil, begin: {
+      if let raw {
+        guard model.selectionSession.id == selectionID,model.selectionSession.ink.contains(where:{ $0.key == raw }) else { return }
+        contactID=model.beginSelectionManipulation(kind:.move)
+      } else if let reference {
+        if !model.selectionSession.contains(reference) { model.selectElement(reference) }
+        contactID=model.beginElementManipulation(reference,kind:.move)
+      }
+      if contactID != nil { UIImpactFeedbackGenerator(style: .soft).impactOccurred() }
+    }, change: {
+      if let contactID { model.updateElementManipulation(contactID, translation: translation($0)) }
+    }, end: { delta in
+      if let contactID { model.finishElementManipulation(contactID, translation: translation(delta)) }
+    }, cancel: {
+      if let contactID { model.cancelElementManipulation(contactID) }
+    })
+  }
+
   private func showContextMenu(at point:CGPoint,presence:SessionPresence,cohort:SceneCompositionCohort?) {
     guard cameraGesture == nil,!settling,!model.inputGate.hasActivePencil else { return }
     chromeHidden=false
+    if NotebookAttentionProjection.selectedInk(at:point,model:model,presence:presence,cohort:cohort) != nil {
+      contextMenus.requestSelectionMenu(model.selectionSession.id,at:point);return
+    }
     if let selected=selectedElement(at:point,presence:presence) {
       if !model.selectionSession.contains(selected) { model.selectElement(selected) }
       contextMenus.requestSelectionMenu(model.selectionSession.id,at:point);return

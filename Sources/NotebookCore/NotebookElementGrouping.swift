@@ -292,6 +292,9 @@ extension NotebookStore {
         !id.isEmpty, id.utf16.count <= 120, !sources.contains(where:{ collaborationIdentity($0.id) == collaborationIdentity(id) }) else {
         throw CollaborationError("invalid_operation","Группа получает свободный ID и от 2 до 31 выбранного объекта одной поверхности.")
       }
+      guard sources.allSatisfy({($0.page?.graphic ?? $0.spatial?.graphic)?.sourceInkContactID == nil}) else {
+        throw CollaborationError("unsupported_operation","Принятые рукописные контакты перемещаются целиком без изменения их порядка группировкой.")
+      }
       let members = try sources.map { source -> NotebookElementPlacement.Source in
         guard let element = source.placementSource else {
           throw CollaborationError("revision_conflict","Выбранный объект исчез до группировки.")

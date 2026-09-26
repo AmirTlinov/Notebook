@@ -45,3 +45,35 @@ vertex CompactInkOut compactInkVertex(device const InkNode *nodes [[buffer(0)]],
   float2 unit=world/max(viewport,float2(1));float alpha=nodes[node].alpha;
   return {float4(unit.x*2-1,1-unit.y*2,0,1),float4(p.color.rgb*alpha,alpha)};
 }
+
+// Reverse outer composition. Local body layers are rendered forward into their
+// isolated attachment before the fold; historical raw cuts never touch it.
+struct OrderedInkState { float4 value [[color(0),raster_order_group(0)]]; float weight [[color(1),raster_order_group(0)]]; };
+struct OrderedInkBody { half4 color [[color(2),raster_order_group(0)]]; };
+struct OrderedInkFinal { half4 color [[color(3),raster_order_group(0)]]; };
+struct OrderedInkQuad { float4 position [[position]]; float2 textureCoordinate; };
+fragment OrderedInkState orderedInkRawFragment(CompactInkOut input [[stage_in]],
+  float4 value [[color(0),raster_order_group(0)]], float weight [[color(1),raster_order_group(0)]],
+  constant uint &erases [[buffer(0)]], uint sample [[sample_id]]) {
+  float4 c=input.premultipliedColor;
+  if (!erases) {value.rgb += c.rgb*weight;value.a -= c.a*weight;}
+  return {value,weight*(1-c.a)};
+}
+fragment OrderedInkBody orderedInkBodyFragment(CompactInkOut input [[stage_in]]) {return {half4(input.premultipliedColor)};}
+fragment OrderedInkState orderedInkFoldFragment(OrderedInkQuad input [[stage_in]],
+  float4 value [[color(0),raster_order_group(0)]], float weight [[color(1),raster_order_group(0)]],
+  half4 body [[color(2),raster_order_group(0)]], uint sample [[sample_id]]) {
+  value.rgb += float3(body.rgb)*value.a;value.a *= 1-float(body.a);
+  return {value,weight*(1-float(body.a))};
+}
+fragment OrderedInkBody orderedInkClearFragment(OrderedInkQuad input [[stage_in]]) {return {half4(0)};}
+fragment OrderedInkFinal orderedInkFinalFragment(OrderedInkQuad input [[stage_in]],
+  float4 value [[color(0),raster_order_group(0)]], uint sample [[sample_id]]) {return {half4(float4(value.rgb,1-value.a))};}
+fragment OrderedInkState orderedInkBaselineFragment(OrderedInkQuad input [[stage_in]],
+  float4 value [[color(0),raster_order_group(0)]], float weight [[color(1),raster_order_group(0)]],
+  texture2d<half> baseline [[texture(0)]], uint sample [[sample_id]]) {
+  constexpr sampler s(coord::normalized,address::clamp_to_edge,filter::linear);
+  float4 c=float4(baseline.sample(s,input.textureCoordinate));
+  value.rgb += c.rgb*weight;value.a -= c.a*weight;
+  return {value,weight*(1-c.a)};
+}

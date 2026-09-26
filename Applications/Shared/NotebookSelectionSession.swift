@@ -11,6 +11,28 @@ enum EditableElementReference: Hashable, Sendable {
 
 struct NotebookSelectedItem: Hashable, Sendable { let boardID: UUID; let itemID: UUID }
 
+/// An accepted contact, not a render chunk and not an authored element. The
+/// prospective ID is private edit geometry until one conversion is admitted.
+struct NotebookSelectedInk: Equatable, Sendable {
+  struct Key: Hashable, Sendable { let surface:SurfaceID; let actionID:UUID }
+  let actionID:UUID
+  let painterOrder:NotebookLassoInkSource.PaintOrder
+  let address:NotebookToolAddress
+  let revision:String
+  let material:NotebookLassoInkSource.Result
+  let conversionID:UUID
+  var key:Key { .init(surface:address.surface,actionID:actionID) }
+  var memberID:String { conversionID.uuidString.lowercased() }
+  var working:NotebookWorkingGraphic {
+    .init(id:conversionID,surface:address.surface,frame:material.frame,
+      worldOrigin:address.worldOrigin,graphic:material.graphic)
+  }
+  init(contact:NotebookLassoInkSource.WholeContact,address:NotebookToolAddress,revision:String) {
+    actionID=contact.actionID;painterOrder=contact.painterOrder;material=contact.material;self.address=address;self.revision=revision
+    conversionID=UUID()
+  }
+}
+
 /// Device-local lasso result. It names vector sources and a region but does
 /// not write either journal or scene until Move/Delete/Copy is requested.
 struct NotebookRegionSelection: Equatable, Sendable {
@@ -61,7 +83,7 @@ struct NotebookSelectionSession: Equatable, Sendable {
   enum Target: Equatable, Sendable {
     case item(boardID: UUID, itemID: UUID)
     case element(EditableElementReference)
-    case elements([EditableElementReference], items: [NotebookSelectedItem] = [])
+    case elements([EditableElementReference], items: [NotebookSelectedItem] = [], ink:[NotebookSelectedInk] = [])
     case region(NotebookRegionSelection)
     case context
     case reference(CollaborationReference)
@@ -91,12 +113,15 @@ struct NotebookSelectionSession: Equatable, Sendable {
     if case .element(let reference) = target { return reference }; return nil
   }
   var elements: [EditableElementReference] {
-    switch target { case .element(let ref): [ref]; case .elements(let refs,_): refs; default: [] }
+    switch target { case .element(let ref): [ref]; case .elements(let refs,_,_): refs; default: [] }
   }
   var items: [NotebookSelectedItem] {
-    switch target { case .item(let board,let id): [.init(boardID:board,itemID:id)]; case .elements(_,let items): items; default: [] }
+    switch target { case .item(let board,let id): [.init(boardID:board,itemID:id)]; case .elements(_,let items,_): items; default: [] }
   }
-  var count: Int { elements.count+items.count+(region == nil ? 0 : 1) }
+  var ink:[NotebookSelectedInk] {
+    if case .elements(_,_,let ink)=target { return ink };return []
+  }
+  var count: Int { elements.count+items.count+ink.count+(region == nil ? 0 : 1) }
   func contains(_ reference: EditableElementReference) -> Bool { elements.contains(reference) || region?.reference == reference }
   /// Direct program/text input does not expose transformation handles.
   var editingElement: EditableElementReference? { isInteractive ? nil : (element ?? region?.reference) }

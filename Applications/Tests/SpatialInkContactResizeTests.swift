@@ -54,8 +54,7 @@ final class SpatialInkContactResizeTests: XCTestCase {
         .init(point: .zero, worldPoint: .init(x: x, y: 0), timeOffset: Double(index) / 10,
           width: 8, opacity: 1, force: 1, azimuth: 0, altitude: 1)
       })], actor: fixture.actor))
-    let frame = try await native.prepareSpatialFrame(SpatialInkMesh.prepare(surface: surface, journal: journal),
-      size: .init(x: 768, y: 768), displayScale: 1)
+    let frame = try await native.prepareFrame(.spatial(SpatialInkMesh.prepare(surface: surface, journal: journal),size:.init(x: 768, y: 768),displayScale:1,camera:nil))
     let candidate = SpatialInkSceneLease(registry: fixture.registry, rootBoardID: fixture.boardID,
       focusedCoverID: nil,
       owners: [surface: owner], updates: [.init(owner: owner, generation: native.spatialSourceGeneration,

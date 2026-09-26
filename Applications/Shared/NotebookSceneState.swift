@@ -289,6 +289,16 @@ struct NotebookSceneState: Sendable {
         if case .target(.page, _) = domain { continue }
         for entry in entries { switch entry { case .ink(let ids), .inkRedo(let ids, _): inkHistoryIDs.formUnion(ids); case .command: break } }
       }
+      // A moved contact may be visible while its original raw body is outside
+      // this window. Its painter address needs only the exact header, not pins
+      // that would reload those offscreen measurements.
+      for node in nodes.values {
+        for element in node.board.elements where element.parentID == nil {
+          if let graphic = element.graphic, let sourceID = graphic.sourceInkContactID {
+            inkHistoryIDs.insert(sourceID)
+          }
+        }
+      }
       let inkHistoryStates = try store.spatialInkHistoryStates(ids: inkHistoryIDs)
       return try Self(header: header, workspace: workspace, pages: pages, pagePositions: pagePositions,
         documents: live.documents, states: live.states,

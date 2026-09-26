@@ -188,12 +188,32 @@ vector paint minus later cuts, not a bitmap mask. Selected whole strokes use sha
 `InkStrokeGeometry` as freehand with source IDs, pressure and ordered pen/eraser
 layers. Its immutable source hierarchy serves point picking, subsequent lasso and
 visible-range GPU uploads; pose edits share it instead of rewriting vertices.
-The existing InkRasterRenderer/Metal path preserves triangle coverage and overlap.
-Its replaceable raster is clipped to visibility and at most four megapixels.
-Admission rechecks revision; stale selection cannot replace new ink.
-Original journal entries remain immutable; a copy gains no authority over their IDs.
-Move/scale/rotate use ordinary selection, geometry, erasure and undo.
-Preparation limits are 1,024 strokes, 10,000 samples and 65,536 mesh vertices.
+A whole-contact selection is read-only until its first nonzero edit. One atomic
+command converts each selected accepted contact once and moves it with authored
+peers. Its ordered ink body retains the original page sequence or spatial creation
+stamp, captured cuts and later addressed erasures. Global raw erasers cannot cut
+that moved body again at its new position. Raw triangle overlap remains grouped;
+extracting a contact changes that grouping only at the first actual edit, never
+on selection or in an intermediate frame at the old pose.
+
+`InkCanvasView` installs one prepared ordered plan, including its controls, rather
+than mounting one material view per member. A later move uses the same exchange;
+cancellation restores only its selected bodies and preserves newer accepted ink.
+Resource refusal keeps the last complete picture until canonical preparation is
+installed. Enqueued writes retain their own publication authority. Pipeline and
+clip preparation run off the input actor; clip buffers are admitted before fill.
+
+Live ink, exports and contextual ink proofs use the same ordered encoder. An
+original contact header and its addressed cuts come from the same source snapshot;
+an offscreen original does not force its measurements into the render window.
+Source-anchored contacts cannot acquire authored layer/group order. Copy and
+Duplicate capture authored order below the original raw/converted contact order;
+Core validates only the addressed headers before assigning detached authored ranks.
+A detached copy has no source claim. Delete uses the same atomic exchange for raw
+or already converted contacts with authored peers; unsupported item mixtures are
+refused as a whole. Original journal entries remain immutable; stale selection
+cannot replace new ink. Multi-contact region aggregates remain authored geometry,
+not a fabricated single paint rank.
 
 Text is created directly by a surface tap, initially sized in screen points then
 converted through camera scale. UITextView/TextKit owns caret, selection and line

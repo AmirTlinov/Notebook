@@ -15,11 +15,14 @@ extension NotebookAppModel {
     else {
       // The exported pose includes its ancestors, not only the child's own
       // frame. A parent edit during preparation must also revoke a late Cut.
-      var ids=Set(source.sources.map(\.id))
-      for element in source.sources { ids.formUnion(source.graph.placement(element.id)?.ancestors ?? []) }
+      let rawIDs=Set(selectionSession.ink.map(\.memberID))
+      var ids=Set(source.sources.map(\.id)).subtracting(rawIDs)
+      for element in source.sources where !rawIDs.contains(element.id) {
+        ids.formUnion(source.graph.placement(element.id)?.ancestors ?? [])
+      }
       let board=selectionSession.elements.first.map { reference -> UUID in
         if case .spatial(let board,_) = reference { return board };return source.surface.ownerID!
-      } ?? source.surface.ownerID!
+      } ?? selectionSession.ink.first?.address.boardID ?? source.surface.ownerID!
       var captured:[EditableElementReference:NotebookNativeElementSource]=[:]
       for id in ids {
         let reference:EditableElementReference = source.surface.kind == .page
@@ -31,10 +34,30 @@ extension NotebookAppModel {
       }
       checks=captured
     }
+    var keys:[String:NotebookInkPaintKey]=[:]
+    for raw in selectionSession.ink {
+      if source.surface.kind == .page { keys[raw.memberID] = .page(sequence:raw.painterOrder.counter,id:raw.actionID) }
+      else {
+        guard let actor=UUID(uuidString:raw.painterOrder.actor) else {
+          throw CollaborationError("selection_not_ready","Порядок рукописи ещё не готов.")
+        }
+        keys[raw.memberID] = .spatial(stamp:.init(counter:raw.painterOrder.counter,actor:actor),id:raw.actionID)
+      }
+    }
+    if source.surface.kind != .page {
+      for element in source.sources {
+        guard let id=element.graphic?.sourceInkContactID,keys[element.id] == nil else {continue}
+        guard let header=spatialInkHistoryStates[id],header.surfaces.contains(source.surface) else {
+          throw CollaborationError("selection_not_ready","Порядок рукописи ещё не готов.")
+        }
+        keys[element.id] = .spatial(stamp:header.result.creationStamp,id:id)
+      }
+    }
     return .init(selectionID:selectionSession.id,surface:source.surface,
       inkRevision:selectionInkRevision(source.surface),sourceChecks:checks,
       sources:source.sources,graph:source.graph,rootOrigin:source.rootOrigin,
-      erasures:elementErasures(on:source.surface))
+      erasures:elementErasures(on:source.surface),inkKeys:keys,
+      pageInkSource:source.surface.kind == .page ? source.surface.ownerID.flatMap{pages[$0]?.inkSource} : nil)
   }
 
   func selectionStillMatches(_ snapshot:NotebookSelectionExport) -> Bool {
@@ -44,7 +67,7 @@ extension NotebookAppModel {
     return snapshot.sourceChecks.allSatisfy { nativeElementSource($0.key) == $0.value && elementCommandDrafts[$0.key] == nil }
   }
 
-  private func selectionInkRevision(_ surface:SurfaceID) -> String? {
+  func selectionInkRevision(_ surface:SurfaceID) -> String? {
     surface.kind == .page ? surface.ownerID.flatMap { pages[$0]?.drawingStamp.revision } : spatialInk?.stamp.revision
   }
 
@@ -56,6 +79,7 @@ extension NotebookAppModel {
   /// Native graphic contacts retain their causal copy operation; text, programs
   /// and whole groups use the same element transaction, never the clipboard.
   func duplicateSelectedContent() {
+    if !selectionSession.ink.isEmpty || selectionContainsSourceAnchoredInk { duplicateMeasuredSelection();return }
     if selectionSession.region != nil || (!selectionSession.elements.isEmpty
       && selectionSession.elements.allSatisfy({ graphicElement($0) != nil })) {
       duplicateGraphicMaterial(); return
@@ -89,6 +113,55 @@ extension NotebookAppModel {
     } catch { showCue(error.localizedDescription) }
   }
 
+  /// Copies never convert the original contacts. Their immutable export and
+  /// exact source checks enter the same addressed command FIFO as every edit.
+  func duplicateMeasuredSelection() {
+    guard selectionSession.items.isEmpty else {return}
+    do {
+      let snapshot=try clipboardSelectionSnapshot(),namespace=UUID()
+      let address:NotebookToolAddress
+      if let raw=selectionSession.ink.first {address=raw.address}
+      else {
+        guard let first=selectionSession.elements.first,let target=nativeElementSource(first)?.target else {return}
+        address = .init(surface:snapshot.surface,boardID:target.kind == .page ? nil : target.boardID ?? target.id,
+          worldOrigin:target.kind == .board ? snapshot.rootOrigin : nil,bounds:elementGeometry(first)?.bounds)
+      }
+      let preparation=Task.detached(priority:.userInitiated) {
+        let exported=try snapshot.prepare(),fragment=try exported.fragment.reidentified(namespace:namespace)
+        let offset=SpatialPoint(x:exported.minimum.x+min(24,max(0,address.bounds.map { $0.maxX-exported.minimum.x-fragment.size.x } ?? 24)),
+          y:exported.minimum.y+min(24,max(0,address.bounds.map { $0.maxY-exported.minimum.y-fragment.size.y } ?? 24)))
+        let operations=try fragment.operations(target:address.target,offset:offset,
+          worldOrigin:address.target.kind == .board ? exported.worldOrigin : nil)
+        var sources=snapshot.sourceChecks
+        let edits=operations.map { operation -> NotebookElementEdit in
+          let reference=address.reference(operation.id!)
+          sources[reference] = .init(target:address.target,id:operation.id!)
+          return .init(reference:reference,kind:operation.kind,values:operation.values)
+        }
+        guard sources.count<=64 else { throw CollaborationError("selection_limit","У копии слишком много связанных исходников.") }
+        let selected=fragment.elements.filter { $0.parentID == nil }.map { address.reference($0.id) }
+        return (edits,sources,selected)
+      }
+      let plan=Task { [weak self] () throws -> NotebookElementCommandPlan in
+        let result=try await preparation.value
+        guard let self,let plan=prepareElementOperations(result.0,summary:"Дублировать выделенное",
+          readSources:Array(result.1.keys),insertionTarget:address.target,expectedInkRevision:snapshot.inkRevision,
+          frozenSources:result.1) else {
+          throw CollaborationError("revision_conflict","Не удалось подготовить всё выделение.")
+        }
+        return plan
+      }
+      let batch=enqueueElementCommand(target:address.target,preparing:plan)
+      Task { [weak self] in
+        do {
+          _ = try await batch.prepared()
+          let result=try await preparation.value
+          if let self,selectionSession.id == snapshot.selectionID { selectElements(result.2) }
+        } catch { /* The existing command reports the failure. */ }
+      }
+    } catch { showCue(error.localizedDescription) }
+  }
+
   private func selectionExportSource() throws -> (sources:[AgentElement],graph:NotebookGraphicGraph,surface:SurfaceID,rootOrigin:WorldPoint) {
     func unavailable() -> CollaborationError { .init("selection_not_ready","Выделение изменилось или ещё готовится. Повторите действие.") }
     var sources: [AgentElement] = []
@@ -102,13 +175,18 @@ extension NotebookAppModel {
       sources=objects.map(\.pageElement); graph = .init(objects.map(\.node))
       surface=region.address.surface;rootOrigin=region.address.worldOrigin ?? .zero
     } else {
-      let references=selectionSession.elements
-      guard selectionSession.items.isEmpty,let first=references.first,
-        let target=nativeElementSource(first)?.target,let prepared=editingGraphicGraph(first),
-        references.allSatisfy({ nativeElementSource($0)?.target == target && elementCommandDrafts[$0] == nil }) else { throw unavailable() }
-      graph=prepared
-      surface = target.kind == .page ? .page(target.id) : target.kind == .cover ? .cover(target.id) : .board(target.id)
-      rootOrigin=graph.placement(first.elementID)?.origin ?? .zero
+      let references=selectionSession.elements,raw=selectionSession.ink
+      guard selectionSession.items.isEmpty,
+        let target=raw.first?.address.target ?? references.first.flatMap({ nativeElementSource($0)?.target }),
+        references.allSatisfy({ nativeElementSource($0)?.target == target && elementCommandDrafts[$0] == nil }),
+        raw.allSatisfy({ $0.address.target == target && selectionInkRevision($0.address.surface) == $0.revision }) else { throw unavailable() }
+      let prepared:NotebookGraphicGraph
+      if let first=references.first {
+        guard let value=editingGraphicGraph(first) else { throw unavailable() };prepared=value
+      } else { prepared = .init([]) }
+      graph=prepared.projecting(adding:raw.map { $0.working.node })
+      surface=target.kind == .page ? .page(target.id) : target.kind == .cover ? .cover(target.id) : .board(target.id)
+      rootOrigin=references.first.flatMap { graph.placement($0.elementID)?.origin } ?? raw.first?.address.worldOrigin ?? .zero
       var ids=Set(references.map(\.elementID))
       for reference in references where isElementGroup(reference) {
         guard groupAllowsLiveManipulation(reference,in:graph) else { throw unavailable() }
@@ -122,10 +200,10 @@ extension NotebookAppModel {
           }
         }
       }
-      guard (1...32).contains(ids.count) else { throw unavailable() }
-      switch first {
-      case .page(let owner,_): sources=pages[owner]?.interactionElements(ids:ids) ?? []
-      case .spatial(let owner,_):
+      guard (1...32).contains(ids.count+raw.count) else { throw unavailable() }
+      if target.kind == .page { sources=pages[target.id]?.interactionElements(ids:ids) ?? [] }
+      else {
+        let owner=target.boardID ?? target.id
         sources=(boardHierarchy?.board(owner)?.interactionElements(ids:ids) ?? []).map { element in
           AgentElement(id:element.id,kind:AgentElementKind(rawValue:element.kind.rawValue)!,
             frame:.init(x:element.frame.x,y:element.frame.y,width:element.frame.width,height:element.frame.height),
@@ -135,6 +213,7 @@ extension NotebookAppModel {
         }
       }
       guard sources.count == ids.count else { throw unavailable() }
+      sources += raw.map { $0.working.pageElement }
     }
     guard (1...32).contains(sources.count) else { throw unavailable() }
     return (sources,graph,surface,rootOrigin)
@@ -157,6 +236,17 @@ struct NotebookSelectionExport: Sendable {
   let graph:NotebookGraphicGraph
   let rootOrigin:WorldPoint
   let erasures:[String:[InkElementErasure]]
+  let inkKeys:[String:NotebookInkPaintKey]
+  let pageInkSource:PageInkSource?
+
+  init(selectionID:UUID,surface:SurfaceID,inkRevision:String?,
+    sourceChecks:[EditableElementReference:NotebookNativeElementSource],sources:[AgentElement],
+    graph:NotebookGraphicGraph,rootOrigin:WorldPoint,erasures:[String:[InkElementErasure]],
+    inkKeys:[String:NotebookInkPaintKey]=[:],pageInkSource:PageInkSource?=nil) {
+    self.selectionID=selectionID;self.surface=surface;self.inkRevision=inkRevision
+    self.sourceChecks=sourceChecks;self.sources=sources;self.graph=graph;self.rootOrigin=rootOrigin
+    self.erasures=erasures;self.inkKeys=inkKeys;self.pageInkSource=pageInkSource
+  }
 
   func prepare() throws -> Result {
     func unavailable() -> CollaborationError { .init("selection_not_ready","Выделение изменилось или ещё готовится. Повторите действие.") }
@@ -171,7 +261,18 @@ struct NotebookSelectionExport: Sendable {
       bounds=bounds.union(box)
     }
     guard !bounds.isNull,bounds.width > 0,bounds.height > 0 else { throw unavailable() }
-    let elements=try sources.map { element -> AgentElement in
+    var keys=inkKeys
+    let pending=sources.filter{keys[$0.id] == nil && $0.graphic?.sourceInkContactID != nil}
+    if !pending.isEmpty {
+      guard surface.kind == .page,let drawing=try pageInkSource?.drawing() else {throw unavailable()}
+      for element in pending {
+        guard let id=element.graphic?.sourceInkContactID,let action=drawing.action(id:id),action.tool == .pen else {throw unavailable()}
+        keys[element.id] = .page(sequence:action.sequence,id:id)
+      }
+    }
+    let byID=Dictionary(uniqueKeysWithValues:sources.map{($0.id,$0)})
+    let elements=try NotebookInkPaintKey.ordering(sources.map(\.id),keys:keys).map { id -> AgentElement in
+      let element=byID[id]!
       try Task.checkCancellation()
       var frame=element.frame,parent=element.parentID,basis=element.basis
       if parent.map({ !ids.contains($0) }) ?? true {

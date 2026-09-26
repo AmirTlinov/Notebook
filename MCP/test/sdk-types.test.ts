@@ -253,3 +253,16 @@ test('region selection publication accepts all 8192 contour points and rejects o
   assert.equal(readDataSchemas.selection.safeParse({...value,
     selection:{...value.selection,region:[...region,{x:301,y:200}]}}).success,false);
 });
+
+
+test('whole ink selection publishes a separate namespace and one combined member budget',()=>{
+  const id='11111111-1111-4111-8111-111111111111';
+  const selection={id,kind:'elements',surface:{kind:'page',id},target:{kind:'page',id},
+    resolving:false,elementIDs:[],inkActionIDs:[id]};
+  const value={status:'known',deviceID:id,sessionID:id,generation:1,selection};
+  assert.deepEqual(readDataSchemas.selection.parse(value),value);
+  assert.equal(readDataSchemas.selection.safeParse({...value,selection:{...selection,elementIDs:Array.from({length:31},(_,i)=>`real-${i}`)}}).success,true);
+  assert.equal(readDataSchemas.selection.safeParse({...value,selection:{...selection,elementIDs:Array.from({length:32},(_,i)=>`real-${i}`)}}).success,false);
+  assert.equal(readDataSchemas.selection.safeParse({...value,selection:{...selection,inkActionIDs:[id,id]}}).success,false);
+  assert.equal(readDataSchemas.selection.safeParse({...value,selection:{...selection,kind:'element',elementID:'real'}}).success,false);
+});

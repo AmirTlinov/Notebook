@@ -9,6 +9,7 @@ struct NotebookGraphicView: View {
   var erasures: [InkElementErasure] = []
   var appearance: NotebookElementAppearance? = nil
   var live = true
+  var paintsMeasuredBody = true
   var layer:PaintLayer = .content
   var body: some View {
     // Retire the accessibility node together with the material, not only its pixels.
@@ -17,7 +18,7 @@ struct NotebookGraphicView: View {
         if live {
           ZStack {
             if let ink = graphic.freehand, graphic.showsGeometry {
-              if layer != .fillMask {
+              if layer != .fillMask,paintsMeasuredBody {
                 NotebookInkMaterialView(freehand:ink,transform:graphic.transform,layout:layout,mask:graphic.mask)
               }
               if layer != .fillMask,!graphic.label.isEmpty {
@@ -30,13 +31,13 @@ struct NotebookGraphicView: View {
                 }
               }
             } else {
-              Canvas { context, size in Self.paint(graphic, layout:layout, in:context, size:size,layer:layer,clipVisibility:false) }
+              Canvas { context, size in Self.paint(graphic, layout:layout, in:context, size:size,layer:layer,clipVisibility:false,paintsMeasuredBody:paintsMeasuredBody) }
             }
           }
           .clipShape(NotebookGraphicMaskShape(mask:graphic.mask,projection:layout?.projection),style:FillStyle(eoFill:true))
           .erased(by:erasures,appearance:appearance,transform:graphic.transform,layout:layout,visibility:graphic.mask)
         } else {
-          Canvas { context, size in Self.paint(graphic, layout:layout, in:context, size:size, erasures:erasures, appearance:appearance,layer:layer) }
+          Canvas { context, size in Self.paint(graphic, layout:layout, in:context, size:size, erasures:erasures, appearance:appearance,layer:layer,paintsMeasuredBody:paintsMeasuredBody) }
         }
       }
       .accessibilityElement(children: .ignore)
@@ -49,21 +50,21 @@ struct NotebookGraphicView: View {
 
   static func paint(_ graphic: NotebookGraphic, layout: NotebookGraphicLayout?,
     in context: GraphicsContext, size: CGSize, erasures: [InkElementErasure] = [],
-    appearance: NotebookElementAppearance? = nil, layer: PaintLayer = .content,clipVisibility:Bool = true) {
+    appearance: NotebookElementAppearance? = nil, layer: PaintLayer = .content,clipVisibility:Bool = true,paintsMeasuredBody:Bool = true) {
       guard graphic.showsGeometry, appearance?.state != .erased else { return }
       var context = context
       if let layout, let projection = layout.projection {
         if let appearance { context.clip(to:Path(appearance.mask),options:.inverse) }
         context.concatenate(projection.transform)
         paint(graphic,layout:layout.localLayout,in:context,size:projection.size,
-          erasures:appearance == nil ? erasures : [],layer:layer,clipVisibility:clipVisibility)
+          erasures:appearance == nil ? erasures : [],layer:layer,clipVisibility:clipVisibility,paintsMeasuredBody:paintsMeasuredBody)
         return
       }
       if let appearance { context.clip(to:Path(appearance.mask),options:.inverse) }
       else { NotebookElementErasurePaint.clip(erasures, context: &context, size: size,transform:graphic.transform) }
       if clipVisibility,let mask=graphic.mask { context.clip(to:Path(mask.path(in:.init(origin:.zero,size:size))),style:.init(eoFill:true)) }
       if let ink = graphic.freehand {
-        if layer != .fillMask { NotebookFreehandPaint.paint(ink,transform:graphic.transform,context:context,size:size,mask:layer != .content) }
+        if layer != .fillMask,paintsMeasuredBody { NotebookFreehandPaint.paint(ink,transform:graphic.transform,context:context,size:size,mask:layer != .content) }
         if !graphic.label.isEmpty, layer != .fillMask {
           context.draw(Text(graphic.label).font(.system(size:24)).foregroundStyle(graphic.style.stroke.swiftUIColor),at:.init(x:size.width/2,y:size.height/2))
         }
@@ -136,6 +137,7 @@ struct NotebookGraphicElementView: View {
   var layout: NotebookGraphicLayout? = nil
   var erasures:[InkElementErasure] = []
   var appearance:NotebookElementAppearance? = nil
+  var paintsMeasuredBody = true
   @State private var draft = ""
   @State private var original = ""
   @State private var hasDraft = false
@@ -150,7 +152,7 @@ struct NotebookGraphicElementView: View {
   }
   var body: some View {
     ZStack {
-      NotebookGraphicView(graphic: editing ? unlabelled : graphic, layout: layout,erasures:erasures,appearance:appearance)
+      NotebookGraphicView(graphic: editing ? unlabelled : graphic, layout: layout,erasures:erasures,appearance:appearance,paintsMeasuredBody:paintsMeasuredBody)
       if editing {
         TextField("Подпись", text: $draft, axis: .vertical)
           .font(.system(size: 24)).multilineTextAlignment(.center)

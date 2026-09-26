@@ -1,6 +1,7 @@
 import NotebookCore
 import XCTest
 import UIKit
+import SwiftUI
 @testable import Notebook
 
 @MainActor final class NotebookDrawingToolsTests: XCTestCase {
@@ -30,21 +31,21 @@ import UIKit
       while model.drawingTools.pendingLasso != nil,ContinuousClock.now < deadline {
         try await Task.sleep(for:.milliseconds(5))
       }
-      let region=try XCTUnwrap(model.selectionSession.region),raw=try XCTUnwrap(region.rawInk)
-      let prepared=try XCTUnwrap(region.materialization)
-      XCTAssertTrue(raw.selectsWholeContacts)
-      XCTAssertLessThan(region.frame.x,100);XCTAssertGreaterThan(region.frame.x+region.frame.width,700)
+      XCTAssertNil(model.selectionSession.region)
+      XCTAssertTrue(model.selectionSession.elements.isEmpty,"Accepted raw contacts are not fake canonical elements")
+      let selected=try XCTUnwrap(model.selectionSession.ink.first),raw=selected.material
+      XCTAssertEqual(model.selectionSession.count,1)
+      XCTAssertLessThan(raw.frame.x,100);XCTAssertGreaterThan(raw.frame.x+raw.frame.width,700)
       XCTAssertEqual(raw.graphic.sourceInkIDs,[pen.id])
       XCTAssertEqual(raw.graphic.freehand?.layers.first?.measured?.measurements,pen.samples)
       XCTAssertEqual(raw.graphic.freehand?.layers.last?.measured?.measurements,cut.samples,
-        "Selecting the whole preserves later erasure, including outside the hit tolerance")
-      XCTAssertEqual(prepared.edits.map(\.kind),[.convertInkToElement])
-      XCTAssertEqual(prepared.working.count,1,"A tap must not author an outside fragment")
-      XCTAssertNil(prepared.working.first?.graphic.mask,"The 12-point hit tolerance is not a saved clipping polygon")
+        "Whole picking retains later erasure even outside the hit tolerance")
+      XCTAssertNil(raw.graphic.mask,"Hit tolerance is not an authored clipping polygon")
       XCTAssertEqual(try model.store.loadPage(page.id).drawingData,drawing)
       XCTAssertTrue(try model.store.loadPage(page.id).elements.isEmpty,"Selection is read-only")
 
-      let movement=try XCTUnwrap(model.beginElementManipulation(region.reference,kind:.move))
+      try await self.withMountedWholePage(model,pageID:page.id) { _,_ in
+      let movement=try XCTUnwrap(model.beginSelectionManipulation(kind:.move))
       XCTAssertTrue(model.finishElementManipulation(movement,translation:.init(x:0,y:40)))
       await assertSaved(model)
       let moved=try model.store.loadPage(page.id),element=try XCTUnwrap(moved.elements.first)
@@ -59,7 +60,465 @@ import UIKit
       XCTAssertTrue(restored.graphicPresentation.geometryIDs.isEmpty)
       XCTAssertTrue(restored.graphicPresentation.suppressedInkIDs.isEmpty,"The same complete measured contact becomes visible again")
       XCTAssertEqual(restored.drawingData,drawing)
+      }
     }
+  }
+
+  func testWholeElementsKeepsTwoContactsAndTheirAuthoredPeerThroughOneMoveAndCopy() async throws {
+    try await withWholeSelection { model,page,strokes,address in
+      try await self.selectWholeContour(model,address:address)
+      XCTAssertEqual(model.selectionSession.elements,[address.reference("whole-peer")])
+      XCTAssertEqual(model.selectionSession.ink.map(\.actionID),strokes.map(\.id))
+      XCTAssertEqual(model.selectionSession.count,3)
+      XCTAssertNil(model.selectionSession.region)
+      for (selected,stroke) in zip(model.selectionSession.ink,strokes) {
+        XCTAssertEqual(selected.material.graphic.freehand?.layers.first?.measured?.measurements,stroke.samples)
+        XCTAssertLessThan(selected.material.frame.x,100);XCTAssertGreaterThan(selected.material.frame.x+selected.material.frame.width,700)
+        XCTAssertNil(selected.material.graphic.mask)
+      }
+      XCTAssertEqual(try model.store.loadPage(page.id).elements.map(\.id),["whole-peer"])
+      let selection=model.selectionSession
+      let snapshot=try model.clipboardSelectionSnapshot()
+      XCTAssertEqual(Set(snapshot.sourceChecks.keys),[address.reference("whole-peer")],"Raw member IDs must not be read as authored elements")
+      let copied=try await Task.detached { try snapshot.prepare() }.value
+      XCTAssertEqual(copied.fragment.elements.count,3)
+      XCTAssertTrue(copied.fragment.elements.allSatisfy { $0.graphic?.sourceInkIDs.isEmpty == true })
+      XCTAssertEqual(copied.fragment.elements.compactMap { $0.graphic?.freehand?.layers.first?.measured?.measurements },strokes.map(\.samples))
+      XCTAssertEqual(model.selectionSession,selection,"Copy preparation neither converts contacts nor changes the choice")
+      XCTAssertFalse(model.canGroupSelectedElements);XCTAssertTrue(model.availableLayerMoves.isEmpty)
+      let before=Set(try model.store.actionReadModels().map(\.id))
+      model.groupSelectedElements();model.arrangeSelection(.toFront)
+      model.setGraphicStyle(reference:address.reference("whole-peer")) { $0.strokeWidth=30 }
+      await self.assertSaved(model)
+      XCTAssertEqual(Set(try model.store.actionReadModels().map(\.id)),before,"Disabled whole-set commands cannot edit only the authored subset")
+      let raw=try XCTUnwrap(model.pageInkPublication.currentCanvas(on:page.id))
+      let paper=try XCTUnwrap(raw.superview as? PaperCanvasContainerView),window=try XCTUnwrap(paper.window)
+      @MainActor func point(_ x:Double,_ y:Double)->CGPoint { paper.convert(.init(x:x,y:y),to:window) }
+      let beforePixels=[(point(180,200),NotebookUXObservation.Color.black),(point(180,260),.black),
+        (point(390,225),.black),(point(180,240),.paper),(point(180,300),.paper),(point(390,270),.paper)]
+      XCTAssertTrue(try NotebookUXObservation.Pixels(window:window).matches(beforePixels))
+      let began=ContinuousClock.now
+      let contact=try XCTUnwrap(model.beginSelectionManipulation(kind:.move))
+      let original=try XCTUnwrap(model.selectionSession.manipulation).presentedFrame
+      model.updateElementManipulation(contact,translation:.init(x:0,y:40))
+      let pending=try XCTUnwrap(model.selectionSession.manipulation)
+      XCTAssertEqual(pending.presentedFrame,original,"Control geometry cannot lead the raw/material exchange")
+      XCTAssertEqual(model.graphicGraph(page:page).source("whole-peer")?.frame.y,210)
+      XCTAssertTrue(try NotebookUXObservation.Pixels(window:window).matches(beforePixels),"The current producer has not yielded to prepare any new native material")
+      let presentation=try XCTUnwrap(pending.inkPresentation)
+      try await assertUX("whole-contacts-and-authored-peer-move",since:began,budget:NotebookUXObservation.selection,window:window) {
+        guard presentation.installed,model.selectionSession.manipulation?.presentedFrame == original.offsetBy(dx:0,dy:40) else { return false }
+        return try NotebookUXObservation.Pixels(window:window).matches([
+          (point(180,200),.paper),(point(180,260),.paper),(point(390,225),.paper),
+          (point(180,240),.black),(point(180,300),.black),(point(390,270),.black)])
+      }
+      XCTAssertTrue(model.finishElementManipulation(contact,translation:.init(x:0,y:40)))
+      await self.assertSaved(model)
+      let actions=try model.store.actionReadModels().filter { !before.contains($0.id) }
+      XCTAssertEqual(actions.count,1)
+      XCTAssertEqual(actions.first?.action.operations.filter { $0.kind == .convertInkToElement }.count,2)
+      XCTAssertEqual(actions.first?.action.operations.filter { $0.kind == .updateElement }.map(\.id),["whole-peer"])
+      let moved=try model.store.loadPage(page.id)
+      XCTAssertEqual(moved.elements.count,3)
+      XCTAssertEqual(moved.element(id:"whole-peer")?.frame.y,250)
+      for raw in selection.ink {
+        let element=try XCTUnwrap(moved.element(id:raw.memberID))
+        XCTAssertEqual(element.graphic?.sourceInkIDs,[raw.actionID])
+        XCTAssertEqual(element.graphic?.freehand,raw.material.graphic.freehand)
+        XCTAssertEqual(element.frame.y,raw.material.frame.y+40,accuracy:1e-8)
+      }
+      XCTAssertEqual(moved.drawingData,page.drawingData)
+    }
+  }
+
+  func testClaimedWholeMoveKeepsItsPictureUntilTheCanonicalPlanActuallyInstalls() async throws {
+    try await withWholeSelection { model,page,strokes,address in
+      try await self.selectWholeContour(model,address:address)
+      let canvas=try XCTUnwrap(model.pageInkPublication.currentCanvas(on:page.id))
+      let paper=try XCTUnwrap(canvas.superview as? PaperCanvasContainerView),window=try XCTUnwrap(paper.window)
+      let oldElementSource=try XCTUnwrap(model.pages[page.id]).elementSourceIdentity
+      let oldInput=model.pageOrderedInk(page,display:model.pageGraphicDisplay(page,in:nil))
+      XCTAssertTrue(oldInput.matches(canvas.orderedInkPlan))
+      @MainActor func point(_ x:Double,_ y:Double)->CGPoint { paper.convert(.init(x:x,y:y),to:window) }
+      let originalPixels=[(point(180,200),NotebookUXObservation.Color.black),(point(180,260),.black),
+        (point(390,225),.black),(point(180,240),.paper),(point(180,300),.paper),(point(390,270),.paper)]
+      XCTAssertTrue(try NotebookUXObservation.Pixels(window:window).matches(originalPixels))
+      // Hold the existing writer FIFO, not the main actor or a fake publication.
+      // The private GPU stage must fail after the command has been claimed.
+      let (entered,start)=AsyncStream<Void>.makeStream(),release=DispatchSemaphore(value:0)
+      let writer=Task {
+        try await model.performStoreCommand { _ in
+          start.yield();start.finish();_ = release.wait(timeout:.now()+5)
+        }
+      }
+      defer {release.signal()}
+      for await _ in entered {break}
+      let resources=SceneRenderResources.shared
+      let pressure=try XCTUnwrap(resources.reserveDerivedBytes(
+        resources.byteLimit-resources.residentBytes-resources.reservedBytes,priority:.input))
+      defer {pressure.release()}
+      let contact=try XCTUnwrap(model.beginSelectionManipulation(kind:.move))
+      let owner=try XCTUnwrap(model.selectionSession.manipulation?.inkPresentation)
+      XCTAssertTrue(model.finishElementManipulation(contact,translation:.init(x:0,y:40)))
+      let failureDeadline=ContinuousClock.now + .seconds(2)
+      while model.actionCue != "Не удалось подготовить всё выделение. Повторите действие.",ContinuousClock.now<failureDeadline {
+        try await Task.sleep(for:.milliseconds(5))
+      }
+      XCTAssertEqual(model.actionCue,"Не удалось подготовить всё выделение. Повторите действие.")
+      XCTAssertTrue(owner.holdsPresentation);XCTAssertFalse(owner.installed)
+      XCTAssertTrue(try NotebookUXObservation.Pixels(window:window).matches(originalPixels),"A refused private frame cannot remove the complete raw picture")
+      XCTAssertEqual(model.graphicGraph(page:try XCTUnwrap(model.pages[page.id])).source("whole-peer")?.frame.y,210,
+        "Authored controls/material cannot lead the raw members of the same command")
+      release.signal();try await writer.value;await self.assertSaved(model)
+      let publicationDeadline=ContinuousClock.now + .seconds(2)
+      while model.pages[page.id]?.elements.count != 3,ContinuousClock.now<publicationDeadline {
+        try await Task.sleep(for:.milliseconds(5))
+      }
+      let accepted=try XCTUnwrap(model.pages[page.id])
+      XCTAssertEqual(accepted.drawingStamp,page.drawingStamp,"Conversion changes element source, not the raw root")
+      XCTAssertNotEqual(accepted.elementSourceIdentity,oldElementSource)
+      XCTAssertTrue(owner.needsCanonicalSource);XCTAssertTrue(owner.holdsPresentation)
+      XCTAssertEqual(model.workingGraphics.filter{$0.inkPresentation === owner}.count,2)
+      XCTAssertEqual(try model.store.loadPage(page.id).element(id:"whole-peer")?.frame.y,250)
+      // A late callback from the old SwiftUI body has the same raw stamp. It
+      // must not acknowledge the new canonical element source or drop controls.
+      model.canonicalPageInkInstalled(.init(pageID:page.id,stamp:page.drawingStamp),
+        elementSource:oldElementSource,input:oldInput)
+      XCTAssertTrue(owner.holdsPresentation)
+      XCTAssertEqual(model.workingGraphics.filter{$0.inkPresentation === owner}.count,2)
+      XCTAssertTrue(try NotebookUXObservation.Pixels(window:window).matches(originalPixels))
+      pressure.release()
+      // Ordinary demand retries the already captured canonical source. No
+      // synthetic ready callback, replayed writer or second source is supplied.
+      let resumed=ContinuousClock.now
+      canvas.setPageInputEnabled(false);canvas.setPageInputEnabled(true)
+      try await self.assertUX("claimed-whole-move-canonical-handoff",since:resumed,
+        budget:NotebookUXObservation.selection,window:window) {
+        guard !owner.holdsPresentation,model.workingGraphics.allSatisfy({$0.inkPresentation !== owner}),
+          canvas.isStableFramePresented,canvas.orderedInkPlan.suppressedInkIDs == Set(strokes.map(\.id)) else {return false}
+        return try NotebookUXObservation.Pixels(window:window).matches([
+          (point(180,200),.paper),(point(180,260),.paper),(point(390,225),.paper),
+          (point(180,240),.black),(point(180,300),.black),(point(390,270),.black)])
+      }
+      XCTAssertEqual(try model.store.loadPage(page.id).drawingData,page.drawingData)
+    }
+  }
+
+  func testSecondWholeMoveKeepsControlsWithPixelsAndCancelPreservesNewAcceptedContact() async throws {
+    try await withWholeSelection { model,page,strokes,address in
+      try await self.selectWholeContour(model,address:address)
+      let canvas=try XCTUnwrap(model.pageInkPublication.currentCanvas(on:page.id))
+      let paper=try XCTUnwrap(canvas.superview as? PaperCanvasContainerView),window=try XCTUnwrap(paper.window)
+      @MainActor func point(_ x:Double,_ y:Double)->CGPoint {paper.convert(.init(x:x,y:y),to:window)}
+      let first=try XCTUnwrap(model.beginSelectionManipulation(kind:.move))
+      XCTAssertTrue(model.finishElementManipulation(first,translation:.init(x:0,y:40)))
+      await self.assertSaved(model)
+      try await self.assertUX("first-whole-move-canonical-installed",since:ContinuousClock.now,
+        budget:NotebookUXObservation.selection,window:window) {
+        guard model.workingGraphics.isEmpty,canvas.isStableFramePresented,
+          canvas.orderedInkPlan.bodies.count == 2 else {return false}
+        return try NotebookUXObservation.Pixels(window:window).matches([
+          (point(180,200),.paper),(point(180,240),.black),(point(180,300),.black)])
+      }
+      let before=canvas.orderedInkPlan
+      let original=try XCTUnwrap(before.bodies.first(where:{$0.sourceID == strokes[0].id}))
+      let reference=address.reference(original.elementID)
+      let acceptedFrame=try XCTUnwrap(model.store.loadPage(page.id).element(id:original.elementID)).frame
+      XCTAssertTrue(model.selectElements([reference]));XCTAssertTrue(model.selectionSession.ink.isEmpty)
+      // Use the ordinary single-authored-element entry point on the second
+      // contact; it must not bypass the installed-picture owner after conversion.
+      let second=try XCTUnwrap(model.beginElementManipulation(reference,kind:.move))
+      let oldFrame=try XCTUnwrap(model.selectionSession.manipulation).presentedFrame
+      let owner=try XCTUnwrap(model.selectionSession.manipulation?.inkPresentation)
+      let began=ContinuousClock.now
+      model.updateElementManipulation(second,translation:.init(x:0,y:40))
+      XCTAssertEqual(model.selectionSession.manipulation?.presentedFrame,oldFrame)
+      XCTAssertEqual(canvas.orderedInkPlan,before,"No yield: neither controls nor pixels may advance alone")
+      XCTAssertTrue(try NotebookUXObservation.Pixels(window:window).matches([
+        (point(180,240),.black),(point(180,280),.paper)]))
+      try await self.assertUX("second-whole-move-picture-and-controls",since:began,
+        budget:NotebookUXObservation.selection,window:window) {
+        guard owner.installed,model.selectionSession.manipulation?.presentedFrame == oldFrame.offsetBy(dx:0,dy:40) else {return false}
+        return try NotebookUXObservation.Pixels(window:window).matches([
+          (point(180,240),.paper),(point(180,280),.black),(point(180,300),.black)])
+      }
+      XCTAssertEqual(canvas.orderedInkPlan.bodies.first(where:{$0.elementID == original.elementID})?.key,original.key)
+      // Deliver a real new accepted raw delta through the page owner before
+      // cancelling the unaccepted move. Rollback owns only the old body's pose.
+      let added=PageInkAction(tool:.pen,samples:[200.0,280].enumerated().map { index,x in
+        .init(point:.init(x:x,y:360),timeOffset:Double(index)/60,width:8,opacity:1,force:1,azimuth:0,altitude:1)
+      })
+      let stamp=try XCTUnwrap(model.reserveDrawingAction(pageID:page.id))
+      XCTAssertNotNil(model.acceptDrawingAction(added,pageID:page.id,stamp:stamp))
+      await self.assertSaved(model)
+      let acceptedDeadline=ContinuousClock.now + .seconds(2)
+      while !canvas.isStableFramePresented,ContinuousClock.now<acceptedDeadline {
+        try await Task.sleep(for:.milliseconds(5))
+      }
+      XCTAssertTrue(try NotebookUXObservation.Pixels(window:window).matches([(point(240,360),.black)]))
+      let cancelled=ContinuousClock.now
+      model.cancelElementManipulation(second)
+      try await self.assertUX("second-whole-move-cancel-keeps-new-raw",since:cancelled,
+        budget:NotebookUXObservation.selection,window:window) {
+        guard model.workingGraphics.allSatisfy({$0.inkPresentation !== owner}),
+          canvas.orderedInkPlan == before,canvas.isStableFramePresented else {return false}
+        return try NotebookUXObservation.Pixels(window:window).matches([
+          (point(180,240),.black),(point(180,280),.paper),(point(180,300),.black),(point(240,360),.black)])
+      }
+      let saved=try model.store.loadPage(page.id)
+      XCTAssertEqual(saved.element(id:original.elementID)?.frame,acceptedFrame)
+      XCTAssertTrue(try saved.inkSource.drawing().actions.contains(where:{$0.id == added.id && $0.isActive}))
+      XCTAssertEqual(saved.elements.count,3,"Cancelling the second move neither reconverts nor duplicates a contact")
+    }
+  }
+
+  func testCopyAndDuplicatePreserveRawPlaneOrderAfterReverseContactConversion() async throws {
+    try await withWholeSelection { model,page,strokes,address in
+      try await self.selectWholeContour(model,address:address)
+      let rawA=try XCTUnwrap(model.selectionSession.ink.first(where:{$0.actionID == strokes[0].id}))
+      let rawB=try XCTUnwrap(model.selectionSession.ink.first(where:{$0.actionID == strokes[1].id}))
+      let canvas=try XCTUnwrap(model.pageInkPublication.currentCanvas(on:page.id))
+      let window=try XCTUnwrap(canvas.window)
+      for (step,raw) in [rawB,rawA].enumerated() {
+        XCTAssertTrue(model.selectElements([],ink:[raw]))
+        let movement=try XCTUnwrap(model.beginSelectionManipulation(kind:.move))
+        XCTAssertTrue(model.finishElementManipulation(movement,translation:.init(x:0,y:40)))
+        await self.assertSaved(model)
+        try await self.assertUX("copy-order-conversion-\(step)",since:ContinuousClock.now,
+          budget:NotebookUXObservation.selection,window:window) {
+          canvas.isStableFramePresented && model.workingGraphics.isEmpty
+            && canvas.orderedInkPlan.bodies.contains(where:{$0.elementID == raw.memberID})
+        }
+        if step == 0 {
+          XCTAssertTrue(model.selectElements([address.reference(rawB.memberID),address.reference("whole-peer")],ink:[rawA]))
+          let mixed=try model.clipboardSelectionSnapshot()
+          let fragment=try await Task.detached{try mixed.prepare().fragment}.value
+          XCTAssertEqual(fragment.elements.map(\.id),["whole-peer",rawA.memberID,rawB.memberID],
+            "Raw A is below converted B, not appended on top of all authored references")
+        }
+      }
+      XCTAssertEqual(try model.store.loadPage(page.id).elements.map(\.id),["whole-peer",rawB.memberID,rawA.memberID])
+      XCTAssertTrue(model.selectElements([address.reference(rawB.memberID),address.reference("whole-peer"),address.reference(rawA.memberID)]))
+      let snapshot=try model.clipboardSelectionSnapshot()
+      let copied=try await Task.detached{try snapshot.prepare().fragment}.value
+      XCTAssertEqual(copied.elements.map(\.id),["whole-peer",rawA.memberID,rawB.memberID])
+      XCTAssertTrue(copied.elements.allSatisfy{$0.graphic?.sourceInkIDs.isEmpty == true})
+      XCTAssertEqual(copied.elements.compactMap{$0.graphic?.freehand?.layers.first?.measured?.sourceID},strokes.map(\.id))
+      let originalIDs=Set(try model.store.loadPage(page.id).elements.map(\.id))
+      model.duplicateSelectedContent();await self.assertSaved(model)
+      let duplicate=try model.store.loadPage(page.id).elements.filter{!originalIDs.contains($0.id)}
+      XCTAssertEqual(duplicate.count,3)
+      XCTAssertEqual(duplicate.first?.graphic?.shape,.rectangle)
+      XCTAssertEqual(duplicate.compactMap{$0.graphic?.freehand?.layers.first?.measured?.sourceID},strokes.map(\.id))
+      XCTAssertTrue(duplicate.allSatisfy{$0.graphic?.sourceInkIDs.isEmpty == true})
+      XCTAssertEqual(try model.store.loadPage(page.id).drawingData,page.drawingData)
+    }
+  }
+
+  func testDeletingRawAndCanonicalContactsInstallsOneWholeFrameAndUndoRedoRetainsBothSources() async throws {
+    try await deletingWholeContacts(canonicalOnly:false)
+  }
+
+  func testDeletingCanonicalContactAndAuthoredPeerUsesOneInstalledFrameBeforeWriterAndUndoRedo() async throws {
+    try await deletingWholeContacts(canonicalOnly:true)
+  }
+
+  private func deletingWholeContacts(canonicalOnly:Bool) async throws {
+    try await withWholeSelection { model,page,strokes,address in
+      try await self.selectWholeContour(model,address:address)
+      let rawA=try XCTUnwrap(model.selectionSession.ink.first(where:{$0.actionID == strokes[0].id}))
+      let rawB=try XCTUnwrap(model.selectionSession.ink.first(where:{$0.actionID == strokes[1].id}))
+      let canvas=try XCTUnwrap(model.pageInkPublication.currentCanvas(on:page.id))
+      let paper=try XCTUnwrap(canvas.superview as? PaperCanvasContainerView),window=try XCTUnwrap(paper.window)
+      @MainActor func point(_ x:Double,_ y:Double)->CGPoint {paper.convert(.init(x:x,y:y),to:window)}
+      XCTAssertTrue(model.selectElements([],ink:[rawB]))
+      let movement=try XCTUnwrap(model.beginSelectionManipulation(kind:.move))
+      XCTAssertTrue(model.finishElementManipulation(movement,translation:.init(x:0,y:40)))
+      await self.assertSaved(model)
+      try await self.assertUX("mixed-delete-setup-canonical-contact",since:ContinuousClock.now,
+        budget:NotebookUXObservation.selection,window:window) {
+        guard canvas.isStableFramePresented,model.workingGraphics.isEmpty,
+          canvas.orderedInkPlan.bodies.contains(where:{$0.elementID == rawB.memberID}) else {return false}
+        return try NotebookUXObservation.Pixels(window:window).matches([
+          (point(180,200),.black),(point(180,260),.paper),(point(180,300),.black),(point(390,225),.black)])
+      }
+      let before=Set(try model.store.actionReadModels().map(\.id))
+      let oldCanonicalSource=try XCTUnwrap(model.pages[page.id]).elementSourceIdentity
+      let selected=canonicalOnly ? [address.reference(rawB.memberID),address.reference("whole-peer")] : [address.reference(rawB.memberID)]
+      XCTAssertTrue(model.selectElements(selected,ink:canonicalOnly ? [] : [rawA]))
+      XCTAssertEqual(model.selectionSession.ink.isEmpty,canonicalOnly)
+      let remainingA:NotebookUXObservation.Color=canonicalOnly ? .black : .paper
+      let remainingPeer:NotebookUXObservation.Color=canonicalOnly ? .paper : .black
+      // The writer cannot replace this proof with a later canonical repair:
+      // inspect the actual first installed private delete frame while SQL is held.
+      let (entered,start)=AsyncStream<Void>.makeStream(),release=DispatchSemaphore(value:0)
+      let writer=Task {
+        try await model.performStoreCommand { _ in
+          start.yield();start.finish();_ = release.wait(timeout:.now()+5)
+        }
+      }
+      defer {release.signal()}
+      for await _ in entered {break}
+      let deletedAt=ContinuousClock.now
+      model.deleteSelectedContent()
+      let owner=try XCTUnwrap(model.workingGraphics.first(where:{$0.id == (canonicalOnly ? rawB.memberID : rawA.memberID)})?.inkPresentation)
+      XCTAssertEqual(owner.source.orderedMembers.map(\.id),[rawB.memberID])
+      XCTAssertTrue(try NotebookUXObservation.Pixels(window:window).matches([
+        (point(180,200),.black),(point(180,300),.black),(point(390,225),.black)]),
+        "Before the common frame is installed neither the authored peer nor the ordered body disappears")
+      try await self.assertUX("mixed-raw-canonical-private-delete",since:deletedAt,
+        budget:NotebookUXObservation.selection,window:window) {
+        guard owner.installed,!canvas.orderedInkPlan.bodies.contains(where:{$0.elementID == rawB.memberID}),
+          !model.workingGraphics.contains(where:{$0.id == rawB.memberID}) else {return false}
+        return try NotebookUXObservation.Pixels(window:window).matches([
+          (point(180,200),remainingA),(point(180,260),.paper),(point(180,300),.paper),(point(390,225),remainingPeer)])
+      }
+      XCTAssertEqual(model.pages[page.id]?.elementSourceIdentity,oldCanonicalSource,
+        "The private frame, not a newer canonical publication, removed B")
+      release.signal();try await writer.value;await self.assertSaved(model)
+      let actions=try model.store.actionReadModels().filter{!before.contains($0.id)}
+      XCTAssertEqual(actions.count,1)
+      XCTAssertEqual(actions.first?.action.operations.filter{$0.kind == .convertInkToElement}.count,canonicalOnly ? 0 : 1)
+      XCTAssertEqual(Set(actions.first?.action.operations.filter{$0.kind == .removeElement}.compactMap(\.id) ?? []),Set(selected.map(\.elementID)))
+      let deleted=try model.store.loadPage(page.id)
+      let deletedSuppression:Set<UUID>=canonicalOnly ? [rawB.actionID] : Set(strokes.map(\.id))
+      XCTAssertEqual(deleted.graphicPresentation.suppressedInkIDs,deletedSuppression)
+      XCTAssertFalse(deleted.graphicPresentation.geometryIDs.contains(rawB.memberID))
+      XCTAssertEqual(deleted.drawingData,page.drawingData)
+      let undoneAt=ContinuousClock.now
+      model.undoLastSurfaceAction();await self.assertSaved(model)
+      try await self.assertUX("mixed-raw-canonical-delete-undo",since:undoneAt,
+        budget:NotebookUXObservation.selection,window:window) {
+        guard model.workingGraphics.isEmpty,canvas.isStableFramePresented,
+          canvas.orderedInkPlan.bodies.contains(where:{$0.elementID == rawB.memberID}),
+          !canvas.orderedInkPlan.suppressedInkIDs.contains(rawA.actionID) else {return false}
+        return try NotebookUXObservation.Pixels(window:window).matches([
+          (point(180,200),.black),(point(180,260),.paper),(point(180,300),.black),(point(390,225),.black)])
+      }
+      let restored=try model.store.loadPage(page.id)
+      XCTAssertEqual(restored.graphicPresentation.suppressedInkIDs,[rawB.actionID])
+      XCTAssertEqual(restored.drawingData,page.drawingData)
+      let repeatedAt=ContinuousClock.now
+      model.redoLastSurfaceAction();await self.assertSaved(model)
+      try await self.assertUX("mixed-raw-canonical-delete-redo",since:repeatedAt,
+        budget:NotebookUXObservation.selection,window:window) {
+        guard model.workingGraphics.isEmpty,canvas.isStableFramePresented,
+          !canvas.orderedInkPlan.bodies.contains(where:{$0.elementID == rawB.memberID}),
+          canvas.orderedInkPlan.suppressedInkIDs == deletedSuppression else {return false}
+        return try NotebookUXObservation.Pixels(window:window).matches([
+          (point(180,200),remainingA),(point(180,260),.paper),(point(180,300),.paper),(point(390,225),remainingPeer)])
+      }
+      let repeated=try model.store.loadPage(page.id)
+      XCTAssertEqual(repeated.drawingData,page.drawingData)
+      XCTAssertFalse(repeated.graphicPresentation.geometryIDs.contains(rawB.memberID))
+      XCTAssertFalse(owner.holdsPresentation)
+    }
+  }
+
+  func testRawAndNativeTextRemainWholeAndOnlySupportedOperationsAreAdmitted() async throws {
+    try await withWholeSelection { model,page,_,address in
+      try await self.selectWholeContour(model,address:address)
+      let raw=model.selectionSession.ink
+      var updated=try model.store.loadPage(page.id)
+      let text=AgentElement(id:"whole-text",kind:.nativeText,frame:.init(x:360,y:200,width:80,height:60),source:"whole text",html:"")
+      XCTAssertTrue(updated.replaceElements(updated.elements+[text],actor:model.actorID));try model.store.savePage(updated)
+      await model.reloadExternalChanges()?.value
+      XCTAssertTrue(model.selectElements([address.reference(text.id)],ink:raw))
+      XCTAssertEqual(model.selectionSession.count,3)
+      XCTAssertFalse(model.canTransformSelection)
+      XCTAssertNil(model.beginSelectionManipulation(kind:.move))
+      XCTAssertTrue(model.canDeleteSelection);XCTAssertTrue(model.canExportSelection)
+      let snapshot=try model.clipboardSelectionSnapshot()
+      let exported=try await Task.detached { try snapshot.prepare() }.value
+      XCTAssertEqual(exported.fragment.elements.map(\.id),[text.id]+raw.map(\.memberID))
+      let before=Set(try model.store.actionReadModels().map(\.id))
+      model.deleteSelectedContent();await self.assertSaved(model)
+      let actions=try model.store.actionReadModels().filter { !before.contains($0.id) }
+      XCTAssertEqual(actions.count,1)
+      XCTAssertEqual(actions.first?.action.operations.filter { $0.kind == .convertInkToElement }.count,2)
+      XCTAssertEqual(actions.first?.action.operations.filter { $0.kind == .removeElement }.map(\.id),[text.id])
+      let deleted=try model.store.loadPage(page.id)
+      XCTAssertNil(deleted.element(id:text.id))
+      XCTAssertEqual(deleted.graphicPresentation.suppressedInkIDs,Set(raw.map(\.actionID)))
+      XCTAssertEqual(deleted.drawingData,page.drawingData)
+    }
+  }
+
+  func testWholeContactEditRejectsAChangedInkBasisWithoutTouchingTheAuthoredPeer() async throws {
+    try await withWholeSelection { model,page,_,address in
+      try await self.selectWholeContour(model,address:address)
+      let selection=model.selectionSession
+      let contact=try XCTUnwrap(model.beginSelectionManipulation(kind:.move))
+      model.cancelElementManipulation(contact)
+      XCTAssertEqual(model.selectionSession.id,selection.id)
+      XCTAssertTrue(model.workingGraphics.isEmpty,"A cancelled read-only pick leaves no optimistic conversion")
+      let before=Set(try model.store.actionReadModels().map(\.id))
+      var next=try model.store.loadPage(page.id)
+      let added=PageInkAction(tool:.pen,samples:[20.0,40].map { x in
+        .init(point:.init(x:x,y:20),timeOffset:0,width:3,opacity:1,force:1,azimuth:0,altitude:1)
+      })
+      XCTAssertTrue(next.replaceDrawing(try PageInkDrawing(actions:next.inkSource.drawing().actions+[added]).dataRepresentation(),actor:model.actorID))
+      try model.store.savePage(next);await model.reloadExternalChanges()?.value
+      XCTAssertNil(model.beginSelectionManipulation(kind:.move),"A new source cannot be silently grafted onto the captured whole contacts")
+      model.transformGraphicSelection(scale:1.2);await self.assertSaved(model)
+      XCTAssertEqual(Set(try model.store.actionReadModels().map(\.id)),before)
+      XCTAssertEqual(try model.store.loadPage(page.id).element(id:"whole-peer")?.frame,page.element(id:"whole-peer")?.frame)
+    }
+  }
+
+  private func withWholeSelection(_ body:(NotebookAppModel,PageDocument,[PageInkAction],NotebookToolAddress) async throws -> Void) async throws {
+    try await fixture { model in
+      var page=try XCTUnwrap(model.activePage)
+      let strokes=[200.0,260].map { y in PageInkAction(tool:.pen,samples:[100.0,700].enumerated().map { index,x in
+        .init(point:.init(x:x,y:y),timeOffset:Double(index)/60,width:8,opacity:1,force:1,azimuth:0,altitude:1)
+      }) }
+      XCTAssertTrue(page.replaceDrawing(try PageInkDrawing(actions:strokes).dataRepresentation(),actor:model.actorID))
+      XCTAssertTrue(page.replaceElements([.init(id:"whole-peer",kind:.graphic,frame:.init(x:370,y:210,width:50,height:30),
+        source:"",html:"",graphic:.init(shape:.rectangle,style:.init(strokeWidth:3,fill:.black)))],actor:model.actorID))
+      try model.store.savePage(page);await model.reloadExternalChanges()?.value
+      let presence=try XCTUnwrap(model.presence),item=try XCTUnwrap(model.workspace?.selectedItemID)
+      model.updatePresence(.init(boardID:presence.boardID,mode:.page,camera:presence.camera,viewport:presence.viewport,
+        focusedItemID:item,openProgress:1,selectedItemID:item,notebookPageID:page.id),settled:true)
+      await self.assertSaved(model)
+      let address=NotebookToolAddress(surface:.page(page.id),boardID:nil,worldOrigin:nil,
+        bounds:.init(x:0,y:0,width:page.size.width,height:page.size.height))
+      try await self.withMountedWholePage(model,pageID:page.id) { _,_ in
+        try await body(model,page,strokes,address)
+      }
+    }
+  }
+
+  private func showFixturePage(_ model:NotebookAppModel,_ pageID:UUID) async throws {
+    let presence=try XCTUnwrap(model.presence),item=try XCTUnwrap(model.notebookPageOwner(pageID))
+    model.updatePresence(.init(boardID:presence.boardID,mode:.page,camera:presence.camera,viewport:presence.viewport,
+      focusedItemID:item,openProgress:1,selectedItemID:item,notebookPageID:pageID),settled:true)
+    await assertSaved(model)
+  }
+
+  private func withMountedWholePage(_ model:NotebookAppModel,pageID:UUID,
+    _ body:(UIView,UIWindow) async throws -> Void) async throws {
+    let scene=try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+    let previous=scene.windows.first(where: \.isKeyWindow),window=UIWindow(windowScene:scene)
+    let host=UIHostingController(rootView:WholeSelectionTestPage(pageID:pageID).environment(model))
+    window.rootViewController=host;window.makeKeyAndVisible();host.view.layoutIfNeeded()
+    defer { window.isHidden=true;window.rootViewController=nil;previous?.makeKey() }
+    let deadline=ContinuousClock.now + .seconds(5)
+    while model.pageInkPublication.currentCanvas(on:pageID)?.isStableFramePresented != true,
+      ContinuousClock.now<deadline { try await Task.sleep(for:.milliseconds(5)) }
+    XCTAssertTrue(model.pageInkPublication.currentCanvas(on:pageID)?.isStableFramePresented == true)
+    try await body(host.view,window)
+  }
+
+  private func selectWholeContour(_ model:NotebookAppModel,address:NotebookToolAddress) async throws {
+    let polygon=[SpatialPoint(x:340,y:180),.init(x:460,y:180),.init(x:460,y:280),.init(x:340,y:280)]
+    model.selectDrawingTool(.lasso);model.drawingToolSettings.lassoMode = .elements
+    XCTAssertTrue(model.drawingTools.begin(at:polygon[0],address:address,screenScale:1))
+    for point in polygon.dropFirst() { model.drawingTools.move(to:point) }
+    model.drawingTools.finish()
+    let deadline=ContinuousClock.now + .seconds(5)
+    while model.drawingTools.pendingLasso != nil,ContinuousClock.now<deadline { try await Task.sleep(for:.milliseconds(5)) }
+    XCTAssertNil(model.drawingTools.pendingLasso)
+    XCTAssertEqual(model.selectionSession.count,3)
   }
 
   func testWholeContactSelectionIncludesAllSpansButRegionSelectionKeepsItsContour() throws {
@@ -74,16 +533,58 @@ import UIKit
         .init(sourceID:id,span:index,measurements:values,header:.init(tool:.pen,color:.black))
       })],surface:surface,origin:nil,excluding:[])
     let polygon=[SpatialPoint(x:125,y:94),.init(x:137,y:94),.init(x:137,y:106),.init(x:125,y:106)]
-    let whole=try XCTUnwrap(source.selection(polygon:polygon,surface:surface,origin:nil,bounds:nil,wholeContacts:true))
+    let whole=try XCTUnwrap(source.wholeContacts(polygon:polygon,surface:surface,origin:nil,bounds:nil).first?.material)
     XCTAssertEqual(whole.graphic.sourceInkIDs,[id])
     XCTAssertEqual(whole.graphic.freehand?.layers.compactMap(\.measured?.span),[0,1])
     XCTAssertLessThan(whole.selectionFrame.x,100)
     XCTAssertGreaterThan(whole.selectionFrame.x+whole.selectionFrame.width,580)
     XCTAssertEqual(whole.graphic.freehand?.layers.compactMap(\.measured?.measurements),spans)
     let region=try XCTUnwrap(source.selection(polygon:polygon,surface:surface,origin:nil,bounds:nil))
-    XCTAssertFalse(region.selectsWholeContacts)
     XCTAssertEqual(region.polygon,polygon)
     XCTAssertEqual(region.selectionFrame.width,12,accuracy:1e-8)
+  }
+
+  func testWholeContactQueryKeepsPainterOrderCutsAndRejectsAnUnsupportedContact() throws {
+    let surface=SurfaceID.page(UUID())
+    func action(_ tool:SpatialInkTool,_ y:Double,_ width:Double) -> PageInkAction {
+      .init(tool:tool,samples:[100.0,700].map { x in .init(point:.init(x:x,y:y),timeOffset:0,
+        width:width,opacity:1,force:1,azimuth:0,altitude:.pi/2) })
+    }
+    let erased=action(.pen,200,8),eraser=action(.eraser,200,30),top=action(.pen,200,8)
+    let page=PageInkDrawing(actions:[erased,eraser,top])
+    let source=try NotebookLassoInkSource.Prepared(revision:"painter",
+      entries:page.actions.map { .init(id:$0.id,tool:$0.tool,color:$0.color,sources:[.init($0)]) },
+      surface:surface,origin:nil,excluding:[])
+    let polygon=[SpatialPoint(x:180,y:190),.init(x:220,y:190),.init(x:220,y:210),.init(x:180,y:210)]
+    let whole=try source.wholeContacts(polygon:polygon,surface:surface,origin:nil,bounds:nil)
+    XCTAssertEqual(whole.map(\.actionID),[top.id],"A surviving neighbour does not revive a fully erased contact")
+    XCTAssertEqual(whole.first?.material.graphic.freehand?.layers.compactMap(\.measured?.sourceID),[top.id],
+      "An earlier eraser cannot cut a later pen")
+    XCTAssertEqual(try source.wholeContacts(polygon:polygon,surface:surface,origin:nil,bounds:nil,topmostOnly:true).map(\.actionID),[top.id])
+    let other=action(.pen,200,8)
+    let unsupported=try NotebookLassoInkSource.Prepared(revision:"cross-surface",
+      entries:[.init(id:other.id,tool:.pen,color:other.color,sources:[.init(other)],allowsWholeContact:false)],
+      surface:surface,origin:nil,excluding:[])
+    XCTAssertThrowsError(try unsupported.wholeContacts(polygon:polygon,surface:surface,origin:nil,bounds:nil)) {
+      XCTAssertEqual(($0 as? CollaborationError)?.code,"unsupported_selection")
+    }
+  }
+
+  func testWholeContactQueryRejectsThirtyThreeMembersRatherThanAggregatingThem() throws {
+    let surface=SurfaceID.page(UUID())
+    let actions=(0..<33).map { index in PageInkAction(tool:.pen,samples:[100.0,700].map { x in
+      .init(point:.init(x:x,y:Double(index)*10+100),timeOffset:0,width:4,opacity:1,force:1,azimuth:0,altitude:.pi/2)
+    }) }
+    let source=try NotebookLassoInkSource.Prepared(revision:"33-members",
+      entries:actions.map { .init(id:$0.id,tool:$0.tool,color:$0.color,sources:[.init($0)]) },
+      surface:surface,origin:nil,excluding:[])
+    let polygon=[SpatialPoint(x:190,y:90),.init(x:210,y:90),.init(x:210,y:450),.init(x:190,y:450)]
+    XCTAssertThrowsError(try source.wholeContacts(polygon:polygon,surface:surface,origin:nil,bounds:nil)) {
+      XCTAssertEqual(($0 as? CollaborationError)?.code,"selection_limit")
+    }
+    let first=try XCTUnwrap(source.wholeContacts(polygon:polygon,surface:surface,origin:nil,bounds:nil,topmostOnly:true).first)
+    XCTAssertEqual(first.actionID,actions.last?.id)
+    XCTAssertEqual(first.material.graphic.sourceInkIDs,[first.actionID])
   }
 
   func testLassoKeepsAll8192AdmittedPointsAndRejectsOverflowWithoutLosingSelection() async throws {
@@ -286,7 +787,8 @@ import UIKit
       let address=NotebookToolAddress(surface:.page(page.id),boardID:nil,worldOrigin:nil,bounds:nil)
       let polygon=[SpatialPoint(x:90,y:90),.init(x:150,y:90),.init(x:150,y:210),.init(x:90,y:210)]
       @MainActor func lasso(_ mode:NotebookLassoMode) async throws {
-        model.selectDrawingTool(.lasso);model.drawingToolSettings.lassoMode=mode
+        try await self.showFixturePage(model,page.id)
+      model.selectDrawingTool(.lasso);model.drawingToolSettings.lassoMode=mode
         XCTAssertTrue(model.drawingTools.begin(at:polygon[0],address:address,screenScale:1))
         for point in polygon.dropFirst() { model.drawingTools.move(to:point) }
         model.drawingTools.finish()
@@ -497,6 +999,7 @@ import UIKit
       XCTAssertTrue(page.replaceDrawing(try PageInkDrawing(actions: [cut]).dataRepresentation(), actor: model.actorID))
       try model.store.savePage(page); await model.reloadExternalChanges()?.value
       let address = NotebookToolAddress(surface: .page(page.id), boardID: nil, worldOrigin: nil, bounds: nil)
+      try await self.showFixturePage(model,page.id)
       model.selectDrawingTool(.lasso)
       model.drawingToolSettings.lassoMode = .elements
       let polygon = [SpatialPoint(x: 90, y: 190), .init(x: 310, y: 190), .init(x: 310, y: 330), .init(x: 90, y: 330)]
@@ -610,6 +1113,7 @@ import UIKit
       let text=try XCTUnwrap(model.beginToolText(at:.init(x:120,y:120),address:address,screenScale:1))
       model.commitNativeText(reference:address.reference(text),text:"Object",finish:true)
       await assertSaved(model);await model.reloadExternalChanges()?.value
+      try await self.showFixturePage(model,page.id)
       model.selectDrawingTool(.lasso);model.drawingToolSettings.lassoMode = .region
       @MainActor func lasso(_ polygon:[SpatialPoint]) {
         XCTAssertTrue(model.drawingTools.begin(at:polygon[0],address:address,screenScale:1))
@@ -652,10 +1156,12 @@ import UIKit
       await model.reloadExternalChanges()?.value
       model.drawingTools.selectInk(at:.init(x:400,y:200),address:address,screenScale:1)
       let tapDeadline = ContinuousClock.now + .seconds(5)
-      while model.selectionSession.region?.materialization == nil,ContinuousClock.now < tapDeadline {
+      while model.drawingTools.pendingLasso != nil,ContinuousClock.now < tapDeadline {
         try await Task.sleep(for:.milliseconds(10))
       }
-      XCTAssertEqual(model.selectionSession.region?.rawInk?.graphic.sourceInkIDs,[raw.id])
+      XCTAssertNil(model.selectionSession.region)
+      XCTAssertEqual(model.selectionSession.ink.map(\.actionID),[raw.id])
+      XCTAssertEqual(model.selectionSession.ink.first?.material.graphic.freehand?.layers.first?.measured?.measurements,raw.samples)
       XCTAssertEqual(try model.store.loadPage(page.id).drawingData,try ink.dataRepresentation())
     }
   }
@@ -985,6 +1491,7 @@ import UIKit
       let graph=model.graphicGraph(page:try XCTUnwrap(model.activePage))
       let refs = try model.elementsIntersecting(enclosing,at:address,graph:graph)
       XCTAssertTrue(refs.contains(address.reference(text)))
+      try await self.showFixturePage(model,page.id)
       model.selectDrawingTool(.lasso)
       model.drawingToolSettings.lassoMode = .elements
       XCTAssertTrue(model.drawingTools.begin(at:enclosing[0],address:address,screenScale:1))
@@ -1180,4 +1687,18 @@ import UIKit
   override func preciseLocation(in view: UIView?) -> CGPoint { point }
   override func location(in view: UIView?) -> CGPoint { point }
   override func azimuthAngle(in view: UIView?) -> CGFloat { 0 }
+}
+
+
+/// Production page composition and its real input/publication consumer; this
+/// fixture does not impersonate an ink receiver or pre-convert a selection.
+private struct WholeSelectionTestPage:View {
+  @Environment(NotebookAppModel.self) private var model
+  let pageID:UUID
+  var body:some View {
+    if let page=model.pages[pageID] {
+      PageSurface(page:page,isCurrent:true,isInteractive:true,isVisible:true,
+        onRenderReady:.init { _ in }).ignoresSafeArea()
+    }
+  }
 }

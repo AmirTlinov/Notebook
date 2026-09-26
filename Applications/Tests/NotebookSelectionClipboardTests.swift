@@ -123,7 +123,8 @@ import XCTest
       let element=AgentElement(id:"measured",kind:.graphic,frame:frame,source:"",html:"",graphic:graphic)
       let page=PageDocument(size:.init(width:834,height:1194),actor:UUID(),elements:[element])
       let snapshot=NotebookSelectionExport(selectionID:UUID(),surface:.page(page.id),inkRevision:nil,
-        sourceChecks:[:],sources:[element],graph:page.graphicGraph(),rootOrigin:.zero,erasures:[:])
+        sourceChecks:[:],sources:[element],graph:page.graphicGraph(),rootOrigin:.zero,erasures:[:],
+        inkKeys:[element.id:.page(sequence:1,id:id)])
       let prepared=try snapshot.prepare().fragment
       let retained=prepared.elements[0].graphic!.freehand!.layers[0].measured!.measurements
       let encoded=try NotebookClipboard.prepareExport(prepared)

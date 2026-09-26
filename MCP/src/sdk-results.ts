@@ -96,10 +96,22 @@ const selected=z.discriminatedUnion("kind",[
   object({...selectionFields,kind:z.literal("empty")}),
   object({...selectionFields,kind:z.literal("item"),itemID:id}),
   object({...selectionFields,kind:z.literal("element"),target:targetSchema,elementID:text}),
-  object({...selectionFields,kind:z.literal("elements"),target:targetSchema,elementIDs:z.array(text).max(32),itemIDs:z.array(id).max(32).optional()}),
+  object({...selectionFields,kind:z.literal("elements"),target:targetSchema,elementIDs:z.array(text).max(32),itemIDs:z.array(id).max(32).optional(),inkActionIDs:z.array(id).min(1).max(32).optional()}),
   object({...selectionFields,kind:z.literal("region"),target:targetSchema,region:z.array(point).min(3).max(8192),worldOrigin:worldPointSchema.optional()}),
   object({...selectionFields,kind:z.literal("context")}),
-  object({...selectionFields,kind:z.literal("reference"),reference:referenceSchema})]);
+  object({...selectionFields,kind:z.literal("reference"),reference:referenceSchema})]).superRefine((value,context)=>{
+  if(value.kind!=="elements"){
+    if("inkActionIDs" in value) context.addIssue({code:"custom",path:["inkActionIDs"],message:"Raw contacts belong only to an elements selection."});
+    return;
+  }
+  const elementIDs=value.elementIDs, itemIDs=value.itemIDs??[], inkActionIDs=value.inkActionIDs??[];
+  const count=elementIDs.length+itemIDs.length+inkActionIDs.length;
+  if(count<(inkActionIDs.length?1:2)||count>32) context.addIssue({code:"custom",message:"Select one to 32 complete members; a singleton set must be raw ink."});
+  for(const [key,ids] of [["elementIDs",elementIDs],["itemIDs",itemIDs],["inkActionIDs",inkActionIDs]] as const){
+    if(new Set(ids).size!==ids.length) context.addIssue({code:"custom",path:[key],message:"Selection member IDs must be unique."});
+  }
+  if(itemIDs.length&&value.target.kind!=="board") context.addIssue({code:"custom",path:["itemIDs"],message:"Cards require their board target."});
+});
 const selection=z.discriminatedUnion("status",[
   object({status:z.literal("known"),deviceID:id,sessionID:id,generation:number,selection:selected}),
   object({status:z.literal("unknown"),deviceID:id.optional(),sessionID:id.optional(),generation:number.optional()})]);

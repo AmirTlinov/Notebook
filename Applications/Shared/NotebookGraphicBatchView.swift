@@ -33,6 +33,10 @@ struct NotebookGraphicBatchView: View {
         width: local.width * scale, height: local.height * scale))
     }
   }
+  private func ordered(_ id:String)->Bool {
+    guard let node=graph.node(id),node.placement.parentID == nil else {return false}
+    return node.graphic.sourceInkContactID != nil
+  }
   private var editingID: String? {
     guard commitsState, case .board(let boardID, let id) = model.interactiveElementFocus,
       boardID == run.plane.boardID else { return nil }
@@ -53,7 +57,7 @@ struct NotebookGraphicBatchView: View {
       ForEach(paintRuns(objects.filter { $0.id != editingID }, erasures:erasures)) { part in
         if part.isMaterial,let object=part.objects.first {
           NotebookGraphicView(graphic:graph.nodes[object.id]!.graphic,layout:object.layout,
-            erasures:erasures[object.id] ?? [],appearance:appearances[object.id])
+            erasures:erasures[object.id] ?? [],appearance:appearances[object.id],paintsMeasuredBody:!ordered(object.id))
             .environment(\.inkMaterialReadiness,materialReadiness(object.id))
             .frame(width:object.layout.frame.width,height:object.layout.frame.height)
             .scaleEffect(scale)
@@ -85,7 +89,7 @@ struct NotebookGraphicBatchView: View {
       .allowsHitTesting(false)
       if let object = objects.first(where: { $0.id == editingID }) {
         NotebookGraphicElementView(graphic: graph.nodes[object.id]!.graphic, reference: reference(object.id), layout: object.layout,
-          erasures:erasures[object.id] ?? [],appearance:appearances[object.id])
+          erasures:erasures[object.id] ?? [],appearance:appearances[object.id],paintsMeasuredBody:!ordered(object.id))
           .frame(width: object.layout.frame.width, height: object.layout.frame.height)
           .environment(\.inkMaterialReadiness,materialReadiness(object.id))
           .scaleEffect(scale)

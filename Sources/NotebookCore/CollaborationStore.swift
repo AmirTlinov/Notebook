@@ -961,6 +961,9 @@ struct CollaborationWorkspace {
         guard let raw = op.values["graphic"] else { throw invalid("Нужна нативная геометрия.") }
         let graphic = try raw.decode(NotebookGraphic.self)
         guard graphic.isValid else { throw invalid("Недопустимая геометрия.") }
+        guard graphic.sourceInkContactID == nil || value["parentID"] == nil else {
+          throw CollaborationError("unsupported_operation","Принятый рукописный контакт сохраняет свой порядок вне группы.")
+        }
         if op.kind == .convertInkToElement { try validateGraphicSources(graphic, target: op.target, elements: elements) }
         else if !graphic.sourceInkIDs.isEmpty { throw invalid("Исходные штрихи назначает только преобразование.") }
         value["graphic"] = try .encode(graphic)
@@ -984,6 +987,10 @@ struct CollaborationWorkspace {
         : Set(["frame", "parentID", "basis", "source", "html", "css", "javaScript", "programPackage", "graphic", "textStyle"]
           + (op.target.kind == .page ? [] : ["worldOrigin"]))
       guard !op.values.isEmpty, Set(op.values.keys).isSubset(of: allowed) else { throw invalid("Поля изменения принадлежат выбранной операции.") }
+      if let parent=op.values["parentID"],parent != .null,
+        let graphic=try elements[index]["graphic"]?.decode(NotebookGraphic.self),graphic.sourceInkContactID != nil {
+        throw CollaborationError("unsupported_operation","Принятый рукописный контакт сохраняет свой порядок вне группы.")
+      }
       for (key, value) in op.values {
         if key == "graphic" {
           guard let raw = elements[index]["graphic"] else { throw invalid("Элемент не содержит геометрии.") }
@@ -1000,6 +1007,7 @@ struct CollaborationWorkspace {
         elements[index] = elements[index].setting("graphic", graphic.setting("visible", .bool(false)))
       } else { elements.remove(at: index) }
     case .reorderElements:
+      let originalElements=elements
       if op.target.kind == .page {
         elements = try reordered(elements, values: op.values)
       } else {
@@ -1007,6 +1015,11 @@ struct CollaborationWorkspace {
         let indices = try elements.indices.filter { try elements[$0]["surface"]!.decode(SurfaceID.self) == surface }
         let ordered = try reordered(indices.map { elements[$0] }, values: op.values)
         for (offset, index) in indices.enumerated() { elements[index] = ordered[offset] }
+      }
+      let positions=Dictionary(uniqueKeysWithValues:elements.enumerated().compactMap { i,value in value["id"]?.string.map {($0,i)} })
+      for (position,element) in originalElements.enumerated() {
+        guard let id=element["id"]?.string,let graphic=try element["graphic"]?.decode(NotebookGraphic.self),graphic.sourceInkContactID != nil else {continue}
+        guard positions[id] == position else {throw CollaborationError("unsupported_operation","Порядок принятого рукописного контакта сохраняется при перемещении.")}
       }
     default: break
     }

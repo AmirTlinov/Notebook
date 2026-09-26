@@ -194,6 +194,41 @@ final class SceneCompositionRenderer {
     return .init(png: png, diagnostics: canvas.diagnostics)
   }
 
+  /// Transparent ink proof shares the scene's finite element traversal and
+  /// ordered raw/contact plan. It must not reread only the raw journal: moved
+  /// contacts can be visible while their original measurements are offscreen.
+  func renderInk(presence: SessionPresence, coverID: UUID? = nil, scale: Double = 2) async throws -> Result? {
+    defer { finishPreparation() }
+    try checkPreparation()
+    guard try await source.boardExists(presence.boardID) else { throw SceneRenderError.snapshotPending("board_source") }
+    let size: CGSize
+    if let coverID {
+      guard let item = try await source.item(coverID, presence: presence) else {
+        throw SceneRenderError.snapshotPending("cover_source")
+      }
+      size = .init(width: item.geometry.width, height: item.geometry.height)
+    } else { size = .init(width: presence.viewport.x, height: presence.viewport.y) }
+    let canvas = try await SceneRasterCompositor.create(size: size, scale: scale,
+      resources: resources, permitsPreparation: permitsPreparation)
+    let frame = CGRect(origin: .zero, size: size)
+    let hasInk: Bool
+    if let coverID {
+      let elements = try await paintCoverElements(itemID: coverID, boardID: presence.boardID,
+        bounds: .init(origin: .zero, width: size.width, height: size.height),
+        frame: frame, projection: 1, range: .whole(.ink), canvas: canvas)
+      hasInk = try await paintInk(.cover(coverID), camera: nil, size: size, frame: frame,
+        orderedElements: elements, canvas: canvas)
+    } else {
+      hasInk = try await paintBoard(presence: presence, frame: frame, visible: frame,
+        transitionViewport: presence.viewport, passes: WorkspaceSceneProjection.portalPasses,
+        range: .whole(.ink), canvas: canvas)
+    }
+    try await source.validate()
+    guard hasInk else { return nil }
+    let png = try await canvas.finishPNG()
+    return .init(png: png, diagnostics: canvas.diagnostics)
+  }
+
   /// A tile owns transparent pixels of precisely one static painter range.
   /// The live board grid, ink and excluded owners are not duplicated here.
   func renderTile(key: SceneCompositionTileKey, presentation: SessionPresence) async throws -> RasterLease {
@@ -218,7 +253,7 @@ final class SceneCompositionRenderer {
         transitionViewport: presentation.viewport, passes: WorkspaceSceneProjection.portalPasses,
         range: key.range, itemPresentation: presentation, canvas: canvas)
     case .cover(let boardID, let itemID):
-      try await paintCoverElements(itemID: itemID, boardID: boardID, bounds: tile.bounds,
+      _ = try await paintCoverElements(itemID: itemID, boardID: boardID, bounds: tile.bounds,
         frame: frame, projection: cameraScale, range: key.range, canvas: canvas)
     }
     try await source.validate(); try checkPreparation()
@@ -227,12 +262,13 @@ final class SceneCompositionRenderer {
     return raster
   }
 
+  @discardableResult
   private func paintBoard(presence: SessionPresence, frame: CGRect, visible: CGRect,
     transitionViewport: SpatialPoint, passes: Int, range: ScenePaintRange? = nil,
-    itemPresentation: SessionPresence? = nil, canvas: SceneRasterCompositor) async throws {
+    itemPresentation: SessionPresence? = nil, canvas: SceneRasterCompositor) async throws -> Bool {
     try checkPreparation()
     let visible = visible.intersection(frame)
-    guard !visible.isNull, !visible.isEmpty else { return }
+    guard !visible.isNull, !visible.isEmpty else { return false }
     let projection = frame.width / presence.viewport.x
     let localVisible = CGRect(x: (visible.minX - frame.minX) / projection,
       y: (visible.minY - frame.minY) / projection,
@@ -246,24 +282,25 @@ final class SceneCompositionRenderer {
       try await canvas.drawBoardGrid(camera: presence.camera,
         size: .init(width: presence.viewport.x, height: presence.viewport.y), in: frame)
     }
-    if range?.layer == .ink {
-      try await paintInk(.board(presence.boardID), camera: presence.camera,
-        size: .init(width: presence.viewport.x, height: presence.viewport.y), frame: frame, canvas: canvas)
-      return
-    }
+    let paintsInk = range == nil || range?.layer == .ink
+    var orderedElements: [SceneCompositionSource.ElementPaint] = []
     var paintedInk = false
+    var hasInk = false
     var cursor: SceneCompositionReadCursor?
     repeat {
       try checkPreparation()
       let page = try await source.readPaintOrder(boardID: presence.boardID, bounds: bounds, after: cursor)
       cursor = page.next
       for entry in page.entries {
-        if case .item = entry.id, range == nil, !paintedInk {
-          try await paintInk(.board(presence.boardID), camera: presence.camera,
-            size: .init(width: presence.viewport.x, height: presence.viewport.y), frame: frame, canvas: canvas)
+        if case .item = entry.id, paintsInk, !paintedInk {
+          hasInk = try await paintInk(.board(presence.boardID), camera: presence.camera,
+            size: .init(width: presence.viewport.x, height: presence.viewport.y), frame: frame,
+            orderedElements: orderedElements, canvas: canvas)
+          orderedElements.removeAll()
           paintedInk = true
+          if range?.layer == .ink { return hasInk }
         }
-        guard range?.contains(entry) ?? true else { continue }
+        guard range?.layer == .ink || (range?.contains(entry) ?? true) else { continue }
         switch entry.id {
         case .element(let id):
           guard let read = try await source.readElementForPaint(id, boardID: presence.boardID) else { continue }
@@ -275,7 +312,18 @@ final class SceneCompositionRenderer {
           let rect = CGRect(x: frame.minX + screen.x * projection, y: frame.minY + screen.y * projection,
             width: local.width * presence.camera.scale * projection,
             height: local.height * presence.camera.scale * projection)
-          if rect.intersects(visible) { try await paintElement(read, boardID: presence.boardID, frame: rect, canvas: canvas, presentation:presentation) }
+          if isOrderedInk(read) {
+            if paintsInk, rect.intersects(visible) {
+              guard orderedElements.count < 8192 else { throw SceneRenderError.resourceLimit }
+              orderedElements.append(read)
+            }
+            if range?.layer != .ink, read.element.graphic?.label.isEmpty == false, rect.intersects(visible) {
+              try await paintElement(read, boardID: presence.boardID, frame: rect, canvas: canvas,
+                presentation: presentation, paintsMeasuredBody: false)
+            }
+          } else if range?.layer != .ink, rect.intersects(visible) {
+            try await paintElement(read, boardID: presence.boardID, frame: rect, canvas: canvas, presentation:presentation)
+          }
         case .item(let id):
           guard let item = try await source.item(id, presence: itemPresentation ?? presence) else { continue }
           let screen = presence.camera.worldToScreen(item.center, viewport: presence.viewport)
@@ -293,44 +341,65 @@ final class SceneCompositionRenderer {
       }
       await Task.yield()
     } while cursor != nil
-    if range == nil, !paintedInk {
-      try await paintInk(.board(presence.boardID), camera: presence.camera,
-        size: .init(width: presence.viewport.x, height: presence.viewport.y), frame: frame, canvas: canvas)
+    if paintsInk, !paintedInk {
+      hasInk = try await paintInk(.board(presence.boardID), camera: presence.camera,
+        size: .init(width: presence.viewport.x, height: presence.viewport.y), frame: frame,
+        orderedElements: orderedElements, canvas: canvas)
     }
+    return hasInk
   }
 
+  private func isOrderedInk(_ read: SceneCompositionSource.ElementPaint) -> Bool {
+    read.element.parentID == nil && read.layout != nil
+      && read.element.graphic?.sourceInkContactID != nil
+  }
+
+  @discardableResult
   private func paintInk(_ surface: SurfaceID, camera: SpatialCamera?, size: CGSize,
-    frame: CGRect, canvas: SceneRasterCompositor) async throws {
+    frame: CGRect, orderedElements: [SceneCompositionSource.ElementPaint], canvas: SceneRasterCompositor) async throws -> Bool {
     let bounds = camera.map { WorkspaceSpatialBounds(origin: $0.screenToWorld(.zero, viewport: .init(x: size.width, y: size.height)),
       width: size.width / $0.scale, height: size.height / $0.scale) }
       ?? .init(origin: .zero, width: size.width, height: size.height)
-    let journal = try await source.ink(surface, bounds: bounds)
-    guard journal.actions.contains(where: { $0.isActive && $0.spans.contains(where: { $0.surface == surface }) }) else { return }
-    try await canvas.drawInk(surface: surface, journal: journal, camera: camera, size: size, in: frame)
+    let ink = try await source.ink(surface, bounds: bounds, orderedElements: orderedElements)
+    guard !ink.plan.isEmpty || ink.journal.actions.contains(where: { $0.isActive && !ink.plan.suppressedInkIDs.contains($0.id)
+      && $0.spans.contains(where: { $0.surface == surface }) }) else { return false }
+    try await canvas.drawInk(surface: surface, journal: ink.journal, plan: ink.plan, camera: camera, size: size, in: frame)
+    return true
   }
 
   private func paintCoverElements(itemID: UUID, boardID: UUID, bounds: WorkspaceSpatialBounds,
-    frame: CGRect, projection: Double, range: ScenePaintRange? = nil, canvas: SceneRasterCompositor) async throws {
+    frame: CGRect, projection: Double, range: ScenePaintRange? = nil, canvas: SceneRasterCompositor) async throws -> [SceneCompositionSource.ElementPaint] {
+    var orderedElements: [SceneCompositionSource.ElementPaint] = []
     var cursor: SceneCompositionReadCursor?
     repeat {
       try checkPreparation()
       let page = try await source.readPaintOrder(boardID: boardID, coverID: itemID, bounds: bounds, after: cursor)
       cursor = page.next
-      for entry in page.entries where range?.contains(entry) ?? true {
+      for entry in page.entries where range?.layer == .ink || (range?.contains(entry) ?? true) {
         guard case .element(let id) = entry.id else {
           throw SceneRenderError.snapshotPending("cover_element_source")
         }
         guard let read = try await source.readElementForPaint(id, boardID: boardID) else { continue }
+        let ordered = isOrderedInk(read)
+        if ordered {
+          if range == nil || range?.layer == .ink {
+            guard orderedElements.count < 8192 else { throw SceneRenderError.resourceLimit }
+            orderedElements.append(read)
+          }
+          if read.element.graphic?.label.isEmpty != false { continue }
+        }
+        guard range?.layer != .ink else { continue }
         let layout = read.layout
         let presentation = read.placement.map { NotebookElementPresentation(read.element, placement: $0) }
         guard let local=layout?.frame ?? presentation?.frame else { continue }
         let delta = bounds.origin.delta(to: .init(x: local.x, y: local.y))
         try await paintElement(read, boardID: boardID, frame: .init(x: frame.minX + delta.x * projection,
           y: frame.minY + delta.y * projection, width: local.width * projection,
-          height: local.height * projection), canvas: canvas, presentation:presentation)
+          height: local.height * projection), canvas: canvas, presentation:presentation, paintsMeasuredBody: !ordered)
       }
       await Task.yield()
     } while cursor != nil
+    return orderedElements
   }
 
   private func paintCover(_ item: RenderedWorkspaceItem, boardID: UUID, frame: CGRect, visible: CGRect,
@@ -377,15 +446,16 @@ final class SceneCompositionRenderer {
       let bounds = WorkspaceSpatialBounds(origin: .init(x: (visible.minX - frame.minX) / projection,
         y: (visible.minY - frame.minY) / projection), width: visible.width / projection, height: visible.height / projection)
       let contentFrame = CGRect(x: visible.minX, y: visible.minY, width: visible.width, height: visible.height)
-      try await paintCoverElements(itemID: item.id, boardID: boardID, bounds: bounds,
+      let orderedElements = try await paintCoverElements(itemID: item.id, boardID: boardID, bounds: bounds,
         frame: contentFrame, projection: projection, canvas: canvas)
-      try await paintInk(.cover(item.id), camera: nil, size: size, frame: frame, canvas: canvas)
+      try await paintInk(.cover(item.id), camera: nil, size: size, frame: frame,
+        orderedElements: orderedElements, canvas: canvas)
     }
     try await canvas.popClip()
   }
 
   private func paintElement(_ read: SceneCompositionSource.ElementPaint, boardID: UUID, frame: CGRect, canvas: SceneRasterCompositor,
-    presentation:NotebookElementPresentation?) async throws {
+    presentation:NotebookElementPresentation?, paintsMeasuredBody: Bool = true) async throws {
     try checkPreparation()
     let element = read.element, graphicLayout = read.layout, erasures = read.erasures
     let appearance = element.graphic != nil || element.kind == .nativeText
@@ -394,7 +464,7 @@ final class SceneCompositionRenderer {
     if let graphic = element.graphic {
       if graphic.showsGeometry {
         let size = graphicLayout?.frame ?? .init(x:0,y:0,width:element.frame.width,height:element.frame.height)
-        try await canvas.drawView(NotebookGraphicView(graphic: graphic,layout:graphicLayout, erasures: erasures, appearance: appearance,live:false),
+        try await canvas.drawView(NotebookGraphicView(graphic: graphic,layout:graphicLayout, erasures: erasures, appearance: appearance,live:false,paintsMeasuredBody:paintsMeasuredBody),
           size: .init(width: size.width, height: size.height), in: frame)
       }
       return

@@ -3033,13 +3033,46 @@ final class NotebookAppModel {
     if selectionSession.element != reference { replaceSelection(.element(reference)) }
   }
 
-  func selectElements(_ references: [EditableElementReference], items: [NotebookSelectedItem] = []) {
-    let refs = Array(Set(references)).sorted { String(describing:$0) < String(describing:$1) }
-    let items = Array(Set(items)).sorted { $0.itemID.uuidString < $1.itemID.uuidString }
-    guard refs.count+items.count <= 32 else { showCue("Выберите не более 32 объектов за один раз."); return }
-    if items.isEmpty { replaceSelection(refs.isEmpty ? nil : refs.count == 1 ? .element(refs[0]) : .elements(refs)) }
-    else if refs.isEmpty, items.count == 1 { replaceSelection(.item(boardID:items[0].boardID,itemID:items[0].itemID)) }
-    else { replaceSelection(.elements(refs,items:items)) }
+  @discardableResult
+  func selectElements(_ references:[EditableElementReference],items:[NotebookSelectedItem] = [],
+    ink:[NotebookSelectedInk] = []) -> Bool {
+    let refs=Array(Set(references)).sorted { String(describing:$0)<String(describing:$1) }
+    let items=Array(Set(items)).sorted { $0.itemID.uuidString<$1.itemID.uuidString }
+    var raw:[NotebookSelectedInk]=[],seen:[NotebookSelectedInk.Key:String]=[:]
+    for member in ink {
+      if let revision=seen[member.key] {
+        guard revision == member.revision else { showCue("Рукопись изменилась. Повторите выделение.");return false }
+      } else { seen[member.key]=member.revision;raw.append(member) }
+    }
+    guard refs.count+items.count+raw.count<=32 else { showCue("Выберите не более 32 объектов за один раз.");return false }
+    if let first=raw.first {
+      guard raw.allSatisfy({ $0.address.target == first.address.target && $0.revision == first.revision }),
+        refs.allSatisfy({ nativeElementSource($0)?.target == first.address.target }),
+        items.allSatisfy({ first.address.target.kind == .board && $0.boardID == first.address.target.id }) else {
+        showCue("Рукопись и объекты можно выбрать вместе только на одной поверхности.");return false
+      }
+      guard selectionAddressIsCurrent(first.address),selectionInkRevision(first.address.surface) == first.revision else {
+        showCue("Рукопись изменилась. Повторите выделение.");return false
+      }
+      replaceSelection(.elements(refs,items:items,ink:raw.sorted { $0.painterOrder<$1.painterOrder }))
+    } else if items.isEmpty {
+      replaceSelection(refs.isEmpty ? nil : refs.count == 1 ? .element(refs[0]) : .elements(refs))
+    } else if refs.isEmpty,items.count == 1 {
+      replaceSelection(.item(boardID:items[0].boardID,itemID:items[0].itemID))
+    } else { replaceSelection(.elements(refs,items:items)) }
+    return true
+  }
+
+  func selectionAddressIsCurrent(_ address:NotebookToolAddress) -> Bool {
+    guard let presence else { return false }
+    switch address.surface.kind {
+    case .page: return presence.mode == .page && presence.notebookPageID == address.surface.ownerID
+    case .board: return presence.mode == .board && presence.boardID == address.surface.ownerID
+    case .cover:
+      return presence.boardID == address.boardID && (presence.mode == .board
+        || (presence.mode == .cover && presence.focusedItemID == address.surface.ownerID))
+    case .codeFragment: return false
+    }
   }
 
   func selectRegion(_ region: NotebookRegionSelection) {
@@ -3079,81 +3112,182 @@ final class NotebookAppModel {
   func graphicSelectionToggling(_ reference: EditableElementReference) -> [EditableElementReference]? {
     guard selectionSession.addingElements, let graphic = graphicElement(reference), graphic.showsGeometry,
       let target = nativeElementSource(reference)?.target,
-      selectionSession.elements.allSatisfy({ nativeElementSource($0)?.target == target }) else { return nil }
+      selectionSession.elements.allSatisfy({ nativeElementSource($0)?.target == target }),
+      selectionSession.ink.allSatisfy({ $0.address.target == target }),
+      selectionSession.items.allSatisfy({ target.kind == .board && $0.boardID == target.id }) else { return nil }
     var refs = selectionSession.elements
     if let index = refs.firstIndex(of:reference) { refs.remove(at:index) }
-    else if refs.count < 32 { refs.append(reference) }
+    else if selectionSession.count < 32 { refs.append(reference) }
     else { showCue("Выберите не более 32 объектов за один раз."); return nil }
     return refs
   }
 
   func toggleGraphicSelection(_ reference: EditableElementReference) {
     guard let refs = graphicSelectionToggling(reference) else { return }
-    guard !refs.isEmpty else { clearSelection(); return }
-    replaceSelection(refs.count == 1 ? .element(refs[0]) : .elements(refs))
+    guard selectElements(refs,items:selectionSession.items,ink:selectionSession.ink) else { return }
     selectionSession.addingElements = true
   }
 
-  private func selectedGraphicMembers() -> [NotebookGraphicSelection.Member]? {
-    let refs = selectionSession.elements
-    guard selectionSession.items.isEmpty,let first=refs.first,let target=nativeElementSource(first)?.target,
-      refs.allSatisfy({ nativeElementSource($0)?.target == target }),let graph=editingGraphicGraph(first) else { return nil }
-    let members = refs.compactMap { reference -> NotebookGraphicSelection.Member? in
-      guard let graphic = graphicElement(reference), graphic.showsGeometry,
-        let geometry = elementGeometry(reference),let resolved=graphicManipulationGeometry(reference,in:graph),
-        let source = nativeElementSource(reference) else { return nil }
-      if case .spatial = reference, let cohort = compositionTiles.published,
+  func removeInkFromMultipleSelection(_ key:NotebookSelectedInk.Key) {
+    guard selectionSession.addingElements,selectionSession.ink.contains(where:{$0.key == key}) else {return}
+    guard selectElements(selectionSession.elements,items:selectionSession.items,
+      ink:selectionSession.ink.filter{$0.key != key}) else {return}
+    selectionSession.addingElements=true
+  }
+
+  var canTransformSelection:Bool { selectionSession.manipulation?.selectionSource != nil || selectedGraphicMembers() != nil }
+  var canDeleteSelection:Bool { selectionSession.items.isEmpty || (selectionSession.ink.isEmpty && !selectionContainsSourceAnchoredInk) }
+
+  private func selectedGraphicMembers(deleting:Bool = false) -> [NotebookGraphicSelection.Member]? {
+    let refs=selectionSession.elements,ink=selectionSession.ink
+    guard selectionSession.items.isEmpty,!refs.isEmpty || !ink.isEmpty else { return nil }
+    let target=ink.first?.address.target ?? refs.first.flatMap { nativeElementSource($0)?.target }
+    guard let target,refs.allSatisfy({ nativeElementSource($0)?.target == target }),
+      ink.allSatisfy({ $0.address.target == target && selectionInkRevision($0.address.surface) == $0.revision }) else { return nil }
+    let graph=refs.first.flatMap(editingGraphicGraph)
+    var members:[NotebookGraphicSelection.Member]=[]
+    for reference in refs {
+      // Deletion needs the exact installed identities of ordered contacts,
+      // not transform geometry for unrelated text or other authored members.
+      if deleting, graphicElement(reference)?.sourceInkContactID == nil { continue }
+      guard let graphic=graphicElement(reference),graphic.showsGeometry,
+        let geometry=elementGeometry(reference),let graph,
+        let resolved=graphicManipulationGeometry(reference,in:graph),let source=nativeElementSource(reference) else { return nil }
+      if case .spatial=reference,let cohort=compositionTiles.published,
         presentedElement(reference,cohort:cohort) == nil,acceptedWorkingGraphic(reference) == nil { return nil }
-      return .init(id:source.id,frame:.init(x:geometry.frame.minX,y:geometry.frame.minY,width:geometry.frame.width,height:geometry.frame.height),
-        graphic:graphic,layout:resolved.display,body:resolved.body,placement:resolved.placement)
+      members.append(.init(id:source.id,frame:.init(x:geometry.frame.minX,y:geometry.frame.minY,
+        width:geometry.frame.width,height:geometry.frame.height),graphic:graphic,
+        layout:resolved.display,body:resolved.body,placement:resolved.placement))
     }
-    return members.count == refs.count ? members : nil
+    if deleting { return members }
+    let rawGraph=NotebookGraphicGraph(ink.map { $0.working.node })
+    for raw in ink {
+      guard let node=rawGraph.node(raw.memberID),let body=rawGraph.resolve(raw.memberID,space:.body).layout,
+        let layout=rawGraph.resolve(raw.memberID).layout else { return nil }
+      members.append(.init(id:raw.memberID,frame:raw.material.frame,graphic:raw.material.graphic,
+        layout:layout,body:body,placement:node.placement))
+    }
+    return members
+  }
+
+  private func selectionEditSource(deleting:Bool = false) -> NotebookSelectionEditSource? {
+    let references=selectionSession.elements,ink=selectionSession.ink
+    guard selectionSession.items.isEmpty,!references.isEmpty || !ink.isEmpty else { return nil }
+    guard let members=selectedGraphicMembers(deleting:deleting) else { return nil }
+    let address:NotebookToolAddress
+    if let raw=ink.first { address=raw.address }
+    else {
+      guard let first=references.first,let target=nativeElementSource(first)?.target,
+        let geometry=elementGeometry(first) else { return nil }
+      address = .init(surface:target.kind == .page ? .page(target.id) : target.kind == .cover ? .cover(target.id) : .board(target.id),
+        boardID:target.kind == .page ? nil : (target.boardID ?? target.id),worldOrigin:geometry.worldOrigin,bounds:geometry.bounds)
+    }
+    guard references.allSatisfy({ nativeElementSource($0)?.target == address.target }),
+      ink.allSatisfy({ $0.address.target == address.target && $0.revision == ink.first?.revision
+        && selectionInkRevision($0.address.surface) == $0.revision }) else { return nil }
+    var sources:[EditableElementReference:NotebookNativeElementSource]=[:]
+    var dependencies:[EditableElementReference:NotebookElementCommand]=[:]
+    let graph=references.first.flatMap(editingGraphicGraph)
+    for reference in references {
+      for id in [reference.elementID]+(graph?.placement(reference.elementID)?.ancestors ?? []) {
+        let ref=address.reference(id)
+        guard let source=acceptedElementSource(ref),source.target == address.target else { return nil }
+        sources[ref]=source;dependencies[ref]=elementCommandSources[ref]
+      }
+    }
+    guard sources.count+ink.count<=64 else { showCue("У выделения слишком много связанных исходников.");return nil }
+    return .init(selectionID:selectionSession.id,address:address,references:references,ink:ink,
+      sources:sources,dependencies:dependencies,members:members)
+  }
+
+  func selectionEditSourceIsCurrent(_ source:NotebookSelectionEditSource) -> Bool {
+    selectionSession.id == source.selectionID && selectionSession.ink == source.ink
+      && selectionSession.elements == source.references
+      && source.ink.allSatisfy { selectionInkRevision($0.address.surface) == $0.revision }
+      && selectionSourcesAreCurrent(source.sources,dependencies:source.dependencies)
   }
 
   @discardableResult
-  private func applySelectionEdits(_ edits: [NotebookGraphicSelection.Edit], summary: String) -> Bool {
-    let byID = Dictionary(uniqueKeysWithValues:selectionSession.elements.compactMap { reference in
-      nativeElementSource(reference).map { ($0.id,reference) }
-    })
-    do {
-      let operations = try edits.compactMap { edit -> NotebookElementEdit? in
-        guard let reference = byID[edit.id], let geometry = elementGeometry(reference),
-          let graphic = graphicElement(reference) else { return nil }
-        var values: [String:JSONValue] = [:]
-        let frame = PageRect(x:geometry.frame.minX,y:geometry.frame.minY,width:geometry.frame.width,height:geometry.frame.height)
-        if frame != edit.frame { values["frame"] = try .encode(edit.frame) }
-        if (elementCommandDrafts[reference]?.basis ?? nativeElementSource(reference)?.placementSource?.basis) != edit.basis {
-          values["basis"] = try .encode(edit.basis)
-        }
-        var patch: [String:JSONValue] = [:]
-        if graphic.connection != edit.graphic.connection { patch["connection"] = try .encode(edit.graphic.connection) }
-        if graphic.transform != edit.graphic.transform { patch["transform"] = try .encode(edit.graphic.transform) }
-        if graphic.style != edit.graphic.style { patch["style"] = try .encode(edit.graphic.style) }
-        if graphic.cornerRadius != edit.graphic.cornerRadius { patch["cornerRadius"] = try .encode(edit.graphic.cornerRadius) }
-        if !patch.isEmpty { values["graphic"] = .object(patch) }
-        return values.isEmpty ? nil : .init(reference:reference,kind:.updateElement,values:values)
+  private func applySelectionEdits(_ edits:[NotebookGraphicSelection.Edit],summary:String,
+    source frozen:NotebookSelectionEditSource? = nil,deleting:Bool = false,
+    presentation:NotebookSelectedInkPresentation? = nil) -> Bool {
+    guard let source=frozen ?? selectionEditSource(deleting:deleting),selectionEditSourceIsCurrent(source),
+      deleting || (edits.count == source.members.count && Set(edits.map(\.id)) == Set(source.members.map(\.id))) else { return false }
+    // Authored-only patches contain bounded poses/styles, never a measured
+    // body. Preserve their synchronous draft admission through the same helper.
+    if !source.needsOrderedPresentation {
+      do {
+        let prepared=try source.prepare(edits,deleting:deleting)
+        guard !prepared.edits.isEmpty else { return true }
+        guard let plan=prepareElementOperations(prepared.edits,summary:summary,
+          readSources:Array(prepared.sources.keys),frozenSources:prepared.sources,
+          frozenDependencies:source.dependencies) else { return false }
+        enqueueElementCommand(target:source.address.target,ready:plan)
+        if deleting { clearSelection() };return true
+      } catch { showCue(error.localizedDescription);return false }
+    }
+    let working:[NotebookWorkingGraphic]
+    do { working=try source.presentationWorking(for:edits,deleting:deleting) }
+    catch { showCue(error.localizedDescription);return false }
+    guard let presentation=presentation ?? NotebookSelectedInkPresentation(id:UUID(),source:source,model:self) else {
+      showCue("Дождитесь появления выбранного материала.");return false
+    }
+    let presentedBounds=selectionSession.manipulation?.frame
+      ?? NotebookGraphicSelection.bounds(source.members,relativeTo:source.members.first?.origin ?? .zero)
+    presentation.update(working,edits:edits,frame:presentedBounds);presentation.claim()
+    let preparation=Task.detached(priority:.userInitiated) { try source.prepare(edits,deleting:deleting) }
+    let pending=Task { [weak self] () throws -> NotebookElementCommandPlan in
+      let prepared=try await preparation.value
+      guard let self,let plan=prepareElementOperations(prepared.edits,summary:summary,
+        readSources:Array(prepared.sources.keys),insertionTarget:source.address.target,
+        expectedInkRevision:source.expectedInkRevision,previews:false,frozenSources:prepared.sources,
+        frozenDependencies:source.dependencies) else {
+        throw CollaborationError("revision_conflict","Не удалось подготовить всё выделение.")
       }
-      let sources=selectionSession.elements.flatMap { reference in
-        [reference]+(editingGraphicGraph(reference)?.placement(reference.elementID)?.ancestors ?? []).map { id in
-          switch reference { case .page(let owner,_): EditableElementReference.page(pageID:owner,elementID:id)
-            case .spatial(let owner,_): EditableElementReference.spatial(boardID:owner,elementID:id) }
-        }
+      return plan
+    }
+    let refs=source.references+source.ink.map { source.address.reference($0.memberID) }
+    // Typed previews and references are admitted with the existing command
+    // generation. Async body encoding cannot expose a snap-back after lift,
+    // or leave an unowned draft if preparation fails before its plan exists.
+    let batch=enqueueElementCommand(target:source.address.target,preparing:pending,reserving:refs,presentation:presentation)
+    let byID=Dictionary(uniqueKeysWithValues:edits.map { ($0.id,$0) })
+    for reference in source.references {
+      guard var pose=source.sources[reference]?.placementSource else { continue }
+      let original=source.sources[reference]?.page?.graphic ?? source.sources[reference]?.spatial?.graphic
+      let edit=byID[reference.elementID]
+      if let edit { pose.frame=edit.frame;pose.basis=edit.basis }
+      var graphic=edit?.graphic ?? original
+      if deleting { graphic?.visible=false }
+      elementCommandDrafts[reference] = .init(source:pose,graphic:graphic,removed:deleting)
+    }
+    updateWorkingGraphics(presentation.working)
+    acceptWorkingGraphics(presentation.working)
+    selectElements(deleting ? [] : refs)
+    let admission=Task { [weak self] in
+      _ = try? await batch.prepared()
+      if self?.pendingMaterialAdmissions[source.address.surface]?.id == batch.id {
+        self?.pendingMaterialAdmissions[source.address.surface]=nil
       }
-      return operations.isEmpty || performElementOperations(operations,summary:summary,readSources:Array(Set(sources)))
-    } catch { showCue(error.localizedDescription); return false }
+    }
+    pendingMaterialAdmissions[source.address.surface]=(batch.id,admission)
+    return true
   }
 
   func alignGraphicSelection(_ alignment: NotebookGraphicSelection.Alignment) {
     guard let members = selectedGraphicMembers() else { return }
-    _ = applySelectionEdits(NotebookGraphicSelection.aligned(members,to:alignment),summary:"Выровнять фигуры")
+    let aligned=Dictionary(uniqueKeysWithValues:NotebookGraphicSelection.aligned(members,to:alignment).map { ($0.id,$0) })
+    let edits=NotebookGraphicSelection.translated(members,by:.zero).map { aligned[$0.id] ?? $0 }
+    _ = applySelectionEdits(edits,summary:"Выровнять фигуры")
   }
 
   func transformGraphicSelection(radians: Double = 0, scale: Double = 1) {
     if let region=selectionSession.region { transformRegion(region,radians:radians,scale:scale);return }
     if transformSelectedGroup(radians:radians,scale:scale) { return }
-    guard let members = selectedGraphicMembers(), let first = selectionSession.elements.first else { return }
-    let edits = NotebookGraphicSelection.transformed(members,radians:radians,scale:scale)
-    if let bounds = elementGeometry(first)?.bounds,
+    guard let members=selectedGraphicMembers() else { return }
+    let edits=NotebookGraphicSelection.transformed(members,radians:radians,scale:scale)
+    let bounds=selectionSession.ink.first?.address.bounds ?? selectionSession.elements.first.flatMap { elementGeometry($0)?.bounds }
+    if let bounds,
       edits.contains(where: { !bounds.contains(CGRect(x:$0.frame.x,y:$0.frame.y,width:$0.frame.width,height:$0.frame.height)) }) {
       showCue("Для этого поворота или масштаба не хватает места на листе."); return
     }
@@ -3161,6 +3295,7 @@ final class NotebookAppModel {
   }
 
   func duplicateGraphicMaterial() {
+    if !selectionSession.ink.isEmpty || selectionContainsSourceAnchoredInk { duplicateMeasuredSelection();return }
     if let region=selectionSession.region,let prepared=region.materialization {
       let f=region.frame,bounds=region.address.bounds
       let offset=SpatialPoint(x:min(24,max(0,bounds.map { $0.maxX-f.x-f.width } ?? 24)),
@@ -3214,6 +3349,12 @@ final class NotebookAppModel {
   }
 
   func deleteSelectedContent() {
+    if !selectionSession.ink.isEmpty || selectionContainsSourceAnchoredInk {
+      guard canDeleteSelection,let source=selectionEditSource(deleting:true) else {
+        showCue("Эти объекты нельзя удалить вместе. Выберите рукопись отдельно от карточек.");return
+      }
+      _ = applySelectionEdits([],summary:"Удалить выделенное",source:source,deleting:true);return
+    }
     if let region=selectionSession.region,let prepared=region.materialization {
       do { _ = commitRegion(region,prepared:try prepared.deleting(),summary:"Удалить область лассо") }
       catch { showCue(error.localizedDescription) };return
@@ -3231,7 +3372,7 @@ final class NotebookAppModel {
 
   func deleteGraphicSelection() {
     guard selectedGraphicMembers() != nil else { return }
-    if performElementOperations(selectionSession.elements.map { .init(reference:$0,kind:.removeElement,values:[:]) },summary:"Удалить выбранные фигуры") { clearSelection() }
+    deleteSelectedContent()
   }
 
   func updateSelectionPreview(_ rect: CGRect?) {
@@ -3287,13 +3428,15 @@ final class NotebookAppModel {
     case .element(let reference):
       guard let source=nativeElementSource(reference) else { return nil }
       value.target=source.target;value.elementID=source.id
-    case .elements(let refs,let items):
-      let target = refs.first.flatMap { nativeElementSource($0)?.target }
+    case .elements(let refs,let items,let ink):
+      let target=ink.first?.address.target ?? refs.first.flatMap { nativeElementSource($0)?.target }
         ?? items.first.map { CollaborationTarget(kind:.board,id:$0.boardID) }
-      guard let target, refs.allSatisfy({ nativeElementSource($0)?.target == target }),
+      guard let target,refs.allSatisfy({ nativeElementSource($0)?.target == target }),
+        ink.allSatisfy({ $0.address.target == target }),
         items.allSatisfy({ target.kind == .board && $0.boardID == target.id }) else { return nil }
-      value.target = target; value.elementIDs = refs.compactMap { nativeElementSource($0)?.id }
-      value.itemIDs = items.isEmpty ? nil : items.map(\.itemID)
+      value.target=target;value.elementIDs=refs.map(\.elementID)
+      value.itemIDs=items.isEmpty ? nil : items.map(\.itemID)
+      value.inkActionIDs=ink.isEmpty ? nil : ink.map(\.actionID)
     case .region(let region):
       value.target=region.address.target;value.region=region.polygon;value.worldOrigin=region.address.worldOrigin
     case .reference(let reference): value.reference = reference
@@ -3355,6 +3498,12 @@ final class NotebookAppModel {
     if let region=selectionSession.region,region.reference == reference {
       return beginRegionManipulation(region,kind:kind)
     }
+    if selectionSession.elements.count>1 || !selectionSession.ink.isEmpty
+      || (graphicElement(reference)?.sourceInkContactID != nil
+        && editingGraphicGraph(reference)?.placement(reference.elementID)?.parentID == nil) {
+      guard selectionSession.contains(reference) else { return nil }
+      return beginSelectionManipulation(kind:kind)
+    }
     // A passive raster is selectable, but it is not a live manipulation owner.
     // Selection requests its ordinary scene admission; do not commit an
     // invisible drag while the installed cohort still owns baked pixels.
@@ -3388,20 +3537,44 @@ final class NotebookAppModel {
       contact.graphicCapture = .init(graph:captured,source:source,id:reference.elementID,closedGroup:closed)
     }
     contact.commandSource=elementCommandSources[reference]
-    if selectionSession.elements.count > 1 {
-      switch kind { case .move,.resize: break; default: return nil }
-      guard let members=selectedGraphicMembers(),let origin=members.first?.origin else { return nil }
-      let box=NotebookGraphicSelection.bounds(members,relativeTo:origin)
-      guard !box.isNull,box.width>0,box.height>0 else { return nil }
-      let capture=contact.graphicCapture
-      contact=NotebookElementManipulation(reference:reference,kind:kind,frame:box,bounds:geometry.bounds,worldOrigin:origin)
-      contact.graphicCapture=capture;contact.selectedMembers=members
-    }
     if !selectionSession.isInteractive { selectionSession.nativeText = nil }
     selectionSession.manipulation = contact
     inputGate.beginContact(source: contact.id)
     inputGate.registerFingerCancellation(source: contact.id) { [weak self] in self?.cancelElementManipulation(contact.id) }
     return contact.id
+  }
+
+  func beginSelectionManipulation(kind:NotebookElementManipulation.Kind) -> UUID? {
+    switch kind { case .move,.resize:break;default:return nil }
+    guard let source=selectionEditSource(),let origin=source.members.first?.origin,
+      inputGate.beginFingerSequence() != nil else { return nil }
+    let box=NotebookGraphicSelection.bounds(source.members,relativeTo:origin)
+    guard !box.isNull,box.width>0,box.height>0 else { return nil }
+    cancelElementManipulation()
+    var contact=NotebookElementManipulation(reference:nil,kind:kind,frame:box,
+      bounds:source.address.bounds,worldOrigin:origin)
+    contact.selectionSource=source;contact.selectedMembers=source.members
+    if source.needsOrderedPresentation {
+      guard let presentation=NotebookSelectedInkPresentation(id:contact.id,source:source,model:self) else {
+        showCue("Дождитесь появления выбранного материала.");return nil
+      }
+      contact.inkPresentation=presentation
+    }
+    if let reference=source.references.first,let graph=editingGraphicGraph(reference),let value=graph.source(reference.elementID) {
+      contact.graphicCapture = .init(graph:graph,source:value,id:reference.elementID)
+    }
+    selectionSession.manipulation=contact
+    inputGate.beginContact(source:contact.id)
+    inputGate.registerFingerCancellation(source:contact.id) { [weak self] in self?.cancelElementManipulation(contact.id) }
+    updateWholeSelectionPreview(contact)
+    return contact.id
+  }
+
+  private func updateWholeSelectionPreview(_ contact:NotebookElementManipulation) {
+    guard let source=contact.selectionSource,source.needsOrderedPresentation,
+      let working=try? source.presentationWorking(for:contact.selectedEdits,deleting:false) else { return }
+    contact.inkPresentation?.update(working,edits:contact.selectedEdits,frame:contact.frame)
+    updateWorkingGraphics(contact.inkPresentation?.working ?? working)
   }
 
   func beginRegionManipulation(_ region:NotebookRegionSelection,kind:NotebookElementManipulation.Kind) -> UUID? {
@@ -3427,7 +3600,10 @@ final class NotebookAppModel {
     let previous = manipulatedBindingTarget?.elementID
     selectionSession.manipulation?.update(translation:.init(x:translation.x,y:translation.y))
     selectionSession.manipulation?.bindEndpoint(manipulatedEndpointBinding(retaining:previous))
-    if let contact=selectionSession.manipulation,contact.region != nil { updateRegionPreview(contact) }
+    if let contact=selectionSession.manipulation {
+      if contact.region != nil { updateRegionPreview(contact) }
+      else if contact.selectionSource != nil { updateWholeSelectionPreview(contact) }
+    }
   }
 
   func updateRegionPoses(_ id:UUID,poses:[String:NotebookElementPlacement.Source]) {
@@ -3446,29 +3622,33 @@ final class NotebookAppModel {
       }
       return finishRegionManipulation(contact)
     }
-    cancelElementManipulation(id)
     if !contact.selectedMembers.isEmpty {
-      guard selectedGraphicMembers() == contact.selectedMembers else { return false }
-      guard contact.frame != contact.original,contact.selectedEdits.count == contact.selectedMembers.count else { return false }
-      return applySelectionEdits(contact.selectedEdits,summary:contact.kind == .move ? "Переместить выбранные фигуры" : "Изменить размер выбранных фигур")
+      guard let source=contact.selectionSource,selectionEditSourceIsCurrent(source),
+        contact.frame != contact.original,contact.selectedEdits.count == contact.selectedMembers.count else {
+        cancelElementManipulation(id);return false
+      }
+      let result=applySelectionEdits(contact.selectedEdits,summary:contact.kind == .move ? "Переместить выбранные фигуры" : "Изменить размер выбранных фигур",source:source,presentation:contact.inkPresentation)
+      cancelElementManipulation(id);return result
     }
+    cancelElementManipulation(id)
+    guard let reference=contact.reference else { return false }
     guard contact.frame != contact.original || contact.basis != contact.originalBasis || contact.connection != contact.originalConnection
       || contact.vertices != contact.originalVertices || contact.cornerRadius != contact.originalCornerRadius,
-      let current = elementGeometry(contact.reference), current.frame == contact.original,
+      let current = elementGeometry(reference), current.frame == contact.original,
       (current.identity == contact.identity || contactOwnSourceWasPublished(contact)),
-      graphicElement(contact.reference)?.connection == contact.originalConnection else { return false }
+      graphicElement(reference)?.connection == contact.originalConnection else { return false }
     if let placement=contact.placement {
-      if case .spatial(let boardID,let elementID)=contact.reference,let captured=contact.graphicCapture,captured.source.isGroup {
-        let source=elementCommandDrafts[contact.reference]?.source ?? nativeElementSource(contact.reference)?.placementSource
-        let desired=projectingGraphicCommands(boardHierarchy?.board(boardID)?.graphicGraph() ?? NotebookGraphicGraph([])) { .spatial(boardID:boardID,elementID:$0) }.placement(elementID)
+      if case .spatial(let boardID,let elementID)=reference,let captured=contact.graphicCapture,captured.source.isGroup {
+        let source=elementCommandDrafts[reference]?.source ?? nativeElementSource(reference)?.placementSource
+        let desired=projectingGraphicCommands(boardHierarchy?.board(boardID)?.graphicGraph() ?? NotebookGraphicGraph([]),holdingSelectedInk:false) { .spatial(boardID:boardID,elementID:$0) }.placement(elementID)
         guard source == captured.source,desired?.parentTransform == placement.parentTransform,desired?.origin == placement.origin else { return false }
       } else {
-        guard (graphicManipulationGeometry(contact.reference)?.placement ?? groupManipulationGeometry(contact.reference)?.placement ?? elementPresentation(contact.reference)?.placement) == placement else { return false }
+        guard (graphicManipulationGeometry(reference)?.placement ?? groupManipulationGeometry(reference)?.placement ?? elementPresentation(reference)?.placement) == placement else { return false }
       }
     } else if current.worldOrigin != contact.worldOrigin { return false }
     if contact.vertices != contact.originalVertices || contact.cornerRadius != contact.originalCornerRadius {
-      guard graphicElement(contact.reference).flatMap(NotebookGraphicGeometry.polygon) == contact.originalVertices,
-        (graphicElement(contact.reference)?.cornerRadius ?? 0) == contact.originalCornerRadius else { return false }
+      guard graphicElement(reference).flatMap(NotebookGraphicGeometry.polygon) == contact.originalVertices,
+        (graphicElement(reference)?.cornerRadius ?? 0) == contact.originalCornerRadius else { return false }
       var patch: [String:JSONValue] = [:]
       if contact.vertices != contact.originalVertices { patch["vertices"] = try? .encode(contact.vertices) }
       if contact.cornerRadius != contact.originalCornerRadius { patch["cornerRadius"] = .number(contact.cornerRadius) }
@@ -3476,7 +3656,7 @@ final class NotebookAppModel {
       if contact.frame != contact.original {
         values["frame"] = try? .encode(PageRect(x:contact.frame.minX,y:contact.frame.minY,width:contact.frame.width,height:contact.frame.height))
       }
-      return performElementOperation(.updateElement,reference:contact.reference,values:values,summary:"Изменить геометрию фигуры",readSources:contact.ancestorReferences,capture:contact.graphicCapture?.retaining(bounds:contact.presentedFrame),dependency:contact.commandSource)
+      return performElementOperation(.updateElement,reference:reference,values:values,summary:"Изменить геометрию фигуры",readSources:contact.ancestorReferences,capture:contact.graphicCapture?.retaining(bounds:contact.presentedFrame),dependency:contact.commandSource)
     }
     if let connection = contact.connection, connection != contact.originalConnection {
       guard let original = contact.originalConnection else { return false }
@@ -3491,7 +3671,7 @@ final class NotebookAppModel {
       if contact.frame != contact.original {
         values["frame"] = try? .encode(PageRect(x:contact.frame.minX,y:contact.frame.minY,width:contact.frame.width,height:contact.frame.height))
       }
-      return performElementOperation(.updateElement, reference: contact.reference,
+      return performElementOperation(.updateElement, reference: reference,
         values:values,summary:"Изменить связь",readSources:contact.ancestorReferences,capture:contact.graphicCapture?.retaining(bounds:contact.presentedFrame),dependency:contact.commandSource)
     }
     return commitElementFrame(contact)
@@ -3509,29 +3689,30 @@ final class NotebookAppModel {
   /// Preview and commit use the same completed rectangle. Storage changes the
   /// addressed material; it does not run a second resize calculation.
   private func commitElementFrame(_ contact: NotebookElementManipulation) -> Bool {
-    guard contact.identity != nil || contact.commandSource != nil else { return false }
+    guard let reference=contact.reference,contact.identity != nil || contact.commandSource != nil else { return false }
     let frame=contact.frame
-    return performElementOperation(.updateElement,reference:contact.reference,
+    return performElementOperation(.updateElement,reference:reference,
       values:["frame":(try? .encode(PageRect(x:frame.minX,y:frame.minY,width:frame.width,height:frame.height))) ?? .null]
         .merging(contact.basis == contact.originalBasis ? [:] : ["basis":(try? .encode(contact.basis)) ?? .null]) { _,new in new },
       summary:"Изменить положение объекта",readSources:contact.ancestorReferences,capture:contact.graphicCapture?.retaining(bounds:contact.presentedFrame),dependency:contact.commandSource)
   }
 
   private func contactOwnSourceWasPublished(_ contact:NotebookElementManipulation)->Bool {
-    guard let previous=contact.commandSource,let captured=contact.graphicCapture,
-      let current=acceptedElementSource(contact.reference),
-      elementCommandSources[contact.reference].map({ $0.id == previous.id }) ?? true else { return false }
+    guard let reference=contact.reference,let previous=contact.commandSource,let captured=contact.graphicCapture,
+      let current=acceptedElementSource(reference),
+      elementCommandSources[reference].map({ $0.id == previous.id }) ?? true else { return false }
     return current.placementSource == captured.source
-      && (current.page?.graphic ?? current.spatial?.graphic) == captured.graph.node(contact.reference.elementID)?.graphic
+      && (current.page?.graphic ?? current.spatial?.graphic) == captured.graph.node(reference.elementID)?.graphic
     // The captured predecessor's exact receipt is still checked by the writer.
   }
 
   func cancelElementManipulation(_ id: UUID? = nil) {
     guard let contact = selectionSession.manipulation, id == nil || contact.id == id else { return }
     selectionSession.manipulation = nil
-    if let prepared=contact.region?.materialization {
-      let ids=Set(prepared.working.map(\.id));removeWorkingGraphics { !$0.accepted && ids.contains($0.id) }
-    }
+    let ids=Set(contact.region?.materialization?.working.map(\.id) ?? [])
+      .union(contact.selectionSource?.ink.map(\.memberID) ?? [])
+    contact.inkPresentation?.cancel()
+    removeWorkingGraphics { !$0.accepted && ids.contains($0.id) && $0.inkPresentation == nil }
     inputGate.unregisterFingerCancellation(source: contact.id)
     inputGate.endContact(source: contact.id)
   }
@@ -3642,7 +3823,9 @@ final class NotebookAppModel {
   }
 
   func setGraphicStyle(reference: EditableElementReference, update: (inout NotebookGraphic.Style) -> Void) {
-    guard let original = graphicElement(reference)?.style else { return }
+    guard let graphic=graphicElement(reference),graphic.freehand == nil,
+      selectionSession.ink.isEmpty || !selectionSession.elements.contains(reference) else { return }
+    let original=graphic.style
     var style = original; update(&style)
     guard original != style, let value = try? JSONValue.encode(style) else { return }
     performElementOperation(.updateElement,reference:reference,values:["graphic":.object(["style":value])],summary:"Изменить оформление фигуры")
@@ -3795,7 +3978,9 @@ final class NotebookAppModel {
   /// is still being prepared. Later focus changes cannot cancel this writer.
   @discardableResult
   func enqueueElementCommand(target:CollaborationTarget,ready:NotebookElementCommandPlan? = nil,
-    preparing:Task<NotebookElementCommandPlan,Error>? = nil) -> NotebookElementCommandBatch {
+    preparing:Task<NotebookElementCommandPlan,Error>? = nil,
+    reserving reservedReferences:[EditableElementReference] = [],
+    presentation:NotebookSelectedInkPresentation? = nil) -> NotebookElementCommandBatch {
     let batch=NotebookElementCommandBatch(),actor=actorID
     let commandID=batch.id,generation=batch.generation
     let operation=Task { [weak self] () throws -> @Sendable (NotebookStore) throws -> NotebookElementCommandWriteResult in
@@ -3807,7 +3992,7 @@ final class NotebookAppModel {
       } else { throw CollaborationError("invalid_action","Не подготовлено изменение материала.") }
       try Task.checkCancellation()
       guard plan.target == target else { throw CollaborationError("invalid_action","Изменился адрес материала.") }
-      if ready == nil { registerElementCommand(plan,batch:batch);batch.resolve(.success(plan)) }
+      if ready == nil { registerElementCommand(plan,batch:batch,reserved:Set(reservedReferences));batch.resolve(.success(plan)) }
       var expected:[NotebookNativeElementSource]=[]
       for reference in plan.references {
         let source=plan.sources[reference]!
@@ -3838,29 +4023,42 @@ final class NotebookAppModel {
       }
       do {
         let receipt=try await saved.value,plan=try await batch.prepared()
+        presentation?.didAcceptSource()
+        for index in workingGraphics.indices where workingGraphics[index].inkPresentation === presentation && presentation != nil {
+          workingGraphics[index].publicationCursor=receipt.cursor
+          didChangeWorkingGraphics(on:[workingGraphics[index].surface])
+        }
         var results:[EditableElementReference:NotebookElementCommandResult]=[:]
         for reference in plan.references {
           if elementCommandSources[reference]?.id == generation { elementCommandSources[reference]?.cursor=receipt.cursor }
           let id=plan.sources[reference]!.id,source=receipt.sources.first { $0.id == plan.sources[reference]!.id }
           results[reference] = .init(page:source?.page,spatial:source?.spatial,boardHeader:receipt.header)
-          if plan.operations.contains(where:{ $0.id == id && [.convertInkToElement,.insertElement].contains($0.kind) }),
+          if presentation == nil,plan.operations.contains(where:{ $0.id == id && [.convertInkToElement,.insertElement].contains($0.kind) }),
             let index=workingGraphics.firstIndex(where:{ $0.id == id }) {
             let surface=workingGraphics[index].surface
-            workingGraphics[index].publicationCursor=receipt.cursor;didChangeWorkingGraphics(on:[surface])
+            workingGraphics[index].publicationCursor=receipt.cursor
+            workingGraphics[index].inkPresentation?.didAcceptSource()
+            didChangeWorkingGraphics(on:[surface])
           }
         }
         reloadExternalChanges();return results
       } catch {
         operation.cancel();preparing?.cancel();batch.resolve(.failure(error))
+        presentation?.commandFailed()
         pencilUndoHistory.discardCommand(domain:.init(target),actionID:commandID)
-        for reference in batch.admittedPlan?.references ?? [] {
-          if elementCommandSources[reference]?.id == generation { elementCommandDrafts[reference]=nil;elementCommandSources[reference]=nil }
+        for reference in Set(reservedReferences).union(batch.admittedPlan?.references ?? []) {
+          guard elementCommandSources[reference]?.id == generation else { continue }
+          elementCommandDrafts[reference]=nil;elementCommandSources[reference]=nil
+          let failedPresentation=presentation ?? workingGraphics.first { $0.id == reference.elementID }?.inkPresentation
+          failedPresentation?.commandFailed()
           cancelElementManipulationForFailedCommand(reference)
-          removeWorkingGraphics { $0.id == reference.elementID }
+          removeWorkingGraphics { $0.id == reference.elementID && $0.inkPresentation?.retiring != true
+            && (presentation == nil || $0.inkPresentation === presentation) }
         }
         showCue(error.localizedDescription);reloadExternalChanges();return nil
       }
     }
+    for reference in reservedReferences { registerElementCommand(reference,batch:batch) }
     if let ready { registerElementCommand(ready,batch:batch);batch.resolve(.success(ready)) }
     pencilUndoHistory.recordCommand(domain:.init(target),actionID:commandID)
     collaborationReadEpoch &+= 1
@@ -3870,11 +4068,17 @@ final class NotebookAppModel {
     return batch
   }
 
-  private func registerElementCommand(_ plan:NotebookElementCommandPlan,batch:NotebookElementCommandBatch) {
+  private func registerElementCommand(_ plan:NotebookElementCommandPlan,batch:NotebookElementCommandBatch,
+    reserved:Set<EditableElementReference> = []) {
     for operation in plan.operations {
       guard let reference=plan.references.first(where:{ $0.elementID == operation.id }) else { continue }
-      elementCommandSources[reference] = .init(id:batch.generation,task:Task { await batch.result.value?[reference] })
+      if reserved.contains(reference),elementCommandSources[reference]?.id != batch.generation { continue }
+      registerElementCommand(reference,batch:batch)
     }
+  }
+
+  private func registerElementCommand(_ reference:EditableElementReference,batch:NotebookElementCommandBatch) {
+    elementCommandSources[reference] = .init(id:batch.generation,task:Task { await batch.result.value?[reference] })
   }
 
   func nativeElementSource(_ reference: EditableElementReference) -> NotebookNativeElementSource? {
@@ -5560,6 +5764,12 @@ final class NotebookAppModel {
       let address = SceneSourceAddress(plane: plane, elementID: element.id)
       if element.kind == .nativeText || element.kind == .graphic {
         let graphic=graph.nodes[element.id]?.graphic
+        if graphic?.sourceInkContactID != nil,graph.node(element.id)?.placement.parentID == nil {
+          guard let plan=cohort.liveData.orderedInk[element.surface],
+            let canvas=compositionTiles.surfaceRegistry.canvas(for:element.surface),canvas.window != nil,
+            canvas.isStableFramePresented,canvas.orderedInkPlan == plan else {return false}
+          return true
+        }
         let layout=element.kind == .graphic ? graph.resolve(element.id).layout : nil
         let size=CGSize(width:element.basis?.size.x ?? layout?.frame.width ?? element.frame.width,
           height:element.basis?.size.y ?? layout?.frame.height ?? element.frame.height)
@@ -5687,7 +5897,8 @@ final class NotebookAppModel {
     for (owner, entries) in state.history { pencilUndoHistory.restore(entries, for: owner) }
     for (owner, entries) in state.redoHistory { pencilUndoHistory.restoreRedo(entries, for: owner) }
     removeWorkingGraphics { graphic in
-      graphic.surface.kind == .page
+      graphic.surface.kind == .page && graphic.inkPresentation?.retainsOriginal != true
+        && graphic.inkPresentation?.holdsPresentation != true
         && (graphic.publicationCursor.map { state.header.cursor >= $0 } ?? false)
     }
     pageAddresses = Dictionary(uniqueKeysWithValues: state.pagePositions.map {

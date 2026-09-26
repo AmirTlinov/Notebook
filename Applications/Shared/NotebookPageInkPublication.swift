@@ -5,6 +5,8 @@ import Foundation
 /// only source of ink and history; this directory retains neither.
 @MainActor
 protocol NotebookPageInkConsumer: AnyObject {
+  var currentSelectionCanvas:InkCanvasView? { get }
+  func receiveOrderedErasing(_ contacts:[NotebookElementErasing],id:UUID)
   func receiveAcceptedInk(_ change: PreparedPageInkChange, suppressedIDs: Set<UUID>)
 }
 
@@ -22,6 +24,16 @@ final class NotebookPageInkPublication {
 
   func remove(_ consumer: any NotebookPageInkConsumer) {
     entries[ObjectIdentifier(consumer)] = nil
+  }
+
+  func currentCanvas(on pageID:UUID)->InkCanvasView? {
+    let matches=entries.values.filter { $0.pageID == pageID }.compactMap { $0.consumer?.currentSelectionCanvas }
+    guard matches.count == 1 else { return nil }
+    return matches[0]
+  }
+
+  func publishErasing(_ contacts:[NotebookElementErasing],on pageID:UUID,id:UUID) {
+    for entry in entries.values where entry.pageID == pageID {entry.consumer?.receiveOrderedErasing(contacts,id:id)}
   }
 
   func publish(_ change: PreparedPageInkChange, suppressedIDs: Set<UUID> = []) {
