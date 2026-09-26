@@ -1,0 +1,63 @@
+{
+  "status": "failed_before_fixture_seed_and_long_workload",
+  "sourceRevision": "5848cd8248c8d94f8a28b14788ecc9e7d3b37b4f",
+  "sourceSHA256": "c25bce0953324394001b32663da39bd52fe3722d7044d1718406d10d04d06c86",
+  "runID": "8f16d786-dd22-4a11-824f-6bbe9ea12187",
+  "upgradeDataBytesPreserved": true,
+  "summary": {
+    "devicesAndConfigurations": [
+      {
+        "device": {
+          "architecture": "arm64",
+          "deviceId": "00006050-001650DA01F9401C",
+          "deviceName": "My Mac",
+          "modelName": "MacBook Pro",
+          "osBuildNumber": "26A428",
+          "osVersion": "27.0",
+          "platform": "macOS"
+        },
+        "expectedFailures": 0,
+        "failedTests": 1,
+        "passedTests": 0,
+        "skippedTests": 0,
+        "testPlanConfiguration": {
+          "configurationId": "1",
+          "configurationName": "Test Scheme Action"
+        }
+      }
+    ],
+    "environmentDescription": "NotebookMacAcceptance · Built with macOS 27.0",
+    "expectedFailures": 0,
+    "failedTests": 1,
+    "finishTime": 1790383152.519,
+    "passedTests": 0,
+    "result": "Failed",
+    "runtimeWarnings": [],
+    "skippedTests": 0,
+    "startTime": 1790383138.933,
+    "statistics": [],
+    "testFailures": [
+      {
+        "failureText": "XCTAssertTrue failed",
+        "targetName": "NotebookMacAcceptanceUITests",
+        "testIdentifier": 1,
+        "testIdentifierString": "NotebookAcceptanceMacUITests/testDevicesStatusDoesNotRequireSetupOrChangeTheClipboard()",
+        "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookMacAcceptanceUITests/NotebookAcceptanceMacUITests/testDevicesStatusDoesNotRequireSetupOrChangeTheClipboard",
+        "testName": "testDevicesStatusDoesNotRequireSetupOrChangeTheClipboard()"
+      }
+    ],
+    "title": "Test - NotebookMacAcceptance",
+    "topInsights": [],
+    "totalTestCount": 1
+  },
+  "finding": "Devices tab is selected and status and search are visible. The Form parent accessibilityIdentifier workspace-devices overwrites the identifiers of its descendants, including notebook.devices.status. Parent identifier has no consumers; remove it rather than bypass the child locator.",
+  "localArchive": "/Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/.build/notebook-architecture-repair/evidence-2026-09-25/final-release-mac-gate-5848cd82",
+  "regressionPending": [
+    "NotebookMacAcceptanceUITests/NotebookAcceptanceMacUITests/testDevicesStatusDoesNotRequireSetupOrChangeTheClipboard"
+  ],
+  "subsequentVerification": {
+    "physical57": "Failed at the obsolete always-visible workspaces-open entry, before Devices was opened; ordinary context-menu entry is used by the current UI. Raw result/video retained in devices-57 local archive.",
+    "physical58": "Passed the complete ordinary context-menu -> spaces -> Devices -> search/status -> close scenario, among 45/45 tests.",
+    "mac": "Rebuilt Release verification pending; do not infer a Mac PASS from iPad."
+  }
+}

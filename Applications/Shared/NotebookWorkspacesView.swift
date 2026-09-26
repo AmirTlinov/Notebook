@@ -25,7 +25,6 @@ struct NotebookWorkspacesView: View {
         if launch.workspaceTab == .devices, let model = launch.model {
           Form { NotebookDevicesContent(model:model,query:deviceQuery) }
             .searchable(text:$deviceQuery,prompt:"Найти устройство")
-            .accessibilityIdentifier("workspace-devices")
         } else { workspaceList }
       }
       .navigationTitle("Пространства")

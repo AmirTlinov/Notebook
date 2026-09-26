@@ -4,8 +4,12 @@ import XCTest
   func testDevicesLivesInSpacesWithSearchAndWithoutAnInvitationForm() {
     continueAfterFailure = false
     let app = XCUIApplication()
-    app.launchArguments = ["--notebook-drawing-responsiveness-fixture", "--notebook-compact-chat-fixture"]
+    app.launchArguments = ["--notebook-drawing-responsiveness-fixture"]
     app.launch()
+    let paper = app.otherElements["paper-input"]
+    XCTAssertTrue(paper.waitForExistence(timeout: 10))
+    let paperFrame = paper.frame
+    openNotebookCanvasMenu(in: app)
     let spaces = app.buttons["workspaces-open"]
     XCTAssertTrue(spaces.waitForExistence(timeout:10)); spaces.tap()
     let tabs = app.segmentedControls["workspace-tabs"]
@@ -20,6 +24,7 @@ import XCTest
     proof.name = "devices-without-setup"; proof.lifetime = .keepAlways; add(proof)
     app.buttons["Готово"].tap()
     XCTAssertTrue(status.waitForNonExistence(timeout: 5))
-    XCTAssertTrue(spaces.exists, "Closing spaces returns to the same working surface")
+    XCTAssertTrue(paper.waitForExistence(timeout: 5), "Closing spaces returns to the same working surface")
+    XCTAssertEqual(paper.frame, paperFrame)
   }
 }
