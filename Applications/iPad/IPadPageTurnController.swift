@@ -684,8 +684,8 @@ final class IPadPageTurnController: UIViewController {
     readyPages[index] = ready
     if ready { preparationFailures[index] = nil }
     observe("page_turn_readiness", target: index, reason: ready ? "ready" : "not_ready")
-    guard ready else { return }
     if let controller = controllers[index] { sheetController.sheetReadinessDidChange(controller) }
+    guard ready else { return }
     if documentNavigation != nil, index == displayedIndex, hasInstalledPage {
       publishDocumentLanding(at: index, requestID: resolvedDocumentTarget == index ? documentSelection?.id : nil)
     }

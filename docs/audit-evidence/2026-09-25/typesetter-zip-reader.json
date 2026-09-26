@@ -1,0 +1,162 @@
+{
+  "scope": "Integrated private bounded ZIP reader: root Cargo regressions, Mac exact C ABI control and physical cold-opening diagnosis; not final UX acceptance",
+  "evidence": "/tmp/notebook-zip-host-cabi-20260926T1346Z",
+  "resultSHA256": "b775a56bb0dfc7418bfa0a789afc158ef7629596b2af1d6f0338fb529ee655a8",
+  "candidateDiffSHA256": "5b551919a2ce98afdd374e167e9ed11fe5166bef41f96864ebf63be3ce9ea3bf",
+  "sameGuestWASMAndAll16AOTSupervisorMembers": true,
+  "baselineArchiveSHA256": "d5ee8f01923a9acfba45efb7f655f79ccd62597db38953f455b5c562cddc9b23",
+  "candidateArchiveSHA256": "9be884983ea67cfdfdaa75c9df78d746765083d04a091d468b2d825511cb2574",
+  "rootAndStagedRuntimeUnchangedDuringControl": true,
+  "readerRegression": {
+    "passed": 6,
+    "failed": 0,
+    "scope": "Root cargo test, rustc1.94.1; same existing AOT resources;6passed0failed",
+    "log": "/var/folders/yx/hdyh02ls1dd_x8fztvp2j1j00000gn/T/notebook-typesetter-reader-tests.AEEKt4/test.log"
+  },
+  "exactCABI": {
+    "passed": 8,
+    "deadlineCancelAndSameRuntimeRecovery": true
+  },
+  "pairedControl": {
+    "startedUTC": "2026-09-26T13:55:13.696276+00:00",
+    "endedUTC": "2026-09-26T13:55:32.630845+00:00",
+    "casesPassed": 24,
+    "firstRunColdScope": "fresh process+Runtime/resource-owner only; OS file cache is NOT cleared",
+    "source": "same existing 233-byte Second closed body TeX",
+    "sameGuestWASM": true,
+    "phases": [
+      {
+        "phase": "fresh-process-runtime",
+        "baselineMedianMS": 895.1745,
+        "candidateMedianMS": 732.6975,
+        "pairedReductionMedianPercent": 18.075428396807375,
+        "pairedReductionMinPercent": 16.621967654986523,
+        "pairedReductionMaxPercent": 26.961424997199302,
+        "pairReductionPercent": [
+          16.64879353564149,
+          18.122864081341884,
+          18.027992712272866,
+          26.961424997199302,
+          19.416680846174074,
+          16.621967654986523
+        ]
+      },
+      {
+        "phase": "same-runtime-next",
+        "baselineMedianMS": 708.4680000000001,
+        "candidateMedianMS": 702.6885,
+        "pairedReductionMedianPercent": 1.150281626304961,
+        "pairedReductionMinPercent": -1.4879858707573135,
+        "pairedReductionMaxPercent": 12.968843566826438,
+        "pairReductionPercent": [
+          1.6902861179795114,
+          4.422786229931974,
+          0.6102771346304103,
+          12.968843566826438,
+          -1.4879858707573135,
+          -0.46942447060687176
+        ]
+      }
+    ]
+  },
+  "countedFileOperations": {
+    "evidence": "/tmp/notebook-zip-owner-count-20260926T1342Z/phases/RESULT.json",
+    "index": {
+      "file": {
+        "phase": "index",
+        "readCalls": 269965,
+        "seekCalls": 404947,
+        "bytesRequested": 9146436,
+        "bytesReturned": 9146436
+      },
+      "buffered": {
+        "phase": "index",
+        "readCalls": 134985,
+        "seekCalls": 404947,
+        "bytesRequested": 1105797120,
+        "bytesReturned": 1105233438
+      },
+      "positioned": {
+        "phase": "index",
+        "readCalls": 1118,
+        "seekCalls": 3,
+        "bytesRequested": 9158656,
+        "bytesReturned": 9146432
+      }
+    },
+    "runtimeNames": {
+      "phase": "runtime-file_names",
+      "readCalls": 0,
+      "seekCalls": 0,
+      "bytesRequested": 0,
+      "bytesReturned": 0
+    },
+    "sixStatAndRead": {
+      "file": {
+        "phase": "six-lookups-total",
+        "readCalls": 91,
+        "seekCalls": 18,
+        "bytesRequested": 660719,
+        "bytesReturned": 660719
+      },
+      "buffered": {
+        "phase": "six-lookups-total",
+        "readCalls": 91,
+        "seekCalls": 18,
+        "bytesRequested": 745472,
+        "bytesReturned": 745472
+      },
+      "positioned": {
+        "phase": "six-lookups-total",
+        "readCalls": 85,
+        "seekCalls": 6,
+        "bytesRequested": 696320,
+        "bytesReturned": 696320
+      }
+    },
+    "syntheticAllLocalHeaders": {
+      "file": {
+        "phase": "synthetic-all-local-headers",
+        "readCalls": 134974,
+        "seekCalls": 269954,
+        "bytesRequested": 4049220,
+        "bytesReturned": 4049220
+      },
+      "buffered": {
+        "phase": "synthetic-all-local-headers",
+        "readCalls": 134974,
+        "seekCalls": 269954,
+        "bytesRequested": 1105707008,
+        "bytesReturned": 1105707008
+      },
+      "positioned": {
+        "phase": "synthetic-all-local-headers",
+        "readCalls": 33911,
+        "seekCalls": 33831,
+        "bytesRequested": 277798912,
+        "bytesReturned": 277798912
+      }
+    }
+  },
+  "limitations": [
+    "Cold means fresh Runtime/process, not evicted OS disk cache.",
+    "Warm result is noisy; no stable warm speedup claimed.",
+    "Synthetic all-local-header scan amplifies bytes4049220→277798912; this is not runtime names().",
+    "Six normal stat+read lookups increase read-ahead bytes660719→696320 while calls reduce91/18→85/6.",
+    "Mac native compile reduction does not establish the physical unchanged1000ms window/pixels budget."
+  ],
+  "integration": {
+    "preparedPlatforms": [
+      "iphoneos",
+      "macosx",
+      "iphonesimulator"
+    ],
+    "physicalReceipt": "user-ux-125-126.json",
+    "coldDocumentMS": [
+      1985.010375,
+      1977.670541
+    ],
+    "budgetMS": 1000,
+    "result": "FAIL timing, correct output; Mac control speedup is not a physical acceptance claim"
+  }
+}

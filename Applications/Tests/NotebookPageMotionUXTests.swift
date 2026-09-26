@@ -112,6 +112,117 @@ import XCTest
     XCTAssertEqual(completion, true); XCTAssertTrue(native.page === target)
   }
 
+  func testCaptureRejectsRevokedAndRestoredReadinessFromItsExactHost() async throws {
+    let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+    let previous = scene.windows.first(where: \.isKeyWindow)
+    // A source change during capture invalidates pixels even when readiness is
+    // true again on return. Another host or an old sequence cannot invalidate it.
+    for receipt in ["captured", "other", "retired"] {
+      for reverse in [false, true] {
+        let window = UIWindow(windowScene: scene), controller = IPadPageTurnController()
+        window.frame = .init(x: 0, y: 0, width: 300, height: 400)
+        let commands = NotebookPageNavigation(), owner = UUID()
+        var selected = reverse ? 1 : 0, revision = "before"
+        var readiness: [Int: PageTurnReadiness] = [:]
+        func configure() {
+          controller.update(ownerID: owner, sequenceRevision: revision, pageCount: 2, selectedIndex: selected,
+            navigationIsEnabled: true, pageIsInteractive: true, canBeginNavigation: { true },
+            page: { index, _, ready in
+              readiness[index] = ready; ready(true)
+              return AnyView(index == 0 ? Color.red : Color.green)
+            }, onCommit: { index, _ in selected = index; configure() },
+            onTransitioningChange: { _ in }, notebookNavigation: commands)
+        }
+        configure(); window.rootViewController = controller; window.makeKeyAndVisible()
+        defer {
+          controller.sheetController.cancelMotion()
+          window.isHidden = true; window.rootViewController = nil; previous?.makeKey()
+        }
+        window.layoutIfNeeded()
+        let capturedIndex = 0 // Forward source and reverse target are both page zero.
+        let oldReceipt = try XCTUnwrap(readiness[capturedIndex])
+        if receipt == "retired" { revision = "after"; configure() }
+        let injected = try XCTUnwrap(receipt == "retired" ? oldReceipt
+          : readiness[receipt == "captured" ? capturedIndex : 1])
+        var captures = 0
+        controller.sheetController.onCaptureMeasured = { _ in
+          captures += 1
+          if captures == 1 { injected(false); injected(true) }
+        }
+        XCTAssertTrue(commands.send(.step(reverse ? -1 : 1), ownerID: owner, source: revision))
+        let target = reverse ? 0 : 1, deadline = ContinuousClock.now + .seconds(2)
+        while selected != target, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(2)) }
+        XCTAssertEqual(selected, target)
+        XCTAssertEqual(captures, receipt == "captured" ? 2 : 1,
+          "Only the exact captured host in this sequence invalidates the image: \(receipt), reverse=\(reverse)")
+      }
+    }
+  }
+
+  func testPresentedEndpointWaitsForItsLiveHostWithoutRecaptureOrIdleFrames() async throws {
+    let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+    let previous = scene.windows.first(where: \.isKeyWindow)
+    for reverse in [false, true] {
+      for completed in [false, true] {
+        let window = UIWindow(windowScene: scene), native = IPadSheetCurlController()
+        window.frame = .init(x: 0, y: 0, width: 300, height: 400)
+        let source = UIViewController(), target = UIViewController()
+        source.view.backgroundColor = .red; target.view.backgroundColor = .green
+        window.rootViewController = native; window.makeKeyAndVisible()
+        defer { native.cancelMotion(); window.isHidden = true; window.rootViewController = nil; previous?.makeKey() }
+        native.show(source, direction: .forward, animated: false); native.prepare(target)
+        window.layoutIfNeeded()
+        let curl = try XCTUnwrap(native.view.subviews.compactMap { $0 as? SheetCurlMetalView }.first)
+        let landing = completed ? target : source, other = completed ? source : target
+        var ready = true, captures = 0, completions: [Bool] = []
+        var bent = false, lifted = false, endpointPresented = false
+        native.isSheetReadyForCapture = { $0 !== landing || ready }
+        native.onCaptureMeasured = { _ in captures += 1 }
+        native.willTurn = { $0 === target }
+        native.didTurn = { from, completed in
+          XCTAssertTrue(from === source); completions.append(completed)
+        }
+        let resolve = curl.onFrameReady
+        let endpoint = reverse ? (completed ? 0.0 : 1.0) : (completed ? 1.0 : 0.0)
+        curl.onFrameReady = { image, progress, sequence, readiness in
+          if readiness.isReady {
+            if progress > 0, progress < 1 { bent = true }
+            if lifted, progress == endpoint, !endpointPresented {
+              ready = false; native.sheetReadinessDidChange(landing)
+              endpointPresented = true
+            }
+          }
+          resolve?(image, progress, sequence, readiness)
+        }
+        XCTAssertTrue(native.beginInteractiveTurn(direction: reverse ? .reverse : .forward, target: target))
+        native.updateInteractiveTurn(translation: native.view.bounds.width * (reverse ? 0.4 : -0.4))
+        let bendDeadline = ContinuousClock.now + .seconds(2)
+        while !bent, ContinuousClock.now < bendDeadline { try await Task.sleep(for: .milliseconds(2)) }
+        XCTAssertTrue(bent)
+        lifted = true; native.endInteractiveTurn(completed: completed)
+        let endDeadline = ContinuousClock.now + .seconds(2)
+        while !endpointPresented, ContinuousClock.now < endDeadline { try await Task.sleep(for: .milliseconds(2)) }
+        XCTAssertTrue(endpointPresented)
+        XCTAssertTrue(completions.isEmpty, "A frozen endpoint cannot enable an unready live page")
+        XCTAssertTrue(native.page === source)
+        XCTAssertTrue(native.containsInActiveTurn(source)); XCTAssertTrue(native.containsInActiveTurn(target))
+        XCTAssertFalse(curl.isHidden); XCTAssertNotNil(curl.frameLease)
+        native.sheetReadinessDidChange(other)
+        XCTAssertFalse(curl.animatesContinuously)
+        let submitted = curl.submittedFrameCount
+        try await Task.sleep(for: .milliseconds(40))
+        XCTAssertTrue(completions.isEmpty, "The other page cannot release this landing")
+        XCTAssertEqual(curl.submittedFrameCount, submitted, "Waiting for live readiness must not poll the display")
+        XCTAssertEqual(captures, 1)
+        ready = true; native.sheetReadinessDidChange(landing)
+        XCTAssertEqual(completions, [completed]); XCTAssertTrue(native.page === landing)
+        XCTAssertTrue(curl.isHidden); XCTAssertNil(curl.frameLease)
+        native.sheetReadinessDidChange(landing)
+        XCTAssertEqual(completions, [completed]); XCTAssertEqual(captures, 1)
+      }
+    }
+  }
+
   func testCapturedCurlContainsTheImmediatelyUpdatedSwiftUISheet() async throws {
     let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
     let previous = scene.windows.first(where: \.isKeyWindow)

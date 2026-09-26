@@ -115,18 +115,60 @@ impl ResourceFile {
     }
 }
 
+// One cursor and bounded read-ahead buffer for the immutable distribution.
+// Zip's position queries and absolute no-op seeks must not discard read-ahead.
+const ZIP_READER_BUFFER_BYTES: usize = 8 * 1024;
+struct BundleReader {
+    file: io::BufReader<File>,
+    position: u64,
+}
+impl BundleReader {
+    fn new(mut file: File) -> io::Result<Self> {
+        let position = std::io::Seek::stream_position(&mut file)?;
+        Ok(Self { file: io::BufReader::with_capacity(ZIP_READER_BUFFER_BYTES, file), position })
+    }
+}
+impl Read for BundleReader {
+    fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
+        let count = self.file.read(bytes)?;
+        self.position = self.position.checked_add(count as u64)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "archive position overflow"))?;
+        Ok(count)
+    }
+}
+impl std::io::Seek for BundleReader {
+    fn seek(&mut self, from: SeekFrom) -> io::Result<u64> {
+        let target = match from {
+            SeekFrom::Start(position) => Some(position),
+            SeekFrom::Current(delta) => u64::try_from(i128::from(self.position) + i128::from(delta)).ok(),
+            SeekFrom::End(_) => None,
+        };
+        if let Some(target) = target {
+            if let Ok(delta) = i64::try_from(i128::from(target) - i128::from(self.position)) {
+                self.file.seek_relative(delta)?;
+                self.position = target;
+                return Ok(target);
+            }
+        }
+        self.position = self.file.seek(from)?;
+        Ok(self.position)
+    }
+    fn stream_position(&mut self) -> io::Result<u64> { Ok(self.position) }
+}
+
 pub struct Bundle {
     path: PathBuf,
-    archive: Mutex<Option<zip::ZipArchive<File>>>,
+    archive: Mutex<Option<zip::ZipArchive<BundleReader>>>,
     names: [OnceLock<Arc<Vec<String>>>; 2],
 }
 impl Bundle {
     pub fn new(path: &Path) -> Self { Self { path: path.into(), archive: Mutex::new(None), names: Default::default() } }
-    fn with_archive<T>(&self, budget: &Budget, read: impl FnOnce(&mut zip::ZipArchive<File>) -> Result<T, Error>) -> Result<T, Error> {
+    fn with_archive<T>(&self, budget: &Budget, read: impl FnOnce(&mut zip::ZipArchive<BundleReader>) -> Result<T, Error>) -> Result<T, Error> {
         let mut slot = self.archive.lock().unwrap();
         if slot.is_none() {
             let file = File::open(&self.path).map_err(|error| budget.resource_error(error))?;
-            let archive = zip::ZipArchive::new(file).map_err(|error| budget.resource_error(error))?;
+            let reader = BundleReader::new(file).map_err(|error| budget.resource_error(error))?;
+            let archive = zip::ZipArchive::new(reader).map_err(|error| budget.resource_error(error))?;
             // The native resource owner verifies the immutable distribution.
             if archive.len() > 150_000 { return Err(budget.resource_error("TeX distribution entry limit")); }
             *slot = Some(archive);
@@ -228,4 +270,125 @@ impl Write for Log {
         Ok(data.len())
     }
     fn flush(&mut self) -> io::Result<()> { Ok(()) }
+}
+
+#[cfg(test)]
+mod bundle_reader_tests {
+    use super::*;
+    use std::io::Seek;
+
+    struct Fixture(PathBuf);
+    impl Fixture {
+        fn new(name: &str) -> Self {
+            let path = std::env::temp_dir().join(format!("notebook-bundle-reader-{}-{name}", std::process::id()));
+            let mut file = File::create_new(&path).unwrap();
+            file.write_all(&(0..32781).map(|i| (i * 31 + 17) as u8).collect::<Vec<_>>()).unwrap();
+            Self(path)
+        }
+        fn pair(&self) -> (File, BundleReader) {
+            (File::open(&self.0).unwrap(), BundleReader::new(File::open(&self.0).unwrap()).unwrap())
+        }
+    }
+    impl Drop for Fixture { fn drop(&mut self) { std::fs::remove_file(&self.0).unwrap(); } }
+    fn compare_seek(file: &mut File, reader: &mut BundleReader, seek: SeekFrom) {
+        let expected = file.seek(seek);
+        let actual = reader.seek(seek);
+        assert_eq!(expected.as_ref().ok(), actual.as_ref().ok(), "{seek:?}");
+        assert_eq!(expected.as_ref().err().map(|e| e.kind()), actual.as_ref().err().map(|e| e.kind()), "{seek:?}");
+        assert_eq!(file.stream_position().unwrap(), reader.stream_position().unwrap());
+    }
+    fn compare_read(file: &mut File, reader: &mut BundleReader, length: usize) {
+        let mut actual = vec![0; length];
+        let start = file.stream_position().unwrap();
+        let count = reader.read(&mut actual).unwrap();
+        assert!(count <= length);
+        if length > 0 && count == 0 { assert!(start >= file.metadata().unwrap().len(), "false EOF"); }
+        // Read permits short reads: compare exactly the returned bytes and cursor.
+        let mut expected = vec![0; count];
+        file.read_exact(&mut expected).unwrap();
+        assert_eq!(expected, actual[..count]);
+        assert_eq!(file.stream_position().unwrap(), reader.stream_position().unwrap());
+    }
+    #[test]
+    fn position_queries_and_absolute_noop_seeks_keep_readahead() {
+        let fixture = Fixture::new("readahead");
+        let (mut file, mut reader) = fixture.pair();
+        compare_read(&mut file, &mut reader, 30);
+        assert_eq!(reader.file.capacity(), ZIP_READER_BUFFER_BYTES);
+        let buffered = reader.file.buffer().len();
+        assert_eq!(buffered, ZIP_READER_BUFFER_BYTES - 30);
+        for _ in 0..1000 {
+            assert_eq!(reader.stream_position().unwrap(), 30);
+            assert_eq!(reader.seek(SeekFrom::Start(30)).unwrap(), 30);
+            assert_eq!(reader.file.buffer().len(), buffered);
+        }
+        compare_seek(&mut file, &mut reader, SeekFrom::Current(46));
+        assert_eq!(reader.file.buffer().len(), buffered - 46);
+        compare_read(&mut file, &mut reader, 17);
+    }
+    #[test]
+    fn absolute_relative_end_eof_and_errors_preserve_cursor() {
+        let fixture = Fixture::new("seeks");
+        let (mut file, mut reader) = fixture.pair();
+        compare_read(&mut file, &mut reader, 23);
+        for seek in [SeekFrom::Current(0), SeekFrom::Start(23), SeekFrom::Start(5),
+            SeekFrom::Current(8180), SeekFrom::Start(8190), SeekFrom::Current(20),
+            SeekFrom::Current(-17), SeekFrom::End(-7), SeekFrom::End(100),
+            SeekFrom::Current(-90), SeekFrom::Start(0), SeekFrom::Current(-1),
+            SeekFrom::End(-100000), SeekFrom::Start(u64::MAX),
+            SeekFrom::Current(i64::MAX), SeekFrom::Current(i64::MIN), SeekFrom::Start(17)] {
+            compare_seek(&mut file, &mut reader, seek);
+            compare_read(&mut file, &mut reader, 3);
+        }
+        compare_seek(&mut file, &mut reader, SeekFrom::End(-2));
+        compare_read(&mut file, &mut reader, 5);
+        compare_read(&mut file, &mut reader, 5);
+        compare_read(&mut file, &mut reader, 0);
+    }
+    #[test]
+    fn mixed_operations_match_file() {
+        let fixture = Fixture::new("mixed");
+        let (mut file, mut reader) = fixture.pair();
+        let mut random = 918723u64;
+        for _ in 0..10000 {
+            random = random.wrapping_mul(6364136223846793005).wrapping_add(1);
+            match random % 5 {
+                0 => compare_seek(&mut file, &mut reader, SeekFrom::Start((random >> 8) % 40000)),
+                1 => compare_seek(&mut file, &mut reader, SeekFrom::Current(((random >> 8) % 6000) as i64 - 3000)),
+                2 => compare_seek(&mut file, &mut reader, SeekFrom::End(((random >> 8) % 40000) as i64 - 35000)),
+                _ => compare_read(&mut file, &mut reader, ((random >> 8) % 20000) as usize),
+            }
+        }
+    }
+    #[test]
+    fn initial_nonzero_cursor_and_read_exact_partial_eof() {
+        let fixture = Fixture::new("initial");
+        let mut file = File::open(&fixture.0).unwrap();
+        file.seek(SeekFrom::Start(8217)).unwrap();
+        let mut owned = File::open(&fixture.0).unwrap();
+        owned.seek(SeekFrom::Start(8217)).unwrap();
+        let mut reader = BundleReader::new(owned).unwrap();
+        compare_read(&mut file, &mut reader, 19);
+        compare_seek(&mut file, &mut reader, SeekFrom::End(-7));
+        let (mut expected, mut actual) = ([0; 12], [0; 12]);
+        assert_eq!(file.read_exact(&mut expected).unwrap_err().kind(), reader.read_exact(&mut actual).unwrap_err().kind());
+        assert_eq!(expected, actual);
+        assert_eq!(file.stream_position().unwrap(), reader.stream_position().unwrap());
+    }
+    #[test]
+    fn file_read_failure_does_not_publish_false_position() {
+        let path = std::env::temp_dir();
+        let mut file = File::open(&path).unwrap();
+        let mut reader = BundleReader::new(File::open(&path).unwrap()).unwrap();
+        let (mut expected, mut actual) = ([0; 4], [0; 4]);
+        assert_eq!(file.read(&mut expected).unwrap_err().kind(), reader.read(&mut actual).unwrap_err().kind());
+        assert_eq!(file.stream_position().unwrap(), reader.stream_position().unwrap());
+    }
+    #[test]
+    fn nonseekable_handle_is_rejected_at_construction() {
+        use std::os::{fd::OwnedFd, unix::net::UnixStream};
+        let (stream, _peer) = UnixStream::pair().unwrap();
+        let fd: OwnedFd = stream.into();
+        assert_eq!(BundleReader::new(File::from(fd)).err().unwrap().kind(), io::ErrorKind::NotSeekable);
+    }
 }

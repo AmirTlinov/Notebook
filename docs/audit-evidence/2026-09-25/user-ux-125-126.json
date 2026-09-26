@@ -1,0 +1,72 @@
+{
+  "format": 1,
+  "date": "2026-09-26",
+  "issue": "GUI-306",
+  "scope": "Physical exact-host readiness regressions and cold-document phase diagnosis; not final UX acceptance",
+  "sourceSHA256": "12ef6656e865866a184c7076192467402d98c2641111abf108795824ab8b950a",
+  "sourceUnchanged": true,
+  "evidencePack": {
+    "evidenceDirectory": "/Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/.build/notebook-architecture-repair/evidence-2026-09-25/user-ux-125-126",
+    "manifestSHA256": "a76279e10c36482edb4dfd2c5090f84700e0949de7ef4f7443072914269faaa8",
+    "sealedFileCount": 167
+  },
+  "results": {
+    "125": {
+      "result": "Failed",
+      "passedTests": 2,
+      "failedTests": 2,
+      "skippedTests": 0,
+      "runtimeWarnings": [],
+      "testFailures": [
+        {
+          "failureText": "XCTAssertTrue failed - UX document-installed: correct=true, observed=1985.0103749999998 ms, ceiling=1.0 seconds; window observation, not photon timing",
+          "targetName": "NotebookTests",
+          "testIdentifier": 1,
+          "testIdentifierString": "NotebookDocumentOpeningTests/testHistoryReferenceInstallsAnUnloadedDocumentOutsideTheCurrentCamera()",
+          "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/NotebookDocumentOpeningTests/testHistoryReferenceInstallsAnUnloadedDocumentOutsideTheCurrentCamera",
+          "testName": "testHistoryReferenceInstallsAnUnloadedDocumentOutsideTheCurrentCamera()"
+        },
+        {
+          "failureText": "XCTAssertTrue failed - Zero/dropped, invalid or pre-command timestamps cannot stand in for displayed frames",
+          "targetName": "NotebookTests",
+          "testIdentifier": 4,
+          "testIdentifierString": "NotebookPageMotionUXTests/testTenForwardReverseTurnsMeetFirstPresentationAndLandingDeadlines()",
+          "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/NotebookPageMotionUXTests/testTenForwardReverseTurnsMeetFirstPresentationAndLandingDeadlines",
+          "testName": "testTenForwardReverseTurnsMeetFirstPresentationAndLandingDeadlines()"
+        }
+      ]
+    },
+    "126": {
+      "result": "Failed",
+      "passedTests": 0,
+      "failedTests": 1,
+      "skippedTests": 0,
+      "runtimeWarnings": [],
+      "testFailures": [
+        {
+          "failureText": "XCTAssertTrue failed - UX document-installed: correct=true, observed=1977.670541 ms, ceiling=1.0 seconds; window observation, not photon timing",
+          "targetName": "NotebookTests",
+          "testIdentifier": 1,
+          "testIdentifierString": "NotebookDocumentOpeningTests/testHistoryReferenceInstallsAnUnloadedDocumentOutsideTheCurrentCamera()",
+          "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/NotebookDocumentOpeningTests/testHistoryReferenceInstallsAnUnloadedDocumentOutsideTheCurrentCamera",
+          "testName": "testHistoryReferenceInstallsAnUnloadedDocumentOutsideTheCurrentCamera()"
+        }
+      ]
+    }
+  },
+  "regressions": [
+    "Physical125: only the captured host/sequence revokes its image generation; readiness ABA rejects stale capture in both directions.",
+    "Physical125: the chosen live endpoint owns landing release; no recapture, idle frames or release by another page."
+  ],
+  "openPerformance": {
+    "coldDocument125MS": 1985.010375,
+    "coldDocument126MS": 1977.670541,
+    "budgetMS": 1000,
+    "correctPixels": true,
+    "artifactPreparation126MS": 1243.949375,
+    "requestToInstalled126MS": 1707.35475,
+    "contentReadyToInstalled126MS": 321.0214167,
+    "curl": "Zero/invalid OS receipts and displayed gaps up to25.010ms fail120Hz8.833ms ceiling; no thresholds changed."
+  },
+  "phaseRun": "126 uses unchanged125 executable, test-without-building, existing --notebook-profile-documents; no source instrumentation or fixture change."
+}

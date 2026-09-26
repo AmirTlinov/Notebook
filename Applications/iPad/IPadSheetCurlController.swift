@@ -41,6 +41,7 @@ final class IPadSheetCurlController: UIViewController, UIGestureRecognizerDelega
     let id: UUID
     let source: UIViewController, target: UIViewController
     var image: CGImage?
+    var captureGeneration: UInt64 = 0
     let direction: Direction
     let completion: ((Bool) -> Void)?
     let gesture: Bool
@@ -120,8 +121,19 @@ final class IPadSheetCurlController: UIViewController, UIGestureRecognizerDelega
   /// Readiness belongs to the mounted page. A dirty source retains this
   /// motion/finger instead of capturing old Metal pixels or polling a timer.
   func sheetReadinessDidChange(_ sheet: UIViewController) {
-    guard let motion, motion.image == nil,
-      (motion.direction == .forward ? motion.source : motion.target) === sheet else { return }
+    guard var motion, motion.source === sheet || motion.target === sheet else { return }
+    if motion.image != nil {
+      // Frozen curl pixels stay unchanged. Only the selected live endpoint
+      // can release a completed turn that is waiting for its current content.
+      finishPresentedEndpoint()
+      return
+    }
+    guard (motion.direction == .forward ? motion.source : motion.target) === sheet else { return }
+    // A UIKit flush can revoke and restore readiness within one capture.
+    // A final true value does not authorize pixels from the previous generation.
+    motion.captureGeneration &+= 1
+    self.motion = motion
+    guard isSheetReadyForCapture(sheet) else { return }
     let id = motion.id
     DispatchQueue.main.async { [weak self] in self?.captureCurrentSource(for: id) }
   }
@@ -136,7 +148,9 @@ final class IPadSheetCurlController: UIViewController, UIGestureRecognizerDelega
       if let began { onCaptureMeasured?(.init(began: began, ended: CACurrentMediaTime(), pixels: image.width * image.height)) }
       // drawHierarchy can flush layout, which may invalidate ink coverage.
       // Discard that capture and keep this motion waiting for its new receipt.
-      guard var current = self.motion, current.id == id, isSheetReadyForCapture(sheet) else { return }
+      guard var current = self.motion, current.id == id,
+        current.captureGeneration == motion.captureGeneration,
+        isSheetReadyForCapture(sheet) else { return }
       current.image = image; self.motion = current
       curl.frameLease = reservation
       curl.prepareDrawable(size: .init(width: image.width, height: image.height))
@@ -234,7 +248,8 @@ final class IPadSheetCurlController: UIViewController, UIGestureRecognizerDelega
   }
 
   private func finishPresentedEndpoint() {
-    guard let motion, let terminal = motion.terminal, motion.presentation?.progress == terminal else { return }
+    guard let motion, let terminal = motion.terminal, motion.presentation?.progress == terminal,
+      isSheetReadyForCapture(terminal == 1 ? motion.target : motion.source) else { return }
     finish(completed: terminal == 1, presented: true)
   }
 

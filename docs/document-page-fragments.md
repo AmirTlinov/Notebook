@@ -83,6 +83,14 @@ shell, network, SQLite or user-filesystem access. Cancellation checks exist in
 generated TeX/font/image/BibTeX/PDF code; traps do not cross Rust/Swift frames.
 WASI exposes only admitted resources.
 
+The immutable distribution has one private ZIP reader per runtime, with an 8 KiB
+read-ahead buffer. Its owned logical cursor answers position queries and preserves
+read-ahead across no-op/nearby seeks; end and invalid seeks retain standard File
+semantics. The underlying handle is neither cloned nor exposed. Enumeration uses
+the accepted central-directory names, not a second pass over local file headers.
+This does not cache decoded resources or change CRC, file, descriptor or VM limits;
+the buffer retires with the existing runtime resource owner.
+
 | Resource | Limit |
 |---|---:|
 | VM linear memory | 320 MiB |
