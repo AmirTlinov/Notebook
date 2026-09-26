@@ -170,6 +170,79 @@ final class PageTurnSelectionTests: XCTestCase {
   }
 
   @MainActor
+  func testDocumentSourceReplacementRetainsHostsButRevokesTheirPendingCapture() async throws {
+    let controller = IPadPageTurnController(), documentID = UUID()
+    let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+    let previous = scene.windows.first(where: \.isKeyWindow), window = UIWindow(windowScene: scene)
+    var source = "old-source", actual = 0, sourceReady = true
+    var request: DocumentPageNavigationRequest?
+    var readiness: [String: [Int: PageTurnReadiness]] = [:]
+    var landings: [DocumentPageLanding] = []
+    func configure() {
+      let revision = source
+      controller.update(ownerID: documentID, sequenceRevision: revision, pageCount: 2,
+        selectedIndex: actual, navigationIsEnabled: true, pageIsInteractive: true,
+        canBeginNavigation: { true }, page: { index, _, ready in
+          readiness[revision, default: [:]][index] = ready
+          ready(index != 0 || sourceReady)
+          return AnyView(index == 0 ? Color.blue : Color.red)
+        }, onCommit: { _, _ in XCTFail("A document landing uses its typed receipt") },
+        onTransitioningChange: { _ in },
+        canonicalDocumentLayout: .init(pageCount: 2, sourceRevision: revision), documentSelection: request,
+        documentNavigation: .init(bind: { _, _, _ in }, unbind: { _ in }, landed: { receipt in
+          landings.append(receipt); actual = receipt.pageIndex
+          if request?.id == receipt.requestID { request = nil }
+        }, status: { _ in }))
+    }
+    configure(); window.rootViewController = controller; window.makeKeyAndVisible()
+    defer { controller.sheetController.cancelMotion(); window.isHidden = true; window.rootViewController = nil; previous?.makeKey() }
+    window.layoutIfNeeded()
+    let native = controller.sheetController, original = try XCTUnwrap(controller.visiblePageIdentity)
+    let hosts = controller.cachedPageIdentities, checkReadiness = native.isSheetReadyForCapture
+    var refusedCaptures = 0, captures = 0
+    native.isSheetReadyForCapture = { sheet in
+      let ready = checkReadiness(sheet)
+      if !ready { refusedCaptures += 1 }
+      return ready
+    }
+    native.onCaptureMeasured = { _ in captures += 1 }
+    sourceReady = false
+    try XCTUnwrap(readiness[source]?[0])(false)
+    request = .init(id: UUID(), documentID: documentID, sourceRevision: source, pageIndex: 1)
+    configure()
+    let refused = ContinuousClock.now + .seconds(2)
+    while refusedCaptures == 0, ContinuousClock.now < refused { try await Task.sleep(for: .milliseconds(2)) }
+    XCTAssertGreaterThan(refusedCaptures, 0, "Exercise a real motion still waiting for its source image")
+    XCTAssertNotNil(native.settlingPage)
+    XCTAssertEqual(captures, 0)
+    let oldReceipt = try XCTUnwrap(readiness[source]?[0])
+
+    source = "new-source"; request = nil
+    configure()
+    XCTAssertEqual(controller.cachedPageIdentities, hosts, "Editing the document retains its native hosts")
+    XCTAssertNil(native.settlingPage, "The old source's motion must end before new readiness can arrive")
+    oldReceipt(true)
+    XCTAssertFalse(controller.isCurrentPagePrepared, "A retained host does not authorize an old source receipt")
+    sourceReady = true
+    try XCTUnwrap(readiness[source]?[0])(true)
+    await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+      DispatchQueue.main.async { continuation.resume() }
+    }
+    XCTAssertEqual(captures, 0, "New-source readiness cannot revive the retired capture")
+    XCTAssertEqual(controller.visiblePageIdentity, original)
+    XCTAssertEqual(controller.displayedIndex, 0); XCTAssertEqual(actual, 0)
+    XCTAssertFalse(landings.contains { $0.pageIndex == 1 })
+
+    request = .init(id: UUID(), documentID: documentID, sourceRevision: source, pageIndex: 1)
+    configure()
+    let completed = ContinuousClock.now + .seconds(2)
+    while actual != 1, ContinuousClock.now < completed { try await Task.sleep(for: .milliseconds(2)) }
+    XCTAssertEqual(captures, 1)
+    XCTAssertEqual(controller.displayedIndex, 1); XCTAssertEqual(actual, 1)
+    XCTAssertEqual(landings.filter { $0.pageIndex == 1 }.map(\.sourceRevision), [source])
+  }
+
+  @MainActor
   func testDocumentIntentFailureRetryAndExternalLandingPreserveConfirmedPage() async throws {
     let controller = IPadPageTurnController(), documentID = UUID()
     let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)

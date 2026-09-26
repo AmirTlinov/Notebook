@@ -42,6 +42,17 @@ import XCTest
     let receiveFrame = curl.onFrameReady, captureSize = native.view.bounds.size
     var captured: CGImage?, capturedReadiness: NotebookMetalFrameReadiness?
     var phases: [String] = []
+    let checkReadiness = native.isSheetReadyForCapture
+    native.isSheetReadyForCapture = { sheet in
+      let ready = checkReadiness(sheet)
+      phases.append("capture admission: ready=\(ready) sourceStable=\(ink.isStableFramePresented)")
+      if ready { XCTAssertTrue(ink.isStableFramePresented, "Capture must wait for the accepted native material") }
+      return ready
+    }
+    native.onCaptureMeasured = { timing in
+      phases.append("capture \(timing.began)…\(timing.ended): sourceStableAtEnd=\(ink.isStableFramePresented)")
+    }
+    defer { native.isSheetReadyForCapture = checkReadiness; native.onCaptureMeasured = nil }
     curl.onFrameReady = { image, progress, sequence, readiness in
       if captured == nil, readiness.isReady {
         captured = image; capturedReadiness = readiness

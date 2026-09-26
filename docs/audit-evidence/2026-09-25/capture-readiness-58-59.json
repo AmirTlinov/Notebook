@@ -1,0 +1,130 @@
+{
+  "status": "passed_bounded_physical_regressions_not_full_acceptance",
+  "device": "00008103-001E059934D9001E",
+  "configuration": "Private bundle com.amirtlinov.notebook.architecture-tests; Swift -O and C -Os; no shared containers, CloudKit or production Keychain access",
+  "runs": [
+    {
+      "number": 58,
+      "summary": {
+        "devicesAndConfigurations": [
+          {
+            "device": {
+              "architecture": "arm64",
+              "deviceId": "00008103-001E059934D9001E",
+              "deviceName": "iPad (Елизавета)",
+              "modelName": "iPad Pro (11-inch) (3rd generation)",
+              "osBuildNumber": "24A435",
+              "osVersion": "27.0",
+              "platform": "iOS"
+            },
+            "expectedFailures": 0,
+            "failedTests": 0,
+            "passedTests": 45,
+            "skippedTests": 0,
+            "testPlanConfiguration": {
+              "configurationId": "1",
+              "configurationName": "Test Scheme Action"
+            }
+          }
+        ],
+        "environmentDescription": "Notebook · Built with macOS 27.0",
+        "expectedFailures": 0,
+        "failedTests": 0,
+        "finishTime": 1790384513.546,
+        "passedTests": 45,
+        "result": "Passed",
+        "runtimeWarnings": [],
+        "skippedTests": 0,
+        "startTime": 1790384430.546,
+        "statistics": [],
+        "testFailures": [],
+        "title": "Test - Notebook",
+        "topInsights": [
+          {
+            "category": "Longest Test Runs",
+            "impact": "16% of duration",
+            "text": "1 longest test run with outlier durations exceeding 1.71s (three standard deviations)"
+          }
+        ],
+        "totalTestCount": 45
+      },
+      "sourceWitnessSHA256": "c1a3ff18a0e73e4fbb75b7fb1bc56f7fdd29a48728a1552d0706447afae5bcc5",
+      "changedSources": [],
+      "selection": [
+        "NotebookTests/NotebookPageMotionUXTests/testDirtyCapturedSheetWaitsForItsOwnReceiptAndCancellationDropsTheWait",
+        "NotebookTests/NotebookPageMotionUXTests/testDirtySheetRetainsTheSameFingerProgressAndLiftUntilItsReceipt",
+        "NotebookTests/NotebookPageMotionUXTests/testCapturedCurlContainsTheImmediatelyUpdatedSwiftUISheet",
+        "NotebookTests/NotebookPageMotionUXTests/testFirstPresentedCurlPrimesTheSourceBeforeExposingTheOtherLeaf",
+        "NotebookTests/NotebookPageMotionUXTests/testSlowSourcePreparationCannotConsumeTheVisibleCurl",
+        "NotebookTests/NotebookPageLifecycleUXTests/testAcceptedInkLiftIsPresentInTheImmediatelyRequestedCurlSource",
+        "NotebookTests/NotebookPageLifecycleUXTests/testAcceptedShapeEraseIsPresentInTheImmediatelyRequestedCurlSource",
+        "NotebookTests/NotebookColdPageTurnTests",
+        "NotebookTests/PageTurnSelectionTests",
+        "NotebookUITests/NotebookDevicesUITests/testDevicesLivesInSpacesWithSearchAndWithoutAnInvitationForm"
+      ]
+    },
+    {
+      "number": 59,
+      "summary": {
+        "devicesAndConfigurations": [
+          {
+            "device": {
+              "architecture": "arm64",
+              "deviceId": "00008103-001E059934D9001E",
+              "deviceName": "iPad (Елизавета)",
+              "modelName": "iPad Pro (11-inch) (3rd generation)",
+              "osBuildNumber": "24A435",
+              "osVersion": "27.0",
+              "platform": "iOS"
+            },
+            "expectedFailures": 0,
+            "failedTests": 0,
+            "passedTests": 7,
+            "skippedTests": 0,
+            "testPlanConfiguration": {
+              "configurationId": "1",
+              "configurationName": "Test Scheme Action"
+            }
+          }
+        ],
+        "environmentDescription": "Notebook · Built with macOS 27.0",
+        "expectedFailures": 0,
+        "failedTests": 0,
+        "finishTime": 1790384686.99,
+        "passedTests": 7,
+        "result": "Passed",
+        "runtimeWarnings": [],
+        "skippedTests": 0,
+        "startTime": 1790384640.31,
+        "statistics": [],
+        "testFailures": [],
+        "title": "Test - Notebook",
+        "topInsights": [],
+        "totalTestCount": 7
+      },
+      "sourceWitnessSHA256": "4f653cca304be4db9c3c931867b585d971e3c118584cdfbb4dc1715a78efed43",
+      "changedSources": [],
+      "selection": [
+        "NotebookTests/NotebookPageMotionUXTests/testReadinessRevokedDuringCaptureDiscardsTheImageUntilItsNewReceipt",
+        "NotebookTests/NotebookPageMotionUXTests/testDirtyCapturedSheetWaitsForItsOwnReceiptAndCancellationDropsTheWait",
+        "NotebookTests/NotebookPageMotionUXTests/testDirtySheetRetainsTheSameFingerProgressAndLiftUntilItsReceipt",
+        "NotebookTests/NotebookPageMotionUXTests/testCapturedCurlContainsTheImmediatelyUpdatedSwiftUISheet",
+        "NotebookTests/NotebookPageLifecycleUXTests/testAcceptedInkLiftIsPresentInTheImmediatelyRequestedCurlSource",
+        "NotebookTests/NotebookPageLifecycleUXTests/testAcceptedShapeEraseIsPresentInTheImmediatelyRequestedCurlSource",
+        "NotebookTests/PageTurnSelectionTests/testDocumentSourceReplacementRetainsHostsButRevokesTheirPendingCapture"
+      ]
+    }
+  ],
+  "changes": [
+    "Synchronous revocation of accepted ink readiness before releasing the input fence",
+    "The mounted page owner gates the exact captured sheet; one retained motion resumes on its receipt without polling",
+    "Synchronous capture layout rechecks readiness before installing its image; a revoked capture releases its local resources",
+    "Same-document source replacement cancels the old motion while retaining native hosts"
+  ],
+  "localArchive": "/Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/.build/notebook-architecture-repair/evidence-2026-09-25/capture-readiness-58-59",
+  "limitations": [
+    "Not the final synchronized Release-pair acceptance",
+    "Not physical FPS or Apple Pencil sensor-to-photon latency evidence",
+    "Previous physical first-frame/cadence failures are not overwritten by these functional passes"
+  ]
+}

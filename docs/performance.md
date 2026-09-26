@@ -525,8 +525,17 @@ image and two drawable backings have one bounded
 input reservation, explicitly released at presentation or drained on cancellation.
 Snapshot capture runs once outside input dispatch and UIKit update callbacks,
 using `drawHierarchy(afterScreenUpdates: true)` on the next main-queue turn.
-The queue hop is not evidence of current pixels; the snapshot itself requests the
-current layer tree. A motion ID revokes a cancelled capture. No timer, idle
+The queue hop is not evidence of current pixels. Immediately before capture the
+page owner verifies the mounted sheet's readiness (source for forward, target for
+reverse). Accepted native ink revokes that readiness synchronously, before the
+input fence can release; only its current material receipt restores it. A dirty
+sheet keeps the same motion, finger progress and lift until its own receipt
+resumes capture. The snapshot then requests the current UIKit layer tree. If
+that synchronous layout revokes readiness, its image/reservation is discarded
+and the same motion waits for the replacement receipt.
+A motion ID revokes a cancelled capture; replacing a document source revokes
+the motion even when its native hosts are retained. Repeated receipts cannot
+replace an already captured image. No timer, idle
 observer, extra page cache or replacement button owns this handoff. The snapshot preserves UIKit's native 32/64-bit colour range, avoiding
 a full-frame SDR conversion on MainActor. Admission covers an eight-byte source
 and the aligned rows of both four-byte drawables; the actual captured row size

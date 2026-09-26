@@ -13,6 +13,7 @@ final class IPadSheetCurlController: UIViewController, UIGestureRecognizerDelega
   var willTurn: (UIViewController) -> Bool = { _ in false }
   var didTurn: (UIViewController, Bool) -> Void = { _, _ in }
   var onFailure: (Error) -> Void = { _ in }
+  var isSheetReadyForCapture: (UIViewController) -> Bool = { _ in true }
   struct CaptureTiming {
     let began, ended: TimeInterval
     let pixels: Int
@@ -101,24 +102,35 @@ final class IPadSheetCurlController: UIViewController, UIGestureRecognizerDelega
     let id = UUID()
     motion = .init(id: id, source: source, target: target, direction: direction,
       completion: completion, gesture: gesture)
-    // Snapshot outside both input dispatch and UIKit's update callbacks. A
-    // fresh snapshot inside either stack can recursively update UIKit and lose
-    // later contacts. The snapshot itself requests current layers; a queue hop
-    // is not being treated as evidence that an old cached raster is current.
+    // Capture outside input dispatch and UIKit's update callbacks. The queue
+    // hop is not readiness: the exact captured sheet must have presented its
+    // accepted material, including native Metal ink, before taking the image.
     // Live paper stays in front while the same motion retains finger progress.
     let sheet = direction == .forward ? source : target
     sheet.view.layoutIfNeeded()
     DispatchQueue.main.async { [weak self] in self?.captureCurrentSource(for: id) }
   }
 
+  /// Readiness belongs to the mounted page. A dirty source retains this
+  /// motion/finger instead of capturing old Metal pixels or polling a timer.
+  func sheetReadinessDidChange(_ sheet: UIViewController) {
+    guard let motion, motion.image == nil,
+      (motion.direction == .forward ? motion.source : motion.target) === sheet else { return }
+    let id = motion.id
+    DispatchQueue.main.async { [weak self] in self?.captureCurrentSource(for: id) }
+  }
+
   private func captureCurrentSource(for id: UUID) {
-    guard let motion, motion.id == id else { return }
+    guard let motion, motion.id == id, motion.image == nil else { return }
+    let sheet = motion.direction == .forward ? motion.source : motion.target
+    guard isSheetReadyForCapture(sheet) else { return }
     do {
-      let sheet = motion.direction == .forward ? motion.source : motion.target
       let began = onCaptureMeasured == nil ? nil : CACurrentMediaTime()
       let (image, reservation) = try capture(sheet.view)
       if let began { onCaptureMeasured?(.init(began: began, ended: CACurrentMediaTime(), pixels: image.width * image.height)) }
-      guard var current = self.motion, current.id == id else { return }
+      // drawHierarchy can flush layout, which may invalidate ink coverage.
+      // Discard that capture and keep this motion waiting for its new receipt.
+      guard var current = self.motion, current.id == id, isSheetReadyForCapture(sheet) else { return }
       current.image = image; self.motion = current
       curl.frameLease = reservation
       curl.prepareDrawable(size: .init(width: image.width, height: image.height))
