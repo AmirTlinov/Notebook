@@ -1,0 +1,36 @@
+{
+  "sourceSHA256": "8a223cb495ba41ed2432a187ed467699df23890c5e49dd82834f6d342e828a53",
+  "baseCommit": "38d03028",
+  "modifiedFrameBufferOnly": false,
+  "runResult": "same third-journey Redo failure96==96",
+  "submissionID": "B667C374-270B-406D-8070-0C1285A9658C",
+  "pageID": "223CE26C-9741-4937-A91B-AFD21FD857EF",
+  "pageRevision": "13",
+  "stableRevision": "21",
+  "gpuEndUptime": 958497.0056670001,
+  "probeSequences": {
+    "undo": 634,
+    "redo": 652
+  },
+  "redoRetainedAlpha": 0,
+  "redoFinalAlpha": 0,
+  "undoRetainedAlpha": 118,
+  "undoFinalAlpha": 118,
+  "positiveControlAlpha": 117,
+  "screenshotDelayFromGPUms": [
+    185.0379166426137,
+    315.3766666073352
+  ],
+  "allFinalRetainedProbeBytesEqual": true,
+  "observerRows": 654,
+  "dropped": 0,
+  "scope": "Instrumented allocation framebufferOnly=false; final attachment and retained sampled in their same submitted command buffer. No new wait, frame, clock or readiness. Reproduced original failure, but not pixel proof for original framebufferOnly=true. Production source restored.",
+  "nextBoundary": "Encoded drawable to displayed/captured window; neither data loss nor a proven OS defect.",
+  "rawEvidence": ".build/notebook-architecture-repair/evidence-2026-09-25/final-drawable-probe-20260926T1536Z",
+  "rawManifestSHA256": "4251de438d5f309a30e0ef531b14ea80d564b086074cc3d42f4f7149506a0c7b",
+  "rawFileCount": 231,
+  "rawBytes": 91646797,
+  "nativeBaseCommit": "38d03028",
+  "launchConfigurationSourceRevision": "74751c697136593fb088df983dc83ee5d77111c6",
+  "identityNote": "Launch configuration revision is its immutable origin, not native build revision; nativeBuild/source manifest independently identify the upgraded artifact."
+}

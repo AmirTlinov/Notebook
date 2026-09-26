@@ -49,7 +49,7 @@ backlog/uploads/page order, notifications, export/clipboard, preview и worker c
 | Условие | Фактическое состояние; что требуется для закрытия |
 |---|---|
 | **Raw-page Redo: правильный конечный кадр** | Чистая Release-пара `8abb746f`, source SHA `12ef6656…`: два полных journey завершены, третий остановлен — Undo/Redo оба 96 тёмных пикселей; **0/1 XCTest PASS**, 0 skips/warnings. Данные и идентичности private-пары сохранены; 30 минут не запускались. Поздний отдельный LLDB/readback спустя около 12 минут: retained ROI с нулевой alpha и окно с 0 тёмных пикселей — не свидетельство исходного кадра и не отмена FAIL. [Отказ и архив](audit-evidence/2026-09-25/release-8abb-redo.json). |
-| **Raw-page inverse ≤100 мс** | Правильный retained ink ещё не доказывает своевременный drawable/кадр окна. Есть физический отказ 120,965 мс и последующие отдельные PASS без доказанного timing-fix. ROI-проба показала правильную retained texture, но старое окно спустя 203,872–307,367 мс; граница после retained sampling не закрыта. [ROI](audit-evidence/2026-09-25/retained-roi-redo-diagnostic.json), [physical105](audit-evidence/2026-09-25/user-ux-105-native-failures.json). |
+| **Raw-page inverse ≤100 мс** | Правильный retained ink ещё не доказывает своевременный drawable/кадр окна. Есть физический отказ 120,965 мс и последующие отдельные PASS без доказанного timing-fix. В новом том же GPU command buffer retained и итоговый drawable дают пустой cut (Undo — 118 alpha pixels), положительный контроль — 117; окно остаётся со старой линией спустя 185,038–315,377 мс. Это диагностический `framebufferOnly=false`, не production fix; граница drawable→показ/снимок ещё открыта. [Итоговый drawable](audit-evidence/2026-09-25/final-drawable-redo-probe.json). [ROI](audit-evidence/2026-09-25/retained-roi-redo-diagnostic.json), [physical105](audit-evidence/2026-09-25/user-ux-105-native-failures.json). |
 | **U10: целое смешанное выделение/перенос** | Требуется полный путь raw handwriting + authored elements, лассо, атомарный перенос и продолжение следующего действия. Проверки отдельных material/selection владельцев его не заменяют. |
 | **Холодный документ ≤1000 мс** | **USB iPad125: 1985,010375 мс — FAIL**; same-artifact126: **1977,670541 мс — FAIL**, оба изображения правильные. Это уже новый ZIP reader, но не физическое закрытие секунды. В126 ожидание печатного артефакта заняло 1243,949 мс, запрос→установка 1707,355 мс. [125–126](audit-evidence/2026-09-25/user-ux-125-126.json). |
 | **Физический ink response ≤20 мс** | Предыдущие pen/eraser replay timing FAIL не закрыты; GPU-ready/логический commit не заменяют показ ОС. [Отрицательный A/B](audit-evidence/2026-09-25/warm-transaction-rejected.json). |
@@ -90,6 +90,12 @@ ASan/UBSan, точные PDF/SyncTeX/log, отмена/deadline/recovery и по
 reduction 8,778%; физический порог пока не проверен на этом kernel. Глобального
 cache нет, TeX-проходы и memory ceiling прежние.
 [Квитанция fontmap](audit-evidence/2026-09-25/typesetter-fontmap.json).
+
+Следующий адресный срез читает fontmap частями по 8 KiB: 4 408 062 перехода
+через C/Rust bridge заменены на 540 без изменения underlying reads/bytes.
+100 000 строк, точные PDF/SyncTeX, отмена и prepare/check трёх платформ — PASS;
+Mac fresh median 790,241 → 684,856 мс. Физическое открытие ещё не перепроверено.
+[Квитанция чтения](audit-evidence/2026-09-25/typesetter-fontmap-stream.json).
 
 Сборка из изолированного source snapshot теперь берёт закреплённый TeX distribution
 из выбранного runtime stage, а не повторно загружает 2,88 GB в каждый snapshot.

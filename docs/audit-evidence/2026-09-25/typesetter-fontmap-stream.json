@@ -1,0 +1,91 @@
+{
+  "scope": "Устранена побайтовая передача fontmap через C/Rust bridge внутри guest. Не физическая UX-приёмка.",
+  "owner": "pdf_load_fontmap_file: один private 8 KiB reader на открытый handle; существующий partial-read API; общий tt_mfgets не изменён.",
+  "rawEvidence": ".build/notebook-architecture-repair/evidence-2026-09-25/typesetter-fontmap-stream-20260926T1545Z",
+  "rawManifestSHA256": "ae35f80e6465835da7d51a71ac6c47c2178360a46b7e37a5ccf791cfa6a8e106",
+  "kernel": {
+    "bytes": 5188052,
+    "sha256": "396ef3ed9d9a32631cfc0142b7a79b66fefc58cf9f3e012931e40bc669b863e7",
+    "packedSHA256": "86af20f92e86f5c7e132a95fde6f76e86d46ee54bae2bf0088d769ac188cd2e1"
+  },
+  "combinedGuestPatchSHA256": "40d65698db4dd3978e2656e5fd7373927e330cbb3155257272e50bb423ae9ed3",
+  "privateGuestDeltaSHA256": "ef50b57ad3ebe97329816f37a5eda7bfe0d914fb7f052ed04118b85e11578c15",
+  "ownerCounterControl": {
+    "mapBytes": 4408061,
+    "exactLines": 38046,
+    "baselineGetcCalls": 4408062,
+    "candidatePartialReadCalls": 540,
+    "backingReadsBoth": 540,
+    "backingBytesBoth": 4408061,
+    "exactBoundaryAndErrorSequenceCases": 360,
+    "realInputHandleCloseDigestCases": 4,
+    "hostSyscallCountClaimed": false
+  },
+  "integratedRegression": {
+    "route": "existing build/rebuild-tectonic.py → fontmap-test.c with actual pinned C owners",
+    "asanUbsan": "PASS",
+    "readerLines": 100000,
+    "readerPartialCalls": 63,
+    "preservedHashEntries": 100000,
+    "preservedHashInsertionComparisons": 115986,
+    "sourceSHA256": "9bdc20ddaa3388cdaff81b77a1ca2cd1ec7fc843434fba406ca845d764e2d030",
+    "logSHA256": "963efd4eeab835d5d26316322e24533d61ff73f2fcfb28c9dfe7d32979d06d8e"
+  },
+  "exactCABI": {
+    "frozenPdfRawAndDecodedSyncTeXAndLogCases": 8,
+    "fontmapOperationRuns": 2,
+    "customMixedLineAndEarlyErrorRuns": 4,
+    "deadlineCancelCancelledTokenAndSameRuntimeRecovery": "PASS for both kernels",
+    "texPasses": 2,
+    "pdfPasses": 1,
+    "executedABIVersion": 2,
+    "memoryCeilingBytes": 536870912,
+    "secondClosedBodyGuestMemoryBytesBoth": 291635200,
+    "pairedExactOutputRuns": 36
+  },
+  "pairedMac": {
+    "startedUTC": "2026-09-26T15:33:42.995291+00:00",
+    "endedUTC": "2026-09-26T15:34:10.841900+00:00",
+    "currentFreshMedianMS": 790.2405,
+    "rebuiltFreshMedianMS": 790.8445,
+    "candidateFreshMedianMS": 684.856,
+    "currentPairedFreshReductionPercent": 12.869704346574773,
+    "currentPairedFreshRangePercent": [
+      10.646299788035861,
+      20.923838038876287
+    ],
+    "rebuiltPairedFreshReductionPercent": 13.345934351928618,
+    "currentWarmMedianMS": 751.8475,
+    "candidateWarmMedianMS": 660.769,
+    "currentPairedWarmReductionPercent": 11.443683829652935,
+    "allSixFreshAndWarmPairsPositive": true
+  },
+  "provenance": {
+    "currentKernelSHA256": "2ab984ab3c08c3413a2c7476f3b7974d2458a4de51572a4a599e858106b1dbcb",
+    "rebuiltBaselineSHA256": "17f0d61958a734f2d592a33e16a40d685a02b847652f182e9c938c7b4086b22e",
+    "onlyGuestSourceChange": "crates/pdf_io/pdf_io/dpx-fontmap.c",
+    "sameToolchain": "SDK25 + Rust1.94.1 + locked Cargo.lock; same checkout baseline/candidate",
+    "allPriorPatchesPreservedByExactSourceReplay": true,
+    "sameImageWasiSupervisorObjects": true,
+    "crossDirectoryBinaryIdentityClaimed": false
+  },
+  "integration": {
+    "runtimeInputSHA256": "60709940be64ffcfc7a6d4427e52e03608b74cf6eef2d0861f7b13d90ce991cf",
+    "preparedAndCheckedPlatforms": [
+      "macosx",
+      "iphoneos",
+      "iphonesimulator"
+    ],
+    "sourceUnchangedDuringPreparation": true,
+    "regressionExecutedAgainstExactCandidateGuest": true,
+    "fullBootstrapAfterRegressionExtensionRepeated": false
+  },
+  "open": "Physical cold-document 1000 ms condition remains open; Mac control does not close it.",
+  "limitations": [
+    "Cold = fresh process/Runtime; OS file cache was not cleared. Possible external video CPU decode is retained as a timing caveat.",
+    "No 50% speedup, physical FPS, GPU or CPU duty claim.",
+    "Existing partial-read I/O error says N-byte read failed instead of getc failed; negative result, line/error sequence, consumed position and digest are preserved.",
+    "First TMP candidate retained old C mtime and reused baseline binary. Equal hash rejected before AOT/measurement; preserved failed build attempt, exact source touched and rebuilt.",
+    "Combined patch ordering was normalized by git diff; checked source replay proves no unrelated source change."
+  ]
+}
