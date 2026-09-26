@@ -5,6 +5,7 @@ struct NotebookNavigationView: View {
   @Environment(NotebookAppModel.self) private var model
   let presence: SessionPresence
   let documentPageCount: Int?
+  var openingFailure: PageTurnPreparationFailure? = nil
   @State private var showsPages = false
   @State private var pageWindow = 0
   @State private var savedText: String?
@@ -24,6 +25,21 @@ struct NotebookNavigationView: View {
   var body: some View {
     VStack(alignment: .leading, spacing: 8) {
       Spacer(minLength: 0)
+      if let failure = openingFailure {
+        HStack(spacing: 8) {
+          Text(failure.message).font(.caption)
+          Button("Повторить", action: failure.retry)
+            .accessibilityIdentifier("retry-workspace-opening")
+        }
+        .padding(12).notebookPanel(radius: NotebookChrome.cardRadius)
+        .background {
+          #if os(iOS)
+          NotebookControlRegion(gate: model.inputGate)
+          #endif
+        }
+        .accessibilityIdentifier("workspace-opening-failure")
+        .frame(maxWidth: .infinity, alignment: .trailing).padding(.trailing, 18)
+      }
       if presence.mode == .page || presence.mode == .document {
         if let save = model.documentSavePresentation, save.documentID == presence.focusedItemID,
           save.phase != .installed {
@@ -39,7 +55,7 @@ struct NotebookNavigationView: View {
           .accessibilityIdentifier("document-save-status")
           .frame(maxWidth: .infinity, alignment: .trailing).padding(.trailing, 18)
         }
-        if presence.mode == .document,
+        if openingFailure == nil, presence.mode == .document,
           let status = model.documentPageNavigationStatus,
           status.documentID == presence.focusedItemID, let target = status.target {
           HStack(spacing: 8) {
@@ -56,7 +72,7 @@ struct NotebookNavigationView: View {
           .accessibilityIdentifier("document-page-navigation-status")
           .frame(maxWidth: .infinity, alignment: .trailing).padding(.trailing, 18)
         }
-        if presence.mode == .page, let status = model.notebookPageNavigation.status,
+        if openingFailure == nil, presence.mode == .page, let status = model.notebookPageNavigation.status,
           status.ownerID == presence.focusedItemID {
           HStack(spacing: 8) {
             if let failure = status.failure {

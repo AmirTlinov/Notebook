@@ -274,21 +274,29 @@ import XCTest
 
   func testMissingElementPinsKeepTheirBoardAddress() async throws {
     try await fixture { model, _ in
-      let child = try XCTUnwrap(model.createBoard(at: .zero))
+      let original = try XCTUnwrap(model.presence)
+      let notebook = try XCTUnwrap(original.selectedItemID)
+      // A visible closed board legitimately contributes its portal header.
+      // Keep this unrelated board outside coverage and outside the selection.
+      let child = try XCTUnwrap(model.createBoard(at: .init(x: 100_000, y: 100_000)))
       await model.finishPendingPersistence()
       let root = try XCTUnwrap(model.presence?.boardID)
-      let before = try model.store.loadBoard(items: try XCTUnwrap(model.workspace).items)
+      let before = try model.store.readTransaction { store in
+        try store.loadBoard(items: store.loadIndex().items)
+      }
       var board = before
       let element = SpatialElement(id: "same-local-id", surface: .board(root), kind: .web,
         frame: .init(x: 0, y: 0, width: 100, height: 100), worldOrigin: .zero,
         source: "chart", html: "<b>Keep me</b>", stamp: .init(counter: 0, actor: model.actorID))
       XCTAssertTrue(board.upsertElement(element, in: root, expected: nil, actor: model.actorID))
       _ = try model.store.saveBoardEdits(before: before, after: board)
-      let presence = SessionPresence(boardID: root, mode: .board, camera: .init(scale: 0.2), viewport: .init(x: 834, y: 1194))
+      let presence = SessionPresence(boardID: root, mode: .board, camera: .init(scale: 0.2), viewport: .init(x: 834, y: 1194),
+        selectedItemID: notebook, notebookPageID: original.notebookPageID)
       let state = try NotebookSceneState.read(store: model.store, presence: presence, viewport: presence.viewport,
         pinnedElements: [root: [element.id], child: [element.id]])
       XCTAssertTrue(state.missingPinnedElements.isEmpty,"An unopened child is not queried for unrelated stale pins")
       XCTAssertNil(state.hierarchy.board(child))
+      XCTAssertNil(state.coverage[child], "Foreign pins must not admit a child content window")
       XCTAssertNotNil(state.hierarchy.board(root)?.elements.first { $0.id == element.id })
     }
   }

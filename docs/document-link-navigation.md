@@ -41,6 +41,23 @@ and relative cross-document URLs are rejected.
 navigation. `DocumentPagePresentationOwner` prepares the target, while
 `DocumentProgramOwner` independently owns program checkpoints.
 
+An addressed offscreen notebook/document keeps one workspace settlement. Its
+closed cover first approaches the actual viewport; only then can its mounted
+paper establish render readiness and authorize opening. Both animation stages
+share the original duration, request identity and rollback origin. The admitted
+preparation target is not culled by the old board camera. Offscreen preparation
+is never reported as a displayed page, and cancellation retires both stages.
+The prepared source demand is checked separately from the actual camera. A
+canonical deletion/transfer proof is installed before retiring its mounted owner;
+late input cannot restore the old placement. iPad ends that camera passage, while
+the AppKit mouse owner validates the same semantic presence before both drag and
+lift. Stationary paper refines its backing before opening, not after landing.
+The existing native preparation channel refines the installed page at its actual
+pose before its ready result can authorize a stationary opening. It revokes the
+old movement-quality receipt synchronously; a later SwiftUI quality update does
+not allocate the same backing again. The existing confirmation clock stays active
+through both short stages, and returns to its idle cadence outside a pending passage.
+
 The current paper remains interactive during preparation. The target gains input
 only after native installation and publication of its current role.
 `didInstall` retains the completed demand identity across SwiftUI updates.

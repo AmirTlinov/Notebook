@@ -124,7 +124,7 @@ final class IPadPageTurnController: UIViewController {
   private var onTransitioningChange: @MainActor (Bool) -> Void = { _ in }
 
   private var hasInstalledPage = false
-  private let pageTurnActivity = PageTurnActivity()
+  let pageTurnActivity = PageTurnActivity()
   private var isTransitioning = false
   private var isUpdatingContents = false
   private var pendingExternalIndex: Int?
@@ -913,16 +913,7 @@ final class IPadPageTurnController: UIViewController {
       target: target, phase: phase, failure: failure?.id)
     guard key != lastDocumentStatus else { return }
     lastDocumentStatus = key; documentStatusRevision &+= 1
-    let retry = failure.map { failure in
-      PageTurnPreparationFailure(kind: failure.kind, message: failure.message) { [weak self] in
-        guard let self, self.documentSelection?.id == request?.id,
-          self.sequenceRevision == key.source, let target,
-          self.preparationFailures[target]?.id == failure.id else { return }
-        self.preparationFailures[target] = nil
-        self.publishDocumentStatus()
-        failure.retry()
-      }
-    }
+    let retry = failure.flatMap { _ in target.flatMap { retryablePreparationFailure(at: $0) } }
     let status = DocumentPageNavigationStatus(controllerID: documentControllerID, documentID: ownerID,
       sourceRevision: sequenceRevision, revision: documentStatusRevision, requestID: request?.id,
       target: target, phase: phase, failure: retry)
@@ -978,7 +969,33 @@ final class IPadPageTurnController: UIViewController {
     min(max(0, index), max(0, pageCount - 1))
   }
 
-  var isCurrentPagePrepared:Bool { hasInstalledPage && readyPages[displayedIndex] == true && preparationFailures[displayedIndex] == nil }
+  private func retryablePreparationFailure(at index: Int, requiresCurrentPage: Bool = false) -> PageTurnPreparationFailure? {
+    guard let failure = preparationFailures[index], let hostID = controllers[index]?.hostID else { return nil }
+    let source = sequenceRevision, owner = ownerID, request = documentSelection?.id
+    return .init(id: failure.id, kind: failure.kind, message: failure.message) { [weak self] in
+      guard let self, ownerID == owner, sequenceRevision == source,
+        controllers[index]?.hostID == hostID, preparationFailures[index]?.id == failure.id,
+        documentSelection?.id == request, !requiresCurrentPage || displayedIndex == index else { return }
+      preparationFailures[index] = nil
+      publishDocumentStatus()
+      failure.retry()
+    }
+  }
+
+  func prepareCurrentPage(refinesDetails: Bool) -> PageTurnPreparationState {
+    if refinesDetails {
+      guard hasInstalledPage, let current = controllers[displayedIndex],
+        sheetController.page === current, current.viewIfLoaded?.window != nil else { return .waiting }
+      if case .failed = currentPagePreparation { return currentPagePreparation }
+      pageTurnActivity.refinePresentation(at: displayedIndex)
+    }
+    return currentPagePreparation
+  }
+
+  var currentPagePreparation: PageTurnPreparationState {
+    if let failure = retryablePreparationFailure(at: displayedIndex, requiresCurrentPage: true) { return .failed(failure) }
+    return hasInstalledPage && readyPages[displayedIndex] == true ? .ready : .waiting
+  }
   var preparedPageIndices: Set<Int> { Set(readyPages.compactMap { $0.value ? $0.key : nil }) }
 
   #if DEBUG

@@ -118,6 +118,114 @@ import SwiftUI
     view.uninstall()
   }
 
+  func testCanonicalDeletionRevokesTheOldMouseCameraBeforeItsNextSample() async throws {
+    for sendsLateDrag in [true, false] {
+      try await assertCanonicalRetirementRevokesMouseCamera(transferring: false, sendsLateDrag: sendsLateDrag)
+    }
+  }
+
+  func testCanonicalTransferRevokesTheOldMouseCameraWithoutDeletingItsSelection() async throws {
+    for sendsLateDrag in [true, false] {
+      try await assertCanonicalRetirementRevokesMouseCamera(transferring: true, sendsLateDrag: sendsLateDrag)
+    }
+  }
+
+  private func assertCanonicalRetirementRevokesMouseCamera(transferring: Bool, sendsLateDrag: Bool) async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    let fixture = MacCommandFixture(root: root), model = fixture.model
+    retainNotebookUntilTeardown(model, removing: root)
+    try await fixture.start(showingPage: true)
+    let itemID = try XCTUnwrap(model.presence?.selectedItemID)
+    let pageID = try XCTUnwrap(model.presence?.notebookPageID)
+    let boardID = try XCTUnwrap(model.presence?.boardID)
+    let childID = try XCTUnwrap(model.createBoard(at: .init(x: 3_000, y: 0)))
+    let created = await model.finishPendingPersistence(); XCTAssertTrue(created)
+    model.selectItem(itemID)
+    model.updatePresence(.init(boardID: boardID, mode: .cover,
+      camera: .init(scale: 0.3), viewport: .init(x: 1_000, y: 800),
+      focusedItemID: itemID, selectedItemID: itemID, notebookPageID: pageID), settled: true)
+    let saved = await model.finishPendingPersistence(); XCTAssertTrue(saved)
+    await model.reloadExternalChanges()?.value
+    let peer = UUID(), local = model.actorID
+    let peerStore = NotebookStore(root: root.appendingPathComponent("peer"))
+    // The other device authors this change before the local mouse contact.
+    // Native commands on the live store must continue to reject active input.
+    try await model.performStoreCommand { store in
+      try NotebookPeerFixture.copy(from: store, to: peerStore, peerID: local)
+      if transferring {
+        let workspace = try peerStore.loadIndex(), before = try peerStore.loadBoard(items: workspace.items)
+        var after = before
+        XCTAssertTrue(after.deleteItem(itemID, from: boardID, kind: .notebook,
+          spatialInk: .init(stamp: before.stamp), actor: peer))
+        XCTAssertTrue(after.addItem(itemID, to: childID, near: .zero, actor: peer))
+        _ = try peerStore.saveBoardEdits(before: before, after: after)
+      } else { _ = try peerStore.deleteTestItem(itemID: itemID, actor: peer) }
+    }
+    let canvas = MacCanvasNavigationView(model: model)
+    let window = NSWindow(contentRect: .init(x: 0, y: 0, width: 1_000, height: 800),
+      styleMask: .borderless, backing: .buffered, defer: false)
+    window.isReleasedWhenClosed = false; window.contentView = canvas; window.orderBack(nil)
+    defer { canvas.uninstall(); window.contentView = nil; window.close() }
+    func event(_ type: NSEvent.EventType, _ x: CGFloat, _ y: CGFloat) throws -> NSEvent {
+      try XCTUnwrap(NSEvent.mouseEvent(with: type, location: canvas.convert(.init(x: x, y: y), to: nil),
+        modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+        windowNumber: window.windowNumber, context: nil, eventNumber: 1, clickCount: 1, pressure: 1))
+    }
+    let initial = try XCTUnwrap(model.presence)
+    window.sendEvent(try event(.leftMouseDown, 200, 200))
+    window.sendEvent(try event(.leftMouseDragged, 230, 220))
+    let first = try XCTUnwrap(model.presence)
+    XCTAssertNotEqual(first.camera, initial.camera)
+    window.sendEvent(try event(.leftMouseDragged, 260, 240))
+    let observed = try XCTUnwrap(model.presence)
+    XCTAssertNotEqual(observed.camera, first.camera, "Ordinary successive samples keep one mouse owner")
+    XCTAssertEqual(model.presencePhase, .active)
+    XCTAssertEqual(observed.focusedItemID, itemID)
+    let pins = [boardID: [itemID]]
+    // As in the iPad retirement fixture, publish an already committed incoming
+    // Core cut while the native camera still owns its original mouse-down.
+    // Transport admission is a separate gate; no local native write bypasses it.
+    let state = try await model.performStoreCommand { store in
+      try NotebookPeerFixture.copy(from: peerStore, to: store, peerID: peer)
+      return try NotebookSceneState.read(store: store, presence: observed,
+        viewport: observed.viewport, pinnedItems: pins)
+    }
+    if transferring { XCTAssertEqual(state.transferredPinnedItems, [itemID: childID]) }
+    else { XCTAssertEqual(state.missingPinnedItems, [itemID]) }
+    model.prepareComposition(presence: observed, frame: nil, pinned: [.item(itemID)],
+      displayScale: 1, installedItemOwners: [itemID: boardID])
+    XCTAssertTrue(model.acceptExternalScene(state, observedEpoch: model.collaborationReadEpoch,
+      observedPresence: observed, observedPreparation: observed, itemPins: pins))
+    let normalized = try XCTUnwrap(model.presence)
+    XCTAssertEqual(model.presencePhase, .settled)
+    XCTAssertNil(normalized.focusedItemID)
+    if transferring { XCTAssertEqual(normalized.selectedItemID, itemID) }
+    else { XCTAssertNotEqual(normalized.selectedItemID, itemID) }
+    if sendsLateDrag {
+      window.sendEvent(try event(.leftMouseDragged, 290, 260))
+      XCTAssertEqual(model.presence, normalized, "A late drag cannot revive the retired semantic owner")
+      XCTAssertEqual(model.presencePhase, .settled)
+    }
+    // A late lift belongs to the revoked sequence, not any replacement owner.
+    model.updatePresence(normalized, settled: false)
+    model.selectWorkspaceItem(childID, boardID: boardID)
+    let selected = model.selectionSession.target
+    XCTAssertNotNil(selected)
+    window.sendEvent(try event(.leftMouseUp, 200, 200))
+    XCTAssertEqual(model.presence, normalized)
+    XCTAssertEqual(model.presencePhase, .active, "The old lift cannot settle another camera owner")
+    XCTAssertEqual(model.selectionSession.target, selected, "A direct late lift at the old down point cannot clear the new selection")
+    model.updatePresence(normalized, settled: true)
+    try await fixture.waitUntil { !model.inputGate.isActive }
+    window.sendEvent(try event(.leftMouseDown, 200, 200))
+    window.sendEvent(try event(.leftMouseDragged, 240, 230))
+    XCTAssertNotEqual(model.presence?.camera, normalized.camera, "Revocation cannot disable the next ordinary mouse drag")
+    XCTAssertNil(model.presence?.focusedItemID)
+    XCTAssertEqual(model.presence?.selectedItemID, normalized.selectedItemID)
+    window.sendEvent(try event(.leftMouseUp, 240, 230))
+    XCTAssertEqual(model.presencePhase, .settled)
+  }
+
   func testClosingLastWindowDoesNotTerminateSharedOwner() {
     let lifecycle = NotebookMacLifecycle()
     XCTAssertFalse(lifecycle.applicationShouldTerminateAfterLastWindowClosed(NSApplication.shared))

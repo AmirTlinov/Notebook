@@ -281,6 +281,231 @@ import XCTest
     XCTAssertEqual(model.presence?.notebookPageID, target)
   }
 
+  func testCanonicalRetirementEndsTheMountedHumanCameraWithoutRestoringItsTarget() async throws {
+    let model = try await modelWithPages(1)
+    let notebook = try XCTUnwrap(model.workspace?.selectedItemID)
+    _ = try XCTUnwrap(model.createNotebook(at: .init(x: 10_000, y: 10_000)))
+    model.selectItem(notebook)
+    let saved = await model.finishPendingPersistence(); XCTAssertTrue(saved)
+    let scene = try await mount(model)
+    let camera = try XCTUnwrap(scene.window.gestureRecognizers?.compactMap {
+      $0.delegate as? WorkspaceGestureLayer.Coordinator
+    }.first)
+    let center = CGPoint(x: scene.window.bounds.midX, y: scene.window.bounds.midY)
+    camera.onCamera(.began(centroid: center))
+    camera.onCamera(.changed(scale: 1.08, velocity: 0.6, elapsed: 0.2, centroid: center))
+    let active = ContinuousClock.now + .seconds(1)
+    while model.presencePhase != .active, ContinuousClock.now < active { await Task.yield() }
+    XCTAssertEqual(model.presencePhase, .active)
+    let last = try XCTUnwrap(model.presence)
+    XCTAssertEqual(last.focusedItemID, notebook)
+    // Commit a canonical external cut, then let the real mounted owner consume
+    // its exact pinned retirement. No replacement observer or gesture API.
+    let actor = UUID()
+    _ = try await model.performStoreCommand { try $0.deleteTestItem(itemID: notebook, actor: actor) }
+    await model.reloadExternalChanges()?.value
+    let retired = ContinuousClock.now + .seconds(2)
+    while model.presencePhase != .settled || model.presence?.focusedItemID != nil,
+      ContinuousClock.now < retired { try await Task.sleep(for: .milliseconds(5)) }
+    XCTAssertEqual(model.presencePhase, .settled)
+    XCTAssertEqual(model.presence?.mode, .board)
+    XCTAssertNil(model.presence?.focusedItemID); XCTAssertNotEqual(model.presence?.selectedItemID, notebook)
+    XCTAssertEqual(model.presence?.camera, last.camera)
+    let settled = model.presence
+    camera.onCamera(.changed(scale: 1.2, velocity: 0.6, elapsed: 0.3, centroid: center))
+    camera.onCamera(.ended(scale: 1.2, velocity: 0.6, elapsed: 0.4, centroid: center))
+    XCTAssertEqual(model.presence, settled, "Late samples cannot revive the retired camera target")
+    XCTAssertEqual(model.presencePhase, .settled)
+  }
+
+  func testWorkspaceCompositionDeliveryCoalescesCancelsAndRebindsTheNativeOwner() async throws {
+    let first = try await modelWithPages(1), second = try await modelWithPages(1)
+    let presence = try XCTUnwrap(first.presence)
+    let owner = NotebookWorkspacePresentationController()
+    defer { owner.uninstall() }
+    func request(_ publication: UInt64) -> NotebookWorkspaceCompositionRequest {
+      .init(presence: presence, generation: first.sceneIndex?.generationID, publication: publication,
+        revision: first.workspaceHeader?.cursor, pinned: [], itemOwners: [:], permitsPreparation: true,
+        refinesDetails: true, groupPoses: [:])
+    }
+    var delivered: [String] = []
+    func update(_ model: NotebookAppModel, _ publication: UInt64, _ label: String,
+      completed: XCTestExpectation? = nil) {
+      owner.update(model: model, presence: presence, cohort: nil, preparation: request(publication), prepare: {
+        delivered.append(label); completed?.fulfill()
+      }, content: AnyView(EmptyView()))
+    }
+    let latest = expectation(description: "The latest native update is delivered")
+    update(first, 1, "superseded-first")
+    update(first, 2, "superseded-second")
+    update(first, 3, "latest", completed: latest)
+    XCTAssertTrue(delivered.isEmpty, "Preparation must not publish inside updateUIViewController")
+    await fulfillment(of: [latest], timeout: 1)
+    XCTAssertEqual(delivered, ["latest"])
+
+    let repeated = expectation(description: "An unchanged request is not prepared again")
+    repeated.isInverted = true
+    update(first, 3, "duplicate", completed: repeated)
+    await fulfillment(of: [repeated], timeout: 0.05)
+    XCTAssertEqual(delivered, ["latest"])
+
+    let rebound = expectation(description: "Rebinding resets equality and cancels the previous model's work")
+    update(first, 4, "old-model")
+    update(second, 4, "new-model", completed: rebound)
+    await fulfillment(of: [rebound], timeout: 1)
+    XCTAssertEqual(delivered, ["latest", "new-model"])
+
+    let retired = expectation(description: "Retired native owners cannot prepare a late request")
+    retired.isInverted = true
+    update(second, 5, "retired", completed: retired)
+    owner.uninstall()
+    await fulfillment(of: [retired], timeout: 0.05)
+    XCTAssertEqual(delivered, ["latest", "new-model"])
+  }
+
+  func testShowReferenceApproachesAnOffscreenNotebookBeforeOpeningItsExactPaper() async throws {
+    let model = try await modelWithPages(3, distinctLeaves: true, includesSVG: true)
+    let workspace = try XCTUnwrap(model.workspace), notebook = workspace.selectedItemID
+    let targetPage = try XCTUnwrap(model.activePage), target = targetPage.id
+    let root = try XCTUnwrap(model.notebookPageRoot(notebook))
+    let center = try XCTUnwrap(model.boardHierarchy?.focusedCenter(of: notebook, in: workspace.rootBoardID))
+    await model.prepareNotebookPage(at: 0, in: notebook)
+    XCTAssertEqual(model.selectNotebookPage(0, notebookID: notebook, expectedRoot: root), 0)
+    model.clearSelection()
+    let viewport = SpatialPoint(x: 834, y: 1194)
+    let origin = SessionPresence(boardID: workspace.rootBoardID, mode: .board,
+      camera: .init(center: center.offsetBy(x: 10_000, y: 10_000), scale: 0.6), viewport: viewport,
+      selectedItemID: notebook, notebookPageID: model.activePage?.id)
+    model.updatePresence(origin, settled: true)
+    let window = try await mountNotebookScene(model)
+    func initialBoardIsInstalled() -> Bool {
+      model.stopNavigationPresentation != nil && model.presencePhase == .settled
+        && model.compositionTiles.published?.isPaintInstalled == true
+        && model.compositionTiles.published?.frame.presences[workspace.rootBoardID]?.camera == model.presence?.camera
+        && !model.scenePreparationPending
+    }
+    let mountedDeadline = ContinuousClock.now + .seconds(8)
+    while !initialBoardIsInstalled(), ContinuousClock.now < mountedDeadline {
+      try await Task.sleep(for: .milliseconds(10))
+    }
+    XCTAssertTrue(initialBoardIsInstalled(), "Measure navigation from the installed original board, not its initial publication")
+    XCTAssertNil(model.selectionSession.itemID(on: workspace.rootBoardID), "Workspace selection must not accidentally pin a native paper")
+    let oldFrame = WorkspaceItemGeometry.notebook.screenFrame(center: center, camera: origin.camera, viewport: viewport)
+    XCTAssertLessThan(oldFrame.x + oldFrame.width, 0, "The target is genuinely outside the mounted board viewport")
+    XCTAssertLessThan(oldFrame.y + oldFrame.height, 0)
+    let actualViewport = try XCTUnwrap(model.presence?.viewport)
+    let scale = WorkspaceItemGeometry.notebook.fitScale(viewport: actualViewport)
+    let transform = CGAffineTransform(a: scale, b: 0, c: 0, d: scale,
+      tx: (actualViewport.x - WorkspaceItemGeometry.notebook.width * scale) / 2,
+      ty: (actualViewport.y - WorkspaceItemGeometry.notebook.height * scale) / 2)
+    var phases: [String] = [], lastState = ""
+    var observedInk: InkCanvasView?, receiveReadiness: ((Bool) -> Void)?
+    var observedPageOwner: IPadPageTurnController?
+    var preparationObservation: UUID?
+    var positionedTypedReadyAt: ContinuousClock.Instant?, firstOpeningAt: ContinuousClock.Instant?
+    var positionedReadyProjection: (changes: Int, resizes: Int)?
+    var settlementRevokedReadyInk = false, openingPrecededPreparedProjection = false
+    let requiredPaper = CGRect(x: 0, y: 0, width: targetPage.size.width, height: targetPage.size.height)
+    let pageFit = min(WorkspaceItemGeometry.notebook.width / targetPage.size.width,
+      WorkspaceItemGeometry.notebook.height / targetPage.size.height)
+    let requiredDensity = CGFloat(scale * pageFit) * window.screen.scale
+    func hasPreparedDestinationProjection(_ ink: InkCanvasView) -> Bool {
+      guard ink.isStableFramePresented, ink.pageSourceSize == requiredPaper.size,
+        let crop = ink.pageRenderRegion, crop.width > 0, crop.height > 0,
+        crop.contains(requiredPaper) else { return false }
+      let density = min(ink.drawableSize.width / crop.width, ink.drawableSize.height / crop.height)
+      // Same calculation epsilon as PageInkProjection, not movement quality.
+      return density + 0.000_001 >= requiredDensity
+    }
+    let start = ContinuousClock.now
+    func inkState(_ ink: InkCanvasView) -> String {
+      "ink=\(ObjectIdentifier(ink)) stable=\(ink.isStableFramePresented) geometry=\(ink.pageGeometryIsReady) projections=\(ink.pageProjectionChangeCount) resizes=\(ink.pageDrawableResizeCount) region=\(String(describing: ink.pageRenderRegion)) pixels=\(ink.drawableSize) mesh=\(ink.pageMeshPreparationCount)/\(ink.pageMeshBuildCount) submitted=\(ink.drawableRequestCount) committed=\(ink.pageCommittedPassCount) hidden=\(ink.isHidden) failure=\(String(describing: ink.renderFailure))"
+    }
+    func observeMountedInk() {
+      guard observedInk == nil else { return }
+      func owner(in controller: UIViewController) -> IPadPageTurnController? {
+        if let owner = controller as? IPadPageTurnController { return owner }
+        return controller.children.lazy.compactMap { owner(in: $0) }.first
+      }
+      guard let root = window.rootViewController, let owner = owner(in: root), owner.displayedIndex == 2,
+        let installed = owner.sheetController.page?.view else { return }
+      func paper(in view: UIView) -> PaperCanvasContainerView? {
+        if let paper = view as? PaperCanvasContainerView, paper.touchView.quickShapePageID == target { return paper }
+        return view.subviews.lazy.compactMap { paper(in: $0) }.first
+      }
+      guard let ink = paper(in: installed)?.inkView else { return }
+      observedInk = ink; observedPageOwner = owner; receiveReadiness = ink.onRenderReadinessChange
+      preparationObservation = owner.pageTurnActivity.observePreparation { change in
+        guard case .refine(let pageIndex) = change, pageIndex == 2 else { return }
+        // This existing native request runs before consuming the cached ready
+        // bit. Merely observe it; do not initiate or complete preparation here.
+        recordState()
+      }
+      let receive = receiveReadiness
+      ink.onRenderReadinessChange = { [weak ink] ready in
+        if let ink {
+          phases.append("\(start.duration(to: .now)): ink readiness=\(ready); phase=\(model.presencePhase); \(inkState(ink))")
+          if !ready, model.presencePhase == .settled, positionedReadyProjection != nil { settlementRevokedReadyInk = true }
+        }
+        receive?(ready)
+      }
+    }
+    func recordState() {
+      observeMountedInk()
+      let typedReady = observedPageOwner?.displayedIndex == 2
+        && observedPageOwner?.currentPagePreparation.isReady == true
+      // A spring sample may reach the model endpoint before its movement
+      // stage finishes. Only the installed full-density crop certifies paper.
+      let positionedReady = typedReady && observedInk.map(hasPreparedDestinationProjection) == true
+        && model.activePage?.id == target && model.presencePhase == .active
+        && model.presence?.openProgress == 0 && model.presence?.camera.center == center
+        && model.presence?.camera.scale == scale
+      if positionedTypedReadyAt == nil, positionedReady {
+        positionedTypedReadyAt = .now
+        phases.append("\(start.duration(to: .now)): exact native target ready with destination crop/density")
+      }
+      if positionedReadyProjection == nil, positionedReady, let ink = observedInk,
+        model.activePage.map({ model.pagePresentations.isPresented($0) }) == true {
+        positionedReadyProjection = (ink.pageProjectionChangeCount, ink.pageDrawableResizeCount)
+      }
+      if firstOpeningAt == nil, (model.presence?.openProgress ?? 0) > 0 {
+        firstOpeningAt = .now
+        openingPrecededPreparedProjection = positionedTypedReadyAt == nil || positionedReadyProjection == nil
+        phases.append("\(start.duration(to: .now)): first opening sample; prepared destination=\(!openingPrecededPreparedProjection)")
+      }
+      let state = "phase=\(model.presencePhase) presence=\(String(describing: model.presence)); requested=\(String(describing: model.requestedReference?.id)); target=\(target); active=\(String(describing: model.activePage?.id)); paperReady=\(model.activePage.map { model.pagePresentations.isPresented($0) } ?? false); input=\(model.inputGate.isActive); scenePending=\(model.scenePreparationPending); composing=\(model.compositionTiles.isPreparing); targetIndexed=\(model.sceneIndex?.item(id: notebook) != nil); targetAdmitted=\(model.compositionTiles.published?.plan.allowsLive(.item(notebook), in: .board(workspace.rootBoardID)) == true); failure=\(model.persistenceFailure ?? model.compositionTiles.failure ?? "none"); \(observedInk.map(inkState) ?? "ink-not-mounted")"
+      if state != lastState { phases.append("\(start.duration(to: .now)): \(state)"); lastState = state }
+    }
+    defer {
+      recordState()
+      observedInk?.onRenderReadinessChange = receiveReadiness
+      if let preparationObservation { observedPageOwner?.pageTurnActivity.removePreparationObserver(preparationObservation) }
+      let state = XCTAttachment(string: phases.joined(separator: "\n"))
+      state.name = "offscreen-reference-state"; state.lifetime = .keepAlways; add(state)
+    }
+    model.requestShow(.init(target: .init(kind: .page, id: target), revision: "offscreen-page-reference"))
+    try await shown("offscreen-reference-exact-paper", window: window, probes: leafProbes(2, transform),
+      since: start, budget: NotebookUXObservation.opening, acknowledged: {
+        recordState()
+        return model.presence?.mode == .page && model.presence?.focusedItemID == notebook
+          && model.activePage?.id == target && model.requestedReference == nil
+          && model.activePage.map { model.pagePresentations.isPresented($0) } == true
+      })
+    XCTAssertEqual(try pageOwner(window).displayedIndex, 2)
+    XCTAssertEqual(model.presence?.notebookPageID, target)
+    XCTAssertFalse(openingPrecededPreparedProjection,
+      "The first positive opening sample must follow the exact installed destination crop, not a ready moving backing")
+    let typedReadyAt = try XCTUnwrap(positionedTypedReadyAt, "The exact mounted target must become ready at its destination camera")
+    let openingAt = try XCTUnwrap(firstOpeningAt, "That same pending request must begin opening")
+    XCTAssertLessThanOrEqual(typedReadyAt.duration(to: openingAt), NotebookUXObservation.correctnessTimeout,
+      "A prepared passage must not wait for the idle confirmation cadence")
+    let prepared = try XCTUnwrap(positionedReadyProjection, "The closed positioned sheet must prepare before it opens")
+    let ink = try XCTUnwrap(observedInk)
+    XCTAssertEqual(ink.pageProjectionChangeCount, prepared.changes, "Opening at the same camera must retain its exact prepared crop")
+    XCTAssertEqual(ink.pageDrawableResizeCount, prepared.resizes, "Landing must not defer stationary-paper density refinement")
+    XCTAssertFalse(settlementRevokedReadyInk, "Settling an unchanged camera must not revoke already presented accepted ink")
+  }
+
   func testDenseVectorSheetsKeepTheirOwnPixelsThroughImmediateReversals() async throws {
     #if targetEnvironment(simulator)
     throw XCTSkip("Immediate post-display pixels require OS presentation receipts, unavailable in Simulator")

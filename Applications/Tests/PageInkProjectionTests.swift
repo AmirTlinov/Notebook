@@ -1,6 +1,7 @@
 import NotebookCore
 import PencilKit
 import UIKit
+import SwiftUI
 import XCTest
 @testable import Notebook
 
@@ -213,8 +214,12 @@ final class PageInkProjectionTests: XCTestCase {
         "Thirty covered camera samples stay within the existing movement-density allowance")
     }
     let current=try XCTUnwrap(papers.last)
-    current.inkProjection.setRefinesDetails(true)
+    invalidations.removeAll()
+    activity.refinePresentation(at:PageTurnPrewarmWindow.capacity-1)
+    XCTAssertEqual(invalidations,[PageTurnPrewarmWindow.capacity-1],
+      "Only the stationary installed page revokes its movement-quality receipt")
     guard try await ready(current.inkView) else { return }
+    current.inkProjection.setRefinesDetails(true)
     XCTAssertEqual(current.inkView.drawableSize.width/current.inkView.bounds.width,
       1.3*window.screen.scale,accuracy:0.02,"Stationary refinement restores exact detail")
     let counts=papers.enumerated().map { index,paper in
@@ -252,6 +257,40 @@ final class PageInkProjectionTests: XCTestCase {
     }
     XCTAssertEqual(promoted.inkView.drawableSize.width/promoted.inkView.bounds.width,
       1.3*window.screen.scale,accuracy:0.02,"A newly visible sheet immediately regains exact screen density")
+  }
+
+  func testStationaryOpeningRefinesTheInstalledNativePoseBeforeReadingReady() async throws {
+    let controller=IPadPageTurnController()
+    let window=UIWindow(windowScene:try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene))
+    let paper=PaperCanvasContainerView(frame:.init(x:0,y:0,width:300,height:300))
+    controller.update(ownerID:UUID(),sequenceRevision:"stationary-page",pageCount:1,
+      selectedIndex:0,navigationIsEnabled:false,pageIsInteractive:false,canBeginNavigation:{false},
+      page:{_,_,ready in AnyView(StationaryProjectionPaper(paper:paper,readiness:ready).frame(width:300,height:300))},
+      onCommit:{_,_ in XCTFail("Refinement is not a page turn")},onTransitioningChange:{_ in})
+    window.rootViewController=controller;window.makeKeyAndVisible();window.layoutIfNeeded()
+    defer { paper.retireInput();window.isHidden=true;window.rootViewController=nil }
+    paper.inkView.apply(PageInkDrawing(actions:[line()]));paper.inkProjection.refresh()
+    guard try await ready(paper.inkView) else { return }
+    XCTAssertTrue(controller.currentPagePreparation.isReady)
+    let initial=paper.inkView.pageProjectionChangeCount
+    paper.transform = .init(scaleX:1.1,y:1.1)
+    paper.inkProjection.refresh()
+    XCTAssertEqual(paper.inkView.pageProjectionChangeCount,initial)
+    XCTAssertTrue(controller.prepareCurrentPage(refinesDetails:false).isReady,
+      "A human moving-camera probe preserves the admitted movement quality")
+    XCTAssertFalse(controller.prepareCurrentPage(refinesDetails:true).isReady,
+      "Stationary preparation must revoke the old crop synchronously, before consuming cached readiness")
+    XCTAssertEqual(paper.inkView.pageProjectionChangeCount,initial+1)
+    XCTAssertFalse(controller.currentPagePreparation.isReady)
+    guard try await ready(paper.inkView) else { return }
+    XCTAssertTrue(controller.prepareCurrentPage(refinesDetails:true).isReady)
+    XCTAssertEqual(paper.inkView.drawableSize.width/paper.inkView.bounds.width,
+      1.1*window.screen.scale,accuracy:0.02)
+    let prepared=paper.inkView.pageProjectionChangeCount
+    // The later ordinary SwiftUI update must not create another backing.
+    paper.inkProjection.setRefinesDetails(true)
+    XCTAssertEqual(paper.inkView.pageProjectionChangeCount,prepared)
+    XCTAssertTrue(controller.currentPagePreparation.isReady)
   }
 
   private func makePaper() throws -> (UIWindow, PaperCanvasContainerView) {
@@ -302,5 +341,21 @@ final class PageInkProjectionTests: XCTestCase {
       bytesPerRow:cg.width*4,space:CGColorSpaceCreateDeviceRGB(),bitmapInfo:CGImageAlphaInfo.premultipliedLast.rawValue))
     context.draw(cg,in:CGRect(x:0,y:0,width:cg.width,height:cg.height))
     return (0..<cg.width).map { bytes[(cg.height/2*cg.width+$0)*4] }
+  }
+}
+
+/// Native paper mounted by the same hosting contract as a real notebook page.
+private struct StationaryProjectionPaper: UIViewRepresentable {
+  let paper: PaperCanvasContainerView
+  let readiness: PageTurnReadiness
+  func makeUIView(context: Context) -> PaperCanvasContainerView { paper }
+  func updateUIView(_ view: PaperCanvasContainerView, context: Context) {
+    view.inkProjection.observePage(readiness,isCurrent:true,isVisible:true)
+    view.inkProjection.setRefinesDetails(false)
+    view.inkView.onRenderReadinessChange = { readiness($0) }
+  }
+  static func dismantleUIView(_ view: PaperCanvasContainerView, coordinator: ()) {
+    view.inkView.onRenderReadinessChange = nil
+    view.retireInput()
   }
 }

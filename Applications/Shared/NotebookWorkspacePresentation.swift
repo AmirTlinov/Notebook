@@ -10,13 +10,15 @@ struct NotebookWorkspacePresentation<Content: View>: UIViewControllerRepresentab
   @Environment(\.sceneComposition) private var composition
   let presence: SessionPresence
   let cohort: SceneCompositionCohort?
+  let preparation: NotebookWorkspaceCompositionRequest
+  let prepare: @MainActor () -> Void
   @ViewBuilder let content: () -> Content
 
   func makeUIViewController(context: Context) -> NotebookWorkspacePresentationController {
     NotebookWorkspacePresentationController()
   }
   func updateUIViewController(_ controller: NotebookWorkspacePresentationController, context: Context) {
-    controller.update(model: model, presence: presence, cohort: cohort,
+    controller.update(model: model, presence: presence, cohort: cohort, preparation: preparation, prepare: prepare,
       // Only application dependencies cross this hosting boundary. Copying
       // EnvironmentValues wholesale also copies SwiftUI's private platform/
       // accessibility host state and hides this second tree from its window.
@@ -25,6 +27,21 @@ struct NotebookWorkspacePresentation<Content: View>: UIViewControllerRepresentab
   static func dismantleUIViewController(_ controller: NotebookWorkspacePresentationController, coordinator: ()) {
     controller.uninstall()
   }
+}
+
+/// The finite inputs of one requested composition, independent of the native
+/// hosting update that delivers them to its single preparation task.
+@MainActor
+struct NotebookWorkspaceCompositionRequest: Equatable {
+  let presence: SessionPresence
+  let generation: UUID?
+  let publication: UInt64
+  let revision: UInt64?
+  let pinned: Set<WorkspaceSpatialID>
+  let itemOwners: [UUID: UUID]
+  let permitsPreparation: Bool
+  let refinesDetails: Bool
+  let groupPoses: [SceneCompositionPlane:[String:NotebookElementPlacement.Source]]
 }
 
 @MainActor
@@ -96,6 +113,9 @@ final class NotebookWorkspacePresentationController: UIViewController, NotebookS
   private var installedContent: NotebookWorkspaceContentIdentity?
   private var hasInstalledLayout = false
   private var retired = false
+  private var preparationRequest: NotebookWorkspaceCompositionRequest?
+  private var pendingPreparation: (@MainActor () -> Void)?
+  private var preparationTask: Task<Void, Never>?
 
   override func loadView() {
     view = UIView(); view.backgroundColor = .clear; view.isOpaque = false
@@ -112,10 +132,12 @@ final class NotebookWorkspacePresentationController: UIViewController, NotebookS
     host?.view.frame = view.bounds
   }
 
-  func update(model: NotebookAppModel, presence: SessionPresence, cohort: SceneCompositionCohort?, content: AnyView) {
+  func update(model: NotebookAppModel, presence: SessionPresence, cohort: SceneCompositionCohort?,
+    preparation: NotebookWorkspaceCompositionRequest, prepare: @escaping @MainActor () -> Void, content: AnyView) {
     guard !retired else { return }
     loadViewIfNeeded()
     if self.model !== model {
+      cancelPreparation()
       self.model?.workspacePresentations.remove(self)
       self.model?.unregisterScenePresentation(self)
       self.model = model; model.workspacePresentations.register(self); model.registerScenePresentation(self)
@@ -132,6 +154,29 @@ final class NotebookWorkspacePresentationController: UIViewController, NotebookS
     // update, not wait another frame before the camera planes even see it.
     // Ordinary camera samples still update projection without forcing layout.
     if contentChanged { host?.view.layoutIfNeeded() }
+    schedulePreparation(preparation, perform: prepare)
+  }
+
+  private func schedulePreparation(_ request: NotebookWorkspaceCompositionRequest,
+    perform: @escaping @MainActor () -> Void) {
+    guard preparationRequest != request else { return }
+    preparationRequest = request
+    pendingPreparation = perform
+    guard preparationTask == nil else { return }
+    // Native updates replace one pending request. Unlike a SwiftUI task-id
+    // callback, publishing its result cannot suppress the next update this frame.
+    preparationTask = Task { @MainActor [weak self] in
+      guard !Task.isCancelled, let self, !retired else { return }
+      preparationTask = nil
+      let perform = pendingPreparation
+      pendingPreparation = nil
+      perform?()
+    }
+  }
+
+  private func cancelPreparation() {
+    preparationTask?.cancel(); preparationTask = nil
+    pendingPreparation = nil; preparationRequest = nil
   }
 
   func capture(fragment: NotebookAttentionSelection.Fragment, expectedSources: NotebookWorkspacePresentedSources,
@@ -170,6 +215,7 @@ final class NotebookWorkspacePresentationController: UIViewController, NotebookS
   func uninstall() {
     guard !retired else { return }
     retired = true; hasInstalledLayout = false; presence = nil; cohort = nil; installedContent = nil
+    cancelPreparation()
     model?.workspacePresentations.remove(self); model?.unregisterScenePresentation(self); model = nil
     host?.didLayout = { }
     host?.willMove(toParent: nil); host?.view.removeFromSuperview(); host?.removeFromParent(); host = nil

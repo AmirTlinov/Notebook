@@ -89,14 +89,14 @@ final class NotebookLiveScenePublicationTests: XCTestCase {
     let lock = try NotebookSQLWriteBlocker(store: model.store)
     defer { try? lock.release() }
     XCTAssertTrue(model.commitSpatialElementState(boardID: presence.boardID, rendered: rendered, state: .string("first"), onCommitted: .init(sourceBasis: sourceBasis) { _ in }))
-    XCTAssertFalse(model.acceptExternalScene(read, observedEpoch: epoch, observedPresence: presence, itemPins: [:],
+    XCTAssertFalse(model.acceptExternalScene(read, observedEpoch: epoch, observedPresence: presence, observedPreparation: presence, itemPins: [:],
       preparedIndex: preparedIndex), "Prepared geometry cannot bypass the accepted-contact frontier")
     XCTAssertFalse(model.collaborationDetailsAreCurrent, "Accepted input cannot leave old history results current while its write waits")
     XCTAssertNotEqual(model.collaborationPreparationKey, historyKey)
     let firstEpoch = model.collaborationReadEpoch
     XCTAssertTrue(model.commitSpatialElementState(boardID: presence.boardID, rendered: rendered, state: .string("complete input"), onCommitted: .init(sourceBasis: sourceBasis) { _ in }))
     XCTAssertGreaterThan(model.collaborationReadEpoch, firstEpoch)
-    XCTAssertFalse(model.acceptExternalScene(read, observedEpoch: firstEpoch, observedPresence: presence, itemPins: [:]))
+    XCTAssertFalse(model.acceptExternalScene(read, observedEpoch: firstEpoch, observedPresence: presence, observedPreparation: presence, itemPins: [:]))
     let preparing = Task { await model.refreshCollaborationDetails() }
     try await Task.sleep(for: .milliseconds(100))
     XCTAssertFalse(model.collaborationDetailsAreCurrent,
@@ -247,10 +247,10 @@ final class NotebookLiveScenePublicationTests: XCTestCase {
     defer { try? lock.release() }
     let first = WorldPoint(x: 130, y: 80), second = WorldPoint(x: 280, y: 120)
     model.moveItem(item, to: first)
-    XCTAssertFalse(model.acceptExternalScene(pendingRead, observedEpoch: observed, observedPresence: presence, itemPins: [:]))
+    XCTAssertFalse(model.acceptExternalScene(pendingRead, observedEpoch: observed, observedPresence: presence, observedPreparation: presence, itemPins: [:]))
     XCTAssertEqual(model.board?.placement(of: item)?.center, first)
     model.moveItem(item, to: second)
-    XCTAssertFalse(model.acceptExternalScene(pendingRead, observedEpoch: observed, observedPresence: presence, itemPins: [:]))
+    XCTAssertFalse(model.acceptExternalScene(pendingRead, observedEpoch: observed, observedPresence: presence, observedPreparation: presence, itemPins: [:]))
     XCTAssertEqual(model.board?.placement(of: item)?.center, second)
     XCTAssertEqual(model.presence, presence)
     try lock.release()
@@ -258,7 +258,7 @@ final class NotebookLiveScenePublicationTests: XCTestCase {
     XCTAssertEqual(try model.store.readBoardItem(item)?.board.placement(of: item)?.center, second)
     let currentEpoch = model.collaborationReadEpoch
     let current = try NotebookSceneState.read(store: model.store, presence: presence, viewport: presence.viewport)
-    XCTAssertTrue(model.acceptExternalScene(current, observedEpoch: currentEpoch, observedPresence: presence, itemPins: [:]),
+    XCTAssertTrue(model.acceptExternalScene(current, observedEpoch: currentEpoch, observedPresence: presence, observedPreparation: presence, itemPins: [:]),
       "A current read must still publish; the negative case is the superseded frontier, not a permanently closed gate")
     XCTAssertEqual(model.board?.placement(of: item)?.center, second)
   }

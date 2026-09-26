@@ -111,7 +111,7 @@ import XCTest
     XCTAssertEqual(model.graphicLayout(reference)?.frame, expected)
     await withCheckedContinuation { continuation in model.inputGate.performAfterIdle { continuation.resume() } }
     XCTAssertTrue(model.acceptExternalScene(older, observedEpoch: model.collaborationReadEpoch,
-      observedPresence: presence, itemPins: [:]), "An older canonical cut can publish while the command is still queued")
+      observedPresence: presence, observedPreparation: presence, itemPins: [:]), "An older canonical cut can publish while the command is still queued")
     XCTAssertEqual(model.activePage?.elements.first?.frame, .init(x: 100, y: 100, width: 100, height: 100))
     XCTAssertEqual(model.graphicLayout(reference)?.frame, expected, "Canonical publication without this command cannot retire its draft")
     XCTAssertTrue(model.graphicCommandPending)

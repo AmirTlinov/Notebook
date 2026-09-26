@@ -39,6 +39,45 @@ function document(
   };
 }
 
+function packages(source: string): string[] {
+  return [...source.matchAll(/\\usepackage(?:\[[^\]]*\])?\{([^}]+)\}/g)].flatMap(match => match[1]!.split(","));
+}
+
+test("plain Markdown loads only its generated print dependencies", () => {
+  const input = document([markdown("body", "Second closed body\n\n**Bold** and _emphasis_.\n\n- One\n- Two")]);
+  const before = JSON.stringify(input), result = documentExport(input);
+  assert.equal(JSON.stringify(input), before);
+  assert.deepEqual(packages(result.source), ["fontspec", "geometry"]);
+  assert.match(result.source, /\\setmainfont\{Libertinus Serif\}/);
+  assert.match(result.source, /\\textbf\{Bold\}/);
+  assert.match(result.source, /\\begin\{itemize\}/);
+  const range = result.sourceRanges[0]!;
+  assert.match(result.source.split("\n").slice(range.firstLine-1, range.lastLine).join("\n"), /Second closed body/);
+});
+
+test("generated tables, images and links admit their own package dependencies", () => {
+  const table = documentTeX(document([markdown("table", "| One | Two |\n| --- | --- |\n| A | B |") ]));
+  assert.deepEqual(packages(table), ["fontspec", "booktabs", "longtable", "array", "geometry"]);
+  const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="10"/>';
+  const image = documentExport(document([markdown("image", `![Actual](data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")})`)]));
+  assert.deepEqual(packages(image.source), ["fontspec", "graphicx", "geometry"]);
+  assert.equal(Buffer.from(image.assets[0]!.data, "base64").toString(), svg);
+  assert.match(image.source, /\\newcommand\{\\NotebookPrintImage\}/);
+  for (const text of ["[Web](https://example.org)", "# Heading\n\n[Here](#heading)", '<span id="target">Destination</span>']) {
+    assert.deepEqual(packages(documentTeX(document([markdown("links", text)]))), ["fontspec", "xcolor", "geometry", "hyperref"]);
+  }
+});
+
+test("opaque authored TeX and custom preambles keep the complete macro environment", () => {
+  const expected = ["fontspec", "amsmath", "amssymb", "booktabs", "longtable", "array", "graphicx", "xcolor", "geometry", "hyperref"];
+  for (const input of [document([{ ...markdown("tex", "\\textcolor{red}{Raw}"), kind: "tex" }]),
+    document([latex("formula", "\\color{blue}x^2")]),
+    document([markdown("formula", "Inline $\\color{red}x$ stays exact.")]),
+    document([markdown("body", "Plain")], "\\newcommand{\\authored}{1}")]) {
+    assert.deepEqual(packages(documentTeX(input)), expected);
+  }
+});
+
 test("maps repeated, empty and raw TeX blocks to exact generated source lines without injecting IDs", () => {
   const blocks = [markdown("first", "Repeated paragraph."), markdown("empty", ""),
     latex("unsafe%\\input{private}", "\\begin{align}\nx&=1\\\\\ny&=2\n\\end{align}"),

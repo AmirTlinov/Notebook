@@ -22,6 +22,12 @@ export interface DocumentExport {
  * data-only capabilities; the sandboxed compiler renders them before TeX runs. */
 export function documentExport(document: DocumentDocument, programPointScale = 0.75): DocumentExport {
   if (!Number.isFinite(programPointScale) || programPointScale <= 0 || programPointScale > 10) throw new Error("invalid_program_scale");
+  const printPackages = ["amsmath", "amssymb", "booktabs", "longtable", "array", "graphicx", "xcolor", "geometry", "hyperref"];
+  const supplied = document.preamble.trim();
+  const packages = new Set<string>(["geometry"]);
+  // Authored TeX is opaque: retain its complete existing macro environment.
+  // Generated Markdown only needs dependencies of the constructs we emit.
+  let authoredTeX = Boolean(supplied);
   const assets: DocumentExportAsset[] = [];
   const images = new Map<string, DocumentExportAsset>();
   const anchors = new Set<string>();
@@ -39,12 +45,16 @@ export function documentExport(document: DocumentDocument, programPointScale = 0
   let markerPrefix = "NOTEBOOKSOURCEOFFSET";
   while (document.blocks.some(block => block.source.includes(markerPrefix))) markerPrefix += "X";
   const rendered = document.blocks.map(block => {
-    if (block.kind !== "markdown") return { block, fragment: null, nodes: [] as Node[], restoreMath: (value: string) => value };
+    if (block.kind !== "markdown") {
+      if (block.kind === "tex" || block.kind === "latex") authoredTeX = true;
+      return { block, fragment: null, nodes: [] as Node[], restoreMath: (value: string) => value };
+    }
     const normalized = replaceMapped(block.source, /\r\n|\r/g, () => "\n");
     const compact = replaceMapped(normalized.text, /data:image\/(?:svg\+xml|png|jpeg)(?:;charset=[^;,\s]+)?;base64,[A-Za-z0-9+/=]+/gi, value => {
       const token = `${imageToken}${encodedImages.length}END`; encodedImages.push(value); return token;
     });
     const protectedMath = protectMath(compact.text);
+    authoredTeX ||= protectedMath.hasMath;
     const tokens = marked.lexer(protectedMath.source, { gfm: true });
     let cursor = 0;
     // Top-level Markdown tokens retain the nearest authored paragraph. Keep
@@ -82,6 +92,7 @@ export function documentExport(document: DocumentDocument, programPointScale = 0
   }
 
   function image(source: string, width?: number, height?: number): string {
+    packages.add("graphicx");
     const match = /^data:(image\/(?:svg\+xml|png|jpeg))(?:;charset=[^;,]+)?(;base64)?,([\s\S]*)$/i.exec(source);
     if (!match) throw new Error("export_image_unsupported: Print images must be embedded SVG, PNG or JPEG; remote URLs and user-file paths are unavailable.");
     const mediaType = match[1]!.toLowerCase() as DocumentExportAsset["mediaType"];
@@ -109,6 +120,7 @@ export function documentExport(document: DocumentDocument, programPointScale = 0
   function target(node: Element): string {
     const name = attribute(node, "id") || (node.tagName === "a" ? attribute(node, "name") : "");
     if (!name || emittedAnchors.has(name)) return "";
+    packages.add("hyperref"); packages.add("xcolor");
     emittedAnchors.add(name);
     return `\\hypertarget{${anchorName(name)}}{}`;
   }
@@ -129,6 +141,7 @@ export function documentExport(document: DocumentDocument, programPointScale = 0
     const prefix = target(node);
     if (tag === "pre") return `${prefix}\n\\begin{verbatim}\n${restoreMath(plainText(node))}\n\\end{verbatim}\n`;
     if (tag === "table") {
+      packages.add("booktabs"); packages.add("longtable"); packages.add("array");
       const rows = descendants(node.childNodes).filter((child): child is Element => "tagName" in child && child.tagName === "tr");
       const cells = rows.map(row => row.childNodes.filter((child): child is Element => "tagName" in child && ["td", "th"].includes(child.tagName)));
       for (const cell of cells.flat()) if (Number(attribute(cell, "colspan") ?? 1) !== 1 || Number(attribute(cell, "rowspan") ?? 1) !== 1) {
@@ -150,10 +163,12 @@ export function documentExport(document: DocumentDocument, programPointScale = 0
         const destination = decodeURIComponent(href.slice(1));
         // Keep a missing destination visibly identified; never create an
         // annotation that silently lands at page one.
-        return anchors.has(destination) ? `${prefix}\\hyperlink{${anchorName(destination)}}{${body}}`
-          : `${prefix}${body}\\textsuperscript{[недоступная ссылка]}`;
+        if (!anchors.has(destination)) return `${prefix}${body}\\textsuperscript{[недоступная ссылка]}`;
+        packages.add("hyperref"); packages.add("xcolor");
+        return `${prefix}\\hyperlink{${anchorName(destination)}}{${body}}`;
       }
       if (!/^(?:https?:|mailto:)/i.test(href)) throw new Error("export_link_unsupported: Only document anchors, HTTPS/HTTP and mailto links can be printed.");
+      packages.add("hyperref"); packages.add("xcolor");
       return `${prefix}\\href{${escapeURL(href)}}{${body}}`;
     }
     case "p": return `\n\\par\n${prefix}${body.trim()}\\par\n`;
@@ -212,11 +227,11 @@ export function documentExport(document: DocumentDocument, programPointScale = 0
     mappedOffsets.set(block.id, offsets);
     return text.trim() ? text : "\\noindent\\mbox{}\\par";
   });
-  const supplied = document.preamble.trim();
   let preamble = /\\documentclass(?:\[[^\]]*\])?\{/.test(supplied) ? supplied : ["\\documentclass[12pt]{article}",
     "\\usepackage{fontspec}", "\\setmainfont{Libertinus Serif}", supplied].filter(Boolean).join("\n");
   if (/\\(?:begin|end)\s*\{document\}/.test(preamble)) throw new Error("preamble задаёт класс и пакеты; begin/end document принадлежат экспортёру.");
-  for (const name of ["amsmath", "amssymb", "booktabs", "longtable", "array", "graphicx", "xcolor", "geometry", "hyperref"]) {
+  for (const name of printPackages) {
+    if (!authoredTeX && !packages.has(name)) continue;
     if (!new RegExp(String.raw`\\(?:usepackage|RequirePackage)(?:\[[^\]]*\])?\{[^}]*\b${name}\b[^}]*\}`).test(preamble)) {
       preamble += `\n\\usepackage${name === "hyperref" ? "[colorlinks=true,linkcolor=black,urlcolor=blue]" : ""}{${name}}`;
     }
@@ -312,7 +327,7 @@ function protectMath(source: string) {
     const placeholder = `${prefix}${segments.length}TOKEN`; segments.push([placeholder, formula]); return placeholder;
   });
   const formulas = new Map(segments), pattern = new RegExp(`${prefix}\\d+TOKEN`, "g");
-  return { source: mapped.text, originalOffset: mapped.originalOffset,
+  return { source: mapped.text, originalOffset: mapped.originalOffset, hasMath: formulas.size > 0,
     restore: (text: string, restoreImages: (value: string) => string) =>
       text.replace(pattern, token => restoreImages(formulas.get(token) ?? token)) };
 }

@@ -469,7 +469,8 @@ final class DocumentPagePresentationOwner {
         if active { self?.interruptPassiveWork() }
         else { Task { @MainActor [weak self] in self?.schedule() } }
       }
-      entry.preparationObserver = entry.activity?.observePreparation { [weak self] in
+      entry.preparationObserver = entry.activity?.observePreparation { [weak self] change in
+        guard case .demand = change else { return }
         self?.refreshPreparationDemand()
       }
     }

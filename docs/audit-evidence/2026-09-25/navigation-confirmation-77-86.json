@@ -1,0 +1,371 @@
+{
+  "status": "focused_navigation_recovery_evidence_not_full_acceptance",
+  "baseRevision": "f8591b1311d342279266fe9940e31e0c3ec3ab3f",
+  "scope": "Completed sealed results and interrupted diagnostics listed here, through86; each source cut remains separately identified, not final clean Release acceptance.",
+  "archives": [
+    {
+      "path": "/Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/.build/notebook-architecture-repair/evidence-2026-09-25/navigation-diagnostics-77c-78-20260926T0446Z",
+      "manifest": "ARCHIVE.json",
+      "sha256": "13ac648f7bc7718e07ed457a778741167e2aaa50e90e0bbd6b90f8d61c2e1ad3",
+      "scope": "77c interrupted Mac diagnosis and78 temporary physical cadence diagnosis"
+    },
+    {
+      "path": "/Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/.build/notebook-architecture-repair/evidence-2026-09-25/mac-mounted-program-diagnostic-77e-20260926T045858Z",
+      "manifest": "MANIFEST.json",
+      "sha256": "6f416b9a886909acf1a4cea3a16cfcb68e873ca04fc998ed2679a42f7e55e1eb",
+      "scope": "77e five repeated Mac stage diagnostics"
+    },
+    {
+      "path": "/Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/.build/notebook-architecture-repair/evidence-2026-09-25/navigation-confirmation-77fg-81-20260926T050233Z",
+      "manifest": "ARCHIVE.json",
+      "sha256": "fd5b2f219d975c5af39c9cb52cb2538478af113ada69b90bd1c882348ac4f372",
+      "scope": "77f,77g completed Mac checks and81 completed physical checks"
+    },
+    {
+      "path": "/Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/.build/notebook-architecture-repair/evidence-2026-09-25/physical-opening-82-83-20260926T051121Z",
+      "manifest": "ARCHIVE.json",
+      "sha256": "94dfd52124af35d0ed398515e91f7c37a4f6c5b9897219e747c47be75c5a0f04",
+      "scope": "Completed physical82 failed guards and83 repeated pass;84/80 excluded"
+    },
+    {
+      "path": "/Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/.build/notebook-architecture-repair/evidence-2026-09-25/native-navigation-77d-79",
+      "manifest": "manifest.json",
+      "sha256": "080501c82d0d45681623203264c9e085561e709c573313647b382a44fee25047",
+      "scope": "Previously sealed77d and79"
+    },
+    {
+      "path": "/Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/.build/notebook-architecture-repair/evidence-2026-09-25/exact-opening-80-84-20260926T051515Z",
+      "manifest": "ARCHIVE.json",
+      "sha256": "66c02e06f94f3342726591a38fca0df4d67cd018195acd4e304f3f04118adf09",
+      "scope": "Completed Simulator80 failure, exact physical84 observer checks, current focused MCP checks"
+    },
+    {
+      "path": "/Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/.build/notebook-architecture-repair/evidence-2026-09-25/simulator-missing-pin-85-interrupted-20260926T052158Z",
+      "manifest": "MANIFEST.json",
+      "sha256": "53a07961cda3da49e6ad1741643ef7e904790190229c83c0ba6426913172738b",
+      "scope": "Interrupted85 exact XCTest caught error, source witnesses and authorized isolated temporary fixture"
+    },
+    {
+      "path": "/Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/.build/notebook-architecture-repair/evidence-2026-09-25/simulator-missing-pin-86-20260926T052241Z",
+      "manifest": "MANIFEST.json",
+      "sha256": "28f6191fb30d4a0ea5f8c5f3186c505a8eaea1764fd6c9291d9e88e857e2bd1c",
+      "scope": "Completed86 exact canonical fixture repeat"
+    }
+  ],
+  "runs": [
+    {
+      "run": "77c",
+      "passed": 48,
+      "failed": 2,
+      "countUnit": "test cases",
+      "runtimeWarningCount": 0,
+      "changedSourcesDuringRun": [],
+      "localArchive": "/Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/.build/notebook-architecture-repair/evidence-2026-09-25/navigation-diagnostics-77c-78-20260926T0446Z/mac-77c-interrupted",
+      "filesManifestSHA256": "6bd665099ed42b131cb9b006e317269a883a6a79687617abfc942b549303d4f2",
+      "resultReceiptSHA256": "cd5f1df7197f524c186ee60d09dbc7b48e021c9c5741c52747b80e16b422078f",
+      "assessment": "Interrupted in XCTestCore/CoreSymbolication while reporting caught DecodingError state/Array; canceled result is not a pass. Separately one accepted-pose fixture assertion failed."
+    },
+    {
+      "run": "77d",
+      "passed": 25,
+      "failed": 0,
+      "countUnit": "test cases",
+      "runtimeWarningCount": 0,
+      "changedSourcesDuringRun": [],
+      "localArchive": "/Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/.build/notebook-architecture-repair/evidence-2026-09-25/native-navigation-77d-79",
+      "filesManifestSHA256": "080501c82d0d45681623203264c9e085561e709c573313647b382a44fee25047",
+      "resultReceiptSHA256": "566ec74d80e2d60e114f08b5fd68c559beb3cd0f4f808292489225ccb3b0c81f",
+      "assessment": "Focused Mac causal regressions25/25PASS; not full Mac acceptance."
+    },
+    {
+      "run": "77e",
+      "passed": 1,
+      "failed": 4,
+      "countUnit": "repetitions of one test case",
+      "runtimeWarningCount": 0,
+      "changedSourcesDuringRun": [],
+      "localArchive": "/Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/.build/notebook-architecture-repair/evidence-2026-09-25/mac-mounted-program-diagnostic-77e-20260926T045858Z",
+      "filesManifestSHA256": "6f416b9a886909acf1a4cea3a16cfcb68e873ca04fc998ed2679a42f7e55e1eb",
+      "resultReceiptSHA256": "1d5f6052dd8db55532b38d2ae296a9520e3eb2342ba6e66b582695aa3574f888",
+      "assessment": "All four failures occurred when the test set an unsaved draft before authored input existed; no state-decoding failure reproduced. Temporary stage patch was subsequently removed."
+    },
+    {
+      "run": "77f",
+      "passed": 4,
+      "failed": 0,
+      "countUnit": "test cases",
+      "runtimeWarningCount": 0,
+      "changedSourcesDuringRun": [],
+      "localArchive": "/Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/.build/notebook-architecture-repair/evidence-2026-09-25/navigation-confirmation-77fg-81-20260926T050233Z/mac-77f",
+      "filesManifestSHA256": "46a89ca6c01eeee12e5bd89672c835e7f85b9256f5ebdc792da40415bfa0a1d3",
+      "resultReceiptSHA256": "be44f7f5c8a63660ec207de672876a09f5d49180372823d1c691bea3329e4087",
+      "assessment": "Four MacSceneCompositionTests pass after test waits for actual authored DOM, not only WKWebView.isLoading=false."
+    },
+    {
+      "run": "77g",
+      "passed": 5,
+      "failed": 0,
+      "countUnit": "repetitions of one test case",
+      "runtimeWarningCount": 0,
+      "changedSourcesDuringRun": [],
+      "localArchive": "/Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/.build/notebook-architecture-repair/evidence-2026-09-25/navigation-confirmation-77fg-81-20260926T050233Z/mac-77g",
+      "filesManifestSHA256": "068b4486f19c20face5c75efec948c988c18e92ae03a348d61e61bd8f3935639",
+      "resultReceiptSHA256": "6ee89db9781bcca9c3eb2ccecb9f34de577db6fba4ed45130c03f4b4a0411e45",
+      "assessment": "Same mounted-program zoom test passed all five repetitions; source inputs identical to77f."
+    },
+    {
+      "run": "78",
+      "passed": 1,
+      "failed": 0,
+      "countUnit": "test cases",
+      "runtimeWarningCount": 0,
+      "changedSourcesDuringRun": [],
+      "localArchive": "/Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/.build/notebook-architecture-repair/evidence-2026-09-25/navigation-diagnostics-77c-78-20260926T0446Z/physical-78-cadence-diagnostic",
+      "filesManifestSHA256": "aee5ec24278358097e32ede2b34357b9b91881529c8ec38cf808d4619cadf65b",
+      "resultReceiptSHA256": "8ca6971776c69ead974451b0e7890773b5ff61f8f5d1a9a1c082d879fc7182e6",
+      "assessment": "Temporary passive cadence diagnostic, not acceptance of the later fix; 118.232 ms estimate indirect, callback gap166.809 ms, target cadence250.1 ms not measured stall."
+    },
+    {
+      "run": "79",
+      "passed": 8,
+      "failed": 1,
+      "countUnit": "test cases",
+      "runtimeWarningCount": 0,
+      "changedSourcesDuringRun": [],
+      "localArchive": "/Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/.build/notebook-architecture-repair/evidence-2026-09-25/native-navigation-77d-79",
+      "filesManifestSHA256": "080501c82d0d45681623203264c9e085561e709c573313647b382a44fee25047",
+      "resultReceiptSHA256": "dca1ba269d5deb38961101758f3dad6d51504068fd5be5e81f08cf861030b2bf",
+      "assessment": "FAILED8/9: final window pixels468.593916ms were correct, but opening changed exact prepared crop projection count2→3. Visual latency alone is not scenario PASS."
+    },
+    {
+      "run": "80",
+      "passed": 38,
+      "failed": 2,
+      "countUnit": "test cases",
+      "runtimeWarningCount": 0,
+      "changedSourcesDuringRun": [],
+      "localArchive": "/Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/.build/notebook-architecture-repair/evidence-2026-09-25/exact-opening-80-84-20260926T051515Z/simulator-80",
+      "filesManifestSHA256": "1c63400016926b772704a4e8c22a856cdb08f57a928f0e452030c0a00a54353c",
+      "resultReceiptSHA256": "1aa98af3a55860d4a574a267dc05d08724f374a10424cde341bdab8c7130be57",
+      "assessment": "FAILED: missing-board fixture assertion and actual1018.684917ms offscreen window latency above unchanged1000ms. Cause of the latency interval is not established; physical84 success does not convert this result to PASS.",
+      "offscreenWindowMS": [
+        1018.684917
+      ],
+      "ceilingMS": 1000,
+      "exactNativeOpeningPhases": [
+        {
+          "repetition": null,
+          "exactTypedReadyMS": 825.4095,
+          "firstOpeningMS": 874.3235000000001,
+          "readyToOpeningMS": 48.9140000000001,
+          "finalProjectionCount": 3,
+          "finalResizeCount": 3,
+          "projectionCountsStableAfterFirstOpening": true
+        }
+      ],
+      "video": {
+        "present": false,
+        "reason": "No video recording was made for this native run; PNG attachments are not video."
+      },
+      "observedFinalInkReadyMS": 218.126292
+    },
+    {
+      "run": "81",
+      "passed": 17,
+      "failed": 0,
+      "countUnit": "test cases",
+      "runtimeWarningCount": 1,
+      "changedSourcesDuringRun": [],
+      "localArchive": "/Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/.build/notebook-architecture-repair/evidence-2026-09-25/navigation-confirmation-77fg-81-20260926T050233Z/physical-81",
+      "filesManifestSHA256": "ae2f288fc2a50d08a4249c710ae8b85640ad561f1e3bbb65b472796f3553285c",
+      "resultReceiptSHA256": "e3c4e6e11da0abbd85ed183471b42e76609e42dbbb460c445e91b1706f2f4e8d",
+      "runtimeWarnings": [
+        {
+          "issueType": "Runtime Warning",
+          "message": "Adding 'PaperCanvasContainerView' as a subview of UIHostingController.view is not supported and may result in a broken view hierarchy. Add your view above UIHostingController.view in a common superview or insert it into your SwiftUI content in a UIViewRepresentable instead.",
+          "sourceURL": "file:///Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/Applications/Tests/PageInkProjectionTests.swift"
+        }
+      ],
+      "offscreenOpening": {
+        "observedMS": 484.237084,
+        "ceilingMS": 1000,
+        "exactNativeTargetReadyMS": 301.793459,
+        "firstOpeningSampleMS": 323.0855,
+        "readyToOpeningMS": 21.29204100000004,
+        "finalProjectionCount": 3,
+        "finalResizeCount": 3,
+        "stableAtFinalSample": true,
+        "measurement": "window observation; not photon timing, FPS or Apple Pencil latency",
+        "stateAttachment": "notebook-repair-native-cover-81-attachments/3B511FC3-AC27-4A7F-8A12-A2DAD727F3A2.txt",
+        "receiptAttachment": "notebook-repair-native-cover-81-attachments/8BA6FDEE-D6A9-4CD7-BACB-DEDEB1566F36.txt"
+      },
+      "assessment": "Not warning-free acceptance: test fixture inserted PaperCanvasContainerView directly into UIHostingController.view. The later fixture correction is not verified by81."
+    },
+    {
+      "run": "82",
+      "passed": 4,
+      "failed": 2,
+      "countUnit": "repetitions of two test cases",
+      "runtimeWarningCount": 0,
+      "changedSourcesDuringRun": [],
+      "localArchive": "/Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/.build/notebook-architecture-repair/evidence-2026-09-25/physical-opening-82-83-20260926T051121Z/physical-82",
+      "filesManifestSHA256": "e084cb43d87d4fd25a5bedf6e50d4c0bfa747f3305517b43c49a4f3a49f2b2ba",
+      "resultReceiptSHA256": "75d230802302baa0178b879e6a82f4107c139e7c86f8d430375600c372a84487",
+      "assessment": "FAILED: offscreen observer missed exact native readiness on two repetitions; final installed window observations passed the unchanged1s ceiling, but do not override these guard failures.",
+      "offscreenWindowObservations": [
+        {
+          "timestamp": 1790398928.426,
+          "correct": true,
+          "observedMS": 505.182375,
+          "ceilingMS": 1000.0,
+          "attachment": "notebook-repair-native-cover-82-attachments/B1805CD4-29DD-499D-9686-CD32C7B6530C.txt"
+        },
+        {
+          "timestamp": 1790398929.432,
+          "correct": true,
+          "observedMS": 449.973542,
+          "ceilingMS": 1000.0,
+          "attachment": "notebook-repair-native-cover-82-attachments/B654F63D-D06F-4BEE-AEA9-01CD263E5E01.txt"
+        },
+        {
+          "timestamp": 1790398930.172,
+          "correct": true,
+          "observedMS": 423.10625,
+          "ceilingMS": 1000.0,
+          "attachment": "notebook-repair-native-cover-82-attachments/02C701DC-04E4-4BC9-AEF9-15BB878408A8.txt"
+        }
+      ]
+    },
+    {
+      "run": "83",
+      "passed": 6,
+      "failed": 0,
+      "countUnit": "repetitions of two test cases",
+      "runtimeWarningCount": 0,
+      "changedSourcesDuringRun": [],
+      "localArchive": "/Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/.build/notebook-architecture-repair/evidence-2026-09-25/physical-opening-82-83-20260926T051121Z/physical-83",
+      "filesManifestSHA256": "d79e5c6e37ed2e2ea952bade383720c16dc210f2b4bdf07b910eb5a1a37b1e75",
+      "resultReceiptSHA256": "bf3f67f89b7290b6b599a973b09ca76a9021a26a64a57ad8d46fded2b300eb64",
+      "assessment": "Intermediate observer:6/6PASS,0warnings after a test-only callback observation correction. It sampled ink readiness callbacks; the exact existing .refine observer was verified separately in84.",
+      "offscreenWindowObservations": [
+        {
+          "timestamp": 1790399114.425,
+          "correct": true,
+          "observedMS": 522.039375,
+          "ceilingMS": 1000.0,
+          "attachment": "notebook-repair-native-cover-83-attachments/92A44448-E697-4F79-90FE-B94278B9096E.txt"
+        },
+        {
+          "timestamp": 1790399115.175,
+          "correct": true,
+          "observedMS": 438.320041,
+          "ceilingMS": 1000.0,
+          "attachment": "notebook-repair-native-cover-83-attachments/281ECB79-FE73-4E88-998E-FA7E5059BB9D.txt"
+        },
+        {
+          "timestamp": 1790399115.938,
+          "correct": true,
+          "observedMS": 445.806583,
+          "ceilingMS": 1000.0,
+          "attachment": "notebook-repair-native-cover-83-attachments/8FDE8219-B20C-4ED8-904F-936679FAD9FD.txt"
+        }
+      ],
+      "sourceChangesSince82": [
+        "Applications/Tests/NotebookPageLifecycleUXTests.swift"
+      ]
+    },
+    {
+      "run": "84",
+      "passed": 6,
+      "failed": 0,
+      "countUnit": "repetitions of two test cases",
+      "runtimeWarningCount": 0,
+      "changedSourcesDuringRun": [],
+      "localArchive": "/Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/.build/notebook-architecture-repair/evidence-2026-09-25/exact-opening-80-84-20260926T051515Z/physical-84",
+      "filesManifestSHA256": "bbb69908df7ce9b6fc7f20b9252a98c1366a3742aadb2801a2e7c55c06646cdc",
+      "resultReceiptSHA256": "651a427be228ccb494b3c459e66175da6da93f1b35f80823bd62bb55ab6d789f",
+      "assessment": "PASSED: two tests, three repetitions each. The passive observer uses existing PageTurnActivity .refine before cached ready consumption; observer token is removed at teardown. Final exact prepared crop remained unchanged.",
+      "offscreenWindowMS": [
+        590.997292,
+        437.840042,
+        441.422167
+      ],
+      "ceilingMS": 1000,
+      "exactNativeOpeningPhases": [
+        {
+          "repetition": 1,
+          "exactTypedReadyMS": 399.226209,
+          "firstOpeningMS": 415.88075000000003,
+          "readyToOpeningMS": 16.65454100000005,
+          "finalProjectionCount": 5,
+          "finalResizeCount": 5,
+          "projectionCountsStableAfterFirstOpening": true
+        },
+        {
+          "repetition": 2,
+          "exactTypedReadyMS": 257.012542,
+          "firstOpeningMS": 276.008375,
+          "readyToOpeningMS": 18.995833000000005,
+          "finalProjectionCount": 3,
+          "finalResizeCount": 3,
+          "projectionCountsStableAfterFirstOpening": true
+        },
+        {
+          "repetition": 3,
+          "exactTypedReadyMS": 240.74183299999999,
+          "firstOpeningMS": 275.773292,
+          "readyToOpeningMS": 35.03145900000004,
+          "finalProjectionCount": 4,
+          "finalResizeCount": 4,
+          "projectionCountsStableAfterFirstOpening": true
+        }
+      ],
+      "video": {
+        "present": false,
+        "reason": "No video recording was made for this native run; PNG attachments are not video."
+      },
+      "sameSourceInputsAs80": true
+    },
+    {
+      "run": "85",
+      "passed": 0,
+      "failed": 2,
+      "countUnit": "official result entries: one interrupted selected test and one system cancellation",
+      "runtimeWarningCount": 0,
+      "changedSourcesDuringRun": [],
+      "localArchive": "/Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/.build/notebook-architecture-repair/evidence-2026-09-25/simulator-missing-pin-85-interrupted-20260926T052158Z",
+      "filesManifestSHA256": "53a07961cda3da49e6ad1741643ef7e904790190229c83c0ba6426913172738b",
+      "resultReceiptSHA256": "e33bdf0acd39976b4b9eb370b4ae48fa93ee1a037455a6e563367eac5c663391",
+      "assessment": "Interrupted native Simulator diagnosis; not application hang or performance acceptance. NSCocoaErrorDomain Code259: board.json could not be opened because it is not in the correct format; exact XCTest issue/error is preserved in LLDB transcripts. XCTestCore/CoreSymbolication was looping while reporting the caught fixture error. The retained canonical board validates against the full two-item catalogue; either singleton subset fails validation. The fixture passed bounded model.workspace.items into full loadBoard after its distant child was excluded, not corrupted app data."
+    },
+    {
+      "run": "86",
+      "passed": 1,
+      "failed": 0,
+      "countUnit": "test cases",
+      "runtimeWarningCount": 0,
+      "changedSourcesDuringRun": [],
+      "localArchive": "/Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/.build/notebook-architecture-repair/evidence-2026-09-25/simulator-missing-pin-86-20260926T052241Z",
+      "filesManifestSHA256": "28f6191fb30d4a0ea5f8c5f3186c505a8eaea1764fd6c9291d9e88e857e2bd1c",
+      "resultReceiptSHA256": "576ba8b1ebdad4fac04c39833210451fa2c5b1a0c9466a47327863b3f0f5b136",
+      "assessment": "MissingElementPinsKeepTheirBoardAddress passes after the fixture loads canonical loadIndex and loadBoard in one read transaction, preserving the distant-child geometry.85 failure remains archived; no stored app corruption claim."
+    }
+  ],
+  "limitations": [
+    "85 interruption and exact Cocoa259 issue remain archived. Offline full-catalogue proof identified bounded catalogue misuse in the test fixture; canonical one-transaction fixture86 passes1/1. This does not close80 offscreen latency or establish app corruption.",
+    "80 remains FAILED38/40: missing-board fixture assertion plus1018.684917ms offscreen latency over the unchanged1000ms ceiling. The observed gap between final ink readiness218.126292ms and typed readiness825.4095ms has no proven attribution; do not label it an OS delay.",
+    "79 and82 remain failed despite correct final pixels.83 is an intermediate observer result;84 uses the existing native .refine event before cached readiness consumption.",
+    "81 retains its runtime warning.82/83/84 are warning-free; no historic warning is erased.",
+    "77c caught decoding error remains archived and was not reproduced by77e; the DOM readiness fixture correction does not claim to fix that decoding error.",
+    "Cold document typography latency remains open; these runs do not retest or close the physical76 one-second budget failures.",
+    "No final clean Release ten-journey or30-minute mixed-session result is established. Native window observations are not FPS, photon or Apple Pencil measurements. No video was captured for84; screenshots are not a substitute."
+  ],
+  "focusedMCP": {
+    "checks": "TypeScript and script-service freshness check PASS; LaTeX24/24PASS",
+    "math100000TokensMS": 149.057083,
+    "scope": "Algorithm observation, not device latency",
+    "localArchive": "/Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/.build/notebook-architecture-repair/evidence-2026-09-25/exact-opening-80-84-20260926T051515Z/mcp-current",
+    "filesManifestSHA256": "0e0911308a1e8e1ba106444bbd7865e1b489e8618a22c550295243356eac407b",
+    "sourceWitnessSHA256": "28a9066eacf2516a749a42411ac1b230d016ee74e84d730bef86c03819a70962"
+  }
+}

@@ -72,16 +72,29 @@ final class MacCanvasNavigationView: NSView {
     drag = (convert(event.locationInWindow, from: nil), presence)
   }
   override func mouseDragged(with event: NSEvent) {
-    guard let drag, let model else { return }
+    guard let drag = admittedDrag(), let model else { return }
     let point = convert(event.locationInWindow, from: nil)
     var camera = drag.presence.camera
     camera.pan(screenX: point.x - drag.point.x, screenY: point.y - drag.point.y)
     model.updatePresence(drag.presence.replacingCamera(model.macConstrainReading(camera, presence: drag.presence)), settled: false)
   }
   override func mouseUp(with event: NSEvent) {
-    if let drag, hypot(convert(event.locationInWindow, from: nil).x - drag.point.x,
+    guard let drag = admittedDrag() else { return }
+    if hypot(convert(event.locationInWindow, from: nil).x - drag.point.x,
       convert(event.locationInWindow, from: nil).y - drag.point.y) < 3 { model?.clearSelection() }
-    drag = nil; finishCamera(); model?.inputGate.endContact(source: source)
+    self.drag = nil; finishCamera(); model?.inputGate.endContact(source: source)
+  }
+  private func admittedDrag() -> (point: CGPoint, presence: SessionPresence)? {
+    guard let drag else { return nil }
+    guard let current = model?.presence,
+      drag.presence.replacingCamera(current.camera) == current else {
+      // A committed retirement or navigation replaced the semantic owner.
+      // Revoke this mouse sequence, not the replacement owner's camera phase.
+      self.drag = nil; settle?.cancel(); settle = nil
+      model?.inputGate.endContact(source: source)
+      return nil
+    }
+    return drag
   }
   override func keyDown(with event: NSEvent) {
     guard let model else { return }

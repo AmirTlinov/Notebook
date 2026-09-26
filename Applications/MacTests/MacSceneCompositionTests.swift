@@ -156,7 +156,21 @@ import XCTest
     try await waitUntil { webViews(host).count == 4 }
     let programs = webViews(host), identities = Set(programs.map(ObjectIdentifier.init))
     XCTAssertEqual(programs.count, 4)
-    try await waitUntil { programs.allSatisfy { !$0.isLoading } }
+    var readinessFailure = "authored input has not mounted"
+    let inputsReady = try await waitUntil(message: { "Programs did not mount their authored input: \(readinessFailure)" }) {
+      for (index, web) in programs.enumerated() {
+        guard !web.isLoading else { readinessFailure = "program \(index) is loading"; return false }
+        do {
+          guard try await web.evaluateJavaScript("document.querySelector('input') !== null") as? Bool == true else {
+            readinessFailure = "program \(index) has no authored input"; return false
+          }
+        } catch {
+          readinessFailure = "program \(index): \(String(reflecting: error))"; return false
+        }
+      }
+      return true
+    }
+    guard inputsReady else { return }
     for web in programs {
       _ = try await web.evaluateJavaScript("document.querySelector('input').value = 'unsaved draft'")
     }
@@ -207,10 +221,17 @@ import XCTest
     await coordinator.stop()
   }
 
-  private func waitUntil(_ predicate: () -> Bool) async throws {
+  @discardableResult
+  private func waitUntil(message: () -> String = { "The expected scene must become ready" },
+    _ predicate: () async -> Bool) async throws -> Bool {
     let deadline = Date().addingTimeInterval(8)
-    while !predicate(), Date() < deadline { try await Task.sleep(for: .milliseconds(20)) }
-    XCTAssertTrue(predicate())
+    var ready = await predicate()
+    while !ready, Date() < deadline {
+      try await Task.sleep(for: .milliseconds(20))
+      ready = await predicate()
+    }
+    XCTAssertTrue(ready, message())
+    return ready
   }
 
   private struct Fixture {

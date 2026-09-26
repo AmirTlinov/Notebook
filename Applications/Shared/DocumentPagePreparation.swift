@@ -5,6 +5,11 @@ import NotebookCore
 import NotebookTypesetter
 import WebKit
 
+private func printPreparationMilliseconds(since start: ContinuousClock.Instant) -> Double {
+  let elapsed = start.duration(to: .now).components
+  return Double(elapsed.seconds)*1000 + Double(elapsed.attoseconds)/1e15
+}
+
 struct DocumentBrowserRegion: Codable, Sendable {
   let id: String
   let pageIndex: Int
@@ -161,6 +166,7 @@ final class DocumentPagePreparation {
   private func loadPrint(onAdmissionWait: @escaping (Bool) -> Void) async throws {
     let start = ContinuousClock.now
     let value = try await DocumentCanonicalPrint.store.artifact(for: document)
+    preparationPhasesMS["artifact"] = printPreparationMilliseconds(since: start)
     try Task.checkCancellation()
     // Admit decoding scratch and bounded PDF navigation before materializing
     // either. The same reservation shrinks to the retained source afterwards.
@@ -168,12 +174,17 @@ final class DocumentPagePreparation {
       + value.assets.reduce(0, { $0 + $1.data.count })
       + value.sourceMap.ranges.reduce(0, { $0 + ($1.sourceOffsets?.count ?? 0)*MemoryLayout<Int>.stride + 256 })
     guard value.locationDecodeBytes <= 16*1024*1024 else { throw SceneRenderError.resourceLimit }
+    let admissionStart = ContinuousClock.now
     let charge = try await resources.acquirePassiveDerivedBytes(bodyBytes + value.locationDecodeBytes*5 + 24*1024*1024) { onAdmissionWait(true) }
+    preparationPhasesMS["admission"] = printPreparationMilliseconds(since: admissionStart)
     defer { onAdmissionWait(false) }
     do {
       let pdf=DocumentPrintedPDF(value.pdf)
       let worker = Task.detached {
+        let locationsStart = ContinuousClock.now
         let addresses=try value.locations()
+        let locationsMS = printPreparationMilliseconds(since: locationsStart)
+        let pdfStart = ContinuousClock.now
         let (boxes,navigation)=try await pdf.perform { document,quartz in
           let boxes=try (1...quartz.numberOfPages).map { index in
             guard let page=quartz.page(at:index) else { throw DocumentSessionError.invalidLayout }
@@ -181,18 +192,21 @@ final class DocumentPagePreparation {
           }
           return (boxes,try DocumentPrintNavigation.read(document))
         }
-        return (addresses,boxes,navigation)
+        return (addresses,boxes,navigation,locationsMS,printPreparationMilliseconds(since: pdfStart))
       }
-      let (addresses, boxes, navigation) = try await withTaskCancellationHandler { try await worker.value } onCancel: { worker.cancel() }
+      let (addresses, boxes, navigation, locationsMS, pdfMS) = try await withTaskCancellationHandler { try await worker.value } onCancel: { worker.cancel() }
+      preparationPhasesMS["locations"] = locationsMS
+      preparationPhasesMS["pdfNavigation"] = pdfMS
       try Task.checkCancellation()
+      let layoutStart = ContinuousClock.now
       try installLayout(value, boxes: boxes, locations: addresses)
+      preparationPhasesMS["layout"] = printPreparationMilliseconds(since: layoutStart)
       let cost = bodyBytes + addresses.count*128 + navigation.pageText.reduce(0, { $0 + $1.utf8.count*2 })
         + navigation.links.reduce(0, { $0 + $1.href.utf8.count*2 + 256 })
       guard resources.resizePassiveDerivedReservation(charge, to: max(1, cost)) else { throw SceneRenderError.resourceLimit }
       printSource = DocumentPrintedSource(artifact: value, locations: addresses, pdf: pdf, reservation: charge)
       locations = addresses; self.navigation = navigation
-      let elapsed = start.duration(to: .now).components
-      preparationPhasesMS["canonicalPrint"] = Double(elapsed.seconds)*1000 + Double(elapsed.attoseconds)/1e15
+      preparationPhasesMS["canonicalPrint"] = printPreparationMilliseconds(since: start)
       preparation = nil
     } catch { charge.release(); throw error }
   }

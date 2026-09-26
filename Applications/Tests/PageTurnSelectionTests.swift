@@ -222,7 +222,7 @@ final class PageTurnSelectionTests: XCTestCase {
     XCTAssertEqual(controller.cachedPageIdentities, hosts, "Editing the document retains its native hosts")
     XCTAssertNil(native.settlingPage, "The old source's motion must end before new readiness can arrive")
     oldReceipt(true)
-    XCTAssertFalse(controller.isCurrentPagePrepared, "A retained host does not authorize an old source receipt")
+    XCTAssertFalse(controller.currentPagePreparation.isReady, "A retained host does not authorize an old source receipt")
     sourceReady = true
     try XCTUnwrap(readiness[source]?[0])(true)
     await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
@@ -240,6 +240,49 @@ final class PageTurnSelectionTests: XCTestCase {
     XCTAssertEqual(captures, 1)
     XCTAssertEqual(controller.displayedIndex, 1); XCTAssertEqual(actual, 1)
     XCTAssertEqual(landings.filter { $0.pageIndex == 1 }.map(\.sourceRevision), [source])
+  }
+
+  @MainActor
+  func testOpeningPreparationRetainsItsFailureKindAndRevokesLateSourceRetry() async throws {
+    let controller = IPadPageTurnController(), ownerID = UUID()
+    let window = UIWindow(windowScene: try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene))
+    var source = "first-source", readiness: PageTurnReadiness?, retries = 0
+    func configure() {
+      controller.update(ownerID: ownerID, sequenceRevision: source, pageCount: 1,
+        selectedIndex: 0, navigationIsEnabled: false, pageIsInteractive: false,
+        canBeginNavigation: { false }, page: { _, _, ready in
+          readiness = ready; return AnyView(Color.white)
+        }, onCommit: { _, _ in XCTFail("Preparation is not a page landing") }, onTransitioningChange: { _ in })
+    }
+    configure(); window.rootViewController = controller; window.makeKeyAndVisible()
+    defer { window.isHidden = true; window.rootViewController = nil }
+    XCTAssertFalse(controller.currentPagePreparation.isReady)
+    for kind in [PageTurnPreparationFailure.Kind.resourceLimit, .snapshotPending, .preparationFailed] {
+      let failure = PageTurnPreparationFailure(kind: kind, message: "Owned preparation failure") { retries += 1 }
+      try XCTUnwrap(readiness).failed(failure)
+      guard case .failed(let observed) = controller.currentPagePreparation else { return XCTFail("Only an explicit failure can pause opening") }
+      XCTAssertEqual(observed.id, failure.id); XCTAssertEqual(observed.kind, kind)
+      XCTAssertEqual(observed.message, failure.message)
+      let before = retries
+      observed.retry()
+      XCTAssertEqual(retries, before + 1)
+      if case .waiting = controller.currentPagePreparation {} else { XCTFail("Retry reuses this pending native page") }
+      observed.retry()
+      XCTAssertEqual(retries, before + 1, "An old Retry cannot repeat a stage already restarted")
+    }
+    let oldReadiness = try XCTUnwrap(readiness)
+    oldReadiness.failed(.init(message: "Old source failed") { retries += 1 })
+    guard case .failed(let stale) = controller.currentPagePreparation else { return XCTFail("Expected retained failure") }
+    let beforeReplacement = retries
+    source = "replacement-source"; configure()
+    stale.retry()
+    oldReadiness.failed(.init(message: "Late old failure") { retries += 1 })
+    XCTAssertEqual(retries, beforeReplacement, "Source replacement revokes the failed heap's Retry")
+    if case .waiting = controller.currentPagePreparation {} else { XCTFail("Old receipts cannot fail the replacement") }
+    try XCTUnwrap(readiness)(true)
+    let deadline = ContinuousClock.now + .seconds(1)
+    while !controller.currentPagePreparation.isReady, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(5)) }
+    XCTAssertTrue(controller.currentPagePreparation.isReady)
   }
 
   @MainActor

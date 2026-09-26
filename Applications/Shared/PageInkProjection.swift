@@ -29,7 +29,16 @@ final class PageInkProjection: ScenePlaneProjectionObserver {
     if activity !== readiness?.activity {
       if let preparationObserver { activity?.removePreparationObserver(preparationObserver) }
       activity=readiness?.activity
-      preparationObserver=activity?.observePreparation { [weak self] in self?.refreshPageRole() }
+      preparationObserver=activity?.observePreparation { [weak self] change in
+        guard let self else { return }
+        switch change {
+        case .demand: refreshPageRole()
+        case .refine(let pageIndex):
+          guard pageReadiness?.pageIndex == pageIndex, isSceneVisible else { return }
+          refresh(refining:true)
+          if canvas?.isStableFramePresented == false { pageReadiness?(false) }
+        }
+      }
     }
     pageReadiness=readiness;pageIsCurrent=isCurrent;notebookIsVisible=isVisible
     refreshPageRole()

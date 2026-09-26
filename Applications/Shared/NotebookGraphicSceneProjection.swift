@@ -89,7 +89,7 @@ extension NotebookAppModel {
     switch reference {
     case .page(let owner,_): return pages[owner].map { graphicGraph(page:$0) }
     case .spatial(let owner,_): return compositionTiles.published.map { presentedGraphicGraph(boardID:owner,cohort:$0) }
-      ?? boardHierarchy?.board(owner)?.graphicGraph()
+      ?? authoredGraphicGraph(boardID:owner)
     }
   }
 

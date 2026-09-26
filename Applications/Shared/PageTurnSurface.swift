@@ -33,7 +33,11 @@ final class PageTurnActivity {
   private(set) var preparationDemand: PreparationDemand?
   private(set) var installedPreparation: PreparationDemand?
   private var observers: [UUID: @MainActor (Bool) -> Void] = [:]
-  private var preparationObservers: [UUID: @MainActor () -> Void] = [:]
+  enum PreparationChange {
+    case demand
+    case refine(pageIndex: Int)
+  }
+  private var preparationObservers: [UUID: @MainActor (PreparationChange) -> Void] = [:]
 
   /// The native page controller owns the one accepted landing still waiting
   /// for pixels. Repeated view updates preserve its identity; a new landing
@@ -42,22 +46,28 @@ final class PageTurnActivity {
     guard preparationDemand?.pageIndex != pageIndex
       || (pageIndex != nil && preparationDemand?.presentation != presentation) else { return }
     preparationDemand = pageIndex.map { PreparationDemand(id: UUID(), pageIndex: $0, presentation: presentation) }
-    for observer in Array(preparationObservers.values) { observer() }
+    for observer in Array(preparationObservers.values) { observer(.demand) }
   }
 
   @discardableResult
-  func observePreparation(_ observer: @escaping @MainActor () -> Void) -> UUID {
+  func observePreparation(_ observer: @escaping @MainActor (PreparationChange) -> Void) -> UUID {
     let id = UUID(); preparationObservers[id] = observer; return id
   }
 
   func removePreparationObserver(_ id: UUID) { preparationObservers[id] = nil }
+
+  /// The installed page prepares its actual native pose before a stationary
+  /// opening consumes readiness. This does not replace the pending page demand.
+  func refinePresentation(at pageIndex: Int) {
+    for observer in Array(preparationObservers.values) { observer(.refine(pageIndex: pageIndex)) }
+  }
 
   /// Native completion precedes the SwiftUI current-page update. Retain that
   /// exact prepared surface across the gap, not a guess based on host lifetime.
   func didInstall(_ demand: PreparationDemand?) {
     guard installedPreparation != demand else { return }
     installedPreparation = demand
-    for observer in Array(preparationObservers.values) { observer() }
+    for observer in Array(preparationObservers.values) { observer(.demand) }
   }
 
   /// Native owners consult this value in the same event that accepts a curl.
@@ -230,7 +240,7 @@ struct PageTurnSurface: View {
     ) -> AnyView
   let onCommit: @MainActor (Int, String) -> Void
   let onTransitioningChange: @MainActor (Bool) -> Void
-  var onReadinessProbe: (@MainActor (@escaping @MainActor () -> Bool) -> Void)? = nil
+  var onReadinessProbe: (@MainActor (@escaping @MainActor (_ refinesDetails: Bool) -> PageTurnPreparationState) -> Void)? = nil
   var canonicalDocumentLayout: DocumentPageLayout? = nil
   var documentSelection: DocumentPageNavigationRequest? = nil
   var documentNavigation: DocumentPageNavigationCallbacks? = nil
@@ -305,7 +315,7 @@ struct PageTurnSurface: View {
       ) -> AnyView
     let onCommit: @MainActor (Int, String) -> Void
     let onTransitioningChange: @MainActor (Bool) -> Void
-    let onReadinessProbe: (@MainActor (@escaping @MainActor () -> Bool) -> Void)?
+    let onReadinessProbe: (@MainActor (@escaping @MainActor (_ refinesDetails: Bool) -> PageTurnPreparationState) -> Void)?
     let canonicalDocumentLayout: DocumentPageLayout?
     let documentSelection: DocumentPageNavigationRequest?
     let documentNavigation: DocumentPageNavigationCallbacks?
@@ -346,7 +356,9 @@ struct PageTurnSurface: View {
         onWindowChange: onWindowChange,
         inputGate: inputGate
       )
-      onReadinessProbe?({ [weak controller] in controller?.isCurrentPagePrepared == true })
+      onReadinessProbe?({ [weak controller] refinesDetails in
+        controller?.prepareCurrentPage(refinesDetails: refinesDetails) ?? .waiting
+      })
     }
   }
 #endif

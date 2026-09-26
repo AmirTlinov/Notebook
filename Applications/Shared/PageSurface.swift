@@ -12,6 +12,7 @@ struct NotebookPageView: View {
   let isVisible: Bool
   let onRenderReady: PageTurnReadiness
   let displayProjection: Double
+  let refinesDetails: Bool
 
   var body: some View {
     if index < 0 || index >= model.notebookPageCount(notebookID) {
@@ -19,7 +20,8 @@ struct NotebookPageView: View {
         .onAppear { onRenderReady(index == model.notebookPageCount(notebookID)) }
     } else if let page = model.notebookPage(at: index, in: notebookID) {
       PageSurface(page: page, isCurrent: isCurrent, isInteractive: isInteractive,
-        isVisible: isVisible, onRenderReady: onRenderReady, displayProjection: displayProjection)
+        isVisible: isVisible, onRenderReady: onRenderReady, displayProjection: displayProjection,
+        refinesDetails: refinesDetails)
     } else {
       BlankPageSurface(fallbackSize: model.notebookPageSize)
         .overlay { ProgressView().allowsHitTesting(false) }
@@ -41,6 +43,7 @@ struct PageSurface: View {
   /// Maximum physical projection of the already owned paper while it opens.
   /// A standalone page/thumbnail is laid out directly and needs no outer scale.
   var displayProjection: Double = 1
+  var refinesDetails = true
 
   @State private var visibleRegion: CGRect?
   @State private var readiness=PageSurfaceReadiness()
@@ -88,7 +91,7 @@ struct PageSurface: View {
             isVisible: isVisible,
             isCurrent: isCurrent,
             pageReadiness: onRenderReady,
-            refinesDetails: model.presencePhase == .settled,
+            refinesDetails: refinesDetails,
             penStyle: model.activePenStyle,
             eraserStyle: model.eraserStyle,
             drawingTool: model.drawingTool,
@@ -114,7 +117,7 @@ struct PageSurface: View {
           )
         #else
           MacPageInkView(page: page, isInteractive: isVisible && isInteractive, isVisible:isVisible,
-            isCurrent:isCurrent,pageReadiness:onRenderReady,refinesDetails:model.presencePhase == .settled) { receipt in
+            isCurrent:isCurrent,pageReadiness:onRenderReady,refinesDetails:refinesDetails) { receipt in
             readiness.recordInk(receipt);publishReadiness()
           }.id(page.id)
         #endif

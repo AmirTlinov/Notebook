@@ -9254,6 +9254,10 @@ Please report this to https://github.com/markedjs/marked.`, e) {
   // src/document-tex.ts
   function documentExport(document, programPointScale = 0.75) {
     if (!Number.isFinite(programPointScale) || programPointScale <= 0 || programPointScale > 10) throw new Error("invalid_program_scale");
+    const printPackages = ["amsmath", "amssymb", "booktabs", "longtable", "array", "graphicx", "xcolor", "geometry", "hyperref"];
+    const supplied = document.preamble.trim();
+    const packages = /* @__PURE__ */ new Set(["geometry"]);
+    let authoredTeX = Boolean(supplied);
     const assets = [];
     const images = /* @__PURE__ */ new Map();
     const anchors = /* @__PURE__ */ new Set();
@@ -9268,7 +9272,10 @@ Please report this to https://github.com/markedjs/marked.`, e) {
     let markerPrefix = "NOTEBOOKSOURCEOFFSET";
     while (document.blocks.some((block) => block.source.includes(markerPrefix))) markerPrefix += "X";
     const rendered = document.blocks.map((block) => {
-      if (block.kind !== "markdown") return { block, fragment: null, nodes: [], restoreMath: (value) => value };
+      if (block.kind !== "markdown") {
+        if (block.kind === "tex" || block.kind === "latex") authoredTeX = true;
+        return { block, fragment: null, nodes: [], restoreMath: (value) => value };
+      }
       const normalized = replaceMapped(block.source, /\r\n|\r/g, () => "\n");
       const compact = replaceMapped(normalized.text, /data:image\/(?:svg\+xml|png|jpeg)(?:;charset=[^;,\s]+)?;base64,[A-Za-z0-9+/=]+/gi, (value) => {
         const token = `${imageToken}${encodedImages.length}END`;
@@ -9276,6 +9283,7 @@ Please report this to https://github.com/markedjs/marked.`, e) {
         return token;
       });
       const protectedMath = protectMath(compact.text);
+      authoredTeX ||= protectedMath.hasMath;
       const tokens = f.lexer(protectedMath.source, { gfm: true });
       let cursor = 0;
       const html = tokens.map((token) => {
@@ -9310,6 +9318,7 @@ Please report this to https://github.com/markedjs/marked.`, e) {
       suffixes.set(stem, suffix + 1);
     }
     function image(source, width, height) {
+      packages.add("graphicx");
       const match = /^data:(image\/(?:svg\+xml|png|jpeg))(?:;charset=[^;,]+)?(;base64)?,([\s\S]*)$/i.exec(source);
       if (!match) throw new Error("export_image_unsupported: Print images must be embedded SVG, PNG or JPEG; remote URLs and user-file paths are unavailable.");
       const mediaType = match[1].toLowerCase();
@@ -9340,6 +9349,8 @@ Please report this to https://github.com/markedjs/marked.`, e) {
     function target(node) {
       const name = attribute(node, "id") || (node.tagName === "a" ? attribute(node, "name") : "");
       if (!name || emittedAnchors.has(name)) return "";
+      packages.add("hyperref");
+      packages.add("xcolor");
       emittedAnchors.add(name);
       return `\\hypertarget{${anchorName(name)}}{}`;
     }
@@ -9369,6 +9380,9 @@ ${restoreMath(plainText(node))}
 \\end{verbatim}
 `;
       if (tag === "table") {
+        packages.add("booktabs");
+        packages.add("longtable");
+        packages.add("array");
         const rows = descendants(node.childNodes).filter((child) => "tagName" in child && child.tagName === "tr");
         const cells = rows.map((row) => row.childNodes.filter((child) => "tagName" in child && ["td", "th"].includes(child.tagName)));
         for (const cell of cells.flat()) if (Number(attribute(cell, "colspan") ?? 1) !== 1 || Number(attribute(cell, "rowspan") ?? 1) !== 1) {
@@ -9396,9 +9410,14 @@ ${prefix}\\${command}{${body2.trim()}}
           if (!href) return prefix + body2;
           if (href.startsWith("#")) {
             const destination = decodeURIComponent(href.slice(1));
-            return anchors.has(destination) ? `${prefix}\\hyperlink{${anchorName(destination)}}{${body2}}` : `${prefix}${body2}\\textsuperscript{[\u043D\u0435\u0434\u043E\u0441\u0442\u0443\u043F\u043D\u0430\u044F \u0441\u0441\u044B\u043B\u043A\u0430]}`;
+            if (!anchors.has(destination)) return `${prefix}${body2}\\textsuperscript{[\u043D\u0435\u0434\u043E\u0441\u0442\u0443\u043F\u043D\u0430\u044F \u0441\u0441\u044B\u043B\u043A\u0430]}`;
+            packages.add("hyperref");
+            packages.add("xcolor");
+            return `${prefix}\\hyperlink{${anchorName(destination)}}{${body2}}`;
           }
           if (!/^(?:https?:|mailto:)/i.test(href)) throw new Error("export_link_unsupported: Only document anchors, HTTPS/HTTP and mailto links can be printed.");
+          packages.add("hyperref");
+          packages.add("xcolor");
           return `${prefix}\\href{${escapeURL(href)}}{${body2}}`;
         }
         case "p":
@@ -9490,7 +9509,6 @@ End Notebook program source`), "\\par"];
       mappedOffsets.set(block.id, offsets);
       return text.trim() ? text : "\\noindent\\mbox{}\\par";
     });
-    const supplied = document.preamble.trim();
     let preamble = /\\documentclass(?:\[[^\]]*\])?\{/.test(supplied) ? supplied : [
       "\\documentclass[12pt]{article}",
       "\\usepackage{fontspec}",
@@ -9498,7 +9516,8 @@ End Notebook program source`), "\\par"];
       supplied
     ].filter(Boolean).join("\n");
     if (/\\(?:begin|end)\s*\{document\}/.test(preamble)) throw new Error("preamble \u0437\u0430\u0434\u0430\u0451\u0442 \u043A\u043B\u0430\u0441\u0441 \u0438 \u043F\u0430\u043A\u0435\u0442\u044B; begin/end document \u043F\u0440\u0438\u043D\u0430\u0434\u043B\u0435\u0436\u0430\u0442 \u044D\u043A\u0441\u043F\u043E\u0440\u0442\u0451\u0440\u0443.");
-    for (const name of ["amsmath", "amssymb", "booktabs", "longtable", "array", "graphicx", "xcolor", "geometry", "hyperref"]) {
+    for (const name of printPackages) {
+      if (!authoredTeX && !packages.has(name)) continue;
       if (!new RegExp(String.raw`\\(?:usepackage|RequirePackage)(?:\[[^\]]*\])?\{[^}]*\b${name}\b[^}]*\}`).test(preamble)) {
         preamble += `
 \\usepackage${name === "hyperref" ? "[colorlinks=true,linkcolor=black,urlcolor=blue]" : ""}{${name}}`;
@@ -9612,6 +9631,7 @@ End Notebook program source`), "\\par"];
     return {
       source: mapped.text,
       originalOffset: mapped.originalOffset,
+      hasMath: formulas.size > 0,
       restore: (text, restoreImages) => text.replace(pattern, (token) => restoreImages(formulas.get(token) ?? token))
     };
   }

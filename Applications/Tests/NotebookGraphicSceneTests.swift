@@ -116,7 +116,7 @@ import XCTest
       "The read-only region owns controls before any content edit")
     await withCheckedContinuation { continuation in model.inputGate.performAfterIdle { continuation.resume() } }
     XCTAssertTrue(model.acceptExternalScene(older,observedEpoch:model.collaborationReadEpoch,
-      observedPresence:presence,itemPins:itemPins))
+      observedPresence:presence,observedPreparation:presence,itemPins:itemPins))
     XCTAssertEqual(model.selectionSession.region?.reference,selected,
       "An older scene cut is not deletion of the live selection descriptor")
     XCTAssertNotNil(NotebookAttentionProjection.editingFrame(selected,model:model,presence:presence))

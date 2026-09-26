@@ -30,6 +30,7 @@ struct MacNotebookPageSurface: NSViewRepresentable {
     var ready = false
     var current = false
     var scale = 0.0
+    var refinesDetails: Bool?
     var failure: PageTurnPreparationFailure?
   }
   private weak var model: NotebookAppModel?
@@ -140,9 +141,11 @@ struct MacNotebookPageSurface: NSViewRepresentable {
         slot.host.frame = bounds
       }
       let source = source(at: index), current = hasShown && index == displayed
-      guard slot.scale != scale || slot.source != source || slot.current != current else { continue }
+      let refinesDetails = model.presencePhase == .settled
+      guard slot.scale != scale || slot.source != source || slot.current != current
+        || slot.refinesDetails != refinesDetails else { continue }
       if slot.source != source { slot.ready = false; slot.failure = nil }
-      slot.source = source; slot.scale = scale; slot.current = current
+      slot.source = source; slot.scale = scale; slot.current = current; slot.refinesDetails = refinesDetails
       let generation = UUID(); slot.generation = generation
       let readiness = PageTurnReadiness(activity: activity, pageIndex: index,
         onFailure: { [weak self, weak slot] failure in
@@ -154,7 +157,7 @@ struct MacNotebookPageSurface: NSViewRepresentable {
         }
       slot.host.rootView = AnyView(NotebookPageView(notebookID: notebookID, index: index,
         isCurrent: current, isInteractive: current, isVisible: true,
-        onRenderReady: readiness, displayProjection: scale)
+        onRenderReady: readiness, displayProjection: scale, refinesDetails: refinesDetails)
         .accessibilityHidden(!current).background(Color.white).environment(model).environment(\.scenePlaneProjection, projection))
     }
   }

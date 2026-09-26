@@ -118,8 +118,15 @@ final class SceneItemOwnerRetirementTests: XCTestCase {
       _ = try peerStore.deleteTestItem(itemID: itemID, actor: peer)
     }
     let presence = try XCTUnwrap(model.presence), pencil = UUID(), binding = UUID()
+    let rollback = SessionPresence(boardID: boardID, mode: .board,
+      camera: .init(center: .init(x: 321, y: 654), scale: 0.4), viewport: presence.viewport,
+      selectedItemID: presence.selectedItemID, notebookPageID: presence.notebookPageID)
     var notices: [(UUID, UUID, UInt64)] = []
-    model.bindItemOwnerObserver(owner: binding) { notices.append(($0, $1, $2)) }
+    model.bindItemOwnerObserver(owner: binding) { id, board, cursor in
+      XCTAssertNil(model.workspace?.item(id: id), "The committed scene is installed before its owner reacts")
+      notices.append((id, board, cursor))
+      model.updatePresence(rollback, settled: true)
+    }
     model.inputGate.beginPencilAction(source: pencil)
     defer { model.inputGate.endPencilAction(source: pencil) }
     // The existing preparation request names the engaged physical owner. An
@@ -139,6 +146,7 @@ final class SceneItemOwnerRetirementTests: XCTestCase {
     XCTAssertEqual(notices.count, 1)
     XCTAssertEqual(notice.0, itemID); XCTAssertEqual(notice.1, boardID)
     XCTAssertGreaterThanOrEqual(notice.2, cursor)
+    XCTAssertEqual(model.presence, rollback, "The same scene publication must not overwrite navigation's synchronous rollback")
     await model.reloadExternalChanges()?.value
     XCTAssertEqual(notices.count, 1, "An already consumed placement retirement is not replayed by another refresh")
     XCTAssertNil(model.persistenceFailure)
@@ -170,7 +178,9 @@ final class SceneItemOwnerRetirementTests: XCTestCase {
         spatialInk: .init(stamp: before.stamp), actor: peer))
       XCTAssertTrue(after.addItem(itemID, to: childID, near: .zero, actor: peer))
       _ = try store.saveBoardEdits(before: before, after: after)
-      return try NotebookSceneState.read(store: store, presence: presence, viewport: presence.viewport,
+      let destination = SessionPresence(boardID: childID, mode: .board,
+        camera: .init(scale: 0.3), viewport: presence.viewport, selectedItemID: childID)
+      return try NotebookSceneState.read(store: store, presence: destination, viewport: destination.viewport,
         loadsLiveContent: false, pinnedItems: [childID: [itemID]])
     }
     let index = WorkspaceSceneIndex(workspace: state.workspace, hierarchy: state.hierarchy, paperSizes: state.paperSizes)
@@ -189,6 +199,110 @@ final class SceneItemOwnerRetirementTests: XCTestCase {
     XCTAssertEqual(owner, childID, "Retiring the old pose does not delete or move the canonical transferred item")
     XCTAssertNil(model.persistenceFailure)
     model.unbindItemOwnerObserver(owner: binding)
+  }
+
+  func testActivePreparedTargetDeletionInstallsItsProofBeforeRetiringTheOwner() async throws {
+    try await assertActivePreparedTargetRetirement(transferring: false)
+  }
+
+  func testActivePreparedTargetTransferInstallsItsProofBeforeRetiringTheOwner() async throws {
+    try await assertActivePreparedTargetRetirement(transferring: true)
+  }
+
+  func testActivePreparedTargetRetirementWithoutObserverNormalizesAndSettles() async throws {
+    try await assertActivePreparedTargetRetirement(transferring: false, observing: false)
+    try await assertActivePreparedTargetRetirement(transferring: true, observing: false)
+  }
+
+  private func assertActivePreparedTargetRetirement(transferring: Bool, observing: Bool = true) async throws {
+    let model = try await makeModel()
+    let itemID = try XCTUnwrap(model.workspace?.selectedItemID)
+    let pageID = try XCTUnwrap(model.presence?.notebookPageID)
+    let rootID = try XCTUnwrap(model.presence?.boardID)
+    let childID = try XCTUnwrap(model.createBoard(at: .init(x: 3_000, y: 0)))
+    let created = await model.finishPendingPersistence()
+    XCTAssertTrue(created)
+    model.selectItem(itemID)
+    model.updatePresence(.init(boardID: rootID, mode: .board,
+      camera: .init(scale: 0.3), viewport: .init(x: 800, y: 600),
+      selectedItemID: itemID, notebookPageID: pageID), settled: true)
+    let saved = await model.finishPendingPersistence()
+    XCTAssertTrue(saved)
+    await model.reloadExternalChanges()?.value
+    let actual = try XCTUnwrap(model.presence)
+    let prepared = SessionPresence(boardID: rootID, mode: .page,
+      camera: .init(scale: 0.8), viewport: actual.viewport,
+      focusedItemID: itemID, openProgress: 1, selectedItemID: itemID, notebookPageID: pageID)
+    let pins = [rootID: [itemID]], peer = UUID()
+    // The external mutation and the proof are real canonical SQL, not absence
+    // from an arbitrarily cropped projection. Admission below remains local.
+    let state = try await model.performStoreCommand { store in
+      if transferring {
+        let workspace = try store.loadIndex(), before = try store.loadBoard(items: workspace.items)
+        var after = before
+        XCTAssertTrue(after.deleteItem(itemID, from: rootID, kind: .notebook,
+          spatialInk: .init(stamp: before.stamp), actor: peer))
+        XCTAssertTrue(after.addItem(itemID, to: childID, near: .zero, actor: peer))
+        _ = try store.saveBoardEdits(before: before, after: after)
+      } else {
+        _ = try store.deleteTestItem(itemID: itemID, actor: peer)
+      }
+      return try NotebookSceneState.read(store: store, presence: prepared,
+        viewport: prepared.viewport, pinnedItems: pins)
+    }
+    XCTAssertNotEqual(state.presence.focusedItemID, prepared.focusedItemID,
+      "Canonical retirement must actually normalize the now-impossible prepared presence")
+    if transferring { XCTAssertEqual(state.transferredPinnedItems, [itemID: childID]) }
+    else { XCTAssertEqual(state.missingPinnedItems, [itemID]) }
+    let rollback = SessionPresence(boardID: rootID, mode: .board,
+      camera: .init(center: .init(x: 321, y: 654), scale: 0.4),
+      viewport: actual.viewport, selectedItemID: childID)
+    let binding = UUID()
+    var notices: [(UUID, UUID, UInt64)] = []
+    if observing {
+      model.bindItemOwnerObserver(owner: binding) { id, board, cursor in
+        XCTAssertEqual(model.sceneContentCursor, state.header.cursor,
+          "The owner must see the installed cut, not the body that is being retired")
+        XCTAssertNil(model.boardHierarchy?.board(rootID)?.placement(of: itemID))
+        if transferring { XCTAssertNotNil(model.workspace?.item(id: itemID)) }
+        else { XCTAssertNil(model.workspace?.item(id: itemID)) }
+        notices.append((id, board, cursor))
+        model.updatePresence(rollback, settled: true)
+      }
+    }
+    defer { model.unbindItemOwnerObserver(owner: binding) }
+    model.prepareComposition(presence: prepared, frame: nil,
+      pinned: [.item(itemID)], displayScale: 1, installedItemOwners: [itemID: rootID])
+    XCTAssertFalse(model.acceptExternalScene(state, observedEpoch: model.collaborationReadEpoch,
+      observedPresence: actual, observedPreparation: prepared, itemPins: pins),
+      "Even canonical retirement does not revive a settled or cancelled demand")
+    model.updatePresence(actual, settled: false)
+    let epoch = model.collaborationReadEpoch
+    XCTAssertFalse(model.acceptExternalScene(state, observedEpoch: epoch &- 1,
+      observedPresence: actual, observedPreparation: prepared, itemPins: pins),
+      "The retirement proof cannot bypass the accepted-content frontier")
+    XCTAssertTrue(model.acceptExternalScene(state, observedEpoch: epoch,
+      observedPresence: actual, observedPreparation: prepared, itemPins: pins),
+      "An exact active demand must consume its canonical retirement rather than endlessly reread it")
+    if observing {
+      XCTAssertEqual(notices.count, 1)
+      XCTAssertEqual(notices.first?.0, itemID); XCTAssertEqual(notices.first?.1, rootID)
+      XCTAssertEqual(notices.first?.2, state.header.cursor)
+      XCTAssertEqual(model.presence, rollback, "Installing this cut cannot overwrite the owner's synchronous rollback")
+    } else {
+      XCTAssertEqual(model.presence, state.presence, "No mounted owner exists to resolve this impossible demand later")
+      XCTAssertNil(model.presence?.focusedItemID)
+    }
+    XCTAssertEqual(model.presencePhase, .settled)
+    let completedPresence = try XCTUnwrap(model.presence)
+    model.prepareComposition(presence: completedPresence, frame: nil, pinned: [], displayScale: 1)
+    let refreshed = expectation(description: "Retired demand leaves no refresh loop")
+    let refresh = try XCTUnwrap(model.reloadExternalChanges())
+    let completion = Task { await refresh.value; refreshed.fulfill() }
+    defer { refresh.cancel(); completion.cancel() }
+    await fulfillment(of: [refreshed], timeout: 2)
+    XCTAssertEqual(notices.count, observing ? 1 : 0, "The exact physical placement is retired once, not once per refresh")
+    XCTAssertEqual(model.presence, completedPresence)
   }
 
   private func makeModel() async throws -> NotebookAppModel {

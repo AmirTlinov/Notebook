@@ -18,6 +18,12 @@ final class NotebookDocumentOpeningTests: XCTestCase {
 
   private func assertHistoryOpening(onAnotherBoard: Bool) async throws {
     let (model, _, destination) = try await fixture(secondOnAnotherBoard: onAnotherBoard)
+    defer {
+      if model.documentMeasurements.enabled, let data = try? JSONEncoder().encode(model.documentMeasurements.records) {
+        let measurements = XCTAttachment(data: data, uniformTypeIdentifier: "public.json")
+        measurements.name = "history-opening-phases"; measurements.lifetime = .keepAlways; add(measurements)
+      }
+    }
     let window = UIWindow(windowScene: try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene))
     let host = UIHostingController(rootView: SpatialWorkspaceView().environment(model).ignoresSafeArea())
     window.rootViewController = host; window.makeKeyAndVisible()
@@ -51,6 +57,38 @@ final class NotebookDocumentOpeningTests: XCTestCase {
     // registry checks the installed current source, not just focus/title/model.
     try await assertUX(onAnotherBoard ? "document-other-board-installed" : "document-installed",
       since: openingStarted, budget: NotebookUXObservation.opening, window: window) { installed() }
+  }
+
+  func testAcceptedNavigationDoesNotStartAnOptionalShellBeforeItsResolverRuns() async throws {
+    let (model, first, _) = try await fixture()
+    let window = UIWindow(windowScene: try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene))
+    let previous = window.windowScene?.windows.first(where: \.isKeyWindow)
+    window.rootViewController = UIHostingController(rootView: SpatialWorkspaceView().environment(model).ignoresSafeArea())
+    window.makeKeyAndVisible()
+    defer {
+      model.cancelRequestedNavigation()
+      window.isHidden = true; window.rootViewController = nil; previous?.makeKey()
+      model.compositionTiles.cancelPreparation()
+    }
+    let deadline = ContinuousClock.now + .seconds(10)
+    while model.compositionTiles.published?.isPaintInstalled != true, ContinuousClock.now < deadline {
+      try await Task.sleep(for: .milliseconds(20))
+    }
+    let cohort = try XCTUnwrap(model.compositionTiles.published)
+    XCTAssertTrue(cohort.isPaintInstalled)
+    let visible = try XCTUnwrap(model.presence)
+    let resources = SceneRenderResources.shared
+    resources.documentShellPreparation?.retireUnused()
+    model.requestShow(.init(target: .init(kind: .document, id: first.id), revision: first.contentStamp.revision))
+    XCTAssertNotNil(model.requestedReference)
+    XCTAssertEqual(model.presencePhase, .settled, "The resolver has not yet moved the camera")
+    model.prepareCommonDocumentShellIfIdle(presence: visible, cohort: cohort)
+    XCTAssertNil(resources.documentShellPreparation?.unusedCoordinator,
+      "Accepted navigation is not an idle opportunity, even before its first camera sample")
+    model.cancelRequestedNavigation()
+    model.prepareCommonDocumentShellIfIdle(presence: visible, cohort: cohort)
+    XCTAssertNotNil(resources.documentShellPreparation?.unusedCoordinator,
+      "The same installed board can prepare its optional shell after cancellation")
   }
 
   func testOpenedDocumentOwnsPixelsHitTestingAndAttentionAboveAnOverlappingCoverWithoutMovingIt() async throws {
@@ -262,6 +300,26 @@ final class NotebookDocumentOpeningTests: XCTestCase {
     XCTAssertEqual(model.documents[second.id], second)
     XCTAssertEqual(model.presence?.selectedItemID, second.id)
     XCTAssertEqual(model.presence?.openProgress, 0)
+  }
+
+  func testPreparedDocumentRefreshRetainsActualCoverAndRejectsRetiredDemand() async throws {
+    let (model, _, destination) = try await fixture()
+    model.selectItem(destination.id)
+    let actual = try XCTUnwrap(model.presence)
+    let target = SessionPresence(boardID: actual.boardID, mode: .document,
+      camera: .init(center: .init(x: 2_000, y: 0), scale: 0.8), viewport: actual.viewport,
+      focusedItemID: destination.id, openProgress: 1, selectedItemID: destination.id)
+    model.updatePresence(actual, settled: false)
+    model.prepareComposition(presence: target, frame: nil, pinned: [], displayScale: 1)
+    let state = try NotebookSceneState.read(store: model.store, presence: target, viewport: target.viewport)
+    XCTAssertTrue(model.acceptExternalScene(state, observedEpoch: model.collaborationReadEpoch,
+      observedPresence: actual, observedPreparation: target, itemPins: [:]))
+    XCTAssertEqual(model.presence, actual, "Preparing another paper cannot teleport the actual cover")
+    XCTAssertEqual(model.documents[destination.id], destination, "The accepted opening demand owns its fresh body even while the cover is closed")
+    model.updatePresence(actual, settled: true)
+    XCTAssertFalse(model.acceptExternalScene(state, observedEpoch: model.collaborationReadEpoch,
+      observedPresence: actual, observedPreparation: target, itemPins: [:]),
+      "A cancelled passage cannot restore its stale preparation demand")
   }
 
   private func fixture(secondOnAnotherBoard: Bool = false) async throws -> (NotebookAppModel, DocumentDocument, DocumentDocument) {

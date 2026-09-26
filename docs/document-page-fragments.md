@@ -13,6 +13,11 @@ derived disk cache keyed by resource version and complete source. PDF, source an
 map are checked on read. Canceling the last reader stops the real job; canceling
 one shared reader preserves the others.
 
+The existing Markdown-to-TeX walk collects the packages required by the constructs
+it emits. Plain text does not load table, image or hyperlink packages. Authored
+TeX, formulas and a custom preamble retain the complete supported macro
+environment; compilation passes and source mapping are unchanged.
+
 `DocumentSourceSnapshot` has one `DocumentPagePreparation` containing PDF,
 SyncTeX addresses, links and accepted `DocumentLayoutRecord`.
 `DocumentPrintedSource` shares that map with paper and editor. Arbitrary TeX

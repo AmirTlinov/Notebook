@@ -443,7 +443,7 @@ final class NotebookAppModel {
     return sceneIndex?.workset(presence: presence, pinned: pinned, limit: limit, pixelScale: pixelScale) ?? .empty
   }
 
-  /// Called by the view's task, never by its body or a UIKit update callback.
+  /// Called by scheduled scene preparation, never inline from a view body or native update.
   /// The camera can replace one pending coverage request without growing a queue.
   func prepareComposition(presence: SessionPresence, frame: WorkspaceSceneFrame?,
     pinned: Set<WorkspaceSpatialID>, displayScale: Double, installedItemOwners: [UUID: UUID] = [:]) {
@@ -545,7 +545,14 @@ final class NotebookAppModel {
             try NotebookSceneState.read(store: store, presence: requested,
               viewport: requested.viewport, loadsLiveContent: loadsDocument, pinnedElements: pins, pinnedItems: itemPins, preparedPages: preparedIDs, historyActor: actor, pinnedInkActionIDs: inkPins)
           }
-          guard epoch == collaborationReadEpoch, state.header.cursor == workspaceHeader?.cursor else {
+          guard epoch == collaborationReadEpoch else {
+            // A body or selection can publish while this addressed read waits.
+            // Keep draining the latest requested destination, not the camera
+            // it is preparing to leave. Never install the obsolete SQL cut.
+            requestedScenePresence = requestedScenePresence ?? compositionPreparationPresence ?? self.presence
+            continue
+          }
+          guard state.header.cursor == workspaceHeader?.cursor else {
             externalReloadPending = true
             if permitsExternalScenePublication { reloadExternalChanges() }
             return
@@ -559,7 +566,6 @@ final class NotebookAppModel {
           guard current?.boardID == requested.boardID,
             current?.focusedItemID == requested.focusedItemID,
             current?.selectedItemID == requested.selectedItemID else { continue }
-          acceptItemOwnerInvalidations(state, requested: itemPins)
           workspace = state.workspace
           let retained = Set(state.pagePositions.map(\.pageID))
           pages = pages.filter { retained.contains($0.key) }
@@ -588,6 +594,7 @@ final class NotebookAppModel {
           for (owner, entries) in state.history { pencilUndoHistory.restore(entries, for: owner) }
           for (owner, entries) in state.redoHistory { pencilUndoHistory.restoreRedo(entries, for: owner) }
           alignWorkspaceSelection()
+          acceptItemOwnerInvalidations(state, requested: itemPins)
           scheduleScenePreparation(coverageOnly: true)
         } catch {
           publicationFailure = error.localizedDescription
@@ -2124,7 +2131,7 @@ final class NotebookAppModel {
       do {
         let header = try await saved.value
         completedDeletions[itemID] = header.cursor
-        itemOwnerObserver?.receive(itemID, ownerID, header.cursor)
+        notifyItemOwnerUnavailable(itemID, on: ownerID, through: header.cursor, deleted: true)
         scenePinnedItems = scenePinnedItems.mapValues { $0.filter { $0 != itemID } }
         for pageID in loadedPageIDs {
           persistence.discardPending(owner: .page(pageID))
@@ -4247,7 +4254,8 @@ final class NotebookAppModel {
         let draftEpoch = documentDraftEpoch
         let elementPins = scenePinnedElements, itemPins = scenePinnedItems
         let previousIndex = sceneIndex, previousPages = pages
-        let preparedIDs = preparedNotebookPageIDs(in: presence.selectedItemID)
+        let readPresence = sceneReadPresence(for: presence)
+        let preparedIDs = preparedNotebookPageIDs(in: readPresence.selectedItemID)
         let inkPins = drawingTools.pinnedSpatialInkActionIDs
         let attentionID = agentFeedback.attentionID, attentionReferences = agentFeedback.attention.map(\.reference)
         #if os(iOS)
@@ -4258,7 +4266,7 @@ final class NotebookAppModel {
         do {
           let _: Void = try await persistence.submit { _ in () }
           let prepared = try await sceneReader.read { [actor = actorID] store in
-            try NotebookDiskRefresh.prepare(store: store, presence: presence,
+            try NotebookDiskRefresh.prepare(store: store, presence: readPresence,
               pinnedElements: elementPins, pinnedItems: itemPins, preparedPages: preparedIDs,
               feedbackKnown: feedbackKnown, feedbackTracked: feedbackTracked, attentionReferences: attentionReferences,
               historyActor: actor, pinnedInkActionIDs: inkPins, reusing: previousIndex, reusingPages: previousPages)
@@ -4267,7 +4275,7 @@ final class NotebookAppModel {
           if persistence.failure == nil { persistenceFailure = arrivalFailure }
           let liveDrafts = documentEditingSessions
           guard acceptExternalScene(prepared.scene, observedEpoch: epoch,
-            observedPresence: presence, itemPins: itemPins, preparedIndex: prepared.sceneIndex) else {
+            observedPresence: presence, observedPreparation: readPresence, itemPins: itemPins, preparedIndex: prepared.sceneIndex) else {
             if !permitsExternalScenePublication { externalReloadPending = true; return }
             diskRefreshRequested = true; continue
           }
@@ -5343,7 +5351,8 @@ final class NotebookAppModel {
   func prepareCommonDocumentShellIfIdle(presence visible: SessionPresence, cohort: SceneCompositionCohort?) {
     #if os(iOS)
       guard preparationIsForeground, UIApplication.shared.applicationState == .active,
-        !isClosing, permitsBackgroundPreparation, presence == visible,
+        !isClosing, permitsBackgroundPreparation, requestedReference == nil, requestedReturn == nil,
+        presence == visible,
         visible.openProgress <= 0, let cohort, cohort.isPaintInstalled,
         cohort.plan.rootBoardID == visible.boardID,
         compositionTiles.published === cohort else { return }
@@ -5464,15 +5473,37 @@ final class NotebookAppModel {
       pages: Array(pages.values), documents: Array(documents.values), states: Array(documentStates.values))
   }
 
+  private func notifyItemOwnerUnavailable(_ id: UUID, on boardID: UUID, through cursor: UInt64, deleted: Bool) {
+    itemOwnerObserver?.receive(id, boardID, cursor)
+    // A native cancellation can restore an origin carrying the retired
+    // selection. Clear only the canonical receipt's address, after that owner
+    // has chosen its surviving camera; nil in updatePresence means inheritance.
+    // A transfer retires only the old physical placement; its live item
+    // remains a valid session selection on another board.
+    guard deleted, let current = presence, current.selectedItemID == id else { return }
+    let cleared = current.selecting(itemID: nil, pageID: nil)
+    setPresence(cleared, publishes: true)
+    updatePresence(cleared, settled: presencePhase == .settled)
+  }
+
   private func acceptItemOwnerInvalidations(_ state: NotebookSceneState, requested: [UUID: [UUID]]) {
     let unavailable = state.missingPinnedItems.union(state.transferredPinnedItems.keys)
     guard !unavailable.isEmpty else { return }
     for (boardID, ids) in requested {
       for id in ids where unavailable.contains(id) {
-        itemOwnerObserver?.receive(id, boardID, state.header.cursor)
+        notifyItemOwnerUnavailable(id, on: boardID, through: state.header.cursor,
+          deleted: state.missingPinnedItems.contains(id))
       }
     }
     scenePinnedItems = scenePinnedItems.mapValues { $0.filter { !unavailable.contains($0) } }
+  }
+
+  /// The pending passage owns the sources it is preparing, not the still-closed
+  /// cover along its camera route. A settled/cancelled passage has no such demand.
+  private func sceneReadPresence(for actual: SessionPresence) -> SessionPresence {
+    guard presencePhase == .active, let preparing = compositionPreparationPresence,
+      preparing.selectedItemID == actual.selectedItemID else { return actual }
+    return preparing
   }
 
   /// A completed SQL read observes the local content frontier from its request,
@@ -5480,7 +5511,7 @@ final class NotebookAppModel {
   /// invalidates that read even while the old pixels are still displayed.
   @discardableResult
   func acceptExternalScene(_ state: NotebookSceneState, observedEpoch: UInt64,
-    observedPresence: SessionPresence, itemPins: [UUID: [UUID]], preparedIndex: WorkspaceSceneIndex? = nil) -> Bool {
+    observedPresence: SessionPresence, observedPreparation: SessionPresence, itemPins: [UUID: [UUID]], preparedIndex: WorkspaceSceneIndex? = nil) -> Bool {
     guard permitsExternalScenePublication, observedEpoch == collaborationReadEpoch,
       let current = presence, itemPins == scenePinnedItems else { return false }
     let moving = presencePhase == .active
@@ -5489,17 +5520,29 @@ final class NotebookAppModel {
         focusedItemID: value.focusedItemID, openProgress: value.openProgress, documentPageIndex: value.documentPageIndex,
         selectedItemID: value.selectedItemID, notebookPageID: value.notebookPageID)
     }
-    guard moving ? (withCurrentCamera(observedPresence) == current && withCurrentCamera(state.presence) == current)
-      : current == observedPresence else { return false }
-    acceptItemOwnerInvalidations(state, requested: itemPins)
-    acceptSceneState(state, preservingPresence: moving ? current : nil, preparedIndex: preparedIndex, coverageOnly: moving)
+    let retiredDemand = (observedPreparation.focusedItemID ?? observedPreparation.selectedItemID).map { id in
+      itemPins[observedPreparation.boardID]?.contains(id) == true
+        && (state.missingPinnedItems.contains(id) || state.transferredPinnedItems[id] != nil)
+    } ?? false
+    guard withCurrentCamera(observedPreparation) == withCurrentCamera(sceneReadPresence(for: current)),
+      moving ? (withCurrentCamera(observedPresence) == current
+        && (withCurrentCamera(state.presence) == withCurrentCamera(observedPreparation) || retiredDemand))
+        : current == observedPresence else { return false }
+    // Canonical removal/transfer normalizes the SQL presence. It must reach the
+    // same mounted owner, not trigger an endless retry of its obsolete demand.
+    // Without a mounted owner, the model can immediately accept normalization.
+    let unownedRetirement = moving && retiredDemand && itemOwnerObserver == nil
+    if unownedRetirement { cancelRequestedNavigation() }
+    acceptSceneState(state, preservingPresence: moving && !unownedRetirement ? current : nil,
+      preparedIndex: preparedIndex, coverageOnly: moving && !unownedRetirement, itemPins: itemPins)
+    if unownedRetirement, let normalized = presence { updatePresence(normalized, settled: true) }
     // This refresh may advance content, but no content contact is admitted.
     // Publish its finite window now, never an old camera from the SQL read.
     return true
   }
 
   private func acceptSceneState(_ state: NotebookSceneState, preservingPresence: SessionPresence? = nil,
-    preparedIndex: WorkspaceSceneIndex? = nil, coverageOnly: Bool = false) {
+    preparedIndex: WorkspaceSceneIndex? = nil, coverageOnly: Bool = false, itemPins: [UUID: [UUID]]? = nil) {
     acceptingSceneState = true
     defer {
       acceptingSceneState = false
@@ -5570,6 +5613,10 @@ final class NotebookAppModel {
       guard case .page(let pageID,let id) = reference, let page = pages[pageID] else { return false }
       return page.element(id:id) == nil
     }) { clearSelection() }
+    // The observer may synchronously cancel navigation and restore its origin.
+    // Deliver after installing this SQL cut, but before its prepared cohort can
+    // replace the physical owner that must receive the retirement.
+    if let itemPins { acceptItemOwnerInvalidations(state, requested: itemPins) }
   }
 
   private func reloadCollaborationMetadata() { reloadExternalChanges() }

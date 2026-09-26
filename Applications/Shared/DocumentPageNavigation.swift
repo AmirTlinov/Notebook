@@ -21,10 +21,23 @@ struct DocumentPageLanding {
 @MainActor
 struct PageTurnPreparationFailure {
   enum Kind: Equatable { case resourceLimit, snapshotPending, preparationFailed }
-  let id = UUID()
-  var kind: Kind = .preparationFailed
+  let id: UUID
+  let kind: Kind
   let message: String
   let retry: @MainActor () -> Void
+
+  init(id: UUID = UUID(), kind: Kind = .preparationFailed, message: String,
+    retry: @escaping @MainActor () -> Void) {
+    self.id = id; self.kind = kind; self.message = message; self.retry = retry
+  }
+}
+
+/// A missing first frame is ordinary waiting. Only an explicit failure from
+/// the currently mounted page can pause its caller and expose the owner's Retry.
+@MainActor
+enum PageTurnPreparationState {
+  case waiting, ready, failed(PageTurnPreparationFailure)
+  var isReady: Bool { if case .ready = self { true } else { false } }
 }
 
 @MainActor

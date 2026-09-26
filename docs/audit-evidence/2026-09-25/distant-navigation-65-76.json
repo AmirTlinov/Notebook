@@ -1,0 +1,878 @@
+{
+  "status": "causal_navigation_regressions_passed_cold_document_latency_open",
+  "baseRevision": "f8591b1311d342279266fe9940e31e0c3ec3ab3f",
+  "localArchive": "/Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/.build/notebook-architecture-repair/evidence-2026-09-25/distant-navigation-65-76",
+  "filesManifestSHA256": "259f21235441a6ba17fc7ffd57b92c0577f8622dae87f809bae8455bc04829cd",
+  "runs": [
+    {
+      "number": "65",
+      "summary": {
+        "devicesAndConfigurations": [
+          {
+            "device": {
+              "architecture": "arm64",
+              "deviceId": "29BEF8B8-E3C5-4943-8408-9A616ECC863D",
+              "deviceName": "Notebook Architecture QA",
+              "modelName": "iPad Pro 13-inch (M5)",
+              "osBuildNumber": "24A434",
+              "osVersion": "27.0",
+              "platform": "iOS Simulator"
+            },
+            "expectedFailures": 0,
+            "failedTests": 4,
+            "passedTests": 20,
+            "skippedTests": 0,
+            "testPlanConfiguration": {
+              "configurationId": "1",
+              "configurationName": "Test Scheme Action"
+            }
+          }
+        ],
+        "environmentDescription": "Notebook · Built with macOS 27.0",
+        "expectedFailures": 0,
+        "failedTests": 4,
+        "finishTime": 1790391657.355,
+        "passedTests": 20,
+        "result": "Failed",
+        "runtimeWarnings": [],
+        "skippedTests": 0,
+        "startTime": 1790391627.129,
+        "statistics": [],
+        "testFailures": [
+          {
+            "failureText": "XCTAssertTrue failed - A history reference must install the actual document, not only change the title: no failure reported; document=false, indexed=true, scenePending=false, permits=true, preparing=false, presence=Optional(NotebookCore.SessionPresence(format: 5, boardID: 7E7A0000-0000-4000-8000-000000000003, mode: NotebookCore.WorkspaceSemanticMode.board, camera: NotebookCore.SpatialCamera(center: NotebookCore.WorldPoint(tileX: 0, tileY: 0, localX: 2000.0, localY: 0.0), scale: 0.22), viewport: NotebookCore.SpatialPoint(x: 1032.0, y: 1376.0), focusedItemID: nil, openProgress: 0.0, selectedItemID: Optional(9E168727-335A-4250-813D-6FEF0C5612B8), notebookPageID: nil, documentPageIndex: 0))",
+            "targetName": "NotebookTests",
+            "testIdentifier": 5,
+            "testIdentifierString": "NotebookDocumentOpeningTests/testHistoryReferenceInstallsAnUnloadedDocumentOnAnotherBoard()",
+            "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/NotebookDocumentOpeningTests/testHistoryReferenceInstallsAnUnloadedDocumentOnAnotherBoard",
+            "testName": "testHistoryReferenceInstallsAnUnloadedDocumentOnAnotherBoard()"
+          },
+          {
+            "failureText": "XCTAssertTrue failed - UX document-installed: correct=true, observed=3158.9095 ms, ceiling=1.0 seconds; window observation, not photon timing",
+            "targetName": "NotebookTests",
+            "testIdentifier": 6,
+            "testIdentifierString": "NotebookDocumentOpeningTests/testHistoryReferenceInstallsAnUnloadedDocumentOutsideTheCurrentCamera()",
+            "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/NotebookDocumentOpeningTests/testHistoryReferenceInstallsAnUnloadedDocumentOutsideTheCurrentCamera",
+            "testName": "testHistoryReferenceInstallsAnUnloadedDocumentOutsideTheCurrentCamera()"
+          },
+          {
+            "failureText": "XCTAssertEqual failed: (\"Optional(NotebookCore.WorkspaceSemanticMode.board)\") is not equal to (\"Optional(NotebookCore.WorkspaceSemanticMode.cover)\")",
+            "targetName": "NotebookTests",
+            "testIdentifier": 11,
+            "testIdentifierString": "NotebookGraphicSceneTests/testNewContactStillInterruptsTheCameraOwnedByItsReference()",
+            "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/NotebookGraphicSceneTests/testNewContactStillInterruptsTheCameraOwnedByItsReference",
+            "testName": "testNewContactStillInterruptsTheCameraOwnedByItsReference()"
+          },
+          {
+            "failureText": "XCTAssertTrue failed - UX offscreen-reference-exact-paper: correct=false, observed=1009.77225 ms, ceiling=1.0 seconds; window observation, not photon timing",
+            "targetName": "NotebookTests",
+            "testIdentifier": 12,
+            "testIdentifierString": "NotebookPageLifecycleUXTests/testShowReferenceApproachesAnOffscreenNotebookBeforeOpeningItsExactPaper()",
+            "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/NotebookPageLifecycleUXTests/testShowReferenceApproachesAnOffscreenNotebookBeforeOpeningItsExactPaper",
+            "testName": "testShowReferenceApproachesAnOffscreenNotebookBeforeOpeningItsExactPaper()"
+          }
+        ],
+        "title": "Test - Notebook",
+        "topInsights": [
+          {
+            "category": "Longest Test Runs",
+            "impact": "58% of duration",
+            "text": "1 longest test run with outlier durations exceeding 11.18s (three standard deviations)"
+          }
+        ],
+        "totalTestCount": 24
+      },
+      "sourceStability": {
+        "changedSources": []
+      },
+      "sourceWitnessSHA256": "f216995a3031ab0db51a29896c44d78216cca37af6c7d503cfc852f214609912"
+    },
+    {
+      "number": "66",
+      "summary": {
+        "devicesAndConfigurations": [
+          {
+            "device": {
+              "architecture": "arm64",
+              "deviceId": "29BEF8B8-E3C5-4943-8408-9A616ECC863D",
+              "deviceName": "Notebook Architecture QA",
+              "modelName": "iPad Pro 13-inch (M5)",
+              "osBuildNumber": "24A434",
+              "osVersion": "27.0",
+              "platform": "iOS Simulator"
+            },
+            "expectedFailures": 0,
+            "failedTests": 4,
+            "passedTests": 25,
+            "skippedTests": 0,
+            "testPlanConfiguration": {
+              "configurationId": "1",
+              "configurationName": "Test Scheme Action"
+            }
+          }
+        ],
+        "environmentDescription": "Notebook · Built with macOS 27.0",
+        "expectedFailures": 0,
+        "failedTests": 4,
+        "finishTime": 1790392527.411,
+        "passedTests": 25,
+        "result": "Failed",
+        "runtimeWarnings": [],
+        "skippedTests": 0,
+        "startTime": 1790392496.904,
+        "statistics": [],
+        "testFailures": [
+          {
+            "failureText": "XCTAssertTrue failed - A history reference must install the actual document, not only change the title: no failure reported; document=true, indexed=false, scenePending=false, permits=true, preparing=false, presence=Optional(NotebookCore.SessionPresence(format: 5, boardID: 7E7A0000-0000-4000-8000-000000000003, mode: NotebookCore.WorkspaceSemanticMode.cover, camera: NotebookCore.SpatialCamera(center: NotebookCore.WorldPoint(tileX: 0, tileY: 0, localX: 0.0, localY: 0.0), scale: 0.2566480149211742), viewport: NotebookCore.SpatialPoint(x: 1032.0, y: 1376.0), focusedItemID: Optional(5DE0D25A-7AE3-4FCF-9326-896612A81960), openProgress: 0.0, selectedItemID: Optional(4FB14A67-FFD6-4F92-883E-8E04B518DD4A), notebookPageID: nil, documentPageIndex: 0))",
+            "targetName": "NotebookTests",
+            "testIdentifier": 5,
+            "testIdentifierString": "NotebookDocumentOpeningTests/testHistoryReferenceInstallsAnUnloadedDocumentOnAnotherBoard()",
+            "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/NotebookDocumentOpeningTests/testHistoryReferenceInstallsAnUnloadedDocumentOnAnotherBoard",
+            "testName": "testHistoryReferenceInstallsAnUnloadedDocumentOnAnotherBoard()"
+          },
+          {
+            "failureText": "XCTAssertTrue failed - UX document-installed: correct=true, observed=2588.926666 ms, ceiling=1.0 seconds; window observation, not photon timing",
+            "targetName": "NotebookTests",
+            "testIdentifier": 6,
+            "testIdentifierString": "NotebookDocumentOpeningTests/testHistoryReferenceInstallsAnUnloadedDocumentOutsideTheCurrentCamera()",
+            "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/NotebookDocumentOpeningTests/testHistoryReferenceInstallsAnUnloadedDocumentOutsideTheCurrentCamera",
+            "testName": "testHistoryReferenceInstallsAnUnloadedDocumentOutsideTheCurrentCamera()"
+          },
+          {
+            "failureText": "XCTAssertEqual failed: (\"nil\") is not equal to (\"Optional(009A6138-1317-4F11-82A3-D770A3CA441B)\") - The requested scene genuinely knows the transferred placement, unlike the still-installed body",
+            "targetName": "NotebookTests",
+            "testIdentifier": 28,
+            "testIdentifierString": "SceneItemOwnerRetirementTests/testPeerTransferUsesTheInstalledOwnerRatherThanTheNewRequestedProjection()",
+            "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/SceneItemOwnerRetirementTests/testPeerTransferUsesTheInstalledOwnerRatherThanTheNewRequestedProjection",
+            "testName": "testPeerTransferUsesTheInstalledOwnerRatherThanTheNewRequestedProjection()"
+          },
+          {
+            "failureText": "XCTAssertTrue failed - UX offscreen-reference-exact-paper: correct=false, observed=1012.158833 ms, ceiling=1.0 seconds; window observation, not photon timing",
+            "targetName": "NotebookTests",
+            "testIdentifier": 12,
+            "testIdentifierString": "NotebookPageLifecycleUXTests/testShowReferenceApproachesAnOffscreenNotebookBeforeOpeningItsExactPaper()",
+            "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/NotebookPageLifecycleUXTests/testShowReferenceApproachesAnOffscreenNotebookBeforeOpeningItsExactPaper",
+            "testName": "testShowReferenceApproachesAnOffscreenNotebookBeforeOpeningItsExactPaper()"
+          }
+        ],
+        "title": "Test - Notebook",
+        "topInsights": [
+          {
+            "category": "Longest Test Runs",
+            "impact": "57% of duration",
+            "text": "1 longest test run with outlier durations exceeding 10.02s (three standard deviations)"
+          }
+        ],
+        "totalTestCount": 29
+      },
+      "sourceStability": {
+        "changedSources": []
+      },
+      "sourceWitnessSHA256": "a4b6f7b1a690ffe6d1938eadfbfbe68aff74f405243cebf105f602704bb30c4a"
+    },
+    {
+      "number": "68",
+      "summary": {
+        "devicesAndConfigurations": [
+          {
+            "device": {
+              "architecture": "arm64",
+              "deviceId": "29BEF8B8-E3C5-4943-8408-9A616ECC863D",
+              "deviceName": "Notebook Architecture QA",
+              "modelName": "iPad Pro 13-inch (M5)",
+              "osBuildNumber": "24A434",
+              "osVersion": "27.0",
+              "platform": "iOS Simulator"
+            },
+            "expectedFailures": 0,
+            "failedTests": 3,
+            "passedTests": 5,
+            "skippedTests": 0,
+            "testPlanConfiguration": {
+              "configurationId": "1",
+              "configurationName": "Test Scheme Action"
+            }
+          }
+        ],
+        "environmentDescription": "Notebook · Built with macOS 27.0",
+        "expectedFailures": 0,
+        "failedTests": 3,
+        "finishTime": 1790392754.268,
+        "passedTests": 5,
+        "result": "Failed",
+        "runtimeWarnings": [],
+        "skippedTests": 0,
+        "startTime": 1790392731.288,
+        "statistics": [],
+        "testFailures": [
+          {
+            "failureText": "XCTAssertTrue failed - A history reference must install the actual document, not only change the title: no failure reported; document=true, indexed=false, scenePending=false, permits=true, preparing=false, presence=Optional(NotebookCore.SessionPresence(format: 5, boardID: 7E7A0000-0000-4000-8000-000000000003, mode: NotebookCore.WorkspaceSemanticMode.cover, camera: NotebookCore.SpatialCamera(center: NotebookCore.WorldPoint(tileX: 0, tileY: 0, localX: 0.0, localY: 0.0), scale: 0.2566480149211742), viewport: NotebookCore.SpatialPoint(x: 1032.0, y: 1376.0), focusedItemID: Optional(403E3959-0FE4-43D9-8222-F512A5EC3103), openProgress: 0.0, selectedItemID: Optional(06A23746-078C-4792-AABD-192D09BF4E38), notebookPageID: nil, documentPageIndex: 0))",
+            "targetName": "NotebookTests",
+            "testIdentifier": 1,
+            "testIdentifierString": "NotebookDocumentOpeningTests/testHistoryReferenceInstallsAnUnloadedDocumentOnAnotherBoard()",
+            "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/NotebookDocumentOpeningTests/testHistoryReferenceInstallsAnUnloadedDocumentOnAnotherBoard",
+            "testName": "testHistoryReferenceInstallsAnUnloadedDocumentOnAnotherBoard()"
+          },
+          {
+            "failureText": "XCTAssertTrue failed - UX document-installed: correct=true, observed=2525.3235 ms, ceiling=1.0 seconds; window observation, not photon timing",
+            "targetName": "NotebookTests",
+            "testIdentifier": 2,
+            "testIdentifierString": "NotebookDocumentOpeningTests/testHistoryReferenceInstallsAnUnloadedDocumentOutsideTheCurrentCamera()",
+            "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/NotebookDocumentOpeningTests/testHistoryReferenceInstallsAnUnloadedDocumentOutsideTheCurrentCamera",
+            "testName": "testHistoryReferenceInstallsAnUnloadedDocumentOutsideTheCurrentCamera()"
+          },
+          {
+            "failureText": "XCTAssertTrue failed - UX offscreen-reference-exact-paper: correct=false, observed=1012.769458 ms, ceiling=1.0 seconds; window observation, not photon timing",
+            "targetName": "NotebookTests",
+            "testIdentifier": 3,
+            "testIdentifierString": "NotebookPageLifecycleUXTests/testShowReferenceApproachesAnOffscreenNotebookBeforeOpeningItsExactPaper()",
+            "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/NotebookPageLifecycleUXTests/testShowReferenceApproachesAnOffscreenNotebookBeforeOpeningItsExactPaper",
+            "testName": "testShowReferenceApproachesAnOffscreenNotebookBeforeOpeningItsExactPaper()"
+          }
+        ],
+        "title": "Test - Notebook",
+        "topInsights": [],
+        "totalTestCount": 8
+      },
+      "sourceStability": {
+        "changedSources": []
+      },
+      "sourceWitnessSHA256": "11cdb57d89b0b6402422dc5487025d82e936b71ec693e69735cd3ec2c258347c"
+    },
+    {
+      "number": "69",
+      "summary": {
+        "devicesAndConfigurations": [
+          {
+            "device": {
+              "architecture": "arm64",
+              "deviceId": "29BEF8B8-E3C5-4943-8408-9A616ECC863D",
+              "deviceName": "Notebook Architecture QA",
+              "modelName": "iPad Pro 13-inch (M5)",
+              "osBuildNumber": "24A434",
+              "osVersion": "27.0",
+              "platform": "iOS Simulator"
+            },
+            "expectedFailures": 0,
+            "failedTests": 3,
+            "passedTests": 0,
+            "skippedTests": 0,
+            "testPlanConfiguration": {
+              "configurationId": "1",
+              "configurationName": "Test Scheme Action"
+            }
+          }
+        ],
+        "environmentDescription": "Notebook · Built with macOS 27.0",
+        "expectedFailures": 0,
+        "failedTests": 3,
+        "finishTime": 1790392910.142,
+        "passedTests": 0,
+        "result": "Failed",
+        "runtimeWarnings": [],
+        "skippedTests": 0,
+        "startTime": 1790392887.528,
+        "statistics": [],
+        "testFailures": [
+          {
+            "failureText": "XCTAssertTrue failed - A history reference must install the actual document, not only change the title: no failure reported; document=true, indexed=false, scenePending=false, permits=true, preparing=false, presence=Optional(NotebookCore.SessionPresence(format: 5, boardID: 7E7A0000-0000-4000-8000-000000000003, mode: NotebookCore.WorkspaceSemanticMode.cover, camera: NotebookCore.SpatialCamera(center: NotebookCore.WorldPoint(tileX: 0, tileY: 0, localX: 0.0, localY: 0.0), scale: 0.2566480149211742), viewport: NotebookCore.SpatialPoint(x: 1032.0, y: 1376.0), focusedItemID: Optional(1AC6082D-1F8F-4E78-B7C3-1F7B8BB7D281), openProgress: 0.0, selectedItemID: Optional(A45A951E-CB3B-415A-8592-3C985A11F267), notebookPageID: nil, documentPageIndex: 0))",
+            "targetName": "NotebookTests",
+            "testIdentifier": 1,
+            "testIdentifierString": "NotebookDocumentOpeningTests/testHistoryReferenceInstallsAnUnloadedDocumentOnAnotherBoard()",
+            "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/NotebookDocumentOpeningTests/testHistoryReferenceInstallsAnUnloadedDocumentOnAnotherBoard",
+            "testName": "testHistoryReferenceInstallsAnUnloadedDocumentOnAnotherBoard()"
+          },
+          {
+            "failureText": "XCTAssertTrue failed - UX document-installed: correct=true, observed=2671.723375 ms, ceiling=1.0 seconds; window observation, not photon timing",
+            "targetName": "NotebookTests",
+            "testIdentifier": 2,
+            "testIdentifierString": "NotebookDocumentOpeningTests/testHistoryReferenceInstallsAnUnloadedDocumentOutsideTheCurrentCamera()",
+            "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/NotebookDocumentOpeningTests/testHistoryReferenceInstallsAnUnloadedDocumentOutsideTheCurrentCamera",
+            "testName": "testHistoryReferenceInstallsAnUnloadedDocumentOutsideTheCurrentCamera()"
+          },
+          {
+            "failureText": "XCTAssertTrue failed - UX offscreen-reference-exact-paper: correct=false, observed=1000.101875 ms, ceiling=1.0 seconds; window observation, not photon timing",
+            "targetName": "NotebookTests",
+            "testIdentifier": 3,
+            "testIdentifierString": "NotebookPageLifecycleUXTests/testShowReferenceApproachesAnOffscreenNotebookBeforeOpeningItsExactPaper()",
+            "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/NotebookPageLifecycleUXTests/testShowReferenceApproachesAnOffscreenNotebookBeforeOpeningItsExactPaper",
+            "testName": "testShowReferenceApproachesAnOffscreenNotebookBeforeOpeningItsExactPaper()"
+          }
+        ],
+        "title": "Test - Notebook",
+        "topInsights": [],
+        "totalTestCount": 3
+      },
+      "sourceStability": {
+        "changedSources": []
+      },
+      "sourceWitnessSHA256": "8bf3c7ad6204dd08a0b7816a6bffe22b588c88ae47ad4e4f624495cbba4ea99a"
+    },
+    {
+      "number": "70",
+      "summary": {
+        "devicesAndConfigurations": [
+          {
+            "device": {
+              "architecture": "arm64",
+              "deviceId": "29BEF8B8-E3C5-4943-8408-9A616ECC863D",
+              "deviceName": "Notebook Architecture QA",
+              "modelName": "iPad Pro 13-inch (M5)",
+              "osBuildNumber": "24A434",
+              "osVersion": "27.0",
+              "platform": "iOS Simulator"
+            },
+            "expectedFailures": 0,
+            "failedTests": 3,
+            "passedTests": 0,
+            "skippedTests": 0,
+            "testPlanConfiguration": {
+              "configurationId": "1",
+              "configurationName": "Test Scheme Action"
+            }
+          }
+        ],
+        "environmentDescription": "Notebook · Built with macOS 27.0",
+        "expectedFailures": 0,
+        "failedTests": 3,
+        "finishTime": 1790393103.691,
+        "passedTests": 0,
+        "result": "Failed",
+        "runtimeWarnings": [],
+        "skippedTests": 0,
+        "startTime": 1790393081.688,
+        "statistics": [],
+        "testFailures": [
+          {
+            "failureText": "XCTAssertTrue failed - A history reference must install the actual document, not only change the title: no failure reported; document=false, indexed=true, scenePending=false, permits=true, preparing=false, presence=Optional(NotebookCore.SessionPresence(format: 5, boardID: 87DAD43B-710E-4487-A848-38AF3EBF54FA, mode: NotebookCore.WorkspaceSemanticMode.cover, camera: NotebookCore.SpatialCamera(center: NotebookCore.WorldPoint(tileX: 0, tileY: 0, localX: 2000.0, localY: 0.0), scale: 0.8915008672579429), viewport: NotebookCore.SpatialPoint(x: 1032.0, y: 1376.0), focusedItemID: Optional(699498DB-540A-4060-812D-1A189A64E9F8), openProgress: 0.0, selectedItemID: Optional(699498DB-540A-4060-812D-1A189A64E9F8), notebookPageID: nil, documentPageIndex: 0))",
+            "targetName": "NotebookTests",
+            "testIdentifier": 1,
+            "testIdentifierString": "NotebookDocumentOpeningTests/testHistoryReferenceInstallsAnUnloadedDocumentOnAnotherBoard()",
+            "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/NotebookDocumentOpeningTests/testHistoryReferenceInstallsAnUnloadedDocumentOnAnotherBoard",
+            "testName": "testHistoryReferenceInstallsAnUnloadedDocumentOnAnotherBoard()"
+          },
+          {
+            "failureText": "XCTAssertTrue failed - UX document-installed: correct=true, observed=2549.346916 ms, ceiling=1.0 seconds; window observation, not photon timing",
+            "targetName": "NotebookTests",
+            "testIdentifier": 2,
+            "testIdentifierString": "NotebookDocumentOpeningTests/testHistoryReferenceInstallsAnUnloadedDocumentOutsideTheCurrentCamera()",
+            "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/NotebookDocumentOpeningTests/testHistoryReferenceInstallsAnUnloadedDocumentOutsideTheCurrentCamera",
+            "testName": "testHistoryReferenceInstallsAnUnloadedDocumentOutsideTheCurrentCamera()"
+          },
+          {
+            "failureText": "XCTAssertTrue failed - UX offscreen-reference-exact-paper: correct=false, observed=1003.292042 ms, ceiling=1.0 seconds; window observation, not photon timing",
+            "targetName": "NotebookTests",
+            "testIdentifier": 3,
+            "testIdentifierString": "NotebookPageLifecycleUXTests/testShowReferenceApproachesAnOffscreenNotebookBeforeOpeningItsExactPaper()",
+            "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/NotebookPageLifecycleUXTests/testShowReferenceApproachesAnOffscreenNotebookBeforeOpeningItsExactPaper",
+            "testName": "testShowReferenceApproachesAnOffscreenNotebookBeforeOpeningItsExactPaper()"
+          }
+        ],
+        "title": "Test - Notebook",
+        "topInsights": [],
+        "totalTestCount": 3
+      },
+      "sourceStability": {
+        "changedSources": []
+      },
+      "sourceWitnessSHA256": "1f2ea68c83ed8a2cab4917596f0d0d7d763a2d2b0b8f45d5c0b454fff383db57"
+    },
+    {
+      "number": "71b",
+      "summary": {
+        "devicesAndConfigurations": [
+          {
+            "device": {
+              "architecture": "arm64",
+              "deviceId": "29BEF8B8-E3C5-4943-8408-9A616ECC863D",
+              "deviceName": "Notebook Architecture QA",
+              "modelName": "iPad Pro 13-inch (M5)",
+              "osBuildNumber": "24A434",
+              "osVersion": "27.0",
+              "platform": "iOS Simulator"
+            },
+            "expectedFailures": 0,
+            "failedTests": 3,
+            "passedTests": 2,
+            "skippedTests": 0,
+            "testPlanConfiguration": {
+              "configurationId": "1",
+              "configurationName": "Test Scheme Action"
+            }
+          }
+        ],
+        "environmentDescription": "Notebook · Built with macOS 27.0",
+        "expectedFailures": 0,
+        "failedTests": 3,
+        "finishTime": 1790393529.555,
+        "passedTests": 2,
+        "result": "Failed",
+        "runtimeWarnings": [],
+        "skippedTests": 0,
+        "startTime": 1790393519.558,
+        "statistics": [],
+        "testFailures": [
+          {
+            "failureText": "XCTAssertTrue failed - UX document-other-board-installed: correct=true, observed=2494.392375 ms, ceiling=1.0 seconds; window observation, not photon timing",
+            "targetName": "NotebookTests",
+            "testIdentifier": 1,
+            "testIdentifierString": "NotebookDocumentOpeningTests/testHistoryReferenceInstallsAnUnloadedDocumentOnAnotherBoard()",
+            "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/NotebookDocumentOpeningTests/testHistoryReferenceInstallsAnUnloadedDocumentOnAnotherBoard",
+            "testName": "testHistoryReferenceInstallsAnUnloadedDocumentOnAnotherBoard()"
+          },
+          {
+            "failureText": "XCTAssertTrue failed - UX document-installed: correct=true, observed=2469.231791 ms, ceiling=1.0 seconds; window observation, not photon timing",
+            "targetName": "NotebookTests",
+            "testIdentifier": 2,
+            "testIdentifierString": "NotebookDocumentOpeningTests/testHistoryReferenceInstallsAnUnloadedDocumentOutsideTheCurrentCamera()",
+            "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/NotebookDocumentOpeningTests/testHistoryReferenceInstallsAnUnloadedDocumentOutsideTheCurrentCamera",
+            "testName": "testHistoryReferenceInstallsAnUnloadedDocumentOutsideTheCurrentCamera()"
+          },
+          {
+            "failureText": "XCTAssertTrue failed - UX offscreen-reference-exact-paper: correct=false, observed=1001.473834 ms, ceiling=1.0 seconds; window observation, not photon timing",
+            "targetName": "NotebookTests",
+            "testIdentifier": 4,
+            "testIdentifierString": "NotebookPageLifecycleUXTests/testShowReferenceApproachesAnOffscreenNotebookBeforeOpeningItsExactPaper()",
+            "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/NotebookPageLifecycleUXTests/testShowReferenceApproachesAnOffscreenNotebookBeforeOpeningItsExactPaper",
+            "testName": "testShowReferenceApproachesAnOffscreenNotebookBeforeOpeningItsExactPaper()"
+          }
+        ],
+        "title": "Test - Notebook",
+        "topInsights": [],
+        "totalTestCount": 5
+      },
+      "sourceStability": {
+        "changedSources": []
+      },
+      "sourceWitnessSHA256": "e89747b2bbf6645854ac9dcb74da675e34b2c9d6b1fe7a77a356a756e9579c6e"
+    },
+    {
+      "number": "72",
+      "summary": {
+        "devicesAndConfigurations": [
+          {
+            "device": {
+              "architecture": "arm64",
+              "deviceId": "29BEF8B8-E3C5-4943-8408-9A616ECC863D",
+              "deviceName": "Notebook Architecture QA",
+              "modelName": "iPad Pro 13-inch (M5)",
+              "osBuildNumber": "24A434",
+              "osVersion": "27.0",
+              "platform": "iOS Simulator"
+            },
+            "expectedFailures": 0,
+            "failedTests": 3,
+            "passedTests": 5,
+            "skippedTests": 0,
+            "testPlanConfiguration": {
+              "configurationId": "1",
+              "configurationName": "Test Scheme Action"
+            }
+          }
+        ],
+        "environmentDescription": "Notebook · Built with macOS 27.0",
+        "expectedFailures": 0,
+        "failedTests": 3,
+        "finishTime": 1790393865.234,
+        "passedTests": 5,
+        "result": "Failed",
+        "runtimeWarnings": [],
+        "skippedTests": 0,
+        "startTime": 1790393854.706,
+        "statistics": [],
+        "testFailures": [
+          {
+            "failureText": "XCTAssertTrue failed - UX document-other-board-installed: correct=true, observed=2246.624916 ms, ceiling=1.0 seconds; window observation, not photon timing",
+            "targetName": "NotebookTests",
+            "testIdentifier": 4,
+            "testIdentifierString": "NotebookDocumentOpeningTests/testHistoryReferenceInstallsAnUnloadedDocumentOnAnotherBoard()",
+            "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/NotebookDocumentOpeningTests/testHistoryReferenceInstallsAnUnloadedDocumentOnAnotherBoard",
+            "testName": "testHistoryReferenceInstallsAnUnloadedDocumentOnAnotherBoard()"
+          },
+          {
+            "failureText": "XCTAssertTrue failed - UX document-installed: correct=true, observed=2041.657666 ms, ceiling=1.0 seconds; window observation, not photon timing",
+            "targetName": "NotebookTests",
+            "testIdentifier": 5,
+            "testIdentifierString": "NotebookDocumentOpeningTests/testHistoryReferenceInstallsAnUnloadedDocumentOutsideTheCurrentCamera()",
+            "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/NotebookDocumentOpeningTests/testHistoryReferenceInstallsAnUnloadedDocumentOutsideTheCurrentCamera",
+            "testName": "testHistoryReferenceInstallsAnUnloadedDocumentOutsideTheCurrentCamera()"
+          },
+          {
+            "failureText": "XCTAssertTrue failed - UX offscreen-reference-exact-paper: correct=true, observed=1038.051959 ms, ceiling=1.0 seconds; window observation, not photon timing",
+            "targetName": "NotebookTests",
+            "testIdentifier": 7,
+            "testIdentifierString": "NotebookPageLifecycleUXTests/testShowReferenceApproachesAnOffscreenNotebookBeforeOpeningItsExactPaper()",
+            "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/NotebookPageLifecycleUXTests/testShowReferenceApproachesAnOffscreenNotebookBeforeOpeningItsExactPaper",
+            "testName": "testShowReferenceApproachesAnOffscreenNotebookBeforeOpeningItsExactPaper()"
+          }
+        ],
+        "title": "Test - Notebook",
+        "topInsights": [],
+        "totalTestCount": 8
+      },
+      "sourceStability": {
+        "changedSources": []
+      },
+      "sourceWitnessSHA256": "d1b1dbf1ca3a7a835923b349ac0554fbdf1f597446279d713ee51b10d164140f"
+    },
+    {
+      "number": "73",
+      "summary": {
+        "devicesAndConfigurations": [
+          {
+            "device": {
+              "architecture": "arm64",
+              "deviceId": "29BEF8B8-E3C5-4943-8408-9A616ECC863D",
+              "deviceName": "Notebook Architecture QA",
+              "modelName": "iPad Pro 13-inch (M5)",
+              "osBuildNumber": "24A434",
+              "osVersion": "27.0",
+              "platform": "iOS Simulator"
+            },
+            "expectedFailures": 0,
+            "failedTests": 4,
+            "passedTests": 15,
+            "skippedTests": 0,
+            "testPlanConfiguration": {
+              "configurationId": "1",
+              "configurationName": "Test Scheme Action"
+            }
+          }
+        ],
+        "environmentDescription": "Notebook · Built with macOS 27.0",
+        "expectedFailures": 0,
+        "failedTests": 4,
+        "finishTime": 1790394882.339,
+        "passedTests": 15,
+        "result": "Failed",
+        "runtimeWarnings": [],
+        "skippedTests": 0,
+        "startTime": 1790394870.567,
+        "statistics": [],
+        "testFailures": [
+          {
+            "failureText": "XCTAssertNotEqual failed: (\"Optional(7E7A0000-0000-4000-8000-000000000001)\") is equal to (\"Optional(7E7A0000-0000-4000-8000-000000000001)\")",
+            "targetName": "NotebookTests",
+            "testIdentifier": 8,
+            "testIdentifierString": "NotebookPageLifecycleUXTests/testCanonicalRetirementEndsTheMountedHumanCameraWithoutRestoringItsTarget()",
+            "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/NotebookPageLifecycleUXTests/testCanonicalRetirementEndsTheMountedHumanCameraWithoutRestoringItsTarget",
+            "testName": "testCanonicalRetirementEndsTheMountedHumanCameraWithoutRestoringItsTarget()"
+          },
+          {
+            "failureText": "XCTAssertTrue failed - UX document-other-board-installed: correct=true, observed=2220.13625 ms, ceiling=1.0 seconds; window observation, not photon timing",
+            "targetName": "NotebookTests",
+            "testIdentifier": 5,
+            "testIdentifierString": "NotebookDocumentOpeningTests/testHistoryReferenceInstallsAnUnloadedDocumentOnAnotherBoard()",
+            "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/NotebookDocumentOpeningTests/testHistoryReferenceInstallsAnUnloadedDocumentOnAnotherBoard",
+            "testName": "testHistoryReferenceInstallsAnUnloadedDocumentOnAnotherBoard()"
+          },
+          {
+            "failureText": "XCTAssertTrue failed - UX document-installed: correct=true, observed=2025.191959 ms, ceiling=1.0 seconds; window observation, not photon timing",
+            "targetName": "NotebookTests",
+            "testIdentifier": 6,
+            "testIdentifierString": "NotebookDocumentOpeningTests/testHistoryReferenceInstallsAnUnloadedDocumentOutsideTheCurrentCamera()",
+            "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/NotebookDocumentOpeningTests/testHistoryReferenceInstallsAnUnloadedDocumentOutsideTheCurrentCamera",
+            "testName": "testHistoryReferenceInstallsAnUnloadedDocumentOutsideTheCurrentCamera()"
+          },
+          {
+            "failureText": "XCTAssertTrue failed - UX offscreen-reference-exact-paper: correct=false, observed=1008.30925 ms, ceiling=1.0 seconds; window observation, not photon timing",
+            "targetName": "NotebookTests",
+            "testIdentifier": 9,
+            "testIdentifierString": "NotebookPageLifecycleUXTests/testShowReferenceApproachesAnOffscreenNotebookBeforeOpeningItsExactPaper()",
+            "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/NotebookPageLifecycleUXTests/testShowReferenceApproachesAnOffscreenNotebookBeforeOpeningItsExactPaper",
+            "testName": "testShowReferenceApproachesAnOffscreenNotebookBeforeOpeningItsExactPaper()"
+          }
+        ],
+        "title": "Test - Notebook",
+        "topInsights": [
+          {
+            "category": "Longest Test Runs",
+            "impact": "32% of duration",
+            "text": "1 longest test run with outlier durations exceeding 2.96s (three standard deviations)"
+          }
+        ],
+        "totalTestCount": 19
+      },
+      "sourceStability": {
+        "changedSources": []
+      },
+      "sourceWitnessSHA256": "8e27c56a29f65192fc3c9db5fa838b5fd290af8f7bdcd51d32269035fba47bc3"
+    },
+    {
+      "number": "74",
+      "summary": {
+        "devicesAndConfigurations": [
+          {
+            "device": {
+              "architecture": "arm64",
+              "deviceId": "29BEF8B8-E3C5-4943-8408-9A616ECC863D",
+              "deviceName": "Notebook Architecture QA",
+              "modelName": "iPad Pro 13-inch (M5)",
+              "osBuildNumber": "24A434",
+              "osVersion": "27.0",
+              "platform": "iOS Simulator"
+            },
+            "expectedFailures": 0,
+            "failedTests": 4,
+            "passedTests": 15,
+            "skippedTests": 0,
+            "testPlanConfiguration": {
+              "configurationId": "1",
+              "configurationName": "Test Scheme Action"
+            }
+          }
+        ],
+        "environmentDescription": "Notebook · Built with macOS 27.0",
+        "expectedFailures": 0,
+        "failedTests": 4,
+        "finishTime": 1790395339.158,
+        "passedTests": 15,
+        "result": "Failed",
+        "runtimeWarnings": [],
+        "skippedTests": 0,
+        "startTime": 1790395328.096,
+        "statistics": [],
+        "testFailures": [
+          {
+            "failureText": "XCTAssertEqual failed: (\"Optional(NotebookCore.SessionPresence(format: 5, boardID: 7E7A0000-0000-4000-8000-000000000003, mode: NotebookCore.WorkspaceSemanticMode.board, camera: NotebookCore.SpatialCamera(center: NotebookCore.WorldPoint(tileX: 0, tileY: 0, localX: 0.0, localY: 0.0), scale: 0.22), viewport: NotebookCore.SpatialPoint(x: 800.0, y: 600.0), focusedItemID: nil, openProgress: 0.0, selectedItemID: nil, notebookPageID: nil, documentPageIndex: 0))\") is not equal to (\"Optional(NotebookCore.SessionPresence(format: 5, boardID: 7E7A0000-0000-4000-8000-000000000003, mode: NotebookCore.WorkspaceSemanticMode.board, camera: NotebookCore.SpatialCamera(center: NotebookCore.WorldPoint(tileX: 0, tileY: 0, localX: 0.0, localY: 0.0), scale: 0.22), viewport: NotebookCore.SpatialPoint(x: 800.0, y: 600.0), focusedItemID: nil, openProgress: 0.0, selectedItemID: Optional(7E7A0000-0000-4000-8000-000000000001), notebookPageID: Optional(7E7A0000-0000-4000-8000-000000000002), documentPageIndex: 0))\") - No mounted owner exists to resolve this impossible demand later",
+            "targetName": "NotebookTests",
+            "testIdentifier": 13,
+            "testIdentifierString": "SceneItemOwnerRetirementTests/testActivePreparedTargetRetirementWithoutObserverNormalizesAndSettles()",
+            "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/SceneItemOwnerRetirementTests/testActivePreparedTargetRetirementWithoutObserverNormalizesAndSettles",
+            "testName": "testActivePreparedTargetRetirementWithoutObserverNormalizesAndSettles()"
+          },
+          {
+            "failureText": "XCTAssertTrue failed - UX document-other-board-installed: correct=true, observed=1866.1105830000001 ms, ceiling=1.0 seconds; window observation, not photon timing",
+            "targetName": "NotebookTests",
+            "testIdentifier": 5,
+            "testIdentifierString": "NotebookDocumentOpeningTests/testHistoryReferenceInstallsAnUnloadedDocumentOnAnotherBoard()",
+            "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/NotebookDocumentOpeningTests/testHistoryReferenceInstallsAnUnloadedDocumentOnAnotherBoard",
+            "testName": "testHistoryReferenceInstallsAnUnloadedDocumentOnAnotherBoard()"
+          },
+          {
+            "failureText": "XCTAssertTrue failed - UX document-installed: correct=true, observed=1655.583792 ms, ceiling=1.0 seconds; window observation, not photon timing",
+            "targetName": "NotebookTests",
+            "testIdentifier": 6,
+            "testIdentifierString": "NotebookDocumentOpeningTests/testHistoryReferenceInstallsAnUnloadedDocumentOutsideTheCurrentCamera()",
+            "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/NotebookDocumentOpeningTests/testHistoryReferenceInstallsAnUnloadedDocumentOutsideTheCurrentCamera",
+            "testName": "testHistoryReferenceInstallsAnUnloadedDocumentOutsideTheCurrentCamera()"
+          },
+          {
+            "failureText": "XCTUnwrap failed: expected non-nil value of type \"IPadPageTurnController\"",
+            "targetName": "NotebookTests",
+            "testIdentifier": 9,
+            "testIdentifierString": "NotebookPageLifecycleUXTests/testShowReferenceApproachesAnOffscreenNotebookBeforeOpeningItsExactPaper()",
+            "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/NotebookPageLifecycleUXTests/testShowReferenceApproachesAnOffscreenNotebookBeforeOpeningItsExactPaper",
+            "testName": "testShowReferenceApproachesAnOffscreenNotebookBeforeOpeningItsExactPaper()"
+          }
+        ],
+        "title": "Test - Notebook",
+        "topInsights": [
+          {
+            "category": "Common Failures",
+            "impact": "25% of failures",
+            "text": "2 runs of 1 test failed with XCTUnwrap failed: expected non-nil value of type \"IPadPageTurnController\""
+          },
+          {
+            "category": "Longest Test Runs",
+            "impact": "31% of duration",
+            "text": "1 longest test run with outlier durations exceeding 2.67s (three standard deviations)"
+          }
+        ],
+        "totalTestCount": 19
+      },
+      "sourceStability": {
+        "changedSources": []
+      },
+      "sourceWitnessSHA256": "722b752c07713dd3fa380103e915340fd18b953b36d0c15934af2cb94c773d58"
+    },
+    {
+      "number": "75",
+      "summary": {
+        "devicesAndConfigurations": [
+          {
+            "device": {
+              "architecture": "arm64",
+              "deviceId": "29BEF8B8-E3C5-4943-8408-9A616ECC863D",
+              "deviceName": "Notebook Architecture QA",
+              "modelName": "iPad Pro 13-inch (M5)",
+              "osBuildNumber": "24A434",
+              "osVersion": "27.0",
+              "platform": "iOS Simulator"
+            },
+            "expectedFailures": 0,
+            "failedTests": 3,
+            "passedTests": 23,
+            "skippedTests": 0,
+            "testPlanConfiguration": {
+              "configurationId": "1",
+              "configurationName": "Test Scheme Action"
+            }
+          }
+        ],
+        "environmentDescription": "Notebook · Built with macOS 27.0",
+        "expectedFailures": 0,
+        "failedTests": 3,
+        "finishTime": 1790395929.081,
+        "passedTests": 23,
+        "result": "Failed",
+        "runtimeWarnings": [],
+        "skippedTests": 0,
+        "startTime": 1790395906.518,
+        "statistics": [],
+        "testFailures": [
+          {
+            "failureText": "XCTAssertTrue failed - UX document-other-board-installed: correct=true, observed=1860.035791 ms, ceiling=1.0 seconds; window observation, not photon timing",
+            "targetName": "NotebookTests",
+            "testIdentifier": 5,
+            "testIdentifierString": "NotebookDocumentOpeningTests/testHistoryReferenceInstallsAnUnloadedDocumentOnAnotherBoard()",
+            "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/NotebookDocumentOpeningTests/testHistoryReferenceInstallsAnUnloadedDocumentOnAnotherBoard",
+            "testName": "testHistoryReferenceInstallsAnUnloadedDocumentOnAnotherBoard()"
+          },
+          {
+            "failureText": "XCTAssertTrue failed - UX document-installed: correct=true, observed=1645.9250419999998 ms, ceiling=1.0 seconds; window observation, not photon timing",
+            "targetName": "NotebookTests",
+            "testIdentifier": 6,
+            "testIdentifierString": "NotebookDocumentOpeningTests/testHistoryReferenceInstallsAnUnloadedDocumentOutsideTheCurrentCamera()",
+            "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/NotebookDocumentOpeningTests/testHistoryReferenceInstallsAnUnloadedDocumentOutsideTheCurrentCamera",
+            "testName": "testHistoryReferenceInstallsAnUnloadedDocumentOutsideTheCurrentCamera()"
+          },
+          {
+            "failureText": "XCTAssertTrue failed - UX offscreen-reference-exact-paper: correct=true, observed=1002.140416 ms, ceiling=1.0 seconds; window observation, not photon timing",
+            "targetName": "NotebookTests",
+            "testIdentifier": 9,
+            "testIdentifierString": "NotebookPageLifecycleUXTests/testShowReferenceApproachesAnOffscreenNotebookBeforeOpeningItsExactPaper()",
+            "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/NotebookPageLifecycleUXTests/testShowReferenceApproachesAnOffscreenNotebookBeforeOpeningItsExactPaper",
+            "testName": "testShowReferenceApproachesAnOffscreenNotebookBeforeOpeningItsExactPaper()"
+          }
+        ],
+        "title": "Test - Notebook",
+        "topInsights": [
+          {
+            "category": "Longest Test Runs",
+            "impact": "39% of duration",
+            "text": "1 longest test run with outlier durations exceeding 5.59s (three standard deviations)"
+          }
+        ],
+        "totalTestCount": 26
+      },
+      "sourceStability": {
+        "changedSources": []
+      },
+      "sourceWitnessSHA256": "cfcdd753c38625a1734dfddd6925c9a2f0d6349f1911b145813f4f9749d4e28e"
+    },
+    {
+      "number": "76",
+      "summary": {
+        "devicesAndConfigurations": [
+          {
+            "device": {
+              "architecture": "arm64e",
+              "deviceId": "00008103-001E059934D9001E",
+              "deviceName": "iPad (Елизавета)",
+              "modelName": "iPad Pro (11-inch) (3rd generation)",
+              "osBuildNumber": "24A435",
+              "osVersion": "27.0",
+              "platform": "iOS"
+            },
+            "expectedFailures": 0,
+            "failedTests": 2,
+            "passedTests": 89,
+            "skippedTests": 0,
+            "testPlanConfiguration": {
+              "configurationId": "1",
+              "configurationName": "Test Scheme Action"
+            }
+          }
+        ],
+        "environmentDescription": "Notebook · Built with macOS 27.0",
+        "expectedFailures": 0,
+        "failedTests": 2,
+        "finishTime": 1790396088.604,
+        "passedTests": 89,
+        "result": "Failed",
+        "runtimeWarnings": [],
+        "skippedTests": 0,
+        "startTime": 1790396008.49,
+        "statistics": [],
+        "testFailures": [
+          {
+            "failureText": "XCTAssertTrue failed - UX document-other-board-installed: correct=true, observed=2374.984375 ms, ceiling=1.0 seconds; window observation, not photon timing",
+            "targetName": "NotebookTests",
+            "testIdentifier": 9,
+            "testIdentifierString": "NotebookDocumentOpeningTests/testHistoryReferenceInstallsAnUnloadedDocumentOnAnotherBoard()",
+            "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/NotebookDocumentOpeningTests/testHistoryReferenceInstallsAnUnloadedDocumentOnAnotherBoard",
+            "testName": "testHistoryReferenceInstallsAnUnloadedDocumentOnAnotherBoard()"
+          },
+          {
+            "failureText": "XCTAssertTrue failed - UX document-installed: correct=true, observed=2086.164333 ms, ceiling=1.0 seconds; window observation, not photon timing",
+            "targetName": "NotebookTests",
+            "testIdentifier": 10,
+            "testIdentifierString": "NotebookDocumentOpeningTests/testHistoryReferenceInstallsAnUnloadedDocumentOutsideTheCurrentCamera()",
+            "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/NotebookDocumentOpeningTests/testHistoryReferenceInstallsAnUnloadedDocumentOutsideTheCurrentCamera",
+            "testName": "testHistoryReferenceInstallsAnUnloadedDocumentOutsideTheCurrentCamera()"
+          }
+        ],
+        "title": "Test - Notebook",
+        "topInsights": [
+          {
+            "category": "Longest Test Runs",
+            "impact": "23% of duration",
+            "text": "1 longest test run with outlier durations exceeding 3.33s (three standard deviations)"
+          }
+        ],
+        "totalTestCount": 91
+      },
+      "sourceStability": {
+        "changedSources": []
+      },
+      "sourceWitnessSHA256": "cad3849159d27eb2386a400264b8cba81a04498a372c609f1e846d000303389d"
+    }
+  ],
+  "causes": [
+    "Distant paper could not mount/produce an in-window frame before the camera waiting on its readiness could move. One existing settlement now approaches with the cover closed, then opens the exact ready paper.",
+    "An invalidated addressed read lost the preparation destination; full reload could replace accepted preparation with the still-closed camera demand. Epoch/pin guards remain; actual camera and source demand are separately checked.",
+    "SwiftUI task-id delivery could suppress another same-frame composition publication. The installed native presentation owns one coalesced scheduled request; old task-id path removed.",
+    "Canonical deletion/transfer proof must be installed before owner cancellation; active normalized presence cannot be rejected in an endless reload. Deleted selection is cleared after callback; a transferred live selection is retained.",
+    "Ink refinement followed general active presence rather than actual camera motion, producing a late density-only resize and revoked readiness after landing.",
+    "Plain generated Markdown needlessly loaded every print package; its existing AST walk now requests actual dependencies, while opaque authored TeX retains its complete environment."
+  ],
+  "finalMeasuredResults": {
+    "simulator75": {
+      "passed": 23,
+      "failed": 3,
+      "skipped": 0,
+      "runtimeWarnings": 0,
+      "offscreenNotebookMS": 1002.140416,
+      "coldDocumentMS": [
+        1860.035791,
+        1645.925042
+      ]
+    },
+    "physical76": {
+      "passed": 89,
+      "failed": 2,
+      "skipped": 0,
+      "runtimeWarnings": 0,
+      "offscreenNotebookMS": 616.199,
+      "coldDocumentMS": [
+        2374.984375,
+        2086.164333
+      ],
+      "device": "00008103-001E059934D9001E",
+      "bundle": "com.amirtlinov.notebook.architecture-tests"
+    },
+    "native75And76": {
+      "sourceChangedDuringRun": false,
+      "lateSettledInkResize": false,
+      "fullMeshBuildsForObservedCanvas": 1
+    }
+  },
+  "limitations": [
+    "Cold document opening still fails the original 1 s budget on both destinations; correct content is not a latency PASS.",
+    "Simulator75 offscreen notebook remains 2.14 ms over the strict original 1 s ceiling; no tolerance was added.",
+    "Native tests use real mounted owners and pixels, but do not replace the ordinary full UI journeys.",
+    "Ten ordinary journeys, thirty-minute joint workload and system performance acceptance remain open.",
+    "Physical76 does not establish real Pencil latency or FPS."
+  ]
+}
