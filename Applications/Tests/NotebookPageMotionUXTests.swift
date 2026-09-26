@@ -216,6 +216,62 @@ import XCTest
     }
   }
 
+  func testFirstSmallBendCannotExposeTheOtherLeafBeforeItsCurlPixels() async throws {
+    let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+    let previous = scene.windows.first(where: \.isKeyWindow), window = UIWindow(windowScene: scene)
+    window.frame = .init(x: 0, y: 0, width: 834, height: 1194)
+    defer { window.isHidden = true; window.rootViewController = nil; previous?.makeKey() }
+    for reverse in [false, true] {
+      for repetition in 0..<3 {
+        let native = IPadSheetCurlController(), source = UIViewController(), target = UIViewController()
+        source.view.backgroundColor = .blue; target.view.backgroundColor = .red
+        window.rootViewController = native; window.makeKeyAndVisible()
+        native.show(source, direction: .forward, animated: false); native.prepare(target)
+        native.willTurn = { $0 === target }
+        try await Task.sleep(for: .milliseconds(30))
+        let curl = try XCTUnwrap(native.view.subviews.compactMap { $0 as? SheetCurlMetalView }.first)
+        let resolve = curl.onFrameReady
+        var resolvedProgress: Double?
+        curl.onFrameReady = { image, progress, sequence, readiness in
+          if readiness.isReady { resolvedProgress = progress }
+          resolve?(image, progress, sequence, readiness)
+        }
+        XCTAssertTrue(native.beginInteractiveTurn(direction: reverse ? .reverse : .forward, target: target))
+        let travel = 0.02
+        native.updateInteractiveTurn(translation: native.view.bounds.width * CGFloat(reverse ? travel : -travel))
+        // A held 2% bend leaves the centre on the blue source in both directions.
+        // Red here reproduces the historical premature-target flash. This is a
+        // pixel safety oracle, not a timing test or a substitute for OS receipts.
+        for frame in 0..<12 {
+          try await Task.sleep(for: .milliseconds(8))
+          let format = UIGraphicsImageRendererFormat(); format.scale = 0.25
+          var captured = false
+          let image = UIGraphicsImageRenderer(size: window.bounds.size, format: format).image { _ in
+            captured = window.drawHierarchy(in: window.bounds, afterScreenUpdates: false)
+          }
+          XCTAssertTrue(captured)
+          let cg = try XCTUnwrap(image.cgImage)
+          let point = try XCTUnwrap(cg.cropping(to: .init(x: cg.width / 2, y: cg.height / 2, width: 1, height: 1)))
+          var rgba = [UInt8](repeating: 0, count: 4)
+          rgba.withUnsafeMutableBytes { bytes in
+            CGContext(data: bytes.baseAddress, width: 1, height: 1, bitsPerComponent: 8, bytesPerRow: 4,
+              space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+              .draw(point, in: .init(x: 0, y: 0, width: 1, height: 1))
+          }
+          let picture = XCTAttachment(image: image)
+          picture.name = "First small bend reverse=\(reverse) repetition=\(repetition) frame=\(frame) rgba=\(rgba)"
+          picture.lifetime = .keepAlways; add(picture)
+          XCTAssertGreaterThan(rgba[2], 220, "The target or an empty layer appeared before the source-backed bend")
+          XCTAssertLessThan(rgba[0], 40, "Premature red target: reverse=\(reverse), frame=\(frame), rgba=\(rgba)")
+        }
+        XCTAssertEqual(try XCTUnwrap(resolvedProgress), reverse ? 1-travel : travel)
+        XCTAssertTrue(native.page === source, "A held contact cannot accept the destination")
+        native.cancelMotion()
+        XCTAssertTrue(native.view.subviews.last === source.view)
+      }
+    }
+  }
+
   func testFirstPresentedCurlPrimesTheSourceBeforeExposingTheOtherLeaf() async throws {
     let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
     let previous = scene.windows.first(where: \.isKeyWindow), window = UIWindow(windowScene: scene)

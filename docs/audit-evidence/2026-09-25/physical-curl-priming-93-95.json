@@ -1,0 +1,40 @@
+{
+  "evidenceDirectory": "/Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/.build/notebook-architecture-repair/evidence-2026-09-25/physical-curl-priming-regression-95-20260926T0642Z",
+  "manifestSHA256": "f1d4356a8c4140dbc7d343b5cd871cf6f03b3887bebb321e2623a0bd2312294b",
+  "fileCount": 128,
+  "bytes": 1082663,
+  "result": {
+    "result": "Passed",
+    "passedTests": 2,
+    "failedTests": 0,
+    "skippedTests": 0,
+    "runtimeWarnings": [],
+    "testFailures": []
+  },
+  "negativeControl": {
+    "evidenceDirectory": "/Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/.build/notebook-architecture-repair/evidence-2026-09-25/physical-curl-no-prime-93-94-20260926T0635Z",
+    "manifestSHA256": "72100ccfd7593ae6f3affd2645cbb2ec1717c45ad071e8f41748888f2a7f58ed",
+    "fileCount": 1054,
+    "bytes": 6649539,
+    "result": "rejected",
+    "runs": {
+      "93": {
+        "result": "Failed",
+        "passedTests": 15,
+        "failedTests": 1,
+        "skippedTests": 0,
+        "runtimeWarnings": []
+      },
+      "94": {
+        "result": "Failed",
+        "passedTests": 14,
+        "failedTests": 2,
+        "skippedTests": 0,
+        "runtimeWarnings": []
+      }
+    },
+    "sourceRestoration": "root-owned; archive makes no live-source assertion"
+  },
+  "productionRestored": true,
+  "fullAcceptancePassed": false
+}
