@@ -1,0 +1,107 @@
+{
+  "archive": "/Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/.build/notebook-architecture-repair/evidence-2026-09-25/typesetter-mac-hotpath-20260926T070814Z",
+  "manifestSHA256": "ba2495a850cf6435104770763005c1db93d75f0b9cd76f22ba90a537145849b9",
+  "fileCount": 301,
+  "bytes": 42047446,
+  "result": {
+    "scope": "one app-only Mac C ABI Time Profiler launch, current 7d9 kernel, ten compiles in the same Runtime",
+    "targetPID": 247,
+    "recorderPID": 228,
+    "captureStartUTC": "2026-09-26T06:54:49.253Z",
+    "captureEndUTC": "2026-09-26T06:54:57.848Z",
+    "captureDurationSeconds": 8.594363,
+    "compilesPassed": 10,
+    "compilesFailed": 0,
+    "allTenPDFRawSyncTeXLogErrorsIdentical": true,
+    "texPassesPerCompile": 2,
+    "sampleRows": 7753,
+    "emptyBacktraceRows": 11,
+    "targetThreads": [
+      "Main Thread"
+    ],
+    "targetState": "Running",
+    "sampleWeightMS": 7753,
+    "recorderExitCode": 0,
+    "boundedStopRequested": false,
+    "cleanupFailure": false,
+    "productionTouched": false,
+    "hostWideCapture": false,
+    "rootBuildResumedAfterTargetExit": true,
+    "limitations": [
+      "Statistical sample weights are not independent CPU duty, frame rate or device latency measurements.",
+      "Instrumented compile durations are not uninstrumented performance claims.",
+      "9 TLV samples have unmatched call-site instruction shapes and remain unresolved.",
+      "Source-based format feasibility did not run a modified format."
+    ],
+    "outputSHA256": {
+      "sample-0": {
+        "document.pdf": "bb38f8bee5cdc1dfcbcbf86381527dd51b7d70fe421d1a0aa93b5cd6ff9ec673",
+        "document.synctex.gz": "f10c343432e6c75e6be5de9b1439a33fea13466c56cddfb92d2cf61cbf8dc1fd",
+        "error.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "engine.log": "0d55913dc547521bea66e3477db10395f2e0b5ee4668fbca52aca7ad6d3c4cd0"
+      },
+      "sample-1": {
+        "document.pdf": "bb38f8bee5cdc1dfcbcbf86381527dd51b7d70fe421d1a0aa93b5cd6ff9ec673",
+        "document.synctex.gz": "f10c343432e6c75e6be5de9b1439a33fea13466c56cddfb92d2cf61cbf8dc1fd",
+        "error.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "engine.log": "0d55913dc547521bea66e3477db10395f2e0b5ee4668fbca52aca7ad6d3c4cd0"
+      },
+      "sample-2": {
+        "document.pdf": "bb38f8bee5cdc1dfcbcbf86381527dd51b7d70fe421d1a0aa93b5cd6ff9ec673",
+        "document.synctex.gz": "f10c343432e6c75e6be5de9b1439a33fea13466c56cddfb92d2cf61cbf8dc1fd",
+        "error.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "engine.log": "0d55913dc547521bea66e3477db10395f2e0b5ee4668fbca52aca7ad6d3c4cd0"
+      },
+      "sample-3": {
+        "document.pdf": "bb38f8bee5cdc1dfcbcbf86381527dd51b7d70fe421d1a0aa93b5cd6ff9ec673",
+        "document.synctex.gz": "f10c343432e6c75e6be5de9b1439a33fea13466c56cddfb92d2cf61cbf8dc1fd",
+        "error.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "engine.log": "0d55913dc547521bea66e3477db10395f2e0b5ee4668fbca52aca7ad6d3c4cd0"
+      },
+      "sample-4": {
+        "document.pdf": "bb38f8bee5cdc1dfcbcbf86381527dd51b7d70fe421d1a0aa93b5cd6ff9ec673",
+        "document.synctex.gz": "f10c343432e6c75e6be5de9b1439a33fea13466c56cddfb92d2cf61cbf8dc1fd",
+        "error.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "engine.log": "0d55913dc547521bea66e3477db10395f2e0b5ee4668fbca52aca7ad6d3c4cd0"
+      },
+      "sample-5": {
+        "document.pdf": "bb38f8bee5cdc1dfcbcbf86381527dd51b7d70fe421d1a0aa93b5cd6ff9ec673",
+        "document.synctex.gz": "f10c343432e6c75e6be5de9b1439a33fea13466c56cddfb92d2cf61cbf8dc1fd",
+        "error.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "engine.log": "0d55913dc547521bea66e3477db10395f2e0b5ee4668fbca52aca7ad6d3c4cd0"
+      },
+      "sample-6": {
+        "document.pdf": "bb38f8bee5cdc1dfcbcbf86381527dd51b7d70fe421d1a0aa93b5cd6ff9ec673",
+        "document.synctex.gz": "f10c343432e6c75e6be5de9b1439a33fea13466c56cddfb92d2cf61cbf8dc1fd",
+        "error.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "engine.log": "0d55913dc547521bea66e3477db10395f2e0b5ee4668fbca52aca7ad6d3c4cd0"
+      },
+      "sample-7": {
+        "document.pdf": "bb38f8bee5cdc1dfcbcbf86381527dd51b7d70fe421d1a0aa93b5cd6ff9ec673",
+        "document.synctex.gz": "f10c343432e6c75e6be5de9b1439a33fea13466c56cddfb92d2cf61cbf8dc1fd",
+        "error.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "engine.log": "0d55913dc547521bea66e3477db10395f2e0b5ee4668fbca52aca7ad6d3c4cd0"
+      },
+      "sample-8": {
+        "document.pdf": "bb38f8bee5cdc1dfcbcbf86381527dd51b7d70fe421d1a0aa93b5cd6ff9ec673",
+        "document.synctex.gz": "f10c343432e6c75e6be5de9b1439a33fea13466c56cddfb92d2cf61cbf8dc1fd",
+        "error.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "engine.log": "0d55913dc547521bea66e3477db10395f2e0b5ee4668fbca52aca7ad6d3c4cd0"
+      },
+      "sample-9": {
+        "document.pdf": "bb38f8bee5cdc1dfcbcbf86381527dd51b7d70fe421d1a0aa93b5cd6ff9ec673",
+        "document.synctex.gz": "f10c343432e6c75e6be5de9b1439a33fea13466c56cddfb92d2cf61cbf8dc1fd",
+        "error.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "engine.log": "0d55913dc547521bea66e3477db10395f2e0b5ee4668fbca52aca7ad6d3c4cd0"
+      }
+    }
+  },
+  "formatFeasibility": {
+    "decision": "NO-GO for directly preloading the current fontspec-based preamble in the one existing generic latex.fmt without behavior changes",
+    "method": "Read-only source inspection; no format generation experiment or timing claim",
+    "existingFormatBytes": 24451432,
+    "formatBudgetBytes": 33554432,
+    "headroomBytes": 9103000
+  },
+  "sourceUnchanged": "No source/stage writes by this diagnostic; captured pins unchanged during run (recorder-result.json)."
+}

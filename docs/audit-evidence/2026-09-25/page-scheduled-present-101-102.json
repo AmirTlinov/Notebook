@@ -1,0 +1,75 @@
+{
+  "evidenceDirectory": "/Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/.build/notebook-architecture-repair/evidence-2026-09-25/native-page-scheduled-present-101-102-20260926T0712Z",
+  "manifestSHA256": "86d881fc4810d9c4512d3899bb10a2ff1f8a942d5b5c20be316a3b83589770ca",
+  "fileCount": 548,
+  "bytes": 16792960,
+  "summary": {
+    "101": {
+      "passed": 7,
+      "failedCases": 2,
+      "failedAssertions": 4,
+      "pairedStatsMS": {
+        "UIKit": {
+          "min": 55.505375,
+          "p50": 57.250292,
+          "p95": 60.708334,
+          "max": 60.708334
+        },
+        "native": {
+          "min": 55.505375,
+          "p50": 57.250292,
+          "p95": 60.708334,
+          "max": 60.708334
+        },
+        "projected": {
+          "min": 92.11854199999999,
+          "p50": 94.517375,
+          "p95": 97.853417,
+          "max": 97.853417
+        },
+        "projectedMinusNativeMS": {
+          "min": 35.566832999999995,
+          "p50": 37.14508299999999,
+          "p95": 38.772417000000004,
+          "max": 38.772417000000004
+        }
+      },
+      "samePatternInAll6": true
+    },
+    "102": {
+      "passed": 7,
+      "failedCases": 2,
+      "failedAssertions": 2,
+      "pairedStatsMS": {
+        "UIKit": {
+          "min": 54.843625,
+          "p50": 56.099833000000004,
+          "p95": 57.903917,
+          "max": 57.903917
+        },
+        "native": {
+          "min": 54.843625,
+          "p50": 56.099833000000004,
+          "p95": 57.903917,
+          "max": 57.903917
+        },
+        "projected": {
+          "min": 91.614166,
+          "p50": 92.687875,
+          "p95": 95.44862499999999,
+          "max": 95.44862499999999
+        },
+        "projectedMinusNativeMS": {
+          "min": 36.137916,
+          "p50": 37.272665999999994,
+          "p95": 39.34879199999999,
+          "max": 39.34879199999999
+        }
+      },
+      "samePatternInAll6": true
+    }
+  },
+  "candidateRejected": true,
+  "thresholdsUnchanged": true,
+  "fullAcceptancePassed": false
+}
