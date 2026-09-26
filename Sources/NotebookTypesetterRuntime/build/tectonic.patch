@@ -596,3 +596,211 @@ index cab0dd2..8092a61 100755
      )
  
      # -----------------------------------------------------------------
+
+--- a/crates/pdf_io/pdf_io/dpx-dpxutil.c
++++ b/crates/pdf_io/pdf_io/dpx-dpxutil.c
+@@ -353,7 +353,9 @@
+ 
+   assert(ht);
+ 
+-  for (i = 0; i < HASH_TABLE_SIZE; i++) {
++  ht->capacity = HASH_TABLE_SIZE;
++  ht->table = NEW(ht->capacity, struct ht_entry *);
++  for (i = 0; i < ht->capacity; i++) {
+     ht->table[i] = NULL;
+   }
+   ht->count = 0;
+@@ -367,7 +369,7 @@
+ 
+   assert(ht);
+ 
+-  for (i = 0; i < HASH_TABLE_SIZE; i++) {
++  for (i = 0; i < ht->capacity; i++) {
+     struct ht_entry *hent, *next;
+ 
+     hent = ht->table[i];
+@@ -386,6 +388,9 @@
+     }
+     ht->table[i] = NULL;
+   }
++  free(ht->table);
++  ht->table = NULL;
++  ht->capacity = 0;
+   ht->count = 0;
+   ht->hval_free_fn = NULL;
+ }
+@@ -407,7 +412,57 @@
+     hkey = (hkey << 5) + hkey + ((const char *)key)[i];
+   }
+ 
+-  return (hkey % HASH_TABLE_SIZE);
++  return hkey;
++}
++
++/* Only owners without live iterators opt into growth. Equal-key entries retain
++ * their order, including the duplicate entries accepted by ht_append_table. */
++void
++ht_reserve_table (struct ht_table *ht, int min_entries)
++{
++  struct ht_entry **table;
++  unsigned int capacity, maximum;
++  int i;
++
++  assert(ht && ht->capacity > 0);
++  if (min_entries <= ht->capacity)
++    return;
++
++  maximum = UINT32_MAX / sizeof(struct ht_entry *);
++  if ((unsigned int) min_entries > maximum)
++    _tt_abort("Hash table capacity overflow.");
++  capacity = ht->capacity;
++  while (capacity < (unsigned int) min_entries) {
++    capacity = capacity > (maximum - 1) / 2 ? maximum : capacity * 2 + 1;
++  }
++  table = NEW(capacity, struct ht_entry *);
++  for (i = 0; i < (int) capacity; i++)
++    table[i] = NULL;
++
++  for (i = 0; i < ht->capacity; i++) {
++    struct ht_entry *hent = ht->table[i];
++    while (hent) {
++      struct ht_entry *next = hent->next;
++      unsigned int hkey = get_hash(hent->key, hent->keylen) % capacity;
++      hent->next = table[hkey];
++      table[hkey] = hent;
++      hent = next;
++    }
++  }
++  /* Reverse the prepended chains once: linear rehash, stable duplicate order. */
++  for (i = 0; i < (int) capacity; i++) {
++    struct ht_entry *hent = table[i], *prev = NULL;
++    while (hent) {
++      struct ht_entry *next = hent->next;
++      hent->next = prev;
++      prev = hent;
++      hent = next;
++    }
++    table[i] = prev;
++  }
++  free(ht->table);
++  ht->table = table;
++  ht->capacity = capacity;
+ }
+ 
+ void *
+@@ -418,7 +473,7 @@
+ 
+   assert(ht && key);
+ 
+-  hkey = get_hash(key, keylen);
++  hkey = get_hash(key, keylen) % ht->capacity;
+   hent = ht->table[hkey];
+   while (hent) {
+     if (hent->keylen == keylen &&
+@@ -441,7 +496,7 @@
+ 
+   assert(ht && key);
+ 
+-  hkey = get_hash(key, keylen);
++  hkey = get_hash(key, keylen) % ht->capacity;
+   hent = ht->table[hkey];
+   prev = NULL;
+   while (hent) {
+@@ -481,7 +536,7 @@
+ 
+   assert(ht && key);
+ 
+-  hkey = get_hash(key, keylen);
++  hkey = get_hash(key, keylen) % ht->capacity;
+   hent = ht->table[hkey];
+   prev = NULL;
+   while (hent) {
+@@ -519,7 +574,7 @@
+   struct ht_entry *hent, *last;
+   unsigned int hkey;
+ 
+-  hkey = get_hash(key, keylen);
++  hkey = get_hash(key, keylen) % ht->capacity;
+   hent = ht->table[hkey];
+   if (!hent) {
+     hent = NEW(1, struct ht_entry);
+@@ -548,7 +603,7 @@
+ 
+   assert(ht && iter);
+ 
+-  for (i = 0; i < HASH_TABLE_SIZE; i++) {
++  for (i = 0; i < ht->capacity; i++) {
+     if (ht->table[i]) {
+       iter->index = i;
+       iter->curr  = ht->table[i];
+@@ -564,7 +619,7 @@
+ ht_clear_iter (struct ht_iter *iter)
+ {
+   if (iter) {
+-    iter->index = HASH_TABLE_SIZE;
++    iter->index = 0;
+     iter->curr  = NULL;
+     iter->hash  = NULL;
+   }
+@@ -610,7 +665,7 @@
+   hent = (struct ht_entry *) iter->curr;
+   hent = hent->next;
+   while (!hent &&
+-         ++iter->index < HASH_TABLE_SIZE) {
++         ++iter->index < ht->capacity) {
+     hent = ht->table[iter->index];
+   }
+   iter->curr = hent;
+--- a/crates/pdf_io/pdf_io/dpx-dpxutil.h
++++ b/crates/pdf_io/pdf_io/dpx-dpxutil.h
+@@ -96,12 +96,15 @@
+ struct ht_table {
+   int count;
+   hval_free_func hval_free_fn;
+-  struct ht_entry *table[HASH_TABLE_SIZE];
++  int capacity;
++  struct ht_entry **table;
+ };
+ 
+ void  ht_init_table   (struct ht_table *ht,
+                               hval_free_func hval_free_fn);
+ void  ht_clear_table  (struct ht_table *ht);
++/* Reserve invalidates iterators, but not entry/value addresses. */
++void  ht_reserve_table(struct ht_table *ht, int min_entries);
+ int   ht_table_size   (struct ht_table *ht);
+ void *ht_lookup_table (struct ht_table *ht,
+                               const void *key, int keylen);
+--- a/crates/pdf_io/pdf_io/dpx-fontmap.c
++++ b/crates/pdf_io/pdf_io/dpx-fontmap.c
+@@ -739,6 +739,7 @@
+                 mrec->map_name = mstrdup(kp); /* link */
+                 mrec->charmap.sfd_name   = mstrdup(sfd_name);
+                 mrec->charmap.subfont_id = mstrdup(subfont_ids[n]);
++                ht_reserve_table(fontmap, ht_table_size(fontmap) + 1);
+                 ht_insert_table(fontmap, tfm_name, strlen(tfm_name), mrec);
+             }
+             free(tfm_name);
+@@ -754,6 +755,7 @@
+         if (mrec->map_name && streq_ptr(kp, mrec->map_name)) {
+             mrec->map_name = mfree(mrec->map_name);
+         }
++        ht_reserve_table(fontmap, ht_table_size(fontmap) + 1);
+         ht_insert_table(fontmap, kp, strlen(kp), mrec);
+     }
+     if (dpx_conf.verbose_level > 3)
+@@ -843,6 +845,7 @@
+             mrec->map_name = mstrdup(kp); /* link to this entry */
+             mrec->charmap.sfd_name   = mstrdup(sfd_name);
+             mrec->charmap.subfont_id = mstrdup(subfont_ids[n]);
++            ht_reserve_table(fontmap, ht_table_size(fontmap) + 1);
+             ht_insert_table(fontmap, tfm_name, strlen(tfm_name), mrec);
+             free(tfm_name);
+         }
+@@ -855,6 +858,7 @@
+     if (mrec->map_name && streq_ptr(kp, mrec->map_name)) {
+         mrec->map_name = mfree(mrec->map_name);
+     }
++    ht_reserve_table(fontmap, ht_table_size(fontmap) + 1);
+     ht_insert_table(fontmap, kp, strlen(kp), mrec);
+ 
+     if (dpx_conf.verbose_level > 3)

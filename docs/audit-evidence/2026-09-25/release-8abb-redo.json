@@ -1,0 +1,126 @@
+{
+  "sourceRevision": "8abb746fb6a9c3e8ef9b94878b4a6e9bab4407bb",
+  "sourceSHA256": "12ef6656e865866a184c7076192467402d98c2641111abf108795824ab8b950a",
+  "classification": "Clean Release acceptance attempt FAILED; not a full acceptance or a performance PASS",
+  "build": {
+    "developmentBuild": false,
+    "workingTreeUnchanged": true,
+    "sourceManifest": "build/source.json",
+    "archivedExactSourceFiles": 1510,
+    "privateMacBundleIdentifier": "com.amirtlinov.notebook.mac.acceptance.27382c388ca7",
+    "simulatorApplicationIdentifier": "M94V58FCVP.com.amirtlinov.notebook.acceptance"
+  },
+  "identity": {
+    "runID": "8f16d786-dd22-4a11-824f-6bbe9ea12187",
+    "workspaceID": "FC6BCF6B-8027-494D-9C04-792D793C498D",
+    "dataBytesPreserved": true,
+    "sameRuntimeAndIdentities": true,
+    "inventoryFilesByteEqual": true,
+    "installedIPadApplicationPreserved": true,
+    "endpointReceipt": "driver/endpoint.json",
+    "macOwnerReceipt": "driver/new-owner.json"
+  },
+  "case": {
+    "name": "NotebookAcceptanceUITests/testTenPageInkUndoLassoAndNavigationJourneys",
+    "status": "failed",
+    "passedTests": 0,
+    "failedTests": 1,
+    "skippedTests": 0,
+    "runtimeWarnings": [],
+    "runnerExitCode": 65,
+    "cleanupErrors": [],
+    "durationSeconds": 82.606,
+    "failure": "XCTAssertLessThan failed: (\"96\") is not less than (\"96\") - Redo must restore the cut, not resurrect the line",
+    "scenario": "case/scenario.json",
+    "fullResult": "case/result.xcresult",
+    "video": "case/simulator.mp4"
+  },
+  "journeys": {
+    "required": 10,
+    "completedZeroBasedIterations": [
+      0,
+      1
+    ],
+    "completedSettlementAttachments": [
+      "ACCB04DE-8E1E-48A4-8591-180C96437F63.png",
+      "95203B67-FE58-48F2-A9E3-E0D4AB6DB8DE.png"
+    ],
+    "failedZeroBasedIteration": 2,
+    "failureGeometry": "case/attachments/02AAB192-858E-4624-8891-226FCDACF6A4.json",
+    "darkPixelCounts": {
+      "baseline": 96,
+      "undo": 96,
+      "redo": 96
+    },
+    "probeWindowPoints": [
+      516,
+      612.32
+    ],
+    "cropWindowPixels": [
+      1024,
+      1216,
+      17,
+      17
+    ],
+    "redoCaptureUptime": [
+      955244.5276976251,
+      955244.64670775
+    ],
+    "twoCompletedJourneysAreNotTwoPassedXCTestCases": true,
+    "mixed1800SecondsStarted": false
+  },
+  "trace": {
+    "scope": "launched_private_app",
+    "template": "Time Profiler",
+    "lifecycleFinished": false,
+    "rawArchived": true,
+    "offlineCPUFrameGPUMemoryAssessment": "unassessed in this receipt; failed scenario did not establish the successful trace END lifecycle"
+  },
+  "lateDiagnostic": {
+    "classification": "Separate read-only private-process diagnostic approximately 12 minutes after failed capture; NOT the original submission/frame witness or acceptance proof",
+    "privatePID": 31429,
+    "textureFormat": "BGRA8Unorm",
+    "textureSize": [
+      1923,
+      2752
+    ],
+    "bytesPerRow": 7936,
+    "readbackFile": "late-diagnostic/notebook-current-redo-retained.bgra",
+    "readbackSHA256": "e3e9ed257b5b77b3741d106f705c985a592cd4cf503a957e7012ea59dafef73d",
+    "roiTexturePixels": [
+      929,
+      1216,
+      64,
+      17
+    ],
+    "roiByteCount": 4352,
+    "roiSHA256": "6fc74890c52aef57c0b98ace4a7dec52972c8498fbe56e84e68d40b7c8087e4e",
+    "roiAlphaMin": 0,
+    "roiAlphaMax": 0,
+    "roiNonzeroAlphaCount": 0,
+    "laterWindowDarkPixels": 0,
+    "laterWindowCropPixels": [
+      1024,
+      1216,
+      17,
+      17
+    ],
+    "laterWindowSize": [
+      2064,
+      2752
+    ],
+    "captureDelayFromFailureNotMeasuredOnSharedClock": true,
+    "limitation": "The original failed screenshot remains96. This later ROI/window state does not attribute the original frame, prove final drawable contents at capture, or clear the FAIL."
+  },
+  "limitations": [
+    "Original ordinary gestures and pixel thresholds unchanged.",
+    "Simulator routing/pixels are not physical iPad FPS or Apple Pencil latency.",
+    "No30-minute continuation was started after the failure.",
+    "No derived build directory, application bundle, private workspace DB, keys or live container content is copied.",
+    "This receipt applies only to sealed8abb746f source; later uncommitted candidates are not included."
+  ],
+  "localArchive": "/Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/.build/notebook-architecture-repair/evidence-2026-09-25/release-8abb-redo",
+  "originalCase": "/tmp/notebook-architecture-clean-20260926T142747Z/build/runs/8f16d786-dd22-4a11-824f-6bbe9ea12187/ipad-testTenPageInkUndoLassoAndNavigationJourneys-95836e82-17c8-4144-99f9-8f502a7141d8",
+  "filesManifestSHA256": "d8e38c73f9166af2e09c13b8f0e79ec1253c466426b148d33e9c1d2a0dc6328f",
+  "sealedFileCount": 2068
+}

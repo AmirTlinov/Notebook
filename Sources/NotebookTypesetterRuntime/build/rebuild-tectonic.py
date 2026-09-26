@@ -13,6 +13,26 @@ def run(args, **kwargs):
     return subprocess.run(list(map(str, args)), check=True, **kwargs)
 
 
+def test_fontmap(upstream, work):
+    source = SOURCE / "build/fontmap-test.c"
+    source_sha = digest(source)
+    pdf_io = upstream / "crates/pdf_io/pdf_io"
+    binary = work / "fontmap-test"
+    log = work / "fontmap-test.log"
+    with log.open("w") as output:
+        run(["xcrun", "clang", "-std=c11", "-O1", "-g", "-Wall", "-Wextra", "-Werror",
+             "-Wno-sign-compare", "-Wno-deprecated-declarations", "-fsanitize=address,undefined",
+             "-fno-omit-frame-pointer", "-Dmemcmp=fontmap_test_memcmp",
+             "-I" + str(pdf_io), "-I" + str(upstream / "crates/bridge_core/support"),
+             "-I" + str(upstream / "crates/bridge_flate/include"),
+             source, pdf_io / "dpx-dpxutil.c", "-Wl,-dead_strip", "-o", binary],
+            stdout=output, stderr=subprocess.STDOUT)
+        run([binary], stdout=output, stderr=subprocess.STDOUT)
+    if digest(source) != source_sha:
+        raise RuntimeError("Font-map regression changed during execution")
+    return {"sourceSHA256": source_sha, "logSHA256": digest(log), "passed": True}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--work", type=Path, default=ROOT / ".build/typesetter-build/tectonic-rebuild")
@@ -66,6 +86,7 @@ def main():
     patch.write_bytes((SOURCE / engine["patch"]).read_bytes())
     run(["git", "-C", upstream, "apply", "--check", patch])
     run(["git", "-C", upstream, "apply", patch])
+    fontmap_regression = test_fontmap(upstream, work)
     dependency_sources = upstream / "wasi-deps/src"
     dependency_sources.mkdir(parents=True)
     for artifact in pin["dependencies"]:
@@ -85,7 +106,7 @@ def main():
         raise RuntimeError("Tracked kernel inputs changed during build; preserved output is not verified")
     receipt = {"format": 1, "upstreamRevision": revision, "patchSHA256": digest(patch),
                "lockSHA256": digest(work / "Runtime.lock.json"), "cargoLockSHA256": digest(upstream / "Cargo.lock"),
-               "rustToolchain": toolchain, "buildInputs": pin,
+               "rustToolchain": toolchain, "buildInputs": pin, "fontmapRegression": fontmap_regression,
                "kernel": {"bytes": kernel.stat().st_size, "sha256": digest(kernel), "packedSHA256": digest(packed)},
                "compiler": subprocess.check_output([sdk / "bin/clang", "--version"], text=True),
                "rustc": subprocess.check_output(["rustc", "+" + toolchain, "-vV"], text=True)}

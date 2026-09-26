@@ -1,0 +1,87 @@
+{
+  "scope": "Устранён квадратичный hash owner fontmap. Mac C ABI и preparation; не физическая UX-приёмка.",
+  "rawEvidence": ".build/notebook-architecture-repair/evidence-2026-09-25/typesetter-fontmap-20260926T1513Z",
+  "rawManifestSHA256": "11e2689893be19f783076c57f61359a4fcc3bbdf1b5c6c193a471e98ae5aa77f",
+  "kernel": {
+    "bytes": 5187471,
+    "sha256": "2ab984ab3c08c3413a2c7476f3b7974d2458a4de51572a4a599e858106b1dbcb",
+    "packedSHA256": "33dbc00481f7aaa6f87c45dd11a15372640700c5be9ba8c5cc92703101c028f0"
+  },
+  "guestSourceDeltaSHA256": "fc35e8c612c28419fdbeade54315e62c6201e83876a9ede30e92f811dba5864e",
+  "combinedGuestPatchSHA256": "8220fd0e98c3c4bc95c8f87aac828125f176fbde92192f3b91d0d152bb7b5f93",
+  "rebuildCommand": "python3 Sources/NotebookTypesetterRuntime/build/rebuild-tectonic.py --work .build/typesetter-build/fontmap-rebuild",
+  "ownerRegression": {
+    "route": "existing pinned rebuild owner, before guest build",
+    "actualOwners": "dpx-dpxutil.c + dpx-fontmap.c; test-only memcmp alias",
+    "entries": 100000,
+    "insertionComparisons": 115986,
+    "asanUbsan": "PASS",
+    "passed": true,
+    "sourceSHA256": "148da2b7cc3bf6e65f0d210a021095a46ffcdc623b93bab31a86ea69a537f56b",
+    "logSHA256": "5eddc55389f1306a9d15fc0d4fee68aea2c6401331a2e566eeb4c8d9fd3e6c80"
+  },
+  "counterControl": {
+    "baseline100kChainVisits": 19789634,
+    "candidate100kChainVisits": 115985,
+    "candidate100kRehashLinkVisits": 257024,
+    "pinnedMapEntries": 37677,
+    "baselinePinnedMapChainVisits": 2820828,
+    "candidatePinnedMapChainVisits": 53836,
+    "candidatePinnedMapRehashLinkVisits": 128002,
+    "timingClaim": false
+  },
+  "exactCABI": {
+    "priorOutputCasesPassed": 8,
+    "fontmapOperationCasesPassed": 2,
+    "pairedCasesPassed": 36,
+    "pdfRawAndDecodedSyncTeXAndLogExact": true,
+    "texPasses": 2,
+    "pdfPasses": 1,
+    "deadlineCancelCancelledTokenAndSameRuntimeRecovery": "PASS",
+    "unchangedMemoryCeilingBytes": 536870912
+  },
+  "pairedMacControl": {
+    "startedUTC": "2026-09-26T15:00:30.291550+00:00",
+    "endedUTC": "2026-09-26T15:01:02.266354+00:00",
+    "freshCurrentMedianMS": 911.077,
+    "freshRebuiltControlMedianMS": 890.396,
+    "freshCandidateMedianMS": 820.912,
+    "currentPairedReductionMedianPercent": 8.778273289906817,
+    "currentPairedReductionRangePercent": [
+      2.151908466147001,
+      14.578912214547202
+    ],
+    "rebuiltPairedReductionMedianPercent": 7.8013211042067265,
+    "rebuiltPairedReductionRangePercent": [
+      -0.6223951991251031,
+      18.60173180764403
+    ],
+    "stableWarmGainClaimed": false
+  },
+  "provenance": {
+    "baselineRootCommit": "8abb746fb6a9c3e8ef9b94878b4a6e9bab4407bb",
+    "currentKernelSHA256": "7d9fb91de919ed814e9ea435a9ceacc2a65c9e6f8be467e91e2c29804d5aac01",
+    "rebuiltBaselineSHA256": "8fd9ee56c3b443829f85896334fd4f1cea3b8f9bd69f132bcafca3bd7ffb7a51",
+    "onlyGuestChanges": "three hash/fontmap C/header files",
+    "sameToolchain": "SDK25 + Rust1.94.1 + --locked Cargo.lock",
+    "embeddedAbsolutePaths": 34,
+    "pathStringsEqualAfterOnlyPrefixNormalization": true,
+    "crossDirectoryBinaryIdentityClaimed": false
+  },
+  "integration": {
+    "runtimeInputSHA256": "f138e4c72f4b0db698b0283d4cd24a3280dba4c85e33c1187b16210191c0b89e",
+    "preparedAndCheckedPlatforms": [
+      "macosx",
+      "iphoneos",
+      "iphonesimulator"
+    ],
+    "runtimeSourceBeforeAfterUnchangedDuringPreparation": true,
+    "physical1000ms": "Открыто; отдельная проверка ROOT ещё не включена в этот receipt."
+  },
+  "limitations": [
+    "Cold = fresh process/Runtime, не сброс OS file cache.",
+    "Шум в rebuilt/warm сравнениях сохранён; стабильный warm gain не заявлен.",
+    "Умеренный Mac gain не подтверждает physical1000ms, GPU/FPS или системную приёмку.",
+    "Candidate собран существующей pinned guest recipe; интегрированный C regression выполнен отдельно. Полный bootstrap после добавления этого test-вызова не повторялся."
+  ]
+}
