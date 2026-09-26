@@ -140,7 +140,7 @@ enum NotebookAttentionProjection {
       guard let frame=editingFrame(reference,model:model,presence:presence) else { return nil }
       frames.append(frame)
     }
-    let poses=Dictionary(uniqueKeysWithValues:(model.selectionSession.manipulation?.presentedSelectedEdits ?? []).map { ($0.id,$0) })
+    let poses=selectedInkPoses(model:model)
     for raw in model.selectionSession.ink {
       let local=poses[raw.memberID]?.frame ?? raw.material.frame
       guard let value=frame(target:raw.address.target,elementID:nil,region:local,
@@ -155,6 +155,28 @@ enum NotebookAttentionProjection {
       frames.append(.init(x:frame.x,y:frame.y,width:frame.width,height:frame.height))
     }
     return frames
+  }
+
+  /// Resolve once per projection: raw controls and hit testing share the same
+  /// installed poses, including a retiring owner after the live contact ends.
+  /// Typed identity excludes a fresh choice of the same journal action.
+  static func selectedInkPoses(model:NotebookAppModel)->[String:NotebookGraphicSelection.Edit] {
+    let selected=Dictionary(uniqueKeysWithValues:model.selectionSession.ink.map{($0.memberID,$0)})
+    guard !selected.isEmpty else {return [:]}
+    var poses=Dictionary(uniqueKeysWithValues:(model.selectionSession.manipulation?.presentedSelectedEdits ?? [])
+      .filter{selected[$0.id] != nil}.map{($0.id,$0)})
+    var visited=Set<UUID>()
+    for working in model.workingGraphics {
+      guard let owner=working.inkPresentation,owner.retiring,owner.holdsPresentation,
+        visited.insert(owner.id).inserted else {continue}
+      let matching=Set(owner.source.ink.compactMap { raw -> String? in
+        guard let current=selected[raw.memberID],current.key == raw.key,current.revision == raw.revision,
+          current.address.surface == owner.source.address.surface else {return nil}
+        return raw.memberID
+      })
+      for edit in owner.presentedEdits ?? [] where matching.contains(edit.id) && poses[edit.id] == nil {poses[edit.id]=edit}
+    }
+    return poses
   }
 
   static func editingFrame(_ reference: EditableElementReference, model: NotebookAppModel, presence: SessionPresence,
@@ -435,11 +457,11 @@ enum NotebookAttentionProjection {
       presence.boardID == model.presence?.boardID,
       let hit=pointContact(at:point,model:model,presence:presence,cohort:cohort) else { return nil }
     let scale=max(presence.camera.scale,0.001)
-    let poses=model.selectionSession.manipulation?.presentedSelectedEdits ?? []
+    let poses=selectedInkPoses(model:model)
     for raw in model.selectionSession.ink.reversed() {
       guard raw.address.target == hit.target,model.selectionAddressIsCurrent(raw.address),
         model.selectionInkRevision(raw.address.surface) == raw.revision else { continue }
-      let pose=poses.first { $0.id == raw.memberID },local=pose?.frame ?? raw.material.frame
+      let pose=poses[raw.memberID],local=pose?.frame ?? raw.material.frame
       guard let box=frame(target:raw.address.target,elementID:nil,region:local,
         worldOrigin:raw.address.worldOrigin,pageIndex:nil,model:model,presence:presence,minimumSide:0),
         box.insetBy(dx:-elementHitPadding,dy:-elementHitPadding).contains(point) else { continue }

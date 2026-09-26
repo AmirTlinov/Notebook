@@ -3708,10 +3708,12 @@ final class NotebookAppModel {
 
   func cancelElementManipulation(_ id: UUID? = nil) {
     guard let contact = selectionSession.manipulation, id == nil || contact.id == id else { return }
+    // Transfer the installed pose to its retiring owner before observers can
+    // see a selection without the contact that previously held that pose.
+    contact.inkPresentation?.cancel()
     selectionSession.manipulation = nil
     let ids=Set(contact.region?.materialization?.working.map(\.id) ?? [])
       .union(contact.selectionSource?.ink.map(\.memberID) ?? [])
-    contact.inkPresentation?.cancel()
     removeWorkingGraphics { !$0.accepted && ids.contains($0.id) && $0.inkPresentation == nil }
     inputGate.unregisterFingerCancellation(source: contact.id)
     inputGate.endContact(source: contact.id)

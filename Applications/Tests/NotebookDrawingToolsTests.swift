@@ -1,4 +1,5 @@
 import NotebookCore
+import Observation
 import XCTest
 import UIKit
 import SwiftUI
@@ -204,6 +205,101 @@ import SwiftUI
     }
   }
 
+  func testCancelledWholeMoveHoldsAuthoredPeersAndRawControlsUntilRestorationInstalls() async throws {
+    try await withWholeSelection { model,page,_,address in
+      try await self.selectWholeContour(model,address:address)
+      let canvas=try XCTUnwrap(model.pageInkPublication.currentCanvas(on:page.id))
+      let paper=try XCTUnwrap(canvas.superview as? PaperCanvasContainerView),window=try XCTUnwrap(paper.window)
+      @MainActor func point(_ x:Double,_ y:Double)->CGPoint {paper.convert(.init(x:x,y:y),to:window)}
+      let selection=model.selectionSession,raw=try XCTUnwrap(selection.ink.first)
+      let journal=try model.store.loadPage(page.id).drawingData
+      let beforeActions=Set(try model.store.actionReadModels().map(\.id))
+      let contact=try XCTUnwrap(model.beginSelectionManipulation(kind:.move))
+      let owner=try XCTUnwrap(model.selectionSession.manipulation?.inkPresentation)
+      model.updateElementManipulation(contact,translation:.init(x:0,y:40))
+      let moved=[(point(180,200),NotebookUXObservation.Color.paper),(point(180,260),.paper),
+        (point(390,225),.paper),(point(180,240),.black),(point(180,300),.black),(point(390,270),.black)]
+      // Setup needs a genuinely installed pose, not a prewarmed shader or a
+      // synthetic ready receipt. Cold first-drag latency has its separate gate.
+      let setupDeadline=ContinuousClock.now + .seconds(2)
+      while ContinuousClock.now<setupDeadline {
+        if owner.installed,canvas.isStableFramePresented,
+          try NotebookUXObservation.Pixels(window:window).matches(moved) {break}
+        try await Task.sleep(for:.milliseconds(5))
+      }
+      XCTAssertTrue(owner.installed);XCTAssertFalse(owner.holdsPresentation,"The installed pose already equals desired")
+      XCTAssertTrue(try NotebookUXObservation.Pixels(window:window).matches(moved))
+      let shownEdits=try XCTUnwrap(owner.presentedEdits)
+      let rawPose=try XCTUnwrap(shownEdits.first(where:{$0.id == raw.memberID}))
+      XCTAssertEqual(NotebookAttentionProjection.selectedInkPoses(model:model)[raw.memberID],rawPose)
+
+      // The existing retained allocation is the controlled pending boundary.
+      // Refuse restoration rendering without changing its callbacks or source.
+      canvas.setPageInputEnabled(false)
+      let drainDeadline=ContinuousClock.now + .seconds(2)
+      while !canvas.isFrameLoopPaused,ContinuousClock.now<drainDeadline {try await Task.sleep(for:.milliseconds(5))}
+      XCTAssertFalse(canvas.hasPageRetainedTexture)
+      let resources=SceneRenderResources.shared
+      let pressure=try XCTUnwrap(resources.reserveDerivedBytes(
+        resources.byteLimit-resources.residentBytes-resources.reservedBytes,priority:.input))
+      defer {pressure.release()}
+      canvas.setPageInputEnabled(true)
+      @MainActor final class CancellationObservation {var retiringBeforeContactCleared=false}
+      let observation=CancellationObservation()
+      withObservationTracking {_ = model.selectionSession.manipulation} onChange: {
+        MainActor.assumeIsolated {observation.retiringBeforeContactCleared=owner.retiring && owner.holdsPresentation}
+      }
+      model.cancelElementManipulation(contact)
+      XCTAssertTrue(observation.retiringBeforeContactCleared)
+      XCTAssertNil(model.selectionSession.manipulation)
+      XCTAssertTrue(owner.retiring);XCTAssertTrue(owner.holdsPresentation)
+      XCTAssertEqual(model.graphicGraph(page:try XCTUnwrap(model.pages[page.id])).source("whole-peer")?.frame.y,250)
+      XCTAssertEqual(NotebookAttentionProjection.selectedInkPoses(model:model)[raw.memberID],rawPose,
+        "Clearing the live contact cannot return raw selection controls before its pixels")
+      let refusedDeadline=ContinuousClock.now + .seconds(2)
+      while !(canvas.renderFailure == .resourceLimit && canvas.isFrameLoopPaused),ContinuousClock.now<refusedDeadline {
+        try await Task.sleep(for:.milliseconds(5))
+      }
+      XCTAssertEqual(canvas.renderFailure,.resourceLimit)
+      XCTAssertTrue(owner.holdsPresentation)
+      XCTAssertEqual(model.workingGraphics.filter{$0.inkPresentation === owner}.count,2)
+      XCTAssertEqual(model.graphicGraph(page:try XCTUnwrap(model.pages[page.id])).source("whole-peer")?.frame.y,250)
+      XCTAssertEqual(NotebookAttentionProjection.selectedInkPoses(model:model)[raw.memberID],rawPose)
+      let heldPixels=try NotebookUXObservation.Pixels(window:window)
+      XCTAssertTrue(try heldPixels.matches(moved),"Pending raw restoration must retain the complete moved picture, including its authored peer")
+      let heldImage=XCTAttachment(image:heldPixels.image);heldImage.name="cancel-pending-raw-and-authored-held"
+      heldImage.lifetime = .keepAlways;self.add(heldImage)
+      let repicked=NotebookSelectedInk(contact:.init(actionID:raw.actionID,painterOrder:raw.painterOrder,material:raw.material),
+        address:raw.address,revision:raw.revision)
+      XCTAssertTrue(model.selectElements(selection.elements,ink:selection.ink.map{$0.key == raw.key ? repicked:$0}))
+      XCTAssertNil(NotebookAttentionProjection.selectedInkPoses(model:model)[repicked.memberID],"A new choice of the same raw action cannot borrow an old cancellation pose")
+      XCTAssertNil(NotebookAttentionProjection.selectedInkPoses(model:model)[raw.memberID])
+      XCTAssertTrue(model.selectElements(selection.elements,ink:selection.ink))
+      XCTAssertEqual(NotebookAttentionProjection.selectedInkPoses(model:model)[raw.memberID],rawPose)
+
+      pressure.release()
+      let resumed=ContinuousClock.now
+      canvas.setPageInputEnabled(false);canvas.setPageInputEnabled(true)
+      try await self.assertUX("cancelled-whole-move-atomic-restore",since:resumed,window:window) {
+        guard !owner.holdsPresentation,model.workingGraphics.allSatisfy({$0.inkPresentation !== owner}),
+          canvas.isStableFramePresented else {return false}
+        return try NotebookUXObservation.Pixels(window:window).matches([
+          (point(180,200),.black),(point(180,260),.black),(point(390,225),.black),
+          (point(180,240),.paper),(point(180,300),.paper),(point(390,270),.paper)])
+      }
+      XCTAssertNil(NotebookAttentionProjection.selectedInkPoses(model:model)[raw.memberID])
+      XCTAssertEqual(model.graphicGraph(page:try XCTUnwrap(model.pages[page.id])).source("whole-peer")?.frame.y,210)
+      let revision=model.workingGraphicRevision(on:address.surface)
+      owner.cancel()
+      XCTAssertEqual(model.workingGraphicRevision(on:address.surface),revision,"The completed restoration releases its owner only once")
+      let next=try XCTUnwrap(model.beginSelectionManipulation(kind:.move),"The exact restore receipt ends the held-owner admission guard")
+      model.cancelElementManipulation(next)
+      XCTAssertTrue(model.workingGraphics.isEmpty)
+      XCTAssertEqual(try model.store.loadPage(page.id).drawingData,journal)
+      XCTAssertEqual(Set(try model.store.actionReadModels().map(\.id)),beforeActions,"Cancellation never writes a conversion")
+    }
+  }
+
   func testSecondWholeMoveKeepsControlsWithPixelsAndCancelPreservesNewAcceptedContact() async throws {
     try await withWholeSelection { model,page,strokes,address in
       try await self.selectWholeContour(model,address:address)
@@ -256,8 +352,14 @@ import SwiftUI
         try await Task.sleep(for:.milliseconds(5))
       }
       XCTAssertTrue(try NotebookUXObservation.Pixels(window:window).matches([(point(240,360),.black)]))
+      XCTAssertFalse(owner.holdsPresentation,"The second desired pose is already installed")
+      let presented=try XCTUnwrap(owner.presentedEdits?.first(where:{$0.id == original.elementID}))
       let cancelled=ContinuousClock.now
       model.cancelElementManipulation(second)
+      // No actor yield: the restore has not submitted a frame yet. Canonical
+      // controls must retain the second pose just like first-move raw controls.
+      XCTAssertTrue(owner.retiring);XCTAssertTrue(owner.holdsPresentation)
+      XCTAssertEqual(model.graphicGraph(page:try XCTUnwrap(model.pages[page.id])).source(original.elementID)?.frame,presented.frame)
       try await self.assertUX("second-whole-move-cancel-keeps-new-raw",since:cancelled,
         budget:NotebookUXObservation.selection,window:window) {
         guard model.workingGraphics.allSatisfy({$0.inkPresentation !== owner}),

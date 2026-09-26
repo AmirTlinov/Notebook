@@ -46,7 +46,9 @@ import QuartzCore
   /// A failed private stage may yield source preparation to the accepted
   /// canonical owner, but controls still describe the last installed picture.
   var needsCanonicalSource:Bool {!disposed && preparationFailed && accepted}
-  var holdsPresentation:Bool {!disposed && (shown != desired || needsCanonicalSource)}
+  // Cancellation ends the contact, not its installed picture. Authored peers
+  // and controls leave this pose only with the raw restoration's frame receipt.
+  var holdsPresentation:Bool {!disposed && (retiring || shown != desired || needsCanonicalSource)}
   func update(_ values:[NotebookWorkingGraphic],edits:[NotebookGraphicSelection.Edit],frame:CGRect) {
     guard !disposed,!retiring else {return}
     desired=values;desiredEdits=edits;desiredFrame=frame

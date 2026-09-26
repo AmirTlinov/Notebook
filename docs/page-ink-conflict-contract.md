@@ -199,6 +199,9 @@ on selection or in an intermediate frame at the old pose.
 `InkCanvasView` installs one prepared ordered plan, including its controls, rather
 than mounting one material view per member. A later move uses the same exchange;
 cancellation restores only its selected bodies and preserves newer accepted ink.
+Ending the contact transfers its shown pose to the retiring presentation before
+selection observers run. Authored peers and raw controls retain that pose until
+the same restoration frame installs; a new typed selection cannot borrow it.
 Resource refusal keeps the last complete picture until canonical preparation is
 installed. Enqueued writes retain their own publication authority. Pipeline and
 clip preparation run off the input actor; clip buffers are admitted before fill.
