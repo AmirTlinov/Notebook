@@ -239,7 +239,10 @@ def build(args):
         command = ["xcrun", "xcodebuild", "-quiet", "-project", snapshot / "Applications/Notebook.xcodeproj",
                    "-scheme", scheme, "-configuration", "Release", "-destination", destination,
                    "-derivedDataPath", evidence / "derived" / platform, "-parallel-testing-enabled", "NO",
-                   "NOTEBOOK_BUNDLE_SUFFIX=.acceptance", "NOTEBOOK_ACCEPTANCE_ENABLED=YES", "ENABLE_TESTABILITY=YES",
+                   "NOTEBOOK_BUNDLE_SUFFIX=.acceptance", "NOTEBOOK_ACCEPTANCE_ENABLED=YES",
+                   # UI tests do not import app internals. Match a deployed
+                   # Release product; retain the external dSYM for diagnostics.
+                   "ENABLE_TESTABILITY=NO", "DEPLOYMENT_POSTPROCESSING=YES", "STRIP_INSTALLED_PRODUCT=YES",
                    "ARCHS=arm64", "ONLY_ACTIVE_ARCH=YES"]
         if platform == "ipad":
             command += ["CODE_SIGN_IDENTITY=-", "CODE_SIGN_STYLE=Manual",

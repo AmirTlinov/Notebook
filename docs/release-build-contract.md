@@ -170,3 +170,10 @@ described in [verification](verification.md).
 
 Historical release-harness runs and former transition gates are retained in
 [the original report](https://github.com/AmirTlinov/Notebook/blob/1723ec2be6f6b8dda29e3a575fd6376fff03e093/docs/release-build-contract.md).
+
+The isolated acceptance schemes use UI tests, not `@testable` app imports.
+Their Release applications disable testability and apply Xcode deployment
+postprocessing/linked-product stripping while retaining the external matching
+dSYM. Native unit hosts may enable testability; their timing observations are
+not silently substituted for the deployed acceptance application. A strip phase
+or a dSYM by itself does not establish successful profiling or UI acceptance.

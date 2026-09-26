@@ -282,6 +282,16 @@ class SelectionTests(unittest.TestCase):
         self.assertIn("com.amirtlinov.notebook.mac$(NOTEBOOK_MAC_BUNDLE_SUFFIX).uitests", project)
         self.assertEqual(acceptance.MAC_BUNDLE, acceptance.mac_bundle_for(ROOT))
 
+    def test_ui_acceptance_build_uses_deployed_release_symbols_not_testability(self):
+        # Native @testable unit hosts remain separate. The acceptance schemes
+        # drive only public UI and must not change the app optimization/export cut.
+        import inspect
+        source = inspect.getsource(acceptance.build)
+        self.assertIn('"ENABLE_TESTABILITY=NO"', source)
+        self.assertIn('"DEPLOYMENT_POSTPROCESSING=YES"', source)
+        self.assertIn('"STRIP_INSTALLED_PRODUCT=YES"', source)
+        self.assertNotIn('"ENABLE_TESTABILITY=YES"', source)
+
     def test_acceptance_mac_has_its_own_stable_apple_identity(self):
         display = ("Identifier=" + acceptance.MAC_BUNDLE + "\nTeamIdentifier=" + release.TEAM
                    + "\nAuthority=Apple Development: Test Developer\nCDHash=" + "a" * 40 + "\n")
