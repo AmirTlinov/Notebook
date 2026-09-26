@@ -1,0 +1,33 @@
+{
+  "format": 1,
+  "sealedAt": "2026-09-26T07:04:31.047582+00:00",
+  "baseRevision": "624b16fc",
+  "revisionAtArchive": "624b16fc0dd55cf3417539aceb73623d1f7aa4a5",
+  "scope": "Physical iPad failure-stop-only production delta + pressure regression; no static UI-demand candidate or paired diagnostic fixture",
+  "sourceFiles": {
+    "Applications/Shared/InkCanvasView.swift": "5c1a15059a6590145a03006835fc77b5944ea459e3b04e0c5852b076e7700f13",
+    "Applications/Tests/InkCanvasLifecycleTests.swift": "963bea11423dbb1ec2849bfb70fdeb3234bceebad5c65e133e23c6462d75174e"
+  },
+  "sourceUnchangedDuringRun": true,
+  "passed": 7,
+  "failed": 0,
+  "skipped": 0,
+  "runtimeWarnings": 0,
+  "failurePressureRegression": "InkCanvasLifecycleTests/testPageRetainedTextureFailureDrainsBothClocksAndRecoversOnTheNextRequest",
+  "priorControl": {
+    "evidenceDirectory": "/Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/.build/notebook-architecture-repair/evidence-2026-09-25/native-page-ui-demand-98-99-20260926T0702Z",
+    "manifestSHA256": "718a431b629596ff656da83582c7950cf40effe29e6816ee2566bec35a431417",
+    "pressureBaseline98": "FAIL: undrained clock",
+    "pressureCandidate99": "PASS",
+    "uiDemandCandidate": "Rejected: no paired capture improvement; entire candidate removed",
+    "note": "Prior control receipt pending failure-only verification is superseded by this physical100 result, not rewritten."
+  },
+  "notEstablished": [
+    "Release Simulator ten-journey Redo visual acceptance remains unresolved; this is not its fix.",
+    "No full acceptance/30-minute mixed-session or 20ms input closure claim.",
+    "GPU/material readiness is not photon timing."
+  ],
+  "evidenceDirectory": "/Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/.build/notebook-architecture-repair/evidence-2026-09-25/native-page-failure-stop-100-20260926T0704Z",
+  "manifestSHA256": "36d1ea84d132dbd214501e5aca492e9b5189d929d519e30f0d286265da438594",
+  "sealedFileCount": 115
+}

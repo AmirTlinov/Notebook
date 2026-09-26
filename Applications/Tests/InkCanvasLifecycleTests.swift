@@ -177,6 +177,61 @@ final class InkCanvasLifecycleTests: XCTestCase {
   }
 
   @MainActor
+  func testPageRetainedTextureFailureDrainsBothClocksAndRecoversOnTheNextRequest() async throws {
+    let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+    let window = UIWindow(windowScene: scene), controller = UIViewController()
+    window.rootViewController = controller; controller.view.backgroundColor = .white
+    let resources = SceneRenderResources(byteLimit: 2 * 1024 * 1024)
+    let canvas = InkCanvasView(frame: .zero, resources: resources)
+    controller.view.addSubview(canvas); window.makeKeyAndVisible()
+    defer { canvas.removeFromSuperview(); window.isHidden = true; window.rootViewController = nil }
+    canvas.projectPage(region: .init(x: 0, y: 0, width: 160, height: 160),
+      sourceSize: .init(width: 160, height: 160), pixelDensity: 1)
+    let stroke = ActiveInkStroke(style: .standard)
+    stroke.replaceMeasuredTail(from: 0, with: [CGFloat(20), 140].map { x in
+      PKStrokePoint(location: .init(x: x, y: 70), timeOffset: 0,
+        size: .init(width: 12, height: 12), opacity: 1, force: 1, azimuth: 0, altitude: .pi / 2)
+    })
+    canvas.displayActiveStroke(stroke); canvas.commitActiveStroke()
+    try await waitForStableFrame(canvas)
+    XCTAssertTrue(canvas.hasPageRetainedTexture)
+    // Keep the admitted drawable pool and accepted source. Only the optional
+    // input history texture is withdrawn; the next request is not a resize.
+    canvas.setPageInputEnabled(false)
+    try await waitForStableFrame(canvas)
+    XCTAssertFalse(canvas.hasPageRetainedTexture)
+    let frames = canvas.drawableRequestCount, pools = canvas.pageDrawableAllocationCount
+    let pressure = try XCTUnwrap(resources.reserveDerivedBytes(
+      resources.byteLimit - resources.reservedBytes, priority: .input))
+    defer { pressure.release() }
+    canvas.setPageInputEnabled(true)
+    let deadline = ContinuousClock.now + .seconds(2)
+    while !(canvas.renderFailure == .resourceLimit && canvas.isFrameLoopPaused), ContinuousClock.now < deadline {
+      try await Task.sleep(for: .milliseconds(10))
+    }
+    XCTAssertEqual(canvas.renderFailure, .resourceLimit)
+    XCTAssertTrue(canvas.isFrameLoopPaused, "A rejected static frame cannot demand continuous UIKit updates")
+    XCTAssertEqual(canvas.drawableRequestCount, frames)
+    XCTAssertEqual(canvas.pageDrawableAllocationCount, pools)
+    // A later ordinary input-demand update, not a timer, retries after space
+    // returns. It must retain the exact accepted material and existing pool.
+    pressure.release()
+    canvas.setPageInputEnabled(false); canvas.setPageInputEnabled(true)
+    let recoveryDeadline = ContinuousClock.now + .seconds(2)
+    while canvas.renderFailure != nil, ContinuousClock.now < recoveryDeadline {
+      try await Task.sleep(for: .milliseconds(10))
+    }
+    try await waitForStableFrame(canvas)
+    XCTAssertNil(canvas.renderFailure)
+    XCTAssertTrue(canvas.hasPageRetainedTexture)
+    XCTAssertEqual(canvas.pageDrawableAllocationCount, pools)
+    try await assertUX("page-retained-pressure-recovers-accepted-ink", since: .now, window: window) {
+      try NotebookUXObservation.Pixels(window: window).matches([
+        (canvas.convert(.init(x: 80, y: 70), to: window), .black)])
+    }
+  }
+
+  @MainActor
   private func waitForStableFrame(_ canvas: InkCanvasView) async throws {
     let deadline = ContinuousClock.now + .seconds(4)
     while !(canvas.isStableFramePresented && canvas.isFrameLoopPaused), ContinuousClock.now < deadline {

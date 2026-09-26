@@ -1075,13 +1075,22 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     guard window != nil, !spatialHandoffIsStopping, spatialStagingID == nil else { pauseFrameLoop(); return }
     if spatialDrawableScale != nil, submittedFrameCount > 0 || submittedPresentationCount > 0 { return }
     if presentEmptyContentIfReady() { return }
+    // A rejected page frame has no work whose completion could drain its
+    // clocks. Only a busy slot or a superseded drawable is a frame retry;
+    // allocation/encoding failure waits for the owner's next real request.
+    var continuesPageFrames = false
+    defer {
+      if pageDrawable != nil, !continuesPageFrames { pauseFrameLoop() }
+    }
     let samples = device?.supportsTextureSampleCount(4) == true ? 4 : 1
     guard admitSpatialDrawable(samples: samples),admitPageDrawable(samples:samples),
       admitPageRetainedTexture() else { return }
     // Page crops and retained scene canvases own their MSAA attachment.
     // Apple GPUs keep it in tile memory; do not allocate another implicit copy.
     sampleCount = spatialDrawableScale == nil && pageRenderRegion == nil ? samples : 1
-    guard inFlightSemaphore.wait(timeout: .now()) == .success else { return }
+    guard inFlightSemaphore.wait(timeout: .now()) == .success else {
+      continuesPageFrames = true; return
+    }
     var mustSignal = true
     defer {
       if mustSignal {
@@ -1144,7 +1153,9 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     } else if usesPageDisplayLink {
       guard let drawable = pageDrawable,
         drawable.texture.width == Int(drawableSize.width),
-        drawable.texture.height == Int(drawableSize.height) else { return }
+        drawable.texture.height == Int(drawableSize.height) else {
+          continuesPageFrames = true; return
+        }
       let pass = MTLRenderPassDescriptor()
       pass.colorAttachments[0].texture = pageMultisample ?? drawable.texture
       pass.colorAttachments[0].resolveTexture = pageMultisample == nil ? nil : drawable.texture
@@ -1368,6 +1379,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     }
     mustSignal = false
     frameSlot = (frameSlot + 1) % Self.framesInFlight
+    continuesPageFrames = true
 
     if activeInkStroke == nil, activeEraserStroke == nil { pauseFrameLoop() }
   }

@@ -127,6 +127,13 @@ ink, changing the crop, or replacing the source invalidates it. Empty paper and
 per-element material canvases do not allocate this page backing. This is the page
 renderer itself, not a screenshot content source or a second persistence path.
 
+A rejected page-frame allocation or encoding attempt pauses its existing display
+clock; UIKit drains the final update through the same phase action. It must not
+retry continuously while resource admission is refused. A later owner request
+can retry without discarding accepted ink or its admitted drawable pool. Busy
+in-flight slots and obsolete-sized system drawables remain transient retries,
+not resource failures. This does not add UIKit update demand for idle pages.
+
 Page element erasing has one live page mask driven directly by the admitted
 `ActiveEraserStroke`. Movement no longer publishes a growing sample prefix
 through `NotebookAppModel` and every element view. Pencil-up transfers the same

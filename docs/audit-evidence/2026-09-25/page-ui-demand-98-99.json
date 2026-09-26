@@ -1,0 +1,29 @@
+{
+  "evidenceDirectory": "/Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/.build/notebook-architecture-repair/evidence-2026-09-25/native-page-ui-demand-98-99-20260926T0702Z",
+  "manifestSHA256": "718a431b629596ff656da83582c7950cf40effe29e6816ee2566bec35a431417",
+  "fileCount": 548,
+  "bytes": 16113789,
+  "scope": "9 same selectors on isolated Simulator; source exact; no thresholds changed",
+  "baseline98": {
+    "passed": 7,
+    "failedCases": 2,
+    "failedAssertions": 3
+  },
+  "candidate99": {
+    "passed": 8,
+    "failedCases": 1,
+    "failedAssertions": 2
+  },
+  "rejectedUIAdmissionExtension": true,
+  "pairedCapturesPerInverse": [
+    3,
+    3,
+    3,
+    3,
+    3,
+    3
+  ],
+  "separateFailureDrainPositiveControl": true,
+  "failureStopOnlyVerificationPending": true,
+  "fullAcceptancePassed": false
+}
