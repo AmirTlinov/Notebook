@@ -205,6 +205,9 @@ the same restoration frame installs; a new typed selection cannot borrow it.
 Resource refusal keeps the last complete picture until canonical preparation is
 installed. Enqueued writes retain their own publication authority. Pipeline and
 clip preparation run off the input actor; clip buffers are admitted before fill.
+An accepted typed raw selection requests the renderer's existing pipeline future;
+the first edit awaits that same work. Cancelling a consumer neither cancels nor
+replaces the shared pipeline resources. Selection itself changes no ink pixels.
 
 Live ink, exports and contextual ink proofs use the same ordered encoder. An
 original contact header and its addressed cuts come from the same source snapshot;

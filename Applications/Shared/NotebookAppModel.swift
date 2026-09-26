@@ -3055,6 +3055,7 @@ final class NotebookAppModel {
         showCue("Рукопись изменилась. Повторите выделение.");return false
       }
       replaceSelection(.elements(refs,items:items,ink:raw.sorted { $0.painterOrder<$1.painterOrder }))
+      InkRasterRenderer.shared.requestOrderedPreparation()
     } else if items.isEmpty {
       replaceSelection(refs.isEmpty ? nil : refs.count == 1 ? .element(refs[0]) : .elements(refs))
     } else if refs.isEmpty,items.count == 1 {

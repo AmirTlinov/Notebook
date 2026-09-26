@@ -22,8 +22,13 @@ final class InkRasterRenderer: @unchecked Sendable {
   /// waits behind pipeline compilation on the native frame callback.
   var ordered:OrderedPipelines? {orderedLock.withLock {try? orderedResult?.get()}}
 
-  func prepareOrdered() async throws {
-    let work=orderedLock.withLock { () -> Task<OrderedPipelines,Error> in
+  /// A complete typed contact selection admits this fixed renderer capability,
+  /// not a source frame. It allocates no body geometry, backing or drawable and
+  /// never delays selection publication. Actual frames await this same future.
+  func requestOrderedPreparation() { _=orderedPreparationTask() }
+
+  private func orderedPreparationTask()->Task<OrderedPipelines,Error> {
+    orderedLock.withLock {
       if let orderedPreparation {return orderedPreparation}
       let work=Task.detached(priority:.userInitiated) { [self] in
         guard let device else {throw SceneRenderError.resourceLimit}
@@ -33,10 +38,13 @@ final class InkRasterRenderer: @unchecked Sendable {
       orderedPreparation=work
       return work
     }
+  }
+
+  func prepareOrdered() async throws {
     // Pipeline compilation belongs to this shared renderer, not to whichever
     // source happens to await it first. Revoking that source does not cancel
     // another caller's preparation; only its own publication is cancelled.
-    let result=await work.result
+    let result=await orderedPreparationTask().result
     orderedLock.withLock {orderedResult=result}
     try Task.checkCancellation()
     _=try result.get()
