@@ -16,6 +16,8 @@ NATIVE_FILES = (
     "Applications/Shared/DocumentPagePreparation.swift",
     "Applications/Shared/SceneRenderResources.swift",
     "Applications/Shared/DocumentProgramOwner.swift",
+    "Applications/iPad/PencilCanvasView.swift",
+    "Applications/Shared/InkCanvasView.swift",
 )
 TARGET = "navigation"
 MAX_BYTES = 4 * 1024 * 1024 + 65536
@@ -55,11 +57,20 @@ def prepare(value, built, manifest, container, requested):
                         and release.file_digest(path) == listed.get(relative),
                         "В native snapshot нет неизменного observer owner: " + relative)
         owners[relative] = listed[relative]
+    ink_delivery = (snapshot / NATIVE_FILES[9]).read_text()
+    ink_render = (snapshot / NATIVE_FILES[10]).read_text()
     release.require("NotebookNavigationObservation.record" in (snapshot / NATIVE_FILES[1]).read_text()
+                    and '"ink_accepted"' in (snapshot / NATIVE_FILES[1]).read_text()
+                    and "static func recordInk" in (snapshot / NATIVE_FILES[0]).read_text()
                     and "view_ready_to_resolve" in (snapshot / NATIVE_FILES[3]).read_text()
                     and "search_result_tap" in (snapshot / NATIVE_FILES[2]).read_text()
                     and "document_owner_created" in (snapshot / NATIVE_FILES[4]).read_text()
-                    and "page_turn_external_request" in (snapshot / NATIVE_FILES[5]).read_text(),
+                    and "page_turn_external_request" in (snapshot / NATIVE_FILES[5]).read_text()
+                    and all(stage in ink_delivery for stage in (
+                        '"ink_delivery"', '"ink_source_settled"', '"ink_cold_requested"', '"ink_source_applied"'))
+                    and all(stage in ink_render for stage in (
+                        '"ink_display_update"', '"ink_submitted"', '"ink_gpu_complete"', '"ink_frame_readiness"',
+                        '"pageRevision"', '"installedPageRevision"', '"submissionID"', '"completionMach"')),
                     "UI-only bundle не добавляет отсутствующие native hooks.")
     journal = root.parent / "navigation-observations"
     release.require(journal.resolve().is_relative_to(container) and not journal.is_symlink(),

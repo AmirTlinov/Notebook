@@ -27,7 +27,11 @@ class NavigationObservationContracts(unittest.TestCase):
         self.build = self.root / "build"; self.sources = {}
         for name in driver.NATIVE_FILES:
             path = self.build / "source" / name; path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text("// synthetic NotebookNavigationObservation.record view_ready_to_resolve search_result_tap document_owner_created page_turn_external_request\n")
+            path.write_text('// synthetic NotebookNavigationObservation.record view_ready_to_resolve search_result_tap '
+                            'document_owner_created page_turn_external_request static func recordInk '
+                            '"ink_accepted" "ink_delivery" "ink_source_settled" "ink_cold_requested" "ink_source_applied" '
+                            '"ink_display_update" "ink_submitted" "ink_gpu_complete" "ink_frame_readiness" '
+                            '"pageRevision" "installedPageRevision" "submissionID" "completionMach"\n')
             self.sources[name] = release.file_digest(path)
         (self.build / "source.json").write_text(json.dumps({"sha256": "snapshot",
             "files": [{"path": name, "sha256": sha} for name, sha in self.sources.items()]}))
@@ -95,17 +99,68 @@ class NavigationObservationContracts(unittest.TestCase):
         self.assertIn("Applications/Shared/DocumentProgramOwner.swift", value["nativeSources"])
         self.assertIn("Applications/Shared/DocumentPagePresentationOwner.swift", value["nativeSources"])
         self.assertIn("Applications/iPad/IPadPageTurnController.swift", value["nativeSources"])
+        self.assertIn("Applications/iPad/PencilCanvasView.swift", value["nativeSources"])
+        self.assertIn("Applications/Shared/InkCanvasView.swift", value["nativeSources"])
         self.assertFalse(Path(value["nativeJournalDirectory"]).exists())
         self.assertFalse(value["displayMeasured"])
         self.assertEqual(value["environment"], {"NOTEBOOK_NAVIGATION_OBSERVATION_SESSION_ID": self.session})
 
     def test_changed_physical_page_owner_cannot_reuse_native_provenance(self):
-        for name in ("Applications/Shared/DocumentPagePresentationOwner.swift", "Applications/Shared/DocumentProgramOwner.swift", "Applications/iPad/IPadPageTurnController.swift"):
+        for name in ("Applications/Shared/DocumentPagePresentationOwner.swift", "Applications/Shared/DocumentProgramOwner.swift",
+                     "Applications/iPad/IPadPageTurnController.swift", "Applications/iPad/PencilCanvasView.swift",
+                     "Applications/Shared/InkCanvasView.swift"):
             path = self.build / "source" / name
             original = path.read_bytes()
             path.write_bytes(original + b"// changed native lifecycle\n")
             with self.subTest(owner=name), self.assertRaises(release.ReleaseError): self.prepare()
             path.write_bytes(original)
+
+    def test_ink_observation_requires_the_actual_native_source_and_frame_hooks(self):
+        required = {
+            "Applications/Shared/NotebookNavigationObservation.swift": ("static func recordInk",),
+            "Applications/Shared/NotebookAppModel.swift": ('"ink_accepted"',),
+            "Applications/iPad/PencilCanvasView.swift": ('"ink_delivery"', '"ink_source_settled"',
+                                                        '"ink_cold_requested"', '"ink_source_applied"'),
+            "Applications/Shared/InkCanvasView.swift": ('"ink_display_update"', '"ink_submitted"',
+                '"ink_gpu_complete"', '"ink_frame_readiness"', '"pageRevision"', '"installedPageRevision"',
+                '"submissionID"', '"completionMach"'),
+        }
+        listing_path = self.build / "source.json"
+        original_listing = listing_path.read_bytes()
+        for name, anchors in required.items():
+            path = self.build / "source" / name
+            original = path.read_text()
+            for anchor in anchors:
+                path.write_text(original.replace(anchor, "old_native_owner"))
+                listing = json.loads(original_listing)
+                for entry in listing["files"]:
+                    if entry["path"] == name: entry["sha256"] = release.file_digest(path)
+                listing_path.write_text(json.dumps(listing))
+                with self.subTest(owner=name, anchor=anchor), self.assertRaisesRegex(
+                        release.ReleaseError, "отсутствующие native hooks"):
+                    self.prepare()
+            path.write_text(original)
+            listing_path.write_bytes(original_listing)
+
+    def test_cold_intent_and_gpu_receipts_are_preserved_without_a_display_claim(self):
+        value = self.prepare(); path = self.journal(value)
+        events = [
+            {"kind": "page_ink", "stage": "ink_cold_requested", "canvasID": "canvas",
+             "detail": {"pageRevision": "3", "installedPageRevision": "2", "geometryReady": False}},
+            {"kind": "page_ink", "stage": "ink_source_applied", "canvasID": "canvas",
+             "detail": {"pageRevision": "4", "installedPageRevision": None}},
+            {"kind": "page_ink", "stage": "ink_gpu_complete", "canvasID": "canvas",
+             "receiptMach": "130", "detail": {"submissionID": "submission", "pageRevision": "4",
+                 "completionMach": "100", "completed": True}},
+        ]
+        with path.open("a") as journal:
+            for event in events: journal.write(json.dumps(event) + "\n")
+        original = path.read_bytes()
+        receipt = driver.collect(value, self.evidence, launch_manifest=self.launch_manifest)
+        self.assertEqual((self.evidence / path.name).read_bytes(), original)
+        self.assertEqual(receipt["status"], "observed_unassessed")
+        self.assertFalse(receipt["displayMeasured"])
+        self.assertEqual(receipt["nativeBuild"]["nativeSources"], self.sources)
 
     def test_missing_journal_is_unobserved_not_pass(self):
         receipt = driver.collect(self.prepare(), self.evidence, launch_manifest=self.launch_manifest)

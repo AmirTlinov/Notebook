@@ -1,0 +1,188 @@
+{
+  "status": "physical_functional_pass_simulator_observation_failure_not_final_acceptance",
+  "applicationRevision": "ca3ac898",
+  "applicationSourceSHA256": "d88e45a9381fd1e16a63b23b95a15ec93e9a6cbde23ab06b58647fb07c1d6328",
+  "uiRun": "ipad-testTenPageInkUndoLassoAndNavigationJourneys-01a9e049-14d5-415f-a1b2-ef0311956a7a",
+  "localArchive": "/Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/.build/notebook-architecture-repair/evidence-2026-09-25/redo-diagnostic-60-62",
+  "nativeRuns": [
+    {
+      "number": 60,
+      "summary": {
+        "devicesAndConfigurations": [
+          {
+            "device": {
+              "architecture": "arm64",
+              "deviceId": "00008103-001E059934D9001E",
+              "deviceName": "iPad (Елизавета)",
+              "modelName": "iPad Pro (11-inch) (3rd generation)",
+              "osBuildNumber": "24A435",
+              "osVersion": "27.0",
+              "platform": "iOS"
+            },
+            "expectedFailures": 0,
+            "failedTests": 0,
+            "passedTests": 3,
+            "skippedTests": 0,
+            "testPlanConfiguration": {
+              "configurationId": "1",
+              "configurationName": "Test Scheme Action"
+            }
+          }
+        ],
+        "environmentDescription": "Notebook · Built with macOS 27.0",
+        "expectedFailures": 0,
+        "failedTests": 0,
+        "finishTime": 1790388187.846,
+        "passedTests": 3,
+        "result": "Passed",
+        "runtimeWarnings": [],
+        "skippedTests": 0,
+        "startTime": 1790388140.171,
+        "statistics": [],
+        "testFailures": [],
+        "title": "Test - Notebook",
+        "topInsights": [],
+        "totalTestCount": 3
+      },
+      "selection": [
+        "NotebookTests/NotebookPageLifecycleUXTests/testRepeatedInkUndoRedoAfterPageTurnsAndZoomKeepsTheAcceptedWarmMaterial",
+        "NotebookTests/AcceptedPageInputTests/testOrdinaryModelUndoAndRedoReachTheMountedIncrementalOwner",
+        "NotebookTests/NotebookInteractionUXTests/testPageLiveEraserHasOnePaintOwnerThroughRetractionCancelAndAcceptedUndoRedo"
+      ],
+      "sourceWitnessSHA256": "1ac9a71ac976df0cf134f71fe4641297cc0f85421c396bd1af36df20bfc77d71",
+      "changedSources": []
+    },
+    {
+      "number": 61,
+      "summary": {
+        "devicesAndConfigurations": [
+          {
+            "device": {
+              "architecture": "arm64",
+              "deviceId": "29BEF8B8-E3C5-4943-8408-9A616ECC863D",
+              "deviceName": "Notebook Architecture QA",
+              "modelName": "iPad Pro 13-inch (M5)",
+              "osBuildNumber": "24A434",
+              "osVersion": "27.0",
+              "platform": "iOS Simulator"
+            },
+            "expectedFailures": 0,
+            "failedTests": 1,
+            "passedTests": 2,
+            "skippedTests": 0,
+            "testPlanConfiguration": {
+              "configurationId": "1",
+              "configurationName": "Test Scheme Action"
+            }
+          }
+        ],
+        "environmentDescription": "Notebook · Built with macOS 27.0",
+        "expectedFailures": 0,
+        "failedTests": 1,
+        "finishTime": 1790388501.69,
+        "passedTests": 2,
+        "result": "Failed",
+        "runtimeWarnings": [],
+        "skippedTests": 0,
+        "startTime": 1790388492.313,
+        "statistics": [],
+        "testFailures": [
+          {
+            "failureText": "XCTAssertTrue failed - UX inverse-journey-0-redo: correct=true, observed=114.122459 ms, ceiling=0.1 seconds; window observation, not photon timing",
+            "targetName": "NotebookTests",
+            "testIdentifier": 3,
+            "testIdentifierString": "NotebookPageLifecycleUXTests/testRepeatedInkUndoRedoAfterPageTurnsAndZoomKeepsTheAcceptedWarmMaterial()",
+            "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/NotebookPageLifecycleUXTests/testRepeatedInkUndoRedoAfterPageTurnsAndZoomKeepsTheAcceptedWarmMaterial",
+            "testName": "testRepeatedInkUndoRedoAfterPageTurnsAndZoomKeepsTheAcceptedWarmMaterial()"
+          }
+        ],
+        "title": "Test - Notebook",
+        "topInsights": [],
+        "totalTestCount": 3
+      },
+      "selection": [
+        "NotebookTests/NotebookPageLifecycleUXTests/testRepeatedInkUndoRedoAfterPageTurnsAndZoomKeepsTheAcceptedWarmMaterial",
+        "NotebookTests/AcceptedPageInputTests/testOrdinaryModelUndoAndRedoReachTheMountedIncrementalOwner",
+        "NotebookTests/NotebookInteractionUXTests/testPageLiveEraserHasOnePaintOwnerThroughRetractionCancelAndAcceptedUndoRedo"
+      ],
+      "sourceWitnessSHA256": "b3a9f3ed6589dfdc16cf8c81b175af04576bb76a3316c18473a1b0469f4cdf35",
+      "changedSources": []
+    },
+    {
+      "number": 62,
+      "summary": {
+        "devicesAndConfigurations": [
+          {
+            "device": {
+              "architecture": "arm64",
+              "deviceId": "29BEF8B8-E3C5-4943-8408-9A616ECC863D",
+              "deviceName": "Notebook Architecture QA",
+              "modelName": "iPad Pro 13-inch (M5)",
+              "osBuildNumber": "24A434",
+              "osVersion": "27.0",
+              "platform": "iOS Simulator"
+            },
+            "expectedFailures": 0,
+            "failedTests": 2,
+            "passedTests": 1,
+            "skippedTests": 0,
+            "testPlanConfiguration": {
+              "configurationId": "1",
+              "configurationName": "Test Scheme Action"
+            }
+          }
+        ],
+        "environmentDescription": "Notebook · Built with macOS 27.0",
+        "expectedFailures": 0,
+        "failedTests": 2,
+        "finishTime": 1790388720.195,
+        "passedTests": 1,
+        "result": "Failed",
+        "runtimeWarnings": [],
+        "skippedTests": 0,
+        "startTime": 1790388711.048,
+        "statistics": [],
+        "testFailures": [
+          {
+            "failureText": "XCTAssertTrue failed - UX one-native-page-mask-at-first-hit: correct=true, observed=108.839417 ms, ceiling=0.1 seconds; window observation, not photon timing",
+            "targetName": "NotebookTests",
+            "testIdentifier": 2,
+            "testIdentifierString": "NotebookInteractionUXTests/testPageLiveEraserHasOnePaintOwnerThroughRetractionCancelAndAcceptedUndoRedo()",
+            "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/NotebookInteractionUXTests/testPageLiveEraserHasOnePaintOwnerThroughRetractionCancelAndAcceptedUndoRedo",
+            "testName": "testPageLiveEraserHasOnePaintOwnerThroughRetractionCancelAndAcceptedUndoRedo()"
+          },
+          {
+            "failureText": "XCTAssertTrue failed - UX inverse-journey-0-redo: correct=true, observed=110.53525 ms, ceiling=0.1 seconds; window observation, not photon timing",
+            "targetName": "NotebookTests",
+            "testIdentifier": 3,
+            "testIdentifierString": "NotebookPageLifecycleUXTests/testRepeatedInkUndoRedoAfterPageTurnsAndZoomKeepsTheAcceptedWarmMaterial()",
+            "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/NotebookPageLifecycleUXTests/testRepeatedInkUndoRedoAfterPageTurnsAndZoomKeepsTheAcceptedWarmMaterial",
+            "testName": "testRepeatedInkUndoRedoAfterPageTurnsAndZoomKeepsTheAcceptedWarmMaterial()"
+          }
+        ],
+        "title": "Test - Notebook",
+        "topInsights": [],
+        "totalTestCount": 3
+      },
+      "selection": [
+        "NotebookTests/NotebookPageLifecycleUXTests/testRepeatedInkUndoRedoAfterPageTurnsAndZoomKeepsTheAcceptedWarmMaterial",
+        "NotebookTests/AcceptedPageInputTests/testOrdinaryModelUndoAndRedoReachTheMountedIncrementalOwner",
+        "NotebookTests/NotebookInteractionUXTests/testPageLiveEraserHasOnePaintOwnerThroughRetractionCancelAndAcceptedUndoRedo"
+      ],
+      "sourceWitnessSHA256": "465188e224eb98a3079ce5deb0b6b4e9358f35c136742e25b2d019b9b5bb847c",
+      "changedSources": []
+    }
+  ],
+  "findings": [
+    "Exact failing Release screenshot and geometry retained without changing the original pixel probe or adding waits; Redo toast visible with the old uncut line.",
+    "Later video frames show the correct cut; video PTS is not calibrated to XCTest uptime.",
+    "Physical60: all three tests pass, repeated warm inverse retains mesh preparation/build counts. Not a hardware multi-finger or Pencil latency proof.",
+    "Simulator61: GPU completion/readiness precedes correct window capture; snapshots occupy MainActor and bound rather than identify first pixel presentation time.",
+    "Simulator62 continuous UIKit demand candidate failed two tests and was removed completely; no rendering/lifecycle changes retained."
+  ],
+  "limitations": [
+    "The existing 100ms observation ceiling and first-screenshot Release oracle are unchanged.",
+    "No full acceptance, ten completed journeys, 30-minute mixed session, physical FPS or system CPU/GPU/memory proof.",
+    "Native controls and Release system-routed contacts are separate evidence."
+  ]
+}

@@ -150,6 +150,7 @@ struct PencilCanvasView: UIViewRepresentable {
 
     func attach(to paper: PaperCanvasContainerView) {
       attachedPaper = paper
+      observeInk("ink_owner_attached", on: paper)
       paper.inkView.onRenderReadinessChange = { [weak self] _ in self?.publishReadiness() }
       paper.touchView.simulatesPencilContacts = inputGate.simulatesPencilContacts
       paper.admitsPencilContact = { [weak self, weak paper] touch in
@@ -204,13 +205,22 @@ struct PencilCanvasView: UIViewRepresentable {
     }
 
     func receiveAcceptedInk(_ change: PreparedPageInkChange, suppressedIDs: Set<UUID>) {
+      if NotebookNavigationObservation.enabled, let paper = attachedPaper {
+        observeInk("ink_delivery", on: paper, fields: [
+          "incomingPageID": .string(change.pageID.uuidString),
+          "incomingBaseStamp": NotebookNavigationObservation.inkStamp(change.baseStamp),
+          "incomingStamp": NotebookNavigationObservation.inkStamp(change.stamp)])
+      }
       guard change.pageID == pageID, let paper = attachedPaper,
         modelSource.map({ $0.stamp < change.stamp }) ?? true else { return }
       let canSettle = modelSource?.stamp == change.baseStamp
       decodeTask?.cancel(); decodeTask = nil; decodeGeneration &+= 1
       modelSource = change.inkSource; suppressedInkIDs = suppressedIDs
       paper.touchView.onLiveElementErasing(.accepted(change))
-      if canSettle { paper.settle(change, suppressedInkIDs: suppressedIDs) }
+      if canSettle {
+        paper.settle(change, suppressedInkIDs: suppressedIDs)
+        observeInk("ink_source_settled", on: paper)
+      }
       else { replaceDrawing(change.inkSource, on: paper, pageID: change.pageID) }
     }
 
@@ -270,6 +280,7 @@ struct PencilCanvasView: UIViewRepresentable {
     }
 
     func detach(from paper: PaperCanvasContainerView) {
+      observeInk("ink_owner_detaching", on: paper)
       // A retiring sheet still owns its final measured samples. Transfer them
       // before removing callbacks or releasing the gate's Pencil source.
       paper.touchView.finishCurrentAction {}
@@ -358,6 +369,7 @@ struct PencilCanvasView: UIViewRepresentable {
       decodeGeneration &+= 1
       let generation = decodeGeneration
       paper.inkView.prepareForDrawing()
+      observeInk("ink_cold_requested", on: paper)
       decodeTask = Task { [weak self, weak paper] in
         let prepared=await Task.detached(priority:.userInitiated) { try? source.drawing() }.value
         guard !Task.isCancelled, let self, let paper,
@@ -367,7 +379,19 @@ struct PencilCanvasView: UIViewRepresentable {
         guard let drawing=prepared else { return }
         paper.touchView.onLiveElementErasing(.reconciled(pageID, source.stamp, drawing))
         paper.apply(drawing, suppressedInkIDs: suppressedInkIDs)
+        observeInk("ink_source_applied", on: paper)
       }
+    }
+
+    private func observeInk(_ stage: String, on paper: PaperCanvasContainerView,
+      fields: [String: JSONValue] = [:]) {
+      guard NotebookNavigationObservation.enabled else { return }
+      var details = fields
+      details["inputSourceID"] = .string(inputSourceID.uuidString)
+      details["pageID"] = pageID.map { .string($0.uuidString) } ?? .null
+      details["stamp"] = NotebookNavigationObservation.inkStamp(modelSource?.stamp)
+      details["decodeGeneration"] = .string(String(decodeGeneration))
+      paper.inkView.recordPageInkObservation(stage, fields: details)
     }
 
     private func restoreModelDrawing(on paper: PaperCanvasContainerView?) {

@@ -1,6 +1,7 @@
 import ImageIO
 import MetalKit
 import NotebookCore
+import Darwin
 #if os(iOS)
 import UIKit
 #else
@@ -394,6 +395,30 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     }
   }
 
+  /// Diagnostic join only: source application records this existing revision,
+  /// and submissions freeze it. No source/stamp cache participates in rendering.
+  func recordPageInkObservation(_ stage: String, fields: [String: JSONValue] = [:]) {
+    guard NotebookNavigationObservation.enabled else { return }
+    var details = pageInkObservationFields
+    details.merge(fields) { _, incoming in incoming }
+    NotebookNavigationObservation.recordInk(stage,
+      canvasID: String(describing: ObjectIdentifier(self)), fields: details)
+  }
+
+  private var pageInkObservationFields: [String: JSONValue] {
+    ["pageRevision": .string(String(pageRevision)),
+      "installedPageRevision": installedPageRevision.map { .string(String($0)) } ?? .null,
+      "stableRevision": .string(String(stableContentRevision)),
+      "committedGeneration": .string(String(committedGeneration)),
+      "meshPrepare": .number(Double(pageMeshPreparationCount)), "meshBuild": .number(Double(pageMeshBuildCount)),
+      "drawables": .number(Double(drawableRequestCount)), "committedPass": .number(Double(pageCommittedPassCount)),
+      "geometryReady": .bool(pageGeometryIsReady), "stable": .bool(isStableFramePresented),
+      "mounted": .bool(window != nil), "inputEnabled": .bool(pageInputEnabled),
+      "active": .bool(activeInkStroke != nil || activeEraserStroke != nil),
+      "pixelWidth": .number(Double(drawableSize.width)), "pixelHeight": .number(Double(drawableSize.height)),
+      "renderFailure": renderFailure.map { .string(String(describing: $0)) } ?? .null]
+  }
+
   var committedSourceNodeCount: Int {
     committedBatches.reduce(0) { $0 + ($1.pageIsActive ? $1.mesh.sourceNodeCount:0) }
   }
@@ -489,6 +514,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
   #endif
 
   private func mounted() {
+    recordPageInkObservation("ink_mount_changed")
     guard window != nil else {
       // UIKit can retain a culled canvas beyond the end of its visible use.
       // Stop its timer even when no drawable arrives to finish the last draw.
@@ -1034,6 +1060,11 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
 
   func metalDisplayLink(_ link: CAMetalDisplayLink, needsUpdate update: CAMetalDisplayLink.Update) {
     guard link === pageDisplayLink, usesPageDisplayLink else { return }
+    if NotebookNavigationObservation.enabled {
+      recordPageInkObservation("ink_display_update", fields: [
+        "targetTimestamp": .number(update.targetTimestamp),
+        "targetPresentationTimestamp": .number(update.targetPresentationTimestamp)])
+    }
     autoreleasepool { renderFrame(pageDrawable: update.drawable) }
   }
 
@@ -1200,6 +1231,17 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
         && pageGeometryIsReady
       ? stableContentRevision : nil
     let submittedRevision = stableContentRevision
+    let observedSubmission: [String: JSONValue]?
+    let observedCanvasID: String?
+    if usesPageDisplayLink, NotebookNavigationObservation.enabled {
+      var fields = pageInkObservationFields
+      fields["submissionID"] = .string(submission.uuidString)
+      fields["transactionPresentation"] = .bool(transactionPresentation)
+      fields["retainedPassEncoded"] = .bool(encodedRetainedKey != nil)
+      fields["stableSubmission"] = .bool(presentedRevision != nil)
+      observedSubmission = fields
+      observedCanvasID = String(describing: ObjectIdentifier(self))
+    } else { observedSubmission = nil; observedCanvasID = nil }
     if transactionPresentation { submittedTransactionalRevision = submittedRevision }
     let visibleSubmission = transactionPresentation || hasRevealedFirstFrame
     if let target = spatialTarget {
@@ -1211,6 +1253,15 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
       }
     } else if visibleSubmission, presentedRevision != nil || onVisibleFrame != nil {
       NotebookMetalFrameReadiness.observe(passes[0].1,commandBuffer:commandBuffer) { [weak self] readiness in
+        if var fields = observedSubmission {
+          fields["ready"] = .bool(readiness.isReady)
+          fields["superseded"] = .bool(self?.stableContentRevision != submittedRevision)
+          switch readiness {
+          case .osPresentation(let time): fields["osPresentedTime"] = .number(time)
+          case .simulatorCommandCompletion(let completed): fields["simulatorCommandCompleted"] = .bool(completed)
+          }
+          NotebookNavigationObservation.recordInk("ink_frame_readiness", canvasID: observedCanvasID, fields: fields)
+        }
         guard let self,!spatialHandoffIsStopping,window != nil,
           stableContentRevision == submittedRevision else { return }
         guard readiness.isReady else {
@@ -1236,7 +1287,19 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     commandBuffer.addCompletedHandler { [weak self, inFlightSemaphore, heldGeometry, physical, target] buffer in
       inFlightSemaphore.signal()
       let completed = buffer.status == .completed
+      // Capture at the existing GPU callback, before its actor hop. The
+      // recorder's receiptMach separately timestamps delivery on MainActor.
+      let observationCompletion = observedSubmission.map { _ in
+        (mach_absolute_time(), buffer.gpuStartTime, buffer.gpuEndTime)
+      }
       Task { @MainActor [weak self, heldGeometry, physical, target] in
+        if var fields = observedSubmission, let timing = observationCompletion {
+          fields["completionMach"] = .string(String(timing.0))
+          fields["gpuStartTime"] = .number(timing.1); fields["gpuEndTime"] = .number(timing.2)
+          fields["completed"] = .bool(completed)
+          fields["superseded"] = .bool(self?.stableContentRevision != submittedRevision)
+          NotebookNavigationObservation.recordInk("ink_gpu_complete", canvasID: observedCanvasID, fields: fields)
+        }
         // Unmount/culling may already have released the canvas's references.
         // These bytes remain charged through the final GPU completion.
         withExtendedLifetime((heldGeometry, physical, target)) {}
@@ -1299,6 +1362,9 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
       // commands are committed, not later from command-buffer scheduling.
       // The GPU may finish within the clock's remaining frame latency.
       pageDrawable.present()
+    }
+    if let fields = observedSubmission {
+      NotebookNavigationObservation.recordInk("ink_submitted", canvasID: observedCanvasID, fields: fields)
     }
     mustSignal = false
     frameSlot = (frameSlot + 1) % Self.framesInFlight

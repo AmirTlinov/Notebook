@@ -45,6 +45,19 @@ import Darwin
       "uptime": .number(ProcessInfo.processInfo.systemUptime),
       "taskCancelled": .bool(Task.isCancelled), "detail": .object(fields)])
   }
+  /// Accepted ink uses the same admitted, bounded diagnostic session. These
+  /// records describe source/frame identities, never samples or document text.
+  static func recordInk(_ stage: String, canvasID: String? = nil,
+    fields: [String: JSONValue] = [:]) {
+    guard enabled else { return }
+    recorder?.append(["kind": .string("page_ink"), "stage": .string(stage),
+      "canvasID": canvasID.map(JSONValue.string) ?? .null,
+      "uptime": .number(ProcessInfo.processInfo.systemUptime), "detail": .object(fields)])
+  }
+  static func inkStamp(_ stamp: VersionStamp?) -> JSONValue {
+    guard let stamp else { return .null }
+    return .object(["counter": .string(String(stamp.counter)), "actor": .string(stamp.actor.uuidString)])
+  }
   private static func uuid(_ id: UUID?) -> JSONValue { id.map { .string($0.uuidString) } ?? .null }
 
   @MainActor private final class Recorder {

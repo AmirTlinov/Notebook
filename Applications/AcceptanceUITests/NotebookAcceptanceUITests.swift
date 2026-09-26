@@ -124,7 +124,7 @@ import XCTest
   }
 
   func testRealStreamingKeepsInkAndStopResponsive() throws {
-    try launch()
+    try launch(readinessIdentifier: "notebook-search")
     try navigateToAcceptanceControls()
     try sendRealStreamingWhileDrawing()
     try systemTrace?.ended(app)
@@ -480,10 +480,14 @@ import XCTest
   /// This probes the real attach lifecycle before a long performance workload.
   /// It uses the ordinary private app even when the Mac is not yet connected.
   func testSystemTraceAttachesToLaunchedApplication() throws {
-    try launch(readinessIdentifier: "notebook-companion-compose")
+    try launch(readinessIdentifier: "notebook-search")
     XCTAssertNotNil(systemTrace, "Run this probe with the explicit Time Profiler option")
-    let ink = app.otherElements["spatial-ink"]
+    // A previous real journey can leave a page open. Trace readiness does not
+    // reset navigation or require the launch surface to be the infinite board.
+    let page = app.otherElements.matching(identifier: "paper-input").allElementsBoundByIndex.first { $0.isHittable }
+    let ink = page ?? app.otherElements["spatial-ink"]
     XCTAssertTrue(ink.waitForExistence(timeout: 10), app.debugDescription)
+    XCTAssertTrue(ink.isHittable)
     screenshot("trace-attached-before-real-gestures")
     let began = ProcessInfo.processInfo.systemUptime
     var count = 0
@@ -955,7 +959,14 @@ import XCTest
         return input != nil
       },object:nil)
       XCTAssertEqual(XCTWaiter.wait(for:[ready],timeout:10),.completed)
-      let paper=try XCTUnwrap(input),frame=paper.frame
+      let paper=try XCTUnwrap(input)
+      let frameReadStarted=ProcessInfo.processInfo.systemUptime
+      let frame=paper.frame
+      let frameReadEnded=ProcessInfo.processInfo.systemUptime
+      @MainActor func diagnose(_ stage:String,_ samples:[(String,DarkPixelSample)]) throws {
+        try attachPageInkFailure(iteration:iteration,stage:stage,paper:paper,initialFrame:frame,
+          frameReadStarted:frameReadStarted,frameReadEnded:frameReadEnded,samples:samples)
+      }
       try selectBlackPen()
       let y=0.32+Double(iteration%5)*0.025
       let from=paper.coordinate(withNormalizedOffset:.init(dx:0.35,dy:y))
@@ -965,7 +976,8 @@ import XCTest
       let written=XCTNSPredicateExpectation(predicate:NSPredicate { _,_ in paper.value as? String != previous },object:nil)
       XCTAssertEqual(XCTWaiter.wait(for:[written],timeout:5),.completed)
       let probe=CGPoint(x:frame.midX,y:frame.minY+frame.height*(y+0.075))
-      let ink=try darkPixels(near:probe)
+      let baseline=try darkPixelSample(near:probe),ink=baseline.count
+      if ink <= 8 { try diagnose("baseline",[("baseline",baseline)]) }
       XCTAssertGreaterThan(ink,8,"A committed contact must leave actual pixels")
       app.buttons["drawing-tool-eraser"].tap()
       let eraseFrom=paper.coordinate(withNormalizedOffset:.init(dx:0.5,dy:y+0.03))
@@ -973,9 +985,13 @@ import XCTest
         withVelocity:.fast,thenHoldForDuration:0)
       // No artificial settle wait before the accepted inverse/repeat.
       surface.tap(withNumberOfTaps:1,numberOfTouches:2)
-      XCTAssertGreaterThan(try darkPixels(near:probe),8,"Undo immediately revokes the eraser material")
+      let undone=try darkPixelSample(near:probe)
+      if undone.count <= 8 { try diagnose("undo",[("baseline",baseline),("undo",undone)]) }
+      XCTAssertGreaterThan(undone.count,8,"Undo immediately revokes the eraser material")
       surface.tap(withNumberOfTaps:1,numberOfTouches:3)
-      XCTAssertLessThan(try darkPixels(near:probe),ink,"Redo must restore the cut, not resurrect the line")
+      let redone=try darkPixelSample(near:probe)
+      if redone.count >= ink { try diagnose("redo",[("baseline",baseline),("undo",undone),("redo",redone)]) }
+      XCTAssertLessThan(redone.count,ink,"Redo must restore the cut, not resurrect the line")
       let actions=paper.value as? String
       app.buttons["drawing-tool-lasso"].tap()
       paper.coordinate(withNormalizedOffset:.init(dx:0.18,dy:0.22)).press(forDuration:0.02,
@@ -995,17 +1011,78 @@ import XCTest
     }
   }
 
-  private func darkPixels(near point:CGPoint) throws -> Int {
-    let image=try XCTUnwrap(app.screenshot().image.cgImage)
-    let scale=Double(image.width)/app.frame.width
-    let size=17,centerX=Int((point.x-app.frame.minX)*scale),centerY=Int((point.y-app.frame.minY)*scale)
+  private struct DarkPixelSample {
+    let screenshot:XCUIScreenshot
+    let croppedImage:CGImage
+    let imageSize:CGSize
+    let point:CGPoint
+    let crop:CGRect
+    let scale:CGFloat
+    let widthFrame:CGRect
+    let originXFrame:CGRect
+    let originYFrame:CGRect
+    let captureStarted:TimeInterval
+    let captureEnded:TimeInterval
+    let decodedAt:TimeInterval
+    let count:Int
+  }
+
+  private func darkPixels(near point:CGPoint) throws -> Int { try darkPixelSample(near:point).count }
+
+  private func darkPixelSample(near point:CGPoint) throws -> DarkPixelSample {
+    let captureStarted=ProcessInfo.processInfo.systemUptime
+    let screenshot=app.screenshot()
+    let captureEnded=ProcessInfo.processInfo.systemUptime
+    let image=try XCTUnwrap(screenshot.image.cgImage)
+    // Keep the original three AX frame reads and arithmetic order. These are
+    // separate observations, not an asserted screenshot-synchronous geometry.
+    let widthFrame=app.frame
+    let scale=Double(image.width)/widthFrame.width
+    let size=17
+    let originXFrame=app.frame
+    let centerX=Int((point.x-originXFrame.minX)*scale)
+    let originYFrame=app.frame
+    let centerY=Int((point.y-originYFrame.minY)*scale)
     let crop=CGRect(x:centerX-size/2,y:centerY-size/2,width:size,height:size)
     let sample=try XCTUnwrap(image.cropping(to:crop))
     var bytes=[UInt8](repeating:0,count:size*size*4)
     let context=try XCTUnwrap(CGContext(data:&bytes,width:size,height:size,bitsPerComponent:8,bytesPerRow:size*4,
       space:CGColorSpaceCreateDeviceRGB(),bitmapInfo:CGImageAlphaInfo.premultipliedLast.rawValue))
     context.draw(sample,in:.init(x:0,y:0,width:size,height:size))
-    return (0..<size*size).filter { bytes[$0*4] < 96 && bytes[$0*4+1] < 96 && bytes[$0*4+2] < 96 }.count
+    let count=(0..<size*size).filter { bytes[$0*4] < 96 && bytes[$0*4+1] < 96 && bytes[$0*4+2] < 96 }.count
+    return .init(screenshot:screenshot,croppedImage:sample,imageSize:.init(width:image.width,height:image.height),
+      point:point,crop:crop,scale:scale,widthFrame:widthFrame,originXFrame:originXFrame,originYFrame:originYFrame,
+      captureStarted:captureStarted,captureEnded:captureEnded,decodedAt:ProcessInfo.processInfo.systemUptime,count:count)
+  }
+
+  private func attachPageInkFailure(iteration:Int,stage:String,paper:XCUIElement,initialFrame:CGRect,
+    frameReadStarted:TimeInterval,frameReadEnded:TimeInterval,samples:[(String,DarkPixelSample)]) throws {
+    // Only after a failed sample: no new AX read, image capture or attachment
+    // delays the immediate eraser → Undo → Redo path being diagnosed.
+    let postStarted=ProcessInfo.processInfo.systemUptime
+    let postFrame=paper.frame
+    let postValue=paper.value as? String
+    let postEnded=ProcessInfo.processInfo.systemUptime
+    func rect(_ value:CGRect) -> [CGFloat] { [value.minX,value.minY,value.width,value.height] }
+    let prefix="page-ink-journey-\(iteration)-\(stage)-failure"
+    let observations:[[String:Any]]=samples.map { name,sample in
+      let full=XCTAttachment(screenshot:sample.screenshot)
+      full.name=prefix+"-"+name+"-full";full.lifetime = .keepAlways;add(full)
+      let crop=XCTAttachment(image:UIImage(cgImage:sample.croppedImage))
+      crop.name=prefix+"-"+name+"-crop";crop.lifetime = .keepAlways;add(crop)
+      return ["stage":name,"darkPixelCount":sample.count,"probe":[sample.point.x,sample.point.y],
+        "imageSizePixels":[sample.imageSize.width,sample.imageSize.height],"cropPixels":rect(sample.crop),"scale":sample.scale,
+        "appFrameReadsInOrder":[rect(sample.widthFrame),rect(sample.originXFrame),rect(sample.originYFrame)],
+        "captureStartedUptime":sample.captureStarted,"captureEndedUptime":sample.captureEnded,"decodedUptime":sample.decodedAt]
+    }
+    let evidence:[String:Any]=["iteration":iteration,"failedStage":stage,
+      "initialPaperFrame":rect(initialFrame),"initialFrameReadStartedUptime":frameReadStarted,"initialFrameReadEndedUptime":frameReadEnded,
+      "samples":observations,"postFailedCapturePaperFrame":rect(postFrame),"postFailedCapturePaperValue":postValue as Any? ?? NSNull(),
+      "postFailedCaptureReadStartedUptime":postStarted,"postFailedCaptureReadEndedUptime":postEnded,
+      "boundary":"The original probe, three captures, three app.frame reads per capture, crop and RGB predicate are unchanged. Post-failure AX is later than the measured screenshot, not a causal acceptance or presentation receipt."]
+    let attachment=XCTAttachment(data:try JSONSerialization.data(withJSONObject:evidence,options:[.prettyPrinted,.sortedKeys]),
+      uniformTypeIdentifier:"public.json")
+    attachment.name=prefix+"-geometry";attachment.lifetime = .keepAlways;add(attachment)
   }
 
   func testMeasuredPencilContactsCommitAndEraserRemainsReachable() throws {

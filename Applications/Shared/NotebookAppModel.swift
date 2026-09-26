@@ -2862,6 +2862,21 @@ final class NotebookAppModel {
       if let quickShape, case .append(let action) = change.mutation {
         suppressed.formUnion(quickShape.precedingStrokeIDs + [action.id])
       }
+      if NotebookNavigationObservation.enabled {
+        let mutationName: String, actionIDs: [UUID], actionCount: Int, active: JSONValue
+        switch change.mutation {
+        case .append(let action):
+          mutationName = "append"; actionIDs = [action.id]; actionCount = 1; active = .bool(action.isActive)
+        case .setActive(let ids, let value):
+          mutationName = "setActive"; actionIDs = Array(ids.prefix(64)); actionCount = ids.count; active = .bool(value)
+        }
+        NotebookNavigationObservation.recordInk("ink_accepted", fields: [
+          "pageID": .string(pageID.uuidString), "baseStamp": NotebookNavigationObservation.inkStamp(change.baseStamp),
+          "stamp": NotebookNavigationObservation.inkStamp(change.stamp), "mutation": .string(mutationName),
+          "actionIDs": .array(actionIDs.map { .string($0.uuidString) }), "active": active,
+          "actionCount": .number(Double(actionCount)), "actionIDsTruncated": .bool(actionCount > actionIDs.count),
+          "nativeRedo": .bool(nativeRedo)])
+      }
       pageInkPublication.publish(change, suppressedIDs: suppressed)
       return change
     } catch {

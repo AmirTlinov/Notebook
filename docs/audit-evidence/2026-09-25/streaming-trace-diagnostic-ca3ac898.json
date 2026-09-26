@@ -1,0 +1,212 @@
+{
+  "status": "failed_not_final_acceptance",
+  "localArchive": "/Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/.build/notebook-architecture-repair/evidence-2026-09-25/streaming-trace-diagnostic-ca3ac898",
+  "cases": [
+    {
+      "case": "ipad-testRealStreamingKeepsInkAndStopResponsive-8b9913db-115d-4552-84a7-d464e0c607aa",
+      "summary": {
+        "devicesAndConfigurations": [
+          {
+            "device": {
+              "architecture": "arm64",
+              "deviceId": "29BEF8B8-E3C5-4943-8408-9A616ECC863D",
+              "deviceName": "Notebook Architecture QA",
+              "modelName": "iPad Pro 13-inch (M5)",
+              "osBuildNumber": "24A434",
+              "osVersion": "27.0",
+              "platform": "iOS Simulator"
+            },
+            "expectedFailures": 0,
+            "failedTests": 1,
+            "passedTests": 0,
+            "skippedTests": 0,
+            "testPlanConfiguration": {
+              "configurationId": "1",
+              "configurationName": "Test Scheme Action"
+            }
+          }
+        ],
+        "environmentDescription": "NotebookAcceptanceUIHarness · Built with macOS 27.0",
+        "expectedFailures": 0,
+        "failedTests": 1,
+        "finishTime": 1790389320.229,
+        "passedTests": 0,
+        "result": "Failed",
+        "runtimeWarnings": [],
+        "skippedTests": 0,
+        "startTime": 1790389187.601,
+        "statistics": [],
+        "testFailures": [
+          {
+            "failureText": "XCTAssertTrue failed - A real assistant packet must arrive before testing overlap",
+            "targetName": "NotebookAcceptanceUITests",
+            "testIdentifier": 1,
+            "testIdentifierString": "NotebookAcceptanceUITests/testRealStreamingKeepsInkAndStopResponsive()",
+            "testIdentifierURL": "test://com.apple.xcode/NotebookAcceptanceUIHarness/NotebookAcceptanceUITests/NotebookAcceptanceUITests/testRealStreamingKeepsInkAndStopResponsive",
+            "testName": "testRealStreamingKeepsInkAndStopResponsive()"
+          }
+        ],
+        "title": "Test - NotebookAcceptanceUIHarness",
+        "topInsights": [],
+        "totalTestCount": 1
+      },
+      "scenario": {
+        "cleanupErrors": [],
+        "document": null,
+        "driverSHA256": "63b2d62b8f1c5422eae66d390ba9b339580fd61b754ceea5e22f8764b0a6d965",
+        "endedAt": 1790389321.453965,
+        "inputProfile": "Simulator direct contacts routed to the production Pencil owner",
+        "installedApplicationPreserved": true,
+        "interaction": null,
+        "launchManifest": "/Users/amir/Library/Developer/CoreSimulator/Devices/29BEF8B8-E3C5-4943-8408-9A616ECC863D/data/Containers/Data/Application/A7642950-AC24-4677-96B3-46C2758722CD/Documents/acceptance/8f16d786-dd22-4a11-824f-6bbe9ea12187/ipad-pencil-ff75b5a2-e7e0-40af-856d-573cce765826.json",
+        "navigationObservation": null,
+        "platform": "ipad",
+        "primaryError": {
+          "message": "Команда не прошла; журнал: /private/tmp/notebook-architecture-final-release-20260926T012009Z/runs/8f16d786-dd22-4a11-824f-6bbe9ea12187/ipad-testRealStreamingKeepsInkAndStopResponsive-8b9913db-115d-4552-84a7-d464e0c607aa/test.log",
+          "type": "ReleaseError"
+        },
+        "requestedWorkloadSeconds": null,
+        "runID": "8f16d786-dd22-4a11-824f-6bbe9ea12187",
+        "runnerExitCode": 65,
+        "scenario": "NotebookAcceptanceUITests/testRealStreamingKeepsInkAndStopResponsive",
+        "sceneObservation": null,
+        "simulator": {
+          "dataPath": "/Users/amir/Library/Developer/CoreSimulator/Devices/29BEF8B8-E3C5-4943-8408-9A616ECC863D/data",
+          "dataPathSize": 6850994176,
+          "deviceTypeIdentifier": "com.apple.CoreSimulator.SimDeviceType.iPad-Pro-13-inch-M5-12GB",
+          "isAvailable": true,
+          "lastUsedAt": "2026-09-25T01:24:16Z",
+          "logPath": "/Users/amir/Library/Logs/CoreSimulator/29BEF8B8-E3C5-4943-8408-9A616ECC863D",
+          "logPathSize": 462848,
+          "name": "Notebook Architecture QA",
+          "state": "Booted",
+          "udid": "29BEF8B8-E3C5-4943-8408-9A616ECC863D"
+        },
+        "simulatorDataContainer": "/Users/amir/Library/Developer/CoreSimulator/Devices/29BEF8B8-E3C5-4943-8408-9A616ECC863D/data/Containers/Data/Application/A7642950-AC24-4677-96B3-46C2758722CD",
+        "sourceRevision": "ca3ac898ec0c833c51196b1327d6fc49e34cadf6",
+        "sourceSHA256": "d88e45a9381fd1e16a63b23b95a15ec93e9a6cbde23ab06b58647fb07c1d6328",
+        "startedAt": 1790389185.697761,
+        "status": "failed",
+        "systemTraceLifecycleFinished": null,
+        "systemTraceScope": null,
+        "systemTraceSessionID": null,
+        "systemTraceTemplate": null,
+        "testBuild": {
+          "applicationBundleSHA256": "c26749c081d1faeac9a8d4bc4f18f940388a110977ea4af71a8525d26d24bbfa",
+          "applicationSourceSHA256": "d88e45a9381fd1e16a63b23b95a15ec93e9a6cbde23ab06b58647fb07c1d6328",
+          "build": "/private/tmp/notebook-streaming-diagnostic-20260926T0220",
+          "diagnosticOnly": true,
+          "runnerSHA256": "6fb45671eb45a089bd96a2b543cefef5541d8f2aedbcb53573f814cceac02cf5",
+          "testSourceSHA256": "bae167de99cd5479d6bbfe7f70579b612d39983b02ba18621bcc455967c49440"
+        },
+        "timeoutSeconds": 240
+      }
+    },
+    {
+      "case": "ipad-testSystemTraceAttachesToLaunchedApplication-152fc3e2-5157-4328-ac73-d570f1fab4e0",
+      "summary": {
+        "devicesAndConfigurations": [
+          {
+            "device": {
+              "architecture": "arm64",
+              "deviceId": "29BEF8B8-E3C5-4943-8408-9A616ECC863D",
+              "deviceName": "Notebook Architecture QA",
+              "modelName": "iPad Pro 13-inch (M5)",
+              "osBuildNumber": "24A434",
+              "osVersion": "27.0",
+              "platform": "iOS Simulator"
+            },
+            "expectedFailures": 0,
+            "failedTests": 1,
+            "passedTests": 0,
+            "skippedTests": 0,
+            "testPlanConfiguration": {
+              "configurationId": "1",
+              "configurationName": "Test Scheme Action"
+            }
+          }
+        ],
+        "environmentDescription": "NotebookAcceptanceUIHarness · Built with macOS 27.0",
+        "expectedFailures": 0,
+        "failedTests": 1,
+        "finishTime": 1790389413.792,
+        "passedTests": 0,
+        "result": "Failed",
+        "runtimeWarnings": [],
+        "skippedTests": 0,
+        "startTime": 1790389351.427,
+        "statistics": [],
+        "testFailures": [
+          {
+            "failureText": "failed: caught error: \"Failure(message: \"Owned system trace failed to finish after SIGINT\")\"",
+            "targetName": "NotebookAcceptanceUITests",
+            "testIdentifier": 1,
+            "testIdentifierString": "NotebookAcceptanceUITests/testSystemTraceAttachesToLaunchedApplication()",
+            "testIdentifierURL": "test://com.apple.xcode/NotebookAcceptanceUIHarness/NotebookAcceptanceUITests/NotebookAcceptanceUITests/testSystemTraceAttachesToLaunchedApplication",
+            "testName": "testSystemTraceAttachesToLaunchedApplication()"
+          }
+        ],
+        "title": "Test - NotebookAcceptanceUIHarness",
+        "topInsights": [],
+        "totalTestCount": 1
+      },
+      "scenario": {
+        "cleanupErrors": [
+          {
+            "message": "Owned trace cleanup failed: recording.stop: TraceError: Owned system trace failed to finish after SIGINT",
+            "stage": "trace.cancel",
+            "type": "TraceError"
+          }
+        ],
+        "document": null,
+        "driverSHA256": "63b2d62b8f1c5422eae66d390ba9b339580fd61b754ceea5e22f8764b0a6d965",
+        "endedAt": 1790389414.8752651,
+        "inputProfile": "Simulator direct contacts routed to the production Pencil owner",
+        "installedApplicationPreserved": true,
+        "interaction": null,
+        "launchManifest": "/Users/amir/Library/Developer/CoreSimulator/Devices/29BEF8B8-E3C5-4943-8408-9A616ECC863D/data/Containers/Data/Application/A7642950-AC24-4677-96B3-46C2758722CD/Documents/acceptance/8f16d786-dd22-4a11-824f-6bbe9ea12187/ipad-pencil-22f1981b-9aa9-4dc4-ae06-c4a033a7d299.json",
+        "navigationObservation": null,
+        "platform": "ipad",
+        "primaryError": {
+          "message": "Команда не прошла; журнал: /private/tmp/notebook-architecture-final-release-20260926T012009Z/runs/8f16d786-dd22-4a11-824f-6bbe9ea12187/ipad-testSystemTraceAttachesToLaunchedApplication-152fc3e2-5157-4328-ac73-d570f1fab4e0/test.log",
+          "type": "ReleaseError"
+        },
+        "requestedWorkloadSeconds": null,
+        "runID": "8f16d786-dd22-4a11-824f-6bbe9ea12187",
+        "runnerExitCode": 65,
+        "scenario": "NotebookAcceptanceUITests/testSystemTraceAttachesToLaunchedApplication",
+        "sceneObservation": null,
+        "simulator": {
+          "dataPath": "/Users/amir/Library/Developer/CoreSimulator/Devices/29BEF8B8-E3C5-4943-8408-9A616ECC863D/data",
+          "dataPathSize": 6850994176,
+          "deviceTypeIdentifier": "com.apple.CoreSimulator.SimDeviceType.iPad-Pro-13-inch-M5-12GB",
+          "isAvailable": true,
+          "lastUsedAt": "2026-09-25T01:24:16Z",
+          "logPath": "/Users/amir/Library/Logs/CoreSimulator/29BEF8B8-E3C5-4943-8408-9A616ECC863D",
+          "logPathSize": 462848,
+          "name": "Notebook Architecture QA",
+          "state": "Booted",
+          "udid": "29BEF8B8-E3C5-4943-8408-9A616ECC863D"
+        },
+        "simulatorDataContainer": "/Users/amir/Library/Developer/CoreSimulator/Devices/29BEF8B8-E3C5-4943-8408-9A616ECC863D/data/Containers/Data/Application/A7642950-AC24-4677-96B3-46C2758722CD",
+        "sourceRevision": "ca3ac898ec0c833c51196b1327d6fc49e34cadf6",
+        "sourceSHA256": "d88e45a9381fd1e16a63b23b95a15ec93e9a6cbde23ab06b58647fb07c1d6328",
+        "startedAt": 1790389348.7271721,
+        "status": "failed",
+        "systemTraceLifecycleFinished": false,
+        "systemTraceScope": "launched_private_app",
+        "systemTraceSessionID": "d3f1b643-fb67-42b3-aed5-47671c12336d",
+        "systemTraceTemplate": "Time Profiler",
+        "testBuild": {
+          "applicationBundleSHA256": "c26749c081d1faeac9a8d4bc4f18f940388a110977ea4af71a8525d26d24bbfa",
+          "applicationSourceSHA256": "d88e45a9381fd1e16a63b23b95a15ec93e9a6cbde23ab06b58647fb07c1d6328",
+          "build": "/private/tmp/notebook-streaming-diagnostic-20260926T0220",
+          "diagnosticOnly": true,
+          "runnerSHA256": "6fb45671eb45a089bd96a2b543cefef5541d8f2aedbcb53573f814cceac02cf5",
+          "testSourceSHA256": "bae167de99cd5479d6bbfe7f70579b612d39983b02ba18621bcc455967c49440"
+        },
+        "timeoutSeconds": 240
+      }
+    }
+  ]
+}

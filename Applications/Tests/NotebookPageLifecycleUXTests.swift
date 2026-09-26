@@ -120,6 +120,110 @@ import XCTest
     XCTAssertTrue(failures.isEmpty, "The curl froze stale accepted content: \(failures)")
   }
 
+  func testRepeatedInkUndoRedoAfterPageTurnsAndZoomKeepsTheAcceptedWarmMaterial() async throws {
+    let model = try await modelWithPages(2), notebook = try XCTUnwrap(model.workspace?.selectedItemID)
+    let root = try XCTUnwrap(model.notebookPageRoot(notebook))
+    XCTAssertEqual(model.selectNotebookPage(0, notebookID: notebook, expectedRoot: root), 0)
+    let initial = try await mount(model), owner = try pageOwner(initial.window)
+    let pageID = try XCTUnwrap(model.activePage?.id)
+    let camera = try XCTUnwrap(initial.window.gestureRecognizers?.compactMap {
+      $0.delegate as? WorkspaceGestureLayer.Coordinator
+    }.first)
+    for iteration in 0..<4 {
+      // The real retained sheets and mounted camera owner reproduce the pose
+      // changes between acceptance journeys. This is not a hardware tap test.
+      try await turn(owner, forward: true, completes: true)
+      try await turn(owner, forward: false, completes: true)
+      let center = CGPoint(x: initial.window.bounds.midX, y: initial.window.bounds.midY)
+      let scale = try XCTUnwrap(model.presence?.camera.scale)
+      camera.onCamera(.began(centroid: center))
+      camera.onCamera(.changed(scale: 1.08, velocity: 0.6, elapsed: 0.2, centroid: center))
+      camera.onCamera(.ended(scale: 1.08, velocity: 0.6, elapsed: 0.3, centroid: center))
+      try await assertUX("inverse-journey-\(iteration)-pose", since: .now,
+        budget: NotebookUXObservation.opening, window: initial.window) {
+        guard let shown = owner.sheetController.page?.view else { return false }
+        return model.presencePhase == .settled && model.activePage?.id == pageID
+          && initial.paper.isUserInteractionEnabled && initial.paper.isDescendant(of: shown)
+          && model.activePage.map { model.pagePresentations.isPresented($0) } == true
+      }
+      XCTAssertGreaterThan(try XCTUnwrap(model.presence?.camera.scale), scale)
+      let scene = try Scene(model: model, window: initial.window)
+      let ink = try XCTUnwrap((scene.paper.superview as? PaperCanvasContainerView)?.inkView)
+      var phase = "setup", phaseStart = ContinuousClock.now, phases: [String] = []
+      @MainActor func record(_ event: String) {
+        phases.append("\(phase) +\(phaseStart.duration(to: .now)): \(event); stamp=\(String(describing: model.activePage?.drawingStamp)); meshPrepare=\(ink.pageMeshPreparationCount); meshBuild=\(ink.pageMeshBuildCount); drawables=\(ink.drawableRequestCount); committedPass=\(ink.pageCommittedPassCount); geometryReady=\(ink.pageGeometryIsReady); stable=\(ink.isStableFramePresented)")
+      }
+      let receiveReadiness = ink.onRenderReadinessChange
+      ink.onRenderReadinessChange = { ready in
+        record("readiness=\(ready)")
+        receiveReadiness?(ready)
+      }
+      defer {
+        ink.onRenderReadinessChange = receiveReadiness
+        let note = XCTAttachment(string: phases.joined(separator: "\n"))
+        note.name = "inverse-journey-\(iteration)-accepted-render-phases"
+        note.lifetime = .keepAlways; add(note)
+      }
+      @MainActor func observe(_ name: String, probes: [Probe]) async throws {
+        var first: UIImage?, last: UIImage?
+        defer {
+          for (suffix, image) in [("first", first), ("last", last)] {
+            if let image {
+              let shot = XCTAttachment(image: image)
+              shot.name = "inverse-journey-\(iteration)-\(name)-\(suffix)"
+              shot.lifetime = .keepAlways; add(shot)
+            }
+          }
+        }
+        // The first read is deliberately immediate, but a stale first image is
+        // not granted an unbounded retry. The existing 100 ms clock includes
+        // input, every capture and the ordinary observation loop's frame yields.
+        try await assertUX("inverse-journey-\(iteration)-\(name)", since: phaseStart,
+          window: scene.window) {
+          let began = ContinuousClock.now
+          let image = try NotebookUXObservation.Pixels(window: scene.window).image
+          let captured = ContinuousClock.now
+          let failures = try NotebookSelectionComposition.Frame(image, sampling: probes).failures(probes)
+          if first == nil { first = image }
+          last = image
+          record("window image began=\(phaseStart.duration(to: began)); capture=\(began.duration(to: captured)); failures=\(failures)")
+          return failures.isEmpty
+        }
+      }
+      let y = 800.0 + Double(iteration) * 45
+      let body = probe("resident-line", [(220, y), (400, y)], .black, scene.pageToWindow)
+      let whole = [body, probe("line-center", [(300, y)], .black, scene.pageToWindow)]
+      let cut = [body, probe("accepted-cut", [(300, y)], .paper, scene.pageToWindow)]
+      model.selectPenColor(.black); model.selectPenWidth(12)
+      model.selectDrawingTool(.pen)
+      try await scene.readyPencil(self)
+      phase = "pen"; phaseStart = .now; record("before contact")
+      scene.beginPencil(.init(x: 180, y: y)); scene.movePencil(.init(x: 480, y: y)); scene.endPencil()
+      record("accepted lift")
+      try await observe("pen", probes: whole)
+      model.selectDrawingTool(.eraser); model.selectEraserWidth(28)
+      try await scene.readyPencil(self)
+      phase = "erase-undo"; phaseStart = .now; record("before contact")
+      scene.beginPencil(.init(x: 300, y: y - 25)); scene.movePencil(.init(x: 300, y: y + 25)); scene.endPencil()
+      record("accepted eraser lift")
+      let preparations = ink.pageMeshPreparationCount, builds = ink.pageMeshBuildCount
+      camera.onUndo() // No await, snapshot or source reread before the inverse.
+      record("accepted undo")
+      let eraser = try XCTUnwrap(model.activePage?.inkDrawing().actions.last)
+      XCTAssertEqual(eraser.tool, .eraser)
+      XCTAssertFalse(eraser.isActive)
+      try await observe("undo", probes: whole)
+      phase = "redo"; phaseStart = .now; record("before repeat")
+      camera.onRedo()
+      record("accepted redo")
+      XCTAssertEqual(try model.activePage?.inkDrawing().action(id: eraser.id)?.isActive, true)
+      try await observe("redo", probes: cut)
+      XCTAssertEqual(ink.pageMeshPreparationCount, preparations, "A warm inverse must not rebuild the retained page")
+      XCTAssertEqual(ink.pageMeshBuildCount, builds)
+    }
+    let saved = await model.finishPendingPersistence(); XCTAssertTrue(saved)
+  }
+
   func testPresentedLandingAdmitsTheNextReverseBeforeSwiftUIRepublishesInput() async throws {
     let model = try await modelWithPages(2, distinctLeaves: true)
     let notebook = try XCTUnwrap(model.workspace?.selectedItemID)
