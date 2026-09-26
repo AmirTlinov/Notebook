@@ -1,0 +1,386 @@
+{
+  "status": "failed_final_journeys_under_investigation",
+  "sourceRevision": "ca3ac898ec0c833c51196b1327d6fc49e34cadf6",
+  "sourceSHA256": "d88e45a9381fd1e16a63b23b95a15ec93e9a6cbde23ab06b58647fb07c1d6328",
+  "developmentBuild": false,
+  "workingTreeUnchanged": true,
+  "runID": "8f16d786-dd22-4a11-824f-6bbe9ea12187",
+  "workspaceID": "FC6BCF6B-8027-494D-9C04-792D793C498D",
+  "dataBytesPreservedDuringUpgrade": true,
+  "runs": [
+    {
+      "case": "ipad-testRealChatReplyThroughConnectedMac-9e8e97f7-1d44-40be-9474-89777f4809f8",
+      "summary": {
+        "devicesAndConfigurations": [
+          {
+            "device": {
+              "architecture": "arm64",
+              "deviceId": "29BEF8B8-E3C5-4943-8408-9A616ECC863D",
+              "deviceName": "Notebook Architecture QA",
+              "modelName": "iPad Pro 13-inch (M5)",
+              "osBuildNumber": "24A434",
+              "osVersion": "27.0",
+              "platform": "iOS Simulator"
+            },
+            "expectedFailures": 0,
+            "failedTests": 0,
+            "passedTests": 1,
+            "skippedTests": 0,
+            "testPlanConfiguration": {
+              "configurationId": "1",
+              "configurationName": "Test Scheme Action"
+            }
+          }
+        ],
+        "environmentDescription": "NotebookAcceptance · Built with macOS 27.0",
+        "expectedFailures": 0,
+        "failedTests": 0,
+        "finishTime": 1790386135.103,
+        "passedTests": 1,
+        "result": "Passed",
+        "runtimeWarnings": [],
+        "skippedTests": 0,
+        "startTime": 1790386101.961,
+        "statistics": [],
+        "testFailures": [],
+        "title": "Test - NotebookAcceptance",
+        "topInsights": [],
+        "totalTestCount": 1
+      },
+      "scenario": {
+        "cleanupErrors": [],
+        "document": null,
+        "driverSHA256": "63b2d62b8f1c5422eae66d390ba9b339580fd61b754ceea5e22f8764b0a6d965",
+        "endedAt": 1790386136.293417,
+        "inputProfile": "native touch",
+        "installedApplicationPreserved": true,
+        "interaction": null,
+        "launchManifest": "/Users/amir/Library/Developer/CoreSimulator/Devices/29BEF8B8-E3C5-4943-8408-9A616ECC863D/data/Containers/Data/Application/A7642950-AC24-4677-96B3-46C2758722CD/Documents/acceptance/8f16d786-dd22-4a11-824f-6bbe9ea12187/ipad-ui-c70334c6-3ef2-4090-86ff-fbb18cadbcf5.json",
+        "navigationObservation": null,
+        "platform": "ipad",
+        "primaryError": null,
+        "requestedWorkloadSeconds": null,
+        "runID": "8f16d786-dd22-4a11-824f-6bbe9ea12187",
+        "runnerExitCode": 0,
+        "scenario": "NotebookAcceptanceUITests/testRealChatReplyThroughConnectedMac",
+        "sceneObservation": null,
+        "simulator": {
+          "dataPath": "/Users/amir/Library/Developer/CoreSimulator/Devices/29BEF8B8-E3C5-4943-8408-9A616ECC863D/data",
+          "dataPathSize": 6850994176,
+          "deviceTypeIdentifier": "com.apple.CoreSimulator.SimDeviceType.iPad-Pro-13-inch-M5-12GB",
+          "isAvailable": true,
+          "lastUsedAt": "2026-09-25T01:24:16Z",
+          "logPath": "/Users/amir/Library/Logs/CoreSimulator/29BEF8B8-E3C5-4943-8408-9A616ECC863D",
+          "logPathSize": 462848,
+          "name": "Notebook Architecture QA",
+          "state": "Booted",
+          "udid": "29BEF8B8-E3C5-4943-8408-9A616ECC863D"
+        },
+        "simulatorDataContainer": "/Users/amir/Library/Developer/CoreSimulator/Devices/29BEF8B8-E3C5-4943-8408-9A616ECC863D/data/Containers/Data/Application/A7642950-AC24-4677-96B3-46C2758722CD",
+        "sourceRevision": "ca3ac898ec0c833c51196b1327d6fc49e34cadf6",
+        "sourceSHA256": "d88e45a9381fd1e16a63b23b95a15ec93e9a6cbde23ab06b58647fb07c1d6328",
+        "startedAt": 1790386099.839602,
+        "status": "passed",
+        "systemTraceLifecycleFinished": null,
+        "systemTraceScope": null,
+        "systemTraceSessionID": null,
+        "systemTraceTemplate": null,
+        "testBuild": null,
+        "timeoutSeconds": 240
+      },
+      "summarySHA256": "37d218336362e9c077aa7107e1f5fd7245df5e1cfe1ffb68f266b4d25132020a",
+      "scenarioSHA256": "b7d25379f722109d765125904b2a596a584d5ab19edc03b580c9100fc414110f",
+      "testLogSHA256": "0e61b426e598fb7b9e688268a75814f7d0a6196e404096203610d75d60a526cf"
+    },
+    {
+      "case": "ipad-testTenPageInkUndoLassoAndNavigationJourneys-85344a9b-2466-4c1c-9f52-b3788eb7d8f3",
+      "summary": {
+        "devicesAndConfigurations": [
+          {
+            "device": {
+              "architecture": "arm64",
+              "deviceId": "29BEF8B8-E3C5-4943-8408-9A616ECC863D",
+              "deviceName": "Notebook Architecture QA",
+              "modelName": "iPad Pro 13-inch (M5)",
+              "osBuildNumber": "24A434",
+              "osVersion": "27.0",
+              "platform": "iOS Simulator"
+            },
+            "expectedFailures": 0,
+            "failedTests": 1,
+            "passedTests": 0,
+            "skippedTests": 0,
+            "testPlanConfiguration": {
+              "configurationId": "1",
+              "configurationName": "Test Scheme Action"
+            }
+          }
+        ],
+        "environmentDescription": "NotebookAcceptance · Built with macOS 27.0",
+        "expectedFailures": 0,
+        "failedTests": 1,
+        "finishTime": 1790386206.332,
+        "passedTests": 0,
+        "result": "Failed",
+        "runtimeWarnings": [],
+        "skippedTests": 0,
+        "startTime": 1790386139.391,
+        "statistics": [],
+        "testFailures": [
+          {
+            "failureText": "XCTAssertLessThan failed: (\"96\") is not less than (\"96\") - Redo must restore the cut, not resurrect the line",
+            "targetName": "NotebookAcceptanceUITests",
+            "testIdentifier": 1,
+            "testIdentifierString": "NotebookAcceptanceUITests/testTenPageInkUndoLassoAndNavigationJourneys()",
+            "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookAcceptanceUITests/NotebookAcceptanceUITests/testTenPageInkUndoLassoAndNavigationJourneys",
+            "testName": "testTenPageInkUndoLassoAndNavigationJourneys()"
+          }
+        ],
+        "title": "Test - NotebookAcceptance",
+        "topInsights": [],
+        "totalTestCount": 1
+      },
+      "scenario": {
+        "cleanupErrors": [],
+        "document": null,
+        "driverSHA256": "63b2d62b8f1c5422eae66d390ba9b339580fd61b754ceea5e22f8764b0a6d965",
+        "endedAt": 1790386242.497076,
+        "inputProfile": "Simulator direct contacts routed to the production Pencil owner",
+        "installedApplicationPreserved": true,
+        "interaction": null,
+        "launchManifest": "/Users/amir/Library/Developer/CoreSimulator/Devices/29BEF8B8-E3C5-4943-8408-9A616ECC863D/data/Containers/Data/Application/A7642950-AC24-4677-96B3-46C2758722CD/Documents/acceptance/8f16d786-dd22-4a11-824f-6bbe9ea12187/ipad-pencil-ab535154-3494-4427-9efe-b84f1bd9f81d.json",
+        "navigationObservation": null,
+        "platform": "ipad",
+        "primaryError": {
+          "message": "Команда не прошла; журнал: /private/tmp/notebook-architecture-final-release-20260926T012009Z/runs/8f16d786-dd22-4a11-824f-6bbe9ea12187/ipad-testTenPageInkUndoLassoAndNavigationJourneys-85344a9b-2466-4c1c-9f52-b3788eb7d8f3/test.log",
+          "type": "ReleaseError"
+        },
+        "requestedWorkloadSeconds": null,
+        "runID": "8f16d786-dd22-4a11-824f-6bbe9ea12187",
+        "runnerExitCode": 65,
+        "scenario": "NotebookAcceptanceUITests/testTenPageInkUndoLassoAndNavigationJourneys",
+        "sceneObservation": null,
+        "simulator": {
+          "dataPath": "/Users/amir/Library/Developer/CoreSimulator/Devices/29BEF8B8-E3C5-4943-8408-9A616ECC863D/data",
+          "dataPathSize": 6850994176,
+          "deviceTypeIdentifier": "com.apple.CoreSimulator.SimDeviceType.iPad-Pro-13-inch-M5-12GB",
+          "isAvailable": true,
+          "lastUsedAt": "2026-09-25T01:24:16Z",
+          "logPath": "/Users/amir/Library/Logs/CoreSimulator/29BEF8B8-E3C5-4943-8408-9A616ECC863D",
+          "logPathSize": 462848,
+          "name": "Notebook Architecture QA",
+          "state": "Booted",
+          "udid": "29BEF8B8-E3C5-4943-8408-9A616ECC863D"
+        },
+        "simulatorDataContainer": "/Users/amir/Library/Developer/CoreSimulator/Devices/29BEF8B8-E3C5-4943-8408-9A616ECC863D/data/Containers/Data/Application/A7642950-AC24-4677-96B3-46C2758722CD",
+        "sourceRevision": "ca3ac898ec0c833c51196b1327d6fc49e34cadf6",
+        "sourceSHA256": "d88e45a9381fd1e16a63b23b95a15ec93e9a6cbde23ab06b58647fb07c1d6328",
+        "startedAt": 1790386136.537518,
+        "status": "failed",
+        "systemTraceLifecycleFinished": false,
+        "systemTraceScope": "launched_private_app",
+        "systemTraceSessionID": "64fc872a-e498-435c-b303-a5b2f69bdf4c",
+        "systemTraceTemplate": "Time Profiler",
+        "testBuild": null,
+        "timeoutSeconds": 660
+      },
+      "summarySHA256": "0082db0f25f28b102da97094c3319aba7a25a509cfd19caf44233cbda300065a",
+      "scenarioSHA256": "ac31a7ed947476ea16b7487455402ce053f7d5007df0390d7cf4cbd6984522b0",
+      "testLogSHA256": "f8bf44e436a44a73c5761a1dedbd7b82a86202a24d76eac264c67c90a6dc4d99"
+    },
+    {
+      "case": "ipad-testTenPageInkUndoLassoAndNavigationJourneys-cf7a5b68-053b-46e8-962c-c6ad4ca5f53a",
+      "summary": {
+        "devicesAndConfigurations": [
+          {
+            "device": {
+              "architecture": "arm64",
+              "deviceId": "29BEF8B8-E3C5-4943-8408-9A616ECC863D",
+              "deviceName": "Notebook Architecture QA",
+              "modelName": "iPad Pro 13-inch (M5)",
+              "osBuildNumber": "24A434",
+              "osVersion": "27.0",
+              "platform": "iOS Simulator"
+            },
+            "expectedFailures": 0,
+            "failedTests": 1,
+            "passedTests": 0,
+            "skippedTests": 0,
+            "testPlanConfiguration": {
+              "configurationId": "1",
+              "configurationName": "Test Scheme Action"
+            }
+          }
+        ],
+        "environmentDescription": "NotebookAcceptance · Built with macOS 27.0",
+        "expectedFailures": 0,
+        "failedTests": 1,
+        "finishTime": 1790386678.207,
+        "passedTests": 0,
+        "result": "Failed",
+        "runtimeWarnings": [],
+        "skippedTests": 0,
+        "startTime": 1790386596.485,
+        "statistics": [],
+        "testFailures": [
+          {
+            "failureText": "XCTAssertLessThan failed: (\"96\") is not less than (\"96\") - Redo must restore the cut, not resurrect the line",
+            "targetName": "NotebookAcceptanceUITests",
+            "testIdentifier": 1,
+            "testIdentifierString": "NotebookAcceptanceUITests/testTenPageInkUndoLassoAndNavigationJourneys()",
+            "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookAcceptanceUITests/NotebookAcceptanceUITests/testTenPageInkUndoLassoAndNavigationJourneys",
+            "testName": "testTenPageInkUndoLassoAndNavigationJourneys()"
+          }
+        ],
+        "title": "Test - NotebookAcceptance",
+        "topInsights": [],
+        "totalTestCount": 1
+      },
+      "scenario": {
+        "cleanupErrors": [],
+        "document": null,
+        "driverSHA256": "63b2d62b8f1c5422eae66d390ba9b339580fd61b754ceea5e22f8764b0a6d965",
+        "endedAt": 1790386679.4983199,
+        "inputProfile": "Simulator direct contacts routed to the production Pencil owner",
+        "installedApplicationPreserved": true,
+        "interaction": null,
+        "launchManifest": "/Users/amir/Library/Developer/CoreSimulator/Devices/29BEF8B8-E3C5-4943-8408-9A616ECC863D/data/Containers/Data/Application/A7642950-AC24-4677-96B3-46C2758722CD/Documents/acceptance/8f16d786-dd22-4a11-824f-6bbe9ea12187/ipad-pencil-e538c25d-d719-4af4-a996-2d5226932686.json",
+        "navigationObservation": null,
+        "platform": "ipad",
+        "primaryError": {
+          "message": "Команда не прошла; журнал: /private/tmp/notebook-architecture-final-release-20260926T012009Z/runs/8f16d786-dd22-4a11-824f-6bbe9ea12187/ipad-testTenPageInkUndoLassoAndNavigationJourneys-cf7a5b68-053b-46e8-962c-c6ad4ca5f53a/test.log",
+          "type": "ReleaseError"
+        },
+        "requestedWorkloadSeconds": null,
+        "runID": "8f16d786-dd22-4a11-824f-6bbe9ea12187",
+        "runnerExitCode": 65,
+        "scenario": "NotebookAcceptanceUITests/testTenPageInkUndoLassoAndNavigationJourneys",
+        "sceneObservation": null,
+        "simulator": {
+          "dataPath": "/Users/amir/Library/Developer/CoreSimulator/Devices/29BEF8B8-E3C5-4943-8408-9A616ECC863D/data",
+          "dataPathSize": 6850994176,
+          "deviceTypeIdentifier": "com.apple.CoreSimulator.SimDeviceType.iPad-Pro-13-inch-M5-12GB",
+          "isAvailable": true,
+          "lastUsedAt": "2026-09-25T01:24:16Z",
+          "logPath": "/Users/amir/Library/Logs/CoreSimulator/29BEF8B8-E3C5-4943-8408-9A616ECC863D",
+          "logPathSize": 462848,
+          "name": "Notebook Architecture QA",
+          "state": "Booted",
+          "udid": "29BEF8B8-E3C5-4943-8408-9A616ECC863D"
+        },
+        "simulatorDataContainer": "/Users/amir/Library/Developer/CoreSimulator/Devices/29BEF8B8-E3C5-4943-8408-9A616ECC863D/data/Containers/Data/Application/A7642950-AC24-4677-96B3-46C2758722CD",
+        "sourceRevision": "ca3ac898ec0c833c51196b1327d6fc49e34cadf6",
+        "sourceSHA256": "d88e45a9381fd1e16a63b23b95a15ec93e9a6cbde23ab06b58647fb07c1d6328",
+        "startedAt": 1790386594.2463849,
+        "status": "failed",
+        "systemTraceLifecycleFinished": null,
+        "systemTraceScope": null,
+        "systemTraceSessionID": null,
+        "systemTraceTemplate": null,
+        "testBuild": null,
+        "timeoutSeconds": 660
+      },
+      "summarySHA256": "90504ceac243543276b96e0e8bfabde2133ee71625f6cdec00f32763eb7c1591",
+      "scenarioSHA256": "192d6aefa48ce648dcc9fe56008521cc7401a523777b44c41ac5a1b2028f4d9c",
+      "testLogSHA256": "36f9e8a477cd80d0f3d365f7f27ddc58ac9082310ebb1066056ed7260c5c50ed"
+    },
+    {
+      "case": "mac-testDevicesStatusDoesNotRequireSetupOrChangeTheClipboard-49c3af73-44a5-4b84-a0a1-c6630d977744",
+      "summary": {
+        "devicesAndConfigurations": [
+          {
+            "device": {
+              "architecture": "arm64",
+              "deviceId": "00006050-001650DA01F9401C",
+              "deviceName": "My Mac",
+              "modelName": "MacBook Pro",
+              "osBuildNumber": "26A428",
+              "osVersion": "27.0",
+              "platform": "macOS"
+            },
+            "expectedFailures": 0,
+            "failedTests": 0,
+            "passedTests": 1,
+            "skippedTests": 0,
+            "testPlanConfiguration": {
+              "configurationId": "1",
+              "configurationName": "Test Scheme Action"
+            }
+          }
+        ],
+        "environmentDescription": "NotebookMacAcceptance · Built with macOS 27.0",
+        "expectedFailures": 0,
+        "failedTests": 0,
+        "finishTime": 1790386096.778,
+        "passedTests": 1,
+        "result": "Passed",
+        "runtimeWarnings": [],
+        "skippedTests": 0,
+        "startTime": 1790386086.47,
+        "statistics": [],
+        "testFailures": [],
+        "title": "Test - NotebookMacAcceptance",
+        "topInsights": [],
+        "totalTestCount": 1
+      },
+      "scenario": {
+        "cleanupErrors": [],
+        "document": null,
+        "driverSHA256": "63b2d62b8f1c5422eae66d390ba9b339580fd61b754ceea5e22f8764b0a6d965",
+        "endedAt": 1790386096.95611,
+        "inputProfile": "native touch",
+        "installedApplicationPreserved": null,
+        "interaction": null,
+        "launchManifest": "/Users/amir/Library/Application Support/NotebookAcceptance/8f16d786-dd22-4a11-824f-6bbe9ea12187/mac.json",
+        "navigationObservation": null,
+        "platform": "mac",
+        "primaryError": null,
+        "requestedWorkloadSeconds": null,
+        "runID": "8f16d786-dd22-4a11-824f-6bbe9ea12187",
+        "runnerExitCode": 0,
+        "scenario": "NotebookAcceptanceMacUITests/testDevicesStatusDoesNotRequireSetupOrChangeTheClipboard",
+        "sceneObservation": null,
+        "simulator": {
+          "dataPath": "/Users/amir/Library/Developer/CoreSimulator/Devices/29BEF8B8-E3C5-4943-8408-9A616ECC863D/data",
+          "dataPathSize": 6850994176,
+          "deviceTypeIdentifier": "com.apple.CoreSimulator.SimDeviceType.iPad-Pro-13-inch-M5-12GB",
+          "isAvailable": true,
+          "lastUsedAt": "2026-09-25T01:24:16Z",
+          "logPath": "/Users/amir/Library/Logs/CoreSimulator/29BEF8B8-E3C5-4943-8408-9A616ECC863D",
+          "logPathSize": 462848,
+          "name": "Notebook Architecture QA",
+          "state": "Booted",
+          "udid": "29BEF8B8-E3C5-4943-8408-9A616ECC863D"
+        },
+        "simulatorDataContainer": "/Users/amir/Library/Developer/CoreSimulator/Devices/29BEF8B8-E3C5-4943-8408-9A616ECC863D/data/Containers/Data/Application/A7642950-AC24-4677-96B3-46C2758722CD",
+        "sourceRevision": "ca3ac898ec0c833c51196b1327d6fc49e34cadf6",
+        "sourceSHA256": "d88e45a9381fd1e16a63b23b95a15ec93e9a6cbde23ab06b58647fb07c1d6328",
+        "startedAt": 1790386085.888236,
+        "status": "passed",
+        "systemTraceLifecycleFinished": null,
+        "systemTraceScope": null,
+        "systemTraceSessionID": null,
+        "systemTraceTemplate": null,
+        "testBuild": null,
+        "timeoutSeconds": 240
+      },
+      "summarySHA256": "5d78b3955b863dc326daf2f2c5c8f97c3cb5691e82d0a20f13a83a6158fcf884",
+      "scenarioSHA256": "be34bbfb0cf8a797f9ddf9d7f274a69cdb3231a7b44c5bec96116e03da2fd976",
+      "testLogSHA256": "0623a6b6b5794a5bb90f9982d04209d2002eb31c27e00e9f9ac8d632859b9a30"
+    }
+  ],
+  "observations": [
+    "Mac devices and connected real chat gates passed on the same clean Release build.",
+    "With app-only Time Profiler: journey 0 completed, journey 1 failed Redo pixel predicate (96 is not less than 96).",
+    "Without profiler on the same installed application: journeys 0 and 1 completed, journey 2 failed the same predicate.",
+    "Both runs preserve the installed application; no threshold changed.",
+    "Trace was cancelled after the failed test and failed to finish after SIGINT; no valid system metrics claimed.",
+    "Final 30-minute session has not started."
+  ],
+  "limitations": [
+    "The exact failing screenshot and geometry were not retained by the original predicate; cause remains undetermined.",
+    "Video shows a later correct cut, but separate timestamps do not establish exact input-to-display latency.",
+    "Simulator input and screenshots are not physical iPad FPS or Apple Pencil latency evidence."
+  ],
+  "localArchive": "/Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/.build/notebook-architecture-repair/evidence-2026-09-25/final-release-ca3ac898"
+}

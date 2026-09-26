@@ -6,14 +6,18 @@ import os
 import plistlib
 import signal
 import struct
+import sys
 import tempfile
 import threading
 import time
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 import uuid
 
 import system_trace as trace
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'Applications'))
+import notebook_acceptance as acceptance
 
 
 class Process:
@@ -64,7 +68,13 @@ class HandshakeTests(unittest.TestCase):
         self.stack.enter_context(patch.object(self.coordinator, '_check_liveness'))
         self.stack.enter_context(patch.object(trace.subprocess, 'run', side_effect=self.export))
         self.coordinator.start()
-        self.addCleanup(self.coordinator.cancel)
+        self.addCleanup(self.stop_coordinator)
+
+    def stop_coordinator(self):
+        # Explicit finish/cancel tests already joined and asserted their error.
+        # Cleanup owns only a fake recorder that the test left running.
+        if self.coordinator._thread.is_alive():
+            self.coordinator.cancel()
 
     def notification(self):
         value = StartNotification(); self.notifications[value.name] = value; return value
@@ -232,7 +242,33 @@ class HandshakeTests(unittest.TestCase):
         value=self.message();process=self.start_segment(value);self.coordinator.cancel()
         self.assertEqual(process.signals,[signal.SIGINT])
         self.assertIn('cancelled',self.ack(value,'failed')['error'])
-        self.assertTrue(trace.read_json(self.coordinator.evidence/'session.json')['cancelled'])
+        session=trace.read_json(self.coordinator.evidence/'session.json')
+        self.assertTrue(session['cancelled'])
+        self.assertEqual(session['cleanupErrors'],[])
+
+    def test_cancel_cleanup_failure_reaches_outer_receipt_without_replacing_ui_failure(self):
+        value=self.message();self.start_segment(value)
+        primary=ValueError('Original UI assertion failed')
+        recording=Mock()
+        cleanup=trace.TraceError('Owned system trace failed to finish after SIGINT')
+        with patch.object(self.coordinator,'_stop_process',side_effect=cleanup):
+            acceptance.finalize_ui_attempt(evidence=self.coordinator.evidence,
+                scenario={'scenario':'synthetic UI failure'},primary_error=primary,
+                trace=self.coordinator,trace_finished=False,recording=recording,
+                installed_before=None,simulator='unused')
+        recording.stop.assert_called_once_with()
+        session=trace.read_json(self.coordinator.evidence/'session.json')
+        self.assertEqual(session['primaryError'],{'type':'TraceError','message':'System trace cancelled'})
+        self.assertEqual(session['cleanupErrors'],[{'stage':'recording.stop','type':'TraceError',
+            'message':str(cleanup),'segmentID':value['segmentID']}])
+        receipt=trace.read_json(self.coordinator.evidence/'scenario.json')
+        self.assertEqual(receipt['status'],'failed')
+        self.assertEqual(receipt['primaryError'],{'type':'ValueError','message':str(primary)})
+        self.assertEqual(receipt['cleanupErrors'],[{'stage':'trace.cancel','type':'TraceError',
+            'message':'Owned trace cleanup failed: recording.stop: TraceError: '+str(cleanup)}])
+        self.assertTrue(any('Cleanup trace.cancel:' in note for note in primary.__notes__))
+        self.assertFalse(receipt['systemTraceLifecycleFinished'])
+        self.assertIsNone(self.coordinator._process)
 
     def test_no_handshake_is_not_a_successful_capture(self):
         with self.assertRaisesRegex(trace.TraceError,'No application process'):

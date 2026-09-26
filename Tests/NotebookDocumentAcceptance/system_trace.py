@@ -199,6 +199,13 @@ class TraceHandshake:
         self._cancel.set()
         self._stop.set()
         self._join()
+        # Cancellation is expected when the UI scenario already failed. A
+        # recorder/receipt cleanup failure is not: forward it to the outer
+        # cleanup owner without substituting the cancelled trace for that UI error.
+        if self._cleanup_errors:
+            details = '; '.join(item['stage']+': '+item['type']+': '+item['message']
+                                for item in self._cleanup_errors)
+            raise TraceError('Owned trace cleanup failed: '+details)
 
     def _join(self):
         if self._thread:
