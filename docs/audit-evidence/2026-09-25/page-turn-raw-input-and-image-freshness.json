@@ -1,0 +1,112 @@
+{
+  "date": "2026-09-26",
+  "productionBuild": 209,
+  "testSourceBeforePrivateInstrumentation": "c0be092624787628601b708f8b899be1ea6c6a745229fdf8e12b5e9f6a7d9092",
+  "instrumentedSourceSHA256": "49844f3e66273578887bedce46bb7fa1246bd21ead973aa6ed2708c000d9db5f",
+  "privatePhysicalRun": "/Users/amir/.codex/worktrees/page-turn-continuity/Notebook/.build/page-turn-210-private-footer-events/verification.json",
+  "baseline": {
+    "passedTests": 4,
+    "failedTests": 0,
+    "skippedTests": 0,
+    "runtimeWarnings": []
+  },
+  "scope": "Exact eight real pages in isolated test app; 72 footer steps (12 roundtrips 7→4→7) plus actual curl-image freshness after immediate SwiftUI change, ink lift and erase. UIApplication.sendEvent logs before forwarding exactly once; no recognizer probe. Private material and instrumentation removed after run.",
+  "eventCadence": "Observed touch timestamps approx50–58ms, not250ms.",
+  "captureMsObservedRange": [
+    33,
+    80
+  ],
+  "interpretation": "One complete baseline burst passed with afterScreenUpdates:true. Prior installed209 failure remains; neither old recognizer probe nor this pass establishes why a contact was absent. Main-thread capture blocking is observed, OS input loss causality is not established.",
+  "rejectedViewSnapshot": {
+    "resultBundle": "/Users/amir/.codex/worktrees/page-turn-continuity/Notebook/.build/page-turn-210-view-snapshot/ipad.xcresult",
+    "summary": {
+      "devicesAndConfigurations": [
+        {
+          "device": {
+            "architecture": "arm64",
+            "deviceId": "00008103-001E059934D9001E",
+            "deviceName": "iPad (Елизавета)",
+            "modelName": "iPad Pro (11-inch) (3rd generation)",
+            "osBuildNumber": "24A435",
+            "osVersion": "27.0",
+            "platform": "iOS"
+          },
+          "expectedFailures": 0,
+          "failedTests": 4,
+          "passedTests": 0,
+          "skippedTests": 0,
+          "testPlanConfiguration": {
+            "configurationId": "1",
+            "configurationName": "Test Scheme Action"
+          }
+        }
+      ],
+      "environmentDescription": "Notebook · Built with macOS 27.0",
+      "expectedFailures": 0,
+      "failedTests": 4,
+      "finishTime": 1790382580.275,
+      "passedTests": 0,
+      "result": "Failed",
+      "runtimeWarnings": [],
+      "skippedTests": 0,
+      "startTime": 1790382462.782,
+      "statistics": [],
+      "testFailures": [
+        {
+          "failureText": "XCTAssertEqual failed: (\"0\") is not equal to (\"1\")",
+          "targetName": "NotebookTests",
+          "testIdentifier": 1,
+          "testIdentifierString": "NotebookPageLifecycleUXTests/testAcceptedInkLiftIsPresentInTheImmediatelyRequestedCurlSource()",
+          "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/NotebookPageLifecycleUXTests/testAcceptedInkLiftIsPresentInTheImmediatelyRequestedCurlSource",
+          "testName": "testAcceptedInkLiftIsPresentInTheImmediatelyRequestedCurlSource()"
+        },
+        {
+          "failureText": "XCTAssertEqual failed: (\"0\") is not equal to (\"1\")",
+          "targetName": "NotebookTests",
+          "testIdentifier": 2,
+          "testIdentifierString": "NotebookPageLifecycleUXTests/testAcceptedShapeEraseIsPresentInTheImmediatelyRequestedCurlSource()",
+          "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/NotebookPageLifecycleUXTests/testAcceptedShapeEraseIsPresentInTheImmediatelyRequestedCurlSource",
+          "testName": "testAcceptedShapeEraseIsPresentInTheImmediatelyRequestedCurlSource()"
+        },
+        {
+          "failureText": "XCTUnwrap failed: expected non-nil value of type \"CGImageRef\"",
+          "targetName": "NotebookTests",
+          "testIdentifier": 4,
+          "testIdentifierString": "NotebookPageMotionUXTests/testCapturedCurlContainsTheImmediatelyUpdatedSwiftUISheet()",
+          "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/NotebookPageMotionUXTests/testCapturedCurlContainsTheImmediatelyUpdatedSwiftUISheet",
+          "testName": "testCapturedCurlContainsTheImmediatelyUpdatedSwiftUISheet()"
+        },
+        {
+          "failureText": "XCTAssertEqual failed: (\"0\") is not equal to (\"1\")",
+          "targetName": "NotebookTests",
+          "testIdentifier": 3,
+          "testIdentifierString": "NotebookPageLifecycleUXTests/testDenseVectorSheetsKeepTheirOwnPixelsThroughImmediateReversals()",
+          "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/NotebookPageLifecycleUXTests/testDenseVectorSheetsKeepTheirOwnPixelsThroughImmediateReversals",
+          "testName": "testDenseVectorSheetsKeepTheirOwnPixelsThroughImmediateReversals()"
+        }
+      ],
+      "title": "Test - Notebook",
+      "topInsights": [
+        {
+          "category": "Common Failures",
+          "impact": "75% of failures",
+          "text": "5 runs of 3 tests failed with XCTAssertEqual failed: (\"0\") is not equal to (\"1\")"
+        },
+        {
+          "category": "Common Failures",
+          "impact": "50% of failures",
+          "text": "2 runs of 2 tests failed with XCTUnwrap failed: expected non-nil value of type \"CGImageRef\" - The real curl must capture and present its source"
+        },
+        {
+          "category": "Common Failures",
+          "impact": "50% of failures",
+          "text": "2 runs of 2 tests failed with XCTAssertEqual failed: (\"nil\") is not equal to (\"Optional(true)\")"
+        }
+      ],
+      "totalTestCount": 4
+    },
+    "candidate": "snapshotView(afterScreenUpdates:true), then drawHierarchy(afterScreenUpdates:false) into CGImage",
+    "result": "0/4; no usable captured/presented source; original production source restored exactly. Not installed."
+  },
+  "status": "not_resolved_not_full_acceptance"
+}

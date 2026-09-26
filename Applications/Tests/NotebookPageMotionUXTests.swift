@@ -7,6 +7,49 @@ import XCTest
 /// Observe real native curl images, independently of the run-loop latency
 /// check: screenshot work must not be credited as display frames or FPS.
 @MainActor final class NotebookPageMotionUXTests: XCTestCase {
+  func testCapturedCurlContainsTheImmediatelyUpdatedSwiftUISheet() async throws {
+    let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+    let previous = scene.windows.first(where: \.isKeyWindow)
+    for reverse in [false, true] {
+      let window = UIWindow(windowScene: scene), native = IPadSheetCurlController()
+      let state = ImmediateSheetColour()
+      let changed = UIHostingController(rootView: ImmediateSheetView(state: state))
+      let other = UIViewController(); other.view.backgroundColor = .blue
+      window.rootViewController = native; window.makeKeyAndVisible()
+      defer { native.cancelMotion(); window.isHidden = true; window.rootViewController = nil; previous?.makeKey() }
+      native.show(reverse ? other : changed, direction: .forward, animated: false)
+      native.prepare(reverse ? changed : other)
+      try await Task.sleep(for: .milliseconds(30))
+      let curl = try XCTUnwrap(native.view.subviews.compactMap { $0 as? SheetCurlMetalView }.first)
+      let resolve = curl.onFrameResolved
+      var captured: CGImage?
+      native.onCaptureMeasured = { timing in state.events.append("capture \(timing.began)…\(timing.ended)") }
+      defer {
+        let note = XCTAttachment(string: state.events.joined(separator: "\n"))
+        note.name = "Immediate sheet capture reverse=\(reverse)"; note.lifetime = .keepAlways; add(note)
+      }
+      curl.onFrameResolved = { image, progress, receipt in
+        if captured == nil { captured = image }
+        resolve?(image, progress, receipt)
+      }
+      // No screenshot or intervening UI cycle may flush the pending update.
+      state.events.append("mutation \(CACurrentMediaTime())"); state.green = true
+      native.show(reverse ? changed : other, direction: reverse ? .reverse : .forward, animated: true)
+      let limit = ContinuousClock.now + .seconds(2)
+      while captured == nil, ContinuousClock.now < limit { try await Task.sleep(for: .milliseconds(2)) }
+      let cg = try XCTUnwrap(captured)
+      let pixel = try XCTUnwrap(cg.cropping(to: .init(x: cg.width/2, y: cg.height/2, width: 1, height: 1)))
+      var rgba = [UInt8](repeating: 0, count: 4)
+      rgba.withUnsafeMutableBytes { bytes in
+        CGContext(data: bytes.baseAddress, width: 1, height: 1, bitsPerComponent: 8, bytesPerRow: 4,
+          space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+          .draw(pixel, in: .init(x: 0, y: 0, width: 1, height: 1))
+      }
+      XCTAssertGreaterThan(rgba[1], 220, "Stale captured sheet, reverse=\(reverse): \(rgba)")
+      XCTAssertLessThan(rgba[0], 40, "Old red pixels must not reappear in the curl")
+    }
+  }
+
   func testInteractiveReverseDoesNotResurrectSourceAfterTheTargetAppears() async throws {
     let controller = IPadPageTurnController(), commands = NotebookPageNavigation(), owner = UUID()
     var selected = 0
@@ -505,4 +548,17 @@ final class NotebookCurlPan: UIPanGestureRecognizer {
   override var state: UIGestureRecognizer.State { get { phase } set { phase = newValue } }
   override func translation(in view: UIView?) -> CGPoint { offset }
   override func velocity(in view: UIView?) -> CGPoint { speed }
+}
+
+@MainActor private final class ImmediateSheetColour: ObservableObject {
+  @Published var green = false
+  var events: [String] = []
+  func color() -> Color {
+    events.append("body green=\(green) \(CACurrentMediaTime())")
+    return green ? Color(red: 0, green: 1, blue: 0) : Color(red: 1, green: 0, blue: 0)
+  }
+}
+private struct ImmediateSheetView: View {
+  @ObservedObject var state: ImmediateSheetColour
+  var body: some View { state.color().ignoresSafeArea() }
 }
