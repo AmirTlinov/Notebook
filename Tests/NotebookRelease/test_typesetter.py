@@ -12,6 +12,14 @@ class TypesetterPackagingTests(unittest.TestCase):
         self.root=fixture.stage(Path(temporary.name)/'runtime')
         for name,value in {'LOCK':fixture.LOCK,'input_digest':lambda:fixture.IDENTITY}.items():
             p=patch.object(runtime,name,value);p.start();self.addCleanup(p.stop)
+    def test_prepare_reuses_the_selected_stages_distribution_unless_explicitly_overridden(self):
+        for override in [None, self.root/'explicit.zip']:
+            with self.subTest(override=override), patch.object(runtime, 'prepare') as prepare:
+                args=['prepare_notebook_typesetter.py','--prepare','--platform','macosx','--stage',str(self.root)]
+                if override is not None:args += ['--distribution',str(override)]
+                with patch('sys.argv',args):runtime.main()
+                prepare.assert_called_once_with(self.root.resolve(),'macosx',fixture.IDENTITY,
+                    (override or self.root/'Resources/texlive.zip').resolve())
     def test_bundle_check_never_builds_or_changes_resources(self):
         before={p:p.stat().st_mtime_ns for p in self.root.rglob('*')}
         with patch.object(runtime.subprocess,'run',side_effect=AssertionError('not a builder')):

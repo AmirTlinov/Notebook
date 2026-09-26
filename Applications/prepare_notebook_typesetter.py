@@ -103,9 +103,9 @@ def prepare(stage,platform,identity,distribution):
 def main():
  p=argparse.ArgumentParser();p.add_argument('--prepare',action='store_true');p.add_argument('--check',action='store_true');p.add_argument('--platform',choices=['macosx','iphoneos','iphonesimulator'],required=True)
  p.add_argument('--stage',type=Path,default=ROOT/'.build/notebook-typesetter-runtime')
- p.add_argument('--distribution',type=Path,default=ROOT/'.build/notebook-typesetter-runtime/Resources/texlive.zip')
+ p.add_argument('--distribution',type=Path)
  args=p.parse_args();identity=input_digest()
- if args.prepare:prepare(args.stage.resolve(),args.platform,identity,args.distribution.resolve())
+ if args.prepare:prepare(args.stage.resolve(),args.platform,identity,(args.distribution or args.stage/'Resources/texlive.zip').resolve())
  else:check(args.stage.resolve(),args.platform,identity)
  print(args.stage.resolve())
 if __name__=='__main__':main()

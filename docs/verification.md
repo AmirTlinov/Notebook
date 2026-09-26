@@ -91,6 +91,10 @@ reduction 8,778%; физический порог пока не проверен
 cache нет, TeX-проходы и memory ceiling прежние.
 [Квитанция fontmap](audit-evidence/2026-09-25/typesetter-fontmap.json).
 
+Сборка из изолированного source snapshot теперь берёт закреплённый TeX distribution
+из выбранного runtime stage, а не повторно загружает 2,88 GB в каждый snapshot.
+Проверки pin/inventory сохранены; шесть адресных packaging tests — PASS.
+
 ## Среда и допустимые выводы
 
 - **USB iPad:** native UIKit/Metal/WebKit и реальные pixel captures в private test
