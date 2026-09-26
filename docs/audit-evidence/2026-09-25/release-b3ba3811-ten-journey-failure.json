@@ -1,0 +1,126 @@
+{
+  "sourceRevision": "b3ba38111416434da72aab6ebeade020451a1dfb",
+  "sourceSHA256": "b0cbc4c80abac72f3698cccf9ba71204c3b29e977de51abbb5a7a4b8ae0e603c",
+  "classification": "Clean Release acceptance attempt FAILED; no30-minute continuation was started",
+  "samePairDataBytesPreserved": true,
+  "installedIPadApplicationPreserved": true,
+  "cases": [
+    {
+      "name": "NotebookAcceptanceUITests/testTenPageInkUndoLassoAndNavigationJourneys",
+      "status": "failed",
+      "passedTests": 0,
+      "failedTests": 1,
+      "runnerExitCode": 65,
+      "cleanupErrors": [],
+      "runtimeWarnings": [],
+      "scenario": "run/ipad-testTenPageInkUndoLassoAndNavigationJourneys-bb0606da-dc4c-42b5-aa61-740af5c0818a/scenario.json",
+      "failure": [
+        {
+          "failureText": "XCTAssertLessThan failed: (\"96\") is not less than (\"96\") - Redo must restore the cut, not resurrect the line",
+          "targetName": "NotebookAcceptanceUITests",
+          "testIdentifier": 1,
+          "testIdentifierString": "NotebookAcceptanceUITests/testTenPageInkUndoLassoAndNavigationJourneys()",
+          "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookAcceptanceUITests/NotebookAcceptanceUITests/testTenPageInkUndoLassoAndNavigationJourneys",
+          "testName": "testTenPageInkUndoLassoAndNavigationJourneys()"
+        }
+      ]
+    },
+    {
+      "name": "NotebookAcceptanceMacUITests/testDevicesStatusDoesNotRequireSetupOrChangeTheClipboard",
+      "status": "passed",
+      "passedTests": 1,
+      "failedTests": 0,
+      "runnerExitCode": 0,
+      "cleanupErrors": [],
+      "runtimeWarnings": [],
+      "scenario": "run/mac-testDevicesStatusDoesNotRequireSetupOrChangeTheClipboard-9d9e5f5f-ee5e-4f6f-b647-62fc3279b703/scenario.json",
+      "failure": []
+    }
+  ],
+  "journeys": {
+    "required": 10,
+    "completedBeforeFailure": [
+      0,
+      1
+    ],
+    "failedZeroBasedIteration": 2,
+    "failure": "Redo screenshot96 is not less than Undo screenshot96; cut was not restored according to scenario pixel assertion.",
+    "completedJourneyScope": "Two full journey settlement attachments exist; this is not two passed XCTest cases or ten-journey PASS."
+  },
+  "trace": {
+    "scope": "launched_private_app",
+    "status": "cancelled_after_scenario_failure",
+    "lifecycleFinished": false,
+    "cleanupErrors": [],
+    "rawFileSaved": true,
+    "offlineExportSucceeded": true,
+    "durationSeconds": 80.863027,
+    "cpuRows": 11651,
+    "mainThreadRows": 7483,
+    "hangs": [
+      {
+        "testSeconds": [
+          9.458705291000001,
+          15.887547166000001
+        ],
+        "durationSeconds": 6.428841875,
+        "mainSamples": 11,
+        "alignment": "Overlaps XCTest retries looking for notebook-chat-toggle before the first search tap. Eleven running main-thread samples over6.429s do not attribute the blocked interval; some samples contain Network.nw_browser_start. Not the failedRedo interval."
+      },
+      {
+        "testSeconds": [
+          16.048761833,
+          16.189195333
+        ],
+        "durationSeconds": 0.1404335,
+        "mainSamples": 133,
+        "alignment": "First search presentation; top main stacks show SwiftUI/AttributeGraph dynamic properties and protocol conformance."
+      },
+      {
+        "testSeconds": [
+          17.915378583,
+          18.241466708
+        ],
+        "durationSeconds": 0.326088125,
+        "mainSamples": 230,
+        "alignment": "First search-field focus/keyboard display; top main stacks show TextInput cached-image open/mmap and UIKit keyboard rendering."
+      },
+      {
+        "testSeconds": [
+          20.898697708,
+          21.048011791
+        ],
+        "durationSeconds": 0.149314083,
+        "mainSamples": 138,
+        "alignment": "First search-result navigation; top main stacks show SwiftUI/AttributeGraph dynamic-property construction."
+      }
+    ],
+    "redoAssessment": "No potential-hangs row overlaps test84.87–85.54s.101 main running samples during this0.67s span include accessibility hierarchy snapshots and SwiftUI work; no repeated dominant CPU stack establishes a synchronous app loop. This does not prove gesture routing or erase/redo correctness.",
+    "symbolication": {
+      "status": "timed_out",
+      "timeoutSeconds": 25,
+      "matchingUUID": "F3C74D63-2A42-3A68-BDFF-D5FF7D42EFAA",
+      "loadAddress": "0x100824000",
+      "requestedAppAddresses": [
+        "0x10086dfa9",
+        "0x100a1dc91",
+        "0x100a21967",
+        "0x100a2d18f",
+        "0x100aa9c2b",
+        "0x100f7a75b",
+        "0x1011d3397",
+        "0x1011dd0bb"
+      ],
+      "assessment": "Exact dSYM UUID was verified. Bounded atos subprocess was terminated by timeout; no app-frame names inferred and no retry/import expansion."
+    }
+  },
+  "limitations": [
+    "Actual ten-journeyFAIL retained; GPU/FPS/memory/full acceptance not established.",
+    "Main ownership verified before scenario by existing live-mac-owner-before receipt; failing continuation never wrote an after-session owner receipt.",
+    "Time mapping rounded; trace cancelled on test failure. Raw trace usability does not establish successful END handshake.",
+    "Next steps depend on exact redo/input diagnosis; do not reset/reseed or relax thresholds."
+  ],
+  "localArchive": "/Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/.build/notebook-architecture-repair/evidence-2026-09-25/release-b3ba3811-ten-journey-failure-20260926T053756Z",
+  "filesManifestSHA256": "ef51acc99eee0cdce866cbea670188d30fa2269193622684b5eb4546a6fa6b2c",
+  "video": "/Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/.build/notebook-architecture-repair/evidence-2026-09-25/release-b3ba3811-ten-journey-failure-20260926T053756Z/run/ipad-testTenPageInkUndoLassoAndNavigationJourneys-bb0606da-dc4c-42b5-aa61-740af5c0818a/simulator.mp4"
+}

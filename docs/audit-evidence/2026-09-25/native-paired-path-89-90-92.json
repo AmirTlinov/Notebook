@@ -1,0 +1,110 @@
+{
+  "format": 1,
+  "kind": "diagnostic",
+  "evidenceDirectory": "/Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/.build/notebook-architecture-repair/evidence-2026-09-25/native-paired-path-89-90-92-20260926T0614Z",
+  "manifestSHA256": "1d6a350c83cf430890942a87e37ad5831bdf5c0d4438a1a1da7d687ba7790159",
+  "sourceRevision": "b3ba38111416434da72aab6ebeade020451a1dfb",
+  "selector": "NotebookTests/InkCanvasLifecycleTests/testWarmInverseWindowObservationSeparatesUIKitProjectedPageAndNativeMetal",
+  "runs": [
+    {
+      "run": 89,
+      "environment": "iPad Simulator",
+      "projectedRetainedTexture": true,
+      "sourceHashes": {
+        "Applications/Shared/InkCanvasView.swift": "720ab6b30938cf2e539e93c4fd74fa9c2024b5193534958ed6fa587f9c0b3349",
+        "Applications/Tests/InkCanvasLifecycleTests.swift": "9addf3fb9156c706a18b8d96ed7b3e5f62918905e21b9542f7afbedd5cbb8f5b"
+      },
+      "sourcesUnchanged": true,
+      "testResult": {
+        "result": "Passed",
+        "passedTests": 1,
+        "failedTests": 0,
+        "skippedTests": 0,
+        "runtimeWarnings": []
+      },
+      "rangeMs": {
+        "UIKit": [
+          52.180917,
+          57.414291
+        ],
+        "native": [
+          52.180917,
+          57.414291
+        ],
+        "projected": [
+          89.386208,
+          96.32350000000001
+        ]
+      },
+      "medianDeltaMs": 36.3556875
+    },
+    {
+      "run": 90,
+      "environment": "physical iPad",
+      "projectedRetainedTexture": true,
+      "sourceHashes": {
+        "Applications/Shared/InkCanvasView.swift": "720ab6b30938cf2e539e93c4fd74fa9c2024b5193534958ed6fa587f9c0b3349",
+        "Applications/Tests/InkCanvasLifecycleTests.swift": "9addf3fb9156c706a18b8d96ed7b3e5f62918905e21b9542f7afbedd5cbb8f5b"
+      },
+      "sourcesUnchanged": true,
+      "testResult": {
+        "result": "Passed",
+        "passedTests": 1,
+        "failedTests": 0,
+        "skippedTests": 0,
+        "runtimeWarnings": []
+      },
+      "rangeMs": {
+        "UIKit": [
+          53.566458999999995,
+          59.248374999999996
+        ],
+        "native": [
+          53.566458999999995,
+          59.248374999999996
+        ],
+        "projected": [
+          53.566458999999995,
+          59.248374999999996
+        ]
+      },
+      "medianDeltaMs": 0.0
+    },
+    {
+      "run": 92,
+      "environment": "iPad Simulator",
+      "projectedRetainedTexture": false,
+      "sourceHashes": {
+        "Applications/Shared/InkCanvasView.swift": "720ab6b30938cf2e539e93c4fd74fa9c2024b5193534958ed6fa587f9c0b3349",
+        "Applications/Tests/InkCanvasLifecycleTests.swift": "235f094f02292ccb2bb738e12dc8e81357e1de8bad8b13d546fc51860a2ea3cc"
+      },
+      "sourcesUnchanged": true,
+      "testResult": {
+        "result": "Passed",
+        "passedTests": 1,
+        "failedTests": 0,
+        "skippedTests": 0,
+        "runtimeWarnings": []
+      },
+      "rangeMs": {
+        "UIKit": [
+          54.149875,
+          57.465208
+        ],
+        "native": [
+          54.149875,
+          57.465208
+        ],
+        "projected": [
+          91.149125,
+          94.569292
+        ]
+      },
+      "medianDeltaMs": 36.8015625
+    }
+  ],
+  "conclusion": "Retained pass is not a necessary cause of Simulator-only projected-page window-observation differential; physical six phases show no differential. No production renderer fix justified; Release acceptance remains failed.",
+  "fullAcceptancePassed": false,
+  "displayMeasured": false,
+  "budgetMs": 100
+}

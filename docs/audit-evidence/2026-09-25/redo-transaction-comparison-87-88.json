@@ -1,0 +1,453 @@
+{
+  "classification": "Both variants FAIL the unchanged native Simulator 100 ms window-image gate; experiment rejected and reverted.",
+  "sourceRevision": "b3ba38111416434da72aab6ebeade020451a1dfb",
+  "sourceDifferences": [
+    {
+      "path": "Applications/Shared/InkCanvasView.swift",
+      "baselineSHA256": "720ab6b30938cf2e539e93c4fd74fa9c2024b5193534958ed6fa587f9c0b3349",
+      "candidateSHA256": "b7f5e9bf591fc04c57cba299812d0ff1aaeec60725181d38ec0266a615a6830c"
+    }
+  ],
+  "localArchive": "/Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/.build/notebook-architecture-repair/evidence-2026-09-25/native-redo-transaction-comparison-87-88-20260926T060214Z",
+  "filesManifestSHA256": "b1fd891ad9870f4961ef06bb8911d0455ab48f4aaf96f7139f81820cdc642306",
+  "files": 460,
+  "bytes": 15064334,
+  "restoration": {
+    "checkedAt": "2026-09-26T06:02:14.729691+00:00",
+    "head": "b3ba38111416434da72aab6ebeade020451a1dfb",
+    "statusPorcelain": "",
+    "inkSHA256": "720ab6b30938cf2e539e93c4fd74fa9c2024b5193534958ed6fa587f9c0b3349",
+    "restoredToBaseline": true
+  },
+  "runs": [
+    {
+      "run": 87,
+      "variant": "original async page presentation",
+      "passedTests": 1,
+      "failedTests": 2,
+      "skippedTests": 0,
+      "runtimeWarnings": [],
+      "changedSources": [],
+      "inkSHA256": "720ab6b30938cf2e539e93c4fd74fa9c2024b5193534958ed6fa587f9c0b3349",
+      "issueCount": 5,
+      "cases": [
+        {
+          "name": "AcceptedPageInputTests/testOrdinaryModelUndoAndRedoReachTheMountedIncrementalOwner()",
+          "result": "Passed",
+          "durationSeconds": 0.1466740369796753,
+          "issues": []
+        },
+        {
+          "name": "NotebookInteractionUXTests/testPageLiveEraserHasOnePaintOwnerThroughRetractionCancelAndAcceptedUndoRedo()",
+          "result": "Failed",
+          "durationSeconds": 1.3967690467834473,
+          "issues": [
+            {
+              "name": "XCTAssertTrue failed - UX one-native-page-mask-at-first-hit: correct=true, observed=110.21925 ms, ceiling=0.1 seconds; window observation, not photon timing",
+              "nodeType": "Failure Message",
+              "sourceLocation": {
+                "filePath": "/Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/Applications/Tests/NotebookPageEraserOwnershipTests.swift",
+                "lineNumber": 19
+              }
+            }
+          ]
+        },
+        {
+          "name": "NotebookPageLifecycleUXTests/testRepeatedInkUndoRedoAfterPageTurnsAndZoomKeepsTheAcceptedWarmMaterial()",
+          "result": "Failed",
+          "durationSeconds": 5.729365944862366,
+          "issues": [
+            {
+              "name": "XCTAssertTrue failed - UX inverse-journey-0-redo: correct=true, observed=109.715875 ms, ceiling=0.1 seconds; window observation, not photon timing",
+              "nodeType": "Failure Message",
+              "sourceLocation": {
+                "filePath": "/Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/Applications/Tests/NotebookPageLifecycleUXTests.swift",
+                "lineNumber": 181
+              }
+            },
+            {
+              "name": "XCTAssertTrue failed - UX inverse-journey-1-redo: correct=true, observed=109.329541 ms, ceiling=0.1 seconds; window observation, not photon timing",
+              "nodeType": "Failure Message",
+              "sourceLocation": {
+                "filePath": "/Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/Applications/Tests/NotebookPageLifecycleUXTests.swift",
+                "lineNumber": 181
+              }
+            },
+            {
+              "name": "XCTAssertTrue failed - UX inverse-journey-2-pen: correct=true, observed=107.859584 ms, ceiling=0.1 seconds; window observation, not photon timing",
+              "nodeType": "Failure Message",
+              "sourceLocation": {
+                "filePath": "/Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/Applications/Tests/NotebookPageLifecycleUXTests.swift",
+                "lineNumber": 181
+              }
+            },
+            {
+              "name": "XCTAssertTrue failed - UX inverse-journey-2-redo: correct=true, observed=114.944292 ms, ceiling=0.1 seconds; window observation, not photon timing",
+              "nodeType": "Failure Message",
+              "sourceLocation": {
+                "filePath": "/Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/Applications/Tests/NotebookPageLifecycleUXTests.swift",
+                "lineNumber": 181
+              }
+            }
+          ]
+        }
+      ],
+      "cycles": [
+        {
+          "cycle": 0,
+          "phases": [
+            {
+              "operation": "pen",
+              "acceptedMs": 0.742916,
+              "firstReadyMs": 21.266375,
+              "firstCorrectRecordMs": 76.1225,
+              "uxObservedMs": 76.1595,
+              "captureCount": 3,
+              "staleCapturesAfterReady": 1,
+              "withinBudget": true
+            },
+            {
+              "operation": "undo",
+              "acceptedMs": 0.722084,
+              "firstReadyMs": null,
+              "firstCorrectRecordMs": 16.266417,
+              "uxObservedMs": 16.292042,
+              "captureCount": 1,
+              "staleCapturesAfterReady": 0,
+              "withinBudget": true
+            },
+            {
+              "operation": "redo",
+              "acceptedMs": 0.108042,
+              "firstReadyMs": 28.52975,
+              "firstCorrectRecordMs": 109.688834,
+              "uxObservedMs": 109.715875,
+              "captureCount": 4,
+              "staleCapturesAfterReady": 2,
+              "withinBudget": false
+            }
+          ]
+        },
+        {
+          "cycle": 1,
+          "phases": [
+            {
+              "operation": "pen",
+              "acceptedMs": 3.306959,
+              "firstReadyMs": 26.032417,
+              "firstCorrectRecordMs": 78.766334,
+              "uxObservedMs": 78.800167,
+              "captureCount": 3,
+              "staleCapturesAfterReady": 1,
+              "withinBudget": true
+            },
+            {
+              "operation": "undo",
+              "acceptedMs": 1.766625,
+              "firstReadyMs": null,
+              "firstCorrectRecordMs": 16.837084,
+              "uxObservedMs": 16.867167,
+              "captureCount": 1,
+              "staleCapturesAfterReady": 0,
+              "withinBudget": true
+            },
+            {
+              "operation": "redo",
+              "acceptedMs": 0.110708,
+              "firstReadyMs": 30.812,
+              "firstCorrectRecordMs": 109.296541,
+              "uxObservedMs": 109.329541,
+              "captureCount": 4,
+              "staleCapturesAfterReady": 2,
+              "withinBudget": false
+            }
+          ]
+        },
+        {
+          "cycle": 2,
+          "phases": [
+            {
+              "operation": "pen",
+              "acceptedMs": 0.694375,
+              "firstReadyMs": 21.297042,
+              "firstCorrectRecordMs": 107.822125,
+              "uxObservedMs": 107.859584,
+              "captureCount": 4,
+              "staleCapturesAfterReady": 2,
+              "withinBudget": false
+            },
+            {
+              "operation": "undo",
+              "acceptedMs": 0.765917,
+              "firstReadyMs": null,
+              "firstCorrectRecordMs": 16.486292,
+              "uxObservedMs": 16.502834,
+              "captureCount": 1,
+              "staleCapturesAfterReady": 0,
+              "withinBudget": true
+            },
+            {
+              "operation": "redo",
+              "acceptedMs": 0.1075,
+              "firstReadyMs": 21.365708,
+              "firstCorrectRecordMs": 114.910333,
+              "uxObservedMs": 114.944292,
+              "captureCount": 4,
+              "staleCapturesAfterReady": 2,
+              "withinBudget": false
+            }
+          ]
+        },
+        {
+          "cycle": 3,
+          "phases": [
+            {
+              "operation": "pen",
+              "acceptedMs": 3.421208,
+              "firstReadyMs": 25.834667,
+              "firstCorrectRecordMs": 76.676208,
+              "uxObservedMs": 76.710792,
+              "captureCount": 3,
+              "staleCapturesAfterReady": 1,
+              "withinBudget": true
+            },
+            {
+              "operation": "undo",
+              "acceptedMs": 0.745625,
+              "firstReadyMs": null,
+              "firstCorrectRecordMs": 14.987,
+              "uxObservedMs": 15.008333,
+              "captureCount": 1,
+              "staleCapturesAfterReady": 0,
+              "withinBudget": true
+            },
+            {
+              "operation": "redo",
+              "acceptedMs": 0.146041,
+              "firstReadyMs": 21.8755,
+              "firstCorrectRecordMs": 78.530916,
+              "uxObservedMs": 78.5585,
+              "captureCount": 3,
+              "staleCapturesAfterReady": 1,
+              "withinBudget": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "run": 88,
+      "variant": "experimental transaction presentation for idle stable page",
+      "passedTests": 1,
+      "failedTests": 2,
+      "skippedTests": 0,
+      "runtimeWarnings": [],
+      "changedSources": [],
+      "inkSHA256": "b7f5e9bf591fc04c57cba299812d0ff1aaeec60725181d38ec0266a615a6830c",
+      "issueCount": 4,
+      "cases": [
+        {
+          "name": "AcceptedPageInputTests/testOrdinaryModelUndoAndRedoReachTheMountedIncrementalOwner()",
+          "result": "Passed",
+          "durationSeconds": 0.15214002132415771,
+          "issues": []
+        },
+        {
+          "name": "NotebookInteractionUXTests/testPageLiveEraserHasOnePaintOwnerThroughRetractionCancelAndAcceptedUndoRedo()",
+          "result": "Failed",
+          "durationSeconds": 0.7975319623947144,
+          "issues": [
+            {
+              "name": "XCTAssertTrue failed - UX one-native-page-mask-at-first-hit: correct=true, observed=104.699292 ms, ceiling=0.1 seconds; window observation, not photon timing",
+              "nodeType": "Failure Message",
+              "sourceLocation": {
+                "filePath": "/Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/Applications/Tests/NotebookPageEraserOwnershipTests.swift",
+                "lineNumber": 19
+              }
+            }
+          ]
+        },
+        {
+          "name": "NotebookPageLifecycleUXTests/testRepeatedInkUndoRedoAfterPageTurnsAndZoomKeepsTheAcceptedWarmMaterial()",
+          "result": "Failed",
+          "durationSeconds": 5.668480038642883,
+          "issues": [
+            {
+              "name": "XCTAssertTrue failed - UX inverse-journey-0-redo: correct=true, observed=113.200459 ms, ceiling=0.1 seconds; window observation, not photon timing",
+              "nodeType": "Failure Message",
+              "sourceLocation": {
+                "filePath": "/Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/Applications/Tests/NotebookPageLifecycleUXTests.swift",
+                "lineNumber": 181
+              }
+            },
+            {
+              "name": "XCTAssertTrue failed - UX inverse-journey-1-redo: correct=true, observed=115.667083 ms, ceiling=0.1 seconds; window observation, not photon timing",
+              "nodeType": "Failure Message",
+              "sourceLocation": {
+                "filePath": "/Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/Applications/Tests/NotebookPageLifecycleUXTests.swift",
+                "lineNumber": 181
+              }
+            },
+            {
+              "name": "XCTAssertTrue failed - UX inverse-journey-2-redo: correct=true, observed=112.422792 ms, ceiling=0.1 seconds; window observation, not photon timing",
+              "nodeType": "Failure Message",
+              "sourceLocation": {
+                "filePath": "/Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/Applications/Tests/NotebookPageLifecycleUXTests.swift",
+                "lineNumber": 181
+              }
+            }
+          ]
+        }
+      ],
+      "cycles": [
+        {
+          "cycle": 0,
+          "phases": [
+            {
+              "operation": "pen",
+              "acceptedMs": 0.799333,
+              "firstReadyMs": 22.432416,
+              "firstCorrectRecordMs": 76.203708,
+              "uxObservedMs": 76.238875,
+              "captureCount": 3,
+              "staleCapturesAfterReady": 1,
+              "withinBudget": true
+            },
+            {
+              "operation": "undo",
+              "acceptedMs": 1.704042,
+              "firstReadyMs": null,
+              "firstCorrectRecordMs": 17.491333,
+              "uxObservedMs": 17.516417,
+              "captureCount": 1,
+              "staleCapturesAfterReady": 0,
+              "withinBudget": true
+            },
+            {
+              "operation": "redo",
+              "acceptedMs": 0.145084,
+              "firstReadyMs": 31.470875,
+              "firstCorrectRecordMs": 113.166292,
+              "uxObservedMs": 113.200459,
+              "captureCount": 4,
+              "staleCapturesAfterReady": 2,
+              "withinBudget": false
+            }
+          ]
+        },
+        {
+          "cycle": 1,
+          "phases": [
+            {
+              "operation": "pen",
+              "acceptedMs": 2.975791,
+              "firstReadyMs": 23.951125,
+              "firstCorrectRecordMs": 81.082666,
+              "uxObservedMs": 81.111875,
+              "captureCount": 3,
+              "staleCapturesAfterReady": 1,
+              "withinBudget": true
+            },
+            {
+              "operation": "undo",
+              "acceptedMs": 0.837084,
+              "firstReadyMs": null,
+              "firstCorrectRecordMs": 16.077042,
+              "uxObservedMs": 16.105334,
+              "captureCount": 1,
+              "staleCapturesAfterReady": 0,
+              "withinBudget": true
+            },
+            {
+              "operation": "redo",
+              "acceptedMs": 0.122041,
+              "firstReadyMs": 24.26825,
+              "firstCorrectRecordMs": 115.631875,
+              "uxObservedMs": 115.667083,
+              "captureCount": 4,
+              "staleCapturesAfterReady": 2,
+              "withinBudget": false
+            }
+          ]
+        },
+        {
+          "cycle": 2,
+          "phases": [
+            {
+              "operation": "pen",
+              "acceptedMs": 0.812209,
+              "firstReadyMs": 26.887584,
+              "firstCorrectRecordMs": 77.653959,
+              "uxObservedMs": 77.690875,
+              "captureCount": 3,
+              "staleCapturesAfterReady": 1,
+              "withinBudget": true
+            },
+            {
+              "operation": "undo",
+              "acceptedMs": 1.640459,
+              "firstReadyMs": null,
+              "firstCorrectRecordMs": 16.474875,
+              "uxObservedMs": 16.491334,
+              "captureCount": 1,
+              "staleCapturesAfterReady": 0,
+              "withinBudget": true
+            },
+            {
+              "operation": "redo",
+              "acceptedMs": 0.137209,
+              "firstReadyMs": 25.73875,
+              "firstCorrectRecordMs": 112.397375,
+              "uxObservedMs": 112.422792,
+              "captureCount": 4,
+              "staleCapturesAfterReady": 2,
+              "withinBudget": false
+            }
+          ]
+        },
+        {
+          "cycle": 3,
+          "phases": [
+            {
+              "operation": "pen",
+              "acceptedMs": 0.659042,
+              "firstReadyMs": 27.049292,
+              "firstCorrectRecordMs": 76.657709,
+              "uxObservedMs": 76.693334,
+              "captureCount": 3,
+              "staleCapturesAfterReady": 1,
+              "withinBudget": true
+            },
+            {
+              "operation": "undo",
+              "acceptedMs": 0.747083,
+              "firstReadyMs": null,
+              "firstCorrectRecordMs": 15.286458,
+              "uxObservedMs": 15.31875,
+              "captureCount": 1,
+              "staleCapturesAfterReady": 0,
+              "withinBudget": true
+            },
+            {
+              "operation": "redo",
+              "acceptedMs": 0.134958,
+              "firstReadyMs": 23.510417,
+              "firstCorrectRecordMs": 86.31075,
+              "uxObservedMs": 86.342375,
+              "captureCount": 3,
+              "staleCapturesAfterReady": 1,
+              "withinBudget": true
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "limitations": [
+    "Readiness callback on Simulator is GPU command completion/readiness, not evidence of drawable display or physical pixels.",
+    "Window capture includes capture cost and may return after the fixed 100 ms deadline; correct=true with observed>100 ms remains FAIL.",
+    "Undo is immediately issued after eraser lift without waiting for the cut. The original whole line can satisfy the pixel oracle before a ready callback; null readiness means not recorded in that phase, not zero latency.",
+    "All phase timings use each native test phase ContinuousClock origin before input, not video PTS or physical input timestamps.",
+    "Four cycles per variant are a bounded negative control, not a distributional performance proof, 10-journey acceptance or 30-minute session."
+  ]
+}

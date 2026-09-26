@@ -1,0 +1,142 @@
+{
+  "experiment": 91,
+  "scope": "One exact private physical PID Time Profiler attempt; clean optimized build; no source changes",
+  "baseHEAD": "b3ba38111416434da72aab6ebeade020451a1dfb",
+  "buildExit": 0,
+  "coordinatorExit": 1,
+  "testExit": 65,
+  "traceExit": 21,
+  "attempts": 1,
+  "traceStarted": false,
+  "rawTraceAvailable": false,
+  "cpuAttribution": "unassessed",
+  "failure": "Cannot find process for provided pid: 15075",
+  "exactPrivatePID": 15075,
+  "samePrivateTargetStillListedAfterAttachFailure": true,
+  "naturalTestFinalization": true,
+  "testRepetitions": [
+    {
+      "repetition": 1,
+      "result": "Failed",
+      "testDurationSeconds": 3.076619029045105,
+      "correctDocument": true,
+      "observedMS": 2327.249042,
+      "ceilingSeconds": 1.0,
+      "failure": "XCTAssertTrue failed - UX document-other-board-installed: correct=true, observed=2327.249042 ms, ceiling=1.0 seconds; window observation, not photon timing"
+    },
+    {
+      "repetition": 2,
+      "result": "Failed",
+      "testDurationSeconds": 2.390262007713318,
+      "correctDocument": true,
+      "observedMS": 1959.422584,
+      "ceilingSeconds": 1.0,
+      "failure": "XCTAssertTrue failed - UX document-other-board-installed: correct=true, observed=1959.422584 ms, ceiling=1.0 seconds; window observation, not photon timing"
+    },
+    {
+      "repetition": 3,
+      "result": "Failed",
+      "testDurationSeconds": 2.417153000831604,
+      "correctDocument": true,
+      "observedMS": 1973.016208,
+      "ceilingSeconds": 1.0,
+      "failure": "XCTAssertTrue failed - UX document-other-board-installed: correct=true, observed=1973.016208 ms, ceiling=1.0 seconds; window observation, not photon timing"
+    },
+    {
+      "repetition": 4,
+      "result": "Failed",
+      "testDurationSeconds": 2.400739908218384,
+      "correctDocument": true,
+      "observedMS": 1955.456584,
+      "ceilingSeconds": 1.0,
+      "failure": "XCTAssertTrue failed - UX document-other-board-installed: correct=true, observed=1955.456584 ms, ceiling=1.0 seconds; window observation, not photon timing"
+    },
+    {
+      "repetition": 5,
+      "result": "Failed",
+      "testDurationSeconds": 2.4177370071411133,
+      "correctDocument": true,
+      "observedMS": 1974.5663749999999,
+      "ceilingSeconds": 1.0,
+      "failure": "XCTAssertTrue failed - UX document-other-board-installed: correct=true, observed=1974.5663749999999 ms, ceiling=1.0 seconds; window observation, not photon timing"
+    },
+    {
+      "repetition": 6,
+      "result": "Failed",
+      "testDurationSeconds": 2.4455639123916626,
+      "correctDocument": true,
+      "observedMS": 2001.332,
+      "ceilingSeconds": 1.0,
+      "failure": "XCTAssertTrue failed - UX document-other-board-installed: correct=true, observed=2001.332 ms, ceiling=1.0 seconds; window observation, not photon timing"
+    },
+    {
+      "repetition": 7,
+      "result": "Failed",
+      "testDurationSeconds": 2.407142996788025,
+      "correctDocument": true,
+      "observedMS": 1997.7959580000002,
+      "ceilingSeconds": 1.0,
+      "failure": "XCTAssertTrue failed - UX document-other-board-installed: correct=true, observed=1997.7959580000002 ms, ceiling=1.0 seconds; window observation, not photon timing"
+    },
+    {
+      "repetition": 8,
+      "result": "Failed",
+      "testDurationSeconds": 2.410544991493225,
+      "correctDocument": true,
+      "observedMS": 1964.198333,
+      "ceilingSeconds": 1.0,
+      "failure": "XCTAssertTrue failed - UX document-other-board-installed: correct=true, observed=1964.198333 ms, ceiling=1.0 seconds; window observation, not photon timing"
+    },
+    {
+      "repetition": 9,
+      "result": "Failed",
+      "testDurationSeconds": 2.4025280475616455,
+      "correctDocument": true,
+      "observedMS": 1955.6846249999999,
+      "ceilingSeconds": 1.0,
+      "failure": "XCTAssertTrue failed - UX document-other-board-installed: correct=true, observed=1955.6846249999999 ms, ceiling=1.0 seconds; window observation, not photon timing"
+    },
+    {
+      "repetition": 10,
+      "result": "Failed",
+      "testDurationSeconds": 2.4055670499801636,
+      "correctDocument": true,
+      "observedMS": 1961.205916,
+      "ceilingSeconds": 1.0,
+      "failure": "XCTAssertTrue failed - UX document-other-board-installed: correct=true, observed=1961.205916 ms, ceiling=1.0 seconds; window observation, not photon timing"
+    }
+  ],
+  "passedRepetitions": 0,
+  "failedRepetitions": 10,
+  "uniqueSelectors": 1,
+  "runtimeWarnings": 0,
+  "sourcesAndRuntime": {
+    "head": "b3ba38111416434da72aab6ebeade020451a1dfb",
+    "sourceCount": 1761,
+    "sourcesUnchanged": true,
+    "gitStatusClean": true,
+    "allPriorRuntimePlatformsChecked": [
+      "iphoneos",
+      "iphonesimulator",
+      "macosx"
+    ],
+    "runtimeManifestUnchanged": true,
+    "sourceWitnessSHA256": "ffa985d602c4634f47ef845992b89da24e1f44ac218b2df527605f91e7ef8434",
+    "afterWitnessSHA256": "1630f9f5e5139514879c3b583d4710c6bbd3d030abad7f3f5d6bed72c0e5fe77",
+    "verifiedAt": "2026-09-26T05:59:20.105135+00:00"
+  },
+  "leaseReleasedAt": "2026-09-26T05:59:40Z",
+  "buildEvidence": "/tmp/notebook-typesetter-physical-profile-91-build-20260926T055652Z",
+  "runEvidence": "/tmp/notebook-typesetter-physical-profile-91-20260926T055726Z",
+  "limitations": [
+    "No usable Time Profiler recording or worker stacks; no CPU/FPS/duty/wait attribution.",
+    "CoreDevice listing does not prove Instruments attach availability; cause remains unresolved.",
+    "The 1s ceilings were not changed; correct document pixels did not pass latency.",
+    "No retry, name fallback, all-process capture, source instrumentation, precompile barrier, test gate or device reset.",
+    "No per-stage phase attachments in this clean uninstrumented run."
+  ],
+  "sealedArchivePath": "/Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/.build/notebook-architecture-repair/evidence-2026-09-25/physical-typesetter-cpu-91-attach-failed-20260926T060025Z",
+  "manifestSHA256": "63db8fda22a6fb4e92f5ecffc903674e4134fe3e5fcbf41a4e7eda2d4c1b9bcc",
+  "archiveFiles": 210,
+  "archiveBytes": 9139177
+}

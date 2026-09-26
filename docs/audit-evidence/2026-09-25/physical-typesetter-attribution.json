@@ -1,0 +1,110 @@
+{
+  "kind": "temporary physical native typography attribution, not acceptance",
+  "baseHEAD": "b3ba38111416434da72aab6ebeade020451a1dfb",
+  "evidencePath": "/tmp/notebook-typesetter-native-20260926T054241Z",
+  "manifestSHA256": "abb16a13078bf2e4481820f36a2de1dda93969ffe35b09a17edc0c2310d13837",
+  "files": 99,
+  "bytes": 1999670,
+  "tests": {
+    "passed": 0,
+    "failed": 2,
+    "runtimeWarnings": 0,
+    "exitCode": 65,
+    "assertionSecondsUnchanged": 1,
+    "correctDocumentBoth": true,
+    "observedMS": {
+      "otherBoard": 2417.287084,
+      "sameBoard": 2093.628875
+    }
+  },
+  "attribution": [
+    {
+      "documentID": "84644ECE-D309-4900-B872-37B242904FEB",
+      "revision": "0@5393e6b4-d53b-40c7-8364-14a7647c9def",
+      "identityMatched": true,
+      "artifactA_MS": 1749.63275,
+      "nativeN_MS": 1718.749,
+      "outsideNativeResidualMS": 30.883749999999964,
+      "nativeFractionOfArtifact": 0.9823484385508902,
+      "derivedIntervalsMS": {
+        "materializeSourceAssetsFormatFontsMS": 5.267,
+        "wasiSetupMS": 0.309,
+        "arenaMapMS": 0.015,
+        "guestStartupMS": 2.11,
+        "texPass1MS": 808.639,
+        "texPass2MS": 525.164,
+        "xdvipdfmxMS": 375.779,
+        "engineCleanupThroughArenaReleaseMS": 1.442
+      },
+      "profile": {
+        "total_ms": 1718.749,
+        "zip_index_ms": 275.524,
+        "zip_indexes": 1,
+        "bundle_read_ms": 341.08,
+        "bundle_reads": 473,
+        "failed_reads": 130,
+        "decode_crc_ms": 63.813,
+        "decoded_bytes": 28617034,
+        "untracked_reads": 0
+      }
+    },
+    {
+      "documentID": "F370A5D0-46A1-48E6-8BED-60BAC24057ED",
+      "revision": "0@ebcc3a77-5782-4633-ae64-42eb4e471c49",
+      "identityMatched": true,
+      "artifactA_MS": 1459.850625,
+      "nativeN_MS": 1431.524,
+      "outsideNativeResidualMS": 28.32662500000015,
+      "nativeFractionOfArtifact": 0.9805962168218408,
+      "derivedIntervalsMS": {
+        "materializeSourceAssetsFormatFontsMS": 1.956,
+        "wasiSetupMS": 0.013,
+        "arenaMapMS": 0.004,
+        "guestStartupMS": 0.344,
+        "texPass1MS": 528.666,
+        "texPass2MS": 523.898,
+        "xdvipdfmxMS": 374.927,
+        "engineCleanupThroughArenaReleaseMS": 1.689
+      },
+      "profile": {
+        "total_ms": 1431.524,
+        "zip_index_ms": 0.0,
+        "zip_indexes": 0,
+        "bundle_read_ms": 64.991,
+        "bundle_reads": 473,
+        "failed_reads": 130,
+        "decode_crc_ms": 63.97,
+        "decoded_bytes": 28617034,
+        "untracked_reads": 0
+      }
+    }
+  ],
+  "interpretation": "Native dominates ~98% of artifact time. Cold central index costs275.524ms once; warm ZIP read/decode ~65ms; two TeX passes ~524-529ms each after cold index, xdvipdfmx~375ms. Format/input/font materialization <=5.267ms aggregate, clone not separately isolated. Remaining Swift/native-output aggregate28-31ms does not support cache-save bottleneck; no further Swift instrumentation or production fix performed.",
+  "restoration": {
+    "restoredAt": "2026-09-26T05:50:16.638955+00:00",
+    "head": "b3ba38111416434da72aab6ebeade020451a1dfb",
+    "gitStatusClean": true,
+    "exactSourceHashesRestored": true,
+    "runtimeInputSHA256": "cae9f4874213d24096ca772a2db67154524f7f2cf5227ede8527abc92f711f6b",
+    "platforms": [
+      "iphoneos",
+      "iphonesimulator",
+      "macosx"
+    ],
+    "privateDiagnosticProductIsNotCleanRelease": true,
+    "flockReleasedAt": "2026-09-26T05:50:24Z",
+    "flockOwnerPID": 31117,
+    "flockOwnerExited": true,
+    "leaseReleasedToRootAt": "2026-09-26T05:50:34Z"
+  },
+  "limitations": [
+    "Nested read/index/decode timings are not additive.",
+    "Native report excludes some final validation/marshalling; residual is not cache-save timing.",
+    "Instrumentation overhead uncalibrated; failed1s budgets retained.",
+    "Installed private diagnostic app/test product still instrumented; rebuild from clean restored runtime before clean native tests.",
+    "Production and isolated Acceptance pair were not accessed."
+  ],
+  "sealedArchivePath": "/Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/.build/notebook-architecture-repair/evidence-2026-09-25/physical-native-typesetter-diagnostic-20260926T055130Z",
+  "sealedArchiveManifestSHA256": "abb16a13078bf2e4481820f36a2de1dda93969ffe35b09a17edc0c2310d13837",
+  "sealedArchiveVerified": true
+}
