@@ -459,5 +459,30 @@
       "bytes": 23851
     },
     "boundary": "Прямой прицельный SwiftPM-запуск; не native verification.json."
+  },
+  "releasePackaging": {
+    "sourceSHA256": "73d2893a2bcfd9ab407bee7024db29f1414fe703e6e15e3cbfa7843424ff8a38",
+    "changedInputsSinceFunctional18": [
+      "Applications/notebook_release.py",
+      "Tests/NotebookRelease/run.py"
+    ],
+    "purpose": "Сборка Mac повторно использует проверяемый подготовленный Codex/Node runtime вместо нового скачивания из каждого immutable snapshot. Версии и правила подписи не менялись.",
+    "refusedAttempt": {
+      "path": "/private/tmp/notex-release-212-20260927T0015Z/build.json",
+      "sha256": "3ada12c470904f5d33c51d7b098d69b7af8566917842339aa1deb05a1ceebd21",
+      "bytes": 433
+    },
+    "cause": "TLS timeout при повторном скачивании Codex; iPad был собран, установка не выполнялась.",
+    "verification": {
+      "path": "/Users/amir/.codex/worktrees/notex-integration/Notebook/.build/notex-release-stage-final-19/verification.json",
+      "sha256": "e43be680cdc0b8dcabcf3ed1fa34a06651148b7bb2025d297a9d020c14a95a3f",
+      "bytes": 335108
+    },
+    "releaseContractTests": 69,
+    "verificationContractTests": 90,
+    "macRegressionPassed": 1,
+    "physicalIPadRegressionPassed": 1,
+    "codexVersion": "0.155.0",
+    "nodeVersion": "v24.21.0"
   }
 }

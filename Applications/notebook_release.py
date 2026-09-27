@@ -464,8 +464,8 @@ def prepare_typesetter_runtime(source, command, platform, stage=None):
     return stage
 
 
-def prepare_codex_runtime(source, command):
-    stage = Path(source) / ".build/notebook-codex-runtime"
+def prepare_codex_runtime(source, command, stage=None):
+    stage = Path(stage or Path(source) / ".build/notebook-codex-runtime").resolve()
     command("codex-resources", [sys.executable, "-B", Path(source) / "Applications/prepare_notebook_codex.py",
         "--stage", stage], cwd=source, timeout=1800)
     return stage
@@ -514,9 +514,9 @@ def restrict_test_script_services(app, source, command, *, bundle_identifier, si
     command("test-host-seal-verify", ["/usr/bin/codesign", "--verify", "--deep", "--strict", app])
 
 
-def build_mac(snapshot, evidence, command, typesetter_runtime):
+def build_mac(snapshot, evidence, command, typesetter_runtime, codex_runtime):
     typescript_runtime = prepare_typescript_runtime(snapshot, command)
-    prepare_codex_runtime(snapshot, command)
+    codex_runtime = prepare_codex_runtime(snapshot, command, stage=codex_runtime)
     entitlements = evidence / "mac.entitlements"
     entitlements.write_bytes(plistlib.dumps({"com.apple.security.get-task-allow": True, **cloud_entitlements(mac=True)}))
     command("build-mac", ["/usr/bin/xcrun", "xcodebuild", "-project",
@@ -527,6 +527,7 @@ def build_mac(snapshot, evidence, command, typesetter_runtime):
         "CODE_SIGN_STYLE=Automatic", "CODE_SIGNING_ALLOWED=YES", "CODE_SIGNING_REQUIRED=YES",
         "CODE_SIGN_IDENTITY=Apple Development", "NOTEBOOK_CLOUD_CONTAINER=" + CLOUD_CONTAINER, "NOTEBOOK_MAC_ENTITLEMENTS=" + str(entitlements),
         "NOTEBOOK_TYPESETTER_RUNTIME=" + str(typesetter_runtime),
+        "NOTEBOOK_CODEX_RUNTIME=" + str(codex_runtime),
         "NOTEBOOK_TYPESCRIPT_RUNTIME=" + str(typescript_runtime),
         "SWIFT_OPTIMIZATION_LEVEL=" + SWIFT_OPTIMIZATION, "ARCHS=arm64", "build"],
         cwd=snapshot, timeout=1800)
@@ -706,7 +707,7 @@ def build_verified_pair(source, verification, evidence, runner=None):
         prepare_typesetter_runtime(snapshot, command, "macosx", stage=runtime)
         ipad = build_ipad(snapshot, evidence, command, runtime)
         ipad_info, ipad_signature, ipad_uuids, ipad_manifest = inspect_ipad(ipad, device, evidence, command)
-        mac = build_mac(snapshot, evidence, command, runtime)
+        mac = build_mac(snapshot, evidence, command, runtime, source / ".build/notebook-codex-runtime")
         mac_info, mac_signature, mac_uuids, mac_manifest = inspect_mac(mac, command)
         require(all(ipad_info[key] == mac_info[key] for key in ("CFBundleVersion", "CFBundleShortVersionString")),
                 "Пара собрана с разными версиями приложений.")
