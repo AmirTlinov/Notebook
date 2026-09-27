@@ -1,0 +1,23 @@
+{
+  "format": 1,
+  "scope": "Merged source on USB iPad Pro 11-inch (3rd generation), iOS 27; private optimized build, one selected Xcode run",
+  "sourceSHA256": "e2930d4def71c17cc72d08178e77cc62089d1fe02fbc4a0ad00cef5f4e76674d",
+  "result": "9 PASS / 1 FAIL / 0 skipped, 0 runtime warnings",
+  "passed": [
+    "Seven NotebookPageCurlInteractionTests",
+    "Last visible pen Redo correct in 56.324 ms with retained active backing",
+    "Last-pen Undo/Redo among 100000 actions correct in 20.888/23.025 ms without full mesh/history rebuild"
+  ],
+  "failed": {
+    "test": "NotebookPageMotionUXTests/testTenForwardReverseTurnsMeetFirstPresentationAndLandingDeadlines",
+    "reason": "At least one zero/dropped OS presentation timestamp; first bend and frame cadence also miss unchanged budgets",
+    "turns": 10,
+    "firstBendMS": {"min": 70.840, "max": 109.891, "budget": 16.67},
+    "maxDisplayedGapMS": 16.673,
+    "cadenceBudgetHZ": 120,
+    "unpresentedProgressTurns": [0, 1, 7, 8],
+    "landingMS": {"min": 386.299, "max": 428.169}
+  },
+  "rawResult": "/Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/.build/notebook-architecture-repair/evidence-2026-09-27/merge-curl-ink-192/ipad.xcresult",
+  "boundary": "The shared shader removes the protective flat primer and selected functional checks pass, but OS first-bend/cadence FAIL. Timing attachments come from this exact source; no threshold was raised. This is not final 30-minute acceptance."
+}

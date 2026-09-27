@@ -162,10 +162,12 @@ import XCTest
         let rgba = pixel(image)
         XCTAssertGreaterThan(rgba[0], 240, "The current red source was replaced with stale pixels: \(rgba)")
         XCTAssertLessThan(rgba[2], 15, "Old blue source leaked into the curl: \(rgba)")
-        XCTAssertTrue([32,64].contains(image.bitsPerPixel), "The native source is admitted before capture, not converted on main")
-        let drawableBytes = ((image.width * 4 + 255) / 256) * 256 * image.height * curl.drawableCount
+        XCTAssertTrue([32, 64].contains(image.bitsPerPixel), "UIKit preserves its native colour range")
+        let imageBytes = image.bytesPerRow * image.height
+        let textureBytes = ((image.width * 4 + 255) / 256) * 256 * image.height
         XCTAssertGreaterThanOrEqual(try XCTUnwrap(curl.frameLease).byteCount,
-          image.bytesPerRow * image.height + drawableBytes, "The larger source must not bypass shared admission")
+          imageBytes * 2 + textureBytes * (2 + curl.drawableCount),
+          "Both native captures, both sampled textures and every drawable must be admitted")
         native.cancelMotion()
         XCTAssertTrue(native.view.subviews.last === source.view)
         XCTAssertTrue(native.view.subviews.contains { $0 === curl }, "A turn must not rebuild the Metal view")

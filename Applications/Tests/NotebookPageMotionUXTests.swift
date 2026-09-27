@@ -384,7 +384,7 @@ import XCTest
     }
   }
 
-  func testFirstPresentedCurlPrimesTheSourceBeforeExposingTheOtherLeaf() async throws {
+  func testFirstPresentedCurlBendsTheCompletePairWithoutAFlatPrimingFrame() async throws {
     let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
     let previous = scene.windows.first(where: \.isKeyWindow), window = UIWindow(windowScene: scene)
     let native = IPadSheetCurlController(), blue = UIViewController(), red = UIViewController()
@@ -412,8 +412,9 @@ import XCTest
       while native.page !== target, ContinuousClock.now < limit { try await Task.sleep(for: .milliseconds(2)) }
       XCTAssertTrue(native.page === target)
       XCTAssertTrue(try XCTUnwrap(first).isReady)
-      XCTAssertEqual(firstProgress, turn.isMultiple(of: 2) ? 0 : 1,
-        "The first displayed drawable must match the live source, not expose the next page before its pixels exist")
+      let progress = try XCTUnwrap(firstProgress)
+      XCTAssertGreaterThan(progress, 0)
+      XCTAssertLessThan(progress, 1, "A complete pair can start bending in its first presented frame")
       XCTAssertTrue(underlay === (turn.isMultiple(of: 2) ? blue.view : red.view))
     }
   }
@@ -450,7 +451,7 @@ import XCTest
     }
   }
 
-  func testFlatReverseInstallsItsLiveUnderlayBeforeRetiringTheCurl() async throws {
+  func testOpaqueReverseKeepsLiveSourceUntilItsPresentedEndpoint() async throws {
     let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
     let previous = scene.windows.first(where: \.isKeyWindow), window = UIWindow(windowScene: scene)
     let native = IPadSheetCurlController(), source = UIViewController(), target = UIViewController()
@@ -475,15 +476,18 @@ import XCTest
       let limit = ContinuousClock.now + .seconds(2)
       while shown != 1 - progress, ContinuousClock.now < limit { try await Task.sleep(for: .milliseconds(2)) }
       XCTAssertEqual(shown, 1 - progress)
-      XCTAssertTrue(curl.presentsWithTransaction,
-        "Interior frames cannot detach an earlier reveal from UIKit's still-open transaction")
-      XCTAssertTrue(try XCTUnwrap(curl.layer as? CAMetalLayer).presentsWithTransaction,
-        "The display link bypasses MTKView.draw; its actual Metal layer must participate in the transaction")
+      XCTAssertFalse(curl.presentsWithTransaction,
+        "A complete opaque pair does not require a blocking UIKit scheduling fence per frame")
       XCTAssertTrue(native.page === source, "Holding the endpoint does not accept the gesture")
       let layers = native.view.subviews
       XCTAssertTrue(layers.last === curl)
-      XCTAssertTrue(layers.dropLast().last === (progress == 1 ? target.view : source.view),
-        "The exact live underlay must be installed before the curl can retire; otherwise the compositor flashes the old leaf")
+      XCTAssertTrue(layers.dropLast().last === source.view,
+        "Until landing, a missing drawable must expose the source, never an unconfirmed destination")
+      if progress == 1 {
+        let pixels = try NotebookUXObservation.Pixels(window: window)
+        XCTAssertTrue(try pixels.matches([(.init(x: window.bounds.midX, y: window.bounds.midY), .red)]),
+          "The opaque curl, not a prematurely swapped live underlay, must show the reverse endpoint")
+      }
     }
     native.endInteractiveTurn(completed: true)
     XCTAssertTrue(native.page === target)
@@ -534,11 +538,12 @@ import XCTest
             XCTAssertEqual(completions, [completes], "Lift must accept the already displayed endpoint without waiting for a duplicate frame")
           } else {
             XCTAssertFalse(endpointPresented)
-            XCTAssertTrue(completions.isEmpty, "Lift without a displayed endpoint is not presentation")
+            XCTAssertEqual(completions, completes ? [] : [false],
+              "Only an uncaptured cancellation may finish without a new displayed frame")
           }
           let limit = CACurrentMediaTime() + 2
           while completions.isEmpty, CACurrentMediaTime() < limit { try await Task.sleep(for: .milliseconds(2)) }
-          XCTAssertTrue(endpointPresented)
+          XCTAssertEqual(endpointPresented, completes || holdsEndpoint)
           XCTAssertEqual(completions, [completes])
           XCTAssertTrue(native.page === (completes ? target : source))
           pan.phase = .began; pan.offset.x = sign * 20
@@ -762,6 +767,7 @@ import XCTest
         frames.append((progress, presentedAt, CACurrentMediaTime()))
         forwardReadiness?(image, progress, sequence, readiness)
       }
+      defer { curl.onFrameReady = forwardReadiness; curl.onFrameMeasured = nil }
       let start = CACurrentMediaTime()
       XCTAssertTrue(commands.send(.step(target == 1 ? 1 : -1), ownerID: owner, source: "motion-timing"))
       let commandReturned = CACurrentMediaTime()

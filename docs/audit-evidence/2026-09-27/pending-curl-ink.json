@@ -1,0 +1,68 @@
+{
+  "format": 1,
+  "scope": "Нативный Metal-изгиб страницы, GPU presentation и тёплый Undo/Redo. Отдельный проверенный срез перед завершением смешанного выделения.",
+  "sourceSHA256": "a5191af8a12068853ca32cffe8c2cf3fde8f89173b549d62a26fe17c2f386a40",
+  "rawEvidence": ".build/pending-integration/final-native",
+  "receiptSHA256": "2f290f5b6c2eb66a23933aba897a88b9b9a62b0351d1ff1e6ddfb36fa87a46e7",
+  "selected": {
+    "commands": [],
+    "core": [],
+    "ipad": [
+      "NotebookTests/InkCanvasLifecycleTests/testRetainedCulledCanvasStopsImmediatelyAndPresentsNewContentAfterRemount",
+      "NotebookTests/NotebookColdPageTurnTests",
+      "NotebookTests/NotebookPageCaptureTests",
+      "NotebookTests/NotebookPageCurlInteractionTests",
+      "NotebookTests/NotebookPageMotionUXTests/testFirstPresentedCurlBendsTheCompletePairWithoutAFlatPrimingFrame",
+      "NotebookTests/NotebookPageMotionUXTests/testFirstSmallBendCannotExposeTheOtherLeafBeforeItsCurlPixels",
+      "NotebookTests/PageInkGeometryTests/testLastPenUndoRedoKeepsTheWarmViewportAcross100000ResidentActions",
+      "NotebookTests/PageInkGeometryTests/testWarmUndoRedoAddressesOneOf100000DistinctActionsWithoutRepreparingHistory",
+      "NotebookTests/PageInkProjectionTests/testPreparedPagesKeepMSAAInTileMemoryAndEmptyPagesReleaseBacking"
+    ],
+    "mac": []
+  },
+  "result": {
+    "devicesAndConfigurations": [
+      {
+        "device": {
+          "architecture": "arm64",
+          "deviceId": "00008103-001E059934D9001E",
+          "deviceName": "iPad (Елизавета)",
+          "modelName": "iPad Pro (11-inch) (3rd generation)",
+          "osBuildNumber": "24A435",
+          "osVersion": "27.0",
+          "platform": "iOS"
+        },
+        "expectedFailures": 0,
+        "failedTests": 0,
+        "passedTests": 29,
+        "skippedTests": 0,
+        "testPlanConfiguration": {
+          "configurationId": "1",
+          "configurationName": "Test Scheme Action"
+        }
+      }
+    ],
+    "environmentDescription": "Notebook · Built with macOS 27.0",
+    "expectedFailures": 0,
+    "failedTests": 0,
+    "finishTime": 1790473551.59,
+    "passedTests": 29,
+    "result": "Passed",
+    "runtimeWarnings": [],
+    "skippedTests": 0,
+    "startTime": 1790473411.461,
+    "statistics": [],
+    "testFailures": [],
+    "title": "Test - Notebook",
+    "topInsights": [
+      {
+        "category": "Longest Test Runs",
+        "impact": "17% of duration",
+        "text": "1 longest test run with outlier durations exceeding 2.35s (three standard deviations)"
+      }
+    ],
+    "totalTestCount": 29
+  },
+  "workingPairUpdated": false,
+  "limits": "29/29 selected native на USB iPad; не системные FPS, не 30-минутная S7. Working pair 213 не заменялась."
+}

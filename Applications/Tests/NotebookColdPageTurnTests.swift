@@ -28,6 +28,34 @@ import XCTest
     try await exerciseOverlappingContact(direction: 1, releaseEarly: true, startsWithGesture: true)
   }
 
+  func testCancellingANewerHeldContactDoesNotEraseAcceptedSteps() async throws {
+    let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+    let previous = scene.windows.first(where: \.isKeyWindow), window = UIWindow(windowScene: scene)
+    let controller = IPadPageTurnController(), commands = NotebookPageNavigation(), owner = UUID()
+    var commits: [Int] = []
+    controller.update(ownerID: owner, sequenceRevision: "cancel-after-accepted-steps", pageCount: 8, selectedIndex: 1,
+      navigationIsEnabled: true, pageIsInteractive: true, canBeginNavigation: { true },
+      page: { index, _, ready in ready(true); return AnyView(Color.white.overlay(Text("Leaf \(index)"))) },
+      onCommit: { index, _ in commits.append(index) }, onTransitioningChange: { _ in }, notebookNavigation: commands)
+    window.rootViewController = controller; window.makeKeyAndVisible()
+    defer { controller.sheetController.cancelMotion(); window.isHidden = true; window.rootViewController = nil; previous?.makeKey() }
+    try await Task.sleep(for: .milliseconds(60))
+    let native = controller.sheetController
+    let admission = try XCTUnwrap(native.view.gestureRecognizers?.compactMap { $0 as? PageTurnAdmissionRecognizer }.first)
+    XCTAssertTrue(commands.send(.step(1), ownerID: owner, source: "cancel-after-accepted-steps"))
+    for _ in 0..<3 { XCTAssertTrue(commands.send(.step(1), ownerID: owner, source: "cancel-after-accepted-steps")) }
+    XCTAssertFalse(admission.prepareDirection(1)) // Unconfirmed page 6, accepted destination remains 5.
+    admission.updateColdSwipe(-native.view.bounds.width)
+    let boundary = ContinuousClock.now + .seconds(3)
+    while controller.displayedIndex != 2, ContinuousClock.now < boundary { try await Task.sleep(for: .milliseconds(2)) }
+    XCTAssertEqual(controller.displayedIndex, 2)
+    admission.finishColdSwipe(false)
+    let landing = ContinuousClock.now + .seconds(3)
+    while controller.displayedIndex != 5, ContinuousClock.now < landing { try await Task.sleep(for: .milliseconds(2)) }
+    XCTAssertEqual(controller.displayedIndex, 5)
+    XCTAssertEqual(commits, [2, 5], "A cancelled contact cannot confirm 6 or erase accepted page 5")
+  }
+
   func testColdAndBusyFlicksUseTheSameLiftDecisionAsWarmPaper() throws {
     let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
     let previous = scene.windows.first(where: \.isKeyWindow), window = UIWindow(windowScene: scene)
@@ -132,7 +160,7 @@ import XCTest
     XCTAssertTrue(bending); XCTAssertEqual(controller.displayedIndex, 1)
     let touch = ColdTouch(); touch.point = .init(x: 500, y: 300)
     admission.touchesBegan([touch], with: UIEvent())
-    touch.point.x -= CGFloat(direction) * 250
+    touch.point.x -= CGFloat(direction) * (releaseEarly ? 250 : 700)
     admission.touchesMoved([touch], with: UIEvent())
     XCTAssertEqual(admission.state, .began, "A second physical swipe must not disappear while the earlier sheet lands")
     if !releaseEarly {
@@ -143,11 +171,17 @@ import XCTest
     }
     admission.touchesEnded([touch], with: UIEvent())
     deadline = ContinuousClock.now + .seconds(2)
-    while commits.count < 2, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(2)) }
-    XCTAssertEqual(commits, [2, 2 + direction])
+    while (controller.displayedIndex != 2 + direction || native.settlingPage != nil), ContinuousClock.now < deadline {
+      try await Task.sleep(for: .milliseconds(2))
+    }
+    if direction > 0 {
+      XCTAssertEqual(commits, [2, 3])
+      XCTAssertEqual(installed.first ?? nil, firstPreparation,
+        "The landing acknowledges its captured paper, not the newer contact's preparation")
+    } else {
+      XCTAssertTrue(commits.isEmpty, "Reversing the unfinished pair must not first commit the unwanted page")
+    }
     XCTAssertEqual(controller.displayedIndex, 2 + direction)
-    XCTAssertEqual(installed.first ?? nil, firstPreparation,
-      "The landing acknowledges its captured paper, not the newer contact's preparation")
   }
 
   private func exerciseColdContact(cancel: Bool) async throws {

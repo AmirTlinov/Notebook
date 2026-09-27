@@ -65,20 +65,27 @@ struct SheetCurlLayout: Equatable {
   }
 }
 
-/// One shared Core Image executor compiles the physical curl before a finger
-/// can ask for it. Individual covers keep their own drawable and in-flight
-/// limit, while the expensive Metal context and filter program are prepared
-/// once outside the interactive frame.
+/// One device/queue and prebuilt interior-page pipeline. Covers retain their
+/// separate Core Image geometry, compiled once outside the interactive frame;
+/// individual views own their drawables and finite in-flight limit.
 private final class SheetCurlGPU: @unchecked Sendable {
   static let shared = SheetCurlGPU()
 
   let device: (any MTLDevice)?
   let commandQueue: (any MTLCommandQueue)?
   let imageContext: CIContext?
+  let pagePipeline: (any MTLRenderPipelineState)?
 
   private init() {
     let device = MTLCreateSystemDefaultDevice()
     self.device = device
+    if let device, let library = try? device.makeDefaultLibrary(bundle: .main) {
+      let descriptor = MTLRenderPipelineDescriptor()
+      descriptor.vertexFunction = library.makeFunction(name: "pageCurlVertex")
+      descriptor.fragmentFunction = library.makeFunction(name: "pageCurlFragment")
+      descriptor.colorAttachments[0].pixelFormat = .bgra8Unorm
+      pagePipeline = try? device.makeRenderPipelineState(descriptor: descriptor)
+    } else { pagePipeline = nil }
     commandQueue = device?.makeCommandQueue()
     imageContext = device.map {
       CIContext(
@@ -136,9 +143,8 @@ private final class SheetCurlGPU: @unchecked Sendable {
   }
 }
 
-/// GPU executor for the physical sheet. Core Image owns curl geometry and
-/// backside illumination; this view supplies the frozen cover pixels, clears
-/// every drawable, and presents the camera-owned progress value.
+/// One presentation owner: covers use their outside-sheet Core Image geometry;
+/// interior pages render a complete frozen pair with the analytic Metal kernel.
 @MainActor
 final class SheetCurlMetalView: MTKView, MTKViewDelegate {
   struct FrameTiming: Sendable {
@@ -172,7 +178,7 @@ final class SheetCurlMetalView: MTKView, MTKViewDelegate {
       displayLink?.invalidate(); displayLink = nil
     #endif
     animatesContinuously = false
-    sourceCover = nil; coverImage = nil; framePending = false
+    sourceCover = nil; coverImage = nil; pageTextures = nil; framePending = false
     releaseDrawables()
     guard let lease = frameLease else { return }
     frameLease = nil
@@ -198,6 +204,84 @@ final class SheetCurlMetalView: MTKView, MTKViewDelegate {
   private var curlLayout: SheetCurlLayout?
   private var sourceCover: CGImage?
   private var submittedProgress: Double?
+  private var pageTextures: (leaf: any MTLTexture, base: any MTLTexture)?
+  private var pageFold = SIMD4<Float>(1, 0, 0, 0)
+  private let pagePass = MTLRenderPassDescriptor()
+  private struct PageUniforms {
+    var fold: SIMD4<Float>
+    var paper: SIMD4<Float>
+    var size: SIMD2<Float>
+  }
+
+  func pageDrawableBytes(width: Int, height: Int) throws -> Int {
+    guard let device else { throw SceneRenderError.snapshotPending("page_device") }
+    let descriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: colorPixelFormat,
+      width: width, height: height, mipmapped: false)
+    descriptor.storageMode = .private; descriptor.usage = .renderTarget
+    let allocation = device.heapTextureSizeAndAlign(descriptor: descriptor)
+    let alignment = max(16 * 1024, allocation.align)
+    return max(((allocation.size + alignment - 1) / alignment) * alignment,
+      ((width * 4 + 255) / 256) * 256 * height)
+  }
+
+  /// Upload each immutable pair once. The shared CI context preserves UIKit's
+  /// native input colour range; there is no CPU SDR conversion or per-frame CI graph.
+  func preparePages(leaf: CGImage, base: CGImage) throws {
+    let encodingBegan = onFrameMeasured == nil ? nil : CACurrentMediaTime()
+    guard SheetCurlGPU.shared.pagePipeline != nil,
+      let device, let imageContext, let command = commandQueue?.makeCommandBuffer() else {
+      throw SceneRenderError.snapshotPending("page_pipeline")
+    }
+    command.label = "PageCurl.upload"
+    let descriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .bgra8Unorm,
+      width: leaf.width, height: leaf.height, mipmapped: false)
+    descriptor.usage = [.shaderRead, .shaderWrite, .renderTarget]
+    descriptor.storageMode = .private
+    guard let front = device.makeTexture(descriptor: descriptor),
+      let beneath = device.makeTexture(descriptor: descriptor) else { throw SceneRenderError.resourceLimit }
+    let extent = CGRect(x: 0, y: 0, width: leaf.width, height: leaf.height)
+    for (image, texture) in [(leaf, front), (base, beneath)] {
+      // CI's texture origin is bottom-left; the analytic page uses UIKit's
+      // top-left coordinates. Resolve this once at upload, never per sample.
+      let input = CIImage(cgImage: image).transformed(by:
+        CGAffineTransform(translationX: 0, y: CGFloat(leaf.height)).scaledBy(x: 1, y: -1))
+      imageContext.render(input, to: texture, commandBuffer: command, bounds: extent, colorSpace: outputColorSpace)
+    }
+    let lease = frameLease, submitted = encodingBegan.map { _ in CACurrentMediaTime() }
+    command.addCompletedHandler { [weak self, leaf, base, lease] command in
+      _ = (leaf, base, lease)
+      guard let encodingBegan, let submitted else { return }
+      let timing = FrameTiming(encodingBegan: encodingBegan, submitted: submitted,
+        gpuBegan: command.gpuStartTime, gpuEnded: command.gpuEndTime, targetPresentation: 0)
+      Task { @MainActor [weak self] in
+        guard let self, self.sourceCover === leaf else { return }
+        self.onFrameMeasured?(timing) // Zero target: pair upload, not a displayed frame.
+      }
+    }
+    command.commit()
+    sourceCover = leaf; coverImage = nil
+    pageTextures = (front, beneath); submittedProgress = nil
+    // The full image shields the live paper, even if its first drawable is dropped.
+    // Only the terminal handoff changes that paper's stacking.
+    presentsWithTransaction = false
+  }
+
+  func updatePage(progress: Double, anchor: Double, tilt: Double, layout: SheetCurlLayout) {
+    guard pageTextures != nil else { return }
+    let p = min(1, max(0, progress))
+    var fold = SIMD4<Float>(1, 0, Float(p), 0)
+    if p > 0, p < 1 {
+      let travel = 2.35*p, dy = tilt*sin(.pi*p), length = hypot(travel, dy)
+      let nx = travel/length, ny = -dy/length
+      let radius = min(0.09, length*0.18)
+      fold = .init(Float(nx), Float(ny), Float(nx+ny*anchor-(length + .pi*radius)*0.5), Float(radius))
+    }
+    guard self.progress != p || pageFold != fold || curlLayout != layout || submittedProgress == nil else {
+      if framePending { requestFrame() }; return
+    }
+    self.progress = p; pageFold = fold; curlLayout = layout
+    framePending = true; requestFrame()
+  }
 
   override init(frame frameRect: CGRect, device: (any MTLDevice)? = nil) {
     let gpu = SheetCurlGPU.shared
@@ -260,6 +344,7 @@ final class SheetCurlMetalView: MTKView, MTKViewDelegate {
       return
     }
     if sourceCover !== cover {
+      pageTextures = nil
       sourceCover = cover
       coverImage = CIImage(cgImage: cover)
       submittedProgress = nil
@@ -315,38 +400,39 @@ final class SheetCurlMetalView: MTKView, MTKViewDelegate {
       drawableSize.height > 0,
       let curlLayout,
       let commandQueue,
-      let commandBuffer = commandQueue.makeCommandBuffer(),
-      let imageContext
+      let commandBuffer = commandQueue.makeCommandBuffer()
     else { return }
 
     let size = suppliedDrawable.map { CGSize(width: $0.texture.width, height: $0.texture.height) } ?? drawableSize
     let canvasExtent = CGRect(origin: .zero, size: size)
     let sheetExtent = curlLayout.sheetExtent(inDrawableSize: size)
-    guard let input = placedCoverImage(in: sheetExtent) else { return }
-    let radius = curlLayout.clipsToSheet ? Float(min(sheetExtent.width, sheetExtent.height) * 0.035)
-      : CoverOpeningPhysics.curlRadius(for: sheetExtent)
-    // CIPageCurlWithShadowTransition's cast shadow includes its opaque output
-    // extent. The fold's own lighting is the visual owner while the sheet moves,
-    // so these values keep the surrounding Metal canvas transparent.
-    // Build the graph before borrowing a drawable. All temporary Core Image /
-    // Metal references leave this frame's autorelease pool after submission,
-    // not after every other view has drawn in the same layer transaction.
-    guard let output = SheetCurlGPU.curlImage(input: input, backside: roundedBacksideImage(extent: sheetExtent),
-      sheetExtent: sheetExtent, canvasExtent: canvasExtent, progress: progress, radius: radius),
-      let drawable = suppliedDrawable ?? currentDrawable
-    else {
-      return
+    guard let drawable = suppliedDrawable ?? currentDrawable else { return }
+    commandBuffer.label = pageTextures == nil ? "CoverCurl.draw" : "PageCurl.draw"
+    if let pageTextures {
+      guard let pipeline = SheetCurlGPU.shared.pagePipeline else { return }
+      pagePass.colorAttachments[0].texture = drawable.texture
+      pagePass.colorAttachments[0].loadAction = .dontCare
+      pagePass.colorAttachments[0].storeAction = .store
+      defer { pagePass.colorAttachments[0].texture = nil }
+      guard let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: pagePass) else { return }
+      var uniforms = PageUniforms(fold: pageFold,
+        paper: .init(Float(backsideColor.red), Float(backsideColor.green), Float(backsideColor.blue), 0.3),
+        size: .init(Float(size.height/size.width), Float(1/size.width)))
+      encoder.setRenderPipelineState(pipeline)
+      encoder.setFragmentBytes(&uniforms, length: MemoryLayout<PageUniforms>.stride, index: 0)
+      encoder.setFragmentTexture(pageTextures.leaf, index: 0)
+      encoder.setFragmentTexture(pageTextures.base, index: 1)
+      encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6)
+      encoder.endEncoding()
+    } else {
+      guard let imageContext, let input = placedCoverImage(in: sheetExtent),
+        let output = SheetCurlGPU.curlImage(input: input, backside: roundedBacksideImage(extent: sheetExtent),
+          sheetExtent: sheetExtent, canvasExtent: canvasExtent, progress: progress,
+          radius: CoverOpeningPhysics.curlRadius(for: sheetExtent)),
+        clear(texture: drawable.texture, with: commandBuffer) else { return }
+      imageContext.render(output, to: drawable.texture, commandBuffer: commandBuffer,
+        bounds: canvasExtent, colorSpace: outputColorSpace)
     }
-    guard clear(texture: drawable.texture, with: commandBuffer) else {
-      return
-    }
-    imageContext.render(
-      output,
-      to: drawable.texture,
-      commandBuffer: commandBuffer,
-      bounds: canvasExtent,
-      colorSpace: outputColorSpace
-    )
     let source = sourceCover!, progress = progress
     let submitted = encodingBegan.map { _ in CACurrentMediaTime() }
     if onFrameReady != nil || onFramePresented != nil {
@@ -359,12 +445,16 @@ final class SheetCurlMetalView: MTKView, MTKViewDelegate {
         resumePendingFrame()
       }
     }
+    let needsCompletionDelivery = onFrameMeasured != nil || onDisplayUpdate == nil
     commandBuffer.addCompletedHandler { [weak self, inFlightSemaphore, frameLease] command in
       _ = frameLease // Keep the charged image/drawables through GPU completion.
       // The display link already owns presentation pacing. Holding an encoding
       // slot until the OS presentation callback double-throttles it and drops
       // admitted 120 Hz updates even after their GPU work has completed.
       inFlightSemaphore.signal()
+      // An active page clock already retries pending frames. Only diagnostics
+      // and event-driven covers need a second MainActor callback here.
+      guard needsCompletionDelivery else { return }
       let timing = encodingBegan.map { began in
         FrameTiming(encodingBegan: began, submitted: submitted!, gpuBegan: command.gpuStartTime,
           gpuEnded: command.gpuEndTime, targetPresentation: targetPresentation)
