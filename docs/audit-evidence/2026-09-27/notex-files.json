@@ -4,9 +4,57 @@
   "scope": "Файловые LaTeX-документы .notex: отдельные прицельные срезы, не сводный PASS и не полная приёмка S7.",
   "sourceRoot": "/Users/amir/.codex/worktrees/notex-integration/Notebook",
   "production": {
-    "installedPairBuild": "211",
-    "updated": false,
-    "release212": "Не установлен в этом срезе."
+    "installedPairBuild": "212",
+    "version": "0.3.143",
+    "updated": true,
+    "status": "matched-pair-launched",
+    "sourceSHA256": "73d2893a2bcfd9ab407bee7024db29f1414fe703e6e15e3cbfa7843424ff8a38",
+    "build": {
+      "path": "/private/tmp/notex-release-212-20260927T0023Z/build.json",
+      "sha256": "f0269ae6b5a8499ace3fbb34d67e9f583a7c75978250e99f37045a26002710fa",
+      "bytes": 14685
+    },
+    "installation": {
+      "path": "/private/tmp/notex-install-212-20260927T0031Z/installation.json",
+      "sha256": "b7365faf9ed2c8a45c39a9d4c367065b5bbb1ec635593b8c92a4dfa87c349677",
+      "bytes": 1483
+    },
+    "selectedStoresUnchangedBeforeLaunch": true,
+    "ipadDataContainerRelocatedWithBytesPreserved": true,
+    "installedSidecarReadOnly": {
+      "receipt": {
+        "path": "/private/tmp/notex-installed-proof-212-20260927T0040Z/result.json",
+        "sha256": "b26ad207c570268b1cf69d8de4991d203a8c4023b3b760bdb89ef5e43a297233",
+        "bytes": 12073
+      },
+      "tools": 5,
+      "visual": "ready",
+      "runtime": "connected",
+      "boundary": "Чтение установленного подписанного sidecar; не доказательство доставки и показа нового документа."
+    },
+    "relaunchAfterPreservationCheck": {
+      "path": "/private/tmp/notex-post-cutover-212-20260927T0041Z/ipad-relaunch.json",
+      "sha256": "1cbffe9aa5fb6570166a07da646c454831c16365eeba4e4bfda7529dc4f9d8c8",
+      "bytes": 1278
+    },
+    "installationRefusals": [
+      {
+        "receipt": {
+          "path": "/private/tmp/notex-install-212-20260927T0027Z/installation.json",
+          "sha256": "7a025a0dc8afd7b4824dba4d019aab03518638ad990b774735ccd7d12de850ce",
+          "bytes": 1368
+        },
+        "cause": "Одноразовый guard ошибочно требовал явную Mac keychain group. Исправлен на точное равенство прав старой и новой подписи; установки не было."
+      },
+      {
+        "receipt": {
+          "path": "/private/tmp/notex-install-212-20260927T0028Z/installation.json",
+          "sha256": "9e81aaea705d2ec7f34b565534035d8e4f8ffc55c72e37b23364ffb60a676396",
+          "bytes": 1414
+        },
+        "cause": "iPad 211 вновь работал после старого снимка; установки не было. Затем выполнены обычное завершение и новый согласованный снимок."
+      }
+    ]
   },
   "cutover": {
     "remove": "Только старые блочные документы выбранного текущего пространства, их состояния, черновики и исполнимое восстановление/Undo; смешанные действия с удалёнными документами также инвалидируются.",
@@ -25,10 +73,30 @@
       "oldPairBuild": "211",
       "scope": "Выбранное пространство на обеих сторонах, приложения нормально остановлены; очередь доставки полностью подтверждена. Исторические архивы не читались.",
       "receipt": {
-        "path": "/private/tmp/notex-drain-212-20260927T0008Z/drain.json",
-        "sha256": "a0d89093f0bed634bb2ddfcce6ecaafbc35fadb831c107fceffc684996bef3f4",
-        "bytes": 4141
+        "path": "/private/tmp/notex-drain-212-20260927T0031Z/drain.json",
+        "sha256": "1d8760e36ed6b931833b8357c9245ae1859f2b838337347d5a71a33f6f6f0d7e",
+        "bytes": 4140
       }
+    },
+    "postcheck": {
+      "receipt": {
+        "path": "/private/tmp/notex-post-cutover-212-20260927T0041Z/postcheck.json",
+        "sha256": "a4d5844424563b55004e71907d85a2b4a3616c708a28c4670cb1ba5d9c4a26b4",
+        "bytes": 10417
+      },
+      "rawStatus": "differences",
+      "analysis": {
+        "path": "/private/tmp/notex-post-cutover-212-20260927T0041Z/preservation-analysis.json",
+        "sha256": "00e01aa5b2feb9a669c1904a140421406890473c1fa97105c1cfa62d9190fcb3",
+        "bytes": 3272
+      },
+      "membershipDifferences": {
+        "path": "/private/tmp/notex-post-cutover-212-20260927T0041Z/notebook-membership-differences.json",
+        "sha256": "d3d4e99567348d08a52b639fdf9ff9581f1dbe65695ea08073b3022de1c3f9e9",
+        "bytes": 2625
+      },
+      "status": "preservation-confirmed",
+      "scope": "На каждой стороне schema 26, те же каталог и пространство; 6 тетрадей, 1 доска, 66 страниц. Документов и их состояний 0. Проверенные группы страниц/чернил/чатов и три локальные chat-таблицы совпали. Все семь оставшихся элементов и их потомки сохранены; различия хешей членства объяснены только уплотнением позиции после удаления документов, относительный порядок не изменился. Исходный сырой результат differences не заменён PASS. Ключи и архивы не читались."
     }
   },
   "nativeRuns": [
