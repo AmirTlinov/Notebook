@@ -1,0 +1,58 @@
+{
+  "format": 1,
+  "auditDate": "2026-09-27",
+  "revision": "0b237f6df17357a964a09e43c66e94901cf77fb8",
+  "branch": "main",
+  "originMainMatches": true,
+  "initialWorktreeClean": true,
+  "sourceInventorySHA256": "eda4f8b4b6c0f51c440bf441ed13c5b5d31d3dfb400bb3bb8bda9ed3996bba05",
+  "installedPair": "0.3.143 (213)",
+  "installedSourceInventorySHA256": "cf52f90127122fdd90c6307e857bbf50e47b290ebb17cc2132d7afbb93d03f71",
+  "installedMacBinaryUUID": "E1A8D14E-3AFC-39FD-A1C8-2951C883A45C",
+  "installedIPadBundle": "com.amirtlinov.notebook.preview",
+  "installedChangedSourceInputFileCount": 106,
+  "installedBuildReceipt": "/private/tmp/notebook-zoom-out-213-20260927T0110Z/build.json",
+  "installedPairReceipt": "/private/tmp/notebook-zoom-out-install-213-20260927T0114Z/installation.json",
+  "excludedBranch": {
+    "name": "codex/native-page-capture",
+    "revision": "7e0be0b95a257fd4ffef879949f10190413d8ca4"
+  },
+  "evidenceComparisons": [
+    {
+      "run": "document-oracle-194",
+      "manifestPath": "/Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/.build/notebook-architecture-repair/evidence-2026-09-27/document-oracle-194/source-before.json",
+      "manifestFileSHA256": "27c8acc41541165049ba2dc89d6934e3b8bc9c372fb9555c9c535a1227895233",
+      "inventorySHA256": "eda4f8b4b6c0f51c440bf441ed13c5b5d31d3dfb400bb3bb8bda9ed3996bba05",
+      "changedFilesFromCurrent": []
+    },
+    {
+      "run": "merge-curl-ink-192",
+      "manifestPath": "/Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/.build/notebook-architecture-repair/evidence-2026-09-27/merge-curl-ink-192/source-before.json",
+      "manifestFileSHA256": "e2930d4def71c17cc72d08178e77cc62089d1fe02fbc4a0ad00cef5f4e76674d",
+      "inventorySHA256": "a520c417e6732c1e6ff25da8961fc3beae07275025fa834d5fb06fceb0fbcc9d",
+      "changedFilesFromCurrent": [
+        "Applications/Tests/NotebookDocumentOpeningTests.swift"
+      ]
+    },
+    {
+      "run": "u10-native-191",
+      "manifestPath": "/Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/.build/notebook-architecture-repair/evidence-2026-09-27/u10-native-191/source-before.json",
+      "manifestFileSHA256": "8d518326f095225278046d049aa5ebd7ab9ef859a675f70bf49339c283e93a5d",
+      "inventorySHA256": "963e05bda5289076f3f9054736715e869b657190b1b6ba8b4261f79d510c195a",
+      "changedFilesFromCurrent": [
+        "Applications/Shared/NotebookSelectedGraphicHost.swift",
+        "Applications/Shared/NotebookSelectionPresentation.swift",
+        "Applications/Shared/PageCurl.metal",
+        "Applications/Shared/SheetCurlRenderer.swift",
+        "Applications/Tests/NotebookColdPageTurnTests.swift",
+        "Applications/Tests/NotebookDocumentOpeningTests.swift",
+        "Applications/Tests/NotebookPageCaptureTests.swift",
+        "Applications/Tests/NotebookPageCurlInteractionTests.swift",
+        "Applications/Tests/NotebookPageMotionUXTests.swift",
+        "Applications/iPad/IPadPageTurnController.swift",
+        "Applications/iPad/IPadSheetCurlController.swift"
+      ]
+    }
+  ],
+  "boundary": "Read-only product audit. Existing frozen source manifests compared by file; no new build, install, device run or test. Mac binary UUID matched the installation build receipt; current iPad bundle version/build matched the pair receipt. No iPad binary hash reread. Audit documentation is excluded from release source inputs."
+}
