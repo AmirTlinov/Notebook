@@ -225,6 +225,36 @@ import XCTest
     let saved = await model.finishPendingPersistence(); XCTAssertTrue(saved)
   }
 
+  func testLastVisiblePenRedoReusesTheActivePageBackingWithinBudget() async throws {
+    let model = try await modelWithPages(1)
+    var page = try XCTUnwrap(model.activePage)
+    XCTAssertTrue(page.replaceDrawing(try PageInkDrawing(actions:[]).dataRepresentation(),actor:model.actorID))
+    try model.store.savePage(page)
+    await model.reloadExternalChanges()?.value
+    let scene = try await mount(model)
+    let ink = try XCTUnwrap((scene.paper.superview as? PaperCanvasContainerView)?.inkView)
+    let point = CGPoint(x:300,y:800).applying(scene.pageToWindow)
+    model.selectPenColor(.black);model.selectPenWidth(12);model.selectDrawingTool(.pen)
+    try await scene.readyPencil(self)
+    scene.beginPencil(.init(x:180,y:800));scene.movePencil(.init(x:480,y:800));scene.endPencil()
+    try await assertUX("last-pen-source",since:.now,budget:NotebookUXObservation.opening,window:scene.window) {
+      try NotebookUXObservation.Pixels(window:scene.window).matches([(point,.black)])
+    }
+    model.undoLastSurfaceAction()
+    try await assertUX("last-pen-empty",since:.now,budget:NotebookUXObservation.opening,window:scene.window) {
+      try NotebookUXObservation.Pixels(window:scene.window).matches([(point,.paper)])
+    }
+    XCTAssertTrue(ink.hasPageRetainedTexture,"The active page keeps its charged backing for the next inverse")
+    let allocations=ink.pageDrawableAllocationCount, start=ContinuousClock.now
+    model.redoLastSurfaceAction()
+    try await assertUX("last-pen-redo",since:start,budget:NotebookUXObservation.correctnessTimeout,window:scene.window) {
+      guard ink.isStableFramePresented else { return false }
+      return try NotebookUXObservation.Pixels(window:scene.window).matches([(point,.black)])
+    }
+    XCTAssertEqual(ink.pageDrawableAllocationCount,allocations,
+      "Redo must reuse the admitted page backing rather than make a cold allocation")
+  }
+
   func testPresentedLandingAdmitsTheNextReverseBeforeSwiftUIRepublishesInput() async throws {
     let model = try await modelWithPages(2, distinctLeaves: true)
     let notebook = try XCTUnwrap(model.workspace?.selectedItemID)

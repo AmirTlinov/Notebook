@@ -70,6 +70,31 @@ import XCTest
     queue.finish(batch,consumed:false); XCTAssertEqual(queue.count(scope:scope),1)
   }
 
+  func testCompletedPointerWithUnavailableSceneCannotSendAnUnmarkedViewport() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("unavailable-pointer-"+UUID().uuidString)
+    let model = NotebookAppModel(store:.init(root:root),startsNearbySync:false)
+    retainNotebookUntilTeardown(model,removing:root)
+    await model.start(pageSize:NotebookAppModel.defaultPageSize)
+    let chat = try XCTUnwrap(model.chat), scope = chat.pointingScope
+    // The address belonged to the contact, but its page is no longer the
+    // mounted board when the completed pointer asks for visible pixels.
+    let address = NotebookToolAddress(surface:.page(UUID()),boardID:nil,worldOrigin:nil,bounds:nil)
+    let contact = NotebookDrawingToolController.LaserContact(id:UUID(),address:.material(address),
+      scope:scope,screenScale:1,contour:NotebookToolContour([.init(x:20,y:20)],capacity:256))
+    model.captureLaserContext(contact)
+    XCTAssertEqual(model.laserContext.count(scope:scope),1)
+    chat.draft = "Посмотри на указанный фрагмент"
+    var saved = true
+    await model.sendChatMessage { saved = $0 }?.value
+    XCTAssertFalse(saved)
+    XCTAssertTrue(chat.jobs.isEmpty)
+    XCTAssertEqual(chat.draft,"Посмотри на указанный фрагмент")
+    XCTAssertTrue(model.agentRequestError?.contains("Изображение указки ещё не готово") == true)
+    XCTAssertEqual(model.laserContext.count,1,
+      "A failed Send retains the exact pointer until the user corrects or clears it")
+    let stopped = await model.shutdown(); XCTAssertTrue(stopped)
+  }
+
   func testPreparedPointingSurvivesJournalFailureForExistingAndNewChat() async throws {
     for newChat in [false,true] {
       let root = FileManager.default.temporaryDirectory.appendingPathComponent("pointing-retry-"+UUID().uuidString)

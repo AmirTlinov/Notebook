@@ -2460,12 +2460,23 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     }
     visibleCommittedVertexCount = 0; visibleCommittedChunkCount = 0
     drawnTiles = nil
-    isPaused = true
-    retirePageDisplayLink()
-    if sampleCount != 1 { sampleCount = 1 }
-    releaseDrawables()
-    pageDrawableReservation = nil; pageMultisample = nil
-    pageRetainedTexture = nil; pageRetainedReservation = nil; pageRetainedKey = nil
+    // An inverse of the last visible stroke is usually followed by Redo or a
+    // new contact. Keep the active page's admitted pixels and paused clock:
+    // releasing them turns that immediate next frame into a cold allocation.
+    // Hidden neighbours and genuinely cold empty pages still release as before.
+    let warmPage = prepared != nil && pageBackingRequired && !pageBackingIsReclaimed
+      && window != nil && pageDrawableReservation != nil && usesPageDisplayLink
+    if warmPage {
+      pauseFrameLoop()
+      pageRetainedKey = nil // The next revision must redraw the retained body.
+    } else {
+      isPaused = true
+      retirePageDisplayLink()
+      if sampleCount != 1 { sampleCount = 1 }
+      releaseDrawables()
+      pageDrawableReservation = nil; pageMultisample = nil
+      pageRetainedTexture = nil; pageRetainedReservation = nil; pageRetainedKey = nil
+    }
     spatialTarget?.detach(); spatialTarget = nil
     hasRevealedFirstFrame = false
     CATransaction.begin()

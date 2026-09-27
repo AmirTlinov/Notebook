@@ -142,6 +142,8 @@ its exact batch through preparation and consumes it only after durable admission
 prepared image addresses for Retry. Starting dictation does not consume it. A
 different chat/computer never inherits it: changing context or clearing the crop
 count discards unsent captures.
+If a completed indication in the same chat loses its scene before capture, Send
+reports the missing crop and retains the draft; it cannot silently send the viewport.
 
 A message carries at most five frozen displayed images / 4 MiB total, with the
 actual drawn contour in red in that crop's original coordinates. Printed pages
