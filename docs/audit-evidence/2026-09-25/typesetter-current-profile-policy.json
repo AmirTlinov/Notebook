@@ -1,0 +1,65 @@
+{
+  "format": 1,
+  "status": "NO_PRODUCTION_POLICY_CHANGE_TIMING_INCONCLUSIVE",
+  "kernelSHA256": "396ef3ed9d9a32631cfc0142b7a79b66fefc58cf9f3e012931e40bc669b863e7",
+  "profile": {
+    "capturedUTC": "2026-09-26T16:08:44.376Z\u20132026-09-26T16:08:51.990Z",
+    "scope": "Single app-only standalone C ABI process; concurrent parent Xcode BUILD, no ordinary UI; Running sample distribution only",
+    "targetPID": 12932,
+    "recorderExitCode": 0,
+    "samples": 6655,
+    "successfulExactOutputs": 10,
+    "texPassesPerCompile": 2,
+    "pdfPassesPerCompile": 1,
+    "exclusivePercent": {
+      "get_next": 23.56123,
+      "macro_call": 18.10669,
+      "load_fmt_file": 8.95567,
+      "_tlv_get_addr": 6.14576,
+      "end_token_list": 5.87528,
+      "__ZN7zlib_rs7inflate17inflate_fast_help17h5f6c72522f2f1544E": 5.51465
+    },
+    "texEngineInclusivePercent": 86.56649,
+    "pdfEngineInclusivePercent": 12.68219,
+    "fontmapInclusivePercent": 8.79038,
+    "pollClockUnionInclusivePercent": 1.62284,
+    "preambleConclusion": "No proven duplicate app compile or unnecessary package; prepared core expl3 is not parsed again by expl3.sty guard. Macro source filename/name is not in native stacks."
+  },
+  "compilePolicy": {
+    "baseline": "clang-O2",
+    "candidate": "clang-O3",
+    "sameKernelGeneratedSourcesAndSafetyFlags": true,
+    "rebuiltO2RuntimeArchiveEqualsCurrent": true,
+    "functionalCasesPassed": 14,
+    "timedExactOutputCasesPassed": 36,
+    "timingStatus": "inconclusive: known scoped Swift6 typecheck overlapped approximately16:38:55 through16:39:04 completion polling upper bound",
+    "allPairsPreserved": true,
+    "cleanRepeat": "Aborted before any target at16:46:11.964 because unrelated xcodebuild32101 and swift-frontends were active; no process stopped",
+    "coldPairedMedianVersusRebuiltO2Percent": 2.5974032439419705,
+    "coldPairedRangePercent": [
+      -46.46066359266754,
+      8.904848817037825
+    ],
+    "warmPairedMedianVersusRebuiltO2Percent": 6.532324896337027,
+    "warmPairedRangePercent": [
+      -13.004663642548596,
+      17.905927305777325
+    ],
+    "codeBytesO2": 27048280,
+    "codeBytesO3": 27916956,
+    "codeGrowthPercent": 3.211575745296935,
+    "guestMemoryBytes": 291635200,
+    "hostRSSMeasured": false,
+    "candidateInIntendedChanges": false
+  },
+  "ROOTRuntimeStageUnchanged": true,
+  "physical1sAccepted": false,
+  "evidence": "/Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/.build/notebook-architecture-repair/evidence-2026-09-25/typesetter-current-profile-policy-20260926T1648Z",
+  "originalPaths": {
+    "profile": "/tmp/notebook-typesetter-mac-hotpath-396e-20260926T160842Z",
+    "policy": "/tmp/notebook-typesetter-aot-policy-20260926T1628Z"
+  },
+  "excluded": "No executables, object files, static runtime archives, Cargo caches, generated-C checkout, SDK, or source-tree copies. app.trace is the raw measurement bundle, not an executable. Large re-derived per-sample JSON omitted; source XML + resolution maps retained.",
+  "manifestSHA256": "a7b37068dacc29b325fce5de2311a1df705234b3c7ba45191bd62148d02481b4",
+  "evidenceBytes": 10257830
+}

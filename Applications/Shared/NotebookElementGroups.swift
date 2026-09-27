@@ -54,14 +54,14 @@ extension NotebookAppModel {
     if case .spatial(let owner,_)=reference {
       guard let read=spatialGroupReads[owner]?[id],!read.localBounds.isNull,
         read.source == nativeElementSource(reference)?.placementSource else { return false }
-      let desired=projectingGraphicCommands(boardHierarchy?.board(owner)?.graphicGraph() ?? NotebookGraphicGraph([])) { .spatial(boardID:owner,elementID:$0) }
+      let desired=projectingGraphicCommands(boardHierarchy?.board(owner)?.graphicGraph() ?? NotebookGraphicGraph([]),holdingSelectedInk:false) { .spatial(boardID:owner,elementID:$0) }
       return graph.placement(id) == desired.placement(id)
     }
     return graph.groups[id] != nil
   }
 
   var hasSpatialGroupContact: Bool {
-    guard let contact=selectionSession.manipulation,case .spatial=contact.reference else { return false }
+    guard let contact=selectionSession.manipulation,let reference=contact.reference,case .spatial=reference else { return false }
     return contact.graphicCapture?.source.isGroup == true
   }
 
@@ -70,10 +70,11 @@ extension NotebookAppModel {
   /// a second live geometry ahead of the same whole's passive pixels.
   var compositionGroupPoses: [SceneCompositionPlane:[String:NotebookElementPlacement.Source]] {
     var drafts=elementCommandDrafts.filter { $0.value.source.isGroup }.mapValues(\.source)
-    if let contact=selectionSession.manipulation,let captured=contact.graphicCapture,captured.source.isGroup {
+    if let contact=selectionSession.manipulation,let reference=contact.reference,
+      let captured=contact.graphicCapture,captured.source.isGroup {
       var source=captured.source
       source.frame = .init(x:contact.frame.minX,y:contact.frame.minY,width:contact.frame.width,height:contact.frame.height)
-      source.basis=contact.basis;drafts[contact.reference]=source
+      source.basis=contact.basis;drafts[reference]=source
     }
     var result:[SceneCompositionPlane:[String:NotebookElementPlacement.Source]]=[:]
     for (ref,source) in drafts {
@@ -86,7 +87,7 @@ extension NotebookAppModel {
 
   var canGroupSelectedElements: Bool {
     let refs=selectionSession.elements
-    guard selectionSession.items.isEmpty,(2...31).contains(refs.count) else { return false }
+    guard !selectionContainsSourceAnchoredInk,selectionSession.ink.isEmpty,selectionSession.items.isEmpty,(2...31).contains(refs.count) else { return false }
     let sources=refs.compactMap(nativeElementSource)
     return sources.count == refs.count && (try? NotebookStore.elementGroupingEdits(sources,id:UUID().uuidString)) != nil
   }

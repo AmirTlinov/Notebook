@@ -23,13 +23,27 @@ struct NotebookRegionSourceSnapshot: Sendable {
 
   func sources(for region:NotebookRegionSelection,graph:NotebookGraphicGraph) throws
     -> [EditableElementReference:NotebookNativeElementSource] {
+    try sources(for:region.graphics,graph:graph)
+  }
+
+  func sources(for references:[EditableElementReference],graph:NotebookGraphicGraph) throws
+    -> [EditableElementReference:NotebookNativeElementSource] {
     var result:[EditableElementReference:NotebookNativeElementSource]=[:]
-    for reference in region.graphics {
+    for reference in references {
       guard let placement=graph.placement(reference.elementID) else { throw staleRegion() }
       for id in [reference.elementID]+placement.ancestors {
-        let ref=region.address.reference(id)
+        let ref:EditableElementReference,target:CollaborationTarget
+        switch reference {
+        case .page(let owner,_): ref = .page(pageID:owner,elementID:id);target = .init(kind:.page,id:owner)
+        case .spatial(let owner,_):
+          ref = .spatial(boardID:owner,elementID:id)
+          guard let surface=accepted[ref]?.spatial?.surface ?? board?.element(id:id)?.surface,
+            let surfaceID=surface.ownerID else { throw staleRegion() }
+          target = .init(kind:surface.kind == .cover ? .cover : .board,id:surfaceID,
+            boardID:surface.kind == .cover ? owner : nil)
+        }
         guard result[ref] == nil else { continue }
-        let value=accepted[ref] ?? NotebookNativeElementSource(target:region.address.target,id:id,
+        let value=accepted[ref] ?? NotebookNativeElementSource(target:target,id:id,
           page:page?.element(id:id),spatial:board?.element(id:id))
         guard let source=value.placementSource,source == graph.source(id),
           (value.page?.graphic ?? value.spatial?.graphic) == graph.node(id)?.graphic else { throw staleRegion() }
@@ -150,9 +164,14 @@ extension NotebookAppModel {
         : spatialInk?.stamp.revision
       guard current == expected else { return false }
     }
-    return prepared.sources.allSatisfy { reference,source in
+    return selectionSourcesAreCurrent(prepared.sources,dependencies:prepared.dependencies)
+  }
+
+  func selectionSourcesAreCurrent(_ sources:[EditableElementReference:NotebookNativeElementSource],
+    dependencies:[EditableElementReference:NotebookElementCommand]) -> Bool {
+    sources.allSatisfy { reference,source in
       guard let current=acceptedElementSource(reference) else { return false }
-      if let dependency=prepared.dependencies[reference] {
+      if let dependency=dependencies[reference] {
         if let active=elementCommandSources[reference],active.id != dependency.id { return false }
         // An own predecessor may publish a newer spatial stamp while this
         // immutable read is prepared. Its exact receipt is checked by storage.

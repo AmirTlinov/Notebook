@@ -1,0 +1,272 @@
+{
+  "scope": "Незавершённая интеграция whole-contact selection. В main не включена.",
+  "baseMain": "3127ac7fc26d55dfe792dd8170942e8519f6d6f0",
+  "mergeParent": "027932684607007022636fbd37a07ea833ba58d4",
+  "status": "BLOCKED_FOR_MAIN",
+  "retainedChanges": [
+    "Причинная идентичность ordered echo включает страницу; точный уже установленный plan не запускает повторную подготовку.",
+    "Input сохраняет допуск к ранее показанному тому же causal source; новый источник всё ещё требует readiness.",
+    "Исправлены ожидание принятой записи и provenance в fixtures; oracle замечает переход любого из двух тел."
+  ],
+  "remaining": [
+    "Первый перенос смешанного выбора иногда превышает прежний 100ms observation ceiling.",
+    "При отмене второго переноса окно иногда содержит разные позы raw material и authored peer/controls. Причина различия screen observation и native publication не установлена."
+  ],
+  "rejectedRemoved": [
+    "GPU-completion publication, отдельная UI update phase и принудительный layout не обеспечили повторяемую целую композицию; производственные изменения удалены.",
+    "Растеризация snapshotView вернула unavailable; исходный drawHierarchy observation восстановлен."
+  ],
+  "unchangedLimits": {
+    "windowObservationMS": 100,
+    "mixedFrames": 0
+  },
+  "isolatedTests": true,
+  "productionPair": "213 unchanged",
+  "runs": [
+    {
+      "path": ".build/pending-integration/snapshot-observation/ipad.xcresult",
+      "result": "Failed",
+      "passedTests": 0,
+      "failedTests": 1,
+      "skippedTests": 0,
+      "runtimeWarnings": [],
+      "configurations": [
+        {
+          "device": {
+            "architecture": "arm64",
+            "deviceId": "00008103-001E059934D9001E",
+            "deviceName": "iPad (Елизавета)",
+            "modelName": "iPad Pro (11-inch) (3rd generation)",
+            "osBuildNumber": "24A435",
+            "osVersion": "27.0",
+            "platform": "iOS"
+          },
+          "expectedFailures": 0,
+          "failedTests": 1,
+          "passedTests": 0,
+          "skippedTests": 0,
+          "testPlanConfiguration": {
+            "configurationId": "1",
+            "configurationName": "Test Scheme Action"
+          }
+        }
+      ],
+      "failures": [
+        {
+          "failureText": "failed: caught error: \"unavailable\"",
+          "targetName": "NotebookTests",
+          "testIdentifier": 1,
+          "testIdentifierString": "NotebookInteractionUXTests/testClosedWholeLassoRoutesRawAndAuthoredMaterialThroughTwoInstalledDragsAndCancel()",
+          "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/NotebookInteractionUXTests/testClosedWholeLassoRoutesRawAndAuthoredMaterialThroughTwoInstalledDragsAndCancel",
+          "testName": "testClosedWholeLassoRoutesRawAndAuthoredMaterialThroughTwoInstalledDragsAndCancel()"
+        }
+      ]
+    },
+    {
+      "path": ".build/pending-integration/selection-layout/ipad.xcresult",
+      "result": "Failed",
+      "passedTests": 1,
+      "failedTests": 1,
+      "skippedTests": 0,
+      "runtimeWarnings": [],
+      "configurations": [
+        {
+          "device": {
+            "architecture": "arm64",
+            "deviceId": "00008103-001E059934D9001E",
+            "deviceName": "iPad (Елизавета)",
+            "modelName": "iPad Pro (11-inch) (3rd generation)",
+            "osBuildNumber": "24A435",
+            "osVersion": "27.0",
+            "platform": "iOS"
+          },
+          "expectedFailures": 0,
+          "failedTests": 1,
+          "passedTests": 1,
+          "skippedTests": 0,
+          "testPlanConfiguration": {
+            "configurationId": "1",
+            "configurationName": "Test Scheme Action"
+          }
+        }
+      ],
+      "failures": [
+        {
+          "failureText": "XCTAssertTrue failed - Every frame includes raw material, authored peer, four controls and untouched pixels; see stage attachments",
+          "targetName": "NotebookTests",
+          "testIdentifier": 2,
+          "testIdentifierString": "NotebookInteractionUXTests/testClosedWholeLassoRoutesRawAndAuthoredMaterialThroughTwoInstalledDragsAndCancel()",
+          "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/NotebookInteractionUXTests/testClosedWholeLassoRoutesRawAndAuthoredMaterialThroughTwoInstalledDragsAndCancel",
+          "testName": "testClosedWholeLassoRoutesRawAndAuthoredMaterialThroughTwoInstalledDragsAndCancel()"
+        }
+      ]
+    },
+    {
+      "path": ".build/pending-integration/selection-complete-layout/ipad.xcresult",
+      "result": "Failed",
+      "passedTests": 0,
+      "failedTests": 1,
+      "skippedTests": 0,
+      "runtimeWarnings": [],
+      "configurations": [
+        {
+          "device": {
+            "architecture": "arm64",
+            "deviceId": "00008103-001E059934D9001E",
+            "deviceName": "iPad (Елизавета)",
+            "modelName": "iPad Pro (11-inch) (3rd generation)",
+            "osBuildNumber": "24A435",
+            "osVersion": "27.0",
+            "platform": "iOS"
+          },
+          "expectedFailures": 0,
+          "failedTests": 1,
+          "passedTests": 0,
+          "skippedTests": 0,
+          "testPlanConfiguration": {
+            "configurationId": "1",
+            "configurationName": "Test Scheme Action"
+          }
+        }
+      ],
+      "failures": [
+        {
+          "failureText": "XCTAssertTrue failed - Every frame includes raw material, authored peer, four controls and untouched pixels; see stage attachments",
+          "targetName": "NotebookTests",
+          "testIdentifier": 1,
+          "testIdentifierString": "NotebookInteractionUXTests/testClosedWholeLassoRoutesRawAndAuthoredMaterialThroughTwoInstalledDragsAndCancel()",
+          "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/NotebookInteractionUXTests/testClosedWholeLassoRoutesRawAndAuthoredMaterialThroughTwoInstalledDragsAndCancel",
+          "testName": "testClosedWholeLassoRoutesRawAndAuthoredMaterialThroughTwoInstalledDragsAndCancel()"
+        }
+      ]
+    },
+    {
+      "path": ".build/pending-integration/selection-host-layout/ipad.xcresult",
+      "result": "Failed",
+      "passedTests": 1,
+      "failedTests": 1,
+      "skippedTests": 0,
+      "runtimeWarnings": [],
+      "configurations": [
+        {
+          "device": {
+            "architecture": "arm64",
+            "deviceId": "00008103-001E059934D9001E",
+            "deviceName": "iPad (Елизавета)",
+            "modelName": "iPad Pro (11-inch) (3rd generation)",
+            "osBuildNumber": "24A435",
+            "osVersion": "27.0",
+            "platform": "iOS"
+          },
+          "expectedFailures": 0,
+          "failedTests": 1,
+          "passedTests": 1,
+          "skippedTests": 0,
+          "testPlanConfiguration": {
+            "configurationId": "1",
+            "configurationName": "Test Scheme Action"
+          }
+        }
+      ],
+      "failures": [
+        {
+          "failureText": "XCTAssertTrue failed - Every frame includes raw material, authored peer, four controls and untouched pixels; see stage attachments",
+          "targetName": "NotebookTests",
+          "testIdentifier": 2,
+          "testIdentifierString": "NotebookInteractionUXTests/testClosedWholeLassoRoutesRawAndAuthoredMaterialThroughTwoInstalledDragsAndCancel()",
+          "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/NotebookInteractionUXTests/testClosedWholeLassoRoutesRawAndAuthoredMaterialThroughTwoInstalledDragsAndCancel",
+          "testName": "testClosedWholeLassoRoutesRawAndAuthoredMaterialThroughTwoInstalledDragsAndCancel()"
+        }
+      ]
+    },
+    {
+      "path": ".build/pending-integration/selection-ten/ipad.xcresult",
+      "result": "Failed",
+      "passedTests": 0,
+      "failedTests": 1,
+      "skippedTests": 0,
+      "runtimeWarnings": [],
+      "configurations": [
+        {
+          "device": {
+            "architecture": "arm64",
+            "deviceId": "00008103-001E059934D9001E",
+            "deviceName": "iPad (Елизавета)",
+            "modelName": "iPad Pro (11-inch) (3rd generation)",
+            "osBuildNumber": "24A435",
+            "osVersion": "27.0",
+            "platform": "iOS"
+          },
+          "expectedFailures": 0,
+          "failedTests": 9,
+          "passedTests": 1,
+          "skippedTests": 0,
+          "testPlanConfiguration": {
+            "configurationId": "1",
+            "configurationName": "Test Scheme Action"
+          }
+        }
+      ],
+      "failures": [
+        {
+          "failureText": "XCTAssertTrue failed - Every frame includes raw material, authored peer, four controls and untouched pixels; see stage attachments",
+          "targetName": "NotebookTests",
+          "testIdentifier": 1,
+          "testIdentifierString": "NotebookInteractionUXTests/testClosedWholeLassoRoutesRawAndAuthoredMaterialThroughTwoInstalledDragsAndCancel()",
+          "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/NotebookInteractionUXTests/testClosedWholeLassoRoutesRawAndAuthoredMaterialThroughTwoInstalledDragsAndCancel",
+          "testName": "testClosedWholeLassoRoutesRawAndAuthoredMaterialThroughTwoInstalledDragsAndCancel()"
+        }
+      ]
+    },
+    {
+      "path": ".build/pending-integration/selection-transaction-ten/ipad.xcresult",
+      "result": "Failed",
+      "passedTests": 0,
+      "failedTests": 1,
+      "skippedTests": 0,
+      "runtimeWarnings": [],
+      "configurations": [
+        {
+          "device": {
+            "architecture": "arm64",
+            "deviceId": "00008103-001E059934D9001E",
+            "deviceName": "iPad (Елизавета)",
+            "modelName": "iPad Pro (11-inch) (3rd generation)",
+            "osBuildNumber": "24A435",
+            "osVersion": "27.0",
+            "platform": "iOS"
+          },
+          "expectedFailures": 0,
+          "failedTests": 9,
+          "passedTests": 1,
+          "skippedTests": 0,
+          "testPlanConfiguration": {
+            "configurationId": "1",
+            "configurationName": "Test Scheme Action"
+          }
+        }
+      ],
+      "failures": [
+        {
+          "failureText": "XCTAssertTrue failed - Every frame includes raw material, authored peer, four controls and untouched pixels; see stage attachments",
+          "targetName": "NotebookTests",
+          "testIdentifier": 1,
+          "testIdentifierString": "NotebookInteractionUXTests/testClosedWholeLassoRoutesRawAndAuthoredMaterialThroughTwoInstalledDragsAndCancel()",
+          "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/NotebookInteractionUXTests/testClosedWholeLassoRoutesRawAndAuthoredMaterialThroughTwoInstalledDragsAndCancel",
+          "testName": "testClosedWholeLassoRoutesRawAndAuthoredMaterialThroughTwoInstalledDragsAndCancel()"
+        }
+      ]
+    }
+  ],
+  "retainedPatchSourceSHA256": {
+    "Applications/Shared/NotebookAttentionProjection.swift": "cbb2e06213c1aef920c97952aa84bfc8ea27abe24d4baa814cff5874fdd9459b",
+    "Applications/Shared/PagePresentation.swift": "041b8c4d7ba9eb7017817f096b8c2247334cd3c4c3e2c9e3465ba5c1941bf128",
+    "Applications/Tests/DrawingOwnershipTests.swift": "8e25c402bf2527df3e7442bd01a0bc3a58f017b2f049930bbbdd25b3f4f4bb50",
+    "Applications/Tests/InkCanvasLifecycleTests.swift": "ed0c1d9716329924543a788cb4c02154981a06dc871775d693619322f1cb3bab",
+    "Applications/Tests/NotebookDrawingToolsTests.swift": "a2b8299a9b667541decec8f86b5a90f5c085f39133232d54309820188f3ae575",
+    "Applications/Tests/NotebookSelectionCompositionTests.swift": "92ab4835039786cf2e4fe6da5187b2398c187f8d7ee1d93d6c6a4597c2ab7f51",
+    "Applications/Tests/PagePresentationTests.swift": "ed2935f9764d8479ee7add9c4dc2b3f2aaa6b1213fd44593562ed5308d40d410",
+    "Applications/Tests/SpatialInkTilePoolTests.swift": "3172f8fa55c5a5b20e6d5f023d7ad2f54effc95c4d8ac26b1fa8775fe0b35408",
+    "Applications/iPad/PencilCanvasView.swift": "606a66707eecd582fc34daeb231485aedbdaf348d813030f25c1f73115ce5fb0"
+  }
+}

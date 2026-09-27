@@ -151,13 +151,13 @@ struct NotebookMultipleElementControls: UIViewRepresentable {
       || (model.inputIsActive && !model.inputGate.permitsObjectPickup)
     view.graphic = nil
     let frame = frames.reduce(CGRect.null) { $0.union($1) }
-    let transforms=model.selectionSession.items.isEmpty && model.selectionSession.elements.allSatisfy { model.graphicElement($0) != nil }
+    let transforms=model.canTransformSelection
     view.configure(selectionID:selectionID,frame:frame,scale:scale,manipulating:suppressActions,
       subject:.elements(frames.count),transformsSelection:transforms,memberFrames:frames,
       camera:camera,cameraProjection:model.nativeCameraProjection)
     view.beginManipulation = { [weak view] kind in
-      guard transforms,model.selectionSession.id == selectionID,let reference=model.selectionSession.elements.first,
-        let contact=model.beginElementManipulation(reference,kind:kind) else { return nil }
+      guard transforms,model.selectionSession.id == selectionID,
+        let contact=model.beginSelectionManipulation(kind:kind) else { return nil }
       let scale=max(view?.projectionScale ?? scale,0.001)
       return .init(begin:{},change:{ point in
         model.updateElementManipulation(contact,translation:.init(x:point.x/scale,y:point.y/scale))
@@ -167,19 +167,18 @@ struct NotebookMultipleElementControls: UIViewRepresentable {
     }
     guard !suppressActions else { return }
     view.editElement = nil
-    view.deleteElement = { if model.selectionSession.id == selectionID { model.deleteGraphicSelection() } }
+    view.deleteElement=model.canDeleteSelection ? { if model.selectionSession.id == selectionID { model.deleteGraphicSelection() } } : nil
     if model.selectionSession.items.isEmpty {
       view.setLayerActions(available:model.availableLayerMoves) { move in
         guard model.selectionSession.id == selectionID else { return }
         model.arrangeSelection(move)
       }
     }
-    guard model.selectionSession.items.isEmpty,
-      model.selectionSession.elements.allSatisfy({ model.graphicElement($0) != nil }) else {
+    guard transforms else {
       view.setActionsMenu([UIAction(title:"Снять выделение",image:UIImage(systemName:"xmark")) { _ in
         guard model.selectionSession.id == selectionID else { return }; model.clearSelection()
       }])
-      view.deleteElement = { if model.selectionSession.id == selectionID { model.deleteSelectedContent() } }
+      view.deleteElement=model.canDeleteSelection ? { if model.selectionSession.id == selectionID { model.deleteSelectedContent() } } : nil
       return
     }
     let alignments: [(NotebookGraphicSelection.Alignment,String)] = [(.left,"По левому краю"),(.center,"По центру горизонтально"),

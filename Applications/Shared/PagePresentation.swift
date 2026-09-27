@@ -12,9 +12,13 @@ struct PageInkPresentation:Equatable {
 /// Queries read it directly; a SwiftUI redraw is not another readiness owner.
 @MainActor final class PageSurfaceReadiness {
   private var ink:PageInkPresentation?
+  private var shownInk:PageInkPresentation?
   private var graphics:ObjectIdentifier?
   private var shownGraphics:(id:UUID,size:PageSize,stamp:VersionStamp)?
-  func recordInk(_ receipt:PageInkPresentation?) { ink=receipt }
+  func recordInk(_ receipt:PageInkPresentation?) {
+    ink=receipt
+    if let receipt { shownInk=receipt }
+  }
   func recordGraphics(_ ready:Bool,page:PageDocument) {
     if ready {
       graphics=page.elementSourceIdentity
@@ -26,6 +30,11 @@ struct PageInkPresentation:Equatable {
   }
   func hasInstalledGraphics(_ page:PageDocument)->Bool {
     shownGraphics?.id == page.id && shownGraphics?.size == page.size && shownGraphics?.stamp == page.agentStamp
+  }
+  // Input may keep using an already shown causal source while its pose is
+  // repainted. A new ink/graphic version still needs its own first receipt.
+  func hasInstalledContent(_ page:PageDocument)->Bool {
+    shownInk?.matches(page) == true && hasInstalledGraphics(page)
   }
 }
 
@@ -54,6 +63,10 @@ final class NotebookPagePresentationRegistry {
   func hasInstalledGraphics(_ page:PageDocument) -> Bool {
     owners = owners.filter { $0.value.value != nil }
     return owners.values.contains { $0.value?.hasInstalledGraphics(page) == true }
+  }
+  func hasInstalledContent(_ page:PageDocument) -> Bool {
+    owners = owners.filter { $0.value.value != nil }
+    return owners.values.contains { $0.value?.hasInstalledContent(page) == true }
   }
 }
 
@@ -134,6 +147,9 @@ final class PagePresentationNativeView: UIView, NotebookScenePresentationOwner {
   /// grants local hit testing, not a receipt that the whole page was shown.
   func hasInstalledGraphics(_ page:PageDocument) -> Bool {
     readiness?.hasInstalledGraphics(page) == true && isShowingCurrentPaper(page)
+  }
+  func hasInstalledContent(_ page:PageDocument) -> Bool {
+    readiness?.hasInstalledContent(page) == true && isShowingCurrentPaper(page)
   }
 
   private func isShowingCurrentPaper(_ page:PageDocument) -> Bool {

@@ -54,6 +54,18 @@ public struct NotebookGraphic: Codable, Equatable, Sendable {
     self.connection = connection; self.vertices = vertices; self.cornerRadius = cornerRadius; self.freehand = freehand; self.transform = transform; self.path = path; self.mask = mask
   }
 
+  /// A measured independent contact keeps its accepted ink painter address.
+  /// Detached copies and multi-contact region aggregates use authored order.
+  public var sourceInkContactID:UUID? {
+    guard shape == .freehand,sourceInkIDs.count == 1,let id=sourceInkIDs.first,
+      let freehand,!freehand.layers.isEmpty,
+      freehand.layers.allSatisfy({ layer in
+        guard let measured=layer.measured else {return false}
+        return layer.tool == .eraser || measured.sourceID == id
+      }),freehand.layers.contains(where:{$0.tool == .pen}) else {return nil}
+    return id
+  }
+
   /// A native accepted edit and a delivered action interpret the same field
   /// patch. It never changes source-ink ownership or authors a second action.
   public func applying(_ patch: JSONValue) throws -> Self {

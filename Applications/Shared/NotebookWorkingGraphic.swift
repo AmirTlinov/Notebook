@@ -14,12 +14,15 @@ struct NotebookWorkingGraphic: Equatable, Identifiable, Sendable {
   let worldOrigin: WorldPoint?
   let graphic: NotebookGraphic
   let basis: NotebookElementBasis?
+  var inkPresentation:NotebookSelectedInkPresentation?
   var accepted = false
   var publicationCursor: UInt64?
-  var id: String { strokeID.uuidString.lowercased() }
+  private let authoredID:String?
+  var id: String { authoredID ?? strokeID.uuidString.lowercased() }
 
   init(strokeID: UUID, fit: NotebookQuickShapeFit, surface: SurfaceID,
     worldOrigin: WorldPoint? = nil, color: SpatialInkColor, width: Double) {
+    authoredID=nil
     self.strokeID = strokeID; self.surface = surface; self.frame = fit.frame
     self.worldOrigin = worldOrigin; basis = nil
     graphic = .init(shape: fit.shape, style: .init(stroke: color, strokeWidth: width),
@@ -28,8 +31,17 @@ struct NotebookWorkingGraphic: Equatable, Identifiable, Sendable {
 
   init(id: UUID, surface: SurfaceID, frame: PageRect, worldOrigin: WorldPoint?, graphic: NotebookGraphic,
     basis:NotebookElementBasis? = nil) {
+    authoredID=nil
     strokeID = id; self.surface = surface; self.frame = frame; self.worldOrigin = worldOrigin
     self.graphic = graphic; self.basis = basis
+  }
+
+  /// Existing authored IDs need not be UUIDs. The measured contact remains the
+  /// source identity, while the working representation retains its actual ID.
+  init(elementID:String,sourceID:UUID,surface:SurfaceID,frame:PageRect,
+    worldOrigin:WorldPoint?,graphic:NotebookGraphic,basis:NotebookElementBasis?) {
+    authoredID=elementID;strokeID=UUID(uuidString:elementID) ?? sourceID;self.surface=surface;self.frame=frame
+    self.worldOrigin=worldOrigin;self.graphic=graphic;self.basis=basis
   }
 
   var pageElement: AgentElement {
@@ -137,7 +149,9 @@ extension NotebookAppModel {
     var changed=Set<SurfaceID>()
     for index in workingGraphics.indices {
       let old=workingGraphics[index]
-      guard let value=updates.removeValue(forKey:old.strokeID),!old.accepted,value != old else { continue }
+      guard let value=updates.removeValue(forKey:old.strokeID),value != old,
+        !old.accepted || (value.inkPresentation != nil && value.inkPresentation !== old.inkPresentation
+          && old.inkPresentation?.holdsPresentation == false) else { continue }
       workingGraphics[index]=value;changed.insert(old.surface);changed.insert(value.surface)
     }
     for value in values where updates[value.strokeID] != nil {
@@ -163,15 +177,21 @@ extension NotebookAppModel {
 
   func pageSuppressedInkIDs(_ page: PageDocument) -> Set<UUID> {
     _ = workingGraphicRevision(on:.page(page.id))
+    let working=workingGraphics.filter { $0.surface == .page(page.id) }
+    let held=Set(working.filter { value in
+      guard let owner=value.inkPresentation else {return false}
+      let canonical=owner.needsCanonicalSource && (value.publicationCursor.map { sceneContentCursor >= $0 } ?? false)
+      return owner.retainsRawSource(value.id) && !canonical
+    }.flatMap { $0.graphic.sourceInkIDs })
     return page.graphicPresentation.suppressedInkIDs.union(
-      workingGraphics.filter { $0.surface == .page(page.id) }.flatMap { $0.graphic.sourceInkIDs })
+      working.filter { $0.inkPresentation?.retainsRawSource($0.id) != true }.flatMap { $0.graphic.sourceInkIDs }).subtracting(held)
   }
 
   func workingGraphics(on surface: SurfaceID, cohort: SceneCompositionCohort) -> [NotebookWorkingGraphic] {
     _ = workingGraphicRevision(on:surface)
     return workingGraphics.filter { graphic in
       graphic.surface == surface
-        && (graphic.publicationCursor.map { cohort.plan.revision < $0 } ?? true)
+        && (graphic.inkPresentation?.holdsPresentation == true || (graphic.publicationCursor.map { cohort.plan.revision < $0 } ?? true))
     }
   }
 
@@ -188,8 +208,16 @@ extension NotebookAppModel {
 
   func retireWorkingGraphics(in cohort: SceneCompositionCohort) {
     guard !workingGraphics.isEmpty, cohort.isPaintInstalled else { return }
+    var delivered=Set<UUID>()
+    for value in workingGraphics {
+      guard let owner=value.inkPresentation,owner.needsCanonicalSource,delivered.insert(owner.id).inserted,
+        value.surface.kind != .page,value.publicationCursor.map({cohort.plan.revision >= $0}) == true,
+        let plan=cohort.liveData.orderedInk[value.surface],
+        let canvas=compositionTiles.surfaceRegistry.canvas(for:value.surface) else {continue}
+      owner.canonicalInstalled(plan,on:canvas,surface:value.surface)
+    }
     func installed(_ graphic: NotebookWorkingGraphic) -> Bool {
-      graphic.surface.kind != .page
+      graphic.surface.kind != .page && graphic.inkPresentation?.holdsPresentation != true
         && (graphic.publicationCursor.map { cohort.plan.revision >= $0 } ?? false)
     }
     // Display confirmation is a read unless an actual handoff completes.
@@ -198,5 +226,54 @@ extension NotebookAppModel {
     let changed=Set(workingGraphics.filter(installed).map(\.surface))
     workingGraphics.removeAll(where: installed)
     didChangeWorkingGraphics(on:changed)
+  }
+}
+
+
+
+extension NotebookAppModel {
+  func selectedInkPresentationNeedsCanonical(_ owner:NotebookSelectedInkPresentation) {
+    guard workingGraphics.contains(where:{$0.inkPresentation === owner}) else {return}
+    didChangeWorkingGraphics(on:[owner.source.address.surface])
+  }
+
+  /// Raw identity alone does not change on conversion. The same captured
+  /// immutable element source and input must own the installed ink plan.
+  func canonicalPageInkInstalled(_ receipt:PageInkPresentation?,elementSource:ObjectIdentifier,input:NotebookPageOrderedInkInput) {
+    guard let receipt,workingGraphics.contains(where:{
+      $0.surface == .page(receipt.pageID) && $0.inkPresentation?.needsCanonicalSource == true
+    }),let page=pages[receipt.pageID],page.drawingStamp == receipt.stamp,
+      page.elementSourceIdentity == elementSource,
+      let canvas=pageInkPublication.currentCanvas(on:receipt.pageID),canvas.isStableFramePresented,
+      input.matches(canvas.orderedInkPlan) else {return}
+    let surface=SurfaceID.page(receipt.pageID)
+    var delivered=Set<UUID>()
+    for value in workingGraphics {
+      guard value.surface == surface,let owner=value.inkPresentation,owner.needsCanonicalSource,
+        delivered.insert(owner.id).inserted,value.publicationCursor.map({sceneContentCursor >= $0}) == true else {continue}
+      owner.canonicalInstalled(canvas.orderedInkPlan,on:canvas,surface:surface)
+    }
+  }
+
+  func selectedInkPresentationInstalled(_ owner:NotebookSelectedInkPresentation) {
+    let desired=Dictionary(uniqueKeysWithValues:owner.working.map { ($0.id,$0) })
+    for index in workingGraphics.indices where workingGraphics[index].inkPresentation === owner {
+      guard var value=desired[workingGraphics[index].id] else { continue }
+      value.accepted=workingGraphics[index].accepted;value.publicationCursor=workingGraphics[index].publicationCursor
+      workingGraphics[index]=value
+    }
+    // A deleted ordered member leaves the working projection in this same
+    // installed frame; retaining its old working body would re-admit it on the
+    // next model projection before the writer publishes canonical deletion.
+    workingGraphics.removeAll { $0.inkPresentation === owner && desired[$0.id] == nil }
+    // The contact keeps desired input, but only this native installation lets
+    // its projected canonical members and selection controls advance.
+    didChangeWorkingGraphics(on:[owner.source.address.surface])
+    removeWorkingGraphics { $0.inkPresentation === owner && $0.surface.kind == .page
+      && $0.inkPresentation?.holdsPresentation != true
+      && ($0.publicationCursor.map { sceneContentCursor >= $0 } ?? false) }
+  }
+  func retireSelectedInkPresentation(_ owner:NotebookSelectedInkPresentation) {
+    removeWorkingGraphics { $0.inkPresentation === owner }
   }
 }

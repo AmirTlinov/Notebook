@@ -107,10 +107,44 @@ extension NotebookStore {
         let order = try currentSQL!.rows("SELECT member FROM reference_element_order WHERE owner_key=? AND member IN (\(placeholders)) ORDER BY position,member",
           [.text(owner)] + copiedFrom.values.map { .text($0) }).compactMap { $0[0].text }
         guard order.count == copiedFrom.count else { throw CollaborationError("revision_conflict", "Порядок исходников изменился.") }
-        let positions = Dictionary(uniqueKeysWithValues:order.enumerated().map { ($0.element,$0.offset) })
+        let selectedSources=sources.filter{copiedFrom.values.contains($0.id)}
+        let contacts=Dictionary(uniqueKeysWithValues:selectedSources.compactMap { source -> (String,UUID)? in
+          (source.page?.graphic ?? source.spatial?.graphic)?.sourceInkContactID.map{(source.id,$0)}
+        })
+        var keys:[String:NotebookInkPaintKey]=[:]
+        if target.kind == .page {
+          // Only bounded headers: duplicating a contact never reads its samples
+          // or walks the surrounding page history to recover its painter rank.
+          let parent=pageFile(target.id)+"#/drawingData/actions/@"
+          for (element,id) in contacts {
+            let address=parent+id.uuidString.lowercased()
+            guard let row=try boundedStoredFragments([(address,false)],maximumCount:1,
+              maximumBytes:262_144,budget:"copied_ink_header").first else {
+              throw CollaborationError("revision_conflict","Исходный рукописный контакт отсутствует.")
+            }
+            let header=try row.value.decode(NotebookPageInkActionMetadata.self)
+            guard header.id == id,header.tool == .pen,header.sequence > 0 else {
+              throw NotebookStorageError.corruptRecord(address)
+            }
+            keys[element] = .page(sequence:header.sequence,id:id)
+          }
+        } else if !contacts.isEmpty {
+          let surface:SurfaceID = target.kind == .cover ? .cover(target.id) : .board(target.id)
+          let headers=try spatialInkHistoryStates(ids:Set(contacts.values))
+          for (element,id) in contacts {
+            guard let header=headers[id],header.surfaces.contains(surface) else {
+              throw CollaborationError("revision_conflict","Исходный рукописный контакт отсутствует на поверхности.")
+            }
+            keys[element] = .spatial(stamp:header.result.creationStamp,id:id)
+          }
+        }
+        let positions = Dictionary(uniqueKeysWithValues:NotebookInkPaintKey.ordering(order,keys:keys).enumerated().map { ($0.element,$0.offset) })
         admitted.sort { positions[copiedFrom[$0.id!]!]! < positions[copiedFrom[$1.id!]!]! }
       }
       if let layerMove {
+        guard sources.allSatisfy({($0.page?.graphic ?? $0.spatial?.graphic)?.sourceInkContactID == nil}) else {
+          throw CollaborationError("unsupported_operation","Порядок принятого рукописного контакта сохраняется при перемещении.")
+        }
         guard operations.count == 1, operations[0].kind == .reorderElements else {
           throw CollaborationError("invalid_operation", "Порядок меняется одной перестановкой выбранных объектов.")
         }

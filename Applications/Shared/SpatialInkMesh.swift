@@ -5,12 +5,16 @@ import NotebookCore
 /// finished contact do not walk or copy the baseline's sample arrays.
 struct SpatialInkInstalledSource: Sendable {
   let surface: SurfaceID
-  let suppressedInkIDs: Set<UUID>
+  private(set) var suppressedInkIDs: Set<UUID>
   private let baseline: SpatialInkJournal
   private var finished: [SpatialInkAction] = []
 
   init(surface: SurfaceID, journal: SpatialInkJournal, suppressedInkIDs: Set<UUID> = []) {
     self.surface = surface; baseline = journal; self.suppressedInkIDs = suppressedInkIDs
+  }
+
+  func suppressing(_ ids:Set<UUID>)->Self {
+    var value=self;value.suppressedInkIDs=ids;return value
   }
 
   var journalRevision: String {
@@ -81,28 +85,37 @@ struct SpatialInkMesh: Sendable {
 
   typealias Chunk = SpatialInkGeometry.Chunk
 
+  struct PaintRange: Sendable { let chunks:Range<Int>;let key:NotebookInkPaintKey }
   struct Batch: Sendable {
     typealias Part = SpatialInkGeometry.Source
     let tool: SpatialInkTool
     let projection: Projection
     let parts: [Part]
+    let paintRanges:[PaintRange]
+    func paintKey(for chunks:Range<Int>)->NotebookInkPaintKey? {
+      var lo=0,hi=paintRanges.count
+      while lo<hi {let m=(lo+hi)/2;if paintRanges[m].chunks.upperBound<=chunks.lowerBound {lo=m+1} else {hi=m}}
+      guard lo<paintRanges.count,paintRanges[lo].chunks.lowerBound<=chunks.lowerBound,paintRanges[lo].chunks.upperBound>=chunks.upperBound else {return nil}
+      return paintRanges[lo].key
+    }
     private let starts: [Int]
     private let partIndex: InkBoundsIndex?
     let chunkCount: Int
     var sourceNodeCount: Int { parts.reduce(0) { $0+$1.sourceNodeCount } }
     var preparedNodeCount: Int { parts.reduce(0) { $0+$1.preparedNodeCount } }
     var isEmpty: Bool { chunkCount == 0 }
-    private var indexBytes: Int { (partIndex?.byteCount ?? 0)+starts.count*MemoryLayout<Int>.stride+parts.count*MemoryLayout<Part>.stride }
+    private var indexBytes: Int { (partIndex?.byteCount ?? 0)+starts.count*MemoryLayout<Int>.stride+parts.count*MemoryLayout<Part>.stride+paintRanges.count*MemoryLayout<PaintRange>.stride }
     var byteCount: Int { indexBytes+parts.reduce(0) { $0+$1.byteCount } }
     var auxiliaryBytes: Int { indexBytes+parts.reduce(0) { $0+$1.auxiliaryBytes } }
-    init(tool: SpatialInkTool,projection: Projection,parts: [Part]) {
-      self.tool=tool;self.projection=projection;self.parts=parts
+    init(tool: SpatialInkTool,projection: Projection,parts: [Part],paintRanges:[PaintRange] = []) {
+      self.tool=tool;self.projection=projection;self.parts=parts;self.paintRanges=paintRanges
       var count=0,starts:[Int]=[]
       for part in parts { starts.append(count);count += part.chunkCount }
       self.starts=starts;chunkCount=count;partIndex = parts.count > 1 ? .init(parts.map(\.bounds)) : nil
     }
-    init(source: InkSampleRelations,projection: Projection,sampleProjection: InkSampleProjection = .init()) {
-      self.init(tool:source.header.tool,projection:projection,parts:[.init(source:source,projection:sampleProjection)])
+    init(source: InkSampleRelations,projection: Projection,sampleProjection: InkSampleProjection = .init(),paintKey:NotebookInkPaintKey? = nil) {
+      let part=Part(source:source,projection:sampleProjection)
+      self.init(tool:source.header.tool,projection:projection,parts:[part],paintRanges:paintKey.map{[.init(chunks:0..<part.chunkCount,key:$0)]} ?? [])
     }
     init(tool: SpatialInkTool,nodes: [SpatialInkGeometry.Node],color: SIMD4<Float>,projection: Projection) {
       self.init(tool:tool,nodes:nodes,chunks:SpatialInkGeometry.chunks(for:nodes,color:color,eraser:tool == .eraser),projection:projection)
@@ -135,14 +148,75 @@ struct SpatialInkMesh: Sendable {
       return parts[low].prepare((id-starts[low])..<(selection.upperBound-starts[low]))
     }
   }
+  struct ActionRange:Sendable { let batch:Int;let chunks:Range<Int> }
   let batches: [Batch]
+  /// Built once with the source mesh, then borrowed by its canvas. A selection
+  /// addresses accepted contacts without decoding or regrouping their spans.
+  let actionRanges:[UUID:[ActionRange]]
+  init(batches:[Batch],actionRanges:[UUID:[ActionRange]] = [:]) {
+    self.batches=batches;self.actionRanges=actionRanges
+  }
+  var auxiliaryBytes:Int {
+    batches.reduce(0) { $0+$1.auxiliaryBytes } + actionRanges.reduce(0) {
+      $0 + 2 * (MemoryLayout<UUID>.stride + MemoryLayout<[ActionRange]>.stride) + $1.value.count*MemoryLayout<ActionRange>.stride
+    }
+  }
+  static func page(_ drawing:PageInkDrawing,suppressedInkIDs:Set<UUID> = [])->Self {
+    .init(batches:drawing.actions.filter{$0.isActive && !suppressedInkIDs.contains($0.id)}.map { action in
+      .init(source:InkSampleRelations(action),projection:.local,paintKey:.page(sequence:action.sequence,id:action.id))
+    })
+  }
   static func local(_ layers: [SpatialInkRenderLayer]) -> Self {
-    .init(batches:layers.map { .init(source:$0.source,projection:.local,
-      sampleProjection:.init(origin:$0.origin,offset:$0.offset,scale:$0.scale)) })
+    let batches=layers.map { Batch(source:$0.source,projection:.local,
+      sampleProjection:.init(origin:$0.origin,offset:$0.offset,scale:$0.scale)) }
+    var ranges:[UUID:[ActionRange]]=[:]
+    for (index,layer) in layers.enumerated() {
+      ranges[layer.source.sourceID,default:[]].append(.init(batch:index,chunks:0..<batches[index].chunkCount))
+    }
+    return .init(batches:batches,actionRanges:ranges)
+  }
+  /// Export holds one mesh through all physical tiles. Admit its retained
+  /// source/index and bounded visible normalization before building that mesh,
+  /// using the same conservative CPU/GPU allowance as page ink export.
+  static func exportPreparationBytes(surface:SurfaceID,journal:SpatialInkJournal,
+    suppressedInkIDs:Set<UUID>,camera:SpatialCamera?,viewport:SpatialPoint,limit:Int) throws -> Int {
+    var total=0
+    func add(_ count:Int,_ stride:Int = 1) throws {
+      let bytes=count.multipliedReportingOverflow(by:stride)
+      let sum=total.addingReportingOverflow(bytes.partialValue)
+      guard count >= 0,!bytes.overflow,!sum.overflow,sum.partialValue <= limit else {throw SceneRenderError.resourceLimit}
+      total=sum.partialValue
+    }
+    let area=CGRect(x:0,y:0,width:viewport.x,height:viewport.y).insetBy(dx:-1,dy:-1)
+    for action in journal.actions where action.isActive && !suppressedInkIDs.contains(action.id) {
+      try Task.checkCancellation()
+      for (index,span) in action.spans.enumerated() where span.surface == surface {
+        let origin=span.samples.first?.worldPoint.map {WorldPoint(tileX:$0.tileX,tileY:$0.tileY,localX:0,localY:0)}
+        let projection=InkSampleProjection(origin:origin)
+        let source=InkSampleRelations(sourceID:action.id,span:index,measurements:span.samples,
+          header:.init(tool:action.tool,color:action.color))
+        try add(source.payloadBytes);try add(2304)
+        if source.count > InkRenderGeometry.maximumSegments,
+          let relative=SpatialInkGeometry.RelativeSource(source,projection:projection) {
+          try add(relative.chunkCount,2*MemoryLayout<Range<Int>>.stride)
+          let placement=origin.map(Projection.world) ?? .local
+          let affine=InkAffine(placement.transform(camera:camera,viewport:viewport))
+          for range in relative.query(viewport:area,affine:affine).chunks {
+            // CPU halo, nodes/LOD, selected copy and transient GPU buffer.
+            try add(relative.preparationPointLimit(range),512)
+          }
+        } else {
+          // Short sources are normalized eagerly even outside the tile.
+          try add(source.count,512)
+        }
+      }
+    }
+    return total
   }
   static func prepare(surface: SurfaceID,journal: SpatialInkJournal?,suppressedInkIDs: Set<UUID> = []) throws -> Self {
     var batches:[Batch]=[],parts:[Batch.Part]=[],tool: SpatialInkTool?,projection: Projection?
     var nodes:[SpatialInkGeometry.Node]=[],chunks:[Chunk]=[]
+    var actionRanges:[UUID:[ActionRange]]=[:],batchChunks=0,paintRanges:[PaintRange]=[]
     func sealPrepared() {
       if !nodes.isEmpty { parts.append(.init(nodes:nodes,chunks:chunks));nodes=[];chunks=[] }
     }
@@ -160,7 +234,7 @@ struct SpatialInkMesh: Sendable {
     }
     func seal() {
       guard let tool,let projection else { return }
-      sealPrepared();batches.append(.init(tool:tool,projection:projection,parts:parts));parts=[]
+      sealPrepared();batches.append(.init(tool:tool,projection:projection,parts:parts,paintRanges:paintRanges));parts=[];batchChunks=0;paintRanges=[]
     }
     for action in journal?.actions ?? [] where action.isActive && !suppressedInkIDs.contains(action.id) {
       try Task.checkCancellation()
@@ -170,10 +244,13 @@ struct SpatialInkMesh: Sendable {
         if tool != action.tool || projection != next { seal();tool=action.tool;projection=next }
         let source=InkSampleRelations(sourceID:action.id,span:spanIndex,measurements:span.samples,
           header:.init(tool:action.tool,color:action.color))
-        append(.init(source:source,projection:.init(origin:origin)))
+        let part=Batch.Part(source:source,projection:.init(origin:origin))
+        actionRanges[action.id,default:[]].append(.init(batch:batches.count,chunks:batchChunks..<(batchChunks+part.chunkCount)))
+        paintRanges.append(.init(chunks:batchChunks..<(batchChunks+part.chunkCount),key:.spatial(stamp:action.stamp,id:action.id)))
+        batchChunks += part.chunkCount;append(part)
       }
     }
-    seal();return .init(batches:batches)
+    seal();return .init(batches:batches,actionRanges:actionRanges)
   }
 }
 
@@ -252,7 +329,7 @@ final class SpatialInkMeshCache {
     } ?? 0
     // Include canonical source retained for reconciliation, relative metadata,
     // and any explicitly required full normalization; visible caches own theirs.
-    let cost = mesh.batches.reduce(0) { $0+$1.auxiliaryBytes }
+    let cost = mesh.auxiliaryBytes
       + sourceBytes
       + (journal?.actions.count ?? 0) * MemoryLayout<SpatialInkAction>.stride
     guard capacity > 0, cost <= byteLimit else { return }

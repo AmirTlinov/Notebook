@@ -458,6 +458,20 @@ extension NotebookAppModel {
       next.retainUnchangedCoverage(from:previous.indices.contains(index) ? previous[index] : nil)
       return next
     }
+    for surface in Set((previous+visible).map(\.surface)) {
+      let canvas:InkCanvasView?
+      if surface.kind == .page,let owner=surface.ownerID {
+        pageInkPublication.publishErasing(visible.filter{$0.surface == surface},on:owner,id:id);canvas=nil
+      }
+      else {
+        #if os(iOS)
+        canvas=compositionTiles.surfaceRegistry.canvas(for:surface)
+        #else
+        canvas=nil
+        #endif
+      }
+      canvas?.updateOrderedErasing(visible.filter{$0.surface == surface},id:id)
+    }
     if visible.allSatisfy({ $0.targets.isEmpty }) {
       // An inactive canvas may cancel during every SwiftUI update. A no-op
       // must not publish another update and strand the opened paper in a loop.

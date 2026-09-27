@@ -220,6 +220,49 @@ final class DrawingOwnershipTests: XCTestCase {
   }
 
   @MainActor
+  func testInstalledSelectionEchoDoesNotRevokeInkReadiness() async throws {
+    let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+    let previous = scene.windows.first(where: \.isKeyWindow), window = UIWindow(windowScene: scene)
+    let host = UIViewController(), paper = PaperCanvasContainerView(frame: .init(x: 0, y: 0, width: 200, height: 200))
+    window.rootViewController = host; host.view.addSubview(paper); window.makeKeyAndVisible()
+    let action = stroke(y: 20)
+    let page = PageDocument(size: .init(width: 200, height: 200), actor: UUID(),
+      drawingData: try PageInkDrawing(actions: [action]).dataRepresentation())
+    let owner = PencilCanvasView.Coordinator(inputGate: NotebookInputGate(), publication: .init(),
+      reserveAction: { _ in nil }, releaseAction: { _, _ in }, acceptAction: { _, _, _, _ in nil })
+    owner.attach(to: paper); owner.apply(page.inkSource, pageID: page.id, to: paper)
+    defer { owner.detach(from: paper); window.isHidden = true; window.rootViewController = nil; previous?.makeKey() }
+    owner.applyOrdered(.empty, source: page.inkSource, pageID: page.id, on: paper)
+    let initial = expectation(description: "initial paper presented")
+    var initialDelivered = false
+    owner.onRenderReady = { receipt in
+      if receipt != nil, !initialDelivered { initialDelivered = true; initial.fulfill() }
+    }
+    await fulfillment(of: [initial], timeout: 3)
+    let plan = NotebookOrderedInkPlan(suppressedInkIDs: [action.id])
+    let frame = try await paper.inkView.prepareFrame(.ordered(plan))
+    paper.inkView.installPreparedFrame(frame)
+    let installed = expectation(description: "private selection frame presented")
+    var installedDelivered = false
+    owner.onRenderReady = { receipt in
+      if receipt != nil, !installedDelivered { installedDelivered = true; installed.fulfill() }
+    }
+    owner.publishReadiness()
+    await fulfillment(of: [installed], timeout: 3)
+    var receipts: [PageInkPresentation?] = []
+    owner.onRenderReady = { receipts.append($0) }
+    let echo = NotebookPageOrderedInkInput(candidates: [], suppressedInkIDs: [action.id])
+    owner.applyOrdered(echo, source: page.inkSource, pageID: page.id, on: paper)
+    owner.publishReadiness()
+    XCTAssertFalse(receipts.contains { $0 == nil }, "The exact installed plan is not pending work")
+    XCTAssertTrue(paper.inkView.isStableFramePresented)
+    receipts.removeAll()
+    owner.applyOrdered(echo, source: page.inkSource, pageID: UUID(), on: paper)
+    owner.publishReadiness()
+    XCTAssertTrue(receipts.contains { $0 == nil }, "Another paper cannot borrow this installed plan even at the same stamp")
+  }
+
+  @MainActor
   func testARepeatedModelSnapshotCannotReplaceANewerLocalDrawing() async throws {
     let base = PageInkDrawing(actions: [stroke(y: 20)])
     let pageID = UUID()

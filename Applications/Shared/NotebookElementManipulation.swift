@@ -60,7 +60,9 @@ struct NotebookTextWidthControls {
 struct NotebookElementManipulation: Equatable, Sendable {
   enum Kind: Equatable, Sendable { case move, resize(NotebookElementResizeHandle), endpoint(NotebookGraphicConnection.Terminal), bend, vertex(Int), roundCorners }
   let id = UUID()
-  let reference: EditableElementReference
+  let reference: EditableElementReference?
+  var selectionSource:NotebookSelectionEditSource?
+  var inkPresentation:NotebookSelectedInkPresentation?
   let kind: Kind
   let original: CGRect
   let bounds: CGRect?
@@ -76,7 +78,8 @@ struct NotebookElementManipulation: Equatable, Sendable {
   /// Input keeps its latest pose while a cold lasso resolves. Until the source
   /// cut and moved material exist, controls must depict the unchanged material,
   /// not an empty rectangle at a pose that no painter can install yet.
-  var presentedFrame: CGRect {
+  @MainActor var presentedFrame: CGRect {
+    if let inkPresentation {return inkPresentation.presentedFrame ?? displayFrame}
     if let region, region.materialization == nil { return displayFrame }
     return projectedFrame
   }
@@ -92,7 +95,8 @@ struct NotebookElementManipulation: Equatable, Sendable {
   private let graphic: NotebookGraphic?
   private let text: NotebookNativeTextTarget?
   var ancestorReferences: [EditableElementReference] {
-    (placement?.ancestors ?? []).map { ancestor in
+    guard let reference else { return [] }
+    return (placement?.ancestors ?? []).map { ancestor in
       switch reference { case .page(let owner,_): .page(pageID:owner,elementID:ancestor)
         case .spatial(let owner,_): .spatial(boardID:owner,elementID:ancestor) }
     }
@@ -100,6 +104,9 @@ struct NotebookElementManipulation: Equatable, Sendable {
   var region: NotebookRegionSelection?
   var regionPoses:[String:NotebookElementPlacement.Source] = [:]
   var selectedMembers: [NotebookGraphicSelection.Member] = []
+  @MainActor var presentedSelectedEdits:[NotebookGraphicSelection.Edit] {
+    inkPresentation.map { $0.presentedEdits ?? NotebookGraphicSelection.translated(selectedMembers,by:.zero) } ?? selectedEdits
+  }
   var selectedEdits: [NotebookGraphicSelection.Edit] {
     guard let origin=selectedMembers.first?.origin else { return [] }
     if kind == .move { return NotebookGraphicSelection.translated(selectedMembers,by:.init(x:movement.x,y:movement.y)) }
@@ -109,7 +116,7 @@ struct NotebookElementManipulation: Equatable, Sendable {
     return NotebookGraphicSelection.transformed(selectedMembers,by:change,relativeTo:origin)
   }
 
-  init(reference: EditableElementReference, kind: Kind, frame: CGRect, bounds: CGRect?, identity: VersionStamp? = nil,
+  init(reference: EditableElementReference?, kind: Kind, frame: CGRect, bounds: CGRect?, identity: VersionStamp? = nil,
     worldOrigin: WorldPoint? = nil, connection: NotebookGraphicConnection? = nil, layout: NotebookGraphicLayout? = nil,
     graphic: NotebookGraphic? = nil, placement: NotebookElementPlacement? = nil, displayFrame: CGRect? = nil,
     text:NotebookNativeTextTarget? = nil) {

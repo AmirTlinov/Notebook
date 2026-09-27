@@ -6,6 +6,29 @@ import XCTest
 @testable import Notebook
 
 final class CompactInkRenderingTests: XCTestCase {
+  func testOrderedSelectionRequestAndCancelledWaiterReuseTheSameRendererResources() async throws {
+    let renderer=InkRasterRenderer.shared
+    func identities(_ value:InkRasterRenderer.OrderedPipelines)->[ObjectIdentifier] {
+      [value.raw,value.body,value.cut,value.fold,value.clear,value.finish,value.clip,value.baseline].map {ObjectIdentifier($0)}
+        + [value.invertClip,value.insideClip,value.clearClip].map {ObjectIdentifier($0)}
+    }
+    for _ in 0..<32 {renderer.requestOrderedPreparation()}
+    try await renderer.prepareOrdered()
+    let original=identities(try XCTUnwrap(renderer.ordered))
+    let cancelled=Task {
+      withUnsafeCurrentTask {$0?.cancel()}
+      try await renderer.prepareOrdered()
+    }
+    switch await cancelled.result {
+    case .success: XCTFail("A cancelled waiter must receive cancellation even though renderer resources remain valid")
+    case .failure(let error): XCTAssertTrue(error is CancellationError)
+    }
+    renderer.requestOrderedPreparation()
+    try await renderer.prepareOrdered()
+    XCTAssertEqual(identities(try XCTUnwrap(renderer.ordered)),original,
+      "Requests and cancelled consumers must neither replace nor cancel the renderer's shared pipeline future")
+  }
+
   func testGPUContourPressureCapsEraserAndAffineMatchCanonicalPixels() throws {
     let gpu = try CompactInkTestRenderer()
     let color = SIMD4<Float>(0.1, 0.35, 0.7, 1)

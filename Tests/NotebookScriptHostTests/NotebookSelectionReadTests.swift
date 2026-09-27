@@ -109,6 +109,32 @@ struct NotebookSelectionReadTests {
     #expect(explicit["data"]?["selection"] == nil, "An explicit address is not rewritten by the current selection")
   }
 
+  @Test func rawOnlySelectionPublishesContactIdentityWithoutReadingAuthoredBodies() async throws {
+    let owner=try NotebookSDKV2ReadTests.Owner(),coordinator=host(owner)
+    defer { try? FileManager.default.removeItem(at:owner.store.root) }
+    let pageID=try #require(owner.store.loadIndex().selectedPageID)
+    var page=try owner.store.loadPage(pageID)
+    let inserted=page.replaceElements([.init(id:"unselected",kind:.markdown,
+      frame:.init(x:0,y:0,width:100,height:100),source:"not selected",html:"<p>not selected</p>")],actor:UUID())
+    #expect(inserted)
+    try owner.store.savePage(page)
+    let target=CollaborationTarget(kind:.page,id:pageID),device=UUID(),connection=UUID(),action=UUID()
+    let selected=NotebookSelection(id:UUID(),kind:.elements,surface:target,target:target,
+      elementIDs:[],inkActionIDs:[action])
+    try owner.store.beginSelectionPublication(deviceID:device,connectionID:connection)
+    #expect(try owner.store.acceptSelectionPublication(.init(deviceID:device,sessionID:UUID(),sequence:1,
+      selection:selected),connectionID:connection))
+    try owner.store.commandTransaction {
+      try owner.store.currentSQL!.run("UPDATE blobs SET data=? WHERE hash=(SELECT hash FROM records WHERE address=?)",
+        [.blob(Data("raw selection must not decode any authored body".utf8)),.text(pageFile(pageID)+"#/elements/@unselected")])
+    }
+    let value=try await coordinator.context(.init(method:"observe"))
+    #expect(value["data"]?["objects"] == .array([]))
+    #expect(value["data"]?["selection"]?["selection"]?["elementIDs"] == .array([]))
+    #expect(value["data"]?["selection"]?["selection"]?["inkActionIDs"] == .array([.string(action.uuidString)]))
+    #expect(value["coverage"]?["complete"] == .bool(true))
+  }
+
   @Test func selectedSetReadsOnlyItsExactMembers() async throws {
     let owner = try NotebookSDKV2ReadTests.Owner(), coordinator = host(owner)
     defer { try? FileManager.default.removeItem(at:owner.store.root) }

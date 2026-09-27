@@ -37,8 +37,9 @@ extension NotebookAppModel {
   var manipulatedBindingTarget: (reference: EditableElementReference, elementID: String)? {
     guard let contact = selectionSession.manipulation, case .endpoint(let terminal) = contact.kind,
       let connection = contact.connection,
-      let binding = terminal == .start ? connection.start.binding : connection.end.binding else { return nil }
-    switch contact.reference {
+      let binding = terminal == .start ? connection.start.binding : connection.end.binding,
+      let reference=contact.reference else { return nil }
+    switch reference {
     case .page(let owner,_): return (.page(pageID:owner,elementID:binding.elementID),binding.elementID)
     case .spatial(let owner,_): return (.spatial(boardID:owner,elementID:binding.elementID),binding.elementID)
     }
@@ -46,9 +47,9 @@ extension NotebookAppModel {
 
   func manipulatedEndpointBinding(retaining retainedID: String? = nil) -> NotebookGraphicConnection.Binding? {
     guard let contact = selectionSession.manipulation, case .endpoint(let terminal) = contact.kind,
-      let connection = contact.connection else { return nil }
+      let connection = contact.connection,let reference=contact.reference else { return nil }
     let graph: NotebookGraphicGraph, surface: SurfaceID, id: String
-    switch contact.reference {
+    switch reference {
     case .page(let owner,let elementID):
       guard let page = pages[owner] else { return nil }
       graph = graphicGraph(page: page); surface = .page(owner); id = elementID
@@ -82,7 +83,7 @@ extension NotebookAppModel {
         $0.surface.ownerID.flatMap { boardHierarchy?.ownerBoardID(of:$0) } == boardID)
     }
     let combined = graph.projecting(adding:working.map(\.node))
-    return projectingGraphicCommands(combined) { .spatial(boardID:boardID,elementID:$0) }
+    return projectingGraphicCommands(combined,holdingSelectedInk:false) { .spatial(boardID:boardID,elementID:$0) }
   }
 
   func editingGraphicGraph(_ reference:EditableElementReference) -> NotebookGraphicGraph? {

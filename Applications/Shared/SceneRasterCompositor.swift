@@ -181,7 +181,7 @@ final class SceneRasterCompositor {
     try checkPreparation()
   }
 
-  func drawInk(surface: SurfaceID, journal: SpatialInkJournal, camera: SpatialCamera?,
+  func drawInk(surface: SurfaceID, journal: SpatialInkJournal, plan: NotebookOrderedInkPlan = .init(), camera: SpatialCamera?,
     size: CGSize, in frame: CGRect) async throws {
     try checkPreparation()
     guard size.width.isFinite, size.height.isFinite, size.width > 0, size.height > 0,
@@ -217,42 +217,76 @@ final class SceneRasterCompositor {
       && (frame.minY * scale).rounded() == frame.minY * scale
     let mask = nativeGrid ? nil : try await Self.create(size: size, scale: 2,
       resources: resources, permitsPreparation: permitsPreparation)
+    // Body-present composition prepares one immutable source for all tiles;
+    // the raw-only specialization keeps its existing forward renderer.
+    let ordered:(mesh:SpatialInkMesh,geometry:InkOrderedGeometry)?
+    let rawJournal:SpatialInkJournal
+    var sourceAllocation:RasterReservation?
+    defer {sourceAllocation?.release()}
+    if plan.isEmpty {
+      ordered=nil;rawJournal=journal.presenting(excluding:plan.suppressedInkIDs)
+    } else {
+      rawJournal=journal
+      let limit=resources.byteLimit,viewport=SpatialPoint(x:size.width,y:size.height)
+      let estimate=Task.detached(priority:.utility) {
+        try SpatialInkMesh.exportPreparationBytes(surface:surface,journal:journal,
+          suppressedInkIDs:plan.suppressedInkIDs,camera:camera,viewport:viewport,limit:limit)
+      }
+      let bytes=try await withTaskCancellationHandler {try await estimate.value} onCancel:{estimate.cancel()}
+      try checkPreparation()
+      guard let allocation=resources.reserveDerivedBytes(max(1,bytes),priority:.passive) else {throw SceneRenderError.resourceLimit}
+      sourceAllocation=allocation
+      let worker=Task.detached(priority:.utility) {
+        try Task.checkCancellation()
+        return try SpatialInkMesh.prepare(surface:surface,journal:journal,suppressedInkIDs:plan.suppressedInkIDs)
+      }
+      let mesh=try await withTaskCancellationHandler {try await worker.value} onCancel:{worker.cancel()}
+      try checkPreparation()
+      guard let device=InkRasterRenderer.shared.device else {throw SceneRenderError.resourceLimit}
+      let geometry=try await InkOrderedGeometry(plan,reusing:nil,device:device,resources:resources,owner:nil)
+      ordered=(mesh,geometry)
+    }
+    try checkPreparation()
     for y in stride(from: firstY, to: lastY, by: side) {
       for x in stride(from: firstX, to: lastX, by: side) {
         try checkPreparation()
         let width = min(side, lastX - x), height = min(side, lastY - y)
         let region = CGRect(x: Double(x) / sx, y: Double(y) / sy,
           width: Double(width) / sx, height: Double(height) / sy)
-        let shiftedCamera = camera.map {
-          SpatialCamera(center: $0.screenToWorld(.init(x: region.midX, y: region.midY),
-            viewport: .init(x: size.width, y: size.height)), scale: $0.scale)
-        }
         // MSAA, resolve texture and CPU readback coexist for only this 512-pixel
         // region. The physical 2x sampling grid remains the original owner's.
         guard let allocation = resources.reserveRaster(pixelWidth: width, pixelHeight: height, backingCount: 8)
         else { throw SceneRenderError.resourceLimit }
         do {
-          let worker = Task.detached(priority: .utility) {
-            try Task.checkCancellation()
-            let layers = shiftedCamera.map { SpatialInkComposer.boardLayers(board: surface, journal: journal,
-              camera: $0, viewport: .init(x: region.width, y: region.height)) }
-              ?? SpatialInkComposer.localLayers(for: surface, journal: journal,
-                origin: .init(x: region.minX, y: region.minY))
-            guard !layers.isEmpty else { return nil as CGImage? }
-            guard let image = InkRasterRenderer.shared.render(layers: layers, size: region.size, scale: 2) else {
-              throw SceneRenderError.snapshotPending("ink_pixels")
+          let image:CGImage?
+          if let ordered {
+            image=try await InkRasterRenderer.shared.orderedImage(mesh:ordered.mesh,plan:plan,
+              camera:camera,viewport:.init(x:size.width,y:size.height),region:region,scale:2,
+              resources:resources,preparedGeometry:ordered.geometry)
+          } else {
+            let shiftedCamera=camera.map {
+              SpatialCamera(center:$0.screenToWorld(.init(x:region.midX,y:region.midY),
+                viewport:.init(x:size.width,y:size.height)),scale:$0.scale)
             }
-            try Task.checkCancellation()
-            return image
+            let worker=Task.detached(priority:.utility) {
+              try Task.checkCancellation()
+              let layers=shiftedCamera.map { SpatialInkComposer.boardLayers(board:surface,journal:rawJournal,
+                camera:$0,viewport:.init(x:region.width,y:region.height)) }
+                ?? SpatialInkComposer.localLayers(for:surface,journal:rawJournal,origin:.init(x:region.minX,y:region.minY))
+              guard !layers.isEmpty else {return nil as CGImage?}
+              guard let image=InkRasterRenderer.shared.render(layers:layers,size:region.size,scale:2) else {
+                throw SceneRenderError.snapshotPending("ink_pixels")
+              }
+              try Task.checkCancellation();return image
+            }
+            image=try await withTaskCancellationHandler {try await worker.value} onCancel:{worker.cancel()}
           }
-          let image = try await withTaskCancellationHandler { try await worker.value } onCancel: { worker.cancel() }
           try checkPreparation()
           if let image {
-            if let mask { try await mask.buffer.draw(image, in: region) }
+            if let mask {try await mask.buffer.draw(image,in:region)}
             else {
-              try await buffer.draw(image, in: .init(x: frame.minX + region.minX * projectedX,
-                y: frame.minY + region.minY * projectedY,
-                width: region.width * projectedX, height: region.height * projectedY))
+              try await buffer.draw(image,in:.init(x:frame.minX+region.minX*projectedX,
+                y:frame.minY+region.minY*projectedY,width:region.width*projectedX,height:region.height*projectedY))
             }
           }
           allocation.release()

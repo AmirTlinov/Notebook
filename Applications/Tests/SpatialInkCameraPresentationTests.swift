@@ -169,8 +169,7 @@ final class SpatialInkCameraPresentationTests: XCTestCase {
     defer { pressure.release() }
     let held = fixture.resources.reservedBytes
     let refinementStart = ContinuousClock.now
-    let frame = try await canvas.prepareSpatialFrame(nil, size: canvas.spatialViewport,
-      displayScale: 1, camera: requested)
+    let frame = try await canvas.prepareFrame(.spatial(nil,size:canvas.spatialViewport,displayScale:1,camera:requested))
     XCTAssertTrue(frame.isValid)
     XCTAssertEqual(canvas.spatialCamera, oldBasis)
     XCTAssertEqual(try fixture.pixels(), pixels, "Completed GPU preparation has not replaced displayed pixels")
@@ -201,8 +200,7 @@ final class SpatialInkCameraPresentationTests: XCTestCase {
     addTeardownBlock { await fixture.close() }
     let canvas = fixture.owner.canvas, basis = canvas.spatialCamera
     let requested = SpatialCamera(center: .init(x: 30, y: -18), scale: 1.2)
-    let frame = try await canvas.prepareSpatialFrame(nil, size: canvas.spatialViewport,
-      displayScale: 1, camera: requested)
+    let frame = try await canvas.prepareFrame(.spatial(nil,size:canvas.spatialViewport,displayScale:1,camera:requested))
     let candidate = fixture.candidate(frame: frame)
     let first = try XCTUnwrap(fixture.registry.acquireContact(on: fixture.surface, in: fixture.mount))
     let second = try XCTUnwrap(fixture.registry.acquireContact(on: fixture.surface, in: fixture.mount))
@@ -234,8 +232,7 @@ final class SpatialInkCameraPresentationTests: XCTestCase {
     let moved = SpatialCamera(center: .init(x: 14, y: -12), scale: 1.1)
     XCTAssertTrue(fixture.owner.needsProjection(camera: moved, viewport: fixture.viewport, refinesDetails: true))
     fixture.update(camera: moved)
-    let frame = try await fixture.owner.canvas.prepareSpatialFrame(nil,
-      size: fixture.owner.canvas.spatialViewport, displayScale: 1, camera: moved)
+    let frame = try await fixture.owner.canvas.prepareFrame(.spatial(nil,size:fixture.owner.canvas.spatialViewport,displayScale:1,camera:moved))
     try fixture.candidate(frame: frame).install()
     XCTAssertFalse(fixture.owner.needsProjection(camera: moved, viewport: fixture.viewport, refinesDetails: true))
     await withCheckedContinuation { continuation in
@@ -290,7 +287,7 @@ final class SpatialInkCameraPresentationTests: XCTestCase {
       mount.update(lease: cohort.nativeInk, surface: surface, boardID: boardID, camera: camera, active: true)
       mount.setNeedsLayout(); mount.layoutIfNeeded()
     }
-    func candidate(frame: InkCanvasView.PreparedSpatialFrame) -> SpatialInkSceneLease {
+    func candidate(frame: InkCanvasView.PreparedFrame) -> SpatialInkSceneLease {
       .init(registry: registry, rootBoardID: boardID, focusedCoverID: nil,
         owners: [surface: owner], updates: [.init(owner: owner,
           generation: owner.canvas.spatialSourceGeneration, frame: frame, journal: journal)])
