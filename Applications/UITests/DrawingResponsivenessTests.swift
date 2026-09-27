@@ -48,7 +48,7 @@ final class DrawingResponsivenessTests: XCTestCase {
     proof.lifetime = .keepAlways; add(proof)
   }
 
-  func testPaperSelectionPinchesAndEdgeTapsKeepTheFittedSheet() {
+  func testPaperSelectionAndZoomOutReturnToBoardAndReopenSameSheet() {
     continueAfterFailure = false
     let app = XCUIApplication()
     app.launchArguments = ["--notebook-drawing-responsiveness-fixture","--notebook-native-graphics-fixture","--notebook-native-graphic-page"]
@@ -68,11 +68,16 @@ final class DrawingResponsivenessTests: XCTestCase {
       app.coordinate(withNormalizedOffset:.init(dx:x,dy:0.72)).tap()
       XCTAssertEqual(surface.value as? String,page,"An edge tap cannot curl the sheet")
     }
-    for scale in [1.6, 0.1] {
-      node.pinch(withScale:scale,velocity:scale > 1 ? 0.7 : -2)
-      XCTAssertEqual(paper.frame,originalPaper,"Notebook pinches cannot zoom or close the fitted page")
-      XCTAssertEqual(surface.value as? String,page)
-    }
+    node.pinch(withScale:1.6,velocity:0.7)
+    XCTAssertEqual(paper.frame,originalPaper,"Zooming in keeps the notebook fitted")
+    XCTAssertEqual(surface.value as? String,page)
+    surface.pinch(withScale:0.5,velocity:-1)
+    XCTAssertTrue(surface.waitForNonExistence(timeout:5),"Zooming out must close the notebook")
+    let closed = XCTAttachment(screenshot:app.screenshot()); closed.name="Notebook closed by pinch"; closed.lifetime = .keepAlways; add(closed)
+    app.pinch(withScale:1.6,velocity:1)
+    XCTAssertTrue(surface.waitForExistence(timeout:10))
+    XCTAssertEqual(surface.value as? String,page)
+    XCTAssertEqual(paper.frame,originalPaper)
     surface.swipeLeft()
     wait(for:[XCTNSPredicateExpectation(predicate:NSPredicate(format:"value BEGINSWITH 'Страница 2 из '"),object:surface)],timeout:3)
     surface.swipeRight()

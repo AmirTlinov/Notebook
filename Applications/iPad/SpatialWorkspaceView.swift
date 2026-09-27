@@ -1184,10 +1184,6 @@ struct SpatialWorkspaceView: View {
   private func handleWorkspaceMagnification(
     _ phase: WorkspaceMagnificationPhase
   ) {
-    // A notebook is a physical fitted sheet, not another zoomable board. The
-    // same recognizer still owns two-finger Undo/Redo; only its camera route is
-    // unavailable here. Documents and closed covers retain their own zoom.
-    guard model.presence?.mode != .page else { return }
     if case .began = phase { referencePageResolution.cancel() }
     handleBoardMagnification(phase)
   }
@@ -1207,7 +1203,7 @@ struct SpatialWorkspaceView: View {
   }
 
   private func exitPassage(presence:SessionPresence) -> NotebookZoomPassage? {
-    if let id=presence.focusedItemID,presence.mode == .document,
+    if let id=presence.focusedItemID,presence.mode == .page || presence.mode == .document,
       let kind=itemKind(id),let center=focusedCenter(itemID:id,boardID:presence.boardID) {
       let geometry=model.itemGeometry(id)
       return .init(itemID:id,parentID:presence.boardID,kind:kind,center:center,geometry:geometry,opening:false,
@@ -1225,9 +1221,13 @@ struct SpatialWorkspaceView: View {
   }
 
   private func openSurfaceCamera(_ camera:SpatialCamera,for presence:SessionPresence) -> SpatialCamera {
-    guard presence.mode == .document,let item=presence.focusedItemID,
+    guard presence.mode == .page || presence.mode == .document,let item=presence.focusedItemID,
       let center=focusedCenter(itemID:item,boardID:presence.boardID) else { return camera }
-    return model.itemGeometry(item).readingCamera(camera,centeredOn:center,viewport:presence.viewport)
+    let geometry=model.itemGeometry(item)
+    // A notebook stays fitted while reading; only the raw gesture trajectory
+    // can cross into the shared closing passage below the fitted scale.
+    if presence.mode == .page { return .init(center:center,scale:geometry.fitScale(viewport:presence.viewport)) }
+    return geometry.readingCamera(camera,centeredOn:center,viewport:presence.viewport)
   }
 
   private func updateMagnification(scale: CGFloat, centroid: CGPoint) {

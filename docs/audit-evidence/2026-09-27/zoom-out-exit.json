@@ -1,0 +1,79 @@
+{
+  "issue": "GUI-314",
+  "sourceSHA256": "cf52f90127122fdd90c6307e857bbf50e47b290ebb17cc2132d7afbb93d03f71",
+  "scope": "iPad pinch exit; notebook zoom-in remains fitted; document zoom unchanged",
+  "verification": {
+    "path": "/Users/amir/.codex/worktrees/notex-integration/Notebook/.build/zoom-out-exit-7/verification.json",
+    "sha256": "0360cac0e1048b9992e2b49ab9d7095bea51b941dce4ca4b7529148d8f79dbb9"
+  },
+  "physicalIPad": {
+    "passed": 10,
+    "failed": 0,
+    "skipped": 0,
+    "runtimeWarnings": [],
+    "native": 8,
+    "ui": 2
+  },
+  "build": {
+    "path": "/private/tmp/notebook-zoom-out-213-20260927T0110Z/build.json",
+    "sha256": "5cfcdeaeb3d66e958ea5632c3c0aff9a3f82f443fd5a7450a293212991640905"
+  },
+  "installation": {
+    "path": "/private/tmp/notebook-zoom-out-install-213-20260927T0114Z/installation.json",
+    "sha256": "2166a27b271cd39913a974dd95db370ef32cb80fe32faf97593be8be23ece6b9"
+  },
+  "installedPair": "0.3.143 (213)",
+  "dataAccess": "No store, key or archive access during in-place update.",
+  "fullAcceptance": false,
+  "visuals": [
+    {
+      "path": "/tmp/notebook-zoom-out-exit-7-all/4673430B-C79B-4C86-94C4-7091E64415BB.png",
+      "sha256": "b5927d48dd0aec5e49de46b1cf03754815275a6d1947560cd939f2dc17e40c28"
+    },
+    {
+      "path": "/tmp/notebook-zoom-out-exit-7-all/3C438690-2AB2-4624-9340-07793BC1FEC0.png",
+      "sha256": "dc7912f92f2b799f9d5cadd181c9a71477a10d9390dddd7085593d428ea7a151"
+    },
+    {
+      "path": "/tmp/notebook-zoom-out-exit-7-all/A05BA61E-B7DD-42A6-8F0E-7EFDA152467F.png",
+      "sha256": "48d4014711484a8a6ef94a7624039a27c3802bbc1a967094dbe4756802177604"
+    }
+  ],
+  "priorAttempts": [
+    {
+      "run": "zoom-out-exit-1",
+      "result": "build failed",
+      "reason": "Test referenced private launch helper; corrected test setup."
+    },
+    {
+      "run": "zoom-out-exit-2",
+      "result": "8 pass / 1 fail",
+      "reason": "Document pinch began on native file header, not paper."
+    },
+    {
+      "run": "zoom-out-exit-3",
+      "result": "8 pass / 1 fail",
+      "reason": "Test incorrectly expected blank-paper tap to hide the independent source header."
+    },
+    {
+      "run": "zoom-out-admission-4",
+      "result": "1 native pass",
+      "scope": "Real loaded PDF admits paper contacts to scene navigation."
+    },
+    {
+      "run": "zoom-out-exit-5",
+      "result": "9 pass / 1 fail",
+      "reason": "Letter geometry did not change XCTest global pinch contacts; first contact still on header."
+    },
+    {
+      "run": "zoom-out-document-6",
+      "result": "1 UI pass",
+      "scope": "Pinch contacts on typeset body; exit/reopen and slider value. Reopened screenshot was enlarged/cropped; this run alone does not prove restored visual pose."
+    },
+    {
+      "run": "zoom-out-exit-7",
+      "result": "10 pass",
+      "scope": "Unchanged final sources; screenshots show closed covers and fitted reopened document. Does not establish long-run visual restoration acceptance."
+    }
+  ]
+}

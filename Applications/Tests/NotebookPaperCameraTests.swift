@@ -7,11 +7,11 @@ import XCTest
 /// tests separately exercise the hardware recognizers on the physical iPad.
 @MainActor
 final class NotebookPaperCameraTests: XCTestCase {
-  func testOpenNotebookRejectsCameraPhasesWithoutChangingPageOrNavigation() async throws {
+  func testOpenNotebookKeepsItsFittedPageDuringZoomInAndTranslation() async throws {
     let (model, window) = try await scene(document: false)
     let start = try XCTUnwrap(model.presence), owner = try coordinator(in: window)
     let pair = CGPoint(x: start.viewport.x * 0.4, y: start.viewport.y * 0.43)
-    for scale in [CGFloat(1.6), 0.1, 4, 1] {
+    for scale in [CGFloat(1.6), 4, 1] {
       let moved = CGPoint(x: pair.x + 42, y: pair.y + 27)
       owner.onCamera(.began(centroid: pair))
       owner.onCamera(.changed(scale: scale, velocity: 0.2, elapsed: 0.2, centroid: moved))
@@ -23,6 +23,28 @@ final class NotebookPaperCameraTests: XCTestCase {
       XCTAssertEqual(model.presencePhase, .settled)
       XCTAssertTrue(owner.defersHorizontalMotionToPageTurn)
       XCTAssertTrue(model.returnPlaces.isEmpty)
+    }
+  }
+
+  func testLoadedDocumentPaperAdmitsSceneFingers() async throws {
+    let (model,window)=try await scene(document:true)
+    let item=try XCTUnwrap(model.presence?.focusedItemID)
+    let document=try XCTUnwrap(model.documents[item]),state=try XCTUnwrap(model.documentStates[item])
+    let deadline=ContinuousClock.now + .seconds(12)
+    while !DocumentRenderRegistry.shared.hasLiveSurface(document:document,state:state,pageIndex:0,scope:.paper),ContinuousClock.now < deadline {
+      try await Task.sleep(for:.milliseconds(30))
+    }
+    XCTAssertTrue(DocumentRenderRegistry.shared.hasLiveSurface(document:document,state:state,pageIndex:0,scope:.paper))
+    for position in [CGPoint(x:0.94,y:0.8),.init(x:0.25,y:0.6),.init(x:0.75,y:0.6)] {
+      let point=CGPoint(x:window.bounds.width*position.x,y:window.bounds.height*position.y)
+      let hit=try XCTUnwrap(window.hitTest(point,with:nil))
+      var chain=[String](),current:UIView?=hit
+      while let view=current {
+        chain.append("\(type(of:view))" + ((view as? UIScrollView).map { " scroll=\($0.isScrollEnabled) pan=\($0.panGestureRecognizer.isEnabled)" } ?? ""))
+        current=view.superview
+      }
+      XCTAssertTrue(NotebookSceneFingerRouting.owner(of:hit,at:hit.convert(point,from:window)).permitsSceneNavigation,chain.joined(separator:" > "))
+      XCTAssertTrue(model.inputGate.permitsSceneContact(at:point,kind:.finger),chain.joined(separator:" > "))
     }
   }
 
@@ -75,7 +97,15 @@ final class NotebookPaperCameraTests: XCTestCase {
   }
 
   func testDocumentZoomCanCloseAndReopenOnlyItsOwnSurface() async throws {
-    let (model,window)=try await scene(document:true)
+    try await verifyZoomClosesAndReopens(document:true)
+  }
+
+  func testNotebookZoomCanCloseAndReopenOnlyItsOwnSurface() async throws {
+    try await verifyZoomClosesAndReopens(document:false)
+  }
+
+  private func verifyZoomClosesAndReopens(document:Bool) async throws {
+    let (model,window)=try await scene(document:document)
     let start=try XCTUnwrap(model.presence),item=try XCTUnwrap(start.focusedItemID)
     let owner=try coordinator(in:window),pair=CGPoint(x:start.viewport.x/2,y:start.viewport.y/2)
     owner.onCamera(.began(centroid:pair))

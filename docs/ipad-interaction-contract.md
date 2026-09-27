@@ -50,8 +50,9 @@ formats are unchanged. Tool styles remain independent device preferences.
 Navigation uses one `idle / interacting / settling` state in `SpatialWorkspaceView`.
 `NotebookZoomPassage` interprets immutable `CameraGestureTrajectory` samples,
 locking one initial-centroid target and one hierarchy boundary per pinch on boards,
-closed covers and documents. Open notebooks stay fitted to the physical viewport;
-pinching or two-finger translation neither zooms nor closes their page. Two-finger
+closed covers, notebooks and documents. Zooming out below fitted paper enters the
+same reversible closing passage for notebooks and documents. Zoom-in and ordinary
+two-finger translation keep notebook pages fitted to the physical viewport. Two-finger
 Undo, three-finger Redo and horizontal page turns retain their own recognizer routes. Release
 chooses the nearest endpoint; reversal and cancellation use the same portal
 projection. A waiting/retired transition cannot accept a late preparation callback.

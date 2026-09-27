@@ -53,6 +53,28 @@ import XCTest
     }
   }
 
+  func testDocumentZoomOutReturnsToBoardAndReopensTheSamePaper() {
+    continueAfterFailure = false
+    let app = XCUIApplication()
+    app.launchArguments = ["--notebook-drawing-responsiveness-fixture", "--notebook-document-runtime-fixture"]
+    app.launch()
+    rotateNotebook(to:.portrait,in:app)
+    let surface = app.otherElements["page-turn-surface"]
+    XCTAssertTrue(surface.waitForExistence(timeout:30))
+    let slider = app.webViews.sliders.firstMatch
+    XCTAssertTrue(slider.waitForExistence(timeout:15))
+    let value = slider.value as? String
+    // Start both contacts in the typeset body, not in the native file header.
+    app.buttons["Исходник: main.tex"].firstMatch.pinch(withScale:0.5,velocity:-1)
+    XCTAssertTrue(surface.waitForNonExistence(timeout:5),"Zooming out must close the document")
+    let closed = XCTAttachment(screenshot:app.screenshot()); closed.name="Document closed by pinch"; closed.lifetime = .keepAlways; add(closed)
+    app.pinch(withScale:1.6,velocity:1)
+    XCTAssertTrue(surface.waitForExistence(timeout:15))
+    XCTAssertTrue(slider.waitForExistence(timeout:15))
+    XCTAssertEqual(slider.value as? String,value)
+    let reopened = XCTAttachment(screenshot:app.screenshot()); reopened.name="Document reopened by pinch"; reopened.lifetime = .keepAlways; add(reopened)
+  }
+
   func testRotatingBesideToPortraitKeepsCodeTextAndInsertionPoint() {
     continueAfterFailure = false
     let app = XCUIApplication()
