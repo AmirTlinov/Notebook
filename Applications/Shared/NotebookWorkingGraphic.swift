@@ -14,7 +14,7 @@ struct NotebookWorkingGraphic: Equatable, Identifiable, Sendable {
   let worldOrigin: WorldPoint?
   let graphic: NotebookGraphic
   let basis: NotebookElementBasis?
-  var inkPresentation:NotebookSelectedInkPresentation?
+  var inkPresentation:NotebookSelectionPresentation?
   var accepted = false
   var publicationCursor: UInt64?
   private let authoredID:String?
@@ -207,7 +207,19 @@ extension NotebookAppModel {
   }
 
   func retireWorkingGraphics(in cohort: SceneCompositionCohort) {
-    guard !workingGraphics.isEmpty, cohort.isPaintInstalled else { return }
+    guard cohort.isPaintInstalled else { return }
+    #if os(iOS)
+    // Deletion has no working body after its first installed frame. Its claim
+    // still owns the hidden native peers until this exact canonical ink cut is
+    // installed; the journal cursor alone is not a visual handoff.
+    for (surface,plan) in cohort.liveData.orderedInk {
+      guard let canvas=compositionTiles.surfaceRegistry.canvas(for:surface) else {continue}
+      for owner in selectedGraphicHosts.acceptedDeletingOwners(on:surface,through:cohort.plan.revision) {
+        owner.canonicalInstalled(plan,on:canvas,surface:surface)
+      }
+    }
+    #endif
+    guard !workingGraphics.isEmpty else {return}
     var delivered=Set<UUID>()
     for value in workingGraphics {
       guard let owner=value.inkPresentation,owner.needsCanonicalSource,delivered.insert(owner.id).inserted,
@@ -232,7 +244,7 @@ extension NotebookAppModel {
 
 
 extension NotebookAppModel {
-  func selectedInkPresentationNeedsCanonical(_ owner:NotebookSelectedInkPresentation) {
+  func selectedInkPresentationNeedsCanonical(_ owner:NotebookSelectionPresentation) {
     guard workingGraphics.contains(where:{$0.inkPresentation === owner}) else {return}
     didChangeWorkingGraphics(on:[owner.source.address.surface])
   }
@@ -240,7 +252,13 @@ extension NotebookAppModel {
   /// Raw identity alone does not change on conversion. The same captured
   /// immutable element source and input must own the installed ink plan.
   func canonicalPageInkInstalled(_ receipt:PageInkPresentation?,elementSource:ObjectIdentifier,input:NotebookPageOrderedInkInput) {
-    guard let receipt,workingGraphics.contains(where:{
+    guard let receipt else {return}
+    #if os(iOS)
+    let deleting=selectedGraphicHosts.acceptedDeletingOwners(on:.page(receipt.pageID),through:sceneContentCursor)
+    #else
+    let deleting:[NotebookSelectionPresentation]=[]
+    #endif
+    guard !deleting.isEmpty || workingGraphics.contains(where:{
       $0.surface == .page(receipt.pageID) && $0.inkPresentation?.needsCanonicalSource == true
     }),let page=pages[receipt.pageID],page.drawingStamp == receipt.stamp,
       page.elementSourceIdentity == elementSource,
@@ -253,9 +271,10 @@ extension NotebookAppModel {
         delivered.insert(owner.id).inserted,value.publicationCursor.map({sceneContentCursor >= $0}) == true else {continue}
       owner.canonicalInstalled(canvas.orderedInkPlan,on:canvas,surface:surface)
     }
+    for owner in deleting {owner.canonicalInstalled(canvas.orderedInkPlan,on:canvas,surface:surface)}
   }
 
-  func selectedInkPresentationInstalled(_ owner:NotebookSelectedInkPresentation) {
+  func selectedInkPresentationInstalled(_ owner:NotebookSelectionPresentation) {
     let desired=Dictionary(uniqueKeysWithValues:owner.working.map { ($0.id,$0) })
     for index in workingGraphics.indices where workingGraphics[index].inkPresentation === owner {
       guard var value=desired[workingGraphics[index].id] else { continue }
@@ -273,7 +292,7 @@ extension NotebookAppModel {
       && $0.inkPresentation?.holdsPresentation != true
       && ($0.publicationCursor.map { sceneContentCursor >= $0 } ?? false) }
   }
-  func retireSelectedInkPresentation(_ owner:NotebookSelectedInkPresentation) {
+  func retireSelectedInkPresentation(_ owner:NotebookSelectionPresentation) {
     removeWorkingGraphics { $0.inkPresentation === owner }
   }
 }

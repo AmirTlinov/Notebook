@@ -351,9 +351,12 @@ struct NotebookGraphicSelectionTests {
     for (member,edit) in zip(members,edits) {
       #expect(edit.graphic == member.graphic)
       let placed=try member.placement.updating(frame:edit.frame,basis:edit.basis)
+      let display=try #require(NotebookGraphicSelection.displayTransform(from:member,to:edit))
       for point in [CGPoint.zero,.init(x:17,y:29),.init(x:member.placement.localSize.x,y:member.placement.localSize.y)] {
         let expected=point.applying(member.placement.transform).applying(change),actual=point.applying(placed.transform)
         #expect(abs(actual.x-expected.x)<1e-9 && abs(actual.y-expected.y)<1e-9)
+        let preview=point.applying(member.placement.transform).applying(display)
+        #expect(abs(preview.x-actual.x)<1e-9 && abs(preview.y-actual.y)<1e-9)
       }
     }
     let moved=NotebookGraphicSelection.translated(members,by:.init(x:40,y:30))
@@ -365,6 +368,26 @@ struct NotebookGraphicSelectionTests {
     let onlyLink=NotebookGraphicSelection.transformed([members[2]],by:change,relativeTo:.zero)
     #expect(onlyLink[0].graphic.connection?.bindings.isEmpty == true)
     #expect(onlyLink[0].graphic.style == members[2].graphic.style)
+  }
+
+  @Test func selectedChildPreviewKeepsItsRotatedParentBasis() throws {
+    let page=PageDocument(size:.init(width:1000,height:1000),actor:UUID(),elements:[
+      .init(id:"group",kind:.group,frame:.init(x:90,y:70,width:220,height:160),source:"",html:"",
+        basis:.init(size:.init(x:220,y:160),transform:.init(a:0,b:1,c:-1,d:0,tx:1,ty:0))),
+      .init(id:"child",kind:.graphic,frame:.init(x:20,y:30,width:65,height:42),source:"",html:"",
+        graphic:.init(shape:.ellipse),parentID:"group")])
+    let graph=page.graphicGraph(),node=try #require(graph.node("child"))
+    let member=NotebookGraphicSelection.Member(id:node.id,frame:node.frame,graphic:node.graphic,
+      layout:try #require(graph.resolve(node.id).layout),body:try #require(graph.resolve(node.id,space:.body).layout),
+      placement:node.placement)
+    let edit=try #require(NotebookGraphicSelection.translated([member],by:.init(x:37,y:-29)).first)
+    let preview=try #require(NotebookGraphicSelection.displayTransform(from:member,to:edit))
+    let target=try member.placement.updating(frame:edit.frame,basis:edit.basis)
+    for p in [CGPoint.zero,CGPoint(x:21,y:9),CGPoint(x:65,y:42)] {
+      let displayed=p.applying(member.placement.transform).applying(preview)
+      let persisted=p.applying(target.transform)
+      #expect(abs(displayed.x-persisted.x)<1e-9 && abs(displayed.y-persisted.y)<1e-9)
+    }
   }
 
   @Test func copyingAtThePageEdgeDetachesUnselectedNodesWithoutLosingVisibleGeometry() throws {

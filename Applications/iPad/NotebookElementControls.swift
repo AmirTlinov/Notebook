@@ -143,8 +143,13 @@ struct NotebookMultipleElementControls: UIViewRepresentable {
   let frames: [CGRect]
   let scale: Double
   var camera: SessionPresence? = nil
-  func makeUIView(context: Context) -> NotebookSelectionControlsView { .init(gate:model.inputGate,contextMenus:contextMenus) }
+  func makeUIView(context: Context) -> NotebookSelectionControlsView {
+    let view=NotebookSelectionControlsView(gate:model.inputGate,contextMenus:contextMenus)
+    model.selectedGraphicHosts.registerControls(view,selectionID:selectionID)
+    return view
+  }
   func updateUIView(_ view: NotebookSelectionControlsView, context: Context) {
+    model.selectedGraphicHosts.registerControls(view,selectionID:selectionID)
     view.beginActionsUpdate()
     defer { view.finishActionsUpdate() }
     let suppressActions = model.selectionSession.manipulation != nil

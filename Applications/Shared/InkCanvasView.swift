@@ -2093,7 +2093,8 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
   /// Called only after every source/projection in the candidate validated in
   /// this main-actor turn. GPU work is complete; this is not an observed-frame
   /// receipt. The caller publishes its matching static cohort in the same turn.
-  func installPreparedFrame(_ frame:PreparedFrame,spatialSource:SpatialInkInstalledSource? = nil) {
+  func installPreparedFrame(_ frame:PreparedFrame,spatialSource:SpatialInkInstalledSource? = nil,
+    installDependants:(@MainActor ()->Void)? = nil) {
     precondition(frame.canvas === self && frame.isValid)
     frame.installed = true
     // Ownership has passed from the cancellable candidate to this install.
@@ -2188,6 +2189,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
       if material != nil { layer?.backgroundColor = nil }
     #endif
     for drawable in frame.drawables { drawable.present() }
+    installDependants?()
     CATransaction.commit()
     hasRevealedFirstFrame = !frame.drawables.isEmpty
     pauseFrameLoop()

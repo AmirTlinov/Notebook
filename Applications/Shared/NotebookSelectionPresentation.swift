@@ -1,0 +1,443 @@
+import Foundation
+import NotebookCore
+import Observation
+import QuartzCore
+/// The current contact and its accepted working members share this one native
+/// exchange. It retains no screenshot and owns no render clock. Source and
+/// material drawables are private until the existing canvas install transaction.
+@MainActor @Observable final class NotebookSelectionPresentation: Equatable {
+  nonisolated static func ==(lhs:NotebookSelectionPresentation,rhs:NotebookSelectionPresentation)->Bool { lhs === rhs }
+  let id:UUID
+  let source:NotebookSelectionEditSource
+  let membersByID:[String:NotebookGraphicSelection.Member]
+  @ObservationIgnored private weak var model:NotebookAppModel?
+  @ObservationIgnored private weak var canvas:InkCanvasView?
+  private var restoration:InkCanvasView.SourceRestoration?
+  private let isSpatial:Bool
+  private let originalWorking:[NotebookWorkingGraphic]
+  private let originals:[String:NotebookOrderedInkPlan.Body]
+  private let rawMemberIDs:Set<String>
+  #if os(iOS)
+  @ObservationIgnored private let requiredAuthoredHostIDs:Set<String>
+  @ObservationIgnored private let requiredTextHostIDs:Set<String>
+  @ObservationIgnored private var physicalLease:SpatialInkSurfaceRegistry.ContactLease?
+  #endif
+  @ObservationIgnored private var preparation:Task<Void,Never>?
+  @ObservationIgnored private var generation=UUID()
+  @ObservationIgnored private var claimed=false
+  @ObservationIgnored private var accepted=false
+  @ObservationIgnored private var acceptedCursor:UInt64?
+  @ObservationIgnored private(set) var canonicalAuthoredCutReady=false
+  @ObservationIgnored private var canonicalCommitScheduled=false
+  @ObservationIgnored private var preparationFailed=false
+  @ObservationIgnored private var deleting=false
+  @ObservationIgnored private var installWaiter:CheckedContinuation<Void,Error>?
+  @ObservationIgnored private var installTimeout:Task<Void,Never>?
+  #if os(iOS)
+  @ObservationIgnored private var installedHostGenerations:[String:UUID]=[:]
+  @ObservationIgnored private var installedDisplayGenerations:[String:UUID]=[:]
+  #endif
+  @ObservationIgnored private var desired:[NotebookWorkingGraphic]=[]
+  @ObservationIgnored private var desiredEdits:[NotebookGraphicSelection.Edit]=[]
+  private(set) var presentedEdits:[NotebookGraphicSelection.Edit]?
+  private(set) var presentedFrame:CGRect?
+  @ObservationIgnored private var desiredFrame:CGRect?
+  private var shown:[NotebookWorkingGraphic]?
+  var working:[NotebookWorkingGraphic] {
+    (shown ?? originalWorking).map {value in var value=value;value.inkPresentation=self;return value}
+  }
+  private(set) var installed=false
+  private(set) var retiring=false
+  @ObservationIgnored private var disposed=false
+  var ownsAuthoredHosts:Bool { !disposed }
+  var retainsOriginal:Bool {!installed && !disposed}
+  func retainsRawSource(_ id:String)->Bool {
+    (retainsOriginal || retiring) && rawMemberIDs.contains(id)
+  }
+  var retiringBodies:[NotebookOrderedInkPlan.Body] {
+    retiring && !disposed ? originals.values.sorted{$0.key < $1.key} : []
+  }
+  /// A failed private stage may yield source preparation to the accepted
+  /// canonical owner, but controls still describe the last installed picture.
+  var needsCanonicalSource:Bool {!disposed && preparationFailed && accepted}
+  var awaitsAcceptedDeleteCut:Bool {!disposed && accepted && deleting && canvas != nil}
+  func acceptsCanonicalCut(_ cursor:UInt64)->Bool {
+    awaitsAcceptedDeleteCut && acceptedCursor.map({cursor >= $0}) == true
+  }
+  // Cancellation ends the contact, not its installed picture. Authored peers
+  // and controls leave this pose only with the raw restoration's frame receipt.
+  var holdsPresentation:Bool {!disposed && (retiring || shown != desired || needsCanonicalSource || (canvas == nil && installed))}
+  func update(_ values:[NotebookWorkingGraphic],edits:[NotebookGraphicSelection.Edit],frame:CGRect) {
+    guard !disposed,!retiring else {return}
+    desired=values;desiredEdits=edits;desiredFrame=frame
+    // Selection is read-only until the actual desired pose differs. The raw
+    // stream keeps its exact original alpha grouping until that first edit.
+    guard values != originalWorking || edits != NotebookGraphicSelection.translated(source.members,by:.zero) || installed else {return}
+    prepareIfPossible()
+  }
+
+  func stageDeletion() { deleting=true }
+  func awaitFirstInstallation() async throws {
+    if installed { return }
+    guard !disposed,!preparationFailed else {throw CancellationError()}
+    try await withTaskCancellationHandler {
+      try await withCheckedThrowingContinuation { continuation in
+        guard !installed,!disposed,!preparationFailed else {
+          if installed {continuation.resume(returning:())} else {continuation.resume(throwing:CancellationError())}
+          return
+        }
+        precondition(installWaiter == nil)
+        installWaiter=continuation
+        installTimeout=Task { [weak self] in
+          do {try await Task.sleep(for:.seconds(2))} catch {return}
+          self?.completeInstallWaiter(CollaborationError("material_unavailable","Не удалось показать всё выделение."))
+        }
+      }
+    } onCancel: {Task { @MainActor [weak self] in self?.completeInstallWaiter(CancellationError()) }}
+  }
+  private func completeInstallWaiter(_ failure:Error? = nil) {
+    installTimeout?.cancel();installTimeout=nil
+    let waiter=installWaiter;installWaiter=nil
+    if let failure {waiter?.resume(throwing:failure)} else {waiter?.resume(returning:())}
+  }
+
+  init?(id:UUID,source:NotebookSelectionEditSource,model:NotebookAppModel) {
+    let raw:InkCanvasView?
+    if source.needsOrderedPresentation {
+      if source.address.surface.kind == .page,let pageID=source.address.surface.ownerID {
+        raw=model.pageInkPublication.currentCanvas(on:pageID)
+        isSpatial=false
+      } else {
+        let registry=model.compositionTiles.surfaceRegistry
+        raw=registry.canvas(for:source.address.surface)
+        guard let installed=raw?.installedSpatialSource,
+          source.expectedInkRevision.map({installed.journalRevision == $0}) ?? true else { return nil }
+        isSpatial=true
+        #if os(iOS)
+        if let raw { physicalLease=registry.acquireContact(on:source.address.surface,in:raw) }
+        #endif
+      }
+      guard raw != nil else {return nil}
+    } else {
+      #if os(iOS)
+      raw=nil;isSpatial=source.address.surface.kind != .page
+      #else
+      return nil
+      #endif
+    }
+    let selectedIDs=Set(source.members.map(\.id))
+    guard !model.workingGraphics.contains(where: {selectedIDs.contains($0.id)
+      && $0.surface == source.address.surface && $0.inkPresentation?.holdsPresentation == true}) else {return nil}
+    var originals:[String:NotebookOrderedInkPlan.Body]=[:]
+    var restoration:InkCanvasView.SourceRestoration?
+    if let raw {
+      for member in source.orderedMembers {
+        guard let body=raw.orderedInkPlan.bodies.first(where:{$0.elementID == member.id}),
+          body.graphic == member.graphic,body.layout == member.layout else {return nil}
+        originals[member.id]=body
+      }
+      let sourceIDs=Set(source.ink.map(\.actionID)).union(originals.values.map(\.sourceID))
+      guard !sourceIDs.isEmpty,let captured=raw.captureSourceRestoration(for:sourceIDs) else {return nil}
+      restoration=captured
+    }
+    self.originals=originals;originalWorking=source.initialPresentationWorking
+    rawMemberIDs=Set(source.ink.map(\.memberID))
+    self.id=id;self.source=source
+    membersByID=Dictionary(uniqueKeysWithValues:source.members.map{($0.id,$0)})
+    self.model=model;canvas=raw;self.restoration=restoration
+    #if os(iOS)
+    requiredAuthoredHostIDs=model.selectedGraphicHosts.requiredHostIDs(source)
+    requiredTextHostIDs=model.selectedGraphicHosts.requiredTextHostIDs(source,model:model)
+    model.selectedGraphicHosts.bind(self)
+    #endif
+  }
+
+  #if os(iOS)
+  func graphicHostDidInstall() { prepareIfPossible() }
+  #endif
+
+  private func prepareIfPossible() {
+    guard !disposed,!retiring,preparation == nil,let desiredFrame else {return}
+    #if os(iOS)
+    guard let hosts=model?.selectedGraphicHosts.hosts(source,requiredIDs:requiredAuthoredHostIDs,ownerID:id),
+      let textHosts=model?.selectedGraphicHosts.textHosts(source,requiredIDs:requiredTextHostIDs) else {return}
+    let hostGenerations=hosts.mapValues(\.generation)
+    let displayGenerations=hosts.mapValues(\.displayGeneration)
+    #endif
+    let generation=generation,values=desired,edits=desiredEdits,frameRect=desiredFrame
+    if installed,shown == values,presentedEdits == edits {
+      #if os(iOS)
+      guard presentedFrame != frameRect || installedHostGenerations != hostGenerations
+        || installedDisplayGenerations != displayGenerations else {return}
+      guard let poses=authoredPoses(edits,hosts:hosts) else {return}
+      CATransaction.begin();CATransaction.setDisableActions(true)
+      for (host,pose) in poses {if let pose {host.install(pose)} else {host.hide()}}
+      if deleting {for host in textHosts {host.hide()}}
+      presentedFrame=frameRect;installedHostGenerations=hostGenerations
+      installedDisplayGenerations=displayGenerations
+      if let model {model.selectedGraphicHosts.installControls(model:model,selectionID:source.selectionID)}
+      CATransaction.commit()
+      #else
+      return
+      #endif
+      return
+    }
+    guard let canvas else {
+      #if os(iOS)
+      guard let poses=authoredPoses(edits,hosts:hosts),model?.selectionEditSourceIsCurrent(source) == true || claimed else {return}
+      CATransaction.begin();CATransaction.setDisableActions(true)
+      for (host,pose) in poses {if let pose {host.install(pose)} else {host.hide()}}
+      if deleting {for host in textHosts {host.hide()}}
+      shown=values;presentedEdits=edits;presentedFrame=frameRect;installed=true
+      installedHostGenerations=hostGenerations;installedDisplayGenerations=displayGenerations
+      if deleting {model?.publishSelectionDrafts(source:source,edits:edits,deleting:true)}
+      model?.selectedInkPresentationInstalled(self)
+      if let model {model.selectedGraphicHosts.installControls(model:model,selectionID:source.selectionID)}
+      completeInstallWaiter()
+      CATransaction.commit()
+      #endif
+      return
+    }
+    preparation=Task { [weak self] in
+      guard let self else {return}
+      var frame:InkCanvasView.PreparedFrame?
+      do {
+        try Task.checkCancellation()
+        let ids=Set(source.ink.map(\.actionID)).union(originals.values.map(\.sourceID))
+        var bodies=canvas.orderedInkPlan.bodies.filter{!ids.contains($0.sourceID)}
+        for value in values {
+          guard let layout=NotebookGraphicGraph([value.node]).resolve(value.id).layout else {throw CancellationError()}
+          let key:NotebookInkPaintKey,erasures:[InkElementErasure]
+          if let original=originals[value.id] {
+            key=original.key;erasures=original.erasures
+          } else {
+            guard let raw=source.ink.first(where:{$0.memberID == value.id}) else {throw CancellationError()}
+            if isSpatial {
+              guard let actor=UUID(uuidString:raw.painterOrder.actor) else {throw CancellationError()}
+              key = .spatial(stamp:.init(counter:raw.painterOrder.counter,actor:actor),id:raw.actionID)
+            } else {key = .page(sequence:raw.painterOrder.counter,id:raw.actionID)}
+            erasures=[]
+          }
+          bodies.append(.init(elementID:value.id,key:key,graphic:value.graphic,layout:layout,erasures:erasures))
+        }
+        let plan=NotebookOrderedInkPlan(bodies:bodies,suppressedInkIDs:canvas.orderedInkPlan.suppressedInkIDs.union(ids))
+        frame=try await canvas.prepareFrame(.ordered(plan))
+        try Task.checkCancellation()
+        guard self.generation == generation,!disposed,!retiring,let frame,frame.isValid,
+          claimed || model?.selectionEditSourceIsCurrent(source) == true else {throw CancellationError()}
+        #if os(iOS)
+        guard let hosts=model?.selectedGraphicHosts.hosts(source,requiredIDs:requiredAuthoredHostIDs,ownerID:id),
+          hosts.mapValues(\.generation) == hostGenerations else {
+          frame.cancel();preparation=nil;prepareIfPossible();return
+        }
+        guard let currentTextHosts=model?.selectedGraphicHosts.textHosts(source,requiredIDs:requiredTextHostIDs),
+          Set(currentTextHosts.map(ObjectIdentifier.init)) == Set(textHosts.map(ObjectIdentifier.init)) else {
+          frame.cancel();preparation=nil;prepareIfPossible();return
+        }
+        guard let poses=authoredPoses(edits,hosts:hosts) else {throw CancellationError()}
+        #endif
+        canvas.installPreparedFrame(frame) { [weak self] in
+          guard let self else {return}
+          shown=values;presentedEdits=edits;presentedFrame=frameRect
+          #if os(iOS)
+          installedHostGenerations=hostGenerations
+          installedDisplayGenerations=hosts.mapValues(\.displayGeneration)
+          #endif
+          restoration?.installed();installed=true
+          if deleting {model?.publishSelectionDrafts(source:source,edits:edits,deleting:true)}
+          model?.selectedInkPresentationInstalled(self)
+          #if os(iOS)
+          for (host,pose) in poses {if let pose {host.install(pose)} else {host.hide()}}
+          if deleting {for host in textHosts {host.hide()}}
+          if let model {model.selectedGraphicHosts.installControls(model:model,selectionID:source.selectionID)}
+          completeInstallWaiter()
+          #endif
+        }
+        preparation=nil
+        if accepted && shown == desired {releasePhysicalLease()}
+        if desired != values || desiredEdits != edits {prepareIfPossible()}
+      } catch {
+        frame?.cancel()
+        guard self.generation == generation else {return}
+        preparation=nil;fail()
+      }
+    }
+  }
+
+  #if os(iOS)
+  private func authoredPoses(_ edits:[NotebookGraphicSelection.Edit],
+    hosts:[String:NotebookSelectedGraphicHostController]) -> [(NotebookSelectedGraphicHostController,CGAffineTransform?)]? {
+    let byID=Dictionary(uniqueKeysWithValues:edits.map { ($0.id,$0) })
+    let members=Dictionary(uniqueKeysWithValues:source.members.map { ($0.id,$0) })
+    var result:[(NotebookSelectedGraphicHostController,CGAffineTransform?)]=[]
+    for (id,host) in hosts {
+      guard let member=members[id] else {return nil}
+      if let edit=byID[id] {
+        guard let pose=host.pose(edit,from:member) else {return nil}
+        result.append((host,pose))
+      } else {result.append((host,nil))}
+    }
+    return result
+  }
+  #endif
+
+  /// Enqueueing owns the material independently of the selection or view.
+  func claim() {
+    claimed=true
+    #if os(iOS)
+    if canvas == nil || deleting {
+      model?.selectedGraphicHosts.retainClaim(self)
+    }
+    #endif
+  }
+  func didAcceptSource(cursor:UInt64? = nil) {
+    accepted=true
+    acceptedCursor=cursor
+    // The atomic writer receipt ends rollback authority. Keep only the current
+    // native picture/controls, not the captured pre-command body geometry.
+    restoration=nil
+    if installed || preparationFailed { releasePhysicalLease() }
+    authoredHostUnmounted()
+  }
+  func authoredHostUnmounted() {
+    #if os(iOS)
+    if deleting,!installed,!disposed {
+      preparationFailed=true
+      completeInstallWaiter(CancellationError())
+      return
+    }
+    if accepted,deleting,canvas != nil,!requiredTextHostIDs.isEmpty,let model,
+      model.selectedGraphicHosts.textHosts(source,requiredIDs:requiredTextHostIDs) == nil {
+      finishRetirement();return
+    }
+    guard accepted,canvas == nil,!disposed,let model,
+      model.selectedGraphicHosts.mountedHosts(source,ownerID:id).isEmpty else {return}
+    finishRetirement()
+    #endif
+    if canonicalAuthoredCutReady {canonicalHostStaged()}
+  }
+  func canonicalAuthoredSourceLoaded(upTo cursor:UInt64) {
+    guard accepted,canvas == nil,!disposed,!canonicalAuthoredCutReady,
+      acceptedCursor.map({cursor >= $0}) == true,let model else {return}
+    #if os(iOS)
+    if model.selectedGraphicHosts.mountedHosts(source,ownerID:id).isEmpty {finishRetirement();return}
+    #endif
+    canonicalAuthoredCutReady=true
+    // A later queued edit or peer action may already have superseded this
+    // command. The scene's current source, not this command's desired pose,
+    // is the canonical handoff target. The hosts retain the old complete
+    // picture until that source has been staged together.
+    model.didChangeWorkingGraphics(on:[source.address.surface])
+    canonicalHostStaged()
+  }
+  func canonicalHostStaged() {
+    guard canonicalAuthoredCutReady,!disposed,!canonicalCommitScheduled else {return}
+    canonicalCommitScheduled=true
+    // One turn admits every host's source view; only then can a single native
+    // transaction replace their visible bodies and controls together.
+    Task { @MainActor [weak self] in
+      self?.canonicalCommitScheduled=false
+      self?.commitCanonicalHostsIfReady()
+    }
+  }
+  private func commitCanonicalHostsIfReady() {
+    guard canonicalAuthoredCutReady,!disposed,let model else {return}
+    #if os(iOS)
+    let hosts=model.selectedGraphicHosts.mountedHosts(source,ownerID:id)
+    guard !hosts.isEmpty else {finishRetirement();return}
+    for (id,host) in hosts {
+      let ref=source.address.reference(id)
+      guard let graphic=model.graphicElement(ref),let layout=model.graphicLayout(ref),
+        host.hasCanonical(graphic:graphic,layout:layout) else {return}
+    }
+    CATransaction.begin();CATransaction.setDisableActions(true)
+    for host in hosts.values {host.installCanonical()}
+    finishRetirement()
+    CATransaction.commit()
+    #endif
+  }
+  func canonicalInstalled(_ plan:NotebookOrderedInkPlan,on current:InkCanvasView,surface:SurfaceID) {
+    guard (needsCanonicalSource || awaitsAcceptedDeleteCut),surface == source.address.surface,current.window != nil,
+      current.isStableFramePresented,current.orderedInkPlan == plan else {return}
+    // The caller also checked its accepted publication cursor and immutable
+    // source. A newer physical owner may legitimately replace the original one.
+    finishRetirement()
+  }
+  func commandFailed() { claimed=false;cancel() }
+  func cancel() {
+    guard !claimed,!disposed,!retiring else { return }
+    generation=UUID();preparation?.cancel();preparation=nil
+    if !installed { finishRetirement();return }
+    retiring=true
+    guard let restoration else {
+      #if os(iOS)
+      let original=NotebookGraphicSelection.translated(source.members,by:.zero)
+      if let hosts=model?.selectedGraphicHosts.hosts(source,requiredIDs:requiredAuthoredHostIDs,ownerID:id),
+        let poses=authoredPoses(original,hosts:hosts) {
+        CATransaction.begin();CATransaction.setDisableActions(true)
+        for (host,pose) in poses {if let pose {host.install(pose)} else {host.hide()}}
+        presentedEdits=original
+        if let model {model.selectedGraphicHosts.installControls(model:model,selectionID:source.selectionID)}
+        CATransaction.commit()
+      }
+      #endif
+      finishRetirement();return
+    }
+    restoration.restore(install:{ [weak self] in
+      guard let self else {return}
+      #if os(iOS)
+      if let textHosts=model?.selectedGraphicHosts.textHosts(source,requiredIDs:requiredTextHostIDs) {
+        for host in textHosts {host.show()}
+      }
+      let original=NotebookGraphicSelection.translated(source.members,by:.zero)
+      if let hosts=model?.selectedGraphicHosts.hosts(source,requiredIDs:requiredAuthoredHostIDs,ownerID:id),
+        let poses=authoredPoses(original,hosts:hosts) {
+        for (host,pose) in poses {if let pose {host.install(pose)} else {host.hide()}}
+      }
+      presentedEdits=original
+      if let model {model.selectedGraphicHosts.installControls(model:model,selectionID:source.selectionID)}
+      #endif
+      finishRetirement()
+    },abandon:{ [weak self] in self?.finishRetirement() })
+  }
+  private func fail() {
+    guard !disposed else { return }
+    generation=UUID();preparation?.cancel();preparation=nil
+    completeInstallWaiter(CancellationError())
+    if claimed {
+      // Enqueued is not installed. Keep the last complete picture/controls
+      // through the writer outcome, then let the existing canonical source
+      // prepare and retire this owner only on its exact native receipt.
+      preparationFailed=true
+      if accepted {releasePhysicalLease()}
+      model?.selectedInkPresentationNeedsCanonical(self)
+    } else {
+      model?.cancelElementManipulation(id)
+      if !disposed && !retiring { cancel() }
+    }
+    model?.showCue("Не удалось подготовить всё выделение. Повторите действие.")
+  }
+  private func finishRetirement() {
+    guard !disposed else { return }
+    disposed=true
+    completeInstallWaiter(CancellationError())
+    #if os(iOS)
+    model?.selectedGraphicHosts.unbind(self)
+    #endif
+    releasePhysicalLease()
+    model?.retireSelectedInkPresentation(self)
+    if canonicalAuthoredCutReady {model?.didChangeWorkingGraphics(on:[source.address.surface])}
+  }
+  private func releasePhysicalLease() {
+    #if os(iOS)
+    physicalLease?.release();physicalLease=nil
+    #endif
+  }
+  isolated deinit {
+    preparation?.cancel()
+    #if os(iOS)
+    model?.selectedGraphicHosts.unbind(self)
+    #endif
+    releasePhysicalLease()
+  }
+}

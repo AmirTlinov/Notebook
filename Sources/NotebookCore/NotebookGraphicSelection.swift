@@ -199,6 +199,19 @@ public enum NotebookGraphicSelection {
     public let basis: NotebookElementBasis?
   }
 
+  /// Maps an already painted surface point to the edit's surface point. The
+  /// placement resolver retains the member's ancestor chain, so a child of a
+  /// rotated/scaled group cannot be previewed by stretching its bounding box.
+  public static func displayTransform(from member:Member,to edit:Edit) -> CGAffineTransform? {
+    guard member.id == edit.id,
+      let target=try? member.placement.updating(frame:edit.frame,basis:edit.basis).transform else { return nil }
+    let source=member.placement.transform,det=source.a*source.d-source.b*source.c
+    guard det.isFinite,det != 0 else { return nil }
+    let transform=source.inverted().concatenating(target)
+    return [transform.a,transform.b,transform.c,transform.d,transform.tx,transform.ty].allSatisfy(\.isFinite)
+      ? transform : nil
+  }
+
   /// Resolve an external endpoint once in its authored body. Internal bindings
   /// remain relationships, including when members have different parents.
   private static func detached(_ member:Member,selected:Set<String>) -> NotebookGraphic {

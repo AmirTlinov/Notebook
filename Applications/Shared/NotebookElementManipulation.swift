@@ -62,7 +62,7 @@ struct NotebookElementManipulation: Equatable, Sendable {
   let id = UUID()
   let reference: EditableElementReference?
   var selectionSource:NotebookSelectionEditSource?
-  var inkPresentation:NotebookSelectedInkPresentation?
+  var inkPresentation:NotebookSelectionPresentation?
   let kind: Kind
   let original: CGRect
   let bounds: CGRect?
@@ -109,6 +109,7 @@ struct NotebookElementManipulation: Equatable, Sendable {
   }
   var selectedEdits: [NotebookGraphicSelection.Edit] {
     guard let origin=selectedMembers.first?.origin else { return [] }
+    if frame == original { return NotebookGraphicSelection.translated(selectedMembers,by:.zero) }
     if kind == .move { return NotebookGraphicSelection.translated(selectedMembers,by:.init(x:movement.x,y:movement.y)) }
     let change=CGAffineTransform(translationX:-original.minX,y:-original.minY)
       .concatenating(.init(scaleX:frame.width/original.width,y:frame.height/original.height))

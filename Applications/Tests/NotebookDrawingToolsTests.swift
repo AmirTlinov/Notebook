@@ -475,6 +475,7 @@ import SwiftUI
         return try NotebookUXObservation.Pixels(window:window).matches([
           (point(180,200),remainingA),(point(180,260),.paper),(point(180,300),.paper),(point(390,225),remainingPeer)])
       }
+      XCTAssertTrue(owner.installed,"The private deletion frame must be installed before the writer proceeds")
       XCTAssertEqual(model.pages[page.id]?.elementSourceIdentity,oldCanonicalSource,
         "The private frame, not a newer canonical publication, removed B")
       release.signal();try await writer.value;await self.assertSaved(model)
@@ -534,7 +535,24 @@ import SwiftUI
       let exported=try await Task.detached { try snapshot.prepare() }.value
       XCTAssertEqual(exported.fragment.elements.map(\.id),[text.id]+raw.map(\.memberID))
       let before=Set(try model.store.actionReadModels().map(\.id))
-      model.deleteSelectedContent();await self.assertSaved(model)
+      let (entered,start)=AsyncStream<Void>.makeStream(),release=DispatchSemaphore(value:0)
+      let writer=Task {
+        try await model.performStoreCommand { _ in
+          start.yield();start.finish();_ = release.wait(timeout:.now()+5)
+        }
+      }
+      defer {release.signal()}
+      for await _ in entered {break}
+      model.deleteSelectedContent()
+      let owner=try XCTUnwrap(model.workingGraphics.first(where:{$0.id == raw[0].memberID})?.inkPresentation)
+      let deadline=ContinuousClock.now + .seconds(2)
+      while !owner.installed,ContinuousClock.now<deadline {try await Task.sleep(for:.milliseconds(10))}
+      XCTAssertTrue(owner.installed,"The raw and text deletion must install before the writer proceeds")
+      let textIDs=model.selectedGraphicHosts.requiredTextHostIDs(owner.source,model:model)
+      XCTAssertEqual(textIDs,[text.id])
+      XCTAssertTrue(model.selectedGraphicHosts.textHosts(owner.source,requiredIDs:textIDs)?.allSatisfy(\.isHidden) == true,
+        "The text body must hide with the raw drawable, not after a later SwiftUI publication")
+      release.signal();try await writer.value;await self.assertSaved(model)
       let actions=try model.store.actionReadModels().filter { !before.contains($0.id) }
       XCTAssertEqual(actions.count,1)
       XCTAssertEqual(actions.first?.action.operations.filter { $0.kind == .convertInkToElement }.count,2)

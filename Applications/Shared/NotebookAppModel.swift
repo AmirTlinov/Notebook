@@ -959,6 +959,11 @@ final class NotebookAppModel {
   private(set) var drawingTool: DrawingTool = .pen
   private(set) var selectionSession = NotebookSelectionSession() {
     didSet {
+      #if os(iOS)
+      if oldValue.id != selectionSession.id || oldValue.elements != selectionSession.elements {
+        selectedGraphicHosts.select(selectionSession)
+      }
+      #endif
       if oldValue.highlightedReference != selectionSession.highlightedReference { collaborationContentEpoch &+= 1 }
       if oldValue.id != selectionSession.id || oldValue.target != selectionSession.target
         || oldValue.context != selectionSession.context || oldValue.isResolvingContext != selectionSession.isResolvingContext {
@@ -1024,6 +1029,9 @@ final class NotebookAppModel {
   @ObservationIgnored private var graphicCommandGeneration = UUID()
   @ObservationIgnored var workingGraphics: [NotebookWorkingGraphic] = []
   @ObservationIgnored var workingGraphicSignals:[SurfaceID:NotebookWorkingGraphicSignal] = [:]
+  #if os(iOS)
+  @ObservationIgnored let selectedGraphicHosts = NotebookSelectedGraphicHosts()
+  #endif
   var workingElementErasures: [UUID: [NotebookElementErasing]] = [:] {
     didSet { elementErasureCache.invalidateWorking() }
   }
@@ -3257,9 +3265,9 @@ final class NotebookAppModel {
     let graph=refs.first.flatMap(editingGraphicGraph)
     var members:[NotebookGraphicSelection.Member]=[]
     for reference in refs {
-      // Deletion needs the exact installed identities of ordered contacts,
-      // not transform geometry for unrelated text or other authored members.
-      if deleting, graphicElement(reference)?.sourceInkContactID == nil { continue }
+      // Non-graphic peers have their own deletion route. A graphic peer must
+      // remain in the same native handoff as a selected raw contact.
+      if deleting,graphicElement(reference) == nil {continue}
       guard let graphic=graphicElement(reference),graphic.showsGeometry,
         let geometry=elementGeometry(reference),let graph,
         let resolved=graphicManipulationGeometry(reference,in:graph),let source=nativeElementSource(reference) else { return nil }
@@ -3320,7 +3328,7 @@ final class NotebookAppModel {
   @discardableResult
   private func applySelectionEdits(_ edits:[NotebookGraphicSelection.Edit],summary:String,
     source frozen:NotebookSelectionEditSource? = nil,deleting:Bool = false,
-    presentation:NotebookSelectedInkPresentation? = nil) -> Bool {
+    presentation:NotebookSelectionPresentation? = nil) -> Bool {
     guard let source=frozen ?? selectionEditSource(deleting:deleting),selectionEditSourceIsCurrent(source),
       deleting || (edits.count == source.members.count && Set(edits.map(\.id)) == Set(source.members.map(\.id))) else { return false }
     // Authored-only patches contain bounded poses/styles, never a measured
@@ -3332,22 +3340,30 @@ final class NotebookAppModel {
         guard let plan=prepareElementOperations(prepared.edits,summary:summary,
           readSources:Array(prepared.sources.keys),frozenSources:prepared.sources,
           frozenDependencies:source.dependencies) else { return false }
-        enqueueElementCommand(target:source.address.target,ready:plan)
+        if let presentation {
+          let bounds=selectionSession.manipulation?.frame
+            ?? NotebookGraphicSelection.bounds(source.members,relativeTo:source.members.first?.origin ?? .zero)
+          presentation.update([],edits:edits,frame:bounds)
+          presentation.claim()
+        }
+        enqueueElementCommand(target:source.address.target,ready:plan,presentation:presentation)
         if deleting { clearSelection() };return true
       } catch { showCue(error.localizedDescription);return false }
     }
     let working:[NotebookWorkingGraphic]
     do { working=try source.presentationWorking(for:edits,deleting:deleting) }
     catch { showCue(error.localizedDescription);return false }
-    guard let presentation=presentation ?? NotebookSelectedInkPresentation(id:UUID(),source:source,model:self) else {
+    guard let presentation=presentation ?? NotebookSelectionPresentation(id:UUID(),source:source,model:self) else {
       showCue("Дождитесь появления выбранного материала.");return false
     }
+    if deleting {presentation.stageDeletion()}
     let presentedBounds=selectionSession.manipulation?.frame
       ?? NotebookGraphicSelection.bounds(source.members,relativeTo:source.members.first?.origin ?? .zero)
     presentation.update(working,edits:edits,frame:presentedBounds);presentation.claim()
     let preparation=Task.detached(priority:.userInitiated) { try source.prepare(edits,deleting:deleting) }
     let pending=Task { [weak self] () throws -> NotebookElementCommandPlan in
       let prepared=try await preparation.value
+      if deleting {try await presentation.awaitFirstInstallation()}
       guard let self,let plan=prepareElementOperations(prepared.edits,summary:summary,
         readSources:Array(prepared.sources.keys),insertionTarget:source.address.target,
         expectedInkRevision:source.expectedInkRevision,previews:false,frozenSources:prepared.sources,
@@ -3361,16 +3377,7 @@ final class NotebookAppModel {
     // generation. Async body encoding cannot expose a snap-back after lift,
     // or leave an unowned draft if preparation fails before its plan exists.
     let batch=enqueueElementCommand(target:source.address.target,preparing:pending,reserving:refs,presentation:presentation)
-    let byID=Dictionary(uniqueKeysWithValues:edits.map { ($0.id,$0) })
-    for reference in source.references {
-      guard var pose=source.sources[reference]?.placementSource else { continue }
-      let original=source.sources[reference]?.page?.graphic ?? source.sources[reference]?.spatial?.graphic
-      let edit=byID[reference.elementID]
-      if let edit { pose.frame=edit.frame;pose.basis=edit.basis }
-      var graphic=edit?.graphic ?? original
-      if deleting { graphic?.visible=false }
-      elementCommandDrafts[reference] = .init(source:pose,graphic:graphic,removed:deleting)
-    }
+    if !deleting {publishSelectionDrafts(source:source,edits:edits,deleting:false)}
     updateWorkingGraphics(presentation.working)
     acceptWorkingGraphics(presentation.working)
     selectElements(deleting ? [] : refs)
@@ -3382,6 +3389,20 @@ final class NotebookAppModel {
     }
     pendingMaterialAdmissions[source.address.surface]=(batch.id,admission)
     return true
+  }
+
+  func publishSelectionDrafts(source:NotebookSelectionEditSource,
+    edits:[NotebookGraphicSelection.Edit],deleting:Bool) {
+    let byID=Dictionary(uniqueKeysWithValues:edits.map { ($0.id,$0) })
+    for reference in source.references {
+      guard var pose=source.sources[reference]?.placementSource else { continue }
+      let original=source.sources[reference]?.page?.graphic ?? source.sources[reference]?.spatial?.graphic
+      let edit=byID[reference.elementID]
+      if let edit {pose.frame=edit.frame;pose.basis=edit.basis}
+      var graphic=edit?.graphic ?? original
+      if deleting {graphic?.visible=false}
+      elementCommandDrafts[reference] = .init(source:pose,graphic:graphic,removed:deleting)
+    }
   }
 
   func alignGraphicSelection(_ alignment: NotebookGraphicSelection.Alignment) {
@@ -3656,7 +3677,7 @@ final class NotebookAppModel {
 
   func beginSelectionManipulation(kind:NotebookElementManipulation.Kind) -> UUID? {
     switch kind { case .move,.resize:break;default:return nil }
-    guard let source=selectionEditSource(),let origin=source.members.first?.origin,
+    guard !selectionSession.isInteractive,let source=selectionEditSource(),let origin=source.members.first?.origin,
       inputGate.beginFingerSequence() != nil else { return nil }
     let box=NotebookGraphicSelection.bounds(source.members,relativeTo:origin)
     guard !box.isNull,box.width>0,box.height>0 else { return nil }
@@ -3664,8 +3685,13 @@ final class NotebookAppModel {
     var contact=NotebookElementManipulation(reference:nil,kind:kind,frame:box,
       bounds:source.address.bounds,worldOrigin:origin)
     contact.selectionSource=source;contact.selectedMembers=source.members
-    if source.needsOrderedPresentation {
-      guard let presentation=NotebookSelectedInkPresentation(id:contact.id,source:source,model:self) else {
+    #if os(iOS)
+    let needsPresentation=true
+    #else
+    let needsPresentation=source.needsOrderedPresentation
+    #endif
+    if needsPresentation {
+      guard let presentation=NotebookSelectionPresentation(id:contact.id,source:source,model:self) else {
         showCue("Дождитесь появления выбранного материала.");return nil
       }
       contact.inkPresentation=presentation
@@ -3681,10 +3707,10 @@ final class NotebookAppModel {
   }
 
   private func updateWholeSelectionPreview(_ contact:NotebookElementManipulation) {
-    guard let source=contact.selectionSource,source.needsOrderedPresentation,
+    guard let source=contact.selectionSource,
       let working=try? source.presentationWorking(for:contact.selectedEdits,deleting:false) else { return }
     contact.inkPresentation?.update(working,edits:contact.selectedEdits,frame:contact.frame)
-    updateWorkingGraphics(contact.inkPresentation?.working ?? working)
+    if !working.isEmpty { updateWorkingGraphics(contact.inkPresentation?.working ?? working) }
   }
 
   func beginRegionManipulation(_ region:NotebookRegionSelection,kind:NotebookElementManipulation.Kind) -> UUID? {
@@ -4092,7 +4118,7 @@ final class NotebookAppModel {
   func enqueueElementCommand(target:CollaborationTarget,ready:NotebookElementCommandPlan? = nil,
     preparing:Task<NotebookElementCommandPlan,Error>? = nil,
     reserving reservedReferences:[EditableElementReference] = [],
-    presentation:NotebookSelectedInkPresentation? = nil) -> NotebookElementCommandBatch {
+    presentation:NotebookSelectionPresentation? = nil) -> NotebookElementCommandBatch {
     let batch=NotebookElementCommandBatch(),actor=actorID
     let commandID=batch.id,generation=batch.generation
     let operation=Task { [weak self] () throws -> @Sendable (NotebookStore) throws -> NotebookElementCommandWriteResult in
@@ -4135,7 +4161,7 @@ final class NotebookAppModel {
       }
       do {
         let receipt=try await saved.value,plan=try await batch.prepared()
-        presentation?.didAcceptSource()
+        presentation?.didAcceptSource(cursor:receipt.cursor)
         for index in workingGraphics.indices where workingGraphics[index].inkPresentation === presentation && presentation != nil {
           workingGraphics[index].publicationCursor=receipt.cursor
           didChangeWorkingGraphics(on:[workingGraphics[index].surface])
@@ -6019,6 +6045,9 @@ final class NotebookAppModel {
     spatialInkWindow = state.inkWindow
     spatialInkHistoryStates = state.inkHistoryStates
     pages = state.pages
+    #if os(iOS)
+    selectedGraphicHosts.retireAcceptedAuthored(upTo:state.header.cursor)
+    #endif
     for (owner, entries) in state.history { pencilUndoHistory.restore(entries, for: owner) }
     for (owner, entries) in state.redoHistory { pencilUndoHistory.restoreRedo(entries, for: owner) }
     removeWorkingGraphics { graphic in
