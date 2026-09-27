@@ -1,11 +1,11 @@
 {
   "format": 1,
-  "recordedAt": "2026-09-27T22:19:16.453457+00:00",
+  "recordedAt": "2026-09-27T22:30:31.380295+00:00",
   "baseCommit": "dbaf04e94268d8d9e914a2a33b801691a2129d57",
   "branch": "codex/causal-repair",
   "candidateVersion": "0.3.145 (215)",
-  "installedVersion": "0.3.144 (214)",
-  "status": "migration-regression-fixed-release-pending",
+  "installedVersion": "0.3.145 (215)",
+  "status": "installed-pair-runtime-ready-selected-regressions-passed-strict-latency-open",
   "fullAcceptance": false,
   "initialFindings": "F01–F18 in docs/causal-audit-2026-09-27.md",
   "runs": [
@@ -737,7 +737,23 @@
     "reason": "Native TeX execution dominates the cache miss; phase intervals overlap and must not be summed."
   },
   "activeRun": null,
-  "installation": null,
+  "installation": {
+    "build": "215",
+    "buildReceiptSHA256": "1110b51971857c191ebe081c2a5d15d50a64fedcb0b1f5741d75a1d83e438342",
+    "dataAccess": "none",
+    "finishedAt": "2026-09-27T22:24:07.783509+00:00",
+    "fullAcceptance": false,
+    "installationAttempted": true,
+    "ipadInstalledBuild": "215",
+    "macInstalledBuild": "215",
+    "macPID": 93270,
+    "previousBuild": "214",
+    "sourceSHA256": "e117522d718ff8ca8fb77367d092f56a9b3ea4542cdefc790f6d024f0e4c5f40",
+    "status": "matched-pair-launched",
+    "verificationSHA256": "1898d77d314f92168befde90eea20e5567434eb66bbd131e30d5da7ae90b4447",
+    "path": "/private/tmp/notebook-causal-repair-install-215-20260927T2223Z/installation.json",
+    "sha256": "516ea4b1174793b56f8a73c8bd4e12722204b194537741b82b8a0b839abcde54"
+  },
   "boundary": "Individual passed suites retain only their source-valid scope. Stopped runs, correct late pixels, GPU completion and installed bundles do not establish full physical acceptance.",
   "inverseWindowDiagnostic": {
     "evidence": "/private/tmp/notebook-repair214-2009-attachments/9BED83DA-B30B-40C9-887B-363867D9D871.txt",
@@ -781,6 +797,52 @@
     "selectedMacRecordsBefore": 40672,
     "selectedMacRecordAddressHashSHA256Before": "09854c674bf0613be5764fbd17dff3fdf9d0aada1bd6314d67f423696e8e74d1",
     "digestAlgorithm": "SHA256 of address-ordered compact UTF8 JSON [address,hash] plus LF, ensure_ascii=false",
-    "liveDatabaseManuallyChanged": false
+    "liveDatabaseManuallyChanged": false,
+    "contentPreservation": {
+      "checkedAt": "2026-09-27T22:28:51.743301+00:00",
+      "schema": 27,
+      "recordCount": 40672,
+      "currentSHA256": "9f206e1d08e954bbe59d6d52cfa2cbf963cecf15492aa1c1395fadf2fa22a895",
+      "baselineReconstructedSHA256": "09854c674bf0613be5764fbd17dff3fdf9d0aada1bd6314d67f423696e8e74d1",
+      "runtimeChanges": [
+        {
+          "address": "runtime/input.json#",
+          "before": "3fa76d73448a0e2b2503b557c3e07e392fbc24a12f5bdc3df5eebab7c79fbeb3",
+          "after": "6b830051aa195c56e8cede878bbccd632d30a470ff2ab169b39111f397cf9e55"
+        },
+        {
+          "address": "runtime/local-selection.json#",
+          "before": "6c08673dcdf93793113c5b510b5d1d0f3f263a3d4faa033df521021f085e7afe",
+          "after": "35d014871425a44d712f524f0d38fd5808b7af4ee271457eea023f780076f789"
+        },
+        {
+          "address": "runtime/selection.json#",
+          "before": "a32984f8709f8b943d1cbe579e6f65499f89c34c346a0068d65c2eff34feff18",
+          "after": "23059e640593dd796f65caa792ef338d81ed1e61068698132bba8c91fdb1fe3d"
+        }
+      ],
+      "unchangedRecordCount": 40669,
+      "readOnly": true,
+      "method": "SHA256 over compact UTF-8 JSON [address,hash] plus LF, sorted by address; substitute only 3 prior runtime hashes",
+      "matchesBefore215": true
+    },
+    "result": "Installed215 admitted selected live Mac workspace at schema27; only three runtime session/selection records changed, all other40669 address/hash pairs unchanged."
+  },
+  "productCommits": [
+    "82cb8f9893806076bf4143eb46164ae7a7cf012a",
+    "efbb9c2bdcbce4b825d9c9d397dc2a484cba9147"
+  ],
+  "build": {
+    "path": "/private/tmp/notebook-causal-repair-pair-215-20260927T2219Z/build.json",
+    "sha256": "1110b51971857c191ebe081c2a5d15d50a64fedcb0b1f5741d75a1d83e438342",
+    "sourceSHA256": "e117522d718ff8ca8fb77367d092f56a9b3ea4542cdefc790f6d024f0e4c5f40",
+    "status": "verified-build"
+  },
+  "runtimeAdmission": {
+    "macSelectedSchema": 27,
+    "installedMCPStatus": "ready",
+    "ipadPresentationStatus": "ready",
+    "checkedAt": "2026-09-27T22:28:23Z",
+    "boundary": "Current authenticated iPad presentation session and installed Mac IPC, not a new pixel or gesture acceptance."
   }
 }

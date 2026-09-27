@@ -6,11 +6,13 @@
 ## Ремонт причин F01–F18
 
 [Диагноз](causal-audit-2026-09-27.md) и [изменения владельцев](causal-repair-2026-09-27.md).
-База `dbaf04e94268d8d9e914a2a33b801691a2129d57`, ремонт `82cb8f98`.
-Кандидат **0.3.145 (215)**. Установленная 214 выявила ошибку миграции retained
-page erasers: публичный live-page gate возвращал `target_missing` до открытия IPC.
-Исправление прошло Core-регрессию в 2218 (3 теста, migration 0,145 с);
-собирается 215. GUI-306 остаётся In Progress.
+База `dbaf04e94268d8d9e914a2a33b801691a2129d57`, ремонт `82cb8f98` + `efbb9c2b`.
+**0.3.145 (215) установлена и запущена на Mac и физическом iPad.**
+Установленная 214 выявила ошибку миграции retained page erasers: публичный
+live-page gate возвращал `target_missing` до открытия IPC. Исправление прошло
+Core-регрессию в 2218 (3 теста, migration 0,145 с); 215 успешно открыла рабочую
+Mac-базу на schema27. Установленный MCP и текущая iPad presentation session
+отвечают `ready`. Это подтверждает запуск и связь, не весь UX. GUI-306 In Progress.
 UI24 и три stale-callback проверки прошли в 2150. После аналогичного исправления
 current demand в обработчике ошибки финальный прогон 2158 дал 3 PASS: поздние
 ошибки, snapshots и readiness после invalidation. UI24 повторно не запускался.
@@ -37,7 +39,8 @@ state и возвращаются на reverse (2150). Строгие задер
 |---|---|
 | Core и browser, 1728 | 44 Swift Testing + 2 XCTest; 15 browser PASS. Неизменный относящийся к ним код проверен по inventory. Весь запуск не PASS: последовала ошибка native compilation. |
 | Schema 26→27, 1845 | Дополнительный Core migration PASS, 80 мс; реальные измерения штрихов, порядок и page erasers сохранены. Это не измерение миграции рабочего контейнера. |
-| Physical integration, 1811 | 129 PASS / 8 FAIL, без пропусков/runtime warnings. Проверены selected input, mixed selection, ресурсы, ссылки, программы и поздние публикации. Часть readiness после этого изменена и перепроверяется. |
+| Retained-history migration, 2218 / установленная 215 | Core: 3 PASS, включая 4 варианта writer admission; migration 0,145 с. Удалённая тетрадь с сохранённым ластиком индексируется, публичный gate сохраняется. Рабочая Mac-база открылась на schema27; 40 669 записей совпадают с состоянием перед запуском 215, изменились только три runtime-записи. |
+| Physical integration, 1811 | 129 PASS / 8 FAIL, без пропусков/runtime warnings. Проверены selected input, mixed selection, ресурсы, ссылки, программы и поздние публикации. Последующие изменения readiness проверены адресно в перечисленных ниже запусках. |
 | Continuous board zoom, 1811 | 24 программы, 10 итераций: XCTHitchMetric = 0. Это системный hitch metric, не FPS и не physical Pencil latency. |
 | Mac selected checks, 2008 | 9 PASS, без failures/skips/runtime warnings: render session и print read-set invalidation. |
 | Dense turns, 1952 | Forward/reverse: 10 повторений, все XCTHitchMetric=0. Весь запуск: 55 PASS / 4 FAIL; это не общая приёмка. |
@@ -46,8 +49,9 @@ state и возвращаются на reverse (2150). Строгие задер
 | Accepted-turn cuts, 2118 / 2139 | В 2118: 9 PASS / 2 FAIL; UI24 PASS 75,410 с, document live/static/status, cover и resources прошли. Native24 был медленнее 450 мс, старый UIKit cancellation fixture заменён GPU fixture в 2125. В 2139: 6 PASS / 2 FAIL; прошли AgentWeb invalidation, cover reuse, document live/status и native reopen visibility. После всех 24 first taps и forward на reverse осталось 23/24 controls (99,672 с); этот отказ сохранён. |
 | Current program owner, 2150 | **4 PASS / 0 FAIL**, без skips/runtime warnings. System UI24: все first taps, state, forward/reverse — PASS 76,579 с; три AgentWeb stale-callback проверки PASS. Старое passive completion больше не отзывает активный WebKit по прежнему demand. Completed receipt: source `18ed4bd20097805b91770e3156672806dac23d4212dd3b7235af26fcef5a8d58`, 1547 файлов до/после без изменений. Это выбранная функциональная проверка, не повтор строгих latency tests. |
 
-Core-результаты относятся только к своим неизменным зависимостям. Новый общий
-source inventory проверяется отдельно; длительный S7 не выполнялся.
+Core-результаты относятся только к своим неизменным зависимостям; изменения
+storage в 215 проверены отдельно в 2218. Release-пара собрана из указанного
+source inventory; длительный S7 не выполнялся.
 
 ## Не закрытые показатели
 
@@ -76,6 +80,15 @@ display oracle. Исходный FAIL сохранён и не повторяе�
 идентичности и ключи сохраняются. Исторические архивы не открываются.
 Schema27 вводится только согласованной парой; старый helper schema26 после
 миграции не запускается против обновлённого workspace.
+
+215 установлена 27 сентября в 22:24 UTC. Source SHA256:
+`e117522d718ff8ca8fb77367d092f56a9b3ea4542cdefc790f6d024f0e4c5f40`.
+В рабочей Mac-базе осталось 40 672 записи. Изменились только `runtime/input.json#`,
+`runtime/local-selection.json#`, `runtime/selection.json#`: новые сессии и выделение
+после подключения. Подстановка их прежних hashes восстановила исходный SHA256
+всех address/hash; остальные 40 669 записей, включая контент, неизменны.
+Проверка SQLite выполнялась только чтением. iPad сообщил текущую authenticated
+presentation session; новые пользовательские записи для проверки не создавались.
 
 Full acceptance остаётся отдельной задачей GUI-190: десять повторов сценариев,
 30 минут совместной работы и системные frame/CPU/GPU/memory измерения одной пары.
