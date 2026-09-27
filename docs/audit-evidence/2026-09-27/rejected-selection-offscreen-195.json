@@ -1,0 +1,23 @@
+{
+  "format": 1,
+  "scope": "Rejected private offscreen restoration candidate on USB iPad; candidate source removed, no production path changed",
+  "runs": [
+    {
+      "name": "active-pencil",
+      "sourceSHA256": "ac7123e09cf5bb8c93b529a91e9ac10a916341a4c51faca902507cdcd867d85d",
+      "result": "1 PASS / 0 FAIL",
+      "scenario": "Resource pressure, release, active Pencil and raw rollback: correct window at 55.659 ms within 100 ms, contact preserved"
+    },
+    {
+      "name": "exact-journey",
+      "sourceSHA256": "ea418bab531dc508180713670c1ea35be9a16dba74aa844ee7e47367f1169097",
+      "result": "0 PASS / 1 FAIL",
+      "scenario": "Raw+authored first drag 120.367 ms, second 75.217 ms; cancel correct at 113.200 ms but one mixed window capture at 74.53 ms"
+    }
+  ],
+  "rawResults": [
+    "/Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/.build/notebook-architecture-repair/evidence-2026-09-27/u10-offscreen-195/active-pencil/ipad.xcresult",
+    "/Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/.build/notebook-architecture-repair/evidence-2026-09-27/u10-offscreen-195/exact-journey/ipad.xcresult"
+  ],
+  "decision": "Reject and remove the candidate: GPU-complete offscreen material, bounded blit and one CATransaction did not remove the observed mixed window state and worsened first/cancel latency. A native window capture is not an OS photon receipt; physical screen recording was unavailable because CoreDevice reports Screen Recording unsupported on this device. No threshold changed."
+}

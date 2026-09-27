@@ -1,0 +1,247 @@
+{
+  "format": 1,
+  "scope": "Физический iPad140: один временный контроль transaction mode перед acquisition для prepared ordered page. Не физическая/GPU/FPS latency-сертификация и не полная приёмка.",
+  "result": "FAIL — TEMP не принят как исправление U10. Ранний setter не закрывает first-drag100ms или cancel composition.",
+  "counts": {
+    "passedTests": 0,
+    "failedTests": 1,
+    "skippedTests": 0,
+    "runtimeWarnings": []
+  },
+  "testExitCode": 65,
+  "selectors": [
+    "NotebookTests/NotebookInteractionUXTests/testClosedWholeLassoRoutesRawAndAuthoredMaterialThroughTwoInstalledDragsAndCancel"
+  ],
+  "rawEvidence": ".build/notebook-architecture-repair/evidence-2026-09-25/ordered-mode-admission-rejected-140-20260926T203824Z",
+  "analysis": "experiment/analysis.json",
+  "source": {
+    "baseSHA256": "f8b14c90278db0d09608e7c45427bde79e693781a06c879d6120d0478b269056",
+    "diagnosticSHA256": "d8981074c12f454d9926b933888e76b0c05491a60098ab74f028ba4dfd76cda3",
+    "changedFiles": [
+      "Applications/Shared/InkCanvasView.swift",
+      "Applications/Tests/NotebookSelectionCompositionTests.swift"
+    ],
+    "patchSHA256": "639e1ac71e0ef6f64a3502f445b9cc8fa2a8a809075816714bc4b5b37926b7bc",
+    "originalOracleBytesUnchanged": true,
+    "temporaryPatchOnlyInFrozenSnapshot": true,
+    "rootWitness": {
+      "Applications/Shared/InkCanvasView.swift": "248c63dc676ed54ad88db1393f59c208295fbe63c8a75ca9658800e48a6f4980",
+      "Applications/Tests/NotebookSelectionCompositionTests.swift": "8ffb072e36966df8f029d2f76f9aad292ca33aa66bcadbb957c46ee5cd4c4cbc"
+    }
+  },
+  "admission": {
+    "sourceBeforeEqualsAfter": true,
+    "artifactBeforeEqualsAfter": true,
+    "images": {
+      "Notebook": {
+        "sha256": "e26bd5de13b82acef5928c9f1269ca2adc07b3ebe5b434b209d7ba36b71c612e",
+        "uuid": "60C3FBD2-3375-38B4-B0C5-F10750DE7224"
+      },
+      "PlugIns/NotebookTests.xctest/NotebookTests": {
+        "sha256": "a4678c5c847fcaaaab2489e37c9b3b17202a810a052efea944485f03b5b3eab3",
+        "uuid": "18A38382-342A-34C4-9EC6-F38C7E7E1DA0"
+      }
+    },
+    "privateBundle": "com.amirtlinov.notebook.native-test",
+    "device": "00008103-001E059934D9001E",
+    "optimizedDebug": true,
+    "profileArguments": [],
+    "cleanup": {
+      "bundleIdentifier": "com.amirtlinov.notebook.native-test",
+      "removed": true
+    }
+  },
+  "modeObservation": {
+    "attachment": {
+      "path": "native-run/attachments/A1EE1A80-79A8-4F9D-90CF-28E09A92B752.txt",
+      "name": "ordered-mode-admission-140_0_0B5E445A-B424-495D-B873-EA7170151C92.txt",
+      "sha256": "07107bf39e100762a21978c32f64dc670dc943e24caf5137d057b30a14b848f8"
+    },
+    "raw": {
+      "capacity": 32,
+      "dropped": 0,
+      "experiment": "ordered-mode-before-acquisition-140",
+      "records": [
+        {
+          "linkPaused": true,
+          "newMode": true,
+          "oldMode": false,
+          "requestID": "1F3C39C2-56A4-4ED0-B2AF-B7AFEC644363",
+          "stage": "first-drag"
+        },
+        {
+          "linkPaused": true,
+          "newMode": true,
+          "oldMode": false,
+          "requestID": "76637D11-F468-48EC-A3AC-58BE4B62AB4E",
+          "stage": "canonical-install"
+        },
+        {
+          "linkPaused": true,
+          "newMode": true,
+          "oldMode": true,
+          "requestID": "1CEA4D5F-2F9E-4A65-894F-4C7E855CCFA4",
+          "stage": "second-drag"
+        }
+      ],
+      "sameMountedCanvasAtEnd": true
+    },
+    "actualModeDeltas": [
+      {
+        "linkPaused": true,
+        "newMode": true,
+        "oldMode": false,
+        "requestID": "1F3C39C2-56A4-4ED0-B2AF-B7AFEC644363",
+        "stage": "first-drag"
+      },
+      {
+        "linkPaused": true,
+        "newMode": true,
+        "oldMode": false,
+        "requestID": "76637D11-F468-48EC-A3AC-58BE4B62AB4E",
+        "stage": "canonical-install"
+      }
+    ],
+    "noModeDeltas": [
+      {
+        "linkPaused": true,
+        "newMode": true,
+        "oldMode": true,
+        "requestID": "1CEA4D5F-2F9E-4A65-894F-4C7E855CCFA4",
+        "stage": "second-drag"
+      }
+    ],
+    "allLinksPaused": true,
+    "cancelHasNoPreparedFrameRecord": true,
+    "interpretation": [
+      "Mode really changed false to true for first drag and canonical installation only.",
+      "Second drag was already true: its zero-mixed result is not evidence of a local property change for that request.",
+      "Cancellation uses SourceRestoration.restore -> frameInstallation -> requestFrame/renderFrame, not prepareFrame(.ordered). Its acquisition was not modified or observed by this cut.",
+      "No overflow; observed canvas remained current. Absence of a cancellation admission record matches the source path, not dropped records."
+    ]
+  },
+  "stages": [
+    {
+      "name": "whole-route-closed-contour",
+      "correct": true,
+      "mixedFrames": 0,
+      "observedMS": 80.45175002189353,
+      "captureDecodeMS": 22.58087496738881,
+      "budgetMS": 100,
+      "passed": true
+    },
+    {
+      "name": "whole-route-first-drag",
+      "correct": true,
+      "mixedFrames": 0,
+      "observedMS": 113.89349994715303,
+      "captureDecodeMS": 27.208499959670007,
+      "budgetMS": 100,
+      "passed": false
+    },
+    {
+      "name": "whole-route-first-lift",
+      "correct": true,
+      "mixedFrames": 0,
+      "observedMS": 19.373625051230192,
+      "captureDecodeMS": 18.665916693862528,
+      "budgetMS": 100,
+      "passed": true
+    },
+    {
+      "name": "whole-route-second-canonical-drag",
+      "correct": true,
+      "mixedFrames": 0,
+      "observedMS": 71.0275000310503,
+      "captureDecodeMS": 20.32191667240113,
+      "budgetMS": 100,
+      "passed": true
+    },
+    {
+      "name": "whole-route-cancel-second",
+      "correct": true,
+      "mixedFrames": 1,
+      "observedMS": 69.30737500078976,
+      "captureDecodeMS": 20.65295830834657,
+      "budgetMS": 100,
+      "passed": false
+    },
+    {
+      "name": "whole-route-deselect",
+      "correct": true,
+      "mixedFrames": 0,
+      "observedMS": 36.810458346735686,
+      "captureDecodeMS": 25.062666682060808,
+      "budgetMS": 100,
+      "passed": true
+    }
+  ],
+  "actualMixedRow": {
+    "stage": "whole-route-cancel-second",
+    "elapsedMS": 29.960500018205494,
+    "captureDecodeMS": 20.8599166944623,
+    "failedComponents": [
+      "moved-material: 0/3",
+      "no-raw-ghost-220.0: 0/3"
+    ],
+    "interpretation": "Raw line remains at moved220 pose while authored peer and controls already show restored120 pose. A later correct snapshot does not forgive this mixed frame."
+  },
+  "visualReview": [
+    {
+      "path": "native-run/attachments/FE47C7EE-6EC6-4A1A-B173-B89F328FCC18.png",
+      "sha256": "f328ec827ed3844ae25facf47b13429fca03dd96fb75bd7e6555504f69f3579a",
+      "assessment": "Inspected: second-drag incomplete snapshot retains whole prior pose: black raw line, authored blue peer and controls remain together."
+    },
+    {
+      "path": "native-run/attachments/3A9956B4-234F-4367-99B3-3406973382D9.png",
+      "sha256": "a057368533aac6246664bb91f4af50fddfd6f9db02caacf354384da502291c6c",
+      "assessment": "Inspected: subsequent second-drag snapshot has whole moved pose."
+    },
+    {
+      "path": "native-run/attachments/050D429F-3EFC-44BB-9F04-ED0F7F2B7F4A.png",
+      "sha256": "6e34f8575e7526e3412dd0b2d2f421949b10c3c4cb2b4285ce6b6be2abe16e3b",
+      "assessment": "Inspected: cancel snapshot is mixed. Blue peer and controls are restored higher; black raw line remains lower outside the restored control box."
+    },
+    {
+      "path": "native-run/attachments/EFD07D4A-7035-4A9E-AFD5-847E1917C4A0.png",
+      "sha256": "f328ec827ed3844ae25facf47b13429fca03dd96fb75bd7e6555504f69f3579a",
+      "assessment": "Inspected: subsequent cancel snapshot has raw line restored inside controls with the authored peer."
+    }
+  ],
+  "causalBoundary": {
+    "realModeDeltaStages": [
+      "first-drag",
+      "canonical-install"
+    ],
+    "secondDrag": "oldMode=true, newMode=true; its zero-mixed result is not a discriminant for per-request property latching.",
+    "cancel": "SourceRestoration.restore uses frameInstallation -> requestFrame/renderFrame. It does not enter prepareFrame(.ordered); this TEMP does not modify or observe that acquisition.",
+    "claim": "No intrinsic CAMetalDisplayLink time-pinning or transaction-mode latching is established. The candidate does not solve U10 and is not promoted.",
+    "sourceWitnesses": [
+      "Applications/Shared/InkCanvasView.swift SourceRestoration.restore and prepareFrame",
+      "Applications/Shared/NotebookSelectedInkPresentation.swift cancel/finishRetirement"
+    ]
+  },
+  "failureMessages": [
+    {
+      "failureText": "XCTAssertTrue failed - Every frame includes raw material, authored peer, four controls and untouched pixels; see stage attachments",
+      "targetName": "NotebookTests",
+      "testIdentifier": 1,
+      "testIdentifierString": "NotebookInteractionUXTests/testClosedWholeLassoRoutesRawAndAuthoredMaterialThroughTwoInstalledDragsAndCancel()",
+      "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/NotebookInteractionUXTests/testClosedWholeLassoRoutesRawAndAuthoredMaterialThroughTwoInstalledDragsAndCancel",
+      "testName": "testClosedWholeLassoRoutesRawAndAuthoredMaterialThroughTwoInstalledDragsAndCancel()"
+    }
+  ],
+  "limitations": [
+    "Single cold test, not repetitions or global acceptance.",
+    "Whole-window snapshots are not photon/OS presentation timing or FPS.",
+    "No inference that presentsWithTransaction is latched on acquisition; Apple documents transaction selection at present().",
+    "No direct nextDrawable or clock, PSO, budget, memory or cancellation policy change in140.",
+    "140 does not establish why139 and140 second-drag snapshot sampling differed."
+  ],
+  "openConditions": [
+    "First cold U10 drag exceeds unchanged100ms visual ceiling; observed113.893500ms.",
+    "Cancel still has a mixed whole-window snapshot at29.960500ms.",
+    "No ten repetitions,30-minute session, strict20ms closure or ordinary rawRedo closure claimed."
+  ],
+  "rawManifestSHA256": "15db80569f3abb08bd0ff2dcce1b1b8fc3efc3085e828f21b62efb9d9edfe533"
+}

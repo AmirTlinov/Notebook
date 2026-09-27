@@ -2,29 +2,30 @@ import AppKit
 import ImageIO
 import NotebookCore
 
-/// A regional-reference proof uses the same bounded ink composition as the
-/// scene. Only its encoded pixels and alpha-derived map leave preparation.
+/// Alpha-derived regional map of the common renderer's transparent ink PNG.
+/// Painting belongs to Page/SceneCompositionRenderer, not to this proof reader.
 struct SpatialInkRasterSnapshot: Sendable {
   let png: Data
   let regions: [PageRect]
 
   @MainActor
-  static func prepare(surface: SurfaceID, camera: SpatialCamera?, size: CGSize,
-    journal: SpatialInkJournal, resources: SceneRenderResources = .shared,
-    permitsPreparation: @escaping @MainActor () -> Bool) async throws -> Self? {
-    let hasInk = await Task.detached(priority: .utility) {
-      journal.actions.contains { $0.isActive && $0.spans.contains { $0.surface == surface } }
-    }.value
+  static func prepare(png: Data, size: CGSize, resources: SceneRenderResources = .shared,
+    permitsPreparation: @escaping @MainActor () -> Bool) async throws -> Self {
     try Task.checkCancellation()
     guard permitsPreparation() else { throw CancellationError() }
-    guard hasInk else { return nil }
-    let canvas = try await SceneRasterCompositor.create(size: size, scale: 2,
-      resources: resources, permitsPreparation: permitsPreparation)
-    try await canvas.drawInk(surface: surface, journal: journal, camera: camera, size: size,
-      in: .init(origin: .zero, size: size))
-    let png = try await canvas.finishPNG()
-    guard let allocation = resources.reserveRaster(pixelWidth: Int(ceil(size.width * 2)),
-      pixelHeight: Int(ceil(size.height * 2))) else { throw SceneRenderError.resourceLimit }
+    guard size.width.isFinite, size.height.isFinite, size.width > 0, size.height > 0,
+      size.width * 2 <= 8192, size.height * 2 <= 8192,
+      let metadata = CGImageSourceCreateWithData(png as CFData, [kCGImageSourceShouldCache: false] as CFDictionary),
+      let properties = CGImageSourceCopyPropertiesAtIndex(metadata, 0, nil) as? [CFString: Any],
+      let width = properties[kCGImagePropertyPixelWidth] as? Int,
+      let height = properties[kCGImagePropertyPixelHeight] as? Int,
+      width == Int(ceil(size.width * 2)), height == Int(ceil(size.height * 2)) else {
+      throw SceneRenderError.snapshotPending("ink_pixel_dimensions")
+    }
+    // Decoded CGImage and the alpha-analysis bitmap coexist until the worker
+    // completes. Metadata inspection above never decodes that pixel storage.
+    guard let allocation = resources.reserveRaster(pixelWidth: width, pixelHeight: height,
+      backingCount: 2) else { throw SceneRenderError.resourceLimit }
     defer { allocation.release() }
     let worker = Task.detached(priority: .utility) { () throws -> [PageRect] in
       try Task.checkCancellation()

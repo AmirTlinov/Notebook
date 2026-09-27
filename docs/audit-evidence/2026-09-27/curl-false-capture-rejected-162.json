@@ -1,0 +1,9 @@
+{
+  "source": "3f88d559 plus one-line drawHierarchy(afterScreenUpdates:false) candidate; candidate reverted",
+  "device": "physical USB iPad, optimized native test",
+  "xcresult": ".build/notebook-architecture-repair/evidence-2026-09-27/curl-false-freshness-162/ipad.xcresult",
+  "result": "3/4 PASS; freshness FAIL",
+  "failure": "Immediately changed SwiftUI source captured stale red [255,0,0,255] instead of green in forward curl",
+  "passingScope": "Accepted pen, accepted shape erasure, and newly installed CALayer source cases",
+  "conclusion": "Exact readiness for accepted content does not make the generic pending SwiftUI update safe to capture without afterScreenUpdates. No curl timing claim or production change."
+}

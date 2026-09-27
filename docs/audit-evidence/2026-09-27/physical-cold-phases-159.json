@@ -1,0 +1,34 @@
+{
+  "source": "f65b0afa plus isolated diagnostic candidates, physical iPad, optimized native test",
+  "xcresult": ".build/notebook-architecture-repair/evidence-2026-09-27/cold-ink-document-phases-159/ipad.xcresult",
+  "coldInk": {
+    "result": "FAIL; candidate reverted",
+    "handlerMS": 1.208,
+    "frameCallbackMS": 24.891,
+    "osPresentedTime": null,
+    "heldDotWindowMS": 20.791,
+    "reason": "Immediate Metal present for a never-presented blank layer did not yield an OS presentation receipt. Correct later window pixels do not prove the 20 ms display target."
+  },
+  "coldDocument": {
+    "result": "FAIL; observational profiler only, code reverted",
+    "artifactMS": 1019.991,
+    "canonicalPrintMS": 1021.096,
+    "requestToInstalledMS": 1364.670,
+    "windowOracleMS": 1636.963,
+    "captureMS": 152.353,
+    "attachmentMS": 119.304,
+    "shellReadyMS": 99.310,
+    "browserRenderMS": 1,
+    "browserReceiptMS": 29,
+    "reason": "One cold canonical compiler run dominates; shell preparation overlaps it. No second compile or consequential PDF-navigation work was found."
+  },
+  "blankPrimerFollowup": {
+    "result": "FAIL in physical160 and physical161; candidate reverted",
+    "xcresult160": ".build/notebook-architecture-repair/evidence-2026-09-27/blank-primer-160/ipad.xcresult",
+    "xcresult161": ".build/notebook-architecture-repair/evidence-2026-09-27/blank-primer-161/ipad.xcresult",
+    "loadedPageColdPencilAndEraser160": "PASS",
+    "blankFirstContact160": "OS presentedTime=0, firstFrame=true, correct held-dot window at 22.734ms",
+    "blankFirstContact161": "Precontact layer opacity=0; OS presentedTime=0, firstFrame=true, correct held-dot window at 23.462ms",
+    "reason": "Transparent primer did not provide a reusable visible layer before first contact. No prewarming route was retained."
+  }
+}

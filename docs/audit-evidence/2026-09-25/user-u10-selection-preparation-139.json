@@ -1,0 +1,349 @@
+{
+  "format": 1,
+  "scope": "Физический iPad139: uninstrumented cold U10 первым в отдельном процессе, затем три адресные регрессии в другом private process. Один build, без retries и изменения порогов. Полный маршрут остаётся FAIL.",
+  "baseCommit": "acf675f720dd090283cb13bb1d020ec36bef4694",
+  "decision": "U10_FULL_ROUTE_FAILED_SCOPED_REGRESSIONS_PASSED",
+  "rawEvidence": ".build/notebook-architecture-repair/evidence-2026-09-25/user-u10-selection-preparation-139-20260926T2021Z",
+  "rawManifestSHA256": "a91c13f9fb216228d5621dc2e5afce66cd4e2df26b1d10403e41d5d9b25ed11e",
+  "source": {
+    "sha256": "f8b14c90278db0d09608e7c45427bde79e693781a06c879d6120d0478b269056",
+    "approvedEqualsBeforeEqualsAfter": true,
+    "dirtyFiles": [
+      {
+        "path": "Applications/Shared/InkRasterRenderer.swift",
+        "baseSHA256": "fbd754c378a6834c05efd6ef90665a23861d0537d7c5d0f5bcc8d0b005929a53",
+        "sourceSHA256": "7c9b47e75df50f7f9a4f2963d27cdad59e1193549c2d555301e7351ad34c1cd0"
+      },
+      {
+        "path": "Applications/Shared/NotebookAppModel.swift",
+        "baseSHA256": "316967724784c63c5e5b804b886ad92a614e994e8943fb43cd0416b709619826",
+        "sourceSHA256": "18c96d25d405e66e161cdcc6068c82918dd212e31ff1ba337c3cecaacef7b29a"
+      },
+      {
+        "path": "Applications/Shared/NotebookAttentionProjection.swift",
+        "baseSHA256": "a26fb8f4fcf86227bc021aacd6675c4d3a754fdf16885b2032ff81bf5e94fef4",
+        "sourceSHA256": "471e34c39d2a22995f1c9a190e5475c854c093d0c2771e8aa0df479728205228"
+      },
+      {
+        "path": "Applications/Shared/NotebookSelectedInkPresentation.swift",
+        "baseSHA256": "37c0bf1cd236363cf84ea27329f18f1d8d13bc1fd0195e7e3a7d8f0a4bf090f9",
+        "sourceSHA256": "93627b642c92b4c2471f5def970ed4a9f124c67f16c5c211bb6a6a7f51c681e6"
+      },
+      {
+        "path": "Applications/TestSupport/CompactInkRenderingTests.swift",
+        "baseSHA256": "f9e76e82e1697b1c3a62f7864f46378b1a7b6d0ce4293a4c1d800732cacae785",
+        "sourceSHA256": "fc68b55540227f215fa3abb72442432de293fc3363250c32edca36650b98a92b"
+      },
+      {
+        "path": "Applications/Tests/NotebookDrawingToolsTests.swift",
+        "baseSHA256": "ee5daeaeacacfa9312d73b28ed22255d5e82d87098ac576a437bee1d97d26470",
+        "sourceSHA256": "f9f979ac68f800ea0377a723f28b5b04f0499e6cd96e00401db93577c7f8b8e9"
+      }
+    ],
+    "patchSHA256": "772eac40bde5076e1b3d2df59427ae8210eda10b8e5f4d2d89ad53903fa4d169"
+  },
+  "binary": {
+    "builtImages": {
+      "Notebook": {
+        "sha256": "b691e0ce81344fcb7db68b09e04b032ca2257115dd24ca00d98e3c0a003fc7db",
+        "uuid": "0700FAC7-29D7-37FB-A4D4-5574204363A7"
+      },
+      "PlugIns/NotebookTests.xctest/NotebookTests": {
+        "sha256": "4e7b7de488ea8fc9dd1b69ae5f9a19d73c1ad8c55cdcc679af3a35bdefdffae8",
+        "uuid": "379544F6-0433-3AAB-8B70-BC2BCCF6E522"
+      }
+    },
+    "artifactsBeforeEqualsAfter": true,
+    "artifactsManifestSHA256": "64f0c8a7fb56974ea2f629199f4e301bba9208ef37d5d83bc128c2e0d4c0da87",
+    "artifactsAfterSHA256": "64f0c8a7fb56974ea2f629199f4e301bba9208ef37d5d83bc128c2e0d4c0da87"
+  },
+  "execution": {
+    "runnerSHA256": "cea72f97e0a5556b5e5f658f0d34a9fe0664d9f553bb757b20e77d90d1a2699e",
+    "commandsSHA256": "226c75d40c5ccca9d85753880dc99e42562951ce8e2fefb98bbcd88186267d9f",
+    "buildCount": 1,
+    "buildExitCode": 0,
+    "testProcesses": 2,
+    "cleanupBeforeBetweenAfter": [
+      0,
+      0,
+      0
+    ],
+    "instrumentation": false,
+    "profiler": false,
+    "runtimeArguments": [],
+    "device": {
+      "architecture": "arm64e",
+      "deviceId": "00008103-001E059934D9001E",
+      "modelName": "iPad Pro (11-inch) (3rd generation)",
+      "osBuildNumber": "24A435",
+      "osVersion": "27.0",
+      "platform": "iOS"
+    }
+  },
+  "results": [
+    {
+      "group": "cold",
+      "testExitCode": 65,
+      "actualCases": {
+        "NotebookInteractionUXTests/testClosedWholeLassoRoutesRawAndAuthoredMaterialThroughTwoInstalledDragsAndCancel": "Failed"
+      },
+      "passed": 0,
+      "failed": 1,
+      "skipped": 0,
+      "runtimeWarnings": [],
+      "failures": [
+        {
+          "failureText": "XCTAssertTrue failed - Every frame includes raw material, authored peer, four controls and untouched pixels; see stage attachments",
+          "targetName": "NotebookTests",
+          "testIdentifier": 1,
+          "testIdentifierString": "NotebookInteractionUXTests/testClosedWholeLassoRoutesRawAndAuthoredMaterialThroughTwoInstalledDragsAndCancel()",
+          "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/NotebookInteractionUXTests/testClosedWholeLassoRoutesRawAndAuthoredMaterialThroughTwoInstalledDragsAndCancel",
+          "testName": "testClosedWholeLassoRoutesRawAndAuthoredMaterialThroughTwoInstalledDragsAndCancel()"
+        }
+      ]
+    },
+    {
+      "group": "regressions",
+      "testExitCode": 0,
+      "actualCases": {
+        "CompactInkRenderingTests/testOrderedSelectionRequestAndCancelledWaiterReuseTheSameRendererResources": "Passed",
+        "NotebookDrawingToolsTests/testCancelledWholeMoveHoldsAuthoredPeersAndRawControlsUntilRestorationInstalls": "Passed",
+        "NotebookDrawingToolsTests/testSecondWholeMoveKeepsControlsWithPixelsAndCancelPreservesNewAcceptedContact": "Passed"
+      },
+      "passed": 3,
+      "failed": 0,
+      "skipped": 0,
+      "runtimeWarnings": [],
+      "failures": []
+    }
+  ],
+  "fullRouteStages": [
+    {
+      "stage": "whole-route-first-drag",
+      "correct": true,
+      "mixedFrameCount": 0,
+      "observedMS": 109.99783338047564,
+      "finalCaptureAndDecodeMS": 24.930916668381542,
+      "correctnessCeilingMS": 100,
+      "within20MS": false,
+      "rows": [
+        {
+          "elapsedMS": 31.52454167138785,
+          "captureAndDecodeMS": 21.784791664686054,
+          "incoherent": false,
+          "failedComponents": "moved-material: 0/3;blue-material: 0/5;no-raw-ghost-0.0: 0/3;no-blue-ghost-0.0: 0/1;handle-2-present: 0/25;handle-3-present: 0/25;retired-0-handle-0-absent: 25/25;retired-0-handle-1-absent: 25/25"
+        },
+        {
+          "elapsedMS": 68.94329166971147,
+          "captureAndDecodeMS": 20.019541669171304,
+          "incoherent": false,
+          "failedComponents": "moved-material: 0/3;blue-material: 0/5;no-raw-ghost-0.0: 0/3;no-blue-ghost-0.0: 0/1;handle-2-present: 0/25;handle-3-present: 0/25;retired-0-handle-0-absent: 25/25;retired-0-handle-1-absent: 25/25"
+        },
+        {
+          "elapsedMS": 109.99783338047564,
+          "captureAndDecodeMS": 24.930916668381542,
+          "incoherent": false,
+          "failedComponents": ""
+        }
+      ],
+      "attachment": "native-run/cold/attachments/7851DF79-C6CB-45FA-AFB0-AB2D794B5D8A.txt",
+      "sha256": "e0243b60954275fe6ae747cc7ed809f542799bb49d9cb2c93d947b664b4b9efa"
+    },
+    {
+      "stage": "whole-route-first-lift",
+      "correct": true,
+      "mixedFrameCount": 0,
+      "observedMS": 19.244958355557173,
+      "finalCaptureAndDecodeMS": 18.54712498607114,
+      "correctnessCeilingMS": 100,
+      "within20MS": true,
+      "rows": [
+        {
+          "elapsedMS": 19.244958355557173,
+          "captureAndDecodeMS": 18.54712498607114,
+          "incoherent": false,
+          "failedComponents": ""
+        }
+      ],
+      "attachment": "native-run/cold/attachments/08C119AD-861B-461A-B14F-BACCA74DCA15.txt",
+      "sha256": "02215bceb1cfa5c90c877088f71f84cf80849599e913d058202a63c4faa35bd8"
+    },
+    {
+      "stage": "whole-route-second-canonical-drag",
+      "correct": true,
+      "mixedFrameCount": 1,
+      "observedMS": 72.9422916774638,
+      "finalCaptureAndDecodeMS": 21.7873333604075,
+      "correctnessCeilingMS": 100,
+      "within20MS": false,
+      "rows": [
+        {
+          "elapsedMS": 33.92974997404963,
+          "captureAndDecodeMS": 21.698374999687076,
+          "incoherent": true,
+          "failedComponents": "moved-material: 0/3;no-raw-ghost-120.0: 0/3"
+        },
+        {
+          "elapsedMS": 72.9422916774638,
+          "captureAndDecodeMS": 21.7873333604075,
+          "incoherent": false,
+          "failedComponents": ""
+        }
+      ],
+      "attachment": "native-run/cold/attachments/2815BA03-A7D1-41D9-B7E6-ECAAD8D2D457.txt",
+      "sha256": "38cad596bca5ce302e627ee7347081994ab31272a9e4f695e24b8ddf3dfb86c0"
+    },
+    {
+      "stage": "whole-route-cancel-second",
+      "correct": true,
+      "mixedFrameCount": 1,
+      "observedMS": 76.6308750025928,
+      "finalCaptureAndDecodeMS": 20.86999994935468,
+      "correctnessCeilingMS": 100,
+      "within20MS": false,
+      "rows": [
+        {
+          "elapsedMS": 35.066333308350295,
+          "captureAndDecodeMS": 25.853833300061524,
+          "incoherent": true,
+          "failedComponents": "moved-material: 0/3;no-raw-ghost-220.0: 0/3"
+        },
+        {
+          "elapsedMS": 76.6308750025928,
+          "captureAndDecodeMS": 20.86999994935468,
+          "incoherent": false,
+          "failedComponents": ""
+        }
+      ],
+      "attachment": "native-run/cold/attachments/D82D403E-86AC-4AD2-A36B-AC28E283DF5F.txt",
+      "sha256": "0f749bd014bafc799f237783a38b85a4488781b14d34ec12fcab562e29203234"
+    }
+  ],
+  "scopedRegressionObservations": [
+    {
+      "group": "regressions",
+      "name": "cancelled-whole-move-atomic-restore_0_706E9D20-4A98-4274-AA3F-39D992097106.txt",
+      "text": "UX cancelled-whole-move-atomic-restore: correct=true, observed=52.185417 ms, ceiling=0.1 seconds; window observation, not photon timing",
+      "attachment": "native-run/regressions/attachments/D2A115EA-AEC9-4FFC-93D7-F24B323353D2.txt",
+      "sha256": "0442e711ed1af6bc80f223d116a3409c6cd44c0b70432efbf02686ce0f6ff1aa"
+    },
+    {
+      "group": "regressions",
+      "name": "second-whole-move-cancel-keeps-new-raw_0_8941AD1A-E549-4704-B773-B38A1C076501.txt",
+      "text": "UX second-whole-move-cancel-keeps-new-raw: correct=true, observed=52.346209 ms, ceiling=0.25 seconds; window observation, not photon timing",
+      "attachment": "native-run/regressions/attachments/907A2094-86F0-48F6-82DC-2368BB45E59F.txt",
+      "sha256": "bb69d3cdaf98679c44755439996d047cf3e7f3783dd98e48c00dd1c77c89541c"
+    },
+    {
+      "group": "regressions",
+      "name": "second-whole-move-picture-and-controls_0_D49E6CAD-53A7-4B2D-A3F4-4C7AA41B168B.txt",
+      "text": "UX second-whole-move-picture-and-controls: correct=true, observed=54.108458 ms, ceiling=0.25 seconds; window observation, not photon timing",
+      "attachment": "native-run/regressions/attachments/889FEC2B-48D0-4693-B848-C89FEA3BD050.txt",
+      "sha256": "e21a7e3b56fcd9aba1c98e7d9647beba0e988ba917350796674707bcd6af6975"
+    },
+    {
+      "group": "regressions",
+      "name": "first-whole-move-canonical-installed_0_FD2107B1-66E9-448A-BA1A-D24BC05647DC.txt",
+      "text": "UX first-whole-move-canonical-installed: correct=true, observed=18.121208 ms, ceiling=0.25 seconds; window observation, not photon timing",
+      "attachment": "native-run/regressions/attachments/743C2EF6-9124-4F3B-B092-51F21BD0C479.txt",
+      "sha256": "e25fea7a7bbbc764bab8059b12392a440608cd30e7b81f111a9d6cc1ab5f2818"
+    }
+  ],
+  "screenshots": [
+    {
+      "group": "cold",
+      "test": "NotebookInteractionUXTests/testClosedWholeLassoRoutesRawAndAuthoredMaterialThroughTwoInstalledDragsAndCancel()",
+      "name": "whole-route-cancel-second-observed_0_540A5E2B-8DA9-43B9-B707-078B8AD481FE.png",
+      "path": "native-run/cold/attachments/20085FCF-18C7-4FAA-ABEF-2D93A801DE39.png",
+      "sha256": "f328ec827ed3844ae25facf47b13429fca03dd96fb75bd7e6555504f69f3579a"
+    },
+    {
+      "group": "cold",
+      "test": "NotebookInteractionUXTests/testClosedWholeLassoRoutesRawAndAuthoredMaterialThroughTwoInstalledDragsAndCancel()",
+      "name": "whole-route-cancel-second-incomplete-0_0_17524B45-77C8-4CA1-83A0-62A6F8D9F647.png",
+      "path": "native-run/cold/attachments/A41336C2-6FC7-429E-A7A8-248AE30AE6CD.png",
+      "sha256": "6e34f8575e7526e3412dd0b2d2f421949b10c3c4cb2b4285ce6b6be2abe16e3b"
+    },
+    {
+      "group": "cold",
+      "test": "NotebookInteractionUXTests/testClosedWholeLassoRoutesRawAndAuthoredMaterialThroughTwoInstalledDragsAndCancel()",
+      "name": "whole-route-second-canonical-drag-observed_0_6C53328B-9274-4BA4-A6D6-CFC93F83D756.png",
+      "path": "native-run/cold/attachments/611E5E4F-CC82-41D9-AE66-BAFB018D9BF7.png",
+      "sha256": "a057368533aac6246664bb91f4af50fddfd6f9db02caacf354384da502291c6c"
+    },
+    {
+      "group": "cold",
+      "test": "NotebookInteractionUXTests/testClosedWholeLassoRoutesRawAndAuthoredMaterialThroughTwoInstalledDragsAndCancel()",
+      "name": "whole-route-second-canonical-drag-incomplete-0_0_364746DA-FA98-44E3-B340-C991272FB369.png",
+      "path": "native-run/cold/attachments/EBFE398E-27C1-421C-B5ED-AA6620A8B5AF.png",
+      "sha256": "4c4c46fa09a0040125a74c6c32ca870abcc228b61489259e461b3dd61df029dd"
+    },
+    {
+      "group": "cold",
+      "test": "NotebookInteractionUXTests/testClosedWholeLassoRoutesRawAndAuthoredMaterialThroughTwoInstalledDragsAndCancel()",
+      "name": "whole-route-first-lift-observed_0_44FF6062-BB93-4C95-9441-C13E740F8F3F.png",
+      "path": "native-run/cold/attachments/A87FC6B6-E308-4A46-AAFD-3BC458CCA5E7.png",
+      "sha256": "c11be5d25b4bf6fc9fe9921c369d5fe0c9be8f41141c13d4738974d8891f1806"
+    },
+    {
+      "group": "cold",
+      "test": "NotebookInteractionUXTests/testClosedWholeLassoRoutesRawAndAuthoredMaterialThroughTwoInstalledDragsAndCancel()",
+      "name": "whole-route-first-drag-observed_0_3FA25E88-D6B0-4BF8-9529-F38E11F37461.png",
+      "path": "native-run/cold/attachments/0293724B-0D6A-42A0-A91E-E2B0EB500417.png",
+      "sha256": "c11be5d25b4bf6fc9fe9921c369d5fe0c9be8f41141c13d4738974d8891f1806"
+    },
+    {
+      "group": "cold",
+      "test": "NotebookInteractionUXTests/testClosedWholeLassoRoutesRawAndAuthoredMaterialThroughTwoInstalledDragsAndCancel()",
+      "name": "whole-route-first-drag-incomplete-0_0_ABE44E7D-1708-4A92-A959-25BF19D0256B.png",
+      "path": "native-run/cold/attachments/0B83D043-061D-4D97-B50F-54FBEE11258B.png",
+      "sha256": "5621b5d57a31943bdabbcc6133322588cded1703f7afc21f6cb35cdc9e0ec782"
+    }
+  ],
+  "compilerDiagnostic": {
+    "overallBuildExitCode": 0,
+    "buildCount": 1,
+    "diagnostic": "error: the following command failed with exit code 0 but produced no further output",
+    "stdoutLines": {
+      "first": 87,
+      "last": 88
+    },
+    "context": [
+      "error: the following command failed with exit code 0 but produced no further output",
+      "SwiftCompile normal arm64 /tmp/notebook-u10-selection-pipelines-139/frozen-source/Applications/iPad/NotebookVoiceController.swift (in target 'Notebook' from project 'Notebook' at path '/tmp/notebook-u10-selection-pipelines-139/frozen-source/Applications/Notebook.xcodeproj')"
+    ],
+    "stdoutSHA256": "eed18f8aaa077e225a227c2432d7089f847933a900f7ef9cf5294ddbcf36160d",
+    "notExplained": "The odd compiler diagnostic is retained, not reclassified as clean compiler output; there was no second build command."
+  },
+  "conclusion": "Первый drag стал целиком корректным лишь в109.998ms при потолке100ms. First lift корректен19.245ms. Второй drag и cancellation каждый дали по одному incoherent окну перед eventual correctness72.942/76.631ms. Адресные lifetime/resource tests3/3PASS не закрывают atomic screen/first-drag UX.",
+  "limits": [
+    "Это window capture/decode observations, не OS presentation/photon latency; capture cost сохранён.",
+    "Early pipeline request и retiring-owner имеют scoped functional PASS, но глобальное U10 исправление не установлено.",
+    "Нет profiler/CPU attribution в139; нельзя приписать оставшуюся задержку PSO по этому запуску.",
+    "PNG сохранены с hashes; sealing agent их визуально не оценивал.",
+    "Compiler stdout содержит odd error diagnostic при overall build exit0; raw output сохранён.",
+    "Никакой полной финальной UX acceptance/10+30min проверки этот срез не доказывает."
+  ],
+  "visualInspection": {
+    "performed": true,
+    "reviewer": "root",
+    "reportedUTC": "2026-09-26T20:22:58Z",
+    "screenshots": [
+      {
+        "group": "cold",
+        "test": "NotebookInteractionUXTests/testClosedWholeLassoRoutesRawAndAuthoredMaterialThroughTwoInstalledDragsAndCancel()",
+        "name": "whole-route-cancel-second-incomplete-0_0_17524B45-77C8-4CA1-83A0-62A6F8D9F647.png",
+        "path": "native-run/cold/attachments/A41336C2-6FC7-429E-A7A8-248AE30AE6CD.png",
+        "sha256": "6e34f8575e7526e3412dd0b2d2f421949b10c3c4cb2b4285ce6b6be2abe16e3b"
+      },
+      {
+        "group": "cold",
+        "test": "NotebookInteractionUXTests/testClosedWholeLassoRoutesRawAndAuthoredMaterialThroughTwoInstalledDragsAndCancel()",
+        "name": "whole-route-second-canonical-drag-incomplete-0_0_364746DA-FA98-44E3-B340-C991272FB369.png",
+        "path": "native-run/cold/attachments/EBFE398E-27C1-421C-B5ED-AA6620A8B5AF.png",
+        "sha256": "4c4c46fa09a0040125a74c6c32ca870abcc228b61489259e461b3dd61df029dd"
+      }
+    ],
+    "finding": "Оба PNG показывают прежнюю y-позицию raw-линии, тогда как синий authored peer и четыре controls уже переместились. Это визуально подтверждённый mixed frame, не только вычисленный oracle."
+  }
+}

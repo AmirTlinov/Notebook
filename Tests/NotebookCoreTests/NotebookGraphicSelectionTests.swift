@@ -15,6 +15,108 @@ struct NotebookGraphicSelectionTests {
     #expect(!NotebookGraphicMask(operations:[.init(.intersect,polygon:polygon+[.zero])]).isValid)
   }
 
+  @Test func sourceAnchoredContactRejectsAuthoredOrderAndGroupBeforeWriting() throws {
+    let root=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer {try? FileManager.default.removeItem(at:root)}
+    let store=NotebookStore(root:root),actor=UUID()
+    let (_,initial)=try store.loadOrCreate(actor:actor,pageSize:.init(width:834,height:1194))
+    _=try store.loadOrCreateSpatialInk(actor:actor)
+    var page=try #require(initial.values.first)
+    let action=PageInkAction(tool:.pen,samples:[20.0,100].map { x in
+      .init(point:.init(x:x,y:50),timeOffset:0,width:10,opacity:1,force:1,azimuth:0,altitude:1)
+    })
+    _=page.replaceDrawing(try PageInkDrawing(actions:[action]).dataRepresentation(),actor:actor);try store.savePage(page)
+    let frame=PageRect(x:0,y:0,width:140,height:100),target=CollaborationTarget(kind:.page,id:page.id)
+    let body=NotebookGraphic(shape:.freehand,sourceInkIDs:[action.id],freehand:.init(layers:[
+      .init(tool:.pen,color:.black,measured:.init(sourceID:action.id,measurements:action.samples,frame:frame))]))
+    func values(_ graphic:NotebookGraphic)throws->[String:JSONValue] {
+      ["kind":.string("graphic"),"source":.string(""),"frame":try .encode(frame),"graphic":try .encode(graphic)]
+    }
+    _=try store.applyNativeElementEdits([
+      .init(kind:.convertInkToElement,target:target,id:"contact",values:values(body)),
+      .init(kind:.insertElement,target:target,id:"shape",values:values(.init(shape:.rectangle)))],summary:"Целый контакт",
+      sources:[.init(target:target,id:"contact"),.init(target:target,id:"shape")],expectedInkRevision:page.drawingStamp.revision,actor:actor)
+    func source(_ id:String)throws->NotebookNativeElementSource {try .init(target:target,id:id,page:store.readPageElement(pageID:page.id,elementID:id))}
+    let cursor=try store.currentChangeCursor(),sources=try [source("contact"),source("shape")]
+    #expect(throws:CollaborationError.self) {try NotebookStore.elementGroupingEdits(sources,id:"group")}
+    #expect(throws:CollaborationError.self) {
+      try store.applyNativeElementEdits([.init(kind:.reorderElements,target:target,id:"contact")],summary:"Порядок",
+        sources:[source("contact")],layerMove:.toFront,actor:actor)
+    }
+    #expect(throws:CollaborationError.self) {
+      try store.applyNativeElementEdits([.init(kind:.updateElement,target:target,id:"contact",values:["parentID":.string("group")])],
+        summary:"Группа",sources:[source("contact")],actor:actor)
+    }
+    #expect(try store.currentChangeCursor() == cursor)
+    #expect(try source("contact").page?.graphic == body)
+    let detached=NotebookGraphic(shape:.freehand,freehand:body.freehand)
+    #expect(detached.sourceInkContactID == nil)
+    #expect(body.sourceInkContactID == action.id)
+  }
+
+  @Test(arguments:[false,true])
+  func copiedContactsKeepOriginalInkOrderAfterReverseConversion(onBoard:Bool) throws {
+    let root=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer {try? FileManager.default.removeItem(at:root)}
+    let store=NotebookStore(root:root),actor=UUID()
+    let (workspace,pages)=try store.loadOrCreate(actor:actor,pageSize:.init(width:834,height:1194))
+    _=try store.loadOrCreateSpatialInk(actor:actor)
+    var page=try #require(pages.values.first)
+    let target=CollaborationTarget(kind:onBoard ? .board : .page,id:onBoard ? workspace.rootBoardID : page.id)
+    let frame=PageRect(x:0,y:0,width:140,height:100)
+    let actions=[UInt64(1),2].map { sequence in PageInkAction(tool:.pen,samples:[20.0,100].map { x in
+      .init(point:.init(x:x,y:50),timeOffset:0,width:10,opacity:1,force:1,azimuth:0,altitude:1)
+    },sequence:sequence) }
+    if onBoard {
+      for action in actions {
+        let stamp=VersionStamp(counter:action.sequence,actor:actor)
+        let spatial=SpatialInkAction(id:action.id,tool:.pen,spans:[.init(surface:.board(target.id),samples:action.samples.map { sample in
+          .init(point:sample.point,worldPoint:.init(x:sample.point.x,y:sample.point.y),timeOffset:sample.timeOffset,
+            width:sample.width,opacity:sample.opacity,force:sample.force,azimuth:sample.azimuth,altitude:sample.altitude)
+        })],stamp:stamp)
+        _=try store.commitSpatialInk(.append(spatial,journalStamp:stamp))
+      }
+    } else {
+      _=page.replaceDrawing(try PageInkDrawing(actions:actions).dataRepresentation(),actor:actor);try store.savePage(page)
+    }
+    func source(_ id:String)throws->NotebookNativeElementSource {
+      try .init(target:target,id:id,page:onBoard ? nil : store.readPageElement(pageID:target.id,elementID:id),
+        spatial:onBoard ? store.readSpatialElement(boardID:target.id,elementID:id) : nil)
+    }
+    func values(_ graphic:NotebookGraphic)throws->[String:JSONValue] {
+      var result:[String:JSONValue]=["kind":.string("graphic"),"source":.string(""),"frame":try .encode(frame),"graphic":try .encode(graphic)]
+      if onBoard {result["worldOrigin"]=try .encode(WorldPoint.zero)}
+      return result
+    }
+    for (id,action) in zip(["a","b"],actions).reversed() {
+      let body=NotebookGraphic(shape:.freehand,sourceInkIDs:[action.id],freehand:.init(layers:[
+        .init(tool:.pen,color:.black,measured:.init(sourceID:action.id,measurements:action.samples,frame:frame))]))
+      _=try store.applyNativeElementEdits([.init(kind:.convertInkToElement,target:target,id:id,values:values(body))],
+        summary:"Обратный порядок преобразования",sources:[source(id)],actor:actor)
+    }
+    _=try store.applyNativeElementEdits([.init(kind:.insertElement,target:target,id:"shape",values:values(.init(shape:.rectangle)))],
+      summary:"Авторская плоскость",sources:[source("shape")],actor:actor)
+    let originalIDs=["b","a","shape"],newIDs=originalIDs.map{"copy-"+$0}
+    let sources=try (originalIDs+newIDs).map(source)
+    let operations=try originalIDs.map { id -> CollaborationOperation in
+      let original=try source(id)
+      let body=try #require(original.page?.graphic ?? original.spatial?.graphic)
+      let graphic=NotebookGraphic(shape:body.shape,style:body.style,freehand:body.freehand)
+      return .init(kind:.insertElement,target:target,id:"copy-"+id,values:try values(graphic))
+    }
+    _=try store.applyNativeElementEdits(operations,summary:"Копировать в исходном порядке",sources:sources,
+      copiedFrom:Dictionary(uniqueKeysWithValues:zip(newIDs,originalIDs)),actor:actor)
+    let order=onBoard ? try store.loadBoard(items:store.loadIndex().items).board(target.id)!.elements.map(\.id)
+      : try store.loadPage(page.id).elements.map(\.id)
+    #expect(Array(order.prefix(3)) == originalIDs)
+    #expect(Array(order.suffix(3)) == ["copy-shape","copy-a","copy-b"],
+      "Authored order is below ink; conversion order must not reverse original contacts")
+    for id in newIDs {
+      let copied=try source(id)
+      #expect((copied.page?.graphic ?? copied.spatial?.graphic)?.sourceInkIDs.isEmpty == true)
+    }
+  }
+
   private enum Fault: Error { case storage }
 
   @Test(arguments: [false,true], [NotebookStorageFault.afterRecordWrites,.beforeCommit,.afterCommit])
@@ -249,9 +351,12 @@ struct NotebookGraphicSelectionTests {
     for (member,edit) in zip(members,edits) {
       #expect(edit.graphic == member.graphic)
       let placed=try member.placement.updating(frame:edit.frame,basis:edit.basis)
+      let display=try #require(NotebookGraphicSelection.displayTransform(from:member,to:edit))
       for point in [CGPoint.zero,.init(x:17,y:29),.init(x:member.placement.localSize.x,y:member.placement.localSize.y)] {
         let expected=point.applying(member.placement.transform).applying(change),actual=point.applying(placed.transform)
         #expect(abs(actual.x-expected.x)<1e-9 && abs(actual.y-expected.y)<1e-9)
+        let preview=point.applying(member.placement.transform).applying(display)
+        #expect(abs(preview.x-actual.x)<1e-9 && abs(preview.y-actual.y)<1e-9)
       }
     }
     let moved=NotebookGraphicSelection.translated(members,by:.init(x:40,y:30))
@@ -263,6 +368,26 @@ struct NotebookGraphicSelectionTests {
     let onlyLink=NotebookGraphicSelection.transformed([members[2]],by:change,relativeTo:.zero)
     #expect(onlyLink[0].graphic.connection?.bindings.isEmpty == true)
     #expect(onlyLink[0].graphic.style == members[2].graphic.style)
+  }
+
+  @Test func selectedChildPreviewKeepsItsRotatedParentBasis() throws {
+    let page=PageDocument(size:.init(width:1000,height:1000),actor:UUID(),elements:[
+      .init(id:"group",kind:.group,frame:.init(x:90,y:70,width:220,height:160),source:"",html:"",
+        basis:.init(size:.init(x:220,y:160),transform:.init(a:0,b:1,c:-1,d:0,tx:1,ty:0))),
+      .init(id:"child",kind:.graphic,frame:.init(x:20,y:30,width:65,height:42),source:"",html:"",
+        graphic:.init(shape:.ellipse),parentID:"group")])
+    let graph=page.graphicGraph(),node=try #require(graph.node("child"))
+    let member=NotebookGraphicSelection.Member(id:node.id,frame:node.frame,graphic:node.graphic,
+      layout:try #require(graph.resolve(node.id).layout),body:try #require(graph.resolve(node.id,space:.body).layout),
+      placement:node.placement)
+    let edit=try #require(NotebookGraphicSelection.translated([member],by:.init(x:37,y:-29)).first)
+    let preview=try #require(NotebookGraphicSelection.displayTransform(from:member,to:edit))
+    let target=try member.placement.updating(frame:edit.frame,basis:edit.basis)
+    for p in [CGPoint.zero,CGPoint(x:21,y:9),CGPoint(x:65,y:42)] {
+      let displayed=p.applying(member.placement.transform).applying(preview)
+      let persisted=p.applying(target.transform)
+      #expect(abs(displayed.x-persisted.x)<1e-9 && abs(displayed.y-persisted.y)<1e-9)
+    }
   }
 
   @Test func copyingAtThePageEdgeDetachesUnselectedNodesWithoutLosingVisibleGeometry() throws {

@@ -275,7 +275,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
       }
       self.items = items.sorted { $0.zIndex < $1.zIndex }
       if self.journal != journal {
-        view.accessibilityValue = "\(journal?.actions.filter(\.isActive).count ?? 0) действий"
+        view.accessibilityValue = "\(journal?.orderedActions.reduce(0) { $0 + ($1.isActive ? 1 : 0) } ?? 0) действий"
       }
       self.journal = journal
       self.penStyle = penStyle

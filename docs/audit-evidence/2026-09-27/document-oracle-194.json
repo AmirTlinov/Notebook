@@ -1,0 +1,12 @@
+{
+  "format": 1,
+  "scope": "USB iPad, private optimized build; one corrected cold document opening oracle, not an app rendering change",
+  "sourceSHA256": "27c8acc41541165049ba2dc89d6934e3b8bc9c372fb9555c9c535a1227895233",
+  "result": "0 PASS / 1 FAIL / 0 skipped",
+  "installedSourceMS": 1390.771,
+  "budgetMS": 1000,
+  "diagnosticCaptureMS": 151.611,
+  "diagnosticAttachmentMS": 111.521,
+  "rawResult": "/Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/.build/notebook-architecture-repair/evidence-2026-09-27/document-oracle-194/ipad.xcresult",
+  "boundary": "The test now times exact installed document source before making its diagnostic screenshot and XCTest attachment. Correctness is true but cold opening remains above budget; this is not a speed fix."
+}

@@ -132,7 +132,7 @@ extension PageInkDrawing {
 extension SpatialInkJournal {
   public func elementErasures(on surface: SurfaceID) -> [String: [InkElementErasure]] {
     var result: [String: [InkElementErasure]] = [:]
-    for action in actions where action.isActive && action.tool == .eraser {
+    for action in orderedActions where action.isActive && action.tool == .eraser {
       for span in action.spans where span.surface == surface {
         for target in span.elementTargets ?? [] {
           result[target.elementID, default: []].append(.init(target: target, measurements: span.samples))

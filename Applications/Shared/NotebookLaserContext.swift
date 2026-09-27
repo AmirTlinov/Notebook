@@ -111,17 +111,28 @@ final class NotebookLaserContext {
 #if os(iOS)
 extension NotebookAppModel {
   func captureLaserContext(_ contact: NotebookDrawingToolController.LaserContact) {
-    guard let chat, contact.scope == chat.pointingScope,
-      let presence, let cohort = compositionTiles.published,
+    // A completed mark in this chat is an explicit image intent. Losing its
+    // scene between touch-down and lift must not turn Send into an unmarked
+    // whole-viewport request. Changing chats deliberately drops that intent.
+    guard let chat, contact.scope == chat.pointingScope else { return }
+    let scope = chat.pointingScope
+    func unavailable() {
+      laserContext.append(scope:scope) {
+        throw CollaborationError("pointing_not_ready", "Изображение указки ещё не готово. Укажите фрагмент после завершения движения.")
+      }
+    }
+    guard let presence, let cohort = compositionTiles.published,
       !contact.points.isEmpty,
-      let frame = NotebookAttentionProjection.laserFrame(contact.address,model:self,presence:presence) else { return }
+      let frame = NotebookAttentionProjection.laserFrame(contact.address,model:self,presence:presence) else {
+      unavailable(); return
+    }
     let origin = frame.origin, scale = presence.camera.scale
     let box = contact.contour.bounds.insetBy(dx:-24/scale,dy:-24/scale)
     let start = CGPoint(x:origin.x+box.minX*scale,y:origin.y+box.minY*scale)
     let end = CGPoint(x:origin.x+box.maxX*scale,y:origin.y+box.maxY*scale)
     guard let capture = NotebookAttentionProjection.capture(start:start,end:end,model:self,presence:presence,
       cohort:cohort,installedInk:compositionTiles.surfaceRegistry.installedSources(),compositeRegion:true)?.freezingSubmissionVisuals() else {
-      laserContext.append(scope:chat.pointingScope) { throw CollaborationError("pointing_not_ready", "Изображение указки ещё не готово. Укажите фрагмент после завершения движения.") }; return
+      unavailable(); return
     }
     var outlines: [UUID:NotebookLaserContext.Outline] = [:]
     for fragment in capture.fragments {
@@ -131,7 +142,7 @@ extension NotebookAppModel {
       outlines[fragment.id] = .init(points:contact.points,sourceOrigin:origin,cropOrigin:frame.origin,
         scale:scale,width:4/contact.screenScale)
     }
-    laserContext.append(scope:chat.pointingScope) {
+    laserContext.append(scope:scope) {
       let ready = try await capture.resolvingAcceptedCommands()
       let references = try await Task.detached { try ready.resolvedReferences() }.value
       let images = try await ready.renderPinnedImages(references:references)

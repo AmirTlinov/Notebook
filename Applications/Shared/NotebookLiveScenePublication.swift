@@ -52,11 +52,12 @@ extension NotebookAppModel {
     _ = workingGraphicRevision(on:.board(boardID))
     let working = workingGraphics.filter {
       ($0.surface == .board(boardID) || ($0.surface.kind == .cover && $0.surface.ownerID.flatMap { cohort.frame.index.ownerBoard(itemID:$0) } == boardID))
-        && ($0.publicationCursor.map { cohort.plan.revision < $0 } ?? true)
+        && ($0.inkPresentation?.holdsPresentation == true || ($0.publicationCursor.map { cohort.plan.revision < $0 } ?? true))
     }
     let ids=Set(working.filter { $0.accepted && ($0.publicationCursor.map { sceneContentCursor >= $0 } ?? false) }.map(\.id))
     let admitted=Dictionary(uniqueKeysWithValues:boardHierarchy?.board(boardID)?.graphicNodes(ids:ids).map { ($0.id,$0) } ?? [])
     return working.map { object in
+      if object.inkPresentation?.holdsPresentation == true { return object.node }
       if object.accepted, let cursor = object.publicationCursor, sceneContentCursor >= cursor,
         let current = admitted[object.id], current.surface == object.surface { return current }
       return object.node

@@ -21,7 +21,7 @@ struct NotebookInkMaterialView: View {
       .allowsHitTesting(false)
   }
 
-  struct Content: Equatable {
+  struct Content: Equatable, Sendable {
     let freehand: NotebookFreehand?
     let erasures: [InkElementErasure]
     let transform: NotebookGraphicTransform?
@@ -76,7 +76,8 @@ final class InkMaterialHost: PageInkHost {
   func update(_ content:NotebookInkMaterialView.Content,projection value:ScenePlaneProjection?,report:NotebookInkMaterialReceiver?) {
     let changedReceiver=self.report?.id != report?.id
     self.content=content;self.report=report
-    canvas.updateMaterial(content);projection.observe(value)
+    projection.observe(value)
+    canvas.updateMaterial(content)
     if changedReceiver {
       Task { @MainActor [weak self] in
         guard let self,let content=self.content else { return }
@@ -199,16 +200,34 @@ final class InkMaterialRenderer {
   func encode(region:CGRect, sourceSize:CGSize, pixels:CGSize,
     device:any MTLDevice, resources:SceneRenderResources, owner:ScenePhysicalOwnerLease?,
     encoder:any MTLRenderCommandEncoder) throws -> [RasterReservation] {
-    guard let ink=InkRasterRenderer.shared.ink,let erase=InkRasterRenderer.shared.eraser,
-      let connectivity=InkRasterRenderer.shared.connectivity else { throw SceneRenderError.resourceLimit }
+    let renderer=InkRasterRenderer.shared
+    guard let ink=renderer.ink,let erase=renderer.eraser else { throw SceneRenderError.resourceLimit }
+    let prepared=try prepareDraws(region:region,sourceSize:sourceSize,pixels:pixels,device:device,resources:resources,owner:owner)
+    for draw in prepared.draws {renderer.encode(draw,pipeline:draw.tool == .eraser ? erase:ink,encoder:encoder)}
+    return prepared.reservations
+  }
+
+  init() {}
+  /// A staged pose borrows immutable buffers without modifying the currently
+  /// installed source. Only changed body/cut geometry acquires new backing.
+  private init(copying other:InkMaterialRenderer) {
+    content=other.content;sources=other.sources;uploadedNodes=other.uploadedNodes
+  }
+  func staging(_ value:NotebookInkMaterialView.Content)->InkMaterialRenderer {
+    let next=InkMaterialRenderer(copying:self);next.update(value);return next
+  }
+
+  func prepareDraws(region:CGRect, sourceSize:CGSize, pixels:CGSize,
+    device:any MTLDevice, resources:SceneRenderResources, owner:ScenePhysicalOwnerLease?) throws
+    -> (draws:[InkRasterRenderer.Draw],reservations:[RasterReservation]) {
     let density=max(pixels.width/region.width,pixels.height/region.height)
     let queryRegion=Self.queryRegion(content!,region:region,sourceSize:sourceSize,density:density)
     guard !queryRegion.isNull,!queryRegion.isEmpty else {
       for i in sources.indices { sources[i].buffers.removeAll() }
-      return []
+      return ([],[])
     }
-    var viewport=SIMD2<Float>(Float(region.width),Float(region.height))
-    encoder.setVertexBytes(&viewport,length:MemoryLayout<SIMD2<Float>>.stride,index:1)
+    let viewport=SIMD2<Float>(Float(region.width),Float(region.height))
+    var draws:[InkRasterRenderer.Draw]=[]
     var held: [RasterReservation] = []
     let grid=InkRasterRenderer.shared.sampleGrid(viewport:region.size,pixels:pixels)
     for i in sources.indices {
@@ -221,7 +240,7 @@ final class InkMaterialRenderer {
       sources[i].buffers=sources[i].buffers.filter { selected.contains($0.key) }
       for id in query.indices {
         let prepared=sources[i].buffers[id]?.prepared ?? geometry.prepared(at:id)
-        var affine=affine(basis,unit:prepared.descriptor.sourceSize,region:region)
+        let affine=affine(basis,unit:prepared.descriptor.sourceSize,region:region)
         let level=InkRenderGeometry.level(prepared.geometry.descriptor.levels,
           pixelsPerUnit:affine.maximumStretch*Float(density),minimumPixelsPerUnit:affine.minimumStretch*Float(density))
         if sources[i].buffers[id]?.level != level {
@@ -235,16 +254,11 @@ final class InkMaterialRenderer {
         guard let buffer=sources[i].buffers[id] else { continue }
         held.append(buffer.bytes)
         let tool=geometry.tool(at:id),color=geometry.color(at:id)
-        encoder.setRenderPipelineState(tool == .eraser ? erase : ink)
-        encoder.setVertexBuffer(buffer.nodes,offset:0,index:0)
-        encoder.setVertexBytes(&affine,length:MemoryLayout<InkAffine>.stride,index:2)
-        var primitive=InkPrimitive(count:UInt32(buffer.count),flags:prepared.descriptor.flags,
-          color:.init(Float(color.red),Float(color.green),Float(color.blue),1))
-        encoder.setVertexBytes(&primitive,length:MemoryLayout<InkPrimitive>.stride,index:3)
-        connectivity.draw(nodes:buffer.count,flags:prepared.descriptor.flags,encoder:encoder)
+        draws.append(.init(buffer:buffer.nodes,offset:0,count:buffer.count,flags:prepared.descriptor.flags,
+          color:.init(Float(color.red),Float(color.green),Float(color.blue),1),affine:affine,viewport:viewport,tool:tool))
       }
     }
-    return held
+    return (draws,held)
   }
 }
 

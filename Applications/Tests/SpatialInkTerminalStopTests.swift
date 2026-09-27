@@ -37,8 +37,7 @@ final class SpatialInkTerminalStopTests: XCTestCase {
     XCTAssertEqual(durable.actions.first { $0.id == action.id }, action)
     // Hold stop behind a real native presentation transaction, not a sleep or
     // a synthetic completion. No local frame reference outlives installation.
-    var nativeFrame: InkCanvasView.PreparedSpatialFrame? = try await canvas.prepareSpatialFrame(nil,
-      size: .init(x: canvas.bounds.width, y: canvas.bounds.height), displayScale: 2)
+    var nativeFrame: InkCanvasView.PreparedFrame? = try await canvas.prepareFrame(.spatial(nil,size:.init(x: canvas.bounds.width, y: canvas.bounds.height),displayScale:2,camera:nil))
     let owner = try XCTUnwrap(lease.owners[surface])
     let pending = SpatialInkSceneLease(registry: lease.registry, rootBoardID: fixture.boardID,
       focusedCoverID: lease.focusedCoverID,

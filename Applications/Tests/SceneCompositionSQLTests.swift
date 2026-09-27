@@ -4,6 +4,187 @@ import XCTest
 @testable import Notebook
 
 final class SceneCompositionSQLTests: XCTestCase {
+  @MainActor
+  func testPageOrderedExportPreservesRanksCapturedCutsAndSelectedLayerScope() async throws {
+    let red=SpatialInkColor(red:1,green:0,blue:0),blue=SpatialInkColor(red:0,green:0,blue:1),green=SpatialInkColor(red:0,green:1,blue:0)
+    func action(_ sequence:UInt64,_ tool:SpatialInkTool,_ color:SpatialInkColor,
+      _ points:[CGPoint],width:Double = 12,targets:[InkElementTarget]? = nil)->PageInkAction {
+      .init(tool:tool,color:color,samples:points.enumerated().map { index,p in
+        .init(point:.init(x:p.x,y:p.y),timeOffset:Double(index)/10,width:width,opacity:1,force:1,azimuth:0,altitude:1)
+      },sequence:sequence,elementTargets:targets)
+    }
+    let a=action(1,.pen,red,[.init(x:10,y:40),.init(x:110,y:40)])
+    let b=action(2,.pen,blue,[.init(x:48,y:10),.init(x:48,y:86)])
+    let c=action(3,.pen,green,[.init(x:10,y:65),.init(x:110,y:65)])
+    let captured=action(4,.eraser,.black,[.init(x:40,y:25),.init(x:56,y:25)],width:10)
+    let bodyFrame=PageRect(x:8,y:0,width:96,height:96),sourceFrame=PageRect(x:0,y:0,width:96,height:96)
+    let target=InkElementTarget(elementID:"ordered-body",frame:bodyFrame)
+    let targeted=action(5,.eraser,.black,[.init(x:50,y:50),.init(x:62,y:50)],width:8,targets:[target])
+    let baselineCut=action(6,.eraser,.black,[.init(x:105,y:105)],width:14)
+    let format=UIGraphicsImageRendererFormat();format.scale=1;format.opaque=false
+    let baseline=UIGraphicsImageRenderer(size:.init(width:128,height:128),format:format).pngData { context in
+      context.cgContext.setFillColor(UIColor.red.cgColor);context.cgContext.fill(.init(x:96,y:96,width:24,height:24))
+    }
+    let drawing=PageInkDrawing(baselinePNG:baseline,baselineActionCount:1,actions:[a,b,c,captured,targeted,baselineCut])
+    let graphic=NotebookGraphic(shape:.freehand,sourceInkIDs:[b.id],freehand:.init(layers:[
+      .init(tool:.pen,color:blue,measured:.init(sourceID:b.id,measurements:b.samples,frame:sourceFrame)),
+      .init(tool:.eraser,color:.black,measured:.init(sourceID:captured.id,measurements:captured.samples,frame:sourceFrame))
+    ]))
+    let element=AgentElement(id:target.elementID,kind:.graphic,frame:bodyFrame,source:"",html:"",graphic:graphic)
+    let page=PageDocument(size:.init(width:128,height:128),actor:UUID(),drawingData:try drawing.dataRepresentation(),elements:[element])
+    let graph=page.graphicGraph(),layout=try XCTUnwrap(graph.resolve(element.id).layout)
+    let input=NotebookPageOrderedInkInput(elements:[element],graph:graph,layouts:[element.id:layout],
+      erasures:drawing.elementErasures,suppressedInkIDs:page.graphicPresentation.suppressedInkIDs)
+    let plan=try input.plan(drawing:drawing)
+    XCTAssertEqual(plan.bodies.map(\.key),[.page(sequence:b.sequence,id:b.id)])
+    XCTAssertEqual(plan.bodies.first?.erasures,[.init(target:target,measurements:targeted.samples)])
+    XCTAssertEqual(plan.suppressedInkIDs,[b.id])
+    let resources=SceneRenderResources()
+    func render(_ source:PageDocument,selected:String? = nil) async throws -> [UInt8] {
+      let result=try await PageCompositionRenderer.render(source,elementID:selected,scale:2,resources:resources) { _ in
+        throw SceneRenderError.snapshotPending("unexpected_webkit")
+      }
+      let image=try XCTUnwrap(UIImage(data:result.png)?.cgImage)
+      XCTAssertEqual(image.width,256);XCTAssertEqual(image.height,256)
+      let context=try XCTUnwrap(CGContext(data:nil,width:image.width,height:image.height,bitsPerComponent:8,
+        bytesPerRow:image.width*4,space:CGColorSpaceCreateDeviceRGB(),bitmapInfo:CGImageAlphaInfo.premultipliedLast.rawValue))
+      context.draw(image,in:.init(x:0,y:0,width:image.width,height:image.height))
+      let data=try XCTUnwrap(context.data).assumingMemoryBound(to:UInt8.self)
+      return Array(UnsafeBufferPointer(start:data,count:image.width*image.height*4))
+    }
+    func pixel(_ bytes:[UInt8],_ x:Int,_ y:Int)->[UInt8] {let i=(y*2*256+x*2)*4;return Array(bytes[i..<i+4])}
+    func dominant(_ rgba:[UInt8],_ channel:Int)->Bool {
+      rgba[channel]>240 && (0..<3).filter{$0 != channel}.allSatisfy{rgba[$0]<15} && rgba[3]>240
+    }
+    let full=try await render(page)
+    XCTAssertTrue(dominant(pixel(full,56,40),2),"Moved B remains above earlier raw A")
+    XCTAssertTrue(dominant(pixel(full,56,65),1),"Later raw C remains above moved B")
+    XCTAssertTrue(dominant(pixel(full,48,40),0),"The old raw B is not painted twice")
+    XCTAssertFalse(dominant(pixel(full,105,105),0),"A later raw eraser still cuts the converted baseline PNG")
+    let selected=try await render(page,selected:element.id)
+    XCTAssertTrue(dominant(pixel(selected,56,40),2))
+    XCTAssertTrue(dominant(pixel(selected,56,65),2),"Selected scope excludes C rather than baking its occlusion")
+    for (x,y) in [(56,25),(56,50),(24,40),(90,65),(110,110)] {
+      XCTAssertLessThan(pixel(selected,x,y)[3],5,"Selected body retains captured/target cuts and exposes no unrelated layer")
+    }
+    let reopened=try JSONDecoder().decode(PageDocument.self,from:JSONEncoder().encode(page))
+    let afterReopen=try await render(reopened)
+    XCTAssertTrue(afterReopen == full,"Canonical reopen uses the same ordered page source")
+    XCTAssertEqual(resources.reservedBytes,0)
+  }
+
+  @MainActor
+  func testOrderedExportPreservesFractionalRawErasureAroundTheMovedBody() async throws {
+    let actor=UUID(),frame=PageRect(x:0,y:0,width:96,height:128)
+    func dot(_ x:Double,_ color:SpatialInkColor,_ sequence:UInt64,tool:SpatialInkTool = .pen)->PageInkAction {
+      .init(tool:tool,color:color,samples:[.init(point:.init(x:x,y:64),timeOffset:0,
+        width:20,opacity:0.5,force:1,azimuth:0,altitude:1)],sequence:sequence)
+    }
+    let red=dot(64,.init(red:1,green:0,blue:0),1)
+    let blue=dot(32,.init(red:0,green:0,blue:1),2)
+    let green=dot(64,.init(red:0,green:1,blue:0),3)
+    let cut=dot(64,.black,4,tool:.eraser)
+    let drawing=PageInkDrawing(actions:[red,blue,green,cut])
+    let body=NotebookGraphic(shape:.freehand,sourceInkIDs:[blue.id],freehand:.init(layers:[
+      .init(tool:.pen,color:blue.color,measured:.init(sourceID:blue.id,measurements:blue.samples,frame:frame))]))
+    let element=AgentElement(id:"fractional-body",kind:.graphic,
+      frame:.init(x:32,y:0,width:96,height:128),source:"",html:"",graphic:body)
+    let page=PageDocument(size:.init(width:128,height:128),actor:actor,
+      drawingData:try drawing.dataRepresentation(),elements:[element])
+    let resources=SceneRenderResources()
+    let result=try await PageCompositionRenderer.renderInk(page,scale:2,resources:resources)
+    let image=try XCTUnwrap(UIImage(data:result.png)?.cgImage)
+    let context=try XCTUnwrap(CGContext(data:nil,width:image.width,height:image.height,bitsPerComponent:8,
+      bytesPerRow:image.width*4,space:CGColorSpaceCreateDeviceRGB(),bitmapInfo:CGImageAlphaInfo.premultipliedLast.rawValue))
+    context.draw(image,in:.init(x:0,y:0,width:image.width,height:image.height))
+    let bytes=try XCTUnwrap(context.data).assumingMemoryBound(to:UInt8.self)
+    // The original raw group retains its half-strength erasure and occlusion:
+    // green contributes 1/4, red 1/16. Moved blue is not cut by that raw eraser
+    // and contributes 3/8 through green. These are premultiplied channels.
+    let expected=[1.0/16,1.0/4,3.0/8,11.0/16]
+    let index=(128*image.width+128)*4
+    for channel in 0..<4 {
+      XCTAssertEqual(Double(bytes[index+channel])/255,expected[channel],accuracy:2.0/255)
+    }
+    XCTAssertEqual(bytes[(128*image.width+64)*4+3],0,"No duplicate at the suppressed original position")
+    XCTAssertEqual(resources.reservedBytes,0)
+  }
+
+  func testOrderedInkReadsMovedBodyAndTargetCutsWithoutReloadingItsOffscreenContact() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = NotebookStore(root: root), actor = UUID()
+    let initial = try store.initializeWorkspace(actor: actor, pageSize: .init(width: 834, height: 1194))
+    let surface = SurfaceID.board(initial.rootBoardID), far = WorldPoint(x: 20_000, y: 20_000)
+    func sample(_ point: WorldPoint) -> SpatialInkSample {
+      .init(point: .zero, worldPoint: point, timeOffset: 0, width: 4, opacity: 1, force: 1, azimuth: 0, altitude: 1)
+    }
+    let raw = SpatialInkAction(tool: .pen, spans: [.init(surface: surface, samples: [
+      sample(far.offsetBy(x: 0, y: 10)), sample(far.offsetBy(x: 80, y: 10))
+    ])], stamp: .init(counter: 1, actor: actor))
+    _ = try store.commitSpatialInk(.append(raw, journalStamp: raw.stamp))
+    let body = NotebookFreehand(layers: [.init(tool: .pen, color: .black, measured: .init(sourceID: raw.id,
+      measurements: raw.spans[0].samples, frame: .init(x: 0, y: 0, width: 80, height: 20), origin: far))])
+    let graphic = NotebookGraphic(shape: .freehand, sourceInkIDs: [raw.id], freehand: body)
+    let workspace = try store.loadIndex(), before = try store.loadBoard(items: workspace.items)
+    var hierarchy = before
+    XCTAssertTrue(hierarchy.moveItem(workspace.selectedItemID, in: initial.rootBoardID, to: far, actor: actor))
+    let element = SpatialElement(id: "moved-contact", surface: surface, kind: .graphic,
+      frame: .init(x: 20, y: 20, width: 80, height: 20), worldOrigin: .zero, source: "",
+      graphic: graphic, stamp: .init(counter: 0, actor: actor))
+    XCTAssertTrue(hierarchy.upsertElement(element, in: initial.rootBoardID, expected: nil, actor: actor))
+    _ = try store.saveBoardEdits(before: before, after: hierarchy)
+    let target = InkElementTarget(elementID: element.id,
+      frame: .init(x: element.frame.x, y: element.frame.y, width: element.frame.width, height: element.frame.height), worldOrigin: .zero)
+    let cut = SpatialInkAction(tool: .eraser, spans: [.init(surface: surface,
+      samples: [sample(.init(x: 60, y: 10)), sample(.init(x: 60, y: 50))], elementTargets: [target])],
+      stamp: .init(counter: 2, actor: actor))
+    _ = try store.commitSpatialInk(.append(cut, journalStamp: cut.stamp))
+    let bounds = WorkspaceSpatialBounds(origin: .zero, width: 120, height: 120)
+    func read() async throws -> (SceneCompositionSource.InkPaint, ScenePixelDependencies) {
+      let header = try store.workspaceHeader()
+      let source = SceneCompositionSource(store: store, revision: header.cursor, workspaceID: header.workspaceID,
+        recordPixelDependencies: true)
+      let value = try await source.readElementForPaint(element.id, boardID: initial.rootBoardID)
+      let paint = try XCTUnwrap(value)
+      let ink = try await source.ink(surface, bounds: bounds, orderedElements: [paint])
+      let witness = try await source.pixelDependencies()
+      return (ink, try XCTUnwrap(witness))
+    }
+    let (paint, witness) = try await read()
+    XCTAssertFalse(paint.journal.actions.contains { $0.id == raw.id }, "Painter headers must not pin old offscreen measurements")
+    let ordered = try XCTUnwrap(paint.plan.bodies.first)
+    XCTAssertEqual(paint.plan.bodies.count, 1)
+    XCTAssertEqual(ordered.key, .spatial(stamp: raw.stamp, id: raw.id))
+    XCTAssertEqual(ordered.erasures, [.init(target: target, measurements: cut.spans[0].samples)])
+    XCTAssertEqual(paint.plan.suppressedInkIDs, [raw.id])
+    XCTAssertTrue(try witness.isCurrent(store))
+    let presence = SessionPresence(boardID: initial.rootBoardID, mode: .board,
+      camera: .init(center: .init(x: 60, y: 60), scale: 1), viewport: .init(x: 120, y: 120))
+    let scene = try NotebookSceneState.read(store: store, presence: presence, viewport: presence.viewport)
+    XCTAssertNotNil(scene.inkHistoryStates[raw.id], "The same finite live source retains the moved body's exact header")
+    XCTAssertFalse(scene.ink.actions.contains { $0.id == raw.id })
+
+    // Replace just the addressed original header; no copied measurements or
+    // unrelated journal clock can stand in for this painter dependency.
+    let replacement = VersionStamp(counter: 30, actor: actor)
+    try store.commandTransaction {
+      let address = "spatial-ink.json#/actions/@" + raw.id.uuidString.lowercased()
+      let row = try XCTUnwrap(try store.storedFragments(address: address, descendants: false).first)
+      _ = try store.writeFragment(row.replacing(value: row.value.setting("stamp", try .encode(replacement))
+        .setting("stateStamp", try .encode(replacement))), database: store.currentSQL!)
+    }
+    XCTAssertFalse(try witness.isCurrent(store))
+    let (afterHeader, secondWitness) = try await read()
+    XCTAssertEqual(afterHeader.plan.bodies.first?.key, .spatial(stamp: replacement, id: raw.id))
+    let previous = hierarchy
+    let winner = SpatialElement(id: "newer-offscreen-claim", surface: surface, kind: .graphic,
+      frame: element.frame, worldOrigin: far, source: "", graphic: graphic, stamp: .init(counter: 50, actor: actor))
+    XCTAssertTrue(hierarchy.upsertElement(winner, in: initial.rootBoardID, expected: nil, actor: actor))
+    _ = try store.saveBoardEdits(before: previous, after: hierarchy)
+    XCTAssertFalse(try secondWitness.isCurrent(store), "An off-window winner still owns the original contact claim")
+  }
+
   func testPixelWitnessKeepsUnseenBoardEditsAndRejectsVisibleSourcesMembershipAndInk() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
@@ -32,7 +213,7 @@ final class SceneCompositionSQLTests: XCTestCase {
         for case .element(let id) in page.entries.map(\.id) { _ = try await source.readElementForPaint(id, boardID: header.rootBoardID) }
         cursor = page.next
       } while cursor != nil
-      _ = try await source.ink(.board(header.rootBoardID), bounds: bounds)
+      _ = try await source.ink(.board(header.rootBoardID), bounds: bounds, orderedElements: [])
       let proof = try await source.pixelDependencies()
       return try XCTUnwrap(proof)
     }
@@ -47,7 +228,7 @@ final class SceneCompositionSQLTests: XCTestCase {
     let held = try source(), first = try await held.readPaintOrder(boardID: header.rootBoardID, bounds: bounds)
     let after = try XCTUnwrap(first.next)
     for case .element(let id) in first.entries.map(\.id) { _ = try await held.readElementForPaint(id, boardID: header.rootBoardID) }
-    _ = try await held.ink(.board(header.rootBoardID), bounds: bounds)
+    _ = try await held.ink(.board(header.rootBoardID), bounds: bounds, orderedElements: [])
     let partialValue = try await held.pixelDependencies(), partial = try XCTUnwrap(partialValue)
     try change("visible-40", "Offscreen edit")
     XCTAssertTrue(try partial.isCurrent(store))
@@ -96,7 +277,7 @@ final class SceneCompositionSQLTests: XCTestCase {
       _ = try await source.boardHasContent(child)
       let page = try await source.readPaintOrder(boardID: child, bounds: bounds)
       for case .element(let id) in page.entries.map(\.id) { _ = try await source.readElementForPaint(id, boardID: child) }
-      _ = try await source.ink(.board(child), bounds: bounds)
+      _ = try await source.ink(.board(child), bounds: bounds, orderedElements: [])
       let result = try await source.pixelDependencies()
       return try XCTUnwrap(result)
     }

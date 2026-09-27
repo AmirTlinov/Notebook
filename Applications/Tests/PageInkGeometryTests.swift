@@ -175,7 +175,8 @@ final class PageInkGeometryTests: XCTestCase {
     let undo=try page.prepareInkChange(.setActive([target],false),stamp:.init(counter:100_001,actor:actor))
     XCTAssertTrue(page.publishLiveInkChange(undo));view.settle(undo)
     try await rendered()
-    XCTAssertEqual(view.visibleCommittedChunkCount,0);XCTAssertFalse(view.hasPageRetainedTexture)
+    XCTAssertEqual(view.visibleCommittedChunkCount,0);XCTAssertTrue(view.hasPageRetainedTexture,
+      "An active warm page retains its charged backing for the next addressed inverse")
     XCTAssertTrue(view.isFrameLoopPaused)
     XCTAssertEqual(view.residentCommittedBufferBytes,geometryBytes,"The exact warm cut retains only its already charged geometry")
     try await assertUX("last-of-100k-pen-undo",since:.now,window:window) { try pixels(.paper) }

@@ -17,8 +17,12 @@ extension NotebookAppModel {
     }
   }
 
+  var selectionContainsSourceAnchoredInk:Bool {
+    selectionSession.elements.contains { graphicElement($0)?.sourceInkContactID != nil }
+  }
+
   var availableLayerMoves: Set<NotebookElementLayerMove> {
-    guard selectionSession.items.isEmpty, let first = selectionSession.elements.first else { return [] }
+    guard !selectionContainsSourceAnchoredInk,selectionSession.ink.isEmpty,selectionSession.items.isEmpty, let first = selectionSession.elements.first else { return [] }
     guard let order = completeElementOrder(first) else { return Set(NotebookElementLayerMove.allCases) }
     let ids = Set(selectionSession.elements.map { reference in
       switch reference { case .page(_,let id), .spatial(_,let id): return id }

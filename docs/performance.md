@@ -123,8 +123,10 @@ and cached by content, formatting and line width, never by camera/position.
 
 The iPad page renderer also retains the accepted page composite at the current
 crop. Pencil frames draw only the mutable contact over that texture; accepting
-ink, changing the crop, or replacing the source invalidates it. Empty paper and
-per-element material canvases do not allocate this page backing. This is the page
+ink, changing the crop, or replacing the source invalidates it. Cold empty paper
+and per-element material canvases do not allocate this page backing; after Undo
+empties an active warm crop, its already admitted backing remains for Redo.
+This is the page
 renderer itself, not a screenshot content source or a second persistence path.
 
 A rejected page-frame allocation or encoding attempt pauses its existing display

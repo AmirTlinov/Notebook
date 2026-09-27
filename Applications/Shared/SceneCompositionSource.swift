@@ -54,17 +54,19 @@ struct SceneCompositionLiveData: Sendable {
   let pages: [UUID: PageDocument]
   let ink: SpatialInkJournal
   let suppressedInkIDs: Set<UUID>
+  let orderedInk: [SurfaceID: NotebookOrderedInkPlan]
   let referenceIdentities: [NotebookReferenceIdentity]
   let referenceBasis: NotebookReferenceBasis?
   let documentPaperSizes: [UUID: WorkspaceItemGeometry]
   let nonemptyBoardIDs: Set<UUID>
   let inkWindow: NotebookSpatialInkWindow?
   init(documents: [UUID: DocumentDocument], states: [UUID: DocumentStateJournal], pages: [UUID: PageDocument],
-    ink: SpatialInkJournal, suppressedInkIDs: Set<UUID> = [], referenceIdentities: [NotebookReferenceIdentity] = [],
+    ink: SpatialInkJournal, suppressedInkIDs: Set<UUID> = [], orderedInk: [SurfaceID: NotebookOrderedInkPlan] = [:], referenceIdentities: [NotebookReferenceIdentity] = [],
     referenceBasis: NotebookReferenceBasis? = nil, documentPaperSizes: [UUID: WorkspaceItemGeometry] = [:],
     nonemptyBoardIDs: Set<UUID> = [], inkWindow: NotebookSpatialInkWindow? = nil) {
     self.documents = documents; self.states = states; self.pages = pages; self.ink = ink
     self.suppressedInkIDs = suppressedInkIDs
+    self.orderedInk = orderedInk
     self.referenceIdentities = referenceIdentities
     self.referenceBasis = referenceBasis
     self.documentPaperSizes = documentPaperSizes
@@ -93,10 +95,15 @@ struct ScenePixelDependencies: Sendable {
     let value: RenderedWorkspaceItem?
     let documentGeometry: WorkspaceItemGeometry?
   }
+  struct InkHeader: Equatable, Sendable {
+    let stamp: VersionStamp
+    let surfaces: Set<SurfaceID>
+  }
   let workspaceID: UUID
   var records = NotebookSceneRecordDependencies()
   var paints: [Paint] = []
   var ink: [NotebookSpatialInkWindowRecords] = []
+  var inkHeaders: [UUID: InkHeader] = [:]
   var boards: [UUID: Bool] = [:]
   var cameras: [UUID: BoardPortalCamera] = [:]
   var contents: [UUID: Bool] = [:]
@@ -115,6 +122,13 @@ struct ScenePixelDependencies: Sendable {
         guard page.entries == query.entries, page.positions == query.positions, (page.next != nil) == query.hasMore else { return false }
       }
       for query in ink where try !query.isCurrent(store) { return false }
+      if !inkHeaders.isEmpty {
+        let current = try store.spatialInkHistoryStates(ids: Set(inkHeaders.keys))
+        for (id, expected) in inkHeaders {
+          guard let header = current[id], header.result.creationStamp == expected.stamp,
+            header.surfaces == expected.surfaces else { return false }
+        }
+      }
       return true
     }
   }
@@ -141,6 +155,10 @@ struct ScenePixelDependencies: Sendable {
 /// receipt changes may cross the cut; changed material cancels the unpublished
 /// cohort rather than mixing its tiles.
 actor SceneCompositionSource {
+  struct InkPaint: Sendable {
+    let journal: SpatialInkJournal
+    let plan: NotebookOrderedInkPlan
+  }
   struct ElementPaint: Sendable {
     let element: SpatialElement
     let layout: NotebookGraphicLayout?
@@ -278,18 +296,112 @@ actor SceneCompositionSource {
     pixelWitness!.ink.append(value)
   }
 
-  func ink(_ surface: SurfaceID, bounds: WorkspaceSpatialBounds) throws -> SpatialInkJournal {
+  /// Ordered bodies have already passed the same addressed element read used
+  /// by the painter. Resolving their claim component also includes offscreen
+  /// winners; only the original headers are needed to recover painter order.
+  private func orderedInkPlan(_ surface: SurfaceID, journal: SpatialInkJournal,
+    elements: [ElementPaint]) throws -> NotebookOrderedInkPlan {
+    var candidates: [String: ElementPaint] = [:]
+    for read in elements where read.element.surface == surface && read.element.parentID == nil {
+      guard let graphic = read.element.graphic, read.layout != nil,
+        graphic.sourceInkContactID != nil else { continue }
+      candidates[read.element.id] = read
+    }
+    guard candidates.count <= 8192 else { throw SceneRenderError.resourceLimit }
+    let candidateIDs = Set(candidates.values.compactMap { $0.element.graphic?.sourceInkContactID })
+    let sourceIDs = Set(journal.orderedActions.lazy.filter { action in action.spans.contains { $0.surface == surface } }.map(\.id)).union(candidateIDs)
+    let presentation: NotebookGraphicPresentation
+    var keys: [UUID: NotebookInkPaintKey] = [:]
+    switch origin {
+    case .sql(let store):
+      (presentation, keys) = try checked(store) { store in
+        let presentation = try recorded(store) { try store.graphicPresentation(on: surface, sourceInkIDs: sourceIDs) }
+        let needed = Set(candidates.values.compactMap { read -> UUID? in
+          guard presentation.geometryIDs.contains(read.element.id),
+            !read.erasures.contains(where: { $0.target.wholeElement }) else { return nil }
+          return read.element.graphic?.sourceInkContactID
+        })
+        var keys: [UUID: NotebookInkPaintKey] = [:]
+        guard !needed.isEmpty else { return (presentation, keys) }
+        let headers = try store.spatialInkHistoryStates(ids: needed)
+        for id in needed {
+          guard let header = headers[id], header.surfaces.contains(surface) else {
+            throw SceneRenderError.snapshotPending("ordered_ink_header")
+          }
+          if pixelWitness != nil {
+            let witness = ScenePixelDependencies.InkHeader(stamp: header.result.creationStamp, surfaces: header.surfaces)
+            guard pixelWitness!.inkHeaders[id] != nil || pixelWitness!.inkHeaders.count < 8192 else {
+              throw SceneRenderError.resourceLimit
+            }
+            if let old = pixelWitness!.inkHeaders[id], old != witness { throw NotebookStorageError.transactionConflict }
+            pixelWitness!.inkHeaders[id] = witness
+          }
+          keys[id] = .spatial(stamp: header.result.creationStamp, id: id)
+        }
+        return (presentation, keys)
+      }
+    case .values(_, let hierarchy, let source):
+      let boardID = surface.kind == .board ? surface.ownerID : surface.ownerID.flatMap(hierarchy.ownerBoardID(of:))
+      guard let boardID, let board = hierarchy.board(boardID) else { throw SceneRenderError.snapshotPending("ordered_ink_owner") }
+      let ids = Set(board.elements.lazy.filter { $0.surface == surface }.map(\.id))
+      presentation = .init(board.graphicPresentationCandidates.filter { ids.contains($0.id) })
+      if !candidateIDs.isEmpty {
+        for id in candidateIDs {
+          guard let action = source.action(id: id), action.spans.contains(where: { $0.surface == surface }) else { continue }
+          keys[action.id] = .spatial(stamp: action.stamp, id: action.id)
+        }
+      }
+    }
+    var bodies: [NotebookOrderedInkPlan.Body] = []
+    for read in candidates.values where presentation.geometryIDs.contains(read.element.id) {
+      guard !read.erasures.contains(where: { $0.target.wholeElement }), let graphic = read.element.graphic,
+        let sourceID = graphic.sourceInkContactID, let layout = read.layout else { continue }
+      guard let key = keys[sourceID] else { throw SceneRenderError.snapshotPending("ordered_ink_header") }
+      bodies.append(.init(elementID: read.element.id, key: key, graphic: graphic, layout: layout, erasures: read.erasures))
+    }
+    return .init(bodies: bodies, suppressedInkIDs: presentation.suppressedInkIDs)
+  }
+
+  func ink(_ surface: SurfaceID, bounds: WorkspaceSpatialBounds,
+    orderedElements: [ElementPaint]) throws -> InkPaint {
     switch origin {
     case .sql(let store): return try checked(store) {
       let journal = try window($0, coverage: [surface: bounds]).journal
-      let store = $0
-      let presentation = try recorded(store) { try store.graphicPresentation(on: surface, sourceInkIDs: Set(journal.actions.map(\.id))) }
-      return journal.presenting(excluding: presentation.suppressedInkIDs)
+      return .init(journal: journal, plan: try orderedInkPlan(surface, journal: journal, elements: orderedElements))
     }
-    case .values(_, let hierarchy, let journal):
-      let suppressed = hierarchy.boards.reduce(into: Set<UUID>()) { $0.formUnion($1.board.graphicPresentation.suppressedInkIDs) }
-      return journal.presenting(excluding: suppressed)
+    case .values(_, _, let journal):
+      return .init(journal: journal, plan: try orderedInkPlan(surface, journal: journal, elements: orderedElements))
     }
+  }
+
+  /// The live cohort uses its existing finite worksets and the one admitted ink
+  /// window. Target cuts are projected once per surface, not reread per body.
+  private func liveOrderedInk(surfaces: [SurfaceID], frame: WorkspaceSceneFrame,
+    journal: SpatialInkJournal) throws -> [SurfaceID: NotebookOrderedInkPlan] {
+    var result: [SurfaceID: NotebookOrderedInkPlan] = [:]
+    for surface in surfaces {
+      guard let owner = surface.ownerID else { throw SceneRenderError.snapshotPending("ordered_ink_owner") }
+      let boardID: UUID
+      let elements: [SpatialElement]
+      if surface.kind == .board {
+        boardID = owner; elements = frame.worksets[owner]?.elements ?? []
+      } else {
+        guard let board = frame.index.ownerBoard(itemID: owner) else { throw SceneRenderError.snapshotPending("ordered_ink_owner") }
+        boardID = board; elements = frame.covers[owner]?.elements ?? []
+      }
+      let candidates = elements.filter { element in
+        element.surface == surface && element.parentID == nil
+          && element.graphic?.sourceInkContactID != nil
+      }
+      let erasures = candidates.isEmpty ? [:] : journal.elementErasures(on: surface)
+      var reads: [ElementPaint] = []
+      for element in candidates {
+        guard let layout = try graphicLayout(element, boardID: boardID) else { continue }
+        reads.append(.init(element: element, layout: layout, placement: nil, erasures: erasures[element.id] ?? []))
+      }
+      result[surface] = try orderedInkPlan(surface, journal: journal, elements: reads)
+    }
+    return result
   }
   func liveData(plan: SceneCompositionPlan, presence: SessionPresence, frame: WorkspaceSceneFrame,
     previous: (plan: SceneCompositionPlan, data: SceneCompositionLiveData)? = nil) throws -> SceneCompositionLiveData {
@@ -354,28 +466,27 @@ actor SceneCompositionSource {
         // descendants own backing; no invisible ancestor competes for pixels.
         let referenceRoot = plan.rootBoardID
         let basis = try store.referenceBasis(rootBoardID: referenceRoot,
-          targets: targets.sorted { $0.key < $1.key }, surfaces: replaceable, inkActionIDs: Set(ink.actions.map(\.id)),
+          targets: targets.sorted { $0.key < $1.key }, surfaces: replaceable, inkActionIDs: Set(ink.orderedActions.map(\.id)),
           liveOwners: plan.presentedOwners.map { owner in
             switch owner.id {
             case .item(let id): return .item(boardID: owner.plane.boardID, id: id)
             case .element(let id): return .element(boardID: owner.plane.boardID, id: id)
             }
           })
-        var suppressed = Set<UUID>()
-        for surface in surfaces {
-          let ids = Set(ink.actions.filter { $0.spans.contains { $0.surface == surface } }.map(\.id))
-          suppressed.formUnion(try store.graphicPresentation(on: surface, sourceInkIDs: ids).suppressedInkIDs)
-        }
+        let ordered = try liveOrderedInk(surfaces: surfaces, frame: frame, journal: ink)
+        let suppressed = ordered.values.reduce(into: Set<UUID>()) { $0.formUnion($1.suppressedInkIDs) }
         return .init(documents: data.documents, states: data.states, pages: data.pages, ink: ink, suppressedInkIDs: suppressed,
+          orderedInk: ordered,
           referenceIdentities: basis.identities, referenceBasis: basis,
           documentPaperSizes: frame.index.documentPaperSizes.filter { itemIDs.contains($0.key) },
           nonemptyBoardIDs: nonemptyBoardIDs, inkWindow: inkSource)
       }
-    case .values(_, let hierarchy, let journal):
+    case .values(_, _, let journal):
       let wanted = Set(surfaces)
-      let ink = SpatialInkJournal(actions: journal.actions.filter { $0.spans.contains { wanted.contains($0.surface) } }, stamp: journal.stamp)
+      let ink = SpatialInkJournal(actions: journal.orderedActions.filter { $0.spans.contains { wanted.contains($0.surface) } }, stamp: journal.stamp)
+      let ordered = try liveOrderedInk(surfaces: surfaces, frame: frame, journal: ink)
       return .init(documents: [:], states: [:], pages: [:], ink: ink,
-        suppressedInkIDs: hierarchy.boards.reduce(into: Set<UUID>()) { $0.formUnion($1.board.graphicPresentation.suppressedInkIDs) },
+        suppressedInkIDs: ordered.values.reduce(into: Set<UUID>()) { $0.formUnion($1.suppressedInkIDs) }, orderedInk: ordered,
         documentPaperSizes: frame.index.documentPaperSizes.filter { itemIDs.contains($0.key) },
         nonemptyBoardIDs: nonemptyBoardIDs)
     }
@@ -423,8 +534,8 @@ actor SceneCompositionSource {
     let liveItems = covers(oldPlan).intersection(covers(plan))
     let surfaces = Set(oldPlan.inkBoardIDs.intersection(plan.inkBoardIDs).map(SurfaceID.board)
       + liveItems.map(SurfaceID.cover))
-    let oldActions = Dictionary(uniqueKeysWithValues: oldData.ink.actions.map { ($0.id, $0) })
-    let actions = Dictionary(uniqueKeysWithValues: data.ink.actions.map { ($0.id, $0) })
+    let oldActions = Dictionary(uniqueKeysWithValues: oldData.ink.orderedActions.map { ($0.id, $0) })
+    let actions = Dictionary(uniqueKeysWithValues: data.ink.orderedActions.map { ($0.id, $0) })
     for record in records where record.beforeHash != record.afterHash {
       let address = record.address
       // Root ink carries only format and journal stamp. Every changed action

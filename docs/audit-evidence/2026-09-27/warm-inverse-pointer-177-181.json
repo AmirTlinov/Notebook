@@ -1,0 +1,30 @@
+{
+  "format": 1,
+  "scope": "USB iPad Pro 11-inch (3rd generation), iOS 27, private optimized app; selected native regressions, not a final UX acceptance",
+  "runs": [
+    {
+      "name": "u10-native-177",
+      "sourceSHA256": "e55374675ed43080c93260f7a7666a1708d7ce2ed3f13fc09793c65035152520",
+      "result": "2 PASS / 2 FAIL, 0 skips or runtime warnings",
+      "relevant": "Same-chat completed pointer with unavailable scene blocks Send and retains draft: PASS. Raw+nativeText mixed deletion: PASS. Canonical raw+authored deletion and rapid second board drag: FAIL."
+    },
+    {
+      "name": "u10-native-179",
+      "sourceSHA256": "313dcc967e1144d5927bdfe22e09842397cfcc65785312c2f7d6cdbf2d9bc9cf",
+      "result": "1 PASS / 2 FAIL, 0 skips or runtime warnings",
+      "relevant": "Last visible pen Redo reuses the active page backing and meets the 100 ms window budget: PASS. Both mixed-selection cases: FAIL."
+    },
+    {
+      "name": "u10-native-181",
+      "sourceSHA256": "d8c94eeac24efb3149b08fdcaf4a1969e8de9e977edc00770a27f5bbb5a7450a",
+      "result": "1 PASS / 2 FAIL, 0 skips or runtime warnings",
+      "relevant": "Last-pen Undo/Redo among 100000 resident actions retains the warm viewport without rebuilding all history: PASS. Both mixed-selection cases: FAIL."
+    }
+  ],
+  "rawResults": [
+    "/Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/.build/notebook-architecture-repair/evidence-2026-09-27/u10-native-177/ipad.xcresult",
+    "/Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/.build/notebook-architecture-repair/evidence-2026-09-27/u10-native-179/ipad.xcresult",
+    "/Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/.build/notebook-architecture-repair/evidence-2026-09-27/u10-native-181/ipad.xcresult"
+  ],
+  "boundary": "These are source-specific selected tests. U10 remained unfinished and other strict physical Pencil/curl/document and final-session conditions are not established."
+}

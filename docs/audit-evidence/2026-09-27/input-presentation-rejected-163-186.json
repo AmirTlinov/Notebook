@@ -1,0 +1,37 @@
+{
+  "format": 1,
+  "scope": "USB iPad 00008103-001E059934D9001E, iOS 27, private optimized app; four rejected presentation candidates, no production source retained",
+  "runs": [
+    {
+      "name": "redo-display-link-163",
+      "sourceSHA256": "ebc8d29aed4625347f35def5e8e1b5019c25ec4854c465b32ec2e10dd53eaea6",
+      "tests": "0 PASS / 3 FAIL",
+      "result": "Persistent page display link made all 120 pen and all 120 eraser OS samples exceed 20 ms; first pen window 110.80 ms and Redo window 135.20 ms exceeded 100 ms."
+    },
+    {
+      "name": "cold-resident-164",
+      "sourceSHA256": "08aa380b9aaf6f85a1baff1f97e17fbcbcd34c20dd47276df35af943eaec6077",
+      "tests": "0 PASS / 2 FAIL",
+      "result": "Blank active sheet held a transparent drawable before contact (firstFrame=false); first dot GPU callback 14.22 ms but OS presentation was nil and eraser OS p50 25.57 ms. Window pixel check at 20.01 ms does not replace OS receipt."
+    },
+    {
+      "name": "page-pending-165",
+      "sourceSHA256": "40287360648745474174c4f803ad16f5c7a45270c751bd87ecf389b635182a13",
+      "tests": "1 PASS / 4 FAIL",
+      "result": "One pending page submission and one-shot retry passed the 100000-action addressed geometry regression, but cold OS receipt was nil; pen and eraser each had 120/120 samples above 20 ms (OS p50 24.48/25.72 ms), first inverse-journey pen window 102.95 ms."
+    },
+    {
+      "name": "cold-paused-link-186",
+      "sourceSHA256": "a3f7b8bc46bf00b84dea4a3851f1f3dad308f732c253a5aa8b686b7c55e72a3e",
+      "tests": "0 PASS / 3 FAIL, 0 skips or runtime warnings",
+      "result": "A paused CAMetalDisplayLink without a blank drawable did not meet cold first-dot acceptance and worsened both 120-sample warm paths: pen OS p50 24.10 ms, eraser p50 20.20 ms; 120/120 samples in each exceeded 20 ms. Candidate removed."
+    }
+  ],
+  "rawResults": [
+    "/Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/.build/notebook-architecture-repair/evidence-2026-09-27/redo-display-link-163/ipad.xcresult",
+    "/Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/.build/notebook-architecture-repair/evidence-2026-09-27/cold-resident-164/ipad.xcresult",
+    "/Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/.build/notebook-architecture-repair/evidence-2026-09-27/page-pending-165/ipad.xcresult",
+    "/Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/.build/notebook-architecture-repair/evidence-2026-09-27/cold-paused-link-186/ipad.xcresult"
+  ],
+  "decision": "All candidates removed. No deadline or PASS is changed."
+}

@@ -1,0 +1,116 @@
+{
+  "format": 1,
+  "decision": "NO_GO_ROOT_UNCHANGED",
+  "summaryRu": "Оба кандидата отклонены: O3 ухудшил cold-компиляцию; перенос двух TLV-полей сохранил корректность, но дал небольшой нестабильный выигрыш при росте кода. Повторные попытки ради удачной пары не планируются.",
+  "kernelSHA256": "396ef3ed9d9a32631cfc0142b7a79b66fefc58cf9f3e012931e40bc669b863e7",
+  "baselineO2ArchiveSHA256": "4a5d4da705ae6b684d2fab74c756d5298c9ee1991b0d036dd3f00b2a31378ed2",
+  "scope": "Existing233-byte Second closed body, actual complete C ABI compile, fresh process/Runtime plus same-Runtime-next; OS caches not cleared. No physical1s/UI acceptance claim.",
+  "O3": {
+    "decision": "NO_GO_COLD_REGRESSION",
+    "functionalPassed": 14,
+    "quietExactOutputsPassed": 36,
+    "quietWindow": [
+      "2026-09-26T17:34:02.554511+00:00",
+      "2026-09-26T17:34:28.049492+00:00"
+    ],
+    "versusRebuiltO2": [
+      {
+        "control": "baseline",
+        "phase": "fresh-process-runtime",
+        "baselineMedianMS": 665.325,
+        "candidateMedianMS": 733.1595,
+        "pairedReductionMedianPercent": -8.485099839190468,
+        "pairedReductionMinPercent": -15.751650709434738,
+        "pairedReductionMaxPercent": -2.67356291774421
+      },
+      {
+        "control": "baseline",
+        "phase": "same-runtime-next",
+        "baselineMedianMS": 664.5255,
+        "candidateMedianMS": 661.2574999999999,
+        "pairedReductionMedianPercent": -0.009224962951270843,
+        "pairedReductionMinPercent": -8.802237452219153,
+        "pairedReductionMaxPercent": 7.786783563881139
+      }
+    ],
+    "otherInstalledControlRetainedInRawReceipt": true,
+    "outcome": {
+      "path": "/tmp/notebook-typesetter-o3-quiet-20260926T1733Z/outcome.json",
+      "sha256": "0534686ea65d827efe36627d8fcc36fb1f554562f0ef87a4543a43f8f8281054"
+    },
+    "rawPairs": {
+      "path": "/tmp/notebook-typesetter-o3-quiet-20260926T1733Z/timings/raw.json",
+      "sha256": "ab9f17caa3a8ce97c6325611cb8d2a6bbe80169c81f1122cd0c15130ec0ef720"
+    },
+    "summary": {
+      "path": "/tmp/notebook-typesetter-o3-quiet-20260926T1733Z/timings/summary.json",
+      "sha256": "ac8d6c1b8271286e7ce97f2c8d8bedc1eafc925557e8e4e390cf71f89e903522"
+    },
+    "oldContaminatedAttemptPreserved": "/tmp/notebook-typesetter-aot-policy-20260926T1628Z/RESULT.json"
+  },
+  "TLSRefined": {
+    "decision": "NO_GO_WEAK_UNSTABLE_GAIN",
+    "actualFunctionalPassed": 17,
+    "quietExactOutputsPassed": 24,
+    "quietWindow": [
+      "2026-09-26T17:58:52.520167+00:00",
+      "2026-09-26T17:59:10.713096+00:00"
+    ],
+    "phases": [
+      {
+        "phase": "fresh-process-runtime",
+        "metric": "wholeOperationNs",
+        "baselineMedianMS": 749.5215000000001,
+        "candidateMedianMS": 732.852,
+        "pairedReductionMedianPercent": 3.0350369830657975,
+        "pairedReductionMinPercent": -5.374943479505356,
+        "pairedReductionMaxPercent": 12.498537826430244
+      },
+      {
+        "phase": "same-runtime-next",
+        "metric": "wholeOperationNs",
+        "baselineMedianMS": 724.8485000000001,
+        "candidateMedianMS": 698.6624999999999,
+        "pairedReductionMedianPercent": 2.198170655763032,
+        "pairedReductionMinPercent": -7.819321819243563,
+        "pairedReductionMaxPercent": 7.5035525816815944
+      }
+    ],
+    "nativeTextBytes": {
+      "baseline": 27045220,
+      "candidate": 27417648
+    },
+    "candidateArchiveSHA256": "04f8e607fc3ea04945064f1bd66420f73d5e286166efa1bab24c261053acf4c8",
+    "candidateIsTMPOnly": true,
+    "pollCadenceAndAllSafetyGuardsUnchanged": true,
+    "functionalReceipt": {
+      "path": "/tmp/notebook-typesetter-tls-owner-review/refined/functional-result.json",
+      "sha256": "6fb054f11d60542e842dcc30cb86408f372a1b609a5cb355cf310e7dcd334f50"
+    },
+    "outcome": {
+      "path": "/tmp/notebook-typesetter-tls-quiet-20260926T1758Z/outcome.json",
+      "sha256": "146d8dbfdd7704cd58003e421593c65f74eca2ec749c02ab48235834068f6200"
+    },
+    "rawPairs": {
+      "path": "/tmp/notebook-typesetter-tls-quiet-20260926T1758Z/timings/raw.json",
+      "sha256": "efe5a3e0eeb4c46da3f3c649f7946bc1026b2fec2da89a51681980e1a7f5bf33"
+    },
+    "summary": {
+      "path": "/tmp/notebook-typesetter-tls-quiet-20260926T1758Z/timings/summary.json",
+      "sha256": "0293cd4bffc74770b9fcdae7f97e28eebf14911b3000f2dfd3dafaa86a075a31"
+    },
+    "firstPreflightAbortedBeforeAnyProbe": {
+      "path": "/tmp/notebook-typesetter-tls-quiet-20260926T1757Z/outcome.json",
+      "sha256": "c5e4232e139567c22835173ddba9cf557136e3fc6aa28f8827dd9c415c1ab957"
+    },
+    "systemDaemon": "PID1527 started15September; before/after CPU time unchanged1913:54.06 and0.0%; no process stopped.",
+    "processMonitorScope": "58 ps inventories with0.25s waits; no observed known compiler/linker/CLI recorder. Not a guarantee against all possible host scheduling noise."
+  },
+  "remaining": "Physical cold-document1s budget remains open. These measurements neither establish an inherent1s lower bound nor justify dropping passes, changing format, caching heaps or weakening guards.",
+  "createdUTC": "2026-09-26T18:03:20.284921+00:00",
+  "archivedEvidence": ".build/notebook-architecture-repair/evidence-2026-09-25/typesetter-negative-policies-20260926T1809Z",
+  "manifestSHA256": "1fef108814966a59cd763362e6c30e6ececac4beac412743dc3b7cc74b22d5b6",
+  "fileCount": 618,
+  "bytes": 853562,
+  "archiveExclusions": "Executable probes, static archives, objects, generated-C source trees and mutable Cargo cache. Raw exact PDF/SyncTeX/log outputs and all timing pairs retained."
+}

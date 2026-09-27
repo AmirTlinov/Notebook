@@ -93,6 +93,10 @@ final class NotebookDocumentOpeningTests: XCTestCase {
     XCTAssertNotNil(firstOpeningAt)
     XCTAssertFalse(openedBeforeReady, "A positive opening sample requires the exact installed current paper")
     if let closedAt, let firstOpeningAt { XCTAssertLessThanOrEqual(closedAt, firstOpeningAt) }
+    // Measure the installed source before creating diagnostic evidence. A
+    // screenshot and XCTest attachment are not part of the app's opening.
+    try await assertUX(onAnotherBoard ? "document-other-board-installed" : "document-installed",
+      since: openingStarted, budget: NotebookUXObservation.opening, window: window) { installed() }
     let captureStarted = ProcessInfo.processInfo.systemUptime
     let image = UIGraphicsImageRenderer(size: window.bounds.size).image { _ in
       window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
@@ -101,11 +105,7 @@ final class NotebookDocumentOpeningTests: XCTestCase {
     let proof = XCTAttachment(image: image); proof.name = "history-opens-unloaded-document"
     proof.lifetime = .keepAlways; add(proof)
     let attachmentEnded = ProcessInfo.processInfo.systemUptime
-    // A generous diagnostic wait must not silently bless a slow opening. The
-    // registry checks the installed current source, not just focus/title/model.
-    try await assertUX(onAnotherBoard ? "document-other-board-installed" : "document-installed",
-      since: openingStarted, budget: NotebookUXObservation.opening, window: window) { installed() }
-    let capturePhases = XCTAttachment(string: "captureMS=\((captureEnded-captureStarted)*1000); attachmentMS=\((attachmentEnded-captureEnded)*1000); both remain included in the unchanged opening oracle")
+    let capturePhases = XCTAttachment(string: "captureMS=\((captureEnded-captureStarted)*1000); attachmentMS=\((attachmentEnded-captureEnded)*1000); both are excluded from the installed-source timing oracle")
     capturePhases.name = "document-window-observation-cost"; capturePhases.lifetime = .keepAlways; add(capturePhases)
     if model.documentMeasurements.enabled {
       let record = try XCTUnwrap(model.documentMeasurements.records.last { $0.documentID == destination.id })

@@ -1,0 +1,206 @@
+{
+  "format": 1,
+  "scope": "Физический iPad 135/136: два прежних холодных document-entry сценария. Не исправление и не закрытие 1000 ms. 135 сохраняет неудавшийся exact-PID profile; 136 измеряет wall/thread CPU синхронного worker отдельным временным diagnostic.",
+  "baseCommit": "fcbc788818c43d69603b2db5428570524541fc3e",
+  "rawEvidence": ".build/notebook-architecture-repair/evidence-2026-09-25/cold-document-cpu-135-136-20260926T1929Z",
+  "rawManifestSHA256": "3ccb4e0e0dec17cb02abae2478a62bcf6e8e7d9e1a8a415ce19ae697a7347381",
+  "run135": {
+    "sourceSHA256": "b23d58e15e8ec85461b3fe956754b8f59e84e2e783cdfd77c0b0e47a5b56d76e",
+    "sourceUnchanged": true,
+    "builtArtifactsUnchanged": true,
+    "result": {
+      "passed": 0,
+      "failed": 2,
+      "skipped": 0,
+      "runtimeWarnings": [],
+      "exitCode": 65,
+      "scope": "Both functional correctness=true; unchanged 1000 ms complete-window oracle FAILED. Do not subtract capture/attachment to relabel PASS."
+    },
+    "cases": [
+      {
+        "test": "NotebookDocumentOpeningTests/testHistoryReferenceInstallsAnUnloadedDocumentOnAnotherBoard()",
+        "correct": true,
+        "strictOracleMS": 1753.2046249999999,
+        "budgetMS": 1000,
+        "requestToInstalledMS": 1479.8760833218694,
+        "artifactMS": 1070.682625,
+        "sourcePreparationCount": 1,
+        "closedWhilePreparing": true,
+        "openedBeforeReady": false
+      },
+      {
+        "test": "NotebookDocumentOpeningTests/testHistoryReferenceInstallsAnUnloadedDocumentOutsideTheCurrentCamera()",
+        "correct": true,
+        "strictOracleMS": 1485.5246670000001,
+        "budgetMS": 1000,
+        "requestToInstalledMS": 1258.6058750166558,
+        "artifactMS": 1001.4565,
+        "sourcePreparationCount": 1,
+        "closedWhilePreparing": true,
+        "openedBeforeReady": false
+      }
+    ],
+    "profile": {
+      "attempts": 1,
+      "pid": 15910,
+      "bundleID": "com.amirtlinov.notebook.native-test",
+      "deviceUDID": "00008103-001E059934D9001E",
+      "exitCode": 21,
+      "error": "Cannot find process for provided pid: 15910\n",
+      "samePrivateTargetStillListed": true,
+      "testStillRunning": true,
+      "usableTraceExists": false,
+      "retryOrHostWideCapture": false,
+      "interpretation": "Attach 21 не является app crash, измеренным stall или CPU/QoS evidence."
+    },
+    "rawResult": "135/ipad.xcresult",
+    "rawAnalysis": "135/analysis/receipt.json",
+    "cleanup": {
+      "bundleIdentifier": "com.amirtlinov.notebook.native-test",
+      "removed": true,
+      "exitCode": 0
+    }
+  },
+  "run136": {
+    "diagnosticSourceSHA256": "c3e429ddc0fcd9d647531439fc3262758cbe57b3ba4bbe78d8090894da033a07",
+    "patchSHA256": "035aff4828fe8a6a64bda7902625b1e39cd72b42f4d156528693dd9289afe062",
+    "sourceUnchanged": true,
+    "builtArtifactsUnchanged": true,
+    "result": {
+      "passed": 0,
+      "failed": 2,
+      "skipped": 0,
+      "runtimeWarnings": 0,
+      "testExitCode": 65
+    },
+    "cases": [
+      {
+        "test": "NotebookDocumentOpeningTests/testHistoryReferenceInstallsAnUnloadedDocumentOnAnotherBoard()",
+        "correct": true,
+        "oracleMS": 1718.947917,
+        "unchangedCeilingMS": 1000.0,
+        "sourcePreparationCount": 1,
+        "queueWaitMS": 0.007,
+        "stages": {
+          "prepare": {
+            "wallMS": 20.921,
+            "threadCPUMS": 20.834208,
+            "samePthread": true,
+            "requestedQoSStart": 25,
+            "requestedQoSEnd": 25
+          },
+          "runtimeInit": {
+            "wallMS": 0.265,
+            "threadCPUMS": 0.264708,
+            "samePthread": true,
+            "requestedQoSStart": 25,
+            "requestedQoSEnd": 25
+          },
+          "native": {
+            "wallMS": 1021.674,
+            "threadCPUMS": 1013.710916,
+            "samePthread": true,
+            "requestedQoSStart": 25,
+            "requestedQoSEnd": 25
+          },
+          "output": {
+            "wallMS": 0.318,
+            "threadCPUMS": 0.318125,
+            "samePthread": true,
+            "requestedQoSStart": 25,
+            "requestedQoSEnd": 25
+          }
+        },
+        "whole": {
+          "wallMS": 1043.239,
+          "threadCPUMS": 1035.187709,
+          "samePthread": true
+        },
+        "nativeThreadCPUOverWall": 0.9922058464833206,
+        "nativeWallMinusThreadCPUMS": 7.963083999999981,
+        "requestToInstalledMS": 1450.6984166800976,
+        "closedWhilePreparing": true,
+        "openedBeforeReady": false
+      },
+      {
+        "test": "NotebookDocumentOpeningTests/testHistoryReferenceInstallsAnUnloadedDocumentOutsideTheCurrentCamera()",
+        "correct": true,
+        "oracleMS": 1454.899,
+        "unchangedCeilingMS": 1000.0,
+        "sourcePreparationCount": 1,
+        "queueWaitMS": 0.018,
+        "stages": {
+          "prepare": {
+            "wallMS": 22.437,
+            "threadCPUMS": 21.996459,
+            "samePthread": true,
+            "requestedQoSStart": 25,
+            "requestedQoSEnd": 25
+          },
+          "runtimeInit": {
+            "wallMS": 0.001,
+            "threadCPUMS": 0.000708,
+            "samePthread": true,
+            "requestedQoSStart": 25,
+            "requestedQoSEnd": 25
+          },
+          "native": {
+            "wallMS": 956.507,
+            "threadCPUMS": 954.2535,
+            "samePthread": true,
+            "requestedQoSStart": 25,
+            "requestedQoSEnd": 25
+          },
+          "output": {
+            "wallMS": 0.334,
+            "threadCPUMS": 0.334417,
+            "samePthread": true,
+            "requestedQoSStart": 25,
+            "requestedQoSEnd": 25
+          }
+        },
+        "whole": {
+          "wallMS": 979.307,
+          "threadCPUMS": 976.611875,
+          "samePthread": true
+        },
+        "nativeThreadCPUOverWall": 0.9976440318784913,
+        "nativeWallMinusThreadCPUMS": 2.2534999999999172,
+        "requestToInstalledMS": 1220.4997083172202,
+        "closedWhilePreparing": true,
+        "openedBeforeReady": false
+      }
+    ],
+    "rawCPURecords": "136/typesetter-cpu-records.json",
+    "rawResult": "136/ipad.xcresult",
+    "rawAnalysis": "136/analysis/receipt.json",
+    "restoration": {
+      "head": "fcbc788818c43d69603b2db5428570524541fc3e",
+      "gitStatus": "",
+      "typesetterSHA256": "d4a334e2f7f9f4a9474cb9d0ae71fd2deaece3d968990cc9d28911bab24db475",
+      "matchesOriginalDiagnosticBase": true
+    },
+    "cleanup": {
+      "exitCode": 0,
+      "receipt": {
+        "bundleIdentifier": "com.amirtlinov.notebook.native-test",
+        "removed": true
+      }
+    }
+  },
+  "conclusion": "Native worker тратит 1013.711/954.254 ms фактического thread CPU при 1021.674/956.507 ms wall (99.22%/99.76%). Queue wait 0.007/0.018 ms, prepare ~21/22 ms, runtime init <0.3 ms, output <0.4 ms. Это локализует основную стоимость в native вычислении, а не очереди запуска, init/output или ошибочно запрошенном background QoS. Оба неизменных UX oracle остаются FAIL.",
+  "limits": [
+    "Thread CPU измерен отдельным clock того же pthread, не долей samples и не CPU duty всего приложения.",
+    "Requested QoS 25 не доказывает effective override, частоту CPU или отсутствие других процессов.",
+    "135/136 не парный оптимизационный A/B:136 содержит diagnostic. Числа нельзя использовать как доказательство ускорения.",
+    "Capture/attachment остаются внутри исходного UX oracle; они не вычитаются для PASS. Request→installed тоже выше 1000 ms.",
+    "Нет usable app-only trace 135; whole-process CPU/GPU/memory и physical FPS здесь не измерены.",
+    "Временный diagnostic удалён с exact restoration к fcbc; никакого нового cache/изменения threshold или оптимизации не поставлено."
+  ],
+  "preservationBoundary": {
+    "secretConfigurationCopied": false,
+    "privateMacOrIPadJSONCopied": false,
+    "preserved": "Public endpoint identity, upgrade/data inventories, source/build witnesses, diagnostics, raw XCTest artifacts. No live containers, keys, app bundles or DerivedData.",
+    "manifestMapsOriginalToArchivedPaths": true
+  }
+}

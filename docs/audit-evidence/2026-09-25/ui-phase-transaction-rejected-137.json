@@ -1,0 +1,786 @@
+{
+  "format": 1,
+  "scope": "Физический iPad137: одна последовательная baseline/candidate пара, пять неизменённых native сценариев. Один экспериментальный UI-phase presentation clock отвергнут целиком; не исправление Redo и не окончательная UX-приёмка.",
+  "baseCommit": "fcbc788818c43d69603b2db5428570524541fc3e",
+  "restoredHead": "acf675f720dd090283cb13bb1d020ec36bef4694",
+  "rawEvidence": ".build/notebook-architecture-repair/evidence-2026-09-25/ui-phase-transaction-rejected-137-20260926T1948Z",
+  "rawManifestSHA256": "f520f1462ec4e47c25322bf122e8fd3e30b195929f0f6005323c0ccc724a82a7",
+  "decision": "REJECTED_AND_REMOVED",
+  "candidate": "Только InkCanvasView: единственный UIUpdateLink вместо page CAMetalDisplayLink, bounded off-main drawable acquisition и transaction presentation в UI phase. Все изменения кандидата удалены, частичный timing-fix не оставлен.",
+  "admission": {
+    "baselineSourceSHA256": "b23d58e15e8ec85461b3fe956754b8f59e84e2e783cdfd77c0b0e47a5b56d76e",
+    "candidateSourceSHA256": "e113f3c263a4b2e8e5a14a6bc777cbed20df2cd30d10e2c173feb4133cb7a79d",
+    "changedInputs": [
+      {
+        "path": "Applications/Shared/InkCanvasView.swift",
+        "baseline": {
+          "executable": false,
+          "path": "Applications/Shared/InkCanvasView.swift",
+          "sha256": "248c63dc676ed54ad88db1393f59c208295fbe63c8a75ca9658800e48a6f4980"
+        },
+        "candidate": {
+          "executable": false,
+          "path": "Applications/Shared/InkCanvasView.swift",
+          "sha256": "19dc634e5e5c26c6ec30c9805809cfbd8fcce79c7db5b0a6eb3ed73082088b69"
+        }
+      }
+    ],
+    "onlyInkCanvasChanged": true,
+    "sameRuntimePin": true,
+    "bothSourcesAndArtifactsUnchanged": true,
+    "sameBuildArgumentsAfterSnapshotPathNormalization": true
+  },
+  "patchSHA256": "79c52632d0bcc5527a3bdc1fe7c8be2b0fc280a13204c746b1b4c2447febecab",
+  "restoration": {
+    "observedUTC": "2026-09-26T19:48:00Z",
+    "head": "acf675f720dd090283cb13bb1d020ec36bef4694",
+    "restoredFile": "Applications/Shared/InkCanvasView.swift",
+    "sha256": "248c63dc676ed54ad88db1393f59c208295fbe63c8a75ca9658800e48a6f4980",
+    "matchesExperimentalBase": true,
+    "scope": "Read-only instant witness for this single restored file; not a claim about later concurrent work."
+  },
+  "runs": {
+    "baseline": {
+      "sourceSHA256": "b23d58e15e8ec85461b3fe956754b8f59e84e2e783cdfd77c0b0e47a5b56d76e",
+      "results": {
+        "passedTests": 2,
+        "failedTests": 3,
+        "skippedTests": 0,
+        "runtimeWarnings": []
+      },
+      "testExitCode": 65,
+      "sourceUnchanged": true,
+      "binaryAndXctestrunUnchanged": true,
+      "builtImages": {
+        "Notebook": {
+          "sha256": "0da3de9109194c009c4de6447c549de9d2530d146088095cb9d47cdf16f08084",
+          "uuid": "40C673DD-46D1-3144-BC10-ECDBB646880E"
+        },
+        "PlugIns/NotebookTests.xctest/NotebookTests": {
+          "sha256": "b3b9bf07db7314b8c95e1c482ec9cf5fc218be4f4c91e374753230b914d222fa",
+          "uuid": "B682AC93-AE9B-3F69-93C5-07252DB2C269"
+        }
+      },
+      "tests": [
+        {
+          "selector": "NotebookInteractionUXTests/testPencilReplayCannotHideBacklogBySlowingItsInputSchedule",
+          "result": [
+            "Passed"
+          ],
+          "failures": [],
+          "inputRows": 121,
+          "exactIndices": true,
+          "environment": [
+            {
+              "thermalRaw": 0,
+              "lowPower": false,
+              "screenMaxHz": 120
+            }
+          ],
+          "lanes": {
+            "handler_ms": {
+              "requiredCount": 121,
+              "observedCount": 121,
+              "missingCount": 0,
+              "over20msCount": 0,
+              "medianMS": 1.2586666853167117,
+              "p95MS": 1.370333309751004,
+              "maxMS": 1.5161249903030694
+            },
+            "ui_update_ms": {
+              "requiredCount": 121,
+              "observedCount": 121,
+              "missingCount": 0,
+              "over20msCount": 0,
+              "medianMS": 9.44304169388488,
+              "p95MS": 10.413833369966596,
+              "maxMS": 10.552458348684013
+            },
+            "metal_present_ms": {
+              "requiredCount": 120,
+              "observedCount": 120,
+              "missingCount": 0,
+              "over20msCount": 0,
+              "medianMS": 18.33479167544283,
+              "p95MS": 18.515750009100884,
+              "maxMS": 18.53595837019384
+            }
+          },
+          "observations": []
+        },
+        {
+          "selector": "NotebookInteractionUXTests/testInkEraserMeetsTwentyMillisecondPresentationBudget",
+          "result": [
+            "Passed"
+          ],
+          "failures": [],
+          "inputRows": 121,
+          "exactIndices": true,
+          "environment": [
+            {
+              "thermalRaw": 0,
+              "lowPower": false,
+              "screenMaxHz": 120
+            }
+          ],
+          "lanes": {
+            "handler_ms": {
+              "requiredCount": 121,
+              "observedCount": 121,
+              "missingCount": 0,
+              "over20msCount": 0,
+              "medianMS": 1.3534167082980275,
+              "p95MS": 1.6047916724346578,
+              "maxMS": 1.746083318721503
+            },
+            "ui_update_ms": {
+              "requiredCount": 121,
+              "observedCount": 121,
+              "missingCount": 0,
+              "over20msCount": 0,
+              "medianMS": 3.6002083215862513,
+              "p95MS": 11.857958335895091,
+              "maxMS": 17.41416670847684
+            },
+            "metal_present_ms": {
+              "requiredCount": 120,
+              "observedCount": 120,
+              "missingCount": 0,
+              "over20msCount": 0,
+              "medianMS": 19.3978333263658,
+              "p95MS": 19.579000014346093,
+              "maxMS": 19.599291670601815
+            }
+          },
+          "observations": []
+        },
+        {
+          "selector": "NotebookColdInputUXTests/testBlankPageReportsItsFirstContactFrameWithoutSnapshotPolling",
+          "result": [
+            "Failed"
+          ],
+          "failures": [
+            {
+              "message": "XCTAssertLessThanOrEqual failed: (\"41.78845835849643\") is greater than (\"20.0\")",
+              "file": "NotebookColdInputUXTests.swift",
+              "line": 48
+            }
+          ],
+          "observations": [
+            {
+              "kind": "coldFirstDot",
+              "handlerMS": 3.613041655626148,
+              "resolutionCallbackMS": 42.30883333366364,
+              "osDisplayMS": 41.78845835849643,
+              "isFirstFrame": true,
+              "budgetMS": 20
+            }
+          ]
+        },
+        {
+          "selector": "NotebookPageLifecycleUXTests/testRepeatedInkUndoRedoAfterPageTurnsAndPinchesKeepsTheAcceptedWarmMaterial",
+          "result": [
+            "Failed"
+          ],
+          "failures": [
+            {
+              "message": "XCTAssertTrue failed - UX inverse-journey-0-redo: correct=true, observed=143.980666 ms, ceiling=0.1 seconds; window observation, not photon timing",
+              "file": "NotebookPageLifecycleUXTests.swift",
+              "line": 182
+            },
+            {
+              "message": "XCTAssertTrue failed - UX inverse-journey-1-pen: correct=true, observed=113.786542 ms, ceiling=0.1 seconds; window observation, not photon timing",
+              "file": "NotebookPageLifecycleUXTests.swift",
+              "line": 182
+            },
+            {
+              "message": "XCTAssertTrue failed - UX inverse-journey-2-pen: correct=true, observed=113.358792 ms, ceiling=0.1 seconds; window observation, not photon timing",
+              "file": "NotebookPageLifecycleUXTests.swift",
+              "line": 182
+            },
+            {
+              "message": "XCTAssertTrue failed - UX inverse-journey-3-pen: correct=true, observed=111.444792 ms, ceiling=0.1 seconds; window observation, not photon timing",
+              "file": "NotebookPageLifecycleUXTests.swift",
+              "line": 182
+            }
+          ],
+          "observations": [
+            {
+              "kind": "windowCorrectness",
+              "name": "inverse-journey-3-redo",
+              "correct": true,
+              "observedMS": 66.107209,
+              "budgetMS": 100.0,
+              "passed": true
+            },
+            {
+              "kind": "windowCorrectness",
+              "name": "inverse-journey-3-undo",
+              "correct": true,
+              "observedMS": 22.056709,
+              "budgetMS": 100.0,
+              "passed": true
+            },
+            {
+              "kind": "windowCorrectness",
+              "name": "inverse-journey-3-pen",
+              "correct": true,
+              "observedMS": 111.444792,
+              "budgetMS": 100.0,
+              "passed": false
+            },
+            {
+              "kind": "windowCorrectness",
+              "name": "inverse-journey-2-redo",
+              "correct": true,
+              "observedMS": 98.379625,
+              "budgetMS": 100.0,
+              "passed": true
+            },
+            {
+              "kind": "windowCorrectness",
+              "name": "inverse-journey-2-undo",
+              "correct": true,
+              "observedMS": 22.046375,
+              "budgetMS": 100.0,
+              "passed": true
+            },
+            {
+              "kind": "windowCorrectness",
+              "name": "inverse-journey-2-pen",
+              "correct": true,
+              "observedMS": 113.358792,
+              "budgetMS": 100.0,
+              "passed": false
+            },
+            {
+              "kind": "windowCorrectness",
+              "name": "inverse-journey-1-redo",
+              "correct": true,
+              "observedMS": 97.613125,
+              "budgetMS": 100.0,
+              "passed": true
+            },
+            {
+              "kind": "windowCorrectness",
+              "name": "inverse-journey-1-undo",
+              "correct": true,
+              "observedMS": 21.881625,
+              "budgetMS": 100.0,
+              "passed": true
+            },
+            {
+              "kind": "windowCorrectness",
+              "name": "inverse-journey-1-pen",
+              "correct": true,
+              "observedMS": 113.786542,
+              "budgetMS": 100.0,
+              "passed": false
+            },
+            {
+              "kind": "windowCorrectness",
+              "name": "inverse-journey-0-redo",
+              "correct": true,
+              "observedMS": 143.980666,
+              "budgetMS": 100.0,
+              "passed": false
+            },
+            {
+              "kind": "windowCorrectness",
+              "name": "inverse-journey-0-undo",
+              "correct": true,
+              "observedMS": 23.83775,
+              "budgetMS": 100.0,
+              "passed": true
+            },
+            {
+              "kind": "windowCorrectness",
+              "name": "inverse-journey-0-pen",
+              "correct": true,
+              "observedMS": 69.217708,
+              "budgetMS": 100.0,
+              "passed": true
+            }
+          ]
+        },
+        {
+          "selector": "NotebookInteractionUXTests/testClosedWholeLassoRoutesRawAndAuthoredMaterialThroughTwoInstalledDragsAndCancel",
+          "result": [
+            "Failed"
+          ],
+          "failures": [
+            {
+              "message": "XCTAssertTrue failed",
+              "file": "NotebookSelectionCompositionTests.swift",
+              "line": 286
+            },
+            {
+              "message": "XCTAssertTrue failed - Every frame includes raw material, authored peer, four controls and untouched pixels; see stage attachments",
+              "file": "NotebookSelectionCompositionTests.swift",
+              "line": 339
+            }
+          ],
+          "observations": [
+            {
+              "kind": "selectionWholeWindow",
+              "name": "whole-route-deselect",
+              "correct": true,
+              "mixedFrames": 0,
+              "observedMS": 30.671750020701438,
+              "captureDecodeMS": 20.955333311576396,
+              "budgetMS": 100,
+              "passed": true
+            },
+            {
+              "kind": "selectionWholeWindow",
+              "name": "whole-route-cancel-second",
+              "correct": true,
+              "mixedFrames": 1,
+              "observedMS": 72.36333336913958,
+              "captureDecodeMS": 20.947999961208552,
+              "budgetMS": 100,
+              "passed": false
+            },
+            {
+              "kind": "selectionWholeWindow",
+              "name": "whole-route-second-canonical-drag",
+              "correct": true,
+              "mixedFrames": 0,
+              "observedMS": 79.06158332480118,
+              "captureDecodeMS": 26.53904166072607,
+              "budgetMS": 100,
+              "passed": true
+            },
+            {
+              "kind": "selectionWholeWindow",
+              "name": "whole-route-first-lift",
+              "correct": false,
+              "mixedFrames": 0,
+              "observedMS": 19.805708318017423,
+              "captureDecodeMS": 19.097208336461335,
+              "budgetMS": 100,
+              "passed": false
+            },
+            {
+              "kind": "selectionWholeWindow",
+              "name": "whole-route-first-drag",
+              "correct": false,
+              "mixedFrames": 0,
+              "observedMS": 119.88737503997982,
+              "captureDecodeMS": 28.49529165541753,
+              "budgetMS": 100,
+              "passed": false
+            },
+            {
+              "kind": "selectionWholeWindow",
+              "name": "whole-route-closed-contour",
+              "correct": true,
+              "mixedFrames": 0,
+              "observedMS": 70.7543749595061,
+              "captureDecodeMS": 22.4946666858159,
+              "budgetMS": 100,
+              "passed": true
+            }
+          ]
+        }
+      ],
+      "cleanup": {
+        "bundleIdentifier": "com.amirtlinov.notebook.native-test",
+        "removed": true
+      },
+      "raw": "baseline-run"
+    },
+    "candidate": {
+      "sourceSHA256": "e113f3c263a4b2e8e5a14a6bc777cbed20df2cd30d10e2c173feb4133cb7a79d",
+      "results": {
+        "passedTests": 1,
+        "failedTests": 4,
+        "skippedTests": 0,
+        "runtimeWarnings": []
+      },
+      "testExitCode": 65,
+      "sourceUnchanged": true,
+      "binaryAndXctestrunUnchanged": true,
+      "builtImages": {
+        "Notebook": {
+          "sha256": "2e3a919f4c5560aaa68587a48ee637e8b00f82df3164c3ad2e0a40dad6129389",
+          "uuid": "FE535DDA-7C49-35F5-B672-C253B3036A3F"
+        },
+        "PlugIns/NotebookTests.xctest/NotebookTests": {
+          "sha256": "012c4f7c701601e4e3bd1fcac0aef53ff07c5d25e5194be93dcd95e4f6ee5f4d",
+          "uuid": "FFA42A9A-5B8C-36E9-A366-5D83B1125115"
+        }
+      },
+      "tests": [
+        {
+          "selector": "NotebookInteractionUXTests/testPencilReplayCannotHideBacklogBySlowingItsInputSchedule",
+          "result": [
+            "Failed"
+          ],
+          "failures": [
+            {
+              "message": "XCTAssertTrue failed - pen-20ms, thermal=0, lowPower=false, screenMax=120, fixed 120 Hz input, EVERY sample <= 20.0 ms; input to handler return: n=121 p50=1.261750003322959 p95=1.36900000507012 p99=1.4140832936391234 max=1.4171249931678176 ms; UIKit update completion: n=121 p50=2.0721249748021364 p95=4.255458363331854 p99=4.327416652813554 max=10.73741668369621 ms; OS Metal presentation: n=120 p50=36.219875037204474 p95=44.69508334295824 p99=44.745833321940154 max=44.75595831172541 ms; failed samples=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119]. UIKit is not a presentation ACK. Neither lane measures physical Pencil sensing/photons.",
+              "file": "NotebookInteractionLatencyTests.swift",
+              "line": 117
+            }
+          ],
+          "inputRows": 121,
+          "exactIndices": true,
+          "environment": [
+            {
+              "thermalRaw": 0,
+              "lowPower": false,
+              "screenMaxHz": 120
+            },
+            {
+              "thermalRaw": 0,
+              "lowPower": false,
+              "screenMaxHz": 120
+            }
+          ],
+          "lanes": {
+            "handler_ms": {
+              "requiredCount": 121,
+              "observedCount": 121,
+              "missingCount": 0,
+              "over20msCount": 0,
+              "medianMS": 1.261750003322959,
+              "p95MS": 1.36900000507012,
+              "maxMS": 1.4171249931678176
+            },
+            "ui_update_ms": {
+              "requiredCount": 121,
+              "observedCount": 121,
+              "missingCount": 0,
+              "over20msCount": 0,
+              "medianMS": 2.0721249748021364,
+              "p95MS": 4.255458363331854,
+              "maxMS": 10.73741668369621
+            },
+            "metal_present_ms": {
+              "requiredCount": 120,
+              "observedCount": 120,
+              "missingCount": 0,
+              "over20msCount": 120,
+              "medianMS": 36.224916664650664,
+              "p95MS": 44.69508334295824,
+              "maxMS": 44.75595831172541
+            }
+          },
+          "observations": []
+        },
+        {
+          "selector": "NotebookInteractionUXTests/testInkEraserMeetsTwentyMillisecondPresentationBudget",
+          "result": [
+            "Failed"
+          ],
+          "failures": [
+            {
+              "message": "XCTAssertTrue failed - ink-eraser-20ms, thermal=0, lowPower=false, screenMax=120, fixed 120 Hz input, EVERY sample <= 20.0 ms; input to handler return: n=121 p50=1.3094166642986238 p95=1.5362916747108102 p99=1.6500417259521782 max=1.658499997574836 ms; UIKit update completion: n=121 p50=5.018791707698256 p95=7.544708321802318 p99=9.31908335769549 max=10.755958326626569 ms; OS Metal presentation: n=120 p50=39.10933336010203 p95=47.584750049281865 p99=47.635583381634206 max=47.645750048104674 ms; failed samples=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119]. UIKit is not a presentation ACK. Neither lane measures physical Pencil sensing/photons.",
+              "file": "NotebookInteractionLatencyTests.swift",
+              "line": 117
+            }
+          ],
+          "inputRows": 121,
+          "exactIndices": true,
+          "environment": [
+            {
+              "thermalRaw": 0,
+              "lowPower": false,
+              "screenMaxHz": 120
+            },
+            {
+              "thermalRaw": 0,
+              "lowPower": false,
+              "screenMaxHz": 120
+            }
+          ],
+          "lanes": {
+            "handler_ms": {
+              "requiredCount": 121,
+              "observedCount": 121,
+              "missingCount": 0,
+              "over20msCount": 0,
+              "medianMS": 1.3094166642986238,
+              "p95MS": 1.5362916747108102,
+              "maxMS": 1.658499997574836
+            },
+            "ui_update_ms": {
+              "requiredCount": 121,
+              "observedCount": 121,
+              "missingCount": 0,
+              "over20msCount": 0,
+              "medianMS": 5.018791707698256,
+              "p95MS": 7.544708321802318,
+              "maxMS": 10.755958326626569
+            },
+            "metal_present_ms": {
+              "requiredCount": 120,
+              "observedCount": 120,
+              "missingCount": 0,
+              "over20msCount": 120,
+              "medianMS": 39.11437501665205,
+              "p95MS": 47.584750049281865,
+              "maxMS": 47.645750048104674
+            }
+          },
+          "observations": []
+        },
+        {
+          "selector": "NotebookColdInputUXTests/testBlankPageReportsItsFirstContactFrameWithoutSnapshotPolling",
+          "result": [
+            "Failed"
+          ],
+          "failures": [
+            {
+              "message": "XCTAssertLessThanOrEqual failed: (\"34.64320831699297\") is greater than (\"20.0\")",
+              "file": "NotebookColdInputUXTests.swift",
+              "line": 48
+            }
+          ],
+          "observations": [
+            {
+              "kind": "coldFirstDot",
+              "handlerMS": 1.4211249654181302,
+              "resolutionCallbackMS": 36.78587498143315,
+              "osDisplayMS": 34.64320831699297,
+              "isFirstFrame": true,
+              "budgetMS": 20
+            }
+          ]
+        },
+        {
+          "selector": "NotebookPageLifecycleUXTests/testRepeatedInkUndoRedoAfterPageTurnsAndPinchesKeepsTheAcceptedWarmMaterial",
+          "result": [
+            "Passed"
+          ],
+          "failures": [],
+          "observations": [
+            {
+              "kind": "windowCorrectness",
+              "name": "inverse-journey-3-redo",
+              "correct": true,
+              "observedMS": 59.545917,
+              "budgetMS": 100.0,
+              "passed": true
+            },
+            {
+              "kind": "windowCorrectness",
+              "name": "inverse-journey-3-undo",
+              "correct": true,
+              "observedMS": 22.423291,
+              "budgetMS": 100.0,
+              "passed": true
+            },
+            {
+              "kind": "windowCorrectness",
+              "name": "inverse-journey-3-pen",
+              "correct": true,
+              "observedMS": 79.563083,
+              "budgetMS": 100.0,
+              "passed": true
+            },
+            {
+              "kind": "windowCorrectness",
+              "name": "inverse-journey-2-redo",
+              "correct": true,
+              "observedMS": 98.7365,
+              "budgetMS": 100.0,
+              "passed": true
+            },
+            {
+              "kind": "windowCorrectness",
+              "name": "inverse-journey-2-undo",
+              "correct": true,
+              "observedMS": 21.773834,
+              "budgetMS": 100.0,
+              "passed": true
+            },
+            {
+              "kind": "windowCorrectness",
+              "name": "inverse-journey-2-pen",
+              "correct": true,
+              "observedMS": 87.769833,
+              "budgetMS": 100.0,
+              "passed": true
+            },
+            {
+              "kind": "windowCorrectness",
+              "name": "inverse-journey-1-redo",
+              "correct": true,
+              "observedMS": 61.319417,
+              "budgetMS": 100.0,
+              "passed": true
+            },
+            {
+              "kind": "windowCorrectness",
+              "name": "inverse-journey-1-undo",
+              "correct": true,
+              "observedMS": 21.711,
+              "budgetMS": 100.0,
+              "passed": true
+            },
+            {
+              "kind": "windowCorrectness",
+              "name": "inverse-journey-1-pen",
+              "correct": true,
+              "observedMS": 70.569041,
+              "budgetMS": 100.0,
+              "passed": true
+            },
+            {
+              "kind": "windowCorrectness",
+              "name": "inverse-journey-0-redo",
+              "correct": true,
+              "observedMS": 59.92175,
+              "budgetMS": 100.0,
+              "passed": true
+            },
+            {
+              "kind": "windowCorrectness",
+              "name": "inverse-journey-0-undo",
+              "correct": true,
+              "observedMS": 21.903625,
+              "budgetMS": 100.0,
+              "passed": true
+            },
+            {
+              "kind": "windowCorrectness",
+              "name": "inverse-journey-0-pen",
+              "correct": true,
+              "observedMS": 70.9535,
+              "budgetMS": 100.0,
+              "passed": true
+            }
+          ]
+        },
+        {
+          "selector": "NotebookInteractionUXTests/testClosedWholeLassoRoutesRawAndAuthoredMaterialThroughTwoInstalledDragsAndCancel",
+          "result": [
+            "Failed"
+          ],
+          "failures": [
+            {
+              "message": "XCTAssertTrue failed",
+              "file": "NotebookSelectionCompositionTests.swift",
+              "line": 286
+            },
+            {
+              "message": "XCTAssertTrue failed - Every frame includes raw material, authored peer, four controls and untouched pixels; see stage attachments",
+              "file": "NotebookSelectionCompositionTests.swift",
+              "line": 339
+            }
+          ],
+          "observations": [
+            {
+              "kind": "selectionWholeWindow",
+              "name": "whole-route-deselect",
+              "correct": true,
+              "mixedFrames": 0,
+              "observedMS": 30.49399994779378,
+              "captureDecodeMS": 20.66604164429009,
+              "budgetMS": 100,
+              "passed": true
+            },
+            {
+              "kind": "selectionWholeWindow",
+              "name": "whole-route-cancel-second",
+              "correct": true,
+              "mixedFrames": 1,
+              "observedMS": 81.72170835314319,
+              "captureDecodeMS": 34.877499972935766,
+              "budgetMS": 100,
+              "passed": false
+            },
+            {
+              "kind": "selectionWholeWindow",
+              "name": "whole-route-second-canonical-drag",
+              "correct": true,
+              "mixedFrames": 0,
+              "observedMS": 79.59854166256264,
+              "captureDecodeMS": 27.879874978680164,
+              "budgetMS": 100,
+              "passed": true
+            },
+            {
+              "kind": "selectionWholeWindow",
+              "name": "whole-route-first-lift",
+              "correct": false,
+              "mixedFrames": 0,
+              "observedMS": 19.38625000184402,
+              "captureDecodeMS": 18.69166671531275,
+              "budgetMS": 100,
+              "passed": false
+            },
+            {
+              "kind": "selectionWholeWindow",
+              "name": "whole-route-first-drag",
+              "correct": false,
+              "mixedFrames": 0,
+              "observedMS": 116.88562500057742,
+              "captureDecodeMS": 23.019541695248336,
+              "budgetMS": 100,
+              "passed": false
+            },
+            {
+              "kind": "selectionWholeWindow",
+              "name": "whole-route-closed-contour",
+              "correct": true,
+              "mixedFrames": 0,
+              "observedMS": 42.352208285592496,
+              "captureDecodeMS": 22.186500020325184,
+              "budgetMS": 100,
+              "passed": true
+            }
+          ]
+        }
+      ],
+      "cleanup": {
+        "bundleIdentifier": "com.amirtlinov.notebook.native-test",
+        "removed": true
+      },
+      "raw": "candidate-run"
+    }
+  },
+  "visualReview": [
+    {
+      "description": "Первый drag всё ещё показывает исходную общую позу black stroke + blue circle и исходную рамку.",
+      "baselineImage": "baseline-run/attachments/9B260321-4099-4698-8067-A52A038B00F0.png",
+      "candidateImage": "candidate-run/attachments/063D0C36-1E6E-4ADE-93B5-EB4D6B3083C8.png",
+      "sha256": "5621b5d57a31943bdabbcc6133322588cded1703f7afc21f6cb35cdc9e0ec782",
+      "samePNGBytesBothRuns": true,
+      "inspection": "Baseline original PNG directly viewed; candidate exact SHA-equivalent."
+    },
+    {
+      "description": "После cancel circle и рамка уже вернулись вверх, а чёрный stroke остаётся ниже за рамкой: смешанный кадр.",
+      "baselineImage": "baseline-run/attachments/0BD8361F-E595-4519-850E-9DBC6AFD8DF1.png",
+      "candidateImage": "candidate-run/attachments/689FF6A9-6A44-4697-B27F-326318294EA5.png",
+      "sha256": "6e34f8575e7526e3412dd0b2d2f421949b10c3c4cb2b4285ce6b6be2abe16e3b",
+      "samePNGBytesBothRuns": true,
+      "inspection": "Baseline original PNG directly viewed; candidate exact SHA-equivalent."
+    },
+    {
+      "description": "Последующий кадр снова содержит black stroke внутри той же рамки рядом с blue circle.",
+      "baselineImage": "baseline-run/attachments/2AA251A1-C3C0-480F-BA48-0FB61C7C934B.png",
+      "candidateImage": "candidate-run/attachments/A22D43E4-CDD7-4F9A-8967-95E632F4EBBD.png",
+      "sha256": "f328ec827ed3844ae25facf47b13429fca03dd96fb75bd7e6555504f69f3579a",
+      "samePNGBytesBothRuns": true,
+      "inspection": "Baseline original PNG directly viewed; candidate exact SHA-equivalent."
+    }
+  ],
+  "conclusions": [
+    "Baseline strict warm pen и raw eraser прошли по одному разу: OS median/max18.335/18.536 и19.398/19.599 ms. Это не закрывает прежние физические отказы и не доказывает аппаратный Pencil input-to-photon.",
+    "Candidate ухудшил каждый из120 обязательных OS samples в обоих replay: все выше20 ms, ни одного missing sample. Pen median/max36.225/44.756, eraser39.114/47.646 ms; более ранний UIKit callback это не компенсирует.",
+    "Cold blank first dot41.788→34.643 ms: оба FAIL20 ms. Warm inverse baseline имеет четыре100 ms нарушения, candidate прошёл выбранные четыре цикла; один улучшенный прогон не отменяет ухудшения и не доказывает стабильного исправления.",
+    "U10 в обоих запусках имеет прежнюю исходную картину после первого drag на119.887/116.886 ms и после lift; после второго cancel есть один реальный смешанный кадр, хотя позднее correct=true за72.363/81.722 ms. Это отдельный открытый lifetime/composition дефект, не только timing кандидата.",
+    "Предыдущие133/134 PASS сохранены как свои узкие результаты; новая baseline137 опровергает категорическое объявление U10 завершённым. Причинное исправление first-stage/cancel owner выполняется отдельно."
+  ],
+  "limits": [
+    "Одна последовательная пара, не статистическая оценка небольшого latency gain; порядок и все отрицательные результаты сохранены.",
+    "Thermal nominal/lowPower=false/maximum120Hz записаны в replay attachments, не непрерывно на протяжении всей сессии.",
+    "OS Metal receipts не являются внешним физическим input-to-photon/FPS измерением; native gestures не подменяют финальную обычную Release-пару.",
+    "First lift wrong не равен20 ms production latency threshold: это отдельный whole-frame stage check; исходные budgets не изменены.",
+    "Данные не закрывают исторические20 ms, cold-first-frame, ordinary third Redo или10 journey+30min conditions."
+  ],
+  "preservation": "Raw results, attachments, comparison with all CSV rows, failures, logs, source/binary manifests and exact dirty InkCanvas retained. No full baseline/candidate-source trees, root outputs, app/DerivedData or secret configuration copied."
+}

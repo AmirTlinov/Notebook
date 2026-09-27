@@ -3,6 +3,34 @@ import Testing
 @testable import NotebookCore
 
 @Suite struct NotebookSelectionPublicationTests {
+  @Test func wholeRawContactsPublishInTheirOwnNamespaceAndPreserveTheCombinedLimit() throws {
+    let target=CollaborationTarget(kind:.page,id:UUID()),contact=UUID()
+    var raw=NotebookSelection(id:UUID(),kind:.elements,surface:target,target:target,
+      elementIDs:[],inkActionIDs:[contact])
+    #expect(raw.isValid)
+    #expect(try JSONDecoder().decode(NotebookSelection.self,from:JSONEncoder().encode(raw)) == raw)
+    let root=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at:root) }
+    let store=NotebookStore(root:root),device=UUID(),session=UUID(),connection=UUID()
+    _ = try store.initializeWorkspace(actor:UUID(),pageSize:.init(width:834,height:1194))
+    let envelope=NotebookSelectionEnvelope(deviceID:device,sessionID:session,sequence:1,selection:raw)
+    try store.saveLocalSelectionPublication(envelope)
+    #expect(try store.readSelectionPublication().selection?.elementIDs == [])
+    #expect(try store.readSelectionPublication().selection?.inkActionIDs == [contact])
+    try store.beginSelectionPublication(deviceID:device,connectionID:connection)
+    #expect(try store.acceptSelectionPublication(envelope,connectionID:connection))
+    #expect(try store.readSelectionPublication().selection == raw)
+    raw.elementIDs=(0..<31).map { "authored-\($0)" }
+    #expect(raw.isValid)
+    raw.elementIDs?.append("overflow")
+    #expect(!raw.isValid)
+    raw.elementIDs=[];raw.inkActionIDs=[contact,contact]
+    #expect(!raw.isValid)
+    var wrong=NotebookSelection(id:UUID(),kind:.element,surface:target,target:target,elementID:"real")
+    wrong.inkActionIDs=[contact]
+    #expect(!wrong.isValid)
+  }
+
   @Test func regionIsOneExplicitReadOnlySelection() throws {
     let target=CollaborationTarget(kind:.board,id:UUID())
     var value=NotebookSelection(id:UUID(),kind:.region,surface:target,target:target)

@@ -1,0 +1,321 @@
+{
+  "format": 1,
+  "scope": "Физический iPad141: одна исходная strict10 curl проверка с временной адресной записью capture, Metal, CA и OS receipts. Не новая реализация/clock и не полная приёмка.",
+  "result": "FAIL",
+  "counts": {
+    "passedTests": 0,
+    "failedTests": 1,
+    "skippedTests": 0,
+    "runtimeWarnings": []
+  },
+  "testExitCode": 65,
+  "selector": "NotebookPageMotionUXTests/testTenForwardReverseTurnsMeetFirstPresentationAndLandingDeadlines",
+  "rawEvidence": ".build/notebook-architecture-repair/evidence-2026-09-25/curl-capture-and-presentation-phases-141-20260926T204459Z",
+  "analysis": "experiment/analysis.json",
+  "source": {
+    "base": "f8b14c90278db0d09608e7c45427bde79e693781a06c879d6120d0478b269056",
+    "candidate": "c590ae028098a99cf8fe80d50ccbd5eff85ba737e4a0371048ded9a9b93c72bb",
+    "changed": [
+      "Applications/Shared/NotebookMetalFrameReadiness.swift",
+      "Applications/Shared/SheetCurlRenderer.swift",
+      "Applications/Tests/NotebookPageMotionUXTests.swift",
+      "Applications/iPad/IPadSheetCurlController.swift"
+    ],
+    "temporaryPatchSHA256": "c9eb657e0ed202d6bed5763d3eff2d886208dee6db89eac7ffd79d46a1624959",
+    "originalOracleSHA256": "434b8565033a38b94bec5b535fc48316840907746b96000aa0a03368516b7510",
+    "originalOraclesByteIdentical": true,
+    "temporaryPatchOnlyInFrozenSnapshot": true,
+    "rootWitness": {
+      "Applications/iPad/IPadSheetCurlController.swift": "12c292dd137d3c2d11dd0f52143ddad6ca16af181e74e180eed798c5e314bc72",
+      "Applications/Shared/SheetCurlRenderer.swift": "acca5ad1fc0164e2d93d452a8e5cc2281e075670c97337fea673c7899d6ada96",
+      "Applications/Shared/NotebookMetalFrameReadiness.swift": "43337fbcce3538c26244d2b62287cc1c94ac9ab2aa59d046167bad15ea477010",
+      "Applications/Tests/NotebookPageMotionUXTests.swift": "8f7e7eb07a4657baba96ea12525c661953736938cca5beb2c0981b2171cb4893"
+    }
+  },
+  "admission": {
+    "sourceUnchanged": true,
+    "artifactsUnchanged": true,
+    "images": {
+      "Notebook": {
+        "sha256": "d021ab2fac4a5c654300ee0fd31a56cf0856e22d441ff22400ad0ca74fde258e",
+        "uuid": "490357C6-49F1-3799-80E5-9AC9C927F180"
+      },
+      "PlugIns/NotebookTests.xctest/NotebookTests": {
+        "sha256": "7509412c7fd72f76a1e04f3e111d78b986d4224f77dd3dc7287d0ef0e9ce6412",
+        "uuid": "FC03FD34-79B6-3073-96D8-95A9ED3DC1A1"
+      }
+    },
+    "privateBundle": "com.amirtlinov.notebook.native-test",
+    "device": "00008103-001E059934D9001E",
+    "cleanup": {
+      "bundleIdentifier": "com.amirtlinov.notebook.native-test",
+      "removed": true
+    }
+  },
+  "recordCounts": {
+    "commands": 10,
+    "captures": 10,
+    "frames": 378,
+    "phases": 4576,
+    "OSCallbacks": 378
+  },
+  "dropped": {
+    "captures": 0,
+    "frames": 0,
+    "phases": 0
+  },
+  "caps": {
+    "captures": 128,
+    "frames": 2048,
+    "phases": 16384
+  },
+  "oracleTotals": {
+    "firstFailures": 10,
+    "cadenceFailures": 10,
+    "landingFailures": 0,
+    "receiptInvalidTurns": 1,
+    "XCTestFailureMessages": 21
+  },
+  "budgets": {
+    "firstBendMS": 16.666666666666668,
+    "landingMS": 450,
+    "refreshHz": 120,
+    "changingOSGapMS": 8.833333333333334,
+    "zeroOSReceiptsAllowed": false
+  },
+  "turns": [
+    {
+      "turn": 0,
+      "direction": "forward",
+      "captureMS": 29.979166691191494,
+      "flatSubmissions": [
+        0,
+        1
+      ],
+      "firstBendMS": 116.85766669688746,
+      "landingMS": 409.60887499386445,
+      "maxOSGapMS": 33.34691666532308,
+      "primerToBendOSGapMS": 33.34691666532308,
+      "invalidOSReceiptSequences": [
+        0,
+        9
+      ]
+    },
+    {
+      "turn": 1,
+      "direction": "reverse",
+      "captureMS": 18.2306666392833,
+      "flatSubmissions": [
+        39
+      ],
+      "firstBendMS": 60.44508330523968,
+      "landingMS": 361.05700000189245,
+      "maxOSGapMS": 25.010083336383104,
+      "primerToBendOSGapMS": 25.010083336383104,
+      "invalidOSReceiptSequences": []
+    },
+    {
+      "turn": 2,
+      "direction": "forward",
+      "captureMS": 21.662333339918405,
+      "flatSubmissions": [
+        76
+      ],
+      "firstBendMS": 78.79554165992886,
+      "landingMS": 379.6177916810848,
+      "maxOSGapMS": 25.01012501306832,
+      "primerToBendOSGapMS": 25.01012501306832,
+      "invalidOSReceiptSequences": []
+    },
+    {
+      "turn": 3,
+      "direction": "reverse",
+      "captureMS": 31.15541662555188,
+      "flatSubmissions": [
+        114
+      ],
+      "firstBendMS": 94.69400002853945,
+      "landingMS": 395.3246250166558,
+      "maxOSGapMS": 25.010208366438746,
+      "primerToBendOSGapMS": 25.010208366438746,
+      "invalidOSReceiptSequences": []
+    },
+    {
+      "turn": 4,
+      "direction": "forward",
+      "captureMS": 22.265249979682267,
+      "flatSubmissions": [
+        152
+      ],
+      "firstBendMS": 82.96383335255086,
+      "landingMS": 379.6434583491646,
+      "maxOSGapMS": 29.1787083260715,
+      "primerToBendOSGapMS": 29.1787083260715,
+      "invalidOSReceiptSequences": []
+    },
+    {
+      "turn": 5,
+      "direction": "reverse",
+      "captureMS": 31.095125013962388,
+      "flatSubmissions": [
+        189
+      ],
+      "firstBendMS": 123.84212500182912,
+      "landingMS": 420.33808334963396,
+      "maxOSGapMS": 29.17850000085309,
+      "primerToBendOSGapMS": 29.17850000085309,
+      "invalidOSReceiptSequences": []
+    },
+    {
+      "turn": 6,
+      "direction": "forward",
+      "captureMS": 22.174375015310943,
+      "flatSubmissions": [
+        226
+      ],
+      "firstBendMS": 78.78445833921432,
+      "landingMS": 379.63733333162963,
+      "maxOSGapMS": 25.01012501306832,
+      "primerToBendOSGapMS": 25.01012501306832,
+      "invalidOSReceiptSequences": []
+    },
+    {
+      "turn": 7,
+      "direction": "reverse",
+      "captureMS": 29.421958315651864,
+      "flatSubmissions": [
+        264
+      ],
+      "firstBendMS": 86.71941666398197,
+      "landingMS": 387.4056250206195,
+      "maxOSGapMS": 25.01016663154587,
+      "primerToBendOSGapMS": 25.01016663154587,
+      "invalidOSReceiptSequences": []
+    },
+    {
+      "turn": 8,
+      "direction": "forward",
+      "captureMS": 21.395833347924054,
+      "flatSubmissions": [
+        302
+      ],
+      "firstBendMS": 78.77979165641591,
+      "landingMS": 379.5895416405983,
+      "maxOSGapMS": 25.010208308231086,
+      "primerToBendOSGapMS": 25.010208308231086,
+      "invalidOSReceiptSequences": []
+    },
+    {
+      "turn": 9,
+      "direction": "reverse",
+      "captureMS": 27.622708294074982,
+      "flatSubmissions": [
+        340
+      ],
+      "firstBendMS": 86.07362495968118,
+      "landingMS": 386.6805832949467,
+      "maxOSGapMS": 25.01016663154587,
+      "primerToBendOSGapMS": 25.01016663154587,
+      "invalidOSReceiptSequences": []
+    }
+  ],
+  "frameStatistics": {
+    "encodeWallMS": {
+      "count": 378,
+      "minMS": 0.33216667361557484,
+      "medianMS": 2.7795624919235706,
+      "maxMS": 7.50933337258175
+    },
+    "queueUntilGPUStartMS": {
+      "count": 378,
+      "minMS": 0.10604161070659757,
+      "medianMS": 0.18943747272714972,
+      "maxMS": 1.5536249266006052
+    },
+    "GPUExecutionMS": {
+      "count": 378,
+      "minMS": 1.0516666807234287,
+      "medianMS": 3.103687515249476,
+      "maxMS": 9.208375005982816
+    },
+    "waitScheduledWallMS": {
+      "count": 378,
+      "minMS": 0.15054165851324797,
+      "medianMS": 1.283437479287386,
+      "maxMS": 2.564083319157362
+    },
+    "underlayWallMS": {
+      "count": 20,
+      "minMS": 0.007374968845397234,
+      "medianMS": 0.019937491742894053,
+      "maxMS": 0.026666675694286823
+    },
+    "presentCallWallMS": {
+      "count": 378,
+      "minMS": 0.009791692718863487,
+      "medianMS": 0.01675001112744212,
+      "maxMS": 0.03374996595084667
+    },
+    "CACommitWallMS": {
+      "count": 378,
+      "minMS": 0.0027082860469818115,
+      "medianMS": 0.03035416011698544,
+      "maxMS": 0.0895416596904397
+    },
+    "GPUEndBeforeAssignedTargetMS": {
+      "count": 378,
+      "minMS": 4.262458358425647,
+      "medianMS": 10.328708391170949,
+      "maxMS": 22.902875032741576
+    },
+    "CACommitBeforeAssignedTargetMS": {
+      "count": 378,
+      "minMS": 9.930208383593708,
+      "medianMS": 12.068791693309322,
+      "maxMS": 24.104374984744936
+    },
+    "OSCallbackToActorMS": {
+      "count": 378,
+      "minMS": 0.007916649337857962,
+      "medianMS": 4.004562506452203,
+      "maxMS": 6.391000002622604
+    },
+    "OSPresentationMinusAssignedTargetMS": {
+      "count": 376,
+      "minMS": -8.336375001817942,
+      "medianMS": 0.0013333046808838844,
+      "maxMS": 44.93874998297542
+    }
+  },
+  "initialDuplicateReason": "Only turn0 submits two flat primers. Seq0 has actual OS presentedTime0; the existing invalid-readiness branch retries unchanged progress. Seq1 is a successful retry, not unconditional duplicate work. All other turns have one primer.",
+  "zeroOSReceipts": [
+    {
+      "sequence": 0,
+      "progress": 0,
+      "OSPresentedTime": 0,
+      "GPUCommandStatus": 4
+    },
+    {
+      "sequence": 9,
+      "progress": 0.19930146304321789,
+      "OSPresentedTime": 0,
+      "GPUCommandStatus": 4
+    }
+  ],
+  "conclusions": [
+    "All ten full-sheet captures (3,983,184 pixels each) take18.231–31.155ms, exceeding first-bend16.667ms before a drawable is rendered. capture(sheet) uses UIKit drawHierarchy(afterScreenUpdates:true); phase does not separate snapshot rendering, flush, conversion or allocation.",
+    "Two initial flat frames only on turn0: seq0 returned OS0, which existing readiness handler retries at the unchanged progress. Seq1 is the successful retry, not an unconditional second primer. Every other turn has one initial flat submission.",
+    "Controller holds bending until the first actual flat receipt, rebases animation.start to that receipt, and advances only on the next Metal display callback. This serial barrier corresponds to25.010–33.347ms primer-to-first-bend intervals. It is a safety rule, not evidence that it can simply be removed.",
+    "All378 recorded GPU completions are at least4.262ms before their assigned target, and CA commits at least9.930ms early. Underlay/present/CA callback wall work is tens of microseconds, not the dominant observed startup/cadence delay.",
+    "Turn3 and5 primers display20.054/44.939ms after assigned targets despite early GPU and CA commit; their additional compositor delay is not causally explained by this record.",
+    "OS0 is preserved for seq0 andseq9. Seq9 changes progress and is not a primer; one dropped/zero frame can coincide with an8.337ms valid-OS gap because later content displayed early. No zero receipt is discarded from acceptance.",
+    "CPU/thread duty, photon latency and physical FPS are not measured. encode/wait values are wall intervals. Instrumentation may add overhead."
+  ],
+  "unresolved": [
+    "Why the first flat seq0 and changing seq9 received OS0 despite successful GPU commands.",
+    "Why turn3/5 flat receipts were20.054/44.939ms later than assigned target despite early GPU/CA work.",
+    "Additional later changing-frame gaps16.673ms(turn1),12.505ms(turn4/5)."
+  ],
+  "open": "All strict first-response and cadence budgets remain open;10/10 landing checks alone do not pass strict10.",
+  "rawManifestSHA256": "0fd4da605e6a024ece27d9567e735db26b169cc6befc2fdd31468efa86552d85"
+}

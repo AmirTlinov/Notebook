@@ -43,7 +43,7 @@ struct NotebookMacCanvas: View {
             MacReadingSurface(presence: presence, documentLayout: $documentLayout)
           } else if let cohort {
             elements(workset.elements, presence: presence, cohort: cohort)
-            SpatialInkSurfaceView(surface: .board(presence.boardID), journal: cohort.liveData.ink,
+            SpatialInkSurfaceView(surface: .board(presence.boardID), journal: cohort.liveData.ink, ordered:cohort.liveData.orderedInk[.board(presence.boardID)] ?? .init(),
               camera: presence.camera, viewport: viewport).allowsHitTesting(false)
             items(workset.items, presence: presence, cohort: cohort)
           } else { ProgressView("Подготовка пространства…") }
@@ -52,11 +52,17 @@ struct NotebookMacCanvas: View {
             let rect = NotebookAttentionProjection.editingFrame(reference, model: model, presence: presence) {
             MacElementControls(reference: reference, frame: rect, scale: presence.camera.scale)
           }
-          if model.selectionSession.elements.count > 1 {
-            VStack { HStack {
-              Button("Сгруппировать") { model.groupSelectedElements() }.disabled(!model.canGroupSelectedElements)
-              Button("Снять выделение") { model.clearSelection() }
-            }.padding(8).background(.regularMaterial,in:RoundedRectangle(cornerRadius:8));Spacer() }.padding()
+          if model.selectionSession.count>1 || !model.selectionSession.ink.isEmpty,
+            let frames=NotebookAttentionProjection.selectionFrames(model:model,presence:presence),!frames.isEmpty {
+            if model.canTransformSelection {
+              MacElementControls(reference:nil,selectionID:model.selectionSession.id,
+                frame:frames.reduce(CGRect.null) { $0.union($1) },scale:presence.camera.scale)
+            } else {
+              VStack { HStack {
+                Button("Удалить") { model.deleteSelectedContent() }.disabled(!model.canDeleteSelection)
+                Button("Снять выделение") { model.clearSelection() }
+              }.padding(8).background(.regularMaterial,in:RoundedRectangle(cornerRadius:8));Spacer() }.padding()
+            }
           }
           if let cue = model.actionCue {
             Text(cue).padding(12).background(.regularMaterial, in: Capsule()).allowsHitTesting(false)

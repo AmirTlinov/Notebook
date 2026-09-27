@@ -7,6 +7,7 @@ struct AgentOverlayView: View {
 
   let page:PageDocument
   let renderingScale: Double
+  var preparedDisplay:NotebookPageGraphicDisplay? = nil
   private var pageID:UUID { page.id }
   private var pageSize:PageSize { page.size }
   let allowsInteraction: Bool
@@ -22,7 +23,7 @@ struct AgentOverlayView: View {
   @State private var readiness = AgentOverlayReadiness()
   @State private var readinessID = UUID()
 
-  private var display:NotebookPageGraphicDisplay { model.pageGraphicDisplay(page,in:visibleRegion) }
+  private var display:NotebookPageGraphicDisplay { preparedDisplay ?? model.pageGraphicDisplay(page,in:visibleRegion) }
 
   private var paintedErasures: [String: [InkElementErasure]] {
     #if os(iOS)
@@ -30,6 +31,11 @@ struct AgentOverlayView: View {
     #else
     model.elementErasures(on: .page(pageID))
     #endif
+  }
+
+  private func ordered(_ id:String,graph:NotebookGraphicGraph)->Bool {
+    guard let node=graph.node(id),node.placement.parentID == nil else {return false}
+    return node.graphic.sourceInkContactID != nil
   }
 
   private func capturePolicy(for element: AgentElement, presentation:NotebookElementPresentation) -> AgentSnapshotPolicy {
@@ -65,7 +71,7 @@ struct AgentOverlayView: View {
     // Requirements and receipts describe this tree, not a later model version.
     // Image completion only updates exact facts in the non-observable ledger.
     let expected = Dictionary(uniqueKeysWithValues: visible.map { element in
-      (element.id, NotebookInkMaterialView.Content.required(graphic: graph.nodes[element.id]?.graphic,
+      (element.id, ordered(element.id,graph:graph) ? []:NotebookInkMaterialView.Content.required(graphic: graph.nodes[element.id]?.graphic,
         layout: presentations[element.id] == nil ? display.layouts[element.id] : nil,
         erasures: erasures[element.id] ?? [], appearance: appearances[element.id]))
     })
@@ -88,18 +94,38 @@ struct AgentOverlayView: View {
           elementID: element.id
         )
         let interactiveReference = InteractiveElementReference.page(pageID: pageID, elementID: element.id)
-        let layout = display.layouts[element.id]
+        #if os(iOS)
+        let canHost=allowsInteraction && inputEnabled && model.presence?.notebookPageID == pageID
+        let held=canHost ? model.selectedGraphicHosts.heldMember(reference) : nil
+        let heldSelectionID=canHost ? model.selectedGraphicHosts.selectionID(for:reference) : nil
+        #else
+        let held:NotebookGraphicSelection.Member?=nil
+        let heldSelectionID:UUID?=nil
+        #endif
+        let targetLayout=display.layouts[element.id]
+        let targetGraphic=graph.nodes[element.id]?.graphic
+        let layout = held?.layout ?? targetLayout
+        let graphic=held?.graphic ?? targetGraphic
         let presentation=presentations[element.id]
         let frame = layout?.frame ?? presentation?.frame ?? model.elementPresentationFrame(reference, fallback: element.frame)
+        let targetFrame=targetLayout?.frame ?? frame
+        let selectedHostID=graphic?.sourceInkContactID == nil && graphic != nil ? heldSelectionID : nil
+        #if os(iOS)
+        let selectedTextHostID=element.kind == .nativeText &&
+          (!model.selectionSession.ink.isEmpty || model.selectedGraphicHosts.heldSelectionID(reference) != nil)
+          ? heldSelectionID : nil
+        #else
+        let selectedTextHostID:UUID?=nil
+        #endif
         let cuts = erasures[element.id] ?? []
         let appearance = appearances[element.id]
         let erased = appearance?.state == .erased
-        let paintsGraphic=graph.nodes[element.id]?.graphic != nil
+        let paintsGraphic=graphic != nil
         EditableElementContainer(reference: reference) {
           NotebookPlacedElement(presentation:presentation) {
           Group {
-          if let graphic = graph.nodes[element.id]?.graphic {
-            NotebookGraphicElementView(graphic: graphic, reference: reference, layout: layout,erasures:cuts,appearance:appearance)
+          if let graphic {
+            NotebookGraphicElementView(graphic: graphic, reference: reference, layout: layout,erasures:cuts,appearance:appearance,paintsMeasuredBody:!ordered(element.id,graph:graph))
           } else if element.kind == .nativeText {
             let target=model.nativeTextTarget(reference)
             NotebookNativeTextView(source:target?.source ?? element.source,style:target?.style ?? element.textStyle ?? .standard,reference:reference,
@@ -129,11 +155,26 @@ struct AgentOverlayView: View {
           }.erased(by:presentation == nil || paintsGraphic ? [] : cuts,appearance:presentation == nil || paintsGraphic ? nil : appearance)
           }
         }
+        // Clip the authored body before it enters the movable native host.
+        // An outer SwiftUI mask would remain at the original wrapper frame
+        // and erase the body as soon as the host translates beyond it.
+        .erased(by:presentation == nil && !paintsGraphic ? cuts : [], appearance:presentation == nil && !paintsGraphic ? appearance : nil,transform:graph.nodes[element.id]?.graphic.transform,layout:layout)
+        .modifier(NotebookSelectedGraphicHostModifier(reference:reference,selectionID:selectedHostID,
+          size:.init(width:frame.width,height:frame.height),graphic:graphic,layout:layout,
+          targetGraphic:targetGraphic,targetLayout:targetLayout,
+          targetSize:.init(width:targetFrame.width,height:targetFrame.height),
+          targetOffset:.init(x:targetFrame.x+targetFrame.width/2-frame.x-frame.width/2,
+            y:targetFrame.y+targetFrame.height/2-frame.y-frame.height/2),
+          targetContent:selectedHostID.flatMap { _ in targetGraphic.map { target in AnyView(
+            NotebookGraphicElementView(graphic:target,reference:reference,layout:targetLayout,
+              erasures:cuts,appearance:appearance,paintsMeasuredBody:!ordered(element.id,graph:graph))
+              .frame(width:targetFrame.width,height:targetFrame.height)) } }))
+        .modifier(NotebookSelectedTextHostModifier(reference:reference,selectionID:selectedTextHostID,
+          size:.init(width:frame.width,height:frame.height)))
         .frame(
           width: frame.width,
           height: frame.height
         )
-        .erased(by:presentation == nil && !paintsGraphic ? cuts : [], appearance:presentation == nil && !paintsGraphic ? appearance : nil,transform:graph.nodes[element.id]?.graphic.transform,layout:layout)
         .environment(\.inkMaterialReadiness, .init(id:readinessID,report:{ id,content,ready in
           if readiness.recordMaterial(element.id,id:id,content:content,ready:ready) {
             readiness.publish()
@@ -143,7 +184,9 @@ struct AgentOverlayView: View {
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("agent-element-\(element.id)")
         .accessibilityHidden(erased || (!cuts.isEmpty && appearance == nil))
-        .allowsHitTesting(!erased && (cuts.isEmpty || appearance != nil))
+        // The selected native host is a painter, not a second gesture owner.
+        // Whole-selection controls and the existing input gate own the drag.
+        .allowsHitTesting(selectedHostID == nil && !erased && (cuts.isEmpty || appearance != nil))
       }
     }
     .coordinateSpace(name: NotebookManipulationSpace.material)

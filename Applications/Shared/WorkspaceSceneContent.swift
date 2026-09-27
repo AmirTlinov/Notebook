@@ -286,7 +286,7 @@ struct WorkspaceItemCoverView: View {
             .allowsHitTesting(false).opacity(portalOverlayOpacity).zIndex(1_000)
         }
       #elseif os(macOS)
-        SpatialInkSurfaceView(surface: .cover(item.id), journal: model.renderingInk(on: .cover(item.id), fallback: cohort?.liveData.ink ?? model.spatialInk))
+        SpatialInkSurfaceView(surface:.cover(item.id),journal:cohort?.liveData.ink,ordered:cohort?.liveData.orderedInk[.cover(item.id)] ?? .init())
           .allowsHitTesting(false).opacity(portalOverlayOpacity).zIndex(1_000)
       #endif
     }
@@ -378,7 +378,19 @@ struct SpatialElementContent: View {
     let appearance = model.elementErasureCache.appearance(surface:element.surface,id:element.id,graphic:nil,layout:nil,
       size:.init(width:element.basis?.size.x ?? element.frame.width,height:element.basis?.size.y ?? element.frame.height),erasures:cuts,prepares:!model.isElementErasing(element.id,on:element.surface))
     let erased = appearance?.state == .erased
-    content.erased(by:cuts,appearance:appearance)
+    #if os(iOS)
+    let reference=EditableElementReference.spatial(boardID:sourceBoardID ?? WorkspaceRoot.boardID,elementID:element.id)
+    let selectedTextHostID:UUID?=commitsState && sourceBoardID != nil && element.kind == .nativeText
+      && (!model.selectionSession.ink.isEmpty || model.selectedGraphicHosts.heldSelectionID(reference) != nil)
+      ? model.selectedGraphicHosts.selectionID(for:reference) : nil
+    #else
+    let reference=EditableElementReference.spatial(boardID:sourceBoardID ?? WorkspaceRoot.boardID,elementID:element.id)
+    let selectedTextHostID:UUID?=nil
+    #endif
+    content.modifier(NotebookSelectedTextHostModifier(reference:reference,selectionID:selectedTextHostID,
+      size:.init(width:element.basis?.size.x ?? element.frame.width,
+        height:element.basis?.size.y ?? element.frame.height)))
+      .erased(by:cuts,appearance:appearance)
       .environment(\.inkMaterialReadiness, materialReadiness)
       .accessibilityHidden(erased || (!cuts.isEmpty && appearance == nil))
       .allowsHitTesting(!erased && (cuts.isEmpty || appearance != nil))

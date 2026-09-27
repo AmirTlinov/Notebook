@@ -1,0 +1,353 @@
+{
+  "format": 1,
+  "scope": "Физический iPad138: адресная корректность отмены whole-selection и временное измерение стадий первого U10 drag. Не глобальная UX-приёмка и не сертификация latency budgets.",
+  "productionBaseCommit": "acf675f720dd090283cb13bb1d020ec36bef4694",
+  "rawEvidence": ".build/notebook-architecture-repair/evidence-2026-09-25/cancel-retirement-and-cold-phases-138-20260926T201228Z",
+  "productionSourceSHA256": "446d72fe2ce33ea8e7670f226a9b2a6fd0fad3473b7e7d02ad86733e86987a01",
+  "diagnosticSourceSHA256": "377da52048a7604443c49d3d6b0ad9aea0b1d4d4378db939c4f2a0e2581612cc",
+  "temporaryFiles": [
+    "Applications/Shared/InkCanvasView.swift",
+    "Applications/Shared/InkRasterRenderer.swift"
+  ],
+  "temporaryPatchAppliedOnlyToFrozenSnapshot": true,
+  "productionPatchSHA256": "d8283020460b01c3615987622cda3317f50fa1ceaee15bbae853bbba092e6057",
+  "diagnosticPatchSHA256": "74d79b55c89fc6c11910e01c7db85cb93df5cf62a839c8e49e8e5d73aa07cc71",
+  "decision": {
+    "cancelRetirement": "Focused native correctness PASS, including retained full picture during pressure and cancellation with a newer accepted raw contact.",
+    "coldWholeU10": "FAIL: first drag and immediate lift remain wrong; no budget increase, prewarming, clock rewrite or cold retry.",
+    "nextBoundary": "Pipeline creation is measured44.208ms, but it alone does not explain all elapsed time. MainActor delivery includes possible XCTest failure handling; do not infer production CPU cost from that interval."
+  },
+  "admission": {
+    "sourceUnchangedOriginal": true,
+    "sourceUnchangedRecovery": true,
+    "artifactsUnchangedRecovery": true,
+    "originalArtifactsUnchanged": true,
+    "builtImages": {
+      "Notebook": {
+        "sha256": "2a1e0d83d3d34fe0694fff3aa82a103fa25b539df405f1a8fdbb0dd7818f6237",
+        "uuid": "F2C54E5D-8345-3B2E-B7F2-4A9239D44A45"
+      },
+      "PlugIns/NotebookTests.xctest/NotebookTests": {
+        "sha256": "82f3aed401abdfad484a7d815e4022f1df0f9cabec24dc969b34ca0f0c9197ee",
+        "uuid": "F1EE6574-F6EC-3CD3-B48D-16C5FBAF1D64"
+      }
+    },
+    "privateBundle": "com.amirtlinov.notebook.native-test",
+    "device": "00008103-001E059934D9001E",
+    "cleanupOriginal": {
+      "bundleIdentifier": "com.amirtlinov.notebook.native-test",
+      "removed": true
+    },
+    "cleanupRecovery": {
+      "bundleIdentifier": "com.amirtlinov.notebook.native-test",
+      "removed": true
+    }
+  },
+  "groups": {
+    "coldFirstFreshProcess": {
+      "counts": {
+        "passedTests": 0,
+        "failedTests": 1,
+        "skippedTests": 0,
+        "runtimeWarnings": []
+      },
+      "exitCode": 65,
+      "selectors": [
+        "NotebookInteractionUXTests/testClosedWholeLassoRoutesRawAndAuthoredMaterialThroughTwoInstalledDragsAndCancel"
+      ],
+      "profileFlag": "--notebook-profile-documents",
+      "stages": [
+        {
+          "kind": "selectionWholeWindow",
+          "name": "whole-route-deselect",
+          "correct": true,
+          "mixedFrames": 0,
+          "observedMS": 39.01570837479085,
+          "captureDecodeMS": 24.83041665982455,
+          "budgetMS": 100,
+          "passed": true
+        },
+        {
+          "kind": "selectionWholeWindow",
+          "name": "whole-route-cancel-second",
+          "correct": true,
+          "mixedFrames": 0,
+          "observedMS": 71.98616664391011,
+          "captureDecodeMS": 24.47020832914859,
+          "budgetMS": 100,
+          "passed": true
+        },
+        {
+          "kind": "selectionWholeWindow",
+          "name": "whole-route-second-canonical-drag",
+          "correct": true,
+          "mixedFrames": 0,
+          "observedMS": 72.34316662652418,
+          "captureDecodeMS": 20.545666688121855,
+          "budgetMS": 100,
+          "passed": true
+        },
+        {
+          "kind": "selectionWholeWindow",
+          "name": "whole-route-first-lift",
+          "correct": false,
+          "mixedFrames": 0,
+          "observedMS": 21.795833366923034,
+          "captureDecodeMS": 21.076791686937213,
+          "budgetMS": 100,
+          "passed": false
+        },
+        {
+          "kind": "selectionWholeWindow",
+          "name": "whole-route-first-drag",
+          "correct": false,
+          "mixedFrames": 0,
+          "observedMS": 109.87729165935889,
+          "captureDecodeMS": 20.53262497065589,
+          "budgetMS": 100,
+          "passed": false
+        },
+        {
+          "kind": "selectionWholeWindow",
+          "name": "whole-route-closed-contour",
+          "correct": true,
+          "mixedFrames": 0,
+          "observedMS": 77.05279171932489,
+          "captureDecodeMS": 21.067458379548043,
+          "budgetMS": 100,
+          "passed": true
+        }
+      ],
+      "failureMessages": [
+        {
+          "name": "XCTAssertTrue failed",
+          "nodeType": "Failure Message",
+          "sourceLocation": {
+            "filePath": "/tmp/notebook-u10-first-drag-attribution-138/frozen-source/Applications/Tests/NotebookSelectionCompositionTests.swift",
+            "lineNumber": 286
+          }
+        },
+        {
+          "name": "XCTAssertTrue failed - Every frame includes raw material, authored peer, four controls and untouched pixels; see stage attachments",
+          "nodeType": "Failure Message",
+          "sourceLocation": {
+            "filePath": "/tmp/notebook-u10-first-drag-attribution-138/frozen-source/Applications/Tests/NotebookSelectionCompositionTests.swift",
+            "lineNumber": 339
+          }
+        }
+      ]
+    },
+    "separateRecoveryProcess": {
+      "counts": {
+        "passedTests": 2,
+        "failedTests": 0,
+        "skippedTests": 0,
+        "runtimeWarnings": []
+      },
+      "exitCode": 0,
+      "selectors": [
+        "NotebookDrawingToolsTests/testCancelledWholeMoveHoldsAuthoredPeersAndRawControlsUntilRestorationInstalls",
+        "NotebookDrawingToolsTests/testSecondWholeMoveKeepsControlsWithPixelsAndCancelPreservesNewAcceptedContact"
+      ],
+      "profileFlag": null,
+      "observations": [
+        {
+          "kind": "windowCorrectness",
+          "name": "cancelled-whole-move-atomic-restore",
+          "correct": true,
+          "observedMS": 53.341708,
+          "budgetMS": 100.0,
+          "passed": true
+        },
+        {
+          "kind": "windowCorrectness",
+          "name": "second-whole-move-cancel-keeps-new-raw",
+          "correct": true,
+          "observedMS": 52.267208,
+          "budgetMS": 250.0,
+          "passed": true
+        },
+        {
+          "kind": "windowCorrectness",
+          "name": "second-whole-move-picture-and-controls",
+          "correct": true,
+          "observedMS": 52.845542,
+          "budgetMS": 250.0,
+          "passed": true
+        },
+        {
+          "kind": "windowCorrectness",
+          "name": "first-whole-move-canonical-installed",
+          "correct": true,
+          "observedMS": 20.700167,
+          "budgetMS": 250.0,
+          "passed": true
+        }
+      ]
+    }
+  },
+  "attribution": {
+    "recordCount": 11,
+    "recordCap": 32,
+    "recordCapReached": false,
+    "pipelineBuildTasks": 1,
+    "pipelineAwaitCalls": 2,
+    "preparations": [
+      {
+        "requestID": "A4357CE5-B20E-4AA8-AEB6-712B2F6B60D3",
+        "ordinal": 1,
+        "counts": {
+          "bodyCount": "1",
+          "suppressedCount": "1",
+          "visibleRangeCount": "1",
+          "drawableCount": "1"
+        },
+        "outcomes": [
+          {
+            "ready": "true",
+            "taskCancelled": "false",
+            "identitySuperseded": "false",
+            "sourceSuperseded": "false",
+            "revisionSuperseded": "false"
+          }
+        ],
+        "wallStagesMS": {
+          "previousFrameDrain": 0.0018749851733446121,
+          "planSetup": 0.0036666751839220524,
+          "geometryIncludingPipelineAwait": 65.42324996553361,
+          "residentBufferPreparation": 0.01970835728570819,
+          "drawableAdmissionAndWait": 1.1255416902713478,
+          "packingAndEncoding": 0.1851666602306068,
+          "submissionToGPUCompletionCallback": 34.720708325039595,
+          "GPUCallbackToMainActor": 291.7947917012498,
+          "GPUActorResumeToValidatedReady": 1.6477499739266932,
+          "readyToInstall": 0.03362499410286546,
+          "installBeforePresent": 0.030333350878208876,
+          "presentAndInstallReturn": 0.019666680600494146,
+          "installToCACompletionCallback": 3.9067916222848,
+          "CACompletionToMainActor": 0.07379171438515186,
+          "installToPresentationActorCallback": 5.002833320759237,
+          "wholePreparation": 394.92333331145346,
+          "admittedToAtomicPresent": 394.98729165643454,
+          "actualGPUExecution": 33.901624963618815
+        },
+        "geometryOutsidePipelineAwaitMS": 20.996625011321157,
+        "pipelineAwaits": [
+          {
+            "buildID": "58E2BE88-C3BF-4AF3-8CF2-C6820A99FFA3",
+            "reusedTask": false,
+            "awaitWallMS": 44.42662495421246,
+            "constructionIntervals": [
+              {
+                "workerQueueWaitMS": 0.006125017534941435,
+                "libraryLookupMS": 0.1600833493284881,
+                "orderedPipelineConstructorMS": 44.20791665324941,
+                "workerWholeMS": 44.3680000025779,
+                "constructorExitToCallerResumeMS": 0.050499977078288794
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "requestID": "31CD6C99-21FF-4F74-92BA-0AD3A3247910",
+        "ordinal": 2,
+        "counts": {
+          "bodyCount": "1",
+          "suppressedCount": "1",
+          "visibleRangeCount": "0",
+          "drawableCount": "1"
+        },
+        "outcomes": [
+          {
+            "ready": "true",
+            "taskCancelled": "false",
+            "identitySuperseded": "false",
+            "sourceSuperseded": "false",
+            "revisionSuperseded": "false"
+          }
+        ],
+        "wallStagesMS": {
+          "previousFrameDrain": 0.0016666599549353123,
+          "planSetup": 0.002833374310284853,
+          "geometryIncludingPipelineAwait": 0.4433749709278345,
+          "residentBufferPreparation": 0.004166678991168737,
+          "drawableAdmissionAndWait": 3.227041626814753,
+          "packingAndEncoding": 0.10958337225019932,
+          "submissionToGPUCompletionCallback": 2.6963333366438746,
+          "GPUCallbackToMainActor": 23.734916641842574,
+          "GPUActorResumeToValidatedReady": 0.12395833618938923,
+          "readyToInstall": 0.054083357099443674,
+          "installBeforePresent": 0.013541663065552711,
+          "presentAndInstallReturn": 0.024749955628067255,
+          "installToCACompletionCallback": 3.2919583609327674,
+          "CACompletionToMainActor": 0.04374998388811946,
+          "installToPresentationActorCallback": 56.44712503999472,
+          "wholePreparation": 30.344458355102688,
+          "admittedToAtomicPresent": 30.412083375267684,
+          "actualGPUExecution": 2.1700416691601276
+        },
+        "geometryOutsidePipelineAwaitMS": 0.44062494998797774,
+        "pipelineAwaits": [
+          {
+            "buildID": "58E2BE88-C3BF-4AF3-8CF2-C6820A99FFA3",
+            "reusedTask": true,
+            "awaitWallMS": 0.0027500209398567677,
+            "constructionIntervals": null
+          }
+        ]
+      }
+    ],
+    "limitations": [
+      "Monotonic wall intervals, not thread/process CPU or FPS.",
+      "GPU callback was timestamped before its MainActor hop; first actualGPUExecution33.902ms and GPUCallbackToMainActor291.795ms are distinct.",
+      "The long first actor-delivery interval overlaps the failing XCTest observation; failure-reporting overhead is possible and not partitioned by this probe.",
+      "Later reused-task age is not construction cost; warm prepareOrdered await was0.00275ms.",
+      "Atomic canvas presentation time is not by itself the callers entire controls transaction or photon timing."
+    ]
+  },
+  "visualReview": [
+    {
+      "path": "recovery-run/cold/attachments/D667DA2C-ACC8-4828-B197-0B530191C59E.png",
+      "name": "whole-route-cancel-second-observed_0_CB0C65BA-2CCE-4EEB-833B-87A911483F86.png",
+      "sha256": "f328ec827ed3844ae25facf47b13429fca03dd96fb75bd7e6555504f69f3579a",
+      "inspection": "Reviewed by root: entire held/restored pose coherent; reported to this packaging agent."
+    },
+    {
+      "path": "recovery-run/cold/attachments/8D04588D-C501-49E1-8AA0-D851DC25782D.png",
+      "name": "whole-route-cancel-second-incomplete-0_0_E84F1B39-2499-4D9F-A13D-9CF0AB180A3F.png",
+      "sha256": "a057368533aac6246664bb91f4af50fddfd6f9db02caacf354384da502291c6c",
+      "inspection": "Reviewed by root: entire held/restored pose coherent; reported to this packaging agent."
+    },
+    {
+      "path": "recovery-run/regressions/attachments/137F6B04-7FBF-44A1-A885-FA520196E075.png",
+      "name": "cancel-pending-raw-and-authored-held_0_CE7F7ACF-4AE7-45E7-B5F8-278B36B4DB32.png",
+      "sha256": "b998d4cd3521157b1274d0f0e7e779128da30105391b62f1515eb447848e8c50",
+      "inspection": "Reviewed by root: entire held/restored pose coherent; reported to this packaging agent."
+    }
+  ],
+  "runnerRecovery": {
+    "originalBug": "commands.json is a JSON array; run.py incorrectly passed it to dictionary-only release.read_json after the cold test exited65.",
+    "originalRunnerAndOutcomePreserved": true,
+    "correction": "Recovery uses json.loads for command arrays; commands-list-reader-fix.patch records the one-line correction.",
+    "coldRepeated": false,
+    "buildRepeated": false,
+    "regressionsOnly": true,
+    "recoveryOutcome": {
+      "artifactsUnchanged": true,
+      "buildPerformed": false,
+      "coldRepeated": false,
+      "coldTestExitCode": 65,
+      "errors": [],
+      "regressionTestExitCode": 0,
+      "scope": "Original cold failure preserved; only previously unexecuted two regressions launched from the exact admitted artifact.",
+      "sourceUnchanged": true,
+      "status": "failed"
+    }
+  },
+  "openConditions": [
+    "Cold first U10 drag100ms and immediate lift correctness remain open.",
+    "No new strict20ms/global input acceptance, ordinary Release rawRedo closure, ten repetitions or30-minute acceptance is claimed."
+  ],
+  "rawManifestSHA256": "bfbe5b7ea955570c4ebf7b96a9e454e5fe0e0b300114305d8cfec19da1d5bbf7"
+}
