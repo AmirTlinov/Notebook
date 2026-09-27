@@ -319,14 +319,7 @@ final class NotebookAppModel {
   }
   private static func sameSpatialInkWindow(_ previous: SpatialInkJournal?, _ current: SpatialInkJournal?) -> Bool {
     guard let previous, let current else { return previous == nil && current == nil }
-    let before: [SpatialInkAction] = previous.actions
-    let after: [SpatialInkAction] = current.actions
-    guard before.count == after.count else { return false }
-    for index in before.indices {
-      let a = before[index], b = after[index]
-      if a.id != b.id || a.stamp != b.stamp || a.stateStamp != b.stateStamp || a.isActive != b.isActive { return false }
-    }
-    return true
+    return previous.hasSameActionStates(as: current)
   }
   private(set) var spatialInkWindow: NotebookSpatialInkWindow?
   private(set) var spatialInkHistoryStates: [UUID: NotebookSpatialInkHistoryState] = [:]
@@ -2799,7 +2792,7 @@ final class NotebookAppModel {
   /// mistaken for the surface's complete action history.
   private func setSpatialInkContribution(_ ids: Set<UUID>, domain: PencilUndoHistory.Domain,
     active: Bool, redoGate: VersionStamp? = nil) -> Bool {
-    guard let journal = spatialInk,
+    guard var journal = spatialInk,
       let source = ids.compactMap({ spatialInkHistoryStates[$0] }).filter({ state in
         state.result.isActive != active && state.result.creationStamp.actor == actorID
           && state.surfaces.contains { PencilUndoHistory.Domain(surface: $0) == domain }
@@ -2810,11 +2803,8 @@ final class NotebookAppModel {
     let prior = source.result
     let command = NotebookSpatialInkCommand.state(actionID: prior.actionID, creationStamp: prior.creationStamp,
       expectedStateStamp: prior.stateStamp, isActive: active, stateStamp: next, journalStamp: journalStamp, nativeRedo: active)
-    let actions = journal.actions.map { action in
-      action.id == prior.actionID ? SpatialInkAction(id: action.id, tool: action.tool, color: action.color,
-        spans: action.spans, stamp: action.stamp, isActive: active, stateStamp: next) : action
-    }
-    spatialInk = .init(actions: actions, stamp: journalStamp)
+    guard journal.applyState(command.expectedResult) else { return false }
+    spatialInk = journal
     spatialInkHistoryStates[prior.actionID] = .init(result: command.expectedResult, surfaces: source.surfaces)
     for surface in source.surfaces {
       guard let touched = PencilUndoHistory.Domain(surface: surface) else { continue }

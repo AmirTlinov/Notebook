@@ -361,7 +361,7 @@ final class SceneCompositionRenderer {
       width: size.width / $0.scale, height: size.height / $0.scale) }
       ?? .init(origin: .zero, width: size.width, height: size.height)
     let ink = try await source.ink(surface, bounds: bounds, orderedElements: orderedElements)
-    guard !ink.plan.isEmpty || ink.journal.actions.contains(where: { $0.isActive && !ink.plan.suppressedInkIDs.contains($0.id)
+    guard !ink.plan.isEmpty || ink.journal.orderedActions.contains(where: { $0.isActive && !ink.plan.suppressedInkIDs.contains($0.id)
       && $0.spans.contains(where: { $0.surface == surface }) }) else { return false }
     try await canvas.drawInk(surface: surface, journal: ink.journal, plan: ink.plan, camera: camera, size: size, in: frame)
     return true

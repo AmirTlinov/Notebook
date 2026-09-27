@@ -31,7 +31,8 @@ enum SpatialInkComposer {
   }
 
   private static func layers(for surface: SurfaceID, in journal: SpatialInkJournal?) -> [InkSampleRelations] {
-    (journal?.actions ?? []).filter(\.isActive).flatMap { action in
+    guard let journal else { return [] }
+    return journal.orderedActions.filter(\.isActive).flatMap { action in
       action.spans.enumerated().filter { $0.element.surface == surface }.map { index,span in
         .init(sourceID:action.id,span:index,measurements:span.samples,
           header:.init(tool:action.tool,color:action.color))

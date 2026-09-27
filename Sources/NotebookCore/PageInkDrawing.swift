@@ -49,80 +49,13 @@ final class PageInkDrawingCache: @unchecked Sendable {
   }
 }
 
-private final class PersistentMapNode<Key: Comparable & Sendable, Value: Sendable>: @unchecked Sendable {
-  let key: Key
-  let value: Value
-  let left: PersistentMapNode?
-  let right: PersistentMapNode?
-  let height: Int
-
-  init(_ key: Key, _ value: Value, left: PersistentMapNode? = nil, right: PersistentMapNode? = nil) {
-    self.key=key;self.value=value;self.left=left;self.right=right
-    height=max(left?.height ?? 0,right?.height ?? 0)+1
-  }
-
-  func value(for key: Key) -> Value? {
-    if key == self.key { return value }
-    return key < self.key ? left?.value(for:key) : right?.value(for:key)
-  }
-
-  func inserting(_ key: Key, _ value: Value) -> PersistentMapNode {
-    if key == self.key { return .init(key,value,left:left,right:right) }
-    let node: PersistentMapNode
-    if key < self.key { node = .init(self.key,self.value,left:left?.inserting(key,value) ?? .init(key,value),right:right) }
-    else { node = .init(self.key,self.value,left:left,right:right?.inserting(key,value) ?? .init(key,value)) }
-    return node.balanced()
-  }
-
-  private func balanced() -> PersistentMapNode {
-    let balance=(left?.height ?? 0)-(right?.height ?? 0)
-    if balance > 1,let left {
-      let child=(left.left?.height ?? 0) >= (left.right?.height ?? 0) ? left : left.rotatedLeft()
-      return PersistentMapNode(key,value,left:child,right:right).rotatedRight()
-    }
-    if balance < -1,let right {
-      let child=(right.right?.height ?? 0) >= (right.left?.height ?? 0) ? right : right.rotatedRight()
-      return PersistentMapNode(key,value,left:left,right:child).rotatedLeft()
-    }
-    return self
-  }
-
-  private func rotatedLeft() -> PersistentMapNode {
-    guard let right else { return self }
-    return .init(right.key,right.value,left:.init(key,value,left:left,right:right.left),right:right.right)
-  }
-
-  private func rotatedRight() -> PersistentMapNode {
-    guard let left else { return self }
-    return .init(left.key,left.value,left:left.left,right:.init(key,value,left:left.right,right:right))
-  }
-
-  func values(into result: inout [Value]) {
-    left?.values(into:&result);result.append(value);right?.values(into:&result)
-  }
-
-  func values(from lowerBound: Key, into result: inout [Value]) {
-    if key >= lowerBound {
-      left?.values(from:lowerBound,into:&result)
-      result.append(value)
-    }
-    right?.values(from:lowerBound,into:&result)
-  }
-
-  static func balanced(_ entries: [(Key,Value)], _ lower: Int, _ upper: Int) -> PersistentMapNode? {
-    guard lower < upper else { return nil }
-    let middle=lower+(upper-lower)/2,entry=entries[middle]
-    return .init(entry.0,entry.1,left:balanced(entries,lower,middle),right:balanced(entries,middle+1,upper))
-  }
-}
-
 /// Immutable roots make one accepted contact O(log history). Older page
 /// snapshots retain their roots without copying the action array.
 fileprivate final class PageInkActionCursorToken: @unchecked Sendable {}
 
 private final class PageInkActionStorage: @unchecked Sendable {
-  let order: PersistentMapNode<Int,PageInkAction>?
-  let ids: PersistentMapNode<String,Int>?
+  let order: InkActionMapNode<Int,PageInkAction>?
+  let ids: InkActionMapNode<String,Int>?
   let count: Int
   let activeCount: Int
   let maximumSequence: UInt64
@@ -137,15 +70,15 @@ private final class PageInkActionStorage: @unchecked Sendable {
     }
     let identifiers=actions.enumerated().map { ($0.element.id.uuidString.lowercased(),$0.offset) }.sorted { $0.0 < $1.0 }
     let unique=zip(identifiers,identifiers.dropFirst()).allSatisfy { $0.0.0 != $0.1.0 }
-    order=PersistentMapNode.balanced(Array(actions.enumerated().map { ($0.offset,$0.element) }),0,actions.count)
-    ids=PersistentMapNode.balanced(identifiers,0,identifiers.count)
+    order=InkActionMapNode.balanced(Array(actions.enumerated().map { ($0.offset,$0.element) }),0,actions.count)
+    ids=InkActionMapNode.balanced(identifiers,0,identifiers.count)
     count=actions.count;activeCount=actions.reduce(0) { $0+($1.isActive ? 1:0) }
     maximumSequence=actions.map(\.sequence).max() ?? 0
     cursorToken = .init();predecessorToken=nil;predecessorCount=nil
     isValid=unique && actions.allSatisfy(\.isValid)
   }
 
-  private init(order: PersistentMapNode<Int,PageInkAction>?, ids: PersistentMapNode<String,Int>?,
+  private init(order: InkActionMapNode<Int,PageInkAction>?, ids: InkActionMapNode<String,Int>?,
     count:Int,activeCount:Int,maximumSequence:UInt64,cursorToken:PageInkActionCursorToken,
     predecessorToken:PageInkActionCursorToken?,predecessorCount:Int?) {
     self.order=order;self.ids=ids;self.count=count;self.activeCount=activeCount

@@ -1,0 +1,61 @@
+{
+  "contracts": [
+    "Existing format=2 sorted JSON bytes unchanged",
+    "Cold decode invalid duplicate IDs remains invalid",
+    "Independent incoming membership/causal gate comparison retained",
+    "Missing window ID advances only clock",
+    "ABA/stale/creation/conflicting state checks",
+    "Iterator pins original immutable root",
+    "Real node allocation cost bounded by cache metadata admission"
+  ],
+  "core": {
+    "duration_seconds": 1.161,
+    "passed": 15,
+    "suites": 3,
+    "tests": 15
+  },
+  "native": {
+    "physical156": {
+      "coldFirstPencil": "FAIL, OS presentation 0; cold flush removed",
+      "pageLastPen100k": "PASS на экспериментальном cold flush source"
+    },
+    "physical157": {
+      "coldFlushRemoved": true,
+      "wholeSelection": "FAIL, first drag 112.05 ms and mixed cancel window capture; pre-existing condition"
+    }
+  },
+  "scale": {
+    "actions": 100000,
+    "append_operations": 32,
+    "append_total_seconds": 0.000307461,
+    "gate_total_seconds": 0.000232915,
+    "gate_transitions": 32,
+    "maximum_new_retained_append_nodes": 37,
+    "maximum_new_retained_gate_nodes": 17,
+    "retained_snapshots": 65,
+    "tail_undo_seconds": 1.0834e-05
+  },
+  "scope": "Адресный spatial journal; не финальная UX-приёмка",
+  "sourceSHA256": {
+    "Applications/Shared/NotebookAgentFeedbackInk.swift": "c5a5eac38ec536c9feed005010abdb34ceb3c4a26e4f0a6de282ef6a6a7d4a00",
+    "Applications/Shared/NotebookAppModel.swift": "e88499e0d15d4da160eb2c26cbafba62fc4fc65383ac1f80d7732c19d42c029d",
+    "Applications/Shared/NotebookCodeAnnotations.swift": "5bed0d314d9df3647c27d54768b088ae33d5133a86c0e6ee180ee194ff01e348",
+    "Applications/Shared/NotebookDrawingToolController.swift": "8d38f4c7726f5a246eeb73ed657c81e1e2835e57cdb7156c2e68dfa761f05a4e",
+    "Applications/Shared/NotebookLassoSelection.swift": "a058632490cf4b83b7581cd04cc88dd86c32abed6cb20e4bf7d90fc26773bcb8",
+    "Applications/Shared/SceneCompositionRenderer.swift": "4b15f0063c0998dc1bf13b52053f526cf45cdf34b9b868c325c39656bf5644f7",
+    "Applications/Shared/SceneCompositionSource.swift": "1d2a2bddcb63acfd4d519937e0f13a6bb759a6a1762595c9133309b777ce68a0",
+    "Applications/Shared/SpatialInkComposer.swift": "432de6313bd0e3a2b1363a3c134cb9165df498d75ba8f20ab0a74d89809e8d19",
+    "Applications/Shared/SpatialInkMesh.swift": "caf2f781b9badfc60202140cc963a56f2ded5204292040ed707928da75004b89",
+    "Applications/Shared/SpatialInkSurfaceView.swift": "01037d37b49f6bb999bbfa676f39ded46af1f791f782c9c52b2a4633aaf54412",
+    "Applications/iPad/NotebookCodeInkView.swift": "db4c6ecca71795a65edda3e53e8196c20e2a3d0b208289fc65a726ae131961ae",
+    "Applications/iPad/SpatialInkCanvas.swift": "4bb991bd1fc96308bad81cdc88099a19f46eec511592f0ad7f996262304b943e",
+    "Sources/NotebookCore/InkActionMap.swift": "ef0a78440c77de209cbccddc13a117c1e8781b42549b1c5db5d0d09b0a073d6f",
+    "Sources/NotebookCore/InkElementTarget.swift": "c7b4c00bd55dbce6fb7e4a400ff37afedbfebe653c4f7ce2b6a5ae7126d25f86",
+    "Sources/NotebookCore/NotebookGraphic.swift": "2724077061b6b7aa6d5a777f6e83052fab40521d98a4421368193b971824313d",
+    "Sources/NotebookCore/NotebookSpatialInkWindow.swift": "40cd533c177c2494fb883c54d5fd79b65360e3beaec26b3db4f6039efea7d0f1",
+    "Sources/NotebookCore/PageInkDrawing.swift": "54620856db1fe626c0b39a727e39ec121974b89cacc1bd0b6190b66caeeed4e7",
+    "Sources/NotebookCore/SpatialInkActionStorage.swift": "03d73a5b854ff8bb9b2b121afc97b3c81e472941da42f3c3ce2cd0c179b2d250",
+    "Sources/NotebookCore/SpatialInkJournal.swift": "54844f73598e3cb13c714dd57074aa10f24d00458f254d68eef72cdd07dc3879",
+    "Tests/NotebookCoreTests/SpatialInkJournalTests.swift": "1c104015db7f19081572f31e6a6d8c8a2ca9931ec266ea4ed00c6e6924bb1324"
+  }
+}

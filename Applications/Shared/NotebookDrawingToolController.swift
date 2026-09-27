@@ -275,7 +275,7 @@ final class NotebookDrawingToolController {
           delta:spatialSelection.delta,graph:graph) else { return nil }
       let revision=model.lassoMembershipRevision
       raw = .spatial(journal,suppression.ids,membershipRevision:revision)
-      lassoSpatialSourceIDs=Set(journal.actions.lazy.filter { $0.spans.contains { $0.surface == address.surface } }.map(\.id))
+      lassoSpatialSourceIDs=Set(journal.orderedActions.lazy.filter { $0.spans.contains { $0.surface == address.surface } }.map(\.id))
     }
     let claims=Set(model.pendingModelGraphics.filter { $0.surface == address.surface }.flatMap { $0.graphic.sourceInkIDs })
     let key=raw.cacheKey(surface:address.surface)

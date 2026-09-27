@@ -253,7 +253,7 @@ final class NotebookCodeAnnotations {
   }
   @discardableResult
   private static func setState(_ journal: inout SpatialInkJournal, id: UUID, active: Bool, stamp: VersionStamp) -> Bool {
-    guard let old = journal.actions.first(where: { $0.id == id }) else { return false }
+    guard let old = journal.action(id: id) else { return false }
     let changed = SpatialInkAction(id: old.id, tool: old.tool, color: old.color, spans: old.spans,
       stamp: old.stamp, isActive: active, stateStamp: stamp)
     return journal.merge(.init(actions: [changed], stamp: max(journal.stamp, stamp)))

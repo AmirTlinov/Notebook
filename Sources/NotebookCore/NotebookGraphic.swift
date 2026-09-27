@@ -527,7 +527,7 @@ extension PageInkDrawing {
 extension SpatialInkJournal {
   public func presenting(excluding ids: Set<UUID>) -> Self {
     guard !ids.isEmpty else { return self }
-    return .init(actions: actions.filter { !ids.contains($0.id) }, stamp: stamp)
+    return .init(actions: orderedActions.filter { !ids.contains($0.id) }, stamp: stamp)
   }
 }
 

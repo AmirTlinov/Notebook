@@ -309,7 +309,7 @@ actor SceneCompositionSource {
     }
     guard candidates.count <= 8192 else { throw SceneRenderError.resourceLimit }
     let candidateIDs = Set(candidates.values.compactMap { $0.element.graphic?.sourceInkContactID })
-    let sourceIDs = Set(journal.actions.lazy.filter { action in action.spans.contains { $0.surface == surface } }.map(\.id)).union(candidateIDs)
+    let sourceIDs = Set(journal.orderedActions.lazy.filter { action in action.spans.contains { $0.surface == surface } }.map(\.id)).union(candidateIDs)
     let presentation: NotebookGraphicPresentation
     var keys: [UUID: NotebookInkPaintKey] = [:]
     switch origin {
@@ -346,7 +346,8 @@ actor SceneCompositionSource {
       let ids = Set(board.elements.lazy.filter { $0.surface == surface }.map(\.id))
       presentation = .init(board.graphicPresentationCandidates.filter { ids.contains($0.id) })
       if !candidateIDs.isEmpty {
-        for action in source.actions where candidateIDs.contains(action.id) && action.spans.contains(where: { $0.surface == surface }) {
+        for id in candidateIDs {
+          guard let action = source.action(id: id), action.spans.contains(where: { $0.surface == surface }) else { continue }
           keys[action.id] = .spatial(stamp: action.stamp, id: action.id)
         }
       }
@@ -465,7 +466,7 @@ actor SceneCompositionSource {
         // descendants own backing; no invisible ancestor competes for pixels.
         let referenceRoot = plan.rootBoardID
         let basis = try store.referenceBasis(rootBoardID: referenceRoot,
-          targets: targets.sorted { $0.key < $1.key }, surfaces: replaceable, inkActionIDs: Set(ink.actions.map(\.id)),
+          targets: targets.sorted { $0.key < $1.key }, surfaces: replaceable, inkActionIDs: Set(ink.orderedActions.map(\.id)),
           liveOwners: plan.presentedOwners.map { owner in
             switch owner.id {
             case .item(let id): return .item(boardID: owner.plane.boardID, id: id)
@@ -482,7 +483,7 @@ actor SceneCompositionSource {
       }
     case .values(_, _, let journal):
       let wanted = Set(surfaces)
-      let ink = SpatialInkJournal(actions: journal.actions.filter { $0.spans.contains { wanted.contains($0.surface) } }, stamp: journal.stamp)
+      let ink = SpatialInkJournal(actions: journal.orderedActions.filter { $0.spans.contains { wanted.contains($0.surface) } }, stamp: journal.stamp)
       let ordered = try liveOrderedInk(surfaces: surfaces, frame: frame, journal: ink)
       return .init(documents: [:], states: [:], pages: [:], ink: ink,
         suppressedInkIDs: ordered.values.reduce(into: Set<UUID>()) { $0.formUnion($1.suppressedInkIDs) }, orderedInk: ordered,
@@ -533,8 +534,8 @@ actor SceneCompositionSource {
     let liveItems = covers(oldPlan).intersection(covers(plan))
     let surfaces = Set(oldPlan.inkBoardIDs.intersection(plan.inkBoardIDs).map(SurfaceID.board)
       + liveItems.map(SurfaceID.cover))
-    let oldActions = Dictionary(uniqueKeysWithValues: oldData.ink.actions.map { ($0.id, $0) })
-    let actions = Dictionary(uniqueKeysWithValues: data.ink.actions.map { ($0.id, $0) })
+    let oldActions = Dictionary(uniqueKeysWithValues: oldData.ink.orderedActions.map { ($0.id, $0) })
+    let actions = Dictionary(uniqueKeysWithValues: data.ink.orderedActions.map { ($0.id, $0) })
     for record in records where record.beforeHash != record.afterHash {
       let address = record.address
       // Root ink carries only format and journal stamp. Every changed action

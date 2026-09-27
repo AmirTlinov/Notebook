@@ -70,7 +70,7 @@ enum NotebookLassoInkSource: Sendable {
       return try Prepared(revision:revision,entries:Self.pageEntries(actions),pageCursor:cursor,
         preparationActionCount:actions.count,surface:surface,origin:origin,excluding:suppressed)
     case .spatial(let journal,_,_):
-      let entries:[Prepared.Entry] = journal.actions.filter(\.isActive).compactMap { action in
+      let entries:[Prepared.Entry] = journal.orderedActions.filter(\.isActive).compactMap { action in
           let spans=action.spans.enumerated().filter { $0.element.surface == surface }.map { index,span in
             InkSampleRelations(sourceID:action.id,span:index,measurements:span.samples,
               header:.init(tool:action.tool,color:action.color))
@@ -81,7 +81,7 @@ enum NotebookLassoInkSource: Sendable {
         }
       if let previous,let updated=try Prepared(revision:revision,entries:entries,surface:surface,
         origin:origin,excluding:suppressed,reusing:previous) { return updated }
-      return try Prepared(revision:revision,entries:entries,preparationActionCount:journal.actions.count,
+      return try Prepared(revision:revision,entries:entries,preparationActionCount:journal.actionCount,
         surface:surface,origin:origin,excluding:suppressed)
     }
   }

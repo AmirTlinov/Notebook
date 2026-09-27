@@ -140,11 +140,11 @@ final class SpatialInkSurfaceRegistry {
           let journal = liveData.ink
           let ordered=liveData.orderedInk[surface] ?? .init()
           let suppressed = liveData.suppressedInkIDs.isEmpty ? Set<UUID>() : liveData.suppressedInkIDs.intersection(
-            journal.actions.filter { $0.spans.contains { $0.surface == surface } }.map(\.id))
+            journal.orderedActions.filter { $0.spans.contains { $0.surface == surface } }.map(\.id))
           let worker = Task.detached(priority: .userInitiated) {
             try Task.checkCancellation()
             let source = try installed?.reconciled(with: journal)
-              ?? SpatialInkJournal(actions: journal.actions.filter { $0.spans.contains { $0.surface == surface } }, stamp: journal.stamp)
+              ?? SpatialInkJournal(actions: journal.orderedActions.filter { $0.spans.contains { $0.surface == surface } }, stamp: journal.stamp)
             // Baseline IDs prove the addressed read behind a capture, not
             // paint. An echoed tail or another equal window must not rebuild
             // the same mesh solely because that provenance moved to SQL.

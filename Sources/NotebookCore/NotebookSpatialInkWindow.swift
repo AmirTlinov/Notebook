@@ -13,7 +13,7 @@ public struct NotebookSpatialInkWindow: Sendable {
 
   public func covers(_ requested: [SurfaceID: WorkspaceSpatialBounds], pins: Set<UUID> = [], elements: [SurfaceID: [String]] = [:]) -> Bool {
     elements.allSatisfy { Set($0.value).isSubset(of: elementIDs[$0.key] ?? []) }
-      && pins.isSubset(of: Set(journal.actions.map(\.id))) && requested.allSatisfy { surface, bounds in
+      && pins.allSatisfy({ journal.action(id: $0) != nil }) && requested.allSatisfy { surface, bounds in
       coverage[surface]?.contains(bounds) == true
     }
   }

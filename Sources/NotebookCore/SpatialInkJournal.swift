@@ -162,20 +162,57 @@ public struct SpatialInkJournal: Codable, Equatable, Sendable {
   public static let formatVersion = 2
 
   public let format: Int
-  public private(set) var actions: [SpatialInkAction]
+  private(set) var storage: SpatialInkActionStorage
+  public var actions: [SpatialInkAction] { storage.actions }
+  public var orderedActions: some Sequence<SpatialInkAction> & Sendable { storage.orderedActions }
+  public var actionCount: Int { storage.count }
+  /// Conservative retained metadata for both immutable nodes per action:
+  /// value, UUID/position, child pointers, heights, object headers and alignment.
+  /// Shared roots are intentionally charged to each retaining cache entry.
+  public var retainedMetadataBytes: Int { 128 + actionCount * (MemoryLayout<SpatialInkAction>.stride + 128) }
   public private(set) var stamp: VersionStamp
 
   public init(actions: [SpatialInkAction] = [], stamp: VersionStamp) {
     format = Self.formatVersion
-    self.actions = actions
+    storage = .init(actions)
     self.stamp = stamp
     precondition(isValid)
+  }
+
+  public func action(id: UUID) -> SpatialInkAction? { storage.action(id) }
+
+  /// Source membership and causal gates, excluding the aggregate journal clock.
+  /// Warm accepted changes are compared without enumerating their history.
+  public func hasSameActionStates(as other: Self) -> Bool {
+    storage.hasSameActionStates(as: other.storage)
+  }
+
+  public func hasSameActions(as other: Self) -> Bool {
+    storage === other.storage || (actionCount == other.actionCount && orderedActions.elementsEqual(other.orderedActions))
+  }
+
+  private enum CodingKeys: String, CodingKey { case format, actions, stamp }
+  public init(from decoder: Decoder) throws {
+    let values = try decoder.container(keyedBy: CodingKeys.self)
+    format = try values.decode(Int.self, forKey: .format)
+    storage = .init(try values.decode([SpatialInkAction].self, forKey: .actions))
+    stamp = try values.decode(VersionStamp.self, forKey: .stamp)
+  }
+  public func encode(to encoder: Encoder) throws {
+    var values = encoder.container(keyedBy: CodingKeys.self)
+    try values.encode(format, forKey: .format)
+    try values.encode(actions, forKey: .actions)
+    try values.encode(stamp, forKey: .stamp)
+  }
+  public static func == (left: Self, right: Self) -> Bool {
+    left.format == right.format && left.stamp == right.stamp
+      && left.hasSameActions(as: right)
   }
 
   /// Active pen actions retain editable content even when a later eraser
   /// covers their pixels. Undo must remain able to recover that content.
   public func containsEditableInk(on surface: SurfaceID) -> Bool {
-    actions.contains { action in
+    orderedActions.contains { action in
       action.isActive && action.tool == .pen
         && action.spans.contains { span in
           span.surface == surface && span.samples.hasVisibleInk
@@ -191,7 +228,7 @@ public struct SpatialInkJournal: Codable, Equatable, Sendable {
     actor: UUID,
     id: UUID = UUID()
   ) -> SpatialInkAction? {
-    guard !actions.contains(where: { $0.id == id }),
+    guard storage.action(id) == nil,
       !spans.isEmpty,
       let next = stamp.advanced(by: actor)
     else { return nil }
@@ -202,7 +239,7 @@ public struct SpatialInkJournal: Codable, Equatable, Sendable {
       spans: spans,
       stamp: next
     )
-    actions.append(action)
+    storage = storage.appending(action)
     stamp = next
     return action
   }
@@ -218,10 +255,30 @@ public struct SpatialInkJournal: Codable, Equatable, Sendable {
   }
 
   private mutating func setActive(_ active:Bool,id:UUID,actor:UUID)->Bool {
-    guard let index = actions.firstIndex(where: { $0.id == id }),
-      actions[index].isActive != active, let next = stamp.advanced(by: actor) else { return false }
-    guard actions[index].setActive(active, actor: actor) else { return false }
+    guard var action = storage.action(id), action.isActive != active,
+      let next = stamp.advanced(by: actor), action.setActive(active, actor: actor) else { return false }
+    storage = storage.replacing(action)
     stamp = next
+    return true
+  }
+
+  /// Publish the exact gate chosen by an addressed native command. An absent
+  /// action is outside this geometry window: advance its clock, not its bodies.
+  @discardableResult
+  public mutating func applyState(_ result: NotebookSpatialInkResult) -> Bool {
+    guard result.creationStamp.counter <= VersionStamp.maximumCounter,
+      result.stateStamp >= result.creationStamp, result.journalStamp >= result.stateStamp,
+      result.journalStamp.counter <= VersionStamp.maximumCounter else { return false }
+    if let action = storage.action(result.actionID) {
+      guard action.stamp == result.creationStamp, result.stateStamp >= action.stateStamp else { return false }
+      if result.stateStamp == action.stateStamp {
+        guard result.isActive == action.isActive else { return false }
+      } else {
+        storage = storage.replacing(.init(id: action.id, tool: action.tool, color: action.color,
+          spans: action.spans, stamp: action.stamp, isActive: result.isActive, stateStamp: result.stateStamp))
+      }
+    }
+    stamp = max(stamp, result.journalStamp)
     return true
   }
 
@@ -230,20 +287,22 @@ public struct SpatialInkJournal: Codable, Equatable, Sendable {
     actor: UUID,
     touching surface: SurfaceID? = nil
   ) -> SpatialInkAction? {
-    guard let index = actions.lastIndex(where: { action in
+    guard var action = storage.order?.last(where: { action in
       action.isActive
         && (surface == nil || action.spans.contains { $0.surface == surface })
     }), let next = stamp.advanced(by: actor)
     else { return nil }
-    guard actions[index].setActive(false, actor: actor) else { return nil }
+    guard action.setActive(false, actor: actor) else { return nil }
+    storage = storage.replacing(action)
     stamp = next
-    return actions[index]
+    return action
   }
 
   @discardableResult
   public mutating func merge(_ other: Self) -> Bool {
     guard other.isValid else { return false }
     var changed = false
+    var actions = self.actions
     var byID = Dictionary(uniqueKeysWithValues: actions.enumerated().map {
       ($0.element.id, $0.offset)
     })
@@ -261,6 +320,7 @@ public struct SpatialInkJournal: Codable, Equatable, Sendable {
         ? first.id.uuidString < second.id.uuidString
         : first.stamp < second.stamp
     }
+    storage = .init(actions)
     if stamp < other.stamp {
       stamp = other.stamp
       changed = true
@@ -271,9 +331,8 @@ public struct SpatialInkJournal: Codable, Equatable, Sendable {
   public var isValid: Bool {
     guard format == Self.formatVersion,
       stamp.counter <= VersionStamp.maximumCounter,
-      actions.allSatisfy(\.isValid)
+      storage.isValid
     else { return false }
-    let ids = actions.map(\.id)
-    return Set(ids).count == ids.count
+    return true
   }
 }

@@ -29,7 +29,8 @@ struct SpatialInkInstalledSource: Sendable {
 
   /// Only the persistence worker resolves the retained tail and exact records.
   func referenceInk() throws -> NotebookReferenceInk {
-    var actions = Dictionary(uniqueKeysWithValues: baseline.actions.filter { $0.spans.contains { $0.surface == surface } }.map { ($0.id, $0) })
+    var actions = Dictionary(uniqueKeysWithValues: baseline.orderedActions.filter { $0.spans.contains { $0.surface == surface } }.map { ($0.id, $0) })
+    let baselineIDs = Set(actions.keys)
     for action in finished where action.spans.contains(where: { $0.surface == surface }) {
       if let previous = actions[action.id], previous != action {
         throw CollaborationError("capture_source_changed", "Один контакт получил несовместимые источники чернил.")
@@ -37,14 +38,14 @@ struct SpatialInkInstalledSource: Sendable {
       actions[action.id] = action
     }
     return try .init(surface: surface, actions: Array(actions.values),
-      baselineActionIDs: Set(baseline.actions.filter { $0.spans.contains { $0.surface == surface } }.map(\.id)))
+      baselineActionIDs: baselineIDs)
   }
 
   /// Runs on the mesh worker. Canonical undo wins by the journal's existing
   /// causal rule; a finished local contact not yet echoed by SQL is retained.
   /// The old baseline is not merged back into a newly read source.
   func reconciled(with journal: SpatialInkJournal) throws -> SpatialInkJournal {
-    let incoming = journal.actions.filter { $0.spans.contains { $0.surface == surface } }
+    let incoming = journal.orderedActions.filter { $0.spans.contains { $0.surface == surface } }
     let byID = Dictionary(uniqueKeysWithValues: incoming.map { ($0.id, $0) })
     for action in finished {
       if let other = byID[action.id],
@@ -188,7 +189,7 @@ struct SpatialInkMesh: Sendable {
       total=sum.partialValue
     }
     let area=CGRect(x:0,y:0,width:viewport.x,height:viewport.y).insetBy(dx:-1,dy:-1)
-    for action in journal.actions where action.isActive && !suppressedInkIDs.contains(action.id) {
+    for action in journal.orderedActions where action.isActive && !suppressedInkIDs.contains(action.id) {
       try Task.checkCancellation()
       for (index,span) in action.spans.enumerated() where span.surface == surface {
         let origin=span.samples.first?.worldPoint.map {WorldPoint(tileX:$0.tileX,tileY:$0.tileY,localX:0,localY:0)}
@@ -214,6 +215,7 @@ struct SpatialInkMesh: Sendable {
     return total
   }
   static func prepare(surface: SurfaceID,journal: SpatialInkJournal?,suppressedInkIDs: Set<UUID> = []) throws -> Self {
+    guard let journal else { return .init(batches: []) }
     var batches:[Batch]=[],parts:[Batch.Part]=[],tool: SpatialInkTool?,projection: Projection?
     var nodes:[SpatialInkGeometry.Node]=[],chunks:[Chunk]=[]
     var actionRanges:[UUID:[ActionRange]]=[:],batchChunks=0,paintRanges:[PaintRange]=[]
@@ -236,7 +238,7 @@ struct SpatialInkMesh: Sendable {
       guard let tool,let projection else { return }
       sealPrepared();batches.append(.init(tool:tool,projection:projection,parts:parts,paintRanges:paintRanges));parts=[];batchChunks=0;paintRanges=[]
     }
-    for action in journal?.actions ?? [] where action.isActive && !suppressedInkIDs.contains(action.id) {
+    for action in journal.orderedActions where action.isActive && !suppressedInkIDs.contains(action.id) {
       try Task.checkCancellation()
       for (spanIndex,span) in action.spans.enumerated() where span.surface == surface {
         let origin=span.samples.first?.worldPoint.map { WorldPoint(tileX:$0.tileX,tileY:$0.tileY,localX:0,localY:0) }
@@ -324,14 +326,14 @@ final class SpatialInkMeshCache {
   fileprivate func store(_ mesh: SpatialInkMesh, versions: [ActionVersion],
     surface: SurfaceID, journal: SpatialInkJournal?) {
     if let old = entries.removeValue(forKey: surface) { retainedBytes -= old.cost }
-    let sourceBytes = journal?.actions.reduce(0) { total, action in
+    let sourceBytes = journal?.orderedActions.reduce(0) { total, action in
       total + action.spans.reduce(0) { $0 + $1.samples.payloadBytes }
     } ?? 0
     // Include canonical source retained for reconciliation, relative metadata,
     // and any explicitly required full normalization; visible caches own theirs.
     let cost = mesh.auxiliaryBytes
       + sourceBytes
-      + (journal?.actions.count ?? 0) * MemoryLayout<SpatialInkAction>.stride
+      + (journal?.retainedMetadataBytes ?? 0)
     guard capacity > 0, cost <= byteLimit else { return }
     while entries.count >= capacity || retainedBytes + cost > byteLimit {
       guard let oldest = entries.min(by: { $0.value.access < $1.value.access }) else { break }
@@ -358,7 +360,7 @@ final class SpatialInkMeshPreparation {
 
   @discardableResult
   func update(surface: SurfaceID, journal: SpatialInkJournal?, apply: @escaping @MainActor (SpatialInkMesh?, SpatialInkJournal?) -> Void) -> Bool {
-    // Array equality takes its shared-storage fast path on camera-only frames;
+    // Root equality takes its shared-storage fast path on camera-only frames;
     // unlike a maximum stamp it also detects independent, lower-clock merges.
     guard needsSource || self.surface != surface || self.journal != journal else { return false }
     let ownerChanged = self.surface != surface
@@ -366,7 +368,7 @@ final class SpatialInkMeshPreparation {
     self.surface = surface; self.journal = journal
     needsSource = false
     task?.cancel(); task = nil
-    if let journal, journal.actions.isEmpty {
+    if let journal, journal.actionCount == 0 {
       versions = []
       let mesh = SpatialInkMesh(batches: [])
       cache.store(mesh, versions: [], surface: surface, journal: journal)
@@ -385,8 +387,8 @@ final class SpatialInkMeshPreparation {
     }
     let worker = Task.detached(priority: .userInitiated) {
       try Task.checkCancellation()
-      let versions = (journal?.actions ?? []).filter { $0.isActive && $0.spans.contains { $0.surface == surface } }
-        .map { SpatialInkMeshCache.ActionVersion(id: $0.id, stamp: $0.stamp, state: $0.stateStamp) }
+      let versions = journal?.orderedActions.filter { $0.isActive && $0.spans.contains { $0.surface == surface } }
+        .map { SpatialInkMeshCache.ActionVersion(id: $0.id, stamp: $0.stamp, state: $0.stateStamp) } ?? []
       let mesh: SpatialInkMesh
       if let cached, versions == cached.versions { mesh = cached.mesh }
       else { mesh = try SpatialInkMesh.prepare(surface: surface, journal: journal) }

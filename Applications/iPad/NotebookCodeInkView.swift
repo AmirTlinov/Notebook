@@ -198,7 +198,7 @@ final class NotebookCodeInkPresenter {
       do {
         let worker = Task.detached(priority: .userInitiated) {
           var ordered: [(SpatialInkAction, Double, UUID)] = []
-          for item in placements { for action in item.annotation.ink.actions where action.isActive { ordered.append((action, item.originY, item.annotation.fragment.id)) } }
+          for item in placements { for action in item.annotation.ink.orderedActions where action.isActive { ordered.append((action, item.originY, item.annotation.fragment.id)) } }
           ordered.sort { $0.0.stamp == $1.0.stamp ? $0.0.id.uuidString < $1.0.id.uuidString : $0.0.stamp < $1.0.stamp }
           var batches: [SpatialInkMesh.Batch] = []
           for (action, y, id) in ordered {
@@ -216,7 +216,7 @@ final class NotebookCodeInkPresenter {
         overlay.paper.inkView.applySpatial(mesh); project(); overlay.paper.inkView.isHidden = false
         // PaperInput's value describes the represented contacts; this adapter
         // does not serialize a second drawing or replace the spatial owner.
-        let actions = placements.flatMap { $0.annotation.ink.actions }.sorted { $0.stamp < $1.stamp }.map { action in
+        let actions = placements.flatMap { $0.annotation.ink.orderedActions }.sorted { $0.stamp < $1.stamp }.map { action in
           PageInkAction(id: action.id, tool: action.tool, color: action.color,
             samples: action.spans.flatMap(\.samples), isActive: action.isActive)
         }
@@ -231,7 +231,7 @@ private struct NotebookCodeInkPlacement: Equatable, Sendable {
   let originY: Double
   static func == (lhs: Self, rhs: Self) -> Bool {
     lhs.originY == rhs.originY && lhs.annotation.fragment == rhs.annotation.fragment
-      && lhs.annotation.ink.actions == rhs.annotation.ink.actions
+      && lhs.annotation.ink.hasSameActions(as: rhs.annotation.ink)
   }
 }
 

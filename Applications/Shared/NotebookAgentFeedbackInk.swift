@@ -37,9 +37,10 @@ import SwiftUI
         else if selected != nil, action.tool == .eraser { erasures.append(geometry(action.samples)) }
       }
     } else {
-      guard model.compositionTiles.published?.liveData.suppressedInkIDs.contains(strokeID) != true else { return nil }
+      guard model.compositionTiles.published?.liveData.suppressedInkIDs.contains(strokeID) != true,
+        let journal = model.spatialInk else { return nil }
       let surface: SurfaceID = reference.target.kind == .cover ? .cover(reference.target.id) : .board(reference.target.id)
-      for action in model.spatialInk?.actions ?? [] where action.isActive {
+      for action in journal.orderedActions where action.isActive {
         for span in action.spans where span.surface == surface {
           if action.id == strokeID, action.tool == .pen { selected = geometry(span.samples,origin:reference.worldOrigin) }
           else if selected != nil, action.tool == .eraser { erasures.append(geometry(span.samples,origin:reference.worldOrigin)) }
