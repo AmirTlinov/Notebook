@@ -52,8 +52,7 @@ final class AddressedTargetRenderTests: XCTestCase {
     var (workspace, _) = try store.loadOrCreate(actor: actor, pageSize: .init(width: 100, height: 140))
     var hierarchy = try store.loadBoard(items: workspace.items)
     let item = try XCTUnwrap(workspace.createDocument(title: "Letter", actor: actor))
-    let document = DocumentDocument(id: item.id, actor: actor, paperSize: .letter,
-      blocks: [.interactive(id: "body", html: "<h1>Not this cover</h1>", javaScript: "throw Error('the document program is not its cover')")])
+    let document = DocumentTestFiles.document(id: item.id, actor: actor, contents: [.program(id: "body", html: "<h1>Not this cover</h1>", javaScript: "throw Error('the document program is not its cover')")])
     XCTAssertTrue(hierarchy.addItem(item.id, to: workspace.rootBoardID, near: .zero, actor: actor))
     try store.saveDocumentWorkspaceBundle(index: workspace, document: document,
       state: .init(id: document.id, actor: actor), board: hierarchy)
@@ -68,7 +67,7 @@ final class AddressedTargetRenderTests: XCTestCase {
     try await CurrentViewPreviewWriter.writeTarget(request, model: model)
     let receipt = try JSONDecoder().decode(TargetRenderReceipt.self, from: Data(contentsOf: store.targetReceiptURL(request.id)))
     XCTAssertEqual(receipt.status, "ready", "\(receipt.diagnostics)")
-    let size = WorkspaceItemGeometry.document(.letter)
+    let size = WorkspaceItemGeometry.uncompiledDocument
     XCTAssertEqual(receipt.pixelSize?.x, ceil(size.width * 2))
     XCTAssertEqual(receipt.pixelSize?.y, ceil(size.height * 2))
     XCTAssertTrue(model.documents.isEmpty)
@@ -293,7 +292,7 @@ final class AddressedTargetRenderTests: XCTestCase {
     var (workspace, _) = try store.loadOrCreate(actor: actor, pageSize: .init(width: 100, height: 140))
     var hierarchy = try store.loadBoard(items: workspace.items)
     let item = try XCTUnwrap(workspace.createDocument(title: "Formula", actor: actor))
-    let document = DocumentDocument(id: item.id, actor: actor, blocks: [.markdown(id: "formula", source: "$x^2$")])
+    let document = DocumentTestFiles.document(id: item.id, actor: actor, contents: [.tex(id: "formula", source: "$x^2$")])
     XCTAssertTrue(hierarchy.addItem(item.id, to: workspace.rootBoardID, near: .zero, actor: actor))
     try store.saveDocumentWorkspaceBundle(index: workspace, document: document,
       state: .init(id: document.id, actor: actor), board: hierarchy)

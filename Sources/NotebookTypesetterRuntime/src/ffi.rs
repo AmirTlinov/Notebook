@@ -1,7 +1,7 @@
 use super::{Output, Runtime};
 use std::{ffi::{CStr, c_char}, path::Path, sync::atomic::{AtomicBool, Ordering}, time::Duration};
 #[repr(C)]
-pub struct Asset { name: *const c_char, bytes: *const u8, count: usize }
+pub struct InputFile { name: *const c_char, bytes: *const u8, count: usize }
 pub struct ResultHandle(Result<Output, String>);
 unsafe fn string<'a>(p: *const c_char) -> Result<&'a str, String> {
     if p.is_null() { return Err("typesetter_argument".into()); }
@@ -21,27 +21,29 @@ pub unsafe extern "C" fn nb_typesetter_cancel(p: *mut AtomicBool) { if !p.is_nul
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn nb_typesetter_cancel_destroy(p: *mut AtomicBool) { if !p.is_null() { drop(unsafe { Box::from_raw(p) }); } }
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn nb_typesetter_compile(runtime: *const Runtime, bytes: *const u8, count: usize,
-    assets: *const Asset, asset_count: usize, epoch: u64, timeout_ms: u64, cancel: *const AtomicBool) -> *mut ResultHandle {
+pub unsafe extern "C" fn nb_typesetter_compile(runtime: *const Runtime, entrypoint: *const c_char,
+    files: *const InputFile, file_count: usize, epoch: u64, timeout_ms: u64, cancel: *const AtomicBool) -> *mut ResultHandle {
     let compile = || {
-        if runtime.is_null() || bytes.is_null() || cancel.is_null() || count > 4*1024*1024 || asset_count > 128 || (asset_count > 0 && assets.is_null()) {
+        if runtime.is_null() || cancel.is_null() || file_count == 0 || file_count > 4096 || files.is_null() {
             return Err("typesetter_input_limit".into());
         }
-        let source = std::str::from_utf8(unsafe { std::slice::from_raw_parts(bytes, count) }).map_err(|_| "typesetter_encoding".to_string())?;
-        let list = if asset_count == 0 { &[] } else { unsafe { std::slice::from_raw_parts(assets, asset_count) } };
+        let entrypoint = unsafe { string(entrypoint)? };
+        let list = unsafe { std::slice::from_raw_parts(files, file_count) };
         let total = list.iter().try_fold(0usize, |n, a| n.checked_add(a.count)).ok_or("typesetter_input_limit")?;
         if total > 16*1024*1024 { return Err("typesetter_input_limit".into()); }
         let mut owned = Vec::with_capacity(list.len());
-        for asset in list {
-            if asset.bytes.is_null() { return Err("typesetter_argument".into()); }
-            let name = unsafe { string(asset.name)? };
-            if name.len() > 256 { return Err("typesetter_input_limit".into()); }
-            owned.push((name.into(), unsafe { std::slice::from_raw_parts(asset.bytes, asset.count) }.to_vec()));
+        for file in list {
+            if file.count > 0 && file.bytes.is_null() { return Err("typesetter_argument".into()); }
+            let name = unsafe { string(file.name)? };
+            if name.len() > 1024 { return Err("typesetter_input_limit".into()); }
+            let bytes = if file.count == 0 { vec![] } else { unsafe { std::slice::from_raw_parts(file.bytes, file.count) }.to_vec() };
+            owned.push((name.into(), bytes));
         }
-        unsafe { &*runtime }.compile(source, owned, epoch, Duration::from_millis(timeout_ms.min(30_000)), unsafe { &*cancel })
+        unsafe { &*runtime }.compile(entrypoint, owned, epoch, Duration::from_millis(timeout_ms.min(30_000)), unsafe { &*cancel })
     };
     Box::into_raw(Box::new(ResultHandle(compile())))
 }
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn nb_typesetter_output_bytes(p: *const ResultHandle, kind: u32, count: *mut usize) -> *const u8 {
     let value: &[u8] = match (&unsafe { &*p }.0, kind) {

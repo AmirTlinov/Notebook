@@ -62,10 +62,19 @@ const style=document.createElement('style');style.textContent=${json(css)};docum
 }
 
 export function animationPreview(request) {
-  const programs=(request.args?.operations??[]).filter(op=>
-    (op.kind==='insertElement'&&op.values.kind==='web')||(op.kind==='insertBlock'&&op.values.kind==='interactive'));
-  if(programs.length!==1)throw new Error('Preview needs exactly one prepared animation');
-  const value=programs[0].values;
+  const operations=request.args?.operations??[];
+  const programs=operations.filter(op=>op.kind==='insertElement'&&op.values.kind==='web');
+  let value;
+  if(programs.length===1)value=programs[0].values;
+  else {
+    const files=operations.filter(op=>op.kind==='putDocumentFile').map(op=>op.values);
+    const manifests=files.filter(file=>file.path.endsWith('/program.json'));
+    if(programs.length||manifests.length!==1)throw new Error('Preview needs exactly one prepared animation');
+    const manifest=manifests[0],settings=JSON.parse(manifest.source),prefix=manifest.path.slice(0,-'program.json'.length);
+    const read=path=>{if(path===undefined)return '';const file=files.find(file=>file.path===prefix+path);
+      if(!file||file.resource)throw new Error('Animation preview needs its exact prepared text files');return file.source;};
+    value={html:read(settings.html),css:read(settings.css),javaScript:read(settings.javaScript),initialState:settings.initialState};
+  }
   if(value.programPackage)throw new Error('A packaged program needs its prepared files for preview, not an empty inline page');
   const parts=previewDocument({state:value.state??value.initialState??{},css:value.css??'',
     requiresReady:!!(String(value.javaScript??'').trim()||/<script/i.test(value.html??'')),

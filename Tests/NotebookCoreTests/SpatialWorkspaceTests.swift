@@ -175,7 +175,7 @@ func clampedPinchStillKeepsItsAnchor() {
 @Test("Уменьшение открытого листа останавливается на целом листе, доска остаётся свободной")
 func paperZoomStopsAtWholeSheet() {
   for viewport in [SpatialPoint(x: 834, y: 1_194), SpatialPoint(x: 1_194, y: 834)] {
-    for geometry in [WorkspaceItemGeometry.notebook, .document(.a4), .document(.letter)] {
+    for geometry in [WorkspaceItemGeometry.notebook, .document(widthPoints: 540, heightPoints: 720), .document(widthPoints: 720, heightPoints: 540)] {
       let center = WorldPoint(tileX: 91, tileY: -37, localX: 211, localY: 3_900)
       let raw = SpatialCamera(center: center.offsetBy(x: 12_000, y: -19_000), scale: 0.02)
       let paper = geometry.readingCamera(raw, centeredOn: center, viewport: viewport)
@@ -198,10 +198,9 @@ func workspaceItemGeometryKeepsPaperIdentityAndPhysicalCorners() {
   #expect(WorkspaceItemGeometry.notebook.width == 834)
   #expect(WorkspaceItemGeometry.notebook.height == 1_194)
   #expect(WorkspaceItemGeometry.notebook.cornerRadius == 18)
-  #expect(WorkspaceItemGeometry.notebook.paperSize == nil)
-  for paper in DocumentPaperSize.allCases {
-    #expect(WorkspaceItemGeometry.document(paper).paperSize == paper)
-  }
+  let custom = WorkspaceItemGeometry.document(widthPoints: 432, heightPoints: 648)
+  #expect(abs(custom.width / custom.height - 2.0 / 3.0) < 0.000001)
+  #expect(custom.cornerRadius > 0)
 }
 
 @Test("Тетрадь принадлежит либо доске, либо одной стопке")

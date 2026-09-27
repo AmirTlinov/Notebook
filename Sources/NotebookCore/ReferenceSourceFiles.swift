@@ -32,12 +32,6 @@ extension NotebookStore {
     case .document:
       guard try readItemHeader(target.id)?.kind == .document else { throw referenceMissing(target) }
       let file = "documents/" + suffix, state = "document-states/" + suffix
-      if let elementID {
-        guard let header = try storedFragments(address: file + "#", descendants: false).first,
-          let block = try storedMember(file: file, collection: "blocks", id: elementID) else { throw referenceMissing(target) }
-        let record = try storedMember(file: state, collection: "records", id: elementID)
-        return [file: header.value.setting("blocks", .array([block])), state: .object(["records": .array(record.map { [$0] } ?? [])])]
-      }
       guard try hasStoredValue(file) else { throw referenceMissing(target) }
       return [file: try .encode(loadDocument(target.id)), state: try .encode(loadDocumentState(target.id))]
     case .workspace:
@@ -51,7 +45,7 @@ extension NotebookStore {
       if target.kind == .cover {
         guard let item = try readItemHeader(target.id) else { throw referenceMissing(target) }
         items = [try .encode(item.item)]
-        if item.kind == .document, let paper = try readDocumentPaperSize(target.id) { files["documents/" + suffix] = .object(["paperSize": try .encode(paper)]) }
+        if item.kind == .document { files["documents/" + suffix] = .object([:]) }
       }
       var elements: [JSONValue] = []
       if let elementID {

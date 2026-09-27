@@ -12,17 +12,18 @@ import AppKit
 @MainActor
 final class DocumentLinkNavigationTests: XCTestCase {
   private func book() -> DocumentDocument {
-    DocumentDocument(actor: UUID(), blocks: [
-      .markdown(id: "contents", source: "<h1 id='contents'>Contents</h1><a id='dup' href='#%D1%80%D0%B0%D0%B7%D0%B4%D0%B5%D0%BB%3A%CE%B2'>Far section</a>"),
-      .markdown(id: "body", source: String(repeating: "Intermediate content occupies physical sheets.\n\n", count: 120)),
-      .markdown(id: "far", source: "<h1 id='раздел:β'>Far section</h1><a name='named'></a><p><a href='#contents'>Return</a></p><h2>Generated heading</h2><p id='dup'>Later duplicate</p>"),
-      .markdown(id: "duplicate", source: "## Generated heading\n\nThe second automatic address stays distinct.")
+    DocumentTestFiles.document(actor: UUID(), contents: [
+      .tex(id: "contents", source: "\\section{Contents}\\hyperlink{far-section}{Far section}"),
+      .tex(id: "body", source: String(repeating: "Intermediate content occupies physical sheets.\n\n", count: 120)),
+      .tex(id: "far", source: "\\section{Far section}\\hypertarget{far-section}{}\\hypertarget{named}{}\\hyperlink{contents}{Return}\\subsection{Named heading}"),
+      .tex(id: "duplicate", source: "\\section{Generated heading}\\hypertarget{generated-heading}{}\n\nThe second automatic address stays distinct.")
     ])
   }
 
   private func layout(anchors: [[String: Any]]) throws -> DocumentLayoutRecord {
-    let geometry = WorkspaceItemGeometry.document(.a4)
+    let geometry = WorkspaceItemGeometry.uncompiledDocument
     return try DocumentLayoutRecord(receipt: ["sourceKey": "source", "layoutScope": "source", "layoutCanonical": true,
+      "pages": Array(repeating: ["widthPoints": DocumentPaperLayout.uncompiled.widthPoints, "heightPoints": DocumentPaperLayout.uncompiled.heightPoints], count: 4),
       "pageCount": 4, "width": geometry.width, "height": geometry.height, "regions": [], "anchors": anchors, "reading": []] as NSDictionary,
       sourceKey: "source", blockIDs: [], geometry: geometry)
   }
@@ -55,8 +56,11 @@ final class DocumentLinkNavigationTests: XCTestCase {
     let far = try XCTUnwrap(layout.regions.first { $0.id == "far" }?.pageIndex)
     XCTAssertGreaterThan(far, 0)
     let printed = try await source.printedSource(resources: SceneRenderResources.shared)
-    let links = try DocumentPrintNavigation.read(printed.artifact.pdf).links
-    XCTAssertTrue(links.contains { $0.page == 0 && layout.destination(for: $0.href) == .page(far) })
+    let pages = printed.artifact.pages
+    let links = try await printed.pdf.perform { pdf, _ in
+      try DocumentPrintNavigation.read(pdf, pages: pages).links
+    }
+    XCTAssertTrue(links.contains { $0.page == 0 && $0.label == "Far section" && layout.destination(for: $0.href) == .page(far) })
     XCTAssertTrue(links.contains { $0.page == far && layout.destination(for: $0.href) == .page(0) })
     XCTAssertEqual(source.measurementCount, 1)
   }
@@ -69,24 +73,24 @@ final class DocumentLinkNavigationTests: XCTestCase {
     let oldLayout = try XCTUnwrap(first.coordinator.payload?.source.layout)
     let far = try XCTUnwrap(oldLayout.regions.first { $0.id == "far" })
     let page = far.pageIndex
-    let anchor = try XCTUnwrap(oldLayout.reading.anchor(page: page, blockOrder: document.blocks.map(\.id), y: far.frame.y))
-    XCTAssertEqual(anchor.blockID, "far")
+    let anchor = try XCTUnwrap(oldLayout.reading.anchor(page: page, fileOrder: document.files.map(\.id), y: far.frame.y))
+    XCTAssertEqual(anchor.fileID, "far")
     XCTAssertFalse(anchor.nodeID.isEmpty)
-    let originalBody = try XCTUnwrap(document.blocks.first { $0.id == "body" }).source
-    XCTAssertTrue(document.replaceBlockSource(id: "body", source:
+    let originalBody = try XCTUnwrap(document.files.first { $0.id == "body" }).source
+    XCTAssertTrue(document.replaceFileSource(id: "body", source:
       String(repeating: "A new preceding paragraph changes page boundaries.\n\n", count: 80) + originalBody, actor: UUID()))
     let next = try surface(document)
     defer { next.close() }
     try await ready(next.coordinator)
     let layout = try XCTUnwrap(next.coordinator.payload?.source.layout)
     let restoredPage = try XCTUnwrap(layout.reading.page(for: anchor,
-      survivingBlockOrder: document.blocks.map(\.id), regions: layout.regions))
+      survivingFileOrder: document.files.map(\.id), regions: layout.regions))
     XCTAssertGreaterThan(restoredPage, page)
     XCTAssertTrue(layout.reading.segments.contains { $0.pageIndex == restoredPage && $0.nodeID == anchor.nodeID },
       "The new page contains the actual old text, not the old numeric page")
     let source = try XCTUnwrap(next.coordinator.payload?.source)
     await source.discardIdlePreparation()
-    XCTAssertEqual(layout.reading.page(for: anchor, survivingBlockOrder: document.blocks.map(\.id), regions: layout.regions), restoredPage)
+    XCTAssertEqual(layout.reading.page(for: anchor, survivingFileOrder: document.files.map(\.id), regions: layout.regions), restoredPage)
   }
 
   func testOnlyTheCurrentCanonicalFragmentCanRequestNavigation() async throws {
@@ -107,7 +111,7 @@ final class DocumentLinkNavigationTests: XCTestCase {
     var external = message; external["href"] = "https://example.com"; external["userActivated"] = false
     coordinator.receive(body: external, from: web)
     XCTAssertEqual(destinations.count, 1)
-    let size = WorkspaceItemGeometry.document(.a4)
+    let size = WorkspaceItemGeometry.uncompiledDocument
     coordinator.mount(in: surface.host, physicalSize: .init(width: size.width, height: size.height), isInteractive: false, priority: .neighbor)
     coordinator.receive(body: message, from: web)
     coordinator.invalidate(); coordinator.receive(body: message, from: web)
@@ -139,7 +143,7 @@ final class DocumentLinkNavigationTests: XCTestCase {
       onPageLayout: { _ in },  onStateChange: { _, _ in nil })
     coordinator.update(document: document, state: .init(id: document.id, actor: UUID()), selectedPageIndex: 0,
       capturesSnapshot: false, onRenderReady: .init { _ in }, onPageLayout: { _ in },  onStateChange: { _, _ in nil })
-    let host = DocumentWebHost(), size = WorkspaceItemGeometry.document(document.paperSize)
+    let host = DocumentWebHost(), size = WorkspaceItemGeometry.uncompiledDocument
     #if os(iOS)
     let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
     let previousKeyWindow = scene.windows.first { $0.isKeyWindow }

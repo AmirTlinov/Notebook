@@ -43,6 +43,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
     }
     context.coordinator.onWorkingGraphic = { [weak model] in model?.updateWorkingGraphic($0, strokeID: $1) }
     context.coordinator.toolController = model?.drawingTools
+    context.coordinator.model = model
     context.coordinator.onQuickShape = onQuickShape
     context.coordinator.appearances = model?.elementErasureCache
     context.coordinator.resolveEraserSource = { [weak model] in
@@ -81,6 +82,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
     view.bindCameraProjection(to: model?.nativeCameraProjection)
     context.coordinator.onWorkingGraphic = { [weak model] in model?.updateWorkingGraphic($0, strokeID: $1) }
     context.coordinator.toolController = model?.drawingTools
+    context.coordinator.model = model
     context.coordinator.onQuickShape = onQuickShape
     context.coordinator.appearances = model?.elementErasureCache
     context.coordinator.resolveEraserSource = { [weak model] in
@@ -133,6 +135,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
     var resolveGraphicErasures: ((SceneCompositionCohort, UUID) -> [String: [InkElementErasure]])?
     var resolveGraphicGraph: ((SceneCompositionCohort, UUID) -> NotebookGraphicGraph)?
     weak var toolController: NotebookDrawingToolController?
+    weak var model: NotebookAppModel?
     private var toolContact: NotebookToolInputContact?
     private let quickShape = NotebookQuickShapeSession()
     var onWorkingGraphic: (NotebookWorkingGraphic?, UUID) -> Void = { _, _ in }
@@ -328,8 +331,11 @@ struct SpatialInkCanvas: UIViewRepresentable {
       recognizer.canBeginContact = { [weak self] touch in
         guard let self, let view = self.view, isEnabled, admitsNewContact(),
           sceneReceives(touch, inside: view),
-          inputGate.permitsSceneContact(at: touch.preciseLocation(in: self.window), kind: .pencil),
-          let surfaces = admissionSurfaces() else { return false }
+          inputGate.permitsSceneContact(at: touch.preciseLocation(in: self.window), kind: .pencil) else { return false }
+        if model?.presence?.mode == .document {
+          return documentLaser(at:touch.preciseLocation(in:view)) != nil
+        }
+        guard let surfaces = admissionSurfaces() else { return false }
         let surface = SpatialSurfaceRouter.surface(at: touch.preciseLocation(in: view),
           covers: surfaces, board: boardSurface)
         return surface.kind != .cover || surface.ownerID.map { !isItemBeingDeleted($0) && !surfaceRegistry.isRetired(surface) } == true
@@ -402,10 +408,21 @@ struct SpatialInkCanvas: UIViewRepresentable {
     private func beginAction(touch: UITouch, event: UIEvent) {
       guard inputGate.permitsNewContact else { return }
       if actionTool != nil { finishAction() }
-      guard let view, let surfaces = admissionSurfaces() else { return }
+      guard let view else { return }
       if let settings=toolController?.inputSettings {
         drawingTool=settings.tool;penStyle=settings.pen;eraserStyle=settings.eraser
       }
+      if model?.presence?.mode == .document {
+        let point = touch.preciseLocation(in:view)
+        guard let controller = toolController, let admitted = documentLaser(at:point) else { return }
+        toolContact = .init(controller:controller,gate:inputGate,view:view,laserAddress:admitted.address,
+          point:point,screenScale:admitted.scale,toOwner:{
+            .init(x:($0.x-admitted.frame.minX)/admitted.scale,y:($0.y-admitted.frame.minY)/admitted.scale)
+          })
+        toolContact?.onFinish = { [weak self] in self?.toolContact = nil }
+        return
+      }
+      guard let surfaces = admissionSurfaces() else { return }
       if !drawingTool.usesInkJournal {
         guard let controller = toolController, let boardID = boardSurface.ownerID else { return }
         let point = touch.preciseLocation(in:view)
@@ -955,6 +972,12 @@ struct SpatialInkCanvas: UIViewRepresentable {
     /// complete tile coverage and native registrations are the admission proof
     /// while a later placement is still being prepared. No unshown geometry
     /// or test-specific admission path can replace this installed source.
+    private func documentLaser(at point: CGPoint) -> (address:NotebookLaserAddress,frame:CGRect,scale:Double)? {
+      guard let model, let presence = model.presence,
+        let admitted = NotebookAttentionProjection.documentLaser(at:point,model:model,presence:presence) else { return nil }
+      return (admitted.address,admitted.frame,presence.camera.scale)
+    }
+
     private func admissionSurfaces() -> [SpatialScreenSurface]? {
       guard let view, view.window != nil else { return nil }
       let surfaces = screenSurfaces()

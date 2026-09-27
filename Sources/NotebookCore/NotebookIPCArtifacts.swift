@@ -76,7 +76,7 @@ public struct NotebookExportOptions: Codable, Equatable, Sendable {
   public let format: Format
   public let pageIndex: Int?
   public let pixelWidth: Int?
-  public let blockID: String?
+  public let instanceID: String?
   public let video: Video?
   public struct Video: Codable, Equatable, Sendable {
     public let start: Double
@@ -92,9 +92,9 @@ public struct NotebookExportOptions: Codable, Equatable, Sendable {
       }
     }
   }
-  public init(format: Format = .pdf, pageIndex: Int? = nil, pixelWidth: Int? = nil, blockID: String? = nil, video: Video? = nil, moment: Moment? = nil, attention: Attention? = nil) {
+  public init(format: Format = .pdf, pageIndex: Int? = nil, pixelWidth: Int? = nil, instanceID: String? = nil, video: Video? = nil, moment: Moment? = nil, attention: Attention? = nil) {
     self.moment = moment; self.attention = attention
-    self.video = video; self.format = format; self.pageIndex = pageIndex; self.pixelWidth = pixelWidth; self.blockID = blockID
+    self.video = video; self.format = format; self.pageIndex = pageIndex; self.pixelWidth = pixelWidth; self.instanceID = instanceID
   }
   public func validate(cut: NotebookExportCut) throws {
     try validate()
@@ -111,20 +111,13 @@ public struct NotebookExportOptions: Codable, Equatable, Sendable {
         }
       } else {
         guard let program = source.image?.presentation?.program,
-          let block = cut.document.blocks.first(where: { $0.id == program.blockID && $0.kind == .interactive }),
-          program.blockID == source.reference.elementID,
-          program.programIdentity == cut.document.programIdentity(blockID: block.id),
-          program.state == (cut.state.value(for: block.id) ?? block.initialState) else {
+          let descriptor = try? DocumentProgramSource(document: cut.document, instanceID: program.instanceID, path: program.programPath),
+          program.instanceID == source.reference.elementID,
+          program.sourceBasis == descriptor.sourceBasis,
+          program.state == (cut.state.value(for: descriptor.id) ?? descriptor.initialState) else {
           throw CollaborationError("export_presentation_model_unavailable", "Для этого формата явно остановите программу и отправьте её attention: нужен checkpoint той же модели/source, связанный с показанными пикселями.")
         }
-        if format == .pdf || format == .package || format == .mp4 {
-          // Whole-document/page formats must not label another running model
-          // as presented just because the selected program was checkpointed.
-          guard cut.document.blocks.filter({ $0.kind == .interactive }).allSatisfy({ $0.id == program.blockID }) else {
-            throw CollaborationError("export_presentation_model_unavailable", "Документ содержит другие программы без выбранного frozen checkpoint. Экспортируйте выбранный блок как SVG/HTML либо весь документ как saved.")
-          }
-        }
-        guard blockID == nil || blockID == program.blockID else {
+        guard instanceID == nil || instanceID == program.instanceID else {
           throw CollaborationError("export_presentation_mismatch", "Экспортируемая программа не совпадает с выбранным кадром.")
         }
       }
@@ -134,9 +127,9 @@ public struct NotebookExportOptions: Codable, Equatable, Sendable {
     if selectedMoment == .presented {
       guard attention != nil else { throw CollaborationError("invalid_export", "Показанный момент требует attention:{contextID,referenceID}.") }
       if format == .png {
-        guard pageIndex == nil, blockID == nil, video == nil,
+        guard pageIndex == nil, instanceID == nil, video == nil,
           pixelWidth == nil || (1...4096).contains(pixelWidth!) else {
-          throw CollaborationError("invalid_export", "Показанный PNG сохраняет исходный capture; область задаёт attention, не pageIndex/blockID.")
+          throw CollaborationError("invalid_export", "Показанный PNG сохраняет исходный capture; область задаёт attention, не pageIndex/instanceID.")
         }
         return
       }
@@ -147,18 +140,18 @@ public struct NotebookExportOptions: Codable, Equatable, Sendable {
     switch format {
     case .mp4:
       guard let video, let pixelWidth, pixelWidth.isMultiple(of: 2), (128...4096).contains(pixelWidth),
-        let blockID, !blockID.isEmpty, blockID.utf8.count <= 120, (0..<10_000).contains(pageIndex ?? 0) else {
+        let instanceID, !instanceID.isEmpty, instanceID.utf8.count <= 120, (0..<10_000).contains(pageIndex ?? 0) else {
         throw CollaborationError("invalid_export", "MP4 требует программу, диапазон/FPS и чётную ширину 128…4096; высота выводится из канонического листа и дополняется до чётной.")
       }
       try video.validate()
     case .pdf, .package:
-      guard pageIndex == nil, pixelWidth == nil, blockID == nil else { throw CollaborationError("invalid_export", "PDF/пакет сохраняют весь документ; выбор блока и пиксельный размер здесь не задаются.") }
+      guard pageIndex == nil, pixelWidth == nil, instanceID == nil else { throw CollaborationError("invalid_export", "PDF/пакет сохраняют весь документ; выбор блока и пиксельный размер здесь не задаются.") }
     case .svg, .html:
-      guard let blockID, !blockID.isEmpty, blockID.utf8.count <= 120, pageIndex == nil, pixelWidth == nil else {
+      guard let instanceID, !instanceID.isEmpty, instanceID.utf8.count <= 120, pageIndex == nil, pixelWidth == nil else {
         throw CollaborationError("invalid_export", "SVG/HTML требуют ID программы; пиксельный размер не задаётся.")
       }
     case .png:
-      guard blockID == nil, (0..<10_000).contains(pageIndex ?? 0), (128...4096).contains(pixelWidth ?? 1600) else {
+      guard instanceID == nil, (0..<10_000).contains(pageIndex ?? 0), (128...4096).contains(pixelWidth ?? 1600) else {
         throw CollaborationError("invalid_export", "PNG требует номер страницы >=0 и ширину от 128 до 4096 пикселей; ресурсный бюджет проверяется отдельно.")
       }
     }

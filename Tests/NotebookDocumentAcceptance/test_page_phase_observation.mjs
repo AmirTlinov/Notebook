@@ -17,6 +17,57 @@ const tick = () => new Promise(resolve => setImmediate(resolve));
 const frame = {documentID:'document', runtimeID:'runtime', generation:'18', sourceKey:'source',
   stateKey:'state', renderToken:'token', pageIndex:3};
 
+test('failed author keeps its admitted state transport until the existing drain permits retry', async () => {
+  const created=[],messages=[],bridgeMessages=[];
+  const node=()=>({style:{},children:[],setAttribute(){},append(...items){this.children.push(...items)},
+    remove(){this.removed=true}});
+  const contentWindow={postMessage:message=>messages.push(message)};
+  const runtime={token:'program-token',frame:{...node(),contentWindow},container:node(),
+    transportReady:true,isStarted:true,lifecycleRequests:new Map(),cancel(){this.cancelled=true}};
+  const interactiveFrames=new Map([['program',runtime]]);
+  let receive,resolveDrain,rejectDrain;
+  let drain=new Promise((resolve,reject)=>{resolveDrain=resolve;rejectDrain=reject});
+  const scope={interactiveFrames,runtimeDiagnostics:[],payload:{documentID:'document',runtimeID:'runtime'},
+    window:{webkit:{messageHandlers:{notebook:{postMessage:message=>bridgeMessages.push(message)}}}},
+    document:{createElement:()=>{const value=node();created.push(value);return value}},
+    diagnostic:(kind,message,blockID)=>scope.runtimeDiagnostics.push({kind,message:String(message),blockID}),
+    finishAcceptedProgram:()=>drain,
+    addEventListener:(name,handler)=>{if(name==='message')receive=handler}};
+  vm.runInNewContext(section('      const bridge =','      // Native paper')
+    +section('      const failInteractiveFrame =','      // Iframes never belong')
+    +section("      addEventListener('message', event => {","      addEventListener('dragstart'")
+    +'\nglobalThis.fail=failInteractiveFrame;',scope);
+  scope.fail('program',runtime,new Error('author failed after commit'));
+  assert.equal(runtime.readiness,'failed');assert.equal(runtime.isStarted,false);
+  assert.equal(runtime.frame.style.visibility,'hidden');assert.equal(runtime.frame.removed,undefined);
+  assert.equal(runtime.cancelled,undefined);assert.equal(messages[0].channel,'notebook-dispose');
+  assert.equal(bridgeMessages[0].kind,'programFocus');
+  assert.equal(bridgeMessages[0].documentID,'document');assert.equal(bridgeMessages[0].runtimeID,'runtime');
+  let reply;
+  runtime.lifecycleRequests.set('read',{resolve:value=>{reply=value}});
+  receive({source:contentWindow,data:{channel:'notebook-program-reply',token:runtime.token,requestID:'read',result:'frozen-state-window'}});
+  assert.equal(reply,'frozen-state-window','A failed author cannot discard the native writer’s current pull');
+  receive({source:contentWindow,data:{channel:'notebook-interactive',token:runtime.token,snapshot:{revision:'1'}}});
+  assert.equal(bridgeMessages.at(-1).kind,'state');assert.equal(runtime.awaitingStateVersion,'pending');
+  const before=bridgeMessages.length;
+  receive({source:contentWindow,data:{channel:'notebook-interactive',token:'old',snapshot:{revision:'2'}}});
+  assert.equal(bridgeMessages.length,before);
+  const retry=created.at(-1),failedRetry=retry.onclick();await tick();
+  assert.equal(retry.disabled,true);assert.equal(interactiveFrames.get('program'),runtime);
+  rejectDrain(new Error('writer unavailable'));await failedRetry;
+  assert.equal(runtime.cancelled,undefined);assert.equal(retry.disabled,false);
+  drain=new Promise(resolve=>{resolveDrain=resolve});
+  const admittedRetry=retry.onclick();await tick();
+  assert.equal(runtime.container.removed,undefined);resolveDrain();await admittedRetry;
+  assert.equal(runtime.cancelled,undefined);assert.equal(runtime.container.removed,undefined);
+  assert.equal(interactiveFrames.get('program'),runtime,'The native replacement frame owns old-heap removal');
+  assert.equal(bridgeMessages.at(-1).kind,'programRetry');
+  assert.equal(bridgeMessages.at(-1).blockID,'program');
+  assert.equal(bridgeMessages.at(-1).blockToken,'program-token');
+  assert.equal(bridgeMessages.at(-1).documentID,'document');
+  assert.equal(bridgeMessages.at(-1).runtimeID,'runtime');
+});
+
 function execution() {
   let now = 0, clockReads = 0;
   const frames = [], actions = [];
@@ -119,7 +170,7 @@ function renderExecution(observe=true) {
     bridge:value=>f.actions.push(['bridge',value.kind]),
     installPhysicalFragment:()=>{installed++},prepareInteractiveFrames:()=>programs,
     work:{stateApplications:0},applyInteractiveState:()=>state,
-    runtimeDiagnostics:[],layoutCanonical:true,pageLayout:{pageCount:9}});
+    runtimeDiagnostics:[],layoutCanonical:true,pageLayout:{pageCount:9},stable:JSON.stringify});
   vm.runInNewContext(renderSource+'\nglobalThis.render=renderFrame;',f.scope);
   const job={frame:{...frame},source:{key:'source'},state:{key:'state',states:{}},
     fragment:{html:'<section data-block-id="program"></section>'},diagnostics:[]};

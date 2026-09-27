@@ -230,7 +230,7 @@ final class NotebookCodeAnnotationsTests: XCTestCase {
     XCTAssertEqual(ink.overlay.frame.origin.y, 100)
     XCTAssertEqual(model.presence, camera)
     XCTAssertEqual(try model.store.codeAnnotation(fragment.id)?.ink.actions.first?.id, id)
-    files.edit("# prefix\n" + source, address: file, selection: 0, scroll: 100)
+    files.edit("\\section{prefix}\\hypertarget{prefix}{}\n" + source, address: file, selection: 0, scroll: 100)
     try await Task.sleep(for: .milliseconds(100))
     XCTAssertEqual(fragment.range(in: files.document!.text)?.location, 9)
     let oldWidth = fragment.width
@@ -250,7 +250,7 @@ final class NotebookCodeAnnotationsTests: XCTestCase {
     let files = try XCTUnwrap(model.chat?.files), actor = model.actorID
     let a = NotebookFileAddress(computer: UUID(), project: "demo", root: "/project", path: "before.py")
     let b = NotebookFileAddress(computer: a.computer, project: a.project, root: a.root, path: "after.py")
-    let source = "old code", target = "# new\nnew code\n"
+    let source = "old code", target = "\\section{new}\\hypertarget{new}{}\nnew code\n"
     try model.store.saveFileDraft(.init(address: a, text: source))
     try model.store.saveFileDraft(.init(address: b, text: target))
     await files.open(a)

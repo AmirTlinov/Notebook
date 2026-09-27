@@ -20,10 +20,6 @@ const markup=await build({absWorkingDir:root,entryPoints:["src/markup.ts"],bundl
 await resource("../Sources/NotebookMarkupService/Resources/notebook-markup.js",markup.outputFiles[0].contents);
 await resource("../Sources/NotebookMarkupService/Resources/marked-LICENSE.md",
   await readFile(new URL("node_modules/marked/LICENSE",import.meta.url)));
-for (const name of ["parse5", "entities"]) {
-  await resource(`../Sources/NotebookMarkupService/Resources/${name}-LICENSE.txt`,
-    await readFile(new URL(`node_modules/${name}/LICENSE`,import.meta.url)));
-}
 const contract=await build({absWorkingDir:root,entryPoints:["src/sdk-contracts.ts"],bundle:true,format:"esm",platform:"node",target:"es2022",write:false});
 const {sdkReference}=await import("data:text/javascript;base64,"+Buffer.from(contract.outputFiles[0].contents).toString("base64"));
 await resource("../Sources/NotebookScriptHost/Resources/sdk-reference.json",JSON.stringify(sdkReference,null,2)+"\n");

@@ -13,6 +13,42 @@ enum NotebookAttentionProjection {
       worldOrigin: reference.worldOrigin, pageIndex: reference.pageIndex, model: model, presence: presence)
   }
 
+  static func documentLaser(at point: CGPoint, model: NotebookAppModel, presence: SessionPresence)
+    -> (address: NotebookLaserAddress, frame: CGRect)? {
+    guard model.drawingTool == .laser, presence.mode == .document, let id = presence.focusedItemID,
+      let document = model.documents[id], let state = model.documentStates[id],
+      let identity = DocumentRenderRegistry.shared.liveSurfaceIdentity(document:document,state:state,pageIndex:presence.documentPageIndex) else { return nil }
+    let address = NotebookLaserAddress.document(.init(id:id,pageIndex:presence.documentPageIndex,
+      token:DocumentSnapshotCache.token(document:document,state:state,pageIndex:presence.documentPageIndex),
+      hostID:identity.hostID,generation:identity.generation,
+      size:DocumentRenderRegistry.shared.geometry(document:document,pageIndex:presence.documentPageIndex)))
+    guard let frame = laserFrame(address,model:model,presence:presence), frame.contains(point) else { return nil }
+    return (address,frame)
+  }
+
+  static func laserFrame(_ address: NotebookLaserAddress, model: NotebookAppModel, presence: SessionPresence) -> CGRect? {
+    switch address {
+    case .material(let address):
+      if address.surface.kind == .board {
+        guard address.surface.ownerID == presence.boardID else { return nil }
+        let p = presence.camera.worldToScreen(address.worldOrigin ?? .zero,viewport:presence.viewport)
+        return .init(x:p.x,y:p.y,width:0,height:0)
+      }
+      return frame(.init(target:address.target,revision:""),model:model,presence:presence)
+    case .document(let page):
+      guard presence.mode == .document, presence.focusedItemID == page.id, presence.documentPageIndex == page.pageIndex,
+        let document = model.documents[page.id], let state = model.documentStates[page.id],
+        DocumentSnapshotCache.token(document:document,state:state,pageIndex:page.pageIndex) == page.token,
+        let identity = DocumentRenderRegistry.shared.liveSurfaceIdentity(document:document,state:state,pageIndex:page.pageIndex),
+        identity.hostID == page.hostID, identity.generation == page.generation,
+        DocumentRenderRegistry.shared.geometry(document:document,pageIndex:page.pageIndex) == page.size,
+        let rect = frame(.init(target:.init(kind:.document,id:page.id),pageIndex:page.pageIndex,revision:""),model:model,presence:presence),
+        abs(rect.width-page.size.width*presence.camera.scale) < 0.5,
+        abs(rect.height-page.size.height*presence.camera.scale) < 0.5 else { return nil }
+      return rect
+    }
+  }
+
   static func agentFeedback(_ subject: NotebookAgentFeedbackChange.Subject, model: NotebookAppModel,
     presence: SessionPresence, includingOcclusion: Bool = true) -> NotebookAgentFeedbackSurface? {
     let reference = subject.reference
@@ -65,8 +101,8 @@ enum NotebookAttentionProjection {
     if reference.target.kind == .document {
       if reference.elementID == nil, reference.region != nil { result.isSurface = true; return finished(result) }
       guard let id = reference.elementID, let document = model.documents[reference.target.id],
-        let block = document.blocks.first(where: { $0.id == id }) else { return nil }
-      if block.kind == .interactive { result.isSurface = true; return finished(result) }
+        document.files.contains(where: { $0.id == id }) || DocumentRenderRegistry.shared.program(documentID: document.id, id: id) != nil else { return nil }
+      if DocumentRenderRegistry.shared.program(documentID: document.id, id: id) != nil { result.isSurface = true; return finished(result) }
       guard let state = model.documentStates[document.id],
         let paper = DocumentRenderRegistry.shared.installedPaper(document: document, state: state, pageIndex: presence.documentPageIndex),
         let page = result.clipRect else { return nil }
@@ -341,7 +377,7 @@ enum NotebookAttentionProjection {
       cohort.isPaintInstalled else { return [] }
     var candidates: [(CollaborationTarget, String, String)] = []
     if presence.mode == .document, let id = presence.focusedItemID, let document = model.documents[id] {
-      candidates = document.blocks.filter { $0.kind == .interactive }.map { (.init(kind: .document, id: id), $0.id, "Программа · " + $0.id) }
+      candidates = DocumentRenderRegistry.shared.programs(documentID: document.id).map { (.init(kind: .document, id: id), $0.id, "Программа · " + $0.id) }
     } else if presence.mode == .page, let id = presence.notebookPageID ?? model.workspace?.selectedPageID,
       let page = model.pages[id] {
       candidates = page.elements.filter { $0.kind == .web }.map { (.init(kind: .page, id: id), $0.id, $0.source) }

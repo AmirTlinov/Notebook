@@ -46,7 +46,7 @@ final class MacModelLifecycleTests: XCTestCase {
     let item = try XCTUnwrap(incomingIndex.createDocument(title: "Remote document", actor: peer))
     XCTAssertTrue(incomingBoard.addItem(item.id, to: incomingIndex.rootBoardID, near: .zero, actor: peer))
     try remote.saveDocumentWorkspaceBundle(index: incomingIndex,
-      document: .init(id: item.id, actor: peer, blocks: [.markdown(id: "body", source: "# Delivered")]),
+      document: DocumentTestFiles.document(id: item.id, actor: peer, contents: [.tex(id: "body", source: "Delivered")]),
       state: .init(id: item.id, actor: peer), board: incomingBoard)
 
     let movedCenter = WorldPoint(x: 370, y: -240)
@@ -63,7 +63,7 @@ final class MacModelLifecycleTests: XCTestCase {
     try await fixture.waitUntil { model.workspace?.item(id: item.id) != nil }
     let published = try store.loadBoard(items: store.loadIndex().items)
     XCTAssertEqual(try store.workspaceHeader().itemCount, incomingIndex.items.count)
-    XCTAssertEqual(try store.loadDocument(item.id).blocks.first?.source, "# Delivered")
+    XCTAssertEqual(try store.loadDocument(item.id).files.first { $0.id == "body" }?.source, "Delivered")
     XCTAssertEqual(model.presence?.selectedItemID, humanSelection,
       "A peer catalogue publication cannot change the human's local selection")
     XCTAssertEqual(published.board(childID)?.focusedCenter(of: notebookID), movedCenter)
@@ -342,10 +342,10 @@ final class MacModelLifecycleTests: XCTestCase {
     let human = model.presence
     let boardID = try XCTUnwrap(human?.boardID), documentID = UUID()
     try await fixture.apply([.init(kind: .createDocument, target: .init(kind: .board, id: boardID), id: documentID.uuidString, values: [
-      "title": .string("MCP"), "center": try .encode(WorldPoint.zero), "paperSize": .string("a4"),
-      "blocks": try .encode([DocumentBlock.markdown(id: "body", source: "# Первый текст")])])])
+      "title": .string("MCP"), "center": try .encode(WorldPoint.zero),
+      "files": try .encode(DocumentTestFiles.document(contents: [.tex(id: "body", source: "Первый текст")]).files)])])
     try await fixture.waitUntil { model.workspace?.item(id: documentID) != nil }
-    XCTAssertEqual(try store.loadDocument(documentID).blocks.first?.source, "# Первый текст")
+    XCTAssertEqual(try store.loadDocument(documentID).files.first { $0.id == "body" }?.source, "Первый текст")
     XCTAssertEqual(model.presence?.selectedItemID, human?.selectedItemID)
     XCTAssertEqual(model.presence?.camera, human?.camera)
     model.selectItem(documentID)
@@ -357,11 +357,12 @@ final class MacModelLifecycleTests: XCTestCase {
       viewport: selection.viewport, focusedItemID: documentID, openProgress: 1,
       documentPageIndex: 0, selectedItemID: documentID), settled: true)
     await model.prepareDocumentOpening(documentID, pageIndex: 0)?.value
-    XCTAssertEqual(model.documents[documentID]?.blocks.first?.source, "# Первый текст")
-    try await fixture.apply([.init(kind: .updateBlock, target: .init(kind: .document, id: documentID), id: "body",
-      values: ["source": .string("# Изменено агентом")])])
-    try await fixture.waitUntil { model.documents[documentID]?.blocks.first?.source == "# Изменено агентом" }
-    XCTAssertEqual(try store.loadDocument(documentID).blocks.first?.source, "# Изменено агентом")
+    XCTAssertEqual(model.documents[documentID]?.files.first { $0.id == "body" }?.source, "Первый текст")
+    let original = try XCTUnwrap(store.readDocumentFile(documentID: documentID, fileID: "body"))
+    try await fixture.apply([.init(kind: .putDocumentFile, target: .init(kind: .document, id: documentID), id: "body",
+      values: ["path": .string(original.file.path), "expectedVersion": try .encode(original.sourceVersion), "source": .string("Изменено агентом")])])
+    try await fixture.waitUntil { model.documents[documentID]?.files.first { $0.id == "body" }?.source == "Изменено агентом" }
+    XCTAssertEqual(try store.loadDocument(documentID).files.first { $0.id == "body" }?.source, "Изменено агентом")
     XCTAssertEqual(model.presence?.selectedItemID, documentID)
     XCTAssertEqual(model.presence?.camera, selection.camera)
   }

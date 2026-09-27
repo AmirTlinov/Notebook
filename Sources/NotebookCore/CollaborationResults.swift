@@ -40,7 +40,7 @@ extension NotebookActionReadModel {
   private func resultLocations(_ operation: NotebookActionReadModel.Operation,
     ownerBoardID: (UUID) throws -> UUID?) rethrows -> [(CollaborationTarget, String?)] {
     switch operation.kind {
-    case .appendInkStroke, .reorderElements, .reorderBlocks, .setPreamble, .replaceDocument:
+    case .appendInkStroke, .reorderElements, .putDocumentFile, .patchDocumentFile, .renameDocumentFile, .removeDocumentFile:
       return [(operation.target, nil)]
     case .createNotebook, .createDocument, .createBoard, .renameItem, .moveItem:
       guard let id = operation.id.flatMap(UUID.init(uuidString:)) else { return [] }

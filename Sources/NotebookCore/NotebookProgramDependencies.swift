@@ -14,15 +14,14 @@ extension NotebookStore {
     }
     let isElement = (fragment.file.hasPrefix("pages/") && fragment.collection == "elements")
       || (fragment.file == "board.json" && fragment.collection == "board/elements")
-    let isBlock = fragment.file.hasPrefix("documents/") && fragment.collection == "blocks"
-    if isElement || isBlock {
+    if isElement {
       try add(fragment.value["programPackage"])
     }
     let isCausal = (fragment.file.hasPrefix("pages/") || fragment.file.hasPrefix("documents/"))
       ? fragment.collection == "collaboration/fields"
       : fragment.file == "board.json" && fragment.collection == "board/collaboration/fields"
     let key = fragment.member.components(separatedBy: "/")
-    let collection = fragment.file.hasPrefix("documents/") ? "blocks" : "elements"
+    let collection = "elements"
     if isCausal, key.count == 3, key[0] == collection, key[2] == "content" {
       let version = try fragment.value.decode(ContentFieldVersion.self)
       guard version.isValid else { throw NotebookStorageError.invalidTransaction("program causal source") }
@@ -47,8 +46,13 @@ extension NotebookStore {
 
   func noteProgramDependencies(manifestHash: String, fragment: NotebookStoredFragment) throws {
     let hashes = try programPackageHashes(in: fragment)
-    guard !hashes.isEmpty else { return }
+    let parts = try documentResourceParts(in: fragment)
+    guard !hashes.isEmpty || !parts.isEmpty else { return }
     try prepareProgramDependencies()
+    for part in parts {
+      try currentSQL!.run("INSERT OR IGNORE INTO manifest_program_parts VALUES(?,?,?)", [.text(manifestHash), .text(part.sha256), .integer(Int64(part.byteCount))])
+      guard try currentSQL!.rows("SELECT byte_count FROM manifest_program_parts WHERE manifest_hash=? AND hash=?", [.text(manifestHash), .text(part.sha256)]).first?[0].integer == Int64(part.byteCount) else { throw NotebookStorageError.blobHashMismatch }
+    }
     for hash in hashes {
       try currentSQL!.run("INSERT OR IGNORE INTO manifest_program_roots(manifest_hash,hash) VALUES(?,?)", [.text(manifestHash), .text(hash)])
     }
@@ -65,7 +69,7 @@ extension NotebookStore {
         try Task.checkCancellation()
         let rows = try db.rows("""
           SELECT address,blob_hash,(SELECT length(data) FROM blobs WHERE hash=blob_hash) FROM manifest_records WHERE manifest_hash=? AND address>? AND blob_hash IS NOT NULL AND (
-            address GLOB 'pages/*#/elements/@*' OR address GLOB 'documents/*#/blocks/@*' OR
+            address GLOB 'pages/*#/elements/@*' OR address GLOB 'documents/*#/files/@*' OR
             address GLOB 'board.json#/boards/@*/board/elements/@*' OR
             address GLOB 'pages/*#/collaboration/fields/@*' OR address GLOB 'documents/*#/collaboration/fields/@*' OR
             address GLOB 'board.json#/boards/@*/board/collaboration/fields/@*')
@@ -75,18 +79,18 @@ extension NotebookStore {
         for row in rows {
           let address = row[0].text!
           if address.hasPrefix("documents/") {
-            if let block = address.range(of: "#/blocks/@") {
+            if let block = address.range(of: "#/files/@") {
               let end = address[block.upperBound...].firstIndex(of: "/") ?? address.endIndex
               let root = String(address[..<end])
               if admittedDocumentProgram != root {
-                _ = try incomingDocumentProgramRecords(root, manifestHash: manifest)
+                _ = try incomingDocumentFileRecords(root, manifestHash: manifest)
                 admittedDocumentProgram = root
               }
               // initialState children do not own programPackage references.
               guard address == root else { continue }
             }
             guard let bytes = row[2].integer else { throw NotebookStorageError.blobMissing(row[1].text!) }
-            guard bytes <= Self.documentProgramReplicationBytes else { throw NotebookStorageError.limitExceeded("document_replication_block") }
+            guard bytes <= Self.documentFileReplicationBytes else { throw NotebookStorageError.limitExceeded("document_replication_file") }
           }
           let fragment = try db.decodedStoredFragment(from:db.blob(row[1].text!))
           guard fragment.address == row[0].text else { throw NotebookStorageError.invalidTransaction("program dependency address") }
@@ -112,6 +116,7 @@ extension NotebookStore {
     }
     let missing = try db.rows("SELECT p.hash FROM manifest_program_parts p LEFT JOIN blobs b ON b.hash=p.hash WHERE p.manifest_hash=? AND b.hash IS NULL ORDER BY p.hash LIMIT ?", [.text(manifest), .integer(Int64(limit))]).compactMap { $0[0].text }
     if !missing.isEmpty { return missing }
+    guard try db.rows("SELECT 1 FROM manifest_program_parts p JOIN blobs b ON b.hash=p.hash WHERE p.manifest_hash=? AND length(b.data)!=p.byte_count LIMIT 1", [.text(manifest)]).isEmpty else { throw NotebookStorageError.blobHashMismatch }
     var after = ""
     while let hash = try db.rows("SELECT hash FROM manifest_program_roots WHERE manifest_hash=? AND hash>? ORDER BY hash LIMIT 1", [.text(manifest), .text(after)]).first?[0].text {
       try validateProgramPackageClosure(hash); after = hash
@@ -127,6 +132,22 @@ extension NotebookStore {
       let hashes = try db.rows("SELECT hash FROM manifest_program_roots WHERE manifest_hash=? AND hash>? UNION SELECT hash FROM manifest_program_parts WHERE manifest_hash=? AND hash>? ORDER BY hash LIMIT 64", [.text(manifestHash), .text(after), .text(manifestHash), .text(after)]).compactMap { $0[0].text }
       guard let last = hashes.last else { break }
       for hash in hashes { try visit(hash) }; after = last
+    }
+  }
+}
+
+extension NotebookStore {
+  func documentResourceParts(in fragment: NotebookStoredFragment) throws -> [NotebookProgramPackage.Part] {
+    guard fragment.file.hasPrefix("documents/") else { return [] }
+    var values: [JSONValue] = []
+    if fragment.collection == "files", let resource = fragment.value["resource"] { values.append(resource) }
+    let key = fragment.member.components(separatedBy: "/")
+    if fragment.collection == "collaboration/fields", key.count == 3, key[0] == "files", key[2] == "content" {
+      values += try fragment.value.decode(ContentFieldVersion.self).retainedContentValues.compactMap { $0["resource"] }
+    }
+    return try values.filter { $0 != .null }.flatMap { value in
+      let file = try value.decode(NotebookProgramPackage.File.self)
+      try file.validate(); return file.parts
     }
   }
 }

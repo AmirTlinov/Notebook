@@ -1,5 +1,5 @@
 import * as z from "zod/v4";
-import {expectationSchema, targetSchema, coverTargetSchema, referenceSchema, graphicSchema, textStyleSchema, operationSchema} from "./actions.js";
+import {expectationSchema, targetSchema, coverTargetSchema, referenceSchema, graphicSchema, textStyleSchema, operationSchema, documentFileSchema, contentFieldVersionSchema} from "./actions.js";
 import {worldPointSchema} from "./spatial.js";
 
 const id=z.uuid(), text=z.string(), number=z.number(), json=z.json();
@@ -18,14 +18,18 @@ const spatialElement=element.extend({textStyle:textStyleSchema});
 const item=object({id,kind:z.enum(["notebook","document","board"]),title:text,firstPageID:id.optional(),pageCount:number});
 const header=object({workspaceID:id,rootBoardID:id,stamp,itemCount:number,cursor:number,selectedItemID:id.optional(),selectedPageID:id.optional(),boardRevision:text.optional(),boardStamp:stamp.optional(),spatialInkStamp:stamp.optional()});
 const contentHeader=object({target:targetSchema,contentStamp:stamp,stateStamp:stamp.optional(),inkStamp:stamp.optional(),size:size.optional()});
-const fieldVersion=object({stamp,human:z.boolean(),observed:z.record(text,number)});
-const block=object({id:text,kind:z.enum(["markdown","latex","tex","interactive"]),source:text,html:text,css:text,javaScript:text,initialState:json,height:number});
+const fieldVersion=contentFieldVersionSchema;
+const documentFileContent=documentFileSchema;
 const state=object({id:text,value:json,stamp});
-const document=object({format:number,id,paperSize:z.enum(["a4","letter"]),preamble:text,blocks:z.array(block),contentStamp:stamp});
+const document=object({format:z.literal(3),id,entrypoint:text,files:z.array(documentFileContent),contentStamp:stamp});
+const documentDirectory=object({documentID:id,entrypoint:text,contentStamp:stamp,files:z.array(object({id:text,path:text,byteCount:number,mimeType:text,sourceVersion:fieldVersion}))});
+const documentStructure=object({documentID:id,contentStamp:stamp,entries:z.array(object({kind:text,fileID:text,path:text,line:number,utf16Offset:number,text,instanceID:text.optional()}))});
+const documentProgram=object({documentID:id,instanceID:text,programPath:text,sourceBasis:text,initialState:json,state:json,stateVersion:contentFieldVersionSchema.passthrough().optional()});
 const documentState=object({format:number,id,records:z.array(state),stamp});
 const page=object({format:number,id,size,elements:z.array(element),agentStamp:stamp,drawingStamp:stamp,drawingData:json});
 const pageElement=object({header:contentHeader,element,appearance,graphicResolution:resolution.optional()}).nullable();
-const documentBlock=object({documentID:id,contentStamp:stamp,stateStamp:stamp,sourceVersion:fieldVersion,stateVersion:fieldVersion.optional(),block,state:json.optional()}).nullable();
+const documentFileBytes=object({documentID:id,fileID:text,path:text,mimeType:text,sourceVersion:fieldVersion,offset:number,byteCount:number,totalBytes:number,eof:z.boolean(),base64:text});
+const documentFile=object({documentID:id,contentStamp:stamp,sourceVersion:fieldVersion,file:documentFileContent}).nullable();
 const inkSample=object({point,worldPoint:worldPointSchema.optional(),timeOffset:number,width:number,opacity:number,force:number,azimuth:number,altitude:number});
 const inkElementTarget=object({elementID:text,frame,worldOrigin:worldPointSchema.optional(),wholeElement:z.boolean().optional()});
 const pageInkMetadata={id,tool:z.enum(["pen","eraser"]),color:object({red:number,green:number,blue:number}),sequence:number,isActive:z.boolean()};
@@ -77,8 +81,9 @@ const details=object({actionVersion:text,receipt:receipt.optional(),publication:
   pages:z.record(text,object({total:number,nextOffset:number.nullable()})).optional(),continuations:z.array(object({file:text,path,author:text})).optional(),nextActionID:id.nullable().optional()});
 const artifact=object({kind:z.enum(["currentView","target","pageOverview","pageRegion","attention","scriptImage"]),id:id.optional(),contextID:id.optional(),referenceID:id.optional(),regionID:text.optional(),mode:text.optional(),expectedSHA256:text});
 const renderRequest=object({id,target:targetSchema,sourceRevision:text,region:frame.optional(),worldOrigin:worldPointSchema.optional(),pageIndex:number.optional()});
-const renderDiagnostics=z.array(object({kind:text,elementID:text.optional(),message:text}));
-const render=object({status:text,request:renderRequest.optional(),id:id.optional(),artifact:artifact.optional(),pngSHA256:text.optional(),sourceRevision:text.optional(),diagnostics:renderDiagnostics.optional()});
+const renderDiagnostics=z.array(object({kind:text,elementID:text.optional(),fileID:text.optional(),path:text.optional(),line:number.optional(),message:text}));
+const documentProgramChecks=z.array(object({instanceID:text,sourceBasis:text.optional(),status:z.enum(["ready","failed","not_checked"]),scope:z.literal("startup")}));
+const render=object({status:text,programs:documentProgramChecks.optional(),buildID:text.optional(),request:renderRequest.optional(),id:id.optional(),artifact:artifact.optional(),pngSHA256:text.optional(),sourceRevision:text.optional(),diagnostics:renderDiagnostics.optional()});
 const visionCell=object({column:number,row:number});
 const visionCellFrame=object({column:number,row:number,width:number,height:number});
 const visionRegion=object({id:text,contentCells:visionCellFrame,cropCells:visionCellFrame,
@@ -116,11 +121,11 @@ const selection=z.discriminatedUnion("status",[
   object({status:z.literal("known"),deviceID:id,sessionID:id,generation:number,selection:selected}),
   object({status:z.literal("unknown"),deviceID:id.optional(),sessionID:id.optional(),generation:number.optional()})]);
 const observation=object({mode:z.enum(["snapshot","delta"]).optional(),status:text.optional(),target:targetSchema.optional(),header:z.union([contentHeader,object({target:targetSchema,contentRevision:text})]).optional(),reset:text.optional(),through:text.optional(),
-  objects:z.array(object({target:targetSchema,id:text,change:z.enum(["upsert","deleted","outOfScope"]),value:object({appearance:appearance.optional(),content:z.union([element,block]).optional(),state:json.optional(),graphicResolution:resolution.optional(),preview:text.optional()}).optional()})).optional(),
+  objects:z.array(object({target:targetSchema,id:text,change:z.enum(["upsert","deleted","outOfScope"]),value:object({appearance:appearance.optional(),content:z.union([element,documentFileContent]).optional(),sourceVersion:fieldVersion.optional(),graphicResolution:resolution.optional(),preview:text.optional()}).optional()})).optional(),
   containers:z.array(item).optional(),checkpoint:text.optional(),presence:presence.nullable().optional(),presenceGeneration:text.optional(),selection:selection.optional(),context:contexts.optional(),visual:object({status:text,receipt:viewReceipt.optional(),artifact:artifact.optional()}).optional()});
 const runtime=object({status:text,updatedAt:number}).nullable();
 const printMapArtifact=object({path:text,sha256:text,byteCount:number,mimeType:text});
-const exportOptions=object({moment:z.enum(["saved","presented"]).optional(),attention:object({contextID:id,referenceID:id}).optional(),video:object({start:number,end:number,framesPerSecond:number}).optional(),format:z.enum(["pdf","png","svg","html","package","mp4"]),blockID:text.optional(),pageIndex:number.optional(),pixelWidth:number.optional()});
+const exportOptions=object({moment:z.enum(["saved","presented"]).optional(),attention:object({contextID:id,referenceID:id}).optional(),video:object({start:number,end:number,framesPerSecond:number}).optional(),format:z.enum(["pdf","png","svg","html","package","mp4"]),instanceID:text.optional(),pageIndex:number.optional(),pixelWidth:number.optional()});
 const exportJob=object({status:z.enum(["missing","queued","running","saved","failed","interrupted","cancelled"]),jobID:id.optional(),documentID:id.optional(),contentRevision:text.optional(),stateRevision:text.optional(),cutSHA256:text.optional(),moment:z.enum(["saved","presented"]).optional(),options:exportOptions.optional(),receipt:object({cutSHA256:text,stateRevision:text,cut:printMapArtifact,documentID:id,options:exportOptions,artifact:printMapArtifact,source:printMapArtifact.optional(),log:text,packageSHA256:text.optional(),assets:z.array(object({path:text,sha256:text})).optional(),sourceMap:printMapArtifact.optional(),syncTeX:printMapArtifact.optional()}).optional(),error:json.optional()});
 const presentation=object({status:text.optional(),id:id.optional(),view:object({deviceID:id,sessionID:id,sequence:number,nonce:id}).optional(),reason:text.optional()});
 const search=object({results:z.array(object({id,target:targetSchema,elementID:text.optional(),title:text,path:z.array(text),preview:text,revision:text,reference:referenceSchema})),total:number});
@@ -128,7 +133,7 @@ export const readDataSchemas = {
   observation, workspaceHeader:header, itemHeaders:z.array(item), itemHeader:item.nullable(), itemLifecycle:object({item,target:coverTargetSchema,revision:text,bodyRecordCount:number.int().nonnegative()}).nullable(),
   workingSet:object({header,items:z.array(item),boards:z.array(board),pages:z.record(text,page),documents:z.record(text,document),states:z.record(text,documentState),ink}),
   sceneWindow:scene, scenePaintOrder:object({revision:text,entries:z.array(object({kind:text,id:text,zIndex:number})),nextCursor:text.nullable()}),
-  page,pageHeader:contentHeader,pageElement,pageInkActions,pageInkAction,documentHeader:contentHeader,document,documentState,documentBlock,
+  page,pageHeader:contentHeader,pageElement,pageInkActions,pageInkAction,documentHeader:contentHeader,document,documentState,documentDirectory,documentFile,documentFileBytes,documentProgram,documentStructure,
   boardItem:board.nullable(),boardElement:spatialElement.nullable(),boardContentRevision:text.nullable(),ownerBoard:id.nullable(),
   notebookPages:object({header:directoryHeader,pages:z.array(object({position,document:page}))}),notebookDirectory:directory,notebookPosition:position.nullable(),
   spatialInk:ink,presence,selection,attentionEvidence:object({reference:referenceSchema,payload:json,image:object({sha256:text,pixelWidth:number,pixelHeight:number}).optional()}).nullable(),
@@ -136,7 +141,7 @@ export const readDataSchemas = {
   renderRequests:z.array(renderRequest),delivery:z.array(delivery),actionSnapshots:z.array(object({request:renderRequest,pngSHA256:text.optional(),diagnostics:renderDiagnostics.optional()})),runtime,codeFragment:code,codeFragments:z.array(codeFragment),
 };
 export const methodDataSchemas = {
-  observe:observation,page:z.union([page,pageElement]),document:z.union([document,documentBlock]),board:scene,notebook:directory,context:z.union([contexts,contextEntries]),
+  observe:observation,page:z.union([page,pageElement]),document:z.union([documentDirectory,documentFile,documentFileBytes]),documentStructure,documentCheck:render.extend({programs:documentProgramChecks,code:text.optional()}),board:scene,notebook:directory,context:z.union([contexts,contextEntries]),
   attention,code:z.union([code,z.array(codeFragment)]),search,reference:object({target:targetSchema,revision:text}),referenceStatus:object({status:z.enum(["current","changed","checking","review_required","target_missing"]),currentRevision:text.optional(),fingerprint:text.optional()}),
   action:z.union([details,z.array(details),actionResultSchema]),render,pageMap:object({status:text,drawingRevision:text.optional(),map:vision.optional(),request:renderRequest.optional(),diagnostics:renderDiagnostics.optional(),delta:object({fromDrawingRevision:text,available:z.boolean(),unchangedRegionIDs:z.array(text),changedRegionIDs:z.array(text),removedRegionIDs:z.array(text)}).optional()}),
   pageImage:object({status:text,drawingRevision:text.optional(),artifacts:z.array(artifact).optional(),request:renderRequest.optional(),diagnostics:renderDiagnostics.optional()}),regions:object({status:text,drawingRevision:text.optional(),artifacts:z.array(artifact).optional(),request:renderRequest.optional(),diagnostics:renderDiagnostics.optional()}),

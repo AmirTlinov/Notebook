@@ -5,10 +5,10 @@ import XCTest
 
 @MainActor
 final class DocumentCutOriginTests: XCTestCase {
-  private let geometry = WorkspaceItemGeometry.document(.a4)
+  private let geometry = WorkspaceItemGeometry.uncompiledDocument
 
-  private func region(page: Int, offset: Any = 0.0, scale: Double = 1) -> [String: Any] {
-    ["id": "program", "pageIndex": page, "x": 20.0 / scale, "y": 20.0 / scale,
+  private func region(page: Int, offset: Any = 0.0, scale: Double = 1, kind: String = "program") -> [String: Any] {
+    ["kind": kind, "id": "program", "pageIndex": page, "x": 20.0 / scale, "y": 20.0 / scale,
       "width": 600.0 / scale, "height": 900.0 / scale, "sourceOffset": offset]
   }
 
@@ -17,7 +17,10 @@ final class DocumentCutOriginTests: XCTestCase {
     var value: [String: Any] = ["sourceKey": key, "layoutCanonical": true, "anchors": [], "reading": [], "pageCount": 2,
       "layoutScope": page == nil ? "source" : "page",
       "width": geometry.width / scale, "height": geometry.height / scale, "regions": regions]
-    if let page { value["pageIndex"] = page }
+    let paper = DocumentPaperLayout.uncompiled
+    if let page {
+      value["pageIndex"] = page; value["widthPoints"] = paper.widthPoints; value["heightPoints"] = paper.heightPoints
+    } else { value["pages"] = Array(repeating: ["widthPoints": paper.widthPoints, "heightPoints": paper.heightPoints], count: 2) }
     return value as NSDictionary
   }
 
@@ -43,13 +46,12 @@ final class DocumentCutOriginTests: XCTestCase {
     XCTAssertNotEqual(full.regions, shifted.regions)
   }
 
-  func testSourceOriginUsesTheSamePhysicalUnitsAsItsPaperRectangle() throws {
+  func testPageReceiptCannotRescaleThePDFGeometryOrItsProgramCut() throws {
     let physical = try layout(receipt([region(page: 1, offset: 900.0)], page: 1))
-    let half = try layout(receipt([region(page: 1, offset: 450.0, scale: 2)], scale: 2, page: 1))
-    XCTAssertTrue(physical.matches(half))
-    XCTAssertEqual(physical.regions, half.regions)
-    let unscaledOrigin = try layout(receipt([region(page: 1, offset: 900.0, scale: 2)], scale: 2, page: 1))
-    XCTAssertFalse(physical.matches(unscaledOrigin))
+    XCTAssertThrowsError(try layout(receipt([region(page: 1, offset: 450.0, scale: 2)], scale: 2, page: 1)),
+      "Camera projection cannot become a second physical page geometry")
+    let shifted = try layout(receipt([region(page: 1, offset: 450.0)], page: 1))
+    XCTAssertFalse(physical.matches(shifted), "The viewport cut remains in the same physical units as its rectangle")
   }
 
   func testAnOriginCannotBeMissingNegativeNonfiniteOrAnUnrepresentablePhysicalAddress() throws {
@@ -68,13 +70,12 @@ final class DocumentCutOriginTests: XCTestCase {
   }
 
   func testARejectedNeighborCannotReplaceTheAcceptedSourceLayout() throws {
-    let document = DocumentDocument(actor: UUID(), blocks: [.interactive(id: "program",
-      html: "<div>Physical continuation</div>", height: 1800)])
+    let document = DocumentTestFiles.document(actor: UUID(), contents: [.tex(id: "program", source: "Physical continuation")])
     let source = DocumentSourceSnapshot(document), key = source.message.key
-    let accepted = try source.acceptLayout(receipt([region(page: 0), region(page: 1, offset: 900.0)], key: key), geometry: geometry)
-    XCTAssertThrowsError(try source.acceptLayout(receipt([region(page: 1, offset: 0.0)], key: key, page: 1), geometry: geometry))
+    let accepted = try source.acceptLayout(receipt([region(page: 0, kind: "file"), region(page: 1, offset: 900.0, kind: "file")], key: key), geometry: geometry)
+    XCTAssertThrowsError(try source.acceptLayout(receipt([region(page: 1, offset: 0.0, kind: "file")], key: key, page: 1), geometry: geometry))
     XCTAssertTrue(source.layout === accepted)
-    let neighbor = try source.acceptLayout(receipt([region(page: 1, offset: 900.0)], key: key, page: 1), geometry: geometry)
+    let neighbor = try source.acceptLayout(receipt([region(page: 1, offset: 900.0, kind: "file")], key: key, page: 1), geometry: geometry)
     XCTAssertTrue(neighbor === accepted)
   }
 }

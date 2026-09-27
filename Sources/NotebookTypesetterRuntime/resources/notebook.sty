@@ -1,0 +1,55 @@
+\NeedsTeXFormat{LaTeX2e}
+\ProvidesPackage{notebook}[2026/09/26 Notebook interactive regions]
+\RequirePackage{keyval}
+\newif\ifNotebook@breakable
+\newdimen\Notebook@width
+\newdimen\Notebook@height
+\newdimen\Notebook@remaining
+\newdimen\Notebook@chunk
+\newdimen\Notebook@offset
+\define@key{Notebook}{id}{\def\Notebook@id{#1}}
+\define@key{Notebook}{width}{\Notebook@width=#1\relax}
+\define@key{Notebook}{height}{\Notebook@height=#1\relax}
+\define@key{Notebook}{breakable}[true]{\csname Notebook@breakable#1\endcsname}
+% The engine observes this expanded marker at actual shipout, alongside the
+% source boxes and PDF transformations (including deferred floats).
+\def\Notebook@box{%
+  \edef\Notebook@emit{\noexpand\special{notebook:region \Notebook@id|\Notebook@path|%
+    \number\Notebook@width|\number\Notebook@chunk|\number\Notebook@offset|\number\Notebook@height}}%
+  \noindent\hbox to\Notebook@width{\Notebook@emit
+    \vrule width0pt height\Notebook@chunk depth0pt\hfil}\par}
+\newcommand\NotebookInteractive[2][]{%
+  \par\begingroup
+  \def\Notebook@id{}\edef\Notebook@path{\detokenize{#2}}%
+  \Notebook@width=\linewidth\Notebook@height=0pt\Notebook@breakablefalse
+  \setkeys{Notebook}{#1}%
+  \ifx\Notebook@id\@empty\PackageError{notebook}{Interactive id is required}{Give this program a stable id.}\fi
+  \ifcsname Notebook@seen@\Notebook@id\endcsname
+    \PackageError{notebook}{Duplicate interactive id: \Notebook@id}{Every instance needs a distinct id.}%
+  \fi
+  \expandafter\gdef\csname Notebook@seen@\Notebook@id\endcsname{1}%
+  \ifdim\Notebook@width>0pt\else\PackageError{notebook}{Interactive width must be positive}{}\fi
+  \ifdim\Notebook@height>0pt\else\PackageError{notebook}{Interactive height must be positive}{}\fi
+  \Notebook@remaining=\Notebook@height\Notebook@offset=0pt
+  \ifinner\Notebook@breakablefalse\fi
+  \ifNotebook@breakable
+    \ifnum\col@number>\@ne
+      \PackageError{notebook}{Interactive \Notebook@id: breakable requires single-column flow}%
+        {Remove breakable or move the program into a one-column section.}%
+    \fi
+    \loop\ifdim\Notebook@remaining>0pt
+      \Notebook@chunk=\pagegoal
+      \ifdim\Notebook@chunk>\textheight\Notebook@chunk=\textheight\fi
+      \advance\Notebook@chunk by -\pagetotal
+      \advance\Notebook@chunk by -\baselineskip
+      \ifdim\Notebook@chunk<\baselineskip\newpage\Notebook@chunk=\textheight
+        \advance\Notebook@chunk by -\baselineskip\fi
+      \ifdim\Notebook@chunk>\Notebook@remaining\Notebook@chunk=\Notebook@remaining\fi
+      \Notebook@box
+      \advance\Notebook@offset by \Notebook@chunk
+      \advance\Notebook@remaining by -\Notebook@chunk
+      \ifdim\Notebook@remaining>0pt\newpage\fi
+    \repeat
+  \else\Notebook@chunk=\Notebook@height\Notebook@box\fi
+  \endgroup}
+\endinput

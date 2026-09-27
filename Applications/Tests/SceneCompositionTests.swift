@@ -696,7 +696,7 @@ final class SceneCompositionTests: XCTestCase {
     ], elements: [table], stamp: stamp)
     let hierarchy = BoardHierarchy(rootBoardID: workspace.rootBoardID,
       boards: [.init(id: workspace.rootBoardID, board: board)], stamp: stamp)
-    let index = WorkspaceSceneIndex(workspace: workspace, hierarchy: hierarchy, paperSizes: [document.id: .a4])
+    let index = WorkspaceSceneIndex(workspace: workspace, hierarchy: hierarchy, paperSizes: [document.id: .uncompiledDocument])
     let resources = SceneRenderResources(profile: .headless), registry = SpatialInkSurfaceRegistry()
     let tiles = SceneCompositionTiles(resources: resources, surfaceRegistry: registry)
     addTeardownBlock { @MainActor in await tiles.stop(); await registry.stopSceneInk() }
@@ -741,7 +741,7 @@ final class SceneCompositionTests: XCTestCase {
     ], stamp: stamp)
     let hierarchy = BoardHierarchy(rootBoardID: workspace.rootBoardID,
       boards: [.init(id: workspace.rootBoardID, board: board)], stamp: stamp)
-    let index = WorkspaceSceneIndex(workspace: workspace, hierarchy: hierarchy, paperSizes: [document.id: .a4])
+    let index = WorkspaceSceneIndex(workspace: workspace, hierarchy: hierarchy, paperSizes: [document.id: .uncompiledDocument])
     let presence = SessionPresence(boardID: workspace.rootBoardID, mode: .board,
       camera: .init(center: .init(x: 640, y: -1890), scale: 0.1425), viewport: .init(x: 1194, y: 834))
     let frame = WorkspaceSceneFrame(index: index, presence: presence, portalCamera: { _ in nil })

@@ -83,7 +83,7 @@ struct ArchiveSource {
     }
     let documents = try workspace.items.filter { $0.kind == .document }.map { item in
       let path = "documents/\(item.id.uuidString.lowercased()).json", bytes = try data(path)
-      let value = try recordConversion(convertLegacyDocument(bytes), path: path, original: bytes)
+      let value = try readCurrentArchivedDocument(bytes)
       guard value.id == item.id else { throw ArchiveTransferError.invalidSource("document UUID differs from address") }
       return value
     }

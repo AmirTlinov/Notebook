@@ -44,8 +44,7 @@ extension NotebookStore {
           target.kind != .document || header.kind == .document else { throw missing }
         let geometry: WorkspaceItemGeometry
         if header.kind == .document {
-          guard let paper = try store.readDocumentPaperSize(itemID) else { throw missing }
-          geometry = .document(paper)
+          geometry = .uncompiledDocument
         } else { geometry = .notebook }
         return .item(boardID: placement.id, id: itemID, center: center, geometry: geometry)
       case .workspace, .codeFragment:

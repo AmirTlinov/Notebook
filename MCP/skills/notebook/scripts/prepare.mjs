@@ -6,6 +6,7 @@ import {fileURLToPath} from 'node:url';
 import {makeRecipe,chartSVG} from './recipes.mjs';
 import {loadScienceExample,buildScienceProgram} from './science-examples.mjs';
 import {prepareProgramPackage} from './program-package.mjs';
+import {documentResourceRequest} from './file-import.mjs';
 
 const maxImageBytes=700_000;
 function size(bytes,mimeType,path) {
@@ -42,6 +43,10 @@ export async function loadImage(path,{fit=false,outputPath}={}) {
 
 export async function prepare(name,input,{baseDirectory='.',outputPath,runID}={}) {
   input=structuredClone(input);
+  if(name==='document-resource') {
+    if(typeof input.sourcePath!=='string'||Object.keys(input).some(key=>!['sourcePath','path'].includes(key)))throw Error('Document resource needs only sourcePath and path');
+    return {tool:'notebook_import_document_resource',arguments:await documentResourceRequest(resolve(baseDirectory,input.sourcePath),input.path)};
+  }
   if(name==='program'&&input.example) {
     if(Object.keys(input).some(key=>key!=='example'))throw new Error('Choose a named program or build inputs, not both');
     return buildScienceProgram(input.example);
@@ -62,8 +67,16 @@ export async function prepare(name,input,{baseDirectory='.',outputPath,runID}={}
     input.image=await loadImage(path,{fit:input.fit??false,
       outputPath:outputPath?`${outputPath}.image${extname(path)}`:undefined});
   }
-  if(name==='document') for(const section of input.sections??[]) {
-    if(section.sourcePath) section.body=await readFile(resolve(baseDirectory,section.sourcePath),'utf8');
+  if(name==='document') {
+    if(input.sourcePath) {
+      if(input.source!==undefined)throw new Error('Choose source or sourcePath, not both');
+      input.source=await readFile(resolve(baseDirectory,input.sourcePath),'utf8');
+    }
+    for(const file of input.files??[]) if(file.sourcePath) {
+      if(file.source!==undefined)throw new Error('Choose file source or sourcePath, not both');
+      file.source=await readFile(resolve(baseDirectory,file.sourcePath),'utf8');
+      delete file.sourcePath;
+    }
   }
   if(name==='animation') for(const field of ['html','css','javaScript']) {
     if(input[`${field}Path`]) {
@@ -76,7 +89,7 @@ export async function prepare(name,input,{baseDirectory='.',outputPath,runID}={}
 
 async function main() {
   const [name,inputPath,outputPath,...extra]=process.argv.slice(2);
-  if(!name||!inputPath||!outputPath||extra.length)throw new Error('Usage: node prepare.mjs mindmap|flow|compare|visual|plot|sketch|point|document|animation|program input.json request.json');
+  if(!name||!inputPath||!outputPath||extra.length)throw new Error('Usage: node prepare.mjs mindmap|flow|compare|visual|plot|sketch|point|document|document-resource|animation|program input.json request.json');
   // This saved request is the retry identity; preparing again is a new intention.
   const input=JSON.parse(await readFile(inputPath,'utf8'));
   const request=await prepare(name,input,{baseDirectory:dirname(resolve(inputPath)),outputPath:resolve(outputPath)});

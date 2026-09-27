@@ -24,7 +24,7 @@ import XCTest
     if XCUIDevice.shared.orientation != .portrait { XCUIDevice.shared.orientation = .portrait }
     XCTAssertTrue(app.buttons["notebook-companion-compose"].waitForExistence(timeout: 20))
     for _ in 0..<8 where app.otherElements["page-turn-surface"].exists {
-      let back = app.buttons["leave-nested-board"]; XCTAssertTrue(back.isHittable); back.tap()
+      notebookBack(in: app)
     }
     let collapse = app.buttons["notebook-chat-toggle"]
     if collapse.isHittable { collapse.tap() }

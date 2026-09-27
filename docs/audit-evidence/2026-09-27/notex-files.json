@@ -1,0 +1,556 @@
+{
+  "format": 1,
+  "date": "2026-09-27",
+  "scope": "Файловые LaTeX-документы .notex: отдельные прицельные срезы, не сводный PASS и не полная приёмка S7.",
+  "sourceRoot": "/Users/amir/.codex/worktrees/notex-integration/Notebook",
+  "production": {
+    "installedPairBuild": "212",
+    "version": "0.3.143",
+    "updated": true,
+    "status": "matched-pair-launched",
+    "sourceSHA256": "73d2893a2bcfd9ab407bee7024db29f1414fe703e6e15e3cbfa7843424ff8a38",
+    "build": {
+      "path": "/private/tmp/notex-release-212-20260927T0023Z/build.json",
+      "sha256": "f0269ae6b5a8499ace3fbb34d67e9f583a7c75978250e99f37045a26002710fa",
+      "bytes": 14685
+    },
+    "installation": {
+      "path": "/private/tmp/notex-install-212-20260927T0031Z/installation.json",
+      "sha256": "b7365faf9ed2c8a45c39a9d4c367065b5bbb1ec635593b8c92a4dfa87c349677",
+      "bytes": 1483
+    },
+    "selectedStoresUnchangedBeforeLaunch": true,
+    "ipadDataContainerRelocatedWithBytesPreserved": true,
+    "installedSidecarReadOnly": {
+      "receipt": {
+        "path": "/private/tmp/notex-installed-proof-212-20260927T0040Z/result.json",
+        "sha256": "b26ad207c570268b1cf69d8de4991d203a8c4023b3b760bdb89ef5e43a297233",
+        "bytes": 12073
+      },
+      "tools": 5,
+      "visual": "ready",
+      "runtime": "connected",
+      "boundary": "Чтение установленного подписанного sidecar; не доказательство доставки и показа нового документа."
+    },
+    "relaunchAfterPreservationCheck": {
+      "path": "/private/tmp/notex-post-cutover-212-20260927T0041Z/ipad-relaunch.json",
+      "sha256": "1cbffe9aa5fb6570166a07da646c454831c16365eeba4e4bfda7529dc4f9d8c8",
+      "bytes": 1278
+    },
+    "installationRefusals": [
+      {
+        "receipt": {
+          "path": "/private/tmp/notex-install-212-20260927T0027Z/installation.json",
+          "sha256": "7a025a0dc8afd7b4824dba4d019aab03518638ad990b774735ccd7d12de850ce",
+          "bytes": 1368
+        },
+        "cause": "Одноразовый guard ошибочно требовал явную Mac keychain group. Исправлен на точное равенство прав старой и новой подписи; установки не было."
+      },
+      {
+        "receipt": {
+          "path": "/private/tmp/notex-install-212-20260927T0028Z/installation.json",
+          "sha256": "9e81aaea705d2ec7f34b565534035d8e4f8ffc55c72e37b23364ffb60a676396",
+          "bytes": 1414
+        },
+        "cause": "iPad 211 вновь работал после старого снимка; установки не было. Затем выполнены обычное завершение и новый согласованный снимок."
+      }
+    ]
+  },
+  "cutover": {
+    "remove": "Только старые блочные документы выбранного текущего пространства, их состояния, черновики и исполнимое восстановление/Undo; смешанные действия с удалёнными документами также инвалидируются.",
+    "preserve": [
+      "тетради",
+      "доски",
+      "чаты",
+      "контейнеры",
+      "идентичности",
+      "ключи",
+      "исторические архивы"
+    ],
+    "archivesAreMigrationInput": false,
+    "preflight": {
+      "status": "passed",
+      "oldPairBuild": "211",
+      "scope": "Выбранное пространство на обеих сторонах, приложения нормально остановлены; очередь доставки полностью подтверждена. Исторические архивы не читались.",
+      "receipt": {
+        "path": "/private/tmp/notex-drain-212-20260927T0031Z/drain.json",
+        "sha256": "1d8760e36ed6b931833b8357c9245ae1859f2b838337347d5a71a33f6f6f0d7e",
+        "bytes": 4140
+      }
+    },
+    "postcheck": {
+      "receipt": {
+        "path": "/private/tmp/notex-post-cutover-212-20260927T0041Z/postcheck.json",
+        "sha256": "a4d5844424563b55004e71907d85a2b4a3616c708a28c4670cb1ba5d9c4a26b4",
+        "bytes": 10417
+      },
+      "rawStatus": "differences",
+      "analysis": {
+        "path": "/private/tmp/notex-post-cutover-212-20260927T0041Z/preservation-analysis.json",
+        "sha256": "00e01aa5b2feb9a669c1904a140421406890473c1fa97105c1cfa62d9190fcb3",
+        "bytes": 3272
+      },
+      "membershipDifferences": {
+        "path": "/private/tmp/notex-post-cutover-212-20260927T0041Z/notebook-membership-differences.json",
+        "sha256": "d3d4e99567348d08a52b639fdf9ff9581f1dbe65695ea08073b3022de1c3f9e9",
+        "bytes": 2625
+      },
+      "status": "preservation-confirmed",
+      "scope": "На каждой стороне schema 26, те же каталог и пространство; 6 тетрадей, 1 доска, 66 страниц. Документов и их состояний 0. Проверенные группы страниц/чернил/чатов и три локальные chat-таблицы совпали. Все семь оставшихся элементов и их потомки сохранены; различия хешей членства объяснены только уплотнением позиции после удаления документов, относительный порядок не изменился. Исходный сырой результат differences не заменён PASS. Ключи и архивы не читались."
+    }
+  },
+  "nativeRuns": [
+    {
+      "id": "notex-functional-final-11",
+      "source": {
+        "inventory": {
+          "path": "/Users/amir/.codex/worktrees/notex-integration/Notebook/.build/notex-functional-final-11/source-before.json",
+          "sha256": "2a5894ce7693a70e4b47b6510143b16ddbd20873a96d1857183f27927f9d414b",
+          "bytes": 290389
+        },
+        "sourceSHA256": "c9f14a6be03430974eefb976538fcd85118f4ac441abef3b69e1018c59f9fc8e",
+        "unchangedBeforeAfter": null,
+        "closure": "Запуск завершился отказом; source-after/verification.json отсутствуют."
+      },
+      "selection": {
+        "path": "/Users/amir/.codex/worktrees/notex-integration/Notebook/.build/notex-functional-final-11/selection.json",
+        "sha256": "83d6dabb88b189223f1722e9876843ab29a027cc7a5bbd29298a741c45bac876",
+        "bytes": 29258
+      },
+      "commands": {
+        "path": "/Users/amir/.codex/worktrees/notex-integration/Notebook/.build/notex-functional-final-11/commands.json",
+        "sha256": "59fa87bdee33e802912361112f1ea367847e4c01c828b625ac5e71f719dae5cd",
+        "bytes": 17286
+      },
+      "iPad": {
+        "status": "Passed",
+        "passed": 18,
+        "failed": 0,
+        "skipped": 0,
+        "total": 18,
+        "runtimeWarnings": 0,
+        "xcresult": "/Users/amir/.codex/worktrees/notex-integration/Notebook/.build/notex-functional-final-11/ipad.xcresult",
+        "summary": {
+          "path": "/Users/amir/.codex/worktrees/notex-integration/Notebook/.build/notex-functional-final-11/ipad-summary.json",
+          "sha256": "df894dfa3c85d560ca41ed378c6773c47f81558ea298def154fd24ebedf2568e",
+          "bytes": 968
+        },
+        "targets": {
+          "NotebookTests": 14,
+          "NotebookUITests": 4
+        },
+        "timings": {
+          "path": "/Users/amir/.codex/worktrees/notex-integration/Notebook/.build/notex-functional-final-11/ipad-timings.json",
+          "sha256": "c7c2e7d235f489450eb98cb5369fd07d62cb8b2d4b654a12d3b726eef4f7693d",
+          "bytes": 3121
+        },
+        "tests": {
+          "path": "/Users/amir/.codex/worktrees/notex-integration/Notebook/.build/notex-functional-final-11/ipad-tests.json",
+          "sha256": "dba801606d199113daa1cb1632570a0d89b983c6361eb7a8d8e067c5d68b632b",
+          "bytes": 14165
+        }
+      },
+      "mac": {
+        "status": "compile_failed",
+        "executed": false,
+        "exitCode": 65,
+        "failure": "DocumentRuntimeTests.swift:95: conditional downcast to CoreFoundation type 'CGImage' will always succeed",
+        "log": {
+          "path": "/Users/amir/.codex/worktrees/notex-integration/Notebook/.build/notex-functional-final-11/mac-build-for-testing.stdout.log",
+          "sha256": "6ac31fd6e71f012bda2db064fb66d989294ae29ca5195447a35c8b3783fa882f",
+          "bytes": 60382
+        }
+      }
+    },
+    {
+      "id": "notex-functional-final-14",
+      "source": {
+        "inventory": {
+          "path": "/Users/amir/.codex/worktrees/notex-integration/Notebook/.build/notex-functional-final-14/source-before.json",
+          "sha256": "41ca963f496739a7c7e971455f7b580f5b8f914098aefc3cc30398ca44352109",
+          "bytes": 290389
+        },
+        "sourceSHA256": "7580a137c36e515b1d5044f867941a1924e87cb930206d14d91fc90f1635c0a9",
+        "unchangedBeforeAfter": null,
+        "closure": "Запуск завершился отказом; source-after/verification.json отсутствуют."
+      },
+      "selection": {
+        "path": "/Users/amir/.codex/worktrees/notex-integration/Notebook/.build/notex-functional-final-14/selection.json",
+        "sha256": "5b314273eec98e7097c9ccc1c14fac77153fb70c8b0bfca26f0fea13533e7ed6",
+        "bytes": 29318
+      },
+      "commands": {
+        "path": "/Users/amir/.codex/worktrees/notex-integration/Notebook/.build/notex-functional-final-14/commands.json",
+        "sha256": "38f402bd7d8752849fd7facafbd5a6d681933b636c82d163a304d76b6099d3f1",
+        "bytes": 19211
+      },
+      "iPad": {
+        "status": "Passed",
+        "passed": 19,
+        "failed": 0,
+        "skipped": 0,
+        "total": 19,
+        "runtimeWarnings": 0,
+        "xcresult": "/Users/amir/.codex/worktrees/notex-integration/Notebook/.build/notex-functional-final-14/ipad.xcresult",
+        "summary": {
+          "path": "/Users/amir/.codex/worktrees/notex-integration/Notebook/.build/notex-functional-final-14/ipad-summary.json",
+          "sha256": "c5f09dd12c859c86137b39ad6fd0fb38beccf48dc228988cbb4509620e8e01cc",
+          "bytes": 1158
+        },
+        "targets": {
+          "NotebookTests": 19
+        },
+        "timings": {
+          "path": "/Users/amir/.codex/worktrees/notex-integration/Notebook/.build/notex-functional-final-14/ipad-timings.json",
+          "sha256": "6c30c70d19c93f13868a633da913a84438eb88f654e87776502db11529204c72",
+          "bytes": 3015
+        },
+        "tests": {
+          "path": "/Users/amir/.codex/worktrees/notex-integration/Notebook/.build/notex-functional-final-14/ipad-tests.json",
+          "sha256": "4012b13f86e49ebfba94a044a8d8814945460008ab9a9e5a849824bdf90e9e82",
+          "bytes": 14189
+        }
+      },
+      "mac": {
+        "status": "Failed",
+        "passed": 107,
+        "failed": 1,
+        "skipped": 0,
+        "total": 108,
+        "runtimeWarnings": 0,
+        "xcresult": "/Users/amir/.codex/worktrees/notex-integration/Notebook/.build/notex-functional-final-14/mac.xcresult",
+        "summary": {
+          "path": "/tmp/notex-mac-final-14-summary.json",
+          "sha256": "067c852713f5da31bcb2750623542737eab5f1e67fba0c2f72bf5733baa8a6b0",
+          "bytes": 1450
+        },
+        "failureTest": "DocumentRuntimeTests/testFailedDrainDeadlineKeepsItsHeapUntilExplicitRetry()",
+        "failure": "Retry не завершил bounded preparation; новая execution identity/первый commit и восстановленный state не подтверждены.",
+        "failureDetails": {
+          "path": "/tmp/notex-retry14-detail.json",
+          "sha256": "a546e8b18b80702906a6bf15496a2453fe4b3eb27238c6554151db619293952c",
+          "bytes": 5794
+        }
+      }
+    },
+    {
+      "id": "notex-retry-final-15",
+      "source": {
+        "inventory": {
+          "path": "/Users/amir/.codex/worktrees/notex-integration/Notebook/.build/notex-retry-final-15/source-before.json",
+          "sha256": "26b730fee2a0503d40a3b47529971b649d0e260c38eff6efd6494497045b61b8",
+          "bytes": 290389
+        },
+        "sourceSHA256": "7eaf11bada8cf4210ab3a762c7531aedee016cb3cf9caedde349f6044edc28c7",
+        "afterInventory": {
+          "path": "/Users/amir/.codex/worktrees/notex-integration/Notebook/.build/notex-retry-final-15/source-after.json",
+          "sha256": "26b730fee2a0503d40a3b47529971b649d0e260c38eff6efd6494497045b61b8",
+          "bytes": 290389
+        },
+        "unchangedBeforeAfter": true
+      },
+      "selection": {
+        "path": "/Users/amir/.codex/worktrees/notex-integration/Notebook/.build/notex-retry-final-15/selection.json",
+        "sha256": "a09fb05401a64d1ec4fd3ae289bc2b674f6a8fd44dc36604a50a0246fd920711",
+        "bytes": 27828
+      },
+      "commands": {
+        "path": "/Users/amir/.codex/worktrees/notex-integration/Notebook/.build/notex-retry-final-15/commands.json",
+        "sha256": "e65008057ba49379e4798199d8f7b30105429cd339e45b4e87d25a8f574a8013",
+        "bytes": 12147
+      },
+      "mac": {
+        "status": "Passed",
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0,
+        "total": 1,
+        "runtimeWarnings": 0,
+        "xcresult": "/Users/amir/.codex/worktrees/notex-integration/Notebook/.build/notex-retry-final-15/mac.xcresult",
+        "summary": {
+          "path": "/Users/amir/.codex/worktrees/notex-integration/Notebook/.build/notex-retry-final-15/mac-summary.json",
+          "sha256": "7d390bed9a398727bc7c66f56859a65287120957b804743f400c9efbb5e4ff39",
+          "bytes": 929
+        },
+        "targets": {
+          "NotebookMacTests": 1
+        },
+        "timings": {
+          "path": "/Users/amir/.codex/worktrees/notex-integration/Notebook/.build/notex-retry-final-15/mac-timings.json",
+          "sha256": "87af9d1bef59e300cee46d7da3e4558605aaef114427092dfd9e457f30e71879",
+          "bytes": 305
+        },
+        "tests": {
+          "path": "/Users/amir/.codex/worktrees/notex-integration/Notebook/.build/notex-retry-final-15/mac-tests.json",
+          "sha256": "a12453d8799eff574c6197c108f6ae595b2712b14c0dbc2951a9be1047092f2c",
+          "bytes": 1664
+        }
+      },
+      "verification": {
+        "path": "/Users/amir/.codex/worktrees/notex-integration/Notebook/.build/notex-retry-final-15/verification.json",
+        "sha256": "82e41a1f6406a9ba2b83b90caaca4288a9d32213a3624d99393780e23354e8a1",
+        "bytes": 324324
+      },
+      "scope": "Только DocumentRuntimeTests/testFailedDrainDeadlineKeepsItsHeapUntilExplicitRetry; не общий Mac/iPad PASS."
+    },
+    {
+      "id": "notex-functional-final-16",
+      "sourceSHA256": "7eaf11bada8cf4210ab3a762c7531aedee016cb3cf9caedde349f6044edc28c7",
+      "selection": {
+        "path": "/Users/amir/.codex/worktrees/notex-integration/Notebook/.build/notex-functional-final-16/selection.json",
+        "sha256": "24e42d4e44652938716ade127406afb33d979a440a082ab2ee1f6848750cf385",
+        "bytes": 28559
+      },
+      "commands": {
+        "path": "/Users/amir/.codex/worktrees/notex-integration/Notebook/.build/notex-functional-final-16/commands.json",
+        "sha256": "62520ae132e707682aadefc4eaef8475695bf85a6358609d17797ac4e54c7aaf",
+        "bytes": 13040
+      },
+      "iPad": {
+        "status": "Failed",
+        "passed": 22,
+        "failed": 1,
+        "skipped": 0,
+        "runtimeWarnings": 0,
+        "summary": {
+          "path": "/tmp/notex-ipad-final-16-summary.json",
+          "sha256": "37ee107a109dd52f0eb375194959b939f3bae6a9006084135e0571ae4e9a7515",
+          "bytes": 18738
+        },
+        "xcresult": "/Users/amir/.codex/worktrees/notex-integration/Notebook/.build/notex-functional-final-16/ipad.xcresult"
+      },
+      "mac": {
+        "executed": false
+      },
+      "failureAnalysis": "19 native и 3 UI PASS. В четвёртом сценарии система незапрошенно вернула iPad в portrait между проверкой landscape и касанием «Рядом». Видео подтверждает оба корректных макета; production и oracle не менялись. Повтор выбран отдельно, этот запуск остаётся FAIL.",
+      "images": [
+        {
+          "path": "/tmp/notex-rotation16/landscape.png",
+          "sha256": "5b94f4563e7bf0baf958b74a9b384bd3e67d46a421d5f626917fdb46818df194",
+          "bytes": 832545
+        },
+        {
+          "path": "/tmp/notex-rotation16/portrait.png",
+          "sha256": "ba26867c6553d36825d750838ce811eb2f62efe742da627c8803a15c4b284a82",
+          "bytes": 381895
+        }
+      ]
+    },
+    {
+      "id": "notex-functional-final-18",
+      "sourceSHA256": "7eaf11bada8cf4210ab3a762c7531aedee016cb3cf9caedde349f6044edc28c7",
+      "sourceUnchanged": true,
+      "verification": {
+        "path": "/Users/amir/.codex/worktrees/notex-integration/Notebook/.build/notex-functional-final-18/verification.json",
+        "sha256": "92a80e7a220c8142fb135de3599512747b078d1e5f4c15b3f9522c95c90b0616",
+        "bytes": 368866
+      },
+      "route": "./verify.sh:selected",
+      "selection": {
+        "path": "/Users/amir/.codex/worktrees/notex-integration/Notebook/.build/notex-functional-final-18/selection.json",
+        "sha256": "40a123e05054ff58c7feb2fa144be6c14dfcf8f2a128d99e5e16faeafe705285",
+        "bytes": 28284
+      },
+      "commands": {
+        "path": "/Users/amir/.codex/worktrees/notex-integration/Notebook/.build/notex-functional-final-18/commands.json",
+        "sha256": "82e3fb542a588923ac146fd4d88aa25a6b65230c0f31b11c77b082f26fa975ab",
+        "bytes": 23412
+      },
+      "iPad": {
+        "passed": 20,
+        "failed": 0,
+        "skipped": 0,
+        "runtimeWarnings": 0,
+        "summary": {
+          "path": "/Users/amir/.codex/worktrees/notex-integration/Notebook/.build/notex-functional-final-18/ipad-summary.json",
+          "sha256": "967ee44bf0ad590a0698ffcb12e86ddf5f9959d7be2181c04245a64703856045",
+          "bytes": 1159
+        },
+        "xcresult": "/Users/amir/.codex/worktrees/notex-integration/Notebook/.build/notex-functional-final-18/ipad.xcresult"
+      },
+      "mac": {
+        "passed": 38,
+        "failed": 0,
+        "skipped": 0,
+        "runtimeWarnings": 0,
+        "summary": {
+          "path": "/Users/amir/.codex/worktrees/notex-integration/Notebook/.build/notex-functional-final-18/mac-summary.json",
+          "sha256": "993d76169524700c548fc942474ec31a4864fa7ccfaf917575965cd0eea9310c",
+          "bytes": 1124
+        },
+        "xcresult": "/Users/amir/.codex/worktrees/notex-integration/Notebook/.build/notex-functional-final-18/mac.xcresult"
+      },
+      "documentBrowser": {
+        "passed": 15,
+        "failed": 0,
+        "log": {
+          "path": "/Users/amir/.codex/worktrees/notex-integration/Notebook/.build/notex-functional-final-18/document-browser.stdout.log",
+          "sha256": "33fc11ec5ea06723178003d5b2658dacc0f84220843a09175592a65d0dcf9ea2",
+          "bytes": 1643
+        }
+      }
+    }
+  ],
+  "separateCoreAndMCP": [
+    {
+      "log": {
+        "path": "/tmp/notex-core-final-9.log",
+        "sha256": "a23babb35c422c945b3a4c3ea650e6cb8b98a3123518bd8156bb00f798068a8a",
+        "bytes": 16589
+      },
+      "status": "passed",
+      "groups": [
+        {
+          "name": "Exact document check adapter",
+          "tests": 3
+        },
+        {
+          "name": "File/resource/state/migration/portable/history Core",
+          "tests": 59,
+          "suites": 7
+        }
+      ]
+    },
+    {
+      "log": {
+        "path": "/tmp/notex-mcp-final-9.log",
+        "sha256": "6345469359c252e2935b506ca32b7a052d4b2938b78aed8f0d31584c65af2a8d",
+        "bytes": 6583
+      },
+      "status": "passed",
+      "tests": 65,
+      "failed": 0,
+      "skipped": 0,
+      "isolation": "NOTEBOOK_HOME отдельного IPC test host, не production store"
+    },
+    {
+      "log": {
+        "path": "/tmp/notex-core-export-final-14.log",
+        "sha256": "bf5585758c559a982821abf602731bbe395bfc14ce8bbf9463fbf766d3885e39",
+        "bytes": 7541
+      },
+      "status": "passed",
+      "groups": [
+        {
+          "name": "DocumentPrintLocationsTests",
+          "framework": "XCTest",
+          "tests": 8
+        },
+        {
+          "name": "NotebookExportPublicationTests",
+          "framework": "Swift Testing",
+          "tests": 15
+        }
+      ]
+    }
+  ],
+  "evidenceBoundary": "Core/MCP-логи закреплены отдельно; не имеют в этих файлах собственного before/after source inventory и не объединяются с native source cuts.",
+  "inheritedGUI306": {
+    "coldDocument": {
+      "status": "open",
+      "ceilingMilliseconds": 1000,
+      "source": {
+        "inventory": {
+          "path": "/Users/amir/.codex/worktrees/notex-integration/Notebook/.build/notex-native-final-7/source-before.json",
+          "sha256": "a74c9cdba663668547713ebee0ea7c1470d73621221e2299bb712609815b8e23",
+          "bytes": 290389
+        },
+        "sourceSHA256": "25269008bc9628a319994d3bd14d7a0762b75b7e59a2c2b3f0fa9c3f14e5e176",
+        "unchangedBeforeAfter": null,
+        "closure": "Запуск завершился отказом; source-after/verification.json отсутствуют."
+      },
+      "summary": {
+        "path": "/tmp/notex-ipad-final-7-summary.json",
+        "sha256": "a1880d0a3c029b3286c42b8379de08e2b12144502b6c0051dac8243fa8f19640",
+        "bytes": 53691
+      },
+      "xcresult": "/Users/amir/.codex/worktrees/notex-integration/Notebook/.build/notex-native-final-7/ipad.xcresult",
+      "failures": [
+        {
+          "test": "NotebookDocumentOpeningTests/testHistoryReferenceInstallsAnUnloadedDocumentOnAnotherBoard()",
+          "failure": "XCTAssertTrue failed - UX document-other-board-installed: correct=true, observed=1415.450667 ms, ceiling=1.0 seconds; window observation, not photon timing"
+        },
+        {
+          "test": "NotebookDocumentOpeningTests/testHistoryReferenceInstallsAnUnloadedDocumentOutsideTheCurrentCamera()",
+          "failure": "XCTAssertTrue failed - UX document-installed: correct=true, observed=1316.181167 ms, ceiling=1.0 seconds; window observation, not photon timing"
+        }
+      ],
+      "boundary": "correct=true; наблюдение окна, не input-to-photon. Эти два performance-теста не входят в functional11/14/retry15."
+    },
+    "portalOracle": {
+      "status": "old_oracle_not_fixed_or_passed",
+      "test": "AddressedTargetRenderTests/testPortalCoverRendersItsSavedChildAndChangesIdentityWithIt()",
+      "summary": {
+        "path": "/tmp/notex-mac-final-13-summary.json",
+        "sha256": "67d28dd236bd2ec8f2a8c9bd431294c3e97f4724e69822b003bfa188b185b551",
+        "bytes": 2679
+      },
+      "xcresult": "/Users/amir/.codex/worktrees/notex-integration/Notebook/.build/notex-mac-final-13/mac.xcresult",
+      "actualCenterRGBA": [
+        222,
+        227,
+        213,
+        255
+      ],
+      "finding": "Старый тест ожидает цвет child в центре намеренно закрытой папки; test/production portal не изменялись от ed60. В final14 выбраны остальные три AddressedTargetRenderTests, этот отказ не засчитан как PASS.",
+      "images": [
+        {
+          "path": "/tmp/notex-portal-13/58705401-CAB7-4FC1-9501-502879B8630D.png",
+          "sha256": "aff1972dfec25b78577ebb2a16a0864056bbcbd157b146bbecd8b6e0c48ee068",
+          "bytes": 2458263
+        },
+        {
+          "path": "/tmp/notex-portal-13/9BC695B5-1931-4E60-990D-87B5906A7005.png",
+          "sha256": "aff1972dfec25b78577ebb2a16a0864056bbcbd157b146bbecd8b6e0c48ee068",
+          "bytes": 2458263
+        }
+      ]
+    }
+  },
+  "s7": {
+    "status": "incomplete",
+    "physicalUIAutomation": "Работает: три UI-сценария final16 и повтор четвёртого final18 на неизменных исходниках; все четыре также прошли прежний final11.",
+    "tenScenarioRepetitions": false,
+    "thirtyMinuteJointSession": false,
+    "systemFrameCPUGPUMemoryAcceptance": false,
+    "productionPairAcceptance": false,
+    "boundary": "Сохранение, получение на iPad, фактический показ и жесты — разные результаты; полная приёмка не завершена."
+  },
+  "supplementaryCurrentCore": {
+    "command": "swift test --filter DocumentFilesTests|NotebookDocumentResourceTransferTests|DocumentFormatMigrationTests|DocumentProgramStateTests|NotebookProgramStateReadTests|NotebookPortableDocumentTests|NotebookNativeHistoryTests|DocumentDocumentTests|DocumentReadingPositionTests|NotebookExportPublicationTests|DocumentPrintLocationsTests|NotebookDocumentCheckTests",
+    "xctestPassed": 8,
+    "scriptHostSwiftTestingPassed": 3,
+    "coreSwiftTestingPassed": 74,
+    "log": {
+      "path": "/tmp/notex-core-final-17.log",
+      "sha256": "12595200b24abf30a891158e65acc2fc25bd8a1961ad38a10cc26a37437c6737",
+      "bytes": 23851
+    },
+    "boundary": "Прямой прицельный SwiftPM-запуск; не native verification.json."
+  },
+  "releasePackaging": {
+    "sourceSHA256": "73d2893a2bcfd9ab407bee7024db29f1414fe703e6e15e3cbfa7843424ff8a38",
+    "changedInputsSinceFunctional18": [
+      "Applications/notebook_release.py",
+      "Tests/NotebookRelease/run.py"
+    ],
+    "purpose": "Сборка Mac повторно использует проверяемый подготовленный Codex/Node runtime вместо нового скачивания из каждого immutable snapshot. Версии и правила подписи не менялись.",
+    "refusedAttempt": {
+      "path": "/private/tmp/notex-release-212-20260927T0015Z/build.json",
+      "sha256": "3ada12c470904f5d33c51d7b098d69b7af8566917842339aa1deb05a1ceebd21",
+      "bytes": 433
+    },
+    "cause": "TLS timeout при повторном скачивании Codex; iPad был собран, установка не выполнялась.",
+    "verification": {
+      "path": "/Users/amir/.codex/worktrees/notex-integration/Notebook/.build/notex-release-stage-final-19/verification.json",
+      "sha256": "e43be680cdc0b8dcabcf3ed1fa34a06651148b7bb2025d297a9d020c14a95a3f",
+      "bytes": 335108
+    },
+    "releaseContractTests": 69,
+    "verificationContractTests": 90,
+    "macRegressionPassed": 1,
+    "physicalIPadRegressionPassed": 1,
+    "codexVersion": "0.155.0",
+    "nodeVersion": "v24.21.0"
+  }
+}

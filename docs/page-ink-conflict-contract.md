@@ -196,8 +196,10 @@ that moved body again at its new position. Raw triangle overlap remains grouped;
 extracting a contact changes that grouping only at the first actual edit, never
 on selection or in an intermediate frame at the old pose.
 
-`InkCanvasView` installs one prepared ordered plan, including its controls, rather
-than mounting one material view per member. A later move uses the same exchange;
+`InkCanvasView` installs one prepared ordered plan rather than mounting one
+material view per member. Its presentation owner publishes matching authored
+poses and controls at that boundary; publication is not an OS display receipt.
+A later move uses the same exchange;
 cancellation restores only its selected bodies and preserves newer accepted ink.
 Ending the contact transfers its shown pose to the retiring presentation before
 selection observers run. Authored peers and raw controls retain that pose until

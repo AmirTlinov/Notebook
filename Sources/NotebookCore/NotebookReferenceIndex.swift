@@ -493,7 +493,7 @@ extension NotebookStore {
       value = .object(["id": .string(id.uuidString.lowercased()), "kind": fragment.value["kind"] ?? .null, "title": fragment.value["title"] ?? .null])
       owners = [Self.referenceOwnerKey("cover", id)]
     } else if fragment.file.hasPrefix("documents/"), let id = UUID(uuidString: String(fragment.file.dropFirst(10).dropLast(5))) {
-      value = .object(["paperSize": fragment.value["paperSize"] ?? .null])
+      value = .object([:])
       owners = [Self.referenceOwnerKey("cover", id)]
     } else if fragment.file == "spatial-ink.json" {
       let action = try read().decode(SpatialInkAction.self)

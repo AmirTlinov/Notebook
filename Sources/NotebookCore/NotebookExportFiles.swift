@@ -8,7 +8,10 @@ public struct NotebookExportFile: Codable, Equatable, Sendable {
   public let sha256: String
   public init(file: NotebookProgramPackage.File, sha256: String) { self.file = file; self.sha256 = sha256 }
   public func validate() throws {
-    try file.validate()
+    // The authored namespace already permits 1024 bytes and 32 components.
+    // The export container's files/ prefix does not consume that source budget.
+    let path = file.path.hasPrefix("files/") ? String(file.path.dropFirst(6)) : file.path
+    try NotebookProgramPackage.File(path: path, mimeType: file.mimeType, byteCount: file.byteCount, parts: file.parts).validate()
     guard NotebookProgramPackage.validHash(sha256) else { throw NotebookStorageError.blobHashMismatch }
   }
 
@@ -59,33 +62,42 @@ extension NotebookStore {
         throw CollaborationError("export_presentation_mismatch", "Presented export публикует исходные пиксели, не поздний повторный render.")
       }
     }
+    try NotebookPortableDocument.validateCutBudget(publication.cut)
     let cutData = try publication.cut.canonicalData(), assets = publication.assets
     let addressed = [publication.artifact] + assets + (publication.syncTeX.map { [$0] } ?? [])
-    guard cutData.count <= 8*1024*1024, publication.source.utf8.count <= 4*1024*1024,
-      publication.log.utf8.count <= 32_000, assets.count <= (publication.options.format == .package ? 16_383 : 128),
-      publication.artifact.file.path == "document." + publication.options.format.rawValue,
-      (publication.options.format == .pdf || publication.options.format == .package) || (assets.isEmpty && publication.source.isEmpty && publication.sourceMap == nil && publication.syncTeX == nil),
-      assets.enumerated().allSatisfy({
-        publication.options.format == .package ? $0.element.file.path == "blob-" + $0.element.sha256 : $0.element.file.path == "notebook-image-\($0.offset).pdf"
-      }),
+    let expectedAssets = publication.cut.document.files.filter { $0.path != publication.cut.document.entrypoint }.sorted { $0.path < $1.path }
+    let primaryName = publication.options.format == .package ? "document.notex" : "document."+publication.options.format.rawValue
+    let sourcePaths = Set(assets.map { $0.file.path })
+    var exactAssets = assets.count == expectedAssets.count
+    if exactAssets {
+      for (asset, file) in zip(assets, expectedAssets) {
+        guard asset.file.path == "files/"+file.path, asset.file.byteCount == file.byteCount else { exactAssets = false; break }
+        if let resource = file.resource { if asset.file.parts != resource.parts { exactAssets = false; break } }
+        else if asset.sha256 != NotebookExportFile.hex(SHA256.hash(data: Data(file.source.utf8))) { exactAssets = false; break }
+      }
+    }
+    guard publication.source.utf8.count <= DocumentFile.maximumSourceLength,
+      publication.log.utf8.count <= 64*1024, assets.count <= DocumentDocument.maximumFileCount,
+      publication.artifact.file.path == primaryName,
+      publication.options.format == .pdf ? (exactAssets && publication.cut.document.files.first(where: { $0.path == publication.cut.document.entrypoint && $0.isText })?.source == publication.source) : (assets.isEmpty && publication.source.isEmpty && publication.sourceMap == nil && publication.syncTeX == nil),
       addressed.reduce(0, { $0 + $1.file.parts.count }) <= 16_384 else {
       throw CollaborationError("invalid_artifact", "Недопустимый печатный пакет.")
     }
     for file in addressed { try file.validate() }
     let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
-    guard try encoder.encode(addressed).count <= NotebookProgramPackage.maximumManifestBytes else {
-      throw CollaborationError("invalid_artifact", "Описание экспортных файлов превышает 1 МиБ.")
+    guard try encoder.encode(addressed).count <= NotebookPortableDocument.maximumMetadataBytes else {
+      throw CollaborationError("resource_limit", "Описание экспортных файлов превышает 8 МиБ.")
     }
     var metadata = [("document.cut.json", cutData), ("export.options.json", try encoder.encode(publication.options))]
-    if publication.options.format == .pdf { metadata.append(("document.tex", Data(publication.source.utf8))) }
+    if publication.options.format == .pdf { metadata.append(("files/"+publication.cut.document.entrypoint, Data(publication.source.utf8))) }
     if let map = publication.sourceMap, let syncTeX = publication.syncTeX {
       guard syncTeX.file.path == "document.synctex.gz" else { throw CollaborationError("invalid_artifact", "Неверный адрес карты страниц.") }
       try map.validate(document: publication.cut.document, source: publication.source, pdfSHA256: publication.artifact.sha256)
       let encoded = try encoder.encode(map)
-      guard encoded.count <= 1_048_576 else { throw CollaborationError("invalid_artifact", "Карта блоков превышает 1 МиБ.") }
+      guard encoded.count <= 8*1024*1024 else { throw CollaborationError("invalid_artifact", "Карта файлов превышает 8 МиБ.") }
       metadata.append(("document.source-map.json", encoded))
     } else if publication.sourceMap != nil || publication.syncTeX != nil {
-      throw CollaborationError("invalid_artifact", "Карта блоков и карта страниц публикуются вместе.")
+      throw CollaborationError("invalid_artifact", "Карта файлов и карта страниц публикуются вместе.")
     }
     let directory = root.appendingPathComponent("exports", isDirectory: true)
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -95,11 +107,14 @@ extension NotebookStore {
       var files: [(name: String, size: Int64, hash: String, mime: String)] = []
       for (name, data) in metadata {
         try Task.checkCancellation()
-        try data.write(to: staging.appendingPathComponent(name))
+        let output = staging.appendingPathComponent(name)
+        try FileManager.default.createDirectory(at: output.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try data.write(to: output)
         files.append((name, Int64(data.count), NotebookExportFile.hex(SHA256.hash(data: data)), NotebookProgramPackage.mimeType(for: name)))
       }
       for item in addressed {
         let url = staging.appendingPathComponent(item.file.path)
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         guard FileManager.default.createFile(atPath: url.path, contents: nil, attributes: [.posixPermissions: 0o600]) else {
           throw CollaborationError("invalid_artifact", "Не удалось подготовить файл экспорта.")
         }
@@ -109,7 +124,7 @@ extension NotebookStore {
           try Task.checkCancellation()
           let bytes = try readProgramFile(item.file, offset: offset, maxBytes: 1_048_576)
           guard !bytes.isEmpty else { throw NotebookStorageError.blobHashMismatch }
-          if offset == 0 && publication.options.format != .package {
+          if offset == 0 && publication.options.format != .package && !sourcePaths.contains(item.file.path) {
             let prefix: Data
             switch item.file.mimeType {
             case "application/pdf": prefix = Data("%PDF-".utf8)
@@ -133,16 +148,16 @@ extension NotebookStore {
           }
           digest.update(data: bytes); try output.write(contentsOf: bytes); offset += Int64(bytes.count)
         }
-        guard offset > 0, NotebookExportFile.hex(digest.finalize()) == item.sha256 else { throw NotebookStorageError.blobHashMismatch }
+        guard (offset > 0 || sourcePaths.contains(item.file.path)), NotebookExportFile.hex(digest.finalize()) == item.sha256 else { throw NotebookStorageError.blobHashMismatch }
         try output.close()
         files.append((item.file.path, offset, item.sha256, item.file.mimeType))
       }
       if publication.options.format == .package {
         guard publication.source.isEmpty, publication.sourceMap == nil, publication.syncTeX == nil,
-          publication.artifact.file.byteCount <= 8*1024*1024 else { throw CollaborationError("invalid_portable_document", "Неверный состав переносимого документа.") }
-        let bytes = try Data(contentsOf: staging.appendingPathComponent("document.package"))
-        let portable = try JSONDecoder().decode(NotebookPortableDocument.self, from: bytes)
-        guard portable.cut == publication.cut, try portable.blobs() == assets else {
+          assets.isEmpty, publication.artifact.file.byteCount <= 64*1024*1024 else { throw CollaborationError("invalid_portable_document", "Неверный состав переносимого документа.") }
+        let bytes = try Data(contentsOf: staging.appendingPathComponent("document.notex"))
+        let portable = try NotebookPortableDocument(data: bytes)
+        guard portable.cut == publication.cut else {
           throw CollaborationError("invalid_portable_document", "Срез и полный набор адресных ресурсов должны совпадать.")
         }
       }
@@ -170,7 +185,7 @@ extension NotebookStore {
       let cut = artifact("document.cut.json")!
       let receipt = NotebookExportReceipt(cutSHA256: cut.sha256, stateRevision: publication.cut.state.stamp.revision,
         cut: cut, documentID: publication.documentID, options: publication.options,
-        artifact: artifact(publication.artifact.file.path)!, source: artifact("document.tex"),
+        artifact: artifact(publication.artifact.file.path)!, source: artifact("files/"+publication.cut.document.entrypoint),
         log: publication.log, packageSHA256: hash,
         assets: publication.options.format == .package ? nil : assets.compactMap { artifact($0.file.path) }, sourceMap: artifact("document.source-map.json"), syncTeX: artifact("document.synctex.gz"))
       try Task.checkCancellation()

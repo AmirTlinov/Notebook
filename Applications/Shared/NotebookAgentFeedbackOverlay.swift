@@ -14,7 +14,7 @@ struct NotebookAgentFeedbackOverlay: View {
       let reference = episode.subject.reference
       if reference.target.kind == .document, reference.elementID == nil, reference.region == nil,
         let document = model.documents[reference.target.id] {
-        subjects = document.blocks.map { block in
+        subjects = document.files.map { block in
           .init(reference:.init(target:reference.target,elementID:block.id,revision:reference.revision),expected:episode.subject.expected)
         }
       }

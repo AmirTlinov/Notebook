@@ -150,7 +150,7 @@ final class NotebookPageAddressTests: XCTestCase {
     XCTAssertEqual(newFrame.sourceIdentity, oldFrame.sourceIdentity)
     if elementCount == 64 {
       let resized = WorkspaceSceneIndex(workspace: current, hierarchy: hierarchy,
-        paperSizes: [UUID(): .a4], reusing: rebound)
+        paperSizes: [UUID(): .document(widthPoints: 595.275590551, heightPoints: 841.88976378)], reusing: rebound)
       XCTAssertNotEqual(resized.generationID, rebound.generationID)
     }
   }

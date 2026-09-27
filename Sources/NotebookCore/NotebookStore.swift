@@ -479,7 +479,6 @@ public struct NotebookStore: Sendable {
     for var document in documents where liveDocuments.contains(document.id) {
       if (try hasStoredValue(at: documentURL(document.id))) {
         let old = try loadDocument(document.id)
-        guard old.paperSize == document.paperSize else { throw corruptFile(at: documentURL(document.id)) }
         _ = document.merge(old)
         if document == old { continue }
       }

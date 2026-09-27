@@ -34,13 +34,39 @@ test('SDK v2 declarations type addressed reads, tuples, bases and results withou
       }
       const appearance:'intact'|'partial'|'erased'=s.data.appearance.state;
       const sourceIsPixels:boolean=s.data.appearance.sourceIsCompleteAppearance;
-      const d=await nb.document({id:input.documentID,blockID:'one'});
-      if(d.data) { const kind:'markdown'|'latex'|'tex'|'interactive'=d.data.block.kind; await emit(kind); }
+      const d=await nb.document({id:input.documentID,fileID:'one'});
+      if(d.data) { const path:string=d.data.file.path; const source:string=d.data.file.source; await emit({path,source}); }
+      if(d.data) {
+        const chunk=await nb.document({id:input.documentID,fileID:'one',bytes:{sourceVersion:d.data.sourceVersion,offset:0,maxBytes:65536}});
+        const body:string=chunk.data.base64;
+        const eof:boolean=chunk.data.eof;
+        const byteCount:number=chunk.data.byteCount;
+        // @ts-expect-error: explicit byte read is not a file source body
+        const unrelated=chunk.data.file.source;
+        await emit({body,eof,byteCount});
+        // @ts-expect-error: directory read cannot request a byte window without fileID
+        await nb.document({id:input.documentID,bytes:{sourceVersion:d.data.sourceVersion,offset:0,maxBytes:1}});
+      }
+      const directory=await nb.document({id:input.documentID});
+      const entrypoint:string=directory.data.entrypoint;
+      for(const file of directory.data.files) { const bytes:number=file.byteCount; await emit({entrypoint,bytes}); }
+      const program=await nb.read({kind:'documentProgram',id:input.documentID,instanceID:'wave',programPath:'programs/wave'});
+      const sourceBasis:string=program.data.sourceBasis;
+      await nb.transaction('state',{base:program.basis,summary:'State',operations:[{kind:'setDocumentProgramState',target:{kind:'document',id:input.documentID},id:program.data.instanceID,values:{programPath:program.data.programPath,sourceBasis,state:program.data.state}}]});
+      const checked=await nb.documentCheck({id:input.documentID,expectedRevision:'exact-source',pageIndex:2});
+      for(const program of checked.data.programs) {
+        const status:'ready'|'failed'|'not_checked'=program.status;
+        const scope:'startup'=program.scope;
+        const basis:string|undefined=program.sourceBasis;
+        await emit({status,scope,basis});
+      }
+      const structure=await nb.documentStructure({id:input.documentID});
+      for(const entry of structure.data.entries) { const offset:number=entry.utf16Offset; await emit(offset); }
       await nb.export('png',{documentID:input.documentID,format:'png',pageIndex:0,pixelWidth:1600});
       await nb.export('shown',{documentID:input.documentID,format:'png',moment:'presented',attention:{contextID:input.documentID,referenceID:input.documentID}});
       await nb.export('portable',{documentID:input.documentID,format:'package'});
-      await nb.export('html',{documentID:input.documentID,format:'html',blockID:'sound'});
-      await nb.export('svg',{documentID:input.documentID,format:'svg',blockID:'signal'});
+      await nb.export('html',{documentID:input.documentID,format:'html',instanceID:'sound'});
+      await nb.export('svg',{documentID:input.documentID,format:'svg',instanceID:'signal'});
       await nb.cancelExport('cancel-image',{jobID:input.documentID});
       const printed=await nb.exportStatus({jobID:input.documentID});
       for(const map of [printed.data.receipt?.artifact,printed.data.receipt?.source,printed.data.receipt?.cut,printed.data.receipt?.sourceMap,printed.data.receipt?.syncTeX]) {
@@ -194,8 +220,8 @@ test('SDK v2 declarations type addressed reads, tuples, bases and results withou
       await nb.transaction('old',{summary:'old',expected:[],operations:[]});
       // @ts-expect-error: an addressed element is not the whole page
       const elements=s.data.elements;
-      // @ts-expect-error: block kind is not arbitrary source text
-      const wrong:number=d.data?.block.kind;
+      // @ts-expect-error: source is text, never a numeric value
+      const wrong:number=d.data?.file.source;
     }`);
     await writeFile(join(root,'tsconfig.json'),JSON.stringify({compilerOptions:{strict:true,noEmit:true,noEmitOnError:true,skipLibCheck:false,lib:['ES2023'],types:[],target:'ES2023',module:'esnext'},files:['notebook-sdk.d.ts','script.ts']}));
     const compiler=fileURLToPath(new URL('../node_modules/.bin/tsc',import.meta.url));

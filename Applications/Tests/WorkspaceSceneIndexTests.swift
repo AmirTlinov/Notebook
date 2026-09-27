@@ -395,12 +395,12 @@ final class WorkspaceSceneIndexTests: XCTestCase {
   @MainActor
   func testCameraDocumentSourceAndInteractiveStateKeepPreparedGeometryGeneration() async throws {
     let model = await makeModel()
-    let documentID = try XCTUnwrap(model.createDocument(at: .zero, paperSize: .letter))
+    let documentID = try XCTUnwrap(model.createDocument(at: .zero))
     await model.finishPendingPersistence()
     var document = try model.store.loadDocument(documentID)
-    XCTAssertTrue(document.replaceContent(blocks: document.blocks + [
-      .interactive(id: "counter", html: "<button>Next</button>", initialState: .object(["step": .number(0)]))
-    ], actor: model.actorID))
+    XCTAssertTrue(document.replaceContent(files: DocumentTestFiles.document(contents: [.tex(id: "body", source: "Initial body"),
+      .program(id: "counter", html: "<button>Next</button>", initialState: .object(["step": .number(0)]))
+    ]).files, actor: model.actorID))
     _ = try model.store.saveMergedDocument(document)
     await model.reloadExternalChanges()?.value
     try await waitForIndex(model)
@@ -413,19 +413,19 @@ final class WorkspaceSceneIndexTests: XCTestCase {
           scale: 0.2 + Double(frame % 30) / 50), viewport: viewport)
       model.updatePresence(presence, settled: false)
       let result = model.sceneWorkset(presence: presence, pinned: [.item(documentID)])
-      XCTAssertEqual(result.items.first { $0.id == documentID }?.geometry, .document(.letter))
+      XCTAssertEqual(result.items.first { $0.id == documentID }?.geometry, .uncompiledDocument)
     }
     XCTAssertEqual(model.sceneIndexGeneration, generation, "Camera changes query prepared metadata; they never rebuild it")
     model.updatePresence(try XCTUnwrap(model.presence), settled: true)
     await model.finishPendingPersistence()
     XCTAssertNil(model.documents[documentID], "Camera work does not hydrate a closed document body")
     document = try model.store.loadDocument(documentID)
-    XCTAssertTrue(document.replaceBlockSource(id: "body", source: "A changed sentence", actor: model.actorID))
+    XCTAssertTrue(document.replaceFileSource(id: "body", source: "A changed sentence", actor: model.actorID))
     _ = try model.store.saveMergedDocument(document)
     await model.reloadExternalChanges()?.value
     await model.finishPendingPersistence()
     try await waitForIndex(model)
-    XCTAssertEqual(try model.store.loadDocument(documentID).blocks.first?.source, "A changed sentence")
+    XCTAssertEqual(try model.store.loadDocument(documentID).files.first?.source, "A changed sentence")
     XCTAssertEqual(model.sceneIndexGeneration, generation, "Document text is not physical paper geometry")
     let presence = try XCTUnwrap(model.presence)
     model.updatePresence(.init(boardID: boardID, mode: .document,
@@ -436,8 +436,8 @@ final class WorkspaceSceneIndexTests: XCTestCase {
     try await waitForIndex(model)
     let openedGeneration = model.sceneIndexGeneration
     document = try XCTUnwrap(model.documents[documentID])
-    let stateAdmission1 = try await model.commitDocumentState(documentID: documentID, blockID: "counter",
-      value: .object(["step": .number(2)]), programIdentity: document.programIdentity(blockID: "counter"))
+    let stateAdmission1 = try await model.commitDocumentState(documentID: documentID,
+      program: try DocumentProgramSource(document: document, instanceID: "counter", path: "programs/counter"), value: .object(["step": .number(2)]))
     XCTAssertNotNil(stateAdmission1)
     await model.finishPendingPersistence()
     try await waitForIndex(model)

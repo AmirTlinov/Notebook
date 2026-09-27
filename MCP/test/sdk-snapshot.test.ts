@@ -148,7 +148,7 @@ for (const kind of ['document','board'] as const) {
       await commit({id:randomUUID(),summary:`Create a ${kind}`,references:[],expected:board.basis.owners,
         operations:[{kind:kind==='document'?'createDocument':'createBoard',target:{kind:'board',id:board.data},id,
           values:{title:'Public lifecycle',center:{tileX:0,tileY:0,localX:100,localY:100},
-            ...(kind==='document'?{paperSize:'a4'}:{})}}]});
+            ...(kind==='document'?{template:'article'}:{})}}]});
       const extent=await read({kind:'itemLifecycle',id}),actionID=randomUUID();
       const {result,request}=await commit({id:actionID,summary:`Delete a ${kind}`,references:[],
         expected:extent.basis.owners,additionalOwners:[extent.data.target],

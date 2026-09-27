@@ -50,10 +50,10 @@ enum NotebookProgramBridge {
     return source
   }()
 
-  @MainActor static func document(block: DocumentBlock, stateJSON: String, token: String,
+  @MainActor static func document(program: DocumentProgramSource, stateJSON: String, token: String,
     package: NotebookProgramPackage, origin: URL, stateCredit: Int = 0) throws -> NotebookProgramAssets.Document {
     let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
-    let configuration: JSONValue = .object(["blockID": .string(block.id), "token": .string(token), "requiresReady": .bool(true), "stateCredit": .number(Double(stateCredit))])
+    let configuration: JSONValue = .object(["blockID": .string(program.id), "token": .string(token), "requiresReady": .bool(true), "stateCredit": .number(Double(stateCredit))])
     let json = String(decoding: try encoder.encode(configuration), as: UTF8.self).replacingOccurrences(of: "<", with: "\\u003c")
     return .init(before: """
       <!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">

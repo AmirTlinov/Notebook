@@ -3,7 +3,28 @@ import NotebookCore
 import Observation
 import WebKit
 
+/// Failed execution still reports the addressed diagnostics from its exact
+/// source frame; a generic WebKit error must not erase the program identity.
+struct DocumentRenderingFailure: Error, LocalizedError {
+  let diagnostics: [RenderDiagnostic]
+  let buildID: String?
+  var programs: [DocumentProgramCheck] = []
+  var errorDescription: String? { diagnostics.first?.message }
+
+  static func diagnostics(in receipt: NSDictionary) -> [RenderDiagnostic] {
+    (receipt["diagnostics"] as? [[String: Any]] ?? []).suffix(64).map { row in
+      func string(_ key: String, limit: Int) -> String? { (row[key] as? String).map { String($0.prefix(limit)) } }
+      return .init(kind: string("kind", limit: 80) ?? "render_error", elementID: string("blockID", limit: 120),
+        fileID: string("fileID", limit: 120), path: string("path", limit: 4096),
+        line: (row["line"] as? Int).flatMap { $0 > 0 ? $0 : nil }, message: string("message", limit: 16_384) ?? "")
+    }
+  }
+}
+
+enum DocumentRegionKind: String, Codable, Sendable { case file, program }
+
 struct DocumentBlockRegion: Equatable {
+  var kind: DocumentRegionKind = .file
   let id: String
   let pageIndex: Int
   let frame: PageRect
@@ -25,6 +46,7 @@ final class DocumentRenderRegistry {
     let layout: DocumentLayoutRecord
     var regions: [DocumentBlockRegion] { layout.regions }
     let diagnostics: [RenderDiagnostic]
+    let programs: [DocumentProgramCheck]
   }
   @MainActor private struct PublishedEntry {
     let token: String
@@ -33,8 +55,9 @@ final class DocumentRenderRegistry {
     let pageIndex: Int
     weak var layout: DocumentLayoutRecord?
     let diagnostics: [RenderDiagnostic]
+    let programs: [DocumentProgramCheck]
     var retained: Entry? {
-      layout.map { Entry(token: token, pageIndex: pageIndex, layout: $0, diagnostics: diagnostics) }
+      layout.map { Entry(token: token, pageIndex: pageIndex, layout: $0, diagnostics: diagnostics, programs: programs) }
     }
   }
   // The registry locates a measured source; it is not another cache owner.
@@ -169,6 +192,16 @@ final class DocumentRenderRegistry {
     }
   }
 
+  func liveSurfaceIdentity(document: DocumentDocument, state: DocumentStateJournal, pageIndex: Int)
+    -> (hostID: UUID, generation: UInt64)? {
+    let token = DocumentSnapshotCache.token(document:document,state:state,pageIndex:pageIndex)
+    guard let entry = liveSurfaces.first(where: {
+      $0.value.documentID == document.id && $0.value.token == token && $0.value.pageIndex == pageIndex
+        && $0.value.isAttached(.paper)
+    }) else { return nil }
+    return (entry.key,entry.value.generation)
+  }
+
   /// Borrow the installed, accounted paper pixels. A prepared or detached page
   /// is not a mask for feedback on the current source.
   func installedPaper(document: DocumentDocument, state: DocumentStateJournal, pageIndex: Int) -> DocumentPaperRaster? {
@@ -202,10 +235,27 @@ final class DocumentRenderRegistry {
     entries[document.id]?.last(where: { $0.layout != nil && $0.sourceStamp == document.contentStamp })?.layout
   }
 
+  func geometry(document: DocumentDocument, pageIndex: Int = 0) -> WorkspaceItemGeometry {
+    layout(document: document)?.paper(on: pageIndex).geometry ?? .uncompiledDocument
+  }
+
+  func program(documentID: UUID, id: String) -> DocumentProgramSource? {
+    renderers.values.compactMap(\.value).first {
+      !$0.isInvalidated && $0.payload?.documentID == documentID && $0.payload?.source.program(id) != nil
+        && $0.exportSnapshotID == nil
+    }?.payload?.source.program(id)
+  }
+
+  func programs(documentID: UUID) -> [DocumentProgramSource] {
+    renderers.values.compactMap(\.value).first {
+      !$0.isInvalidated && $0.payload?.documentID == documentID && $0.exportSnapshotID == nil
+    }?.payload?.source.programs ?? []
+  }
+
   func programIDs(document: DocumentDocument, pageIndex: Int) -> Set<String>? {
     guard let entry = entries[document.id]?.last(where: { $0.layout != nil && $0.sourceStamp == document.contentStamp }),
       let layout = entry.layout, (0..<layout.pageCount).contains(pageIndex) else { return nil }
-    return layout.blockIDs(on: [pageIndex]).intersection(entry.programIDs)
+    return layout.blockIDs(on: [pageIndex], kind: .program).intersection(entry.programIDs)
   }
 
   func regions(document: DocumentDocument) -> [DocumentBlockRegion] {
@@ -213,6 +263,24 @@ final class DocumentRenderRegistry {
   }
 
   func layoutReferenceCount(documentID: UUID) -> Int { entries[documentID]?.count ?? 0 }
+
+  /// Only the selected physical page is checked. A retained executor on another
+  /// page cannot turn an unvisited illustration into an asserted successful test.
+  static func programChecks(in receipt: NSDictionary, source: DocumentSourceSnapshot, pageIndex: Int) -> [DocumentProgramCheck] {
+    let selected = source.programIDs(on: pageIndex) ?? []
+    let reported = Dictionary((receipt["programs"] as? [[String: Any]] ?? []).prefix(4096).compactMap { row -> (String, [String: Any])? in
+      guard let id = row["blockID"] as? String, selected.contains(id) else { return nil }
+      return (id, row)
+    }, uniquingKeysWith: { _, last in last })
+    return source.programIDs.sorted().map { id in
+      let status: DocumentProgramCheck.Status
+      if !selected.contains(id) { status = .notChecked }
+      else if source.programFailures[id] != nil || reported[id]?["readiness"] as? String == "failed" { status = .failed }
+      else if reported[id]?["readiness"] as? String == "declared", reported[id]?["started"] as? Bool == true { status = .ready }
+      else { status = .notChecked }
+      return .init(instanceID: id, sourceBasis: source.program(id)?.sourceBasis, status: status)
+    }
+  }
 
   func publish(documentID: UUID, token: String, source: DocumentSourceSnapshot, receipt: NSDictionary, geometry: WorkspaceItemGeometry) throws {
     guard let pageIndex = receipt["pageIndex"] as? Int,
@@ -226,15 +294,14 @@ final class DocumentRenderRegistry {
       let live = entries[documentID]?.filter { $0.layout != nil } ?? []
       entries[documentID] = live.isEmpty ? nil : live
     }
-    let diagnostics = (receipt["diagnostics"] as? [[String: String]] ?? []).map {
-      RenderDiagnostic(kind: $0["kind"] ?? "render_error", elementID: $0["blockID"], message: $0["message"] ?? "")
-    }
+    let diagnostics = DocumentRenderingFailure.diagnostics(in: receipt)
+    let programs = Self.programChecks(in: receipt, source: source, pageIndex: pageIndex)
     var values = entries[documentID]?.filter { $0.layout != nil } ?? []
     if let previous = values.last(where: { $0.token == token && $0.pageIndex == pageIndex }),
-      previous.layout === layout, previous.diagnostics == diagnostics { return }
+      previous.layout === layout, previous.diagnostics == diagnostics, previous.programs == programs { return }
     values.removeAll { $0.token == token && $0.pageIndex == pageIndex }
     values.append(.init(token: token, sourceStamp: source.stamp, programIDs: source.programIDs,
-      pageIndex: pageIndex, layout: layout, diagnostics: diagnostics))
+      pageIndex: pageIndex, layout: layout, diagnostics: diagnostics, programs: programs))
     entries[documentID] = Array(values.suffix(8))
   }
 }

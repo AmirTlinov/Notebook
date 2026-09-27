@@ -303,7 +303,7 @@ struct NotebookRecordCodec {
                 parent: address, collection: collectionKey, member: member, position: 0)
             }
           } else if case .array(let values) = value,
-            (["items", "boards", "placements", "elements", "blocks", "records", "actions", "entries", "pageIDs"].contains(key) || isComputationCollection),
+            (["items", "boards", "placements", "elements", "files", "records", "actions", "entries", "pageIDs"].contains(key) || isComputationCollection),
             values.allSatisfy({ $0.memberIdentity != nil || (key == "pageIDs" && $0.string != nil) }) {
             let ids = values.compactMap { $0.memberIdentity ?? $0.string?.lowercased() }
             guard Set(ids).count == ids.count else { throw NotebookStorageError.invalidTransaction("duplicate IDs in \(file)/\(collectionKey)") }
@@ -312,7 +312,8 @@ struct NotebookRecordCodec {
               let member = ids[offset]
               try make(value, address: address + "/" + collectionKey + "/@" + fieldKey([member]),
                 parent: address, collection: collectionKey, member: member, position: ((file == "board.json" && key == "placements") || isComputationCollection || (file.hasPrefix("collaboration/contexts/") && key == "entries")
-                || (file.hasPrefix("document-states/") && address == file + "#" && location == ["records"])) ? 0 : offset)
+                || (file.hasPrefix("document-states/") && address == file + "#" && location == ["records"])
+                || (file.hasPrefix("documents/") && location == ["files"])) ? 0 : offset)
             }
           } else if key == "drawingData", file.hasPrefix("pages/") {
             let drawing = try PageInkDrawing.decode(value.decode(Data.self))
@@ -421,7 +422,7 @@ extension NotebookStore {
   var currentSQL: NotebookSQLConnection? { Thread.current.threadDictionary[connectionKey] as? NotebookSQLConnection }
 
   // SQLite admission is local to this database, independently of wire and content formats.
-  static let currentDatabaseVersion: Int64 = 25
+  static let currentDatabaseVersion: Int64 = 26
 
   @discardableResult
   func prepareDatabase(initialWorkspaceID: UUID? = nil,
@@ -518,6 +519,7 @@ extension NotebookStore {
         try database.run("CREATE INDEX IF NOT EXISTS reference_element_children ON reference_element_order(owner_key,parent_id,position,member)")
       }
       if admittedVersion == 2 { try migrateStoredBoardPlacements(database: database) }
+      if admittedVersion < 26 { try retireStoredBlockDocuments(database: database) }
       // v18 completed the ink wire transition. Local schema updates must not
       // repeat it, require drained peers or advance the delivery floor.
       if admittedVersion < 18 { try migrateStoredInkRelations(database: database) }

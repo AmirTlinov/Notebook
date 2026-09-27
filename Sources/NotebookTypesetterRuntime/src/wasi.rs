@@ -159,18 +159,6 @@ pub unsafe extern "C" fn nb_wasi_fd_read(state: *mut NativeState, bytes: *mut u8
   }
 }
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn nb_wasi_fd_readdir(state: *mut NativeState, bytes: *mut u8, len: usize, a0: u32, a1: u32, a2: u32, a3: u64, a4: u32) -> u32 {
-  let state = unsafe { &mut *state };
-  if state.check() { return u32::MAX; }
-  let mut memory = wiggle::GuestMemory::Unshared(unsafe { std::slice::from_raw_parts_mut(bytes, len) });
-  let future = wasi::fd_readdir(&mut state.wasi, &mut memory, a0 as i32, a1 as i32, a2 as i32, a3 as i64, a4 as i32);
-  match pin!(future).poll(&mut Context::from_waker(Waker::noop())) {
-    Poll::Ready(Ok(result)) => result as u32,
-    Poll::Ready(Err(error)) => { state.failure = Some(error.to_string()); u32::MAX },
-    Poll::Pending => { state.failure = Some("Blocking WASI operation denied".into()); u32::MAX },
-  }
-}
-#[unsafe(no_mangle)]
 pub unsafe extern "C" fn nb_wasi_fd_seek(state: *mut NativeState, bytes: *mut u8, len: usize, a0: u32, a1: u64, a2: u32, a3: u32) -> u32 {
   let state = unsafe { &mut *state };
   if state.check() { return u32::MAX; }

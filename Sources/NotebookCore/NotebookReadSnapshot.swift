@@ -27,7 +27,7 @@ extension NotebookStore {
     case .itemHeader, .ownerBoard: if let id = query.id { try item(id) }
     case .itemHeaders: for value in data.array { if let id = value["id"]?.string.flatMap(UUID.init(uuidString:)) { try item(id) } }
     case .page, .pageHeader, .pageElement, .pageInkActions, .pageInkAction: add(.page, query.id)
-    case .document, .documentHeader, .documentBlock, .documentState: add(.document, query.id)
+    case .document, .documentHeader, .documentFile, .documentFileBytes, .documentDirectory, .documentStructure, .documentProgram, .documentState: add(.document, query.id)
     case .observation: if let target = query.scope?.target { targets.append(target) }
     case .boardItem:
       // This query names an item, not its containing board. The bounded

@@ -1,4 +1,5 @@
 import NotebookCore
+import PDFKit
 import UIKit
 import WebKit
 import XCTest
@@ -19,13 +20,13 @@ final class DocumentSaveTransitionTests: XCTestCase {
     let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
     retainNotebookUntilTeardown(model, removing: root)
     await model.start(pageSize: NotebookAppModel.defaultPageSize)
-    let id = try XCTUnwrap(model.createDocument(at: .zero, paperSize: .a4))
+    let id = try XCTUnwrap(model.createDocument(at: .zero))
     await model.finishPendingPersistence()
-    if brokenNeighbour {
+    do {
       try await model.performStoreCommand(publishesChanges: true) { store in
         var document = try store.loadDocument(id)
-        _ = document.replaceContent(blocks: [.markdown(id: "body", source: "# Edit this text"),
-          .interactive(id: "broken", html: "<button>Broken</button>", javaScript: "throw new Error('broken save neighbour')", height: 100)], actor: UUID())
+        _ = document.replaceContent(files: DocumentTestFiles.document(contents: [.tex(id: "body", source: "\\section{Edit this text}")] +
+          (brokenNeighbour ? [.program(id: "broken", html: "<button>Broken</button>", javaScript: "throw new Error('broken save neighbour')", height: 100)] : [])).files, actor: UUID())
         _ = try store.saveMergedDocument(document)
       }
       await model.reloadExternalChanges()?.value
@@ -53,7 +54,7 @@ final class DocumentSaveTransitionTests: XCTestCase {
         onPageLayout: { model.acceptDocumentReadingLayout($0, documentID: id) },
          onStateChange: { _, _ in nil },
          onLinkActivation: { _ in }, snapshotPixelWidth: nil,
-        onPreparationFailure: { _ in }), in: host, resources: resources)
+        onPreparationFailure: { _ in }, programStore: model.store), in: host, resources: resources)
     }
     func paper() -> WKWebView? {
       func find(_ view: UIView) -> WKWebView? {
@@ -66,21 +67,21 @@ final class DocumentSaveTransitionTests: XCTestCase {
     await wait { (paper()?.navigationDelegate as? DocumentWebCoordinator)?.hasCanonicalPixels == true && host.isUserInteractionEnabled }
     let web = try XCTUnwrap(paper())
     let current = try XCTUnwrap(model.documents[id])
-    let block = try XCTUnwrap(current.blocks.first { $0.kind != .interactive })
-    let editor = DocumentSourceEditorSession(request: .init(documentID: id, block: block,
-      version: current.sourceVersion(blockID: block.id), offset: 0), model: model)
-    editor.input("# Saved by the sole writer", selection: .init(location: 5, length: 0), composing: false, scroll: 0)
+    let block = try XCTUnwrap(current.files.first { $0.id == "body" })
+    let editor = DocumentSourceEditorSession(request: .init(documentID: id, file: block,
+      version: current.fileVersion(fileID: block.id), offset: 0), model: model)
+    editor.input("\\section{Saved by the sole writer}\\hypertarget{saved-by-the-sole-writer}{}", selection: .init(location: 5, length: 0), composing: false, scroll: 0)
     await editor.save()
     await wait { model.documentSavePresentation?.phase == .saved }
-    XCTAssertEqual(model.documentSavePresentation?.source, "# Saved by the sole writer")
+    XCTAssertEqual(model.documentSavePresentation?.source, "\\section{Saved by the sole writer}\\hypertarget{saved-by-the-sole-writer}{}")
     let savedDocument = try await model.performStoreCommand { try $0.loadDocument(id) }
-    XCTAssertEqual(savedDocument.blocks.first { $0.id == "body" }?.source, "# Saved by the sole writer")
+    XCTAssertEqual(savedDocument.files.first { $0.id == "body" }?.source, "\\section{Saved by the sole writer}\\hypertarget{saved-by-the-sole-writer}{}")
     // The exact new source exists in SQLite, but has not been sent to this WK.
     XCTAssertFalse(DocumentRenderRegistry.shared.hasLiveSurface(document: savedDocument,
       state: try XCTUnwrap(model.documentStates[id]), pageIndex: 0))
     physical.invalidate()
     XCTAssertEqual(model.documentSavePresentation?.phase, .saved)
-    XCTAssertEqual(model.documentSavePresentation?.source, "# Saved by the sole writer")
+    XCTAssertEqual(model.documentSavePresentation?.source, "\\section{Saved by the sole writer}\\hypertarget{saved-by-the-sole-writer}{}")
     physical = DocumentPhysicalPageCoordinator()
     try update()
     await wait { model.documentSavePresentation?.phase == .installed }
@@ -91,8 +92,10 @@ final class DocumentSaveTransitionTests: XCTestCase {
         state: try XCTUnwrap(model.documentStates[id]), pageIndex: 0, scope: .paper))
     }
     XCTAssertTrue(paper() === web, "A host gap is not a document close or a replacement WK runtime")
-    let rendered = try await web.evaluateJavaScript("!document.querySelector('textarea') && document.querySelector('#document').textContent.includes('Saved by the sole writer')")
+    let rendered = try await web.evaluateJavaScript("!document.querySelector('textarea') && notebookRenderer.presentationReceipt() !== null")
     XCTAssertEqual(rendered as? Bool, true)
+    let print = try await DocumentCanonicalPrint.store.artifact(for: savedDocument)
+    XCTAssertTrue(PDFDocument(data: print.pdf)?.string?.contains("Saved by the sole writer") == true)
     XCTAssertNil(model.documentSavePresentation?.source, "Only a proven native installation releases the retained saved text")
   }
 

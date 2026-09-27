@@ -29,7 +29,6 @@ import PDFKit
     let document = cut.document, state = cut.state
     // A saved export never borrows an uncommitted live frame with an equal
     // journal token, and never checkpoints or rewinds the user's executor.
-    let programs = Set(document.blocks.filter { $0.kind == .interactive }.map(\.id))
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent("notebook-export-" + jobID.uuidString)
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
     defer { try? FileManager.default.removeItem(at: directory) }
@@ -39,69 +38,63 @@ import PDFKit
         log: "Exact submitted presentation crop; original pixels/extent; no WebKit, checkpoint, rescale or cache read", options: options, jobID: jobID)
     }
     if options.format == .package {
-      let prepare = Task.detached(priority: .utility) {
-        let packages = try Set(document.blocks.compactMap(\.programPackage)).sorted().map { hash in
-          try NotebookPortableDocument.Package(sha256: hash, value: store.readProgramPackage(hash))
-        }
-        let portable = NotebookPortableDocument(cut: cut, packages: packages)
-        return (try portable.data(), try portable.blobs())
+      let printed: NotebookPrintedDocument?
+      do {
+        let input = try await Task.detached { try NotebookTypesetterInput(document: document) { try store.readDocumentFileBytes($0) } }.value
+        printed = try await DocumentCanonicalPrint.store.artifact(for: document, input: input)
+      } catch is CancellationError { throw CancellationError() }
+      catch { printed = nil } // A broken TeX entrypoint must not prevent carrying the authored files.
+      if cut.presented != nil {
+        guard let printed else { throw CollaborationError("export_presentation_model_unavailable", "Показанный пакет требует корректный печатный снимок.") }
+        try validatePresentedPrograms(cut, artifact: printed)
       }
-      let (data, assets) = try await withTaskCancellationHandler { try await prepare.value } onCancel: { prepare.cancel() }
-      let file = try await stage(data, path: "document.package", directory: directory, persistence: persistence)
-      return .init(cut: cut, source: "", artifact: file, log: "NotebookPortable/1: copy the entire directory; submit document.package to import", options: options, jobID: jobID, assets: assets)
+      let derived = printed.map { NotebookPortableDocument.Derived(pdf: $0.pdf, syncTeX: $0.syncTeX,
+        interactiveMap: $0.interactiveMap, sourceMap: $0.sourceMap) }
+      let data = try await Task.detached { try store.exportPortableDocument(cut: cut, derived: derived) }.value
+      let file = try await stage(data, path: "document.notex", directory: directory, persistence: persistence)
+      return .init(cut: cut, source: "", artifact: file, log: "NotebookDocument/1: complete offline source and saved state", options: options, jobID: jobID)
     }
-    if options.format == .html {
-      guard let block = document.blocks.first(where: { $0.id == options.blockID && $0.kind == .interactive }) else {
-        throw CollaborationError("export_block_missing", "HTML экспортирует явно выбранную программу.")
-      }
-      let html = try NotebookStandaloneExport.document(block: block, state: state.value(for: block.id) ?? block.initialState)
-      let file = try await stage(html, path: "document.html", directory: directory, persistence: persistence)
-      return .init(cut: cut, source: "", artifact: file, log: "Standalone NotebookProgram/1: immutable cut state, isolated offline iframe", options: options, jobID: jobID)
-    }
-    // The export owns this immutable source through the last composed page.
-    // Each page still gets an isolated program heap, but never reopens/redecodes
-    // the whole PDF, SyncTeX and navigation after its predecessor retires.
-    let printSession: DocumentRenderSession? = options.format != .pdf || !programs.isEmpty
-      ? DocumentRenderSession(documentID: document.id) : nil
-    let printSource = printSession?.source(document)
-    let printed = try await printSource?.printedSource(resources: .shared)
+    // Preflight, page composition and format adapters borrow this same admitted
+    // immutable source and its serial PDF owner through the final publication.
+    let printSession = DocumentRenderSession(documentID: document.id)
+    let printSource = printSession.source(document, store: store)
+    let printed = try await printSource.printedSource(resources: .shared)
     defer { withExtendedLifetime((printSession, printSource, printed)) {} }
-    let artifact: NotebookPrintedDocument
-    if let printed { artifact = printed.artifact }
-    else { artifact = try await DocumentCanonicalPrint.store.artifact(for: document) }
-    if options.format == .mp4 {
-      guard document.blocks.contains(where: { $0.id == options.blockID && $0.kind == .interactive }) else {
-        throw CollaborationError("export_block_missing", "Видео требует явно выбранную программу.")
+    let artifact = printed.artifact
+    if [.pdf, .mp4].contains(options.format) { try validatePresentedPrograms(cut, artifact: artifact) }
+    let programs = Set(artifact.interactiveRegions.map(\.instanceID))
+    if [.html, .svg, .mp4].contains(options.format) {
+      guard let instanceID = options.instanceID,
+        let region = artifact.interactiveRegions.first(where: { $0.instanceID == instanceID }) else {
+        throw CollaborationError("export_program_missing", "Программы нет в принятом печатном макете.")
       }
-      guard let printed, let printSession else { throw DocumentSessionError.invalidLayout }
-      let locations = printed.locations
-      guard locations.contains(where: { $0.blockID == options.blockID && $0.pageIndex == (options.pageIndex ?? 0) }) else {
-        throw CollaborationError("export_block_missing", "Программы нет на выбранной странице видео.")
+      let program = try await Task.detached { try store.documentProgramSource(document: document, instanceID: instanceID, path: region.programPath) }.value
+      if options.format == .html {
+        let html = try NotebookStandaloneExport.document(program: program, state: state.value(for: program.id) ?? program.initialState,
+          height: region.viewportHeight, store: store)
+        let file = try await stage(html, path: "document.html", directory: directory, persistence: persistence)
+        return .init(cut: cut, source: "", artifact: file, log: "Standalone NotebookProgram/1: immutable cut state, isolated offline iframe", options: options, jobID: jobID)
       }
-      let url = directory.appendingPathComponent("document.mp4")
-      try await NotebookVideoExport.write(to: url, cut: cut, options: options, jobID: jobID, store: store, renderSession: printSession)
-      return .init(cut: cut, source: "", artifact: try await stage(url, path: "document.mp4", persistence: persistence),
-        log: "H.264, no audio; explicit model times [start,end); canonical page, even height padded white", options: options, jobID: jobID)
-    }
-    if options.format == .svg {
-      guard let block = document.blocks.first(where: { $0.id == options.blockID && $0.kind == .interactive }) else {
-        throw CollaborationError("export_block_missing", "SVG exportFrame принадлежит явно названной программе.")
+      if options.format == .mp4 {
+        guard artifact.interactiveRegions.contains(where: { $0.instanceID == instanceID && $0.pageIndex == (options.pageIndex ?? 0) }) else {
+          throw CollaborationError("export_program_missing", "Программы нет на выбранной странице видео.")
+        }
+        let url = directory.appendingPathComponent("document.mp4")
+        try await NotebookVideoExport.write(to: url, cut: cut, options: options, jobID: jobID, store: store,
+          page: artifact.pages[options.pageIndex ?? 0], renderSession: printSession)
+        return .init(cut: cut, source: "", artifact: try await stage(url, path: "document.mp4", persistence: persistence),
+          log: "H.264, explicit model times [start,end), canonical page", options: options, jobID: jobID)
       }
-      guard let printed, let printSession else { throw DocumentSessionError.invalidLayout }
-      let locations = printed.locations
-      guard let page = locations.first(where: { $0.blockID == block.id })?.pageIndex else {
-        throw CollaborationError("export_block_missing", "Программы нет в принятом печатном макете.")
-      }
-      let svg = try await DocumentSnapshotCache.shared.withPreparedPage(document: document, state: state, pageIndex: page,
+      let svg = try await DocumentSnapshotCache.shared.withPreparedPage(document: document, state: state, pageIndex: region.pageIndex,
         resources: .shared, programStore: store, isolationID: jobID, renderSession: printSession) { coordinator in
-        try await coordinator.exportSVG(block: block, state: state.value(for: block.id) ?? block.initialState)
+        try await coordinator.exportSVG(program: program, state: state.value(for: program.id) ?? program.initialState)
       }
       let file = try await stage(Data(svg.utf8), path: "document.svg", directory: directory, persistence: persistence)
       return .init(cut: cut, source: "", artifact: file, log: artifact.log, options: options, jobID: jobID)
     }
     if options.format == .png {
       let pageIndex = options.pageIndex ?? 0, width = options.pixelWidth ?? 1600
-      guard let printSession, let pages = printSource?.layout?.pageCount else { throw DocumentSessionError.invalidLayout }
+      let pages = artifact.pages.count
       guard pageIndex < pages else { throw CollaborationError("export_page_missing", "Такой страницы нет в принятом печатном макете.") }
       let raster = try await DocumentSnapshotCache.shared.withPreparedPage(document: document, state: state, pageIndex: pageIndex,
         resources: .shared, programStore: store, isolationID: jobID, renderSession: printSession) { coordinator in
@@ -125,27 +118,25 @@ import PDFKit
     }
     let pdfURL = directory.appendingPathComponent("document.pdf")
     if !programs.isEmpty {
-      guard let printed else { throw DocumentSessionError.invalidLayout }
       let composer = try await PrintedPDFComposer.open(printed.pdf, outputURL: pdfURL)
-      let mapped = printed.locations.filter { programs.contains($0.blockID) }
+      let mapped = artifact.interactiveRegions
       let byPage = Dictionary(grouping: mapped, by: \.pageIndex)
       for pageIndex in 0..<composer.pageCount {
         try Task.checkCancellation()
         let locations = byPage[pageIndex] ?? []
         if locations.isEmpty { try await composer.append(pageIndex: pageIndex, image: nil, regions: []); continue }
-        let geometry = WorkspaceItemGeometry.document(document.paperSize)
+        let page = artifact.pages[pageIndex]
+        let geometry = WorkspaceItemGeometry.document(widthPoints: page.width, heightPoints: page.height)
         try await DocumentSnapshotCache.shared.withPreparedPage(document: document, state: state, pageIndex: pageIndex,
           resources: .shared, programStore: store, isolationID: jobID, renderSession: printSession) { coordinator in
-          let raster = try await coordinator.retainPreparedSnapshot(pixelWidth: Int(ceil(document.paperSize.widthPoints * 300 / 72)),
+          let raster = try await coordinator.retainPreparedSnapshot(pixelWidth: Int(ceil(page.width * 300 / 72)),
             force: true, waitsForRasterAdmission: true)
           defer { raster.release() }
-          let vectors = try await coordinator.exportPDFVectors(pointScale: document.paperSize.widthPoints / geometry.width)
+          let vectors = try await coordinator.exportPDFVectors(pointScale: page.width / geometry.width)
           defer { vectors.storage?.release() }
           var rect = CGRect(origin: .zero, size: raster.image.size)
           guard let image = raster.image.cgImage(forProposedRect: &rect, context: nil, hints: nil) else { throw SceneRenderError.resourceLimit }
-          let regions = Dictionary(grouping: locations, by: \.blockID).values.map { group in
-            group.reduce(CGRect.null) { $0.union(CGRect(x: $1.x, y: $1.y, width: $1.width, height: $1.height)) }
-          }
+          let regions = locations.map { CGRect(x: $0.x, y: $0.y, width: $0.width, height: $0.height) }
           try await composer.append(pageIndex: pageIndex, image: image, regions: regions, vectors: vectors.values)
         }
       }
@@ -155,17 +146,25 @@ import PDFKit
     let pdf = try await stage(pdfURL, path: "document.pdf", persistence: persistence)
     var assets: [NotebookExportFile] = []
     for asset in artifact.assets {
-      assets.append(try await stage(asset.data, path: asset.name, directory: directory, persistence: persistence))
+      assets.append(try await stage(asset.data, path: "files/" + asset.name, directory: directory, persistence: persistence))
     }
     let syncTeX = try await stage(artifact.syncTeX, path: "document.synctex.gz", directory: directory, persistence: persistence)
-    let map = try DocumentPrintSourceMap(document: document, source: artifact.source, pdfSHA256: pdf.sha256, ranges: artifact.sourceMap.ranges)
+    let map = try DocumentPrintSourceMap(document: document, source: artifact.source, pdfSHA256: pdf.sha256, compilerRevision: artifact.sourceMap.compilerRevision)
     return .init(cut: cut, source: artifact.source, artifact: pdf, log: artifact.log, options: options, jobID: jobID,
       assets: assets, sourceMap: map, syncTeX: syncTeX)
   }
 
+  private static func validatePresentedPrograms(_ cut: NotebookExportCut, artifact: NotebookPrintedDocument) throws {
+    guard let proof = cut.presented?.image?.presentation?.program else { return }
+    guard Set(artifact.interactiveRegions.map(\.instanceID)) == [proof.instanceID],
+      artifact.interactiveRegions.allSatisfy({ $0.programPath == proof.programPath }) else {
+      throw CollaborationError("export_presentation_model_unavailable", "Один показанный кадр не удостоверяет другие программы документа; выберите saved для полного сохранённого состояния.")
+    }
+  }
+
   private static func stage(_ data: Data, path: String, directory: URL, persistence: NotebookPersistenceQueue) async throws -> NotebookExportFile {
     let url = directory.appendingPathComponent(path)
-    try await Task.detached(priority: .utility) { try data.write(to: url) }.value
+    try await Task.detached(priority: .utility) { try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true); try data.write(to: url) }.value
     return try await stage(url, path: path, persistence: persistence)
   }
   static func stage(_ url: URL, path: String, persistence: NotebookPersistenceQueue) async throws -> NotebookExportFile {
@@ -189,6 +188,7 @@ final class PrintedPDFComposer: @unchecked Sendable {
   private let source: DocumentPrintedPDF
   private var links: PDFDocument?
   private var context: CGContext?
+  private var pages: [DocumentPrintPage] = []
   private var destinations: [Int: [(name: String, point: CGPoint)]] = [:]
   private var linkNames: [Int: [Int: String]] = [:]
   private let output: PrintedPDFSink
@@ -202,11 +202,17 @@ final class PrintedPDFComposer: @unchecked Sendable {
   }
   static func open(_ source: DocumentPrintedPDF, outputURL: URL) async throws -> PrintedPDFComposer {
     let owner = try PrintedPDFComposer(source, outputURL: outputURL)
-    try await source.perform { links,document in
-      guard let consumer = owner.output.consumer(), let context = CGContext(consumer: consumer, mediaBox: nil, nil) else {
+    try await source.perform { links, document in
+      guard document.numberOfPages > 0, let consumer = owner.output.consumer(), let context = CGContext(consumer: consumer, mediaBox: nil, nil) else {
         throw SceneRenderError.resourceLimit
       }
       owner.links = links; owner.context = context; owner.pageCount = document.numberOfPages
+      owner.pages = try (1...document.numberOfPages).map { index in
+        guard let page = document.page(at: index) else { throw SceneRenderError.resourceLimit }
+        let box = page.getBoxRect(.mediaBox)
+        return DocumentPrintPage(mediaBoxX: box.minX, mediaBoxY: box.minY,
+          mediaBoxWidth: box.width, mediaBoxHeight: box.height, rotation: Int(page.rotationAngle))
+      }
       if let links = owner.links {
         for pageIndex in 0..<links.pageCount {
           for (annotationIndex, annotation) in (links.page(at: pageIndex)?.annotations ?? []).enumerated() {
@@ -214,8 +220,11 @@ final class PrintedPDFComposer: @unchecked Sendable {
               let page = target.page else { continue }
             let index = links.index(for: page), name = "notebook-link-\(pageIndex)-\(annotationIndex)"
             let box = page.bounds(for: .mediaBox), targetPoint = target.point
-            let point = CGPoint(x: min(box.maxX, max(box.minX, targetPoint.x)), y: min(box.maxY, max(box.minY, targetPoint.y)))
-            guard point.x.isFinite, point.y.isFinite, annotationIndex < 16_384 else { throw SceneRenderError.resourceLimit }
+            let rawPoint = CGPoint(x: min(box.maxX, max(box.minX, targetPoint.x)), y: min(box.maxY, max(box.minY, targetPoint.y)))
+            guard rawPoint.x.isFinite, rawPoint.y.isFinite, annotationIndex < 16_384,
+              owner.pages.indices.contains(index) else { throw SceneRenderError.resourceLimit }
+            let projected = owner.pages[index].projectPDF(x: rawPoint.x, y: rawPoint.y, width: 0, height: 0)
+            let point = CGPoint(x: projected.x, y: owner.pages[index].height-projected.y)
             owner.destinations[index, default: []].append((name, point))
             owner.linkNames[pageIndex, default: [:]][annotationIndex] = name
           }
@@ -225,11 +234,14 @@ final class PrintedPDFComposer: @unchecked Sendable {
     return owner
   }
   func append(pageIndex: Int, image: CGImage?, regions: [CGRect], vectors: [DocumentPDFVector] = []) async throws {
-    try await source.perform { [self] _,document in
-      guard let page = document.page(at: pageIndex+1), let context else { throw SceneRenderError.resourceLimit }
-      let box = page.getBoxRect(.mediaBox)
+    try await source.perform { [self] _, document in
+      guard let page = document.page(at: pageIndex+1), pages.indices.contains(pageIndex), let context else { throw SceneRenderError.resourceLimit }
+      let geometry = pages[pageIndex]
+      let box = CGRect(x: 0, y: 0, width: geometry.width, height: geometry.height)
       context.beginPDFPage([kCGPDFContextMediaBox as String: NSData(bytes: [box], length: MemoryLayout<CGRect>.size)] as CFDictionary)
-      context.drawPDFPage(page)
+      context.saveGState()
+      context.concatenate(page.getDrawingTransform(.mediaBox, rect: box, rotate: 0, preserveAspectRatio: false))
+      context.drawPDFPage(page); context.restoreGState()
       if let image {
         for region in regions {
           let physical = CGRect(x: region.minX, y: box.height-region.maxY, width: region.width, height: region.height)
@@ -254,9 +266,13 @@ final class PrintedPDFComposer: @unchecked Sendable {
       if let original = links?.page(at: pageIndex) {
         for target in destinations[pageIndex] ?? [] { context.addDestination(target.name as CFString, at: target.point) }
         for (annotationIndex, annotation) in original.annotations.enumerated() {
-          if let action = annotation.action as? PDFActionURL, let url = action.url { context.setURL(url as CFURL, for: annotation.bounds) }
+          let bounds = annotation.bounds
+          let projected = geometry.projectPDF(x: bounds.minX, y: bounds.minY, width: bounds.width, height: bounds.height)
+          let rect = CGRect(x: projected.x, y: box.height-projected.y-projected.height,
+            width: projected.width, height: projected.height)
+          if let action = annotation.action as? PDFActionURL, let url = action.url { context.setURL(url as CFURL, for: rect) }
           else if let name = linkNames[pageIndex]?[annotationIndex] {
-            context.setDestination(name as CFString, for: annotation.bounds)
+            context.setDestination(name as CFString, for: rect)
           }
         }
       }

@@ -12,15 +12,14 @@ struct NotebookRetainedContentMergeTests {
     var values: [String: JSONValue] = ["center": try .encode(WorldPoint.zero)]
     if kind == .createNotebook { values["pageID"] = try .encode(pageID) }
     if kind == .createDocument {
-      values["paperSize"] = .string("a4")
-      values["blocks"] = try .encode([DocumentBlock.interactive(id: "kept-program", html: "<button>Keep</button>", initialState: .number(3))])
+      values["files"] = try .encode(documentProgramFiles(id: "kept-program", html: "<button>Keep</button>", initialState: .number(3)))
     }
     let basis = try f.store.readBasis(targets: [board, .init(kind: .workspace, id: header.rootBoardID)])
     _ = try f.store.applyCollaborationAction(.init(summary: "Source retained across later deletion", expected: basis.owners,
       operations: [.init(kind: kind, target: board, id: id.uuidString, values: values)]), actor: f.actor)
     if kind == .createDocument {
       var state = try f.store.loadDocumentState(id)
-      let changed = state.commit(blockID: "kept-program", value: .number(11), actor: f.actor)
+      let changed = state.commit(instanceID: "kept-program", value: .number(11), actor: f.actor)
       #expect(changed)
       try f.store.saveDocumentState(state)
     }

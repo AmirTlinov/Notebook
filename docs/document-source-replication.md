@@ -1,50 +1,47 @@
-# Addressed document-source delivery
+# Причинная доставка файлов документа
 
-`NotebookStore.applyReplicatedDocumentSource` passes one program at a time to
-`DocumentDocument.merge`. Causal history is read in pages of 64 addresses.
-Ordering reads at most 512 index rows and uses the same `contentMemberOrder`
-as a full merge. `DocumentBlock` defines causal field names for delivery and
-agent commands alike.
+`NotebookStore.applyReplicatedDocumentSource` объединяет по одному `DocumentFile`
+через того же владельца `DocumentDocument.merge`, который используется локально.
+Существование, ID, путь и содержимое файла имеют причинные версии; entrypoint —
+отдельное поле заголовка. Порядок файлов в каталоге не является содержанием:
+порядок публикации задают включения в LaTeX.
 
-## Admission and complete declarations
+## Полнота и адресность
 
-Incoming and stored program sources are admitted before decoding: 4,096 fragments
-and 16 MiB each. The merged value must also fit. Headers are limited to 1 MiB and
-causal versions to 64 KiB. A newly materialized causal field checks the owner's
-100,000-field bound; that occasional SQL count remains proportional to history.
+Изменённый файл объявляется целиком вместе со своими причинными полями.
+Непрочитанные соседние файлы не заменяются; неизменённые SHA-записи передаются
+ссылками без повторной записи тела. Изолированная дочерняя мутация без объявления
+владельца отклоняется. Двоичные ресурсы используют существующую проверку SHA
+зависимостей, текст программы остаётся обычными файлами того же дерева.
 
-Changing a source fragment marks its program in the existing transaction-local SQL
-table. Before publishing a manifest, the writer enumerates the complete current
-subtree and its seven causal fields in pages of 64 hashes. Unchanged bodies are
-referenced rather than rewritten. An order change declares all author positions,
-including positions that only changed at the receiver.
+Входящее и сохранённое поддерево допускаются до декодирования: до 4096 фрагментов
+и 16 MiB на адресованный файл с причинным контекстом. Заголовок — до 1 MiB.
+История и входящие адреса просматриваются порциями по 64, а не собираются в копию
+всего документа. Конкурентные значения причинного поля могут содержать исходники,
+поэтому их лимит — байтовый, а не предположение о «маленькой версии».
 
-`initialState` is one authored value. Arbitrary JSON keys such as `records`,
-`blocks`, or `collaboration.fields` do not grant storage structure.
-The receiver merges a complete declared program against its local causal fields.
-A child mutation without that declaration is rejected; unrelated programs remain
-unchanged.
+Добавление нового причинного поля проверяет общий предел истории. Это индексный
+подсчёт строк, не обещание постоянного времени. Публикация, полученный receipt и
+курсор доставки принадлежат одной штатной транзакции; частичного commit нет.
 
-Complete declarations were introduced with manifest 3. That historical transition
-is not the current wire version; see [transport](transport-contract.md).
-Unsupported manifests are rejected rather than interpreted as complete programs.
+Состояние экземпляров передаётся отдельным `DocumentStateJournal`. Изменение
+абзаца не приобретает версию программы, а изменение состояния не меняет файлы
+и не требует TeX. Полный причинный stateVersion нельзя заменить файловым CAS.
 
-## Snapshot and retained-source boundaries
+## Формат и удаление
 
-`prepareDeviceSnapshot` can rebuild delivery from current records while preserving
-content hashes, questions, receipts, and stopped runs. A newly prepared journal
-starts at sequence 1 with no copied network acknowledgements. A continuing device
-preserves its local drafts/jobs; another device has independent presence.
-This belongs to the explicit snapshot/transfer route, not normal application startup.
+Текущий протокол согласуется с [transport](transport-contract.md). Неподдерживаемый
+manifest не интерпретируется как старый документ. При переходе на файловый формат
+старые текущие документы удаляются отдельной миграцией вместе с исполняемым
+восстановлением и Undo; тетради, доски, обсуждения, ключи и независимые архивы
+сохраняются. Переключение не является восстановлением архива.
 
-Admitted source/state baselines survive catalog removal and accept late causal fields
-without restoring live membership. See
-[retained sources](spatial-replication-contract.md#retained-sources-and-live-membership).
+Для обычного удаления уже файлового документа причинные базовые записи могут
+оставаться вне живого каталога и принимать позднюю доставку, не восстанавливая
+членство: [retained sources](spatial-replication-contract.md#retained-sources-and-live-membership).
+Подготовка нового device snapshot — явный маршрут текущего содержимого, не
+действие при каждом открытии приложения.
 
-## Verification
-
-Tests cover 99,000 unrelated fields, independent CSS, human continuation, removals,
-ordering, nested initial state, escaped IDs, resource limits before decoding,
-rollback, exact retry, and real exchange between prepared stores.
-These storage checks do not establish physical display, source-editor acceptance,
-or general blob garbage collection. Evidence is in [verification](verification.md).
+Проверки: `DocumentFilesTests`, `NotebookReplicationTests` и
+`NotebookRetiredContentDeliveryTests`. Они проверяют сохранение и обмен; получение
+и фактический показ на iPad фиксируются отдельно в [verification](verification.md).

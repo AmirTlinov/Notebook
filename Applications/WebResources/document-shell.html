@@ -138,7 +138,9 @@
 
       const bridge = (message) => {
         const handler = window.webkit?.messageHandlers?.notebook;
-        if (handler) handler.postMessage({ ...message, runtimeID: message.runtimeID ?? payload?.runtimeID });
+        if (handler) handler.postMessage({ ...message,
+          documentID: message.documentID ?? payload?.documentID,
+          runtimeID: message.runtimeID ?? payload?.runtimeID });
       };
 
       // Native paper and its transparent interaction layer publish the same
@@ -158,10 +160,6 @@
       const canonical = value => Array.isArray(value) ? value.map(canonical)
         : value && typeof value === 'object' ? Object.fromEntries(Object.keys(value).sort().map(key => [key, canonical(value[key])])) : value;
       const stable = (value) => JSON.stringify(canonical(value ?? null));
-      const stateFor = (block) => payload?.states
-        && Object.prototype.hasOwnProperty.call(payload.states, block.id)
-        ? payload.states[block.id]
-        : (block.initialState ?? {});
       const currentPageIndex = () => pageLayout?.requestedPage ?? 0;
 
       const configurePaper = (nextPayload, requestedPage = currentPageIndex()) => {
@@ -173,9 +171,9 @@
           paper.surfaceWidth / paper.widthPoints,
           paper.surfaceHeight / paper.heightPoints
         );
-        const pageWidth = paper.widthPoints * scale;
-        const pageHeight = paper.heightPoints * scale;
-        const margin = paper.marginPoints * scale;
+        const pageWidth = paper.surfaceWidth;
+        const pageHeight = paper.surfaceHeight;
+        const margin = 0;
         const gap = Math.max(18, Math.min(30, 22 * scale));
         const contentWidth = pageWidth - 2 * margin;
         const contentHeight = pageHeight - 2 * margin;
@@ -183,7 +181,7 @@
         const side = 0, top = 0;
         const stride = pageWidth + gap;
         pageLayout = {
-          kind: paper.kind,
+          kind: "latex",
           pageWidth, pageHeight, margin, gap,
           contentWidth, contentHeight, columnGap,
           side, top, stride, requestedPage,
@@ -205,7 +203,7 @@
 
       let runtimeDiagnostics = [];
       const diagnostic = (kind, message, blockID) => {
-        runtimeDiagnostics.push({kind, message:String(message), ...(blockID ? {blockID} : {})});
+        runtimeDiagnostics.push({kind, message:String(message).slice(0,16384), ...(blockID ? {blockID} : {})});
         runtimeDiagnostics = runtimeDiagnostics.slice(-64);
       };
       const blockRegions = () => measuredRegions;
@@ -229,25 +227,11 @@
           pageIndex: currentPageIndex(),
           pageCount: pageLayout.pageCount,
           width: pageLayout.pageWidth, height: pageLayout.pageHeight,
+          widthPoints: payload.paper.widthPoints, heightPoints: payload.paper.heightPoints,
           regions: blockRegions(), diagnostics: runtimeDiagnostics,
           programs: [...interactiveFrames].map(([blockID, value]) => ({blockID, token:value.token,
-            readiness:value.readiness || 'unknown'}))
+            readiness:value.readiness || 'unknown',started:value.isStarted===true}))
         };
-      };
-
-      const interactiveDocument = (block, state, token) => {
-        const safeID = JSON.stringify(block.id).replaceAll('<', '\\u003c');
-        const safeState = JSON.stringify(state ?? null).replaceAll('<', '\\u003c');
-        const safeScript = JSON.stringify(block.javaScript || '').replaceAll('<', '\\u003c');
-        const safeToken = JSON.stringify(token);
-        const safeCSS = String(block.css || '').replace(/<\/style/gi, '<\\/style');
-        const csp = "default-src 'none'; img-src data: blob:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'none'; font-src data:; media-src data: blob:; form-action 'none'; base-uri 'none'; object-src 'none';";
-        const html = block.html || '';
-        return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,minimum-scale=1,maximum-scale=1,user-scalable=no"><meta http-equiv="Content-Security-Policy" content="${csp}"><style>html,body{margin:0;min-height:100%;background:transparent;color:#171713;font-family:-apple-system,BlinkMacSystemFont,sans-serif}*{box-sizing:border-box}${safeCSS}</style><script>(()=>{
-          ${createNotebookStateReceiver.toString()}
-          (${installNotebookDocumentProgram.toString()})({blockID:${safeID},token:${safeToken},state:${safeState},stateCredit:${payload.programStateCredit?.[block.id]||0},
-            requiresReady:${!!(String(block.javaScript || '').trim() || /<script/i.test(html))},script:${safeScript}},${createNotebookProgram.toString()});
-        })()<\/script></head><body>${html}</body></html>`;
       };
 
       // Requests belong to the existing iframe, not to a second runtime or
@@ -326,7 +310,7 @@
 
       const positionInteractiveFrames = () => {
         for (const [blockID, runtime] of interactiveFrames) {
-          const fragment = measuredRegions.find(region => region.id === blockID && region.pageIndex === currentPageIndex());
+          const fragment = measuredRegions.find(region => region.kind === 'program' && region.id === blockID && region.pageIndex === currentPageIndex());
           runtime.container.style.visibility = fragment && programsVisible ? 'visible' : 'hidden';
           runtime.container.inert = !fragment || !programsVisible;
           const visible=!!fragment && programsVisible;
@@ -365,7 +349,7 @@
 
       // A program belongs to the mounted document runtime, not to a page cut.
       // Its native owner can show passive page pixels without another script.
-      const ensureInteractiveFrame = (block, state, token) => {
+      const ensureInteractiveFrame = (block, token) => {
         let runtime=interactiveFrames.get(block.id);
         if(runtime && runtime.token!==token){runtime.cancel();runtime.container.remove();interactiveFrames.delete(block.id);runtime=null;}
         if(!runtime) {
@@ -374,26 +358,63 @@
           const frame=document.createElement('iframe');frame.className='interactive-frame';frame.title=block.id;
           // A native-minted package has its own non-file origin. Retaining it permits workers,
           // but cannot expose this file-backed parent or another package's capability.
-          frame.setAttribute('sandbox',block.programPackage?'allow-scripts allow-same-origin':'allow-scripts');frame.setAttribute('scrolling','no');frame.dataset.blockId=block.id;
-          let resolve,reject;const started=new Promise((yes,no)=>{resolve=yes;reject=no});
+          frame.setAttribute('sandbox','allow-scripts allow-same-origin');frame.setAttribute('scrolling','no');frame.dataset.blockId=block.id;
+          let resolve,reject,startupTimer;
+          const started=new Promise((yes,no)=>{
+            resolve=()=>{clearTimeout(startupTimer);yes()};reject=error=>{clearTimeout(startupTimer);no(error)};
+          });
+          startupTimer=setTimeout(()=>reject(Object.assign(new Error('program_startup_timeout'),{blockID:block.id})),8000);
           runtime={container,frame,token,started,resolve,reject,readiness:'unknown',isStarted:false,transportReady:false,
-            appliedState:stable(state),appliedVersion:payload.stateVersions?.[block.id]??null,revision:'0',cancel:()=>{
+            appliedState:undefined,appliedVersion:payload.stateVersions?.[block.id]??null,revision:'0',cancel:()=>{
               for(const request of runtime.lifecycleRequests?.values()||[])request.reject(new Error('Interactive surface was superseded'));
               runtime.lifecycleRequests?.clear();frame.contentWindow?.postMessage({channel:'notebook-dispose',token},'*');reject(new Error('Interactive surface was superseded'))}};
           interactiveFrames.set(block.id,runtime);
           started.then(()=>{
+            if(interactiveFrames.get(block.id)!==runtime||runtime.failure)return;
             runtime.isStarted=true;runtime.visible=undefined;positionInteractiveFrames();
             bridge({kind:'programReady',blockID:block.id,blockToken:token});
           },()=>{});
-          if(block.programPackage) {
-            const url=payload.programURLs?.[block.id];
-            if(!url)throw new Error('Program package capability is missing');
-            frame.src=url;
-          } else frame.srcdoc=interactiveDocument(block,state,token);
+          const url=payload.programURLs?.[block.id];
+          if(!url)reject(Object.assign(new Error('Program package capability is missing'),{blockID:block.id}));
+          else frame.src=url;
           container.append(frame);interactiveLayer.append(container);
         }
-        runtime.height=block.height||320;runtime.initialState=block.initialState??{};
+        runtime.height=payload.programHeights?.[block.id];
+        if(!Number.isFinite(runtime.height)||runtime.height<=0)throw new Error('Program viewport is missing');runtime.initialState=block.initialState??{};
         return runtime;
+      };
+
+      const failInteractiveFrame = (blockID, runtime, error) => {
+        if(interactiveFrames.get(blockID)!==runtime)return;
+        const message=runtime.failure||String(error?.message||error).slice(0,16384);
+        if(!runtimeDiagnostics.some(value=>value.kind==='error'&&value.blockID===blockID&&value.message===message))
+          diagnostic('error',message,blockID);
+        if(runtime.failure)return;
+        runtime.failure=message;runtime.readiness='failed';runtime.isStarted=false;
+        // Dispose author work, not the admitted immutable state transport. Its
+        // receiver and snapshots remain until the native writer acknowledges.
+        runtime.frame.style.visibility='hidden';runtime.frame.inert=true;
+        if(runtime.transportReady)runtime.frame.contentWindow?.postMessage({channel:'notebook-dispose',token:runtime.token},'*');
+        bridge({kind:'programFocus',blockID,blockToken:runtime.token,focused:false});
+        const notice=document.createElement('div');notice.setAttribute('role','alert');
+        Object.assign(notice.style,{padding:'12px',background:'#fff9f3',color:'#773515',font:'13px system-ui',height:'100%',boxSizing:'border-box'});
+        const label=document.createElement('p');label.textContent=`Ошибка программы ${blockID}: ${message}`;
+        const retry=document.createElement('button');retry.textContent='Повторить';
+        retry.onclick=async()=>{
+          if(interactiveFrames.get(blockID)!==runtime||retry.disabled)return;
+          retry.disabled=true;
+          try {
+            await finishAcceptedProgram(blockID,runtime);
+            if(interactiveFrames.get(blockID)!==runtime)return;
+            // Only the native admission owner can issue a new execution token
+            // and its revision/credit sequence. Retain this heap until its frame.
+            bridge({kind:'programRetry',blockID,blockToken:runtime.token});
+          } catch(error) {
+            diagnostic('program_lifecycle_error',error,blockID);
+            label.textContent=`${message}. Состояние ещё не сохранено; повторите запись перед перезапуском.`;
+          } finally { retry.disabled=false; }
+        };
+        notice.append(label,retry);runtime.container.append(notice);
       };
 
       // Iframes never belong to reordered flow nodes: detach/reinsert destroys
@@ -401,21 +422,26 @@
       const prepareInteractiveFrames = async () => {
         if(payload.programMode==='external')return;
         const page=currentPageIndex();
-        const visible=new Set(blockRegions().filter(region=>region.pageIndex===page).map(region=>region.id));
-        const blocks=new Map((payload.blocks||[]).filter(block=>block.kind==='interactive').map(block=>[block.id,block]));
+        const visible=new Set(blockRegions().filter(region=>region.kind==='program'&&region.pageIndex===page).map(region=>region.id));
+        const blocks=new Map((payload.programs||[]).map(block=>[block.id,block]));
         for(const [blockID,runtime] of interactiveFrames) {
           if(runtime.token!==payload.blockTokens?.[blockID]) {
             runtime.cancel();runtime.container.remove();interactiveFrames.delete(blockID);
+            runtimeDiagnostics=runtimeDiagnostics.filter(value=>value.blockID!==blockID);
           }
         }
         for(const [blockID,block] of blocks)if(visible.has(blockID))
-          ensureInteractiveFrame(block,stateFor(block),payload.blockTokens?.[blockID]);
+          ensureInteractiveFrame(block,payload.blockTokens?.[blockID]);
         positionInteractiveFrames();
-        await Promise.all([...interactiveFrames].filter(([id])=>visible.has(id)).map(([,runtime])=>runtime.started));
+        await Promise.all([...interactiveFrames].filter(([id])=>visible.has(id)).map(([id,runtime])=>{
+          if(runtime.failure){failInteractiveFrame(id,runtime,runtime.failure);return;}
+          return runtime.started.catch(error=>failInteractiveFrame(id,runtime,error));
+        }));
       };
 
       const applyInteractiveState = async () => {
-        await Promise.all([...interactiveFrames].filter(([,runtime])=>runtime.visible).map(async ([blockID,runtime])=>{
+        await Promise.all([...interactiveFrames].filter(([,runtime])=>runtime.visible&&runtime.isStarted&&!runtime.failure).map(async ([blockID,runtime])=>{
+          try {
           const nextState=Object.prototype.hasOwnProperty.call(payload.states,blockID)?payload.states[blockID]:runtime.initialState;
           const stateKey=stable(nextState),nextVersion=payload.stateVersions?.[blockID]??null;
           if(runtime.localOnlyVersion!==undefined){
@@ -437,6 +463,7 @@
             offset=end;
           }
           if(runtime.revision===revision){runtime.appliedState=stateKey;runtime.appliedVersion=nextVersion;}
+          } catch(error) { failInteractiveFrame(blockID,runtime,error); }
         }));
       };
 
@@ -498,7 +525,7 @@
         if(activeProgramPreparation?.frame.runtimeID===runtimeID)activeProgramPreparation.controller.abort();
         // An unstarted program has never admitted native input. End its actual
         // browsing context so an unresolved ready promise cannot retain a slot.
-        if(payload?.runtimeID===runtimeID)for(const [id,runtime] of interactiveFrames)if(!runtime.isStarted) {
+        if(payload?.runtimeID===runtimeID)for(const [id,runtime] of interactiveFrames)if(!runtime.isStarted&&!runtime.failure) {
           runtime.cancel();runtime.container.remove();interactiveFrames.delete(id);
         }
       };
@@ -517,6 +544,7 @@
         const fragmentChanged = installedFragment !== job.fragment || sourceChanged;
         const stateChanged = appliedStateKey !== job.state.key;
         const modeChanged = payload?.programMode !== job.frame.programMode;
+        const programsChanged = stable(payload?.blockTokens) !== stable(job.frame.blockTokens);
         let fragmentDOM = null;
         if (fragmentChanged) {
           // Text and images are already in the canonical PDF. This DOM owns
@@ -540,12 +568,12 @@
         const dependency={frame:job.frame,controller:new AbortController()};
         activeProgramPreparation=dependency;
         try {
-        if(fragmentChanged || previousPage !== currentPageIndex() || modeChanged){
+        if(fragmentChanged || previousPage !== currentPageIndex() || modeChanged || programsChanged){
           await waitForProgram(prepareInteractiveFrames(),dependency.controller.signal);
           if(!frameIsRequired(job.frame))return;
         }
         mark('programs');
-        if(stateChanged || sourceChanged || previousPage !== currentPageIndex()){
+        if(stateChanged || sourceChanged || previousPage !== currentPageIndex() || programsChanged){
           work.stateApplications += 1;
           await waitForProgram(applyInteractiveState(),dependency.controller.signal);
           if(!frameIsRequired(job.frame))return;
@@ -593,7 +621,7 @@
       const installPageSource = async page => {
         if(page?.fragment?.sourceKey!==page?.source?.key || page.fragment.format!==1
           || !Number.isInteger(page.pageCount) || page.pageCount<=page.fragment.pageIndex
-          || page.source.blocks.some(block=>!page.fragment.blockIDs.includes(block.id))) {
+          || page.source.files.some(file=>!page.fragment.blockIDs.includes(file.id))) {
           throw new Error('document_page_source_invalid');
         }
         sourceSnapshot=page;
@@ -621,10 +649,11 @@
               pendingFrame = null;
               try { await renderFrame(next); } catch(error) {
                 if(error?.name==='AbortError' || pendingFrame || !frameIsRequired(next.frame))continue;
-                diagnostic(error?.blockID ? 'image_error' : 'render_error',error,error?.blockID);
+                if(!runtimeDiagnostics.some(value=>value.blockID===error?.blockID&&value.message===String(error.message)))
+                  diagnostic(error?.blockID ? 'program_error' : 'render_error',error,error?.blockID);
                 bridge({kind:'renderFailed',documentID:next.frame.documentID,runtimeID:next.frame.runtimeID,
                   renderToken:next.frame.renderToken,sourceKey:next.frame.sourceKey,stateKey:next.frame.stateKey,
-                  generation:next.frame.generation,message:String(error),blockID:error?.blockID});
+                  generation:next.frame.generation,message:String(error),blockID:error?.blockID,diagnostics:runtimeDiagnostics.slice(-64),programs:pageReceipt()?.programs??[]});
               }
             }
           })().finally(() => { renderTask = null; });
@@ -647,8 +676,8 @@
 
       const beginEditing = (blockID, event) => {
         if (!payload?.editable) return;
-        const block = payload.blocks.find(candidate => candidate.id === blockID);
-        if (!block || block.kind === 'interactive') return;
+        const file = payload.files.find(candidate => candidate.id === blockID);
+        if (!file) return;
         const rect = viewport.getBoundingClientRect();
         bridge({kind:'requestSource', ...presentationReceipt(), blockID,
           x:(event.clientX-rect.left)*viewport.clientWidth/rect.width,
@@ -760,11 +789,12 @@
         const [blockID,runtime]=found;
         if(message.token!==runtime.token)return;
         if(message.channel==='notebook-program-focus'){
-          runtime.focused=message.focused===true;
-          bridge({kind:'programFocus',blockID,blockToken:runtime.token,focused:message.focused===true});return;
+          runtime.focused=!runtime.failure&&message.focused===true;
+          bridge({kind:'programFocus',blockID,blockToken:runtime.token,focused:runtime.focused});return;
         }
         if(message.channel==='notebook-program-installed'){
           if(!runtime.transportReady){runtime.transportReady=true;for(const request of runtime.lifecycleRequests?.values()||[])request.send();}
+          if(runtime.failure)runtime.frame.contentWindow.postMessage({channel:'notebook-dispose',token:runtime.token},'*');
           return;
         }
         if(message.channel==='notebook-program-exported'||message.channel==='notebook-program-reply'){
@@ -775,9 +805,17 @@
           const request=runtime.lifecycleRequests?.get(message.requestID);
           runtime.lifecycleRequests?.delete(message.requestID);request?.resolve(message.state??true);return;
         }
-        if(message.channel==='notebook-diagnostic'){diagnostic(message.kind,message.message,blockID);if(message.kind==='program_ready_error'||message.kind==='javascript_error')runtime.reject(new Error(message.message));return}
-        if(message.channel==='notebook-program-started'){runtime.resolve();return}
-        if(message.channel==='notebook-program-ready'){runtime.readiness='declared';return}
+        if(message.channel==='notebook-diagnostic'){
+          if(runtime.failure)return;
+          diagnostic(message.kind,message.message,blockID);
+          if(message.kind==='program_ready_error'||message.kind==='javascript_error'){
+            const failure=Object.assign(new Error(message.message),{blockID});runtime.reject(failure);
+            if(runtime.isStarted){failInteractiveFrame(blockID,runtime,failure);refreshSourcePresentation();}
+          }
+          return;
+        }
+        if(message.channel==='notebook-program-started'){if(!runtime.failure)runtime.resolve();return}
+        if(message.channel==='notebook-program-ready'){if(!runtime.failure)runtime.readiness='declared';return}
         if(message.channel==='notebook-program-error'){
           const request=runtime.lifecycleRequests?.get(message.requestID);
           runtime.lifecycleRequests?.delete(message.requestID);request?.reject(new Error(message.message));

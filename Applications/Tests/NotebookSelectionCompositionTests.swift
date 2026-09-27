@@ -353,7 +353,8 @@ extension NotebookInteractionUXTests {
     var last: UIImage?
     repeat {
       let capture = CACurrentMediaTime()
-      let frame = try NotebookSelectionComposition.Frame(NotebookUXObservation.Pixels(window: scene.window).image)
+      let frame = try NotebookSelectionComposition.Frame(NotebookUXObservation.Pixels(window: scene.window).image,
+        sampling: probes)
       let captured = CACurrentMediaTime()
       let failures = frame.failures(probes)
       let incoherent = moving && NotebookSelectionComposition.isIncoherentMotionFrame(probes, failures: failures)

@@ -126,6 +126,73 @@ final class PageInkGeometryTests: XCTestCase {
   }
 
   @MainActor
+  func testLastPenUndoRedoKeepsTheWarmViewportAcross100000ResidentActions() async throws {
+    let (page,target)=try await Task.detached(priority:.userInitiated) {
+      let actor=UUID(),page=PageDocument(size:.init(width:2_048,height:2_048),actor:actor)
+      var target=UUID()
+      for index in 0..<100_000 {
+        try Task.checkCancellation()
+        let isPen=index == 99_999
+        let x=isPen ? 100.0 : 500+Double(index%300)*4
+        let y=isPen ? 100.0 : 500+Double(index/300)*4
+        let action=PageInkAction(tool:isPen ? .pen : .eraser,samples:[
+          .init(point:.init(x:x,y:y),timeOffset:0,width:8,opacity:1,force:1,azimuth:0,altitude:1),
+          .init(point:.init(x:x+40,y:y),timeOffset:0.01,width:8,opacity:1,force:1,azimuth:0,altitude:1)])
+        let change=try page.prepareInkChange(.append(action),stamp:.init(counter:UInt64(index+1),actor:actor))
+        guard page.publishLiveInkChange(change) else { throw PageInkDrawing.InkError.invalidDrawing }
+        if isPen { target=action.id }
+      }
+      return (page,target)
+    }.value
+    let scene=try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+    let window=UIWindow(windowScene:scene),host=UIViewController()
+    window.rootViewController=host;window.makeKeyAndVisible();host.view.backgroundColor = .white
+    defer { window.isHidden=true;window.rootViewController=nil }
+    let resources=SceneRenderResources(byteLimit:16*1024*1024)
+    let view=InkCanvasView(frame:.zero,resources:resources)
+    host.view.addSubview(view)
+    view.projectPage(region:.init(x:0,y:0,width:300,height:300),
+      sourceSize:.init(width:2_048,height:2_048),pixelDensity:1)
+    view.apply(try page.inkDrawing())
+    func rendered() async throws {
+      let deadline=ContinuousClock.now + .seconds(30)
+      while !view.isStableFramePresented,view.renderFailure == nil,ContinuousClock.now < deadline {
+        try await Task.sleep(for:.milliseconds(10))
+      }
+      XCTAssertNil(view.renderFailure);XCTAssertTrue(view.isStableFramePresented)
+    }
+    func pixels(_ color:NotebookUXObservation.Color) throws -> Bool {
+      try NotebookUXObservation.Pixels(window:window).matches([(view.convert(.init(x:120,y:100),to:window),color)])
+    }
+    try await rendered()
+    try await assertUX("last-of-100k-pen-installed",since:.now,window:window) { try pixels(.black) }
+    XCTAssertEqual(view.pageMeshBuildCount,100_000);XCTAssertEqual(view.visibleCommittedChunkCount,1)
+    let queries=view.committedBatchQueryVisitCount,visits=view.pageAcceptedMutationActionVisits
+    let decoded=view.preparedCommittedPointCount,builds=view.pageMeshBuildCount,preparations=view.pageMeshPreparationCount
+    let geometryBytes=view.residentCommittedBufferBytes
+    XCTAssertGreaterThan(geometryBytes,0)
+    let actor=page.drawingStamp.actor
+    let undo=try page.prepareInkChange(.setActive([target],false),stamp:.init(counter:100_001,actor:actor))
+    XCTAssertTrue(page.publishLiveInkChange(undo));view.settle(undo)
+    try await rendered()
+    XCTAssertEqual(view.visibleCommittedChunkCount,0);XCTAssertFalse(view.hasPageRetainedTexture)
+    XCTAssertTrue(view.isFrameLoopPaused)
+    XCTAssertEqual(view.residentCommittedBufferBytes,geometryBytes,"The exact warm cut retains only its already charged geometry")
+    try await assertUX("last-of-100k-pen-undo",since:.now,window:window) { try pixels(.paper) }
+    let redo=try page.prepareInkChange(.setActive([target],true),stamp:.init(counter:100_002,actor:actor))
+    XCTAssertTrue(page.publishLiveInkChange(redo));view.settle(redo)
+    try await rendered()
+    try await assertUX("last-of-100k-pen-redo",since:.now,window:window) { try pixels(.black) }
+    XCTAssertEqual(view.visibleCommittedChunkCount,1)
+    XCTAssertEqual(view.committedBatchQueryVisitCount-queries,2,"Empty Undo must not turn addressed Redo into a 100k-history query")
+    XCTAssertEqual(view.pageAcceptedMutationActionVisits-visits,2)
+    XCTAssertEqual(view.preparedCommittedPointCount,decoded,"Redo reuses the existing charged geometry")
+    XCTAssertEqual(view.pageMeshBuildCount,builds);XCTAssertEqual(view.pageMeshPreparationCount,preparations)
+    view.removeFromSuperview();await view.finishSpatialHandoffFrames()
+    XCTAssertEqual(view.residentCommittedBufferBytes,0);XCTAssertEqual(resources.reservedBytes,0)
+  }
+
+  @MainActor
   func testAcceptedAppendAlsoAppliesChangedSuppressionToEarlierResidentActions() async throws {
     let actor=UUID(),page=PageDocument(size:.init(width:400,height:400),actor:actor)
     let first=stroke(y:100),second=stroke(y:200)

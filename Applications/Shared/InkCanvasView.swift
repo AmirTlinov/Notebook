@@ -2427,8 +2427,15 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
   @discardableResult
   private func presentEmptyContentIfReady() -> Bool {
     guard !isErasureMask, material == nil, orderedGeometry == nil, !spatialHandoffIsStopping, spatialStagingID == nil, pageGeometryIsReady, baselineTexture == nil,
-      activeInkStroke == nil, activeEraserStroke == nil,
-      committedBatches.allSatisfy({ batch in
+      activeInkStroke == nil, activeEraserStroke == nil else { return false }
+    // Addressed inverses already updated this exact crop. Its visible ranges,
+    // not the position of the first pen in resident history, decide emptiness.
+    let prepared = committedViewport.flatMap { $0.key == committedViewportKey ? $0 : nil }
+    let empty: Bool
+    if let prepared {
+      empty = !prepared.visible.contains { committedBatches[$0.0].operation == .ink }
+    } else {
+      empty = committedBatches.allSatisfy { batch in
         if !batch.pageIsActive { return true }
         // Absence cannot emit ink. An erase-only journal (for example a cut
         // through a shape on an otherwise empty page) retains its source and
@@ -2438,12 +2445,18 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
         guard spatialDrawableScale != nil, bounds.width > 0, bounds.height > 0 else { return false }
         let transform = batch.mesh.projection.transform(camera: spatialCamera, viewport: spatialViewport)
         return batch.mesh.query(viewport:CGRect(origin:.zero,size:bounds.size).insetBy(dx:-1,dy:-1),affine:.init(transform)).chunks.isEmpty
-      })
-    else { return false }
-    // Source ink elsewhere on this board is not a visible Metal allocation.
-    // Keep its mesh; a later projection prepares the same chunks normally.
-    for batch in committedBatches.indices {
-      committedBatches[batch].buffers.removeAll(keepingCapacity: true)
+      }
+    }
+    guard empty else { return false }
+    // An empty warm revision releases its pixels, not the charged geometry
+    // needed by an addressed Redo. Clearing every batch here also invalidated
+    // the exact viewport and forced the next inverse to re-query all history.
+    // Cold empty sources have no usable cut; ordinary unmount/terminal release
+    // still retire the buffers through their existing resource owner.
+    if prepared == nil {
+      for batch in committedBatches.indices {
+        committedBatches[batch].buffers.removeAll(keepingCapacity: true)
+      }
     }
     visibleCommittedVertexCount = 0; visibleCommittedChunkCount = 0
     drawnTiles = nil

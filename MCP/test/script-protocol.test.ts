@@ -10,14 +10,14 @@ import {createServer,executionOutput} from "../src/server.js";
 import {sdkReference,sdkInputs} from "../src/sdk-contracts.js";
 import {operationSchema} from "../src/actions.js";
 
-test("public SDK help covers every method, all 22 operations, native content and all old capabilities",async()=>{
+test("public SDK help covers every method, all 20 operations, native content and all old capabilities",async()=>{
   const source=await readFile(new URL("../../Sources/NotebookScriptWorker/Resources/notebook-sdk.js",import.meta.url),"utf8");
   const names=[...source.matchAll(/\b([A-Za-z]+):\s*(?:read\(|effect\(|topic\s*=>|key\s*=>|\(key, action\))/g)].map(x=>x[1]!);
   for(const name of [...names,"emit","emitImage"]) {
     const method=sdkReference.methods[name]!;
     assert.ok(method?.input&&method.returns&&method.example,"missing discoverable contract: "+name);
   }
-  assert.equal(sdkReference.operations.items.length,22);
+  assert.equal(sdkReference.operations.items.length,20);
   for(const {name,topic} of sdkReference.operations.items) {
     assert.equal(topic,`operation/${name}`);
     assert.ok(sdkReference.operationDetails[name]?.input,"missing operation schema: "+topic);
@@ -82,7 +82,7 @@ test("operation discovery is compact and every exact schema reference resolves l
   const bytes=(value:unknown)=>Buffer.byteLength(JSON.stringify(value));
   assert.ok(bytes(sdkReference.operations)<6*1024,"The operation index must not repeat full schemas");
   // Package references plus native paths/freehand add shared typed definitions.
-  // Keep the complete 22-operation schema below 28 KiB; never inline targets.
+  // Keep the complete 20-operation schema below 28 KiB; never inline targets.
   assert.ok(bytes(sdkReference.methods.transaction!.input)<28*1024,"Atomic action help must remain compact");
   const targetReferences=new Set<string>();
   const collectTargets=(value:any):void=>{
@@ -177,19 +177,20 @@ test("document program example installs, declares initial readiness and redraws 
   const AsyncFunction=Object.getPrototypeOf(async function(){}).constructor;
   const documentID=randomUUID();let action:any;
   await new AsyncFunction("nb","args","emit",sdkReference.examples.interactive)({
-    document:async()=>({data:{id:documentID},basis:{workspaceID:randomUUID(),owners:[{target:{kind:"document",id:documentID},revision:"7@fixture"}]}}),
+    document:async()=>({data:{sourceVersion:{stamp:{counter:7,actor:randomUUID()},human:true,observed:{}}},basis:{workspaceID:randomUUID(),owners:[{target:{kind:"document",id:documentID},revision:"7@fixture"}]}}),
     transaction:async(key:string,value:unknown)=>{assert.equal(key,"counter");action=(sdkInputs.transaction!.parse({key,action:value}) as any).action;return [];},
-  },{documentID},async()=>{});
+  },{documentID,fileID:"main",range:{location:0,length:0},expectedText:""},async()=>{});
   assert.equal(action.base.owners[0].target.id,documentID);
   assert.equal(action.base.owners[0].revision,"7@fixture");
-  const block=action.operations[0].values;
-  let state=block.initialState,ready:Promise<unknown>|undefined;const commits:unknown[]=[];
+  const source=action.operations.find((op:any)=>op.values.path?.endsWith("/main.js")).values.source;
+  assert.equal(action.operations.at(-1).kind,"patchDocumentFile");
+  let state:unknown={},ready:Promise<unknown>|undefined;const commits:unknown[]=[];
   const events:Record<string,()=>void>={},buttonEvents:Record<string,()=>void>={};
   const output={textContent:""},button={addEventListener:(kind:string,handler:()=>void)=>{buttonEvents[kind]=handler;}};
   const document={getElementById:(id:string)=>id==="increment"?button:id==="count"?output:null};
   const notebook={get state(){return state;},commit:(next:unknown)=>{state=next;commits.push(next);return true;},
     ready:(promise:Promise<unknown>)=>{ready=Promise.resolve(promise);return ready;}};
-  new Function("document","notebook","addEventListener",block.javaScript)(document,notebook,
+  new Function("document","notebook","addEventListener",source)(document,notebook,
     (kind:string,handler:()=>void)=>{events[kind]=handler;});
   assert.ok(ready,"Ready must be declared during installation, before the initial promise settles");
   await ready;assert.equal(output.textContent,"0");
@@ -240,7 +241,7 @@ test("MCP preserves attention statuses and exact run identity across start/resum
     await chmod(root,0o700);await new Promise<void>(resolve=>native.listen(path,resolve));await chmod(path,0o600);
     const [clientTransport,serverTransport]=InMemoryTransport.createLinkedPair();
     await server.connect(serverTransport);await client.connect(clientTransport);
-    assert.deepEqual((await client.listTools()).tools.map(t=>t.name).sort(),["notebook_context","notebook_execute","notebook_import_program"]);
+    assert.deepEqual((await client.listTools()).tools.map(t=>t.name).sort(),["notebook_context","notebook_execute","notebook_import_document","notebook_import_document_resource","notebook_import_program"]);
     for(const status of ["source_pixels","source_pixels_unavailable"]) {
       attentionStatus=status;
       const result=await client.callTool({name:"notebook_context",arguments:{method:"attention",args:{contextID:randomUUID(),referenceID:randomUUID()}}});
@@ -273,7 +274,7 @@ test("MCP preserves attention statuses and exact run identity across start/resum
     const failures=[{code:"revision_required",message:"Для изменения нужна версия владельца.",operation},
       {code:"revision_conflict",message:"Владелец изменился. Прочитайте его текущую версию."},
       {code:"target_missing",message:"Указанный владелец или элемент отсутствует.",
-        operation:{index:0,kind:"updateBlock",target:{kind:"document",id:randomUUID()},id:"no-such-block-v6"}}];
+        operation:{index:0,kind:"patchDocumentFile",target:{kind:"document",id:randomUUID()},id:"no-such-file-v6"}}];
     effects=failures.map((error,index)=>({id:randomUUID(),key:`rejected-${index}`,method:"transaction",
       state:"notSaved",fingerprint:"b".repeat(64),actionID:randomUUID(),error}));
     const rejected=await client.callTool({name:"notebook_execute",arguments:{op:"resume",run_id:id}});

@@ -83,7 +83,8 @@ node ~/.codex/skills/notebook/scripts/submit.mjs request.json
 ```
 
 Boards require `anchor`; documents use `target.kind:"document"` and optional
-`afterID`. Choose height from the actual narrow-column render, keeping text
+`edit:{fileID,expectedVersion,range,expectedText}` from the addressed source
+read, and load `\usepackage{notebook}` in that LaTeX file. Choose height from the actual narrow-column render, keeping text
 readable. Inline requests retain all HTML/CSS/JS. Explicit human actions save
 state; animation frames do not. Received state stops playback at that state.
 

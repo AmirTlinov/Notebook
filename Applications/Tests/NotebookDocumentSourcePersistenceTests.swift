@@ -11,7 +11,7 @@ final class NotebookDocumentSourcePersistenceTests: XCTestCase {
     await model.start(pageSize: NotebookAppModel.defaultPageSize)
     let notebook = try XCTUnwrap(model.workspace?.selectedItemID)
     var ids: [UUID] = []
-    for _ in 0..<10 { ids.append(try XCTUnwrap(model.createDocument(at: .zero, paperSize: .a4))) }
+    for _ in 0..<10 { ids.append(try XCTUnwrap(model.createDocument(at: .zero))) }
     model.selectItem(notebook)
     let saved = await model.finishPendingPersistence(); XCTAssertTrue(saved)
     await model.reloadExternalChanges()?.value
@@ -42,8 +42,8 @@ final class NotebookDocumentSourcePersistenceTests: XCTestCase {
     let notebookID = try XCTUnwrap(model.workspace?.items.first { $0.kind == .notebook }?.id)
     let lock = try NotebookSQLWriteBlocker(store: model.store)
     defer { try? lock.release() }
-    let edit = DocumentSourceEdit(sessionID: UUID(), documentID: id, blockID: "a", baseSource: before.blocks[0].source,
-      baseVersion: before.sourceVersion(blockID: "a"), source: "<button>Accepted human text</button>", sequence: 1)
+    let edit = DocumentSourceEdit(sessionID: UUID(), documentID: id, fileID: "a-html", baseSource: before.files.first { $0.id == "a-html" }!.source,
+      baseVersion: before.fileVersion(fileID: "a-html"), source: "<button>Accepted human text</button>", sequence: 1)
     model.saveDocumentDraft(.init(edit: edit))
     let operation = Task { try await model.commitDocumentSource(edit: edit) }
     // The source command retains its explicit document even if human
@@ -56,25 +56,25 @@ final class NotebookDocumentSourcePersistenceTests: XCTestCase {
     let saved = await model.finishPendingPersistence()
     XCTAssertTrue(saved, model.persistenceFailure ?? "")
     let stored = try model.store.loadDocument(id)
-    XCTAssertEqual(stored.blocks[0].source, edit.source)
-    XCTAssertEqual(stored.blocks[0].css, before.blocks[0].css)
-    XCTAssertEqual(stored.blocks[1], before.blocks[1])
+    XCTAssertEqual(stored.files.first { $0.id == "a-html" }!.source, edit.source)
+    XCTAssertEqual(stored.files.first { $0.id == "a-css" }, before.files.first { $0.id == "a-css" })
+    XCTAssertEqual(stored.files.first { $0.id == "b" }, before.files.first { $0.id == "b" })
     XCTAssertEqual(try model.store.loadDocumentState(id), state)
     XCTAssertEqual(model.presence?.selectedItemID, notebookID)
     XCTAssertFalse(model.documentEditingSessions.contains { $0.id == edit.sessionID })
-    if let retained = model.documents[id] { XCTAssertEqual(retained.blocks, stored.blocks) }
+    if let retained = model.documents[id] { XCTAssertEqual(retained.files, stored.files) }
   }
 
   @MainActor
   func testSourceReceiptReachesTheVisibleModelBeforeTheEditorCloses() async throws {
     let (model, id) = try await makeModel()
     let before = try XCTUnwrap(model.documents[id])
-    let edit = DocumentSourceEdit(sessionID: UUID(), documentID: id, blockID: "a", baseSource: before.blocks[0].source,
-      baseVersion: before.sourceVersion(blockID: "a"), source: "<p>Visible source</p>", sequence: 1)
+    let edit = DocumentSourceEdit(sessionID: UUID(), documentID: id, fileID: "a-html", baseSource: before.files.first { $0.id == "a-html" }!.source,
+      baseVersion: before.fileVersion(fileID: "a-html"), source: "<p>Visible source</p>", sequence: 1)
     let status = try await model.commitDocumentSource(edit: edit)
     XCTAssertEqual(status, .committed)
     let shown = try XCTUnwrap(model.documents[id])
-    XCTAssertEqual(shown.blocks[0].source, edit.source)
+    XCTAssertEqual(shown.files.first { $0.id == "a-html" }!.source, edit.source)
     XCTAssertEqual(shown, try model.store.loadDocument(id))
     let settled = await model.finishPendingPersistence()
     XCTAssertTrue(settled, model.persistenceFailure ?? "")
@@ -88,8 +88,8 @@ final class NotebookDocumentSourcePersistenceTests: XCTestCase {
     let undone = await model.finishPendingPersistence()
     XCTAssertTrue(undone, model.persistenceFailure ?? "")
     await model.reloadExternalChanges()?.value
-    XCTAssertEqual(try model.store.loadDocument(id).blocks, before.blocks)
-    XCTAssertEqual(model.documents[id]?.blocks, before.blocks)
+    XCTAssertEqual(try model.store.loadDocument(id).files, before.files)
+    XCTAssertEqual(model.documents[id]?.files, before.files)
     XCTAssertEqual(try model.store.loadDocumentState(id), state,
       "Undo of a source field does not undo a live program's independent state")
   }
@@ -99,15 +99,15 @@ final class NotebookDocumentSourcePersistenceTests: XCTestCase {
     let (model, id) = try await makeModel()
     let before = try XCTUnwrap(model.documents[id]), contact = UUID()
     model.inputGate.beginContact(source: contact)
-    let edit = DocumentSourceEdit(sessionID: UUID(), documentID: id, blockID: "a", baseSource: before.blocks[0].source,
-      baseVersion: before.sourceVersion(blockID: "a"), source: "Saved after lifting", sequence: 1)
+    let edit = DocumentSourceEdit(sessionID: UUID(), documentID: id, fileID: "a-html", baseSource: before.files.first { $0.id == "a-html" }!.source,
+      baseVersion: before.fileVersion(fileID: "a-html"), source: "Saved after lifting", sequence: 1)
     let saving = Task { try await model.commitDocumentSource(edit: edit) }
     await Task.yield()
-    XCTAssertEqual(try model.store.loadDocument(id).blocks, before.blocks)
+    XCTAssertEqual(try model.store.loadDocument(id).files, before.files)
     model.inputGate.endContact(source: contact)
     let status = try await saving.value
     XCTAssertEqual(status, .committed)
-    XCTAssertEqual(try model.store.loadDocument(id).blocks[0].source, edit.source)
+    XCTAssertEqual(try model.store.loadDocument(id).files.first { $0.id == "a-html" }!.source, edit.source)
   }
 
   @MainActor
@@ -117,8 +117,8 @@ final class NotebookDocumentSourcePersistenceTests: XCTestCase {
     let stopped = await model.shutdown()
     XCTAssertTrue(stopped, model.persistenceFailure ?? "")
     let cursor = try model.store.currentChangeCursor()
-    let edit = DocumentSourceEdit(sessionID: UUID(), documentID: id, blockID: "a", baseSource: document.blocks[0].source,
-      baseVersion: document.sourceVersion(blockID: "a"), source: "Not admitted", sequence: 1)
+    let edit = DocumentSourceEdit(sessionID: UUID(), documentID: id, fileID: "a-html", baseSource: document.files.first { $0.id == "a-html" }!.source,
+      baseVersion: document.fileVersion(fileID: "a-html"), source: "Not admitted", sequence: 1)
     do {
       _ = try await model.commitDocumentSource(edit: edit)
       XCTFail("A closed Notebook admitted new source input")
@@ -134,13 +134,13 @@ final class NotebookDocumentSourcePersistenceTests: XCTestCase {
     let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
     retainNotebookUntilTeardown(model, removing: root)
     await model.start(pageSize: NotebookAppModel.defaultPageSize)
-    let id = try XCTUnwrap(model.createDocument(at: .zero, paperSize: .letter))
+    let id = try XCTUnwrap(model.createDocument(at: .zero))
     let created = await model.finishPendingPersistence()
     XCTAssertTrue(created, model.persistenceFailure ?? "")
     var document = try model.store.loadDocument(id)
-    XCTAssertTrue(document.replaceContent(blocks: [
-      .interactive(id: "a", html: "<button>A</button>", css: "button{color:blue}", initialState: .number(3)),
-      .markdown(id: "b", source: "Independent human program")], actor: model.actorID))
+    XCTAssertTrue(document.replaceContent(files: DocumentTestFiles.document(contents: [
+      .program(id: "a", html: "<button>A</button>", css: "button{color:blue}", initialState: .number(3)),
+      .tex(id: "b", source: "Independent human program")]).files, actor: model.actorID))
     _ = try model.store.saveMergedDocument(document)
     await model.reloadExternalChanges()?.value
     let ready = await model.finishPendingPersistence()

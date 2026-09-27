@@ -4,7 +4,7 @@ import Foundation
 enum NotebookPendingOwner: String {
   case board, referenceRoot, item, cover, page, pageOrder, pageMembership, capturedPageOrder, orderRoot
   case boardPrefix, referenceTouched, referencePending
-  case documentProgram, documentOrder
+  case documentFile
   case graphic, elementGroup, lifecycleFile
   case actionLifecycleFile, actionLifecycleElement
 }

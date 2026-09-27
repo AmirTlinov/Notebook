@@ -10,11 +10,12 @@ final class MacDocumentLaunchFixtureTests: XCTestCase {
     let model = MacDocumentLaunchFixture.makeModel()
     retainNotebookUntilTeardown(model, removing: model.store.root)
     await model.start(pageSize: NotebookAppModel.defaultPageSize)
-    let document = try XCTUnwrap(model.activeDocument), block = try XCTUnwrap(document.blocks.first)
+    let document = try XCTUnwrap(model.activeDocument), block = try XCTUnwrap(document.files.first)
     let source = NotebookAppModel.documentPageSourceRevision(document), controller = UUID()
-    let geometry = WorkspaceItemGeometry.document(document.paperSize)
+    let paper = DocumentPaperLayout.uncompiled, geometry = paper.geometry
     let record = try DocumentLayoutRecord(receipt: ["sourceKey": source, "layoutScope": "source", "layoutCanonical": true,
       "pageCount": 1, "width": geometry.width, "height": geometry.height,
+      "pages": [["widthPoints": paper.widthPoints, "heightPoints": paper.heightPoints]],
       "regions": [["id": block.id, "pageIndex": 0, "x": 20.0, "y": 30.0, "width": 100.0, "height": 100.0, "sourceOffset": 0.0]],
       "anchors": [], "reading": [[block.id, "1111111111111111", 0, 0, 10, 0, 30.0]]] as NSDictionary,
       sourceKey: source, blockIDs: [block.id], geometry: geometry)

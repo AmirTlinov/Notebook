@@ -59,14 +59,13 @@ func addressedReferenceIgnoresUnrelatedSources() throws {
   #expect(try f.store.requestTargetRender(target: f.page, expectedRevision: f.expectation(f.page).revision) == request)
 }
 
-@Test("Адрес документа читает его блоки и состояние, а состояние меняет идентичность снимка")
+@Test("Адрес документа читает его файлы и состояние, а состояние меняет идентичность снимка")
 func addressedDocumentIncludesItsInteractiveState() throws {
   let f = try CollaborationFixture(); defer { f.clean() }
   let id = UUID(), target = CollaborationTarget(kind: .document, id: id)
   _ = try f.store.applyCollaborationAction(f.action([.init(kind: .createDocument, target: f.board,
-    id: id.uuidString, values: ["center": try .encode(WorldPoint.zero), "paperSize": .string("letter"),
-      "blocks": .array([.object(["id": .string("counter"), "kind": .string("interactive"),
-        "html": .string("<button>+</button>"), "initialState": .number(0)])])])], targets: [f.board, f.index]), actor: f.agent)
+    id: id.uuidString, values: ["center": try .encode(WorldPoint.zero),
+      "files": try .encode(documentProgramFiles(id: "counter", html: "<button>+</button>", initialState: .number(0)))])], targets: [f.board, f.index]), actor: f.agent)
   let legacy = try f.store.collaborationSnapshot(), suffix = id.uuidString.lowercased() + ".json"
   let files = try f.store.referenceSourceFiles(target: target)
   #expect(Set(files.keys) == Set(["documents/" + suffix, "document-states/" + suffix]))
@@ -77,7 +76,7 @@ func addressedDocumentIncludesItsInteractiveState() throws {
   let version = try f.expectation(target).revision
   let before = try f.store.requestTargetRender(target: target, expectedRevision: version)
   var state = try f.store.loadDocumentState(id)
-  _ = state.commit(blockID: "counter", value: .number(7), actor: f.human)
+  _ = state.commit(instanceID: "counter", value: .number(7), actor: f.human)
   try f.store.saveDocumentState(state)
   let after = try f.store.requestTargetRender(target: target, expectedRevision: version)
   #expect(before.id != after.id)
@@ -97,9 +96,8 @@ func addressedBoardPreservesHistoricalIdentityAndScope() throws {
   for (boardID, id) in [(a, documentA), (b, documentB)] {
     let target = CollaborationTarget(kind: .board, id: boardID)
     _ = try f.store.applyCollaborationAction(f.action([.init(kind: .createDocument, target: target,
-      id: id.uuidString, values: ["center": try .encode(WorldPoint.zero), "paperSize": .string("letter"),
-        "blocks": .array([.object(["id": .string("body"), "kind": .string("markdown"),
-          "source": .string("This text belongs to the document, not its cover.")])])])], targets: [target, f.index]), actor: f.agent)
+      id: id.uuidString, values: ["center": try .encode(WorldPoint.zero),
+        "files": try .encode([DocumentFile(id: "body", path: "main.tex", source: "This text belongs to the document, not its cover.")])])], targets: [target, f.index]), actor: f.agent)
   }
   let targets = [CollaborationTarget(kind: .board, id: a), .init(kind: .cover, id: documentA, boardID: a)]
   let legacy = try f.store.collaborationSnapshot()
@@ -107,8 +105,7 @@ func addressedBoardPreservesHistoricalIdentityAndScope() throws {
   try f.store.fixtureWrite(Data("unrelated damaged document".utf8), to: f.store.documentURL(documentB))
   for (target, revision) in zip(targets, expected) {
     let files = try f.store.referenceSourceFiles(target: target)
-    if target.kind == .cover { #expect(files["documents/\(documentA.uuidString.lowercased()).json"] == .object(["paperSize": .string("letter")])) }
-    else { #expect(files["documents/\(documentA.uuidString.lowercased()).json"] == nil) }
+    #expect(files["documents/\(documentA.uuidString.lowercased()).json"] == nil)
     #expect(files["documents/\(documentB.uuidString.lowercased()).json"] == nil)
     #expect(!files.keys.contains { $0.hasPrefix("pages/") || $0.hasPrefix("document-states/") || $0.hasPrefix("collaboration/") })
     #expect(try f.store.referenceRevision(target: target) == revision)
@@ -116,7 +113,7 @@ func addressedBoardPreservesHistoricalIdentityAndScope() throws {
   }
 }
 
-@Test("Ссылка на портал включает дочернюю доску и размеры вложенной бумаги")
+@Test("Ссылка на портал включает дочернюю доску без исходников закрытого документа")
 func portalCoverReferenceOwnsItsVisibleChildSources() throws {
   let f = try CollaborationFixture(); defer { f.clean() }
   let portalID = UUID(), documentID = UUID()
@@ -124,7 +121,7 @@ func portalCoverReferenceOwnsItsVisibleChildSources() throws {
     id: portalID.uuidString, values: ["center": try .encode(WorldPoint.zero)])], targets: [f.board, f.index]), actor: f.agent)
   let child = CollaborationTarget(kind: .board, id: portalID)
   _ = try f.store.applyCollaborationAction(f.action([.init(kind: .createDocument, target: child,
-    id: documentID.uuidString, values: ["center": try .encode(WorldPoint.zero), "paperSize": .string("letter")])],
+    id: documentID.uuidString, values: ["center": try .encode(WorldPoint.zero)])],
     targets: [child, f.index]), actor: f.agent)
   let portal = CollaborationTarget(kind: .cover, id: portalID, boardID: f.boardID)
   let files = try f.store.referenceSourceFiles(target: portal)
@@ -496,24 +493,26 @@ func collaborationBoardAddress() throws {
   #expect(board.board(b)?.elements.isEmpty == true)
 }
 
-@Test("Правка блока сохраняет соседей, преамбулу, состояние и выбор человека")
+@Test("Правка файла сохраняет соседей, входной файл, состояние и выбор человека")
 func collaborationDocumentPartialEdit() throws {
   let f = try CollaborationFixture(); defer { f.clean() }
   let id = UUID()
   let create = CollaborationOperation(kind: .createDocument, target: f.board, id: id.uuidString, values: [
-    "center": try .encode(WorldPoint(x: 200, y: 200)), "paperSize": .string("a4"), "preamble": .string("Preamble"),
-    "blocks": .array([.object(["id": .string("first"), "kind": .string("markdown"), "source": .string("First")]),
-      .object(["id": .string("second"), "kind": .string("markdown"), "source": .string("Second")])])])
+    "center": try .encode(WorldPoint(x: 200, y: 200)), "entrypoint": .string("first.tex"),
+    "files": try .encode([DocumentFile(id: "first", path: "first.tex", source: "First"),
+      .init(id: "second", path: "second.tex", source: "Second")])])
   _ = try f.store.applyCollaborationAction(f.action([create], targets: [f.board, f.index]), actor: f.agent)
   #expect(try f.store.loadIndex().selectedItemID == f.itemID)
-  let target = CollaborationTarget(kind: .document, id: id)
-  let edit = try f.action([.init(kind: .updateBlock, target: target, id: "first", values: ["source": .string("Edited")])], targets: [target])
+  let target = CollaborationTarget(kind: .document, id: id), before = try f.store.loadDocument(id)
+  let edit = try f.action([.init(kind: .patchDocumentFile, target: target, id: "first", values: [
+    "expectedVersion": try .encode(before.fileVersion(fileID: "first")), "range": .object(["location": .number(0), "length": .number(5)]),
+    "expectedText": .string("First"), "source": .string("Edited")])], targets: [target])
   _ = try f.store.applyCollaborationAction(edit, actor: f.agent)
   let doc = try f.store.loadDocument(id)
-  #expect(doc.preamble == "Preamble")
-  #expect(doc.blocks.map(\.source) == ["Edited", "Second"])
+  #expect(doc.entrypoint == "first.tex")
+  #expect(doc.files.map(\.source) == ["Edited", "Second"])
   _ = try f.store.undoCollaborationAction(edit.id, actor: f.human)
-  #expect(try f.store.loadDocument(id).blocks.map(\.source) == ["First", "Second"])
+  #expect(try f.store.loadDocument(id).files.map(\.source) == ["First", "Second"])
 }
 
 @Test("Отмена созданной тетради сохраняет принятое человеком содержание")
@@ -557,18 +556,18 @@ func collaborationConcurrentPageFields() throws {
   #expect(agent == human)
 }
 
-@Test("Разные блоки документа сходятся независимо на двух устройствах")
-func collaborationConcurrentDocumentBlocks() throws {
+@Test("Разные файлы документа сходятся независимо на двух устройствах")
+func collaborationConcurrentDocumentFiles() throws {
   let actor = UUID(), a = UUID(), b = UUID()
-  let original = DocumentDocument(actor: actor, blocks: [.markdown(id: "a", source: "A"), .markdown(id: "b", source: "B")])
+  let original = DocumentDocument(actor: actor, files: [.init(id: "a", path: "a.tex", source: "A"), .init(id: "b", path: "b.tex", source: "B")])
   var left = original, right = original
-  _ = left.replaceBlockSource(id: "a", source: "Left", actor: a)
-  _ = right.replaceBlockSource(id: "b", source: "Right", actor: b)
+  _ = left.replaceFileSource(id: "a", source: "Left", actor: a)
+  _ = right.replaceFileSource(id: "b", source: "Right", actor: b)
   let oldLeft = left
   _ = left.merge(right)
   _ = right.merge(oldLeft)
-  #expect(left.blocks.map(\.source) == ["Left", "Right"])
-  #expect(right.blocks == left.blocks)
+  #expect(left.files.map(\.source) == ["Left", "Right"])
+  #expect(right.files == left.files)
   _ = left.merge(right)
   _ = right.merge(left)
   #expect(left == right)
@@ -655,16 +654,15 @@ func collaborationAtomicNetworkCut() throws {
 }
 
 
-@Test("Состояние блока имеет явную операцию, отдельную версию и устойчивую отмену")
-func collaborationBlockStateUndoAndMerge() throws {
+@Test("Состояние программы имеет явную операцию, отдельную версию и устойчивую отмену")
+func collaborationProgramStateUndoAndMerge() throws {
   let f = try CollaborationFixture(); defer { f.clean() }
   let id = UUID(), target = CollaborationTarget(kind:.document,id:id)
   _ = try f.store.applyCollaborationAction(f.action([.init(kind:.createDocument,target:f.board,id:id.uuidString,values:[
-    "center":try .encode(WorldPoint.zero),"paperSize":.string("a4"),"blocks":.array([
-      .object(["id":.string("counter"),"kind":.string("interactive"),"html":.string("<button>+</button>"),"initialState":.number(0)])])])],targets:[f.board,f.index]),actor:f.agent)
+    "center":try .encode(WorldPoint.zero), "files": try .encode(documentProgramFiles(id: "counter", html: "<button>+</button>", initialState: .number(0)))])],targets:[f.board,f.index]),actor:f.agent)
   let document = try f.store.loadDocument(id), state = try f.store.loadDocumentState(id)
   let action = CollaborationAction(summary:"Счётчик показывает семь",expected:[.init(target:target,revision:document.contentStamp.revision,stateRevision:state.stamp.revision)],operations:[
-    .init(kind:.setBlockState,target:target,id:"counter",values:["state":.number(7)])])
+    .init(kind:.setDocumentProgramState,target:target,id:"counter",values:["programPath": .string("programs/model"), "sourceBasis": .string(try DocumentProgramSource(document: document, instanceID: "counter", path: "programs/model").sourceBasis), "state":.number(7)])])
   _ = try f.store.applyCollaborationAction(action,actor:f.agent)
   let delivered = try f.store.loadDocumentState(id)
   #expect(delivered.value(for:"counter") == .number(7))
@@ -675,8 +673,8 @@ func collaborationBlockStateUndoAndMerge() throws {
   _ = final.merge(delivered)
   #expect(final.value(for:"counter") == .number(0))
   var human = delivered, agent = delivered
-  _ = human.commit(blockID:"counter",value:.number(11),actor:f.human)
-  _ = agent.commit(blockID:"counter",value:.number(12),actor:f.agent,human:false)
+  _ = human.commit(instanceID:"counter",value:.number(11),actor:f.human)
+  _ = agent.commit(instanceID:"counter",value:.number(12),actor:f.agent,human:false)
   _ = human.merge(agent); _ = agent.merge(human)
   #expect(human.value(for:"counter") == .number(11))
   #expect(agent.value(for:"counter") == .number(11))
@@ -772,8 +770,8 @@ func collaborationReceivedActionIdentityIsAtomic() throws {
 func collaborationStateMergeNamesTheCombinedResult() {
   let id = UUID(), actorA = UUID(), actorB = UUID()
   var a = DocumentStateJournal(id:id,actor:actorA), b = DocumentStateJournal(id:id,actor:actorA)
-  _ = a.commit(blockID:"a",value:.number(1),actor:actorA)
-  _ = b.commit(blockID:"b",value:.number(2),actor:actorB)
+  _ = a.commit(instanceID:"a",value:.number(1),actor:actorA)
+  _ = b.commit(instanceID:"b",value:.number(2),actor:actorB)
   let frontier = max(a.stamp,b.stamp)
   _ = a.merge(b); _ = b.merge(a)
   #expect(a == b)

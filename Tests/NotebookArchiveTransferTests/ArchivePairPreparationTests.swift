@@ -15,8 +15,7 @@ struct ArchivePairPreparationTests {
     let placed = board.addItem(item.id, to: index.rootBoardID, near: .zero, actor: author)
     #expect(placed)
     try fixture.current.saveDocumentWorkspaceBundle(index: index,
-      document: .init(id: item.id, actor: author, blocks: [.interactive(id: "counter", html: "<button>Before</button>",
-        initialState: .object(["records": .array([.object(["id": .string("value"), "count": .number(7)])])]))]),
+      document: .init(id: item.id, actor: author, files: [.init(id: "counter", path: "main.tex", source: "Before")]),
       state: .init(id: item.id, actor: author), board: board)
     let request = ArchivePairRequest(transitionID: UUID(), legacyIPad: fixture.legacy.root.path,
       legacyMac: fixture.peer.path, currentIPad: fixture.current.root.path,
@@ -58,14 +57,14 @@ struct ArchivePairPreparationTests {
     #expect(try a.currentChangeCursor() == 1 && b.currentChangeCursor() == 1,
       "Identical prepared seeds must not create a delivery echo")
     var edited = try a.loadDocument(item.id)
-    let changed = edited.replaceBlockSource(id: "counter", source: "<button>After activation</button>", actor: request.iPad.actorID)
+    let changed = edited.replaceFileSource(id: "counter", source: "<button>After activation</button>", actor: request.iPad.actorID)
     #expect(changed)
     try a.saveMergedDocument(edited)
     let update = try #require(a.changeJournal(after: 1).first)
     #expect(update.sequence == 2)
     try deliver(update, from: a, to: b, peer: request.iPad.actorID)
     #expect(try a.loadDocument(item.id) == b.loadDocument(item.id))
-    #expect(try b.loadDocument(item.id).blocks[0].html == "<button>After activation</button>")
+    #expect(try b.loadDocument(item.id).files[0].source == "<button>After activation</button>")
     #expect(try [fixture.legacy.root, fixture.peer, fixture.current.root].map(inventory) == before)
   }
 

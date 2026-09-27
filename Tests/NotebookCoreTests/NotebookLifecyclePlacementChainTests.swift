@@ -23,8 +23,7 @@ struct NotebookLifecyclePlacementChainTests {
       var values: [String: JSONValue] = ["center": try .encode(WorldPoint(x: 1600, y: 900))]
       if kind == .createNotebook { values["pageID"] = try .encode(UUID()) }
       if kind == .createDocument {
-        values["paperSize"] = .string("a4")
-        values["blocks"] = try .encode([DocumentBlock.markdown(id: "body", source: "Unadopted document")])
+          values["files"] = try .encode([DocumentFile(id: "body", path: "body" + ".tex", source: "Unadopted document")])
       }
       let basis = try store.readBasis(targets: [board, .init(kind: .workspace, id: boardID)])
       let receipt = try store.applyCollaborationAction(.init(summary: "Create the original item lifetime", expected: basis.owners,

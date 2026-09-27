@@ -139,33 +139,55 @@ function animation(input,namespace) {
   const animationID=id(namespace,'animation'),height=positive(input.height??560,'height');
   const ids={animation:animationID};
   if(input.target.kind==='document') {
-    if(height<48||height>2048)throw new Error('Document animation height must be 48–2048');
-    return {ids,operations:[{kind:'insertBlock',target:input.target,id:animationID,
-      values:{kind:'interactive',...program,initialState:input.initialState??{},height,...(input.afterID?{afterID:input.afterID}:{})}}]};
+    if(input.programPackage)throw new Error('Document programs use editable document files, not an opaque package hash');
+    const programPath=input.programPath??`programs/${animationID}`;
+    const manifest={html:'index.html',css:'style.css',javaScript:'main.js',module:false,initialState:input.initialState??{}};
+    const files=[['program.json',JSON.stringify(manifest)],['index.html',program.html],['style.css',program.css],['main.js',program.javaScript]];
+    const operations=files.map(([name,source])=>({kind:'putDocumentFile',target:input.target,id:id(namespace,programPath+'/'+name),
+      values:{path:programPath+'/'+name,source,expectedVersion:null}}));
+    const source=String.raw`\NotebookInteractive[id=${animationID},width=\linewidth,height=${height*.75}bp]{${programPath}}`;
+    operations.push(sourcePatch(input,source));
+    return {ids:{...ids,programPath},operations};
   }
   return {ids,operations:insert([{id:animationID,kind:'web',source:input.programPackage?'':input.title??'',...program,
     state:input.initialState??{},frame:{x:0,y:0,width:positive(input.width??760,'width'),height}}],input)};
 }
+function sourcePatch(input,source) {
+  const edit=input.edit;
+  if(!edit?.fileID||!edit.expectedVersion||!edit.range||typeof edit.expectedText!=='string')
+    throw new Error('A document edit needs edit:{fileID,expectedVersion,range:{location,length},expectedText} from an addressed file read');
+  return {kind:'patchDocumentFile',target:input.target,id:edit.fileID,
+    values:{expectedVersion:edit.expectedVersion,range:edit.range,expectedText:edit.expectedText,source}};
+}
 function document(input,namespace) {
-  const blocks=[],ids=Object.create(null);
-  if(input.title) {ids.title=id(namespace,'title');blocks.push({id:ids.title,kind:'markdown',source:`# ${input.title}${input.subtitle?`\n\n${input.subtitle}`:''}`});}
-  for(const [i,section] of (input.sections??[]).entries()) {
-    const key=section.id??`section:${i}`;
-    if(ids[key])throw new Error(`Duplicate section id: ${key}`);
-    ids[key]=id(namespace,key);
-    blocks.push({id:ids[key],kind:section.kind??'markdown',source:`${section.heading?`## ${section.heading}\n\n`:''}${section.body??''}`});
-  }
-  if(!blocks.length)throw new Error('Document needs content');
+  if(input.sections!==undefined||input.preamble!==undefined||input.paperSize!==undefined||input.afterID!==undefined)
+    throw new Error('Documents use ordinary source/files; layout and order belong to LaTeX');
+  const ids=Object.create(null);
+  if(input.files!==undefined&&input.source!==undefined)throw new Error('Choose source or files, not both');
+  const entrypoint=input.entrypoint??'main.tex';
+  const values=input.files??(input.source!==undefined?[{path:entrypoint,source:input.source}]:[]);
+  const seen=new Set();
+  const files=values.map(file=>{
+    if(!file.path||seen.has(file.path))throw new Error('Every document file needs a unique relative path');
+    seen.add(file.path);const fileID=file.id??id(namespace,file.path);ids[file.path]=fileID;
+    return {id:fileID,path:file.path,source:file.source??'',...(file.resource?{resource:file.resource}:{})};
+  });
   if(input.target.kind==='document') {
-    let afterID=input.afterID;
-    const operations=blocks.map(({id,...values})=>{const op={kind:'insertBlock',target:input.target,id,values:{...values,...(afterID?{afterID}:{})}};afterID=id;return op;});
+    if(input.template!==undefined)throw new Error('A template creates a document; edit existing files explicitly');
+    const operations=files.map((file,index)=>{
+      if(!Object.hasOwn(values[index],'expectedVersion'))throw new Error('A file write needs expectedVersion; null asserts a new file');
+      const {id,...content}=file;
+      return {kind:'putDocumentFile',target:input.target,id,values:{...content,expectedVersion:values[index].expectedVersion}};
+    });
+    if(input.edit)operations.push(sourcePatch(input,input.edit.source??''));
     return {ids,operations};
   }
   if(input.target.kind!=='board'||!input.anchor)throw new Error('New document needs a board target and anchor');
+  if(input.template!==undefined&&files.length)throw new Error('Choose a template or files, not both');
   ids.document=id(namespace,'document');
   return {ids,operations:[{kind:'createDocument',target:input.target,id:ids.document,
-    values:{title:input.title??'Документ',center:input.anchor,paperSize:input.paperSize??'a4',blocks,
-      ...(input.preamble?{preamble:input.preamble}:{})}}]};
+    values:{title:input.title??'Документ',center:input.anchor,entrypoint,
+      ...(files.length?{files}:{}),...(input.template?{template:input.template}:{})}}]};
 }
 
 export const applyCode=`const snapshot = args.base ? null : await nb.readMany({queries: args.queries});

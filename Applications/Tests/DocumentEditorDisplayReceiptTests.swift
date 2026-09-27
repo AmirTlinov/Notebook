@@ -11,12 +11,12 @@ final class DocumentEditorDisplayReceiptTests: XCTestCase {
     let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
     retainNotebookUntilTeardown(model, removing: root)
     await model.start(pageSize: NotebookAppModel.defaultPageSize)
-    let id = try XCTUnwrap(model.createDocument(at: .zero, paperSize: .letter))
+    let id = try XCTUnwrap(model.createDocument(at: .zero))
     await model.finishPendingPersistence()
     try await model.performStoreCommand(publishesChanges: true) { store in
       var document = try store.loadDocument(id)
-      _ = document.replaceContent(blocks: [.markdown(id: "body", source: "# Edit me"),
-        .interactive(id: "broken", html: "<button>Broken</button>", javaScript: "throw new Error('broken receipt neighbour')", height: 100)], actor: UUID())
+      _ = document.replaceContent(files: DocumentTestFiles.document(contents: [.tex(id: "body", source: "\\section{Edit me}\\hypertarget{edit-me}{}"),
+        .program(id: "broken", html: "<button>Broken</button>", javaScript: "throw new Error('broken receipt neighbour')", height: 100)]).files, actor: UUID())
       _ = try store.saveMergedDocument(document)
     }
     await model.reloadExternalChanges()?.value
@@ -39,19 +39,19 @@ final class DocumentEditorDisplayReceiptTests: XCTestCase {
     await wait { find(window) != nil }
     let web = try XCTUnwrap(find(window)), coordinator = try XCTUnwrap(web.navigationDelegate as? DocumentWebCoordinator)
     let editor = DocumentSourceEditorSession(request: .init(documentID: id,
-      block: try XCTUnwrap(initial.blocks.first { $0.id == "body" }),
-      version: initial.sourceVersion(blockID: "body"), offset: 0), model: model)
+      file: try XCTUnwrap(initial.files.first { $0.id == "body" }),
+      version: initial.fileVersion(fileID: "body"), offset: 0), model: model)
     editor.input("Мой незавершённый текст", selection: NSRange(location: 3, length: 4), composing: true, scroll: 0)
     await editor.checkpoint()
     await model.finishPendingPersistence()
     let action = CollaborationAction(summary: "Показать канонический результат",
       expected: [.init(target: target, revision: initial.contentStamp.revision)],
-      operations: [.init(kind: .updateBlock, target: target, id: "body", values: ["source": .string("# Результат агента")])])
+      operations: [.init(kind: .putDocumentFile, target: target, id: "body", values: ["path": .string("sections/body.tex"), "source": .string("\\section{Результат агента}"), "expectedVersion": try .encode(initial.fileVersion(fileID: "body"))])])
     _ = try await model.performStoreCommand(publishesChanges: true) { try $0.applyCollaborationAction(action, actor: UUID()) }
     await model.reloadExternalChanges()?.value
     await model.finishPendingPersistence()
     let document = try XCTUnwrap(model.documents[id]), state = try XCTUnwrap(model.documentStates[id])
-    XCTAssertEqual(document.blocks.first { $0.id == "body" }?.source, "# Результат агента")
+    XCTAssertEqual(document.files.first { $0.id == "body" }?.source, "\\section{Результат агента}")
     await wait { coordinator.payload?.source.matches(document) == true && coordinator.renderIsReady }
     XCTAssertTrue(coordinator.hasCanonicalPixels)
     XCTAssertEqual(editor.text, "Мой незавершённый текст")

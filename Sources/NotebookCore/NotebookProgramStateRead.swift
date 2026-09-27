@@ -3,8 +3,8 @@ import Foundation
 extension NotebookStore {
   /// Count JSON backing without constructing the recursive value. Reads one
   /// existing 1 MiB transfer window at a time in one short WAL snapshot.
-  public func documentProgramStateReadBytes(documentID: UUID, blockID: String) throws -> Int {
-    let address = stateFile(documentID) + "#/records/@" + fieldKey([collaborationIdentity(blockID)])
+  public func documentProgramStateReadBytes(documentID: UUID, instanceID: String) throws -> Int {
+    let address = stateFile(documentID) + "#/records/@" + fieldKey([collaborationIdentity(instanceID)])
     return try readTransaction { _ in try programStateReadCost(address: address).cost }
   }
 

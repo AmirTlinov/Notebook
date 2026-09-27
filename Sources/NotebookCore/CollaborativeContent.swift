@@ -195,7 +195,7 @@ public struct CollaborativeContent: Codable, Equatable, Sendable {
     var metadata = Self()
     var keys = Set(a.keys).union(b.keys).union(localState?.fields.keys ?? Dictionary<String, ContentFieldVersion>().keys)
       .union(incomingState?.fields.keys ?? Dictionary<String, ContentFieldVersion>().keys)
-    if !includeOrder { keys.subtract(["elements/order", "blocks/order"]) }
+    if !includeOrder { keys.subtract(["elements/order"]) }
     for key in keys {
       // No field and no authored clock is no observation, not a counter-zero
       // deletion by the sender. A real removal carries its existence version.
@@ -224,7 +224,7 @@ public struct CollaborativeContent: Codable, Equatable, Sendable {
     let value = rebuildContent(base: base, fields: result)
     // Membership can append concurrent survivors to the chosen author's
     // sequence. That derived display order is not a new value by that author.
-    for name in ["elements", "blocks"] where includeOrder && value[name] != nil {
+    for name in ["elements"] where includeOrder && value[name] != nil {
       let key = fieldKey([name, "order"])
       let displayed = JSONValue.array(value[name]!.array.compactMap(\.memberIdentity).map(JSONValue.string))
       if displayed != result[key] { metadata.fields[key] = metadata.fields[key]?.retainingValue(result[key]) }
@@ -235,7 +235,7 @@ public struct CollaborativeContent: Codable, Equatable, Sendable {
 
 private func memberExistenceField(_ key: String) -> String? {
   let parts = key.split(separator: "/", omittingEmptySubsequences: false)
-  guard parts.count >= 3, (parts[0] == "elements" || parts[0] == "blocks"), parts[2] != "exists" else { return nil }
+  guard parts.count >= 3, (parts[0] == "elements" || parts[0] == "files"), parts[2] != "exists" else { return nil }
   return parts[0] + "/" + parts[1] + "/exists"
 }
 
@@ -264,14 +264,14 @@ func contentMemberOrder(preferred: [String], escapedMembers: [String]) -> [Strin
 func contentFields(_ value: JSONValue) -> [String: JSONValue] {
   var result: [String: JSONValue] = [:]
   for (name, property) in value.object where !["collaboration", "stamp", "agentStamp", "contentStamp", "drawingStamp", "drawingData", "format", "id", "size", "paperSize", "placements"].contains(name) {
-    if ["elements", "blocks"].contains(name) {
-      result[fieldKey([name, "order"])] = .array(property.array.compactMap(\.memberIdentity).map(JSONValue.string))
+    if ["elements", "files"].contains(name) {
+      if name == "elements" { result[fieldKey([name, "order"])] = .array(property.array.compactMap(\.memberIdentity).map(JSONValue.string)) }
       for item in property.array {
         guard let id = item.memberIdentity else { continue }
         result[fieldKey([name, id, "exists"])] = .bool(true)
         var content: [String: JSONValue] = [:]
         for (field, val) in item.object {
-          if ["source", "html", "kind", "programPackage"].contains(field) { content[field] = val }
+          if (name == "files" ? ["source", "resource"] : ["source", "html", "kind", "programPackage"]).contains(field) { content[field] = val }
           else if field == "graphic" {
             for (part, value) in val.object {
               if part == "connection" {
@@ -291,7 +291,7 @@ func contentFields(_ value: JSONValue) -> [String: JSONValue] {
 private func rebuildContent(base: JSONValue, fields: [String: JSONValue]) -> JSONValue {
   var result = base
   for name in base.object.keys where !["collaboration", "stamp", "agentStamp", "contentStamp", "drawingStamp", "drawingData", "format", "id", "size", "paperSize", "placements"].contains(name) {
-    if ["elements", "blocks"].contains(name) {
+    if ["elements", "files"].contains(name) {
       let prefix = fieldKey([name]) + "/"
       let existing = fields.keys.filter { $0.hasPrefix(prefix) && $0.hasSuffix("/exists") && fields[$0] == .bool(true) }
       let ids = existing.map { String($0.dropFirst(prefix.count).dropLast("/exists".count)) }

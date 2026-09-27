@@ -101,28 +101,41 @@ export interface WorkspaceProjection {
   stamp: VersionStamp;
 }
 
-export type DocumentBlockKind = "markdown" | "latex" | "tex" | "interactive";
-export type DocumentPaperSize = "a4" | "letter";
-
-export interface DocumentBlock {
-  id: string;
-  kind: DocumentBlockKind;
-  source: string;
-  html: string;
-  css: string;
-  javaScript: string;
-  programPackage?: string;
-  initialState: JSONValue;
-  height: number;
+export interface ContentFieldVersion {
+  stamp: VersionStamp;
+  human: boolean;
+  observed: Record<string, number>;
 }
-
-export interface DocumentDocument {
-  format: 2;
+export interface DocumentResource {
+  path: string;
+  mimeType: string;
+  byteCount: number;
+  parts: Array<{sha256: string; byteCount: number}>;
+}
+export interface DocumentFile {
   id: string;
-  paperSize: DocumentPaperSize;
-  preamble: string;
-  blocks: DocumentBlock[];
+  path: string;
+  source: string;
+  resource?: DocumentResource;
+}
+export interface DocumentDocument {
+  format: 3;
+  id: string;
+  entrypoint: string;
+  files: DocumentFile[];
   contentStamp: VersionStamp;
+}
+export interface DocumentFileRead {
+  documentID: string;
+  contentStamp: VersionStamp;
+  sourceVersion: ContentFieldVersion;
+  file: DocumentFile;
+}
+export interface DocumentDirectory {
+  documentID: string;
+  entrypoint: string;
+  contentStamp: VersionStamp;
+  files: Array<{id: string; path: string; byteCount: number; mimeType: string; sourceVersion: ContentFieldVersion}>;
 }
 
 export interface DocumentStateRecord {
@@ -208,14 +221,6 @@ export const maximumStackItemCount = 5;
 export const minimumCameraScale = 0.0125;
 export const maximumCameraScale = 4;
 export const canonicalPageSize: PageSize = { width: 834, height: 1_194 };
-
-/** Same physical point conversion as WorkspaceItemGeometry.document in Swift. */
-export function documentSpatialSize(paper: DocumentPaperSize): PageSize {
-  const postScript = paper === "a4"
-    ? { width: 595.275590551, height: 841.88976378 }
-    : { width: 612, height: 792 };
-  return { width: postScript.width * 132 / 72, height: postScript.height * 132 / 72 };
-}
 
 /** Native read projection; Core derives layout from its canonical placement intents. */
 export interface BoardDocument {

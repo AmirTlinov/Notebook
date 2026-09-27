@@ -52,9 +52,9 @@ private struct ComparableFixture {
 
   func createDocument(initialState: JSONValue) throws -> (CollaborationTarget, CollaborationAction) {
     let target = CollaborationTarget(kind: .document, id: UUID())
-    let block = DocumentBlock.interactive(id: "confirmation", html: "<button>Подтвердить</button>", initialState: initialState)
+    let files = try documentProgramFiles(id: "confirmation", html: "<button>Подтвердить</button>", initialState: initialState)
     let action = try action([.init(kind: .createDocument, target: board, id: target.id.uuidString, values: [
-      "paperSize": .string("a4"), "center": try .encode(WorldPoint.zero), "blocks": try .encode([block])])],
+      "center": try .encode(WorldPoint.zero), "files": try .encode(files)])],
       targets: [board, .init(kind: .workspace, id: boardID)])
     _ = try store.applyCollaborationAction(action, actor: agent)
     return (target, action)
@@ -158,13 +158,13 @@ func collaborationComparableDocumentStateReceiptAndUndo(stateKey: String) throws
   let (target, _) = try f.createDocument(initialState: .object([:]))
   let document = try f.store.loadDocument(target.id)
   var state = try f.store.loadDocumentState(target.id)
-  let committed = state.commit(blockID: "confirmation", value: initial, actor: f.human)
+  let committed = state.commit(instanceID: "confirmation", value: initial, actor: f.human)
   #expect(committed)
   _ = try f.store.commitDocumentState(.init(documentID: target.id,
     record: #require(state.records.first { $0.id == "confirmation" }), journalStamp: state.stamp,
-    expectedProgramIdentity: document.programIdentity(blockID: "confirmation")))
+    programPath: "programs/model", expectedSourceBasis: try DocumentProgramSource(document: document, instanceID: "confirmation", path: "programs/model").sourceBasis))
   state = try f.store.loadDocumentState(target.id)
-  let action = try f.action([.init(kind: .setBlockState, target: target, id: "confirmation", values: ["state": edited])], targets: [target])
+  let action = try f.action([.init(kind: .setDocumentProgramState, target: target, id: "confirmation", values: ["programPath": .string("programs/model"), "sourceBasis": .string(try DocumentProgramSource(document: document, instanceID: "confirmation", path: "programs/model").sourceBasis), "state": edited])], targets: [target])
   let receipt = try f.store.applyCollaborationAction(action, actor: f.agent)
   let change = try #require(receipt.changes.count == 1 ? receipt.changes.first : nil)
   #expect(change.file == stateFile(target.id))
@@ -184,19 +184,19 @@ func collaborationComparableDocumentStateReceiptAndUndo(stateKey: String) throws
   #expect(restored.records[0].fieldVersion?.human == true)
   let afterEcho = try f.store.commitDocumentState(.init(documentID: target.id,
     record: #require(delivered.records.first { $0.id == "confirmation" }), journalStamp: delivered.stamp,
-    expectedProgramIdentity: document.programIdentity(blockID: "confirmation")))
+    programPath: "programs/model", expectedSourceBasis: try DocumentProgramSource(document: document, instanceID: "confirmation", path: "programs/model").sourceBasis))
   guard case .committed(let publication) = afterEcho else { Issue.record("Unchanged program rejected its state echo"); return }
   #expect(publication.record.value == initial)
 }
 
-@Test("Начальное состояние блока тоже является авторским содержанием, а не служебными полями",
+@Test("Начальное состояние программы тоже является авторским содержанием, а не служебными полями",
   arguments: programMetadataNames)
 func collaborationComparableProtectsHumanDocumentInitialState(stateKey: String) throws {
   let f = try ComparableFixture(); defer { f.clean() }
   let initial = programState(stateKey, "draft"), edited = programState(stateKey, "human value")
   let (target, action) = try f.createDocument(initialState: initial)
   var document = try f.store.loadDocument(target.id)
-  let changed = document.replaceContent(blocks: [.interactive(id: "confirmation", html: "<button>Подтвердить</button>", initialState: edited)], actor: f.human)
+  let changed = document.replaceContent(files: try documentProgramFiles(id: "confirmation", html: "<button>Подтвердить</button>", initialState: edited), actor: f.human)
   #expect(changed)
   _ = try f.store.saveMergedDocument(document)
   let undone = try f.store.undoCollaborationAction(action.id, actor: f.human)
@@ -205,7 +205,7 @@ func collaborationComparableProtectsHumanDocumentInitialState(stateKey: String) 
   #expect(retained)
   #expect(try f.store.hasStoredValue(stateFile(target.id)))
   #expect(undone.undo?.restored == 0)
-  if retained { #expect(try f.store.loadDocument(target.id).blocks[0].initialState == edited) }
+  if retained { #expect(try DocumentProgramSource(document: f.store.loadDocument(target.id), instanceID: "confirmation", path: "programs/model").initialState == edited) }
 }
 
 private func metadataReceipt(file: String, value: JSONValue) -> CollaborationReceipt {
@@ -230,7 +230,7 @@ func collaborationComparableQualifiedDomainMetadata() throws {
   let f = try ComparableFixture(); defer { f.clean() }
   let next = VersionStamp(counter: 100, actor: f.human), stamp = try JSONValue.encode(next)
   var metadata = CollaborativeContent()
-  metadata.recordField("preamble", stamp: next, human: true)
+  metadata.recordField("entrypoint", stamp: next, human: true)
   let metadataValue = try JSONValue.encode(metadata)
 
   let page = try f.store.loadPage(f.pageID)
@@ -238,13 +238,13 @@ func collaborationComparableQualifiedDomainMetadata() throws {
     ([.field("agentStamp")], stamp), ([.field("drawingStamp")], stamp), ([.field("collaboration")], metadataValue)])
   #expect(laterPage.isValid)
 
-  let document = DocumentDocument(actor: f.human, blocks: [.interactive(id: "confirmation", html: "<button/>", initialState: programState("contentStamp", "same"))])
+  let document = DocumentDocument(actor: f.human, files: try documentProgramFiles(id: "confirmation", html: "<button/>", initialState: programState("contentStamp", "same")))
   let laterDocument = try expectQualifiedMetadata(document, file: documentFile(document.id), changes: [
     ([.field("contentStamp")], stamp), ([.field("collaboration")], metadataValue)])
   #expect(laterDocument.isValid)
 
   var state = DocumentStateJournal(id: document.id, actor: f.human)
-  _ = state.commit(blockID: "confirmation", value: programState("fieldVersion", "same"), actor: f.human)
+  _ = state.commit(instanceID: "confirmation", value: programState("fieldVersion", "same"), actor: f.human)
   let recordPath: [CollaborationPathComponent] = [.field("records"), .member("confirmation")]
   let laterState = try expectQualifiedMetadata(state, file: stateFile(document.id), changes: [
     ([.field("stamp")], stamp), (recordPath + [.field("stamp")], stamp),

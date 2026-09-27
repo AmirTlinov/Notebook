@@ -86,9 +86,12 @@ test('Bernoulli experiment has reproducible prefixes, exact counts and boundary 
 test('six inline examples prepare through animation into valid self-contained Notebook programs',async()=>{
   assert.equal(scienceExamples.filter((e:any)=>!e.format).length,6);
   for(const example of scienceExamples.filter((e:any)=>!e.format))for(const kind of ['page','document']) {
-    const request=await prepare('animation',{example:example.id,target:{kind,id:randomUUID()},initialState:{phase:.25}},{runID:randomUUID()});
-    executionInput.parse(request);const operation=request.args.operations[0];operationSchema.parse(operation);
-    const program=operation.values;assert.ok(program.javaScript.includes('ScienceModels'));assert.ok(program.html.includes(example.source));assert.ok(Buffer.byteLength(JSON.stringify(request))<200_000);
+    const request=await prepare('animation',{example:example.id,target:{kind,id:randomUUID()},initialState:{phase:.25},
+      ...(kind==='document'?{edit:{fileID:'main',expectedVersion:{stamp:{counter:1,actor:randomUUID()},human:false,observed:{}},range:{location:0,length:0},expectedText:''}}:{})},{runID:randomUUID()});
+    executionInput.parse(request);request.args.operations.forEach((operation:unknown)=>operationSchema.parse(operation));
+    const source=(name:string)=>request.args.operations.find((operation:any)=>operation.values.path?.endsWith('/'+name)).values.source;
+    const program=kind==='page'?request.args.operations[0].values:{javaScript:source('main.js'),html:source('index.html'),initialState:JSON.parse(source('program.json')).initialState};
+    assert.ok(program.javaScript.includes('ScienceModels'));assert.ok(program.html.includes(example.source));assert.ok(Buffer.byteLength(JSON.stringify(request))<200_000);
     new Function(program.javaScript);assert.doesNotMatch(program.javaScript,/\bfetch\s*\(|https?:\/\//);
     const ids=new Set();function visit(n:any){for(const attr of n.attrs??[])if(attr.name==='id'){assert.ok(!ids.has(attr.value),`duplicate ${attr.value}`);ids.add(attr.value);}for(const child of n.childNodes??[])visit(child);}
     visit(parseFragment(program.html));

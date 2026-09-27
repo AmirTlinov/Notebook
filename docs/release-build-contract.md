@@ -69,6 +69,10 @@ independent source copy, installs locked MCP dependencies without install script
 and builds Release iPad, then Mac. Xcode, Swift, SDK, XcodeGen, Node and npm must
 match verification and remain unchanged.
 
+The source snapshot reuses the selected checkout’s prepared Codex/Node runtime.
+The same preparer still checks its pinned version marker and official signatures;
+Mac build phases receive that exact stage, not a fresh network-only copy.
+
 Both apps require genuine Apple Development signatures from team `M94V58FCVP`,
 matching pair versions and exact bundle identities:
 

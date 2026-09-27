@@ -44,15 +44,15 @@ final class NotebookAttentionSelectionTests: XCTestCase {
     let workspace = WorkspaceIndex(items: [.document(id: id, title: "Letter")],
       selectedItemID: id, selectedPageID: nil, stamp: stamp)
     let hierarchy = BoardHierarchy.initial(rootBoardID: workspace.rootBoardID, itemIDs: [id], actor: actor)
-    let document = DocumentDocument(id: id, actor: actor, paperSize: .letter,
-      blocks: [.markdown(id: "unrelated-program", source: String(repeating: "Not part of a cover. ", count: 40_000))])
+    let document = DocumentTestFiles.document(id: id, actor: actor,
+      contents: [.tex(id: "unrelated-program", source: String(repeating: "Not part of a cover. ", count: 40_000))])
     let fragment = NotebookAttentionSelection.Fragment(target: .init(kind: .cover, id: id, boardID: workspace.rootBoardID),
       elementID: nil, region: .init(x: 0, y: 0, width: 300, height: 400), worldOrigin: nil, pageIndex: nil, label: "Обложка")
     let selection = NotebookAttentionSelection(fragments: [fragment], workspace: workspace, hierarchy: hierarchy,
       ink: .init(stamp: stamp), pages: [:], documents: [id: document], states: [:])
     let files = try await Task.detached { try selection.sourceFiles() }.value
     XCTAssertEqual(files.count, 4)
-    XCTAssertEqual(files["documents/\(id.uuidString.lowercased()).json"], .object(["paperSize": .string("letter")]))
+    XCTAssertEqual(files["documents/\(id.uuidString.lowercased()).json"], try .encode(document))
     let full = CollaborationContent(workspace: workspace, hierarchy: hierarchy,
       ink: .init(stamp: stamp), pages: [], documents: [document], states: [])
     let references = try await Task.detached { try selection.resolvedReferences() }.value

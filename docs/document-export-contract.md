@@ -5,7 +5,10 @@
 `DocumentCanonicalExport` reads the same `DocumentCanonicalPrint.store` artifact
 used by paper. `NotebookTypesetter` owns PDF/SyncTeX layout. Printed text, paths,
 formulas and links retain their canonical coordinates; only live program rectangles
-need isolated authored frames. Export does not use the retired
+need isolated authored frames. One retained print source owns preflight,
+SyncTeX/layout and the serial PDFKit/Quartz parser through final composition.
+The compiler's per-page MediaBox and rotation project text, program clips and
+links together; page/viewport geometry never becomes an execution identity. Export does not use the retired
 `NotebookSandboxedTeXCompiler` / native Tectonic-helper pipeline.
 
 `nb.export(key, options)` starts a durable job. Its `NotebookExportCut` captures
@@ -24,7 +27,7 @@ provides source, assets and maps. Options participate in package identity.
 |---|---|
 | `pdf` | Canonical vector paper, with authored program-frame composition |
 | `png` | One canonical page at the requested pixel width |
-| `svg` | Passive authored vector frame from a named interactive block |
+| `svg` | Passive authored vector frame from a named interactive instance |
 | `html` | One inline program and saved state as an offline standalone file |
 | `package` | Portable document/source/state with complete package dependencies |
 | `mp4` | Canonical page frames at explicit authored model times |
@@ -34,7 +37,7 @@ await nb.export("page-image", {
   documentID, format: "png", pageIndex: 0, pixelWidth: 1600
 });
 await nb.export("vector-frame", {
-  documentID, format: "svg", blockID: "signal"
+  documentID, format: "svg", instanceID: "signal"
 });
 ```
 
@@ -59,14 +62,21 @@ There is no raster fallback disguised as SVG.
 Standalone HTML is at most 8 MiB and is not executed during export. Explicitly
 opening it runs NotebookProgram/1 in an opaque offline sandbox iframe without
 file-origin or Notebook-writer access. Local changes do not return to Notebook.
-Modules/package assets require portable export and return
+Additional package assets require portable export and return
 `export_portable_required` rather than a broken file-URL bundle.
 
-Portable output is `document.package` (`NotebookPortable/1`) plus adjacent
-`blob-<sha256>` files. **Copy the entire containing directory.**
-It does not run programs or typesetting. Source/state/manifest metadata is limited
-to 8 MiB; unique V2 parts remain at most 4 MiB. Import is described in
-[program fragments](document-program-fragments.md#portable-document-import).
+Portable output is one ZIP-container `document.notex` (`NotebookDocument/1`):
+manifest, real relative-path files, resources and saved instance state. Import
+checks paths, expanded sizes, hashes, CRC and namespace collisions, then creates
+one new closed copy in the ordinary transaction. It does not execute programs.
+The container is bounded to 64 MiB, authored files to 16 MiB, and metadata/state
+separately to 8 MiB. Programs with dependencies use this format rather than a
+broken standalone HTML bundle.
+
+Portable export can include a matching derived PDF, file-aware SyncTeX and
+shipout region map. Source/compiler-recipe mismatches discard only derivatives.
+A valid prepared packet opens offline without compulsory compilation. Broken TeX
+still exports its editable files and state, without claiming a usable preview.
 
 MP4 uses one isolated coordinator and authored timeline, not screen recording or
 a second animation engine. An off-main AVFoundation receiver consumes sequential
@@ -78,11 +88,11 @@ presentation crop with original pixels and extent: no new WebKit frame, checkpoi
 rescale or cache read. This is different from rendering a saved-state page.
 
 For `moment: "presented"`, supply `attention:{contextID,referenceID}`.
-PNG takes the original crop, without page/block selectors or resolution changes.
+PNG takes the original crop, without page/instance selectors or resolution changes.
 Other formats require the same source and a frozen program checkpoint bound to
 those pixels; mismatches return `export_presentation_model_unavailable` or
 `export_presentation_mismatch`. Whole-document/page formats (PDF/package/MP4)
-reject other interactive blocks without that checkpoint. A selected block's frozen
+check the completed compiler region map and reject other interactive instances without that checkpoint. A selected instance's frozen
 state cannot label unrelated running models as presented.
 
 MP4 requires an even width of 128–4,096, 1–60 FPS and an integral 1–3,600 frames.

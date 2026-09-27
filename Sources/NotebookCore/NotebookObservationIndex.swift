@@ -62,13 +62,9 @@ extension NotebookStore {
       }
       let tail = "substr(address,\(prefix.count + 1))"
       var parts = [changed(prefix, expression: q(prefix) + "||" + head(tail))]
-      let fieldsPrefix = layout.root + "/" + layout.fields + "/@" + (scope.target.kind == .document ? "blocks" : "elements") + "~1"
+      let fieldsPrefix = layout.root + "/" + layout.fields + "/@" + (scope.target.kind == .document ? "files" : "elements") + "~1"
       let fieldTail = unescape("substr(address,\(fieldsPrefix.count + 1))")
       parts.append(changed(fieldsPrefix, expression: q(prefix) + "||" + head(fieldTail)) + " AND instr(\(fieldTail),'/')>0")
-      if scope.target.kind == .document, scope.fields.contains(.state) {
-        let statePrefix = stateFile(scope.target.id) + "#/records/@"
-        parts.append(changed(statePrefix, expression: q(prefix) + "||" + head("substr(address,\(statePrefix.count + 1))")))
-      }
       if scope.target.kind != .document {
         // The immutable erasure-target index selects only touched elements.
         // A changed activation header (undo) invalidates the same projection.

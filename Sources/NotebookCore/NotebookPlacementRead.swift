@@ -268,8 +268,7 @@ extension NotebookStore {
   private func placementItemGeometry(_ id: UUID) throws -> WorkspaceItemGeometry {
     guard let item = try readItemHeader(id) else { throw NotebookStorageError.corruptRecord("placement item") }
     if item.kind == .document {
-      guard let paper = try readDocumentPaperSize(id) else { throw NotebookStorageError.corruptRecord(documentFile(id)) }
-      return .document(paper)
+      return .uncompiledDocument
     }
     return .notebook
   }
@@ -349,7 +348,7 @@ extension NotebookStore {
   }
 
   private static let placementItemPadding: (left: Double, top: Double, right: Double, bottom: Double) = {
-    let sizes = [WorkspaceItemGeometry.notebook] + DocumentPaperSize.allCases.map(WorkspaceItemGeometry.document)
+    let sizes = [WorkspaceItemGeometry.notebook, .uncompiledDocument]
     var left = 0.0, top = 0.0, right = 0.0, bottom = 0.0
     for size in sizes {
       left = max(left, size.width); top = max(top, size.height)

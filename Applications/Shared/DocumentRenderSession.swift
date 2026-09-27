@@ -21,13 +21,13 @@ final class DocumentRenderSession {
 
   init(documentID: UUID) { self.documentID = documentID }
 
-  func source(_ document: DocumentDocument) -> DocumentSourceSnapshot {
+  func source(_ document: DocumentDocument, store: NotebookStore? = nil) -> DocumentSourceSnapshot {
     precondition(document.id == documentID)
-    if let snapshot = sources[document.contentStamp]?.lazy.compactMap(\.value).first(where: { $0.matches(document) }) { return snapshot }
+    if let snapshot = sources[document.contentStamp]?.lazy.compactMap(\.value).first(where: { $0.matches(document) && $0.canRead(using: store) }) { return snapshot }
     sources = sources.compactMapValues { values in
       let live = values.filter { $0.value != nil }; return live.isEmpty ? nil : live
     }
-    let snapshot = DocumentSourceSnapshot(document)
+    let snapshot = DocumentSourceSnapshot(document, store: store)
     sources[document.contentStamp, default: []].append(WeakSource(snapshot))
     return snapshot
   }
@@ -50,32 +50,44 @@ final class DocumentRenderSession {
   }
 }
 
+/// Media-box dimensions are produced by TeX. A4 is a placeholder only until
+/// the first compilation, never a constraint on source or the accepted PDF.
 struct DocumentPaperLayout: Codable, Equatable, Sendable {
-  let kind: DocumentPaperSize
+  static let pointsToSurface = PhysicalPaper.pointsPerCentimeter * 2.54 / 72
   let widthPoints: Double
   let heightPoints: Double
-  let marginPoints: Double
   let cornerRadiusRatio: Double
   let surfaceWidth: Double
   let surfaceHeight: Double
-
-  init(_ size: DocumentPaperSize) {
-    kind = size
-    widthPoints = size.widthPoints; heightPoints = size.heightPoints
-    marginPoints = size.marginPoints
-    let geometry = WorkspaceItemGeometry.document(size)
+  init(widthPoints: Double, heightPoints: Double) {
+    self.widthPoints = widthPoints; self.heightPoints = heightPoints
+    let geometry = WorkspaceItemGeometry.document(widthPoints: widthPoints, heightPoints: heightPoints)
     cornerRadiusRatio = geometry.cornerRadius / geometry.width
     surfaceWidth = geometry.width; surfaceHeight = geometry.height
   }
+  static let uncompiled = DocumentPaperLayout(widthPoints: 595.275590551, heightPoints: 841.88976378)
+  var geometry: WorkspaceItemGeometry { .document(widthPoints: widthPoints, heightPoints: heightPoints) }
 }
 
 struct DocumentSourceMessage: Encodable, Sendable {
   let key: String
   let documentID: UUID
   let paper: DocumentPaperLayout
-  let blocks: [DocumentBlock]
-  let sourceVersions: [String: ContentFieldVersion]
-  let programIdentities: [String: DocumentProgramIdentity]
+  let files: [DocumentFile]
+  let programs: [DocumentProgramSource]
+  let programHeights: [String: Double]
+  private enum CodingKeys: String, CodingKey { case key, documentID, paper, files, programs, programHeights }
+  func encode(to encoder: Encoder) throws {
+    var c = encoder.container(keyedBy: CodingKeys.self)
+    try c.encode(key, forKey: .key); try c.encode(documentID, forKey: .documentID)
+    try c.encode(paper, forKey: .paper)
+    // The browser needs addresses, never another editable copy of source bytes.
+    try c.encode(files.map { ["id": $0.id, "path": $0.path] }, forKey: .files)
+    try c.encode(programHeights, forKey: .programHeights)
+    try c.encode(programs.map { program in JSONValue.object([
+      "id": .string(program.id), "path": .string(program.path), "programPackage": .string(program.programPackage),
+      "initialState": program.initialState, "sourceBasis": .string(program.sourceBasis)]) }, forKey: .programs)
+  }
 }
 
 struct DocumentStateMessage: Encodable, Sendable {
@@ -86,36 +98,36 @@ struct DocumentStateMessage: Encodable, Sendable {
 }
 
 /// Pages share one immutable source. Its body crosses the browser boundary
-/// only in the addressed block batches requested by the canonical flow.
+/// only as addressed page metadata; the native editor reads the actual files.
 @MainActor
 final class DocumentSourceSnapshot {
-  let message: DocumentSourceMessage
-  private let document: DocumentDocument
+  private let key = UUID().uuidString
+  let document: DocumentDocument
+  private let store: NotebookStore?
+  var message: DocumentSourceMessage { .init(key: key, documentID: document.id, paper: paper(on: 0), files: document.files, programs: programs, programHeights: layout?.programHeights(ids: programIDs) ?? [:]) }
   let stamp: VersionStamp
-  let programIDs: Set<String>
-  private let blockIDs: Set<String>
+  var programs: [DocumentProgramSource] { preparation?.programs ?? [] }
+  var programIDs: Set<String> { preparation?.programIDs ?? [] }
+  var programFailures: [String: String] { preparation?.programFailures ?? [:] }
+  private var blockIDs: Set<String> { Set(document.files.map(\.id)).union(programIDs) }
   private(set) var layout: DocumentLayoutRecord?
   private var preparation: DocumentPagePreparation?
   private var layoutObservers: [UUID: (DocumentLayoutRecord) -> Void] = [:]
   private(set) var preparationCount = 0
   private var receiptLayoutMismatch: String?
 
-  init(_ document: DocumentDocument) {
-    self.document = document
-    stamp = document.contentStamp
-    programIDs = Set(document.blocks.filter { $0.kind == .interactive }.map(\.id))
-    blockIDs = Set(document.blocks.map(\.id))
-    message = .init(key: UUID().uuidString, documentID: document.id,
-      paper: .init(document.paperSize), blocks: document.blocks,
-      sourceVersions: Dictionary(uniqueKeysWithValues: document.blocks.map { ($0.id, document.sourceVersion(blockID: $0.id)) }),
-      programIdentities: Dictionary(uniqueKeysWithValues: document.blocks.map { ($0.id, document.programIdentity(blockID: $0.id)) }))
+  init(_ document: DocumentDocument, store: NotebookStore? = nil) {
+    self.document = document; self.store = store; stamp = document.contentStamp
   }
+  func paper(on page: Int) -> DocumentPaperLayout { layout?.paper(on: page) ?? .uncompiled }
+  func program(_ id: String) -> DocumentProgramSource? { programs.first { $0.id == id } }
 
   func matches(_ document: DocumentDocument) -> Bool { self.document == document }
+  func canRead(using store: NotebookStore?) -> Bool { store == nil || self.store?.root == store?.root }
 
   func programIDs(on page: Int) -> Set<String>? {
     guard let layout, (0..<layout.pageCount).contains(page) else { return nil }
-    return layout.blockIDs(on: [page]).intersection(programIDs)
+    return layout.blockIDs(on: [page], kind: .program).intersection(programIDs)
   }
 
   func preparedPage(_ index: Int, hostID: UUID,
@@ -136,7 +148,7 @@ final class DocumentSourceSnapshot {
   private func ensurePreparation(resources: SceneRenderResources) {
     if preparation == nil {
       preparationCount += 1
-      preparation = DocumentPagePreparation(document: document, message: message, resources: resources)
+      preparation = DocumentPagePreparation(document: document, sourceKey: key, store: store, resources: resources)
       preparation?.onLayoutAccepted = { [weak self] record in
         guard let self else { return }
         if let layout, layout !== record { guard layout.matches(record) else { throw DocumentSessionError.inconsistentLayout } }
@@ -149,8 +161,8 @@ final class DocumentSourceSnapshot {
     ensurePreparation(resources: resources)
     return try await preparation!.printedSource()
   }
-  func sourceOffset(blockID: String, pageIndex: Int, x: Double, y: Double) -> Int? {
-    preparation?.sourceOffset(blockID: blockID, pageIndex: pageIndex, x: x, y: y)
+  func sourceOffset(fileID: String, pageIndex: Int, x: Double, y: Double) -> Int? {
+    preparation?.sourceOffset(fileID: fileID, pageIndex: pageIndex, x: x, y: y)
   }
 
   private func acceptPreparedLayout() throws {
@@ -266,8 +278,12 @@ final class DocumentLayoutRecord {
   private(set) var pageCount: Int
   private(set) var isComplete: Bool
   private(set) var regions: [DocumentBlockRegion]
-  let width: Double
-  let height: Double
+  let buildID: String?
+  let pages: [DocumentPaperLayout]
+  let readingFileOrder: [String]
+  var width: Double { pages[0].surfaceWidth }
+  var height: Double { pages[0].surfaceHeight }
+  func paper(on page: Int) -> DocumentPaperLayout { pages[min(max(0, page), pages.count - 1)] }
   private(set) var anchorPages: [String: Int]
   private(set) var reading: DocumentReadingIndex
   private var pageRanges: [Int: Range<Int>]
@@ -285,6 +301,25 @@ final class DocumentLayoutRecord {
       let width = receipt["width"] as? Double, width.isFinite, width > 0,
       let height = receipt["height"] as? Double, height.isFinite, height > 0,
       let values = receipt["regions"] as? [[String: Any]] else { throw DocumentSessionError.invalidLayout }
+    let papers: [DocumentPaperLayout]
+    if scope == "source" {
+      guard let values = receipt["pages"] as? [[String: Double]], values.count == count
+      else { throw DocumentSessionError.invalidLayout }
+      papers = try values.map { value in
+        guard let w = value["widthPoints"], let h = value["heightPoints"], w.isFinite, h.isFinite,
+          w > 0, h > 0, w <= 14_400, h <= 14_400 else { throw DocumentSessionError.invalidLayout }
+        return .init(widthPoints: w, heightPoints: h)
+      }
+    } else {
+      // Carry the exact PDF points separately from their screen projection.
+      // Multiplying and dividing the projection is not an identity for Double.
+      guard let w = receipt["widthPoints"] as? Double, let h = receipt["heightPoints"] as? Double,
+        w.isFinite, h.isFinite, w > 0, h > 0, w <= 14_400, h <= 14_400
+      else { throw DocumentSessionError.invalidLayout }
+      let paper = DocumentPaperLayout(widthPoints: w, heightPoints: h)
+      guard width == paper.surfaceWidth, height == paper.surfaceHeight else { throw DocumentSessionError.inconsistentLayout }
+      papers = Array(repeating: paper, count: count)
+    }
     var regions: [DocumentBlockRegion] = []
     var pageRanges: [Int: Range<Int>] = [:]
     regions.reserveCapacity(values.count)
@@ -298,12 +333,11 @@ final class DocumentLayoutRecord {
         let origin = value["sourceOffset"] as? NSNumber, CFGetTypeID(origin) != CFBooleanGetTypeID(),
         let sourceOffset = value["sourceOffset"] as? Double, sourceOffset.isFinite, sourceOffset >= 0,
         (sourceOffset + h).isFinite,
-        x + w <= width + 0.03125, y + h <= height + 0.03125 else { throw DocumentSessionError.invalidLayout }
-      let physicalOffset = sourceOffset * (geometry.height / height)
+        x + w <= papers[page].surfaceWidth + 0.03125, y + h <= papers[page].surfaceHeight + 0.03125 else { throw DocumentSessionError.invalidLayout }
+      let physicalOffset = sourceOffset
       guard physicalOffset.isFinite, regions.last.map({ $0.pageIndex <= page }) ?? true else { throw DocumentSessionError.invalidLayout }
       pageRanges[page] = (pageRanges[page]?.lowerBound ?? regions.count)..<(regions.count + 1)
-      regions.append(.init(id: id, pageIndex: page, frame: .init(x: x * geometry.width / width,
-        y: y * geometry.height / height, width: w * geometry.width / width, height: h * geometry.height / height),
+      regions.append(.init(kind: (value["kind"] as? String).flatMap(DocumentRegionKind.init(rawValue:)) ?? .file, id: id, pageIndex: page, frame: .init(x: x, y: y, width: w, height: h),
         sourceOffset: physicalOffset))
     }
     // Page receipts describe pixels, never a replacement for the complete
@@ -328,11 +362,16 @@ final class DocumentLayoutRecord {
       guard let rows = receipt["reading"] as? [[Any]] else { throw DocumentSessionError.invalidLayout }
       readingRows = rows
     } else { readingRows = [] }
-    self.reading = try .init(rows: readingRows, blockIDs: blockIDs, pageCount: count, scale: geometry.height / height)
+    self.reading = try .init(rows: readingRows, fileIDs: blockIDs, pageCount: count, scale: 1)
     self.anchorPages = anchors
     self.pageCount = count; self.regions = regions; self.pageRanges = pageRanges
     isComplete = true
-    self.width = geometry.width; self.height = geometry.height
+    self.buildID = receipt["buildID"] as? String
+    self.pages = papers
+    var seen: Set<String> = []
+    self.readingFileOrder = regions.filter { $0.kind == .file }.sorted {
+      ($0.pageIndex, $0.frame.y, $0.frame.x) < ($1.pageIndex, $1.frame.y, $1.frame.x)
+    }.compactMap { seen.insert($0.id).inserted ? $0.id : nil }
     self.reservation = reservation
   }
 
@@ -341,12 +380,12 @@ final class DocumentLayoutRecord {
     let tolerance = 1.0 / 32
     guard (pageIndex != nil || (anchorPages == other.anchorPages && reading.matches(other.reading, tolerance: tolerance))),
       (pageIndex != nil || (pageCount == other.pageCount && isComplete == other.isComplete)),
-      width == other.width, height == other.height,
+      (pageIndex.map { paper(on: $0) == other.paper(on: $0) } ?? (pages == other.pages)),
       expectedRegions.count == other.regions.count else { return false }
     // Transform round trips may differ by two WebKit layout subpixels. This
     // tolerance never changes the accepted record or grows with page count.
     return zip(expectedRegions, other.regions).allSatisfy { left, right in
-      left.id == right.id && left.pageIndex == right.pageIndex
+      left.kind == right.kind && left.id == right.id && left.pageIndex == right.pageIndex
         && abs(left.frame.x - right.frame.x) <= tolerance && abs(left.frame.y - right.frame.y) <= tolerance
         && abs(left.frame.width - right.frame.width) <= tolerance && abs(left.frame.height - right.frame.height) <= tolerance
         && abs(left.sourceOffset - right.sourceOffset) <= tolerance
@@ -357,11 +396,19 @@ final class DocumentLayoutRecord {
     regions[pageRanges[page] ?? 0..<0]
   }
 
-  func blockIDs(on pages: Set<Int>) -> Set<String> {
+  func blockIDs(on pages: Set<Int>, kind: DocumentRegionKind? = nil) -> Set<String> {
     var result: Set<String> = []
     for page in pages {
       guard let range = pageRanges[page] else { continue }
-      for region in regions[range] { result.insert(region.id) }
+      for region in regions[range] where kind == nil || region.kind == kind { result.insert(region.id) }
+    }
+    return result
+  }
+
+  func programHeights(ids: Set<String>) -> [String: Double] {
+    var result: [String: Double] = [:]
+    for region in regions where region.kind == .program && ids.contains(region.id) {
+      result[region.id] = max(result[region.id] ?? 0, region.sourceOffset + region.frame.height)
     }
     return result
   }

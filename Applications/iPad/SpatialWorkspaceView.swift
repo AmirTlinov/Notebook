@@ -152,15 +152,15 @@ private final class NativeSpatialBoardGrid: UIView, SceneNativeCameraOwner {
 struct SpatialWorkspaceView: View {
   var backRequest: UInt64 = 0
   @Binding private var chromeHidden: Bool
-  @Binding private var documentMode: DocumentViewMode
-  init(backRequest: UInt64 = 0, chromeHidden: Binding<Bool> = .constant(false), documentMode: Binding<DocumentViewMode> = .constant(.paper)) {
-    self.backRequest=backRequest; self._chromeHidden=chromeHidden; self._documentMode=documentMode
+  init(backRequest: UInt64 = 0, chromeHidden: Binding<Bool> = .constant(false)) {
+    self.backRequest=backRequest; self._chromeHidden=chromeHidden
   }
   @Environment(\.scenePhase) private var scenePhase
   @Environment(\.displayScale) private var displayScale
   @Environment(NotebookAppModel.self) private var model
 
   @State private var contextMenus = NotebookContextMenus()
+  @Environment(\.importNotebookDocument) private var importNotebookDocument
   @State private var navigation = WorkspaceNavigationState.idle
   private var cameraGesture: CameraGestureSnapshot? { if case .interacting(let value)=navigation { value } else { nil } }
   private var settling: Bool { if case .settling=navigation { true } else { false } }
@@ -218,8 +218,10 @@ struct SpatialWorkspaceView: View {
   @State private var openingFeedback = UIImpactFeedbackGenerator(style: .soft)
 
   var body: some View {
-    if model.shutdownPhase != .stopped {
-      mountedScene.allowsHitTesting(model.shutdownPhase != .draining)
+    Group {
+      if model.shutdownPhase != .stopped {
+        mountedScene.allowsHitTesting(model.shutdownPhase != .draining)
+      }
     }
   }
 
@@ -311,7 +313,7 @@ struct SpatialWorkspaceView: View {
             // surface registrations, never by the newer pending scene index.
             admitsNewContact: { [weak cohort] in cohort != nil },
             onCommit: model.appendSpatialInk,
-            isEnabled: (presence.mode == .board || presence.mode == .cover)
+            isEnabled: (presence.mode == .board || presence.mode == .cover || (presence.mode == .document && model.drawingTool == .laser))
               && !contentGestureActive,
             onQuickShape: { model.acceptQuickShape($0, boardID: $1, origin: $2, stroke: $3) }
 
@@ -749,15 +751,14 @@ struct SpatialWorkspaceView: View {
     let center=presence.camera.screenToWorld(.init(x:point.x,y:point.y),viewport:presence.viewport)
     let canBack = !model.returnPlaces.isEmpty || presence.mode != .board || presence.boardID != model.workspace?.rootBoardID
     contextMenus.presentContent(NotebookCanvasContextContent(dismiss:{ contextMenus.dismissPresentedContent() },destination:contextDestination(at:point,presence:presence),
-      documentMode:$documentMode,allowsBeside:presence.viewport.x > presence.viewport.y,
       create:presence.mode == .board ? { kind,paper in
         guard model.presence?.boardID == presence.boardID,model.presence?.mode == presence.mode else { return }
-        createItem(kind:kind,paperSize:paper,presence:presence,viewport:presence.viewport,at:center)
+        createItem(kind:kind,template:paper,presence:presence,viewport:presence.viewport,at:center)
       } : nil,
       back:canBack ? {
         guard model.presence?.boardID == presence.boardID,model.presence?.focusedItemID == presence.focusedItemID else { return }
         returnToParent()
-      } : nil).environment(model),at:point)
+      } : nil, importDocument: importNotebookDocument).environment(model),at:point)
   }
 
   private func selectionContextActions(_ selection:UUID,at point:CGPoint) -> [UIMenuElement] {
@@ -1194,10 +1195,6 @@ struct SpatialWorkspaceView: View {
   private func handleWorkspaceMagnification(
     _ phase: WorkspaceMagnificationPhase
   ) {
-    // A notebook is a physical fitted sheet, not another zoomable board. The
-    // same recognizer still owns two-finger Undo/Redo; only its camera route is
-    // unavailable here. Documents and closed covers retain their own zoom.
-    guard model.presence?.mode != .page else { return }
     if case .began = phase { referencePageResolution.cancel() }
     handleBoardMagnification(phase)
   }
@@ -1217,7 +1214,7 @@ struct SpatialWorkspaceView: View {
   }
 
   private func exitPassage(presence:SessionPresence) -> NotebookZoomPassage? {
-    if let id=presence.focusedItemID,presence.mode == .document,
+    if let id=presence.focusedItemID,presence.mode == .page || presence.mode == .document,
       let kind=itemKind(id),let center=focusedCenter(itemID:id,boardID:presence.boardID) {
       let geometry=model.itemGeometry(id)
       return .init(itemID:id,parentID:presence.boardID,kind:kind,center:center,geometry:geometry,opening:false,
@@ -1235,9 +1232,13 @@ struct SpatialWorkspaceView: View {
   }
 
   private func openSurfaceCamera(_ camera:SpatialCamera,for presence:SessionPresence) -> SpatialCamera {
-    guard presence.mode == .document,let item=presence.focusedItemID,
+    guard presence.mode == .page || presence.mode == .document,let item=presence.focusedItemID,
       let center=focusedCenter(itemID:item,boardID:presence.boardID) else { return camera }
-    return model.itemGeometry(item).readingCamera(camera,centeredOn:center,viewport:presence.viewport)
+    let geometry=model.itemGeometry(item)
+    // A notebook stays fitted while reading; only the raw gesture trajectory
+    // can cross into the shared closing passage below the fitted scale.
+    if presence.mode == .page { return .init(center:center,scale:geometry.fitScale(viewport:presence.viewport)) }
+    return geometry.readingCamera(camera,centeredOn:center,viewport:presence.viewport)
   }
 
   private func updateMagnification(scale: CGFloat, centroid: CGPoint) {
@@ -1654,7 +1655,7 @@ struct SpatialWorkspaceView: View {
 
   private func createItem(
     kind: WorkspaceItemKind,
-    paperSize: DocumentPaperSize = .a4,
+    template: DocumentTemplate = .article,
     presence: SessionPresence,
     viewport: SpatialPoint,
     at requestedCenter: WorldPoint? = nil
@@ -1668,7 +1669,7 @@ struct SpatialWorkspaceView: View {
     case .notebook:
       itemID = model.createNotebook(at: center)
     case .document:
-      itemID = model.createDocument(at: center, paperSize: paperSize)
+      itemID = model.createDocument(at: center, template: template)
     case .board:
       itemID = model.createBoard(at: center)
     }
@@ -1983,19 +1984,14 @@ private struct WorkspaceSceneItem: View {
         onLinkActivation: { activation in
           model.activateDocumentLink(activation)
         },
-        onStateChange: { blockID, value in
-          try await model.commitDocumentState(
-            documentID: document.id,
-            blockID: blockID,
-            value: value,
-            programIdentity: document.programIdentity(blockID: blockID)
-          )
+        onStateChange: { program, value in
+          try await model.commitDocumentState(documentID: document.id, program: program, value: value)
         },
         isCurrent: isCurrent,
         isVisible: isVisible,
-        onStateCheckpoint: { blockID, value, sourceVersion, stateVersion in
+        onStateCheckpoint: { blockID, value, program, stateVersion in
           try await model.checkpointDocumentState(documentID: document.id, blockID: blockID,
-            value: value, programIdentity: sourceVersion, stateVersion: stateVersion)
+            value: value, program: program, stateVersion: stateVersion)
         }, measurements: model.documentMeasurements
       )
     )

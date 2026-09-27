@@ -4,77 +4,49 @@ import XCTest
 
 @MainActor
 final class DocumentProgramIdentityTests: XCTestCase {
-  private func update(_ coordinator: DocumentWebCoordinator, document: DocumentDocument, state: DocumentStateJournal,
-    pageIndex: Int = 0) {
-    coordinator.update(document: document, state: state, selectedPageIndex: pageIndex, capturesSnapshot: false,
-      onRenderReady: .init { _ in }, onPageLayout: { _ in },  onStateChange: { _, _ in nil })
-  }
-
-  func testPackageReplacementInvalidatesProgramAndRasterIdentityWithoutChangingPlacement() throws {
-    let actor = UUID(), first = String(repeating: "a", count: 64), second = String(repeating: "b", count: 64)
-    let a = AgentElement(id: "p", kind: .web, frame: .init(x: 0, y: 0, width: 100, height: 100), source: "", html: "", programPackage: first)
-    let b = AgentElement(id: "p", kind: .web, frame: a.frame, source: "", html: "", programPackage: second)
-    XCTAssertNotEqual(AgentProgramSource(a), AgentProgramSource(b))
-    XCTAssertNotEqual(SceneRasterSource.agent(a), .agent(b))
-    XCTAssertEqual(SceneRasterSource.agent(a), .agent(a.updating(frame: .init(x: 80, y: 70, width: 100, height: 100))))
-    var document = DocumentDocument(actor: actor, blocks: [.interactive(id: "p", html: "", programPackage: first)])
-    let state = DocumentStateJournal(id: document.id, actor: actor)
-    let coordinator = DocumentWebCoordinator(onRenderReady: .init { _ in }, onPageLayout: { _ in },
-      onStateChange: { _, _ in nil })
-    defer { coordinator.invalidate() }
-    update(coordinator, document: document, state: state)
-    let before = try XCTUnwrap(coordinator.payload?.blockTokens["p"])
-    XCTAssertTrue(document.replaceContent(blocks: [.interactive(id: "p", html: "", programPackage: second)], actor: actor))
-    update(coordinator, document: document, state: state)
-    XCTAssertNotEqual(coordinator.payload?.blockTokens["p"], before)
-  }
-
-  func testStateAndPageChangesKeepEveryProgramAtTheMaximumDocumentSize() throws {
-    let document = DocumentDocument(actor: UUID(), blocks: (0..<DocumentDocument.maximumBlockCount).map {
-      .interactive(id: "block-\($0)", html: "<button>Program \($0)</button>", height: 100)
-    })
-    var state = DocumentStateJournal(id: document.id, actor: UUID())
-    let coordinator = DocumentWebCoordinator(onRenderReady: .init { _ in }, onPageLayout: { _ in },
-       onStateChange: { _, _ in nil })
-    defer { coordinator.invalidate() }
-    update(coordinator, document: document, state: state)
-    let first = try XCTUnwrap(coordinator.payload)
-    XCTAssertEqual(first.blockTokens.count, DocumentDocument.maximumBlockCount)
-    for page in 1...4 {
-      XCTAssertTrue(state.commit(blockID: "block-0", value: .number(Double(page)), actor: UUID()))
-      update(coordinator, document: document, state: state, pageIndex: page)
-      let current = try XCTUnwrap(coordinator.payload)
-      XCTAssertEqual(current.blockTokens, first.blockTokens)
-      XCTAssertEqual(current.runtimeID, first.runtimeID)
-      XCTAssertEqual(current.states["block-0"], .number(Double(page)))
-      XCTAssertEqual(current.pageIndex, page)
-    }
-    XCTAssertNil(coordinator.webView, "Preparing source identities cannot allocate a hidden fifth WebKit")
-  }
-
-  func testReorderAndRemovalPreserveOnlyTheProgramsWhoseSourceStillExists() throws {
+  func testExecutableFileReplacementChangesIdentityButPaperDoesNot() throws {
     let actor = UUID()
-    var document = DocumentDocument(actor: actor, blocks: (0..<12).map { .markdown(id: "block-\($0)", source: "Source \($0)") })
-    let state = DocumentStateJournal(id: document.id, actor: actor)
-    let coordinator = DocumentWebCoordinator(onRenderReady: .init { _ in }, onPageLayout: { _ in },
-       onStateChange: { _, _ in nil })
+    var document = DocumentTestFiles.document(actor: actor, contents: [.tex(id: "body", source: "Before"),
+      .program(id: "p", html: "<button>First</button>", height: 100)])
+    let original = try DocumentProgramSource(document: document, instanceID: "p", path: "programs/p")
+    XCTAssertTrue(document.replaceFileSource(id: "body", source: "After", actor: actor))
+    XCTAssertEqual(try DocumentProgramSource(document: document, instanceID: "p", path: "programs/p"), original)
+    let main = try XCTUnwrap(document.files.first { $0.path == "main.tex" })
+    XCTAssertTrue(document.replaceFileSource(id: main.id, source: main.source.replacingOccurrences(of: "width=\\linewidth", with: "width=.8\\linewidth"), actor: actor))
+    XCTAssertEqual(try DocumentProgramSource(document: document, instanceID: "p", path: "programs/p"), original,
+      "Viewport geometry is not executable identity")
+    XCTAssertTrue(document.replaceFileSource(id: "p-html", source: "<button>Second</button>", actor: actor))
+    let replacement = try DocumentProgramSource(document: document, instanceID: "p", path: "programs/p")
+    XCTAssertNotEqual(replacement.sourceBasis, original.sourceBasis)
+    XCTAssertNotEqual(replacement.programPackage, original.programPackage)
+  }
+
+  func testMaximumFileSnapshotDoesNotCreateAnExecutorBeforeCompilation() throws {
+    let files = [DocumentFile(id: "main", path: "main.tex", source: "\\documentclass{article}\\begin{document}Text\\end{document}")]
+      + (1..<DocumentDocument.maximumFileCount).map { DocumentFile(id: "file-\($0)", path: "sections/file-\($0).tex", source: "Source \($0)") }
+    let document = DocumentDocument(actor: UUID(), files: files), resources = SceneRenderResources()
+    let coordinator = DocumentWebCoordinator(resources: resources, onRenderReady: .init { _ in },
+      onPageLayout: { _ in }, onStateChange: { _, _ in nil })
     defer { coordinator.invalidate() }
-    update(coordinator, document: document, state: state)
-    let first = try XCTUnwrap(coordinator.payload?.blockTokens)
-    XCTAssertTrue(document.replaceContent(blocks: Array(document.blocks.reversed()), actor: actor))
-    update(coordinator, document: document, state: state)
-    XCTAssertEqual(coordinator.payload?.blockTokens, first, "Order is not a program restart")
-    XCTAssertTrue(document.replaceBlockSource(id: "block-3", source: "Changed", actor: actor))
-    update(coordinator, document: document, state: state)
-    let edited = try XCTUnwrap(coordinator.payload?.blockTokens)
-    XCTAssertNotEqual(edited["block-3"], first["block-3"])
-    for (id, token) in first where id != "block-3" { XCTAssertEqual(edited[id], token) }
-    XCTAssertTrue(document.replaceContent(blocks: document.blocks.filter { $0.id != "block-5" } + [.markdown(id: "new", source: "New")], actor: actor))
-    update(coordinator, document: document, state: state)
-    let final = try XCTUnwrap(coordinator.payload?.blockTokens)
-    XCTAssertEqual(final.count, 12)
-    XCTAssertNil(final["block-5"])
-    XCTAssertNotNil(final["new"])
-    for (id, token) in edited where id != "block-5" { XCTAssertEqual(final[id], token) }
+    coordinator.update(document: document, state: .init(id: document.id, actor: UUID()), selectedPageIndex: 0, capturesSnapshot: false,
+      onRenderReady: .init { _ in }, onPageLayout: { _ in }, onStateChange: { _, _ in nil })
+    XCTAssertEqual(coordinator.payload?.source.document.files.count, DocumentDocument.maximumFileCount)
+    XCTAssertTrue(coordinator.payload?.programs.isEmpty == true)
+    XCTAssertNil(coordinator.webView)
+    XCTAssertEqual(resources.activeWebSurfaceCount, 0)
+  }
+
+  func testCausalRoundTripCannotReviveAnOldProgramIdentity() throws {
+    let actor = UUID()
+    var document = DocumentTestFiles.document(actor: actor, contents: [
+      .program(id: "first", html: "Original"), .program(id: "other", html: "Independent")])
+    let original = try DocumentProgramSource(document: document, instanceID: "first", path: "programs/first")
+    let other = try DocumentProgramSource(document: document, instanceID: "other", path: "programs/other")
+    XCTAssertTrue(document.replaceFileSource(id: "first-html", source: "Changed", actor: actor))
+    XCTAssertTrue(document.replaceFileSource(id: "first-html", source: "Original", actor: actor))
+    let current = try DocumentProgramSource(document: document, instanceID: "first", path: "programs/first")
+    XCTAssertEqual(current.programPackage, original.programPackage)
+    XCTAssertNotEqual(current.sourceBasis, original.sourceBasis)
+    XCTAssertEqual(try DocumentProgramSource(document: document, instanceID: "other", path: "programs/other"), other)
   }
 }

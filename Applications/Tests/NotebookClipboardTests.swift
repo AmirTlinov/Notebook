@@ -20,7 +20,7 @@ import NotebookCore
     return fragment
   }
   func testPlainTextIsLiteralAndOrdinaryHTMLUsesTextWithoutExecution() async throws {
-    let text = "# Не заголовок\n<script>alert(1)</script> **literal**"
+    let text = "\\section{Не заголовок}\n<script>alert(1)</script> **literal**"
     let fragment = try await read([(.html, Data("<script>fetch('https://example.com')</script>".utf8)), (.plainText, Data(text.utf8))])
     let element = try XCTUnwrap(fragment.elements.first)
     XCTAssertEqual(element.kind, .markdown)

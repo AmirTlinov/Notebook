@@ -13,8 +13,7 @@ struct NotebookItemIdentityRetirementTests {
       var values: [String: JSONValue] = ["center": try .encode(WorldPoint.zero)]
       if kind == .createNotebook { values["pageID"] = try .encode(UUID()) }
       if kind == .createDocument {
-        values["paperSize"] = .string("a4")
-        values["blocks"] = try .encode([DocumentBlock.markdown(id: "body", source: "Original")])
+          values["files"] = try .encode([DocumentFile(id: "body", path: "body" + ".tex", source: "Original")])
       }
       let basis = try f.store.readBasis(targets: [board, .init(kind: .workspace, id: header.rootBoardID)])
       return .init(summary: "A single item birth", expected: basis.owners,

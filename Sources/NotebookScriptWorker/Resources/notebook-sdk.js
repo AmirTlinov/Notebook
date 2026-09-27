@@ -29,7 +29,7 @@
   const nb = Object.freeze({
     help: topic => host("help", topic === undefined ? {} : {topic}),
     observe: read("observe"), read: read("read"), readMany: read("readMany"),
-    board: read("board"), notebook: read("notebook"), page: read("page"), document: read("document"),
+    board: read("board"), notebook: read("notebook"), page: read("page"), document: read("document"), documentStructure: read("documentStructure"), documentCheck: read("documentCheck"),
     context: read("context"), attention: read("attention"), code: read("code"),
     search: read("search"), reference: read("reference"), referenceStatus: read("referenceStatus"),
     action: read("action"), render: read("render"), pageMap: read("pageMap"),

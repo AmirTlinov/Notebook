@@ -191,7 +191,7 @@ async function startFixture(root:string):Promise<void> {
       } catch(error){clearTimeout(timer);reject(error);}
     });
     child.once("error",error=>{clearTimeout(timer);reject(error);});
-    child.once("exit",code=>{clearTimeout(timer);reject(new Error(`Fixture host exited ${code}: ${diagnostics}`));
+    child.once("exit",(code,signal)=>{clearTimeout(timer);reject(new Error(`Fixture host exited ${code??signal}: ${diagnostics}`));
       for(const request of host.requests.values()){clearTimeout(request.timer);request.reject(new Error("Fixture host exited: "+diagnostics));}host.requests.clear();});
   });
   await ready;
@@ -207,8 +207,11 @@ export function fixtureControl<T=any>(root:string,operation:string,value?:unknow
 }
 export async function stopFixture(root:string):Promise<void> {
   const host=hosts.get(root);if(!host)return;hosts.delete(root);
-  const exited=new Promise<void>(resolve=>host.process.once("exit",()=>resolve()));
-  host.process.stdin.end();
-  const timer=setTimeout(()=>host.process.kill(),2000);
-  await exited;clearTimeout(timer);await rm(host.directory,{recursive:true,force:true});
+  if(host.process.exitCode===null && host.process.signalCode===null) {
+    const exited=new Promise<void>(resolve=>host.process.once("exit",()=>resolve()));
+    host.process.stdin.end();
+    const timer=setTimeout(()=>host.process.kill(),2000);
+    await exited;clearTimeout(timer);
+  }
+  await rm(host.directory,{recursive:true,force:true});
 }

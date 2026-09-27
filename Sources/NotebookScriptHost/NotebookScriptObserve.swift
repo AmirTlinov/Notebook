@@ -22,10 +22,10 @@ extension NotebookScriptCoordinator {
         else if presence?.mode == .document, let id = presence?.selectedItemID { target = .init(kind: .document, id: id) }
         else if let boardID = presence?.boardID { target = .init(kind: .board, id: boardID) }
         else { target = nil }
-        let elementID = args.string("elementID"), blockID = args.string("blockID")
-        guard (elementID == nil || target?.kind == .page), (blockID == nil || target?.kind == .document),
-          args["ids"] == nil || (elementID == nil && blockID == nil) else {
-          throw CollaborationError("invalid_reference", "elementID требует лист, blockID — документ; не смешивайте их с ids.")
+        let elementID = args.string("elementID"), fileID = args.string("fileID")
+        guard (elementID == nil || target?.kind == .page), (fileID == nil || target?.kind == .document),
+          args["ids"] == nil || (elementID == nil && fileID == nil) else {
+          throw CollaborationError("invalid_reference", "elementID требует лист, fileID — файл документа; не смешивайте их с ids.")
         }
         let requestedLimit = args.number("limit") ?? 32
         guard (1...32).contains(requestedLimit), requestedLimit.rounded() == requestedLimit else {
@@ -35,8 +35,8 @@ extension NotebookScriptCoordinator {
         var coverage = NotebookReadCoverage(complete: true)
         if let target {
           let implicitID = selectedElement?.elementID
-          let ids = try args["ids"]?.decode([String].self) ?? (elementID ?? blockID ?? implicitID).map { [$0] } ?? selectedElement?.elementIDs
-          let defaults: [NotebookObservationScope.Field] = blockID != nil ? [.content, .state] : elementID != nil || implicitID != nil || selectedElement?.elementIDs != nil ? [.content, .geometry] : [.preview]
+          let ids = try args["ids"]?.decode([String].self) ?? (elementID ?? fileID ?? implicitID).map { [$0] } ?? selectedElement?.elementIDs
+          let defaults: [NotebookObservationScope.Field] = fileID != nil ? [.content, .version] : elementID != nil || implicitID != nil || selectedElement?.elementIDs != nil ? [.content, .geometry] : [.preview]
           let scope = NotebookObservationScope(target: target, ids: ids,
             fields: try args["fields"]?.decode([NotebookObservationScope.Field].self) ?? defaults,
             expand: try args["expand"]?.decode([NotebookObservationScope.Relation].self) ?? [],

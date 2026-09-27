@@ -1,13 +1,13 @@
 import Foundation
 import CryptoKit
 
-/// The wire names domain owners, never a store. Only the typed local program
-/// import capability accepts source files; browser/QuickJS commands cannot.
+/// The wire names domain owners, never a store. Only typed trusted local import
+/// capabilities accept device files; browser/QuickJS commands cannot.
 public struct NotebookCommand: Codable, Sendable {
   public enum Kind: String, Codable, Sendable {
     case apply, admitAction, prepareAction, commitAction, undo, action, actions, continuations, search, contexts, point, delivery
     case referenceStatus, referenceStatuses, actionDetails, reference, placement, render, pageVision, read, artifact, presentation
-    case script, scriptContext, scriptArtifact, importProgram
+    case script, scriptContext, scriptArtifact, importProgram, importDocument, importDocumentResource
   }
   public var command: Kind
   public var query: String?
@@ -39,11 +39,13 @@ public struct NotebookCommand: Codable, Sendable {
   public var scriptEffect: NotebookScriptEffectAddress?
   public var readSnapshots: Bool?
   public var programImport: NotebookProgramImportRequest?
+  public var documentImport: NotebookDocumentImportRequest?
+  public var documentResourceImport: NotebookDocumentResourceImportRequest?
 
   enum CodingKeys: String, CodingKey, CaseIterable {
     case command, query, filters, next, limit, action, actionID, target, elementID, reference
     case expectedRevision, region, worldOrigin, pageIndex, placement, contextID
-    case replyTo, references, queries, expectedCursor, artifact, presentation, cancel, fingerprint, script, scriptContext, actionPage, scriptEffect, readSnapshots, programImport
+    case replyTo, references, queries, expectedCursor, artifact, presentation, cancel, fingerprint, script, scriptContext, actionPage, scriptEffect, readSnapshots, programImport, documentImport, documentResourceImport
   }
 
   public init(command: Kind) { self.command = command }
@@ -74,7 +76,7 @@ public struct NotebookReadBounds: Codable, Sendable {
 public struct NotebookReadQuery: Codable, Sendable {
   public enum Kind: String, Codable, Sendable {
     case observation, workspaceHeader, itemHeaders, itemHeader, itemLifecycle, workingSet, sceneWindow, scenePaintOrder
-    case page, pageHeader, pageElement, pageInkActions, pageInkAction, documentHeader, document, documentState, documentBlock, boardItem, boardElement, boardContentRevision, ownerBoard, notebookPages, notebookDirectory, notebookPosition, spatialInk, presence
+    case page, pageHeader, pageElement, pageInkActions, pageInkAction, documentHeader, document, documentState, documentFile, documentFileBytes, documentDirectory, documentStructure, documentProgram, boardItem, boardElement, boardContentRevision, ownerBoard, notebookPages, notebookDirectory, notebookPosition, spatialInk, presence
     case attentionEvidence, contexts, contextEntries, actions, currentViewReceipt, pageVisionReceipt, targetRenderReceipt
     case renderRequests, delivery, actionSnapshots, runtime, selection, codeFragment, codeFragments
   }
@@ -102,6 +104,12 @@ public struct NotebookReadQuery: Codable, Sendable {
   public var visibleRoot: String?
   public var contextID: UUID?
   public var elementID: String?
+  public var fileID: String?
+  public var instanceID: String?
+  public var programPath: String?
+  public var sourceVersion: ContentFieldVersion?
+  public var offset: Int64?
+  public var maxBytes: Int?
   public init(kind: Kind, id: UUID? = nil, revision: String? = nil, limit: Int? = nil) {
     self.kind = kind; self.id = id; self.revision = revision; self.limit = limit
   }
@@ -139,7 +147,7 @@ public struct NotebookCommandDispatcher: Sendable {
 
   private func execute(_ request: NotebookCommand) throws -> JSONValue {
     switch request.command {
-    case .script, .scriptContext, .importProgram:
+    case .script, .scriptContext, .importProgram, .importDocument, .importDocumentResource:
       throw invalid("script_owner_unavailable", "Программы обслуживает координатор установленного Mac-помощника.")
     case .scriptArtifact:
       guard let artifact = request.artifact else { throw invalid("invalid_artifact", "Нужен точный адрес изображения.") }
@@ -267,12 +275,12 @@ public struct NotebookCommandDispatcher: Sendable {
       }
       let pages = Set(queries.flatMap { query in (query.kind == .page ? query.id.map { [$0] } ?? [] : []) + (query.pageIDs ?? []) })
       let heavy = Set(queries.flatMap { query in
-        ([.document, .documentState, .documentBlock, .boardItem].contains(query.kind) ? query.id.map { [$0] } ?? [] : [])
+        ([.document, .documentState, .documentFile, .documentFileBytes, .documentProgram, .boardItem].contains(query.kind) ? query.id.map { [$0] } ?? [] : [])
           + (query.itemIDs ?? []) + (query.boardIDs ?? [])
       })
       let windowPages = queries.filter { $0.kind == .notebookPages }.reduce(0) { $0 + ($1.pages?.count ?? 0) }
-      guard queries.filter({ [.documentBlock, .pageElement, .pageInkAction].contains($0.kind) }).count <= 4 else {
-        throw invalid("resource_limit", "Один срез читает до четырёх адресных элементов, блоков или штрихов по 4 МиБ каждый.")
+      guard queries.filter({ [.documentFile, .pageElement, .pageInkAction].contains($0.kind) }).count <= 4 else {
+        throw invalid("resource_limit", "Один срез читает до четырёх адресных элементов, файлов или штрихов по 4 МиБ каждый.")
       }
       guard pages.count + windowPages <= 4, heavy.count <= 8, queries.filter({ $0.kind == .attentionEvidence }).count <= 4 else { throw invalid("resource_limit", "Один срез удерживает до четырёх листов и восьми тяжёлых владельцев.") }
       return try store.readTransaction { snapshot in
@@ -358,9 +366,21 @@ public struct NotebookCommandDispatcher: Sendable {
       return try store.readPageInkAction(pageID: required(query.id), actionID: actionID)?.measuredReadProjection() ?? .null
     case .document: return try .encode(store.loadDocument(required(query.id)))
     case .documentState: return try .encode(store.loadDocumentState(required(query.id)))
-    case .documentBlock:
-      guard let blockID = query.elementID else { throw invalid("invalid_reference", "Нужен ID блока документа.") }
-      return try .encode(store.readDocumentBlock(documentID: required(query.id), blockID: blockID))
+    case .documentFile:
+      guard let fileID = query.fileID else { throw invalid("invalid_reference", "Нужен ID файла документа.") }
+      return try .encode(store.readDocumentFile(documentID: required(query.id), fileID: fileID))
+    case .documentFileBytes:
+      guard let fileID = query.fileID, let version = query.sourceVersion, let offset = query.offset, let maxBytes = query.maxBytes else {
+        throw invalid("invalid_reference", "Нужны ID файла, его версия и явный диапазон байтов.")
+      }
+      return try .encode(store.readDocumentFileBytes(documentID: required(query.id), fileID: fileID, sourceVersion: version, offset: offset, maxBytes: maxBytes))
+    case .documentProgram:
+      guard let instanceID = query.instanceID, let path = query.programPath else { throw invalid("invalid_reference", "Нужны ID экземпляра и путь программы.") }
+      return try .encode(store.readDocumentProgram(documentID: required(query.id), instanceID: instanceID, programPath: path))
+    case .documentDirectory:
+      return try .encode(store.readDocumentDirectory(documentID: required(query.id)))
+    case .documentStructure:
+      return try .encode(store.readDocumentStructure(documentID: required(query.id)))
     case .boardItem:
       guard let node = try store.readBoardItem(required(query.id)) else { return .null }
       return try boardReadProjection(node)

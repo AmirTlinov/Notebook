@@ -18,7 +18,7 @@ struct DocumentStateReplicationTests {
     let added = tree.addItem(document.id, to: header.rootBoardID, near: .zero, actor: actor)
     #expect(added)
     try a.saveDocumentWorkspaceBundle(index: index,
-      document: .init(id: document.id, actor: actor, blocks: [.interactive(id: "body", html: "<button>+</button>")]),
+      document: .init(id: document.id, actor: actor, files: notebookProgramFiles()),
       state: .init(id: document.id, actor: actor), board: tree)
     try deliver(a.changeJournal(after: 1)[0], a, b, actor)
     try body(a, b, actor, document.id)
@@ -73,20 +73,20 @@ struct DocumentStateReplicationTests {
       let kept = try b.storedFragments(address: rootAddress + "/records/@retired-75000")
       try b.commandTransaction {
         let hash = try b.currentSQL!.putBlob(Data("unrequested program and state must not be decoded".utf8))
-        for address in [rootAddress + "/records/@retired-50000", documentFile(id) + "#/blocks/@body"] {
+        for address in [rootAddress + "/records/@retired-50000", documentFile(id) + "#/files/@program-html"] {
           try b.currentSQL!.run("UPDATE records SET hash=? WHERE address=?", [.text(hash), .text(address)])
         }
       }
       let block = "counter/a~😀", cursor = try b.currentChangeCursor()
       var state = try a.loadDocumentState(id)
-      let changed = state.commit(blockID: block, value: .number(1), actor: actor)
+      let changed = state.commit(instanceID: block, value: .number(1), actor: actor)
       #expect(changed)
       try a.saveDocumentState(state)
       let first = try #require(a.changeJournal(after: 2).first)
       try stage(first, a, b)
       let appendWork = try bounded(b) { _ = try b.applyRemoteChange(first, peerID: actor) }
       #expect(try addressed(b, id, block)?.value == .number(1))
-      let edited = state.commit(blockID: block, value: .number(3), actor: actor)
+      let edited = state.commit(instanceID: block, value: .number(3), actor: actor)
       #expect(edited)
       try a.saveDocumentState(state)
       let second = try #require(a.changeJournal(after: first.sequence).first)
@@ -110,7 +110,7 @@ struct DocumentStateReplicationTests {
       let ids = ["a0", "a!", "a", "a/child", "a~child", "Z", "А"] + (0..<129).map { "program-\($0)" }
       for block in ids {
         let value: JSONValue = .object(["blocks": .array([.object(["id": .string("nested"), "source": .string(block)])])])
-        let changed = state.commit(blockID: block, value: value, actor: actor)
+        let changed = state.commit(instanceID: block, value: value, actor: actor)
         #expect(changed)
       }
       try a.saveDocumentState(state)
@@ -119,7 +119,7 @@ struct DocumentStateReplicationTests {
       #expect(try a.loadDocumentState(id) == b.loadDocumentState(id))
       #expect(try b.loadDocumentState(id).records.map(\.id) == ids.sorted())
       let kept = try b.storedFragments(address: stateFile(id) + "#/records/@a!")
-      let replaced = state.commit(blockID: "a", value: .object(["counter": .number(9)]), actor: actor)
+      let replaced = state.commit(instanceID: "a", value: .object(["counter": .number(9)]), actor: actor)
       #expect(replaced)
       try a.saveDocumentState(state)
       try deliver(a.changeJournal(after: first.sequence)[0], a, b, actor)
@@ -132,13 +132,13 @@ struct DocumentStateReplicationTests {
   @Test func causalHumanContinuationWinsAndAnOldEnvelopeCannotRewindIt() throws {
     try fixture { a, b, actor, id in
       var source = try a.loadDocumentState(id)
-      let changed = source.commit(blockID: "body", value: .number(1), actor: actor)
+      let changed = source.commit(instanceID: "body", value: .number(1), actor: actor)
       #expect(changed)
       try a.saveDocumentState(source)
       let first = try #require(a.changeJournal(after: 2).first)
       try deliver(first, a, b, actor)
       var human = try b.loadDocumentState(id)
-      let continued = human.commit(blockID: "body", value: .number(7), actor: UUID())
+      let continued = human.commit(instanceID: "body", value: .number(7), actor: UUID())
       #expect(continued)
       try b.saveDocumentState(human)
       let kept = try b.storedFragments(address: stateFile(id) + "#"), before = try b.currentChangeCursor()
@@ -160,7 +160,7 @@ struct DocumentStateReplicationTests {
     try fixture { a, b, actor, id in
       _ = try b.deleteTestItem(itemID: id, actor: UUID())
       var source = try a.loadDocumentState(id)
-      let changed = source.commit(blockID: "body", value: .number(1), actor: actor)
+      let changed = source.commit(instanceID: "body", value: .number(1), actor: actor)
       #expect(changed)
       try a.saveDocumentState(source)
       try deliver(a.changeJournal(after: 2)[0], a, b, actor)
@@ -202,7 +202,7 @@ struct DocumentStateReplicationTests {
     try fixture { a, b, actor, id in
       var source = try a.loadDocumentState(id)
       for block in ["a", "zz"] {
-        let changed = source.commit(blockID: block, value: .number(1), actor: actor)
+        let changed = source.commit(instanceID: block, value: .number(1), actor: actor)
         #expect(changed)
       }
       try a.saveDocumentState(source)
@@ -247,7 +247,7 @@ struct DocumentStateReplicationTests {
   func publicationReceiptAndPeerCursorRecoverTogether(fault: NotebookStorageFault) throws {
     try fixture { a, b, actor, id in
       var source = try a.loadDocumentState(id)
-      let changed = source.commit(blockID: "body", value: .number(1), actor: actor)
+      let changed = source.commit(instanceID: "body", value: .number(1), actor: actor)
       #expect(changed)
       try a.saveDocumentState(source)
       let packet = try #require(a.changeJournal(after: 2).first)

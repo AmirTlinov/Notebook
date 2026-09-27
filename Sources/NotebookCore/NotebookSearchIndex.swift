@@ -28,7 +28,7 @@ extension NotebookStore {
     } else if fragment.file.hasPrefix("pages/"), fragment.collection == "elements" {
       kind = "page"; owner = String(fragment.file.dropFirst(6).dropLast(5)); targetKind = nil; targetID = nil; elementID = value["id"]?.string
       let source = value["source"]?.string ?? ""; text = source.isEmpty ? value["html"]?.string ?? "" : source
-    } else if fragment.file.hasPrefix("documents/"), fragment.collection == "blocks" {
+    } else if fragment.file.hasPrefix("documents/"), fragment.collection == "files" {
       kind = "document"; owner = String(fragment.file.dropFirst(10).dropLast(5)); targetKind = nil; targetID = nil; elementID = value["id"]?.string; text = value["source"]?.string ?? ""
     } else if fragment.file == "board.json", fragment.collection == "board/elements", let parent = fragment.parent,
       let surface = try value["surface"]?.decode(SurfaceID.self), let id = surface.ownerID {

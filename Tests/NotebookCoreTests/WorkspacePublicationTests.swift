@@ -154,7 +154,7 @@ func staleNativeDocumentAndBoardCreation(kind: WorkspaceItemKind) throws {
       try store.saveDocumentWorkspaceBundle(index: local, document: document,
         state: .init(id: id, actor: publicationActorA), board: localTree)
       let persisted = try store.loadDocument(id)
-      #expect(persisted.blocks == document.blocks && persisted.contentStamp == document.contentStamp)
+      #expect(persisted.files == document.files && persisted.contentStamp == document.contentStamp)
       #expect(persisted.collaboration?.fields.isEmpty == false)
       #expect(persisted.collaboration?.fields.values.allSatisfy(\.human) == true)
       #expect(try store.loadDocumentState(id).id == id)
@@ -255,7 +255,7 @@ func lateHeavyOwnerSaveDoesNotResurrectDeletion(kind: WorkspaceItemKind) throws 
     let id = UUID()
     var capturedPage: PageDocument?
     let capturedDocument = DocumentDocument(id: id, actor: publicationActorA,
-      blocks: [.interactive(id: "accepted", html: "<button>Accepted</button>")])
+      files: try documentProgramFiles(id: "accepted", html: "<button>Accepted</button>"))
     var capturedState = DocumentStateJournal(id: id, actor: publicationActorA)
     if kind == .notebook {
       let creation = index.createNotebook(title: "Delete after input", actor: publicationActorA,
@@ -270,11 +270,11 @@ func lateHeavyOwnerSaveDoesNotResurrectDeletion(kind: WorkspaceItemKind) throws 
       _ = board.addItem(id, to: base.rootBoardID, near: .zero, actor: publicationActorA)
       try store.saveDocumentWorkspaceBundle(index: index, document: capturedDocument, state: capturedState, board: board)
     }
-    let accepted = capturedState.commit(blockID: "accepted", value: .number(1), actor: publicationActorA)
+    let accepted = capturedState.commit(instanceID: "accepted", value: .number(1), actor: publicationActorA)
     #expect(accepted)
     let stateCommand = NotebookDocumentStateCommand(documentID: id,
       record: try #require(capturedState.records.first), journalStamp: capturedState.stamp,
-      expectedProgramIdentity: capturedDocument.programIdentity(blockID: "accepted"))
+      programPath: "programs/model", expectedSourceBasis: try DocumentProgramSource(document: capturedDocument, instanceID: "accepted", path: "programs/model").sourceBasis)
     let beforeDeletion = index
     _ = index.deleteItem(id, actor: publicationActorA)
     _ = board.deleteItem(id, from: base.rootBoardID, kind: kind,
@@ -286,7 +286,7 @@ func lateHeavyOwnerSaveDoesNotResurrectDeletion(kind: WorkspaceItemKind) throws 
       #expect(!FileManager.default.fileExists(atPath: store.pageURL(capturedPage.id).path))
     } else {
       #expect(throws: CocoaError.self) { _ = try store.saveMergedDocument(capturedDocument) }
-      #expect(try store.commitDocumentState(stateCommand) == .targetChanged(documentID: id, currentProgramIdentity: nil))
+      #expect(try store.commitDocumentState(stateCommand) == .targetChanged(documentID: id, currentSourceBasis: nil))
       #expect(!FileManager.default.fileExists(atPath: store.documentURL(id).path))
       #expect(!FileManager.default.fileExists(atPath: store.documentStateURL(id).path))
     }

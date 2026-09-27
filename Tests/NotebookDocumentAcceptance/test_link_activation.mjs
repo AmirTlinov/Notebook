@@ -112,7 +112,7 @@ test('single-finger double tap has one owner; a later mouse double-click still e
 // a native receiver rejecting a message with no document identity.
 test('source request carries the installed identity and full paper coordinates, not the inset content origin',()=>{
   const messages = [], receipt = {documentID:'doc',runtimeID:'runtime',sourceKey:'source',generation:'7',pageIndex:2};
-  const context = vm.createContext({payload:{editable:true,blocks:[{id:'body',kind:'tex'}]},
+  const context = vm.createContext({payload:{editable:true,files:[{id:'body',path:'main.tex'}]},
     viewport:{getBoundingClientRect:()=>({left:10,top:20,width:100,height:200}),clientWidth:200,clientHeight:400},
     root:{getBoundingClientRect:()=>({left:10,top:50,width:100,height:140}),clientWidth:200,clientHeight:280},
     presentationReceipt:()=>receipt,bridge:message=>messages.push(message)});
@@ -120,4 +120,24 @@ test('source request carries the installed identity and full paper coordinates, 
     "beginEditing('body',{clientX:35,clientY:50});",context);
   for(const [key,value] of Object.entries(receipt))assert.equal(messages[0][key],value);
   assert.equal(messages[0].kind,'requestSource');assert.equal(messages[0].x,50);assert.equal(messages[0].y,60);
+});
+
+// TeX media boxes and their native projection are exact packet fields; the
+// browser must not round-trip them through an independently chosen scale.
+test('custom paper receipt preserves PDF points separately from surface extent',()=>{
+  for(const [widthPoints,heightPoints] of [[720,400],[400,300],[595.28,841.89]]) {
+    const scale=132/72;
+    const paper={widthPoints,heightPoints,surfaceWidth:widthPoints*scale,surfaceHeight:heightPoints*scale,cornerRadiusRatio:0};
+    const context=vm.createContext({payload:{paper},pageLayout:null,layoutCanonical:true,work:{},
+      viewport:{style:{}},stage:{style:{}},track:{style:{}},
+      document:{documentElement:{style:{setProperty(){}}}},
+      runtimeDiagnostics:[],interactiveFrames:new Map(),measuredRegions:[],presentationReceipt:()=>({})});
+    const configure=shell.slice(shell.indexOf('const currentPageIndex ='),shell.indexOf('const setPageIndex ='));
+    const receipt=shell.slice(shell.indexOf('const pageReceipt ='),shell.indexOf('// Requests belong to the existing iframe'));
+    vm.runInContext(configure+receipt+'configurePaper(payload);globalThis.actual=pageReceipt();',context);
+    assert.equal(context.actual.widthPoints,widthPoints);
+    assert.equal(context.actual.heightPoints,heightPoints);
+    assert.equal(context.actual.width,paper.surfaceWidth);
+    assert.equal(context.actual.height,paper.surfaceHeight);
+  }
 });

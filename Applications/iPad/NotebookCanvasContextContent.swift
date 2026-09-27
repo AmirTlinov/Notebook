@@ -6,26 +6,23 @@ struct NotebookCanvasContextContent: View {
   @Environment(NotebookAppModel.self) private var model
   let dismiss: () -> Void
   let destination: NotebookPasteDestination?
-  @Binding var documentMode: DocumentViewMode
-  let allowsBeside: Bool
-  let create: ((WorkspaceItemKind,DocumentPaperSize) -> Void)?
+  let create: ((WorkspaceItemKind,DocumentTemplate) -> Void)?
   let back: (() -> Void)?
+  var importDocument: (() -> Void)? = nil
 
   var body: some View {
     VStack(alignment:.leading,spacing:4) {
       if let destination { NotebookActionsContent(destination:destination,onClose:dismiss) }
       if let create {
-        row("Тетрадь",symbol:"book.closed") { create(.notebook,.a4) }.accessibilityIdentifier("context-create-notebook")
-        row("Доска",symbol:"folder") { create(.board,.a4) }.accessibilityIdentifier("create-nested-board")
+        row("Тетрадь",symbol:"book.closed") { create(.notebook,.article) }.accessibilityIdentifier("context-create-notebook")
+        row("Доска",symbol:"folder") { create(.board,.article) }.accessibilityIdentifier("create-nested-board")
         Menu {
-          Button("A4") { dismiss(); create(.document,.a4) }.accessibilityIdentifier("create-document-a4")
-          Button("Letter") { dismiss(); create(.document,.letter) }.accessibilityIdentifier("create-document-letter")
+          ForEach(DocumentTemplate.allCases, id: \.self) { template in
+            Button(template.title) { dismiss(); create(.document,template) }.accessibilityIdentifier("create-document-" + template.rawValue)
+          }
         } label: { Label("Документ",systemImage:"doc.text").frame(maxWidth:.infinity,minHeight:44,alignment:.leading) }
       }
-      if model.activeDocument != nil {
-        Text("Вид документа").font(.caption).foregroundStyle(.secondary)
-        DocumentViewModePicker(mode:$documentMode,allowsBeside:allowsBeside)
-      }
+      if let importDocument { row("Импорт документа…", symbol: "square.and.arrow.down", action: importDocument) }
       if let back { row("Назад",symbol:"arrow.uturn.backward",action:back).accessibilityIdentifier("leave-nested-board") }
       if let open=model.openWorkspaceLibrary {
         row("Пространства",symbol:"square.grid.2x2") { open(.spaces) }.accessibilityIdentifier("workspaces-open")

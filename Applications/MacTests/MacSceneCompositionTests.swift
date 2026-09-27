@@ -31,7 +31,7 @@ import XCTest
         in: boardID, expected: nil, actor: actor))
     }
     try command.store.saveDocumentWorkspaceBundle(index: workspace,
-      document: .init(id: document.id, actor: actor, paperSize: .a4),
+      document: .init(id: document.id, actor: actor),
       state: .init(id: document.id, actor: actor), board: hierarchy)
     var ink = try command.store.loadOrCreateSpatialInk(actor: actor)
     for line in 0..<8 {
@@ -42,7 +42,7 @@ import XCTest
       _ = ink.append(tool: .pen, spans: [.init(surface: .cover(document.id), samples: samples)], actor: actor)
     }
     try command.store.saveSpatialInk(ink)
-    let viewport = SpatialPoint(x: 1100, y: 728), geometry = WorkspaceItemGeometry.document(.a4)
+    let viewport = SpatialPoint(x: 1100, y: 728), geometry = WorkspaceItemGeometry.document(widthPoints: 595.275590551, heightPoints: 841.88976378)
     let initial = SessionPresence(boardID: boardID, mode: .board,
       camera: .init(center: .init(x: 1571.4631430057862, y: 350.341394864676), scale: 1), viewport: viewport)
     try command.store.savePresence(initial)

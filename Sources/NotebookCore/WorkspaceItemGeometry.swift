@@ -2,28 +2,28 @@ import Foundation
 
 /// One physical rectangle for a workspace item. A document derives it from
 /// its immutable paper size; the scene, cover, page, camera and input use it.
-public struct WorkspaceItemGeometry: Equatable, Hashable, Sendable {
+public struct WorkspaceItemGeometry: Codable, Equatable, Hashable, Sendable {
   public let width: Double
   public let height: Double
   public let cornerRadius: Double
-  public let paperSize: DocumentPaperSize?
 
   /// Logical display geometry of the 11-inch iPad Pro, including its 18-point corner.
   public static let notebook = Self(
     width: 834, height: 1_194,
-    cornerRadius: 18,
-    paperSize: nil
+    cornerRadius: 18
   )
 
-  public static func document(_ paper: DocumentPaperSize) -> Self {
+  public static func document(widthPoints: Double, heightPoints: Double) -> Self {
     let pointsPerPostScriptPoint = PhysicalPaper.pointsPerCentimeter * 2.54 / 72
     return Self(
-      width: paper.widthPoints * pointsPerPostScriptPoint,
-      height: paper.heightPoints * pointsPerPostScriptPoint,
-      cornerRadius: PhysicalPaper.pointsPerCentimeter * 0.12,
-      paperSize: paper
+      width: widthPoints * pointsPerPostScriptPoint,
+      height: heightPoints * pointsPerPostScriptPoint,
+      cornerRadius: PhysicalPaper.pointsPerCentimeter * 0.12
     )
   }
+
+  /// Neutral cover until the first accepted PDF supplies real page geometry.
+  public static let uncompiledDocument = document(widthPoints: 595.275590551, heightPoints: 841.88976378)
 
   public var size: SpatialPoint { SpatialPoint(x: width, y: height) }
 

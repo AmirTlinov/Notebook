@@ -135,17 +135,19 @@ references remain available. New HTML becomes shown only after its image is read
 
 ## One-shot laser context
 
-`NotebookLaserContext` retains the last five completed local indications for a
-specific Mac and draft/task, each expiring after 30 monotonic seconds before
-submission. Drawing alone writes nothing. Send reserves its exact batch through
-preparation and consumes it only after durable admission; a failed write keeps the
+`NotebookLaserContext` retains the last five completed local indications for the
+Mac and draft/task selected at contact start. Typing does not expire pending crops;
+visible laser traces fade independently. Drawing alone writes nothing. Send reserves
+its exact batch through preparation and consumes it only after durable admission; a failed write keeps the
 prepared image addresses for Retry. Starting dictation does not consume it. A
-different chat/computer never inherits it, and the crop-count clear action discards
-unsent captures.
+different chat/computer never inherits it: changing context or clearing the crop
+count discards unsent captures.
 
-A message carries at most five frozen displayed images / 4 MiB total. Missing
-evidence is not replaced with newly captured pixels. Persistence uses SharedContext
-and AgentPinnedSource with `select: false`. Chat jobs carry evidence addresses;
+A message carries at most five frozen displayed images / 4 MiB total, with the
+actual drawn contour in red in that crop's original coordinates. Printed pages
+use their mounted source, page and generation, not a cover or an ink surface.
+Missing evidence is not replaced with newly captured pixels. Persistence uses
+SharedContext and AgentPinnedSource with `select: false`. Chat jobs carry evidence addresses;
 PNGs use normal blob delivery. Mac waits for those exact images before the native
 Codex turn. Frame/job limits remain unchanged.
 

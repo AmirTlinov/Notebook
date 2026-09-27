@@ -402,7 +402,7 @@ final class SceneRasterCompositionTests: XCTestCase {
       XCTAssertTrue(hierarchy.upsertElement(source, in: workspace.rootBoardID, expected: nil, actor: actor))
     }
     let resources = SceneRenderResources(byteLimit: 6 * 1024 * 1024, maximumBackgroundWebSurfaces: 1)
-    let index = WorkspaceSceneIndex(workspace: workspace, hierarchy: hierarchy, paperSizes: model.documents.mapValues(\.paperSize))
+    let index = WorkspaceSceneIndex(workspace: workspace, hierarchy: hierarchy, paperSizes: Dictionary(uniqueKeysWithValues: model.documents.keys.map { ($0, model.itemGeometry($0)) }))
     let painter = SceneCompositionRenderer(source: SceneCompositionSource(index: index, hierarchy: hierarchy,
       journal: try XCTUnwrap(model.spatialInk)), resources: resources)
     let result = try await painter.render(presence: .init(boardID: workspace.rootBoardID,

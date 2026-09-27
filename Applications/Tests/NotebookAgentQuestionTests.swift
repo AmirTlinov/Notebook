@@ -138,6 +138,53 @@ final class NotebookAgentQuestionTests: XCTestCase {
   }
 
   @MainActor
+  func testNativeSourceSelectionBelongsToTheNextMessageAndIsFrozenBeforePreparation() async throws {
+    try await fixture { model in
+      let chat = try XCTUnwrap(model.chat)
+      chat.select(.init(id: UUID().uuidString, title: "Исходник", cwd: "/tmp"))
+      chat.expanded = false
+      let id = try XCTUnwrap(model.createDocument(at: .zero))
+      await model.finishPendingPersistence()
+      let document = try model.store.loadDocument(id)
+      let file = try XCTUnwrap(document.files.first { $0.path == document.entrypoint })
+      let version = document.fileVersion(fileID: file.id)
+      let editor = DocumentSourceEditorSession(request: .init(documentID: id, file: file, version: version), model: model)
+      let range = (file.source as NSString).range(of: "\\documentclass")
+      XCTAssertNotEqual(range.location, NSNotFound)
+      let history = try model.store.sharedContexts().contexts.count
+      editor.input(file.source, selection: range, composing: false, scroll: 0)
+      XCTAssertTrue(chat.jobs.isEmpty, "Selecting does not submit a message")
+      XCTAssertFalse(chat.expanded, "Selection must not open the conversation")
+      XCTAssertEqual(try model.store.sharedContexts().contexts.count, history)
+      let captured = model.captureChatSubmissionContext(chat)
+      let draft = "% Human draft\n" + file.source
+      editor.input(draft, selection: .init(location: 2, length: 5), composing: false, scroll: 0)
+      let frozen = try await captured.prepare()
+      let context = try JSONDecoder().decode(JSONValue.self, from: Data(frozen.text.utf8))
+      let selected = try XCTUnwrap(context["documentSourceSelection"])
+      XCTAssertEqual(selected["documentID"], .string(id.uuidString))
+      XCTAssertEqual(selected["fileID"], .string(file.id))
+      XCTAssertEqual(selected["baseVersion"], try .encode(version))
+      XCTAssertEqual(selected["selectionStart"], .number(Double(range.location)))
+      XCTAssertEqual(selected["selectionEnd"], .number(Double(NSMaxRange(range))))
+      XCTAssertEqual(selected["selectedText"], .string("\\documentclass"))
+      XCTAssertEqual(selected["hasLocalDraft"], .bool(false))
+      XCTAssertNil(frozen.attentionContextID)
+      XCTAssertTrue(chat.jobs.isEmpty)
+
+      let withDraft = model.captureChatSubmissionContext(chat)
+      editor.input(draft, selection: .init(location: 0, length: 0), composing: false, scroll: 0)
+      let frozenDraft = try await withDraft.prepare()
+      let draftContext = try JSONDecoder().decode(JSONValue.self, from: Data(frozenDraft.text.utf8))
+      XCTAssertEqual(draftContext["documentSourceSelection"]?["selectedText"], .string("Human"))
+      XCTAssertEqual(draftContext["documentSourceSelection"]?["hasLocalDraft"], .bool(true))
+      let noSelection = try await model.captureChatSubmissionContext(chat).prepare()
+      XCTAssertEqual(try JSONDecoder().decode(JSONValue.self, from: Data(noSelection.text.utf8))["documentSourceSelection"], .null)
+      XCTAssertTrue(chat.jobs.isEmpty)
+    }
+  }
+
+  @MainActor
   func testDictationSendContextKeepsThePointedMaterialAndAttachmentsWhileSpeechIsRecognized() async throws {
     try await fixture { model in
       let original = try await point(model), chat = try XCTUnwrap(model.chat)

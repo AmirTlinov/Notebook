@@ -11,11 +11,12 @@ public struct AgentPinnedImage: Codable, Equatable, Sendable {
     /// Author model data remains untrusted; this binds its identity to capture,
     /// not a promise that arbitrary author code is deterministic.
     public struct Program: Codable, Equatable, Sendable {
-      public let blockID: String
-      public let programIdentity: DocumentProgramIdentity
+      public let instanceID: String
+      public let programPath: String
+      public let sourceBasis: String
       public let state: JSONValue
-      public init(blockID: String, programIdentity: DocumentProgramIdentity, state: JSONValue) {
-        self.blockID = blockID; self.programIdentity = programIdentity; self.state = state
+      public init(instanceID: String, programPath: String, sourceBasis: String, state: JSONValue) {
+        self.instanceID = instanceID; self.programPath = programPath; self.sourceBasis = sourceBasis; self.state = state
       }
     }
     public let program: Program?
@@ -67,12 +68,12 @@ public struct AgentPinnedImage: Codable, Equatable, Sendable {
     guard dimension(16) == pixelWidth, dimension(20) == pixelHeight,
       SHA256.hash(data: png).map({ String(format: "%02x", $0) }).joined() == sha256 else { throw invalid() }
     if let program = presentation?.program {
-      guard !program.blockID.isEmpty, program.blockID.utf8.count <= 120,
-        program.programIdentity.isValid, program.state.isValid,
+      guard !program.instanceID.isEmpty, program.instanceID.utf8.count <= 120,
+        NotebookProgramPackage.validHash(program.sourceBasis) && DocumentFile.validPath(program.programPath), program.state.isValid,
         try JSONEncoder().encode(program.state).count <= 1_048_576 else { throw invalid() }
     }
     if let reference {
-      guard presentation?.program.map({ $0.blockID == reference.elementID }) ?? true,
+      guard presentation?.program.map({ $0.instanceID == reference.elementID }) ?? true,
         reference.id == referenceID, reference.revision == sourceRevision,
         reference.region == region, reference.worldOrigin == worldOrigin, reference.pageIndex == pageIndex else { throw invalid() }
     }

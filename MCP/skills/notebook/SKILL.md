@@ -23,7 +23,7 @@ two parts in sequence. Leave an editable continuation when proposing an idea.
 [Teammate patterns](references/teammate-patterns.md) offer a few starting points.
 
 [Executable recipes](references/recipes.md) cover editable maps and diagrams,
-SVG, plots, animations, sketches, images, and document blocks. Adapt and combine
+SVG, plots, animations, sketches, images, and LaTeX document files. Adapt and combine
 them freely.
 
 Take the shortest reliable path from intention to result. Reuse known data and
@@ -89,8 +89,12 @@ scientific correctness. State the inspection boundary if rendering is unavailabl
 
 `notebook_context` reads material. `notebook_execute` runs JS/TS with `nb`,
 `args`, `emit`, and `emitImage`. `notebook_import_program` stages a file-backed
-program package; publication is a separate transaction. Use `nb.help(topic)`
-for an unfamiliar SDK method. Read objects and blocks by address and expand
+spatial program package; publication is a separate transaction.
+`notebook_import_document` imports one `.notex` file through the Mac owner,
+without executing its programs. `notebook_import_document_resource` stages a
+local image/PDF for `putDocumentFile`; it does not create a program or publish
+content. Use `nb.help(topic)`
+for an unfamiliar SDK method. Read objects and document files by address and expand
 large results only as needed.
 
 Reads return `data` and a ready-to-use `basis`. Pass it as `base` to

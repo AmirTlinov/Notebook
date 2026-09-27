@@ -370,8 +370,7 @@ extension NotebookStore {
     let header = try readItemHeader(itemID)
     let size: WorkspaceItemGeometry
     if header?.kind == .document {
-      guard let paper = try readDocumentPaperSize(itemID) else { throw NotebookStorageError.corruptRecord(documentFile(itemID)) }
-      size = .document(paper)
+      size = .uncompiledDocument
     } else { size = .notebook }
     let origin: WorldPoint, width: Double, height: Double, z: Double
     if let stack = layout.stacks.first(where: { $0.itemIDs.contains(itemID) }),
@@ -444,11 +443,11 @@ extension NotebookStore {
       try appendGraphicDependencies(to: &rows, boardAddress: address)
       try appendBoardCausalFragments(to: &rows, address: address)
       let board = try NotebookRecordCodec.decode(rows, root: address).decode(BoardNode.self)
-      var items: [WorkspaceItem] = [], paper: [UUID: DocumentPaperSize] = [:], counts: [UUID: Int] = [:]
+      var items: [WorkspaceItem] = [], paper: [UUID: WorkspaceItemGeometry] = [:], counts: [UUID: Int] = [:]
       for id in board.board.itemIDs {
         guard let header = try readItemHeader(id) else { throw NotebookStorageError.corruptRecord(id.uuidString) }
         items.append(header.item); counts[id] = header.pageCount
-        if header.kind == .document { paper[id] = try storedFragments(address: documentFile(id) + "#", descendants: false).first?.value["paperSize"]?.decode(DocumentPaperSize.self) }
+        if header.kind == .document { paper[id] = .uncompiledDocument }
       }
       let targets = [CollaborationTarget(kind: .board, id: boardID)] + items.map { CollaborationTarget(kind: .cover, id: $0.id, boardID: boardID) }
       guard let contentRevision = try boardContentRevision(boardID) else { throw CocoaError(.fileNoSuchFile) }
@@ -675,12 +674,6 @@ extension NotebookStore {
     // missing ownership from a source-only projection during conditional undo.
     rows += try causalFragments(parent: address, collection: "board/collaboration/fields",
       memberPrefixes: members.map { fieldKey(["elements", $0]) + "/" }, includeKeys: ["elements/order"])
-  }
-}
-
-extension NotebookStore {
-  public func readDocumentPaperSize(_ id: UUID) throws -> DocumentPaperSize? {
-    try storedFragments(address: documentFile(id) + "#", descendants: false).first?.value["paperSize"]?.decode(DocumentPaperSize.self)
   }
 }
 

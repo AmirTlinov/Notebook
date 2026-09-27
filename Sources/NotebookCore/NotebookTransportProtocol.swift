@@ -4,9 +4,9 @@ import Foundation
 /// The transport has no durable content owner. A completed frame grants only
 /// transfer credit; a committed change acknowledges the store's SQL transaction.
 public enum NotebookTransportLimits {
-  // Signed connector bends and a retained elbow axis share one wire meaning.
-  // Both applications update together; identities and queued history stay intact.
-  public static let protocolVersion = 43
+  // File documents replace the retired block format. Update the pair together;
+  // the cutover keeps workspace identities, keys and acknowledged history.
+  public static let protocolVersion = 44
   public static let maximumFrameBytes = 256 * 1_024
   public static let maximumChunkBytes = 32 * 1_024
   public static let maximumBlobRequests = 16

@@ -134,6 +134,9 @@ final class TwoFingerPaperGestureRecognizer: UIGestureRecognizer {
   private var magnificationSamples: [(timestamp: TimeInterval, value: CGFloat)] = []
   private var fingerSequenceRevision: UInt64?
   private let inputSource = UUID()
+  private(set) weak var historyTarget: (UIView & NotebookHistoryGestureTarget)?
+  private var historyNativeInput: ObjectIdentifier?
+  var isNativeHistory: Bool { historyNativeInput != nil }
 
   private(set) var intent = Intent.undecided
   private(set) var translation = CGPoint.zero
@@ -152,7 +155,7 @@ final class TwoFingerPaperGestureRecognizer: UIGestureRecognizer {
     didSet {
       guard oldValue !== inputGate else { return }
       oldValue?.unregisterFingerCancellation(source: inputSource)
-      oldValue?.releaseHistoryContacts(Set(activeTouches.keys))
+      oldValue?.releaseHistoryContacts(Set(activeTouches.keys), nativeInput: historyNativeInput)
       cancelForExclusiveInput()
       inputGate?.registerFingerCancellation(source: inputSource) { [weak self] in
         self?.cancelForExclusiveInput()
@@ -167,7 +170,7 @@ final class TwoFingerPaperGestureRecognizer: UIGestureRecognizer {
 
   isolated deinit {
     holdTask?.cancel()
-    inputGate?.releaseHistoryContacts(Set(activeTouches.keys))
+    inputGate?.releaseHistoryContacts(Set(activeTouches.keys), nativeInput: historyNativeInput)
     inputGate?.unregisterFingerCancellation(source: inputSource)
   }
 
@@ -183,8 +186,12 @@ final class TwoFingerPaperGestureRecognizer: UIGestureRecognizer {
   ) {
     if activeTouches.isEmpty, let first = touches.min(by: { $0.timestamp < $1.timestamp }) {
       firstContact = (ObjectIdentifier(first), first.location(in: view), first.timestamp)
+      historyTarget = NotebookSceneFingerRouting.historyTarget(of: first.view)
+      historyNativeInput = historyTarget.map(ObjectIdentifier.init)
     }
     for touch in touches {
+      let target = NotebookSceneFingerRouting.historyTarget(of: touch.view)
+      guard (target != nil) == isNativeHistory, target === historyTarget else { finishAsInvalid(); return }
       activeTouches[ObjectIdentifier(touch)] = touch
     }
     guard activeTouches.count <= 2 else {
@@ -218,6 +225,12 @@ final class TwoFingerPaperGestureRecognizer: UIGestureRecognizer {
       return
     }
     updateMetrics()
+    // Native code editing lends quiet history contacts only. Selection drags,
+    // scrolling and pinches stay native even when another finger joins.
+    if isNativeHistory {
+      if !undoContactRemainsStationary { finishAsInvalid() }
+      return
+    }
 
     switch intent {
     case .undecided, .hold:
@@ -231,7 +244,7 @@ final class TwoFingerPaperGestureRecognizer: UIGestureRecognizer {
       switch motionIntent {
       case .navigation:
         cancelHold()
-        inputGate?.releaseHistoryContacts(Set(activeTouches.keys))
+        inputGate?.releaseHistoryContacts(Set(activeTouches.keys), nativeInput: historyNativeInput)
         if defersThisPairToPageTurn {
           finishAsInvalid()
           return
@@ -240,13 +253,13 @@ final class TwoFingerPaperGestureRecognizer: UIGestureRecognizer {
         state = state == .possible ? .began : .changed
       case .magnification:
         cancelHold()
-        inputGate?.releaseHistoryContacts(Set(activeTouches.keys))
+        inputGate?.releaseHistoryContacts(Set(activeTouches.keys), nativeInput: historyNativeInput)
         intent = .magnification
         state = state == .possible ? .began : .changed
       case .undecided:
         if !undoContactRemainsStationary {
           cancelHold()
-          inputGate?.releaseHistoryContacts(Set(activeTouches.keys))
+          inputGate?.releaseHistoryContacts(Set(activeTouches.keys), nativeInput: historyNativeInput)
           if intent == .hold { intent = .undecided }
         }
         break
@@ -274,6 +287,7 @@ final class TwoFingerPaperGestureRecognizer: UIGestureRecognizer {
     }
     updateMetrics()
     cancelHold()
+    if isNativeHistory, !undoContactRemainsStationary { finishAsInvalid(); return }
     let releaseIntent = TwoFingerIntentArbiter.resolve(
       defersHorizontalMotionToPageTurn: defersThisPairToPageTurn,
       translation: translation,
@@ -320,8 +334,9 @@ final class TwoFingerPaperGestureRecognizer: UIGestureRecognizer {
   override func reset() {
     super.reset()
     cancelHold()
-    inputGate?.releaseHistoryContacts(Set(activeTouches.keys))
+    inputGate?.releaseHistoryContacts(Set(activeTouches.keys), nativeInput: historyNativeInput)
     activeTouches.removeAll(keepingCapacity: true)
+    historyTarget = nil; historyNativeInput = nil
     startLocations.removeAll(keepingCapacity: true)
     firstContact = nil
     undoIsEligible = true
@@ -359,7 +374,7 @@ final class TwoFingerPaperGestureRecognizer: UIGestureRecognizer {
   /// The second touchdown establishes the pair once. Intent recognition must
   /// retain subsequent measured travel, even if release is the very next sample.
   private func beginTrackingPair() {
-    cameraInput = .init(contactID: UUID(), revision: 0)
+    cameraInput = isNativeHistory ? nil : .init(contactID: UUID(), revision: 0)
     let leavesObject = inputGate?.hasSceneObjectContact == true
     defersThisPairToPageTurn = defersHorizontalMotionToPageTurn && !leavesObject
     if leavesObject { undoIsEligible = false }
@@ -383,7 +398,7 @@ final class TwoFingerPaperGestureRecognizer: UIGestureRecognizer {
         undoContactRemainsStationary
       else { return }
       intent = .hold
-      inputGate?.claimHistoryContacts(Set(activeTouches.keys))
+      inputGate?.claimHistoryContacts(Set(activeTouches.keys), nativeInput: historyNativeInput)
       state = .began
     }
   }
@@ -483,7 +498,7 @@ final class TwoFingerPaperGestureRecognizer: UIGestureRecognizer {
 
   private func finishAsInvalid() {
     cancelHold()
-    inputGate?.releaseHistoryContacts(Set(activeTouches.keys))
+    inputGate?.releaseHistoryContacts(Set(activeTouches.keys), nativeInput: historyNativeInput)
     switch state {
     case .began, .changed: state = .cancelled
     case .possible: state = .failed

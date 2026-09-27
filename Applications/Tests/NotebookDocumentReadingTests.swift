@@ -9,7 +9,7 @@ final class NotebookDocumentReadingTests: XCTestCase {
     let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
     retainNotebookUntilTeardown(model, removing: root)
     await model.start(pageSize: NotebookAppModel.defaultPageSize)
-    let id = try XCTUnwrap(model.createDocument(at: .zero, paperSize: .a4))
+    let id = try XCTUnwrap(model.createDocument(at: .zero))
     let saved1 = await model.finishPendingPersistence(); XCTAssertTrue(saved1)
     let initial = try XCTUnwrap(model.presence), center = try XCTUnwrap(model.board?.focusedCenter(of: id))
     let viewport = initial.viewport, geometry = model.itemGeometry(id)
@@ -34,10 +34,10 @@ final class NotebookDocumentReadingTests: XCTestCase {
     let saved2 = await model.finishPendingPersistence(); XCTAssertTrue(saved2)
     XCTAssertEqual(try model.store.readDocumentReadingPosition(id), place)
 
-    let block = try XCTUnwrap(document.blocks.first)
-    let edit = DocumentSourceEdit(sessionID: UUID(), documentID: id, blockID: block.id,
-      baseSource: block.source, baseVersion: document.sourceVersion(blockID: block.id),
-      source: "Preceding content changes pagination. " + block.source, sequence: 1)
+    let block = try XCTUnwrap(document.files.first)
+    let edit = DocumentSourceEdit(sessionID: UUID(), documentID: id, fileID: block.id,
+      baseSource: block.source, baseVersion: document.fileVersion(fileID: block.id),
+      source: block.source.replacingOccurrences(of: "\\begin{document}", with: "\\begin{document} Preceding content changes pagination. "), sequence: 1)
     let status = try await model.commitDocumentSource(edit: edit); XCTAssertEqual(status, .committed)
     document = try XCTUnwrap(model.documents[id]); source = NotebookAppModel.documentPageSourceRevision(document)
     model.acceptDocumentReadingLayout(try layout(document, target: 5), documentID: id)
@@ -67,13 +67,14 @@ final class NotebookDocumentReadingTests: XCTestCase {
   }
 
   private func layout(_ document: DocumentDocument, target: Int) throws -> DocumentPageLayout {
-    let geometry = WorkspaceItemGeometry.document(document.paperSize), id = try XCTUnwrap(document.blocks.first?.id)
+    let geometry = WorkspaceItemGeometry.uncompiledDocument, id = try XCTUnwrap(document.files.first?.id)
     let source = NotebookAppModel.documentPageSourceRevision(document)
     let regions: [[String: Any]] = [0, target].map { page in
       ["id": id, "pageIndex": page, "x": 20.0, "y": 30.0, "width": 100.0, "height": 100.0,
        "sourceOffset": Double(page) * 100]
     }
     let record = try DocumentLayoutRecord(receipt: ["sourceKey": source, "layoutScope": "source", "layoutCanonical": true,
+      "pages": Array(repeating: ["widthPoints": DocumentPaperLayout.uncompiled.widthPoints, "heightPoints": DocumentPaperLayout.uncompiled.heightPoints], count: target + 1),
       "pageCount": target + 1, "width": geometry.width, "height": geometry.height, "regions": regions, "anchors": [],
       "reading": [[id, "1111111111111111", 0, 0, 10, 0, 30.0],
         [id, "2222222222222222", target * 100, 0, 10, target, 30.0]]] as NSDictionary,

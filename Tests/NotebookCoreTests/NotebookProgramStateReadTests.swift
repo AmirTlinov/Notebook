@@ -26,20 +26,20 @@ struct NotebookProgramStateReadTests {
     let address = file + "#/records/@" + member
     let fragment = NotebookStoredFragment(address: address, file: file, parent: file + "#", collection: "records",
       member: member, position: 0, value: value, collections: [])
-    try store.commandTransaction { try store.writeFragment(fragment, database: store.currentSQL!) }
+    _ = try store.commandTransaction { try store.writeFragment(fragment, database: store.currentSQL!) }
     let physical = try store.sqlRead { db in
       try JSONDecoder().decode(NotebookStoredFragment.self, from: db.rows("SELECT b.data FROM records r JOIN blobs b ON b.hash=r.hash WHERE address=?", [.text(address)]).first![0].blob!)
     }
     #expect(physical.inkBodies.count == 2)
     #expect(try physical.inkBodyHashes.count == 1, "Body equality must not erase occurrence revisions")
     let reopened = NotebookStore(root: root)
-    let budget = try reopened.documentProgramStateReadBytes(documentID: id, blockID: "body")
+    let budget = try reopened.documentProgramStateReadBytes(documentID: id, instanceID: "body")
     #expect(budget > (first.utf8.count + second.utf8.count) * 8)
     #expect(throws: NotebookStorageError.limitExceeded("program_state_admission")) {
       try reopened.readTransaction { _ in _ = try reopened.programStateFragments(address: address, admittedBytes: budget - 1) }
     }
     let restored = try reopened.readTransaction { _ in try reopened.programStateFragments(address: address, admittedBytes: budget) }
     #expect(restored == [fragment], "Declared NIM1 values expand exactly; lookalike user objects remain ordinary JSON")
-    #expect(try reopened.documentProgramStateReadBytes(documentID: id, blockID: "body") == budget)
+    #expect(try reopened.documentProgramStateReadBytes(documentID: id, instanceID: "body") == budget)
   }
 }

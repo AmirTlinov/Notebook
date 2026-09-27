@@ -72,6 +72,7 @@ struct NotebookChatPanel: View {
     }
     .disabled(chat.switchingComputer)
     .onChange(of: chat.expanded) { draftFocused = false }
+    .onChange(of: chat.pointingScope) { model.laserContext.clear() }
     .onChange(of: chat.dictation.showsInput) { if chat.dictation.showsInput { draftFocused = false } }
     .task(id: chat.dictation.reviewRequest) {
       guard chat.dictation.reviewRequest != nil else { return }

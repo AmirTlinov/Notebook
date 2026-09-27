@@ -143,7 +143,7 @@ extension NotebookStore {
         prefix = [.field("boards"), .member(board.uuidString.lowercased()), .field("board")]
         sourceAddress = parent + "/board/elements/@" + fieldKey([parts[1]])
       } else if row.collection == "collaboration/fields", parent == row.file + "#",
-        (row.file.hasPrefix("pages/") && parts[0] == "elements") || (row.file.hasPrefix("documents/") && parts[0] == "blocks") {
+        (row.file.hasPrefix("pages/") && parts[0] == "elements") || (row.file.hasPrefix("documents/") && parts[0] == "files") {
         prefix = []; sourceAddress = parent + "/" + parts[0] + "/@" + fieldKey([parts[1]])
       } else { return nil }
       let source = prefix + [.field(parts[0]), .member(parts[1])]

@@ -61,13 +61,13 @@ final class CollaborationReadTests: XCTestCase {
       let header = try store.initializeWorkspace(actor: actor, pageSize: .init(width: 834, height: 1194))
       _ = try store.loadOrCreateSpatialInk(actor: actor)
       let target = CollaborationTarget(kind: .board, id: header.rootBoardID)
-      let blocks = (0..<140).map { DocumentBlock.markdown(id: "part-\($0)",
-        source: "# Chapter \($0)\n\n" + String(repeating: "Large source. ", count: 3_800)) }
+      let blocks = (0..<140).map { DocumentTestFiles.tex(id: "part-\($0)",
+        source: "\\section{Chapter }\\hypertarget{chapter}{}\($0)\n\n" + String(repeating: "Large source. ", count: 3_800)) }
       let receipt = try store.applyCollaborationAction(.init(summary: "Large received document", expected: [
         .init(target: target, revision: store.targetContentRevision(target: target)),
         .init(target: .init(kind: .workspace, id: header.rootBoardID), revision: store.workspaceHeader().stamp.revision)
       ], operations: [.init(kind: .createDocument, target: target, id: id.uuidString, values: [
-        "paperSize": .string("a4"), "blocks": try .encode(blocks), "center": try .encode(WorldPoint.zero)])]), actor: actor)
+        "entrypoint": .string("main.tex"), "files": try .encode(DocumentTestFiles.document(contents: blocks).files), "center": try .encode(WorldPoint.zero)])]), actor: actor)
       try store.savePresence(.init(boardID: header.rootBoardID, mode: .board, camera: .init(),
         viewport: .init(x: 834, y: 1194), openProgress: 0, selectedItemID: id))
       return receipt.id

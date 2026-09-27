@@ -4,10 +4,9 @@ import { createHash } from "node:crypto";
 import { open } from "node:fs/promises";
 import { constants } from "node:fs";
 import { BridgeError, defaultSocketPath, runBridge } from "../src/bridge.js";
-import type { BoardDocument, BoardHierarchy, CurrentViewReceipt, DocumentBlock, DocumentDocument, DocumentStateJournal, JSONValue,
+import type { BoardDocument, BoardHierarchy, CurrentViewReceipt, DocumentFileRead, DocumentDirectory, DocumentDocument, DocumentStateJournal,
   PageDocument, PageSize, SessionPresence, SpatialElement, SpatialInkJournal, SurfaceID, VersionStamp,
   WorkspaceProjection, NotebookItemHeader } from "../src/domain.js";
-import { canonicalPageSize, documentSpatialSize } from "../src/domain.js";
 
 export class StoreError extends Error {}
 export interface WorkspaceHeader {
@@ -19,11 +18,10 @@ export interface NotebookPagePosition { itemID:string;pageID:string;index:number
 export interface NotebookPageHeader { workspaceID:string;item:NotebookItemHeader;visibleRoot:string;readCursor:string;selectedPageID?:string;selectedPageIndex?:number }
 export interface NotebookPageWindow { header:NotebookPageHeader;pages:Array<{position:NotebookPagePosition;document:PageDocument}> }
 export interface NotebookPageDirectory { header:NotebookPageHeader;pages:Array<{position:NotebookPagePosition;size:PageSize;drawingStamp:VersionStamp;agentStamp:VersionStamp}>;nextIndex?:number }
-export interface DocumentBlockRead { documentID:string;contentStamp:VersionStamp;stateStamp:VersionStamp;block:DocumentBlock;state?:JSONValue }
 export interface SceneWindow {
   header: WorkspaceHeader; boardID: string; items: NotebookItemHeader[]; boards: BoardHierarchy["boards"];
   boardContentRevisions: Record<string, string>;
-  documentPaper: Record<string, "a4" | "letter">; pageCounts: Record<string, number>; totalMatches: number; truncated: boolean;
+  pageCounts: Record<string, number>; totalMatches: number; truncated: boolean;
 }
 export interface ScenePaintPage {
   revision: string; entries: Array<{kind:"item"|"element";id:string;bounds:ProjectionBounds;zIndex:number}>; nextCursor: string | null;
@@ -161,20 +159,14 @@ export class NotebookStore {
     const ink = await this.read<SpatialInkJournal>({ kind: "spatialInk", surfaces });
     return { ...ink, readSurfaces: surfaces };
   }
-  async readItemSizes(workspace: WorkspaceProjection, paper: Record<string, "a4" | "letter"> = {}): Promise<Map<string, PageSize>> {
-    return new Map(workspace.items.map(item => {
-      const size = paper[item.id.toLowerCase()] ?? paper[item.id];
-      if (item.kind === "document" && !size) throw new StoreError("Размер документа отсутствует в проекции сцены.");
-      return [item.id.toLowerCase(), item.kind === "document" ? documentSpatialSize(size!) : canonicalPageSize];
-    }));
-  }
   readPresence(): Promise<SessionPresence> { return this.read({ kind: "presence" }); }
   readPage(id: string): Promise<PageDocument> { return this.read({ kind: "page", id }); }
   readDocument(id: string): Promise<DocumentDocument> { return this.read({ kind: "document", id }); }
   readDocumentState(id: string): Promise<DocumentStateJournal> { return this.read({ kind: "documentState", id }); }
-  readDocumentBlock(id: string, blockID: string): Promise<DocumentBlockRead | null> {
-    return this.read({kind:"documentBlock",id,elementID:blockID});
+  readDocumentFile(id: string, fileID: string): Promise<DocumentFileRead | null> {
+    return this.read({kind:"documentFile",id,fileID});
   }
+  readDocumentDirectory(id: string): Promise<DocumentDirectory> { return this.read({kind:"documentDirectory",id}); }
   readCollaborationContexts<T>(id?: string, limit = 20): Promise<T> { return this.read({ kind: "contexts", id, limit }); }
   readCollaborationActions<T>(contextID?: string, limit = 20): Promise<T> { return this.read({ kind: "actions", contextID, limit }); }
   readRuntime(): Promise<{ status: string; updatedAt: number } | null> { return this.read({ kind: "runtime" }); }

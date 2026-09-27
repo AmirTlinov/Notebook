@@ -3,7 +3,7 @@ import Foundation
 /// A query is a physical owner plus a bounded projection. Tokens are portable
 /// data, never read sessions or authority to mutate the selected neighbours.
 public struct NotebookObservationScope: Codable, Equatable, Sendable {
-  public enum Field: String, Codable, Sendable { case preview, content, state, geometry }
+  public enum Field: String, Codable, Sendable { case preview, content, version, geometry }
   public enum Relation: String, Codable, Sendable { case incoming, outgoing, neighbors, container }
   public var target: CollaborationTarget
   public var ids: [String]?
@@ -27,7 +27,7 @@ public struct NotebookObservationScope: Codable, Equatable, Sendable {
     guard [.page, .document, .board, .cover].contains(target.kind), (target.kind == .cover) == (target.boardID != nil),
       ids == nil || (!ids!.isEmpty && ids!.count <= 32 && ids!.allSatisfy({ !$0.isEmpty && $0.utf16.count <= 120 })),
       !fields.isEmpty, fields.count <= 4, expand.count <= 4,
-      !fields.contains(.state) || target.kind == .document,
+      !fields.contains(.version) || target.kind == .document,
       bounds == nil || ([.board, .cover].contains(target.kind) && ids == nil),
       expand.isEmpty || ids != nil else {
       throw CollaborationError("invalid_observation", "Нужен физический target, 1–32 ids, допустимые fields и одношаговое expand только от явных ids. bounds относится к доске/обложке.")
@@ -186,7 +186,7 @@ extension NotebookStore {
     init(_ target: CollaborationTarget) {
       if target.kind == .page || target.kind == .document {
         file = target.kind == .page ? pageFile(target.id) : documentFile(target.id)
-        root = file + "#"; collection = target.kind == .page ? "elements" : "blocks"; fields = "collaboration/fields"
+        root = file + "#"; collection = target.kind == .page ? "elements" : "files"; fields = "collaboration/fields"
       } else {
         file = "board.json"; root = file + "#/boards/@" + (target.boardID ?? target.id).uuidString.lowercased()
         collection = "board/elements"; fields = "board/collaboration/fields"
@@ -236,16 +236,14 @@ extension NotebookStore {
       case .page:
         let element = try value.decode(AgentElement.self), size = try header["size"]!.decode(PageSize.self)
         valid = PageDocument.elementsAreValid([element], in: size)
-      case .document: valid = try value.decode(DocumentBlock.self).isValid
+      case .document: valid = try value.decode(DocumentFile.self).isValid
       default: valid = try value.decode(SpatialElement.self).isValid
       }
       guard valid else { throw NotebookStorageError.corruptRecord(root.address) }
       result["content"] = value
     }
-    if scope.fields.contains(.state) {
-      let read = try readDocumentBlock(documentID: scope.target.id, blockID: root.value["id"]!.string!)
-      result["state"] = read?.state
-      result["stateVersion"] = try .encode(read?.stateVersion)
+    if scope.fields.contains(.version) {
+      let read = try readDocumentFile(documentID: scope.target.id, fileID: root.value["id"]!.string!)
       result["sourceVersion"] = try .encode(read?.sourceVersion)
     }
     if scope.fields.contains(.geometry) {

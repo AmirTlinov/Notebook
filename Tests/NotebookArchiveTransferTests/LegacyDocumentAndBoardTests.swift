@@ -3,7 +3,7 @@ import NotebookCore
 import Testing
 @testable import NotebookArchiveTransfer
 
-@Suite("Only the offline converter owns retired document and board meanings")
+@Suite("Retired documents are rejected; offline board conversion retains its owner")
 struct LegacyDocumentAndBoardTests {
   private func object(_ value: some Encodable) throws -> [String: Any] {
     try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(value)) as? [String: Any])
@@ -31,19 +31,16 @@ struct LegacyDocumentAndBoardTests {
     return value
   }
 
-  @Test func documentOneAssignsA4ButPreservesUUIDBlocksAndCausalHistory() throws {
-    var document = DocumentDocument(actor: UUID(), paperSize: .a4, preamble: "\\newcommand{\\x}{x}", blocks: [
-      .markdown(id: "body", source: "# Source"),
-      .interactive(id: "program", html: "<button>+</button>", initialState: .object(["paperSize": .string("not metadata"), "format": .number(1)]))])
-    let changed = document.replaceBlockSource(id: "body", source: "# Human continuation", actor: UUID())
-    #expect(changed)
-    var old = try object(document); old["format"] = 1; old.removeValue(forKey: "paperSize")
-    let bytes = try data(old)
-    #expect(throws: DecodingError.self) { try JSONDecoder().decode(DocumentDocument.self, from: bytes) }
-    #expect(try convertLegacyDocument(bytes) == document)
-    #expect(try convertLegacyDocument(JSONEncoder().encode(document)) == document)
-    old["format"] = 77
-    #expect(throws: DecodingError.self) { try convertLegacyDocument(data(old)) }
+  @Test func retiredDocumentsAreRejectedWithoutInventingLaTeXFiles() throws {
+    let document = DocumentDocument(actor: UUID(), files: [.init(id: "main", path: "main.tex", source: "\\documentclass{article}\n\\begin{document}Current source.\\end{document}\n")])
+    let current = try JSONEncoder().encode(document)
+    #expect(try readCurrentArchivedDocument(current) == document)
+    for format in [1, 2, 77] {
+      var old = try object(document); old["format"] = format
+      let bytes = try data(old), before = bytes
+      #expect(throws: ArchiveTransferError.self) { try readCurrentArchivedDocument(bytes) }
+      #expect(bytes == before)
+    }
   }
 
   @Test func oldPlacementsAndStacksRetainUUIDCoordinatesOrderAndClocks() throws {
@@ -79,13 +76,13 @@ struct LegacyDocumentAndBoardTests {
     #expect(throws: DecodingError.self) { try convertLegacyHierarchy(data(old)) }
   }
 
-  @Test func completeArchiveUsesExternalConversionsBeforeCheckpointPublication() throws {
+  @Test func archiveWithRetiredDocumentIsRejectedBeforePublicationAndSourceRemainsUnchanged() throws {
     let root = try transferTestRoot(); defer { try? FileManager.default.removeItem(at: root) }
     let fixture = try LegacyArchiveFixture.make(at: root.appendingPathComponent("backup"))
     let workspaceURL = fixture.root.appendingPathComponent("workspace.json")
     var workspace = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: workspaceURL)) as? [String: Any])
     var items = try #require(workspace["items"] as? [[String: Any]])
-    let document = DocumentDocument(actor: UUID(), blocks: [.markdown(id: "source", source: "Не менять исходник")])
+    let document = DocumentDocument(actor: UUID(), files: [.init(id: "main", path: "main.tex", source: "Не менять исходник")])
     items.append(["id": document.id.uuidString, "kind": "document", "title": "Old document", "pageIDs": []])
     workspace["items"] = items
     try data(workspace).write(to: workspaceURL)
@@ -102,16 +99,8 @@ struct LegacyDocumentAndBoardTests {
     node.removeValue(forKey: "portalCamera"); node.removeValue(forKey: "portalStamp"); tree["boards"] = [node]
     try data(tree).write(to: fixture.root.appendingPathComponent("board.json"))
     let before = try inventory(fixture.root), destination = root.appendingPathComponent("prepared")
-    let report = try ArchiveTransfer.prepare(source: fixture.root, destination: destination, workspaceID: UUID())
-    #expect(report.convertedOwners.map(\.path) == ["board.json", "documents/" + document.id.uuidString.lowercased() + ".json"])
-    for conversion in report.convertedOwners {
-      #expect(conversion.sourceSHA256 == before.first { $0.path == conversion.path }?.sha256)
-      #expect(conversion.sourceSHA256 != conversion.preparedOwnerSHA256)
-    }
-    let store = NotebookStore(root: destination.appendingPathComponent("archive"))
-    #expect(try store.loadDocument(document.id) == document.materializingCausalVersions())
-    #expect(try store.loadDocumentState(document.id) == state)
-    #expect(try store.loadBoard(items: store.loadIndex().items) == hierarchy)
+    #expect(throws: ArchiveTransferError.self) { try ArchiveTransfer.prepare(source: fixture.root, destination: destination, workspaceID: UUID()) }
+    #expect(!FileManager.default.fileExists(atPath: destination.path))
     #expect(try inventory(fixture.root) == before)
   }
 }

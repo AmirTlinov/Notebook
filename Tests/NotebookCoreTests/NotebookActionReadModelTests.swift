@@ -11,14 +11,14 @@ struct NotebookActionReadModelTests {
     let header = try store.initializeWorkspace(actor: actor, pageSize: .init(width: 834, height: 1194))
     _ = try store.loadOrCreateSpatialInk(actor: actor)
     let board = CollaborationTarget(kind: .board, id: header.rootBoardID)
-    let blocks = (0..<140).map { DocumentBlock.markdown(id: "part-\($0)",
+    let files = (0..<140).map { DocumentFile(id: "part-\($0)", path: "part-\($0).tex",
       source: "# Chapter \($0)\n\n" + String(repeating: "Large source. ", count: 3_800)) }
     let receipt = try store.applyCollaborationAction(.init(summary: "A large document", expected: [
       .init(target: board, revision: store.targetContentRevision(target: board)),
       .init(target: .init(kind: .workspace, id: header.rootBoardID), revision: store.workspaceHeader().stamp.revision)
     ], operations: [.init(kind: .createDocument, target: board, id: documentID.uuidString, values: [
-      "title": .string("Large control"), "paperSize": .string("a4"), "center": try .encode(WorldPoint.zero),
-      "blocks": try .encode(blocks)])]), actor: actor)
+      "title": .string("Large control"), "center": try .encode(WorldPoint.zero),
+      "files": try .encode(files)])]), actor: actor)
     try body(store, actor, receipt, documentID)
   }
 
@@ -50,9 +50,9 @@ struct NotebookActionReadModelTests {
   @Test func sourceComparisonPreservesHumanContinuationWithoutRetainingTheOldSource() throws {
     try fixture { store, _, receipt, documentID in
       var document = try store.loadDocument(documentID)
-      var blocks = document.blocks
-      blocks[0] = .markdown(id: "part-0", source: "# Human continuation")
-      let changed = document.replaceContent(blocks: blocks, actor: UUID())
+      var editedFiles = document.files
+      editedFiles[0] = .init(id: "part-0", path: "part-0.tex", source: "# Human continuation")
+      let changed = document.replaceContent(files: editedFiles, actor: UUID())
       #expect(changed)
       _ = try store.saveMergedDocument(document)
       let content = try store.collaborationContent(), files = try content.sourceFiles()

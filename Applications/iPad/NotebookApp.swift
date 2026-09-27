@@ -40,6 +40,7 @@ struct NotebookApp: App {
           }.padding(32)
         }
       }
+      .modifier(NotebookDocumentImport(model: launch.model))
       .background {
         NotebookSystemTraceIdentitySurface()
           .frame(width: 1, height: 1)

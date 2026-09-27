@@ -1,4 +1,3 @@
-import Foundation
 import AppKit
 import CryptoKit
 import NotebookCore
@@ -6,58 +5,58 @@ import SwiftUI
 import XCTest
 @testable import Notebook
 
+@MainActor
 final class DocumentProgramSourceTests: XCTestCase {
-  @MainActor func testPackageViewerShowsTheStoredCodeWithoutCreatingAnEditableCopy() async throws {
+  func testProgramFileUsesTheSameEditableNativeSourceAndWriter() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-    defer { try? FileManager.default.removeItem(at: root) }
-    let store = NotebookStore(root: root)
-    _ = try store.initializeWorkspace(actor: UUID(), pageSize: .init(width: 834, height: 1194))
+    let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
+    retainNotebookUntilTeardown(model, removing: root)
+    await model.start(pageSize: NotebookAppModel.defaultPageSize)
+    let id = try XCTUnwrap(model.createDocument(at: .zero))
+    await model.finishPendingPersistence()
+    let before = try model.store.loadDocument(id)
+    let request = try await model.insertDocumentFile(documentID: id, path: "programs/scene/main.js")
+    let session = DocumentSourceEditorSession(request: request, model: model)
     let code = "const фаза = 0.25;\nnotebook.ready(Promise.resolve());"
-    let bytes = Data(code.utf8), hash = SHA256.hash(data: bytes).map { String(format: "%02x", $0) }.joined()
-    try store.stageBlob(data: bytes, expectedHash: hash)
-    let file = NotebookProgramPackage.File(path: "scene.js", mimeType: "text/javascript", byteCount: Int64(bytes.count),
-      parts: [.init(sha256: hash, byteCount: bytes.count)])
-    let package = try store.stageProgramPackage(.init(javaScript: file.path, files: [file]))
-    let cursor = try store.currentChangeCursor()
-    let view = NSHostingView(rootView: DocumentProgramSourceView(
-      block: .interactive(id: "scene", html: "", programPackage: package), store: store, findRequest: 0))
+    session.input(code, selection: .init(location: code.utf16.count, length: 0), composing: false, scroll: 0)
+    await session.save()
+    let view = NSHostingView(rootView: DocumentNativeSourceEditor(session: session))
     let window = NSWindow(contentRect: .init(x: -20_000, y: -20_000, width: 600, height: 500),
       styleMask: .borderless, backing: .buffered, defer: false)
     window.isReleasedWhenClosed = false; window.contentView = view; window.orderBack(nil)
-    defer { window.orderOut(nil); window.close() }
+    defer { session.finish(); window.orderOut(nil); window.close() }
     func textView(_ parent: NSView) -> NSTextView? {
       if let text = parent as? NSTextView { return text }
       return parent.subviews.lazy.compactMap(textView).first
     }
     let deadline = ContinuousClock.now + .seconds(5)
     while textView(view)?.string != code, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(10)) }
-    let text = try XCTUnwrap(textView(view))
-    XCTAssertEqual(text.string, code); XCTAssertFalse(text.isEditable); XCTAssertTrue(text.isSelectable)
-    XCTAssertEqual(try store.currentChangeCursor(), cursor)
-    XCTAssertEqual(try DocumentProgramSourceText.read(file, page: 0, store: store), code)
+    let editor = try XCTUnwrap(textView(view))
+    XCTAssertEqual(editor.string, code); XCTAssertTrue(editor.isEditable); XCTAssertTrue(editor.isSelectable)
+    editor.insertText("\n// Живой исходник 🪐", replacementRange: .init(location: code.utf16.count, length: 0))
+    await session.save(); await model.finishPendingPersistence()
+    let saved = try model.store.loadDocument(id)
+    XCTAssertEqual(saved.files.first { $0.id == session.fileID }?.source, code + "\n// Живой исходник 🪐")
+    XCTAssertEqual(saved.files.filter { $0.id != session.fileID }, before.files)
+    XCTAssertTrue(try model.store.documentEditingSessions().isEmpty)
   }
 
-  func testPagedSourcePreservesEveryUTF8CharacterAcrossTheReadBoundary() throws {
-    let size = DocumentProgramSourceText.pageBytes
+  func testFileBytesPreserveUTF8AndBinaryResourcesStayExplicit() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    let store = NotebookStore(root: root)
+    _ = try store.initializeWorkspace(actor: UUID(), pageSize: .init(width: 834, height: 1194))
+    defer { try? FileManager.default.removeItem(at: root) }
     for glyph in ["я", "€", "🪐"] {
-      for distance in 0..<4 {
-        let original = String(repeating: "a", count: size-distance) + glyph + "\nconst value = 42;"
-        let bytes = Data(original.utf8)
-        var result = ""
-        for offset in stride(from: 0, to: bytes.count, by: size) {
-          result += try DocumentProgramSourceText.decodePage(bytes.subdata(in: offset..<min(bytes.count, offset+size+3)))
-        }
-        XCTAssertEqual(result, original)
-      }
+      let original = String(repeating: "a", count: 1_048_575) + glyph + "\nconst value = 42;"
+      let file = DocumentFile(id: "code", path: "programs/scene/main.js", source: original)
+      XCTAssertTrue(file.isText)
+      XCTAssertEqual(try store.readDocumentFileBytes(file), Data(original.utf8))
     }
-    XCTAssertThrowsError(try DocumentProgramSourceText.decodePage(Data([0xff])))
-    XCTAssertEqual(try DocumentProgramSourceText.decodePage(Data()), "")
-  }
-
-  func testBinaryAssetsAreNotLoadedIntoTheTextViewer() {
-    for (path, expected) in [("main.js", true), ("src/main.ts", true), ("model.gltf", true), ("source.svg", true), ("data.bin", false), ("model.glb", false), ("font.woff2", false)] {
-      let file = NotebookProgramPackage.File(path: path, mimeType: NotebookProgramPackage.mimeType(for: path), byteCount: 0, parts: [])
-      XCTAssertEqual(DocumentProgramSourceText.isText(file), expected)
-    }
+    let bytes = Data([0xff, 0, 1, 127]), hash = SHA256.hash(data: bytes).map { String(format: "%02x", $0) }.joined()
+    try store.stageBlob(data: bytes, expectedHash: hash)
+    let binary = DocumentFile(id: "data", path: "programs/scene/data.bin", resource: .init(path: "programs/scene/data.bin",
+      mimeType: "application/octet-stream", byteCount: Int64(bytes.count), parts: [.init(sha256: hash, byteCount: bytes.count)]))
+    XCTAssertFalse(binary.isText); XCTAssertTrue(binary.source.isEmpty)
+    XCTAssertEqual(try store.readDocumentFileBytes(binary), bytes)
   }
 }

@@ -26,7 +26,7 @@ struct DocumentRenderRecipeTests {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("notebook-render-recipe-\(UUID())")
     defer { try? FileManager.default.removeItem(at: root) }
     let store = NotebookStore(root: root), actor = UUID()
-    let document = DocumentDocument(actor: actor, blocks: [.markdown(id: "formula", source: "$x^2+y^2=z^2$")])
+    let document = DocumentDocument(actor: actor, files: [.init(id: "formula", path: "main.tex", source: "$x^2+y^2=z^2$")])
     let state = DocumentStateJournal(id: document.id, actor: actor)
     try publish(document, in: store, state: state)
     let acceptedDocument = try store.loadDocument(document.id), acceptedState = try store.loadDocumentState(document.id)
@@ -71,7 +71,7 @@ struct DocumentRenderRecipeTests {
   @Test func anotherDocumentPageGetsItsOwnStablePhysicalAddress() throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("notebook-render-page-\(UUID())")
     defer { try? FileManager.default.removeItem(at: root) }
-    let store = NotebookStore(root: root), document = DocumentDocument(actor: UUID(), blocks: [.markdown(id: "body", source: "Measured book")])
+    let store = NotebookStore(root: root), document = DocumentDocument(actor: UUID(), files: [.init(id: "body", path: "main.tex", source: "Measured book")])
     try publish(document, in: store)
     let target = CollaborationTarget(kind: .document, id: document.id)
     let first = try store.requestTargetRender(target: target, expectedRevision: document.contentStamp.revision)
@@ -104,7 +104,7 @@ struct DocumentRenderRecipeTests {
   func regionalProofUsesTheCurrentRecipeWithoutRewritingHistoricalBaseline(status: String, previousRenderer: String?) throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("notebook-render-baseline-\(UUID())")
     defer { try? FileManager.default.removeItem(at: root) }
-    let store = NotebookStore(root: root), document = DocumentDocument(actor: UUID(), blocks: [.markdown(id: "body", source: "$x^2$")])
+    let store = NotebookStore(root: root), document = DocumentDocument(actor: UUID(), files: [.init(id: "body", path: "main.tex", source: "$x^2$")])
     try publish(document, in: store)
     let target = CollaborationTarget(kind: .document, id: document.id), region = PageRect(x: 20, y: 20, width: 200, height: 120)
     let revision = try store.referenceRevision(target: target)

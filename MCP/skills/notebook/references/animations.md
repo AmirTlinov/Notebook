@@ -5,7 +5,7 @@ an algorithm, or an emerging form. Pause, seek, and meaningful parameters help
 the reader examine and compare those states.
 
 `animation` saves HTML/SVG and JavaScript as a board/page `web` element or a
-document `interactive` block. Code and initial state remain in Notebook beside
+set of editable document program files plus a LaTeX command. Code and initial state remain in Notebook beside
 the surrounding material.
 
 ## Starting point
@@ -32,7 +32,10 @@ Copy `wave.html`, `wave.css`, and `wave.js` beside `input.json`:
 ```
 
 For a board use `target.kind:"board"` and `anchor`. For a document use
-`target.kind:"document"` and optional `afterID`; block height is 48–2,048.
+`target.kind:"document"` and `edit:{fileID,expectedVersion,range,expectedText}`
+from the addressed LaTeX file read. Load `\usepackage{notebook}` in that
+source first. The recipe writes `programs/<id>/` and patches only that range;
+`height` is converted from CSS pixels to physical points.
 Inline `html`, `css`, and `javaScript` strings can replace paths.
 
 ```sh
@@ -44,7 +47,7 @@ node ~/.codex/skills/notebook/scripts/submit.mjs request.json
 
 The self-contained preview sends nothing to Notebook and resets state on reload.
 An existing scene's parameter changes usually need only `setElementState` or
-`setBlockState`. Use [file-backed programs](programs.md) for TS, imports, large
+`setDocumentProgramState` with the exact program resource basis. Use [file-backed programs](programs.md) for TS, imports, large
 assets, and workers.
 
 ## Authoring a scene

@@ -22,9 +22,10 @@ let package = Package(
   ],
   targets: [
     .systemLibrary(name: "CSQLite", pkgConfig: "sqlite3"),
+    .systemLibrary(name: "CZlib"),
     .target(name: "CNotebookTypesetter", publicHeadersPath: "include", linkerSettings: [.linkedLibrary("z")]),
-    .target(name: "NotebookTypesetter", dependencies: ["NotebookCore", "CNotebookTypesetter", "CQuickJS"]),
-    .target(name: "NotebookCore", dependencies: ["CSQLite"]),
+    .target(name: "NotebookTypesetter", dependencies: ["NotebookCore", "CNotebookTypesetter"]),
+    .target(name: "NotebookCore", dependencies: ["CSQLite", "CZlib"]),
     .target(name: "NotebookCodex", dependencies: ["NotebookCore"]),
     .target(name: "CQuickJS", path: "Sources/CQuickJS",
       exclude: ["LICENSE", "UPSTREAM.md"],

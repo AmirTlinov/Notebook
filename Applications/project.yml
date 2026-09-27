@@ -61,6 +61,20 @@ targets:
             UTTypeDescription: Notebook selection
             UTTypeConformsTo:
               - public.json
+          - UTTypeIdentifier: com.amirtlinov.notebook.document
+            UTTypeDescription: Notebook document
+            UTTypeConformsTo:
+              - public.zip-archive
+            UTTypeTagSpecification:
+              public.filename-extension: notex
+              public.mime-type: application/vnd.notebook.document+zip
+        CFBundleDocumentTypes:
+          - CFBundleTypeName: Notebook document
+            CFBundleTypeRole: Editor
+            LSHandlerRank: Owner
+            LSItemContentTypes:
+              - com.amirtlinov.notebook.document
+        LSSupportsOpeningDocumentsInPlace: false
         NotebookAcceptanceEnabled: $(NOTEBOOK_ACCEPTANCE_ENABLED)
         NotebookCloudContainer: $(NOTEBOOK_CLOUD_CONTAINER)
         CFBundleShortVersionString: $(MARKETING_VERSION)
@@ -86,7 +100,7 @@ targets:
         OTHER_LDFLAGS: "$(inherited) $(NOTEBOOK_TYPESETTER_RUNTIME)/$(PLATFORM_NAME)/libnotebook_typesetter_runtime.a -liconv -lresolv -framework Security"
         NOTEBOOK_DISPLAY_NAME: Notebook
         MARKETING_VERSION: 0.3.143
-        CURRENT_PROJECT_VERSION: 204
+        CURRENT_PROJECT_VERSION: 213
         CODE_SIGN_STYLE: Automatic
         CODE_SIGN_ENTITLEMENTS: $(NOTEBOOK_IPAD_ENTITLEMENTS)
         DEVELOPMENT_TEAM: M94V58FCVP
@@ -218,6 +232,19 @@ targets:
             UTTypeDescription: Notebook selection
             UTTypeConformsTo:
               - public.json
+          - UTTypeIdentifier: com.amirtlinov.notebook.document
+            UTTypeDescription: Notebook document
+            UTTypeConformsTo:
+              - public.zip-archive
+            UTTypeTagSpecification:
+              public.filename-extension: notex
+              public.mime-type: application/vnd.notebook.document+zip
+        CFBundleDocumentTypes:
+          - CFBundleTypeName: Notebook document
+            CFBundleTypeRole: Editor
+            LSHandlerRank: Owner
+            LSItemContentTypes:
+              - com.amirtlinov.notebook.document
         NotebookAcceptanceEnabled: $(NOTEBOOK_ACCEPTANCE_ENABLED)
         NotebookCloudContainer: $(NOTEBOOK_CLOUD_CONTAINER)
         NotebookScriptService: com.amirtlinov.notebook.script-service$(NOTEBOOK_SCRIPT_BUNDLE_SUFFIX)
@@ -235,7 +262,7 @@ targets:
         PRODUCT_NAME: Notebook
         OTHER_LDFLAGS: "$(inherited) $(NOTEBOOK_TYPESETTER_RUNTIME)/$(PLATFORM_NAME)/libnotebook_typesetter_runtime.a -liconv -lresolv -framework Security"
         MARKETING_VERSION: 0.3.143
-        CURRENT_PROJECT_VERSION: 204
+        CURRENT_PROJECT_VERSION: 213
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: M94V58FCVP
         GENERATE_INFOPLIST_FILE: false
@@ -329,6 +356,7 @@ targets:
     platform: iOS
     sources:
       - path: AcceptanceUITests
+      - path: UITests/NotebookInteractionActions.swift
     dependencies:
       - target: Notebook
     settings:

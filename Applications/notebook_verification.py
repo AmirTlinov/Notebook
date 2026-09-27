@@ -152,8 +152,8 @@ PROFILES = {
     },
     "documents": {
         "commands": ["document-browser"],
-        "core": ["DocumentRenderRecipeTests", "DocumentDocumentTests", "DocumentEditingSessionTests",
-                 "NotebookDocumentBlockReadTests", "NotebookDocumentStateCommandTests"],
+        "core": ["DocumentRenderRecipeTests", "DocumentDocumentTests", "DocumentFilesTests",
+                 "DocumentFormatMigrationTests", "NotebookPortableDocumentTests"],
         "mac": ["NotebookMacTests/DocumentLargeSourceTests", "NotebookMacTests/DocumentRenderSessionTests",
                 "NotebookMacTests/DocumentLinkNavigationTests",
                 "NotebookMacTests/DocumentSnapshotTests", "NotebookMacTests/AddressedTargetRenderTests",
@@ -295,7 +295,7 @@ def owners(path):
                 "NotebookAttentionProjection.swift", "NotebookAttentionSelection.swift", "NotebookCoverPresentation.swift",
                 "PagePresentation.swift"):
         return ["submitted-pixels"]
-    if name in ("NotebookDocumentBlockReadTests.swift", "NotebookDocumentStateCommand.swift", "NotebookDocumentStateCommandTests.swift",
+    if name in ("NotebookDocumentFileRead.swift", "NotebookDocumentStateCommand.swift", "DocumentFilesTests.swift",
                 "PhysicalWebViewport.swift", "NotebookDocumentOpeningTests.swift"):
         return ["documents"]
     if name in ("SceneCompositionTiles.swift", "SceneCompositionSource.swift", "SceneCompositionTests.swift"):

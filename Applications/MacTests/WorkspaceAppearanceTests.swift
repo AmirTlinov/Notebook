@@ -159,7 +159,7 @@ final class WorkspaceAppearanceTests: XCTestCase {
     let width = 260.0, height = 380.0
     let proof = HStack(alignment: .top, spacing: 30) {
       ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
-        let geometry = WorkspaceItemGeometry.document(index.isMultiple(of: 2) ? .a4 : .letter)
+        let geometry = WorkspaceItemGeometry.document(widthPoints: index.isMultiple(of: 2) ? 595.275590551 : 612, heightPoints: index.isMultiple(of: 2) ? 841.88976378 : 792)
         self.cover(item: item, geometry: geometry, model: model)
           .background { WorkspaceItemShadow(geometry: geometry) }
           .scaleEffect(width / geometry.width, anchor: .topLeading)
@@ -170,10 +170,9 @@ final class WorkspaceAppearanceTests: XCTestCase {
     let image = try attachRendering(proof, size: size, name: "document-title-pages")
     let sx = Double(image.pixelsWide) / size.width, sy = Double(image.pixelsHigh) / size.height
     for (index, item) in items.enumerated() {
-      let geometry = WorkspaceItemGeometry.document(index.isMultiple(of: 2) ? .a4 : .letter)
+      let geometry = WorkspaceItemGeometry.document(widthPoints: index.isMultiple(of: 2) ? 595.275590551 : 612, heightPoints: index.isMultiple(of: 2) ? 841.88976378 : 792)
       let x = 36 + Double(index) * (width + 30), paperHeight = geometry.height * width / geometry.width
       let material = WorkspaceCoverRaster.material(item: item, geometry: geometry)
-      XCTAssertEqual(geometry.paperSize, index.isMultiple(of: 2) ? .a4 : .letter)
       XCTAssertEqual(Double(material.width) / Double(material.height), geometry.width / geometry.height, accuracy: 0.002)
       var titlePixels = 0
       for py in Int((36 + paperHeight * 0.28) * sy)..<Int((36 + paperHeight * 0.60) * sy) {
@@ -197,8 +196,8 @@ final class WorkspaceAppearanceTests: XCTestCase {
     await model.start(pageSize: NotebookAppModel.defaultPageSize)
     let cases: [(WorkspaceItem, WorkspaceItemGeometry)] = [
       (.notebook(title: "Тетрадь", pageIDs: [UUID()]), .notebook),
-      (.document(title: "A4"), .document(.a4)),
-      (.document(title: "Letter"), .document(.letter)),
+      (.document(title: "A4"), .document(widthPoints: 595.275590551, heightPoints: 841.88976378)),
+      (.document(title: "Letter"), .document(widthPoints: 612, heightPoints: 792)),
     ]
     for (item, geometry) in cases {
       let scale = 0.5, padding = 12.0
@@ -228,42 +227,51 @@ final class WorkspaceAppearanceTests: XCTestCase {
   }
 
   @MainActor
-  func testDocumentModelRestoresThePaperFitAfterWindowRotation() async throws {
-    for paper in DocumentPaperSize.allCases {
+  func testDocumentModelRestoresTheCompiledPaperFitAfterWindowRotation() async throws {
+    for (width, height) in [(300.0, 500.0), (612.0, 792.0)] {
       let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-      let store = NotebookStore(root: root)
-      let model = NotebookAppModel(store: store, startsNearbySync: false)
-      let sizes = [PageSize(width: 1_366, height: 1_024), NotebookAppModel.defaultPageSize]
-      let restoredModels = sizes.map { _ in NotebookAppModel(store: store, startsNearbySync: false) }
-      let models = [model] + restoredModels
+      let store = NotebookStore(root: root), actor = UUID()
+      var (index, _) = try store.loadOrCreate(actor: actor, pageSize: NotebookAppModel.defaultPageSize)
+      var board = try store.loadBoard(items: index.items)
+      let item = try XCTUnwrap(index.createDocument(title: "Custom source geometry", actor: actor))
+      XCTAssertTrue(board.addItem(item.id, to: index.rootBoardID, near: .zero, actor: actor))
+      let document = DocumentTestFiles.document(id: item.id, actor: actor, contents: [.tex(id: "body", source: "A saved reading position.")], width: width, height: height)
+      try store.saveDocumentWorkspaceBundle(index: index, document: document, state: .init(id: item.id, actor: actor), board: board)
+      let geometry = WorkspaceItemGeometry.document(widthPoints: width, heightPoints: height)
+      let portrait = SpatialPoint(x: 834, y: 1194)
+      try store.savePresence(.init(boardID: index.rootBoardID, mode: .document,
+        camera: .init(scale: geometry.fitScale(viewport: portrait)), viewport: portrait, focusedItemID: item.id, openProgress: 1))
+      let sizes = [NotebookAppModel.defaultPageSize, PageSize(width: 1366, height: 1024), NotebookAppModel.defaultPageSize]
+      let models = sizes.map { _ in NotebookAppModel(store: store, startsNearbySync: false) }
       addTeardownBlock { @MainActor in
-        var allStopped = true
-        for owner in models {
-          let stopped = await owner.shutdown()
-          allStopped = stopped && allStopped
-        }
-        XCTAssertTrue(allStopped, "Every restored model must drain before removing their shared store")
-        guard allStopped else { return }
-        try FileManager.default.removeItem(at: root)
+        var stopped = true
+        for model in models { stopped = await model.shutdown() && stopped }
+        XCTAssertTrue(stopped)
+        if stopped { try FileManager.default.removeItem(at: root) }
       }
-      await model.start(pageSize: NotebookAppModel.defaultPageSize)
-      let id = try XCTUnwrap(model.createDocument(at: .zero, paperSize: paper))
-      let geometry = WorkspaceItemGeometry.document(paper)
-      let portrait = SpatialPoint(x: 834, y: 1_194)
-      model.updatePresence(SessionPresence(mode: .document,
-        camera: SpatialCamera(scale: geometry.fitScale(viewport: portrait)),
-        viewport: portrait, focusedItemID: id, openProgress: 1), settled: true)
-      let creationSaved = await model.shutdown()
-      XCTAssertTrue(creationSaved, model.persistenceFailure ?? "")
-      guard creationSaved else { return }
-      for (size, restored) in zip(sizes, restoredModels) {
-        await restored.start(pageSize: size)
-        XCTAssertEqual(restored.itemGeometry(id), geometry)
-        let presence = try XCTUnwrap(restored.presence)
-        XCTAssertEqual(presence.camera.scale, geometry.fitScale(viewport: SpatialPoint(x: size.width, y: size.height)), accuracy: 1e-12)
-        let restoredSaved = await restored.shutdown()
-        XCTAssertTrue(restoredSaved)
-        guard restoredSaved else { return }
+      for (iteration, pair) in zip(sizes, models).enumerated() {
+        let (size, model) = pair
+        await model.start(pageSize: size)
+        await model.prepareDocumentOpening(item.id, pageIndex: 0)?.value
+        let current = try XCTUnwrap(model.documents[item.id])
+        let snapshot = DocumentSourceSnapshot(current, store: store)
+        _ = try await snapshot.printedSource(resources: .shared)
+        let layout = try XCTUnwrap(snapshot.layout)
+        model.acceptDocumentReadingLayout(.init(pageCount: layout.pageCount,
+          sourceRevision: NotebookAppModel.documentPageSourceRevision(current), record: layout), documentID: item.id)
+        if iteration == 0 {
+          model.updatePresence(.init(boardID: index.rootBoardID, mode: .document,
+            camera: .init(scale: geometry.fitScale(viewport: portrait)), viewport: portrait,
+            focusedItemID: item.id, openProgress: 1), settled: true)
+        }
+        XCTAssertEqual(model.itemGeometry(item.id).width, geometry.width, accuracy: 0.05)
+        XCTAssertEqual(model.itemGeometry(item.id).height, geometry.height, accuracy: 0.05)
+        let presence = try XCTUnwrap(model.presence)
+        XCTAssertEqual(presence.camera.scale, geometry.fitScale(viewport: .init(x: size.width, y: size.height)), accuracy: 0.0001)
+        XCTAssertNotNil(model.documentReadingPosition(item.id))
+        let saved = await model.shutdown()
+        XCTAssertTrue(saved, model.persistenceFailure ?? "")
+        if !saved { return }
       }
     }
   }

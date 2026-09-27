@@ -78,12 +78,13 @@ class PairCLI(preview.FakeCLI):
         elif label == "codex-resources":
             snapshot = Path(cwd)
             assert argv == [sys.executable, "-B", str(snapshot / "Applications/prepare_notebook_codex.py"),
-                            "--stage", str(snapshot / ".build/notebook-codex-runtime")]
+                            "--stage", str(self.source / ".build/notebook-codex-runtime")]
             exit_code = 1 if self.codex_prepare_fail else 0
         elif label == "typescript-resources":
             assert "--prepare" in argv and "--stage-root" in argv
             output = json.dumps({"status": "ready", "stage": str(self.source / ".build/fixture-typescript-runtime")}).encode()
         elif label == "build-mac":
+            assert "NOTEBOOK_CODEX_RUNTIME=" + str(self.source / ".build/notebook-codex-runtime") in argv
             if self.mac_fail:
                 exit_code = 1
             else:
