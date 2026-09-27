@@ -1,0 +1,90 @@
+{
+  "format": 1,
+  "recordedAt": "2026-09-27T23:58:49.899786+00:00",
+  "baseCommit": "e57df8e36a11ea02d354be54ca4ea275f31f6dca",
+  "productCommit": "044724d93f7b22ef502ef21bd6e2e812cab08f06",
+  "candidateVersion": "0.3.146 (216)",
+  "installedVersion": "0.3.146 (216)",
+  "issue": "GUI-314",
+  "status": "installed-matched-pair-selected-gesture-passed",
+  "cause": "Closing settlement replaced raw zoom-out scale with coverScale, causing a zoom-in after finger release.",
+  "repair": "NotebookZoomPassage.closed uses min(raw camera scale, cover boundary); preserves camera center and any farther zoom-out.",
+  "runs": [
+    {
+      "path": "/private/tmp/notebook-exit-camera-216-20260927T2340Z",
+      "sourceSHA256": "f8a4113c323015db33f494ea9555c10bbad6f49b8e158110f8356788100b53b5",
+      "passed": 3,
+      "failed": 1,
+      "skipped": 0,
+      "runtimeWarnings": [],
+      "boundary": "Native notebook and real notebook/document gestures passed. Native document compared initial neutral A4 with measured Letter geometry; final frame assertions failed."
+    },
+    {
+      "path": "/private/tmp/notebook-exit-camera-216-20260927T2347Z",
+      "sourceSHA256": "c86d979725fd065fe1534475cabd1daeeb43b654c38d4d8724d3ef235c7690af",
+      "passed": 1,
+      "failed": 0,
+      "skipped": 0,
+      "runtimeWarnings": [],
+      "boundary": "Only document native rerun after correcting the fixture initial measured-geometry precondition. Final reopen assertion unchanged; product and UI sources unchanged.",
+      "verificationSHA256": "6efc5e354f5bbbca8dec75847f889f35cd697906057bc774df68fbe92c2d500d"
+    },
+    {
+      "path": "/private/tmp/notebook-exit-camera-216-20260927T2351Z",
+      "sourceSHA256": "c86d979725fd065fe1534475cabd1daeeb43b654c38d4d8724d3ef235c7690af",
+      "passed": 1,
+      "failed": 0,
+      "skipped": 0,
+      "runtimeWarnings": [],
+      "boundary": "Only real notebook pinch exit/repeated zoom-out/reopen rerun to satisfy signed-release gesture receipt; same complete source inventory as preceding native run.",
+      "verificationSHA256": "3b6e7d80b948efd78d05e80c656b4695d48fbd570f2e13393ddccaf631cda8f3"
+    }
+  ],
+  "changedInputsAfterInitialRun": [
+    "Applications/Tests/NotebookPaperCameraTests.swift"
+  ],
+  "finalSourceSHA256": "c86d979725fd065fe1534475cabd1daeeb43b654c38d4d8724d3ef235c7690af",
+  "initialBuildAdmission": "Native-only final receipt was rejected because changed UI fixture required a named gesture; no app built/installed on that attempt. The named gesture was then rerun unchanged.",
+  "fullAcceptance": false,
+  "physicalImage": {
+    "path": "/private/tmp/notebook-exit-camera-216-ui-images/A0CC1A01-3773-4418-AF37-C180D143B47D.png",
+    "reviewed": true,
+    "observation": "Closed cover remains small on board after strong and repeated zoom-out."
+  },
+  "build": {
+    "path": "/private/tmp/notebook-exit-camera-pair-216-20260927T2353Z/build.json",
+    "sha256": "8b4904d2cd2bb6987e0fc3c36f54fc9722511c1d3f86337978cc2d2b33b46bcd",
+    "status": "verified-build"
+  },
+  "installation": {
+    "build": "216",
+    "buildReceiptSHA256": "8b4904d2cd2bb6987e0fc3c36f54fc9722511c1d3f86337978cc2d2b33b46bcd",
+    "dataAccess": "none",
+    "finishedAt": "2026-09-27T23:58:13.285562+00:00",
+    "fullAcceptance": false,
+    "installationAttempted": true,
+    "ipadInstalledBuild": "216",
+    "macInstalledBuild": "216",
+    "macPID": 14581,
+    "previousBuild": "215",
+    "sourceSHA256": "c86d979725fd065fe1534475cabd1daeeb43b654c38d4d8724d3ef235c7690af",
+    "status": "matched-pair-launched",
+    "verificationSHA256": "3b6e7d80b948efd78d05e80c656b4695d48fbd570f2e13393ddccaf631cda8f3",
+    "path": "/private/tmp/notebook-exit-camera-install-216-20260927T2357Z/installation.json",
+    "sha256": "1cd30f741d78a1b75bc5fc519d3f4dd016d455ebe7b4e8d218b157604ffeeb8f"
+  },
+  "installedMCPStatus": "ready",
+  "ipadDeveloperApps": [
+    {
+      "name": "Notebook Lab",
+      "bundleIdentifier": "com.amirtlinov.notebook.preview",
+      "version": "0.3.146",
+      "build": "216"
+    }
+  ],
+  "ipadPresentation": {
+    "status": "ready",
+    "checkedAt": "2026-09-27T23:58:50Z",
+    "boundary": "Current authenticated session; gesture acceptance is recorded separately in the physical tests."
+  }
+}
