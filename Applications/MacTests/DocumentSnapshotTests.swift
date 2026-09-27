@@ -6,10 +6,11 @@ import XCTest
 final class DocumentSnapshotTests: XCTestCase {
   @MainActor
   private func measuredLayout(_ document: DocumentDocument) throws -> DocumentLayoutRecord {
-    let geometry = WorkspaceItemGeometry.document(document.paperSize)
+    let paper = DocumentPaperLayout.uncompiled, geometry = paper.geometry
     return try DocumentLayoutRecord(receipt: ["sourceKey": "cache-fixture", "layoutScope": "source", "layoutCanonical": true, "anchors": [], "reading": [],
-      "pageCount": 3, "width": geometry.width, "height": geometry.height, "regions": []] as NSDictionary,
-      sourceKey: "cache-fixture", blockIDs: Set(document.blocks.map(\.id)), geometry: geometry)
+      "pageCount": 3, "width": geometry.width, "height": geometry.height,
+      "pages": Array(repeating: ["widthPoints": paper.widthPoints, "heightPoints": paper.heightPoints], count: 3), "regions": []] as NSDictionary,
+      sourceKey: "cache-fixture", blockIDs: Set(document.files.map(\.id)), geometry: geometry)
   }
 
   private func bitmap(width: Int, height: Int) -> NSImage {
@@ -45,11 +46,11 @@ final class DocumentSnapshotTests: XCTestCase {
   @MainActor
   func testSnapshotBelongsToExactContentAndStateRevisions() throws {
     let actor = UUID()
-    var document = DocumentDocument(
+    var document = DocumentTestFiles.document(
       id: UUID(),
       actor: actor,
-      blocks: [.markdown(id: "body", source: "# Первый кадр"),
-        .interactive(id: "counter", html: "<button>Counter</button>", height: 100)]
+      contents: [.tex(id: "body", source: "\\section{Первый кадр}"),
+        .program(id: "counter", html: "<button>Counter</button>", height: 100)]
     )
     var state = DocumentStateJournal(id: document.id, actor: actor)
     let image = bitmap(width: 834, height: 1_194)
@@ -72,9 +73,9 @@ final class DocumentSnapshotTests: XCTestCase {
       )
     )
 
-    XCTAssertTrue(document.replaceBlockSource(
+    XCTAssertTrue(document.replaceFileSource(
       id: "body",
-      source: "# Второй кадр",
+      source: "\\section{Второй кадр}",
       actor: actor
     ))
     XCTAssertNil(
@@ -96,11 +97,13 @@ final class DocumentSnapshotTests: XCTestCase {
       documentID: document.id,
       token: secondToken, layout: try measuredLayout(document)
     )
-    XCTAssertTrue(state.commit(blockID: "unrelated", value: .number(1), actor: actor))
-    XCTAssertNotNil(DocumentSnapshotCache.shared.image(for: document, state: state, pageIndex: 0),
-      "A record outside the document's actual programs cannot invalidate its image")
+    XCTAssertTrue(state.commit(instanceID: "unrelated", value: .number(1), actor: actor))
+    XCTAssertNil(DocumentSnapshotCache.shared.image(for: document, state: state, pageIndex: 0),
+      "Until a compiler map identifies live instances, a new journal record conservatively invalidates the old image")
+    DocumentSnapshotCache.shared.store(image: image, documentID: document.id,
+      token: DocumentSnapshotCache.token(document: document, state: state, pageIndex: 0), layout: try measuredLayout(document))
     XCTAssertTrue(state.commit(
-      blockID: "counter",
+      instanceID: "counter",
       value: .number(1),
       actor: actor
     ))

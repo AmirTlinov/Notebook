@@ -173,8 +173,8 @@ final class DocumentShellPreparationTests: XCTestCase {
 
 @MainActor
 private final class PreparedShellPageFixture {
-  let document = DocumentDocument(actor: UUID(), blocks: [.markdown(id: "body",
-    source: "# Adopted physical document\n\nA real canonical page with \\(x^2 + y^2\\).")])
+  let document = DocumentTestFiles.document(actor: UUID(), contents: [.tex(id: "body",
+    source: "\\section{Adopted physical document}\\hypertarget{adopted-physical-document}{}\n\nA real canonical page with \\(x^2 + y^2\\).")])
   private let coordinator = DocumentPhysicalPageCoordinator()
   private let host = DocumentWebHost()
   private let window: UIWindow
@@ -192,7 +192,7 @@ private final class PreparedShellPageFixture {
     previousKeyWindow = scene.windows.first { $0.isKeyWindow }
     window = UIWindow(windowScene: scene)
     let controller = UIViewController(); window.rootViewController = controller
-    let geometry = WorkspaceItemGeometry.document(document.paperSize)
+    let geometry = WorkspaceItemGeometry.uncompiledDocument
     host.frame = .init(x: 20, y: 20, width: 340, height: 340 * geometry.height / geometry.width)
     controller.view.addSubview(host); window.makeKeyAndVisible()
     coordinator.update(.init(document: document, state: .init(id: document.id, actor: UUID()), pageIndex: 0,

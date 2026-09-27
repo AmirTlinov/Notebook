@@ -157,24 +157,26 @@ struct NotebookObservationReadTests {
     #expect(deleted.objects.first?.change == .deleted)
   }
 
-  @Test func documentStateNestedRecordsAndEscapedIDsAreOneDeltaObject() throws {
+  @Test func documentFilesWithEscapedIDsHaveIndependentVersionDeltas() throws {
     let f = try Fixture(), id = "program/a~b"
     var index = try f.store.loadIndex(), board = try f.store.loadBoard(items: index.items)
-    let created = index.createDocument(title: "Programs", actor: f.actor)
+    let created = index.createDocument(title: "Files", actor: f.actor)
     let document = try #require(created)
     let added = board.addItem(document.id, to: index.rootBoardID, near: .zero, actor: f.actor)
     #expect(added)
     try f.store.saveDocumentWorkspaceBundle(index: index, document: .init(id: document.id, actor: f.actor,
-      blocks: [.interactive(id: id, html: "<p>Program</p>")]), state: .init(id: document.id, actor: f.actor), board: board)
-    let scope = NotebookObservationScope(target: .init(kind: .document, id: document.id), ids: [id], fields: [.state])
+      files: [.init(id: id, path: "main.tex", source: "Before"), .init(id: "other", path: "other.tex", source: "Unrequested")]),
+      state: .init(id: document.id, actor: f.actor), board: board)
+    let scope = NotebookObservationScope(target: .init(kind: .document, id: document.id), ids: [id], fields: [.version])
     let before = try f.store.observeContent(scope: scope)
-    var state = try f.store.loadDocumentState(document.id)
-    let changed = state.commit(blockID: id, value: .object(["records": .array([.object(["id": .string("child"), "n": .number(3)])])]), actor: f.actor)
+    var source = try f.store.loadDocument(document.id)
+    let changed = source.replaceFileSource(id: id, source: "After", actor: f.actor)
     #expect(changed)
-    try f.store.saveDocumentState(state)
+    try f.store.saveDocument(source)
     let delta = try f.store.observeContent(scope: scope, since: before.checkpoint)
     #expect(delta.objects.map(\.id) == [id])
-    #expect(delta.objects.first?.value?["state"] == state.value(for: id))
+    #expect(delta.objects.first?.value?["sourceVersion"] == (try JSONValue.encode(source.fileVersion(fileID: id))))
+    #expect(delta.objects.first?.value?["content"] == nil)
   }
 
   @Test func presenceGenerationDoesNotAdvanceContentCheckpointAndCannotABA() throws {

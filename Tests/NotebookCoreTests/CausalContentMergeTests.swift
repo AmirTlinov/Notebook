@@ -221,7 +221,7 @@ import Testing
   @Test func documentSourceAndBoardGeometryRetainTheSameIndependentHuman() throws {
     let id = UUID()
     let documents = try versions.enumerated().map { index, version in
-      let document = DocumentDocument(id: id, actor: x, blocks: [.markdown(id: "body", source: ["a", "b", "c"][index])])
+      let document = DocumentDocument(id: id, actor: x, files: [DocumentFile(id: "body", path: "body" + ".tex", source: ["a", "b", "c"][index])])
       return try JSONValue.encode(document).setting("contentStamp", .encode(version.stamp))
         .setting("collaboration", .encode(CollaborativeContent(fields: ["blocks/body/content": version]))).decode(DocumentDocument.self)
     }
@@ -240,11 +240,11 @@ import Testing
       for offset in order.dropFirst() {
         _ = document.merge(documents[offset]); _ = try board.merge(boards[offset], itemIDs: [])
       }
-      #expect(document.blocks.first?.source == "c")
+      #expect(document.files.first?.source == "c")
       #expect(board.elements.first?.frame.x == 200)
       for offset in 0..<3 {
         _ = document.merge(documents[offset]); _ = try board.merge(boards[offset], itemIDs: [])
-        #expect(document.blocks.first?.source == "c")
+        #expect(document.files.first?.source == "c")
         #expect(board.elements.first?.frame.x == 200)
       }
     }

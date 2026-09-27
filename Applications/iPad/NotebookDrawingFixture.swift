@@ -320,55 +320,53 @@
           ) != nil else {
             fatalError("Не удалось создать документ проверки")
           }
-          let document = DocumentDocument(
-            id: documentID,
-            actor: actor,
-            paperSize: ProcessInfo.processInfo.arguments.contains(documentLetterArgument) ? .letter : .a4,
-            blocks: packageFixture ? [
-              .interactive(id: "compiled", html: "", programPackage: packageHash, height: 600)
-            ] : lcFixture ? [
-              .interactive(id: "lc", html: try lcSource("html"), css: try lcSource("css"),
-                javaScript: try lcSource("js"), height: 720)
-            ] : ProcessInfo.processInfo.arguments.contains(documentLinksArgument)
-              ? [
-                .markdown(id: "contents", source: "<h1 id='contents'>Оглавление проверки</h1><p><a href='#глава:предел'>К дальней главе</a></p><p><a href='#missing'>Отсутствующий раздел</a></p>"),
-                .markdown(id: "body", source: String(repeating: "Промежуточный текст занимает настоящие листы и не является целью ссылки.\n\n", count: 120)),
-                .markdown(id: "destination", source: "<h1 id='глава:предел'>Дальняя глава</h1><p><a href='#contents'>К оглавлению</a></p>Содержание найдено по адресу, а не по номеру листа.")
-              ]
-              : ProcessInfo.processInfo.arguments.contains(documentProseArgument)
-              ? (1...3).map { chapter in
-                .markdown(id: "chapter-\(chapter)", source:
-                  "# Глава \(chapter)\n\n*Текст самостоятельной главы*\n\n" +
-                  (1...4).map { section in
-                    "## Тема \(chapter).\(section)\n\n" +
-                    String(repeating: "Один лист содержит свою часть общего текста. Следующий лист продолжает мысль с того места, где закончился предыдущий. ", count: 2)
-                  }.joined(separator: "\n\n"))
-              }
-              : [
-              .markdown(
-                id: "introduction",
-                source: "# Живая математика\n\nДокумент соединяет текст, формулы и управление."
-              ),
-              .latex(
-                id: "equation",
-                source: #"\begin{aligned} f(x) &= x^2 \\ f'(x) &= 2x \end{aligned}"#
-              ),
-              .interactive(
-                id: "square",
-                html: "<label for='x'>x = <output id='value'>3</output></label><input id='x' type='range' min='0' max='10' value='3'><p>x² = <strong id='square'>9</strong></p>",
-                css: "body{font:22px -apple-system;padding:18px}input{width:100%}",
-                javaScript: "const x=document.querySelector('#x');const value=document.querySelector('#value');const square=document.querySelector('#square');x.addEventListener('input',()=>{value.textContent=x.value;square.textContent=Number(x.value)**2;notebook.commit({x:Number(x.value)})});notebook.ready(Promise.resolve())",
-                initialState: .object(["x": .number(3)]),
-                height: 190
-              ),
-              .markdown(
-                id: "continuation",
-                source: (1...36).map { paragraph in
-                  "## Раздел \(paragraph)\n\nЭто текст следующей физической страницы. Он проверяет, что содержание течёт из листа в лист, а размер бумаги остаётся конечным."
-                }.joined(separator: "\n\n")
-              ),
-            ]
-          )
+          var files: [DocumentFile] = []
+          var body: String
+          if packageFixture, let packageHash {
+            let package = try store.readProgramPackage(packageHash)
+            for (offset, file) in package.files.enumerated() {
+              let path = "programs/compiled/" + file.path
+              let resource = NotebookProgramPackage.File(path: path, mimeType: file.mimeType, byteCount: file.byteCount, parts: file.parts)
+              if file.mimeType.hasPrefix("text/") || ["application/json", "application/javascript", "image/svg+xml"].contains(file.mimeType),
+                let source = String(data: try store.readDocumentFileBytes(.init(id: "resource", path: path, resource: resource)), encoding: .utf8) {
+                files.append(.init(id: "compiled-\(offset)", path: path, source: source))
+              } else { files.append(.init(id: "compiled-\(offset)", path: path, resource: resource)) }
+            }
+            let config: JSONValue = .object(["html": package.html.map(JSONValue.string) ?? .null,
+              "css": package.css.map(JSONValue.string) ?? .null, "javaScript": package.javaScript.map(JSONValue.string) ?? .null,
+              "module": .bool(package.module)])
+            files.append(.init(id: "compiled-config", path: "programs/compiled/program.json",
+              source: String(decoding: try JSONEncoder().encode(config), as: UTF8.self)))
+            body = #"\NotebookInteractive[id=compiled,width=\linewidth,height=600pt]{programs/compiled}"#
+          } else if lcFixture {
+            files += [.init(id: "lc-html", path: "programs/lc/index.html", source: try lcSource("html")),
+              .init(id: "lc-css", path: "programs/lc/style.css", source: try lcSource("css")),
+              .init(id: "lc-js", path: "programs/lc/main.js", source: try lcSource("js"))]
+            body = #"\NotebookInteractive[id=lc,width=\linewidth,height=500pt]{programs/lc}"#
+          } else if ProcessInfo.processInfo.arguments.contains(documentLinksArgument) {
+            body = "\\section{Оглавление проверки}\\label{contents}\n\\hyperref[destination]{К дальней главе}\n"
+              + String(repeating: "Промежуточный текст занимает настоящие листы.\n\n", count: 120)
+              + "\\section{Дальняя глава}\\label{destination}\n\\hyperref[contents]{К оглавлению}"
+          } else if ProcessInfo.processInfo.arguments.contains(documentProseArgument) {
+            body = (1...3).map { chapter in
+              "\\section{Глава \(chapter)}\n" + (1...4).map { section in
+                "\\subsection{Тема \(chapter).\(section)}\n" + String(repeating: "Один лист содержит свою часть общего текста. Следующий лист продолжает мысль. ", count: 4)
+              }.joined(separator: "\n\n")
+            }.joined(separator: "\n\\clearpage\n")
+          } else {
+            files += [.init(id: "square-html", path: "programs/square/index.html", source: "<label for='x'>x = <output id='value'>3</output></label><input id='x' type='range' min='0' max='10' value='3'><p>x² = <strong id='square'>9</strong></p>"),
+              .init(id: "square-css", path: "programs/square/style.css", source: "body{font:22px -apple-system;padding:18px}input{width:100%}"),
+              .init(id: "square-js", path: "programs/square/main.js", source: "const x=document.querySelector('#x');const value=document.querySelector('#value');const square=document.querySelector('#square');x.addEventListener('input',()=>{value.textContent=x.value;square.textContent=Number(x.value)**2;notebook.commit({x:Number(x.value)})});notebook.ready(Promise.resolve())"),
+              .init(id: "square-config", path: "programs/square/program.json", source: #"{"initialState":{"x":3}}"#)]
+            body = #"\section{Живая математика}"# + "\nДокумент соединяет текст, формулы и управление.\n"
+              + #"\[f(x)=x^2,\quad f'(x)=2x\]"# + "\n"
+              + #"\NotebookInteractive[id=square,width=\linewidth,height=150pt]{programs/square}"# + "\n"
+              + (1...36).map { "\\section{Раздел \($0)}\nСодержание течёт из листа в лист, а размер бумаги остаётся конечным." }.joined(separator: "\n\n")
+          }
+          let paper = ProcessInfo.processInfo.arguments.contains(documentLetterArgument) ? "letterpaper" : "a4paper"
+          let source = "\\documentclass{article}\n\\usepackage{fontspec}\n\\setmainfont{Libertinus Serif}\n\\usepackage[\(paper),margin=25mm]{geometry}\n\\usepackage{amsmath}\n\\usepackage{hyperref}\n\\usepackage{notebook}\n\\begin{document}\n\(body)\n\\end{document}\n"
+          files.insert(.init(id: "main", path: "main.tex", source: source), at: 0)
+          let document = DocumentDocument(id: documentID, actor: actor, files: files)
           let state = DocumentStateJournal(id: documentID, actor: actor)
           let board = BoardDocument.initial(
             itemIDs: [itemID, documentID],
@@ -391,7 +389,7 @@
               mode: .document,
               camera: SpatialCamera(
                 center: center,
-                scale: WorkspaceItemGeometry.document(document.paperSize).fitScale(viewport: viewport)
+                scale: WorkspaceItemGeometry.uncompiledDocument.fitScale(viewport: viewport)
               ),
               viewport: viewport,
               focusedItemID: documentID,

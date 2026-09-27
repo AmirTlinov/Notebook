@@ -32,7 +32,7 @@ extension NotebookStore {
         let continuations = try actionContinuations(action)
         let references = try actionResultReferences(action).flatMap { reference in
           guard reference.elementID == nil, action.action.operations.contains(where: {
-            [.reorderElements,.reorderBlocks].contains($0.kind) && $0.target == reference.target
+            [.reorderElements].contains($0.kind) && $0.target == reference.target
           }) else { return [reference] }
           // Reordering never expands an entire owner just to paint a flash.
           // The already bounded scene supplies the only candidate material.
@@ -50,7 +50,7 @@ extension NotebookStore {
             let owner = original.target.boardID ?? original.target.id
             if continuations.contains(where: { continuation in
               (continuation.elementID == collaborationIdentity(id) || (continuation.path.last == .order
-                && action.action.operations.contains { [.reorderElements,.reorderBlocks].contains($0.kind) && $0.target == original.target })) && (
+                && action.action.operations.contains { [.reorderElements].contains($0.kind) && $0.target == original.target })) && (
                 continuation.file.contains(original.target.id.uuidString.lowercased())
                 || continuation.path.contains(.member(owner.uuidString.lowercased())))
             }) { return nil }
@@ -67,7 +67,7 @@ extension NotebookStore {
           // Removed content has no new material to paint. Never highlight its
           // entire owner as a substitute for the absent object.
           if action.action.operations.contains(where: {
-            [.removeElement, .removeBlock, .deleteItem].contains($0.kind)
+            [.removeElement, .removeDocumentFile, .deleteItem].contains($0.kind)
               && $0.target == reference.target && ($0.id == reference.elementID || reference.elementID == nil)
           }) { return nil }
           let owner = reference.target.kind == .cover

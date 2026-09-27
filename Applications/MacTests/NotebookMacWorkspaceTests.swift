@@ -43,7 +43,7 @@ import SwiftUI
   }
 
   func testReaderResizeConstrainsTheOldScrollWithoutReservingAFooter() {
-    let center = WorldPoint(x: 1800, y: -2400), geometry = WorkspaceItemGeometry.document(.a4)
+    let center = WorldPoint(x: 1800, y: -2400), geometry = WorkspaceItemGeometry.document(widthPoints: 595.275590551, heightPoints: 841.88976378)
     let original = SpatialPoint(x: 1100, y: 780)
     let camera = MacReadingCamera.fitted(center: center, geometry: geometry, viewport: original, fit: .width)
     let scrolled = MacReadingCamera.constrained(.init(center: center.offsetBy(x: 0, y: 100_000), scale: camera.scale),

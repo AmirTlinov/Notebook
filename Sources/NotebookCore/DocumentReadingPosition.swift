@@ -1,28 +1,28 @@
 import Foundation
 
 /// An address in content, not in the current pagination. The compact node
-/// fingerprint survives preceding insertions; the block text offset supplies
+/// fingerprint survives preceding insertions; the file text offset supplies
 /// a deterministic fallback when that particular text has been edited.
 public struct DocumentReadingAnchor: Codable, Equatable, Sendable {
-  public let blockID: String
+  public let fileID: String
   public let nodeID: String
   public let textOffset: Int
   public let offset: Int
-  public let blockOrder: [String]
+  public let fileOrder: [String]
 
-  public init(blockID: String, nodeID: String, textOffset: Int, offset: Int, blockOrder: [String]) {
-    self.blockID = blockID; self.nodeID = nodeID; self.textOffset = textOffset
-    self.offset = offset; self.blockOrder = blockOrder
+  public init(fileID: String, nodeID: String, textOffset: Int, offset: Int, fileOrder: [String]) {
+    self.fileID = fileID; self.nodeID = nodeID; self.textOffset = textOffset
+    self.offset = offset; self.fileOrder = fileOrder
   }
 
   public var isValid: Bool {
-    !blockID.isEmpty && blockID.utf16.count <= 120 && (nodeID.isEmpty || nodeID.utf8.count == 16)
+    !fileID.isEmpty && fileID.utf16.count <= 120 && (nodeID.isEmpty || nodeID.utf8.count == 16)
       && nodeID.utf8.allSatisfy { (48...57).contains($0) || (97...102).contains($0) }
       && textOffset >= 0 && textOffset <= Int(Int32.max)
       && offset >= 0 && offset <= Int(Int32.max) - textOffset
-      && blockOrder.count <= DocumentDocument.maximumBlockCount
-      && Set(blockOrder).count == blockOrder.count && blockOrder.contains(blockID)
-      && blockOrder.allSatisfy { !$0.isEmpty && $0.utf16.count <= 120 }
+      && fileOrder.count <= DocumentDocument.maximumFileCount
+      && Set(fileOrder).count == fileOrder.count && fileOrder.contains(fileID)
+      && fileOrder.allSatisfy { !$0.isEmpty && $0.utf16.count <= 120 }
   }
 }
 

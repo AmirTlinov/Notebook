@@ -25,22 +25,32 @@ struct DocumentViewModePicker: View {
 }
 
 struct DocumentSourceRequest: Sendable {
-  enum Contents: Sendable { case block(DocumentBlock), preamble(String) }
   let documentID: UUID
-  let contents: Contents
+  let file: DocumentFile
   let version: ContentFieldVersion
   let offset: Int
-  var blockID: String { if case .block(let block) = contents { block.id } else { "preamble" } }
-  var source: String { switch contents { case .block(let block): block.source; case .preamble(let source): source } }
-  var kind: DocumentBlockKind { if case .block(let block) = contents { block.kind } else { .latex } }
-  var field: DocumentSourceEdit.Field { if case .preamble = contents { .preamble } else { .content } }
-  init(documentID: UUID, block: DocumentBlock, version: ContentFieldVersion, offset: Int) {
-    self.documentID = documentID; contents = .block(block); self.version = version; self.offset = offset
-  }
-  init(preamble document: DocumentDocument) {
-    documentID = document.id; contents = .preamble(document.preamble); version = document.preambleVersion; offset = 0
+  var fileID: String { file.id }
+  var source: String { file.source }
+  init(documentID: UUID, file: DocumentFile, version: ContentFieldVersion, offset: Int = 0) {
+    self.documentID = documentID; self.file = file; self.version = version; self.offset = offset
   }
   static let notification = Notification.Name("Notebook.documentSourceRequest")
+}
+
+/// The next message freezes the current native selection, including an
+/// unfinished human draft. A draft never claims to be a saved file revision.
+struct DocumentSourceMessageSelection: Codable, Sendable {
+  let documentID: UUID
+  let fileID: String
+  let path: String
+  let baseVersion: ContentFieldVersion
+  let selectionStart: Int
+  let selectionEnd: Int
+  let selectedText: String
+  let hasLocalDraft: Bool
+  let draftID: UUID?
+  let sequence: UInt64?
+  let truncated: Bool
 }
 
 /// A view of one addressed field. The document and common command executor
@@ -48,9 +58,8 @@ struct DocumentSourceRequest: Sendable {
 @MainActor @Observable
 final class DocumentSourceEditorSession {
   let documentID: UUID
-  let blockID: String
-  let kind: DocumentBlockKind
-  let field: DocumentSourceEdit.Field
+  let fileID: String
+  private(set) var path: String
   private(set) var text: String
   private(set) var selection = NSRange(location: 0, length: 0)
   private(set) var navigation = UUID()
@@ -69,8 +78,8 @@ final class DocumentSourceEditorSession {
   private var frozen: UUID?
 
   init(request: DocumentSourceRequest, model: NotebookAppModel) {
-    self.model = model; documentID = request.documentID; blockID = request.blockID; kind = request.kind; field = request.field
-    let draft = model.documentEditingSessions.last { $0.edit.documentID == request.documentID && $0.edit.blockID == request.blockID && ($0.edit.field ?? .content) == request.field }
+    self.model = model; documentID = request.documentID; fileID = request.fileID; path = request.file.path
+    let draft = model.documentEditingSessions.last { $0.edit.documentID == request.documentID && $0.edit.fileID == request.fileID }
     text = draft?.edit.source ?? request.source; base = draft?.edit.baseSource ?? request.source
     version = draft?.edit.baseVersion ?? request.version; sessionID = draft?.id ?? UUID(); sequence = draft?.edit.sequence ?? 0
     let start = min(text.utf16.count, draft?.selectionStart ?? request.offset)
@@ -82,8 +91,8 @@ final class DocumentSourceEditorSession {
   }
   var restoredScroll: Double { scroll }
   private var edit: DocumentSourceEdit {
-    .init(sessionID: sessionID, documentID: documentID, blockID: blockID, baseSource: base,
-      baseVersion: version, source: text, sequence: sequence, field: field)
+    .init(sessionID: sessionID, documentID: documentID, fileID: fileID, baseSource: base,
+      baseVersion: version, source: text, sequence: sequence)
   }
   func input(_ value: String, selection: NSRange, composing: Bool, scroll: Double) {
     let changed = text != value, compositionEnded = self.composing && !composing
@@ -118,9 +127,9 @@ final class DocumentSourceEditorSession {
     frozen = submitted.sessionID; saving = true; notice = "Сохранение…"
     do {
       var acceptedVersion: ContentFieldVersion?
-      let status = try await model.commitDocumentSource(edit: submitted) { acceptedVersion = $0.publication?.sourceVersion ?? $0.preamblePublication?.sourceVersion }
+      let status = try await model.commitDocumentSource(edit: submitted) { acceptedVersion = $0.publication?.sourceVersion }
       guard status == .committed, let acceptedVersion else {
-        conflicted = true; notice = status == .targetMissing ? "Блок удалён. Черновик сохранён." : "Исходник изменился. Черновик сохранён; сравните версии."
+        conflicted = true; notice = status == .targetMissing ? "Файл удалён. Черновик сохранён." : "Исходник изменился. Черновик сохранён; сравните версии."
         saving = false; frozen = nil; return
       }
       let unfinished = sessionID != submitted.sessionID ? sessionID : nil
@@ -136,31 +145,37 @@ final class DocumentSourceEditorSession {
       } else if let unfinished { model.discardDocumentDraft(unfinished) }
     } catch { saving = false; frozen = nil; notice = error.localizedDescription }
   }
-  var canAskAgent: Bool { field == .content && selection.length > 0 && selection.length <= 16_000 && !conflicted }
-  func askAgent() {
-    let selected = selection, selectedText = text
-    Task {
-      await save()
-      guard !conflicted, !composing, text == base, text == selectedText, canAskAgent else { return }
-      model?.selectSourceForAgent(documentID: documentID, blockID: blockID, version: version, range: selected)
-    }
+  var messageSelection: DocumentSourceMessageSelection? {
+    guard !composing, selection.length > 0 else { return nil }
+    let source = text as NSString
+    let start = min(max(0, selection.location), source.length)
+    let end = min(max(start, NSMaxRange(selection)), source.length)
+    var excerptEnd = min(end, start + 16_000)
+    if excerptEnd < end, excerptEnd > start, (0xD800...0xDBFF).contains(source.character(at: excerptEnd - 1)) { excerptEnd -= 1 }
+    let draft = text != base || conflicted
+    return .init(documentID: documentID, fileID: fileID, path: path, baseVersion: version,
+      selectionStart: start, selectionEnd: end,
+      selectedText: source.substring(with: .init(location: start, length: excerptEnd - start)),
+      hasLocalDraft: draft, draftID: draft ? sessionID : nil, sequence: draft ? sequence : nil,
+      truncated: excerptEnd < end)
   }
-  func undo() {
-    Task {
+  func undo() { performHistory(redo: false) }
+  func redo() { performHistory(redo: true) }
+  private func performHistory(redo: Bool) {
+    model?.performSurfaceHistory(redo: redo, documentID: documentID) { [self] in
       await save()
-      guard !conflicted, !composing, text == base else { return }
-      model?.undoLastSurfaceAction()
+      return !conflicted && !composing && text == base
     }
   }
   func reconcile(_ document: DocumentDocument) {
+    if let file = document.files.first(where: { $0.id == fileID }) { path = file.path }
     guard !saving, text == base, document.id == documentID,
       let current = source(in: document), current.version != version else { return }
     base = current.text; text = base; version = current.version
     sessionID = UUID(); sequence = 0; notice = nil; navigate(selection.location)
   }
   private func source(in document: DocumentDocument) -> (text: String, version: ContentFieldVersion)? {
-    if field == .preamble { return (document.preamble, document.preambleVersion) }
-    return document.blocks.first(where: { $0.id == blockID }).map { ($0.source, document.sourceVersion(blockID: blockID)) }
+    return document.files.first(where: { $0.id == fileID && $0.isText }).map { ($0.source, document.fileVersion(fileID: fileID)) }
   }
   func navigate(_ offset: Int) {
     selection = NSRange(location: min(max(0, offset), text.utf16.count), length: 0); navigation = UUID()
@@ -169,7 +184,7 @@ final class DocumentSourceEditorSession {
   /// A composing input is retained as a draft rather than committed halfway
   /// through an IME transaction. The caller drains the same persistence FIFO.
   func checkpoint() async { if composing { persist() }; await save() }
-  var maximumSourceLength: Int { field == .preamble ? 200_000 : DocumentBlock.maximumSourceLength }
+  var maximumSourceLength: Int { DocumentFile.maximumSourceLength }
   func useCurrentDocument() {
     guard !saving, let model, let document = model.documents[documentID], let current = source(in: document) else { return }
     model.discardDocumentDraft(sessionID)
@@ -197,8 +212,10 @@ struct DocumentSourceWorkspace<Paper: View>: View {
   var topInset: CGFloat = 0
   let allowsBeside: Bool
   @State private var session: DocumentSourceEditorSession?
-  @State private var programID: String?
-  @State private var find = 0
+  @State private var resourceID: String?
+  @State private var filePath = ""
+  @State private var fileOperation: FileOperation?
+  private enum FileOperation: String, Identifiable { case create, rename; var id: String { rawValue } }
   @State private var comparison = false
   @State private var printStatus = ""
   @State private var diagnostics: [NotebookPrintDiagnostic] = []
@@ -214,6 +231,7 @@ struct DocumentSourceWorkspace<Paper: View>: View {
       let document = model.activeDocument
       let showing = document != nil && mode != .paper
       let width = mode == .code ? geometry.size.width : min(680, geometry.size.width * 0.48)
+      let editorTop = topInset + 56
       ZStack(alignment: .leading) {
         paper.padding(.leading, showing && mode == .beside ? width : 0)
           .environment(\.documentPaperVisible, mode != .code)
@@ -228,25 +246,35 @@ struct DocumentSourceWorkspace<Paper: View>: View {
           }
         if showing, let document {
           editor(document)
-            .frame(width: width, height: max(0, geometry.size.height - topInset), alignment: .top)
+            .frame(width: width, height: max(0, geometry.size.height - editorTop), alignment: .top)
             .background(.background)
             #if os(iOS)
             .background(NotebookControlRegion(gate: model.inputGate))
             #endif
             .overlay(alignment: .trailing) {
               if mode == .beside { Rectangle().fill(.quaternary).frame(width: 1) }
-            }.padding(.top, topInset)
+            }.padding(.top, editorTop)
         }
-
+      }
+      .overlay(alignment: .topLeading) {
+        if let document {
+          header(document)
+            .frame(maxWidth: min(460, (mode == .beside ? width : geometry.size.width) - 36), alignment: .leading)
+            .padding(.horizontal, 18).padding(.top, topInset)
+            #if os(iOS)
+            .background(NotebookControlRegion(gate: model.inputGate))
+            #endif
+        }
       }
       .onChange(of: mode) { _, value in
         if value == .paper { session?.finish() }
+        else if session == nil, resourceID == nil, let document, let file = document.files.first(where: { $0.path == document.entrypoint }) { open(.init(documentID: document.id, file: file, version: document.fileVersion(fileID: file.id))) }
       }
       .onChange(of: allowsBeside, initial: true) { _, allowed in
         if !allowed, mode == .beside { mode = .code }
       }
       .onChange(of: document) { _, value in if let value { session?.reconcile(value) } }
-      .onChange(of: document?.id) { _, _ in session?.finish(); session = nil; programID = nil; mode = .paper }
+      .onChange(of: document?.id) { _, _ in session?.finish(); session = nil; resourceID = nil; mode = .paper }
       .onReceive(NotificationCenter.default.publisher(for: DocumentSourceRequest.notification)) { note in
         guard let request = note.object as? DocumentSourceRequest, request.documentID == model.activeDocument?.id else { return }
         open(request); if mode == .paper { mode = allowsBeside ? .beside : .code }
@@ -260,7 +288,7 @@ struct DocumentSourceWorkspace<Paper: View>: View {
         HStack(alignment: .top) {
           ScrollView { Text(session?.text ?? "").font(.system(.body, design: .monospaced)).textSelection(.enabled) }
           Divider()
-          ScrollView { Text(session?.currentSource ?? "Блок удалён").font(.system(.body, design: .monospaced)).textSelection(.enabled) }
+          ScrollView { Text(session?.currentSource ?? "Файл удалён").font(.system(.body, design: .monospaced)).textSelection(.enabled) }
         }
         HStack {
           Button("Оставить черновик") { comparison = false }
@@ -278,9 +306,9 @@ struct DocumentSourceWorkspace<Paper: View>: View {
     printTask = Task {
       do {
         let owner = DocumentRenderRegistry.shared.session(documentID: document.id, resources: SceneRenderResources.shared)
-        let source = owner.source(document)
+        let source = owner.source(document, store: model.store)
         let printed = try await source.printedSource(resources: SceneRenderResources.shared)
-        try Task.checkCancellation(); printedSource = printed; printStatus = ""
+        try Task.checkCancellation(); printedSource = printed; diagnostics = printed.artifact.diagnostics; printStatus = ""
       } catch is CancellationError { } catch {
         guard !Task.isCancelled else { return }
         diagnostics = (error as? NotebookTypesetterError)?.diagnostics ?? []
@@ -289,62 +317,31 @@ struct DocumentSourceWorkspace<Paper: View>: View {
     }
   }
   @ViewBuilder private func editor(_ document: DocumentDocument) -> some View {
-    let program = document.blocks.first { $0.id == programID && $0.kind == .interactive }
+    let resource = document.files.first { $0.id == resourceID }
     VStack(spacing: 0) {
-      HStack {
-        Menu {
-          Button("Документ LaTeX") { showSource() }
-          Divider()
-          Button("Добавить LaTeX") { insert(.tex, document: document) }
-          Button("Добавить текст") { insert(.markdown, document: document) }
-          Divider()
-          Button("Преамбула LaTeX") { open(.init(preamble: document)) }
-          Divider()
-          ForEach(document.blocks) { block in
-            if block.kind == .interactive {
-              Button("Программа · \(block.id)") { showSource(program: block.id) }
-            } else {
-              Button("\(block.kind.rawValue) · \(block.id)") { open(.init(documentID: document.id, block: block, version: document.sourceVersion(blockID: block.id), offset: 0)) }
-            }
-          }
-        } label: { Label(session.map { $0.field == .preamble ? "Преамбула LaTeX" : "\($0.blockID) · \($0.kind.rawValue)" }
-          ?? program.map { "Программа · \($0.id)" } ?? "Документ LaTeX", systemImage: "doc.text").lineLimit(1) }
-        .accessibilityIdentifier("document-source-menu")
-        Spacer()
-        Button { find += 1 } label: { Image(systemName: "magnifyingglass") }.accessibilityLabel("Найти в исходнике")
-        if let session {
-          Button { revealSelection(document) } label: { Image(systemName: "doc.viewfinder") }.accessibilityLabel("Показать на листе")
-          Button { session.askAgent() } label: { Image(systemName: "bubble.left.and.text.bubble.right") }
-            .accessibilityLabel("Обсудить выделенный исходник").disabled(!session.canAskAgent)
-          Button { session.undo() } label: { Image(systemName: "arrow.uturn.backward") }.accessibilityLabel("Отменить действие")
-        }
-      }.padding(14)
       if let session {
-        DocumentNativeSourceEditor(session: session, findRequest: find).id(ObjectIdentifier(session))
+        DocumentNativeSourceEditor(session: session,
+          revealSelection: canRevealSelection(document) ? { revealSelection(document, range: $0) } : nil)
+          .id(ObjectIdentifier(session))
           .accessibilityIdentifier("document-source-editor")
         HStack {
           Text(session.notice ?? "Изменения сохраняются автоматически").lineLimit(2)
           Spacer()
           if session.conflicted { Button("Сравнить") { comparison = true } }
         }.font(.caption).padding(12)
-      } else if let program {
-        DocumentProgramSourceView(block: program, store: model.store, findRequest: find).id(program.id)
-      } else if let printedSource, printedSource.artifact.document == document {
-        DocumentNativeSourceViewer(text: printedSource.artifact.source, findRequest: find)
-          .accessibilityIdentifier("document-latex-source-viewer")
-        Text("Собранный LaTeX · только чтение. Для правки выберите блок в меню исходника.")
-          .font(.caption).foregroundStyle(.secondary).padding(12)
+      } else if let resource {
+        ContentUnavailableView("Двоичный ресурс", systemImage: "doc", description: Text(resource.path))
       } else {
-        ContentUnavailableView("LaTeX ещё не собран", systemImage: "doc.text", description:
-          Text("Исходники отдельных блоков и программ доступны в меню выше."))
-          .frame(maxWidth: .infinity, maxHeight: .infinity)
+        ProgressView("Открываем исходник…").frame(maxWidth: .infinity, maxHeight: .infinity)
+          .onAppear { if let file = document.files.first(where: { $0.path == document.entrypoint }) {
+            open(.init(documentID: document.id, file: file, version: document.fileVersion(fileID: file.id)))
+          } }
       }
       ForEach(diagnostics) { diagnostic in
-        Button("Строка \(diagnostic.line): \(diagnostic.message)") {
-          if let id = diagnostic.blockID, let block = document.blocks.first(where: { $0.id == id }) {
-            let offset = block.source.split(separator: "\n", omittingEmptySubsequences: false).prefix(diagnostic.line-1).reduce(0) { $0 + $1.utf16.count + 1 }
-            open(.init(documentID: document.id, block: block, version: document.sourceVersion(blockID: id), offset: offset))
-          } else { open(.init(preamble: document)) }
+        Button("\(diagnostic.path ?? document.entrypoint):\(diagnostic.line): \(diagnostic.message)") {
+          guard let file = document.files.first(where: { $0.path == (diagnostic.path ?? document.entrypoint) && $0.isText }) else { return }
+          let offset = file.source.split(separator: "\n", omittingEmptySubsequences: false).prefix(max(0, diagnostic.line-1)).reduce(0) { $0 + $1.utf16.count + 1 }
+          open(.init(documentID: document.id, file: file, version: document.fileVersion(fileID: file.id), offset: offset))
         }.font(.caption).lineLimit(2).padding(.horizontal, 12)
       }
       if !printStatus.isEmpty {
@@ -353,26 +350,68 @@ struct DocumentSourceWorkspace<Paper: View>: View {
       }
     }
   }
-  private func insert(_ kind: DocumentBlockKind, document: DocumentDocument) {
-    Task {
-      await session?.save()
-      do { open(try await model.insertDocumentSource(documentID: document.id, kind: kind)) }
-      catch { printStatus = error.localizedDescription }
+  private func header(_ document: DocumentDocument) -> some View {
+    HStack(spacing: 10) {
+      DocumentViewModePicker(mode: $mode, allowsBeside: allowsBeside)
+        .frame(width: allowsBeside ? 216 : 144)
+      Menu {
+        ForEach(document.files.sorted { $0.path < $1.path }) { file in
+          Button(file.path) {
+            open(.init(documentID: document.id, file: file, version: document.fileVersion(fileID: file.id)))
+            if mode == .paper { mode = allowsBeside ? .beside : .code }
+          }
+        }
+        Divider()
+        Button("Новый файл…") { filePath = ""; fileOperation = .create }
+        Button("Переименовать…") { filePath = session?.path ?? document.files.first { $0.id == resourceID }?.path ?? document.entrypoint; fileOperation = .rename }
+      } label: {
+        Label(session?.path ?? document.files.first { $0.id == resourceID }?.path ?? document.entrypoint, systemImage: "doc.text")
+          .lineLimit(1).truncationMode(.middle).frame(width: 140, alignment: .leading)
+      }.accessibilityIdentifier("document-source-menu")
+    }.padding(6).frame(height: 44).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+    .accessibilityElement(children: .contain).accessibilityIdentifier("document-source-header")
+    .sheet(item: $fileOperation) { operation in
+      VStack(alignment: .leading, spacing: 16) {
+        Text(operation == .create ? "Новый файл" : "Переименовать файл").font(.headline)
+        TextField("Относительный путь, например chapters/intro.tex", text: $filePath)
+          .textFieldStyle(.roundedBorder)
+        HStack {
+          Button("Отмена") { fileOperation = nil }
+          Spacer()
+          Button("Сохранить") { changeFile(operation, document: document) }
+            .disabled(filePath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        }
+      }.padding(20).frame(minWidth: 400)
     }
   }
-  private func showSource(program: String? = nil) {
-    session?.finish(); session = nil; programID = program
+  private func changeFile(_ operation: FileOperation, document: DocumentDocument) {
+    let path = filePath, fileID = session?.fileID ?? resourceID ?? document.files.first { $0.path == document.entrypoint }?.id
+    Task {
+      await session?.save()
+      guard session?.conflicted != true else { return }
+      do {
+        let request: DocumentSourceRequest
+        if operation == .create { request = try await model.insertDocumentFile(documentID: document.id, path: path) }
+        else if let fileID { request = try await model.renameDocumentFile(documentID: document.id, fileID: fileID, path: path) }
+        else { return }
+        fileOperation = nil; open(request)
+        if mode == .paper { mode = allowsBeside ? .beside : .code }
+      } catch { printStatus = error.localizedDescription }
+    }
   }
   private func open(_ request: DocumentSourceRequest) {
-    if case .block(let block) = request.contents, block.kind == .interactive { showSource(program: block.id); return }
-    if session?.blockID == request.blockID, session?.field == request.field, session?.documentID == request.documentID { session?.navigate(request.offset); return }
-    session?.finish(); programID = nil; session = .init(request: request, model: model)
+    if !request.file.isText { session?.finish(); session = nil; resourceID = request.fileID; return }
+    if session?.fileID == request.fileID, session?.documentID == request.documentID { session?.navigate(request.offset); return }
+    session?.finish(); resourceID = nil; session = .init(request: request, model: model)
   }
-  private func revealSelection(_ document: DocumentDocument) {
-    guard let session, let printedSource, printedSource.artifact.document == document,
-      session.field == .content,
-      session.text == document.blocks.first(where: { $0.id == session.blockID })?.source,
-      let reference = printedSource.reference(blockID: session.blockID, sourceOffset: session.selection.location) else { return }
+  private func canRevealSelection(_ document: DocumentDocument) -> Bool {
+    guard let session, let printedSource else { return false }
+    return printedSource.artifact.document == document
+      && session.text == document.files.first(where: { $0.id == session.fileID })?.source
+  }
+  private func revealSelection(_ document: DocumentDocument, range: NSRange) {
+    guard canRevealSelection(document), let session,
+      let reference = printedSource?.reference(fileID: session.fileID, sourceOffset: range.location) else { return }
     if mode == .code { mode = .paper }
     model.requestShow(reference)
   }

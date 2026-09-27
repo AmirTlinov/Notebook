@@ -10,8 +10,8 @@ import WebKit
 @MainActor
 final class DocumentBlockRuntime: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
   let documentID: UUID
-  let block: DocumentBlock
-  let programIdentity: DocumentProgramIdentity
+  let program: DocumentProgramSource
+  var sourceBasis: String { program.sourceBasis }
   let id = UUID()
   let resources: SceneRenderResources
   private(set) var webView: WKWebView?
@@ -64,25 +64,43 @@ final class DocumentBlockRuntime: NSObject, WKScriptMessageHandler, WKNavigation
   var onFocus: (Bool) -> Void = { _ in }
   var onLink: (String) -> Void = { _ in }
   var onMount: (WKWebView, CGSize) -> Void = { _, _ in }
-  private let size: CGSize
-  var blockWidth: Double { size.width }
+  private(set) var viewportSize: CGSize
+  private var viewportRevision: UInt64 = 0
+  var blockWidth: Double { viewportSize.width }
+  private var size: CGSize { viewportSize }
 
   func presents(_ value: JSONValue, version: ContentFieldVersion?) -> Bool {
     ready && failure == nil && presentedRevision == revision && appliedValue == value
       && (version.map { observedStateVersion?.includes($0) == true } ?? true)
   }
 
-  init(documentID: UUID, block: DocumentBlock, programIdentity: DocumentProgramIdentity,
-    value: JSONValue, stateVersion: ContentFieldVersion?, width: Double, resources: SceneRenderResources, programStore: NotebookStore? = nil) {
-    self.documentID = documentID; self.block = block; self.programIdentity = programIdentity
+  init(documentID: UUID, program: DocumentProgramSource,
+    value: JSONValue, stateVersion: ContentFieldVersion?, width: Double, height: Double,
+    resources: SceneRenderResources, programStore: NotebookStore? = nil) {
+    self.documentID = documentID; self.program = program
     self.value = value; appliedValue = value; observedStateVersion = stateVersion; self.resources = resources
     self.programStore = programStore
-    size = .init(width: width, height: block.height)
+    viewportSize = .init(width: width, height: height)
     super.init()
   }
 
-  func matches(_ block: DocumentBlock, programIdentity: DocumentProgramIdentity, width: Double) -> Bool {
-    self.programIdentity == programIdentity && self.block == block && abs(size.width - width) < 1 / 32
+  func matches(_ program: DocumentProgramSource) -> Bool {
+    self.program.id == program.id && self.program.path == program.path && sourceBasis == program.sourceBasis
+      && self.program.programPackage == program.programPackage
+  }
+
+  /// Geometry belongs to TeX, not executable identity. WebKit keeps its heap,
+  /// state and focused controls while the ordinary browser resize is delivered.
+  func updateViewport(width: Double, height: Double) {
+    guard width.isFinite, height.isFinite, width > 0, height > 0,
+      abs(viewportSize.width - width) > 1 / 32 || abs(viewportSize.height - height) > 1 / 32 else { return }
+    viewportSize = .init(width: width, height: height); viewportRevision &+= 1
+    captureTask?.cancel(); checkpointWasCaptured = false
+    if let webView {
+      webView.bounds.size = viewportSize
+      webView.frame.size = viewportSize
+      webView.setNeedsLayout(); webView.layoutIfNeeded()
+    }
   }
 
   func offerReturnReclamation(_ reclaim: (@MainActor () -> Void)?) {
@@ -108,7 +126,7 @@ final class DocumentBlockRuntime: NSObject, WKScriptMessageHandler, WKNavigation
       guard let self else { return }
       do {
         let acquired = try await resources.acquireDocumentProgramSurface(priority: priority,
-          documentID: documentID, blockID: block.id)
+          documentID: documentID, blockID: program.id)
         guard !stopped, !Task.isCancelled, startID == request else { acquired.release(); return }
         lease = acquired
         stateTransfer = NotebookProgramStateTransfer(resources: resources)
@@ -120,24 +138,19 @@ final class DocumentBlockRuntime: NSObject, WKScriptMessageHandler, WKNavigation
         configuration.websiteDataStore = .nonPersistent(); configuration.userContentController = content
         configuration.setURLSchemeHandler(programAssets, forURLScheme: NotebookProgramAssets.scheme)
         let web = WKWebView(frame: .init(origin: .zero, size: size), configuration: configuration)
-        web.accessibilityIdentifier = "document-program-" + block.id
+        web.accessibilityIdentifier = "document-program-" + program.id
         web.isOpaque = false; web.backgroundColor = .clear; web.scrollView.backgroundColor = .clear
         web.scrollView.bounces = false; web.scrollView.contentInsetAdjustmentBehavior = .never
         web.scrollView.pinchGestureRecognizer?.isEnabled = false; web.scrollView.panGestureRecognizer.isEnabled = false
         web.navigationDelegate = self; webView = web; onMount(web, size)
         observe("program_mounted")
-        if let hash = block.programPackage {
-          guard let store = programStore else { throw SceneRenderError.snapshotPending("program_store") }
-          let package = try await Task.detached(priority: .userInitiated) { try store.readProgramPackage(hash) }.value
-          guard !stopped, !Task.isCancelled, startID == request, webView === web else { return }
-          let url = try programAssets.register(store: store, package: package) { try html(package: package, resourceOrigin: $0) }
-          packageURL = url; initialNavigationPending = true
-          web.load(URLRequest(url: url))
-        } else {
-          let document = try html()
-          initialNavigationPending = true
-          web.loadHTMLString(document.before + block.html + document.after, baseURL: origin)
-        }
+        guard let store = programStore else { throw SceneRenderError.snapshotPending("program_store") }
+        let hash = program.programPackage
+        let package = try await Task.detached(priority: .userInitiated) { try store.readProgramPackage(hash) }.value
+        guard !stopped, !Task.isCancelled, startID == request, webView === web else { return }
+        let url = try programAssets.register(store: store, package: package) { try html(package: package, resourceOrigin: $0) }
+        packageURL = url; initialNavigationPending = true
+        web.load(URLRequest(url: url))
         readinessDeadline = Task { @MainActor [weak self, weak web] in
           do { try await Task.sleep(for: .seconds(8)) } catch { return }
           guard let self, self.webView === web, !ready, !stopped, failure == nil else { return }
@@ -315,7 +328,7 @@ final class DocumentBlockRuntime: NSObject, WKScriptMessageHandler, WKNavigation
       guard let self, ready, !stopped, let web = webView, let lease else {
         throw SceneRenderError.snapshotPending("document_program")
       }
-      let expectedRevision = revision
+      let expectedRevision = revision, expectedViewport = viewportRevision
       let rect = CGRect(x: 0, y: sourceOffset, width: size.width, height: height)
       guard size.width > 0, height > 0, CGRect(origin: .zero, size: size).contains(rect) else {
         throw DocumentSessionError.invalidLayout
@@ -328,10 +341,10 @@ final class DocumentBlockRuntime: NSObject, WKScriptMessageHandler, WKNavigation
       let configuration = WKSnapshotConfiguration(); configuration.rect = rect; configuration.afterScreenUpdates = true
       configuration.snapshotWidth = NSNumber(value: Double(pixelWidth) / (web.window?.screen.scale ?? 2))
       let image = try await web.takeSnapshot(configuration: configuration)
-      guard !stopped, self.webView === web, revision == expectedRevision,
+      guard !stopped, self.webView === web, revision == expectedRevision, viewportRevision == expectedViewport,
         let cg = image.cgImage else { throw CancellationError() }
       let normalized = UIImage(cgImage: cg, scale: Double(cg.width) / size.width, orientation: .up)
-      let source = SceneRasterSource.document(id: documentID, token: "program:\(block.id):\(id):\(operation)")
+      let source = SceneRasterSource.document(id: documentID, token: "program:\(program.id):\(id):\(operation)")
       guard let raster = resources.storeAndRetain(normalized, for: source, reservation: reservation,
         semanticSelection: checkpointSelection?.mapped(from: .init(x: 0, y: 0, width: size.width, height: size.height),
           into: .init(x: 0, y: sourceOffset, width: size.width, height: height))) else { throw SceneRenderError.resourceLimit }
@@ -407,7 +420,7 @@ final class DocumentBlockRuntime: NSObject, WKScriptMessageHandler, WKNavigation
     let web = webView, window = web?.window
     let intersectsWindow = if let web, let window { !web.convert(web.bounds, to: window).intersection(window.bounds).isEmpty } else { false }
     NotebookNavigationObservation.recordDocument(stage, ownerID: id, documentID: documentID, fields: [
-      "blockID": .string(block.id), "webID": web.map { .string(String(describing: ObjectIdentifier($0))) } ?? .null,
+      "blockID": .string(program.id), "webID": web.map { .string(String(describing: ObjectIdentifier($0))) } ?? .null,
       "hasWindow": .bool(window != nil), "intersectsWindow": .bool(intersectsWindow),
       "activeWebSurfaces": .number(Double(resources.activeWebSurfaceCount)),
       "pendingWebRequests": .number(Double(resources.pendingWebRequestCount))])
@@ -473,19 +486,17 @@ final class DocumentBlockRuntime: NSObject, WKScriptMessageHandler, WKNavigation
   }
   isolated deinit { startTask?.cancel(); releaseSurface() }
 
-  private func html(package: NotebookProgramPackage? = nil, resourceOrigin: URL? = nil) throws -> NotebookProgramAssets.Document {
+  private func html(package: NotebookProgramPackage, resourceOrigin: URL) throws -> NotebookProgramAssets.Document {
     func encoded<T: Encodable>(_ value: T) throws -> String {
       String(decoding: try JSONEncoder().encode(value), as: UTF8.self).replacingOccurrences(of: "<", with: "\\u003c")
     }
-    let css = block.css.replacingOccurrences(of: "</style", with: "<\\/style", options: .caseInsensitive)
-    let policy = resourceOrigin.map(NotebookProgramAssets.policy) ?? "default-src 'none';img-src data: blob:;style-src 'unsafe-inline';script-src 'unsafe-inline';font-src data:;media-src data: blob:;connect-src 'none';form-action 'none';base-uri 'none';object-src 'none'"
-    let style = package.flatMap { package in resourceOrigin.map { NotebookProgramAssets.style(package, origin: $0) } } ?? ""
-    let entry = package.flatMap { package in resourceOrigin.map { NotebookProgramAssets.script(package, origin: $0) } } ?? ""
-    let inline = package == nil ? "addEventListener('DOMContentLoaded',()=>{try{const script=document.createElement('script');script.textContent=\(try encoded(block.javaScript));document.body.append(script)}catch(error){post('failure',{message:String(error)})}});" : ""
+    let policy = NotebookProgramAssets.policy(origin: resourceOrigin)
+    let style = NotebookProgramAssets.style(package, origin: resourceOrigin)
+    let entry = NotebookProgramAssets.script(package, origin: resourceOrigin)
     return .init(before: """
     <!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,minimum-scale=1,maximum-scale=1,user-scalable=no">
     <meta http-equiv="Content-Security-Policy" content="\(policy)">
-    <style>html,body{margin:0;min-height:100%;background:transparent;color:#171713;font-family:-apple-system,BlinkMacSystemFont,sans-serif}*{box-sizing:border-box}\(css)</style>\(style)<script>(()=>{
+    <style>html,body{margin:0;min-height:100%;background:transparent;color:#171713;font-family:-apple-system,BlinkMacSystemFont,sans-serif}*{box-sizing:border-box}</style>\(style)<script>(()=>{
       \(NotebookProgramBridge.script)
       const runtimeID=\(try encoded(id.uuidString));
       const post=(kind,extra={})=>webkit.messageHandlers.documentProgram.postMessage({runtimeID,kind,...extra});
@@ -505,10 +516,9 @@ final class DocumentBlockRuntime: NSObject, WKScriptMessageHandler, WKNavigation
       addEventListener('load',async()=>{try{
         await document.fonts.ready;
         await Promise.all([...document.images].map(image=>image.decode()));
-        const receipt=await documentProgram.start({requiresReady:\(block.programPackage != nil || !block.javaScript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || block.html.localizedCaseInsensitiveContains("<script"))});
+        const receipt=await documentProgram.start({requiresReady:true});
         post('ready',receipt);
       }catch(error){post('failure',{message:String(error)})}});
-      \(inline)
     })()</script></head><body>
     """, after: "\(entry)</body></html>")
   }

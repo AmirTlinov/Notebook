@@ -89,11 +89,11 @@ struct NotebookDiskRefresh: Sendable {
         }
       }
       for (id,page) in scene.pages { elementsInScene[CollaborationTarget(kind:.page,id:id).key] = page.elements.map(\.id) }
-      for (id,document) in scene.documents { elementsInScene[CollaborationTarget(kind:.document,id:id).key] = document.blocks.map(\.id) }
+      for (id,document) in scene.documents { elementsInScene[CollaborationTarget(kind:.document,id:id).key] = document.files.map(\.id) }
       // This immutable projection is already on the read worker. Derive its
       // geometry here, not through another UI/background/UI round trip after
       // publishing the content that needs that geometry to become visible.
-      let sizes = scene.paperSizes.merging(scene.documents.mapValues(\.paperSize)) { _, live in live }
+      let sizes = scene.paperSizes
       let index = WorkspaceSceneIndex(workspace: scene.workspace, hierarchy: scene.hierarchy,
         paperSizes: sizes, reusing: previousIndex)
       return try Self(scene:scene, sceneIndex: index,

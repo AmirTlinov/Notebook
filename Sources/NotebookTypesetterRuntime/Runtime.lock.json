@@ -59,9 +59,9 @@
   },
   "kernels": {
     "tectonic.wasm": {
-      "bytes": 5188052,
-      "sha256": "396ef3ed9d9a32631cfc0142b7a79b66fefc58cf9f3e012931e40bc669b863e7",
-      "packedSHA256": "86af20f92e86f5c7e132a95fde6f76e86d46ee54bae2bf0088d769ac188cd2e1"
+      "bytes": 5189552,
+      "sha256": "7ad4136fb67ceeb4a2bb72b01d1a5feaa7afce87c82a1cd335732b61b0764e9f",
+      "packedSHA256": "26499c3a0d64d1ccb4b63861bf64f466c743cc7412724b39c47b56af3b2fe1e6"
     },
     "image.wasm": {
       "bytes": 5125796,
@@ -100,6 +100,12 @@
       "Cargo.toml": "8d6d65f6e3c4548b245fd9edb48960920e3bc60c338733fcaeaad41341dbfbc5",
       "Cargo.lock": "ef2565e5f7546a0650b58764b4a9dd6c3f85f855b5831f4060e2067ccc72bf28",
       "src/main.rs": "ae3e093cc470cc183a7ffe3b33e3a60ae097d5d48e11bcaa19a93cd50acd2961"
+    }
+  },
+  "resources": {
+    "notebook.sty": {
+      "bytes": 2768,
+      "sha256": "b3a108a0f9b7303cd27b7ca952448242e67e902751de0175f168bac6f18c0269"
     }
   }
 }

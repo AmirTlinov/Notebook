@@ -3,7 +3,7 @@ import CryptoKit
 import NotebookCore
 
 enum NotebookScriptAPI {
-  static let readMethods: Set<String> = ["help", "observe", "read", "readMany", "board", "notebook", "page", "document",
+  static let readMethods: Set<String> = ["help", "observe", "read", "readMany", "board", "notebook", "page", "document", "documentStructure", "documentCheck",
     "context", "attention", "code", "search", "reference", "referenceStatus", "action", "render", "pageMap",
     "pageImage", "regions", "place", "prepareTldraw", "exportStatus", "presentation", "wait"]
   static var help: JSONValue { .object([
@@ -15,15 +15,15 @@ enum NotebookScriptAPI {
       "output_event_bytes": .number(262144), "result_bytes": .number(262144), "output_page_bytes": .number(1048576)]),
     "reads": .array(readMethods.sorted().map(JSONValue.string)),
     "effects": .array(["transaction(key, action)", "undo(key, {actionID})", "point(key, {references, contextID?, replyTo?})",
-      "present(key, {view, steps})", "cancelPresentation(key, {id})", "export(key, {documentID, format?:pdf|png|svg|html|package|mp4, moment?:saved|presented, attention?, pageIndex?, pixelWidth?, blockID?, video?})", "cancelExport(key, {jobID})"].map(JSONValue.string)),
+      "present(key, {view, steps})", "cancelPresentation(key, {id})", "export(key, {documentID, format?:pdf|png|svg|html|package|mp4, moment?:saved|presented, attention?, pageIndex?, pixelWidth?, instanceID?, video?})", "cancelExport(key, {jobID})"].map(JSONValue.string)),
     "utilities": .array(["await nb.id(key)", "await emit(value)", "await emitImage(artifact)", "await nb.wait({milliseconds:100})"].map(JSONValue.string)),
     "read_contract": .string("Reads return Snapshot {data,basis,coverage,cursor}; readMany returns a tuple with per-query coverages from one WAL snapshot. IDs, revisions and continuation cursors come from owners, never inferred from omitted data."),
     "execution_contract": .string("Async TypeScript/JavaScript with args, nb, emit and emitImage. language defaults to javascript; typescript is explicitly selected, strictly checked and compiled by pinned CLI before QuickJS, never guessed or retried as JS. No Node, Python, DOM, require, fetch, filesystem, network, imports, user paths/configuration, SQLite or bytecode. Same run_id+language+code+args attaches without recompilation; changed payload conflicts. Resume never replays source or restores a heap. Mac owns the 30s active-run wall deadline including preparation and XPC launch; TS preparation has its own 10s ceiling. Read help('execution') for all compiler limits."),
     "reply_deadline": .string("One MCP reply has four seconds total, including owner admission and images. response_pending includes run_id, original after_seq and admission unknown/confirmed. It never cancels an accepted write. Resume that ID and cursor. If run_missing with after_seq:0, retry the identical start, never a fresh ID. wait_ms is an upper bound from native handler entry, not after admission; the adapter shortens it to leave room for IPC response."),
     "mutation_contract": .string("Every effect requires a stable key. One transaction is atomic and undoable; a whole program may save several effects. Cancellation prevents new effects and reports accepted native outcomes. Native undo preserves later human edits."),
     "images": .string("Image reads return opaque descriptors with exact hashes. emitImage freezes exact pixels in the native output journal; image bytes count toward 4 MiB per run. Up to four image events per resume page. JavaScript receives no file capability."),
-    "exports": .string("export produces the canonical vector PDF or one PNG page at explicit pixelWidth (default 1600), without silent downsampling. It admits one immutable saved source/state cut from a WAL snapshot; keep jobID and read exportStatus after JS ends; cancelExport(key,{jobID}) durably cancels an unfinished job. Cancellation never changes a previously saved artifact; the final writer fence decides the race. At most two jobs render in the same pinned offline canonical print owner as paper, without touching a live program. Source/state changes before publication fail revision_conflict. The receipt binds cutSHA256/stateRevision and all artifacts. TeX <=4 MiB; composed PDF/assets stream through V2 4 MiB parts and 1 MiB read windows, without binary IPC. Descriptor <=1 MiB / 16384 parts. The existing canonical typesetter retains its own input/layout bounds."),
-    "old_receipts": .string("Existing action and undo receipts stay readable. A raw retry without an original fingerprint fails request_identity_unavailable."),
+    "exports": .string("export produces the canonical vector PDF or one PNG page at explicit pixelWidth (default 1600), without silent downsampling. It admits one immutable saved source/state cut from a WAL snapshot; keep jobID and read exportStatus after JS ends; cancelExport(key,{jobID}) durably cancels an unfinished job. Cancellation never changes a previously saved artifact; the final writer fence decides the race. At most two jobs render in the same pinned offline canonical print owner as paper, without touching a live program. Source/state changes before publication fail revision_conflict. The receipt binds cutSHA256/stateRevision and all artifacts. The source tree including resources is <=16 MiB; each text file is <=4 MiB. Composed PDF/assets stream through 4 MiB parts and 1 MiB read windows, without binary IPC. Export file metadata is <=8 MiB / 16384 parts. The existing canonical typesetter retains its own input/layout bounds."),
+    "old_receipts": .string("Existing action and undo receipts stay readable except actions touching block-format documents removed by the file-format cutover: those receipts and their recovery paths are invalidated, including mixed actions. A raw retry without an original fingerprint fails request_identity_unavailable."),
   ]) }
   static func documentation(_ topic: String?) throws -> JSONValue {
     guard let url = Bundle.module.url(forResource: "sdk-reference", withExtension: "json") else {
@@ -114,10 +114,42 @@ extension NotebookScriptCoordinator {
       try await Task.sleep(for: .milliseconds(Int(milliseconds))); return .null
     case "page", "document":
       let page = method == "page", id = try await selectedID(args, page: page)
-      let member = args.string(page ? "elementID" : "blockID")
-      var query: [String: JSONValue] = ["kind": .string(page ? (member == nil ? "page" : "pageElement") : (member == nil ? "document" : "documentBlock")), "id": .string(id.uuidString)]
-      query["elementID"] = member.map(JSONValue.string)
+      let member = args.string(page ? "elementID" : "fileID")
+      var query: [String: JSONValue] = ["kind": .string(page ? (member == nil ? "page" : "pageElement") : (member == nil ? "documentDirectory" : "documentFile")), "id": .string(id.uuidString)]
+      query[page ? "elementID" : "fileID"] = member.map(JSONValue.string)
+      if let bytes = args["bytes"] {
+        guard !page, member != nil, case .object = bytes else {
+          throw CollaborationError("invalid_resource_range", "Чтение байтов требует fileID и явный диапазон.")
+        }
+        query["kind"] = .string("documentFileBytes")
+        for field in ["sourceVersion", "offset", "maxBytes"] { query[field] = bytes[field] }
+      }
       return try await snapshotRead([.object(query)])
+    case "documentStructure":
+      let id = try await selectedID(args, page: false)
+      return try await snapshotRead([.object(["kind": .string("documentStructure"), "id": .string(id.uuidString)])])
+    case "documentCheck":
+      let id = try await selectedID(args, page: false)
+      guard let revision = args.string("expectedRevision"), !revision.isEmpty else {
+        throw CollaborationError("invalid_reference", "Проверка требует точную версию исходного снимка.")
+      }
+      var request: [String: JSONValue] = ["target": .object(["kind": .string("document"), "id": .string(id.uuidString)]),
+        "expectedRevision": .string(revision)]
+      request["pageIndex"] = args["pageIndex"]
+      var result = try await render(.object(request)).fields
+      // The canonical renderer owns startup evidence. A pending compilation has
+      // no map yet; this wrapper never executes or invents a program check.
+      result["programs"] = result["programs"] ?? .array([])
+      if result["status"] == .string("ready"),
+        JSONValue.object(result).array("diagnostics").contains(where: { $0.string("kind") == "error" }) ||
+        JSONValue.object(result).array("programs").contains(where: { $0.string("status") == "failed" }) {
+        result["status"] = .string("failed")
+        result["code"] = .string("document_diagnostics")
+      } else if result["status"] == .string("ready"), JSONValue.object(result).string("buildID")?.isEmpty != false {
+        result["status"] = .string("unverified")
+        result["code"] = .string("build_identity_unavailable")
+      }
+      return try await evidenceSnapshot(.object(result))
     case "notebook":
       var query = args.fields; query["kind"] = .string("notebookDirectory")
       if query["limit"] == nil { query["limit"] = .number(4) }
@@ -204,7 +236,7 @@ extension NotebookScriptCoordinator {
   }
 
   private func render(_ args: JSONValue) async throws -> JSONValue {
-    var request = args.fields; request["command"] = .string("render")
+    var request = args.fields; request.removeValue(forKey: "expectedBuildID"); request["command"] = .string("render")
     let waiting = try await send(request)
     guard let id = waiting.string("id") else { return waiting }
     let result = try await nativeRead([.object(["kind": .string("targetRenderReceipt"), "id": .string(id)])])
@@ -212,6 +244,10 @@ extension NotebookScriptCoordinator {
       return .object(["status": .string("pending"), "request": waiting])
     }
     var fields = receipt.fields
+    if receipt.string("status") == "ready", let expectedBuildID = args.string("expectedBuildID"),
+      receipt.string("buildID") != expectedBuildID {
+      throw CollaborationError("build_changed", "Сборка документа изменилась; повторите проверку перед просмотром.")
+    }
     if receipt.string("status") == "ready", let hash = receipt.string("pngSHA256") {
       let current = try await send(["command": .string("reference"), "target": args["target"] ?? .null])
       guard current["revision"] == waiting["sourceRevision"] else { throw CollaborationError("revision_conflict", "Владелец изменился при подготовке снимка.") }

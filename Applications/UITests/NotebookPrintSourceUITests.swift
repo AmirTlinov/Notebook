@@ -1,64 +1,76 @@
 import XCTest
 
 @MainActor final class NotebookPrintSourceUITests: XCTestCase {
-  func testUnifiedTopBarOffersTwoPortraitModesAndThreeLandscapeModesWithoutOverlap() {
+  func testDocumentModesStayReachableAcrossPaperEditorAndRotationWithoutOverlap() {
     continueAfterFailure = false
     let app = XCUIApplication()
     app.launchArguments = ["--notebook-drawing-responsiveness-fixture", "--notebook-document-runtime-fixture"]
+    defer { XCUIDevice.shared.orientation = .portrait }
     app.launch()
+    XCTAssertTrue(app.otherElements["page-turn-surface"].waitForExistence(timeout: 30))
     for orientation in [UIDeviceOrientation.portrait, .landscapeLeft] {
-      XCUIDevice.shared.orientation = orientation
-      let code = app.buttons["Код"]
-      XCTAssertTrue(code.waitForExistence(timeout: 30))
+      rotateNotebook(to: orientation, in: app)
       let landscape = orientation == .landscapeLeft
+      XCTAssertEqual(app.windows.firstMatch.frame.width > app.windows.firstMatch.frame.height, landscape,
+        "The compact header follows the completed native rotation")
       let modes = app.segmentedControls["document-view-mode"]
+      XCTAssertTrue(modes.waitForExistence(timeout: 3))
       let adapted = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
         modes.buttons.count == (landscape ? 3 : 2)
       }, object: nil)
       XCTAssertEqual(XCTWaiter.wait(for: [adapted], timeout: 8), .completed)
       XCTAssertEqual(app.buttons["Рядом"].exists, landscape)
-      let modeButtons = landscape ? [app.buttons["Лист"], app.buttons["Рядом"], code] : [app.buttons["Лист"], code]
-      let controls = [app.buttons["leave-nested-board"]] + modeButtons +
-        [app.buttons["drawing-group"], app.buttons["drawing-tool-eraser"], app.buttons["pen-settings"]]
+      let code = modes.buttons["Код"]
+      let modeButtons = landscape ? [modes.buttons["Лист"], modes.buttons["Рядом"], code] : [modes.buttons["Лист"], code]
+      let controls = [app.buttons["document-source-menu"]] + modeButtons
       for (index, control) in controls.enumerated() {
         let ready = XCTNSPredicateExpectation(predicate: NSPredicate(format: "hittable == true"), object: control)
         if XCTWaiter.wait(for: [ready], timeout: 8) != .completed {
-          let tree = XCTAttachment(string: app.debugDescription); tree.name = "Toolbar accessibility"; tree.lifetime = .keepAlways; add(tree)
-          let screen = XCTAttachment(screenshot: app.screenshot()); screen.name = "Toolbar failure"; screen.lifetime = .keepAlways; add(screen)
+          let tree = XCTAttachment(string: app.debugDescription); tree.name = "Document mode accessibility"; tree.lifetime = .keepAlways; add(tree)
+          let screen = XCTAttachment(screenshot: XCUIScreen.main.screenshot()); screen.name = "Document mode failure"; screen.lifetime = .keepAlways; add(screen)
           XCTFail(control.description)
         }
         for other in controls.dropFirst(index+1) {
           XCTAssertFalse(control.frame.intersects(other.frame), "Overlapping controls: \(control.label), \(other.label)")
         }
       }
-      (landscape ? app.buttons["Рядом"] : code).tap()
-      let editor = app.textViews["document-latex-source-viewer"].firstMatch
+      selectNotebookDocumentMode(landscape ? "Рядом" : "Код", in: app)
+      let editor = app.textViews["document-source-editor"].firstMatch
       XCTAssertTrue(editor.waitForExistence(timeout: 10))
-      XCTAssertGreaterThan(editor.frame.minY, controls.map { $0.frame.maxY }.max() ?? 0)
-      let image = XCTAttachment(screenshot: app.screenshot()); image.name = "Unified toolbar \(orientation.rawValue)"; image.lifetime = .keepAlways; add(image)
-      app.buttons["Лист"].tap()
+      XCTAssertEqual(modes.buttons.count, landscape ? 3 : 2)
+      XCTAssertTrue(modes.buttons["Лист"].isHittable, "The editor must keep a direct route back when paper gestures are hidden")
+      XCTAssertGreaterThanOrEqual(editor.frame.minY, modes.frame.maxY)
+      XCTAssertFalse(modes.frame.intersects(app.buttons["document-source-menu"].frame))
+      let drawingBar = app.otherElements["notebook-top-bar"]
+      XCTAssertEqual(drawingBar.exists, landscape, "Drawing tools stay on the paper, never above full-screen code")
+      if drawingBar.exists { XCTAssertFalse(app.otherElements["document-source-header"].frame.intersects(drawingBar.frame)) }
+      for action in ["Отменить действие", "Обсудить выделенный исходник", "Найти в исходнике", "Показать на листе"] {
+        XCTAssertFalse(app.buttons[action].exists, "The compact header must not retain replaced actions")
+      }
+      let image = XCTAttachment(screenshot: XCUIScreen.main.screenshot()); image.name = "Document modes \(orientation.rawValue)"; image.lifetime = .keepAlways; add(image)
+      selectNotebookDocumentMode("Лист", in: app)
+      XCTAssertFalse(editor.exists)
     }
-    XCUIDevice.shared.orientation = .portrait
   }
 
   func testRotatingBesideToPortraitKeepsCodeTextAndInsertionPoint() {
     continueAfterFailure = false
     let app = XCUIApplication()
     app.launchArguments = ["--notebook-drawing-responsiveness-fixture", "--notebook-document-runtime-fixture"]
-    XCUIDevice.shared.orientation = .landscapeLeft
     defer { XCUIDevice.shared.orientation = .portrait }
     app.launch()
+    XCTAssertTrue(app.otherElements["page-turn-surface"].waitForExistence(timeout: 30))
+    rotateNotebook(to: .landscapeLeft, in: app)
     let beside = app.buttons["Рядом"]
-    XCTAssertTrue(beside.waitForExistence(timeout: 30))
-    beside.tap()
-    app.buttons["document-source-menu"].tap(); app.buttons["markdown · introduction"].tap()
+    selectNotebookDocumentMode("Рядом", in: app)
+    selectNotebookDocumentFile("main.tex", in: app)
     let editor = app.textViews["document-source-editor"].firstMatch
     XCTAssertTrue(editor.waitForExistence(timeout: 10))
     editor.tap()
-    editor.typeText("RotationBefore")
+    editor.typeText("%RotationBefore")
     let before = editor.value as? String
     XCTAssertTrue(before?.contains("RotationBefore") == true)
-    XCUIDevice.shared.orientation = .portrait
+    rotateNotebook(to: .portrait, in: app)
     let adapted = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
       !beside.exists && app.buttons["Код"].isSelected
     }, object: nil)
@@ -66,7 +78,7 @@ import XCTest
     XCTAssertEqual(editor.value as? String, before)
     editor.typeText("After")
     XCTAssertEqual(editor.value as? String, before?.replacingOccurrences(of: "RotationBefore", with: "RotationBeforeAfter"))
-    XCUIDevice.shared.orientation = .landscapeLeft
+    rotateNotebook(to: .landscapeLeft, in: app)
     XCTAssertTrue(beside.waitForExistence(timeout: 8))
     XCTAssertTrue(app.buttons["Код"].isSelected)
     XCTAssertTrue((editor.value as? String)?.contains("RotationBeforeAfter") == true)
@@ -77,22 +89,33 @@ import XCTest
     let app = XCUIApplication()
     app.launchArguments = ["--notebook-drawing-responsiveness-fixture", "--notebook-document-runtime-fixture"]
     app.launch()
-    let code = app.buttons["Код"]
-    XCTAssertTrue(code.waitForExistence(timeout: 30), app.debugDescription)
-    code.tap()
-    app.buttons["document-source-menu"].tap(); app.buttons["markdown · introduction"].tap()
+    XCTAssertTrue(app.otherElements["page-turn-surface"].waitForExistence(timeout: 30))
+    selectNotebookDocumentMode("Код", in: app)
+    selectNotebookDocumentFile("main.tex", in: app)
     let editor = app.textViews["document-source-editor"].firstMatch
     XCTAssertTrue(editor.waitForExistence(timeout: 10), app.debugDescription)
     let original = editor.value as? String
     XCTAssertTrue(original?.contains("Живая математика") == true)
     editor.tap()
-    editor.typeText("Canonical source edit\n\n")
+    editor.typeText("%Canonical source edit\n\n")
     XCTAssertTrue((editor.value as? String)?.contains("Canonical source edit") == true)
     XCTAssertTrue(app.staticTexts["Сохранено"].waitForExistence(timeout: 15), app.debugDescription)
-    app.buttons["Отменить действие"].tap()
+    editor.twoFingerTap()
     let restored = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in editor.value as? String == original }, object: nil)
     XCTAssertEqual(XCTWaiter.wait(for: [restored], timeout: 15), .completed)
-    app.buttons["Лист"].tap()
+    editor.tap(withNumberOfTaps: 1, numberOfTouches: 3)
+    let repeated = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+      (editor.value as? String)?.contains("Canonical source edit") == true
+    }, object: nil)
+    XCTAssertEqual(XCTWaiter.wait(for: [repeated], timeout: 15), .completed)
+    editor.twoFingerTap()
+    let restoredAgain = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in editor.value as? String == original }, object: nil)
+    XCTAssertEqual(XCTWaiter.wait(for: [restoredAgain], timeout: 15), .completed)
+    XCTAssertTrue(app.staticTexts["document-print-status"].waitForNonExistence(timeout: 15))
+    editor.doubleTap()
+    // UIKit can place the source action on a later page of its native edit menu.
+    XCTAssertTrue(app.menuItems.firstMatch.waitForExistence(timeout: 5), app.debugDescription)
+    notebookMenuAction("Показать на листе", in: app)
     XCTAssertFalse(editor.exists)
     let slider = app.webViews.sliders.firstMatch
     XCTAssertTrue(slider.waitForExistence(timeout: 15), app.debugDescription)
@@ -104,12 +127,12 @@ import XCTest
     let changed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in slider.value as? String != before }, object: nil)
     XCTAssertEqual(XCTWaiter.wait(for: [changed], timeout: 5), .completed)
     let programValue = slider.value as? String
-    let image = XCTAttachment(screenshot: app.screenshot())
+    let image = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
     image.name = "Canonical paper after native source save and causal undo"
     image.lifetime = .keepAlways; add(image)
-    app.buttons["Код"].tap()
+    selectNotebookDocumentMode("Код", in: app)
     XCTAssertEqual(editor.value as? String, original)
-    app.buttons["Лист"].tap()
+    selectNotebookDocumentMode("Лист", in: app)
     XCTAssertTrue(slider.waitForExistence(timeout: 15))
     XCTAssertEqual(slider.value as? String, programValue, "Code mode must retain the same live program and control state")
   }

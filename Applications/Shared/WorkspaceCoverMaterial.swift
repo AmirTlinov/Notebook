@@ -205,17 +205,15 @@ struct WorkspaceCoverTitle: View {
         title(alignment: .center)
           .frame(width: geometry.width * 0.74, height: geometry.height * 0.30, alignment: .top)
           .offset(y: geometry.height * 0.28)
-        if let paper = geometry.paperSize {
-          VStack(spacing: geometry.width * 0.026) {
+        VStack(spacing: geometry.width * 0.026) {
             Rectangle().fill(ink.opacity(0.24))
               .frame(width: geometry.width * 0.09, height: 1)
-            Text(paper == .a4 ? "A4" : "Letter")
+            Text("LaTeX")
               .font(.system(size: geometry.width * 0.030, weight: .medium))
               .foregroundStyle(ink.opacity(0.65))
               .accessibilityIdentifier("document-cover-format")
           }
           .offset(y: geometry.height * 0.77)
-        }
       }
       .frame(width: geometry.width, height: geometry.height, alignment: .top)
     }

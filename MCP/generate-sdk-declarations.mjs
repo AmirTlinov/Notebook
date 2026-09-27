@@ -52,8 +52,9 @@ export function sdkDeclarations(contract) {
     'readMany<const Q extends readonly ReadQuery[]>(request: {queries: Q; expectedCursor?: string}): Promise<BatchSnapshot<{[K in keyof Q]: ReadData[Q[K]["kind"]]}>>;',
     'page(args: pageInput & {elementID: string}): Promise<Snapshot<Read_pageElement>>;',
     'page(args?: pageInput & {elementID?: never}): Promise<Snapshot<Read_page>>;',
-    'document(args: documentInput & {blockID: string}): Promise<Snapshot<Read_documentBlock>>;',
-    'document(args?: documentInput & {blockID?: never}): Promise<Snapshot<Read_document>>;');
+    'document(args: documentInput & {fileID: string; bytes: {sourceVersion: Read_documentFileBytes["sourceVersion"]; offset: number; maxBytes: number}}): Promise<Snapshot<Read_documentFileBytes>>;',
+    'document(args: documentInput & {fileID: string; bytes?: never}): Promise<Snapshot<Read_documentFile>>;',
+    'document(args?: documentInput & {fileID?: never; bytes?: never}): Promise<Snapshot<Read_documentDirectory>>;');
   for(const name of Object.keys(contract.methods)) {
     if(['read','readMany','page','document','emit','emitImage'].includes(name)) continue;
     let args='args: '+name+'Input';

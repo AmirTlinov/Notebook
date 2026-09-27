@@ -90,7 +90,7 @@ final class NotebookPersistenceTests: XCTestCase {
     for tile in [WorldPoint.maximumTileIndex + 1, -WorldPoint.maximumTileIndex - 1] {
       let point = WorldPoint(tileX: tile, tileY: tile, localX: 0, localY: 0)
       XCTAssertNil(model.createNotebook(at: point))
-      XCTAssertNil(model.createDocument(at: point, paperSize: .a4))
+      XCTAssertNil(model.createDocument(at: point))
       XCTAssertNil(model.createBoard(at: point))
     }
     let saved = await model.finishPendingPersistence()

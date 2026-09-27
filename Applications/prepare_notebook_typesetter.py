@@ -13,10 +13,13 @@ def digest(path):
  return h.hexdigest()
 def run(args,**kwargs): subprocess.run(list(map(str,args)),check=True,**kwargs)
 def input_digest():
+ for name,expected in LOCK['resources'].items():
+  path=SOURCE/'resources'/name
+  if path.stat().st_size!=expected['bytes'] or digest(path)!=expected['sha256']:raise RuntimeError('Typesetter resource differs from its pin: '+name)
  for name,expected in LOCK['imageSource']['files'].items():
   if digest(ROOT/LOCK['imageSource']['directory']/name)!=expected:raise RuntimeError('Image kernel source differs from its pinned build: '+name)
  h=hashlib.sha256()
- files=[Path(__file__),ROOT/'Applications/prepare_notebook_distribution.py',ROOT/'Sources/NotebookMarkupService/Resources/notebook-markup.js']
+ files=[Path(__file__),ROOT/'Applications/prepare_notebook_distribution.py']
  files+=sorted(p for p in SOURCE.rglob('*') if p.is_file() and 'target' not in p.parts)
  for p in files: h.update(str(p.relative_to(ROOT)).encode());h.update(bytes.fromhex(digest(p)))
  return h.hexdigest()
@@ -91,7 +94,7 @@ def prepare(stage,platform,identity,distribution):
  targetzip=resources/'texlive.zip'
  if not targetzip.exists() or digest(targetzip)!=expected['sha256']:shutil.copy2(distribution,targetzip)
  for name in ['latex.fmt','fonts.tsv']:shutil.copy2(build/name,resources/name)
- shutil.copy2(ROOT/'Sources/NotebookMarkupService/Resources/notebook-markup.js',resources/'notebook-markup.js')
+ (resources/'notebook-markup.js').unlink(missing_ok=True)
  shutil.copytree(SOURCE/'licenses',resources/'licenses',dirs_exist_ok=True)
  (resources/'revision.txt').write_text(identity+'\n')
  platforms=sorted(set(verified+[platform]))

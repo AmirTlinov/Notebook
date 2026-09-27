@@ -111,7 +111,7 @@ struct NotebookAgentFeedbackMaterial: View {
         // alpha: white paper is transparent, letters/contours are the mask.
         // Borrowing this raster retains its existing resource reservation.
         if layer != .content { context.addFilter(.luminanceToAlpha) }
-        let geometry = WorkspaceItemGeometry.document(paper.page.artifact.document.paperSize)
+        let geometry = WorkspaceItemGeometry.document(widthPoints: paper.page.width, heightPoints: paper.page.height)
         context.drawLayer { ink in
           if layer != .content { ink.addFilter(.colorInvert()) }
           ink.draw(Image(decorative:paper.image,scale:1),

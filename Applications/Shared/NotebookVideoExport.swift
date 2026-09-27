@@ -8,10 +8,10 @@ import NotebookCore
 /// renderer seeks explicit model times; AVFoundation supplies encoder backpressure.
 @MainActor enum NotebookVideoExport {
   static func write(to url: URL, cut: NotebookExportCut, options: NotebookExportOptions,
-    jobID: UUID, store: NotebookStore, renderSession: DocumentRenderSession) async throws {
+    jobID: UUID, store: NotebookStore, page: DocumentPrintPage, renderSession: DocumentRenderSession) async throws {
     try options.validate()
-    guard let video = options.video, let width = options.pixelWidth, let blockID = options.blockID else { throw SceneRenderError.resourceLimit }
-    let geometry = WorkspaceItemGeometry.document(cut.document.paperSize)
+    guard let video = options.video, let width = options.pixelWidth, let blockID = options.instanceID else { throw SceneRenderError.resourceLimit }
+    let geometry = WorkspaceItemGeometry.document(widthPoints: page.width, heightPoints: page.height)
     let sourceHeight = Int(ceil(Double(width)*geometry.height/geometry.width))
     let height = sourceHeight + sourceHeight % 2 // One white bottom pixel, never a rescale/crop.
     let resources = SceneRenderResources.shared

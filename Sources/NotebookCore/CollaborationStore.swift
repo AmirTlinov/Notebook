@@ -63,6 +63,10 @@ extension NotebookStore {
     let before = try projection ?? actionSourceProjection(action)
   for expectation in action.expected {
     let actual = try targetContentRevision(target: expectation.target)
+    let owned = action.operations.filter { $0.target == expectation.target }
+    let fileCAS = expectation.target.kind == .document && !owned.isEmpty && owned.allSatisfy {
+      [.putDocumentFile, .patchDocumentFile, .renameDocumentFile, .removeDocumentFile].contains($0.kind) && $0.values["expectedVersion"] != nil
+    }
     if let expectedLifecycle = expectation.lifecycleRevision {
       guard expectation.target.kind == .cover else {
         throw CollaborationError("invalid_basis", "Основание жизненного цикла принадлежит предмету пространства.", target: expectation.target)
@@ -77,16 +81,16 @@ extension NotebookStore {
       throw CollaborationError("revision_conflict", "Чернила изменились. Рассмотрите поверхность заново.", target: expectation.target,
         expected: expectedInk, actual: try before.inkRevision(of: expectation.target))
     }
-    if let expectedSource = expectation.sourceRevision {
+    if let expectedSource = expectation.sourceRevision, !fileCAS {
       let source = try referenceRevision(target: expectation.target)
       guard source == expectedSource else {
         throw CollaborationError("revision_conflict", "Содержание и геометрия изменились. Рассчитайте место заново.", target:expectation.target,expected:expectedSource,actual:source)
       }
     }
-    if let expectedState = expectation.stateRevision, try before.stateRevision(of:expectation.target) != expectedState.lowercased() {
+    if let expectedState = expectation.stateRevision, !fileCAS, try before.stateRevision(of:expectation.target) != expectedState.lowercased() {
       throw CollaborationError("revision_conflict", "Состояние блока изменилось.", target:expectation.target, expected:expectedState, actual:try before.stateRevision(of:expectation.target))
     }
-    guard actual == expectation.revision.lowercased() else {
+    guard fileCAS || actual == expectation.revision.lowercased() else {
       throw CollaborationError("revision_conflict", "Владелец изменился. Прочитайте его текущую версию.",
         target: expectation.target, expected: expectation.revision, actual: actual)
     }
@@ -204,7 +208,7 @@ extension NotebookStore {
                 throw CollaborationError("revision_required", "Для изменения нужна версия владельца.", target: target)
               }
             }
-            if operation.kind == .setBlockState, !action.expected.contains(where: { $0.target == operation.target && $0.stateRevision != nil }) {
+            if operation.kind == .setDocumentProgramState, !action.expected.contains(where: { $0.target == operation.target && $0.stateRevision != nil }) {
               throw CollaborationError("revision_required", "Для состояния блока нужна stateRevision документа.", target: operation.target)
             }
             if operation.kind == .deleteItem, !createdTargets.contains(operation.target),
@@ -325,7 +329,8 @@ extension NotebookStore {
       }
       guard inverse.lifecycleChanges?.isEmpty ?? true, !original.changes.isEmpty,
         original.action.operations.allSatisfy({ [.insertElement,.updateElement,.removeElement,
-          .convertInkToElement,.reorderElements,.moveItem,.stackItems].contains($0.kind) }) else {
+          .convertInkToElement,.reorderElements,.moveItem,.stackItems,
+          .putDocumentFile,.patchDocumentFile,.renameDocumentFile,.removeDocumentFile].contains($0.kind) }) else {
         throw CollaborationError("revision_conflict","Этот ход нельзя безопасно повторить после отмены.")
       }
       let expected=try original.action.expected.map {
@@ -478,13 +483,7 @@ extension NotebookStore {
             preserved.append(change)
             continue
           }
-          if change.file.hasPrefix("document-states/"), change.before == nil, change.path.count == 2,
-            change.path[0] == .field("records"), case .member(let blockID) = change.path[1],
-            let documentID = UUID(uuidString:URL(fileURLWithPath:change.file).deletingPathExtension().lastPathComponent),
-            let document = try? after.files[documentFile(documentID)]?.decode(DocumentDocument.self),
-            let block = document.blocks.first(where: { $0.id == blockID }), let current {
-            after.files[change.file] = after.files[change.file]?.setting(at:change.path[...],to:current.setting("value",block.initialState))
-          } else if let value = after.files[change.file] {
+          if let value = after.files[change.file] {
             if change.file.hasPrefix("document-states/"), change.path.last == .order { continue }
             after.files[change.file] = value.setting(at: change.path[...], to: change.before)
           } else if change.path.isEmpty {
@@ -839,15 +838,16 @@ struct CollaborationWorkspace {
       try appendInk(operation, actor: actor)
     case .insertElement, .convertInkToElement, .updateElement, .setElementState, .removeElement, .reorderElements:
       try editElements(operation, actor: actor)
-    case .setBlockState:
+    case .setDocumentProgramState:
       guard operation.target.kind == .document, let id = operation.id, let value = operation.values["state"],
         let raw = files[documentFile(operation.target.id)],
-        try raw.decode(DocumentDocument.self).blocks.contains(where: { $0.id == id && $0.kind == .interactive }),
+        let path = operation.values["programPath"]?.string, let basis = operation.values["sourceBasis"]?.string,
+        try DocumentProgramSource(document: raw.decode(DocumentDocument.self), instanceID: id, path: path).sourceBasis == basis,
         let rawState = files[stateFile(operation.target.id)] else { throw missing(operation.target) }
       var state = try rawState.decode(DocumentStateJournal.self)
-      _ = state.commit(blockID:id,value:value,actor:actor,human:false)
+      _ = state.commit(instanceID:id,value:value,actor:actor,human:false)
       files[stateFile(operation.target.id)] = try .encode(state)
-    case .insertBlock, .updateBlock, .removeBlock, .reorderBlocks, .setPreamble, .replaceDocument:
+    case .putDocumentFile, .patchDocumentFile, .renameDocumentFile, .removeDocumentFile:
       try editDocument(operation, actor: actor)
     case .createNotebook, .createDocument, .createBoard:
       try create(operation, actor: actor)
@@ -894,7 +894,7 @@ struct CollaborationWorkspace {
       if target.kind == .cover {
         guard let item = try workspace.items.first(where: { $0.id == target.id }) else { throw missing(target) }
         let geometry = item.kind == .document
-          ? WorkspaceItemGeometry.document(try files[documentFile(item.id)]!.decode(DocumentDocument.self).paperSize)
+          ? WorkspaceItemGeometry.uncompiledDocument
           : .notebook
         guard stroke.region.isContained(in: .init(width: geometry.width, height: geometry.height)) else {
           throw invalid("Штрих целиком помещается в физическую обложку.")
@@ -1025,42 +1025,47 @@ struct CollaborationWorkspace {
   }
 
   mutating func editDocument(_ op: CollaborationOperation, actor: UUID) throws {
-    guard op.target.kind == .document, let value = files[documentFile(op.target.id)] else { throw missing(op.target) }
-    var blocks = value["blocks"]!.array
-    let index = op.id.flatMap { id in blocks.firstIndex { $0.memberIdentity == collaborationIdentity(id) } }
-    var next = value
-    switch op.kind {
-    case .insertBlock:
-      guard index == nil, let id = op.id else { throw invalid("Новый блок получает свободный ID.") }
-      let block = try completeBlock(op.values.merging(["id": .string(id)]) { _, new in new })
-      if let afterID = op.values["afterID"]?.string {
-        guard let anchor = blocks.firstIndex(where: { $0.memberIdentity == collaborationIdentity(afterID) }) else { throw invalid("Опорный блок найден в этом документе.") }
-        blocks.insert(block, at: anchor + 1)
-      } else { blocks.append(block) }
-    case .updateBlock:
-      guard let index else { throw missing(op.target) }
-      let allowed: Set<String> = ["source", "html", "css", "javaScript", "programPackage", "height"]
-      guard !op.values.isEmpty, Set(op.values.keys).isSubset(of: allowed) else { throw invalid("Обновление меняет исходник и оформление блока.") }
-      for (key, field) in op.values { blocks[index] = blocks[index].setting(key, key == "programPackage" && field == .null ? nil : field) }
-      if blocks[index]["kind"]?.string == "interactive" {
-        if let html = op.values["html"] ?? op.values["source"] {
-          blocks[index] = blocks[index].setting("source", html).setting("html", html)
-        }
-      }
-    case .removeBlock:
-      guard let index else { throw missing(op.target) }
-      blocks.remove(at: index)
-    case .reorderBlocks: blocks = try reordered(blocks, values: op.values)
-    case .setPreamble:
-      guard let preamble = op.values["preamble"]?.string else { throw invalid("Нужна преамбула.") }
-      next = next.setting("preamble", .string(preamble))
-    case .replaceDocument:
-      guard let replacement = op.values["blocks"], let preamble = op.values["preamble"] else { throw invalid("Полная замена содержит блоки и преамбулу.") }
-      blocks = try replacement.array.map { try completeBlock($0.object) }
-      next = next.setting("preamble", preamble)
-    default: break
+    guard op.target.kind == .document, let value = files[documentFile(op.target.id)], let id = op.id else { throw missing(op.target) }
+    let document = try value.decode(DocumentDocument.self)
+    var entries = document.files
+    let index = entries.firstIndex { collaborationIdentity($0.id) == collaborationIdentity(id) }
+    guard let rawVersion = op.values["expectedVersion"] else { throw invalid("Нужна прочитанная версия файла; null только для создания.") }
+    let expected = try rawVersion == .null ? nil : rawVersion.decode(ContentFieldVersion.self)
+    guard index == nil ? expected == nil : expected == document.fileVersion(fileID: id) else {
+      throw CollaborationError("file_conflict", "Файл изменился. Прочитайте его заново; соседние файлы не затронуты.", target: op.target)
     }
-    next = next.setting("blocks", .array(blocks))
+    switch op.kind {
+    case .putDocumentFile:
+      guard let path = op.values["path"]?.string else { throw invalid("Нужен относительный путь файла.") }
+      let resource = try op.values["resource"].flatMap { $0 == .null ? nil : try $0.decode(NotebookProgramPackage.File.self) }
+      let file = DocumentFile(id: id, path: path, source: op.values["source"]?.string ?? "", resource: resource)
+      guard file.isValid else { throw invalid("Недопустимое содержимое файла.") }
+      if let index { entries[index] = file } else { entries.append(file) }
+    case .patchDocumentFile:
+      guard let index, entries[index].isText, let range = op.values["range"],
+        let location = try range["location"]?.decode(Double.self), let length = try range["length"]?.decode(Double.self),
+        location.isFinite, length.isFinite, location >= 0, length >= 0,
+        location.rounded() == location, length.rounded() == length,
+        location + length <= Double(entries[index].source.utf16.count),
+        let expectedText = op.values["expectedText"]?.string, let replacement = op.values["source"]?.string else { throw invalid("Правка называет точный UTF-16 диапазон текстового файла.") }
+      let source = entries[index].source
+      let nsrange = NSRange(location: Int(location), length: Int(length))
+      guard let swiftRange = Range(nsrange, in: source), String(source[swiftRange]) == expectedText else {
+        throw CollaborationError("file_conflict", "Текст указанного диапазона изменился.", target: op.target)
+      }
+      entries[index] = entries[index].replacingSource(source.replacingCharacters(in: swiftRange, with: replacement))
+    case .renameDocumentFile:
+      guard let index, let path = op.values["path"]?.string else { throw missing(op.target) }
+      entries[index] = entries[index].renamed(path)
+    case .removeDocumentFile:
+      guard let index else { throw missing(op.target) }; entries.remove(at: index)
+    default: throw invalid("Операция не принадлежит файлу документа.")
+    }
+    var next = value.setting("files", try .encode(entries.sorted { collaborationIdentity($0.id) < collaborationIdentity($1.id) }))
+    if op.kind == .renameDocumentFile, let index, document.files[index].path == document.entrypoint, let path = op.values["path"] {
+      next = next.setting("entrypoint", path)
+    }
+    guard try next.decode(DocumentDocument.self).isValid else { throw invalid("Пути и ID файлов должны быть уникальны.") }
     guard next != value else { return }
     files[documentFile(op.target.id)] = try advancing(next, key: "contentStamp", actor: actor)
   }
@@ -1079,16 +1084,22 @@ struct CollaborationWorkspace {
       files[pageFile(pageID)] = try .encode(created.page)
       guard try tree.addItem(id, to: op.target.id, near: center.decode(WorldPoint.self), actor: actor) else { throw missing(op.target) }
     case .createDocument:
-      guard let paper = op.values["paperSize"]?.string.flatMap(DocumentPaperSize.init(rawValue:)),
-        index.createDocument(title: title, actor: actor, documentID: id) != nil else { throw invalid("Нужны свободный ID и формат a4 либо letter.") }
-      let blocks = try (op.values["blocks"]?.array ?? []).map { try completeBlock($0.object).decode(DocumentBlock.self) }
-      let candidate: JSONValue = .object(["format": .number(Double(DocumentDocument.formatVersion)),
-        "id": .string(id.uuidString), "paperSize": .string(paper.rawValue),
-        "preamble": op.values["preamble"] ?? .string(""), "blocks": try .encode(blocks),
+      guard Set(op.values.keys).isSubset(of: ["title", "center", "template", "entrypoint", "files", "state"]),
+        op.values["template"] == nil || op.values["template"]?.string.flatMap(DocumentTemplate.init(rawValue:)) != nil else {
+        throw invalid("Создание документа принимает только настоящие файлы или исходный шаблон.")
+      }
+      guard index.createDocument(title: title, actor: actor, documentID: id) != nil else { throw invalid("Нужен свободный ID документа.") }
+      guard op.values["template"] == nil || op.values["files"] == nil else { throw invalid("Выберите шаблон или передайте файлы.") }
+      let template = op.values["template"]?.string.flatMap(DocumentTemplate.init(rawValue:)) ?? .article
+      let entries = try op.values["files"]?.decode([DocumentFile].self) ?? template.files
+      let candidate: JSONValue = .object(["format": .number(Double(DocumentDocument.formatVersion)), "id": .string(id.uuidString),
+        "entrypoint": op.values["entrypoint"] ?? .string(template.entrypoint), "files": try .encode(entries),
         "contentStamp": try .encode(VersionStamp(counter: 0, actor: actor))])
       let document = try candidate.decode(DocumentDocument.self)
       files[documentFile(id)] = try .encode(document)
-      files[stateFile(id)] = try .encode(DocumentStateJournal(id: id, actor: actor))
+      let state = try op.values["state"]?.decode(DocumentStateJournal.self) ?? DocumentStateJournal(id: id, actor: actor)
+      guard state.id == id, state.isValid else { throw invalid("Начальное состояние принадлежит новому документу.") }
+      files[stateFile(id)] = try .encode(state)
       guard try tree.addItem(id, to: op.target.id, near: center.decode(WorldPoint.self), actor: actor) else { throw missing(op.target) }
     case .createBoard:
       guard index.createBoard(title: title, actor: actor, boardID: id) != nil,
@@ -1131,7 +1142,8 @@ struct CollaborationWorkspace {
         }
       }
       if item.kind == .document {
-        guard let document = files[documentFile(item.id)], try document.decode(DocumentDocument.self).isValid else { throw invalid("Документ содержит согласованные блоки.") }
+        guard let document = files[documentFile(item.id)], try document.decode(DocumentDocument.self).isValid else { throw invalid("Документ содержит согласованные файлы.") }
+        if let scope { try scope.validateDocumentFileNamespace(file: documentFile(item.id), replacing: document.decode(DocumentDocument.self)) }
         if let state = files[stateFile(item.id)] {
           guard try state.decode(DocumentStateJournal.self).isValid else { throw invalid("Документ содержит допустимое состояние.") }
         } else if let scope {
@@ -1148,7 +1160,7 @@ struct CollaborationWorkspace {
         guard let id = element.surface.ownerID, let item = index.items.first(where: { $0.id == id }) else { throw invalid("Обложка принадлежит существующему предмету.") }
         let geometry: WorkspaceItemGeometry
         if item.kind == .document {
-          geometry = .document(try files[documentFile(id)]!.decode(DocumentDocument.self).paperSize)
+          geometry = .uncompiledDocument
         } else { geometry = .notebook }
         guard element.frame.x >= 0, element.frame.y >= 0,
           element.frame.x + element.frame.width <= geometry.width,
@@ -1426,17 +1438,6 @@ private func advancing(_ value: JSONValue, key: String, actor: UUID) throws -> J
   guard let next = stamp.advanced(by: actor) else { throw invalid("Счётчик версий достиг предела.") }
   return value.setting(key, try .encode(next))
 }
-private func completeBlock(_ fields: [String: JSONValue]) throws -> JSONValue {
-  guard let id = fields["id"]?.string, !id.isEmpty, id.count <= 120,
-    let kind = fields["kind"]?.string, ["markdown", "latex", "tex", "interactive"].contains(kind) else { throw invalid("Блок имеет устойчивый ID и вид содержания.") }
-  let source = fields["source"] ?? fields["html"] ?? .string("")
-  var value: [String: JSONValue] = ["id": .string(id), "kind": .string(kind), "source": source,
-    "html": kind == "interactive" ? (fields["html"] ?? source) : .string(""),
-    "css": fields["css"] ?? .string(""), "javaScript": fields["javaScript"] ?? .string(""),
-    "initialState": fields["initialState"] ?? .object([:]), "height": fields["height"] ?? .number(320)]
-  if let package = fields["programPackage"], package != .null { value["programPackage"] = package }
-  return .object(value)
-}
 private func reordered(_ items: [JSONValue], values: [String: JSONValue]) throws -> [JSONValue] {
   guard let ids = values["ids"]?.array.compactMap(\.string), ids.count == items.count,
     Set(ids).count == ids.count, Set(ids) == Set(items.compactMap { $0["id"]?.string }) else { throw invalid("Порядок перечисляет каждый существующий ID ровно один раз.") }
@@ -1449,7 +1450,7 @@ private enum CollaborationValueOwner: Equatable {
   case workspace, workspaceItems, workspaceItem
   case hierarchy, boards, boardNode, board
   case page, pageElements, pageElement
-  case document, blocks, block
+  case document, documentFiles, documentFile
   case stateJournal, stateRecords, stateRecord
   case inkJournal, inkActions, inkAction
   case placements, placement, spatialElements, spatialElement
@@ -1488,14 +1489,14 @@ private enum CollaborationValueOwner: Equatable {
     case (.spatialElements, .member(_)): .spatialElement
     case (.page, .field("elements")): .pageElements
     case (.pageElements, .member(_)): .pageElement
-    case (.document, .field("blocks")): .blocks
-    case (.blocks, .member(_)): .block
+    case (.document, .field("files")): .documentFiles
+    case (.documentFiles, .member(_)): .documentFile
     case (.stateJournal, .field("records")): .stateRecords
     case (.stateRecords, .member(_)): .stateRecord
     case (.inkJournal, .field("actions")): .inkActions
     case (.inkActions, .member(_)): .inkAction
     case (.pageElement, .field("state")), (.spatialElement, .field("state")),
-      (.block, .field("initialState")), (.stateRecord, .field("value")): .opaque
+      (.stateRecord, .field("value")): .opaque
     case (.opaque, _): .opaque
     default: .value
     }
@@ -1523,7 +1524,7 @@ private enum CollaborationValueOwner: Equatable {
     }
     // These values contain no domain-owned descendants. In particular state,
     // initialState and record.value retain every nested key and array entry.
-    if self == .value || self == .opaque || self == .workspaceItem || self == .pageElement || self == .block { return value }
+    if self == .value || self == .opaque || self == .workspaceItem || self == .pageElement || self == .documentFile { return value }
     switch value {
     case .object(let object):
       var result: [String: JSONValue] = [:]
@@ -1639,7 +1640,7 @@ private func collaborationDiff(_ before: [String: JSONValue], _ after: [String: 
       for id in Set(leftMap.keys).union(rightMap.keys).sorted() { walk(file, path + [.member(id)], leftMap[id], rightMap[id]) }
       let leftOrder: JSONValue = .array(left.compactMap(\.memberIdentity).map(JSONValue.string))
       let rightOrder: JSONValue = .array(right.compactMap(\.memberIdentity).map(JSONValue.string))
-      if owner != .placements, leftOrder != rightOrder {
+      if owner != .placements, owner != .documentFiles, leftOrder != rightOrder {
         result.append(.init(file: file, path: path + [.order], before: leftOrder, after: rightOrder))
       }
     } else { result.append(.init(file: file, path: path, before: a, after: b)) }
@@ -1697,7 +1698,8 @@ func collaborationCausalFieldPath(_ path: [CollaborationPathComponent]) -> [Coll
     case .member(let id):
       parts.append(collaborationIdentity(id))
       if local.count > 2, case .field(let field) = local[2] {
-        parts.append(collection != "items" && ["source", "html", "kind", "programPackage"].contains(field) ? "content" : field)
+        let content = collection == "files" ? ["source", "resource"] : ["source", "html", "kind", "programPackage"]
+        parts.append(collection != "items" && content.contains(field) ? "content" : field)
         if field == "graphic", local.count > 3, case .field(let part) = local[3] {
           parts.append(part)
           if part == "connection", local.count > 4, case .field(let property) = local[4] { parts.append(property) }

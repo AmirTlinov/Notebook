@@ -1,6 +1,7 @@
 import Combine
 import Foundation
 import NotebookCore
+import NotebookTypesetter
 import Observation
 
 /// Pixel dependencies, separate from the workspace cursor used to discover changes.
@@ -269,8 +270,12 @@ final class MacPreviewPublisher {
           return
         } catch {
           guard self?.started == true, !Task.isCancelled, model.permitsBackgroundPreparation else { return }
-          let receipt = TargetRenderReceipt(request: request, status: "error", diagnostics: [
-            .init(kind: "render_error", message: String(describing: error))])
+          let rendering = error as? DocumentRenderingFailure
+          let diagnostics = rendering?.diagnostics ?? (error as? NotebookTypesetterError)?.diagnostics.map {
+            RenderDiagnostic(kind: $0.severity, fileID: $0.fileID, path: $0.path, line: $0.line, message: $0.message)
+          } ?? [.init(kind: "render_error", message: String(describing: error))]
+          let receipt = TargetRenderReceipt(request: request, status: "error", buildID: rendering?.buildID, diagnostics: diagnostics,
+            programs: request.target.kind == .document ? rendering?.programs ?? [] : nil)
           try await model.performStoreCommand { try $0.saveTargetRender(receipt) }
         }
       } catch { /* The next publisher observation can retry an unread request. */ }

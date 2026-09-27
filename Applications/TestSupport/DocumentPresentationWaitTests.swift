@@ -33,8 +33,8 @@ final class DocumentPresentationWaitTests: XCTestCase {
   }
 
   func testNativeCanonicalReceiptCompletesTheExactRequest() async throws {
-    let (renderer, document) = makeRenderer()
-    let host = DocumentWebHost(), geometry = WorkspaceItemGeometry.document(document.paperSize)
+    let (renderer, _) = makeRenderer()
+    let host = DocumentWebHost(), geometry = WorkspaceItemGeometry.uncompiledDocument
     #if os(iOS)
     let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
     let window = UIWindow(windowScene: scene), controller = UIViewController()
@@ -78,7 +78,7 @@ final class DocumentPresentationWaitTests: XCTestCase {
     defer { task.cancel() }
     try await subscribed(renderer)
     var changed = document
-    XCTAssertTrue(changed.replaceBlockSource(id: "body", source: "# Replaced source", actor: UUID()))
+    XCTAssertTrue(changed.replaceFileSource(id: "body", source: "\\section{Replaced source}\\hypertarget{replaced-source}{}", actor: UUID()))
     update(renderer, document: changed)
     await fulfillment(of: [finished], timeout: 1)
     XCTAssertEqual(renderer.pendingPresentationRequestCount, 0)
@@ -129,7 +129,7 @@ final class DocumentPresentationWaitTests: XCTestCase {
   private func makeRenderer() -> (DocumentWebCoordinator, DocumentDocument) {
     let renderer = DocumentWebCoordinator(resources: SceneRenderResources(), onRenderReady: .init { _ in },
       onPageLayout: { _ in },  onStateChange: { _, _ in nil })
-    let document = DocumentDocument(actor: UUID(), blocks: [.markdown(id: "body", source: "# Ready from a native receipt")])
+    let document = DocumentTestFiles.document(actor: UUID(), contents: [.tex(id: "body", source: "\\section{Ready from a native receipt}\\hypertarget{ready-from-a-native-receipt}{}")])
     update(renderer, document: document)
     return (renderer, document)
   }

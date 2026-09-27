@@ -21,21 +21,21 @@ extension DocumentWebCoordinator {
     struct Layer: Decodable { let svg: String; let frame: PageRect }
     guard exportSnapshotID != nil, let before = payload, !isInvalidated,
       let webView, let layout = before.source.layout else { throw CancellationError() }
-    let regions = layout.regions(on: before.pageIndex)
+    let regions = layout.regions(on: before.pageIndex).filter { $0.kind == .program }
     var values: [DocumentPDFVector] = [], storage: RasterReservation?, bytes = 0
     do {
-      for block in before.blocks where block.kind == .interactive && regions.contains(where: { $0.id == block.id }) {
+      for program in before.source.programs where regions.contains(where: { $0.id == program.id }) {
         let layers = try await NotebookProgramBridge.lifecycle("exportProgram", controller: "notebookRenderer",
-          argument: .object(["format": .string("pdf"), "blockID": .string(block.id),
-            "state": before.states[block.id] ?? block.initialState]), in: webView).decode([Layer].self)
+          argument: .object(["format": .string("pdf"), "blockID": .string(program.id),
+            "state": before.states[program.id] ?? program.initialState]), in: webView).decode([Layer].self)
         guard !isInvalidated, payload?.renderToken == before.renderToken else { throw CancellationError() }
-        let fragments = regions.filter { $0.id == block.id }
+        let fragments = regions.filter { $0.id == program.id }
         guard layers.count <= 16, let fragment = fragments.first else { throw SceneRenderError.resourceLimit }
         var preceding: [CGRect] = []
         for layer in layers {
           let r = layer.frame, rect = CGRect(x: r.x, y: r.y, width: r.width, height: r.height)
           guard [r.x, r.y, r.width, r.height].allSatisfy(\.isFinite), r.x >= 0, r.y >= 0, r.width > 0, r.height > 0,
-            r.x+r.width <= fragment.frame.width+0.01, r.y+r.height <= block.height+0.01,
+            r.x+r.width <= fragment.frame.width+0.01, r.y+r.height <= (layout.programHeights(ids: [program.id])[program.id] ?? 0)+0.01,
             preceding.allSatisfy({ !$0.intersects(rect) }) else {
             throw CollaborationError("invalid_export_vector", "Векторные области должны быть непересекающимися и находиться внутри программы.")
           }

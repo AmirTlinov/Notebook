@@ -31,6 +31,7 @@ struct NotebookMacWorkspaceRoot: View {
         }.padding(32)
       }
     }
+    .modifier(NotebookDocumentImport(model: lifecycle.launch.model))
     .frame(minWidth: 760, minHeight: 520)
     .preferredColorScheme(.light)
     .sheet(isPresented: Binding(get: { lifecycle.launch.showsWorkspaces }, set: { lifecycle.launch.showsWorkspaces = $0 })) {
@@ -43,6 +44,7 @@ struct NotebookMacWorkspaceView: View {
   @Environment(NotebookAppModel.self) private var model
   let showPaste: () -> Void
   @State private var showsSearch = false
+  @Environment(\.importNotebookDocument) private var importNotebookDocument
   @State private var documentLayout: DocumentPageLayout?
   @State private var documentMode = DocumentViewMode.paper
 
@@ -73,9 +75,6 @@ struct NotebookMacWorkspaceView: View {
       }
     }
     .toolbar {
-      ToolbarItem(placement: .principal) {
-        if model.activeDocument != nil { DocumentViewModePicker(mode: $documentMode).frame(width: 224) }
-      }
       ToolbarItemGroup(placement: .navigation) {
         Button(action: model.macGoBack) { Label("Назад", systemImage: "chevron.left") }
           .disabled(!model.macCanGoBack).keyboardShortcut("[", modifiers: .command)
@@ -126,8 +125,14 @@ struct NotebookMacWorkspaceView: View {
         }
         Menu {
           Button("Тетрадь") { model.macCreateItem(.notebook) }
-          Button("Документ") { model.macCreateItem(.document) }
+          Menu("Документ") {
+            ForEach(DocumentTemplate.allCases, id: \.self) { template in
+              Button(template.title) { model.macCreateItem(.document, template: template) }
+            }
+          }
           Button("Доска") { model.macCreateItem(.board) }
+          Divider()
+          Button("Импорт документа…", action: importNotebookDocument)
         } label: { Label("Создать", systemImage: "plus") }
           .accessibilityIdentifier("create-workspace-item")
         Button(action: showPaste) { Label("Вставить", systemImage: "document.on.clipboard") }
@@ -240,13 +245,13 @@ extension NotebookAppModel {
     }
   }
 
-  func macCreateItem(_ kind: WorkspaceItemKind) {
+  func macCreateItem(_ kind: WorkspaceItemKind, template: DocumentTemplate = .article) {
     afterPageInput { [self] in
       guard let p = presence else { return }
       let id: UUID?
       switch kind {
       case .notebook: id = createNotebook(at: p.camera.center)
-      case .document: id = createDocument(at: p.camera.center, paperSize: .a4)
+      case .document: id = createDocument(at: p.camera.center, template: template)
       case .board: id = createBoard(at: p.camera.center)
       }
       if let id { macOpenItem(id) }

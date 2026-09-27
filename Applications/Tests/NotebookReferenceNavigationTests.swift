@@ -181,7 +181,7 @@ final class NotebookReferenceNavigationTests: XCTestCase {
     XCTAssertNil(model.workspace?.item(id: itemID))
     let viewport = try XCTUnwrap(model.presence?.viewport)
     let requested = SessionPresence(boardID: boardID, mode: .document,
-      camera: .init(center: center, scale: WorkspaceItemGeometry.document(.a4).fitScale(viewport: viewport)),
+      camera: .init(center: center, scale: WorkspaceItemGeometry.uncompiledDocument.fitScale(viewport: viewport)),
       viewport: viewport, focusedItemID: itemID, openProgress: 1, selectedItemID: itemID)
     model.updatePresence(requested, settled: true)
     XCTAssertEqual(model.presence, requested, "A bounded cache cannot turn an addressed document into root-board overview")
@@ -285,8 +285,8 @@ final class NotebookReferenceNavigationTests: XCTestCase {
       let center = WorldPoint(x: 90_000, y: -70_000)
       XCTAssertTrue(hierarchy.addItem(document.id, to: board.id, near: center, actor: actor))
       try store.saveDocumentWorkspaceBundle(index: index,
-        document: .init(id: document.id, actor: actor, paperSize: .a4,
-          blocks: [.markdown(id: "text", source: "Real distant document")]),
+        document: DocumentTestFiles.document(id: document.id, actor: actor,
+          contents: [.tex(id: "text", source: "Real distant document")]),
         state: .init(id: document.id, actor: actor), board: hierarchy)
       return (board.id, document.id, center)
     }

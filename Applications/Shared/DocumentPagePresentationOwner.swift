@@ -17,11 +17,11 @@ struct DocumentPagePresentation {
   let pageTurnActive: Bool
   let onRenderReady: PageTurnReadiness
   let onPageLayout: (DocumentPageLayout) -> Void
-  let onStateChange: (String, JSONValue) async throws -> ContentFieldVersion?
+  let onStateChange: (DocumentProgramSource, JSONValue) async throws -> ContentFieldVersion?
   let onLinkActivation: (DocumentLinkActivation) -> Void
   let snapshotPixelWidth: Int?
   let onPreparationFailure: (Error) -> Void
-  var onStateCheckpoint: (String, JSONValue, DocumentProgramIdentity, ContentFieldVersion?) async throws -> ContentFieldVersion? = { _, _, _, _ in nil }
+  var onStateCheckpoint: (String, JSONValue, DocumentProgramSource, ContentFieldVersion?) async throws -> ContentFieldVersion? = { _, _, _, _ in nil }
   var onStateDrained: () async -> Void = {}
   var measurements: DocumentPresentationRecorder? = nil
   var programStore: NotebookStore? = nil
@@ -171,7 +171,7 @@ final class DocumentPagePresentationOwner {
     let value: JSONValue
     do {
       value = try await runtime.checkpoint()
-      let raster = try await runtime.capture(sourceOffset: 0, height: runtime.block.height,
+      let raster = try await runtime.capture(sourceOffset: 0, height: runtime.viewportSize.height,
         pixelWidth: max(1, Int(ceil(runtime.blockWidth * 2))))
       raster.release()
       guard owner.programOwner.runtimes[blockID] === runtime, runtime.value == value else { throw CancellationError() }
@@ -232,11 +232,11 @@ final class DocumentPagePresentationOwner {
     let program: AgentPinnedImage.Presentation.Program?
     if let blockID, let runtime = owner.programOwner.runtimes[blockID],
       runtime.attentionPauseID != nil, runtime.hasFrozenFrame,
-      runtime.programIdentity == entry.input.document.programIdentity(blockID: blockID),
-      runtime.value == (entry.input.state.value(for: blockID) ?? runtime.block.initialState),
+      runtime.sourceBasis == owner.source?.program(blockID)?.sourceBasis,
+      runtime.value == (entry.input.state.value(for: blockID) ?? runtime.program.initialState),
       let placement = owner.placements(on: entry).first(where: { $0.blockID == blockID }),
       placement.rect.intersects(CGRect(x: region.x, y: region.y, width: region.width, height: region.height)) {
-      program = .init(blockID: blockID, programIdentity: runtime.programIdentity, state: runtime.value)
+      program = .init(instanceID: blockID, programPath: runtime.program.path, sourceBasis: runtime.sourceBasis, state: runtime.value)
     } else { program = nil }
     let pixels = try NotebookSubmittedPixels.capture(view: host,
       physicalSize: owner.physicalSize(entry.input), region: region, resources: resources,
@@ -315,10 +315,10 @@ final class DocumentPagePresentationOwner {
     }
     programOwner.onLink = { [weak self] block, version, href in
       guard let self, let current, current.id == mountedID, let host = current.host,
-        current.input.document.programIdentity(blockID: block) == version,
+        source?.program(block)?.sourceBasis == version,
         let origin = paper.currentLinkOrigin, let layout = origin.source.layout,
         origin.source.matches(current.input.document), origin.pageIndex == current.input.pageIndex,
-        layout.blockIDs(on: [origin.pageIndex]).contains(block),
+        layout.blockIDs(on: [origin.pageIndex], kind: .program).contains(block),
         host.programOverlay.isPresenting(placements(on: current), paperSize: physicalSize(current.input),
           passive: passivePlacements(on: current)) else { return }
       paper.resolveLink(href, origin: origin, deliver: current.input.onLinkActivation)
@@ -479,8 +479,7 @@ final class DocumentPagePresentationOwner {
     host.onSizeChange = { [weak self] in self?.schedule() }
     host.onWindowChange = { [weak self] in self?.hostAttachmentChanged(id) }
     if mountedID != id, entry.requiresPreparation {
-      let geometry = WorkspaceItemGeometry.document(input.document.paperSize)
-      host.configure(size: .init(width: geometry.width, height: geometry.height), interactive: false)
+      host.configure(size: physicalSize(input), interactive: false)
       if hasStagedPaper(for: entry) { entry.publishReadiness(true) }
       else if requestsLivePaper(for: entry) {
         entry.publishReadiness(false)
@@ -814,7 +813,7 @@ final class DocumentPagePresentationOwner {
         !hasTerminalFailure(for: candidate) else { continue }
       if requestsLivePaper(for: candidate), candidate.host?.window == nil { continue }
       if !requestsLivePaper(for: candidate), !programsReady(on: candidate.input.pageIndex) {
-        let ids = layout.blockIDs(on: [candidate.input.pageIndex])
+        let ids = layout.blockIDs(on: [candidate.input.pageIndex], kind: .program)
         if let error = ids.compactMap({ programOwner.runtimes[$0]?.failure }).first {
           show(error, on: candidate, scope: .composite)
         }
@@ -853,9 +852,9 @@ final class DocumentPagePresentationOwner {
           preparationHost.installProgramOverlay()
           _ = preparationHost.programOverlay.present([], paperSize: physicalSize(candidate.input), interactive: false)
           preparationHost.programOverlay.presentPending(layout.regions(on: candidate.input.pageIndex).compactMap { region in
-            guard source?.programIDs.contains(region.id) == true else { return nil }
+            guard region.kind == .program, source?.programIDs.contains(region.id) == true else { return nil }
             return .init(blockID: region.id, rect: .init(x: region.frame.x, y: region.frame.y,
-              width: region.frame.width, height: region.frame.height), message: "Подготовка программы…")
+              width: region.frame.width, height: region.frame.height), message: source?.programFailures[region.id] ?? "Подготовка программы…")
           })
           preparationHost.removeFallback(); preparationHost.removeLoading(); preparationHost.removeFailure()
           measurements?.observeLanding(landingTrace, stage: .completed)
@@ -892,7 +891,8 @@ final class DocumentPagePresentationOwner {
   }
 
   private func physicalSize(_ input: DocumentPagePresentation) -> CGSize {
-    let geometry = WorkspaceItemGeometry.document(input.document.paperSize)
+    let geometry = source?.layout?.paper(on: input.pageIndex).geometry
+      ?? paper.retainedGeometry(on: input.pageIndex) ?? WorkspaceItemGeometry.uncompiledDocument
     return .init(width: geometry.width, height: geometry.height)
   }
 
@@ -946,7 +946,7 @@ final class DocumentPagePresentationOwner {
           y: (visible.minY - bounds.midY) / scale + size.height / 2,
           width: visible.width / scale, height: visible.height / scale)
         visibleIDs = Set(layout.regions(on: entry.input.pageIndex).filter { region in
-          rect.intersects(CGRect(x: region.frame.x, y: region.frame.y, width: region.frame.width, height: region.frame.height))
+          region.kind == .program && rect.intersects(CGRect(x: region.frame.x, y: region.frame.y, width: region.frame.width, height: region.frame.height))
         }.map(\.id))
       }
     }
@@ -968,11 +968,11 @@ final class DocumentPagePresentationOwner {
     let pages = Set(entries.values.filter(\.requiresPreparation).map { min($0.input.pageIndex, layout.pageCount - 1) })
     var densities: [String: Double] = [:]
     for entry in entries.values where entry.requiresPreparation {
-      for id in layout.blockIDs(on: [entry.input.pageIndex]) {
+      for id in layout.blockIDs(on: [entry.input.pageIndex], kind: .program) {
         densities[id] = max(densities[id] ?? 0, requiredScale(entry))
       }
     }
-    programOwner.update(input: input, layout: layout, pages: pages,
+    programOwner.update(input: input, layout: layout, programs: source?.programs ?? [], pages: pages,
       currentPage: current?.input.pageIndex, visibleIDs: visiblePrograms(), preparationPage: preparationDemand?.pageIndex,
       blocked: gestureLocked, contacts: contacts, densities: densities)
     if !hiddenOpenPaper { programOwner.resumeFromReturn() }
@@ -984,7 +984,7 @@ final class DocumentPagePresentationOwner {
     CATransaction.begin(); CATransaction.setDisableActions(true)
     defer { CATransaction.commit() }
     refreshMountedInput()
-    let currentIDs = layout.blockIDs(on: [entry.input.pageIndex])
+    let currentIDs = layout.blockIDs(on: [entry.input.pageIndex], kind: .program)
     host.installProgramOverlay()
     for (id, runtime) in programOwner.runtimes where !currentIDs.contains(id) {
       if let web = runtime.webView { host.programOverlay.park(web, fullSize: web.bounds.size) }
@@ -993,10 +993,12 @@ final class DocumentPagePresentationOwner {
     let passive = passivePlacements(on: entry)
     guard host.programOverlay.present(placements, paperSize: physicalSize(entry.input), interactive: entry.input.isInteractive, passive: passive) else { return }
     host.programOverlay.presentPending(layout.regions(on: entry.input.pageIndex).compactMap { region in
-      guard source?.programIDs.contains(region.id) == true else { return nil }
+      guard region.kind == .program, source?.programIDs.contains(region.id) == true else { return nil }
       let id = region.id, runtime = programOwner.runtimes[id]
       let message: String, actionTitle: String, action: (() -> Void)?
-      if programOwner.retiringIDs.contains(id) {
+      if let failure = source?.programFailures[id] {
+        message = failure; actionTitle = ""; action = nil
+      } else if programOwner.retiringIDs.contains(id) {
         message = "Сохраняем состояние программы…"; actionTitle = ""; action = nil
       } else if runtime?.failure != nil || programOwner.pauseFailures[id] != nil {
         message = "Не удалось подготовить программу"; actionTitle = "Повторить"
@@ -1055,7 +1057,7 @@ final class DocumentPagePresentationOwner {
   private func placements(on entry: Entry) -> [DocumentProgramPlacement] {
     guard let layout = source?.layout else { return [] }
     return layout.regions(on: entry.input.pageIndex).compactMap { region in
-      guard let runtime = programOwner.runtimes[region.id], runtime.ready,
+      guard region.kind == .program, let runtime = programOwner.runtimes[region.id], runtime.ready,
         programOwner.liveIDs.contains(region.id) || programOwner.retiringIDs.contains(region.id),
         let web = runtime.webView else { return nil }
       return .init(blockID: region.id, webView: web,
@@ -1068,13 +1070,13 @@ final class DocumentPagePresentationOwner {
   private func passivePlacements(on entry: Entry) -> [DocumentProgramPassivePlacement] {
     guard let layout = source?.layout else { return [] }
     return layout.regions(on: entry.input.pageIndex).compactMap { region in
+      guard region.kind == .program else { return nil }
       if programOwner.runtimes[region.id]?.ready == true,
         programOwner.liveIDs.contains(region.id) || programOwner.retiringIDs.contains(region.id) { return nil }
-      guard let saved = programOwner.paused(region.id),
-        let block = entry.input.document.blocks.first(where: { $0.id == region.id }) else { return nil }
+      guard let saved = programOwner.paused(region.id) else { return nil }
       return .init(blockID: region.id, raster: saved.raster,
         rect: .init(x: region.frame.x, y: region.frame.y, width: region.frame.width, height: region.frame.height),
-        sourceOffset: region.sourceOffset, fullSize: .init(width: region.frame.width, height: block.height))
+        sourceOffset: region.sourceOffset, fullSize: saved.size)
     }
   }
 
@@ -1111,11 +1113,11 @@ final class DocumentPagePresentationOwner {
     case .region(let region):
       let crop = CGRect(x: region.x, y: region.y, width: region.width, height: region.height)
       guard [region.x, region.y, region.width, region.height].allSatisfy(\.isFinite), !crop.isEmpty,
-        CGRect(x: 0, y: 0, width: layout.width, height: layout.height).contains(crop) else { return false }
-      return layout.regions(on: page).filter { source.programIDs.contains($0.id)
+        CGRect(x: 0, y: 0, width: layout.paper(on: page).surfaceWidth, height: layout.paper(on: page).surfaceHeight).contains(crop) else { return false }
+      return layout.regions(on: page).filter { $0.kind == .program && source.programIDs.contains($0.id)
         && crop.intersects(CGRect(x: $0.frame.x, y: $0.frame.y, width: $0.frame.width, height: $0.frame.height))
       }.allSatisfy { programOwner.presents($0.id) }
-    case .page: return layout.blockIDs(on: [page]).intersection(source.programIDs).allSatisfy { programOwner.presents($0) }
+    case .page: return layout.blockIDs(on: [page], kind: .program).intersection(source.programIDs).allSatisfy { programOwner.presents($0) }
     }
   }
 
@@ -1141,9 +1143,9 @@ final class DocumentPagePresentationOwner {
     let input = entry.input, token = input.token, physical = physicalSize(input)
     let width = captureWidth(entry)
     guard width > 0 else { throw SceneRenderError.resourceLimit }
-    let hasPrograms = !layout.blockIDs(on: [input.pageIndex]).intersection(source?.programIDs ?? []).isEmpty
+    let hasPrograms = !layout.blockIDs(on: [input.pageIndex], kind: .program).intersection(source?.programIDs ?? []).isEmpty
     let liveRegions = layout.regions(on: input.pageIndex).compactMap { region -> (DocumentBlockRegion, DocumentBlockRuntime)? in
-      guard let runtime = programOwner.runtimes[region.id], runtime.ready else { return nil }
+      guard region.kind == .program, let runtime = programOwner.runtimes[region.id], runtime.ready else { return nil }
       return (region, runtime)
     }
     let pageHeight = Int(ceil(Double(width) * physical.height / physical.width))
@@ -1151,7 +1153,7 @@ final class DocumentPagePresentationOwner {
     var sizes = [(width: width, height: max(pageHeight, Int(ceil(Double(width) * baseSize.height / baseSize.width))))]
     for (region, runtime) in liveRegions {
       let pixels = max(1, Int(ceil(Double(width) * region.frame.width / physical.width)))
-      sizes.append((pixels, Int(ceil(Double(pixels) * min(region.frame.height, runtime.block.height - region.sourceOffset) / runtime.blockWidth))))
+      sizes.append((pixels, Int(ceil(Double(pixels) * min(region.frame.height, runtime.viewportSize.height - region.sourceOffset) / runtime.blockWidth))))
     }
     if hasPrograms { sizes.append((width, pageHeight)) }
     guard let reservations = resources.reserveRasterBatch(sizes) else { throw SceneRenderError.resourceLimit }
@@ -1165,10 +1167,10 @@ final class DocumentPagePresentationOwner {
     defer { base.release() }
     var layers: [(DocumentBlockRegion, RasterLease, Bool)] = []
     defer { layers.forEach { $0.1.release() } }
-    for region in layout.regions(on: input.pageIndex) {
+    for region in layout.regions(on: input.pageIndex) where region.kind == .program {
       if let index = liveRegions.firstIndex(where: { $0.0 == region }) {
         let runtime = liveRegions[index].1
-        let image = try await runtime.capture(sourceOffset: region.sourceOffset, height: min(region.frame.height, runtime.block.height - region.sourceOffset),
+        let image = try await runtime.capture(sourceOffset: region.sourceOffset, height: min(region.frame.height, runtime.viewportSize.height - region.sourceOffset),
           pixelWidth: sizes[index + 1].width, reservation: reservations[index + 1])
         layers.append((region, image, false))
       } else if let image = programOwner.paused(region.id)?.raster.retainedCopy() {
@@ -1186,7 +1188,7 @@ final class DocumentPagePresentationOwner {
         context.cgContext.saveGState(); context.cgContext.clip(to: rect)
         if fullProgram {
           raster.image.draw(in: .init(x: rect.minX, y: rect.minY - region.sourceOffset,
-            width: rect.width, height: input.document.blocks.first(where: { $0.id == region.id })?.height ?? raster.image.size.height))
+            width: rect.width, height: programOwner.paused(region.id)?.size.height ?? raster.image.size.height))
         } else { raster.image.draw(in: rect) }
         context.cgContext.restoreGState()
       }
@@ -1215,7 +1217,7 @@ final class DocumentPagePresentationOwner {
       admission.passiveByteLimit - admission.pinnedBytes - admission.passiveReservedBytes)
     let physical = physicalSize(entry.input)
     let allProgramRegions = source?.layout?.regions(on: entry.input.pageIndex).filter {
-      source?.programIDs.contains($0.id) == true
+      $0.kind == .program && source?.programIDs.contains($0.id) == true
     } ?? []
     let programRegions = allProgramRegions.filter { programOwner.runtimes[$0.id]?.ready == true }
     func cost(_ width: Int) -> Int {
@@ -1300,7 +1302,9 @@ final class DocumentPagePresentationOwner {
       }
       entry.host?.removeFailure(); schedule()
     }
-    let message = "Не удалось подготовить страницу. Можно повторить попытку."
+    let message = paper.retainsPreviousPrint
+      ? "Исходник сохранён. Показана предыдущая сборка; текущую не удалось подготовить."
+      : "Не удалось подготовить страницу. Можно повторить попытку."
     let kind: PageTurnPreparationFailure.Kind
     switch error {
     case SceneRenderError.resourceLimit: kind = .resourceLimit

@@ -64,7 +64,7 @@ public struct CollaborationOperation: Codable, Equatable, Sendable {
     case appendInkStroke
     case convertInkToElement
     case insertElement, updateElement, setElementState, removeElement, reorderElements
-    case insertBlock, updateBlock, setBlockState, removeBlock, reorderBlocks, setPreamble, replaceDocument
+    case putDocumentFile, patchDocumentFile, renameDocumentFile, removeDocumentFile, setDocumentProgramState
     case createNotebook, createDocument, createBoard, renameItem, moveItem, stackItems
     case appendPage, deleteItem
   }

@@ -122,7 +122,7 @@ final class NotebookPaperCameraTests: XCTestCase {
     let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
     retainNotebookUntilTeardown(model, removing: root)
     await model.start(pageSize: NotebookAppModel.defaultPageSize)
-    let item = try XCTUnwrap(document ? model.createDocument(at: .zero, paperSize: .a4) : model.workspace?.selectedItemID)
+    let item = try XCTUnwrap(document ? model.createDocument(at: .zero) : model.workspace?.selectedItemID)
     let saved = await model.finishPendingPersistence()
     XCTAssertTrue(saved)
     let board = try XCTUnwrap(model.workspace?.rootBoardID)

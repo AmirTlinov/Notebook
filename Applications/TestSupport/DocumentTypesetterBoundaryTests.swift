@@ -8,7 +8,7 @@ import XCTest
 final class DocumentTypesetterBoundaryTests: XCTestCase {
   private var resources: URL { Bundle.main.resourceURL!.appendingPathComponent("NotebookTypesetter") }
   private func document(_ source: String) -> DocumentDocument {
-    .init(actor: UUID(), blocks: [.init(id: "body", kind: .tex, source: source)])
+    .init(actor: UUID(), files: [.init(id: "main", path: "main.tex", source: "\\documentclass{article}\n\\usepackage{fontspec}\n\\setmainfont{Libertinus Serif}\n\\begin{document}\n" + source + "\n\\end{document}\n")])
   }
 
   // PDF metadata records compilation time; compare the actual typeset page,
@@ -34,7 +34,7 @@ final class DocumentTypesetterBoundaryTests: XCTestCase {
     defer { try? FileManager.default.removeItem(at: root) }
     // The unchanged image kernel still has its pinned font metadata. No TeX
     // format or archive exists: opening either one makes this conversion fail.
-    for name in ["fonts.tsv", "notebook-markup.js"] {
+    for name in ["fonts.tsv"] {
       try FileManager.default.copyItem(at: resources.appendingPathComponent(name), to: root.appendingPathComponent(name))
     }
     let compiler = NotebookTypesetter(resources: root)
@@ -95,16 +95,60 @@ final class DocumentTypesetterBoundaryTests: XCTestCase {
     try assertSamePrintedPage(cold, initial)
   }
 
-  func testMalformedSourceKeepsTheLastSuccessfulArtifactAndReportsItsBlock() async throws {
+  func testMalformedSourceKeepsTheLastSuccessfulArtifactAndReportsItsFile() async throws {
     let compiler = NotebookTypesetter(resources: resources)
     let valid = try await compiler.compile(document("Исходный текст."))
     do { _ = try await compiler.compile(document("\\NotebookUnknownCommand")); XCTFail("Invalid TeX was accepted") }
     catch let error as NotebookTypesetterError {
-      XCTAssertTrue(error.diagnostics.contains { $0.blockID == "body" }, error.localizedDescription)
+      XCTAssertTrue(error.diagnostics.contains { $0.fileID == "main" && $0.path == "main.tex" && $0.line >= 5 }, error.localizedDescription)
     }
     XCTAssertTrue(valid.pdf.starts(with: Data("%PDF-".utf8)))
     let next = try await compiler.compile(document("Следующая корректная версия."))
     XCTAssertFalse(next.pdf.isEmpty)
+  }
+
+  func testBreakableRequiresSingleColumnFlowButWholeAndBoxedProgramsRemainValid() async throws {
+    let compiler = NotebookTypesetter(resources: resources)
+    func source(_ body: String, columns: Bool) -> DocumentDocument {
+      let main = """
+        \\documentclass[\(columns ? "twocolumn" : "onecolumn")]{article}
+        \\usepackage[paperwidth=400bp,paperheight=400bp,margin=25bp]{geometry}
+        \\usepackage{notebook}
+        \\usepackage{multicol}
+        \\begin{document}
+        \\input{sections/content.tex}
+        \\end{document}
+        """
+      return .init(actor: UUID(), files: [.init(id: "main", path: "main.tex", source: main),
+        .init(id: "content", path: "sections/content.tex", source: body)] +
+        DocumentTestFiles.program(id: "probe", html: "<p>One executor</p>").files)
+    }
+    let command = "\\NotebookInteractive[id=probe,width=\\linewidth,height=600bp,breakable]{programs/probe}"
+    for (body, columns, line) in [(command, true, 1),
+      ("\\begin{multicols}{2}\n" + command + "\n\\end{multicols}", false, 2)] {
+      do { _ = try await compiler.compile(source(body, columns: columns)); XCTFail("A second same-page fragment would be lost") }
+      catch let error as NotebookTypesetterError {
+        XCTAssertTrue(error.diagnostics.contains { $0.fileID == "content" && $0.path == "sections/content.tex" && $0.line == line
+          && $0.message.contains("probe: breakable requires single-column flow") }, error.localizedDescription)
+      }
+    }
+    let ordinary = try await compiler.compile(source(command, columns: false))
+    XCTAssertGreaterThan(ordinary.interactiveRegions.count, 1)
+    XCTAssertEqual(Set(ordinary.interactiveRegions.map(\.pageIndex)).count, ordinary.interactiveRegions.count)
+    XCTAssertEqual(ordinary.interactiveRegions.reduce(0) { $0 + $1.height }, 600, accuracy: 0.001)
+    let columns = try await compiler.compile(source(#"""
+      \NotebookInteractive[id=whole,width=\linewidth,height=50bp]{programs/probe}
+      \begin{figure}[ht]
+      \NotebookInteractive[id=float,width=\linewidth,height=50bp,breakable]{programs/probe}
+      \end{figure}
+      \begin{minipage}{\linewidth}
+      \NotebookInteractive[id=boxed,width=\linewidth,height=50bp,breakable]{programs/probe}
+      \end{minipage}
+      """#, columns: true))
+    XCTAssertEqual(Set(columns.interactiveRegions.map(\.instanceID)), ["whole", "float", "boxed"])
+    XCTAssertEqual(columns.interactiveRegions.count, 3)
+    for region in columns.interactiveRegions { XCTAssertEqual(region.height, 50, accuracy: 0.001) }
+    XCTAssertFalse(columns.diagnostics.contains { $0.severity == "error" })
   }
 
   func testCorruptedSourceMapCacheIsRecompiledRatherThanUsedForEditing() async throws {
@@ -144,9 +188,7 @@ final class DocumentTypesetterBoundaryTests: XCTestCase {
     for body in ["<foreignObject width='20' height='20'><div xmlns='http://www.w3.org/1999/xhtml'>Cannot vanish</div></foreignObject>",
       "<style>@import url(https://example.org/print.css);</style>", "<image href='\(path.absoluteString)'/>"] {
       let svg = "<svg xmlns='http://www.w3.org/2000/svg' width='40' height='40'>\(body)</svg>"
-      let source = DocumentDocument(actor: UUID(), blocks: [.markdown(id: "image", source:
-        "<img src='data:image/svg+xml;base64,\(Data(svg.utf8).base64EncodedString())'>")])
-      do { _ = try await compiler.compile(source); XCTFail("Unsupported image was silently accepted: \(body)") }
+      do { _ = try await compiler.convertSVG(Data(svg.utf8)); XCTFail("Unsupported image was silently accepted: \(body)") }
       catch { XCTAssertFalse(error.localizedDescription.contains(marker)) }
     }
   }

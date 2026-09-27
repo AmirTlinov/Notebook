@@ -194,7 +194,7 @@ private struct NotebookPageThumbnail: View {
   var body: some View {
     ZStack {
       if let itemID, let document = model.documents[itemID], let state = model.documentStates[itemID] {
-        let geometry = WorkspaceItemGeometry.document(document.paperSize)
+        let geometry = DocumentRenderRegistry.shared.geometry(document: document, pageIndex: index)
         DocumentThumbnailView(document: document, state: state, pageIndex: index,
           onRenderReady: .init { value in Task { @MainActor in
             ready = value

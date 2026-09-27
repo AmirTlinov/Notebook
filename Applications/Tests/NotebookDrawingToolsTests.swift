@@ -749,7 +749,10 @@ import UIKit
     let before = model.spatialInk
     model.selectDrawingTool(.laser)
     XCTAssertTrue(model.drawingTools.begin(at:.zero,address:address,screenScale:1))
+    XCTAssertNil(model.drawingTools.contact,"Pointing has no material-writing contact")
+    XCTAssertEqual(model.drawingTools.laserContact?.address,.material(address))
     model.drawingTools.move(to:.init(x:50,y:80)); model.drawingTools.finish()
+    XCTAssertNil(model.drawingTools.currentContactID)
     XCTAssertEqual(model.spatialInk,before); XCTAssertTrue(model.workingGraphics.isEmpty)
     model.selectDrawingTool(.shape)
     XCTAssertTrue(model.drawingTools.begin(at:.zero,address:address,screenScale:1))
@@ -1055,7 +1058,7 @@ import UIKit
 
   func testLaserExpiresFromOldestToNewestAndRetainsWorldWidth() {
     let address = NotebookToolAddress(surface:.board(UUID()),boardID:nil,worldOrigin:.zero,bounds:nil)
-    let trace = NotebookLaserTrace(id:UUID(),address:address,color:.red,width:40,lifetime:0.6,
+    let trace = NotebookLaserTrace(id:UUID(),address:.material(address),color:.red,width:40,lifetime:0.6,
       samples:[.init(point:.init(x:0,y:0),time:0),.init(point:.init(x:100,y:0),time:0.2),.init(point:.init(x:200,y:0),time:0.4)])
     let visible = trace.points(at:0.7)
     XCTAssertEqual(visible.first!.x,50,accuracy:0.00001)

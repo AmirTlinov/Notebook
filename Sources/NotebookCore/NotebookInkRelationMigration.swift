@@ -133,6 +133,6 @@ extension NotebookStore {
   }
 
   func deliveryFormatFloor(database: NotebookSQLConnection) throws -> UInt64 {
-    UInt64(try database.rows("SELECT COALESCE(MAX(CAST(value AS INTEGER)),0) FROM metadata WHERE key IN ('placement_outgoing_floor','ink_outgoing_floor')").first![0].integer!)
+    UInt64(try database.rows("SELECT COALESCE(MAX(CAST(value AS INTEGER)),0) FROM metadata WHERE key IN ('placement_outgoing_floor','ink_outgoing_floor','document_outgoing_floor')").first![0].integer!)
   }
 }

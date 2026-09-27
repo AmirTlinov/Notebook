@@ -1,29 +1,30 @@
-# Addressed agent state updates
+# Состояние живой программы
 
-`NotebookActionProjection` selects the document header, interactive programs named
-by `setBlockState`, and state records with the same IDs. UUID-like IDs follow the
-existing normalization; `/` and `~` are escaped in SQL addresses only.
-The header retains complete source and state revisions.
+Программа объявляется в LaTeX через `\NotebookInteractive[id=…]{programs/…}`.
+`DocumentProgramSource` производит неизменяемый исполняемый пакет из настоящих
+файлов документа; второй редактируемой копии HTML/CSS/JavaScript нет.
+Идентичность исполнения — ID экземпляра и `sourceBasis` выигравших причинных
+точек ресурсов; проигравшая конкурентная правка не заменяет исполнитель.
+Размер, страница и правка соседнего абзаца в неё не входят.
 
-`CollaborationWorkspace` requires an interactive block, exact `revision` and
-`stateRevision`, and valid JSON. Updating state leaves source clocks and causal
-source fields unchanged.
+`nb.read({kind:'documentProgram',id,instanceID,programPath})` возвращает
+`sourceBasis`, `initialState`, сохранённое `state` и необязательный `stateVersion`.
+stateVersion сохраняет полный причинный контекст; это не компактный файловый CAS.
+Чтение не запускает код и не подготавливает исполнитель. Отсутствие записи
+означает начальное состояние, а не подтверждённое выполнение программы.
 
-`CollaborationStore` publishes the baseline projection difference through
-`NotebookStore.writeFragment`. Unread states, including retired program records,
-are preserved. Content, receipt, context, and cursor commit atomically.
-Undo restores the addressed program's previous value, or its initial state when
-undoing its first write, while preserving later human edits. Repeating the UUID
-returns the original receipt.
+`setDocumentProgramState` в штатной `nb.transaction` принимает `id:instanceID` и
+`values:{programPath,sourceBasis,state}`. Общий writer проверяет исполняемые
+ресурсы и причинные предусловия, затем меняет только соответствующую запись
+`DocumentStateJournal`. Исходники и их часы остаются прежними; TeX не запускается.
+Receipt, состояние и доставка фиксируются вместе. Undo не стирает более позднее
+человеческое состояние, повтор запроса не создаёт вторую запись действия.
 
-## Verification and limits
+Нативные жесты используют `commitDocumentState` с той же проверкой sourceBasis.
+Финальный checkpoint дополнительно сравнивает прочитанный stateVersion. Поздний
+ответ старого исходника или состояния не может заменить новый. Освобождение
+исполнителя следует порядку pause → checkpoint → подтверждённая запись.
 
-`NotebookAgentDocumentStateProjectionTests` exercises apply/undo/retry among
-100,000 historical states, with corrupted unrelated records and a large unrelated
-source. It checks stale revisions, human continuation, rollback, and ambiguous
-post-commit responses. SQL accounting includes flush and commit.
-
-Source changes, block ordering, and creation undo have separate contracts.
-Creation undo intentionally checks the owner's later human work before removal.
-This addressed-state contract does not establish full UI or installed-pair acceptance.
-See [verification](verification.md).
+Индекс структуры и печатная карта не владеют журналом состояния. Валидация
+исходников, сохранение состояния и фактический жест на устройстве — отдельные
+результаты; [verification](verification.md) фиксирует проверенный объём.

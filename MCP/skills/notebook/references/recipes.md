@@ -10,7 +10,7 @@ the source material and the intended result.
 | `program` | TS/imports/CSS/assets/workers compiled into an offline package — [build and preview](programs.md) |
 | `animation` | Interactive HTML/SVG on a board, page, or document — [animation](animations.md) |
 | `sketch`, `point` | Native ink or temporary attention — [visuals](visuals.md) |
-| `document` | Selected blocks in a new or existing document — [documents](documents.md) |
+| `document` | Real LaTeX files in a new or existing document — [documents](documents.md) |
 
 The [scientific examples](scientific-examples.md) cover sound, mechanisms, linear
 geometry, uncertainty, search, tensor contraction, and probability. Larger

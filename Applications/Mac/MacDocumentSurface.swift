@@ -48,8 +48,8 @@ struct MacDocumentSurface: View {
         onLayout(layout)
         if layout.isComplete, page >= layout.pageCount { _ = model.selectDocumentPage(layout.pageCount - 1, documentID: document.id) }
       }, onLinkActivation: model.activateDocumentLink,
-      onStateChange: { block, value in try await model.commitDocumentState(documentID: document.id, blockID: block, value: value, programIdentity: document.programIdentity(blockID: block)) },
-      onStateCheckpoint: { try await model.checkpointDocumentState(documentID: document.id, blockID: $0, value: $1, programIdentity: $2, stateVersion: $3) },
+      onStateChange: { program, value in try await model.commitDocumentState(documentID: document.id, program: program, value: value) },
+      onStateCheckpoint: { try await model.checkpointDocumentState(documentID: document.id, blockID: $0, value: $1, program: $2, stateVersion: $3) },
 
       measurements: model.documentMeasurements)
       .overlay(alignment: .bottom) { if let failure = model.documentPageNavigationStatus?.failure {

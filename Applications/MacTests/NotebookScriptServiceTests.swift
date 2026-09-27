@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 import AppKit
 import NotebookCore
 import NotebookScriptProtocol
@@ -556,96 +557,77 @@ final class NotebookScriptServiceTests: XCTestCase {
     await host.shutdown()
   }
 
-  func testDocumentSourceStructureStateAndUndoCrossTheRealSandboxedSDK() async throws {
+  func testDocumentFilesStructureAndUndoCrossTheRealSandboxedSDK() async throws {
     let owner = try Owner(), host = try await coordinator(owner), run = UUID()
     defer { try? FileManager.default.removeItem(at: owner.store.root) }
     let boardID = try owner.store.loadIndex().rootBoardID
+    let main = "\\documentclass{article}\n\\begin{document}\\input{sections/intro}\\end{document}"
     _ = try await host.handle(.init(op: .start, runID: run, apiVersion: 2, code: """
       const origin={tileX:0,tileY:0,localX:0,localY:0};
       const scene=await nb.board({id:args.board,bounds:{anchor:origin,
         region:{x:0,y:0,width:1200,height:1000}}});
-      const documentID=await nb.id('document'), target={kind:'document',id:documentID};
-      const created=await nb.transaction('create',{base:scene.basis,summary:'Create a real document',operations:[{
+      const documentID=await nb.id('document'),target={kind:'document',id:documentID};
+      const created=await nb.transaction('create',{base:scene.basis,summary:'Create a real file document',operations:[{
         kind:'createDocument',target:{kind:'board',id:args.board},id:documentID,values:{
-          title:'Script lifecycle',center:{...origin,localX:700,localY:400},paperSize:'a4',preamble:'',blocks:[
-            {id:'intro',kind:'markdown',source:'# Before'},
-            {id:'counter',kind:'interactive',html:'<button>Count</button>',
-              javaScript:'window.counter = 0;',initialState:{count:0},height:160}
-          ]
-        }
-      }]});
-      const original=await nb.document({id:documentID});
-      const addressed=await nb.document({id:documentID,blockID:'counter'});
-      const source=await nb.transaction('source',{base:addressed.basis,summary:'Edit source and structure',operations:[
-        {kind:'updateBlock',target,id:'intro',values:{source:'# After'}},
-        {kind:'insertBlock',target,id:'appendix',values:{kind:'markdown',source:'**Added**',afterID:'intro'}},
-        {kind:'reorderBlocks',target,values:{ids:['counter','appendix','intro']}},
-        {kind:'setPreamble',target,values:{preamble:'\\\\usepackage{amsmath}'}}
+          title:'Script lifecycle',center:{...origin,localX:700,localY:400},entrypoint:'main.tex',files:[
+            {id:'main',path:'main.tex',source:args.main},
+            {id:'intro',path:'sections/intro.tex',source:String.raw`\\section{Before}`},
+            {id:'notes',path:'notes.txt',source:'Independent'}]
+        }}]});
+      const directory=await nb.document({id:documentID});
+      const original=await nb.document({id:documentID,fileID:'intro'});
+      const notes=await nb.document({id:documentID,fileID:'notes'});
+      const source=await nb.transaction('source',{base:original.basis,summary:'Edit addressed source and create a file',operations:[
+        {kind:'patchDocumentFile',target,id:'intro',values:{expectedVersion:original.data.sourceVersion,
+          range:{location:original.data.file.source.indexOf('Before'),length:6},expectedText:'Before',source:'After'}},
+        {kind:'putDocumentFile',target,id:'appendix',values:{path:'sections/appendix.tex',expectedVersion:null,source:'Added'}}
       ]});
-      const afterSource=await nb.document({id:documentID});
-      const beforeState=await nb.document({id:documentID,blockID:'counter'});
-      const versions=beforeState.basis.owners.find(owner=>owner.target.kind==='document'&&owner.target.id.toLowerCase()===documentID.toLowerCase());
-      if (!versions || !versions.revision || !versions.stateRevision) throw new Error('Missing source/state basis');
-      const state=await nb.transaction('state',{base:beforeState.basis,summary:'Advance the program state',operations:[
-        {kind:'setBlockState',target,id:'counter',values:{state:{count:7}}}
-      ]});
-      const afterState=await nb.document({id:documentID,blockID:'counter'});
+      const afterSource=await nb.document({id:documentID,fileID:'intro'});
+      const appendix=await nb.document({id:documentID,fileID:'appendix'});
+      const structure=await nb.documentStructure({id:documentID});
+      const independent=await nb.transaction('independent',{base:notes.basis,summary:'Edit another file from its original basis',operations:[
+        {kind:'patchDocumentFile',target,id:'notes',values:{expectedVersion:notes.data.sourceVersion,
+          range:{location:0,length:11},expectedText:'Independent',source:'Retained'}}]});
+      const currentMain=await nb.document({id:documentID,fileID:'main'});
       let stale;
-      try { await nb.transaction('stale',{base:beforeState.basis,summary:'Reject all stale edits',operations:[
-        {kind:'updateBlock',target,id:'intro',values:{source:'Must not be saved'}},
-        {kind:'setBlockState',target,id:'counter',values:{state:{count:99}}}
-      ]}); } catch(error) { stale=error.code; }
-      const afterRejected=await nb.document({id:documentID});
-      const rejectedState=await nb.document({id:documentID,blockID:'counter'});
-      const undoSource=await nb.undo('undo-source',{actionID:source.actionID});
-      const restoredSource=await nb.document({id:documentID});
-      const retainedState=await nb.document({id:documentID,blockID:'counter'});
-      const undoState=await nb.undo('undo-state',{actionID:state.actionID});
-      const finalState=await nb.document({id:documentID,blockID:'counter'});
-      return {documentID,created,source,state,versions,original:original.data,afterSource:afterSource.data,
-        beforeState:beforeState.data,afterState:afterState.data,stale,afterRejected:afterRejected.data,
-        rejectedState:rejectedState.data,undoSource,restoredSource:restoredSource.data,
-        retainedState:retainedState.data,undoState,finalState:finalState.data};
-      """, arguments: .object(["board": .string(boardID.uuidString.lowercased())])))
+      try{await nb.transaction('stale',{base:currentMain.basis,summary:'Reject an atomic stale range',operations:[
+        {kind:'patchDocumentFile',target,id:'main',values:{expectedVersion:currentMain.data.sourceVersion,
+          range:{location:0,length:0},expectedText:'',source:'Must not be saved'}},
+        {kind:'patchDocumentFile',target,id:'intro',values:{expectedVersion:original.data.sourceVersion,
+          range:{location:0,length:0},expectedText:'',source:'Stale'}}
+      ]});}catch(error){stale=error.code;}
+      const afterRejected=await nb.document({id:documentID,fileID:'main'});
+      const undo=await nb.undo('undo-source',{actionID:source.actionID});
+      const restored=await nb.document({id:documentID,fileID:'intro'});
+      const retained=await nb.document({id:documentID,fileID:'notes'});
+      const final=await nb.document({id:documentID});
+      return {documentID,created,source,independent,directory:directory.data,original:original.data,
+        afterSource:afterSource.data,appendix:appendix.data,structure:structure.data,stale,afterRejected:afterRejected.data,
+        undo,restored:restored.data,retained:retained.data,final:final.data};
+      """, arguments: .object(["board": .string(boardID.uuidString.lowercased()), "main": .string(main)])))
     let result = try await finish(host, run)
     XCTAssertEqual(result.string("status"), "completed", "\(result)")
     let value = try XCTUnwrap(result["result"])
-    XCTAssertEqual(value["afterSource"]?.array("blocks").compactMap { $0.string("id") }, ["counter", "appendix", "intro"])
-    XCTAssertEqual(value["afterSource"]?.array("blocks").first { $0.string("id") == "intro" }?.string("source"), "# After")
-    XCTAssertEqual(value["afterSource"]?.string("preamble"), "\\usepackage{amsmath}")
-    let appendix = try XCTUnwrap(value["afterSource"]?.array("blocks").first { $0.string("id") == "appendix" })
-    // Document markdown owns source, unlike a prepared page AgentElement.
-    // Its HTML belongs to the live document renderer, not a second saved copy.
-    XCTAssertEqual(appendix.string("kind"), "markdown")
-    XCTAssertEqual(appendix.string("source"), "**Added**")
-    XCTAssertEqual(appendix.string("html"), "")
-    XCTAssertEqual(value["afterState"]?["block"], value["beforeState"]?["block"])
-    XCTAssertEqual(value["afterState"]?["state"], .object(["count": .number(7)]))
-    XCTAssertEqual(value["afterState"]?["contentStamp"], value["beforeState"]?["contentStamp"])
-    XCTAssertNotEqual(value["afterState"]?["stateStamp"], value["beforeState"]?["stateStamp"])
-    XCTAssertNotNil(value["versions"]?.string("revision"))
-    XCTAssertNotNil(value["versions"]?.string("stateRevision"))
-    XCTAssertEqual(value.string("stale"), "revision_conflict")
-    XCTAssertEqual(value["afterRejected"], value["afterSource"])
-    XCTAssertEqual(value["rejectedState"], value["afterState"])
-    XCTAssertEqual(value["restoredSource"]?["blocks"], value["original"]?["blocks"])
-    XCTAssertEqual(value["restoredSource"]?["preamble"], value["original"]?["preamble"])
-    XCTAssertEqual(value["retainedState"]?["state"], .object(["count": .number(7)]))
-    XCTAssertEqual(value["finalState"]?["state"], .object(["count": .number(0)]))
-    for key in ["created", "source", "state", "undoSource", "undoState"] {
+    XCTAssertEqual(value["directory"]?.array("files").count, 3)
+    XCTAssertTrue(value["directory"]?.array("files").allSatisfy { $0["source"] == nil } == true)
+    XCTAssertEqual(value["afterSource"]?["file"]?.string("source"), "\\section{After}")
+    XCTAssertTrue(value["structure"]?.array("entries").contains { $0.string("fileID") == "intro" && $0.string("text") == "After" } == true)
+    XCTAssertEqual(value.string("stale"), "file_conflict")
+    XCTAssertEqual(value["appendix"]?["file"]?.string("source"), "Added")
+    XCTAssertEqual(value["afterRejected"]?["file"]?.string("source"), main)
+    XCTAssertEqual(value["restored"]?["file"], value["original"]?["file"])
+    XCTAssertEqual(value["retained"]?["file"]?.string("source"), "Retained")
+    XCTAssertEqual(value["final"]?.array("files").compactMap { $0.string("id") }.sorted(), ["intro", "main", "notes"])
+    for key in ["created", "source", "independent", "undo"] {
       XCTAssertEqual(value[key]?["publication"]?.string("saved"), "confirmed")
     }
-    XCTAssertEqual(value["undoSource"]?["undo"]?["preservedCount"], .number(0))
-    XCTAssertEqual(value["undoState"]?["undo"]?["preservedCount"], .number(0))
     let documentID = try XCTUnwrap(value.string("documentID").flatMap(UUID.init(uuidString:)))
     let document = try owner.store.loadDocument(documentID)
     XCTAssertEqual(try owner.store.readItemHeader(documentID)?.kind, .document)
     XCTAssertEqual(try owner.store.ownerBoardID(of: documentID), boardID)
-    XCTAssertEqual(document.blocks.map(\.id), ["intro", "counter"])
-    XCTAssertEqual(document.blocks.first?.source, "# Before")
-    XCTAssertEqual(document.preamble, "")
-    XCTAssertEqual(try owner.store.loadDocumentState(documentID).value(for: "counter"), .object(["count": .number(0)]))
-    XCTAssertEqual(owner.nativeWrites, 5, "Create, source, state and their two inverses; the stale action saves nothing")
+    XCTAssertEqual(document.files.first { $0.id == "intro" }?.source, "\\section{Before}")
+    XCTAssertEqual(document.files.first { $0.id == "notes" }?.source, "Retained")
+    XCTAssertEqual(owner.nativeWrites, 4, "Create, source, independent file and source inverse; the stale action saves nothing")
     await host.shutdown()
   }
 
@@ -916,12 +898,12 @@ final class NotebookScriptServiceTests: XCTestCase {
   func testExportFreezesStateAtAdmissionAndRejectsALaterEditWithoutReplay() async throws {
     let owner = try Owner(), host = try await coordinator(owner), run = UUID(), actor = UUID()
     defer { owner.releaseExportRender?.resume(); try? FileManager.default.removeItem(at: owner.store.root) }
-    let document = DocumentDocument(actor: actor, blocks: [.markdown(id: "text", source: "Immutable source")])
+    let document = DocumentTestFiles.document(actor: actor, contents: [.tex(id: "text", source: "Immutable source")])
     var index = try owner.store.loadIndex(), board = try owner.store.loadBoard(items: index.items)
     XCTAssertNotNil(index.createDocument(title: "State cut", actor: actor, documentID: document.id))
     XCTAssertTrue(board.addItem(document.id, to: index.rootBoardID, near: .zero, actor: actor))
     var state = DocumentStateJournal(id: document.id, actor: actor)
-    XCTAssertTrue(state.commit(blockID: "text", value: .number(1), actor: actor))
+    XCTAssertTrue(state.commit(instanceID: "text", value: .number(1), actor: actor))
     try owner.store.saveDocumentWorkspaceBundle(index: index, document: document, state: state, board: board)
     owner.holdExportRender = true
     _ = try await host.handle(.init(op: .start, runID: run, apiVersion: 2,
@@ -934,7 +916,7 @@ final class NotebookScriptServiceTests: XCTestCase {
     let accepted = try XCTUnwrap(owner.exportCuts.first)
     XCTAssertEqual(accepted.state, state)
     XCTAssertEqual(result["result"]?.string("cutSHA256"), try accepted.sha256)
-    XCTAssertTrue(state.commit(blockID: "text", value: .number(2), actor: actor))
+    XCTAssertTrue(state.commit(instanceID: "text", value: .number(2), actor: actor))
     try owner.store.saveDocumentState(state)
     owner.releaseExportRender?.resume(); owner.releaseExportRender = nil
     var status: JSONValue = .null
@@ -961,9 +943,9 @@ final class NotebookScriptServiceTests: XCTestCase {
     var index = try owner.store.loadIndex(), board = try owner.store.loadBoard(items: index.items)
     let item = try XCTUnwrap(index.createDocument(title: "Image export", actor: actor))
     XCTAssertTrue(board.addItem(item.id, to: index.rootBoardID, near: .zero, actor: actor))
-    let document = DocumentDocument(id: item.id, actor: actor, blocks: [
-      .markdown(id: "heading", source: "# Canonical image\n\nAn offline mixed page with $x^2$ and vector SVG.\n\n<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"240\" height=\"60\"><path d=\"M10 40 Q120 -20 230 40\" fill=\"none\" stroke=\"#2466af\" stroke-width=\"3\"/></svg>"),
-      .interactive(id: "program", html: "<div style='width:100%;height:100px;background:rgb(255,0,0)'></div>", javaScript: "notebook.ready(Promise.resolve());notebook.exportFrame(()=>null)", height: 100)])
+    let document = DocumentTestFiles.document(id: item.id, actor: actor, contents: [
+      .tex(id: "heading", source: "\\section{Canonical image}\nAn offline mixed page with $x^2$ and vector text."),
+      .program(id: "program", html: "<div style='width:100%;height:100px;background:rgb(255,0,0)'></div>", javaScript: "notebook.ready(Promise.resolve());notebook.exportFrame(()=>null)", height: 100)])
     try owner.store.saveDocumentWorkspaceBundle(index: index, document: document, state: .init(id: item.id, actor: actor), board: board)
     _ = try await host.handle(.init(op: .start, runID: run, apiVersion: 2,
       code: "return await nb.export('png',{documentID:args.documentID,format:'png',pageIndex:0,pixelWidth:1600});",
@@ -990,7 +972,9 @@ final class NotebookScriptServiceTests: XCTestCase {
       }
     }
     XCTAssertGreaterThan(inkAboveProgram, 80, "An opaque WebKit background must not erase the PDF heading/formula")
-    XCTAssertEqual(bitmap.pixelsHigh, Int(ceil(1600*document.paperSize.heightPoints/document.paperSize.widthPoints)))
+    let printed = try await DocumentCanonicalPrint.store.artifact(for: document)
+    let page = try XCTUnwrap(printed.pages.first)
+    XCTAssertEqual(bitmap.pixelsHigh, Int(ceil(1600 * page.height / page.width)))
     let attachment = XCTAttachment(data: bytes, uniformTypeIdentifier: "public.png")
     attachment.name = "canonical-mixed-page-1600px"; attachment.lifetime = .keepAlways; add(attachment)
     let unchanged = try owner.store.loadDocumentState(item.id)
@@ -1004,7 +988,7 @@ final class NotebookScriptServiceTests: XCTestCase {
     var index = try owner.store.loadIndex(), board = try owner.store.loadBoard(items: index.items)
     let item = try XCTUnwrap(index.createDocument(title: "Cancel a real PDF", actor: actor))
     XCTAssertTrue(board.addItem(item.id, to: index.rootBoardID, near: .zero, actor: actor))
-    let document = DocumentDocument(id: item.id, actor: actor, blocks: [.markdown(id: "text", source: "An actual rendered PDF")])
+    let document = DocumentTestFiles.document(id: item.id, actor: actor, contents: [.tex(id: "text", source: "An actual rendered PDF")])
     try owner.store.saveDocumentWorkspaceBundle(index: index, document: document, state: .init(id: item.id, actor: actor), board: board)
     owner.holdPublication = true
     _ = try await host.handle(.init(op: .start, runID: run, apiVersion: 2,
@@ -1039,15 +1023,20 @@ final class NotebookScriptServiceTests: XCTestCase {
     // These packages were not part of the Mac user's small existing cache.
     // Full pinned resources preserve arbitrary supported TeX preambles.
     let svg = ##"<svg xmlns="http://www.w3.org/2000/svg" width="240" height="100"><style>.paint{fill:url(#gradient)}</style><defs><linearGradient id="gradient"><stop stop-color="yellow"/><stop offset="1" stop-color="blue"/></linearGradient><clipPath id="clip"><circle cx="210" cy="75" r="18"/></clipPath><filter id="blur"><feGaussianBlur stdDeviation="2"/></filter></defs><rect width="240" height="100" fill="#ed182a"/><text x="12" y="50" font-size="22" fill="white">Printed SVG vector</text><rect class="paint" x="190" y="55" width="40" height="40" clip-path="url(#clip)" filter="url(#blur)"/></svg>"##
-    let svgURL = "data:image/svg+xml;base64," + Data(svg.utf8).base64EncodedString()
+    let vectorPDF = try await DocumentCanonicalPrint.store.vectorPDF(Data(svg.utf8))
+    let vectorHash = SHA256.hash(data: vectorPDF).map { String(format: "%02x", $0) }.joined()
+    try owner.store.stageBlob(data: vectorPDF, expectedHash: vectorHash)
     let interactiveID = "collaboration-counter-1d13a2ed-6e64-4ff6-b973-aa1b28bc328e"
-    let document = DocumentDocument(actor: UUID(), preamble: "\\usepackage{tikz,siunitx}", blocks: [
-      .markdown(id: "print", source: "# Проверка PDF\n\n**Сохранённый** русский источник и формула $x_1$.\n\n<a href='#vector'>К рисунку</a> <a href='https://example.org/notebook'>Сайт</a>"),
-      .markdown(id: "vector", source: "<h2 id='vector'>Векторное изображение</h2><img width='240' height='100' src='\(svgURL)'><p><a href='#проверка-pdf'>К началу</a></p>"),
-      .latex(id: "math", source: "\\[E=mc^2,\\qquad \\int_0^1 x^2\\,dx=\\frac{1}{3}\\]\n\\begin{tikzpicture}\\draw (0,0) -- (1,1);\\end{tikzpicture}\\num{1234.5}"),
-      .interactive(id: interactiveID, html: "<button>+1</button>",
-        javaScript: "notebook.exportFrame(() => null); notebook.ready(Promise.resolve());")
-    ])
+    let fixture = DocumentTestFiles.document(contents: [
+      .tex(id: "print", source: "\\hypertarget{start}{}\\section{Проверка PDF}\n\\textbf{Сохранённый} русский источник и формула $x_1$.\n\\hyperlink{vector}{К рисунку} \\href{https://example.org/notebook}{Сайт}"),
+      .tex(id: "vector", source: "\\section{Векторное изображение}\\includegraphics[width=240bp,height=100bp]{figures/vector.pdf}\n\\hyperlink{start}{К началу}"),
+      .tex(id: "math", source: "\\[E=mc^2,\\qquad \\int_0^1 x^2\\,dx=\\frac{1}{3}\\]\n\\begin{tikzpicture}\\draw (0,0) -- (1,1);\\end{tikzpicture}\\num{1234.5}"),
+      .program(id: interactiveID, html: "<button>+1</button>", javaScript: "notebook.ready(Promise.resolve());notebook.exportFrame(()=>null)", height: 80)])
+    let authoredFiles = fixture.files.map { file in file.path == "main.tex"
+      ? file.replacingSource(file.source.replacingOccurrences(of: "\\usepackage{hyperref}", with: "\\usepackage{hyperref,tikz,siunitx,graphicx}")) : file }
+    let document = DocumentDocument(actor: UUID(), files: authoredFiles + [.init(id: "image", path: "figures/vector.pdf",
+      resource: .init(path: "figures/vector.pdf", mimeType: "application/pdf", byteCount: Int64(vectorPDF.count),
+        parts: [.init(sha256: vectorHash, byteCount: vectorPDF.count)]))])
     let actor = UUID()
     var index = try owner.store.loadIndex(), board = try owner.store.loadBoard(items: index.items)
     let independentPageID = try XCTUnwrap(index.selectedPageID)
@@ -1103,12 +1092,12 @@ final class NotebookScriptServiceTests: XCTestCase {
     XCTAssertEqual(pdf.count, receipt.artifact.byteCount)
     XCTAssertTrue(PDFDocument(data: pdf)?.string?.contains("русский источник") == true,
       "The actual PDF must contain the printed Cyrillic text, not merely a valid PDF header.")
-    XCTAssertTrue(try String(contentsOfFile: receipt.source!.path, encoding: .utf8).contains("Проверка PDF"))
+    XCTAssertEqual(try String(contentsOfFile: receipt.source!.path, encoding: .utf8), document.files.first { $0.path == document.entrypoint }?.source)
     let mapBytes = try Data(contentsOf: URL(fileURLWithPath: XCTUnwrap(receipt.sourceMap?.path)))
     let sourceMap = try JSONDecoder().decode(DocumentPrintSourceMap.self, from: mapBytes)
     let frozen = try owner.store.loadDocument(document.id)
     try sourceMap.validate(document: frozen, source: String(contentsOfFile: receipt.source!.path, encoding: .utf8), pdf: pdf)
-    XCTAssertEqual(sourceMap.ranges.map(\.blockID), frozen.blocks.map(\.id))
+    XCTAssertEqual(Set(sourceMap.files.map(\.fileID)), Set(frozen.files.filter { $0.isText }.map { $0.id }))
     let syncTeX = try Data(contentsOf: URL(fileURLWithPath: XCTUnwrap(receipt.syncTeX?.path)))
     XCTAssertGreaterThan(syncTeX.count, 100)
     XCTAssertTrue(syncTeX.starts(with: [0x1f, 0x8b]), "The source map must accompany actual engine-generated page coordinates")
@@ -1127,8 +1116,9 @@ final class NotebookScriptServiceTests: XCTestCase {
     let annotations = pages.flatMap(\.annotations).filter { $0.type == "Link" }
     XCTAssertGreaterThanOrEqual(annotations.count, 3, "The actual PDF keeps forward, backward and HTTPS links.")
     XCTAssertTrue(annotations.contains { ($0.action as? PDFActionURL)?.url?.absoluteString == "https://example.org/notebook" })
-    XCTAssertEqual(receipt.assets?.count, 1)
-    let renderedAsset = try Data(contentsOf: URL(fileURLWithPath: XCTUnwrap(receipt.assets?.first?.path)))
+    XCTAssertEqual(receipt.assets?.count, document.files.count - 1)
+    let renderedAsset = try Data(contentsOf: URL(fileURLWithPath: XCTUnwrap(receipt.assets?.first { $0.path.hasSuffix("files/figures/vector.pdf") }?.path)))
+    XCTAssertEqual(renderedAsset, vectorPDF, "An authored binary is exported unchanged, never regenerated from markup")
     XCTAssertTrue(PDFDocument(data: renderedAsset)?.string?.contains("Printed SVG vector") == true,
       "The SVG renderer prints real SVG text into the vector PDF; an alt label or a blank page does not pass.")
     XCTAssertTrue(pages.contains { page in
@@ -1342,7 +1332,7 @@ final class NotebookScriptServiceTests: XCTestCase {
     let source = "const values: number[] = [" + String(repeating: "1234,", count: 30_000) + "]; return values.length;"
     async let compilation = typed.compileTypeScript(.init(id: UUID(), source: source,
       compilerVersion: identity.compilerVersion, sdkVersion: identity.sdkVersion))
-    async let pdf = printer.compile(DocumentDocument(actor: UUID(), blocks: [.init(id: "body", kind: .tex, source: "Independent PDF")]))
+    async let pdf = printer.compile(DocumentTestFiles.document(contents: [.tex(id: "body", source: "Independent PDF")]))
     async let markup = parser.normalize(runID: runID, effectID: UUID(), arguments: .object(["kind": .string("action"), "preparation": .object([
       "action": .object(["operations": .array([.object(["values": .object(["source": .string("**Independent markup**")])])])]),
       "markdownOperations": .array([.number(0)])])]))

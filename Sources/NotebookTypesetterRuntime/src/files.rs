@@ -8,6 +8,7 @@ use wasi_common::{Error, ErrorExt, WasiDir, WasiFile, dir::{OpenResult, ReaddirC
 const MAX_FILE: usize = 32 * 1024 * 1024;
 const MAX_FILES: usize = 64 * 1024 * 1024;
 const MAX_HANDLES: usize = 128;
+const MAX_ENTRIES: usize = 4096;
 #[derive(Default)]
 pub struct Budget { bytes: AtomicUsize, handles: AtomicUsize, resource_failure: Mutex<Option<String>> }
 impl Budget {
@@ -201,29 +202,47 @@ impl Bundle {
 #[derive(Clone)]
 pub struct Directory {
     files: Arc<Mutex<BTreeMap<String, SharedBuffer>>>,
+    prefix: String,
+    directories: Arc<Mutex<std::collections::BTreeSet<String>>>,
     bundle: Option<Arc<Bundle>>, fonts_only: bool, writable: bool, budget: Arc<Budget>,
 }
 impl Directory {
-    pub fn new(writable: bool, budget: &Arc<Budget>) -> Self { Self { files: Default::default(), bundle: None, fonts_only: false, writable, budget: budget.clone() } }
+    pub fn new(writable: bool, budget: &Arc<Budget>) -> Self { Self { files: Default::default(), prefix: String::new(), directories: Default::default(), bundle: None, fonts_only: false, writable, budget: budget.clone() } }
     pub fn bundle(bundle: Arc<Bundle>, fonts_only: bool, budget: &Arc<Budget>) -> Self {
         Self { bundle: Some(bundle), fonts_only, ..Self::new(false, budget) }
     }
     pub fn put(&self, name: &str, bytes: Vec<u8>) -> Result<(), Error> {
-        Self::name(name)?;
+        let name = self.path(name)?;
         let mut files = self.files.lock().unwrap();
-        if files.len() >= MAX_HANDLES && !files.contains_key(name) { return Err(Error::io()); }
-        files.insert(name.into(), Arc::new(Mutex::new(Buffer::new(bytes, &self.budget)?))); Ok(())
+        if files.len() >= MAX_ENTRIES && !files.contains_key(&name) { return Err(Error::io()); }
+        if files.contains_key(&name) || files.keys().any(|p| p.starts_with(&(name.clone()+"/")))
+            || name.match_indices('/').any(|(at, _)| files.contains_key(&name[..at])) { return Err(Error::exist()); }
+        files.insert(name, Arc::new(Mutex::new(Buffer::new(bytes, &self.budget)?))); Ok(())
     }
     pub fn take(&self, name: &str) -> Option<Vec<u8>> {
         let shared = self.files.lock().unwrap().remove(name)?;
         let mut buffer = shared.lock().unwrap(); let bytes = std::mem::take(&mut buffer.bytes);
         buffer.budget.bytes.fetch_sub(bytes.len(), Ordering::Relaxed); Some(bytes)
     }
-    fn name(name: &str) -> Result<&str, Error> {
+    pub fn valid_path(name: &str) -> bool {
+        !name.is_empty() && name.len() <= 1024 && !name.contains('\\') && !name.contains('\0')
+            && name.split('/').count() <= 32
+            && name.split('/').all(|p| !p.is_empty() && p != "." && p != "..")
+    }
+    fn path(&self, name: &str) -> Result<String, Error> {
         let name = name.strip_prefix("./").unwrap_or(name);
-        if name.is_empty() || name.len() > 256 || name.contains('/') || name.contains('\\') || name == "." || name == ".." || name.contains('\0') { return Err(Error::not_found()); }
+        if !Self::valid_path(name) { return Err(Error::not_found()); }
+        let name = format!("{}{name}", self.prefix);
+        if !Self::valid_path(&name) { return Err(Error::not_found()); }
         Ok(name)
     }
+    fn is_directory(&self, path: &str) -> bool {
+        let prefix = format!("{path}/");
+        self.directories.lock().unwrap().contains(path)
+            || self.files.lock().unwrap().keys().any(|name| name.starts_with(&prefix))
+    }
+    fn child(&self, path: &str) -> Self { Self { prefix: format!("{path}/"), ..self.clone() } }
+
 }
 #[wiggle::async_trait]
 impl WasiDir for Directory {
@@ -231,33 +250,54 @@ impl WasiDir for Directory {
     async fn get_filestat(&self) -> Result<Filestat, Error> { Ok(stat(FileType::Directory, 0)) }
     async fn get_path_filestat(&self, name: &str, _: bool) -> Result<Filestat, Error> {
         if name == "." || name.is_empty() { return self.get_filestat().await; }
-        let name = Self::name(name)?;
-        if let Some(file) = self.files.lock().unwrap().get(name) { return Ok(stat(FileType::RegularFile, file.lock().unwrap().bytes.len() as u64)); }
-        Ok(stat(FileType::RegularFile, self.bundle.as_ref().ok_or_else(Error::not_found)?.size(name, &self.budget)?))
+        let name = self.path(name)?;
+        if self.is_directory(&name) { return Ok(stat(FileType::Directory, 0)); }
+        if let Some(file) = self.files.lock().unwrap().get(&name) { return Ok(stat(FileType::RegularFile, file.lock().unwrap().bytes.len() as u64)); }
+        Ok(stat(FileType::RegularFile, self.bundle.as_ref().ok_or_else(Error::not_found)?.size(&name, &self.budget)?))
     }
     async fn open_file(&self, _: bool, name: &str, flags: OFlags, _: bool, write: bool, fd: FdFlags) -> Result<OpenResult, Error> {
         if name == "." || name.is_empty() { return Ok(OpenResult::Dir(Box::new(self.clone()))); }
-        let name = Self::name(name)?;
+        let name = self.path(name)?;
         if (write || flags.intersects(OFlags::CREATE | OFlags::TRUNCATE)) && !self.writable { return Err(Error::not_supported()); }
-        if flags.contains(OFlags::DIRECTORY) || !fd.is_empty() { return Err(Error::not_supported()); }
+        if !fd.is_empty() { return Err(Error::not_supported()); }
+        if self.is_directory(&name) { return Ok(OpenResult::Dir(Box::new(self.child(&name)))); }
+        if flags.contains(OFlags::DIRECTORY) { return Err(Error::not_found()); }
         let mut files = self.files.lock().unwrap();
-        let buffer = if let Some(file) = files.get(name) {
+        let buffer = if let Some(file) = files.get(&name) {
             if flags.contains(OFlags::EXCLUSIVE) { return Err(Error::exist()); }
             if flags.contains(OFlags::TRUNCATE) { file.lock().unwrap().resize(0)?; }
             file.clone()
         } else if self.writable && flags.contains(OFlags::CREATE) {
-            if files.len() >= MAX_HANDLES { return Err(Error::io()); }
-            let file = Arc::new(Mutex::new(Buffer::new(Vec::new(), &self.budget)?)); files.insert(name.into(), file.clone()); file
-        } else { self.bundle.as_ref().ok_or_else(Error::not_found)?.read(name, &self.budget)? };
+            if files.len() >= MAX_ENTRIES { return Err(Error::io()); }
+            let file = Arc::new(Mutex::new(Buffer::new(Vec::new(), &self.budget)?)); files.insert(name.clone(), file.clone()); file
+        } else { self.bundle.as_ref().ok_or_else(Error::not_found)?.read(&name, &self.budget)? };
         Ok(OpenResult::File(Box::new(Handle::new(buffer, write, &self.budget)?)))
     }
     async fn readdir(&self, cursor: ReaddirCursor) -> Result<Box<dyn Iterator<Item=Result<ReaddirEntity, Error>> + Send>, Error> {
         let at = u64::from(cursor) as usize;
         let names = if let Some(bundle) = &self.bundle { bundle.names(self.fonts_only, &self.budget)? }
-            else { Arc::new(self.files.lock().unwrap().keys().cloned().collect()) };
-        Ok(Box::new((at..names.len()).map(move |i| Ok(ReaddirEntity { next: ((i+1) as u64).into(), inode: (i+1) as u64, name: names[i].clone(), filetype: FileType::RegularFile }))))
+            else { Arc::new(self.files.lock().unwrap().keys().cloned()
+                .chain(self.directories.lock().unwrap().iter().cloned()).collect()) };
+        let mut entries = BTreeMap::new();
+        for name in names.iter().filter_map(|name| name.strip_prefix(&self.prefix)) {
+            let mut parts = name.split('/'); let first = parts.next().unwrap();
+            let kind = if parts.next().is_some() || self.directories.lock().unwrap().contains(&format!("{}{first}", self.prefix))
+                { FileType::Directory } else { FileType::RegularFile };
+            entries.insert(first.to_string(), kind);
+        }
+        Ok(Box::new(entries.into_iter().enumerate().skip(at).map(|(i, (name, filetype))|
+            Ok(ReaddirEntity { next: ((i+1) as u64).into(), inode: (i+1) as u64, name, filetype }))))
     }
-    async fn create_dir(&self, name: &str) -> Result<(), Error> { if name == "." || name.is_empty() { Ok(()) } else { Err(Error::not_supported()) } }
+    async fn create_dir(&self, name: &str) -> Result<(), Error> {
+        if name == "." || name.is_empty() { return Ok(()); }
+        if !self.writable { return Err(Error::not_supported()); }
+        let name = self.path(name)?;
+        if self.files.lock().unwrap().contains_key(&name) { return Err(Error::exist()); }
+        let mut directories = self.directories.lock().unwrap();
+        if directories.len() >= MAX_ENTRIES { return Err(Error::io()); }
+        directories.insert(name); Ok(())
+    }
+
 }
 
 #[derive(Clone, Default)]
@@ -390,5 +430,51 @@ mod bundle_reader_tests {
         let (stream, _peer) = UnixStream::pair().unwrap();
         let fd: OwnedFd = stream.into();
         assert_eq!(BundleReader::new(File::from(fd)).err().unwrap().kind(), io::ErrorKind::NotSeekable);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{future::Future, pin::pin, task::{Context, Poll, Waker}};
+    fn ready<T>(future: impl Future<Output = T>) -> T {
+        match pin!(future).poll(&mut Context::from_waker(Waker::noop())) {
+            Poll::Ready(value) => value, Poll::Pending => panic!("the capability filesystem must not block"),
+        }
+    }
+    #[test]
+    fn nested_inputs_are_read_only_and_paths_cannot_escape() {
+        let directory = Directory::new(false, &Arc::new(Budget::default()));
+        directory.put("chapters/one.tex", b"Chapter".to_vec()).unwrap();
+        for name in ["../private", "/private", "chapters/../../private", "chapters//one", "chapters/./one", "a\\b", "a\0b"] {
+            assert!(!Directory::valid_path(name), "{name:?}");
+            assert!(ready(directory.get_path_filestat(name, false)).is_err());
+        }
+        assert_eq!(ready(directory.get_path_filestat("chapters", false)).unwrap().filetype, FileType::Directory);
+        let OpenResult::Dir(child) = ready(directory.open_file(false, "chapters", OFlags::DIRECTORY, true, false, FdFlags::empty())).unwrap() else { panic!() };
+        let OpenResult::File(file) = ready(child.open_file(false, "one.tex", OFlags::empty(), true, false, FdFlags::empty())).unwrap() else { panic!() };
+        let mut data = [0; 7]; assert_eq!(ready(file.read_vectored(&mut [io::IoSliceMut::new(&mut data)])).unwrap(), 7);
+        assert_eq!(&data, b"Chapter");
+        assert!(ready(child.open_file(false, "one.tex", OFlags::TRUNCATE, true, true, FdFlags::empty())).is_err());
+        assert!(ready(child.open_file(false, "../one.tex", OFlags::empty(), true, false, FdFlags::empty())).is_err());
+    }
+    #[test]
+    fn namespace_rejects_duplicates_and_file_directory_collisions() {
+        let directory = Directory::new(false, &Arc::new(Budget::default()));
+        directory.put("a/b.tex", vec![]).unwrap();
+        assert!(directory.put("a/b.tex", vec![]).is_err());
+        assert!(directory.put("a", vec![]).is_err());
+        assert!(directory.put("a/b.tex/c", vec![]).is_err());
+        let entries: Vec<_> = ready(directory.readdir(0u64.into())).unwrap().map(|v| v.unwrap().name).collect();
+        assert_eq!(entries, ["a"]);
+    }
+    #[test]
+    fn entry_budget_does_not_reduce_open_handle_budget() {
+        let budget = Arc::new(Budget::default());
+        let directory = Directory::new(false, &budget);
+        for i in 0..256 { directory.put(&format!("chapters/{i}.tex"), vec![0]).unwrap(); }
+        assert_eq!(budget.bytes.load(Ordering::Relaxed), 256);
+        assert_eq!(budget.handles.load(Ordering::Relaxed), 0);
+        drop(directory); assert_eq!(budget.bytes.load(Ordering::Relaxed), 0);
     }
 }

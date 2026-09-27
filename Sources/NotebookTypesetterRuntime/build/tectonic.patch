@@ -22,6 +22,122 @@ index fb7ef6b..227a291 100755
      --target wasm32-wasip1 \
      -p tectonic_wasi \
      --release
+diff --git a/crates/engine_xetex/xetex/xetex-io.c b/crates/engine_xetex/xetex/xetex-io.c
+index de71b33..e386710 100644
+--- a/crates/engine_xetex/xetex/xetex-io.c
++++ b/crates/engine_xetex/xetex/xetex-io.c
+@@ -17,7 +17,8 @@ char *name_of_input_file = NULL;
+ // filesystem paths -- which are difficult to derive in our virtualized I/O
+ // system. The most backwards-compatible way to expose this information to the
+ // engine was to add the `ttstub_get_last_input_abspath()` API used below.
+-char abspath_of_input_file[1024] = "";
++// 1024 admitted path bytes, the virtual /input/ prefix and a terminator.
++char abspath_of_input_file[1032] = "";
+ 
+ rust_input_handle_t
+ tt_xetex_open_input (int filefmt)
+@@ -49,7 +50,7 @@ tt_xetex_open_input (int filefmt)
+ 
+     name_length = strlen(name_of_file);
+     free(name_of_input_file);
+-    name_of_input_file = xstrdup(name_of_file);
++    name_of_input_file = xstrdup(abspath_of_input_file[0] ? abspath_of_input_file : name_of_file);
+     return handle;
+ }
+ 
+diff --git a/crates/engine_xetex/xetex/xetex-shipout.c b/crates/engine_xetex/xetex/xetex-shipout.c
+index f90839d..79bb9b1 100644
+--- a/crates/engine_xetex/xetex/xetex-shipout.c
++++ b/crates/engine_xetex/xetex/xetex-shipout.c
+@@ -2086,6 +2086,12 @@ special_out(int32_t p)
+     if (pool_ptr + 1 > pool_size)
+         overflow("pool size", pool_size - init_pool_ptr);
+ 
++    if (synctex_notebook_special(str_pool + str_start[str_ptr - TOO_BIG_CHAR], cur_length())) {
++        pool_ptr = str_start[str_ptr - TOO_BIG_CHAR];
++        doing_special = false;
++        return;
++    }
++
+     if (cur_length() < 256) {
+         dvi_out(XXX1);
+         dvi_out(cur_length());
+diff --git a/crates/engine_xetex/xetex/xetex-synctex.c b/crates/engine_xetex/xetex/xetex-synctex.c
+index d2d915a..1b804ba 100644
+--- a/crates/engine_xetex/xetex/xetex-synctex.c
++++ b/crates/engine_xetex/xetex/xetex-synctex.c
+@@ -416,6 +416,50 @@ void synctex_sheet(int32_t mag)
+     return;
+ }
+ 
++/* Notebook records the expanded special at actual shipout, in the same stream
++ * and order as source boxes. Dvipdfmx still owns PDF execution. This is not a
++ * PDF interpreter: the host admits its documented btrans/etrans subset only. */
++bool
++synctex_notebook_special(const uint16_t *text, size_t length)
++{
++    char value[2048];
++    bool ascii = length < sizeof(value);
++    for (size_t i = 0; ascii && i < length; i++) {
++        ascii = text[i] >= 32 && text[i] < 127;
++        value[i] = (char)text[i];
++    }
++    if (!ascii)
++        return false;
++    value[length] = 0;
++    char kind = 0;
++    const char *payload = "";
++    bool consume = false;
++    if (strncmp(value, "notebook:region ", 16) == 0) {
++        kind = '='; payload = value + 16; consume = true;
++    } else if (strncmp(value, "pdf:btrans", 10) == 0) {
++        kind = '+'; payload = value + 10;
++    } else if (strcmp(value, "pdf:etrans") == 0) {
++        kind = '-';
++    } else if (strncmp(value, "pdf:bcontent", 12) == 0 || strncmp(value, "pdf:econtent", 12) == 0 ||
++        ((strncmp(value, "pdf:literal", 11) == 0 || strncmp(value, "pdf:content", 11) == 0) && strstr(value, " cm"))) {
++        kind = '!'; payload = "unsupported PDF coordinate transform";
++    }
++    if (!kind || synctex_ctxt.flags.off || !INTPAR(synctex) || synctex_ctxt.file == INVALID_HANDLE)
++        return consume;
++    if (synctex_ctxt.recorder != NULL) {
++        (*synctex_ctxt.recorder)(synctex_ctxt.node);
++        synctex_ctxt.recorder = NULL;
++    }
++    int len = ttstub_fprintf(synctex_ctxt.file, "N%c%i,%i:%s\n", kind, SYNCTEX_CURH, SYNCTEX_CURV, payload);
++    if (len > 0) {
++        synctex_ctxt.total_length += len;
++        ++synctex_ctxt.count;
++    } else {
++        synctexabort();
++    }
++    return consume;
++}
++
+ /*  Recording the "}..." line.  In *tex.web, use synctex_teehs at
+  *  the very end of the ship_out procedure.
+  */
+@@ -753,7 +797,7 @@ synctex_record_settings(void)
+ static inline int
+ synctex_record_preamble(void)
+ {
+-    int len = ttstub_fprintf(synctex_ctxt.file, "SyncTeX Version:%i\n", SYNCTEX_VERSION);
++    int len = ttstub_fprintf(synctex_ctxt.file, "SyncTeX Version:%i\nNotebook Shipout:1\n", SYNCTEX_VERSION);
+ 
+     if (len > 0) {
+         synctex_ctxt.total_length = len; /* XXX: should this be `+=`? */
+diff --git a/crates/engine_xetex/xetex/xetex-synctex.h b/crates/engine_xetex/xetex/xetex-synctex.h
+index 63c7120..0a2de4a 100644
+--- a/crates/engine_xetex/xetex/xetex-synctex.h
++++ b/crates/engine_xetex/xetex/xetex-synctex.h
+@@ -60,6 +60,7 @@ void synctex_start_input(void);
+  *  the very beginning of the ship_out procedure.
+ */
+ void synctex_sheet(int32_t mag);
++bool synctex_notebook_special(const uint16_t *text, size_t length);
+ 
+ /*  Recording the "}..." line.  In *tex.web, use synctex_teehs at
+  *  the very end of the ship_out procedure.
 diff --git a/crates/io_base/src/lib.rs b/crates/io_base/src/lib.rs
 index 45ce87d..ddad690 100644
 --- a/crates/io_base/src/lib.rs
@@ -471,10 +587,41 @@ index 2d780b6..77b2d34 100644
  
          lpos++;
 diff --git a/crates/wasi/src/driver.rs b/crates/wasi/src/driver.rs
-index 72702e2..aae1ccb 100644
+index 72702e2..9a05abe 100644
 --- a/crates/wasi/src/driver.rs
 +++ b/crates/wasi/src/driver.rs
-@@ -136,7 +136,7 @@ pub fn compile(input_path: &str, output_dir: &str, bundle_dir: &str) -> Result<(
+@@ -66,24 +66,12 @@ fn resolve_build_date() -> SystemTime {
+ pub fn compile(input_path: &str, output_dir: &str, bundle_dir: &str) -> Result<()> {
+     let mut status = WasiStatusBackend;
+ 
+-    // Determine the input directory and file name
+-    let input_full = Path::new(input_path);
+-    let (input_dir, tex_name) = if input_full.is_absolute() {
+-        let parent = input_full
+-            .parent()
+-            .unwrap_or_else(|| Path::new("/input"));
+-        let name = input_full
+-            .file_name()
+-            .unwrap_or_default()
+-            .to_str()
+-            .unwrap_or("input.tex");
+-        (parent.to_path_buf(), name.to_string())
+-    } else {
+-        (PathBuf::from("/input"), input_path.to_string())
+-    };
+-
+-    // Strip .tex extension for output base name
+-    let base_name = tex_name.strip_suffix(".tex").unwrap_or(&tex_name);
++    // Every authored path is relative to the admitted document root. Even a
++    // nested entrypoint does not gain another filesystem or change that root.
++    let input_dir = PathBuf::from("/input");
++    let tex_name = input_path.to_string();
++    let base_name = Path::new(input_path).file_stem().and_then(|v| v.to_str())
++        .ok_or_else(|| anyhow::anyhow!("invalid document entrypoint"))?;
+     let xdv_name = format!("{base_name}.xdv");
+     let pdf_name = format!("{base_name}.pdf");
+ 
+@@ -136,7 +124,7 @@ pub fn compile(input_path: &str, output_dir: &str, bundle_dir: &str) -> Result<(
          let mut launcher = CoreBridgeLauncher::new(&mut bridge_state, &mut status);
  
          let mut engine = TexEngine::default();
@@ -483,7 +630,7 @@ index 72702e2..aae1ccb 100644
          let result = engine.process(&mut launcher, &format_name, &tex_name)?;
  
          match result {
-@@ -204,7 +204,7 @@ pub fn compile(input_path: &str, output_dir: &str, bundle_dir: &str) -> Result<(
+@@ -204,7 +192,7 @@ pub fn compile(input_path: &str, output_dir: &str, bundle_dir: &str) -> Result<(
      // Export feedback state files so the host can seed the next compilation
      // of this document (warm aux): place them back in /input and a converged
      // document compiles in a single pass.
@@ -492,7 +639,7 @@ index 72702e2..aae1ccb 100644
          let name = format!("{base_name}.{ext}");
          if let Some(data) = bridge_state.mem.get_file(&name) {
              let _ = std::fs::write(output_path.join(&name), &data);
-@@ -342,6 +342,28 @@ struct WasiBridgeState {
+@@ -342,6 +330,28 @@ struct WasiBridgeState {
      events: HashMap<String, ()>,
  }
  
@@ -521,12 +668,40 @@ index 72702e2..aae1ccb 100644
  impl DriverHooks for WasiBridgeState {
      fn io(&mut self) -> &mut dyn IoProvider {
          self
-@@ -375,13 +397,20 @@ impl IoProvider for WasiBridgeState {
-             OpenResult::NotAvailable => {}
+@@ -366,35 +376,61 @@ impl IoProvider for WasiBridgeState {
+         name: &str,
+         status: &mut dyn StatusBackend,
+     ) -> OpenResult<InputHandle> {
+-        // Try memory first, then filesystem, then bundle
+-        let name_norm = normalize_tex_path(name).to_string();
+-
+-        match self.mem.input_open_name(&name_norm, status) {
+-            OpenResult::Ok(h) => return OpenResult::Ok(h),
+-            OpenResult::Err(e) => return OpenResult::Err(e),
+-            OpenResult::NotAvailable => {}
++        match self.input_open_name_with_abspath(name, status) {
++            OpenResult::Ok((handle, _)) => OpenResult::Ok(handle),
++            OpenResult::Err(error) => OpenResult::Err(error),
++            OpenResult::NotAvailable => OpenResult::NotAvailable,
          }
++    }
  
 -        match self.filesystem.input_open_name(&name_norm, status) {
 -            OpenResult::Ok(h) => return OpenResult::Ok(h),
+-            OpenResult::Err(e) => return OpenResult::Err(e),
+-            OpenResult::NotAvailable => {}
++    fn input_open_name_with_abspath(
++        &mut self,
++        name: &str,
++        status: &mut dyn StatusBackend,
++    ) -> OpenResult<(InputHandle, Option<PathBuf>)> {
++        // Preserve the actual admitted virtual path for SyncTeX, including
++        // extensions resolved by the engine. This exposes no host filesystem.
++        let name_norm = normalize_tex_path(name).to_string();
++        match self.mem.input_open_name_with_abspath(&name_norm, status) {
++            OpenResult::NotAvailable => {},
++            result => return result,
++        }
 +        match self.filesystem.input_open_name_with_abspath(&name_norm, status) {
 +            OpenResult::Ok((handle, path)) => {
 +                let handle = if path.as_deref().is_some_and(is_immutable_resource_path) {
@@ -534,18 +709,33 @@ index 72702e2..aae1ccb 100644
 +                } else {
 +                    handle
 +                };
-+                return OpenResult::Ok(handle);
++                return OpenResult::Ok((handle, path));
 +            }
-             OpenResult::Err(e) => return OpenResult::Err(e),
-             OpenResult::NotAvailable => {}
++            OpenResult::Err(error) => return OpenResult::Err(error),
++            OpenResult::NotAvailable => {},
++        }
++        match self.bundle.input_open_name_with_abspath(&name_norm, status) {
++            OpenResult::Ok((handle, path)) => OpenResult::Ok((handle.into_read_only(), path)),
++            other => other,
          }
- 
+-
 -        self.bundle.input_open_name(&name_norm, status)
-+        self.input_open_bundle(&name_norm, status)
      }
  
      fn input_open_primary(&mut self, status: &mut dyn StatusBackend) -> OpenResult<InputHandle> {
-@@ -394,7 +423,7 @@ impl IoProvider for WasiBridgeState {
+         self.primary_input.input_open_primary(status)
+     }
+ 
++    fn input_open_primary_with_abspath(
++        &mut self,
++        status: &mut dyn StatusBackend,
++    ) -> OpenResult<(InputHandle, Option<PathBuf>)> {
++        self.primary_input.input_open_primary_with_abspath(status)
++    }
++
+     fn input_open_format(
+         &mut self,
+         name: &str,
          status: &mut dyn StatusBackend,
      ) -> OpenResult<InputHandle> {
          // Try bundle first for format files
@@ -554,7 +744,7 @@ index 72702e2..aae1ccb 100644
              OpenResult::Ok(h) => return OpenResult::Ok(h),
              OpenResult::Err(e) => return OpenResult::Err(e),
              OpenResult::NotAvailable => {}
-@@ -559,3 +588,27 @@ impl IoProvider for FormatBridgeState {
+@@ -559,3 +595,27 @@ impl IoProvider for FormatBridgeState {
          Ok(())
      }
  }
@@ -582,6 +772,46 @@ index 72702e2..aae1ccb 100644
 +        }
 +    }
 +}
+diff --git a/crates/wasi/src/main.rs b/crates/wasi/src/main.rs
+index f67d6aa..d8c8131 100644
+--- a/crates/wasi/src/main.rs
++++ b/crates/wasi/src/main.rs
+@@ -100,16 +100,14 @@ pub unsafe extern "C" fn tectonic_compile(
+ /// Compile a TeX document using default paths.
+ ///
+ /// Uses `/input/`, `/output/`, and `/bundle/` as the default directories.
+-/// The input file is the first .tex file found in /input/, or "input.tex".
++/// The host admits one explicit relative entrypoint in NOTEBOOK_ENTRYPOINT.
+ ///
+ /// # Returns
+ /// 0 on success, non-zero on error.
+ #[no_mangle]
+ pub extern "C" fn tectonic_compile_defaults() -> i32 {
+     let result = std::panic::catch_unwind(|| {
+-        // Find the primary .tex file
+-        let input_path =
+-            find_primary_tex_file("/input/").unwrap_or_else(|| "input.tex".to_string());
++        let input_path = std::env::var("NOTEBOOK_ENTRYPOINT")?;
+ 
+         driver::compile(&input_path, "/output", "/bundle")
+     });
+@@ -150,16 +148,3 @@ pub extern "C" fn tectonic_generate_format() -> i32 {
+         }
+     }
+ }
+-
+-/// Find the primary .tex file in the input directory.
+-fn find_primary_tex_file(dir: &str) -> Option<String> {
+-    let entries = std::fs::read_dir(dir).ok()?;
+-    for entry in entries {
+-        let entry = entry.ok()?;
+-        let path = entry.path();
+-        if path.extension().and_then(|e| e.to_str()) == Some("tex") {
+-            return path.to_str().map(|s| s.to_string());
+-        }
+-    }
+-    None
+-}
 diff --git a/crates/xetex_layout/src/manager.rs b/crates/xetex_layout/src/manager.rs
 index 833f5ba..bf0044a 100644
 --- a/crates/xetex_layout/src/manager.rs

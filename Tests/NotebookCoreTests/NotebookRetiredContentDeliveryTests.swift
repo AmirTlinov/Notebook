@@ -12,8 +12,7 @@ struct NotebookRetiredContentDeliveryTests {
     var values: [String: JSONValue] = ["center": try .encode(WorldPoint.zero)]
     if kind == .createNotebook { values["pageID"] = try .encode(pageID) }
     if kind == .createDocument {
-      values["paperSize"] = .string("a4")
-      values["blocks"] = try .encode([DocumentBlock.interactive(id: "body", html: "<button>Before</button>", initialState: .number(0))])
+      values["files"] = try .encode(documentProgramFiles(id: "body", html: "<button>Before</button>", initialState: .number(0)))
     }
     let basis = try f.store.readBasis(targets: [board, .init(kind: .workspace, id: header.rootBoardID)])
     _ = try f.store.applyCollaborationAction(.init(summary: "Birth before a stale whole cut",
@@ -28,11 +27,11 @@ struct NotebookRetiredContentDeliveryTests {
       #expect(changed); roots = [pageFile(pageID) + "#"]
     case "document":
       let position = try #require(submitted.documents.firstIndex { $0.id == id })
-      let changed = submitted.documents[position].replaceContent(preamble: "Late preamble", actor: human)
+      let changed = submitted.documents[position].replaceFileSource(id: "main", source: "Late complete source", actor: human)
       #expect(changed); roots = [documentFile(id) + "#", stateFile(id) + "#"]
     case "state":
       let position = try #require(submitted.states.firstIndex { $0.id == id })
-      let changed = submitted.states[position].commit(blockID: "body", value: .number(77), actor: human)
+      let changed = submitted.states[position].commit(instanceID: "body", value: .number(77), actor: human)
       #expect(changed)
       submitted.documents = [] // A partial envelope can carry state independently.
       roots = [documentFile(id) + "#", stateFile(id) + "#"]

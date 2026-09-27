@@ -37,40 +37,19 @@ private typealias SourceColor = NSColor
 }
 
 #if os(iOS)
-/// Inspect the actual generated/file source without opening an editable draft.
-struct DocumentNativeSourceViewer: UIViewRepresentable {
-  let text: String
-  let findRequest: Int
-  func makeCoordinator() -> Coordinator { Coordinator() }
-  func makeUIView(context: Context) -> UITextView {
-    let view = UITextView(usingTextLayoutManager: false)
-    view.isEditable = false; view.isSelectable = true; view.isFindInteractionEnabled = true
-    view.font = .monospacedSystemFont(ofSize: 14, weight: .regular)
-    view.textColor = .label; view.backgroundColor = .systemBackground
-    view.textContainerInset = .init(top: 16, left: 16, bottom: 16, right: 16)
-    return view
-  }
-  func updateUIView(_ view: UITextView, context: Context) {
-    if view.text != text { view.text = text; view.setContentOffset(.zero, animated: false) }
-    if context.coordinator.find != findRequest {
-      context.coordinator.find = findRequest; view.findInteraction?.presentFindNavigator(showingReplace: false)
-    }
-  }
-  final class Coordinator { var find = 0 }
-}
-
 struct DocumentNativeSourceEditor: UIViewRepresentable {
   let session: DocumentSourceEditorSession
-  let findRequest: Int
+  var revealSelection: ((NSRange) -> Void)? = nil
   func makeCoordinator() -> Coordinator { Coordinator(session) }
   func makeUIView(context: Context) -> SourceTextView {
     let view = SourceTextView(usingTextLayoutManager: false)
-    view.delegate = context.coordinator; view.sourceUndo = { session.undo() }
+    view.delegate = context.coordinator; view.sourceUndo = { session.undo() }; view.sourceRedo = { session.redo() }
+    view.sourceRevealSelection = revealSelection
     view.font = .monospacedSystemFont(ofSize: 15, weight: .regular)
     view.textColor = .label; view.backgroundColor = .systemBackground
     view.autocorrectionType = .no; view.autocapitalizationType = .none; view.spellCheckingType = .no
     view.smartQuotesType = .no; view.smartDashesType = .no; view.smartInsertDeleteType = .no
-    view.isFindInteractionEnabled = true; view.keyboardDismissMode = .interactive
+    view.keyboardDismissMode = .interactive
     view.textContainerInset = .init(top: 16, left: 16, bottom: 140, right: 16)
     view.text = session.text; view.selectedRange = session.selection
     SourceSyntax.highlight(view.textStorage, around: view.selectedRange, full: true)
@@ -87,18 +66,19 @@ struct DocumentNativeSourceEditor: UIViewRepresentable {
   }
   func updateUIView(_ view: SourceTextView, context: Context) {
     let owner = context.coordinator; owner.applying = true; defer { owner.applying = false }
+    view.sourceRevealSelection = revealSelection
     if view.text != session.text, view.markedTextRange == nil {
       view.text = session.text; SourceSyntax.highlight(view.textStorage, around: session.selection, full: true)
     }
     if owner.navigation != session.navigation {
+      view.initialScroll = nil
       owner.navigation = session.navigation; view.selectedRange = session.selection; SourceSyntax.highlight(view.textStorage, around: session.selection); view.scrollRangeToVisible(session.selection)
     }
-    if owner.find != findRequest { owner.find = findRequest; view.findInteraction?.presentFindNavigator(showingReplace: true) }
   }
   static func dismantleUIView(_ view: SourceTextView, coordinator: Coordinator) { coordinator.changed(view); view.delegate = nil; view.resignFirstResponder() }
   @MainActor final class Coordinator: NSObject, UITextViewDelegate {
     let session: DocumentSourceEditorSession
-    var applying = false, find = 0
+    var applying = false
     var navigation: UUID?
     init(_ session: DocumentSourceEditorSession) { self.session = session }
     func changed(_ view: UITextView) {
@@ -111,6 +91,16 @@ struct DocumentNativeSourceEditor: UIViewRepresentable {
       applying = true; SourceSyntax.highlight(view.textStorage, around: view.selectedRange); applying = false
     }
     func textViewDidChangeSelection(_ view: UITextView) { changed(view) }
+    func textView(_ textView: UITextView, editMenuForTextInRanges ranges: [NSValue],
+      suggestedActions: [UIMenuElement]) -> UIMenu? {
+      guard let view = textView as? SourceTextView, view.selectedRange.length > 0 else { return nil }
+      let range = view.selectedRange
+      let reveal = UIAction(title: "Показать на листе", image: UIImage(systemName: "doc.viewfinder"),
+        attributes: view.sourceRevealSelection == nil ? .disabled : []) { [weak view] _ in
+          view?.sourceRevealSelection?(range)
+        }
+      return UIMenu(children: suggestedActions + [reveal])
+    }
     func scrollViewDidScroll(_ scroll: UIScrollView) {
       guard let view = scroll as? SourceTextView, !applying, view.markedTextRange == nil else { return }
       let bounds = CGRect(origin: view.contentOffset, size: view.bounds.size)
@@ -126,7 +116,7 @@ struct DocumentNativeSourceEditor: UIViewRepresentable {
     }
   }
 }
-final class SourceTextView: UITextView {
+final class SourceTextView: UITextView, NotebookHistoryGestureTarget {
   var initialScroll: Double?
   var highlightedViewport: NSRange?
   override func layoutSubviews() {
@@ -155,12 +145,19 @@ final class SourceTextView: UITextView {
     if isFirstResponder { scrollRangeToVisible(selectedRange) }
   }
   var sourceUndo: (() -> Void)?
+  var sourceRedo: (() -> Void)?
+  var sourceRevealSelection: ((NSRange) -> Void)?
+  func undoFromGesture() { sourceUndo?() }
+  func redoFromGesture() { sourceRedo?() }
   override var undoManager: UndoManager? { nil }
+  override var editingInteractionConfiguration: UIEditingInteractionConfiguration { .none }
   override var keyCommands: [UIKeyCommand]? {
     (super.keyCommands ?? []) + [UIKeyCommand(input: "z", modifierFlags: .command, action: #selector(undoSource)),
+      UIKeyCommand(input: "z", modifierFlags: [.command, .shift], action: #selector(redoSource)),
       UIKeyCommand(input: "\t", modifierFlags: [], action: #selector(completeCommand))]
   }
   @objc private func undoSource() { sourceUndo?() }
+  @objc private func redoSource() { sourceRedo?() }
   @objc func completeCommand() {
     let prefix = (text as NSString).substring(to: selectedRange.location)
     guard let slash = prefix.lastIndex(of: "\\") else { return }
@@ -170,48 +167,19 @@ final class SourceTextView: UITextView {
   }
 }
 #else
-struct DocumentNativeSourceViewer: NSViewRepresentable {
-  let text: String
-  let findRequest: Int
-  func makeCoordinator() -> Coordinator { Coordinator() }
-  func makeNSView(context: Context) -> NSScrollView {
-    let scroll = NSScrollView(); scroll.hasVerticalScroller = true; scroll.autohidesScrollers = true
-    let view = NSTextView(frame: .zero)
-    view.isEditable = false; view.isSelectable = true; view.isRichText = false
-    view.font = .monospacedSystemFont(ofSize: 14, weight: .regular)
-    view.usesFindPanel = true; view.isIncrementalSearchingEnabled = true
-    view.textContainerInset = .init(width: 16, height: 16)
-    view.minSize = .zero; view.maxSize = .init(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
-    view.isVerticallyResizable = true; view.isHorizontallyResizable = false; view.autoresizingMask = [.width]
-    view.textContainer?.widthTracksTextView = true
-    view.textContainer?.containerSize = .init(width: scroll.contentSize.width, height: CGFloat.greatestFiniteMagnitude)
-    scroll.documentView = view
-    return scroll
-  }
-  func updateNSView(_ scroll: NSScrollView, context: Context) {
-    guard let view = scroll.documentView as? NSTextView else { return }
-    if view.string != text { view.string = text; view.scrollRangeToVisible(.init(location: 0, length: 0)) }
-    if context.coordinator.find != findRequest {
-      context.coordinator.find = findRequest; view.window?.makeFirstResponder(view)
-      let sender = NSMenuItem(); sender.tag = NSTextFinder.Action.showFindInterface.rawValue; view.performTextFinderAction(sender)
-    }
-  }
-  final class Coordinator { var find = 0 }
-}
-
 struct DocumentNativeSourceEditor: NSViewRepresentable {
   let session: DocumentSourceEditorSession
-  let findRequest: Int
+  var revealSelection: ((NSRange) -> Void)? = nil
   func makeCoordinator() -> Coordinator { Coordinator(session) }
   func makeNSView(context: Context) -> NSScrollView {
     let scroll = NSScrollView(); scroll.hasVerticalScroller = true; scroll.autohidesScrollers = true
     let view = SourceTextView(frame: .zero)
-    view.delegate = context.coordinator; view.sourceUndo = { session.undo() }
+    view.delegate = context.coordinator; view.sourceUndo = { session.undo() }; view.sourceRedo = { session.redo() }
+    view.sourceRevealSelection = revealSelection
     view.font = .monospacedSystemFont(ofSize: 15, weight: .regular)
     view.isRichText = false; view.isEditable = true; view.isSelectable = true
     view.isAutomaticQuoteSubstitutionEnabled = false; view.isAutomaticDashSubstitutionEnabled = false
     view.isAutomaticSpellingCorrectionEnabled = false; view.isContinuousSpellCheckingEnabled = false
-    view.usesFindPanel = true; view.isIncrementalSearchingEnabled = true
     view.textContainerInset = .init(width: 16, height: 16)
     view.minSize = .zero; view.maxSize = .init(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
     view.isVerticallyResizable = true; view.isHorizontallyResizable = false; view.autoresizingMask = [.width]
@@ -229,13 +197,13 @@ struct DocumentNativeSourceEditor: NSViewRepresentable {
   func updateNSView(_ scroll: NSScrollView, context: Context) {
     guard let view = scroll.documentView as? SourceTextView else { return }
     let owner = context.coordinator; owner.applying = true; defer { owner.applying = false }
+    view.sourceRevealSelection = revealSelection
     if view.string != session.text, !view.hasMarkedText() {
       view.string = session.text; SourceSyntax.highlight(view.textStorage!, around: session.selection, full: true)
     }
-    if owner.navigation != session.navigation { owner.navigation = session.navigation; view.setSelectedRange(session.selection); SourceSyntax.highlight(view.textStorage!, around: session.selection); view.scrollRangeToVisible(session.selection) }
-    if owner.find != findRequest {
-      owner.find = findRequest; view.window?.makeFirstResponder(view)
-      let sender = NSMenuItem(); sender.tag = NSTextFinder.Action.showFindInterface.rawValue; view.performTextFinderAction(sender)
+    if owner.navigation != session.navigation {
+      view.initialScroll = nil
+      owner.navigation = session.navigation; view.setSelectedRange(session.selection); SourceSyntax.highlight(view.textStorage!, around: session.selection); view.scrollRangeToVisible(session.selection)
     }
   }
   static func dismantleNSView(_ scroll: NSScrollView, coordinator: Coordinator) {
@@ -244,7 +212,7 @@ struct DocumentNativeSourceEditor: NSViewRepresentable {
   }
   @MainActor final class Coordinator: NSObject, NSTextViewDelegate {
     let session: DocumentSourceEditorSession
-    var applying = false, find = 0
+    var applying = false
     var navigation: UUID?
     private var highlightedViewport: NSRange?
     init(_ session: DocumentSourceEditorSession) { self.session = session }
@@ -290,9 +258,30 @@ final class SourceTextView: NSTextView {
     }
   }
   var sourceUndo: (() -> Void)?
+  var sourceRedo: (() -> Void)?
+  var sourceRevealSelection: ((NSRange) -> Void)?
+  private var menuSelection: NSRange?
   override var undoManager: UndoManager? { nil }
+  override func menu(for event: NSEvent) -> NSMenu? {
+    let menu = super.menu(for: event)
+    if selectedRange().length > 0 {
+      menuSelection = selectedRange()
+      let item = NSMenuItem(title: "Показать на листе", action: #selector(revealSource), keyEquivalent: "")
+      item.target = self; item.isEnabled = sourceRevealSelection != nil
+      menu?.addItem(.separator()); menu?.addItem(item)
+    }
+    return menu
+  }
+  @objc private func revealSource() { if let menuSelection { sourceRevealSelection?(menuSelection) } }
+  override func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+    if menuItem.action == #selector(revealSource) { return sourceRevealSelection != nil && menuSelection != nil }
+    if menuItem.action == #selector(performTextFinderAction(_:)) { return false }
+    return super.validateMenuItem(menuItem)
+  }
   override func keyDown(with event: NSEvent) {
-    if event.modifierFlags.contains(.command), event.charactersIgnoringModifiers == "z" { sourceUndo?(); return }
+    if event.modifierFlags.contains(.command), event.charactersIgnoringModifiers?.lowercased() == "z" {
+      if event.modifierFlags.contains(.shift) { sourceRedo?() } else { sourceUndo?() }; return
+    }
     if event.keyCode == 48 { complete(nil); return }
     super.keyDown(with: event)
   }

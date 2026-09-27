@@ -9,7 +9,7 @@ import WebKit
 @MainActor
 final class DocumentProgramOwner {
   struct PausedProgram {
-    let programIdentity: DocumentProgramIdentity
+    let sourceBasis: String
     let value: JSONValue
     let size: CGSize
     let raster: RasterLease
@@ -17,6 +17,7 @@ final class DocumentProgramOwner {
   private struct Context {
     let input: DocumentPagePresentation
     let layout: DocumentLayoutRecord
+    let programs: [DocumentProgramSource]
     let pages: Set<Int>
     let currentPage: Int?
     let visibleIDs: Set<String>
@@ -29,11 +30,6 @@ final class DocumentProgramOwner {
     let id: UUID
     let task: Task<Void, Never>
     var preservesRuntime = false
-  }
-  private struct ReplacementState {
-    let identity: DocumentProgramIdentity
-    let value: JSONValue
-    let version: ContentFieldVersion?
   }
   private struct Application {
     let id: UUID
@@ -51,9 +47,6 @@ final class DocumentProgramOwner {
   private(set) var pauseFailures: [String: String] = [:]
   private var jobs: [String: Job] = [:]
   private var applications: [String: Application] = [:]
-  // A saved geometry handoff lasts only until the replacement is created.
-  // The old presentation input may not yet contain the writer's receipt.
-  private var replacementStates: [String: ReplacementState] = [:]
   private var retirementAttempts: [String: String] = [:]
   private var stopped = false
   private var boundaryTask: (id: UUID, task: Task<Bool, Never>)?
@@ -64,13 +57,13 @@ final class DocumentProgramOwner {
   private var returnEvictions: Set<String> = []
   var onChange: () -> Void = {}
   var onMount: (WKWebView, CGSize) -> Void = { _, _ in }
-  var onLink: (String, DocumentProgramIdentity, String) -> Void = { _, _, _ in }
+  var onLink: (String, String, String) -> Void = { _, _, _ in }
   var hasFocus: Bool { runtimes.values.contains { $0.focused } }
   var visibleIDs: Set<String> { context?.visibleIDs ?? [] }
   var retainedIDs: Set<String> {
     guard let context else { return [] }
-    let ids = Set(context.input.document.blocks.filter { $0.kind == .interactive }.map(\.id))
-    return context.layout.blockIDs(on: context.pages).intersection(ids)
+    let ids = Set(context.programs.map(\.id))
+    return context.layout.blockIDs(on: context.pages, kind: .program).intersection(ids)
   }
 
   init(documentID: UUID, resources: SceneRenderResources) {
@@ -116,30 +109,34 @@ final class DocumentProgramOwner {
     reconcile(); onChange()
   }
 
-  func update(input: DocumentPagePresentation, layout: DocumentLayoutRecord, pages: Set<Int>,
+  func update(input: DocumentPagePresentation, layout: DocumentLayoutRecord, programs: [DocumentProgramSource], pages: Set<Int>,
     currentPage: Int?, visibleIDs: Set<String>, preparationPage: Int?, blocked: Bool, contacts: Set<String>, densities: [String: Double]) {
     guard !stopped else { return }
-    context = .init(input: input, layout: layout, pages: pages, currentPage: currentPage,
+    context = .init(input: input, layout: layout, programs: programs, pages: pages, currentPage: currentPage,
       visibleIDs: visibleIDs, preparationPage: preparationPage, blocked: blocked, contacts: contacts, densities: densities)
     reconcile()
   }
 
   func paused(_ id: String) -> PausedProgram? {
     guard let saved = pausedPrograms[id], let context,
-      context.input.document.programIdentity(blockID: id) == saved.programIdentity,
-      let block = context.input.document.blocks.first(where: { $0.id == id }),
-      let region = context.layout.regions.first(where: { $0.id == id }),
-      abs(saved.size.width - region.frame.width) < 1 / 32, saved.size.height == block.height,
+      let block = context.programs.first(where: { $0.id == id }), block.sourceBasis == saved.sourceBasis,
+      saved.size == viewportSize(id),
       (context.input.state.records.first(where: { $0.id == id })?.value ?? block.initialState) == saved.value else { return nil }
     return saved
   }
 
+  private func viewportSize(_ id: String) -> CGSize {
+    let fragments = context?.layout.regions.filter { $0.kind == .program && $0.id == id } ?? []
+    return .init(width: fragments.first?.frame.width ?? 1,
+      height: fragments.map { $0.sourceOffset + $0.frame.height }.max() ?? 1)
+  }
+
   func presents(_ id: String) -> Bool {
     guard pauseFailures[id] == nil, !retiringIDs.contains(id) else { return false }
-    guard let input = context?.input, let block = input.document.blocks.first(where: { $0.id == id }) else { return false }
+    guard let context, let block = context.programs.first(where: { $0.id == id }) else { return false }
     if paused(id) != nil { return true }
-    guard let runtime = runtimes[id], runtime.programIdentity == input.document.programIdentity(blockID: id) else { return false }
-    let record = input.state.records.first { $0.id == id }
+    guard let runtime = runtimes[id], runtime.sourceBasis == block.sourceBasis else { return false }
+    let record = context.input.state.records.first { $0.id == id }
     return runtime.presents(record?.value ?? block.initialState, version: record?.valueVersion)
   }
 
@@ -163,20 +160,16 @@ final class DocumentProgramOwner {
   private func reconcile() {
     guard !stopped, !parkedForReturn, !boundarySuspendsPrograms, let context else { return }
     let input = context.input, retained = retainedIDs
-    replacementStates = replacementStates.filter { id, handoff in
-      input.document.blocks.contains { $0.id == id && $0.kind == .interactive }
-        && input.document.programIdentity(blockID: id) == handoff.identity
-    }
     pausedPrograms = pausedPrograms.filter { retained.contains($0.key) && paused($0.key) != nil }
     pauseFailures = pauseFailures.filter { retained.contains($0.key) }
-    let currentIDs = context.layout.blockIDs(on: [context.currentPage ?? input.pageIndex])
-    let blocks = input.document.blocks.filter { $0.kind == .interactive && retained.contains($0.id) }
+    let currentIDs = context.layout.blockIDs(on: [context.currentPage ?? input.pageIndex], kind: .program)
+    let blocks = context.programs.filter { retained.contains($0.id) }
     let ordered = (blocks.filter { currentIDs.contains($0.id) } + blocks.filter { !currentIDs.contains($0.id) }).map(\.id)
     var desired = context.visibleIDs.intersection(retained)
     desired.formUnion(runtimes.filter { $0.value.focused || context.contacts.contains($0.key) }.map(\.key))
     if !context.blocked { liveIDs = desired }
     let previewPages = context.preparationPage.map { Set([$0]) } ?? context.pages.subtracting(context.currentPage.map { [$0] } ?? [])
-    let previewCandidates = context.layout.blockIDs(on: previewPages).intersection(retained)
+    let previewCandidates = context.layout.blockIDs(on: previewPages, kind: .program).intersection(retained)
     if let previewID, context.blocked || !previewCandidates.contains(previewID) || liveIDs.contains(previewID)
       || runtimes[previewID]?.failure != nil { self.previewID = nil }
     if previewID == nil, !context.blocked {
@@ -187,57 +180,43 @@ final class DocumentProgramOwner {
     if let previewID { demanded.insert(previewID) }
     for block in blocks where demanded.contains(block.id) {
       let id = block.id
-      guard let region = context.layout.regions.first(where: { $0.id == id }) else { continue }
-      let programIdentity = input.document.programIdentity(blockID: id)
-      if let old = runtimes[id], !old.matches(block, programIdentity: programIdentity, width: region.frame.width) {
+      guard context.layout.regions.contains(where: { $0.kind == .program && $0.id == id }) else { continue }
+      if let old = runtimes[id], !old.matches(block) {
         guard !context.blocked, !old.focused, !context.contacts.contains(id) else { continue }
-        if old.programIdentity != programIdentity { retireImmediately(id, runtime: old) }
-        else {
-          // Geometry does not revoke this author's already accepted commits.
-          // Keep the same executor and its Retry until the existing boundary
-          // has saved it; only then may the new viewport replace its heap.
-          if old.failure == nil, jobs[id] == nil, pauseFailures[id] == nil {
-            startCheckpoint(id, runtime: old, keepsPicture: false, keepsRuntime: true)
-          }
-          continue
-        }
+        retireImmediately(id, runtime: old)
       }
       let record = input.state.records.first { $0.id == id }
-      var state = record?.value ?? block.initialState, stateVersion = record?.valueVersion
+      let state = record?.value ?? block.initialState, stateVersion = record?.valueVersion
       if runtimes[id] == nil {
-        if let handoff = replacementStates.removeValue(forKey: id), handoff.identity == programIdentity {
-          // Same causal rule as runtime.apply: only a strictly older input is
-          // superseded. Equal, newer and concurrent input remain authoritative.
-          let inputIsOlder = if let version = stateVersion {
-            handoff.version.map { $0.includes(version) && !version.includes($0) } ?? false
-          } else { true }
-          if inputIsOlder { state = handoff.value; stateVersion = handoff.version }
-        }
-        let runtime = DocumentBlockRuntime(documentID: documentID, block: block, programIdentity: programIdentity,
-          value: state, stateVersion: stateVersion, width: region.frame.width, resources: resources, programStore: input.programStore)
+        let size = viewportSize(id)
+        let runtime = DocumentBlockRuntime(documentID: documentID, program: block,
+          value: state, stateVersion: stateVersion, width: size.width, height: size.height, resources: resources, programStore: input.programStore)
         runtime.onChange = { [weak self, weak runtime] in
           guard let self, let runtime, runtimes[id] === runtime else { return }
           reconcile(); onChange()
         }
         runtime.onFocus = { [weak self] _ in self?.reconcile(); self?.onChange() }
-        // This accepted runtime addresses the captured source even while its
-        // presentation retires. The app/SQLite writer fences a changed program.
+        // Accepted state retains its original program through presentation
+        // retirement; the common writer fences a replaced executable source.
         let writeState = input.onStateChange
-        runtime.onStateChange = { value in try await writeState(id, value) }
+        runtime.onStateChange = { value in try await writeState(block, value) }
         runtime.onStateDrained = input.onStateDrained
         runtime.onStateCheckpoint = { [weak self, weak runtime] value, stateVersion in
           guard let self, let runtime, runtimes[id] === runtime, let input = self.context?.input,
-            input.document.programIdentity(blockID: id) == runtime.programIdentity else { return nil }
-          return try await input.onStateCheckpoint(id, value, runtime.programIdentity, stateVersion)
+            self.context?.programs.first(where: { $0.id == id })?.sourceBasis == runtime.sourceBasis else { return nil }
+          return try await input.onStateCheckpoint(id, value, runtime.program, stateVersion)
         }
         runtime.onMount = { [weak self] web, size in self?.onMount(web, size) }
         runtime.onLink = { [weak self, weak runtime] href in
           guard let self, let runtime, runtimes[id] === runtime else { return }
-          onLink(id, runtime.programIdentity, href)
+          onLink(id, runtime.sourceBasis, href)
         }
         runtimes[id] = runtime
       }
       guard let runtime = runtimes[id] else { continue }
+      if !context.blocked, !runtime.focused, !context.contacts.contains(id) {
+        let size = viewportSize(id); runtime.updateViewport(width: size.width, height: size.height)
+      }
       runtime.requiresStateAcceptance = true
       runtime.start(priority: liveIDs.contains(id) ? .liveProgram : .visible)
       if !runtime.focused, context.contacts.isEmpty, jobs[id] == nil, pauseFailures[id] == nil,
@@ -250,13 +229,13 @@ final class DocumentProgramOwner {
       // A queued acquisition has no author yet. A created WebKit may already
       // have accepted state before ready, so it leaves through the same drain.
       if !demanded.contains(id), !runtime.ready, runtime.failure == nil, !context.blocked, !runtime.focused, !context.contacts.contains(id) {
-        if runtime.webView == nil || !input.document.blocks.contains(where: { $0.id == id })
-          || input.document.programIdentity(blockID: id) != runtime.programIdentity { retireImmediately(id, runtime: runtime) }
+        if runtime.webView == nil || !context.programs.contains(where: { $0.id == id })
+          || context.programs.first(where: { $0.id == id })?.sourceBasis != runtime.sourceBasis { retireImmediately(id, runtime: runtime) }
         else if jobs[id] == nil { startCheckpoint(id, runtime: runtime, keepsPicture: false) }
         continue
       }
-      if outside && (!input.document.blocks.contains { $0.id == id }
-        || input.document.programIdentity(blockID: id) != runtime.programIdentity) {
+      if outside && (!context.programs.contains { $0.id == id }
+        || context.programs.first(where: { $0.id == id })?.sourceBasis != runtime.sourceBasis) {
         if !context.blocked, !runtime.focused, !context.contacts.contains(id) { retireImmediately(id, runtime: runtime) }
         continue
       }
@@ -274,7 +253,7 @@ final class DocumentProgramOwner {
   }
 
   private func apply(_ state: JSONValue, version: ContentFieldVersion?, to runtime: DocumentBlockRuntime) {
-    let block = runtime.block.id, id = UUID()
+    let block = runtime.program.id, id = UUID()
     applications[block]?.task.cancel()
     let task = Task { @MainActor [weak self, weak runtime] in
       guard let self, let runtime else { return }
@@ -313,7 +292,7 @@ final class DocumentProgramOwner {
         try Task.checkCancellation()
         if keepsPicture {
           let width = max(1, Int(ceil(runtime.blockWidth * (context.densities[block] ?? 2))))
-          do { pixels = try await runtime.capture(sourceOffset: 0, height: runtime.block.height, pixelWidth: width) }
+          do { pixels = try await runtime.capture(sourceOffset: 0, height: runtime.viewportSize.height, pixelWidth: width) }
           catch SceneRenderError.resourceLimit {
             // An offscreen former input owner may keep a useful image, but its
             // optional pixels cannot pin the executor ahead of visible work.
@@ -322,20 +301,6 @@ final class DocumentProgramOwner {
           }
         }
         guard !stopped, runtimes[block] === runtime else { return }
-        if let latest = self.context, !latest.blocked, !runtime.focused,
-          !latest.contacts.contains(block),
-          latest.input.document.programIdentity(blockID: block) == runtime.programIdentity,
-          let source = latest.input.document.blocks.first(where: { $0.id == block }),
-          let region = latest.layout.regions.first(where: { $0.id == block }),
-          !runtime.matches(source, programIdentity: runtime.programIdentity, width: region.frame.width) {
-          // Recheck after the write: the layout may have returned while this
-          // boundary was pending, or the source may have been superseded.
-          let handoff = ReplacementState(identity: runtime.programIdentity, value: value,
-            version: runtime.acceptedStateVersion)
-          retireImmediately(block, runtime: runtime)
-          replacementStates[block] = handoff
-          return
-        }
         if keepsRuntime {
           pauseFailures[block] = nil
           if parkedForReturn, !returnEvictions.contains(block) {
@@ -348,7 +313,7 @@ final class DocumentProgramOwner {
         }
         guard let latest = self.context,
           !latest.blocked, !latest.contacts.contains(block), !runtime.focused, !liveIDs.contains(block),
-          latest.input.document.programIdentity(blockID: block) == runtime.programIdentity,
+          latest.programs.first(where: { $0.id == block })?.sourceBasis == runtime.sourceBasis,
           runtime.value == value, keepsPicture || parkedForReturn || !retainedIDs.contains(block) || !runtime.ready else {
           await resume(block, runtime: runtime); return
         }
@@ -357,8 +322,8 @@ final class DocumentProgramOwner {
           return
         }
         if let pixels, keepsPicture {
-          pausedPrograms[block] = .init(programIdentity: runtime.programIdentity, value: value,
-            size: .init(width: runtime.blockWidth, height: runtime.block.height), raster: pixels)
+          pausedPrograms[block] = .init(sourceBasis: runtime.sourceBasis, value: value,
+            size: runtime.viewportSize, raster: pixels)
           self.previewID = nil
         }
         pixels = nil
@@ -508,7 +473,7 @@ final class DocumentProgramOwner {
     jobs[id]?.task.cancel(); applications[id]?.task.cancel(); applications[id] = nil
     runtime.stop(); runtimes[id] = nil; retiringIDs.remove(id); retirementAttempts[id] = nil
     parkedPrograms.remove(id); returnEvictions.remove(id)
-    pauseFailures[id] = nil; replacementStates[id] = nil
+    pauseFailures[id] = nil
   }
 
   func stop() {
@@ -519,7 +484,6 @@ final class DocumentProgramOwner {
     applications.values.forEach { $0.task.cancel() }; applications.removeAll()
     runtimes.values.forEach { $0.stop() }; runtimes.removeAll(); pausedPrograms.removeAll(); context = nil
     parkedPrograms.removeAll(); returnEvictions.removeAll()
-    replacementStates.removeAll()
   }
   isolated deinit { stop() }
 }

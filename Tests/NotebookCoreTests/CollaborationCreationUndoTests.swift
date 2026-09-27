@@ -35,8 +35,7 @@ private struct CreationUndoFixture {
 
   func document(_ id: UUID) throws -> CollaborationOperation {
     .init(kind: .createDocument, target: board, id: id.uuidString, values: [
-      "center": try .encode(WorldPoint.zero), "paperSize": .string("a4"),
-      "blocks": try .encode([DocumentBlock.interactive(id: "choice", html: "<button>Выбрать</button>", initialState: .object([:]))])])
+      "center": try .encode(WorldPoint.zero), "files": try .encode(documentProgramFiles(id: "choice", html: "<button>Выбрать</button>", initialState: .object([:])))])
   }
 
   func element(on target: CollaborationTarget) throws -> CollaborationOperation {
@@ -137,11 +136,11 @@ func creationUndoMixedDocumentsPreservesOnlyAdoptedOwner() throws {
   let delivered = try f.store.collaborationContent()
   let document = try f.store.loadDocument(first)
   var state = try f.store.loadDocumentState(first)
-  let changed = state.commit(blockID: "choice", value: .object(["fieldVersion": .string("Точный ответ человека")]), actor: f.human)
+  let changed = state.commit(instanceID: "choice", value: .object(["fieldVersion": .string("Точный ответ человека")]), actor: f.human)
   #expect(changed)
   _ = try f.store.commitDocumentState(.init(documentID: first,
     record: #require(state.records.first { $0.id == "choice" }), journalStamp: state.stamp,
-    expectedProgramIdentity: document.programIdentity(blockID: "choice")))
+    programPath: "programs/model", expectedSourceBasis: try DocumentProgramSource(document: document, instanceID: "choice", path: "programs/model").sourceBasis))
   state = try f.store.loadDocumentState(first)
   let undone = try f.store.undoCollaborationAction(action.id, actor: f.human)
   #expect(try f.store.loadDocument(first) == document)

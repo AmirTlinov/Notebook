@@ -122,7 +122,7 @@ struct NotebookScriptAdmissionTests {
 
   @Test func publicationReceiptAndExportJobCommitTogetherAcrossRestart() throws {
     let (store, _) = try fixture(); defer { try? FileManager.default.removeItem(at: store.root) }
-    let document = DocumentDocument(actor: UUID(), blocks: [.markdown(id: "text", source: "Printed")])
+    let document = DocumentDocument(actor: UUID(), files: [DocumentFile(id: "text", path: "main.tex", source: "Printed")])
     let actor = UUID()
     var index = try store.loadIndex(), board = try store.loadBoard(items: index.items)
     let created = index.createDocument(title: "Export receipt", actor: actor, documentID: document.id)
@@ -133,10 +133,10 @@ struct NotebookScriptAdmissionTests {
     let id = UUID()
     try store.saveScriptExportJob(id, value: .object(["status": .string("queued"), "jobID": .string(id.uuidString)]))
     let publication = NotebookExportPublication(cut: try .init(document: store.loadDocument(document.id), state: store.loadDocumentState(document.id)),
-      source: "trusted source", artifact: try stageExportFixture(Data("%PDF-proof".utf8), store: store), log: "", jobID: id)
+      source: "Printed", artifact: try stageExportFixture(Data("%PDF-proof".utf8), store: store), log: "", jobID: id)
     let receipt = try store.publishDocumentExport(store.prepareDocumentExport(publication))
     let lost = UUID()
-    let options: JSONValue = try .encode(NotebookExportOptions(format: .mp4, pixelWidth: 640, blockID: "model", video: .init(start: 0.25, end: 1.25, framesPerSecond: 30)))
+    let options: JSONValue = try .encode(NotebookExportOptions(format: .mp4, pixelWidth: 640, instanceID: "model", video: .init(start: 0.25, end: 1.25, framesPerSecond: 30)))
     let cutHash = try publication.cut.sha256
     try store.saveScriptExportJob(lost, value: .object(["status": .string("queued"), "jobID": .string(lost.uuidString),
       "cutSHA256": .string(cutHash), "contentRevision": .string(publication.expectedRevision), "stateRevision": .string(publication.cut.state.stamp.revision),

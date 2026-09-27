@@ -16,11 +16,14 @@ final class NotebookProgramImporter {
   private let persistence: NotebookPersistenceQueue
   private let workspaceID: UUID
   private var jobs: [String: Job] = [:]
+  private var resourceImports = 0
+  private var stopped = false
   init(persistence: NotebookPersistenceQueue, workspaceID: UUID) {
     self.persistence = persistence; self.workspaceID = workspaceID
   }
 
   func handle(_ request: NotebookProgramImportRequest) async throws -> JSONValue {
+    guard !stopped else { throw CancellationError() }
     guard NotebookProgramPackage.validHash(request.packageHash) else {
       throw CollaborationError("invalid_program_package", "Нужен SHA-256 подготовленного manifest.")
     }
@@ -82,7 +85,29 @@ final class NotebookProgramImporter {
     return receipt(hash: hash, job: job)
   }
 
-  func stop() { for job in jobs.values { job.task?.cancel() } }
+  /// Resource-only import shares the same immutable blob and FIFO owner. It
+  /// does not invent an executable package or attach content to a document.
+  func handle(_ request: NotebookDocumentResourceImportRequest) async throws -> JSONValue {
+    guard !stopped else { throw CancellationError() }
+    guard resourceImports < 2 else { throw CollaborationError("document_resource_busy", "Два ресурса уже импортируются.") }
+    resourceImports += 1; defer { resourceImports -= 1 }
+    let task = Task.detached(priority: .utility) { try NotebookDocumentResourceImport.prepare(request) }
+    let prepared = try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
+    var offset: Int64 = 0
+    for part in prepared.resource.parts {
+      guard !stopped else { throw CancellationError() }
+      try Task.checkCancellation()
+      let range = offset..<(offset+Int64(part.byteCount)), url = prepared.fileURL
+      try await persistence.submit { store in
+        try store.stageBlob(file: url, expectedHash: part.sha256, byteCount: Int64(part.byteCount), range: range)
+      }
+      offset = range.upperBound
+      await Task.yield()
+    }
+    return .object(["status": .string("ready"), "sha256": .string(prepared.sha256), "resource": try .encode(prepared.resource)])
+  }
+
+  func stop() { stopped = true; for job in jobs.values { job.task?.cancel() } }
 
   private func receipt(hash: String, job: Job?, absent: String = "not_started") -> JSONValue {
     var result: [String: JSONValue] = ["status": .string(job?.status ?? absent), "packageHash": .string(hash),

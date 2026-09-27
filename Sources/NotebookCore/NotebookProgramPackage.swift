@@ -56,10 +56,10 @@ public struct NotebookProgramPackage: Codable, Equatable, Sendable {
   }
 
   public static func validPath(_ path: String) -> Bool {
-    guard !path.isEmpty, path.utf8.count <= 512, !path.hasPrefix("/"), !path.hasSuffix("/"),
+    guard !path.isEmpty, path.utf8.count <= 1024, !path.hasPrefix("/"), !path.hasSuffix("/"),
       path.utf8.allSatisfy({ (65...90).contains($0) || (97...122).contains($0) || (48...57).contains($0)
         || [45, 46, 47, 64, 95].contains($0) }) else { return false }
-    return path.split(separator: "/", omittingEmptySubsequences: false).allSatisfy { !$0.isEmpty && $0 != "." && $0 != ".." }
+    return path.split(separator: "/", omittingEmptySubsequences: false).count <= 32 && path.split(separator: "/", omittingEmptySubsequences: false).allSatisfy { !$0.isEmpty && $0 != "." && $0 != ".." }
   }
 
   /// MIME belongs to the immutable namespace, not an arbitrary response header.
@@ -73,7 +73,7 @@ public struct NotebookProgramPackage: Codable, Equatable, Sendable {
       "woff":"font/woff", "woff2":"font/woff2", "ttf":"font/ttf", "otf":"font/otf",
       "mp4":"video/mp4", "webm":"video/webm", "mp3":"audio/mpeg", "m4a":"audio/mp4", "wav":"audio/wav",
       "ogg":"audio/ogg", "wasm":"application/wasm", "gltf":"model/gltf+json", "glb":"model/gltf-binary",
-      "pdf":"application/pdf", "tex":"application/x-tex", "gz":"application/gzip",
+      "pdf":"application/pdf", "tex":"application/x-tex", "gz":"application/gzip", "notex":"application/zip",
       "csv":"text/csv", "txt":"text/plain"][suffix] ?? "application/octet-stream"
   }
 

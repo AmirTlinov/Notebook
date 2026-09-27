@@ -261,7 +261,7 @@ enum NotebookPinnedImageRenderer {
       guard let document, let state, let pageIndex = reference.pageIndex,
         document.id == reference.target.id, state.id == document.id, reference.worldOrigin == nil,
         let visuals else { throw SceneRenderError.snapshotPending("historical_frame_unavailable") }
-      let geometry = WorkspaceItemGeometry.document(document.paperSize)
+      let geometry = DocumentRenderRegistry.shared.geometry(document: document, pageIndex: reference.pageIndex ?? 0)
       guard region.x >= 0, region.y >= 0, region.x + region.width <= geometry.width,
         region.y + region.height <= geometry.height else { throw SceneRenderError.snapshotPending("document_region") }
       if let submitted = try visuals.submittedRegion(referenceID: reference.id) {

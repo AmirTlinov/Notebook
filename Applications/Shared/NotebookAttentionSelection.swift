@@ -156,7 +156,7 @@ struct NotebookAttentionSelection: Sendable {
       try Task.checkCancellation()
       guard let id = UUID(uuidString: String(path.dropFirst("documents/".count).dropLast(".json".count))),
         let document = paperSources[id] else { continue }
-      files[path] = .object(["paperSize": try .encode(document.paperSize)])
+      files[path] = try .encode(document)
     }
     return referenceIdentities.isEmpty ? files : try NotebookStore.bindReferenceIdentities(referenceIdentities, to: files)
   }

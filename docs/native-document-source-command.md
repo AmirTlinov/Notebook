@@ -1,34 +1,39 @@
-# Addressed native source commits
+# Нативное редактирование файла
 
-`NotebookStore.commitDocumentSource` reads the pinned block, its seven causal
-fields, the header, and preamble/order versions in one command transaction.
-The complete read is admitted before decoding: 4,096 fragments and 4 MiB.
-Draft text retains its separate limit. Neighboring programs, retired-field
-history, and the program-state journal are outside this read.
+`DocumentSourceEdit` закрепляет `documentID`, `fileID`, исходные текст и причинную
+версию, новый текст и последовательность редакторского сеанса. Черновик вместе
+с выделением и фазой хранится отдельно от опубликованного файла.
 
-`DocumentDocument.replaceBlockSource` owns the human source version and block
-existence acceptance. Publication writes the projection difference.
-Native and agent writers share one Store method for admitting new causal fields.
-Updating an existing version is addressed; allocating an implicit version may
-require an owner-wide SQL count.
+`NotebookStore.commitDocumentSource` читает адресованный файл и его причинные
+поля через `documentFileProjection`, затем сравнивает текст и файловый CAS внутри
+одной command transaction. Независимая правка другого файла не создаёт конфликт.
+Изменённый или удалённый файл оставляет черновик в `conflict`/`targetMissing` и не
+восстанавливает удалённое содержание.
 
-Source, terminal draft state, and delivery commit together. A changed basis preserves
-conflicting text; removal of a block does not resurrect it. Repeating a completed
-session checks the original content and returns the addressed publication without
-a second delivery entry.
+Успешная запись использует обычный `patchDocumentFile` с человеческим авторством:
+тот же writer, Undo и доставка, что у агентских файловых команд. Результат содержит
+одну `DocumentFileSourcePublication`, а не устаревшую копию всего дерева. Повтор
+завершённого сеанса возвращает его сохранённый результат без новой записи.
 
-`DocumentSourceCommitResult` returns a `DocumentBlockSourcePublication`, not an
-entire document. The model applies it through `DocumentDocument.mergeSource`,
-preserving independent preamble/order changes, newer text/CSS, removal, and the
-current human selection. A late result cannot reopen a departed document.
+`DocumentDocument.mergeSource` применяет только этот файл и его причинные поля.
+Независимые файлы, состояние программ и текущий редакторский контекст не заменяются.
+Создание и переименование файлов также направляются штатным файловым операциям.
 
-## Checks and limits
+Верхняя строка содержит только представление и файл; в режиме «Код» панель
+рисования скрыта. Undo/Redo используют общие жесты двумя/тремя пальцами и ту же
+историю. «Показать на листе» находится в контекстном меню выделенного текста.
+Поиска и отдельных кнопок Undo, показа или передачи выделения нет.
 
-Regressions exercise 99,000 unrelated fields, corrupt neighboring bodies, stable
-hashes/positions, replay, causal limits, human versions, escaped IDs, pre-decode
-admission, and failures before/after commit. Native checks cover application of
-late publications and preservation of current UI context.
+Отправка сообщения фиксирует текущее выделение редактора до первого ожидания:
+файл, исходную версию, UTF-16 диапазон и текст. Черновик явно помечен как черновик;
+его нельзя принять за сохранённый файловый CAS. Большое выделение сохраняет
+полный диапазон и помеченный сокращённый текст. Само выделение не открывает чат,
+не отправляет сообщение и не создаёт отдельной истории контекстов.
 
-The full draft catalog and in-memory document model retain separate ownership.
-This command contract does not claim a fully addressed editor or incremental layout.
-See [source editing](document-page-fragments.md) and [verification](verification.md).
+Ошибка компиляции не отменяет сохранённый текст или черновик. Последняя корректная
+печатная версия остаётся производным результатом и не объявляется сборкой нового
+исходника. SyncTeX и диагностика адресуют настоящий файл и строку.
+
+Core-проверки: `DocumentFilesTests`; нативный сеанс:
+`DocumentNativeSourceSessionTests`. Реальные фокус, клавиатура, доставка и показ
+на iPad проверяются отдельно: [verification](verification.md).

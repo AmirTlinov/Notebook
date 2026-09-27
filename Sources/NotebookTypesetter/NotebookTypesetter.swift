@@ -1,45 +1,58 @@
 import Foundation
 import NotebookCore
 import CNotebookTypesetter
-import CQuickJS
+import CoreGraphics
+import CryptoKit
 
 public struct NotebookPrintedAsset: Codable, Sendable {
   public let name: String
   public let data: Data
 }
 public struct NotebookPrintedDocument: Sendable {
+  public var buildID: String {
+    SHA256.hash(data: Data((sourceMap.documentSHA256+sourceMap.inputSHA256+sourceMap.pdfSHA256).utf8)+interactiveMap).map { String(format: "%02x", $0) }.joined()
+  }
   public let document: DocumentDocument
   public let source: String
   public let pdf: Data
   public let syncTeX: Data
   public let sourceMap: DocumentPrintSourceMap
   public let assets: [NotebookPrintedAsset]
+  public let interactiveMap: Data
+  public let pages: [DocumentPrintPage]
+  public let interactiveRegions: [DocumentPrintInteractiveRegion]
+  public let diagnostics: [NotebookPrintDiagnostic]
   public let log: String
   public let guestMemoryBytes: Int
 }
-public struct NotebookPrintDiagnostic: Sendable, Identifiable {
-  public var id: String { "\(blockID ?? "preamble"):\(line):\(message)" }
-  public let blockID: String?
+public struct NotebookPrintDiagnostic: Codable, Sendable, Identifiable {
+  public var id: String { "\(path ?? "document"):\(line):\(message)" }
+  public let fileID: String?
+  public let path: String?
   public let line: Int
+  public let severity: String
   public let message: String
+  public init(fileID: String? = nil, path: String? = nil, line: Int = 1, severity: String = "error", message: String) {
+    self.fileID = fileID; self.path = path; self.line = line; self.severity = severity; self.message = message
+  }
 }
 public struct NotebookTypesetterError: Error, LocalizedError, Sendable {
   public let message: String
   public let diagnostics: [NotebookPrintDiagnostic]
   public var errorDescription: String? { message }
   public init(_ message: String, diagnostics: [NotebookPrintDiagnostic] = []) { self.message = message; self.diagnostics = diagnostics }
-  static func compiler(_ log: String, document: DocumentDocument, ranges: [DocumentPrintSourceRange]) -> Self {
-    let pattern = try! NSRegularExpression(pattern: #"document\.tex:([0-9]+): ([^\n\r]+)"#)
+  static func compiler(_ log: String, document: DocumentDocument) -> Self {
+    let pattern = try! NSRegularExpression(pattern: #"(?:/input/)?([A-Za-z0-9_@./-]+):([0-9]+): ?([^\n\r]+)"#)
     let text = log as NSString
-    let diagnostics = pattern.matches(in: log, range: NSRange(location: 0, length: text.length)).prefix(32).compactMap { match -> NotebookPrintDiagnostic? in
-      guard let generated = Int(text.substring(with: match.range(at: 1))) else { return nil }
-      let range = ranges.first { $0.firstLine <= generated && generated <= $0.lastLine }
-      let source = range.flatMap { range in document.blocks.first { $0.id == range.blockID }?.source } ?? document.preamble
-      let count = source.reduce(1) { $1 == "\n" ? $0 + 1 : $0 }
-      let offset = range.map { DocumentPrintLocations.sourceOffset(line: generated, range: $0, source: source) }
-      let line = offset.map { (source as NSString).substring(to: $0).reduce(1) { $1 == "\n" ? $0+1 : $0 } }
-        ?? min(count, max(1, generated))
-      return .init(blockID: range?.blockID, line: line, message: text.substring(with: match.range(at: 2)))
+    let diagnostics = pattern.matches(in: log, range: NSRange(location: 0, length: text.length)).prefix(64).compactMap { match -> NotebookPrintDiagnostic? in
+      var path = text.substring(with: match.range(at: 1))
+      if path.hasPrefix("/input/") { path.removeFirst(7) }
+      if path.hasPrefix("./") { path.removeFirst(2) }
+      guard let line = Int(text.substring(with: match.range(at: 2))) else { return nil }
+      let file = document.files.first { $0.path == path }
+      let prefix = text.substring(with: NSRange(location: max(0, match.range.location-12), length: min(12, match.range.location)))
+      return .init(fileID: file?.id, path: path, line: max(1, line), severity: prefix.contains("warning:") ? "warning" : "error",
+        message: text.substring(with: match.range(at: 3)))
     }
     return .init(log, diagnostics: diagnostics)
   }
@@ -51,22 +64,12 @@ private final class Work: @unchecked Sendable {
   private let lock = NSLock()
   private var cancelled = false
   private let deadline = ContinuousClock.now + .seconds(30)
-  private var javascript: OpaquePointer?
   private var tex: OpaquePointer?
-  func cancel() { lock.lock(); defer { lock.unlock() }; cancelled = true; if let javascript { nq_cancel(javascript) }; if let tex { nb_typesetter_cancel(tex) } }
+  func cancel() { lock.lock(); defer { lock.unlock() }; cancelled = true; if let tex { nb_typesetter_cancel(tex) } }
   func check() throws { lock.lock(); defer { lock.unlock() }; if cancelled { throw CancellationError() }; if ContinuousClock.now >= deadline { throw NotebookTypesetterError("typesetter_deadline") } }
   func remainingMilliseconds() throws -> UInt64 {
     try check(); let c = ContinuousClock.now.duration(to: deadline).components
     return max(1, UInt64(max(0, c.seconds * 1000 + c.attoseconds / 1_000_000_000_000_000)))
-  }
-  func withJavaScript<T>(_ body: (OpaquePointer) throws -> T) throws -> T {
-    try check()
-    // Markup is data-only. No host calls, filesystem, timers, network or eval
-    // bridge are available to the normalizer.
-    guard let runtime = nq_create(64*1024*1024, 1024*1024, 2, nil, nil) else { throw NotebookTypesetterError("markup_resource_limit") }
-    lock.lock(); javascript = runtime; if cancelled { nq_cancel(runtime) }; lock.unlock()
-    defer { lock.lock(); javascript = nil; nq_destroy(runtime); lock.unlock() }
-    return try body(runtime)
   }
   func withTeX<T>(_ body: (OpaquePointer) throws -> T) throws -> T {
     try check()
@@ -84,7 +87,6 @@ public final class NotebookTypesetter: @unchecked Sendable {
   private let resources: URL
   // Accessed only on queue; the engine itself admits one fixed-memory VM.
   private var runtime: OpaquePointer?
-  private var markup: String?
   private var idleGeneration: UInt64 = 0
   private var pressure: DispatchSourceMemoryPressure?
   public init(resources: URL) {
@@ -95,14 +97,16 @@ public final class NotebookTypesetter: @unchecked Sendable {
   }
   deinit { pressure?.cancel(); if let runtime { nb_typesetter_destroy(runtime) } }
   private func discardRuntime() {
-    if let runtime { nb_typesetter_destroy(runtime) }; runtime = nil; markup = nil
+    if let runtime { nb_typesetter_destroy(runtime) }; runtime = nil
   }
   public func trimIdle() async {
     await withCheckedContinuation { continuation in queue.async { [self] in discardRuntime(); continuation.resume() } }
   }
 
-  public func compile(_ document: DocumentDocument) async throws -> NotebookPrintedDocument {
-    try await perform { try self.compile(document, work: $0) }
+  public func compile(_ document: DocumentDocument, input: NotebookTypesetterInput? = nil) async throws -> NotebookPrintedDocument {
+    let input = try input ?? NotebookTypesetterInput(document: document)
+    try input.validate(document: document)
+    return try await perform { try self.compile(document, input: input, work: $0) }
   }
   /// Same bounded data-only SVG kernel as canonical document images. No TeX,
   /// layout, JavaScript or second compiler is created for an export overlay.
@@ -129,33 +133,6 @@ public final class NotebookTypesetter: @unchecked Sendable {
     } onCancel: { work.cancel() }
   }
 
-  private struct Preparation: Decodable {
-    struct Asset: Decodable { let name: String; let mediaType: String; let data: String }
-    let source: String
-    let sourceRanges: [DocumentPrintSourceRange]
-    let assets: [Asset]
-  }
-  private func prepare(_ document: DocumentDocument, work: Work) throws -> Preparation {
-    let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
-    struct Input: Encodable { let kind = "documentTeX"; let document: DocumentDocument; let programPointScale: Double }
-    let input = try encoder.encode(Input(document: document, programPointScale: document.paperSize.widthPoints / WorkspaceItemGeometry.document(document.paperSize).width))
-    guard input.count <= 24*1024*1024 else { throw NotebookTypesetterError("markup_input_limit") }
-    if markup == nil { markup = try String(contentsOf: resources.appendingPathComponent("notebook-markup.js"), encoding: .utf8) }
-    return try work.withJavaScript { engine in
-      func failure() -> NotebookTypesetterError {
-        guard let value = nq_error(engine) else { return .init("markup_resource_limit") }
-        defer { nq_free_string(value) }; return .init(String(cString: value))
-      }
-      nq_set_result_limit(engine, 24*1024*1024)
-      guard nq_bootstrap(engine, markup!) == 0,
-        nq_start(engine, "return notebookMarkup(args);", String(decoding: input, as: UTF8.self)) == 0 else { throw failure() }
-      var result = nq_pump(engine)
-      while result == 0 { try work.check(); result = nq_pump(engine) }
-      guard result == 1, let raw = nq_result(engine) else { throw failure() }
-      defer { nq_free_string(raw) }
-      return try JSONDecoder().decode(Preparation.self, from: Data(bytes: raw, count: strlen(raw)))
-    }
-  }
   private func preparedRuntime() throws -> OpaquePointer {
     if runtime == nil {
       runtime = nb_typesetter_create(resources.appendingPathComponent("texlive.zip").path,
@@ -182,33 +159,18 @@ public final class NotebookTypesetter: @unchecked Sendable {
     }
   }
 
-  private func compile(_ document: DocumentDocument, work: Work) throws -> NotebookPrintedDocument {
-    try work.check()
-    let prepared = try prepare(document, work: work)
+  private func compile(_ document: DocumentDocument, input: NotebookTypesetterInput, work: Work) throws -> NotebookPrintedDocument {
     try work.check()
     let runtime = try preparedRuntime()
-    // Converted assets are frozen with the source before the VM starts.
-    var assets: [NotebookPrintedAsset] = [], total = 0
-    for asset in prepared.assets {
-      try work.check()
-      guard let data = Data(base64Encoded: asset.data) else { throw NotebookTypesetterError("print_image_invalid") }
-      let imageSource = asset.mediaType == "image/svg+xml" ? data : try NotebookPrintImage.embeddedSVG(data, mediaType: asset.mediaType)
-      let pdf = try convertSVG(imageSource, work: work)
-      total += pdf.count
-      guard total <= 8*1024*1024 else { throw NotebookTypesetterError("print_images_output_limit") }
-      assets.append(.init(name: asset.name, data: pdf))
-    }
-    let source = Data(prepared.source.utf8)
-    let names = assets.map { strdup($0.name)! }; defer { names.forEach { free($0) } }
-    let buffers = assets.map { $0.data as NSData }
-    let nativeAssets = assets.indices.map { NBTypesetterAsset(name: UnsafePointer(names[$0]), bytes: buffers[$0].bytes.assumingMemoryBound(to: UInt8.self), count: buffers[$0].length) }
+    let names = input.files.map { strdup($0.path)! }; defer { names.forEach { free($0) } }
+    let buffers = input.files.map { $0.data as NSData }
+    let nativeFiles = input.files.indices.map { NBTypesetterFile(name: UnsafePointer(names[$0]),
+      bytes: buffers[$0].bytes.assumingMemoryBound(to: UInt8.self), count: buffers[$0].length) }
     return try work.withTeX { ticket in
       let timeout = try work.remainingMilliseconds()
-      let output = source.withUnsafeBytes { raw in
-        nativeAssets.withUnsafeBufferPointer { pointers in
-          nb_typesetter_compile(runtime, raw.bindMemory(to: UInt8.self).baseAddress, source.count,
-            pointers.baseAddress, pointers.count, UInt64(Date().timeIntervalSince1970), timeout, ticket)
-        }
+      let output = nativeFiles.withUnsafeBufferPointer { pointers in
+        nb_typesetter_compile(runtime, input.entrypoint, pointers.baseAddress, pointers.count,
+          UInt64(Date().timeIntervalSince1970), timeout, ticket)
       }
       guard let output else { throw NotebookTypesetterError("typesetter_output_missing") }
       defer { nb_typesetter_output_destroy(output); withExtendedLifetime(buffers) {} }
@@ -217,12 +179,43 @@ public final class NotebookTypesetter: @unchecked Sendable {
         return count > 0 ? Data(bytes: pointer!, count: count) : Data()
       }
       let error = bytes(3)
-      guard error.isEmpty else { throw NotebookTypesetterError.compiler(String(decoding: error, as: UTF8.self), document: document, ranges: prepared.sourceRanges) }
+      guard error.isEmpty else { throw NotebookTypesetterError.compiler(String(decoding: error, as: UTF8.self), document: document) }
       try work.check()
       let pdf = bytes(0), syncTeX = bytes(1)
-      return .init(document: document, source: prepared.source, pdf: pdf, syncTeX: syncTeX,
-        sourceMap: try .init(document: document, source: prepared.source, pdf: pdf, ranges: prepared.sourceRanges),
-        assets: assets, log: String(decoding: bytes(2), as: UTF8.self), guestMemoryBytes: nb_typesetter_output_memory(output))
+      let pages = try Self.pages(pdf)
+      let source = String(decoding: input.files.first { $0.path == input.entrypoint }!.data, as: UTF8.self)
+      let revision = try String(contentsOf: resources.appendingPathComponent("revision.txt"), encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)
+      let sourceMap = try DocumentPrintSourceMap(document: document, source: source, pdf: pdf, compilerRevision: revision)
+      let projection = try NotebookPrintedDocument.projection(syncTeX: syncTeX, files: sourceMap.files, pages: pages)
+      let regions = projection.interactiveRegions
+      let map = try NotebookPrintedDocument.regionMap(regions)
+      let log = String(decoding: bytes(2), as: UTF8.self)
+      var diagnostics = NotebookTypesetterError.compiler(log, document: document).diagnostics
+      for path in Set(regions.map(\.programPath)).sorted() where !input.files.contains(where: { $0.path == path || $0.path.hasPrefix(path+"/") }) {
+        let file = document.files.first { $0.resource == nil && $0.source.contains("{"+path+"}") }
+        let offset = file.map { ($0.source as NSString).range(of: "{"+path+"}").location } ?? 0
+        diagnostics.append(.init(fileID: file?.id, path: file?.path,
+          line: file.map { DocumentPrintLocations.line(sourceOffset: offset, source: $0.source) } ?? 1,
+          message: "Файлы программы не найдены: \(path)"))
+      }
+      return .init(document: document, source: source, pdf: pdf, syncTeX: syncTeX,
+        sourceMap: sourceMap,
+        assets: input.files.filter { $0.path != input.entrypoint }.map { .init(name: $0.path, data: $0.data) },
+        interactiveMap: map, pages: pages, interactiveRegions: regions, diagnostics: diagnostics,
+        log: log, guestMemoryBytes: nb_typesetter_output_memory(output))
+    }
+  }
+  static func pages(_ pdf: Data) throws -> [DocumentPrintPage] {
+    guard let provider = CGDataProvider(data: pdf as CFData), let document = CGPDFDocument(provider),
+      (1...4096).contains(document.numberOfPages) else { throw NotebookTypesetterError("typesetter_pdf_invalid") }
+    return try (1...document.numberOfPages).map { index in
+      guard let page = document.page(at: index) else { throw NotebookTypesetterError("typesetter_pdf_invalid") }
+      let box = page.getBoxRect(.mediaBox)
+      guard page.rotationAngle % 90 == 0, [box.minX, box.minY].allSatisfy({ $0.isFinite && abs($0) <= 1_000_000 }),
+        [box.width, box.height].allSatisfy({ $0.isFinite && $0 > 0 && $0 <= 1_000_000 }) else {
+        throw NotebookTypesetterError("typesetter_page_geometry_invalid")
+      }
+      return .init(mediaBoxX: box.minX, mediaBoxY: box.minY, mediaBoxWidth: box.width, mediaBoxHeight: box.height, rotation: Int(page.rotationAngle))
     }
   }
 }

@@ -15,7 +15,7 @@ struct NotebookTransientToolsOverlay: View {
         let now = timeline.date.timeIntervalSinceReferenceDate
         Canvas { context,_ in
           for trace in model.drawingTools.laserTraces {
-            guard let origin = origin(trace.address) else { continue }
+            guard let origin = NotebookAttentionProjection.laserFrame(trace.address,model:model,presence:presence)?.origin else { continue }
             let points = trace.points(at:now), scale = presence.camera.scale
             guard let first = points.first else { continue }
             func p(_ point: SpatialPoint) -> CGPoint { .init(x:origin.x+point.x*scale,y:origin.y+point.y*scale) }

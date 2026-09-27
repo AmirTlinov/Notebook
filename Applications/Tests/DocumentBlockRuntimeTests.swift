@@ -7,7 +7,7 @@ import XCTest
 @MainActor
 final class DocumentBlockRuntimeTests: XCTestCase {
   func testReadinessFailureRetainsEarlierAcceptedCommitUntilDurable() async throws {
-    let fixture = try RuntimeFixture(block: .interactive(id: "failed-ready", html: "<output>Early</output>", javaScript: """
+    let fixture = try RuntimeFixture(program: .program(id: "failed-ready", html: "<output>Early</output>", javaScript: """
       notebook.ready(Promise.reject(new Error('author readiness failure')));
       window.earlyAccepted=notebook.commit({savedBeforeFailure:1});
       """, height: 120))
@@ -21,7 +21,7 @@ final class DocumentBlockRuntimeTests: XCTestCase {
     var held: CheckedContinuation<Void, Never>?
     fixture.runtime.onStateChange = { value in
       await withCheckedContinuation { held = $0 }
-      _ = journal.commit(blockID: "failed-ready", value: value, actor: journal.stamp.actor)
+      _ = journal.commit(instanceID: "failed-ready", value: value, actor: journal.stamp.actor)
       let accepted = journal, version = journal.records.first { $0.id == "failed-ready" }?.valueVersion
       await withCheckedContinuation { (done: CheckedContinuation<Void, Never>) in
         queue.enqueue(owner: .documentState(fixture.document.id)) { store in
@@ -60,7 +60,7 @@ final class DocumentBlockRuntimeTests: XCTestCase {
   }
 
   func testUnreadyProgramCheckpointJoinsAcceptedStateBeforeRetirement() async throws {
-    let fixture = try RuntimeFixture(block: .interactive(id: "early", html: "<output>Early</output>",
+    let fixture = try RuntimeFixture(program: .program(id: "early", html: "<output>Early</output>",
       javaScript: "notebook.ready(new Promise(()=>{})); window.earlyAccepted=notebook.commit({early:1});", height: 120))
     defer { fixture.close() }
     var held: CheckedContinuation<Void, Never>?
@@ -100,7 +100,7 @@ final class DocumentBlockRuntimeTests: XCTestCase {
       let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "lc", withExtension: suffix, subdirectory: "animation"))
       return try String(contentsOf: url, encoding: .utf8)
     }
-    let fixture = try RuntimeFixture(block: .interactive(id: "lc", html: source("html"),
+    let fixture = try RuntimeFixture(program: .program(id: "lc", html: source("html"),
       css: source("css"), javaScript: source("js"), height: 720), width: 760)
     defer { fixture.close() }
     try await fixture.waitUntilReady()
@@ -127,7 +127,7 @@ final class DocumentBlockRuntimeTests: XCTestCase {
   }
 
   func testCheckpointFreezesTheActualAnimatedMomentBeforeAcceptingStateAndPixels() async throws {
-    let block = DocumentBlock.interactive(id: "animation", html: "<output></output>", javaScript: """
+    let block = DocumentTestFiles.program(id: "animation", html: "<output></output>", javaScript: """
       let phase=0,frame=0;
       const draw=()=>document.querySelector('output').textContent=String(phase);
       const tick=()=>{phase++;draw();frame=requestAnimationFrame(tick)};
@@ -135,7 +135,7 @@ final class DocumentBlockRuntimeTests: XCTestCase {
         resume:()=>{frame=requestAnimationFrame(tick)},dispose:()=>cancelAnimationFrame(frame)});
       notebook.ready(Promise.resolve().then(()=>{draw();frame=requestAnimationFrame(tick)}));
       """, initialState: .object(["phase": .number(0)]), height: 100)
-    let fixture = try RuntimeFixture(block: block)
+    let fixture = try RuntimeFixture(program: block)
     defer { fixture.close() }
     try await fixture.waitUntilReady()
     let web = try XCTUnwrap(fixture.runtime.webView)
@@ -158,7 +158,7 @@ final class DocumentBlockRuntimeTests: XCTestCase {
   }
 
   func testRejectedCheckpointRetainsTheLiveRuntimeForRecovery() async throws {
-    let fixture = try RuntimeFixture(block: .interactive(id: "rejected", html: "<output>0.5</output>", javaScript: """
+    let fixture = try RuntimeFixture(program: .program(id: "rejected", html: "<output>0.5</output>", javaScript: """
       window.pauses=0;window.checkpoints=0;window.resumes=0;
       notebook.lifecycle({pause:()=>{window.pauses++},checkpoint:()=>{window.checkpoints++;return {phase:0.5}},
         resume:()=>{window.resumes++}});notebook.ready(Promise.resolve());
@@ -204,7 +204,7 @@ final class DocumentBlockRuntimeTests: XCTestCase {
   }
 
   func testCheckpointCannotOverwriteAnUnobservedExternalState() async throws {
-    let fixture = try RuntimeFixture(block: .interactive(id: "stale", html: "<output>0.5</output>", javaScript: """
+    let fixture = try RuntimeFixture(program: .program(id: "stale", html: "<output>0.5</output>", javaScript: """
       notebook.lifecycle({checkpoint:()=>({phase:0.5})});notebook.ready(Promise.resolve());
       """, initialState: .object(["phase": .number(0)]), height: 100))
     defer { fixture.close() }
@@ -222,7 +222,7 @@ final class DocumentBlockRuntimeTests: XCTestCase {
   func testMissingRejectedAndHungReadinessAreLocalFailuresNotReadySurfaces() async throws {
     for source in ["window.unfinished=true", "notebook.ready(Promise.reject(new Error('setup failed')))",
       "notebook.ready(new Promise(()=>{}))"] {
-      let fixture = try RuntimeFixture(block: .interactive(id: "unready", html: "<output>Not ready</output>",
+      let fixture = try RuntimeFixture(program: .program(id: "unready", html: "<output>Not ready</output>",
         javaScript: source, height: 100))
       defer { fixture.close() }
       try await wait(seconds: 9) { fixture.runtime.failure != nil }
@@ -237,11 +237,11 @@ final class DocumentBlockRuntimeTests: XCTestCase {
   }
 
   func testHTMLScriptReceivesTheAPIAndAnOlderStateEchoCannotUndoItsInput() async throws {
-    let block = DocumentBlock.interactive(id: "counter", html: """
+    let block = DocumentTestFiles.program(id: "counter", html: """
       <script>notebook.commit({count:0,inline:true});notebook.ready(Promise.resolve());</script>
       <button onclick="notebook.commit({...notebook.state,count:notebook.state.count+1})">Increment</button>
       """, css: "", javaScript: "", initialState: .null, height: 300)
-    let fixture = try RuntimeFixture(block: block)
+    let fixture = try RuntimeFixture(program: block)
     defer { fixture.close() }
     try await fixture.waitUntilReady()
     let web = try XCTUnwrap(fixture.runtime.webView)
@@ -257,7 +257,7 @@ final class DocumentBlockRuntimeTests: XCTestCase {
     let retained = try await web.evaluateJavaScript("notebook.state.count")
     XCTAssertEqual(retained as? Int, 1, "The unchanged observed state version is an echo, even while the local value has advanced")
     var journal = DocumentStateJournal(id: fixture.document.id, actor: UUID())
-    _ = journal.commit(blockID: block.id, value: .object(["count": .number(7)]), actor: UUID())
+    _ = journal.commit(instanceID: block.id, value: .object(["count": .number(7)]), actor: UUID())
     let accepted = try XCTUnwrap(journal.records.first)
     try await fixture.runtime.apply(accepted.value, stateVersion: accepted.valueVersion)
     let advanced = try await web.evaluateJavaScript("notebook.state.count")
@@ -265,10 +265,10 @@ final class DocumentBlockRuntimeTests: XCTestCase {
   }
 
   func testConcurrentPhysicalCutsKeepTheReadyControlAndViewportInstalled() async throws {
-    let block = DocumentBlock.interactive(id: "counter",
+    let block = DocumentTestFiles.program(id: "counter",
       html: "<button style='height:70px' onclick='notebook.commit({clicked:true})'>Ready control</button><div style='height:1930px;background:linear-gradient(red,blue)'></div>",
       css: "", javaScript: "", initialState: .null, height: 2000)
-    let fixture = try RuntimeFixture(block: block)
+    let fixture = try RuntimeFixture(program: block)
     defer { fixture.close() }
     try await fixture.waitUntilReady()
     let web = try XCTUnwrap(fixture.runtime.webView), parent = web.superview, frame = web.frame
@@ -290,11 +290,33 @@ final class DocumentBlockRuntimeTests: XCTestCase {
     attachment.name = "document-program-offscreen-lower-cut"; attachment.lifetime = .keepAlways; add(attachment)
   }
 
+  func testViewportResizeRetainsTheSameWebKitHeapAndAcceptedState() async throws {
+    let fixture = try RuntimeFixture(program: .program(id: "resizable", html: "<button>Count</button>",
+      javaScript: "window.contextNonce=crypto.randomUUID();notebook.ready(Promise.resolve());",
+      initialState: .object(["count": .number(4)]), height: 200))
+    defer { fixture.close() }
+    try await fixture.waitUntilReady()
+    let web = try XCTUnwrap(fixture.runtime.webView)
+    let nonce = try await web.evaluateJavaScript("window.contextNonce") as? String
+    let id = fixture.runtime.id, basis = fixture.runtime.sourceBasis
+    for width in [520.0, 300.0, 360.0] {
+      fixture.runtime.updateViewport(width: width, height: 400)
+      try await fixture.waitUntilReady()
+      XCTAssertTrue(fixture.runtime.webView === web)
+      XCTAssertEqual(fixture.runtime.id, id); XCTAssertEqual(fixture.runtime.sourceBasis, basis)
+      XCTAssertEqual(fixture.runtime.value["count"], .number(4))
+      let after = try await web.evaluateJavaScript("window.contextNonce") as? String
+      XCTAssertEqual(after, nonce)
+      XCTAssertEqual(web.bounds.size, CGSize(width: width, height: 400))
+    }
+    XCTAssertEqual(fixture.resources.activeWebSurfaceCount, 1)
+  }
+
   func testAQueuedNeighborReceivesTheInputSlotWhenItBecomesCurrent() async throws {
     let resources = SceneRenderResources(maximumWebSurfaces: 2, maximumBackgroundWebSurfaces: 1, reservedInteractiveSlots: 1)
     let background = try await resources.acquireWebSurface(priority: .visible)
     defer { background.release() }
-    let fixture = try RuntimeFixture(block: .interactive(id: "queued", html: "<button>Current control</button>", height: 100),
+    let fixture = try RuntimeFixture(program: .program(id: "queued", html: "<button>Current control</button>", height: 100),
       resources: resources, priority: .neighbor)
     defer { fixture.close() }
     try await wait { resources.pendingWebRequestCount == 1 }
@@ -311,7 +333,7 @@ final class DocumentBlockRuntimeTests: XCTestCase {
     let resources = SceneRenderResources(maximumWebSurfaces: 1, maximumPendingWebRequests: 0)
     let held = try await resources.acquireWebSurface(priority: .input)
     defer { held.release() }
-    let fixture = try RuntimeFixture(block: .interactive(id: "waiting", html: "<button>First touch</button>", height: 100),
+    let fixture = try RuntimeFixture(program: .program(id: "waiting", html: "<button>First touch</button>", height: 100),
       resources: resources, priority: .input)
     defer { fixture.close() }
     await Task.yield(); await Task.yield()
@@ -344,31 +366,36 @@ final class DocumentBlockRuntimeTests: XCTestCase {
 
 @MainActor
 private final class RuntimeFixture {
+  private let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+  private let store: NotebookStore
   let document: DocumentDocument
   let resources: SceneRenderResources
   let runtime: DocumentBlockRuntime
   private var journal: DocumentStateJournal
   let overlay = DocumentProgramOverlayHost()
   let window: UIWindow
-  init(block: DocumentBlock, resources: SceneRenderResources = SceneRenderResources(), priority: WebPriority = .input, width: Double = 360) throws {
+  init(program: DocumentTestFiles, resources: SceneRenderResources = SceneRenderResources(), priority: WebPriority = .input, width: Double = 360) throws {
     self.resources = resources
-    document = .init(actor: UUID(), blocks: [block])
+    document = DocumentTestFiles.document(contents: [program])
+    store = NotebookStore(root: directory)
+    try store.prepare()
+    let descriptor = try store.documentProgramSource(document: document, instanceID: program.id, path: "programs/" + program.id)
     journal = .init(id: document.id, actor: UUID())
-    runtime = .init(documentID: document.id, block: block, programIdentity: document.programIdentity(blockID: block.id),
-      value: block.initialState, stateVersion: nil, width: width, resources: resources)
+    runtime = .init(documentID: document.id, program: descriptor,
+      value: program.initialState, stateVersion: nil, width: width, height: program.height, resources: resources, programStore: store)
     window = UIWindow(windowScene: try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene))
     let root = UIViewController(); window.rootViewController = root
     overlay.frame = .init(x: 0, y: 0, width: width, height: 700); root.view.addSubview(overlay)
     window.makeKeyAndVisible()
     runtime.onStateChange = { [weak self] value in
       guard let self else { return nil }
-      _ = journal.commit(blockID: block.id, value: value, actor: journal.stamp.actor)
-      return journal.records.first { $0.id == block.id }?.valueVersion
+      _ = journal.commit(instanceID: program.id, value: value, actor: journal.stamp.actor)
+      return journal.records.first { $0.id == program.id }?.valueVersion
     }
     runtime.onStateCheckpoint = { [weak self] value, version in
-      guard let self, journal.records.first(where: { $0.id == block.id })?.valueVersion == version else { return nil }
-      _ = journal.commit(blockID: block.id, value: value, actor: journal.stamp.actor)
-      return journal.records.first { $0.id == block.id }?.valueVersion
+      guard let self, journal.records.first(where: { $0.id == program.id })?.valueVersion == version else { return nil }
+      _ = journal.commit(instanceID: program.id, value: value, actor: journal.stamp.actor)
+      return journal.records.first { $0.id == program.id }?.valueVersion
     }
     runtime.onMount = { [weak overlay] web, size in overlay?.park(web, fullSize: size) }
     runtime.start(priority: priority)
@@ -379,9 +406,12 @@ private final class RuntimeFixture {
     if let failure = runtime.failure { throw failure }
     XCTAssertTrue(runtime.ready)
     let web = try XCTUnwrap(runtime.webView)
-    XCTAssertTrue(overlay.present([.init(blockID: runtime.block.id, webView: web,
-      rect: .init(x: 0, y: 0, width: runtime.blockWidth, height: min(700, runtime.block.height)), sourceOffset: 0, fullSize: web.bounds.size)],
+    XCTAssertTrue(overlay.present([.init(blockID: runtime.program.id, webView: web,
+      rect: .init(x: 0, y: 0, width: runtime.blockWidth, height: min(700, runtime.viewportSize.height)), sourceOffset: 0, fullSize: web.bounds.size)],
       paperSize: .init(width: runtime.blockWidth, height: 700), interactive: true))
   }
-  func close() { runtime.stop(); overlay.removePrograms(); window.isHidden = true; window.rootViewController = nil }
+  func close() {
+    runtime.stop(); overlay.removePrograms(); window.isHidden = true; window.rootViewController = nil
+    try? FileManager.default.removeItem(at: directory)
+  }
 }

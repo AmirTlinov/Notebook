@@ -6,13 +6,14 @@ public struct NotebookDocumentStateCommand: Sendable {
   public let documentID: UUID
   public let record: DocumentStateRecord
   public let journalStamp: VersionStamp
-  public let expectedProgramIdentity: DocumentProgramIdentity
+  public let programPath: String
+  public let expectedSourceBasis: String
   public let stateCondition: NotebookDocumentStateCondition
 
   public init(documentID: UUID, record: DocumentStateRecord, journalStamp: VersionStamp,
-    expectedProgramIdentity: DocumentProgramIdentity, stateCondition: NotebookDocumentStateCondition = .any) {
+    programPath: String, expectedSourceBasis: String, stateCondition: NotebookDocumentStateCondition = .any) {
     self.documentID = documentID; self.record = record; self.journalStamp = journalStamp
-    self.expectedProgramIdentity = expectedProgramIdentity; self.stateCondition = stateCondition
+    self.programPath = programPath; self.expectedSourceBasis = expectedSourceBasis; self.stateCondition = stateCondition
   }
 
   public var expectedResult: NotebookDocumentStateResult {
@@ -33,7 +34,7 @@ public enum NotebookDocumentStateResult: Equatable, Sendable {
   case committed(NotebookDocumentStatePublication)
   /// Admission in memory cannot authorize a different durable program. A nil
   /// version identifies a missing target; neither case advances the journal.
-  case targetChanged(documentID: UUID, currentProgramIdentity: DocumentProgramIdentity?)
+  case targetChanged(documentID: UUID, currentSourceBasis: String?)
   case stateChanged(documentID: UUID, currentStateVersion: ContentFieldVersion?)
 }
 
@@ -48,57 +49,59 @@ extension NotebookStore {
   public func commitDocumentState(_ command: NotebookDocumentStateCommand) throws -> NotebookDocumentStateResult {
     guard command.journalStamp.counter <= VersionStamp.maximumCounter,
       command.record.fieldVersion != nil, command.record.isValid(in: command.journalStamp),
-      command.expectedProgramIdentity.isValid else {
+      DocumentFile.validPath(command.programPath), NotebookProgramPackage.validHash(command.expectedSourceBasis) else {
       throw NotebookStorageError.invalidTransaction("document state clock or value")
     }
     return try commandTransaction {
       guard try readItemHeader(command.documentID)?.kind == .document,
-        let target = try readDocumentProgramSource(documentID: command.documentID, blockID: command.record.id) else {
-        return .targetChanged(documentID: command.documentID, currentProgramIdentity: nil)
+        let target = try readDocumentProgramSource(documentID: command.documentID, instanceID: command.record.id, programPath: command.programPath) else {
+        return .targetChanged(documentID: command.documentID, currentSourceBasis: nil)
       }
-      guard target.block.kind == .interactive, target.programIdentity == command.expectedProgramIdentity else {
-        return .targetChanged(documentID: command.documentID, currentProgramIdentity: target.programIdentity)
+      guard target.sourceBasis == command.expectedSourceBasis else {
+        return .targetChanged(documentID: command.documentID, currentSourceBasis: target.sourceBasis)
       }
       return try commitDocumentState(command,
-        projection: documentStateProjection(documentID: command.documentID, blockID: command.record.id))
+        projection: documentStateProjection(documentID: command.documentID, programID: command.record.id))
     }
   }
 
   /// The document may leave the active model after this program has accepted a
   /// value. Its captured source identity, not a loaded journal, owns the event.
   @discardableResult
-  public func commitDocumentState(documentID: UUID, blockID: String, value: JSONValue,
-    programIdentity: DocumentProgramIdentity, actor: UUID) throws -> ContentFieldVersion? {
-    try commitDocumentState(documentID: documentID, blockID: blockID, value: value,
-      programIdentity: programIdentity, condition: .any, actor: actor)
+  public func commitDocumentState(documentID: UUID, programID: String, programPath: String, value: JSONValue,
+    sourceBasis: String, actor: UUID) throws -> NotebookDocumentStatePublication? {
+    try commitDocumentState(documentID: documentID, programID: programID, programPath: programPath, value: value,
+      sourceBasis: sourceBasis, condition: .any, actor: actor)
   }
 
   /// A detached document is outside the model's working set, not deleted.
-  /// Its final heap still addresses one durable block through the same writer.
-  public func checkpointDocumentState(documentID: UUID, blockID: String, value: JSONValue,
-    programIdentity: DocumentProgramIdentity, stateVersion: ContentFieldVersion?, actor: UUID) throws -> ContentFieldVersion? {
-    try commitDocumentState(documentID: documentID, blockID: blockID, value: value,
-      programIdentity: programIdentity, condition: .matching(stateVersion), actor: actor)
+  /// Its final heap still addresses one durable instance through the same writer.
+  public func checkpointDocumentState(documentID: UUID, programID: String, programPath: String, value: JSONValue,
+    sourceBasis: String, stateVersion: ContentFieldVersion?, actor: UUID) throws -> NotebookDocumentStatePublication? {
+    try commitDocumentState(documentID: documentID, programID: programID, programPath: programPath, value: value,
+      sourceBasis: sourceBasis, condition: .matching(stateVersion), actor: actor)
   }
 
-  private func commitDocumentState(documentID: UUID, blockID: String, value: JSONValue,
-    programIdentity: DocumentProgramIdentity, condition: NotebookDocumentStateCondition, actor: UUID) throws -> ContentFieldVersion? {
+  private func commitDocumentState(documentID: UUID, programID: String, programPath: String, value: JSONValue,
+    sourceBasis: String, condition: NotebookDocumentStateCondition, actor: UUID) throws -> NotebookDocumentStatePublication? {
     guard value.isValid else { throw NotebookStorageError.invalidTransaction("document state value") }
     return try commandTransaction {
       guard try readItemHeader(documentID)?.kind == .document,
-        let target = try readDocumentProgramSource(documentID: documentID, blockID: blockID),
-        target.block.kind == .interactive, target.programIdentity == programIdentity else { return nil }
-      let projection = try documentStateProjection(documentID: documentID, blockID: blockID)
+        let target = try readDocumentProgramSource(documentID: documentID, instanceID: programID, programPath: programPath),
+        target.sourceBasis == sourceBasis else { return nil }
+      let projection = try documentStateProjection(documentID: documentID, programID: programID)
       let previous = projection.previous
       if case .matching(let expected) = condition, previous?.valueVersion != expected { return nil }
-      if previous?.value == value, let version = previous?.valueVersion { return version }
+      if let previous, previous.value == value {
+        return .init(documentID: documentID, record: previous, journalStamp: projection.header.stamp)
+      }
       guard let stamp = projection.header.stamp.advanced(by: actor) else { throw NotebookStorageError.limitExceeded("document state clock") }
       let version = ContentFieldVersion(stamp: stamp, human: true, previous: previous?.valueVersion)
       let command = NotebookDocumentStateCommand(documentID: documentID,
-        record: .init(id: blockID, value: value, stamp: stamp, fieldVersion: version),
-        journalStamp: stamp, expectedProgramIdentity: programIdentity, stateCondition: condition)
+        record: .init(id: programID, value: value, stamp: stamp, fieldVersion: version),
+        journalStamp: stamp, programPath: programPath, expectedSourceBasis: sourceBasis, stateCondition: condition)
       guard case .committed(let accepted) = try commitDocumentState(command, projection: projection) else { return nil }
-      return accepted.record.valueVersion
+      return accepted
     }
   }
 
@@ -108,17 +111,17 @@ extension NotebookStore {
     let previous: DocumentStateRecord?
   }
 
-  private func documentStateProjection(documentID: UUID, blockID: String) throws -> DocumentStateProjection {
+  private func documentStateProjection(documentID: UUID, programID: String) throws -> DocumentStateProjection {
     let rootAddress = stateFile(documentID) + "#"
     guard let root = try storedFragments(address: rootAddress, descendants: false).first else {
       throw NotebookStorageError.corruptRecord(rootAddress)
     }
     let header = try documentStateHeader(root, id: documentID)
-    let address = rootAddress + "/records/@" + fieldKey([collaborationIdentity(blockID)])
+    let address = rootAddress + "/records/@" + fieldKey([collaborationIdentity(programID)])
     let rows = try storedFragments(address: address)
     let previous = try rows.isEmpty ? nil : NotebookRecordCodec.decode(rows, root: address).decode(DocumentStateRecord.self)
     if let previous {
-      guard previous.id == blockID, previous.isValid(in: header.stamp) else { throw NotebookStorageError.corruptRecord(address) }
+      guard previous.id == programID, previous.isValid(in: header.stamp) else { throw NotebookStorageError.corruptRecord(address) }
     }
     return .init(root: root, header: header, previous: previous)
   }

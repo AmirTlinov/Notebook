@@ -87,29 +87,25 @@ final class DocumentPrintedSource {
   init(artifact: NotebookPrintedDocument, locations: [DocumentPrintLocation] = [], pdf: DocumentPrintedPDF, reservation: RasterReservation) {
     self.artifact = artifact; self.locations = locations; self.pdf = pdf; self.reservation = reservation
   }
-  func sourceOffset(blockID: String, pageIndex: Int, x: Double, y: Double) -> Int? {
-    guard let location = DocumentPrintLocations.nearest(in: locations, blockID: blockID, pageIndex: pageIndex, x: x, y: y),
-      let range = artifact.sourceMap.ranges.first(where: { $0.blockID == blockID }),
-      let block = artifact.document.blocks.first(where: { $0.id == blockID }) else { return nil }
-    return DocumentPrintLocations.sourceOffset(line: location.generatedLine, range: range, source: block.source)
+  func sourceOffset(fileID: String, pageIndex: Int, x: Double, y: Double) -> Int? {
+    guard let location = DocumentPrintLocations.nearest(in: locations, fileID: fileID, pageIndex: pageIndex, x: x, y: y),
+      let file = artifact.document.files.first(where: { $0.id == fileID && $0.resource == nil }) else { return nil }
+    return DocumentPrintLocations.sourceOffset(line: location.line, source: file.source)
   }
-  func reference(blockID: String, sourceOffset: Int) -> CollaborationReference? {
+  func reference(fileID: String, sourceOffset: Int) -> CollaborationReference? {
     let document = artifact.document
-    guard let block = document.blocks.first(where: { $0.id == blockID }),
-      let range = artifact.sourceMap.ranges.first(where: { $0.blockID == blockID }) else { return nil }
-    let line = DocumentPrintLocations.generatedLine(sourceOffset: sourceOffset, range: range, source: block.source)
-    let authored = DocumentPrintLocations.sourceOffset(line: line, range: range, source: block.source)
+    guard let file = document.files.first(where: { $0.id == fileID && $0.resource == nil }) else { return nil }
+    let line = DocumentPrintLocations.line(sourceOffset: sourceOffset, source: file.source)
+    let authored = DocumentPrintLocations.sourceOffset(line: line, source: file.source)
     func rank(_ location: DocumentPrintLocation) -> (Int, Int, Double, Int, Double) {
-      let offset = DocumentPrintLocations.sourceOffset(line: location.generatedLine, range: range, source: block.source)
-      return (abs(offset-authored), abs(location.generatedLine-line), location.width*location.height, location.pageIndex, location.y)
+      let offset = DocumentPrintLocations.sourceOffset(line: location.line, source: file.source)
+      return (abs(offset-authored), abs(location.line-line), location.width*location.height, location.pageIndex, location.y)
     }
-    guard let location = locations.lazy.filter({ $0.blockID == blockID }).min(by: { rank($0) < rank($1) }) else { return nil }
-    let scale = WorkspaceItemGeometry.document(document.paperSize).width / document.paperSize.widthPoints
-    // A region, not an element address: the existing navigation/highlight owner
-    // should reveal this source line rather than replace it with the whole block.
+    guard let location = locations.lazy.filter({ $0.fileID == fileID }).min(by: { rank($0) < rank($1) }) else { return nil }
+    let scale = PhysicalPaper.pointsPerCentimeter*2.54/72
     return .init(target: .init(kind: .document, id: document.id),
       region: .init(x: location.x*scale, y: location.y*scale, width: location.width*scale, height: location.height*scale),
-      pageIndex: location.pageIndex, revision: document.contentStamp.revision, label: blockID)
+      pageIndex: location.pageIndex, revision: document.contentStamp.revision, label: file.path)
   }
   isolated deinit { reservation.release() }
 }
@@ -126,8 +122,8 @@ struct DocumentPrintedPage {
   /// source addresses, page count or the ready PDF used for export.
   func image(width pixels: Int, overlay: CGImage? = nil) async throws -> CGImage {
     let pageIndex = pageIndex, aspect = height / width
-    let programs = Set(artifact.document.blocks.filter { $0.kind == .interactive }.map(\.id))
-    let regions = source.locations.filter { $0.pageIndex == pageIndex && programs.contains($0.blockID) }
+    let geometry = artifact.pages[pageIndex]
+    let regions = artifact.interactiveRegions.filter { $0.pageIndex == pageIndex }
       .map { CGRect(x: $0.x, y: $0.y, width: $0.width, height: $0.height) }
     defer { withExtendedLifetime(source) {} }
     return try await source.pdf.perform { _, document in
@@ -148,11 +144,10 @@ struct DocumentPrintedPage {
         // A WebKit snapshot can have an opaque white background even though
         // the mounted overlay is transparent. Only program rectangles belong
         // to it; paper/text/formulas remain the canonical PDF's responsibility.
-        let box = page.getBoxRect(.mediaBox)
         context.saveGState()
-        let clips = regions.map { region in CGRect(x: region.minX/box.width*rect.width,
-          y: (box.height-region.maxY)/box.height*rect.height, width: region.width/box.width*rect.width,
-          height: region.height/box.height*rect.height) }
+        let clips = regions.map { region in CGRect(x: region.minX/geometry.width*rect.width,
+          y: (geometry.height-region.maxY)/geometry.height*rect.height, width: region.width/geometry.width*rect.width,
+          height: region.height/geometry.height*rect.height) }
         context.clip(to: clips)
         context.draw(overlay, in: rect); context.restoreGState()
       }

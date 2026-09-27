@@ -26,6 +26,9 @@ extension NotebookStore {
   @discardableResult
   func writeFragment(_ fragment: NotebookStoredFragment, data suppliedData: Data? = nil, hash suppliedHash: String? = nil,
     database: NotebookSQLConnection, migratingInk: Bool = false) throws -> Bool {
+    for part in try documentResourceParts(in: fragment) {
+      guard try blobSize(hash: part.sha256) == part.byteCount else { throw NotebookStorageError.blobHashMismatch }
+    }
     for hash in try programPackageHashes(in: fragment) { try validateProgramPackageClosure(hash) }
     let data = try suppliedData ?? database.encodedStoredFragment(fragment)
     let hash = try suppliedHash ?? database.putBlob(data)
@@ -230,8 +233,15 @@ extension NotebookStore {
     // A projection's ordinals are local to its selected members. Only an
     // actual sequence edit permutes their durable slots; unseen rows retain
     // theirs, and simultaneously inserted members retain authored order.
+    func hasCanonicalZeroPosition(_ fragment: NotebookStoredFragment) -> Bool {
+      fragment.collection.hasSuffix("collaboration/fields")
+        || ["pageOrders", "pageOrderNodes", "board/placements"].contains(fragment.collection)
+        // The LaTeX entrypoint owns order; inserting a file never allocates a
+        // sequence slot or rewrites another file's immutable record identity.
+        || (file.hasPrefix("documents/") && fragment.collection == "files")
+    }
     func sequenceGroups(_ fragments: [String: NotebookStoredFragment]) -> [String: [NotebookStoredFragment]] {
-      Dictionary(grouping: fragments.values.filter { $0.parent != nil && !$0.collection.hasSuffix("collaboration/fields") && !["pageOrders", "pageOrderNodes", "board/placements"].contains($0.collection) },
+      Dictionary(grouping: fragments.values.filter { $0.parent != nil && !hasCanonicalZeroPosition($0) },
         by: { $0.parent! + "|" + $0.collection })
     }
     let oldGroups = sequenceGroups(old), nextGroups = sequenceGroups(next)
@@ -299,7 +309,7 @@ extension NotebookStore {
           }
           collections[key] = nextCollections[key]
         }
-        let position = (edited.collection.hasSuffix("collaboration/fields") || ["pageOrders", "pageOrderNodes", "board/placements"].contains(edited.collection)) ? 0 : try positions[address] ?? stored?.position ?? Int(database.rows("SELECT COALESCE(MAX(position),-1)+1 FROM records WHERE parent=? AND collection=?", [edited.parent.map(NotebookSQLValue.text) ?? .null, .text(edited.collection)]).first![0].integer!)
+        let position = hasCanonicalZeroPosition(edited) ? 0 : try positions[address] ?? stored?.position ?? Int(database.rows("SELECT COALESCE(MAX(position),-1)+1 FROM records WHERE parent=? AND collection=?", [edited.parent.map(NotebookSQLValue.text) ?? .null, .text(edited.collection)]).first![0].integer!)
         let changed = try writeFragment(edited.replacing(value: value,
           collections: collections.values.sorted { $0.path.lexicographicallyPrecedes($1.path) },
           position: position), database: database)

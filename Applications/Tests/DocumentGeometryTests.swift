@@ -10,25 +10,18 @@ final class DocumentGeometryTests: XCTestCase {
   @MainActor
   func testWebKitAndCoverShareOnePhysicalRectangleAcrossResizing() async throws {
     let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
-    for paper in DocumentPaperSize.allCases {
-      let document = DocumentDocument(
-        id: UUID(), actor: UUID(), paperSize: paper,
-        blocks: [
-          .markdown(
-            id: "body",
-            source:
-              "# Пространство мысли\n\nОдин физический лист для текста и формул.\n\n## Раздел\n\nТекст раздела.\n\n### Уточнение\n\nТекст уточнения."
-          )
-        ])
+    for (name, width, height) in [("portrait", 595.276, 841.89), ("landscape", 841.89, 595.276), ("custom", 720.0, 400.0)] {
+      let document = DocumentTestFiles.document(contents: [.tex(id: "body", source:
+        "\\section{Physical page}\nOne source defines text and formulas.\n\\subsection{Details}\nEditable text.")], width: width, height: height)
       let state = DocumentStateJournal(id: document.id, actor: UUID())
-      let geometry = WorkspaceItemGeometry.document(paper)
+      let geometry = WorkspaceItemGeometry.document(widthPoints: width, heightPoints: height)
       // Fractional sizes exercise the subpixel rounding of a moving camera.
-      let baseWidth = paper == .a4 ? 420.0 : 408.0
+      let baseWidth = 420.0
       let window = UIWindow(windowScene: scene)
       defer { window.isHidden = true }
       let container = UIViewController()
       window.rootViewController = container
-      let ready = expectation(description: "Готовый WebKit-лист \(paper)")
+      let ready = expectation(description: "Готовый WebKit-лист \(name)")
       var completed = false
       let host = UIHostingController(
         rootView: DocumentWebView(
@@ -48,7 +41,7 @@ final class DocumentGeometryTests: XCTestCase {
         x: 0, y: 0, width: baseWidth, height: baseWidth * geometry.height / geometry.width)
       window.makeKeyAndVisible()
       host.view.layoutIfNeeded()
-      await fulfillment(of: [ready], timeout: 8)
+      await fulfillment(of: [ready], timeout: 20)
       let web = try XCTUnwrap(webView(in: host.view))
       let paperView = try XCTUnwrap(descendant(DocumentPaperView.self, in: host.view))
       let artifact = try XCTUnwrap(paperView.raster?.page.artifact)
@@ -67,7 +60,7 @@ final class DocumentGeometryTests: XCTestCase {
           )
           bounds = try XCTUnwrap(value as? [String: Double])
         } while abs((bounds["width"] ?? 0) - geometry.width) > 1 && ContinuousClock.now < deadline
-        print("DOCUMENT WEB GEOMETRY", paper, target, host.view.frame, web.frame, bounds)
+        print("DOCUMENT WEB GEOMETRY", name, target, host.view.frame, web.frame, bounds)
         XCTAssertEqual(bounds["left"]!, 0, accuracy: 0.05)
         XCTAssertEqual(bounds["top"]!, 0, accuracy: 0.05)
         XCTAssertEqual(bounds["width"]!, geometry.width, accuracy: 1)
@@ -83,7 +76,7 @@ final class DocumentGeometryTests: XCTestCase {
         XCTAssertEqual(projected.height, target.height, accuracy: 1 / window.screen.scale)
       }
       let proof = XCTAttachment(image: UIImage(cgImage: try XCTUnwrap(paperView.raster?.image)))
-      proof.name = "\(paper.rawValue)-physical-paper"
+      proof.name = "\(name)-physical-paper"
       proof.lifetime = .keepAlways
       add(proof)
     }

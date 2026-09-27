@@ -1,4 +1,5 @@
 import CoreGraphics
+import CryptoKit
 import NotebookCore
 import NotebookTypesetter
 import XCTest
@@ -6,6 +7,10 @@ import XCTest
 
 @MainActor
 final class DocumentCanonicalPrintTests: XCTestCase {
+  private func document(_ body: String, geometry: String = "paperwidth=210mm,paperheight=297mm,margin=25mm") -> DocumentDocument {
+    let source = "\\documentclass{article}\n\\usepackage{fontspec}\n\\setmainfont{Libertinus Serif}\n\\usepackage[\(geometry)]{geometry}\n\\begin{document}\n\(body)\n\\end{document}\n"
+    return .init(actor: UUID(), files: [.init(id: "main", path: "main.tex", source: source)])
+  }
   func testPrintCacheDirectoryBelongsToTheRunningApplicationBundle() throws {
     let userCaches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
     let bundle = try XCTUnwrap(Bundle.main.bundleIdentifier)
@@ -48,7 +53,7 @@ final class DocumentCanonicalPrintTests: XCTestCase {
     let oldFiles = try directories.map(oldEntry)
     let legacyFile = try oldEntry(in: legacy)
     let resources = Bundle.main.resourceURL!.appendingPathComponent("NotebookTypesetter", isDirectory: true)
-    let document = DocumentDocument(actor: UUID(), blocks: [.markdown(id: "body", source: "Isolated printed cache.")])
+    let document = document("Isolated printed cache.")
     var saved: [(URL, Data)] = []
     for (index, directory) in directories.enumerated() {
       let store = NotebookPrintedDocumentStore(resources: resources, directory: directory)
@@ -71,35 +76,8 @@ final class DocumentCanonicalPrintTests: XCTestCase {
     XCTAssertTrue(fm.fileExists(atPath: legacyFile.path))
   }
 
-  func testPaperRasterUsesTheWholePhysicalPageAtEveryPixelDensity() async throws {
-    let document = DocumentDocument(actor: UUID(), blocks: [.markdown(id: "text", source: "# Печатный лист\n\nТочный размер текста на бумаге.")])
-    let artifact = try await DocumentCanonicalPrint.store.artifact(for: document)
-    let resources = SceneRenderResources(profile: .interactive)
-    let charge = try XCTUnwrap(resources.reserveDerivedBytes(artifact.pdf.count, priority: .passive))
-    let source = DocumentPrintedSource(artifact: artifact, pdf: .init(artifact.pdf), reservation: charge)
-    let page = DocumentPrintedPage(source: source, pageIndex: 0, width: document.paperSize.widthPoints, height: document.paperSize.heightPoints)
-    let locations = try artifact.locations()
-    let first = try XCTUnwrap(locations.filter { $0.blockID == "text" && $0.width > 20 && $0.height > 5 }.min { $0.y < $1.y })
-    for width in [320, 1668] {
-      let image = try await page.image(width: width)
-      XCTAssertEqual(image.width, width)
-      let pixelScale = Double(width) / page.width
-      // The first typeset line is at the physical margin, not a miniature PDF
-      // centered inside a larger raster. Read the actual Quartz output pixels.
-      let rect = CGRect(x: max(0, first.x*pixelScale), y: max(0, first.y*pixelScale),
-        width: min(Double(width)-first.x*pixelScale, first.width*pixelScale), height: first.height*pixelScale).integral
-      let crop = try XCTUnwrap(image.cropping(to: rect))
-      let pixels = try XCTUnwrap(crop.dataProvider?.data) as Data
-      XCTAssertTrue(pixels.contains { $0 < 100 }, "Printed line missing at its physical coordinates for density \(width)")
-    }
-    let openings=await source.pdf.openedDocumentCount()
-    XCTAssertEqual(openings,1,"Changing raster density cannot reopen the whole source PDF")
-    let cached = try await DocumentCanonicalPrint.store.artifact(for: document)
-    XCTAssertEqual(artifact.pdf, cached.pdf)
-  }
-
   func testCancelledQueuedRasterDoesNotCancelItsSourceOrLeakTheParserAndAdmission() async throws {
-    let document=DocumentDocument(actor:UUID(),blocks:[.markdown(id:"body",source:"Retained PDF")])
+    let document=document("Retained PDF")
     let artifact=try await DocumentCanonicalPrint.store.artifact(for:document)
     let resources=SceneRenderResources(),baseline=resources.reservedBytes
     weak var observedSource:DocumentPrintedSource?
@@ -108,7 +86,7 @@ final class DocumentCanonicalPrintTests: XCTestCase {
       let charge=try XCTUnwrap(resources.reserveDerivedBytes(artifact.pdf.count,priority:.passive))
       let source=DocumentPrintedSource(artifact:artifact,pdf:.init(artifact.pdf),reservation:charge)
       observedSource=source;observedPDF=source.pdf
-      let page=DocumentPrintedPage(source:source,pageIndex:0,width:document.paperSize.widthPoints,height:document.paperSize.heightPoints)
+      let page=DocumentPrintedPage(source:source,pageIndex:0,width:artifact.pages[0].width,height:artifact.pages[0].height)
       let entered=expectation(description:"The source Quartz executor is occupied"),release=DispatchSemaphore(value:0)
       let blocker=Task { try await source.pdf.perform { _,_ in
         entered.fulfill();release.wait()
@@ -136,87 +114,189 @@ final class DocumentCanonicalPrintTests: XCTestCase {
     XCTAssertEqual(resources.reservedBytes,baseline)
   }
 
-  func testFormulaAndArbitraryLaTeXKeepDistinctSourceContracts() async throws {
-    let actor = UUID()
-    let formula = DocumentBlock(id: "equation", kind: .latex, source: "x^2+1")
-    let tex = DocumentBlock(id: "body", kind: .tex, source: "\\section{Исходник}\nТекст и $x^2$ в одном блоке.")
-    let document = DocumentDocument(actor: actor, blocks: [tex, formula])
+  func testPaperRasterUsesTheWholePhysicalPageAtEveryPixelDensity() async throws {
+    let document = document("\\section{Печатный лист}\nТочный размер текста на бумаге.")
     let artifact = try await DocumentCanonicalPrint.store.artifact(for: document)
-    XCTAssertTrue(artifact.source.contains("\\section{Исходник}"))
-    XCTAssertTrue(artifact.source.contains("\\[x^2+1\\]"))
-    XCTAssertEqual(Set(try artifact.locations().map(\.blockID)), ["equation", "body"])
+    let resources = SceneRenderResources(profile: .interactive)
+    let charge = try XCTUnwrap(resources.reserveDerivedBytes(artifact.pdf.count, priority: .passive))
+    let source = DocumentPrintedSource(artifact: artifact, pdf: .init(artifact.pdf), reservation: charge)
+    let page = DocumentPrintedPage(source: source, pageIndex: 0, width: artifact.pages[0].width, height: artifact.pages[0].height)
+    let first = try XCTUnwrap(try artifact.locations().filter { $0.fileID == "main" && $0.width > 20 && $0.height > 5 }.min { $0.y < $1.y })
+    for width in [320, 1668] {
+      let image = try await page.image(width: width)
+      XCTAssertEqual(image.width, width)
+      let scale = Double(width)/page.width
+      let rect = CGRect(x: max(0, first.x*scale), y: max(0, first.y*scale),
+        width: min(Double(width)-first.x*scale, first.width*scale), height: first.height*scale).integral
+      let crop = try XCTUnwrap(image.cropping(to: rect)), pixels = try XCTUnwrap(crop.dataProvider?.data) as Data
+      XCTAssertTrue(pixels.contains { $0 < 100 }, "Printed line missing at its physical coordinates at density \(width)")
+    }
+    let openings = await source.pdf.openedDocumentCount()
+    XCTAssertEqual(openings, 1, "Changing raster density cannot reopen the whole source PDF")
+    let cached = try await DocumentCanonicalPrint.store.artifact(for: document)
+    XCTAssertEqual(artifact.pdf, cached.pdf); XCTAssertEqual(artifact.buildID, cached.buildID)
+  }
+  func testExactAuthoredSourcesAndFileAwareSyncTeXSurviveCompilationAndCache() async throws {
+    let main = "\\documentclass{article}\n\\begin{document}\n\\input{chapters/body}\n\\end{document}\n"
+    let document = DocumentDocument(actor: UUID(), files: [.init(id: "main", path: "main.tex", source: main),
+      .init(id: "chapter", path: "chapters/body.tex", source: "\\section{Source}\nText and $x^2$.\n\\[x^2+1\\]\n")])
+    let artifact = try await DocumentCanonicalPrint.store.artifact(for: document)
+    XCTAssertEqual(artifact.source, main)
+    XCTAssertTrue(try artifact.locations().contains { $0.fileID == "chapter" && $0.path == "chapters/body.tex" })
     try artifact.sourceMap.validate(document: document, source: artifact.source, pdf: artifact.pdf)
+    XCTAssertEqual(Set(artifact.sourceMap.files.map(\.fileID)), ["main", "chapter"])
     XCTAssertLessThanOrEqual(artifact.guestMemoryBytes, 320*1024*1024)
   }
-
-  func testSourceAndPrintedLineUseOnePhysicalReferenceOnBothPaperSizes() async throws {
-    for paper: DocumentPaperSize in [.a4, .letter] {
-      let text = "\\section{Первый раздел}\nНачальная строка.\n\\newpage\n\\section{Второй раздел}\nПоследняя строка."
-      let document = DocumentDocument(actor: UUID(), paperSize: paper, blocks: [.init(id: "body", kind: .tex, source: text)])
+  func testSourceAndPrintedLineUseExactAddressesOnUserDefinedPaper() async throws {
+    for geometry in ["paperwidth=210mm,paperheight=297mm,margin=25mm", "paperwidth=180mm,paperheight=240mm,margin=18mm"] {
+      let document = document("\\section{Первый раздел}\nНачальная строка.\n\\newpage\n\\section{Второй раздел}\nПоследняя строка.", geometry: geometry)
+      let text = try XCTUnwrap(document.files.first).source
       let artifact = try await DocumentCanonicalPrint.store.artifact(for: document)
       let resources = SceneRenderResources(profile: .interactive)
-      let charge = try XCTUnwrap(resources.reserveDerivedBytes(artifact.pdf.count, priority: .passive))
-      let source = DocumentPrintedSource(artifact: artifact, locations: try artifact.locations(), pdf: .init(artifact.pdf), reservation: charge)
+      let source = DocumentPrintedSource(artifact: artifact, locations: try artifact.locations(), pdf: .init(artifact.pdf),
+        reservation: try XCTUnwrap(resources.reserveDerivedBytes(artifact.pdf.count, priority: .passive)))
       let offset = (text as NSString).range(of: "Последняя строка").location
-      let reference = try XCTUnwrap(source.reference(blockID: "body", sourceOffset: offset))
-      XCTAssertEqual(reference.pageIndex, 1)
-      XCTAssertNil(reference.elementID, "A block reference would replace the selected line with the whole block")
+      let reference = try XCTUnwrap(source.reference(fileID: "main", sourceOffset: offset))
+      XCTAssertEqual(reference.pageIndex, 1); XCTAssertNil(reference.elementID)
       XCTAssertEqual(reference.revision, document.contentStamp.revision)
-      let region = try XCTUnwrap(reference.region)
-      let scale = WorkspaceItemGeometry.document(paper).width / paper.widthPoints
-      let mapped = try XCTUnwrap(source.sourceOffset(blockID: "body", pageIndex: 1,
+      let region = try XCTUnwrap(reference.region), scale = PhysicalPaper.pointsPerCentimeter*2.54/72
+      let mapped = try XCTUnwrap(source.sourceOffset(fileID: "main", pageIndex: 1,
         x: (region.x+region.width/2)/scale, y: (region.y+region.height/2)/scale))
       XCTAssertEqual(mapped, offset)
     }
   }
-
-  func testMarkdownParagraphMapsToItsAuthoredOffsetNotTheGeneratedTeXLine() async throws {
-    let text = "# Heading\n\nFirst $x^2$.\n\nRepeated paragraph.\n\nRepeated paragraph.\n\nLast paragraph."
-    let document = DocumentDocument(actor: UUID(), blocks: [.markdown(id: "body", source: text)])
+  func testIndividualPDFPageGeometryIsNotReplacedByA4() async throws {
+    let document = document("First.\\clearpage\n\\special{papersize=400bp,300bp}\nSecond.", geometry: "paperwidth=300bp,paperheight=400bp,margin=20bp")
     let artifact = try await DocumentCanonicalPrint.store.artifact(for: document)
-    let resources = SceneRenderResources(profile: .interactive)
-    let source = DocumentPrintedSource(artifact: artifact, locations: try artifact.locations(), pdf: .init(artifact.pdf),
-      reservation: try XCTUnwrap(resources.reserveDerivedBytes(artifact.pdf.count, priority: .passive)))
-    let offset = (text as NSString).range(of: "Last paragraph").location
-    let reference = try XCTUnwrap(source.reference(blockID: "body", sourceOffset: offset))
-    let region = try XCTUnwrap(reference.region), scale = WorkspaceItemGeometry.document(.a4).width / DocumentPaperSize.a4.widthPoints
-    XCTAssertEqual(source.sourceOffset(blockID: "body", pageIndex: 0,
-      x: (region.x+region.width/2)/scale, y: (region.y+region.height/2)/scale), offset)
+    XCTAssertEqual(artifact.pages.count, 2)
+    XCTAssertEqual(artifact.pages[0].width, 300, accuracy: 0.1); XCTAssertEqual(artifact.pages[0].height, 400, accuracy: 0.1)
+    XCTAssertEqual(artifact.pages[1].width, 400, accuracy: 0.1); XCTAssertEqual(artifact.pages[1].height, 300, accuracy: 0.1)
   }
-
-  func testReadingBookmarksUseTheSameAuthoredParagraphOffsetsAsTheEditor() async throws {
-    let text = (0..<70).map { "## Section \($0)\n\nParagraph \($0) with $x^2$. " + String(repeating: "Printed reading positions follow their source. ", count: 7) }.joined(separator: "\n\n")
-    let document = DocumentDocument(actor: UUID(), blocks: [.markdown(id: "body", source: text)])
+  func testAllEditableStarterTemplatesCompileWithTheirIncludedFiles() async throws {
+    for template in DocumentTemplate.allCases {
+      let value = DocumentDocument(actor: UUID(), entrypoint: template.entrypoint, files: template.files)
+      let printed = try await DocumentCanonicalPrint.store.artifact(for: value)
+      XCTAssertFalse(printed.pdf.isEmpty, template.rawValue)
+      XCTAssertFalse(printed.pages.isEmpty, template.rawValue)
+      XCTAssertFalse(printed.diagnostics.contains { $0.severity == "error" }, template.rawValue)
+    }
+  }
+  func testPDFLandscapeProjectsSourceAndProgramToTheVisiblePixels() async throws {
+    let tex = #"""
+      \documentclass{article}
+      \usepackage[paperwidth=300bp,paperheight=400bp,margin=25bp]{geometry}
+      \usepackage{pdflscape}
+      \usepackage{xcolor}
+      \usepackage{notebook}
+      \begin{document}
+      Portrait before.
+      \newpage
+      \begin{landscape}
+      \section{Landscape source}
+      \noindent\color{red}\fbox{\NotebookInteractive[id=rotated,width=100bp,height=60bp]{programs/probe}}
+      \par\color{black}After the live region.
+      \end{landscape}
+      \end{document}
+      """#
+    let document = DocumentDocument(actor: UUID(), files: [.init(id: "main", path: "main.tex", source: tex)] +
+      DocumentTestFiles.program(id: "probe", html: "<p>Probe</p>").files)
+    let artifact = try await DocumentCanonicalPrint.store.artifact(for: document)
+    XCTAssertEqual(artifact.pages[1].rotation, 90)
+    XCTAssertEqual(artifact.pages[1].width, 400); XCTAssertEqual(artifact.pages[1].height, 300)
+    let region = try XCTUnwrap(artifact.interactiveRegions.first)
+    XCTAssertEqual(region.pageIndex, 1); XCTAssertEqual(region.x, 28.387, accuracy: 0.02)
+    XCTAssertEqual(region.y, 52.005, accuracy: 0.02); XCTAssertEqual(region.width, 100, accuracy: 0.001)
+    let locations = try artifact.locations()
+    let exact = try XCTUnwrap(locations.first { $0.line == 11 && abs($0.x-region.x) < 0.001 && abs($0.width-region.width) < 0.001 })
+    XCTAssertEqual(exact.y, region.y, accuracy: 0.001); XCTAssertEqual(exact.height, region.height, accuracy: 0.001)
     let resources = SceneRenderResources(profile: .interactive)
-    let snapshot = DocumentSourceSnapshot(document)
-    let printed = try await snapshot.printedSource(resources: resources)
-    let layout = try XCTUnwrap(snapshot.layout)
-    let range = try XCTUnwrap(printed.artifact.sourceMap.ranges.first)
+    let source = DocumentPrintedSource(artifact: artifact, locations: locations, pdf: .init(artifact.pdf),
+      reservation: try XCTUnwrap(resources.reserveDerivedBytes(artifact.pdf.count, priority: .passive)))
+    let after = (tex as NSString).range(of: "\\par\\color{black}After").location
+    let reference = try XCTUnwrap(source.reference(fileID: "main", sourceOffset: after)), selection = try XCTUnwrap(reference.region)
+    let scale = PhysicalPaper.pointsPerCentimeter*2.54/72
+    XCTAssertEqual(reference.pageIndex, 1)
+    XCTAssertEqual(source.sourceOffset(fileID: "main", pageIndex: 1, x: (selection.x+selection.width/2)/scale,
+      y: (selection.y+selection.height/2)/scale), after)
+    let blue = try XCTUnwrap(CGContext(data: nil, width: 1, height: 1, bitsPerComponent: 8, bytesPerRow: 4,
+      space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+    blue.setFillColor(CGColor(red: 0, green: 0, blue: 1, alpha: 1)); blue.fill(.init(x: 0, y: 0, width: 1, height: 1))
+    let page = DocumentPrintedPage(source: source, pageIndex: 1, width: 400, height: 300)
+    let image = try await page.image(width: 400, overlay: XCTUnwrap(blue.makeImage()))
+    XCTAssertEqual(image.width, 400); XCTAssertEqual(image.height, 300)
+    func pixel(_ x: Int, _ y: Int) throws -> [UInt8] {
+      let crop = try XCTUnwrap(image.cropping(to: .init(x: x, y: y, width: 1, height: 1)))
+      let context = try XCTUnwrap(CGContext(data: nil, width: 1, height: 1, bitsPerComponent: 8, bytesPerRow: 4,
+        space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+      context.draw(crop, in: .init(x: 0, y: 0, width: 1, height: 1))
+      return Array(UnsafeBufferPointer(start: try XCTUnwrap(context.data).assumingMemoryBound(to: UInt8.self), count: 4))
+    }
+    let inside = try pixel(Int(region.x+region.width/2), Int(region.y+region.height/2))
+    let outside = try pixel(Int(region.x+region.width+10), Int(region.y+region.height/2))
+    XCTAssertLessThan(inside[0], 10); XCTAssertGreaterThan(inside[2], 245)
+    XCTAssertGreaterThan(outside[0], 245, "The overlay must not cover the rest of the rotated page")
+  }
+  func testImportedPrecompiledDocumentReopensWithoutTeXResourcesOrProgramExecution() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("portable-compiled-" + UUID().uuidString)
+    let store = NotebookStore(root: root.appendingPathComponent("workspace")), actor = UUID()
+    _ = try store.initializeWorkspace(actor: actor, pageSize: .init(width: 834, height: 1194))
+    defer { try? FileManager.default.removeItem(at: root) }
+    let bytes = Data([0, 128, 255]), hash = SHA256.hash(data: bytes).map { String(format: "%02x", $0) }.joined()
+    try store.stageBlob(data: bytes, expectedHash: hash)
+    let resource = NotebookProgramPackage.File(path: "assets/probe.bin", mimeType: "application/octet-stream", byteCount: Int64(bytes.count),
+      parts: [.init(sha256: hash, byteCount: bytes.count)])
+    var document = DocumentTestFiles.document(actor: actor, contents: [.tex(id: "body", source: "Prepared before transfer."),
+      .program(id: "control", html: "<p>Saved illustration</p>", javaScript: "throw Error('Reading an imported PDF cannot execute a program')", height: 120)])
+    XCTAssertTrue(document.replaceContent(files: document.files + [.init(id: "binary", path: resource.path, resource: resource)], actor: actor))
+    let input = try NotebookTypesetterInput(document: document, readResource: { try store.readDocumentFileBytes($0) })
+    let original = try await DocumentCanonicalPrint.store.artifact(for: document, input: input)
+    var state = DocumentStateJournal(id: document.id, actor: actor)
+    XCTAssertTrue(state.commit(instanceID: "control", value: .object(["phase": .number(0.75)]), actor: actor))
+    let cut = try NotebookExportCut(document: document, state: state)
+    let data = try store.exportPortableDocument(cut: cut, derived: .init(pdf: original.pdf, syncTeX: original.syncTeX,
+      interactiveMap: original.interactiveMap, sourceMap: original.sourceMap))
+    let imported = try store.importPortableDocument(data: data, targetBoardID: store.loadIndex().rootBoardID,
+      center: .zero, actor: actor, compilerRevision: original.sourceMap.compilerRevision)
+    let received = try store.loadDocument(imported.documentID), derived = try XCTUnwrap(imported.derived)
+    let resources = root.appendingPathComponent("compiler-identity-only"), cache = root.appendingPathComponent("pages")
+    try FileManager.default.createDirectory(at: resources, withIntermediateDirectories: true)
+    try Data(original.sourceMap.compilerRevision.utf8).write(to: resources.appendingPathComponent("revision.txt"))
+    let receiver = NotebookPrintedDocumentStore(resources: resources, directory: cache)
+    try await receiver.adopt(derived, for: received, input: .init(document: received, readResource: { try store.readDocumentFileBytes($0) }))
+    // A second store proves disk reuse. There is no TeX distribution/format and
+    // no binary resolver on this request: recompilation cannot succeed here.
+    let reopened = try await NotebookPrintedDocumentStore(resources: resources, directory: cache).artifact(for: received)
+    XCTAssertEqual(reopened.pdf, original.pdf); XCTAssertEqual(reopened.syncTeX, original.syncTeX)
+    XCTAssertEqual(reopened.pages, original.pages); XCTAssertEqual(reopened.interactiveRegions, original.interactiveRegions)
+    XCTAssertEqual(reopened.guestMemoryBytes, 0); XCTAssertEqual(reopened.log, "portable_document_precompiled")
+    XCTAssertEqual(reopened.sourceMap.documentID, imported.documentID); XCTAssertNotEqual(reopened.buildID, original.buildID)
+    XCTAssertFalse(try reopened.locations().isEmpty)
+    XCTAssertEqual(try store.loadDocumentState(imported.documentID).value(for: "control"), state.value(for: "control"))
+  }
+  func testReadingBookmarksUseAuthoredFileOffsets() async throws {
+    let body = (0..<70).map { "\\section{Section \($0)}\nParagraph \($0) with $x^2$. " + String(repeating: "Printed reading positions follow their source. ", count: 7) }.joined(separator: "\n\n")
+    let document = document(body), text = try XCTUnwrap(document.files.first).source
+    let resources = SceneRenderResources(profile: .interactive), snapshot = DocumentSourceSnapshot(document)
+    let printed = try await snapshot.printedSource(resources: resources), layout = try XCTUnwrap(snapshot.layout)
     XCTAssertGreaterThan(layout.pageCount, 3)
     for segment in layout.reading.segments {
-      let line = try XCTUnwrap(printed.locations.filter { $0.blockID == segment.blockID && $0.pageIndex == segment.pageIndex }.map(\.generatedLine).min())
-      let offset = DocumentPrintLocations.sourceOffset(line: line, range: range, source: text)
-      XCTAssertEqual(segment.textOffset, offset, "A bookmark must not interpret a generated TeX line as a Markdown line")
+      let line = try XCTUnwrap(printed.locations.filter { $0.fileID == segment.fileID && $0.pageIndex == segment.pageIndex }.map(\.line).min())
+      XCTAssertEqual(segment.textOffset, DocumentPrintLocations.sourceOffset(line: line, source: text))
     }
     XCTAssertGreaterThan(Set(layout.reading.segments.map(\.textOffset)).count, 3)
   }
-
-  func testCancellingTheLastSourceReaderReleasesActualAdmissionWithoutAWebKit() async throws {
-    let document = DocumentDocument(actor: UUID(), blocks: [.markdown(id: "body", source: "Лист ждёт памяти.")])
-    let resources = SceneRenderResources(profile: .interactive)
-    let block = try XCTUnwrap(resources.reserveDerivedBytes(resources.passiveByteLimit-1024, priority: .passive))
-    defer { block.release() }
-    let source = DocumentSourceSnapshot(document)
-    let reader = Task { try await source.printedSource(resources: resources) }
+  func testCancellingLastSourceReaderReleasesAdmissionWithoutAWebKit() async throws {
+    let document = document("Лист ждёт памяти."), resources = SceneRenderResources(profile: .interactive)
+    let charge = try XCTUnwrap(resources.reserveDerivedBytes(resources.passiveByteLimit-1024, priority: .passive))
+    defer { charge.release() }
+    let source = DocumentSourceSnapshot(document), reader = Task { try await source.printedSource(resources: resources) }
     let deadline = ContinuousClock.now + .seconds(15)
     while resources.pendingDerivedRequestCount == 0, .now < deadline { try await Task.sleep(for: .milliseconds(10)) }
-    XCTAssertEqual(resources.pendingDerivedRequestCount, 1)
-    reader.cancel()
+    XCTAssertEqual(resources.pendingDerivedRequestCount, 1); reader.cancel()
     do { _ = try await reader.value; XCTFail("Cancelled source returned a printed artifact") }
     catch { XCTAssertTrue(error is CancellationError, "\(error)") }
-    XCTAssertEqual(resources.pendingDerivedRequestCount, 0)
-    XCTAssertEqual(resources.activeWebSurfaceCount, 0)
-    block.release()
+    XCTAssertEqual(resources.pendingDerivedRequestCount, 0); XCTAssertEqual(resources.activeWebSurfaceCount, 0)
+    charge.release()
     let recovered = try await source.printedSource(resources: resources)
     XCTAssertFalse(recovered.locations.isEmpty)
   }

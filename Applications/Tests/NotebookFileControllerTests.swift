@@ -233,14 +233,14 @@ final class NotebookFileControllerTests: XCTestCase {
     try await Task.sleep(for: .milliseconds(50))
     XCTAssertTrue(view.text.hasPrefix("😃\n"), "An external patch cannot split an emoji into replacement characters")
     view.setContentOffset(.init(x: 0, y: 480), animated: false)
-    view.isEditable = true; view.selectedRange = .init(location: 0, length: 0); view.insertText("# human\n")
-    XCTAssertTrue(chat.files.document?.text.hasPrefix("# human\n") == true)
+    view.isEditable = true; view.selectedRange = .init(location: 0, length: 0); view.insertText("\\section{human}\\hypertarget{human}{}\n")
+    XCTAssertTrue(chat.files.document?.text.hasPrefix("\\section{human}\\hypertarget{human}{}\n") == true)
     XCTAssertEqual(model.presence, before)
     let shot = XCTAttachment(image: UIGraphicsImageRenderer(bounds: host.view.bounds).image { _ in host.view.drawHierarchy(in: host.view.bounds, afterScreenUpdates: true) })
     shot.name = "native-vertical-code-over-mounted-board"; shot.lifetime = .keepAlways; add(shot)
     chat.files.close(); try await Task.sleep(for: .milliseconds(80))
     XCTAssertEqual(model.presence, before)
-    await chat.files.open(address); XCTAssertTrue(chat.files.document?.text.hasPrefix("# human\n") == true)
+    await chat.files.open(address); XCTAssertTrue(chat.files.document?.text.hasPrefix("\\section{human}\\hypertarget{human}{}\n") == true)
   }
   func testReadingPositionRestoresWhenUIKitLaysOutTheViewport() {
     let view = NotebookCodeTextView()

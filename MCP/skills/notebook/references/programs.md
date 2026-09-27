@@ -101,12 +101,17 @@ node ~/.codex/skills/notebook/scripts/prepare.mjs animation input.json publicati
 node ~/.codex/skills/notebook/scripts/submit.mjs publication.json
 ```
 
-For a document use `target.kind:document` and `afterID`; for a board use
-`board` and `anchor`. To update an existing item, read its current `basis`
-and use `nb.transaction` with `updateElement` or `updateBlock`, the new
-`programPackage`, and empty inline source/html/css/javaScript. Preserve
-concurrent human work; do not blindly retry CAS with a fresh basis.
-State and geometry edits do not require rebuilding.
+For a board use `target.kind:'board'` and `anchor`. To replace a spatial
+program, read its current basis and use `updateElement` with the new
+`programPackage` and empty inline source/html/css/javaScript.
+
+Documents own editable files, not a package-hash block. Put the program's text
+and admitted binary resources into the document tree, then place
+`\NotebookInteractive` in the LaTeX source. The compact `animation` recipe
+accepts inline source and an exact file edit; see [documents](documents.md).
+Use `putDocumentFile`/`patchDocumentFile` for later source edits. Preserve
+concurrent human work; never refresh CAS silently. State and geometry changes
+do not rebuild executable resources.
 
 The installed pair must support the package protocol. Current release identity
 and exact acceptance scope belong to the repository's `docs/verification.md`;
@@ -249,7 +254,7 @@ camera state. Simulator checks remain separate from hardware acceptance.
 ## Export
 
 `nb.export(key,{documentID})` starts a PDF job. PNG selects a page with
-`pageIndex/pixelWidth`; SVG selects an authored vector result with `blockID`.
+`pageIndex/pixelWidth`; SVG selects an authored vector result with `instanceID`.
 Status/cancel use the returned job ID. Errors do not publish partial files.
 
 Default `moment:'saved'` captures immutable source/state. For a genuinely
@@ -261,17 +266,17 @@ await nb.export('shown', {documentID, format:'png', moment:'presented',
 ```
 
 This returns original captured crop bytes, not a newly rendered page.
-`pixelWidth`, if supplied, must equal the original width; omit page/block
+`pixelWidth`, if supplied, must equal the original width; omit page/instance
 selectors. Native provenance identifies capture, time, device kind, and exact
 PNG hash. Cache pixels alone cannot claim presentation. Stale source/state,
 missing delivery, or absent provenance fails explicitly. Export never checkpoints
 or rewinds the live scene.
 
 For presented SVG/HTML/PDF/package/video, first freeze the selected program and
-submit its attention. Capture binds pixels to block ID, source version, and an
+submit its attention. Capture binds pixels to instance ID, source version, and an
 accepted checkpoint. The isolated export executor renders that model.
-SVG/HTML address the selected block; whole-document/page formats reject other
-interactive blocks without equivalent proof. MP4 time is an offset from the
+SVG/HTML address the selected instance; whole-document/page formats reject other
+interactive instances without equivalent proof. MP4 time is an offset from the
 captured model. Model replay does not promise screenshot-byte identity.
 
 Each exportable program registers an authored callback:
@@ -302,19 +307,20 @@ at the same physical layout/page clips. Remaining regions render at the target
 300 DPI. Signal supplies Plot and MathJax paths. Undeclared vector support uses
 raster; malformed declared output fails explicitly.
 
-`format:'html',blockID` exports one compact inline program as an offline HTML
+`format:'html',instanceID` exports one compact inline program as an offline HTML
 sandbox with saved state. Local edits never write back to Notebook.
-Imports/workers/assets require `format:'package'`. Copy the entire artifact
-directory, then run:
+Imports/workers/assets require `format:'package'`. Copy the single `.notex` file, then run:
 
 ```sh
-node ~/.codex/skills/notebook/scripts/submit.mjs /absolute/directory/document.package
+node ~/.codex/skills/notebook/scripts/submit.mjs /absolute/path/document.notex
 ```
 
-The native importer validates V2 parts and creates a copy with saved state through
-one ordinary transaction. Code does not execute before explicit opening.
+The native importer verifies ZIP paths, sizes, hashes and resource closure, then
+creates a copy with saved state in one transaction. Code does not execute before
+explicit opening. The CLI prints a retry request path before admission; after a
+lost response, submit that request JSON to attach to the same import identity.
 
-For Mac MP4 export, supply `format:'mp4',blockID,pageIndex,pixelWidth` and
+For Mac MP4 export, supply `format:'mp4',instanceID,pageIndex,pixelWidth` and
 `video:{start:0,end:6,framesPerSecond:30}`. Output is a canonical page,
 H.264 without audio, with even width 128–4,096 and white padding to even height.
 Use 1–60 FPS and an integral 1–3,600 frames in [start,end). Each frame receives

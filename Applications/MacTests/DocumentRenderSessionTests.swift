@@ -17,7 +17,7 @@ final class DocumentRenderSessionTests: XCTestCase {
   }
 
   func testClosedMultiPageProgramExportSharesOnePDFSyncTeXPreparation() async throws {
-    let document = DocumentDocument(actor: UUID(), blocks: [.interactive(id: "long-program",
+    let document = DocumentTestFiles.document(actor: UUID(), contents: [.program(id: "long-program",
       html: "<div style='height:1800px;background:linear-gradient(red,blue)'></div>",
       javaScript: "notebook.exportFrame(() => null); notebook.ready(Promise.resolve());", height: 1800)])
     let state = DocumentStateJournal(id: document.id, actor: UUID())
@@ -61,7 +61,7 @@ final class DocumentRenderSessionTests: XCTestCase {
   }
 
   func testFourPagesShareExactlyOneImmutableSourceAndStateEncodingWithoutAllocatingWebKit() async throws {
-    let document = DocumentDocument(actor: UUID(), blocks: (0..<512).map { .markdown(id: "block-\($0)", source: "Source \($0)") })
+    let document = DocumentTestFiles.document(actor: UUID(), contents: (0..<512).map { .tex(id: "block-\($0)", source: "Source \($0)") })
     let state = DocumentStateJournal(id: document.id, actor: UUID()), resources = SceneRenderResources()
     let pages = (0..<4).map { coordinator(resources: resources, document: document, state: state, page: $0) }
     defer { pages.forEach { $0.invalidate() } }
@@ -84,8 +84,8 @@ final class DocumentRenderSessionTests: XCTestCase {
 
   func testEqualMaxSourceStampDoesNotAliasDifferentContentOrChangeTheOldNeighbor() throws {
     let actor = UUID(), id = UUID(), resources = SceneRenderResources()
-    let before = DocumentDocument(id: id, actor: actor, blocks: [.markdown(id: "body", source: "Before")])
-    let after = DocumentDocument(id: id, actor: actor, blocks: [.markdown(id: "body", source: "After")])
+    let before = DocumentTestFiles.document(id: id, actor: actor, contents: [.tex(id: "body", source: "Before")])
+    let after = DocumentTestFiles.document(id: id, actor: actor, contents: [.tex(id: "body", source: "After")])
     let state = DocumentStateJournal(id: id, actor: actor)
     XCTAssertEqual(before.contentStamp, after.contentStamp)
     let current = coordinator(resources: resources, document: before, state: state)
@@ -95,14 +95,14 @@ final class DocumentRenderSessionTests: XCTestCase {
     update(current, document: after, state: state)
     XCTAssertFalse(current.payload?.source === original)
     XCTAssertTrue(neighbor.payload?.source === original)
-    XCTAssertEqual(neighbor.payload?.blocks.first?.source, "Before")
-    XCTAssertEqual(current.payload?.blocks.first?.source, "After")
+    XCTAssertEqual(neighbor.payload?.source.document.files.first { $0.id == "body" }?.source, "Before")
+    XCTAssertEqual(current.payload?.source.document.files.first { $0.id == "body" }?.source, "After")
     XCTAssertTrue(current.renderSession?.source(before) === original,
       "Interning another value at the same stamp must not replace the old immutable version")
   }
 
   func testEqualMaxStateStampDoesNotAliasDifferentRecordsOrRewriteTheOldSnapshot() throws {
-    let actor = UUID(), document = DocumentDocument(actor: UUID(), blocks: [.interactive(id: "body", html: "<button>Control</button>", height: 100)]), resources = SceneRenderResources()
+    let actor = UUID(), document = DocumentTestFiles.document(actor: UUID(), contents: [.program(id: "body", html: "<button>Control</button>", height: 100)]), resources = SceneRenderResources()
     let stamp = VersionStamp(counter: 0, actor: actor)
     let before = DocumentStateJournal(id: document.id, actor: actor, records: [.init(id: "body", value: .number(1), stamp: stamp)])
     let after = DocumentStateJournal(id: document.id, actor: actor, records: [.init(id: "body", value: .number(2), stamp: stamp)])
@@ -121,11 +121,13 @@ final class DocumentRenderSessionTests: XCTestCase {
   }
 
   func testAPageReceiptCannotCreateAFullLayoutOrNameAnAbsentPage() throws {
-    let document = DocumentDocument(actor: UUID(), blocks: [.markdown(id: "body", source: "Body")])
+    let document = DocumentTestFiles.document(actor: UUID(), contents: [.tex(id: "body", source: "Body")])
     let source = DocumentRenderSession(documentID: document.id).source(document)
-    let geometry = WorkspaceItemGeometry.document(document.paperSize)
+    let paper = DocumentPaperLayout(widthPoints: 720, heightPoints: 400), geometry = paper.geometry
     var receipt: [String: Any] = ["sourceKey": source.message.key, "layoutScope": "page", "layoutCanonical": true, "anchors": [], "reading": [],
-      "pageIndex": 0, "pageCount": 1, "width": geometry.width, "height": geometry.height, "regions": []]
+      "pageIndex": 0, "pageCount": 1, "width": geometry.width, "height": geometry.height,
+      "widthPoints": paper.widthPoints, "heightPoints": paper.heightPoints,
+      "pages": [["widthPoints": paper.widthPoints, "heightPoints": paper.heightPoints]], "regions": []]
     XCTAssertThrowsError(try source.acceptLayout(receipt as NSDictionary, geometry: geometry))
     XCTAssertNil(source.layout)
     receipt["layoutScope"] = "source"
@@ -135,6 +137,12 @@ final class DocumentRenderSessionTests: XCTestCase {
     XCTAssertTrue(source.layout === full)
     receipt["pageIndex"] = 0
     XCTAssertTrue(try source.acceptLayout(receipt as NSDictionary, geometry: geometry) === full)
+    XCTAssertEqual(full.paper(on: 0), paper, "The page preserves exact PDF dimensions, not an inverse projection")
+    XCTAssertEqual(full.paper(on: 0).widthPoints, 720)
+    XCTAssertEqual(full.paper(on: 0).heightPoints, 400)
+    receipt["widthPoints"] = paper.widthPoints.nextDown
+    XCTAssertThrowsError(try source.acceptLayout(receipt as NSDictionary, geometry: geometry))
+    receipt["widthPoints"] = paper.widthPoints
     receipt["layoutScope"] = "partial-but-pretending"
     XCTAssertThrowsError(try source.acceptLayout(receipt as NSDictionary, geometry: geometry))
   }
@@ -143,27 +151,28 @@ final class DocumentRenderSessionTests: XCTestCase {
     let document = DocumentDocument(actor: UUID()), actor = UUID()
     let session = DocumentRenderSession(documentID: document.id)
     var state = DocumentStateJournal(id: document.id, actor: actor)
-    XCTAssertTrue(state.commit(blockID: "first", value: .number(1), actor: actor))
+    XCTAssertTrue(state.commit(instanceID: "first", value: .number(1), actor: actor))
     let first = session.state(state, blockIDs: ["first"])
     let paper = session.state(state, blockIDs: [])
-    XCTAssertTrue(state.commit(blockID: "other", value: .number(2), actor: actor))
+    XCTAssertTrue(state.commit(instanceID: "other", value: .number(2), actor: actor))
     XCTAssertTrue(session.state(state, blockIDs: ["first"]) === first)
     XCTAssertTrue(session.state(state, blockIDs: []) === paper)
     XCTAssertTrue(paper.records.isEmpty)
-    XCTAssertTrue(state.commit(blockID: "first", value: .number(3), actor: actor))
+    XCTAssertTrue(state.commit(instanceID: "first", value: .number(3), actor: actor))
     XCTAssertFalse(session.state(state, blockIDs: ["first"]) === first)
     XCTAssertEqual(first.message.states, ["first": .number(1)])
   }
 
   func testLayoutAcceptanceRejectsAnInconsistentNeighborWithoutReplacingTheFirstRecord() throws {
     let registry = DocumentRenderRegistry(), resources = SceneRenderResources()
-    let document = DocumentDocument(actor: UUID(), blocks: [.markdown(id: "body", source: "Body")])
+    let document = DocumentTestFiles.document(actor: UUID(), contents: [.tex(id: "body", source: "Body")])
     let state = DocumentStateJournal(id: document.id, actor: UUID())
     let session = registry.session(documentID: document.id, resources: resources), source = session.source(document)
-    let geometry = WorkspaceItemGeometry.document(document.paperSize)
+    let paper = DocumentPaperLayout.uncompiled, geometry = paper.geometry
     func receipt(height: Double) -> NSDictionary {
       ["sourceKey": source.message.key, "layoutScope": "source", "layoutCanonical": true, "anchors": [], "reading": [], "pageIndex": 0, "pageCount": 1,
         "width": geometry.width, "height": geometry.height,
+        "pages": [["widthPoints": paper.widthPoints, "heightPoints": paper.heightPoints]],
         "regions": [["id": "body", "pageIndex": 0, "x": 70.0, "y": 70.0, "width": 200.0, "height": height, "sourceOffset": 0.0]]]
     }
     let token = DocumentSnapshotCache.token(document: document, state: state, pageIndex: 0)

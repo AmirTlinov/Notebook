@@ -106,7 +106,7 @@ extension NotebookStore {
         additionalOwners: request.additionalOwners, sourceRevision: source, suggestion: suggestion, renderRequest: render)
     }
     guard let geometry = cut.geometry else {
-      return result(.unavailable, suggestion: "Продолжите поток документа операцией insertBlock после выбранного блока.")
+      return result(.unavailable, suggestion: "Продолжите поток в исходном LaTeX-файле адресной правкой patchDocumentFile; расположение материала определяет TeX.")
     }
     let movable = cut.movable
     let render = try placementRender(cut, budget: budget)

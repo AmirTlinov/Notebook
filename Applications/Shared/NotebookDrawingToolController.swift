@@ -34,11 +34,10 @@ final class NotebookToolContour {
   func append(_ point:SpatialPoint) {
     points.append(point);bounds=bounds.union(.init(x:point.x,y:point.y,width:0,height:0))
   }
-  func endpoint(_ point:SpatialPoint,retainingBounds:Bool = false) {
+  func endpoint(_ point:SpatialPoint) {
     if points.count == 1 { points.append(point) } else { points[1]=point }
-    if retainingBounds { bounds=bounds.union(.init(x:point.x,y:point.y,width:0,height:0)) }
-    else { bounds=CGRect(x:min(points[0].x,point.x),y:min(points[0].y,point.y),
-      width:abs(points[0].x-point.x),height:abs(points[0].y-point.y)) }
+    bounds=CGRect(x:min(points[0].x,point.x),y:min(points[0].y,point.y),
+      width:abs(points[0].x-point.x),height:abs(points[0].y-point.y))
   }
 }
 
@@ -72,8 +71,18 @@ final class NotebookDrawingToolController {
       self.materialAdmission=materialAdmission
     }
   }
+  struct LaserContact: Sendable {
+    let id: UUID
+    let address: NotebookLaserAddress
+    let scope: NotebookLaserContext.Scope?
+    let screenScale: Double
+    let contour: NotebookToolContour
+    @MainActor var points: [SpatialPoint] { contour.points }
+  }
   private unowned let model: NotebookAppModel
   private(set) var contact: Contact?
+  private(set) var laserContact: LaserContact?
+  var currentContactID: UUID? { laserContact?.id ?? contact?.id }
   private(set) var pendingLasso: Contact?
   @ObservationIgnored private var lassoSpatialSourceIDs=Set<UUID>()
   /// A raw window may move, but the admitted contact and chosen material keep
@@ -203,11 +212,11 @@ final class NotebookDrawingToolController {
   func begin(at point: SpatialPoint, address: NotebookToolAddress, screenScale: Double) -> Bool {
     guard !model.drawingTool.usesInkJournal, address.surface.ownerID != nil,
       screenScale.isFinite, screenScale > 0 else { return false }
+    if model.drawingTool == .laser { return beginLaser(at:point,address:.material(address),screenScale:screenScale) }
     cancel()
-    laserTraces.removeAll { $0.expiresAt <= Date.timeIntervalSinceReferenceDate }
     let graph: NotebookGraphicGraph
     var spatialSelection: SpatialSelectionSource? = nil
-    if [.laser,.text].contains(model.drawingTool) { graph = .init([]) }
+    if model.drawingTool == .text { graph = .init([]) }
     else if address.surface.kind == .page, let page = model.pages[address.surface.ownerID!] { graph = model.graphicGraph(page:page) }
     else if model.drawingTool == .lasso, let source=spatialSelectionSource(at:address) {
       graph=source.graph;spatialSelection=source.source
@@ -221,11 +230,30 @@ final class NotebookDrawingToolController {
     contact = .init(id:UUID(),tool:model.drawingTool,settings:model.drawingToolSettings,pen:model.penStyle,
       address:address,graph:graph,spatialSelection:spatialSelection,
       screenScale:screenScale,ink:ink,points:[point],materialAdmission:model.pendingMaterialAdmissions[address.surface]?.task)
-    if let contact, contact.tool == .laser {
-      laserTraces.append(.init(id:contact.id,address:address,color:contact.settings.laserColor,
-        width:4/screenScale,lifetime:contact.settings.laserDuration,
-        samples:[.init(point:point,time:Date.timeIntervalSinceReferenceDate)]))
+    return true
+  }
+
+  @discardableResult
+  func beginLaser(at point: SpatialPoint, address: NotebookLaserAddress, screenScale: Double) -> Bool {
+    guard model.drawingTool == .laser, screenScale.isFinite, screenScale > 0,
+      point.x.isFinite, point.y.isFinite else { return false }
+    if case .document = address {
+      guard let presence = model.presence,
+        NotebookAttentionProjection.laserFrame(address,model:model,presence:presence) != nil else { return false }
     }
+    cancel()
+    #if os(iOS)
+    let scope = model.chat?.pointingScope
+    #else
+    let scope: NotebookLaserContext.Scope? = nil
+    #endif
+    let current = LaserContact(id:UUID(),address:address,scope:scope,screenScale:screenScale,
+      contour:NotebookToolContour([point],capacity:256))
+    laserContact = current
+    laserTraces.removeAll { $0.expiresAt <= Date.timeIntervalSinceReferenceDate }
+    laserTraces.append(.init(id:current.id,address:address,color:model.drawingToolSettings.laserColor,
+      width:4/screenScale,lifetime:model.drawingToolSettings.laserDuration,
+      samples:[.init(point:point,time:Date.timeIntervalSinceReferenceDate)]))
     return true
   }
 
@@ -296,30 +324,48 @@ final class NotebookDrawingToolController {
 
   @discardableResult
   func move(to point: SpatialPoint) -> SpatialPoint? {
+    if let current = laserContact {
+      guard point.x.isFinite, point.y.isFinite else { return nil }
+      var point = point
+      if let bounds = current.address.bounds {
+        point = .init(x:min(bounds.maxX,max(bounds.minX,point.x)),y:min(bounds.maxY,max(bounds.minY,point.y)))
+      }
+      if let last = current.contour.last, hypot(last.x-point.x,last.y-point.y)*current.screenScale < 1 { return nil }
+      guard current.points.count < NotebookGraphicMask.maximumPolygonPoints else {
+        cancel(); model.showCue("Указание слишком длинное. Обведите меньшую область."); return nil
+      }
+      current.contour.append(point)
+      if let index = laserTraces.firstIndex(where:{ $0.id == current.id }) {
+        laserTraces[index].append(point,time:Date.timeIntervalSinceReferenceDate)
+      }
+      return point
+    }
     guard let current = contact, point.x.isFinite, point.y.isFinite else { return nil }
     var point = point
     if let bounds = current.address.bounds {
       point = .init(x:min(bounds.maxX,max(bounds.minX,point.x)),y:min(bounds.maxY,max(bounds.minY,point.y)))
     }
-    if current.tool == .lasso || current.tool == .laser {
+    if current.tool == .lasso {
       if let last = current.contour.last, hypot(last.x-point.x,last.y-point.y)*current.screenScale < 1 { return nil }
-      if current.tool == .lasso {
-        guard current.contour.points.count < NotebookGraphicMask.maximumPolygonPoints else {
-          cancel();model.showCue("Контур слишком длинный. Обведите меньшую область; предыдущее выделение сохранено.")
-          return nil
-        }
-        current.contour.append(point)
-      } else { current.contour.endpoint(point,retainingBounds:true) }
+      guard current.contour.points.count < NotebookGraphicMask.maximumPolygonPoints else {
+        cancel();model.showCue("Контур слишком длинный. Обведите меньшую область; предыдущее выделение сохранено.")
+        return nil
+      }
+      current.contour.append(point)
     } else { current.contour.endpoint(point) }
-    if current.tool == .laser, let index = laserTraces.firstIndex(where:{ $0.id == current.id }) {
-      let now = Date.timeIntervalSinceReferenceDate
-      laserTraces[index].append(point,time:now)
-    }
     if let object = figure(current) { model.updateWorkingGraphic(object,strokeID:current.id) }
     return point
   }
 
   func finish() {
+    if let current = laserContact {
+      laserContact = nil; onContactCancellation = nil
+      #if os(iOS)
+      model.captureLaserContext(current)
+      #endif
+      expireLaser(current.id)
+      return
+    }
     guard let current = contact else { return }
     contact = nil
     onContactCancellation = nil
@@ -333,12 +379,7 @@ final class NotebookDrawingToolController {
     case .lasso: finishLasso(current)
     case .text:
       model.beginToolText(at:current.points[0],address:current.address,screenScale:current.screenScale)
-    case .laser:
-      #if os(iOS)
-      model.captureLaserContext(current)
-      #endif
-      expireLaser(current.id)
-    case .pen,.marker,.eraser: assertionFailure("Ink belongs to the measured journal adapter")
+    case .laser,.pen,.marker,.eraser: assertionFailure("This tool has its own contact domain")
     }
   }
 
@@ -351,8 +392,9 @@ final class NotebookDrawingToolController {
     pendingLasso=nil
     if let contact {
       model.updateWorkingGraphic(nil,strokeID:contact.id)
-      if contact.tool == .laser { expireLaser(contact.id) }
     }
+    if let laserContact { expireLaser(laserContact.id) }
+    laserContact = nil
     contact = nil
     let cancellation = onContactCancellation; onContactCancellation = nil
     cancellation?()

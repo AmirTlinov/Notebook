@@ -32,8 +32,8 @@ struct NotebookRootView: View {
             }.padding(24)
           } else { Color.clear }
         case .ready:
-          DocumentSourceWorkspace(mode: $documentMode, topInset: max(74, topBarFrame.maxY - geometry.frame(in: .global).minY + 8),
-            allowsBeside: geometry.size.width > geometry.size.height) { SpatialWorkspaceView(chromeHidden:$chromeHidden,documentMode:$documentMode) }
+          DocumentSourceWorkspace(mode: $documentMode, topInset: 18,
+            allowsBeside: geometry.size.width > geometry.size.height) { SpatialWorkspaceView(chromeHidden:$chromeHidden) }
         case .failed(let message):
           Text(message)
             .font(.footnote)
@@ -68,7 +68,7 @@ struct NotebookRootView: View {
           .accessibilityIdentifier("persistence-failure")
         }
 
-        if model.presence != nil {
+        if model.presence != nil, model.activeDocument == nil || documentMode != .code {
           NotebookTopBar()
             .background(NotebookControlRegion(gate:model.inputGate))
             .opacity(chromeHidden ? 0 : 1).allowsHitTesting(!chromeHidden)

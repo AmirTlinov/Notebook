@@ -3,7 +3,7 @@ import CryptoKit
 import Testing
 @testable import NotebookCore
 
-@Suite("A pinned program contains the state of that physical block")
+@Suite("A pinned program contains the state of that addressed file")
 struct AgentPinnedSourceTests {
   @Test func availableSourcePixelsDoNotCarryTheFallbackUnavailableReason() throws {
     let target = CollaborationTarget(kind: .page, id: UUID())
@@ -44,25 +44,25 @@ struct AgentPinnedSourceTests {
   }
 
   @Test(arguments: ["counter/a~b", "ABCDEF00-1234-4ABC-8DEF-1234567890AB"])
-  func addressedStateIsFrozenWithoutDisclosingAnotherProgram(blockID: String) throws {
+  func addressedStateIsFrozenWithoutDisclosingAnotherProgram(fileID: String) throws {
     let id = UUID(), actor = UUID(), requestID = UUID()
-    let document = DocumentDocument(id: id, actor: actor, blocks: [
-      .interactive(id: blockID, html: "<button>+</button>", initialState: .number(3)),
-      .interactive(id: "private", html: "<p>unrequested source</p>")])
+    let document = DocumentDocument(id: id, actor: actor, files: [
+      .init(id: fileID, path: "programs/model/index.html", source: "<button>+</button>"),
+      .init(id: "private", path: "programs/private/index.html", source: "<p>unrequested source</p>")])
     var state = DocumentStateJournal(id: id, actor: actor)
-    let first = state.commit(blockID: blockID, value: .number(7), actor: actor)
-    let other = state.commit(blockID: "private", value: .string("unrequested state"), actor: actor)
+    let first = state.commit(instanceID: fileID, value: .number(7), actor: actor)
+    let other = state.commit(instanceID: "private", value: .string("unrequested state"), actor: actor)
     #expect(first && other)
     var files = [documentFile(id): try JSONValue.encode(document), stateFile(id): try JSONValue.encode(state)]
-    let target = CollaborationTarget(kind: .document, id: id), selectedID = collaborationIdentity(blockID)
+    let target = CollaborationTarget(kind: .document, id: id), selectedID = collaborationIdentity(fileID)
     let reference = CollaborationReference(target: target, elementID: selectedID,
       revision: try NotebookStore.referenceRevision(target: target, elementID: selectedID, files: files))
     let pinned = try AgentPinnedSource.capture(requestID: requestID, reference: reference, files: files)
     #expect(pinned.payload["state"] == .number(7))
-    #expect(pinned.payload["block"] == (try JSONValue.encode(document.blocks[0])))
+    #expect(pinned.payload["file"] == (try JSONValue.encode(document.files.first { $0.id == fileID }!)))
     #expect(pinned.payload["elements"] == .array([]))
-    #expect(Set(pinned.payload.object.keys) == ["reference", "block", "state", "elements"])
-    let changed = state.commit(blockID: blockID, value: .number(11), actor: actor)
+    #expect(Set(pinned.payload.object.keys) == ["reference", "file", "state", "elements"])
+    let changed = state.commit(instanceID: fileID, value: .number(11), actor: actor)
     #expect(changed)
     files[stateFile(id)] = try .encode(state)
     #expect(throws: CollaborationError.self) {
@@ -75,10 +75,10 @@ struct AgentPinnedSourceTests {
     #expect(next.payload["state"] == .number(11))
   }
 
-  @Test func aProgramWithoutCommittedStateRetainsOnlyItsInitialSourceValue() throws {
+  @Test func aProgramManifestWithoutCommittedStateRetainsItsInitialSourceValue() throws {
     let id = UUID(), actor = UUID()
     let document = DocumentDocument(id: id, actor: actor,
-      blocks: [.interactive(id: "counter", html: "<button>+</button>", initialState: .number(3))])
+      files: [.init(id: "counter", path: "programs/model/program.json", source: #"{"initialState":3}"#)])
     let files = [documentFile(id): try JSONValue.encode(document),
       stateFile(id): try JSONValue.encode(DocumentStateJournal(id: id, actor: actor))]
     let target = CollaborationTarget(kind: .document, id: id)
@@ -86,6 +86,6 @@ struct AgentPinnedSourceTests {
       revision: try NotebookStore.referenceRevision(target: target, elementID: "counter", files: files))
     let pinned = try AgentPinnedSource.capture(requestID: UUID(), reference: reference, files: files)
     #expect(pinned.payload["state"] == nil)
-    #expect(pinned.payload["block"] == (try JSONValue.encode(document.blocks[0])))
+    #expect(pinned.payload["file"] == (try JSONValue.encode(document.files[0])))
   }
 }

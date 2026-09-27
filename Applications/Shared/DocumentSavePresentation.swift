@@ -6,8 +6,7 @@ struct DocumentSavePresentation: Equatable {
   enum Phase: Equatable { case saving, saved, installed }
   let sessionID: UUID
   let documentID: UUID
-  let blockID: String
-  var isPreamble = false
+  let fileID: String
   var phase: Phase
   var source: String?
 }

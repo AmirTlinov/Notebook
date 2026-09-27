@@ -14,7 +14,7 @@ struct NotebookSearchIndexTests {
     let page = index.items[0].pageIDs[0], document = UUID()
     _ = index.createDocument(title: "Ёжик внутри Каталога", actor: actor, documentID: document)
     _ = board.addItem(document, to: header.rootBoardID, near: .zero, actor: actor)
-    try store.saveDocumentWorkspaceBundle(index: index, document: .init(id: document, actor: actor, blocks: [.markdown(id: "CamelCaseBlock", source: "Café. Приветствие русского ТЕКСТА.")]), state: .init(id: document, actor: actor), board: board)
+    try store.saveDocumentWorkspaceBundle(index: index, document: .init(id: document, actor: actor, files: [DocumentFile(id: "CamelCaseBlock", path: "CamelCaseBlock" + ".tex", source: "Café. Приветствие русского ТЕКСТА.")]), state: .init(id: document, actor: actor), board: board)
     let before = try store.loadBoard(items: index.items)
     var after = before
     _ = after.upsertElement(.init(id: "CamelCaseElement", surface: .board(header.rootBoardID), kind: .nativeText,
@@ -68,11 +68,11 @@ struct NotebookSearchIndexTests {
   }
 
   @Test(arguments: [1, 4, 7])
-  func allMatchingBlocksAreReachableWithStableTieBreakersAndChangingPageSizes(size: Int) throws {
+  func allMatchingFilesAreReachableWithStableTieBreakersAndChangingPageSizes(size: Int) throws {
     try fixture { store, actor, board, documentID, _ in
       var document = try store.loadDocument(documentID)
-      let blocks = (0..<23).map { DocumentBlock.markdown(id: String(format: "block-%02d", $0), source: "needle одинаковый текст") }
-      let changed = document.replaceContent(blocks: blocks, actor: actor)
+      let files = (0..<23).map { DocumentFile(id: String(format: "part-%02d", $0), path: String(format: "part-%02d.tex", $0), source: "needle одинаковый текст") }
+      let changed = document.replaceContent(files: files, actor: actor)
       #expect(changed)
       _ = try store.saveMergedDocument(document)
       let filters = NotebookSearchFilters(kinds: [.document], target: .init(kind: .document, id: documentID))
@@ -87,7 +87,7 @@ struct NotebookSearchIndexTests {
         try store.savePresence(.init(boardID: board, mode: .board, camera: .init(), viewport: .init(x: 834, y: 1194)))
         #expect(calls <= 23)
       } while next != nil && calls <= 23
-      #expect(found == blocks.map(\.id))
+      #expect(found == files.map(\.id))
       #expect(Set(found).count == 23)
       let empty = try store.search("absent-needle", limit: size, filters: filters)
       #expect(empty.results.isEmpty && empty.total == 0 && empty.coverage.complete && empty.coverage.next == nil)
@@ -130,7 +130,7 @@ struct NotebookSearchIndexTests {
     try fixture { store, actor, _, documentID, _ in
       let next = try #require(try store.search("р", limit: 1).coverage.next)
       var document = try store.loadDocument(documentID)
-      let changed = document.replaceContent(blocks: insert ? document.blocks + [.markdown(id: "new", source: "Результат")]
+      let changed = document.replaceContent(files: insert ? document.files + [DocumentFile(id: "new", path: "new" + ".tex", source: "Результат")]
         : [], actor: actor)
       #expect(changed)
       _ = try store.saveMergedDocument(document)
@@ -142,14 +142,14 @@ struct NotebookSearchIndexTests {
   @Test func countAndPageSelectionDoNotDecodeUnselectedMatchingBodies() throws {
     try fixture { store, actor, _, documentID, _ in
       var document = try store.loadDocument(documentID)
-      let changed = document.replaceContent(blocks: (0..<512).map {
-        .markdown(id: String(format: "match-%04d", $0), source: "needle \($0)")
+      let changed = document.replaceContent(files: (0..<512).map {
+        .init(id: String(format: "match-%04d", $0), path: String(format: "match-%04d.tex", $0), source: "needle \($0)")
       }, actor: actor)
       #expect(changed)
       _ = try store.saveMergedDocument(document)
       try store.commandTransaction {
         try store.currentSQL!.run("UPDATE blobs SET data=? WHERE hash=(SELECT hash FROM records WHERE address=?)",
-          [.blob(Data("unselected matching body".utf8)), .text(documentFile(documentID) + "#/blocks/@match-0511")])
+          [.blob(Data("unselected matching body".utf8)), .text(documentFile(documentID) + "#/files/@match-0511")])
       }
       let counter = UnsafeMutablePointer<Int>.allocate(capacity: 1)
       counter.initialize(to: 0); defer { counter.deinitialize(count: 1); counter.deallocate() }

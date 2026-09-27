@@ -70,7 +70,7 @@ struct NotebookAgentFeedbackTests {
       let created = try store.applyCollaborationAction(.init(summary:"New document",expected:[target,workspace].map {
         try .init(target:$0,revision:store.targetContentRevision(target:$0))
       },operations:[.init(kind:.createDocument,target:target,id:documentID.uuidString,values:["center":try .encode(WorldPoint.zero),
-        "paperSize":.string("a4"),"blocks":.array([])])]),actor:UUID())
+        "template":.string(DocumentTemplate.article.rawValue)])]),actor:UUID())
       let cover = try #require(store.agentFeedbackChanges([NotebookActionReadModel(created)]).first?.subjects.first)
       #expect(cover.reference.target == CollaborationTarget(kind:.cover,id:documentID,boardID:target.id))
       #expect(cover.expected.target == target)

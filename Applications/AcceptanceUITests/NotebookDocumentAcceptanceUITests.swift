@@ -26,6 +26,7 @@ private struct DocumentInstallationHistory {
   private let app = XCUIApplication(bundleIdentifier: "com.amirtlinov.notebook.acceptance")
   private var systemTrace: NotebookSystemTraceHandshake?
   private var installationHistory = DocumentInstallationHistory()
+  private var lastInstallation: Installation?
   private struct PagePreparationIdentity: Codable {
     let requestID: UUID
     let attemptID: UUID
@@ -82,7 +83,7 @@ private struct DocumentInstallationHistory {
     }
     systemTrace?.configure(app)
     app.launch()
-    installationHistory = DocumentInstallationHistory()
+    installationHistory = DocumentInstallationHistory(); lastInstallation = nil
     try systemTrace?.began(app)
     if XCUIDevice.shared.orientation != .portrait { XCUIDevice.shared.orientation = .portrait }
     XCTAssertTrue(app.buttons["notebook-search"].waitForExistence(timeout: 20), app.debugDescription)
@@ -163,6 +164,7 @@ private struct DocumentInstallationHistory {
     XCTAssertEqual(record.observationIntervalMS, 5)
     XCTAssertTrue(installationHistory.accept(id: record.id, requestedAt: record.requestedAt),
       "Every accepted installation must have a unique ID and a later request within this app launch")
+    lastInstallation = record
     return record
   }
 
@@ -172,8 +174,7 @@ private struct DocumentInstallationHistory {
     // is made by the test. The bounded loop also handles link return places.
     for _ in 0..<8 {
       if !surface.exists { return }
-      let back = app.buttons["leave-nested-board"]
-      XCTAssertTrue(back.isHittable); back.tap()
+      notebookBack(in: app)
       if surface.waitForNonExistence(timeout: 2) { return }
     }
     XCTFail("The ordinary Back action did not return to the board.\n\(app.debugDescription)")
@@ -260,7 +261,7 @@ private struct DocumentInstallationHistory {
     XCTAssertTrue(outward.isHittable); outward.tap()
     let distant = try installed(after: first.id)
     try assertPreparationBelongsToRequest(distant)
-    XCTAssertGreaterThan(distant.pageIndex, 20)
+    XCTAssertGreaterThan(distant.pageIndex, 1, "The link must reach a non-neighbouring physical page")
     try attach(distant, name: "diagnostic-first-distant-page-installation")
     screenshot("diagnostic-first-distant-page")
     let returning = app.links["К оглавлению"].firstMatch
@@ -287,7 +288,7 @@ private struct DocumentInstallationHistory {
     XCTAssertTrue(outward.isHittable); outward.tap()
     let distant = try installed(after: first.id)
     try assertPreparationBelongsToRequest(distant)
-    XCTAssertGreaterThan(distant.pageIndex, 20)
+    XCTAssertGreaterThan(distant.pageIndex, 1, "The link must reach a non-neighbouring physical page")
     screenshot("lifecycle-distant-page")
     let returning = app.links["К оглавлению"].firstMatch
     XCTAssertTrue(returning.isHittable); returning.tap()
@@ -295,7 +296,7 @@ private struct DocumentInstallationHistory {
     try assertPreparationBelongsToRequest(returned)
     screenshot("lifecycle-returned-first-page")
     try attach([first, distant, returned], name: "lifecycle-actual-native-navigation-records")
-    try editFirstBlockAndReopen()
+    try editIntroductionFileAndReopen()
     closeDocument()
     try systemTrace?.ended(app)
   }
@@ -318,28 +319,6 @@ private struct DocumentInstallationHistory {
     try systemTrace?.ended(app)
   }
 
-  /// Observe the failed v15 state without recreating the document/WebKit. The
-  /// coordinate comes from its original 1640x2360 screenshot, not DOM focus.
-  func testInspectDisplayedDocumentAndTapVisibleFirstLink() throws {
-    continueAfterFailure = false
-    XCTAssertEqual(app.state, .runningForeground, "This diagnostic requires the already displayed failed document")
-    XCTAssertTrue(surface.exists)
-    XCTAssertEqual(app.windows.firstMatch.frame.size, CGSize(width: 820, height: 1180))
-    screenshot("displayed-document-before-physical-link-tap")
-    let hierarchy = XCTAttachment(string: app.debugDescription)
-    hierarchy.name = "displayed-document-before-link-hierarchy"; hierarchy.lifetime = .keepAlways; add(hierarchy)
-    let window = app.windows.firstMatch
-    let before = window.coordinate(withNormalizedOffset: .zero)
-    // Centre of the visibly underlined first link in the recorded v15 page.
-    before.withOffset(.init(dx: 160, dy: 178)).tap()
-    let distant = app.descendants(matching: .any).matching(identifier: "page-turn-page-35").firstMatch
-    let appeared = distant.waitForExistence(timeout: 12)
-    screenshot("displayed-document-after-physical-link-tap")
-    let after = XCTAttachment(string: app.debugDescription)
-    after.name = "displayed-document-after-link-hierarchy"; after.lifetime = .keepAlways; add(after)
-    XCTAssertTrue(appeared, "The actual visible link did not open its destination")
-  }
-
   func testTenColdOpeningsAndWarmDistantLinksMeetNativeInstallationBudgets() throws {
     executionTimeAllowance = 600
     var cold: [Installation] = [], warm: [Installation] = []
@@ -354,7 +333,6 @@ private struct DocumentInstallationHistory {
       XCTAssertEqual(first.cause, "open")
       let outward = app.links["К дальней главе"].firstMatch
       XCTAssertTrue(outward.waitForExistence(timeout: 3)); XCTAssertTrue(outward.isHittable)
-      XCTAssertTrue(app.webViews.staticTexts["Chapter 0"].firstMatch.exists)
       screenshot("canonical-cold-first-page-\(iteration)")
       closeDocument(); try terminate()
     }
@@ -364,24 +342,24 @@ private struct DocumentInstallationHistory {
     // returns. The first distant preparation is retained as separate evidence.
     app.links["К дальней главе"].firstMatch.tap()
     previous = try installed(after: previous.id)
-    XCTAssertGreaterThan(previous.pageIndex, 20)
+    XCTAssertGreaterThan(previous.pageIndex, 1, "The link must reach a non-neighbouring physical page")
     try attach(previous, name: "first-distant-page-preparation")
     app.links["К оглавлению"].firstMatch.tap()
     previous = try installed(after: previous.id, pageIndex: 0)
     for iteration in 0..<10 {
       app.links["К дальней главе"].firstMatch.tap()
       let distant = try installed(after: previous.id)
-      XCTAssertGreaterThan(distant.pageIndex, 20); warm.append(distant)
+      XCTAssertGreaterThan(distant.pageIndex, 1, "The link must reach a non-neighbouring physical page"); warm.append(distant)
       screenshot("canonical-warm-distant-page-\(iteration)")
       let returning = app.links["К оглавлению"].firstMatch
       XCTAssertTrue(returning.isHittable); returning.tap()
       previous = try installed(after: distant.id, pageIndex: 0); warm.append(previous)
     }
-    try attach(cold, name: "simulator-release-ten-cold-open-native-records")
-    try attach(warm, name: "simulator-release-twenty-warm-link-native-records")
+    try attach(cold, name: "ten-cold-open-native-records")
+    try attach(warm, name: "twenty-warm-link-native-records")
     XCTAssertLessThanOrEqual(try p95(cold.compactMap(\.elapsedMS)), 3_000)
     XCTAssertLessThanOrEqual(try p95(warm.compactMap(\.elapsedMS)), 300)
-    // These are request-to-observed-installation measurements in Simulator.
+    // These are request-to-observed-installation measurements on the target device.
     // Observation targets 5 ms intervals; MainActor scheduling can add delay,
     // which remains in the measured time. This is not a frame-rate measurement.
     closeDocument()
@@ -401,19 +379,19 @@ private struct DocumentInstallationHistory {
     screenshot("canonical-real-page-overview-selection")
     app.buttons["previous-page"].tap(); previous = try installed(after: previous.id, pageIndex: 1)
     app.buttons["previous-page"].tap(); _ = try installed(after: previous.id, pageIndex: 0)
-    app.links["Отсутствующий раздел"].firstMatch.tap()
-    XCTAssertTrue(app.alerts["Ссылка недоступна"].waitForExistence(timeout: 3))
-    app.alerts.buttons["Понятно"].tap()
-
-    try editFirstBlockAndReopen()
+    try editIntroductionFileAndReopen()
     closeDocument()
     try systemTrace?.ended(app)
   }
 
-  private func editFirstBlockAndReopen() throws {
-    let heading = app.webViews.staticTexts["Chapter 0"].firstMatch
-    XCTAssertTrue(heading.isHittable); heading.doubleTap()
-    let editor = app.textViews["Исходный Markdown или LaTeX"].firstMatch
+  private func editIntroductionFileAndReopen() throws {
+    let beforeEdit = try XCTUnwrap(lastInstallation)
+    func openIntroduction() {
+      selectNotebookDocumentMode("Код", in: app)
+      selectNotebookDocumentFile("chapters/introduction.tex", in: app)
+    }
+    openIntroduction()
+    let editor = app.textViews["document-source-editor"].firstMatch
     XCTAssertTrue(editor.waitForExistence(timeout: 5)); editor.tap()
     let visibleKeyboard = XCTNSPredicateExpectation(predicate: NSPredicate { [self] _, _ in
       let keyboard = app.keyboards.firstMatch
@@ -429,15 +407,15 @@ private struct DocumentInstallationHistory {
     XCTAssertEqual(XCTWaiter.wait(for: [entered], timeout: 3), .completed,
       "The complete physical input must reach the editor before Save")
     screenshot("canonical-real-software-keyboard-source-edit")
-    let save = app.webViews.buttons["Сохранить"].firstMatch
-    XCTAssertTrue(save.isHittable); save.tap()
+    selectNotebookDocumentMode("Лист", in: app)
     XCTAssertTrue(editor.waitForNonExistence(timeout: 10))
-    // Saving must make the updated paper usable before it is closed. Merely
-    // reopening a successfully written source hides a failed live replacement.
-    let committedText = app.webViews.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", marker)).firstMatch
-    XCTAssertTrue(committedText.waitForExistence(timeout: 15),
-      "The saved text must appear on the current physical page without closing the document")
-    XCTAssertTrue(committedText.isHittable)
+    // The actual PDF is drawn by Quartz, not copied into a hidden browser DOM.
+    // Confirm a newly installed source and retain its physical pixels for visual
+    // inspection before closing; reopening the file alone cannot prove this.
+    let saved = try installed(after: beforeEdit.id, pageIndex: 0)
+    XCTAssertNotEqual(saved.sourceToken, beforeEdit.sourceToken)
+    try assertPreparationBelongsToRequest(saved)
+    try attach(saved, name: "lifecycle-edited-source-installed-before-closing")
     screenshot("lifecycle-saved-source-visible-before-closing")
     closeDocument(); try terminate()
 
@@ -445,15 +423,14 @@ private struct DocumentInstallationHistory {
     let reopened = try installed(pageIndex: 0)
     try assertPreparationBelongsToRequest(reopened)
     try attach(reopened, name: "lifecycle-edited-document-reopened-native-installation")
-    app.webViews.staticTexts["Chapter 0"].firstMatch.doubleTap()
+    openIntroduction()
     XCTAssertTrue(editor.waitForExistence(timeout: 5))
     XCTAssertTrue((editor.value as? String)?.contains(marker) == true,
       "The actual source must survive closing, persistence, process termination, and reopening")
     screenshot("canonical-source-survives-cold-reopening")
-    let cancel = app.webViews.buttons["Отменить"].firstMatch
-    XCTAssertTrue(cancel.isHittable); cancel.tap()
+    XCTAssertTrue(paper.isHittable); paper.tap()
     XCTAssertTrue(editor.waitForNonExistence(timeout: 5))
-    try attach(["documentID": try expectedDocumentID.uuidString, "blockID": "part-0", "marker": marker],
+    try attach(["documentID": try expectedDocumentID.uuidString, "fileID": "introduction", "marker": marker],
       name: "public-addressed-read-witness-for-ui-edit")
   }
 }

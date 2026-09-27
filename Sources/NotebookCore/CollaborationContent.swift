@@ -127,11 +127,6 @@ public struct CollaborationContent: Codable, Equatable, Sendable {
       pages[other.id] = try pages[other.id].map { try $0.merging(other) } ?? other
     }
     var documents = Dictionary(uniqueKeysWithValues: self.documents.map { ($0.id, $0) })
-    for other in incoming.documents {
-      if let current = documents[other.id], current.paperSize != other.paperSize {
-        throw CollaborationError("invalid_content", "UUID документа сохраняет формат бумаги.")
-      }
-    }
     for other in incoming.documents where documents[other.id] != other { if documents[other.id] != nil { _ = documents[other.id]!.merge(other) } else { documents[other.id] = other } }
     var states = Dictionary(uniqueKeysWithValues: self.states.map { ($0.id, $0) })
     for other in incoming.states where states[other.id] != other { if states[other.id] != nil { _ = states[other.id]!.merge(other) } else { states[other.id] = other } }

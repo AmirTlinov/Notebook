@@ -15,8 +15,7 @@ struct NotebookReferenceLocationTests {
     let added = hierarchy.addItem(item.id, to: header.rootBoardID, near: .init(x: 90_000, y: -70_000), actor: actor)
     #expect(added)
     try store.saveDocumentWorkspaceBundle(index: index,
-      document: .init(id: item.id, actor: actor, paperSize: .a4,
-        blocks: [.markdown(id: "unrequested", source: "Not needed to find the document")]),
+      document: .init(id: item.id, actor: actor, files: [DocumentFile(id: "unrequested", path: "main.tex", source: "Not needed to find the document")]),
       state: .init(id: item.id, actor: actor), board: hierarchy)
     try body(store, actor, header.rootBoardID, item.id)
   }
@@ -24,18 +23,18 @@ struct NotebookReferenceLocationTests {
   @Test func distantCoverAndDocumentResolveWithoutDecodingTheirBody() throws {
     try fixture { store, _, boardID, itemID in
       let expected = try #require(try store.readBoardItem(itemID)?.board.focusedCenter(of: itemID))
-      // A corrupt unrequested block makes accidental eager document decoding
+      // A corrupt unrequested file makes accidental eager document decoding
       // observable, instead of merely checking the resolver's return value.
       try store.commandTransaction {
         let hash = try store.currentSQL!.putBlob(Data("must not decode".utf8))
         try store.currentSQL!.run("UPDATE records SET hash=? WHERE address=?", [.text(hash),
-          .text(documentFile(itemID) + "#/blocks/@unrequested")])
+          .text(documentFile(itemID) + "#/files/@unrequested")])
       }
       let cursor = try store.currentChangeCursor()
       for kind in [CollaborationTarget.Kind.cover, .document] {
         let reference = CollaborationReference(target: .init(kind: kind, id: itemID, boardID: boardID), revision: "historical")
         #expect(try store.readReferenceLocation(reference) == .item(boardID: boardID, id: itemID,
-          center: expected, geometry: .document(.a4)))
+          center: expected, geometry: .uncompiledDocument))
       }
       #expect(try store.currentChangeCursor() == cursor)
     }
@@ -52,7 +51,7 @@ struct NotebookReferenceLocationTests {
       #expect(moved)
       try store.saveBoard(hierarchy, items: index.items)
       #expect(try store.readReferenceLocation(reference) == .item(boardID: boardID, id: itemID,
-        center: center, geometry: .document(.a4)))
+        center: center, geometry: .uncompiledDocument))
     }
   }
 

@@ -382,8 +382,8 @@ final class SceneCompositionSQLTests: XCTestCase {
     XCTAssertTrue(hierarchy.createBoard(child.id, in: initial.rootBoardID, near: .zero, actor: actor))
     let item = try XCTUnwrap(workspace.createDocument(title: "Visible paper", actor: actor))
     XCTAssertTrue(hierarchy.addItem(item.id, to: child.id, near: .zero, actor: actor))
-    let document = DocumentDocument(id: item.id, actor: actor, paperSize: .a4,
-      blocks: [.markdown(id: "text", source: "The actual opened paper")])
+    let document = DocumentTestFiles.document(id: item.id, actor: actor,
+      contents: [.tex(id: "text", source: "The actual opened paper")])
     try store.saveDocumentWorkspaceBundle(index: workspace, document: document,
       state: .init(id: item.id, actor: actor), board: hierarchy)
     var ink = try store.readSpatialInk(surfaces: [.board(initial.rootBoardID)])
@@ -648,12 +648,12 @@ final class SceneCompositionSQLTests: XCTestCase {
     XCTAssertTrue(hierarchy.moveItem(notebookID, in: header.rootBoardID, to: .init(x: 1_000_000, y: 1_000_000), actor: actor))
     let documentID = try XCTUnwrap(workspace.createDocument(title: "Live document", actor: actor)?.id)
     XCTAssertTrue(hierarchy.addItem(documentID, to: header.rootBoardID, near: .zero, actor: actor))
-    var document = DocumentDocument(id: documentID, actor: actor, blocks: [.markdown(id: "body", source: "Old body")])
+    var document = DocumentTestFiles.document(id: documentID, actor: actor, contents: [.tex(id: "body", source: "Old body")])
     var state = DocumentStateJournal(id: documentID, actor: actor)
     try store.saveDocumentWorkspaceBundle(index: workspace, document: document, state: state, board: hierarchy)
     document = try store.loadDocument(documentID)
     state = try store.loadDocumentState(documentID)
-    let index = WorkspaceSceneIndex(workspace: workspace, hierarchy: hierarchy, paperSizes: [documentID: .a4])
+    let index = WorkspaceSceneIndex(workspace: workspace, hierarchy: hierarchy, paperSizes: [documentID: .uncompiledDocument])
     let presence = SessionPresence(boardID: header.rootBoardID, mode: .board, camera: .init(scale: 0.3),
       viewport: .init(x: 512, y: 512), focusedItemID: documentID, selectedItemID: documentID)
     let frame = WorkspaceSceneFrame(index: index, presence: presence, portalCamera: { _ in nil }, pinned: [.item(documentID)])
@@ -673,7 +673,7 @@ final class SceneCompositionSQLTests: XCTestCase {
     let oldData = try await before.liveData(plan: oldPlan, presence: presence, frame: frame)
     XCTAssertTrue(oldData.documents.isEmpty, "A selected closed cover cannot load its document body")
     XCTAssertTrue(oldData.states.isEmpty, "Closed cover admission does not need program state")
-    XCTAssertEqual(oldData.documentPaperSizes[documentID], .a4)
+    XCTAssertEqual(oldData.documentPaperSizes[documentID], .uncompiledDocument)
     XCTAssertTrue(oldData.pages.isEmpty)
     let resources = SceneRenderResources(byteLimit: 128 * 1024 * 1024)
     let coordinator = SceneCompositionTiles(resources: resources)
@@ -683,8 +683,8 @@ final class SceneCompositionSQLTests: XCTestCase {
     let oldCohort = try XCTUnwrap(coordinator.published)
     let rasterGeneration = resources.rasterGeneration
 
-    XCTAssertTrue(document.replaceBlockSource(id: "body", source: "New body", actor: actor))
-    XCTAssertTrue(state.commit(blockID: "body", value: .number(7), actor: actor))
+    XCTAssertTrue(document.replaceFileSource(id: "body", source: "New body", actor: actor))
+    XCTAssertTrue(state.commit(instanceID: "body", value: .number(7), actor: actor))
     try store.saveDocument(document); try store.saveDocumentState(state)
     var journal = try store.loadSpatialInk()
     let sample = SpatialInkSample(point: .zero, worldPoint: .zero, timeOffset: 0,
@@ -702,7 +702,7 @@ final class SceneCompositionSQLTests: XCTestCase {
       viewport: presence.viewport, focusedItemID: documentID, openProgress: 1, selectedItemID: documentID)
     let openedData = try await after.liveData(plan: newPlan, presence: opened, frame: frame,
       previous: (newPlan, newData))
-    XCTAssertEqual(openedData.documents[documentID]?.blocks.first?.source, "New body")
+    XCTAssertEqual(openedData.documents[documentID]?.files.first?.source, "New body")
     XCTAssertEqual(openedData.states[documentID]?.value(for: "body"), .number(7))
     XCTAssertEqual(newData.ink.actions.count, 1)
     XCTAssertEqual(openedData.ink, newData.ink)
@@ -768,13 +768,13 @@ final class SceneCompositionSQLTests: XCTestCase {
     var hierarchy = try store.loadBoard(items: workspace.items)
     let documentID = try XCTUnwrap(workspace.createDocument(title: "Closed content", actor: actor)?.id)
     XCTAssertTrue(hierarchy.addItem(documentID, to: initial.rootBoardID, near: .zero, actor: actor))
-    let document = DocumentDocument(id: documentID, actor: actor,
-      blocks: [.markdown(id: "body", source: String(repeating: "The unopened body. ", count: 1_000))])
+    let document = DocumentTestFiles.document(id: documentID, actor: actor,
+      contents: [.tex(id: "body", source: String(repeating: "The unopened body. ", count: 1_000))])
     var state = DocumentStateJournal(id: documentID, actor: actor)
-    XCTAssertTrue(state.commit(blockID: "body", value: .number(7), actor: actor))
+    XCTAssertTrue(state.commit(instanceID: "body", value: .number(7), actor: actor))
     try store.saveDocumentWorkspaceBundle(index: workspace, document: document, state: state, board: hierarchy)
-    let draft = DocumentEditingSession(edit: .init(sessionID: UUID(), documentID: documentID, blockID: "body",
-      baseSource: document.blocks[0].source, baseVersion: document.sourceVersion(blockID: "body"), source: "Draft", sequence: 1))
+    let draft = DocumentEditingSession(edit: .init(sessionID: UUID(), documentID: documentID, fileID: "body",
+      baseSource: document.files[0].source, baseVersion: document.fileVersion(fileID: "body"), source: "Draft", sequence: 1))
     try store.saveDocumentDraft(draft)
     let viewport = SpatialPoint(x: 834, y: 1194)
     for selectedID in [documentID, notebookID] {
@@ -793,7 +793,7 @@ final class SceneCompositionSQLTests: XCTestCase {
         XCTAssertTrue(snapshot.drafts.isEmpty)
         XCTAssertTrue(snapshot.pages.isEmpty, "A closed notebook also reads its directory without page bodies")
         if selectedID == notebookID { XCTAssertTrue(snapshot.pagePositions.contains { $0.pageID == pageID }) }
-        else { XCTAssertEqual(snapshot.paperSizes[documentID], document.paperSize) }
+        else { XCTAssertEqual(snapshot.paperSizes[documentID], .uncompiledDocument) }
       }
       let opened = SessionPresence(boardID: initial.rootBoardID, mode: selectedID == notebookID ? .page : .document,
         camera: closed.camera, viewport: viewport, focusedItemID: selectedID, openProgress: 1,
@@ -801,7 +801,7 @@ final class SceneCompositionSQLTests: XCTestCase {
       let openSnapshot = try NotebookDiskRefresh.prepare(store: store, presence: opened).scene
       if selectedID == notebookID { XCTAssertNotNil(openSnapshot.pages[pageID]) }
       else {
-        XCTAssertEqual(openSnapshot.documents[documentID]?.blocks, document.blocks)
+        XCTAssertEqual(openSnapshot.documents[documentID]?.files, document.files)
         XCTAssertEqual(openSnapshot.states[documentID]?.value(for: "body"), .number(7))
         XCTAssertEqual(openSnapshot.drafts.map(\.id), [draft.id])
       }

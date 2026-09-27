@@ -1,4 +1,5 @@
 import AppKit
+import CryptoKit
 import NotebookCore
 import XCTest
 @testable import Notebook
@@ -24,14 +25,12 @@ final class DocumentTargetSnapshotPreparationTests: XCTestCase {
   }
 
   func testActualNewDocumentPreparesItsOwnRequestedRasterWithoutASeededCache() async throws {
-    try await check(blocks: [.markdown(id: "body", source: "# A fresh source\n\nIts real image must become available.")], name: "fresh-text")
+    try await check(contents: [.tex(id: "body", source: "\\section{A fresh source}\n\nIts real image must become available.")], name: "fresh-text")
   }
 
   func testPublicCollaborationCounterSourcePreparesItsOwnRaster() async throws {
-    // Exact block content of the failed isolated v15 public request. A fresh
-    // document identity keeps the reproduction separate from saved user data.
-    let blocks = try JSONDecoder().decode([DocumentBlock].self, from: Data(Self.publicBlocks.utf8))
-    try await check(blocks: blocks, name: "public-collaboration-counter")
+    // The same authored counter lives in ordinary program files, not an old-format block decoder.
+    try await check(contents: Self.publicContents, name: "public-collaboration-counter")
   }
 
   func testQueuedDocumentPreparationSurvivesRealBackgroundCapacityRelease() async throws {
@@ -41,7 +40,7 @@ final class DocumentTargetSnapshotPreparationTests: XCTestCase {
     defer { blockers.forEach { $0.close() } }
     try await waitUntil { blockers.allSatisfy { $0.coordinator.hasCanonicalPixels } }
     XCTAssertEqual(resources.activeBackgroundWebSurfaceCount, resources.maximumBackgroundWebSurfaces)
-    let document = DocumentDocument(actor: UUID(), blocks: [.markdown(id: "body", source: "# Waiting for physical capacity")])
+    let document = DocumentTestFiles.document(actor: UUID(), contents: [.tex(id: "body", source: "\\section{Waiting for physical capacity}")])
     let state = DocumentStateJournal(id: document.id, actor: UUID())
     let started = ProcessInfo.processInfo.systemUptime
     var completedAt: Double?, releasedAt: Double?, failure: Error?, result: RasterLease?
@@ -79,7 +78,7 @@ final class DocumentTargetSnapshotPreparationTests: XCTestCase {
     let blockers = (0..<resources.maximumBackgroundWebSurfaces).map { _ in BackgroundPaper() }
     defer { blockers.forEach { $0.close() } }
     try await waitUntil { blockers.allSatisfy { $0.coordinator.hasCanonicalPixels } }
-    let document = DocumentDocument(actor: UUID(), blocks: [.markdown(id: "body", source: "Never admitted")])
+    let document = DocumentTestFiles.document(actor: UUID(), contents: [.tex(id: "body", source: "Never admitted")])
     let state = DocumentStateJournal(id: document.id, actor: UUID())
     let source = SceneRasterSource.document(id: document.id,
       token: DocumentSnapshotCache.token(document: document, state: state, pageIndex: 0))
@@ -111,8 +110,7 @@ final class DocumentTargetSnapshotPreparationTests: XCTestCase {
       visible.forEach { $0.orderBack(nil) }
     }
     XCTAssertTrue(application.windows.allSatisfy { !$0.isVisible })
-    let blocks = try JSONDecoder().decode([DocumentBlock].self, from: Data(Self.publicBlocks.utf8))
-    try await check(blocks: blocks, name: "accessory-no-own-visible-window")
+    try await check(contents: Self.publicContents, name: "accessory-no-own-visible-window")
   }
 
   func testCapturePressureKeepsTheSameProducerUntilItsWholeRasterFits() async throws {
@@ -221,16 +219,23 @@ final class DocumentTargetSnapshotPreparationTests: XCTestCase {
 
   func testActualBrokenImageReturnsItsRenderFailureRatherThanReaderCancellation() async throws {
     let resources = SceneRenderResources(byteLimit: 32 * 1024 * 1024)
-    let document = DocumentDocument(actor: UUID(), blocks: [.markdown(id: "broken-image", source:
-      "<img width='451' height='158' src='data:image/png;base64,bm90LWFuLWltYWdl'>")])
+    let store = NotebookStore(root: FileManager.default.temporaryDirectory.appendingPathComponent("broken-document-image-" + UUID().uuidString))
+    _ = try store.initializeWorkspace(actor: UUID(), pageSize: .init(width: 834, height: 1194))
+    defer { try? FileManager.default.removeItem(at: store.root) }
+    let bytes = Data("not-an-image".utf8), hash = SHA256.hash(data: bytes).map { String(format: "%02x", $0) }.joined()
+    try store.stageBlob(data: bytes, expectedHash: hash)
+    let document = DocumentDocument(actor: UUID(), files: [
+      .init(id: "main", path: "main.tex", source: "\\documentclass{article}\\usepackage{graphicx}\\begin{document}\\includegraphics{images/broken.png}\\end{document}"),
+      .init(id: "image", path: "images/broken.png", resource: .init(path: "images/broken.png", mimeType: "image/png",
+        byteCount: Int64(bytes.count), parts: [.init(sha256: hash, byteCount: bytes.count)]))])
     let state = DocumentStateJournal(id: document.id, actor: UUID())
     do {
       let unexpected = try await DocumentSnapshotCache.shared.prepare(document: document, state: state,
-        pageIndex: 0, resources: resources)
+        pageIndex: 0, resources: resources, programStore: store)
       unexpected.release(); XCTFail("An undecodable physical image was reported as a prepared page")
     } catch {
       XCTAssertFalse(error is CancellationError, "Internal reader retirement must retain the actual renderer failure")
-      XCTAssertTrue(String(describing: error).contains("document_image_decode_failed"), "\(error)")
+      XCTAssertTrue(error.localizedDescription.contains("broken.png"), "\(error)")
       try attach(["actualBrokenImageError": String(describing: error)], name: "actual-broken-image-render-error")
     }
     try await waitUntil { resources.activeWebSurfaceCount == 0 && resources.reservedBytes == 0 }
@@ -262,7 +267,7 @@ final class DocumentTargetSnapshotPreparationTests: XCTestCase {
       var board = try store.loadBoard(items: workspace.items)
       mark("create_document")
       let item = try XCTUnwrap(workspace.createDocument(title: "Queued target", actor: actor))
-      let document = DocumentDocument(id: item.id, actor: actor, blocks: [.markdown(id: "body", source: "# A real queued target")])
+      let document = DocumentTestFiles.document(id: item.id, actor: actor, contents: [.tex(id: "body", source: "\\section{A real queued target}")])
       XCTAssertTrue(board.addItem(item.id, to: workspace.rootBoardID, near: .zero, actor: actor))
       mark("publish_document_bundle")
       try store.saveDocumentWorkspaceBundle(index: workspace, document: document,
@@ -318,12 +323,12 @@ final class DocumentTargetSnapshotPreparationTests: XCTestCase {
     let window: NSWindow
     private var closed = false
     init(resources: SceneRenderResources = .shared) {
-      let document = DocumentDocument(actor: UUID(), blocks: [.markdown(id: "body", source: "# An actual retained background paper")])
+      let document = DocumentTestFiles.document(actor: UUID(), contents: [.tex(id: "body", source: "\\section{An actual retained background paper}")])
       let state = DocumentStateJournal(id: document.id, actor: UUID())
       let ready = PageTurnReadiness { _ in }
       coordinator = DocumentWebCoordinator(resources: resources, onRenderReady: ready, onPageLayout: { _ in },
          onStateChange: { _, _ in nil })
-      let geometry = WorkspaceItemGeometry.document(document.paperSize)
+      let geometry = WorkspaceItemGeometry.uncompiledDocument
       window = NSWindow(contentRect: .init(x: -20_000, y: -20_000, width: geometry.width, height: geometry.height),
         styleMask: .borderless, backing: .buffered, defer: false)
       window.isReleasedWhenClosed = false; window.contentView = host; window.orderBack(nil)
@@ -352,8 +357,11 @@ final class DocumentTargetSnapshotPreparationTests: XCTestCase {
     proof.name = name; proof.lifetime = .keepAlways; add(proof)
   }
 
-  private func check(blocks: [DocumentBlock], name: String) async throws {
-    let actor = UUID(), document = DocumentDocument(actor: UUID(), blocks: blocks)
+  private func check(contents: [DocumentTestFiles], name: String) async throws {
+    let actor = UUID(), document = DocumentTestFiles.document(actor: UUID(), contents: contents)
+    let store = NotebookStore(root: FileManager.default.temporaryDirectory.appendingPathComponent("document-preview-" + UUID().uuidString))
+    _ = try store.initializeWorkspace(actor: actor, pageSize: .init(width: 834, height: 1194))
+    defer { try? FileManager.default.removeItem(at: store.root) }
     let state = DocumentStateJournal(id: document.id, actor: actor)
     let source = SceneRasterSource.document(id: document.id,
       token: DocumentSnapshotCache.token(document: document, state: state, pageIndex: 0))
@@ -364,13 +372,13 @@ final class DocumentTargetSnapshotPreparationTests: XCTestCase {
     let policyBeforePreparation = NSApplication.shared.activationPolicy().rawValue
     let started = ProcessInfo.processInfo.systemUptime
     var failure: Error?, result: RasterLease?
-    do { result = try await DocumentSnapshotCache.shared.prepare(document: document, state: state, pageIndex: 0) }
+    do { result = try await DocumentSnapshotCache.shared.prepare(document: document, state: state, pageIndex: 0, programStore: store) }
     catch { failure = error }
     defer { result?.release() }
     let elapsedMS = (ProcessInfo.processInfo.systemUptime - started) * 1000
     // The probe runs only after the real call. It must not manufacture an own
     // window before NSScreen.main is sampled by the production owner.
-    let geometry = WorkspaceItemGeometry.document(document.paperSize)
+    let geometry = WorkspaceItemGeometry.uncompiledDocument
     let probe = NSWindow(contentRect: .init(x: -20_000, y: -20_000, width: geometry.width, height: geometry.height),
       styleMask: .borderless, backing: .buffered, defer: false)
     probe.isReleasedWhenClosed = false; probe.orderBack(nil)
@@ -401,30 +409,9 @@ final class DocumentTargetSnapshotPreparationTests: XCTestCase {
     XCTAssertNotNil(result, "The live preparation path must return its own actual raster")
   }
 
-  private static let publicBlocks = #"""
-[
-  {
-    "source": "На отправленном изображении видно **Acceptance count: 8**. После вашего нажатия публичное состояние исходного блока показало **9**. SHA-256 замороженного изображения при повторном чтении остался прежним.\n\nНиже — отдельный счётчик с начальным значением 0. Кнопка прибавляет 1; notebook.commit передаёт состояние на сохранение, notebookstate восстанавливает отображение, notebook.ready сообщает о готовности.",
-    "id": "collaboration-explanation",
-    "kind": "markdown",
-    "html": "",
-    "javaScript": "",
-    "height": 320,
-    "initialState": {},
-    "css": ""
-  },
-  {
-    "source": "<main><button type=\"button\" id=\"increment\" aria-label=\"Collaboration increment 2c047f99-97ed-4108-a072-19d4b28b1427\">Прибавить один</button><output id=\"count\" aria-live=\"polite\">Collaboration count 2c047f99-97ed-4108-a072-19d4b28b1427: 0</output></main>",
-    "id": "collaboration-counter-2c047f99-97ed-4108-a072-19d4b28b1427",
-    "kind": "interactive",
-    "html": "<main><button type=\"button\" id=\"increment\" aria-label=\"Collaboration increment 2c047f99-97ed-4108-a072-19d4b28b1427\">Прибавить один</button><output id=\"count\" aria-live=\"polite\">Collaboration count 2c047f99-97ed-4108-a072-19d4b28b1427: 0</output></main>",
-    "javaScript": "const button=document.getElementById(\"increment\");\nconst output=document.getElementById(\"count\");\nconst count=()=>notebook.state?.count ?? 0;\nconst draw=()=>{output.textContent=\"Collaboration count 2c047f99-97ed-4108-a072-19d4b28b1427: \"+count();};\nbutton.addEventListener(\"click\",()=>{notebook.commit({count:count()+1});draw();});\naddEventListener(\"notebookstate\",draw);\nnotebook.ready(Promise.resolve().then(draw));",
-    "initialState": {
-      "count": 0
-    },
-    "height": 180,
-    "css": "*{box-sizing:border-box}html,body{margin:0;background:#fff;color:#172733;font:18px -apple-system,sans-serif}main{display:grid;gap:18px;padding:12px}button{font:inherit;min-height:52px;padding:12px 18px;background:#1675a9;color:white;border:0;border-radius:12px;cursor:pointer}button:focus-visible{outline:3px solid #172733;outline-offset:3px}output{display:block;overflow-wrap:anywhere;line-height:1.45;font-variant-numeric:tabular-nums}"
-  }
-]
-"""#
+  private static var publicContents: [DocumentTestFiles] { [
+    .tex(id: "collaboration-explanation", source: "Сохранённое состояние и независимый счётчик. Кнопка прибавляет один; значение остаётся доступным после повторного открытия."),
+    .program(id: "collaboration-counter-2c047f99-97ed-4108-a072-19d4b28b1427", html: "<main><button type=\"button\" id=\"increment\" aria-label=\"Collaboration increment 2c047f99-97ed-4108-a072-19d4b28b1427\">Прибавить один</button><output id=\"count\" aria-live=\"polite\">Collaboration count 2c047f99-97ed-4108-a072-19d4b28b1427: 0</output></main>", css: "*{box-sizing:border-box}html,body{margin:0;background:#fff;color:#172733;font:18px -apple-system,sans-serif}main{display:grid;gap:18px;padding:12px}button{font:inherit;min-height:52px;padding:12px 18px;background:#1675a9;color:white;border:0;border-radius:12px;cursor:pointer}button:focus-visible{outline:3px solid #172733;outline-offset:3px}output{display:block;overflow-wrap:anywhere;line-height:1.45;font-variant-numeric:tabular-nums}",
+      javaScript: "const button=document.getElementById(\"increment\");\nconst output=document.getElementById(\"count\");\nconst count=()=>notebook.state?.count ?? 0;\nconst draw=()=>{output.textContent=\"Collaboration count 2c047f99-97ed-4108-a072-19d4b28b1427: \"+count();};\nbutton.addEventListener(\"click\",()=>{notebook.commit({count:count()+1});draw();});\naddEventListener(\"notebookstate\",draw);\nnotebook.ready(Promise.resolve().then(draw));", initialState: .object(["count": .number(0)]), height: 180)
+  ] }
 }

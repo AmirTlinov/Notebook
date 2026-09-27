@@ -102,7 +102,7 @@ enum CurrentViewPreviewWriter {
     let identities: [NotebookReferenceIdentity]?
     if case .scene(let values) = identity { identities = values } else { identities = nil }
     let source = identities.map { SceneCompositionSource(store: store, revision: header.cursor, workspaceID: header.workspaceID,
-      validationIdentities: $0, recordPixelDependencies: true) }
+      validationIdentities: $0, recordPixelDependencies: true, documentGeometry: model.documentPaperSizes) }
     let png: Data
     let surface: CurrentViewSurfaceRevision
     switch presence.mode {
@@ -210,11 +210,13 @@ enum CurrentViewPreviewWriter {
       }
     }
     let (files, header) = try await withTaskCancellationHandler { try await reader.value } onCancel: { reader.cancel() }
-    let source = SceneCompositionSource(store: store, revision: header.cursor, workspaceID: header.workspaceID)
+    let source = SceneCompositionSource(store: store, revision: header.cursor, workspaceID: header.workspaceID, documentGeometry: model.documentPaperSizes)
     let target = request.target
     let full: RasterSnapshot
     var camera: SpatialCamera?
     var diagnostics: [RenderDiagnostic] = []
+    var buildID: String?
+    var programs: [DocumentProgramCheck]?
     var inkRegions: [PageRect] = []
     var inkRaster: RasterSnapshot?
     var documentRaster: RasterLease?
@@ -242,7 +244,8 @@ enum CurrentViewPreviewWriter {
       let preparedDocument = try await DocumentSnapshotCache.shared.prepare(document: document, state: state, pageIndex: request.pageIndex, programStore: model.store)
       documentRaster = preparedDocument
       full = try await raster(preparedDocument.image)
-      diagnostics = DocumentRenderRegistry.shared.entry(document: document, pageIndex: request.pageIndex)?.diagnostics ?? []
+      let entry = DocumentRenderRegistry.shared.entry(document: document, pageIndex: request.pageIndex)
+      diagnostics = entry?.diagnostics ?? []; buildID = entry?.layout.buildID; programs = entry?.programs ?? []
     case .board, .cover:
       let boardID = target.kind == .board ? target.id : target.boardID!
       guard try await source.boardExists(boardID) else { throw PreviewError.invalidSurface }
@@ -292,7 +295,8 @@ enum CurrentViewPreviewWriter {
     let ink = try inkRaster.map { target.kind == .board ? $0 : try crop($0, region: request.region) }
     let inkFingerprint = ink?.sha256 ?? "empty-ink"
     let png = output.png, outputHash = output.sha256
-    let outputCamera = camera, outputDiagnostics = diagnostics, outputRegions = inkRegions
+    let outputCamera = camera, outputDiagnostics = diagnostics, outputRegions = inkRegions, outputBuildID = buildID
+    let outputPrograms = programs
     try await model.performStoreCommand { store in
       try Task.checkCancellation()
       let latest = try store.workspaceHeader()
@@ -301,9 +305,9 @@ enum CurrentViewPreviewWriter {
       guard let image = NSBitmapImageRep(data: png) else { throw PreviewError.pngEncoding }
       let fingerprint = request.region == nil ? nil : target.kind == .document ? outputHash
         : try store.regionalFingerprint(request, inkFingerprint: inkFingerprint)
-      try store.saveTargetRender(.init(request: request, status: "ready", pngSHA256: outputHash, referenceFingerprint: fingerprint,
+      try store.saveTargetRender(.init(request: request, status: "ready", buildID: outputBuildID, pngSHA256: outputHash, referenceFingerprint: fingerprint,
         pixelSize: .init(x: Double(image.pixelsWide), y: Double(image.pixelsHigh)), camera: outputCamera,
-        diagnostics: outputDiagnostics, inkRegions: outputRegions), png: png)
+        diagnostics: outputDiagnostics, programs: outputPrograms, inkRegions: outputRegions), png: png)
     }
   }
 

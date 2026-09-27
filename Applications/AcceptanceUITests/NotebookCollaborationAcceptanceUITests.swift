@@ -1,4 +1,5 @@
 import UIKit
+import Vision
 import XCTest
 
 /// Exercises the paired application's real conversation and human controls.
@@ -456,7 +457,6 @@ import XCTest
     let title = "Collaboration \(nonce)"
     let button = "Collaboration increment \(nonce)"
     let output = "Collaboration count \(nonce): "
-    let svg = Data("<svg xmlns='http://www.w3.org/2000/svg' width='160' height='48'><path d='M4 40L80 4L156 40' fill='none' stroke='#173d69'/><text x='12' y='32'>Joint Figure</text></svg>".utf8).base64EncodedString()
     let before = try count()
     try selectCounterRegion()
     try send("""
@@ -468,22 +468,30 @@ import XCTest
       публичные чтения его нового count, отличного от значения в отправленном изображении; не проси
       подтверждения и не делай сетевых/файловых вызовов. Повторно прочитай то же внимание: SHA должен
       остаться прежним. В текущей доске создай одной транзакцией документ «\(title)»: короткое объяснение
-      увиденного и интерактивный блок на первой странице, исходный count 0, настоящая кнопка с aria-label
+      увиденного и живую программу на первой странице, исходный count 0, настоящая кнопка с aria-label
       «\(button)», output «\(output)0». Кнопка прибавляет 1, notebook.commit сохраняет состояние,
       notebookstate его восстанавливает, notebook.ready объявляет готовность. Прочитай сохранённый документ.
-      Первый markdown-блок должен иметь id joint-reading, заголовок «Joint route \(nonce)»,
-      короткое объяснение, формулу x^2+1 с обычными MathJax delimiters, внутреннюю ссылку
-      <a href='#joint-reading'>Joint reading</a> и <img width='160' height='48'
-      src='data:image/svg+xml;base64,\(svg)'>. Поставь id joint-reading также на его HTML-заголовке.
-      Не заменяй формулу картинкой. Весь первый блок и кнопка должны помещаться на первой странице.
+      Создай настоящие адресные файлы: main.tex — полный LaTeX с fontspec, Libertinus Serif,
+      geometry (540 на 720 bp, поля 36 bp), hyperref и notebook; он включает chapters/joint-reading.tex,
+      затем команду \\NotebookInteractive[id=joint-counter,width=\\linewidth,height=100bp]{programs/joint-counter}.
+      Файл chapters/joint-reading.tex имеет id joint-reading: заголовок «Joint route \(nonce)»,
+      короткое объяснение, формулу $x^2+1$, цель joint-reading и ссылку «Joint reading» через
+      \\hypertarget/\\hyperlink. Из него включи файл figures/joint.tex с id joint-figure:
+      обычный векторный рисунок LaTeX picture — треугольник 160 на 48 bp с текстом «Joint Figure».
+      Не используй Markdown, MathJax, HTML или data URI для печатного содержания.
+      Программа хранится в programs/joint-counter/index.html, style.css, main.js и program.json
+      (module=false, initialState={count:0}); programID в ответе — joint-counter.
+      Чтение проверяет каталог через nb.document, текст через nb.document с fileID,
+      состояние — nb.read kind documentProgram с instanceID и programPath.
+      Весь вводный раздел, рисунок и кнопка должны помещаться на первой странице.
       Не двигай мою камеру. В финале дай один плоский JSON без вложенных объектов: test=\(nonce),
       phase=attention_created, contextID, referenceID, artifactSHA256, artifactSHA256After, boardID,
       documentID, programID, creationActionID, creationRunID, attentionRunID, beforeRevision, afterRevision,
       sentCount (число с исходных
       пикселей), currentCount (новое публичное значение). IDs/версии/SHA возьми из настоящих результатов.
       RunID — действительный run_id вызова notebook_execute с соответствующим действием или изображением.
-      Версии относятся к boardID: beforeRevision из expected создания, afterRevision из его сохранённой
-      квитанции. Выведи через emit фактическую квитанцию создания и прочитанные значения; они нужны
+      Версии относятся к boardID: beforeRevision из base чтения доски, afterRevision из basis сохранённой
+      квитанции создания. Выведи через emit фактическую квитанцию создания и прочитанные значения; они нужны
       для независимой проверки по журналу публичного запуска.
       Если изображения или операции недоступны, опиши реальную ошибку, не придумывай успешный пакет.
       """)
@@ -512,17 +520,18 @@ import XCTest
     try inspectCreatedDocument(receipt: receipt, nonce: nonce, before: before)
     let humanMarker = try editAndExportCreatedDocument(receipt: receipt, nonce: nonce)
     try continueCreatedMaterial(receipt: receipt, nonce: nonce)
-    XCTAssertTrue(app.webViews.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", humanMarker)).firstMatch.exists,
-      "Agent continuation and undo must preserve the human source edit in the same installed document")
+    try assertHumanSourceVisible(marker: humanMarker, name: "joint-route-human-source-after-agent-undo")
   }
 
   /// Close the previously separate Save/export boundary inside the real
   /// agent/human conversation. Agent prose only supplies addresses for the
   /// independent public export audit; it is not accepted as a file receipt.
   private func editAndExportCreatedDocument(receipt: [String: Any], nonce: String) throws -> String {
-    let heading = app.webViews.staticTexts["Joint route \(nonce)"].firstMatch
-    XCTAssertTrue(heading.isHittable); heading.doubleTap()
-    let editor = app.textViews["Исходный Markdown или LaTeX"].firstMatch
+    let documentID = try uuid(receipt, "documentID")
+    let beforeToken = try XCTUnwrap(installedDocumentSourceToken(documentID))
+    selectNotebookDocumentMode("Код", in: app)
+    selectNotebookDocumentFile("chapters/joint-reading.tex", in: app)
+    let editor = app.textViews["document-source-editor"].firstMatch
     XCTAssertTrue(editor.waitForExistence(timeout: 5)); editor.tap()
     let keyboard = XCTNSPredicateExpectation(predicate: NSPredicate { [self] _, _ in
       app.keyboards.firstMatch.exists && app.keyboards.firstMatch.frame.height > 100
@@ -530,8 +539,8 @@ import XCTest
     XCTAssertEqual(XCTWaiter.wait(for: [keyboard], timeout: 3), .completed)
     let original = try XCTUnwrap(editor.value as? String)
     let marker = "Human source \(nonce)"
-    // A centre tap can put the caret inside the SVG's data URI. Move through
-    // the ordinary keyboard command and prove the original source survives.
+    // Append to the included chapter, not after main.tex's end-of-document.
+    // The ordinary system command must preserve the original complete file.
     editor.typeKey(XCUIKeyboardKey.downArrow.rawValue, modifierFlags: .command)
     editor.typeText("\n\n" + marker)
     let entered = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
@@ -539,29 +548,62 @@ import XCTest
     }, object: nil)
     XCTAssertEqual(XCTWaiter.wait(for: [entered], timeout: 3), .completed)
     screenshot("joint-route-human-source-before-save")
-    let save = app.webViews.buttons["Сохранить"].firstMatch
-    XCTAssertTrue(save.isHittable); save.tap()
+    XCTAssertTrue(app.staticTexts["Сохранено"].waitForExistence(timeout: 15))
+    selectNotebookDocumentMode("Лист", in: app)
     XCTAssertTrue(editor.waitForNonExistence(timeout: 10))
-    let installedText = app.webViews.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", marker)).firstMatch
-    XCTAssertTrue(installedText.waitForExistence(timeout: 15),
-      "Save ends only when the saved source is installed, not when the editor disappears")
-    XCTAssertTrue(installedText.isHittable)
-    screenshot("joint-route-saved-human-source-actually-installed")
-    let documentID = try uuid(receipt, "documentID").uuidString
+    let installed = XCTNSPredicateExpectation(predicate: NSPredicate { [self] _, _ in
+      guard let token = installedDocumentSourceToken(documentID) else { return false }
+      return token != beforeToken
+    }, object: nil)
+    XCTAssertEqual(XCTWaiter.wait(for: [installed], timeout: 30), .completed,
+      "A durable file save must install a new exact source on the real paper before export")
+    try assertHumanSourceVisible(marker: marker, name: "joint-route-saved-human-source-actually-installed")
     try send("""
-      Продолжим тот же маршрут \(nonce), документ \(documentID). Я отредактировал первый блок
-      через настоящий редактор и Save: в joint-reading теперь есть «\(marker)».
-      Через notebook_context/notebook_execute прочитай именно сохранённый документ, убедись в маркере,
-      прежней формуле, SVG data URI, ссылке и count=1 интерактивного блока. Ничего не изменяй.
+      Продолжим тот же маршрут \(nonce), документ \(documentID.uuidString). Я отредактировал файл
+      chapters/joint-reading.tex (fileID joint-reading) нативным редактором с автосохранением:
+      в нём теперь есть «\(marker)». Через notebook_context/notebook_execute адресно прочитай
+      joint-reading и joint-figure через nb.document({id,fileID}), убедись в маркере, формуле
+      $x^2+1$, исходнике векторного picture и ссылке. Отдельно прочитай nb.read kind documentProgram
+      с instanceID joint-counter и programPath programs/joint-counter: count должен быть 1.
+      Ничего не изменяй.
       Создай один nb.export для этой сохранённой версии. Дождись nb.exportStatus с готовым файлом,
       не повторяя запрос экспорта. Emit полные фактические ответы document, export и exportStatus.
       Ответь одним плоским JSON: test=\(nonce), phase=human_saved_exported, documentID,
       jobID, exportRunID, contentRevision, stateRevision, markerPresent (boolean),
-      formulaPresent (boolean), svgPresent (boolean), linkPresent (boolean), actualCount (1).
+      formulaPresent (boolean), vectorPresent (boolean), linkPresent (boolean), actualCount (1).
       Адреса и версии возьми из реальных ответов, не из этого сообщения. Ошибка не заменяется пакетом PASS.
       """)
     try readSavedExport(receipt: receipt, nonce: nonce)
     return marker
+  }
+
+  private func installedDocumentSourceToken(_ documentID: UUID) -> String? {
+    for host in app.descendants(matching: .any).matching(identifier: "document-runtime").allElementsBoundByIndex where host.isHittable {
+      guard let raw = host.value as? String, let data = raw.data(using: .utf8),
+        let record = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+        (record["documentID"] as? String).flatMap(UUID.init(uuidString:)) == documentID,
+        record["pageIndex"] as? Int == 0, record["installedAt"] is NSNumber,
+        record["failure"] == nil, let token = record["sourceToken"] as? String else { continue }
+      return token
+    }
+    return nil
+  }
+
+  private func assertHumanSourceVisible(marker: String, name: String) throws {
+    let screenshot = app.screenshot(), surface = app.otherElements["page-turn-surface"]
+    let frame = surface.frame.intersection(app.frame)
+    XCTAssertFalse(frame.isEmpty)
+    let attachment = XCTAttachment(screenshot: screenshot); attachment.name = name
+    attachment.lifetime = .keepAlways; add(attachment)
+    let request = VNRecognizeTextRequest(); request.recognitionLevel = .accurate
+    request.recognitionLanguages = ["en-US", "ru-RU"]
+    try VNImageRequestHandler(cgImage: XCTUnwrap(screenshot.image.cgImage), options: [:]).perform([request])
+    let pageRegion = CGRect(x: (frame.minX-app.frame.minX)/app.frame.width,
+      y: 1-(frame.maxY-app.frame.minY)/app.frame.height, width: frame.width/app.frame.width, height: frame.height/app.frame.height)
+    let text = (request.results ?? []).filter { pageRegion.contains(CGPoint(x: $0.boundingBox.midX, y: $0.boundingBox.midY)) }
+      .compactMap { $0.topCandidates(1).first?.string }.joined(separator: "\n")
+    XCTAssertTrue(text.contains("Human source"), "The actual printed glyphs must remain visible, not only a hidden source copy: \(text)")
+    try attach(["expectedFileMarker": marker, "recognizedPrintedText": text], name: name + "-text")
   }
 
   private func readSavedExport(receipt: [String: Any], nonce: String) throws {
@@ -571,14 +613,14 @@ import XCTest
     XCTAssertEqual(try uuid(export, "documentID"), try uuid(receipt, "documentID"))
     for key in ["jobID", "exportRunID"] { try uuid(export, key) }
     for key in ["contentRevision", "stateRevision"] { _ = try string(export, key) }
-    for key in ["markerPresent", "formulaPresent", "svgPresent", "linkPresent"] {
+    for key in ["markerPresent", "formulaPresent", "vectorPresent", "linkPresent"] {
       XCTAssertEqual(export[key] as? Bool, true)
     }
     XCTAssertEqual(export["actualCount"] as? Int, 1)
-    try attach(["test": nonce, "documentID": documentID, "blockID": "joint-reading", "marker": marker,
+    try attach(["test": nonce, "documentID": documentID, "fileID": "joint-reading", "marker": marker,
       "agentReportedExportAddresses": export], name: "joint-route-save-export-addresses-for-independent-public-audit")
     collapseChat()
-    XCTAssertTrue(app.webViews.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", marker)).firstMatch.exists)
+    try assertHumanSourceVisible(marker: marker, name: "joint-route-exported-human-source")
   }
 
   /// Continue the same completed creation through its remaining human/agent
@@ -616,7 +658,7 @@ import XCTest
     } else {
       try continueCreatedMaterial(receipt: receipt, nonce: nonce)
     }
-    XCTAssertTrue(app.webViews.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Human source \(nonce)")).firstMatch.exists)
+    try assertHumanSourceVisible(marker: "Human source \(nonce)", name: "joint-route-resumed-human-source")
   }
 
   private func currentCreationReceipt() throws -> [String: Any] {
@@ -690,16 +732,18 @@ import XCTest
     let createdButton = app.webViews.buttons["Collaboration increment \(nonce)"].firstMatch
     XCTAssertTrue(app.webViews.staticTexts[output + "1"].firstMatch.exists)
     try send("""
-      Продолжи тот же материал проверки \(nonce), документ \(documentID), блок \(programID), в этом же чате.
+      Продолжи тот же материал проверки \(nonce), документ \(documentID), экземпляр \(programID), в этом же чате.
       Работай только через notebook_context/notebook_execute. Я уже нажал созданную тобой кнопку один раз.
-      Прочитай реальное состояние: count должен быть 1. Если он другой — остановись с настоящей ошибкой.
-      Сохраняя остальные поля, одной nb.transaction/setBlockState прибавь 100: получится 101.
-      expected содержит contentRevision И stateRevision из nb.document. Сохрани actionID и точные
-      revisions из квитанции этого эффекта, не из последующего чтения. Emit полную квитанцию и state.
+      Прочитай nb.read({kind:'documentProgram',id:'\(documentID)',instanceID:'\(programID)',
+      programPath:'programs/joint-counter'}): фактический count должен быть 1, иначе остановись с ошибкой.
+      Сохраняя остальные поля, одной nb.transaction с операцией setDocumentProgramState прибавь 100:
+      получится 101. Передай base из этого чтения, id экземпляра, values.programPath и values.sourceBasis
+      из его data, новое values.state. Сохрани actionID и точный basis из результата этой транзакции,
+      не из последующего чтения. Emit полную квитанцию и state.
       Не меняй исходник, разметку, камеру или другие владельцы. Я увижу 101 и нажму ту же кнопку ещё раз.
       Жди actual count 102 ограниченными публичными чтениями; один JS run не дольше 30 секунд,
-      продолжения без повторения эффекта. После моей правки намеренно попробуй setBlockState с
-      ожиданиями именно твоей сохранённой версии 101. Ожидается revision_conflict; не обновляй expected
+      продолжения без повторения эффекта. После моей правки намеренно попробуй setDocumentProgramState с
+      base именно твоей сохранённой версии 101 и тем же sourceBasis. Ожидается revision_conflict; не обновляй base
       и не повторяй запись. Если запись принята — остановись и сообщи реальную ошибку.
       Emit фактическую ошибку. Отмени только свой эффект +100 через nb.undo, прочитай итог:
       человеческая версия 102 должна сохраниться. Создание документа не отменяй.

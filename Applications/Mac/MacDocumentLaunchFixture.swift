@@ -105,18 +105,10 @@
         }
 
         let sections = (1...36).map { number in
-          "## Раздел \(number)\n\nЖивой многостраничный документ проверяет устойчивое присоединение WebKit к окну."
+          "\\section{Раздел \(number)}\nЖивой многостраничный документ проверяет устойчивое присоединение WebKit к окну."
         }.joined(separator: "\n\n")
-        let document = DocumentDocument(
-          id: documentID,
-          actor: actor,
-          blocks: [
-            .markdown(
-              id: "launch-proof",
-              source: "# Проверка запуска\n\n\(sections)"
-            )
-          ]
-        )
+        let source = DocumentTemplate.article.files[0].source.replacingOccurrences(of: "Write your article here.", with: sections)
+        let document = DocumentDocument(id: documentID, actor: actor, files: [.init(id: "main", path: "main.tex", source: source)])
         let state = DocumentStateJournal(id: documentID, actor: actor)
         let halfSpacing = WorkspaceItemGeometry.notebook.width * 1.28 / 2
         guard hierarchy.moveItem(notebookID, in: index.rootBoardID,
@@ -139,7 +131,7 @@
             mode: .document,
             camera: SpatialCamera(
               center: center,
-              scale: WorkspaceItemGeometry.document(document.paperSize).fitScale(viewport: viewport)
+              scale: WorkspaceItemGeometry.uncompiledDocument.fitScale(viewport: viewport)
             ),
             viewport: viewport,
             focusedItemID: documentID,

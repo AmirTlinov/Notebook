@@ -20,7 +20,8 @@ final class ProgramAssetTests: XCTestCase {
     let hash: String
     func close() { try? FileManager.default.removeItem(at: root) }
   }
-  private func fixture() throws -> Fixture {
+  private func fixture(largeAsset: Bool = true) throws -> Fixture {
+    let rangeStart = (largeAsset ? 74 : 1) * NotebookProgramPackage.partBytes - 2
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     let store = NotebookStore(root: root)
     _ = try store.initializeWorkspace(actor: UUID(), pageSize: .init(width: 834, height: 1194))
@@ -29,7 +30,7 @@ final class ProgramAssetTests: XCTestCase {
       const result=(async()=>{
         const font=await new FontFace('PackageFixture',"url('./font.woff2')").load();document.fonts.add(font);
         const data=await (await fetch('./data.json')).json();
-        const response=await fetch('./large.bin',{headers:{Range:'bytes=310378494-310378497'}});
+        const response=await fetch('./large.bin',{headers:{Range:'bytes=\(rangeStart)-\(rangeStart + 3)'}});
         const bytes=[...new Uint8Array(await response.arrayBuffer())];
         const worker=await new Promise((resolve,reject)=>{const w=new Worker(new URL('./worker.js',import.meta.url));
           w.onmessage=e=>{w.terminate();resolve(e.data)};w.onerror=e=>reject(Error('worker: '+e.message));w.postMessage(answer)});
@@ -73,11 +74,30 @@ final class ProgramAssetTests: XCTestCase {
     // A 300 MiB logical asset; two unique 4 MiB parts, not a 300 MiB transfer benchmark.
     let a = try part(Data(repeating: 29, count: NotebookProgramPackage.partBytes))
     let b = try part(Data(repeating: 31, count: NotebookProgramPackage.partBytes))
-    entries.append(.init(path: "large.bin", mimeType: "application/octet-stream", byteCount: 300 * 1_048_576,
-      parts: Array(repeating: a, count: 74) + [b]))
+    entries.append(.init(path: "large.bin", mimeType: "application/octet-stream", byteCount: Int64((largeAsset ? 75 : 2) * NotebookProgramPackage.partBytes),
+      parts: Array(repeating: a, count: largeAsset ? 74 : 1) + [b]))
     let package = NotebookProgramPackage(html: "view.html", css: "style.css", javaScript: "main.js", files: entries.sorted { $0.path < $1.path })
     return Fixture(root: root, store: store, package: package, hash: try store.stageProgramPackage(package))
   }
+  private func packagePath(_ fixture: Fixture) -> String { "programs/p" + fixture.hash.prefix(24) }
+
+  private func packaged(id: String, fixture f: Fixture, initialState: JSONValue = .object([:]), height: Double = 320) throws -> DocumentTestFiles {
+    let path = packagePath(f)
+    var files = f.package.files.enumerated().map { index, file in
+      DocumentFile(id: "p" + f.hash.prefix(24) + "-\(index)", path: path + "/" + file.path,
+        resource: .init(path: path + "/" + file.path, mimeType: file.mimeType, byteCount: file.byteCount, parts: file.parts))
+    }
+    let config: JSONValue = .object(["html": f.package.html.map(JSONValue.string) ?? .null,
+      "css": f.package.css.map(JSONValue.string) ?? .null, "javaScript": f.package.javaScript.map(JSONValue.string) ?? .null,
+      "module": .bool(f.package.module), "initialState": initialState])
+    files.append(.init(id: "p" + f.hash.prefix(24) + "-config", path: path + "/program.json",
+      source: String(decoding: try JSONEncoder().encode(config), as: UTF8.self)))
+    let scale = PhysicalPaper.pointsPerCentimeter * 2.54 / 72
+    return .init(id: id, files: files,
+      inclusion: "\\NotebookInteractive[id=\(id),width=\\linewidth,height=\(height / scale)bp,breakable]{\(path)}",
+      initialState: initialState, height: height)
+  }
+
   func testSixInlineScientificRecipesCheckpointTheirExplicitModelThroughTheExistingOwner() async throws {
     let bundle = Bundle(for: Self.self)
     func source(_ name: String, _ ext: String) throws -> String {
@@ -138,56 +158,40 @@ final class ProgramAssetTests: XCTestCase {
   }
 
   #if os(macOS)
-  func testPortableDirectoryImportsRealScientificResourcesWithoutExecutingBeforeOpen() async throws {
+  func testPortableArchiveImportsRealScientificResourcesWithoutExecutingBeforeOpen() async throws {
     let f = try compiledFixture("signal-program"); defer { f.close() }
     let actor = UUID()
     var index = try f.store.loadIndex(), board = try f.store.loadBoard(items: index.items)
     let item = try XCTUnwrap(index.createDocument(title: "Portable signal", actor: actor))
     XCTAssertTrue(board.addItem(item.id, to: index.rootBoardID, near: .zero, actor: actor))
-    let document = DocumentDocument(id: item.id, actor: actor, blocks: [.markdown(id: "title", source: "# Portable exact signal"),
-      .interactive(id: "signal", html: "", programPackage: f.hash, height: 1000)])
+    let document = DocumentTestFiles.document(id: item.id, actor: actor, contents: [.tex(id: "title", source: "\\section{Portable exact signal}"),
+      try packaged(id: "signal", fixture: f, height: 1000)])
     var state = DocumentStateJournal(id: item.id, actor: actor)
-    XCTAssertTrue(state.commit(blockID: "signal", value: .object(["center": .number(37.125), "span": .number(0.05), "sample": .number(37125)]), actor: actor))
+    XCTAssertTrue(state.commit(instanceID: "signal", value: .object(["center": .number(37.125), "span": .number(0.05), "sample": .number(37125)]), actor: actor))
     try f.store.saveDocumentWorkspaceBundle(index: index, document: document, state: state, board: board)
     let cut = try f.store.readTransaction { try NotebookExportCut(document: $0.loadDocument(item.id), state: $0.loadDocumentState(item.id)) }
     let surfaces = SceneRenderResources.shared.activeWebSurfaceCount, before = try f.store.currentChangeCursor()
     let receipt = try await DocumentCanonicalExport.publish(cut: cut, options: .init(format: .package), jobID: UUID(), store: f.store, persistence: NotebookPersistenceQueue(store: f.store))
     XCTAssertEqual(SceneRenderResources.shared.activeWebSurfaceCount, surfaces)
     XCTAssertEqual(try f.store.currentChangeCursor(), before, "Export has no content or state effects")
-    let path = URL(fileURLWithPath: receipt.artifact.path), directory = path.deletingLastPathComponent()
-    let portable = try JSONDecoder().decode(NotebookPortableDocument.self, from: Data(contentsOf: path))
-    XCTAssertEqual(portable.cut, cut); XCTAssertEqual(portable.packages.first?.sha256, f.hash)
+    let path = URL(fileURLWithPath: receipt.artifact.path)
+    XCTAssertEqual(path.pathExtension, "notex")
+    let bytes = try Data(contentsOf: path)
+    let portable = try NotebookPortableDocument(data: bytes)
+    XCTAssertEqual(portable.cut, cut)
     let importedRoot = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: importedRoot) }
     let store = NotebookStore(root: importedRoot)
     let workspace = try store.initializeWorkspace(actor: actor, pageSize: .init(width: 834, height: 1194))
-    let importer = NotebookProgramImporter(persistence: NotebookPersistenceQueue(store: store), workspaceID: workspace.workspaceID)
-    defer { importer.stop() }
-    let initialIndex = try store.loadIndex()
-    for package in portable.packages {
-      let descriptor = NotebookProgramImport(packageHash: package.sha256, package: package.value, sources: package.value.files.map { file in
-        .init(path: file.path, partPaths: file.parts.map { directory.appendingPathComponent("blob-" + $0.sha256).path })
-      })
-      let manifest = importedRoot.appendingPathComponent("import.json")
-      try JSONEncoder().encode(descriptor).write(to: manifest)
-      var progress = try await importer.handle(.init(op: .start, packageHash: package.sha256, manifestPath: manifest.path))
-      let deadline = ContinuousClock.now + .seconds(20)
-      while progress["status"] == .string("staging"), ContinuousClock.now < deadline {
-        try await Task.sleep(for: .milliseconds(10)); progress = try await importer.handle(.init(op: .status, packageHash: package.sha256))
-      }
-      XCTAssertEqual(progress["status"], .string("ready"), "\(progress)")
-      XCTAssertEqual(try store.readProgramPackage(package.sha256), package.value)
-      for file in package.value.files {
-        var offset: Int64 = 0
-        while offset < file.byteCount {
-          let bytes = try store.readProgramFile(file, offset: offset, maxBytes: 1_048_576)
-          XCTAssertEqual(bytes, try f.store.readProgramFile(file, offset: offset, maxBytes: 1_048_576))
-          offset += Int64(bytes.count)
-        }
-      }
-    }
-    XCTAssertEqual(try store.loadIndex(), initialIndex, "Staging alone cannot publish, select or render")
+    let selection = workspace.selectedItemID
+    let imported = try store.importPortableDocument(data: bytes, targetBoardID: workspace.rootBoardID, center: .zero, actor: actor)
+    let copy = try store.loadDocument(imported.documentID)
+    XCTAssertNotEqual(copy.id, document.id)
+    XCTAssertEqual(copy.files, document.files)
+    for file in copy.files { XCTAssertEqual(try store.readDocumentFileBytes(file), try f.store.readDocumentFileBytes(file)) }
+    XCTAssertEqual(try store.loadIndex().selectedItemID, selection, "Import cannot select or execute the new document")
     XCTAssertEqual(SceneRenderResources.shared.activeWebSurfaceCount, surfaces)
+    let importedProgram = try store.documentProgramSource(document: copy, instanceID: "signal", path: packagePath(f))
     // Only the explicit open below obtains a WebKit owner and executes the
     // unchanged asset program against the imported, saved scientific state.
     let resources = SceneRenderResources(), lease = try await resources.acquireWebSurface(priority: .input)
@@ -196,7 +200,7 @@ final class ProgramAssetTests: XCTestCase {
     owner.programStore = store
     let web = AgentWebCoordinator.makeWebView(coordinator: owner), close = try mount(web)
     defer { owner.invalidate(); lease.release(); close() }
-    owner.load(.init(id: "signal", kind: .web, frame: .init(x: 0, y: 0, width: 760, height: 1050), source: "", html: "", programPackage: f.hash,
+    owner.load(.init(id: "signal", kind: .web, frame: .init(x: 0, y: 0, width: 760, height: 1050), source: "", html: "", programPackage: importedProgram.programPackage,
       state: try XCTUnwrap(portable.cut.state.value(for: "signal"))), policy: .exact(scale: 1), in: web)
     try await wait { ready || owner.snapshotFailure != nil }
     XCTAssertTrue(ready); XCTAssertNil(owner.snapshotFailure); XCTAssertEqual(commits, 0)
@@ -208,11 +212,11 @@ final class ProgramAssetTests: XCTestCase {
 
   func testSignalExportsTheExactSavedSampleWindowAsOfflineVectors() async throws {
     let f = try compiledFixture("signal-program"); defer { f.close() }
-    let document = DocumentDocument(actor: UUID(), blocks: [.interactive(id: "signal", html: "", programPackage: f.hash, height: 1000)])
+    let document = DocumentTestFiles.document(actor: UUID(), contents: [try packaged(id: "signal", fixture: f, height: 1000)])
     var state = DocumentStateJournal(id: document.id, actor: UUID())
-    XCTAssertTrue(state.commit(blockID: "signal", value: .object(["center": .number(37.125), "span": .number(0.05), "sample": .number(37125)]), actor: UUID()))
+    XCTAssertTrue(state.commit(instanceID: "signal", value: .object(["center": .number(37.125), "span": .number(0.05), "sample": .number(37125)]), actor: UUID()))
     let cut = try NotebookExportCut(document: document, state: state)
-    let publication = try await DocumentCanonicalExport.publication(cut: cut, options: .init(format: .svg, blockID: "signal"), jobID: UUID(), store: f.store, persistence: NotebookPersistenceQueue(store: f.store))
+    let publication = try await DocumentCanonicalExport.publication(cut: cut, options: .init(format: .svg, instanceID: "signal"), jobID: UUID(), store: f.store, persistence: NotebookPersistenceQueue(store: f.store))
     let bytes = try readExportBytes(publication.artifact, store: f.store)
     try NotebookExportSVG.validate(bytes)
     let svg = String(decoding: bytes, as: UTF8.self)
@@ -222,7 +226,7 @@ final class ProgramAssetTests: XCTestCase {
     let attachment = XCTAttachment(data: bytes, uniformTypeIdentifier: "public.svg-image")
     attachment.name = "saved-signal-37125-vector"; attachment.lifetime = .keepAlways; add(attachment)
     for height in [800.0, 1000.0] {
-      let sized = DocumentDocument(id: document.id, actor: UUID(), blocks: [.interactive(id: "signal", html: "", programPackage: f.hash, height: height)])
+      let sized = DocumentTestFiles.document(id: document.id, actor: UUID(), contents: [try packaged(id: "signal", fixture: f, height: height)])
       let pdfCut = try NotebookExportCut(document: sized, state: state)
       let pdfResult = try await DocumentCanonicalExport.publication(cut: pdfCut, options: .init(format: .pdf), jobID: UUID(), store: f.store, persistence: NotebookPersistenceQueue(store: f.store))
       let pdfBytes = try readExportBytes(pdfResult.artifact, store: f.store)
@@ -276,10 +280,10 @@ final class ProgramAssetTests: XCTestCase {
 
   func testSavedPDFExportsACompiledAssetPackageWithoutAProgramStoreFallback() async throws {
     let f = try compiledFixture(); defer { f.close() }
-    let document = DocumentDocument(actor: UUID(), blocks: [.markdown(id: "title", source: "# Offline asset export"),
-      .interactive(id: "compiled", html: "", programPackage: f.hash, height: 600)])
+    let document = DocumentTestFiles.document(actor: UUID(), contents: [.tex(id: "title", source: "\\section{Offline asset export}"),
+      try packaged(id: "compiled", fixture: f, height: 600)])
     var state = DocumentStateJournal(id: document.id, actor: UUID())
-    XCTAssertTrue(state.commit(blockID: "compiled", value: .object(["x": .number(2)]), actor: UUID()))
+    XCTAssertTrue(state.commit(instanceID: "compiled", value: .object(["x": .number(2)]), actor: UUID()))
     let cut = try NotebookExportCut(document: document, state: state)
     let publication = try await DocumentCanonicalExport.publication(cut: cut, jobID: UUID(), store: f.store, persistence: NotebookPersistenceQueue(store: f.store))
     XCTAssertEqual(publication.cut, cut)
@@ -313,7 +317,7 @@ final class ProgramAssetTests: XCTestCase {
     XCTAssertEqual(result, "3² = 9")
     agent.invalidate(); lease.release()
 
-    let document = DocumentDocument(actor: UUID(), blocks: [.interactive(id: "compiled", html: "", programPackage: f.hash, height: 600)])
+    let document = DocumentTestFiles.document(actor: UUID(), contents: [try packaged(id: "compiled", fixture: f, height: 600)])
     let state = DocumentStateJournal(id: document.id, actor: UUID())
     let owner = DocumentWebCoordinator(resources: resources, onRenderReady: .init { _ in }, onPageLayout: { _ in }, onStateChange: { _, _ in nil })
     owner.programStore = f.store
@@ -327,7 +331,7 @@ final class ProgramAssetTests: XCTestCase {
     var checkpointJournal = DocumentStateJournal(id: document.id, actor: UUID())
     owner.onStateCheckpoint = { id, value, _, _ in
       checkpoint = value
-      _ = checkpointJournal.commit(blockID: id, value: value, actor: checkpointJournal.stamp.actor)
+      _ = checkpointJournal.commit(instanceID: id, value: value, actor: checkpointJournal.stamp.actor)
       return checkpointJournal.records.first { $0.id == id }?.valueVersion
     }
     let accepted = await owner.checkpointPrograms(resume: true)
@@ -480,8 +484,7 @@ final class ProgramAssetTests: XCTestCase {
     owner.invalidate(); lease.release()
 
     // The document owner loads the identical package, not a second 3D renderer implementation.
-    let document = DocumentDocument(actor: UUID(), blocks: [.interactive(id: "gears", html: "", programPackage: f.hash,
-      initialState: checkpoint, height: 900)])
+    let document = DocumentTestFiles.document(actor: UUID(), contents: [try packaged(id: "gears", fixture: f, initialState: checkpoint, height: 900)])
     let journal = DocumentStateJournal(id: document.id, actor: UUID())
     let docOwner = DocumentWebCoordinator(resources: resources, onRenderReady: .init { _ in }, onPageLayout: { _ in }, onStateChange: { _, _ in nil })
     docOwner.programStore = f.store
@@ -495,7 +498,7 @@ final class ProgramAssetTests: XCTestCase {
     var checkpointJournal = DocumentStateJournal(id: document.id, actor: UUID())
     docOwner.onStateCheckpoint = { id, value, _, _ in
       saved = value
-      _ = checkpointJournal.commit(blockID: id, value: value, actor: checkpointJournal.stamp.actor)
+      _ = checkpointJournal.commit(instanceID: id, value: value, actor: checkpointJournal.stamp.actor)
       return checkpointJournal.records.first { $0.id == id }?.valueVersion
     }
     let accepted = await docOwner.checkpointPrograms(resume: true)
@@ -805,14 +808,18 @@ final class ProgramAssetTests: XCTestCase {
     let wave = try compiledFixture("wave-program", store: signal.store)
     let packages = [signal, gears, wave]
     for count in [2, 4, 8] {
-      let document = DocumentDocument(actor: UUID(), blocks: (0..<count).map { i in
-        .interactive(id: "science-\(i)", html: "", programPackage: packages[i % 3].hash, height: 300)
-      })
+      var authored: Set<String> = []
+      let contents = try (0..<count).map { i -> DocumentTestFiles in
+        let item = try packaged(id: "science-\(i)", fixture: packages[i % 3], height: 300)
+        let files = item.files.filter { authored.insert($0.path).inserted }
+        return DocumentTestFiles(id: item.id, files: files, inclusion: item.inclusion, initialState: item.initialState, height: item.height)
+      }
+      let document = DocumentTestFiles.document(actor: UUID(), contents: contents)
       let resources = SceneRenderResources()
       let fixture = try ProgramFixture(document: document, resources: resources, showsNeighbour: false, programStore: signal.store)
       defer { fixture.close() }
       try await wait({ fixture.presents(.paper) }, message: { "count=\(count) " + fixture.diagnostics })
-      for regions in Dictionary(grouping: DocumentRenderRegistry.shared.regions(document: document), by: \.id).values {
+      for regions in Dictionary(grouping: DocumentRenderRegistry.shared.regions(document: document).filter { $0.kind == .program }, by: \.id).values {
         XCTAssertEqual(regions.reduce(0) { $0 + $1.frame.height }, 300, accuracy: 1/32,
           "Program fragments must preserve their authored height across printed page numbers")
       }
@@ -884,20 +891,20 @@ final class ProgramAssetTests: XCTestCase {
   func testAuthoredPlotCanvasAndThreeSelectionsBindOnlyToFrozenDocumentRasters() async throws {
     for name in ["signal", "wave", "gears"] {
       let f = try compiledFixture(name + "-program"); defer { f.close() }
-      let actor = UUID(), document = DocumentDocument(actor: UUID(), blocks: [.interactive(id: name, html: "", programPackage: f.hash, height: 900)])
-      let block = try XCTUnwrap(document.blocks.first), resources = SceneRenderResources()
+      let actor = UUID(), document = DocumentTestFiles.document(actor: UUID(), contents: [try packaged(id: name, fixture: f, height: 900)])
+      let program = try f.store.documentProgramSource(document: document, instanceID: name, path: packagePath(f)), resources = SceneRenderResources()
       var journal = DocumentStateJournal(id: document.id, actor: actor)
-      let runtime = DocumentBlockRuntime(documentID: document.id, block: block, programIdentity: document.programIdentity(blockID: name),
-        value: block.initialState, stateVersion: nil, width: 600, resources: resources, programStore: f.store)
+      let runtime = DocumentBlockRuntime(documentID: document.id, program: program,
+        value: program.initialState, stateVersion: nil, width: 600, height: 900, resources: resources, programStore: f.store)
       let container = UIView(), close = try mount(container)
       defer { runtime.stop(); close() }
       runtime.onMount = { web, size in container.addSubview(web); web.frame = .init(origin: .zero, size: size) }
       runtime.onStateChange = { value in
-        _ = journal.commit(blockID: name, value: value, actor: actor)
+        _ = journal.commit(instanceID: name, value: value, actor: actor)
         return journal.records.first { $0.id == name }?.valueVersion
       }
       runtime.onStateCheckpoint = { value, _ in
-        _ = journal.commit(blockID: name, value: value, actor: actor)
+        _ = journal.commit(instanceID: name, value: value, actor: actor)
         return journal.records.first { $0.id == name }?.valueVersion
       }
       runtime.start(priority: .input); try await wait { runtime.ready || runtime.failure != nil }
@@ -919,7 +926,7 @@ final class ProgramAssetTests: XCTestCase {
       XCTAssertNil(runtime.frozenSemanticSelection)
       runtime.attentionPauseID = UUID()
       let value = try await runtime.checkpoint()
-      let raster = try await runtime.capture(sourceOffset: 0, height: block.height, pixelWidth: 600)
+      let raster = try await runtime.capture(sourceOffset: 0, height: 900, pixelWidth: 600)
       defer { raster.release() }
       let semantic = try XCTUnwrap(raster.semanticSelection, name)
       try semantic.validate()
@@ -930,7 +937,7 @@ final class ProgramAssetTests: XCTestCase {
       guard case .object(var edited) = value else { throw CocoaError(.coderInvalidValue) }
       edited["acceptedPeerEdit"] = .bool(true)
       let next = JSONValue.object(edited)
-      _ = journal.commit(blockID: name, value: next, actor: actor)
+      _ = journal.commit(instanceID: name, value: next, actor: actor)
       try await runtime.apply(next, stateVersion: journal.records.first { $0.id == name }?.valueVersion)
       XCTAssertEqual(runtime.value, next, "A new accepted edit invalidates the old hold and applies instead of remaining suspended")
       XCTAssertTrue(web.isUserInteractionEnabled); XCTAssertNil(runtime.frozenSemanticSelection)
@@ -942,11 +949,11 @@ final class ProgramAssetTests: XCTestCase {
   }
 
   func testIPadDocumentBlockPackageUsesItsNativeProgramOwner() async throws {
-    let f = try fixture(); defer { f.close() }
-    let document = DocumentDocument(actor: UUID(), blocks: [.interactive(id: "asset", html: "", programPackage: f.hash, height: 180)])
-    let block = try XCTUnwrap(document.blocks.first), resources = SceneRenderResources()
-    let runtime = DocumentBlockRuntime(documentID: document.id, block: block, programIdentity: document.programIdentity(blockID: block.id),
-      value: .object(["restored": .number(7)]), stateVersion: nil, width: 600, resources: resources, programStore: f.store)
+    let f = try fixture(largeAsset: false); defer { f.close() }
+    let document = DocumentTestFiles.document(actor: UUID(), contents: [try packaged(id: "asset", fixture: f, height: 180)])
+    let program = try f.store.documentProgramSource(document: document, instanceID: "asset", path: packagePath(f)), resources = SceneRenderResources()
+    let runtime = DocumentBlockRuntime(documentID: document.id, program: program,
+      value: .object(["restored": .number(7)]), stateVersion: nil, width: 600, height: 180, resources: resources, programStore: f.store)
     let container = UIView(), close = try mount(container)
     defer { runtime.stop(); close() }
     runtime.onMount = { web, size in container.addSubview(web); web.frame = .init(origin: .zero, size: size) }
@@ -961,8 +968,8 @@ final class ProgramAssetTests: XCTestCase {
   #endif
 
   func testDocumentIframePackageUsesExistingParentStateAndLifecycleOwner() async throws {
-    let f = try fixture(); defer { f.close() }
-    let document = DocumentDocument(actor: UUID(), blocks: [.interactive(id: "asset", html: "", programPackage: f.hash, height: 180)])
+    let f = try fixture(largeAsset: false); defer { f.close() }
+    let document = DocumentTestFiles.document(actor: UUID(), contents: [try packaged(id: "asset", fixture: f, height: 180)])
     let state = DocumentStateJournal(id: document.id, actor: UUID()), resources = SceneRenderResources()
     let coordinator = DocumentWebCoordinator(resources: resources, onRenderReady: .init { _ in }, onPageLayout: { _ in }, onStateChange: { _, _ in nil })
     coordinator.programStore = f.store
@@ -984,14 +991,16 @@ final class ProgramAssetTests: XCTestCase {
     var checkpointJournal = DocumentStateJournal(id: document.id, actor: UUID())
     coordinator.onStateCheckpoint = { id, value, _, _ in
       checkpoint = value
-      _ = checkpointJournal.commit(blockID: id, value: value, actor: checkpointJournal.stamp.actor)
+      _ = checkpointJournal.commit(instanceID: id, value: value, actor: checkpointJournal.stamp.actor)
       return checkpointJournal.records.first { $0.id == id }?.valueVersion
     }
     let accepted = await coordinator.checkpointPrograms(resume: true)
     XCTAssertTrue(accepted); XCTAssertEqual(checkpoint?["assetAnswer"], .number(42)); XCTAssertEqual(checkpoint?["parentIsolated"], .bool(true))
     let iframeURL = try await web.evaluateJavaScript("document.querySelector('iframe').src") as? String
     var changed = document
-    _ = changed.replaceContent(blocks: [.markdown(id: "other", source: "Independent text")] + document.blocks, actor: UUID())
+    let main = try XCTUnwrap(changed.files.first { $0.path == "main.tex" })
+    _ = changed.replaceFileSource(id: main.id,
+      source: main.source.replacingOccurrences(of: "\\begin{document}", with: "\\begin{document} Independent text.\\par"), actor: UUID())
     coordinator.update(document: changed, state: state, selectedPageIndex: 0, capturesSnapshot: false,
       onRenderReady: .init { _ in }, onPageLayout: { _ in }, onStateChange: { _, _ in nil })
     try await wait { coordinator.hasCanonicalPixels || coordinator.acquisitionError != nil }
@@ -999,14 +1008,20 @@ final class ProgramAssetTests: XCTestCase {
     let afterURL = try await web.evaluateJavaScript("document.querySelector('iframe').src") as? String
     XCTAssertEqual(afterURL, iframeURL, "Independent text retains the same capability and running program")
     XCTAssertEqual(coordinator.programAssets.scopeCount, 1)
-    _ = changed.replaceContent(blocks: [.interactive(id: "asset", html: "<strong>Inline replacement</strong>")], actor: UUID())
+    let htmlPath = packagePath(f) + "/" + (f.package.html ?? "view.html")
+    let html = try XCTUnwrap(changed.files.first { $0.path == htmlPath })
+    let replacement = DocumentFile(id: html.id, path: html.path, source: "<strong>File replacement</strong>")
+    let jsPath = packagePath(f) + "/" + (f.package.javaScript ?? "main.js")
+    let js = try XCTUnwrap(changed.files.first { $0.path == jsPath })
+    let ready = DocumentFile(id: js.id, path: js.path, source: "notebook.ready(Promise.resolve());")
+    _ = changed.replaceContent(files: changed.files.map { $0.id == html.id ? replacement : $0.id == js.id ? ready : $0 }, actor: UUID())
     coordinator.update(document: changed, state: state, selectedPageIndex: 0, capturesSnapshot: false,
       onRenderReady: .init { _ in }, onPageLayout: { _ in }, onStateChange: { _, _ in nil })
-    XCTAssertEqual(coordinator.programAssets.scopeCount, 0, "Replacing package source revokes its namespace immediately")
     try await wait { coordinator.hasCanonicalPixels || coordinator.acquisitionError != nil }
     XCTAssertTrue(coordinator.hasCanonicalPixels, String(describing: coordinator.acquisitionError))
-    let inline = try await web.evaluateJavaScript("document.querySelector('iframe').srcdoc.includes('Inline replacement')") as? Bool
-    XCTAssertEqual(inline, true, "The same document adapter also owns the replacement inline program")
+    let replacementURL = try await web.evaluateJavaScript("document.querySelector('iframe').src") as? String
+    XCTAssertNotEqual(replacementURL, iframeURL, "Changed file bytes revoke the old execution namespace")
+    XCTAssertEqual(coordinator.programAssets.scopeCount, 1, "There is only one package-backed owner after source replacement")
     coordinator.invalidate(); XCTAssertEqual(coordinator.programAssets.scopeCount, 0); XCTAssertEqual(coordinator.programAssets.activeReadCount, 0)
   }
 }

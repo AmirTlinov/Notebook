@@ -46,7 +46,7 @@ final class PortalRenderingTests: XCTestCase {
     for size in [SpatialPoint(x: 834, y: 1_194), SpatialPoint(x: 1_366, y: 1_024)] {
       let camera = BoardPortalProjection.entryCamera(portalCamera: hierarchy.portalCamera(childID)!, viewport: size)
       let presence = SessionPresence(boardID: childID, mode: .board, camera: camera, viewport: size)
-      let sourceIndex = WorkspaceSceneIndex(workspace: workspace, hierarchy: hierarchy, paperSizes: model.documents.mapValues(\.paperSize))
+      let sourceIndex = WorkspaceSceneIndex(workspace: workspace, hierarchy: hierarchy, paperSizes: Dictionary(uniqueKeysWithValues: model.documents.keys.map { ($0, model.itemGeometry($0)) }))
       let painter = SceneCompositionRenderer(source: SceneCompositionSource(index: sourceIndex, hierarchy: hierarchy, journal: ink))
       let parent = SessionPresence(boardID: workspace.rootBoardID, mode: .cover,
         camera: BoardPortalProjection.parentBoundaryCamera(portalCenter: .zero, viewport: size), viewport: size,
@@ -77,7 +77,7 @@ final class PortalRenderingTests: XCTestCase {
     let notebook = try XCTUnwrap(model.workspace?.selectedItemID)
     model.moveItem(notebook, to: .init(x: -350, y: 0))
     let portal = try XCTUnwrap(model.createBoard(at: .init(x: 650, y: 0)))
-    let document = try XCTUnwrap(model.createDocument(at: .init(x: 1550, y: 0), paperSize: .letter))
+    let document = try XCTUnwrap(model.createDocument(at: .init(x: 1550, y: 0)))
     let workspace = try XCTUnwrap(model.workspace)
     var hierarchy = try XCTUnwrap(model.boardHierarchy)
     let actor = UUID(), stamp = VersionStamp(counter: 0, actor: UUID())
@@ -105,7 +105,7 @@ final class PortalRenderingTests: XCTestCase {
         timeOffset: x / 1000, width: width, opacity: 1, force: 1, azimuth: 0, altitude: 1) }
       _ = ink.append(tool: tool, spans: [.init(surface: .cover(notebook), samples: samples)], actor: actor)
     }
-    let sourceIndex = WorkspaceSceneIndex(workspace: workspace, hierarchy: hierarchy, paperSizes: model.documents.mapValues(\.paperSize))
+    let sourceIndex = WorkspaceSceneIndex(workspace: workspace, hierarchy: hierarchy, paperSizes: Dictionary(uniqueKeysWithValues: model.documents.keys.map { ($0, model.itemGeometry($0)) }))
     for scale in [0.3, 0.6] {
       let size = SpatialPoint(x: 1194, y: 834)
       let presence = SessionPresence(boardID: workspace.rootBoardID, mode: .board,

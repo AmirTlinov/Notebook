@@ -341,7 +341,7 @@ final class NotebookAppModel {
   // Logical content admission, not the durable header-only refresh or GPU cohort.
   private(set) var sceneContentCursor: UInt64 = 0
   private(set) var spatialGroupReads: [UUID:[String:NotebookElementGroupRead]] = [:]
-  private(set) var documentPaperSizes: [UUID: DocumentPaperSize] = [:]
+  private(set) var documentPaperSizes: [UUID: WorkspaceItemGeometry] = [:]
   private(set) var sceneCoverage: [UUID: WorkspaceSpatialBounds] = [:]
   private(set) var truncatedSceneBoards: Set<UUID> = []
   private(set) var completeSceneCoverOwners: Set<UUID> = []
@@ -377,7 +377,7 @@ final class NotebookAppModel {
       while !Task.isCancelled, scenePreparationPending, let workspace, let boardHierarchy {
         let request = scenePreparationRequest
         let coverageOnly = scenePreparationIsCoverageOnly
-        let paperSizes = documentPaperSizes.merging(documents.mapValues(\.paperSize)) { _, live in live }
+        let paperSizes = documentPaperSizes
         let previous = sceneIndex
         let result = await Task.detached(priority: .utility) {
           let portals = Dictionary(uniqueKeysWithValues: boardHierarchy.boards.map { ($0.id, $0.portalCamera) })
@@ -483,7 +483,7 @@ final class NotebookAppModel {
       return
     }
     guard let header = workspaceHeader, let frame else { return }
-    let source = SceneCompositionSource(store: store, revision: header.cursor, workspaceID: header.workspaceID,groupPoses:compositionGroupPoses, inkWindow: spatialInkWindow)
+    let source = SceneCompositionSource(store: store, revision: header.cursor, workspaceID: header.workspaceID, groupPoses: compositionGroupPoses, inkWindow: spatialInkWindow, documentGeometry: documentPaperSizes)
     compositionTiles.prepare(source: source, presence: presence, frame: frame, pinned: pinned,
       displayScale: displayScale, refinesDetails: presencePhase == .settled,
       permitsPreparation: { [weak self] in self?.permitsScenePreparation == true },
@@ -582,7 +582,7 @@ final class NotebookAppModel {
             documentStates = state.states
             if draftEpoch == documentDraftEpoch { documentEditingSessions = state.drafts }
           }
-          documentPaperSizes = state.paperSizes.merging(documents.mapValues(\.paperSize)) { _, live in live }
+          documentPaperSizes = state.paperSizes.merging(documentPaperSizes) { _, current in current }
           sceneCoverage = state.coverage
           truncatedSceneBoards = state.truncatedBoards
           completeSceneCoverOwners = state.completeCoverElementOwners
@@ -809,6 +809,9 @@ final class NotebookAppModel {
   let agentFeedback = NotebookAgentFeedback()
   private var referenceHighlightTask: Task<Void, Never>?
   private var collaborationHistoryTask: Task<Void, Never>?
+  private var surfaceHistoryTask: Task<Bool, Never>?
+  private var surfaceHistoryRequestID: UUID?
+  private var surfaceHistoryRequestCount = 0
   private var contextPublicationTask: Task<Void, Never>?
   private var contextPublicationID: UUID?
   private var collaborationReadSnapshot: CollaborationReadSnapshot?
@@ -974,8 +977,12 @@ final class NotebookAppModel {
   /// The document bundle supplies its physical size. A notebook or an
   /// unselected board uses the canonical notebook/portal rectangle.
   func itemGeometry(_ itemID: UUID?) -> WorkspaceItemGeometry {
-    if let itemID, let paper = documents[itemID]?.paperSize ?? documentPaperSizes[itemID] {
-      return .document(paper)
+    if let itemID, documents[itemID] != nil || workspace?.item(id: itemID)?.kind == .document {
+      if let document = documents[itemID], let layout = DocumentRenderRegistry.shared.layout(document: document) {
+        let page = presence?.focusedItemID == itemID && presence?.mode == .document ? (presence?.documentPageIndex ?? 0) : 0
+        return layout.paper(on: page).geometry
+      }
+      return documentPaperSizes[itemID] ?? .uncompiledDocument
     }
     return .notebook
   }
@@ -1845,10 +1852,32 @@ final class NotebookAppModel {
     return created.item.id
   }
 
+  /// File picker, Files/Finder and MCP converge on the same import owner.
+  func importDocumentFile(_ url: URL) async throws -> UUID {
+    guard loadState == .ready, !isClosing, let header = workspaceHeader else {
+      throw CollaborationError("owner_unavailable", "Хранилище Notebook ещё не открыто.")
+    }
+    let scoped = url.startAccessingSecurityScopedResource()
+    defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+    let boardID = presence?.boardID ?? header.rootBoardID
+    let center = presence?.camera.center ?? WorldPoint(x: 0, y: 0)
+    let request = try await Task.detached {
+      try NotebookDocumentImportRequest.inspect(url, targetBoardID: boardID, center: center)
+    }.value
+    return try await importDocument(request).documentID
+  }
+
+  private func importDocument(_ request: NotebookDocumentImportRequest) async throws -> NotebookDocumentImportOwner.Result {
+    let result = try await NotebookDocumentImportOwner.run(request, persistence: persistence, actor: actorID)
+    pencilUndoHistory.recordCommand(domain: .document(result.documentID), actionID: result.actionID)
+    reloadExternalChanges()
+    return result
+  }
+
   @discardableResult
   func createDocument(
     at center: WorldPoint,
-    paperSize: DocumentPaperSize
+    template: DocumentTemplate = .article
   ) -> UUID? {
     guard center.isValid, let beforeWorkspace = workspace, let beforeBoard = boardHierarchy, let presence else { return nil }
     var workspace = beforeWorkspace, board = beforeBoard
@@ -1864,7 +1893,7 @@ final class NotebookAppModel {
     let document = DocumentDocument(
       id: item.id,
       actor: actorID,
-      paperSize: paperSize
+      entrypoint: template.entrypoint, files: template.files
     )
     let state = DocumentStateJournal(id: item.id, actor: actorID)
     enqueueStoreWrite(reload: true) { [workspace, board] store in
@@ -2423,6 +2452,10 @@ final class NotebookAppModel {
       layout.pageCount(for: Self.documentPageSourceRevision(document)) != nil,
       presence?.focusedItemID == documentID, (presence?.openProgress ?? 0) > 0 else { return }
     documentReadingLayout = (documentID, document.contentStamp, record)
+    let geometry = record.paper(on: presence?.documentPageIndex ?? 0).geometry
+    if documentPaperSizes[documentID] != geometry {
+      documentPaperSizes[documentID] = geometry; scheduleScenePreparation()
+    }
     inputGate.performAfterPageContact { [weak self] in self?.restoreDocumentReadingIfPossible() }
   }
 
@@ -2441,7 +2474,7 @@ final class NotebookAppModel {
       saved.documentID == id,
       readingRestoreDocument == id || saved.sourceStamp != document.contentStamp || readingReturnPosition != nil,
       let page = measured.record.reading.page(for: saved.anchor,
-        survivingBlockOrder: document.blocks.map(\.id), regions: measured.record.regions) else { return }
+        survivingFileOrder: measured.record.readingFileOrder, regions: measured.record.regions) else { return }
     readingRestoreDocument = nil; readingReturnPosition = nil
     if page != presence.documentPageIndex {
       readingRestoreTarget = (id, document.contentStamp, page)
@@ -2469,10 +2502,10 @@ final class NotebookAppModel {
     // At fit, the beginning of the sheet is the reading address. Under zoom,
     // retain the nearest visible text segment rather than the old page number.
     let visibleTop = max(0, geometry.height / 2 + offset.y - presence.viewport.y / (2 * presence.camera.scale))
-    let order = document.blocks.map(\.id)
-    let anchor = measured.record.reading.anchor(page: presence.documentPageIndex, blockOrder: order, y: visibleTop)
-      ?? measured.record.regions.first(where: { $0.pageIndex == presence.documentPageIndex }).map {
-        DocumentReadingAnchor(blockID: $0.id, nodeID: "", textOffset: 0, offset: 0, blockOrder: order)
+    let order = measured.record.readingFileOrder
+    let anchor = measured.record.reading.anchor(page: presence.documentPageIndex, fileOrder: order, y: visibleTop)
+      ?? measured.record.regions.first(where: { $0.kind == .file && $0.pageIndex == presence.documentPageIndex && order.contains($0.id) }).map {
+        DocumentReadingAnchor(fileID: $0.id, nodeID: "", textOffset: 0, offset: 0, fileOrder: order)
       }
     guard let anchor else { return }
     let position = DocumentReadingPosition(documentID: id, sourceStamp: document.contentStamp, anchor: anchor,
@@ -2571,6 +2604,12 @@ final class NotebookAppModel {
         openProgress: presence.openProgress, documentPageIndex: landing.pageIndex,
         selectedItemID: presence.selectedItemID, notebookPageID: presence.notebookPageID), settled: true)
     }
+    if let document = documents[landing.documentID], let layout = DocumentRenderRegistry.shared.layout(document: document) {
+      let geometry = layout.paper(on: landing.pageIndex).geometry
+      if documentPaperSizes[landing.documentID] != geometry {
+        documentPaperSizes[landing.documentID] = geometry; scheduleScenePreparation()
+      }
+    }
     if presencePhase == .settled { rememberDocumentReading() }
     readingSuppressedDocument = nil
     completeDocumentSavePresentation()
@@ -2638,38 +2677,72 @@ final class NotebookAppModel {
     return presence.map { $0.focusedItemID.map(PencilUndoHistory.Domain.cover) ?? .board($0.boardID) }
   }
 
-  func undoLastSurfaceAction() {
+  func undoLastSurfaceAction() { performSurfaceHistory(redo: false) }
+  func redoLastSurfaceAction() { performSurfaceHistory(redo: true) }
+
+  /// One entry for gesture, keyboard and menu history. Each accepted contact
+  /// retains its domain; its action is selected only after the preceding write.
+  func performSurfaceHistory(redo: Bool, documentID: UUID? = nil,
+    after prepare: (@MainActor () async -> Bool)? = nil) {
+    guard shutdownPhase == .running, inputGate.permitsNewContact, !inputGate.hasActivePencil else { return }
     #if os(iOS)
-      if let files = chat?.files, files.window.isOpen {
-        guard inputGate.permitsNewContact, !inputGate.hasActivePencil else { return }
-        files.notes.undo(); return
+      if documentID == nil, let files = chat?.files, files.window.isOpen {
+        if redo { files.notes.redo() } else { files.notes.undo() }; return
       }
     #endif
-    guard inputGate.permitsNewContact, !inputGate.hasActivePencil else { return }
-    guard let domain=activeHistoryDomain else { return }
+    guard let domain = documentID.map(PencilUndoHistory.Domain.document) ?? activeHistoryDomain else { return }
+    guard surfaceHistoryRequestCount < 32 else { showCue("Дождитесь сохранения предыдущих действий"); return }
+    let previous = surfaceHistoryTask, requestID = UUID()
+    surfaceHistoryRequestID = requestID; surfaceHistoryRequestCount += 1
+    // Ordinary ink still changes synchronously in its actor segment. Only an
+    // unfinished source or an earlier accepted history command needs to wait.
+    let applied = previous == nil && prepare == nil
+    if applied {
+      applySurfaceHistory(redo: redo, domain: domain)
+      if collaborationHistoryTask == nil {
+        surfaceHistoryRequestCount -= 1; surfaceHistoryRequestID = nil
+        return // Synchronous ink already advanced its one retained journal.
+      }
+    }
+    surfaceHistoryTask = Task { [self] in
+      defer {
+        surfaceHistoryRequestCount -= 1
+        if surfaceHistoryRequestID == requestID { surfaceHistoryTask = nil; surfaceHistoryRequestID = nil }
+      }
+      if let previous, !(await previous.value) { return false }
+      guard !Task.isCancelled else { return false }
+      if !applied {
+        // Closing preserves the draft, but does not admit a later history
+        // operation. An already accepted write below still drains normally.
+        guard shutdownPhase == .running else { return true }
+        if let prepare, !(await prepare()) { return true }
+        guard !Task.isCancelled, shutdownPhase == .running else { return true }
+        applySurfaceHistory(redo: redo, domain: domain)
+      }
+      guard await persistence.flush() else { return false }
+      if let task = collaborationHistoryTask { await task.value }
+      await reloadExternalChanges()?.value
+      return persistenceFailure == nil
+    }
+  }
+
+  private func applySurfaceHistory(redo: Bool, domain: PencilUndoHistory.Domain) {
+    if redo { redoSurfaceAction(in: domain) } else { undoSurfaceAction(in: domain) }
+  }
+
+  private func undoSurfaceAction(in domain: PencilUndoHistory.Domain) {
     if let command = pencilUndoHistory.lastCommand(for: domain) { undoCollaboration(command); return }
     if case .target(.document, _) = domain { return }
-    if isPageOpen {
-      _ = acceptDrawingUndo()
-      return
-    }
+    if case .target(.page, let pageID) = domain { _ = acceptDrawingUndo(pageID: pageID); return }
     guard let contribution = pencilUndoHistory.lastContribution(for: domain),
       setSpatialInkContribution(contribution, domain: domain, active: false) else { return }
     showCue("Отменено")
   }
 
-  func redoLastSurfaceAction() {
-    #if os(iOS)
-      if let files = chat?.files, files.window.isOpen {
-        guard inputGate.permitsNewContact, !inputGate.hasActivePencil else { return }
-        files.notes.redo(); return
-      }
-    #endif
-    guard inputGate.permitsNewContact, !inputGate.hasActivePencil else { return }
-    guard let domain=activeHistoryDomain else { return }
+  private func redoSurfaceAction(in domain: PencilUndoHistory.Domain) {
     if let command = pencilUndoHistory.lastRedoCommand(for: domain) { redoCollaboration(command); return }
     if case .target(.document, _) = domain { return }
-    if isPageOpen { _ = acceptDrawingRedo(); return }
+    if case .target(.page, let pageID) = domain { _ = acceptDrawingRedo(pageID: pageID); return }
     guard let contribution = pencilUndoHistory.lastRedoContribution(for: domain),
       let gate = pencilUndoHistory.lastRedoStateStamp(for: domain),
       setSpatialInkContribution(contribution, domain: domain, active: true, redoGate: gate) else { return }
@@ -2904,16 +2977,16 @@ final class NotebookAppModel {
 
   /// Undo resolves its target and writes the inverse into the same journal in
   /// the button's actor segment; storage follows in the ordinary FIFO.
-  func acceptDrawingUndo() -> PreparedPageInkChange? {
+  func acceptDrawingUndo(pageID: UUID? = nil) -> PreparedPageInkChange? {
     guard inputGate.permitsNewContact, !inputGate.hasActivePencil,
-      let page=activePage,let ids=pencilUndoHistory.lastContribution(for:.page(page.id)),
+      let page=pageID == nil ? activePage : pages[pageID!],let ids=pencilUndoHistory.lastContribution(for:.page(page.id)),
       let stamp=reserveDrawingAction(pageID:page.id) else { return nil }
     return acceptInkMutation(.setActive(ids,false),pageID:page.id,stamp:stamp)
   }
 
-  func acceptDrawingRedo() -> PreparedPageInkChange? {
+  func acceptDrawingRedo(pageID: UUID? = nil) -> PreparedPageInkChange? {
     guard inputGate.permitsNewContact, !inputGate.hasActivePencil,
-      let page=activePage,let ids=pencilUndoHistory.lastRedoContribution(for:.page(page.id)),
+      let page=pageID == nil ? activePage : pages[pageID!],let ids=pencilUndoHistory.lastRedoContribution(for:.page(page.id)),
       let gate=pencilUndoHistory.lastRedoStateStamp(for:.page(page.id)),
       let drawing=try? page.inkDrawing(),ids.allSatisfy({ drawing.action(id:$0)?.visibility.stateStamp == gate }),
       let stamp=reserveDrawingAction(pageID:page.id) else { return nil }
@@ -3986,40 +4059,35 @@ final class NotebookAppModel {
     return true
   }
 
-  func insertDocumentSource(documentID: UUID, kind: DocumentBlockKind) async throws -> DocumentSourceRequest {
+  func insertDocumentFile(documentID: UUID, path: String) async throws -> DocumentSourceRequest {
     guard shutdownPhase == .running, !isItemBeingDeleted(documentID) else { throw CancellationError() }
     let actor = actorID
     await withCheckedContinuation { continuation in inputGate.performAfterIdle { continuation.resume() } }
     let inserted = try await persistence.submit(publishesChanges: true) {
-      try $0.insertDocumentSource(documentID: documentID, kind: kind, actor: actor)
+      try $0.insertDocumentFile(documentID: documentID, path: path, actor: actor)
     }
     pencilUndoHistory.recordCommand(domain: .document(documentID), actionID: inserted.receipt.id)
     if var current = documents[documentID] { _ = current.merge(inserted.document); documents[documentID] = current }
     else { documents[documentID] = inserted.document }
     reloadExternalChanges()
-    return .init(documentID: documentID, block: inserted.document.blocks.first { $0.id == inserted.blockID }!,
-      version: inserted.document.sourceVersion(blockID: inserted.blockID), offset: 0)
+    return .init(documentID: documentID, file: inserted.document.files.first { $0.id == inserted.fileID }!,
+      version: inserted.document.fileVersion(fileID: inserted.fileID))
   }
 
-  func selectSourceForAgent(documentID: UUID, blockID: String, version: ContentFieldVersion, range: NSRange) {
-    guard let workspace, let hierarchy = boardHierarchy, let ink = spatialInk,
-      let document = documents[documentID], let block = document.blocks.first(where: { $0.id == blockID }),
-      document.sourceVersion(blockID: blockID) == version,
-      range.location >= 0, range.length > 0, NSMaxRange(range) <= block.source.utf16.count else { return }
-    let geometry = WorkspaceItemGeometry.document(document.paperSize)
-    let selection = NotebookAttentionSelection(fragments: [.init(target: .init(kind: .document, id: documentID),
-      elementID: blockID, region: .init(x: 0, y: 0, width: geometry.width, height: geometry.height),
-      worldOrigin: nil, pageIndex: nil, label: "Исходник · " + blockID)], workspace: workspace, hierarchy: hierarchy,
-      ink: ink, pages: pages, documents: [documentID: document], states: documentStates)
-    let selected = (block.source as NSString).substring(with: range)
-    publishHumanContext(selection, text: "Выделенный исходник (UTF-16: \(range.location)..<\(NSMaxRange(range))):\n" + selected)
-    #if os(iOS)
-    chat?.expanded = true; chat?.browsesChats = false
-    #else
-    showCue("Выделенный исходник добавлен в контекст Codex")
-    #endif
+  func renameDocumentFile(documentID: UUID, fileID: String, path: String) async throws -> DocumentSourceRequest {
+    guard shutdownPhase == .running, !isItemBeingDeleted(documentID) else { throw CancellationError() }
+    let actor = actorID
+    await withCheckedContinuation { continuation in inputGate.performAfterIdle { continuation.resume() } }
+    let renamed = try await persistence.submit(publishesChanges: true) {
+      try $0.renameDocumentFile(documentID: documentID, fileID: fileID, path: path, actor: actor)
+    }
+    pencilUndoHistory.recordCommand(domain: .document(documentID), actionID: renamed.receipt.id)
+    if var current = documents[documentID] { _ = current.merge(renamed.document); documents[documentID] = current }
+    else { documents[documentID] = renamed.document }
+    reloadExternalChanges()
+    return .init(documentID: documentID, file: renamed.document.files.first { $0.id == fileID }!,
+      version: renamed.document.fileVersion(fileID: fileID))
   }
-
 
   func saveDocumentDraft(_ draft: DocumentEditingSession) {
     guard !isItemBeingDeleted(draft.edit.documentID) else { return }
@@ -4047,7 +4115,7 @@ final class NotebookAppModel {
     let actor = actorID
     if let documentSaveObserver { DocumentRenderRegistry.shared.removeLiveObserver(documentSaveObserver) }
     documentSavePresentation = .init(sessionID: edit.sessionID, documentID: edit.documentID,
-      blockID: edit.blockID, isPreamble: edit.isPreamble, phase: .saving, source: edit.source)
+      fileID: edit.fileID, phase: .saving, source: edit.source)
     documentSaveObserver = DocumentRenderRegistry.shared.observeLive(documentID: edit.documentID) { [weak self] in
       // The native publication can occur during representable update. Its
       // actual attachment is checked again after that update, never polled.
@@ -4074,10 +4142,6 @@ final class NotebookAppModel {
         let publication = result.publication, var document = documents[edit.documentID] {
         _ = document.mergeSource(publication)
         documents[document.id] = document
-      }
-      if !isStopped, !isItemBeingDeleted(edit.documentID),
-        let publication = result.preamblePublication, var document = documents[edit.documentID] {
-        _ = document.mergeSource(publication); documents[document.id] = document
       }
       if documentSavePresentation?.sessionID == edit.sessionID {
         documentSavePresentation?.phase = .saved
@@ -4106,7 +4170,7 @@ final class NotebookAppModel {
   private func completeDocumentSavePresentation() {
     guard let saved = documentSavePresentation, saved.phase == .saved else { return }
     if let document = documents[saved.documentID],
-      (saved.isPreamble ? document.preamble : document.blocks.first(where: { $0.id == saved.blockID })?.source) != saved.source {
+      document.files.first(where: { $0.id == saved.fileID })?.source != saved.source {
       // Undo or a newer author's source superseded this pending presentation.
       // It can no longer install, so it must not leave an endless save cue.
       clearDocumentSavePresentation(sessionID: saved.sessionID); return
@@ -4116,7 +4180,7 @@ final class NotebookAppModel {
       presence.openProgress >= 0.999, presencePhase == .settled,
       readingRestoreTarget?.id != saved.documentID, readingRestoreDocument != saved.documentID,
       let document = documents[saved.documentID], let state = documentStates[saved.documentID],
-      (saved.isPreamble ? document.preamble : document.blocks.first(where: { $0.id == saved.blockID })?.source) == saved.source,
+      document.files.first(where: { $0.id == saved.fileID })?.source == saved.source,
       DocumentRenderRegistry.shared.hasLiveSurface(document: document, state: state, pageIndex: presence.documentPageIndex, scope: .paper) else { return }
     documentSavePresentation?.phase = .installed
     documentSavePresentation?.source = nil
@@ -4129,40 +4193,33 @@ final class NotebookAppModel {
   }
 
   @discardableResult
-  func commitDocumentState(
-    documentID: UUID,
-    blockID: String,
-    value: JSONValue,
-    programIdentity: DocumentProgramIdentity
-  ) async throws -> ContentFieldVersion? {
+  func commitDocumentState(documentID: UUID, program: DocumentProgramSource, value: JSONValue) async throws -> ContentFieldVersion? {
     guard value.isValid else { throw NotebookStorageError.invalidTransaction("document state value") }
     guard !isStopped, !isItemBeingDeleted(documentID) else { return nil }
     if documents[documentID] == nil || documentStates[documentID] == nil {
-      // A retiring heap may finish its accepted transfer after the document
-      // leaves the working set. Keep its FIFO entry through writer failure;
-      // eviction is neither source revocation nor cancellation of that value.
+      // A retiring heap keeps its admitted value and writer position even after
+      // the document leaves the working set. Eviction does not revoke source.
       let actor = actorID
       return await withCheckedContinuation { continuation in
         persistence.enqueue(owner: .documentState(documentID)) { store in
-          let accepted = try store.commitDocumentState(documentID: documentID, blockID: blockID,
-            value: value, programIdentity: programIdentity, actor: actor)
-          continuation.resume(returning: accepted)
+          let accepted = try store.commitDocumentState(documentID: documentID, programID: program.id,
+            programPath: program.path, value: value, sourceBasis: program.sourceBasis, actor: actor)
+          continuation.resume(returning: accepted?.record.value == value ? accepted?.record.valueVersion : nil)
           return accepted != nil
         }
       }
     }
-    guard let document = documents[documentID], document.programIdentity(blockID: blockID) == programIdentity,
-      document.blocks.contains(where: { $0.id == blockID && $0.kind == .interactive }),
+    guard let document = documents[documentID],
+      (try? DocumentProgramSource(document: document, instanceID: program.id, path: program.path).sourceBasis) == program.sourceBasis,
       var journal = documentStates[documentID] else { return nil }
-    if journal.commit(blockID: blockID, value: value, actor: actorID) {
+    if journal.commit(instanceID: program.id, value: value, actor: actorID) {
       documentStates[documentID] = journal
     }
-    guard let record = journal.records.first(where: { $0.id == blockID && $0.value == value }) else { return nil }
+    guard let record = journal.records.first(where: { $0.id == program.id && $0.value == value }) else { return nil }
     let command = NotebookDocumentStateCommand(documentID: documentID, record: record,
-      journalStamp: journal.stamp, expectedProgramIdentity: programIdentity)
-    // Display is immediate, but JavaScript may only adopt the actual receipt
-    // for its value. A different causal winner cannot authorize this old heap's
-    // next checkpoint. No-op events use the same source/causal check as edits.
+      journalStamp: journal.stamp, programPath: program.path, expectedSourceBasis: program.sourceBasis)
+    // Display is immediate; the executor adopts only its value's durable receipt.
+    // A concurrent winner cannot authorize this heap's next checkpoint.
     return await withCheckedContinuation { continuation in
       persistence.enqueue(owner: .documentState(documentID)) { store in
         let result = try store.commitDocumentState(command)
@@ -4176,52 +4233,66 @@ final class NotebookAppModel {
     }
   }
 
-  /// Checkpoint admission compares the executor's causal basis before changing
-  /// the model, and again inside the sole writer. A delayed animation cannot
-  /// adopt a newer human state just because SwiftUI has not echoed it yet.
+  /// A checkpoint always reaches the durable file-basis CAS. Closing an editor
+  /// cannot lose the captured program path or turn an old heap into a new author.
   func checkpointDocumentState(documentID: UUID, blockID: String, value: JSONValue,
-    programIdentity: DocumentProgramIdentity, stateVersion: ContentFieldVersion?) async throws -> ContentFieldVersion? {
-    guard value.isValid else { throw NotebookStorageError.invalidTransaction("document checkpoint value") }
+    program: DocumentProgramSource, stateVersion: ContentFieldVersion?) async throws -> ContentFieldVersion? {
+    guard value.isValid, program.id == blockID else { throw NotebookStorageError.invalidTransaction("document checkpoint value") }
     guard !isStopped, !isItemBeingDeleted(documentID) else { return nil }
-    if documents[documentID] == nil || documentStates[documentID] == nil {
-      let actor = actorID
-      let accepted = try await persistence.submit(publishesChanges: true) { store in
-        try store.checkpointDocumentState(documentID: documentID, blockID: blockID, value: value,
-          programIdentity: programIdentity, stateVersion: stateVersion, actor: actor)
+    if let document = documents[documentID],
+      (try? DocumentProgramSource(document: document, instanceID: program.id, path: program.path).sourceBasis) != program.sourceBasis { return nil }
+    let observesLocalState = documentStates[documentID] != nil
+    let command: NotebookDocumentStateCommand?
+    if var journal = documentStates[documentID] {
+      guard journal.records.first(where: { $0.id == blockID })?.valueVersion == stateVersion else { return nil }
+      _ = journal.commit(instanceID: blockID, value: value, actor: actorID)
+      guard let record = journal.records.first(where: { $0.id == blockID }), record.value == value else {
+        throw NotebookStorageError.invalidTransaction("document checkpoint admission")
       }
-      if accepted != nil { reloadExternalChanges() }
-      return accepted
-    }
-    guard !isStopped, !isItemBeingDeleted(documentID),
-      let document = documents[documentID], document.programIdentity(blockID: blockID) == programIdentity,
-      document.blocks.contains(where: { $0.id == blockID && $0.kind == .interactive }),
-      var journal = documentStates[documentID],
-      journal.records.first(where: { $0.id == blockID })?.valueVersion == stateVersion else { return nil }
-    if journal.commit(blockID: blockID, value: value, actor: actorID) {
-      documentStates[documentID] = journal
-    }
-    guard let record = journal.records.first(where: { $0.id == blockID }), record.value == value else {
-      throw NotebookStorageError.invalidTransaction("document checkpoint admission")
-    }
-    let command = NotebookDocumentStateCommand(documentID: documentID, record: record,
-      journalStamp: journal.stamp, expectedProgramIdentity: programIdentity, stateCondition: .matching(stateVersion))
-    // The admitted snapshot already owns the value's memory through this
-    // callback. Return the addressed writer's exact receipt, including no-op
-    // checkpoints, rather than reserving and decoding the same state again.
-    // Disk failure keeps this command and its receipt in the existing retry
-    // FIFO; the frozen heap cannot release its admission before durability.
-    let result = await withCheckedContinuation { continuation in
+      command = .init(documentID: documentID, record: record, journalStamp: journal.stamp,
+        programPath: program.path, expectedSourceBasis: program.sourceBasis, stateCondition: .matching(stateVersion))
+    } else { command = nil }
+    let actor = actorID
+    // Keep the admitted frozen snapshot in the existing writer FIFO through a
+    // disk retry. Publish its exact addressed receipt, never the whole scene.
+    let accepted: NotebookDocumentStatePublication? = await withCheckedContinuation { continuation in
       persistence.enqueue(owner: .documentState(documentID)) { store in
-        let result = try store.commitDocumentState(command)
-        continuation.resume(returning: result)
-        return result != command.expectedResult
+        let publication: NotebookDocumentStatePublication?
+        let reload: Bool
+        if let command {
+          let result = try store.commitDocumentState(command)
+          if case .committed(let value) = result { publication = value } else { publication = nil }
+          reload = result != command.expectedResult
+        } else {
+          publication = try store.checkpointDocumentState(documentID: documentID, programID: program.id,
+            programPath: program.path, value: value, sourceBasis: program.sourceBasis, stateVersion: stateVersion, actor: actor)
+          reload = publication != nil
+        }
+        continuation.resume(returning: publication)
+        return reload
       }
     }
     try Task.checkCancellation()
-    guard !isStopped, !isItemBeingDeleted(documentID),
-      case .committed(let accepted) = result, accepted.record == record,
-      documents[documentID]?.programIdentity(blockID: blockID) == programIdentity,
-      documentStates[documentID]?.records.first(where: { $0.id == blockID }) == record else { return nil }
+    guard let accepted, !isStopped, !isItemBeingDeleted(documentID) else { return nil }
+    // SQL accepts the checkpoint at its position in the write queue. A later
+    // contact can already be admitted locally while that write was waiting.
+    // Only the observed state or this exact writer publication may retire it.
+    if let document = documents[documentID],
+      (try? DocumentProgramSource(document: document, instanceID: program.id, path: program.path).sourceBasis) != program.sourceBasis { return nil }
+    if var journal = documentStates[documentID] {
+      let current = journal.records.first(where: { $0.id == blockID })
+      guard current?.valueVersion == stateVersion
+        || (current?.valueVersion == accepted.record.valueVersion && current?.value == value) else { return nil }
+      // This exact writer publication does not replace the scene protected by
+      // the current gesture. The next contact still needs its accepted clock.
+      let changed = journal.merge(accepted)
+      guard let record = journal.records.first(where: { $0.id == blockID }),
+        record.valueVersion == accepted.record.valueVersion, record.value == value else { return nil }
+      if changed { documentStates[documentID] = journal }
+      return record.valueVersion
+    }
+    // A detached runtime does not reopen the document to acknowledge its write.
+    guard !observesLocalState else { return nil }
     return accepted.record.valueVersion
   }
 
@@ -4417,6 +4488,19 @@ final class NotebookAppModel {
         }
         throw CollaborationError("invalid_script_request", "Запрос исполнения или контекста отсутствует.")
       }
+      if command.command == .importDocument {
+        guard let request = command.documentImport else {
+          throw CollaborationError("invalid_document_import", "Запрос импорта документа отсутствует.")
+        }
+        return try await importDocument(request).response
+      }
+      if command.command == .importDocumentResource {
+        guard let request = command.documentResourceImport, let workspaceID = workspaceHeader?.workspaceID else {
+          throw CollaborationError("invalid_document_resource", "Запрос импорта ресурса отсутствует.")
+        }
+        if programImporter == nil { programImporter = NotebookProgramImporter(persistence: persistence, workspaceID: workspaceID) }
+        return try await programImporter!.handle(request)
+      }
       if command.command == .importProgram {
         guard let request = command.programImport, let workspaceID = workspaceHeader?.workspaceID else {
           throw CollaborationError("invalid_program_package", "Запрос импорта отсутствует.")
@@ -4558,7 +4642,7 @@ final class NotebookAppModel {
     guard let refs = agentQuestion?.references, refs.count == 1, let ref = refs.first,
       let id = ref.elementID, ref.region != nil else { return false }
     switch ref.target.kind {
-    case .document: return documents[ref.target.id]?.blocks.first(where: { $0.id == id })?.kind == .interactive
+    case .document: return DocumentRenderRegistry.shared.program(documentID: ref.target.id, id: id) != nil
     case .page: return pages[ref.target.id]?.element(id:id)?.kind == .web
     case .board, .cover:
       return boardHierarchy?.board(ref.target.boardID ?? ref.target.id)?.element(id:id)?.kind == .web
@@ -4589,11 +4673,9 @@ final class NotebookAppModel {
       switch reference.target.kind {
       case .document:
         guard let document = documents[reference.target.id],
-          let block = document.blocks.first(where: { $0.id == id }) else { throw CancellationError() }
-        let programIdentity = document.programIdentity(blockID: id)
+          let program = DocumentRenderRegistry.shared.program(documentID: document.id, id: id) else { throw CancellationError() }
         acceptsState = { value in
-          self.documents[document.id]?.programIdentity(blockID: id) == programIdentity
-            && self.documents[document.id]?.blocks.first(where: { $0.id == id }) == block
+          DocumentRenderRegistry.shared.program(documentID: document.id, id: id)?.sourceBasis == program.sourceBasis
             && self.documentStates[document.id]?.records.first(where: { $0.id == id })?.value == value
         }
         pause = try await DocumentPagePresentationOwner.pauseForAttention(documentID: reference.target.id, blockID: id)
@@ -4843,7 +4925,10 @@ final class NotebookAppModel {
     /// The send gesture freezes attention and attachments before transcription
     /// or image rendering can suspend. Both text and dictation use this owner.
     func captureChatSubmissionContext(_ chat: NotebookChatController) -> ChatSubmissionContext {
-      let question = agentQuestion
+      // Freeze the native selection at Send, before any suspension. A local
+      // draft remains explicitly a draft, not a reference to different SQL text.
+      let sourceSelection = documentSourceEditor?.messageSelection
+      let question = sourceSelection == nil ? agentQuestion : nil
       let retainedSource = question.flatMap { q in pinnedAttentionSelections.first { $0.0 == q.contextID }?.1 }
       let retained = retainedSource?.freezingSubmissionVisuals()
       retainedSource?.resumePrograms()
@@ -4929,11 +5014,12 @@ final class NotebookAppModel {
           "fileHasLocalDraft": capturedFile.map { .bool($0.text != $0.base) } ?? .null,
           "visibleImages": try .encode(viewReferences),
           "visibleImageUnavailable": viewUnavailable.map(JSONValue.string) ?? .null,
+          "documentSourceSelection": try sourceSelection.map(JSONValue.encode) ?? .null,
           "attention": try question.map { question in
             .object(["contextID": .string(question.contextID.uuidString),
               "entryID": .string(question.entryID.uuidString), "references": try .encode(question.references)])
           } ?? .null,
-          "meaning": .string("Attached images show the exact frozen Notebook view or explicit pointing at submission; presence alone is not visual evidence. If visibleImageUnavailable is non-null, say that the image was unavailable instead of claiming to see it. Read frozen attention inside notebook_execute with await nb.attention({contextID, referenceID}); use emitImage(result.data.artifact) when present. notebook_context gives compact current context; Reads return {data,basis,coverage,cursor}; nb.transaction(key,{base:snapshot.basis,summary,operations}) returns immutable ActionResult. Consult nb.help(topic) only when needed. Shared Notebook workspace. Selection directs attention, not permissions. Use nb.reference, nb.transaction, nb.undo and nb.action for source/version checks, undoable edits and separate saved/received/shown receipts. For code notes use nb.code and the appendInkStroke operation on codeFragment. Use notebook://code/UUID for the read fragment, or fileLink with the required 1-based line query, in Markdown references. These links scroll only the document. A local draft is not yet the working file on Mac. Do not move the board camera.")
+          "meaning": .string("Attached images show the exact frozen Notebook view or explicit pointing at submission; presence alone is not visual evidence. If visibleImageUnavailable is non-null, say that the image was unavailable instead of claiming to see it. Read frozen attention inside notebook_execute with await nb.attention({contextID, referenceID}); use emitImage(result.data.artifact) when present. notebook_context gives compact current context; Reads return {data,basis,coverage,cursor}; nb.transaction(key,{base:snapshot.basis,summary,operations}) returns immutable ActionResult. Consult nb.help(topic) only when needed. Shared Notebook workspace. Selection directs attention, not permissions. Use nb.reference, nb.transaction, nb.undo and nb.action for source/version checks, undoable edits and separate saved/received/shown receipts. For code notes use nb.code and the appendInkStroke operation on codeFragment. Use notebook://code/UUID for the read fragment, or fileLink with the required 1-based line query, in Markdown references. These links scroll only the document. documentSourceSelection contains the exact native text selection at Send, its UTF-16 range and baseVersion. hasLocalDraft marks unsaved or conflicting human text: read the current file before an addressed edit; do not treat the draft as the saved source. A local draft is not yet the working file on Mac. Do not move the board camera.")
         ])
         let text = String(decoding: try JSONEncoder().encode(context), as: UTF8.self)
         return (text, question?.contextID, imageAttachments)
@@ -5671,7 +5757,7 @@ final class NotebookAppModel {
       pendingDeletions[id] = nil
       completedDeletions[id] = nil
     }
-    documentPaperSizes = state.paperSizes
+    documentPaperSizes = state.paperSizes.merging(documentPaperSizes) { _, current in current }
     sceneCoverage = state.coverage
     truncatedSceneBoards = state.truncatedBoards
     completeSceneCoverOwners = state.completeCoverElementOwners
@@ -5877,6 +5963,7 @@ final class NotebookAppModel {
     #endif
     repeat {
       guard !Task.isCancelled, continuing() else { return false }
+      if let task = surfaceHistoryTask, !(await task.value) { return false }
       let commands = Array(pendingCollaborationCommands.values)
       if !commands.isEmpty {
         // Positions were reserved at acceptance. A storage failure retains the
@@ -5906,7 +5993,7 @@ final class NotebookAppModel {
       observeNavigation("writer_flush_end", fields: trace)
       guard !Task.isCancelled, continuing() else { return false }
     } while boundary == .quiescent && (arrivalDrainTask != nil || diskRefreshTask != nil || headerRefreshTask != nil || documentOpeningTask != nil || persistence.pendingCount > 0
-      || !pendingCollaborationCommands.isEmpty || contextPublicationTask != nil)
+      || !pendingCollaborationCommands.isEmpty || contextPublicationTask != nil || surfaceHistoryTask != nil)
     return publicationFailure == nil && arrivalFailure == nil
   }
 

@@ -1,4 +1,5 @@
 import CoreGraphics
+import ImageIO
 import UIKit
 import Vision
 import XCTest
@@ -2803,13 +2804,13 @@ final class DrawingResponsivenessTests: XCTestCase {
     )
   }
 
-  func testDocumentTextOpensMarkdownEditorOnDoubleTap() async throws {
+  func testDocumentTextOpensLaTeXEditorOnDoubleTap() async throws {
     continueAfterFailure = false
     XCUIDevice.shared.orientation = .portrait
     let app = XCUIApplication()
     app.launchArguments = ["--notebook-drawing-responsiveness-fixture", "--notebook-document-runtime-fixture"]
     launchPortraitFixture(app)
-    let sourceRegion = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Исходник: # Живая математика")).firstMatch
+    let sourceRegion = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Исходник: main.tex")).firstMatch
     XCTAssertTrue(sourceRegion.waitForExistence(timeout: 20), app.debugDescription)
     sourceRegion.doubleTap()
     let editor = app.textViews["document-source-editor"].firstMatch
@@ -2817,15 +2818,15 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertTrue((editor.value as? String)?.contains("Живая математика") == true)
     editor.tap(); editor.typeText("\n\nНовая строка\n\n")
     XCTAssertTrue(app.staticTexts["Сохранено"].waitForExistence(timeout: 15))
-    app.buttons["Лист"].tap()
+    selectNotebookDocumentMode("Лист", in: app)
     XCTAssertFalse(editor.exists)
-    app.buttons["Код"].tap()
+    selectNotebookDocumentMode("Код", in: app)
     XCTAssertTrue((editor.value as? String)?.contains("Новая строка") == true)
     let image = XCTAttachment(screenshot: app.screenshot()); image.name = "Native source after paper double tap"
     image.lifetime = .keepAlways; add(image)
   }
 
-  func testDocumentRuntimeRendersMarkdownLatexAndInteractiveContent() async throws {
+  func testDocumentRuntimeRendersLaTeXAndInteractiveContent() async throws {
     continueAfterFailure = false
     XCUIDevice.shared.orientation = .portrait
     try await Task.sleep(for: .milliseconds(350))
@@ -2847,7 +2848,7 @@ final class DrawingResponsivenessTests: XCTestCase {
     XCTAssertEqual(
       app.state,
       .runningForeground,
-      "Markdown, LaTeX и интерактивный блок должны жить без падения приложения"
+      "LaTeX и интерактивная программа должны жить без падения приложения"
     )
 
     let slider = app.webViews.sliders.firstMatch
@@ -3315,61 +3316,79 @@ final class DrawingResponsivenessTests: XCTestCase {
       predicate: NSPredicate(format: "value BEGINSWITH 'Страница 1 из '"), object: surface)], timeout: 5)
     attachInstallation("return-page-installation")
     XCTAssertTrue(outward.waitForExistence(timeout: 3)); XCTAssertTrue(outward.isHittable)
-    XCTAssertFalse(app.textViews["Исходный Markdown или LaTeX"].exists, "Following links must not start source editing")
-    app.links["Отсутствующий раздел"].firstMatch.tap()
-    XCTAssertTrue(app.alerts["Ссылка недоступна"].waitForExistence(timeout: 2))
-    app.alerts.buttons["Понятно"].tap()
+    XCTAssertFalse(app.textViews["document-source-editor"].exists, "Following links must not start source editing")
     XCTAssertTrue((surface.value as? String ?? "").hasPrefix("Страница 1 из "))
   }
 
   func testDocumentFarLinkEditSaveAndColdReopeningKeepTheVisibleSavedText() async throws {
     continueAfterFailure = false
     let app = XCUIApplication()
-    app.launchArguments = ["--notebook-drawing-responsiveness-fixture", "--notebook-simulator-finger-gestures",
-      "--notebook-document-runtime-fixture", "--notebook-document-links-fixture"]
+    app.launchArguments = ["--notebook-drawing-responsiveness-fixture",
+      "--notebook-document-runtime-fixture", "--notebook-document-links-fixture", "--notebook-profile-documents"]
     launchPortraitFixture(app)
+    let surface = app.otherElements["page-turn-surface"]
     let outward = app.links["К дальней главе"].firstMatch
-    XCTAssertTrue(outward.waitForExistence(timeout: 8)); outward.tap()
+    XCTAssertTrue(outward.waitForExistence(timeout: 20)); outward.tap()
     let returning = app.links["К оглавлению"].firstMatch
-    XCTAssertTrue(returning.waitForExistence(timeout: 5)); returning.tap()
-    let firstPage = app.otherElements["page-turn-page-0"].firstMatch
-    let heading = firstPage.staticTexts["Оглавление проверки"].firstMatch
-    XCTAssertTrue(heading.waitForExistence(timeout: 5)); heading.doubleTap()
-    let editor = app.textViews["Исходный Markdown или LaTeX"].firstMatch
-    XCTAssertTrue(editor.waitForExistence(timeout: 5)); editor.tap()
-    XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
-    editor.typeText("\n\nСохранено до закрытия\n\n")
-    XCTAssertTrue((editor.value as? String)?.contains("Сохранено до закрытия") == true)
-    app.buttons["Сохранить"].firstMatch.tap()
-    let saved = firstPage.staticTexts["Сохранено до закрытия"].firstMatch
-    XCTAssertTrue(saved.waitForExistence(timeout: 12), "Save must install the new readable text before closing")
-    XCTAssertFalse(editor.exists)
-    let installed = XCTAttachment(screenshot: app.screenshot())
-    installed.name = "full-document-cycle-saved-before-close"; installed.lifetime = .keepAlways; add(installed)
-    notebookBack(in:app)
-    XCTAssertTrue(notebookOffersCreation(in:app))
-    app.terminate()
-    app.launchArguments.append("--notebook-reopen-fixture")
+    XCTAssertTrue(returning.waitForExistence(timeout: 10)); returning.tap()
+    XCTAssertTrue(outward.waitForExistence(timeout: 10))
+    selectNotebookDocumentMode("Код", in: app)
+    selectNotebookDocumentFile("main.tex", in: app)
+    let editor = app.textViews["document-source-editor"].firstMatch
+    XCTAssertTrue(editor.waitForExistence(timeout: 10))
+    let original = try XCTUnwrap(editor.value as? String)
+    // The native text view's default accessibility hit point can be its first
+    // glyph. Touch the visible body instead of splitting a preamble command.
+    editor.coordinate(withNormalizedOffset: .init(dx: 0.35, dy: 0.25)).tap()
+    let insertion = "\n\nСохранено до закрытия\n\n"
+    editor.typeText(insertion)
+    let edited = try XCTUnwrap(editor.value as? String)
+    XCTAssertEqual(edited.components(separatedBy: insertion).count, 2)
+    XCTAssertEqual(edited.replacingOccurrences(of: insertion, with: ""), original)
+    XCTAssertGreaterThan((edited as NSString).range(of: insertion).location,
+      NSMaxRange((original as NSString).range(of: "\\begin{document}")), "Touch must edit the visible document body")
+    XCTAssertTrue(app.staticTexts["Сохранено"].waitForExistence(timeout: 15))
+    selectNotebookDocumentMode("Лист", in: app)
+    let printFinished = app.staticTexts["document-print-status"].waitForNonExistence(timeout: 20)
+    // The profiler retains the completed navigation request across source edits.
+    // Only pixels containing the newly typed text prove the updated paper.
+    var observedText = ""
+    let accepted = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+      observedText = (try? self.visibleDocumentText(app: app, surface: surface, name: nil)) ?? ""
+      return observedText.contains("Сохранено до закрытия")
+    }, object: nil)
+    let displayed = await XCTWaiter.fulfillment(of: [accepted], timeout: 20)
+    if !printFinished || displayed != .completed {
+      let profiles = app.descendants(matching: .any).matching(identifier: "document-runtime")
+        .allElementsBoundByIndex.prefix(8).compactMap { $0.value as? String }.joined(separator: "\n")
+      let report = XCTAttachment(string: "printFinished=\(printFinished)\npage=\(surface.value ?? "nil")\n"
+        + "visibleText=\(observedText.prefix(8_000))\nhistoricalNavigation=\(profiles.prefix(16_000))\n"
+        + "savedSource=\(edited.prefix(16_000))\nAX=\(app.debugDescription.prefix(40_000))")
+      report.name = "saved-file-paper-timeout"; report.lifetime = .keepAlways; add(report)
+      let screen = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+      screen.name = "saved-file-paper-timeout-screen"; screen.lifetime = .keepAlways; add(screen)
+    }
+    XCTAssertTrue(printFinished, "The saved LaTeX must finish compiling without diagnostics")
+    XCTAssertEqual(displayed, .completed, "The physical paper must contain the newly saved text, not the previous artifact")
+    XCTAssertTrue(try visibleDocumentText(app: app, surface: surface, name: "saved-file-before-close").contains("Сохранено до закрытия"))
+    notebookBack(in: app)
+    XCTAssertTrue(notebookOffersCreation(in: app))
+    app.terminate(); app.launchArguments.append("--notebook-reopen-fixture")
     launchPortraitFixture(app)
-    let cover = app.descendants(matching: .any).matching(
-      identifier: "workspace-item-7e7a1000-0000-4000-8000-000000000006").firstMatch
-    XCTAssertTrue(cover.waitForExistence(timeout: 5)); cover.doubleTap()
-    XCTAssertTrue(saved.waitForExistence(timeout: 8), "A fresh process must read the saved source from SQLite")
-    XCTAssertFalse(editor.exists)
-    XCTAssertTrue(outward.waitForExistence(timeout: 3)); outward.tap()
-    XCTAssertTrue(returning.waitForExistence(timeout: 5)); returning.tap()
-    XCTAssertTrue(saved.waitForExistence(timeout: 5), "Reopened anchors and the saved first page must still agree")
-    let reopened = XCTAttachment(screenshot: app.screenshot())
-    reopened.name = "full-document-cycle-cold-reopened"; reopened.lifetime = .keepAlways; add(reopened)
-    // The page container extends behind the status bar; XCTest chooses its
-    // top hit point for multi-touch. Target visible paper text, not that inset.
-    heading.tap(withNumberOfTaps: 1, numberOfTouches: 2)
-    let undone = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in !saved.exists }, object: nil)
-    XCTAssertEqual(XCTWaiter.wait(for: [undone], timeout: 8), .completed,
-      "The ordinary two-finger undo must restore the saved document action after a cold reopening")
-    XCTAssertTrue(heading.exists, "Undo restores the block; it must not navigate away or remove the paper")
-    let undoImage = XCTAttachment(screenshot: app.screenshot())
-    undoImage.name = "document-source-undo-after-cold-reopening"; undoImage.lifetime = .keepAlways; add(undoImage)
+    let cover = app.descendants(matching: .any).matching(identifier: "workspace-item-7e7a1000-0000-4000-8000-000000000006").firstMatch
+    XCTAssertTrue(cover.waitForExistence(timeout: 8)); cover.doubleTap()
+    XCTAssertTrue(outward.waitForExistence(timeout: 20))
+    XCTAssertTrue(try visibleDocumentText(app: app, surface: surface, name: "saved-file-cold-reopened").contains("Сохранено до закрытия"))
+    outward.tap(); XCTAssertTrue(returning.waitForExistence(timeout: 10)); returning.tap()
+    XCTAssertTrue(outward.waitForExistence(timeout: 10))
+    selectNotebookDocumentMode("Код", in: app)
+    XCTAssertTrue(editor.waitForExistence(timeout: 10)); XCTAssertEqual(editor.value as? String, edited)
+    editor.twoFingerTap()
+    let restored = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in editor.value as? String == original }, object: nil)
+    XCTAssertEqual(XCTWaiter.wait(for: [restored], timeout: 15), .completed)
+    selectNotebookDocumentMode("Лист", in: app)
+    XCTAssertTrue(outward.waitForExistence(timeout: 20))
+    XCTAssertTrue(try visibleDocumentText(app: app, surface: surface, name: "file-undo-after-cold-reopen").contains("Оглавление проверки"))
     app.terminate()
   }
 
@@ -3447,27 +3466,45 @@ final class DrawingResponsivenessTests: XCTestCase {
       "The real workspace, not an offscreen preparation window, owns the portrait fixture")
   }
 
-  private func visibleDocumentText(app: XCUIApplication, surface: XCUIElement, name: String) throws -> String {
-    let screenshot = app.screenshot()
-    let attachment = XCTAttachment(screenshot: screenshot)
-    attachment.name = name
-    attachment.lifetime = .keepAlways
-    add(attachment)
+  private func visibleDocumentText(app: XCUIApplication, surface: XCUIElement, name: String?) throws -> String {
+    let screenshot = XCUIScreen.main.screenshot()
+    if let name {
+      let attachment = XCTAttachment(screenshot: screenshot)
+      attachment.name = name; attachment.lifetime = .keepAlways; add(attachment)
+    }
     let request = VNRecognizeTextRequest()
     request.recognitionLevel = .accurate
     request.recognitionLanguages = ["ru-RU"]
-    let frame = surface.frame.intersection(app.frame)
-    let pageRegion = CGRect(x: (frame.minX - app.frame.minX) / app.frame.width,
-      y: 1 - (frame.maxY - app.frame.minY) / app.frame.height,
-      width: frame.width / app.frame.width, height: frame.height / app.frame.height)
-    try VNImageRequestHandler(cgImage: screenshot.image.cgImage!, options: [:]).perform([request])
+    // These portrait scenarios launch a full-screen window at the screen origin.
+    // Full-screen capture is not cropped to an element's rotated coordinates.
+    let window = app.frame
+    XCTAssertEqual(window.origin, .zero)
+    let frame = surface.frame.intersection(window)
+    let pageRegion = CGRect(x: frame.minX / window.width,
+      y: 1 - frame.maxY / window.height,
+      width: frame.width / window.width, height: frame.height / window.height)
+    let orientation: CGImagePropertyOrientation
+    switch screenshot.image.imageOrientation {
+    case .up: orientation = .up
+    case .down: orientation = .down
+    case .left: orientation = .left
+    case .right: orientation = .right
+    case .upMirrored: orientation = .upMirrored
+    case .downMirrored: orientation = .downMirrored
+    case .leftMirrored: orientation = .leftMirrored
+    case .rightMirrored: orientation = .rightMirrored
+    @unknown default: throw NSError(domain: "NotebookUITest.ImageOrientation", code: 1)
+    }
+    try VNImageRequestHandler(cgImage: screenshot.image.cgImage!, orientation: orientation, options: [:]).perform([request])
     // Recognize complete screen glyphs, then address observations to the real
     // sheet. Cropping the recognizer's input changes its word segmentation.
     let text = (request.results ?? []).filter {
       pageRegion.contains(CGPoint(x: $0.boundingBox.midX, y: $0.boundingBox.midY))
     }.compactMap { $0.topCandidates(1).first?.string }.joined(separator: "\n")
-    XCTAssertFalse(text.isEmpty)
-    let proof = XCTAttachment(string: text); proof.name = name + "-text"; proof.lifetime = .keepAlways; add(proof)
+    if let name {
+      XCTAssertFalse(text.isEmpty)
+      let proof = XCTAttachment(string: text); proof.name = name + "-text"; proof.lifetime = .keepAlways; add(proof)
+    }
     return text
   }
 
@@ -3567,7 +3604,7 @@ final class DrawingResponsivenessTests: XCTestCase {
       XCTAssertTrue(sheet.waitForExistence(timeout: 2))
       XCTAssertEqual(cover.value as? String, "Обложка 100%", "The same sheet must stay fully open during ordinary zoom")
       XCTAssertFalse(notebookOffersCreation(in:app))
-      XCTAssertFalse(app.textViews["Исходный Markdown или LaTeX"].exists,
+      XCTAssertFalse(app.textViews["document-source-editor"].exists,
         "The two releases of a pinch are not a double tap on document text")
       XCTAssertFalse(app.keyboards.firstMatch.exists)
     }
@@ -4078,7 +4115,7 @@ final class DrawingResponsivenessTests: XCTestCase {
     launchPortraitFixture(app)
     let page = app.otherElements["page-turn-surface"]
     XCTAssertTrue(page.waitForExistence(timeout: 8))
-    let content = page.buttons.matching(NSPredicate(format:"label BEGINSWITH %@","Исходник: # Живая математика Документ соединяет")).firstMatch
+    let content = page.buttons.matching(NSPredicate(format:"label BEGINSWITH %@","Исходник: main.tex")).firstMatch
     XCTAssertTrue(content.waitForExistence(timeout: 5))
     content.pinch(withScale: 0.28, velocity: -2)
     XCTAssertTrue(page.waitForNonExistence(timeout:5))

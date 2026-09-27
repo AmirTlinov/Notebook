@@ -223,17 +223,17 @@ final class AgentStateTests: XCTestCase {
     retainNotebookUntilTeardown(model, removing: root)
     await model.start(pageSize: PageSize(width: 834, height: 1_194))
     let documentID = try XCTUnwrap(
-      model.createDocument(at: .zero, paperSize: .letter)
+      model.createDocument(at: .zero)
     )
 
     let creationSaved = await model.finishPendingPersistence()
     XCTAssertTrue(creationSaved, model.persistenceFailure ?? "")
-    XCTAssertEqual(try store.loadDocument(documentID).paperSize, .letter)
+    XCTAssertEqual(try store.loadDocument(documentID).entrypoint, "main.tex")
 
     var document = try store.loadDocument(documentID)
-    XCTAssertTrue(document.replaceContent(blocks: document.blocks + [
-      .interactive(id: "counter", html: "<button>Count</button>", initialState: .object(["count": .number(0)]))
-    ], actor: model.actorID))
+    XCTAssertTrue(document.replaceContent(files: DocumentTestFiles.document(contents: [.tex(id: "body", source: "Initial body"),
+      .program(id: "counter", html: "<button>Count</button>", initialState: .object(["count": .number(0)]))
+    ]).files, actor: model.actorID))
     _ = try store.saveMergedDocument(document)
     let presence = try XCTUnwrap(model.presence)
     model.updatePresence(.init(boardID: presence.boardID, mode: .document,
@@ -242,24 +242,20 @@ final class AgentStateTests: XCTestCase {
     await model.finishPendingPersistence()
     await model.reloadExternalChanges()?.value
     document = try XCTUnwrap(model.documents[documentID])
-    let source = try XCTUnwrap(document.blocks.first { $0.id == "body" }?.source)
+    let source = try XCTUnwrap(document.files.first { $0.id == "body" }?.source)
     let status = try await model.commitDocumentSource(edit: .init(
-      sessionID: UUID(), documentID: documentID, blockID: "body", baseSource: source,
-      baseVersion: document.sourceVersion(blockID: "body"), source: "# Отредактировано на iPad", sequence: 1
+      sessionID: UUID(), documentID: documentID, fileID: "body", baseSource: source,
+      baseVersion: document.fileVersion(fileID: "body"), source: "\\section{Отредактировано на iPad}\\hypertarget{ipad}{}", sequence: 1
     ))
     XCTAssertEqual(status, .committed)
-    let stateVersion = try await model.commitDocumentState(
-      documentID: documentID,
-      blockID: "counter",
-      value: .object(["count": .number(4)]),
-      programIdentity: document.programIdentity(blockID: "counter")
-    )
+    let stateVersion = try await model.commitDocumentState(documentID: documentID,
+      program: try DocumentProgramSource(document: document, instanceID: "counter", path: "programs/counter"), value: .object(["count": .number(4)]))
     XCTAssertNotNil(stateVersion)
 
     await model.finishPendingPersistence()
     XCTAssertEqual(
-      try store.loadDocument(documentID).blocks.first?.source,
-      "# Отредактировано на iPad"
+      try store.loadDocument(documentID).files.first?.source,
+      "\\section{Отредактировано на iPad}\\hypertarget{ipad}{}"
     )
     XCTAssertEqual(
       try store.loadDocumentState(documentID).value(for: "counter"),
@@ -300,10 +296,10 @@ final class AgentStateTests: XCTestCase {
       near: WorldPoint(x: 1_200, y: 300),
       actor: remoteActor
     ))
-    let document = DocumentDocument(
+    let document = DocumentTestFiles.document(
       id: item.id,
       actor: remoteActor,
-      blocks: [.markdown(id: "body", source: "# Доставлено целиком")]
+      contents: [.tex(id: "body", source: "\\section{Доставлено целиком}")]
     )
     let state = DocumentStateJournal(id: item.id, actor: remoteActor)
 
@@ -323,9 +319,8 @@ final class AgentStateTests: XCTestCase {
       "Receiving independent content does not redirect the iPad's human selection")
     let delivered = try store.loadDocument(item.id)
     XCTAssertEqual(delivered.id, document.id)
-    XCTAssertEqual(delivered.paperSize, document.paperSize)
-    XCTAssertEqual(delivered.preamble, document.preamble)
-    XCTAssertEqual(delivered.blocks, document.blocks)
+    XCTAssertEqual(delivered.entrypoint, document.entrypoint)
+    XCTAssertEqual(delivered.files, document.files)
     XCTAssertEqual(delivered.contentStamp, document.contentStamp)
     XCTAssertNotNil(delivered.collaboration, "Принятое содержание получает причинные версии полей")
     XCTAssertEqual(try store.loadDocumentState(item.id), state)
@@ -343,7 +338,7 @@ final class AgentStateTests: XCTestCase {
     retainNotebookUntilTeardown(model, removing: root)
     await model.start(pageSize: PageSize(width: 834, height: 1_194))
     let documentID = try XCTUnwrap(
-      model.createDocument(at: .zero, paperSize: .a4)
+      model.createDocument(at: .zero)
     )
     await model.finishPendingPersistence()
     let peer = NotebookStore(root: root.appendingPathComponent("peer")), peerID = UUID()

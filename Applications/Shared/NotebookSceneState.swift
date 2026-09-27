@@ -45,7 +45,7 @@ struct NotebookSceneState: Sendable {
   let inkWindow: NotebookSpatialInkWindow
   let inkHistoryStates: [UUID: NotebookSpatialInkHistoryState]
   let presence: SessionPresence
-  let paperSizes: [UUID: DocumentPaperSize]
+  let paperSizes: [UUID: WorkspaceItemGeometry]
   let coverage: [UUID: WorkspaceSpatialBounds]
   let truncatedBoards: Set<UUID>
   let completeCoverElementOwners: Set<UUID>
@@ -134,8 +134,7 @@ struct NotebookSceneState: Sendable {
       let owner = try store.ownerBoardID(of: selected.id) ?? header.rootBoardID
       let desiredBoard = considered?.boardID ?? owner
       let boardID = try store.readBoardNodeHeader(desiredBoard) == nil ? header.rootBoardID : desiredBoard
-      let selectedPaper = selected.kind == .document ? try store.readDocumentPaperSize(selected.id) : nil
-      let geometry = selectedPaper.map(WorkspaceItemGeometry.document) ?? .notebook
+      let geometry: WorkspaceItemGeometry = selected.kind == .document ? .uncompiledDocument : .notebook
       let presence: SessionPresence
       if let considered, considered.boardID == boardID,
         considered.focusedItemID == nil || (considered.focusedItemID == selected.id && owner == boardID),
@@ -181,7 +180,7 @@ struct NotebookSceneState: Sendable {
       var items: [UUID: WorkspaceItem] = [selected.id: selected]
       var nodes: [UUID: BoardNode] = [:]
       var boardContentRevisions: [UUID: String] = [:]
-      var paper: [UUID: DocumentPaperSize] = [:]
+      var paper: [UUID: WorkspaceItemGeometry] = [:]
       var coverage: [UUID: WorkspaceSpatialBounds] = [:], truncated = Set<UUID>()
       var completeCoverElementOwners = Set<UUID>()
       var pending: [SessionPresence] = [presence]
@@ -254,14 +253,14 @@ struct NotebookSceneState: Sendable {
         boardIDs: boardIDs, surfaces: [])
       var inkCoverage = Dictionary(uniqueKeysWithValues: coverage.map { (SurfaceID.board($0.key), $0.value) })
       for id in coverIDs {
-        let geometry = paper[id].map(WorkspaceItemGeometry.document) ?? .notebook
+        let geometry = paper[id] ?? .notebook
         inkCoverage[.cover(id)] = .init(origin: .zero, width: geometry.width, height: geometry.height)
       }
       var inkElements: [SurfaceID: [String]] = [:]
       for node in nodes.values { for element in node.board.elements { inkElements[element.surface, default: []].append(element.id) } }
       let inkWindow = try store.readSpatialInkWindow(coverage: inkCoverage, pinnedActionIDs: pinnedInkActionIDs, elementIDs: inkElements)
       for item in live.items where item.id != selected.id { items[item.id] = item.item }
-      paper.merge(live.documents.mapValues(\.paperSize)) { _, next in next }
+      for id in live.documents.keys where paper[id] == nil { paper[id] = .uncompiledDocument }
       let workspace = try store.workspaceProjection(items: items.values.sorted { $0.id.uuidString < $1.id.uuidString },
         selectedItemID: selected.id, selectedPageID: pageID)
       let hierarchy = BoardHierarchy(rootBoardID: header.rootBoardID,

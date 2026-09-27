@@ -214,13 +214,13 @@ struct NotebookPlacementTests {
     #expect(result.sourceRevision == source && result.expected.first?.sourceRevision == source)
   }
 
-  @Test func documentCoverUsesItsPaperSizeWithoutReadingBlocksOrState() throws {
+  @Test func uncompiledDocumentCoverDoesNotReadSourcesOrProgramState() throws {
     let f = try Fixture(); defer { f.clean() }
     let before = try f.store.loadIndex(), boardBefore = try f.store.loadBoard(items: before.items)
     var after = before, boardAfter = boardBefore
     let created = after.createDocument(title: "Letter", actor: f.actor)
     let item = try #require(created)
-    let document = DocumentDocument(id: item.id, actor: f.actor, paperSize: .letter)
+    let document = DocumentDocument(id: item.id, actor: f.actor)
     let state = DocumentStateJournal(id: item.id, actor: f.actor)
     let added = boardAfter.addItem(item.id, to: f.header.rootBoardID, near: .init(x: 3000, y: 3000), actor: f.actor)
     #expect(added)
@@ -228,7 +228,7 @@ struct NotebookPlacementTests {
     let target = CollaborationTarget(kind: .cover, id: item.id, boardID: f.header.rootBoardID)
     let request = try f.request(target: target)
     try f.corrupt(["document-states/" + item.id.uuidString.lowercased() + ".json#"])
-    let cut = try f.store.readPlacement(request, budget: .init()), expected = WorkspaceItemGeometry.document(.letter)
+    let cut = try f.store.readPlacement(request, budget: .init()), expected = WorkspaceItemGeometry.uncompiledDocument
     #expect(cut.geometry?.extent == .init(width: expected.width, height: expected.height))
     #expect(cut.sourceRevision == (try f.store.referenceRevision(target: target)))
     #expect(try f.complete(request).status == .ready)

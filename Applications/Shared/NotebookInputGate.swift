@@ -52,19 +52,20 @@ final class NotebookInputGate {
       && fingerContactOwners.values.allSatisfy { $0 == .history }
   }
 
-  func claimHistoryContacts(_ contacts: Set<ObjectIdentifier>) {
+  func claimHistoryContacts(_ contacts: Set<ObjectIdentifier>, nativeInput: ObjectIdentifier? = nil) {
     guard contacts.count == 2, !hasActivePencil, contacts.allSatisfy({ contact in
       switch fingerContactOwners[contact] {
-      case .scene?, .webLink?: true
+      case .scene?, .webLink?: nativeInput == nil
+      case .nativeInput(let owner)?: owner == nativeInput
       default: false
       }
     }) else { return }
     for contact in contacts { fingerContactOwners[contact] = .history }
   }
 
-  func releaseHistoryContacts(_ contacts: Set<ObjectIdentifier>) {
+  func releaseHistoryContacts(_ contacts: Set<ObjectIdentifier>, nativeInput: ObjectIdentifier? = nil) {
     for contact in contacts where fingerContactOwners[contact] == .history {
-      fingerContactOwners[contact] = .scene
+      fingerContactOwners[contact] = nativeInput.map(FingerContactOwner.nativeInput) ?? .scene
     }
   }
 

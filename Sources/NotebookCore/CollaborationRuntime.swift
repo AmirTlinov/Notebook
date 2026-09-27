@@ -45,11 +45,7 @@ struct NotebookReferenceReader {
       }
     case .document:
       guard let document = files["documents/" + suffix] else { throw CollaborationError("target_missing", "Документ отсутствует.", target: target) }
-      if let elementID {
-        guard let block = document["blocks"]?.array.first(where: { $0.memberIdentity == collaborationIdentity(elementID) }) else { throw CollaborationError("target_missing", "Блок документа отсутствует.", target: target) }
-        let state = files["document-states/" + suffix]?["records"]?.array.first { $0.memberIdentity == collaborationIdentity(elementID) }
-        content = .object(["block": block, "state": state ?? .null])
-      } else { content = .object(["document": document.setting("collaboration", nil), "state": files["document-states/" + suffix] ?? .null]) }
+      content = .object(["document": document.setting("collaboration", nil), "state": files["document-states/" + suffix] ?? .null])
     case .board, .cover:
       guard let hierarchy = files["board.json"], files["workspace.json"] != nil else { throw CollaborationError("target_missing", "Доска отсутствует.", target: target) }
       let boardID = target.kind == .board ? target.id : target.boardID
@@ -127,16 +123,33 @@ public struct TargetRenderRequest: Codable, Equatable, Sendable, Identifiable {
 }
 
 public struct RenderDiagnostic: Codable, Equatable, Sendable {
+  public let fileID: String?
+  public let path: String?
+  public let line: Int?
   public let kind: String
   public let elementID: String?
   public let message: String
 
-  public init(kind: String, elementID: String? = nil, message: String) {
-    self.kind = kind; self.elementID = elementID; self.message = message
+  public init(kind: String, elementID: String? = nil, fileID: String? = nil, path: String? = nil, line: Int? = nil, message: String) {
+    self.kind = kind; self.elementID = elementID; self.fileID = fileID; self.path = path; self.line = line; self.message = message
+  }
+}
+
+/// Execution evidence from the accepted page render, not an interaction test.
+public struct DocumentProgramCheck: Codable, Equatable, Sendable {
+  public enum Status: String, Codable, Sendable { case ready, failed, notChecked = "not_checked" }
+  public enum Scope: String, Codable, Sendable { case startup }
+  public let instanceID: String
+  public let sourceBasis: String?
+  public let status: Status
+  public let scope: Scope
+  public init(instanceID: String, sourceBasis: String? = nil, status: Status) {
+    self.instanceID = instanceID; self.sourceBasis = sourceBasis; self.status = status; scope = .startup
   }
 }
 
 public struct TargetRenderReceipt: Codable, Equatable, Sendable {
+  public let buildID: String?
   public let request: TargetRenderRequest
   public let status: String
   public let referenceFingerprint: String?
@@ -144,14 +157,15 @@ public struct TargetRenderReceipt: Codable, Equatable, Sendable {
   public let pixelSize: SpatialPoint?
   public let camera: SpatialCamera?
   public let diagnostics: [RenderDiagnostic]
+  public let programs: [DocumentProgramCheck]?
   public let inkRegions: [PageRect]
   public let completedAt: Date
 
-  public init(request: TargetRenderRequest, status: String, pngSHA256: String? = nil, referenceFingerprint: String? = nil,
+  public init(request: TargetRenderRequest, status: String, buildID: String? = nil, pngSHA256: String? = nil, referenceFingerprint: String? = nil,
     pixelSize: SpatialPoint? = nil, camera: SpatialCamera? = nil,
-    diagnostics: [RenderDiagnostic] = [], inkRegions: [PageRect] = []) {
-    self.request = request; self.status = status; self.pngSHA256 = pngSHA256; self.referenceFingerprint = referenceFingerprint
-    self.pixelSize = pixelSize; self.camera = camera; self.diagnostics = diagnostics
+    diagnostics: [RenderDiagnostic] = [], programs: [DocumentProgramCheck]? = nil, inkRegions: [PageRect] = []) {
+    self.buildID = buildID; self.request = request; self.status = status; self.pngSHA256 = pngSHA256; self.referenceFingerprint = referenceFingerprint
+    self.pixelSize = pixelSize; self.camera = camera; self.diagnostics = diagnostics; self.programs = programs
     self.inkRegions = inkRegions
     completedAt = Date()
   }

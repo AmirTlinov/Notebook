@@ -19,9 +19,9 @@ public struct NotebookRecordMutation: Codable, Equatable, Sendable {
 }
 
 public struct NotebookChangeManifest: Codable, Equatable, Sendable {
-  // Detached connectors retain signed bend positions and their elbow axis.
-  // Older readers must not silently reinterpret that material on cloud delivery.
-  public static let currentFormat = 25
+  // Documents are addressed file trees, not block streams. An old reader must
+  // never reinterpret the new source or restore a retired document inverse.
+  public static let currentFormat = 26
   public let format: Int
   public let transactionID: UUID
   public let workspaceID: UUID
@@ -69,7 +69,7 @@ public struct NotebookSceneWindow: Codable, Sendable {
   /// Complete physical board content versions from this window's SQL cut;
   /// hashing the deliberately bounded board bodies would omit unseen edits.
   public let boardContentRevisions: [UUID: String]
-  public let documentPaper: [UUID: DocumentPaperSize]
+  public let documentPaper: [UUID: WorkspaceItemGeometry]
   public let pageCounts: [UUID: Int]
   public let referenceIdentities: [NotebookReferenceIdentity]
   public let totalMatches: Int

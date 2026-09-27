@@ -48,25 +48,34 @@ test('recipes commit through native admission: bound diagram, SVG, document, nat
     const persisted=await read({kind:'boardElement',id:rootBoardID,elementID:picture.ids.image});
     assert.match(JSON.stringify(persisted.data),/data:image\/svg\+xml;base64,/);
     assert.match(JSON.stringify(persisted.data),/SVG на доске/);
+    const source=String.raw`\documentclass{article}
+\usepackage{notebook}
+\begin{document}
+Одна очередь записи.
+\end{document}`;
     const doc=await run('document',{target:{kind:'board',id:rootBoardID},anchor:{tileX:0,tileY:0,localX:1200,localY:500},
-      title:'Технический дизайн',sections:[{id:'decision',heading:'Решение',body:'Одна очередь записи.'}]});
+      title:'Технический дизайн',source});
     assert.equal(doc.action.publication.saved,'confirmed');
-    assert.equal((await read({kind:'document',id:doc.ids.document})).data.blocks.length,2);
-    await run('document',{target:{kind:'document',id:doc.ids.document},afterID:doc.ids.decision,sections:[{id:'next',body:'Продолжение человека и агента.'}]});
-    const updated=await read({kind:'document',id:doc.ids.document});
-    assert.equal(updated.data.blocks.length,3);assert.equal(updated.data.blocks[1].id,doc.ids.decision);
+    assert.equal((await read({kind:'document',id:doc.ids.document})).data.files.length,1);
+    const main=await read({kind:'documentFile',id:doc.ids.document,fileID:doc.ids['main.tex']});
+    const location=main.data.file.source.indexOf(String.raw`\end{document}`);
+    await run('document',{target:{kind:'document',id:doc.ids.document},edit:{fileID:main.data.file.id,
+      expectedVersion:main.data.sourceVersion,range:{location,length:0},expectedText:'',source:'Продолжение человека и агента.\n'}});
+    const updated=await read({kind:'documentFile',id:doc.ids.document,fileID:main.data.file.id});
+    assert.match(updated.data.file.source,/Продолжение человека и агента/);
     const program={html:'<svg viewBox="0 0 100 100"><circle id="point" cx="50" cy="50" r="5"/></svg>',
       css:'svg{width:100%}',javaScript:'notebook.ready(Promise.resolve());',initialState:{phase:0.25}};
     const animation=await run('animation',{...program,target:{kind:'board',id:rootBoardID},anchor:{tileX:0,tileY:0,localX:400,localY:1200}});
     assert.equal(animation.action.publication.saved,'confirmed');
     const scene=(await read({kind:'boardElement',id:rootBoardID,elementID:animation.ids.animation})).data;
     assert.equal(scene.kind,'web');assert.equal(scene.html,program.html);assert.deepEqual(scene.state,program.initialState);
-    const block=await run('animation',{...program,target:{kind:'document',id:doc.ids.document},afterID:doc.ids.decision});
-    assert.equal(block.action.publication.saved,'confirmed');
-    const withAnimation=(await read({kind:'document',id:doc.ids.document})).data.blocks;
-    const savedBlock=withAnimation.find((value:any)=>value.id===block.ids.animation);
-    assert.equal(savedBlock.kind,'interactive');assert.equal(savedBlock.javaScript,program.javaScript);
-    assert.deepEqual(savedBlock.initialState,program.initialState);
+    const prepared=await run('animation',{...program,target:{kind:'document',id:doc.ids.document},
+      edit:{fileID:updated.data.file.id,expectedVersion:updated.data.sourceVersion,
+        range:{location:updated.data.file.source.indexOf(String.raw`\end{document}`),length:0},expectedText:''}});
+    assert.equal(prepared.action.publication.saved,'confirmed');
+    const withAnimation=(await read({kind:'document',id:doc.ids.document})).data.files;
+    assert.equal(withAnimation.find((value:any)=>value.path===prepared.ids.programPath+'/main.js').source,program.javaScript);
+    assert.deepEqual(JSON.parse(withAnimation.find((value:any)=>value.path===prepared.ids.programPath+'/program.json').source).initialState,program.initialState);
     const ink=await run('sketch',{target,strokes:[{points:[{x:10,y:10},{x:30,y:40},{x:60,y:15}]}]});
     assert.equal(ink.action.publication.saved,'confirmed');
     const undo=await store.command<any>({command:'undo',actionID:graph.action.actionID});

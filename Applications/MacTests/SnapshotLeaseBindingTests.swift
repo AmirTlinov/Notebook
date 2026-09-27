@@ -49,7 +49,7 @@ final class SnapshotLeaseBindingTests: XCTestCase {
     let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
     retainNotebookUntilTeardown(model, removing: root)
     await model.start(pageSize: NotebookAppModel.defaultPageSize)
-    let id = try XCTUnwrap(model.createDocument(at: .zero, paperSize: .a4))
+    let id = try XCTUnwrap(model.createDocument(at: .zero))
     let created = await model.finishPendingPersistence()
     XCTAssertTrue(created, model.persistenceFailure ?? "")
     // Closed covers deliberately do not retain the document body. Admit the
@@ -58,7 +58,7 @@ final class SnapshotLeaseBindingTests: XCTestCase {
     await model.prepareDocumentOpening(id, pageIndex: 0)?.value
     let document = try XCTUnwrap(model.documents[id])
     let state = try XCTUnwrap(model.documentStates[id])
-    let geometry = WorkspaceItemGeometry.document(document.paperSize)
+    let geometry = WorkspaceItemGeometry.uncompiledDocument
     let size = NSSize(width: geometry.width, height: geometry.height)
     let source = SceneRasterSource.document(id: id,
       token: DocumentSnapshotCache.token(document: document, state: state, pageIndex: 0))

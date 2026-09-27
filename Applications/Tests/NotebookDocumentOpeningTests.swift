@@ -37,7 +37,7 @@ final class NotebookDocumentOpeningTests: XCTestCase {
     let target = CollaborationTarget(kind: .document, id: destination.id)
     let revision = try await model.performStoreCommand { try $0.referenceRevision(target: target) }
     let viewport = try XCTUnwrap(model.presence?.viewport)
-    let geometry = WorkspaceItemGeometry.document(destination.paperSize)
+    let geometry = WorkspaceItemGeometry.uncompiledDocument
     let destinationCamera = SpatialCamera(center: .init(x: 2_000, y: 0), scale: geometry.fitScale(viewport: viewport))
     if !onAnotherBoard {
       let origin = try XCTUnwrap(model.presence)
@@ -213,6 +213,32 @@ final class NotebookDocumentOpeningTests: XCTestCase {
     XCTAssertEqual(area?.pageIndex, presence.documentPageIndex)
     XCTAssertNil(area?.elementID)
     XCTAssertEqual(area?.region, .init(x: 0, y: 0, width: 120 / presence.camera.scale, height: 160 / presence.camera.scale))
+    let chat = try XCTUnwrap(model.chat)
+    chat.select(.init(id: UUID().uuidString, title: "Указка", cwd: "/tmp"))
+    model.selectDrawingTool(.laser)
+    let laser = try XCTUnwrap(NotebookAttentionProjection.documentLaser(at: point, model: model, presence: presence))
+    guard case .document(let page) = laser.address else { return XCTFail("An open PDF must not borrow its cover's ink address") }
+    XCTAssertEqual(page.id, first.id); XCTAssertEqual(page.pageIndex, 0)
+    let stale = NotebookLaserAddress.document(.init(id:page.id,pageIndex:page.pageIndex,token:page.token,
+      hostID:page.hostID,generation:page.generation &+ 1,size:page.size))
+    XCTAssertNil(NotebookAttentionProjection.laserFrame(stale,model:model,presence:presence))
+    XCTAssertFalse(model.drawingTools.beginLaser(at:.zero,address:stale,screenScale:presence.camera.scale))
+    let local = SpatialPoint(x:(point.x-laser.frame.minX)/presence.camera.scale,
+      y:(point.y-laser.frame.minY)/presence.camera.scale)
+    let beforeInk = model.spatialInk
+    XCTAssertTrue(model.drawingTools.beginLaser(at:local,address:laser.address,screenScale:presence.camera.scale))
+    chat.select(.init(id: UUID().uuidString, title: "Другой разговор", cwd: "/tmp"))
+    model.drawingTools.finish()
+    XCTAssertEqual(model.laserContext.count,0,"A contact cannot be reassigned to the chat selected after Pencil-down")
+    XCTAssertTrue(model.drawingTools.beginLaser(at:local,address:laser.address,screenScale:presence.camera.scale))
+    XCTAssertNil(model.drawingTools.contact)
+    model.drawingTools.move(to:.init(x:local.x+20/presence.camera.scale,y:local.y))
+    model.drawingTools.move(to:.init(x:local.x+20/presence.camera.scale,y:local.y+20/presence.camera.scale))
+    model.drawingTools.finish()
+    let pending = model.laserContext.snapshot(scope:chat.pointingScope)
+    model.laserContext.reserve(pending)
+    XCTAssertEqual(pending.count,1)
+    XCTAssertEqual(model.spatialInk,beforeInk); XCTAssertTrue(model.workingGraphics.isEmpty)
     let pose = try XCTUnwrap(model.compositionTiles.surfaceRegistry.pose(for: .cover(first.id)))
     let surface = try XCTUnwrap(pose.screenSurface(in: host.view))
     XCTAssertEqual(surface.presentationRank, rank, "Accepted native surface samples retain this same presentation tier")
@@ -220,6 +246,15 @@ final class NotebookDocumentOpeningTests: XCTestCase {
     let closed = SessionPresence(boardID: boardID, mode: .cover, camera: camera, viewport: viewport,
       focusedItemID: first.id, openProgress: 0, selectedItemID: first.id)
     model.updatePresence(closed, settled: true)
+    XCTAssertNil(NotebookAttentionProjection.laserFrame(laser.address,model:model,presence:closed))
+    let crops = try await NotebookLaserContext.images(pending)
+    model.laserContext.finish(pending,consumed:true)
+    let crop = try XCTUnwrap(crops.first)
+    XCTAssertEqual(crops.count,1,"The completed crop survives closing the paper before sending")
+    XCTAssertEqual(crop.reference.target,.init(kind:.document,id:first.id))
+    XCTAssertEqual(crop.reference.pageIndex,0)
+    XCTAssertLessThan(crop.image.region.width,page.size.width)
+    XCTAssertNil(crop.image.presentation,"A red contour is annotated context, not an export presentation receipt")
     XCTAssertNil(WorkspaceSceneProjection.presentationRank(of: opened, in: closed))
     XCTAssertTrue(WorkspaceSceneProjection.isPaintedBelow(opened, neighbour, in: closed))
     let persisted = await model.finishPendingPersistence(); XCTAssertTrue(persisted)
@@ -252,9 +287,9 @@ final class NotebookDocumentOpeningTests: XCTestCase {
     let (model, first, second) = try await fixture()
     try await model.performStoreCommand { store in
       let database = try NotebookSQLConnection(url: store.databaseURL, writable: true)
-      let address = "documents/" + second.id.uuidString.lowercased() + ".json#/blocks/@text"
+      let address = "documents/" + second.id.uuidString.lowercased() + ".json#/files/@text"
       try database.run("UPDATE blobs SET data=? WHERE hash=(SELECT hash FROM records WHERE address=?)",
-        [.blob(Data("not a document block".utf8)), .text(address)])
+        [.blob(Data("not a document file".utf8)), .text(address)])
       XCTAssertThrowsError(try store.loadDocument(second.id))
     }
     let opening = try XCTUnwrap(model.prepareDocumentOpening(first.id, pageIndex: 0))
@@ -275,8 +310,8 @@ final class NotebookDocumentOpeningTests: XCTestCase {
         near: .init(x: 900_000, y: -700_000), actor: actor))
       let item = try XCTUnwrap(index.createDocument(title: "Distant document", actor: actor))
       XCTAssertTrue(hierarchy.addItem(item.id, to: board.id, near: .init(x: 90_000, y: -70_000), actor: actor))
-      let document = DocumentDocument(id: item.id, actor: actor, paperSize: .a4,
-        blocks: [.markdown(id: "text", source: "Addressed document body")])
+      let document = DocumentTestFiles.document(id: item.id, actor: actor,
+        contents: [.tex(id: "text", source: "Addressed document body")])
       try store.saveDocumentWorkspaceBundle(index: index, document: document,
         state: .init(id: item.id, actor: actor), board: hierarchy)
       return (board.id, try store.loadDocument(document.id))
@@ -385,12 +420,27 @@ final class NotebookDocumentOpeningTests: XCTestCase {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("document-opening-" + UUID().uuidString)
     let store = NotebookStore(root: root), actor = UUID()
     let pageSize = NotebookAppModel.defaultPageSize
+    // The cold-opening probe is plain text, as before the file-model cutover.
+    // Packages for links/programs belong only to fixtures that actually use them.
+    let mainSource = #"""
+      \documentclass[12pt]{article}
+      \usepackage{fontspec}
+      \setmainfont{Libertinus Serif}
+      \usepackage{geometry}
+      \geometry{a4paper,margin=25mm}
+      \begin{document}
+      \special{pdf:minorversion 7}
+      \input{sections/text.tex}
+      \end{document}
+      """#
     let documents = try await Task.detached {
       _ = try store.initializeWorkspace(actor: actor, pageSize: pageSize)
       var index = try store.loadIndex(), hierarchy = try store.loadBoard(items: index.items)
       let first = try XCTUnwrap(index.createDocument(title: "First", actor: actor))
       XCTAssertTrue(hierarchy.addItem(first.id, to: index.rootBoardID, near: .zero, actor: actor))
-      let a = DocumentDocument(id: first.id, actor: actor, paperSize: .a4, blocks: [.markdown(id: "text", source: "First real body")])
+      let a = DocumentDocument(id: first.id, actor: actor, files: [
+        .init(id: "main", path: "main.tex", source: mainSource),
+        .init(id: "text", path: "sections/text.tex", source: "First real body")])
       try store.saveDocumentWorkspaceBundle(index: index, document: a, state: .init(id: a.id, actor: actor), board: hierarchy)
       var secondBoard = index.rootBoardID
       if secondOnAnotherBoard {
@@ -401,7 +451,9 @@ final class NotebookDocumentOpeningTests: XCTestCase {
       }
       let second = try XCTUnwrap(index.createDocument(title: "Second", actor: actor))
       XCTAssertTrue(hierarchy.addItem(second.id, to: secondBoard, near: .init(x: 2_000, y: 0), actor: actor))
-      let b = DocumentDocument(id: second.id, actor: actor, paperSize: .a4, blocks: [.markdown(id: "text", source: "Second closed body")])
+      let b = DocumentDocument(id: second.id, actor: actor, files: [
+        .init(id: "main", path: "main.tex", source: mainSource),
+        .init(id: "text", path: "sections/text.tex", source: "Second closed body")])
       _ = index.selectItem(first.id, actor: actor)
       try store.saveDocumentWorkspaceBundle(index: index, document: b, state: .init(id: b.id, actor: actor), board: hierarchy)
       try store.savePresence(.init(boardID: index.rootBoardID, mode: .cover, camera: .init(),

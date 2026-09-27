@@ -1,423 +1,175 @@
 import Foundation
 
-public enum DocumentBlockKind: String, Codable, Equatable, Sendable {
-  case markdown
-  case latex
-  case tex
-  case interactive
-}
-
-public enum DocumentPaperSize: String, Codable, CaseIterable, Hashable,
-  Sendable
-{
-  case a4
-  case letter
-
-  /// Physical dimensions in PostScript points. The live WebKit page and the
-  /// exported PDF both derive their aspect ratio from this single contract.
-  public var widthPoints: Double {
-    switch self {
-    case .a4: 595.275590551
-    case .letter: 612
-    }
-  }
-
-  public var heightPoints: Double {
-    switch self {
-    case .a4: 841.88976378
-    case .letter: 792
-    }
-  }
-
-  public var marginPoints: Double {
-    switch self {
-    case .a4: 70.8661417323 // 25 mm
-    case .letter: 72 // 1 inch
-    }
-  }
-}
-
-public struct DocumentBlock: Codable, Equatable, Identifiable, Sendable {
-  public static let maximumSourceLength = 1_000_000
-  public static let minimumInteractiveHeight = 48.0
-  public static let maximumInteractiveHeight = 2_048.0
-  static let causalFieldNames = ["exists", "id", "content", "css", "javaScript", "initialState", "height"]
-
+/// A file has one durable identity. Paths can move without replacing its text
+/// history; binary bytes belong to the existing content-addressed blob store.
+public struct DocumentFile: Codable, Equatable, Identifiable, Sendable {
+  public static let maximumSourceLength = 4 * 1_024 * 1_024
+  static let causalFieldNames = ["exists", "id", "path", "content"]
   static func causalFieldKeys(id: String) -> [String] {
-    causalFieldNames.map { fieldKey(["blocks", collaborationIdentity(id), $0]) }
+    causalFieldNames.map { fieldKey(["files", collaborationIdentity(id), $0]) }
   }
-
   public let id: String
-  public let kind: DocumentBlockKind
-  public private(set) var source: String
-  public private(set) var html: String
-  public private(set) var css: String
-  public private(set) var javaScript: String
-  public private(set) var programPackage: String?
-  public private(set) var initialState: JSONValue
-  public private(set) var height: Double
+  public let path: String
+  public let source: String
+  public let resource: NotebookProgramPackage.File?
+  public var isText: Bool { resource == nil }
+  public var byteCount: Int64 { resource?.byteCount ?? Int64(source.utf8.count) }
+  public var mimeType: String { NotebookProgramPackage.mimeType(for: path) }
 
-  public init(
-    id: String,
-    kind: DocumentBlockKind,
-    source: String,
-    html: String = "",
-    css: String = "",
-    javaScript: String = "",
-    programPackage: String? = nil,
-    initialState: JSONValue = .object([:]),
-    height: Double = 320
-  ) {
-    precondition(!id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-    self.id = id
-    self.kind = kind
-    self.source = source
-    self.html = html
-    self.css = css
-    self.javaScript = javaScript
-    self.programPackage = programPackage
-    self.initialState = initialState
-    self.height = height
-    precondition(isValid)
+  public init(id: String, path: String, source: String = "", resource: NotebookProgramPackage.File? = nil) {
+    self.id = id; self.path = path; self.source = source; self.resource = resource
   }
-
-  public static func markdown(id: String, source: String) -> Self {
-    Self(id: id, kind: .markdown, source: source)
+  private enum CodingKeys: String, CodingKey { case id, path, source, resource }
+  public init(from decoder: Decoder) throws {
+    let c = try decoder.container(keyedBy: CodingKeys.self)
+    id = try c.decode(String.self, forKey: .id); path = try c.decode(String.self, forKey: .path)
+    source = try c.decodeIfPresent(String.self, forKey: .source) ?? ""
+    resource = try c.decodeIfPresent(NotebookProgramPackage.File.self, forKey: .resource)
+    guard isValid else { throw DecodingError.dataCorruptedError(forKey: .path, in: c, debugDescription: "Invalid document file") }
   }
-
-  public static func latex(id: String, source: String) -> Self {
-    Self(id: id, kind: .latex, source: source)
+  public static func validPath(_ path: String) -> Bool { NotebookProgramPackage.validPath(path) }
+  public var isValid: Bool {
+    guard !id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, id.utf16.count <= 120,
+      Self.validPath(path), source.utf8.count <= Self.maximumSourceLength else { return false }
+    if let resource { return source.isEmpty && resource.path == path && (try? resource.validate()) != nil }
+    return true
   }
-
-  public static func interactive(
-    id: String,
-    html: String,
-    css: String = "",
-    javaScript: String = "",
-    programPackage: String? = nil,
-    initialState: JSONValue = .object([:]),
-    height: Double = 320
-  ) -> Self {
-    Self(
-      id: id,
-      kind: .interactive,
-      source: html,
-      html: html,
-      css: css,
-      javaScript: javaScript,
-      programPackage: programPackage,
-      initialState: initialState,
-      height: height
-    )
-  }
-
-  public func replacingSource(_ source: String) -> Self {
-    switch kind {
-    case .markdown, .latex, .tex:
-      Self(id: id, kind: kind, source: source)
-    case .interactive:
-      Self(
-        id: id,
-        kind: kind,
-        source: source,
-        html: source,
-        css: css,
-        javaScript: javaScript,
-        initialState: initialState,
-        height: height
-      )
-    }
-  }
-
-  var isValid: Bool {
-    guard !id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-      id.utf16.count <= 120,
-      [source, html, css, javaScript].allSatisfy({
-        $0.utf16.count <= Self.maximumSourceLength
-      }),
-      NotebookProgramPackage.validSourceReference(programPackage, isProgram: kind == .interactive, source: source, html: html, css: css, javaScript: javaScript),
-      initialState.isValid,
-      height.isFinite
-    else { return false }
-
-    switch kind {
-    case .markdown, .latex, .tex:
-      return html.isEmpty && css.isEmpty && javaScript.isEmpty
-        && initialState == .object([:])
-    case .interactive:
-      return source == html
-        && height >= Self.minimumInteractiveHeight
-        && height <= Self.maximumInteractiveHeight
-    }
+  public func replacingSource(_ source: String) -> Self { .init(id: id, path: path, source: source) }
+  public func renamed(_ path: String) -> Self {
+    .init(id: id, path: path, source: source, resource: resource.map {
+      .init(path: path, mimeType: NotebookProgramPackage.mimeType(for: path), byteCount: $0.byteCount, parts: $0.parts)
+    })
   }
 }
 
 public struct DocumentDocument: Codable, Equatable, Identifiable, Sendable {
-  public static let formatVersion = 2
-  public static let maximumBlockCount = 512
-  public static let maximumPreambleLength = 200_000
-
+  public static let formatVersion = 3
+  public static let maximumFileCount = 4096
+  public static let maximumSourceBytes = 16 * 1_024 * 1_024
   public let format: Int
   public let id: UUID
-  public let paperSize: DocumentPaperSize
-  public private(set) var preamble: String
-  public private(set) var blocks: [DocumentBlock]
+  public private(set) var entrypoint: String
+  public private(set) var files: [DocumentFile]
   public private(set) var contentStamp: VersionStamp
   public private(set) var collaboration: CollaborativeContent?
 
-  public init(
-    id: UUID = UUID(),
-    actor: UUID,
-    paperSize: DocumentPaperSize = .a4,
-    preamble: String = "",
-    blocks: [DocumentBlock] = [
-      .markdown(id: "body", source: "")
-    ]
-  ) {
-    format = Self.formatVersion
-    self.id = id
-    self.paperSize = paperSize
-    self.preamble = preamble
-    self.blocks = blocks
-    contentStamp = VersionStamp(counter: 0, actor: actor)
-    collaboration = nil
+  public init(id: UUID = UUID(), actor: UUID, entrypoint: String = "main.tex", files: [DocumentFile] = DocumentTemplate.article.files) {
+    format = Self.formatVersion; self.id = id; self.entrypoint = entrypoint
+    self.files = files.sorted { collaborationIdentity($0.id) < collaborationIdentity($1.id) }
+    contentStamp = .init(counter: 0, actor: actor); collaboration = nil
     precondition(isValid)
   }
 
-  var isValid: Bool {
-    guard format == Self.formatVersion,
-      collaboration?.isValid ?? true,
-      preamble.utf16.count <= Self.maximumPreambleLength,
-      blocks.count <= Self.maximumBlockCount,
-      contentStamp.counter <= VersionStamp.maximumCounter
-    else { return false }
-    let ids = blocks.map(\.id)
-    return Set(ids).count == ids.count && blocks.allSatisfy(\.isValid)
+  public var isValid: Bool {
+    format == Self.formatVersion && DocumentFile.validPath(entrypoint)
+      && files.count <= Self.maximumFileCount && files.allSatisfy(\.isValid)
+      && Set(files.map { collaborationIdentity($0.id) }).count == files.count
+      && Set(files.map(\.path)).count == files.count
+      && files.reduce(Int64(0), { $0 + $1.byteCount }) <= Self.maximumSourceBytes
+      && contentStamp.counter <= VersionStamp.maximumCounter && (collaboration?.isValid ?? true)
+  }
+
+  public func fileVersion(fileID: String) -> ContentFieldVersion {
+    let versions = DocumentFile.causalFieldKeys(id: fileID).compactMap { collaboration?.fields[$0] }
+    return .fileBasis(versions, fallback: contentStamp)
   }
 
   @discardableResult
-  public mutating func replaceContent(
-    preamble: String? = nil,
-    blocks: [DocumentBlock]? = nil,
-    actor: UUID
-  ) -> Bool {
-    guard let nextStamp = contentStamp.advanced(by: actor) else { return false }
-    var candidate = self
-    if let preamble { candidate.preamble = preamble }
-    if let blocks { candidate.blocks = blocks }
-    guard candidate.preamble != self.preamble || candidate.blocks != self.blocks
-    else { return false }
-    candidate.contentStamp = nextStamp
-    candidate.recordContentChange(from: self, stamp: nextStamp)
-    guard candidate.isValid else { return false }
-    self = candidate
-    return true
+  public mutating func replaceContent(entrypoint: String? = nil, files: [DocumentFile]? = nil, actor: UUID) -> Bool {
+    guard let stamp = contentStamp.advanced(by: actor) else { return false }
+    return replaceContent(entrypoint: entrypoint ?? self.entrypoint, files: files ?? self.files, stamp: stamp)
   }
 
   @discardableResult
-  public mutating func replaceContent(
-    preamble: String,
-    blocks: [DocumentBlock],
-    stamp: VersionStamp
-  ) -> Bool {
-    guard contentStamp < stamp,
-      stamp.counter <= VersionStamp.maximumCounter
-    else { return false }
+  public mutating func replaceContent(entrypoint: String, files: [DocumentFile], stamp: VersionStamp) -> Bool {
+    guard contentStamp < stamp, stamp.counter <= VersionStamp.maximumCounter else { return false }
     var candidate = self
-    candidate.preamble = preamble
-    candidate.blocks = blocks
+    candidate.entrypoint = entrypoint; candidate.files = files.sorted { collaborationIdentity($0.id) < collaborationIdentity($1.id) }
+    guard candidate.entrypoint != self.entrypoint || candidate.files != self.files else { return false }
     candidate.contentStamp = stamp
-    candidate.recordContentChange(from: self, stamp: stamp)
+    var metadata = collaboration ?? CollaborativeContent()
+    guard let before = try? JSONValue.encode(self), let after = try? JSONValue.encode(candidate) else { return false }
+    metadata.record(before: before, after: after, beforeStamp: contentStamp, stamp: stamp, human: true)
+    candidate.collaboration = metadata
     guard candidate.isValid else { return false }
-    self = candidate
-    return true
+    self = candidate; return true
   }
 
   @discardableResult
-  public mutating func replaceBlockSource(
-    id blockID: String,
-    source: String,
-    actor: UUID
-  ) -> Bool {
-    guard source.utf16.count <= DocumentBlock.maximumSourceLength,
-      let index = blocks.firstIndex(where: { $0.id == blockID })
-    else {
-      return false
-    }
-    var next = blocks
-    next[index] = next[index].replacingSource(source)
-    return replaceContent(blocks: next, actor: actor)
-  }
-
-  private mutating func recordContentChange(from before: Self, stamp: VersionStamp) {
-    var metadata = before.collaboration ?? CollaborativeContent()
-    if let previous = try? JSONValue.encode(before), let next = try? JSONValue.encode(self) {
-      metadata.record(before: previous, after: next, beforeStamp: before.contentStamp, stamp: stamp, human: true)
-      collaboration = metadata
-    }
+  public mutating func replaceFileSource(id: String, source: String, actor: UUID) -> Bool {
+    guard let index = files.firstIndex(where: { $0.id == id }), files[index].isText else { return false }
+    var next = files; next[index] = next[index].replacingSource(source)
+    return replaceContent(files: next, actor: actor)
   }
 
   public mutating func merge(_ other: Self) -> Bool {
-    guard id == other.id, paperSize == other.paperSize, other.isValid,
-      let local = try? JSONValue.encode(self), let incoming = try? JSONValue.encode(other) else { return false }
-    guard let merged = try? CollaborativeContent.merge(local: local, incoming: incoming,
-      localState: collaboration, incomingState: other.collaboration,
-      localStamp: contentStamp, incomingStamp: other.contentStamp) else { return false }
-    guard var candidate = try? merged.value.decode(Self.self), candidate.isValid else { return false }
+    guard id == other.id, other.isValid,
+      let local = try? JSONValue.encode(self), let incoming = try? JSONValue.encode(other),
+      let merged = try? CollaborativeContent.merge(local: local, incoming: incoming,
+        localState: collaboration, incomingState: other.collaboration, localStamp: contentStamp, incomingStamp: other.contentStamp),
+      var candidate = try? merged.value.decode(Self.self) else { return false }
     candidate.collaboration = merged.state
     candidate.contentStamp = mergedContentStamp(local: local, incoming: incoming, result: merged.value,
       localStamp: contentStamp, incomingStamp: other.contentStamp)
     guard candidate.isValid, candidate != self else { return false }
-    self = candidate
-    return true
+    self = candidate; return true
   }
 
-  /// Reconcile only the editor's named source after its durable command.
-  /// The existing causal merger still chooses fields. This return value does
-  /// not own neighbouring programs, their order, preamble, or a removed block.
+  /// An editor receipt reconciles exactly one file, never a stale directory.
   @discardableResult
-  public mutating func mergeSource(_ publication: DocumentBlockSourcePublication) -> Bool {
+  public mutating func mergeSource(_ publication: DocumentFileSourcePublication) -> Bool {
     guard id == publication.documentID,
-      let index = blocks.firstIndex(where: { collaborationIdentity($0.id) == collaborationIdentity(publication.block.id) }) else { return false }
-    let keys = Set(DocumentBlock.causalFieldKeys(id: publication.block.id))
-    var local = self
-    local.blocks = [blocks[index]]
-    local.collaboration = .init(fields: Dictionary(uniqueKeysWithValues: keys.compactMap { key in
-      collaboration?.fields[key].map { (key, $0) }
-    }))
-    var incoming = local
-    incoming.blocks = [publication.block]
-    incoming.contentStamp = publication.contentStamp
+      let index = files.firstIndex(where: { collaborationIdentity($0.id) == collaborationIdentity(publication.file.id) }) else { return false }
+    let keys = Set(DocumentFile.causalFieldKeys(id: publication.file.id))
+    var local = self; local.files = [files[index]]
+    local.collaboration = .init(fields: (collaboration?.fields ?? [:]).filter { keys.contains($0.key) })
+    var incoming = local; incoming.files = [publication.file]; incoming.contentStamp = publication.contentStamp
     incoming.collaboration = .init(fields: publication.fields)
     _ = local.merge(incoming)
-    guard let resolved = local.blocks.first, local.blocks.count == 1 else { return false }
-    let changedFields = (local.collaboration?.fields ?? [:]).filter {
-      keys.contains($0.key) && collaboration?.fields[$0.key] != $0.value
-    }
-    let stamp = max(contentStamp, local.contentStamp)
-    guard blocks[index] != resolved || stamp != contentStamp || !changedFields.isEmpty else { return false }
-    var metadata = collaboration ?? CollaborativeContent()
-    for (key, version) in changedFields {
+    guard let file = local.files.first, local.files.count == 1 else { return false }
+    var metadata = collaboration ?? (try? materializingCausalVersions().collaboration) ?? CollaborativeContent()
+    for (key, version) in local.collaboration?.fields ?? [:] where keys.contains(key) {
       do { try metadata.joinField(key, version: version) } catch { return false }
     }
-    guard metadata.fields.count <= CollaborativeContent.maximumFieldCount,
-      changedFields.values.allSatisfy(\.isValid), resolved.isValid else { return false }
-    blocks[index] = resolved
-    collaboration = metadata
-    contentStamp = stamp
-    return true
+    var candidate = self; candidate.files[index] = file; candidate.collaboration = metadata
+    candidate.contentStamp = max(contentStamp, local.contentStamp)
+    guard candidate.isValid, candidate != self else { return false }
+    self = candidate; return true
   }
 
-  public var preambleVersion: ContentFieldVersion {
-    collaboration?.fields["preamble"] ?? .init(stamp: contentStamp, human: true)
-  }
-
-  @discardableResult
-  public mutating func mergeSource(_ publication: DocumentPreamblePublication) -> Bool {
-    guard id == publication.documentID else { return false }
-    var local = self; local.blocks = []
-    local.collaboration = .init(fields: ["preamble": preambleVersion])
-    var incoming = local; incoming.preamble = publication.source
-    incoming.contentStamp = publication.contentStamp
-    incoming.collaboration = .init(fields: ["preamble": publication.sourceVersion])
-    _ = local.merge(incoming)
-    let version = local.preambleVersion, stamp = max(contentStamp, local.contentStamp)
-    guard preamble != local.preamble || preambleVersion != version || stamp != contentStamp else { return false }
-    var metadata = collaboration ?? (try? materializingCausalVersions().collaboration) ?? CollaborativeContent()
-    do { try metadata.joinField("preamble", version: version) } catch { return false }
-    preamble = local.preamble; contentStamp = stamp; collaboration = metadata
-    return true
-  }
-
-  /// Publication makes implicit field clocks explicit without editing source
-  /// or advancing its frontier. Offline preparation uses the same owner so a
-  /// checked checkpoint already equals the archive that SQLite will publish.
   public func materializingCausalVersions() throws -> Self {
     guard collaboration == nil else { return self }
     var result = self, metadata = CollaborativeContent()
     try metadata.materializeVersions(in: .encode(self), fallback: contentStamp)
-    result.collaboration = metadata
-    return result
+    result.collaboration = metadata; return result
   }
 
-  private enum CodingKeys: String, CodingKey {
-    case format
-    case id
-    case paperSize
-    case preamble
-    case blocks
-    case contentStamp
-    case collaboration
-  }
-
+  private enum CodingKeys: String, CodingKey { case format, id, entrypoint, files, contentStamp, collaboration }
   public init(from decoder: Decoder) throws {
-    let container = try decoder.container(keyedBy: CodingKeys.self)
-    let decodedFormat = try container.decode(Int.self, forKey: .format)
-    guard decodedFormat == Self.formatVersion else {
-      throw DecodingError.dataCorruptedError(
-        forKey: .format,
-        in: container,
-        debugDescription: "Unsupported document format \(decodedFormat)"
-      )
-    }
-    format = Self.formatVersion
-    id = try container.decode(UUID.self, forKey: .id)
-    paperSize = try container.decode(DocumentPaperSize.self, forKey: .paperSize)
-    preamble = try container.decode(String.self, forKey: .preamble)
-    blocks = try container.decode([DocumentBlock].self, forKey: .blocks)
-    contentStamp = try container.decode(
-      VersionStamp.self,
-      forKey: .contentStamp
-    )
-    collaboration = try container.decodeIfPresent(CollaborativeContent.self, forKey: .collaboration)
-    guard isValid else {
-      throw DecodingError.dataCorruptedError(
-        forKey: .blocks,
-        in: container,
-        debugDescription: "Document violates its content contract"
-      )
-    }
-  }
-
-  public func encode(to encoder: Encoder) throws {
-    var container = encoder.container(keyedBy: CodingKeys.self)
-    try container.encode(format, forKey: .format)
-    try container.encode(id, forKey: .id)
-    try container.encode(paperSize, forKey: .paperSize)
-    try container.encode(preamble, forKey: .preamble)
-    try container.encode(blocks, forKey: .blocks)
-    try container.encode(contentStamp, forKey: .contentStamp)
-    try container.encodeIfPresent(collaboration, forKey: .collaboration)
+    let c = try decoder.container(keyedBy: CodingKeys.self)
+    format = try c.decode(Int.self, forKey: .format); id = try c.decode(UUID.self, forKey: .id)
+    entrypoint = try c.decode(String.self, forKey: .entrypoint)
+    files = try c.decode([DocumentFile].self, forKey: .files).sorted { collaborationIdentity($0.id) < collaborationIdentity($1.id) }
+    contentStamp = try c.decode(VersionStamp.self, forKey: .contentStamp)
+    collaboration = try c.decodeIfPresent(CollaborativeContent.self, forKey: .collaboration)
+    guard isValid else { throw DecodingError.dataCorruptedError(forKey: .files, in: c, debugDescription: "Invalid file-backed LaTeX document") }
   }
 }
 
-/// A command publishes one complete program and its own causal fields, not a
-/// partial DocumentDocument that a caller might mistake for the whole source.
-public struct DocumentPreamblePublication: Codable, Equatable, Sendable {
+public struct DocumentFileSourcePublication: Codable, Equatable, Sendable {
   public let documentID: UUID
   public let contentStamp: VersionStamp
-  public let source: String
-  public let sourceVersion: ContentFieldVersion
-  init(document: DocumentDocument) {
-    documentID = document.id; contentStamp = document.contentStamp
-    source = document.preamble; sourceVersion = document.preambleVersion
-  }
-}
-
-public struct DocumentBlockSourcePublication: Codable, Equatable, Sendable {
-  public let documentID: UUID
-  public let contentStamp: VersionStamp
-  public let block: DocumentBlock
+  public let file: DocumentFile
   let fields: [String: ContentFieldVersion]
   public var sourceVersion: ContentFieldVersion {
-    fields[fieldKey(["blocks", collaborationIdentity(block.id), "content"])] ?? .init(stamp: contentStamp, human: true)
+    let versions = DocumentFile.causalFieldKeys(id: file.id).compactMap { fields[$0] }
+    return .fileBasis(versions, fallback: contentStamp)
   }
-
-  init?(document: DocumentDocument, blockID: String) {
-    guard let block = document.blocks.first(where: { collaborationIdentity($0.id) == collaborationIdentity(blockID) }) else { return nil }
-    documentID = document.id; contentStamp = document.contentStamp; self.block = block
-    let keys = Set(DocumentBlock.causalFieldKeys(id: block.id))
-    fields = Dictionary(uniqueKeysWithValues: keys.compactMap { key in document.collaboration?.fields[key].map { (key, $0) } })
+  init?(document: DocumentDocument, fileID: String) {
+    guard let file = document.files.first(where: { collaborationIdentity($0.id) == collaborationIdentity(fileID) }) else { return nil }
+    documentID = document.id; contentStamp = document.contentStamp; self.file = file
+    let keys = Set(DocumentFile.causalFieldKeys(id: file.id))
+    fields = (document.collaboration?.fields ?? [:]).filter { keys.contains($0.key) }
   }
 }
 
@@ -487,8 +239,8 @@ public struct DocumentStateJournal: Codable, Equatable, Identifiable, Sendable {
     stamp = try values.decode(VersionStamp.self, forKey: .stamp)
   }
 
-  public func value(for blockID: String) -> JSONValue? {
-    records.first { $0.id == blockID }?.value
+  public func value(for instanceID: String) -> JSONValue? {
+    records.first { $0.id == instanceID }?.value
   }
 
   var isValid: Bool {
@@ -501,29 +253,57 @@ public struct DocumentStateJournal: Codable, Equatable, Identifiable, Sendable {
 
   @discardableResult
   public mutating func commit(
-    blockID: String,
+    instanceID: String,
     value: JSONValue,
     actor: UUID,
     human: Bool = true
   ) -> Bool {
-    guard !blockID.isEmpty,
-      blockID.utf16.count <= 120,
+    guard !instanceID.isEmpty,
+      instanceID.utf16.count <= 120,
       value.isValid,
       let nextStamp = stamp.advanced(by: actor)
     else { return false }
-    if let index = records.firstIndex(where: { $0.id == blockID }) {
+    if let index = records.firstIndex(where: { $0.id == instanceID }) {
       guard records[index].value != value else { return false }
       let previous = records[index].fieldVersion ?? .init(stamp:records[index].stamp,human:true)
       _ = records[index].replace(value, version:.init(stamp:nextStamp,human:human,previous:previous))
     } else {
-      let position = records.firstIndex { $0.id > blockID } ?? records.count
+      let position = records.firstIndex { $0.id > instanceID } ?? records.count
       records.insert(
-        DocumentStateRecord(id: blockID, value: value, stamp: nextStamp, fieldVersion:.init(stamp:nextStamp,human:human)),
+        DocumentStateRecord(id: instanceID, value: value, stamp: nextStamp, fieldVersion:.init(stamp:nextStamp,human:human)),
         at: position
       )
     }
     stamp = nextStamp
     return true
+  }
+
+  /// Absent records in an addressed receipt say nothing about other instances.
+  /// A new combination at an old frontier still needs its own aggregate clock.
+  @discardableResult
+  public mutating func merge(_ publication: NotebookDocumentStatePublication) -> Bool {
+    guard publication.documentID == id,
+      publication.journalStamp.counter <= VersionStamp.maximumCounter,
+      publication.record.isValid(in: publication.journalStamp) else { return false }
+    let incoming = publication.record
+    let index = records.firstIndex { $0.id == incoming.id }
+    let previous = index.map { records[$0] }
+    var resolved = previous ?? incoming
+    if previous != nil { _ = resolved.replace(incoming.value, version: incoming.valueVersion) }
+    var frontier = max(stamp, publication.journalStamp)
+    if resolved.value != previous?.value, stamp >= publication.journalStamp {
+      guard let advanced = frontier.advanced(by: frontier.actor) else { return false }
+      frontier = advanced
+    }
+    let changed = previous != resolved || stamp != frontier
+    if let index {
+      records[index] = resolved
+    } else {
+      let index = records.firstIndex { $0.id > incoming.id } ?? records.count
+      records.insert(resolved, at: index)
+    }
+    stamp = frontier
+    return changed
   }
 
   public mutating func merge(_ other: Self) -> Bool {
@@ -553,5 +333,18 @@ public struct DocumentStateJournal: Codable, Equatable, Identifiable, Sendable {
     }
     records.sort { $0.id < $1.id }
     return changed
+  }
+}
+
+extension ContentFieldVersion {
+  /// A file CAS observes several registers, not a merge of their differently
+  /// typed values. Keep only their causal vector in this comparison token.
+  static func fileBasis(_ versions: [Self], fallback: VersionStamp) -> Self {
+    guard let latest = versions.max(by: { $0.stamp < $1.stamp }) else { return .init(stamp: fallback, human: true) }
+    var observed: [String: UInt64] = [:]
+    for version in versions {
+      for (actor, counter) in version.observed { observed[actor] = max(observed[actor] ?? 0, counter) }
+    }
+    return .init(stamp: latest.stamp, human: latest.human, observed: observed)
   }
 }

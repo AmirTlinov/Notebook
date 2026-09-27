@@ -8,6 +8,27 @@ import WebKit
 @testable import Notebook
 
 @MainActor final class DocumentCanonicalExportTests: XCTestCase {
+  func testPortableExportPreservesAnEditableDraftWithAMissingEntrypointWithoutExecution() async throws {
+    let store = NotebookStore(root: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)), actor = UUID()
+    _ = try store.initializeWorkspace(actor: actor, pageSize: .init(width: 834, height: 1194))
+    defer { try? FileManager.default.removeItem(at: store.root) }
+    var index = try store.loadIndex(), board = try store.loadBoard(items: index.items)
+    let item = try XCTUnwrap(index.createDocument(title: "Unfinished source", actor: actor))
+    XCTAssertTrue(board.addItem(item.id, to: index.rootBoardID, near: .zero, actor: actor))
+    let document = DocumentDocument(id: item.id, actor: actor, files: [
+      .init(id: "draft", path: "chapters/draft.tex", source: "An editable draft; main.tex has not been written."),
+      .init(id: "program", path: "programs/draft/main.js", source: "throw Error('Portable export must not execute a draft')")])
+    try store.saveDocumentWorkspaceBundle(index: index, document: document, state: .init(id: item.id, actor: actor), board: board)
+    let cut = try store.readDocumentExportCut(documentID: item.id, options: .init(format: .package))
+    let surfaces = SceneRenderResources.shared.activeWebSurfaceCount
+    let receipt = try await DocumentCanonicalExport.publish(cut: cut, options: .init(format: .package),
+      jobID: UUID(), store: store, persistence: NotebookPersistenceQueue(store: store))
+    let portable = try NotebookPortableDocument(data: Data(contentsOf: URL(fileURLWithPath: receipt.artifact.path)))
+    XCTAssertEqual(portable.cut, cut); XCTAssertNil(portable.derived)
+    XCTAssertEqual(portable.cut.document.entrypoint, "main.tex")
+    XCTAssertEqual(portable.cut.document.files, document.files)
+    XCTAssertEqual(SceneRenderResources.shared.activeWebSurfaceCount, surfaces)
+  }
   func testPresentedPNGPublishesTheFrozenPixelsWithoutExecutingOrChangingTheDocument() async throws {
     let store = NotebookStore(root: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)), actor = UUID()
     _ = try store.initializeWorkspace(actor: actor, pageSize: .init(width: 834, height: 1194))
@@ -15,7 +36,7 @@ import WebKit
     var index = try store.loadIndex(), board = try store.loadBoard(items: index.items)
     let item = try XCTUnwrap(index.createDocument(title: "Presented cut", actor: actor))
     XCTAssertTrue(board.addItem(item.id, to: index.rootBoardID, near: .zero, actor: actor))
-    let document = DocumentDocument(id: item.id, actor: actor, blocks: [.interactive(id: "model", html: "<p>Later frame</p>",
+    let document = DocumentTestFiles.document(id: item.id, actor: actor, contents: [.program(id: "model", html: "<p>Later frame</p>",
       javaScript: "throw Error('Presented pixels must not execute the author again')", height: 200)])
     try store.saveDocumentWorkspaceBundle(index: index, document: document, state: .init(id: item.id, actor: actor), board: board)
     let target = CollaborationTarget(kind: .document, id: item.id), files = try store.referenceSourceFiles(target: target)
@@ -53,8 +74,8 @@ import WebKit
     var index = try store.loadIndex(), board = try store.loadBoard(items: index.items)
     let item = try XCTUnwrap(index.createDocument(title: "Frozen model", actor: actor))
     XCTAssertTrue(board.addItem(item.id, to: index.rootBoardID, near: .zero, actor: actor))
-    let document = DocumentDocument(id: item.id, actor: actor, blocks: [.markdown(id: "heading", source: "# Bound frozen model"),
-      .interactive(id: "model", html: "<canvas style='width:100%;height:180px'></canvas>", javaScript: """
+    let document = DocumentTestFiles.document(id: item.id, actor: actor, contents: [.tex(id: "heading", source: "\\section{Bound frozen model}"),
+      .program(id: "model", html: "<canvas style='width:100%;height:180px'></canvas>", javaScript: """
         const canvas=document.querySelector('canvas'),ctx=canvas.getContext('2d');
         notebook.lifecycle({pause(){},checkpoint(){throw Error('Export cannot checkpoint the live scene')}});
         notebook.exportFrame(({format,state,time,pixelRatio})=>{
@@ -67,7 +88,7 @@ import WebKit
         },{timeline:true});notebook.ready(Promise.resolve());
         """, initialState: .object(["phase": .number(0)]), height: 180)])
     var state = DocumentStateJournal(id: item.id, actor: actor)
-    XCTAssertTrue(state.commit(blockID: "model", value: .object(["phase": .number(0.25)]), actor: actor))
+    XCTAssertTrue(state.commit(instanceID: "model", value: .object(["phase": .number(0.25)]), actor: actor))
     try store.saveDocumentWorkspaceBundle(index: index, document: document, state: state, board: board)
     let saved = try store.loadDocument(item.id), target = CollaborationTarget(kind: .document, id: item.id)
     let reference = CollaborationReference(target: target, elementID: "model", region: .init(x: 1, y: 1, width: 1, height: 1), pageIndex: 0,
@@ -78,13 +99,14 @@ import WebKit
     let image = try AgentPinnedImage(referenceID: reference.id, sourceRevision: reference.revision, region: reference.region!, worldOrigin: nil,
       pageIndex: 0, pixelWidth: 1, pixelHeight: 1, pixelsPerPoint: 1, png: png,
       sha256: SHA256.hash(data: png).map { String(format: "%02x", $0) }.joined(),
-      presentation: .init(device: .iOSSimulator, program: .init(blockID: "model", programIdentity: saved.programIdentity(blockID: "model"), state: state.value(for: "model")!)))
+      presentation: .init(device: .iOSSimulator, program: .init(instanceID: "model", programPath: "programs/model",
+        sourceBasis: try DocumentProgramSource(document: saved, instanceID: "model", path: "programs/model").sourceBasis, state: state.value(for: "model")!)))
     let source = try AgentPinnedSource.capture(requestID: context.id, reference: reference, files: store.referenceSourceFiles(target: target)).withVisual(image)
     try store.saveAttentionEvidence([source], contextID: context.id)
     let cursor = try store.currentChangeCursor()
     for format in [NotebookExportOptions.Format.pdf, .svg, .html, .package, .mp4] {
       let options = NotebookExportOptions(format: format, pixelWidth: format == .mp4 ? 640 : nil,
-        blockID: [.svg, .html, .mp4].contains(format) ? "model" : nil,
+        instanceID: [.svg, .html, .mp4].contains(format) ? "model" : nil,
         video: format == .mp4 ? .init(start: 0, end: 1, framesPerSecond: 4) : nil,
         moment: .presented, attention: .init(contextID: context.id, referenceID: reference.id))
       let cut = try store.readDocumentExportCut(documentID: item.id, options: options)
@@ -101,7 +123,7 @@ import WebKit
       case .svg: XCTAssertTrue(try String(contentsOf: url, encoding: .utf8).contains("Frozen phase 0.25"))
       case .html: XCTAssertTrue(try String(contentsOf: url, encoding: .utf8).contains("0.25"))
       case .package:
-        let portable = try JSONDecoder().decode(NotebookPortableDocument.self, from: Data(contentsOf: url)); XCTAssertEqual(portable.cut, cut)
+        let portable = try NotebookPortableDocument(data: Data(contentsOf: url)); XCTAssertEqual(portable.cut, cut)
       case .mp4:
         let asset = AVURLAsset(url: url), duration = try await asset.load(.duration)
         XCTAssertEqual(duration.seconds, 1, accuracy: 0.001)
@@ -130,13 +152,13 @@ import WebKit
         if(notebook.commit({phase:99}))throw Error('Video must not commit');return null;
       },{timeline:true});
       """
-    let document = DocumentDocument(id: item.id, actor: actor, blocks: [.markdown(id: "heading", source: "# Exact video phase"),
-      .interactive(id: "model", html: "<canvas style='width:100%;height:150px'></canvas>", javaScript: script, height: 150)])
+    let document = DocumentTestFiles.document(id: item.id, actor: actor, contents: [.tex(id: "heading", source: "\\section{Exact video phase}"),
+      .program(id: "model", html: "<canvas style='width:100%;height:150px'></canvas>", javaScript: script, height: 150)])
     var state = DocumentStateJournal(id: item.id, actor: actor)
-    XCTAssertTrue(state.commit(blockID: "model", value: .object(["phase": .number(0.25)]), actor: actor))
+    XCTAssertTrue(state.commit(instanceID: "model", value: .object(["phase": .number(0.25)]), actor: actor))
     try store.saveDocumentWorkspaceBundle(index: index, document: document, state: state, board: board)
     let cut = try store.readTransaction { try NotebookExportCut(document: $0.loadDocument(item.id), state: $0.loadDocumentState(item.id)) }
-    let options = NotebookExportOptions(format: .mp4, pixelWidth: 640, blockID: "model", video: .init(start: 0, end: 1, framesPerSecond: 4))
+    let options = NotebookExportOptions(format: .mp4, pixelWidth: 640, instanceID: "model", video: .init(start: 0, end: 1, framesPerSecond: 4))
     let receipt = try await DocumentCanonicalExport.publish(cut: cut, options: options, jobID: UUID(), store: store, persistence: NotebookPersistenceQueue(store: store))
     XCTAssertEqual(receipt.options, options); XCTAssertEqual(receipt.artifact.mimeType, "video/mp4")
     XCTAssertEqual(try store.loadDocument(item.id), cut.document); XCTAssertEqual(try store.loadDocumentState(item.id), cut.state)
@@ -165,7 +187,7 @@ import WebKit
     let previous = try Data(contentsOf: url)
     let count = SceneRenderResources.shared.activeWebSurfaceCount
     let task = Task { @MainActor in
-      try await DocumentCanonicalExport.publish(cut: cut, options: .init(format: .mp4, pixelWidth: 640, blockID: "model", video: .init(start: 0, end: 30, framesPerSecond: 60)),
+      try await DocumentCanonicalExport.publish(cut: cut, options: .init(format: .mp4, pixelWidth: 640, instanceID: "model", video: .init(start: 0, end: 30, framesPerSecond: 60)),
         jobID: UUID(), store: store, persistence: NotebookPersistenceQueue(store: store))
     }
     let deadline = ContinuousClock.now + .seconds(5)
@@ -184,12 +206,12 @@ import WebKit
     func source(_ name: String, _ ext: String) throws -> String {
       try String(contentsOf: XCTUnwrap(Bundle(for: Self.self).url(forResource: name, withExtension: ext, subdirectory: "science")), encoding: .utf8)
     }
-    let document = DocumentDocument(actor: UUID(), blocks: [.interactive(id: "sound", html: try source("sound", "html"), css: try source("common", "css"),
+    let document = DocumentTestFiles.document(actor: UUID(), contents: [.program(id: "sound", html: try source("sound", "html"), css: try source("common", "css"),
       javaScript: try source("models", "js") + "\n" + source("runtime", "js") + "\n" + source("sound", "js"), height: 1000)])
     var state = DocumentStateJournal(id: document.id, actor: UUID())
-    XCTAssertTrue(state.commit(blockID: "sound", value: .object(["phase": .number(0)]), actor: UUID()))
+    XCTAssertTrue(state.commit(instanceID: "sound", value: .object(["phase": .number(0)]), actor: UUID()))
     let publication = try await DocumentCanonicalExport.publication(cut: .init(document: document, state: state),
-      options: .init(format: .mp4, pixelWidth: 900, blockID: "sound", video: .init(start: 0, end: 6, framesPerSecond: 12)), jobID: UUID(), store: store, persistence: NotebookPersistenceQueue(store: store))
+      options: .init(format: .mp4, pixelWidth: 900, instanceID: "sound", video: .init(start: 0, end: 6, framesPerSecond: 12)), jobID: UUID(), store: store, persistence: NotebookPersistenceQueue(store: store))
     let bytes = try readExportBytes(publication.artifact, store: store)
     let url = store.root.appendingPathComponent("sound.mp4"); try bytes.write(to: url)
     let asset = AVURLAsset(url: url), duration = try await asset.load(.duration)
@@ -210,7 +232,7 @@ import WebKit
     _ = try store.initializeWorkspace(actor: UUID(), pageSize: .init(width: 834, height: 1194))
     defer { try? FileManager.default.removeItem(at: store.root) }
     let persistence = NotebookPersistenceQueue(store: store)
-    let document = DocumentDocument(actor: UUID(), blocks: [.init(id: "body", kind: .tex,
+    let document = DocumentTestFiles.document(actor: UUID(), contents: [.tex(id: "body",
       source: "\\section{Один печатный лист}\nТекст и $x^2$. \\href{https://example.com}{Ссылка}")])
     let artifact = try await DocumentCanonicalPrint.store.artifact(for: document)
     let publication = try await DocumentCanonicalExport.publication(cut: .init(document: document,
@@ -219,7 +241,7 @@ import WebKit
     XCTAssertEqual(pdfBytes, artifact.pdf)
     XCTAssertEqual(publication.source, artifact.source)
     XCTAssertEqual(try readExportBytes(XCTUnwrap(publication.syncTeX), store: store), artifact.syncTeX)
-    XCTAssertTrue(try DocumentPrintNavigation.read(pdfBytes).links.contains { $0.href == "https://example.com" })
+    XCTAssertTrue(try DocumentPrintNavigation.read(XCTUnwrap(PDFDocument(data: pdfBytes)), pages: artifact.pages).links.contains { $0.href == "https://example.com" })
   }
 
   func testRenderedFormatsUseOneArtifactForPreflightAndTheActualPublication() async throws {
@@ -228,8 +250,8 @@ import WebKit
     defer { try? FileManager.default.removeItem(at:store.root) }
     let persistence=NotebookPersistenceQueue(store:store)
     for format in [NotebookExportOptions.Format.png,.svg,.mp4] {
-      let document=DocumentDocument(actor:UUID(),blocks:[.markdown(id:"title",source:"# One closed export source"),
-        .interactive(id:"model",html:"<canvas style='width:100%;height:120px'></canvas>",javaScript:"""
+      let document=DocumentTestFiles.document(actor:UUID(),contents:[.tex(id:"title",source:"One closed export source"),
+        .program(id:"model",html:"<canvas style='width:100%;height:120px'></canvas>",javaScript:"""
           const canvas=document.querySelector('canvas'),ctx=canvas.getContext('2d');
           notebook.exportFrame(({format,pixelRatio})=>{
             if(format==='svg')return '<svg xmlns="http://www.w3.org/2000/svg" width="160" height="120"><rect width="160" height="120" fill="red"/></svg>';
@@ -240,7 +262,7 @@ import WebKit
           """,height:120)])
       let cut=try NotebookExportCut(document:document,state:.init(id:document.id,actor:UUID()))
       let options=NotebookExportOptions(format:format,pixelWidth:format == .svg ? nil : 160,
-        blockID:format == .png ? nil : "model",video:format == .mp4 ? .init(start:0,end:0.5,framesPerSecond:4) : nil)
+        instanceID:format == .png ? nil : "model",video:format == .mp4 ? .init(start:0,end:0.5,framesPerSecond:4) : nil)
       let before=await DocumentCanonicalPrint.store.artifactRequestCount
       let publication=try await DocumentCanonicalExport.publication(cut:cut,options:options,jobID:UUID(),store:store,persistence:persistence)
       let requests=await DocumentCanonicalPrint.store.artifactRequestCount-before
@@ -273,7 +295,7 @@ import WebKit
     _ = try store.initializeWorkspace(actor: UUID(), pageSize: .init(width: 834, height: 1194))
     defer { try? FileManager.default.removeItem(at: store.root) }
     let persistence = NotebookPersistenceQueue(store: store)
-    let document = DocumentDocument(actor: UUID(), blocks: [.markdown(id: "text", source: "# Static image\n\nA real paper with $x^2$.")])
+    let document = DocumentTestFiles.document(actor: UUID(), contents: [.tex(id: "text", source: "\\section{Static image}\nA real paper with $x^2$.")])
     let cut = try NotebookExportCut(document: document, state: .init(id: document.id, actor: UUID()))
     let publication = try await DocumentCanonicalExport.publication(cut: cut, options: .init(format: .png, pixelWidth: 800),
       jobID: UUID(), store: store, persistence: persistence)
@@ -295,11 +317,13 @@ import WebKit
     _ = try store.initializeWorkspace(actor: UUID(), pageSize: .init(width: 834, height: 1194))
     defer { try? FileManager.default.removeItem(at: store.root) }
     let persistence = NotebookPersistenceQueue(store: store)
-    let document = DocumentDocument(actor: UUID(), blocks: [
-      .markdown(id: "text", source: "# Vector heading\n\n[An external link](https://example.com)"),
-      .interactive(id: "program", html: "<div style='width:100%;height:100px;background:rgb(255,0,0)'></div>", javaScript: "notebook.ready(Promise.resolve());notebook.exportFrame(()=>null)", height: 100)])
+    let document = DocumentTestFiles.document(actor: UUID(), contents: [
+      .tex(id: "text", source: "\\section{Vector heading}\n\\href{https://example.com}{An external link}"),
+      .program(id: "program", html: "<div style='width:100%;height:100px;background:rgb(255,0,0)'></div>", javaScript: "notebook.ready(Promise.resolve());notebook.exportFrame(()=>null)", height: 100)])
     let state = DocumentStateJournal(id: document.id, actor: UUID())
-    let geometry = WorkspaceItemGeometry.document(document.paperSize)
+    let printed = try await DocumentCanonicalPrint.store.artifact(for: document)
+    let firstPage = try XCTUnwrap(printed.pages.first)
+    let geometry = WorkspaceItemGeometry.document(widthPoints: firstPage.width, heightPoints: firstPage.height)
     // Deliberately install a later blue frame under the same saved journal
     // token. Exporting a saved cut must not borrow these uncommitted pixels.
     let poison = try XCTUnwrap(CGContext(data: nil, width: Int(ceil(geometry.width*2)), height: Int(ceil(geometry.height*2)),
@@ -314,7 +338,7 @@ import WebKit
     XCTAssertTrue(SceneRenderResources.shared.image(for: source) === laterImage, "Saved export does not replace the live cache")
     let pdf = try XCTUnwrap(PDFDocument(data: pdfBytes)), page = try XCTUnwrap(pdf.page(at: 0))
     XCTAssertTrue(page.string?.contains("Vector heading") == true, "Text must remain selectable vector PDF, not a full-page screenshot")
-    XCTAssertTrue(try DocumentPrintNavigation.read(pdfBytes).links.contains { $0.href == "https://example.com" })
+    XCTAssertTrue(try DocumentPrintNavigation.read(pdf, pages: printed.pages).links.contains { $0.href == "https://example.com" })
     let image = page.thumbnail(of: .init(width: 595, height: 842), for: .mediaBox)
     let cg = try XCTUnwrap(image.cgImage(forProposedRect: nil, context: nil, hints: nil))
     let context = try XCTUnwrap(CGContext(data: nil, width: cg.width, height: cg.height, bitsPerComponent: 8, bytesPerRow: cg.width*4,
@@ -336,8 +360,8 @@ import WebKit
         frame:{x:20,y,width:100,height:60}
       })),{vectors:true});
       """
-    let document = DocumentDocument(actor: UUID(), blocks: [.markdown(id: "heading", source: "# Vector fragments\n\nSelectable text and $x^2$."),
-      .interactive(id: "model", html: "<div style='height:1500px;background:#ff0000'></div>", javaScript: script, height: 1500)])
+    let document = DocumentTestFiles.document(actor: UUID(), contents: [.tex(id: "heading", source: "\\section{Vector fragments}\nSelectable text and $x^2$."),
+      .program(id: "model", html: "<div style='height:1500px;background:#ff0000'></div>", javaScript: script, height: 1500)])
     let cut = try NotebookExportCut(document: document, state: .init(id: document.id, actor: UUID()))
     let publication = try await DocumentCanonicalExport.publication(cut: cut, jobID: UUID(), store: store, persistence: NotebookPersistenceQueue(store: store))
     let bytes = try readExportBytes(publication.artifact, store: store), pdf = try XCTUnwrap(PDFDocument(data: bytes))
@@ -382,10 +406,10 @@ import WebKit
         if(notebook.commit({phase:99}))throw Error('Export must not commit');return null;
       });
       """
-    var document = DocumentDocument(actor: UUID(), blocks: [.markdown(id: "text", source: "# Exact saved phase"),
-      .interactive(id: "frame", html: "<canvas style='width:100%;height:100px'></canvas>", javaScript: script, height: 100)])
+    var document = DocumentTestFiles.document(actor: UUID(), contents: [.tex(id: "text", source: "\\section{Exact saved phase}"),
+      .program(id: "frame", html: "<canvas style='width:100%;height:100px'></canvas>", javaScript: script, height: 100)])
     var state = DocumentStateJournal(id: document.id, actor: UUID())
-    XCTAssertTrue(state.commit(blockID: "frame", value: .object(["phase": .number(0.625)]), actor: UUID()))
+    XCTAssertTrue(state.commit(instanceID: "frame", value: .object(["phase": .number(0.625)]), actor: UUID()))
     let cut = try NotebookExportCut(document: document, state: state)
     let first = try await DocumentCanonicalExport.publication(cut: cut, options: .init(format: .png, pixelWidth: 1600), jobID: UUID(), store: store, persistence: persistence)
     let bytes = try readExportBytes(first.artifact, store: store), bitmap = try XCTUnwrap(NSBitmapImageRep(data: bytes))
@@ -399,7 +423,7 @@ import WebKit
     XCTAssertGreaterThan(red, 500, "Await author completion, not its blue startup frame")
     let repeated = try await DocumentCanonicalExport.publication(cut: cut, options: .init(format: .png, pixelWidth: 1600), jobID: UUID(), store: store, persistence: persistence)
     XCTAssertEqual(repeated.artifact.sha256, first.artifact.sha256, "Same saved frame renders reproducibly")
-    document = DocumentDocument(actor: UUID(), blocks: [.interactive(id: "unknown", html: "<p>Not an export-ready program</p>", javaScript: "notebook.ready(Promise.resolve())", height: 100)])
+    document = DocumentTestFiles.document(actor: UUID(), contents: [.program(id: "unknown", html: "<p>Not an export-ready program</p>", javaScript: "notebook.ready(Promise.resolve())", height: 100)])
     do {
       _ = try await DocumentCanonicalExport.publication(cut: .init(document: document, state: .init(id: document.id, actor: UUID())), options: .init(format: .png), jobID: UUID(), store: store, persistence: persistence)
       XCTFail("A running frame with no author export contract cannot be called the saved state")
@@ -419,13 +443,13 @@ import WebKit
     var index = try store.loadIndex(), board = try store.loadBoard(items: index.items)
     let item = try XCTUnwrap(index.createDocument(title: "Standalone sound", actor: actor))
     XCTAssertTrue(board.addItem(item.id, to: index.rootBoardID, near: .zero, actor: actor))
-    let document = DocumentDocument(id: item.id, actor: actor, blocks: [.interactive(id: "sound", html: try source("sound", "html"),
+    let document = DocumentTestFiles.document(id: item.id, actor: actor, contents: [.program(id: "sound", html: try source("sound", "html"),
       css: try source("common", "css"), javaScript: try source("models", "js") + "\n" + source("runtime", "js") + "\n" + source("sound", "js"), height: 1000)])
     var state = DocumentStateJournal(id: document.id, actor: actor)
-    XCTAssertTrue(state.commit(blockID: "sound", value: .object(["phase": .number(0.625)]), actor: actor))
+    XCTAssertTrue(state.commit(instanceID: "sound", value: .object(["phase": .number(0.625)]), actor: actor))
     try store.saveDocumentWorkspaceBundle(index: index, document: document, state: state, board: board)
     let cut = try store.readTransaction { try NotebookExportCut(document: $0.loadDocument(item.id), state: $0.loadDocumentState(item.id)) }
-    let receipt = try await DocumentCanonicalExport.publish(cut: cut, options: .init(format: .html, blockID: "sound"), jobID: UUID(), store: store, persistence: NotebookPersistenceQueue(store: store))
+    let receipt = try await DocumentCanonicalExport.publish(cut: cut, options: .init(format: .html, instanceID: "sound"), jobID: UUID(), store: store, persistence: NotebookPersistenceQueue(store: store))
     let url = URL(fileURLWithPath: receipt.artifact.path), bytes = try Data(contentsOf: url)
     XCTAssertEqual(receipt.artifact.mimeType, "text/html"); XCTAssertEqual(receipt.cutSHA256, try cut.sha256)
     let probe = StandaloneProbe(), configuration = WKWebViewConfiguration()
@@ -455,10 +479,69 @@ import WebKit
     let attachment = XCTAttachment(data: bytes, uniformTypeIdentifier: "public.html"); attachment.name = "offline-sound-saved-phase"; attachment.lifetime = .keepAlways; add(attachment)
     let image = try await web.takeSnapshot(configuration: nil)
     let visual = XCTAttachment(image: image); visual.name = "offline-sound-after-quarter"; visual.lifetime = .keepAlways; add(visual)
-    let packaged = DocumentBlock.interactive(id: "package", html: "", programPackage: String(repeating: "a", count: 64), height: 100)
-    XCTAssertThrowsError(try NotebookStandaloneExport.document(block: packaged, state: .null)) { error in
+    var dependentFiles = document.files
+    dependentFiles.append(.init(id: "data", path: "programs/sound/data.json", source: "{}"))
+    let dependent = DocumentDocument(actor: actor, files: dependentFiles)
+    let program = try store.documentProgramSource(document: dependent, instanceID: "sound", path: "programs/sound")
+    XCTAssertThrowsError(try NotebookStandaloneExport.document(program: program, state: .null, height: 1000, store: store)) { error in
       XCTAssertEqual((error as? CollaborationError)?.code, "export_portable_required")
     }
+  }
+
+  func testComposerKeepsRotatedVectorTextLinksAndProgramCropInOneGeometry() async throws {
+    let tex = #"""
+      \documentclass{article}
+      \usepackage[paperwidth=300bp,paperheight=400bp,margin=25bp]{geometry}
+      \usepackage{pdflscape}\usepackage{hyperref}\usepackage{notebook}
+      \begin{document}\hypertarget{portrait}{}Portrait destination.
+      \newpage\begin{landscape}\section{Rotated vector heading}
+      \href{https://example.com/landscape}{External link}\quad\hyperlink{portrait}{Back to portrait}
+      \NotebookInteractive[id=rotated,width=100bp,height=60bp]{programs/probe}
+      \end{landscape}\end{document}
+      """#
+    let document = DocumentDocument(actor: UUID(), files: [.init(id: "main", path: "main.tex", source: tex)] +
+      DocumentTestFiles.program(id: "probe", html: "<p>Not executed</p>").files)
+    let printed = try await DocumentCanonicalPrint.store.artifact(for: document)
+    let program = try XCTUnwrap(printed.interactiveRegions.first)
+    let sourcePDF = DocumentPrintedPDF(printed.pdf)
+    let originalLinks = try await sourcePDF.perform { pdf, _ in
+      try DocumentPrintNavigation.read(pdf, pages: printed.pages)
+    }
+    let output = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString+".pdf")
+    defer { try? FileManager.default.removeItem(at: output) }
+    let composer = try await PrintedPDFComposer.open(sourcePDF, outputURL: output)
+    let red = try XCTUnwrap(CGContext(data: nil, width: 1, height: 1, bitsPerComponent: 8, bytesPerRow: 4,
+      space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+    red.setFillColor(NSColor.red.cgColor); red.fill(.init(x: 0, y: 0, width: 1, height: 1))
+    try await composer.append(pageIndex: 0, image: nil, regions: [])
+    try await composer.append(pageIndex: 1, image: XCTUnwrap(red.makeImage()),
+      regions: [.init(x: program.x, y: program.y, width: program.width, height: program.height)])
+    try await composer.finish()
+    let bytes = try Data(contentsOf: output), pdf = try XCTUnwrap(PDFDocument(data: bytes)), page = try XCTUnwrap(pdf.page(at: 1))
+    XCTAssertEqual(page.rotation, 0); XCTAssertEqual(page.bounds(for: .mediaBox).size, .init(width: 400, height: 300))
+    XCTAssertTrue(page.string?.contains("Rotated vector heading") == true)
+    let pages = printed.pages.map { DocumentPrintPage(width: $0.width, height: $0.height) }
+    let links = try DocumentPrintNavigation.read(pdf, pages: pages)
+    for original in originalLinks.links {
+      let link = try XCTUnwrap(links.links.first { $0.href == original.href && $0.page == original.page })
+      XCTAssertEqual(link.rect.minX, original.rect.minX, accuracy: 0.02); XCTAssertEqual(link.rect.minY, original.rect.minY, accuracy: 0.02)
+      XCTAssertEqual(link.rect.width, original.rect.width, accuracy: 0.02); XCTAssertEqual(link.rect.height, original.rect.height, accuracy: 0.02)
+    }
+    XCTAssertTrue(links.links.contains { $0.href == "#notebook-print-page-0" })
+    let image = page.thumbnail(of: .init(width: 400, height: 300), for: .mediaBox)
+    let bitmap = NSBitmapImageRep(cgImage: try XCTUnwrap(image.cgImage(forProposedRect: nil, context: nil, hints: nil)))
+    var redPixels = 0, redBounds = CGRect.null
+    for y in 0..<bitmap.pixelsHigh { for x in 0..<bitmap.pixelsWide {
+      // PDFKit applies the display's ColorSync profile. Identify the red region,
+      // not the monitor's numeric primaries; its physical bounds remain exact.
+      guard let color = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB), color.redComponent > 0.8,
+        color.greenComponent < 0.3, color.blueComponent < 0.3 else { continue }
+      redPixels += 1
+      redBounds = redBounds.union(.init(x: x, y: y, width: 1, height: 1))
+    } }
+    XCTAssertGreaterThan(redPixels, 5_000); XCTAssertLessThan(redPixels, 6_500)
+    XCTAssertEqual(redBounds.minX, program.x, accuracy: 1); XCTAssertEqual(redBounds.minY, program.y, accuracy: 1)
+    XCTAssertEqual(redBounds.width, program.width, accuracy: 1); XCTAssertEqual(redBounds.height, program.height, accuracy: 1)
   }
 
   func testLargeQuartzPDFStreamsThroughPartsAndPublishesWithoutBinaryIPC() async throws {
@@ -470,7 +553,8 @@ import WebKit
     var index = try store.loadIndex(), board = try store.loadBoard(items: index.items)
     let item = try XCTUnwrap(index.createDocument(title: "Large streamed PDF", actor: actor))
     XCTAssertTrue(board.addItem(item.id, to: index.rootBoardID, near: .zero, actor: actor))
-    let document = DocumentDocument(id: item.id, actor: actor, blocks: [.markdown(id: "body", source: "Large PDF")])
+    let document = DocumentDocument(id: item.id, actor: actor, files: [.init(id: "main", path: "main.tex",
+      source: "\\documentclass{article}\n\\begin{document}Large PDF\\end{document}")])
     try store.saveDocumentWorkspaceBundle(index: index, document: document, state: .init(id: item.id, actor: actor), board: board)
     let cut = try NotebookExportCut(document: store.loadDocument(item.id), state: store.loadDocumentState(item.id))
     let inputURL = root.appendingPathComponent("input.pdf"), outputURL = root.appendingPathComponent("output.pdf")
@@ -503,7 +587,7 @@ import WebKit
     let file = try await DocumentCanonicalExport.stage(outputURL, path: "document.pdf", persistence: persistence)
     XCTAssertGreaterThan(file.file.byteCount, 32*1024*1024)
     XCTAssertGreaterThan(file.file.parts.count, 8)
-    let publication = NotebookExportPublication(cut: cut, source: "Large PDF", artifact: file, log: "", jobID: UUID())
+    let publication = NotebookExportPublication(cut: cut, source: document.files[0].source, artifact: file, log: "", jobID: UUID())
     XCTAssertLessThan(try JSONEncoder().encode(publication).count, 16_384, "No PDF base64 in the publication")
     let prepared = try await Task.detached { try store.prepareDocumentExport(publication) }.value
     let receipt = try await persistence.submit { try $0.publishDocumentExport(prepared) }

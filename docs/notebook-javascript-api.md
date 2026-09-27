@@ -1,9 +1,13 @@
 # Notebook SDK v2: TypeScript and JavaScript
 
-Three public MCP tools route to the single Mac owner:
+Five public MCP tools route to the single Mac owner:
 
 - `notebook_context`: reads, derived rendering/placement and typed help.
 - `notebook_execute`: starts a script or attaches to its durable output.
+- `notebook_import_document`: imports one local `.notex` ZIP into a new document
+  through the native owner, without executing programs.
+- `notebook_import_document_resource`: stages one bounded local binary file;
+  `putDocumentFile` remains the only document publication owner.
 - `notebook_import_program`: admits immutable package bytes from a trusted local
   descriptor; ready does not publish or display content.
 
@@ -15,7 +19,7 @@ shared machine contract; native validation remains authoritative.
 ## Help and execution
 
 Request help only for an unknown contract:
-`{"method":"help","args":{"topic":"operations"}}` lists 22 operations.
+`{"method":"help","args":{"topic":"operations"}}` lists the supported operations.
 `operation/createDocument` describes one; `transaction` supplies the complete
 atomic schema, `interactive` readiness, `execution` output pagination.
 Inside a script use `await nb.help(topic)`.
@@ -47,9 +51,12 @@ coverages from one snapshot, not `values[0]`.
 |---|---|
 | One page element | `page({id,elementID})` or read kind pageElement |
 | Metadata only | read pageHeader / documentHeader / itemHeader |
-| One document block with state | `document({id,blockID})` or read documentBlock |
+| Document directory | `document({id})`, without source bodies |
+| One document file | `document({id,fileID})` or read documentFile |
+| Program basis and saved state | read documentProgram with id/instanceID/programPath |
+| LaTeX structure | `documentStructure({id})` |
 | One board element | read boardElement |
-| Whole page/document | explicit page / document without a child selector |
+| Whole page/document | `page({id})` / explicit read document |
 | Code and its notes | `code({id})` or bounded file query |
 | Actual selection | read selection |
 | Whole-item lifecycle basis | read itemLifecycle |
@@ -69,6 +76,37 @@ Pass `base:snapshot.basis` or an explicit array. Conflicting owner versions retu
 basis_conflict; missing components basis_incomplete; another workspace
 basis_workspace_mismatch. There is no automatic refresh before writing.
 Reference/context/additionalOwners scope is checked independently.
+
+### LaTeX files and exact checks
+
+A document has one file tree. `main.tex` (or its declared entrypoint) owns the
+preamble, content order and geometry. `createDocument` accepts real `files` or one
+Core template: article/report/contract/instruction/book. Templates become ordinary
+editable files. Binary resources use immutable SHA parts, not device paths.
+
+`putDocumentFile`, `patchDocumentFile`, `renameDocumentFile` and `removeDocumentFile`
+address stable file IDs. `expectedVersion` is the returned file `sourceVersion`;
+only creation uses null. A patch additionally requires a UTF-16 range and exact
+`expectedText`. A changed file returns file_conflict; unrelated file changes do not
+invalidate this CAS. A multi-file transaction rolls back as a whole on failure.
+
+`documentStructure` returns derived entries with fileID/path/line/utf16Offset.
+`documentCheck({id,expectedRevision,pageIndex})` uses the document owner revision from the
+current read basis, not the `reference` hash. It requests the existing native
+renderer; a ready result names the canonical compile `buildID` and its exact
+artifact. Pass that ID as `expectedBuildID` to `render` to reject another build.
+A result without canonical identity is unverified, not a successful compile.
+`pageIndex` selects a zero-based canonical page (default 0). `programs` contains
+instanceID, optional sourceBasis, status ready/failed/not_checked and scope startup.
+Only that page is checked: ready requires actual initialization evidence, failed
+reports configuration/startup errors; off-page instances remain not_checked. An empty list before compilation is not evidence of success.
+Startup readiness does not certify interaction or subsequent animation.
+
+For a live illustration, `\NotebookInteractive` names a program directory and an
+instance ID. `read({kind:'documentProgram',id,instanceID,programPath})` returns its
+`sourceBasis`, initial/saved state and stateVersion without execution. Use the
+returned programPath/sourceBasis in `setDocumentProgramState`. State is a separate
+journal, not a file source, and changing it never runs TeX.
 
 ### Item lifecycle
 
@@ -127,7 +165,7 @@ target reads saved context, not a current-camera write basis.
 Preview limit is 1–32 (default 32); coverage.complete:false states incompleteness.
 
 Observation scope supports target, ids (1–32), fields
-(preview/content/state/geometry) and one-step expand from explicit IDs
+(preview/content/version/geometry) and one-step expand from explicit IDs
 (incoming/outgoing/neighbors/container). Expansion is not recursive and does not
 expand mutation authority. Board/cover bounds admit at most 256 addresses;
 overflow returns observation_scope_full, requiring a narrower window or unbounded-
@@ -251,8 +289,7 @@ startup and awaits. Queue waiting does not consume active-run time.
 | Concurrent export jobs | 2 |
 
 Limits fail explicitly rather than truncate content. Put large material in a document
-and return its ID/compact receipt. Canonical print limits—not the retired native
-Tectonic process budget—are in [paper](document-page-fragments.md).
+and return its ID/compact receipt. Canonical print limits are in [paper](document-page-fragments.md).
 
 ## Atomic writes and results
 
@@ -330,7 +367,11 @@ PNG, SVG, HTML, portable package and MP4. Export captures **both source and stat
 and composes authored program frames on the shared canonical PDF; programs are not
 generic placeholders. Saved and presented moments have distinct guarded semantics.
 See [export contract](document-export-contract.md) for exact options, cancellation,
-offline packaging and frozen-frame requirements.
+offline packaging and frozen-frame requirements. Package export produces one
+`.notex` file; `submit.mjs /absolute/path/document.notex` sends its SHA-256 and
+path to the native importer. Its persisted request ID is reused after uncertainty;
+a new ID intentionally creates another document. No workspace/key/chat restore is
+performed.
 
 ## Search continuation
 
@@ -348,7 +389,7 @@ matches; only selected keys after LIMIT decode bodies. No OCR is implied.
 ## Public verification client
 
 `MCP/public-transport.mjs` is a deliberately narrow **two-tool test client** for
-context/execute, not the complete three-tool server inventory. It connects an
+context/execute, not the complete five-tool server inventory. It connects an
 already-running isolated Mac owner; it does not launch/register a helper or read SQL.
 
 ```sh

@@ -8,8 +8,25 @@ protocol NotebookSceneFingerInputOwner: AnyObject {
   func sceneFingerOwner(at point: CGPoint) -> NotebookInputGate.FingerContactOwner?
 }
 
+/// Native editing can share the workspace's history gestures without giving
+/// its selection, scrolling, or pinch contacts to the paper camera.
+@MainActor
+protocol NotebookHistoryGestureTarget: AnyObject {
+  func undoFromGesture()
+  func redoFromGesture()
+}
+
 @MainActor
 enum NotebookSceneFingerRouting {
+  static func historyTarget(of view: UIView?) -> (UIView & NotebookHistoryGestureTarget)? {
+    var current = view
+    while let candidate = current {
+      if let target = candidate as? (UIView & NotebookHistoryGestureTarget) { return target }
+      if candidate is UIControl || candidate is UITextView { return nil }
+      current = candidate.superview
+    }
+    return nil
+  }
   static func owner(of view: UIView?, at point: CGPoint? = nil) -> NotebookInputGate.FingerContactOwner {
     var current = view
     while let candidate = current {
@@ -110,7 +127,7 @@ struct WorkspaceGestureLayer: UIViewRepresentable {
     private weak var hostView: UIView?
     private weak var sceneView: UIView?
     private var recognizer: TwoFingerPaperGestureRecognizer?
-    private var redoRecognizer: UITapGestureRecognizer?
+    private var redoRecognizer: WorkspaceRedoGestureRecognizer?
     private var contactObserver: NotebookContactObserver?
     private var repeatTask: Task<Void, Never>?
     private var cameraIsActive = false
@@ -157,7 +174,7 @@ struct WorkspaceGestureLayer: UIViewRepresentable {
       recognizer.isEnabled = isEnabled
       recognizer.delegate = self
       hostView.addGestureRecognizer(recognizer)
-      let redo = UITapGestureRecognizer(target: self, action: #selector(handleRedo))
+      let redo = WorkspaceRedoGestureRecognizer(target: self, action: #selector(handleRedo))
       redo.numberOfTouchesRequired = 3
       redo.numberOfTapsRequired = 1
       redo.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
@@ -195,7 +212,7 @@ struct WorkspaceGestureLayer: UIViewRepresentable {
     @objc private func handle(_ recognizer: TwoFingerPaperGestureRecognizer) {
       switch recognizer.state {
       case .began where recognizer.intent == .hold:
-        onUndo()
+        undo(recognizer)
         startRepeating()
       case .began
       where recognizer.intent == .magnification
@@ -210,7 +227,7 @@ struct WorkspaceGestureLayer: UIViewRepresentable {
         repeatTask = nil
         switch recognizer.intent {
         case .tap:
-          onUndo()
+          undo(recognizer)
         case .navigation:
           updateCamera(recognizer)
           finishCamera(recognizer)
@@ -233,8 +250,15 @@ struct WorkspaceGestureLayer: UIViewRepresentable {
       }
     }
 
-    @objc private func handleRedo(_ recognizer: UITapGestureRecognizer) {
-      if recognizer.state == .ended { onRedo() }
+    private func undo(_ recognizer: TwoFingerPaperGestureRecognizer) {
+      if recognizer.isNativeHistory { recognizer.historyTarget?.undoFromGesture() }
+      else { onUndo() }
+    }
+
+    @objc private func handleRedo(_ recognizer: WorkspaceRedoGestureRecognizer) {
+      guard recognizer.state == .ended else { return }
+      if recognizer.isNativeHistory { recognizer.historyTarget?.redoFromGesture() }
+      else { onRedo() }
     }
 
     private func updateCamera(_ recognizer: TwoFingerPaperGestureRecognizer) {
@@ -258,7 +282,7 @@ struct WorkspaceGestureLayer: UIViewRepresentable {
         while !Task.isCancelled {
           try? await Task.sleep(for: .milliseconds(95))
           guard !Task.isCancelled, let self, recognizer?.permitsUndoRepetition == true else { return }
-          onUndo()
+          if let recognizer { undo(recognizer) }
         }
       }
     }
@@ -279,12 +303,15 @@ struct WorkspaceGestureLayer: UIViewRepresentable {
       shouldReceive touch: UITouch
     ) -> Bool {
       guard touch.type == .direct, let sceneView else { return false }
-      guard inputGate.permitsSceneContact(at: touch.location(in: sceneView.window), kind: .finger),
-        sceneReceives(touch, inside: sceneView) else { return false }
+      guard sceneReceives(touch, inside: sceneView) else { return false }
+      let history = NotebookSceneFingerRouting.historyTarget(of: touch.view) != nil
+      guard history
+        ? inputGate.permitsNewContact && !inputGate.hasActivePencil
+        : inputGate.permitsSceneContact(at: touch.location(in: sceneView.window), kind: .finger) else { return false }
       let owner = NotebookSceneFingerRouting.owner(of: touch, gate: inputGate)
       // The passive observer still follows native input for admission and
       // persistence. The camera cannot take that owner's first or later finger.
-      return gestureRecognizer === contactObserver || owner.permitsSceneNavigation
+      return gestureRecognizer === contactObserver || history || owner.permitsSceneNavigation
     }
 
     func gestureRecognizer(
@@ -293,6 +320,27 @@ struct WorkspaceGestureLayer: UIViewRepresentable {
     ) -> Bool {
       true
     }
+  }
+}
+
+/// The existing three-finger recognizer retains the owner of touchdown, not
+/// whichever view happens to sit beneath its centroid when the fingers lift.
+@MainActor
+final class WorkspaceRedoGestureRecognizer: UITapGestureRecognizer {
+  private(set) weak var historyTarget: (UIView & NotebookHistoryGestureTarget)?
+  private(set) var isNativeHistory = false
+  private var receivedContact = false
+  override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
+    for touch in touches {
+      let target = NotebookSceneFingerRouting.historyTarget(of: touch.view)
+      if receivedContact {
+        guard (target != nil) == isNativeHistory, target === historyTarget else { state = .failed; return }
+      } else { historyTarget = target; isNativeHistory = target != nil; receivedContact = true }
+    }
+    super.touchesBegan(touches, with: event)
+  }
+  override func reset() {
+    super.reset(); historyTarget = nil; isNativeHistory = false; receivedContact = false
   }
 }
 

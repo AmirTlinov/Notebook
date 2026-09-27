@@ -59,14 +59,14 @@ struct WorkspaceSceneIndex: Sendable {
   private let pageOwners: [UUID: UUID]
   private let itemOwners: [UUID: UUID]
   private let catalog: [WorkspaceItem]
-  private let paperSizes: [UUID: DocumentPaperSize]
+  private let paperSizes: [UUID: WorkspaceItemGeometry]
   private let boards: [UUID: Board]
 
   /// A return-boundary projection extends this bounded scene with one addressed
   /// parent window. Paper geometry travels unchanged with its existing owners.
-  var documentPaperSizes: [UUID: DocumentPaperSize] { paperSizes }
+  var documentPaperSizes: [UUID: WorkspaceItemGeometry] { paperSizes }
 
-  init(workspace: WorkspaceIndex, hierarchy: BoardHierarchy, paperSizes: [UUID: DocumentPaperSize],
+  init(workspace: WorkspaceIndex, hierarchy: BoardHierarchy, paperSizes: [UUID: WorkspaceItemGeometry],
     reusing previous: Self? = nil) {
     let reusable = previous.flatMap { previous -> Self? in
       guard previous.capturedWorkspace.hasSameCatalogExceptPreparedPages(as: workspace),
@@ -93,7 +93,7 @@ struct WorkspaceSceneIndex: Sendable {
       var elements: [String: SpatialElement] = [:]
       var covers: [UUID: [SpatialElement]] = [:]
       func geometry(_ value: WorkspaceItem) -> WorkspaceItemGeometry? {
-        value.kind == .document ? paperSizes[value.id].map(WorkspaceItemGeometry.document) : .notebook
+        value.kind == .document ? (paperSizes[value.id] ?? .uncompiledDocument) : .notebook
       }
       for placement in node.board.freeItems {
         guard let value = values[placement.itemID], let size = geometry(value) else { continue }
@@ -165,7 +165,7 @@ struct WorkspaceSceneIndex: Sendable {
   /// Exact exports borrow a coherent existing generation, or prepare the same
   /// derived index off the UI actor when its publication has not caught up yet.
   static func prepare(workspace: WorkspaceIndex, hierarchy: BoardHierarchy,
-    paperSizes: [UUID: DocumentPaperSize], reusing previous: Self?) async throws -> Self {
+    paperSizes: [UUID: WorkspaceItemGeometry], reusing previous: Self?) async throws -> Self {
     let worker = Task.detached(priority: .utility) {
       try Task.checkCancellation()
       let index = Self(workspace: workspace, hierarchy: hierarchy, paperSizes: paperSizes, reusing: previous)

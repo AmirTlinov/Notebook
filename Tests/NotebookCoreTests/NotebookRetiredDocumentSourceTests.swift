@@ -18,7 +18,7 @@ struct NotebookRetiredDocumentSourceTests {
       let placed = board.addItem(id, to: header.rootBoardID, near: .zero, actor: human)
       #expect(placed)
       try a.saveDocumentWorkspaceBundle(index: index,
-        document: .init(id: id, actor: human, blocks: [.markdown(id: "body", source: "Before retirement")]),
+        document: .init(id: id, actor: human, files: [.init(id: "body", path: "main.tex", source: "Before retirement")]),
         state: .init(id: id, actor: human), board: board)
       try b.prepareEmptyWorkspace(workspaceID: header.workspaceID)
       try send(a, b, peerA)
@@ -61,8 +61,8 @@ struct NotebookRetiredDocumentSourceTests {
     let f = try Fixture(), cachedSource = try f.a.loadDocument(f.id), cachedState = try f.a.loadDocumentState(f.id)
     try f.retire()
     var source = try f.b.loadDocument(f.id), state = try f.b.loadDocumentState(f.id)
-    let changed = source.replaceBlockSource(id: "body", source: "LateHumanDocumentSource", actor: f.human)
-    let committed = state.commit(blockID: "body", value: .number(42), actor: f.human)
+    let changed = source.replaceFileSource(id: "body", source: "LateHumanDocumentSource", actor: f.human)
+    let committed = state.commit(instanceID: "body", value: .number(42), actor: f.human)
     #expect(changed && committed)
     _ = try f.b.saveMergedDocument(source)
     try f.b.saveDocumentState(state)
@@ -72,7 +72,7 @@ struct NotebookRetiredDocumentSourceTests {
     for store in [f.a, NotebookStore(root: f.a.root)] {
       #expect(try store.readItemHeader(f.id) == nil)
       #expect(try store.documentSourceOwnerID(f.id) == f.id)
-      #expect(try store.storedMember(file: documentFile(f.id), collection: "blocks", id: "body")?.decode(DocumentBlock.self).source == "LateHumanDocumentSource")
+      #expect(try store.storedMember(file: documentFile(f.id), collection: "files", id: "body")?.decode(DocumentFile.self).source == "LateHumanDocumentSource")
       #expect(try store.storedMember(file: stateFile(f.id), collection: "records", id: "body")?.decode(DocumentStateRecord.self).value == .number(42))
       #expect(throws: (any Error).self) { _ = try store.loadDocument(f.id) }
       #expect(throws: (any Error).self) { _ = try store.loadDocumentState(f.id) }

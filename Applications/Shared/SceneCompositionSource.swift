@@ -56,12 +56,12 @@ struct SceneCompositionLiveData: Sendable {
   let suppressedInkIDs: Set<UUID>
   let referenceIdentities: [NotebookReferenceIdentity]
   let referenceBasis: NotebookReferenceBasis?
-  let documentPaperSizes: [UUID: DocumentPaperSize]
+  let documentPaperSizes: [UUID: WorkspaceItemGeometry]
   let nonemptyBoardIDs: Set<UUID>
   let inkWindow: NotebookSpatialInkWindow?
   init(documents: [UUID: DocumentDocument], states: [UUID: DocumentStateJournal], pages: [UUID: PageDocument],
     ink: SpatialInkJournal, suppressedInkIDs: Set<UUID> = [], referenceIdentities: [NotebookReferenceIdentity] = [],
-    referenceBasis: NotebookReferenceBasis? = nil, documentPaperSizes: [UUID: DocumentPaperSize] = [:],
+    referenceBasis: NotebookReferenceBasis? = nil, documentPaperSizes: [UUID: WorkspaceItemGeometry] = [:],
     nonemptyBoardIDs: Set<UUID> = [], inkWindow: NotebookSpatialInkWindow? = nil) {
     self.documents = documents; self.states = states; self.pages = pages; self.ink = ink
     self.suppressedInkIDs = suppressedInkIDs
@@ -91,6 +91,7 @@ struct ScenePixelDependencies: Sendable {
     let id: UUID
     let presence: SessionPresence
     let value: RenderedWorkspaceItem?
+    let documentGeometry: WorkspaceItemGeometry?
   }
   let workspaceID: UUID
   var records = NotebookSceneRecordDependencies()
@@ -107,7 +108,7 @@ struct ScenePixelDependencies: Sendable {
       for (id, exists) in boards where try (store.readBoardNodeHeader(id) != nil) != exists { return false }
       for (id, camera) in cameras where try (store.readBoardNodeHeader(id)?.portalCamera ?? .init()) != camera { return false }
       for (id, content) in contents where try store.boardHasContent(id) != content { return false }
-      for item in items where try Self.readItem(store, id: item.id, presence: item.presence) != item.value { return false }
+      for item in items where try Self.readItem(store, id: item.id, presence: item.presence, documentGeometry: item.documentGeometry) != item.value { return false }
       for query in paints {
         let page = try store.readCurrentScenePaintOrder(boardID: query.boardID, coverID: query.coverID,
           bounds: query.bounds, after: query.after, groupPoses: query.poses)
@@ -118,13 +119,11 @@ struct ScenePixelDependencies: Sendable {
     }
   }
 
-  fileprivate static func readItem(_ store: NotebookStore, id: UUID, presence: SessionPresence) throws -> RenderedWorkspaceItem? {
+  fileprivate static func readItem(_ store: NotebookStore, id: UUID, presence: SessionPresence, documentGeometry: WorkspaceItemGeometry? = nil) throws -> RenderedWorkspaceItem? {
     guard let header = try store.readItemHeader(id), let node = try store.readBoardItem(id), node.id == presence.boardID else { return nil }
     let geometry: WorkspaceItemGeometry
-    if header.kind == .document {
-      guard let paper = try store.readDocumentPaperSize(id) else { throw SceneRenderError.snapshotPending("document_paper") }
-      geometry = .document(paper)
-    } else { geometry = .notebook }
+    if header.kind == .document { geometry = documentGeometry ?? .uncompiledDocument }
+    else { geometry = .notebook }
     if let placement = node.board.freeItems.first(where: { $0.itemID == id }) {
       return .init(item: header.item, geometry: geometry, center: placement.center, zIndex: Double(placement.zIndex), stackID: nil)
     }
@@ -157,6 +156,7 @@ actor SceneCompositionSource {
     case sql(NotebookStore)
     case values(WorkspaceSceneIndex, BoardHierarchy, SpatialInkJournal)
   }
+  private let documentGeometry: [UUID: WorkspaceItemGeometry]
   private let origin: Origin
   private let reader: NotebookReadSession?
   private let validationIdentities: [NotebookReferenceIdentity]?
@@ -174,13 +174,15 @@ actor SceneCompositionSource {
   init(store: NotebookStore, revision: UInt64, workspaceID: UUID,
     groupPoses:[SceneCompositionPlane:[String:NotebookElementPlacement.Source]] = [:],
     validationIdentities: [NotebookReferenceIdentity]? = nil, inkWindow: NotebookSpatialInkWindow? = nil,
-    recordPixelDependencies: Bool = false) {
+    recordPixelDependencies: Bool = false, documentGeometry: [UUID: WorkspaceItemGeometry] = [:]) {
+    self.documentGeometry = documentGeometry
     origin = .sql(store); reader = NotebookReadSession(store: store); self.revision = revision; validatedRevision = revision; self.workspaceID = workspaceID;self.groupPoses=groupPoses.filter { !$0.value.isEmpty }
     self.validationIdentities = validationIdentities
     self.inkWindow = inkWindow?.cursor == revision ? inkWindow : nil
     pixelWitness = recordPixelDependencies ? .init(workspaceID: workspaceID) : nil
   }
   init(index: WorkspaceSceneIndex, hierarchy: BoardHierarchy, journal: SpatialInkJournal, revision: UInt64 = 0) {
+    documentGeometry = index.documentPaperSizes
     origin = .values(index, hierarchy, journal); reader = nil; self.revision = revision; validatedRevision = revision; workspaceID = index.generationID;groupPoses=[:]
     validationIdentities = nil; inkWindow = nil; pixelWitness = nil
   }
@@ -318,7 +320,7 @@ actor SceneCompositionSource {
             guard let view = plan.presentations[.board(surface.ownerID!)] else { throw SceneRenderError.snapshotPending("ink_coverage") }
             inkCoverage[surface] = NotebookSceneState.bounds(for: view)
           } else {
-            let geometry = frame.index.documentPaperSizes[surface.ownerID!].map(WorkspaceItemGeometry.document) ?? .notebook
+            let geometry = frame.index.documentPaperSizes[surface.ownerID!] ?? .notebook
             inkCoverage[surface] = .init(origin: .zero, width: geometry.width, height: geometry.height)
           }
         }
@@ -457,8 +459,8 @@ actor SceneCompositionSource {
       let file = String(address.split(separator: "#", maxSplits: 1)[0])
       if let id = documentID(file, directory: "document-states"), liveItems.contains(id) { continue }
       if let id = documentID(file, directory: "documents"), liveItems.contains(id),
-        let oldPaper = oldData.documentPaperSizes[id] ?? oldData.documents[id]?.paperSize,
-        let newPaper = data.documentPaperSizes[id] ?? data.documents[id]?.paperSize, oldPaper == newPaper { continue }
+        let oldPaper = oldData.documentPaperSizes[id],
+        let newPaper = data.documentPaperSizes[id], oldPaper == newPaper { continue }
       if let id = documentID(file, directory: "pages"), oldData.pages[id] != nil, data.pages[id] != nil { continue }
       return false
     }
@@ -578,10 +580,10 @@ actor SceneCompositionSource {
     case .values(let index, _, _): return index.renderedItem(id: id, presence: presence)
     case .sql(let store):
       return try checked(store) { store in
-        let value = try ScenePixelDependencies.readItem(store, id: id, presence: presence)
+        let value = try ScenePixelDependencies.readItem(store, id: id, presence: presence, documentGeometry: documentGeometry[id])
         if pixelWitness != nil {
           guard pixelWitness!.items.count < 8192 else { throw SceneRenderError.resourceLimit }
-          pixelWitness!.items.append(.init(id: id, presence: presence, value: value))
+          pixelWitness!.items.append(.init(id: id, presence: presence, value: value, documentGeometry: documentGeometry[id]))
         }
         return value
       }

@@ -8,9 +8,10 @@ final class DocumentPacketAdmissionTests: XCTestCase {
   func testSharedLayoutRetainsItsAllocationUntilItsLastReaderLeaves() throws {
     let resources = SceneRenderResources(profile: .interactive)
     var reservation = try XCTUnwrap(resources.reserveDerivedBytes(4096, priority: .passive)) as RasterReservation?
-    let geometry = WorkspaceItemGeometry.document(.a4)
+    let geometry = WorkspaceItemGeometry.uncompiledDocument
     var layout: DocumentLayoutRecord? = try DocumentLayoutRecord(receipt: [
       "sourceKey": "source", "layoutScope": "source", "layoutCanonical": true, "anchors": [], "reading": [], "pageCount": 1,
+      "pages": [["widthPoints": DocumentPaperLayout.uncompiled.widthPoints, "heightPoints": DocumentPaperLayout.uncompiled.heightPoints]],
       "width": geometry.width, "height": geometry.height, "regions": []
     ] as NSDictionary, sourceKey: "source", blockIDs: [], geometry: geometry, reservation: reservation)
     weak let allocation = reservation

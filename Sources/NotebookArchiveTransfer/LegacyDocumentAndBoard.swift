@@ -12,15 +12,14 @@ private func archiveData(_ object: [String: Any]) throws -> Data {
   try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
 }
 
-/// Paper size did not exist in Document/1. Only the offline converter assigns
-/// its published A4 meaning; a live decoder never guesses missing ownership.
-func convertLegacyDocument(_ data: Data) throws -> DocumentDocument {
+/// Retired block documents are deliberately not migrated into file documents.
+/// Reading a backup cannot authorize inventing source or changing the archive.
+func readCurrentArchivedDocument(_ data: Data) throws -> DocumentDocument {
   let format = try JSONDecoder().decode(ArchiveFormat.self, from: data).format
-  guard format == 1 else { return try JSONDecoder().decode(DocumentDocument.self, from: data).materializingCausalVersions() }
-  var object = try archiveObject(data)
-  object["format"] = DocumentDocument.formatVersion
-  object["paperSize"] = DocumentPaperSize.a4.rawValue
-  return try JSONDecoder().decode(DocumentDocument.self, from: archiveData(object)).materializingCausalVersions()
+  guard format == DocumentDocument.formatVersion else {
+    throw ArchiveTransferError.invalidSource("Архив содержит документ старого формата \(format). Автоматическое преобразование в LaTeX-файлы не поддерживается; исходный архив не изменён.")
+  }
+  return try JSONDecoder().decode(DocumentDocument.self, from: data)
 }
 
 /// The retired board named placements by notebookID. Rename only those typed

@@ -18,11 +18,25 @@ final class NotebookToolInputContact {
   private var finished = false
   var onFinish: (() -> Void)?
 
-  init?(controller: NotebookDrawingToolController, gate: NotebookInputGate, view: UIView,
+  convenience init?(controller: NotebookDrawingToolController, gate: NotebookInputGate, view: UIView,
     address: NotebookToolAddress, point: CGPoint, screenScale: Double, viewScale: Double? = nil,
     toOwner: @escaping (CGPoint) -> SpatialPoint) {
-    guard controller.begin(at:toOwner(point),address:address,screenScale:screenScale), let contact = controller.contact else { return nil }
-    self.controller = controller; self.gate = gate; self.toOwner = toOwner; id = contact.id
+    self.init(controller:controller,gate:gate,view:view,point:point,screenScale:screenScale,viewScale:viewScale,
+      toOwner:toOwner,start:{ controller.begin(at:$0,address:address,screenScale:screenScale) })
+  }
+
+  convenience init?(controller: NotebookDrawingToolController, gate: NotebookInputGate, view: UIView,
+    laserAddress: NotebookLaserAddress, point: CGPoint, screenScale: Double,
+    toOwner: @escaping (CGPoint) -> SpatialPoint) {
+    self.init(controller:controller,gate:gate,view:view,point:point,screenScale:screenScale,viewScale:1,
+      toOwner:toOwner,start:{ controller.beginLaser(at:$0,address:laserAddress,screenScale:screenScale) })
+  }
+
+  private init?(controller: NotebookDrawingToolController, gate: NotebookInputGate, view: UIView,
+    point: CGPoint, screenScale: Double, viewScale: Double?, toOwner: @escaping (CGPoint) -> SpatialPoint,
+    start: (SpatialPoint) -> Bool) {
+    guard start(toOwner(point)), let id = controller.currentContactID else { return nil }
+    self.controller = controller; self.gate = gate; self.toOwner = toOwner; self.id = id
     // Ink sits below covers. Disposable contact feedback belongs above the
     // composed scene, never inside that ink plane. Freeze the same admitted
     // view geometry as input; the gate prevents camera changes until lift.
@@ -33,7 +47,7 @@ final class NotebookToolInputContact {
     let a=toOwner(.zero),b=toOwner(.init(x:1,y:0)),c=toOwner(.init(x:0,y:1))
     let ownerToView=CGAffineTransform(a:b.x-a.x,b:b.y-a.y,c:c.x-a.x,d:c.y-a.y,tx:a.x,ty:a.y).inverted()
     toFeedback = { CGPoint(x:$0.x,y:$0.y).applying(ownerToView).applying(transform) }
-    tool = contact.tool
+    tool = controller.inputSettings.tool
     guard gate.beginPencilAction(source:sourceID) else { controller.cancel(); return nil }
     controller.onContactCancellation = { [weak self] in self?.finish(cancelled:true) }
     gate.registerPageFinisher(source:sourceID) { [weak self] _, completion in
@@ -55,7 +69,7 @@ final class NotebookToolInputContact {
 
   func move(to point: CGPoint) {
     guard !finished else { return }
-    guard controller.contact?.id == id else { finish(cancelled:true); return }
+    guard controller.currentContactID == id else { finish(cancelled:true); return }
     guard let accepted=controller.move(to:toOwner(point)) else { return }
     if tool == .lasso {
       path.addLine(to:toFeedback(accepted))
@@ -67,7 +81,7 @@ final class NotebookToolInputContact {
     guard !finished else { return }; finished = true
     onFinish?(); onFinish = nil
     defer { gate.unregisterPageFinisher(source:sourceID); gate.endPencilAction(source:sourceID) }
-    if controller.contact?.id == id {
+    if controller.currentContactID == id {
       if cancelled { controller.cancel() } else { controller.finish() }
     }
     feedback.removeFromSuperlayer()

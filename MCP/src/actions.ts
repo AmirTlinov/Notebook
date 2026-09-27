@@ -22,11 +22,17 @@ const source = z.string().max(1_000_000);
 const programPackage = z.string().regex(/^[a-f0-9]{64}$/).nullable().describe("Immutable staged package SHA; requires empty inline source/html/css/javaScript. Null switches back to inline.");
 export const textStyleSchema = z.object({fontSize:z.number().min(3).max(5760),weight:z.number().min(0).max(1),
   red:z.number().min(0).max(1),green:z.number().min(0).max(1),blue:z.number().min(0).max(1),alpha:z.number().min(0).max(1)}).strict();
-const block = z.discriminatedUnion("kind", [
-  z.object({ id: z.string().min(1).max(120), kind: z.enum(["markdown", "latex", "tex"]), source }).strict(),
-  z.object({ id: z.string().min(1).max(120), kind: z.literal("interactive"), html: source,
-    css: source.optional(), javaScript: source.optional(), programPackage: programPackage.optional(), initialState: z.json().optional(), height: z.number().min(48).max(2048).optional() }).strict(),
-]);
+export const documentPathSchema = z.string().min(1).max(512).regex(/^(?!\/)(?!.*(?:^|\/)\.\.?(?:\/|$))[A-Za-z0-9@_.-]+(?:\/[A-Za-z0-9@_.-]+)*$/);
+export const documentSourceSchema = z.string().max(4 * 1024 * 1024);
+export const contentFieldVersionSchema = z.object({
+  stamp:z.object({counter:z.number().int().nonnegative(),actor:uuid}).strict(),
+  human:z.boolean(),observed:z.record(z.string(),z.number().int().nonnegative()),
+}).strict();
+export const documentResourceSchema = z.object({path:documentPathSchema,mimeType:z.string().min(1),
+  byteCount:z.number().int().nonnegative(),parts:z.array(z.object({sha256:z.string().regex(/^[a-f0-9]{64}$/),
+    byteCount:z.number().int().min(1).max(4*1024*1024)}).strict()).max(16384)}).strict();
+export const documentFileSchema = z.object({id:z.string().min(1).max(120),path:documentPathSchema,
+  source:documentSourceSchema,resource:documentResourceSchema.optional()}).strict();
 const graphicColor = z.object({ red: z.number().min(0).max(1), green: z.number().min(0).max(1), blue: z.number().min(0).max(1) }).strict();
 const graphicStyle = z.object({ stroke: graphicColor, strokeWidth: z.number().positive().max(1_000_000), fill: graphicColor.optional(), dash: z.enum(["solid", "dashed", "dotted"]).optional() }).strict();
 const graphicScalar = z.number().finite().min(-1e6).max(1e6);
@@ -82,16 +88,16 @@ export const operationSchema = z.discriminatedUnion("kind", [
   op("setElementState", z.object({ state: z.json() }).strict()),
   op("removeElement", z.object({}).strict().default({})),
   op("reorderElements", z.object({ ids: z.array(z.string()).max(512) }).strict(), null),
-  op("insertBlock", z.object({ kind: z.enum(["markdown", "latex", "tex", "interactive"]), source: source.optional(), html: source.optional(), css: source.optional(),
-    javaScript: source.optional(), programPackage: programPackage.optional(), initialState: z.json().optional(), height: z.number().min(48).max(2048).optional(), afterID: z.string().optional() }).strict()),
-  op("updateBlock", z.object({ source: source.optional(), html: source.optional(), css: source.optional(), javaScript: source.optional(), programPackage: programPackage.optional(), height: z.number().min(48).max(2048).optional() }).strict()),
-  op("setBlockState", z.object({state:z.json()}).strict()),
-  op("removeBlock", z.object({}).strict().default({})),
-  op("reorderBlocks", z.object({ ids: z.array(z.string()).max(512) }).strict(), null),
-  op("setPreamble", z.object({ preamble: source }).strict(), null),
-  op("replaceDocument", z.object({ preamble: source, blocks: z.array(block).max(512) }).strict(), null),
+  op("putDocumentFile", z.object({path:documentPathSchema,source:documentSourceSchema.optional(),
+    resource:documentResourceSchema.optional(),expectedVersion:contentFieldVersionSchema.nullable()}).strict()),
+  op("patchDocumentFile", z.object({expectedVersion:contentFieldVersionSchema,
+    range:z.object({location:z.number().int().nonnegative(),length:z.number().int().nonnegative()}).strict(),
+    expectedText:documentSourceSchema,source:documentSourceSchema}).strict()),
+  op("renameDocumentFile", z.object({expectedVersion:contentFieldVersionSchema,path:documentPathSchema}).strict()),
+  op("removeDocumentFile", z.object({expectedVersion:contentFieldVersionSchema}).strict()),
+  op("setDocumentProgramState", z.object({programPath:documentPathSchema,sourceBasis:z.string().min(1),state:z.json()}).strict()),
   op("createNotebook", z.object({ title: z.string().max(240).optional(), center: point, pageID: uuid.optional() }).strict(), uuid.optional()),
-  op("createDocument", z.object({ title: z.string().max(240).optional(), center: point, paperSize: z.enum(["a4", "letter"]), preamble: source.optional(), blocks: z.array(block).max(512) }).strict(), uuid.optional()),
+  op("createDocument", z.object({title:z.string().max(240).optional(),center:point,entrypoint:documentPathSchema.optional(),template:z.enum(["article","report","contract","instruction","book"]).optional(),files:z.array(documentFileSchema).max(4096).optional()}).strict(), uuid.optional()),
   op("createBoard", z.object({ title: z.string().max(240).optional(), center: point }).strict(), uuid.optional()),
   op("appendPage", z.object({}).strict(), uuid.optional()).extend({target:coverTargetSchema}),
   op("deleteItem", z.object({}).strict(), null).extend({target:coverTargetSchema}),

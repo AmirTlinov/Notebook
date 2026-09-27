@@ -47,7 +47,7 @@ extension NotebookStore {
     var elementIDs: [UUID: Set<String>] = [:], placementIDs: [UUID: Set<UUID>] = [:]
     var creationInkSurfaces = Set<SurfaceID>()
     var spatialActionIDs = Set<UUID>()
-    var stateBlockIDs: [UUID: Set<String>] = [:], sourceBlockIDs: [UUID: Set<String>] = [:]
+    var stateProgramIDs: [UUID: Set<String>] = [:], sourceFileIDs: [UUID: Set<String>] = [:]
     var sourceDocumentIDs = Set<UUID>(), fullDocumentIDs = Set<UUID>()
     var pageElementIDs: [UUID: Set<String>] = [:], fullPageIDs = Set<UUID>()
     var pageGraphicSources: [UUID: [PageInkAction]] = [:]
@@ -100,19 +100,19 @@ extension NotebookStore {
           } else { fullPageIDs.insert(operation.target.id) }
         }
         if operation.target.kind == .document {
-          if [.setBlockState, .updateBlock].contains(operation.kind) {
+          if [.setDocumentProgramState, .putDocumentFile, .patchDocumentFile, .renameDocumentFile, .removeDocumentFile].contains(operation.kind) {
             guard let id = operation.id, !id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               id.utf16.count <= 120 else {
               throw CollaborationError("invalid_operation", "Изменение блока называет допустимый ID длиной до 120 знаков UTF-16.")
             }
           }
           switch operation.kind {
-          case .setBlockState:
-            if let id = operation.id { stateBlockIDs[operation.target.id, default: []].insert(collaborationIdentity(id)) }
-          case .updateBlock:
+          case .setDocumentProgramState:
+            fullDocumentIDs.insert(operation.target.id)
+            if let id = operation.id { stateProgramIDs[operation.target.id, default: []].insert(collaborationIdentity(id)) }
+          case .putDocumentFile, .patchDocumentFile, .renameDocumentFile, .removeDocumentFile:
             sourceDocumentIDs.insert(operation.target.id)
-            if let id = operation.id { sourceBlockIDs[operation.target.id, default: []].insert(collaborationIdentity(id)) }
-          case .setPreamble: sourceDocumentIDs.insert(operation.target.id)
+            if let id = operation.id { sourceFileIDs[operation.target.id, default: []].insert(collaborationIdentity(id)) }
           default: fullDocumentIDs.insert(operation.target.id)
           }
         }
@@ -310,20 +310,20 @@ extension NotebookStore {
     }
     let sourceAddresses = items.filter { $0.kind == .document && !fullDocumentIDs.contains($0.id) }.flatMap { item -> [(String, Bool)] in
       let file = documentFile(item.id)
-      let ids = (stateBlockIDs[item.id] ?? []).union(sourceBlockIDs[item.id] ?? [])
-      var addresses = [(file + "#", false)] + ids.sorted().map { (file + "#/blocks/@" + fieldKey([$0]), true) }
+      let ids = sourceFileIDs[item.id] ?? []
+      var addresses = [(file + "#", false)] + ids.sorted().map { (file + "#/files/@" + fieldKey([$0]), true) }
       if sourceDocumentIDs.contains(item.id) {
         // Editing an existing program cannot create a new source field or
         // reorder its neighbours. Read exactly its causal owners, including
         // adoption of existence, not every retired field of this document.
-        let keys = ["preamble", "blocks/order"] + ids.sorted().flatMap { DocumentBlock.causalFieldKeys(id: $0) }
+        let keys = ["entrypoint"] + ids.sorted().flatMap { DocumentFile.causalFieldKeys(id: $0) }
         addresses += keys.map { (file + "#/collaboration/fields/@" + fieldKey([$0]), false) }
       }
       return addresses
     }
     // A batch shares one source admission, not four MiB per addressed document.
     let sourceRows = Dictionary(grouping: try boundedStoredFragments(sourceAddresses,
-      maximumCount: 4_096, maximumBytes: 4 * 1_024 * 1_024, budget: "document_source_command"), by: \.file)
+      maximumCount: 4_096, maximumBytes: 32 * 1_024 * 1_024, budget: "document_source_command"), by: \.file)
     for item in items where item.kind == .document {
       let file = documentFile(item.id)
       if fullDocumentIDs.contains(item.id) {
@@ -348,7 +348,7 @@ extension NotebookStore {
           files[file] = try storedValue(file)
         } else {
           var rows = try storedFragments(address: file + "#", descendants: false)
-          for id in (stateBlockIDs[item.id] ?? []).sorted() {
+          for id in (stateProgramIDs[item.id] ?? []).sorted() {
             rows += try storedFragments(address: file + "#/records/@" + fieldKey([id]))
           }
           if !rows.isEmpty { files[file] = try NotebookRecordCodec.decode(rows, root: file + "#") }

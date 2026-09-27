@@ -165,26 +165,30 @@ struct NotebookProgramDeliveryTests {
     #expect(try f.b.loadPage(f.pageID).elements.isEmpty)
   }
 
-  @Test func boardAndDocumentUseTheSamePublicationAndDeliveryAsPages() throws {
-    let f = try Fixture(), (hash, _) = try f.package("shared"), documentID = UUID()
+  @Test func boardPackagesAndDocumentFilesShareTheSameByteDelivery() throws {
+    let f = try Fixture(), (hash, package) = try f.package("shared"), documentID = UUID()
     let board = CollaborationTarget(kind: .board, id: f.boardID)
+    let resource = try #require(package.files.first)
+    let file = DocumentFile(id: "doc-program", path: "programs/model/main.js", resource: .init(
+      path: "programs/model/main.js", mimeType: resource.mimeType, byteCount: resource.byteCount, parts: resource.parts))
     let basis = try f.a.readBasis(targets: [board, .init(kind: .workspace, id: f.boardID)])
     _ = try f.a.applyCollaborationAction(.init(summary: "Board and document", expected: basis.owners, operations: [
       .init(kind: .insertElement, target: board, id: "board-program", values: ["kind": .string("web"), "source": .string(""),
         "programPackage": .string(hash), "frame": try .encode(SpatialRect(x: 0, y: 0, width: 400, height: 400)), "worldOrigin": try .encode(WorldPoint.zero)]),
       .init(kind: .createDocument, target: board, id: documentID.uuidString, values: ["center": try .encode(WorldPoint.zero),
-        "paperSize": .string("a4"), "blocks": .array([.object(["id": .string("doc-program"), "kind": .string("interactive"),
-          "html": .string(""), "programPackage": .string(hash)])])])
+        "files": try .encode([DocumentFile(id: "main", path: "main.tex", source: "Document"), file])])
     ]), actor: f.actor)
     try f.sync()
     #expect(try f.b.loadBoard(items: f.b.loadIndex().items).board(f.boardID)?.elements.first?.programPackage == hash)
-    #expect(try f.b.loadDocument(documentID).blocks.first?.programPackage == hash)
-    let target = CollaborationTarget(kind: .document, id: documentID)
-    _ = try f.a.applyCollaborationAction(.init(summary: "Document inline", expected: [.init(target: target, revision: f.a.targetContentRevision(target: target))],
-      operations: [.init(kind: .updateBlock, target: target, id: "doc-program", values: ["programPackage": .null, "html": .string("<p>inline</p>")])]), actor: f.actor)
+    #expect(try f.b.loadDocument(documentID).files.first { $0.id == file.id } == file)
+    #expect(try f.b.readDocumentFileBytes(file) == f.a.readDocumentFileBytes(file))
+    let target = CollaborationTarget(kind: .document, id: documentID), current = try f.a.loadDocument(documentID)
+    _ = try f.a.applyCollaborationAction(.init(summary: "Replace a resource with editable text", expected: [.init(target: target, revision: f.a.targetContentRevision(target: target))],
+      operations: [.init(kind: .putDocumentFile, target: target, id: file.id, values: ["path": .string("programs/model/index.html"),
+        "expectedVersion": try .encode(current.fileVersion(fileID: file.id)), "source": .string("<p>inline</p>")])]), actor: f.actor)
     try f.sync()
-    #expect(try f.b.loadDocument(documentID).blocks.first?.programPackage == nil)
-    #expect(try f.b.loadDocument(documentID).blocks.first?.html == "<p>inline</p>")
+    let received = try #require(f.b.loadDocument(documentID).files.first { $0.id == file.id })
+    #expect(received.resource == nil && received.source == "<p>inline</p>")
   }
 
   @Test func retainedConcurrentSourceHeadsRemainOfflineDependenciesButStateHeadsDoNot() throws {

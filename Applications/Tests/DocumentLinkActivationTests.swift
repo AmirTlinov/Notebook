@@ -33,9 +33,9 @@ final class DocumentLinkActivationTests: XCTestCase {
     let fixture = try await fixture()
     defer { fixture.close() }
     let activation = try await fixture.activation()
-    let identity = try XCTUnwrap(fixture.model.documents[activation.origin.documentID]?.programIdentity(blockID: "widget"))
+    let program = try DocumentProgramSource(document: XCTUnwrap(fixture.model.documents[activation.origin.documentID]), instanceID: "widget", path: "programs/widget")
     let changed = try await fixture.model.commitDocumentState(documentID: activation.origin.documentID,
-      blockID: "widget", value: .string("later user state"), programIdentity: identity)
+      program: program, value: .string("later user state"))
     XCTAssertNotNil(changed)
     XCTAssertEqual(fixture.model.activateDocumentLink(activation), activation.destination)
     if case .page(let target) = activation.destination {
@@ -51,10 +51,10 @@ final class DocumentLinkActivationTests: XCTestCase {
     defer { fixture.close() }
     let activation = try await fixture.activation()
     let document = try XCTUnwrap(fixture.model.documents[activation.origin.documentID])
-    let block = try XCTUnwrap(document.blocks.first { $0.id == "far" })
-    let edit = DocumentSourceEdit(sessionID: UUID(), documentID: document.id, blockID: block.id,
-      baseSource: block.source, baseVersion: document.sourceVersion(blockID: block.id),
-      source: "# A changed destination", sequence: 1)
+    let block = try XCTUnwrap(document.files.first { $0.id == "far" })
+    let edit = DocumentSourceEdit(sessionID: UUID(), documentID: document.id, fileID: block.id,
+      baseSource: block.source, baseVersion: document.fileVersion(fileID: block.id),
+      source: "\\section{A changed destination}\\hypertarget{a-changed-destination}{}", sequence: 1)
     let status = try await fixture.model.commitDocumentSource(edit: edit)
     XCTAssertEqual(status, .committed)
     XCTAssertNil(fixture.model.activateDocumentLink(activation))
@@ -84,11 +84,11 @@ final class DocumentLinkActivationTests: XCTestCase {
       var index = try store.loadIndex(), board = try store.loadBoard(items: index.items)
       let item = try XCTUnwrap(index.createDocument(title: "Link owner", actor: actor))
       XCTAssertTrue(board.addItem(item.id, to: index.rootBoardID, near: .zero, actor: actor))
-      let document = DocumentDocument(id: item.id, actor: actor, blocks: [
-        .markdown(id: "contents", source: "[Far chapter](#far)"),
-        .markdown(id: "body", source: String(repeating: "A physical canonical paragraph preserves its navigation origin.\n\n", count: 140)),
-        .markdown(id: "far", source: "# Far\n\nThe actual measured destination."),
-        .interactive(id: "widget", html: "<output>A real stateful block</output>")])
+      let document = DocumentTestFiles.document(id: item.id, actor: actor, contents: [
+        .tex(id: "contents", source: "\\hyperlink{far}{Far chapter}"),
+        .tex(id: "body", source: String(repeating: "A physical canonical paragraph preserves its navigation origin.\n\n", count: 140)),
+        .tex(id: "far", source: "\\section{Far}\\hypertarget{far}{}\n\nThe actual measured destination."),
+        .program(id: "widget", html: "<output>A real stateful block</output>")])
       try store.saveDocumentWorkspaceBundle(index: index, document: document,
         state: .init(id: item.id, actor: actor), board: board)
       try store.savePresence(.init(boardID: index.rootBoardID, mode: .document, camera: .init(),
@@ -120,11 +120,12 @@ final class DocumentLinkActivationTests: XCTestCase {
       let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
       previousKeyWindow = scene.windows.first { $0.isKeyWindow }
       window = UIWindow(windowScene: scene)
-      let controller = UIViewController(), geometry = WorkspaceItemGeometry.document(document.paperSize)
+      let controller = UIViewController(), geometry = WorkspaceItemGeometry.uncompiledDocument
       window.rootViewController = controller
       host.frame = .init(x: 0, y: 0, width: geometry.width, height: geometry.height)
       controller.view.addSubview(host); window.makeKeyAndVisible()
       coordinator.externallyHostedPrograms = true
+      coordinator.programStore = model.store
       coordinator.update(document: document, state: state, selectedPageIndex: 0, capturesSnapshot: false,
         onRenderReady: .init { _ in }, onPageLayout: { _ in },
         onStateChange: { _, _ in nil }, onLinkActivation: { [weak self] in self?.received = $0 })

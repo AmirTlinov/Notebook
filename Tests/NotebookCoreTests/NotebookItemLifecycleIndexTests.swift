@@ -32,7 +32,7 @@ struct NotebookItemLifecycleIndexTests {
 
   @Test func documentBodiesJoinTheirCatalogItemInOneNativePublication() throws {
     let f = try Fixture(), id = UUID()
-    let document = DocumentDocument(id: id, actor: f.actor, blocks: [.interactive(id: "answer", html: "<button>Choose</button>")])
+    let document = DocumentDocument(id: id, actor: f.actor, files: try documentProgramFiles(id: "answer", html: "<button>Choose</button>"))
     let state = DocumentStateJournal(id: id, actor: f.actor)
     // Native creation publishes catalogue, source and state together. A
     // source-only cut cannot mint the missing ownership or a retired baseline.
@@ -55,7 +55,7 @@ struct NotebookItemLifecycleIndexTests {
     let extent = try #require(try f.store.readItemLifecycle(id))
     #expect(extent.bodyRecordCount >= 3)
     var next = state
-    let changed = next.commit(blockID: "answer", value: .string("Human"), actor: f.actor, human: true)
+    let changed = next.commit(instanceID: "answer", value: .string("Human"), actor: f.actor, human: true)
     #expect(changed)
     try f.store.saveDocumentState(next)
     #expect(try f.store.readItemLifecycle(id)?.revision != extent.revision)

@@ -74,16 +74,23 @@ test('provided basis is used as-is, one transaction, no mandatory readback',asyn
   assert.equal(calls.length,1);assert.deepEqual(calls[0].base,base);assert.deepEqual(output.action,result);
 });
 
-test('documents retain chosen order and editable blocks; append does not replace existing content',()=>{
+test('documents preserve real source files and patch only an explicitly read range',()=>{
+  const source=String.raw`\documentclass{article}
+\begin{document}
+\input{chapters/finding}
+\end{document}`;
   const document=makeRecipe('document',{target:{kind:'board',id:target.id},anchor:{tileX:0,tileY:0,localX:50,localY:50},
-    title:'Исследование',sections:[{id:'finding',heading:'Наблюдение',body:'$x^2$'},{id:'source',body:'[Источник](https://example.org)'}]},randomUUID());
+    title:'Исследование',files:[{path:'main.tex',source},{path:'chapters/finding.tex',source:String.raw`\section{Наблюдение} $x^2$`}]},randomUUID());
   const op=document.args.operations[0];operationSchema.parse(op);
-  assert.equal(op.kind,'createDocument');assert.equal(op.values.blocks.length,3);
-  assert.match(op.values.blocks[1].source,/Наблюдение/);
-  const append=makeRecipe('document',{target:{kind:'document',id:randomUUID()},afterID:'existing',
-    sections:[{id:'new',body:'Продолжение'}]},randomUUID());
-  assert.equal(append.args.operations[0].kind,'insertBlock');
-  assert.equal(append.args.operations[0].values.afterID,'existing');
+  assert.equal(op.kind,'createDocument');assert.equal(op.values.files.length,2);
+  assert.equal(op.values.files[0].source,source);
+  const edit={fileID:'finding',expectedVersion:{stamp:{counter:1,actor:target.id},human:false,observed:{}},
+    range:{location:9,length:10},expectedText:'Наблюдение',source:'Измерение'};
+  const patch=makeRecipe('document',{target:{kind:'document',id:randomUUID()},edit},randomUUID());
+  const change=operationSchema.parse(patch.args.operations[0]);assert.equal(change.kind,'patchDocumentFile');
+  if(change.kind==='patchDocumentFile')assert.deepEqual(change.values,{expectedVersion:edit.expectedVersion,
+    range:edit.range,expectedText:edit.expectedText,source:edit.source});
+  assert.throws(()=>makeRecipe('document',{target:{kind:'document',id:randomUUID()},sections:[{body:'old'}]},randomUUID()),/ordinary source/);
 });
 
 test('SVG plots use actual data and embed as self-contained sources',()=>{
@@ -106,17 +113,17 @@ test('pointer is ephemeral and freehand sketch uses native editable ink',()=>{
   assert.equal(sketch.args.operations[0].kind,'appendInkStroke');
 });
 
-test('image and Markdown source files become self-contained input, not paths',async()=>{
+test('image and LaTeX source files become self-contained input, not paths',async()=>{
   const directory=await mkdtemp(join(tmpdir(),'notebook-recipe-files-'));
   try {
     const svg=chartSVG({series:[{points:[[1,2],[3,4]]}]});
     await writeFile(join(directory,'figure.svg'),svg);
-    await writeFile(join(directory,'section.md'),'Содержательный **вывод**.');
+    await writeFile(join(directory,'section.tex'),String.raw`Содержательный \textbf{вывод}.`);
     const image=await prepare('visual',{target,imagePath:'figure.svg'},{baseDirectory:directory});
     assert.match(image.args.operations[0].values.source,/data:image\/svg\+xml;base64,/);
     assert.doesNotMatch(JSON.stringify(image),/figure\.svg|notebook-recipe-files/);
-    const doc=await prepare('document',{target:{kind:'document',id:randomUUID()},sections:[{sourcePath:'section.md'}]},{baseDirectory:directory});
-    assert.equal(doc.args.operations[0].values.source,'Содержательный **вывод**.');
+    const doc=await prepare('document',{target:{kind:'document',id:randomUUID()},files:[{path:'section.tex',sourcePath:'section.tex',expectedVersion:null}]},{baseDirectory:directory});
+    assert.equal(doc.args.operations[0].values.source,String.raw`Содержательный \textbf{вывод}.`);
   } finally {await rm(directory,{recursive:true,force:true});}
 });
 
@@ -125,23 +132,29 @@ async function waveInput() {
   return {html:await readFile(new URL('wave.html',directory),'utf8'),css:await readFile(new URL('wave.css',directory),'utf8'),
     javaScript:await readFile(new URL('wave.js',directory),'utf8'),initialState:{phase:0,amplitude:1,speed:1}};
 }
-test('animation uses the existing web/interactive owners with embedded code and state',async()=>{
+test('animation saves editable files and one exact LaTeX patch, while spatial owners stay inline',async()=>{
   const program=await waveInput(),runID=randomUUID();
   for(const kind of ['page','board','document']) {
-    const input={...program,target:{...target,kind},anchor:{tileX:0,tileY:0,localX:20,localY:30},afterID:'previous'};
+    const input={...program,target:{...target,kind},anchor:{tileX:0,tileY:0,localX:20,localY:30},
+      edit:{fileID:'main',expectedVersion:{stamp:{counter:1,actor:target.id},human:false,observed:{}},range:{location:0,length:0},expectedText:''}};
     const request=makeRecipe('animation',input,runID);
     assert.deepEqual(makeRecipe('animation',input,runID),request);
-    executionInput.parse(request);
-    const op=request.args.operations[0];operationSchema.parse(op);
-    assert.equal(op.kind,kind==='document'?'insertBlock':'insertElement');
-    assert.equal(op.values.kind,kind==='document'?'interactive':'web');
-    assert.equal(op.values.html,program.html);assert.equal(op.values.javaScript,program.javaScript);
-    assert.deepEqual(op.values.initialState??op.values.state,program.initialState);
-    if(kind==='document') assert.equal(op.values.afterID,'previous');
+    executionInput.parse(request);request.args.operations.forEach((op:unknown)=>operationSchema.parse(op));
+    if(kind==='document') {
+      const read=(name:string)=>request.args.operations.find((op:any)=>op.values.path?.endsWith('/'+name)).values.source;
+      assert.equal(read('index.html'),program.html);assert.equal(read('main.js'),program.javaScript);
+      assert.deepEqual(JSON.parse(read('program.json')).initialState,program.initialState);
+      const patch=request.args.operations.at(-1);assert.equal(patch.kind,'patchDocumentFile');
+      assert.match(patch.values.source,/NotebookInteractive/);
+    } else {
+      const op=request.args.operations[0];assert.equal(op.kind,'insertElement');assert.equal(op.values.kind,'web');
+      assert.equal(op.values.html,program.html);assert.equal(op.values.javaScript,program.javaScript);
+      assert.deepEqual(op.values.state,program.initialState);
+    }
     assert.ok(animationPreview(request).includes(program.html));
   }
   assert.throws(()=>makeRecipe('animation',{target,...program,html:''}),/fragment/);
-  assert.throws(()=>makeRecipe('animation',{target:{...target,kind:'document'},...program,height:2049}),/48–2048/);
+  assert.throws(()=>makeRecipe('animation',{target:{...target,kind:'document'},...program}),/addressed file read/);
 });
 
 test('animation file preparation embeds sources; preview cannot close its script with program data',async()=>{

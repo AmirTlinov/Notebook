@@ -5,15 +5,16 @@ private directory of one Apple Account and stored in Keychain. Bonjour discovers
 endpoints; access comes from verified keys, identities and account admission.
 See [automatic connection](installation-pairing.md).
 
-## Current compatibility: wire 43, manifest 25
+## Current compatibility: wire 44, manifest 26
 
-Both applications must use the same wire contract. Version 43 and manifest 25 preserve detached connector routing and signed bend
-positions without silently changing their visible contours on an older peer. They
-also carry causal page-ink visibility as well as exact compact measurement bodies,
-including shared repetitions and tiled fields, rather than flat arrays. An old
-snapshot cannot undo a later explicit repeat. Prior wire versions cannot join.
+Both applications must use wire 44 and manifest 26: documents are now file trees,
+not block streams. Admission removes only old-format current documents and their
+executable recovery after pending peer delivery is drained. It preserves notebooks,
+boards, chat, workspace identities, keys and immutable historical blobs. Prior
+wire versions cannot join. Causal ink and connector routing keep their existing
+meaning; an old snapshot cannot undo a later explicit repeat.
 Current admission rejects prior manifest formats, including cloud delivery;
-immutable manifests 3–24 remain inspectable as history,
+immutable manifests 3–25 remain inspectable as history,
 not relabelled as current input. Already accepted transaction echoes retain
 normal idempotent acknowledgement without applying their bodies again.
 The existing Codex, TeX, package and native-content boundaries remain unchanged.
@@ -23,7 +24,7 @@ Content, local containers, workspace/device identities and keys survive an
 ordinary update. Installed build status belongs in [verification](verification.md);
 a source version alone does not prove installation.
 
-Bonjour advertises `notebook-v43-<UUID>-<generation>`; TXT `workspace` distinguishes
+Bonjour advertises `notebook-v44-<UUID>-<generation>`; TXT `workspace` distinguishes
 background workspace listeners sharing a Mac device ID. One transport owner
 changes the advertisement generation on restart. Metadata grants no trust.
 

@@ -112,7 +112,7 @@ extension NotebookStore {
           if operation.needsInkExpectation, !created.contains(operation.target), owner?.inkRevision == nil {
             throw Self.incompleteBasis(operation.target, component: "ink")
           }
-          if operation.kind == .setBlockState, owner?.stateRevision == nil { throw Self.incompleteBasis(operation.target, component: "state") }
+          if operation.kind == .setDocumentProgramState, owner?.stateRevision == nil { throw Self.incompleteBasis(operation.target, component: "state") }
           if operation.kind == .deleteItem, !created.contains(operation.target), owner?.lifecycleRevision == nil {
             throw Self.incompleteBasis(operation.target, component: "lifecycle")
           }
