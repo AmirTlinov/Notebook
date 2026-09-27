@@ -163,7 +163,7 @@ final class InkCanvasLifecycleTests: XCTestCase {
   }
 
   @MainActor
-  private func withPreparedSelectionCanvas(resources:SceneRenderResources = .init(),_ test:(InkCanvasView,UIWindow,PageInkAction,NotebookOrderedInkPlan) async throws -> Void) async throws {
+  private func withPreparedSelectionCanvas(resources:SceneRenderResources = .init(),_ test:@MainActor (InkCanvasView,UIWindow,PageInkAction,NotebookOrderedInkPlan) async throws -> Void) async throws {
     let scene=try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
     let window=UIWindow(windowScene:scene),controller=UIViewController()
     window.rootViewController=controller;controller.view.backgroundColor = .white
