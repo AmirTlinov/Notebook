@@ -1,0 +1,30 @@
+{
+  "format": 1,
+  "scope": "USB iPad Pro 11-inch (3rd generation), iOS 27, private optimized app; addressed selection checks, not final acceptance",
+  "runs": [
+    {
+      "name": "u10-native-185",
+      "sourceSHA256": "6be72971bef06eb4d71f11ee78942b2cd893700fc2402981969f5e6e2f64a521",
+      "result": "1 PASS / 0 FAIL / 0 skipped",
+      "scenario": "Canonical mixed Delete, Undo and Redo: correct installed visual state"
+    },
+    {
+      "name": "u10-native-190",
+      "sourceSHA256": "8d518326f095225278046d049aa5ebd7ab9ef859a675f70bf49339c283e93a5d",
+      "result": "1 PASS / 0 FAIL / 0 skipped",
+      "scenario": "Board authored host and native control geometry; not a system VoiceOver focus-frame receipt"
+    },
+    {
+      "name": "u10-native-191",
+      "sourceSHA256": "8d518326f095225278046d049aa5ebd7ab9ef859a675f70bf49339c283e93a5d",
+      "result": "0 PASS / 1 FAIL / 0 skipped",
+      "scenario": "Closed whole-lasso raw+authored two drags and cancel: first correct window 112.51 ms (>100 ms), second 75.48 ms, cancel correct at 69.89 ms but mixed capture at 34.03 ms; blue authored/controls returned while black raw remained at preceding pose"
+    }
+  ],
+  "rawResults": [
+    "/Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/.build/notebook-architecture-repair/evidence-2026-09-27/u10-native-185/ipad.xcresult",
+    "/Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/.build/notebook-architecture-repair/evidence-2026-09-27/u10-native-190/ipad.xcresult",
+    "/Users/amir/.codex/worktrees/notebook-architecture-repair/Notebook/.build/notebook-architecture-repair/evidence-2026-09-27/u10-native-191/ipad.xcresult"
+  ],
+  "boundary": "The screenshot loop is a native window observation, not an OS photon receipt. U10 remains open: restoration is not atomic and the first-drag budget fails. These runs do not prove real VoiceOver focus geometry, Markdown/WebKit selected hosts, or final mixed-session performance."
+}
