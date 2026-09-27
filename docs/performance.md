@@ -522,49 +522,36 @@ the current gesture progress. Closed-cover prewarming retains its existing deman
 and admission rules. This removes background main-thread capture rather than
 merely delaying it until the first page frame. No extra snapshot cache is added.
 
-`IPadSheetCurlController` bends one frozen sheet through the same Core Image /
-Metal renderer as covers. It replaces UIKit's fixed binding shadow, not overlays
-or private layer mutations. The mounted source/destination keep one parent;
-only their stacking changes. A presented endpoint, not elapsed animation time,
-confirms the landing. Page progress and drawable submission share one
-`CAMetalDisplayLink`; a dropped drawable never confirms a landing. The turn's
-image and two drawable backings have one bounded
-input reservation, explicitly released at presentation or drained on cancellation.
-Snapshot capture runs once outside input dispatch and UIKit update callbacks,
-using `drawHierarchy(afterScreenUpdates: true)` on the next main-queue turn.
-The queue hop is not evidence of current pixels. Immediately before capture the
-page owner verifies the mounted sheet's readiness (source for forward, target for
-reverse). Accepted native ink revokes that readiness synchronously, before the
-input fence can release; only its current material receipt restores it. A dirty
-sheet keeps the same motion, finger progress and lift until its own receipt
-resumes capture. The snapshot then requests the current UIKit layer tree. If
-that synchronous layout revokes readiness, its image/reservation is discarded
-and the same motion waits for the replacement receipt.
-A motion ID revokes a cancelled capture; replacing a document source revokes
-the motion even when its native hosts are retained. Repeated receipts cannot
-replace an already captured image. No timer, idle
-observer, extra page cache or replacement button owns this handoff. The snapshot preserves UIKit's native 32/64-bit colour range, avoiding
-a full-frame SDR conversion on MainActor. Admission covers an eight-byte source
-and the aligned rows of both four-byte drawables; the actual captured row size
-is checked before use. It uses
-the sheet's actual window-projected density (at most four million pixels), not
-the resolution of a larger fitted-offscreen sheet. Live source paper stays in
-front until this turn's first resolved curl frame; a preceding drawable cannot
-become the new turn's placeholder. The first source-matching frame primes the
-unchanged sheet before exposing the other leaf. Source reveal and entry/exit at
-the flat boundary install their live underlay in the drawable's transaction.
-Command animation starts at that first receipt, not before capture; an interactive
-turn retains its measured finger progress instead of restarting it. The Metal view survives turns, its bitmap
-backing retires, and progress changes reuse the same immutable Core Image source.
-A cold swipe retains its original contact and drives this same interactive curl
-as soon as the neighbour is ready; lift/pinch still decide completion/cancellation.
-Simulator advances on an explicitly typed GPU completion because it supplies no
-drawable presentation callback. That receipt has no display timestamp and cannot
-satisfy the physical first-frame, same-event display or FPS checks.
-Four alternating native turns check intermediate images, final content, a bounded
-left-edge shadow, and return of reserved bytes before the next turn. This route
-is regression evidence, not full sustained CPU/GPU/memory or physical-photon
-acceptance.
+`IPadSheetCurlController` renders one frozen source/destination pair through an
+analytic Metal cylinder. The fold follows horizontal travel and vertical tilt;
+front/back lighting and cast shadow belong to this same composition. Covers
+retain their separate outside-sheet Core Image geometry. Both live page hosts
+keep their parent and the source stays beneath the opaque curl until the exact
+presented endpoint is ready to replace it. No flat priming frame or per-frame
+UIKit underlay transaction is needed for the complete pair.
+
+Both hosts must be ready before capture. Capture runs outside input dispatch,
+using `drawHierarchy(afterScreenUpdates: true)` at window-projected density,
+bounded to four million pixels per sheet. The motion ID and readiness generation
+are checked between captures and before installing the pair; a false→true
+readiness cycle cannot admit old pixels. A cancelled uncaptured turn keeps the
+live source without allocating a pair. Accepted ink revokes readiness before
+releasing its input fence. Resource reclamation resumes the same waiting motion,
+not a replacement gesture.
+
+One input reservation accounts for both native-range captured images, uploaded
+textures and two drawable backings. The pair is uploaded once, reused through
+re-grabs and released by the existing presentation/cancellation owner. There is
+no persistent snapshot cache. The existing `CAMetalDisplayLink` owns progress
+and submission; a dropped or obsolete receipt cannot confirm a landing.
+Settlement follows remaining travel, release velocity, stroke duration and
+current input cadence, without a fixed minimum duration. A re-grab starts from
+the visible pose; cancelling a newer contact preserves the previously accepted
+destination. An expired burst cannot accelerate an unrelated stationary hold.
+
+Simulator's typed GPU completion is readiness, not an OS presentation timestamp.
+The unchanged physical first-frame/cadence limits remain separate from geometry,
+endpoint, re-grab, colour and resource-lifetime regressions.
 
 Page projection installs frame, drawable size and layer size atomically before
 requesting a frame. The synchronous MTK size callback cannot allocate an

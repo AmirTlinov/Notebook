@@ -12,11 +12,18 @@ final class IPadSheetCurlController: UIViewController, UIGestureRecognizerDelega
   var neighbor: (UIViewController, Direction) -> UIViewController? = { _, _ in nil }
   var willTurn: (UIViewController) -> Bool = { _ in false }
   var didTurn: (UIViewController, Bool) -> Void = { _, _ in }
+  var didAcceptTurn: (UIViewController) -> Void = { _ in }
   var onFailure: (Error) -> Void = { _ in }
   var isSheetReadyForCapture: (UIViewController) -> Bool = { _ in true }
+  struct SourceCaptureTiming {
+    let began, contextReady, drawn, published: TimeInterval
+    let bytes, bitsPerPixel: Int
+    let colorSpace: String
+  }
   struct CaptureTiming {
     let began, ended: TimeInterval
     let pixels: Int
+    let sources: [SourceCaptureTiming]
   }
   /// Optional timing at the actual capture owner, never a second render path.
   var onCaptureMeasured: ((CaptureTiming) -> Void)?
@@ -26,10 +33,17 @@ final class IPadSheetCurlController: UIViewController, UIGestureRecognizerDelega
   private var panDirection: Direction?
   private var motion: Motion?
   private var captureReclamation: Task<Void, Never>?
+  private var lastIntentTime: Double?
+  private var inputCadence = Double.infinity
+  private var continuedContact: Contact?
+  private struct Contact {
+    let initial, origin, initialTilt, began: Double
+    let direction: Direction
+  }
   /// A new contact can wait for this accepted landing, including cancellation
   /// back to the source. The page container must not guess from its old index.
   var settlingPage: UIViewController? {
-    guard let motion, let endpoint = motion.animation?.to ?? motion.terminal else { return nil }
+    guard let motion, let endpoint = motion.contact?.origin ?? motion.animation?.to ?? motion.terminal else { return nil }
     return endpoint == 1 ? motion.target : motion.source
   }
   func containsInActiveTurn(_ controller: UIViewController) -> Bool {
@@ -40,14 +54,18 @@ final class IPadSheetCurlController: UIViewController, UIGestureRecognizerDelega
   private struct Motion {
     let id: UUID
     let source: UIViewController, target: UIViewController
+    let size: CGSize
     var image: CGImage?
-    var captureGeneration: UInt64 = 0
     let direction: Direction
     let completion: ((Bool) -> Void)?
     let gesture: Bool
     var progress: Double = 0
+    var anchor = 1.0
+    var tilt = 0.0
+    var captureGeneration: UInt64 = 0
+    var contact: Contact?
     var presentation: (progress: Double, sequence: Int, readiness: NotebookMetalFrameReadiness)?
-    var animation: (start: Double, from: Double, to: Double, duration: Double, rate: Double)?
+    var animation: (start: Double?, from: Double, to: Double, duration: Double, tilt: Double)?
     var terminal: Double?
   }
 
@@ -64,6 +82,7 @@ final class IPadSheetCurlController: UIViewController, UIGestureRecognizerDelega
 
   override func viewDidLayoutSubviews() {
     super.viewDidLayoutSubviews()
+    if let motion, motion.size != view.bounds.size { cancelMotion() }
     for child in children { child.view.frame = view.bounds }
     curl.frame = view.bounds
   }
@@ -91,7 +110,7 @@ final class IPadSheetCurlController: UIViewController, UIGestureRecognizerDelega
     loadViewIfNeeded()
     cancelMotion()
     prepare(target)
-    guard animated, let source = page, source !== target, SceneSourceVisibility.isVisible(view) else {
+    guard animated, !UIAccessibility.isReduceMotionEnabled, let source = page, source !== target, SceneSourceVisibility.isVisible(view) else {
       page = target; view.bringSubviewToFront(target.view)
       if let completion { Task { @MainActor in completion(true) } }
       return
@@ -107,14 +126,19 @@ final class IPadSheetCurlController: UIViewController, UIGestureRecognizerDelega
     prepare(target)
     guard view.bounds.width > 0, view.bounds.height > 0 else { throw SceneRenderError.snapshotPending("page_bounds") }
     let id = UUID()
-    motion = .init(id: id, source: source, target: target, direction: direction,
+    motion = .init(id: id, source: source, target: target, size: view.bounds.size, direction: direction,
       completion: completion, gesture: gesture)
     // Capture outside input dispatch and UIKit's update callbacks. The queue
     // hop is not readiness: the exact captured sheet must have presented its
     // accepted material, including native Metal ink, before taking the image.
     // Live paper stays in front while the same motion retains finger progress.
-    let sheet = direction == .forward ? source : target
-    sheet.view.layoutIfNeeded()
+    if gesture {
+      motion?.contact = continuedContact ?? .init(initial: 0, origin: 0, initialTilt: 0,
+        began: CACurrentMediaTime(), direction: direction)
+      continuedContact = nil
+    }
+    guard !UIAccessibility.isReduceMotionEnabled else { return }
+    source.view.layoutIfNeeded(); target.view.layoutIfNeeded()
     DispatchQueue.main.async { [weak self] in self?.captureCurrentSource(for: id) }
   }
 
@@ -123,39 +147,44 @@ final class IPadSheetCurlController: UIViewController, UIGestureRecognizerDelega
   func sheetReadinessDidChange(_ sheet: UIViewController) {
     guard var motion, motion.source === sheet || motion.target === sheet else { return }
     if motion.image != nil {
-      // Frozen curl pixels stay unchanged. Only the selected live endpoint
-      // can release a completed turn that is waiting for its current content.
-      finishPresentedEndpoint()
-      return
+      // Keep the frozen pair while new live material prepares. Its flat frame
+      // can retire only when the actual landing host is ready again.
+      finishPresentedEndpoint(); return
     }
-    guard (motion.direction == .forward ? motion.source : motion.target) === sheet else { return }
-    // A UIKit flush can revoke and restore readiness within one capture.
-    // A final true value does not authorize pixels from the previous generation.
     motion.captureGeneration &+= 1
     self.motion = motion
-    guard isSheetReadyForCapture(sheet) else { return }
     let id = motion.id
     DispatchQueue.main.async { [weak self] in self?.captureCurrentSource(for: id) }
   }
 
   private func captureCurrentSource(for id: UUID) {
-    guard let motion, motion.id == id, motion.image == nil, captureReclamation == nil else { return }
-    let sheet = motion.direction == .forward ? motion.source : motion.target
-    guard isSheetReadyForCapture(sheet) else { return }
+    guard let motion, motion.id == id, motion.image == nil, captureReclamation == nil,
+      isSheetReadyForCapture(motion.source), isSheetReadyForCapture(motion.target) else { return }
     do {
       let began = onCaptureMeasured == nil ? nil : CACurrentMediaTime()
-      let (image, reservation) = try capture(sheet.view)
-      if let began { onCaptureMeasured?(.init(began: began, ended: CACurrentMediaTime(), pixels: image.width * image.height)) }
-      // drawHierarchy can flush layout, which may invalidate ink coverage.
-      // Discard that capture and keep this motion waiting for its new receipt.
+      var sources: [SourceCaptureTiming] = []
+      let measure: ((SourceCaptureTiming) -> Void)? = began == nil ? nil : { sources.append($0) }
+      guard let (source, target, reservation) = try capturePair(source: motion.source.view, target: motion.target.view,
+        measure: measure, permitsCapture: { [self] in
+          self.motion?.id == id && self.motion?.captureGeneration == motion.captureGeneration
+            && isSheetReadyForCapture(motion.source) && isSheetReadyForCapture(motion.target)
+        }) else { return }
+      if let began { onCaptureMeasured?(.init(began: began, ended: CACurrentMediaTime(), pixels: source.width * source.height * 2, sources: sources)) }
+      // A capture flushes UIKit. Either host can become dirty (even false→true)
+      // during that flush, so the pair belongs to this exact readiness generation.
       guard var current = self.motion, current.id == id,
         current.captureGeneration == motion.captureGeneration,
-        isSheetReadyForCapture(sheet) else { return }
-      current.image = image; self.motion = current
+        isSheetReadyForCapture(motion.source), isSheetReadyForCapture(motion.target) else { return }
+      let leaf = motion.direction == .forward ? source : target
+      let base = motion.direction == .forward ? target : source
       curl.frameLease = reservation
-      curl.prepareDrawable(size: .init(width: image.width, height: image.height))
+      try curl.preparePages(leaf: leaf, base: base)
+      current.image = leaf; self.motion = current
+      curl.prepareDrawable(size: .init(width: leaf.width, height: leaf.height))
       curl.isHidden = false
-      view.bringSubviewToFront(motion.source.view)
+      // Transparent until its first complete pair arrives; the original live
+      // paper stays underneath. No empty drawable can expose the destination.
+      view.bringSubviewToFront(curl)
       render(current.progress)
       curl.animatesContinuously = current.animation != nil
     } catch {
@@ -177,52 +206,60 @@ final class IPadSheetCurlController: UIViewController, UIGestureRecognizerDelega
     }
   }
 
-  private func capture(_ sheet: UIView) throws -> (CGImage, RasterReservation) {
+  private func capturePair(source: UIView, target: UIView, measure: ((SourceCaptureTiming) -> Void)?,
+    permitsCapture: () -> Bool) throws -> (CGImage, CGImage, RasterReservation)? {
     let size = view.bounds.size
     guard size.width > 0, size.height > 0 else { throw SceneRenderError.snapshotPending("page_bounds") }
-    // A fitted sheet can be much larger than its on-screen projection. Capture
-    // its displayed density, not a full-resolution offscreen page on every swipe.
     let origin = view.convert(CGPoint.zero, to: view.window)
     let x = view.convert(CGPoint(x: size.width, y: 0), to: view.window)
     let y = view.convert(CGPoint(x: 0, y: size.height), to: view.window)
     let projection = max(hypot(x.x-origin.x, x.y-origin.y)/size.width,
       hypot(y.x-origin.x, y.y-origin.y)/size.height)
     let scale = min(projection * (view.window?.screen.scale ?? 2), sqrt(4_000_000 / (size.width*size.height)))
-    // The accepted gesture owns one image and the bounded drawable pool. This is transient
-    // input backing, not a speculative cache entry competing with its own pages.
+    guard scale.isFinite, scale > 0 else { throw SceneRenderError.snapshotPending("page_projection") }
     let width = Int(ceil(size.width*scale)), height = Int(ceil(size.height*scale))
-    // Keep UIKit's native pixels through capture. Converting the full
-    // window to SDR here blocks input; Core Image already resolves the curl
-    // into its BGRA8 output. Admit the eight-byte source and two four-byte
-    // drawable rows, including their alignment, before taking the snapshot.
     let imageBytes = ((width * 8 + 63) / 64) * 64 * height
-    let drawableBytes = ((width * 4 + 255) / 256) * 256 * height
-    guard let reservation = SceneRenderResources.shared.reserveDerivedBytes(imageBytes + drawableBytes * curl.drawableCount,
-      priority: .input) else { throw SceneRenderError.resourceLimit }
+    let textureBytes = try curl.pageDrawableBytes(width: width, height: height)
+    guard let reservation = SceneRenderResources.shared.reserveDerivedBytes(
+      imageBytes * 2 + textureBytes * (2 + curl.drawableCount), priority: .input) else {
+      throw SceneRenderError.resourceLimit
+    }
     let format = UIGraphicsImageRendererFormat(); format.scale = scale; format.opaque = false
     format.preferredRange = .automatic
-    var captured = false
-    let snapshot = UIGraphicsImageRenderer(size: size, format: format).image { _ in
-      captured = sheet.drawHierarchy(in: sheet.bounds, afterScreenUpdates: true)
+    let renderer = UIGraphicsImageRenderer(size: size, format: format)
+    func capture(_ sheet: UIView) throws -> CGImage {
+      let began = measure == nil ? nil : CACurrentMediaTime()
+      var contextReady: TimeInterval?, drawn: TimeInterval?, captured = false
+      let snapshot = renderer.image { _ in
+        contextReady = began.map { _ in CACurrentMediaTime() }
+        captured = sheet.drawHierarchy(in: sheet.bounds, afterScreenUpdates: true)
+        drawn = began.map { _ in CACurrentMediaTime() }
+      }
+      guard captured, let image = snapshot.cgImage else { throw SceneRenderError.snapshotPending("page_capture") }
+      guard image.bytesPerRow * image.height <= imageBytes else { throw SceneRenderError.resourceLimit }
+      if let began, let contextReady, let drawn {
+        measure?(.init(began: began, contextReady: contextReady, drawn: drawn,
+          published: CACurrentMediaTime(), bytes: image.bytesPerRow * image.height,
+          bitsPerPixel: image.bitsPerPixel, colorSpace: image.colorSpace?.name as String? ?? "unknown"))
+      }
+      return image
     }
-    guard captured, let image = snapshot.cgImage else { throw SceneRenderError.snapshotPending("page_capture") }
-    guard image.bytesPerRow * image.height <= imageBytes else { throw SceneRenderError.resourceLimit }
-    return (image, reservation)
+    guard permitsCapture() else { return nil }
+    let sourceRaster = try capture(source)
+    // drawHierarchy flushes UIKit and may invalidate/cancel the motion. Never
+    // allocate or capture the second page of an obsolete pair after that flush.
+    guard permitsCapture() else { return nil }
+    let targetRaster = try capture(target)
+    guard permitsCapture() else { return nil }
+    return (sourceRaster, targetRaster, reservation)
   }
 
   private func render(_ progress: Double) {
     guard var motion else { return }
     motion.progress = min(max(0, progress), 1); self.motion = motion
-    guard let image = motion.image else { return }
-    curl.update(cover: image,
-      // First present the source's unchanged surface above its live paper.
-      // A newly exposed Metal layer can miss its first presentation even when
-      // its writes are scheduled. Until a real receipt, never expose the next
-      // leaf under that still-empty layer. Once primed, the retained drawable
-      // protects the underlay while subsequent frames are being composed.
-      progress: motion.direction == .forward ? (motion.presentation == nil ? 0 : motion.progress)
-        : (motion.presentation == nil ? 1 : 1-motion.progress),
-      backsideColor: .document, cornerRadius: 0,
+    guard motion.image != nil else { return }
+    curl.updatePage(progress: motion.direction == .forward ? motion.progress : 1-motion.progress,
+      anchor: motion.anchor, tilt: motion.tilt,
       layout: .init(sheetSize: view.bounds.size, clipsToSheet: true))
   }
 
@@ -233,73 +270,113 @@ final class IPadSheetCurlController: UIViewController, UIGestureRecognizerDelega
       if let time = readiness.presentedTime,
         let oldTime = previous.readiness.presentedTime, time <= oldTime { return }
     }
-    let first = motion.presentation == nil
     let shown = motion.direction == .forward ? progress : 1-progress
     motion.presentation = (shown, sequence, readiness)
-    if first, var animation = motion.animation {
-      // Preparation is not visible animation time. Catching up to an old
-      // command timestamp can skip the entire curl on a dense real page.
-      animation.start = readiness.presentedTime ?? CACurrentMediaTime()
-      motion.animation = animation
-    }
     self.motion = motion
-    if first { render(motion.progress) }
     finishPresentedEndpoint()
   }
 
   private func finishPresentedEndpoint() {
-    guard let motion, let terminal = motion.terminal, motion.presentation?.progress == terminal,
+    guard let motion, let terminal = motion.terminal, motion.progress == terminal,
+      motion.presentation?.progress == terminal,
+      motion.presentation?.sequence == curl.submittedFrameCount - 1,
       isSheetReadyForCapture(terminal == 1 ? motion.target : motion.source) else { return }
     finish(completed: terminal == 1, presented: true)
   }
 
-  private func animate(to target: Double) {
+  static func settlementDuration(distance: Double, velocity: Double, strokeSpeed: Double,
+    inputDuration: Double, cadence: Double) -> Double {
+    let speed = max(4, (distance < 0 ? -1 : 1)*velocity, strokeSpeed)
+    return max(0, min(0.32, 2*abs(distance)/speed, inputDuration, cadence))
+  }
+
+  private func animate(to target: Double, velocity: Double = 0, strokeSpeed: Double = 0,
+    inputDuration: Double = .infinity) {
     guard var motion else { return }
-    // A held finger can already have presented the exact endpoint. Releasing
-    // it accepts that receipt; waiting for a duplicate frame would deadlock
-    // because the renderer correctly does not redraw an unchanged image.
-    if motion.progress == target {
-      motion.animation = nil; motion.terminal = target; self.motion = motion
-      curl.animatesContinuously = false
-      finishPresentedEndpoint()
-      return
+    motion.contact = nil
+    // Cancelling before capture changes no displayed pixels. Do not snapshot,
+    // upload or wait for a fake Metal receipt for the still-live source.
+    if target == 0, motion.image == nil {
+      self.motion = motion; finish(completed: false); return
     }
-    motion.animation = (CACurrentMediaTime(), motion.progress, target, max(0.1, 0.32*abs(target-motion.progress)), 1)
+    if UIAccessibility.isReduceMotionEnabled { self.motion = motion; finish(completed: target == 1); return }
+    // A previous burst cannot shorten cancellation after a new long hold.
+    // Cadence expires continuously with elapsed input time, without a timeout
+    // or a minimum animation duration imposed on a fresh fast swipe.
+    let cadence = max(inputCadence, lastIntentTime.map { CACurrentMediaTime()-$0 } ?? .infinity)
+    let duration = Self.settlementDuration(distance: target-motion.progress, velocity: velocity,
+      strokeSpeed: strokeSpeed, inputDuration: inputDuration, cadence: cadence)
+    if motion.progress == target || duration == 0 {
+      motion.animation = nil; motion.terminal = target; self.motion = motion
+      render(target); curl.animatesContinuously = false
+      finishPresentedEndpoint(); return
+    }
+    motion.animation = (nil, motion.progress, target, duration, motion.tilt)
     motion.terminal = nil; self.motion = motion
     curl.animatesContinuously = motion.image != nil
   }
 
-  /// Give the latest contact room to start instead of finishing a stale full-
-  /// duration ease first. Rebase the same curl at its pose, without a pixel jump.
-  func accelerateSettlement() {
-    guard var motion, var animation = motion.animation,
-      animation.rate == 1 else { return }
-    let remaining = abs(animation.to - motion.progress), travel = abs(animation.to - animation.from)
-    guard remaining > 0, travel > 0 else { return }
-    animation.duration *= remaining / travel / 2
-    animation.from = motion.progress
-    animation.start = CACurrentMediaTime()
-    animation.rate = 2
-    motion.animation = animation
+  /// A new intent shortens the remaining travel to its input cadence, not an
+  /// arbitrary 2× playback rate. Readiness callbacks never manufacture intent.
+  func noteNavigationIntent(at now: Double = CACurrentMediaTime()) {
+    inputCadence = lastIntentTime.map { max(0, now-$0) } ?? .infinity
+    lastIntentTime = now
+    guard var motion, motion.contact == nil, let animation = motion.animation else { return }
+    let duration = min(animation.duration, inputCadence)
+    motion.animation = (nil, motion.progress, animation.to, duration, motion.tilt)
     self.motion = motion
   }
 
+  func retargetSettlement(to page: UIViewController) {
+    guard let motion, motion.contact == nil else { return }
+    let endpoint: Double
+    if page === motion.source { endpoint = 0 }
+    else if page === motion.target { endpoint = 1 }
+    else { return } // Another pair starts only after this one is flat.
+    if (motion.animation?.to ?? motion.terminal) != endpoint { animate(to: endpoint) }
+  }
+
   private func advanceAnimation(at timestamp: Double) {
-    // Begin timed bending only after the source surface is on screen. Direct
-    // finger progress is retained independently by render(), including a lift
-    // that arrives while preparation is still pending.
-    guard let motion, motion.presentation != nil, let animation = motion.animation else { return }
-    let fraction = min(1, max(0, (timestamp-animation.start)/animation.duration))
-    let eased = fraction*fraction*(3-2*fraction)
-    if fraction == 1 { self.motion?.terminal = animation.to }
+    guard var motion, motion.image != nil, var animation = motion.animation else { return }
+    let frameDuration = 1/Double(view.window?.screen.maximumFramesPerSecond ?? 60)
+    if animation.duration < frameDuration, animation.start != nil, motion.presentation == nil { return }
+    if animation.start == nil {
+      // Even an intent faster than one refresh gets one curved image before
+      // its endpoint, without a fixed-duration animation or a flat primer.
+      animation.start = timestamp - min(animation.duration/2,
+        frameDuration)
+      motion.animation = animation
+    }
+    let fraction = animation.duration == 0 ? 1 : min(1, max(0, (timestamp-animation.start!)/animation.duration))
+    let eased = fraction*(2-fraction)
+    motion.tilt = animation.tilt*(1-fraction)
+    if fraction == 1 { motion.terminal = animation.to }
+    self.motion = motion
     render(fraction == 1 ? animation.to : animation.from+(animation.to-animation.from)*eased)
     if fraction == 1 { curl.animatesContinuously = false; finishPresentedEndpoint() }
+  }
+
+  /// An admitted contact grabs the existing pair without rebuilding either image.
+  @discardableResult
+  func grabSettlement(direction: Direction) -> Bool {
+    guard var motion, motion.contact == nil, let origin = motion.animation?.to ?? motion.terminal else { return false }
+    motion.contact = .init(initial: motion.progress, origin: origin, initialTilt: motion.tilt,
+      began: CACurrentMediaTime(), direction: direction)
+    motion.animation = nil; motion.terminal = nil
+    self.motion = motion; curl.animatesContinuously = false
+    return true
   }
 
   private func finish(completed: Bool, notify: Bool = true, presented: Bool = false) {
     guard let motion else { return }
     self.motion = nil
     captureReclamation?.cancel(); captureReclamation = nil
+    if presented, let contact = motion.contact {
+      // The previous accepted turn reached its flat boundary under a new held
+      // contact. Shift the same continuous coordinate into the next pair.
+      continuedContact = .init(initial: completed ? contact.initial-1 : -contact.initial,
+        origin: 0, initialTilt: contact.initialTilt, began: contact.began, direction: contact.direction)
+    }
     page = completed ? motion.target : motion.source
     view.bringSubviewToFront(page!.view)
     curl.isHidden = true; curl.releaseSource(presented: presented)
@@ -309,7 +386,10 @@ final class IPadSheetCurlController: UIViewController, UIGestureRecognizerDelega
     } else { motion.completion?(false) }
   }
 
-  func cancelMotion(notify: Bool = true) { if motion != nil { finish(completed: false, notify: notify) } }
+  func cancelMotion(notify: Bool = true) {
+    continuedContact = nil
+    if motion != nil { finish(completed: false, notify: notify) }
+  }
   isolated deinit { captureReclamation?.cancel(); curl.releaseSource() }
 
   /// Warm pans and a cold contact whose neighbour becomes ready use the same
@@ -323,18 +403,34 @@ final class IPadSheetCurlController: UIViewController, UIGestureRecognizerDelega
     } catch { onFailure(error); didTurn(page, false); return false }
   }
 
-  func updateInteractiveTurn(translation: CGFloat) {
-    guard let motion, motion.gesture else { return }
+  func updateInteractiveTurn(translation: CGFloat, verticalTranslation: CGFloat = 0) {
+    guard var motion, let contact = motion.contact else { return }
     let sign = motion.direction == .forward ? -1.0 : 1.0
-    render(translation * sign / max(1, view.bounds.width))
+    let delta = translation * sign / max(1, view.bounds.width), travel = min(abs(delta), 1)
+    motion.tilt = min(0.45, max(-0.45, contact.initialTilt + verticalTranslation/max(1, view.bounds.width)))
+    let position = contact.initial*(1-travel) + contact.origin*travel + delta
+    if contact.origin == 1, contact.direction == motion.direction, position >= 1 { motion.terminal = 1 }
+    else if contact.origin == 0, contact.direction != motion.direction, position <= 0 { motion.terminal = 0 }
+    else { motion.terminal = nil }
+    self.motion = motion
+    render(position)
+    finishPresentedEndpoint()
   }
 
-  func endInteractiveTurn(completed: Bool) {
-    guard let motion, motion.gesture else { return }
-    // Nothing has replaced the source yet. A cancelled cold contact must not
-    // wait for future readiness, acquire a snapshot, or hold navigation open.
-    if !completed, motion.image == nil { finish(completed: false); return }
-    animate(to: completed ? 1 : 0)
+  func endInteractiveTurn(completed: Bool, velocity: CGFloat = 0, travel: CGFloat = 0,
+    duration: Double? = nil, recordsIntent: Bool = true) {
+    continuedContact = nil
+    guard let motion, let contact = motion.contact else { return }
+    let target = completed ? (contact.direction == motion.direction ? 1.0 : 0.0) : contact.origin
+    if completed, recordsIntent {
+      noteNavigationIntent()
+      didAcceptTurn(target == 1 ? motion.target : motion.source)
+    }
+    let sign = motion.direction == .forward ? -1.0 : 1.0
+    let interval = duration ?? max(0, CACurrentMediaTime()-contact.began)
+    let strokeSpeed = interval > 0 ? abs(travel)/max(1, view.bounds.width)/interval : 0
+    animate(to: target, velocity: velocity*sign/max(1, view.bounds.width), strokeSpeed: strokeSpeed,
+      inputDuration: completed && travel != 0 ? interval : .infinity)
   }
 
   func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
@@ -362,25 +458,18 @@ final class IPadSheetCurlController: UIViewController, UIGestureRecognizerDelega
     curl.onFrameReady = { [weak self] image, progress, sequence, readiness in
       self?.frameReady(image, progress: progress, sequence: sequence, readiness: readiness)
     }
-    curl.onWillPresentFrame = { [weak self] image, progress in
-      guard let self, let motion, motion.image === image else { return }
-      let sheet = motion.direction == .forward ? motion.source : motion.target
-      let beneath = motion.direction == .forward ? motion.target : motion.source
-      // At the flat endpoint the live sheet must already be beneath its frozen
-      // pixels. Retiring the Metal clock can otherwise expose the old source
-      // for one compositor frame before finish()'s layer changes reach screen.
-      view.bringSubviewToFront((progress == 0 ? sheet : beneath).view)
-      view.bringSubviewToFront(curl)
-    }
   }
 
   @objc private func panned(_ pan: UIPanGestureRecognizer) {
     switch pan.state {
     case .began:
       guard let direction = panDirection else { return }
-      beginInteractiveTurn(direction: direction)
+      if beginInteractiveTurn(direction: direction) {
+        motion?.anchor = pan.location(in: view).y/max(1, view.bounds.width)
+      }
     case .changed:
-      updateInteractiveTurn(translation: pan.translation(in: view).x)
+      let translation = pan.translation(in: view)
+      updateInteractiveTurn(translation: translation.x, verticalTranslation: translation.y)
     case .ended, .cancelled, .failed:
       panDirection = nil
       guard let motion, motion.gesture else { return }
@@ -388,7 +477,8 @@ final class IPadSheetCurlController: UIViewController, UIGestureRecognizerDelega
       let velocity = pan.velocity(in: view.window).x * sign
       let travel = pan.translation(in: view.window).x * sign
       let completed = Self.completesGesture(travel: travel, velocity: velocity, ended: pan.state == .ended)
-      endInteractiveTurn(completed: completed)
+      endInteractiveTurn(completed: completed, velocity: pan.velocity(in: view).x,
+        travel: pan.translation(in: view).x)
     default: break
     }
   }

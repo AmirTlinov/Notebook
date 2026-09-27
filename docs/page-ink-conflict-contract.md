@@ -45,6 +45,9 @@ row as separate contributions. A gate transition reads/writes only its bounded
 header, never the measured body. Cold canvas restoration uses the same page mesh
 preparer to restore its original position between later pens/erasers; warm
 restoration toggles the resident batch. Neither path appends a replacement copy.
+An empty warm crop releases drawable backing, but retains its charged geometry
+and exact visible range set for addressed Redo. It does not rescan or clear the
+resident history; normal unmount and resource reclamation still release it.
 `NotebookAppModel` publishes every accepted append and inverse to the mounted
 page consumers through `NotebookPageInkPublication` in that same actor segment.
 The directory owns neither content nor history. Matching bases settle a delta;
