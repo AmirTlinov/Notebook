@@ -106,8 +106,18 @@ final class NotebookPaperCameraTests: XCTestCase {
 
   private func verifyZoomClosesAndReopens(document:Bool) async throws {
     let (model,window)=try await scene(document:document)
-    let start=try XCTUnwrap(model.presence),item=try XCTUnwrap(start.focusedItemID)
+    let item=try XCTUnwrap(model.presence?.focusedItemID)
+    if document {
+      let source=try XCTUnwrap(model.documents[item]),state=try XCTUnwrap(model.documentStates[item])
+      let deadline=ContinuousClock.now + .seconds(12)
+      while !DocumentRenderRegistry.shared.hasLiveSurface(document:source,state:state,pageIndex:0,scope:.paper),ContinuousClock.now < deadline {
+        try await Task.sleep(for:.milliseconds(20))
+      }
+      XCTAssertTrue(DocumentRenderRegistry.shared.hasLiveSurface(document:source,state:state,pageIndex:0,scope:.paper))
+    }
+    let start=try XCTUnwrap(model.presence)
     let owner=try coordinator(in:window),pair=CGPoint(x:start.viewport.x/2,y:start.viewport.y/2)
+    let originalPaper = document ? try paperFrame(in:window,documentID:item) : nil
     owner.onCamera(.began(centroid:pair))
     owner.onCamera(.changed(scale:0.1,velocity:-2,elapsed:0.2,centroid:pair))
     XCTAssertEqual(model.presence?.focusedItemID,item)
@@ -122,6 +132,27 @@ final class NotebookPaperCameraTests: XCTestCase {
     XCTAssertEqual(model.presence?.focusedItemID,item)
     XCTAssertEqual(model.presence?.notebookPageID,start.notebookPageID)
     XCTAssertEqual(model.presence?.documentPageIndex,start.documentPageIndex)
+    if let originalPaper {
+      assertCamera(try XCTUnwrap(model.presence).camera,equals:start.camera)
+      let reopened=try paperFrame(in:window,documentID:item)
+      for (actual,expected) in [(reopened.minX,originalPaper.minX),(reopened.minY,originalPaper.minY),
+        (reopened.width,originalPaper.width),(reopened.height,originalPaper.height)] {
+        XCTAssertEqual(actual,expected,accuracy:1/window.screen.scale,
+          "Reopening must restore the mounted PDF projection, not only the model's camera")
+      }
+      let image=UIGraphicsImageRenderer(size:window.bounds.size).image { _ in window.drawHierarchy(in:window.bounds,afterScreenUpdates:true) }
+      let attachment=XCTAttachment(image:image);attachment.name="reopened-document-physical-projection";attachment.lifetime = .keepAlways;add(attachment)
+    }
+  }
+
+  private func paperFrame(in window:UIWindow,documentID:UUID) throws -> CGRect {
+    func find(_ view:UIView) -> DocumentPaperView? {
+      if let paper=view as? DocumentPaperView,paper.raster?.page.artifact.document.id == documentID,
+        SceneSourceVisibility.isVisible(paper) { return paper }
+      return view.subviews.lazy.compactMap(find).first
+    }
+    let paper=try XCTUnwrap(find(window))
+    return paper.convert(paper.bounds,to:window)
   }
 
   func testClosedCoverOwnsItsHitAndReopensByTheSameTapCallback() async throws {

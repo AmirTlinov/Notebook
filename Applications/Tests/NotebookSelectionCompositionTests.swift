@@ -326,6 +326,8 @@ extension NotebookInteractionUXTests {
 
     try await scene.readyFinger(self)
     started = CACurrentMediaTime(); scene.beginFinger(.init(x: 700, y: 950)); scene.endFinger()
+    XCTAssertNil(model.selectionSession.target,
+      "A resolved paper tap retires the previous selection before the ink query completes")
     results.append(try await composition("whole-route-deselect", scene, since: started,
       probes: picture(dy: 120, previous: [0,220], controls: false)))
     XCTAssertNil(model.selectionSession.target)

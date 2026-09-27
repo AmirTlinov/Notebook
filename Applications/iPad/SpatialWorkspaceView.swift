@@ -10,6 +10,7 @@ private final class CameraGestureSnapshot {
   let entry: NotebookZoomPassage?
   let exit: NotebookZoomPassage?
   var passage: NotebookZoomPassage?
+  var documentPageIndex: Int
   @ObservationIgnored var choseDirection = false
   @ObservationIgnored var latestCamera: SpatialCamera
   @ObservationIgnored var preparedItem = false
@@ -18,11 +19,11 @@ private final class CameraGestureSnapshot {
   @ObservationIgnored var paperReadiness: (@MainActor (_ refinesDetails: Bool) -> PageTurnPreparationState)?
   var passageCamera:SpatialCamera? { passage.map { $0.camera(from:trajectory,magnification:magnification,centroid:centroid) } }
   init(presence:SessionPresence,trajectory:CameraGestureTrajectory,entry:NotebookZoomPassage?,exit:NotebookZoomPassage?) {
-    self.presence=presence;self.trajectory=trajectory;self.entry=entry;self.exit=exit;latestCamera=presence.camera;centroid=trajectory.startingCentroid
+    self.presence=presence;self.trajectory=trajectory;self.entry=entry;self.exit=exit;latestCamera=presence.camera;centroid=trajectory.startingCentroid;documentPageIndex=presence.documentPageIndex
   }
   var preparation: SessionPresence? {
     guard let passage,let camera=passageCamera else { return nil }
-    return passage.presentation(camera:camera,viewport:presence.viewport,page:presence.documentPageIndex)
+    return passage.presentation(camera:camera,viewport:presence.viewport,page:documentPageIndex)
   }
 }
 
@@ -272,6 +273,7 @@ struct SpatialWorkspaceView: View {
               referencePageResolution.cancel()
               interruptSettlementForInput()
               model.cancelElementManipulation()
+              model.beginDocumentCameraInteraction()
               panStart = model.presence.map { presenceForNewContact($0) }
             },
             onChanged: { translation in
@@ -678,6 +680,10 @@ struct SpatialWorkspaceView: View {
     } else if fragment.target.kind == .cover {
       model.selectWorkspaceItem(fragment.target.id,boardID:presence.boardID)
     } else if let contact=NotebookAttentionProjection.toolAddress(at:end,fragment:fragment,model:model,presence:presence) {
+      // The paper contact has already been resolved. Retire the previous
+      // selection now, not after the asynchronous ink hit query completes.
+      // A newly hit ink contact will install its own selection if still current.
+      if hadSelection { model.clearSelection() }
       model.drawingTools.selectInk(at:contact.point,address:contact.address,screenScale:presence.camera.scale) { found in
         if !found,tapCount == 1,!hadSelection { confirmBlankTap(generation:contactGeneration,presence:presence) }
       }
@@ -870,9 +876,9 @@ struct SpatialWorkspaceView: View {
             rendered: rendered,
             document: presence.focusedItemID == rendered.id ? model.documents[rendered.id] : cohort?.liveData.documents[rendered.id],
             documentState: presence.focusedItemID == rendered.id ? model.documentStates[rendered.id] : cohort?.liveData.states[rendered.id],
-            documentPageIndex: presence.focusedItemID == rendered.id
+            documentPageIndex: presence.focusedItemID == rendered.id && presence.openProgress > 0
               ? presence.documentPageIndex
-              : 0,
+              : (preparationPresence?.focusedItemID == rendered.id ? preparationPresence?.documentPageIndex ?? 0 : 0),
             documentPageLayout: documentPageLayouts[rendered.id],
             camera: anchorCamera,
             projectedScale: presence.camera.scale,
@@ -1169,6 +1175,7 @@ struct SpatialWorkspaceView: View {
       }
       interruptSettlementForInput()
       model.cancelElementManipulation()
+      model.beginDocumentCameraInteraction()
       guard let currentPresence = model.presence else { return }
       let presence = presenceForNewContact(currentPresence)
       contentGestureActive = presence.mode == .page || presence.mode == .document
@@ -1248,6 +1255,11 @@ struct SpatialWorkspaceView: View {
     if !snapshot.choseDirection,abs(log(max(0.001,Double(scale)))) > 0.005 {
       snapshot.choseDirection=true
       snapshot.passage = snapshot.entry == nil ? snapshot.exit : snapshot.exit == nil ? snapshot.entry : scale > 1 ? snapshot.entry : snapshot.exit
+      if let passage = snapshot.passage {
+        let previousPage = documentPageIndex(for: passage.itemID, from: snapshot.presence)
+        snapshot.documentPageIndex = passage.opening && passage.kind == .document
+          ? model.documentOpeningPage(passage.itemID, fallback: previousPage) : previousPage
+      }
     }
     guard let passage=snapshot.passage else {
       model.updatePresence(snapshot.presence.replacingCamera(snapshot.latestCamera),settled:false);return
@@ -1257,11 +1269,12 @@ struct SpatialWorkspaceView: View {
     if passage.opening && progress <= 0 || !passage.opening && progress >= 1 {
       model.updatePresence(snapshot.presence.replacingCamera(snapshot.latestCamera),settled:false);return
     }
+    let page = snapshot.documentPageIndex
     if passage.opening && !snapshot.preparedItem {
       snapshot.preparedItem=true;model.selectItem(passage.itemID)
-      if passage.kind == .document { model.prepareDocumentOpening(passage.itemID,pageIndex:documentPageIndex(for:passage.itemID,from:snapshot.presence)) }
+      if passage.kind == .document { model.prepareDocumentOpening(passage.itemID,pageIndex:page) }
     }
-    let shown=passage.presentation(camera:passageCamera,viewport:snapshot.presence.viewport,page:documentPageIndex(for:passage.itemID,from:snapshot.presence))
+    let shown=passage.presentation(camera:passageCamera,viewport:snapshot.presence.viewport,page:page)
     // The outgoing surface stays mounted until the bounded target cohort is
     // available. Its camera still follows the same raw gesture while loading.
     if shown.boardID == model.presence?.boardID || navigationHasPreparedSurface(shown) {
@@ -1506,21 +1519,20 @@ struct SpatialWorkspaceView: View {
     }
     let previousPresence = model.presence
     model.selectItem(itemID)
+    let previousPage = documentPageIndex(for: itemID, from: previousPresence)
+    let openingPage = itemKind(itemID) == .document ? model.documentOpeningPage(itemID, fallback: previousPage) : previousPage
     if itemKind(itemID) == .document {
-      model.prepareDocumentOpening(itemID, pageIndex: documentPageIndex(for: itemID, from: previousPresence))
+      model.prepareDocumentOpening(itemID, pageIndex: openingPage)
     }
     let target = SessionPresence(
       boardID: previousPresence?.boardID ?? WorkspaceRoot.boardID,
       mode: openMode(for: itemID),
-      camera: itemKind(itemID) == .document ? model.documentReadingCamera(itemID, center: center, viewport: viewport)
+      camera: itemKind(itemID) == .document ? model.documentReadingCamera(itemID, page: openingPage, center: center, viewport: viewport)
         : SpatialCamera(center: center, scale: model.itemGeometry(itemID).fitScale(viewport: viewport)),
       viewport: viewport,
       focusedItemID: itemID,
       openProgress: 1,
-      documentPageIndex: documentPageIndex(
-        for: itemID,
-        from: previousPresence
-      )
+      documentPageIndex: openingPage
     )
     openingFeedback.prepare()
     performOpeningFeedback()

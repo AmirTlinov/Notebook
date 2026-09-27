@@ -268,7 +268,7 @@ final class NotebookAppModel {
   @ObservationIgnored private var readingRestoreDocument: UUID?
   @ObservationIgnored private var readingSuppressedDocument: UUID?
   @ObservationIgnored private var readingReturnPosition: DocumentReadingPosition?
-  @ObservationIgnored private var readingRestoreTarget: (id: UUID, stamp: VersionStamp, page: Int)?
+  @ObservationIgnored private var readingRestoreTarget: (id: UUID, stamp: VersionStamp, page: Int, camera: SpatialCamera, viewport: SpatialPoint, contact: UInt64)?
   @ObservationIgnored private var documentDraftEpoch: UInt64 = 0
   private struct DocumentOpeningRequest: Sendable {
     let id = UUID()
@@ -978,11 +978,8 @@ final class NotebookAppModel {
   /// unselected board uses the canonical notebook/portal rectangle.
   func itemGeometry(_ itemID: UUID?) -> WorkspaceItemGeometry {
     if let itemID, documents[itemID] != nil || workspace?.item(id: itemID)?.kind == .document {
-      if let document = documents[itemID], let layout = DocumentRenderRegistry.shared.layout(document: document) {
-        let page = presence?.focusedItemID == itemID && presence?.mode == .document ? (presence?.documentPageIndex ?? 0) : 0
-        return layout.paper(on: page).geometry
-      }
-      return documentPaperSizes[itemID] ?? .uncompiledDocument
+      let page = presence?.focusedItemID == itemID && presence?.mode == .document ? (presence?.documentPageIndex ?? 0) : 0
+      return documentGeometry(itemID, page: page)
     }
     return .notebook
   }
@@ -1995,6 +1992,13 @@ final class NotebookAppModel {
     // Its addressed SQL read validates kind and owner without moving the camera.
     let boardID = boardID ?? presence.boardID
     documentMeasurements.request(documentID: documentID, pageIndex: pageIndex, cause: .open)
+    if presence.focusedItemID != documentID || presence.openProgress <= 0,
+      let layout = readingLayout(documentID) {
+      let geometry = layout.paper(on: pageIndex).geometry
+      if documentPaperSizes[documentID] != geometry {
+        documentPaperSizes[documentID] = geometry; scheduleScenePreparation()
+      }
+    }
     if documents[documentID] != nil, documentStates[documentID] != nil { return nil }
     if documentOpeningRequest?.documentID != documentID || documentOpeningRequest?.boardID != boardID {
       documentOpeningRequest = .init(documentID: documentID, boardID: boardID,
@@ -2435,14 +2439,42 @@ final class NotebookAppModel {
     documentReadingPositions[reading.documentID] = reading
   }
 
-  func documentReadingCamera(_ documentID: UUID, center: WorldPoint, viewport: SpatialPoint) -> SpatialCamera {
-    let fit = itemGeometry(documentID).fitScale(viewport: viewport)
+  private func readingLayout(_ documentID: UUID) -> DocumentLayoutRecord? {
+    guard let document = documents[documentID] else { return nil }
+    if let measured = documentReadingLayout, measured.id == documentID,
+      measured.stamp == document.contentStamp { return measured.record }
+    return DocumentRenderRegistry.shared.layout(document: document)
+  }
+
+  private func documentGeometry(_ documentID: UUID, page: Int) -> WorkspaceItemGeometry {
+    readingLayout(documentID)?.paper(on: page).geometry ?? documentPaperSizes[documentID] ?? .uncompiledDocument
+  }
+
+  /// A warm opening prepares the saved content page directly. The camera and
+  /// the paper request use the same layout, never page zero's physical size.
+  func documentOpeningPage(_ documentID: UUID, fallback: Int) -> Int {
+    guard let reading = documentReadingPositions[documentID], let layout = readingLayout(documentID),
+      let page = layout.reading.page(for: reading.anchor,
+        survivingFileOrder: layout.readingFileOrder, regions: layout.regions) else { return fallback }
+    return page
+  }
+
+  func documentReadingCamera(_ documentID: UUID, page: Int, center: WorldPoint, viewport: SpatialPoint) -> SpatialCamera {
+    let geometry = documentGeometry(documentID, page: page), fit = geometry.fitScale(viewport: viewport)
     guard let reading = documentReadingPositions[documentID],
       let position = center.addressOffset(x: reading.centerOffset.x, y: reading.centerOffset.y) else {
       return .init(center: center, scale: fit)
     }
-    return itemGeometry(documentID).readingCamera(
+    return geometry.readingCamera(
       .init(center: position, scale: fit * reading.zoomRatio), centeredOn: center, viewport: viewport)
+  }
+
+  /// A new person's camera contact supersedes a deferred bookmark restoration,
+  /// not the native page controller's already accepted landing.
+  func beginDocumentCameraInteraction() {
+    guard let id = presence?.focusedItemID, documents[id] != nil else { return }
+    readingRestoreDocument = nil; readingReturnPosition = nil; readingRestoreTarget = nil
+    readingSuppressedDocument = id
   }
 
   /// Source measurement provides content addresses, never a fabricated landing.
@@ -2475,16 +2507,20 @@ final class NotebookAppModel {
       readingRestoreDocument == id || saved.sourceStamp != document.contentStamp || readingReturnPosition != nil,
       let page = measured.record.reading.page(for: saved.anchor,
         survivingFileOrder: measured.record.readingFileOrder, regions: measured.record.regions) else { return }
-    readingRestoreDocument = nil; readingReturnPosition = nil
     if page != presence.documentPageIndex {
-      readingRestoreTarget = (id, document.contentStamp, page)
+      readingRestoreDocument = id
+      readingRestoreTarget = (id, document.contentStamp, page, presence.camera, presence.viewport,
+        inputGate.acceptedContactGeneration)
       _ = selectDocumentPage(page, documentID: id, restoresReading: true)
+      return
     }
-    // Reflow preserves zoom; reopening also restores the book-relative camera.
+    readingRestoreDocument = nil; readingReturnPosition = nil
+    // Apply the saved ratio only to the measured paper which actually landed.
+    // Applying it to the outgoing sheet corrupts the bookmark on mixed sizes.
     guard let center = boardHierarchy?.board(presence.boardID)?.focusedCenter(of: id),
       let cameraCenter = center.addressOffset(x: saved.centerOffset.x, y: saved.centerOffset.y) else { return }
     let camera = SpatialCamera(center: cameraCenter, scale: max(SpatialCamera.minimumScale,
-      itemGeometry(id).fitScale(viewport: presence.viewport) * saved.zoomRatio))
+      measured.record.paper(on: page).geometry.fitScale(viewport: presence.viewport) * saved.zoomRatio))
     if camera != presence.camera {
       applyPresence(.init(boardID: presence.boardID, mode: presence.mode, camera: camera,
         viewport: presence.viewport, focusedItemID: id, openProgress: presence.openProgress,
@@ -2495,10 +2531,10 @@ final class NotebookAppModel {
   private func rememberDocumentReading() {
     guard let presence, presence.mode == .document, presence.openProgress >= 0.999,
       let id = presence.focusedItemID, readingRestoreDocument != id,
-      readingRestoreTarget?.id != id, let document = documents[id],
+      readingRestoreTarget?.id != id, documentPageSelection == nil, let document = documents[id],
       let measured = documentReadingLayout, measured.id == id, measured.stamp == document.contentStamp,
       let center = boardHierarchy?.board(presence.boardID)?.focusedCenter(of: id) else { return }
-    let geometry = itemGeometry(id), offset = center.delta(to: presence.camera.center)
+    let geometry = measured.record.paper(on: presence.documentPageIndex).geometry, offset = center.delta(to: presence.camera.center)
     // At fit, the beginning of the sheet is the reading address. Under zoom,
     // retain the nearest visible text segment rather than the old page number.
     let visibleTop = max(0, geometry.height / 2 + offset.y - presence.viewport.y / (2 * presence.camera.scale))
@@ -2510,7 +2546,11 @@ final class NotebookAppModel {
     guard let anchor else { return }
     let position = DocumentReadingPosition(documentID: id, sourceStamp: document.contentStamp, anchor: anchor,
       zoomRatio: presence.camera.scale / geometry.fitScale(viewport: presence.viewport), centerOffset: offset)
-    guard position.isValid, documentReadingPositions[id] != position else { return }
+    guard position.isValid else { return }
+    // A new camera/page choice remains authoritative until its reading anchor
+    // is measured from this exact source, not merely until a landing callback.
+    if readingSuppressedDocument == id { readingSuppressedDocument = nil }
+    guard documentReadingPositions[id] != position else { return }
     documentReadingPositions[id] = position
     // The addressed SQL read restores an evicted bookmark. This is a small
     // current-working-set cache, not another archive-sized history reader.
@@ -2589,6 +2629,10 @@ final class NotebookAppModel {
     if let target = readingRestoreTarget, target.id == landing.documentID,
       target.page == landing.pageIndex, documents[target.id]?.contentStamp == target.stamp {
       readingRestoreTarget = nil
+      if target.camera != presence.camera || target.viewport != presence.viewport
+        || target.contact != inputGate.acceptedContactGeneration {
+        readingRestoreDocument = nil; readingReturnPosition = nil; readingSuppressedDocument = landing.documentID
+      }
     }
     // A is still the actual landing when B superseded its request. A may
     // publish that fact, but cannot clear B or restore an obsolete intent.
@@ -2611,7 +2655,6 @@ final class NotebookAppModel {
       }
     }
     if presencePhase == .settled { rememberDocumentReading() }
-    readingSuppressedDocument = nil
     completeDocumentSavePresentation()
     return true
   }
@@ -2634,6 +2677,9 @@ final class NotebookAppModel {
   }
 
   private func validateDocumentPageNavigation() {
+    if let target = readingRestoreTarget, documents[target.id]?.contentStamp != target.stamp {
+      readingRestoreTarget = nil
+    }
     if let request = documentPageSelection,
       documents[request.documentID].map(Self.documentPageSourceRevision) != request.sourceRevision {
       documentPageSelection = nil; documentPageNavigationStatus = nil
@@ -6330,7 +6376,7 @@ final class NotebookAppModel {
     guard (presence.mode == .page || presence.mode == .document), presence.openProgress == 1,
       let id = presence.focusedItemID,
       let center = boardHierarchy?.board(presence.boardID)?.focusedCenter(of: id) else { return presence }
-    let geometry = itemGeometry(id)
+    let geometry = presence.mode == .document ? documentGeometry(id, page: presence.documentPageIndex) : itemGeometry(id)
     let camera = presence.mode == .page
       ? SpatialCamera(center: center, scale: geometry.fitScale(viewport: presence.viewport))
       : geometry.readingCamera(presence.camera, centeredOn: center, viewport: presence.viewport)
