@@ -1,6 +1,7 @@
 import Foundation
 import NotebookCore
 import Observation
+import SwiftUI
 
 /// One local owner of visual feedback. Durable action identity stays in Core;
 /// the scene reports installed material, never a network arrival or onAppear.
@@ -28,6 +29,75 @@ final class NotebookAgentFeedback {
   @ObservationIgnored private var activeActions: [String: UUID] = [:]
   @ObservationIgnored private var expiryDeadline: Date?
   @ObservationIgnored private var expiry: Task<Void, Never>?
+
+  private(set) var inkMaterials:[String:NotebookAgentFeedbackInk.Material]=[:]
+  private struct InkPreparation {
+    let id:UUID,strokeID:UUID
+    let region:PageRect,origin:WorldPoint?
+    let task:Task<Void,Never>
+  }
+  @ObservationIgnored private var inkPreparations:[String:InkPreparation]=[:]
+
+  func inkPath(_ subject:NotebookAgentFeedbackChange.Subject,model:NotebookAppModel)->Path? {
+    guard let material=inkMaterials[subject.key],material.region == subject.reference.region,
+      material.origin == subject.reference.worldOrigin,inkMaterialIsCurrent(material,model:model) else {return nil}
+    return Path(material.path)
+  }
+  private func inkMaterialIsCurrent(_ material:NotebookAgentFeedbackInk.Material,model:NotebookAppModel)->Bool {
+    let set=material.readSet
+    if set.surface.kind == .page,let pageID=set.surface.ownerID,let page=model.pages[pageID] {
+      return set.matches(page.inkSource,suppressed:page.graphicPresentation.suppressedInkIDs)
+    }
+    guard let journal=model.spatialInk else {return false}
+    return set.matches(journal,suppressed:model.compositionTiles.published?.liveData.suppressedInkIDs ?? [])
+  }
+  func prepareInkMaterials(_ subjects:[NotebookAgentFeedbackChange.Subject],model:NotebookAppModel) {
+    let wanted=Set(subjects.filter{$0.strokeID != nil}.map(\.key))
+    for key in inkPreparations.keys.filter({!wanted.contains($0)}) {inkPreparations.removeValue(forKey:key)?.task.cancel()}
+    for key in inkMaterials.keys.filter({!wanted.contains($0)}) {inkMaterials[key]=nil}
+    for subject in subjects {
+      guard let stroke=subject.strokeID,let region=subject.reference.region else {continue}
+      if inkPath(subject,model:model) != nil {continue}
+      if let job=inkPreparations[subject.key],job.strokeID == stroke,job.region == region,
+        job.origin == subject.reference.worldOrigin {continue}
+      inkPreparations.removeValue(forKey:subject.key)?.task.cancel();inkMaterials[subject.key]=nil
+      let target=subject.reference.target,surface:SurfaceID,source:NotebookAgentFeedbackInk.Source
+      if target.kind == .page {
+        guard let page=model.pages[target.id],!page.graphicPresentation.suppressedInkIDs.contains(stroke) else {continue}
+        surface = .page(target.id);source = .page(page.inkSource)
+      } else {
+        guard let journal=model.spatialInk,model.compositionTiles.published?.liveData.suppressedInkIDs.contains(stroke) != true else {continue}
+        surface=target.kind == .cover ? .cover(target.id):.board(target.id);source = .spatial(journal)
+      }
+      let input=NotebookAgentFeedbackInk.Input(source:source,strokeID:stroke,surface:surface,region:region,origin:subject.reference.worldOrigin)
+      let token=UUID(),key=subject.key
+      let worker=Task.detached(priority:.userInitiated) {try NotebookAgentFeedbackInk.prepare(input)}
+      let task=Task { [weak self,weak model] in
+        do {
+          let result=try await withTaskCancellationHandler {try await worker.value} onCancel:{worker.cancel()}
+          guard !Task.isCancelled,let self,let model,inkPreparations[key]?.id == token else {return}
+          inkPreparations[key]=nil
+          if let result,inkMaterialIsCurrent(result,model:model) {
+            inkMaterials[key]=result
+            if let presence=model.presence,let cohort=model.compositionTiles.published {
+              let scene=model.presentedWorkset(cohort:cohort,boardID:presence.boardID,presence:presence)
+              model.confirmAgentFeedback(presence:presence,scene:scene,cohort:cohort)
+            }
+          } else if result != nil {
+            // One changed source can retire this result. Re-entry preserves
+            // the new job through unrelated owner revision changes.
+            prepareInkMaterials(pendingSubjects+attention+episodes.values.map(\.subject),model:model)
+          }
+        } catch {if self?.inkPreparations[key]?.id == token {self?.inkPreparations[key]=nil}}
+      }
+      inkPreparations[key] = .init(id:token,strokeID:stroke,region:region,origin:subject.reference.worldOrigin,task:task)
+    }
+  }
+  private func discardExpiredInk() {
+    let keys=Set(episodes.keys).union(pendingSubjects.map(\.key)).union(attention.map(\.key))
+    for key in inkPreparations.keys.filter({!keys.contains($0)}) {inkPreparations.removeValue(forKey:key)?.task.cancel()}
+    for key in inkMaterials.keys.filter({!keys.contains($0)}) {inkMaterials[key]=nil}
+  }
 
   var knownActions: Set<UUID>? { known.map { Set($0.keys) } }
   var trackedActions: Set<UUID> { Set(pending.keys).union(activeActions.values) }
@@ -115,12 +185,14 @@ final class NotebookAgentFeedback {
   }
 
   func expire(now: Date = Date()) {
+    defer {discardExpiredInk()}
     let kept = episodes.filter { $0.value.endsAt > now }
     if kept != episodes { episodes = kept }
     activeActions = activeActions.filter { episodes[$0.key] != nil }
     pending = pending.filter { !$0.value.remaining.isEmpty && now.timeIntervalSince($0.value.receivedAt) < Self.pendingLifetime }
   }
   func stop() {
+    for job in inkPreparations.values {job.task.cancel()};inkPreparations.removeAll();inkMaterials.removeAll()
     expiry?.cancel(); expiry = nil; expiryDeadline = nil
     pending.removeAll(); episodes.removeAll(); activeActions.removeAll(); clearAttention()
   }

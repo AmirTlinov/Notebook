@@ -151,6 +151,38 @@ final class DocumentTypesetterBoundaryTests: XCTestCase {
     XCTAssertFalse(columns.diagnostics.contains { $0.severity == "error" })
   }
 
+  func testPrintReadSetReusesUnchangedPaperAndInvalidatesNegativeProbes() async throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let store = NotebookPrintedDocumentStore(resources: resources, directory: directory)
+    let main = "\\documentclass{article}\n\\begin{document}\n\\input{actual.js}\n\\IfFileExists{optional.tex}{\\input{optional.tex}}{Missing optional input}\n\\end{document}\n"
+    let actor = UUID()
+    var source = DocumentDocument(actor: actor, files: [
+      .init(id: "main", path: "main.tex", source: main),
+      .init(id: "actual", path: "actual.js", source: "Actual typeset input."),
+      .init(id: "unused", path: "programs/unused/main.js", source: "console.log('one');")])
+    let first = try await store.artifact(for: source)
+    XCTAssertTrue(first.dependencies.lookups.contains { $0.path == "actual.js" })
+    XCTAssertTrue(first.dependencies.lookups.contains { $0.path == "optional.tex" && $0.digest == "missing" })
+    source.replaceContent(files: source.files.map { $0.id == "unused" ? $0.replacingSource("console.log('two');") : $0 }, actor: actor)
+    let cached = try await NotebookPrintedDocumentStore(resources: resources, directory: directory).artifact(for: source, inputFactory: {
+      throw NotebookTypesetterError("A cache hit must not materialize the full compiler namespace")
+    })
+    XCTAssertEqual(cached.pdf, first.pdf)
+    XCTAssertEqual(cached.pixelIdentity, first.pixelIdentity)
+    XCTAssertNotEqual(cached.buildID, first.buildID, "The causal editing receipt is rebound to the new source")
+    try cached.sourceMap.validate(document: source, source: cached.source, pdf: cached.pdf)
+    source.replaceContent(files: source.files.map { $0.id == "actual" ? $0.replacingSource("Changed typeset content, despite its JavaScript extension.") : $0 }, actor: actor)
+    XCTAssertFalse(try first.dependencies.matches(source, compilerRevision: first.sourceMap.compilerRevision))
+    let changed = try await store.artifact(for: source)
+    XCTAssertNotEqual(changed.pdf, first.pdf)
+    source.replaceContent(files: source.files + [.init(id: "optional", path: "optional.tex", source: "The previously absent branch now exists.")], actor: actor)
+    XCTAssertFalse(try changed.dependencies.matches(source, compilerRevision: changed.sourceMap.compilerRevision))
+    let appeared = try await store.artifact(for: source)
+    XCTAssertNotEqual(appeared.pdf, changed.pdf)
+    XCTAssertTrue(try appeared.locations().contains { $0.fileID == "optional" })
+  }
+
   func testCorruptedSourceMapCacheIsRecompiledRatherThanUsedForEditing() async throws {
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: directory) }
@@ -160,7 +192,7 @@ final class DocumentTypesetterBoundaryTests: XCTestCase {
     let folder = try XCTUnwrap(FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil).first)
     let map = folder.appendingPathComponent("document.synctex.gz")
     try Data("foreign mapping".utf8).write(to: map)
-    let repaired = try await store.artifact(for: source)
+    let repaired = try await NotebookPrintedDocumentStore(resources: resources, directory: directory).artifact(for: source)
     try assertSamePrintedPage(repaired, original)
     XCTAssertEqual(repaired.syncTeX, original.syncTeX)
     XCTAssertEqual(try Data(contentsOf: map), original.syncTeX)

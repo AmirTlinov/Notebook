@@ -50,6 +50,7 @@ struct AgentWebSourceFailure: Equatable, Sendable {
     var onInteractionReady: (Bool) -> Void = { _ in }
     var onInteraction: () -> Void = {}
     var onInstalled: (SceneSourceInstallation) -> Void = { _ in }
+    var onFramePainted: (SceneSourceInstallation) -> Void = { _ in }
     var onFailure: (AgentWebSourceFailure) -> Void = { _ in }
     let onState: NotebookProgramStateWriter
 
@@ -90,6 +91,8 @@ struct AgentWebSourceFailure: Equatable, Sendable {
       context.coordinator.use(onRenderReady: onRenderReady)
       context.coordinator.use(onInteractionReady: onInteractionReady)
       context.coordinator.use(onInteraction: onInteraction)
+      context.coordinator.use(onFramePainted: onFramePainted)
+      context.coordinator.use(onSourceInstalled: onInstalled)
       context.coordinator.bindPresentation(to: focus)
       view.onInstalled = { [weak coordinator = context.coordinator] in
         guard let installation = coordinator?.installation(for: element), installation.isInstalled else { return }
@@ -287,6 +290,7 @@ struct AgentWebSourceFailure: Equatable, Sendable {
     var onInteractionReady: (Bool) -> Void = { _ in }
     var onInteraction: () -> Void = {}
     var onInstalled: (SceneSourceInstallation) -> Void = { _ in }
+    var onFramePainted: (SceneSourceInstallation) -> Void = { _ in }
     var onFailure: (AgentWebSourceFailure) -> Void = { _ in }
     let onState: NotebookProgramStateWriter
 
@@ -313,6 +317,8 @@ struct AgentWebSourceFailure: Equatable, Sendable {
       context.coordinator.use(onRenderReady: onRenderReady)
       context.coordinator.use(onInteractionReady: onInteractionReady)
       context.coordinator.use(onInteraction: onInteraction)
+      context.coordinator.use(onFramePainted: onFramePainted)
+      context.coordinator.use(onSourceInstalled: onInstalled)
       context.coordinator.use(onFailure: onFailure)
       context.coordinator.use(onState: onState, enabled: allowsStateCommits)
       context.coordinator.programOwner = programOwner
@@ -636,7 +642,7 @@ private final class StaticSVGContent: NSObject, XMLParserDelegate {
 @MainActor
 final class AgentSnapshotCapture {
   let id = UUID()
-  private let reservation: RasterReservation
+  private var reservation: RasterReservation?
   private var lease: WebSurfaceLease?
   private var borrow: WebSurfaceBorrow?
   private(set) var isCancelled = false
@@ -649,9 +655,16 @@ final class AgentSnapshotCapture {
     precondition(borrow != nil)
   }
   func cancel() { isCancelled = true }
+  /// The validated temporary pixels now own this exact grant. WebKit's
+  /// surface borrow still ends only at the submitted callback's completion.
+  func transferReservationToCut() {
+    precondition(!isComplete && reservation != nil)
+    reservation = nil
+  }
   func finish() {
     guard !isComplete else { return }
-    isComplete = true; reservation.release(); borrow?.release(); borrow = nil; lease = nil
+    isComplete = true; reservation?.release(); reservation = nil
+    borrow?.release(); borrow = nil; lease = nil
     let pending = waiters; waiters.removeAll()
     for waiter in pending.values { waiter.resume() }
   }
@@ -671,7 +684,15 @@ final class AgentSnapshotCapture {
       }
     }
   }
-  isolated deinit { reservation.release(); borrow?.release() }
+  isolated deinit { reservation?.release(); borrow?.release() }
+}
+
+private enum AgentCurrentFrameDestination: Equatable { case cache, acceptedTurn }
+
+@MainActor
+private enum AgentCurrentFrame {
+  case raster(RasterLease)
+  case cut(SceneRasterCut)
 }
 
 /// The reader may time out while WebKit still owns its submitted backing.
@@ -679,10 +700,10 @@ final class AgentSnapshotCapture {
 /// until WebKit's real callback even if that reader is already gone.
 @MainActor
 private final class AgentCurrentFrameResult {
-  var continuation: CheckedContinuation<RasterLease?, Error>?
-  func finish(_ result: Result<RasterLease?, Error>) {
+  var continuation: CheckedContinuation<AgentCurrentFrame?, Error>?
+  func finish(_ result: Result<AgentCurrentFrame?, Error>) {
     guard let continuation else {
-      if case .success(let raster) = result { raster?.release() }
+      if case .success(.some(.raster(let raster))) = result { raster.release() }
       return
     }
     self.continuation = nil
@@ -735,6 +756,9 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
   private var onSnapshotPrepared: ((RasterLease) -> Void)?
   private var onInteractionReady: (Bool) -> Void
   private var onInteraction: () -> Void = {}
+  private var onFramePainted: (SceneSourceInstallation) -> Void = { _ in }
+  private var onSourceInstalled: (SceneSourceInstallation) -> Void = { _ in }
+  private var publishedInstallation: SceneSourceInstallation?
   private var onFailure: (AgentWebSourceFailure) -> Void
   private var renderIsReady = false
   private var isInvalidated = false
@@ -824,6 +848,40 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
     self.onInteraction = onInteraction
   }
 
+  func use(onFramePainted: @escaping (SceneSourceInstallation) -> Void) {
+    guard !isInvalidated else { return }
+    self.onFramePainted = onFramePainted
+  }
+
+  func use(onSourceInstalled: @escaping (SceneSourceInstallation) -> Void) {
+    guard !isInvalidated else { return }
+    self.onSourceInstalled = onSourceInstalled
+  }
+
+  /// Changing accepted state rebinds this same native executor. Its exact
+  /// source installation must not wait for a passive cache snapshot to finish.
+  private func publishCurrentSourceInstallation() {
+    guard let element = loadedElement, let token = loadToken,
+      let installation = installation(for: element) else { return }
+    Task { @MainActor [weak self] in
+      guard let self, accepts(token), installation.isInstalled,
+        publishedInstallation?.runtimeToken != installation.runtimeToken
+          || publishedInstallation?.source != installation.source else { return }
+      publishedInstallation = installation
+      onSourceInstalled(installation)
+    }
+  }
+
+  /// A real WebKit image certifies native pixels independently of passive
+  /// cache admission, mipmap construction or the earlier JavaScript-ready edge.
+  private func publishFramePainted(_ element: AgentElement, token: String) {
+    guard accepts(token), let installation = installation(for: element) else { return }
+    Task { @MainActor [weak self] in
+      guard let self, accepts(token), installation.isInstalled else { return }
+      onFramePainted(installation)
+    }
+  }
+
   func hasLiveSource(_ element: AgentElement) -> Bool {
     guard !isInvalidated, !lease.isReleased, runtimeLoaded, let loadedElement else { return false }
     return appliedState == loadedElement.state && SceneRasterSource.agent(loadedElement) == .agent(element)
@@ -877,6 +935,29 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
   /// or with a newly booted program.
   static func captureCurrent(focus: InteractiveElementReference, element: AgentElement,
     resources: SceneRenderResources = .shared) async throws -> RasterLease? {
+    guard let owner = try currentCaptureOwner(focus: focus, element: element, resources: resources) else { return nil }
+    return try await owner.captureCurrent(element: element)
+  }
+
+  /// Only the accepted turn requests this temporary input-priority cut. It
+  /// does not update the passive cache or prepare mipmaps for future readers.
+  static func captureCurrentCut(focus: InteractiveElementReference, element: AgentElement,
+    resources: SceneRenderResources = .shared) async throws -> SceneRasterCut? {
+    guard let owner = try currentCaptureOwner(focus: focus, element: element, resources: resources),
+      let frame = try await owner.captureFrame(element: element, destination: .acceptedTurn) else { return nil }
+    guard case .cut(let cut) = frame else { preconditionFailure("Current cut returned a cached raster") }
+    return cut
+  }
+
+  /// A finite accepted cohort may borrow only already installed executors.
+  /// This lookup never boots a runtime or allocates snapshot backing.
+  static func currentInstallation(focus: InteractiveElementReference, element: AgentElement,
+    resources: SceneRenderResources = .shared) throws -> SceneSourceInstallation? {
+    try currentCaptureOwner(focus: focus, element: element, resources: resources)?.installation(for: element)
+  }
+
+  private static func currentCaptureOwner(focus: InteractiveElementReference, element: AgentElement,
+    resources: SceneRenderResources) throws -> AgentWebCoordinator? {
     presentations = presentations.filter { $0.value.owner != nil }
     let owners = presentations.values.compactMap(\.owner).filter {
       $0.resources === resources && $0.presentationFocus == focus
@@ -884,7 +965,7 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
     }
     guard !owners.isEmpty else { return nil }
     guard owners.count == 1 else { throw SceneRenderError.snapshotPending("ambiguous_live_element_" + element.id) }
-    return try await owners[0].captureCurrent(element: element)
+    return owners[0]
   }
 
   static func resumeCurrent(focus: InteractiveElementReference) async {
@@ -986,7 +1067,7 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
     entry.retiringOwner = self; entry.retiringWeb = web
     Self.presentations[ObjectIdentifier(self)] = entry
     onRenderReady = { _ in }; onInteractionReady = { _ in }
-    onInteraction = {}; onFailure = { _ in }
+    onInteraction = {}; onFramePainted = { _ in }; onSourceInstalled = { _ in }; onFailure = { _ in }
     retirementTask = Task { @MainActor [self, model, web] in
       defer { retirementTask = nil }
       var superseded = false
@@ -1021,8 +1102,11 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
     }
   }
 
-  static func checkpointPrograms(ownedBy model: NotebookAppModel, resume: Bool) async -> Bool {
-    let owners = presentations.values.compactMap(\.owner).filter { $0.programOwner === model && !$0.isInvalidated }
+  static func checkpointPrograms(ownedBy model: NotebookAppModel, resume: Bool,
+    focus: InteractiveElementReference? = nil) async -> Bool {
+    let owners = presentations.values.compactMap(\.owner).filter {
+      $0.programOwner === model && !$0.isInvalidated && (focus == nil || $0.presentationFocus == focus)
+    }
     let tasks = owners.map { owner in Task { @MainActor in
       if let retiring = owner.retirementTask { await retiring.value }
       guard !owner.isInvalidated, let focus = owner.presentationFocus,
@@ -1158,6 +1242,12 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
   }
 
   private func captureCurrent(element: AgentElement) async throws -> RasterLease? {
+    guard let frame = try await captureFrame(element: element, destination: .cache) else { return nil }
+    guard case .raster(let raster) = frame else { preconditionFailure("Cached capture returned a current cut") }
+    return raster
+  }
+
+  private func captureFrame(element: AgentElement, destination: AgentCurrentFrameDestination) async throws -> AgentCurrentFrame? {
     try Task.checkCancellation()
     guard let installation = installation(for: element), installation.isInstalled,
       let web = attachedWebView, let token = loadToken else { return nil }
@@ -1165,7 +1255,8 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
     guard let pixels = policy.pixelSize(for: element),
       let configuration = Self.snapshotConfiguration(for: element, policy: policy, backingScale: snapshotScale(of: web)),
       pixels.width < CGFloat(Int.max - 2), pixels.height < CGFloat(Int.max - 2),
-      let reservation = resources.reserveWebSnapshot(pixelSize: pixels)
+      let reservation = destination == .acceptedTurn
+        ? resources.reserveCurrentWebCut(pixelSize: pixels) : resources.reserveWebSnapshot(pixelSize: pixels)
     else { throw SceneRenderError.resourceLimit }
     let capture = AgentSnapshotCapture(reservation: reservation, lease: lease)
     submittedCaptures[capture.id] = capture
@@ -1186,6 +1277,18 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
               hasLiveSource(element) else { result.finish(.success(nil)); return }
             if let error { result.finish(.failure(error)); return }
             guard let image else { result.finish(.failure(SceneRenderError.snapshotPending(element.id))); return }
+            publishFramePainted(element, token: token)
+            if destination == .acceptedTurn {
+              guard let cut = resources.currentWebCut(image, for: policy.rasterSource(for: element), reservation: reservation)
+              else { result.finish(.failure(SceneRenderError.resourceLimit)); return }
+              // Construction and transfer are synchronous on the owner actor.
+              // No cancelled reader can expose an uncharged returned image.
+              capture.transferReservationToCut()
+              guard cut.pixelScale + 0.000_001 >= policy.minimumScale(for: element) else {
+                result.finish(.failure(SceneRenderError.snapshotPending("live_capture_density_" + element.id))); return
+              }
+              result.finish(.success(.cut(cut))); return
+            }
             let prepared = await resources.storeWebSnapshot(image, for: policy.rasterSource(for: element), reservation: reservation,
               semanticSelection: self.checkpointedSource == element ? self.checkpointSelection : nil,
               permitsPublication: { [weak self] in self?.accepts(token) == true && !capture.isCancelled
@@ -1196,7 +1299,7 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
             guard raster.pixelScale + 0.000_001 >= policy.minimumScale(for: element) else {
               raster.release(); result.finish(.failure(SceneRenderError.snapshotPending("live_capture_density_" + element.id))); return
             }
-            result.finish(.success(raster))
+            result.finish(.success(.raster(raster)))
           }
         }
       }
@@ -1249,6 +1352,8 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
     onSnapshotPrepared = nil
     onInteractionReady = { _ in }
     onInteraction = {}
+    onFramePainted = { _ in }
+    onSourceInstalled = { _ in }; publishedInstallation = nil
     onFailure = { _ in }
     onState = { _, _ in false }
     attachedWebView?.evaluateJavaScript("void notebookProgram.dispose().catch(()=>{})", completionHandler: nil)
@@ -1463,6 +1568,7 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
       }
       guard accepts(token), !Task.isCancelled, let web = attachedWebView,
         appliedState == loadedElement?.state else { return }
+      publishCurrentSourceInstallation()
       captureSnapshot(of: web, token: token)
     }
   }
@@ -1540,6 +1646,7 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
               if let receipt { programBasis = receipt }
             }
             if runtimeLoaded { preparationDeadline?.cancel(); preparationDeadline = nil; preparationDeadlineAt = nil; currentCapture?.cancel() }
+            publishCurrentSourceInstallation()
             setRenderReady(false, token: token)
             if runtimeLoaded { applyCurrentState() }
           }
@@ -1657,6 +1764,7 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
     if let error {
       record(error, kind: "snapshot_error", token: token, source: element, policy: policy ?? snapshotPolicy)
     } else if let image {
+      publishFramePainted(element, token: token)
       let capturedPolicy = policy ?? snapshotPolicy
       let source = capturedPolicy.rasterSource(for: element)
       let stillCurrent: @MainActor () -> Bool = { [weak self] in

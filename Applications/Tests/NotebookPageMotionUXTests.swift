@@ -7,11 +7,56 @@ import XCTest
 /// Observe real native curl images, independently of the run-loop latency
 /// check: screenshot work must not be credited as display frames or FPS.
 @MainActor final class NotebookPageMotionUXTests: XCTestCase {
+  func testSourceReplacementDuringBorrowKeepsTheAcceptedTurn() async throws {
+    let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+    let previous = scene.windows.first(where: \.isKeyWindow)
+    for successorArrivesDuringBorrow in [false, true] {
+      let window = UIWindow(windowScene: scene), native = IPadSheetCurlController()
+      window.frame = .init(x: 0, y: 0, width: 300, height: 400)
+      let source = UIViewController(), target = UIViewController()
+      source.view.backgroundColor = .red; target.view.backgroundColor = .green
+      window.rootViewController = native; window.makeKeyAndVisible()
+      defer { native.cancelMotion(); window.isHidden = true; window.rootViewController = nil; previous?.makeKey() }
+      native.show(source, direction: .forward, animated: false); native.prepare(target)
+      var ready = true, replaced = false, captures = 0, failures = 0, completion: Bool?
+      native.isSheetReadyForCapture = { $0 !== source || ready }
+      native.isSheetPresented = native.isSheetReadyForCapture
+      native.onFailure = { _ in failures += 1 }
+      native.onFramesAcquired = { _ in captures += 1 }
+      native.acquireSheetFrame = { [weak native] sheet in
+        if sheet === source, !replaced {
+          replaced = true; ready = false
+          native?.sheetReadinessDidChange(source)
+          await Task.yield()
+          if successorArrivesDuringBorrow { ready = true; native?.sheetReadinessDidChange(source) }
+          throw PageTurnMaterialUnavailable.changed
+        }
+        return try await PageTurnFrameFixture.solid(sheet === source ? .red : .green,
+          size: native?.view.bounds.size ?? .init(width: 300, height: 400))
+      }
+      native.show(target, direction: .forward, animated: true) { completion = $0 }
+      let began = ContinuousClock.now
+      while !replaced, ContinuousClock.now - began < .seconds(1) { await Task.yield() }
+      XCTAssertTrue(replaced)
+      if !successorArrivesDuringBorrow {
+        try await Task.sleep(for: .milliseconds(20))
+        XCTAssertNil(completion); XCTAssertEqual(captures, 0)
+        ready = true; native.sheetReadinessDidChange(source)
+      }
+      while completion == nil, ContinuousClock.now - began < .seconds(2) {
+        try await Task.sleep(for: .milliseconds(2))
+      }
+      XCTAssertEqual(failures, 0); XCTAssertEqual(completion, true)
+      XCTAssertEqual(captures, 1); XCTAssertTrue(native.page === target)
+    }
+  }
+
   func testDirtyCapturedSheetWaitsForItsOwnReceiptAndCancellationDropsTheWait() async throws {
     let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
     let previous = scene.windows.first(where: \.isKeyWindow)
     for reverse in [false, true] {
       let window = UIWindow(windowScene: scene), native = IPadSheetCurlController()
+      PageTurnFrameFixture.install(on: native)
       let source = UIViewController(), target = UIViewController()
       source.view.backgroundColor = .red; target.view.backgroundColor = .green
       window.rootViewController = native; window.makeKeyAndVisible()
@@ -21,7 +66,8 @@ import XCTest
       let capturedSheet = reverse ? target : source, otherSheet = reverse ? source : target
       var ready = false, captures = 0
       native.isSheetReadyForCapture = { $0 !== capturedSheet || ready }
-      native.onCaptureMeasured = { _ in captures += 1 }
+      native.isSheetPresented = native.isSheetReadyForCapture
+      native.onFramesAcquired = { _ in captures += 1 }
       native.show(target, direction: reverse ? .reverse : .forward, animated: true)
       // Give the queued capture a chance to run. This is a negative assertion,
       // not a production debounce or evidence of the sheet's readiness.
@@ -48,6 +94,7 @@ import XCTest
     for reverse in [false, true] {
       for completed in [false, true] {
         let window = UIWindow(windowScene: scene), native = IPadSheetCurlController()
+        PageTurnFrameFixture.install(on: native)
         let source = UIViewController(), target = UIViewController()
         source.view.backgroundColor = .red; target.view.backgroundColor = .green
         window.rootViewController = native; window.makeKeyAndVisible()
@@ -57,7 +104,8 @@ import XCTest
         let capturedSheet = reverse ? target : source
         var ready = false, captures = 0, completions: [Bool] = []
         native.isSheetReadyForCapture = { $0 !== capturedSheet || ready }
-        native.onCaptureMeasured = { _ in captures += 1 }
+        native.isSheetPresented = native.isSheetReadyForCapture
+        native.onFramesAcquired = { _ in captures += 1 }
         native.willTurn = { $0 === target }
         native.didTurn = { from, completed in
           XCTAssertTrue(from === source); completions.append(completed)
@@ -81,10 +129,11 @@ import XCTest
     }
   }
 
-  func testReadinessRevokedDuringCaptureDiscardsTheImageUntilItsNewReceipt() async throws {
+  func testAcceptedCutSurvivesLaterSourceReadinessChange() async throws {
     let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
     let previous = scene.windows.first(where: \.isKeyWindow), window = UIWindow(windowScene: scene)
     let native = IPadSheetCurlController(), source = UIViewController(), target = UIViewController()
+    PageTurnFrameFixture.install(on: native)
     source.view.backgroundColor = .red; target.view.backgroundColor = .green
     window.rootViewController = native; window.makeKeyAndVisible()
     defer { native.cancelMotion(); window.isHidden = true; window.rootViewController = nil; previous?.makeKey() }
@@ -92,9 +141,9 @@ import XCTest
     let curl = try XCTUnwrap(native.view.subviews.compactMap { $0 as? SheetCurlMetalView }.first)
     var ready = true, captures = 0, completion: Bool?
     native.isSheetReadyForCapture = { $0 !== source || ready }
-    // Exercise the exact return boundary of the synchronous UIKit capture.
-    // In the app its layout can revoke coverage before the image is installed.
-    native.onCaptureMeasured = { _ in
+    native.isSheetPresented = native.isSheetReadyForCapture
+    // A later live publication cannot revoke the pair already borrowed by the curl.
+    native.onFramesAcquired = { _ in
       captures += 1
       if captures == 1 { ready = false }
     }
@@ -102,21 +151,20 @@ import XCTest
     let first = ContinuousClock.now + .seconds(2)
     while captures == 0, ContinuousClock.now < first { try await Task.sleep(for: .milliseconds(2)) }
     XCTAssertEqual(captures, 1)
-    XCTAssertTrue(curl.isHidden, "A revoked image must not enter the curl")
-    XCTAssertNil(completion); XCTAssertTrue(native.page === source)
+    XCTAssertFalse(curl.isHidden, "The accepted immutable cut survives a newer live source")
     ready = true
     native.sheetReadinessDidChange(source)
     let second = ContinuousClock.now + .seconds(2)
     while completion == nil, ContinuousClock.now < second { try await Task.sleep(for: .milliseconds(2)) }
-    XCTAssertEqual(captures, 2)
+    XCTAssertEqual(captures, 1)
     XCTAssertEqual(completion, true); XCTAssertTrue(native.page === target)
   }
 
-  func testCaptureRejectsRevokedAndRestoredReadinessFromItsExactHost() async throws {
+  func testAcceptedCutSurvivesNewAndRetiredReadinessPublications() async throws {
     let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
     let previous = scene.windows.first(where: \.isKeyWindow)
-    // A source change during capture invalidates pixels even when readiness is
-    // true again on return. Another host or an old sequence cannot invalidate it.
+    // An accepted texture pair is immutable. New live receipts and retired
+    // host callbacks cannot restart its source acquisition.
     for receipt in ["captured", "other", "retired"] {
       for reverse in [false, true] {
         let window = UIWindow(windowScene: scene), controller = IPadPageTurnController()
@@ -128,7 +176,7 @@ import XCTest
           controller.update(ownerID: owner, sequenceRevision: revision, pageCount: 2, selectedIndex: selected,
             navigationIsEnabled: true, pageIsInteractive: true, canBeginNavigation: { true },
             page: { index, _, ready in
-              readiness[index] = ready; ready(true)
+              readiness[index] = ready; ready.installTestFrame(color: index == 0 ? .red : .green); ready(true)
               return AnyView(index == 0 ? Color.red : Color.green)
             }, onCommit: { index, _ in selected = index; configure() },
             onTransitioningChange: { _ in }, notebookNavigation: commands)
@@ -145,7 +193,7 @@ import XCTest
         let injected = try XCTUnwrap(receipt == "retired" ? oldReceipt
           : readiness[receipt == "captured" ? capturedIndex : 1])
         var captures = 0
-        controller.sheetController.onCaptureMeasured = { _ in
+        controller.sheetController.onFramesAcquired = { _ in
           captures += 1
           if captures == 1 { injected(false); injected(true) }
         }
@@ -153,8 +201,7 @@ import XCTest
         let target = reverse ? 0 : 1, deadline = ContinuousClock.now + .seconds(2)
         while selected != target, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(2)) }
         XCTAssertEqual(selected, target)
-        XCTAssertEqual(captures, receipt == "captured" ? 2 : 1,
-          "Only the exact captured host in this sequence invalidates the image: \(receipt), reverse=\(reverse)")
+        XCTAssertEqual(captures, 1, "An accepted pair keeps its cut: \(receipt), reverse=\(reverse)")
       }
     }
   }
@@ -165,6 +212,7 @@ import XCTest
     for reverse in [false, true] {
       for completed in [false, true] {
         let window = UIWindow(windowScene: scene), native = IPadSheetCurlController()
+        PageTurnFrameFixture.install(on: native)
         window.frame = .init(x: 0, y: 0, width: 300, height: 400)
         let source = UIViewController(), target = UIViewController()
         source.view.backgroundColor = .red; target.view.backgroundColor = .green
@@ -174,17 +222,23 @@ import XCTest
         window.layoutIfNeeded()
         let curl = try XCTUnwrap(native.view.subviews.compactMap { $0 as? SheetCurlMetalView }.first)
         let landing = completed ? target : source, other = completed ? source : target
-        var ready = true, captures = 0, completions: [Bool] = []
+        var ready = true, captures = 0, staged = 0, completions: [Bool] = []
         var bent = false, lifted = false, endpointPresented = false
-        native.isSheetReadyForCapture = { $0 !== landing || ready }
-        native.onCaptureMeasured = { _ in captures += 1 }
+        native.isSheetPresented = { $0 !== landing || ready }
+        native.onStageLiveSheet = { [weak native] host in
+          XCTAssertTrue(host === landing)
+          XCTAssertTrue(native?.view.subviews.last === landing.view)
+          XCTAssertTrue(native?.page === source)
+          staged += 1
+        }
+        native.onFramesAcquired = { _ in captures += 1 }
         native.willTurn = { $0 === target }
         native.didTurn = { from, completed in
           XCTAssertTrue(from === source); completions.append(completed)
         }
-        let resolve = curl.onFrameReady
+        let resolve = curl.onPageFrameReady
         let endpoint = reverse ? (completed ? 0.0 : 1.0) : (completed ? 1.0 : 0.0)
-        curl.onFrameReady = { image, progress, sequence, readiness in
+        curl.onPageFrameReady = { image, progress, sequence, readiness in
           if readiness.isReady {
             if progress > 0, progress < 1 { bent = true }
             if lifted, progress == endpoint, !endpointPresented {
@@ -203,6 +257,7 @@ import XCTest
         let endDeadline = ContinuousClock.now + .seconds(2)
         while !endpointPresented, ContinuousClock.now < endDeadline { try await Task.sleep(for: .milliseconds(2)) }
         XCTAssertTrue(endpointPresented)
+        XCTAssertEqual(staged, 1, "The GPU-ready host must be exposed before it can earn a live OS receipt")
         XCTAssertTrue(completions.isEmpty, "A frozen endpoint cannot enable an unready live page")
         XCTAssertTrue(native.page === source)
         XCTAssertTrue(native.containsInActiveTurn(source)); XCTAssertTrue(native.containsInActiveTurn(target))
@@ -214,6 +269,7 @@ import XCTest
         XCTAssertTrue(completions.isEmpty, "The other page cannot release this landing")
         XCTAssertEqual(curl.submittedFrameCount, submitted, "Waiting for live readiness must not poll the display")
         XCTAssertEqual(captures, 1)
+        XCTAssertEqual(staged, 1, "Unrelated readiness cannot restart the live presentation")
         ready = true; native.sheetReadinessDidChange(landing)
         XCTAssertEqual(completions, [completed]); XCTAssertTrue(native.page === landing)
         XCTAssertTrue(curl.isHidden); XCTAssertNil(curl.frameLease)
@@ -228,6 +284,7 @@ import XCTest
     let previous = scene.windows.first(where: \.isKeyWindow)
     for reverse in [false, true] {
       let window = UIWindow(windowScene: scene), native = IPadSheetCurlController()
+      PageTurnFrameFixture.install(on: native)
       let state = ImmediateSheetColour()
       let changed = UIHostingController(rootView: ImmediateSheetView(state: state))
       let other = UIViewController(); other.view.backgroundColor = .blue
@@ -237,14 +294,18 @@ import XCTest
       native.prepare(reverse ? changed : other)
       try await Task.sleep(for: .milliseconds(30))
       let curl = try XCTUnwrap(native.view.subviews.compactMap { $0 as? SheetCurlMetalView }.first)
-      let resolve = curl.onFrameReady
+      let resolve = curl.onPageFrameReady
       var captured: CGImage?
-      curl.onFrameReady = { image, progress, sequence, readiness in
-        if captured == nil, readiness.isReady { captured = image }
+      curl.onPageFrameReady = { image, progress, sequence, readiness in
+        if captured == nil, readiness.isReady { captured = PageTurnFrameFixture.image(image) }
         resolve?(image, progress, sequence, readiness)
       }
       // No screenshot or intervening UI cycle may flush the pending update.
       state.green = true
+      native.acquireSheetFrame = { [weak native] sheet in
+        try await PageTurnFrameFixture.solid(sheet === changed ? (state.green ? .green : .red) : .blue,
+          size: native?.view.bounds.size ?? .init(width: 300, height: 400))
+      }
       native.show(reverse ? changed : other, direction: reverse ? .reverse : .forward, animated: true)
       let limit = ContinuousClock.now + .seconds(2)
       while captured == nil, ContinuousClock.now < limit { try await Task.sleep(for: .milliseconds(2)) }
@@ -268,7 +329,7 @@ import XCTest
       controller.update(ownerID: owner, sequenceRevision: "interactive-reverse", pageCount: 3, selectedIndex: selected,
         navigationIsEnabled: true, pageIsInteractive: true, canBeginNavigation: { true },
         page: { index, _, ready in
-          ready(true)
+          ready.installTestFrame(color: index == 0 ? .red : .blue); ready(true)
           return AnyView(index == 0 ? Color(red: 1, green: 0, blue: 0) : Color(red: 0, green: 0, blue: 1))
         }, onCommit: { index, _ in selected = index; configure() }, onTransitioningChange: { _ in }, notebookNavigation: commands)
     }
@@ -336,15 +397,16 @@ import XCTest
     for reverse in [false, true] {
       for repetition in 0..<3 {
         let native = IPadSheetCurlController(), source = UIViewController(), target = UIViewController()
+        PageTurnFrameFixture.install(on: native)
         source.view.backgroundColor = .blue; target.view.backgroundColor = .red
         window.rootViewController = native; window.makeKeyAndVisible()
         native.show(source, direction: .forward, animated: false); native.prepare(target)
         native.willTurn = { $0 === target }
         try await Task.sleep(for: .milliseconds(30))
         let curl = try XCTUnwrap(native.view.subviews.compactMap { $0 as? SheetCurlMetalView }.first)
-        let resolve = curl.onFrameReady
+        let resolve = curl.onPageFrameReady
         var resolvedProgress: Double?
-        curl.onFrameReady = { image, progress, sequence, readiness in
+        curl.onPageFrameReady = { image, progress, sequence, readiness in
           if readiness.isReady { resolvedProgress = progress }
           resolve?(image, progress, sequence, readiness)
         }
@@ -388,18 +450,19 @@ import XCTest
     let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
     let previous = scene.windows.first(where: \.isKeyWindow), window = UIWindow(windowScene: scene)
     let native = IPadSheetCurlController(), blue = UIViewController(), red = UIViewController()
+    PageTurnFrameFixture.install(on: native)
     blue.view.backgroundColor = .blue; red.view.backgroundColor = .red
     window.rootViewController = native; window.makeKeyAndVisible()
     defer { native.cancelMotion(); window.isHidden = true; window.rootViewController = nil; previous?.makeKey() }
     native.show(blue, direction: .forward, animated: false); native.prepare(red)
     try await Task.sleep(for: .milliseconds(30))
     let curl = try XCTUnwrap(native.view.subviews.compactMap { $0 as? SheetCurlMetalView }.first)
-    let resolve = curl.onFrameReady
-    defer { curl.onFrameReady = resolve }
+    let resolve = curl.onPageFrameReady
+    defer { curl.onPageFrameReady = resolve }
     for turn in 0..<6 {
       var first: NotebookMetalFrameReadiness?, firstProgress: Double?
       var underlay: UIView?
-      curl.onFrameReady = { image, progress, sequence, readiness in
+      curl.onPageFrameReady = { image, progress, sequence, readiness in
         if first == nil, readiness.isReady {
           first = readiness; firstProgress = progress
           underlay = native.view.subviews.dropLast().last
@@ -423,6 +486,7 @@ import XCTest
     let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
     let previous = scene.windows.first(where: \.isKeyWindow), window = UIWindow(windowScene: scene)
     let native = IPadSheetCurlController(), blue = UIViewController(), red = UIViewController()
+    PageTurnFrameFixture.install(on: native)
     blue.view.backgroundColor = .blue; red.view.backgroundColor = .red
     window.rootViewController = native; window.makeKeyAndVisible()
     defer { native.cancelMotion(); window.isHidden = true; window.rootViewController = nil; previous?.makeKey() }
@@ -430,13 +494,13 @@ import XCTest
     try await Task.sleep(for: .milliseconds(30))
     // Deliberately make preparation longer than the animation's entire 320 ms.
     // This is a continuity regression, not a latency or performance measurement.
-    native.onCaptureMeasured = { _ in Thread.sleep(forTimeInterval: 0.35) }
+    native.onFramesAcquired = { _ in Thread.sleep(forTimeInterval: 0.35) }
     let curl = try XCTUnwrap(native.view.subviews.compactMap { $0 as? SheetCurlMetalView }.first)
-    let resolve = curl.onFrameReady
-    defer { curl.onFrameReady = resolve }
+    let resolve = curl.onPageFrameReady
+    defer { curl.onPageFrameReady = resolve }
     for turn in 0..<2 {
       var firstBend: Double?
-      curl.onFrameReady = { image, progress, sequence, readiness in
+      curl.onPageFrameReady = { image, progress, sequence, readiness in
         let travel = turn == 0 ? progress : 1-progress
         if readiness.isReady, travel > 0, firstBend == nil { firstBend = travel }
         resolve?(image, progress, sequence, readiness)
@@ -455,6 +519,7 @@ import XCTest
     let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
     let previous = scene.windows.first(where: \.isKeyWindow), window = UIWindow(windowScene: scene)
     let native = IPadSheetCurlController(), source = UIViewController(), target = UIViewController()
+    PageTurnFrameFixture.install(on: native)
     source.view.backgroundColor = .blue; target.view.backgroundColor = .red
     native.neighbor = { _, _ in target }; native.willTurn = { _ in true }
     window.rootViewController = native; window.makeKeyAndVisible()
@@ -462,10 +527,10 @@ import XCTest
     native.show(source, direction: .forward, animated: false); native.prepare(target)
     try await Task.sleep(for: .milliseconds(30))
     let curl = try XCTUnwrap(native.view.subviews.compactMap { $0 as? SheetCurlMetalView }.first)
-    let resolve = curl.onFrameReady
-    defer { curl.onFrameReady = resolve }
+    let resolve = curl.onPageFrameReady
+    defer { curl.onPageFrameReady = resolve }
     var shown: Double?
-    curl.onFrameReady = { image, progress, sequence, readiness in
+    curl.onPageFrameReady = { image, progress, sequence, readiness in
       if readiness.isReady { shown = progress }
       resolve?(image, progress, sequence, readiness)
     }
@@ -503,6 +568,7 @@ import XCTest
       for completes in [false, true] {
         for holdsEndpoint in [false, true] {
           let native = IPadSheetCurlController(), source = UIViewController(), target = UIViewController()
+          PageTurnFrameFixture.install(on: native)
           source.view.backgroundColor = .blue; target.view.backgroundColor = .red
           native.neighbor = { _, _ in target }; native.willTurn = { _ in true }
           var completions: [Bool] = [], endpointPresented = false
@@ -514,9 +580,9 @@ import XCTest
           native.prepare(target)
           try await Task.sleep(for: .milliseconds(30))
           let curl = try XCTUnwrap(native.view.subviews.compactMap { $0 as? SheetCurlMetalView }.first)
-          let owner = curl.onFrameReady
+          let owner = curl.onPageFrameReady
           let endpoint = direction == .forward ? (completes ? 1.0 : 0.0) : (completes ? 0.0 : 1.0)
-          curl.onFrameReady = { image, progress, sequence, readiness in
+          curl.onPageFrameReady = { image, progress, sequence, readiness in
             if readiness.isReady, progress == endpoint { endpointPresented = true }
             owner?(image, progress, sequence, readiness)
           }
@@ -578,7 +644,9 @@ import XCTest
       controller.update(ownerID:owner,sequenceRevision:"motion",pageCount:3,selectedIndex:selected,
         navigationIsEnabled:true,pageIsInteractive:true,canBeginNavigation:{true},
         page:{ index,_,ready in
-          ready(true)
+          ready.setFrameProvider { [weak controller] _ in
+            try await PageTurnFrameFixture.artwork(index: index, size: controller?.view.bounds.size ?? .init(width: 834, height: 1194))
+          }; ready(true)
           return AnyView(Color.white.overlay(alignment:.center) {
             (index == 0 ? Color.blue : Color.red).frame(width:400,height:400)
           })
@@ -645,7 +713,7 @@ import XCTest
     func configure() {
       controller.update(ownerID: owner, sequenceRevision: "rapid-series", pageCount: 13, selectedIndex: selected,
         navigationIsEnabled: true, pageIsInteractive: true, canBeginNavigation: { true },
-        page: { index, _, ready in ready(true); return AnyView(Color.white.overlay(Text("Sheet \(index)"))) },
+        page: { index, _, ready in ready.installTestFrame(); ready(true); return AnyView(Color.white.overlay(Text("Sheet \(index)"))) },
         onCommit: { index, _ in selected = index; landings.append((index, CACurrentMediaTime())); configure() },
         onTransitioningChange: { _ in }, notebookNavigation: commands)
     }
@@ -654,13 +722,13 @@ import XCTest
     try await Task.sleep(for: .milliseconds(60))
     let native = controller.sheetController
     let curl = try XCTUnwrap(native.view.subviews.compactMap { $0 as? SheetCurlMetalView }.first)
-    let resolve = curl.onFrameReady
+    let resolve = curl.onPageFrameReady
     var origin = CACurrentMediaTime(), phases: [String] = []
     var lastImage: ObjectIdentifier?, sawBend = false
-    native.onCaptureMeasured = { measurement in
+    native.onFramesAcquired = { measurement in
       phases.append("capture beginMS=\((measurement.began-origin)*1000) durationMS=\((measurement.ended-measurement.began)*1000) pixels=\(measurement.pixels)")
     }
-    curl.onFrameReady = { image, progress, sequence, readiness in
+    curl.onPageFrameReady = { image, progress, sequence, readiness in
       if readiness.isReady {
         let identity = ObjectIdentifier(image), first = identity != lastImage
         if first { lastImage = identity; sawBend = false }
@@ -672,7 +740,7 @@ import XCTest
       }
       resolve?(image, progress, sequence, readiness)
     }
-    defer { native.onCaptureMeasured = nil; curl.onFrameReady = resolve }
+    defer { native.onFramesAcquired = nil; curl.onPageFrameReady = resolve }
     for direction in [1, -1] {
       landings = []; phases = []; lastImage = nil; sawBend = false
       let steps = (alternating ? [1, 1, -1, 1, -1, 1, 1, -1, 1, 1] : Array(repeating: 1, count: 10)).map { $0 * direction }
@@ -723,12 +791,19 @@ import XCTest
     throw XCTSkip("Simulator has no OS Metal presentation receipts; GPU completion is not frame-cadence evidence")
     #endif
     let controller = IPadPageTurnController(), commands = NotebookPageNavigation(), owner = UUID()
+    // Resident paper owns prepared immutable pixels before a command. Keep
+    // the curl pipeline cold, but do not reintroduce the removed UIKit paint
+    // and image upload inside this synthetic frame provider on every turn.
+    var preparedFrames: [Int: PageTurnFrame] = [:]
+    for index in 0..<3 {
+      preparedFrames[index] = try await PageTurnFrameFixture.artwork(index: index, size: .init(width: 834, height: 1194))
+    }
     var selected = 0, committedAt: TimeInterval?
     func configure() {
       controller.update(ownerID: owner, sequenceRevision: "motion-timing", pageCount: 3, selectedIndex: selected,
         navigationIsEnabled: true, pageIsInteractive: true, canBeginNavigation: { true },
         page: { index, _, ready in
-          ready(true)
+          ready.setFrameProvider { _ in try XCTUnwrap(preparedFrames[index]) }; ready(true)
           return AnyView(Color.white.overlay {
             (index == 0 ? Color.blue : Color.red).frame(width: 400, height: 400)
           })
@@ -751,12 +826,12 @@ import XCTest
     for turn in 0..<10 {
       let target = turn.isMultiple(of: 2) ? 1 : 0
       let curl = try XCTUnwrap(controller.sheetController.view.subviews.compactMap { $0 as? SheetCurlMetalView }.first)
-      let forwardReadiness = curl.onFrameReady
+      let forwardReadiness = curl.onPageFrameReady
       var frames: [(progress: Double, presented: TimeInterval, delivered: TimeInterval)] = []
       var submission: [SheetCurlMetalView.FrameTiming] = []
       curl.onFrameMeasured = { submission.append($0) }
       committedAt = nil
-      curl.onFrameReady = { image, progress, sequence, readiness in
+      curl.onPageFrameReady = { image, progress, sequence, readiness in
         // The filtered presentation observer excludes precisely the zero or
         // invalid receipts this oracle must reject. Keep every native receipt.
         let presentedAt: TimeInterval
@@ -767,14 +842,14 @@ import XCTest
         frames.append((progress, presentedAt, CACurrentMediaTime()))
         forwardReadiness?(image, progress, sequence, readiness)
       }
-      defer { curl.onFrameReady = forwardReadiness; curl.onFrameMeasured = nil }
+      defer { curl.onPageFrameReady = forwardReadiness; curl.onFrameMeasured = nil }
       let start = CACurrentMediaTime()
       XCTAssertTrue(commands.send(.step(target == 1 ? 1 : -1), ownerID: owner, source: "motion-timing"))
       let commandReturned = CACurrentMediaTime()
       while committedAt == nil, CACurrentMediaTime() - start < 1 {
         try await Task.sleep(for: .milliseconds(1))
       }
-      curl.onFrameReady = forwardReadiness
+      curl.onPageFrameReady = forwardReadiness
       curl.onFrameMeasured = nil
       let encoding = XCTAttachment(string: "Command execution=\((commandReturned-start)*1000) ms\n" + submission.map {
         "start=\(($0.encodingBegan-start)*1000)ms; CPU=\(($0.submitted-$0.encodingBegan)*1000)ms; GPU queue=\(($0.gpuBegan-$0.submitted)*1000)ms; GPU=\(($0.gpuEnded-$0.gpuBegan)*1000)ms; target=\(($0.targetPresentation-start)*1000)ms"

@@ -349,6 +349,31 @@ final class DocumentProgramOwner {
     jobs[block] = .init(id: id, task: task, preservesRuntime: keepsRuntime)
   }
 
+  /// Navigation finishes only the editing program. Retiring the document
+  /// retains its separate all-runtime durability boundary.
+  func checkpointFocused(resume: Bool) async -> Bool {
+    let focused = runtimes.filter { $0.value.focused }
+    for (block, runtime) in focused {
+      applications[block]?.task.cancel()
+      if let application = applications[block] { await application.task.value }
+      if let job = jobs[block] { await job.task.value }
+      guard !stopped, runtimes[block] === runtime else { continue }
+      do {
+        await runtime.blur()
+        _ = try await runtime.checkpoint()
+        if resume, !boundarySuspendsPrograms, !parkedForReturn, runtimes[block] === runtime {
+          await startResume(block, runtime: runtime).value
+          if pauseFailures[block] != nil { return false }
+        }
+      } catch {
+        if error is NotebookProgramCheckpointError { continue }
+        parkedPrograms.insert(block); pauseFailures[block] = String(describing: error)
+        onChange(); return false
+      }
+    }
+    return true
+  }
+
   /// Explicit background/close boundary, independent of page raster work.
   /// Each admitted runtime finishes its own author model; a hung neighbour
   /// cannot serialize the remaining programs behind its deadline.

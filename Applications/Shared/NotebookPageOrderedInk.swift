@@ -14,6 +14,7 @@ struct NotebookPageOrderedInkInput:Equatable,Sendable {
   }
   let candidates:[Candidate]
   let suppressedInkIDs:Set<UUID>
+  let isCanonical:Bool
   static let empty=Self(candidates:[],suppressedInkIDs:[])
   /// Candidates are the caller's already admitted graphic window. Both live
   /// paper and exact export use this same winner/cut test before reading ranks.
@@ -27,10 +28,18 @@ struct NotebookPageOrderedInkInput:Equatable,Sendable {
         let layout=layouts[element.id] else {return nil}
       return .init(id:element.id,graphic:node.graphic,layout:layout,erasures:erasures[element.id] ?? [])
     }
-    self.suppressedInkIDs=suppressedInkIDs
+    self.suppressedInkIDs=suppressedInkIDs;isCanonical=true
   }
-  init(candidates:[Candidate],suppressedInkIDs:Set<UUID>) {
-    self.candidates=candidates;self.suppressedInkIDs=suppressedInkIDs
+  init(candidates:[Candidate],suppressedInkIDs:Set<UUID>,isCanonical:Bool = true) {
+    self.candidates=candidates;self.suppressedInkIDs=suppressedInkIDs;self.isCanonical=isCanonical
+  }
+  func confirmingSource(_ page:PageDocument)->Self {
+    let graph=page.graphicGraph(),cuts=page.preparedElementErasures ?? [:]
+    let canonical=suppressedInkIDs == page.graphicPresentation.suppressedInkIDs && candidates.allSatisfy {value in
+      page.element(id:value.id)?.graphic == value.graphic && graph.resolve(value.id).layout == value.layout
+        && (cuts[value.id] ?? []) == value.erasures
+    }
+    return .init(candidates:candidates,suppressedInkIDs:suppressedInkIDs,isCanonical:canonical)
   }
   func matches(_ plan:NotebookOrderedInkPlan)->Bool {
     guard suppressedInkIDs == plan.suppressedInkIDs,candidates.count == plan.bodies.count else {return false}
@@ -71,7 +80,7 @@ extension NotebookAppModel {
     let returned=restoring.map { NotebookPageOrderedInkInput.Candidate(id:$0.elementID,
       graphic:$0.graphic,layout:$0.layout,erasures:$0.erasures) }
     guard !canonical.isEmpty else {
-      return .init(candidates:ordinary.candidates+returned,suppressedInkIDs:suppressed)
+      return NotebookPageOrderedInkInput(candidates:ordinary.candidates+returned,suppressedInkIDs:suppressed).confirmingSource(page)
     }
     // Only the failed accepted members use the canonical source. The display
     // graph/controls keep their last pose until this plan is actually installed.
@@ -81,6 +90,6 @@ extension NotebookAppModel {
     })
     let accepted=NotebookPageOrderedInkInput(elements:elements,graph:graph,layouts:layouts,
       erasures:erasures,suppressedInkIDs:suppressed)
-    return .init(candidates:ordinary.candidates+accepted.candidates+returned,suppressedInkIDs:suppressed)
+    return NotebookPageOrderedInkInput(candidates:ordinary.candidates+accepted.candidates+returned,suppressedInkIDs:suppressed).confirmingSource(page)
   }
 }

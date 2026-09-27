@@ -233,17 +233,8 @@ import SwiftUI
       let rawPose=try XCTUnwrap(shownEdits.first(where:{$0.id == raw.memberID}))
       XCTAssertEqual(NotebookAttentionProjection.selectedInkPoses(model:model)[raw.memberID],rawPose)
 
-      // The existing retained allocation is the controlled pending boundary.
-      // Refuse restoration rendering without changing its callbacks or source.
-      canvas.setPageInputEnabled(false)
-      let drainDeadline=ContinuousClock.now + .seconds(2)
-      while !canvas.isFrameLoopPaused,ContinuousClock.now<drainDeadline {try await Task.sleep(for:.milliseconds(5))}
-      XCTAssertFalse(canvas.hasPageRetainedTexture)
-      let resources=SceneRenderResources.shared
-      let pressure=try XCTUnwrap(resources.reserveDerivedBytes(
-        resources.byteLimit-resources.residentBytes-resources.reservedBytes,priority:.input))
-      defer {pressure.release()}
-      canvas.setPageInputEnabled(true)
+      // Cancellation publishes its pending owner synchronously; raw pixels,
+      // authored peers and controls stay together until the next frame cut.
       @MainActor final class CancellationObservation {var retiringBeforeContactCleared=false}
       let observation=CancellationObservation()
       withObservationTracking {_ = model.selectionSession.manipulation} onChange: {
@@ -256,12 +247,6 @@ import SwiftUI
       XCTAssertEqual(model.graphicGraph(page:try XCTUnwrap(model.pages[page.id])).source("whole-peer")?.frame.y,250)
       XCTAssertEqual(NotebookAttentionProjection.selectedInkPoses(model:model)[raw.memberID],rawPose,
         "Clearing the live contact cannot return raw selection controls before its pixels")
-      let refusedDeadline=ContinuousClock.now + .seconds(2)
-      while !(canvas.renderFailure == .resourceLimit && canvas.isFrameLoopPaused),ContinuousClock.now<refusedDeadline {
-        try await Task.sleep(for:.milliseconds(5))
-      }
-      XCTAssertEqual(canvas.renderFailure,.resourceLimit)
-      XCTAssertTrue(owner.holdsPresentation)
       XCTAssertEqual(model.workingGraphics.filter{$0.inkPresentation === owner}.count,2)
       XCTAssertEqual(model.graphicGraph(page:try XCTUnwrap(model.pages[page.id])).source("whole-peer")?.frame.y,250)
       XCTAssertEqual(NotebookAttentionProjection.selectedInkPoses(model:model)[raw.memberID],rawPose)
@@ -269,7 +254,7 @@ import SwiftUI
       XCTAssertTrue(try heldPixels.matches(moved),"Pending raw restoration must retain the complete moved picture, including its authored peer")
       let heldImage=XCTAttachment(image:heldPixels.image);heldImage.name="cancel-pending-raw-and-authored-held"
       heldImage.lifetime = .keepAlways;self.add(heldImage)
-      let repicked=NotebookSelectedInk(contact:.init(actionID:raw.actionID,painterOrder:raw.painterOrder,material:raw.material),
+      let repicked=NotebookSelectedInk(contact:.init(actionID:raw.actionID,painterOrder:raw.painterOrder,material:raw.material,readSet:raw.readSet),
         address:raw.address,revision:raw.revision)
       XCTAssertTrue(model.selectElements(selection.elements,ink:selection.ink.map{$0.key == raw.key ? repicked:$0}))
       XCTAssertNil(NotebookAttentionProjection.selectedInkPoses(model:model)[repicked.memberID],"A new choice of the same raw action cannot borrow an old cancellation pose")
@@ -277,9 +262,7 @@ import SwiftUI
       XCTAssertTrue(model.selectElements(selection.elements,ink:selection.ink))
       XCTAssertEqual(NotebookAttentionProjection.selectedInkPoses(model:model)[raw.memberID],rawPose)
 
-      pressure.release()
       let resumed=ContinuousClock.now
-      canvas.setPageInputEnabled(false);canvas.setPageInputEnabled(true)
       try await self.assertUX("cancelled-whole-move-atomic-restore",since:resumed,window:window) {
         guard !owner.holdsPresentation,model.workingGraphics.allSatisfy({$0.inkPresentation !== owner}),
           canvas.isStableFramePresented else {return false}
@@ -644,22 +627,22 @@ import SwiftUI
   func testWholeContactSelectionIncludesAllSpansButRegionSelectionKeepsItsContour() throws {
     let surface=SurfaceID.board(UUID()),id=UUID()
     func samples(_ x:Double)->InkMeasurements {
-      .init([x,x+80].map { x in .init(point:.init(x:x,y:100),timeOffset:0,
+      .init([x,x+80].map { x in .init(point:.init(x:x,y:100),worldPoint:.init(x:x,y:100),timeOffset:0,
         width:8,opacity:1,force:1,azimuth:0,altitude:.pi/2) })
     }
     let spans=[samples(100),samples(500)]
-    let source=try NotebookLassoInkSource.Prepared(revision:"whole-contact",
-      entries:[.init(id:id,tool:.pen,color:.black,sources:spans.enumerated().map { index,values in
-        .init(sourceID:id,span:index,measurements:values,header:.init(tool:.pen,color:.black))
-      })],surface:surface,origin:nil,excluding:[])
+    let actor=UUID(),stamp=VersionStamp(counter:1,actor:actor)
+    let action=SpatialInkAction(id:id,tool:.pen,spans:spans.map{.init(surface:surface,measurements:$0)},stamp:stamp)
+    let journal=SpatialInkJournal(actions:[action],stamp:stamp)
+    let source=try NotebookLassoInkSource.spatial(journal,[],membershipRevision:1).prepare(surface:surface,origin:.zero)
     let polygon=[SpatialPoint(x:125,y:94),.init(x:137,y:94),.init(x:137,y:106),.init(x:125,y:106)]
-    let whole=try XCTUnwrap(source.wholeContacts(polygon:polygon,surface:surface,origin:nil,bounds:nil).first?.material)
+    let whole=try XCTUnwrap(source.wholeContacts(polygon:polygon,surface:surface,origin:.zero,bounds:nil).first?.material)
     XCTAssertEqual(whole.graphic.sourceInkIDs,[id])
     XCTAssertEqual(whole.graphic.freehand?.layers.compactMap(\.measured?.span),[0,1])
     XCTAssertLessThan(whole.selectionFrame.x,100)
     XCTAssertGreaterThan(whole.selectionFrame.x+whole.selectionFrame.width,580)
     XCTAssertEqual(whole.graphic.freehand?.layers.compactMap(\.measured?.measurements),spans)
-    let region=try XCTUnwrap(source.selection(polygon:polygon,surface:surface,origin:nil,bounds:nil))
+    let region=try XCTUnwrap(source.selection(polygon:polygon,surface:surface,origin:.zero,bounds:nil))
     XCTAssertEqual(region.polygon,polygon)
     XCTAssertEqual(region.selectionFrame.width,12,accuracy:1e-8)
   }
@@ -672,9 +655,8 @@ import SwiftUI
     }
     let erased=action(.pen,200,8),eraser=action(.eraser,200,30),top=action(.pen,200,8)
     let page=PageInkDrawing(actions:[erased,eraser,top])
-    let source=try NotebookLassoInkSource.Prepared(revision:"painter",
-      entries:page.actions.map { .init(id:$0.id,tool:$0.tool,color:$0.color,sources:[.init($0)]) },
-      surface:surface,origin:nil,excluding:[])
+    let document=PageDocument(id:surface.ownerID!,size:.init(width:834,height:1194),actor:UUID(),drawingData:try page.dataRepresentation())
+    let source=try NotebookLassoInkSource.page(document).prepare(surface:surface,origin:nil)
     let polygon=[SpatialPoint(x:180,y:190),.init(x:220,y:190),.init(x:220,y:210),.init(x:180,y:210)]
     let whole=try source.wholeContacts(polygon:polygon,surface:surface,origin:nil,bounds:nil)
     XCTAssertEqual(whole.map(\.actionID),[top.id],"A surviving neighbour does not revive a fully erased contact")
@@ -695,9 +677,8 @@ import SwiftUI
     let actions=(0..<33).map { index in PageInkAction(tool:.pen,samples:[100.0,700].map { x in
       .init(point:.init(x:x,y:Double(index)*10+100),timeOffset:0,width:4,opacity:1,force:1,azimuth:0,altitude:.pi/2)
     }) }
-    let source=try NotebookLassoInkSource.Prepared(revision:"33-members",
-      entries:actions.map { .init(id:$0.id,tool:$0.tool,color:$0.color,sources:[.init($0)]) },
-      surface:surface,origin:nil,excluding:[])
+    let document=PageDocument(id:surface.ownerID!,size:.init(width:834,height:1194),actor:UUID(),drawingData:try PageInkDrawing(actions:actions).dataRepresentation())
+    let source=try NotebookLassoInkSource.page(document).prepare(surface:surface,origin:nil)
     let polygon=[SpatialPoint(x:190,y:90),.init(x:210,y:90),.init(x:210,y:450),.init(x:190,y:450)]
     XCTAssertThrowsError(try source.wholeContacts(polygon:polygon,surface:surface,origin:nil,bounds:nil)) {
       XCTAssertEqual(($0 as? CollaborationError)?.code,"selection_limit")

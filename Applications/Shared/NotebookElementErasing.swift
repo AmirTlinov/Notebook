@@ -275,7 +275,6 @@ struct NotebookPageEraserSource {
     discard { address in
       address.surface.kind == .page && !(address.surface.ownerID.flatMap { owners[$0] }?.contains(address.id) ?? false)
     }
-    self.pages = self.pages.filter { pages[$0.key] != nil }
     projected=projected.filter { $0.key.kind != .page || $0.key.ownerID.flatMap { pages[$0] } != nil }
   }
 
@@ -295,39 +294,10 @@ struct NotebookPageEraserSource {
     stopped = true
     let tasks = entries.values.map(\.task)
     for task in tasks { task.cancel() }
-    entries.removeAll(); pages.removeAll(); spatial.removeAll();projected.removeAll();activeTargets=nil
+    entries.removeAll(); spatial.removeAll();projected.removeAll();activeTargets=nil
     for task in tasks { await task.value }
   }
 
-  private struct TaggedErasure { let actionID:UUID;let erasure:InkElementErasure }
-  private struct PageErasures {
-    var stamp:VersionStamp
-    var tagged:[String:[TaggedErasure]]
-    var targets:[UUID:Set<String>]
-    var values:[String:[InkElementErasure]]
-    init(stamp:VersionStamp,drawing:PageInkDrawing) {
-      self.stamp=stamp;tagged=[:];targets=[:];values=[:]
-      for action in drawing.actions where action.isActive && action.tool == .eraser { append(action) }
-    }
-    mutating func append(_ action:PageInkAction) {
-      guard action.isActive,action.tool == .eraser else { return }
-      for target in action.elementTargets ?? [] {
-        let value=InkElementErasure(target:target,measurements:action.samples)
-        tagged[target.elementID,default:[]].append(.init(actionID:action.id,erasure:value))
-        values[target.elementID,default:[]].append(value);targets[action.id,default:[]].insert(target.elementID)
-      }
-    }
-    mutating func remove(_ ids:Set<UUID>) {
-      for id in ids {
-        for target in targets.removeValue(forKey:id) ?? [] {
-          tagged[target]?.removeAll { $0.actionID == id }
-          if tagged[target]?.isEmpty == true { tagged[target]=nil;values[target]=nil }
-          else { values[target]=tagged[target]?.map(\.erasure) }
-        }
-      }
-    }
-  }
-  @ObservationIgnored private var pages: [UUID: PageErasures] = [:]
   @ObservationIgnored private var spatial: [SurfaceID: [String: [InkElementErasure]]] = [:]
   @ObservationIgnored private var projected: [SurfaceID:[String:[InkElementErasure]]] = [:]
   @ObservationIgnored private var activeTargets: [SurfaceID:Set<String>]?
@@ -364,24 +334,9 @@ struct NotebookPageEraserSource {
 
   func record(_ change: PreparedPageInkChange) {
     projected[.page(change.pageID)]=nil
-    var entry:PageErasures
-    if var cached=pages[change.pageID],cached.stamp == change.baseStamp {
-      switch change.mutation {
-      case .append(let action): cached.append(action)
-      case .setActive(let ids,let active):
-        if active { for id in ids { if let action=change.drawing.action(id:id) { cached.append(action) } } }
-        else { cached.remove(ids) }
-      }
-      entry=cached
-    } else { entry=PageErasures(stamp:change.stamp,drawing:change.drawing) }
-    entry.stamp=change.stamp;pages[change.pageID]=entry
   }
   func page(_ page: PageDocument) -> [String: [InkElementErasure]] {
-    if let cached=pages[page.id],cached.stamp == page.drawingStamp { return cached.values }
-    projected[.page(page.id)]=nil
-    let entry=PageErasures(stamp:page.drawingStamp,drawing:(try? page.inkDrawing()) ?? .init())
-    pages[page.id]=entry
-    return entry.values
+    page.preparedElementErasures ?? [:]
   }
   /// Partial live cuts belong to the page-wide native mask, not another
   /// per-element material. Whole-element hits still retire the body immediately

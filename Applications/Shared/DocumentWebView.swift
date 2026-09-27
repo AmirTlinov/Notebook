@@ -331,6 +331,8 @@ final class DocumentWebCoordinator: NSObject,
   private(set) var pagePreparationTrace: DocumentPagePreparationTrace?
   private(set) var renderSession: DocumentRenderSession?
   private var frameTask: Task<Void, Never>?
+  private var sourcePreparationSubscriber: Task<DocumentPreparedPage, Error>?
+  private var focusedProgramID: String?
   private var frameTaskID: UUID?
   private var shellContinuation: CheckedContinuation<Void, Error>?
   private var frameEvaluationID: UUID?
@@ -1027,6 +1029,18 @@ final class DocumentWebCoordinator: NSObject,
     }
   }
 
+  func checkpointFocusedProgram(resume: Bool) async -> Bool {
+    guard let blockID = focusedProgramID, let token = blockTokens[blockID], let web = webView else { return true }
+    let accepted = await checkpointProgramsOnce(blockID: blockID)
+    guard accepted else { return false }
+    if resume, blockTokens[blockID] == token {
+      do { _ = try await NotebookProgramBridge.request("resumeProgram",
+        script: "return await notebookRenderer.resumeProgram(blockID);", arguments: ["blockID": blockID], in: web) }
+      catch { return false }
+    }
+    return true
+  }
+
   func checkpointPrograms(resume: Bool) async -> Bool {
     let task: Task<Bool, Never>
     if let pending = programCheckpointTask { task = pending }
@@ -1039,12 +1053,16 @@ final class DocumentWebCoordinator: NSObject,
     return accepted
   }
 
-  private func checkpointProgramsOnce() async -> Bool {
+  private func checkpointProgramsOnce(blockID: String? = nil) async -> Bool {
     guard !isInvalidated, isReady, requestedInput || ownsProgramState, let webView, let before = payload,
       before.programMode != "external", !installedPrograms.isEmpty else { return true }
     do {
       let operation = acquisitionError == nil ? "checkpointPrograms" : "finishAcceptedPrograms"
-      let result = try await NotebookProgramBridge.lifecycle(operation, controller: "notebookRenderer", in: webView)
+      let result: JSONValue
+      if let blockID {
+        result = try await NotebookProgramBridge.request("checkpointFocusedProgram",
+          script: "return await notebookRenderer.checkpointProgram(blockID);", arguments: ["blockID": blockID], in: webView)
+      } else { result = try await NotebookProgramBridge.lifecycle(operation, controller: "notebookRenderer", in: webView) }
       guard case .array(let checkpoints) = result, !isInvalidated, payload?.runtimeID == before.runtimeID else { return false }
       var accepted = true
       for checkpoint in checkpoints {
@@ -1197,7 +1215,7 @@ final class DocumentWebCoordinator: NSObject,
   }
 
   private func releaseWebSurface() {
-    programAssets.revokeAll(); programURLs.removeAll(); installedPrograms.removeAll(); programIdentities.removeAll()
+    programAssets.revokeAll(); programURLs.removeAll(); installedPrograms.removeAll(); programIdentities.removeAll(); focusedProgramID = nil
     for entry in programStateTransfers.values { entry.owner.revoke() }
     programStateTransfers.removeAll(); programCheckpointWrites.removeAll(); programInitialStates.removeAll()
     cancelPresentationWaiters()
@@ -1226,6 +1244,7 @@ final class DocumentWebCoordinator: NSObject,
     printedView.clear()
     webView = nil
     isReady = false
+    sourcePreparationSubscriber?.cancel(); sourcePreparationSubscriber = nil
     frameTaskID = nil; frameTask?.cancel(); frameTask = nil
     finishShellWait(throwing: CancellationError())
     finishFrameEvaluation(throwing: CancellationError())
@@ -1253,6 +1272,7 @@ final class DocumentWebCoordinator: NSObject,
     payload?.source.releasePage(hostID: hostID, in: webView)
     clearSnapshotWait(); wakeSnapshotWaiters(unavailable: true)
     snapshotTask?.cancel()
+    sourcePreparationSubscriber?.cancel(); sourcePreparationSubscriber = nil
     frameTask?.cancel()
     finishShellWait(throwing: CancellationError())
     finishFrameEvaluation(throwing: CancellationError())
@@ -1378,6 +1398,7 @@ final class DocumentWebCoordinator: NSObject,
       || payload?.source !== nextSource || payload?.state !== nextState || paperWidthChanged {
       clearSnapshotWait()
       generation &+= 1
+      sourcePreparationSubscriber?.cancel()
       cancelSnapshotPreparation()
       snapshotOnlyComplete = false
       acquisitionError = nil
@@ -1583,6 +1604,7 @@ final class DocumentWebCoordinator: NSObject,
       onProgramReady()
     case "programFocus":
       guard body["blockToken"] as? String == blockTokens[blockID], let focused = body["focused"] as? Bool else { return }
+      if focused { focusedProgramID = blockID } else if focusedProgramID == blockID { focusedProgramID = nil }
       onProgramFocus(focused)
     case "programRetry":
       guard requestedInput || ownsProgramState, !programRetirementRequested,
@@ -1790,7 +1812,7 @@ final class DocumentWebCoordinator: NSObject,
         if let self, frameTaskID == taskID { frameTask = nil; frameTaskID = nil }
       }
       while let self, !Task.isCancelled, !isInvalidated, frameTaskID == taskID,
-        let web = webView, let next = payload, sentGeneration != generation {
+        let web = webView, var next = payload, sentGeneration != generation {
         let expected = generation
         let trace = pagePreparationTrace
         recordPreparation(.frameTaskAt, trace: trace)
@@ -1800,7 +1822,7 @@ final class DocumentWebCoordinator: NSObject,
           // owner. The current paper has not: Code can hide it while the next
           // source is invalid, so its last good raster must remain installed.
           if let retained = printedView.raster,
-            retained.sourceKey != next.source.message.key || retained.page.pageIndex != next.pageIndex
+            retained.page.pageIndex != next.pageIndex
               || retained.image.width != paperPreparationPixelWidth,
             requestedPriority != .currentPage, !SceneSourceVisibility.isVisible(printedView) {
             printedView.clear()
@@ -1810,29 +1832,42 @@ final class DocumentWebCoordinator: NSObject,
             self?.preparationAdmissionChanged(waiting, generation: expected)
           }
           admissionChanged(true)
-          let prepared = try await next.source.preparedPage(next.pageIndex, hostID: hostID,
-            resources: resources, onAdmissionWait: admissionChanged, onLayoutChanged: { [weak self, weak source = next.source] layout in
+          let request = next
+          let subscriber = Task { @MainActor [weak self, hostID, resources, requestedPriority] in try await request.source.preparedPage(request.pageIndex, hostID: hostID,
+            resources: resources, priority: requestedPriority == .currentPage ? .current : .anticipated, onAdmissionWait: admissionChanged, onLayoutChanged: { [weak self, weak source = request.source] layout in
               guard let self, let source, payload?.source === source, hasCanonicalPixels else { return }
               pageCount = layout.pageCount
               webView?.callAsyncJavaScript("window.notebookRenderer.acceptSourceExtent(key, count); return true;",
                 arguments: ["key": source.message.key, "count": layout.pageCount], in: nil, in: .page, completionHandler: nil)
               onPageLayout(.init(pageCount: layout.pageCount,
                 sourceRevision: "\(source.stamp.actor):\(source.stamp.counter)", record: layout))
-            })
+            }) }
+          sourcePreparationSubscriber = subscriber
+          let prepared = try await subscriber.value
+          sourcePreparationSubscriber = nil
           admissionChanged(false)
           guard generation == expected else { continue }
+          if next.programMode != "external" { try await next.source.preparePrograms(on: [next.pageIndex]) }
+          guard generation == expected else { continue }
+          if let ids = next.source.programIDs(on: next.pageIndex), next.programMode != "external" {
+            let local = next.state.records.filter { ids.contains($0.id) }
+            if local.count != next.state.records.count, let renderSession {
+              next.state = renderSession.state(records: local)
+              payload?.state = next.state; pendingSnapshotPayload?.state = next.state
+            }
+          }
           refreshProgramTokens(next.programs)
           physicalSize = .init(width: prepared.fragment.width, height: prepared.fragment.height)
           host?.configure(size: physicalSize, interactive: acceptsInput)
           let paper: DocumentPaperRaster
-          if let installed = printedView.raster, installed.sourceKey == next.source.message.key,
+          if let installed = printedView.raster, installed.page.artifact.pixelIdentity == prepared.printed.artifact.pixelIdentity,
             installed.page.pageIndex == prepared.fragment.pageIndex,
-            installed.image.width >= paperPreparationPixelWidth { paper = installed }
+            installed.image.width >= paperPreparationPixelWidth { paper = installed.rebound(page: prepared.printed, sourceKey: next.source.message.key) }
           else { paper = try await DocumentPaperRaster.prepare(page: prepared.printed, sourceKey: next.source.message.key,
             pixelWidth: paperPreparationPixelWidth, resources: resources, waits: admissionChanged) }
           recordPreparation(.preparedPageReadyAt, trace: trace)
           let source = sentSourceKey == next.source.message.key && sentSourcePage == prepared.fragment.pageIndex
-            ? nil : try await prepared.encodedMessage(resources: resources, onAdmissionWait: admissionChanged)
+            ? nil : try await prepared.encodedMessage(resources: resources, programs: next.programs, failures: next.source.programFailures, externalPrograms: next.programMode == "external", onAdmissionWait: admissionChanged)
           recordPreparation(.pageSourceEncodedAt, trace: trace)
           defer { withExtendedLifetime(source) {} }
           let state = sentStateKey == next.state.message.key ? nil : try await next.state.encodedState(resources: resources)

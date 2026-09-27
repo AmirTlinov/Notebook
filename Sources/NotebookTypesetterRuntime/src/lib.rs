@@ -23,7 +23,7 @@ unsafe extern "C" fn nb_typesetter_should_stop(state: *mut NativeState) -> i32 {
 unsafe extern "C" { fn nb_engine_run(context: *mut std::ffi::c_void, bytes: *mut u8, capacity: usize, used: *mut usize, format: i32) -> i32; }
 pub struct Runtime { bundle: Arc<Bundle>, format: ResourceFile, fonts: ResourceFile }
 #[derive(Debug)]
-pub struct Output { pub pdf: Vec<u8>, pub synctex: Vec<u8>, pub log: String, pub memory_bytes: usize }
+pub struct Output { pub pdf: Vec<u8>, pub synctex: Vec<u8>, pub log: String, pub memory_bytes: usize, pub input_reads: Vec<u8> }
 impl Runtime {
     pub fn new(bundle: &Path, format: &Path, fonts: &Path) -> Self {
         Self { bundle: Arc::new(Bundle::new(bundle)),
@@ -59,7 +59,7 @@ impl Runtime {
         };
         check()?;
         let budget = Arc::new(Budget::default());
-        let input = Directory::new(false, &budget);
+        let (input, input_reads) = Directory::tracked_input(&budget);
         for (name, data) in assets {
             if !Directory::valid_path(&name) || name == "notebook.sty" { return Err("typesetter_file_path_invalid".into()); }
             input.put(&name, data).map_err(|e| format!("typesetter_namespace_invalid: {e}"))?;
@@ -99,12 +99,12 @@ impl Runtime {
         check()?;
         let log = String::from_utf8_lossy(&log.0.lock().unwrap()).into_owned();
         if status != 0 { return Err(format!("typesetter_error({status}): {log}")); }
-        if format { return Ok(Output { pdf: output.take("latex.fmt").ok_or_else(|| format!("typesetter_no_format: {log}"))?, synctex: vec![], log, memory_bytes }); }
+        if format { return Ok(Output { pdf: output.take("latex.fmt").ok_or_else(|| format!("typesetter_no_format: {log}"))?, synctex: vec![], log, memory_bytes, input_reads: input_reads.bytes()? }); }
         let base = Path::new(entrypoint).file_stem().and_then(|v| v.to_str()).unwrap_or("image");
         let pdf = output.take(&format!("{base}.pdf")).ok_or_else(|| format!("typesetter_no_pdf: {log}"))?;
         let synctex = output.take(&format!("{base}.synctex.gz")).unwrap_or_default();
         if !pdf.starts_with(b"%PDF-") || pdf.len() > 16*1024*1024 || synctex.len() > 4*1024*1024 { return Err("typesetter_output_limit".into()); }
-        Ok(Output { pdf, synctex, log, memory_bytes })
+        Ok(Output { pdf, synctex, log, memory_bytes, input_reads: input_reads.bytes()? })
     }
 }
 

@@ -57,6 +57,19 @@ final class DocumentPagePresentationOwner {
     var closingValue: DocumentPagePresentationOwner?
     init(_ value: DocumentPagePresentationOwner) { self.value = value }
   }
+  private struct TurnFrameKey: Equatable {
+    enum Material: Equatable { case picture(UUID), paper(ObjectIdentifier) }
+    let material: Material
+    let token: String
+    let source: String
+    let size: CGSize
+    let scale: Double
+  }
+  private struct TurnFrameMaterial {
+    let key: TurnFrameKey
+    let image: CGImage
+    let owner: AnyObject
+  }
   @MainActor private final class Entry {
     let id: UUID
     weak var host: DocumentWebHost?
@@ -64,10 +77,22 @@ final class DocumentPagePresentationOwner {
     var activity: PageTurnActivity?
     var activityObserver: UUID?
     var preparationObserver: UUID?
+    var turnFrameKey: TurnFrameKey?
+    var turnFrame: PageTurnFrame?
+    var turnFramePreparation: Task<PageTurnFrame, Error>?
+    var turnFramePreparationID: UUID?
+    var turnFramePreparationIsRequired = false
+    var turnFrameRefusal: SceneRasterAdmission?
+    var acceptedTurnCaptures = 0
+    func releaseTurnFrame() {
+      turnFramePreparation?.cancel(); turnFramePreparation = nil; turnFramePreparationID = nil
+      turnFramePreparationIsRequired = false
+      turnFrame = nil; turnFrameKey = nil; turnFrameRefusal = nil
+    }
     var requiresPreparation: Bool {
       input.retainsOpenDocument || (input.isVisible && host?.window != nil)
     }
-    private var readiness: Bool?
+    private var readiness: PageTurnReadiness.State?
     private weak var readinessHandler: PageTurnReadiness?
     init(id: UUID, input: DocumentPagePresentation, host: DocumentWebHost) {
       self.id = id; self.input = input; self.host = host
@@ -77,14 +102,17 @@ final class DocumentPagePresentationOwner {
       if let preparationObserver { activity?.removePreparationObserver(preparationObserver) }
       activityObserver = nil; preparationObserver = nil; activity = nil
     }
-    func publishReadiness(_ value: Bool) {
+    func publishReadiness(_ presented: Bool, capturable: Bool = false) {
+      let value = PageTurnReadiness.State(presented: presented, capturable: presented && capturable)
       guard readiness != value || readinessHandler !== input.onRenderReady else { return }
-      readiness = value; readinessHandler = input.onRenderReady; input.onRenderReady(value)
+      readiness = value; readinessHandler = input.onRenderReady
+      input.onRenderReady(value.presented, capturable: value.capturable)
     }
-    isolated deinit { stopObserving() }
+    isolated deinit { stopObserving(); turnFramePreparation?.cancel() }
   }
   private struct Picture {
     let token: String
+    let source: String
     let raster: RasterLease
   }
   private struct CurrentTarget: Equatable {
@@ -131,6 +159,54 @@ final class DocumentPagePresentationOwner {
     func cameraDidChange() { owner?.refreshVisiblePrograms() }
     isolated deinit { close() }
   }
+  /// The accepted opening owns one cancellable reader of this owner's source.
+  /// It starts no WebKit, pixel capture or program and adds no second compiler.
+  @MainActor final class OpeningPreparation {
+    let documentID: UUID
+    private let document: DocumentDocument
+    private(set) var hasTransferred = false
+    fileprivate var isPending: Bool { source != nil }
+    private let hostID = UUID()
+    private var lifetime: OpenDocument?
+    private var source: DocumentSourceSnapshot?
+    private var task: Task<Void, Never>?
+    fileprivate init(owner: DocumentPagePresentationOwner, document: DocumentDocument,
+      pageIndex: Int, store: NotebookStore) {
+      documentID = document.id; self.document = document; lifetime = owner.retainOpenDocument()
+      let source = owner.renderSession.source(document, store: store)
+      self.source = source
+      let hostID = hostID, resources = owner.resources
+      task = Task { @MainActor in
+        // Failure stays on the same immutable source and is presented by the
+        // mounted page's existing error/retry path, never by a hidden surface.
+        do { try await source.prepareOpening(pageIndex: pageIndex, hostID: hostID, resources: resources) }
+        catch { }
+      }
+    }
+    func matches(_ document: DocumentDocument) -> Bool { self.document == document }
+    fileprivate func handoff(to installedSource: DocumentSourceSnapshot) {
+      guard source === installedSource else { return }
+      hasTransferred = true; close()
+    }
+    func close() {
+      task?.cancel(); task = nil
+      source?.releasePage(hostID: hostID, in: nil); source = nil
+      lifetime?.close(); lifetime = nil
+    }
+    isolated deinit { close() }
+  }
+  private final class WeakOpeningPreparation {
+    weak var value: OpeningPreparation?
+    init(_ value: OpeningPreparation) { self.value = value }
+  }
+  private var openingPreparations: [WeakOpeningPreparation] = []
+  func prepareOpening(document: DocumentDocument, pageIndex: Int, store: NotebookStore) -> OpeningPreparation {
+    precondition(document.id == documentID)
+    openingPreparations.removeAll { $0.value?.isPending != true }
+    let opening = OpeningPreparation(owner: self, document: document, pageIndex: pageIndex, store: store)
+    openingPreparations.append(WeakOpeningPreparation(opening))
+    return opening
+  }
   private var closingPrograms: Task<Void, Never>?
   private var openDocuments = 0
   private var returnDocuments = 0
@@ -148,6 +224,11 @@ final class DocumentPagePresentationOwner {
     for entry in Array(owners.values) {
       if let owner = entry.closingValue, owner.resources === resources { owner.stop() }
     }
+  }
+
+  static func checkpointFocusedProgram(documentID: UUID, resources: SceneRenderResources = .shared, resume: Bool) async -> Bool {
+    guard let owner = owners[Key(documentID: documentID, resources: ObjectIdentifier(resources))]?.value else { return true }
+    return await owner.programOwner.checkpointFocused(resume: resume)
   }
 
   static func checkpointPrograms(documentID: UUID? = nil, resources: SceneRenderResources = .shared, resume: Bool) async -> Bool {
@@ -210,7 +291,7 @@ final class DocumentPagePresentationOwner {
     let entries = owner.entries.values.map { entry in
       "\(entry.id):page=\(entry.input.pageIndex),current=\(entry.input.isCurrent),host=\(entry.host.map { String(describing: ObjectIdentifier($0)) } ?? "nil"),window=\(entry.host?.window != nil)"
     }.sorted()
-    return "current=\(String(describing: owner.current?.id)) mounted=\(String(describing: owner.mountedID)) entries=\(entries) paperPage=\(String(describing: owner.paper.payload?.pageIndex)) canonical=\(owner.paper.hasCanonicalPixels) paper=\(path(owner.paper.webView)) paperToken=\(owner.paper.payload?.renderToken ?? "nil") currentToken=\(owner.current?.input.token ?? "nil") work=\(String(describing: owner.workID)) needsWork=\(owner.needsWork) passivePage=\(String(describing: owner.passive?.payload?.pageIndex)) passiveStage=\(owner.passiveStage) passiveCanonical=\(owner.passive?.hasCanonicalPixels == true) passiveError=\(String(describing: owner.passive?.acquisitionError)) passiveView=\(path(owner.passive?.webView)) pictures=\(owner.pictures.mapValues { "\($0.raster.image.cgImage?.width ?? 0)x\($0.raster.image.cgImage?.height ?? 0)" }) admission=\(owner.resources.rasterAdmission) pendingReaders=\(owner.source?.pendingPreparationReaderCount ?? 0) gesture=\(owner.gestureLocked) focused=\(owner.programOwner.hasFocus) terminal=\(owner.terminalFailures.keys.sorted()) pressure=\(owner.failures.keys.sorted())"
+    return "current=\(String(describing: owner.current?.id)) mounted=\(String(describing: owner.mountedID)) entries=\(entries) paperPage=\(String(describing: owner.paper.payload?.pageIndex)) canonical=\(owner.paper.hasCanonicalPixels) paper=\(path(owner.paper.webView)) paperToken=\(owner.paper.payload?.renderToken ?? "nil") currentToken=\(owner.current?.input.token ?? "nil") work=\(String(describing: owner.workID)) needsWork=\(owner.needsWork) passivePage=\(String(describing: owner.passive?.payload?.pageIndex)) passiveStage=\(owner.passiveStage) passiveCanonical=\(owner.passive?.hasCanonicalPixels == true) passiveError=\(String(describing: owner.passive?.acquisitionError)) passiveView=\(path(owner.passive?.webView)) pictures=\(owner.pictures.mapValues { "\($0.raster.image.cgImage?.width ?? 0)x\($0.raster.image.cgImage?.height ?? 0)" }) admission=\(owner.resources.rasterAdmission) pendingReaders=\(owner.source?.pendingPreparationReaderCount ?? 0) gesture=\(owner.gestureLocked) focused=\(owner.programOwner.hasFocus) terminal=\(owner.terminalFailures.sorted()) pressure=\(owner.failures.keys.sorted())"
   }
 
   /// Submission freezes the installed native paper and all clipped program
@@ -262,6 +343,7 @@ final class DocumentPagePresentationOwner {
 
   let documentID: UUID
   let resources: SceneRenderResources
+  private let renderSession: DocumentRenderSession
   private let installationID = UUID()
   private var installationGeneration: UInt64 = 0
   private var entries: [UUID: Entry] = [:]
@@ -280,12 +362,13 @@ final class DocumentPagePresentationOwner {
   }
   private var stagedPaper: StagedPaper?
   private var source: DocumentSourceSnapshot?
+  private var programDemandTask: Task<Void, Never>?
+  private var programDemandKey: String?
   private let programOwner: DocumentProgramOwner
   private var contacts: Set<String> = []
   private var pictures: [Int: Picture] = [:]
   private var failures: [String: SceneRasterAdmission] = [:]
-  private enum FailureScope { case paper, composite }
-  private var terminalFailures: [String: FailureScope] = [:]
+  private var terminalFailures: Set<String> = []
   private var work: Task<Void, Never>?
   private var workID: UUID?
   private var needsWork = false
@@ -302,6 +385,7 @@ final class DocumentPagePresentationOwner {
 
   private init(documentID: UUID, resources: SceneRenderResources) {
     self.documentID = documentID; self.resources = resources
+    renderSession = DocumentRenderRegistry.shared.session(documentID: documentID, resources: resources)
     programOwner = DocumentProgramOwner(documentID: documentID, resources: resources)
     paper = makePaper()
     programOwner.onChange = { [weak self] in
@@ -379,7 +463,7 @@ final class DocumentPagePresentationOwner {
   }
 
   private func makePaper() -> DocumentWebCoordinator {
-    let renderer = DocumentWebCoordinator(resources: resources, onRenderReady: .init { _ in },
+    let renderer = DocumentWebCoordinator(resources: resources, renderSession: renderSession, onRenderReady: .init { _ in },
       onPageLayout: { _ in },  onStateChange: { _, _ in nil })
     bindPaper(renderer)
     return renderer
@@ -459,6 +543,11 @@ final class DocumentPagePresentationOwner {
     let entry: Entry
     if let existing = entries[id] { entry = existing; entry.input = input; entry.host = host }
     else { entry = Entry(id: id, input: input, host: host); entries[id] = entry }
+    input.onRenderReady.setFrameProvider { [weak self, weak entry] priority in
+      guard let self, let entry, self.entries[id] === entry else { throw CancellationError() }
+      return try await self.prepareTurnFrame(entry, priority: priority)
+    }
+    if previousToken != input.token { entry.releaseTurnFrame() }
     if input.isCurrent { selectedID = id }
     if mountedID == id {
       refreshMountedInput()
@@ -484,7 +573,9 @@ final class DocumentPagePresentationOwner {
       else if requestsLivePaper(for: entry) {
         entry.publishReadiness(false)
       }
-      else if let picture = picture(for: entry) { host.installSnapshot(picture.raster); entry.publishReadiness(true) }
+      else if let picture = picture(for: entry) {
+        host.installSnapshot(picture.raster); entry.publishReadiness(true, capturable: canCapture(entry))
+      }
       else { host.showLoading(); entry.publishReadiness(false) }
     }
     if entry.requiresPreparation { source?.retainPage(input.pageIndex, hostID: id) }
@@ -492,6 +583,7 @@ final class DocumentPagePresentationOwner {
       // UIKit can retain a closed overview. Its native attachment, not deinit,
       // owns thumbnail demand and pins; off-window RAF cannot hold up a reader.
       source?.releasePage(hostID: id, in: nil)
+      entry.releaseTurnFrame()
       host.removeFallback(); entry.publishReadiness(false)
       if let passive, passive.webView?.window == nil {
         work?.cancel(); work = nil; workID = nil
@@ -616,6 +708,7 @@ final class DocumentPagePresentationOwner {
       }
     }
     if mountedID == id { mountedID = nil }
+    entry.releaseTurnFrame()
     entry.stopObserving(); entry.host?.onContactChange = { _ in }; entry.host?.onSizeChange = { }
     entry.host?.onWindowChange = { }
     // SwiftUI/UIKit can retain the departed host after its coordinator ends.
@@ -639,8 +732,9 @@ final class DocumentPagePresentationOwner {
     // installed native host owns its own fallback lease through the handoff.
     // This preparation owner only pins images a current presentation can use.
     pictures = pictures.filter { requestedTokens.contains($0.value.token) }
+    for entry in entries.values where !entry.requiresPreparation { entry.releaseTurnFrame() }
     failures = failures.filter { requestedTokens.contains($0.key) }
-    terminalFailures = terminalFailures.filter { requestedTokens.contains($0.key) }
+    terminalFailures = terminalFailures.intersection(requestedTokens)
   }
 
   /// UIKit's adjacent controllers can remain mounted without being displayed.
@@ -648,7 +742,17 @@ final class DocumentPagePresentationOwner {
   /// remains mandatory. The host still owns every installed image lease.
   private func reclamationCandidates() -> [SceneResourceReclamationCandidate] {
     guard !stopped, !gestureLocked else { return [] }
-    return pictures.compactMap { page, picture in
+    let frames: [SceneResourceReclamationCandidate] = entries.values.compactMap { entry in
+      guard let frame = entry.turnFrame else { return nil }
+      let frameID = frame.id, bytes = frame.byteCount
+      return .init(id: frameID, bytes: bytes, rasterCount: 1, value: .unused,
+        distance: abs(entry.input.pageIndex - (current?.input.pageIndex ?? entry.input.pageIndex)), restorationMilliseconds: 1,
+        release: { [weak entry] in
+          guard entry?.turnFrame?.id == frameID else { return nil }
+          entry?.releaseTurnFrame(); return nil
+        })
+    }
+    return frames + pictures.compactMap { page, picture in
       guard canReclaimPicture(page: page, rasterID: picture.raster.entryID) else { return nil }
       let rasterID = picture.raster.entryID
       let installed = entries.values.contains { $0.host?.snapshotEntryID == rasterID }
@@ -672,6 +776,7 @@ final class DocumentPagePresentationOwner {
   private func reclaimPicture(page: Int, rasterID: UUID) {
     guard canReclaimPicture(page: page, rasterID: rasterID) else { return }
     for entry in entries.values where entry.host?.snapshotEntryID == rasterID {
+      entry.releaseTurnFrame()
       entry.host?.removeFallback(); entry.publishReadiness(false)
     }
     pictures[page] = nil
@@ -681,6 +786,7 @@ final class DocumentPagePresentationOwner {
   private func schedule() {
     guard !stopped else { return }
     resources.reclamationOffersChanged()
+    refreshResidentTurnFrames()
     refreshProgramDemand()
     needsWork = true
     guard work == nil else { return }
@@ -812,13 +918,6 @@ final class DocumentPagePresentationOwner {
       guard needsPicture(candidate), failures[candidate.input.token] == nil,
         !hasTerminalFailure(for: candidate) else { continue }
       if requestsLivePaper(for: candidate), candidate.host?.window == nil { continue }
-      if !requestsLivePaper(for: candidate), !programsReady(on: candidate.input.pageIndex) {
-        let ids = layout.blockIDs(on: [candidate.input.pageIndex], kind: .program)
-        if let error = ids.compactMap({ programOwner.runtimes[$0]?.failure }).first {
-          show(error, on: candidate, scope: .composite)
-        }
-        continue
-      }
       let token = candidate.input.token
       let measurements = candidate.input.measurements
       var landingTrace: DocumentPagePreparationTrace?
@@ -829,6 +928,14 @@ final class DocumentPagePresentationOwner {
         // A hidden paper bitmap is preparation backing, not the final native
         // page picture. Budget both simultaneously before starting its decode;
         // a fixed 1024px intermediate otherwise defeats low-quality admission.
+        // Optional GPU copies yield before choosing the new paper's density;
+        // captureWidth intentionally sees actual free bytes, not eviction offers.
+        if !requestsLivePaper(for: candidate) {
+          for cached in residentTurnEntries.reversed() {
+            guard captureWidth(candidate, includesPaperBacking: true) < requestedWidth(candidate) else { break }
+            cached.releaseTurnFrame()
+          }
+        }
         let paperWidth = requestsLivePaper(for: candidate) ? 1024 : max(1, min(1024, captureWidth(candidate, includesPaperBacking: true)))
         configure(renderer, input: candidate.input, page: candidate.input.pageIndex, paperPixelWidth: paperWidth)
         observe("passive_page_configured", entryID: candidate.id, page: candidate.input.pageIndex, renderer: renderer)
@@ -860,6 +967,7 @@ final class DocumentPagePresentationOwner {
           measurements?.observeLanding(landingTrace, stage: .completed)
           observe("document_live_target_prepared", entryID: candidate.id, page: candidate.input.pageIndex, renderer: renderer)
           candidate.publishReadiness(true)
+          refreshResidentTurnFrames()
           return
         }
         passiveStage = .capturing
@@ -868,9 +976,11 @@ final class DocumentPagePresentationOwner {
         measurements?.observeLanding(landingTrace, stage: .completed)
         observe("passive_page_capture_finished", entryID: candidate.id, page: candidate.input.pageIndex, renderer: renderer)
         guard candidate.input.token == token, entries[candidate.id] === candidate else { raster.release(); continue }
-        pictures[candidate.input.pageIndex] = Picture(token: token, raster: raster)
+        pictures[candidate.input.pageIndex] = Picture(token: token, source: source?.message.key ?? "", raster: raster)
         offerPassiveRenderer(renderer)
-        candidate.host?.installSnapshot(raster); candidate.host?.removeFailure(); candidate.publishReadiness(true)
+        candidate.host?.installSnapshot(raster); candidate.host?.removeFailure()
+        candidate.publishReadiness(true, capturable: canCapture(candidate))
+        refreshResidentTurnFrames()
       } catch is CancellationError {
         measurements?.observeLanding(landingTrace, stage: .cancelled)
         if workID == preparingOperation, passiveStage != .idle { retirePassiveRenderer() }
@@ -931,6 +1041,13 @@ final class DocumentPagePresentationOwner {
     for entry in entries.values where entry.requiresPreparation {
       source?.retainPage(entry.input.pageIndex, hostID: entry.id)
     }
+    // A positive camera pose only retains the document owner. Transfer the
+    // early source reader after this exact native payload has registered its
+    // real page demand, so cancellation cannot fall into an unowned interval.
+    if let source {
+      for opening in openingPreparations.compactMap(\.value) { opening.handoff(to: source) }
+      openingPreparations.removeAll { $0.value?.isPending != true }
+    }
   }
 
   private func visiblePrograms() -> Set<String> {
@@ -966,6 +1083,30 @@ final class DocumentPagePresentationOwner {
     guard let input = stateOwner?.input ?? entries.values.first?.input, let layout = source?.layout,
       source?.matches(input.document) == true else { return }
     let pages = Set(entries.values.filter(\.requiresPreparation).map { min($0.input.pageIndex, layout.pageCount - 1) })
+    if let source {
+      // Existing heaps remain publication owners while their new descriptor is
+      // being resolved. Absence in a lazy result is not proof of source deletion.
+      let retained = Set(programOwner.runtimes.keys)
+      let required = layout.blockIDs(on: pages, kind: .program).union(retained).intersection(source.programIDs)
+      let key = source.message.key + ":" + required.sorted().joined(separator: ",")
+      if programDemandKey != key {
+        programDemandTask?.cancel(); programDemandKey = key
+        programDemandTask = Task { @MainActor [weak self, weak source] in
+          guard let self, let source else { return }
+          do {
+            let immediate = current.map { Set([$0.input.pageIndex]) } ?? []
+            try await source.preparePrograms(on: immediate, retaining: retained)
+            guard !Task.isCancelled, self.source === source, programDemandKey == key else { return }
+            refreshProgramDemand(); schedule()
+            try await source.preparePrograms(on: pages)
+          } catch { return }
+          guard !Task.isCancelled, self.source === source, programDemandKey == key else { return }
+          refreshProgramDemand(); schedule()
+        }
+      }
+      let resolved = Set(source.programs.map(\.id)).union(source.programFailures.keys)
+      guard retained.intersection(source.programIDs).isSubset(of: resolved) else { return }
+    }
     var densities: [String: Double] = [:]
     for entry in entries.values where entry.requiresPreparation {
       for id in layout.blockIDs(on: [entry.input.pageIndex], kind: .program) {
@@ -991,32 +1132,15 @@ final class DocumentPagePresentationOwner {
     }
     let placements = placements(on: entry)
     let passive = passivePlacements(on: entry)
-    guard host.programOverlay.present(placements, paperSize: physicalSize(entry.input), interactive: entry.input.isInteractive, passive: passive) else { return }
-    host.programOverlay.presentPending(layout.regions(on: entry.input.pageIndex).compactMap { region in
-      guard region.kind == .program, source?.programIDs.contains(region.id) == true else { return nil }
-      let id = region.id, runtime = programOwner.runtimes[id]
-      let message: String, actionTitle: String, action: (() -> Void)?
-      if let failure = source?.programFailures[id] {
-        message = failure; actionTitle = ""; action = nil
-      } else if programOwner.retiringIDs.contains(id) {
-        message = "Сохраняем состояние программы…"; actionTitle = ""; action = nil
-      } else if runtime?.failure != nil || programOwner.pauseFailures[id] != nil {
-        message = "Не удалось подготовить программу"; actionTitle = "Повторить"
-        action = { [weak self] in
-          self?.programOwner.retry(id)
-        }
-      } else if runtime?.ready != true || !programOwner.liveIDs.contains(id) {
-        message = runtime?.webView == nil && programOwner.liveIDs.contains(id)
-          ? "Ожидаем свободные ресурсы…" : "Подготовка программы…"
-        actionTitle = ""; action = nil
-      } else { return nil }
-      return DocumentProgramPendingPlacement(blockID: id,
-        rect: .init(x: region.frame.x, y: region.frame.y, width: region.frame.width, height: region.frame.height),
-        message: message, retry: action, actionTitle: actionTitle)
-    })
+    guard host.programOverlay.present(placements, paperSize: physicalSize(entry.input), interactive: entry.input.isInteractive, passive: passive) else {
+      entry.publishReadiness(true, capturable: false)
+      return
+    }
+    host.programOverlay.presentPending(pendingPlacements(on: entry))
     paper.preservesFallback = false; host.removeFallback(); host.removeLoading(); host.removeFailure()
     refreshMountedInput()
-    entry.publishReadiness(true)
+    entry.publishReadiness(true, capturable: canCapture(entry))
+    refreshResidentTurnFrames()
     installationGeneration &+= 1
     let installedToken = entry.input.token
     let installation = host.programOverlay.installation(for: placements, paperSize: physicalSize(entry.input), passive: passive)
@@ -1054,10 +1178,39 @@ final class DocumentPagePresentationOwner {
     }
   }
 
+  private func pendingPlacements(on entry: Entry) -> [DocumentProgramPendingPlacement] {
+    guard let layout = source?.layout else { return [] }
+    return layout.regions(on: entry.input.pageIndex).compactMap { region in
+      guard region.kind == .program, source?.programIDs.contains(region.id) == true else { return nil }
+      let id = region.id, runtime = programOwner.runtimes[id]
+      let message: String, actionTitle: String, action: (() -> Void)?
+      if let failure = source?.programFailures[id] {
+        message = failure; actionTitle = ""; action = nil
+      } else if source?.program(id) == nil || (runtime != nil && source?.program(id)?.sourceBasis != runtime?.sourceBasis) {
+        message = "Подготовка программы…"; actionTitle = ""; action = nil
+      } else if programOwner.retiringIDs.contains(id) {
+        message = "Сохраняем состояние программы…"; actionTitle = ""; action = nil
+      } else if runtime?.failure != nil || programOwner.pauseFailures[id] != nil {
+        message = "Не удалось подготовить программу"; actionTitle = "Повторить"
+        action = { [weak self] in
+          self?.programOwner.retry(id)
+        }
+      } else if runtime?.ready != true || !programOwner.liveIDs.contains(id) {
+        message = runtime?.webView == nil && programOwner.liveIDs.contains(id)
+          ? "Ожидаем свободные ресурсы…" : "Подготовка программы…"
+        actionTitle = ""; action = nil
+      } else { return nil }
+      return DocumentProgramPendingPlacement(blockID: id,
+        rect: .init(x: region.frame.x, y: region.frame.y, width: region.frame.width, height: region.frame.height),
+        message: message, retry: action, actionTitle: actionTitle)
+    }
+  }
+
   private func placements(on entry: Entry) -> [DocumentProgramPlacement] {
     guard let layout = source?.layout else { return [] }
     return layout.regions(on: entry.input.pageIndex).compactMap { region in
       guard region.kind == .program, let runtime = programOwner.runtimes[region.id], runtime.ready,
+        source?.program(region.id)?.sourceBasis == runtime.sourceBasis,
         programOwner.liveIDs.contains(region.id) || programOwner.retiringIDs.contains(region.id),
         let web = runtime.webView else { return nil }
       return .init(blockID: region.id, webView: web,
@@ -1104,6 +1257,24 @@ final class DocumentPagePresentationOwner {
     return host.programOverlay.isPresenting(placements(on: entry), paperSize: physicalSize(entry.input), passive: passivePlacements(on: entry))
   }
 
+  /// Curl captures what is actually installed, including an explicit pending
+  /// or failed slot. Program interactivity is a separate readiness contract.
+  private func canCapture(_ entry: Entry) -> Bool {
+    guard let host = entry.host, let source, source.matches(entry.input.document),
+      let layout = source.layout else { return false }
+    if let picture = picture(for: entry), host.snapshotEntryID == picture.raster.entryID {
+      return !picture.raster.isReleased
+    }
+    guard mountedID == entry.id, !host.hasSnapshot, paper.hasCanonicalPixels,
+      paper.payload?.renderToken == entry.input.paperToken, paper.installedPaper != nil,
+      let web = paper.webView, host.ownsSurface(web) else { return false }
+    let live = placements(on: entry), passive = passivePlacements(on: entry), pending = pendingPlacements(on: entry)
+    let covered = Set(live.map(\.blockID)).union(passive.map(\.blockID)).union(pending.map(\.blockID))
+    return layout.blockIDs(on: [entry.input.pageIndex], kind: .program).isSubset(of: covered)
+      && host.programOverlay.isPresenting(live, paperSize: physicalSize(entry.input), passive: passive)
+      && host.programOverlay.isPresentingPending(pending)
+  }
+
   private func programsReady(on page: Int, scope: DocumentPresentationScope = .page) -> Bool {
     guard let source, let layout = source.layout, (0..<layout.pageCount).contains(page) else { return false }
     switch scope {
@@ -1138,61 +1309,307 @@ final class DocumentPagePresentationOwner {
     } onCancel: { task.cancel() }
   }
 
-  private func capturePixels(_ entry: Entry, using renderer: DocumentWebCoordinator) async throws -> RasterLease {
-    guard let layout = source?.layout, programsReady(on: entry.input.pageIndex) else { throw SceneRenderError.snapshotPending("document_program") }
-    let input = entry.input, token = input.token, physical = physicalSize(input)
-    let width = captureWidth(entry)
-    guard width > 0 else { throw SceneRenderError.resourceLimit }
-    let hasPrograms = !layout.blockIDs(on: [input.pageIndex], kind: .program).intersection(source?.programIDs ?? []).isEmpty
-    let liveRegions = layout.regions(on: input.pageIndex).compactMap { region -> (DocumentBlockRegion, DocumentBlockRuntime)? in
-      guard region.kind == .program, let runtime = programOwner.runtimes[region.id], runtime.ready else { return nil }
-      return (region, runtime)
+  @MainActor private final class TurnLayers {
+    let images: [PageTurnFrame.ImageLayer]
+    let retained: [AnyObject]
+    init(images: [PageTurnFrame.ImageLayer], retained: [AnyObject]) {
+      self.images = images; self.retained = retained
     }
-    let pageHeight = Int(ceil(Double(width) * physical.height / physical.width))
-    let baseSize = renderer.webView?.bounds.size ?? physical
-    var sizes = [(width: width, height: max(pageHeight, Int(ceil(Double(width) * baseSize.height / baseSize.width))))]
-    for (region, runtime) in liveRegions {
-      let pixels = max(1, Int(ceil(Double(width) * region.frame.width / physical.width)))
-      sizes.append((pixels, Int(ceil(Double(pixels) * min(region.frame.height, runtime.viewportSize.height - region.sourceOffset) / runtime.blockWidth))))
-    }
-    if hasPrograms { sizes.append((width, pageHeight)) }
-    guard let reservations = resources.reserveRasterBatch(sizes) else { throw SceneRenderError.resourceLimit }
-    defer { reservations.forEach { $0.release() } }
-    let base = try await renderer.retainPreparedSnapshot(pixelWidth: width, force: true, reservation: reservations[0])
-    renderer.releasePreparedSnapshot()
-    guard !Task.isCancelled, !stopped, entry.input.token == token, renderer.payload?.renderToken == entry.input.paperToken else {
-      base.release(); throw CancellationError()
-    }
-    if !hasPrograms { return base }
-    defer { base.release() }
-    var layers: [(DocumentBlockRegion, RasterLease, Bool)] = []
-    defer { layers.forEach { $0.1.release() } }
-    for region in layout.regions(on: input.pageIndex) where region.kind == .program {
-      if let index = liveRegions.firstIndex(where: { $0.0 == region }) {
-        let runtime = liveRegions[index].1
-        let image = try await runtime.capture(sourceOffset: region.sourceOffset, height: min(region.frame.height, runtime.viewportSize.height - region.sourceOffset),
-          pixelWidth: sizes[index + 1].width, reservation: reservations[index + 1])
-        layers.append((region, image, false))
-      } else if let image = programOwner.paused(region.id)?.raster.retainedCopy() {
-        layers.append((region, image, true))
+  }
+
+  /// Only the finite native page window owns resident GPU frames. Thumbnails
+  /// keep their existing CPU picture and never compete with opening input.
+  private var residentTurnEntries: [Entry] {
+    let currentPage = current?.input.pageIndex ?? driver?.input.pageIndex ?? 0
+    return Array(entries.values.filter { $0.input.retainsOpenDocument && $0.requiresPreparation }.sorted {
+      @MainActor func rank(_ entry: Entry) -> Int {
+        if entry.id == current?.id { return 0 }
+        if entry.input.pageIndex == preparationDemand?.pageIndex { return 1 }
+        return 2
       }
+      if rank($0) != rank($1) { return rank($0) < rank($1) }
+      let a = abs($0.input.pageIndex - currentPage), b = abs($1.input.pageIndex - currentPage)
+      return a == b ? $0.id.uuidString < $1.id.uuidString : a < b
+    }.prefix(PageTurnPrewarmWindow.capacity))
+  }
+
+  private func staticTurnMaterial(_ entry: Entry) -> TurnFrameMaterial? {
+    guard let source, let layout = source.layout, source.matches(entry.input.document) else { return nil }
+    let size = physicalSize(entry.input), scale = requiredScale(entry)
+    guard size.width.isFinite, size.height.isFinite, size.width > 0, size.height > 0,
+      scale.isFinite, scale > 0, size.width * scale <= 8192, size.height * scale <= 8192 else { return nil }
+    let hasPrograms = layout.regions(on: entry.input.pageIndex).contains { $0.kind == .program }
+    let renderer = entry.id == mountedID ? paper : passive
+    let currentPaperMatches = renderer?.payload?.renderToken == entry.input.paperToken
+      && renderer?.payload?.source.matches(entry.input.document) == true && renderer?.hasCanonicalPixels == true
+    // A passive picture is the actual installed cut. A plain page may continue
+    // borrowing it after landing when it covers the same print at full density.
+    // Live slots always take a new cut once this entry becomes current.
+    if let picture = picture(for: entry), picture.source == source.message.key,
+      let image = picture.raster.image.cgImage,
+      (entry.host?.snapshotEntryID == picture.raster.entryID
+        || (!hasPrograms && currentPaperMatches && entry.id == mountedID
+          && image.width >= Int(ceil(size.width * scale)) && image.height >= Int(ceil(size.height * scale)))) {
+      return .init(key: .init(material: .picture(picture.raster.entryID), token: entry.input.token,
+        source: source.message.key, size: size, scale: scale), image: image, owner: picture.raster)
+    }
+    guard !hasPrograms, currentPaperMatches, entry.id == mountedID || hasStagedPaper(for: entry),
+      let paper = renderer?.installedPaper, entry.host?.hasSnapshot == false else { return nil }
+    return .init(key: .init(material: .paper(ObjectIdentifier(paper)), token: entry.input.token,
+      source: source.message.key, size: size, scale: scale), image: paper.image, owner: paper)
+  }
+
+  private func refreshResidentTurnFrames() {
+    guard !stopped else { return }
+    let retained = residentTurnEntries, ids = Set(retained.map(\.id))
+    for entry in entries.values where !ids.contains(entry.id) { entry.releaseTurnFrame() }
+    // CPU paper/pictures get the first admission. A speculative GPU copy must
+    // not consume the single available raster slot before a neighbour can use it.
+    let mayPrewarm = !entries.values.contains {
+      $0.requiresPreparation && $0.id != current?.id && needsPicture($0)
+    }
+    for entry in retained {
+      guard let material = staticTurnMaterial(entry) else { entry.releaseTurnFrame(); continue }
+      if entry.turnFrameKey != material.key { entry.releaseTurnFrame() }
+      guard mayPrewarm, entry.acceptedTurnCaptures == 0,
+        entry.turnFrame == nil, entry.turnFramePreparation == nil else { continue }
+      _ = prepareResidentTurnFrame(entry, material: material, opportunistic: true)
+    }
+  }
+
+  private func prepareResidentTurnFrame(_ entry: Entry, material: TurnFrameMaterial,
+    opportunistic: Bool) -> Task<PageTurnFrame, Error>? {
+    if entry.turnFrameKey != material.key { entry.releaseTurnFrame() }
+    if let task = entry.turnFramePreparation {
+      if !opportunistic { entry.turnFramePreparationIsRequired = true }
+      return task
+    }
+    let key = material.key, admission = resources.rasterAdmission
+    guard let bytes = SceneRenderResources.estimatedRasterBytes(pixelWidth: Int(ceil(key.size.width * key.scale)),
+      pixelHeight: Int(ceil(key.size.height * key.scale))) else { return nil }
+    if opportunistic {
+      // No pending allocation and no reclamation for a speculative GPU copy.
+      // Paper readiness/input have already been published by their owner.
+      guard resources.pendingDerivedRequestCount == 0, entry.turnFrameRefusal != admission,
+        admission.fits(additionalBytes: bytes / 2, additionalCount: 1) else { return nil }
+    }
+    let operation = UUID()
+    entry.turnFrameKey = key; entry.turnFramePreparationID = operation
+    entry.turnFramePreparationIsRequired = !opportunistic
+    let resources = resources
+    let task = Task { @MainActor [weak self, weak entry] in
+      do {
+        try Task.checkCancellation()
+        if entry?.turnFramePreparationIsRequired != true {
+          guard resources.pendingDerivedRequestCount == 0,
+            resources.rasterAdmission.fits(additionalBytes: bytes / 2, additionalCount: 1) else { throw SceneRenderError.resourceLimit }
+        }
+        let frame = try await PageTurnFrame.compose(size: key.size, scale: key.scale,
+          images: [.init(image: material.image, frame: .init(origin: .zero, size: key.size))], resources: resources,
+          retaining: [material.owner])
+        try Task.checkCancellation()
+        guard let self, let entry, self.entries[entry.id] === entry,
+          entry.turnFramePreparationID == operation, entry.turnFrameKey == key,
+          self.staticTurnMaterial(entry)?.key == key else { throw CancellationError() }
+        entry.turnFrame = frame; entry.turnFramePreparation = nil; entry.turnFramePreparationID = nil
+        entry.turnFramePreparationIsRequired = false; entry.turnFrameRefusal = nil
+        resources.reclamationOffersChanged()
+        return frame
+      } catch {
+        if let entry, entry.turnFramePreparationID == operation {
+          entry.turnFramePreparation = nil; entry.turnFramePreparationID = nil
+          entry.turnFramePreparationIsRequired = false; entry.turnFrameRefusal = resources.rasterAdmission
+        }
+        throw error
+      }
+    }
+    entry.turnFramePreparation = task
+    return task
+  }
+
+  /// A curl borrows an already resident immutable static frame. Live programs
+  /// contribute an atomic cut of their existing slots at this acceptance.
+  private func prepareTurnFrame(_ entry: Entry, priority: SceneAllocationPriority) async throws -> PageTurnFrame {
+    guard canCapture(entry) else { throw SceneRenderError.snapshotPending("document_installed_slots") }
+    if priority == .input { entry.acceptedTurnCaptures += 1 }
+    defer { if priority == .input { entry.acceptedTurnCaptures -= 1 } }
+    let token = entry.input.token, size = physicalSize(entry.input)
+    if let material = staticTurnMaterial(entry) {
+      if entry.turnFrameKey == material.key, let frame = entry.turnFrame { return frame }
+      if priority == .input {
+        // Reuse an already submitted passive GPU copy when possible. A refused
+        // speculative allocation must not veto this accepted physical turn.
+        if let task = entry.turnFramePreparation {
+          do {
+            let frame = try await task.value
+            try Task.checkCancellation()
+            guard entries[entry.id] === entry, staticTurnMaterial(entry)?.key == material.key else { throw CancellationError() }
+            return frame
+          } catch {
+            try Task.checkCancellation()
+            guard entries[entry.id] === entry, staticTurnMaterial(entry)?.key == material.key else { throw CancellationError() }
+            guard error is CancellationError || error as? SceneRenderError == .resourceLimit else { throw error }
+          }
+        }
+        let frame = try await PageTurnFrame.compose(size: material.key.size, scale: material.key.scale,
+          images: [.init(image: material.image, frame: .init(origin: .zero, size: material.key.size))],
+          resources: resources, priority: .input, retaining: [material.owner])
+        try Task.checkCancellation()
+        guard entries[entry.id] === entry, staticTurnMaterial(entry)?.key == material.key else { throw CancellationError() }
+        return frame
+      }
+      guard let task = prepareResidentTurnFrame(entry, material: material, opportunistic: false) else {
+        throw SceneRenderError.snapshotPending("document_turn_material")
+      }
+      let frame = try await task.value
+      try Task.checkCancellation()
+      guard entries[entry.id] === entry, staticTurnMaterial(entry)?.key == material.key else { throw CancellationError() }
+      return frame
+    }
+    entry.releaseTurnFrame()
+    let renderer = entry.id == mountedID ? paper : passive
+    guard let renderer, let raster = renderer.installedPaper,
+      renderer.payload?.renderToken == entry.input.paperToken else { throw SceneRenderError.snapshotPending("document_paper") }
+    let layers = try await turnLayers(entry, paper: raster, width: requestedWidth(entry), exactInstalled: true, priority: priority)
+    guard entries[entry.id] === entry, entry.input.token == token,
+      renderer.installedPaper === raster else { throw CancellationError() }
+    let frame = try await PageTurnFrame.compose(size: size, scale: requiredScale(entry), images: layers.images, resources: resources, priority: priority, retaining: layers.retained)
+    guard entries[entry.id] === entry, entry.input.token == token else { throw CancellationError() }
+    return frame
+  }
+
+  private func turnLayers(_ entry: Entry, paper: DocumentPaperRaster, width: Int, exactInstalled: Bool,
+    priority: SceneAllocationPriority = .passive) async throws -> TurnLayers {
+    guard let layout = source?.layout else { throw SceneRenderError.snapshotPending("document_layout") }
+    let size = physicalSize(entry.input), token = entry.input.token
+    var images: [PageTurnFrame.ImageLayer] = [.init(image: paper.image, frame: .init(origin: .zero, size: size))]
+    var retained: [AnyObject] = [paper]
+    let regions = layout.regions(on: entry.input.pageIndex).filter { $0.kind == .program }
+    let slots: [Int: TurnLayers]
+    if priority == .input {
+      // Independent installed executors share display opportunities instead of
+      // spending one afterScreenUpdates snapshot round per program. One runtime
+      // still serializes its own crops. All cuts survive until composition,
+      // so serial waves cannot reduce their final charged memory peak.
+      let programs = Dictionary(grouping: regions.indices, by: { regions[$0].id }).values
+        .sorted { $0[0] < $1[0] }
+      let capture: @MainActor @Sendable ([Int]) async throws -> [Int: TurnLayers] = { [self] indices in
+        var cuts: [Int: TurnLayers] = [:]
+        for index in indices {
+          try Task.checkCancellation()
+          guard entry.input.token == token else { throw CancellationError() }
+          cuts[index] = try await turnProgramLayers(entry, region: regions[index], width: width,
+            exactInstalled: exactInstalled, priority: priority)
+        }
+        return cuts
+      }
+      slots = try await withThrowingTaskGroup(of: [Int: TurnLayers].self) { group in
+        var result: [Int: TurnLayers] = [:]
+        for indices in programs { group.addTask { try await capture(indices) } }
+        while let cuts = try await group.next() {
+          result.merge(cuts) { _, latest in latest }
+        }
+        return result
+      }
+
+    } else {
+      var result: [Int: TurnLayers] = [:]
+      for index in regions.indices {
+        result[index] = try await turnProgramLayers(entry, region: regions[index], width: width,
+          exactInstalled: exactInstalled, priority: priority)
+      }
+      slots = result
     }
     try Task.checkCancellation()
-    guard entry.input.token == token, renderer.payload?.renderToken == entry.input.paperToken else { throw CancellationError() }
-    let reservation = reservations[reservations.count - 1]
-    let format = UIGraphicsImageRendererFormat(); format.scale = Double(width) / physical.width; format.opaque = true
-    let image = UIGraphicsImageRenderer(size: physical, format: format).image { context in
-      base.image.draw(in: .init(origin: .zero, size: physical))
-      for (region, raster, fullProgram) in layers {
-        let rect = CGRect(x: region.frame.x, y: region.frame.y, width: region.frame.width, height: region.frame.height)
-        context.cgContext.saveGState(); context.cgContext.clip(to: rect)
-        if fullProgram {
-          raster.image.draw(in: .init(x: rect.minX, y: rect.minY - region.sourceOffset,
-            width: rect.width, height: programOwner.paused(region.id)?.size.height ?? raster.image.size.height))
-        } else { raster.image.draw(in: rect) }
-        context.cgContext.restoreGState()
+    guard entry.input.token == token else { throw CancellationError() }
+    for index in regions.indices {
+      guard let layers = slots[index] else { throw SceneRenderError.snapshotPending("document_program_layers") }
+      images.append(contentsOf: layers.images); retained.append(contentsOf: layers.retained)
+    }
+    return .init(images: images, retained: retained)
+  }
+
+  private func turnProgramLayers(_ entry: Entry, region: DocumentBlockRegion, width: Int,
+    exactInstalled: Bool, priority: SceneAllocationPriority) async throws -> TurnLayers {
+    let size = physicalSize(entry.input), token = entry.input.token
+    let rect = CGRect(x: region.frame.x, y: region.frame.y, width: region.frame.width, height: region.frame.height)
+    let pixelWidth = max(1, Int(ceil(Double(width) * rect.width / size.width)))
+    var images: [PageTurnFrame.ImageLayer] = [], retained: [AnyObject] = []
+    func appendRuntime(_ runtime: DocumentBlockRuntime) async throws {
+      if priority == .input {
+        let cut = try await runtime.captureCurrentCut(sourceOffset: region.sourceOffset,
+          height: min(region.frame.height, runtime.viewportSize.height-region.sourceOffset), pixelWidth: pixelWidth)
+        images.append(.init(image: cut.image, frame: rect)); retained.append(cut)
+      } else {
+        let raster = try await runtime.capture(sourceOffset: region.sourceOffset,
+          height: min(region.frame.height, runtime.viewportSize.height-region.sourceOffset), pixelWidth: pixelWidth)
+        if let image = raster.image.cgImage { images.append(.init(image: image, frame: rect)); retained.append(raster) }
       }
     }
+    func appendPaused(_ paused: DocumentProgramOwner.PausedProgram) {
+      guard let sourceImage = paused.raster.image.cgImage else { return }
+      let scale = Double(sourceImage.width)/paused.size.width
+      let crop = CGRect(x: 0, y: region.sourceOffset*scale, width: Double(sourceImage.width), height: rect.height*scale)
+      if let image = sourceImage.cropping(to: crop), let pin = paused.raster.retainedCopy() {
+        images.append(.init(image: image, frame: rect)); retained.append(pin)
+      }
+    }
+    // A status overlays a retiring/failed runtime. Preserve its installed
+    // pixels instead of freezing a hidden heap and calling it readiness.
+    if let status = pendingPlacements(on: entry).first(where: { $0.blockID == region.id }) {
+      if let paused = programOwner.paused(region.id) { appendPaused(paused) }
+      else if let runtime = programOwner.runtimes[region.id], runtime.ready,
+        source?.program(region.id)?.sourceBasis == runtime.sourceBasis,
+        programOwner.retiringIDs.contains(region.id) || programOwner.liveIDs.contains(region.id) {
+        try await appendRuntime(runtime)
+      }
+      let pixelHeight = max(1, Int(ceil(Double(pixelWidth)*rect.height/rect.width)))
+      guard let reservation = resources.reserveRaster(pixelWidth: pixelWidth, pixelHeight: pixelHeight,
+        priority: priority) else { throw SceneRenderError.resourceLimit }
+      var transferred = false
+      defer { if !transferred { reservation.release() } }
+      let image: UIImage
+      if exactInstalled {
+        guard let installed = entry.host?.programOverlay.pendingImage(blockID: region.id, pixelWidth: pixelWidth) else {
+          throw SceneRenderError.snapshotPending("document_program_status")
+        }
+        image = installed
+      } else { image = DocumentProgramOverlayHost.pendingImage(status, pixelWidth: pixelWidth) }
+      if priority == .input {
+        guard let cut = resources.currentWebCut(image,
+          for: .document(id: documentID, token: "status:" + UUID().uuidString), reservation: reservation)
+        else { throw SceneRenderError.resourceLimit }
+        transferred = true
+        images.append(.init(image: cut.image, frame: rect)); retained.append(cut)
+      } else if let raster = resources.storeAndRetain(image,
+        for: .document(id: documentID, token: "status:" + UUID().uuidString), reservation: reservation),
+        let pixels = raster.image.cgImage {
+        images.append(.init(image: pixels, frame: rect)); retained.append(raster)
+      } else { throw SceneRenderError.resourceLimit }
+    } else if let runtime = programOwner.runtimes[region.id], runtime.ready {
+      try await appendRuntime(runtime)
+    } else if let paused = programOwner.paused(region.id) { appendPaused(paused) }
+    try Task.checkCancellation()
+    guard entry.input.token == token else { throw CancellationError() }
+    return .init(images: images, retained: retained)
+  }
+
+  private func capturePixels(_ entry: Entry, using renderer: DocumentWebCoordinator) async throws -> RasterLease {
+    guard let layout = source?.layout, let paper = renderer.installedPaper else { throw SceneRenderError.snapshotPending("document_paper") }
+    let input = entry.input, token = input.token, physical = physicalSize(input)
+    let width = captureWidth(entry), height = Int(ceil(Double(width)*physical.height/physical.width))
+    guard width > 0, let reservation = resources.reserveRaster(pixelWidth: width, pixelHeight: height) else { throw SceneRenderError.resourceLimit }
+    defer { reservation.release() }
+    let layers = try await turnLayers(entry, paper: paper, width: width, exactInstalled: false)
+    guard !Task.isCancelled, !stopped, entry.input.token == token,
+      renderer.payload?.renderToken == input.paperToken else { throw CancellationError() }
+    // Passive native hosts need a reusable UIImage. This composes the existing
+    // paper image and local slots once, without a whole-page WebKit readback.
+    let format = UIGraphicsImageRendererFormat(); format.scale = Double(width)/physical.width; format.opaque = true
+    let image = UIGraphicsImageRenderer(size: physical, format: format).image { _ in
+      for layer in layers.images { UIImage(cgImage: layer.image).draw(in: layer.frame) }
+    }
+    withExtendedLifetime(layers.retained) {}
     guard let raster = DocumentSnapshotCache.shared.storeAndRetain(image: image, documentID: documentID,
       token: token, layout: layout, reservation: reservation, resources: resources) else { throw SceneRenderError.resourceLimit }
     return raster
@@ -1216,21 +1633,26 @@ final class DocumentPagePresentationOwner {
     let available = min(admission.byteLimit - admission.heldBytes,
       admission.passiveByteLimit - admission.pinnedBytes - admission.passiveReservedBytes)
     let physical = physicalSize(entry.input)
-    let allProgramRegions = source?.layout?.regions(on: entry.input.pageIndex).filter {
-      $0.kind == .program && source?.programIDs.contains($0.id) == true
-    } ?? []
-    let programRegions = allProgramRegions.filter { programOwner.runtimes[$0.id]?.ready == true }
+    let statuses = Set(pendingPlacements(on: entry).map(\.blockID))
+    let slots = (source?.layout?.regions(on: entry.input.pageIndex) ?? []).filter { $0.kind == .program }.map { region in
+      let runtime = programOwner.runtimes[region.id]
+      let hasStatus = statuses.contains(region.id)
+      let capturesRuntime = runtime?.ready == true && (!hasStatus || (programOwner.paused(region.id) == nil
+        && source?.program(region.id)?.sourceBasis == runtime?.sourceBasis
+        && (programOwner.retiringIDs.contains(region.id) || programOwner.liveIDs.contains(region.id))))
+      return (region: region, count: (hasStatus ? 1 : 0) + (capturesRuntime ? 1 : 0))
+    }
+    let pageCount = includesPaperBacking ? 2 : 1
     func cost(_ width: Int) -> Int {
       guard let page = SceneRenderResources.estimatedRasterBytes(pixelWidth: width,
         pixelHeight: Int(ceil(Double(width) * physical.height / physical.width))) else { return Int.max }
-      if allProgramRegions.isEmpty { return page * (includesPaperBacking ? 2 : 1) }
-      return programRegions.reduce(page * (includesPaperBacking ? 3 : 2)) { sum, region in
-        sum + (SceneRenderResources.estimatedRasterBytes(
-          pixelWidth: max(1, Int(ceil(Double(width) * region.frame.width / physical.width))),
-          pixelHeight: max(1, Int(ceil(Double(width) * region.frame.height / physical.width)))) ?? Int.max / 16)
+      return slots.reduce(page * pageCount) { sum, slot in
+        sum + slot.count * (SceneRenderResources.estimatedRasterBytes(
+          pixelWidth: max(1, Int(ceil(Double(width) * slot.region.frame.width / physical.width))),
+          pixelHeight: max(1, Int(ceil(Double(width) * slot.region.frame.height / physical.width)))) ?? Int.max / 16)
       }
     }
-    let count = programRegions.count + (allProgramRegions.isEmpty ? 1 : 2)
+    let count = slots.reduce(pageCount) { $0 + $1.count }
     guard available > 0, count <= admission.countLimit - admission.pinnedCount - admission.reservedCount else { return 0 }
     var lower = 0, upper = requestedWidth(entry)
     while lower < upper {
@@ -1256,14 +1678,10 @@ final class DocumentPagePresentationOwner {
   }
 
   private func hasTerminalFailure(for entry: Entry) -> Bool {
-    switch terminalFailures[entry.input.token] {
-    case .paper: return true
-    case .composite: return entry.id != current?.id && !requestsLivePaper(for: entry) && !programsReady(on: entry.input.pageIndex)
-    case nil: return false
-    }
+    terminalFailures.contains(entry.input.token)
   }
 
-  private func show(_ error: Error, on entry: Entry, scope: FailureScope = .paper) {
+  private func show(_ error: Error, on entry: Entry) {
     if NotebookNavigationObservation.enabled {
       let native = error as NSError
       let knownCase: String?
@@ -1291,11 +1709,11 @@ final class DocumentPagePresentationOwner {
     }
     entry.input.onPreparationFailure(error)
     if error as? SceneRenderError == .resourceLimit { failures[entry.input.token] = resources.rasterAdmission }
-    else { terminalFailures[entry.input.token] = scope }
+    else { terminalFailures.insert(entry.input.token) }
     let token = entry.input.token
     let retry: @MainActor () -> Void = { [weak self, weak entry] in
       guard let self, let entry, entries[entry.id] === entry, entry.input.token == token else { return }
-      failures[entry.input.token] = nil; terminalFailures[entry.input.token] = nil
+      failures[entry.input.token] = nil; terminalFailures.remove(entry.input.token)
       if current?.id == entry.id, paper.acquisitionError != nil { paper.retryPreparation() }
       for id in source?.layout?.blockIDs(on: [entry.input.pageIndex]) ?? [] where programOwner.runtimes[id]?.failure != nil {
         programOwner.retry(id)
@@ -1315,6 +1733,7 @@ final class DocumentPagePresentationOwner {
     entry.input.onRenderReady.failed(.init(kind: kind, message: message, retry: retry))
   }
   private func retryAfterAdmission() {
+    refreshResidentTurnFrames()
     let next = resources.rasterAdmission
     var recovered = false
     for (page, old) in failures where next.byteLimit - next.heldBytes > old.byteLimit - old.heldBytes
@@ -1347,7 +1766,9 @@ final class DocumentPagePresentationOwner {
 
   private func finishStop() {
     observe("document_owner_stop", reason: "document_and_presentations_closed")
-    stopped = true; work?.cancel(); work = nil; captureTail?.cancel(); captureTail = nil
+    stopped = true
+    entries.values.forEach { $0.releaseTurnFrame() }
+    programDemandTask?.cancel(); programDemandTask = nil; programDemandKey = nil; work?.cancel(); work = nil; captureTail?.cancel(); captureTail = nil
     paper?.invalidate(); passive?.invalidate(); programOwner.stop()
     paperTransfer = nil
     stagedPaper = nil
@@ -1359,11 +1780,11 @@ final class DocumentPagePresentationOwner {
   isolated deinit {
     observe("document_owner_deinit")
     DocumentRenderRegistry.shared.revokeLive(hostID: installationID, through: installationGeneration)
-    work?.cancel(); paper?.invalidate(); passive?.invalidate(); programOwner.stop()
+    programDemandTask?.cancel(); work?.cancel(); paper?.invalidate(); passive?.invalidate(); programOwner.stop()
     paperTransfer = nil
     if let admissionObserver { NotificationCenter.default.removeObserver(admissionObserver) }
     if let reclamationOwner { resources.unregisterReclamationOwner(reclamationOwner) }
-    entries.values.forEach { $0.stopObserving() }
+    entries.values.forEach { $0.stopObserving(); $0.releaseTurnFrame() }
   }
 }
 #endif

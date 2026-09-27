@@ -44,8 +44,25 @@ import XCTest
       XCTAssertTrue(self.app.otherElements["resize-agent-element-topLeading"].isHittable)
     }
     try step("delete-without-confirmation", { notebookContextAction("Удалить элемент",on:node,in:app) }) { try self.leaf(0, deleted: true) }
-    try step("deleted-page-away", { surface.swipeLeft() }) { try self.leaf(1) }
-    try step("deleted-page-back", { surface.swipeRight() }) { try self.leaf(0, deleted: true) }
+    // The same real history gestures must restore each accepted body exactly;
+    // the untouched blue shape, ink and leaf marker remain pixel witnesses.
+    try step("undo-delete-restores-moved-body", { surface.twoFingerTap() }) { try self.leaf(0, moved: true) }
+    try step("undo-move-restores-original-body", { surface.twoFingerTap() }) { try self.leaf(0) }
+    // XCUI distributes a three-finger tap across its target's whole frame.
+    // The moving body can occlude the sheet's centre after the first redo.
+    // This unchanged native body provides three real, unobstructed contacts
+    // to the same window-level history recognizer, away from the root cue.
+    let historyBody = app.images["Journey neighbor 1"]
+    try step("redo-move-restores-moved-body", {
+      XCTAssertTrue(historyBody.isHittable)
+      historyBody.tap(withNumberOfTaps: 1, numberOfTouches: 3)
+    }) { try self.leaf(0, moved: true) }
+    try step("redo-delete-removes-only-body", {
+      XCTAssertTrue(historyBody.isHittable)
+      historyBody.tap(withNumberOfTaps: 1, numberOfTouches: 3)
+    }) { try self.leaf(0, deleted: true) }
+    try turn("deleted-page-away", to: 1) { surface.swipeLeft() }
+    try turn("deleted-page-back", to: 0, deleted: true) { surface.swipeRight() }
     try leave()
     app.terminate(); app.launchArguments.append("--notebook-reopen-fixture"); app.launch()
     XCTAssertTrue(cover.waitForExistence(timeout: 8))
@@ -114,6 +131,7 @@ import XCTest
     #endif
     app.launch(); XCUIDevice.shared.orientation = .portrait
     XCTAssertTrue(cover.waitForExistence(timeout: 10), app.debugDescription)
+    assertNotebookFullScreenPortrait(in: app)
     XCTAssertTrue(notebookOffersCreation(in:app))
     XCTAssertFalse(surface.exists, "The scenario must start on the board, not on a pre-opened sheet")
     paperFrame = fittedPaper(in: app.frame) // Freeze before input, not from a possibly displaced result.
@@ -127,7 +145,12 @@ import XCTest
       dy: paperFrame.minY + y * paperFrame.height / 1194 - app.frame.minY))
   }
   private func open(deleted: Bool = false) throws {
-    try step("ordinary-cover-double-tap", { cover.doubleTap() },
+    try step("ordinary-cover-double-tap", {
+      cover.doubleTap()
+      // The native sheet becomes accessible only at the completed physical
+      // opening. A prepared host behind a moving cover is not that endpoint.
+      XCTAssertTrue(surface.waitForExistence(timeout: 2), "The native cover did not finish opening")
+    },
       simulatorComposition: leafProbes(0, deleted: deleted)) {
       XCTAssertTrue(self.surface.exists)
       XCTAssertTrue(self.app.buttons["drawing-group"].isHittable)
@@ -135,7 +158,7 @@ import XCTest
       try self.leaf(0, deleted: deleted)
     }
   }
-  private func turn(_ name: String, to index: Int, action: () -> Void) throws {
+  private func turn(_ name: String, to index: Int, deleted: Bool = false, action: () -> Void) throws {
     try step(name, {
       action()
       // XCTest's swipe returns while UIKit's curl is still in flight. Await
@@ -143,7 +166,7 @@ import XCTest
       let landed = XCTNSPredicateExpectation(
         predicate: NSPredicate(format: "value BEGINSWITH %@", "Страница \(index + 1) из "), object: surface)
       XCTAssertEqual(XCTWaiter.wait(for: [landed], timeout: 2), .completed, "The native curl did not land")
-    }, simulatorComposition: leafProbes(index)) { try self.leaf(index) }
+    }, simulatorComposition: leafProbes(index, deleted: deleted)) { try self.leaf(index, deleted: deleted) }
   }
   private func leave() throws {
     try step("back-to-board", { notebookBack(in:app) }) {
@@ -172,11 +195,14 @@ import XCTest
   private func leafProbes(_ index: Int, moved: Bool = false, deleted: Bool = false) -> [(CGFloat, CGFloat, Color)] {
     let dy: CGFloat = moved ? 200 : 0
     var probes: [(CGFloat, CGFloat, Color)] = []
+    // Keep all four rows outside the graphic's label and the root's centred
+    // 38-point history cue. Inspect the first composition without waiting for
+    // that intentional overlay to disappear or sampling it as authored paper.
     for x: CGFloat in [180, 220, 440, 460] {
-      for y: CGFloat in [280, 310, 390, 420] { probes.append((x, y + dy, deleted ? .paper : .red)) }
+      for y: CGFloat in [280, 310, 370, 420] { probes.append((x, y + dy, deleted ? .paper : .red)) }
     }
     if moved || deleted { probes += [(200, 300, .paper), (450, 400, .paper)] }
-    if deleted { probes += [(200, 500, .paper), (450, 610, .paper)] }
+    if !moved || deleted { probes += [(200, 500, .paper), (450, 610, .paper)] }
     probes += [(560, 560, .blue), (620, 620, .blue)]
     for slot in 0..<6 {
       probes.append((130 + CGFloat(slot) * 100, 820, slot == index ? .blue : .paper))

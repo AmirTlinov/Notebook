@@ -5,6 +5,8 @@ import NotebookCore
 /// its coverage is not a deletion; native commands name their before/after scope.
 struct NotebookSceneState: Sendable {
   struct OpenedDocument: Sendable {
+    let inputScope: NotebookInputScope
+    let witness: NotebookSourceWitness
     let header: NotebookWorkspaceHeader
     let document: DocumentDocument
     let state: DocumentStateJournal
@@ -12,6 +14,14 @@ struct NotebookSceneState: Sendable {
     var reading: DocumentReadingPosition? = nil
     var history: [PencilUndoHistory.Entry] = []
     var redoHistory: [PencilUndoHistory.Entry] = []
+    func isCurrent(store: NotebookStore, actor: UUID) throws -> Bool {
+      try store.readTransaction { _ in
+        try witness.isCurrent(store)
+          && store.inputScopes(for: [inputScope.target]) == [inputScope]
+          && store.nativeHistory(domain: .document(document.id), actor: actor) == history
+          && store.nativeRedoHistory(domain: .document(document.id), actor: actor) == redoHistory
+      }
+    }
   }
 
   /// An accepted opening is a separate read capability from a closed cover's
@@ -20,17 +30,20 @@ struct NotebookSceneState: Sendable {
     try store.readTransaction { store in
       guard try store.readItemHeader(documentID)?.kind == .document,
         try store.ownerBoardID(of: documentID) == boardID else { return nil }
+      try Task.checkCancellation()
       let live = try store.readWorkingSet(itemIDs: [documentID], pageIDs: [], boardIDs: [], surfaces: [])
       guard let document = live.documents[documentID], let state = live.states[documentID] else {
         throw NotebookStorageError.corruptRecord("opened document source")
       }
-      return try .init(header: live.header, document: document, state: state,
+      return try .init(inputScope: store.inputScopes(for: [.init(kind: .document, id: documentID)])[0], witness: store.readSourceWitness(itemIDs: [documentID], pageIDs: [], boardIDs: [], documentIDs: [documentID]), header: live.header, document: document, state: state,
         drafts: store.documentEditingSessions(documentID: documentID), reading: store.readDocumentReadingPosition(documentID),
         history: historyActor.map { try store.nativeHistory(domain: .document(documentID), actor: $0) } ?? [],
         redoHistory: historyActor.map { try store.nativeRedoHistory(domain: .document(documentID), actor: $0) } ?? [])
     }
   }
 
+  let inputScopes: [NotebookInputScope]
+  let witness: NotebookSourceWitness
   let header: NotebookWorkspaceHeader
   let workspace: WorkspaceIndex
   let pages: [UUID: PageDocument]
@@ -55,6 +68,25 @@ struct NotebookSceneState: Sendable {
   var groupReads: [UUID:[String:NotebookElementGroupRead]] = [:]
   var history: [PencilUndoHistory.Domain:[PencilUndoHistory.Entry]] = [:]
   var redoHistory: [PencilUndoHistory.Domain:[PencilUndoHistory.Entry]] = [:]
+
+  var readTargets: Set<CollaborationTarget> {
+    Set<CollaborationTarget>(pages.keys.map { .init(kind: .page, id: $0) })
+      .union(documents.keys.map { .init(kind: .document, id: $0) })
+      .union(hierarchy.boards.map { .init(kind: .board, id: $0.id) })
+      .union(workspace.items.map { .init(kind: .cover, id: $0.id) })
+      .union(missingPinnedItems.map { .init(kind: .cover, id: $0) })
+      .union(inputScopes.flatMap(\.publicationTargets))
+  }
+
+  func isCurrent(store: NotebookStore, actor: UUID) throws -> Bool {
+    try store.readTransaction { _ in
+      guard try witness.isCurrent(store), try inkWindow.records.isCurrent(store),
+        try store.inputScopes(for: inputScopes.map(\.target)) == inputScopes else { return false }
+      for (domain, entries) in history where try store.nativeHistory(domain: domain, actor: actor) != entries { return false }
+      for (domain, entries) in redoHistory where try store.nativeRedoHistory(domain: domain, actor: actor) != entries { return false }
+      return true
+    }
+  }
 
   static func start(store: NotebookStore, actor: UUID, pageSize: PageSize,
     notebookID: UUID, pageID: UUID, viewport: SpatialPoint? = nil) throws -> Self {
@@ -168,12 +200,13 @@ struct NotebookSceneState: Sendable {
         let window = try store.readNotebookPageWindow(itemID: selected.id,
           pages: pagePositions.filter { demanded.contains($0.pageID) }.map { .page($0.pageID) },
           expectedVisibleRoot: notebookRoot)
-        pages = Dictionary(uniqueKeysWithValues: window.pages.map { entry in
+        pages = Dictionary(uniqueKeysWithValues: try window.pages.map { entry in
           let incoming = entry.document
           // Compare the complete immutable material on the read worker. A
           // metadata-only refresh keeps its graph/index and installed identity;
           // a changed source (even with the same stamp) must replace it.
           let page = reusingPages[incoming.id].flatMap { $0 == incoming ? $0 : nil } ?? incoming
+          try page.prepareInkForPresentation()
           return (page.id, page)
         })
       }
@@ -299,7 +332,15 @@ struct NotebookSceneState: Sendable {
         }
       }
       let inkHistoryStates = try store.spatialInkHistoryStates(ids: inkHistoryIDs)
-      return try Self(header: header, workspace: workspace, pages: pages, pagePositions: pagePositions,
+      let scopeTargets = Set(pages.keys.map { CollaborationTarget(kind: .page, id: $0) })
+        .union(items.keys.map { .init(kind: .cover, id: $0) })
+        .union(nodes.keys.map { .init(kind: .board, id: $0) })
+        .union(live.documents.keys.map { .init(kind: .document, id: $0) })
+        .union(inkCoverage.keys.compactMap { surface -> CollaborationTarget? in
+          guard let id = surface.ownerID else { return nil }
+          return .init(kind: surface.kind == .cover ? .cover : .board, id: id)
+        })
+      return try Self(inputScopes: store.inputScopes(for: Array(scopeTargets)), witness: store.readSourceWitness(itemIDs: Set(items.keys).union(requestedItems), pageIDs: Set(pages.keys), boardIDs: Set(nodes.keys), documentIDs: Set(live.documents.keys)), header: header, workspace: workspace, pages: pages, pagePositions: pagePositions,
         documents: live.documents, states: live.states,
         drafts: needsSelectedContent && selected.kind == .document ? store.documentEditingSessions(documentID: selected.id) : [],
         reading: selected.kind == .document ? store.readDocumentReadingPosition(selected.id) : nil,

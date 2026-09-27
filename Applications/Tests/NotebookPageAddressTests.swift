@@ -233,15 +233,19 @@ final class NotebookPageAddressTests: XCTestCase {
     XCTAssertEqual(model.selectNotebookPage(1, notebookID: f.item, expectedRoot: f.order), 1)
     let selected = try XCTUnwrap(model.presence), contact = UUID()
     model.inputGate.beginPencilAction(source: contact)
+    let rotatedViewport = SpatialPoint(x: selected.viewport.y, y: selected.viewport.x)
     let moved = SessionPresence(boardID: selected.boardID, mode: selected.mode,
-      camera: .init(center: .init(x: 20, y: 30), scale: 1.4), viewport: selected.viewport,
+      camera: .init(center: selected.camera.center,
+        scale: WorkspaceItemGeometry.notebook.fitScale(viewport: rotatedViewport)), viewport: rotatedViewport,
       focusedItemID: selected.focusedItemID, openProgress: selected.openProgress,
       selectedItemID: selected.selectedItemID, notebookPageID: selected.notebookPageID)
     model.updatePresence(moved, settled: false)
     model.inputGate.endPencilAction(source: contact)
     model.updatePresence(moved, settled: true)
     let acceptedPresence = try XCTUnwrap(model.presence)
-    XCTAssertNotEqual(acceptedPresence.camera, selected.camera, "Negative control: a real camera change was accepted")
+    XCTAssertEqual(acceptedPresence.viewport, rotatedViewport)
+    XCTAssertNotEqual(acceptedPresence.camera, selected.camera,
+      "Negative control: rotation changes the fitted page projection without changing its UUID")
     let writerFinished = expectation(description: "Accepted writes are not behind the page read")
     let writer = Task {
       defer { writerFinished.fulfill() }

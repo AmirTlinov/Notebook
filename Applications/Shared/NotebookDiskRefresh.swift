@@ -5,6 +5,7 @@ import NotebookCore
 /// preparation. An unrelated publication can require a fresh SQL cut without
 /// decoding that body again. History is checked anew in that same cut.
 struct NotebookPagePreparation: Sendable {
+  let inputScope: NotebookInputScope
   let position: NotebookPagePosition
   let page: PageDocument
   let revision: String
@@ -29,11 +30,12 @@ struct NotebookPagePreparation: Sendable {
         page = try store.readNotebookPageWindow(itemID: itemID, pages: [.page(id)],
           expectedVisibleRoot: root).pages[0].document
       }
+      try page.prepareInkForPresentation()
       // Membership causal fields live in the catalog, not the page digest.
       // Re-read this one-page witness even when its immutable body is reused.
       let projection = try store.workspaceProjection(items: [.notebook(id: itemID,
         title: directory.header.item.title, pageIDs: [id])], selectedItemID: itemID, selectedPageID: id)
-      return try Self(position: position, page: page, revision: revision, projection: projection,
+      return try Self(inputScope: store.inputScopes(for: [.init(kind: .page, id: id)])[0], position: position, page: page, revision: revision, projection: projection,
         undo: store.nativeHistory(domain: .page(id), actor: actor),
         redo: store.nativeRedoHistory(domain: .page(id), actor: actor))
     }
@@ -44,7 +46,8 @@ struct NotebookPagePreparation: Sendable {
   /// that expensive decode back onto the accepted-write queue.
   func isCurrent(store: NotebookStore, actor: UUID) throws -> Bool {
     try store.readTransaction { store in
-      guard let current = try store.resolveNotebookPage(page.id, in: position.itemID,
+      guard try store.inputScopes(for: [inputScope.target]) == [inputScope],
+        let current = try store.resolveNotebookPage(page.id, in: position.itemID,
         expectedVisibleRoot: position.visibleRoot), current.index == position.index,
         try store.pageSourceRevision(page.id) == revision else { return false }
       let witness = try store.workspaceProjection(items: projection.items,
@@ -114,7 +117,10 @@ actor NotebookSceneReader {
   /// Serialized behind active reads; retained models cannot reopen after quit.
   func close() { session = nil }
   func read<Value: Sendable>(_ operation: @Sendable (NotebookStore) throws -> Value) throws -> Value {
+    try Task.checkCancellation()
     guard let session else { throw CancellationError() }
-    return try session.read(operation)
+    let value = try session.read(operation)
+    try Task.checkCancellation()
+    return value
   }
 }

@@ -13,10 +13,12 @@ final class SceneRasterCompositor {
   private let reservation: RasterReservation
   private let buffer: CompositionPixels
   private let resources: SceneRenderResources
+  private let priority: SceneAllocationPriority
   let scale: Double
   private let size: CGSize
   private let permitsPreparation: @MainActor () -> Bool
   private var isFinished = false
+  private var transfersReservation = false
   private var recordedDiagnostics: [RenderDiagnostic] = []
   private var omittedDiagnostics = 0
   var diagnostics: [RenderDiagnostic] {
@@ -34,6 +36,7 @@ final class SceneRasterCompositor {
 
 
   static func create(size: CGSize, scale: Double, resources: SceneRenderResources,
+    priority: SceneAllocationPriority = .passive,
     permitsPreparation: @escaping @MainActor () -> Bool = { true }) async throws -> SceneRasterCompositor {
     guard size.width.isFinite, size.height.isFinite, scale.isFinite, scale > 0,
       size.width > 0, size.height > 0, size.width * scale <= 8192, size.height * scale <= 8192
@@ -41,20 +44,23 @@ final class SceneRasterCompositor {
     try Task.checkCancellation()
     guard permitsPreparation() else { throw CancellationError() }
     let width = Int(ceil(size.width * scale)), height = Int(ceil(size.height * scale))
-    guard let reservation = resources.reserveRaster(pixelWidth: width, pixelHeight: height) else {
+    guard let reservation = resources.reserveRaster(pixelWidth: width, pixelHeight: height, priority: priority) else {
       throw SceneRenderError.resourceLimit
     }
     do {
       let buffer = try await CompositionPixels.create(size: size, width: width, height: height, scale: scale)
       try Task.checkCancellation()
       guard permitsPreparation() else { throw CancellationError() }
-      return Self(reservation: reservation, buffer: buffer, resources: resources, size: size, scale: scale, permitsPreparation: permitsPreparation)
+      return Self(reservation: reservation, buffer: buffer, resources: resources, priority: priority,
+        size: size, scale: scale, permitsPreparation: permitsPreparation)
     } catch { reservation.release(); throw error }
   }
 
   private init(reservation: RasterReservation, buffer: CompositionPixels,
-    resources: SceneRenderResources, size: CGSize, scale: Double, permitsPreparation: @escaping @MainActor () -> Bool) {
+    resources: SceneRenderResources, priority: SceneAllocationPriority,
+    size: CGSize, scale: Double, permitsPreparation: @escaping @MainActor () -> Bool) {
     self.reservation = reservation; self.buffer = buffer; self.resources = resources
+    self.priority = priority
     self.size = size; self.scale = scale; self.permitsPreparation = permitsPreparation
   }
 
@@ -75,6 +81,7 @@ final class SceneRasterCompositor {
   /// A newer capture of the same program cannot replace the borrowed pixels.
   func draw(_ raster: RasterLease, in frame: CGRect, erasures: [InkElementErasure] = [], elementFrame: CGRect? = nil,
     presentation: NotebookElementPresentation? = nil) async throws {
+    defer { withExtendedLifetime(raster) {} }
     try checkPreparation()
     guard !raster.isReleased else { throw SceneRenderError.snapshotPending("released_source") }
     #if os(iOS)
@@ -83,9 +90,25 @@ final class SceneRasterCompositor {
       let image = raster.image.cgImage(forProposedRect: nil, context: nil, hints: nil)
     #endif
     guard let image else { throw SceneRenderError.snapshotPending("source_pixels") }
+    try await drawSource(image, source: raster.source, in: frame, erasures: erasures,
+      elementFrame: elementFrame, presentation: presentation)
+  }
+
+  /// An accepted turn borrows these exact pixels without publishing a cache
+  /// entry. Geometry and erased regions use the same painter as stored rasters.
+  func draw(_ cut: SceneRasterCut, in frame: CGRect, erasures: [InkElementErasure] = [], elementFrame: CGRect? = nil,
+    presentation: NotebookElementPresentation? = nil) async throws {
+    defer { withExtendedLifetime(cut) {} }
+    try checkPreparation()
+    try await drawSource(cut.image, source: cut.source, in: frame, erasures: erasures,
+      elementFrame: elementFrame, presentation: presentation)
+  }
+
+  private func drawSource(_ image: CGImage, source: SceneRasterSource, in frame: CGRect,
+    erasures: [InkElementErasure], elementFrame: CGRect?, presentation: NotebookElementPresentation?) async throws {
     if let presentation, presentation.requiresRasterTransform {
       let size=presentation.bodySize
-      let crop=raster.source.captureRegion.map { CGRect(x:$0.x,y:$0.y,width:$0.width,height:$0.height) }
+      let crop=source.captureRegion.map { CGRect(x:$0.x,y:$0.y,width:$0.width,height:$0.height) }
         ?? CGRect(origin:.zero,size:size)
       let appearance=erasures.isEmpty ? nil : try await NotebookElementErasureCache.Input(graphic:nil,
         layout:nil,size:size,erasures:erasures).prepared()
@@ -96,9 +119,9 @@ final class SceneRasterCompositor {
       },size:presentation.bounds.size,in:elementFrame ?? frame)
       return
     }
-    if !erasures.isEmpty, let element = raster.source.agentElement {
+    if !erasures.isEmpty, let element = source.agentElement {
       let size = CGSize(width: element.frame.width, height: element.frame.height)
-      let crop = raster.source.captureRegion.map { CGRect(x: $0.x, y: $0.y, width: $0.width, height: $0.height) }
+      let crop = source.captureRegion.map { CGRect(x: $0.x, y: $0.y, width: $0.width, height: $0.height) }
         ?? CGRect(origin: .zero, size: size)
       let appearance = try await NotebookElementErasureCache.Input(graphic: nil,
         layout: nil, size: size, erasures: erasures).prepared()
@@ -152,7 +175,7 @@ final class SceneRasterCompositor {
     let height = Int(ceil(visible.maxY * scale) - top)
     let capture = CGRect(x: left / scale, y: top / scale,
       width: Double(width) / scale, height: Double(height) / scale)
-    guard let allocation = resources.reserveRaster(pixelWidth: width + 2, pixelHeight: height + 2)
+    guard let allocation = resources.reserveRaster(pixelWidth: width + 2, pixelHeight: height + 2, priority: priority)
     else { throw SceneRenderError.resourceLimit }
     defer { allocation.release() }
     let renderer = ImageRenderer(content: content
@@ -216,7 +239,7 @@ final class SceneRasterCompositor {
       && (frame.minX * scale).rounded() == frame.minX * scale
       && (frame.minY * scale).rounded() == frame.minY * scale
     let mask = nativeGrid ? nil : try await Self.create(size: size, scale: 2,
-      resources: resources, permitsPreparation: permitsPreparation)
+      resources: resources, priority: priority, permitsPreparation: permitsPreparation)
     // Body-present composition prepares one immutable source for all tiles;
     // the raw-only specialization keeps its existing forward renderer.
     let ordered:(mesh:SpatialInkMesh,geometry:InkOrderedGeometry)?
@@ -234,7 +257,7 @@ final class SceneRasterCompositor {
       }
       let bytes=try await withTaskCancellationHandler {try await estimate.value} onCancel:{estimate.cancel()}
       try checkPreparation()
-      guard let allocation=resources.reserveDerivedBytes(max(1,bytes),priority:.passive) else {throw SceneRenderError.resourceLimit}
+      guard let allocation=resources.reserveDerivedBytes(max(1,bytes),priority:priority) else {throw SceneRenderError.resourceLimit}
       sourceAllocation=allocation
       let worker=Task.detached(priority:.utility) {
         try Task.checkCancellation()
@@ -255,14 +278,14 @@ final class SceneRasterCompositor {
           width: Double(width) / sx, height: Double(height) / sy)
         // MSAA, resolve texture and CPU readback coexist for only this 512-pixel
         // region. The physical 2x sampling grid remains the original owner's.
-        guard let allocation = resources.reserveRaster(pixelWidth: width, pixelHeight: height, backingCount: 8)
+        guard let allocation = resources.reserveRaster(pixelWidth: width, pixelHeight: height, backingCount: 8, priority: priority)
         else { throw SceneRenderError.resourceLimit }
         do {
           let image:CGImage?
           if let ordered {
             image=try await InkRasterRenderer.shared.orderedImage(mesh:ordered.mesh,plan:plan,
               camera:camera,viewport:.init(x:size.width,y:size.height),region:region,scale:2,
-              resources:resources,preparedGeometry:ordered.geometry)
+              resources:resources,preparedGeometry:ordered.geometry,priority:priority)
           } else {
             let shiftedCamera=camera.map {
               SpatialCamera(center:$0.screenToWorld(.init(x:region.midX,y:region.midY),
@@ -310,6 +333,14 @@ final class SceneRasterCompositor {
   func pushClip(_ path: sending CGPath) async throws { try checkPreparation(); try await buffer.pushClip(path) }
   func popClip() async throws { try checkPreparation(); try await buffer.popClip() }
 
+  func finishImage() async throws -> SceneRasterImage {
+    try checkPreparation()
+    let image = try await buffer.finishImage()
+    try checkPreparation()
+    isFinished = true; transfersReservation = true
+    return .init(image: image, reservation: reservation)
+  }
+
   func finishPNG() async throws -> Data {
     try checkPreparation()
     let png = try await buffer.finishPNG()
@@ -323,6 +354,7 @@ final class SceneRasterCompositor {
   /// shared image cache. No decode or unaccounted image survives this boundary.
   func finishRaster(for source: SceneRasterSource) async throws -> RasterLease {
     try checkPreparation()
+    guard priority == .passive else { throw SceneRenderError.resourceLimit }
     let pixels = try await buffer.finishImage()
     try checkPreparation()
     #if os(iOS)
@@ -341,7 +373,30 @@ final class SceneRasterCompositor {
     guard !isFinished, permitsPreparation() else { throw CancellationError() }
   }
 
+  isolated deinit { if !transfersReservation { reservation.release() } }
+}
+
+/// An accounted CPU image can be borrowed by the native compositor directly;
+/// passing it to Metal requires neither PNG serialization nor a cache alias.
+@MainActor
+final class SceneRasterImage {
+  let image: CGImage
+  private let reservation: RasterReservation
+  init(image: CGImage, reservation: RasterReservation) { self.image = image; self.reservation = reservation }
   isolated deinit { reservation.release() }
+}
+
+/// A single current WebKit frame, scoped to its accepted turn. This holds the
+/// capture grant directly; unlike a RasterLease it has no passive cache alias.
+@MainActor
+final class SceneRasterCut {
+  let source: SceneRasterSource
+  let pixelScale: Double
+  private let pixels: SceneRasterImage
+  var image: CGImage { pixels.image }
+  init(source: SceneRasterSource, pixelScale: Double, pixels: SceneRasterImage) {
+    self.source = source; self.pixelScale = pixelScale; self.pixels = pixels
+  }
 }
 
 /// Pixel allocation, blending and PNG encoding run outside the UI actor. This

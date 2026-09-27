@@ -285,6 +285,44 @@ final class DocumentCanonicalPrintTests: XCTestCase {
     }
     XCTAssertGreaterThan(Set(layout.reading.segments.map(\.textOffset)).count, 3)
   }
+  func testUnchangedPrintReusesItsParsedMaterialAndRebindsTheCausalReceipt() async throws {
+    var document = document("One immutable printed page.")
+    let actor = UUID()
+    document.replaceContent(files: document.files + [.init(id: "program", path: "programs/control/main.js", source: "let value=1;")], actor: actor)
+    let session = DocumentRenderSession(documentID: document.id), resources = SceneRenderResources(profile: .interactive)
+    let first = session.source(document), original = try await first.printedSource(resources: resources)
+    let charge = resources.reservedBytes
+    document.replaceContent(files: document.files.map { $0.id == "program" ? $0.replacingSource("let value=2;") : $0 }, actor: actor)
+    let next = session.source(document), rebound = try await next.printedSource(resources: resources)
+    XCTAssertTrue(original.pdf === rebound.pdf, "An unrelated program edit cannot reopen and re-index the PDF")
+    XCTAssertEqual(original.artifact.pixelIdentity, rebound.artifact.pixelIdentity)
+    XCTAssertNotEqual(original.artifact.buildID, rebound.artifact.buildID)
+    XCTAssertEqual(resources.reservedBytes, charge, "Shared physical material has one allocation owner")
+    try rebound.artifact.sourceMap.validate(document: document, source: rebound.artifact.source, pdf: rebound.artifact.pdf)
+  }
+
+  func testCancelledSourceSubscriberLeavesSharedPreparationWithoutWaitingForItsOtherReader() async throws {
+    let source = DocumentSourceSnapshot(document("Shared source subscription"))
+    let resources = SceneRenderResources(profile: .interactive)
+    let held = try XCTUnwrap(resources.reserveDerivedBytes(resources.passiveByteLimit-1024, priority: .passive))
+    defer { held.release() }
+    let first = Task { try await source.printedSource(resources: resources) }
+    let second = Task { try await source.printedSource(resources: resources) }
+    defer { first.cancel(); second.cancel() }
+    let deadline = ContinuousClock.now + .seconds(15)
+    while resources.pendingDerivedRequestCount == 0, .now < deadline { await Task.yield() }
+    XCTAssertEqual(source.pendingPreparationReaderCount, 2)
+    first.cancel()
+    do { _ = try await first.value; XCTFail("Cancelled subscriber returned another reader's artifact") }
+    catch { XCTAssertTrue(error is CancellationError) }
+    XCTAssertEqual(source.pendingPreparationReaderCount, 1)
+    XCTAssertEqual(resources.pendingDerivedRequestCount, 1, "The remaining reader still owns the same admission")
+    held.release()
+    let printed = try await second.value
+    XCTAssertFalse(printed.locations.isEmpty)
+    XCTAssertEqual(source.measurementCount, 1)
+  }
+
   func testCancellingLastSourceReaderReleasesAdmissionWithoutAWebKit() async throws {
     let document = document("Лист ждёт памяти."), resources = SceneRenderResources(profile: .interactive)
     let charge = try XCTUnwrap(resources.reserveDerivedBytes(resources.passiveByteLimit-1024, priority: .passive))

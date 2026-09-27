@@ -27,7 +27,7 @@ import XCTest
       let document = DocumentDocument(actor: UUID(), files: [.init(id: "main", path: "main.tex", source: tex), .init(id: "image", path: path, resource: resource)])
       let input = try NotebookTypesetterInput(document: document, readResource: { _ in bytes })
       let artifact = try await DocumentCanonicalPrint.store.artifact(for: document, input: input)
-      XCTAssertEqual(artifact.assets.count, 1); XCTAssertEqual(artifact.assets[0].name, path); XCTAssertEqual(artifact.assets[0].data, bytes)
+      XCTAssertTrue(artifact.dependencies.lookups.contains { $0.path == path })
       let resources = SceneRenderResources(), charge = try XCTUnwrap(resources.reserveDerivedBytes(artifact.pdf.count, priority: .passive))
       let source = DocumentPrintedSource(artifact: artifact, pdf: .init(artifact.pdf), reservation: charge)
       let page = DocumentPrintedPage(source: source, pageIndex: 0, width: artifact.pages[0].width, height: artifact.pages[0].height)

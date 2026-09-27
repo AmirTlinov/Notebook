@@ -110,8 +110,7 @@ import QuartzCore
       } else {
         let registry=model.compositionTiles.surfaceRegistry
         raw=registry.canvas(for:source.address.surface)
-        guard let installed=raw?.installedSpatialSource,
-          source.expectedInkRevision.map({installed.journalRevision == $0}) ?? true else { return nil }
+        guard raw?.installedSpatialSource != nil,model.selectionEditSourceIsCurrent(source) else {return nil}
         isSpatial=true
         #if os(iOS)
         if let raw { physicalLease=registry.acquireContact(on:source.address.surface,in:raw) }
@@ -200,7 +199,6 @@ import QuartzCore
     }
     preparation=Task { [weak self] in
       guard let self else {return}
-      var frame:InkCanvasView.PreparedFrame?
       do {
         try Task.checkCancellation()
         let ids=Set(source.ink.map(\.actionID)).union(originals.values.map(\.sourceID))
@@ -221,22 +219,31 @@ import QuartzCore
           bodies.append(.init(elementID:value.id,key:key,graphic:value.graphic,layout:layout,erasures:erasures))
         }
         let plan=NotebookOrderedInkPlan(bodies:bodies,suppressedInkIDs:canvas.orderedInkPlan.suppressedInkIDs.union(ids))
-        frame=try await canvas.prepareFrame(.ordered(plan))
+        let geometry=try await canvas.prepareOrderedPlan(plan)
         try Task.checkCancellation()
-        guard self.generation == generation,!disposed,!retiring,let frame,frame.isValid,
+        guard self.generation == generation,!disposed,!retiring,
           claimed || model?.selectionEditSourceIsCurrent(source) == true else {throw CancellationError()}
         #if os(iOS)
         guard let hosts=model?.selectedGraphicHosts.hosts(source,requiredIDs:requiredAuthoredHostIDs,ownerID:id),
           hosts.mapValues(\.generation) == hostGenerations else {
-          frame.cancel();preparation=nil;prepareIfPossible();return
+          preparation=nil;prepareIfPossible();return
         }
         guard let currentTextHosts=model?.selectedGraphicHosts.textHosts(source,requiredIDs:requiredTextHostIDs),
           Set(currentTextHosts.map(ObjectIdentifier.init)) == Set(textHosts.map(ObjectIdentifier.init)) else {
-          frame.cancel();preparation=nil;prepareIfPossible();return
+          preparation=nil;prepareIfPossible();return
         }
         guard let poses=authoredPoses(edits,hosts:hosts) else {throw CancellationError()}
         #endif
-        canvas.installPreparedFrame(frame) { [weak self] in
+        try await canvas.presentOrderedPlan(geometry,plan:plan,replacing:ids,validate:{ [weak self] in
+          guard let self,self.generation == generation,!disposed,!retiring,
+            claimed || model?.selectionEditSourceIsCurrent(source) == true else {return false}
+          #if os(iOS)
+          guard model?.selectedGraphicHosts.hosts(source,requiredIDs:requiredAuthoredHostIDs,ownerID:id)?.mapValues(\.generation) == hostGenerations,
+            let currentText=model?.selectedGraphicHosts.textHosts(source,requiredIDs:requiredTextHostIDs),
+            Set(currentText.map(ObjectIdentifier.init)) == Set(textHosts.map(ObjectIdentifier.init)) else {return false}
+          #endif
+          return true
+        }) { [weak self] in
           guard let self else {return}
           shown=values;presentedEdits=edits;presentedFrame=frameRect
           #if os(iOS)
@@ -257,7 +264,6 @@ import QuartzCore
         if accepted && shown == desired {releasePhysicalLease()}
         if desired != values || desiredEdits != edits {prepareIfPossible()}
       } catch {
-        frame?.cancel()
         guard self.generation == generation else {return}
         preparation=nil;fail()
       }
@@ -359,6 +365,7 @@ import QuartzCore
   func canonicalInstalled(_ plan:NotebookOrderedInkPlan,on current:InkCanvasView,surface:SurfaceID) {
     guard (needsCanonicalSource || awaitsAcceptedDeleteCut),surface == source.address.surface,current.window != nil,
       current.isStableFramePresented,current.orderedInkPlan == plan else {return}
+    current.acknowledgeAcceptedOrderedFrame(plan)
     // The caller also checked its accepted publication cursor and immutable
     // source. A newer physical owner may legitimately replace the original one.
     finishRetirement()

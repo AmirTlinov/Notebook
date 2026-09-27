@@ -22,6 +22,14 @@ import NotebookCore
     bodies=values
   }
   private init(plan:NotebookOrderedInkPlan,bodies:[UUID:InkMaterialRenderer.OrderedBody]) {self.plan=plan;self.bodies=bodies}
+  static func replacing(_ ids:Set<UUID>,with candidate:InkOrderedGeometry?,plan:NotebookOrderedInkPlan,
+    in current:InkOrderedGeometry?,currentPlan:NotebookOrderedInkPlan)->InkOrderedGeometry? {
+    let sources=currentPlan.bodies.filter{!ids.contains($0.sourceID)}+plan.bodies.filter{ids.contains($0.sourceID)}
+    guard !sources.isEmpty else {return nil}
+    var bodies=current?.bodies ?? [:]
+    for id in ids {bodies[id]=candidate?.bodies[id]}
+    return .init(plan:.init(bodies:sources,suppressedInkIDs:currentPlan.suppressedInkIDs.subtracting(ids).union(plan.suppressedInkIDs.intersection(ids))),bodies:bodies)
+  }
   static func restoring(_ original:InkOrderedGeometry?,originalPlan:NotebookOrderedInkPlan,in current:InkOrderedGeometry?,removing ids:Set<UUID>)->InkOrderedGeometry? {
     let retained=(current?.plan.bodies ?? []).filter{!ids.contains($0.sourceID)}
     let restored=(original?.plan.bodies ?? []).filter{ids.contains($0.sourceID)}
@@ -43,10 +51,15 @@ import NotebookCore
     return .init(plan:.init(bodies:sources,suppressedInkIDs:plan.suppressedInkIDs),bodies:prepared)
   }
   func events(raw:[(NotebookInkPaintKey,InkRasterRenderer.Draw)],camera:SpatialCamera?,viewport:SpatialPoint,
-    region:CGRect,pixels:CGSize,device:any MTLDevice,resources:SceneRenderResources,owner:ScenePhysicalOwnerLease?,liveCuts:[String:[InkElementErasure]] = [:]) throws
+    region:CGRect,pixels:CGSize,device:any MTLDevice,resources:SceneRenderResources,owner:ScenePhysicalOwnerLease?,liveCuts:[String:[InkElementErasure]] = [:],damage:CGRect? = nil) throws
     -> (events:[InkRasterRenderer.OrderedEvent],reservations:[RasterReservation]) {
     var result:[InkRasterRenderer.OrderedEvent]=[],held:[RasterReservation]=[],index=0
     func appendBody(_ source:NotebookOrderedInkPlan.Body) throws {
+      let position=camera.map {$0.worldToScreen(source.layout.origin.offsetBy(x:source.layout.frame.x,y:source.layout.frame.y),viewport:viewport)}
+        ?? .init(x:source.layout.frame.x,y:source.layout.frame.y)
+      let scale=camera?.scale ?? 1
+      let bounds=CGRect(x:position.x,y:position.y,width:source.layout.frame.width*scale,height:source.layout.frame.height*scale)
+      guard bounds.intersects((damage ?? region).insetBy(dx:-1,dy:-1)) else {return}
       guard !source.erasures.contains(where:{$0.target.wholeElement}),
         !(liveCuts[source.elementID] ?? []).contains(where:{$0.target.wholeElement}) else {return}
       guard let body=bodies[source.sourceID] else {throw SceneRenderError.snapshotPending("ordered_ink_body")}

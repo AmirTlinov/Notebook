@@ -179,6 +179,8 @@ struct AgentOverlayView: View {
           if readiness.recordMaterial(element.id,id:id,content:content,ready:ready) {
             readiness.publish()
           }
+        },page:pageTurnActivity.flatMap { activity in
+          rasterPreparation.map { (activity:activity,index:$0.pageIndex) }
         }))
         .offset(x: frame.x, y: frame.y)
         .accessibilityElement(children: .contain)

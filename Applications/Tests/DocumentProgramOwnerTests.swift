@@ -472,7 +472,7 @@ final class DocumentProgramOwnerTests: XCTestCase {
     try await wait(message: { fixture.diagnostics }) { fixture.number("good", field: "count") == 1 && fixture.presents(.block("good")) }
   }
 
-  func testFailedCompositeDoesNotBlockALiveDistantLandingWithTheSameProgramSource() async throws {
+  func testFailedProgramAllowsSnapshotAndLiveLandingsWithAnExplicitStatus() async throws {
     let document = DocumentTestFiles.document(actor: UUID(), contents: [
       .tex(id: "body", source: String(repeating: "Paper and programs have independent readiness.\n\n", count: 160)),
       .program(id: "bad", html: "<button>Broken neighbour</button>", javaScript: "throw new Error('broken far fixture')", height: 150)])
@@ -495,8 +495,9 @@ final class DocumentProgramOwnerTests: XCTestCase {
     try await wait(message: {
       "target=\(target) \(fixture.diagnostics)\n" +
         DocumentPagePresentationOwner.presentationDiagnostic(documentID: document.id, resources: fixture.resources)
-    }) { !fixture.preparationErrors.isEmpty }
-    XCTAssertNotEqual(fixture.ready[1], true, "A failed program cannot yield a complete curl picture")
+    }) { fixture.ready[1] == true }
+    XCTAssertTrue(fixture.hosts[1].hasSnapshot, "Canonical paper and the explicit program status form a complete navigation frame")
+    XCTAssertTrue(fixture.preparationErrors.isEmpty, "A program failure belongs to its slot, not the physical page")
     fixture.activity.prepare(target, presentation: .live)
     let demand = try XCTUnwrap(fixture.activity.preparationDemand)
     try await wait(message: { fixture.diagnostics }) { fixture.ready[1] == true && fixture.canonicalPaper(in: 1) }
@@ -697,6 +698,75 @@ final class DocumentProgramOwnerTests: XCTestCase {
     XCTAssertLessThanOrEqual(resources.rasterCount, 1)
   }
 
+  func testAcceptedOpeningPreparesTheSameSourceBeforeAnyNativeHostExists() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = NotebookStore(root: root); try store.prepare()
+    let document = DocumentTestFiles.document(contents: [.tex(id: "body", source: "Accepted opening source before native mount.")])
+    let resources = SceneRenderResources()
+    let owner = DocumentPagePresentationOwner.shared(documentID: document.id, resources: resources)
+    let opening = owner.prepareOpening(document: document, pageIndex: 0, store: store)
+    defer { opening.close() }
+    let source = DocumentRenderRegistry.shared.session(documentID: document.id, resources: resources).source(document, store: store)
+    try await wait(message: { "accepted source has no preparation reader or layout" }) {
+      source.pendingPreparationReaderCount > 0 || source.layout != nil
+    }
+    XCTAssertEqual(resources.activeWebSurfaceCount, 0, "Accepted immutable print work has no native mount dependency")
+    let fixture = try ProgramFixture(document: document, resources: resources, showsNeighbour: false, programStore: store)
+    defer { fixture.close() }
+    try await wait(message: { fixture.diagnostics }) { fixture.ready[0] == true && fixture.canonicalPaper(in: 0) }
+    let renderer = try XCTUnwrap(fixture.paper(in: 0)?.navigationDelegate as? DocumentWebCoordinator)
+    XCTAssertTrue(renderer.payload?.source === source, "Mounting borrows the accepted source instead of starting another preparation")
+    XCTAssertEqual(source.measurementCount, 1)
+    XCTAssertTrue(opening.hasTransferred, "The exact native source demand ends the temporary opening reader")
+    opening.close()
+    XCTAssertTrue(fixture.canonicalPaper(in: 0), "Handing off the opening lease preserves the mounted source")
+    XCTAssertTrue(fixture.hosts[0].isUserInteractionEnabled)
+  }
+
+  func testStaticTurnFramesReuseTheirExactPixelsAcrossLandingAndReplaceEditedSource() async throws {
+    let original = "First immutable page.\\newpage Second immutable page."
+    let document = DocumentTestFiles.document(contents: [.tex(id: "body", source: original)])
+    let fixture = try ProgramFixture(document: document)
+    defer { fixture.close() }
+    try await wait(message: { fixture.diagnostics }) {
+      fixture.ready[0] == true && fixture.ready[1] == true && fixture.canonicalPaper(in: 0)
+    }
+    let first = try await fixture.turnFrame(in: 0), neighbour = try await fixture.turnFrame(in: 1)
+    let sameFirst = try await fixture.turnFrame(in: 0), sameNeighbour = try await fixture.turnFrame(in: 1)
+    XCTAssertTrue(first === sameFirst)
+    XCTAssertTrue(neighbour === sameNeighbour)
+    fixture.select(1)
+    try await wait(message: { fixture.diagnostics }) { fixture.ready[1] == true && fixture.canonicalPaper(in: 1) }
+    let landed = try await fixture.turnFrame(in: 1)
+    XCTAssertTrue(landed === neighbour, "Landing on unchanged plain paper keeps its resident GPU material")
+    fixture.setInteractive(false); fixture.setInteractive(true)
+    let afterInputPolicy = try await fixture.turnFrame(in: 1)
+    XCTAssertTrue(afterInputPolicy === landed)
+    fixture.replaceSource(fileID: "body", source: original + " A changed printed sentence.")
+    try await wait(message: { fixture.diagnostics }) { fixture.ready[1] == true && fixture.canonicalPaper(in: 1) }
+    let edited = try await fixture.turnFrame(in: 1), sameEdited = try await fixture.turnFrame(in: 1)
+    XCTAssertFalse(edited === landed, "A source binding cannot reuse the preceding page frame")
+    XCTAssertTrue(edited === sameEdited)
+  }
+
+  func testLiveProgramTurnTakesANewLocalCutWithoutCheckpointOrRuntimeReplacement() async throws {
+    let document = DocumentTestFiles.document(contents: [.program(id: "live",
+      html: "<div id='color' style='height:120px;background:red'>Live pixels</div>", css: "",
+      javaScript: "notebook.ready(Promise.resolve());", height: 140)])
+    let fixture = try ProgramFixture(document: document, showsNeighbour: false)
+    defer { fixture.close() }
+    try await wait(message: { fixture.diagnostics }) { fixture.ready[0] == true && fixture.web(block: "live") != nil }
+    let web = try XCTUnwrap(fixture.web(block: "live"))
+    let first = try await fixture.turnFrame(in: 0, priority: .input)
+    _ = try await web.evaluateJavaScript("document.querySelector('#color').style.background='blue';true")
+    let changed = try await fixture.turnFrame(in: 0, priority: .input)
+    XCTAssertFalse(first === changed, "Unsaved live pixels never hit the immutable page cache")
+    XCTAssertTrue(fixture.web(block: "live") === web)
+    XCTAssertTrue(fixture.checkpoints.isEmpty, "A visual cut must not add an authored-state writer dependency")
+    XCTAssertEqual(fixture.ready[0], true)
+  }
+
   func testSnapshotDensityUsesTheNativeCameraProjectionAndKeepsPhysicalBounds() throws {
     let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
     let window = UIWindow(windowScene: scene), controller = UIViewController()
@@ -742,9 +812,13 @@ final class DocumentProgramOwnerTests: XCTestCase {
     protectedRequest?.release()
     try await wait(message: { fixture.diagnostics }) { fixture.resources.pendingReclamationCount == 0 }
     fixture.activity.update(false)
+    // GPU copies are cheaper to restore and yield before the installed picture.
+    let currentFrameBytes = try await fixture.turnFrame(in: 0).byteCount
+    let neighbourFrameBytes = try await fixture.turnFrame(in: 1).byteCount
+    let frameBytes = currentFrameBytes + neighbourFrameBytes
     let before = fixture.resources.rasterAdmission
     let admitted = try XCTUnwrap(fixture.resources.reserveDerivedBytes(
-      max(1, before.passiveByteLimit - before.pinnedBytes - before.passiveReservedBytes + 1), priority: .passive))
+      max(1, before.passiveByteLimit - before.pinnedBytes - before.passiveReservedBytes + frameBytes + 1), priority: .passive))
     defer { admitted.release() }
     XCTAssertNil(fixture.hosts[1].snapshotEntryID)
     XCTAssertEqual(fixture.ready[1], false)
@@ -1737,9 +1811,9 @@ final class DocumentProgramOwnerTests: XCTestCase {
     defer { fixture.close() }
     try await wait(message: { fixture.diagnostics }) { fixture.ready[0] == true && fixture.web(in: 0) != nil }
     let web = try XCTUnwrap(fixture.web(in: 0))
-    try await Task.sleep(for: .milliseconds(400))
+    try await wait(message: { fixture.diagnostics }) { fixture.ready[1] == true }
     XCTAssertEqual(fixture.ready[0], true)
-    XCTAssertNotEqual(fixture.ready[1], true)
+    XCTAssertTrue(fixture.hosts[1].hasSnapshot, "An unresolved author ready promise leaves an explicit status in the turn frame")
     XCTAssertTrue(fixture.hosts[0].isUserInteractionEnabled)
     XCTAssertTrue(fixture.web(in: 0) === web)
     let page = try await XCTUnwrap(fixture.paper(in: 0)).evaluateJavaScript("notebookRenderer.pageReceipt().pageIndex")
@@ -2053,6 +2127,7 @@ final class ProgramFixture {
   private var thumbnailPresentations: Set<Int> = []
   private var pageIndices = [0, 1]
   var ready: [Int: Bool] = [:]
+  private var frameReadiness: [Int: PageTurnReadiness] = [:]
   var checkpoints: Set<String> = []
   var checkpointValues: [String: JSONValue] = [:]
   var onCheckpoint: (String) async -> Void = { _ in }
@@ -2116,6 +2191,9 @@ final class ProgramFixture {
     XCTAssertTrue(document.replaceFileSource(id: fileID, source: source, actor: actor))
     refresh()
   }
+  func turnFrame(in index: Int, priority: SceneAllocationPriority = .passive) async throws -> PageTurnFrame {
+    try await XCTUnwrap(frameReadiness[index]).acquireFrame(priority: priority)
+  }
   func canonicalPaper(in index: Int) -> Bool {
     guard let web = paper(in: index), let coordinator = web.navigationDelegate as? DocumentWebCoordinator else { return false }
     return coordinator.hasCanonicalPixels && coordinator.payload?.pageIndex == pageIndices[index]
@@ -2126,7 +2204,7 @@ final class ProgramFixture {
   func setInteractive(_ value: Bool) { interactive = value; refresh() }
   func setThumbnail(_ index: Int) { thumbnailPresentations.insert(index); refresh() }
   func retirePresentation(_ index: Int) {
-    retiredPresentations.insert(index); coordinators[index].invalidate()
+    retiredPresentations.insert(index); coordinators[index].invalidate(); frameReadiness[index] = nil
   }
   func restorePresentation(_ index: Int) { retiredPresentations.remove(index); refresh() }
   func showPages(current: Int, neighbour: Int) {
@@ -2135,9 +2213,11 @@ final class ProgramFixture {
   private func refresh() {
     for (index, coordinator) in coordinators.enumerated() {
       guard !retiredPresentations.contains(index) else { continue }
+      let readiness = PageTurnReadiness(activity: activity, pageIndex: pageIndices[index]) { [weak self] in self?.ready[index] = $0 }
+      frameReadiness[index] = readiness
       coordinator.update(.init(document: document, state: state, pageIndex: pageIndices[index], isCurrent: selected == index && !thumbnailPresentations.contains(index),
         isVisible: visible, isInteractive: visible && selected == index && interactive && !thumbnailPresentations.contains(index), pageTurnActive: false,
-        onRenderReady: .init(activity: activity) { [weak self] in self?.ready[index] = $0 },
+        onRenderReady: readiness,
         onPageLayout: { _ in },
         onStateChange: { [weak self] program, value in
           guard let self else { return nil }
@@ -2259,7 +2339,7 @@ final class ProgramFixture {
   deinit { if let ownedStoreDirectory { try? FileManager.default.removeItem(at: ownedStoreDirectory) } }
   func close() {
     retiredPresentations = Set(coordinators.indices)
-    coordinators.forEach { $0.invalidate() }; window.isHidden = true; window.rootViewController = nil
+    coordinators.forEach { $0.invalidate() }; frameReadiness.removeAll(); window.isHidden = true; window.rootViewController = nil
   }
 }
 

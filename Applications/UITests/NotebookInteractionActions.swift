@@ -2,6 +2,27 @@ import XCTest
 
 /// System-routed gestures shared by UX scenarios, without model shortcuts.
 @MainActor extension XCTestCase {
+  func assertNotebookFullScreenPortrait(in app: XCUIApplication) {
+    let application = app.frame, window = app.windows.firstMatch.frame
+    let screen = XCUIScreen.main.screenshot()
+    let image = screen.image
+    let hierarchy = XCTAttachment(string:
+      "application=\(application), window=\(window), screenImage=\(image.size), imageScale=\(image.scale)\n\(app.debugDescription)")
+    hierarchy.name = "Before first contact: window and accessibility tree"
+    hierarchy.lifetime = .keepAlways; add(hierarchy)
+    let picture = XCTAttachment(screenshot: screen)
+    picture.name = "Before first contact: physical screen"
+    picture.lifetime = .keepAlways; add(picture)
+    XCTAssertGreaterThan(window.width, 0)
+    XCTAssertGreaterThan(window.height, window.width,
+      "This gesture journey requires a full-screen portrait window before its first contact")
+    XCTAssertEqual(window, application,
+      "The app and its main window must share the gesture coordinate space")
+    XCTAssertEqual(window.width / max(window.height, 1),
+      image.size.width / max(image.size.height, 1), accuracy: 0.001,
+      "The physical screen and app window differ: restore full-screen portrait before this journey")
+  }
+
   func selectNotebookTool(_ tool:String,in app:XCUIApplication,settings:Bool = false) {
     let groupID = ["pen","marker"].contains(tool) ? "drawing-group"
       : ["shape","connector"].contains(tool) ? "figure-group" : nil

@@ -1,0 +1,746 @@
+{
+  "format": 1,
+  "recordedAt": "2026-09-27T21:59:37.815448+00:00",
+  "baseCommit": "dbaf04e94268d8d9e914a2a33b801691a2129d57",
+  "branch": "codex/causal-repair",
+  "candidateVersion": "0.3.144 (214)",
+  "installedVersion": "0.3.143 (213)",
+  "status": "implemented-selected-verification-complete-release-pending",
+  "fullAcceptance": false,
+  "initialFindings": "F01–F18 in docs/causal-audit-2026-09-27.md",
+  "runs": [
+    {
+      "path": "/private/tmp/notebook-causal-repair-214-20260927T1728Z",
+      "scope": "core-and-browser",
+      "sourceSHA256": "f6a802bd24450fe87e98ffcff923dfeaf96ac87547df68db4f2e7edef25570d7",
+      "wholeRunPassed": false,
+      "passedCore": {
+        "swiftTesting": 44,
+        "xctest": 2
+      },
+      "passedBrowser": 15,
+      "remaining": "Native compilation failed; no overall receipt."
+    },
+    {
+      "path": "/private/tmp/notebook-causal-repair-native-214-20260927T1811Z",
+      "scope": "physical-integration",
+      "sourceSHA256": "e51b16b8cdffcb86111b20f69a6e8e6c3c4576c6355a5637a58c30c68e852764",
+      "wholeRunPassed": false,
+      "passed": 129,
+      "failed": 8,
+      "skipped": 0,
+      "runtimeWarnings": [],
+      "failures": [
+        {
+          "test": "NotebookColdInputUXTests/testBlankPageReportsItsFirstContactFrameWithoutSnapshotPolling()",
+          "reason": "XCTAssertLessThanOrEqual failed: (\"34.594916680362076\") is greater than (\"20.0\")"
+        },
+        {
+          "test": "PageTurnSelectionTests/testDocumentIntentFailureRetryAndExternalLandingPreserveConfirmedPage()",
+          "reason": "XCTAssertEqual failed: (\"0\") is not equal to (\"7\")"
+        },
+        {
+          "test": "PageTurnSelectionTests/testDocumentSourceReplacementRetainsHostsButRevokesTheirPendingCapture()",
+          "reason": "XCTAssertNil failed: \"<_TtC8NotebookP33_3C44745868F89053300ED558BCBA432325IPadIndexedPageController: 0x15faab600>\" - The old source's motion must end before new readiness can arrive"
+        },
+        {
+          "test": "NotebookDocumentOpeningTests/testHistoryReferenceInstallsAnUnloadedDocumentOnAnotherBoard()",
+          "reason": "XCTAssertTrue failed - UX document-other-board-installed: correct=true, observed=1194.512292 ms, ceiling=1.0 seconds; window observation, not photon timing"
+        },
+        {
+          "test": "NotebookPageLifecycleUXTests/testNativePageTurnsShowTheStoredLeafAfterEvictionReverseAndCancellation()",
+          "reason": "XCTUnwrap failed: expected non-nil value of type \"UIViewController\" - The real next sheet did not become ready; a fake ready(true) would hide this failure"
+        },
+        {
+          "test": "NotebookPageLifecycleUXTests/testRepeatedInkUndoRedoAfterPageTurnsAndPinchesKeepsTheAcceptedWarmMaterial()",
+          "reason": "XCTAssertTrue failed - UX inverse-journey-0-pen: correct=true, observed=109.122917 ms, ceiling=0.1 seconds; window observation, not photon timing"
+        },
+        {
+          "test": "NotebookPageMotionUXTests/testTenForwardReverseTurnsMeetFirstPresentationAndLandingDeadlines()",
+          "reason": "XCTAssertTrue failed - Zero/dropped, invalid or pre-command timestamps cannot stand in for displayed frames"
+        },
+        {
+          "test": "NotebookNavigationLoadUITests/testDensePageTurnsMeetSystemHitchBudget()",
+          "reason": "XCTAssertTrue failed"
+        }
+      ]
+    },
+    {
+      "path": "/private/tmp/notebook-causal-repair-native-214-20260927T1845Z",
+      "scope": "physical-cause-check",
+      "sourceSHA256": "23e073658a57d7bd48e72e77c1b600b45e027b0670bd9c8a45c5c895c9d0edd4",
+      "wholeRunPassed": false,
+      "passed": 28,
+      "failed": 5,
+      "skipped": 0,
+      "runtimeWarnings": [],
+      "failures": [
+        {
+          "test": "NotebookColdInputUXTests/testBlankPageReportsItsFirstContactFrameWithoutSnapshotPolling()",
+          "reason": "XCTAssertTrue failed"
+        },
+        {
+          "test": "NotebookNavigationLoadUXTests/testClosedDenseNotebookOpensThroughItsMountedDoubleTapOwner()",
+          "reason": "Testing was canceled"
+        },
+        {
+          "test": "NotebookDocumentOpeningTests/testHistoryReferenceInstallsAnUnloadedDocumentOnAnotherBoard()",
+          "reason": "XCTAssertTrue failed - UX document-other-board-installed: correct=true, observed=1227.793167 ms, ceiling=1.0 seconds; window observation, not photon timing"
+        },
+        {
+          "test": "NotebookInteractionUXTests/testInkEraserMeetsTwentyMillisecondPresentationBudget()",
+          "reason": "XCTAssertTrue failed - ink-eraser-20ms, thermal=0, lowPower=false, screenMax=120, fixed 120 Hz input, EVERY sample <= 20.0 ms; input to handler return: n=121 p50=1.4991250354796648 p95=1.654083316680044 p99=1.685291645117104 max=1.7580832936801016 ms; UIKit update completion: n=121 p50=5.911000014748424 p95=13.310874986927956 p99=13.516083301510662 max=14.244333375245333 ms; OS Metal presentation: n=120 p50=20.753583346959203 p95=20.935125008691102 p99=37.2152499621734 max=37.218583340290934 ms; failed samples=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119]. UIKit is not a presentation ACK. Neither lane measures physical Pencil sensing/photons."
+        },
+        {
+          "test": "NotebookInteractionUXTests/testPencilReplayCannotHideBacklogBySlowingItsInputSchedule()",
+          "reason": "XCTAssertTrue failed - pen-20ms, thermal=0, lowPower=false, screenMax=120, fixed 120 Hz input, EVERY sample <= 20.0 ms; input to handler return: n=121 p50=0.9218333289027214 p95=1.3281666906550527 p99=1.6677083331160247 max=1.7928750021383166 ms; UIKit update completion: n=121 p50=9.447291668038815 p95=17.70712505094707 p99=18.037583329714835 max=18.053041654638946 ms; OS Metal presentation: n=120 p50=25.105624983552843 p95=25.28683334821835 p99=33.23724993970245 max=33.24066667119041 ms; failed samples=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119]. UIKit is not a presentation ACK. Neither lane measures physical Pencil sensing/photons."
+        }
+      ]
+    },
+    {
+      "path": "/private/tmp/notebook-causal-repair-native-214-20260927T1923Z",
+      "scope": "physical-integration-negative-ui-clock-experiment",
+      "sourceSHA256": "6ba4e2795c0cb6fcd15cc4b51915e86105c13f51344473eba7e70bfa6f7f8005",
+      "wholeRunPassed": false,
+      "passed": 63,
+      "failed": 14,
+      "skipped": 0,
+      "runtimeWarnings": [],
+      "failures": [
+        {
+          "failureText": "XCTAssertTrue failed",
+          "targetName": "NotebookTests",
+          "testIdentifier": 10,
+          "testIdentifierString": "NotebookColdInputUXTests/testBlankPageReportsItsFirstContactFrameWithoutSnapshotPolling()",
+          "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/NotebookColdInputUXTests/testBlankPageReportsItsFirstContactFrameWithoutSnapshotPolling",
+          "testName": "testBlankPageReportsItsFirstContactFrameWithoutSnapshotPolling()"
+        },
+        {
+          "failureText": "XCTAssertTrue failed - First authored pixels: 157.996083 ms, matched=false, budget=0.15 seconds",
+          "targetName": "NotebookTests",
+          "testIdentifier": 15,
+          "testIdentifierString": "NotebookNavigationLoadUXTests/testColdNotebookWithThirteenDenseSVGsShowsEveryElementWithinBudget()",
+          "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/NotebookNavigationLoadUXTests/testColdNotebookWithThirteenDenseSVGsShowsEveryElementWithinBudget",
+          "testName": "testColdNotebookWithThirteenDenseSVGsShowsEveryElementWithinBudget()"
+        },
+        {
+          "failureText": "XCTAssertTrue failed - First authored pixels: 315.962125 ms, matched=false, budget=0.15 seconds",
+          "targetName": "NotebookTests",
+          "testIdentifier": 16,
+          "testIdentifierString": "NotebookNavigationLoadUXTests/testColdNotebookWithTwentyFourProgramsShowsEveryControlWithinBudget()",
+          "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/NotebookNavigationLoadUXTests/testColdNotebookWithTwentyFourProgramsShowsEveryControlWithinBudget",
+          "testName": "testColdNotebookWithTwentyFourProgramsShowsEveryControlWithinBudget()"
+        },
+        {
+          "failureText": "XCTAssertGreaterThan failed: (\"0\") is not greater than (\"0\") - Exercise a real motion still waiting for its source image",
+          "targetName": "NotebookTests",
+          "testIdentifier": 51,
+          "testIdentifierString": "PageTurnSelectionTests/testDocumentSourceReplacementRetainsHostsButRevokesTheirPendingCapture()",
+          "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/PageTurnSelectionTests/testDocumentSourceReplacementRetainsHostsButRevokesTheirPendingCapture",
+          "testName": "testDocumentSourceReplacementRetainsHostsButRevokesTheirPendingCapture()"
+        },
+        {
+          "failureText": "XCTAssertTrue failed - ink-eraser-20ms, thermal=0, lowPower=false, screenMax=120, fixed 120 Hz input, EVERY sample <= 20.0 ms; input to handler return: n=121 p50=1.312416628934443 p95=1.5300833038054407 p99=1.5816249651834369 max=1.5956249553710222 ms; UIKit update completion: n=121 p50=2.253458311315626 p95=4.348666698206216 p99=4.619124985765666 max=10.18245832528919 ms; OS Metal presentation: n=120 p50=44.84058334492147 p95=61.480333330109715 p99=61.54762499500066 max=61.56100000953302 ms; failed samples=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119]. UIKit is not a presentation ACK. Neither lane measures physical Pencil sensing/photons.",
+          "targetName": "NotebookTests",
+          "testIdentifier": 12,
+          "testIdentifierString": "NotebookInteractionUXTests/testInkEraserMeetsTwentyMillisecondPresentationBudget()",
+          "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/NotebookInteractionUXTests/testInkEraserMeetsTwentyMillisecondPresentationBudget",
+          "testName": "testInkEraserMeetsTwentyMillisecondPresentationBudget()"
+        },
+        {
+          "failureText": "XCTUnwrap failed: expected non-nil value of type \"UIViewController\" - The real next sheet did not become ready; a fake ready(true) would hide this failure",
+          "targetName": "NotebookTests",
+          "testIdentifier": 20,
+          "testIdentifierString": "NotebookPageLifecycleUXTests/testNativePageTurnsShowTheStoredLeafAfterEvictionReverseAndCancellation()",
+          "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/NotebookPageLifecycleUXTests/testNativePageTurnsShowTheStoredLeafAfterEvictionReverseAndCancellation",
+          "testName": "testNativePageTurnsShowTheStoredLeafAfterEvictionReverseAndCancellation()"
+        },
+        {
+          "failureText": "XCTAssertFalse failed - A complete opaque pair does not require a blocking UIKit scheduling fence per frame",
+          "targetName": "NotebookTests",
+          "testIdentifier": 34,
+          "testIdentifierString": "NotebookPageMotionUXTests/testOpaqueReverseKeepsLiveSourceUntilItsPresentedEndpoint()",
+          "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/NotebookPageMotionUXTests/testOpaqueReverseKeepsLiveSourceUntilItsPresentedEndpoint",
+          "testName": "testOpaqueReverseKeepsLiveSourceUntilItsPresentedEndpoint()"
+        },
+        {
+          "failureText": "XCTAssertTrue failed - The mounted canvas must complete a frame of its current ink",
+          "targetName": "NotebookTests",
+          "testIdentifier": 6,
+          "testIdentifierString": "InkCanvasLifecycleTests/testPageStopsDrawableProductionWhenAResizedPoolCannotBeAdmitted()",
+          "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/InkCanvasLifecycleTests/testPageStopsDrawableProductionWhenAResizedPoolCannotBeAdmitted",
+          "testName": "testPageStopsDrawableProductionWhenAResizedPoolCannotBeAdmitted()"
+        },
+        {
+          "failureText": "XCTAssertTrue failed - pen-20ms, thermal=0, lowPower=false, screenMax=120, fixed 120 Hz input, EVERY sample <= 20.0 ms; input to handler return: n=121 p50=1.4259166200645268 p95=1.52879161760211 p99=1.6344999894499779 max=1.7824166570790112 ms; UIKit update completion: n=121 p50=4.921666637528688 p95=7.006833329796791 p99=7.164583308622241 max=11.017083306796849 ms; OS Metal presentation: n=120 p50=47.37674997886643 p95=64.0703333192505 p99=64.13754163077101 max=64.15095832198858 ms; failed samples=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119]. UIKit is not a presentation ACK. Neither lane measures physical Pencil sensing/photons.",
+          "targetName": "NotebookTests",
+          "testIdentifier": 13,
+          "testIdentifierString": "NotebookInteractionUXTests/testPencilReplayCannotHideBacklogBySlowingItsInputSchedule()",
+          "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/NotebookInteractionUXTests/testPencilReplayCannotHideBacklogBySlowingItsInputSchedule",
+          "testName": "testPencilReplayCannotHideBacklogBySlowingItsInputSchedule()"
+        },
+        {
+          "failureText": "XCTAssertTrue failed",
+          "targetName": "NotebookTests",
+          "testIdentifier": 22,
+          "testIdentifierString": "NotebookPageLifecycleUXTests/testRepeatedInkUndoRedoAfterPageTurnsAndPinchesKeepsTheAcceptedWarmMaterial()",
+          "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/NotebookPageLifecycleUXTests/testRepeatedInkUndoRedoAfterPageTurnsAndPinchesKeepsTheAcceptedWarmMaterial",
+          "testName": "testRepeatedInkUndoRedoAfterPageTurnsAndPinchesKeepsTheAcceptedWarmMaterial()"
+        },
+        {
+          "failureText": "XCTAssertTrue failed - Zero/dropped, invalid or pre-command timestamps cannot stand in for displayed frames",
+          "targetName": "NotebookTests",
+          "testIdentifier": 41,
+          "testIdentifierString": "NotebookPageMotionUXTests/testTenForwardReverseTurnsMeetFirstPresentationAndLandingDeadlines()",
+          "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/NotebookPageMotionUXTests/testTenForwardReverseTurnsMeetFirstPresentationAndLandingDeadlines",
+          "testName": "testTenForwardReverseTurnsMeetFirstPresentationAndLandingDeadlines()"
+        },
+        {
+          "failureText": "XCTAssertTrue failed - Wrong source or missing SVG on the landed image",
+          "targetName": "NotebookUITests",
+          "testIdentifier": 75,
+          "testIdentifierString": "NotebookNavigationLoadUITests/testDensePageTurnsMeetSystemHitchBudget()",
+          "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookUITests/NotebookNavigationLoadUITests/testDensePageTurnsMeetSystemHitchBudget",
+          "testName": "testDensePageTurnsMeetSystemHitchBudget()"
+        },
+        {
+          "failureText": "XCTAssertTrue failed - Wrong displayed material at page (180.0, 280.0): [223, 227, 214, 255]",
+          "targetName": "NotebookUITests",
+          "testIdentifier": 77,
+          "testIdentifierString": "NotebookWorkspaceJourneyUITests/testFirstSelectionMoveDeleteAndColdReopenPreserveTheWholeComposition()",
+          "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookUITests/NotebookWorkspaceJourneyUITests/testFirstSelectionMoveDeleteAndColdReopenPreserveTheWholeComposition",
+          "testName": "testFirstSelectionMoveDeleteAndColdReopenPreserveTheWholeComposition()"
+        },
+        {
+          "failureText": "XCTAssertEqual failed: (\"0\") is not equal to (\"24\") - All 24 controls must be visibly present after real zoom",
+          "targetName": "NotebookUITests",
+          "testIdentifier": 76,
+          "testIdentifierString": "NotebookNavigationLoadUITests/testTwentyFourPageProgramsAcceptFirstTapAfterZoomAndKeepStateAcrossTurns()",
+          "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookUITests/NotebookNavigationLoadUITests/testTwentyFourPageProgramsAcceptFirstTapAfterZoomAndKeepStateAcrossTurns",
+          "testName": "testTwentyFourPageProgramsAcceptFirstTapAfterZoomAndKeepStateAcrossTurns()"
+        }
+      ],
+      "resolution": "UI phase clock removed after latency regression. Hidden-page GPU material separated from live OS readiness; endpoint stages the live host. Dense layout Observation loop fixed. UI24 follows fitted notebook zoom contract; mixed scenario waits for physical opening endpoint."
+    },
+    {
+      "path": "/private/tmp/notebook-causal-repair-functional-214-20260927T1943Z",
+      "scope": "physical-functional-integration-stopped-for-main-thread-loop",
+      "sourceSHA256": "dc7329bc408cfacfd34ff42d72b40a658ea355349dbcd2d7c1125c4b5a8c4f6a",
+      "wholeRunPassed": false,
+      "passed": 14,
+      "failed": 1,
+      "skipped": 0,
+      "failures": [
+        {
+          "failureText": "Testing was canceled",
+          "targetName": "NotebookTests",
+          "testIdentifier": 15,
+          "testIdentifierString": "NotebookPageLifecycleUXTests/testAcceptedInkLiftIsPresentInTheImmediatelyRequestedCurlSource()",
+          "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/NotebookPageLifecycleUXTests/testAcceptedInkLiftIsPresentInTheImmediatelyRequestedCurlSource",
+          "testName": "testAcceptedInkLiftIsPresentInTheImmediatelyRequestedCurlSource()"
+        }
+      ],
+      "systemProfile": "/private/tmp/notebook-repair214-lift-system-1948.trace",
+      "observation": "MainThread19361 actively executing during immediate Pencil lift to page turn. Stopped by lead after 5-second Time Profiler capture; this is not a passed test.",
+      "resolution": "Matching app UUID 53A14BEF localizes GPU completion → material readiness → capture admission → fixture assertion → XCTest/CoreSymbolication. Test dSYM was later overwritten; its earlier atos attribution is supplemental. Changed obsolete OS assertion to acceptedMaterialIsReady; actual landing OS witness unchanged. Cause report: /private/tmp/notebook-repair214-lift-cause-1948.txt."
+    },
+    {
+      "path": "/private/tmp/notebook-causal-repair-final-214-20260927T1952Z",
+      "scope": "physical-functional-integration",
+      "sourceSHA256": "2f8bb9b137f79db2c37985c012d9932d69baa2d322d9cf8a022b727f1067f1d3",
+      "wholeRunPassed": false,
+      "passed": 55,
+      "failed": 4,
+      "skipped": 0,
+      "failures": [
+        {
+          "failureText": "XCTAssertTrue failed - UX new-leaf-accepts-its-own-ink: correct=true, observed=104.593958 ms, ceiling=0.1 seconds; window observation, not photon timing",
+          "targetName": "NotebookTests",
+          "testIdentifier": 3,
+          "testIdentifierString": "NotebookPageLifecycleUXTests/testNativePageTurnsShowTheStoredLeafAfterEvictionReverseAndCancellation()",
+          "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/NotebookPageLifecycleUXTests/testNativePageTurnsShowTheStoredLeafAfterEvictionReverseAndCancellation",
+          "testName": "testNativePageTurnsShowTheStoredLeafAfterEvictionReverseAndCancellation()"
+        },
+        {
+          "failureText": "XCTAssertTrue failed - inverse-journey-0-pen: [\"resident-line: 0/2\", \"line-center: 0/1\"]",
+          "targetName": "NotebookTests",
+          "testIdentifier": 5,
+          "testIdentifierString": "NotebookPageLifecycleUXTests/testRepeatedInkUndoRedoAfterPageTurnsAndPinchesKeepsTheAcceptedWarmMaterial()",
+          "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/NotebookPageLifecycleUXTests/testRepeatedInkUndoRedoAfterPageTurnsAndPinchesKeepsTheAcceptedWarmMaterial",
+          "testName": "testRepeatedInkUndoRedoAfterPageTurnsAndPinchesKeepsTheAcceptedWarmMaterial()"
+        },
+        {
+          "failureText": "XCTAssertTrue failed - Expected leaf 1, displayed folio: Страница 2 из 7",
+          "targetName": "NotebookUITests",
+          "testIdentifier": 59,
+          "testIdentifierString": "NotebookWorkspaceJourneyUITests/testFirstSelectionMoveDeleteAndColdReopenPreserveTheWholeComposition()",
+          "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookUITests/NotebookWorkspaceJourneyUITests/testFirstSelectionMoveDeleteAndColdReopenPreserveTheWholeComposition",
+          "testName": "testFirstSelectionMoveDeleteAndColdReopenPreserveTheWholeComposition()"
+        },
+        {
+          "failureText": "XCTAssertEqual failed: (\"0\") is not equal to (\"24\") - Every control must exist in the real accessibility tree",
+          "targetName": "NotebookUITests",
+          "testIdentifier": 58,
+          "testIdentifierString": "NotebookNavigationLoadUITests/testTwentyFourPageProgramsAcceptFirstTapAfterZoomAndKeepStateAcrossTurns()",
+          "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookUITests/NotebookNavigationLoadUITests/testTwentyFourPageProgramsAcceptFirstTapAfterZoomAndKeepStateAcrossTurns",
+          "testName": "testTwentyFourPageProgramsAcceptFirstTapAfterZoomAndKeepStateAcrossTurns()"
+        }
+      ],
+      "note": "Both immediate accepted ink/erase curl sources passed. Dense UI forward/reverse ten repetitions passed. Program-state key, inverse first pen pixel evidence and mixed journey return are being resolved.",
+      "systemHitchMetrics": [
+        {
+          "testIdentifier": "NotebookNavigationLoadUITests/testDensePageTurnsMeetSystemHitchBudget()",
+          "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookUITests/NotebookNavigationLoadUITests/testDensePageTurnsMeetSystemHitchBudget",
+          "testRuns": [
+            {
+              "device": {
+                "deviceId": "00008103-001E059934D9001E",
+                "deviceName": "iPad (Елизавета)"
+              },
+              "metrics": [
+                {
+                  "baselineAverage": 0,
+                  "baselineName": "",
+                  "displayName": "Hitches Total Duration (native-test)",
+                  "identifier": "com.apple.dt.XCTMetric_Hitch-native-test.total.duration",
+                  "maxPercentRegression": 10,
+                  "maxPercentRelativeStandardDeviation": 10,
+                  "maxRegression": 0,
+                  "maxStandardDeviation": 10,
+                  "measurements": [
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0
+                  ],
+                  "polarity": "prefers smaller",
+                  "unitOfMeasurement": "s"
+                },
+                {
+                  "baselineAverage": 0,
+                  "baselineName": "",
+                  "displayName": "Hitch Time Ratio (native-test)",
+                  "identifier": "com.apple.dt.XCTMetric_Hitch-native-test.time.ratio",
+                  "maxPercentRegression": 10,
+                  "maxPercentRelativeStandardDeviation": 10,
+                  "maxRegression": 0,
+                  "maxStandardDeviation": 10,
+                  "measurements": [
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0
+                  ],
+                  "polarity": "prefers smaller",
+                  "unitOfMeasurement": "ms per s"
+                },
+                {
+                  "baselineAverage": 0,
+                  "baselineName": "",
+                  "displayName": "Number of Hitches (native-test)",
+                  "identifier": "com.apple.dt.XCTMetric_Hitch-native-test.number",
+                  "maxPercentRegression": 10,
+                  "maxPercentRelativeStandardDeviation": 10,
+                  "maxRegression": 0,
+                  "maxStandardDeviation": 10,
+                  "measurements": [
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0
+                  ],
+                  "polarity": "prefers smaller",
+                  "unitOfMeasurement": "hitches"
+                }
+              ],
+              "testPlanConfiguration": {
+                "configurationId": "1",
+                "configurationName": "Test Scheme Action"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "path": "/private/tmp/notebook-causal-repair-mac-214-20260927T2003Z",
+      "scope": "mac-build-compile-error",
+      "sourceSHA256": "4733a2133d50f05348410a32618fddd8ae476b794f8b94e5e3670a265819ce87",
+      "wholeRunPassed": false,
+      "error": "Mac CoverOpeningSurface referenced iPad-only contentChanged. Restored original Mac rootView assignment."
+    },
+    {
+      "path": "/private/tmp/notebook-causal-repair-mac-214-20260927T2008Z",
+      "scope": "mac-selected-final",
+      "sourceSHA256": "94698c12a4614aab4c64835da74b63dfe176ba65a80453295947c319388ab301",
+      "wholeRunPassed": true,
+      "passed": 9,
+      "failed": 0,
+      "skipped": 0,
+      "runtimeWarnings": []
+    },
+    {
+      "path": "/private/tmp/notebook-causal-repair-ipad-214-20260927T2009Z",
+      "scope": "physical-functional-recheck",
+      "sourceSHA256": "94698c12a4614aab4c64835da74b63dfe176ba65a80453295947c319388ab301",
+      "wholeRunPassed": false,
+      "passed": 1,
+      "failed": 5,
+      "skipped": 0,
+      "failures": [
+        {
+          "failureText": "XCTAssertEqual failed: (\"0\") is not equal to (\"1\")",
+          "targetName": "NotebookTests",
+          "testIdentifier": 2,
+          "testIdentifierString": "NotebookPageLifecycleUXTests/testAcceptedShapeEraseIsPresentInTheImmediatelyRequestedCurlSource()",
+          "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/NotebookPageLifecycleUXTests/testAcceptedShapeEraseIsPresentInTheImmediatelyRequestedCurlSource",
+          "testName": "testAcceptedShapeEraseIsPresentInTheImmediatelyRequestedCurlSource()"
+        },
+        {
+          "failureText": "XCTAssertTrue failed",
+          "targetName": "NotebookTests",
+          "testIdentifier": 3,
+          "testIdentifierString": "NotebookPageLifecycleUXTests/testNativePageTurnsShowTheStoredLeafAfterEvictionReverseAndCancellation()",
+          "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/NotebookPageLifecycleUXTests/testNativePageTurnsShowTheStoredLeafAfterEvictionReverseAndCancellation",
+          "testName": "testNativePageTurnsShowTheStoredLeafAfterEvictionReverseAndCancellation()"
+        },
+        {
+          "failureText": "XCTAssertTrue failed - inverse-journey-2-pen: [\"resident-line: 0/2\", \"line-center: 0/1\"]",
+          "targetName": "NotebookTests",
+          "testIdentifier": 4,
+          "testIdentifierString": "NotebookPageLifecycleUXTests/testRepeatedInkUndoRedoAfterPageTurnsAndPinchesKeepsTheAcceptedWarmMaterial()",
+          "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/NotebookPageLifecycleUXTests/testRepeatedInkUndoRedoAfterPageTurnsAndPinchesKeepsTheAcceptedWarmMaterial",
+          "testName": "testRepeatedInkUndoRedoAfterPageTurnsAndPinchesKeepsTheAcceptedWarmMaterial()"
+        },
+        {
+          "failureText": "XCTAssertTrue failed - Wrong displayed material at page (440.0, 590.0): [252, 252, 250, 255]",
+          "targetName": "NotebookUITests",
+          "testIdentifier": 6,
+          "testIdentifierString": "NotebookWorkspaceJourneyUITests/testFirstSelectionMoveDeleteAndColdReopenPreserveTheWholeComposition()",
+          "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookUITests/NotebookWorkspaceJourneyUITests/testFirstSelectionMoveDeleteAndColdReopenPreserveTheWholeComposition",
+          "testName": "testFirstSelectionMoveDeleteAndColdReopenPreserveTheWholeComposition()"
+        },
+        {
+          "failureText": "XCTAssertEqual failed: (\"0\") is not equal to (\"24\") - Every control must exist in the real accessibility tree",
+          "targetName": "NotebookUITests",
+          "testIdentifier": 5,
+          "testIdentifierString": "NotebookNavigationLoadUITests/testTwentyFourPageProgramsAcceptFirstTapAfterZoomAndKeepStateAcrossTurns()",
+          "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookUITests/NotebookNavigationLoadUITests/testTwentyFourPageProgramsAcceptFirstTapAfterZoomAndKeepStateAcrossTurns",
+          "testName": "testTwentyFourPageProgramsAcceptFirstTapAfterZoomAndKeepStateAcrossTurns()"
+        }
+      ],
+      "resolution": "Transient material revocation across acquire await was terminal; preserve motion until owner readiness. Live-to-raster provider replacement lost addressed wake-up; keep weak live-slot observer. Mixed undo actual screenshot is correct; probe covered by history toast, moved existing row outside cue. Inverse retained GPU contains new body with exact OS source; failed UIKit window oracle remains negative."
+    },
+    {
+      "path": "/private/tmp/notebook-causal-repair-ipad-214-20260927T2017Z",
+      "scope": "physical-handoff-recheck",
+      "sourceSHA256": "e8d221e666190d3525171e247520288ed66ffdc549c166f5fc3a56ce7c436325",
+      "wholeRunPassed": false,
+      "passed": 3,
+      "failed": 3,
+      "skipped": 0,
+      "failures": [
+        {
+          "failureText": "XCTAssertEqual failed: (\"0\") is not equal to (\"1\")",
+          "targetName": "NotebookTests",
+          "testIdentifier": 2,
+          "testIdentifierString": "NotebookPageLifecycleUXTests/testAcceptedShapeEraseIsPresentInTheImmediatelyRequestedCurlSource()",
+          "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/NotebookPageLifecycleUXTests/testAcceptedShapeEraseIsPresentInTheImmediatelyRequestedCurlSource",
+          "testName": "testAcceptedShapeEraseIsPresentInTheImmediatelyRequestedCurlSource()"
+        },
+        {
+          "failureText": "Failed to unable to compute coordinates for gesture after 5 attempts, final visible/unoccluded frame was {{0, 0}, {834, 1194}}.",
+          "targetName": "NotebookUITests",
+          "testIdentifier": 6,
+          "testIdentifierString": "NotebookWorkspaceJourneyUITests/testFirstSelectionMoveDeleteAndColdReopenPreserveTheWholeComposition()",
+          "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookUITests/NotebookWorkspaceJourneyUITests/testFirstSelectionMoveDeleteAndColdReopenPreserveTheWholeComposition",
+          "testName": "testFirstSelectionMoveDeleteAndColdReopenPreserveTheWholeComposition()"
+        },
+        {
+          "failureText": "XCTAssertEqual failed: (\"0\") is not equal to (\"24\") - Every control must exist in the real accessibility tree",
+          "targetName": "NotebookUITests",
+          "testIdentifier": 5,
+          "testIdentifierString": "NotebookNavigationLoadUITests/testTwentyFourPageProgramsAcceptFirstTapAfterZoomAndKeepStateAcrossTurns()",
+          "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookUITests/NotebookNavigationLoadUITests/testTwentyFourPageProgramsAcceptFirstTapAfterZoomAndKeepStateAcrossTurns",
+          "testName": "testTwentyFourPageProgramsAcceptFirstTapAfterZoomAndKeepStateAcrossTurns()"
+        }
+      ],
+      "resolution": "Stored leaf+return after eviction and controlled source-borrow race passed. Remaining receipt recreation and same-Bool material replacement fixed together. Undo/move/delete/first-redo pixels passed; second redo was not delivered by XCTest full-surface coordinate calculation, now targets fixed native element."
+    },
+    {
+      "path": "/private/tmp/notebook-causal-repair-ipad-214-20260927T2028Z",
+      "scope": "Immediate accepted ink/erase, source replacement during borrow, receipt retirement, native stored-leaf journey and two system UI journeys",
+      "wholeRunPassed": false,
+      "passed": 5,
+      "failed": 3,
+      "skipped": 0,
+      "failures": [
+        "XCTAssertTrue failed - UX leaf-0-1: correct=false, observed=1011.616375 ms, ceiling=1.0 seconds; window observation, not photon timing",
+        "XCTAssertTrue failed",
+        "XCTAssertTrue failed"
+      ],
+      "resolution": "Immediate ink/erase and source/receipt replacement pass. Native fixture replaced bypassed delegates with actual begin/update/end and initial identity assertions. Both UI failures occur on board before page open; screenshot shows window-mode/geometry change. Cause under investigation, not attributed to page readiness.",
+      "sourceSHA256": "ba3a2fb823936fa1d03b0586b1e5a095eed1c22ab563005d5ded4bfb10069eb8",
+      "attachments": "/private/tmp/notebook-repair214-2028-attachments/manifest.json"
+    },
+    {
+      "path": "/private/tmp/notebook-causal-repair-ipad-214-20260927T2044Z",
+      "scope": "Addressed body read, stored-leaf native journey,24liveprogram state journey,mixed edit/history/cold reopen",
+      "sourceSHA256": "77571d109e9ac95ecedab1801ad09e6f54f45a702c1efb3ff8e93d215d19f103",
+      "wholeRunPassed": false,
+      "passed": 2,
+      "failed": 2,
+      "skipped": 0,
+      "failures": [
+        "XCTAssertNotEqual failed: (\"SpatialCamera(center: NotebookCore.WorldPoint(tileX: 0, tileY: 0, localX: 0.0, localY: 0.0), scale: 1.0)\") is equal to (\"SpatialCamera(center: NotebookCore.WorldPoint(tileX: 0, tileY: 0, localX: 0.0, localY: 0.0), scale: 1.0)\") - Negative control: a real camera change was accepted",
+        "XCTAssertEqual failed: (\"0\") is not equal to (\"24\") - Every control must exist in the real accessibility tree"
+      ],
+      "attachments": "/private/tmp/notebook-repair214-2044-attachments/manifest.json",
+      "resolution": "Native full leaf journey PASS3.654s with actual admission/cancellation and initial identity checks; created-pagefirstink72.526ms. Mixed system UI journey PASS46.601s including both undo/redo andcoldreopen. Address negativecontrol tried forbidden pagezoom; changedfixture torealportrait-landscape fittedprojection. All24programs acceptfirsttapstate1, butnextturn endsinvisibleRetry; exactcaptureerror being isolated. Initial systemwindowpreflight passed."
+    },
+    {
+      "path": "/private/tmp/notebook-causal-repair-ipad-214-20260927T2101Z",
+      "scope": "Addressed viewport/body read and direct24program-state-to-nativecapture diagnostic",
+      "sourceSHA256": "2d01580ef6734b7d4b98a3d216a27812ca9dc679748e048dc769cc569ef13e1c",
+      "wholeRunPassed": false,
+      "passed": 1,
+      "failed": 1,
+      "skipped": 0,
+      "attachments": "/private/tmp/notebook-repair214-2101-attachments/manifest.json",
+      "resolution": "Addressed read PASS0.252s with actual rotated fittedviewport. All24programcommits accepted; sourcecapture stillpending after1.003s, passivepinned58,447,872 +reserved70,583,808bytes versus134,217,728 limit, insufficientforfinalfullpageGPUcut. No terminalerrorbefore1swatchdog; temporaryinputcuts/cachebypass and boundedconcurrency repair underway. Reopen authoredpixel probe alsofailed; failureimage missing inthisrun, addedtofixture withoutchangingprobe/deadline."
+    },
+    {
+      "path": "/private/tmp/notebook-causal-repair-ipad-214-20260927T2116Z",
+      "sourceSHA256": "c7b56ed186841d52ed112555ab76cc645f2c3038ab54f2a98f9a778dec02ec44",
+      "scope": "Temporary accepted-turn cuts across notebook/document/cover",
+      "wholeRunPassed": false,
+      "passed": 0,
+      "failed": 0,
+      "skipped": 0,
+      "buildFailed": true,
+      "resolution": "Compiler region-based isolation checker rejected nested submit helper capturing task group; changed to explicit Sendable capture operation and inline addTask in all3groups. No device scenarios ran."
+    },
+    {
+      "path": "/private/tmp/notebook-causal-repair-ipad-214-20260927T2118Z",
+      "scope": "Accepted-turn input cuts: notebook programs, document live/static/status frames, cover ownership, raster admission and system UI24 journey",
+      "sourceSHA256": "60ebedff7a03c081418813ef4bd542f8d51dcf60064fd3f6f4314da22bfbcd79",
+      "wholeRunPassed": false,
+      "passed": 9,
+      "failed": 2,
+      "skipped": 0,
+      "runtimeWarnings": [],
+      "failures": [
+        {
+          "failureText": "XCTAssertEqual failed: (\"0\") is not equal to (\"1\")",
+          "targetName": "NotebookTests",
+          "testIdentifier": 7,
+          "testIdentifierString": "NotebookPageCurlInteractionTests/testCancellationDuringSourceCaptureSkipsTheSecondCaptureAndReleasesItsBudget()",
+          "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/NotebookPageCurlInteractionTests/testCancellationDuringSourceCaptureSkipsTheSecondCaptureAndReleasesItsBudget",
+          "testName": "testCancellationDuringSourceCaptureSkipsTheSecondCaptureAndReleasesItsBudget()"
+        },
+        {
+          "failureText": "XCTAssertLessThanOrEqual failed: (\"1.052975917 seconds\") is greater than (\"0.45 seconds\") - The 450ms command-to-landing budget is unchanged; 9s above is only the diagnostic watchdog",
+          "targetName": "NotebookTests",
+          "testIdentifier": 6,
+          "testIdentifierString": "NotebookNavigationLoadUXTests/testTwentyFourProgramsCommitThroughTheirRuntimesBeforeTheNextPageCapture()",
+          "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/NotebookNavigationLoadUXTests/testTwentyFourProgramsCommitThroughTheirRuntimesBeforeTheNextPageCapture",
+          "testName": "testTwentyFourProgramsCommitThroughTheirRuntimesBeforeTheNextPageCapture()"
+        }
+      ],
+      "attachments": "/private/tmp/notebook-repair214-2118-attachments/manifest.json",
+      "measurements": {
+        "systemUI24JourneySeconds": 75.41,
+        "native24CommandToLandingMs": 1052.975917,
+        "native24BudgetMs": 450,
+        "sourceCaptureMs": 407.083292,
+        "targetCaptureMs": 125.05775
+      },
+      "resolution": "System UI24 completed first taps, state preservation and forward/reverse turns. Document live-cut, static-frame reuse, explicit failed-slot status, cover and resource ownership checks passed. Native24 landed correctly but exceeded the unchanged 450 ms deadline. Cancellation test still exercised the retired UIKit capture callback; the GPU-source fixture is checked separately in 2125. No overall PASS."
+    },
+    {
+      "path": "/private/tmp/notebook-causal-repair-ipad-214-20260927T2125Z",
+      "scope": "GPU source-capture cancellation, immediate accepted erase-to-curl and native24 state/capture latency",
+      "sourceSHA256": "6408d2f97a762150a0f6efbcef4e48379d7bfaf6e30f3fde0c2be9f2fb1bb410",
+      "wholeRunPassed": false,
+      "passed": 2,
+      "failed": 1,
+      "assertionFailures": 2,
+      "skipped": 0,
+      "failures": [
+        {
+          "test": "NotebookNavigationLoadUXTests/testTwentyFourProgramsCommitThroughTheirRuntimesBeforeTheNextPageCapture()",
+          "reason": "XCTAssertTrue failed - Every authored element must be visible after the real cover opens"
+        },
+        {
+          "test": "NotebookNavigationLoadUXTests/testTwentyFourProgramsCommitThroughTheirRuntimesBeforeTheNextPageCapture()",
+          "reason": "XCTAssertLessThanOrEqual failed: (\"0.89161725 seconds\") is greater than (\"0.45 seconds\") - The 450ms command-to-landing budget is unchanged; 9s above is only the diagnostic watchdog"
+        }
+      ],
+      "attachments": "/private/tmp/notebook-repair214-2125-attachments/manifest.json",
+      "measurements": {
+        "gpuSourceCancellationSeconds": 0.073,
+        "immediateAcceptedEraseToCurlTestSeconds": 0.84,
+        "native24CommandToLandingMs": 891.61725,
+        "native24BudgetMs": 450,
+        "sourceCaptureMs": 335.267833,
+        "targetCaptureMs": 19.577167
+      },
+      "resolution": "GPU source cancellation and immediate accepted erase-to-curl passed. Native24 landed on the requested ready page, but retained two assertion failures: authored visibility after cover reopen and 891.617250 ms command-to-landing versus the unchanged 450 ms budget. Three tests ran: two passed, one failed with two assertions. The reopen display oracle and latency remain unresolved; no overall PASS."
+    },
+    {
+      "path": "/private/tmp/notebook-causal-repair-ipad-214-20260927T2139Z",
+      "scope": "Native/system UI24 after installed-paint witness and independent accepted cuts; AgentWeb invalidation, cover and live document/status regressions",
+      "sourceSHA256": "c56e334ac5da53f5baa53f1724af3457c636a06540a54fb62c7f076345e69871",
+      "wholeRunPassed": false,
+      "passed": 6,
+      "failed": 2,
+      "skipped": 0,
+      "failures": [
+        {
+          "test": "NotebookNavigationLoadUXTests/testTwentyFourProgramsCommitThroughTheirRuntimesBeforeTheNextPageCapture()",
+          "reason": "XCTAssertLessThanOrEqual failed: (\"0.74914925 seconds\") is greater than (\"0.45 seconds\") - The 450ms command-to-landing budget is unchanged; 9s above is only the diagnostic watchdog"
+        },
+        {
+          "test": "NotebookNavigationLoadUITests/testTwentyFourPageProgramsAcceptFirstTapAfterZoomAndKeepStateAcrossTurns()",
+          "reason": "XCTAssertEqual failed: (\"23\") is not equal to (\"24\") - Every control must exist in the real accessibility tree"
+        }
+      ],
+      "attachments": "/private/tmp/notebook-repair214-2139-attachments/manifest.json",
+      "timingEvidence": "/private/tmp/notebook-repair214-2139-attachments/D586216E-D1A1-477E-A1C9-865E06BECB65.txt",
+      "measurements": {
+        "native24CommandToLandingMs": 749.14925,
+        "native24BudgetMs": 450,
+        "arrowToPairBeginMs": 36.433125,
+        "sourceCaptureMs": 165.709125,
+        "targetCaptureMs": 41.892708,
+        "arrowToPairEndMs": 246.641333,
+        "arrowToFirstObservedCurlOSMs": 325.829,
+        "arrowToEndpointOSMs": 638.454958,
+        "stageLiveCallbackObserved": false,
+        "systemUI24TestSeconds": 99.672,
+        "reverseControlsExpected": 24,
+        "reverseControlsObserved": 23
+      },
+      "resolution": "Native reopen visibility passed after the installed-paint fix. Native24 reached the requested ready leaf but failed the unchanged 450 ms deadline at 749.149250 ms. System UI accepted all 24 first taps and passed forward navigation, then reverse showed only 23/24 controls. The missing slot showed a fallback with no WebView; resource-pool starvation is not established. Three AgentWeb invalidation checks, cover reuse and two document live/status checks passed. No overall PASS.",
+      "boundary": "Landing uses the existing 2 ms polling observation, not OS presentation. Curl OS timestamps are separate from live landing; no stage-live callback occurred in this trace. Previous 2118 UI PASS and 2125 visibility FAIL remain historical evidence on their exact sources."
+    },
+    {
+      "path": "/private/tmp/notebook-causal-repair-ipad-214-20260927T2150Z",
+      "scope": "Current preparation-owner demand: system UI24 state/forward/reverse and three AgentWeb stale-callback regressions",
+      "sourceSHA256": "18ed4bd20097805b91770e3156672806dac23d4212dd3b7235af26fcef5a8d58",
+      "wholeRunPassed": true,
+      "passed": 4,
+      "failed": 0,
+      "skipped": 0,
+      "runtimeWarnings": [],
+      "failures": [],
+      "completedTests": [
+        "NotebookTests/AgentWebLeaseTests/testCurrentSnapshotErrorIsReportedButInvalidatedErrorIsDiscarded",
+        "NotebookTests/AgentWebLeaseTests/testSnapshotAndQueuedReadinessCannotPublishAfterInvalidation",
+        "NotebookTests/AgentWebLeaseTests/testSnapshotFromPreviousLoadDoesNotReplaceCurrentSourceRaster",
+        "NotebookUITests/NotebookNavigationLoadUITests/testTwentyFourPageProgramsAcceptFirstTapAfterZoomAndKeepStateAcrossTurns"
+      ],
+      "sourceInventory": {
+        "before": "/private/tmp/notebook-causal-repair-ipad-214-20260927T2150Z/source-before.json",
+        "after": "/private/tmp/notebook-causal-repair-ipad-214-20260927T2150Z/source-after.json",
+        "fileCount": 1547,
+        "unchanged": true
+      },
+      "receipt": {
+        "path": "/private/tmp/notebook-causal-repair-ipad-214-20260927T2150Z/verification.json",
+        "sha256": "0303e6404e705bb26885775cff01c65f65ddf4d2421e7bdeae77281e204d1002",
+        "status": "passed"
+      },
+      "measurements": {
+        "systemUI24JourneySeconds": 76.5791220664978
+      },
+      "resolution": "PreparationOwner now checks current demand before a passive completion may retire WebKit; a stale passive callback no longer retires the active program owner. All 24 first taps, accepted state and forward/reverse controls passed on the physical iPad. Three stale-callback/load invalidation checks passed. Source inventory is unchanged across this completed four-test run.",
+      "boundary": "This selected run passed; prior strict 450 ms native landing, cold-open, Pencil and display-oracle failures remain unchanged. Candidate 214 was uncommitted, not release-built or installed as the production Mac/iPad pair at this receipt; working pair remains 213. Full acceptance is false."
+    },
+    {
+      "path": "/private/tmp/notebook-causal-repair-ipad-214-20260927T2158Z",
+      "scope": "Final WebKit error/cancellation regressions after current-demand guard in failure callback",
+      "sourceSHA256": "bbeeb10ebe3a0c18519f5391f400f346580d30d198ce3da55fa913be8283e9e7",
+      "wholeRunPassed": true,
+      "passed": 3,
+      "failed": 0,
+      "skipped": 0,
+      "runtimeWarnings": [],
+      "completedTests": [
+        "NotebookTests/AgentWebLeaseTests/testCurrentSnapshotErrorIsReportedButInvalidatedErrorIsDiscarded",
+        "NotebookTests/AgentWebLeaseTests/testSnapshotAndQueuedReadinessCannotPublishAfterInvalidation",
+        "NotebookTests/AgentWebLeaseTests/testSnapshotFromPreviousLoadDoesNotReplaceCurrentSourceRaster"
+      ],
+      "receipt": {
+        "path": "/private/tmp/notebook-causal-repair-ipad-214-20260927T2158Z/verification.json",
+        "sha256": "4e85f6266550f91bb0c2b0e06ef63d62e982721f66808cb1d6d99655addaa772",
+        "status": "passed"
+      },
+      "boundary": "Three selected native tests only. UI24 passed in 2150 before the final two-line failure-branch guard; strict latency measurements and full acceptance were not repeated."
+    }
+  ],
+  "additionalCoreMigration": {
+    "path": "/private/tmp/notebook-causal-repair-native-214-20260927T1845Z",
+    "test": "NotebookSpatialInkWindowTests/migrationFrom26RebuildsPainterOrderAndPageCutsWithoutChangingAcceptedInk",
+    "passed": true,
+    "durationMs": 80
+  },
+  "knownColdDocument": {
+    "requestToInstalledOracleMs": 1227.793167,
+    "budgetMs": 1000,
+    "passed": false,
+    "nativeCompileMs": 965.158,
+    "artifactMs": 979.001,
+    "contentToInstalledMs": 168.888,
+    "sameBytesCachedOpenMs": 320.713,
+    "reason": "Native TeX execution dominates the cache miss; phase intervals overlap and must not be summed."
+  },
+  "activeRun": null,
+  "installation": null,
+  "boundary": "Individual passed suites retain only their source-valid scope. Stopped runs, correct late pixels, GPU completion and installed bundles do not establish full physical acceptance.",
+  "inverseWindowDiagnostic": {
+    "evidence": "/private/tmp/notebook-repair214-2009-attachments/9BED83DA-B30B-40C9-887B-363867D9D871.txt",
+    "acceptedInkImage": "/private/tmp/notebook-repair214-2009-attachments/5EF20A36-CF26-4BCF-890D-AB972D928A9B.png",
+    "windowImage": "/private/tmp/notebook-repair214-2009-attachments/6BE3CF07-55B5-4335-BD61-D1E192FF01EC.png",
+    "sourceStamp": 10,
+    "generation": 17,
+    "osPresentationMs": 23.022625,
+    "gpuProbeFailures": [],
+    "windowProbeFailures": [
+      "resident-line: 0/2",
+      "line-center: 0/1"
+    ],
+    "boundary": "Retained body loss ruled out. UIKit drawHierarchy(false) and accepted GPU disagree; exact OS receipt is not a photon measurement or replacement of failed window oracle. Not rerun unchanged until independent display oracle resolves discrepancy."
+  },
+  "coreBrowserReuse": {
+    "fromSource": "f6a802bd24450fe87e98ffcff923dfeaf96ac87547df68db4f2e7edef25570d7",
+    "toSource": "e8d221e666190d3525171e247520288ed66ffdc549c166f5fc3a56ce7c436325",
+    "comparedFiles": 441,
+    "paths": [
+      "Sources/NotebookCore/",
+      "Applications/WebResources/",
+      "MCP/",
+      "Package.swift"
+    ],
+    "changedFiles": [],
+    "boundary": "Reuses only Core/browser dependency scope, not native/typesetter/whole-app pass."
+  }
+}

@@ -199,15 +199,50 @@ impl Bundle {
         })
     }
 }
+/// Every lookup of the immutable input namespace is a rendering dependency,
+/// including failed probes and directory enumeration. Bundle lookups belong to
+/// the pinned compiler recipe and are deliberately outside this recorder.
+#[derive(Clone, Default)]
+pub struct InputReads(Arc<Mutex<InputReadSet>>);
+#[derive(Default)]
+struct InputReadSet { entries: std::collections::BTreeSet<(u8, String)>, bytes: usize, exceeded: bool }
+impl InputReads {
+    fn record(&self, kind: u8, path: &str) -> Result<(), Error> {
+        let mut reads = self.0.lock().unwrap();
+        let entry = (kind, path.to_string());
+        if reads.entries.contains(&entry) { return Ok(()); }
+        if reads.entries.len() >= 32_768 || reads.bytes + path.len() + 3 > 4 * 1024 * 1024 { reads.exceeded = true; return Err(Error::io()); }
+        reads.bytes += path.len() + 3; reads.entries.insert(entry); Ok(())
+    }
+    pub fn bytes(&self) -> Result<Vec<u8>, String> {
+        let reads = self.0.lock().unwrap();
+        if reads.exceeded { return Err("typesetter_dependency_limit".into()); }
+        let mut bytes = Vec::with_capacity(reads.bytes);
+        for (kind, path) in reads.entries.iter() {
+            bytes.push(*kind); bytes.push(0); bytes.extend_from_slice(path.as_bytes()); bytes.push(0);
+        }
+        Ok(bytes)
+    }
+}
+
 #[derive(Clone)]
 pub struct Directory {
     files: Arc<Mutex<BTreeMap<String, SharedBuffer>>>,
     prefix: String,
     directories: Arc<Mutex<std::collections::BTreeSet<String>>>,
     bundle: Option<Arc<Bundle>>, fonts_only: bool, writable: bool, budget: Arc<Budget>,
+    input_reads: Option<InputReads>,
 }
 impl Directory {
-    pub fn new(writable: bool, budget: &Arc<Budget>) -> Self { Self { files: Default::default(), prefix: String::new(), directories: Default::default(), bundle: None, fonts_only: false, writable, budget: budget.clone() } }
+    pub fn new(writable: bool, budget: &Arc<Budget>) -> Self { Self { files: Default::default(), prefix: String::new(), directories: Default::default(), bundle: None, fonts_only: false, writable, budget: budget.clone(), input_reads: None } }
+    pub fn tracked_input(budget: &Arc<Budget>) -> (Self, InputReads) {
+        let reads = InputReads::default();
+        (Self { input_reads: Some(reads.clone()), ..Self::new(false, budget) }, reads)
+    }
+    fn record(&self, kind: u8, path: &str) -> Result<(), Error> {
+        if let Some(reads) = &self.input_reads { reads.record(kind, path)?; }
+        Ok(())
+    }
     pub fn bundle(bundle: Arc<Bundle>, fonts_only: bool, budget: &Arc<Budget>) -> Self {
         Self { bundle: Some(bundle), fonts_only, ..Self::new(false, budget) }
     }
@@ -247,10 +282,11 @@ impl Directory {
 #[wiggle::async_trait]
 impl WasiDir for Directory {
     fn as_any(&self) -> &dyn Any { self }
-    async fn get_filestat(&self) -> Result<Filestat, Error> { Ok(stat(FileType::Directory, 0)) }
+    async fn get_filestat(&self) -> Result<Filestat, Error> { self.record(b'p', self.prefix.trim_end_matches('/'))?; Ok(stat(FileType::Directory, 0)) }
     async fn get_path_filestat(&self, name: &str, _: bool) -> Result<Filestat, Error> {
         if name == "." || name.is_empty() { return self.get_filestat().await; }
         let name = self.path(name)?;
+        self.record(b'p', &name)?;
         if self.is_directory(&name) { return Ok(stat(FileType::Directory, 0)); }
         if let Some(file) = self.files.lock().unwrap().get(&name) { return Ok(stat(FileType::RegularFile, file.lock().unwrap().bytes.len() as u64)); }
         Ok(stat(FileType::RegularFile, self.bundle.as_ref().ok_or_else(Error::not_found)?.size(&name, &self.budget)?))
@@ -258,6 +294,7 @@ impl WasiDir for Directory {
     async fn open_file(&self, _: bool, name: &str, flags: OFlags, _: bool, write: bool, fd: FdFlags) -> Result<OpenResult, Error> {
         if name == "." || name.is_empty() { return Ok(OpenResult::Dir(Box::new(self.clone()))); }
         let name = self.path(name)?;
+        self.record(b'p', &name)?;
         if (write || flags.intersects(OFlags::CREATE | OFlags::TRUNCATE)) && !self.writable { return Err(Error::not_supported()); }
         if !fd.is_empty() { return Err(Error::not_supported()); }
         if self.is_directory(&name) { return Ok(OpenResult::Dir(Box::new(self.child(&name)))); }
@@ -274,6 +311,7 @@ impl WasiDir for Directory {
         Ok(OpenResult::File(Box::new(Handle::new(buffer, write, &self.budget)?)))
     }
     async fn readdir(&self, cursor: ReaddirCursor) -> Result<Box<dyn Iterator<Item=Result<ReaddirEntity, Error>> + Send>, Error> {
+        self.record(b'd', self.prefix.trim_end_matches('/'))?;
         let at = u64::from(cursor) as usize;
         let names = if let Some(bundle) = &self.bundle { bundle.names(self.fonts_only, &self.budget)? }
             else { Arc::new(self.files.lock().unwrap().keys().cloned()

@@ -30,7 +30,9 @@ final class DocumentBlockRuntime: NSObject, WKScriptMessageHandler, WKNavigation
   private var requestedPriority: WebPriority?
   private var refusedAdmission: UInt64?
   private var readinessDeadline: Task<Void, Never>?
-  private var captureTask: Task<RasterLease, Error>?
+  private enum CaptureDestination: Equatable, Sendable { case cache, acceptedTurn }
+  private enum CapturedFrame: Sendable { case raster(RasterLease), cut(SceneRasterCut) }
+  private var captureTask: Task<CapturedFrame, Error>?
   private var captureID: UUID?
   private var queuedCaptures = 0
   private var stopped = false
@@ -319,10 +321,27 @@ final class DocumentBlockRuntime: NSObject, WKScriptMessageHandler, WKNavigation
 
   func capture(sourceOffset: Double, height: Double, pixelWidth: Int,
     reservation granted: RasterReservation? = nil) async throws -> RasterLease {
+    let frame = try await captureFrame(sourceOffset: sourceOffset, height: height, pixelWidth: pixelWidth,
+      destination: .cache, reservation: granted)
+    guard case .raster(let raster) = frame else { preconditionFailure("Cached capture returned a current cut") }
+    return raster
+  }
+
+  /// An accepted turn owns temporary pixels through its final GPU borrow. It
+  /// neither publishes a passive cache entry nor changes checkpoint ownership.
+  func captureCurrentCut(sourceOffset: Double, height: Double, pixelWidth: Int) async throws -> SceneRasterCut {
+    let frame = try await captureFrame(sourceOffset: sourceOffset, height: height, pixelWidth: pixelWidth,
+      destination: .acceptedTurn)
+    guard case .cut(let cut) = frame else { preconditionFailure("Current cut returned a cached raster") }
+    return cut
+  }
+
+  private func captureFrame(sourceOffset: Double, height: Double, pixelWidth: Int,
+    destination: CaptureDestination, reservation granted: RasterReservation? = nil) async throws -> CapturedFrame {
     guard queuedCaptures < 4 else { throw SceneRenderError.resourceLimit }
     queuedCaptures += 1
     let preceding = captureTask, operation = UUID()
-    let task = Task { @MainActor [weak self] () throws -> RasterLease in
+    let task = Task { @MainActor [weak self] () throws -> CapturedFrame in
       if let preceding { _ = try? await preceding.value }
       try Task.checkCancellation()
       guard let self, ready, !stopped, let web = webView, let lease else {
@@ -334,29 +353,45 @@ final class DocumentBlockRuntime: NSObject, WKScriptMessageHandler, WKNavigation
         throw DocumentSessionError.invalidLayout
       }
       let pixelHeight = Int(ceil(Double(pixelWidth) * height / size.width))
-      guard let reservation = granted ?? resources.reserveRaster(pixelWidth: pixelWidth, pixelHeight: pixelHeight),
+      let reservation = granted ?? (destination == .acceptedTurn
+        ? resources.reserveCurrentWebCut(pixelSize: .init(width: pixelWidth, height: pixelHeight))
+        : resources.reserveRaster(pixelWidth: pixelWidth, pixelHeight: pixelHeight))
+      guard let reservation,
         resources.ownsRasterReservation(reservation, pixelWidth: pixelWidth, pixelHeight: pixelHeight) else { throw SceneRenderError.resourceLimit }
+      var transferred = false
+      defer { if !transferred { reservation.release() } }
       let borrow = try lease.borrow()
-      defer { borrow.release(); reservation.release() }
+      defer { borrow.release() }
       let configuration = WKSnapshotConfiguration(); configuration.rect = rect; configuration.afterScreenUpdates = true
       configuration.snapshotWidth = NSNumber(value: Double(pixelWidth) / (web.window?.screen.scale ?? 2))
       let image = try await web.takeSnapshot(configuration: configuration)
+      try Task.checkCancellation()
       guard !stopped, self.webView === web, revision == expectedRevision, viewportRevision == expectedViewport,
         let cg = image.cgImage else { throw CancellationError() }
       let normalized = UIImage(cgImage: cg, scale: Double(cg.width) / size.width, orientation: .up)
       let source = SceneRasterSource.document(id: documentID, token: "program:\(program.id):\(id):\(operation)")
+      if destination == .acceptedTurn {
+        guard let cut = resources.currentWebCut(normalized, for: source, reservation: reservation)
+        else { throw SceneRenderError.resourceLimit }
+        transferred = true
+        return .cut(cut)
+      }
       guard let raster = resources.storeAndRetain(normalized, for: source, reservation: reservation,
         semanticSelection: checkpointSelection?.mapped(from: .init(x: 0, y: 0, width: size.width, height: size.height),
           into: .init(x: 0, y: sourceOffset, width: size.width, height: height))) else { throw SceneRenderError.resourceLimit }
       if checkpointFrozen { checkpointWasCaptured = true }
-      return raster
+      return .raster(raster)
     }
     captureTask = task; captureID = operation
     defer {
       queuedCaptures -= 1
       if captureID == operation { captureTask = nil; captureID = nil }
     }
-    return try await task.value
+    return try await withTaskCancellationHandler {
+      let frame = try await task.value
+      try Task.checkCancellation()
+      return frame
+    } onCancel: { task.cancel() }
   }
 
   func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {

@@ -14,7 +14,7 @@ void nb_typesetter_cancel_destroy(NBTypesetterCancel *);
 NBTypesetterOutput *nb_typesetter_compile(const NBTypesetter *, const char *entrypoint,
  const NBTypesetterFile *files, size_t file_count, uint64_t epoch, uint64_t timeout_ms, const NBTypesetterCancel *);
 NBTypesetterOutput *nb_typesetter_svg(const NBTypesetter *, const uint8_t *, size_t, uint64_t, const NBTypesetterCancel *);
-// Bytes are borrowed until output_destroy: 0 PDF, 1 SyncTeX, 2 log, 3 error (source boxes and shipout geometry).
+// Bytes are borrowed until output_destroy: 0 PDF, 1 SyncTeX, 2 log, 3 error, 4 input lookup records (NUL-delimited kind/path pairs).
 const uint8_t *nb_typesetter_output_bytes(const NBTypesetterOutput *, uint32_t kind, size_t *count);
 size_t nb_typesetter_output_memory(const NBTypesetterOutput *);
 void nb_typesetter_output_destroy(NBTypesetterOutput *);

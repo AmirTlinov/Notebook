@@ -20,6 +20,7 @@ struct NotebookSelectedInk: Equatable, Sendable {
   let address:NotebookToolAddress
   let revision:String
   let material:NotebookLassoInkSource.Result
+  let readSet:NotebookInkReadSet?
   let conversionID:UUID
   var key:Key { .init(surface:address.surface,actionID:actionID) }
   var memberID:String { conversionID.uuidString.lowercased() }
@@ -29,7 +30,7 @@ struct NotebookSelectedInk: Equatable, Sendable {
   }
   init(contact:NotebookLassoInkSource.WholeContact,address:NotebookToolAddress,revision:String) {
     actionID=contact.actionID;painterOrder=contact.painterOrder;material=contact.material;self.address=address;self.revision=revision
-    conversionID=UUID()
+    readSet=contact.readSet;conversionID=UUID()
   }
 }
 

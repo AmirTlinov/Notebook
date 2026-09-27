@@ -67,6 +67,15 @@ extension NotebookAppModel {
     return snapshot.sourceChecks.allSatisfy { nativeElementSource($0.key) == $0.value && elementCommandDrafts[$0.key] == nil }
   }
 
+  func selectionInkIsCurrent(_ raw:NotebookSelectedInk)->Bool {
+    guard let readSet=raw.readSet else {return false}
+    if raw.address.surface.kind == .page,let pageID=raw.address.surface.ownerID,let page=pages[pageID] {
+      return readSet.matches(page.inkSource,suppressed:page.graphicPresentation.suppressedInkIDs)
+    }
+    guard let journal=spatialInk else {return false}
+    return readSet.matches(journal,suppressed:compositionTiles.published?.liveData.suppressedInkIDs ?? [])
+  }
+
   func selectionInkRevision(_ surface:SurfaceID) -> String? {
     surface.kind == .page ? surface.ownerID.flatMap { pages[$0]?.drawingStamp.revision } : spatialInk?.stamp.revision
   }
@@ -179,7 +188,7 @@ extension NotebookAppModel {
       guard selectionSession.items.isEmpty,
         let target=raw.first?.address.target ?? references.first.flatMap({ nativeElementSource($0)?.target }),
         references.allSatisfy({ nativeElementSource($0)?.target == target && elementCommandDrafts[$0] == nil }),
-        raw.allSatisfy({ $0.address.target == target && selectionInkRevision($0.address.surface) == $0.revision }) else { throw unavailable() }
+        raw.allSatisfy({ $0.address.target == target && selectionInkIsCurrent($0) }) else { throw unavailable() }
       let prepared:NotebookGraphicGraph
       if let first=references.first {
         guard let value=editingGraphicGraph(first) else { throw unavailable() };prepared=value

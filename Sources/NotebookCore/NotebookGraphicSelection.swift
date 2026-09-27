@@ -15,11 +15,11 @@ public struct NotebookNativeElementSource: Equatable, Sendable {
 extension NotebookNativeCommand where Source == NotebookNativeElementSource {
   public convenience init(_ operations: [CollaborationOperation], summary: String,
     sources: [NotebookNativeElementSource], layerMove: NotebookElementLayerMove? = nil,
-    copiedFrom: [String:String] = [:], expectedInkRevision: String? = nil,
+    copiedFrom: [String:String] = [:], expectedInkRevision: String? = nil, inkReadSets:[NotebookInkReadSet] = [],
     actionID: UUID = UUID(), actor: UUID) {
     self.init { store, didPrepare in
       try store.commitNativeElementEdits(operations, summary: summary, sources: sources,
-        layerMove: layerMove, copiedFrom: copiedFrom, expectedInkRevision: expectedInkRevision,
+        layerMove: layerMove, copiedFrom: copiedFrom, expectedInkRevision: expectedInkRevision, inkReadSets:inkReadSets,
         actionID: actionID, actor: actor, didPrepare: didPrepare)
     }
   }
@@ -65,20 +65,20 @@ public enum NotebookElementLayerMove: String, CaseIterable, Sendable {
 
 extension NotebookStore {
   public func applyNativeElementEdits(_ operations: [CollaborationOperation], summary: String,
-    sources: [NotebookNativeElementSource], layerMove: NotebookElementLayerMove? = nil, copiedFrom: [String:String] = [:], expectedInkRevision: String? = nil,
+    sources: [NotebookNativeElementSource], layerMove: NotebookElementLayerMove? = nil, copiedFrom: [String:String] = [:], expectedInkRevision: String? = nil, inkReadSets:[NotebookInkReadSet] = [],
     actionID:UUID=UUID(),actor: UUID
   ) throws -> (receipt: CollaborationReceipt, sources: [NotebookNativeElementSource]) {
     try NotebookNativeCommand(operations, summary: summary, sources: sources,
-      layerMove: layerMove, copiedFrom: copiedFrom, expectedInkRevision: expectedInkRevision,
+      layerMove: layerMove, copiedFrom: copiedFrom, expectedInkRevision: expectedInkRevision, inkReadSets:inkReadSets,
       actionID: actionID, actor: actor).apply(to: self)
   }
 
   fileprivate func commitNativeElementEdits(_ operations: [CollaborationOperation], summary: String,
     sources: [NotebookNativeElementSource], layerMove: NotebookElementLayerMove?, copiedFrom: [String:String],
-    expectedInkRevision: String?, actionID: UUID, actor: UUID,
+    expectedInkRevision: String?, inkReadSets:[NotebookInkReadSet], actionID: UUID, actor: UUID,
     didPrepare: (NotebookNativeCommand<NotebookNativeElementSource>.Output) -> Void
   ) throws -> NotebookNativeCommand<NotebookNativeElementSource>.Output {
-    try commandTransaction(readAllowance: .agentCommand) {
+    try commandTransaction(readAllowance: Self.inkSelectionReadAllowance(inkReadSets)) {
       guard let target = operations.first?.target, [.page,.board,.cover].contains(target.kind),
         !operations.isEmpty, operations.count <= 32, !sources.isEmpty, sources.count <= 64,
         operations.allSatisfy({ $0.target == target }), sources.allSatisfy({ $0.target == target }),
@@ -156,7 +156,8 @@ extension NotebookStore {
           values:["ids":.array(layerMove.applying(to:order,selected:selected).map(JSONValue.string))])]
       }
       let revision = try targetContentRevision(target: target)
-      if let expectedInkRevision, try inkRevision(on:target) != expectedInkRevision {
+      try validateInkReadSets(inkReadSets,target:target)
+      if inkReadSets.isEmpty,let expectedInkRevision, try inkRevision(on:target) != expectedInkRevision {
         throw CollaborationError("revision_conflict","Чернила изменились во время выделения. Повторите лассо.")
       }
       let ink = operations.contains { $0.kind == .convertInkToElement } ? try inkRevision(on: target) : nil

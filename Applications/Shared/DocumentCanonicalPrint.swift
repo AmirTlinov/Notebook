@@ -83,9 +83,21 @@ final class DocumentPrintedSource {
   let artifact: NotebookPrintedDocument
   let locations: [DocumentPrintLocation]
   let pdf: DocumentPrintedPDF
-  private let reservation: RasterReservation
+  @MainActor private final class Allocation {
+    let reservation: RasterReservation
+    init(_ reservation: RasterReservation) { self.reservation = reservation }
+    isolated deinit { reservation.release() }
+  }
+  private let allocation: Allocation
   init(artifact: NotebookPrintedDocument, locations: [DocumentPrintLocation] = [], pdf: DocumentPrintedPDF, reservation: RasterReservation) {
-    self.artifact = artifact; self.locations = locations; self.pdf = pdf; self.reservation = reservation
+    self.artifact = artifact; self.locations = locations; self.pdf = pdf; allocation = Allocation(reservation)
+  }
+  private init(artifact: NotebookPrintedDocument, locations: [DocumentPrintLocation], pdf: DocumentPrintedPDF, allocation: Allocation) {
+    self.artifact = artifact; self.locations = locations; self.pdf = pdf; self.allocation = allocation
+  }
+  func rebinding(_ artifact: NotebookPrintedDocument) -> DocumentPrintedSource {
+    precondition(self.artifact.pixelIdentity == artifact.pixelIdentity && self.artifact.syncTeX == artifact.syncTeX)
+    return .init(artifact: artifact, locations: artifact.projection.locations, pdf: pdf, allocation: allocation)
   }
   func sourceOffset(fileID: String, pageIndex: Int, x: Double, y: Double) -> Int? {
     guard let location = DocumentPrintLocations.nearest(in: locations, fileID: fileID, pageIndex: pageIndex, x: x, y: y),
@@ -107,7 +119,6 @@ final class DocumentPrintedSource {
       region: .init(x: location.x*scale, y: location.y*scale, width: location.width*scale, height: location.height*scale),
       pageIndex: location.pageIndex, revision: document.contentStamp.revision, label: file.path)
   }
-  isolated deinit { reservation.release() }
 }
 
 @MainActor

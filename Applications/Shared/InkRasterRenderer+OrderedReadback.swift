@@ -12,7 +12,8 @@ extension InkRasterRenderer {
   /// caller owns the bounded output reservation and reuses one source mesh for
   /// all tiles. Transient GPU buffers remain charged until command completion.
   @MainActor func orderedImage(mesh:SpatialInkMesh,plan:NotebookOrderedInkPlan,camera:SpatialCamera?,
-    viewport:SpatialPoint,region:CGRect,scale:Double,resources:SceneRenderResources, preparedGeometry:InkOrderedGeometry,baselinePNG:Data? = nil) async throws -> CGImage {
+    viewport:SpatialPoint,region:CGRect,scale:Double,resources:SceneRenderResources, preparedGeometry:InkOrderedGeometry,
+    priority:SceneAllocationPriority = .passive,baselinePNG:Data? = nil) async throws -> CGImage {
     try Task.checkCancellation()
     guard let device,let queue,let command=queue.makeCommandBuffer(),ordered != nil,
       region.width>0,region.height>0,scale.isFinite,scale>0,
@@ -54,7 +55,7 @@ extension InkRasterRenderer {
     var raw:[(NotebookInkPaintKey,Draw)]=[],held:[RasterReservation]=[]
     for item in selected {
       let bytes=item.nodes.count*MemoryLayout<InkRenderGeometry.Node>.stride
-      guard let reservation=resources.reserveDerivedBytes(bytes,priority:.passive,owner:nil),
+      guard let reservation=resources.reserveDerivedBytes(bytes,priority:priority,owner:nil),
         let buffer=item.nodes.withUnsafeBytes({device.makeBuffer(bytes:$0.baseAddress!,length:$0.count,options:.storageModeShared)}) else {throw SceneRenderError.resourceLimit}
       held.append(reservation)
       raw.append((item.key,.init(buffer:buffer,offset:0,count:item.nodes.count,flags:item.flags,color:item.color,affine:item.affine,

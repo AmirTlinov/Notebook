@@ -10,14 +10,14 @@ final class InkCanvasLifecycleTests: XCTestCase {
   func testPreparedPageAndMaterialKeepTheOldPixelsUntilTheirCommonInstall() async throws {
     try await withPreparedSelectionCanvas { canvas,window,action,plan in
       let count=canvas.committedSourceNodeCount,builds=canvas.pageMeshBuildCount
-      let frame=try await canvas.prepareFrame(.ordered(plan))
-      XCTAssertTrue(frame.isValid)
+      let geometry=try await canvas.prepareOrderedPlan(plan)
+      XCTAssertNotNil(geometry)
       XCTAssertEqual(canvas.committedSourceNodeCount,count)
       XCTAssertTrue(try NotebookUXObservation.Pixels(window:window).matches([
         (canvas.convert(.init(x:80,y:40),to:window),.black),
         (canvas.convert(.init(x:80,y:110),to:window),.paper)]))
       let began=ContinuousClock.now
-      canvas.installPreparedFrame(frame)
+      try await canvas.presentOrderedPlan(geometry,plan:plan)
       XCTAssertEqual(canvas.layer.opacity,1,"Installing visibility cannot revoke its own prepared drawable")
       XCTAssertEqual(canvas.orderedInkPlan,plan)
       try await assertUX("whole-contact-native-handoff",since:began,window:window) {
@@ -26,9 +26,9 @@ final class InkCanvasLifecycleTests: XCTestCase {
           (canvas.convert(.init(x:80,y:110),to:window),.black)])
       }
       XCTAssertEqual(canvas.pageMeshBuildCount,builds)
-      let restored=try await canvas.prepareFrame(.ordered(.init()))
+      let restored=try await canvas.prepareOrderedPlan(.init())
       let restoreBegan=ContinuousClock.now
-      canvas.installPreparedFrame(restored)
+      try await canvas.presentOrderedPlan(restored,plan:.init(),canonical:true)
       XCTAssertEqual(canvas.layer.opacity,1,"Rollback must retain its prepared returning raw drawable")
       try await assertUX("whole-contact-native-cancel",since:restoreBegan,window:window) {
         try NotebookUXObservation.Pixels(window:window).matches([
@@ -68,9 +68,9 @@ final class InkCanvasLifecycleTests: XCTestCase {
       let plan=try self.handoffPlan(action:b,graphic:graphic)
       let before:[(CGPoint,NotebookUXObservation.Color)]=[
         (.init(x:80,y:60),.blue),(.init(x:110,y:60),.red),(.init(x:80,y:100),.black)]
-      let candidate=try await canvas.prepareFrame(.ordered(plan))
+      let candidate=try await canvas.prepareOrderedPlan(plan)
       XCTAssertTrue(try NotebookUXObservation.Pixels(window:window).matches(before.map{(canvas.convert($0.0,to:window),$0.1)}))
-      canvas.installPreparedFrame(candidate)
+      try await canvas.presentOrderedPlan(candidate,plan:plan)
       try await assertUX("ordered-contact-crossing-and-cuts",since:.now,window:window) {
         try NotebookUXObservation.Pixels(window:window).matches([
           (canvas.convert(.init(x:80,y:60),to:window),.red),
@@ -90,34 +90,24 @@ final class InkCanvasLifecycleTests: XCTestCase {
       // when the ordered plane has no visible body to retain.
       let hidden=self.handoffStroke(y:75)
       canvas.apply(.init(actions:[action,hidden]));try await self.waitForStableFrame(canvas)
-      let hiddenFrame=try await canvas.prepareFrame(.ordered(.init(suppressedInkIDs:[hidden.id])))
-      canvas.installPreparedFrame(hiddenFrame);try await self.waitForStableFrame(canvas)
+      let hiddenPlan=NotebookOrderedInkPlan(suppressedInkIDs:[hidden.id])
+      let hiddenGeometry=try await canvas.prepareOrderedPlan(hiddenPlan)
+      try await canvas.presentOrderedPlan(hiddenGeometry,plan:hiddenPlan,canonical:true);try await self.waitForStableFrame(canvas)
       let plan=NotebookOrderedInkPlan(bodies:moved.bodies,suppressedInkIDs:moved.suppressedInkIDs.union([hidden.id]))
       let restoration=try XCTUnwrap(canvas.captureSourceRestoration(for:Set(moved.bodies.map(\.sourceID))))
-      let frame=try await canvas.prepareFrame(.ordered(plan))
-      canvas.installPreparedFrame(frame);restoration.installed()
+      let geometry=try await canvas.prepareOrderedPlan(plan)
+      try await canvas.presentOrderedPlan(geometry,plan:plan);restoration.installed()
       try await assertUX("selection-before-pencil-cancel",since:.now,window:window) {
         try NotebookUXObservation.Pixels(window:window).matches([
           (canvas.convert(.init(x:80,y:40),to:window),.paper),
           (canvas.convert(.init(x:80,y:110),to:window),.black)])
       }
-      canvas.setPageInputEnabled(false);try await self.waitForStableFrame(canvas)
-      let pressure=try XCTUnwrap(resources.reserveDerivedBytes(resources.byteLimit-resources.reservedBytes,priority:.input))
-      defer {pressure.release()}
       var retired=0,abandoned=0
-      restoration.restore(install:{retired += 1},abandon:{abandoned += 1})
-      canvas.setPageInputEnabled(true)
-      let deadline=ContinuousClock.now + .seconds(2)
-      while !(canvas.renderFailure == .resourceLimit && canvas.isFrameLoopPaused),ContinuousClock.now<deadline {
-        try await Task.sleep(for:.milliseconds(10))
-      }
-      XCTAssertEqual(canvas.renderFailure,.resourceLimit);XCTAssertEqual(retired,0);XCTAssertEqual(abandoned,0)
-      XCTAssertTrue(try NotebookUXObservation.Pixels(window:window).matches([
-        (canvas.convert(.init(x:80,y:40),to:window),.paper),
-        (canvas.convert(.init(x:80,y:110),to:window),.black)]))
-      pressure.release()
       let began=ContinuousClock.now
-      canvas.setPageInputEnabled(false);canvas.setPageInputEnabled(true)
+      restoration.restore(install:{retired += 1},abandon:{abandoned += 1})
+      XCTAssertEqual(retired,0);XCTAssertEqual(abandoned,0)
+      // The new contact joins the next ordinary frame while the complete old
+      // cut remains shown; cancellation does not drain preceding GPU work.
       let pencil=self.handoffPencil();canvas.displayActiveStroke(pencil)
       let contact=try XCTUnwrap(canvas.activeContactFrame)
       try await assertUX("raw-return-with-active-pencil",since:began,window:window) {
@@ -138,12 +128,14 @@ final class InkCanvasLifecycleTests: XCTestCase {
   func testAbandonedAndSourceChangedPreparedPageFramesCannotSuppressCurrentInk() async throws {
     try await withPreparedSelectionCanvas { canvas,window,action,plan in
       let count=canvas.committedSourceNodeCount
-      var abandoned:InkCanvasView.PreparedFrame?=try await canvas.prepareFrame(.ordered(plan))
-      XCTAssertTrue(abandoned?.isValid == true);abandoned=nil
+      var abandoned:InkOrderedGeometry?=try await canvas.prepareOrderedPlan(plan)
+      XCTAssertNotNil(abandoned);abandoned=nil
       XCTAssertEqual(canvas.committedSourceNodeCount,count)
-      let stale=try await canvas.prepareFrame(.ordered(plan))
+      let prepared=try await canvas.prepareOrderedPlan(plan)
+      let cancelled=Task {try await canvas.presentOrderedPlan(prepared,plan:plan)}
+      cancelled.cancel()
+      do {try await cancelled.value;XCTFail("Cancelled publication must leave the accepted ink visible")} catch {}
       canvas.apply(.init(actions:[action,self.handoffStroke(y:75)]))
-      XCTAssertFalse(stale.isValid)
       try await self.waitForStableFrame(canvas)
       try await assertUX("cancelled-handoff-retains-current-source",since:.now,window:window) {
         try NotebookUXObservation.Pixels(window:window).matches([
@@ -151,8 +143,8 @@ final class InkCanvasLifecycleTests: XCTestCase {
           (canvas.convert(.init(x:80,y:75),to:window),.black),
           (canvas.convert(.init(x:80,y:110),to:window),.paper)])
       }
-      let latest=try await canvas.prepareFrame(.ordered(plan));XCTAssertTrue(latest.isValid)
-      canvas.installPreparedFrame(latest)
+      let latest=try await canvas.prepareOrderedPlan(plan)
+      try await canvas.presentOrderedPlan(latest,plan:plan)
       try await assertUX("new-source-handoff-stays-addressed",since:.now,window:window) {
         try NotebookUXObservation.Pixels(window:window).matches([
           (canvas.convert(.init(x:80,y:40),to:window),.paper),
@@ -369,7 +361,7 @@ final class InkCanvasLifecycleTests: XCTestCase {
   }
 
   @MainActor
-  func testPageRetainedTextureFailureDrainsBothClocksAndRecoversOnTheNextRequest() async throws {
+  func testBorrowedPageCutSurvivesARefusedReplacementAndRecoversOnTheNextRequest() async throws {
     let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
     let window = UIWindow(windowScene: scene), controller = UIViewController()
     window.rootViewController = controller; controller.view.backgroundColor = .white
@@ -378,33 +370,33 @@ final class InkCanvasLifecycleTests: XCTestCase {
     controller.view.addSubview(canvas); window.makeKeyAndVisible()
     defer { canvas.removeFromSuperview(); window.isHidden = true; window.rootViewController = nil }
     canvas.projectPage(region: .init(x: 0, y: 0, width: 160, height: 160),
-      sourceSize: .init(width: 160, height: 160), pixelDensity: 1)
+      sourceSize: .init(width: 200, height: 200), pixelDensity: 1)
     let stroke = ActiveInkStroke(style: .standard)
     stroke.replaceMeasuredTail(from: 0, with: [CGFloat(20), 140].map { x in
       PKStrokePoint(location: .init(x: x, y: 70), timeOffset: 0,
         size: .init(width: 12, height: 12), opacity: 1, force: 1, azimuth: 0, altitude: .pi / 2)
     })
     canvas.displayActiveStroke(stroke); canvas.commitActiveStroke()
-    try await waitForStableFrame(canvas)
+    try await waitForStableFrame(canvas,accepted:true)
     XCTAssertTrue(canvas.hasPageRetainedTexture)
-    // Keep the admitted drawable pool and accepted source. Only the optional
-    // input history texture is withdrawn; the next request is not a resize.
-    canvas.setPageInputEnabled(false)
-    try await waitForStableFrame(canvas)
-    XCTAssertFalse(canvas.hasPageRetainedTexture)
-    let frames = canvas.drawableRequestCount, pools = canvas.pageDrawableAllocationCount
+    let cut=try XCTUnwrap(canvas.acquireAcceptedFrameLease())
+    defer {cut.release()}
+    let pools = canvas.pageDrawableAllocationCount
     let pressure = try XCTUnwrap(resources.reserveDerivedBytes(
       resources.byteLimit - resources.reservedBytes, priority: .input))
     defer { pressure.release() }
-    canvas.setPageInputEnabled(true)
+    // A shifted crop of the same dimensions needs a different accepted cut.
+    // Its prior GPU borrower keeps the old texture immutable and charged.
+    canvas.projectPage(region:.init(x:1,y:1,width:160,height:160),
+      sourceSize:.init(width:200,height:200),pixelDensity:1)
     let deadline = ContinuousClock.now + .seconds(2)
     while !(canvas.renderFailure == .resourceLimit && canvas.isFrameLoopPaused), ContinuousClock.now < deadline {
       try await Task.sleep(for: .milliseconds(10))
     }
     XCTAssertEqual(canvas.renderFailure, .resourceLimit)
     XCTAssertTrue(canvas.isFrameLoopPaused, "A rejected static frame cannot demand continuous UIKit updates")
-    XCTAssertEqual(canvas.drawableRequestCount, frames)
     XCTAssertEqual(canvas.pageDrawableAllocationCount, pools)
+    XCTAssertFalse(canvas.acceptedFrameIsReady)
     // A later ordinary input-demand update, not a timer, retries after space
     // returns. It must retain the exact accepted material and existing pool.
     pressure.release()
@@ -413,9 +405,12 @@ final class InkCanvasLifecycleTests: XCTestCase {
     while canvas.renderFailure != nil, ContinuousClock.now < recoveryDeadline {
       try await Task.sleep(for: .milliseconds(10))
     }
-    try await waitForStableFrame(canvas)
+    try await waitForStableFrame(canvas,accepted:true)
     XCTAssertNil(canvas.renderFailure)
     XCTAssertTrue(canvas.hasPageRetainedTexture)
+    let replacement=try XCTUnwrap(canvas.acquireAcceptedFrameLease())
+    defer {replacement.release()}
+    XCTAssertFalse(replacement.texture === cut.texture,"A borrower never observes the subsequent write")
     XCTAssertEqual(canvas.pageDrawableAllocationCount, pools)
     try await assertUX("page-retained-pressure-recovers-accepted-ink", since: .now, window: window) {
       try NotebookUXObservation.Pixels(window: window).matches([
@@ -424,9 +419,9 @@ final class InkCanvasLifecycleTests: XCTestCase {
   }
 
   @MainActor
-  private func waitForStableFrame(_ canvas: InkCanvasView) async throws {
+  private func waitForStableFrame(_ canvas: InkCanvasView,accepted:Bool = false) async throws {
     let deadline = ContinuousClock.now + .seconds(4)
-    while !(canvas.isStableFramePresented && canvas.isFrameLoopPaused), ContinuousClock.now < deadline {
+    while !(canvas.isStableFramePresented && canvas.isFrameLoopPaused && (!accepted || canvas.acceptedFrameIsReady)), ContinuousClock.now < deadline {
       try await Task.sleep(for: .milliseconds(10))
     }
     XCTAssertTrue(canvas.isStableFramePresented, "The mounted canvas must complete a frame of its current ink")

@@ -14,9 +14,21 @@ final class DocumentPaperRaster {
   let page: DocumentPrintedPage
   let sourceKey: String
   let image: CGImage
-  private let reservation: RasterReservation
+  @MainActor private final class Storage {
+    let reservation: RasterReservation
+    init(_ reservation: RasterReservation) { self.reservation = reservation }
+    isolated deinit { reservation.release() }
+  }
+  private let storage: Storage
   init(page: DocumentPrintedPage, sourceKey: String, image: CGImage, reservation: RasterReservation) {
-    self.page = page; self.sourceKey = sourceKey; self.image = image; self.reservation = reservation
+    self.page = page; self.sourceKey = sourceKey; self.image = image; storage = Storage(reservation)
+  }
+  private init(page: DocumentPrintedPage, sourceKey: String, image: CGImage, storage: Storage) {
+    self.page = page; self.sourceKey = sourceKey; self.image = image; self.storage = storage
+  }
+  func rebound(page: DocumentPrintedPage, sourceKey: String) -> DocumentPaperRaster {
+    precondition(self.page.pageIndex == page.pageIndex && self.page.artifact.pixelIdentity == page.artifact.pixelIdentity)
+    return .init(page: page, sourceKey: sourceKey, image: image, storage: storage)
   }
   static func prepare(page: DocumentPrintedPage, sourceKey: String, pixelWidth: Int,
     resources: SceneRenderResources, waits: (Bool) -> Void) async throws -> DocumentPaperRaster {
@@ -29,7 +41,6 @@ final class DocumentPaperRaster {
       return .init(page: page, sourceKey: sourceKey, image: image, reservation: reservation)
     } catch { reservation.release(); throw error }
   }
-  isolated deinit { reservation.release() }
 }
 
 /// Its rectangle is projected by the existing physical viewport. Refinement

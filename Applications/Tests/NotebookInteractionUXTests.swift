@@ -591,8 +591,10 @@ final class NotebookInteractionUXTests: XCTestCase {
     init(model: NotebookAppModel, window: UIWindow) throws {
       self.model = model; self.window = window
       func descendants(_ view: UIView) -> [UIView] { [view] + view.subviews.flatMap(descendants) }
-      paper = try XCTUnwrap(descendants(window).compactMap { $0 as? PaperInputView }.first { $0.isUserInteractionEnabled })
-      pencil = try XCTUnwrap(window.gestureRecognizers?.first { $0.name == "NotebookPaperPencil" })
+      let installedPaper = try XCTUnwrap(descendants(window).compactMap { $0 as? PaperInputView }.first { $0.isUserInteractionEnabled })
+      paper = installedPaper
+      pencil = try XCTUnwrap(window.gestureRecognizers?.compactMap { $0 as? PaperPencilGestureRecognizer }
+        .first { $0.input === installedPaper && $0.isEnabled })
       finger = try XCTUnwrap(window.gestureRecognizers?.compactMap { $0 as? SceneSelectionRecognizer }.first)
       observer = try XCTUnwrap(window.gestureRecognizers?.compactMap { $0 as? NotebookContactObserver }.first)
       contact = UXTouch(window: window, kind: .pencil); direct = UXTouch(window: window, kind: .direct)

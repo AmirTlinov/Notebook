@@ -43,10 +43,11 @@ extension NotebookStore {
     let columns = Set(try database.rows("PRAGMA table_info(ink_surfaces)").compactMap { $0[1].text })
     for (name, type) in [("min_tx", "INTEGER"), ("min_ty", "INTEGER"), ("min_x", "REAL"), ("min_y", "REAL"),
       ("max_tx", "INTEGER"), ("max_ty", "INTEGER"), ("max_x", "REAL"), ("max_y", "REAL"),
-      ("space_key", "INTEGER"), ("active", "INTEGER NOT NULL DEFAULT 0"), ("tool", "TEXT"), ("has_ink", "INTEGER NOT NULL DEFAULT 0")] where !columns.contains(name) {
+      ("space_key", "INTEGER"), ("paint_counter", "INTEGER"), ("paint_actor", "TEXT"), ("active", "INTEGER NOT NULL DEFAULT 0"), ("tool", "TEXT"), ("has_ink", "INTEGER NOT NULL DEFAULT 0")] where !columns.contains(name) {
       try database.run("ALTER TABLE ink_surfaces ADD COLUMN \(name) \(type)")
     }
     try database.run("CREATE INDEX IF NOT EXISTS ink_surface_content ON ink_surfaces(kind,owner_id) WHERE active=1 AND tool='pen' AND has_ink=1")
+    try database.run("CREATE INDEX IF NOT EXISTS ink_surface_paint_order ON ink_surfaces(kind,owner_id,paint_counter,paint_actor,address) WHERE active=1 AND tool='eraser'")
     try database.run("CREATE VIRTUAL TABLE IF NOT EXISTS ink_ranges USING rtree(entry,min_tx,max_tx,min_ty,max_ty,min_x,max_x,min_y,max_y,min_space,max_space)")
     let values = "new.rowid,new.min_tx,new.max_tx,new.min_ty,new.max_ty,CASE WHEN new.min_tx=new.max_tx THEN new.min_x ELSE 0 END,CASE WHEN new.min_tx=new.max_tx THEN new.max_x ELSE \(WorldPoint.tileSize) END,CASE WHEN new.min_ty=new.max_ty THEN new.min_y ELSE 0 END,CASE WHEN new.min_ty=new.max_ty THEN new.max_y ELSE \(WorldPoint.tileSize) END,new.space_key,new.space_key"
     try database.run("CREATE TRIGGER IF NOT EXISTS ink_range_insert AFTER INSERT ON ink_surfaces WHEN new.active=1 BEGIN INSERT INTO ink_ranges VALUES(" + values + "); END")
@@ -79,6 +80,12 @@ extension NotebookStore {
         .integer(action.isActive ? 1 : 0), .text(action.tool.rawValue), .integer(visible.contains(surface) ? 1 : 0)]
       try database.run("INSERT INTO ink_surfaces(address,kind,owner_id,min_tx,min_ty,min_x,min_y,max_tx,max_ty,max_x,max_y,space_key,active,tool,has_ink) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(address,kind,owner_id) DO UPDATE SET min_tx=excluded.min_tx,min_ty=excluded.min_ty,min_x=excluded.min_x,min_y=excluded.min_y,max_tx=excluded.max_tx,max_ty=excluded.max_ty,max_x=excluded.max_x,max_y=excluded.max_y,space_key=excluded.space_key,active=excluded.active,tool=excluded.tool,has_ink=excluded.has_ink", args)
     }
+    try indexInkPainter(.init(action),address:address,database:database)
+  }
+
+  func indexInkPainter(_ witness:NotebookInkContactWitness,address:String,database:NotebookSQLConnection) throws {
+    try database.run("UPDATE ink_surfaces SET paint_counter=?,paint_actor=? WHERE address=?",
+      [.integer(Int64(witness.sequence)),.text(witness.actor),.text(address)])
   }
 
   public func readSpatialInkWindowRecords(coverage: [SurfaceID: WorkspaceSpatialBounds], pinnedActionIDs: Set<UUID> = [],
@@ -178,5 +185,26 @@ extension NotebookStore {
       return .init(journal: .init(actions: actions.sorted { $0.stamp < $1.stamp }, stamp: stamp), records: records, coverage: coverage,
         cursor: try currentChangeCursor(), pinnedActionIDs: pinnedActionIDs, elementIDs: elementIDs.mapValues(Set.init))
     }
+  }
+}
+
+extension NotebookStore {
+  /// Page cuts share the existing indexed-ink directory. Pen-only appends do
+  /// not touch this projection; visibility changes update one indexed header.
+  func indexPageInkWindow(_ fragment:NotebookStoredFragment,database:NotebookSQLConnection) throws {
+    guard let page=UUID(uuidString:URL(fileURLWithPath:fragment.file).deletingPathExtension().lastPathComponent),
+      let id=UUID(uuidString:fragment.member) else {throw NotebookStorageError.corruptRecord(fragment.address)}
+    let active=fragment.value["isActive"] == .bool(true) ? 1:0
+    if try !database.rows("SELECT 1 FROM ink_surfaces WHERE address=? LIMIT 1",[.text(fragment.address)]).isEmpty {
+      try database.run("UPDATE ink_surfaces SET active=? WHERE address=? AND active<>?",[.integer(Int64(active)),.text(fragment.address),.integer(Int64(active))]);return
+    }
+    guard let action=try readPageInkAction(pageID:page,actionID:id)?.action else {throw NotebookStorageError.corruptRecord(fragment.address)}
+    let bounds=NotebookInkReadSet.bounds(of:action.samples),a=bounds.origin,b=bounds.maximum,owner=page.uuidString.lowercased()
+    try database.run("""
+      INSERT INTO ink_surfaces(address,kind,owner_id,min_tx,min_ty,min_x,min_y,max_tx,max_ty,max_x,max_y,space_key,active,tool,has_ink)
+      VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+      """,[.text(fragment.address),.text("page"),.text(owner),.integer(a.tileX),.integer(a.tileY),.real(a.localX),.real(a.localY),
+        .integer(b.tileX),.integer(b.tileY),.real(b.localX),.real(b.localY),.integer(Self.spatialSpaceKey(board:"page",parent:owner)),.integer(Int64(active)),.text("eraser"),.integer(1)])
+    try indexInkPainter(.init(action),address:fragment.address,database:database)
   }
 }

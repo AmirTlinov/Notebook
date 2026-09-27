@@ -121,6 +121,7 @@ final class NotebookInputGate {
   private var fingerCancellations: [UUID: @MainActor () -> Void] = [:]
   private var commandsAfterPencil: [NotebookInputCompletion] = []
   private var commandsAfterIdle: [NotebookInputCompletion] = []
+  private var publicationWaiters: [UUID: CheckedContinuation<Bool, Never>] = [:]
   private var contactSources: Set<UUID> = []
   private var settlingTask: Task<Void, Never>?
   private var activityGeneration: UInt64 = 0
@@ -242,6 +243,27 @@ final class NotebookInputGate {
     if isActive { commandsAfterIdle.append(action); return }
     performAfterPageInput { [self] in
       if isActive { commandsAfterIdle.append(action) } else { action() }
+    }
+  }
+
+  /// Cancellation revokes a navigation subscriber, never the measured contact
+  /// or its accepted publication. Queued callbacks retain only a weak owner/id.
+  func waitUntilIdle() async -> Bool { await waitForPublication(idle: true) }
+  func waitUntilPageInputFinishes() async -> Bool { await waitForPublication(idle: false) }
+
+  private func waitForPublication(idle: Bool) async -> Bool {
+    let id = UUID()
+    return await withTaskCancellationHandler {
+      await withCheckedContinuation { continuation in
+        guard !Task.isCancelled else { continuation.resume(returning: false); return }
+        publicationWaiters[id] = continuation
+        let completed: NotebookInputCompletion = { [weak self] in
+          self?.publicationWaiters.removeValue(forKey: id)?.resume(returning: true)
+        }
+        if idle { performAfterIdle(completed) } else { performAfterPageInput(completed) }
+      }
+    } onCancel: { [weak self] in
+      Task { @MainActor in self?.publicationWaiters.removeValue(forKey: id)?.resume(returning: false) }
     }
   }
 

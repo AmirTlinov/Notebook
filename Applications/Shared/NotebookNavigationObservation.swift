@@ -5,6 +5,17 @@ import Darwin
 /// Private acceptance observation only. No contact, navigation, persistence,
 /// camera, source content or completion is created or changed by this recorder.
 @MainActor enum NotebookNavigationObservation {
+  /// Optional native acceptance witnesses. Normal rendering keeps these nil;
+  /// the observing test owns any retained samples. Canvas/draw completion is
+  /// an exact paint-installation boundary, not an OS presentation timestamp.
+  struct GraphicPaint: Equatable, Sendable {
+    let reference: EditableElementReference
+    let graphic: NotebookGraphic
+    let layout: NotebookGraphicLayout?
+    let size: CGSize
+  }
+  static var onGraphicPaint: (@MainActor @Sendable (GraphicPaint) -> Void)?
+  static var onSelectionControlsPaint: (@MainActor (UUID, CGRect) -> Void)?
   private static let recorder = Recorder.configured()
   static var enabled: Bool { recorder?.sink.accepting == true }
 

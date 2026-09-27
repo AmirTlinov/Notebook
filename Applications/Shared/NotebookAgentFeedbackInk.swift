@@ -1,54 +1,56 @@
 import NotebookCore
-import SwiftUI
+import CoreGraphics
+import Foundation
 
-/// Reuses the canonical tessellator; no approximate stroked centerline. Later
-/// erasers are subtracted from the chosen stroke, never resurrected by light.
-@MainActor enum NotebookAgentFeedbackInk {
-  static func path(strokeID: UUID, reference: CollaborationReference, model: NotebookAppModel) -> Path? {
-    guard let region = reference.region else { return nil }
-    var vertices: [InkStrokeGeometry.Vertex] = []
-    var erasures: [Path] = []
-    func geometry(_ samples: InkMeasurements, origin: WorldPoint? = nil) -> Path {
-      let points = samples.compactMap { sample -> InkStrokeGeometry.RenderPoint? in
-        let point: SpatialPoint
-        if let world = sample.worldPoint, let origin {
-          let delta = origin.delta(to: world); point = .init(x:delta.x,y:delta.y)
-        } else { point = sample.point }
-        return .init(position:.init(Float(point.x-region.x),Float(point.y-region.y)),
-          radius:max(0.25,Float(sample.width/2)),premultipliedColor:.init(repeating:1))
-      }
-      vertices.removeAll(keepingCapacity:true)
-      InkStrokeGeometry.appendStrokeVertices(renderPoints:points,to:&vertices)
-      var path = Path()
-      for i in stride(from:0,to:vertices.count,by:3) {
-        path.move(to:.init(x:Double(vertices[i].position.x),y:Double(vertices[i].position.y)))
-        path.addLine(to:.init(x:Double(vertices[i+1].position.x),y:Double(vertices[i+1].position.y)))
-        path.addLine(to:.init(x:Double(vertices[i+2].position.x),y:Double(vertices[i+2].position.y)))
-        path.closeSubpath()
-      }
-      return path
+/// Feedback borrows immutable contacts and the canonical freehand geometry.
+/// It prepares one episode mask off-main; camera movement only projects it.
+enum NotebookAgentFeedbackInk {
+  enum Source:Sendable {case page(PageInkSource),spatial(SpatialInkJournal)}
+  struct Input:Sendable {
+    let source:Source
+    let strokeID:UUID
+    let surface:SurfaceID
+    let region:PageRect
+    let origin:WorldPoint?
+  }
+  struct Material:@unchecked Sendable {
+    let path:CGPath
+    let readSet:NotebookInkReadSet
+    let region:PageRect
+    let origin:WorldPoint?
+  }
+  static func prepare(_ input:Input) throws -> Material? {
+    try Task.checkCancellation()
+    let region=input.region
+    let readSet:NotebookInkReadSet
+    var layers:[NotebookFreehand.Layer]=[]
+    func append(id:UUID,span:Int,tool:SpatialInkTool,color:SpatialInkColor,samples:InkMeasurements) {
+      layers.append(.init(tool:tool,color:color,measured:.init(sourceID:id,span:span,measurements:samples,frame:region,origin:input.origin)))
     }
-    var selected: Path?
-    if reference.target.kind == .page {
-      guard let page = model.pages[reference.target.id], !page.graphicPresentation.suppressedInkIDs.contains(strokeID),
-        let drawing = try? PageInkDrawing.decode(page.drawingData) else { return nil }
-      for action in drawing.activeActions {
-        if action.id == strokeID, action.tool == .pen { selected = geometry(action.samples) }
-        else if selected != nil, action.tool == .eraser { erasures.append(geometry(action.samples)) }
+    switch input.source {
+    case .page(let source):
+      guard let set=source.readSet(for:input.strokeID,on:input.surface),let drawing=source.preparedDrawing,
+        set.contact.tool == .pen else {return nil}
+      readSet=set
+      for witness in [set.contact]+set.erasers.sorted(by:{$0.precedes($1)}) {
+        try Task.checkCancellation()
+        guard let action=drawing.action(id:witness.id) else {return nil}
+        append(id:action.id,span:0,tool:action.tool,color:action.color,samples:action.samples)
       }
-    } else {
-      guard model.compositionTiles.published?.liveData.suppressedInkIDs.contains(strokeID) != true,
-        let journal = model.spatialInk else { return nil }
-      let surface: SurfaceID = reference.target.kind == .cover ? .cover(reference.target.id) : .board(reference.target.id)
-      for action in journal.orderedActions where action.isActive {
-        for span in action.spans where span.surface == surface {
-          if action.id == strokeID, action.tool == .pen { selected = geometry(span.samples,origin:reference.worldOrigin) }
-          else if selected != nil, action.tool == .eraser { erasures.append(geometry(span.samples,origin:reference.worldOrigin)) }
+    case .spatial(let journal):
+      guard let set=journal.readSet(for:input.strokeID,on:input.surface),set.contact.tool == .pen else {return nil}
+      readSet=set
+      for witness in [set.contact]+set.erasers.sorted(by:{$0.precedes($1)}) {
+        try Task.checkCancellation()
+        guard let action=journal.action(id:witness.id) else {return nil}
+        for (index,span) in action.spans.enumerated() where span.surface == input.surface {
+          append(id:action.id,span:index,tool:action.tool,color:action.color,samples:span.samples)
         }
       }
     }
-    guard var selected else { return nil }
-    for erasure in erasures { selected = selected.subtracting(erasure) }
-    return selected
+    let geometry=NotebookFreehand(layers:layers).geometry
+    let path=geometry.paintPath(size:.init(width:region.width,height:region.height),transform:nil)
+    try Task.checkCancellation()
+    return .init(path:path,readSet:readSet,region:region,origin:input.origin)
   }
 }

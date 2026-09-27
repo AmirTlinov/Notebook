@@ -52,6 +52,10 @@ struct OrderedInkState { float4 value [[color(0),raster_order_group(0)]]; float 
 struct OrderedInkBody { half4 color [[color(2),raster_order_group(0)]]; };
 struct OrderedInkFinal { half4 color [[color(3),raster_order_group(0)]]; };
 struct OrderedInkQuad { float4 position [[position]]; float2 textureCoordinate; };
+fragment OrderedInkFinal orderedInkAcceptedFragment(OrderedInkQuad input [[stage_in]],texture2d<half> accepted [[texture(0)]]) {
+  constexpr sampler s(coord::normalized,address::clamp_to_edge,filter::linear);
+  return {accepted.sample(s,input.textureCoordinate)};
+}
 fragment OrderedInkState orderedInkRawFragment(CompactInkOut input [[stage_in]],
   float4 value [[color(0),raster_order_group(0)]], float weight [[color(1),raster_order_group(0)]],
   constant uint &erases [[buffer(0)]], uint sample [[sample_id]]) {

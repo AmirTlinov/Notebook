@@ -40,8 +40,9 @@ import PDFKit
     if options.format == .package {
       let printed: NotebookPrintedDocument?
       do {
-        let input = try await Task.detached { try NotebookTypesetterInput(document: document) { try store.readDocumentFileBytes($0) } }.value
-        printed = try await DocumentCanonicalPrint.store.artifact(for: document, input: input)
+        printed = try await DocumentCanonicalPrint.store.artifact(for: document, priority: .export, inputFactory: {
+          try await Task.detached { try NotebookTypesetterInput(document: document) { try store.readDocumentFileBytes($0) } }.value
+        })
       } catch is CancellationError { throw CancellationError() }
       catch { printed = nil } // A broken TeX entrypoint must not prevent carrying the authored files.
       if cut.presented != nil {
@@ -145,8 +146,9 @@ import PDFKit
     else { try await Task.detached { try artifact.pdf.write(to: pdfURL) }.value }
     let pdf = try await stage(pdfURL, path: "document.pdf", persistence: persistence)
     var assets: [NotebookExportFile] = []
-    for asset in artifact.assets {
-      assets.append(try await stage(asset.data, path: "files/" + asset.name, directory: directory, persistence: persistence))
+    for file in document.files where file.path != document.entrypoint {
+      let bytes = try await Task.detached { try store.readDocumentFileBytes(file) }.value
+      assets.append(try await stage(bytes, path: "files/" + file.path, directory: directory, persistence: persistence))
     }
     let syncTeX = try await stage(artifact.syncTeX, path: "document.synctex.gz", directory: directory, persistence: persistence)
     let map = try DocumentPrintSourceMap(document: document, source: artifact.source, pdfSHA256: pdf.sha256, compilerRevision: artifact.sourceMap.compilerRevision)

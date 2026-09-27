@@ -19,6 +19,7 @@ struct CoverOpeningSurface<Cover: View>: View {
   @Environment(\.displayScale) private var displayScale
   #if os(iOS)
     @Environment(\.workspaceItemPose) private var pose
+    @Environment(\.scenePlaneProjection) private var projection
   #endif
 
   let ownerID: UUID
@@ -74,7 +75,8 @@ struct CoverOpeningSurface<Cover: View>: View {
       .environment(\.sceneComposition, composition)
       .environment(\.displayScale, displayScale)
     #if os(iOS)
-      return AnyView(inherited.environment(\.workspaceItemPose, pose))
+      return AnyView(inherited.environment(\.workspaceItemPose, pose)
+        .environment(\.scenePlaneProjection, projection))
     #else
       return AnyView(inherited)
     #endif
@@ -181,12 +183,14 @@ enum CoverOpeningPhysics {
 /// Keeps one frozen cover for one physical curl. Content that arrives while
 /// the sheet is moving waits for an endpoint instead of replacing pixels in
 /// the person's hand halfway through the gesture.
-struct CoverSnapshotLifecycle {
+typealias CoverSnapshotLifecycle = CoverSnapshotState<CGImage>
+
+struct CoverSnapshotState<Frame> {
   enum Endpoint { case closed, open }
   private(set) var progress = 0.0
   private(set) var lastSettledEndpoint = Endpoint.closed
   private(set) var revision: CoverRenderingRevision?
-  private(set) var capturedCover: CGImage?
+  private(set) var capturedCover: Frame?
 
   private var ownerID: UUID?
   private var capturedRevision: CoverRenderingRevision?
@@ -231,9 +235,9 @@ struct CoverSnapshotLifecycle {
     clearCapture()
   }
 
-  mutating func storeCapturedCover(_ image: CGImage?) {
+  mutating func storeCapturedCover(_ image: Frame?, revision: CoverRenderingRevision? = nil) {
     capturedCover = image
-    capturedRevision = image == nil ? nil : revision
+    capturedRevision = image == nil ? nil : (revision ?? self.revision)
   }
 
   private mutating func clearCapture() {
@@ -245,6 +249,7 @@ struct CoverSnapshotLifecycle {
 #if os(iOS)
   private struct PlatformCoverOpeningSurface: UIViewControllerRepresentable {
     @Environment(NotebookAppModel.self) private var model
+    @Environment(\.sceneComposition) private var composition
     let ownerID: UUID
     let progress: Double
     let revision: CoverRenderingRevision
@@ -265,6 +270,7 @@ struct CoverSnapshotLifecycle {
       controller.bind(to: model, itemID: ownerID)
       controller.update(
         ownerID: ownerID,
+        compositionID: composition.id,
         progress: progress,
         revision: revision,
         backsideColor: backsideColor,
@@ -281,7 +287,7 @@ struct CoverSnapshotLifecycle {
   }
 
   @MainActor
-  final class IPadCoverOpeningController: UIViewController {
+  final class IPadCoverOpeningController: UIViewController, SceneNativeCameraOwner {
     private let coverHost = CoverPaintHostingController(rootView: AnyView(EmptyView()))
     private weak var model: NotebookAppModel?
     private var presentationItemID: UUID?
@@ -294,8 +300,24 @@ struct CoverSnapshotLifecycle {
 
     var submittedCurlFrameCount: Int { curlView.submittedFrameCount }
     private(set) var capturedCoverCount = 0
-    private var captureScheduled = false
-    private var lifecycle = CoverSnapshotLifecycle()
+    // Tests can supply their physical material explicitly. Production has one
+    // canonical compositor path and no hierarchy-capture fallback.
+    var prepareMaterial: (@MainActor (UUID, CoverRenderingRevision, Double) async throws -> PageTurnFrame)?
+    private var materialTask: Task<Void, Never>?
+    private var materialRequest: UUID?
+    private var materialDemand = UUID()
+    private var failedMaterialDemand: UUID?
+    private var failedMaterialAdmission: SceneRasterAdmission?
+    private var parkedMaterialDemand: UUID?
+    private var reclamationOwner: UUID?
+    private var preparationWasAllowed = false
+    private var materialOwnerID: UUID?
+    private var materialCohortID: UUID?
+    private var awaitsDrawableAdmission = false
+    private var hasLivePrograms = false
+    private var capturedMaterialIsEphemeral = false
+    private var resourceObservers: [NSObjectProtocol] = []
+    private var lifecycle = CoverSnapshotState<PageTurnFrame>()
     private var backsideColor = CoverBacksideColor.document
     private var preparesCoverMotion = false
     private var canPrepare: @MainActor () -> Bool = { false }
@@ -327,6 +349,34 @@ struct CoverSnapshotLifecycle {
         return lifecycle.isTransitioning || (preparesCoverMotion && canPrepare())
       }
       view.addSubview(curlView)
+      // Only passive material survives at rest; accepted input cuts end with
+      // their motion and are still borrowed by any submitted GPU command.
+      reclamationOwner = SceneRenderResources.shared.registerReclamationOwner { [weak self] in
+        guard let self, !lifecycle.isTransitioning, let frame = lifecycle.capturedCover else { return [] }
+        let id = frame.id
+        return [.init(id: id, bytes: frame.byteCount, rasterCount: 1, value: .unused,
+          distance: 1, restorationMilliseconds: 8, release: { [weak self] in
+            guard let self, !lifecycle.isTransitioning, lifecycle.capturedCover?.id == id else { return nil }
+            lifecycle.storeCapturedCover(nil); parkedMaterialDemand = materialDemand
+            return nil
+          })]
+      }
+      resourceObservers.append(NotificationCenter.default.addObserver(forName: SceneRenderResources.didChange,
+        object: nil, queue: .main) { [weak self] note in
+          let id = note.object as? String
+          Task { @MainActor [weak self] in
+            guard let self, let id, lifecycle.revision?.elements.contains(where: { $0.id == id }) == true else { return }
+            materialInputsChanged()
+          }
+        })
+      resourceObservers.append(NotificationCenter.default.addObserver(forName: SceneRenderResources.didGainRasterAdmission,
+        object: nil, queue: .main) { [weak self] _ in
+          Task { @MainActor [weak self] in
+            guard let self else { return }
+            if awaitsDrawableAdmission { renderCurrentState() }
+            else if materialAdmissionImproved { materialInputsChanged() }
+          }
+        })
     }
 
     override func viewDidLayoutSubviews() {
@@ -336,6 +386,7 @@ struct CoverSnapshotLifecycle {
 
     func update(
       ownerID: UUID,
+      compositionID: UUID? = nil,
       progress: Double,
       revision: CoverRenderingRevision,
       backsideColor: CoverBacksideColor,
@@ -344,17 +395,43 @@ struct CoverSnapshotLifecycle {
       cornerRadius: CGFloat,
       cover: AnyView
     ) {
-      if lifecycle.revision != revision { hasInstalledLayout = false; installedRevision = nil }
-      lifecycle.update(
-        ownerID: ownerID,
-        progress: progress,
-        revision: revision
-      )
-      coverHost.rootView = cover
+      let ownerChanged = materialOwnerID != ownerID
+      let contentChanged = ownerChanged || lifecycle.revision != revision
+      // The environment identifies the content crossing this hosting boundary.
+      // A model publication can precede it: consuming that future ID here would
+      // suppress the later installation and leave source receipts on an old cohort.
+      let cohortChanged = materialCohortID != compositionID
+      materialCohortID = compositionID
+      if contentChanged || cohortChanged { hasInstalledLayout = false; installedRevision = nil }
+      let wasTransitioning = lifecycle.isTransitioning
+      let current = model?.presence
+      let nativeProgress = current.map { $0.focusedItemID == ownerID ? $0.openProgress : 0 } ?? progress
+      lifecycle.update(ownerID: ownerID, progress: nativeProgress, revision: revision)
+      materialOwnerID = ownerID
+      if contentChanged {
+        if ownerChanged || !wasTransitioning { cancelMaterial() }
+        materialDemand = UUID(); failedMaterialDemand = nil
+        if let model, let index = model.sceneIndex, let boardID = index.ownerBoard(itemID: ownerID) {
+          hasLivePrograms = index.coverElements(itemID: ownerID, boardID: boardID).contains { agentElementSnapshotSource($0).requiresLiveRuntime }
+        }
+      } else if cohortChanged, materialTask == nil, lifecycle.capturedCover == nil {
+        // Cohort readiness may unblock this cover. An unrelated cohort does
+        // not invalidate already prepared pixels with the same local source.
+        materialDemand = UUID(); failedMaterialDemand = nil
+      }
+      if wasTransitioning, !lifecycle.isTransitioning { cancelMaterial() }
+      if !wasTransitioning, lifecycle.isTransitioning {
+        materialDemand = UUID(); failedMaterialDemand = nil
+        if hasLivePrograms { cancelMaterial(); lifecycle.storeCapturedCover(nil) }
+      }
+      if contentChanged || cohortChanged { coverHost.rootView = cover }
       self.backsideColor = backsideColor
       self.preparesCoverMotion = preparesCoverMotion
       self.canPrepare = canPrepare
       self.cornerRadius = cornerRadius
+      let preparationAllowed = preparesCoverMotion && canPrepare()
+      if preparationAllowed, !preparationWasAllowed { materialDemand = UUID(); failedMaterialDemand = nil }
+      preparationWasAllowed = preparationAllowed
 
       guard isViewLoaded else { return }
       view.setNeedsLayout()
@@ -366,13 +443,38 @@ struct CoverSnapshotLifecycle {
       uninstallPresentation()
       self.model = model; presentationItemID = itemID
       model.coverPresentations.register(self, itemID: itemID)
+      model.nativeCameraProjection.register(self)
+    }
+
+    func projectSceneCamera(_ presence: SessionPresence) {
+      guard let itemID = presentationItemID, let revision = lifecycle.revision else { return }
+      let wasTransitioning = lifecycle.isTransitioning
+      lifecycle.update(ownerID: itemID, progress: presence.focusedItemID == itemID ? presence.openProgress : 0, revision: revision)
+      if wasTransitioning, !lifecycle.isTransitioning { cancelMaterial() }
+      if !wasTransitioning, lifecycle.isTransitioning {
+        materialDemand = UUID(); failedMaterialDemand = nil
+        if hasLivePrograms { cancelMaterial(); lifecycle.storeCapturedCover(nil) }
+      }
+      if wasTransitioning != lifecycle.isTransitioning { SceneRenderResources.shared.reclamationOffersChanged() }
+      if isViewLoaded { renderCurrentState() }
     }
 
     func uninstallPresentation() {
+      model?.nativeCameraProjection.remove(self)
       if let presentationItemID { model?.coverPresentations.remove(self, itemID: presentationItemID) }
       model = nil; presentationItemID = nil; hasInstalledLayout = false; installedRevision = nil
       preparesCoverMotion = false
       canPrepare = { false }
+      cancelMaterial(); lifecycle.storeCapturedCover(nil)
+      capturedMaterialIsEphemeral = false
+      materialCohortID = nil; awaitsDrawableAdmission = false
+      curlView.releaseSource()
+    }
+
+    isolated deinit {
+      materialTask?.cancel()
+      for observer in resourceObservers { NotificationCenter.default.removeObserver(observer) }
+      if let reclamationOwner { SceneRenderResources.shared.unregisterReclamationOwner(reclamationOwner) }
     }
 
     /// Only the existing live subtree can fix Send-time pixels. Curl snapshots
@@ -426,9 +528,11 @@ struct CoverSnapshotLifecycle {
     private func renderCurrentState() {
       guard let curlLayout = layoutSurfaces() else { return }
       if CoverOpeningPhysics.isClosed(lifecycle.progress) {
+        discardEphemeralMaterial()
         lifecycle.settleAtClosedEndpoint(
           keepingPreparedSnapshot: preparesCoverMotion
         )
+        awaitsDrawableAdmission = false; curlView.releaseSource()
         resetCoverHostGeometry()
         coverVisibilityView.isHidden = false
         coverVisibilityView.alpha = 1
@@ -437,7 +541,9 @@ struct CoverSnapshotLifecycle {
         return
       }
       if CoverOpeningPhysics.isOpen(lifecycle.progress) {
+        discardEphemeralMaterial()
         lifecycle.settleAtOpenEndpoint()
+        cancelMaterial(); awaitsDrawableAdmission = false; curlView.releaseSource()
         resetCoverHostGeometry()
         // Keep the live cover in the render tree while the page is open. It is
         // visually absent, but Metal/WebKit can still produce a current frame
@@ -445,20 +551,28 @@ struct CoverSnapshotLifecycle {
         coverVisibilityView.isHidden = false
         coverVisibilityView.alpha = CoverOpeningPhysics.warmCoverOpacity
         coverHost.view.isUserInteractionEnabled = false
-        // Retain a current snapshot from the preceding curl, but creating a
-        // new one belongs to actual closing, not work behind the open paper.
+        // Passive prepared material may remain. A new current cut belongs to
+        // actual closing, not work behind the open paper.
         curlView.isHidden = true
         return
       }
 
       if lifecycle.capturedCover == nil {
-        scheduleCapture()
+        requestMaterial()
       }
       guard let capturedCover = lifecycle.capturedCover else {
         showEndpointUntilSnapshotIsReady()
         return
       }
 
+      if curlView.frameLease == nil {
+        let scale = max(view.window?.screen.scale ?? view.traitCollection.displayScale, 1)
+        let width = Int(ceil(curlView.bounds.width * scale)), height = Int(ceil(curlView.bounds.height * scale))
+        guard let lease = SceneRenderResources.shared.reserveRaster(pixelWidth: width, pixelHeight: height,
+          backingCount: curlView.drawableCount, priority: .input)
+        else { awaitsDrawableAdmission = true; showEndpointUntilSnapshotIsReady(); return }
+        awaitsDrawableAdmission = false; curlView.frameLease = lease
+      }
       coverVisibilityView.isHidden = true
       coverHost.view.isUserInteractionEnabled = false
       curlView.isHidden = false
@@ -492,69 +606,141 @@ struct CoverSnapshotLifecycle {
       // the display pool and block the document's MainActor for a second.
       // Keep the snapshot and shared CI program warm, not a fake screen frame.
       curlView.isHidden = true
-      guard preparesCoverMotion, canPrepare() else { return }
-      if lifecycle.needsCurrentSnapshot { scheduleCapture() }
+      guard preparesCoverMotion, !hasLivePrograms, canPrepare() else { return }
+      if lifecycle.needsCurrentSnapshot { requestMaterial() }
     }
 
-    // A deferred frame lets the attached hosting tree commit its first content.
-    // InkCanvasView confirms its own GPU frame before the curl freezes those
-    // pixels. Pending ink yields a frame between attempts while the cover is live.
-    private var needsCaptureNow: Bool {
+    private var needsMaterialNow: Bool {
       guard let window = view.window, !window.isHidden else { return false }
       if lifecycle.isTransitioning { return lifecycle.capturedCover == nil }
       return CoverOpeningPhysics.isClosed(lifecycle.progress)
-        && preparesCoverMotion && canPrepare() && lifecycle.needsCurrentSnapshot
+        && preparesCoverMotion && !hasLivePrograms && canPrepare() && lifecycle.needsCurrentSnapshot
     }
 
-    private func scheduleCapture() {
-      guard !captureScheduled, view.window != nil, needsCaptureNow else { return }
-      captureScheduled = true
-      DispatchQueue.main.asyncAfter(deadline: .now() + 1 / 60) { [weak self] in
+    private func cancelMaterial() {
+      materialRequest = nil; materialTask?.cancel(); materialTask = nil
+    }
+
+    private func discardEphemeralMaterial() {
+      guard capturedMaterialIsEphemeral else { return }
+      lifecycle.storeCapturedCover(nil); capturedMaterialIsEphemeral = false
+    }
+
+    private func materialInputsChanged() {
+      // Accepted motion keeps its exact cut. Completion of that motion admits
+      // a successor; a pending cut retries only on an owner event, not a timer.
+      guard materialTask == nil, !(lifecycle.isTransitioning && lifecycle.capturedCover != nil) else { return }
+      materialDemand = UUID(); failedMaterialDemand = nil; failedMaterialAdmission = nil
+      if !lifecycle.isTransitioning { lifecycle.storeCapturedCover(nil) }
+      if isViewLoaded { renderCurrentState() }
+    }
+
+    private var materialAdmissionImproved: Bool {
+      guard failedMaterialDemand != nil, let old = failedMaterialAdmission else { return false }
+      let current = SceneRenderResources.shared.rasterAdmission
+      return current.byteLimit - current.heldBytes > old.byteLimit - old.heldBytes
+        || current.passiveByteLimit - current.pinnedBytes - current.passiveReservedBytes
+          > old.passiveByteLimit - old.pinnedBytes - old.passiveReservedBytes
+        || current.countLimit - current.pinnedCount - current.reservedCount
+          > old.countLimit - old.pinnedCount - old.reservedCount
+    }
+
+    private func requestMaterial() {
+      guard materialTask == nil, failedMaterialDemand != materialDemand, parkedMaterialDemand != materialDemand, needsMaterialNow,
+        let ownerID = materialOwnerID, let revision = lifecycle.revision else { return }
+      let id = UUID(), demand = materialDemand
+      let priority: SceneAllocationPriority = lifecycle.isTransitioning ? .input : .passive
+      materialRequest = id
+      let density = Double(max(view.window?.screen.scale ?? view.traitCollection.displayScale, 1))
+      let scale = min(density, sqrt(4_000_000 / (revision.geometry.width * revision.geometry.height)))
+      materialTask = Task { @MainActor [weak self] in
         guard let self else { return }
-        self.captureScheduled = false
-        guard self.view.window != nil, self.needsCaptureNow else { return }
-        self.lifecycle.storeCapturedCover(self.captureCover())
-        self.renderCurrentState()
+        defer {
+          if materialRequest == id { materialTask = nil; materialRequest = nil }
+        }
+        do {
+          // The task boundary admits later owner cancellation before work.
+          try Task.checkCancellation()
+          guard needsMaterialNow else { throw CancellationError() }
+          let material: PageTurnFrame
+          if let prepareMaterial { material = try await prepareMaterial(ownerID, revision, scale) }
+          else { material = try await prepareCoverMaterial(ownerID: ownerID, revision: revision, scale: scale, priority: priority) }
+          try Task.checkCancellation()
+          guard materialRequest == id, materialOwnerID == ownerID, needsMaterialNow else { return }
+          lifecycle.storeCapturedCover(material, revision: revision)
+          capturedMaterialIsEphemeral = priority == .input
+          capturedCoverCount += 1
+          materialTask = nil; materialRequest = nil; failedMaterialDemand = nil; failedMaterialAdmission = nil; parkedMaterialDemand = nil
+          SceneRenderResources.shared.reclamationOffersChanged()
+          renderCurrentState()
+        } catch {
+          guard materialRequest == id else { return }
+          materialTask = nil; materialRequest = nil; failedMaterialDemand = demand
+          failedMaterialAdmission = error as? SceneRenderError == .resourceLimit ? SceneRenderResources.shared.rasterAdmission : nil
+        }
       }
     }
 
-    private func captureCover() -> CGImage? {
-      guard view.window != nil else { return nil }
-      resetCoverHostGeometry()
-      let wasHidden = coverVisibilityView.isHidden
-      let previousAlpha = coverVisibilityView.alpha
-      coverVisibilityView.isHidden = false
-      coverVisibilityView.alpha = 1
-      defer {
-        coverVisibilityView.alpha = previousAlpha
-        coverVisibilityView.isHidden = wasHidden
+    private func prepareCoverMaterial(ownerID: UUID, revision: CoverRenderingRevision, scale: Double,
+      priority: SceneAllocationPriority) async throws -> PageTurnFrame {
+      guard let model, let cohort = model.compositionTiles.published,
+        let boardID = cohort.frame.index.ownerBoard(itemID: ownerID) else {
+        throw SceneRenderError.snapshotPending("cover_material_owner")
       }
-      coverHost.view.frame = view.bounds
-      coverHost.view.setNeedsLayout()
-      coverHost.view.layoutIfNeeded()
-      guard inkFramesAreReady(in: coverHost.view) else { return nil }
-
-      let format = UIGraphicsImageRendererFormat.preferred()
-      format.opaque = false
-      format.scale =
-        view.window?.screen.scale
-        ?? max(view.traitCollection.displayScale, 1)
-      let renderer = UIGraphicsImageRenderer(bounds: coverHost.view.bounds, format: format)
-      let image = renderer.image { _ in
-        coverHost.view.drawHierarchy(
-          in: coverHost.view.bounds,
-          afterScreenUpdates: true
-        )
+      // These are bounded values of the installed live scene. No store scan or
+      // extra WebKit executor is started by a physical cover gesture.
+      let workspace = model.presentedWorkspace(cohort: cohort)
+      let hierarchy = model.presentedHierarchy(cohort: cohort)
+      var paperSizes = cohort.frame.index.documentPaperSizes
+      paperSizes[ownerID] = revision.geometry
+      let index = WorkspaceSceneIndex(workspace: workspace, hierarchy: hierarchy,
+        paperSizes: paperSizes, reusing: cohort.frame.index)
+      let journal = model.renderingInk(on: .cover(ownerID), fallback: cohort.liveData.ink) ?? cohort.liveData.ink
+      guard let item = workspace.item(id: ownerID),
+        CoverRenderingRevision(item: item, geometry: revision.geometry,
+          elements: index.coverElements(itemID: ownerID, boardID: boardID), journal: model.spatialInk) == revision else {
+        throw SceneRenderError.snapshotPending("cover_material_revision")
       }
-      if image.cgImage != nil { capturedCoverCount += 1 }
-      return image.cgImage
+      let source = SceneCompositionSource(index: index, hierarchy: hierarchy, journal: journal)
+      let plane = SceneCompositionPlane.cover(boardID: boardID, itemID: ownerID)
+      let rasters = cohort.sourceRasters.filter { $0.key.plane == plane }.compactMapValues { $0.retainedCopy() }
+      let cuts = priority == .input
+        ? try await Self.captureCoverCuts(elements: index.coverElements(itemID: ownerID, boardID: boardID), plane: plane)
+        : [:]
+      let renderer = SceneCompositionRenderer(source: source, usesPreparedSources: true,
+        installedSources: rasters, temporarySources: cuts,
+        permitsPreparation: { [weak self] in self?.needsMaterialNow == true })
+      let pixels = try await renderer.renderCoverImage(itemID: ownerID, boardID: boardID, scale: scale, priority: priority)
+      let size = CGSize(width: revision.geometry.width, height: revision.geometry.height)
+      return try await PageTurnFrame.compose(size: size, scale: scale,
+        images: [.init(image: pixels.image, frame: CGRect(origin: .zero, size: size))],
+        priority: priority, retaining: [pixels])
     }
 
-    private func inkFramesAreReady(in view: UIView) -> Bool {
-      if let canvas = view as? InkCanvasView {
-        return canvas.isStableFramePresented
+    private static func captureCoverCuts(elements: [SpatialElement], plane: SceneCompositionPlane) async throws -> [SceneSourceAddress: SceneRasterCut] {
+      var seen = Set<String>()
+      let sources = try elements.map(agentElementSnapshotSource).filter { source in
+        guard source.requiresLiveRuntime, seen.insert(source.id).inserted else { return false }
+        return try AgentWebCoordinator.currentInstallation(
+          focus: .board(boardID: plane.boardID, elementID: source.id), element: source)?.isInstalled == true
       }
-      return view.subviews.allSatisfy { inkFramesAreReady(in: $0) }
+      let capture: @MainActor @Sendable (AgentElement) async throws -> (SceneSourceAddress, SceneRasterCut?) = { source in
+        try Task.checkCancellation()
+        let cut = try await AgentWebCoordinator.captureCurrentCut(
+          focus: .board(boardID: plane.boardID, elementID: source.id), element: source)
+        return (.init(plane: plane, elementID: source.id), cut)
+      }
+      return try await withThrowingTaskGroup(of: (SceneSourceAddress, SceneRasterCut?).self) { group in
+        var result: [SceneSourceAddress: SceneRasterCut] = [:]
+        // All originals remain retained through the canonical cover painter,
+        // so serial waves cannot lower their final admitted physical footprint.
+        // Each existing executor still reserves its full bytes before submit.
+        for source in sources { group.addTask { try await capture(source) } }
+        while let (address, cut) = try await group.next() {
+          if let cut { result[address] = cut }
+        }
+        return result
+      }
     }
 
     private func resetCoverHostGeometry() {

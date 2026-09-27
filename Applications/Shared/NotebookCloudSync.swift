@@ -16,6 +16,7 @@ actor NotebookCloudSync: CKSyncEngineDelegate {
   static let containerIdentifier = "iCloud.com.amirtlinov.notebook"
   private let store: NotebookStore
   private let writer: NotebookPersistenceQueue
+  private let uploadReader: NotebookCloudUploadReader
   private let source: NotebookReplicationSource
   private let zoneID: CKRecordZone.ID
   private let apply: @Sendable (NotebookReplicationDelivery, String) async throws -> Void
@@ -32,11 +33,13 @@ actor NotebookCloudSync: CKSyncEngineDelegate {
   private var hasFailure = false
   private var resuming = false
   private var resumeRetry: Task<Void, Never>?
+  private var uploadPreparation: Task<NotebookCloudUploadPlan?, Error>?
 
   init(store: NotebookStore, writer: NotebookPersistenceQueue, source: NotebookReplicationSource, workspaceID: UUID,
     apply: @escaping @Sendable (NotebookReplicationDelivery, String) async throws -> Void,
     report: @escaping @Sendable (NotebookCloudStatus) async -> Void) {
     self.store = store; self.writer = writer; self.source = source
+    uploadReader = NotebookCloudUploadReader(store: store)
     zoneID = .init(zoneName: "Notebook-" + workspaceID.uuidString.lowercased(), ownerName: CKCurrentUserDefaultName)
     self.apply = apply; self.report = report
   }
@@ -191,6 +194,7 @@ actor NotebookCloudSync: CKSyncEngineDelegate {
 
   private func invalidate() -> CKSyncEngine? {
     resumeRetry?.cancel(); resumeRetry = nil
+    uploadPreparation?.cancel(); uploadPreparation = nil
     epoch = UUID(); let previous = engine; engine = nil; account = nil; contentEnabled = false
     return previous
   }
@@ -222,7 +226,12 @@ actor NotebookCloudSync: CKSyncEngineDelegate {
   private func pump() async {
     pumpAgain = true
     guard !pumping else { return }; pumping = true
-    defer { pumping = false }
+    defer {
+      pumping = false
+      // A replacement engine can request work while the cancelled worker is
+      // unwinding. Preserve that request after this old pump relinquishes it.
+      if pumpAgain, contentEnabled { Task { await self.pump() } }
+    }
     while pumpAgain {
       pumpAgain = false
       guard contentEnabled, let engine, let account else { return }
@@ -250,7 +259,44 @@ actor NotebookCloudSync: CKSyncEngineDelegate {
           }
         }
         guard epoch == token else { return }
-        try await writer.submit { [source] in try $0.prepareCloudUpload(account: account, source: source) }
+        var preparation = try await writer.submit { try $0.pendingCloudUploadPlan(account: account) }
+        if preparation == nil {
+          let preparationTask = Task { [uploadReader, source] in
+            try await uploadReader.prepare(account: account, source: source)
+          }
+          uploadPreparation = preparationTask
+          let plan: NotebookCloudUploadPlan?
+          do { plan = try await preparationTask.value }
+          catch { uploadPreparation = nil; throw error }
+          uploadPreparation = nil
+          guard epoch == token else {
+            if let plan { try? await uploadReader.discard(plan.id) }
+            return
+          }
+          if let plan {
+            do {
+              if try await writer.submit({ try $0.beginCloudUpload(plan, account: account) }) { preparation = plan.id }
+              else { try? await uploadReader.discard(plan.id) }
+            } catch {
+              try? await uploadReader.discard(plan.id)
+              throw error
+            }
+          }
+        }
+        if let preparation {
+          while true {
+            guard epoch == token else { return }
+            guard let batch = try await uploadReader.batch(preparation, account: account) else {
+              try await uploadReader.discard(preparation); break
+            }
+            guard epoch == token else { return }
+            let complete = try await writer.submit { try $0.installCloudUploadBatch(batch, account: account) }
+            if complete { try await uploadReader.discard(preparation); break }
+            // Each transaction ends before the next FIFO admission. Accepted
+            // Pencil/program writes can pass while an initial export is built.
+            await Task.yield()
+          }
+        }
         let pending = try await writer.submit { try $0.cloudOutbox(account: account) }
         guard epoch == token else { return }
         let records = pending.map { CKSyncEngine.PendingRecordZoneChange.saveRecord(.init(recordName: $0.id, zoneID: zoneID)) }
@@ -262,7 +308,7 @@ actor NotebookCloudSync: CKSyncEngineDelegate {
             ? "Изменения отправлены в iCloud."
             : "Сохранено на устройстве. Ожидаем отправку в iCloud."))
         }
-      } catch { await reportFailure(error); return }
+      } catch { if epoch == token { await reportFailure(error) }; return }
     }
   }
 
@@ -445,4 +491,19 @@ actor NotebookCloudSync: CKSyncEngineDelegate {
     init(_ message: String) { self.message = message }
     var errorDescription: String? { message }
   }
+}
+
+/// A cloud plan is an immutable read operation. It never owns the live writer,
+/// and its temporary files have exactly the pending export's lifetime.
+private actor NotebookCloudUploadReader {
+  let store: NotebookStore
+  init(store: NotebookStore) { self.store = store }
+  func prepare(account: String, source: NotebookReplicationSource) throws -> NotebookCloudUploadPlan? {
+    try store.retireUnclaimedCloudUploadSpools()
+    return try store.prepareCloudUploadPlan(account: account, source: source)
+  }
+  func batch(_ id: UUID, account: String) throws -> NotebookCloudUploadBatch? {
+    try store.prepareCloudUploadBatch(id, account: account)
+  }
+  func discard(_ id: UUID) throws { try store.discardCloudUploadSpool(id) }
 }

@@ -47,8 +47,12 @@ derivatives, with a separate lock from live region paths. Each derivative has
 only a normalized and one body-size slot; decoded equal masks borrow completed
 paths without waiting for a build. No raster replaces the authored material.
 
-`PageDocument.prepareInkChange` prepares off-main. Publication rechecks page UUID
-and drawing stamp; a concurrent change retries preparation without losing input.
+The page read owner calls `prepareInkForPresentation` before publishing its source.
+The immutable root carries decoded actions, targeted erasures and their bounds index.
+Live admission uses `prepareLiveInkChange`; an unprepared root rejects input admission
+instead of decoding at first lift. Decode, projection preparation and archive encoding
+have separate single-flight locks; ready reads take only the short publication lock.
+An accepted delta, its model and mounted consumers share the same source identity.
 Undo names action UUIDs and does not erase later strokes. Camera waits only for
 accepted contact completion; shared edits additionally respect publication fences.
 
@@ -121,13 +125,16 @@ waits for accepted-action delivery before admitting the next contact; the model'
 existing ordered write queue owns persistence. Native text extents are bounded
 and cached by content, formatting and line width, never by camera/position.
 
-The iPad page renderer also retains the accepted page composite at the current
-crop. Pencil frames draw only the mutable contact over that texture; accepting
-ink, changing the crop, or replacing the source invalidates it. Cold empty paper
-and per-element material canvases do not allocate this page backing; after Undo
-empties an active warm crop, its already admitted backing remains for Redo.
-This is the page
-renderer itself, not a screenshot content source or a second persistence path.
+The page canvas retains its ordered raw/authored composite for the accepted root,
+crop, pixel density and prepared paint plan. Pen frames draw the current contact
+over that backing. Erasing recomposes only contact damage with the same ordered
+algebra, including addressed body cuts; it never destination-erases all authored
+bodies from a flattened image. A source, pose or crop change rebuilds the backing.
+Ordered scratch attachments belong to bounded frame slots, not individual bodies.
+A page-turn lease borrows a completed, presented canonical cut; while leased, the
+next write obtains a separately charged texture. Empty paper needs no texture.
+Unmount/reclamation releases canvas backing; submitted work and external leases
+keep their exact resources charged until GPU completion/release.
 
 A rejected page-frame allocation or encoding attempt pauses its existing display
 clock; UIKit drains the final update through the same phase action. It must not
@@ -238,6 +245,22 @@ Overflow rejects the contact without replacing the previous selection. Spatial
 base, moved-group and live-delta candidate unions reject world bounds before exact
 geometry and share one 4,096-object bound; exact work remains off-main.
 
+Selection pose, cancellation and canonical handoff enter the existing canvas frame
+clock. Preparation supplies immutable geometry; at most three flight slots hold
+buffers/drawables. Scheduling publishes raw pixels, authored hosts and controls in
+one native transaction without draining earlier GPU or CA work. Changed selected
+sources or host generations revoke a pending cut; unrelated ordered bodies survive
+its addressed merge. Allocation refusal keeps the last picture and resumes only
+on the next owner request. OS presentation remains the readiness evidence.
+
+Raw selection pins the chosen contact's immutable revisions/state and indexed later
+intersecting erasers. The native writer checks the same addressed read set inside
+its transaction; unrelated pens or distant cuts cannot cancel a move. Region export
+still uses its explicit whole-source precondition. Agent stroke feedback prepares
+one canonical vector mask from pending/attention subjects off-main, reusing it for
+animation. Its job survives unrelated owner revisions; the episode clock starts only
+after both the source pixels and its current mask are ready.
+
 The tool controller retains one prepared accepted lasso snapshot. Its identity
 covers the owner, revision and actual spatial-window action membership. Suppressed
 stroke IDs belong to the pinned query and do not rebuild unchanged measurements.
@@ -302,13 +325,21 @@ unused capacity never creates a distant cold page just to fill the window.
 `PageInkProjection` reads the current sheet and exact native demand through the
 existing `PageTurnActivity` (all sheets share the notebook's visibility). Demand
 promotes the target and synchronously revokes stale readiness before navigation
-can capture it. A passive neighbour prepares its first canonical crop but does
-not resize its drawable for another
+can capture it. Every resident nonempty unreclaimed sheet owns a borrowable
+accepted GPU cut; disabling input preserves it. Ready requires both GPU completion
+and OS presentation of that exact canonical cut. A passive neighbour prepares
+its first canonical crop but does not resize its drawable for another
 sheet's camera samples. Visible sheets reuse their admitted crop while it covers
 the current viewport and satisfies the scene's existing movement-density allowance;
 stationary publication refines to current detail. Coverage misses use the existing
 512-pixel tile/128-pixel guard policy clamped to the sheet. Promotion refines the
 newly visible page. No page-density bucket, second cache or allocation limit is added.
+
+The same host receipt publishes installed paper and capture readiness separately.
+Opening, input and a direct landing use the installed source; a bending turn waits
+for both borrowable cuts. Preparing static slot transforms or a GPU turn copy cannot
+delay opening already painted paper. Capture-only failures belong to a requested
+curl, and an accepted immutable pair survives later live readiness changes.
 
 ## Attention, history and export work
 
@@ -417,7 +448,11 @@ as natural gesture performance. The 20 ms input/Metal gates remain unchanged;
 passing the visual check does **not** certify 20 ms whole-composition display.
 The observer reports `observed-within-20ms` separately and never subtracts
 capture cost: window readback itself exceeded 20 ms on the physical iPad.
-No production renderer/selection observer or second presentation owner is added.
+The region first-cut regression separately times the existing Canvas's exact
+reference/graphic/mask/layout paint and the controls' selection/frame draw, then
+checks window pixels. Its optional callbacks are nil during ordinary use; samples
+belong only to the test. This native paint boundary keeps the 100 ms ceiling but
+does not claim an OS presentation timestamp or subtract screenshot cost.
 The window image proves composed output,
 not an OS compositor acknowledgement: SwiftUI shape/lasso composition still
 does not expose a per-content OS presentation receipt here. Its UIKit lane
@@ -532,20 +567,27 @@ keep their parent and the source stays beneath the opaque curl until the exact
 presented endpoint is ready to replace it. No flat priming frame or per-frame
 UIKit underlay transaction is needed for the complete pair.
 
-Both hosts must be ready before capture. Capture runs outside input dispatch,
-using `drawHierarchy(afterScreenUpdates: true)` at window-projected density,
-bounded to four million pixels per sheet. The motion ID and readiness generation
-are checked between captures and before installing the pair; a false→true
-readiness cycle cannot admit old pixels. A cancelled uncaptured turn keeps the
-live source without allocating a pair. Accepted ink revokes readiness before
-releasing its input fence. Resource reclamation resumes the same waiting motion,
-not a replacement gesture.
+`PageTurnMaterialOwner` prepares native artwork and installed static slots when
+their source changes. A turn borrows the canvas's accepted GPU cut; subsequent
+ink uses copy-on-write until the borrow ends. Only live programs need a local
+cut of their existing runtime. `PageTurnFrame` composes these materials on GPU,
+outside input dispatch, bounded to four million pixels per sheet. Whole-host
+`drawHierarchy` capture is removed. Motion identity and readiness generation
+are checked across preparation; a false→true cycle cannot admit old pixels.
+A cancelled unprepared turn keeps the live source without allocating a pair.
+Accepted ink revokes readiness before releasing its input fence. Resource
+reclamation resumes the same waiting motion, not a replacement gesture.
 
-One input reservation accounts for both native-range captured images, uploaded
-textures and two drawable backings. The pair is uploaded once, reused through
-re-grabs and released by the existing presentation/cancellation owner. There is
-no persistent snapshot cache. The existing `CAMetalDisplayLink` owns progress
-and submission; a dropped or obsolete receipt cannot confirm a landing.
+Physical owners account for resident material, the borrowed pair and drawable
+backings. Resident page/document owners may reuse an unchanged completed frame;
+their bounded lifetime and reclamation rules own that memory. The curl retains
+its immutable pair through its last GPU submission and releases it at completion
+or cancellation. `CAMetalDisplayLink` owns progress and submission; a dropped
+or obsolete receipt cannot confirm a landing. Its paused link survives between
+turns while mounted, without acquiring drawables. During admitted motion,
+`UIUpdateLink.wantsImmediatePresentation` requests the lower-latency UIKit policy;
+it does not drive animation and is disabled when motion stops. The request is
+not evidence of actual latency: acceptance uses OS drawable timestamps.
 Settlement follows remaining travel, release velocity, stroke duration and
 current input cadence, without a fixed minimum duration. A re-grab starts from
 the visible pose; cancelling a newer contact preserves the previously accepted
@@ -560,6 +602,16 @@ requesting a frame. The synchronous MTK size callback cannot allocate an
 intermediate backing with old/new dimensions. The first empty-page contact also
 reports its first drawable's typed completion while the dot remains held; the
 regression does not create a screenshot or subsequent move to obtain that receipt.
+An empty layer stays hidden without a dummy drawable. Its first real contact
+and opacity reveal join one CA transaction after GPU scheduling; warm former
+pixels remain hidden until that same atomic replacement.
+The first drawable keeps the page clock parked until its OS receipt, so a later
+frame cannot change transaction mode or supersede the held dot. Input continues
+collecting samples; cancellation/source replacement revoke only this pending frame.
+The repeated pen/undo/redo journey joins each accepted page stamp to its stable
+canvas OS receipt within 100 ms, then checks pixels independently. A previous
+correct-looking picture cannot acknowledge an unpresented inverse, and diagnostic
+window copying cannot block the frame being measured.
 
 ### Ready-link collaboration and iPad priority
 

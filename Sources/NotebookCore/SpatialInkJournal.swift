@@ -166,6 +166,7 @@ public struct SpatialInkJournal: Codable, Equatable, Sendable {
   public var actions: [SpatialInkAction] { storage.actions }
   public var orderedActions: some Sequence<SpatialInkAction> & Sendable { storage.orderedActions }
   public var actionCount: Int { storage.count }
+  public var sourceIdentity:ObjectIdentifier {ObjectIdentifier(storage)}
   /// Conservative retained metadata for both immutable nodes per action:
   /// value, UUID/position, child pointers, heights, object headers and alignment.
   /// Shared roots are intentionally charged to each retaining cache entry.

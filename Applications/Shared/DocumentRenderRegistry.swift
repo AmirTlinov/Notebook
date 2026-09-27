@@ -109,6 +109,18 @@ final class DocumentRenderRegistry {
   }
   @ObservationIgnored private var renderers: [UUID: Renderer] = [:]
   @ObservationIgnored private var editingOwners: [UUID: UUID] = [:]
+  func checkpointFocusedProgram(documentID: UUID, resume: Bool) async -> Bool {
+    #if os(iOS)
+      return await DocumentPagePresentationOwner.checkpointFocusedProgram(documentID: documentID, resume: resume)
+    #else
+      for owner in renderers.values.compactMap(\.value) where !owner.isInvalidated
+        && owner.resourceOwner === SceneRenderResources.shared && owner.payload?.documentID == documentID {
+        if !(await owner.checkpointFocusedProgram(resume: resume)) { return false }
+      }
+      return true
+    #endif
+  }
+
   func checkpointPrograms(documentID: UUID? = nil, resume: Bool) async -> Bool {
     #if os(iOS)
       return await DocumentPagePresentationOwner.checkpointPrograms(documentID: documentID, resume: resume)

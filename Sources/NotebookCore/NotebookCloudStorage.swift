@@ -35,11 +35,6 @@ public struct NotebookCloudRecord: Sendable, Equatable {
 }
 
 extension NotebookStore {
-  static func createCloudOrderQueue(_ db: NotebookSQLConnection) throws {
-    try db.run("CREATE TEMP TABLE cloud_order_nodes(hash TEXT PRIMARY KEY,expanded INTEGER NOT NULL DEFAULT 0)")
-    try db.run("CREATE INDEX cloud_order_pending ON cloud_order_nodes(expanded,hash)")
-  }
-
   public func prepareCloudStorage() throws {
     try commandTransaction(advancesReadRevision: false) {
       let db = currentSQL!
@@ -54,6 +49,11 @@ extension NotebookStore {
         "CREATE INDEX IF NOT EXISTS cloud_inbox_source ON cloud_inbox(account,source,sequence)",
         "CREATE TABLE IF NOT EXISTS cloud_chunks(account TEXT NOT NULL,hash TEXT NOT NULL,offset INTEGER NOT NULL,total INTEGER NOT NULL,data BLOB NOT NULL,PRIMARY KEY(account,hash,offset))"
       ] { try db.run(sql) }
+      let columns = Set(try db.rows("PRAGMA table_info(cloud_exports)").compactMap { $0[1].text })
+      for (name, definition) in [("plan", "TEXT"), ("ready", "INTEGER NOT NULL DEFAULT 1"),
+        ("blob_cursor", "INTEGER NOT NULL DEFAULT 0"), ("record_cursor", "INTEGER NOT NULL DEFAULT 0")] where !columns.contains(name) {
+        try db.run("ALTER TABLE cloud_exports ADD COLUMN " + name + " " + definition)
+      }
     }
   }
 
@@ -94,6 +94,7 @@ extension NotebookStore {
       try requireCloudAccount(account)
       let uploaded = UInt64(try db.rows("SELECT cursor FROM cloud_accounts WHERE account=?", [.text(account)]).first?[0].integer ?? 0)
       return try uploaded >= currentChangeCursor() && db.rows("SELECT 1 FROM cloud_outbox WHERE account=? LIMIT 1", [.text(account)]).isEmpty
+        && db.rows("SELECT 1 FROM cloud_exports WHERE account=? LIMIT 1", [.text(account)]).isEmpty
     }
   }
 
@@ -107,89 +108,11 @@ extension NotebookStore {
     }
   }
 
-  /// Durable outbox is the owner of send progress. CKSyncEngine carries at most
-  /// one bounded page; restoring its serialization is not the only retry path.
-  public func prepareCloudUpload(account: String, source: NotebookReplicationSource) throws {
-    try commandTransaction(advancesReadRevision: false) {
-      try requireCloudAccount(account)
-      let db = currentSQL!
-      // An account-discovered empty replica receives first. Publishing a blank
-      // bootstrap scene would create competing content in the existing space.
-      guard try hasWorkspaceContent() else { return }
-      guard try db.rows("SELECT 1 FROM cloud_exports WHERE account=?", [.text(account)]).isEmpty else { return }
-      let cursor = UInt64(try db.rows("SELECT cursor FROM cloud_accounts WHERE account=?", [.text(account)]).first![0].integer!)
-      let delivery: NotebookReplicationDelivery
-      if cursor == 0 { delivery = try cloudSnapshot(source: source) }
-      else if let change = try changeJournal(after: cursor, limit: 1).first { delivery = .init(source: source, change: change) }
-      else { return }
-      guard try missingBlobHashes(for: delivery.change, limit: 1).isEmpty else { throw NotebookStorageError.blobMissing(delivery.change.manifestHash) }
-      try db.run("INSERT INTO cloud_exports VALUES(?,?)", [.text(account), .blob(try Self.storageEncoder.encode(delivery))])
-      let descriptor = try NotebookCloudRecord.delivery(delivery)
-      try db.run("INSERT INTO cloud_outbox VALUES(?,?,?,NULL,0,0)", [.text(account), .text(descriptor.id), .blob(try Self.storageEncoder.encode(delivery))])
-      func addBlob(_ hash: String) throws -> Bool {
-        let size = try blobSize(hash: hash)
-        guard size <= NotebookTransportLimits.maximumBlobBytes else { throw NotebookTransportError.blobTooLarge }
-        var offset: Int64 = 0, allocated = false
-        repeat {
-          let record = try NotebookCloudRecord.chunk(hash: hash, offset: offset, totalBytes: size)
-          if try db.rows("SELECT 1 FROM cloud_uploaded WHERE account=? AND id=?", [.text(account), .text(record.id)]).isEmpty {
-            try db.run("INSERT OR IGNORE INTO cloud_outbox VALUES(?,?,NULL,?,?,?)", [.text(account), .text(record.id), .text(hash), .integer(offset), .integer(size)])
-            allocated = true
-          }
-          offset += Int64(NotebookCloudRecord.chunkBytes)
-        } while offset < size
-        return allocated
-      }
-      _ = try addBlob(delivery.change.manifestHash)
-      var after = ""
-      while true {
-        let hashes = try db.rows("SELECT blob_hash AS hash FROM manifest_records WHERE manifest_hash=? AND blob_hash>? UNION SELECT part_hash FROM manifest_parts WHERE manifest_hash=? AND part_hash>? ORDER BY hash LIMIT 64",
-          [.text(delivery.change.manifestHash), .text(after), .text(delivery.change.manifestHash), .text(after)]).compactMap { $0[0].text }
-        guard let last = hashes.last else { break }
-        for hash in hashes { _ = try addBlob(hash) }; after = last
-      }
-      try visitProgramDependencyHashes(manifestHash: delivery.change.manifestHash) { hash in _ = try addBlob(hash) }
-      try visitInkBodyDependencies(manifestHash:delivery.change.manifestHash) { hash in _ = try addBlob(hash) }
-      try visitLifecycleInverseDependencyHashes(manifestHash: delivery.change.manifestHash) { hash in
-        _ = try addBlob(hash)
-      }
-      // An uploaded root already covers its dependency closure. New roots are
-      // expanded on disk, not materialized as the notebook's full page vector.
-      try Self.createCloudOrderQueue(db)
-      let manifest = try validatedManifest(delivery.change)
-      for root in manifest.pageOrderRoots { try db.run("INSERT OR IGNORE INTO cloud_order_nodes(hash) VALUES(?)", [.text(root)]) }
-      // Locally admitted inverse roots may deliberately omit their already
-      // known children from dependency discovery. A fresh cloud account has
-      // no such proof: the same outbox traversal exports their entire closure.
-      var inverseAfter = ""
-      while true {
-        let roots = try db.rows("SELECT hash FROM manifest_inverse_blobs WHERE manifest_hash=? AND kind=1 AND hash>? ORDER BY hash LIMIT 64",
-          [.text(delivery.change.manifestHash), .text(inverseAfter)]).compactMap { $0[0].text }
-        guard let last = roots.last else { break }
-        for root in roots { try db.run("INSERT OR IGNORE INTO cloud_order_nodes(hash) VALUES(?)", [.text(root)]) }
-        inverseAfter = last
-      }
-      while let hash = try db.rows("SELECT hash FROM cloud_order_nodes WHERE expanded=0 ORDER BY hash LIMIT 1").first?[0].text {
-        if try addBlob(hash) {
-          for child in try readPageOrderNode(hash).children { try db.run("INSERT OR IGNORE INTO cloud_order_nodes(hash) VALUES(?)", [.text(child)]) }
-        }
-        try db.run("UPDATE cloud_order_nodes SET expanded=1 WHERE hash=?", [.text(hash)])
-      }
-      // Snapshot also retains historical immutable nodes, including non-heads.
-      after = "workspace.json#/pageOrderNodes/@"
-      while let address = try db.rows("SELECT address FROM manifest_records WHERE manifest_hash=? AND address>=? AND address<'workspace.json#/pageOrderNodes0' ORDER BY address LIMIT 1", [.text(delivery.change.manifestHash), .text(after)]).first?[0].text {
-        let hash = String(address.dropFirst("workspace.json#/pageOrderNodes/@".count))
-        _ = try addBlob(hash); after = address + "\u{0001}"
-      }
-      try db.run("DROP TABLE cloud_order_nodes")
-    }
-  }
-
   public func cloudOutbox(account: String, limit: Int = 8) throws -> [NotebookCloudRecord] {
     guard (1...16).contains(limit) else { throw NotebookTransportError.resourceLimit }
     return try sqlRead { db in
       try requireCloudAccount(account)
-      return try db.rows("SELECT id,delivery,hash,offset,total FROM cloud_outbox WHERE account=? ORDER BY id LIMIT ?", [.text(account), .integer(Int64(limit))]).map { row in
+      return try db.rows("SELECT id,delivery,hash,offset,total FROM cloud_outbox WHERE account=? AND EXISTS(SELECT 1 FROM cloud_exports e WHERE e.account=cloud_outbox.account AND e.ready=1) ORDER BY id LIMIT ?", [.text(account), .integer(Int64(limit))]).map { row in
         if let data = row[1].blob { return try .delivery(JSONDecoder().decode(NotebookReplicationDelivery.self, from: data)) }
         return try .chunk(hash: row[2].text!, offset: row[3].integer!, totalBytes: row[4].integer!)
       }
@@ -200,13 +123,15 @@ extension NotebookStore {
     guard ids.count <= 16 else { throw NotebookTransportError.resourceLimit }
     try commandTransaction(advancesReadRevision: false) {
       try requireCloudAccount(account); let db = currentSQL!
+      // Stale engine callbacks cannot consume descriptors still being imported.
+      guard try !db.rows("SELECT 1 FROM cloud_exports WHERE account=? AND ready=1", [.text(account)]).isEmpty else { return }
       for id in ids {
         guard try !db.rows("SELECT 1 FROM cloud_outbox WHERE account=? AND id=?", [.text(account), .text(id)]).isEmpty else { continue }
         try db.run("INSERT OR IGNORE INTO cloud_uploaded VALUES(?,?)", [.text(account), .text(id)])
         try db.run("DELETE FROM cloud_outbox WHERE account=? AND id=?", [.text(account), .text(id)])
       }
       if try db.rows("SELECT 1 FROM cloud_outbox WHERE account=? LIMIT 1", [.text(account)]).isEmpty,
-        let data = try db.rows("SELECT delivery FROM cloud_exports WHERE account=?", [.text(account)]).first?[0].blob {
+        let data = try db.rows("SELECT delivery FROM cloud_exports WHERE account=? AND ready=1", [.text(account)]).first?[0].blob {
         let delivery = try JSONDecoder().decode(NotebookReplicationDelivery.self, from: data)
         try db.run("UPDATE cloud_accounts SET cursor=? WHERE account=?", [.integer(Int64(delivery.change.sequence)), .text(account)])
         try db.run("DELETE FROM cloud_exports WHERE account=?", [.text(account)])

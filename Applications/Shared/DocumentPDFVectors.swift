@@ -45,7 +45,7 @@ extension DocumentWebCoordinator {
             guard let reserved = resourceOwner.reserveDerivedBytes(8*1024*1024, priority: .passive) else { throw SceneRenderError.resourceLimit }
             storage = reserved
           }
-          let pdf = try await DocumentCanonicalPrint.store.vectorPDF(svg)
+          let pdf = try await DocumentCanonicalPrint.store.vectorPDF(svg, priority: .export)
           bytes += pdf.count
           guard bytes <= 8*1024*1024 else { throw SceneRenderError.resourceLimit }
           for fragment in fragments {

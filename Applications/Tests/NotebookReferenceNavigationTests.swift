@@ -91,6 +91,33 @@ final class NotebookReferenceNavigationTests: XCTestCase {
     XCTAssertNil(model.requestedReference)
   }
 
+  func testCancelledNavigationReleasesItsWaitWithoutCancellingPhysicalPublication() async throws {
+    let model = try await makeModel(), source = UUID()
+    let waiting = expectation(description: "the physical page owns its unfinished publication")
+    let finished = expectation(description: "revoked navigation releases its subscription")
+    var completions: [NotebookInputCompletion] = []
+    model.inputGate.registerPageFinisher(source: source) { _, completion in
+      if completions.isEmpty { waiting.fulfill() }
+      completions.append(completion)
+    }
+    model.inputGate.setCurrentPageSource(source, isCurrent: true)
+    model.requestShow(try coverReference(model))
+    let requested = try XCTUnwrap(model.requestedReference)
+    var applied = false
+    let navigation = Task {
+      await model.resolveReferenceLocation(requested) { _ in applied = true }
+      finished.fulfill()
+    }
+    await fulfillment(of: [waiting], timeout: 2)
+    model.cancelRequestedNavigation()
+    await fulfillment(of: [finished], timeout: 2)
+    XCTAssertFalse(applied)
+    XCTAssertFalse(completions.isEmpty, "The actual physical publication still owns its completion")
+    model.inputGate.unregisterPageFinisher(source: source)
+    for completion in completions { completion() }
+    await navigation.value
+  }
+
   func testCancelledNavigationDoesNotJoinLaterWorkAfterItsInputFinisher() async throws {
     let model = try await makeModel(), source = UUID()
     let reachedInput = expectation(description: "navigation awaits accepted input")

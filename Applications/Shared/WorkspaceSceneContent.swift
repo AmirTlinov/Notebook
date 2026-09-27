@@ -189,11 +189,11 @@ struct WorkspaceItemCoverView: View {
     let graph = cohort.map { model.presentedGraphicGraph(boardID:boardID,cohort:$0,preview:!isPortalProjection) }
       ?? model.boardHierarchy?.board(boardID)?.graphicGraph()
     ZStack(alignment: .topLeading) {
-      coverBackground.zIndex(-2)
-      WorkspaceCoverTitle(item: item, geometry: geometry).opacity(portalOverlayOpacity).zIndex(-1)
+      WorkspaceCoverSurface(item: item, geometry: geometry, hasContents: hasContents).zIndex(-2)
+      WorkspaceCoverTitle(item: item, geometry: geometry).zIndex(-1)
       if let cohort, let plane, let presentation = cohort.plan.presentations[plane] {
         ForEach(SceneCompositionTileBandView.bands(in: cohort, plane: plane, layer: .elements, presence: presentation)) { band in
-          band.zIndex(Double(band.rank)).opacity(portalOverlayOpacity)
+          band.zIndex(Double(band.rank))
         }
       }
       if let cohort, let plane, let graph {
@@ -201,7 +201,7 @@ struct WorkspaceItemCoverView: View {
           NotebookGraphicBatchView(run: run, elements: elements, graph: graph, scale: 1,
             size: .init(width: geometry.width, height: geometry.height), projectOrigin: { _ in .zero },
             commitsState: !isPortalProjection)
-            .opacity(portalOverlayOpacity)
+
             .zIndex(cohort.plan.rank(id: run.id.id, in: plane) ?? 0)
         }
       }
@@ -210,7 +210,7 @@ struct WorkspaceItemCoverView: View {
         NotebookGraphicBatchView(run:run,
           elements:model.workingGraphics(on:.cover(item.id),cohort:cohort).map { $0.spatialElement(stamp:.init(counter:0,actor:model.actorID)) },
           graph:graph,scale:1,size:.init(width:geometry.width,height:geometry.height),projectOrigin:{ _ in .zero },commitsState:false)
-          .opacity(portalOverlayOpacity).zIndex(Double.greatestFiniteMagnitude)
+          .zIndex(Double.greatestFiniteMagnitude)
       }
       ForEach(elements.filter { element in
         if element.graphic != nil || element.kind == .group { return false }
@@ -235,7 +235,7 @@ struct WorkspaceItemCoverView: View {
         .allowsHitTesting(ownerIsAvailable)
         .frame(width: local.width, height: local.height)
         .offset(x: local.x, y: local.y)
-        .opacity(portalOverlayOpacity)
+
         .zIndex(plane.flatMap { cohort?.plan.rank(id: .element(element.id), in: $0) } ?? 0)
         }
       }
@@ -283,11 +283,11 @@ struct WorkspaceItemCoverView: View {
           SpatialInkSurfaceView(surface: .cover(item.id), cohort: cohort,
             boardID: cohort.plan.liveOwners.first(where: { $0.id == .item(item.id) })?.plane.boardID ?? cohort.plan.rootBoardID,
             isActive: !isPortalProjection)
-            .allowsHitTesting(false).opacity(portalOverlayOpacity).zIndex(1_000)
+            .allowsHitTesting(false).zIndex(1_000)
         }
       #elseif os(macOS)
         SpatialInkSurfaceView(surface:.cover(item.id),journal:cohort?.liveData.ink,ordered:cohort?.liveData.orderedInk[.cover(item.id)] ?? .init())
-          .allowsHitTesting(false).opacity(portalOverlayOpacity).zIndex(1_000)
+          .allowsHitTesting(false).zIndex(1_000)
       #endif
     }
     .coordinateSpace(name: NotebookManipulationSpace.material)
@@ -295,10 +295,12 @@ struct WorkspaceItemCoverView: View {
       width: geometry.width,
       height: geometry.height
     )
-    .clipShape(
-      WorkspaceCoverOutline(kind: item.kind == .board && portalOpenProgress > 0 ? .notebook : item.kind,
-        cornerRadius: portalCornerRadius, hasContents: hasContents)
-    )
+    .modifier(WorkspacePortalFace(itemID: item.id, isPortal: item.kind == .board && !isPortalProjection,
+      fallbackOpacity: portalOverlayOpacity))
+    .background(alignment: .topLeading) { portalBackground }
+    .modifier(WorkspacePortalClip(itemID: item.id, kind: item.kind, geometry: geometry,
+      hasContents: hasContents, isPortal: item.kind == .board && !isPortalProjection,
+      progress: portalOpenProgress))
     .overlay {
       if model.isItemBeingDeleted(item.id), !isPortalProjection {
         ProgressView("Удаление")
@@ -317,24 +319,14 @@ struct WorkspaceItemCoverView: View {
     item.kind == .board ? max(0, 1 - portalOpenProgress) : 1
   }
 
-  private var portalCornerRadius: Double {
-    item.kind == .board
-      ? geometry.cornerRadius * max(0, 1 - portalOpenProgress)
-      : geometry.cornerRadius
-  }
-
-
   @ViewBuilder
-  private var coverBackground: some View {
+  private var portalBackground: some View {
     if item.kind == .board, portalOpenProgress > 0,
       WorkspaceSceneProjection.showsPortal(pixelScale: portalPixelScale, remainingPasses: remainingPortalPasses) {
       AnyView(BoardPortalPreview(boardID: item.id, spatialInkSurfaces: spatialInkSurfaces,
         pixelScale: portalPixelScale, remainingPortalPasses: remainingPortalPasses,
         transitionViewport: portalViewport))
     }
-    WorkspaceCoverSurface(item: item, geometry: geometry,
-      hasContents: hasContents)
-      .opacity(portalOverlayOpacity)
   }
 
   private var ownerIsAvailable: Bool {
@@ -566,5 +558,44 @@ extension EnvironmentValues {
   var sceneComposition: SceneCompositionReference {
     get { self[SceneCompositionKey.self] }
     set { self[SceneCompositionKey.self] = newValue }
+  }
+}
+
+/// Native portal effects consume accepted camera samples without observing
+/// progress in the SwiftUI tree. Exports and Mac keep the ordinary static path.
+private struct WorkspacePortalFace: ViewModifier {
+  let itemID: UUID
+  let isPortal: Bool
+  let fallbackOpacity: Double
+  func body(content: Content) -> some View {
+    #if os(iOS)
+    if isPortal { SceneCoverMaterial(itemID: itemID, effect: .portalFace) { content } }
+    else { content.opacity(fallbackOpacity) }
+    #else
+    content.opacity(fallbackOpacity)
+    #endif
+  }
+}
+
+private struct WorkspacePortalClip: ViewModifier {
+  let itemID: UUID
+  let kind: WorkspaceItemKind
+  let geometry: WorkspaceItemGeometry
+  let hasContents: Bool
+  let isPortal: Bool
+  let progress: Double
+  func body(content: Content) -> some View {
+    #if os(iOS)
+    if isPortal {
+      SceneCoverMaterial(itemID: itemID, effect: .portalClip(cornerRadius: geometry.cornerRadius, hasContents: hasContents)) { content }
+    } else { clipped(content) }
+    #else
+    clipped(content)
+    #endif
+  }
+  private func clipped(_ content: Content) -> some View {
+    content.clipShape(WorkspaceCoverOutline(kind: kind == .board && progress > 0 ? .notebook : kind,
+      cornerRadius: kind == .board ? geometry.cornerRadius * max(0, 1 - progress) : geometry.cornerRadius,
+      hasContents: hasContents))
   }
 }

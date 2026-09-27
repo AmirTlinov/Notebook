@@ -1,5 +1,6 @@
 import SwiftUI
 import Observation
+import NotebookCore
 
 #if os(iOS)
   import UIKit
@@ -29,15 +30,72 @@ final class PageTurnActivity {
     let pageIndex: Int
     let presentation: Presentation
   }
+  #if os(iOS)
+  // Native installation/layout replaces these borrows. They are an addressed
+  // registry, not view state: readiness is delivered by the installed owner.
+  private struct ElementFrameProvider {
+    let owner: UUID
+    let source: AgentElement
+    let installation: SceneSourceInstallation
+    let acquire: @MainActor (SceneAllocationPriority) async throws -> PageTurnElementFrame
+  }
+  @ObservationIgnored private var elementFrames: [Int: [String: ElementFrameProvider]] = [:]
+  func installElementFrame(page: Int, element: String, owner: UUID, source: AgentElement,
+    installation: SceneSourceInstallation,
+    provider: @escaping @MainActor (SceneAllocationPriority) async throws -> PageTurnElementFrame) {
+    let previous = elementFrames[page]?[element]
+    // Installation wrappers are recreated by layout. Only a new accepted
+    // source, native owner, raster or runtime replaces the borrowed material.
+    let changed = previous?.owner != owner || previous?.source != source
+      || previous?.installation.ownerIdentity != installation.ownerIdentity
+      || previous?.installation.entryID != installation.entryID
+      || previous?.installation.runtimeToken != installation.runtimeToken
+      || previous?.installation.requiresVisibility != installation.requiresVisibility
+    elementFrames[page, default: [:]][element] = .init(owner: owner, source: source,
+      installation: installation, acquire: provider)
+    for observer in Array(preparationObservers.values) {
+      observer(.elementFrames(pageIndex: page, materialChanged: changed))
+    }
+  }
+  func removeElementFrame(page: Int, element: String, owner: UUID) {
+    guard elementFrames[page]?[element]?.owner == owner else { return }
+    elementFrames[page]?[element] = nil
+    if elementFrames[page]?.isEmpty == true { elementFrames[page] = nil }
+    for observer in Array(preparationObservers.values) {
+      observer(.elementFrames(pageIndex: page, materialChanged: true))
+    }
+  }
+  func remapElementFrames(_ indices: [Int: Int]) {
+    elementFrames = Dictionary(uniqueKeysWithValues: elementFrames.compactMap { old, frames in
+      indices[old].map { ($0, frames) }
+    })
+  }
+  func retireElementFrames(at page: Int) { elementFrames[page] = nil }
+  func acquireElementFrame(page: Int, source: AgentElement, priority: SceneAllocationPriority) async throws -> PageTurnElementFrame {
+    guard let provider = elementFrames[page]?[source.id], provider.source == source,
+      provider.installation.isInstalled else { throw PageTurnMaterialUnavailable.changed }
+    return try await provider.acquire(priority)
+  }
+  func hasElementFrame(page: Int, source: AgentElement) -> Bool {
+    guard let provider = elementFrames[page]?[source.id], provider.source == source else { return false }
+    return provider.installation.isInstalled
+  }
+  func hasUncroppedElementFrame(page: Int, source: AgentElement) -> Bool {
+    guard let provider = elementFrames[page]?[source.id], provider.source == source else { return false }
+    return provider.installation.isInstalled && provider.installation.source.captureRegion == nil
+  }
+  #endif
   private(set) var isTransitioning = false
   private(set) var preparationDemand: PreparationDemand?
   private(set) var installedPreparation: PreparationDemand?
-  private var observers: [UUID: @MainActor (Bool) -> Void] = [:]
+  @ObservationIgnored private var observers: [UUID: @MainActor (Bool) -> Void] = [:]
   enum PreparationChange {
     case demand
     case refine(pageIndex: Int)
+    case stage(pageIndex: Int)
+    case elementFrames(pageIndex: Int, materialChanged: Bool)
   }
-  private var preparationObservers: [UUID: @MainActor (PreparationChange) -> Void] = [:]
+  @ObservationIgnored private var preparationObservers: [UUID: @MainActor (PreparationChange) -> Void] = [:]
 
   /// The native page controller owns the one accepted landing still waiting
   /// for pixels. Repeated view updates preserve its identity; a new landing
@@ -60,6 +118,12 @@ final class PageTurnActivity {
   /// opening consumes readiness. This does not replace the pending page demand.
   func refinePresentation(at pageIndex: Int) {
     for observer in Array(preparationObservers.values) { observer(.refine(pageIndex: pageIndex)) }
+  }
+
+  /// The curl endpoint has exposed this live host. Unlike layout refinement,
+  /// this one visibility edge requests its actual OS presentation receipt.
+  func stagePresentation(at pageIndex: Int) {
+    for observer in Array(preparationObservers.values) { observer(.stage(pageIndex: pageIndex)) }
   }
 
   /// Native completion precedes the SwiftUI current-page update. Retain that
@@ -91,8 +155,16 @@ final class PageTurnActivity {
 
 @MainActor
 final class PageTurnReadiness {
+  /// One host receipt distinguishes installed paper/input from its borrowable
+  /// turn cut. Opening and landing must not wait for a future curl allocation.
+  struct State: Equatable {
+    let presented: Bool
+    let capturable: Bool
+    static let waiting = Self(presented: false, capturable: false)
+  }
+  private(set) var state = State.waiting
   let activity: PageTurnActivity?
-  let pageIndex: Int
+  var pageIndex: Int
   var rasterContext: PageRasterPreparation.Context? {
     activity.map { .init(owner: $0.rasters, pageIndex: pageIndex) }
   }
@@ -100,23 +172,48 @@ final class PageTurnReadiness {
   let isInActiveTurn: @MainActor () -> Bool
   private let handler: @MainActor (Bool) -> Void
   private let failureHandler: @MainActor (PageTurnPreparationFailure) -> Void
+  private let materialChangedHandler: @MainActor () -> Void
 
   init(activity: PageTurnActivity? = nil, pageIndex: Int = 0,
     isInActiveTurn: @escaping @MainActor () -> Bool = { false },
     onFailure: @escaping @MainActor (PageTurnPreparationFailure) -> Void = { _ in },
+    onMaterialChanged: @escaping @MainActor () -> Void = {},
     _ handler: @escaping @MainActor (Bool) -> Void) {
     self.activity = activity
     self.pageIndex = pageIndex
     self.isInActiveTurn = isInActiveTurn
     self.handler = handler
     failureHandler = onFailure
+    materialChangedHandler = onMaterialChanged
   }
 
-  func callAsFunction(_ ready: Bool) {
+  #if os(iOS)
+  var inkFrame: (@MainActor () -> InkCanvasView.AcceptedFrameLease?)?
+  var inkFrameIsEmpty: (@MainActor () -> Bool)?
+  var inkFrameIsReady: (@MainActor () -> Bool)?
+  private var frameProvider: (@MainActor (SceneAllocationPriority) async throws -> PageTurnFrame)?
+  func setFrameProvider(_ provider: @escaping @MainActor (SceneAllocationPriority) async throws -> PageTurnFrame) { frameProvider = provider }
+  func acquireFrame(priority: SceneAllocationPriority = .passive) async throws -> PageTurnFrame {
+    guard let frameProvider else { throw SceneRenderError.snapshotPending("page_frame_owner") }
+    return try await frameProvider(priority)
+  }
+  #endif
+
+  func callAsFunction(_ ready: Bool, capturable: Bool? = nil) {
+    // A covered neighbour can have an immutable GPU cut before its live layer
+    // receives an OS presentation. Only the landing uses the visible receipt.
+    state = .init(presented: ready, capturable: capturable ?? ready)
     handler(ready)
   }
 
   func failed(_ failure: PageTurnPreparationFailure) { failureHandler(failure) }
+
+  func materialDidChange() { materialChangedHandler() }
+
+  func captureFailed(_ failure: PageTurnPreparationFailure) {
+    failureHandler(.init(id: failure.id, kind: failure.kind, requiresCapture: true,
+      message: failure.message, retry: failure.retry))
+  }
 }
 
 /// Chooses the small set of live pages that must already have a first frame.
@@ -198,6 +295,9 @@ struct PageTurnSelectionTracker {
     self.displayedIndex = displayedIndex
   }
 
+  var pendingIndex: Int? { pendingLanding }
+  mutating func remap(to index: Int, pending: Int?) { displayedIndex = index; pendingLanding = pending }
+
   var awaitsLocalAcknowledgement: Bool {
     pendingLanding != nil
   }
@@ -251,6 +351,7 @@ struct PageTurnSurface: View {
   var notebookNavigation: NotebookPageNavigation? = nil
   var onWindowChange: @MainActor (Set<Int>, Int?, String) -> Void = { _, _, _ in }
   var inputGate: NotebookInputGate? = nil
+  var pageIdentities: [Int: UUID] = [:]
 
   var body: some View {
     Group {
@@ -285,12 +386,15 @@ struct PageTurnSurface: View {
           documentNavigation: documentNavigation,
           notebookNavigation: notebookNavigation,
           onWindowChange: onWindowChange,
-          inputGate: inputGate
+          inputGate: inputGate, pageIdentities: pageIdentities
         )
       }
       #endif
     }
     .accessibilityIdentifier("page-turn-surface")
+    // Preparing paper behind the cover does not expose its controls to VoiceOver.
+    // Use the same physical interaction endpoint as native page input.
+    .accessibilityHidden(!pageIsInteractive)
     .accessibilityValue(documentNavigation != nil && canonicalDocumentLayout?.pageCount(for: sequenceRevision) == nil
       ? "Страница \(selectedIndex + 1), число страниц уточняется"
       : "Страница \(selectedIndex + 1) из \(max(1, pageCount))")
@@ -326,6 +430,7 @@ struct PageTurnSurface: View {
     let notebookNavigation: NotebookPageNavigation?
     let onWindowChange: @MainActor (Set<Int>, Int?, String) -> Void
     let inputGate: NotebookInputGate?
+    let pageIdentities: [Int: UUID]
 
     func makeUIViewController(context: Context) -> IPadPageTurnController {
       let controller = IPadPageTurnController()
@@ -358,7 +463,7 @@ struct PageTurnSurface: View {
         documentNavigation: documentNavigation,
         notebookNavigation: notebookNavigation,
         onWindowChange: onWindowChange,
-        inputGate: inputGate
+        inputGate: inputGate, pageIdentities: pageIdentities
       )
       onReadinessProbe?({ [weak controller] refinesDetails in
         controller?.prepareCurrentPage(refinesDetails: refinesDetails) ?? .waiting

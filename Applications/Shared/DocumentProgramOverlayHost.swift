@@ -276,9 +276,36 @@ final class DocumentProgramOverlayHost: UIView {
 
   /// Preparation and failure belong to their own fragment. Updating them never
   /// covers a neighboring ready runtime or changes the text viewport below it.
+  /// Only this local native status rectangle is rasterized; canonical paper
+  /// and WebKit content have their own accepted image owners.
+  func pendingImage(blockID: String, pixelWidth: Int) -> UIImage? {
+    guard let view = pendingViews[blockID], !view.isHidden, view.bounds.width > 0 else { return nil }
+    return Self.image(of: view, pixelWidth: pixelWidth)
+  }
+  static func pendingImage(_ placement: DocumentProgramPendingPlacement, pixelWidth: Int) -> UIImage {
+    let view = ProgramPendingView(); view.configure(placement)
+    view.frame = CGRect(origin: .zero, size: placement.rect.size)
+    return image(of: view, pixelWidth: pixelWidth)
+  }
+  private static func image(of view: UIView, pixelWidth: Int) -> UIImage {
+    view.setNeedsLayout(); view.layoutIfNeeded()
+    let format = UIGraphicsImageRendererFormat(); format.scale = Double(pixelWidth) / view.bounds.width; format.opaque = false
+    return UIGraphicsImageRenderer(size: view.bounds.size, format: format).image { view.layer.render(in: $0.cgContext) }
+  }
+
   func presentPending(_ entries: [DocumentProgramPendingPlacement]) {
     pending = entries
     applyPending()
+  }
+
+  func isPresentingPending(_ entries: [DocumentProgramPendingPlacement]) -> Bool {
+    guard Set(pendingViews.keys) == Set(entries.map(\.blockID)) else { return false }
+    return entries.allSatisfy { entry in
+      guard let view = pendingViews[entry.blockID], view.superview === paper,
+        !view.isHidden, view.alpha > 0.01, view.window === window,
+        Self.sameGeometry(view.frame, entry.rect) else { return false }
+      return view.matches(entry)
+    }
   }
 
   private func applyPending() {
@@ -433,6 +460,10 @@ private final class ProgramPendingView: UIView {
     button.isHidden = retry == nil
     button.accessibilityIdentifier = "document-program-retry-" + entry.blockID
     if retry == nil { spinner.startAnimating() } else { spinner.stopAnimating() }
+  }
+  func matches(_ entry: DocumentProgramPendingPlacement) -> Bool {
+    label.text == entry.message && button.title(for: .normal) == entry.actionTitle
+      && (retry != nil) == (entry.retry != nil)
   }
   @objc private func retryPressed() { retry?() }
 }

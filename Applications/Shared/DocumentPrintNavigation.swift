@@ -5,18 +5,19 @@ import NotebookCore
 struct DocumentPrintNavigation: Sendable {
   struct Link: Sendable { let page: Int; let rect: CGRect; let href: String; let label: String }
   let links: [Link]
-  let pageText: [String]
+  let pageText: [Int: String]
   let anchors: [String: Int]
-  static func read(_ pdf: PDFDocument, pages: [DocumentPrintPage]) throws -> Self {
+  static func read(_ pdf: PDFDocument, pages: [DocumentPrintPage], pageIndices: Set<Int>? = nil) throws -> Self {
     guard (1...4096).contains(pdf.pageCount), pages.count == pdf.pageCount else { throw DocumentSessionError.invalidLayout }
-    var links: [Link] = [], text: [String] = [], bytes = 0, linkBytes = 0
-    for index in 0..<pdf.pageCount {
+    var links: [Link] = [], text: [Int: String] = [:], bytes = 0, linkBytes = 0
+    for index in (pageIndices ?? Set(0..<pdf.pageCount)).sorted() {
+      guard (0..<pdf.pageCount).contains(index) else { throw DocumentSessionError.invalidLayout }
       try Task.checkCancellation()
       guard let page = pdf.page(at: index) else { throw DocumentSessionError.invalidLayout }
       let bounds = page.bounds(for: .mediaBox), string = page.string ?? ""
       bytes += string.utf8.count
       guard bytes <= 8*1024*1024 else { throw SceneRenderError.resourceLimit }
-      text.append(string)
+      text[index] = string
       for annotation in page.annotations {
         let href: String
         if let action = annotation.action as? PDFActionURL, let url = action.url { href = url.absoluteString }
@@ -37,12 +38,12 @@ struct DocumentPrintNavigation: Sendable {
           width: projected.width, height: projected.height), href: href, label: label.isEmpty ? "Открыть ссылку" : label))
       }
     }
-    return .init(links: links, pageText: text, anchors: try namedDestinations(pdf))
+    return .init(links: links, pageText: text, anchors: pageIndices == nil ? try namedDestinations(pdf) : [:])
   }
 
   /// Hyperref's named destinations remain addresses in the PDF. In particular,
   /// program links use the same shipped target as a printed \ref annotation.
-  private static func namedDestinations(_ pdf: PDFDocument) throws -> [String: Int] {
+  static func namedDestinations(_ pdf: PDFDocument) throws -> [String: Int] {
     guard let document = pdf.documentRef, let catalog = document.catalog else { return [:] }
     var names: CGPDFDictionaryRef?, destinations: CGPDFDictionaryRef?
     guard CGPDFDictionaryGetDictionary(catalog, "Names", &names), let names,

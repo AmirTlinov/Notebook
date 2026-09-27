@@ -75,6 +75,123 @@ struct NotebookCloudDeliveryTests {
     _ = try store.applyCollaborationAction(action, actor: actor)
   }
 
+  @Test func unfinishedExportSurvivesRestartAndNeverAcknowledgesItsPartialCut() throws {
+    let pair = try Pair(), item = try pair.a.loadIndex().selectedItemID
+    let beforeTitle = try pair.a.readItemHeader(item)?.title
+    let plan = try #require(try pair.a.prepareCloudUploadPlan(account: pair.account, source: pair.sourceA))
+    #expect(try pair.a.beginCloudUpload(plan, account: pair.account))
+    let firstBatch = try #require(try pair.a.prepareCloudUploadBatch(plan.id, account: pair.account))
+    #expect(try !pair.a.installCloudUploadBatch(firstBatch, account: pair.account))
+    #expect(try pair.a.cloudOutbox(account: pair.account).isEmpty)
+    try pair.a.acknowledgeCloudRecords([], account: pair.account)
+    #expect(try !pair.a.cloudHasUploadedCurrentContent(account: pair.account))
+    // This accepted write must commit between cloud batches. The snapshot stays
+    // bound to its earlier WAL cut; its later delta remains to be exported.
+    try rename(pair.a, item: item, title: "После снимка", actor: pair.actorA)
+    let reopened = NotebookStore(root: pair.a.root)
+    #expect(try reopened.pendingCloudUploadPlan(account: pair.account) == plan.id)
+    while let batch = try reopened.prepareCloudUploadBatch(plan.id, account: pair.account) {
+      if try reopened.installCloudUploadBatch(batch, account: pair.account) { break }
+    }
+    var records: [StoredRecord] = []
+    while true {
+      let batch = try reopened.cloudOutbox(account: pair.account)
+      if batch.isEmpty { break }
+      for record in batch {
+        records.append(.init(value: record, bytes: try record.hash.map {
+          try reopened.readBlobChunk(hash: $0, offset: record.offset, maxBytes: max(record.byteCount, 1))
+        }))
+      }
+      try reopened.acknowledgeCloudRecords(batch.map(\.id), account: pair.account)
+    }
+    try receive(records, to: pair.b, source: pair.sourceB, account: pair.account)
+    #expect(try pair.b.readItemHeader(item)?.title == beforeTitle)
+    #expect(try !reopened.cloudHasUploadedCurrentContent(account: pair.account))
+    try receive(upload(reopened, source: pair.sourceA, account: pair.account),
+      to: pair.b, source: pair.sourceB, account: pair.account)
+    #expect(try pair.b.readItemHeader(item)?.title == "После снимка")
+    try reopened.discardCloudUploadSpool(plan.id)
+  }
+
+  @Test func unsealedDescriptorsIgnoreAcknowledgementsFromAnOlderEngine() throws {
+    let pair = try Pair()
+    let plan = try #require(try pair.a.prepareCloudUploadPlan(account: pair.account, source: pair.sourceA))
+    #expect(try pair.a.beginCloudUpload(plan, account: pair.account))
+    var imported: [String] = []
+    while imported.isEmpty {
+      let batch = try #require(try pair.a.prepareCloudUploadBatch(plan.id, account: pair.account))
+      #expect(try !pair.a.installCloudUploadBatch(batch, account: pair.account))
+      imported = try pair.a.sqlRead {
+        try $0.rows("SELECT id FROM cloud_outbox WHERE account=? ORDER BY id LIMIT 16", [.text(pair.account)]).compactMap { $0[0].text }
+      }
+    }
+    try pair.a.acknowledgeCloudRecords(imported, account: pair.account)
+    #expect(try pair.a.sqlRead { try $0.rows("SELECT 1 FROM cloud_uploaded WHERE account=?", [.text(pair.account)]).isEmpty })
+    #expect(try pair.a.sqlRead {
+      try $0.rows("SELECT id FROM cloud_outbox WHERE account=? ORDER BY id LIMIT 16", [.text(pair.account)]).compactMap { $0[0].text }
+    } == imported)
+    #expect(try pair.a.cloudOutbox(account: pair.account).isEmpty)
+    #expect(try pair.a.pendingCloudUploadPlan(account: pair.account) == plan.id)
+  }
+
+  @Test func preparedPlanCannotMoveToAnotherAccountWithTheSameCursor() throws {
+    let pair = try Pair()
+    let plan = try #require(try pair.a.prepareCloudUploadPlan(account: pair.account, source: pair.sourceA))
+    try pair.a.disableCloud()
+    let other = "explicit-other-account"
+    try pair.a.enableCloud(account: other, source: pair.sourceA)
+    #expect(try !pair.a.beginCloudUpload(plan, account: other))
+    #expect(try pair.a.pendingCloudUploadPlan(account: other) == nil)
+    #expect(try pair.a.cloudOutbox(account: other).isEmpty)
+    try pair.a.retireUnclaimedCloudUploadSpools()
+    #expect(!FileManager.default.fileExists(atPath: pair.a.cloudPlanURL(plan.id).path))
+    #expect(throws: NotebookStorageError.self) {
+      try pair.a.prepareCloudUploadPlan(account: other, source: .init(deviceID: pair.actorA, generation: UUID()))
+    }
+  }
+
+  @Test func missingUnsealedSpoolRevokesOnlyItsUnexposedExport() throws {
+    let pair = try Pair()
+    let plan = try #require(try pair.a.prepareCloudUploadPlan(account: pair.account, source: pair.sourceA))
+    #expect(try pair.a.beginCloudUpload(plan, account: pair.account))
+    let batch = try #require(try pair.a.prepareCloudUploadBatch(plan.id, account: pair.account))
+    #expect(try !pair.a.installCloudUploadBatch(batch, account: pair.account))
+    try pair.a.discardCloudUploadSpool(plan.id)
+    let reopened = NotebookStore(root: pair.a.root)
+    #expect(try reopened.pendingCloudUploadPlan(account: pair.account) == nil)
+    #expect(try !reopened.cloudHasUploadedCurrentContent(account: pair.account))
+    #expect(try reopened.cloudOutbox(account: pair.account).isEmpty)
+    let records = try upload(reopened, source: pair.sourceA, account: pair.account)
+    #expect(records.compactMap(\.value.delivery).first?.isSnapshot == true)
+    try receive(records, to: pair.b, source: pair.sourceB, account: pair.account)
+    #expect(try pair.b.incomingCursor(source: pair.sourceA) == reopened.currentChangeCursor())
+  }
+
+  @Test func hundredThousandTombstonesUseBoundedSnapshotParts() throws {
+    let pair = try Pair(), page = try #require(pair.a.loadIndex().selectedPageID)
+    let prefix = "pages/" + page.uuidString.lowercased() + ".json#/elements/@retired-" + String(repeating: "x", count: 160)
+    try pair.a.commandTransaction {
+      let sequence = Int64(try pair.a.currentChangeCursor())
+      for index in 0..<100_000 {
+        try pair.a.currentSQL!.run("INSERT INTO change_records(sequence,address,blob_hash) VALUES(?,?,NULL)",
+          [.integer(sequence), .text(prefix + String(index))])
+      }
+    }
+    var addresses = 0, parts = 0, largestPart = 0
+    _ = try pair.a.readTransaction { _ in
+      try pair.a.prepareCloudSnapshot(source: pair.sourceA) { data in
+        let manifest = try JSONDecoder().decode(NotebookChangeManifest.self, from: data)
+        if !manifest.records.isEmpty {
+          parts += 1; addresses += manifest.records.count; largestPart = max(largestPart, data.count)
+        }
+        return NotebookHexEncoding.encode(SHA256.hash(data: data))
+      }
+    }
+    #expect(addresses >= 100_000)
+    #expect(parts > 1 && parts <= 512)
+    #expect(largestPart <= 1_048_576)
+  }
+
   @Test func retiredCloudSourcesStayUnacknowledgedWithoutStarvingAnActiveSource() throws {
     let pair = try Pair(), cursor = try pair.b.currentChangeCursor()
     try pair.b.acknowledgePeer(peerID: pair.actorA, through: 0)

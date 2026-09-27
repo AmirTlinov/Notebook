@@ -183,6 +183,7 @@ extension NotebookStore {
     try noteGraphicIndexChange(fragment, database: database)
     if fragment.file.hasPrefix("pages/"), fragment.collection == "actions", fragment.value["tool"]?.string == "eraser" {
       try indexPageElementErasures(fragment,database:database)
+      try indexPageInkWindow(fragment,database:database)
     }
     if (fragment.file.hasPrefix("pages/") && fragment.collection == "elements")
       || (fragment.file == "board.json" && fragment.collection == "board/elements") {

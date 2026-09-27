@@ -1,18 +1,20 @@
 import Foundation
 
 extension NotebookStore {
-  /// A single WAL cut, with bounded manifest pages. This publishes no local
-  /// edits and does not reset the archive, device identity, or direct journal.
-  func cloudSnapshot(source: NotebookReplicationSource) throws -> NotebookReplicationDelivery {
+  /// The read worker owns the WAL cut; generated manifest bytes go to its
+  /// export spool, never to the authoritative writer during the scan.
+  func prepareCloudSnapshot(source: NotebookReplicationSource, publish: (Data) throws -> String) throws -> NotebookReplicationDelivery {
     let database = currentSQL!, workspace = try workspaceHeader()
     let through = try currentChangeCursor()
     guard through > 0 else { throw NotebookStorageError.invalidTransaction("snapshot requires a saved workspace") }
     try database.run("CREATE TEMP TABLE cloud_snapshot(address TEXT PRIMARY KEY,blob_hash TEXT)")
+    defer { try? database.run("DROP TABLE cloud_snapshot") }
     var after = "", roots: Set<String> = []
     func absent(_ address: String) throws {
       try database.run("INSERT OR IGNORE INTO cloud_snapshot(address) SELECT ? WHERE NOT EXISTS(SELECT 1 FROM records WHERE address=?)", [.text(address), .text(address)])
     }
     while true {
+      try Task.checkCancellation()
       let rows = try database.rows("SELECT address,file,hash,parent,collection,member FROM records WHERE address>? ORDER BY address LIMIT 64", [.text(after)])
       guard !rows.isEmpty else { break }
       for row in rows {
@@ -50,6 +52,7 @@ extension NotebookStore {
     // example an empty computation member). History is never pruned here.
     after = ""
     while true {
+      try Task.checkCancellation()
       let rows = try database.rows("SELECT DISTINCT c.address FROM change_records c LEFT JOIN records r ON r.address=c.address WHERE r.address IS NULL AND c.address>? ORDER BY c.address LIMIT 64", [.text(after)])
       guard !rows.isEmpty else { break }
       for row in rows {
@@ -62,16 +65,33 @@ extension NotebookStore {
     let count = try database.rows("SELECT count(*) FROM cloud_snapshot").first![0].integer!
     guard count <= 8_388_608 else { throw NotebookStorageError.limitExceeded("snapshot_records") }
     let transaction = UUID(); var parts: [String] = []; after = ""
-    while true {
-      let rows = try database.rows("SELECT address,blob_hash FROM cloud_snapshot WHERE address>? ORDER BY address LIMIT 16384", [.text(after)])
-      guard let last = rows.last else { break }
-      let manifest = NotebookChangeManifest(transactionID: transaction, workspaceID: workspace.workspaceID,
-        records: rows.map { .init(address: $0[0].text!, blobHash: $0[1].text) })
-      parts.append(try database.putBlob(Self.storageEncoder.encode(manifest))); after = last[0].text!
+    var records: [NotebookRecordMutation] = [], recordBytes = 0, emitted: Int64 = 0
+    func flush() throws {
+      guard !records.isEmpty else { return }
+      guard parts.count < 512 else { throw NotebookStorageError.limitExceeded("snapshot_parts") }
+      let manifest = NotebookChangeManifest(transactionID: transaction, workspaceID: workspace.workspaceID, records: records)
+      parts.append(try publish(Self.storageEncoder.encode(manifest)))
+      emitted += Int64(records.count); records.removeAll(keepingCapacity: true); recordBytes = 0
     }
+    while true {
+      try Task.checkCancellation()
+      let rows = try database.rows("SELECT address,blob_hash FROM cloud_snapshot WHERE address>? ORDER BY address LIMIT 128", [.text(after)])
+      guard let last = rows.last else { break }
+      for row in rows {
+        let record = NotebookRecordMutation(address: row[0].text!, blobHash: row[1].text)
+        let bytes = try Self.storageEncoder.encode(record).count + 1
+        // Aim at a 1 MiB writer copy. Preserve the existing 512-part wire
+        // ceiling by filling enough records when near the 8M-address limit.
+        let required = max(Int64(1), count - emitted - Int64(511 - parts.count) * 16_384)
+        if !records.isEmpty, Int64(records.count) >= required, recordBytes + bytes > 1_048_064 { try flush() }
+        records.append(record); recordBytes += bytes
+        if records.count == 16_384 { try flush() }
+      }
+      after = last[0].text!
+    }
+    try flush()
     let data = try Self.storageEncoder.encode(NotebookChangeManifest(transactionID: transaction, workspaceID: workspace.workspaceID, records: [], parts: parts, pageOrderRoots: roots.sorted()))
-    let change = try NotebookDurableChange(sequence: through, transactionID: transaction, manifestHash: database.putBlob(data), byteCount: data.count)
-    try database.run("DROP TABLE cloud_snapshot")
+    let change = try NotebookDurableChange(sequence: through, transactionID: transaction, manifestHash: publish(data), byteCount: data.count)
     return .init(source: source, change: change, isSnapshot: true)
   }
 }

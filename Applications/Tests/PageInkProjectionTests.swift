@@ -113,7 +113,8 @@ final class PageInkProjectionTests: XCTestCase {
 
     let erase = PageInkAction(tool: .eraser, points: [point(50, 70), point(250, 230)])
     for page in pages {
-      page.apply(PageInkDrawing(actions: [erase])); guard try await ready(page) else { return }
+      page.apply(PageInkDrawing(actions: [erase])); guard try await ready(page,accepted:true) else { return }
+      XCTAssertTrue(page.acceptedInkIsEmpty,"Erase-only history has exact transparent turn material")
       XCTAssertGreaterThan(page.committedEraserSourceNodeCount, 0,
         "Reclaim the backing, not the accepted measurements or history")
     }
@@ -148,7 +149,7 @@ final class PageInkProjectionTests: XCTestCase {
     paper.inkView.commitActiveStroke();guard try await ready(paper.inkView) else { return }
   }
 
-  func testFourRetinaCurlPagesFitWithoutDuplicatingInactiveHistory() async throws {
+  func testRetinaPageCutsUsePassiveAdmissionAndReclaimSpeculation() async throws {
     let scene=try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
     let window=UIWindow(windowScene:scene),host=UIViewController()
     window.rootViewController=host;window.makeKeyAndVisible()
@@ -157,21 +158,30 @@ final class PageInkProjectionTests: XCTestCase {
     var pages:[InkCanvasView]=[]
     for index in 0..<PageTurnPrewarmWindow.capacity {
       let canvas=InkCanvasView(frame:.zero,resources:resources)
+      canvas.setPageBackingRequired(index == 0,priority:index == 0 ? .input : .passive)
       canvas.setPageInputEnabled(index == 0)
       host.view.addSubview(canvas)
       canvas.projectPage(region:.init(x:0,y:0,width:834,height:1194),
         sourceSize:.init(width:834,height:1194),pixelDensity:2)
       canvas.apply(PageInkDrawing(actions:[line()]))
-      guard try await ready(canvas) else { return }
-      XCTAssertEqual(canvas.hasPageRetainedTexture,index == 0)
+      guard try await ready(canvas,accepted:true) else { return }
+      XCTAssertTrue(canvas.acceptedFrameIsReady,"A non-input neighbor must yield its exact curl material")
       pages.append(canvas)
     }
-    // Transfer input ownership without retaining a second history backing.
-    pages[0].setPageInputEnabled(false)
-    pages[1].setPageInputEnabled(true)
-    guard try await ready(pages[1]) else { return }
-    XCTAssertFalse(pages[0].hasPageRetainedTexture)
-    XCTAssertTrue(pages[1].hasPageRetainedTexture)
+    let current=try XCTUnwrap(pages.first),landing=try XCTUnwrap(pages.last)
+    XCTAssertTrue(current.acceptedFrameIsReady)
+    XCTAssertTrue(pages.dropFirst().dropLast().contains{!$0.hasPageRetainedTexture},
+      "Speculative full-size neighbors compete for the finite passive allowance")
+    let cut=try XCTUnwrap(landing.acquireAcceptedFrameLease())
+    defer {cut.release()}
+    let allocations=landing.pageRetainedAllocationCount,bytes=resources.reservedBytes
+    landing.setPageBackingRequired(true,priority:.input)
+    current.setPageBackingRequired(false,priority:.passive)
+    current.setPageInputEnabled(false);landing.setPageInputEnabled(true)
+    XCTAssertTrue(landing.acquireAcceptedFrameLease()?.texture === cut.texture)
+    XCTAssertEqual(landing.pageRetainedAllocationCount,allocations,"Promotion reclassifies the existing immutable cut")
+    XCTAssertEqual(resources.reservedBytes,bytes)
+    XCTAssertGreaterThan(resources.passiveReservedBytes,0)
     XCTAssertLessThanOrEqual(resources.reservedBytes,resources.byteLimit)
   }
 
@@ -284,6 +294,7 @@ final class PageInkProjectionTests: XCTestCase {
     }
     native.show(sheets[0], direction: .forward, animated: false); native.view.layoutIfNeeded()
     native.willTurn = { _ in true }; native.isSheetReadyForCapture = { _ in false }
+    native.isSheetPresented = native.isSheetReadyForCapture
     activity.prepare(1)
     XCTAssertTrue(native.beginInteractiveTurn(direction: .forward, target: sheets[1]))
     native.endInteractiveTurn(completed: true)
@@ -447,9 +458,9 @@ final class PageInkProjectionTests: XCTestCase {
     .init(location:.init(x:x,y:y),timeOffset:0,size:.init(width:width,height:width),opacity:1,force:1,azimuth:0,altitude:.pi/2)
   }
   private func line() -> PageInkAction { .init(tool:.pen,points:[point(50,70),point(250,230)]) }
-  private func ready(_ view: InkCanvasView, file: StaticString = #filePath, line: UInt = #line) async throws -> Bool {
+  private func ready(_ view: InkCanvasView, accepted:Bool = false, file: StaticString = #filePath, line: UInt = #line) async throws -> Bool {
     let until = ContinuousClock.now + .seconds(5), frames = view.drawableRequestCount
-    while !view.isStableFramePresented {
+    while !view.isStableFramePresented || (accepted && !view.acceptedFrameIsReady) {
       if view.renderFailure != nil || ContinuousClock.now >= until {
         // A known failed readiness check is an assertion, not an unexpected
         // thrown error. XCTest's error symbolication otherwise obscures the

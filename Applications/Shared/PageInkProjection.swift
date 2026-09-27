@@ -36,7 +36,13 @@ final class PageInkProjection: ScenePlaneProjectionObserver {
         case .refine(let pageIndex):
           guard pageReadiness?.pageIndex == pageIndex, isSceneVisible else { return }
           refresh(refining:true)
-          if canvas?.isStableFramePresented == false { pageReadiness?(false) }
+          if canvas?.acceptedMaterialIsReady == false { pageReadiness?(false) }
+        case .stage(let pageIndex):
+          guard pageReadiness?.pageIndex == pageIndex else { return }
+          refreshPageRole()
+          refresh(refining:true)
+          canvas?.requestPagePresentation()
+        case .elementFrames: break
         }
       }
     }
@@ -52,8 +58,11 @@ final class PageInkProjection: ScenePlaneProjectionObserver {
       || pageReadiness?.isInActiveTurn() == true
     // Install the promoted native crop before un-parking its drawable demand.
     setSceneVisible(notebookIsVisible && required)
-    canvas?.setPageBackingRequired(required)
-    if canvas?.isStableFramePresented == false { pageReadiness?(false) }
+    // A requested or installed curl target belongs to the current interaction.
+    // Passive admission is only for the other retained, speculative sheets.
+    let backingRequired = required && notebookIsVisible
+    canvas?.setPageBackingRequired(backingRequired,priority:backingRequired ? .input : .passive)
+    if canvas?.acceptedMaterialIsReady == false { pageReadiness?(false) }
   }
 
   init(host: PageInkHost? = nil, canvas: InkCanvasView? = nil) { self.host = host; self.canvas = canvas }

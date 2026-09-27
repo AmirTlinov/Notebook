@@ -26,6 +26,14 @@ public struct DocumentPrintInteractiveRegion: Codable, Equatable, Sendable {
 public struct DocumentPrintProjection: Sendable {
   public let locations: [DocumentPrintLocation]
   public let interactiveRegions: [DocumentPrintInteractiveRegion]
+  public func rebinding(files: [DocumentPrintSourceFile]) -> Self {
+    let ids = Dictionary(uniqueKeysWithValues: files.map { ($0.path, $0.fileID) })
+    if locations.allSatisfy({ ids[$0.path] == $0.fileID }) { return self }
+    return .init(locations: locations.compactMap { location in
+      ids[location.path].map { .init(fileID: $0, path: location.path, line: location.line,
+        pageIndex: location.pageIndex, x: location.x, y: location.y, width: location.width, height: location.height) }
+    }, interactiveRegions: interactiveRegions)
+  }
 }
 
 public enum DocumentPrintLocations {

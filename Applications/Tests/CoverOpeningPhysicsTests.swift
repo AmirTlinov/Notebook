@@ -171,6 +171,7 @@ final class CoverOpeningPhysicsTests: XCTestCase {
     let window = UIWindow(windowScene: scene)
     window.frame = CGRect(x: 0, y: 0, width: 420, height: 600)
     let controller = IPadCoverOpeningController()
+    PageTurnFrameFixture.install(on: controller)
     window.rootViewController = controller
     window.makeKeyAndVisible()
     defer { window.isHidden = true }
@@ -189,8 +190,8 @@ final class CoverOpeningPhysicsTests: XCTestCase {
     let liveCover = try XCTUnwrap(controller.view.subviews.first { !($0 is SheetCurlMetalView) })
     var firstFrame: SheetCurlMetalView.FrameTiming?, readyProgress: Double?
     curl.onFrameMeasured = { if firstFrame == nil { firstFrame = $0 } }
-    curl.onFrameReady = { _, progress, _, readiness in if readiness.isReady { readyProgress = progress } }
-    defer { curl.onFrameMeasured = nil; curl.onFrameReady = nil }
+    curl.onCoverFrameReady = { _, progress, _, readiness in if readiness.isReady { readyProgress = progress } }
+    defer { curl.onFrameMeasured = nil; curl.onCoverFrameReady = nil }
     let closing = CACurrentMediaTime()
     update(0.7)
     XCTAssertEqual(controller.capturedCoverCount, 0)
@@ -425,11 +426,38 @@ final class CoverOpeningPhysicsTests: XCTestCase {
   }
 
   @MainActor
+  func testFailedMaterialWaitsForSourceChangeInsteadOfRetryingEveryPose() async throws {
+    let (window, controller) = try coverWindow()
+    defer { window.isHidden = true }
+    var preparations = 0
+    controller.prepareMaterial = { _, _, _ in
+      preparations += 1
+      throw SceneRenderError.snapshotPending("fixture_pending_owner")
+    }
+    let owner = UUID()
+    func update(_ progress: Double, title: String = "Pending") {
+      controller.update(ownerID: owner, progress: progress, revision: revision(title: title),
+        backsideColor: .document, preparesCoverMotion: true,
+        canPrepare: { true }, cornerRadius: 12, cover: AnyView(Color.red))
+    }
+    update(0.2)
+    for _ in 0..<20 { await Task.yield() }
+    XCTAssertEqual(preparations, 1)
+    for progress in [0.3, 0.5, 0.4, 0.6] { update(progress) }
+    for _ in 0..<20 { await Task.yield() }
+    XCTAssertEqual(preparations, 1)
+    update(0.4, title: "New source")
+    for _ in 0..<20 { await Task.yield() }
+    XCTAssertEqual(preparations, 2)
+  }
+
+  @MainActor
   private func coverWindow() throws -> (UIWindow, IPadCoverOpeningController) {
     let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
     let window = UIWindow(windowScene: scene)
     window.frame = CGRect(x: 0, y: 0, width: 420, height: 600)
     let controller = IPadCoverOpeningController()
+    PageTurnFrameFixture.install(on: controller)
     window.rootViewController = controller
     window.makeKeyAndVisible()
     return (window, controller)

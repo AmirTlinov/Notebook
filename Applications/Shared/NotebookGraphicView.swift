@@ -11,6 +11,7 @@ struct NotebookGraphicView: View {
   var live = true
   var paintsMeasuredBody = true
   var layer:PaintLayer = .content
+  var onPaint: (@Sendable (CGSize) -> Void)? = nil
   var body: some View {
     // Retire the accessibility node together with the material, not only its pixels.
     if appearance?.state != .erased {
@@ -31,13 +32,19 @@ struct NotebookGraphicView: View {
                 }
               }
             } else {
-              Canvas { context, size in Self.paint(graphic, layout:layout, in:context, size:size,layer:layer,clipVisibility:false,paintsMeasuredBody:paintsMeasuredBody) }
+              Canvas { context, size in
+                Self.paint(graphic, layout:layout, in:context, size:size,layer:layer,clipVisibility:false,paintsMeasuredBody:paintsMeasuredBody)
+                onPaint?(size)
+              }
             }
           }
           .clipShape(NotebookGraphicMaskShape(mask:graphic.mask,projection:layout?.projection),style:FillStyle(eoFill:true))
           .erased(by:erasures,appearance:appearance,transform:graphic.transform,layout:layout,visibility:graphic.mask)
         } else {
-          Canvas { context, size in Self.paint(graphic, layout:layout, in:context, size:size, erasures:erasures, appearance:appearance,layer:layer,paintsMeasuredBody:paintsMeasuredBody) }
+          Canvas { context, size in
+            Self.paint(graphic, layout:layout, in:context, size:size, erasures:erasures, appearance:appearance,layer:layer,paintsMeasuredBody:paintsMeasuredBody)
+            onPaint?(size)
+          }
         }
       }
       .accessibilityElement(children: .ignore)
@@ -152,7 +159,8 @@ struct NotebookGraphicElementView: View {
   }
   var body: some View {
     ZStack {
-      NotebookGraphicView(graphic: editing ? unlabelled : graphic, layout: layout,erasures:erasures,appearance:appearance,paintsMeasuredBody:paintsMeasuredBody)
+      NotebookGraphicView(graphic: editing ? unlabelled : graphic, layout: layout,erasures:erasures,appearance:appearance,paintsMeasuredBody:paintsMeasuredBody,
+        onPaint:paintObservation)
       if editing {
         TextField("Подпись", text: $draft, axis: .vertical)
           .font(.system(size: 24)).multilineTextAlignment(.center)
@@ -169,6 +177,13 @@ struct NotebookGraphicElementView: View {
       if editing { original = graphic.label; draft = original; hasDraft = true; focused = true }
     }
     .onChange(of: editing) { _, value in if !value { finish() } }
+  }
+  private var paintObservation: (@Sendable (CGSize) -> Void)? {
+    guard let observer=NotebookNavigationObservation.onGraphicPaint else { return nil }
+    let reference=reference,graphic=editing ? unlabelled:graphic,layout=layout
+    return { size in
+      Task { @MainActor in observer(.init(reference:reference,graphic:graphic,layout:layout,size:size)) }
+    }
   }
   private var unlabelled: NotebookGraphic { var value = graphic; value.label = ""; return value }
   private func finish() {

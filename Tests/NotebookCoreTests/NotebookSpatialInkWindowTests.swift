@@ -206,4 +206,69 @@ struct NotebookSpatialInkWindowTests {
       #expect(try reopened.archiveContentProof() == before && reopened.currentChangeCursor() == cursor)
     }
   }
+
+  @Test func migrationFrom26RebuildsPainterOrderAndPageCutsWithoutChangingAcceptedInk() throws {
+    try fixture { store, actor, header in
+      let surface = SurfaceID.board(header.rootBoardID)
+      let earlierActor = UUID(uuidString: "00000000-0000-4000-8000-000000000001")!
+      let laterActor = UUID(uuidString: "00000000-0000-4000-8000-000000000002")!
+      let oldCut = SpatialInkAction(tool: .eraser, spans: [span(surface, 10)], stamp: .init(counter: 1, actor: laterActor))
+      let pen = SpatialInkAction(tool: .pen, spans: [span(surface, 10)], stamp: .init(counter: 2, actor: earlierActor))
+      let cut = SpatialInkAction(tool: .eraser, spans: [span(surface, 10)], stamp: .init(counter: 2, actor: laterActor))
+      let top = SpatialInkAction(tool: .pen, spans: [span(surface, 10)], stamp: .init(counter: 3, actor: earlierActor))
+      for action in [oldCut, pen, cut, top] {
+        _ = try store.commitSpatialInk(.append(action, journalStamp: action.stamp))
+      }
+      let spatial = try store.readSpatialInk(surfaces: [surface])
+      let selectedSpatial = try #require(spatial.readSet(for: pen.id, on: surface))
+      let topSpatial = try #require(spatial.readSet(for: top.id, on: surface))
+      #expect(selectedSpatial.erasers.map(\.id) == [cut.id] && topSpatial.erasers.isEmpty)
+
+      let pageID = try #require(store.loadIndex().selectedPageID)
+      var page = try store.loadPage(pageID)
+      // Paper actions carry local points directly; SpatialInkSpan is only for
+      // spatial surfaces and board spans require world coordinates.
+      let pageSamples = InkMeasurements([10.0, 12.0].enumerated().map { index, x in
+        SpatialInkSample(point: .init(x: x, y: 10), worldPoint: nil,
+          timeOffset: Double(index), width: 4, opacity: 1, force: 1, azimuth: 0, altitude: 1)
+      })
+      let pagePen = PageInkAction(tool: .pen, measurements: pageSamples, sequence: 1)
+      let pageCut = PageInkAction(tool: .eraser, measurements: pageSamples, sequence: 2)
+      let pageTop = PageInkAction(tool: .pen, measurements: pageSamples, sequence: 3)
+      let drawing = PageInkDrawing(actions: [pagePen, pageCut, pageTop])
+      let replaced = page.replaceDrawing(try drawing.dataRepresentation(), actor: actor)
+      #expect(replaced)
+      page = try store.savePage(page)
+      try page.prepareInkForPresentation()
+      let selectedPage = try #require(page.inkSource.readSet(for: pagePen.id, on: .page(pageID)))
+      let topPage = try #require(page.inkSource.readSet(for: pageTop.id, on: .page(pageID)))
+      #expect(selectedPage.erasers.map(\.id) == [pageCut.id] && topPage.erasers.isEmpty)
+      let proof = try store.archiveContentProof(), cursor = try store.currentChangeCursor()
+
+      // v26 had spatial bounds, but neither painter columns nor indexed page
+      // cuts. Recreate that real SQLite layout rather than only its version tag.
+      try store.commandTransaction(advancesReadRevision: false) {
+        let database = try #require(store.currentSQL)
+        try database.run("DELETE FROM ink_surfaces WHERE kind='page'")
+        try database.run("DROP INDEX ink_surface_paint_order")
+        try database.run("ALTER TABLE ink_surfaces DROP COLUMN paint_counter")
+        try database.run("ALTER TABLE ink_surfaces DROP COLUMN paint_actor")
+        try database.run("PRAGMA user_version=26")
+      }
+
+      let reopened = NotebookStore(root: store.root)
+      let restoredSpatial = try reopened.readSpatialInk(surfaces: [surface])
+      let restoredPage = try reopened.loadPage(pageID)
+      try restoredPage.prepareInkForPresentation()
+      #expect(try reopened.sqlRead { try $0.rows("PRAGMA user_version").first?[0].integer } == 27)
+      #expect(try reopened.archiveContentProof() == proof && reopened.currentChangeCursor() == cursor)
+      #expect(restoredSpatial.actions == spatial.actions && restoredPage.preparedInkDrawing == drawing)
+      #expect(selectedSpatial.matches(restoredSpatial) && topSpatial.matches(restoredSpatial))
+      #expect(selectedPage.matches(restoredPage.inkSource) && topPage.matches(restoredPage.inkSource))
+      try reopened.readTransaction { _ in
+        try reopened.validateInkReadSets([selectedSpatial, topSpatial], target: .init(kind: .board, id: header.rootBoardID))
+        try reopened.validateInkReadSets([selectedPage, topPage], target: .init(kind: .page, id: pageID))
+      }
+    }
+  }
 }

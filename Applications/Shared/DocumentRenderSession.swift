@@ -1,6 +1,7 @@
 import CoreFoundation
 import Foundation
 import NotebookCore
+import NotebookTypesetter
 import WebKit
 
 /// One mounted document shares immutable bridge inputs. The page coordinators
@@ -27,7 +28,8 @@ final class DocumentRenderSession {
     sources = sources.compactMapValues { values in
       let live = values.filter { $0.value != nil }; return live.isEmpty ? nil : live
     }
-    let snapshot = DocumentSourceSnapshot(document, store: store)
+    let reuse = sources.values.lazy.flatMap { $0 }.compactMap { $0.value?.printReuse }.first
+    let snapshot = DocumentSourceSnapshot(document, store: store, reuse: reuse)
     sources[document.contentStamp, default: []].append(WeakSource(snapshot))
     return snapshot
   }
@@ -112,12 +114,14 @@ final class DocumentSourceSnapshot {
   private var blockIDs: Set<String> { Set(document.files.map(\.id)).union(programIDs) }
   private(set) var layout: DocumentLayoutRecord?
   private var preparation: DocumentPagePreparation?
+  private var reuse: DocumentPrintReuse?
+  var printReuse: DocumentPrintReuse? { preparation?.printReuse }
   private var layoutObservers: [UUID: (DocumentLayoutRecord) -> Void] = [:]
   private(set) var preparationCount = 0
   private var receiptLayoutMismatch: String?
 
-  init(_ document: DocumentDocument, store: NotebookStore? = nil) {
-    self.document = document; self.store = store; stamp = document.contentStamp
+  init(_ document: DocumentDocument, store: NotebookStore? = nil, reuse: DocumentPrintReuse? = nil) {
+    self.document = document; self.store = store; stamp = document.contentStamp; self.reuse = reuse
   }
   func paper(on page: Int) -> DocumentPaperLayout { layout?.paper(on: page) ?? .uncompiled }
   func program(_ id: String) -> DocumentProgramSource? { programs.first { $0.id == id } }
@@ -131,12 +135,12 @@ final class DocumentSourceSnapshot {
   }
 
   func preparedPage(_ index: Int, hostID: UUID,
-    resources: SceneRenderResources, onAdmissionWait: @escaping (Bool) -> Void = { _ in },
+    resources: SceneRenderResources, priority: NotebookTypesetter.Priority = .current, onAdmissionWait: @escaping (Bool) -> Void = { _ in },
     onLayoutChanged: @escaping (DocumentLayoutRecord) -> Void = { _ in }) async throws -> DocumentPreparedPage {
     layoutObservers[hostID] = onLayoutChanged
     ensurePreparation(resources: resources)
     let prepared: DocumentPreparedPage
-    do { prepared = try await preparation!.page(index, hostID: hostID, onAdmissionWait: onAdmissionWait) }
+    do { prepared = try await preparation!.page(index, hostID: hostID, priority: priority, onAdmissionWait: onAdmissionWait) }
     catch {
       if preparation?.layout != nil { try acceptPreparedLayout() }
       throw error
@@ -145,10 +149,16 @@ final class DocumentSourceSnapshot {
     return prepared
   }
 
+  func preparePrograms(on pages: Set<Int>, retaining ids: Set<String> = []) async throws {
+    guard let preparation, let layout else { return }
+    try await preparation.preparePrograms(layout.blockIDs(on: pages, kind: .program).union(ids))
+  }
+
   private func ensurePreparation(resources: SceneRenderResources) {
     if preparation == nil {
       preparationCount += 1
-      preparation = DocumentPagePreparation(document: document, sourceKey: key, store: store, resources: resources)
+      preparation = DocumentPagePreparation(document: document, sourceKey: key, store: store, resources: resources, reuse: reuse)
+      reuse = nil
       preparation?.onLayoutAccepted = { [weak self] record in
         guard let self else { return }
         if let layout, layout !== record { guard layout.matches(record) else { throw DocumentSessionError.inconsistentLayout } }
@@ -156,6 +166,15 @@ final class DocumentSourceSnapshot {
         for observer in Array(layoutObservers.values) { observer(layout!) }
       }
     }
+  }
+  /// Accepted opening demand starts immutable print work before any native
+  /// host/window exists. The same source is later borrowed by its paper owner.
+  func prepareOpening(pageIndex: Int, hostID: UUID, resources: SceneRenderResources) async throws {
+    try Task.checkCancellation()
+    ensurePreparation(resources: resources)
+    preparation!.retainPage(pageIndex, hostID: hostID)
+    _ = try await preparation!.printedSource()
+    try acceptPreparedLayout()
   }
   func printedSource(resources: SceneRenderResources) async throws -> DocumentPrintedSource {
     ensurePreparation(resources: resources)
@@ -373,6 +392,13 @@ final class DocumentLayoutRecord {
       ($0.pageIndex, $0.frame.y, $0.frame.x) < ($1.pageIndex, $1.frame.y, $1.frame.x)
     }.compactMap { seen.insert($0.id).inserted ? $0.id : nil }
     self.reservation = reservation
+  }
+
+  init(rebinding original: DocumentLayoutRecord, buildID: String) {
+    pageCount = original.pageCount; isComplete = original.isComplete; regions = original.regions
+    self.buildID = buildID; pages = original.pages; readingFileOrder = original.readingFileOrder
+    anchorPages = original.anchorPages; reading = original.reading; pageRanges = original.pageRanges
+    reservation = original.reservation
   }
 
   func matches(_ other: DocumentLayoutRecord, pageIndex: Int? = nil) -> Bool {

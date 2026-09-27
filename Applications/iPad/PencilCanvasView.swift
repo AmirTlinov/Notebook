@@ -45,6 +45,7 @@ struct PencilCanvasView: UIViewRepresentable {
     let paper = PaperCanvasContainerView()
     paper.inkProjection.setRefinesDetails(refinesDetails)
     paper.inkProjection.observePage(pageReadiness,isCurrent:isCurrent,isVisible:isVisible)
+    context.coordinator.bindCapture(pageReadiness, pageID: pageID, source: source)
     paper.inkProjection.observe(projection)
     paper.touchView.toolController = model?.drawingTools
     paper.touchView.toolInputGate = inputGate
@@ -73,6 +74,7 @@ struct PencilCanvasView: UIViewRepresentable {
   func updateUIView(_ paper: PaperCanvasContainerView, context: Context) {
     paper.inkProjection.setRefinesDetails(refinesDetails)
     paper.inkProjection.observePage(pageReadiness,isCurrent:isCurrent,isVisible:isVisible)
+    context.coordinator.bindCapture(pageReadiness, pageID: pageID, source: source)
     paper.inkProjection.observe(projection)
     paper.touchView.toolController = model?.drawingTools
     paper.touchView.toolInputGate = inputGate
@@ -106,6 +108,7 @@ struct PencilCanvasView: UIViewRepresentable {
     coordinator: Coordinator
   ) {
     paper.inkView.onRenderReadinessChange = nil
+    paper.inkView.onAcceptedMaterialReadinessChange = nil
     paper.touchView.onLiveElementErasing(.cancel)
     paper.touchView.onLiveElementErasing = { _ in }
     paper.touchView.pageEraserSource = { nil }
@@ -160,6 +163,7 @@ struct PencilCanvasView: UIViewRepresentable {
       attachedPaper = paper
       observeInk("ink_owner_attached", on: paper)
       paper.inkView.onRenderReadinessChange = { [weak self] _ in self?.publishReadiness() }
+      paper.inkView.onAcceptedMaterialReadinessChange = { [weak self] _ in self?.publishReadiness() }
       paper.touchView.simulatesPencilContacts = inputGate.simulatesPencilContacts
       paper.admitsPencilContact = { [weak self, weak paper] touch in
         guard let self, let paper else { return false }
@@ -191,6 +195,28 @@ struct PencilCanvasView: UIViewRepresentable {
       }
     }
 
+    func bindCapture(_ readiness: PageTurnReadiness?, pageID: UUID, source: PageInkSource) {
+      // GPU completion identifies canvas content, while this owner also knows
+      // which addressed source and ordered plan are still being installed.
+      readiness?.inkFrameIsReady = { [weak self] in
+        self?.captureIsReady(pageID: pageID, source: source) == true
+      }
+      readiness?.inkFrameIsEmpty = { [weak self] in
+        guard let self, captureIsReady(pageID: pageID, source: source) else { return false }
+        return attachedPaper?.inkView.acceptedMaterialIsEmpty == true
+      }
+      readiness?.inkFrame = { [weak self] in
+        guard let self, captureIsReady(pageID: pageID, source: source) else { return nil }
+        return attachedPaper?.inkView.acquireAcceptedFrameLease()
+      }
+    }
+
+    private func captureIsReady(pageID: UUID, source: PageInkSource) -> Bool {
+      self.pageID == pageID && modelSource?.identity == source.identity
+        && decodeTask == nil && orderedTask == nil
+        && attachedPaper?.inkView.acceptedMaterialIsReady == true
+    }
+
     /// Admission, renderer delta and Undo registration finish in the same
     /// actor segment as the measured lift. Storage owns only the later append.
     func commit(
@@ -214,18 +240,22 @@ struct PencilCanvasView: UIViewRepresentable {
 
     private var orderedInput:NotebookPageOrderedInkInput = .empty
     private var orderedTask:Task<Void,Never>?
-    private var orderedSourceStamp:VersionStamp?
+    private var orderedSourceIdentity:ObjectIdentifier?
     func applyOrdered(_ input:NotebookPageOrderedInkInput,source:PageInkSource,on paper:PaperCanvasContainerView) {
-      guard input != orderedInput || orderedSourceStamp != source.stamp else {return}
-      orderedInput=input;orderedSourceStamp=source.stamp;orderedTask?.cancel()
+      guard input != orderedInput || orderedSourceIdentity != source.identity else {return}
+      orderedInput=input;orderedSourceIdentity=source.identity;orderedTask?.cancel()
       paper.inkView.prepareOrderedSourceIDs(Set(input.candidates.compactMap{$0.graphic.sourceInkContactID}))
       orderedTask=Task { [weak self,weak paper] in
-        let worker=Task.detached(priority:.userInitiated) {try input.plan(drawing:source.drawing())}
+        let worker=Task.detached(priority:.userInitiated) {
+          try source.prepareForPresentation()
+          guard let drawing=source.preparedDrawing else {throw CancellationError()}
+          return try input.plan(drawing:drawing)
+        }
         let plan=try? await withTaskCancellationHandler {try await worker.value} onCancel:{worker.cancel()}
-        guard !Task.isCancelled,let self,orderedInput == input,orderedSourceStamp == source.stamp,let paper else {return}
+        guard !Task.isCancelled,let self,orderedInput == input,orderedSourceIdentity == source.identity,let paper else {return}
         orderedTask=nil
-        guard let plan,modelSource?.stamp == source.stamp else {orderedSourceStamp=nil;publishReadiness();return}
-        paper.inkView.updateOrderedInk(plan);publishReadiness()
+        guard let plan,modelSource?.identity == source.identity else {orderedSourceIdentity=nil;publishReadiness();return}
+        paper.inkView.updateOrderedInk(plan,canonical:input.isCanonical);publishReadiness()
       }
     }
 
@@ -327,7 +357,8 @@ struct PencilCanvasView: UIViewRepresentable {
       pageFinisherIsCurrent = false
       publication.remove(self)
       attachedPaper = nil
-      paper.inkView.onRenderReadinessChange=nil;onRenderReady=nil
+      paper.inkView.onRenderReadinessChange=nil
+      paper.inkView.onAcceptedMaterialReadinessChange=nil;onRenderReady=nil
       decodeTask?.cancel()
       orderedTask?.cancel();orderedTask=nil
       decodeTask = nil
@@ -379,7 +410,7 @@ struct PencilCanvasView: UIViewRepresentable {
         if presentationChanged { paper.inkView.setSuppressedPageActions(suppressedInkIDs) }
         return
       }
-      if !pageChanged, modelSource?.stamp == source.stamp {
+      if !pageChanged, modelSource?.identity == source.identity {
         if presentationChanged { paper.inkView.setSuppressedPageActions(suppressedInkIDs) }
         return
       }
@@ -403,7 +434,7 @@ struct PencilCanvasView: UIViewRepresentable {
         let prepared=await Task.detached(priority:.userInitiated) { try? source.drawing() }.value
         guard !Task.isCancelled, let self, let paper,
           decodeGeneration == generation, self.pageID == pageID,
-          modelSource?.stamp == source.stamp else { return }
+          modelSource?.identity == source.identity else { return }
         decodeTask = nil
         guard let drawing=prepared else { return }
         paper.touchView.onLiveElementErasing(.reconciled(pageID, source.stamp, drawing))

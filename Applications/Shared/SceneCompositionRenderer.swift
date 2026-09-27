@@ -17,6 +17,7 @@ final class SceneCompositionRenderer {
   private var webPreparation: SceneWebRasterPreparation?
   private let usesPreparedSources: Bool
   private var fallbackSources: [SceneSourceAddress: RasterLease]
+  private var temporarySources: [SceneSourceAddress: SceneRasterCut]
   private var sourceFailures: [SceneSourceAddress: SceneSourceFailure]
   private var currentTile: SceneCompositionTileKey?
   var onSourceDemand: (@MainActor () -> Void)?
@@ -130,28 +131,35 @@ final class SceneCompositionRenderer {
   func receipts() -> [SceneSourceAddress: SceneSourceReceipt] {
     return Dictionary(uniqueKeysWithValues: sourceDemands.map { address, demand in
       let raster = sourceRasters[address]
-      if raster == nil, let carried = carriedReceipts[address], carried.demand == demand {
+      let cut = temporarySources[address]
+      if raster == nil, cut == nil, let carried = carriedReceipts[address], carried.demand == demand {
         return (address, carried)
       }
       let installed: AgentElement?
-      installed = raster?.source.agentElement
-      let ready = raster?.image(for: demand.rasterSource, minimumScale: demand.minimumScale) != nil
+      installed = cut?.source.agentElement ?? raster?.source.agentElement
+      let ready = if let cut { cut.source == demand.rasterSource && cut.pixelScale + 0.000_001 >= demand.minimumScale }
+        else { raster?.image(for: demand.rasterSource, minimumScale: demand.minimumScale) != nil }
       let failure = sourceFailures[address].flatMap { failure in
         failure.matches(demand) ? failure.message : nil
       }
       let status: SceneSourceReceipt.Status = ready ? .ready : failure.map(SceneSourceReceipt.Status.failed) ?? .pending
       return (address, .init(demand: demand, installedSource: installed,
-        installedScale: raster?.pixelScale ?? 0, status: status, installedRegion: raster?.source.captureRegion))
+        installedScale: cut?.pixelScale ?? raster?.pixelScale ?? 0, status: status,
+        installedRegion: cut?.source.captureRegion ?? raster?.source.captureRegion))
     })
   }
 
   init(source: SceneCompositionSource, resources: SceneRenderResources = .shared,
     usesPreparedSources: Bool = false,
+    installedSources: [SceneSourceAddress: RasterLease] = [:],
+    temporarySources: [SceneSourceAddress: SceneRasterCut] = [:],
     fallbackSources: [SceneSourceAddress: RasterLease] = [:],
     sourceFailures: [SceneSourceAddress: SceneSourceFailure] = [:],
     permitsPreparation: @escaping @MainActor () -> Bool = { true }) {
     self.source = source; self.resources = resources; self.permitsPreparation = permitsPreparation
     self.usesPreparedSources = usesPreparedSources
+    sourceRasters = installedSources.compactMapValues { $0.retainedCopy() }
+    self.temporarySources = temporarySources
     self.fallbackSources = fallbackSources; self.sourceFailures = sourceFailures
   }
 
@@ -176,6 +184,22 @@ final class SceneCompositionRenderer {
   /// boards and shadows behind its transparent corners are not its sources.
   func renderCover(itemID: UUID, boardID: UUID, scale: Double = 2) async throws -> Result {
     defer { finishPreparation() }
+    let canvas = try await coverCanvas(itemID: itemID, boardID: boardID, scale: scale)
+    let png = try await canvas.finishPNG()
+    return .init(png: png, diagnostics: canvas.diagnostics)
+  }
+
+  /// Native motion borrows accounted pixels without PNG encoding/decoding or a
+  /// UIKit hierarchy readback. Source preparation remains this same compositor.
+  func renderCoverImage(itemID: UUID, boardID: UUID, scale: Double = 2,
+    priority: SceneAllocationPriority = .passive) async throws -> SceneRasterImage {
+    defer { finishPreparation() }
+    let canvas = try await coverCanvas(itemID: itemID, boardID: boardID, scale: scale, priority: priority)
+    return try await canvas.finishImage()
+  }
+
+  private func coverCanvas(itemID: UUID, boardID: UUID, scale: Double,
+    priority: SceneAllocationPriority = .passive) async throws -> SceneRasterCompositor {
     try checkPreparation()
     let presence = SessionPresence(boardID: boardID, mode: .cover, camera: .init(),
       viewport: .init(x: 834, y: 1194), focusedItemID: itemID)
@@ -184,14 +208,13 @@ final class SceneCompositionRenderer {
     }
     let size = CGSize(width: item.geometry.width, height: item.geometry.height)
     let canvas = try await SceneRasterCompositor.create(size: size, scale: scale,
-      resources: resources, permitsPreparation: permitsPreparation)
+      resources: resources, priority: priority, permitsPreparation: permitsPreparation)
     let frame = CGRect(origin: .zero, size: size)
     try await paintCover(item, boardID: boardID, frame: frame, visible: frame,
       transitionViewport: .init(x: size.width, y: size.height), passes: WorkspaceSceneProjection.portalPasses,
-      canvas: canvas)
+      includesShadow: false, canvas: canvas)
     try await source.validate()
-    let png = try await canvas.finishPNG()
-    return .init(png: png, diagnostics: canvas.diagnostics)
+    return canvas
   }
 
   /// Transparent ink proof shares the scene's finite element traversal and
@@ -404,7 +427,7 @@ final class SceneCompositionRenderer {
 
   private func paintCover(_ item: RenderedWorkspaceItem, boardID: UUID, frame: CGRect, visible: CGRect,
     transitionViewport: SpatialPoint, passes: Int, portalProgress: Double = 0,
-    canvas: SceneRasterCompositor) async throws {
+    includesShadow: Bool = true, canvas: SceneRasterCompositor) async throws {
     try checkPreparation()
     let hasContents = item.item.kind == .board ? try await source.boardHasContent(item.id) : false
     let size = CGSize(width: item.geometry.width, height: item.geometry.height)
@@ -414,8 +437,10 @@ final class SceneCompositionRenderer {
     // Sending them through a new SwiftUI ImageRenderer for every intersecting
     // tile repeats layout/readback on main. The compositor already owns their
     // projection and can blend them on its pixel worker directly.
-    try await canvas.drawImage(WorkspaceCoverRaster.shadow(geometry: item.geometry, lifted: false, kind: item.item.kind, hasContents: hasContents),
-      in: frame.insetBy(dx: -padding * projection, dy: -padding * projection))
+    if includesShadow {
+      try await canvas.drawImage(WorkspaceCoverRaster.shadow(geometry: item.geometry, lifted: false, kind: item.item.kind, hasContents: hasContents),
+        in: frame.insetBy(dx: -padding * projection, dy: -padding * projection))
+    }
     let shape = WorkspaceCoverOutline(kind: item.item.kind == .board && portalProgress > 0 ? .notebook : item.item.kind,
       cornerRadius: item.geometry.cornerRadius * projection, hasContents: hasContents)
     try await canvas.pushClip(shape.path(in: frame).cgPath)
@@ -493,6 +518,13 @@ final class SceneCompositionRenderer {
       let discoversDemand = sourceDemands[address] != demand
       sourceDemands[address] = demand
       if let currentTile { tileSources[currentTile, default: []].insert(address) }
+      if let cut = temporarySources[address] {
+        guard cut.source.agentElement == source else { throw SceneRenderError.snapshotPending("cover_cut_source") }
+        if discoversDemand { onSourceDemand?() }
+        try await canvas.draw(cut, in: Self.rasterFrame(cut.source, element: source, frame: frame),
+          erasures: erasures, elementFrame: frame, presentation: presentation)
+        return
+      }
       // A painter pass consumes immutable, already admitted pixels. It never
       // awaits a neighbouring program, even when both overlap this same tile.
       let fallback = fallbackSources[address].flatMap { raster -> RasterLease? in
@@ -506,12 +538,7 @@ final class SceneCompositionRenderer {
       if let raster { sourceRasters[address] = raster }
       if discoversDemand { onSourceDemand?() }
       if let raster {
-        let destination: CGRect
-        if let crop = raster.source.captureRegion {
-          destination = CGRect(x: frame.minX + crop.x / source.frame.width * frame.width,
-            y: frame.minY + crop.y / source.frame.height * frame.height,
-            width: crop.width / source.frame.width * frame.width, height: crop.height / source.frame.height * frame.height)
-        } else { destination = frame }
+        let destination = Self.rasterFrame(raster.source, element: source, frame: frame)
         try await canvas.draw(raster, in: destination, erasures: erasures, elementFrame: frame,presentation:presentation)
       } else {
         let message = sourceFailures[address]?.matches(demand) == true ? "Не удалось загрузить" : "Подготовка…"
@@ -526,6 +553,13 @@ final class SceneCompositionRenderer {
     do { try await canvas.draw(raster, in: frame, erasures: erasures,presentation:presentation); raster.release() }
     catch { raster.release(); throw error }
     canvas.recordDiagnostics(resources.diagnostics(for: [source]))
+  }
+
+  private static func rasterFrame(_ source: SceneRasterSource, element: AgentElement, frame: CGRect) -> CGRect {
+    guard let crop = source.captureRegion else { return frame }
+    return CGRect(x: frame.minX + crop.x / element.frame.width * frame.width,
+      y: frame.minY + crop.y / element.frame.height * frame.height,
+      width: crop.width / element.frame.width * frame.width, height: crop.height / element.frame.height * frame.height)
   }
 
   /// Source values and their quantized WebKit extent are read once for this
@@ -608,7 +642,7 @@ final class SceneCompositionRenderer {
     return try await webPreparation!.prepare(element, requestedScale: requestedScale, region: region, programStore: await self.source.programStore(), permitsPreparation: permitsPreparation)
   }
 
-  func finishPreparation() { webPreparation?.close(); webPreparation = nil }
+  func finishPreparation() { webPreparation?.close(); webPreparation = nil; temporarySources.removeAll() }
   func finishPreparationAndDrain() async throws {
     guard let preparation = webPreparation else { return }
     webPreparation = nil

@@ -6,6 +6,9 @@ import UIKit
 private final class CameraGestureSnapshot {
   let id=UUID()
   let presence: SessionPresence
+  var rollback: SessionPresence?
+  var continuesPartialPassage = false
+  @ObservationIgnored var interruptedPortal: (UUID, BoardPortalCamera)?
   let trajectory: CameraGestureTrajectory
   let entry: NotebookZoomPassage?
   let exit: NotebookZoomPassage?
@@ -17,6 +20,12 @@ private final class CameraGestureSnapshot {
   @ObservationIgnored var magnification:CGFloat = 1
   @ObservationIgnored var centroid:CGPoint
   @ObservationIgnored var paperReadiness: (@MainActor (_ refinesDetails: Bool) -> PageTurnPreparationState)?
+  var partialProgress: Double? {
+    guard continuesPartialPassage, let passage else { return nil }
+    let span = log(passage.openScale / passage.closedScale)
+    guard span.isFinite, span > 0 else { return presence.openProgress }
+    return min(1, max(0, presence.openProgress + log(max(0.001, Double(magnification))) / span))
+  }
   var passageCamera:SpatialCamera? { passage.map { $0.camera(from:trajectory,magnification:magnification,centroid:centroid) } }
   init(presence:SessionPresence,trajectory:CameraGestureTrajectory,entry:NotebookZoomPassage?,exit:NotebookZoomPassage?) {
     self.presence=presence;self.trajectory=trajectory;self.entry=entry;self.exit=exit;latestCamera=presence.camera;centroid=trajectory.startingCentroid;documentPageIndex=presence.documentPageIndex
@@ -267,7 +276,7 @@ struct SpatialWorkspaceView: View {
             isEnabled: (presence.mode == .board || presence.mode == .cover
               || (presence.mode == .document
                 && presence.camera.scale > model.itemGeometry(presence.focusedItemID).fitScale(viewport:viewport) * 1.001))
-              && cameraGesture == nil && !settling && !model.isPointing,
+              && cameraGesture == nil && !model.isPointing,
             inputGate: model.inputGate,
             onBegan: {
               referencePageResolution.cancel()
@@ -840,7 +849,7 @@ struct SpatialWorkspaceView: View {
     })
     let revision = ItemPlaneRevision(cohortID: cohort?.paintID, generation: model.sceneIndex?.generationID,
       contents: model.collaborationReadEpoch, items: rendered, covers: covers, mode: presence.mode,
-      focused: presence.focusedItemID, open: presence.openProgress,
+      focused: presence.focusedItemID, open: presence.openProgress <= 0 ? 0 : presence.openProgress >= 0.999 ? 2 : 1,
       selected: selectedItemID, lifted: liftedItemIDs,
       editingText: editingSpatialText, contentGesture: contentGestureActive,
       pageTurn: pageTurnIsActive, navigationID:navigationID, isCameraGesture: cameraGesture != nil, settling: settling,
@@ -1167,21 +1176,32 @@ struct SpatialWorkspaceView: View {
   private func handleBoardMagnification(_ phase: WorkspaceMagnificationPhase) {
     switch phase {
     case .began(let centroid):
-      // A short explicit navigation owns its complete opening/closing curve.
-      // A contact during it must not strand the scene on a half-open cover.
-      if case .settling(let pending)=navigation {
-        guard !pending.started else { return }
-        model.updatePresence(pending.origin,settled:true)
-      }
-      interruptSettlementForInput()
+      let pending: WorkspaceSettlement?
+      if case .settling(let value) = navigation { pending = value } else { pending = nil }
+      let actual = model.presence
+      interruptSettlementForInput(settlesPose: false)
       model.cancelElementManipulation()
       model.beginDocumentCameraInteraction()
-      guard let currentPresence = model.presence else { return }
+      guard let currentPresence = actual ?? model.presence else { return }
       let presence = presenceForNewContact(currentPresence)
       contentGestureActive = presence.mode == .page || presence.mode == .document
-      navigation = .interacting(CameraGestureSnapshot(presence:presence,
-        trajectory:.init(startingCamera:presence.camera,startingCentroid:centroid,viewport:presence.viewport),
-        entry:entryPassage(at:centroid,presence:presence),exit:exitPassage(presence:presence)))
+      let snapshot = CameraGestureSnapshot(presence: presence,
+        trajectory: .init(startingCamera: presence.camera, startingCentroid: centroid, viewport: presence.viewport),
+        entry: entryPassage(at: centroid, presence: presence), exit: exitPassage(presence: presence))
+      snapshot.rollback = pending?.origin
+      snapshot.paperReadiness = pending?.paperReadiness
+      snapshot.interruptedPortal = pending?.portal
+      if presence.mode == .cover, presence.openProgress > 0, presence.openProgress < 1,
+        let item = presence.focusedItemID, let kind = itemKind(item),
+        let center = focusedCenter(itemID: item, boardID: presence.boardID) {
+        let geometry = model.itemGeometry(item)
+        snapshot.passage = .init(itemID: item, parentID: presence.boardID, kind: kind, center: center,
+          geometry: geometry, opening: true, closedScale: geometry.coverScale(viewport: presence.viewport),
+          openScale: kind == .board ? BoardPortalProjection.fillScale(viewport: presence.viewport) : geometry.fitScale(viewport: presence.viewport),
+          returningPortal: nil)
+        snapshot.choseDirection = true; snapshot.continuesPartialPassage = true; snapshot.preparedItem = true
+      }
+      navigation = .interacting(snapshot)
     case .changed(let scale, _, _, let centroid):
       updateMagnification(
         scale: scale,
@@ -1265,8 +1285,8 @@ struct SpatialWorkspaceView: View {
       model.updatePresence(snapshot.presence.replacingCamera(snapshot.latestCamera),settled:false);return
     }
     let passageCamera=passage.camera(from:snapshot.trajectory,magnification:scale,centroid:centroid)
-    let progress=passage.progress(camera:passageCamera)
-    if passage.opening && progress <= 0 || !passage.opening && progress >= 1 {
+    let progress=snapshot.partialProgress ?? passage.progress(camera:passageCamera)
+    if !snapshot.continuesPartialPassage && (passage.opening && progress <= 0 || !passage.opening && progress >= 1) {
       model.updatePresence(snapshot.presence.replacingCamera(snapshot.latestCamera),settled:false);return
     }
     let page = snapshot.documentPageIndex
@@ -1274,7 +1294,13 @@ struct SpatialWorkspaceView: View {
       snapshot.preparedItem=true;model.selectItem(passage.itemID)
       if passage.kind == .document { model.prepareDocumentOpening(passage.itemID,pageIndex:page) }
     }
-    let shown=passage.presentation(camera:passageCamera,viewport:snapshot.presence.viewport,page:page)
+    let projected=passage.presentation(camera:passageCamera,viewport:snapshot.presence.viewport,page:page)
+    let shown = snapshot.continuesPartialPassage
+      ? SessionPresence(boardID: projected.boardID, mode: .cover, camera: passageCamera,
+          viewport: projected.viewport, focusedItemID: projected.focusedItemID, openProgress: progress,
+          documentPageIndex: projected.documentPageIndex, selectedItemID: snapshot.presence.selectedItemID,
+          notebookPageID: snapshot.presence.notebookPageID)
+      : projected
     // The outgoing surface stays mounted until the bounded target cohort is
     // available. Its camera still follows the same raw gesture while loading.
     if shown.boardID == model.presence?.boardID || navigationHasPreparedSurface(shown) {
@@ -1288,7 +1314,23 @@ struct SpatialWorkspaceView: View {
       navigation = .idle;contentGestureActive=false
       model.updatePresence(snapshot.presence.replacingCamera(snapshot.latestCamera),settled:true);return
     }
-    let progress=passage.progress(camera:camera)
+    let progress=snapshot.partialProgress ?? passage.progress(camera:camera)
+    if snapshot.continuesPartialPassage {
+      if progress < 0.5 {
+        animateSettlement(to: passage.closed(viewport: snapshot.presence.viewport, camera: camera),
+          duration: 0.24, bounce: 0, portal: snapshot.interruptedPortal, rollback: snapshot.rollback ?? snapshot.presence) {
+          if let portal = snapshot.interruptedPortal, let origin = snapshot.rollback, origin.boardID == portal.0 {
+            model.rememberBoardReturn(origin, portal: portal.1)
+          }
+        }
+      } else if snapshot.interruptedPortal != nil, let origin = snapshot.rollback {
+        restoreMagnification(snapshot, to: origin)
+      } else {
+        navigation = .idle; contentGestureActive = false
+        openItem(passage.itemID, viewport: snapshot.presence.viewport, rollback: snapshot.rollback ?? snapshot.presence)
+      }
+      return
+    }
     // A zoom which never reaches a hierarchy boundary remains an ordinary zoom.
     if passage.opening && progress == 0 || !passage.opening && progress == 1 {
       navigation = .idle;contentGestureActive=false
@@ -1389,10 +1431,10 @@ struct SpatialWorkspaceView: View {
 
   private func cancelMagnification() {
     guard let snapshot=cameraGesture else { return }
-    restoreMagnification(snapshot,to:snapshot.presence)
+    restoreMagnification(snapshot,to:snapshot.rollback ?? snapshot.presence)
   }
 
-  private func interruptSettlementForInput(interruptPresentation:Bool = true) {
+  private func interruptSettlementForInput(interruptPresentation:Bool = true, settlesPose:Bool = true) {
     if interruptPresentation { model.presentationPlayer.interrupt() }
     cameraSettlement.cancel()
     let origin:SessionPresence?
@@ -1405,7 +1447,7 @@ struct SpatialWorkspaceView: View {
       origin = pending.started || pending.approached ? model.presence : pending.origin
     }
     navigation = .idle;contentGestureActive=false
-    if let origin { model.updatePresence(origin,settled:true) }
+    if let origin, settlesPose { model.updatePresence(origin,settled:true) }
   }
 
   private func replaceWaitingNavigation() {
@@ -1795,8 +1837,6 @@ private struct WorkspaceSceneItem: View {
     // before navigation can await its readiness. Hiding these elements until
     // the first opening sample would deadlock a filled page at the closed edge.
     let contentIsLive = preparesContent || openProgress > 0.001 || contentIsInteractive
-    let restingShadowVisibility =
-      CoverOpeningPhysics.restingShadowVisibility(openProgress)
     WorkspaceItemPose(rendered: rendered, camera: camera, viewport: viewport, boardID: boardID,
       liftRank: liftRank, registry: spatialInkSurfaces,
       onLiftChanged: { lifted in
@@ -1804,9 +1844,10 @@ private struct WorkspaceSceneItem: View {
         onLiftChanged(rendered.id, lifted)
       }, onDrop: { onDrop(rendered.id, $0, $1) }) {
       ZStack {
-      WorkspaceItemShadow(geometry: rendered.geometry, kind: rendered.item.kind,
-        hasContents: composition.cohort?.liveData.nonemptyBoardIDs.contains(rendered.id) == true,
-        lifted: isLifted, visibility: restingShadowVisibility)
+      SceneCoverMaterial(itemID: rendered.id, effect: .shadow) {
+        WorkspaceItemShadow(geometry: rendered.geometry, kind: rendered.item.kind,
+          hasContents: composition.cohort?.liveData.nonemptyBoardIDs.contains(rendered.id) == true, lifted: isLifted)
+      }.allowsHitTesting(false)
       if rendered.item.kind == .board {
         itemCover
       } else if rendered.item.kind == .notebook {
@@ -1867,7 +1908,7 @@ private struct WorkspaceSceneItem: View {
         notebookNavigation: model.notebookPageNavigation,
         onWindowChange: { indices, target, root in
           model.retainNotebookPageWindow(indices, in: rendered.id, root: root, target: target)
-        }, inputGate: model.inputGate
+        }, inputGate: model.inputGate, pageIdentities: model.notebookResidentPageIdentities(rendered.id)
       )
       .clipShape(
         RoundedRectangle(

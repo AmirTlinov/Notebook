@@ -81,9 +81,17 @@ First-time and replacement native ink owners use the same private GPU-frame
 preparation and atomic installation. There is no hidden-window canvas warm-up
 or display-loop polling before a cohort can publish. An unmounted retained
 owner keeps its charged backing without remaining in a hidden view hierarchy.
-Prepared pixels and OS-presented pixels remain distinct states of that canvas;
-layer-transaction completion releases staged resources, not a false visible
-acknowledgement. Empty transparent planes need no drawable.
+A candidate borrows one bounded flight slot rather than draining older frames.
+Its scheduled GPU submission permits atomic native installation; only the OS
+presentation receipt establishes shown pixels. Candidate resources remain charged
+through both publication and GPU completion, including cancellation. Empty transparent
+planes need no drawable. Ordered selection/cancel cuts use the same canvas clock
+and keep only the latest pending request; their immutable submitted resources remain
+owned by their flight slots. Page-turn frame leases pin the accepted texture/crop and
+physical admission; a canvas writes a successor backing while any such lease exists.
+Capture readiness uses that exact completed GPU cut, independently of the live
+layer's OS receipt. A covered neighbor can supply a curl frame; endpoint staging
+requests a real live presentation before the curl releases its visible cover.
 
 ## Raster leases and runtime admission
 
@@ -146,6 +154,11 @@ conversion failure cannot silently switch renderers or substitute fonts.
 Quartz drawing and its exact mip levels finish on the same non-UI worker before
 one synchronous raster publication. The existing reservation covers all levels;
 source/crop identity and cancellation are rechecked before publication.
+Page ink backing follows one physical canvas owner: current paper is input,
+resident neighbors are passive. Role transfer reclassifies already charged bytes
+without replacing immutable pixels; a demotion may temporarily exceed the passive
+allowance, and further admission reclaims expendable neighbors through the same
+finite pool. Reclaimed or unmounted pages retain no GPU cut.
 Passive notebook neighbours share at most two sequential preparation lanes.
 Their finite native page window also owns addressed reads: withdrawing a slot
 cancels its preparation, and a late response cannot evict a currently needed page.
@@ -274,9 +287,11 @@ first interaction, stale callbacks and release. Historical diagnostic timing is 
 It does not establish current CPU/GPU/RSS or physical acceptance:
 [verification](verification.md).
 
-A page turn captures UIKit's native color range after its committed layer update;
-forcing a whole-sheet SDR conversion on the input actor is not required. The turn
-reserves the maximum eight-byte source rows and its bounded four-byte drawable
-rows, including alignment, before capture, then checks actual source row storage.
-Core Image resolves that same retained source into the existing BGRA8 output.
+A page turn borrows immutable GPU paper/ink and exact installed element materials.
+Live WebKit contributes local temporary cuts with input admission before capture;
+these cuts do not enter the passive raster cache or acquire mipmaps. Direct cuts
+retain their original storage through GPU composition instead of copying through
+a CPU canvas. Independent installed executors share one capture cohort; transformed
+intermediates remain bounded and crops from one document runtime stay sequential.
+The page frame and drawable backings retain their grants through the last GPU use.
 Retired source completions cannot notify the next turn's readiness/timing owner.

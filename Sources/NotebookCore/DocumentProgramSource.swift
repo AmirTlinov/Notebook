@@ -9,7 +9,12 @@ public struct DocumentProgramSource: Equatable, Sendable {
   public let initialState: JSONValue
   public let sourceBasis: String
   let package: NotebookProgramPackage
-  let stagedText: [String: Data]
+  fileprivate var stagedText: [String: Data]
+
+  public static func == (lhs: Self, rhs: Self) -> Bool {
+    lhs.id == rhs.id && lhs.path == rhs.path && lhs.programPackage == rhs.programPackage
+      && lhs.initialState == rhs.initialState && lhs.sourceBasis == rhs.sourceBasis
+  }
 
   public init(document: DocumentDocument, instanceID: String, path: String) throws {
     guard !instanceID.isEmpty, instanceID.utf16.count <= 120, DocumentFile.validPath(path) else {
@@ -92,12 +97,13 @@ extension NotebookStore {
     return data
   }
   public func documentProgramSource(document: DocumentDocument, instanceID: String, path: String) throws -> DocumentProgramSource {
-    let source = try DocumentProgramSource(document: document, instanceID: instanceID, path: path)
+    var source = try DocumentProgramSource(document: document, instanceID: instanceID, path: path)
     return try commandTransaction {
       for (hash, bytes) in source.stagedText {
         guard try currentSQL!.putBlob(bytes) == hash else { throw NotebookStorageError.blobHashMismatch }
       }
       guard try stageProgramPackage(source.package) == source.programPackage else { throw NotebookStorageError.blobHashMismatch }
+      source.stagedText.removeAll()
       return source
     }
   }

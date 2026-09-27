@@ -651,6 +651,9 @@ final class NotebookSelectionControlsView: UIControl, UIGestureRecognizerDelegat
       path.lineWidth = 1.5; path.fill(); path.stroke()
 
     }
+    if let selectionID,let window {
+      NotebookNavigationObservation.onSelectionControlsPaint?(selectionID,convert(frameRect,to:window))
+    }
   }
   func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
     guard touch.type == .direct else { return false }

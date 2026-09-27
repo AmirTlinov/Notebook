@@ -47,6 +47,10 @@ enum ScenePreparedRasterFallback {
 /// Focus owns state writes, while the shared allocator owns bounded WebKit
 /// admission; selecting an element is not a prerequisite to pressing a control.
 struct PreparedAgentElementView: View {
+  private struct RuntimePaintIdentity: Equatable {
+    let loadToken: String
+    let program: AgentProgramSource
+  }
   @Environment(NotebookAppModel.self) private var model
   @Environment(\.displayScale) private var displayScale
   @Environment(\.sceneComposition) private var composition
@@ -64,10 +68,17 @@ struct PreparedAgentElementView: View {
   let onRenderReady: (Bool) -> Void
   let onState: NotebookProgramStateWriter
 
+  @State private var pageFrameOwner = UUID()
+  @State private var preparationOwner = PreparationOwner()
   @State private var raster: RasterLease?
   @State private var web: WebSurfaceLease?
   @State private var preparedSource: AgentElement?
   @State private var liveProgram: AgentProgramSource?
+  @State private var paintedProgram: AgentProgramSource?
+  @State private var paintedLeaseID: UUID?
+  @State private var nativeRuntimeToken: String?
+  @State private var paintedRuntimeToken: String?
+  @State private var failedPaintRuntime: RuntimePaintIdentity?
   @State private var runtimeWasPresented = false
   @State private var runtimeAddress: SceneSourceAddress?
   @State private var runtimeLeaseID: UUID?
@@ -110,6 +121,16 @@ struct PreparedAgentElementView: View {
   private var hasFocus: Bool { model.interactiveElementFocus == focus }
   private var showsLiveProgram: Bool {
     web != nil && (isActive || runtimeWasPresented) && liveProgram == AgentProgramSource(element)
+  }
+  private var hasPaintedLiveProgram: Bool {
+    nativeRuntimeToken != nil && paintedRuntimeToken == nativeRuntimeToken
+      && paintedLeaseID == web?.id && paintedProgram == AgentProgramSource(element)
+  }
+  private var bridgesFirstLivePaint: Bool {
+    guard web != nil, !hasPaintedLiveProgram, preparedSource == element else { return false }
+    if let failure = failedPaintRuntime, failure.program == AgentProgramSource(element),
+      nativeRuntimeToken?.hasPrefix(failure.loadToken + "/") != false { return false }
+    return raster?.image(for: rasterSource, minimumScale: requiredScale) != nil
   }
   private var awaitsRasterSource: Bool {
     guard let installed = raster?.source.agentElement else { return true }
@@ -169,6 +190,32 @@ struct PreparedAgentElementView: View {
 
   private func recordInstalled(_ installation: SceneSourceInstallation, raster: RasterLease? = nil) {
     guard installation.source.agentElement != nil else { return }
+    #if os(iOS)
+    if let pageTurnActivity, let context = rasterPreparation,
+      installation.source.agentElement == element,
+      showsLiveProgram || raster?.image(for: rasterSource, minimumScale: requiredScale) != nil {
+      pageTurnActivity.installElementFrame(page: context.pageIndex, element: element.id, owner: pageFrameOwner,
+        source: element, installation: installation) { [installation, element, focus, needsLiveFrame = showsLiveProgram, raster] priority in
+        guard installation.isInstalled else { throw PageTurnMaterialUnavailable.changed }
+        if needsLiveFrame {
+          if priority == .input {
+            guard let captured = try await AgentWebCoordinator.captureCurrentCut(focus: focus, element: element) else {
+              guard installation.isInstalled else { throw PageTurnMaterialUnavailable.changed }
+              throw SceneRenderError.snapshotPending("page_program_pixels")
+            }
+            return PageTurnElementFrame(cut: captured)
+          }
+          guard let captured = try await AgentWebCoordinator.captureCurrent(focus: focus, element: element) else {
+            guard installation.isInstalled else { throw PageTurnMaterialUnavailable.changed }
+            throw SceneRenderError.snapshotPending("page_program_pixels")
+          }
+          return PageTurnElementFrame(raster: captured)
+        }
+        guard let borrowed = raster?.retainedCopy() else { throw SceneRenderError.snapshotPending("page_element_pixels") }
+        return PageTurnElementFrame(raster: borrowed)
+      }
+    }
+    #endif
     guard case .board(let boardID, let id) = focus, let cohort = composition.cohort else { return }
     for address in cohort.sourceReceipts.keys where address.plane.boardID == boardID && address.elementID == id {
       if let raster, let demand = cohort.sourceReceipts[address]?.demand,
@@ -191,6 +238,18 @@ struct PreparedAgentElementView: View {
     let retry: UInt64
   }
 
+  /// Async/native callbacks borrow the currently accepted role, never the
+  /// SwiftUI value that happened to install their closure. This is ownership
+  /// bookkeeping, not observable view state.
+  @MainActor private final class PreparationOwner {
+    var demand: Demand?
+    var request: UUID?
+    func accept(_ demand: Demand) -> UUID {
+      let id = UUID(); self.demand = demand; request = id; return id
+    }
+    func withdraw() { demand = nil; request = nil }
+  }
+
   var body: some View {
     let fallbackEntryID: UUID? = {
       guard case .board(let boardID, let id) = focus else { return nil }
@@ -206,7 +265,10 @@ struct PreparedAgentElementView: View {
       policy: snapshotPolicy, capture: sourceDemand,
       fallbackEntryID: fallbackEntryID, runtimeFailure: runtimeFailure, retry: retry)
     ZStack {
-      if let raster, !showsLiveProgram {
+      // A ready script can precede its first remote WebKit paint. Keep the
+      // installed fallback underneath the transparent native view until that
+      // exact runtime has returned pixels; input never waits for cache storage.
+      if let raster, !showsLiveProgram || bridgesFirstLivePaint {
         AgentElementSnapshotView(raster: raster, onSourceInstalled: { installation, installed in
           recordInstalled(installation, raster: installed)
           Task { @MainActor in
@@ -225,7 +287,8 @@ struct PreparedAgentElementView: View {
           snapshotPolicy: snapshotPolicy,
           focus: focus,
           onRenderReady: { ready in
-            guard model.shutdownPhase != .stopped, self.web?.id == web.id, !web.isReleased else { return }
+            guard model.shutdownPhase != .stopped, self.web?.id == web.id, !web.isReleased,
+              let current = preparationOwner.demand, current.source == element else { return }
             if ready, let next = SceneRenderResources.shared.retainRaster(for: rasterSource, minimumScale: requiredScale) {
               if let runtimeAddress { model.compositionTiles.runtimeSourceBecameReady(runtimeAddress, leaseID: web.id, source: element) }
               if raster?.entryID != next.entryID { raster = next }
@@ -233,30 +296,52 @@ struct PreparedAgentElementView: View {
               failure = nil
               failedSource = nil
               // The representable retains the grant until WebKit is dismantled.
-              if !isActive && !runtimeWasPresented { retireRuntime(); self.web = nil }
+              if !current.active && !runtimeWasPresented { retireRuntime(); self.web = nil }
             } else if !ready, preparedSource != element {
               onRenderReady(false)
             }
           }, onInteractionReady: { ready in
             guard model.shutdownPhase != .stopped, self.web?.id == web.id, !web.isReleased else { return }
             liveProgram = ready ? AgentProgramSource(element) : nil
-            if ready && isActive { runtimeWasPresented = true }
+            if !ready {
+              nativeRuntimeToken = nil; paintedRuntimeToken = nil
+              paintedProgram = nil; paintedLeaseID = nil
+            }
+            if ready && preparationOwner.demand?.active == true { runtimeWasPresented = true }
           }, onInteraction: {
             guard isActive, inputEnabled, liveProgram == AgentProgramSource(element), self.web?.id == web.id else { return }
             if !hasFocus { model.interactiveElementFocus = focus }
           }, onInstalled: { installation in
             if showsLiveProgram, let source = installation.source.agentElement,
-              liveProgram == AgentProgramSource(source) {
+              liveProgram == AgentProgramSource(source), SceneRasterSource.agent(source) == .agent(element) {
               recordInstalled(installation)
               Task { @MainActor in
                 if installation.isInstalled, self.web?.id == web.id,
-                  liveProgram == AgentProgramSource(element) { onRenderReady(true) }
+                  liveProgram == AgentProgramSource(element) {
+                  if nativeRuntimeToken != installation.runtimeToken { nativeRuntimeToken = installation.runtimeToken }
+                  onRenderReady(true)
+                }
               }
             }
+          }, onFramePainted: { installation in
+            guard self.web?.id == web.id, !web.isReleased, installation.isInstalled,
+              let source = installation.source.agentElement,
+              AgentProgramSource(source) == AgentProgramSource(element) else { return }
+            guard paintedLeaseID != web.id || paintedProgram != AgentProgramSource(source)
+              || nativeRuntimeToken != installation.runtimeToken || paintedRuntimeToken != installation.runtimeToken
+              || failedPaintRuntime != nil else { return }
+            nativeRuntimeToken = installation.runtimeToken
+            paintedRuntimeToken = installation.runtimeToken
+            paintedProgram = AgentProgramSource(source); paintedLeaseID = web.id
+            failedPaintRuntime = nil
           }, onFailure: { event in
             guard model.shutdownPhase != .stopped, self.web?.id == event.leaseID, web.id == event.leaseID,
               !web.isReleased, SceneRasterSource.agent(event.source) == .agent(element),
+              let current = preparationOwner.demand, current.source == element,
               event.policy == nil || event.policy == snapshotPolicy else { return }
+            // A functioning transparent runtime must not retain old fallback
+            // pixels indefinitely when its physical capture has failed.
+            failedPaintRuntime = .init(loadToken: event.loadToken, program: AgentProgramSource(event.source))
             let owned = runtimeAddress.map { model.compositionTiles.failRuntimeSource($0, failure: event) } ?? false
             switch event.diagnostic.kind {
             case "resource_limit": failure = "Недостаточно ресурсов для изображения"
@@ -267,7 +352,7 @@ struct PreparedAgentElementView: View {
             failedCapturePolicy = event.policy
             failedCaptureAdmission = event.diagnostic.kind == "resource_limit" ? event.rasterAdmission : nil
             // Snapshot pressure must not dismantle a functioning control.
-            if event.policy == nil || !isActive || liveProgram != AgentProgramSource(element) {
+            if event.policy == nil || !current.active || liveProgram != AgentProgramSource(element) {
               liveProgram = nil
               runtimeWasPresented = false
               retireRuntime()
@@ -319,11 +404,20 @@ struct PreparedAgentElementView: View {
       retry &+= 1
     }
     .onDisappear {
+      preparationOwner.withdraw()
+      #if os(iOS)
+      if let context = rasterPreparation {
+        pageTurnActivity?.removeElementFrame(page: context.pageIndex, element: element.id, owner: pageFrameOwner)
+      }
+      #endif
       retireRuntime()
       web = nil
       raster = nil
       preparedSource = nil
       liveProgram = nil
+      paintedProgram = nil; paintedLeaseID = nil
+      nativeRuntimeToken = nil; paintedRuntimeToken = nil
+      failedPaintRuntime = nil
       runtimeWasPresented = false
       waitingForAdmission = false
       failedCaptureAdmission = nil
@@ -376,7 +470,8 @@ struct PreparedAgentElementView: View {
 
   @MainActor
   private func prepare(_ demand: Demand) async {
-    guard model.shutdownPhase != .stopped else { return }
+    guard !Task.isCancelled, model.shutdownPhase != .stopped else { return }
+    let request = preparationOwner.accept(demand)
     waitingForAdmission = false
     if !demand.active, runtimeWasPresented, let retiring = web,
       liveProgram == AgentProgramSource(demand.source) {
@@ -387,13 +482,15 @@ struct PreparedAgentElementView: View {
         let (accepted, captured) = try await AgentWebCoordinator.checkpointCurrent(focus: focus, element: demand.source) { value, basis, admittedBytes in
           return try await model.checkpointProgramState(focus: focus, rendered: demand.source, value: value, basis: basis, admittedStateBytes: admittedBytes)
         }
-        guard !Task.isCancelled, self.web?.id == retiring.id, !isActive else {
+        guard !Task.isCancelled, preparationOwner.request == request,
+          self.web?.id == retiring.id, preparationOwner.demand?.active == false else {
           captured.release(); await AgentWebCoordinator.resumeCurrent(focus: focus); return
         }
         raster = captured; preparedSource = accepted
         failure = nil; failedSource = nil
       } catch {
-        guard !Task.isCancelled, self.web?.id == retiring.id, !isActive else { return }
+        guard !Task.isCancelled, preparationOwner.request == request,
+          self.web?.id == retiring.id, preparationOwner.demand?.active == false else { return }
         failure = "Не удалось сохранить состояние программы"
         // Writer refusal is not permission to destroy a live browser context.
         return
@@ -423,11 +520,12 @@ struct PreparedAgentElementView: View {
       do {
         let next = try await rasterPreparation.owner.prepare(demand.source, policy: demand.policy,
           pageIndex: rasterPreparation.pageIndex, store: model.store, permits: { model.permitsPagePreparation })
-        guard !Task.isCancelled, model.shutdownPhase != .stopped else { next.release(); return }
+        guard !Task.isCancelled, preparationOwner.request == request,
+          model.shutdownPhase != .stopped else { next.release(); return }
         raster = next; preparedSource = demand.source
       } catch is CancellationError { return }
       catch {
-        guard !Task.isCancelled else { return }
+        guard !Task.isCancelled, preparationOwner.request == request else { return }
         failure = "Не удалось подготовить изображение"
         failedSource = demand.source; failedCapturePolicy = demand.policy
         onRenderReady(false)
@@ -447,13 +545,14 @@ struct PreparedAgentElementView: View {
       let acquired = try await SceneRenderResources.shared.acquireWebSurface(
         priority: demand.active ? (demand.inputEnabled && demand.focused ? .input : .liveProgram) : .visible,
         source: focus, deadline: .now + .seconds(8))
-      guard !Task.isCancelled, model.shutdownPhase != .stopped else { acquired.release(); return }
+      guard !Task.isCancelled, preparationOwner.request == request,
+        model.shutdownPhase != .stopped else { acquired.release(); return }
       bindRuntime(acquired, demand: demand)
       web = acquired
     } catch is CancellationError {
       return
     } catch {
-      guard !Task.isCancelled else { return }
+      guard !Task.isCancelled, preparationOwner.request == request else { return }
       failure = "Недостаточно ресурсов для программы"
       waitingForAdmission = true
       onRenderReady(false)

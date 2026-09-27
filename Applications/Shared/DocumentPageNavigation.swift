@@ -23,12 +23,14 @@ struct PageTurnPreparationFailure {
   enum Kind: Equatable { case resourceLimit, snapshotPending, preparationFailed }
   let id: UUID
   let kind: Kind
+  let requiresCapture: Bool
   let message: String
   let retry: @MainActor () -> Void
 
-  init(id: UUID = UUID(), kind: Kind = .preparationFailed, message: String,
+  init(id: UUID = UUID(), kind: Kind = .preparationFailed, requiresCapture: Bool = false, message: String,
     retry: @escaping @MainActor () -> Void) {
-    self.id = id; self.kind = kind; self.message = message; self.retry = retry
+    self.id = id; self.kind = kind; self.requiresCapture = requiresCapture
+    self.message = message; self.retry = retry
   }
 }
 

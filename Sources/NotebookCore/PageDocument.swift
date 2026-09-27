@@ -182,6 +182,10 @@ public struct PageDocument: Codable, Equatable, Identifiable, Sendable {
   public var inkSource:PageInkSource {
     .init(source:inkDrawingCache.source(data:storedDrawingData,stamp:storedDrawingStamp))
   }
+  /// The read owner prepares both projections before publishing an input-ready page.
+  public func prepareInkForPresentation() throws { _ = try inkSource.prepare() }
+  public var preparedInkDrawing:PageInkDrawing? { inkSource.preparedProjection?.drawing }
+  public var preparedElementErasures:[String:[InkElementErasure]]? { inkSource.preparedProjection?.erasures.values }
   private enum CodingKeys: String,CodingKey {
     case format,id,size,drawingData,drawingStamp,elements,agentStamp,collaboration,computations
   }
@@ -208,15 +212,25 @@ public struct PageDocument: Codable, Equatable, Identifiable, Sendable {
   /// Decoding and encoding happen before publication. The drawing stamp is the
   /// compare-and-swap boundary; unrelated element edits remain on this page.
   public func prepareInkChange(_ mutation: PageInkMutation, stamp: VersionStamp) throws -> PreparedPageInkChange {
+    try prepareInkChange(mutation,stamp:stamp,projection:inkSource.prepare())
+  }
+  /// Input admission cannot become the cold archive decoder at first lift.
+  public func prepareLiveInkChange(_ mutation:PageInkMutation,stamp:VersionStamp) throws -> PreparedPageInkChange {
+    guard let projection=inkSource.preparedProjection else {
+      throw CollaborationError("ink_not_ready","Рукопись страницы ещё готовится.")
+    }
+    return try prepareInkChange(mutation,stamp:stamp,projection:projection)
+  }
+  private func prepareInkChange(_ mutation:PageInkMutation,stamp:VersionStamp,projection:PageInkPreparedProjection) throws -> PreparedPageInkChange {
     try Task.checkCancellation()
-    let current = try inkDrawing()
+    let current = projection.drawing
     let effective: PageInkMutation, expected: [UUID: PageInkVisibility]
     switch mutation {
     case .append(let action):
       if let prior = current.action(id: action.id) {
         _ = try current.appending(action) // Still validate immutable identity on a retry.
         return .init(pageID:id,baseStamp:drawingStamp,stamp:drawingStamp,drawing:current,
-          mutation:.append(prior))
+          mutation:.append(prior),erasureDirectory:projection.erasures,eraserIndex:projection.eraserIndex)
       }
       guard action.isActive else { throw PageInkDrawing.InkError.invalidDrawing }
       effective = mutation; expected = [:]
@@ -228,7 +242,7 @@ public struct PageDocument: Codable, Equatable, Identifiable, Sendable {
       effective = .setActive(Set(expected.keys),active)
       if expected.isEmpty {
         return .init(pageID:id,baseStamp:drawingStamp,stamp:drawingStamp,drawing:current,
-          mutation:effective)
+          mutation:effective,erasureDirectory:projection.erasures,eraserIndex:projection.eraserIndex)
       }
     }
     let frontier = max(drawingStamp.counter, expected.values.compactMap { $0.stateStamp?.counter }.max() ?? 0)
@@ -244,8 +258,11 @@ public struct PageDocument: Codable, Equatable, Identifiable, Sendable {
       drawing = try current.settingActive(active,for:ids,stamp:next); accepted = effective
     }
     try Task.checkCancellation()
+    var eraserIndex=projection.eraserIndex
+    if case .append(let action)=accepted {eraserIndex.append(action)}
     return .init(pageID:id,baseStamp:drawingStamp,stamp:next,drawing:drawing,
-      mutation:accepted,expectedVisibility:expected)
+      mutation:accepted,expectedVisibility:expected,
+      erasureDirectory:projection.erasures.applying(accepted,drawing:drawing),eraserIndex:eraserIndex)
   }
 
   @discardableResult
@@ -253,7 +270,7 @@ public struct PageDocument: Codable, Equatable, Identifiable, Sendable {
     guard change.pageID == id, change.baseStamp == drawingStamp else { return false }
     storedDrawingData = Data()
     storedDrawingStamp = change.stamp
-    inkDrawingCache = .init(change.drawing,stamp:change.stamp)
+    inkDrawingCache = .init(source:change.source)
     return true
   }
 
@@ -537,18 +554,15 @@ public enum PageInkMutation: Sendable {
 /// Opening a cold page still decodes off-main; publishing a contact never has
 /// to serialize it merely to notify the mounted canvas.
 public struct PageInkSource:Sendable {
-  private let source:PageInkDrawingCache.Source
+  let source:PageInkDrawingCache.Source
   public var stamp:VersionStamp { source.stamp }
+  public var identity:ObjectIdentifier { ObjectIdentifier(source) }
+  public var preparedDrawing:PageInkDrawing? {source.prepared?.drawing}
+  var preparedProjection:PageInkPreparedProjection? {source.prepared}
+  func prepare() throws -> PageInkPreparedProjection {try source.prepare()}
+  public func prepareForPresentation() throws {_ = try source.prepare()}
   fileprivate init(source:PageInkDrawingCache.Source) { self.source=source }
   public func drawing() throws -> PageInkDrawing { try source.drawing() }
-}
-
-private final class PreparedPageInkArchive:@unchecked Sendable {
-  private let lock=NSLock()
-  private let drawing:PageInkDrawing
-  private var prepared:Data?
-  init(_ drawing:PageInkDrawing) { self.drawing=drawing }
-  func value()->Data { lock.withLock { if let prepared { return prepared };let data=try! drawing.dataRepresentation();prepared=data;return data } }
 }
 
 /// A validated result prepared away from the input thread. Its constructor is
@@ -561,13 +575,17 @@ public struct PreparedPageInkChange: Sendable {
   public let mutation:PageInkMutation
   public let expectedVisibility: [UUID: PageInkVisibility]
   /// The accepted root, without encoding it or borrowing a previous display.
-  public var inkSource:PageInkSource { .init(source:.init(stamp:stamp,drawing:drawing)) }
-  private let archive:PreparedPageInkArchive
-  public var data:Data { archive.value() }
+  public var inkSource:PageInkSource {.init(source:source)}
+  let source:PageInkDrawingCache.Source
+  let erasureDirectory:PageInkErasureDirectory
+  let eraserIndex:InkReadSetBoundsIndex
+  public var data:Data {try! source.data()}
 
   fileprivate init(pageID: UUID, baseStamp: VersionStamp, stamp: VersionStamp, drawing: PageInkDrawing,
-    mutation:PageInkMutation,expectedVisibility:[UUID:PageInkVisibility] = [:]) {
+    mutation:PageInkMutation,expectedVisibility:[UUID:PageInkVisibility] = [:],erasureDirectory:PageInkErasureDirectory,eraserIndex:InkReadSetBoundsIndex) {
     self.pageID = pageID; self.baseStamp = baseStamp; self.stamp = stamp
-    self.drawing = drawing;self.mutation=mutation;self.expectedVisibility=expectedVisibility;archive = .init(drawing)
+    self.drawing = drawing;self.mutation=mutation;self.expectedVisibility=expectedVisibility
+    source = .init(stamp:stamp,drawing:drawing,erasures:erasureDirectory,eraserIndex:eraserIndex)
+    self.erasureDirectory=erasureDirectory;self.eraserIndex=eraserIndex
   }
 }

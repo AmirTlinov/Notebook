@@ -422,7 +422,7 @@ extension NotebookStore {
   var currentSQL: NotebookSQLConnection? { Thread.current.threadDictionary[connectionKey] as? NotebookSQLConnection }
 
   // SQLite admission is local to this database, independently of wire and content formats.
-  static let currentDatabaseVersion: Int64 = 26
+  static let currentDatabaseVersion: Int64 = 27
 
   @discardableResult
   func prepareDatabase(initialWorkspaceID: UUID? = nil,
@@ -577,6 +577,19 @@ extension NotebookStore {
         while let address = try database.rows("SELECT DISTINCT address FROM ink_surfaces WHERE address>? ORDER BY address LIMIT 1", [.text(after)]).first?[0].text {
           try indexInkWindow(readSpatialInkAction(address), address: address, database: database)
           after = address
+        }
+      }
+      if admittedVersion < 27 {
+        var spatialAfter=""
+        while let address=try database.rows("SELECT DISTINCT address FROM ink_surfaces WHERE address>? AND kind<>'page' ORDER BY address LIMIT 1",[.text(spatialAfter)]).first?[0].text {
+          guard let witness=try inkContactWitness(at:address,page:false) else {throw NotebookStorageError.corruptRecord(address)}
+          try indexInkPainter(witness,address:address,database:database);spatialAfter=address
+        }
+        var after=""
+        while let row=try database.rows("SELECT r.address,b.data FROM records r JOIN blobs b ON b.hash=r.hash WHERE r.file LIKE 'pages/%' AND r.collection='actions' AND r.address>? ORDER BY r.address LIMIT 1",[.text(after)]).first {
+          after=row[0].text!
+          let fragment=try database.decodeFragmentEnvelope(row[1].blob!)
+          if fragment.value["tool"] == .string("eraser") {try indexPageInkWindow(fragment,database:database)}
         }
       }
       try database.run("PRAGMA user_version=\(Self.currentDatabaseVersion)")

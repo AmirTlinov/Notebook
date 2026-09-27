@@ -327,6 +327,84 @@ final class NotebookDocumentOpeningTests: XCTestCase {
     XCTAssertEqual(model.presence, selected, "Source preparation does not publish an unpresented destination camera")
   }
 
+  func testOpenedWALCutSurvivesUnrelatedWritesButRejectsItsOwnLateAdmission() async throws {
+    let (model, first, second) = try await fixture()
+    let boardID = try XCTUnwrap(model.presence?.boardID), actor = model.actorID
+    let reader = NotebookSceneReader(store: model.store)
+    let blocker = NotebookPersistenceFenceContract.Blocker()
+    defer { blocker.release() }
+    let admission = model.readAdmission.begin()
+    defer { model.readAdmission.end(admission) }
+    let reading = Task {
+      try await reader.read { store in
+        try store.readTransaction { _ in
+          let opened = try NotebookSceneState.readOpenedDocument(store: store,
+            documentID: first.id, boardID: boardID, historyActor: actor)
+          try blocker.hold()
+          return opened
+        }
+      }
+    }
+    try await NotebookPersistenceFenceContract.until { blocker.entered.value == true }
+    var changedSecond = second
+    XCTAssertTrue(changedSecond.replaceFileSource(id: "text", source: "An unrelated write while the WAL cut is held", actor: actor))
+    let editedSecond = changedSecond
+    model.readAdmission.changed(.init(kind: .document, id: second.id))
+    try await model.performStoreCommand { try $0.saveDocument(editedSecond) }
+    blocker.release()
+    let readValue = try await reading.value
+    let opened = try XCTUnwrap(readValue)
+    XCTAssertTrue(try opened.isCurrent(store: model.store, actor: actor))
+    XCTAssertTrue(model.readAdmission.permits(admission, targets: opened.inputScope.publicationTargets))
+    XCTAssertGreaterThan(try model.store.currentChangeCursor(), opened.header.cursor,
+      "A newer global cursor does not invalidate another document's immutable body")
+
+    model.readAdmission.changed(.init(kind: .document, id: first.id))
+    XCTAssertTrue(try opened.isCurrent(store: model.store, actor: actor), "The newly accepted edit has not reached SQL")
+    XCTAssertFalse(model.readAdmission.permits(admission, targets: opened.inputScope.publicationTargets),
+      "Its publication must already be revoked before the accepted write becomes durable")
+    var changedFirst = first
+    XCTAssertTrue(changedFirst.replaceFileSource(id: "text", source: "The affected document changed", actor: actor))
+    let editedFirst = changedFirst
+    try await model.performStoreCommand { try $0.saveDocument(editedFirst) }
+    XCTAssertFalse(try opened.isCurrent(store: model.store, actor: actor))
+    await reader.close()
+  }
+
+  func testPeerPublicationUsesCanonicalCarrierAndAncestorScopes() async throws {
+    let (model, first, second) = try await fixture(secondOnAnotherBoard: true)
+    let peer = UUID(), generation = UUID(), session = UUID()
+    let firstTarget = CollaborationTarget(kind: .document, id: first.id)
+    let secondTarget = CollaborationTarget(kind: .document, id: second.id)
+    let secondBoard = try XCTUnwrap(model.store.ownerBoardID(of: second.id))
+    let boardTarget = CollaborationTarget(kind: .board, id: secondBoard)
+    let firstScope = try model.store.inputScopes(for: [firstTarget])[0]
+    let secondScope = try model.store.inputScopes(for: [.init(kind: .cover, id: second.id)])[0]
+    let boardScope = try model.store.inputScopes(for: [boardTarget])[0]
+    model.peerConnected(.init(deviceID: peer, workspaceID: try model.store.workspaceHeader().workspaceID,
+      displayName: "Scoped publication peer"), generation: generation)
+    defer { model.peerDisconnected(peerID: peer, generation: generation) }
+    model.receivePeerTransient(.inputActivity(.init(deviceID: peer, sessionID: session, sequence: 1,
+      targets: [secondTarget])), peerID: peer, generation: generation)
+    try await NotebookPersistenceFenceContract.until {
+      model.peerAllowsPublication(to: firstTarget, scope: firstScope)
+    }
+    XCTAssertFalse(model.peerAllowsPublication(to: secondScope.target, scope: secondScope),
+      "A document and its cover share one physical carrier")
+    XCTAssertFalse(model.peerAllowsPublication(to: boardTarget, scope: boardScope),
+      "A held descendant also protects its ancestor's installation")
+    model.receivePeerTransient(.inputActivity(.init(deviceID: peer, sessionID: session, sequence: 2,
+      targets: [boardTarget])), peerID: peer, generation: generation)
+    try await NotebookPersistenceFenceContract.until {
+      model.peerAllowsPublication(to: firstTarget, scope: firstScope)
+    }
+    XCTAssertFalse(model.peerAllowsPublication(to: secondTarget, scope: secondScope),
+      "The same canonical ancestor relation protects a document from a held parent")
+    model.receivePeerTransient(.inputActivity(.init(deviceID: peer, sessionID: session, sequence: 3,
+      targets: [])), peerID: peer, generation: generation)
+    XCTAssertTrue(model.peerAllowsPublication(to: secondTarget, scope: secondScope))
+  }
+
   func testCancelledOpeningCannotPublishItsDelayedBody() async throws {
     let (model, first, _) = try await fixture()
     let blocker = NotebookPersistenceFenceContract.Blocker()
@@ -406,12 +484,12 @@ final class NotebookDocumentOpeningTests: XCTestCase {
     model.updatePresence(actual, settled: false)
     model.prepareComposition(presence: target, frame: nil, pinned: [], displayScale: 1)
     let state = try NotebookSceneState.read(store: model.store, presence: target, viewport: target.viewport)
-    XCTAssertTrue(model.acceptExternalScene(state, observedEpoch: model.collaborationReadEpoch,
+    XCTAssertTrue(model.acceptExternalScene(state, admission: model.readAdmission.begin(),
       observedPresence: actual, observedPreparation: target, itemPins: [:]))
     XCTAssertEqual(model.presence, actual, "Preparing another paper cannot teleport the actual cover")
     XCTAssertEqual(model.documents[destination.id], destination, "The accepted opening demand owns its fresh body even while the cover is closed")
     model.updatePresence(actual, settled: true)
-    XCTAssertFalse(model.acceptExternalScene(state, observedEpoch: model.collaborationReadEpoch,
+    XCTAssertFalse(model.acceptExternalScene(state, admission: model.readAdmission.begin(),
       observedPresence: actual, observedPreparation: target, itemPins: [:]),
       "A cancelled passage cannot restore its stale preparation demand")
   }

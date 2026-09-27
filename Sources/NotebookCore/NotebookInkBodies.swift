@@ -12,6 +12,27 @@ private struct NotebookInkBodyReference: Codable {
 }
 
 extension NotebookStoredFragment {
+  /// The accepted physical envelope stores small NIM1 values inline and large
+  /// values by an explicit body reference. Selection proof needs only occurrence
+  /// UUIDs: read the 20-byte portable header, never expand a body graph or samples.
+  func inkMeasurementRevisions(at paths:[[String]]) throws -> [UUID] {
+    let referenced=Set(inkBodies)
+    guard referenced.count == inkBodies.count else {throw NotebookStorageError.corruptRecord(address)}
+    return try paths.map { path in
+      let stored=try value.inkValue(at:path)
+      if referenced.contains(path) {
+        let reference=try stored.decode(NotebookInkBodyReference.self)
+        try reference.validate()
+        guard try JSONValue.encode(reference) == stored else {throw NotebookStorageError.corruptRecord(address)}
+        return reference.revision
+      }
+      guard case .string(let text)=stored,
+        let header=Data(base64Encoded:String(text.prefix(28))),header.count>=20,
+        header.starts(with:Data("NIM1".utf8)) else {throw NotebookStorageError.corruptRecord(address)}
+      return try InkStoredBody.revision(in:header)
+    }
+  }
+
   var inkBodyHashes: [String] {
     get throws {
       guard Set(inkBodies).count == inkBodies.count else { throw NotebookStorageError.invalidTransaction("duplicate ink body path") }

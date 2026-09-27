@@ -7,6 +7,7 @@ final class SpatialInkActionToken: @unchecked Sendable {}
 final class SpatialInkActionStorage: @unchecked Sendable {
   let order: InkActionMapNode<Int, SpatialInkAction>?
   let ids: InkActionMapNode<UUID, Int>?
+  let eraserIndex:InkReadSetBoundsIndex
   let count: Int
   let isValid: Bool
   let token = SpatialInkActionToken()
@@ -16,6 +17,7 @@ final class SpatialInkActionStorage: @unchecked Sendable {
     let identifiers = actions.enumerated().map { ($0.element.id, $0.offset) }.sorted { $0.0 < $1.0 }
     order = InkActionMapNode.balanced(actions.enumerated().map { ($0.offset, $0.element) }, 0, actions.count)
     ids = InkActionMapNode.balanced(identifiers, 0, identifiers.count)
+    eraserIndex=InkReadSetBoundsIndex(spatial:actions)
     count = actions.count
     isValid = zip(identifiers, identifiers.dropFirst()).allSatisfy { $0.0.0 != $0.1.0 }
       && actions.allSatisfy(\.isValid)
@@ -23,9 +25,9 @@ final class SpatialInkActionStorage: @unchecked Sendable {
   }
 
   private init(order: InkActionMapNode<Int, SpatialInkAction>?, ids: InkActionMapNode<UUID, Int>?,
-    count: Int, isValid: Bool, predecessorToken: SpatialInkActionToken) {
+    count: Int, isValid: Bool, predecessorToken: SpatialInkActionToken,eraserIndex:InkReadSetBoundsIndex) {
     self.order = order; self.ids = ids; self.count = count
-    self.isValid = isValid; self.predecessorToken = predecessorToken
+    self.isValid = isValid; self.predecessorToken = predecessorToken;self.eraserIndex=eraserIndex
   }
 
   var actions: [SpatialInkAction] {
@@ -42,13 +44,14 @@ final class SpatialInkActionStorage: @unchecked Sendable {
 
   func appending(_ action: SpatialInkAction) -> SpatialInkActionStorage {
     let key = action.id
+    var index=eraserIndex;index.append(action)
     return .init(order: order?.inserting(count, action) ?? .init(count, action),
-      ids: ids?.inserting(key, count) ?? .init(key, count), count: count + 1, isValid: isValid, predecessorToken: token)
+      ids: ids?.inserting(key, count) ?? .init(key, count), count: count + 1, isValid: isValid, predecessorToken: token,eraserIndex:index)
   }
 
   func replacing(_ action: SpatialInkAction) -> SpatialInkActionStorage {
     guard let position = ids?.value(for: action.id) else { return self }
-    return .init(order: order?.inserting(position, action), ids: ids, count: count, isValid: isValid, predecessorToken: token)
+    return .init(order: order?.inserting(position, action), ids: ids, count: count, isValid: isValid, predecessorToken: token,eraserIndex:eraserIndex)
   }
 
   func hasSameActionStates(as other: SpatialInkActionStorage) -> Bool {

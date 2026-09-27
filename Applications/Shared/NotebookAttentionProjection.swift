@@ -112,7 +112,7 @@ enum NotebookAttentionProjection {
       return finished(result)
     }
     if let strokeID = subject.strokeID {
-      guard let ink = NotebookAgentFeedbackInk.path(strokeID:strokeID,reference:reference,model:model) else { return nil }
+      guard let ink = model.agentFeedback.inkPath(subject,model:model) else { return nil }
       result.ink = ink
       return finished(result)
     }
@@ -496,7 +496,7 @@ enum NotebookAttentionProjection {
     let poses=selectedInkPoses(model:model)
     for raw in model.selectionSession.ink.reversed() {
       guard raw.address.target == hit.target,model.selectionAddressIsCurrent(raw.address),
-        model.selectionInkRevision(raw.address.surface) == raw.revision else { continue }
+        model.selectionInkIsCurrent(raw) else { continue }
       let pose=poses[raw.memberID],local=pose?.frame ?? raw.material.frame
       guard let box=frame(target:raw.address.target,elementID:nil,region:local,
         worldOrigin:raw.address.worldOrigin,pageIndex:nil,model:model,presence:presence,minimumSide:0),

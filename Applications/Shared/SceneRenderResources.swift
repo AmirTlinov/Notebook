@@ -222,6 +222,7 @@ final class WebSurfaceBorrow {
 /// A portal's cover and the ink of the board seen through it are different
 /// physical owners. Element IDs are local to their physical source plane.
 enum ScenePhysicalOwner: Hashable {
+  case pageInk(UUID)
   case boardInk(UUID)
   case item(UUID)
   case element(boardID: UUID, coverID: UUID?, id: String)
@@ -445,7 +446,8 @@ final class SceneRenderResources {
   /// A portal handoff reclassifies both existing physical allocations at once.
   /// Per-owner byte totals avoid walking any samples or mesh batches on input.
   @discardableResult
-  func updatePhysicalPriorities(_ updates: [ScenePhysicalOwner: SceneAllocationPriority]) -> Bool {
+  func updatePhysicalPriorities(_ updates: [ScenePhysicalOwner: SceneAllocationPriority],
+    reclassifyingExistingBacking: Bool = false) -> Bool {
     var nextPassive = passiveReservedBytes
     var changed: [ScenePhysicalOwner: SceneAllocationPriority] = [:]
     for (id, priority) in updates {
@@ -458,9 +460,14 @@ final class SceneRenderResources {
     // updateUIView can reaffirm the same installed role. Mutating even an
     // equal @Observable value here invalidates that graph from its own update.
     guard !changed.isEmpty else { return true }
-    guard makeRoom(for: 0, additionalEntry: false, priority: .passive, passiveReserved: nextPassive) else { return false }
+    // A mounted sheet changing current/neighbor role allocates nothing. Its
+    // existing bytes must follow the real role even if passive usage now exceeds
+    // that allowance; subsequent admission reclaims expendable neighbors first.
+    guard reclassifyingExistingBacking || makeRoom(for: 0, additionalEntry: false, priority: .passive, passiveReserved: nextPassive) else { return false }
+    let previous = rasterAdmission
     for (id, priority) in changed { physicalOwners[id]?.priority = priority }
     if passiveReservedBytes != nextPassive { passiveReservedBytes = nextPassive }
+    scheduleAdmissionNotification(previous)
     return true
   }
 
@@ -629,6 +636,33 @@ final class SceneRenderResources {
     return reserveAllocation(bytes: budget.capture, rasterCount: 1, priority: .passive, physicalOwner: nil)
   }
 
+  /// A current cut belongs only to an accepted physical turn. It never enters
+  /// the passive raster cache or builds a mip pyramid for future readers.
+  func reserveCurrentWebCut(pixelSize: CGSize) -> RasterReservation? {
+    guard pixelSize.width.isFinite, pixelSize.height.isFinite,
+      pixelSize.width >= 1, pixelSize.height >= 1,
+      pixelSize.width < CGFloat(Int.max - 2), pixelSize.height < CGFloat(Int.max - 2) else { return nil }
+    return reserveRaster(pixelWidth: Int(pixelSize.width) + 2, pixelHeight: Int(pixelSize.height) + 2,
+      bytesPerPixel: Self.webSnapshotBytesPerPixel, priority: .input)
+  }
+
+  /// The capture owner transfers this same grant after validation. No bytes
+  /// become free between WebKit completion and the compositor's last borrow.
+  func currentWebCut(_ image: AgentSnapshotImage, for source: SceneRasterSource,
+    reservation: RasterReservation) -> SceneRasterCut? {
+    guard !reservation.isReleased, reservation.resources === self,
+      let allocation = reservations[reservation.id], allocation.priority == .input,
+      let description = Self.rasterDescription(image, source: source, mipmaps: []),
+      description.cost <= allocation.bytes else { return nil }
+    #if os(iOS)
+      guard let pixels = image.cgImage else { return nil }
+    #else
+      guard let pixels = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return nil }
+    #endif
+    return .init(source: source, pixelScale: description.scale,
+      pixels: .init(image: pixels, reservation: reservation))
+  }
+
   /// One estimate for execution, retry and the scene's preflight. Both CPU
   /// pixels and GPU copies of every level remain charged through the same lease.
   nonisolated static func webSnapshotBudget(pixelSize: CGSize) -> (resident: Int, capture: Int)? {
@@ -662,12 +696,13 @@ final class SceneRenderResources {
     return result
   }
 
-  func reserveRaster(pixelWidth: Int, pixelHeight: Int, backingCount: Int = 2, bytesPerPixel: Int = 4) -> RasterReservation? {
-    guard derivedWaiters.isEmpty, (1...16).contains(backingCount),
+  func reserveRaster(pixelWidth: Int, pixelHeight: Int, backingCount: Int = 2, bytesPerPixel: Int = 4,
+    priority: SceneAllocationPriority = .passive) -> RasterReservation? {
+    guard (priority == .input || derivedWaiters.isEmpty), (1...16).contains(backingCount),
       let pair = Self.estimatedRasterBytes(pixelWidth: pixelWidth, pixelHeight: pixelHeight, bytesPerPixel: bytesPerPixel) else { return nil }
     let allocation = (pair / 2).multipliedReportingOverflow(by: backingCount)
-    guard !allocation.overflow, makeRoom(for: allocation.partialValue, additionalEntry: true, priority: .passive) else { return nil }
-    return reserveAllocation(bytes: allocation.partialValue, rasterCount: 1, priority: .passive, physicalOwner: nil)
+    guard !allocation.overflow, makeRoom(for: allocation.partialValue, additionalEntry: true, priority: priority) else { return nil }
+    return reserveAllocation(bytes: allocation.partialValue, rasterCount: 1, priority: priority, physicalOwner: nil)
   }
 
   /// Paper, clipped programs and composition output are admitted together.
@@ -887,7 +922,8 @@ final class SceneRenderResources {
   /// This keeps the original exact pixels and adds about a third, not POT padding.
   func storeWebSnapshot(_ image: AgentSnapshotImage, for source: SceneRasterSource,
     reservation: RasterReservation, semanticSelection: ProgramSemanticSelection? = nil, permitsPublication: @MainActor () -> Bool = { true }) async -> RasterLease? {
-    guard !Task.isCancelled, permitsPublication() else { return nil }
+    guard !Task.isCancelled, permitsPublication(),
+      reservations[reservation.id]?.priority == .passive else { return nil }
     #if os(iOS)
     guard !reservation.isReleased, reservation.resources === self,
       let allocation = reservations[reservation.id], let original = image.cgImage,
@@ -924,7 +960,7 @@ final class SceneRenderResources {
     let previous = rasterAdmission
     if let reservation {
       guard !reservation.isReleased, reservation.resources === self,
-        let allocation = reservations[reservation.id], raster.cost <= allocation.bytes,
+        let allocation = reservations[reservation.id], allocation.priority == .passive, raster.cost <= allocation.bytes,
         allocation.rasterCount > 0 || makeRoom(for: 0, additionalEntry: true, priority: .passive) else { return nil }
     } else if !derivedWaiters.isEmpty || !makeRoom(for: raster.cost, additionalEntry: true, priority: .passive) {
       if let element = source.agentElement {

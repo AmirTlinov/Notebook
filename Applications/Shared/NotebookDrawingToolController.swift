@@ -579,8 +579,10 @@ final class NotebookDrawingToolController {
           onCancel: { preparation.cancel() }
         guard !Task.isCancelled,let self,pendingLasso?.id == current.id,model.selectionSession.id == selection,
           model.selectionAddressIsCurrent(current.address),
-          model.selectionInkRevision(current.address.surface) == result.3,
-          model.selectionSourcesAreCurrent(result.4,dependencies:result.5) else { return }
+          model.selectionSourcesAreCurrent(result.4,dependencies:result.5) else {resolved?(false);return}
+        guard (previousInk+result.2).allSatisfy(model.selectionInkIsCurrent) else {
+          model.showCue("Выбранная рукопись изменилась. Повторите выделение.");resolved?(false);return
+        }
         let accepted=model.selectElements(result.0,items:result.1,ink:previousInk+result.2)
         resolved?(accepted && model.selectionSession.count>0)
       } catch is CancellationError {} catch {

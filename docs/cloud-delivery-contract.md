@@ -67,6 +67,22 @@ ACK is durable; the outgoing prefix advances only after the entire delivery.
 Pending engine work is rebuilt from the outbox after restart. An existing immutable
 server record is accepted only when identity, metadata and digest match.
 
+Outgoing preparation runs on a serial read worker. One WAL cut captures mutable
+records, receipt roots and its journal prefix; dependency discovery then follows
+immutable hashes in short reads. Blob storage retains old bodies without GC.
+Ink discovery walks stored graph references without replaying measurements.
+The derived disk spool is account/generation bound and can never publish content.
+The worker authenticates each import batch before the normal writer copies one
+manifest payload or inserts at most 64 chunk descriptors. Snapshot parts aim at
+1 MiB; the existing 512-part/16,384-address limits can require larger parts near
+the wire ceiling, still capped at 64 MiB. The root's ordering references can also
+exceed 1 MiB. Encoding, hashing and spool reads stay outside writer admission.
+
+Only a completely imported export is sendable or accepts ACKs. Restart resumes
+its exact durable spool; a missing unsealed spool revokes the unexposed export
+and rebuilds the cut. Stop/account change cancels preparation. Sealing releases
+the spool; startup retires unclaimed files, including interrupted SQLite journals.
+
 Incoming chunks may precede their envelope and arrive out of order. They are
 persisted before returning from the fetch event and advancing the engine token.
 Assembly runs outside the writer queue and Pencil handler; `stageBlob` checks the

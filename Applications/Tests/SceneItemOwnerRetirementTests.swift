@@ -273,15 +273,16 @@ final class SceneItemOwnerRetirementTests: XCTestCase {
     defer { model.unbindItemOwnerObserver(owner: binding) }
     model.prepareComposition(presence: prepared, frame: nil,
       pinned: [.item(itemID)], displayScale: 1, installedItemOwners: [itemID: rootID])
-    XCTAssertFalse(model.acceptExternalScene(state, observedEpoch: model.collaborationReadEpoch,
+    XCTAssertFalse(model.acceptExternalScene(state, admission: model.readAdmission.begin(),
       observedPresence: actual, observedPreparation: prepared, itemPins: pins),
       "Even canonical retirement does not revive a settled or cancelled demand")
     model.updatePresence(actual, settled: false)
-    let epoch = model.collaborationReadEpoch
-    XCTAssertFalse(model.acceptExternalScene(state, observedEpoch: epoch &- 1,
+    let admission = model.readAdmission.begin()
+    defer { model.readAdmission.end(admission) }
+    XCTAssertFalse(model.acceptExternalScene(state, admission: UUID(),
       observedPresence: actual, observedPreparation: prepared, itemPins: pins),
       "The retirement proof cannot bypass the accepted-content frontier")
-    XCTAssertTrue(model.acceptExternalScene(state, observedEpoch: epoch,
+    XCTAssertTrue(model.acceptExternalScene(state, admission: admission,
       observedPresence: actual, observedPreparation: prepared, itemPins: pins),
       "An exact active demand must consume its canonical retirement rather than endlessly reread it")
     if observing {

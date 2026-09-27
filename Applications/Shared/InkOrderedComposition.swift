@@ -31,6 +31,7 @@ extension InkRasterRenderer {
     let finish:any MTLRenderPipelineState
     let clip:any MTLRenderPipelineState
     let baseline:any MTLRenderPipelineState
+    let accepted:any MTLRenderPipelineState
     let invertClip:any MTLDepthStencilState
     let insideClip:any MTLDepthStencilState
     let clearClip:any MTLDepthStencilState
@@ -61,6 +62,7 @@ extension InkRasterRenderer {
       finish=try pipeline("stableInkVertex","orderedInkFinalFragment",[3])
       clip=try pipeline("compactInkVertex","orderedInkBodyFragment",[])
       baseline=try pipeline("stableInkVertex","orderedInkBaselineFragment",[0,1])
+      accepted=try pipeline("stableInkVertex","orderedInkAcceptedFragment",[3])
       func stencil(compare:MTLCompareFunction,operation:MTLStencilOperation,write:UInt32) throws -> any MTLDepthStencilState {
         let s=MTLStencilDescriptor();s.stencilCompareFunction=compare
         s.stencilFailureOperation = .keep;s.depthFailureOperation = .keep;s.depthStencilPassOperation=operation
@@ -133,7 +135,7 @@ extension InkRasterRenderer {
   /// pixels. The caller has already selected visible geometry and admitted all
   /// buffers. No await, source query, allocation or presentation occurs here.
   func encodeOrdered(_ events:[OrderedEvent],baseline:(any MTLTexture)?,textureRect:SIMD4<Float>,
-    encoder:any MTLRenderCommandEncoder) throws {
+    accepted:(any MTLTexture)? = nil,damage:MTLScissorRect? = nil,encoder:any MTLRenderCommandEncoder) throws {
     guard let p=ordered else { throw SceneRenderError.resourceLimit }
     func quad(_ pipeline:any MTLRenderPipelineState) {
       var rect=textureRect
@@ -141,6 +143,14 @@ extension InkRasterRenderer {
       encoder.setVertexBytes(&rect,length:MemoryLayout<SIMD4<Float>>.stride,index:0)
       encoder.drawPrimitives(type:.triangle,vertexStart:0,vertexCount:6)
     }
+    if let accepted {
+      var full=SIMD4<Float>(0,0,1,1)
+      encoder.setDepthStencilState(nil);encoder.setRenderPipelineState(p.accepted)
+      encoder.setVertexBytes(&full,length:MemoryLayout<SIMD4<Float>>.stride,index:0)
+      encoder.setFragmentTexture(accepted,index:0)
+      encoder.drawPrimitives(type:.triangle,vertexStart:0,vertexCount:6)
+    }
+    if let damage {encoder.setScissorRect(damage)}
     for event in events.reversed() {
       switch event {
       case .raw(let draw):

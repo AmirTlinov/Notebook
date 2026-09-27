@@ -1,3 +1,4 @@
+import CoreImage
 import NotebookCore
 import PencilKit
 import SwiftUI
@@ -39,29 +40,50 @@ import XCTest
     try await scene.readyPencil(self)
     let native = owner.sheetController
     let curl = try XCTUnwrap(native.view.subviews.compactMap { $0 as? SheetCurlMetalView }.first)
-    let receiveFrame = curl.onFrameReady, captureSize = native.view.bounds.size
+    let receiveFrame = curl.onPageFrameReady, captureSize = native.view.bounds.size
     var captured: CGImage?, capturedReadiness: NotebookMetalFrameReadiness?
     var phases: [String] = []
+    let receiveFailure=native.onFailure
+    native.onFailure = { error in
+      phases.append("native capture failure: \(String(reflecting:error)); sourceStable=\(ink.isStableFramePresented); acceptedMaterial=\(ink.acceptedMaterialIsReady)")
+      receiveFailure(error)
+    }
+    defer { native.onFailure=receiveFailure }
+    let acquireFrame=native.acquireSheetFrame
+    native.acquireSheetFrame = { sheet in
+      let identity="\(ObjectIdentifier(sheet))/\(String(describing:sheet.view.accessibilityIdentifier))"
+      let began=CACurrentMediaTime()
+      phases.append("acquire begin: sheet=\(identity), at=\(began), sourceStable=\(ink.isStableFramePresented), acceptedMaterial=\(ink.acceptedMaterialIsReady)")
+      do {
+        let frame=try await acquireFrame(sheet)
+        phases.append("acquire result: sheet=\(identity), elapsed=\(CACurrentMediaTime()-began), frame=\(frame.id), pixels=\(frame.texture.width)x\(frame.texture.height)")
+        return frame
+      } catch {
+        phases.append("acquire error: sheet=\(identity), elapsed=\(CACurrentMediaTime()-began), error=\(String(reflecting:error)), sourceStable=\(ink.isStableFramePresented), acceptedMaterial=\(ink.acceptedMaterialIsReady)")
+        throw error
+      }
+    }
+    defer { native.acquireSheetFrame=acquireFrame }
     let checkReadiness = native.isSheetReadyForCapture
     native.isSheetReadyForCapture = { sheet in
       let ready = checkReadiness(sheet)
       phases.append("capture admission: ready=\(ready) sourceStable=\(ink.isStableFramePresented)")
-      if ready { XCTAssertTrue(ink.isStableFramePresented, "Capture must wait for the accepted native material") }
+      if ready { XCTAssertTrue(ink.acceptedMaterialIsReady, "Capture must wait for the accepted GPU material") }
       return ready
     }
-    native.onCaptureMeasured = { timing in
+    native.onFramesAcquired = { timing in
       phases.append("capture \(timing.began)…\(timing.ended): sourceStableAtEnd=\(ink.isStableFramePresented)")
     }
-    defer { native.isSheetReadyForCapture = checkReadiness; native.onCaptureMeasured = nil }
-    curl.onFrameReady = { image, progress, sequence, readiness in
+    defer { native.isSheetReadyForCapture = checkReadiness; native.onFramesAcquired = nil }
+    curl.onPageFrameReady = { image, progress, sequence, readiness in
       if captured == nil, readiness.isReady {
-        captured = image; capturedReadiness = readiness
+        captured = PageTurnFrameFixture.image(image); capturedReadiness = readiness
         phases.append("captured source: progress=\(progress) sequence=\(sequence) readiness=\(readiness) sourceStable=\(ink.isStableFramePresented) sourceStamp=\(String(describing: model.pages[page.id]?.drawingStamp))")
       }
       receiveFrame?(image, progress, sequence, readiness)
     }
     defer {
-      curl.onFrameReady = receiveFrame
+      curl.onPageFrameReady = receiveFrame
       let note = XCTAttachment(string: phases.joined(separator: "\n"))
       note.name = erasingShape ? "accepted-erase-curl-source" : "accepted-ink-curl-source"
       note.lifetime = .keepAlways; add(note)
@@ -150,7 +172,7 @@ import XCTest
       XCTAssertEqual(try XCTUnwrap(model.presence?.camera.scale), scale)
       let scene = try Scene(model: model, window: initial.window)
       let ink = try XCTUnwrap((scene.paper.superview as? PaperCanvasContainerView)?.inkView)
-      var phase = "setup", phaseStart = ContinuousClock.now, phases: [String] = []
+      var phase = "setup", phaseStart = ContinuousClock.now, phaseUptime = CACurrentMediaTime(), phases: [String] = []
       @MainActor func record(_ event: String) {
         phases.append("\(phase) +\(phaseStart.duration(to: .now)): \(event); uptime=\(ProcessInfo.processInfo.systemUptime); presentation=\(String(describing: ink.frameReadiness)); stamp=\(String(describing: model.activePage?.drawingStamp)); meshPrepare=\(ink.pageMeshPreparationCount); meshBuild=\(ink.pageMeshBuildCount); drawables=\(ink.drawableRequestCount); committedPass=\(ink.pageCommittedPassCount); geometryReady=\(ink.pageGeometryIsReady); stable=\(ink.isStableFramePresented)")
       }
@@ -166,29 +188,65 @@ import XCTest
         note.lifetime = .keepAlways; add(note)
       }
       @MainActor func observe(_ name: String, probes: [Probe]) async throws {
-        var first: UIImage?, last: UIImage?
-        defer {
-          for (suffix, image) in [("first", first), ("last", last)] {
-            if let image {
-              let shot = XCTAttachment(image: image)
-              shot.name = "inverse-journey-\(iteration)-\(name)-\(suffix)"
-              shot.lifetime = .keepAlways; add(shot)
-            }
-          }
+        let accepted=try XCTUnwrap(model.activePage)
+        func presentedTime() -> TimeInterval? {
+          guard model.activePage?.id == accepted.id,
+            model.activePage?.drawingStamp == accepted.drawingStamp,
+            ink.isStableFramePresented,model.pagePresentations.isPresented(accepted),
+            let time=ink.frameReadiness?.presentedTime,time >= phaseUptime else { return nil }
+          return time
         }
-        // The first read is deliberately immediate, but a stale first image is
-        // not granted an unbounded retry. The existing 100 ms clock includes
-        // input, every capture and the ordinary observation loop's frame yields.
-        try await assertUX("inverse-journey-\(iteration)-\(name)", since: phaseStart,
-          window: scene.window) {
-          let began = ContinuousClock.now
-          let image = try NotebookUXObservation.Pixels(window: scene.window).image
-          let captured = ContinuousClock.now
-          let failures = try NotebookSelectionComposition.Frame(image, sampling: probes).failures(probes)
-          if first == nil { first = image }
-          last = image
-          record("window image began=\(phaseStart.duration(to: began)); capture=\(began.duration(to: captured)); failures=\(failures)")
-          return failures.isEmpty
+        // A previous pen picture can look correct after erase+undo even while
+        // the accepted inverse is not presented. Require that exact new stamp
+        // and its real drawable receipt before checking composed pixels.
+        // Polling window readback before this boundary blocks frame delivery.
+        let deadline=phaseStart+NotebookUXObservation.correctnessTimeout
+        while presentedTime() == nil,ContinuousClock.now<deadline { try await Task.sleep(for:.milliseconds(1)) }
+        let presented=try XCTUnwrap(presentedTime(),"The exact accepted source needs its OS presentation receipt")
+        let elapsed=Duration.seconds(presented-phaseUptime)
+        XCTAssertLessThanOrEqual(elapsed,NotebookUXObservation.correctnessTimeout)
+        record("exact accepted source OS presentation=\(elapsed); ceiling=\(NotebookUXObservation.correctnessTimeout); stamp=\(accepted.drawingStamp)")
+        // Freeze the completed accepted ink cut before the one window capture.
+        // Only a failure reads it back: this distinguishes omitted accepted
+        // pixels from UIKit's representation of an otherwise correct Metal cut.
+        let acceptedInk=ink.acquireAcceptedFrameLease()
+        defer { acceptedInk?.release() }
+        let began=ContinuousClock.now,image=try NotebookUXObservation.Pixels(window:scene.window).image
+        let captured=ContinuousClock.now
+        let failures=try NotebookSelectionComposition.Frame(image,sampling:probes).failures(probes)
+        XCTAssertTrue(failures.isEmpty,"inverse-journey-\(iteration)-\(name): \(failures)")
+        record("independent pixel correctness: capture=\(began.duration(to:captured)); failures=\(failures); capture is outside OS timing, no duration was subtracted")
+        let shot=XCTAttachment(image:image);shot.name="inverse-journey-\(iteration)-\(name)-pixels"
+        shot.lifetime = .keepAlways;add(shot)
+        if !failures.isEmpty {
+          guard let acceptedInk,
+            let raw=CIImage(mtlTexture:acceptedInk.texture,
+              options:[.colorSpace:CGColorSpace(name:CGColorSpace.sRGB)!]) else {
+            record("failed window capture: exact accepted ink lease unavailable")
+            return
+          }
+          let flipped=raw.transformed(by:CGAffineTransform(translationX:0,y:acceptedInk.pixelSize.height).scaledBy(x:1,y:-1))
+          let white=CIImage(color:CIColor.white).cropped(to:flipped.extent)
+          guard let cg=CIContext().createCGImage(flipped.composited(over:white),from:flipped.extent) else {
+            record("failed window capture: accepted ink diagnostic readback unavailable")
+            return
+          }
+          let bounds=acceptedInk.logicalBounds,pixels=acceptedInk.pixelSize
+          let leaseProbes=probes.map { value -> Probe in
+            let points=value.points.map { point in
+              let page=point.applying(scene.pageToWindow.inverted())
+              return CGPoint(x:(page.x-bounds.minX)*pixels.width/bounds.width,
+                y:(page.y-bounds.minY)*pixels.height/bounds.height)
+            }
+            return .init(name:value.name,points:points,color:value.color,
+              minimum:value.minimum,maximum:value.maximum)
+          }
+          let materialImage=UIImage(cgImage:cg)
+          let materialFailures=try NotebookSelectionComposition.Frame(materialImage,sampling:leaseProbes).failures(leaseProbes)
+          record("failure-only frozen accepted ink: generation=\(acceptedInk.generation); source=\(accepted.id)/\(accepted.drawingStamp); bounds=\(bounds); pixels=\(pixels); failures=\(materialFailures); window-to-page=\(scene.pageToWindow.inverted()); this diagnostic does not replace the failed window oracle")
+          let materialShot=XCTAttachment(image:materialImage)
+          materialShot.name="inverse-journey-\(iteration)-\(name)-failed-window-accepted-ink"
+          materialShot.lifetime = .keepAlways;add(materialShot)
         }
       }
       let y = 800.0 + Double(iteration) * 45
@@ -198,13 +256,13 @@ import XCTest
       model.selectPenColor(.black); model.selectPenWidth(12)
       model.selectDrawingTool(.pen)
       try await scene.readyPencil(self)
-      phase = "pen"; phaseStart = .now; record("before contact")
+      phase = "pen"; phaseStart = .now; phaseUptime = CACurrentMediaTime(); record("before contact")
       scene.beginPencil(.init(x: 180, y: y)); scene.movePencil(.init(x: 480, y: y)); scene.endPencil()
       record("accepted lift")
       try await observe("pen", probes: whole)
       model.selectDrawingTool(.eraser); model.selectEraserWidth(28)
       try await scene.readyPencil(self)
-      phase = "erase-undo"; phaseStart = .now; record("before contact")
+      phase = "erase-undo"; phaseStart = .now; phaseUptime = CACurrentMediaTime(); record("before contact")
       scene.beginPencil(.init(x: 300, y: y - 25)); scene.movePencil(.init(x: 300, y: y + 25)); scene.endPencil()
       record("accepted eraser lift")
       let preparations = ink.pageMeshPreparationCount, builds = ink.pageMeshBuildCount
@@ -214,7 +272,7 @@ import XCTest
       XCTAssertEqual(eraser.tool, .eraser)
       XCTAssertFalse(eraser.isActive)
       try await observe("undo", probes: whole)
-      phase = "redo"; phaseStart = .now; record("before repeat")
+      phase = "redo"; phaseStart = .now; phaseUptime = CACurrentMediaTime(); record("before repeat")
       camera.onRedo()
       record("accepted redo")
       XCTAssertEqual(try model.activePage?.inkDrawing().action(id: eraser.id)?.isActive, true)
@@ -264,12 +322,12 @@ import XCTest
     _ = try await turnTarget(owner, forward: true)
     let native = owner.sheetController
     let curl = try XCTUnwrap(native.view.subviews.compactMap { $0 as? SheetCurlMetalView }.first)
-    let present = curl.onFrameReady, admit = native.willTurn
+    let present = curl.onPageFrameReady, admit = native.willTurn
     let pan = NotebookCurlPan()
     var attempted = false, admitted: Bool?
     native.willTurn = { target in let accepted = admit(target); admitted = accepted; return accepted }
     defer { native.willTurn = admit }
-    curl.onFrameReady = { image, progress, sequence, readiness in
+    curl.onPageFrameReady = { image, progress, sequence, readiness in
       present?(image, progress, sequence, readiness)
       guard readiness.isReady, progress == 1, owner.displayedIndex == 1, !attempted else { return }
       attempted = true
@@ -584,10 +642,10 @@ import XCTest
         // commanded animation. Hardware touch arbitration is checked separately.
         let native = owner.sheetController, pan = NotebookCurlPan()
         let curl = try XCTUnwrap(native.view.subviews.compactMap { $0 as? SheetCurlMetalView }.first)
-        let presented = curl.onFrameReady
-        defer { curl.onFrameReady = presented }
+        let presented = curl.onPageFrameReady
+        defer { curl.onPageFrameReady = presented }
         var endpointPresented = false
-        curl.onFrameReady = { image, progress, sequence, readiness in
+        curl.onPageFrameReady = { image, progress, sequence, readiness in
           if progress == 0, readiness.isReady { endpointPresented = true }
           presented?(image, progress, sequence, readiness)
         }
@@ -823,6 +881,17 @@ import XCTest
     await model.prepareNotebookPage(at: 0, in: notebook)
     _ = model.selectNotebookPage(0, notebookID: notebook, expectedRoot: model.notebookPageRoot(notebook)!)
     let scene = try await mount(model)
+    let initialOwner=try pageOwner(scene.window)
+    let startsAtZero=model.workspace?.selectedPageID == ids[0]
+      && model.presence?.notebookPageID == ids[0] && model.activePage?.id == ids[0]
+      && initialOwner.displayedIndex == 0
+      && initialOwner.sheetController.page?.view.accessibilityIdentifier == "page-turn-page-0"
+    if !startsAtZero {
+      let note=XCTAttachment(string:"expected=\(ids[0]); workspace=\(String(describing:model.workspace?.selectedPageID)); presence=\(String(describing:model.presence?.notebookPageID)); active=\(String(describing:model.activePage?.id)); displayed=\(initialOwner.displayedIndex); native=\(String(describing:initialOwner.sheetController.page?.view.accessibilityIdentifier)); root=\(String(describing:model.notebookPageRoot(notebook))); resident=\(model.notebookResidentPageIdentities(notebook))")
+      note.name="native-leaf-journey-initial-selection";note.lifetime = .keepAlways;add(note)
+    }
+    _ = try XCTUnwrap(startsAtZero ? initialOwner:nil,
+      "The stored-leaf journey must start with model, presence and physical host on page zero")
     for (step, index) in [1, 2, 3, 4, 5, 4, 3, 2, 1, 0].enumerated() {
       let owner = try pageOwner(scene.window)
       let forward = index > owner.displayedIndex
@@ -941,24 +1010,23 @@ import XCTest
       probes: leafProbes(0, scene.pageToWindow), budget: NotebookUXObservation.opening)
     let (previous, target) = try await turnTarget(owner, forward: true)
     owner.sheetController(native, willTurnTo: target)
-    let animation = Task { @MainActor in
-      await withCheckedContinuation { continuation in
-        native.show(target, direction: .forward, animated: true) {
-          continuation.resume(returning: $0)
-        }
-      }
-    }
+    var oldCurlCompletion: Bool?
+    native.show(target, direction: .forward, animated: true) { oldCurlCompletion = $0 }
     await Task.yield()
     // The peer removes its still-unadopted leaf while UIKit owns the old curl.
     // The surviving leaf moves into that numeric slot, but is a different UUID.
     _ = try model.store.undoCollaborationAction(removed.receipt.id, actor: peer)
     await model.reloadExternalChanges()?.value
-    try await assertUX("new-root-retires-old-page-shell", since: .now,
+    try await assertUX("new-root-retires-removed-leaf", since: .now,
       budget: NotebookUXObservation.opening, window: scene.window) {
       model.notebookPageRoot(notebook) != oldRoot
-        && owner.cachedPageIdentities[0] != ObjectIdentifier(previous)
+        && !owner.cachedPageIdentities.values.contains(ObjectIdentifier(target))
+        && target.parent == nil && native.settlingPage == nil && oldCurlCompletion != nil
     }
-    _ = await animation.value // Cancellation is legal when the source was retired.
+    XCTAssertEqual(owner.cachedPageIdentities[0], ObjectIdentifier(previous),
+      "The surviving UUID keeps its physical source host when its neighbor is removed")
+    XCTAssertFalse(try XCTUnwrap(oldCurlCompletion),
+      "Removing the captured target cancels and resolves the old curl")
     owner.sheetController(native, didTurnFrom: previous, completed: true)
     owner.sheetController(native, didTurnFrom: previous, completed: false)
     try await shown("old-curl-cannot-land-on-a-different-uuid", window: scene.window,
@@ -1035,7 +1103,60 @@ import XCTest
   }
 
   func testLassoFragmentKeepsBothSidesThroughSecondMoveResizeAndColdReopen() async throws {
-    let model = try await modelWithPages(1), scene = try await mount(model)
+    let model = try await modelWithPages(1)
+    var paints:[EditableElementReference:(source:NotebookNavigationObservation.GraphicPaint,at:ContinuousClock.Instant)]=[:]
+    var controls:(selection:UUID,frame:CGRect,at:ContinuousClock.Instant)?
+    NotebookNavigationObservation.onGraphicPaint = { receipt in
+      if paints[receipt.reference]?.source != receipt { paints[receipt.reference]=(receipt,.now) }
+    }
+    NotebookNavigationObservation.onSelectionControlsPaint = { selection,frame in
+      if controls?.selection != selection || controls?.frame != frame { controls=(selection,frame,.now) }
+    }
+    defer {
+      NotebookNavigationObservation.onGraphicPaint=nil
+      NotebookNavigationObservation.onSelectionControlsPaint=nil
+    }
+    let scene = try await mount(model)
+    // The first fragment introduces a clipping subtree; drawHierarchy may
+    // spend more than the entire gesture budget copying that window. Observe
+    // the actual exact Canvas/control paint first, then verify its pixels.
+    // This is native paint installation, not an OS presentation timestamp.
+    func paintedCut(_ name:String,frame:CGRect,since start:ContinuousClock.Instant) async throws {
+      let page=try XCTUnwrap(model.activePage),display=model.pageGraphicDisplay(page,in:nil)
+      let selection=model.selectionSession.id,windowFrame=frame.applying(scene.pageToWindow)
+      let expected=display.elements.compactMap { element -> (EditableElementReference,NotebookGraphic,NotebookGraphicLayout?)? in
+        guard let graphic=display.graph.node(element.id)?.graphic else { return nil }
+        return (.page(pageID:page.id,elementID:element.id),graphic,display.layouts[element.id])
+      }
+      func receiptTime() -> ContinuousClock.Instant? {
+        guard !expected.isEmpty,let controls,controls.selection == selection,
+          abs(controls.frame.minX-windowFrame.minX)<1,abs(controls.frame.minY-windowFrame.minY)<1,
+          abs(controls.frame.width-windowFrame.width)<1,abs(controls.frame.height-windowFrame.height)<1 else { return nil }
+        var latest=controls.at
+        for (reference,graphic,layout) in expected {
+          guard let paint=paints[reference],paint.source.graphic == graphic,paint.source.layout == layout,
+            paint.source.size.width>0,paint.source.size.height>0 else { return nil }
+          latest=max(latest,paint.at)
+        }
+        return latest
+      }
+      let deadline=start+NotebookUXObservation.correctnessTimeout
+      while receiptTime() == nil,ContinuousClock.now<deadline { try await Task.sleep(for:.milliseconds(1)) }
+      let received=try XCTUnwrap(receiptTime(),"The exact graphic/mask/layout and selection/frame must both paint")
+      let elapsed=start.duration(to:received)
+      XCTAssertLessThanOrEqual(elapsed,NotebookUXObservation.correctnessTimeout)
+      let note=XCTAttachment(string:"\(name): exact native Canvas source/mask/layout and controls selection/frame painted in \(elapsed); ceiling=\(NotebookUXObservation.correctnessTimeout). Includes handler/preparation/paint and callback delivery; no window capture. This is not an OS presentation timestamp or touch-to-photon measurement.")
+      note.name=name+"-native-paint";note.lifetime = .keepAlways;add(note)
+    }
+    func paintedPixels(_ name:String,probes:[Probe]) async throws {
+      try await Task.sleep(for:.milliseconds(16))
+      let began=ContinuousClock.now,image=try NotebookUXObservation.Pixels(window:scene.window).image
+      let failures=try NotebookSelectionComposition.Frame(image,sampling:probes).failures(probes)
+      XCTAssertTrue(failures.isEmpty,"\(name): \(failures)")
+      let note=XCTAttachment(string:"\(name): independent post-paint pixel correctness=\(failures.isEmpty); window capture/check=\(began.duration(to:.now)). Capture cost is not native gesture latency.")
+      note.name=name+"-pixel-correctness";note.lifetime = .keepAlways;add(note)
+      let picture=XCTAttachment(image:image);picture.name=name;picture.lifetime = .keepAlways;add(picture)
+    }
     model.selectDrawingTool(.lasso); model.drawingToolSettings.lassoMode = .region
     try await scene.readyPencil(self)
     let selectedAt = ContinuousClock.now
@@ -1044,10 +1165,11 @@ import XCTest
     let cut = CGRect(x: 180, y: 280, width: 100, height: 120)
     // Before any drag, the shown handles must surround this exact partial
     // material, not its whole parent or a previous selection.
-    try await shown("lasso-selection-before-any-drag", window: scene.window,
+    try await paintedCut("lasso-selection-before-any-drag",frame:cut,since:selectedAt)
+    try await paintedPixels("lasso-selection-before-any-drag",
       probes: NotebookSelectionComposition.controls(cut, transform: scene.pageToWindow, visible: true)
         + [probe("enclosed-body", [(230, 340)], .red, scene.pageToWindow),
-           probe("outside-body", [(350, 340)], .red, scene.pageToWindow)], since: selectedAt)
+           probe("outside-body", [(350, 340)], .red, scene.pageToWindow)])
     let region = try XCTUnwrap(model.selectionSession.region)
     XCTAssertEqual(model.selectionSession.editingElement, region.reference)
     func descendants(_ view: UIView) -> [UIView] { [view] + view.subviews.flatMap(descendants) }
@@ -1094,7 +1216,8 @@ import XCTest
     scene.beginFinger(.init(x: 250, y: 340)); scene.moveFinger(.init(x: 250, y: 560))
     var dropped = ContinuousClock.now; scene.endFinger()
     var fragment = CGRect(x: 180, y: 500, width: 100, height: 120)
-    try await shown("fragment-first-drop", window: scene.window, probes: fragmentProbes(fragment, scene.pageToWindow), since: dropped)
+    try await paintedCut("fragment-first-drop",frame:fragment,since:dropped)
+    try await paintedPixels("fragment-first-drop",probes:fragmentProbes(fragment,scene.pageToWindow))
     try await scene.readyFinger(self)
     scene.beginFinger(.init(x: 250, y: 560)); scene.moveFinger(.init(x: 350, y: 560))
     dropped = .now; scene.endFinger()
@@ -1312,17 +1435,72 @@ import XCTest
     if let paper = view as? PaperInputView, paper.isUserInteractionEnabled { return true }
     return view.subviews.contains { hasEnabledPaper($0) }
   }
-  /// Uses real mounted PageSurface readiness and UIKit animation. The native
-  /// delegate's landing is driven here; this is not a hardware finger swipe.
+  /// Drives the installed native gesture owner. Admission, physical capture
+  /// and its sole landing callback stay on the production path; these are
+  /// mounted callbacks, not a hardware finger swipe.
   private func turn(_ owner: IPadPageTurnController, forward: Bool, completes: Bool) async throws {
-    let native = owner.sheetController, (previous, target) = try await turnTarget(owner, forward: forward)
-    owner.sheetController(native, willTurnTo: target)
-    let finished = await withCheckedContinuation { continuation in
-      native.show(completes ? target : previous, direction: forward ? .forward : .reverse,
-        animated: completes) { continuation.resume(returning: $0) }
+    let native=owner.sheetController,sourceIndex=owner.displayedIndex
+    let targetIndex=sourceIndex+(forward ? 1:-1)
+    let (previous,target)=try await turnTarget(owner,forward:forward)
+    let receiveFailure=native.onFailure,receiveTurn=native.didTurn,receiveFrames=native.onFramesAcquired
+    var failures:[String]=[],finished:Bool?,completionCount=0,acquired=false,verified=false
+    var completionSource:UIViewController?
+    func identity(_ controller:UIViewController?)->String {
+      guard let controller else { return "nil" }
+      return "\(ObjectIdentifier(controller))/\(String(describing:controller.view.accessibilityIdentifier))"
     }
-    XCTAssertTrue(finished)
-    owner.sheetController(native, didTurnFrom: previous, completed: completes)
+    var phases=["initial: displayed=\(sourceIndex), now=\(owner.displayedIndex), native=\(identity(native.page)), source=\(identity(previous)), target=\(identity(target)), expectedTarget=\(targetIndex), completes=\(completes)"]
+    native.onFailure = { error in
+      failures.append(String(reflecting:error))
+      receiveFailure(error)
+    }
+    native.onFramesAcquired = { timing in
+      acquired=true
+      phases.append("pair acquired: \(timing.began)...\(timing.ended), pixels=\(timing.pixels), displayed=\(owner.displayedIndex), native=\(identity(native.page))")
+      receiveFrames?(timing)
+    }
+    native.didTurn = { source,completed in
+      completionCount += 1
+      completionSource=source
+      phases.append("native didTurn #\(completionCount): source=\(identity(source)), completed=\(completed), before=\(owner.displayedIndex), native=\(identity(native.page))")
+      receiveTurn(source,completed)
+      finished=completed
+      phases.append("owner landed: displayed=\(owner.displayedIndex), native=\(identity(native.page))")
+    }
+    defer {
+      native.onFailure=receiveFailure;native.didTurn=receiveTurn;native.onFramesAcquired=receiveFrames
+      if !verified || !failures.isEmpty {
+        phases.append("final: finished=\(String(describing:finished)), callbacks=\(completionCount), displayed=\(owner.displayedIndex), native=\(identity(native.page)); sourceCapturable=\(native.isSheetReadyForCapture(previous)), targetCapturable=\(native.isSheetReadyForCapture(target)); failures=\(failures)")
+        let note=XCTAttachment(string:phases.joined(separator:"\n"))
+        note.name="native-turn-primary-failure";note.lifetime = .keepAlways;add(note)
+      }
+    }
+    _ = try XCTUnwrap(owner.displayedIndex == sourceIndex && native.page === previous
+      && previous.view.accessibilityIdentifier == "page-turn-page-\(sourceIndex)" ? previous:nil,
+      "The physical source must equal the owner's displayed index before gesture admission")
+    _ = try XCTUnwrap(target.view.accessibilityIdentifier == "page-turn-page-\(targetIndex)" ? target:nil,
+      "The prepared target must be exactly the requested adjacent leaf")
+    let deadline=ContinuousClock.now+NotebookUXObservation.opening
+    let admitted=native.beginInteractiveTurn(direction:forward ? .forward:.reverse,target:target)
+    phases.append("admitted=\(admitted), displayed=\(owner.displayedIndex), native=\(identity(native.page))")
+    _ = try XCTUnwrap(admitted ? target:nil,"The native gesture owner must admit the turn")
+    let translation=native.view.bounds.width*(forward ? -0.4:0.4)
+    native.updateInteractiveTurn(translation:translation)
+    // Retain the actual partial curl before release, including cancellation.
+    // No synthetic show(previous) or manually published landing substitutes it.
+    while !acquired,finished == nil,ContinuousClock.now<deadline {
+      try await Task.sleep(for:.milliseconds(2))
+    }
+    _ = try XCTUnwrap(acquired ? target:nil,"The real gesture's immutable frame pair must arrive within the opening budget")
+    native.endInteractiveTurn(completed:completes,travel:translation)
+    while finished == nil,ContinuousClock.now<deadline {try await Task.sleep(for:.milliseconds(2))}
+    _ = try XCTUnwrap(finished,"The native owner must finish within the original one-second opening budget")
+    _ = try XCTUnwrap(completionCount == 1 && completionSource === previous && finished == completes ? target:nil,
+      "Exactly one native callback must report the requested completion or cancellation")
+    let landing=completes ? target:previous,landingIndex=completes ? targetIndex:sourceIndex
+    _ = try XCTUnwrap(native.page === landing && owner.displayedIndex == landingIndex ? landing:nil,
+      "The physical landing and owner index must agree before observing pixels")
+    verified=true
   }
 
   private func turnTarget(_ owner: IPadPageTurnController, forward: Bool) async throws -> (UIViewController, UIViewController) {
@@ -1334,6 +1512,25 @@ import XCTest
         : owner.sheetController(native, before: previous)
       if next == nil { try await Task.sleep(for: .milliseconds(16)) }
     } while next == nil && ContinuousClock.now < deadline
+    if next == nil {
+      var state = ["forward=\(forward), shown=\(owner.displayedIndex), ready=\(owner.preparedPageIndices.sorted()), cached=\(owner.cachedPageIdentities.keys.sorted())"]
+      #if DEBUG
+      state.append(owner.navigationStateDescription)
+      #endif
+      func inspect(_ view: UIView, page: String) {
+        if let canvas = view as? InkCanvasView {
+          state.append("\(page): accepted=\(canvas.acceptedFrameIsReady), empty=\(canvas.acceptedInkIsEmpty), stable=\(canvas.isStableFramePresented), prepared=\(canvas.isStableFramePrepared), geometry=\(canvas.pageGeometryIsReady), retained=\(canvas.hasPageRetainedTexture), paused=\(canvas.isFrameLoopPaused), mounted=\(canvas.window != nil), pixels=\(canvas.drawableSize), failure=\(String(describing: canvas.renderFailure)), mesh=\(canvas.pageMeshBuildCount)/\(canvas.pageMeshPreparationCount), retainedAllocations=\(canvas.pageRetainedAllocationCount), passes=\(canvas.pageCommittedPassCount), drawables=\(canvas.drawableRequestCount)")
+        }
+        for child in view.subviews { inspect(child, page: page) }
+      }
+      for controller in native.children {
+        guard let view = controller.viewIfLoaded else { continue }
+        inspect(view, page: view.accessibilityIdentifier ?? String(describing: ObjectIdentifier(controller)))
+      }
+      state.append("admission=\(SceneRenderResources.shared.rasterAdmission)")
+      let note = XCTAttachment(string: state.joined(separator: "\n"))
+      note.name = "page-turn-target-readiness"; note.lifetime = .keepAlways; add(note)
+    }
     let target = try XCTUnwrap(next, "The real next sheet did not become ready; a fake ready(true) would hide this failure")
     return (previous, target)
   }

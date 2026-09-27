@@ -60,6 +60,8 @@ final class InkMaterialHost: PageInkHost {
   private let id = UUID()
   private var content: NotebookInkMaterialView.Content?
   private var report: NotebookInkMaterialReceiver?
+  private weak var pageActivity: PageTurnActivity?
+  private var pageObserver: UUID?
   let projection:PageInkProjection
   init(projection:PageInkProjection = .init()) {
     self.projection=projection
@@ -76,6 +78,16 @@ final class InkMaterialHost: PageInkHost {
   func update(_ content:NotebookInkMaterialView.Content,projection value:ScenePlaneProjection?,report:NotebookInkMaterialReceiver?) {
     let changedReceiver=self.report?.id != report?.id
     self.content=content;self.report=report
+    if pageActivity !== report?.page?.activity {
+      if let pageObserver { pageActivity?.removePreparationObserver(pageObserver) }
+      pageActivity=report?.page?.activity
+      pageObserver=pageActivity?.observePreparation { [weak self] change in
+        guard case .stage(let index) = change, let self,
+          self.report?.page?.index == index else { return }
+        self.projection.refresh(refining:true)
+        self.canvas.requestPagePresentation()
+      }
+    }
     projection.observe(value)
     canvas.updateMaterial(content)
     if changedReceiver {
@@ -87,6 +99,8 @@ final class InkMaterialHost: PageInkHost {
   }
   func stop() {
     let report=report,id=id
+    if let pageObserver { pageActivity?.removePreparationObserver(pageObserver) }
+    pageObserver=nil;pageActivity=nil
     self.report=nil;content=nil
     Task { @MainActor in report?.report(id,nil,false) }
     projection.stop()
@@ -268,6 +282,7 @@ typealias InkMaterialReadinessReport = @MainActor (UUID,NotebookInkMaterialView.
 struct NotebookInkMaterialReceiver {
   let id: UUID
   let report: InkMaterialReadinessReport
+  var page: (activity: PageTurnActivity, index: Int)? = nil
 }
 private struct InkMaterialReadinessKey: EnvironmentKey {
   static let defaultValue: NotebookInkMaterialReceiver? = nil

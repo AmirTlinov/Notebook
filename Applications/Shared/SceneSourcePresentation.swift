@@ -24,6 +24,7 @@ final class SceneSourceInstallation {
     self.requiresVisibility = requiresVisibility
   }
   var isInstalled: Bool { owner?.isShowing(self) == true }
+  var ownerIdentity: ObjectIdentifier? { owner.map { ObjectIdentifier($0) } }
 }
 
 @MainActor

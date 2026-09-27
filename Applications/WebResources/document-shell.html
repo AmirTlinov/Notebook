@@ -264,6 +264,17 @@
         await programRequest(runtime,'notebook-finish-accepted');
         return {blockID,token:runtime.token,acceptedOnly:true};
       };
+      const checkpointProgram = async blockID => {
+        const runtime=interactiveFrames.get(blockID);if(!runtime)return [];
+        runtime.frame.contentWindow.postMessage({channel:'notebook-navigation-blur',token:runtime.token},'*');
+        try{return [await (runtime.isStarted ? freezeProgram(blockID,runtime) : finishAcceptedProgram(blockID,runtime))]}
+        catch(error){return [{blockID,token:runtime.token,error:String(error)}]}
+      };
+      const resumeProgram = async blockID => {
+        const runtime=interactiveFrames.get(blockID);
+        if(runtime?.isStarted && runtime.visible && programsVisible && !programsSuspended)await programRequest(runtime,'notebook-resume');
+        return true;
+      };
       const checkpointPrograms = async () => {
         programsSuspended = true;
         return Promise.all([...interactiveFrames].map(async ([blockID,runtime])=>{
@@ -835,7 +846,7 @@
         blurPrograms:()=>{for(const runtime of interactiveFrames.values())if(runtime.focused)
           runtime.frame.contentWindow.postMessage({channel:'notebook-navigation-blur',token:runtime.token},'*');return true;},
         cancelLifecycle:()=>{for(const runtime of interactiveFrames.values())runtime.frame.contentWindow.postMessage({channel:'notebook-cancel-lifecycle',token:runtime.token},'*');},
-        receiveStateWindow:createNotebookStateReceiver(state=>{applyState(state);return true;}), checkpointPrograms, finishAcceptedPrograms, resumePrograms, exportProgram, transferProgramState, setProgramsVisible, acknowledgeProgramState, acknowledgeProgramCheckpoint,
+        receiveStateWindow:createNotebookStateReceiver(state=>{applyState(state);return true;}), checkpointProgram, resumeProgram, checkpointPrograms, finishAcceptedPrograms, resumePrograms, exportProgram, transferProgramState, setProgramsVisible, acknowledgeProgramState, acknowledgeProgramCheckpoint,
         presentPage, requireFrame, retirePresentation, observePreparation, observedPageReceipt,
         setPageIndex,
         pageReceipt,

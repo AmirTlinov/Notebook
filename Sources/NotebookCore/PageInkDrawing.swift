@@ -9,34 +9,61 @@ final class PageInkDrawingCache: @unchecked Sendable {
   final class Source: @unchecked Sendable {
     let stamp:VersionStamp
     private let lock=NSLock()
+    private let decoding=NSLock()
+    private let encoding=NSLock()
+    private let preparation=NSLock()
     private var value:PageInkDrawing?
     private var bytes:Data?
-    init(stamp:VersionStamp,drawing:PageInkDrawing? = nil,data:Data? = nil) {
-      self.stamp=stamp;value=drawing;bytes=data
+    private var erasures:PageInkErasureDirectory?
+    private var eraserIndex:InkReadSetBoundsIndex?
+    init(stamp:VersionStamp,drawing:PageInkDrawing? = nil,data:Data? = nil,erasures:PageInkErasureDirectory? = nil,eraserIndex:InkReadSetBoundsIndex? = nil) {
+      self.stamp=stamp;value=drawing;bytes=data;self.erasures=erasures;self.eraserIndex=eraserIndex
     }
+    var prepared:PageInkPreparedProjection? { lock.withLock {
+      guard let value,let erasures,let eraserIndex else { return nil };return .init(drawing:value,erasures:erasures,eraserIndex:eraserIndex)
+    } }
     func drawing() throws -> PageInkDrawing {
-      try lock.withLock {
-        if let value { return value }
-        let decoded=try PageInkDrawing.decode(bytes ?? Data());value=decoded;return decoded
+      if let ready=lock.withLock({value}) { return ready }
+      return try decoding.withLock {
+        if let ready=lock.withLock({value}) { return ready }
+        let archive=lock.withLock { bytes ?? Data() }
+        let decoded=try PageInkDrawing.decode(archive)
+        lock.withLock { value=decoded };return decoded
+      }
+    }
+    func prepare() throws -> PageInkPreparedProjection {
+      if let prepared { return prepared }
+      return try preparation.withLock {
+        if let prepared {return prepared}
+        let drawing=try drawing(),directory=PageInkErasureDirectory(drawing)
+        let index=InkReadSetBoundsIndex(page:drawing.actions)
+        return lock.withLock {
+          erasures=directory;eraserIndex=index
+          return .init(drawing:drawing,erasures:directory,eraserIndex:index)
+        }
       }
     }
     func data() throws -> Data {
-      try lock.withLock {
-        if let bytes { return bytes }
-        let encoded=try value!.dataRepresentation();bytes=encoded;return encoded
+      if let ready=lock.withLock({bytes}) {return ready}
+      return try encoding.withLock {
+        if let ready=lock.withLock({bytes}) {return ready}
+        let encoded=try drawing().dataRepresentation()
+        lock.withLock {bytes=encoded};return encoded
       }
     }
   }
   private let lock=NSLock()
   private var current:Source?
-  init(_ drawing:PageInkDrawing? = nil,stamp:VersionStamp? = nil) {
-    if let drawing,let stamp { current=Source(stamp:stamp,drawing:drawing) }
+  init(_ drawing:PageInkDrawing? = nil,stamp:VersionStamp? = nil,erasures:PageInkErasureDirectory? = nil,eraserIndex:InkReadSetBoundsIndex? = nil) {
+    if let drawing,let stamp { current=Source(stamp:stamp,drawing:drawing,erasures:erasures,eraserIndex:eraserIndex) }
   }
+  init(source:Source) {current=source}
   func stamp(fallback:VersionStamp)->VersionStamp { lock.withLock { current?.stamp ?? fallback } }
   func source(data:Data,stamp:VersionStamp)->Source {
     lock.withLock {
       if let current { return current }
-      let source=Source(stamp:stamp,data:data);current=source;return source
+      let source=data.isEmpty ? Source(stamp:stamp,drawing:.init(),data:data,erasures:.init(),eraserIndex:.init()) : Source(stamp:stamp,data:data)
+      current=source;return source
     }
   }
   func value(for data:Data,stamp:VersionStamp) throws -> PageInkDrawing { try source(data:data,stamp:stamp).drawing() }
@@ -44,8 +71,50 @@ final class PageInkDrawingCache: @unchecked Sendable {
   func publish(_ change:PreparedPageInkChange)->Bool {
     lock.withLock {
       guard (current?.stamp ?? change.baseStamp) == change.baseStamp else { return false }
-      current=Source(stamp:change.stamp,drawing:change.drawing);return true
+      current=change.source;return true
     }
+  }
+}
+
+/// The page source owns this projection alongside its persistent action root.
+/// Cold construction happens on the read worker; accepted changes touch only
+/// the addressed eraser targets. UI consumers never reconstruct the history.
+struct PageInkPreparedProjection:Sendable {
+  let drawing:PageInkDrawing
+  let erasures:PageInkErasureDirectory
+  let eraserIndex:InkReadSetBoundsIndex
+}
+struct PageInkErasureDirectory:Sendable {
+  private struct Entry:Sendable {let actionID:UUID;let value:InkElementErasure}
+  private var entries:[String:[Entry]] = [:]
+  private var targets:[UUID:Set<String>] = [:]
+  private(set) var values:[String:[InkElementErasure]] = [:]
+  init() {}
+  init(_ drawing:PageInkDrawing) {
+    for action in drawing.actions where action.isActive && action.tool == .eraser {append(action)}
+  }
+  private mutating func append(_ action:PageInkAction) {
+    guard action.isActive,action.tool == .eraser else {return}
+    for target in action.elementTargets ?? [] {
+      let value=InkElementErasure(target:target,measurements:action.samples)
+      entries[target.elementID,default:[]].append(.init(actionID:action.id,value:value))
+      values[target.elementID,default:[]].append(value);targets[action.id,default:[]].insert(target.elementID)
+    }
+  }
+  func applying(_ mutation:PageInkMutation,drawing:PageInkDrawing)->Self {
+    var next=self
+    switch mutation {
+    case .append(let action): next.append(action)
+    case .setActive(let ids,let active):
+      for id in ids {
+        for target in next.targets.removeValue(forKey:id) ?? [] {
+          next.entries[target]?.removeAll {$0.actionID == id}
+          next.values[target]=next.entries[target]?.map(\.value)
+        }
+        if active,let action=drawing.action(id:id) {next.append(action)}
+      }
+    }
+    return next
   }
 }
 

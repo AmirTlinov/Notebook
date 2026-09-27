@@ -29,6 +29,7 @@ struct NotebookElementCommandPlan: Sendable {
   let layerMove:NotebookElementLayerMove?
   let copiedFrom:[String:String]
   let expectedInkRevision:String?
+  var inkReadSets:[NotebookInkReadSet] = []
 }
 
 /// The first edit of a raw contact uses the same native command as authored

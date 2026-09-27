@@ -47,7 +47,7 @@ pub unsafe extern "C" fn nb_typesetter_compile(runtime: *const Runtime, entrypoi
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn nb_typesetter_output_bytes(p: *const ResultHandle, kind: u32, count: *mut usize) -> *const u8 {
     let value: &[u8] = match (&unsafe { &*p }.0, kind) {
-        (Ok(v), 0) => &v.pdf, (Ok(v), 1) => &v.synctex, (Ok(v), 2) => v.log.as_bytes(), (Err(e), 3) => e.as_bytes(), _ => &[],
+        (Ok(v), 0) => &v.pdf, (Ok(v), 1) => &v.synctex, (Ok(v), 2) => v.log.as_bytes(), (Ok(v), 4) => &v.input_reads, (Err(e), 3) => e.as_bytes(), _ => &[],
     };
     unsafe { *count = value.len(); } value.as_ptr()
 }

@@ -13,16 +13,45 @@ final class PageTurnSelectionTests: XCTestCase {
     func configure(_ revision: String) {
       controller.update(ownerID: owner, sequenceRevision: revision, pageCount: 3,
         selectedIndex: 0, navigationIsEnabled: true, pageIsInteractive: true, canBeginNavigation: { true },
-        page: { index, _, ready in receipts[index] = ready; ready(true); return AnyView(Color.white) },
+        page: { index, _, ready in receipts[index] = ready; ready.installTestFrame(); ready(true); return AnyView(Color.white) },
         onCommit: { _, _ in }, onTransitioningChange: { _ in }, notebookNavigation: navigation)
     }
     let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
     let previous = scene.windows.first(where: \.isKeyWindow), window = UIWindow(windowScene: scene)
     configure("first"); window.rootViewController = controller; window.makeKeyAndVisible(); window.layoutIfNeeded()
     defer { window.isHidden = true; window.rootViewController = nil; previous?.makeKey() }
-    controller.sheetController.isSheetReadyForCapture = { _ in false }
+    let presentedSource = try XCTUnwrap(receipts[0])
+    var paperRetries = 0, captureRetries = 0
+    let paperFailure = PageTurnPreparationFailure(message: "Visible source failed", retry: { paperRetries += 1 })
+    let captureFailure = PageTurnPreparationFailure(message: "Future curl material failed", retry: { captureRetries += 1 })
+    presentedSource(false)
+    presentedSource.failed(paperFailure)
+    presentedSource.captureFailed(captureFailure)
+    guard case .failed(let visibleFailure) = controller.currentPagePreparation else {
+      return XCTFail("A later capture failure must not hide the visible-paper failure")
+    }
+    XCTAssertEqual(visibleFailure.id, paperFailure.id)
+    visibleFailure.retry()
+    XCTAssertEqual(paperRetries, 1)
+    presentedSource(true, capturable: false)
+    XCTAssertTrue(controller.currentPagePreparation.isReady,
+      "Installed paper can open and accept input independently of its future curl material")
+    controller.sheetController.isSheetPresented = { _ in false }
     XCTAssertTrue(navigation.send(.step(1), ownerID: owner, source: "first"))
     let source = try XCTUnwrap(receipts[0]), target = try XCTUnwrap(receipts[1])
+    XCTAssertFalse(source.isInActiveTurn()); XCTAssertFalse(target.isInActiveTurn())
+    XCTAssertEqual(controller.displayedIndex, 0, "The pending animated request still needs both captures")
+    for _ in 0..<100 where navigation.status?.failure?.id != captureFailure.id { await Task.yield() }
+    let retainedFailure = try XCTUnwrap(navigation.status?.failure)
+    XCTAssertEqual(retainedFailure.id, captureFailure.id, "Paper recovery must retain the independent capture retry")
+    retainedFailure.retry()
+    XCTAssertEqual(captureRetries, 1)
+    XCTAssertEqual(paperRetries, 1, "Capture retry must not rerun the restored visible source")
+    target(false, capturable: true)
+    XCTAssertTrue(controller.preparedPageIndices.contains(1),
+      "A hidden neighbour's immutable GPU cut does not require an OS display receipt")
+    XCTAssertFalse(controller.presentedPageIndices.contains(1))
+    source(true, capturable: true)
     XCTAssertTrue(source.isInActiveTurn()); XCTAssertTrue(target.isInActiveTurn())
     XCTAssertTrue(navigation.send(.step(1), ownerID: owner, source: "first"))
     XCTAssertTrue(source.isInActiveTurn()); XCTAssertTrue(target.isInActiveTurn())
@@ -48,7 +77,7 @@ final class PageTurnSelectionTests: XCTestCase {
       selectedIndex: 0, navigationIsEnabled: true, pageIsInteractive: true, canBeginNavigation: { true },
       page: { index, _, ready in
         readiness[index] = ready
-        if index == 0 { ready(true) }
+        ready.installTestFrame(); if index == 0 { ready(true) }
         return AnyView(Color.white)
       }, onCommit: { index, source in
         XCTAssertEqual(model.selectNotebookPage(index, notebookID: item, expectedRoot: source), index)
@@ -72,7 +101,7 @@ final class PageTurnSelectionTests: XCTestCase {
     controller.update(ownerID: owner, sequenceRevision: "contact-fence", pageCount: 3,
       selectedIndex: 0, navigationIsEnabled: true, pageIsInteractive: true, canBeginNavigation: { true },
       page: { index, _, ready in
-        readiness[index] = ready; if index == 0 { ready(true) }; return AnyView(Color.white)
+        readiness[index] = ready; ready.installTestFrame(); if index == 0 { ready(true) }; return AnyView(Color.white)
       }, onCommit: { index, _ in commits.append(index) }, onTransitioningChange: { _ in },
       notebookNavigation: navigation, inputGate: gate)
     controller.loadViewIfNeeded()
@@ -109,7 +138,7 @@ final class PageTurnSelectionTests: XCTestCase {
     controller.update(ownerID: item, sequenceRevision: model.notebookPageRoot(item)!, pageCount: 2,
       selectedIndex: 0, navigationIsEnabled: true, pageIsInteractive: true, canBeginNavigation: { true },
       page: { index, _, ready in
-        readiness[index] = ready; if index == 0 { ready(true) }; return AnyView(Color.white)
+        readiness[index] = ready; ready.installTestFrame(); if index == 0 { ready(true) }; return AnyView(Color.white)
       }, onCommit: { _, _ in XCTFail("Cancelled reference landed") }, onTransitioningChange: { _ in },
       notebookNavigation: model.notebookPageNavigation)
     controller.loadViewIfNeeded()
@@ -132,7 +161,7 @@ final class PageTurnSelectionTests: XCTestCase {
       controller.update(ownerID: owner, sequenceRevision: "one-navigation-owner", pageCount: 2,
         selectedIndex: selected, navigationIsEnabled: true, pageIsInteractive: true,
         canBeginNavigation: { true }, page: { index, _, ready in
-          ready(true)
+          ready.installTestFrame(); ready(true)
           return AnyView(index == 0 ? Color.blue : Color.red)
         }, onCommit: { index, _ in commits.append(index) }, onTransitioningChange: { _ in },
         notebookNavigation: navigation)
@@ -163,7 +192,7 @@ final class PageTurnSelectionTests: XCTestCase {
         navigationIsEnabled: true, pageIsInteractive: true, canBeginNavigation: { false },
         page: { index, _, ready in
           readiness[index] = ready
-          if index == 0 { ready(true) }
+          ready.installTestFrame(); if index == 0 { ready(true) }
           return AnyView(Color.white.overlay(Text("Sheet \(index)")))
         }, onCommit: { index, _ in selected = index; landed.append(index); configure() },
         onTransitioningChange: { _ in }, notebookNavigation: commands)
@@ -178,9 +207,9 @@ final class PageTurnSelectionTests: XCTestCase {
     XCTAssertEqual(selected, 0, "Requested work is not a shown page")
     XCTAssertEqual(controller.displayedIndex, 0)
     let curl = try XCTUnwrap(controller.sheetController.view.subviews.compactMap { $0 as? SheetCurlMetalView }.first)
-    let resolve = curl.onFrameReady
+    let resolve = curl.onPageFrameReady
     var showedBend = false
-    curl.onFrameReady = { image, progress, sequence, readiness in
+    curl.onPageFrameReady = { image, progress, sequence, readiness in
       if readiness.isReady, progress > 0, progress < 1 { showedBend = true }
       resolve?(image, progress, sequence, readiness)
     }
@@ -209,7 +238,7 @@ final class PageTurnSelectionTests: XCTestCase {
         selectedIndex: actual, navigationIsEnabled: true, pageIsInteractive: true,
         canBeginNavigation: { true }, page: { index, _, ready in
           readiness[revision, default: [:]][index] = ready
-          ready(index != 0 || sourceReady)
+          ready.installTestFrame(); ready(index != 0 || sourceReady)
           return AnyView(index == 0 ? Color.blue : Color.red)
         }, onCommit: { _, _ in XCTFail("A document landing uses its typed receipt") },
         onTransitioningChange: { _ in },
@@ -223,29 +252,35 @@ final class PageTurnSelectionTests: XCTestCase {
     defer { controller.sheetController.cancelMotion(); window.isHidden = true; window.rootViewController = nil; previous?.makeKey() }
     window.layoutIfNeeded()
     let native = controller.sheetController, original = try XCTUnwrap(controller.visiblePageIdentity)
-    let hosts = controller.cachedPageIdentities, checkReadiness = native.isSheetReadyForCapture
-    var refusedCaptures = 0, captures = 0
-    native.isSheetReadyForCapture = { sheet in
-      let ready = checkReadiness(sheet)
-      if !ready { refusedCaptures += 1 }
-      return ready
+    let hosts = controller.cachedPageIdentities, acquireFrame = native.acquireSheetFrame
+    var captureRequests = 0, captures = 0
+    var pendingCapture: CheckedContinuation<Void, Never>?
+    defer { pendingCapture?.resume() }
+    native.acquireSheetFrame = { sheet in
+      captureRequests += 1
+      if captureRequests == 1 {
+        await withCheckedContinuation { pendingCapture = $0 }
+        try Task.checkCancellation()
+      }
+      return try await acquireFrame(sheet)
     }
-    native.onCaptureMeasured = { _ in captures += 1 }
-    sourceReady = false
-    try XCTUnwrap(readiness[source]?[0])(false)
+    native.onFramesAcquired = { _ in captures += 1 }
     request = .init(id: UUID(), documentID: documentID, sourceRevision: source, pageIndex: 1)
     configure()
     let refused = ContinuousClock.now + .seconds(2)
-    while refusedCaptures == 0, ContinuousClock.now < refused { try await Task.sleep(for: .milliseconds(2)) }
-    XCTAssertGreaterThan(refusedCaptures, 0, "Exercise a real motion still waiting for its source image")
+    while captureRequests == 0, ContinuousClock.now < refused { try await Task.sleep(for: .milliseconds(2)) }
+    XCTAssertEqual(captureRequests, 1, "Exercise an admitted motion awaiting its actual source capture")
     XCTAssertNotNil(native.settlingPage)
     XCTAssertEqual(captures, 0)
     let oldReceipt = try XCTUnwrap(readiness[source]?[0])
+    sourceReady = false
+    oldReceipt(false)
 
     source = "new-source"; request = nil
     configure()
     XCTAssertEqual(controller.cachedPageIdentities, hosts, "Editing the document retains its native hosts")
     XCTAssertNil(native.settlingPage, "The old source's motion must end before new readiness can arrive")
+    let retiredCapture = pendingCapture; pendingCapture = nil; retiredCapture?.resume()
     oldReceipt(true)
     XCTAssertFalse(controller.currentPagePreparation.isReady, "A retained host does not authorize an old source receipt")
     sourceReady = true
@@ -323,7 +358,7 @@ final class PageTurnSelectionTests: XCTestCase {
         selectedIndex: actual, navigationIsEnabled: true, pageIsInteractive: true,
         canBeginNavigation: { true }, page: { index, _, ready in
           readiness[index] = ready
-          if index == 0 { ready(true) }
+          ready.installTestFrame(); if index == 0 { ready(true) }
           return AnyView(Text("Page \(index)"))
         }, onCommit: { _, _ in XCTFail("A document landing has its typed acknowledgment") },
         onTransitioningChange: { _ in }, canonicalDocumentLayout: .init(pageCount: 20, sourceRevision: "document-source"), documentSelection: request,
@@ -353,7 +388,11 @@ final class PageTurnSelectionTests: XCTestCase {
     let staleRetry = try XCTUnwrap(status?.failure).retry
     staleRetry()
     XCTAssertEqual(retries, 1)
-    ready(true)
+    // Initial landing can publish while the failed request waits and rebind
+    // the retained host. Retry completes through that host's current receipt;
+    // the old closure must not authorize its successor.
+    let recovered = try XCTUnwrap(readiness[7])
+    recovered.installTestFrame(); recovered(true)
     let landingDeadline = ContinuousClock.now + .seconds(2)
     while actual != 7, ContinuousClock.now < landingDeadline { try await Task.sleep(for: .milliseconds(10)) }
     XCTAssertEqual(actual, 7)
@@ -375,7 +414,7 @@ final class PageTurnSelectionTests: XCTestCase {
         selectedIndex: actual, navigationIsEnabled: true, pageIsInteractive: true, canBeginNavigation: { true },
         page: { index, _, ready in
           readiness[index] = ready
-          if index == 0 { ready(true) }
+          ready.installTestFrame(); if index == 0 { ready(true) }
           return AnyView(Text("Page \(index)"))
         }, onCommit: { _, _ in XCTFail("Typed document route required") }, onTransitioningChange: { _ in },
         canonicalDocumentLayout: .init(pageCount: 20, sourceRevision: "document-source"),
@@ -422,7 +461,7 @@ final class PageTurnSelectionTests: XCTestCase {
         navigationIsEnabled: true, pageIsInteractive: true, canBeginNavigation: { true },
         page: { index, _, ready in
           readiness[index] = ready
-          if index == 0 { ready(true) }
+          ready.installTestFrame(); if index == 0 { ready(true) }
           return AnyView(Text("Page \(index)"))
         }, onCommit: { _, _ in XCTFail("Typed document route required") }, onTransitioningChange: { _ in },
         canonicalDocumentLayout: layout, documentSelection: request,
@@ -461,18 +500,39 @@ final class PageTurnSelectionTests: XCTestCase {
   }
 
   @MainActor
+  func testReorderedDirectoryKeepsResidentBodiesByUUID() throws {
+    let controller = IPadPageTurnController(), owner = UUID(), first = UUID(), second = UUID()
+    func configure(_ root: String, identities: [Int: UUID], selected: Int) {
+      controller.update(ownerID: owner, sequenceRevision: root, pageCount: 2, selectedIndex: selected,
+        navigationIsEnabled: true, pageIsInteractive: true, canBeginNavigation: { true },
+        page: { _, _, ready in ready.installTestFrame(); ready(true); return AnyView(Color.white) },
+        onCommit: { _, _ in }, onTransitioningChange: { _ in }, pageIdentities: identities)
+    }
+    configure("before", identities: [0: first, 1: second], selected: 0)
+    controller.loadViewIfNeeded()
+    let source = try XCTUnwrap(controller.sheetController.page), hosts = controller.cachedPageIdentities
+    configure("after", identities: [0: second, 1: first], selected: 1)
+    XCTAssertTrue(controller.sheetController.page === source)
+    XCTAssertEqual(controller.displayedIndex, 1)
+    XCTAssertEqual(controller.cachedPageIdentities[1], hosts[0])
+    XCTAssertEqual(controller.cachedPageIdentities[0], hosts[1])
+  }
+
+  @MainActor
   func testReorderedSequenceRevokesPreparedHostsAndRejectsTheirLateLanding() throws {
     let controller = IPadPageTurnController(), owner = UUID()
     var readiness: [String: [Int: PageTurnReadiness]] = [:]
     var commits: [(Int, String)] = []
+    let before = Dictionary(uniqueKeysWithValues: (0..<6).map { ($0, UUID()) })
+    let after = Dictionary(uniqueKeysWithValues: (0..<6).map { ($0, UUID()) })
     func configure(_ root: String) {
       controller.update(ownerID: owner, sequenceRevision: root, pageCount: 6, selectedIndex: 0,
         navigationIsEnabled: true, pageIsInteractive: true, canBeginNavigation: { true },
         page: { index, _, ready in
           readiness[root, default: [:]][index] = ready
-          if root == "before" || index == 0 { ready(true) }
+          ready.installTestFrame(); if root == "before" || index == 0 { ready(true) }
           return AnyView(Text("\(root):\(index)"))
-        }, onCommit: { commits.append(($0, $1)) }, onTransitioningChange: { _ in })
+        }, onCommit: { commits.append(($0, $1)) }, onTransitioningChange: { _ in }, pageIdentities: root == "before" ? before : after)
     }
     configure("before"); controller.loadViewIfNeeded()
     let oldSource = try XCTUnwrap(controller.sheetController.page)
@@ -507,7 +567,7 @@ final class PageTurnSelectionTests: XCTestCase {
     controller.update(ownerID: UUID(), sequenceRevision: "cold-order", pageCount: 4, selectedIndex: 0,
       navigationIsEnabled: true, pageIsInteractive: true, canBeginNavigation: { true },
       page: { index, _, ready in
-        built.insert(index); ready(true); return AnyView(Text("Page \(index)"))
+        built.insert(index); ready.installTestFrame(); ready(true); return AnyView(Text("Page \(index)"))
       }, onCommit: { _, _ in }, onTransitioningChange: { _ in })
     controller.loadViewIfNeeded()
     XCTAssertEqual(built, [0, 1], "Spare capacity is not a demand to construct two more pages")
@@ -524,7 +584,7 @@ final class PageTurnSelectionTests: XCTestCase {
     controller.update(ownerID: owner, sequenceRevision: "cold-priority", pageCount: 6, selectedIndex: 0,
       navigationIsEnabled: true, pageIsInteractive: true, canBeginNavigation: { true },
       page: { index, _, ready in
-        callbacks[index] = ready; ready(index == 0); return AnyView(Text("Page \(index)"))
+        callbacks[index] = ready; ready.installTestFrame(); ready(index == 0); return AnyView(Text("Page \(index)"))
       }, onCommit: { _, _ in }, onTransitioningChange: { _ in }, notebookNavigation: commands)
     controller.loadViewIfNeeded()
     XCTAssertTrue(commands.send(.step(1), ownerID: owner, source: "cold-priority"))
@@ -565,7 +625,7 @@ final class PageTurnSelectionTests: XCTestCase {
     let controller = IPadPageTurnController(), commands = NotebookPageNavigation(), notebook = UUID()
     controller.update(ownerID: notebook, sequenceRevision: "burst-window", pageCount: 10, selectedIndex: 0,
       navigationIsEnabled: true, pageIsInteractive: true, canBeginNavigation: { true },
-      page: { index, _, ready in ready(true); return AnyView(Color.white.overlay(Text("Leaf \(index)"))) },
+      page: { index, _, ready in ready.installTestFrame(); ready(true); return AnyView(Color.white.overlay(Text("Leaf \(index)"))) },
       onCommit: { _, _ in }, onTransitioningChange: { _ in }, notebookNavigation: commands)
     window.rootViewController = controller; window.makeKeyAndVisible()
     defer { controller.sheetController.cancelMotion(); window.isHidden = true; window.rootViewController = nil; previous?.makeKey() }
@@ -597,7 +657,7 @@ final class PageTurnSelectionTests: XCTestCase {
         page: { index, _, ready in
           XCTAssertLessThanOrEqual(controller.cachedPageIdentities.count, 4,
             "The limit applies while a new child is being created, not just after reconciliation")
-          rendered.insert(index); ready(true)
+          rendered.insert(index); ready.installTestFrame(); ready(true)
           return AnyView(Text("Page \(index)"))
         }, onCommit: { index, _ in commits.append(index) }, onTransitioningChange: { _ in }, notebookNavigation: commands)
     }
@@ -647,7 +707,7 @@ final class PageTurnSelectionTests: XCTestCase {
         page: { index, _, ready in
           XCTAssertLessThanOrEqual(controller.cachedPageIdentities.count, 4)
           activity = ready.activity
-          rendered.insert(index); ready(true); return AnyView(Text("Page \(index)"))
+          rendered.insert(index); ready.installTestFrame(); ready(true); return AnyView(Text("Page \(index)"))
         }, onCommit: { index, _ in commits.append(index) }, onTransitioningChange: { _ in }, notebookNavigation: commands)
     }
     configure(0); controller.loadViewIfNeeded()
@@ -692,7 +752,7 @@ final class PageTurnSelectionTests: XCTestCase {
           XCTAssertLessThanOrEqual(controller.cachedPageIdentities.count, 4)
           if index >= 8 { XCTAssertNil(controller.cachedPageIdentities[2]) }
           readiness[index] = ready
-          if index < 8 { ready(true) }
+          ready.installTestFrame(); if index < 8 { ready(true) }
           return AnyView(Text("Page \(index)"))
         }, onCommit: { index, _ in commits.append(index) }, onTransitioningChange: { _ in }, notebookNavigation: commands)
     }
@@ -739,7 +799,7 @@ final class PageTurnSelectionTests: XCTestCase {
         navigationIsEnabled: true, pageIsInteractive: true, canBeginNavigation: { true },
         page: { index, _, ready in
           XCTAssertLessThanOrEqual(controller.cachedPageIdentities.count, 4)
-          rendered.insert(index); ready(true); return AnyView(Text("Page \(index)"))
+          rendered.insert(index); ready.installTestFrame(); ready(true); return AnyView(Text("Page \(index)"))
         }, onCommit: { _, _ in }, onTransitioningChange: { _ in }, notebookNavigation: commands)
     }
     configure(4); window.rootViewController = controller; window.makeKeyAndVisible()
@@ -768,16 +828,17 @@ final class PageTurnSelectionTests: XCTestCase {
     let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
     let window = UIWindow(windowScene: scene), controller = IPadPageTurnController(), owner = UUID(), commands = NotebookPageNavigation()
     var reportedPageCount = 5, commits: [Int] = [], rendered = Set<Int>()
+    var root = "before-append", identities = Dictionary(uniqueKeysWithValues: (0..<4).map { ($0, UUID()) })
     func configure(_ selected: Int) {
-      controller.update(ownerID: owner, sequenceRevision: "fixture-order", pageCount: reportedPageCount, selectedIndex: selected,
+      controller.update(ownerID: owner, sequenceRevision: root, pageCount: reportedPageCount, selectedIndex: selected,
         allowsTrailingPageCreation: true, navigationIsEnabled: true, pageIsInteractive: true,
         canBeginNavigation: { true }, page: { index, _, ready in
           XCTAssertLessThanOrEqual(controller.cachedPageIdentities.count, 4)
-          rendered.insert(index); ready(true); return AnyView(Text("Page \(index)"))
+          rendered.insert(index); ready.installTestFrame(); ready(true); return AnyView(Text("Page \(index)"))
         }, onCommit: { target, _ in
           commits.append(target)
-          if target == reportedPageCount - 1 { reportedPageCount += 1 }
-        }, onTransitioningChange: { _ in }, notebookNavigation: commands)
+          if target == reportedPageCount - 1 { identities[target] = UUID(); reportedPageCount += 1; root = "after-append" }
+        }, onTransitioningChange: { _ in }, notebookNavigation: commands, pageIdentities: identities)
     }
     configure(3); window.rootViewController = controller; window.makeKeyAndVisible()
     defer { window.isHidden = true; window.rootViewController = nil }
@@ -785,7 +846,7 @@ final class PageTurnSelectionTests: XCTestCase {
     let blank = try XCTUnwrap(controller.sheetController(controller.sheetController, after: source))
     controller.sheetController(controller.sheetController, willTurnTo: blank)
     let frozenWindow = controller.cachedPageIdentities
-    XCTAssertTrue(commands.send(.jump(0), ownerID: owner, source: "fixture-order"))
+    XCTAssertTrue(commands.send(.jump(0), ownerID: owner, source: root))
     XCTAssertEqual(controller.cachedPageIdentities, frozenWindow)
     controller.sheetController.show(blank, direction: .forward, animated: false)
     controller.sheetController(controller.sheetController, didTurnFrom: source, completed: true)
@@ -812,7 +873,7 @@ final class PageTurnSelectionTests: XCTestCase {
     func configure() {
       controller.update(ownerID: owner, sequenceRevision: "fixture-order", pageCount: 3, selectedIndex: committed,
         navigationIsEnabled: true, pageIsInteractive: true, canBeginNavigation: { true },
-        page: { index, _, ready in ready(true); return AnyView(Text("Page \(index)")) },
+        page: { index, _, ready in ready.installTestFrame(); ready(true); return AnyView(Text("Page \(index)")) },
         onCommit: { index, _ in committed = index }, onTransitioningChange: { _ in })
     }
     configure(); controller.loadViewIfNeeded()
@@ -886,7 +947,7 @@ final class PageTurnSelectionTests: XCTestCase {
         navigationIsEnabled: true, pageIsInteractive: true, canBeginNavigation: { true },
         page: { index, _, ready in
           readiness[index, default: []].append(ready)
-          if preparesImmediately { ready(true) }
+          ready.installTestFrame(); if preparesImmediately { ready(true) }
           return AnyView(Text("Physical page \(index)"))
         }, onCommit: { index, _ in committed = index }, onTransitioningChange: { _ in })
     }
@@ -986,7 +1047,7 @@ final class PageTurnSelectionTests: XCTestCase {
       insideUpdate = true
       controller.update(ownerID: owner, sequenceRevision: "fixture-order", pageCount: 3, selectedIndex: selected,
         navigationIsEnabled: true, pageIsInteractive: true, canBeginNavigation: { true },
-        page: { index, _, ready in if index == 0 || preparesTarget { ready(true) }; return AnyView(Text("Page \(index)")) },
+        page: { index, _, ready in ready.installTestFrame(); if index == 0 || preparesTarget { ready(true) }; return AnyView(Text("Page \(index)")) },
         onCommit: { _, _ in }, onTransitioningChange: { active in
           XCTAssertFalse(insideUpdate, "SwiftUI state must not be published inside updateUIViewController")
           reported.append(active)
@@ -1020,7 +1081,7 @@ final class PageTurnSelectionTests: XCTestCase {
     func update(owner: UUID) {
       controller.update(ownerID: owner, sequenceRevision: "fixture-order", pageCount: 3, selectedIndex: 0,
         navigationIsEnabled: true, pageIsInteractive: true, canBeginNavigation: { true },
-        page: { index, _, ready in activity = ready.activity; ready(true); return AnyView(Text("Page \(index)")) },
+        page: { index, _, ready in activity = ready.activity; ready.installTestFrame(); ready(true); return AnyView(Text("Page \(index)")) },
         onCommit: { _, _ in }, onTransitioningChange: { reported.append((owner, $0)) })
     }
     update(owner: firstOwner); controller.loadViewIfNeeded()

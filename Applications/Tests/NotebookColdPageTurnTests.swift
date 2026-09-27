@@ -35,7 +35,7 @@ import XCTest
     var commits: [Int] = []
     controller.update(ownerID: owner, sequenceRevision: "cancel-after-accepted-steps", pageCount: 8, selectedIndex: 1,
       navigationIsEnabled: true, pageIsInteractive: true, canBeginNavigation: { true },
-      page: { index, _, ready in ready(true); return AnyView(Color.white.overlay(Text("Leaf \(index)"))) },
+      page: { index, _, ready in ready.installTestFrame(); ready(true); return AnyView(Color.white.overlay(Text("Leaf \(index)"))) },
       onCommit: { index, _ in commits.append(index) }, onTransitioningChange: { _ in }, notebookNavigation: commands)
     window.rootViewController = controller; window.makeKeyAndVisible()
     defer { controller.sheetController.cancelMotion(); window.isHidden = true; window.rootViewController = nil; previous?.makeKey() }
@@ -96,7 +96,7 @@ import XCTest
     controller.update(ownerID: UUID(), sequenceRevision: "cold-series", pageCount: 5, selectedIndex: 0,
       navigationIsEnabled: true, pageIsInteractive: true, canBeginNavigation: { true },
       page: { index, _, ready in
-        readiness[index] = ready; if index == 0 { ready(true) }
+        readiness[index] = ready; ready.installTestFrame(); if index == 0 { ready(true) }
         return AnyView(Color.white.overlay(Text("Leaf \(index)")))
       }, onCommit: { index, _ in commits.append(index) }, onTransitioningChange: { _ in })
     window.rootViewController = controller; window.makeKeyAndVisible()
@@ -127,7 +127,7 @@ import XCTest
     var installed: [PageTurnActivity.PreparationDemand?] = []
     controller.update(ownerID: notebook, sequenceRevision: "overlapping-contact", pageCount: 5, selectedIndex: 1,
       navigationIsEnabled: true, pageIsInteractive: true, canBeginNavigation: { true },
-      page: { index, _, ready in activity = ready.activity; ready(true); return AnyView(Color.white.overlay(Text("Leaf \(index)"))) },
+      page: { index, _, ready in activity = ready.activity; ready.installTestFrame(); ready(true); return AnyView(Color.white.overlay(Text("Leaf \(index)"))) },
       onCommit: { index, _ in commits.append(index); installed.append(activity?.installedPreparation) },
       onTransitioningChange: { _ in }, notebookNavigation: commands)
     window.rootViewController = controller; window.makeKeyAndVisible()
@@ -136,9 +136,9 @@ import XCTest
     let native = controller.sheetController
     let admission = try XCTUnwrap(native.view.gestureRecognizers?.compactMap { $0 as? PageTurnAdmissionRecognizer }.first)
     let curl = try XCTUnwrap(native.view.subviews.compactMap { $0 as? SheetCurlMetalView }.first)
-    let resolve = curl.onFrameReady
+    let resolve = curl.onPageFrameReady
     var bending = false, nextBending = false
-    curl.onFrameReady = { image, progress, sequence, readiness in
+    curl.onPageFrameReady = { image, progress, sequence, readiness in
       if readiness.isReady, progress > 0, progress < 1 {
         bending = true
         if controller.displayedIndex == 2 { nextBending = true }
@@ -192,7 +192,7 @@ import XCTest
     controller.update(ownerID: UUID(), sequenceRevision: "cold-held", pageCount: 2, selectedIndex: 0,
       navigationIsEnabled: true, pageIsInteractive: true, canBeginNavigation: { true },
       page: { index, _, ready in
-        readiness[index] = ready; if index == 0 { ready(true) }
+        readiness[index] = ready; ready.installTestFrame(); if index == 0 { ready(true) }
         return AnyView(index == 0 ? Color.blue : Color.red)
       }, onCommit: { index, _ in commits.append(index) }, onTransitioningChange: { _ in })
     window.rootViewController = controller; window.makeKeyAndVisible()
@@ -201,9 +201,9 @@ import XCTest
     let native = controller.sheetController
     let admission = try XCTUnwrap(native.view.gestureRecognizers?.compactMap { $0 as? PageTurnAdmissionRecognizer }.first)
     let curl = try XCTUnwrap(native.view.subviews.compactMap { $0 as? SheetCurlMetalView }.first)
-    let owner = curl.onFrameReady
+    let owner = curl.onPageFrameReady
     var progresses: [Double] = []
-    curl.onFrameReady = { image, progress, sequence, readiness in
+    curl.onPageFrameReady = { image, progress, sequence, readiness in
       if readiness.isReady { progresses.append(progress) }
       owner?(image, progress, sequence, readiness)
     }

@@ -18,6 +18,30 @@ public struct NotebookInputActivity: Codable, Equatable, Sendable {
   public var isValid: Bool { sequence <= VersionStamp.maximumCounter && targets.count <= 4 && Set(targets).count == targets.count }
 }
 
+/// The same physical conflict relation is used by writer admission and native
+/// presentation. Resolving ancestry is storage's job; comparing scopes is pure.
+public struct NotebookInputScope: Sendable, Equatable {
+  public let target: CollaborationTarget
+  public let carrier: UUID
+  public let boards: Set<UUID>
+  public init(target: CollaborationTarget, carrier: UUID, boards: Set<UUID>) {
+    self.target = target; self.carrier = carrier; self.boards = boards
+  }
+  /// A late local write to the carrier or any enclosing board can move or
+  /// retire this physical owner before its SQL receipt has reached the reader.
+  public var publicationTargets: Set<CollaborationTarget> {
+    var result = Set(boards.map { CollaborationTarget(kind: .board, id: $0) })
+    result.insert(.init(kind: target.kind, id: target.id))
+    if target.kind != .board { result.insert(.init(kind: .cover, id: carrier)) }
+    return result
+  }
+  public func overlaps(_ other: Self) -> Bool {
+    (target.kind == other.target.kind && target.id == other.target.id) || carrier == other.carrier
+      || (target.kind == .board && other.boards.contains(target.id))
+      || (other.target.kind == .board && boards.contains(other.target.id))
+  }
+}
+
 extension NotebookStore {
   /// Native delivery protects its admitted physical owners inside the same SQL
   /// transaction as the merge. This is not a second address-to-surface mapper:
@@ -104,31 +128,30 @@ extension NotebookStore {
     }
   }
 
+  public func inputScopes(for targets: [CollaborationTarget]) throws -> [NotebookInputScope] {
+    try readTransaction { _ in
+      try targets.map { target in
+        let carrier = target.kind == .page ? try ownerItemID(ofPage: target.id) ?? target.id : target.id
+        var boards = Set<UUID>()
+        var next = target.kind == .board ? target.id : try ownerBoardID(of: carrier)
+        while let id = next {
+          guard boards.insert(id).inserted else { throw NotebookStorageError.corruptRecord("board cycle") }
+          next = try ownerBoardID(of: id)
+        }
+        return .init(target: target, carrier: carrier, boards: boards)
+      }
+    }
+  }
+
   func requireIdleInput(for targets: [CollaborationTarget], excludingDevice: UUID? = nil) throws {
     let activities = try readInputActivities().filter { $0.isActive && $0.deviceID != excludingDevice }
     guard !activities.isEmpty else { return }
-    var carriers: [CollaborationTarget: UUID] = [:], ancestors: [CollaborationTarget: Set<UUID>] = [:]
-    func carrier(_ target: CollaborationTarget) throws -> UUID {
-      if let cached = carriers[target] { return cached }
-      let value = target.kind == .page ? try ownerItemID(ofPage: target.id) ?? target.id : target.id
-      carriers[target] = value; return value
-    }
-    func boards(_ target: CollaborationTarget) throws -> Set<UUID> {
-      if let cached = ancestors[target] { return cached }
-      var result = Set<UUID>()
-      var next = target.kind == .board ? target.id : try ownerBoardID(of: carrier(target))
-      while let id = next {
-        guard result.insert(id).inserted else { throw NotebookStorageError.corruptRecord("board cycle") }
-        next = try ownerBoardID(of: id)
-      }
-      ancestors[target] = result; return result
-    }
+    let scopes = try inputScopes(for: Array(Set(targets + activities.flatMap(\.targets))))
+    let indexed = Dictionary(uniqueKeysWithValues: scopes.map { ($0.target, $0) })
     for activity in activities {
       for target in targets {
-        if try activity.targets.contains(where: { held in
-          try held == target || carrier(held) == carrier(target)
-            || (held.kind == .board && boards(target).contains(held.id))
-            || (target.kind == .board && boards(held).contains(target.id))
+        if activity.targets.contains(where: { held in
+          indexed[held]!.overlaps(indexed[target]!)
         }) {
           throw CollaborationError("input_active", "Ход пока не сохранён: человек взаимодействует с этой поверхностью. Повторите тот же запрос после завершения касания; версии будут проверены заново.", target: target)
         }

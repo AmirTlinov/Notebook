@@ -194,7 +194,7 @@ import SwiftUI
     else { XCTAssertEqual(state.missingPinnedItems, [itemID]) }
     model.prepareComposition(presence: observed, frame: nil, pinned: [.item(itemID)],
       displayScale: 1, installedItemOwners: [itemID: boardID])
-    XCTAssertTrue(model.acceptExternalScene(state, observedEpoch: model.collaborationReadEpoch,
+    XCTAssertTrue(model.acceptExternalScene(state, admission: model.readAdmission.begin(),
       observedPresence: observed, observedPreparation: observed, itemPins: pins))
     let normalized = try XCTUnwrap(model.presence)
     XCTAssertEqual(model.presencePhase, .settled)

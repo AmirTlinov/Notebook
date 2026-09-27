@@ -6,6 +6,8 @@ import XCTest
 @MainActor final class NotebookNavigationLoadUITests: XCTestCase {
   private var app: XCUIApplication!
   private var surface: XCUIElement { app.otherElements["page-turn-surface"] }
+  private var cover: XCUIElement { app.descendants(matching: .any)
+    .matching(identifier: "workspace-item-7e7a2000-0000-4000-8000-000000000002").firstMatch }
 
   func testDenseSVGPagesTurnForwardReverseAndRepeatedArrowsWithoutBlankLanding() throws {
     launch(programs: false)
@@ -18,11 +20,32 @@ import XCTest
 
   func testTwentyFourPageProgramsAcceptFirstTapAfterZoomAndKeepStateAcrossTurns() throws {
     launch(programs: true); try controls(leaf: 0, since: open())
-    surface.pinch(withScale: 1.4, velocity: 1); surface.pinch(withScale: 1 / 1.4, velocity: -1)
-    let rectangles = try visibleControlRects()
+    // A notebook remains fitted on zoom-in. Zoom-out deliberately closes it;
+    // it is not the inverse of reading magnification as it is for a document.
+    surface.pinch(withScale: 1.4, velocity: 1)
+    let first = try XCTUnwrap(visibleControlRects().first)
+    tapControl(first); try changedControl(first, index: 0)
+    surface.pinch(withScale: 1 / 1.4, velocity: -1)
+    let closedScale = min(app.frame.width / 834, app.frame.height / 1194) * 0.72
+    // The sheet leaves AX when the pinch starts. Its absence alone cannot
+    // acknowledge the closed endpoint; the native cover must reach its pose.
+    let closed = XCTNSPredicateExpectation(predicate: NSPredicate { [self] _, _ in
+      guard !surface.exists, cover.exists, cover.isHittable else { return false }
+      let frame = cover.frame
+      return abs(frame.width - 834 * closedScale) <= 1
+        && abs(frame.height - 1194 * closedScale) <= 1
+    }, object: nil)
+    XCTAssertEqual(XCTWaiter.wait(for: [closed], timeout: 2), .completed,
+      "Zoom-out must return the notebook to its closed cover")
+    try controls(leaf: 0, since: open())
+    let restored = try XCTUnwrap(visibleControlRects(red: true, expectedCount: 1).first)
+    XCTAssertEqual(restored.midX, first.midX, accuracy: 2)
+    XCTAssertEqual(restored.midY, first.midY, accuracy: 2,
+      "The first program must retain its changed state after closing and reopening")
+    let rectangles = try visibleControlRects(expectedCount: 23)
     for (index, rectangle) in rectangles.enumerated() {
       tapControl(rectangle)
-      try changedControl(rectangle, index: index)
+      try changedControl(rectangle, index: index + 1)
     }
     let next = ContinuousClock.now
     app.buttons["next-page"].tap(); try controls(leaf: 1, since: next)
@@ -87,7 +110,7 @@ import XCTest
     }
   }
 
-  private func visibleControlRects(red: Bool = false) throws -> [CGRect] {
+  private func visibleControlRects(red: Bool = false, expectedCount: Int = 24) throws -> [CGRect] {
     let pixels = try Pixels(image: XCTUnwrap(app.screenshot().image.cgImage), size: app.frame.size)
     var visited = [Bool](repeating: false, count: pixels.width * pixels.height), rectangles: [CGRect] = []
     // Connected colour regions survive CSS pulses and text. Only the controls
@@ -109,7 +132,8 @@ import XCTest
         rectangles.append(.init(x:minX,y:minY,width:maxX-minX+1,height:maxY-minY+1))
       }
     }
-    XCTAssertEqual(rectangles.count, 24, "All 24 controls must be visibly present after real zoom")
+    XCTAssertEqual(rectangles.count, expectedCount,
+      "Expected \(expectedCount) visibly \(red ? "changed" : "unchanged") controls")
     return rectangles.sorted { abs($0.midY-$1.midY) > 10 ? $0.midY < $1.midY : $0.midX < $1.midX }
   }
 
@@ -141,10 +165,10 @@ import XCTest
     if board { app.launchArguments.append("--notebook-load-board") }
     let start = ContinuousClock.now
     app.launch(); XCUIDevice.shared.orientation = .portrait
+    assertNotebookFullScreenPortrait(in: app)
     return start
   }
   private func open() -> ContinuousClock.Instant {
-    let cover = app.descendants(matching: .any).matching(identifier: "workspace-item-7e7a2000-0000-4000-8000-000000000002").firstMatch
     XCTAssertTrue(cover.waitForExistence(timeout: 8))
     let start = ContinuousClock.now
     cover.doubleTap()

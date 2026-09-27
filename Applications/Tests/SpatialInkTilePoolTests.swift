@@ -7,6 +7,11 @@ import XCTest
 
 @MainActor
 final class SpatialInkTilePoolTests: XCTestCase {
+  private func waitForInkPresentation(_ canvas:InkCanvasView) async throws {
+    let deadline=ContinuousClock.now + .seconds(1)
+    while !canvas.isStableFramePresented,ContinuousClock.now<deadline {try await Task.sleep(for:.milliseconds(5))}
+    XCTAssertTrue(canvas.isStableFramePresented)
+  }
   func testWholeContactSuppressionBorrowsIndexedChunksWithoutRebuildingOneHundredThousandActions() async throws {
     let fixture=try await Fixture.make(extraContacts:99_999)
     addTeardownBlock { await fixture.close() }
@@ -15,21 +20,22 @@ final class SpatialInkTilePoolTests: XCTestCase {
     let original=try pixels(canvas),built=canvas.preparedCommittedPointCount,installs=canvas.spatialMeshInstallCount
     let visited=canvas.committedBatchQueryVisitCount,queried=canvas.queriedCommittedPointCount
     let restoration=try XCTUnwrap(canvas.captureSourceRestoration(for:[first.id]))
-    let frame=try await canvas.prepareFrame(.ordered(.init(suppressedInkIDs:[first.id])))
+    let firstPlan=NotebookOrderedInkPlan(suppressedInkIDs:[first.id])
+    let geometry=try await canvas.prepareOrderedPlan(firstPlan)
     XCTAssertEqual(try pixels(canvas),original,"Preparing suppression cannot hide the old physical owner")
     XCTAssertEqual(canvas.spatialMeshInstallCount,installs)
     XCTAssertEqual(canvas.preparedCommittedPointCount,built,"The unchanged neighboring ranges retain their exact GPU geometry")
     XCTAssertEqual(canvas.committedBatchQueryVisitCount-visited,0,"The prepared frame borrows the unchanged resident visible ranges, not 100k history")
     XCTAssertLessThan(canvas.queriedCommittedPointCount-queried,64)
-    canvas.installPreparedFrame(frame);restoration.installed()
-    await withCheckedContinuation { continuation in frame.afterPresentationTransaction { continuation.resume() } }
+    try await canvas.presentOrderedPlan(geometry,plan:firstPlan);restoration.installed()
+    try await waitForInkPresentation(canvas)
     XCTAssertNotEqual(try pixels(canvas),original)
     XCTAssertGreaterThan(try blackPixels(canvas),0,"A short contact merged into the same batch stays visible")
     XCTAssertEqual(canvas.installedSpatialSource?.suppressedInkIDs,[first.id])
-    let second=try await canvas.prepareFrame(.ordered(.init(suppressedInkIDs:[first.id,neighbor.id])))
+    let secondPlan=NotebookOrderedInkPlan(suppressedInkIDs:[first.id,neighbor.id])
+    let second=try await canvas.prepareOrderedPlan(secondPlan)
     let suppressionBegan=ContinuousClock.now
-    canvas.installPreparedFrame(second)
-    await withCheckedContinuation { continuation in second.afterPresentationTransaction { continuation.resume() } }
+    try await canvas.presentOrderedPlan(second,plan:secondPlan)
     // Transaction completion releases the candidate; it is not the OS's
     // drawable receipt. Keep the same full-image zero-pixel requirement under
     // the existing window budget, timed from installation rather than the wait.
@@ -39,9 +45,9 @@ final class SpatialInkTilePoolTests: XCTestCase {
     }
     XCTAssertEqual(canvas.spatialMeshInstallCount,installs)
     XCTAssertEqual(canvas.preparedCommittedPointCount,built)
-    let neighborReturned=try await canvas.prepareFrame(.ordered(.init(suppressedInkIDs:[first.id])))
-    canvas.installPreparedFrame(neighborReturned)
-    await withCheckedContinuation { continuation in neighborReturned.afterPresentationTransaction { continuation.resume() } }
+    let neighborReturned=try await canvas.prepareOrderedPlan(firstPlan)
+    try await canvas.presentOrderedPlan(neighborReturned,plan:firstPlan)
+    try await waitForInkPresentation(canvas)
     // A claimed conversion can fail after the next native Pencil contact has
     // already been accepted. Returning A must retain B, not its old journal.
     let next=SpatialInkAction(tool:.pen,spans:[.init(surface:fixture.surface,samples:[-180.0,-120].map { x in
@@ -92,6 +98,7 @@ final class SpatialInkTilePoolTests: XCTestCase {
       canvas.installPreparedFrame(frame,spatialSource:.init(surface:fixture.surface,journal:fixture.journal,suppressedInkIDs:[]))
       canvas.frame.origin = .zero
       await withCheckedContinuation { continuation in frame.afterPresentationTransaction { continuation.resume() } }
+      try await waitForInkPresentation(canvas)
       XCTAssertEqual(canvas.spatialTilePoolIDs, pools)
       XCTAssertEqual(canvas.drawableSize, CGSize(width: size.x * 2, height: size.y * 2))
       XCTAssertTrue(canvas.isStableFramePrepared)
@@ -125,15 +132,19 @@ final class SpatialInkTilePoolTests: XCTestCase {
     XCTAssertTrue(try XCTUnwrap(cancelled).isValid)
     XCTAssertGreaterThan(resources.reservedBytes, before)
     cancelled = nil
+    let cancelledDeadline=ContinuousClock.now + .seconds(1)
+    while resources.reservedBytes != before,ContinuousClock.now<cancelledDeadline {try await Task.sleep(for:.milliseconds(5))}
     XCTAssertEqual(resources.reservedBytes, before)
     XCTAssertEqual(canvas.spatialTilePoolIDs, oldIDs)
     let grown = try await canvas.prepareFrame(.spatial(nil,size:.init(x: 768, y: 768),displayScale:2,camera:nil))
     canvas.installPreparedFrame(grown,spatialSource:.init(surface:fixture.surface,journal:fixture.journal,suppressedInkIDs:[]))
     await withCheckedContinuation { continuation in grown.afterPresentationTransaction { continuation.resume() } }
+    try await waitForInkPresentation(canvas)
     XCTAssertEqual(canvas.spatialTilePoolIDs.count, 9)
     let shrunk = try await canvas.prepareFrame(.spatial(nil,size:.init(x: 512, y: 768),displayScale:2,camera:nil))
     canvas.installPreparedFrame(shrunk,spatialSource:.init(surface:fixture.surface,journal:fixture.journal,suppressedInkIDs:[]))
     await withCheckedContinuation { continuation in shrunk.afterPresentationTransaction { continuation.resume() } }
+    try await waitForInkPresentation(canvas)
     XCTAssertEqual(canvas.spatialTilePoolIDs, oldIDs)
     XCTAssertEqual(resources.reservedBytes, before,
       "Keeping both presentation receipts does not retain their drawable slots or discarded pools")
@@ -379,15 +390,18 @@ final class SpatialInkTilePoolTests: XCTestCase {
 
     static func make(samples: [SpatialInkSample]? = nil,camera: SpatialCamera = .init(scale:1),extraContacts:Int = 0) async throws -> Fixture {
       let fixture = try Fixture(samples:samples,extraContacts:extraContacts)
+      fixture.retention = fixture.canvas.retainForSpatialHandoff(displayScale: 2)
+      fixture.canvas.project(camera: camera, viewport: .init(x: 512, y: 768))
+      let mesh = try SpatialInkMesh.prepare(surface: fixture.surface, journal: fixture.journal)
+      let frame = try await fixture.canvas.prepareFrame(.spatial(mesh,size:.init(x: 512, y: 768),displayScale:2,camera:nil))
+      XCTAssertNil(fixture.canvas.window)
+      XCTAssertTrue(frame.isValid,"The scene prepares new physical ink owners before mounting its cohort")
       fixture.window.rootViewController = fixture.host
       fixture.host.view.addSubview(fixture.canvas); fixture.window.makeKeyAndVisible()
       let deadline = ContinuousClock.now + .seconds(5)
       while !fixture.host.appeared, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(5)) }
       XCTAssertTrue(fixture.host.appeared)
-      fixture.retention = fixture.canvas.retainForSpatialHandoff(displayScale: 2)
-      fixture.canvas.project(camera: camera, viewport: .init(x: 512, y: 768))
-      let mesh = try SpatialInkMesh.prepare(surface: fixture.surface, journal: fixture.journal)
-      let frame = try await fixture.canvas.prepareFrame(.spatial(mesh,size:.init(x: 512, y: 768),displayScale:2,camera:nil))
+      XCTAssertTrue(frame.isValid,"A first mount must preserve the accepted spatial candidate")
       fixture.canvas.installPreparedFrame(frame,spatialSource:.init(surface:fixture.surface,journal:fixture.journal,suppressedInkIDs:[]))
       await withCheckedContinuation { continuation in frame.afterPresentationTransaction { continuation.resume() } }
       return fixture

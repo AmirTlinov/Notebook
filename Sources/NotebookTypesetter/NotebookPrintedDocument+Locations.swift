@@ -3,9 +3,8 @@ import NotebookCore
 import CNotebookTypesetter
 
 extension NotebookPrintedDocument {
-  public var locationDecodeBytes: Int { Self.decodedSize(syncTeX) }
   public func locations() throws -> [DocumentPrintLocation] {
-    try Self.projection(syncTeX: syncTeX, files: sourceMap.files, pages: pages).locations
+    projection.locations
   }
   static func regionMap(_ regions: [DocumentPrintInteractiveRegion]) throws -> Data {
     let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]

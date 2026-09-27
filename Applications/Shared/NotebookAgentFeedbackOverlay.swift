@@ -37,6 +37,9 @@ struct NotebookAgentFeedbackOverlay: View {
       }
     }
     .allowsHitTesting(false).accessibilityHidden(true)
+    .task(id:(model.agentFeedback.pendingSubjects+model.agentFeedback.attention+model.agentFeedback.episodes.values.map(\.subject)).map { $0.key+"|"+($0.expected.inkRevision ?? "")+"|"+$0.expected.revision }.sorted().joined(separator:";")) {
+      model.agentFeedback.prepareInkMaterials(model.agentFeedback.pendingSubjects+model.agentFeedback.attention+model.agentFeedback.episodes.values.map(\.subject),model:model)
+    }
     .task(id:model.presentationPlayer.stage?.id) {
       await model.prepareAgentAttention(model.presentationPlayer.stage)
     }
@@ -59,6 +62,7 @@ extension NotebookAppModel {
       let cohort, cohort.isPaintInstalled, cohort.frame.index.generationID == sceneIndex?.generationID else { return }
     let subjects = agentFeedback.pendingSubjects + agentFeedback.attention + agentFeedback.episodes.values.map(\.subject)
     guard !subjects.isEmpty else { return }
+    agentFeedback.prepareInkMaterials(subjects,model:self)
     let viewport = CGRect(x:0,y:0,width:visible.viewport.x,height:visible.viewport.y)
     var ready = Set<String>(), offscreen = Set<String>()
     for subject in subjects {
@@ -86,7 +90,7 @@ extension NotebookAppModel {
         installed = scene.map { sceneRepresents(reference,in:$0,cohort:cohort,presence:visible,inkRevision:subject.expected.inkRevision) } ?? false
       case .workspace, .codeFragment: installed = false
       }
-      if installed { ready.insert(subject.key) }
+      if installed,subject.strokeID == nil || agentFeedback.inkPath(subject,model:self) != nil {ready.insert(subject.key)}
     }
     agentFeedback.presented(ready:ready,offscreen:offscreen)
     if let stageID = agentFeedback.attentionID, !agentFeedback.attention.isEmpty,
