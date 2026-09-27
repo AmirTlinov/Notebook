@@ -32,8 +32,8 @@ import XCTest
     let closed = XCTNSPredicateExpectation(predicate: NSPredicate { [self] _, _ in
       guard !surface.exists, cover.exists, cover.isHittable else { return false }
       let frame = cover.frame
-      return abs(frame.width - 834 * closedScale) <= 1
-        && abs(frame.height - 1194 * closedScale) <= 1
+      return frame.width > 0 && frame.width <= 834 * closedScale + 1
+        && frame.height > 0 && frame.height <= 1194 * closedScale + 1
     }, object: nil)
     XCTAssertEqual(XCTWaiter.wait(for: [closed], timeout: 2), .completed,
       "Zoom-out must return the notebook to its closed cover")

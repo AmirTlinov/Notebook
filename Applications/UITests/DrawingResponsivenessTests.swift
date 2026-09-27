@@ -71,10 +71,31 @@ final class DrawingResponsivenessTests: XCTestCase {
     node.pinch(withScale:1.6,velocity:0.7)
     XCTAssertEqual(paper.frame,originalPaper,"Zooming in keeps the notebook fitted")
     XCTAssertEqual(surface.value as? String,page)
-    surface.pinch(withScale:0.5,velocity:-1)
+    surface.pinch(withScale:0.1,velocity:-1)
     XCTAssertTrue(surface.waitForNonExistence(timeout:5),"Zooming out must close the notebook")
+    let cover = app.descendants(matching:.any)
+      .matching(identifier:"workspace-item-7e7a1000-0000-4000-8000-000000000002").firstMatch
+    XCTAssertTrue(cover.waitForExistence(timeout:3))
+    XCTAssertTrue(cover.isHittable)
+    let closedWidth = originalPaper.width * 0.72
+    let firstExitWidth = cover.frame.width
+    XCTAssertGreaterThan(firstExitWidth,0)
+    XCTAssertLessThan(firstExitWidth,closedWidth * 0.5,
+      "Releasing a strong zoom-out must preserve the smaller cover, not return to coverScale")
+    app.pinch(withScale:0.7,velocity:-1)
+    XCTAssertFalse(surface.exists)
+    let secondExitWidth = cover.frame.width
+    XCTAssertGreaterThan(secondExitWidth,0)
+    XCTAssertLessThan(secondExitWidth,firstExitWidth * 0.9,
+      "The next zoom-out must continue from the camera left by the first gesture")
+    let rebound = XCTNSPredicateExpectation(predicate:NSPredicate { _,_ in
+      cover.frame.width > secondExitWidth + 2
+    },object:nil)
+    rebound.isInverted = true
+    XCTAssertEqual(XCTWaiter.wait(for:[rebound],timeout:1),.completed,
+      "The released camera must not zoom itself back toward the cover")
     let closed = XCTAttachment(screenshot:app.screenshot()); closed.name="Notebook closed by pinch"; closed.lifetime = .keepAlways; add(closed)
-    app.pinch(withScale:1.6,velocity:1)
+    cover.doubleTap()
     XCTAssertTrue(surface.waitForExistence(timeout:10))
     XCTAssertEqual(surface.value as? String,page)
     XCTAssertEqual(paper.frame,originalPaper)

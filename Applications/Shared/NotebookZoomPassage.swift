@@ -52,7 +52,9 @@ struct NotebookZoomPassage: Sendable {
   }
 
   func closed(viewport:SpatialPoint,camera:SpatialCamera) -> SessionPresence {
+    // Finish closing a partial cover, but preserve any zoom-out already made
+    // beyond that boundary. Releasing the pinch must not pull the board back in.
     .init(boardID:parentID,mode:.board,camera:.init(center:camera.center,
-      scale:geometry.coverScale(viewport:viewport)),viewport:viewport)
+      scale:min(camera.scale,geometry.coverScale(viewport:viewport))),viewport:viewport)
   }
 }

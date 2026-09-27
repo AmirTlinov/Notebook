@@ -68,7 +68,9 @@ import XCTest
     app.buttons["Исходник: main.tex"].firstMatch.pinch(withScale:0.5,velocity:-1)
     XCTAssertTrue(surface.waitForNonExistence(timeout:5),"Zooming out must close the document")
     let closed = XCTAttachment(screenshot:app.screenshot()); closed.name="Document closed by pinch"; closed.lifetime = .keepAlways; add(closed)
-    app.pinch(withScale:1.6,velocity:1)
+    // Closing preserves the zoom-out below the cover boundary. Reopen from
+    // that actual board scale rather than depending on the old snap back.
+    app.pinch(withScale:3,velocity:1)
     XCTAssertTrue(surface.waitForExistence(timeout:15))
     XCTAssertTrue(slider.waitForExistence(timeout:15))
     XCTAssertEqual(slider.value as? String,value)

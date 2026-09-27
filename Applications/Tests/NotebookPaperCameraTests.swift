@@ -110,10 +110,13 @@ final class NotebookPaperCameraTests: XCTestCase {
     if document {
       let source=try XCTUnwrap(model.documents[item]),state=try XCTUnwrap(model.documentStates[item])
       let deadline=ContinuousClock.now + .seconds(12)
-      while !DocumentRenderRegistry.shared.hasLiveSurface(document:source,state:state,pageIndex:0,scope:.paper),ContinuousClock.now < deadline {
+      while (!DocumentRenderRegistry.shared.hasLiveSurface(document:source,state:state,pageIndex:0,scope:.paper)
+        || !hasMeasuredPaperProjection(model,in:window,documentID:item)),ContinuousClock.now < deadline {
         try await Task.sleep(for:.milliseconds(20))
       }
       XCTAssertTrue(DocumentRenderRegistry.shared.hasLiveSurface(document:source,state:state,pageIndex:0,scope:.paper))
+      XCTAssertTrue(hasMeasuredPaperProjection(model,in:window,documentID:item),
+        "The directly opened fixture must install its measured PDF geometry before capturing the original pose")
     }
     let start=try XCTUnwrap(model.presence)
     let owner=try coordinator(in:window),pair=CGPoint(x:start.viewport.x/2,y:start.viewport.y/2)
@@ -121,9 +124,21 @@ final class NotebookPaperCameraTests: XCTestCase {
     owner.onCamera(.began(centroid:pair))
     owner.onCamera(.changed(scale:0.1,velocity:-2,elapsed:0.2,centroid:pair))
     XCTAssertEqual(model.presence?.focusedItemID,item)
+    let releasedCamera=try XCTUnwrap(model.presence?.camera)
+    XCTAssertLessThan(releasedCamera.scale,model.itemGeometry(item).coverScale(viewport:start.viewport))
     owner.onCamera(.ended(scale:0.1,velocity:-2,elapsed:0.3,centroid:pair))
     try await waitFor(model,mode:.board)
     XCTAssertNil(model.presence?.focusedItemID)
+    assertCamera(try XCTUnwrap(model.presence?.camera),equals:releasedCamera)
+    assertCamera(try XCTUnwrap(model.nativeCameraProjection.current(for:start.boardID)?.camera),equals:releasedCamera)
+    // Continue from the actual closed-board pose on the next contact.
+    owner.onCamera(.began(centroid:pair))
+    owner.onCamera(.changed(scale:0.75,velocity:-1,elapsed:0.2,centroid:pair))
+    let continuedCamera=try XCTUnwrap(model.presence?.camera)
+    XCTAssertLessThan(continuedCamera.scale,releasedCamera.scale)
+    owner.onCamera(.ended(scale:0.75,velocity:-1,elapsed:0.3,centroid:pair))
+    try await waitFor(model,mode:.board)
+    assertCamera(try XCTUnwrap(model.presence?.camera),equals:continuedCamera)
     let factor=CGFloat(model.itemGeometry(item).fitScale(viewport:start.viewport)/(try XCTUnwrap(model.presence?.camera.scale)))
     owner.onCamera(.began(centroid:pair))
     owner.onCamera(.changed(scale:factor*1.1,velocity:2,elapsed:0.2,centroid:pair))
@@ -153,6 +168,18 @@ final class NotebookPaperCameraTests: XCTestCase {
     }
     let paper=try XCTUnwrap(find(window))
     return paper.convert(paper.bounds,to:window)
+  }
+
+  private func hasMeasuredPaperProjection(_ model:NotebookAppModel,in window:UIWindow,documentID:UUID) -> Bool {
+    guard let document=model.documents[documentID],let layout=DocumentRenderRegistry.shared.layout(document:document),
+      let presence=model.presence,let center=model.boardHierarchy?.focusedCenter(of:documentID,in:presence.boardID),
+      let frame=try? paperFrame(in:window,documentID:documentID) else { return false }
+    // This fixture starts in document mode before compilation. A live PDF in
+    // the neutral A4 host is not the original pose of a measured Letter page.
+    let expected=layout.paper(on:presence.documentPageIndex).geometry.screenFrame(
+      center:center,camera:presence.camera,viewport:presence.viewport)
+    return [(frame.minX,expected.x),(frame.minY,expected.y),(frame.width,expected.width),(frame.height,expected.height)]
+      .allSatisfy { abs($0.0 - $0.1) <= 1/window.screen.scale }
   }
 
   func testClosedCoverOwnsItsHitAndReopensByTheSameTapCallback() async throws {
