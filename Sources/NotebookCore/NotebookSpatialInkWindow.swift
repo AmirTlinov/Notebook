@@ -198,7 +198,7 @@ extension NotebookStore {
     if try !database.rows("SELECT 1 FROM ink_surfaces WHERE address=? LIMIT 1",[.text(fragment.address)]).isEmpty {
       try database.run("UPDATE ink_surfaces SET active=? WHERE address=? AND active<>?",[.integer(Int64(active)),.text(fragment.address),.integer(Int64(active))]);return
     }
-    guard let action=try readPageInkAction(pageID:page,actionID:id)?.action else {throw NotebookStorageError.corruptRecord(fragment.address)}
+    guard let action=try readStoredPageInkAction(pageID:page,actionID:id) else {throw NotebookStorageError.corruptRecord(fragment.address)}
     let bounds=NotebookInkReadSet.bounds(of:action.samples),a=bounds.origin,b=bounds.maximum,owner=page.uuidString.lowercased()
     try database.run("""
       INSERT INTO ink_surfaces(address,kind,owner_id,min_tx,min_ty,min_x,min_y,max_tx,max_ty,max_x,max_y,space_key,active,tool,has_ink)

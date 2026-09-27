@@ -243,6 +243,26 @@ struct NotebookSpatialInkWindowTests {
       let selectedPage = try #require(page.inkSource.readSet(for: pagePen.id, on: .page(pageID)))
       let topPage = try #require(page.inkSource.readSet(for: pageTop.id, on: .page(pageID)))
       #expect(selectedPage.erasers.map(\.id) == [pageCut.id] && topPage.erasers.isEmpty)
+
+      // Retiring a notebook removes live membership but keeps admitted PAGE
+      // sources for history and delayed delivery, including native erasers.
+      var index = try store.loadIndex(), board = try store.loadBoard(items: index.items)
+      let created = index.createNotebook(title: "Retired ink", actor: actor, pageSize: page.size)
+      let retired = try #require(created)
+      let placed = board.addItem(retired.item.id, to: header.rootBoardID, near: .zero, actor: actor)
+      #expect(placed)
+      var retiredPage = retired.page
+      let retiredCut = PageInkAction(tool: .eraser, measurements: pageSamples, sequence: 1)
+      let retiredDrawing = PageInkDrawing(actions: [retiredCut])
+      let retained = retiredPage.replaceDrawing(try retiredDrawing.dataRepresentation(), actor: actor)
+      #expect(retained)
+      try store.saveWorkspaceBundle(index: index, page: retiredPage, board: board)
+      try store.commandTransaction {
+        try store.deleteWorkspaceItemContent(itemID: retired.item.id, actor: actor, human: true)
+      }
+      #expect(try store.ownerItemID(ofPage: retiredPage.id) == nil)
+      #expect(try store.retiredNotebookMembership(ofPage: retiredPage.id)?.itemID == retired.item.id)
+      #expect(try store.readStoredPageInkAction(pageID: retiredPage.id, actionID: retiredCut.id) == retiredCut)
       let proof = try store.archiveContentProof(), cursor = try store.currentChangeCursor()
 
       // v26 had spatial bounds, but neither painter columns nor indexed page
@@ -265,6 +285,20 @@ struct NotebookSpatialInkWindowTests {
       #expect(restoredSpatial.actions == spatial.actions && restoredPage.preparedInkDrawing == drawing)
       #expect(selectedSpatial.matches(restoredSpatial) && topSpatial.matches(restoredSpatial))
       #expect(selectedPage.matches(restoredPage.inkSource) && topPage.matches(restoredPage.inkSource))
+      #expect(try reopened.ownerItemID(ofPage: retiredPage.id) == nil)
+      #expect(try reopened.readStoredPageInkAction(pageID: retiredPage.id, actionID: retiredCut.id) == retiredCut)
+      #expect(throws: CollaborationError.self) {
+        _ = try reopened.readPageInkAction(pageID: retiredPage.id, actionID: retiredCut.id)
+      }
+      let retiredAddress = pageFile(retiredPage.id) + "#/drawingData/actions/@" + retiredCut.id.uuidString.lowercased()
+      let indexed = try reopened.sqlRead {
+        try $0.rows("SELECT kind,owner_id,active,tool,paint_counter FROM ink_surfaces WHERE address=?", [.text(retiredAddress)])
+      }
+      let retiredIndex = try #require(indexed.first)
+      #expect(indexed.count == 1 && retiredIndex[0].text == "page"
+        && retiredIndex[1].text == retiredPage.id.uuidString.lowercased()
+        && retiredIndex[2].integer == 1 && retiredIndex[3].text == "eraser"
+        && retiredIndex[4].integer == Int64(retiredCut.sequence))
       try reopened.readTransaction { _ in
         try reopened.validateInkReadSets([selectedSpatial, topSpatial], target: .init(kind: .board, id: header.rootBoardID))
         try reopened.validateInkReadSets([selectedPage, topPage], target: .init(kind: .page, id: pageID))

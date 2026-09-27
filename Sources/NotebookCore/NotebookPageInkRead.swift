@@ -83,24 +83,40 @@ extension NotebookStore {
   public func readPageInkAction(pageID: UUID, actionID: UUID) throws -> NotebookPageInkActionRead? {
     try readTransaction { _ in
       let header = try readContentHeader(target: .init(kind: .page, id: pageID))
-      let file = pageFile(pageID), parent = pageFile(pageID) + "#/drawingData"
-      let member = actionID.uuidString.lowercased(), address = parent + "/actions/@" + actionID.uuidString.lowercased()
+      let address = pageFile(pageID) + "#/drawingData/actions/@" + actionID.uuidString.lowercased()
       let rows = try boundedStoredFragments([(address, true)], maximumCount: 2,
         maximumBytes: 4 * 1_024 * 1_024, budget: "page_ink_action")
-      guard !rows.isEmpty else { return nil }
-      guard let root = rows.first(where: { $0.address == address }), root.file == file,
-        root.parent == parent, root.collection == "actions", root.member == member else {
-        throw NotebookStorageError.corruptRecord(address)
-      }
-      let action = try NotebookRecordCodec.decode(rows, root: address).decode(PageInkAction.self)
-      guard action.id == actionID, action.sequence > 0 else { throw NotebookStorageError.corruptRecord(address) }
-      let canonical = try NotebookRecordCodec.encode(.encode(action), file: file, address: address,
-        parent: parent, collection: "actions", member: member, position: root.position)
-      guard Dictionary(uniqueKeysWithValues: canonical.map { ($0.address, $0) })
-        == Dictionary(uniqueKeysWithValues: rows.map { ($0.address, $0) }) else {
-        throw NotebookStorageError.corruptRecord(address)
-      }
+      guard let action = try decodeStoredPageInkAction(rows, pageID: pageID, actionID: actionID) else { return nil }
       return .init(header: header, action: action)
     }
+  }
+
+  /// Derived indexes also cover admitted page sources retained after notebook
+  /// retirement. Public reads still require live membership in the outer API.
+  func readStoredPageInkAction(pageID: UUID, actionID: UUID) throws -> PageInkAction? {
+    try readTransaction { _ in
+      let address = pageFile(pageID) + "#/drawingData/actions/@" + actionID.uuidString.lowercased()
+      return try decodeStoredPageInkAction(storedFragments(address: address), pageID: pageID, actionID: actionID)
+    }
+  }
+
+  private func decodeStoredPageInkAction(_ rows: [NotebookStoredFragment], pageID: UUID,
+    actionID: UUID) throws -> PageInkAction? {
+    let file = pageFile(pageID), parent = file + "#/drawingData"
+    let member = actionID.uuidString.lowercased(), address = parent + "/actions/@" + member
+    guard !rows.isEmpty else { return nil }
+    guard let root = rows.first(where: { $0.address == address }), root.file == file,
+      root.parent == parent, root.collection == "actions", root.member == member else {
+      throw NotebookStorageError.corruptRecord(address)
+    }
+    let action = try NotebookRecordCodec.decode(rows, root: address).decode(PageInkAction.self)
+    guard action.id == actionID, action.sequence > 0 else { throw NotebookStorageError.corruptRecord(address) }
+    let canonical = try NotebookRecordCodec.encode(.encode(action), file: file, address: address,
+      parent: parent, collection: "actions", member: member, position: root.position)
+    guard Dictionary(uniqueKeysWithValues: canonical.map { ($0.address, $0) })
+      == Dictionary(uniqueKeysWithValues: rows.map { ($0.address, $0) }) else {
+      throw NotebookStorageError.corruptRecord(address)
+    }
+    return action
   }
 }

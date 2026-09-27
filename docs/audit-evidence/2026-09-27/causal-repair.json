@@ -1,11 +1,11 @@
 {
   "format": 1,
-  "recordedAt": "2026-09-27T21:59:37.815448+00:00",
+  "recordedAt": "2026-09-27T22:19:16.453457+00:00",
   "baseCommit": "dbaf04e94268d8d9e914a2a33b801691a2129d57",
   "branch": "codex/causal-repair",
-  "candidateVersion": "0.3.144 (214)",
-  "installedVersion": "0.3.143 (213)",
-  "status": "implemented-selected-verification-complete-release-pending",
+  "candidateVersion": "0.3.145 (215)",
+  "installedVersion": "0.3.144 (214)",
+  "status": "migration-regression-fixed-release-pending",
   "fullAcceptance": false,
   "initialFindings": "F01–F18 in docs/causal-audit-2026-09-27.md",
   "runs": [
@@ -695,6 +695,29 @@
         "status": "passed"
       },
       "boundary": "Three selected native tests only. UI24 passed in 2150 before the final two-line failure-branch guard; strict latency measurements and full acceptance were not repeated."
+    },
+    {
+      "path": "/private/tmp/notebook-causal-repair-migration-215-20260927T2217Z",
+      "scope": "Retired-page migration regression",
+      "wholeRunPassed": false,
+      "remaining": "New fixture failed to compile: mutating call inside Testing #require. Split mutation from assertion before next run; no tests executed."
+    },
+    {
+      "path": "/private/tmp/notebook-causal-repair-migration-215-20260927T2218Z",
+      "scope": "Schema26 to27 with retained eraser of retired notebook and addressed selection writer",
+      "sourceSHA256": "e117522d718ff8ca8fb77367d092f56a9b3ea4542cdefc790f6d024f0e4c5f40",
+      "wholeRunPassed": true,
+      "passedCore": {
+        "swiftTesting": 3,
+        "parameterizedWriterCases": 4
+      },
+      "migrationSeconds": 0.145,
+      "receipt": {
+        "path": "/private/tmp/notebook-causal-repair-migration-215-20260927T2218Z/verification.json",
+        "sha256": "1898d77d314f92168befde90eea20e5567434eb66bbd131e30d5da7ae90b4447",
+        "status": "passed"
+      },
+      "boundary": "Core-only selected regression; native gestures unchanged and not repeated after storage fix."
     }
   ],
   "additionalCoreMigration": {
@@ -742,5 +765,22 @@
     ],
     "changedFiles": [],
     "boundary": "Reuses only Core/browser dependency scope, not native/typesetter/whole-app pass."
+  },
+  "installationAttempts": [
+    {
+      "version": "0.3.144 (214)",
+      "path": "/private/tmp/notebook-causal-repair-install-214-20260927T2204Z/installation.json",
+      "status": "matched-pair-launched",
+      "runtimeAdmission": "failed before IPC: migration of retained page erasers used a public live-page membership gate"
+    }
+  ],
+  "upgradeRegression": {
+    "cause": "Schema27 indexPageInkWindow called public readPageInkAction; retained erasers on retired pages raised target_missing and rolled back admission. Internal addressed decoder now indexes stored actions independently of live membership.",
+    "observedPageErasers": 124,
+    "outsideLivePageMembership": 80,
+    "selectedMacRecordsBefore": 40672,
+    "selectedMacRecordAddressHashSHA256Before": "09854c674bf0613be5764fbd17dff3fdf9d0aada1bd6314d67f423696e8e74d1",
+    "digestAlgorithm": "SHA256 of address-ordered compact UTF8 JSON [address,hash] plus LF, ensure_ascii=false",
+    "liveDatabaseManuallyChanged": false
   }
 }

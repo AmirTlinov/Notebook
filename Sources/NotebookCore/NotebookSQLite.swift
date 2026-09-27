@@ -581,9 +581,21 @@ extension NotebookStore {
       }
       if admittedVersion < 27 {
         var spatialAfter=""
-        while let address=try database.rows("SELECT DISTINCT address FROM ink_surfaces WHERE address>? AND kind<>'page' ORDER BY address LIMIT 1",[.text(spatialAfter)]).first?[0].text {
-          guard let witness=try inkContactWitness(at:address,page:false) else {throw NotebookStorageError.corruptRecord(address)}
-          try indexInkPainter(witness,address:address,database:database);spatialAfter=address
+        while let row=try database.rows("""
+          SELECT DISTINCT s.address,b.data FROM ink_surfaces s
+          JOIN records r ON r.address=s.address JOIN blobs b ON b.hash=r.hash
+          WHERE s.address>? AND s.kind<>'page' ORDER BY s.address LIMIT 1
+          """,[.text(spatialAfter)]).first {
+          let address=row[0].text!,fragment=try database.decodeFragmentEnvelope(row[1].blob!)
+          let header=try fragment.value.decode(SpatialInkActionHeader.self)
+          guard fragment.address == address,fragment.member == header.id.uuidString.lowercased(),header.isValid else {
+            throw NotebookStorageError.corruptRecord(address)
+          }
+          // Painter order belongs to the accepted action header. A disposable
+          // index migration must not read measurement bodies or selection proofs.
+          try database.run("UPDATE ink_surfaces SET paint_counter=?,paint_actor=? WHERE address=?",
+            [.integer(Int64(header.stamp.counter)),.text(header.stamp.actor.uuidString),.text(address)])
+          spatialAfter=address
         }
         var after=""
         while let row=try database.rows("SELECT r.address,b.data FROM records r JOIN blobs b ON b.hash=r.hash WHERE r.file LIKE 'pages/%' AND r.collection='actions' AND r.address>? ORDER BY r.address LIMIT 1",[.text(after)]).first {

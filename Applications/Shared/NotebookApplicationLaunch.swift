@@ -116,7 +116,11 @@ final class NotebookApplicationLaunch {
     } catch is CancellationError {
       // A committed activation remains on disk; cancellation cannot restore old
       // bytes or publish a model after the calling scene has disappeared.
-    } catch { failure = error.localizedDescription }
+    } catch {
+      Logger(subsystem: "com.amirtlinov.notebook", category: "WorkspaceLifecycle")
+        .error("Workspace launch failed: \(String(reflecting: error), privacy: .public)")
+      failure = error.localizedDescription
+    }
   }
 
   /// Explicit maintenance of the selected workspace, performed only by its
