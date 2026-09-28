@@ -1,9 +1,72 @@
 import NotebookCore
 import UIKit
+import SwiftUI
 import XCTest
 @testable import Notebook
 
 @MainActor final class PageRasterPreparationTests: XCTestCase {
+  func testColdPageDefersSpeculationUntilContentInstalledAndStillAdmitsRequestedLanding() async throws {
+    try await WorkspaceInkFixture.waitForForegroundWindow()
+    let controller = IPadPageTurnController(), navigation = NotebookPageNavigation(), owner = UUID()
+    var pageIDs = [0: UUID(), 1: UUID(), 2: UUID()], receipts: [Int: PageTurnReadiness] = [:]
+    func configure(_ revision: String) {
+      controller.update(ownerID: owner, sequenceRevision: revision, pageCount: 3,
+        selectedIndex: 0, navigationIsEnabled: true, pageIsInteractive: true, canBeginNavigation: { true },
+        page: { index, _, ready in receipts[index] = ready; return AnyView(Color.white) },
+        onCommit: { _, _ in }, onTransitioningChange: { _ in }, notebookNavigation: navigation,
+        pageIdentities: pageIDs)
+    }
+    let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+    let previous = scene.windows.first(where: \.isKeyWindow), window = UIWindow(windowScene: scene)
+    configure("initial"); window.rootViewController = controller; window.makeKeyAndVisible(); window.layoutIfNeeded()
+    defer { controller.uninstall(); window.isHidden = true; window.rootViewController = nil; previous?.makeKey() }
+    let preparation = controller.pageTurnActivity.rasters
+    let sources = NotebookNavigationLoadFixture.elements(leaf: 1, programs: false)
+    let neighbour = Task { try await preparation.prepare(sources[1], policy: .exact(scale: 1), pageIndex: 1, permits: { true }) }
+    let cancelled = Task { try await preparation.prepare(sources[2], policy: .exact(scale: 1), pageIndex: 2, permits: { true }) }
+    defer { neighbour.cancel(); cancelled.cancel() }
+    for _ in 0..<20 { await Task.yield() }
+    XCTAssertEqual(preparation.executorCount, 0, "Unseen authors cannot compete with the current page's first content")
+    cancelled.cancel()
+    do { let raster = try await cancelled.value; raster.release(); XCTFail("A withdrawn neighbour must complete cancellation") }
+    catch is CancellationError { }
+    XCTAssertTrue(navigation.send(.jump(1), ownerID: owner, source: "initial"))
+    let landing = try await neighbour.value
+    XCTAssertEqual(landing.source, .agent(sources[1])); landing.release()
+    XCTAssertEqual(preparation.completedCount, 1, "An accepted landing bypasses the cold current-page fence")
+
+    let original = try XCTUnwrap(receipts[0])
+    original(true, capturable: false)
+    original(false, capturable: false) // A local program revision, on the same mounted host.
+    var distantStarted = false
+    let distant = Task { try await preparation.prepare(sources[3], policy: .exact(scale: 1), pageIndex: 2,
+      permits: { distantStarted = true; return true }) }
+    defer { distant.cancel() }
+    for _ in 0..<20 { await Task.yield() }
+    XCTAssertFalse(distantStarted, "An accepted target must prevent dispatch of unrelated speculation")
+    XCTAssertEqual(preparation.completedCount, 1, "The accepted target owns preparation ahead of an unrelated distant page")
+    XCTAssertTrue(navigation.send(.cancel, ownerID: owner, source: "initial"))
+    let prepared = try await distant.value
+    XCTAssertEqual(prepared.source, .agent(sources[3])); prepared.release()
+    XCTAssertEqual(preparation.completedCount, 2, "A local content revision cannot close the host's completed initial barrier")
+
+    pageIDs[0] = UUID(); configure("replacement")
+    let replacement = try XCTUnwrap(receipts[0])
+    XCTAssertFalse(replacement === original)
+    var replacementStarted = false
+    let next = Task { try await preparation.prepare(sources[4], policy: .exact(scale: 1), pageIndex: 1,
+      permits: { replacementStarted = true; return true }) }
+    defer { next.cancel() }
+    original(true) // A retired predecessor cannot open its successor's barrier.
+    for _ in 0..<20 { await Task.yield() }
+    XCTAssertFalse(replacementStarted, "The predecessor's receipt cannot dispatch work for the cold successor")
+    XCTAssertEqual(preparation.completedCount, 2, "A different page UUID/native host starts with its own cold barrier")
+    replacement(true, capturable: false)
+    let renewed = try await next.value
+    XCTAssertEqual(renewed.source, .agent(sources[4])); renewed.release()
+    XCTAssertEqual(preparation.completedCount, 3)
+  }
+
   func testTwentyFourPassiveProgramsDoNotWaitForAnOffscreenAnimationClock() async throws {
     try await WorkspaceInkFixture.waitForForegroundWindow()
     let resources = SceneRenderResources(), preparation = PageRasterPreparation(resources: resources)

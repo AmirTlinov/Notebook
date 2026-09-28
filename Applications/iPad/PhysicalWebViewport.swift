@@ -17,11 +17,11 @@ final class PhysicalWebViewport: UIView, NotebookSceneFingerInputOwner {
   private let holdsFingerInput: Bool
   func sceneFingerOwner(at point: CGPoint) -> NotebookInputGate.FingerContactOwner? {
     guard holdsFingerInput, let webView, webView.superview === self else { return nil }
-    guard let coordinator = webView.navigationDelegate as? AgentWebCoordinator else { return .nativeInput(ObjectIdentifier(self)) }
+    guard let coordinator = webView.navigationDelegate as? AgentWebCoordinator else { return .webInput(ObjectIdentifier(self)) }
     switch coordinator.fingerInput(at: webView.convert(point, from: self), in: webView.bounds.size) {
     case .scene: return .scene
     case .link: return .webLink(ObjectIdentifier(self))
-    case .input: return .nativeInput(ObjectIdentifier(self))
+    case .input: return .webInput(ObjectIdentifier(self))
     }
   }
 
@@ -48,6 +48,14 @@ final class PhysicalWebViewport: UIView, NotebookSceneFingerInputOwner {
     return hit
   }
 
+  /// The scene's accepted cross-owner pair has taken these physical touches.
+  /// Reset only this live WebKit subtree's native recognizers so its pending
+  /// DOM tap receives cancellation before lift; no synthetic JS event/replay.
+  func cancelTransferredFingerInput() {
+    guard let webView, webView.superview === self else { return }
+    NotebookSceneFingerRouting.cancelTransferredFingerInput(in: webView)
+  }
+
   func setContentSize(_ size: CGSize) {
     guard contentSize != size else { return }
     contentSize = size
@@ -68,8 +76,12 @@ final class PhysicalWebViewport: UIView, NotebookSceneFingerInputOwner {
   /// The native subtree owns the attached runtime. A retired shell may outlive
   /// SwiftUI's dismantle callback, but it must not retain or move that runtime.
   func retire() {
+    let notify = onInstalled
     onInstalled = nil
-    if let webView, webView.superview === self { webView.removeFromSuperview() }
+    if let webView, webView.superview === self {
+      webView.removeFromSuperview()
+      withExtendedLifetime(webView) { notify?() }
+    }
     webView = nil; contentBackground?.removeFromSuperview(); contentBackground = nil
   }
 

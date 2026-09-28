@@ -136,6 +136,13 @@ program does not consume the passive quota that reserves input for it. Persisten
 programs leave preparation capacity. Physical source identity prevents duplicate
 execution until the final submitted borrower releases.
 
+At most two admitted live views await native construction. The constructor delivers
+its exact lease completion after the current native update returns; the allocator
+then resumes queued consumers for a later view update. Navigation commit and
+author readiness retain only their running leases, not construction admission.
+Cancellation or retirement releases an unconstructed grant. Each program retains
+its independent website data store and execution context.
+
 Priority follows accepted contact, visible input programs, then visible paper of
 the current board, then optional labels/static images. Offscreen portals and labels
 do not impersonate input programs. Demoted material returns to its painter range,

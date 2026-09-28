@@ -130,8 +130,8 @@ final class NotebookSceneFingerOwnershipTests: XCTestCase {
     window.rootViewController = root; window.makeKeyAndVisible()
     let anchor = GestureAnchorView(frame: root.view.bounds)
     anchor.isUserInteractionEnabled = false; root.view.addSubview(anchor)
-    let coordinator = WorkspaceGestureLayer.Coordinator(defersHorizontalMotionToPageTurn: false,
-      isEnabled: true, inputGate: gate, onCamera: { _ in XCTFail("Admission must not synthesize a camera gesture") }, onUndo: {}, onRedo: {})
+    let coordinator = WorkspaceGestureLayer.Coordinator(defersHorizontalMotionToPageTurn: true,
+      isEnabled: true, inputGate: gate, onCamera: { _ in }, onUndo: {}, onRedo: {})
     coordinator.install(on: window, inside: anchor)
     defer {
       coordinator.uninstall(); window.isHidden = true; window.rootViewController = nil
@@ -149,20 +149,66 @@ final class NotebookSceneFingerOwnershipTests: XCTestCase {
     let second = SceneFingerOwnershipTouch(target: programHit, window: window, point: CGPoint(x: 110, y: 160))
     // These are deterministic native admission callbacks against a loaded WK
     // subtree, not injected DOM events or a claim of real touch delivery.
-    XCTAssertFalse(coordinator.gestureRecognizer(camera, shouldReceive: first))
+    XCTAssertTrue(coordinator.gestureRecognizer(camera, shouldReceive: first),
+      "Observation does not claim the program's first finger")
     XCTAssertTrue(coordinator.gestureRecognizer(observer, shouldReceive: first))
     observer.touchesBegan([first], with: UIEvent())
-    XCTAssertFalse(coordinator.gestureRecognizer(camera, shouldReceive: second),
-      "A later finger must not let the camera take the program's accepted sequence")
+    XCTAssertTrue(coordinator.gestureRecognizer(camera, shouldReceive: second))
     observer.touchesBegan([second], with: UIEvent())
     XCTAssertEqual(gate.admittedFingerContactCount, 2)
+    let sameProgram = UUID(), pair: Set<ObjectIdentifier> = [ObjectIdentifier(first), ObjectIdentifier(second)]
+    XCTAssertFalse(gate.claimNavigation(source: sameProgram, kind: .cameraPinch,
+      contacts: pair, cancel: {}),
+      "Both fingers of one authored runtime remain its native gesture")
     observer.touchesEnded([first, second], with: UIEvent())
     XCTAssertEqual(gate.admittedFingerContactCount, 0)
+    _ = gate.fingerContactOwner(for: ObjectIdentifier(first)) { .webInput(ObjectIdentifier(program)) }
+    _ = gate.fingerContactOwner(for: ObjectIdentifier(second)) { .webLink(ObjectIdentifier(program)) }
+    XCTAssertFalse(gate.claimNavigation(source: sameProgram, kind: .cameraPinch, contacts: pair, cancel: {}),
+      "A control and a link in the same runtime remain that runtime's pair")
+    gate.endFingerContacts(pair)
+    _ = gate.fingerContactOwner(for: ObjectIdentifier(first)) { .webInput(ObjectIdentifier(program)) }
+    _ = gate.fingerContactOwner(for: ObjectIdentifier(second)) { .webLink(ObjectIdentifier(paper)) }
+    XCTAssertTrue(gate.claimNavigation(source: sameProgram, kind: .cameraPinch, contacts: pair, cancel: {}),
+      "A pair across different runtimes has one scene-camera owner")
+    gate.endNavigation(source: sameProgram); gate.endFingerContacts(pair)
     let paperTouch = SceneFingerOwnershipTouch(target: paperHit, window: window, point: CGPoint(x: 100, y: 560))
     XCTAssertTrue(coordinator.gestureRecognizer(camera, shouldReceive: paperTouch),
       "The paper's WK class must not prohibit camera navigation")
     observer.touchesBegan([paperTouch], with: UIEvent())
     observer.touchesCancelled([paperTouch], with: UIEvent())
+    XCTAssertEqual(gate.admittedFingerContactCount, 0)
+    let programProbe = TransferredWebContactProbe(), paperProbe = TransferredWebContactProbe()
+    programWeb.addGestureRecognizer(programProbe); paperWeb.addGestureRecognizer(paperProbe)
+    for onlyFinalSample in [false, true] {
+      let a = SceneFingerOwnershipTouch(target: programHit, window: window, point: .init(x: 100, y: 160))
+      let b = SceneFingerOwnershipTouch(target: paperHit, window: window, point: .init(x: 100, y: 560))
+      XCTAssertTrue(coordinator.gestureRecognizer(camera, shouldReceive: a))
+      XCTAssertTrue(coordinator.gestureRecognizer(camera, shouldReceive: b))
+      observer.touchesBegan([a, b], with: UIEvent()); camera.touchesBegan([a, b], with: UIEvent())
+      XCTAssertEqual(programProbe.cancellations, onlyFinalSample ? 1 : 0,
+        "Touchdown alone does not cancel the program's tap")
+      a.point.y -= 40; b.point.y += 40; a.sampleTime += 0.1; b.sampleTime += 0.1
+      if onlyFinalSample {
+        // UIKit can retire physical ownership before the recognizer receives
+        // this same event's final sample. Transfer must use its retained pair.
+        observer.touchesEnded([a, b], with: UIEvent())
+        camera.touchesEnded([a, b], with: UIEvent())
+        XCTAssertEqual(gate.admittedFingerContactCount, 0, "Final classification cannot recreate lifted contacts")
+      } else {
+        camera.touchesMoved([a, b], with: UIEvent())
+        XCTAssertEqual(camera.state, .began)
+        XCTAssertEqual(gate.admittedFingerContactCount, 2, "Native cancellation does not retire physical contacts")
+      }
+      XCTAssertEqual(camera.intent, .magnification)
+      XCTAssertEqual(programProbe.cancellations, onlyFinalSample ? 2 : 1,
+        "The accepted cross-owner pair cancels its pending native WebKit tap before release")
+      XCTAssertEqual(paperProbe.cancellations, 0, "An unrelated/native paper subtree is not reset")
+      if !onlyFinalSample {
+        camera.touchesEnded([a, b], with: UIEvent()); observer.touchesEnded([a, b], with: UIEvent())
+      }
+      camera.reset()
+    }
     XCTAssertEqual(gate.admittedFingerContactCount, 0)
   }
 
@@ -337,7 +383,8 @@ final class NotebookSceneFingerOwnershipTests: XCTestCase {
 private final class SceneFingerOwnershipTouch: UITouch {
   weak var target: UIView?
   private weak var sourceWindow: UIWindow?
-  private let point: CGPoint
+  var point: CGPoint
+  var sampleTime: TimeInterval = 1
   private let kind: UITouch.TouchType
   init(target: UIView?, window: UIWindow? = nil, point: CGPoint = .zero, kind: UITouch.TouchType = .direct) {
     self.target = target; sourceWindow = window; self.point = point; self.kind = kind
@@ -345,7 +392,16 @@ private final class SceneFingerOwnershipTouch: UITouch {
   }
   override var view: UIView? { target }
   override var type: UITouch.TouchType { kind }
+  override var timestamp: TimeInterval { sampleTime }
   override func location(in view: UIView?) -> CGPoint { sourceWindow?.convert(point, to: view) ?? point }
+}
+
+@MainActor
+private final class TransferredWebContactProbe: UIGestureRecognizer {
+  private(set) var cancellations = 0
+  override var isEnabled: Bool {
+    didSet { if oldValue && !isEnabled { cancellations += 1 } }
+  }
 }
 
 @MainActor

@@ -3,10 +3,10 @@ import UIKit
 import XCTest
 @testable import Notebook
 
-/// A single window image must contain ALL expected planes at the SAME pose.
-/// Neither a model pose, a UIKit callback, nor an unrelated Metal receipt is an
-/// acknowledgement. Snapshot and decoding time is diagnostic observation cost,
-/// never an application latency measurement or a compositor receipt.
+/// A final image must contain every expected plane at the same pose. Ordered
+/// motion waits for its common native installation and exact current ink OS
+/// receipt before this independent pixel check. UIKit readback is not a system
+/// compositor frame; only an explicitly joined receipt measures display time.
 @MainActor
 enum NotebookSelectionComposition {
   struct Probe {
@@ -190,7 +190,7 @@ extension NotebookInteractionUXTests {
       probes: material + NotebookSelectionComposition.controls(final, transform: scene.pageToWindow, visible: false)))
     XCTAssertNil(scene.model.selectionSession.target, "No confirmation or retained selection after tapping away")
     XCTAssertEqual(results.count, 13)
-    XCTAssertTrue(results.allSatisfy(\.passed), "Every observed frame must preserve composition; snapshot timings are diagnostic costs, not application latency")
+    XCTAssertTrue(results.allSatisfy(\.passed), "Every checked composition must contain all planes; native readback does not identify compositor transition frames")
   }
 
   func testWholeSelectionRequiresMaterialControlsAndUntouchedNeighborsInTheSameFrame() async throws {
@@ -227,7 +227,7 @@ extension NotebookInteractionUXTests {
       probes: wholeComposition(scene, pose: final, history: history)
         + NotebookSelectionComposition.controls(final, transform: scene.pageToWindow, visible: false)))
     XCTAssertEqual(results.count, 13)
-    XCTAssertTrue(results.allSatisfy(\.passed), "A fast frame/pose without the whole composition is not a passing selection")
+    XCTAssertTrue(results.allSatisfy(\.passed), "Installed poses require complete final pixels; native readback alone does not establish display transition coherence")
   }
 
   func testClosedWholeLassoRoutesRawAndAuthoredMaterialThroughTwoInstalledDragsAndCancel() async throws {
@@ -307,18 +307,69 @@ extension NotebookInteractionUXTests {
     XCTAssertEqual(actions.first?.action.operations.filter { $0.kind == .updateElement }.map(\.id), ["ux-blue"])
 
     try await scene.readyFinger(self)
+    let restoredPlan=try XCTUnwrap(model.pageInkPublication.currentCanvas(on:page.id)).orderedInkPlan
     scene.beginFinger(.init(x: 350, y: 770))
     started = CACurrentMediaTime(); scene.moveFinger(.init(x: 350, y: 870))
     XCTAssertTrue(model.selectionSession.manipulation?.selectionSource?.ink.isEmpty == true)
     XCTAssertNotNil(model.selectionSession.manipulation?.inkPresentation)
     results.append(try await composition("whole-route-second-canonical-drag", scene, since: started, moving: true,
       probes: picture(dy: 220, previous: [0,120], controls: true)))
+    let previewCanvas=try XCTUnwrap(model.pageInkPublication.currentCanvas(on:page.id))
+    let previewPlan=previewCanvas.orderedInkPlan
+    let sourceGeneration=previewCanvas.framePublicationState.sourceGeneration
+    let presentation=try XCTUnwrap(model.selectionSession.manipulation?.inkPresentation)
+    let nativeHosts=try XCTUnwrap(model.selectedGraphicHosts.hosts(presentation.source,ownerID:presentation.id))
+    let authored=try XCTUnwrap(nativeHosts["ux-blue"]?.children.first?.view)
+    func descendants(_ view:UIView)->[UIView] {[view]+view.subviews.flatMap(descendants)}
+    let controls=try XCTUnwrap(descendants(scene.window).compactMap{$0 as? NotebookSelectionControlsView}.first)
+    let expectedBody=CGRect(x:540,y:660,width:100,height:100).applying(scene.pageToWindow)
+    let expectedFrame=original.offsetBy(dx:0,dy:120).applying(scene.pageToWindow)
+    let expectedCorners:[String:CGPoint]=[
+      "topLeading":.init(x:expectedFrame.minX,y:expectedFrame.minY),
+      "topTrailing":.init(x:expectedFrame.maxX,y:expectedFrame.minY),
+      "bottomLeading":.init(x:expectedFrame.minX,y:expectedFrame.maxY),
+      "bottomTrailing":.init(x:expectedFrame.maxX,y:expectedFrame.maxY)]
+    var installed:(id:UUID,revision:UInt64,time:TimeInterval,plan:Bool,body:Bool,controls:Bool)?
+    var resolved:(id:UUID,revision:UInt64,time:TimeInterval)?,installCount=0
+    previewCanvas.onOrderedFrameInstalled={ id,revision in
+      installCount += 1
+      let actualBody=authored.convert(authored.bounds,to:scene.window)
+      let bodyMatches=abs(actualBody.minX-expectedBody.minX)<0.1 && abs(actualBody.minY-expectedBody.minY)<0.1
+        && abs(actualBody.width-expectedBody.width)<0.1 && abs(actualBody.height-expectedBody.height)<0.1
+      let handles=controls.accessibilityElements?.compactMap{$0 as? UIAccessibilityElement} ?? []
+      let controlsMatch=expectedCorners.allSatisfy { name,point in
+        guard let handle=handles.first(where:{$0.accessibilityIdentifier == "resize-agent-element-"+name}) else {return false}
+        let box=handle.accessibilityFrameInContainerSpace
+        let actual=controls.convert(CGPoint(x:box.midX,y:box.midY),to:scene.window)
+        return hypot(actual.x-point.x,actual.y-point.y)<0.1
+      }
+      let sameSource=previewCanvas.framePublicationState.sourceGeneration == sourceGeneration
+      installed=(id,revision,CACurrentMediaTime(),sameSource && previewCanvas.orderedInkPlan == restoredPlan,bodyMatches,controlsMatch)
+    }
+    previewCanvas.onOrderedFrameResolved={ id,revision,receipt in
+      guard receipt.isReady,let time=receipt.presentedTime,installed?.id == id,installed?.revision == revision else {return}
+      resolved=(id,revision,time)
+    }
+    defer {previewCanvas.onOrderedFrameInstalled=nil;previewCanvas.onOrderedFrameResolved=nil}
     started = CACurrentMediaTime()
     scene.direct.touchPhase = .cancelled
     scene.finger.touchesCancelled([scene.direct], with: scene.event)
     scene.observer.touchesCancelled([scene.direct], with: scene.event)
+    let cancellingPage=try XCTUnwrap(model.activePage)
+    let projectedCancel=model.pageOrderedInk(cancellingPage,display:model.pageGraphicDisplay(cancellingPage,in:nil))
+    XCTAssertTrue(projectedCancel.matches(previewPlan),
+      "Cancellation keeps the installed cut in scene projection until its single restoration installs ink, objects and controls")
     results.append(try await composition("whole-route-cancel-second", scene, since: started, moving: true,
-      probes: picture(dy: 120, previous: [0,220], controls: true)))
+      probes: picture(dy: 120, previous: [0,220], controls: true),acknowledged:{resolved != nil}))
+    let cut=try XCTUnwrap(installed),receipt=try XCTUnwrap(resolved)
+    XCTAssertEqual(installCount,1)
+    XCTAssertTrue(cut.plan && cut.body && cut.controls,"One native installation contains the exact saved plan/suppression, authored pose and all controls")
+    XCTAssertEqual(receipt.id,cut.id);XCTAssertEqual(receipt.revision,cut.revision)
+    XCTAssertGreaterThanOrEqual(receipt.time,started)
+    XCTAssertLessThanOrEqual((receipt.time-started)*1_000,100,"The same cancel event → actual drawable OS presentation keeps the 100ms ceiling")
+    let joined=XCTAttachment(string:"cancelStart=\(started); nativeInstalled=\(cut.time); submission=\(cut.id); revision=\(cut.revision); exactPlan=\(cut.plan),authoredPose=\(cut.body),controls=\(cut.controls); actualOS=\(receipt.time); elapsedMS=\((receipt.time-started)*1_000). Native installation and drawable OS receipt are joined; no whole-screen compositor frame ID is available. No readback runs during the measured interval; historical pre-OS UIKit readback remains diagnostic only.")
+    joined.name="mixed-cancel-native-cut-and-OS";joined.lifetime = .keepAlways;add(joined)
+    previewCanvas.onOrderedFrameInstalled=nil;previewCanvas.onOrderedFrameResolved=nil
     XCTAssertNil(model.selectionSession.manipulation)
 
     try await scene.readyFinger(self)
@@ -340,43 +391,66 @@ extension NotebookInteractionUXTests {
     XCTAssertEqual(try model.store.nativeHistory(domain: .page(page.id), actor: model.actorID), acceptedHistory,
       "Native cancellation and deselection must not create another saved move or conversion")
     XCTAssertEqual(results.count, 6)
-    XCTAssertTrue(results.allSatisfy(\.passed), "Every frame includes raw material, authored peer, four controls and untouched pixels; see stage attachments")
+    XCTAssertTrue(results.allSatisfy(\.passed), "Pixel checks include raw material, authored peer, four controls and untouched pixels; cancel joins native installation and exact OS receipt separately")
   }
 
   private func composition(_ name: String, _ scene: Scene, since start: TimeInterval,
     immediate: Bool = false, moving: Bool = false,
-    probes: [NotebookSelectionComposition.Probe]) async throws -> NotebookSelectionComposition.Sample {
-    // This sparse correctness observation is separate from fixed-120-Hz input
-    // replay: readback must not slow that replay into a false performance pass.
-    // Give UIKit one opportunity, without forcing layout, CA flush or rendering.
-    if !immediate { try await Task.sleep(for: .milliseconds(8)) }
-    var rows = ["elapsed_ms,capture_and_decode_ms,incoherent,failed_components"]
-    var sample: NotebookSelectionComposition.Sample
+    probes: [NotebookSelectionComposition.Probe],acknowledged:(()->Bool)? = nil) async throws -> NotebookSelectionComposition.Sample {
+    // The existing ordered owner exposes whether the desired complete native
+    // pose has installed. Join that with its current exact ink OS revision;
+    // readback must not enter this input-to-presentation interval.
+    let presentation=moving ? scene.model.selectionSession.manipulation?.inkPresentation:nil
+    let currentCanvas=scene.model.activePage.flatMap {scene.model.pageInkPublication.currentCanvas(on:$0.id)}
+    let nativeReady:(()->Bool)?
+    if let acknowledged {nativeReady=acknowledged}
+    else if let presentation,presentation.source.needsOrderedPresentation {
+      nativeReady={presentation.installed && !presentation.holdsPresentation && currentCanvas?.isStableFramePresented == true}
+    } else {nativeReady=nil}
+    if nativeReady == nil,!immediate {try await Task.sleep(for:.milliseconds(8))}
+    var rows = ["elapsed_ms,capture_and_decode_ms,incoherent,failed_components; owner_before; owner_after"]
+    var sample=NotebookSelectionComposition.Sample(elapsedMS:0,captureMS:0,failures:["No native receipt observed"])
     var incomplete: [(failures: [String], image: UIImage)] = []
     var incoherentFrames = 0
     var last: UIImage?
     repeat {
+      if let nativeReady,!nativeReady() {
+        if (CACurrentMediaTime()-start)*1_000 >= 100 {
+          sample = .init(elapsedMS:(CACurrentMediaTime()-start)*1_000,captureMS:0,
+            failures:["Exact native installation / current OS receipt missing within 100ms"])
+          break
+        }
+        try await Task.sleep(for:.milliseconds(1));continue
+      }
+      let exactReceipt=nativeReady != nil
+      let canvas=scene.model.activePage.flatMap {scene.model.pageInkPublication.currentCanvas(on:$0.id)}
+      let before=canvas?.framePublicationState
       let capture = CACurrentMediaTime()
       let frame = try NotebookSelectionComposition.Frame(NotebookUXObservation.Pixels(window: scene.window).image,
         sampling: probes)
       let captured = CACurrentMediaTime()
+      let after=canvas?.framePublicationState
       let failures = frame.failures(probes)
       let incoherent = moving && NotebookSelectionComposition.isIncoherentMotionFrame(probes, failures: failures)
-      if incoherent { incoherentFrames += 1 }
+      if incoherent {incoherentFrames += 1}
       sample = .init(elapsedMS: (CACurrentMediaTime() - start) * 1_000,
         captureMS: (captured - capture) * 1_000, failures: failures, incoherentFrames: incoherentFrames)
-      rows.append("\(sample.elapsedMS),\(sample.captureMS),\(incoherent),\(failures.joined(separator: ";"))")
+      rows.append("\(sample.elapsedMS),\(sample.captureMS),\(incoherent),\(failures.joined(separator: ";")); captureStart=\(capture),captureEnd=\(captured),exactReceiptBeforeCapture=\(exactReceipt); before=\(String(describing:before)); after=\(String(describing:after))")
       last = frame.image
       if !sample.correct, incomplete.count < 3, !incomplete.contains(where: { $0.failures == failures }) {
         incomplete.append((failures, frame.image))
       }
-      // A later correct frame cannot forgive a mixed composition. This bounded
-      // observation window is a liveness guard, not a latency budget. Lift's
-      // first observed frame has no eventual-correctness grace period.
-      if sample.correct || immediate || sample.elapsedMS >= 100 { break }
+      // The first post-receipt pixel check is final. Static legacy snapshots
+      // retain their existing observation bounds and do not prove live frames.
+      if nativeReady != nil {
+        // The first post-receipt picture is the independent pixel result;
+        // never retry a wrong image until it becomes right.
+        break
+      } else if sample.correct || immediate || sample.elapsedMS >= 100 { break }
       try await Task.sleep(for: .milliseconds(16))
     } while true
-    let text = "\(name): whole-window correct=\(sample.correct), mixed-frames=\(incoherentFrames), observed=\(sample.elapsedMS) ms, capture+decode=\(sample.captureMS) ms, observation-window=100 ms. Diagnostic timing only; no application latency or OS presentation claim.\n" + rows.joined(separator: "\n")
+    let boundary=nativeReady == nil ? "Static native readback correctness only; no compositor frame identity or transition/display claim." : "Common desired native installation and exact current ink OS receipt precede one independent pixel check. No readback runs before that receipt; historical pre-OS mixed-readback evidence remains unresolved as a compositor claim."
+    let text = boundary + "\n" + "\(name): whole-window correct=\(sample.correct), mixed-frames=\(incoherentFrames), observed=\(sample.elapsedMS) ms, capture+decode=\(sample.captureMS) ms, observation-window=100 ms. Diagnostic timing only; no application latency or OS presentation claim. Owner snapshots report delivered receipts; synchronous readback can delay their MainActor delivery.\n" + rows.joined(separator: "\n")
     print(text)
     let detail = XCTAttachment(string: text); detail.name = name; detail.lifetime = .keepAlways; add(detail)
     let images: [(String, UIImage?)] = incomplete.enumerated().map { ("incomplete-\($0.offset)", $0.element.image) } + [("observed", last)]

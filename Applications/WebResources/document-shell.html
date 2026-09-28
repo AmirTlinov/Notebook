@@ -601,7 +601,7 @@
           sourceKey:payload.sourceKey,stateKey:payload.stateKey,generation:payload.generation,layoutCanonical,pageCount:pageLayout.pageCount});
       };
 
-      const observedPageReceipt = async (index, waitsForFrames, attemptID) => {
+      const observedPageReceipt = (index, attemptID) => {
         const observation = observationMatches(payload) && preparationObservation.attemptID === attemptID
           ? preparationObservation : null;
         const startedAt = observation ? performance.now() : 0;
@@ -611,12 +611,6 @@
         };
         mark('enter'); observeBrowserState(observation, 'receipt_enter');
         setPageIndex(index); mark('setPage');
-        if (waitsForFrames) await new Promise(resolve => requestAnimationFrame(() => {
-          mark('raf1'); observeBrowserState(observation, 'receipt_raf1');
-          requestAnimationFrame(() => {
-            mark('raf2'); observeBrowserState(observation, 'receipt_raf2'); resolve();
-          });
-        }));
         const receipt = pageReceipt(); mark('complete');
         if (receipt && observation && preparationObservation === observation && observationMatches(payload, observation))
           receipt.preparationObservation = {attemptID: observation.attemptID,

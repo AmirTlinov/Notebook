@@ -477,7 +477,11 @@ fileprivate final class ProgramFragmentClip: UIView, NotebookSceneFingerInputOwn
   private(set) var hasContact = false
   private(set) var allowsInteraction = true
   func sceneFingerOwner(at point: CGPoint) -> NotebookInputGate.FingerContactOwner? {
-    allowsInteraction && isUserInteractionEnabled && webView?.superview === self ? .nativeInput(ObjectIdentifier(self)) : nil
+    allowsInteraction && isUserInteractionEnabled && webView?.superview === self ? .webInput(ObjectIdentifier(self)) : nil
+  }
+  func cancelTransferredFingerInput() {
+    guard let webView, webView.superview === self else { return }
+    NotebookSceneFingerRouting.cancelTransferredFingerInput(in: webView)
   }
   private var contactGeneration: UInt64 = 0
   var waiters: [ObjectIdentifier: () -> Void] = [:]

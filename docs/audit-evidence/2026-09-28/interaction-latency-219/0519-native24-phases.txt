@@ -1,0 +1,24 @@
+Source: /private/tmp/notebook-interaction-219-input-20260928T0519Z/attachments/E96993CC-54DF-4C3C-B885-E1100F70601F.txt
+Source SHA256: 45ce82d832433463b23915c639756afc99230bdf828c294cf4fdd364da79746c
+Exact phase excerpt; per-element diagnostics omitted. Owner landing is separate from OS presentation and later pixel readback.
+
+clock anchor: unix=1790572897.702736,uptime=443534.7071776668
+arrow begin: uptime=443534.7071841251
+acquire begin: sheet=page-turn-page-0
+acquire begin: sheet=page-turn-page-1
+acquire result: sheet=page-turn-page-1,frame=149773F1-995D-4083-AF36-2BD7B964BB97,elapsed=0.041371166647877544
+acquire result: sheet=page-turn-page-0,frame=9F18D95F-A487-47FE-8019-F0A08AEBE552,elapsed=0.05518495832802728
+pair acquired: 443534.7293760001...443534.7868147918,pixels=7966368,arrowToBegin=0.022191875032149255,arrowToEnd=0.07963066670345142
+curl frame: callbackUptime=443534.9010779168,arrowToCallback=0.19389379170024768,progress=0.3139460729478261,sequence=4,OS=Optional(443534.8626602918),arrowToOS=Optional(0.15547616669209674)
+curl frame: callbackUptime=443535.1466096251,arrowToCallback=0.43942549999337643,progress=1.0,sequence=18,OS=Optional(443535.1461063334),arrowToOS=Optional(0.43892220832640305)
+commandToOwnerLanding=0.440931583 seconds,arrowToOwnerLanding=0.4409316250239499,operation=F60F2B1A-867C-4591-BA91-7D39AA6715C0,presented=true
+reverse begin: uptime=443536.4656868334
+acquire begin: sheet=page-turn-page-1
+acquire begin: sheet=page-turn-page-0
+acquire result: sheet=page-turn-page-0,frame=43D6B665-6EDF-4A07-8992-2D708B8F1624,elapsed=0.06613183335866779
+acquire result: sheet=page-turn-page-1,frame=CAA98DA4-F739-438B-BD50-53F81D2B7E55,elapsed=0.0834618333610706
+pair acquired: 443536.4763880834...443536.56781633344,pixels=7966368,arrowToBegin=0.010701249993871897,arrowToEnd=0.10212950001005083
+curl frame: callbackUptime=443536.65210408345,arrowToCallback=0.18641725002089515,progress=0.7118261743891068,sequence=22,OS=Optional(443536.65086975007),arrowToOS=Optional(0.1851829166407697)
+after reverse: ownerLanding=Optional((operation: 70D2D6FD-1892-4A46-B0A6-17C88DC73C97, at: Swift.ContinuousClock.Instant(_value: 486125.196926916 seconds), uptime: 443536.9380565418, presented: true)); shown=0,selected=1,ack=true,pending=nil,step=false,anticipated=nil,turning=false,updating=false,enabled=true
+
+xcresult: reverse owner landing 0.472369541 seconds > 0.45 seconds. This is the only failing assertion; 24 restored states and leaf markers passed.

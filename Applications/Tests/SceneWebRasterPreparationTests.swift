@@ -154,6 +154,37 @@ final class SceneWebRasterPreparationTests: XCTestCase {
   }
 
   @MainActor
+  func testStaticBrowserSVGJobsKeepTheirShellAndReplaceExactSourcePixels() async throws {
+    let resources = SceneRenderResources(maximumBackgroundWebSurfaces: 1)
+    let preparation = try await SceneWebRasterPreparation.create(resources: resources, permitsPreparation: { true })
+    defer { preparation.close() }
+    func source(_ color: String) -> AgentElement {
+      .init(id: color, kind: .web, frame: .init(x: 0, y: 0, width: 180, height: 160), source: color,
+        html: "<svg width='100%' height='100%' viewBox='0 0 180 160'><rect width='180' height='160' fill='\(color)'/><text x='8' y='150'>Browser font</text></svg>")
+    }
+    let first = source("red"), second = source("blue")
+    XCTAssertFalse(first.requiresLiveRuntime); XCTAssertFalse(first.usesNativeSVGRaster)
+    let a = try await preparation.prepare(first, requestedScale: 1, permitsPreparation: { true })
+    defer { a.release() }
+    let token = try XCTUnwrap(preparation.loadToken)
+    func descendants(_ view: UIView) -> [UIView] { [view] + view.subviews.flatMap(descendants) }
+    let web = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+      .flatMap(\.windows).flatMap(descendants).compactMap { $0 as? WKWebView }
+      .first { ObjectIdentifier($0) == preparation.webIdentity })
+    _ = try await web.evaluateJavaScript("window.staticShellWitness=42")
+    let b = try await preparation.prepare(second, requestedScale: 1, permitsPreparation: { true })
+    defer { b.release() }
+    XCTAssertNotEqual(preparation.loadToken, token, "Each source keeps its own cancellation/publication identity")
+    let witness = try await web.evaluateJavaScript("window.staticShellWitness") as? Int
+    XCTAssertEqual(witness, 42)
+    XCTAssertEqual(a.source, .agent(first)); XCTAssertEqual(b.source, .agent(second))
+    let red = try centerPixel(try XCTUnwrap(a.image.cgImage)), blue = try centerPixel(try XCTUnwrap(b.image.cgImage))
+    XCTAssertGreaterThan(red[0], 240); XCTAssertLessThan(red[2], 10)
+    XCTAssertGreaterThan(blue[2], 240); XCTAssertLessThan(blue[0], 10)
+    XCTAssertEqual(resources.activeWebSurfaceCount, 1)
+  }
+
+  @MainActor
   func testEightSequentialJobsUseOneExecutorAndFreshProgramGlobals() async throws {
     let resources = SceneRenderResources(byteLimit: 32 * 1024 * 1024, maximumBackgroundWebSurfaces: 1)
     let keyWindow = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first?.keyWindow

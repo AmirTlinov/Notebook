@@ -144,6 +144,57 @@ final class InkCanvasLifecycleTests: XCTestCase {
   }
 
   @MainActor
+  func testRefusedSourceRestorationFinishesOnceAndCanonicalDemandRecovers() async throws {
+    let resources=SceneRenderResources(byteLimit:8 * 1024 * 1024)
+    try await withPreparedSelectionCanvas(resources:resources) { canvas,window,action,plan in
+      for needsNewPool in [true,false] {
+        let restoration=try XCTUnwrap(canvas.captureSourceRestoration(for:[action.id]))
+        let geometry=try await canvas.prepareOrderedPlan(plan)
+        try await canvas.presentOrderedPlan(geometry,plan:plan,canonical:true)
+        restoration.installed()
+        try await self.waitForStableFrame(canvas,accepted:true)
+        var cut:InkCanvasView.AcceptedFrameLease?
+        var pressure:RasterReservation?
+        if needsNewPool {
+          // Refusal happens before the page clock can deliver a drawable.
+          canvas.projectPage(region:.init(x:0,y:0,width:2_000,height:2_000),
+            sourceSize:.init(width:160,height:160),pixelDensity:2)
+        } else {
+          // This pool already exists. The borrowed accepted cut forces a new
+          // retained texture only after the restoration owns its frame slot.
+          cut=try XCTUnwrap(canvas.acquireAcceptedFrameLease())
+          pressure=try XCTUnwrap(resources.reserveDerivedBytes(
+            resources.byteLimit-resources.reservedBytes,priority:.input))
+        }
+        defer {pressure?.release();cut?.release()}
+        var installed=0,abandoned=0
+        restoration.restore(install:{installed += 1},abandon:{abandoned += 1})
+        try await NotebookPersistenceFenceContract.until {installed>0 || abandoned>0}
+        XCTAssertEqual(installed,0);XCTAssertEqual(abandoned,1)
+        XCTAssertEqual(canvas.renderFailure,.resourceLimit)
+        XCTAssertEqual(canvas.orderedInkPlan,plan,"Refusal keeps the last complete cut")
+        XCTAssertFalse(canvas.framePublicationState.pendingOrderedCut)
+        XCTAssertEqual(canvas.framePublicationState.queuedOrderedCuts,0)
+        pressure?.release();cut?.release()
+        if needsNewPool {
+          canvas.projectPage(region:.init(x:0,y:0,width:160,height:160),
+            sourceSize:.init(width:160,height:160),pixelDensity:2)
+        }
+        // The failed private operation is terminal. The normal current source
+        // owns recovery after admission returns, with no retained retry waiter.
+        canvas.updateOrderedInk(.init())
+        try await self.waitForStableFrame(canvas,accepted:true)
+        XCTAssertEqual(installed,0);XCTAssertEqual(abandoned,1)
+        try await assertUX("failed-restoration-canonical-recovery-\(needsNewPool)",since:.now,window:window) {
+          try NotebookUXObservation.Pixels(window:window).matches([
+            (canvas.convert(.init(x:80,y:40),to:window),.black),
+            (canvas.convert(.init(x:80,y:110),to:window),.paper)])
+        }
+      }
+    }
+  }
+
+  @MainActor
   func testAbandonedAndSourceChangedPreparedPageFramesCannotSuppressCurrentInk() async throws {
     try await withPreparedSelectionCanvas { canvas,window,action,plan in
       let count=canvas.committedSourceNodeCount
@@ -162,13 +213,31 @@ final class InkCanvasLifecycleTests: XCTestCase {
           (canvas.convert(.init(x:80,y:75),to:window),.black),
           (canvas.convert(.init(x:80,y:110),to:window),.paper)])
       }
+      let restoration=try XCTUnwrap(canvas.captureSourceRestoration(for:[action.id]))
       let latest=try await canvas.prepareOrderedPlan(plan)
       try await canvas.presentOrderedPlan(latest,plan:plan)
+      restoration.installed()
       try await assertUX("new-source-handoff-stays-addressed",since:.now,window:window) {
         try NotebookUXObservation.Pixels(window:window).matches([
           (canvas.convert(.init(x:80,y:40),to:window),.paper),
           (canvas.convert(.init(x:80,y:75),to:window),.black),
           (canvas.convert(.init(x:80,y:110),to:window),.black)])
+      }
+      var restorationInstalled=0,restorationAbandoned=0
+      restoration.restore(install:{restorationInstalled += 1},abandon:{restorationAbandoned += 1})
+      // The real page owner can replace this canvas before the queued Task
+      // starts. A fresh basis must not authorize the old page's restoration.
+      canvas.resetPagePresentation()
+      canvas.apply(.init(actions:[self.handoffStroke(y:75)]))
+      try await NotebookPersistenceFenceContract.until {restorationInstalled>0 || restorationAbandoned>0}
+      XCTAssertEqual(restorationInstalled,0);XCTAssertEqual(restorationAbandoned,1)
+      try await self.waitForStableFrame(canvas)
+      XCTAssertTrue(canvas.orderedInkPlan.isEmpty)
+      try await assertUX("queued-restoration-does-not-adopt-replacement-page",since:.now,window:window) {
+        try NotebookUXObservation.Pixels(window:window).matches([
+          (canvas.convert(.init(x:80,y:40),to:window),.paper),
+          (canvas.convert(.init(x:80,y:75),to:window),.black),
+          (canvas.convert(.init(x:80,y:110),to:window),.paper)])
       }
     }
   }
@@ -308,6 +377,44 @@ final class InkCanvasLifecycleTests: XCTestCase {
       try NotebookUXObservation.Pixels(window:window).matches([
         (canvas.convert(.init(x:80,y:145),to:window),.black),
         (canvas.convert(.init(x:80,y:40),to:window),.paper)])
+    }
+    let pools=canvas.pageDrawableAllocationCount
+    canvas.apply(.init())
+    try await waitForStableFrame(canvas,accepted:true)
+    XCTAssertTrue(canvas.acceptedInkIsEmpty)
+    XCTAssertEqual(canvas.layer.opacity,1,"Current empty paper is an actually presented transparent frame")
+    XCTAssertTrue(canvas.frameReadiness?.isReady == true)
+    XCTAssertEqual(canvas.pageDrawableAllocationCount,pools,"Repeated empty material retains its admitted pool")
+    canvas.setPageInputEnabled(false)
+    canvas.setPageBackingRequired(false,priority:.passive)
+    let neighborFrames=canvas.drawableRequestCount
+    canvas.apply(.init())
+    try await waitForStableFrame(canvas,accepted:true)
+    XCTAssertFalse(canvas.hasPageRetainedTexture)
+    XCTAssertEqual(canvas.drawableRequestCount,neighborFrames,"Empty neighbors use no drawable")
+    var revokedEmptyPaper=false
+    canvas.onRenderReadinessChange={ ready in if !ready {revokedEmptyPaper=true} }
+    canvas.setPageBackingRequired(true,priority:.input)
+    canvas.setPageInputEnabled(true)
+    XCTAssertTrue(canvas.acceptedMaterialIsEmpty)
+    XCTAssertTrue(canvas.isStableFramePresented,
+      "Promoting already transparent paper does not revoke the accepted landing while its native pool warms")
+    XCTAssertFalse(revokedEmptyPaper)
+    canvas.onRenderReadinessChange=nil
+    let blankDeadline=ContinuousClock.now + .seconds(2)
+    while canvas.pendingFirstPresentationID == nil,ContinuousClock.now < blankDeadline {
+      try await Task.sleep(for:.milliseconds(1))
+    }
+    let blank=try XCTUnwrap(canvas.pendingFirstPresentationID)
+    canvas.displayActiveStroke(handoffPencil())
+    XCTAssertNotEqual(canvas.pendingFirstPresentationID,blank,
+      "Early Pencil supersedes only the unpresented transparent cut without waiting for its OS receipt")
+    canvas.commitActiveStroke()
+    try await waitForStableFrame(canvas)
+    XCTAssertTrue(canvas.frameReadiness?.isReady == true)
+    try await assertUX("early-pencil-replaces-pending-empty-reveal",since:.now,window:window) {
+      try NotebookUXObservation.Pixels(window:window).matches([
+        (canvas.convert(.init(x:80,y:145),to:window),.black)])
     }
   }
 

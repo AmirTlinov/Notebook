@@ -1,0 +1,1 @@
+UX next-pencil-contact-ready: correct=true, observed=0.003209 ms, ceiling=0.1 seconds; window observation, not photon timing

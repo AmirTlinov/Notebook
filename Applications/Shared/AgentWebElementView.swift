@@ -45,6 +45,8 @@ struct AgentWebSourceFailure: Equatable, Sendable {
     var allowsStateCommits = true
     let lease: WebSurfaceLease
     let snapshotPolicy: AgentSnapshotPolicy
+    var preparesPassiveSnapshot = true
+    var showsContent = true
     var focus: InteractiveElementReference? = nil
     let onRenderReady: (Bool) -> Void
     var onInteractionReady: (Bool) -> Void = { _ in }
@@ -80,8 +82,9 @@ struct AgentWebSourceFailure: Equatable, Sendable {
     }
 
     static func dismantleUIView(_ view: PhysicalWebViewport, coordinator: AgentWebCoordinator) {
-      coordinator.retireAfterCheckpoint()
+      let web = view.webView
       view.retire()
+      withExtendedLifetime(web) { coordinator.retireAfterCheckpoint() }
     }
 
     func updateUIView(_ view: PhysicalWebViewport, context: Context) {
@@ -101,7 +104,12 @@ struct AgentWebSourceFailure: Equatable, Sendable {
       context.coordinator.use(onFailure: onFailure)
       context.coordinator.use(onState: onState, enabled: allowsStateCommits)
       context.coordinator.programOwner = programOwner
+      context.coordinator.use(passiveSnapshot: preparesPassiveSnapshot)
       context.coordinator.load(element, basis: stateBasis, policy: snapshotPolicy, in: webView)
+      // The native owner reveals its output before it acknowledges installation.
+      // An outer SwiftUI opacity may be applied after updateUIView and supplies
+      // no subsequent mount/layout event to finish that same installation.
+      UIView.performWithoutAnimation { view.alpha = showsContent ? 1 : 0 }
       view.onInstalled?()
     }
   }
@@ -265,6 +273,7 @@ struct AgentWebSourceFailure: Equatable, Sendable {
     func uninstall() {
       guard !isRetired else { return }
       isRetired = true
+      if let retainedRaster { onRasterInstalled?(retainedRaster) }
       projection?.remove(self); projection = nil
       sceneModel?.unregisterScenePresentation(self)
       sceneModel = nil
@@ -285,6 +294,8 @@ struct AgentWebSourceFailure: Equatable, Sendable {
     var allowsStateCommits = true
     let lease: WebSurfaceLease
     let snapshotPolicy: AgentSnapshotPolicy
+    var preparesPassiveSnapshot = true
+    var showsContent = true
     var focus: InteractiveElementReference? = nil
     let onRenderReady: (Bool) -> Void
     var onInteractionReady: (Bool) -> Void = { _ in }
@@ -310,6 +321,8 @@ struct AgentWebSourceFailure: Equatable, Sendable {
     }
 
     static func dismantleNSView(_ webView: WKWebView, coordinator: AgentWebCoordinator) {
+      webView.removeFromSuperview()
+      coordinator.didDetachPresentation()
       coordinator.retireAfterCheckpoint()
     }
 
@@ -322,9 +335,11 @@ struct AgentWebSourceFailure: Equatable, Sendable {
       context.coordinator.use(onFailure: onFailure)
       context.coordinator.use(onState: onState, enabled: allowsStateCommits)
       context.coordinator.programOwner = programOwner
+      context.coordinator.use(passiveSnapshot: preparesPassiveSnapshot)
       context.coordinator.load(element, basis: stateBasis, policy: snapshotPolicy, in: webView)
       context.coordinator.bindPresentation(to: focus)
-      if let installation = context.coordinator.installation(for: element), installation.isInstalled { onInstalled(installation) }
+      webView.alphaValue = showsContent ? 1 : 0
+      if let installation = context.coordinator.installation(for: element) { onInstalled(installation) }
     }
   }
 
@@ -436,12 +451,13 @@ struct AgentWebSourceFailure: Equatable, Sendable {
 
     override func viewDidMoveToWindow() {
       super.viewDidMoveToWindow()
-      if window != nil, let retainedRaster { onRasterInstalled?(retainedRaster) }
+      if let retainedRaster { onRasterInstalled?(retainedRaster) }
     }
 
     func uninstall() {
       guard !isRetired else { return }
       isRetired = true
+      if let retainedRaster { onRasterInstalled?(retainedRaster) }
       sceneModel?.unregisterScenePresentation(self)
       sceneModel = nil
       image = nil
@@ -789,7 +805,7 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
   private var stateToApply: JSONValue?
   private var stateApplication: Task<Void, Never>?
   private var stateApplicationID: UUID?
-  private var currentCapture: AgentSnapshotCapture?
+  private var passiveCapture: AgentSnapshotCapture?
   private var submittedCaptures: [UUID: AgentSnapshotCapture] = [:]
   var pendingSnapshotCaptures: [AgentSnapshotCapture] { Array(submittedCaptures.values) }
   private var snapshotInFlight = false
@@ -856,6 +872,12 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
   func use(onSourceInstalled: @escaping (SceneSourceInstallation) -> Void) {
     guard !isInvalidated else { return }
     self.onSourceInstalled = onSourceInstalled
+  }
+
+  func didDetachPresentation() {
+    guard let element = loadedElement, let installation = installation(for: element),
+      !installation.isInstalled else { return }
+    onSourceInstalled(installation)
   }
 
   /// Changing accepted state rebinds this same native executor. Its exact
@@ -1356,7 +1378,7 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
     renderIsReady = false
     stateApplicationID = nil; stateApplication?.cancel(); stateApplication = nil
     preparationDeadline?.cancel(); preparationDeadline = nil; preparationDeadlineAt = nil
-    currentCapture?.cancel(); currentCapture = nil
+    passiveCapture?.cancel(); passiveCapture = nil
     onRenderReady = { _ in }
     onSnapshotPrepared = nil
     onInteractionReady = { _ in }
@@ -1489,8 +1511,33 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
   }
 
   private var snapshotOnly = false
+  private var preparesPassiveSnapshot = true
+  private var loadFailed = false
+  private var staticRasterShellReady = false
+
+  /// The mounted view requests a passive copy only when it is actually using
+  /// one (including the bridge from an old raster). A live cold program owns
+  /// its native output; turns and checkpoints borrow that output explicitly.
+  func use(passiveSnapshot requested: Bool) {
+    guard preparesPassiveSnapshot != requested else { return }
+    preparesPassiveSnapshot = requested
+    if !requested {
+      needsSnapshot = false
+      passiveCapture?.cancel()
+      if runtimeLoaded {
+        preparationDeadline?.cancel(); preparationDeadline = nil; preparationDeadlineAt = nil
+      }
+    } else if runtimeLoaded, let token = loadToken, let web = attachedWebView {
+      captureSnapshot(of: web, token: token)
+    }
+  }
 
   private func beginLoad(_ element: AgentElement, in webView: WKWebView, snapshotOnly: Bool = false) {
+    NotebookNavigationObservation.webPreparation("source_accepted", leaseID: lease.id, sourceID: element.id)
+    let staticRaster = snapshotOnly && element.kind == .web && !element.requiresLiveRuntime
+    let reusesStaticShell = staticRaster && staticRasterShellReady
+    staticRasterShellReady = reusesStaticShell
+    loadFailed = false
     frozenCheckpoint = nil
     stateTransfer?.revoke()
     self.snapshotOnly = snapshotOnly
@@ -1500,15 +1547,17 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
     checkpointTask?.cancel(); checkpointTask = nil; checkpointID = nil; checkpointedSource = nil; checkpointSelection = nil; checkpointWasCaptured = false; attentionPauseID = nil
     readinessGeneration &+= 1
     stateApplicationID = nil; stateApplication?.cancel(); stateApplication = nil
-    currentCapture?.cancel(); currentCapture = nil
+    passiveCapture?.cancel(); passiveCapture = nil
     snapshotInFlight = false; needsSnapshot = false; runtimeLoaded = false
     fingerRegions = nil
     activeNavigation = nil
-    webView.evaluateJavaScript("void window.notebookProgram?.dispose().catch(()=>{})", completionHandler: nil)
-    webView.stopLoading()
+    if !reusesStaticShell, loadedElement != nil {
+      webView.evaluateJavaScript("void window.notebookProgram?.dispose().catch(()=>{})", completionHandler: nil)
+      webView.stopLoading()
+    }
     let token = "\(lease.id.uuidString)/\(UUID().uuidString)"
     loadToken = token
-    stateTransfer = NotebookProgramStateTransfer(resources: resources,
+    stateTransfer = staticRaster ? nil : NotebookProgramStateTransfer(resources: resources,
       grantsInitialCredit: !snapshotOnly && (lease.priority == .input || lease.priority == .liveProgram))
     #if os(iOS)
       NotebookInteractionDiagnostics.bind(webView, elementID: element.id, token: token, ready: false)
@@ -1521,6 +1570,25 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
     publishRenderReadiness(false, token: token)
     publishInteractionReadiness(false, token: token)
     beginPreparationDeadline(token: token)
+    if staticRaster {
+      // XML classification proves there is no author execution, CSS or external
+      // asset. The existing browser retains its font/layout semantics, while
+      // the next drawing replaces only its DOM, not its navigation/runtime.
+      if reusesStaticShell {
+        webView.callAsyncJavaScript("document.body.innerHTML=html; document.body.getBoundingClientRect(); await document.fonts.ready; return true;",
+          arguments: ["html": element.html], in: nil, in: .page) { [weak self, weak webView] result in
+            guard let self, let webView, accepts(token), attachedWebView === webView else { return }
+            switch result {
+            case .success: acceptRuntimeReady(regions: [:], token: token, in: webView)
+            case .failure(let error): record(error, kind: "render_error", token: token)
+            }
+          }
+      } else {
+        NotebookNavigationObservation.webPreparation("navigation_requested", leaseID: lease.id, sourceID: element.id)
+        activeNavigation = webView.loadHTMLString(Self.staticRasterDocument(element, token: token), baseURL: nil)
+      }
+      return
+    }
     programLoadTask = Task { @MainActor [weak self, weak webView] in
       guard let self, let webView else { return }
       do {
@@ -1535,9 +1603,11 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
             Self.document(for: element, stateJSON: encoded.htmlJSON, token: token, package: package, origin: origin, stateCredit: stateTransfer?.initialCredit ?? 0, commitsEnabled: !snapshotOnly && allowsStateCommits)
           }
           packageNavigationURL = url
+          NotebookNavigationObservation.webPreparation("navigation_requested", leaseID: lease.id, sourceID: element.id)
           activeNavigation = webView.load(URLRequest(url: url))
         } else {
           let document = Self.document(for: element, stateJSON: encoded.htmlJSON, token: token, stateCredit: stateTransfer?.initialCredit ?? 0, commitsEnabled: !snapshotOnly && allowsStateCommits)
+          NotebookNavigationObservation.webPreparation("navigation_requested", leaseID: lease.id, sourceID: element.id)
           activeNavigation = webView.loadHTMLString(document.before + element.html + document.after, baseURL: nil)
         }
       } catch {
@@ -1594,7 +1664,7 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
     preparationDeadline = Task { @MainActor [weak self] in
       do { try await Task.sleep(until: deadline) } catch { return }
       guard let self, !Task.isCancelled, accepts(token) else { return }
-      currentCapture?.cancel(); currentCapture = nil
+      passiveCapture?.cancel(); passiveCapture = nil
       fail(.init(kind: "preparation_timeout", elementID: source.id,
         message: "WebKit did not complete source preparation and a snapshot before the deadline."),
         token: token, source: source, policy: policy)
@@ -1620,10 +1690,12 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
         return
       }
     #endif
-    if object["kind"] as? String == "diagnostic",
+    if object["kind"] as? String == "runtimeReady", let web = attachedWebView {
+      acceptRuntimeReady(regions: object["regions"] ?? [:], token: token, in: web)
+    } else if object["kind"] as? String == "diagnostic",
       let kind = object["category"] as? String, let message = object["message"] as? String {
       let diagnostic = RenderDiagnostic(kind: kind, elementID: element.id, message: String(message.prefix(2000)))
-      if kind == "javascript_error" || kind == "program_ready_error" { fail(diagnostic, token: token) }
+      if kind == "javascript_error" || kind == "program_ready_error" || kind == "render_error" { fail(diagnostic, token: token) }
       else { resources.record(diagnostic, for: element) }
     } else if object["kind"] as? String == "fingerRegions", let value = object["value"] {
       receiveFingerRegions(value)
@@ -1654,7 +1726,7 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
               loadedElement = current.updating(state: value)
               if let receipt { programBasis = receipt }
             }
-            if runtimeLoaded { preparationDeadline?.cancel(); preparationDeadline = nil; preparationDeadlineAt = nil; currentCapture?.cancel() }
+            if runtimeLoaded { preparationDeadline?.cancel(); preparationDeadline = nil; preparationDeadlineAt = nil; passiveCapture?.cancel() }
             publishCurrentSourceInstallation()
             setRenderReady(false, token: token)
             if runtimeLoaded { applyCurrentState() }
@@ -1672,6 +1744,20 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
     }
   }
 
+  private func acceptRuntimeReady(regions: Any, token: String, in web: WKWebView) {
+    guard accepts(token), !loadFailed, !runtimeLoaded, attachedWebView === web,
+      let element = loadedElement else { return }
+    receiveFingerRegions(regions)
+    runtimeLoaded = true; initialStateEncoding = nil
+    NotebookNavigationObservation.webPreparation("runtime_ready", leaseID: lease.id, sourceID: element.id)
+    staticRasterShellReady = snapshotOnly && element.kind == .web && !element.requiresLiveRuntime
+    #if os(iOS)
+      NotebookInteractionDiagnostics.bind(web, elementID: element.id, token: token, ready: true)
+    #endif
+    publishInteractionReadiness(true, token: token)
+    applyCurrentState()
+  }
+
   func webView(
     _ webView: WKWebView,
     decidePolicyFor navigationAction: WKNavigationAction,
@@ -1684,42 +1770,12 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
       && (packaged || scheme == nil || scheme == "about") ? .allow : .cancel)
   }
 
-  func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-    guard let navigation, navigation === activeNavigation, attachedWebView === webView,
-      let token = loadToken, accepts(token), let element = loadedElement else { return }
-    // Authored readiness and the native snapshot are the two real barriers.
-    // Display rAF can be suspended while the native wrapper waits for readiness.
-    webView.callAsyncJavaScript(
-      """
-      await document.fonts.ready;
-      await Promise.all([...document.images].map(image => image.decode().catch(() => {})));
-      await window.notebookProgram.start({requiresReady:\(element.programPackage != nil || !element.javaScript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || element.html.localizedCaseInsensitiveContains("<script"))});
-      for (const image of document.images) if (!image.naturalWidth) window.notebookDiagnostic('load_error', 'Image failed to load');
-      if (Math.max(document.body.scrollHeight, document.documentElement.scrollHeight) > innerHeight + 1 || Math.max(document.body.scrollWidth, document.documentElement.scrollWidth) > innerWidth + 1) window.notebookDiagnostic('overflow', 'Content exceeds its frame');
-      return window.notebookFingerInput.start();
-      """,
-      arguments: [:], in: nil, in: .page,
-      completionHandler: { [weak self, weak webView] result in
-        guard let self, let webView, accepts(token), attachedWebView === webView else { return }
-        switch result {
-        case .success(let value):
-          receiveFingerRegions(value)
-          runtimeLoaded = true; initialStateEncoding = nil
-          #if os(iOS)
-            if let element = loadedElement { NotebookInteractionDiagnostics.bind(webView, elementID: element.id, token: token, ready: true) }
-          #endif
-          publishInteractionReadiness(true, token: token)
-          applyCurrentState()
-        case .failure(let error):
-          record(error, kind: "render_error", token: token, source: element)
-          setRenderReady(false, token: token)
-        }
-      }
-    )
-  }
-
   private func captureSnapshot(of webView: WKWebView, token: String) {
     guard accepts(token), let element = loadedElement, appliedState == element.state else { return }
+    guard snapshotOnly || preparesPassiveSnapshot else {
+      preparationDeadline?.cancel(); preparationDeadline = nil; preparationDeadlineAt = nil
+      return
+    }
     if snapshotInFlight { needsSnapshot = true; return }
     lastCaptureAdmission = resources.rasterAdmission
     let policy = snapshotPolicy
@@ -1745,7 +1801,7 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
             policy: policy, permitsPublication: { !capture.isCancelled })
         }
         if accepts(token) {
-          snapshotInFlight = false; currentCapture = nil
+          snapshotInFlight = false; passiveCapture = nil
           if needsSnapshot, let web = attachedWebView {
             needsSnapshot = false; captureSnapshot(of: web, token: token)
           }
@@ -1759,7 +1815,7 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
   func holdSubmittedSnapshot(_ reservation: RasterReservation) -> AgentSnapshotCapture {
     precondition(!isInvalidated)
     let capture = AgentSnapshotCapture(reservation: reservation, lease: lease)
-    currentCapture = capture; submittedCaptures[capture.id] = capture
+    passiveCapture = capture; submittedCaptures[capture.id] = capture
     return capture
   }
 
@@ -1809,12 +1865,19 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
     fail(navigation: navigation, in: webView, error: error)
   }
 
+  func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
+    guard !isInvalidated, attachedWebView === webView, let navigation,
+      navigation === activeNavigation else { return }
+    NotebookNavigationObservation.webPreparation("navigation_committed", leaseID: lease.id, sourceID: loadedElement?.id)
+  }
+
   func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: any Error) {
     fail(navigation: navigation, in: webView, error: error)
   }
 
   func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
     guard attachedWebView === webView, let token = loadToken, accepts(token), let element = loadedElement else { return }
+    staticRasterShellReady = false
     guard recoveryAttempts < 2 else {
       fail(.init(kind: "web_process_terminated", elementID: element.id,
         message: "WebKit terminated repeatedly. Retry the surface explicitly."), token: token)
@@ -1849,12 +1912,12 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
     if policy == nil {
       // A terminal program/navigation failure revokes live installation too.
       // Only a failed capture can leave a functioning program interactive.
-      runtimeLoaded = false; needsSnapshot = false
+      runtimeLoaded = false; needsSnapshot = false; loadFailed = true; staticRasterShellReady = false
       publishInteractionReadiness(false, token: token)
     }
     snapshotFailure = diagnostic.kind == "resource_limit" ? .resourceLimit : .snapshotPending(element.id)
     preparationDeadline?.cancel(); preparationDeadline = nil; preparationDeadlineAt = nil
-    currentCapture?.cancel(); currentCapture = nil
+    passiveCapture?.cancel(); passiveCapture = nil
     resources.record(diagnostic, for: element)
     setRenderReady(false, token: token)
     Task { @MainActor [weak self] in
@@ -1910,6 +1973,7 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
   ) -> WKWebView {
     precondition(!coordinator.isInvalidated && !coordinator.lease.isReleased, "WebKit requires an active, parent-owned lease.")
     precondition(coordinator.attachedWebView == nil, "A lease session mounts exactly one WebKit surface.")
+    NotebookNavigationObservation.webPreparation("native_init_started", leaseID: coordinator.lease.id)
     let controller = WKUserContentController()
     controller.add(coordinator, name: "notebook")
     let configuration = WKWebViewConfiguration()
@@ -1940,6 +2004,11 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
       webView.setValue(false, forKey: "drawsBackground")
       webView.allowsMagnification = false
     #endif
+    NotebookNavigationObservation.webPreparation("native_init_finished", leaseID: coordinator.lease.id)
+    // Leave this native update before admitting the next bounded pair. The
+    // allocator resumes async consumers; it never constructs views recursively
+    // or waits for this independent browser's remote navigation to commit.
+    Task { @MainActor [weak lease = coordinator.lease] in lease?.finishConstruction() }
     return webView
   }
 
@@ -1991,8 +2060,46 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
       </head><body>
       """, after: """
       \(script)
+      <script>
+        // Readiness belongs to this document. Starting it here avoids a
+        // navigation callback -> native queue -> WebKit round trip per source.
+        addEventListener('load', async () => {
+          try {
+            await document.fonts.ready;
+            await Promise.all([...document.images].map(image => image.decode().catch(() => {})));
+            await window.notebookProgram.start({requiresReady:\(element.programPackage != nil || !element.javaScript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || element.html.localizedCaseInsensitiveContains("<script"))});
+            for (const image of document.images) if (!image.naturalWidth) window.notebookDiagnostic('load_error', 'Image failed to load');
+            if (Math.max(document.body.scrollHeight, document.documentElement.scrollHeight) > innerHeight + 1 || Math.max(document.body.scrollWidth, document.documentElement.scrollWidth) > innerWidth + 1) window.notebookDiagnostic('overflow', 'Content exceeds its frame');
+            const regions = window.notebookFingerInput.start();
+            window.webkit.messageHandlers.notebook.postMessage({token:notebookLoadToken,kind:'runtimeReady',regions});
+          } catch (error) { window.notebookDiagnostic('render_error', String(error)); }
+        }, {once:true});
+      </script>
       </body></html>
       """)
+  }
+
+  private static func staticRasterDocument(_ element: AgentElement, token: String) -> String {
+    precondition(element.kind == .web && !element.requiresLiveRuntime)
+    return """
+      <!doctype html><html><head><meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+      <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline';">
+      <style>
+        :root { color-scheme: light; }
+        html,body { width:100%; height:100%; margin:0; overflow:hidden; background:transparent; }
+        body { box-sizing:border-box; color:#171714; font:17px/1.42 -apple-system,BlinkMacSystemFont,sans-serif; }
+        *,*::before,*::after { box-sizing:border-box; }
+      </style></head><body>\(element.html)
+      <script>addEventListener('load', async () => {
+        try {
+          await document.fonts.ready;
+          window.webkit.messageHandlers.notebook.postMessage({token:'\(token)',kind:'runtimeReady'});
+        } catch (error) {
+          window.webkit.messageHandlers.notebook.postMessage({token:'\(token)',kind:'diagnostic',category:'render_error',message:String(error)});
+        }
+      }, {once:true});</script></body></html>
+      """
   }
 
   private static func json(_ value: JSONValue) -> String {

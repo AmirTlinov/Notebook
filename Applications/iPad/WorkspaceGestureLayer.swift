@@ -6,6 +6,7 @@ import UIKit
 @MainActor
 protocol NotebookSceneFingerInputOwner: AnyObject {
   func sceneFingerOwner(at point: CGPoint) -> NotebookInputGate.FingerContactOwner?
+  func cancelTransferredFingerInput()
 }
 
 /// Native editing can share the workspace's history gestures without giving
@@ -18,6 +19,17 @@ protocol NotebookHistoryGestureTarget: AnyObject {
 
 @MainActor
 enum NotebookSceneFingerRouting {
+  /// Cancel only the transferred runtime's native input. Window camera/contact
+  /// observers and a document clip's physical write barrier remain untouched.
+  static func cancelTransferredFingerInput(in subtree: UIView) {
+    func recognizers(in view: UIView) -> [UIGestureRecognizer] {
+      (view.gestureRecognizers ?? []) + view.subviews.flatMap { recognizers(in: $0) }
+    }
+    let enabled = recognizers(in: subtree).filter(\.isEnabled)
+    for recognizer in enabled { recognizer.isEnabled = false }
+    for recognizer in enabled { recognizer.isEnabled = true }
+  }
+
   static func historyTarget(of view: UIView?) -> (UIView & NotebookHistoryGestureTarget)? {
     var current = view
     while let candidate = current {
@@ -310,9 +322,12 @@ struct WorkspaceGestureLayer: UIViewRepresentable {
         ? inputGate.permitsNewContact && !inputGate.hasActivePencil
         : inputGate.permitsSceneContact(at: touch.location(in: sceneView.window), kind: .finger) else { return false }
       let owner = NotebookSceneFingerRouting.owner(of: touch, gate: inputGate)
-      // The passive observer still follows native input for admission and
-      // persistence. The camera cannot take that owner's first or later finger.
-      return gestureRecognizer === contactObserver || history || owner.permitsSceneNavigation
+      // Observe a program contact without taking its tap. Only the gate can
+      // admit a later pair spanning independent owners to the camera.
+      let observesWebPair: Bool
+      if gestureRecognizer === recognizer, case .webInput = owner { observesWebPair = true }
+      else { observesWebPair = false }
+      return gestureRecognizer === contactObserver || history || owner.permitsSceneNavigation || observesWebPair
     }
 
     func gestureRecognizer(

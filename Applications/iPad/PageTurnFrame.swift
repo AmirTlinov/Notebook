@@ -6,6 +6,10 @@ import UIKit
 /// images and GPU ink; a curl borrows this cut until its last GPU command ends.
 @MainActor
 final class PageTurnFrame {
+  struct CompositionTiming: Sendable {
+    let workerBegan, encodingBegan, encodingEnded, submitted: TimeInterval
+    let gpuBegan, gpuEnded, completionReceived: TimeInterval
+  }
   struct ImageLayer {
     let image: CGImage
     let frame: CGRect
@@ -48,7 +52,8 @@ final class PageTurnFrame {
     priority: SceneAllocationPriority = .passive,
     inputFallback: Bool = false,
     ink: InkCanvasView.AcceptedFrameLease? = nil, retaining: [AnyObject] = [],
-    onRelease: (@MainActor () -> Void)? = nil) async throws -> PageTurnFrame {
+    onRelease: (@MainActor () -> Void)? = nil,
+    onCompositionMeasured: (@MainActor (CompositionTiming, TimeInterval) -> Void)? = nil) async throws -> PageTurnFrame {
     try Task.checkCancellation()
     let gpu = SheetCurlGPU.shared
     guard size.width.isFinite, size.height.isFinite, size.width > 0, size.height > 0, scale.isFinite, scale > 0,
@@ -82,18 +87,20 @@ final class PageTurnFrame {
     let composition = PageTurnComposition(layers: inputs, size: size, scale: scale,
       context: context, texture: texture, command: command)
     let borrow = MaterialBorrow(retaining)
+    let measuresComposition = onCompositionMeasured != nil
     let worker = Task.detached(priority: priority == .input ? .userInitiated : .utility) { [layers, ink, borrow] in
       defer { withExtendedLifetime((layers, ink, borrow)) {} }
-      return try await composition.render()
+      return try await composition.render(measured: measuresComposition)
     }
     do {
-      let succeeded = try await withTaskCancellationHandler {
+      let result = try await withTaskCancellationHandler {
         try await worker.value
       } onCancel: {
         worker.cancel()
       }
+      if let timing = result.timing { onCompositionMeasured?(timing, CACurrentMediaTime()) }
       try Task.checkCancellation()
-      guard succeeded else { throw SceneRenderError.snapshotPending("page_compositor_gpu") }
+      guard result.succeeded else { throw SceneRenderError.snapshotPending("page_compositor_gpu") }
       return .init(texture: texture, size: size, reservation: reservation, priority: admittedPriority, onRelease: onRelease)
     } catch {
       reservation.release()
@@ -125,7 +132,8 @@ private final class PageTurnComposition: @unchecked Sendable {
     self.context = context; self.texture = texture; self.command = command
   }
 
-  nonisolated func render() async throws -> Bool {
+  nonisolated func render(measured: Bool) async throws -> (succeeded: Bool, timing: PageTurnFrame.CompositionTiming?) {
+    let workerBegan = measured ? CACurrentMediaTime() : 0
     try Task.checkCancellation()
     let extent = CGRect(x: 0, y: 0, width: texture.width, height: texture.height)
     let colorSpace = CGColorSpace(name: CGColorSpace.sRGB)!
@@ -153,11 +161,18 @@ private final class PageTurnComposition: @unchecked Sendable {
     try Task.checkCancellation()
     // Graph compilation and image upload are synchronous CPU work even when
     // the resulting GPU command is awaited asynchronously.
+    let encodingBegan = measured ? CACurrentMediaTime() : 0
     context.render(output, to: texture, commandBuffer: command, bounds: extent, colorSpace: colorSpace)
+    let encodingEnded = measured ? CACurrentMediaTime() : 0
     command.label = "PageTurn.composeAcceptedMaterials"
     return await withCheckedContinuation { continuation in
+      let submitted = measured ? CACurrentMediaTime() : 0
       command.addCompletedHandler { command in
-        continuation.resume(returning: command.status == .completed)
+        let timing = measured ? PageTurnFrame.CompositionTiming(workerBegan: workerBegan,
+          encodingBegan: encodingBegan, encodingEnded: encodingEnded, submitted: submitted,
+          gpuBegan: command.gpuStartTime, gpuEnded: command.gpuEndTime,
+          completionReceived: CACurrentMediaTime()) : nil
+        continuation.resume(returning: (command.status == .completed, timing))
       }
       // Once submitted, cancellation drains this fence before the main owner
       // may release either the output allocation or any borrowed source.

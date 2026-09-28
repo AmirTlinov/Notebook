@@ -1949,20 +1949,14 @@ final class DocumentWebCoordinator: NSObject,
     let trace = pagePreparationTrace
     pageIndexRequestID = requestID
     recordPreparation(.pageReceiptRequestedAt, trace: trace)
-    #if os(iOS)
-      let frameReadiness = snapshotPixelWidth == nil
-        ? "await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));" : ""
-    #else
-      let frameReadiness = ""
-    #endif
+    // The receipt describes the prepared source and hit geometry. Native paper
+    // installation owns pixel/input readiness; animation callbacks prove neither.
     let script = trace == nil ? """
       window.notebookRenderer.setPageIndex(index);
-      \(frameReadiness)
       return window.notebookRenderer.pageReceipt();
-      """ : "return await window.notebookRenderer.observedPageReceipt(index, waitsForFrames, attemptID);"
+      """ : "return window.notebookRenderer.observedPageReceipt(index, attemptID);"
     webView.callAsyncJavaScript(script,
-      arguments: ["index": value, "waitsForFrames": !frameReadiness.isEmpty,
-        "attemptID": trace?.identity.attemptID.uuidString ?? ""],
+      arguments: ["index": value, "attemptID": trace?.identity.attemptID.uuidString ?? ""],
       in: nil,
       in: .page,
       completionHandler: { [weak self] result in

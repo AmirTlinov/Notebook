@@ -16,6 +16,15 @@ import Darwin
   }
   static var onGraphicPaint: (@MainActor @Sendable (GraphicPaint) -> Void)?
   static var onSelectionControlsPaint: (@MainActor (UUID, CGRect) -> Void)?
+  static var onSourceInstalled: (@MainActor (SceneSourceInstallation, ContinuousClock.Instant) -> Void)?
+  static var onWebPreparation: (@MainActor (String, UUID, String?, ContinuousClock.Instant) -> Void)?
+  /// The observing scenario bounds its samples. Normal page material does not
+  /// allocate records or read a clock when this hook is absent.
+  // Stage, page owner, page UUID, output frame, composition operation, source time.
+  static var onPageMaterialPreparation: (@MainActor (String, UUID, UUID?, UUID?, UUID?, TimeInterval) -> Void)?
+  static func webPreparation(_ stage: String, leaseID: UUID, sourceID: String? = nil) {
+    onWebPreparation?(stage, leaseID, sourceID, .now)
+  }
   private static let recorder = Recorder.configured()
   static var enabled: Bool { recorder?.sink.accepting == true }
 

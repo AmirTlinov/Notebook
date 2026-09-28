@@ -1,0 +1,1 @@
+rawSourceInstallation=0.001758125 seconds; visibleReceipt=Optional(Notebook.NotebookMetalFrameReadiness.osPresentation(438046.5131428334)); independentCaptureAndCheck=0.028865417 seconds; correct=true. Capture cost is not application latency and is not subtracted.

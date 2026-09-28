@@ -1255,7 +1255,8 @@ final class NotebookAppModel {
     requiresExistingAccountContent: Bool = false,
     acceptance: NotebookAcceptanceConfiguration? = nil,
     persistenceQueue: NotebookPersistenceQueue? = nil,
-    sceneReader: NotebookSceneReader? = nil
+    sceneReader: NotebookSceneReader? = nil,
+    documentMeasurements: DocumentPresentationRecorder? = nil
   ) {
     self.store = store
     self.sceneReader = sceneReader ?? NotebookSceneReader(store: store)
@@ -1266,7 +1267,7 @@ final class NotebookAppModel {
     self.opensDefaultAccountWorkspace = opensDefaultAccountWorkspace
     self.requiresExistingAccountContent = requiresExistingAccountContent
     self.acceptance = acceptance
-    documentMeasurements = DocumentPresentationRecorder(enabled: acceptance != nil
+    self.documentMeasurements = documentMeasurements ?? DocumentPresentationRecorder(enabled: acceptance != nil
       || ProcessInfo.processInfo.arguments.contains("--notebook-profile-documents"))
     #if DEBUG && targetEnvironment(simulator)
       let arguments = ProcessInfo.processInfo.arguments

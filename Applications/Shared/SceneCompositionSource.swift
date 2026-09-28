@@ -188,6 +188,10 @@ actor SceneCompositionSource {
   private var nestedPoseIdentity: String?
   private var erasureProjection: [SurfaceID: [String: [InkElementErasure]]] = [:]
   private var folderContents: [UUID: Bool] = [:]
+  // Geometry belongs to this immutable, validated source cut. Planning, source
+  // admission and drawing reuse the same bounded projection, not one SQL read
+  // and actor round trip per phase and per visible program.
+  private var elementProjections: [SceneSourceAddress: NotebookElementPlacement] = [:]
 
   init(store: NotebookStore, revision: UInt64, workspaceID: UUID,
     groupPoses:[SceneCompositionPlane:[String:NotebookElementPlacement.Source]] = [:],
@@ -634,43 +638,97 @@ actor SceneCompositionSource {
     let programs = elements.filter { $0.kind == .web }
     guard !programs.isEmpty else { return [] }
     func read() throws -> Set<String> {
-      var erased = Set<String>()
-      for element in programs where try cachedElementErasures(element).contains(where: { $0.target.wholeElement }) {
-        erased.insert(element.id)
-      }
-      return erased
+      try prepareElementErasures(programs)
+      return Set(programs.filter { element in
+        erasureProjection[element.surface]?[element.id]?.contains(where: { $0.target.wholeElement }) == true
+      }.map(\.id))
     }
     if case .sql(let store) = origin { return try checked(store) { _ in try read() } }
     return try read()
   }
 
   private func cachedElementErasures(_ element: SpatialElement) throws -> [InkElementErasure] {
-    if let cached = erasureProjection[element.surface]?[element.id] { return cached }
-    let value: [InkElementErasure]
+    try prepareElementErasures([element])
+    return erasureProjection[element.surface]?[element.id] ?? []
+  }
+
+  private func prepareElementErasures(_ elements: [SpatialElement]) throws {
+    let missing = elements.filter { erasureProjection[$0.surface]?[$0.id] == nil }
+    guard !missing.isEmpty else { return }
+    let surfaces = Dictionary(grouping: missing, by: \.surface)
+    let journal: SpatialInkJournal
     switch origin {
     case .sql(let store):
-      let source = try store.readSpatialInkWindow(coverage: [:], elementIDs: [element.surface: [element.id]])
+      let source = try store.readSpatialInkWindow(coverage: [:], elementIDs: surfaces.mapValues { $0.map(\.id) })
       try retainInkWitness(source.records)
-      value = source.journal.elementErasures(on: element.surface)[element.id] ?? []
-    case .values(_, _, let journal): value = journal.elementErasures(on: element.surface)[element.id] ?? []
+      journal = source.journal
+    case .values(_, _, let value): journal = value
     }
-    erasureProjection[element.surface, default: [:]][element.id] = value
-    return value
+    for (surface, elements) in surfaces {
+      let projected = journal.elementErasures(on: surface)
+      for element in elements { erasureProjection[surface, default: [:]][element.id] = projected[element.id] ?? [] }
+    }
   }
   func elementPlacement(_ element: SpatialElement, boardID: UUID) throws -> NotebookElementPlacement? {
+    try elementPlacements([element], boardID: boardID)[element.id]
+  }
+
+  func elementPlacements(_ elements: [SpatialElement], boardID: UUID) throws -> [String: NotebookElementPlacement] {
+    guard elements.count <= WorkspaceSceneIndex.detailLimit else { throw SceneRenderError.resourceLimit }
+    func read() throws -> [String: NotebookElementPlacement] {
+      var result: [String: NotebookElementPlacement] = [:]
+      for element in elements {
+        if let placement = try preparedElementPlacement(element, boardID: boardID) { result[element.id] = placement }
+      }
+      return result
+    }
+    if case .sql(let store) = origin { return try checked(store) { _ in try read() } }
+    return try read()
+  }
+
+  struct SourceElement: Sendable {
+    let element: SpatialElement
+    let placement: NotebookElementPlacement?
+  }
+
+  /// Body and geometry are one bounded source read, including the source fence.
+  func sourceElements(_ addresses: [SceneSourceAddress]) throws -> [SceneSourceAddress: SourceElement] {
+    guard addresses.count <= WorkspaceSceneIndex.detailLimit else { throw SceneRenderError.resourceLimit }
+    func read() throws -> [SceneSourceAddress: SourceElement] {
+      var result: [SceneSourceAddress: SourceElement] = [:]
+      for address in addresses {
+        guard let value = try element(address.elementID, boardID: address.plane.boardID),
+          value.surface == (address.plane.coverID.map(SurfaceID.cover) ?? .board(address.plane.boardID)) else { continue }
+        let placement = value.kind != .nativeText && value.kind != .graphic
+          ? try preparedElementPlacement(value, boardID: address.plane.boardID) : nil
+        result[address] = .init(element: value, placement: placement)
+      }
+      return result
+    }
+    if case .sql(let store) = origin { return try checked(store) { _ in try read() } }
+    return try read()
+  }
+
+  private func preparedElementPlacement(_ element: SpatialElement, boardID: UUID) throws -> NotebookElementPlacement? {
+    let plane = element.surface.kind == .cover
+      ? SceneCompositionPlane.cover(boardID: boardID, itemID: element.surface.ownerID!) : .board(boardID)
+    let address = SceneSourceAddress(plane: plane, elementID: element.id)
+    if let value = elementProjections[address] { return value }
+    let value: NotebookElementPlacement?
     switch origin {
-    case .sql(let store): return try checked(store) {
-      let target=element.surface.kind == .cover
-        ? CollaborationTarget(kind:.cover,id:element.surface.ownerID!,boardID:boardID) : .init(kind:.board,id:boardID)
-      let plane=element.surface.kind == .cover
-        ? SceneCompositionPlane.cover(boardID:boardID,itemID:element.surface.ownerID!) : .board(boardID)
-      let store = $0
-      return try recorded(store) { try store.readElementPlacement(target:target,elementID:element.id,groupPoses:groupPoses[plane] ?? [:]) }
+    case .sql(let store):
+      let target = element.surface.kind == .cover
+        ? CollaborationTarget(kind: .cover, id: element.surface.ownerID!, boardID: boardID) : .init(kind: .board, id: boardID)
+      value = try recorded(store) { try store.readElementPlacement(target: target, elementID: element.id,
+        groupPoses: groupPoses[plane] ?? [:]) }
+    case .values(let index, _, _):
+      value = index.graphicGraph(boardID: boardID)?.projecting(placements: groupPoses[plane] ?? [:]).placement(element.id)
     }
-    case .values(let index,_,_):
-      let plane=element.surface.kind == .cover ? SceneCompositionPlane.cover(boardID:boardID,itemID:element.surface.ownerID!) : .board(boardID)
-      return index.graphicGraph(boardID:boardID)?.projecting(placements:groupPoses[plane] ?? [:]).placement(element.id)
+    if let value {
+      if elementProjections.count >= WorkspaceSceneIndex.detailLimit { elementProjections.removeAll(keepingCapacity: true) }
+      elementProjections[address] = value
     }
+    return value
   }
   private func graphicLayout(_ element: SpatialElement, boardID: UUID) throws -> NotebookGraphicLayout? {
     guard element.graphic != nil else { return nil }

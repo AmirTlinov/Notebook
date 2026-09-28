@@ -177,17 +177,12 @@ import XCTest
       XCTAssertEqual(try XCTUnwrap(model.presence?.camera.scale), scale)
       let scene = try Scene(model: model, window: initial.window)
       let ink = try XCTUnwrap((scene.paper.superview as? PaperCanvasContainerView)?.inkView)
-      var phase = "setup", phaseStart = ContinuousClock.now, phaseUptime = CACurrentMediaTime(), phases: [String] = []
+      var phase = "setup", phaseStart = ContinuousClock.now, phaseUptime = CACurrentMediaTime()
+      var phases: [String] = []
       @MainActor func record(_ event: String) {
-        phases.append("\(phase) +\(phaseStart.duration(to: .now)): \(event); uptime=\(ProcessInfo.processInfo.systemUptime); presentation=\(String(describing: ink.frameReadiness)); stamp=\(String(describing: model.activePage?.drawingStamp)); meshPrepare=\(ink.pageMeshPreparationCount); meshBuild=\(ink.pageMeshBuildCount); drawables=\(ink.drawableRequestCount); committedPass=\(ink.pageCommittedPassCount); geometryReady=\(ink.pageGeometryIsReady); stable=\(ink.isStableFramePresented)")
-      }
-      let receiveReadiness = ink.onRenderReadinessChange
-      ink.onRenderReadinessChange = { ready in
-        record("readiness=\(ready)")
-        receiveReadiness?(ready)
+        phases.append("\(phase) +\(phaseStart.duration(to: .now)): \(event)")
       }
       defer {
-        ink.onRenderReadinessChange = receiveReadiness
         let note = XCTAttachment(string: phases.joined(separator: "\n"))
         note.name = "inverse-journey-\(iteration)-accepted-render-phases"
         note.lifetime = .keepAlways; add(note)
@@ -211,48 +206,29 @@ import XCTest
         let elapsed=Duration.seconds(presented-phaseUptime)
         XCTAssertLessThanOrEqual(elapsed,NotebookUXObservation.correctnessTimeout)
         record("exact accepted source OS presentation=\(elapsed); ceiling=\(NotebookUXObservation.correctnessTimeout); stamp=\(accepted.drawingStamp)")
-        // Freeze the completed accepted ink cut before the one window capture.
-        // Only a failure reads it back: this distinguishes omitted accepted
-        // pixels from UIKit's representation of an otherwise correct Metal cut.
-        let acceptedInk=ink.acquireAcceptedFrameLease()
-        defer { acceptedInk?.release() }
-        let began=ContinuousClock.now,image=try NotebookUXObservation.Pixels(window:scene.window).image
-        let captured=ContinuousClock.now
-        let failures=try NotebookSelectionComposition.Frame(image,sampling:probes).failures(probes)
-        XCTAssertTrue(failures.isEmpty,"inverse-journey-\(iteration)-\(name): \(failures)")
-        record("independent pixel correctness: capture=\(began.duration(to:captured)); failures=\(failures); capture is outside OS timing, no duration was subtracted")
-        let shot=XCTAttachment(image:image);shot.name="inverse-journey-\(iteration)-\(name)-pixels"
-        shot.lifetime = .keepAlways;add(shot)
-        if !failures.isEmpty {
-          guard let acceptedInk,
-            let raw=CIImage(mtlTexture:acceptedInk.texture,
-              options:[.colorSpace:CGColorSpace(name:CGColorSpace.sRGB)!]) else {
-            record("failed window capture: exact accepted ink lease unavailable")
-            return
-          }
-          let flipped=raw.transformed(by:CGAffineTransform(translationX:0,y:acceptedInk.pixelSize.height).scaledBy(x:1,y:-1))
-          let white=CIImage(color:CIColor.white).cropped(to:flipped.extent)
-          guard let cg=CIContext().createCGImage(flipped.composited(over:white),from:flipped.extent) else {
-            record("failed window capture: accepted ink diagnostic readback unavailable")
-            return
-          }
-          let bounds=acceptedInk.logicalBounds,pixels=acceptedInk.pixelSize
-          let leaseProbes=probes.map { value -> Probe in
-            let points=value.points.map { point in
-              let page=point.applying(scene.pageToWindow.inverted())
-              return CGPoint(x:(page.x-bounds.minX)*pixels.width/bounds.width,
-                y:(page.y-bounds.minY)*pixels.height/bounds.height)
-            }
-            return .init(name:value.name,points:points,color:value.color,
-              minimum:value.minimum,maximum:value.maximum)
-          }
-          let materialImage=UIImage(cgImage:cg)
-          let materialFailures=try NotebookSelectionComposition.Frame(materialImage,sampling:leaseProbes).failures(leaseProbes)
-          record("failure-only frozen accepted ink: generation=\(acceptedInk.generation); source=\(accepted.id)/\(accepted.drawingStamp); bounds=\(bounds); pixels=\(pixels); failures=\(materialFailures); window-to-page=\(scene.pageToWindow.inverted()); this diagnostic does not replace the failed window oracle")
-          let materialShot=XCTAttachment(image:materialImage)
-          materialShot.name="inverse-journey-\(iteration)-\(name)-failed-window-accepted-ink"
-          materialShot.lifetime = .keepAlways;add(materialShot)
+        // The native runner cannot request a system screenshot. Read the
+        // already accepted GPU material once after its exact OS receipt;
+        // system composition is checked separately by the UI journey runner.
+        let began = ContinuousClock.now
+        let lease = try XCTUnwrap(ink.acquireAcceptedFrameLease())
+        defer { lease.release() }
+        let source = try XCTUnwrap(CIImage(mtlTexture: lease.texture,
+          options: [.colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!]))
+        let upright = source.transformed(by: CGAffineTransform(translationX: 0,
+          y: Double(lease.texture.height)).scaledBy(x: 1, y: -1))
+        let pixels = try XCTUnwrap(CIContext().createCGImage(upright, from: upright.extent))
+        let format = UIGraphicsImageRendererFormat(); format.scale = 1
+        let image = UIGraphicsImageRenderer(size: scene.window.bounds.size, format: format).image { context in
+          UIColor.white.setFill(); context.fill(scene.window.bounds)
+          UIImage(cgImage: pixels).draw(in: lease.logicalBounds.applying(scene.pageToWindow))
         }
+        let captured = ContinuousClock.now
+        let failures = try NotebookSelectionComposition.Frame(image, sampling: probes).failures(probes)
+        XCTAssertTrue(failures.isEmpty, "inverse-journey-\(iteration)-\(name): \(failures)")
+        record("accepted GPU material: readback=\(began.duration(to: captured)); failures=\(failures); separate from OS timing and system image")
+        let shot = XCTAttachment(image: image)
+        shot.name = "inverse-journey-\(iteration)-\(name)-accepted-material"
+        shot.lifetime = .keepAlways; add(shot)
       }
       let y = 800.0 + Double(iteration) * 45
       let body = probe("resident-line", [(220, y), (400, y)], .black, scene.pageToWindow)

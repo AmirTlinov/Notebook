@@ -1,0 +1,4 @@
+whole-route-cancel-second: whole-window correct=true, mixed-frames=1, observed=80.28529171133414 ms, capture+decode=27.39266667049378 ms, observation-window=100 ms. Diagnostic timing only; no application latency or OS presentation claim.
+elapsed_ms,capture_and_decode_ms,incoherent,failed_components
+36.601875035557896,24.2642083321698,true,moved-material: 0/3;no-raw-ghost-220.0: 0/3
+80.28529171133414,27.39266667049378,false,

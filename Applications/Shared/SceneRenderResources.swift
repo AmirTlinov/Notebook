@@ -165,6 +165,7 @@ final class WebSurfaceLease {
     self.id = id; self.priority = priority; self.resources = resources
   }
   func release() {
+    resources?.finishConstruction(id)
     resources?.setIdleWebReclamation(id, reclaim: nil)
     releaseRequested = true
     releaseIfUnborrowed()
@@ -205,6 +206,9 @@ final class WebSurfaceLease {
     self.priority = priority
     resources.updateWebPriority(id, priority: priority)
   }
+  /// The native constructor has returned. Browser navigation, authored
+  /// readiness and the running surface have separate lifetimes.
+  func finishConstruction() { resources?.finishConstruction(id) }
   isolated deinit { release() }
 }
 
@@ -510,6 +514,7 @@ final class SceneRenderResources {
     let id: UUID
     let priority: WebPriority
     let source: WebExecutionSource?
+    let constructsRuntime: Bool
     let order: UInt64
     let continuation: CheckedContinuation<WebSurfaceLease, any Error>
   }
@@ -542,6 +547,8 @@ final class SceneRenderResources {
   var pendingDerivedRequestCount: Int { derivedWaiters.count }
   @ObservationIgnored private var diagnosticEntries: [String: DiagnosticEntry] = [:]
   @ObservationIgnored private var activeWebSurfaces: [UUID: WebPriority] = [:]
+  @ObservationIgnored private var webConstructions: Set<UUID> = []
+  var activeWebConstructionCount: Int { webConstructions.count }
   @ObservationIgnored private var waiters: [WebWaiter] = []
   @ObservationIgnored private var accessClock: UInt64 = 0
   @ObservationIgnored private var waiterClock: UInt64 = 0
@@ -1023,18 +1030,18 @@ final class SceneRenderResources {
   }
   var diagnosticOwnerCount: Int { diagnosticEntries.count }
 
-  func acquireWebSurface(priority: WebPriority, source: InteractiveElementReference? = nil,
+  func acquireWebSurface(priority: WebPriority, source: InteractiveElementReference? = nil, constructsRuntime: Bool = false,
     deadline: ContinuousClock.Instant? = nil) async throws -> WebSurfaceLease {
-    try await acquireWebSurface(priority: priority, executionSource: source.map(WebExecutionSource.element), deadline: deadline)
+    try await acquireWebSurface(priority: priority, executionSource: source.map(WebExecutionSource.element), constructsRuntime: constructsRuntime, deadline: deadline)
   }
 
   func acquireDocumentProgramSurface(priority: WebPriority, documentID: UUID, blockID: String,
     deadline: ContinuousClock.Instant? = nil) async throws -> WebSurfaceLease {
-    try await acquireWebSurface(priority: priority, executionSource: .document(documentID, blockID), deadline: deadline)
+    try await acquireWebSurface(priority: priority, executionSource: .document(documentID, blockID), constructsRuntime: false, deadline: deadline)
   }
 
   private func acquireWebSurface(priority: WebPriority, executionSource source: WebExecutionSource?,
-    deadline: ContinuousClock.Instant?) async throws -> WebSurfaceLease {
+    constructsRuntime: Bool, deadline: ContinuousClock.Instant?) async throws -> WebSurfaceLease {
     try Task.checkCancellation()
     guard !priority.preparesRaster || maximumBackgroundWebSurfaces > 0 else { throw SceneRenderError.resourceLimit }
     let id = UUID()
@@ -1052,15 +1059,15 @@ final class SceneRenderResources {
         // waiters are quota-blocked, so a reserved critical slot must not need
         // a spare position in their full passive queue.
         reclaimUnusedWebIfNeeded(for: priority)
-        if canAdmit(priority, source: source) {
-          continuation.resume(returning: grantWebSurface(id: id, priority: priority, source: source))
+        if canAdmit(priority, source: source, constructsRuntime: constructsRuntime) {
+          continuation.resume(returning: grantWebSurface(id: id, priority: priority, source: source, constructsRuntime: constructsRuntime))
           return
         }
         guard waiters.count < maximumPendingWebRequests else {
           continuation.resume(throwing: SceneRenderError.resourceLimit); return
         }
         waiterClock &+= 1
-        waiters.append(WebWaiter(id: id, priority: priority, source: source, order: waiterClock, continuation: continuation))
+        waiters.append(WebWaiter(id: id, priority: priority, source: source, constructsRuntime: constructsRuntime, order: waiterClock, continuation: continuation))
         waiters.sort { $0.priority == $1.priority ? $0.order < $1.order : $0.priority < $1.priority }
         pendingWebRequestCount = waiters.count
         admitWaiters()
@@ -1117,10 +1124,17 @@ final class SceneRenderResources {
   fileprivate func releaseWebSurface(_ id: UUID) {
     let availability = webAvailability
     guard let priority = activeWebSurfaces.removeValue(forKey: id) else { return }
+    webConstructions.remove(id)
     activeWebSources[id] = nil; idleWebSurfaces[id] = nil; retiringIdleWebSurfaces.remove(id)
     activeWebSurfaceCount = activeWebSurfaces.count
     if priority.preparesRaster { activeBackgroundWebSurfaceCount -= 1 }
     if priority.isPassive { activePassiveWebSurfaceCount -= 1 }
+    admitWaiters()
+    publishWebAvailability(after: availability)
+  }
+  fileprivate func finishConstruction(_ id: UUID) {
+    guard webConstructions.remove(id) != nil else { return }
+    let availability = webAvailability
     admitWaiters()
     publishWebAvailability(after: availability)
   }
@@ -1159,11 +1173,18 @@ final class SceneRenderResources {
         < min(Self.maximumVisiblePrograms,
           maximumWebSurfaces - (maximumWebSurfaces > 1 && maximumBackgroundWebSurfaces > 0 ? 1 : 0)))
   }
-  private func canAdmit(_ priority: WebPriority, source: WebExecutionSource? = nil) -> Bool {
-    hasWebCapacity(priority) && (source.map { !activeWebSources.values.contains($0) } ?? true)
+  private func canAdmit(_ priority: WebPriority, source: WebExecutionSource? = nil, constructsRuntime: Bool = false) -> Bool {
+    // A dense scene may retain 32 independent programs, but constructing all
+    // their WKWebViews in one SwiftUI transaction blocks the first output.
+    // At most two admitted views await native construction. Their completion
+    // is delivered after the current native update returns; remote navigation
+    // and author readiness never retain this construction allowance.
+    hasWebCapacity(priority) && (!constructsRuntime || webConstructions.count < 2)
+      && (source.map { !activeWebSources.values.contains($0) } ?? true)
   }
-  private func grantWebSurface(id: UUID, priority: WebPriority, source: WebExecutionSource? = nil) -> WebSurfaceLease {
+  private func grantWebSurface(id: UUID, priority: WebPriority, source: WebExecutionSource? = nil, constructsRuntime: Bool = false) -> WebSurfaceLease {
     activeWebSurfaces[id] = priority
+    if constructsRuntime { webConstructions.insert(id) }
     activeWebSources[id] = source
     if let source {
       webAdmissionSerial &+= 1
@@ -1181,10 +1202,10 @@ final class SceneRenderResources {
   }
   private func admitWaiters() {
     if let priority = waiters.first?.priority { reclaimUnusedWebIfNeeded(for: priority) }
-    while let position = waiters.firstIndex(where: { canAdmit($0.priority, source: $0.source) }) {
+    while let position = waiters.firstIndex(where: { canAdmit($0.priority, source: $0.source, constructsRuntime: $0.constructsRuntime) }) {
       let waiter = waiters.remove(at: position)
       pendingWebRequestCount = waiters.count
-      waiter.continuation.resume(returning: grantWebSurface(id: waiter.id, priority: waiter.priority, source: waiter.source))
+      waiter.continuation.resume(returning: grantWebSurface(id: waiter.id, priority: waiter.priority, source: waiter.source, constructsRuntime: waiter.constructsRuntime))
     }
   }
   private func cancelWebRequest(_ id: UUID, error: any Error = CancellationError()) {

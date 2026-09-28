@@ -1,9 +1,46 @@
 import NotebookCore
 import UIKit
+import WebKit
 import XCTest
 @testable import Notebook
 
 final class SceneRenderResourcesTests: XCTestCase {
+  @MainActor
+  func testRuntimeConstructionAdmissionEndsBeforeNavigationAndPreservesRunningOwners() async throws {
+    let resources = SceneRenderResources()
+    let first = try await resources.acquireWebSurface(priority: .liveProgram, constructsRuntime: true)
+    let second = try await resources.acquireWebSurface(priority: .liveProgram, constructsRuntime: true)
+    defer { first.release(); second.release() }
+    let cancelled = Task { try await resources.acquireWebSurface(priority: .liveProgram, constructsRuntime: true) }
+    try await waitUntil { resources.pendingWebRequestCount == 1 }
+    let next = Task { try await resources.acquireWebSurface(priority: .liveProgram, constructsRuntime: true) }
+    defer { cancelled.cancel(); next.cancel() }
+    try await waitUntil { resources.pendingWebRequestCount == 2 }
+    cancelled.cancel()
+    do { _ = try await cancelled.value; XCTFail("Cancelled construction cannot acquire an executor") } catch is CancellationError { }
+    XCTAssertEqual(resources.activeWebConstructionCount, 2)
+    let owner = AgentWebCoordinator(lease: first, resources: resources, onState: { _, _ in false })
+    let web = AgentWebCoordinator.makeWebView(coordinator: owner)
+    defer { owner.invalidate() }
+    XCTAssertEqual(resources.pendingWebRequestCount, 1, "Construction completion must leave the native update before admitting another view")
+    XCTAssertNil(owner.loadToken, "No source navigation is needed to finish native construction")
+    let third = try await next.value
+    XCTAssertNil(web.url)
+    defer { third.release() }
+    XCTAssertEqual(resources.activeWebSurfaceCount, 3, "Finishing native construction does not retire its running program")
+    XCTAssertEqual(resources.activeWebConstructionCount, 2)
+    first.finishConstruction()
+    XCTAssertEqual(resources.activeWebConstructionCount, 2, "An old completion cannot release another owner's construction")
+    let waiting = Task { try await resources.acquireWebSurface(priority: .liveProgram, constructsRuntime: true) }
+    defer { waiting.cancel() }
+    try await waitUntil { resources.pendingWebRequestCount == 1 }
+    second.release()
+    let fourth = try await waiting.value
+    defer { fourth.release() }
+    XCTAssertEqual(resources.activeWebConstructionCount, 2)
+    XCTAssertEqual(resources.pendingWebRequestCount, 0)
+  }
+
   @MainActor
   func testFourVisibleProgramsAreInputOwnersNotPassivePreparation() async throws {
     let resources = SceneRenderResources()

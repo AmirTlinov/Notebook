@@ -61,10 +61,10 @@ import QuartzCore
   var ownsAuthoredHosts:Bool { !disposed }
   var retainsOriginal:Bool {!installed && !disposed}
   func retainsRawSource(_ id:String)->Bool {
-    (retainsOriginal || retiring) && rawMemberIDs.contains(id)
-  }
-  var retiringBodies:[NotebookOrderedInkPlan.Body] {
-    retiring && !disposed ? originals.values.sorted{$0.key < $1.key} : []
+    // An installed preview keeps its raw suppression through cancellation.
+    // SourceRestoration returns raw/body/peers together; projecting the old
+    // source before that install creates a second, competing restoration.
+    retainsOriginal && rawMemberIDs.contains(id)
   }
   /// A failed private stage may yield source preparation to the accepted
   /// canonical owner, but controls still describe the last installed picture.

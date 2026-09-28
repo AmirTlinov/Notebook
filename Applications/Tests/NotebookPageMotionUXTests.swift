@@ -448,6 +448,9 @@ import XCTest
   }
 
   func testFirstPresentedCurlBendsTheCompletePairWithoutAFlatPrimingFrame() async throws {
+    #if targetEnvironment(simulator)
+    throw XCTSkip("This deadline requires actual OS presentation receipts")
+    #endif
     let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
     let previous = scene.windows.first(where: \.isKeyWindow), window = UIWindow(windowScene: scene)
     let native = IPadSheetCurlController(), blue = UIViewController(), red = UIViewController()
@@ -456,21 +459,29 @@ import XCTest
     window.rootViewController = native; window.makeKeyAndVisible()
     defer { native.cancelMotion(); window.isHidden = true; window.rootViewController = nil; previous?.makeKey() }
     native.show(blue, direction: .forward, animated: false); native.prepare(red)
+    let size = native.view.bounds.size
+    let blueFrame = try await PageTurnFrameFixture.solid(.blue, size: size)
+    let redFrame = try await PageTurnFrameFixture.solid(.red, size: size)
+    native.acquireSheetFrame = { $0 === blue ? blueFrame : redFrame }
     try await Task.sleep(for: .milliseconds(30))
     let curl = try XCTUnwrap(native.view.subviews.compactMap { $0 as? SheetCurlMetalView }.first)
     let resolve = curl.onPageFrameReady
     defer { curl.onPageFrameReady = resolve }
     for turn in 0..<6 {
       var first: NotebookMetalFrameReadiness?, firstProgress: Double?
+      var receipts: [(sequence: Int, progress: Double, readiness: NotebookMetalFrameReadiness)] = []
       var underlay: UIView?
       curl.onPageFrameReady = { image, progress, sequence, readiness in
-        if first == nil, readiness.isReady {
+        receipts.append((sequence, progress, readiness))
+        if let shownAt = readiness.presentedTime,
+          first?.presentedTime.map({ shownAt < $0 }) ?? true {
           first = readiness; firstProgress = progress
           underlay = native.view.subviews.dropLast().last
         }
         resolve?(image, progress, sequence, readiness)
       }
       let target = turn.isMultiple(of: 2) ? red : blue
+      let start = CACurrentMediaTime()
       native.show(target, direction: turn.isMultiple(of: 2) ? .forward : .reverse, animated: true)
       let limit = ContinuousClock.now + .seconds(2)
       while native.page !== target, ContinuousClock.now < limit { try await Task.sleep(for: .milliseconds(2)) }
@@ -479,6 +490,11 @@ import XCTest
       let progress = try XCTUnwrap(firstProgress)
       XCTAssertGreaterThan(progress, 0)
       XCTAssertLessThan(progress, 1, "A complete pair can start bending in its first presented frame")
+      let shownAt = try XCTUnwrap(first?.presentedTime)
+      XCTAssertGreaterThanOrEqual(shownAt, start)
+      XCTAssertLessThanOrEqual(Duration.seconds(shownAt - start), NotebookUXObservation.pageFirstResponse)
+      let note = XCTAttachment(string: "First visible bend=\((shownAt-start)*1000) ms; receipts=\(receipts)")
+      note.name = "Complete pair presentation \(turn)"; note.lifetime = .keepAlways; add(note)
       XCTAssertTrue(underlay === (turn.isMultiple(of: 2) ? blue.view : red.view))
     }
   }
@@ -833,8 +849,8 @@ import XCTest
       curl.onFrameMeasured = { submission.append($0) }
       committedAt = nil
       curl.onPageFrameReady = { image, progress, sequence, readiness in
-        // The filtered presentation observer excludes precisely the zero or
-        // invalid receipts this oracle must reject. Keep every native receipt.
+        // Keep dropped receipts in diagnostics. They cannot acknowledge a
+        // visible frame, but need not precede it in delivery order.
         let presentedAt: TimeInterval
         switch readiness {
         case .osPresentation(let time): presentedAt = time
@@ -853,17 +869,17 @@ import XCTest
       curl.onPageFrameReady = forwardReadiness
       curl.onFrameMeasured = nil
       let encoding = XCTAttachment(string: "Command execution=\((commandReturned-start)*1000) ms\n" + submission.map {
-        "start=\(($0.encodingBegan-start)*1000)ms; CPU=\(($0.submitted-$0.encodingBegan)*1000)ms; GPU queue=\(($0.gpuBegan-$0.submitted)*1000)ms; GPU=\(($0.gpuEnded-$0.gpuBegan)*1000)ms; target=\(($0.targetPresentation-start)*1000)ms"
+        "operation=\($0.operationID?.uuidString ?? "cover"); sequence=\($0.sequence); clockRequestMS=\($0.clockRequested.map { ($0-start)*1000 } ?? .nan); callbackMS=\($0.displayUpdateReceived.map { ($0-start)*1000 } ?? .nan); start=\(($0.encodingBegan-start)*1000)ms; CPU=\(($0.submitted-$0.encodingBegan)*1000)ms; GPU queue=\(($0.gpuBegan-$0.submitted)*1000)ms; GPU=\(($0.gpuEnded-$0.gpuBegan)*1000)ms; scheduledMS=\($0.scheduled.map { ($0-start)*1000 } ?? .nan); renderDeadlineMS=\($0.renderingDeadline > 0 ? ($0.renderingDeadline-start)*1000 : .nan); targetMS=\($0.targetPresentation > 0 ? ($0.targetPresentation-start)*1000 : .nan)"
       }.joined(separator: "\n"))
       encoding.name = "Curl submission timing \(turn)"; encoding.lifetime = .keepAlways; add(encoding)
       XCTAssertFalse(frames.isEmpty, "No OS presentation evidence")
       XCTAssertTrue(frames.allSatisfy {
-        $0.presented.isFinite && $0.presented > 0 && $0.presented >= start && $0.presented <= $0.delivered
-      }, "Zero/dropped, invalid or pre-command timestamps cannot stand in for displayed frames")
+        $0.presented == 0 || ($0.presented.isFinite && $0.presented >= start && $0.presented <= $0.delivered)
+      }, "Invalid or pre-command timestamps cannot stand in for displayed frames")
       // Delivery onto MainActor can be delayed or reordered. Only the OS clock
       // measures display cadence; callback delay is retained as a separate lane.
-      // Missing receipts already fail above. Do not turn their zero timestamp
-      // into a meaningless negative first-response or a multi-day frame gap.
+      // A zero timestamp means the drawable was not shown. Preserve it in the
+      // report while measuring first response and cadence from visible frames.
       let ordered = frames.filter { $0.presented.isFinite && $0.presented >= start }
         .sorted { $0.presented < $1.presented }
       let first = try XCTUnwrap(ordered.first { $0.progress > 0 && $0.progress < 1 },

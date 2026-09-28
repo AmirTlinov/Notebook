@@ -1,0 +1,1 @@
+Native installation only: first=gesture-setup; all=715.669042; matched=true; exactSources=24/24; programsRequireLiveRuntime=true; independentPixelsCorrect=true. Origin precedes mounting; 150/1000ms ceilings unchanged. OS first-pixel/display deadlines remain unmeasured. Pixel readback and DOM correctness run afterward; no capture cost is subtracted.

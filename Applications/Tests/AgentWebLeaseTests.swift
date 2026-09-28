@@ -335,6 +335,39 @@ final class AgentWebLeaseTests: XCTestCase {
   }
 
   @MainActor
+  func testColdLiveProgramCapturesOnlyWhenItsMaterialIsRequested() async throws {
+    let resources = SceneRenderResources(), lease = try await resources.acquireWebSurface(priority: .input, constructsRuntime: true)
+    let owner = AgentWebCoordinator(lease: lease, resources: resources, onState: { _, _ in false })
+    owner.use(passiveSnapshot: false)
+    let web = AgentWebCoordinator.makeWebView(coordinator: owner)
+    let window = UIWindow(windowScene: try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene))
+    let host = UIViewController(); window.rootViewController = host; window.makeKeyAndVisible()
+    host.view.addSubview(web); web.frame = .init(x: 0, y: 0, width: 160, height: 120)
+    defer { owner.invalidate(); lease.release(); web.removeFromSuperview(); window.isHidden = true; window.rootViewController = nil }
+    let source = AgentElement(id: "on-demand", kind: .web, frame: .init(x: 0, y: 0, width: 160, height: 120),
+      source: "One live boot", html: "<button style='position:absolute;inset:0;background:red'>Ready</button>",
+      javaScript: "window.boots=(window.boots||0)+1;notebook.ready(Promise.resolve())")
+    let focus = InteractiveElementReference.page(pageID: UUID(), elementID: source.id)
+    owner.bindPresentation(to: focus); owner.load(source, in: web)
+    let deadline = ContinuousClock.now + .seconds(6)
+    while !owner.hasLiveSource(source), ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(10)) }
+    XCTAssertTrue(owner.hasLiveSource(source))
+    XCTAssertEqual(resources.activeWebConstructionCount, 0, "Native construction capacity is independent of authored interaction")
+    XCTAssertTrue(owner.pendingSnapshotCaptures.isEmpty)
+    XCTAssertNil(resources.image(for: source), "A cold mounted program needs no speculative cache readback")
+    let token = try XCTUnwrap(owner.loadToken)
+    let captured = try await AgentWebCoordinator.captureCurrent(focus: focus, element: source, resources: resources)
+    let raster = try XCTUnwrap(captured)
+    defer { raster.release() }
+    XCTAssertEqual(raster.source, .agent(source)); XCTAssertEqual(owner.loadToken, token)
+    let boots = try await web.evaluateJavaScript("window.boots") as? Int
+    XCTAssertEqual(boots, 1, "The later passive/turn reader borrows the executing program")
+    owner.receive(["token": token, "kind": "diagnostic", "category": "program_ready_error", "message": "terminal"])
+    owner.receive(["token": token, "kind": "runtimeReady"])
+    XCTAssertFalse(owner.hasLiveSource(source), "A late readiness event cannot resurrect a terminal runtime")
+  }
+
+  @MainActor
   func testDensityChangeRecapturesTheExistingLiveProgramWithoutReloadingIt() async throws {
     let resources = SceneRenderResources()
     let lease = try await resources.acquireWebSurface(priority: .input)

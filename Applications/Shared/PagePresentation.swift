@@ -21,8 +21,9 @@ struct PageInkPresentation:Equatable {
       shownGraphics=(page.id,page.size,page.agentStamp)
     } else if graphics == page.elementSourceIdentity { graphics=nil }
   }
+  func paperIsReady(_ page: PageDocument) -> Bool { ink?.matches(page) == true }
   func isReady(_ page:PageDocument)->Bool {
-    ink?.matches(page) == true && graphics == page.elementSourceIdentity
+    paperIsReady(page) && graphics == page.elementSourceIdentity
   }
   func hasInstalledGraphics(_ page:PageDocument)->Bool {
     shownGraphics?.id == page.id && shownGraphics?.size == page.size && shownGraphics?.stamp == page.agentStamp

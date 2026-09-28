@@ -122,6 +122,10 @@ final class IPadPageTurnController: UIViewController {
   private var controllers: [Int: IPadIndexedPageController] = [:]
   private struct PagePreparation {
     var readiness = PageTurnReadiness.State.waiting
+    // Belongs to this resident host, and follows its UUID when pages reorder.
+    // A local content revision can revoke today's receipt, not its cold-start
+    // priority over neighbours. Host/source retirement discards this state.
+    var initialContentInstalled = false
     var presentationFailure: PageTurnPreparationFailure?
     var captureFailure: PageTurnPreparationFailure?
     func failure(requiresCapture: Bool) -> PageTurnPreparationFailure? {
@@ -748,7 +752,9 @@ final class IPadPageTurnController: UIViewController {
       controller.pageID = identities[next] ?? controller.pageID
       controller.view.accessibilityIdentifier = "page-turn-page-\(next)"
       retained[next] = controller
-      if let old = pagePreparations[oldIndex] { preparations[next] = .init(readiness: old.readiness) }
+      if let old = pagePreparations[oldIndex] {
+        preparations[next] = .init(readiness: old.readiness, initialContentInstalled: old.initialContentInstalled)
+      }
     }
     pageTurnActivity.remapElementFrames(remapped)
     controllers = retained; pagePreparations = preparations
@@ -825,7 +831,8 @@ final class IPadPageTurnController: UIViewController {
     defer { isUpdatingContents = false }
     let target = canPrepareFollowingStep ? (coldGestureTarget ?? requestedIndex)
       : (anticipatedIndex ?? coldGestureTarget ?? requestedIndex.map(clamped))
-    pageTurnActivity.rasters.prioritize(displayed: displayedIndex, target: target)
+    pageTurnActivity.rasters.prioritize(displayed: displayedIndex, target: target,
+      displayedContentReady: pagePreparations[displayedIndex]?.initialContentInstalled == true)
     var required = PageTurnPrewarmWindow.indices(
       displayedIndex: displayedIndex,
       anticipatedIndex: target,
@@ -945,6 +952,12 @@ final class IPadPageTurnController: UIViewController {
     guard controllers[index]?.hostID == hostID else { return }
     guard pagePreparations[index]?.readiness != state else { return }
     pagePreparations[index, default: .init()].readiness = state
+    if state.presented { pagePreparations[index]?.initialContentInstalled = true }
+    if index == displayedIndex {
+      pageTurnActivity.rasters.prioritize(displayed: displayedIndex,
+        target: pageTurnActivity.preparationDemand?.pageIndex,
+        displayedContentReady: pagePreparations[index]?.initialContentInstalled == true)
+    }
     // Recovery acknowledges only the successful branch. A painted page does
     // not repair an independently failed capture, nor can that error mask paint.
     if state.presented { pagePreparations[index]?.presentationFailure = nil }
@@ -1130,6 +1143,8 @@ final class IPadPageTurnController: UIViewController {
     let target = page.flatMap { $0 == displayedIndex ? nil : $0 }
     let live = documentNavigation != nil && target.map { abs($0 - displayedIndex) > 1 } == true
     pageTurnActivity.prepare(target, presentation: live ? .live : .snapshot)
+    pageTurnActivity.rasters.prioritize(displayed: displayedIndex, target: target,
+      displayedContentReady: pagePreparations[displayedIndex]?.initialContentInstalled == true)
   }
 
   private func publishDocumentLanding(at page: Int, requestID: UUID?, deferred: Bool = true) {
@@ -1275,8 +1290,12 @@ final class IPadPageTurnController: UIViewController {
   }
 
   var currentPagePreparation: PageTurnPreparationState {
+    // Opening exposes the installed writable paper. A neighbouring program's
+    // boot or failure cannot hold that paper behind its closed cover. Complete
+    // content and an immutable curl cut retain their independent requirements.
+    if hasInstalledPage, pagePreparations[displayedIndex]?.readiness.paperReady == true { return .ready }
     if let failure = presentationFailure(at: displayedIndex) { return .failed(failure) }
-    return hasInstalledPage && pageIsPresented(at: displayedIndex) ? .ready : .waiting
+    return .waiting
   }
   var preparedPageIndices: Set<Int> { Set(pagePreparations.compactMap { $0.value.readiness.capturable ? $0.key : nil }) }
   var presentedPageIndices: Set<Int> { Set(pagePreparations.compactMap { $0.value.readiness.presented ? $0.key : nil }) }

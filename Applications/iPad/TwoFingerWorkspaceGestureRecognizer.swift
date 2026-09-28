@@ -151,6 +151,7 @@ final class TwoFingerPaperGestureRecognizer: UIGestureRecognizer {
 
   var defersHorizontalMotionToPageTurn = false
   private var defersThisPairToPageTurn = false
+  private var transferredWebInputs = false
   weak var inputGate: NotebookInputGate? {
     didSet {
       guard oldValue !== inputGate else { return }
@@ -327,6 +328,10 @@ final class TwoFingerPaperGestureRecognizer: UIGestureRecognizer {
         intent = .navigation
         state = .recognized
       }
+    case .undecided where releaseIntent == .magnification:
+      guard claimCamera() else { finishAsInvalid(); return }
+      intent = .magnification
+      state = .recognized
     case .tap, .undecided:
       finishAsInvalid()
     }
@@ -367,6 +372,7 @@ final class TwoFingerPaperGestureRecognizer: UIGestureRecognizer {
     magnificationSamples.removeAll(keepingCapacity: true)
     fingerSequenceRevision = nil
     defersThisPairToPageTurn = false
+    transferredWebInputs = false
   }
 
   /// The pair gets a new camera baseline, not a new undo history. A second
@@ -385,8 +391,12 @@ final class TwoFingerPaperGestureRecognizer: UIGestureRecognizer {
   private func beginTrackingPair() {
     cameraInput = isNativeHistory ? nil : .init(contactID: UUID(), revision: 0)
     let leavesObject = inputGate?.hasSceneObjectContact == true
-    defersThisPairToPageTurn = defersHorizontalMotionToPageTurn && !leavesObject
-    if leavesObject { undoIsEligible = false }
+    let includesWebInput = activeTouches.keys.contains { contact in
+      if case .webInput? = inputGate?.navigationContactOwner(source: inputSource, contact: contact) { return true }
+      return false
+    }
+    defersThisPairToPageTurn = defersHorizontalMotionToPageTurn && !leavesObject && !includesWebInput
+    if leavesObject || includesWebInput { undoIsEligible = false }
     startLocations = activeTouches.mapValues { $0.location(in: view) }
     let centroid = currentCentroid()
     startCentroid = centroid
@@ -506,8 +516,25 @@ final class TwoFingerPaperGestureRecognizer: UIGestureRecognizer {
   }
 
   private func claimCamera() -> Bool {
-    inputGate?.claimNavigation(source: inputSource, kind: .cameraPinch, contacts: Set(activeTouches.keys),
-      cancel: { [weak self] in self?.cancelForExclusiveInput() }) == true
+    guard let inputGate, inputGate.claimNavigation(source: inputSource, kind: .cameraPinch,
+      contacts: Set(activeTouches.keys), cancel: { [weak self] in self?.cancelForExclusiveInput() }) else { return false }
+    if !transferredWebInputs {
+      transferredWebInputs = true
+      var cancelled = Set<ObjectIdentifier>()
+      for (contact, touch) in activeTouches {
+        guard let ownerID = inputGate.navigationContactOwner(source: inputSource, contact: contact)?.webOwnerID,
+          cancelled.insert(ownerID).inserted else { continue }
+        var view = touch.view
+        while let current = view {
+          if let owner = current as? NotebookSceneFingerInputOwner, ObjectIdentifier(owner) == ownerID {
+            owner.cancelTransferredFingerInput()
+            break
+          }
+          view = current.superview
+        }
+      }
+    }
+    return inputGate.ownsNavigation(source: inputSource)
   }
 
   private func finishAsInvalid() {

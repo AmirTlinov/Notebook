@@ -40,7 +40,7 @@ final class DocumentPagePreparationTrace {
   static let browserPhaseNames: Set<String> = [
     "render_enter", "render_fragmentDOM", "render_images", "render_install",
     "render_programs", "render_state", "render_complete",
-    "receipt_enter", "receipt_setPage", "receipt_raf1", "receipt_raf2", "receipt_complete"
+    "receipt_enter", "receipt_setPage", "receipt_complete"
   ]
   static let visibilityStages: Set<Stage> = [
     .preparedPageStartAt, .frameEvaluationStartAt, .renderedAt,
@@ -62,7 +62,7 @@ final class DocumentPagePreparationTrace {
     for (name, elapsed) in phases where browserPhasesMS[name] == nil { browserPhasesMS[name] = elapsed }
   }
   func recordBrowserStates(_ states: [String: [String: Double]], attemptID: UUID) {
-    let stages: Set<String> = ["fonts_before", "fonts_after", "render_enter", "receipt_enter", "receipt_raf1", "receipt_raf2"]
+    let stages: Set<String> = ["fonts_before", "fonts_after", "render_enter", "receipt_enter"]
     let fields: Set<String> = ["documentHidden", "documentReadyState", "sourcePreparationConnected"]
     guard attemptID == identity.attemptID, states.count <= stages.count,
       states.allSatisfy({ stages.contains($0.key) && $0.value.count <= fields.count

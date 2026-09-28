@@ -9,7 +9,7 @@ function section(start, end) {
   assert(a >= 0 && b > a, `Missing shipped boundary: ${start} … ${end}`); return html.slice(a, b);
 }
 const observationSource = section('      let preparationObservation = null;', '      let presentationEpoch = ');
-const receiptSource = section('      const observedPageReceipt = async', '      // Each pending frame');
+const receiptSource = section('      const observedPageReceipt = ', '      // Each pending frame');
 const renderSource = section('      const renderFrame = async', '      const observedPageReceipt');
 const programWaitSource = section('      const waitForProgram = ', '      const retirePresentation = ');
 const programSource = fs.readFileSync(new URL('../../Applications/WebResources/document-program.js', import.meta.url), 'utf8');
@@ -70,7 +70,7 @@ test('failed author keeps its admitted state transport until the existing drain 
 
 function execution() {
   let now = 0, clockReads = 0;
-  const frames = [], actions = [];
+  const actions = [];
   const document = {hidden:false, readyState:'complete', fonts:{}, createElement:()=>({}),
     getElementById:()=>({textContent:''})};
   Object.defineProperties(document.fonts, {
@@ -79,53 +79,49 @@ function execution() {
   });
   const scope = {document, performance:{now:()=>{clockReads++;return now}},
     payload:{...frame},
-    requestAnimationFrame:fn=>frames.push(fn),
-    setPageIndex:index=>actions.push(['setPageIndex',index]), pageReceipt:()=>({...scope.payload}),
+    requestAnimationFrame:()=>{throw new Error('Prepared geometry must not wait for an animation frame')},
+    setPageIndex:index=>actions.push(['setPageIndex',index]),
+    pageReceipt:()=>({...scope.payload,layoutCanonical:true,width:612,height:792,regions:[{id:'link',x:40,y:50}]}),
     getComputedStyle:()=>{throw new Error('No observer layout')}, AbortController, DOMException};
   vm.runInNewContext(observationSource + receiptSource + programWaitSource + `
     globalThis.api={observePreparation, observedPageReceipt, observeBrowserState,
       observation:()=>preparationObservation};`, scope);
-  return {scope, frames, actions, api:scope.api, time:value=>{now=value}, reads:()=>clockReads};
+  return {scope, actions, api:scope.api, time:value=>{now=value}, reads:()=>clockReads};
 }
 
-test('no observation adds no clock/lifecycle sampling and preserves the two real scheduled callbacks', async () => {
+test('prepared geometry returns synchronously with no animation, clock or lifecycle sampling', () => {
   const f=execution(); f.time(10);
-  let finished=false;
-  const task=f.api.observedPageReceipt(3,true,'').then(value=>{finished=true;return value});
-  assert.equal(f.frames.length,1); assert.equal(finished,false); assert.equal(f.reads(),0);
-  f.frames.shift()(); await tick();
-  assert.equal(f.frames.length,1); assert.equal(finished,false);
-  f.frames.shift()(); const value=await task;
+  const value=f.api.observedPageReceipt(3,'');
   assert.equal(value.preparationObservation,undefined); assert.equal(f.reads(),0);
+  assert.equal(value.layoutCanonical,true); assert.equal(value.width,612); assert.equal(value.height,792);
+  assert.deepEqual(value.regions,[{id:'link',x:40,y:50}]);
   assert.deepEqual(f.actions,[['setPageIndex',3]]);
 });
 
-test('receipt phases bound each wait without claiming either callback is an installed frame', async () => {
+test('receipt observation preserves prepared geometry and measures only synchronous work', () => {
   const f=execution(); f.api.observePreparation({...frame,attemptID:'a'}); f.time(100);
-  const task=f.api.observedPageReceipt(3,true,'a');
-  f.time(130); f.frames.shift()(); await tick();
-  f.time(180); f.frames.shift()(); const value=await task;
-  const o=value.preparationObservation;
+  const plain=f.scope.pageReceipt(),value=f.api.observedPageReceipt(3,'a');
+  const {preparationObservation:o,...geometry}=value;
+  assert.deepEqual(geometry,plain);
   assert.equal(o.attemptID,'a'); assert.equal(o.phasesMS.receipt_setPage,0);
-  assert.equal(o.phasesMS.receipt_raf1,30); assert.equal(o.phasesMS.receipt_raf2,80);
-  assert.equal(o.phasesMS.receipt_complete,80);
+  assert.equal(o.phasesMS.receipt_complete,0);
+  assert.deepEqual(Object.keys(o.phasesMS).sort(),['receipt_complete','receipt_enter','receipt_setPage']);
   assert.equal(o.states.receipt_enter.documentHidden,0);
-  assert.equal(o.states.receipt_raf2.documentReadyState,2);
-  assert.deepEqual(Object.keys(o.states.receipt_raf2).sort(),['documentHidden','documentReadyState']);
+  assert.equal(o.states.receipt_enter.documentReadyState,2);
+  assert.deepEqual(Object.keys(o.states.receipt_enter).sort(),['documentHidden','documentReadyState']);
   f.api.observePreparation({...frame,attemptID:'a'});
   assert.equal(f.api.observation().attemptID,'a'); // Re-arming the same native attempt retains its source flags.
 });
 
-test('superseded source, runtime, state, token, page or attempt cannot inherit an earlier receipt observation', async () => {
+test('superseded source, runtime, state, token, page or attempt cannot inherit an earlier receipt observation', () => {
   for(const [key,value] of Object.entries({...frame,documentID:'other',runtimeID:'other',generation:'19',
     sourceKey:'other',stateKey:'other',renderToken:'other',pageIndex:4,attemptID:'other'})) {
     const f=execution(); f.api.observePreparation({...frame,attemptID:'old'});
-    const task=f.api.observedPageReceipt(3,true,'old');
-    f.frames.shift()(); await tick();
     if(key==='attemptID')f.api.observePreparation({...frame,attemptID:value});
     else f.scope.payload={...frame,[key]:value};
-    f.frames.shift()(); const receipt=await task;
+    const receipt=f.api.observedPageReceipt(3,'old');
     assert.equal(receipt.preparationObservation,undefined,key);
+    assert.equal(f.reads(),0,'A stale observation must not sample the current source');
   }
 });
 

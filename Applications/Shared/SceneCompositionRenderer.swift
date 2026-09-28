@@ -59,11 +59,15 @@ final class SceneCompositionRenderer {
   func sourcesOutsideCoverage(of previous: SceneCompositionCohort?) async throws -> Set<SceneSourceAddress> {
     guard let previous, let window = sourcePresentation else { return [] }
     var changed = Set<SceneSourceAddress>()
-    for (address, receipt) in previous.sourceReceipts {
-      guard let element = try await source.element(address.elementID, boardID: address.plane.boardID) else { continue }
-      let scale = (window.frame.pixelScales[address.plane.boardID] ?? 1) * window.displayScale
-      guard let placement=try await source.elementPlacement(element,boardID:address.plane.boardID) else { continue }
-      if demand(for: element, plane: address.plane, density: scale,placement:placement) != receipt.demand { changed.insert(address) }
+    let addresses = Array(previous.sourceReceipts.keys)
+    for start in stride(from: 0, to: addresses.count, by: WorkspaceSceneIndex.detailLimit) {
+      let end = min(start + WorkspaceSceneIndex.detailLimit, addresses.count)
+      let current = try await source.sourceElements(Array(addresses[start..<end]))
+      for (address, value) in current {
+        guard let receipt = previous.sourceReceipts[address], let placement = value.placement else { continue }
+        let scale = (window.frame.pixelScales[address.plane.boardID] ?? 1) * window.displayScale
+        if demand(for: value.element, plane: address.plane, density: scale, placement: placement) != receipt.demand { changed.insert(address) }
+      }
     }
     return changed
   }
@@ -103,11 +107,13 @@ final class SceneCompositionRenderer {
     for plane in plan.presentations.keys {
       // An empty cover is empty, not a second address for every board source.
       let workset = if let id = plane.coverID { frame.covers[id] } else { frame.worksets[plane.boardID] }
-      let erased = try await source.wholeErasedElements(workset?.elements ?? [])
-      for element in workset?.elements ?? [] where element.kind != .nativeText && element.kind != .graphic && element.kind != .group {
+      let elements = (workset?.elements ?? []).filter { $0.kind != .nativeText && $0.kind != .graphic && $0.kind != .group }
+      let erased = try await source.wholeErasedElements(elements)
+      let placements = try await source.elementPlacements(elements, boardID: plane.boardID)
+      for element in elements {
         if erased.contains(element.id) { continue }
         let address = SceneSourceAddress(plane: plane, elementID: element.id)
-        guard let placement=try await source.elementPlacement(element,boardID:plane.boardID) else { continue }
+        guard let placement = placements[element.id] else { continue }
         let demand = demand(for: element, plane: plane,
           density: (frame.pixelScales[plane.boardID] ?? 1) * displayScale,placement:placement)
         sourceDemands[address] = demand
@@ -585,18 +591,23 @@ final class SceneCompositionRenderer {
 
   func liveRasterRequests(plan: SceneCompositionPlan, frame: WorkspaceSceneFrame, displayScale: Double) async throws -> [LiveRasterRequest] {
     var requests: [LiveRasterRequest] = []
+    let addresses = plan.liveOwners.compactMap { owner -> SceneSourceAddress? in
+      guard case .element(let id) = owner.id else { return nil }
+      return .init(plane: owner.plane, elementID: id)
+    }
+    let elements = try await source.sourceElements(addresses)
     for owner in plan.liveOwners {
       try checkPreparation()
       guard case .element(let id) = owner.id else { continue }
-      guard let element = try await source.element(id, boardID: owner.plane.boardID),
-        element.surface == (owner.plane.coverID.map(SurfaceID.cover) ?? .board(owner.plane.boardID)) else {
+      guard let value = elements[.init(plane: owner.plane, elementID: id)] else {
         throw SceneRenderError.snapshotPending("live_element_source")
       }
+      let element = value.element
       if element.kind != .nativeText && element.kind != .graphic {
         guard let projection = frame.pixelScales[owner.plane.boardID] else {
           throw SceneRenderError.snapshotPending("live_element_projection")
         }
-        guard let placement=try await source.elementPlacement(element,boardID:owner.plane.boardID) else { continue }
+        guard let placement = value.placement else { continue }
         let density = projection * displayScale
         requests.append(try .init(owner: owner, element: element, displayScale: density,
           demand: demand(for: element, plane: owner.plane, density: density,placement:placement)))

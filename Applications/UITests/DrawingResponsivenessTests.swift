@@ -1085,7 +1085,13 @@ final class DrawingResponsivenessTests: XCTestCase {
       XCTAssertTrue(app.switches["Пауза"].waitForExistence(timeout: 2))
       let moving = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in phase.value as? String != quarter }, object: nil)
       XCTAssertEqual(XCTWaiter.wait(for: [moving], timeout: 3), .completed)
-      XCUIDevice.shared.press(.home)
+      XCUIApplication(bundleIdentifier: "com.apple.Preferences").activate()
+      let background = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+        let state = app.state
+        return state == .runningBackground || state == .runningBackgroundSuspended
+      }, object: nil)
+      XCTAssertEqual(XCTWaiter.wait(for: [background], timeout: 5), .completed,
+        "The system must actually move the app to background before testing its return boundary")
       app.activate()
       XCTAssertTrue(app.switches["Пуск"].waitForExistence(timeout: 5), "Background freezes the model before the OS suspends its browser")
       let frozen = try XCTUnwrap(phase.value as? String)
@@ -1105,6 +1111,19 @@ final class DrawingResponsivenessTests: XCTestCase {
       app.buttons["Назад на четверть периода"].tap()
       XCTAssertNotEqual(phase.value as? String, zero)
       next.tap(); XCTAssertEqual(phase.value as? String, zero)
+      // Both contacts start on this runtime's wide native range control. An
+      // inward pinch keeps them inside it rather than crossing onto the paper.
+      XCTAssertTrue(phase.isHittable)
+      let beforePinch = material.frame
+      phase.pinch(withScale: 0.85, velocity: -0.5)
+      XCTAssertEqual(material.frame, beforePinch, "A pair inside one program must not move or scale its board/document")
+      let afterPinch = try XCTUnwrap(phase.value as? String)
+      next.tap()
+      XCTAssertNotEqual(phase.value as? String, afterPinch, "The runtime's next control still receives its first tap after pinch")
+      app.buttons["Начало"].tap()
+      phase.coordinate(withNormalizedOffset: .init(dx: 12 / phase.frame.width, dy: 0.5)).press(forDuration: 0.01,
+        thenDragTo: phase.coordinate(withNormalizedOffset: .init(dx: 0.8, dy: 0.5)))
+      XCTAssertNotEqual(phase.value as? String, zero, "The runtime's slider still owns native dragging after pinch")
       app.terminate()
     }
   }

@@ -324,12 +324,13 @@ struct SceneCompositionPlan: Sendable {
         candidates.append((.board(boardID), .item(item.id), pinned.contains(.item(item.id)), false, false, visiblePaper, item.item.kind != .board))
       }
       let erased = try await source.wholeErasedElements(workset.elements)
+      let placements = try await source.elementPlacements(workset.elements.filter { $0.kind == .web }, boardID: boardID)
       for element in workset.elements {
         if erased.contains(element.id) {
           pinned.remove(.element(element.id)); continue
         }
         let plane = SceneCompositionPlane.board(boardID)
-        let placement = element.kind == .web ? try await source.elementPlacement(element,boardID:boardID) : nil
+        let placement = placements[element.id]
         let program = element.kind == .web && agentElementSnapshotSource(element).requiresLiveRuntime
         let runtime = placement.map { plane.demandsRuntime(source:agentElementSnapshotSource(element),
           origin:SceneSourceCapture.origin(placement:$0,plane:plane,frame:frame),transform:SceneSourceCapture.linear($0),in:presence) } ?? false
@@ -631,7 +632,42 @@ final class SceneCompositionCohort {
   }
   private var installedLayers: [ScenePaintPosition.Layer: SceneCameraPlaneInstallation] = [:]
   private var installedTiles: [SceneCompositionTileKey: SceneSourceInstallation] = [:]
-  private var installedSources: [SceneSourceAddress: SceneSourceInstallation] = [:]
+  /// The live view and its bridge can overlap. Native callbacks update their
+  /// own receipt; dismantling either one cannot revoke the other presenter.
+  @MainActor private struct InstalledSource {
+    var source: SceneRasterSource?
+    var raster: SceneSourceInstallation?
+    var runtime: SceneSourceInstallation?
+
+    mutating func record(_ installation: SceneSourceInstallation) {
+      let acceptedSource = installation.source.agentElement.map(SceneRasterSource.agent)
+      if source != acceptedSource {
+        guard installation.isInstalled else { return }
+        self = .init(source: acceptedSource)
+      }
+      let isRuntime = installation.runtimeToken != nil
+      if installation.isInstalled {
+        if isRuntime { runtime = installation } else { raster = installation }
+        return
+      }
+      let previous = isRuntime ? runtime : raster
+      guard previous?.ownerIdentity == installation.ownerIdentity,
+        previous?.source == installation.source,
+        previous?.entryID == installation.entryID,
+        previous?.runtimeToken == installation.runtimeToken else { return }
+      if isRuntime { runtime = nil } else { raster = nil }
+    }
+
+    func hasPixels(for source: AgentElement) -> Bool {
+      func matches(_ candidate: SceneSourceInstallation?) -> Bool {
+        guard let candidate, candidate.isInstalled,
+          let installed = candidate.source.agentElement else { return false }
+        return SceneRasterSource.agent(installed) == .agent(source)
+      }
+      return matches(runtime) || matches(raster)
+    }
+  }
+  private var installedSources: [SceneSourceAddress: InstalledSource] = [:]
   /// Observes the existing native claim without creating an installation or
   /// treating a cached raster as displayed pixels.
   func observedTileInstallation(_ key: SceneCompositionTileKey) -> (entryID: UUID?, isInstalled: Bool) {
@@ -655,7 +691,7 @@ final class SceneCompositionCohort {
     guard let receipt = sourceReceipts[address],
       let source = installation.source.agentElement,
       SceneRasterSource.agent(receipt.demand.source) == .agent(source) else { return }
-    installedSources[address] = installation
+    installedSources[address, default: .init()].record(installation)
   }
   func hasInstalledPixels(for address: SceneSourceAddress) -> Bool {
     guard isPaintInstalled, let receipt = sourceReceipts[address], receipt.hasCurrentPixels else { return false }
@@ -663,8 +699,7 @@ final class SceneCompositionCohort {
     if !fragments.isEmpty {
       return fragments.allSatisfy { installedTiles[$0]?.entryID == rasters[$0]?.entryID && installedTiles[$0]?.isInstalled == true }
     }
-    guard let installation = installedSources[address], let source = installation.source.agentElement else { return false }
-    return installation.isInstalled && SceneRasterSource.agent(source) == .agent(receipt.demand.source)
+    return installedSources[address]?.hasPixels(for: receipt.demand.source) == true
   }
 
   /// Tile snapping may extend past the admitted ink query. Those pixels do
@@ -944,7 +979,8 @@ final class SceneCompositionTiles {
       cancelPreparation()
     }
     let source = request.source, presence = request.presence, frame = request.frame
-    let pinned = request.pinned.union(installedRuntimePins(frame: frame, presence: presence))
+    let runtimePins = installedRuntimePins(frame: frame, presence: presence)
+    let pinned = request.pinned.union(runtimePins)
     let displayScale = request.displayScale
     let permitsPreparation = request.permitsPreparation, onSourceInvalidated = request.onSourceInvalidated
     let sources = frame.sourceIdentity
@@ -961,7 +997,11 @@ final class SceneCompositionTiles {
           refinesDetails: request.refinesDetails), cohort.requestedSources == sources,
         cohort.plan.revision == source.revision, cohort.plan.workspaceID == source.workspaceID,
         cohort.plan.groupPoses == source.groupPoses,
-        Self.covers(cohort.plan, presence: presence, pinned: pinned, refinesDetails: request.refinesDetails)
+        // A runtime just mounted into this very plan is already excluded from
+        // static paint. Reusing it performs no demotion; promoting its existing
+        // membership into a new protected plan would rebuild the same scene.
+        runtimePins.allSatisfy({ pin in cohort.plan.liveOwners.contains { $0.id == pin } }),
+        Self.covers(cohort.plan, presence: presence, pinned: request.pinned, refinesDetails: request.refinesDetails)
       else { return nil }
       return cohort
     }

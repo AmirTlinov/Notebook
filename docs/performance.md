@@ -132,7 +132,9 @@ algebra, including addressed body cuts; it never destination-erases all authored
 bodies from a flattened image. A source, pose or crop change rebuilds the backing.
 Ordered scratch attachments belong to bounded frame slots, not individual bodies.
 A page-turn lease borrows a completed, presented canonical cut; while leased, the
-next write obtains a separately charged texture. Empty paper needs no texture.
+next write obtains a separately charged texture. An empty accepted cut needs no
+retained-content texture; current visible paper warms its admitted drawable pool
+as described under the current-page lifecycle below.
 Unmount/reclamation releases canvas backing; submitted work and external leases
 keep their exact resources charged until GPU completion/release.
 
@@ -252,6 +254,13 @@ one native transaction without draining earlier GPU or CA work. Changed selected
 sources or host generations revoke a pending cut; unrelated ordered bodies survive
 its addressed merge. Allocation refusal keeps the last picture and resumes only
 on the next owner request. OS presentation remains the readiness evidence.
+Cancellation keeps the last installed raw suppression and body poses in ordinary
+scene projection. Only SourceRestoration installs the original ink, authored poses
+and controls together; projection does not launch a competing restoration. Actual
+source retirement or failed preparation resolves the private waiter and relinquishes
+its working members to the current canonical source. Allocation/encoding refusal
+also ends an unsubmitted private cut; a later canonical demand owns recovery.
+Queued restoration checks its addressed source witness again at admission.
 
 Raw selection pins the chosen contact's immutable revisions/state and indexed later
 intersecting erasers. The native writer checks the same addressed read set inside
@@ -588,6 +597,14 @@ turns while mounted, without acquiring drawables. During admitted motion,
 `UIUpdateLink.wantsImmediatePresentation` requests the lower-latency UIKit policy;
 it does not drive animation and is disabled when motion stops. The request is
 not evidence of actual latency: acceptance uses OS drawable timestamps.
+The first bent frame uses that same Metal clock and asynchronous command-buffer
+presentation as subsequent frames. There is no direct-drawable bootstrap, clock
+handoff, or page CA-publication queue. Operation identity and a presentation
+generation reject receipts from a replaced operation or detached view, including
+reuse of the same immutable frame. Optional timing records scheduling at its
+Metal callback; asynchronous presentation has no app-owned UIKit publication time.
+An OS receipt of zero is retained as a dropped drawable in diagnostics; first
+response and cadence are measured only from actually shown bent frames.
 Settlement follows remaining travel, release velocity, stroke duration and
 current input cadence, without a fixed minimum duration. A re-grab starts from
 the visible pose; cancelling a newer contact preserves the previously accepted
@@ -598,16 +615,18 @@ The unchanged physical first-frame/cadence limits remain separate from geometry,
 endpoint, re-grab, colour and resource-lifetime regressions.
 
 Page projection installs frame, drawable size and layer size atomically before
-requesting a frame. The synchronous MTK size callback cannot allocate an
-intermediate backing with old/new dimensions. The first empty-page contact also
-reports its first drawable's typed completion while the dot remains held; the
-regression does not create a screenshot or subsequent move to obtain that receipt.
-An empty layer stays hidden without a dummy drawable. Its first real contact
-and opacity reveal join one CA transaction after GPU scheduling; warm former
-pixels remain hidden until that same atomic replacement.
-The first drawable keeps the page clock parked until its OS receipt, so a later
-frame cannot change transaction mode or supersede the held dot. Input continues
-collecting samples; cancellation/source replacement revoke only this pending frame.
+requesting its sole CAMetalDisplayLink at 120 Hz. The synchronous MTK size callback
+cannot allocate an intermediate backing with old/new dimensions. Visible current
+input paper presents a real transparent frame during empty-page installation,
+then parks its existing clock and pool. Empty neighbors retain only logical
+transparency; demotion/reclamation releases their native backing. An early Pencil
+supersedes an unpresented empty cut and supplies the latest material to that same
+clock; it does not wait for an extra blank frame. Nonempty reveal and selection
+cuts keep their own transaction through the OS receipt.
+The first held dot records dropped submissions separately and awaits the same
+contact's first actual OS presentation from the original input time. Diagnostics
+and later moves do not obtain that receipt. GPU completion and OS presentation
+remain distinct; preparing empty paper does not establish the 20 ms input budget.
 The repeated pen/undo/redo journey joins each accepted page stamp to its stable
 canvas OS receipt within 100 ms, then checks pixels independently. A previous
 correct-looking picture cannot acknowledge an unpresented inverse, and diagnostic

@@ -27,12 +27,22 @@ final class NotebookInputGate {
     /// A browser link owns a tap, not a drag or material hold. Once native
     /// camera motion or a lift wins, UIKit cancels the original link contact.
     case webLink(ObjectIdentifier)
+    /// A program owns one-finger input and pairs inside its own runtime. A
+    /// pair spanning paper or another program belongs to the scene camera.
+    case webInput(ObjectIdentifier)
     case nativeInput(ObjectIdentifier)
+
+    var webOwnerID: ObjectIdentifier? {
+      switch self {
+      case .webInput(let id), .webLink(let id): id
+      default: nil
+      }
+    }
 
     var permitsSceneNavigation: Bool {
       switch self {
       case .scene, .sceneObject, .webLink: true
-      case .history, .nativeInput: false
+      case .history, .webInput, .nativeInput: false
       }
     }
   }
@@ -58,6 +68,12 @@ final class NotebookInputGate {
     }
   }
 
+  func navigationContactOwner(source: UUID, contact: ObjectIdentifier) -> FingerContactOwner? {
+    fingerContactOwners[contact] ?? navigationContacts[source]?[contact]
+  }
+
+  func ownsNavigation(source: UUID) -> Bool { navigationClaim?.source == source }
+
   /// Recognizers report an intent; the gate transfers the accepted physical
   /// contact. A pinch may take over a pan or curl, including its settling tail.
   /// A late horizontal sample cannot take an already accepted pinch back.
@@ -66,8 +82,19 @@ final class NotebookInputGate {
     cancel: @escaping @MainActor () -> Void) -> Bool {
     guard permitsNewContact, !hasActivePencil else { return false }
     if navigationClaim?.source == source { return true }
-    let owners = contacts.map { fingerContactOwners[$0] ?? navigationContacts[source]?[$0] }
-    guard owners.allSatisfy({ $0?.permitsSceneNavigation == true }) else { return false }
+    let owners = contacts.map { navigationContactOwner(source: source, contact: $0) }
+    if kind == .cameraPinch {
+      let includesWebInput = owners.contains { if case .webInput? = $0 { true } else { false } }
+      let webOwners = owners.compactMap { $0?.webOwnerID }
+      // A control plus a link in the same runtime is still that runtime's
+      // pair. Links without a control retain their existing scene navigation.
+      guard owners.allSatisfy({ owner in
+        if case .webInput? = owner { return true }
+        return owner?.permitsSceneNavigation == true
+      }), !(includesWebInput && webOwners.count == 2 && webOwners[0] == webOwners[1]) else { return false }
+    } else {
+      guard owners.allSatisfy({ $0?.permitsSceneNavigation == true }) else { return false }
+    }
     switch kind {
     case .cameraPan:
       guard contacts.count == 1, !fingerSequenceHadMultipleContacts,
@@ -136,7 +163,12 @@ final class NotebookInputGate {
 
   var permitsPageNavigation: Bool {
     permitsNewContact && !hasActivePencil && (navigationClaim == nil || navigationClaim?.kind == .pageTurn) && !hasSceneObjectContact
-      && !fingerContactOwners.values.contains { if case .nativeInput = $0 { return true }; return false }
+      && !fingerContactOwners.values.contains {
+        switch $0 {
+        case .nativeInput, .webInput: true
+        default: false
+        }
+      }
   }
 
   func fingerContactOwner(for contact: ObjectIdentifier,

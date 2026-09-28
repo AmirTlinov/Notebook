@@ -143,6 +143,15 @@ final class SheetCurlGPU: @unchecked Sendable {
   }
 }
 
+/// Optional timing storage shared only by Metal's scheduled/completed callbacks.
+/// This observes submission without adding a publication queue or actor hop.
+private final class SheetCurlScheduleTiming: @unchecked Sendable {
+  private let lock = NSLock()
+  private var timestamp: TimeInterval?
+  func record() { lock.withLock { timestamp = CACurrentMediaTime() } }
+  var value: TimeInterval? { lock.withLock { timestamp } }
+}
+
 /// One presentation owner: covers use their outside-sheet Core Image geometry;
 /// interior pages render a complete frozen pair with the analytic Metal kernel.
 @MainActor
@@ -151,7 +160,8 @@ final class SheetCurlMetalView: MTKView, MTKViewDelegate {
     let operationID: UUID?
     let sequence: Int
     let clockRequested, displayUpdateReceived: TimeInterval?
-    let encodingBegan, submitted, gpuBegan, gpuEnded, targetPresentation: TimeInterval
+    let encodingBegan, submitted, gpuBegan, gpuEnded, renderingDeadline, targetPresentation: TimeInterval
+    let scheduled: TimeInterval?
   }
   var permitsFrameSubmission: @MainActor () -> Bool = { false }
   private(set) var submittedFrameCount = 0
@@ -167,6 +177,7 @@ final class SheetCurlMetalView: MTKView, MTKViewDelegate {
   private var pageFrames: (leaf: PageTurnFrame, base: PageTurnFrame)?
   private var pageOperationID: UUID?
   private var pageClockRequestedAt: TimeInterval?
+  private var pagePresentationGeneration: UInt64 = 0
   #endif
   /// Source reveal and the flat-sheet boundary share their drawable's CA
   /// transaction. The native owner installs the paper beneath that exact frame.
@@ -189,6 +200,7 @@ final class SheetCurlMetalView: MTKView, MTKViewDelegate {
     animatesContinuously = false
     sourceCover = nil; coverImage = nil; pageTextures = nil; framePending = false
     #if os(iOS)
+    pagePresentationGeneration &+= 1
     pageFrames = nil; sourceCoverFrame = nil; pageOperationID = nil; pageClockRequestedAt = nil
     #endif
     let lease = frameLease
@@ -245,6 +257,7 @@ final class SheetCurlMetalView: MTKView, MTKViewDelegate {
   func preparePages(leaf: PageTurnFrame, base: PageTurnFrame, operationID: UUID) throws {
     guard SheetCurlGPU.shared.pagePipeline != nil else { throw SceneRenderError.snapshotPending("page_pipeline") }
     sourceCover = nil; coverImage = nil; sourceCoverFrame = nil
+    pagePresentationGeneration &+= 1
     pageFrames = (leaf, base)
     pageOperationID = operationID; pageClockRequestedAt = nil
     pageTextures = (leaf.texture, base.texture)
@@ -336,6 +349,7 @@ final class SheetCurlMetalView: MTKView, MTKViewDelegate {
     if sourceCover !== cover {
       pageTextures = nil
       #if os(iOS)
+      pagePresentationGeneration &+= 1
       pageFrames = nil; sourceCoverFrame = nil; pageOperationID = nil; pageClockRequestedAt = nil
       #endif
       sourceCover = cover
@@ -360,6 +374,7 @@ final class SheetCurlMetalView: MTKView, MTKViewDelegate {
     guard changed else { if framePending { requestFrame() }; return }
     if sourceCoverFrame !== cover {
       guard let image = CIImage(mtlTexture: cover.texture, options: [.colorSpace: outputColorSpace]) else { return }
+      pagePresentationGeneration &+= 1
       pageTextures = nil; pageFrames = nil; sourceCover = nil; pageOperationID = nil; pageClockRequestedAt = nil
       sourceCoverFrame = cover
       // Accepted frame textures use top-left sheet rows; the existing CI cover
@@ -385,6 +400,8 @@ final class SheetCurlMetalView: MTKView, MTKViewDelegate {
     override func didMoveToWindow() {
       super.didMoveToWindow()
       if window == nil {
+        pagePresentationGeneration &+= 1
+        if pageFrames != nil { framePending = true }
         displayLink?.invalidate(); displayLink = nil
         pageUIUpdates?.isEnabled = false
       }
@@ -407,7 +424,8 @@ final class SheetCurlMetalView: MTKView, MTKViewDelegate {
   }
 
   private func submitPendingFrame(drawable suppliedDrawable: (any CAMetalDrawable)? = nil,
-    targetPresentation: TimeInterval = 0, displayUpdateReceived: TimeInterval? = nil) {
+    targetPresentation: TimeInterval = 0, renderingDeadline: TimeInterval = 0,
+    displayUpdateReceived: TimeInterval? = nil) {
     let encodingBegan = onFrameMeasured == nil ? nil : CACurrentMediaTime()
     guard inFlightSemaphore.wait(timeout: .now()) == .success else { return }
     var mustSignal = true
@@ -456,6 +474,7 @@ final class SheetCurlMetalView: MTKView, MTKViewDelegate {
     #if os(iOS)
     let frames = pageFrames, coverFrame = sourceCoverFrame, operationID = pageOperationID
     let clockRequested = pageClockRequestedAt
+    let presentationGeneration = pagePresentationGeneration
     #else
     let operationID: UUID? = nil, clockRequested: TimeInterval? = nil
     #endif
@@ -471,7 +490,8 @@ final class SheetCurlMetalView: MTKView, MTKViewDelegate {
     }
     if let frames, onPageFrameReady != nil {
       NotebookMetalFrameReadiness.observe(drawable, commandBuffer: commandBuffer) { [weak self, frames] readiness in
-        guard let self, self.pageOperationID == operationID, self.pageFrames?.leaf === frames.leaf else { return }
+        guard let self, self.pageOperationID == operationID,
+          self.pagePresentationGeneration == presentationGeneration, self.pageFrames?.leaf === frames.leaf else { return }
         if !readiness.isReady, self.progress == progress { self.framePending = true }
         self.onPageFrameReady?(frames.leaf, progress, sequence, readiness)
         self.resumePendingFrame()
@@ -490,6 +510,8 @@ final class SheetCurlMetalView: MTKView, MTKViewDelegate {
         resumePendingFrame()
       }
     }
+    let scheduleTiming = encodingBegan.map { _ in SheetCurlScheduleTiming() }
+    if let scheduleTiming { commandBuffer.addScheduledHandler { _ in scheduleTiming.record() } }
     let needsCompletionDelivery = onFrameMeasured != nil || onDisplayUpdate == nil
     commandBuffer.addCompletedHandler { [weak self, inFlightSemaphore, frameLease] command in
       _ = frameLease // Keep the charged image/drawables through GPU completion.
@@ -503,13 +525,15 @@ final class SheetCurlMetalView: MTKView, MTKViewDelegate {
       let timing = encodingBegan.map { began in
         FrameTiming(operationID: operationID, sequence: sequence, clockRequested: clockRequested,
           displayUpdateReceived: displayUpdateReceived, encodingBegan: began, submitted: submitted!, gpuBegan: command.gpuStartTime,
-          gpuEnded: command.gpuEndTime, targetPresentation: targetPresentation)
+          gpuEnded: command.gpuEndTime, renderingDeadline: renderingDeadline,
+          targetPresentation: targetPresentation, scheduled: scheduleTiming?.value)
       }
       Task { @MainActor [weak self] in
         #if os(iOS)
         let isCurrent = coverFrame != nil ? self?.sourceCoverFrame === coverFrame
           : (source != nil ? self?.sourceCover === source
-            : self?.pageOperationID == operationID && self?.pageFrames?.leaf.id == frames?.leaf.id)
+            : self?.pageOperationID == operationID && self?.pagePresentationGeneration == presentationGeneration
+              && self?.pageFrames?.leaf.id == frames?.leaf.id)
         #else
         let isCurrent = self?.sourceCover === source
         #endif
@@ -654,14 +678,15 @@ final class SheetCurlMetalView: MTKView, MTKViewDelegate {
 extension SheetCurlMetalView: @preconcurrency CAMetalDisplayLinkDelegate {
   func metalDisplayLink(_ link: CAMetalDisplayLink, needsUpdate update: CAMetalDisplayLink.Update) {
     let received = onFrameMeasured == nil ? nil : CACurrentMediaTime()
-    guard link === displayLink, window != nil, !isHidden, permitsFrameSubmission() else {
+    guard link === displayLink else { return }
+    guard window != nil, !isHidden, permitsFrameSubmission() else {
       link.isPaused = true; pageUIUpdates?.isEnabled = false
       return
     }
     onDisplayUpdate?(update.targetPresentationTimestamp)
     if framePending {
       autoreleasepool { submitPendingFrame(drawable: update.drawable, targetPresentation: update.targetPresentationTimestamp,
-        displayUpdateReceived: received) }
+        renderingDeadline: update.targetTimestamp, displayUpdateReceived: received) }
     }
     if !animatesContinuously && !framePending {
       link.isPaused = true; pageUIUpdates?.isEnabled = false

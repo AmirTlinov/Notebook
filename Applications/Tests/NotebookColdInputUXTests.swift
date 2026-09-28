@@ -4,8 +4,9 @@ import UIKit
 import XCTest
 @testable import Notebook
 
-/// Starts the real root cold. Unlike mountNotebookScene, it does not first wait
-/// for a presentation receipt, force layout, or pre-install a model/page host.
+/// Cold root → installed paper → first contact. The held-dot check measures
+/// contact-to-OS after mountNotebookScene has installed the actual empty frame;
+/// the opening check below starts its own clock before mounting the root.
 /// Contacts enter installed recognizers; they are not hardware Pencil evidence.
 @MainActor final class NotebookColdInputUXTests: XCTestCase {
   func testBlankPageReportsItsFirstContactFrameWithoutSnapshotPolling() async throws {
@@ -23,23 +24,44 @@ import XCTest
     let window = try await mountNotebookScene(model)
     let scene = try NotebookInteractionUXTests.Scene(model: model, window: window)
     let canvas = try XCTUnwrap(scene.paper.superview as? PaperCanvasContainerView).inkView
+    XCTAssertTrue(canvas.acceptedInkIsEmpty)
+    XCTAssertTrue(canvas.frameReadiness?.isReady == true,
+      "The visible empty input page prepares its real transparent Metal frame during opening")
     let requestsBeforeContact = canvas.drawableRequestCount
-    var first: InkCanvasView.ContactFrameResolution?, resolvedAt: TimeInterval?
+    XCTAssertGreaterThan(requestsBeforeContact,0)
+    var expected: InkCanvasView.ContactFrame?
+    var firstDropped: InkCanvasView.ContactFrameResolution?, firstDroppedAt: TimeInterval?
+    var displayed: InkCanvasView.ContactFrameResolution?, resolvedAt: TimeInterval?
+    var droppedCount = 0
     canvas.onContactFrameResolved = { receipt in
-      guard first == nil else { return }
-      first = receipt; resolvedAt = CACurrentMediaTime()
+      guard receipt.contact == expected else { return }
+      guard receipt.completion.isReady else {
+        droppedCount += 1
+        if firstDropped == nil { firstDropped=receipt;firstDroppedAt=CACurrentMediaTime() }
+        return
+      }
+      guard displayed == nil else { return }
+      displayed = receipt; resolvedAt = CACurrentMediaTime()
     }
     defer { canvas.onContactFrameResolved = nil }
     let start = CACurrentMediaTime()
     scene.beginPencil(.init(x: 180, y: 800))
     let handled = CACurrentMediaTime()
-    let expected = try XCTUnwrap(canvas.activeContactFrame)
-    // No moves, lift, screenshots, forced layout or synchronous CA flush can
-    // manufacture this receipt. The first dot must render while still held.
+    expected = try XCTUnwrap(canvas.activeContactFrame)
+    // A dropped submission is not a display receipt. Keep the dot held and
+    // measure the first actual OS presentation of this exact contact from the
+    // original input time, including any dropped submission and rescheduling.
     let limit = ContinuousClock.now + .seconds(1)
-    while first == nil, ContinuousClock.now < limit { try await Task.sleep(for: .milliseconds(1)) }
-    let receipt = try XCTUnwrap(first)
-    XCTAssertTrue(receipt.isFirstFrame, "A later warm frame cannot measure the cold first drawable")
+    while displayed == nil, ContinuousClock.now < limit { try await Task.sleep(for: .milliseconds(1)) }
+    func ms(_ time: Double?) -> String { time.map { String(($0-start)*1000) } ?? "missing" }
+    func phases(_ receipt: InkCanvasView.ContactFrameResolution?) -> String {
+      guard let receipt else { return "missing" }
+      let timing=receipt.timing
+      return "frame=\(receipt.frameID), firstSubmission=\(receipt.isFirstFrame), OS=\(ms(receipt.completion.presentedTime)), render=\(ms(timing?.renderBegan)), targetDeadline=\(ms(timing?.targetDeadline)), targetPresentation=\(ms(timing?.targetPresentation)), commit=\(ms(timing?.commitBegan)), commitReturned=\(ms(timing?.commitReturned)), scheduled=\(ms(timing?.scheduled)), transactionPresentRequested=\(ms(timing?.transactionPresented)), GPUstart=\(ms(timing?.gpuStarted)), GPUend=\(ms(timing?.gpuEnded)), GPUcompletion=\(ms(timing?.gpuCompletion)); blankRevision=\(String(describing:timing?.lastBlankRevision)), submissionRevision=\(String(describing:timing?.submittedRevision)), opacityBeforePublication=\(String(describing:timing?.opacityBeforePublication))"
+    }
+    let note = XCTAttachment(string: "cold held dot: handler=\((handled-start)*1000) ms; dropped submissions=\(droppedCount), first drop callback=\(ms(firstDroppedAt)); first drop [\(phases(firstDropped))]; displayed callback=\(ms(resolvedAt)), first actual display [\(phases(displayed))]. All times start at the original contact. Target times are predictions. Simulator GPU readiness is not OS display latency.")
+    note.name = "cold-first-dot-phases"; note.lifetime = .keepAlways; add(note)
+    let receipt = try XCTUnwrap(displayed, "The same held dot must receive an actual presentation receipt")
     XCTAssertGreaterThan(canvas.drawableRequestCount, requestsBeforeContact)
     XCTAssertEqual(receipt.contact, expected)
     XCTAssertTrue(receipt.completion.isReady)
@@ -53,8 +75,6 @@ import XCTest
       XCTFail("The physical drawable must supply its OS presentation timestamp")
       #endif
     }
-    let note = XCTAttachment(string: "cold first dot: handler=\((handled-start)*1000) ms; resolution callback=\((try XCTUnwrap(resolvedAt)-start)*1000) ms; OS display=\(String(describing: receipt.completion.presentedTime.map { ($0-start)*1000 })); firstFrame=\(receipt.isFirstFrame). Simulator callback is GPU readiness, not displayed latency.")
-    note.name = "cold-first-dot-phases"; note.lifetime = .keepAlways; add(note)
     // Pixel correctness is a separate observation after timing, including the
     // same held dot (not a later long line at another location).
     try await assertUX("cold-first-held-dot", since: .now, window: window) {

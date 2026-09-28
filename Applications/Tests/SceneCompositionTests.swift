@@ -28,6 +28,29 @@ final class SceneCompositionTests: XCTestCase {
   }
 
   @MainActor
+  func testMountingAnAdmittedProgramKeepsItsPublishedCohort() async throws {
+    let fixture = Fixture(count: 1, side: 64, html: "<input value='Retained draft'>")
+    let resources = SceneRenderResources(), coordinator = SceneCompositionTiles(resources: resources)
+    addTeardownBlock { @MainActor in await coordinator.stop() }
+    let source = fixture.source(), frame = fixture.frame()
+    coordinator.prepare(source: source, presence: fixture.presence, frame: frame, pinned: [], displayScale: 1)
+    try await waitUntil { coordinator.published != nil && !coordinator.isPreparing }
+    let initial = try XCTUnwrap(coordinator.published)
+    let element = fixture.elements[0]
+    let focus = InteractiveElementReference.board(boardID: fixture.presence.boardID, elementID: element.id)
+    let lease = try await resources.acquireWebSurface(priority: .liveProgram, source: focus)
+    defer { lease.release() }
+    XCTAssertNotNil(coordinator.registerRuntimeSource(focus: focus, source: agentElementSnapshotSource(element),
+      policy: .exact(scale: 1), leaseID: lease.id, cohort: initial))
+    var preparationPhases = 0
+    coordinator.onPreparationPhase = { _, _ in preparationPhases += 1 }
+    coordinator.prepare(source: source, presence: fixture.presence, frame: frame, pinned: [], displayScale: 1)
+    XCTAssertFalse(coordinator.isPreparing, "Installing the already admitted runtime cannot request the same scene again")
+    XCTAssertTrue(coordinator.published === initial)
+    XCTAssertEqual(preparationPhases, 0)
+  }
+
+  @MainActor
   func testPrefetchedProgramsDoNotEvictPassiveSourcesFromTheirOwnQuota() async throws {
     let fixture = Fixture(count: 6, side: 32,
       html: "<svg viewBox='0 0 32 32'><rect width='32' height='32' fill='red'/></svg>")
@@ -1194,6 +1217,38 @@ final class SceneCompositionTests: XCTestCase {
     XCTAssertFalse(raster.isReleased, "The cohort protects this source from eviction before its first physical view mounts")
     XCTAssertEqual(resources.activeWebSurfaceCount, 0, "The preparation executor is closed before the published frame is observed")
     XCTAssertLessThanOrEqual(resources.residentBytes + resources.reservedBytes, resources.byteLimit)
+
+    let plane = InstallationOwner(), fallback = InstallationOwner(), runtime = InstallationOwner()
+    cohort.installation(for: .elements).bind(plane)
+    cohort.installation(for: .covers).bind(plane)
+    XCTAssertTrue(cohort.isPaintInstalled)
+    XCTAssertFalse(cohort.hasInstalledPixels(for: address), "Prepared pixels still require their native source owner")
+    let fallbackReceipt = SceneSourceInstallation(source: .agent(source), entryID: raster.entryID, owner: fallback)
+    let runtimeReceipt = SceneSourceInstallation(source: .agent(source), runtimeToken: "first-runtime", owner: runtime)
+    cohort.didInstallSource(address, installation: fallbackReceipt)
+    XCTAssertTrue(cohort.hasInstalledPixels(for: address))
+    cohort.didInstallSource(address, installation: runtimeReceipt)
+    cohort.didInstallSource(address, installation: fallbackReceipt)
+    fallback.isInstalled = false
+    cohort.didInstallSource(address, installation: fallbackReceipt)
+    XCTAssertTrue(cohort.hasInstalledPixels(for: address), "Removing a late bridge cannot revoke its mounted live successor")
+
+    fallback.isInstalled = true
+    cohort.didInstallSource(address, installation: fallbackReceipt)
+    runtime.isInstalled = false
+    cohort.didInstallSource(address, installation: runtimeReceipt)
+    XCTAssertTrue(cohort.hasInstalledPixels(for: address), "Runtime retirement must reveal the already installed checkpoint raster without another raster callback")
+
+    let replacement = InstallationOwner()
+    let replacementReceipt = SceneSourceInstallation(source: .agent(source), runtimeToken: "replacement-runtime", owner: replacement)
+    cohort.didInstallSource(address, installation: replacementReceipt)
+    fallback.isInstalled = false
+    cohort.didInstallSource(address, installation: fallbackReceipt)
+    cohort.didInstallSource(address, installation: runtimeReceipt)
+    XCTAssertTrue(cohort.hasInstalledPixels(for: address), "A late retired runtime cannot revoke the replacement")
+    replacement.isInstalled = false
+    cohort.didInstallSource(address, installation: replacementReceipt)
+    XCTAssertFalse(cohort.hasInstalledPixels(for: address), "No native owner means no installed-source acknowledgement")
   }
 
   @MainActor
@@ -1481,10 +1536,16 @@ final class SceneCompositionTests: XCTestCase {
     _ = try store.saveBoardEdits(before: before, after: after)
     let header = try store.workspaceHeader()
     let source = SceneCompositionSource(store: store, revision: header.cursor, workspaceID: header.workspaceID)
+    let address = SceneSourceAddress(plane: .board(boardID), elementID: element.id)
     for _ in 0..<3 {
       let read = try await source.readElementForPaint(element.id, boardID: boardID)
       XCTAssertEqual(read?.element.html, element.html)
       XCTAssertNotNil(read?.placement)
+      let placements = try await source.elementPlacements([element], boardID: boardID)
+      let projected = try await source.sourceElements([address])
+      XCTAssertEqual(placements[element.id], read?.placement)
+      XCTAssertEqual(projected[address]?.placement, read?.placement)
+      XCTAssertEqual(projected[address]?.element.html, element.html)
     }
     let current = try store.loadBoard(items: workspace.items)
     var changed = current
@@ -1497,6 +1558,10 @@ final class SceneCompositionTests: XCTestCase {
     do {
       _ = try await source.readElementForPaint(element.id, boardID: boardID)
       XCTFail("An idle connection cannot preserve a stale content cut")
+    } catch NotebookStorageError.transactionConflict { }
+    do {
+      _ = try await source.elementPlacements([element], boardID: boardID)
+      XCTFail("Retained geometry must reject a replaced source before returning its prepared value")
     } catch NotebookStorageError.transactionConflict { }
   }
 
@@ -1722,6 +1787,12 @@ final class SceneCompositionTests: XCTestCase {
     context.draw(image, in: .init(x: 0, y: 0, width: image.width, height: image.height))
     let data = try XCTUnwrap(context.data).assumingMemoryBound(to: UInt8.self)
     return Array(UnsafeBufferPointer(start: data, count: context.bytesPerRow * context.height))
+  }
+
+  @MainActor private final class InstallationOwner: SceneSourceInstallationOwner, SceneCameraPlaneInstallationOwner {
+    var isInstalled = true
+    func isShowing(_ installation: SceneSourceInstallation) -> Bool { isInstalled }
+    func isShowing(_ installation: SceneCameraPlaneInstallation) -> Bool { isInstalled }
   }
 
   private struct Fixture {

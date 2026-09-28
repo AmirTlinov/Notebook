@@ -61,6 +61,34 @@ final class PageTurnSelectionTests: XCTestCase {
   }
 
   @MainActor
+  func testWritablePaperOpensWhileProgramsPrepareButCannotSupplyAnIncompleteCurl() throws {
+    let controller = IPadPageTurnController(), navigation = NotebookPageNavigation(), owner = UUID()
+    var receipts: [Int: PageTurnReadiness] = [:]
+    controller.update(ownerID: owner, sequenceRevision: "programs-starting", pageCount: 2,
+      selectedIndex: 0, navigationIsEnabled: true, pageIsInteractive: true, canBeginNavigation: { true },
+      page: { index, _, ready in receipts[index] = ready; return AnyView(Color.white) },
+      onCommit: { _, _ in XCTFail("Incomplete programs cannot produce a completed curl") },
+      onTransitioningChange: { _ in }, notebookNavigation: navigation)
+    let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+    let previous = scene.windows.first(where: \.isKeyWindow), window = UIWindow(windowScene: scene)
+    window.rootViewController = controller; window.makeKeyAndVisible(); window.layoutIfNeeded()
+    defer { controller.uninstall(); window.isHidden = true; window.rootViewController = nil; previous?.makeKey() }
+    let source = try XCTUnwrap(receipts[0])
+    source(false, capturable: false, paperReady: true)
+    XCTAssertTrue(controller.currentPagePreparation.isReady,
+      "An installed ink surface must not stay behind the cover until every program boots")
+    XCTAssertFalse(controller.presentedPageIndices.contains(0))
+    XCTAssertFalse(controller.preparedPageIndices.contains(0))
+    source.failed(.init(message: "A program failed to start", retry: {}))
+    XCTAssertTrue(controller.currentPagePreparation.isReady, "A failed program leaves the paper writable")
+    XCTAssertTrue(navigation.send(.step(1), ownerID: owner, source: "programs-starting"))
+    XCTAssertEqual(controller.displayedIndex, 0)
+    XCTAssertFalse(source.isInActiveTurn(), "A curl still requires all accepted material")
+    source(false, capturable: false, paperReady: false)
+    XCTAssertFalse(controller.currentPagePreparation.isReady, "Revoked paper cannot borrow its old readiness")
+  }
+
+  @MainActor
   func testReferenceUsesTheMountedNotebookOwnerWithoutPublishingAnUnpreparedTarget() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)

@@ -36,9 +36,16 @@ final class PageTurnActivity {
     let id: UUID
     let content: ElementFrameContent
   }
+  enum ElementFrameAcquisition {
+    case raster(RasterLease)
+    case runtime(@MainActor (SceneAllocationPriority) async throws -> PageTurnElementFrame)
+    var content: ElementFrameContent {
+      switch self { case .raster: .raster; case .runtime: .runtime }
+    }
+  }
   // Native installation/layout replaces these borrows. They are an addressed
   // registry, not view state: readiness is delivered by the installed owner.
-  private struct ElementFrameProvider {
+  @MainActor private struct ElementFrameProvider {
     let owner: UUID
     let source: AgentElement
     let installation: SceneSourceInstallation
@@ -46,37 +53,66 @@ final class PageTurnActivity {
     // reads today's hierarchy too, so it cannot remember a visibility edge.
     let isInstalled: Bool
     let version: ElementFrameVersion
-    let acquire: @MainActor (SceneAllocationPriority) async throws -> PageTurnElementFrame
+    let acquisition: ElementFrameAcquisition?
+    var current: Self {
+      let available = acquisition != nil && installation.isInstalled
+      return .init(owner: owner, source: source, installation: installation,
+        isInstalled: available, version: version, acquisition: available ? acquisition : nil)
+    }
   }
-  @ObservationIgnored private var elementFrames: [Int: [String: ElementFrameProvider]] = [:]
+  @MainActor private struct ElementFrameCandidates {
+    var raster: ElementFrameProvider?
+    var runtime: ElementFrameProvider?
+    var published: ElementFrameProvider
+    var installed: ElementFrameProvider? {
+      if let runtime, runtime.acquisition != nil, runtime.installation.isInstalled { return runtime }
+      if let raster, raster.acquisition != nil, raster.installation.isInstalled { return raster }
+      return nil
+    }
+    func candidate(_ content: ElementFrameContent) -> ElementFrameProvider? {
+      content == .runtime ? runtime : raster
+    }
+  }
+  @ObservationIgnored private var elementFrames: [Int: [String: ElementFrameCandidates]] = [:]
   func installElementFrame(page: Int, element: String, owner: UUID, source: AgentElement,
-    installation: SceneSourceInstallation, content: ElementFrameContent,
-    provider: @escaping @MainActor (SceneAllocationPriority) async throws -> PageTurnElementFrame) {
+    installation: SceneSourceInstallation, acquisition: ElementFrameAcquisition) {
+    let content = acquisition.content
     let previous = elementFrames[page]?[element]
+    let sameOwner = previous?.published.owner == owner && previous?.published.source == source
+    let priorCandidate = sameOwner ? previous?.candidate(content) : nil
     // Installation wrappers are recreated by layout. Only a new accepted
     // source, native owner, raster or runtime replaces the borrowed material.
-    let changed = previous?.owner != owner || previous?.source != source
-      || previous?.installation.source != installation.source
-      || previous?.installation.ownerIdentity != installation.ownerIdentity
-      || previous?.installation.entryID != installation.entryID
-      || previous?.installation.runtimeToken != installation.runtimeToken
-      || previous?.installation.requiresVisibility != installation.requiresVisibility
-      || previous?.version.content != content
+    let changed = priorCandidate?.installation.source != installation.source
+      || priorCandidate?.installation.ownerIdentity != installation.ownerIdentity
+      || priorCandidate?.installation.entryID != installation.entryID
+      || priorCandidate?.installation.runtimeToken != installation.runtimeToken
+      || priorCandidate?.installation.requiresVisibility != installation.requiresVisibility
     let isInstalled = installation.isInstalled
     // Loss can revoke only this exact native borrow. A detached predecessor
     // must not replace the raster/runtime which has already taken its place.
-    guard isInstalled || (previous != nil && !changed) else { return }
-    elementFrames[page, default: [:]][element] = .init(owner: owner, source: source,
+    guard isInstalled || (priorCandidate != nil && !changed) else { return }
+    let candidate = ElementFrameProvider(owner: owner, source: source,
       installation: installation, isInstalled: isInstalled,
-      version: changed ? .init(id: UUID(), content: content) : previous!.version,
-      acquire: provider)
-    guard changed || previous?.isInstalled != isInstalled else { return }
+      version: changed ? .init(id: UUID(), content: content) : priorCandidate!.version,
+      acquisition: isInstalled ? acquisition : nil)
+    var candidates = sameOwner ? previous! : .init(published: candidate)
+    if content == .runtime { candidates.runtime = candidate } else { candidates.raster = candidate }
+    candidates.runtime = candidates.runtime?.current
+    candidates.raster = candidates.raster?.current
+    // Keep both mounted owners through their handoff. A late bridge layout
+    // cannot replace live pixels; runtime withdrawal selects an already
+    // installed bridge without waiting for another layout of that bridge.
+    let selected = candidates.installed ?? candidates.candidate(candidates.published.version.content) ?? candidate
+    candidates.published = selected
+    elementFrames[page, default: [:]][element] = candidates
+    let materialChanged = previous?.published.version != selected.version
+    guard materialChanged || previous?.published.isInstalled != selected.isInstalled else { return }
     for observer in Array(preparationObservers.values) {
-      observer(.elementFrames(pageIndex: page, materialChanged: changed))
+      observer(.elementFrames(pageIndex: page, materialChanged: materialChanged))
     }
   }
   func removeElementFrame(page: Int, element: String, owner: UUID) {
-    guard elementFrames[page]?[element]?.owner == owner else { return }
+    guard elementFrames[page]?[element]?.published.owner == owner else { return }
     elementFrames[page]?[element] = nil
     if elementFrames[page]?.isEmpty == true { elementFrames[page] = nil }
     for observer in Array(preparationObservers.values) {
@@ -90,24 +126,40 @@ final class PageTurnActivity {
   }
   func retireElementFrames(at page: Int) { elementFrames[page] = nil }
   func acquireElementFrame(page: Int, source: AgentElement, priority: SceneAllocationPriority) async throws -> PageTurnElementFrame {
-    guard let provider = elementFrames[page]?[source.id], provider.source == source,
-      provider.installation.isInstalled else { throw PageTurnMaterialUnavailable.changed }
-    let frame = try await provider.acquire(priority)
+    guard let provider = elementFrames[page]?[source.id]?.installed, provider.source == source,
+      let acquisition = provider.acquisition else { throw PageTurnMaterialUnavailable.changed }
+    try Task.checkCancellation()
+    let frame: PageTurnElementFrame
+    switch acquisition {
+    case .raster(let raster): frame = try Self.borrow(raster)
+    case .runtime(let acquire): frame = try await acquire(priority)
+    }
     guard elementFrameVersion(page: page, source: source) == provider.version else { throw PageTurnMaterialUnavailable.changed }
     return frame
   }
+  /// The installed raster is already immutable. Borrow it in this actor turn;
+  /// runtime pixels still require their accepted WebKit capture and fence.
+  func borrowRasterElementFrame(page: Int, source: AgentElement) throws -> PageTurnElementFrame? {
+    try Task.checkCancellation()
+    guard let provider = elementFrames[page]?[source.id]?.installed, provider.source == source,
+      let acquisition = provider.acquisition else { throw PageTurnMaterialUnavailable.changed }
+    guard case .raster(let raster) = acquisition else { return nil }
+    return try Self.borrow(raster)
+  }
+  private static func borrow(_ raster: RasterLease) throws -> PageTurnElementFrame {
+    guard let retained = raster.retainedCopy() else { throw SceneRenderError.snapshotPending("page_element_pixels") }
+    return .init(raster: retained)
+  }
   func elementFrameVersion(page: Int, source: AgentElement) -> ElementFrameVersion? {
-    guard let provider = elementFrames[page]?[source.id], provider.source == source,
-      provider.installation.isInstalled else { return nil }
+    guard let provider = elementFrames[page]?[source.id]?.installed, provider.source == source else { return nil }
     return provider.version
   }
   func hasElementFrame(page: Int, source: AgentElement) -> Bool {
-    guard let provider = elementFrames[page]?[source.id], provider.source == source else { return false }
-    return provider.installation.isInstalled
+    elementFrames[page]?[source.id]?.installed?.source == source
   }
   func hasUncroppedElementFrame(page: Int, source: AgentElement) -> Bool {
-    guard let provider = elementFrames[page]?[source.id], provider.source == source else { return false }
-    return provider.installation.isInstalled && provider.installation.source.captureRegion == nil
+    guard let provider = elementFrames[page]?[source.id]?.installed, provider.source == source else { return false }
+    return provider.installation.source.captureRegion == nil
   }
   #endif
   private(set) var isTransitioning = false
@@ -204,11 +256,17 @@ final class PageTurnPreparationSource {
 
 @MainActor
 final class PageTurnReadiness {
-  /// One host receipt distinguishes installed paper/input from its borrowable
-  /// turn cut. Opening and landing must not wait for a future curl allocation.
+  /// One host receipt distinguishes writable paper, complete content and its
+  /// borrowable turn cut. Opening does not wait for programs; landing retains
+  /// the complete visible-content boundary and its independent curl material.
   struct State: Equatable {
     let presented: Bool
     let capturable: Bool
+    let paperReady: Bool
+    init(presented: Bool, capturable: Bool, paperReady: Bool? = nil) {
+      self.presented = presented; self.capturable = capturable
+      self.paperReady = paperReady ?? presented
+    }
     static let waiting = Self(presented: false, capturable: false)
   }
   private(set) var state = State.waiting
@@ -263,11 +321,11 @@ final class PageTurnReadiness {
     #endif
   }
 
-  func callAsFunction(_ ready: Bool, capturable: Bool? = nil) {
+  func callAsFunction(_ ready: Bool, capturable: Bool? = nil, paperReady: Bool? = nil) {
     guard !isRetired else { return }
     // A covered neighbour can have an immutable GPU cut before its live layer
     // receives an OS presentation. Only the landing uses the visible receipt.
-    state = .init(presented: ready, capturable: capturable ?? ready)
+    state = .init(presented: ready, capturable: capturable ?? ready, paperReady: paperReady)
     handler(ready)
   }
 

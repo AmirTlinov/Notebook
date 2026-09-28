@@ -16,6 +16,10 @@ final class NotebookGestureLatency {
     var entered: TimeInterval?
     var uiSubmitted: TimeInterval?
     var presented: TimeInterval?
+    var presentedFrame: UUID?
+    var presentedRevision: UInt64?
+    var timing: InkContactFrameTiming?
+    var receiptDelivered: TimeInterval?
     var complete: Bool { uiSubmitted != nil && (!needsPresentation || presented != nil) }
     func accepts(_ time: TimeInterval?) -> Bool {
       guard let time, time.isFinite, due.isFinite, time > 0 else { return false }
@@ -30,6 +34,7 @@ final class NotebookGestureLatency {
     let contact: InkCanvasView.ContactFrame
     let tileCount: Int
     var times: [Int: TimeInterval] = [:]
+    var timing: InkContactFrameTiming?
   }
   private var frames: [UUID: Frame] = [:]
   private(set) var samples: [Sample] = []
@@ -71,6 +76,7 @@ final class NotebookGestureLatency {
     var frame = frames[receipt.frameID] ?? .init(contact: receipt.contact, tileCount: receipt.tileCount)
     guard frame.contact == receipt.contact, frame.tileCount == receipt.tileCount else { return }
     frame.times[receipt.tile] = presentedAt
+    frame.timing = receipt.timing
     frames[receipt.frameID] = frame
     // Every changed drawable must be presented: the fastest tile cannot hide
     // a late/missing tile. A newer revision can include older measured samples.
@@ -78,7 +84,12 @@ final class NotebookGestureLatency {
     for i in samples.indices {
       guard let contact = samples[i].contact, contact.sourceID == frame.contact.sourceID,
         contact.revision <= frame.contact.revision else { continue }
-      samples[i].presented = min(samples[i].presented ?? .infinity, shown)
+      guard shown <= (samples[i].presented ?? .infinity) else { continue }
+      samples[i].presented = shown
+      samples[i].presentedFrame = receipt.frameID
+      samples[i].presentedRevision = frame.contact.revision
+      samples[i].timing = frame.timing
+      samples[i].receiptDelivered = CACurrentMediaTime()
     }
   }
   func drain() async throws {
@@ -110,9 +121,16 @@ final class NotebookGestureLatency {
     test.add(attachment)
     let rows = samples.enumerated().map { i, sample in
       func ms(_ time: Double?) -> String { time.map { String(($0 - sample.due) * 1_000) } ?? "missing" }
-      return "\(i),\(ms(sample.handled)),\(ms(sample.uiSubmitted)),\(ms(sample.presented)),\(sample.passed),\(ms(sample.entered))"
+      let timing = sample.timing
+      let phases = [timing?.renderBegan, timing?.targetDeadline, timing?.targetPresentation,
+        timing?.commitBegan, timing?.commitReturned, timing?.scheduled, timing?.transactionPresented,
+        timing?.gpuStarted, timing?.gpuEnded, timing?.gpuCompletion, sample.receiptDelivered].map(ms)
+      return "\(i),\(ms(sample.handled)),\(ms(sample.uiSubmitted)),\(ms(sample.presented)),\(sample.passed),\(ms(sample.entered)),"
+        + "\(sample.contact?.sourceID.uuidString ?? "missing"),\(sample.contact.map { String($0.revision) } ?? "missing"),"
+        + "\(sample.presentedFrame?.uuidString ?? "missing"),\(sample.presentedRevision.map(String.init) ?? "missing"),"
+        + phases.joined(separator: ",")
     }
-    let detail = XCTAttachment(string: "sample,handler_ms,ui_update_ms,metal_present_ms,passed,entered_ms\n" + rows.joined(separator: "\n"))
+    let detail = XCTAttachment(string: "sample,handler_ms,ui_update_ms,metal_present_ms,passed,entered_ms,contact_id,input_revision,frame_id,encoded_revision,render_began_ms,target_deadline_ms,target_presentation_ms,commit_began_ms,commit_returned_ms,scheduled_ms,transaction_present_requested_ms,gpu_started_ms,gpu_ended_ms,gpu_completion_ms,receipt_delivered_ms\n" + rows.joined(separator: "\n"))
     detail.name = name + "-samples.csv"; detail.lifetime = .keepAlways; test.add(detail)
     XCTAssertEqual(samples.count, count, "Missing input cannot produce green evidence", file: file, line: line)
     XCTAssertTrue(passed, text, file: file, line: line)

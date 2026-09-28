@@ -26,13 +26,25 @@ final class PageRasterPreparation {
   private var workers: [UUID: Task<Void, Never>] = [:]
   private var displayedIndex = 0
   private var targetIndex: Int?
+  private var displayedContentReady = true
+  private var idleExecutors: [SceneWebRasterPreparation] = []
   private(set) var executorCount = 0
   private(set) var completedCount = 0
 
   init(resources: SceneRenderResources = .shared) { self.resources = resources }
 
-  func prioritize(displayed: Int, target: Int?) {
+  /// Current-page material and an accepted landing never wait for speculation.
+  /// The native controller latches the current host's first content receipt.
+  /// Local revisions do not make that host cold again. A requested landing
+  /// suspends new unrelated work; captures already submitted retain their fence.
+  func prioritize(displayed: Int, target: Int?, displayedContentReady: Bool = true) {
     displayedIndex = displayed; targetIndex = target
+    self.displayedContentReady = displayedContentReady
+    startWorkers()
+  }
+
+  private func canPrepare(_ page: Int) -> Bool {
+    page == displayedIndex || page == targetIndex || (targetIndex == nil && displayedContentReady)
   }
 
   func prepare(_ element: AgentElement, policy: AgentSnapshotPolicy, pageIndex: Int, store: NotebookStore? = nil,
@@ -54,6 +66,7 @@ final class PageRasterPreparation {
   private func cancel(_ id: UUID) {
     if let index = pending.firstIndex(where: { $0.id == id }) {
       pending.remove(at: index).completion.resume(throwing: CancellationError())
+      if pending.isEmpty { closeIdleExecutors() }
     } else if let running = active.removeValue(forKey: id) {
       // Cancel only this executor. Its submitted capture keeps the physical
       // lease until completion; the other lane and pending landing survive.
@@ -67,7 +80,8 @@ final class PageRasterPreparation {
     // WebKit navigation/snapshot round trips cannot prepare a dense neighbour
     // while one process also handles every element of the displayed page.
     let capacity = max(1, min(2, resources.maximumBackgroundWebSurfaces))
-    while workers.count < capacity, workers.count < pending.count + active.count {
+    let admitted = pending.filter { canPrepare($0.pageIndex) }.count + active.count
+    while workers.count < capacity, workers.count < admitted {
       let id = UUID()
       workers[id] = Task { await run(workerID: id) }
     }
@@ -78,15 +92,20 @@ final class PageRasterPreparation {
   }
 
   private func run(workerID: UUID) async {
-    var executor: SceneWebRasterPreparation?
+    var executor = idleExecutors.popLast()
     defer {
-      executor?.close(); workers[workerID] = nil
+      // A visibility receipt may follow completion by one native transaction.
+      // Keep the admitted shell while its queued consumer waits for that event.
+      if let executor, !Task.isCancelled, !pending.isEmpty { idleExecutors.append(executor) }
+      else { executor?.close() }
+      workers[workerID] = nil
       startWorkers()
     }
-    while !Task.isCancelled, !pending.isEmpty {
+    while !Task.isCancelled {
       // Equal priority preserves arrival order. Newly requested landings move
       // ahead of speculation without interrupting a submitted image capture.
-      let index = pending.indices.min { priority(pending[$0].pageIndex) < priority(pending[$1].pageIndex) }!
+      let eligible = pending.indices.filter { canPrepare(pending[$0].pageIndex) }
+      guard let index = eligible.min(by: { priority(pending[$0].pageIndex) < priority(pending[$1].pageIndex) }) else { return }
       let request = pending.remove(at: index)
       guard request.permits() else {
         request.completion.resume(throwing: CancellationError()); continue
@@ -119,4 +138,11 @@ final class PageRasterPreparation {
       }
     }
   }
+
+  private func closeIdleExecutors() {
+    for executor in idleExecutors { executor.close() }
+    idleExecutors.removeAll()
+  }
+
+  isolated deinit { closeIdleExecutors() }
 }

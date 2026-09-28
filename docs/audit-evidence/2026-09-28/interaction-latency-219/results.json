@@ -1,0 +1,479 @@
+{
+  "format": 1,
+  "version": "0.3.149 (219)",
+  "baseCommit": "4d80bdd0dbf14ea4f902fcf0acf570bf36a541bc",
+  "status": "repair-in-progress",
+  "fullAcceptance": false,
+  "runs": [
+    {
+      "id": "0302",
+      "path": "/private/tmp/notebook-interaction-219-20260928T0302Z",
+      "sourceSHA256": "ee4eaad84f93e72389fcbde0a8084a3dfccc4e892d674200c350c5a4a369bb29",
+      "status": "interrupted-after-native-screenshot-harness-error",
+      "error": "Native unit runner cannot request XCUIScreen screenshots. Stopped hung XCTest; system screenshot removed from native runner. Product failures below retained.",
+      "observedFailures": {
+        "pencilOSMedianMS": 25.26004,
+        "eraserOSMedianMS": 23.64396,
+        "firstDot": "dropped OS drawable",
+        "documentNativePaperInputMS": 1331.747625,
+        "coldNotebook24FirstNativeMS": 646.094541,
+        "coldNotebook24CompleteNativeMS": 1162.381708,
+        "coldBoard24FirstNativeMS": 746.216666,
+        "coldSVG13FirstNativeMS": 285.097125,
+        "native24": "reopen did not finish inside 2s"
+      },
+      "cause": "GPU encoding was about 0.5 ms; the remaining delay was between callback and OS presentation. The proposed replacement clock was a hypothesis, disproved by later runs. Native WebKit reveal had a separate lost SwiftUI opacity update.",
+      "cleanup": "Native-test removed; production218 unchanged."
+    },
+    {
+      "id": "0331",
+      "path": "/private/tmp/notebook-interaction-219-20260928T0331Z",
+      "sourceSHA256": "68a475ba2ea5ae565d50c0ea6ec97fe0c912e3f4ebd7f1f4111723bcf33c206c",
+      "status": "failed",
+      "passed": 22,
+      "failed": 10,
+      "skipped": 0,
+      "runtimeWarnings": [],
+      "scope": "Both system UI journeys and 20 native correctness tests passed. Cold first dot/curl, input latency, cold source budgets and native24 observation/latency failed. One additional mixed selector was qualified against the wrong suite and did not execute; corrected for follow-up. Mac selected checks did not run after iPad failure.",
+      "observedFailures": {
+        "pencilOSMedianMS": 27.152625,
+        "eraserOSMedianMS": 28.239875,
+        "documentNativePaperInputMS": 1132.725042,
+        "documentNativeTypesettingMS": 921.42625,
+        "coldBoard24FirstNativeMS": 373.985583,
+        "coldBoard24CompleteNativeMS": 1133.652375,
+        "coldNotebook24FirstNativeMS": 278.284375,
+        "coldNotebook24CompleteNativeMS": 1251.313792,
+        "coldSVG13FirstNativeMS": 272.685167,
+        "native24OwnerLandingMS": 459.663792
+      },
+      "findings": "The replacement page pump produced 61 OS frames for 120 input samples (median frame interval16.673ms), whereas0302 CAMetal produced111/115 frames and8.337ms median. Extending continuous UIKit updates did not recover120Hz in0348. Cold notebook also started24 invisible neighbour programs. Native snapshot missed a late WebKit paint; both system UI journeys passed."
+    },
+    {
+      "id": "0348",
+      "path": "/private/tmp/notebook-interaction-219-20260928T0348Z",
+      "sourceSHA256": "2d49afbd89828abffee104d0ea8c8691e01f7d603ad599478efd296cdb8343e6",
+      "status": "failed",
+      "passed": 27,
+      "failed": 11,
+      "skipped": 0,
+      "runtimeWarnings": [],
+      "observedFailures": {
+        "pencilOSMedianMS": 28.969458,
+        "eraserOSMedianMS": 30.453292,
+        "documentNativePaperInputMS": 1134.284667,
+        "documentNativeTypesettingMS": 918.353333,
+        "coldBoard24FirstNativeMS": 313.239792,
+        "coldBoard24CompleteNativeMS": 1038.029959,
+        "coldNotebook24FirstNativeMS": 273.094,
+        "coldNotebook24CompleteNativeMS": 1071.221208,
+        "coldSVG13FirstNativeMS": 266.544458,
+        "native24OwnerLandingMS": 592.545625,
+        "mixedSelectionCancellationIncoherentFrames": 1
+      },
+      "findings": "The demand pump and precommit/all-transactional curl queue failed to fix first presentation; curl cadence and landing regressed. These approaches are removed, retaining generation cancellation checks. Source batches,100000-item bounded scene, retained cohort, stale SQL/pixel witnesses and deferred invisible-page speculation passed. Both system UI journeys passed. Mac checks did not execute after iPad failure."
+    },
+    {
+      "id": "0404",
+      "path": "/private/tmp/notebook-interaction-219-ipad-20260928T0404Z",
+      "sourceSHA256": "0036b250119a2ff4ae741b1b9f52b8ac02af59b57f18683334fee8a77f9bf2e4",
+      "status": "failed",
+      "passed": 16,
+      "failed": 11,
+      "skipped": 0,
+      "runtimeWarnings": [],
+      "observedFailures": {
+        "firstActualHeldDotOSMS": 56.74675,
+        "pencilOSMedianMS": 24.434625,
+        "eraserOSMedianMS": 18.068708,
+        "documentNativePaperInputMS": 1127.695375,
+        "coldBoard24FirstNativeMS": 417.23875,
+        "coldNotebook24FirstNativeMS": 428.974125,
+        "cold24CompleteNativeMSApprox": 711,
+        "coldSVG13FirstNativeMS": 280.375292,
+        "native24OwnerLandingMS": 608.783334,
+        "native24PairMS": 225.673,
+        "native24SourceAcquireMS": 136.693,
+        "native24TargetAcquireMS": 180.592,
+        "mixedCancellationInconsistentReadbacks": 1
+      },
+      "findings": "Both system UI journeys and all8 ink lifecycle tests passed. CAMetal restores120Hz cadence for continuous ink. Cold cohort completes inside1000ms, but allowing14-16 concurrent browser navigations slows its first output; first constructors themselves still4-5ms. Native24 target is no longer a resident-frame hit; branch of material wait not yet recorded. Removing competing cancellation projection preserves the projected plan, but one transitional UIKit/Metal readback still disagrees. drawHierarchy is not an atomic OS-frame oracle. Review found independent pre-submit failure and queued source-witness gaps in SourceRestoration; subsequent fixes require a focused run.",
+      "actualOSCadence": {
+        "penFrames": 120,
+        "eraserFrames": 118,
+        "inputSamples": 120,
+        "penMedianIntervalMS": 8.3367083299,
+        "eraserMedianIntervalMS": 8.3367083299,
+        "p95IntervalMS": 8.3367917,
+        "method": "Unique frame_id; absolute OS time = scheduled sample index *1000/120 + metal_present_ms. Missing summary row ignored."
+      }
+    },
+    {
+      "id": "0426",
+      "path": "/private/tmp/notebook-interaction-219-ipad-20260928T0426Z",
+      "sourceSHA256": "7fa363dff36397b10c6618e618c87e20693d0ffcb368f7187460af14d9a4d370",
+      "status": "failed",
+      "passed": 12,
+      "failed": 3,
+      "skipped": 0,
+      "runtimeWarnings": [],
+      "observedFailures": {
+        "firstActualHeldDotOSMS": 21.731541667,
+        "native24OwnerLandingMS": 454.712959,
+        "native24PairMS": 81.005542,
+        "native24SourceAcquireMS": 63.228042,
+        "native24TargetAcquireMS": 34.886875,
+        "ui24AfterTurnControls": 0
+      },
+      "findings": "All8 ink lifecycle tests, mixed cancellation readback, inverse journey, host-scoped preparation gate and system selection/history journey passed. Empty current paper presents real transparency before contact: first held dot has no dropped submissions, GPU ends2.711ms, OS21.732ms, still above20. Native24 pair returns near218 levels, but forward live admission succeeds, but the reverse command hangs in systemUI: 0/24 returned-page AX controls after30seconds. Release blocked while this ownership regression is resolved. Mixed cancellation readback observed old whole cut then new whole cut, no mixed snapshot in this run; this is not a recording of every OS frame."
+    },
+    {
+      "id": "0442",
+      "path": "/private/tmp/notebook-interaction-219-ipad-20260928T0442Z",
+      "sourceSHA256": "92b9c7b767d80267bd36bbe4e3d72ef4d332c9f71cf9da09380e35130f1ccb73",
+      "status": "failed",
+      "passed": 4,
+      "failed": 4,
+      "skipped": 0,
+      "runtimeWarnings": [],
+      "observedFailures": {
+        "firstActualHeldDotOSMS": 27.364541718,
+        "native24OwnerLandingMS": 474.610584,
+        "native24ReverseLanding": "missing after2s",
+        "ui24ReverseControls": "0 after30s",
+        "mixedCancellationInconsistentReadbacks": 1
+      },
+      "findings": "All3 selected ink lifecycle tests and host-scoped preparation gate pass. Native and system UI reproduce reverse hang: target0 is ready but current1 has6 stale raster providers despite installed live WebKit. Late bridge raster overwrote live provider; after bridge retirement source capture stayed blocked. Forward474.611ms remains above450. Mixed cancellation pre-OS readback sees new UIKit pose plus previous Metal image, while post-OS pixels are correct; drawHierarchy(false) is not a compositor-frame oracle. Neither screen incoherence nor a false positive is proved by that transitional readback."
+    },
+    {
+      "id": "0459",
+      "path": "/private/tmp/notebook-interaction-219-handoff-20260928T0459Z",
+      "sourceSHA256": "de40e60cd40cfeaa36f9a87425c0da7004e815865337388b058eff98dffcdaf4",
+      "status": "passed",
+      "ipad": {
+        "passed": 12,
+        "failed": 0
+      },
+      "mac": {
+        "passed": 2,
+        "failed": 0
+      },
+      "scope": "Physical reverse with24 live programs/states and first taps; mixed move/delete/undo/redo/reopen UI; native common-cut cancellation and same-drawable OS35.128ms; first reveal and terminal restoration; native runtime/bridge actual teardown; board cohort handoff; host-scoped preparation. Mac10 typesetter cancellations recover, physical crop preserved. No skip/runtime warnings.",
+      "subsequentChange": "Only PreparedAgentElementView negative receipt filtering: old density/source cannot block exact withdrawal. Final addressed page/provider/Native24/UI24 follows on0504."
+    },
+    {
+      "id": "0504",
+      "path": "/private/tmp/notebook-interaction-219-final-20260928T0504Z",
+      "sourceSHA256": "37ef267e0ae9fd8194feda16793c5800819bd5a392a8184fc149ec31722bdbda",
+      "status": "failed",
+      "passed": 5,
+      "failed": 2,
+      "skipped": 0,
+      "runtimeWarnings": [],
+      "measurements": {
+        "native24ForwardOwnerLandingMS": 435.356,
+        "native24ReverseOwnerLandingMS": 438.166,
+        "ownerLandingBudgetMS": 450
+      },
+      "observedFailures": {
+        "native24FinalPixels": "Combined assertion failed; it incorrectly required the leaf 1 marker at x190 to remain blue after returning to leaf 0. Whether any of the 24 red state probes failed was not isolated by this assertion.",
+        "ui24InitialControls": "23 of 24 controls remained blue after the real pinch, before the first explicit tap; program 6 changed count to 1 during that gesture."
+      },
+      "findings": "Forward and reverse owners both completed within the unchanged 450ms budget. Exact returned-page sources have count1, 24 installed raster providers, and live runtimes are starting independently (0 live,22 queued at landing). The final marker oracle was corrected to leaf0 x100 blue and leaf1 x190 paper; state and marker assertions now report separately. The physical UI video and initial screenshots establish an unintended program activation during pinch; input repair and its verification are still pending. This run is not a final PASS.",
+      "evidence": {
+        "nativeStateAndLanding": "attachments/989E6394-E758-4B3E-920D-41D7FA2B81E8.txt",
+        "uiBeforeContact": "attachments/D901D286-5B49-4564-BD75-8B1E24E0889E.png",
+        "uiAfterPinch": "attachments/C5121427-61B0-4EBC-AC79-7F7A5D5153C9.png",
+        "uiVideo": "attachments/DF991F0E-C282-42DB-B5D0-2F68E343CC95.mp4"
+      },
+      "subsequentChanges": "Native24 marker corrected without changing state assertions or latency budgets. Pinch input repair is in progress; final addressed physical checks and production delivery remain pending."
+    },
+    {
+      "id": "0519",
+      "path": "/private/tmp/notebook-interaction-219-input-20260928T0519Z",
+      "sourceSHA256": "45ce82d832433463b23915c639756afc99230bdf828c294cf4fdd364da79746c",
+      "status": "failed",
+      "passed": 13,
+      "failed": 1,
+      "skipped": 0,
+      "runtimeWarnings": [],
+      "scope": "12 scene finger ownership checks and the real UI24 pinch/first-tap/state/forward/reverse journey passed. Native24 correctness passed; only reverse owner-landing latency failed.",
+      "measurements": {
+        "native24ForwardOwnerLandingMS": 440.931583,
+        "native24ReverseOwnerLandingMS": 472.369541,
+        "ownerLandingBudgetMS": 450
+      },
+      "observedFailures": {
+        "native24ReverseOwnerLandingMS": 472.369541
+      },
+      "findings": "The real pinch no longer activates a control before the first explicit tap. Native24 restores all 24 accepted states and the correct leaf0/leaf1 markers. Forward meets450ms; reverse exceeds450ms by22.369541ms. The selected 3D UI method was excluded by targetEnvironment(simulator), so it did not execute on iPad and is not included in the13PASS. Existing physical LC interaction is the pending addressed replacement. This remains an incomplete repair, not a release PASS.",
+      "notExecutedSelectors": [
+        "NotebookUITests/DrawingResponsivenessTests/testThreeDimensionalFirstOrbitSelectionPinchAndColdReopenOnBoardAndDocument"
+      ],
+      "evidence": {
+        "summary": "0519-summary.json",
+        "nativePhaseExcerpt": "0519-native24-phases.txt",
+        "originalNativeDiagnostics": "attachments/E96993CC-54DF-4C3C-B885-E1100F70601F.txt"
+      },
+      "nextVerification": "Address the measured reverse delay and run the existing physical LC scenario; production219 remains undelivered."
+    },
+    {
+      "id": "0527",
+      "path": "/private/tmp/notebook-interaction-219-program-20260928T0527Z",
+      "sourceSHA256": "398e10704a6125d46dff8a4519b97ccc42666e59237ae26359ac0f2aa8e86f50",
+      "status": "failed",
+      "passed": 1,
+      "failed": 1,
+      "skipped": 0,
+      "runtimeWarnings": [],
+      "scope": "The addressed scene input ownership gate passed. The physical LC journey stopped at its background-pause assertion before the pinch section.",
+      "observedFailures": {
+        "lcBackgroundPause": "Background freezes the model before the OS suspends its browser"
+      },
+      "findings": "The video and XCTest actions show Home followed by Activate after about0.5s without an observed transition to Home. The test had not established its required background state. It now waits for actual runningBackground/runningBackgroundSuspended before reactivation; the pause assertion is unchanged, and this correction made no product change.",
+      "evidence": {
+        "summary": "0527-summary.json",
+        "uiVideo": "attachments/3FC904BC-3161-465C-AAA6-17675D75D686.mp4"
+      },
+      "nextVerification": "0533 addresses the ownership gate, Native24, UI24 and the physical LC journey."
+    },
+    {
+      "id": "0533",
+      "path": "/private/tmp/notebook-interaction-219-complete-20260928T0533Z",
+      "sourceSHA256": "7e8939112a9815df6f8b05a1ad92e232f34b1887685b03b99c55b21796214c22",
+      "status": "failed",
+      "selectors": [
+        "NotebookTests/NotebookNavigationLoadUXTests/testTwentyFourProgramsCommitThroughTheirRuntimesBeforeTheNextPageCapture",
+        "NotebookTests/NotebookSceneFingerOwnershipTests/testCameraAdmissionKeepsLoadedProgramInputButAllowsDocumentPaper",
+        "NotebookUITests/DrawingResponsivenessTests/testLCFirstGestureParametersBackgroundAndColdReopenOnBoardAndDocument",
+        "NotebookUITests/NotebookNavigationLoadUITests/testTwentyFourPageProgramsAcceptFirstTapAfterZoomAndKeepStateAcrossTurns"
+      ],
+      "changes": "Native page acquisition directly borrows installed uncropped/untransformed rasters at passive priority too, removing six unnecessary four-wide scheduling waves for24 retained copies. Copying/transforming work remains bounded to four. LC background assertion now requires the actual system background transition before reactivation.",
+      "passed": 2,
+      "failed": 2,
+      "measurements": {
+        "native24ForwardOwnerLandingMS": 597.797875,
+        "native24ReverseOwnerLandingMS": 463.8723,
+        "ownerLandingBudgetMS": 450
+      },
+      "scope": "Focused scene ownership gate and real UI24 passed. Native24 correctness for all24 states and leaf markers passed; both owner-landing deadlines failed. LC stopped before pinch because actual system background was not reached.",
+      "observedFailures": {
+        "native24ForwardOwnerLandingMS": 597.797875,
+        "native24ReverseOwnerLandingMS": 463.8723,
+        "lcBackgroundTransition": "The actual background/backgroundSuspended predicate failed after Home; the pause and pinch sections were not reached."
+      },
+      "subsequentChanges": "The LC harness now activates Settings and still requires the actual app background state before returning. This changes the test trigger only; product pause behavior is unchanged. 0546 reruns Native24 with composition phases and no heavy pre-action captureState, plus LC."
+    },
+    {
+      "id": "0546",
+      "path": "/private/tmp/notebook-interaction-219-phases-20260928T0546Z",
+      "sourceSHA256": "475d42553aa41c83f0089dda036f0358030fad127d166f92e7e91ac30089a508",
+      "status": "passed",
+      "selectors": [
+        "NotebookTests/NotebookNavigationLoadUXTests/testTwentyFourProgramsCommitThroughTheirRuntimesBeforeTheNextPageCapture",
+        "NotebookUITests/DrawingResponsivenessTests/testLCFirstGestureParametersBackgroundAndColdReopenOnBoardAndDocument"
+      ],
+      "scope": "Native24 forward and reverse met 450 ms; all 24 accepted states and both leaf markers passed. Physical LC passed actual Settings-triggered background, paused state, cold reopen, pinch, first tap and drag on board and document. This is one selected run on its recorded source; earlier latency failures remain evidence.",
+      "passed": 2,
+      "failed": 0,
+      "skipped": 0,
+      "runtimeWarnings": [],
+      "measurements": {
+        "native24ForwardOwnerLandingMS": 425.921542,
+        "native24ReverseOwnerLandingMS": 445.93275,
+        "ownerLandingBudgetMS": 450,
+        "timestampSemantics": {
+          "forward": "Recorded ContinuousClock commandToOwnerLanding duration; native owner completion, not an OS display timestamp.",
+          "reverse": "Recorded command uptime to native owner receipt uptime; not an OS display timestamp."
+        },
+        "forwardLiveSource": {
+          "slotsMS": 30.174792,
+          "ciEncodeMS": 2.380375,
+          "gpuMS": 8.851875,
+          "targetAcquisition": "cached"
+        },
+        "reverseLiveSource": {
+          "slotsMS": 60.036625,
+          "ciEncodeMS": 1.245083,
+          "gpuMS": 8.972417,
+          "targetAcquisition": "cached"
+        },
+        "passiveTargetSlotsMS": {
+          "beforeForward": 61.802375,
+          "beforeReverse": 51.991833
+        }
+      },
+      "evidence": {
+        "verification": "verification.json",
+        "summary": "ipad-summary.json",
+        "nativeSourceAttachment": "/private/tmp/notebook-0546-attachments/94918423-7A97-4F61-9064-D69033F0CB7D.txt",
+        "attachmentLocation": "Derived exports are outside the sealed verification directory."
+      },
+      "subsequentChanges": "Installed-raster-only passive slot acquisition still spent 61.802375/51.991833 ms scheduling synchronous retained borrows through a task group. Its owner is removing that scheduling; the changed source requires final targeted validation. This run does not establish that earlier long latency is universally fixed."
+    },
+    {
+      "id": "0554",
+      "path": "/private/tmp/notebook-interaction-219-borrow-20260928T0554Z",
+      "sourceSHA256": "afc8467690565a2f1ed41df309aee56589d49488080913e0357a4a6996182d13",
+      "status": "failed",
+      "passed": 4,
+      "failed": 1,
+      "skipped": 0,
+      "runtimeWarnings": [],
+      "selectors": [
+        "NotebookTests/PageTurnMaterialOwnerTests",
+        "NotebookTests/NotebookNavigationLoadUXTests/testTwentyFourProgramsCommitThroughTheirRuntimesBeforeTheNextPageCapture"
+      ],
+      "scope": "All four material-owner tests passed. Native24 preserved all accepted states and leaf markers; reverse met 450 ms, forward exceeded it.",
+      "measurements": {
+        "native24ForwardOwnerLandingMS": 511.534541,
+        "native24ReverseOwnerLandingMS": 431.146917,
+        "ownerLandingBudgetMS": 450,
+        "timestampSemantics": {
+          "forward": "Recorded ContinuousClock commandToOwnerLanding; native owner completion, not OS presentation.",
+          "reverse": "Command uptime to native owner receipt uptime; not OS presentation."
+        },
+        "passiveRasterSlotsMS": [
+          0.578125,
+          0.52875,
+          0.565
+        ],
+        "liveSourceSlotsMS": {
+          "forward": 36.150625,
+          "reverse": 41.2285
+        },
+        "forwardPassiveCompositionGPUMS": [
+          63.477958,
+          54.171292
+        ],
+        "forwardCommandToPairBeginMS": 91.605125
+      },
+      "observedFailure": "Forward owner landing exceeded 450 ms. A transient native installation loss cancelled an already submitted passive composition; the same page restarted it. Both GPU submissions completed before the accepted pair began. Synchronous raster borrowing itself fell from approximately 52–62 ms to 0.53–0.58 ms.",
+      "subsequentChanges": "The material owner is retaining a producer that has already borrowed immutable inputs across temporary installation unavailability, with the exact basis checked again at actual acquisition. Source/provider replacement and retirement still cancel it. This change requires a subsequent focused run; 0554 remains failed.",
+      "evidence": {
+        "summary": "ipad.xcresult test-results summary",
+        "nativeSourceAttachment": "/private/tmp/notebook-0554-attachments/868E6995-E536-4A3E-A7D8-A7BB6809D74E.txt"
+      }
+    },
+    {
+      "id": "0604",
+      "path": "/private/tmp/notebook-interaction-219-owner-20260928T0604Z",
+      "sourceSHA256": "2afbd6273dd3b96ee95e69598b5bd8d4b3e9b0c4eaafd64bb5b2b1f884504c8e",
+      "status": "failed",
+      "selectors": [
+        "NotebookTests/PageTurnMaterialOwnerTests",
+        "NotebookTests/NotebookNavigationLoadUXTests/testTwentyFourProgramsCommitThroughTheirRuntimesBeforeTheNextPageCapture"
+      ],
+      "scope": "All four material-owner checks passed. Native24 forward met 450 ms; reverse exceeded it. All accepted states and leaf markers passed. The passive cancellation/restart observed in 0554 did not recur.",
+      "passed": 4,
+      "failed": 1,
+      "skipped": 0,
+      "runtimeWarnings": [],
+      "measurements": {
+        "native24ForwardOwnerLandingMS": 435.606958,
+        "native24ReverseOwnerLandingMS": 468.614,
+        "ownerLandingBudgetMS": 450,
+        "timestampSemantics": "Forward uses the recorded ContinuousClock commandToOwnerLanding duration; reverse uses the exact XCTest duration. Both measure native owner completion, not OS presentation. The separate attachment uptime difference for reverse is 468.614125 ms.",
+        "passiveRasterSlotsMS": [
+          0.542417,
+          0.575833
+        ],
+        "reverseLiveSource": {
+          "slotsMS": 74.861042,
+          "ciEncodeMS": 1.386292,
+          "gpuMS": 10.702833,
+          "gpuCallbackToOwnerResumeMS": 1.542542
+        }
+      },
+      "observedFailure": "Reverse owner landing exceeded 450 ms with correct state and markers. Most of its measured material preparation was live WebKit slot acquisition; the earlier passive duplicate cancellation was absent.",
+      "subsequentChanges": "An explicit MainActor task-group experiment failed to compile in 0608 and 0610 due to a Swift region-based isolation checker diagnostic. All three experimental annotations/capture lists were reverted. The product source witness in 0611 exactly matches 0604; synchronous typed raster borrowing remains. Reverse latency 468.614 ms still exceeds 450 ms.",
+      "evidence": {
+        "summary": "ipad.xcresult test-results summary",
+        "nativeSourceAttachment": "/private/tmp/notebook-0604-attachments/D4284ECC-6679-4648-B4DE-5DB4281FDCD7.txt"
+      }
+    },
+    {
+      "id": "0608",
+      "path": "/private/tmp/notebook-interaction-219-final-20260928T0608Z",
+      "sourceSHA256": "0f93687c728f031d35b0abf169c3b0e1cc49b4c75effe773c574fb50fec24cc1",
+      "status": "compile-failed",
+      "selectors": [
+        "NotebookTests/PageTurnMaterialOwnerTests",
+        "NotebookTests/NotebookNavigationLoadUXTests/testTwentyFourProgramsCommitThroughTheirRuntimesBeforeTheNextPageCapture",
+        "NotebookUITests/NotebookNavigationLoadUITests/testTwentyFourPageProgramsAcceptFirstTapAfterZoomAndKeepStateAcrossTurns"
+      ],
+      "scope": "Selected owner, Native24 and UI24 tests did not execute.",
+      "executedTests": 0,
+      "cause": "Swift region-based isolation checker rejected explicit MainActor group.addTask closure: pattern that the region-based isolation checker does not understand how to check. Please file a bug",
+      "evidence": {
+        "compiler": "ipad-build-for-testing.stdout.log"
+      }
+    },
+    {
+      "id": "0610",
+      "path": "/private/tmp/notebook-interaction-219-final-20260928T0610Z",
+      "sourceSHA256": "8df5b339d8c5951e2330f505f5847d3957303ec9c95b8fb83135b6dd28997c37",
+      "status": "compile-failed",
+      "executedTests": 0,
+      "scope": "Selected owner, Native24 and UI24 tests did not execute.",
+      "cause": "The revised explicit MainActor task-group capture list hit the same Swift region-based isolation checker error. The experimental closure changes were then reverted.",
+      "evidence": {
+        "compiler": "ipad-build-for-testing.stdout.log"
+      }
+    },
+    {
+      "id": "0611",
+      "path": "/private/tmp/notebook-interaction-219-delivery-20260928T0611Z",
+      "sourceSHA256": "2afbd6273dd3b96ee95e69598b5bd8d4b3e9b0c4eaafd64bb5b2b1f884504c8e",
+      "status": "passed",
+      "selectors": [
+        "NotebookTests/PageTurnMaterialOwnerTests",
+        "NotebookUITests/NotebookNavigationLoadUITests/testTwentyFourPageProgramsAcceptFirstTapAfterZoomAndKeepStateAcrossTurns"
+      ],
+      "scope": "All four material-owner checks and physical system UI24 passed for the functional ownership repair. Source-before and source-after witnesses match each other and 0604. This selection does not resolve the known Native24 reverse 468.614 ms > 450 ms failure or constitute performance/full acceptance.",
+      "passed": 5,
+      "failed": 0,
+      "skipped": 0,
+      "runtimeWarnings": [],
+      "sourceAfterSHA256": "2afbd6273dd3b96ee95e69598b5bd8d4b3e9b0c4eaafd64bb5b2b1f884504c8e",
+      "evidence": {
+        "verification": "verification.json",
+        "summary": "ipad-summary.json",
+        "sourceBefore": "source-before.json",
+        "sourceAfter": "source-after.json"
+      }
+    }
+  ],
+  "typesetterBoundary": {
+    "scope": "Local compiled actual generated prologue/epilogue and wasm_rt trap; depth2048, native floor, balanced normal exit and fresh-run recovery. Cancellation and full output remain separate native tests.",
+    "status": "passed"
+  },
+  "mac0404": {
+    "path": "/private/tmp/notebook-interaction-219-mac-20260928T0404Z",
+    "sourceSHA256": "0036b250119a2ff4ae741b1b9f52b8ac02af59b57f18683334fee8a77f9bf2e4",
+    "passed": 2,
+    "failed": 0,
+    "scope": "10 cancelled typesetter compilations recover; page ink crop preserves physical scale."
+  },
+  "mac0440": {
+    "path": "/private/tmp/notebook-interaction-219-mac-20260928T0440Z",
+    "passed": 1,
+    "failed": 1,
+    "cause": "Host exited normally through AppKit terminate during typesetter test: keyboard event07:41:27.394, terminate.435, applicationShouldTerminate/replyYES.447-.448, normal exit.462. Source of key event unknown. Page crop passes; interrupted10-cancel needs rerun.",
+    "diagnostic": "/private/tmp/notebook-0440-host-termination.log"
+  },
+  "ipad0440": {
+    "status": "compile-failed",
+    "cause": "Diagnostic test referred to file-private IPadIndexedPageController; changed probe to existing owner readiness sets before0442."
+  },
+  "ipad0458": {
+    "status": "compile-failed",
+    "cause": "Nested native receipt structs needed explicit MainActor isolation. Added actor annotations before0459; no runtime test executed in0458."
+  },
+  "delivery": {
+    "version219": "not-delivered",
+    "installedProduction": "0.3.148 (218)",
+    "finalVerification": "0611 passed: four material-owner checks plus physical system UI24, 5 PASS, 0 FAIL/skips/runtime warnings, unchanged source witness. Functional ownership repair only; Native24 reverse 468.614 ms > 450 ms remains open. Build/install has not completed: version 219 not delivered, production 218 remains installed.",
+    "scope": "Functional ownership repair, not performance or full acceptance. Native24 reverse 468.614 ms > 450 ms remains open."
+  }
+}

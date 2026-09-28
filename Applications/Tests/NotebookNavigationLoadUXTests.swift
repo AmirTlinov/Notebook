@@ -5,8 +5,9 @@ import WebKit
 import XCTest
 @testable import Notebook
 
-/// Pixel deadlines start before mounting the cold root. A queued/ready status,
-/// one fast element, or a late correct screenshot cannot pass these checks.
+/// Native-installation deadlines start before mounting the cold root. Exact
+/// source/runtime receipts time that boundary; pixels and usable controls are
+/// checked independently afterward. These timestamps do not establish OS display.
 @MainActor final class NotebookNavigationLoadUXTests: XCTestCase {
   func testColdNotebookWithThirteenDenseSVGsShowsEveryElementWithinBudget() async throws {
     try await cold(programs: false, board: false)
@@ -55,7 +56,53 @@ import XCTest
     let previous = scene.windows.first(where: \.isKeyWindow), window = UIWindow(windowScene: scene)
     window.frame = .init(x: 0, y: 0, width: 834, height: 1194)
     addTeardownBlock { @MainActor in window.isHidden = true; window.rootViewController = nil; previous?.makeKey() }
+    let fixtureIndex = try store.loadIndex()
+    let expectedElements: [AgentElement]
+    if board {
+      let hierarchy = try store.loadBoard(items: fixtureIndex.items)
+      expectedElements = hierarchy.board(fixtureIndex.rootBoardID)?.elements.map(agentElementSnapshotSource) ?? []
+    } else {
+      expectedElements = try store.loadPage(XCTUnwrap(fixtureIndex.selectedPageID)).elements
+        .filter { $0.kind == .web }.map(agentElementSnapshotSource)
+    }
+    let expected = Dictionary(uniqueKeysWithValues: expectedElements.map { ($0.id, SceneRasterSource.agent($0)) })
+    XCTAssertEqual(expected.count, programs ? 24 : 13)
+    var firstInstalled: ContinuousClock.Instant?, allInstalled: ContinuousClock.Instant?
+    var installations: [String: SceneSourceInstallation] = [:]
+    precondition(NotebookNavigationObservation.onSourceInstalled == nil)
+    NotebookNavigationObservation.onSourceInstalled = { installation, at in
+      guard let source = installation.source.agentElement,
+        expected[source.id] == .agent(source), installation.requiresVisibility,
+        installation.isInstalled else { return }
+      if firstInstalled == nil { firstInstalled = at }
+      // A passive blue raster can be first useful native material. The complete
+      // program cohort requires every exact, mounted, author-ready live runtime.
+      if programs && installation.runtimeToken == nil { return }
+      installations[source.id] = installation
+      if allInstalled == nil, installations.count == expected.count,
+        installations.values.allSatisfy({ $0.isInstalled }) { allInstalled = at }
+    }
+    defer { NotebookNavigationObservation.onSourceInstalled = nil }
     let start = ContinuousClock.now
+    var webPhases: [(String, UUID, String?, ContinuousClock.Instant)] = []
+    var compositionPhases: [(UUID, String, ContinuousClock.Instant)] = []
+    precondition(NotebookNavigationObservation.onWebPreparation == nil)
+    NotebookNavigationObservation.onWebPreparation = { stage, lease, source, at in
+      guard webPhases.count < 512 else { return }
+      webPhases.append((stage, lease, source, at))
+    }
+    model.compositionTiles.onPreparationPhase = { id, stage in
+      guard compositionPhases.count < 128 else { return }
+      compositionPhases.append((id, stage, .now))
+    }
+    defer {
+      NotebookNavigationObservation.onWebPreparation = nil
+      model.compositionTiles.onPreparationPhase = nil
+      let composition = compositionPhases.map { "\(start.duration(to: $0.2)) \($0.1) owner=\($0.0)" }
+      let web = webPhases.map { "\(start.duration(to: $0.3)) \($0.0) lease=\($0.1) source=\($0.2 ?? "unbound")" }
+      let phases = XCTAttachment(string: (composition + web).joined(separator: "\n"))
+      phases.name = "Cold source preparation events"; phases.lifetime = .keepAlways; add(phases)
+    }
     window.rootViewController = UIHostingController(rootView: SpatialWorkspaceView().environment(model).ignoresSafeArea())
     window.makeKeyAndVisible()
     // Observe while bootstrap runs. start() also awaits nonvisual services:
@@ -73,36 +120,19 @@ import XCTest
       return (.init(x: frame.x + 155, y: frame.y + (programs ? 20 : 145)), .blue)
     }
     let measuresOpening = !measuresPinch && !measuresTurns && !changesProgramsBeforeTurn
-    let first = measuresOpening ? try await NotebookUXObservation.observe(since: start,
-      budget: NotebookUXObservation.firstUsefulFrame) {
-      // Do not keep copying a known-empty full window while WebKit/SwiftUI
-      // needs that same main actor to install the first frame. Readiness can
-      // only enable a pixel probe; it cannot itself satisfy this deadline.
-      let views = descendants(window)
-      let rasterIsMounted = views.contains { $0 is AgentSnapshotRasterView && $0.layer.contents != nil }
-      let sources = board
-        ? model.presence.flatMap { model.boardHierarchy?.board($0.boardID)?.elements.map(agentElementSnapshotSource) } ?? []
-        : model.activePage?.elements.filter { $0.kind == .web } ?? []
-      let liveIsMounted = views.compactMap { $0 as? WKWebView }.contains { web in
-        sources.contains { (web.navigationDelegate as? AgentWebCoordinator)?.hasLiveSource($0) == true }
-      }
-      guard rasterIsMounted || liveIsMounted else { return false }
-      let pixels = try NotebookUXObservation.Pixels(window: window)
-      return try probes.contains { try pixels.matches([$0]) }
-    } : nil
-    let result = try await NotebookUXObservation.observe(since: start,
-      budget: measuresOpening ? NotebookUXObservation.coldOpening : .seconds(5)) {
-      if programs {
-        let sources = board
-          ? model.presence.flatMap { model.boardHierarchy?.board($0.boardID)?.elements.map(agentElementSnapshotSource) } ?? []
-          : model.activePage?.elements.filter { $0.kind == .web } ?? []
-        let views = descendants(window).compactMap { $0 as? WKWebView }
-        guard sources.count == 24, sources.allSatisfy({ source in
-          views.contains { ($0.navigationDelegate as? AgentWebCoordinator)?.hasLiveSource(source) == true }
-        }) else { return false }
-      }
-      return try NotebookUXObservation.Pixels(window: window).matches(probes)
+    // The source owner timestamps installation itself. Polling only waits for
+    // that receipt; it performs no window readback or layout and cannot rebase
+    // either deadline. Five seconds is a diagnostic/setup watchdog, not a budget.
+    let setupLimit = start + .seconds(5)
+    while allInstalled == nil, ContinuousClock.now < setupLimit {
+      try await Task.sleep(for: .milliseconds(2))
     }
+    NotebookNavigationObservation.onSourceInstalled = nil
+    let first = measuresOpening ? NotebookUXObservation.Result(matched: firstInstalled != nil,
+      elapsed: start.duration(to: firstInstalled ?? .now), budget: NotebookUXObservation.firstUsefulFrame) : nil
+    let result = NotebookUXObservation.Result(matched: allInstalled != nil,
+      elapsed: start.duration(to: allInstalled ?? .now),
+      budget: measuresOpening ? NotebookUXObservation.coldOpening : .seconds(5))
     if programs && result.matched {
       // A static blue screenshot is insufficient. Each mounted runtime must
       // have usable DOM and exactly one boot before the system-tap UI journey.
@@ -115,29 +145,29 @@ import XCTest
         }
       }
       XCTAssertEqual(buttons, 24, "Every displayed control must actually be running, not a placeholder or stale raster")
-      if measuresOpening {
-        XCTAssertLessThanOrEqual(start.duration(to: .now), NotebookUXObservation.coldOpening,
-          "All 24 visible runtimes must also have usable DOM within the original cold-opening deadline")
-      }
     }
     await startup.value
-    // Cold deadlines are asserted only after both measurements and DOM checks;
-    // recording a failed first-milestone screenshot must not stall the second.
-    // Gesture lanes get a setup watchdog, not a cold-performance exemption:
-    // the three separate cold tests retain their 150/1000 ms gates.
+    // Readback and DOM queries validate correctness after the owner event;
+    // their execution time cannot establish or erase an earlier display time.
+    let acceptedInstallations = Array(installations.values)
+    let pixels = try await authoredPixels(window: window, probes: probes) {
+      acceptedInstallations.count == expected.count && acceptedInstallations.allSatisfy { $0.isInstalled }
+    }
+    let pixelsMatched = try pixels.matches(probes)
+    XCTAssertTrue(pixelsMatched, "Every exact authored element must be visible independently of native installation readiness")
     if let first {
-      XCTAssertTrue(first.passed, "First authored pixels: \(first.milliseconds) ms, matched=\(first.matched), budget=\(NotebookUXObservation.firstUsefulFrame)")
-      XCTAssertTrue(result.passed, "All authored pixels: \(result.milliseconds) ms, matched=\(result.matched), budget=1000 ms")
+      XCTAssertTrue(first.passed, "First exact authored native installation: \(first.milliseconds) ms, matched=\(first.matched), budget=150 ms; OS first-pixel time is unmeasured")
+      XCTAssertTrue(result.passed, "Complete exact native cohort: \(result.milliseconds) ms, matched=\(result.matched), budget=1000 ms; OS display time is unmeasured")
     } else { XCTAssertTrue(result.passed, "Cannot prepare the real scene for the independent gesture scenario") }
-    let milestones = XCTAttachment(string: "first=\(first.map { String($0.milliseconds) } ?? "gesture-setup"); all=\(result.milliseconds); matched=\(result.matched)")
+    let milestones = XCTAttachment(string: "Native installation only: first=\(first.map { String($0.milliseconds) } ?? "gesture-setup"); all=\(result.milliseconds); matched=\(result.matched); exactSources=\(installations.count)/\(expected.count); programsRequireLiveRuntime=\(programs); independentPixelsCorrect=\(pixelsMatched). Origin precedes mounting; 150/1000ms ceilings unchanged. OS first-pixel/display deadlines remain unmeasured. Pixel readback and DOM correctness run afterward; no capture cost is subtracted.")
     milestones.name = "Cold opening milestones"; milestones.lifetime = .keepAlways; add(milestones)
-    let shot = XCTAttachment(image: try NotebookUXObservation.Pixels(window: window).image)
-    shot.name = "All authored elements at the cold-opening deadline"; shot.lifetime = .keepAlways; add(shot)
+    let shot = XCTAttachment(image: pixels.image)
+    shot.name = "Independent authored pixels after native installation measurement"; shot.lifetime = .keepAlways; add(shot)
     let resources = SceneRenderResources.shared
     let usage = XCTAttachment(string: "web=\(resources.activeWebSurfaceCount); queued=\(resources.pendingWebRequestCount); bytes=\(resources.residentBytes + resources.reservedBytes)/\(resources.byteLimit)")
     usage.name = "Cold navigation resource use"; usage.lifetime = .keepAlways; add(usage)
     XCTAssertLessThanOrEqual(resources.residentBytes + resources.reservedBytes, resources.byteLimit)
-    guard result.matched else { return }
+    guard result.matched, pixelsMatched else { return }
     if changesProgramsBeforeTurn {
       try await changeProgramsAndTurn(model:model,window:window)
       return
@@ -280,6 +310,20 @@ import XCTest
       let note=XCTAttachment(string:phases.joined(separator:"\n"))
       note.name="24-program-state-to-native-capture";note.lifetime = .keepAlways;add(note)
     }
+    var materialPhases: [(String, UUID, UUID?, UUID?, UUID?, TimeInterval)] = []
+    var omittedMaterialPhases = 0
+    precondition(NotebookNavigationObservation.onPageMaterialPreparation == nil)
+    NotebookNavigationObservation.onPageMaterialPreparation = { stage, owner, page, frame, operation, time in
+      guard materialPhases.count < 128 else { omittedMaterialPhases += 1; return }
+      materialPhases.append((stage, owner, page, frame, operation, time))
+    }
+    defer {
+      NotebookNavigationObservation.onPageMaterialPreparation = nil
+      phases.append("material events (omitted=\(omittedMaterialPhases)):")
+      phases.append(contentsOf: materialPhases.map {
+        "material: uptime=\($0.5),stage=\($0.0),owner=\($0.1),page=\($0.2?.uuidString ?? "nil"),frame=\($0.3?.uuidString ?? "nil"),composition=\($0.4?.uuidString ?? "nil")"
+      })
+    }
     func cameraGesture(_ scale:Double) async throws {
       let camera=try XCTUnwrap(window.gestureRecognizers?.compactMap {$0.delegate as? WorkspaceGestureLayer.Coordinator}.first)
       let center=CGPoint(x:window.bounds.midX,y:window.bounds.midY)
@@ -339,19 +383,26 @@ import XCTest
         let available=index.map {owner.pageTurnActivity.hasElementFrame(page:$0,source:current)} ?? false
         return "\(source.id):state=\(source.state),provider=\(available),live=\(owners.count),installations=\(installations.map { "\($0.runtimeToken ?? "none")/installed=\($0.isInstalled)" }),diagnostics=\(resources.diagnostics(for:[current]))"
       } ?? []
-      return "sheet=\(label),id=\(sheet.map {String(describing:ObjectIdentifier($0))} ?? "nil"),page=\(String(describing:page?.id)),stamp=\(String(describing:page?.agentStamp)); slots=\(slots); raster=\(resources.rasterAdmission); derivedWaiters=\(resources.pendingDerivedRequestCount); web=\(resources.activeWebSurfaceCount),pendingWeb=\(resources.pendingWebRequestCount)"
+      let preparation=index.map { "presented=\(owner.presentedPageIndices.contains($0)),capturable=\(owner.preparedPageIndices.contains($0))" } ?? "missing"
+      let ink=sheet.map { descendants($0.view).compactMap {$0 as? InkCanvasView}.map {
+        "material=\($0.acceptedMaterialIsReady),frame=\($0.acceptedFrameIsReady),empty=\($0.acceptedMaterialIsEmpty),hidden=\($0.isHidden),publication=\($0.framePublicationState)"
+      }} ?? []
+      return "sheet=\(label),id=\(sheet.map {String(describing:ObjectIdentifier($0))} ?? "nil"),page=\(String(describing:page?.id)),stamp=\(String(describing:page?.agentStamp)),readiness=\(preparation),ink=\(ink); slots=\(slots); raster=\(resources.rasterAdmission); derivedWaiters=\(resources.pendingDerivedRequestCount); web=\(resources.activeWebSurfaceCount),pendingWeb=\(resources.pendingWebRequestCount)"
     }
     let receiveFailure=native.onFailure,receiveFrames=native.onFramesAcquired,acquire=native.acquireSheetFrame
     let receiveStage=native.onStageLiveSheet,receiveResolution=native.resolveOperation
     let curl=try XCTUnwrap(descendants(native.view).compactMap {$0 as? SheetCurlMetalView}.first)
     let receiveFrame=curl.onPageFrameReady,receiveMeasurement=curl.onFrameMeasured
     var submissions:[SheetCurlMetalView.FrameTiming]=[]
+    var arrowUptime:TimeInterval=0,pairEnded:TimeInterval?,stageUptime:TimeInterval?
     curl.onFrameMeasured = { timing in
-      if submissions.count < 6 { submissions.append(timing) }
+      if arrowUptime>0,timing.operationID != nil,timing.encodingBegan>=arrowUptime,submissions.count < 6 {
+        submissions.append(timing)
+      }
       receiveMeasurement?(timing)
     }
-    var arrowUptime:TimeInterval=0,pairEnded:TimeInterval?,stageUptime:TimeInterval?
     var sawFirstFrame=false,sawEndpoint=false
+    var expectedLanding=1
     var landing:(operation:UUID,at:ContinuousClock.Instant,uptime:TimeInterval,presented:Bool)?
     native.resolveOperation = { id,outcome,presented,notify in
       receiveResolution(id,outcome,presented,notify)
@@ -360,7 +411,7 @@ import XCTest
       // the waiting task's next scheduling opportunity is not this timestamp.
       let at=ContinuousClock.now,uptime=CACurrentMediaTime()
       if arrowUptime>0,landing == nil,outcome == .completed,
-        owner.displayedIndex == 1,owner.currentPagePreparation.isReady {
+        owner.displayedIndex == expectedLanding,owner.currentPagePreparation.isReady {
         landing=(id,at,uptime,presented)
       }
     }
@@ -409,7 +460,7 @@ import XCTest
       native.onStageLiveSheet=receiveStage;native.resolveOperation=receiveResolution;curl.onPageFrameReady=receiveFrame
       curl.onFrameMeasured=receiveMeasurement
     }
-    phases.append("before arrow: \(captureState(native.page)); \(owner.navigationStateDescription)")
+    phases.append("before arrow: \(owner.navigationStateDescription)")
     let wallAnchor=Date().timeIntervalSince1970,uptimeAnchor=CACurrentMediaTime()
     phases.append("clock anchor: unix=\(wallAnchor),uptime=\(uptimeAnchor)")
     let revision=try XCTUnwrap(model.notebookPageRoot(notebook)),start=ContinuousClock.now
@@ -443,6 +494,46 @@ import XCTest
       return (.init(x:frame.x+155,y:frame.y+20),.blue)
     }
     XCTAssertTrue(try NotebookUXObservation.Pixels(window:window).matches(probes+[(.init(x:190,y:1045),.blue)]))
+
+    // The system UI regression occurs on the return after the target's full
+    // live cohort has replaced its passive rasters. Exercise that same role
+    // boundary here; a successful first landing cannot certify its inverse.
+    let targetPage=try XCTUnwrap(model.notebookPage(at:1,in:notebook))
+    let targetSources=targetPage.elements.filter(\.requiresLiveRuntime).map(agentElementSnapshotSource)
+    func targetRuntimesInstalled()->Bool {
+      guard let sheet=native.page else { return false }
+      let owners=descendants(sheet.view).compactMap {($0 as? WKWebView)?.navigationDelegate as? AgentWebCoordinator}
+      return targetSources.allSatisfy { source in
+        owners.contains { $0.hasLiveSource(source) && $0.installation(for:source)?.isInstalled == true }
+      }
+    }
+    let runtimeDeadline=ContinuousClock.now + .seconds(2)
+    while !targetRuntimesInstalled(),ContinuousClock.now<runtimeDeadline {try await Task.sleep(for:.milliseconds(2))}
+    phases.append("before reverse: \(owner.navigationStateDescription)")
+    XCTAssertTrue(targetRuntimesInstalled(),"Every target program must become a real installed runtime before the reverse command")
+    expectedLanding=0;landing=nil;pairEnded=nil;stageUptime=nil;sawFirstFrame=false;sawEndpoint=false
+    submissions.removeAll(keepingCapacity:true)
+    let reverseStart=ContinuousClock.now
+    arrowUptime=CACurrentMediaTime()
+    phases.append("reverse begin: uptime=\(arrowUptime)")
+    XCTAssertTrue(model.notebookPageNavigation.send(.step(-1),ownerID:notebook,source:revision))
+    let reverseDeadline=reverseStart + .seconds(2)
+    while landing == nil,ContinuousClock.now<reverseDeadline {try await Task.sleep(for:.milliseconds(2))}
+    phases.append("after reverse: ownerLanding=\(String(describing:landing)); \(owner.navigationStateDescription)")
+    for sheet in native.children { phases.append("reverse sheet: \(captureState(sheet))") }
+    let reverseReceipt=try XCTUnwrap(landing,"Returning to the retained page must complete after its programs became passive")
+    for timing in submissions where timing.operationID == reverseReceipt.operation {
+      phases.append("reverse curl submission: operation=\(reverseReceipt.operation),sequence=\(timing.sequence),clockRequest=\(String(describing:timing.clockRequested)),displayCallback=\(String(describing:timing.displayUpdateReceived)),encoding=\(timing.encodingBegan),submitted=\(timing.submitted),GPU=\(timing.gpuBegan)...\(timing.gpuEnded),targetOS=\(timing.targetPresentation)")
+    }
+    XCTAssertEqual(owner.displayedIndex,0)
+    XCTAssertTrue(owner.currentPagePreparation.isReady)
+    XCTAssertLessThanOrEqual(reverseStart.duration(to:reverseReceipt.at),NotebookUXObservation.pageLanding)
+    let restoredProbes=probes.map { ($0.0,NotebookUXObservation.Color.red) }
+    let restoredPixels=try NotebookUXObservation.Pixels(window:window)
+    XCTAssertTrue(try restoredPixels.matches(restoredProbes),
+      "The return must show all 24 accepted states")
+    XCTAssertTrue(try restoredPixels.matches([(.init(x:100,y:1045),.blue),(.init(x:190,y:1045),.paper)]),
+      "The return must show the leaf 0 marker and clear the leaf 1 marker")
   }
 
   private func openDenseCover(model: NotebookAppModel, window: UIWindow,
@@ -500,6 +591,13 @@ import XCTest
     attachment.name = "dense-cover-opening-owner-boundaries"; attachment.lifetime = .keepAlways; add(attachment)
     let opened = try XCTUnwrap(milestones["opened"], report)
     XCTAssertLessThanOrEqual(opened, 2_000, "The companion UI double-tap keeps its original 2-second opening watchdog")
+    // Writable paper can open before its programs. Complete authored pixels
+    // have their own receipt, still within the SAME original opening ceiling.
+    while controller?.presentedPageIndices.contains(0) != true, CACurrentMediaTime() - began < 2 {
+      try await Task.sleep(for: .milliseconds(2))
+    }
+    XCTAssertTrue(controller?.presentedPageIndices.contains(0) == true,
+      "All source installations must follow writable paper within the original two seconds")
     let page = try XCTUnwrap(controller).view!
     let scale = min(page.bounds.width / 834, page.bounds.height / 1194)
     let probes = (0..<(programs ? 24:13)).map { index -> (CGPoint, NotebookUXObservation.Color) in
@@ -508,7 +606,12 @@ import XCTest
         y: (page.bounds.height - 1194 * scale) / 2 + CGFloat(frame.y + (programs ? 20:145)) * scale)
       return (page.convert(local, to: window), changedFirstProgram && index == 0 ? .red:.blue)
     }
-    let pixels=try NotebookUXObservation.Pixels(window:window)
+    let acceptedPageID = model.activePage?.id
+    let acceptedSources = model.activePage?.elementSourceIdentity
+    let pixels = try await authoredPixels(window: window, probes: probes) {
+      model.activePage?.id == acceptedPageID && model.activePage?.elementSourceIdentity == acceptedSources
+        && controller?.presentedPageIndices.contains(0) == true
+    }
     let failed=try probes.enumerated().filter { try !pixels.matches([$0.element]) }
     if !failed.isEmpty {
       let shot=XCTAttachment(image:pixels.image)
@@ -525,6 +628,21 @@ import XCTest
       detail.name="dense-cover-opening-pixel-coordinates";detail.lifetime = .keepAlways;add(detail)
     }
     XCTAssertTrue(failed.isEmpty,"Every authored element must be visible after the real cover opens")
+  }
+
+  /// Remote WebKit pixels can arrive after their exact native installation.
+  /// This bounded image check follows the recorded app deadlines; its readback
+  /// and waiting time are diagnostics, never an alternative latency receipt.
+  private func authoredPixels(window: UIWindow, probes: [(CGPoint, NotebookUXObservation.Color)],
+    stillInstalled: () -> Bool) async throws -> NotebookUXObservation.Pixels {
+    let deadline = ContinuousClock.now + .seconds(1)
+    var pixels = try NotebookUXObservation.Pixels(window: window)
+    while try !pixels.matches(probes), ContinuousClock.now < deadline, stillInstalled() {
+      try await Task.sleep(for: .milliseconds(16))
+      pixels = try NotebookUXObservation.Pixels(window: window)
+    }
+    XCTAssertTrue(stillInstalled(), "Image correctness cannot borrow a replaced source installation")
+    return pixels
   }
 
   private func assertVisibleCSSMotion(_ window: UIWindow) async throws {

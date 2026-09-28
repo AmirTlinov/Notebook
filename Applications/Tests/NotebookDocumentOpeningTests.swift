@@ -19,7 +19,7 @@ final class NotebookDocumentOpeningTests: XCTestCase {
   private func assertHistoryOpening(onAnotherBoard: Bool) async throws {
     let (model, _, destination) = try await fixture(secondOnAnotherBoard: onAnotherBoard)
     defer {
-      if model.documentMeasurements.enabled, let data = try? JSONEncoder().encode(model.documentMeasurements.records) {
+      if let data = try? JSONEncoder().encode(model.documentMeasurements.records) {
         let measurements = XCTAttachment(data: data, uniformTypeIdentifier: "public.json")
         measurements.name = "history-opening-phases"; measurements.lifetime = .keepAlways; add(measurements)
       }
@@ -96,28 +96,23 @@ final class NotebookDocumentOpeningTests: XCTestCase {
     // The predicate above verifies eventual settled navigation and exact
     // content. Its 20 ms polling interval is only a correctness watchdog; it
     // cannot timestamp either native installation or OS presentation.
-    if model.documentMeasurements.enabled {
-      let record = try XCTUnwrap(model.documentMeasurements.records.last {
-        $0.documentID == destination.id && $0.requestedAt >= openingStarted
-      })
-      let installedAt = try XCTUnwrap(record.installedAt, "The paper owner must report its input installation event")
-      XCTAssertEqual(record.installationBoundary, "native_paper_input")
-      XCTAssertNil(record.failure)
-      XCTAssertEqual(record.sourcePreparationMeasurement, 1)
-      let elapsed = Duration.seconds(installedAt - openingStarted)
-      XCTAssertLessThanOrEqual(elapsed, NotebookUXObservation.opening,
-        "History request → native paper accepting input retains the original 1 s budget; this is not camera settlement or OS presentation")
-      let timing = XCTAttachment(string: "requestToNativePaperInput=\(elapsed); request=\(record.id); boundary=\(record.installationBoundary). Event time is recorded by the paper owner. Final camera/source predicate is correctness only; no screenshot or polling time is included.")
-      timing.name = onAnotherBoard ? "document-other-board-native-input" : "document-native-input"
-      timing.lifetime = .keepAlways; add(timing)
-      // Pending at the closed endpoint is evidence, not a required delay: a
-      // faster compiler may legitimately finish during the closed approach.
-      if let closedAt, let contentReadyAt = record.contentReadyAt, closedWhilePreparing {
-        XCTAssertLessThanOrEqual(closedAt, contentReadyAt)
-      }
-    } else {
-      let scope = XCTAttachment(string: "Document phase recording is disabled. This run checks unloaded-source navigation, closed approach, readiness ordering and eventual settlement; it makes no opening-performance or OS-presentation claim.")
-      scope.name = "history-opening-correctness-scope"; scope.lifetime = .keepAlways; add(scope)
+    let record = try XCTUnwrap(model.documentMeasurements.records.last {
+      $0.documentID == destination.id && $0.requestedAt >= openingStarted
+    })
+    let installedAt = try XCTUnwrap(record.installedAt, "The paper owner must report its input installation event")
+    XCTAssertEqual(record.installationBoundary, "native_paper_input")
+    XCTAssertNil(record.failure)
+    XCTAssertEqual(record.sourcePreparationMeasurement, 1)
+    let elapsed = Duration.seconds(installedAt - openingStarted)
+    XCTAssertLessThanOrEqual(elapsed, NotebookUXObservation.opening,
+      "History request → native paper accepting input retains the original 1 s budget; this is not camera settlement or OS presentation")
+    let timing = XCTAttachment(string: "requestToNativePaperInput=\(elapsed); request=\(record.id); boundary=\(record.installationBoundary). Event time is recorded by the paper owner. Final camera/source predicate is correctness only; no screenshot or polling time is included.")
+    timing.name = onAnotherBoard ? "document-other-board-native-input" : "document-native-input"
+    timing.lifetime = .keepAlways; add(timing)
+    // Pending at the closed endpoint is evidence, not a required delay: a
+    // faster compiler may legitimately finish during the closed approach.
+    if let closedAt, let contentReadyAt = record.contentReadyAt, closedWhilePreparing {
+      XCTAssertLessThanOrEqual(closedAt, contentReadyAt)
     }
     let captureStarted = ProcessInfo.processInfo.systemUptime
     let image = UIGraphicsImageRenderer(size: window.bounds.size).image { _ in
@@ -551,7 +546,8 @@ final class NotebookDocumentOpeningTests: XCTestCase {
         viewport: .init(x: 834, y: 1194), focusedItemID: first.id, openProgress: 0, selectedItemID: first.id))
       return (try store.loadDocument(a.id), try store.loadDocument(b.id))
     }.value
-    let model = NotebookAppModel(store: store, startsNearbySync: false)
+    let model = NotebookAppModel(store: store, startsNearbySync: false,
+      documentMeasurements: .init(enabled: true))
     retainNotebookUntilTeardown(model, removing: root)
     await model.start(pageSize: NotebookAppModel.defaultPageSize)
     let ready = await model.finishPendingPersistence()

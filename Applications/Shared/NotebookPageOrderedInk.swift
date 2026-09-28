@@ -64,10 +64,9 @@ struct NotebookPageOrderedInkInput:Equatable,Sendable {
 extension NotebookAppModel {
   func pageOrderedInk(_ page:PageDocument,display:NotebookPageGraphicDisplay)->NotebookPageOrderedInkInput {
     let working=workingGraphics.filter{$0.surface == .page(page.id)}
-    var owners=Set<UUID>()
-    let restoring=working.compactMap(\.inkPresentation).filter{owners.insert($0.id).inserted}
-      .flatMap(\.retiringBodies)
-    let restoringIDs=Set(restoring.map(\.elementID))
+    // The installed selection owns its whole visible pose while retiring.
+    // Only its addressed SourceRestoration may return those members; this
+    // ordinary scene projection must not independently prepare their originals.
     let canonical=Set(working.filter {
       $0.inkPresentation?.needsCanonicalSource == true && ($0.publicationCursor.map {sceneContentCursor >= $0} ?? false)
     }.map(\.id))
@@ -75,12 +74,10 @@ extension NotebookAppModel {
       $0.inkPresentation?.retainsRawSource($0.id) == true && !canonical.contains($0.id)
     }.map(\.id))
     let erasures=elementErasures(on:.page(page.id)),suppressed=pageSuppressedInkIDs(page)
-    let ordinary=NotebookPageOrderedInkInput(elements:display.elements.filter{!held.contains($0.id) && !canonical.contains($0.id) && !restoringIDs.contains($0.id)},
+    let ordinary=NotebookPageOrderedInkInput(elements:display.elements.filter{!held.contains($0.id) && !canonical.contains($0.id)},
       graph:display.graph,layouts:display.layouts,erasures:erasures,suppressedInkIDs:suppressed)
-    let returned=restoring.map { NotebookPageOrderedInkInput.Candidate(id:$0.elementID,
-      graphic:$0.graphic,layout:$0.layout,erasures:$0.erasures) }
     guard !canonical.isEmpty else {
-      return NotebookPageOrderedInkInput(candidates:ordinary.candidates+returned,suppressedInkIDs:suppressed).confirmingSource(page)
+      return NotebookPageOrderedInkInput(candidates:ordinary.candidates,suppressedInkIDs:suppressed).confirmingSource(page)
     }
     // Only the failed accepted members use the canonical source. The display
     // graph/controls keep their last pose until this plan is actually installed.
@@ -90,6 +87,6 @@ extension NotebookAppModel {
     })
     let accepted=NotebookPageOrderedInkInput(elements:elements,graph:graph,layouts:layouts,
       erasures:erasures,suppressedInkIDs:suppressed)
-    return NotebookPageOrderedInkInput(candidates:ordinary.candidates+accepted.candidates+returned,suppressedInkIDs:suppressed).confirmingSource(page)
+    return NotebookPageOrderedInkInput(candidates:ordinary.candidates+accepted.candidates,suppressedInkIDs:suppressed).confirmingSource(page)
   }
 }

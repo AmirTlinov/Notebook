@@ -6,15 +6,26 @@ for wasm, module, stem in [(root/'tectonic.wasm', 'notebook', 'engine'), (root/'
  subprocess.run([str(root/'wabt-build/wasm2c'),str(wasm),'--no-debug-names','--num-outputs=6','-n',module,'-o',str(out/(stem+'.c'))],check=True)
 for p in list(out.glob('engine_*.c'))+list(out.glob('engine*-impl.h'))+list(out.glob('image_*.c'))+list(out.glob('image*-impl.h')):
  s=p.read_text()
- s=s.replace('  FUNC_PROLOGUE;', '  FUNC_PROLOGUE; NOTEBOOK_STACK_CHECK(); NOTEBOOK_POLL();')
- s,n=re.subn(r'(^[ \t]*var_[A-Za-z0-9_]+:;?)',r'\1 NOTEBOOK_POLL();',s,flags=re.M)
+ if p.name.endswith('-impl.h'):
+  # The pinned kernels have no internal exception unwinding. Every normal
+  # function exit decrements this run's depth; a trap ends and discards the run.
+  prologue='''#define FUNC_PROLOGUE \\
+  struct w2c_wasi__snapshot__preview1 *const notebook_run = instance->w2c_wasi__snapshot__preview1_instance; \\
+  NOTEBOOK_ENTER(notebook_run); NOTEBOOK_POLL(notebook_run)
+#define FUNC_EPILOGUE NOTEBOOK_LEAVE(notebook_run)'''
+  s,count=re.subn(r'#if WASM_RT_STACK_DEPTH_COUNT\n#define FUNC_PROLOGUE.*?\n#endif',lambda _:prologue,s,count=1,flags=re.S)
+  assert count==1,(p,'missing generated function boundary')
+ else:
+  assert not re.search(r'wasm_rt_(throw|load_exception|set_unwind_target)\(',s),(p,'unreviewed guest exception unwinding')
+ assert not re.search(r'\bwasm_rt_(saved_)?call_stack_depth\b',s),(p,'unowned generated stack counter')
+ s,n=re.subn(r'(^[ \t]*var_[A-Za-z0-9_]+:;?)',r'\1 NOTEBOOK_POLL(notebook_run);',s,flags=re.M)
  # Branches can only target the generated labels, all of which are polled.
  targets=set(re.findall(r'goto (var_[A-Za-z0-9_]+);',s))
- labels=set(re.findall(r'(var_[A-Za-z0-9_]+):;? NOTEBOOK_POLL\(\);',s))
+ labels=set(re.findall(r'(var_[A-Za-z0-9_]+):;? NOTEBOOK_POLL\(notebook_run\);',s))
  assert targets <= labels,(p,targets-labels)
  p.write_text('#include "supervisor.h"\n'+s)
  print(p,n)
-h=(out/'engine.h').read_text()+(out/'image.h').read_text();c=['#include "engine.h"','#include "wasm-rt-impl.h"','struct w2c_wasi__snapshot__preview1 { void *context; wasm_rt_memory_t *memory; };']
+h=(out/'engine.h').read_text()+(out/'image.h').read_text();c=['#include "engine.h"','#include "wasm-rt-impl.h"','#include "supervisor.h"']
 r=['use super::NativeState;','use std::{future::Future, pin::pin, task::{Context, Poll, Waker}};','use wasi_common::snapshots::preview_1::wasi_snapshot_preview1 as wasi;']
 for ret,name,params in sorted(set(re.findall(r'(u32|void) w2c_wasi__snapshot__preview1_(\w+)\(struct w2c_wasi__snapshot__preview1\*(.*?)\);',h))):
  types=params.lstrip(', ').split(', ') if params else []
