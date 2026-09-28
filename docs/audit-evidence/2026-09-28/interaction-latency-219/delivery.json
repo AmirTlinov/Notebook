@@ -1,0 +1,62 @@
+{
+  "format": 1,
+  "status": "functional-repair-delivered",
+  "sourceCommit": "ac418ec65ab64f8ab99135bcc1d7ff0428736c40",
+  "version": "0.3.149",
+  "build": "219",
+  "previousBuild": "218",
+  "sourceSHA256": "2afbd6273dd3b96ee95e69598b5bd8d4b3e9b0c4eaafd64bb5b2b1f884504c8e",
+  "fullAcceptance": false,
+  "scope": "Functional ownership repair. Final selected source passed four material-owner checks and physical system UI24. Native24 reverse 468.614 ms > 450 ms and the previously recorded strict cold, input, first-curl and full-acceptance conditions remain open.",
+  "verification": {
+    "path": "/private/tmp/notebook-interaction-219-delivery-20260928T0611Z/verification.json",
+    "sha256": "a48d31813e8255d1c56f3a24a8ba66d9eaf191d577566b5be4889deb9852f403",
+    "route": "./verify.sh:selected",
+    "status": "passed",
+    "passed": 5,
+    "failed": 0,
+    "skipped": 0,
+    "runtimeWarnings": [],
+    "summary": "0611-summary.json",
+    "tests": "0611-tests.json"
+  },
+  "buildReceipt": {
+    "path": "/private/tmp/notebook-interaction-pair-219-20260928T0618Z/build.json",
+    "sha256": "ccff74087a1afac2fabc1cd1f55531212906686f37231a23464901903b9449b5",
+    "status": "verified-build"
+  },
+  "installationReceipt": {
+    "path": "/private/tmp/notebook-interaction-install-219-20260928T0623Z/installation.json",
+    "sha256": "ff904af33ee2743500c419224174243b9b28b5a02de63825502eb2e4be47e898",
+    "status": "matched-pair-launched",
+    "finishedAt": "2026-09-28T06:24:25.062890+00:00",
+    "macInstalledBuild": "219",
+    "ipadInstalledBuild": "219",
+    "dataAccess": "none",
+    "inPlaceUpdate": true,
+    "noStoreOrKeyAccess": true,
+    "identityRetention": "Application identifiers and signed rights were preserved. The trusted existing iPad device identity reconnected with a new ready presentation session and retained board state. iOS migrated the filesystem data-container path during the update; equal paths are not asserted."
+  },
+  "postLaunch": {
+    "path": "/private/tmp/notebook-interaction-install-219-20260928T0623Z/post-launch-check.json",
+    "sha256": "6c65bf0eb792c00a46ea0ebcb9b5d409c54377ebe18e9ac173927517f98dea7a",
+    "checkedAt": "2026-09-28T06:24:56Z",
+    "macInstalledHelperStatus": "ready",
+    "iPadPresentationStatus": "ready",
+    "iPadSessionID": "95E58BF9-361F-4651-A3DE-7A1816618D9E",
+    "iPadDeviceID": "29DC77FE-8777-41EC-BE98-704F4668A2F4",
+    "scope": "Installed pair launch and connection only; physical interaction scope is recorded separately.",
+    "macInstalledVersion": "0.3.149",
+    "macInstalledBuild": "219",
+    "iPadInstalledVersion": "0.3.149",
+    "iPadInstalledBuild": "219",
+    "iPadNotebookApps": [
+      {
+        "bundleID": "com.amirtlinov.notebook.preview",
+        "name": "Notebook Lab",
+        "build": "219"
+      }
+    ],
+    "qaOrTestAppsPresent": false
+  }
+}

@@ -1,0 +1,105 @@
+{
+  "devices": [
+    {
+      "architecture": "arm64e",
+      "deviceId": "00008103-001E059934D9001E",
+      "deviceName": "iPad (Елизавета)",
+      "modelName": "iPad Pro (11-inch) (3rd generation)",
+      "osBuildNumber": "24A435",
+      "osVersion": "27.0",
+      "platform": "iOS"
+    }
+  ],
+  "testNodes": [
+    {
+      "children": [
+        {
+          "children": [
+            {
+              "children": [
+                {
+                  "duration": "0,072s",
+                  "durationInSeconds": 0.07220804691314697,
+                  "name": "testNativeDetachRemountPublishesAvailabilityWithoutRevokingANewerRuntime()",
+                  "nodeIdentifier": "PageTurnMaterialOwnerTests/testNativeDetachRemountPublishesAvailabilityWithoutRevokingANewerRuntime()",
+                  "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/PageTurnMaterialOwnerTests/testNativeDetachRemountPublishesAvailabilityWithoutRevokingANewerRuntime",
+                  "nodeType": "Test Case",
+                  "result": "Passed"
+                },
+                {
+                  "duration": "0,12s",
+                  "durationInSeconds": 0.11895108222961426,
+                  "name": "testPassiveProgramFrameSurvivesNativeDetachmentAndReusesItsExactMaterial()",
+                  "nodeIdentifier": "PageTurnMaterialOwnerTests/testPassiveProgramFrameSurvivesNativeDetachmentAndReusesItsExactMaterial()",
+                  "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/PageTurnMaterialOwnerTests/testPassiveProgramFrameSurvivesNativeDetachmentAndReusesItsExactMaterial",
+                  "nodeType": "Test Case",
+                  "result": "Passed"
+                },
+                {
+                  "duration": "0,0094s",
+                  "durationInSeconds": 0.009414911270141602,
+                  "name": "testRuntimeNeverWarmsOrReusesAPreviousTurnAndRetirementRejectsPendingPixels()",
+                  "nodeIdentifier": "PageTurnMaterialOwnerTests/testRuntimeNeverWarmsOrReusesAPreviousTurnAndRetirementRejectsPendingPixels()",
+                  "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/PageTurnMaterialOwnerTests/testRuntimeNeverWarmsOrReusesAPreviousTurnAndRetirementRejectsPendingPixels",
+                  "nodeType": "Test Case",
+                  "result": "Passed"
+                },
+                {
+                  "duration": "0,0011s",
+                  "durationInSeconds": 0.0010800361633300781,
+                  "name": "testUnchangedProviderLayoutDoesNotWakeThePageButPixelsAndAvailabilityDo()",
+                  "nodeIdentifier": "PageTurnMaterialOwnerTests/testUnchangedProviderLayoutDoesNotWakeThePageButPixelsAndAvailabilityDo()",
+                  "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/PageTurnMaterialOwnerTests/testUnchangedProviderLayoutDoesNotWakeThePageButPixelsAndAvailabilityDo",
+                  "nodeType": "Test Case",
+                  "result": "Passed"
+                }
+              ],
+              "name": "PageTurnMaterialOwnerTests",
+              "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/PageTurnMaterialOwnerTests",
+              "nodeType": "Test Suite",
+              "result": "Passed"
+            }
+          ],
+          "name": "NotebookTests",
+          "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests",
+          "nodeType": "Unit test bundle",
+          "result": "Passed"
+        },
+        {
+          "children": [
+            {
+              "children": [
+                {
+                  "duration": "1 мин 16 с",
+                  "durationInSeconds": 76.20381999015808,
+                  "name": "testTwentyFourPageProgramsAcceptFirstTapAfterZoomAndKeepStateAcrossTurns()",
+                  "nodeIdentifier": "NotebookNavigationLoadUITests/testTwentyFourPageProgramsAcceptFirstTapAfterZoomAndKeepStateAcrossTurns()",
+                  "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookUITests/NotebookNavigationLoadUITests/testTwentyFourPageProgramsAcceptFirstTapAfterZoomAndKeepStateAcrossTurns",
+                  "nodeType": "Test Case",
+                  "result": "Passed"
+                }
+              ],
+              "name": "NotebookNavigationLoadUITests",
+              "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookUITests/NotebookNavigationLoadUITests",
+              "nodeType": "Test Suite",
+              "result": "Passed"
+            }
+          ],
+          "name": "NotebookUITests",
+          "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookUITests",
+          "nodeType": "UI test bundle",
+          "result": "Passed"
+        }
+      ],
+      "name": "Notebook",
+      "nodeType": "Test Plan",
+      "result": "Passed"
+    }
+  ],
+  "testPlanConfigurations": [
+    {
+      "configurationId": "1",
+      "configurationName": "Test Scheme Action"
+    }
+  ]
+}

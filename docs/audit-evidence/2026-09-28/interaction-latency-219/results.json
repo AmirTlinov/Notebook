@@ -2,7 +2,7 @@
   "format": 1,
   "version": "0.3.149 (219)",
   "baseCommit": "4d80bdd0dbf14ea4f902fcf0acf570bf36a541bc",
-  "status": "repair-in-progress",
+  "status": "functional-repair-delivered",
   "fullAcceptance": false,
   "runs": [
     {
@@ -471,9 +471,12 @@
     "cause": "Nested native receipt structs needed explicit MainActor isolation. Added actor annotations before0459; no runtime test executed in0458."
   },
   "delivery": {
-    "version219": "not-delivered",
-    "installedProduction": "0.3.148 (218)",
-    "finalVerification": "0611 passed: four material-owner checks plus physical system UI24, 5 PASS, 0 FAIL/skips/runtime warnings, unchanged source witness. Functional ownership repair only; Native24 reverse 468.614 ms > 450 ms remains open. Build/install has not completed: version 219 not delivered, production 218 remains installed.",
-    "scope": "Functional ownership repair, not performance or full acceptance. Native24 reverse 468.614 ms > 450 ms remains open."
+    "version219": "installed-and-launched",
+    "installedProduction": "0.3.149 (219)",
+    "previousProduction": "0.3.148 (218)",
+    "sourceCommit": "ac418ec65ab64f8ab99135bcc1d7ff0428736c40",
+    "receipt": "delivery.json",
+    "scope": "Functional ownership repair. Final selected source passed four material-owner checks and physical system UI24. Native24 reverse 468.614 ms > 450 ms and the previously recorded strict cold, input, first-curl and full-acceptance conditions remain open.",
+    "finalVerification": "0611 passed: four material-owner checks plus physical system UI24, 5 PASS, 0 FAIL/skips/runtime warnings, unchanged source witness. Build and installation receipts match that witness. The installed Mac helper and current iPad presentation session report ready; one Notebook Lab 219 remains on iPad, with no QA or test apps. This confirms delivery and connection; physical interaction scope and open performance failures are recorded separately."
   }
 }
