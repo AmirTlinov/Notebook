@@ -1290,7 +1290,14 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
           do { try await Task.sleep(for: .seconds(8)) } catch { return }
           result.finish(.failure(SceneRenderError.snapshotPending("live_capture_" + element.id)))
         }
+        let leaseID = lease.id
+        if destination == .acceptedTurn {
+          NotebookNavigationObservation.webPreparation("accepted_capture_submitted", ownerID: leaseID, sourceID: element.id)
+        }
         web.takeSnapshot(with: configuration) { [weak self, capture, installation] image, error in
+          if destination == .acceptedTurn {
+            NotebookNavigationObservation.webPreparation("accepted_capture_callback", ownerID: leaseID, sourceID: element.id)
+          }
           // WebKit delivers this callback on MainActor. An accepted turn only
           // transfers these pixels; queuing another task delays every slot's
           // completion behind unrelated view and passive preparation work.
@@ -1533,7 +1540,7 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
   }
 
   private func beginLoad(_ element: AgentElement, in webView: WKWebView, snapshotOnly: Bool = false) {
-    NotebookNavigationObservation.webPreparation("source_accepted", leaseID: lease.id, sourceID: element.id)
+    NotebookNavigationObservation.webPreparation("source_accepted", ownerID: lease.id, sourceID: element.id)
     let staticRaster = snapshotOnly && element.kind == .web && !element.requiresLiveRuntime
     let reusesStaticShell = staticRaster && staticRasterShellReady
     staticRasterShellReady = reusesStaticShell
@@ -1584,7 +1591,7 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
             }
           }
       } else {
-        NotebookNavigationObservation.webPreparation("navigation_requested", leaseID: lease.id, sourceID: element.id)
+        NotebookNavigationObservation.webPreparation("navigation_requested", ownerID: lease.id, sourceID: element.id)
         activeNavigation = webView.loadHTMLString(Self.staticRasterDocument(element, token: token), baseURL: nil)
       }
       return
@@ -1603,11 +1610,11 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
             Self.document(for: element, stateJSON: encoded.htmlJSON, token: token, package: package, origin: origin, stateCredit: stateTransfer?.initialCredit ?? 0, commitsEnabled: !snapshotOnly && allowsStateCommits)
           }
           packageNavigationURL = url
-          NotebookNavigationObservation.webPreparation("navigation_requested", leaseID: lease.id, sourceID: element.id)
+          NotebookNavigationObservation.webPreparation("navigation_requested", ownerID: lease.id, sourceID: element.id)
           activeNavigation = webView.load(URLRequest(url: url))
         } else {
           let document = Self.document(for: element, stateJSON: encoded.htmlJSON, token: token, stateCredit: stateTransfer?.initialCredit ?? 0, commitsEnabled: !snapshotOnly && allowsStateCommits)
-          NotebookNavigationObservation.webPreparation("navigation_requested", leaseID: lease.id, sourceID: element.id)
+          NotebookNavigationObservation.webPreparation("navigation_requested", ownerID: lease.id, sourceID: element.id)
           activeNavigation = webView.loadHTMLString(document.before + element.html + document.after, baseURL: nil)
         }
       } catch {
@@ -1645,11 +1652,16 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
         }
         guard accepts(token), !Task.isCancelled else { return }
       }
-      guard accepts(token), !Task.isCancelled, let web = attachedWebView,
-        appliedState == loadedElement?.state else { return }
-      publishCurrentSourceInstallation()
-      captureSnapshot(of: web, token: token)
+      guard !Task.isCancelled else { return }
+      finishCurrentState(token: token)
     }
+  }
+
+  private func finishCurrentState(token: String) {
+    guard accepts(token), let web = attachedWebView,
+      appliedState == loadedElement?.state else { return }
+    publishCurrentSourceInstallation()
+    captureSnapshot(of: web, token: token)
   }
 
   private func beginPreparationDeadline(token: String, policy: AgentSnapshotPolicy? = nil) {
@@ -1749,13 +1761,16 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
       let element = loadedElement else { return }
     receiveFingerRegions(regions)
     runtimeLoaded = true; initialStateEncoding = nil
-    NotebookNavigationObservation.webPreparation("runtime_ready", leaseID: lease.id, sourceID: element.id)
+    NotebookNavigationObservation.webPreparation("runtime_ready", ownerID: lease.id, sourceID: element.id)
     staticRasterShellReady = snapshotOnly && element.kind == .web && !element.requiresLiveRuntime
     #if os(iOS)
       NotebookInteractionDiagnostics.bind(web, elementID: element.id, token: token, ready: true)
     #endif
     publishInteractionReadiness(true, token: token)
-    applyCurrentState()
+    // The initial HTML already owns the accepted state. Starting a transfer
+    // task with an empty queue delays installation and the first passive image.
+    if stateToApply == nil { finishCurrentState(token: token) }
+    else { applyCurrentState() }
   }
 
   func webView(
@@ -1868,7 +1883,7 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
   func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
     guard !isInvalidated, attachedWebView === webView, let navigation,
       navigation === activeNavigation else { return }
-    NotebookNavigationObservation.webPreparation("navigation_committed", leaseID: lease.id, sourceID: loadedElement?.id)
+    NotebookNavigationObservation.webPreparation("navigation_committed", ownerID: lease.id, sourceID: loadedElement?.id)
   }
 
   func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: any Error) {
@@ -1973,7 +1988,7 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
   ) -> WKWebView {
     precondition(!coordinator.isInvalidated && !coordinator.lease.isReleased, "WebKit requires an active, parent-owned lease.")
     precondition(coordinator.attachedWebView == nil, "A lease session mounts exactly one WebKit surface.")
-    NotebookNavigationObservation.webPreparation("native_init_started", leaseID: coordinator.lease.id)
+    NotebookNavigationObservation.webPreparation("native_init_started", ownerID: coordinator.lease.id)
     let controller = WKUserContentController()
     controller.add(coordinator, name: "notebook")
     let configuration = WKWebViewConfiguration()
@@ -2004,7 +2019,7 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
       webView.setValue(false, forKey: "drawsBackground")
       webView.allowsMagnification = false
     #endif
-    NotebookNavigationObservation.webPreparation("native_init_finished", leaseID: coordinator.lease.id)
+    NotebookNavigationObservation.webPreparation("native_init_finished", ownerID: coordinator.lease.id)
     // Leave this native update before admitting the next bounded pair. The
     // allocator resumes async consumers; it never constructs views recursively
     // or waits for this independent browser's remote navigation to commit.

@@ -99,7 +99,7 @@ import XCTest
       NotebookNavigationObservation.onWebPreparation = nil
       model.compositionTiles.onPreparationPhase = nil
       let composition = compositionPhases.map { "\(start.duration(to: $0.2)) \($0.1) owner=\($0.0)" }
-      let web = webPhases.map { "\(start.duration(to: $0.3)) \($0.0) lease=\($0.1) source=\($0.2 ?? "unbound")" }
+      let web = webPhases.map { "\(start.duration(to: $0.3)) \($0.0) owner=\($0.1) source=\($0.2 ?? "unbound")" }
       let phases = XCTAttachment(string: (composition + web).joined(separator: "\n"))
       phases.name = "Cold source preparation events"; phases.lifetime = .keepAlways; add(phases)
     }
@@ -127,7 +127,11 @@ import XCTest
     while allInstalled == nil, ContinuousClock.now < setupLimit {
       try await Task.sleep(for: .milliseconds(2))
     }
+    // Cold observation ends with this cohort's setup. Subsequent correctness
+    // reads and accepted turns own their own observation interval and hooks.
     NotebookNavigationObservation.onSourceInstalled = nil
+    NotebookNavigationObservation.onWebPreparation = nil
+    model.compositionTiles.onPreparationPhase = nil
     let first = measuresOpening ? NotebookUXObservation.Result(matched: firstInstalled != nil,
       elapsed: start.duration(to: firstInstalled ?? .now), budget: NotebookUXObservation.firstUsefulFrame) : nil
     let result = NotebookUXObservation.Result(matched: allInstalled != nil,
@@ -322,6 +326,22 @@ import XCTest
       phases.append("material events (omitted=\(omittedMaterialPhases)):")
       phases.append(contentsOf: materialPhases.map {
         "material: uptime=\($0.5),stage=\($0.0),owner=\($0.1),page=\($0.2?.uuidString ?? "nil"),frame=\($0.3?.uuidString ?? "nil"),composition=\($0.4?.uuidString ?? "nil")"
+      })
+    }
+    let captureEpoch = ContinuousClock.now
+    var capturePhases: [(String, UUID, String?, ContinuousClock.Instant)] = []
+    var omittedCapturePhases = 0
+    precondition(NotebookNavigationObservation.onWebPreparation == nil)
+    NotebookNavigationObservation.onWebPreparation = { stage, lease, source, time in
+      guard stage.hasPrefix("accepted_capture_") else { return }
+      guard capturePhases.count < 192 else { omittedCapturePhases += 1; return }
+      capturePhases.append((stage, lease, source, time))
+    }
+    defer {
+      NotebookNavigationObservation.onWebPreparation = nil
+      phases.append("accepted capture events (omitted=\(omittedCapturePhases)):")
+      phases.append(contentsOf: capturePhases.map {
+        "capture: elapsed=\(captureEpoch.duration(to: $0.3)),stage=\($0.0),lease=\($0.1),source=\($0.2 ?? "nil")"
       })
     }
     func cameraGesture(_ scale:Double) async throws {

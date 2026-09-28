@@ -407,6 +407,7 @@ struct PreparedAgentElementView: View {
     }
     .onAppear {
       guard model.shutdownPhase != .stopped else { return }
+      NotebookNavigationObservation.webPreparation("prepared_appeared", ownerID: pageFrameOwner, sourceID: element.id)
       // Mounting, not constructing a cached SwiftUI value, acquires the lease.
       // This synchronous callback supplies cached pixels before the first frame;
       // asynchronous WebKit preparation remains the existing task's job.
@@ -562,9 +563,11 @@ struct PreparedAgentElementView: View {
       return
     }
     do {
+      NotebookNavigationObservation.webPreparation("prepared_admission_requested", ownerID: request, sourceID: demand.source.id)
       let acquired = try await SceneRenderResources.shared.acquireWebSurface(
         priority: demand.active ? (demand.inputEnabled && demand.focused ? .input : .liveProgram) : .visible,
         source: focus, constructsRuntime: demand.active, deadline: .now + .seconds(8))
+      NotebookNavigationObservation.webPreparation("prepared_admission_acquired", ownerID: request, sourceID: demand.source.id)
       guard !Task.isCancelled, preparationOwner.request == request,
         model.shutdownPhase != .stopped else { acquired.release(); return }
       bindRuntime(acquired, demand: demand)

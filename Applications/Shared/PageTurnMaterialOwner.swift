@@ -561,19 +561,23 @@ final class PageTurnMaterialOwner {
         cuts: cuts, frame: frame, scale: scale, readiness: readiness, priority: priority))
     }
     return try await withThrowingTaskGroup(of: (Int, SlotPixels).self) { group in
-      // Installed raster borrows above need no tasks. Live providers reserve
-      // their pixels before WK submission and need no serial copy allowance.
+      // Submit on this material owner's actor before waiting. A generic-pool
+      // child would first queue back to MainActor just to call WebKit, spreading
+      // one accepted cohort across unrelated layout/preparation work. Immediate
+      // children keep the group's cancellation and submitted resource fences.
+      // Live providers reserve their pixels before WK submission and need no
+      // serial copy allowance; installed raster borrows above need no tasks.
       // Copies/transforms still have four in flight: their temporary input and
       // output coexist, unlike the direct cuts retained until final composition.
       var remaining = asynchronous.filter { !direct.contains($0) }.makeIterator()
       var result = borrowed
-      for index in asynchronous where direct.contains(index) { group.addTask { try await capture(index) } }
+      for index in asynchronous where direct.contains(index) { group.addImmediateTask { try await capture(index) } }
       for _ in 0..<4 {
-        if let index = remaining.next() { group.addTask { try await capture(index) } }
+        if let index = remaining.next() { group.addImmediateTask { try await capture(index) } }
       }
       while let (index, pixels) = try await group.next() {
         result[index] = pixels
-        if !direct.contains(index), let next = remaining.next() { group.addTask { try await capture(next) } }
+        if !direct.contains(index), let next = remaining.next() { group.addImmediateTask { try await capture(next) } }
       }
       return result
     }

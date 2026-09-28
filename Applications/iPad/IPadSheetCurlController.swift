@@ -17,7 +17,7 @@ final class IPadSheetCurlController: UIViewController, UIGestureRecognizerDelega
   var resolveOperation: (UUID, PageTurnOutcome, Bool, Bool) -> Void = { _, _, _, _ in }
   var didAcceptTurn: (UIViewController) -> Void = { _ in }
   var onFailure: (Error) -> Void = { _ in }
-  var acquireSheetFrame: @MainActor (UIViewController) async throws -> PageTurnFrame = { _ in throw SceneRenderError.snapshotPending("page_frame_owner") }
+  var acquireSheetFrame: @MainActor @Sendable (UIViewController) async throws -> PageTurnFrame = { _ in throw SceneRenderError.snapshotPending("page_frame_owner") }
   var isSheetReadyForCapture: (UIViewController) -> Bool = { _ in true }
   var isSheetPresented: (UIViewController) -> Bool = { _ in true }
   var onStageLiveSheet: (UIViewController) -> Void = { _ in }
@@ -178,14 +178,28 @@ final class IPadSheetCurlController: UIViewController, UIGestureRecognizerDelega
       defer { if self.motion?.id == id { frameAcquisition = nil } }
       do {
         let began = CACurrentMediaTime()
-        // The admitted owners are independent. Submit both borrows before
-        // awaiting either WebKit/GPU result; both final cuts are retained by
-        // this same operation. Structured children cancel and drain together
-        // if either owner fails or the gesture is replaced.
+        // Both admitted owners live on this actor. Start their borrows here,
+        // without sending each child through the generic pool and back before
+        // its first WebKit/GPU submission. The structured pair still cancels
+        // and drains together if either owner fails or motion is replaced.
         let acquire = acquireSheetFrame
-        async let sourceFrame = acquire(motion.source)
-        async let targetFrame = acquire(motion.target)
-        let (source, target) = try await (sourceFrame, targetFrame)
+        let sourcePage = motion.source, targetPage = motion.target
+        let readSource: @MainActor @Sendable () async throws -> (isSource: Bool, frame: PageTurnFrame) = {
+          (true, try await acquire(sourcePage))
+        }
+        let readTarget: @MainActor @Sendable () async throws -> (isSource: Bool, frame: PageTurnFrame) = {
+          (false, try await acquire(targetPage))
+        }
+        let (source, target) = try await withThrowingTaskGroup(of: (isSource: Bool, frame: PageTurnFrame).self) { group in
+          group.addImmediateTask(operation: readSource)
+          group.addImmediateTask(operation: readTarget)
+          var source: PageTurnFrame?, target: PageTurnFrame?
+          while let result = try await group.next() {
+            if result.isSource { source = result.frame } else { target = result.frame }
+          }
+          guard let source, let target else { throw PageTurnMaterialUnavailable.changed }
+          return (source, target)
+        }
         try Task.checkCancellation()
         guard var current = self.motion, current.id == id else { return }
         // Each owner delivered an immutable accepted cut. Subsequent live

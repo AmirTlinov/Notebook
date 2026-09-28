@@ -59,19 +59,20 @@ impl Runtime {
         };
         check()?;
         let budget = Arc::new(Budget::default());
+        let resources = files::ResourceCache::new(&budget);
         let (input, input_reads) = Directory::tracked_input(&budget);
         for (name, data) in assets {
             if !Directory::valid_path(&name) || name == "notebook.sty" { return Err("typesetter_file_path_invalid".into()); }
             input.put(&name, data).map_err(|e| format!("typesetter_namespace_invalid: {e}"))?;
         }
         let output = Directory::new(true, &budget);
-        let bundle = Directory::bundle(self.bundle.clone(), false, &budget);
+        let bundle = Directory::bundle(self.bundle.clone(), false, &budget, &resources);
         if !format && !image {
-            bundle.put("latex.fmt", self.format.bytes()?).map_err(|e| e.to_string())?;
+            bundle.put_resource("latex.fmt", self.format.bytes()?).map_err(|e| e.to_string())?;
             bundle.put("notebook.sty", include_bytes!("../resources/notebook.sty").to_vec()).map_err(|e| e.to_string())?;
         }
-        let fonts = Directory::bundle(self.bundle.clone(), true, &budget);
-        fonts.put("notebook-fonts.tsv", self.fonts.bytes()?).map_err(|e| e.to_string())?;
+        let fonts = Directory::bundle(self.bundle.clone(), true, &budget, &resources);
+        fonts.put_resource("notebook-fonts.tsv", self.fonts.bytes()?).map_err(|e| e.to_string())?;
         let log = Log::default();
         let mut builder = WasiCtxBuilder::new();
         builder.env("TECTONIC_CACHE_DIR", "/output").map_err(|e| e.to_string())?

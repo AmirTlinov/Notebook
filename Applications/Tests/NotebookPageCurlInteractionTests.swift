@@ -157,7 +157,7 @@ import XCTest
     XCTAssertTrue(curl.isHidden); XCTAssertNil(curl.frameLease)
   }
 
-  func testCancellationDuringSourceCaptureSkipsTheSecondCaptureAndReleasesItsBudget() async throws {
+  func testCancellingAnAdmittedPairDrainsBothCapturesWithoutPublishing() async throws {
     let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
     let previous = scene.windows.first(where: \.isKeyWindow), window = UIWindow(windowScene: scene)
     let native = IPadSheetCurlController(), source = UIViewController(), target = UIViewController()
@@ -173,37 +173,38 @@ import XCTest
     let acquire = native.acquireSheetFrame
     defer { native.acquireSheetFrame = acquire }
     var sourceAcquisitions = 0, targetAcquisitions = 0, pairs = 0
-    var sourceReturned = false, sourceBytes = 0, reservedAtCancellation = 0
+    var sourceCompletedGPU = false, sourceDrained = false, targetDrained = false
     var completions: [Bool] = [], failures: [String] = []
-    weak var acquiredSource: PageTurnFrame?
+    weak var acquiredSource: PageTurnFrame?, acquiredTarget: PageTurnFrame?
     native.onFramesAcquired = { _ in pairs += 1 }
     native.onFailure = { failures.append(String(reflecting: $0)) }
     native.acquireSheetFrame = { sheet in
-      if sheet === source { sourceAcquisitions += 1 }
-      if sheet === target { targetAcquisitions += 1 }
-      // Await the real, charged GPU composition. Cancel at the same boundary
-      // where the source material is ready but the pair has not borrowed it.
-      let frame = try await acquire(sheet)
-      if sheet === source {
-        acquiredSource = frame; sourceBytes = frame.byteCount
-        reservedAtCancellation = resources.reservedBytes
-        native.cancelMotion()
-        sourceReturned = true
+      let isSource = sheet === source
+      if isSource { sourceAcquisitions += 1 } else { targetAcquisitions += 1 }
+      defer {
+        if isSource { sourceDrained = true } else { targetDrained = true }
       }
+      // These are the real charged GPU producers. Cancelling the admitted pair
+      // after source completion must drain the concurrently submitted target,
+      // whether it returns its frame or observes cancellation at its fence.
+      let frame = try await acquire(sheet)
+      if isSource {
+        acquiredSource = frame
+        sourceCompletedGPU = true
+        native.cancelMotion()
+      } else { acquiredTarget = frame }
       return frame
     }
     native.show(target, direction: .forward, animated: true) { completions.append($0) }
     let limit = ContinuousClock.now + .seconds(2)
-    while (!sourceReturned || acquiredSource != nil), ContinuousClock.now < limit {
+    while (!sourceDrained || !targetDrained || acquiredSource != nil || acquiredTarget != nil
+      || resources.reservedBytes != reserved), ContinuousClock.now < limit {
       try await Task.sleep(for: .milliseconds(2))
     }
-    XCTAssertTrue(sourceReturned, "The cancellation must follow a completed source GPU frame")
-    XCTAssertEqual(sourceAcquisitions, 1)
-    XCTAssertEqual(targetAcquisitions, 0, "A cancelled pair must not request the target material")
-    XCTAssertGreaterThan(sourceBytes, 0)
-    XCTAssertEqual(reservedAtCancellation, reserved + sourceBytes,
-      "The awaited source allocation remains charged until the borrower returns")
-    XCTAssertNil(acquiredSource, "Cancellation must release the returned immutable source frame")
+    XCTAssertTrue(sourceCompletedGPU, "Cancellation follows the actual source GPU completion")
+    XCTAssertEqual(sourceAcquisitions, 1); XCTAssertEqual(targetAcquisitions, 1)
+    XCTAssertTrue(sourceDrained); XCTAssertTrue(targetDrained)
+    XCTAssertNil(acquiredSource); XCTAssertNil(acquiredTarget)
     XCTAssertEqual(pairs, 0)
     XCTAssertEqual(completions, [false])
     XCTAssertTrue(failures.isEmpty, "Cancellation is not a rendering failure: \(failures)")
@@ -211,6 +212,9 @@ import XCTest
     XCTAssertEqual(resources.reservedBytes, reserved)
     XCTAssertTrue(native.page === source)
     XCTAssertTrue(curl.isHidden); XCTAssertNil(curl.frameLease)
+    let pixels = try NotebookUXObservation.Pixels(window: window)
+    XCTAssertTrue(try pixels.matches([(.init(x: window.bounds.midX, y: window.bounds.midY), .blue)]),
+      "Drained callbacks cannot expose target pixels after cancellation")
   }
 
   func testPageShaderKeepsTextureOrientationAndExactFlatEndpoints() async throws {

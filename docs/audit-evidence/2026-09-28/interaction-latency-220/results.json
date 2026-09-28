@@ -1,0 +1,143 @@
+{
+  "format": 1,
+  "candidateVersion": "0.3.150 (220)",
+  "baseCommit": "87c787d30f44df356817b50cc13b572d210124e8",
+  "status": "implemented-awaiting-final-physical-check-and-delivery",
+  "installedProduction": "0.3.149 (219)",
+  "installation220Attempted": false,
+  "fullAcceptance": false,
+  "candidateSource": "87d7ea85c16550d111d0322c4ee6797808dc4bfd081ce5b72d6ad348b0a34b36",
+  "changes": [
+    "Actor-local immediate submission of the structured page pair and live snapshot cohort; preserved cancellation/resource fences.",
+    "Initial accepted WebKit state publishes without an empty transfer task; later transfers remain coalesced and source-checked.",
+    "Runtime-owned immutable format/font bytes are borrowed. Per-compile archive-entry reuse is bounded8MiB/256entries, charged to64MiB, and evicts only unborrowed buffers for input/output growth.",
+    "Obsolete serial-capture cancellation assertion replaced with admitted-pair drain/release/correct-source scenario.",
+    "Nested diagnostic observer ends before the next interaction; UIKit phase probes removed from strict latency tests."
+  ],
+  "rust": {
+    "status": "passed",
+    "passedTests": 6,
+    "scope": "files::tests: immutable borrow/read-only boundaries, per-compile inflation reuse/release, reclamation under the existing byte budget, namespace and entry/handle limits.",
+    "log": "/private/tmp/notebook-220-rust-prepared.log"
+  },
+  "sourceInventoryNote": "Early1122–1148 witnesses also contain1633 ignored files produced in Sources/NotebookTypesetterRuntime/target by the local cargo run. These generated files were moved to .build/typesetter-unit-tests-220 before1154. Neither early receipts nor1154 is claimed as a final complete-source delivery proof.",
+  "runs": [
+    {
+      "id": "1122",
+      "path": "/private/tmp/notebook-interaction-220-20260928T1122Z",
+      "sourceSHA256": "715ba86ac6f298befe65c4a359513c79932d81e9e0102345cc710b76775404cf",
+      "sourceFileCount": 3185,
+      "status": "compile-failed",
+      "executedTests": 0,
+      "reason": "Swift region-based isolation rejected inline immediate child closures."
+    },
+    {
+      "id": "1124",
+      "path": "/private/tmp/notebook-interaction-220-20260928T1124Z",
+      "sourceSHA256": "63f1f3bf686ec775ad71b44dbc246620c1cbd74fc9a5437d13d2ac5b1a3bc852",
+      "sourceFileCount": 3185,
+      "status": "compile-failed",
+      "executedTests": 0,
+      "reason": "The same region checker failure remained after Sendable callback annotation."
+    },
+    {
+      "id": "1127",
+      "path": "/private/tmp/notebook-interaction-220-20260928T1127Z",
+      "sourceSHA256": "d4eb92412e1801770721274bae12e195a6a2b5473f8c626dfe89ac050b38fafe",
+      "sourceFileCount": 3185,
+      "status": "test-startup-interrupted",
+      "executedTests": 0,
+      "reason": "Optimized build succeeded with separately typed actor closures; XCTest blocked registering system notifications before tests. Owned runner interrupted."
+    },
+    {
+      "id": "1132",
+      "path": "/private/tmp/notebook-interaction-220-20260928T1132Z",
+      "sourceSHA256": "e5e2563fb68547336943cdeef1b9e3f98e37f8626e2c6f36c77d80f974a58887",
+      "sourceFileCount": 3185,
+      "status": "failed",
+      "passedTests": 8,
+      "failedTests": 7,
+      "skippedTests": 0,
+      "runtimeWarnings": [],
+      "passedScope": "Four PageTurnMaterialOwner cases, admitted-pair cancellation/drain, two AgentWeb fresh-frame/lifecycle cases, ten cancelled typesetter compilations.",
+      "failures": {
+        "firstHeldDotOSMS": 23.405041662,
+        "coldSVG13FirstNativeInstallationMS": 278.790209,
+        "coldPrograms24FirstNativeInstallationMS": 425.405541,
+        "coldDocumentNativePaperInputMS": 1086.922375,
+        "firstCurlOSMSRange": [
+          21.56,
+          46.67
+        ],
+        "native24": "Observation precondition trap; nested scenario attempted to replace an active observer. Fixed before1148.",
+        "systemUI24": "UI runner timed out enabling automation; no journey executed."
+      },
+      "measurementBoundary": "Ink/curl included experimental UIKit phase observation. Those probes were later removed; these timings are instrumented observations, not an unchanged-final-source baseline. Native fixtures invoke installed recognizers directly, without hardware Pencil dispatch.",
+      "coldDocumentPhasesMS": {
+        "nativeTypesetting": 865.641,
+        "canonicalArtifact": 874.872,
+        "contentReady": 923.768,
+        "nativePaperInput": 1086.884
+      },
+      "rawSummary": "/private/tmp/notebook-220-summary1132.json",
+      "attachments": "/private/tmp/notebook-220-attachments1132"
+    },
+    {
+      "id": "1148",
+      "path": "/private/tmp/notebook-interaction-220-functional-20260928T1148Z",
+      "sourceSHA256": "85794ad1c533333741bb3b4055af9039598456bc492e007b0f4af3dda7d1cc89",
+      "sourceFileCount": 3185,
+      "status": "failed",
+      "passedTests": 0,
+      "failedTests": 2,
+      "skippedTests": 0,
+      "runtimeWarnings": [],
+      "native24": {
+        "correctness": "All program states, 24 color probes, markers, forward and reverse transitions passed. One deadline assertion failed.",
+        "forward": {
+          "ownerLandingMS": 454.644834,
+          "allSnapshotSubmissionMS": 1.588,
+          "snapshotCallbackMedianMS": 43.953,
+          "allMaterialsMS": 53.462,
+          "compositionEncodeMS": 1.835,
+          "compositionGPUMS": 5.236,
+          "GPUToOwnerMS": 0.171,
+          "pairMS": 86.51
+        },
+        "reverse": {
+          "ownerLandingMS": 437.733,
+          "allSnapshotSubmissionMS": 2.31,
+          "snapshotCallbackMedianMS": 46.783,
+          "allMaterialsMS": 54.159,
+          "compositionEncodeMS": 1.143,
+          "compositionGPUMS": 10.663,
+          "GPUToOwnerMS": 0.113,
+          "pairMS": 79.645
+        },
+        "budgetMS": 450,
+        "remainingObservation": "After the forward pair, CAMetal callback gaps61.27/44.75ms; curl GPU about1ms. First confirmed OS frame was sequence4,127.19ms after the pair. Transition demand remained held; no page material composition events in the gap. Reservation-release-driven scene refinement is an unproved hypothesis."
+      },
+      "systemUI24": "Second failure to enable iPad automation mode; journey did not execute. Device rebooted1152; trusted connection unavailable until user unlocks it.",
+      "comparison": "219 reverse live materials74.861ms;220 reverse54.159ms,20.702ms lower in these individual observations. This does not establish repeatability or full acceptance.",
+      "rawSummary": "/private/tmp/notebook-220-summary1148.json",
+      "attachments": "/private/tmp/notebook-220-attachments1148"
+    },
+    {
+      "id": "1154",
+      "path": "/private/tmp/notebook-interaction-220-mac-20260928T1154Z",
+      "sourceSHA256": "76476536fa489905f9392a3b2b6b055e43fa6cd49b167becbf5de2f01f6263d2",
+      "sourceFileCount": 1552,
+      "status": "passed",
+      "passedTests": 2,
+      "failedTests": 0,
+      "skippedTests": 0,
+      "runtimeWarnings": [],
+      "scope": "Mac document read-set reuse/negative-probe invalidation and recovery from ten cancelled compilations. Final Rust/source-preparation product code unchanged; only iPad UIKit diagnostic additions subsequently removed."
+    }
+  ],
+  "remaining": [
+    "Final system UI24 on the unlocked physical iPad and matched-pair installation.",
+    "Stable450ms Native24 landing, strict cold document/SVG/program, Pencil/first-curl and inverse-window conditions remain open.",
+    "System frame/CPU/GPU/memory acceptance and30-minute joint workload remain separate."
+  ]
+}
