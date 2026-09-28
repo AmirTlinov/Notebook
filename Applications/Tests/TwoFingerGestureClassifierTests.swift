@@ -83,10 +83,8 @@ final class TwoFingerGestureClassifierTests: XCTestCase {
       )
     )
 
-    controller.sheetController(
-      controller.sheetController,
-      willTurnTo: target
-    )
+    let operation = try PageTurnFrameFixture.begin(on: controller, target: target)
+    defer { PageTurnFrameFixture.finish(on: controller, operation: operation, completed: false) }
     XCTAssertEqual(controller.sheetController.view.layer.speed,1)
 
     XCTAssertNotNil(
@@ -128,18 +126,8 @@ final class TwoFingerGestureClassifierTests: XCTestCase {
         after: current
       )
     )
-    controller.sheetController(
-      controller.sheetController,
-      willTurnTo: target
-    )
-    controller.sheetController.show(target,
-      direction: .forward,
-      animated: false
-    )
-    controller.sheetController(
-      controller.sheetController,
-      didTurnFrom: current, completed: true
-    )
+    let operation = try PageTurnFrameFixture.begin(on: controller, target: target)
+    PageTurnFrameFixture.finish(on: controller, operation: operation, completed: true)
 
     XCTAssertNotNil(
       controller.cachedPageIdentities[2],

@@ -269,6 +269,7 @@ final class PageInkProjectionTests: XCTestCase {
     let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
     let previous = scene.windows.first(where: \.isKeyWindow), window = UIWindow(windowScene: scene)
     let native = IPadSheetCurlController(), activity = PageTurnActivity()
+    PageTurnFrameFixture.install(on: native)
     let resources = SceneRenderResources(byteLimit: 64 * 1024 * 1024)
     window.rootViewController = native; window.makeKeyAndVisible()
     var sheets: [UIViewController] = [], pages: [InkCanvasView] = []

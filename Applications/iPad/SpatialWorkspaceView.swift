@@ -2,73 +2,6 @@ import NotebookCore
 import SwiftUI
 import UIKit
 
-@MainActor @Observable
-private final class CameraGestureSnapshot {
-  let id=UUID()
-  let presence: SessionPresence
-  var rollback: SessionPresence?
-  var continuesPartialPassage = false
-  @ObservationIgnored var interruptedPortal: (UUID, BoardPortalCamera)?
-  let trajectory: CameraGestureTrajectory
-  let entry: NotebookZoomPassage?
-  let exit: NotebookZoomPassage?
-  var passage: NotebookZoomPassage?
-  var documentPageIndex: Int
-  @ObservationIgnored var choseDirection = false
-  @ObservationIgnored var latestCamera: SpatialCamera
-  @ObservationIgnored var preparedItem = false
-  @ObservationIgnored var magnification:CGFloat = 1
-  @ObservationIgnored var centroid:CGPoint
-  @ObservationIgnored var paperReadiness: (@MainActor (_ refinesDetails: Bool) -> PageTurnPreparationState)?
-  var partialProgress: Double? {
-    guard continuesPartialPassage, let passage else { return nil }
-    let span = log(passage.openScale / passage.closedScale)
-    guard span.isFinite, span > 0 else { return presence.openProgress }
-    return min(1, max(0, presence.openProgress + log(max(0.001, Double(magnification))) / span))
-  }
-  var passageCamera:SpatialCamera? { passage.map { $0.camera(from:trajectory,magnification:magnification,centroid:centroid) } }
-  init(presence:SessionPresence,trajectory:CameraGestureTrajectory,entry:NotebookZoomPassage?,exit:NotebookZoomPassage?) {
-    self.presence=presence;self.trajectory=trajectory;self.entry=entry;self.exit=exit;latestCamera=presence.camera;centroid=trajectory.startingCentroid;documentPageIndex=presence.documentPageIndex
-  }
-  var preparation: SessionPresence? {
-    guard let passage,let camera=passageCamera else { return nil }
-    return passage.presentation(camera:camera,viewport:presence.viewport,page:documentPageIndex)
-  }
-}
-
-@MainActor @Observable
-private final class WorkspaceSettlement {
-  let id=UUID()
-  let origin:SessionPresence
-  let target:SessionPresence
-  let handoff:SessionPresence?
-  let approach:SessionPresence?
-  @ObservationIgnored private(set) var approached = false
-  var isApproaching:Bool { approach != nil && !approached }
-  var destination:SessionPresence { approached ? target : approach ?? target }
-  var stageDuration:TimeInterval { approach == nil ? duration : duration / 2 }
-  var preparation:SessionPresence { handoff ?? target }
-  @ObservationIgnored var paperReadiness: (@MainActor (_ refinesDetails: Bool) -> PageTurnPreparationState)?
-  var preparationFailure: PageTurnPreparationFailure?
-  var cameraIsMoving = false
-  let duration:TimeInterval
-  let bounce:Double
-  let navigationID:UUID?
-  let portal:(UUID,BoardPortalCamera)?
-  let completion:()->Void
-  @ObservationIgnored var started=false
-  init(origin:SessionPresence,target:SessionPresence,handoff:SessionPresence?,approach:SessionPresence?,duration:TimeInterval,bounce:Double,navigationID:UUID?,
-    portal:(UUID,BoardPortalCamera)?,completion:@escaping ()->Void) {
-    self.origin=origin;self.target=target;self.handoff=handoff;self.approach=approach;self.duration=duration;self.bounce=bounce;self.navigationID=navigationID
-    self.portal=portal;self.completion=completion
-  }
-  func finishApproach() { approached=true;started=false;cameraIsMoving=false }
-}
-
-private enum WorkspaceNavigationState {
-  case idle, interacting(CameraGestureSnapshot), settling(WorkspaceSettlement)
-}
-
 /// The board background follows the same synchronous native camera sample as
 /// ink and scene planes. It is deliberately outside SwiftUI's per-sample
 /// invalidation path; drawing a dot field is its only frame work.
@@ -171,7 +104,8 @@ struct SpatialWorkspaceView: View {
 
   @State private var contextMenus = NotebookContextMenus()
   @Environment(\.importNotebookDocument) private var importNotebookDocument
-  @State private var navigation = WorkspaceNavigationState.idle
+  @State private var cameraOwner = WorkspaceCameraOwner()
+  private var navigation: WorkspaceNavigationState { cameraOwner.state }
   private var cameraGesture: CameraGestureSnapshot? { if case .interacting(let value)=navigation { value } else { nil } }
   private var settling: Bool { if case .settling=navigation { true } else { false } }
   private var preparationPresence: SessionPresence? {
@@ -198,15 +132,7 @@ struct SpatialWorkspaceView: View {
   private var navigationID:UUID? {
     switch navigation { case .idle:nil;case .interacting(let value):value.id;case .settling(let value):value.id }
   }
-  private func bindPaperReadiness(itemID:UUID,transitionID:UUID?,probe:@escaping @MainActor (_ refinesDetails: Bool)->PageTurnPreparationState) {
-    guard transitionID == navigationID else { return }
-    switch navigation {
-    case .interacting(let snapshot): if snapshot.passage?.itemID == itemID { snapshot.paperReadiness=probe }
-    case .settling(let pending): if pending.target.focusedItemID == itemID { pending.paperReadiness=probe }
-    case .idle: break
-    }
-  }
-  @State private var panStart: SessionPresence?
+  private var panStart: SessionPresence? { cameraOwner.panStart }
   private var selectedItemID: UUID? { model.presence.flatMap { model.selectionSession.itemID(on: $0.boardID) } }
   @State private var liftedItemIDs: [UUID] = []
   @State private var deletionObserverID = UUID()
@@ -219,10 +145,9 @@ struct SpatialWorkspaceView: View {
   private func editingTextID(on boardID: UUID) -> String? {
     guard case .spatial(let owner, let id) = editingSpatialText, owner == boardID else { return nil }; return id
   }
-  @State private var contentGestureActive = false
-  @State private var pageTurnIsActive = false
+  private var contentGestureActive: Bool { cameraOwner.contentGestureActive }
+  private var pageTurnIsActive: Bool { !cameraOwner.activePageTurns.isEmpty }
   @State private var documentPageLayouts: [UUID: DocumentPageLayout] = [:]
-  @State private var cameraSettlement = SceneCameraSettlement()
   @State private var referencePageResolution = NotebookReferencePageResolution()
   private var spatialInkSurfaces: SpatialInkSurfaceRegistry { model.compositionTiles.surfaceRegistry }
   @State private var openingFeedback = UIImpactFeedbackGenerator(style: .soft)
@@ -283,7 +208,7 @@ struct SpatialWorkspaceView: View {
               interruptSettlementForInput()
               model.cancelElementManipulation()
               model.beginDocumentCameraInteraction()
-              panStart = model.presence.map { presenceForNewContact($0) }
+              cameraOwner.beginPan(model.presence.map { presenceForNewContact($0) })
             },
             onChanged: { translation in
               updateWorkspacePan(translation, viewport: viewport)
@@ -383,11 +308,6 @@ struct SpatialWorkspaceView: View {
             .frame(width: rect.width, height: rect.height).position(x: rect.midX, y: rect.midY).allowsHitTesting(false)
         }
           NotebookDisplayConfirmation(preparedSource:model.preparedCollaborationVersion) {
-            advancePreparedNavigation()
-            // Keep this same confirmation clock awake across both short
-            // settlement stages: approach completion can expose ready paper
-            // without another SwiftUI update to wake an idle 4 Hz clock.
-            if case .settling(let pending)=navigation { return pending.preparationFailure == nil }
             guard cameraGesture == nil, !settling, !pageTurnIsActive, !contentGestureActive else { return false }
             model.prepareCommonDocumentShellIfIdle(presence: presence, cohort: cohort)
             return model.confirmVisibleActions(presence: presence, scene: workset, cohort: cohort)
@@ -406,6 +326,7 @@ struct SpatialWorkspaceView: View {
       .accessibilityAction(named:"Назад") { returnToParent() }
       .environment(\.sceneComposition, .init(cohort,portal:transitionPortalOverride))
       .onAppear {
+        cameraOwner.attach(model)
         contextMenus.selectionActions = { id,point in selectionContextActions(id,at:point) }
         model.stopNavigationPresentation = { requestID in
           referencePageResolution.cancel()
@@ -432,7 +353,7 @@ struct SpatialWorkspaceView: View {
         model.bindItemOwnerObserver(owner: deletionObserverID) { [weak registry, weak owner] id, boardID, revision in
           if case .settling(let pending)=navigation,
             pending.preparation.focusedItemID == id,pending.preparation.boardID == boardID {
-            cancelUnavailableSettlement(pending)
+            cameraOwner.cancelUnavailable(pending)
           }
           // The canonical receipt also ends a human camera owner. Its later
           // changed/ended samples may not restore the retired physical target.
@@ -441,8 +362,7 @@ struct SpatialWorkspaceView: View {
           if let actual = owner?.presence,
             (actual.boardID == boardID && actual.focusedItemID == id) || retiredPassage {
             let remaining = actual.boardID == boardID ? actual : gesture?.presence ?? actual
-            cameraSettlement.cancel(); navigation = .idle; panStart = nil
-            contentGestureActive = false; pageTurnIsActive = false
+            cameraOwner.interrupt(settlesPose: false); cameraOwner.endPan()
             referencePageResolution.cancel(); owner?.cancelRequestedNavigation()
             owner?.updatePresence(.init(boardID: remaining.boardID, mode: .board,
               camera: remaining.camera, viewport: remaining.viewport,
@@ -462,9 +382,7 @@ struct SpatialWorkspaceView: View {
         model.presentationPlayer.interrupt("navigation")
         referencePageResolution.cancel()
         replaceWaitingNavigation()
-        while cameraGesture != nil || settling || pageTurnIsActive || contentGestureActive || model.presencePhase != .settled {
-          do { try await Task.sleep(for:.milliseconds(40)) } catch { return }
-        }
+        guard await cameraOwner.waitUntilIdle(), !Task.isCancelled else { return }
         model.observeNavigation("view_ready_to_resolve", reference: reference)
         await model.resolveReferenceLocation(reference) { location in
           showReference(reference, location: location, viewport: model.presence?.viewport ?? viewport)
@@ -475,9 +393,7 @@ struct SpatialWorkspaceView: View {
         model.presentationPlayer.interrupt("navigation")
         referencePageResolution.cancel()
         replaceWaitingNavigation()
-        while cameraGesture != nil || settling || pageTurnIsActive || contentGestureActive || model.presencePhase != .settled {
-          do { try await Task.sleep(for: .milliseconds(40)) } catch { return }
-        }
+        guard await cameraOwner.waitUntilIdle(), !Task.isCancelled else { return }
         await model.resolveReturnToPlace(place, viewport: model.presence?.viewport ?? viewport) { destination, completed in
           guard destination.mode == .document, let documentID = destination.focusedItemID else {
             animateSettlement(to: destination, duration: 0.3, navigationID: place.id, completion: completed)
@@ -504,6 +420,10 @@ struct SpatialWorkspaceView: View {
           })
         }
       }
+      .onChange(of: model.compositionTiles.published?.id) { _, _ in cameraOwner.preparationChanged() }
+      .onChange(of: model.compositionTiles.failure) { _, _ in cameraOwner.preparationChanged() }
+      .onChange(of: model.persistenceFailure) { _, _ in cameraOwner.preparationChanged() }
+      .onChange(of: cameraOwner.isIdle) { _, idle in if idle { referencePageResolution.advance() } }
       .onChange(of: backRequest) { _, _ in
         returnToParent()
       }
@@ -527,16 +447,13 @@ struct SpatialWorkspaceView: View {
         contextMenus.dismissPresentedContent()
         model.endSurfaceEditing()
         if mode != .cover { model.interactiveElementFocus = nil }
-        if mode != .page && mode != .document {
-          pageTurnIsActive = false
-        }
+
       }
       .onChange(of: presence.boardID) { _,_ in contextMenus.dismissPresentedContent() }
       .onChange(of: presence.focusedItemID) { _, itemID in
         if referencePageResolution.documentID != itemID { referencePageResolution.cancel() }
         model.endSurfaceEditing()
         if itemID == nil { model.interactiveElementFocus = nil }
-        pageTurnIsActive = false
       }
       .onDisappear {
         model.cancelRequestedNavigation()
@@ -546,10 +463,7 @@ struct SpatialWorkspaceView: View {
         model.unbindItemOwnerObserver(owner: deletionObserverID)
         model.compositionTiles.cancelPreparation()
         referencePageResolution.cancel()
-        cameraSettlement.cancel()
-        navigation = .idle
-        contentGestureActive = false
-        pageTurnIsActive = false
+        cameraOwner.detach()
         model.interactiveElementFocus = nil
         model.endSurfaceEditing()
       }
@@ -586,15 +500,7 @@ struct SpatialWorkspaceView: View {
     }
   }
 
-  private var openingFailure: PageTurnPreparationFailure? {
-    guard case .settling(let pending)=navigation, let failure=pending.preparationFailure else { return nil }
-    return .init(id:failure.id,kind:failure.kind,message:failure.message) { [weak pending] in
-      guard let pending,case .settling(let current)=navigation,current === pending,
-        pending.preparationFailure?.id == failure.id else { return }
-      pending.preparationFailure=nil
-      failure.retry()
-    }
-  }
+  private var openingFailure: PageTurnPreparationFailure? { cameraOwner.failure }
 
   private var navigationNeedsAttention: Bool {
     openingFailure != nil || model.documentPageNavigationStatus?.phase == .failed
@@ -675,7 +581,16 @@ struct SpatialWorkspaceView: View {
     }
     let fragment:NotebookAttentionSelection.Fragment
     switch NotebookAttentionProjection.pointResolution(at:end,model:model,presence:presence,cohort:cohort) {
-    case .pending: return
+    case .pending:
+      // Dismissing the current selection needs its installed bounds, not an
+      // unrelated page's next canonical ink receipt. Do not pick new material
+      // from an unpresented source, but do accept a tap outside the held cut.
+      if hadSelection,!model.selectionSession.addingElements,
+        let frames=NotebookAttentionProjection.selectionFrames(model:model,presence:presence),
+        !frames.isEmpty,frames.allSatisfy({!$0.insetBy(dx:-12,dy:-12).contains(end)}) {
+        model.clearSelection()
+      }
+      return
     case .hit(let hit): fragment=hit
     case nil:
       model.clearSelection()
@@ -950,7 +865,7 @@ struct SpatialWorkspaceView: View {
             },
             onPageTurnStateChange: { active in
               if active { model.cancelRequestedNavigation(); referencePageResolution.cancel() }
-              pageTurnIsActive = active
+              cameraOwner.pageTurnChanged(owner: rendered.id, active: active)
             },
             onDocumentPageLayout: { layout in
               acceptDocumentPageLayout(
@@ -959,7 +874,7 @@ struct SpatialWorkspaceView: View {
               )
             },
             onPaperReadiness: { [transitionID=navigationID] probe in
-              bindPaperReadiness(itemID:rendered.id,transitionID:transitionID,probe:probe)
+              cameraOwner.bindPaperReadiness(itemID: rendered.id, transitionID: transitionID, source: probe)
             }
           )
           .zIndex(WorkspaceSceneProjection.presentationRank(of: rendered, in: presence, liftRank: liftRank(of: rendered.id))
@@ -1145,6 +1060,7 @@ struct SpatialWorkspaceView: View {
     guard let document = model.documents[documentID],
       layout.pageCount(for: NotebookAppModel.documentPageSourceRevision(document)) != nil else { return }
     model.acceptDocumentReadingLayout(layout, documentID: documentID)
+    referencePageResolution.advance()
     let summary = DocumentPageLayout(pageCount: layout.pageCount, sourceRevision: layout.sourceRevision, isComplete: layout.isComplete)
     if documentPageLayouts[documentID] != summary { documentPageLayouts[documentID] = summary }
     guard layout.isComplete, let presence = model.presence,
@@ -1179,17 +1095,17 @@ struct SpatialWorkspaceView: View {
       let pending: WorkspaceSettlement?
       if case .settling(let value) = navigation { pending = value } else { pending = nil }
       let actual = model.presence
+      let inheritedReadiness = pending?.paperReadiness
       interruptSettlementForInput(settlesPose: false)
       model.cancelElementManipulation()
       model.beginDocumentCameraInteraction()
       guard let currentPresence = actual ?? model.presence else { return }
       let presence = presenceForNewContact(currentPresence)
-      contentGestureActive = presence.mode == .page || presence.mode == .document
       let snapshot = CameraGestureSnapshot(presence: presence,
         trajectory: .init(startingCamera: presence.camera, startingCentroid: centroid, viewport: presence.viewport),
         entry: entryPassage(at: centroid, presence: presence), exit: exitPassage(presence: presence))
       snapshot.rollback = pending?.origin
-      snapshot.paperReadiness = pending?.paperReadiness
+      snapshot.paperReadiness = inheritedReadiness
       snapshot.interruptedPortal = pending?.portal
       if presence.mode == .cover, presence.openProgress > 0, presence.openProgress < 1,
         let item = presence.focusedItemID, let kind = itemKind(item),
@@ -1201,7 +1117,7 @@ struct SpatialWorkspaceView: View {
           returningPortal: nil)
         snapshot.choseDirection = true; snapshot.continuesPartialPassage = true; snapshot.preparedItem = true
       }
-      navigation = .interacting(snapshot)
+      cameraOwner.beginGesture(snapshot)
     case .changed(let scale, _, _, let centroid):
       updateMagnification(
         scale: scale,
@@ -1214,7 +1130,6 @@ struct SpatialWorkspaceView: View {
       )
       settleMagnification()
     case .cancelled:
-      contentGestureActive = false
       cancelMagnification()
     }
   }
@@ -1303,7 +1218,7 @@ struct SpatialWorkspaceView: View {
       : projected
     // The outgoing surface stays mounted until the bounded target cohort is
     // available. Its camera still follows the same raw gesture while loading.
-    if shown.boardID == model.presence?.boardID || navigationHasPreparedSurface(shown) {
+    if shown.boardID == model.presence?.boardID || cameraOwner.hasPreparedSurface(shown) {
       model.updatePresence(shown,settled:false)
     } else { model.updatePresence(snapshot.presence.replacingCamera(camera),settled:false) }
   }
@@ -1311,7 +1226,7 @@ struct SpatialWorkspaceView: View {
   private func settleMagnification() {
     guard let snapshot=cameraGesture else { return }
     guard let passage=snapshot.passage,let camera=snapshot.passageCamera else {
-      navigation = .idle;contentGestureActive=false
+      cameraOwner.finishGesture()
       model.updatePresence(snapshot.presence.replacingCamera(snapshot.latestCamera),settled:true);return
     }
     let progress=snapshot.partialProgress ?? passage.progress(camera:camera)
@@ -1326,14 +1241,14 @@ struct SpatialWorkspaceView: View {
       } else if snapshot.interruptedPortal != nil, let origin = snapshot.rollback {
         restoreMagnification(snapshot, to: origin)
       } else {
-        navigation = .idle; contentGestureActive = false
+        cameraOwner.finishGesture()
         openItem(passage.itemID, viewport: snapshot.presence.viewport, rollback: snapshot.rollback ?? snapshot.presence)
       }
       return
     }
     // A zoom which never reaches a hierarchy boundary remains an ordinary zoom.
     if passage.opening && progress == 0 || !passage.opening && progress == 1 {
-      navigation = .idle;contentGestureActive=false
+      cameraOwner.finishGesture()
       model.updatePresence(snapshot.presence.replacingCamera(snapshot.latestCamera),settled:true);return
     }
     if passage.opening && progress < 0.5 || !passage.opening && progress >= 0.5 {
@@ -1343,7 +1258,7 @@ struct SpatialWorkspaceView: View {
       restoreMagnification(snapshot,to:restored);return
     }
     if passage.opening {
-      navigation = .idle;contentGestureActive=false
+      cameraOwner.finishGesture()
       openItem(passage.itemID,viewport:snapshot.presence.viewport,rollback:snapshot.presence)
     } else {
       let target=passage.closed(viewport:snapshot.presence.viewport,camera:camera)
@@ -1354,65 +1269,6 @@ struct SpatialWorkspaceView: View {
         handoff:handoff,rollback:snapshot.presence) {
         if let portal=passage.returningPortal { model.rememberBoardReturn(snapshot.presence,portal:portal) }
       }
-    }
-  }
-
-  private func navigationHasPreparedSurface(_ target:SessionPresence,refinesDetails:Bool = false) -> Bool {
-    guard let cohort=model.compositionTiles.published,cohort.plan.presentations[.board(target.boardID)] != nil else { return false }
-    if let id=target.focusedItemID {
-      guard cohort.plan.allowsLive(.item(id),in:.board(target.boardID)) else { return false }
-      if itemKind(id) == .board,target.openProgress > 0 {
-        return cohort.plan.presentations[.board(id)] != nil
-      }
-      if target.mode == .page || target.mode == .document {
-        if case .settling(let pending)=navigation { return pending.paperReadiness?(refinesDetails).isReady == true }
-        if let snapshot=cameraGesture { return snapshot.paperReadiness?(false).isReady == true }
-      }
-    }
-    return true
-  }
-
-  private func settlementHasPreparedSurface(_ pending:WorkspaceSettlement) -> Bool {
-    // A distant physical page cannot report its first frame outside the window.
-    // Approach with its cover closed, then await that same mounted paper before
-    // opening. The pending request owns both stages and their cancellation.
-    if pending.isApproaching { return navigationHasPreparedSurface(pending.destination) }
-    // The native camera already has this pose; SwiftUI may still carry the
-    // movement quality. Refine that installed paper before reading its ready bit.
-    let stationary = model.presence.map { $0.boardID == pending.target.boardID
-      && $0.camera == pending.target.camera && $0.viewport == pending.target.viewport } == true
-    return navigationHasPreparedSurface(pending.preparation,refinesDetails:stationary)
-      && navigationHasPreparedSurface(pending.target,refinesDetails:stationary)
-  }
-
-  private func cancelUnavailableSettlement(_ pending:WorkspaceSettlement) {
-    guard case .settling(let current)=navigation,current === pending else { return }
-    cameraSettlement.cancel();navigation = .idle;contentGestureActive=false
-    model.cancelRequestedNavigation()
-    model.updatePresence(pending.origin,settled:true)
-    model.showCue("Переход отменён: объект больше недоступен.")
-  }
-
-  private func advancePreparedNavigation() {
-    if case .settling(let pending)=navigation,!pending.started {
-      if let item=pending.preparation.focusedItemID,model.isItemBeingDeleted(item) {
-        cancelUnavailableSettlement(pending);return
-      }
-      if case .failed(let failure)=pending.paperReadiness?(false) {
-        if pending.preparationFailure?.id != failure.id { pending.preparationFailure=failure }
-        return
-      }
-      if pending.preparationFailure != nil { pending.preparationFailure=nil }
-      if settlementHasPreparedSurface(pending) { startSettlement(pending) }
-      else if model.compositionTiles.failure != nil || model.persistenceFailure != nil {
-        navigation = .idle;contentGestureActive=false
-        model.updatePresence(pending.origin,settled:true)
-        model.showCue("Не удалось подготовить переход. Исходное место сохранено; попробуйте ещё раз.")
-      }
-    } else if let snapshot=cameraGesture,let passage=snapshot.passage,let camera=snapshot.passageCamera,
-      passage.returningPortal != nil,passage.progress(camera:camera) < 1 {
-      let shown=passage.presentation(camera:camera,viewport:snapshot.presence.viewport)
-      if navigationHasPreparedSurface(shown),model.presence?.boardID != shown.boardID { model.updatePresence(shown,settled:false) }
     }
   }
 
@@ -1436,18 +1292,7 @@ struct SpatialWorkspaceView: View {
 
   private func interruptSettlementForInput(interruptPresentation:Bool = true, settlesPose:Bool = true) {
     if interruptPresentation { model.presentationPlayer.interrupt() }
-    cameraSettlement.cancel()
-    let origin:SessionPresence?
-    switch navigation {
-    case .idle: origin=nil
-    case .interacting(let gesture): origin=gesture.presence
-    case .settling(let pending):
-      // Once the camera has moved, a new contact owns its actual sample, not
-      // the old rollback location. Failure before admission still restores it.
-      origin = pending.started || pending.approached ? model.presence : pending.origin
-    }
-    navigation = .idle;contentGestureActive=false
-    if let origin, settlesPose { model.updatePresence(origin,settled:true) }
+    cameraOwner.interrupt(outcome: .superseded, settlesPose: settlesPose)
   }
 
   private func replaceWaitingNavigation() {
@@ -1492,7 +1337,7 @@ struct SpatialWorkspaceView: View {
   ) {
     guard panStart != nil else { return }
     if let translation { updateWorkspacePan(translation, viewport: viewport) }
-    panStart = nil
+    cameraOwner.endPan()
     // A pinch may already own the camera when its preceding one-finger pan
     // publishes cancellation. Only the current camera owner may settle it.
     if cameraGesture == nil, let presence = model.presence {
@@ -1615,91 +1460,13 @@ struct SpatialWorkspaceView: View {
     model.workspace?.item(id: itemID)?.kind ?? model.compositionTiles.published?.frame.index.item(id: itemID)?.kind
   }
 
-  private func closedApproach(to target:SessionPresence, from origin:SessionPresence) -> SessionPresence? {
-    guard target.mode == .page || target.mode == .document, let itemID=target.focusedItemID else { return nil }
-    // A partly visible closed document can approach its reading pose while
-    // that same paper prepares. Opening still waits for its exact ready owner.
-    let positionsClosedDocument = target.mode == .document && origin.openProgress == 0
-      && (origin.boardID != target.boardID || origin.camera != target.camera || origin.viewport != target.viewport)
-    if !positionsClosedDocument, origin.boardID == target.boardID,
-      let center=model.boardHierarchy?.focusedCenter(of:itemID,in:target.boardID) {
-      let rect=model.itemGeometry(itemID).screenFrame(center:center,camera:origin.camera,viewport:origin.viewport)
-      if rect.x < origin.viewport.x,rect.y < origin.viewport.y,rect.x + rect.width > 0,rect.y + rect.height > 0 { return nil }
-    }
-    return .init(boardID:target.boardID,mode:.cover,camera:target.camera,viewport:target.viewport,
-      focusedItemID:itemID,openProgress:0,documentPageIndex:target.documentPageIndex,
-      selectedItemID:target.selectedItemID,notebookPageID:target.notebookPageID)
-  }
-
   private func animateSettlement(
-    to target: SessionPresence,
-    duration: TimeInterval,
-    bounce: Double = 0.08,
-    navigationID: UUID? = nil,
-    portal: (UUID,BoardPortalCamera)? = nil,
-    handoff:SessionPresence? = nil,
-    rollback:SessionPresence? = nil,
-    completion: @escaping () -> Void = {}
+    to target: SessionPresence, duration: TimeInterval, bounce: Double = 0.08, navigationID: UUID? = nil,
+    portal: (UUID, BoardPortalCamera)? = nil, handoff: SessionPresence? = nil,
+    rollback: SessionPresence? = nil, completion: @escaping () -> Void = {}
   ) {
-    guard let origin=model.presence else { return }
-    let destination:SessionPresence
-    if target.mode == .page, target.notebookPageID == nil,
-      let itemID=target.focusedItemID, itemID == origin.selectedItemID {
-      // The addressed page was accepted before the camera request. Its UUID
-      // remains part of every preparation/read cut throughout both stages.
-      destination=target.selecting(itemID:itemID,pageID:origin.notebookPageID)
-    } else { destination=target }
-    cameraSettlement.cancel();panStart=nil
-    let pending=WorkspaceSettlement(origin:rollback ?? origin,target:destination,handoff:handoff,approach:closedApproach(to:destination,from:origin),duration:duration,bounce:bounce,navigationID:navigationID,portal:portal,completion:completion)
-    navigation = .settling(pending);contentGestureActive=true
-    // Preparation already owns navigation, although its camera has not moved.
-    // A background read must not normalize this request's old focus/selection
-    // into a different settled location while its addressed source is arriving.
-    model.updatePresence(origin,settled:false)
-    if settlementHasPreparedSurface(pending) { startSettlement(pending) }
-  }
-
-  private func startSettlement(_ pending:WorkspaceSettlement) {
-    guard case .settling(let current)=navigation,current === pending,!pending.started,let currentPresence=model.presence else { return }
-    pending.started=true
-    let approaching=pending.isApproaching
-    var start=currentPresence.boardID == pending.target.boardID ? currentPresence : pending.handoff ?? currentPresence
-    if approaching {
-      // Do not interpolate another notebook's open progress onto the distant
-      // destination before its own paper has become ready.
-      start = .init(boardID:start.boardID,mode:start.focusedItemID == nil ? .board : .cover,
-        camera:start.camera,viewport:start.viewport,focusedItemID:start.focusedItemID,openProgress:0,
-        documentPageIndex:start.documentPageIndex,selectedItemID:start.selectedItemID,notebookPageID:start.notebookPageID)
-    }
-    if start != currentPresence { model.updatePresence(start,settled:false) }
-    let target=pending.destination
-    let retainsNotebook=start.mode == .page && target.mode == .page && start.focusedItemID == target.focusedItemID
-    let destination=retainsNotebook ? target.selecting(itemID:start.selectedItemID,pageID:start.notebookPageID) : target
-    // Preparation can keep navigation active while its camera is stationary.
-    // Refine that already positioned paper before admitting the opening, not
-    // after landing when replacing its usable backing would revoke readiness.
-    pending.cameraIsMoving = start.camera != destination.camera || start.boardID != destination.boardID
-      || start.viewport != destination.viewport
-    let accepted=cameraSettlement.start(from:start,to:destination,duration:pending.stageDuration,bounce:pending.bounce,navigationID:pending.navigationID) { presence,settled in
-      guard case .settling(let active)=navigation,active === pending else { return }
-      var transaction=Transaction();transaction.disablesAnimations=true
-      withTransaction(transaction) {
-        let sample=retainsNotebook ? presence.selecting(itemID:model.presence?.selectedItemID,pageID:model.presence?.notebookPageID) : presence
-        model.updatePresence(sample,settled:settled && !approaching)
-      }
-    } completion: {
-      guard case .settling(let active)=navigation,active === pending else { return }
-      if approaching {
-        pending.finishApproach()
-        advancePreparedNavigation()
-      } else {
-        contentGestureActive=false;navigation = .idle;pending.completion()
-      }
-    }
-    if !accepted {
-      contentGestureActive=false;navigation = .idle
-      model.updatePresence(pending.origin,settled:true)
-    }
+    cameraOwner.settle(to: target, duration: duration, bounce: bounce, navigationID: navigationID,
+      portal: portal, handoff: handoff, rollback: rollback, completion: completion)
   }
 
   private func performOpeningFeedback() {
@@ -1830,7 +1597,7 @@ private struct WorkspaceSceneItem: View {
   let onTextEditingEnded: (String) -> Void
   let onPageTurnStateChange: @MainActor @Sendable (Bool) -> Void
   let onDocumentPageLayout: (DocumentPageLayout) -> Void
-  let onPaperReadiness: @MainActor (@escaping @MainActor (_ refinesDetails: Bool) -> PageTurnPreparationState) -> Void
+  let onPaperReadiness: @MainActor (PageTurnPreparationSource) -> Void
 
   var body: some View {
     // The one admitted opening target must paint behind its opaque cover

@@ -85,13 +85,19 @@ final class DocumentGeometryTests: XCTestCase {
   @MainActor
   private func descendant<T: UIView>(_ type: T.Type, in view: UIView) -> T? {
     if let value = view as? T { return value }
-    return view.subviews.lazy.compactMap { self.descendant(type, in: $0) }.first
+    for child in view.subviews {
+      if let found = self.descendant(type, in: child) { return found }
+    }
+    return nil
 
   }
 
   @MainActor
   private func webView(in view: UIView) -> WKWebView? {
     if let web = view as? WKWebView { return web }
-    return view.subviews.lazy.compactMap { self.webView(in: $0) }.first
+    for child in view.subviews {
+      if let found = self.webView(in: child) { return found }
+    }
+    return nil
   }
 }

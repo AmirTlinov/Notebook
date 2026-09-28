@@ -294,6 +294,9 @@ import XCTest
   }
   private func descendant<T:NSView>(_ type:T.Type,in view:NSView) -> T? {
     if let value = view as? T { return value }
-    return view.subviews.lazy.compactMap { self.descendant(type,in:$0) }.first
+    for child in view.subviews {
+      if let found = self.descendant(type,in:child) { return found }
+    }
+    return nil
   }
 }

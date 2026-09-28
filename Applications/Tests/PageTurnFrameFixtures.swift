@@ -34,10 +34,42 @@ import XCTest
     }
   }
   static func install(on controller: IPadSheetCurlController) {
+    // Renderer-only fixtures explicitly supply the operation owner. Product
+    // execution receives it from IPadPageTurnController, never a native fallback.
+    var operations: [UUID: (source: UIViewController, gesture: Bool, completion: ((Bool) -> Void)?)] = [:]
+    controller.beginOperation = { source, _, gesture, completion in
+      let id = UUID(); operations[id] = (source, gesture, completion); return id
+    }
+    controller.resolveOperation = { [weak controller] id, outcome, presented, notify in
+      guard let operation = operations.removeValue(forKey: id) else { return }
+      let completed = outcome == .completed
+      controller?.resolveMotion(id, completed: completed, presented: presented)
+      operation.completion?(completed)
+      if notify, operation.gesture { controller?.didTurn(operation.source, completed) }
+    }
     controller.acquireSheetFrame = { [weak controller] sheet in
       let size = controller?.view.bounds.size ?? .init(width: 300, height: 400)
       return try await solid(sheet.view.backgroundColor ?? .white, size: size)
     }
+  }
+  /// Logic tests admit the same native operation as a gesture, then report an
+  /// endpoint explicitly. Physical UX tests let the renderer report its OS cut.
+  static func begin(on owner: IPadPageTurnController, target: UIViewController,
+    direction: IPadSheetCurlController.Direction = .forward) throws -> UUID {
+    let native = owner.sheetController
+    native.loadViewIfNeeded()
+    if native.view.bounds.isEmpty { native.view.frame = .init(x: 0, y: 0, width: 300, height: 400) }
+    let accept = native.beginOperation
+    var operationID: UUID?
+    native.beginOperation = { source, target, gesture, completion in
+      let id = accept(source, target, gesture, completion); operationID = id; return id
+    }
+    defer { native.beginOperation = accept }
+    XCTAssertTrue(native.beginInteractiveTurn(direction: direction, target: target))
+    return try XCTUnwrap(operationID)
+  }
+  static func finish(on owner: IPadPageTurnController, operation: UUID, completed: Bool) {
+    owner.sheetController.resolveOperation(operation, completed ? .completed : .cancelled, false, true)
   }
   static func image(_ frame: PageTurnFrame) -> CGImage? {
     guard let image = CIImage(mtlTexture: frame.texture, options: [.colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!]) else { return nil }

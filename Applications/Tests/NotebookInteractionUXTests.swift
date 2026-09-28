@@ -42,7 +42,10 @@ final class NotebookInteractionUXTests: XCTestCase {
     let scene = try await fixture(tool: .lasso), model = scene.model
     func capsule(in view: UIView) -> UIView? {
       if view.accessibilityIdentifier == "notebook-context-menu" { return view }
-      return view.subviews.lazy.compactMap { capsule(in: $0) }.first
+      for child in view.subviews {
+        if let found = capsule(in: child) { return found }
+      }
+      return nil
     }
     let actions = try XCTUnwrap(capsule(in: scene.window))
     let page = try XCTUnwrap(model.activePage), original = try XCTUnwrap(page.element(id: "ux-blue"))

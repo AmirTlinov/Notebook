@@ -140,10 +140,11 @@ import XCTest
         native.view.layoutIfNeeded()
         // The installed owner replaces its immutable cut. UIKit layer state
         // is deliberately irrelevant to this physical source contract.
-        var installed = try await PageTurnFrameFixture.solid(.blue, size: native.view.bounds.size)
-        native.acquireSheetFrame = { _ in installed }
+        let installed = NotebookPersistenceFenceContract.Signal<PageTurnFrame>()
+        installed.set(try await PageTurnFrameFixture.solid(.blue, size: native.view.bounds.size))
+        native.acquireSheetFrame = { _ in try XCTUnwrap(installed.value) }
         if insertsLayer { target.view.addSubview(UIView()) }
-        installed = try await PageTurnFrameFixture.solid(.red, size: native.view.bounds.size)
+        installed.set(try await PageTurnFrameFixture.solid(.red, size: native.view.bounds.size))
         let curl = try XCTUnwrap(native.view.subviews.compactMap { $0 as? SheetCurlMetalView }.first)
         let owner = curl.onPageFrameReady
         var captured: CGImage?

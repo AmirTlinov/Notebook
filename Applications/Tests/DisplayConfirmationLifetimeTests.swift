@@ -69,7 +69,11 @@ final class DisplayConfirmationLifetimeTests: XCTestCase {
   }
 
   private func findClock(in view: UIView) -> DisplayConfirmationView? {
-    (view as? DisplayConfirmationView) ?? view.subviews.lazy.compactMap { self.findClock(in: $0) }.first
+    if let found = view as? DisplayConfirmationView { return found }
+    for child in view.subviews {
+      if let found = self.findClock(in: child) { return found }
+    }
+    return nil
   }
 
   private func waitUntil(_ failure: String, _ condition: () -> Bool) async throws {

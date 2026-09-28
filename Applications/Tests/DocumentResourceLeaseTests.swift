@@ -20,7 +20,10 @@ final class DocumentResourceLeaseTests: XCTestCase {
     await waitUntil(timeout: .seconds(8)) { fixture.coordinator.hasCanonicalPixels }
     func paper(in view: UIView) -> DocumentPaperView? {
       if let paper = view as? DocumentPaperView { return paper }
-      return view.subviews.lazy.compactMap { paper(in: $0) }.first
+      for child in view.subviews {
+        if let found = paper(in: child) { return found }
+      }
+      return nil
     }
     let view = try XCTUnwrap(paper(in: fixture.host))
     let prepared = try XCTUnwrap(view.raster)
@@ -122,8 +125,11 @@ final class DocumentResourceLeaseTests: XCTestCase {
     let first = UUID(), second = UUID()
     source.retainPage(2, hostID: first); source.retainPage(2, hostID: second)
     defer { source.releasePage(hostID: first, in: nil); source.releasePage(hostID: second, in: nil) }
-    let firstPage = try await source.preparedPage(2, hostID: first, resources: resources)
-    let secondPage = try await source.preparedPage(2, hostID: second, resources: resources)
+    // Simultaneous physical consumers share the in-flight extraction, not
+    // only a fragment that happened to finish before the second request.
+    async let firstResult = source.preparedPage(2, hostID: first, resources: resources)
+    async let secondResult = source.preparedPage(2, hostID: second, resources: resources)
+    let (firstPage, secondPage) = try await (firstResult, secondResult)
     XCTAssertTrue(firstPage === secondPage)
     XCTAssertEqual(source.retainedPageIndices, [0, 2])
     XCTAssertEqual(source.compiledPageCount, 2, "Two consumers share one compiled fragment")
@@ -414,9 +420,8 @@ final class DocumentResourceLeaseTests: XCTestCase {
         return destination != nil
       }
       let next = try XCTUnwrap(destination, "Landing \(expected) requires its prepared physical page")
-      controller.sheetController(controller.sheetController, willTurnTo: next)
-      controller.sheetController.show(next, direction: forward ? .forward : .reverse, animated: false)
-      controller.sheetController(controller.sheetController, didTurnFrom: previous, completed: true)
+      let operation = try PageTurnFrameFixture.begin(on: controller, target: next, direction: forward ? .forward : .reverse)
+      PageTurnFrameFixture.finish(on: controller, operation: operation, completed: true)
       configure()
       XCTAssertEqual(controller.displayedIndex, expected)
       XCTAssertEqual(committed, expected)
@@ -495,7 +500,7 @@ final class DocumentResourceLeaseTests: XCTestCase {
     let preparedWeb = try await livePage(0, in: source.view)
     let sharedSource = try XCTUnwrap((preparedWeb.navigationDelegate as? DocumentWebCoordinator)?.payload?.source)
     XCTAssertTrue(descendants(landing.view).isEmpty, "A ready neighbouring physical sheet uses passive pixels from this runtime")
-    controller.sheetController(controller.sheetController, willTurnTo: landing)
+    let operation = try PageTurnFrameFixture.begin(on: controller, target: landing)
     let frozenWindow = controller.cachedPageIdentities
     for target in [7, 12, 9] {
       request = .init(id: UUID(), documentID: document.id, sourceRevision: revision, pageIndex: target)
@@ -506,8 +511,7 @@ final class DocumentResourceLeaseTests: XCTestCase {
       XCTAssertLessThanOrEqual(peak.maximum, 2)
     }
     let latestRequest = try XCTUnwrap(request).id
-    controller.sheetController.show(landing, direction: .forward, animated: false)
-    controller.sheetController(controller.sheetController, didTurnFrom: source, completed: true)
+    PageTurnFrameFixture.finish(on: controller, operation: operation, completed: true)
     XCTAssertEqual(commits, [1])
     configure()
     await waitUntil(timeout: .seconds(10), message: {

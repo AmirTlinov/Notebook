@@ -153,6 +153,30 @@ final class PageTurnActivity {
   func removeObserver(_ id: UUID) { observers[id] = nil }
 }
 
+/// Terminal result of one admitted source/target pair. Native callbacks may
+/// expose a Boolean landing result, but the operation preserves why it ended.
+enum PageTurnOutcome: Equatable { case completed, cancelled, superseded, failed }
+
+/// Navigation subscribes to the installed page's readiness edges. It owns its
+/// subscription only while preparing that page; no display tick polls a reader.
+@MainActor
+final class PageTurnPreparationSource {
+  private(set) var isRetired = false
+  private var probe: (@MainActor (Bool) -> PageTurnPreparationState)?
+  private var observers: [UUID: @MainActor () -> Void] = [:]
+  init(_ probe: @escaping @MainActor (Bool) -> PageTurnPreparationState) { self.probe = probe }
+  func state(refinesDetails: Bool) -> PageTurnPreparationState { probe?(refinesDetails) ?? .waiting }
+  @discardableResult func observe(_ changed: @escaping @MainActor () -> Void) -> UUID {
+    let id = UUID(); observers[id] = changed; return id
+  }
+  func removeObserver(_ id: UUID) { observers[id] = nil }
+  func changed() { for observer in Array(observers.values) { observer() } }
+  func retire() {
+    guard !isRetired else { return }
+    isRetired = true; probe = nil; changed(); observers.removeAll()
+  }
+}
+
 @MainActor
 final class PageTurnReadiness {
   /// One host receipt distinguishes installed paper/input from its borrowable
@@ -163,6 +187,8 @@ final class PageTurnReadiness {
     static let waiting = Self(presented: false, capturable: false)
   }
   private(set) var state = State.waiting
+  private(set) var isRetired = false
+  private(set) var materialRevision: UInt64 = 0
   let activity: PageTurnActivity?
   var pageIndex: Int
   var rasterContext: PageRasterPreparation.Context? {
@@ -192,25 +218,43 @@ final class PageTurnReadiness {
   var inkFrameIsEmpty: (@MainActor () -> Bool)?
   var inkFrameIsReady: (@MainActor () -> Bool)?
   private var frameProvider: (@MainActor (SceneAllocationPriority) async throws -> PageTurnFrame)?
-  func setFrameProvider(_ provider: @escaping @MainActor (SceneAllocationPriority) async throws -> PageTurnFrame) { frameProvider = provider }
+  func setFrameProvider(_ provider: @escaping @MainActor (SceneAllocationPriority) async throws -> PageTurnFrame) {
+    guard !isRetired else { return }; frameProvider = provider
+  }
   func acquireFrame(priority: SceneAllocationPriority = .passive) async throws -> PageTurnFrame {
-    guard let frameProvider else { throw SceneRenderError.snapshotPending("page_frame_owner") }
-    return try await frameProvider(priority)
+    guard !isRetired, let frameProvider else { throw PageTurnMaterialUnavailable.changed }
+    let revision = materialRevision
+    let frame = try await frameProvider(priority)
+    guard !isRetired, materialRevision == revision else { throw PageTurnMaterialUnavailable.changed }
+    return frame
   }
   #endif
 
+  func retire() {
+    guard !isRetired else { return }
+    isRetired = true; state = .waiting; materialRevision &+= 1
+    #if os(iOS)
+    frameProvider = nil; inkFrame = nil; inkFrameIsEmpty = nil; inkFrameIsReady = nil
+    #endif
+  }
+
   func callAsFunction(_ ready: Bool, capturable: Bool? = nil) {
+    guard !isRetired else { return }
     // A covered neighbour can have an immutable GPU cut before its live layer
     // receives an OS presentation. Only the landing uses the visible receipt.
     state = .init(presented: ready, capturable: capturable ?? ready)
     handler(ready)
   }
 
-  func failed(_ failure: PageTurnPreparationFailure) { failureHandler(failure) }
+  func failed(_ failure: PageTurnPreparationFailure) { if !isRetired { failureHandler(failure) } }
 
-  func materialDidChange() { materialChangedHandler() }
+  func materialDidChange() {
+    guard !isRetired else { return }
+    materialRevision &+= 1; materialChangedHandler()
+  }
 
   func captureFailed(_ failure: PageTurnPreparationFailure) {
+    guard !isRetired else { return }
     failureHandler(.init(id: failure.id, kind: failure.kind, requiresCapture: true,
       message: failure.message, retry: failure.retry))
   }
@@ -344,7 +388,7 @@ struct PageTurnSurface: View {
     ) -> AnyView
   let onCommit: @MainActor (Int, String) -> Void
   let onTransitioningChange: @MainActor (Bool) -> Void
-  var onReadinessProbe: (@MainActor (@escaping @MainActor (_ refinesDetails: Bool) -> PageTurnPreparationState) -> Void)? = nil
+  var onReadinessProbe: (@MainActor (PageTurnPreparationSource) -> Void)? = nil
   var canonicalDocumentLayout: DocumentPageLayout? = nil
   var documentSelection: DocumentPageNavigationRequest? = nil
   var documentNavigation: DocumentPageNavigationCallbacks? = nil
@@ -423,7 +467,7 @@ struct PageTurnSurface: View {
       ) -> AnyView
     let onCommit: @MainActor (Int, String) -> Void
     let onTransitioningChange: @MainActor (Bool) -> Void
-    let onReadinessProbe: (@MainActor (@escaping @MainActor (_ refinesDetails: Bool) -> PageTurnPreparationState) -> Void)?
+    let onReadinessProbe: (@MainActor (PageTurnPreparationSource) -> Void)?
     let canonicalDocumentLayout: DocumentPageLayout?
     let documentSelection: DocumentPageNavigationRequest?
     let documentNavigation: DocumentPageNavigationCallbacks?
@@ -443,6 +487,10 @@ struct PageTurnSurface: View {
       context: Context
     ) {
       update(controller)
+    }
+
+    static func dismantleUIViewController(_ controller: IPadPageTurnController, coordinator: ()) {
+      controller.uninstall()
     }
 
     private func update(_ controller: IPadPageTurnController) {
@@ -465,9 +513,7 @@ struct PageTurnSurface: View {
         onWindowChange: onWindowChange,
         inputGate: inputGate, pageIdentities: pageIdentities
       )
-      onReadinessProbe?({ [weak controller] refinesDetails in
-        controller?.prepareCurrentPage(refinesDetails: refinesDetails) ?? .waiting
-      })
+      onReadinessProbe?(controller.preparationSource)
     }
   }
 #endif

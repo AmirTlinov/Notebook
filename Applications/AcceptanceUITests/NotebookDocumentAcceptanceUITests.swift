@@ -51,7 +51,7 @@ private struct DocumentInstallationHistory {
     let installedAt: Double?
     let sourceToken: String?
     let failure: String?
-    let observationIntervalMS: Int
+    let installationBoundary: String
     let sourcePreparationPhasesMS: [String: Double]?
     let sourcePreparationMeasurement: Int?
     let pagePreparationPhasesMS: [String: Double]?
@@ -161,7 +161,7 @@ private struct DocumentInstallationHistory {
     let installed = try XCTUnwrap(record.installedAt)
     XCTAssertLessThanOrEqual(record.requestedAt, demanded)
     XCTAssertLessThanOrEqual(demanded, ready); XCTAssertLessThanOrEqual(ready, installed)
-    XCTAssertEqual(record.observationIntervalMS, 5)
+    XCTAssertEqual(record.installationBoundary, "native_paper_input")
     XCTAssertTrue(installationHistory.accept(id: record.id, requestedAt: record.requestedAt),
       "Every accepted installation must have a unique ID and a later request within this app launch")
     lastInstallation = record

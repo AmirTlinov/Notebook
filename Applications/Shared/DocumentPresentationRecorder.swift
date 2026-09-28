@@ -111,7 +111,7 @@ final class DocumentPresentationRecorder {
     var pagePreparationNativeVisibility: [String: [String: Double]]?
     var landingAttempts: [LandingAttempt] = []
     var failure: String?
-    var observationIntervalMS = 5
+    var installationBoundary = "native_paper_input"
     var requestToInstalledMS: Double? { installedAt.map { ($0 - requestedAt) * 1_000 } }
     var demandToContentReadyMS: Double? {
       guard let demandedAt, let contentReadyAt else { return nil }
@@ -125,8 +125,6 @@ final class DocumentPresentationRecorder {
   private let now: @MainActor () -> TimeInterval
   private let signposter = OSSignposter(subsystem: "com.amirtlinov.notebook", category: "DocumentPresentation")
   private var intervals: [UUID: OSSignpostIntervalState] = [:]
-  private var observers: [UUID: Task<Void, Never>] = [:]
-  private var generations: [UUID: UUID] = [:]
 
   init(enabled: Bool, now: @escaping @MainActor () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }) {
     self.enabled = enabled; self.now = now
@@ -145,7 +143,7 @@ final class DocumentPresentationRecorder {
     records.append(.init(id: id, documentID: documentID, pageIndex: pageIndex, cause: cause, requestedAt: now()))
     intervals[id] = signposter.beginInterval("DocumentRequestToInstalled", id: signposter.makeSignpostID(),
       "request=\(id.uuidString, privacy: .public) document=\(documentID.uuidString, privacy: .public) page=\(pageIndex)")
-    while records.count > 64 { let old = records.removeFirst(); finishInterval(old.id); observers.removeValue(forKey: old.id)?.cancel(); generations[old.id] = nil }
+    while records.count > 64 { let old = records.removeFirst(); finishInterval(old.id) }
     return id
   }
 
@@ -208,38 +206,26 @@ final class DocumentPresentationRecorder {
     signposter.emitEvent("DocumentCanonicalContentReady", "request=\(id, privacy: .public)")
   }
 
-  /// The callback must be the existing native installation proof, captured
-  /// weakly. Polling targets a 5 ms interval; MainActor scheduling can delay
-  /// observation further. That delay remains in request-to-observed-install time.
-  func observeInstallation(documentID: UUID, pageIndex: Int, token: String,
-    isInstalled: @escaping @MainActor () -> Bool,
-    publish: @escaping @MainActor (String) -> Void) {
+  /// Called in the native owner's installation/input event, never on a timer.
+  /// This marks a canonical paper accepting input; it is not an OS display
+  /// receipt and does not wait for independently executing program slots.
+  func installationChanged(documentID: UUID, pageIndex: Int, token: String,
+    installed: Bool, publish: @MainActor (String) -> Void) {
+    guard enabled else { return }
     guard let index = pendingIndex(documentID, pageIndex), records[index].sourceToken == token else {
-      if enabled, let latest = records.last(where: { $0.documentID == documentID && $0.pageIndex == pageIndex }) { publish(encode(latest)) }
+      if let latest = records.last(where: { $0.documentID == documentID && $0.pageIndex == pageIndex
+        && $0.sourceToken == token }) { publish(encode(latest)) }
       return
     }
-    let id = records[index].id
-    observers.removeValue(forKey: id)?.cancel()
-    let generation = UUID(); generations[id] = generation
-    publish(encode(records[index]))
-    observers[id] = Task { @MainActor [weak self] in
-      guard let self else { return }
-      let deadline = ContinuousClock.now + .seconds(30)
-      while !Task.isCancelled, generations[id] == generation,
-        let index = records.firstIndex(where: { $0.id == id && !$0.isFinished }) {
-        if isInstalled() {
-          records[index].installedAt = now(); finishInterval(id)
-          publish(encode(records[index])); break
-        }
-        if ContinuousClock.now >= deadline {
-          finish(id, failure: "installation_timeout")
-          if let record = records.first(where: { $0.id == id }) { publish(encode(record)) }
-          break
-        }
-        do { try await Task.sleep(for: .milliseconds(5)) } catch { break }
-      }
-      if generations[id] == generation { observers[id] = nil; generations[id] = nil }
+    if installed, records[index].contentReadyAt != nil {
+      records[index].installedAt = now(); finishInterval(records[index].id)
     }
+    publish(encode(records[index]))
+  }
+
+  func failed(documentID: UUID, pageIndex: Int, token: String, message: String) {
+    guard let index = pendingIndex(documentID, pageIndex), records[index].sourceToken == token else { return }
+    finish(records[index].id, failure: message)
   }
 
   func cancel(documentID: UUID, failure: String = "navigation_cancelled") {
@@ -252,7 +238,7 @@ final class DocumentPresentationRecorder {
   }
   private func finish(_ id: UUID, failure: String) {
     if let index = records.firstIndex(where: { $0.id == id && !$0.isFinished }) { records[index].failure = failure }
-    finishInterval(id); observers.removeValue(forKey: id)?.cancel(); generations[id] = nil
+    finishInterval(id)
   }
   private func finishInterval(_ id: UUID) {
     if let interval = intervals.removeValue(forKey: id) { signposter.endInterval("DocumentRequestToInstalled", interval) }
@@ -260,5 +246,5 @@ final class DocumentPresentationRecorder {
   private func encode(_ record: Record) -> String {
     (try? JSONEncoder().encode(record)).flatMap { String(data: $0, encoding: .utf8) } ?? ""
   }
-  isolated deinit { observers.values.forEach { $0.cancel() }; for interval in intervals.values { signposter.endInterval("DocumentRequestToInstalled", interval) } }
+  isolated deinit { for interval in intervals.values { signposter.endInterval("DocumentRequestToInstalled", interval) } }
 }

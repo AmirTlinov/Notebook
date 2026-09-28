@@ -12,6 +12,7 @@ import XCTest
     let previous = scene.windows.first(where: \.isKeyWindow)
     for successorArrivesDuringBorrow in [false, true] {
       let window = UIWindow(windowScene: scene), native = IPadSheetCurlController()
+      PageTurnFrameFixture.install(on: native)
       window.frame = .init(x: 0, y: 0, width: 300, height: 400)
       let source = UIViewController(), target = UIViewController()
       source.view.backgroundColor = .red; target.view.backgroundColor = .green

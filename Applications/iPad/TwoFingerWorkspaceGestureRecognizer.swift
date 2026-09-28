@@ -155,6 +155,7 @@ final class TwoFingerPaperGestureRecognizer: UIGestureRecognizer {
     didSet {
       guard oldValue !== inputGate else { return }
       oldValue?.unregisterFingerCancellation(source: inputSource)
+      oldValue?.endNavigation(source: inputSource)
       oldValue?.releaseHistoryContacts(Set(activeTouches.keys), nativeInput: historyNativeInput)
       cancelForExclusiveInput()
       inputGate?.registerFingerCancellation(source: inputSource) { [weak self] in
@@ -170,6 +171,7 @@ final class TwoFingerPaperGestureRecognizer: UIGestureRecognizer {
 
   isolated deinit {
     holdTask?.cancel()
+    inputGate?.endNavigation(source: inputSource)
     inputGate?.releaseHistoryContacts(Set(activeTouches.keys), nativeInput: historyNativeInput)
     inputGate?.unregisterFingerCancellation(source: inputSource)
   }
@@ -192,8 +194,10 @@ final class TwoFingerPaperGestureRecognizer: UIGestureRecognizer {
     for touch in touches {
       let target = NotebookSceneFingerRouting.historyTarget(of: touch.view)
       guard (target != nil) == isNativeHistory, target === historyTarget else { finishAsInvalid(); return }
+      if let inputGate { _ = NotebookSceneFingerRouting.owner(of: touch, gate: inputGate) }
       activeTouches[ObjectIdentifier(touch)] = touch
     }
+    inputGate?.retainNavigationContacts(source: inputSource, contacts: Set(activeTouches.keys))
     guard activeTouches.count <= 2 else {
       finishAsInvalid()
       return
@@ -249,11 +253,13 @@ final class TwoFingerPaperGestureRecognizer: UIGestureRecognizer {
           finishAsInvalid()
           return
         }
+        guard claimCamera() else { finishAsInvalid(); return }
         intent = .navigation
         state = state == .possible ? .began : .changed
       case .magnification:
         cancelHold()
         inputGate?.releaseHistoryContacts(Set(activeTouches.keys), nativeInput: historyNativeInput)
+        guard claimCamera() else { finishAsInvalid(); return }
         intent = .magnification
         state = state == .possible ? .began : .changed
       case .undecided:
@@ -277,6 +283,7 @@ final class TwoFingerPaperGestureRecognizer: UIGestureRecognizer {
     _ touches: Set<UITouch>,
     with event: UIEvent
   ) {
+    defer { inputGate?.endNavigation(source: inputSource) }
     guard startCentroid != nil else {
       state = .failed
       return
@@ -316,6 +323,7 @@ final class TwoFingerPaperGestureRecognizer: UIGestureRecognizer {
       if defersThisPairToPageTurn {
         finishAsInvalid()
       } else {
+        guard claimCamera() else { finishAsInvalid(); return }
         intent = .navigation
         state = .recognized
       }
@@ -333,6 +341,7 @@ final class TwoFingerPaperGestureRecognizer: UIGestureRecognizer {
 
   override func reset() {
     super.reset()
+    inputGate?.endNavigation(source: inputSource)
     cancelHold()
     inputGate?.releaseHistoryContacts(Set(activeTouches.keys), nativeInput: historyNativeInput)
     activeTouches.removeAll(keepingCapacity: true)
@@ -496,7 +505,13 @@ final class TwoFingerPaperGestureRecognizer: UIGestureRecognizer {
     activeTouches.values.map(\.timestamp).max() ?? 0
   }
 
+  private func claimCamera() -> Bool {
+    inputGate?.claimNavigation(source: inputSource, kind: .cameraPinch, contacts: Set(activeTouches.keys),
+      cancel: { [weak self] in self?.cancelForExclusiveInput() }) == true
+  }
+
   private func finishAsInvalid() {
+    inputGate?.endNavigation(source: inputSource)
     cancelHold()
     inputGate?.releaseHistoryContacts(Set(activeTouches.keys), nativeInput: historyNativeInput)
     switch state {

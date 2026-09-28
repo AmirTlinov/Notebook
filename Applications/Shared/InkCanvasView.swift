@@ -542,11 +542,30 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
   private var presentedStableContentRevision: UInt64?
   private var presentedEmptyContentRevision: UInt64?
   private var submittedTransactionalRevision: UInt64?
-  // The first page drawable also reveals its previously transparent layer.
-  // Keep that reveal in transaction mode until its OS receipt; otherwise a
-  // later display-link tick can switch the layer to immediate presentation
-  // and replace the first contact before Core Animation shows it.
-  private var pendingFirstPresentation: UUID?
+  // A reveal or ordered selection cut owns its layer transaction until the
+  // OS presents it. Later source/layout work may collect a new demand, but
+  // cannot switch this drawable to immediate presentation or separate its
+  // ink from the authored objects and controls installed with it.
+  private struct TransactionPresentation {
+    let id:UUID
+    let firstPage:Bool
+    var tiles:Set<Int>
+  }
+  private var pendingTransaction:TransactionPresentation?
+  var pendingFirstPresentationID:UUID? {
+    pendingTransaction?.firstPage == true ? pendingTransaction?.id : nil
+  }
+  private func resolveTransaction(_ id:UUID,tile:Int,ready:Bool) {
+    guard var pending=pendingTransaction,pending.id == id else {return}
+    pending.tiles.remove(tile)
+    if ready,!pending.tiles.isEmpty {pendingTransaction=pending;return}
+    pendingTransaction=nil
+    if !ready,pending.firstPage {hasRevealedFirstFrame=false}
+    if window != nil {requestFrame()}
+    #if os(iOS)
+    if pageDisplayLink?.isPaused != false {pageUIUpdates?.isEnabled=false}
+    #endif
+  }
   private(set) var drawableRequestCount = 0
   private(set) var activeUploadedByteCount = 0
   private(set) var visibleCommittedVertexCount = 0
@@ -712,7 +731,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     defer {publishAcceptedMaterialReadiness()}
     recordPageInkObservation("ink_mount_changed")
     guard window != nil else {
-      pendingFirstPresentation = nil
+      pendingTransaction = nil
       abandonOrderedCuts()
       // UIKit can retain a culled canvas beyond the end of its visible use.
       // Stop its timer even when no drawable arrives to finish the last draw.
@@ -796,7 +815,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     } else {
       guard usesPageDisplayLink,acceptedMaterialIsReady else {return}
     }
-    pendingFirstPresentation=nil
+    pendingTransaction=nil
     requestFrame()
   }
 
@@ -877,6 +896,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     releaseDrawables()
     pageDrawableReservation = nil; pageMultisample = nil
     pageRetainedTexture = nil; pageRetainedReservation = nil; pageRetainedKey = nil
+    pendingTransaction = nil
     hasRevealedFirstFrame = false
     CATransaction.begin(); CATransaction.setDisableActions(true)
     #if os(iOS)
@@ -1003,6 +1023,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     visibleCommittedVertexCount = 0; visibleCommittedChunkCount = 0
     drawnTiles = nil
     spatialTarget?.detach(); spatialTarget = nil
+    pendingTransaction = nil
     hasRevealedFirstFrame = false
     presentedStableContentRevision = nil
   }
@@ -1417,7 +1438,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     #endif
     guard window != nil, !spatialHandoffIsStopping, spatialStagingID == nil,
       !pageBackingIsReclaimed else { pauseFrameLoop(); return }
-    guard pendingFirstPresentation == nil else { pauseFrameLoop(); return }
+    guard pendingTransaction == nil else { pauseFrameLoop(); return }
     isRenderingFrame = true
     defer { isRenderingFrame = false }
     // MetalKit may request the same static material more than once during
@@ -1613,7 +1634,14 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     let transactionPresentation = orderedCut != nil || material != nil
       || (!hasRevealedFirstFrame && (spatialTarget == nil || isErasureMask))
     let firstPagePresentation = !hasRevealedFirstFrame && spatialTarget == nil && material == nil && !isErasureMask
-    if firstPagePresentation { pendingFirstPresentation = submission }
+    if firstPagePresentation || orderedCut != nil {
+      let visibleTiles=spatialTarget.map { target in
+        Set(submittedTiles.filter {target.logicalRect($0).intersects(exposedCanvasRect)})
+      } ?? [0]
+      if !visibleTiles.isEmpty {
+        pendingTransaction = .init(id:submission,firstPage:firstPagePresentation,tiles:visibleTiles)
+      }
+    }
     presentsWithTransaction = transactionPresentation
     for tile in spatialTarget?.tiles ?? [] { tile.layer.presentsWithTransaction = transactionPresentation }
     if let observation = onContactFrameResolved, let contact = activeContactFrame, active != nil {
@@ -1660,18 +1688,9 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
       for (pass, index) in zip(passes, submittedTiles) {
         observePresentation(of: pass.1, tile: index, target: target, submission: submission, commandBuffer: commandBuffer)
       }
-    } else if visibleSubmission, presentedRevision != nil || onVisibleFrame != nil || firstPagePresentation {
+    } else if visibleSubmission, presentedRevision != nil || onVisibleFrame != nil || pendingTransaction?.id == submission {
       NotebookMetalFrameReadiness.observe(passes[0].1,commandBuffer:commandBuffer) { [weak self] readiness in
-        if let self, pendingFirstPresentation == submission {
-          pendingFirstPresentation = nil
-          if !readiness.isReady { hasRevealedFirstFrame = false }
-          // Samples kept accumulating in the same contact while this one
-          // reveal was pending. Its receipt admits the latest collected pose.
-          if window != nil { requestFrame() }
-          #if os(iOS)
-          if pageDisplayLink?.isPaused != false { pageUIUpdates?.isEnabled = false }
-          #endif
-        }
+        self?.resolveTransaction(submission,tile:0,ready:readiness.isReady)
         if var fields = observedSubmission {
           fields["ready"] = .bool(readiness.isReady)
           fields["superseded"] = .bool(self?.stableContentRevision != submittedRevision)
@@ -1737,7 +1756,10 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
         // revision, not another frame of this older submission.
         if transactionPresentation, submittedTransactionalRevision != stableContentRevision { requestFrame() }
         if !completed {
-          if pendingFirstPresentation == submission { pendingFirstPresentation = nil }
+          if pendingTransaction?.id == submission {
+            if pendingTransaction?.firstPage == true {hasRevealedFirstFrame=false}
+            pendingTransaction = nil
+          }
           if material != nil,stableContentRevision == submittedRevision { beginStableContentUpdate() }
           drawnTiles = nil; pageRetainedKey = nil
           requestFrame()
@@ -1780,8 +1802,8 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
           defer {flight.finished();self?.submittedPresentationCount -= 1;self?.resumeFrameSlotWaiters();self?.resumeSpatialDrainIfReady()}
           guard let self,!spatialHandoffIsStopping,window != nil,spatialSourceGeneration == sourceGeneration,
             orderedCut?.cancelled != true,orderedCut?.validate() != false,stableContentRevision == submittedRevision else {
-            if let self,pendingFirstPresentation == submission {
-              pendingFirstPresentation = nil
+            if let self,pendingTransaction?.id == submission {
+              pendingTransaction = nil
               if window != nil { requestFrame() }
             }
             orderedCut?.resolve(CancellationError())
@@ -1815,7 +1837,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     frameSlot = (frameSlot + 1) % Self.framesInFlight
     continuesPageFrames = true
 
-    if pendingFirstPresentation != nil || (activeInkStroke == nil && activeEraserStroke == nil) { pauseFrameLoop() }
+    if pendingTransaction != nil || (activeInkStroke == nil && activeEraserStroke == nil) { pauseFrameLoop() }
   }
 
   private var exposedCanvasRect: CGRect {
@@ -1831,6 +1853,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     target: SpatialTarget, submission: UUID, commandBuffer:(any MTLCommandBuffer)? = nil) {
     let identity=ObjectIdentifier(target)
     NotebookMetalFrameReadiness.observe(drawable,commandBuffer:commandBuffer) { [weak self] readiness in
+      self?.resolveTransaction(submission,tile:tile,ready:readiness.isReady)
       guard let self,!spatialHandoffIsStopping,let current=spatialTarget,
         ObjectIdentifier(current) == identity,drawnTiles?.target == identity,
         drawnTiles!.tiles.indices.contains(tile),drawnTiles!.tiles[tile].submission == submission else { return }
@@ -2477,7 +2500,10 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
 
   private func beginStableContentUpdate() {
     cancelSpatialStaging()
-    pendingFirstPresentation = nil
+    // A content revision is not a visibility edge. In particular lift may
+    // install the accepted stroke after its first drawable was scheduled but
+    // before the OS showed it. That drawable still owns the transactional
+    // reveal; only its receipt/rejection or an actual layer retirement ends it.
     stableContentRevision &+= 1
     frameReadiness=nil
     publishAcceptedMaterialReadiness()
@@ -2652,7 +2678,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
       updates.addAction(to: .afterUpdateComplete) { [weak self] link, _ in
         // The first submission parks Metal, but its actual reveal still owns
         // this policy until the OS acknowledges the presentation.
-        if self?.pageDisplayLink?.isPaused != false && self?.pendingFirstPresentation == nil {
+        if self?.pageDisplayLink?.isPaused != false && self?.pendingTransaction == nil {
           link.isEnabled = false
         }
       }
@@ -2669,7 +2695,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     defer {publishAcceptedMaterialReadiness()}
     startOrderedPreparationIfNeeded()
     if presentEmptyContentIfReady() { return }
-    guard pendingFirstPresentation == nil else { pauseFrameLoop(); return }
+    guard pendingTransaction == nil else { pauseFrameLoop(); return }
     // Layout, mesh and old GPU callbacks cannot reacquire a reclaimed neighbour.
     // Its existing page-role promotion is the only route back to pixel demand.
     guard !pageBackingIsReclaimed else { pauseFrameLoop(); return }
@@ -2699,7 +2725,9 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
 
   @discardableResult
   private func presentEmptyContentIfReady() -> Bool {
-    guard pendingOrderedCut == nil else {return false}
+    // An empty replacement is another presentation demand. It cannot detach
+    // a drawable whose matching authored layers are still awaiting the OS.
+    guard pendingOrderedCut == nil,pendingTransaction == nil else {return false}
     guard !isErasureMask, material == nil, orderedGeometry == nil, !spatialHandoffIsStopping, spatialStagingID == nil, pageGeometryIsReady, baselineTexture == nil,
       activeInkStroke == nil, activeEraserStroke == nil else { return false }
     // Addressed inverses already updated this exact crop. Its visible ranges,
@@ -2752,6 +2780,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
       pageRetainedTexture = nil; pageRetainedReservation = nil; pageRetainedKey = nil
     }
     spatialTarget?.detach(); spatialTarget = nil
+    pendingTransaction = nil
     hasRevealedFirstFrame = false
     CATransaction.begin()
     CATransaction.setDisableActions(true)

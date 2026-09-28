@@ -11,10 +11,13 @@ final class IPadSheetCurlController: UIViewController, UIGestureRecognizerDelega
   }
   var neighbor: (UIViewController, Direction) -> UIViewController? = { _, _ in nil }
   var willTurn: (UIViewController) -> Bool = { _ in false }
+  /// Observation of the owner-resolved result; it never chooses a landing.
   var didTurn: (UIViewController, Bool) -> Void = { _, _ in }
+  var beginOperation: (UIViewController, UIViewController, Bool, ((Bool) -> Void)?) -> UUID? = { _, _, _, _ in nil }
+  var resolveOperation: (UUID, PageTurnOutcome, Bool, Bool) -> Void = { _, _, _, _ in }
   var didAcceptTurn: (UIViewController) -> Void = { _ in }
   var onFailure: (Error) -> Void = { _ in }
-  var acquireSheetFrame: (UIViewController) async throws -> PageTurnFrame = { _ in throw SceneRenderError.snapshotPending("page_frame_owner") }
+  var acquireSheetFrame: @MainActor (UIViewController) async throws -> PageTurnFrame = { _ in throw SceneRenderError.snapshotPending("page_frame_owner") }
   var isSheetReadyForCapture: (UIViewController) -> Bool = { _ in true }
   var isSheetPresented: (UIViewController) -> Bool = { _ in true }
   var onStageLiveSheet: (UIViewController) -> Void = { _ in }
@@ -55,7 +58,6 @@ final class IPadSheetCurlController: UIViewController, UIGestureRecognizerDelega
     var frame: PageTurnFrame?
     var firstFrameSequence: Int?
     let direction: Direction
-    let completion: ((Bool) -> Void)?
     let gesture: Bool
     var readinessGeneration: UInt64 = 0
     var progress: Double = 0
@@ -105,28 +107,41 @@ final class IPadSheetCurlController: UIViewController, UIGestureRecognizerDelega
     controller.willMove(toParent: nil); controller.view.removeFromSuperview(); controller.removeFromParent()
   }
 
+  /// Install the owner's initial page after replacing or retiring a directory.
+  /// There is no source/target transition to admit in this lifecycle boundary.
+  func install(_ target: UIViewController) {
+    cancelMotion(outcome: .superseded, notify: false); prepare(target)
+    page = target; view.bringSubviewToFront(target.view)
+  }
+
   func show(_ target: UIViewController, direction: Direction, animated: Bool, completion: ((Bool) -> Void)? = nil) {
     loadViewIfNeeded()
-    cancelMotion()
+    cancelMotion(outcome: .superseded)
     prepare(target)
-    guard animated, !UIAccessibility.isReduceMotionEnabled, let source = page, source !== target, SceneSourceVisibility.isVisible(view) else {
+    guard let source = page, source !== target else {
       page = target; view.bringSubviewToFront(target.view)
-      if let completion { Task { @MainActor in completion(true) } }
+      completion?(true)
       return
     }
+    let bends = animated && !UIAccessibility.isReduceMotionEnabled && SceneSourceVisibility.isVisible(view)
     do {
-      try begin(source: source, target: target, direction: direction, gesture: false, completion: completion)
-      animate(to: 1)
+      try begin(source: source, target: target, direction: direction, gesture: false,
+        preparesFrames: bends, completion: completion)
+      if bends { animate(to: 1) } else { finish(completed: true) }
     } catch { onFailure(error); completion?(false) }
   }
 
   private func begin(source: UIViewController, target: UIViewController, direction: Direction,
-    gesture: Bool, completion: ((Bool) -> Void)?) throws {
+    gesture: Bool, preparesFrames: Bool = true, completion: ((Bool) -> Void)?) throws {
     prepare(target)
-    guard view.bounds.width > 0, view.bounds.height > 0 else { throw SceneRenderError.snapshotPending("page_bounds") }
-    let id = UUID()
+    guard !preparesFrames || (view.bounds.width > 0 && view.bounds.height > 0) else {
+      throw SceneRenderError.snapshotPending("page_bounds")
+    }
+    guard let id = beginOperation(source, target, gesture, completion) else {
+      throw PageTurnMaterialUnavailable.changed
+    }
     motion = .init(id: id, source: source, target: target, size: view.bounds.size, direction: direction,
-      completion: completion, gesture: gesture)
+      gesture: gesture)
     // Borrow accepted cuts outside input dispatch. Material owners certify
     // their native pixels; a queue hop cannot manufacture readiness. Live paper
     // stays in front while this same motion retains the finger progress.
@@ -135,7 +150,7 @@ final class IPadSheetCurlController: UIViewController, UIGestureRecognizerDelega
         began: CACurrentMediaTime(), direction: direction)
       continuedContact = nil
     }
-    guard !UIAccessibility.isReduceMotionEnabled else { return }
+    guard preparesFrames, !UIAccessibility.isReduceMotionEnabled else { return }
     acquireCurrentFrames(for: id)
   }
 
@@ -162,9 +177,14 @@ final class IPadSheetCurlController: UIViewController, UIGestureRecognizerDelega
       defer { if self.motion?.id == id { frameAcquisition = nil } }
       do {
         let began = CACurrentMediaTime()
-        let source = try await acquireSheetFrame(motion.source)
-        try Task.checkCancellation()
-        let target = try await acquireSheetFrame(motion.target)
+        // The admitted owners are independent. Submit both borrows before
+        // awaiting either WebKit/GPU result; both final cuts are retained by
+        // this same operation. Structured children cancel and drain together
+        // if either owner fails or the gesture is replaced.
+        let acquire = acquireSheetFrame
+        async let sourceFrame = acquire(motion.source)
+        async let targetFrame = acquire(motion.target)
+        let (source, target) = try await (sourceFrame, targetFrame)
         try Task.checkCancellation()
         guard var current = self.motion, current.id == id else { return }
         // Each owner delivered an immutable accepted cut. Subsequent live
@@ -202,7 +222,7 @@ final class IPadSheetCurlController: UIViewController, UIGestureRecognizerDelega
           DispatchQueue.main.async { [weak self] in self?.acquireCurrentFrames(for: id) }
           return
         }
-        onFailure(error); finish(completed: false)
+        onFailure(error); finish(completed: false, outcome: .failed)
       }
     }
   }
@@ -354,8 +374,15 @@ final class IPadSheetCurlController: UIViewController, UIGestureRecognizerDelega
     return true
   }
 
-  private func finish(completed: Bool, notify: Bool = true, presented: Bool = false) {
+  private func finish(completed: Bool, outcome: PageTurnOutcome? = nil, notify: Bool = true, presented: Bool = false) {
     guard let motion else { return }
+    // The executor reports a physical endpoint or interruption. Only the page
+    // operation owner can install its landing and release the accepted pair.
+    resolveOperation(motion.id, outcome ?? (completed ? .completed : .cancelled), presented, notify)
+  }
+
+  func resolveMotion(_ id: UUID, completed: Bool, presented: Bool) {
+    guard let motion, motion.id == id else { return }
     self.motion = nil
     frameAcquisition?.cancel(); frameAcquisition = nil
     if presented, let contact = motion.contact {
@@ -367,15 +394,11 @@ final class IPadSheetCurlController: UIViewController, UIGestureRecognizerDelega
     page = completed ? motion.target : motion.source
     view.bringSubviewToFront(page!.view)
     curl.isHidden = true; curl.releaseSource(presented: presented)
-    if notify {
-      motion.completion?(completed)
-      if motion.gesture { didTurn(motion.source, completed) }
-    } else { motion.completion?(false) }
   }
 
-  func cancelMotion(notify: Bool = true) {
+  func cancelMotion(outcome: PageTurnOutcome = .cancelled, notify: Bool = true) {
     continuedContact = nil
-    if motion != nil { finish(completed: false, notify: notify) }
+    if motion != nil { finish(completed: false, outcome: outcome, notify: notify) }
   }
   isolated deinit { frameAcquisition?.cancel(); curl.releaseSource() }
 
@@ -387,7 +410,7 @@ final class IPadSheetCurlController: UIViewController, UIGestureRecognizerDelega
     do {
       try begin(source: page, target: target, direction: direction, gesture: true, completion: nil)
       return true
-    } catch { onFailure(error); didTurn(page, false); return false }
+    } catch { onFailure(error); return false }
   }
 
   func updateInteractiveTurn(translation: CGFloat, verticalTranslation: CGFloat = 0) {

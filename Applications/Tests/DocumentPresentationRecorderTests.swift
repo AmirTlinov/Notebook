@@ -5,7 +5,6 @@ import XCTest
 final class DocumentPresentationRecorderTests: XCTestCase {
   @MainActor private final class Probe {
     var time = 10.0
-    var installed = false
     var published = ""
   }
   func testLandingAttemptsKeepTheActionIdentityAndCannotFinishInputOrRewriteATerminalAttempt() throws {
@@ -40,29 +39,32 @@ final class DocumentPresentationRecorderTests: XCTestCase {
     XCTAssertNil(recorder.request(documentID: id, pageIndex: 0, cause: .open))
     recorder.demand(documentID: id, pageIndex: 0, token: "version")
     recorder.contentReady(documentID: id, pageIndex: 0, token: "version")
-    recorder.observeInstallation(documentID: id, pageIndex: 0, token: "version",
-      isInstalled: { XCTFail("Disabled instrumentation must not inspect a renderer"); return true },
+    recorder.installationChanged(documentID: id, pageIndex: 0, token: "version", installed: true,
       publish: { _ in XCTFail("Disabled instrumentation cannot change accessibility") })
     XCTAssertTrue(recorder.records.isEmpty)
   }
 
-  func testContentReadinessDoesNotEndTheIntervalBeforeTheNativeOwnerIsInstalled() async throws {
+  func testContentReadinessDoesNotEndTheIntervalBeforeTheNativeOwnerIsInstalled() throws {
     let probe = Probe()
     let recorder = DocumentPresentationRecorder(enabled: true, now: { probe.time }), id = UUID()
     let request = try XCTUnwrap(recorder.request(documentID: id, pageIndex: 3, cause: .page))
     XCTAssertEqual(recorder.request(documentID: id, pageIndex: 3, cause: .page), request)
     probe.time = 10.1; recorder.demand(documentID: id, pageIndex: 3, token: "source-1")
     probe.time = 10.2; recorder.contentReady(documentID: id, pageIndex: 3, token: "source-1")
-    recorder.observeInstallation(documentID: id, pageIndex: 3, token: "source-1",
-      isInstalled: { probe.installed }, publish: { probe.published = $0 })
-    try await Task.sleep(for: .milliseconds(15))
+    recorder.installationChanged(documentID: id, pageIndex: 3, token: "source-1", installed: false,
+      publish: { probe.published = $0 })
     XCTAssertNil(recorder.records.first?.installedAt)
-    probe.time = 10.4; probe.installed = true
-    try await Task.sleep(for: .milliseconds(15))
+    probe.time = 10.4
+    recorder.installationChanged(documentID: id, pageIndex: 3, token: "source-1", installed: true,
+      publish: { probe.published = $0 })
+    probe.time = 10.8
+    recorder.installationChanged(documentID: id, pageIndex: 3, token: "source-1", installed: true,
+      publish: { probe.published = $0 })
     let record = try XCTUnwrap(recorder.records.first)
     XCTAssertEqual(try XCTUnwrap(record.requestToInstalledMS), 400, accuracy: 0.001)
     XCTAssertEqual(try XCTUnwrap(record.demandToContentReadyMS), 100, accuracy: 0.001)
     XCTAssertEqual(try JSONDecoder().decode(DocumentPresentationRecorder.Record.self, from: Data(probe.published.utf8)), record)
+    XCTAssertEqual(record.installationBoundary, "native_paper_input")
     XCTAssertNotEqual(recorder.request(documentID: id, pageIndex: 3, cause: .open), request,
       "A finished opening must not swallow the next actual repeat")
   }

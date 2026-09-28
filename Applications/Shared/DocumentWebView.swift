@@ -2505,6 +2505,7 @@ private enum DocumentWebViewFactory {
     var onSizeChange: () -> Void = { }
     var onWindowChange: () -> Void = { }
     private var lastLaidOutSize = CGSize.zero
+    private var lastCanonicalProjection = false
     func showFailure(_ message: String, retry: @escaping () -> Void) {
       removeLoading()
       removeFailure()
@@ -2535,6 +2536,37 @@ private enum DocumentWebViewFactory {
     func removeLoading() { loadingView?.removeFromSuperview(); loadingView = nil }
     var hasSnapshot: Bool { fallbackLease != nil }
     var snapshotEntryID: UUID? { fallbackLease?.entryID }
+    /// A source receipt alone cannot admit a PDF stretched into the previous
+    /// scene cohort's placeholder rectangle. Geometry belongs to this physical
+    /// host; camera projection must preserve the canonical paper's two axes.
+    var hasCanonicalPaperProjection: Bool {
+      guard paperSize.width > 0, paperSize.height > 0, !bounds.isEmpty, let window else { return false }
+      let origin = convert(bounds.origin, to: window)
+      let horizontal = convert(CGPoint(x: bounds.maxX, y: bounds.minY), to: window)
+      let vertical = convert(CGPoint(x: bounds.minX, y: bounds.maxY), to: window)
+      let scaleX = hypot(horizontal.x - origin.x, horizontal.y - origin.y) / paperSize.width
+      let scaleY = hypot(vertical.x - origin.x, vertical.y - origin.y) / paperSize.height
+      guard scaleX.isFinite, scaleY.isFinite, scaleX > 0, scaleY > 0 else { return false }
+      guard abs(scaleX - scaleY) * max(paperSize.width, paperSize.height) <= 1 / window.screen.scale else { return false }
+      if let viewport, let web = viewport.webView {
+        guard web.bounds.size == paperSize else { return false }
+        let tolerance = 1 / (window.screen.scale * max(scaleX, scaleY))
+        let frames = [web.convert(web.bounds, to: self)] + viewport.subviews.compactMap { view in
+          (view as? DocumentPaperView).map { $0.convert($0.bounds, to: self) }
+        }
+        guard frames.allSatisfy({ frame in
+          abs(frame.minX - bounds.minX) <= tolerance && abs(frame.minY - bounds.minY) <= tolerance
+            && abs(frame.width - bounds.width) <= tolerance && abs(frame.height - bounds.height) <= tolerance
+        }) else { return false }
+      }
+      return true
+    }
+    private func publishProjectionChange() {
+      let installed = hasCanonicalPaperProjection
+      guard installed != lastCanonicalProjection else { return }
+      lastCanonicalProjection = installed
+      Task { @MainActor [weak self] in self?.onSizeChange() }
+    }
     var hasVisibleSnapshot: Bool {
       guard hasSnapshot, let window else { return false }
       var visible = convert(bounds, to: window).intersection(window.bounds)
@@ -2611,6 +2643,7 @@ private enum DocumentWebViewFactory {
         incoming.setContentSize(size)
       } else { incoming = PhysicalWebViewport(webView: web, contentSize: size) }
       viewport = incoming
+      incoming.onInstalled = { [weak self] in self?.publishProjectionChange() }
       let viewport = incoming
       if programOverlay.superview === self { insertSubview(viewport, belowSubview: programOverlay) }
       else if let fallback { insertSubview(viewport, belowSubview: fallback) } else { addSubview(viewport) }
@@ -2651,7 +2684,7 @@ private enum DocumentWebViewFactory {
     }
     func hasCanonicalSurface(_ web: WKWebView) -> Bool {
       guard ownsSurface(web), window?.isKeyWindow == true, !hasSnapshot,
-        failureView == nil, loadingView == nil, !bounds.isEmpty,
+        failureView == nil, loadingView == nil, hasCanonicalPaperProjection,
         UIApplication.shared.applicationState == .active else { return false }
       var node: UIView? = web
       while let view = node {
@@ -2678,6 +2711,7 @@ private enum DocumentWebViewFactory {
         lastLaidOutSize = bounds.size
         Task { @MainActor [weak self] in self?.onSizeChange() }
       }
+      publishProjectionChange()
     }
     override func didMoveToWindow() {
       super.didMoveToWindow()

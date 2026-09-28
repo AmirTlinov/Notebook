@@ -114,7 +114,10 @@ final class SpatialInkConfigurationLifetimeTests: XCTestCase {
 
   private func mount(in view: UIView) -> SpatialInkPhysicalMountView? {
     if let mount = view as? SpatialInkPhysicalMountView { return mount }
-    return view.subviews.lazy.compactMap { self.mount(in: $0) }.first
+    for child in view.subviews {
+      if let found = self.mount(in: child) { return found }
+    }
+    return nil
   }
 
   private func waitUntil(_ predicate: () -> Bool, file: StaticString = #filePath, line: UInt = #line) async throws {

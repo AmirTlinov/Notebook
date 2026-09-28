@@ -45,6 +45,68 @@ final class NotebookInputTests: XCTestCase {
     owner.receivePan(state: .ended, translation: .init(x: 40, y: 0))
   }
 
+  @MainActor
+  func testQueuedNavigationRechecksIdleAfterGestureReplacementBeforeResuming() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("camera-idle-\(UUID())")
+    let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
+    retainNotebookUntilTeardown(model, removing: root)
+    await model.start(pageSize: NotebookAppModel.defaultPageSize)
+    let presence = try XCTUnwrap(model.presence)
+    func snapshot() -> CameraGestureSnapshot {
+      .init(presence: presence, trajectory: .init(startingCamera: presence.camera,
+        startingCentroid: .zero, viewport: presence.viewport), entry: nil, exit: nil)
+    }
+    for detaches in [false, true] {
+      let owner = WorkspaceCameraOwner()
+      owner.attach(model); owner.beginGesture(snapshot())
+      defer { owner.detach() }
+      var started = false
+      let permitCompletion = NotebookPersistenceFenceContract.Signal<Bool>()
+      permitCompletion.set(false)
+      let premature = expectation(description: "Replacement camera interaction still owns navigation")
+      premature.isInverted = true
+      let waiter = Task { @MainActor in
+        started = true
+        let ready = await owner.waitUntilIdle()
+        if permitCompletion.value != true { premature.fulfill() }
+        return ready
+      }
+      try await NotebookPersistenceFenceContract.until { started }
+      // Both events occur in one native callback. The waiter has already been
+      // resumed by the first event when the replacement becomes active.
+      owner.finishGesture()
+      owner.beginGesture(snapshot())
+      await fulfillment(of: [premature], timeout: 0.05)
+      XCTAssertFalse(owner.isIdle)
+      permitCompletion.set(true)
+      if detaches { owner.detach() } else { owner.finishGesture() }
+      let ready = await waiter.value
+      XCTAssertEqual(ready, !detaches, "Only actual idle succeeds; detachment cancels the subscription")
+    }
+  }
+
+  @MainActor
+  func testPinchTakesTheExistingNavigationContactAndCannotBeStolenBack() {
+    let gate = NotebookInputGate(), first = InputTouch(), second = InputTouch()
+    let firstID = ObjectIdentifier(first), secondID = ObjectIdentifier(second)
+    _ = gate.fingerContactOwner(for: firstID) { .scene }
+    let pan = UUID(), pinch = UUID(), turn = UUID()
+    var cancelledPan = 0, cancelledTurn = 0
+    XCTAssertTrue(gate.claimNavigation(source: pan, kind: .cameraPan, contacts: [firstID], cancel: { cancelledPan += 1 }))
+    _ = gate.fingerContactOwner(for: secondID) { .scene }
+    XCTAssertTrue(gate.claimNavigation(source: pinch, kind: .cameraPinch, contacts: [firstID, secondID], cancel: {}))
+    XCTAssertEqual(cancelledPan, 1)
+    gate.endNavigation(source: pan) // late UIKit cancellation belongs to the old owner
+    XCTAssertFalse(gate.claimNavigation(source: turn, kind: .pageTurn, contacts: [firstID, secondID], cancel: {}))
+    gate.endNavigation(source: pinch)
+    XCTAssertTrue(gate.claimNavigation(source: turn, kind: .pageTurn, contacts: [firstID, secondID], cancel: { cancelledTurn += 1 }))
+    XCTAssertTrue(gate.claimNavigation(source: pinch, kind: .cameraPinch, contacts: [firstID, secondID], cancel: {}))
+    XCTAssertEqual(cancelledTurn, 1)
+    gate.endNavigation(source: pinch)
+    gate.endFingerContacts([firstID, secondID])
+    XCTAssertTrue(gate.permitsObjectPickup)
+  }
+
   private func acceptedAction(_ tool: SpatialInkTool, _ color: SpatialInkColor, _ spans: [SpatialInkSpan]) -> SpatialInkAction {
     .init(tool: tool, color: color, spans: spans, stamp: .init(counter: 1, actor: UUID()))
   }

@@ -195,6 +195,7 @@ struct WorkspaceGestureLayer: UIViewRepresentable {
     func uninstall() {
       repeatTask?.cancel()
       repeatTask = nil
+      if cameraIsActive { onCamera(.cancelled) }
       cameraIsActive = false
       if let recognizer { hostView?.removeGestureRecognizer(recognizer) }
       if let redoRecognizer { hostView?.removeGestureRecognizer(redoRecognizer) }
@@ -527,6 +528,7 @@ struct WorkspacePanView: UIViewRepresentable {
       didSet {
         guard oldValue !== inputGate else { return }
         oldValue.unregisterFingerCancellation(source: inputSource)
+        oldValue.endNavigation(source: inputSource)
         cancelFingerSequence(deferCallbacks: true)
         if hostView != nil { registerCancellation() }
       }
@@ -610,6 +612,7 @@ struct WorkspacePanView: UIViewRepresentable {
     }
 
     private func cancelFingerSequence(deferCallbacks: Bool = false) {
+      inputGate.endNavigation(source: inputSource)
       panRevision = nil
       panContact = nil
       panTouchdown = nil
@@ -657,6 +660,8 @@ struct WorkspacePanView: UIViewRepresentable {
       }
       switch state {
       case .began:
+        guard let panContact, inputGate.claimNavigation(source: inputSource, kind: .cameraPan, contacts: [panContact],
+          cancel: { [weak self] in self?.cancelFingerSequence() }) else { cancelFingerSequence(); return }
         panIsActive = true
         onBegan()
         onChanged(translation)
@@ -666,6 +671,7 @@ struct WorkspacePanView: UIViewRepresentable {
       case .ended:
         guard panIsActive else { return }
         panIsActive = false
+        inputGate.endNavigation(source: inputSource)
         self.panRevision = nil
         panTouchdown = nil
         onEnded(translation)
@@ -693,6 +699,7 @@ struct WorkspacePanView: UIViewRepresentable {
       if !panIsActive, gestureRecognizer.numberOfTouches == 0 {
         panRevision = revision
         panContact = ObjectIdentifier(touch)
+        inputGate.retainNavigationContacts(source: inputSource, contacts: [ObjectIdentifier(touch)])
         panTouchdown = point
         panRecognitionOffset = .zero
         startingCover = touch.view as? NotebookInteractionTouchView

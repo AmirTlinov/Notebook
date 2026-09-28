@@ -40,11 +40,60 @@ final class NotebookInputGate {
   // window contact observer retires these claims at lift/cancellation.
   private var fingerContactOwners: [ObjectIdentifier: FingerContactOwner] = [:]
   private var fingerSequenceHadMultipleContacts = false
+  enum NavigationKind: Equatable { case cameraPan, cameraPinch, pageTurn }
+  private struct NavigationClaim {
+    let source: UUID
+    let kind: NavigationKind
+    let cancel: @MainActor () -> Void
+  }
+  private var navigationClaim: NavigationClaim?
+  private var navigationContacts: [UUID: [ObjectIdentifier: FingerContactOwner]] = [:]
+
+  /// A recognizer consumes the final sample even if the passive observer has
+  /// already seen physical lift in the same UIKit event. Retain only identities
+  /// and their admitted routing, until that recognizer finishes or cancels.
+  func retainNavigationContacts(source: UUID, contacts: Set<ObjectIdentifier>) {
+    for contact in contacts {
+      if let owner = fingerContactOwners[contact] { navigationContacts[source, default: [:]][contact] = owner }
+    }
+  }
+
+  /// Recognizers report an intent; the gate transfers the accepted physical
+  /// contact. A pinch may take over a pan or curl, including its settling tail.
+  /// A late horizontal sample cannot take an already accepted pinch back.
+  @discardableResult
+  func claimNavigation(source: UUID, kind: NavigationKind, contacts: Set<ObjectIdentifier>,
+    cancel: @escaping @MainActor () -> Void) -> Bool {
+    guard permitsNewContact, !hasActivePencil else { return false }
+    if navigationClaim?.source == source { return true }
+    let owners = contacts.map { fingerContactOwners[$0] ?? navigationContacts[source]?[$0] }
+    guard owners.allSatisfy({ $0?.permitsSceneNavigation == true }) else { return false }
+    switch kind {
+    case .cameraPan:
+      guard contacts.count == 1, !fingerSequenceHadMultipleContacts,
+        owners.allSatisfy({ $0 != .sceneObject }) else { return false }
+    case .cameraPinch: guard contacts.count == 2 else { return false }
+    case .pageTurn:
+      guard owners.allSatisfy({ $0 != .sceneObject }) else { return false }
+    }
+    if let previous = navigationClaim {
+      guard kind == .cameraPinch, previous.kind != .cameraPinch else { return false }
+    }
+    let previous = navigationClaim
+    navigationClaim = .init(source: source, kind: kind, cancel: cancel)
+    previous?.cancel()
+    return navigationClaim?.source == source
+  }
+
+  func endNavigation(source: UUID) {
+    if navigationClaim?.source == source { navigationClaim = nil }
+    navigationContacts[source] = nil
+  }
   var admittedFingerContactCount: Int { fingerContactOwners.count }
   /// A remaining finger after zoom is not a fresh pickup, even if another
   /// recognizer has already reset. Only the physical observer ends a sequence.
   var permitsObjectPickup: Bool {
-    permitsNewContact && !hasActivePencil && !fingerSequenceHadMultipleContacts
+    permitsNewContact && !hasActivePencil && navigationClaim == nil && !fingerSequenceHadMultipleContacts
   }
   var hasSceneObjectContact: Bool { fingerContactOwners.values.contains(.sceneObject) }
   var hasOnlyHistoryContacts: Bool {
@@ -86,7 +135,7 @@ final class NotebookInputGate {
   }
 
   var permitsPageNavigation: Bool {
-    permitsNewContact && !hasActivePencil && !hasSceneObjectContact
+    permitsNewContact && !hasActivePencil && (navigationClaim == nil || navigationClaim?.kind == .pageTurn) && !hasSceneObjectContact
       && !fingerContactOwners.values.contains { if case .nativeInput = $0 { return true }; return false }
   }
 
@@ -293,6 +342,7 @@ final class NotebookInputGate {
     if activePencilSources.contains(source) { return true }
     guard permitsNewContact else { return false }
     activePencilSources.insert(source)
+    let navigation = navigationClaim; navigationClaim = nil; navigation?.cancel()
     pencilGeneration &+= 1
     notifyAcceptedContact()
     updateActivity()

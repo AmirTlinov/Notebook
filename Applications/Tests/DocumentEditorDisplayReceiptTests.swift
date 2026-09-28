@@ -34,7 +34,10 @@ final class DocumentEditorDisplayReceiptTests: XCTestCase {
     func find(_ view: UIView) -> WKWebView? {
       if let web = view as? WKWebView, let renderer = web.navigationDelegate as? DocumentWebCoordinator,
         renderer.payload?.documentID == id, renderer.hasCanonicalPixels, renderer.acceptsInput { return web }
-      return view.subviews.lazy.compactMap(find).first
+      for child in view.subviews {
+        if let found = find(child) { return found }
+      }
+      return nil
     }
     await wait { find(window) != nil }
     let web = try XCTUnwrap(find(window)), coordinator = try XCTUnwrap(web.navigationDelegate as? DocumentWebCoordinator)

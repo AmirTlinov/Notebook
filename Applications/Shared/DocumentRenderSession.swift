@@ -173,7 +173,7 @@ final class DocumentSourceSnapshot {
     try Task.checkCancellation()
     ensurePreparation(resources: resources)
     preparation!.retainPage(pageIndex, hostID: hostID)
-    _ = try await preparation!.printedSource()
+    _ = try await preparation!.printedSource(priority: .current)
     try acceptPreparedLayout()
   }
   func printedSource(resources: SceneRenderResources) async throws -> DocumentPrintedSource {

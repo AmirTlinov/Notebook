@@ -114,7 +114,10 @@ final class SceneCameraPlaneTests: XCTestCase {
   @MainActor
   private func nestedPose(in root: UIViewController) -> WorkspaceItemPoseController? {
     if let pose = root as? WorkspaceItemPoseController { return pose }
-    return root.children.lazy.compactMap { self.nestedPose(in: $0) }.first
+    for child in root.children {
+      if let found = self.nestedPose(in: child) { return found }
+    }
+    return nil
   }
 
   @MainActor
@@ -205,7 +208,11 @@ final class SceneCameraPlaneTests: XCTestCase {
 
   @MainActor
   private func snapshotView(in view: UIView) -> AgentSnapshotRasterView? {
-    (view as? AgentSnapshotRasterView) ?? view.subviews.lazy.compactMap { self.snapshotView(in: $0) }.first
+    if let found = view as? AgentSnapshotRasterView { return found }
+    for child in view.subviews {
+      if let found = self.snapshotView(in: child) { return found }
+    }
+    return nil
   }
 
   @MainActor
@@ -379,7 +386,10 @@ final class SceneCameraPlaneTests: XCTestCase {
   @MainActor
   private func planeController(in root: UIViewController) -> SceneCameraPlaneController<UUID>? {
     if let controller = root as? SceneCameraPlaneController<UUID> { return controller }
-    return root.children.lazy.compactMap { self.planeController(in: $0) }.first
+    for child in root.children {
+      if let found = self.planeController(in: child) { return found }
+    }
+    return nil
   }
 
   @MainActor

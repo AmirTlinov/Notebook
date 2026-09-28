@@ -97,29 +97,48 @@ final class InkCanvasLifecycleTests: XCTestCase {
       let restoration=try XCTUnwrap(canvas.captureSourceRestoration(for:Set(moved.bodies.map(\.sourceID))))
       let geometry=try await canvas.prepareOrderedPlan(plan)
       try await canvas.presentOrderedPlan(geometry,plan:plan);restoration.installed()
-      try await assertUX("selection-before-pencil-cancel",since:.now,window:window) {
-        try NotebookUXObservation.Pixels(window:window).matches([
-          (canvas.convert(.init(x:80,y:40),to:window),.paper),
-          (canvas.convert(.init(x:80,y:110),to:window),.black)])
-      }
+      try await self.waitForStableFrame(canvas)
+      let selectedPixels=try NotebookUXObservation.Pixels(window:window)
+      XCTAssertTrue(try selectedPixels.matches([
+        (canvas.convert(.init(x:80,y:40),to:window),.paper),
+        (canvas.convert(.init(x:80,y:110),to:window),.black)]))
       var retired=0,abandoned=0
+      let installedAt=NotebookPersistenceFenceContract.Signal<ContinuousClock.Instant>()
+      let shown=NotebookPersistenceFenceContract.Signal<NotebookMetalFrameReadiness>()
+      let receiveVisible=canvas.onVisibleFrame
+      canvas.onVisibleFrame = {
+        receiveVisible?()
+        if installedAt.value != nil,let receipt=canvas.frameReadiness,receipt.isReady {shown.set(receipt)}
+      }
+      defer {canvas.onVisibleFrame=receiveVisible}
       let began=ContinuousClock.now
-      restoration.restore(install:{retired += 1},abandon:{abandoned += 1})
+      restoration.restore(install:{installedAt.set(.now);retired += 1},abandon:{abandoned += 1})
       XCTAssertEqual(retired,0);XCTAssertEqual(abandoned,0)
       // The new contact joins the next ordinary frame while the complete old
       // cut remains shown; cancellation does not drain preceding GPU work.
       let pencil=self.handoffPencil();canvas.displayActiveStroke(pencil)
       let contact=try XCTUnwrap(canvas.activeContactFrame)
-      try await assertUX("raw-return-with-active-pencil",since:began,window:window) {
-        try NotebookUXObservation.Pixels(window:window).matches([
-          (canvas.convert(.init(x:80,y:40),to:window),.black),
-          (canvas.convert(.init(x:80,y:110),to:window),.paper),
-          (canvas.convert(.init(x:80,y:145),to:window),.black)])
-      }
+      try await NotebookPersistenceFenceContract.until {installedAt.value != nil || abandoned>0}
+      let installed=try XCTUnwrap(installedAt.value,"The raw source must join the canvas installation transaction")
+      let installationTime=began.duration(to:installed)
+      XCTAssertLessThanOrEqual(installationTime,NotebookUXObservation.correctnessTimeout,
+        "The original 100 ms ceiling measures raw-source installation; it is not an OS presentation or screenshot deadline")
+      // Wait for the owner's visible-frame receipt before reading pixels. The
+      // source timestamp above precedes this waiter and all window observation.
+      try await NotebookPersistenceFenceContract.until {shown.value != nil}
+      let captureBegan=ContinuousClock.now,pixels=try NotebookUXObservation.Pixels(window:window)
+      let correct=try pixels.matches([
+        (canvas.convert(.init(x:80,y:40),to:window),.black),
+        (canvas.convert(.init(x:80,y:110),to:window),.paper),
+        (canvas.convert(.init(x:80,y:145),to:window),.black),
+        (canvas.convert(.init(x:80,y:75),to:window),.paper)])
+      XCTAssertTrue(correct,"The restored raw source and held Pencil must appear together")
+      let timing=XCTAttachment(string:"rawSourceInstallation=\(installationTime); visibleReceipt=\(String(describing:shown.value)); independentCaptureAndCheck=\(captureBegan.duration(to:.now)); correct=\(correct). Capture cost is not application latency and is not subtracted.")
+      timing.name="raw-return-with-active-pencil";timing.lifetime = .keepAlways;self.add(timing)
+      let image=XCTAttachment(image:pixels.image);image.name="raw-return-active-pencil-pixels"
+      image.lifetime = .keepAlways;self.add(image)
       XCTAssertEqual(retired,1);XCTAssertEqual(abandoned,0);XCTAssertEqual(canvas.activeContactFrame,contact)
       XCTAssertEqual(canvas.orderedInkPlan.suppressedInkIDs,[hidden.id],"Rollback removes only this edit, not an already erased canonical contact")
-      XCTAssertTrue(try NotebookUXObservation.Pixels(window:window).matches([
-        (canvas.convert(.init(x:80,y:75),to:window),.paper)]))
       canvas.commitActiveStroke();try await self.waitForStableFrame(canvas)
     }
   }
@@ -250,6 +269,46 @@ final class InkCanvasLifecycleTests: XCTestCase {
     try await waitForStableFrame(canvas)
     XCTAssertGreaterThan(canvas.committedSourceNodeCount, 0)
     XCTAssertTrue(canvas.isFrameLoopPaused, "After presenting the replacement ink, the resting canvas stops again")
+  }
+
+  @MainActor
+  func testPageLiftKeepsThePendingFirstRevealUntilItsOwnResolution() async throws {
+    let scene=try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+    let previous=scene.windows.first(where: \.isKeyWindow)
+    let window=UIWindow(windowScene:scene),controller=UIViewController()
+    window.rootViewController=controller;controller.view.backgroundColor = .white
+    let canvas=InkCanvasView(frame:.zero)
+    controller.view.addSubview(canvas);window.makeKeyAndVisible()
+    defer {
+      canvas.removeFromSuperview();window.isHidden=true;window.rootViewController=nil
+      previous?.makeKey()
+    }
+    canvas.projectPage(region:.init(x:0,y:0,width:160,height:160),
+      sourceSize:.init(width:160,height:160),pixelDensity:2)
+    canvas.displayActiveStroke(handoffPencil())
+    let deadline=ContinuousClock.now + .seconds(2)
+    while canvas.pendingFirstPresentationID == nil,ContinuousClock.now < deadline {
+      try await Task.sleep(for:.milliseconds(1))
+    }
+    let first=try XCTUnwrap(canvas.pendingFirstPresentationID,
+      "The cold drawable must own an observable transaction until its own resolution")
+    let submitted=canvas.drawableRequestCount
+    // Lift changes accepted content while the first real drawable is pending.
+    // It cannot relinquish that drawable's reveal or admit a competing one in
+    // this actor turn. No fake frame/receipt or forced CA transaction is used.
+    canvas.commitActiveStroke()
+    canvas.draw()
+    XCTAssertEqual(canvas.pendingFirstPresentationID,first)
+    XCTAssertEqual(canvas.drawableRequestCount,submitted)
+    try await waitForStableFrame(canvas)
+    XCTAssertNil(canvas.pendingFirstPresentationID)
+    XCTAssertEqual(canvas.layer.opacity,1)
+    XCTAssertTrue(canvas.frameReadiness?.isReady == true)
+    try await assertUX("first-reveal-survives-lift",since:.now,window:window) {
+      try NotebookUXObservation.Pixels(window:window).matches([
+        (canvas.convert(.init(x:80,y:145),to:window),.black),
+        (canvas.convert(.init(x:80,y:40),to:window),.paper)])
+    }
   }
 
   @MainActor

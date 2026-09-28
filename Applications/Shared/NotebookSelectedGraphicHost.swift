@@ -111,7 +111,7 @@ import UIKit
     if textEntries[reference]?.view === view {
       let owner=textEntries[reference].flatMap {claims[$0.selectionID]?.owner}
       textEntries[reference]=nil
-      owner?.authoredHostUnmounted()
+      owner?.authoredHostUnmounted(reference.elementID)
     }
   }
 
@@ -200,7 +200,7 @@ import UIKit
     if entries[reference]?.view === view {
       let owner=entries[reference].flatMap { claims[$0.selectionID]?.owner }
       entries[reference] = nil
-      owner?.authoredHostUnmounted()
+      owner?.authoredHostUnmounted(reference.elementID)
     }
   }
   func registerControls(_ view:NotebookSelectionControlsView,selectionID:UUID) {

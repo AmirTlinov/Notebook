@@ -342,13 +342,25 @@ import XCTest
       return "sheet=\(label),id=\(sheet.map {String(describing:ObjectIdentifier($0))} ?? "nil"),page=\(String(describing:page?.id)),stamp=\(String(describing:page?.agentStamp)); slots=\(slots); raster=\(resources.rasterAdmission); derivedWaiters=\(resources.pendingDerivedRequestCount); web=\(resources.activeWebSurfaceCount),pendingWeb=\(resources.pendingWebRequestCount)"
     }
     let receiveFailure=native.onFailure,receiveFrames=native.onFramesAcquired,acquire=native.acquireSheetFrame
-    let receiveStage=native.onStageLiveSheet
+    let receiveStage=native.onStageLiveSheet,receiveResolution=native.resolveOperation
     let curl=try XCTUnwrap(descendants(native.view).compactMap {$0 as? SheetCurlMetalView}.first)
     let receiveFrame=curl.onPageFrameReady
     var arrowUptime:TimeInterval=0,pairEnded:TimeInterval?,stageUptime:TimeInterval?
     var sawFirstFrame=false,sawEndpoint=false
+    var landing:(operation:UUID,at:ContinuousClock.Instant,uptime:TimeInterval,presented:Bool)?
+    native.resolveOperation = { id,outcome,presented,notify in
+      receiveResolution(id,outcome,presented,notify)
+      // The page owner has now installed the landing, published its selection,
+      // and consumed the operation. Record that event before diagnostic work;
+      // the waiting task's next scheduling opportunity is not this timestamp.
+      let at=ContinuousClock.now,uptime=CACurrentMediaTime()
+      if arrowUptime>0,landing == nil,outcome == .completed,
+        owner.displayedIndex == 1,owner.currentPagePreparation.isReady {
+        landing=(id,at,uptime,presented)
+      }
+    }
     native.onFailure = { error in
-      phases.append("native failure: \(String(reflecting:error)); \(captureState(native.page)); controller=\(owner.navigationStateDescription)")
+      phases.append("native failure: \(String(reflecting:error)); controller=\(owner.navigationStateDescription)")
       receiveFailure(error)
     }
     native.onFramesAcquired = { timing in
@@ -376,20 +388,20 @@ import XCTest
       }
     }
     native.acquireSheetFrame = { sheet in
-      phases.append("acquire begin: \(captureState(sheet))")
+      phases.append("acquire begin: sheet=\(sheet.view.accessibilityIdentifier ?? "nil")")
       let began=CACurrentMediaTime()
       do {
         let frame=try await acquire(sheet)
         phases.append("acquire result: sheet=\(sheet.view.accessibilityIdentifier ?? "nil"),frame=\(frame.id),elapsed=\(CACurrentMediaTime()-began)")
         return frame
       } catch {
-        phases.append("acquire error: \(String(reflecting:error)),elapsed=\(CACurrentMediaTime()-began); \(captureState(sheet))")
+        phases.append("acquire error: \(String(reflecting:error)),elapsed=\(CACurrentMediaTime()-began),sheet=\(sheet.view.accessibilityIdentifier ?? "nil")")
         throw error
       }
     }
     defer {
       native.onFailure=receiveFailure;native.onFramesAcquired=receiveFrames;native.acquireSheetFrame=acquire
-      native.onStageLiveSheet=receiveStage;curl.onPageFrameReady=receiveFrame
+      native.onStageLiveSheet=receiveStage;native.resolveOperation=receiveResolution;curl.onPageFrameReady=receiveFrame
     }
     phases.append("before arrow: \(captureState(native.page)); \(owner.navigationStateDescription)")
     let revision=try XCTUnwrap(model.notebookPageRoot(notebook)),start=ContinuousClock.now
@@ -399,16 +411,20 @@ import XCTest
     // Let the runtime's existing eight-second typed failure reach the diagnostic
     // wrapper. This does not extend the command-to-landing performance budget.
     let deadline=start + .seconds(9)
-    while (owner.displayedIndex != 1 || !owner.currentPagePreparation.isReady),ContinuousClock.now<deadline {
+    while landing == nil,ContinuousClock.now<deadline {
       try await Task.sleep(for:.milliseconds(2))
     }
-    let elapsed=start.duration(to:.now)
-    let observedLanding=CACurrentMediaTime()
-    phases.append("after arrow: elapsed=\(elapsed),observedUptime=\(observedLanding),stageToObservedLanding=\(String(describing:stageUptime.map {observedLanding-$0})); \(captureState(native.page)); \(owner.navigationStateDescription). Landing timestamp is the existing 2ms polling observation, not OS presentation.")
-    _ = try XCTUnwrap(owner.displayedIndex == 1 && owner.currentPagePreparation.isReady ? native.page:nil,
-      "All accepted program states must permit the actual neighbouring page capture and landing")
+    // Full runtime diagnostics and pixel readback begin only after the event
+    // measurement. No observation cost is subtracted from application time.
+    phases.append("after arrow: ownerLanding=\(String(describing:landing)),stageToOwnerLanding=\(String(describing:landing.flatMap { receipt in stageUptime.map {receipt.uptime-$0} })); \(captureState(native.page)); \(owner.navigationStateDescription). Landing time comes from the owner's terminal event; OS presentation is the separate curl receipt above.")
+    let receipt=try XCTUnwrap(landing,
+      "All accepted program states must permit the actual neighbouring page capture and owner-completed landing")
+    let elapsed=start.duration(to:receipt.at)
+    phases.append("commandToOwnerLanding=\(elapsed),arrowToOwnerLanding=\(receipt.uptime-arrowUptime),operation=\(receipt.operation),presented=\(receipt.presented)")
+    XCTAssertEqual(owner.displayedIndex,1)
+    XCTAssertTrue(owner.currentPagePreparation.isReady)
     XCTAssertLessThanOrEqual(elapsed,NotebookUXObservation.pageLanding,
-      "The 450ms command-to-landing budget is unchanged; 9s above is only the diagnostic watchdog")
+      "The 450ms command-to-owner-landing budget is unchanged; 9s above is only the diagnostic watchdog")
     let probes=(0..<24).map { index -> (CGPoint,NotebookUXObservation.Color) in
       let frame=NotebookNavigationLoadFixture.frame(index,programs:true)
       return (.init(x:frame.x+155,y:frame.y+20),.blue)

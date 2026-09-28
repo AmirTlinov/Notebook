@@ -23,20 +23,26 @@ final class SceneCameraSettlement {
   private var from: SessionPresence?
   private var to: SessionPresence?
   private var publish: ((SessionPresence, Bool) -> Void)?
-  private var completion: (() -> Void)?
+  enum Outcome: Equatable { case completed, cancelled, superseded, failed }
+  private var completion: ((Outcome) -> Void)?
+  private(set) var current: SessionPresence?
+  private(set) var operationID: UUID?
+  var destination: SessionPresence? { to }
   /// Only this request may cancel its navigation transition. A queued request
   /// does not own a different, already running human camera settlement.
   private(set) var navigationID: UUID?
 
   @discardableResult
   func start(from: SessionPresence, to: SessionPresence, duration: Double, bounce: Double, navigationID: UUID? = nil,
-    publish: @escaping (SessionPresence, Bool) -> Void, completion: @escaping () -> Void) -> Bool {
-    guard from.isValid, to.isValid, duration.isFinite, bounce.isFinite else { return false }
-    cancel()
-    guard from.boardID == to.boardID, duration > 0 else { publish(to, true); completion(); return true }
+    publish: @escaping (SessionPresence, Bool) -> Void, completion: @escaping (Outcome) -> Void) -> Bool {
+    guard from.isValid, to.isValid, duration.isFinite, bounce.isFinite else { completion(.failed); return false }
+    cancel(outcome: .superseded)
+    let id = UUID()
+    operationID = id; current = from
     self.from = from; self.to = to; self.duration = duration
     self.navigationID = navigationID
     self.publish = publish; self.completion = completion
+    guard from.boardID == to.boardID, duration > 0 else { finish(.completed, pose: to); return true }
     spring = Spring(settlingDuration: duration, dampingRatio: Spring(duration: duration, bounce: bounce).dampingRatio)
     startedAt = CACurrentMediaTime()
     clockTarget.owner = self
@@ -45,31 +51,40 @@ final class SceneCameraSettlement {
     #else
     link = NSScreen.main?.displayLink(target: clockTarget, selector: #selector(ClockTarget.tick(_:)))
     #endif
-    guard let link else { cancel(); publish(to, true); completion(); return true }
+    guard let link else { finish(.completed, pose: to); return true }
     link.preferredFrameRateRange = .init(minimum: 30, maximum: 120, preferred: 120)
     link.add(to: .main, forMode: .common)
     publish(from, false)
     return true
   }
 
-  func cancel() {
+  /// Termination releases every callback before notifying its owner. A callback
+  /// may immediately start the next movement without being cleared by the old one.
+  @discardableResult
+  func cancel(outcome: Outcome = .cancelled) -> SessionPresence? {
+    finish(outcome)
+    return current
+  }
+
+  private func finish(_ outcome: Outcome, pose: SessionPresence? = nil) {
+    guard operationID != nil else { return }
+    let publish = publish, completion = completion
     link?.invalidate(); link = nil
-    from = nil; to = nil; publish = nil; completion = nil
-    navigationID = nil
+    from = nil; to = nil; self.publish = nil; self.completion = nil
+    navigationID = nil; operationID = nil
+    if let pose { current = pose; publish?(pose, outcome == .completed) }
+    completion?(outcome)
   }
 
   private func advance(at time: Double) {
     guard let from, let to, let publish else { return }
     let elapsed = max(0, time - startedAt)
-    if elapsed >= duration {
-      let completion = completion
-      cancel()
-      publish(to, true)
-      completion?()
-    } else {
+    if elapsed >= duration { finish(.completed, pose: to) }
+    else {
       guard let sample = Self.sample(from: from, to: to, fraction: spring.value(target: 1.0, time: elapsed)) else {
-        let completion = completion; cancel(); completion?(); return
+        finish(.failed); return
       }
+      current = sample
       publish(sample, false)
     }
   }
@@ -95,7 +110,7 @@ final class SceneCameraSettlement {
       documentPageIndex: to.documentPageIndex)
   }
 
-  isolated deinit { link?.invalidate() }
+  isolated deinit { finish(.cancelled) }
 }
 
 extension SessionPresence {

@@ -154,6 +154,12 @@ final class DocumentPagePreparation {
   }
   private var artifact: NotebookPrintedDocument? { printSource?.artifact }
   private var pages: [Int: DocumentPreparedPage] = [:]
+  private struct PageOperation {
+    let id: UUID
+    let task: Task<DocumentPreparedPage, Error>
+    var readers: Set<UUID>
+  }
+  private var pageOperations: [Int: PageOperation] = [:]
   private var demand: [UUID: Int] = [:]
   private var readers: Set<UUID> = []
   private var error: Error?
@@ -187,6 +193,7 @@ final class DocumentPagePreparation {
   func discardIdlePreparation() async {
     guard readers.isEmpty, demand.isEmpty else { return }
     preparation?.cancel(); preparation = nil; pages.removeAll(); printSource = nil; reuse = nil
+    pageOperations.values.forEach { $0.task.cancel() }; pageOperations.removeAll()
     locations.removeAll(); browserRegions.removeAll()
     programTasks.values.forEach { $0.cancel() }; programTasks.removeAll(); programs.removeAll()
   }
@@ -213,6 +220,9 @@ final class DocumentPagePreparation {
   }
   private func cancelUnownedPreparation() {
     if demand.isEmpty, readers.isEmpty { preparation?.cancel(); preparation = nil }
+    for (index, operation) in pageOperations where operation.readers.isEmpty && !demand.values.contains(index) {
+      operation.task.cancel(); pageOperations[index] = nil
+    }
   }
   private func loadPrint(priority: NotebookTypesetter.Priority, onAdmissionWait: @escaping (Bool) -> Void) async throws {
     let start = ContinuousClock.now
@@ -339,6 +349,41 @@ final class DocumentPagePreparation {
     guard artifact != nil, let layout else { throw DocumentSessionError.invalidLayout }
     let index = min(max(0, requested), layout.pageCount-1)
     if let cached = pages[index] { return cached }
+    let reader = UUID()
+    if pageOperations[index] == nil {
+      let id = UUID()
+      let task = Task { @MainActor [self] in
+        let page = try await preparePage(index, onAdmissionWait: { _ in })
+        try Task.checkCancellation()
+        guard pageOperations[index]?.id == id else { throw CancellationError() }
+        pages[index] = page; compiledPageCount += 1; trim()
+        return page
+      }
+      pageOperations[index] = .init(id: id, task: task, readers: [])
+    }
+    pageOperations[index]!.readers.insert(reader)
+    let operation = pageOperations[index]!
+    onAdmissionWait(true)
+    defer { onAdmissionWait(false); releasePageReader(reader, page: index, operation: operation.id) }
+    return try await withTaskCancellationHandler {
+      try Task.checkCancellation()
+      let page = try await DocumentPreparationSubscriber.wait(for: operation.task)
+      try Task.checkCancellation()
+      return page
+    } onCancel: {
+      Task { @MainActor [weak self] in self?.releasePageReader(reader, page: index, operation: operation.id) }
+    }
+  }
+  private func releasePageReader(_ reader: UUID, page: Int, operation: UUID) {
+    guard pageOperations[page]?.id == operation else { return }
+    pageOperations[page]?.readers.remove(reader)
+    guard pageOperations[page]?.readers.isEmpty == true else { return }
+    // Cache ownership belongs to pages/demand. No completed task keeps a
+    // second charged fragment alive after its final reader leaves.
+    pageOperations[page]?.task.cancel(); pageOperations[page] = nil
+  }
+  private func preparePage(_ index: Int, onAdmissionWait: @escaping (Bool) -> Void) async throws -> DocumentPreparedPage {
+    guard let layout else { throw DocumentSessionError.invalidLayout }
     let paper = layout.paper(on: index)
     guard let printSource, let artifact else { throw DocumentSessionError.invalidLayout }
     // Text extraction and annotation selection belong to the requested page.
@@ -365,6 +410,7 @@ final class DocumentPagePreparation {
     }
     let charge = try await resources.acquirePassiveDerivedBytes(html.utf8.count + regions.count*256 + 4096) { onAdmissionWait(true) }
     defer { onAdmissionWait(false) }
+    do { try Task.checkCancellation() } catch { charge.release(); throw error }
     let fragment = DocumentPageFragment(format: 1, sourceKey: sourceKey, pageIndex: index,
       width: paper.surfaceWidth, height: paper.surfaceHeight, contentTop: 0,
       contentBottom: paper.surfaceHeight, blockIDs: Array(ids).sorted(), regions: regions, html: html,
@@ -374,7 +420,7 @@ final class DocumentPagePreparation {
       files: files, programs: [], programHeights: layout.programHeights(ids: programIDs))
     let page = DocumentPreparedPage(fragment: fragment, printed: printed, source: local, pageCount: layout.pageCount,
       reservation: charge)
-    pages[index] = page; compiledPageCount += 1; trim(); return page
+    return page
   }
   /// Executable packages are materialized only for demanded program slots.
   /// They never delay publication of canonical paper.
@@ -402,8 +448,8 @@ final class DocumentPagePreparation {
       }
     }
   }
-  func printedSource() async throws -> DocumentPrintedSource {
-    try await prepare(priority: .export, onAdmissionWait: { _ in })
+  func printedSource(priority: NotebookTypesetter.Priority = .export) async throws -> DocumentPrintedSource {
+    try await prepare(priority: priority, onAdmissionWait: { _ in })
     guard let printSource else { throw DocumentSessionError.invalidLayout }
     return printSource
   }
@@ -411,7 +457,10 @@ final class DocumentPagePreparation {
     let scale = 1 / DocumentPaperLayout.pointsToSurface
     return printSource?.sourceOffset(fileID: fileID, pageIndex: pageIndex, x: x*scale, y: y*scale)
   }
-  isolated deinit { preparation?.cancel(); programTasks.values.forEach { $0.cancel() } }
+  isolated deinit {
+    preparation?.cancel(); pageOperations.values.forEach { $0.task.cancel() }
+    programTasks.values.forEach { $0.cancel() }
+  }
 }
 
 /// A subscriber can leave a shared print operation immediately. Its cancellation

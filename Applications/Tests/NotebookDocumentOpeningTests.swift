@@ -75,7 +75,7 @@ final class NotebookDocumentOpeningTests: XCTestCase {
       let phase = XCTAttachment(string: "closedAt=\(String(describing: closedAt)); closedWhilePreparing=\(closedWhilePreparing); firstOpeningAt=\(String(describing: firstOpeningAt)); openedBeforeReady=\(openedBeforeReady)")
       phase.name = "document-closed-approach"; phase.lifetime = .keepAlways; add(phase)
     }
-    let openingStarted = ContinuousClock.now
+    let openingStarted = ProcessInfo.processInfo.systemUptime
     model.requestShow(.init(target: target, revision: revision))
     func installed() -> Bool {
       guard let document = model.documents[destination.id], let state = model.documentStates[destination.id] else { return false }
@@ -93,10 +93,32 @@ final class NotebookDocumentOpeningTests: XCTestCase {
     XCTAssertNotNil(firstOpeningAt)
     XCTAssertFalse(openedBeforeReady, "A positive opening sample requires the exact installed current paper")
     if let closedAt, let firstOpeningAt { XCTAssertLessThanOrEqual(closedAt, firstOpeningAt) }
-    // Measure the installed source before creating diagnostic evidence. A
-    // screenshot and XCTest attachment are not part of the app's opening.
-    try await assertUX(onAnotherBoard ? "document-other-board-installed" : "document-installed",
-      since: openingStarted, budget: NotebookUXObservation.opening, window: window) { installed() }
+    // The predicate above verifies eventual settled navigation and exact
+    // content. Its 20 ms polling interval is only a correctness watchdog; it
+    // cannot timestamp either native installation or OS presentation.
+    if model.documentMeasurements.enabled {
+      let record = try XCTUnwrap(model.documentMeasurements.records.last {
+        $0.documentID == destination.id && $0.requestedAt >= openingStarted
+      })
+      let installedAt = try XCTUnwrap(record.installedAt, "The paper owner must report its input installation event")
+      XCTAssertEqual(record.installationBoundary, "native_paper_input")
+      XCTAssertNil(record.failure)
+      XCTAssertEqual(record.sourcePreparationMeasurement, 1)
+      let elapsed = Duration.seconds(installedAt - openingStarted)
+      XCTAssertLessThanOrEqual(elapsed, NotebookUXObservation.opening,
+        "History request → native paper accepting input retains the original 1 s budget; this is not camera settlement or OS presentation")
+      let timing = XCTAttachment(string: "requestToNativePaperInput=\(elapsed); request=\(record.id); boundary=\(record.installationBoundary). Event time is recorded by the paper owner. Final camera/source predicate is correctness only; no screenshot or polling time is included.")
+      timing.name = onAnotherBoard ? "document-other-board-native-input" : "document-native-input"
+      timing.lifetime = .keepAlways; add(timing)
+      // Pending at the closed endpoint is evidence, not a required delay: a
+      // faster compiler may legitimately finish during the closed approach.
+      if let closedAt, let contentReadyAt = record.contentReadyAt, closedWhilePreparing {
+        XCTAssertLessThanOrEqual(closedAt, contentReadyAt)
+      }
+    } else {
+      let scope = XCTAttachment(string: "Document phase recording is disabled. This run checks unloaded-source navigation, closed approach, readiness ordering and eventual settlement; it makes no opening-performance or OS-presentation claim.")
+      scope.name = "history-opening-correctness-scope"; scope.lifetime = .keepAlways; add(scope)
+    }
     let captureStarted = ProcessInfo.processInfo.systemUptime
     let image = UIGraphicsImageRenderer(size: window.bounds.size).image { _ in
       window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
@@ -105,17 +127,8 @@ final class NotebookDocumentOpeningTests: XCTestCase {
     let proof = XCTAttachment(image: image); proof.name = "history-opens-unloaded-document"
     proof.lifetime = .keepAlways; add(proof)
     let attachmentEnded = ProcessInfo.processInfo.systemUptime
-    let capturePhases = XCTAttachment(string: "captureMS=\((captureEnded-captureStarted)*1000); attachmentMS=\((attachmentEnded-captureEnded)*1000); both are excluded from the installed-source timing oracle")
+    let capturePhases = XCTAttachment(string: "captureMS=\((captureEnded-captureStarted)*1000); attachmentMS=\((attachmentEnded-captureEnded)*1000); both are separate diagnostic observation costs, excluded from any native paper-input event measurement")
     capturePhases.name = "document-window-observation-cost"; capturePhases.lifetime = .keepAlways; add(capturePhases)
-    if model.documentMeasurements.enabled {
-      let record = try XCTUnwrap(model.documentMeasurements.records.last { $0.documentID == destination.id })
-      XCTAssertEqual(record.sourcePreparationMeasurement, 1)
-      // Pending at the closed endpoint is evidence, not a required delay: a
-      // faster compiler may legitimately finish during the closed approach.
-      if let closedAt, let contentReadyAt = record.contentReadyAt, closedWhilePreparing {
-        XCTAssertLessThanOrEqual(closedAt, contentReadyAt)
-      }
-    }
   }
 
   func testAcceptedNavigationDoesNotStartAnOptionalShellBeforeItsResolverRuns() async throws {

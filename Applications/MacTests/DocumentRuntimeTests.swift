@@ -253,7 +253,11 @@ final class DocumentRuntimeTests: XCTestCase {
     defer { plane.uninstall(); window.orderOut(nil); window.close() }
     var ready = false
     func web(in view: NSView) -> WKWebView? {
-      (view as? WKWebView) ?? view.subviews.lazy.compactMap { web(in: $0) }.first
+      if let found = view as? WKWebView { return found }
+      for child in view.subviews {
+        if let found = web(in: child) { return found }
+      }
+      return nil
     }
     func update(scale: Double, revision: Int, active: Bool) {
       let presence = SessionPresence(mode: .document, camera: .init(scale: scale), viewport: viewport,

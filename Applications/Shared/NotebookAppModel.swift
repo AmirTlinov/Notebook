@@ -66,7 +66,7 @@ final class NotebookAppModel {
   private(set) var pages: [UUID: PageDocument] = [:] {
     didSet {
       elementErasureCache.retain(pages: pages)
-      for id in oldValue.keys where pages[id] == nil { sceneInputScopes[.init(kind: .page, id: id)] = nil }
+      for id in oldValue.keys where pages[id] == nil { peerPublication.scopes[.init(kind: .page, id: id)] = nil }
       var changed = false
       for id in Set(oldValue.keys).union(pages.keys) {
         let a = oldValue[id], b = pages[id]
@@ -181,7 +181,7 @@ final class NotebookAppModel {
               root: root, actor: actor, reusing: previous)
           }
           previous = prepared
-          await awaitPeerPublication(to: .init(kind: .page, id: prepared.page.id), carrier: itemID, scope: prepared.inputScope)
+          try await peerPublication.wait(to: .init(kind: .page, id: prepared.page.id), carrier: itemID, scope: prepared.inputScope)
           try Task.checkCancellation()
           let isCurrent = try await persistence.submit { [actor = actorID] store in
             try prepared.isCurrent(store: store, actor: actor)
@@ -198,7 +198,7 @@ final class NotebookAppModel {
           self.workspace = workspace
           pageAddresses[address] = page.id
           pages[page.id] = page
-          sceneInputScopes[.init(kind: .page, id: page.id)] = prepared.inputScope
+          peerPublication.scopes[.init(kind: .page, id: page.id)] = prepared.inputScope
           pencilUndoHistory.restore(prepared.undo, for: .page(page.id))
           pencilUndoHistory.restoreRedo(prepared.redo, for: .page(page.id))
           retainPreparedPages(near: address, selectedPageID: presence.notebookPageID)
@@ -243,7 +243,7 @@ final class NotebookAppModel {
         }
         guard !Task.isCancelled, !isStopped, isCurrent() else { return false }
         let scope = state.inputScopes.first { $0.target.kind == .page && $0.target.id == pageID }
-        await awaitPeerPublication(to: .init(kind: .page, id: pageID, boardID: state.presence.boardID),
+        try await peerPublication.wait(to: .init(kind: .page, id: pageID, boardID: state.presence.boardID),
           carrier: state.presence.selectedItemID, scope: scope, navigation: navigationGeneration)
         guard !Task.isCancelled, !isStopped, isCurrent() else { return false }
         let sourceIsCurrent = try await persistence.submit { [actor = actorID] store in try state.isCurrent(store: store, actor: actor) }
@@ -299,12 +299,13 @@ final class NotebookAppModel {
 
   private(set) var documents: [UUID: DocumentDocument] = [:] {
     didSet {
-      for id in oldValue.keys where documents[id] == nil { sceneInputScopes[.init(kind: .document, id: id)] = nil }
+      for id in oldValue.keys where documents[id] == nil { peerPublication.scopes[.init(kind: .document, id: id)] = nil }
       for id in Set(oldValue.keys).union(documents.keys) where oldValue[id]?.contentStamp != documents[id]?.contentStamp {
         readAdmission.changed(.init(kind: .document, id: id))
       }
       collaborationReadEpoch &+= 1
       if oldValue != documents { collaborationContentEpoch &+= 1 }
+      if let opening = documentOpening { opening.sourceDidChange(documents[opening.request.documentID]) }
       validateDocumentPageNavigation(); scheduleScenePreparation()
     }
   }
@@ -317,24 +318,7 @@ final class NotebookAppModel {
   @ObservationIgnored private var readingReturnPosition: DocumentReadingPosition?
   @ObservationIgnored private var readingRestoreTarget: (id: UUID, stamp: VersionStamp, page: Int, camera: SpatialCamera, viewport: SpatialPoint, contact: UInt64)?
   @ObservationIgnored private var documentDraftEpoch: UInt64 = 0
-  private struct DocumentOpeningRequest: Sendable {
-    let id = UUID()
-    let documentID: UUID
-    let boardID: UUID
-    let workspaceID: UUID
-  }
-  private struct DocumentOpeningRead: Sendable {
-    let request: DocumentOpeningRequest
-    let admission: UUID
-    let draftEpoch: UInt64
-    let result: AsyncStream<Result<NotebookSceneState.OpenedDocument?, Error>>
-  }
-  @ObservationIgnored private var documentOpeningRequest: DocumentOpeningRequest?
-  @ObservationIgnored private var documentOpeningTask: Task<Void, Never>?
-  @ObservationIgnored private var documentOpeningReadTask: Task<Void, Never>?
-  #if os(iOS)
-  @ObservationIgnored private var documentSourceOpening: (boardID: UUID, lease: DocumentPagePresentationOwner.OpeningPreparation)?
-  #endif
+  @ObservationIgnored private var documentOpening: DocumentRenderSession.Opening?
   private(set) var documentStates: [UUID: DocumentStateJournal] = [:] {
     didSet {
       for id in Set(oldValue.keys).union(documentStates.keys) where oldValue[id]?.stamp != documentStates[id]?.stamp {
@@ -486,7 +470,7 @@ final class NotebookAppModel {
     guard documentMeasurements.enabled else { return nil }
     let id = presence?.focusedItemID
     let cohort = compositionTiles.published
-    return "focus=\(id?.uuidString ?? "none") body=\(id.flatMap { documents[$0] } != nil) state=\(id.flatMap { documentStates[$0] } != nil) opening=\(documentOpeningRequest?.documentID.uuidString ?? "none") openingTask=\(documentOpeningTask != nil) indexed=\(id.flatMap { sceneIndex?.item(id: $0) } != nil) scenePending=\(scenePreparationPending) permits=\(permitsScenePreparation) input=\(inputIsActive) peerInput=\(peerInputIsActive) composing=\(compositionTiles.isPreparing) cohortBoard=\(cohort?.plan.rootBoardID.uuidString ?? "none") live=\(id.map { id in cohort?.plan.liveOwners.contains { $0.id == .item(id) } == true } ?? false) paint=\(cohort?.isPaintInstalled == true) failure=\(persistenceFailure ?? publicationFailure ?? compositionTiles.failure ?? "none")"
+    return "focus=\(id?.uuidString ?? "none") body=\(id.flatMap { documents[$0] } != nil) state=\(id.flatMap { documentStates[$0] } != nil) opening=\(documentOpening?.request.documentID.uuidString ?? "none") openingTask=\(documentOpening?.task != nil) indexed=\(id.flatMap { sceneIndex?.item(id: $0) } != nil) scenePending=\(scenePreparationPending) permits=\(permitsScenePreparation) input=\(inputIsActive) peerInput=\(peerInputIsActive) composing=\(compositionTiles.isPreparing) cohortBoard=\(cohort?.plan.rootBoardID.uuidString ?? "none") live=\(id.map { id in cohort?.plan.liveOwners.contains { $0.id == .item(id) } == true } ?? false) paint=\(cohort?.isPaintInstalled == true) failure=\(persistenceFailure ?? publicationFailure ?? compositionTiles.failure ?? "none")"
   }
 
   func sceneWorkset(presence: SessionPresence, pinned: Set<WorkspaceSpatialID> = [],
@@ -631,14 +615,13 @@ final class NotebookAppModel {
             requestedScenePresence = requestedScenePresence ?? current
             continue
           }
-          let retainedBodyScopes = sceneInputScopes.filter {
+          let retainedBodyScopes = peerPublication.scopes.filter {
             ($0.key.kind == .document && !loadsDocument && documents[$0.key.id] != nil)
               || ($0.key.kind == .page && state.pages[$0.key.id] != nil)
           }
-          sceneInputScopes = Dictionary(uniqueKeysWithValues: state.inputScopes.map {
+          peerPublication.scopes = Dictionary(uniqueKeysWithValues: state.inputScopes.map {
             (CollaborationTarget(kind: $0.target.kind, id: $0.target.id), $0)
           }).merging(retainedBodyScopes) { current, _ in current }
-          resumePeerPublicationWaiters()
           workspace = state.workspace
           let retained = Set(state.pagePositions.map(\.pageID))
           pages = pages.filter { retained.contains($0.key) }
@@ -731,10 +714,6 @@ final class NotebookAppModel {
             resources: .shared).retainOpenDocument()
         }
       } else { returning?.close() }
-    }
-    if let opened, documentSourceOpening?.lease.documentID == opened,
-      documentSourceOpening?.lease.hasTransferred == true {
-      documentSourceOpening = nil
     }
     openDocumentPresentation?.cameraDidChange()
     // Mounted paper observes ScenePlaneProjection.didProject directly.
@@ -1107,64 +1086,12 @@ final class NotebookAppModel {
   private var publicationFailure: String?
   @ObservationIgnored private var collaborationMetadataGeneration: UInt64 = 0
   private var arrivalFailure: String?
-  private var peerActivities: [UUID: NotebookInputActivity] = [:]
-  private var peerInputScopes: [UUID: [NotebookInputScope]] = [:]
-  private var sceneInputScopes: [CollaborationTarget: NotebookInputScope] = [:]
-  private var pendingPeerInputScopes = Set<UUID>()
-  private var failedPeerInputScopes = Set<UUID>()
-  private struct PeerPublicationWaiter {
-    let target: CollaborationTarget
-    let carrier: UUID?
-    let scope: NotebookInputScope?
-    let opening: UUID?
-    let navigation: UInt64?
-    let continuation: CheckedContinuation<Void, Never>
-  }
-  @ObservationIgnored private var peerPublicationWaiters: [UUID: PeerPublicationWaiter] = [:]
+  @ObservationIgnored private let peerPublication: NotebookPeerPublication
 
-  private func resumePeerPublicationWaiters() {
-    for (id, waiter) in peerPublicationWaiters where
-      (waiter.navigation.map { $0 != navigationGeneration } ?? false)
-        || peerAllowsPublication(to: waiter.target, carrier: waiter.carrier, scope: waiter.scope) {
-      peerPublicationWaiters[id] = nil; waiter.continuation.resume()
-    }
-  }
-
-  private func awaitPeerPublication(to target: CollaborationTarget, carrier: UUID? = nil,
-    scope: NotebookInputScope? = nil, opening: UUID? = nil, navigation: UInt64? = nil) async {
-    let id = UUID()
-    await withTaskCancellationHandler {
-      await withCheckedContinuation { continuation in
-        if Task.isCancelled || (navigation.map { $0 != navigationGeneration } ?? false)
-          || peerAllowsPublication(to: target, carrier: carrier, scope: scope) { continuation.resume() }
-        else { peerPublicationWaiters[id] = .init(target: target, carrier: carrier, scope: scope,
-          opening: opening, navigation: navigation, continuation: continuation) }
-      }
-    } onCancel: { [weak self] in
-      Task { @MainActor in self?.peerPublicationWaiters.removeValue(forKey: id)?.continuation.resume() }
-    }
-  }
-
-  func peerAllowsPublication(to target: CollaborationTarget, carrier suppliedCarrier: UUID? = nil,
-    scope suppliedScope: NotebookInputScope? = nil) -> Bool {
-    // A newly announced contact holds installation only until its addressed
-    // lookup finishes. Immutable preparation continues throughout that lookup.
-    guard pendingPeerInputScopes.isEmpty, failedPeerInputScopes.isEmpty else { return false }
-    if peerInputScopes.isEmpty { return true }
-    let key = CollaborationTarget(kind: target.kind, id: target.id)
-    let scope: NotebookInputScope
-    if let prepared = suppliedScope ?? sceneInputScopes[key] { scope = prepared }
-    else {
-      let carrier = suppliedCarrier ?? (target.kind == .page ? notebookPageOwner(target.id) ?? target.id : target.id)
-      // New local pages inherit their notebook's already resolved physical
-      // ancestry. Never reconstruct a truncated ancestor chain from UI nodes.
-      if let cover = sceneInputScopes[.init(kind: .cover, id: carrier)] {
-        scope = .init(target: target, carrier: carrier, boards: cover.boards)
-      } else if let board = target.boardID.flatMap({ sceneInputScopes[.init(kind: .board, id: $0)] }) {
-        scope = .init(target: target, carrier: carrier, boards: board.boards)
-      } else { return false }
-    }
-    return !peerInputScopes.values.joined().contains { $0.overlaps(scope) }
+  func peerAllowsPublication(to target: CollaborationTarget, carrier: UUID? = nil,
+    scope: NotebookInputScope? = nil) -> Bool {
+    peerPublication.allows(target,
+      carrier: carrier ?? (target.kind == .page ? notebookPageOwner(target.id) : nil), scope: scope)
   }
 
   private func publicationTarget(_ presence: SessionPresence) -> CollaborationTarget {
@@ -1185,34 +1112,6 @@ final class NotebookAppModel {
     presence.map { peerAllowsPublication(to: publicationTarget($0)) } ?? true
   }
 
-  private func resolvePeerInputScopes(_ activity: NotebookInputActivity) {
-    let id = activity.deviceID
-    failedPeerInputScopes.remove(id)
-    guard id != actorID, activity.isActive else {
-      pendingPeerInputScopes.remove(id); peerInputScopes[id] = nil
-      resumePeerPublicationWaiters(); publishPreparedSceneIfPossible()
-      if externalReloadPending { reloadExternalChanges() }
-      return
-    }
-    pendingPeerInputScopes.insert(id)
-    persistence.enqueueCommand { store in try store.inputScopes(for: activity.targets) } completion: { [weak self] result in
-      Task { @MainActor [weak self] in
-        guard let self, peerActivities[id] == activity else { return }
-        pendingPeerInputScopes.remove(id)
-        switch result {
-        case .success(let scopes): peerInputScopes[id] = scopes
-        case .failure(let error):
-          // The explicit persistence retry re-resolves this contact. A failed
-          // read must not remain an invisible, permanently pending admission.
-          failedPeerInputScopes.insert(id)
-          publicationFailure = error.localizedDescription
-          persistenceFailure = error.localizedDescription
-        }
-        resumePeerPublicationWaiters(); publishPreparedSceneIfPossible()
-        if externalReloadPending, peerAllowsCurrentPublication { reloadExternalChanges() }
-      }
-    }
-  }
   private var cueTask: Task<Void, Never>?
   private var pencilUndoHistory = PencilUndoHistory()
   @ObservationIgnored private var pendingCollaborationCommands:[UUID:Task<Bool,Never>]=[:]
@@ -1298,7 +1197,7 @@ final class NotebookAppModel {
   @ObservationIgnored private var shutdownTask: Task<Bool, Never>?
   @ObservationIgnored private var inputSequence: UInt64 = 0
   private(set) var inputIsActive = false
-  private(set) var peerInputIsActive = false { didSet { if !peerInputIsActive { publishPreparedSceneIfPossible() } } }
+  var peerInputIsActive: Bool { peerPublication.isActive }
   // Mounted view tasks can run before start() registers its writer. Until the
   // initial workspace is published, a read must not bootstrap SQLite beside it.
   // This admission also changes the history task's key when startup completes.
@@ -1390,10 +1289,23 @@ final class NotebookAppModel {
     if let data = preferences.data(forKey:"notebook.drawing-tool-settings"),
       let settings = try? JSONDecoder().decode(NotebookDrawingToolSettings.self,from:data), settings.isValid { drawingToolSettings = settings }
     actorID = Self.loadActorID(defaults: preferences)
+    peerPublication = NotebookPeerPublication(persistence: persistence, actorID: actorID)
     #if os(macOS)
       self.commandSocketURL = commandSocketURL ?? (startsNearbySync ? NotebookIPC.defaultSocketURL : nil)
     #endif
     inputGate.bindNewContactAdmission { [weak self] in self?.shutdownPhase == .running }
+    peerPublication.onFailure = { [weak self] error in
+      self?.publicationFailure = error.localizedDescription
+      self?.persistenceFailure = error.localizedDescription
+    }
+    peerPublication.onChange = { [weak self] in
+      guard let self else { return }
+      #if os(macOS)
+        if peerPublication.isActive { previewPublisher?.suspendForInput() }
+      #endif
+      publishPreparedSceneIfPossible()
+      if externalReloadPending, peerAllowsCurrentPublication { reloadExternalChanges() }
+    }
     persistence.onFailureChange = { [weak self] message in
       guard let self else { return }
       persistenceFailure = message ?? arrivalFailure ?? publicationFailure
@@ -1519,11 +1431,8 @@ final class NotebookAppModel {
       chat?.disconnect(peerID)
     #endif
     peerGenerations[peerID] = nil
-    peerActivities[peerID] = nil
-    peerInputScopes[peerID] = nil; pendingPeerInputScopes.remove(peerID); failedPeerInputScopes.remove(peerID)
-    resumePeerPublicationWaiters(); publishPreparedSceneIfPossible()
+    peerPublication.disconnect(peerID)
     isPeerConnected = !peerGenerations.isEmpty
-    peerInputIsActive = peerActivities.values.contains(where: \.isActive)
     enqueueStoreWrite(owner: .peerSession(peerID)) {
       try $0.resetInputActivity(deviceID: peerID)
       try $0.endSelectionPublication(deviceID: peerID, connectionID: generation)
@@ -1824,6 +1733,7 @@ final class NotebookAppModel {
 
 
   isolated deinit {
+    peerPublication.stop()
     if let documentSaveObserver { DocumentRenderRegistry.shared.removeLiveObserver(documentSaveObserver) }
     sync?.stop()
     if let accountConnection { Task { await accountConnection.stop() } }
@@ -2134,7 +2044,7 @@ final class NotebookAppModel {
   }
 
   func selectItem(_ itemID: UUID) {
-    if let request = documentOpeningRequest, request.documentID != itemID { cancelDocumentOpening() }
+    if let request = documentOpening?.request, request.documentID != itemID { cancelDocumentOpening() }
     guard !isItemBeingDeleted(itemID), var workspace else { return }
     if workspace.item(id: itemID) != nil {
       guard workspace.selectItem(itemID, actor: actorID) else { return }
@@ -2194,146 +2104,80 @@ final class NotebookAppModel {
         documentPaperSizes[documentID] = geometry; scheduleScenePreparation()
       }
     }
-    if let document = documents[documentID], documentStates[documentID] != nil {
-      prepareDocumentSourceOpening(document, boardID: boardID, pageIndex: pageIndex)
-      return nil
-    }
-    if documentOpeningRequest?.documentID != documentID || documentOpeningRequest?.boardID != boardID {
-      cancelDocumentOpening()
-      documentOpeningRequest = .init(documentID: documentID, boardID: boardID,
-        workspaceID: workspaceHeader.workspaceID)
-      observeNavigation("opening_body_requested", fields: ["documentID": .string(documentID.uuidString),
-        "openingID": .string(documentOpeningRequest!.id.uuidString)])
-    }
-    guard documentOpeningTask == nil, let request = documentOpeningRequest else { return documentOpeningTask }
-    // Register the first read in this accepted MainActor segment, before the
-    // caller starts animation or a later contact enqueues its own writes.
-    let firstRead = enqueueDocumentOpeningRead(request)
-    let task = Task { [weak self] in
-      guard let self else { return }
-      defer { documentOpeningTask = nil; readAdmission.end(firstRead.admission) }
-      var pendingRead: DocumentOpeningRead? = firstRead
-      while !isClosing, !Task.isCancelled {
-        let read: DocumentOpeningRead
-        if let accepted = pendingRead { read = accepted; pendingRead = nil }
-        else if let request = documentOpeningRequest { read = enqueueDocumentOpeningRead(request) }
-        else { return }
-        defer { readAdmission.end(read.admission) }
-        var result = read.result.makeAsyncIterator()
-        guard let completion = await result.next() else { return }
-        // Even an opening revoked before this task's first turn retains its
-        // one submitted read. A later intent cannot accumulate more FIFO reads
-        // while that accepted command is still blocked by an earlier write.
-        let request = read.request
-        let observation: [String: JSONValue] = ["documentID": .string(request.documentID.uuidString),
-          "openingID": .string(request.id.uuidString)]
-        do {
-          let opened = try completion.get()
-          observeNavigation("opening_body_read_end", fields: observation)
-          guard documentOpeningRequest?.id == request.id, !isClosing, !Task.isCancelled else { continue }
-          guard self.presence?.selectedItemID == request.documentID,
-            !isItemBeingDeleted(request.documentID), let opened,
-            opened.header.workspaceID == request.workspaceID,
-            self.workspaceHeader?.workspaceID == request.workspaceID else { cancelDocumentOpening(); return }
-          // Validate the addressed source and pending local admission. Unrelated
-          // metadata or another document's writes do not revoke this WAL cut.
-          await awaitPeerPublication(to: .init(kind: .document, id: request.documentID, boardID: request.boardID),
-            scope: opened.inputScope, opening: request.id)
+    if let current = documentOpening, current.outcome == nil,
+      current.request.documentID == documentID, current.request.boardID == boardID,
+      current.request.pageIndex == pageIndex { return current.task }
+    let predecessor = documentOpening?.task
+    documentOpening?.cancel(superseded: true)
+    let request = DocumentRenderSession.Opening.Request(documentID: documentID, boardID: boardID,
+      workspaceID: workspaceHeader.workspaceID, pageIndex: pageIndex)
+    let session = DocumentRenderRegistry.shared.session(documentID: documentID, resources: .shared)
+    let policy = DocumentRenderSession.Opening.Policy(
+      beginRead: { [weak self] in (self?.readAdmission.begin() ?? UUID(), self?.documentDraftEpoch ?? 0) },
+      endRead: { [weak self] in self?.readAdmission.end($0) },
+      fence: { [weak self] completed in
+        guard let self else { completed(.failure(CancellationError())); return }
+        persistence.enqueueCommand { _ in () } completion: { result in
+          Task { @MainActor in completed(result) }
+        }
+      }, read: { [reader = sceneReader, actor = actorID] request in
+        try await reader.read { store in
           try Task.checkCancellation()
-          guard documentOpeningRequest?.id == request.id else { continue }
-          let sourceIsCurrent = try await persistence.submit { [actor = actorID] store in
-            try opened.isCurrent(store: store, actor: actor)
-          }
-          guard !Task.isCancelled, !isClosing, documentOpeningRequest?.id == request.id,
-            self.presence?.selectedItemID == request.documentID, !isItemBeingDeleted(request.documentID), sourceIsCurrent,
-            peerAllowsPublication(to: .init(kind: .document, id: request.documentID, boardID: request.boardID), scope: opened.inputScope),
-            readAdmission.permits(read.admission, targets: opened.inputScope.publicationTargets) else { continue }
-          prepareDocumentSourceOpening(opened.document, boardID: request.boardID, pageIndex: pageIndex)
-          sceneInputScopes[.init(kind: .document, id: request.documentID)] = opened.inputScope
-          documents[request.documentID] = opened.document
-          pencilUndoHistory.restore(opened.history, for: .document(request.documentID))
-          pencilUndoHistory.restoreRedo(opened.redoHistory, for: .document(request.documentID))
-          documentStates[request.documentID] = opened.state
-          admitDocumentReading(opened.reading)
-          if read.draftEpoch == documentDraftEpoch {
-            documentEditingSessions.removeAll { $0.edit.documentID == request.documentID }
-            documentEditingSessions += opened.drafts
-          }
-          documentOpeningRequest = nil
-          observeNavigation("opening_body_published", fields: observation)
-          return
-        } catch {
-          guard documentOpeningRequest?.id == request.id, !isClosing, !Task.isCancelled else { continue }
-          documentOpeningRequest = nil
-          publicationFailure = error.localizedDescription
-          persistenceFailure = error.localizedDescription
-          return
+          return try NotebookSceneState.readOpenedDocument(store: store, documentID: request.documentID,
+            boardID: request.boardID, historyActor: actor)
         }
-      }
-    }
-    documentOpeningTask = task
-    return task
-  }
-
-  private func prepareDocumentSourceOpening(_ document: DocumentDocument, boardID: UUID, pageIndex: Int) {
-    #if os(iOS)
-      guard !(presence?.mode == .document && presence?.focusedItemID == document.id
-        && (presence?.openProgress ?? 0) > 0) else { return }
-      guard documentSourceOpening?.boardID != boardID || documentSourceOpening?.lease.matches(document) != true else { return }
-      documentSourceOpening?.lease.close()
-      let owner = DocumentPagePresentationOwner.shared(documentID: document.id, resources: .shared)
-      documentSourceOpening = (boardID, owner.prepareOpening(document: document, pageIndex: pageIndex, store: store))
-    #endif
-  }
-
-  private func enqueueDocumentOpeningRead(_ request: DocumentOpeningRequest) -> DocumentOpeningRead {
-    let (result, continuation) = AsyncStream<Result<NotebookSceneState.OpenedDocument?, Error>>
-      .makeStream(bufferingPolicy: .bufferingNewest(1))
-    let read = DocumentOpeningRead(request: request, admission: readAdmission.begin(),
-      draftEpoch: documentDraftEpoch, result: result)
-    observeNavigation("opening_body_read_begin", fields: ["documentID": .string(request.documentID.uuidString),
+      }, isCurrent: { [weak self] request in
+        guard let self else { return false }
+        return !isClosing && documentOpening?.request.id == request.id
+          && documentOpening?.outcome == nil && self.presence?.selectedItemID == request.documentID
+          && self.workspaceHeader?.workspaceID == request.workspaceID && !isItemBeingDeleted(request.documentID)
+      }, waitForPublication: { [weak self] opened, request in
+        guard let self else { throw CancellationError() }
+        try await peerPublication.wait(to: .init(kind: .document, id: request.documentID, boardID: request.boardID),
+          scope: opened.inputScope, opening: request.id)
+      }, accepts: { [weak self] opened, request, admission in
+        guard let self else { throw CancellationError() }
+        let current = try await persistence.submit { [actor = actorID] store in
+          try opened.isCurrent(store: store, actor: actor)
+        }
+        return current && !Task.isCancelled && !isClosing && documentOpening?.request.id == request.id
+          && self.presence?.selectedItemID == request.documentID && !isItemBeingDeleted(request.documentID)
+          && peerAllowsPublication(to: .init(kind: .document, id: request.documentID, boardID: request.boardID), scope: opened.inputScope)
+          && readAdmission.permits(admission, targets: opened.inputScope.publicationTargets)
+      }, publish: { [weak self] opened, request, draftEpoch in
+        guard let self else { return }
+        peerPublication.scopes[.init(kind: .document, id: request.documentID)] = opened.inputScope
+        documents[request.documentID] = opened.document
+        pencilUndoHistory.restore(opened.history, for: .document(request.documentID))
+        pencilUndoHistory.restoreRedo(opened.redoHistory, for: .document(request.documentID))
+        documentStates[request.documentID] = opened.state
+        admitDocumentReading(opened.reading)
+        if draftEpoch == documentDraftEpoch {
+          documentEditingSessions.removeAll { $0.edit.documentID == request.documentID }
+          documentEditingSessions += opened.drafts
+        }
+      }, failed: { [weak self] error in
+        self?.publicationFailure = error.localizedDescription
+        self?.persistenceFailure = error.localizedDescription
+      }, revoked: { [weak self] request in
+        guard let self else { return }
+        peerPublication.cancelOpening(request.id)
+        observeNavigation("opening_body_cancelled", fields: ["documentID": .string(request.documentID.uuidString),
+          "openingID": .string(request.id.uuidString)])
+      }, observe: { [weak self] event, request in
+        self?.observeNavigation(event, fields: ["documentID": .string(request.documentID.uuidString),
+          "openingID": .string(request.id.uuidString)])
+      })
+    observeNavigation("opening_body_requested", fields: ["documentID": .string(documentID.uuidString),
       "openingID": .string(request.id.uuidString)])
-    // Accept only a FIFO fence here. Decoding, draft/history materialization and
-    // cancellation belong to the WAL read owner, leaving writes free to proceed.
-    persistence.enqueueCommand { _ in () } completion: { [weak self] fence in
-      Task { @MainActor [weak self] in
-        guard let self else { continuation.finish(); return }
-        documentOpeningReadTask = Task { [weak self, reader = sceneReader, actor = actorID] in
-          do {
-            try fence.get()
-            try Task.checkCancellation()
-            guard self?.documentOpeningRequest?.id == request.id else { throw CancellationError() }
-            let opened = try await reader.read { store in
-              try Task.checkCancellation()
-              return try NotebookSceneState.readOpenedDocument(store: store, documentID: request.documentID,
-                boardID: request.boardID, historyActor: actor)
-            }
-            try Task.checkCancellation()
-            continuation.yield(.success(opened))
-          } catch { continuation.yield(.failure(error)) }
-          continuation.finish()
-        }
-      }
-    }
-    return read
+    let accepted = documentStates[documentID] == nil ? nil : documents[documentID]
+    let opening = DocumentRenderSession.Opening(session: session, store: store, request: request, policy: policy,
+      accepted: accepted, predecessor: predecessor)
+    documentOpening = opening
+    return opening.task
   }
 
-  /// The accepted FIFO fence drains; revocation cancels the reader's work and
-  /// prevents publication into a closed or subsequently opened item.
-  func cancelDocumentOpening() {
-    #if os(iOS)
-      documentSourceOpening?.lease.close(); documentSourceOpening = nil
-    #endif
-    documentOpeningReadTask?.cancel()
-    if let request = documentOpeningRequest {
-      for (id, waiter) in peerPublicationWaiters where waiter.opening == request.id {
-        peerPublicationWaiters[id] = nil; waiter.continuation.resume()
-      }
-      observeNavigation("opening_body_cancelled", fields: ["documentID": .string(request.documentID.uuidString),
-        "openingID": .string(request.id.uuidString)])
-    }
-    documentOpeningRequest = nil
-  }
+  func cancelDocumentOpening() { documentOpening?.cancel() }
 
   private func alignWorkspaceSelection() {
     guard var workspace, let presence, let id = presence.selectedItemID else { return }
@@ -2614,17 +2458,12 @@ final class NotebookAppModel {
       ?? (selectionItem == self.presence?.selectedItemID ? self.presence?.notebookPageID : nil)
       ?? selectionItem.flatMap { workspace?.item(id: $0)?.pageIDs.first }
     let presence = presence.selecting(itemID: selectionItem, pageID: selectedPage)
-    #if os(iOS)
-      if let opening = documentSourceOpening,
-        presence.selectedItemID != opening.lease.documentID
-          || (settled && (presence.boardID != opening.boardID || presence.focusedItemID != opening.lease.documentID || presence.openProgress <= 0)) {
-        opening.lease.close(); documentSourceOpening = nil
-      }
-    #endif
-    if let request = documentOpeningRequest,
-      presence.selectedItemID != request.documentID
+    if let opening = documentOpening, opening.outcome == nil {
+      let request = opening.request
+      if presence.selectedItemID != request.documentID
         || (settled && (presence.boardID != request.boardID || presence.focusedItemID != request.documentID || presence.openProgress <= 0)) {
-      cancelDocumentOpening()
+        cancelDocumentOpening()
+      }
     }
     if settled {
       resolved = settledPresence(from: presence, viewport: presence.viewport)
@@ -5066,12 +4905,9 @@ final class NotebookAppModel {
       }
       let deadline = ContinuousClock.now.advanced(by: .seconds(4))
       while true {
-        if command.command == .apply || command.command == .commitAction || command.command == .undo {
-          while (inputIsActive || peerInputIsActive), ContinuousClock.now < deadline {
-            guard !isClosing else { throw CollaborationError("owner_unavailable", "Notebook завершает работу.") }
-            try await Task.sleep(for: .milliseconds(20))
-          }
-        }
+        // Core admits the actual affected carriers in the writer transaction.
+        // An unrelated contact never delays the first attempt; only a rejected
+        // affected surface waits outside the FIFO so its release can commit.
         do {
           guard !isClosing else { throw CollaborationError("owner_unavailable", "Notebook завершает работу.") }
           let result = try await persistence.submit(owner: .command(command.command)) {
@@ -5155,15 +4991,8 @@ final class NotebookAppModel {
       #endif
     case .inputActivity(let activity):
       guard activity.isValid, activity.deviceID == peerID else { return }
-      // Stop optional preparation before the disk acknowledges the peer contact.
-      if let previous = peerActivities[activity.deviceID], previous.sessionID == activity.sessionID,
-        previous.sequence >= activity.sequence { return }
-      peerActivities[activity.deviceID] = activity
-      resolvePeerInputScopes(activity)
-      peerInputIsActive = peerActivities.values.contains { $0.deviceID != actorID && $0.isActive }
-      #if os(macOS)
-      if peerInputIsActive { previewPublisher?.suspendForInput() }
-      #endif
+      // Admission precedes the durable contact record in the same writer order.
+      guard peerPublication.receive(activity) else { return }
       enqueueStoreWrite(owner: .inputActivity(activity.deviceID)) { try $0.saveInputActivity(activity) }
     case .presence(let envelope):
       #if os(macOS)
@@ -5762,8 +5591,8 @@ final class NotebookAppModel {
       notebookPageNavigation.send(.cancel, ownerID: item, source: root)
     }
     navigationGeneration &+= 1
+    peerPublication.navigationChanged(to: navigationGeneration)
     for waiter in navigationInputWaiters.values { waiter.cancel() }
-    resumePeerPublicationWaiters()
     requestedReference = nil
     requestedReturn = nil
     documentPageSelection = nil; documentPageNavigationStatus = nil
@@ -6360,8 +6189,7 @@ final class NotebookAppModel {
       } else { scheduleScenePreparation(coverageOnly: coverageOnly) }
     }
     retainPreparedGraphicMasks(in:state)
-    sceneInputScopes = Dictionary(uniqueKeysWithValues: state.inputScopes.map { (.init(kind: $0.target.kind, id: $0.target.id), $0) })
-    resumePeerPublicationWaiters()
+    peerPublication.scopes = Dictionary(uniqueKeysWithValues: state.inputScopes.map { (.init(kind: $0.target.kind, id: $0.target.id), $0) })
     let changesWorkspace = workspaceHeader?.workspaceID != state.header.workspaceID
     if changesWorkspace || state.header.cursor >= (workspaceHeader?.cursor ?? 0) {
       workspaceHeader = state.header
@@ -6529,10 +6357,7 @@ final class NotebookAppModel {
     AgentWebCoordinator.retryRetirements(ownedBy: self)
     DocumentRenderRegistry.shared.retryRetiringPrograms()
     persistence.retry()
-    for id in Array(failedPeerInputScopes) {
-      if let activity = peerActivities[id] { resolvePeerInputScopes(activity) }
-      else { failedPeerInputScopes.remove(id) }
-    }
+    peerPublication.retry()
     requestActionArrivalDrain()
     if publicationFailure != nil { reloadExternalChanges() }
   }
@@ -6624,14 +6449,14 @@ final class NotebookAppModel {
         guard !Task.isCancelled, continuing() else { return false }
         if let task = headerRefreshTask { observeNavigation("wait_header_refresh_begin", fields: trace); await task.value; observeNavigation("wait_header_refresh_end", fields: trace) }
         guard !Task.isCancelled, continuing() else { return false }
-        if let task = documentOpeningTask { await task.value }
+        if let task = documentOpening?.task { await task.value }
         guard !Task.isCancelled, continuing() else { return false }
       }
       observeNavigation("writer_flush_begin", fields: trace)
       guard await persistence.flush() else { return false }
       observeNavigation("writer_flush_end", fields: trace)
       guard !Task.isCancelled, continuing() else { return false }
-    } while boundary == .quiescent && (arrivalDrainTask != nil || diskRefreshTask != nil || headerRefreshTask != nil || documentOpeningTask != nil || persistence.pendingCount > 0
+    } while boundary == .quiescent && (arrivalDrainTask != nil || diskRefreshTask != nil || headerRefreshTask != nil || documentOpening?.task != nil || persistence.pendingCount > 0
       || !pendingCollaborationCommands.isEmpty || contextPublicationTask != nil || surfaceHistoryTask != nil)
     return publicationFailure == nil && arrivalFailure == nil
   }
@@ -6681,20 +6506,20 @@ final class NotebookAppModel {
       if let documentSaveObserver { DocumentRenderRegistry.shared.removeLiveObserver(documentSaveObserver) }
       documentSaveObserver = nil
       #if os(iOS)
-        documentSourceOpening?.lease.close(); documentSourceOpening = nil
         openDocumentPresentation?.close(); openDocumentPresentation = nil
         returnDocumentPresentation?.close(); returnDocumentPresentation = nil
       #endif
       shutdownPhase = .draining
+      peerPublication.stop()
       inputGate.onActivityChange = nil
       inputGate.onNewAcceptedContact = nil
       itemOwnerObserver = nil
-      let readers = [scenePreparationTask, sceneWindowTask, diskRefreshTask, arrivalDrainTask, headerRefreshTask, documentOpeningTask]
+      let readers = [scenePreparationTask, sceneWindowTask, diskRefreshTask, arrivalDrainTask, headerRefreshTask, documentOpening?.task]
         .compactMap { $0 } + Array(pagePreparationTasks.values)
       for task in readers { task.cancel() }
       for task in readers { await task.value }
       scenePreparationTask = nil; sceneWindowTask = nil; diskRefreshTask = nil; arrivalDrainTask = nil; headerRefreshTask = nil
-      documentOpeningTask = nil
+      documentOpening = nil
       pagePreparationTasks = [:]
       collaborationReadTask?.cancel()
       if let task = collaborationReadTask { _ = await task.result }

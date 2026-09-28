@@ -27,7 +27,10 @@ final class DocumentProgramSourceTests: XCTestCase {
     defer { session.finish(); window.orderOut(nil); window.close() }
     func textView(_ parent: NSView) -> NSTextView? {
       if let text = parent as? NSTextView { return text }
-      return parent.subviews.lazy.compactMap(textView).first
+      for child in parent.subviews {
+        if let found = textView(child) { return found }
+      }
+      return nil
     }
     let deadline = ContinuousClock.now + .seconds(5)
     while textView(view)?.string != code, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(10)) }

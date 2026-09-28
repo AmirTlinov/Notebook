@@ -59,7 +59,10 @@ final class DocumentSaveTransitionTests: XCTestCase {
     func paper() -> WKWebView? {
       func find(_ view: UIView) -> WKWebView? {
         if let web = view as? WKWebView, host.ownsSurface(web) { return web }
-        return view.subviews.lazy.compactMap(find).first
+        for child in view.subviews {
+          if let found = find(child) { return found }
+        }
+        return nil
       }
       return find(host)
     }

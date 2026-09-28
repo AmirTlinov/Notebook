@@ -37,16 +37,25 @@ import QuartzCore
   @ObservationIgnored private var installedHostGenerations:[String:UUID]=[:]
   @ObservationIgnored private var installedDisplayGenerations:[String:UUID]=[:]
   #endif
-  @ObservationIgnored private var desired:[NotebookWorkingGraphic]=[]
-  @ObservationIgnored private var desiredEdits:[NotebookGraphicSelection.Edit]=[]
-  private(set) var presentedEdits:[NotebookGraphicSelection.Edit]?
-  private(set) var presentedFrame:CGRect?
-  @ObservationIgnored private var desiredFrame:CGRect?
-  private var shown:[NotebookWorkingGraphic]?
-  var working:[NotebookWorkingGraphic] {
-    (shown ?? originalWorking).map {value in var value=value;value.inkPresentation=self;return value}
+  /// Geometry, authored poses and controls are one cut. A newer contact pose
+  /// replaces demand; only the native installation publishes its whole result.
+  private struct Cut:Equatable {
+    let working:[NotebookWorkingGraphic]
+    let edits:[NotebookGraphicSelection.Edit]
+    let frame:CGRect
   }
-  private(set) var installed=false
+  @ObservationIgnored private var desired:Cut?
+  private var presented:Cut?
+  private var originalCut:Cut {
+    .init(working:originalWorking,edits:NotebookGraphicSelection.translated(source.members,by:.zero),
+      frame:NotebookGraphicSelection.bounds(source.members,relativeTo:source.members.first?.origin ?? .zero))
+  }
+  var presentedEdits:[NotebookGraphicSelection.Edit]? {presented?.edits}
+  var presentedFrame:CGRect? {presented?.frame}
+  var working:[NotebookWorkingGraphic] {
+    (presented?.working ?? originalWorking).map {value in var value=value;value.inkPresentation=self;return value}
+  }
+  var installed:Bool {presented != nil}
   private(set) var retiring=false
   @ObservationIgnored private var disposed=false
   var ownsAuthoredHosts:Bool { !disposed }
@@ -66,10 +75,10 @@ import QuartzCore
   }
   // Cancellation ends the contact, not its installed picture. Authored peers
   // and controls leave this pose only with the raw restoration's frame receipt.
-  var holdsPresentation:Bool {!disposed && (retiring || shown != desired || needsCanonicalSource || (canvas == nil && installed))}
+  var holdsPresentation:Bool {!disposed && (retiring || presented != desired || needsCanonicalSource || (canvas == nil && installed))}
   func update(_ values:[NotebookWorkingGraphic],edits:[NotebookGraphicSelection.Edit],frame:CGRect) {
     guard !disposed,!retiring else {return}
-    desired=values;desiredEdits=edits;desiredFrame=frame
+    desired=Cut(working:values,edits:edits,frame:frame)
     // Selection is read-only until the actual desired pose differs. The raw
     // stream keeps its exact original alpha grouping until that first edit.
     guard values != originalWorking || edits != NotebookGraphicSelection.translated(source.members,by:.zero) || installed else {return}
@@ -90,10 +99,13 @@ import QuartzCore
         installWaiter=continuation
         installTimeout=Task { [weak self] in
           do {try await Task.sleep(for:.seconds(2))} catch {return}
-          self?.completeInstallWaiter(CollaborationError("material_unavailable","Не удалось показать всё выделение."))
+          // A required host may never mount (for example after admission
+          // failure), so no unregister event can terminate this wait. Expiry
+          // rejects the whole preparation, not only its writer continuation.
+          self?.fail(CollaborationError("material_unavailable","Не удалось показать всё выделение."))
         }
       }
-    } onCancel: {Task { @MainActor [weak self] in self?.completeInstallWaiter(CancellationError()) }}
+    } onCancel: {Task { @MainActor [weak self] in self?.fail(CancellationError()) }}
   }
   private func completeInstallWaiter(_ failure:Error? = nil) {
     installTimeout?.cancel();installTimeout=nil
@@ -156,23 +168,23 @@ import QuartzCore
   #endif
 
   private func prepareIfPossible() {
-    guard !disposed,!retiring,preparation == nil,let desiredFrame else {return}
+    guard !disposed,!retiring,!preparationFailed,preparation == nil,let cut=desired else {return}
     #if os(iOS)
     guard let hosts=model?.selectedGraphicHosts.hosts(source,requiredIDs:requiredAuthoredHostIDs,ownerID:id),
       let textHosts=model?.selectedGraphicHosts.textHosts(source,requiredIDs:requiredTextHostIDs) else {return}
     let hostGenerations=hosts.mapValues(\.generation)
     let displayGenerations=hosts.mapValues(\.displayGeneration)
     #endif
-    let generation=generation,values=desired,edits=desiredEdits,frameRect=desiredFrame
-    if installed,shown == values,presentedEdits == edits {
+    let generation=generation,values=cut.working,edits=cut.edits
+    if installed,presented?.working == values,presented?.edits == edits {
       #if os(iOS)
-      guard presentedFrame != frameRect || installedHostGenerations != hostGenerations
+      guard presentedFrame != cut.frame || installedHostGenerations != hostGenerations
         || installedDisplayGenerations != displayGenerations else {return}
       guard let poses=authoredPoses(edits,hosts:hosts) else {return}
       CATransaction.begin();CATransaction.setDisableActions(true)
       for (host,pose) in poses {if let pose {host.install(pose)} else {host.hide()}}
       if deleting {for host in textHosts {host.hide()}}
-      presentedFrame=frameRect;installedHostGenerations=hostGenerations
+      presented=cut;installedHostGenerations=hostGenerations
       installedDisplayGenerations=displayGenerations
       if let model {model.selectedGraphicHosts.installControls(model:model,selectionID:source.selectionID)}
       CATransaction.commit()
@@ -187,7 +199,7 @@ import QuartzCore
       CATransaction.begin();CATransaction.setDisableActions(true)
       for (host,pose) in poses {if let pose {host.install(pose)} else {host.hide()}}
       if deleting {for host in textHosts {host.hide()}}
-      shown=values;presentedEdits=edits;presentedFrame=frameRect;installed=true
+      presented=cut
       installedHostGenerations=hostGenerations;installedDisplayGenerations=displayGenerations
       if deleting {model?.publishSelectionDrafts(source:source,edits:edits,deleting:true)}
       model?.selectedInkPresentationInstalled(self)
@@ -232,45 +244,65 @@ import QuartzCore
           Set(currentTextHosts.map(ObjectIdentifier.init)) == Set(textHosts.map(ObjectIdentifier.init)) else {
           preparation=nil;prepareIfPossible();return
         }
-        guard let poses=authoredPoses(edits,hosts:hosts) else {throw CancellationError()}
+        var nativeCut:NativeCut?
         #endif
         try await canvas.presentOrderedPlan(geometry,plan:plan,replacing:ids,validate:{ [weak self] in
           guard let self,self.generation == generation,!disposed,!retiring,
             claimed || model?.selectionEditSourceIsCurrent(source) == true else {return false}
           #if os(iOS)
-          guard model?.selectedGraphicHosts.hosts(source,requiredIDs:requiredAuthoredHostIDs,ownerID:id)?.mapValues(\.generation) == hostGenerations,
-            let currentText=model?.selectedGraphicHosts.textHosts(source,requiredIDs:requiredTextHostIDs),
-            Set(currentText.map(ObjectIdentifier.init)) == Set(textHosts.map(ObjectIdentifier.init)) else {return false}
+          nativeCut=prepareNativeCut(edits,hostGenerations:hostGenerations,textHosts:textHosts)
+          guard nativeCut != nil else {return false}
           #endif
           return true
         }) { [weak self] in
           guard let self else {return}
-          shown=values;presentedEdits=edits;presentedFrame=frameRect
+          presented=cut
           #if os(iOS)
-          installedHostGenerations=hostGenerations
-          installedDisplayGenerations=hosts.mapValues(\.displayGeneration)
+          // validate and install run synchronously in the canvas transaction.
+          // These poses therefore use the host geometry of this exact cut,
+          // rather than geometry captured before waiting for a drawable slot.
+          guard let nativeCut else {preconditionFailure("Installing an unvalidated selection cut")}
+          installedHostGenerations=nativeCut.hostGenerations
+          installedDisplayGenerations=nativeCut.displayGenerations
           #endif
-          restoration?.installed();installed=true
+          restoration?.installed()
           if deleting {model?.publishSelectionDrafts(source:source,edits:edits,deleting:true)}
           model?.selectedInkPresentationInstalled(self)
           #if os(iOS)
-          for (host,pose) in poses {if let pose {host.install(pose)} else {host.hide()}}
-          if deleting {for host in textHosts {host.hide()}}
+          for (host,pose) in nativeCut.poses {if let pose {host.install(pose)} else {host.hide()}}
+          if deleting {for host in nativeCut.textHosts {host.hide()}}
           if let model {model.selectedGraphicHosts.installControls(model:model,selectionID:source.selectionID)}
-          completeInstallWaiter()
           #endif
+          completeInstallWaiter()
         }
         preparation=nil
-        if accepted && shown == desired {releasePhysicalLease()}
-        if desired != values || desiredEdits != edits {prepareIfPossible()}
+        if accepted && presented == desired {releasePhysicalLease()}
+        if desired != cut {prepareIfPossible()}
       } catch {
         guard self.generation == generation else {return}
-        preparation=nil;fail()
+        preparation=nil;fail(error)
       }
     }
   }
 
   #if os(iOS)
+  private struct NativeCut {
+    let poses:[(NotebookSelectedGraphicHostController,CGAffineTransform?)]
+    let textHosts:[NotebookSelectedTextHostController]
+    let hostGenerations:[String:UUID]
+    let displayGenerations:[String:UUID]
+  }
+  private func prepareNativeCut(_ edits:[NotebookGraphicSelection.Edit],hostGenerations:[String:UUID],
+    textHosts:[NotebookSelectedTextHostController])->NativeCut? {
+    guard let hosts=model?.selectedGraphicHosts.hosts(source,requiredIDs:requiredAuthoredHostIDs,ownerID:id),
+      hosts.mapValues(\.generation) == hostGenerations,
+      let currentText=model?.selectedGraphicHosts.textHosts(source,requiredIDs:requiredTextHostIDs),
+      Set(currentText.map(ObjectIdentifier.init)) == Set(textHosts.map(ObjectIdentifier.init)),
+      let poses=authoredPoses(edits,hosts:hosts) else {return nil}
+    return .init(poses:poses,textHosts:currentText,hostGenerations:hostGenerations,
+      displayGenerations:hosts.mapValues(\.displayGeneration))
+  }
+
   private func authoredPoses(_ edits:[NotebookGraphicSelection.Edit],
     hosts:[String:NotebookSelectedGraphicHostController]) -> [(NotebookSelectedGraphicHostController,CGAffineTransform?)]? {
     let byID=Dictionary(uniqueKeysWithValues:edits.map { ($0.id,$0) })
@@ -305,11 +337,15 @@ import QuartzCore
     if installed || preparationFailed { releasePhysicalLease() }
     authoredHostUnmounted()
   }
-  func authoredHostUnmounted() {
+  func authoredHostUnmounted(_ memberID:String? = nil) {
     #if os(iOS)
-    if deleting,!installed,!disposed {
-      preparationFailed=true
-      completeInstallWaiter(CancellationError())
+    // A required physical host disappearing ends the unaccepted cut. Its
+    // subsequent replacement must not install a command whose waiter failed.
+    let requiredHostLost=memberID.map {
+      requiredAuthoredHostIDs.contains($0) || requiredTextHostIDs.contains($0)
+    } ?? false
+    if !disposed,(!accepted && requiredHostLost) || (deleting && !installed) {
+      fail(CancellationError())
       return
     }
     if accepted,deleting,canvas != nil,!requiredTextHostIDs.isEmpty,let model,
@@ -383,7 +419,7 @@ import QuartzCore
         let poses=authoredPoses(original,hosts:hosts) {
         CATransaction.begin();CATransaction.setDisableActions(true)
         for (host,pose) in poses {if let pose {host.install(pose)} else {host.hide()}}
-        presentedEdits=original
+        presented=originalCut
         if let model {model.selectedGraphicHosts.installControls(model:model,selectionID:source.selectionID)}
         CATransaction.commit()
       }
@@ -401,28 +437,28 @@ import QuartzCore
         let poses=authoredPoses(original,hosts:hosts) {
         for (host,pose) in poses {if let pose {host.install(pose)} else {host.hide()}}
       }
-      presentedEdits=original
+      presented=originalCut
       if let model {model.selectedGraphicHosts.installControls(model:model,selectionID:source.selectionID)}
       #endif
       finishRetirement()
     },abandon:{ [weak self] in self?.finishRetirement() })
   }
-  private func fail() {
-    guard !disposed else { return }
+  private func fail(_ error:Error) {
+    guard !disposed,!preparationFailed else { return }
+    preparationFailed=true
     generation=UUID();preparation?.cancel();preparation=nil
-    completeInstallWaiter(CancellationError())
+    completeInstallWaiter(error)
     if claimed {
       // Enqueued is not installed. Keep the last complete picture/controls
       // through the writer outcome, then let the existing canonical source
       // prepare and retire this owner only on its exact native receipt.
-      preparationFailed=true
       if accepted {releasePhysicalLease()}
       model?.selectedInkPresentationNeedsCanonical(self)
     } else {
       model?.cancelElementManipulation(id)
       if !disposed && !retiring { cancel() }
     }
-    model?.showCue("Не удалось подготовить всё выделение. Повторите действие.")
+    if !(error is CancellationError) {model?.showCue("Не удалось подготовить всё выделение. Повторите действие.")}
   }
   private func finishRetirement() {
     guard !disposed else { return }

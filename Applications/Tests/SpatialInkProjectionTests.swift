@@ -319,10 +319,12 @@ final class SpatialInkProjectionTests: XCTestCase {
     var finished = false
     owner.start(from: start, to: target, duration: 0.3, bounce: 0.025) { value, settled in
       shown = value; samples += 1; XCTAssertFalse(settled)
-    } completion: { finished = true }
+    } completion: { finished = $0 == .completed }
     try await Task.sleep(for: .milliseconds(60))
     owner.cancel()
     let interrupted = shown, count = samples
+    XCTAssertEqual(owner.current, interrupted)
+    XCTAssertNil(owner.operationID)
     XCTAssertGreaterThan(count, 1)
     XCTAssertNotEqual(interrupted, target)
     try await Task.sleep(for: .milliseconds(80))
@@ -353,10 +355,10 @@ final class SpatialInkProjectionTests: XCTestCase {
     let owner = SceneCameraSettlement()
     var publications = 0, completions = 0
     let accepted = owner.start(from: start, to: invalid, duration: 0.3, bounce: 0.08) { _, _ in publications += 1 }
-      completion: { completions += 1 }
+      completion: { outcome in XCTAssertEqual(outcome, .failed); completions += 1 }
     XCTAssertFalse(accepted)
     XCTAssertEqual(publications, 0)
-    XCTAssertEqual(completions, 0)
+    XCTAssertEqual(completions, 1)
   }
 
 }

@@ -189,7 +189,10 @@ final class DocumentProgramOwnerTests: XCTestCase {
       defer { fixture.close() }
       func program(_ view: UIView) -> WKWebView? {
         if let web = view as? WKWebView, web.accessibilityIdentifier == "document-program-sound" { return web }
-        return view.subviews.lazy.compactMap(program).first
+        for child in view.subviews {
+          if let found = program(child) { return found }
+        }
+        return nil
       }
       var phases: [String: Double] = [:]
       let deadline = ContinuousClock.now + .seconds(15)
@@ -698,6 +701,47 @@ final class DocumentProgramOwnerTests: XCTestCase {
     XCTAssertLessThanOrEqual(resources.rasterCount, 1)
   }
 
+  func testColdLetterPaperWaitsForItsNativeGeometryWithoutBlockingPreparedMaterial() async throws {
+    let document = DocumentTestFiles.document(contents: [.tex(id: "body",
+      source: "Cold Letter paper keeps the source and installed geometry in the same version.")],
+      width: 612, height: 792)
+    let fixture = try ProgramFixture(document: document, showsNeighbour: false)
+    defer { fixture.close() }
+    let host = fixture.hosts[0]
+    let placeholder = host.bounds.size
+    XCTAssertEqual(placeholder.height / placeholder.width,
+      WorkspaceItemGeometry.uncompiledDocument.height / WorkspaceItemGeometry.uncompiledDocument.width,
+      accuracy: 0.00001)
+    // Deliberately retain the old scene rectangle after the real compiler and
+    // native paper finish. A source receipt is not a geometry installation.
+    try await wait(message: { fixture.diagnostics }) { fixture.canonicalPaper(in: 0) }
+    await DocumentPagePresentationOwner.shared(documentID: document.id, resources: fixture.resources)
+      .observePendingPresentationWork()
+    let web = try XCTUnwrap(fixture.paper(in: 0))
+    let renderer = try XCTUnwrap(web.navigationDelegate as? DocumentWebCoordinator)
+    let source = try XCTUnwrap(renderer.payload?.source)
+    let paper = try XCTUnwrap(source.layout).paper(on: 0)
+    XCTAssertEqual(paper.widthPoints, 612, accuracy: 0.001)
+    XCTAssertEqual(paper.heightPoints, 792, accuracy: 0.001)
+    XCTAssertFalse(host.hasCanonicalPaperProjection)
+    XCTAssertFalse(fixture.ready[0] == true)
+    XCTAssertFalse(fixture.presents(.paper))
+    XCTAssertFalse(renderer.nativeInputIsReady(in: host))
+    let prepared = try await fixture.turnFrame(in: 0, priority: .input)
+    XCTAssertGreaterThan(prepared.logicalSize.width, 0,
+      "The prepared canonical cut does not require the scene to have installed its new rectangle")
+    host.frame.size.height = host.bounds.width * paper.surfaceHeight / paper.surfaceWidth
+    host.setNeedsLayout(); host.layoutIfNeeded()
+    try await wait(message: { fixture.diagnostics }) {
+      host.hasCanonicalPaperProjection && fixture.ready[0] == true && fixture.presents(.paper)
+        && renderer.nativeInputIsReady(in: host)
+    }
+    XCTAssertTrue(fixture.paper(in: 0) === web, "Geometry installation preserves the accepted native runtime")
+    XCTAssertTrue(renderer.payload?.source === source)
+    XCTAssertEqual(source.measurementCount, 1)
+    XCTAssertEqual(source.compiledPageCount, 1)
+  }
+
   func testAcceptedOpeningPreparesTheSameSourceBeforeAnyNativeHostExists() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
@@ -718,7 +762,7 @@ final class DocumentProgramOwnerTests: XCTestCase {
     let renderer = try XCTUnwrap(fixture.paper(in: 0)?.navigationDelegate as? DocumentWebCoordinator)
     XCTAssertTrue(renderer.payload?.source === source, "Mounting borrows the accepted source instead of starting another preparation")
     XCTAssertEqual(source.measurementCount, 1)
-    XCTAssertTrue(opening.hasTransferred, "The exact native source demand ends the temporary opening reader")
+    XCTAssertEqual(opening.outcome, .completed, "The exact native source demand ends the temporary opening reader")
     opening.close()
     XCTAssertTrue(fixture.canonicalPaper(in: 0), "Handing off the opening lease preserves the mounted source")
     XCTAssertTrue(fixture.hosts[0].isUserInteractionEnabled)
@@ -1042,6 +1086,8 @@ final class DocumentProgramOwnerTests: XCTestCase {
     fixture.setInteractive(true)
     XCTAssertTrue(coordinator.acceptsInput)
     XCTAssertTrue(coordinator.nativeInputIsReady(in: fixture.hosts[0]))
+    XCTAssertNotNil(recorder.records.last?.installedAt,
+      "The input owner's event records installation before any polling task can run")
     XCTAssertFalse(try XCTUnwrap(web.superview).accessibilityElementsHidden)
     try await fixture.assertPaperReceivesNativeHit(web)
     _ = try await web.evaluateJavaScript("document.querySelector('a').click(); true")
@@ -2145,7 +2191,10 @@ final class ProgramFixture {
   var retainedPaper: DocumentPaperRaster? {
     func paper(_ view: UIView) -> DocumentPaperRaster? {
       if let value = view as? DocumentPaperView { return value.raster }
-      return view.subviews.lazy.compactMap(paper).first
+      for child in view.subviews {
+        if let found = paper(child) { return found }
+      }
+      return nil
     }
     return paper(hosts[selected])
   }

@@ -76,7 +76,7 @@ final class NotebookPresentationTests: XCTestCase {
       return clock.start(from: presence, to: presence.replacingCamera(camera), duration: duration, bounce: 0) { sample, _ in
         XCTAssertEqual(sample.mode, .page); XCTAssertEqual(sample.notebookPageID, page)
         presence = sample
-      } completion: {}
+      } completion: { _ in }
     }
     player.stopCamera = { clock.cancel() }
     player.reply = { receipt, _ in receipts.append(receipt) }
@@ -139,7 +139,13 @@ final class NotebookPresentationTests: XCTestCase {
     player.receive(.play(request, expiresAt: Date().addingTimeInterval(5)), peer: peer)
     for _ in 0..<150 where receipts.last?.status != .playing { try await Task.sleep(for: .milliseconds(20)) }
     XCTAssertEqual(receipts.last?.status, .playing, String(describing: receipts.last))
-    func web(in view: UIView) -> WKWebView? { (view as? WKWebView) ?? view.subviews.lazy.compactMap { web(in: $0) }.first }
+    func web(in view: UIView) -> WKWebView? {
+      if let found = view as? WKWebView { return found }
+      for child in view.subviews {
+        if let found = web(in: child) { return found }
+      }
+      return nil
+    }
     let rendered = try XCTUnwrap(web(in: host.view))
     XCTAssertFalse(rendered.isUserInteractionEnabled)
     XCTAssertFalse(rendered.configuration.defaultWebpagePreferences.allowsContentJavaScript)

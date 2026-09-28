@@ -519,7 +519,7 @@ final class PageTurnSelectionTests: XCTestCase {
   }
 
   @MainActor
-  func testReorderedSequenceRevokesPreparedHostsAndRejectsTheirLateLanding() throws {
+  func testReplacedPageUUIDsRetireOldHostsAndRejectTheirLateLanding() throws {
     let controller = IPadPageTurnController(), owner = UUID()
     var readiness: [String: [Int: PageTurnReadiness]] = [:]
     var commits: [(Int, String)] = []
@@ -538,23 +538,22 @@ final class PageTurnSelectionTests: XCTestCase {
     let oldSource = try XCTUnwrap(controller.sheetController.page)
     let oldTarget = try XCTUnwrap(controller.sheetController(controller.sheetController, after: oldSource))
     let oldReady = try XCTUnwrap(readiness["before"]?[1])
-    controller.sheetController(controller.sheetController, willTurnTo: oldTarget)
+    let oldOperation = try PageTurnFrameFixture.begin(on: controller, target: oldTarget)
     configure("after")
     let current = try XCTUnwrap(controller.sheetController.page)
     XCTAssertFalse(current === oldSource)
     XCTAssertNil(oldTarget.parent, "A discarded sequence retains no mounted content")
     oldReady(true)
     XCTAssertNil(controller.sheetController(controller.sheetController, after: current))
-    controller.sheetController(controller.sheetController, didTurnFrom: oldSource, completed: true)
+    PageTurnFrameFixture.finish(on: controller, operation: oldOperation, completed: true)
     XCTAssertTrue(commits.isEmpty, "A late curl cannot reinterpret its slot in the replacement order")
     XCTAssertEqual(controller.displayedIndex, 0)
     try XCTUnwrap(readiness["after"]?[1])(true)
     XCTAssertNil(controller.sheetController(controller.sheetController, after: oldSource))
     XCTAssertNil(controller.sheetController(controller.sheetController, before: oldTarget))
     let target = try XCTUnwrap(controller.sheetController(controller.sheetController, after: current))
-    controller.sheetController(controller.sheetController, willTurnTo: target)
-    controller.sheetController.show(target, direction: .forward, animated: false)
-    controller.sheetController(controller.sheetController, didTurnFrom: current, completed: true)
+    let operation = try PageTurnFrameFixture.begin(on: controller, target: target)
+    PageTurnFrameFixture.finish(on: controller, operation: operation, completed: true)
     XCTAssertEqual(commits.map(\.0), [1])
     XCTAssertEqual(commits.map(\.1), ["after"])
     XCTAssertLessThanOrEqual(controller.cachedPageIdentities.count, 4)
@@ -666,7 +665,7 @@ final class PageTurnSelectionTests: XCTestCase {
     let source = try XCTUnwrap(controller.sheetController.page)
     let landing = try XCTUnwrap(controller.sheetController(controller.sheetController, after: source))
     let preparedChild = landing.view
-    controller.sheetController(controller.sheetController, willTurnTo: landing)
+    let operation = try PageTurnFrameFixture.begin(on: controller, target: landing)
     let frozenWindow = controller.cachedPageIdentities
     for target in [12, 17, 9] {
       XCTAssertTrue(commands.send(.jump(target), ownerID: owner, source: "fixture-order"))
@@ -675,8 +674,7 @@ final class PageTurnSelectionTests: XCTestCase {
       XCTAssertFalse(rendered.contains(target))
       XCTAssertFalse(source.view.isUserInteractionEnabled)
     }
-    controller.sheetController.show(landing, direction: .forward, animated: false)
-    controller.sheetController(controller.sheetController, didTurnFrom: source, completed: true)
+    PageTurnFrameFixture.finish(on: controller, operation: operation, completed: true)
     XCTAssertEqual(controller.displayedIndex, 5)
     XCTAssertTrue(landing.view === preparedChild, "The hand lands on its original prepared child")
     XCTAssertEqual(commits, [5], "The native landing still owns its normal selection publication")
@@ -715,14 +713,14 @@ final class PageTurnSelectionTests: XCTestCase {
     let sourceChild = source.view
     let landing = try XCTUnwrap(controller.sheetController(controller.sheetController, after: source))
     let landingChild = landing.view
-    controller.sheetController(controller.sheetController, willTurnTo: landing)
+    let operation = try PageTurnFrameFixture.begin(on: controller, target: landing)
     let frozenWindow = controller.cachedPageIdentities
     for target in [7, 12, 0] {
       XCTAssertTrue(commands.send(.jump(target), ownerID: owner, source: "fixture-order"))
       XCTAssertEqual(activity?.preparationDemand?.pageIndex, target == 0 ? nil : target)
       XCTAssertEqual(controller.cachedPageIdentities, frozenWindow)
     }
-    controller.sheetController(controller.sheetController, didTurnFrom: source, completed: false)
+    PageTurnFrameFixture.finish(on: controller, operation: operation, completed: false)
     XCTAssertEqual(controller.displayedIndex, 0)
     XCTAssertNil(activity?.preparationDemand)
     XCTAssertTrue(source.view === sourceChild)
@@ -731,9 +729,8 @@ final class PageTurnSelectionTests: XCTestCase {
     XCTAssertFalse(rendered.contains(7)); XCTAssertFalse(rendered.contains(12))
     let next = try XCTUnwrap(controller.sheetController(controller.sheetController, after: source))
     XCTAssertTrue(next === landing); XCTAssertTrue(next.view === landingChild)
-    controller.sheetController(controller.sheetController, willTurnTo: next)
-    controller.sheetController.show(next, direction: .forward, animated: false)
-    controller.sheetController(controller.sheetController, didTurnFrom: source, completed: true)
+    let nextOperation = try PageTurnFrameFixture.begin(on: controller, target: next)
+    PageTurnFrameFixture.finish(on: controller, operation: nextOperation, completed: true)
     configure(1)
     XCTAssertEqual(controller.displayedIndex, 1, "The next ordinary turn cannot replay the cancelled external jump")
     XCTAssertEqual(commits, [1])
@@ -844,12 +841,11 @@ final class PageTurnSelectionTests: XCTestCase {
     defer { window.isHidden = true; window.rootViewController = nil }
     let source = try XCTUnwrap(controller.sheetController.page)
     let blank = try XCTUnwrap(controller.sheetController(controller.sheetController, after: source))
-    controller.sheetController(controller.sheetController, willTurnTo: blank)
+    let operation = try PageTurnFrameFixture.begin(on: controller, target: blank)
     let frozenWindow = controller.cachedPageIdentities
     XCTAssertTrue(commands.send(.jump(0), ownerID: owner, source: root))
     XCTAssertEqual(controller.cachedPageIdentities, frozenWindow)
-    controller.sheetController.show(blank, direction: .forward, animated: false)
-    controller.sheetController(controller.sheetController, didTurnFrom: source, completed: true)
+    PageTurnFrameFixture.finish(on: controller, operation: operation, completed: true)
     XCTAssertEqual(commits, [4])
     XCTAssertEqual(reportedPageCount, 6, "Landing still creates exactly one notebook page")
     XCTAssertTrue(rendered.contains(5), "The next trailing blank is prepared before a later SwiftUI update")
@@ -885,9 +881,8 @@ final class PageTurnSelectionTests: XCTestCase {
       let target = try XCTUnwrap(forward
         ? controller.sheetController(controller.sheetController, after: previous)
         : controller.sheetController(controller.sheetController, before: previous))
-      controller.sheetController(controller.sheetController, willTurnTo: target)
-      controller.sheetController.show(target, direction: forward ? .forward : .reverse, animated: false)
-      controller.sheetController(controller.sheetController, didTurnFrom: previous, completed: true)
+      let operation = try PageTurnFrameFixture.begin(on: controller, target: target, direction: forward ? .forward : .reverse)
+      PageTurnFrameFixture.finish(on: controller, operation: operation, completed: true)
       configure()
       XCTAssertEqual(controller.displayedIndex, expected)
       XCTAssertEqual(Set(controller.cachedPageIdentities.keys), Set([0, 1, 2]))
@@ -956,9 +951,8 @@ final class PageTurnSelectionTests: XCTestCase {
       let next = try XCTUnwrap(forward
         ? controller.sheetController(controller.sheetController, after: current)
         : controller.sheetController(controller.sheetController, before: current))
-      controller.sheetController(controller.sheetController, willTurnTo: next)
-      controller.sheetController.show(next, direction: forward ? .forward : .reverse, animated: false)
-      controller.sheetController(controller.sheetController, didTurnFrom: current, completed: true)
+      let nextOperation = try PageTurnFrameFixture.begin(on: controller, target: next, direction: forward ? .forward : .reverse)
+      PageTurnFrameFixture.finish(on: controller, operation: nextOperation, completed: true)
       configure()
     }
     configure(); controller.loadViewIfNeeded()
@@ -1013,9 +1007,8 @@ final class PageTurnSelectionTests: XCTestCase {
         if next == nil { try await Task.sleep(for: .milliseconds(10)) }
       } while next == nil && ContinuousClock.now < deadline
       let destination = try XCTUnwrap(next, "A restored child must reach the real prewarm window without displaying its retired shell first")
-      controller.sheetController(controller.sheetController, willTurnTo: destination)
-      controller.sheetController.show(destination, direction: forward ? .forward : .reverse, animated: false)
-      controller.sheetController(controller.sheetController, didTurnFrom: current, completed: true)
+      let operation = try PageTurnFrameFixture.begin(on: controller, target: destination, direction: forward ? .forward : .reverse)
+      PageTurnFrameFixture.finish(on: controller, operation: operation, completed: true)
       configure()
       XCTAssertLessThanOrEqual(controller.cachedPageIdentities.count, 4)
     }
@@ -1093,12 +1086,12 @@ final class PageTurnSelectionTests: XCTestCase {
     var acceptedStates: [Bool] = []
     let observation = nativeActivity.observe { acceptedStates.append($0) }
     defer { nativeActivity.removeObserver(observation) }
-    controller.sheetController(controller.sheetController, willTurnTo: next)
+    let nextOperation = try PageTurnFrameFixture.begin(on: controller, target: next)
     XCTAssertTrue(nativeActivity.isTransitioning, "WebKit capture admission changes in the accepted native event")
     XCTAssertEqual(acceptedStates, [true], "A deferred SwiftUI publication cannot leave an unlocked interval")
     XCTAssertFalse(current.view.isUserInteractionEnabled)
     XCTAssertTrue(reported.isEmpty)
-    controller.sheetController(controller.sheetController, didTurnFrom: current, completed: false)
+    PageTurnFrameFixture.finish(on: controller, operation: nextOperation, completed: false)
     XCTAssertFalse(nativeActivity.isTransitioning)
     XCTAssertEqual(acceptedStates, [true, false])
     update(owner: secondOwner)
@@ -1118,13 +1111,13 @@ final class PageTurnSelectionTests: XCTestCase {
       isCurrent: { requestedReferenceID == nil || requestedReferenceID == requestID },
       resolve: { readyPage }, apply: { selectedPage = $0 })
     requestedReferenceID = nil // completeShow finishes the command, not the pending layout.
-    try await Task.sleep(for: .milliseconds(140))
+    resolution.advance()
     XCTAssertEqual(resolution.requestID, requestID)
     XCTAssertEqual(resolution.documentID, documentID)
     readyPage = 2
     let deadline = ContinuousClock.now + .seconds(1)
     while resolution.requestID != nil, ContinuousClock.now < deadline {
-      try await Task.sleep(for: .milliseconds(10))
+      resolution.advance()
     }
     XCTAssertEqual(selectedPage, 2)
     XCTAssertNil(resolution.requestID)
@@ -1139,18 +1132,18 @@ final class PageTurnSelectionTests: XCTestCase {
     var appliedPages: [Int] = []
     resolution.start(requestID: UUID(), documentID: UUID(), isCurrent: { true },
       resolve: { readyPage }, apply: { selectedPage = $0; appliedPages.append($0) })
-    try await Task.sleep(for: .milliseconds(80))
+    resolution.advance()
     resolution.cancel() // Back invalidates the old Show before its camera returns.
     selectedPage = 2
     readyPage = 0 // The old document finishes layout after Back.
-    try await Task.sleep(for: .milliseconds(160))
+    resolution.advance()
     XCTAssertEqual(selectedPage, 2, "Late search layout cannot return the reader to page one")
     XCTAssertTrue(appliedPages.isEmpty)
     XCTAssertNil(resolution.requestID)
   }
 
   @MainActor
-  func testNewShowOwnsResolutionEvenWhenTheCancelledTaskFinishesLater() async throws {
+  func testNewShowOwnsResolutionWhenThePreviousLayoutArrivesLater() async throws {
     let resolution = NotebookReferencePageResolution(), secondID = UUID(), secondDocumentID = UUID()
     var firstPage: Int?, secondPage: Int?
     var appliedPages: [Int] = []
@@ -1159,14 +1152,14 @@ final class PageTurnSelectionTests: XCTestCase {
     resolution.start(requestID: secondID, documentID: secondDocumentID, isCurrent: { true },
       resolve: { secondPage }, apply: { appliedPages.append($0) })
     firstPage = 7
-    try await Task.sleep(for: .milliseconds(140))
+    resolution.advance()
     XCTAssertTrue(appliedPages.isEmpty)
-    XCTAssertEqual(resolution.requestID, secondID, "The cancelled task's cleanup cannot clear the new request")
+    XCTAssertEqual(resolution.requestID, secondID, "The previous layout cannot clear the new request")
     XCTAssertEqual(resolution.documentID, secondDocumentID)
     secondPage = 3
     let deadline = ContinuousClock.now + .seconds(1)
     while resolution.requestID != nil, ContinuousClock.now < deadline {
-      try await Task.sleep(for: .milliseconds(10))
+      resolution.advance()
     }
     XCTAssertEqual(appliedPages, [3])
     XCTAssertNil(resolution.requestID)
@@ -1181,7 +1174,7 @@ final class PageTurnSelectionTests: XCTestCase {
       resolve: { readyPage }, apply: { selectedPage = $0 })
     selectedPage = 1
     readyPage = 4
-    try await Task.sleep(for: .milliseconds(140))
+    resolution.advance()
     XCTAssertEqual(selectedPage, 1)
     XCTAssertNil(resolution.requestID)
   }

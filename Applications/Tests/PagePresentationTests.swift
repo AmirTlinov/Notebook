@@ -26,7 +26,10 @@ final class PagePresentationTests: XCTestCase {
       cohort: try XCTUnwrap(model.compositionTiles.published), presence: try XCTUnwrap(model.presence)))
     func find(_ view: UIView) -> UIView? {
       if view.accessibilityIdentifier == "paper-input" { return view }
-      return view.subviews.lazy.compactMap(find).first
+      for child in view.subviews {
+        if let found = find(child) { return found }
+      }
+      return nil
     }
     XCTAssertNotNil(find(window))
   }

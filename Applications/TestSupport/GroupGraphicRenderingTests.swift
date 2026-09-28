@@ -205,7 +205,10 @@ import AppKit
     defer { window.isHidden=true;window.rootViewController=nil;previous?.makeKey() }
     func find(_ view:UIView) -> UITextView? {
       if let input=view as? UITextView { return input }
-      return view.subviews.lazy.compactMap(find).first
+      for child in view.subviews {
+        if let found = find(child) { return found }
+      }
+      return nil
     }
     var found:UITextView?
     for _ in 0..<50 { host.view.layoutIfNeeded();found=find(host.view);if found != nil { break };try await Task.sleep(for:.milliseconds(20)) }
@@ -225,7 +228,10 @@ import AppKit
     defer { window.orderOut(nil);window.contentView=nil;previous?.makeKey() }
     func find(_ view:NSView) -> NSTextView? {
       if let input=view as? NSTextView { return input }
-      return view.subviews.lazy.compactMap(find).first
+      for child in view.subviews {
+        if let found = find(child) { return found }
+      }
+      return nil
     }
     var found:NSTextView?
     for _ in 0..<50 { host.layoutSubtreeIfNeeded();found=find(host);if found != nil { break };try await Task.sleep(for:.milliseconds(20)) }

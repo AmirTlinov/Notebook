@@ -7,6 +7,8 @@ import XCTest
 /// tests separately exercise the hardware recognizers on the physical iPad.
 @MainActor
 final class NotebookPaperCameraTests: XCTestCase {
+  private var phases: [String] = []
+  private func phase(_ name: String) { phases.append("\(ProcessInfo.processInfo.systemUptime): \(name)") }
   func testOpenNotebookKeepsItsFittedPageDuringZoomInAndTranslation() async throws {
     let (model, window) = try await scene(document: false)
     let start = try XCTUnwrap(model.presence), owner = try coordinator(in: window)
@@ -105,7 +107,14 @@ final class NotebookPaperCameraTests: XCTestCase {
   }
 
   private func verifyZoomClosesAndReopens(document:Bool) async throws {
+    phase("scenario-begin")
+    addTeardownBlock { @MainActor [self] in
+      phase("cleanup-end")
+      let report = XCTAttachment(string: phases.joined(separator: "\n"))
+      report.name = "paper-camera-phases"; report.lifetime = .keepAlways; add(report)
+    }
     let (model,window)=try await scene(document:document)
+    phase("scene-mounted")
     let item=try XCTUnwrap(model.presence?.focusedItemID)
     if document {
       let source=try XCTUnwrap(model.documents[item]),state=try XCTUnwrap(model.documentStates[item])
@@ -118,6 +127,7 @@ final class NotebookPaperCameraTests: XCTestCase {
       XCTAssertTrue(hasMeasuredPaperProjection(model,in:window,documentID:item),
         "The directly opened fixture must install its measured PDF geometry before capturing the original pose")
     }
+    phase("canonical-projection-ready")
     let start=try XCTUnwrap(model.presence)
     let owner=try coordinator(in:window),pair=CGPoint(x:start.viewport.x/2,y:start.viewport.y/2)
     let originalPaper = document ? try paperFrame(in:window,documentID:item) : nil
@@ -144,6 +154,7 @@ final class NotebookPaperCameraTests: XCTestCase {
     owner.onCamera(.changed(scale:factor*1.1,velocity:2,elapsed:0.2,centroid:pair))
     owner.onCamera(.ended(scale:factor*1.1,velocity:2,elapsed:0.3,centroid:pair))
     try await waitFor(model,mode:start.mode)
+    phase("reopened-and-settled")
     XCTAssertEqual(model.presence?.focusedItemID,item)
     XCTAssertEqual(model.presence?.notebookPageID,start.notebookPageID)
     XCTAssertEqual(model.presence?.documentPageIndex,start.documentPageIndex)
@@ -155,8 +166,6 @@ final class NotebookPaperCameraTests: XCTestCase {
         XCTAssertEqual(actual,expected,accuracy:1/window.screen.scale,
           "Reopening must restore the mounted PDF projection, not only the model's camera")
       }
-      let image=UIGraphicsImageRenderer(size:window.bounds.size).image { _ in window.drawHierarchy(in:window.bounds,afterScreenUpdates:true) }
-      let attachment=XCTAttachment(image:image);attachment.name="reopened-document-physical-projection";attachment.lifetime = .keepAlways;add(attachment)
     }
   }
 
@@ -164,7 +173,10 @@ final class NotebookPaperCameraTests: XCTestCase {
     func find(_ view:UIView) -> DocumentPaperView? {
       if let paper=view as? DocumentPaperView,paper.raster?.page.artifact.document.id == documentID,
         SceneSourceVisibility.isVisible(paper) { return paper }
-      return view.subviews.lazy.compactMap(find).first
+      for child in view.subviews {
+        if let paper = find(child) { return paper }
+      }
+      return nil
     }
     let paper=try XCTUnwrap(find(window))
     return paper.convert(paper.bounds,to:window)
@@ -209,9 +221,13 @@ final class NotebookPaperCameraTests: XCTestCase {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("paper-camera-\(UUID())")
     let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
     retainNotebookUntilTeardown(model, removing: root)
+    phase("model-start-begin")
     await model.start(pageSize: NotebookAppModel.defaultPageSize)
+    phase("model-start-end")
     let item = try XCTUnwrap(document ? model.createDocument(at: .zero) : model.workspace?.selectedItemID)
+    phase("save-begin")
     let saved = await model.finishPendingPersistence()
+    phase("save-end")
     XCTAssertTrue(saved)
     let board = try XCTUnwrap(model.workspace?.rootBoardID)
     let center = try XCTUnwrap(model.boardHierarchy?.focusedCenter(of: item, in: board))
@@ -222,6 +238,7 @@ final class NotebookPaperCameraTests: XCTestCase {
     model.updatePresence(.init(boardID: board, mode: startsOnBoard ? .board : document ? .document : .page,
       camera: .init(center: center, scale: fit * (startsOnBoard ? 0.35 : 1)), viewport: viewport,
       focusedItemID: startsOnBoard ? nil : item, openProgress: startsOnBoard ? 0 : 1), settled: true)
+    phase("mount-begin")
     return (model, try await mountNotebookScene(model))
   }
 

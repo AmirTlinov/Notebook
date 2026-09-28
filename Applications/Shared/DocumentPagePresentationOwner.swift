@@ -103,7 +103,10 @@ final class DocumentPagePresentationOwner {
       activityObserver = nil; preparationObserver = nil; activity = nil
     }
     func publishReadiness(_ presented: Bool, capturable: Bool = false) {
-      let value = PageTurnReadiness.State(presented: presented, capturable: presented && capturable)
+      // An offscreen neighbour owns prepared material before it owns a
+      // projected live layer. Only a current paper claims installed geometry.
+      let installed = presented && (!input.retainsOpenDocument || !input.isCurrent || host?.hasCanonicalPaperProjection == true)
+      let value = PageTurnReadiness.State(presented: installed, capturable: capturable)
       guard readiness != value || readinessHandler !== input.onRenderReady else { return }
       readiness = value; readinessHandler = input.onRenderReady
       input.onRenderReady(value.presented, capturable: value.capturable)
@@ -164,7 +167,8 @@ final class DocumentPagePresentationOwner {
   @MainActor final class OpeningPreparation {
     let documentID: UUID
     private let document: DocumentDocument
-    private(set) var hasTransferred = false
+    private(set) var outcome: DocumentRenderSession.Opening.Outcome?
+    var onOutcome: (DocumentRenderSession.Opening.Outcome) -> Void = { _ in }
     fileprivate var isPending: Bool { source != nil }
     private let hostID = UUID()
     private var lifetime: OpenDocument?
@@ -176,22 +180,30 @@ final class DocumentPagePresentationOwner {
       let source = owner.renderSession.source(document, store: store)
       self.source = source
       let hostID = hostID, resources = owner.resources
-      task = Task { @MainActor in
-        // Failure stays on the same immutable source and is presented by the
-        // mounted page's existing error/retry path, never by a hidden surface.
-        do { try await source.prepareOpening(pageIndex: pageIndex, hostID: hostID, resources: resources) }
-        catch { }
+      task = Task { @MainActor [weak self] in
+        do {
+          try await source.prepareOpening(pageIndex: pageIndex, hostID: hostID, resources: resources)
+          guard let self, outcome == nil else { return }
+          task = nil
+        } catch {
+          guard let self, outcome == nil else { return }
+          finish(error is CancellationError ? .cancelled : .failed(error.localizedDescription))
+        }
       }
     }
     func matches(_ document: DocumentDocument) -> Bool { self.document == document }
     fileprivate func handoff(to installedSource: DocumentSourceSnapshot) {
       guard source === installedSource else { return }
-      hasTransferred = true; close()
+      finish(.completed)
     }
-    func close() {
+    func close() { finish(.cancelled) }
+    private func finish(_ result: DocumentRenderSession.Opening.Outcome) {
+      guard outcome == nil else { return }
+      outcome = result
       task?.cancel(); task = nil
       source?.releasePage(hostID: hostID, in: nil); source = nil
       lifetime?.close(); lifetime = nil
+      let completion = onOutcome; onOutcome = { _ in }; completion(result)
     }
     isolated deinit { close() }
   }
@@ -565,7 +577,14 @@ final class DocumentPagePresentationOwner {
     }
     host.onContactChange = { [weak self] active in self?.contact("paper:\(id)", active: active) }
     host.programOverlay.onContactChange = { [weak self] block, active in self?.contact(block, active: active) }
-    host.onSizeChange = { [weak self] in self?.schedule() }
+    host.onSizeChange = { [weak self, weak entry] in
+      guard let self, let entry, self.entries[id] === entry else { return }
+      self.refreshMountedInput()
+      // A canonical source may have become ready while its old A4 scene
+      // rectangle was still installed. The real layout edge admits it now.
+      if entry.id == self.mountedID, self.paper.hasCanonicalPixels { self.installPrograms(on: entry) }
+      self.schedule()
+    }
     host.onWindowChange = { [weak self] in self?.hostAttachmentChanged(id) }
     if mountedID != id, entry.requiresPreparation {
       host.configure(size: physicalSize(input), interactive: false)
@@ -687,6 +706,19 @@ final class DocumentPagePresentationOwner {
     }
     paper.updateInputAdmission(in: host,
       isInteractive: matches && input.isVisible && input.isInteractive)
+    recordInstallation(on: entry)
+  }
+
+  private func recordInstallation(on entry: Entry) {
+    guard let measurements = entry.input.measurements, measurements.enabled,
+      let host = entry.host else { return }
+    let installed = current?.id == entry.id && mountedID == entry.id
+      && entry.input.isVisible && entry.input.isInteractive && !gestureLocked
+      && paper.payload?.renderToken == entry.input.paperToken && paper.hasCanonicalPixels
+      && host.hasCanonicalPaperProjection && paper.nativeInputIsReady(in: host)
+    measurements.installationChanged(documentID: documentID, pageIndex: entry.input.pageIndex,
+      token: entry.input.token, installed: installed,
+      publish: { [weak host] value in host?.accessibilityValue = value })
   }
 
   func unregister(_ id: UUID) {
@@ -1148,7 +1180,8 @@ final class DocumentPagePresentationOwner {
         guard let self, let host, let entry else { return false }
         return current?.id == entry.id && entry.input.token == installedToken
           && paper.payload?.renderToken == entry.input.paperToken && mountedID == entry.id && host.window?.isKeyWindow == true
-          && !host.hasSnapshot && paper.hasCanonicalPixels && programsReady(on: entry.input.pageIndex, scope: scope)
+          && !host.hasSnapshot && host.hasCanonicalPaperProjection && paper.hasCanonicalPixels
+          && programsReady(on: entry.input.pageIndex, scope: scope)
           && installation.isInstalled
       }
     DocumentRenderRegistry.shared.publishLive(documentID: documentID, token: installedToken,
@@ -1162,19 +1195,7 @@ final class DocumentPagePresentationOwner {
       measurements.contentReady(documentID: documentID, pageIndex: entry.input.pageIndex, token: installedToken,
         sourcePreparationPhasesMS: source?.preparationPhasesMS ?? [:], sourcePreparationMeasurement: source?.measurementCount,
         pagePreparation: paper.pagePreparationTrace)
-      var observedInstallation: Bool?
-      measurements.observeInstallation(documentID: documentID, pageIndex: entry.input.pageIndex, token: installedToken,
-        isInstalled: { [weak self, weak entry, weak host] in
-          guard let self, let entry, let host else { return false }
-          let installed = isInstalled(.page) && entry.input.isInteractive && !self.gestureLocked
-            && self.paper.nativeInputIsReady(in: host)
-          if NotebookNavigationObservation.enabled, observedInstallation != installed {
-            observedInstallation = installed
-            self.observe("document_input_installation_observed", entryID: entry.id, page: entry.input.pageIndex,
-              reason: installed ? "ready" : Self.presentationDiagnostic(documentID: self.documentID, resources: self.resources))
-          }
-          return installed
-        }, publish: { [weak host] value in host?.accessibilityValue = value })
+      recordInstallation(on: entry)
     }
   }
 
@@ -1253,6 +1274,7 @@ final class DocumentPagePresentationOwner {
 
   private func isInstalled(_ entry: Entry) -> Bool {
     guard let host = entry.host, mountedID == entry.id,
+      host.hasCanonicalPaperProjection,
       paper.payload?.renderToken == entry.input.paperToken else { return false }
     return host.programOverlay.isPresenting(placements(on: entry), paperSize: physicalSize(entry.input), passive: passivePlacements(on: entry))
   }
@@ -1707,6 +1729,9 @@ final class DocumentPagePresentationOwner {
           "errorCode": .number(Double(native.code)),
           "errorCase": knownCase.map(JSONValue.string) ?? .null])
     }
+    entry.input.measurements?.failed(documentID: documentID, pageIndex: entry.input.pageIndex,
+      token: entry.input.token, message: error.localizedDescription)
+    recordInstallation(on: entry)
     entry.input.onPreparationFailure(error)
     if error as? SceneRenderError == .resourceLimit { failures[entry.input.token] = resources.rasterAdmission }
     else { terminalFailures.insert(entry.input.token) }

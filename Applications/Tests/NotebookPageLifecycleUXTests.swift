@@ -41,7 +41,8 @@ import XCTest
     let native = owner.sheetController
     let curl = try XCTUnwrap(native.view.subviews.compactMap { $0 as? SheetCurlMetalView }.first)
     let receiveFrame = curl.onPageFrameReady, captureSize = native.view.bounds.size
-    var captured: CGImage?, capturedReadiness: NotebookMetalFrameReadiness?
+    var captured: PageTurnFrame?, capturedReadiness: NotebookMetalFrameReadiness?
+    var capturedImage: CGImage?
     var phases: [String] = []
     let receiveFailure=native.onFailure
     native.onFailure = { error in
@@ -77,7 +78,7 @@ import XCTest
     defer { native.isSheetReadyForCapture = checkReadiness; native.onFramesAcquired = nil }
     curl.onPageFrameReady = { image, progress, sequence, readiness in
       if captured == nil, readiness.isReady {
-        captured = PageTurnFrameFixture.image(image); capturedReadiness = readiness
+        captured = image; capturedReadiness = readiness
         phases.append("captured source: progress=\(progress) sequence=\(sequence) readiness=\(readiness) sourceStable=\(ink.isStableFramePresented) sourceStamp=\(String(describing: model.pages[page.id]?.drawingStamp))")
       }
       receiveFrame?(image, progress, sequence, readiness)
@@ -87,8 +88,8 @@ import XCTest
       let note = XCTAttachment(string: phases.joined(separator: "\n"))
       note.name = erasingShape ? "accepted-erase-curl-source" : "accepted-ink-curl-source"
       note.lifetime = .keepAlways; add(note)
-      if let captured {
-        let image = XCTAttachment(image: UIImage(cgImage: captured))
+      if let capturedImage = capturedImage ?? captured.flatMap(PageTurnFrameFixture.image) {
+        let image = XCTAttachment(image: UIImage(cgImage: capturedImage))
         image.name = "actual-curl-source-image"; image.lifetime = .keepAlways; add(image)
       }
     }
@@ -133,7 +134,11 @@ import XCTest
     XCTAssertEqual(arrowAccepted, true)
     XCTAssertEqual(owner.displayedIndex, 1)
     XCTAssertEqual(capturedReadiness?.isReady, true)
-    let image = try XCTUnwrap(captured, "The real curl must capture and present its source")
+    let material = try XCTUnwrap(captured, "The real curl must capture and present its source")
+    // GPU readback verifies the already completed cut, outside frame callbacks
+    // and outside the original native opening deadline.
+    let image = try XCTUnwrap(PageTurnFrameFixture.image(material))
+    capturedImage = image
     let probes: [Probe] = capturePoints.map { name, point, color in
       .init(name: name, points: [.init(x: point.x * CGFloat(image.width) / captureSize.width,
         y: point.y * CGFloat(image.height) / captureSize.height)], color: color)
@@ -514,13 +519,19 @@ import XCTest
       guard observedInk == nil else { return }
       func owner(in controller: UIViewController) -> IPadPageTurnController? {
         if let owner = controller as? IPadPageTurnController { return owner }
-        return controller.children.lazy.compactMap { owner(in: $0) }.first
+        for child in controller.children {
+          if let found = owner(in: child) { return found }
+        }
+        return nil
       }
       guard let root = window.rootViewController, let owner = owner(in: root), owner.displayedIndex == 2,
         let installed = owner.sheetController.page?.view else { return }
       func paper(in view: UIView) -> PaperCanvasContainerView? {
         if let paper = view as? PaperCanvasContainerView, paper.touchView.quickShapePageID == target { return paper }
-        return view.subviews.lazy.compactMap { paper(in: $0) }.first
+        for child in view.subviews {
+          if let found = paper(in: child) { return found }
+        }
+        return nil
       }
       guard let ink = paper(in: installed)?.inkView else { return }
       observedInk = ink; observedPageOwner = owner; receiveReadiness = ink.onRenderReadinessChange
@@ -974,12 +985,18 @@ import XCTest
     await model.prepareNotebookPage(at:0,in:notebook)
     _ = model.selectNotebookPage(0,notebookID:notebook,expectedRoot:model.notebookPageRoot(notebook)!)
     let scene = try await mount(model), owner = try pageOwner(scene.window)
-    let (previous,target) = try await turnTarget(owner,forward:true)
+    let (_, target) = try await turnTarget(owner,forward:true)
     scene.beginFinger(.init(x:730,y:1050))
     scene.moveFinger(.init(x:710,y:1050),expectsManipulation:false)
     defer { scene.endFinger() }
     XCTAssertTrue(model.inputGate.isActive)
-    owner.sheetController(owner.sheetController,willTurnTo: target)
+    let native = owner.sheetController
+    var completed: Bool?
+    let receiveTurn = native.didTurn
+    native.didTurn = { source, landed in receiveTurn(source, landed); completed = landed }
+    defer { native.didTurn = receiveTurn }
+    XCTAssertTrue(native.beginInteractiveTurn(direction: .forward, target: target))
+    native.updateInteractiveTurn(translation: -native.view.bounds.width * 0.4)
     let start = ContinuousClock.now
     while !owner.preparedPageIndices.contains(2), ContinuousClock.now-start < .seconds(2) {
       try await Task.sleep(for:.milliseconds(16))
@@ -989,9 +1006,11 @@ import XCTest
     let elapsed = ContinuousClock.now-start
     let evidence = XCTAttachment(string:"nextSVGReady=\(owner.preparedPageIndices.contains(2)); elapsed=\(elapsed); fingerActive=\(model.inputGate.isActive)")
     evidence.name="svg-prewarm-during-curl";evidence.lifetime = .keepAlways;add(evidence)
-    owner.sheetController.show(target,direction:.forward,animated:false)
-    owner.sheetController(owner.sheetController,didTurnFrom: previous, completed:true)
+    native.endInteractiveTurn(completed: true, travel: -native.view.bounds.width * 0.4)
     scene.endFinger()
+    let landingDeadline = ContinuousClock.now + NotebookUXObservation.opening
+    while completed == nil, ContinuousClock.now < landingDeadline { try await Task.sleep(for: .milliseconds(2)) }
+    XCTAssertEqual(completed, true, "The original curl must reach its OS endpoint")
     let (_,next) = try await turnTarget(owner,forward:true)
     XCTAssertEqual(next.view.accessibilityIdentifier,"page-turn-page-2")
     XCTAssertLessThanOrEqual(owner.cachedPageIdentities.count,4)
@@ -1009,9 +1028,18 @@ import XCTest
     try await shown("peer-directory-original-leaf", window: scene.window,
       probes: leafProbes(0, scene.pageToWindow), budget: NotebookUXObservation.opening)
     let (previous, target) = try await turnTarget(owner, forward: true)
-    owner.sheetController(native, willTurnTo: target)
-    var oldCurlCompletion: Bool?
-    native.show(target, direction: .forward, animated: true) { oldCurlCompletion = $0 }
+    var oldCurlCompletion: Bool?, oldOperation: UUID?
+    let acceptOperation = native.beginOperation, resolveOperation = native.resolveOperation
+    native.beginOperation = { source, target, gesture, completion in
+      let id = acceptOperation(source, target, gesture, completion); oldOperation = id; return id
+    }
+    native.resolveOperation = { id, outcome, presented, notify in
+      resolveOperation(id, outcome, presented, notify)
+      if id == oldOperation, oldCurlCompletion == nil { oldCurlCompletion = outcome == .completed }
+    }
+    defer { native.beginOperation = acceptOperation; native.resolveOperation = resolveOperation }
+    XCTAssertTrue(native.beginInteractiveTurn(direction: .forward, target: target))
+    native.updateInteractiveTurn(translation: -native.view.bounds.width * 0.4)
     await Task.yield()
     // The peer removes its still-unadopted leaf while UIKit owns the old curl.
     // The surviving leaf moves into that numeric slot, but is a different UUID.
@@ -1027,8 +1055,9 @@ import XCTest
       "The surviving UUID keeps its physical source host when its neighbor is removed")
     XCTAssertFalse(try XCTUnwrap(oldCurlCompletion),
       "Removing the captured target cancels and resolves the old curl")
-    owner.sheetController(native, didTurnFrom: previous, completed: true)
-    owner.sheetController(native, didTurnFrom: previous, completed: false)
+    let retiredOperation = try XCTUnwrap(oldOperation)
+    native.resolveOperation(retiredOperation, .completed, false, true)
+    native.resolveOperation(retiredOperation, .cancelled, false, true)
     try await shown("old-curl-cannot-land-on-a-different-uuid", window: scene.window,
       probes: leafProbes(0, scene.pageToWindow), budget: NotebookUXObservation.opening)
     XCTAssertEqual(model.presence?.notebookPageID, first)
@@ -1222,15 +1251,17 @@ import XCTest
     scene.beginFinger(.init(x: 250, y: 560)); scene.moveFinger(.init(x: 350, y: 560))
     dropped = .now; scene.endFinger()
     fragment = fragment.offsetBy(dx: 100, dy: 0)
-    try await shown("fragment-second-drop", window: scene.window, probes: fragmentProbes(fragment, scene.pageToWindow), since: dropped)
+    try await paintedCut("fragment-second-drop", frame: fragment, since: dropped)
+    try await paintedPixels("fragment-second-drop", probes: fragmentProbes(fragment, scene.pageToWindow))
     let selected = try XCTUnwrap(model.selectionSession.editingElement ?? model.selectionSession.elements.first)
     let resize = try XCTUnwrap(model.beginElementManipulation(selected, kind: .resize(.bottomTrailing)))
     let resized = ContinuousClock.now
     XCTAssertTrue(model.finishElementManipulation(resize, translation: .init(x: 40, y: 20)))
     fragment.size = .init(width: 140, height: 140)
+    try await paintedCut("fragment-resize-whole-body", frame: fragment, since: resized)
     model.clearSelection()
     let final = fragmentProbes(fragment, scene.pageToWindow)
-    try await shown("fragment-resize-whole-body", window: scene.window, probes: final, since: resized)
+    try await paintedPixels("fragment-resize-whole-body", probes: final)
     let saved = await model.finishPendingPersistence(); XCTAssertTrue(saved)
     await model.reloadExternalChanges()?.value
     try await shown("fragment-after-publication", window: scene.window, probes: final)
@@ -1391,24 +1422,24 @@ import XCTest
 
   private func shown(_ name: String, window: UIWindow, probes: [Probe],
     since start: ContinuousClock.Instant = .now, budget: Duration = NotebookUXObservation.correctnessTimeout,
-    witness: Probe? = nil, absence: [Probe] = [], acknowledged: () -> Bool = { true }) async throws {
+    witness: Probe? = nil, absence: [Probe] = [], acknowledged: (() -> Bool)? = nil) async throws {
+    // A source/paint receipt is the timing oracle. Screenshot work begins only
+    // after that observation and never participates in the action's clock.
+    if let acknowledged {
+      _ = try await assertUX(name + "-native-acknowledgement", since: start, budget: budget,
+        window: window, probe: acknowledged)
+    }
     try await Task.sleep(for: .milliseconds(16))
+    let pixelStart = ContinuousClock.now, deadline = pixelStart + max(.seconds(1), budget)
     var failures: [String] = [], last: UIImage?, resurrections: [String] = []
-    var captures:[Duration]=[],phases:[String]=[]
+    var captures: [Duration] = []
     let allProbes = probes + (witness.map { [$0] } ?? []) + absence
-    let result = try await assertUX(name, since: start, budget: budget, window: window) {
-      // When this case also requires native source/frame readiness, let that
-      // callback run before the expensive window read. Repeated captures while
-      // awaiting it block MainActor and manufacture delay. The original clock
-      // still includes the gesture, receipt wait and final pixel observation.
-      guard acknowledged() else { phases.append("\(start.duration(to:.now)): source not acknowledged");return false }
-      let captureStart=ContinuousClock.now
+    repeat {
+      let captureStart = ContinuousClock.now
       let image = try NotebookUXObservation.Pixels(window: window).image
-      let captured=ContinuousClock.now
-      captures.append(captureStart.duration(to:captured))
+      captures.append(captureStart.duration(to: .now))
       let frame = try NotebookSelectionComposition.Frame(image, sampling: allProbes)
       last = image; failures = frame.failures(probes)
-      phases.append("\(start.duration(to:captureStart)): capture=\(captureStart.duration(to:captured)), decode/check=\(captured.duration(to:.now)), bits=\(image.cgImage?.bitsPerPixel ?? 0), decoded pixels=\(frame.decodedPixelCount), failures=\(failures)")
       if let witness, frame.failures([witness]).isEmpty, !absence.isEmpty {
         let returned = frame.failures(absence)
         if !returned.isEmpty {
@@ -1419,10 +1450,14 @@ import XCTest
           resurrections += returned
         }
       }
-      return failures.isEmpty
-    }
+      if failures.isEmpty || ContinuousClock.now >= deadline { break }
+      try await Task.sleep(for: .milliseconds(16))
+    } while true
+    XCTAssertTrue(failures.isEmpty, "Independent pixel correctness \(name): \(failures)")
     XCTAssertTrue(resurrections.isEmpty, "Previously erased/deleted material appeared during opening: \(resurrections)")
-    let note = XCTAttachment(string: "\(name): \(failures); elapsed including capture=\(result.milliseconds) ms; captures=\(captures); phases=\(phases)")
+    let scope = acknowledged == nil ? "Pixel correctness only; this call has no native latency witness."
+      : "Native timing was completed before capture; no capture duration was subtracted."
+    let note = XCTAttachment(string: "\(name): \(failures); pixel observation=\(pixelStart.duration(to: .now)); captures=\(captures). \(scope)")
     note.name = name + "-composition"; note.lifetime = .keepAlways; add(note)
     if let last { let picture = XCTAttachment(image: last); picture.name = name; picture.lifetime = .keepAlways; add(picture) }
   }

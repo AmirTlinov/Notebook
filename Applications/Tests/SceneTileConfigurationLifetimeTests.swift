@@ -43,7 +43,10 @@ final class SceneTileConfigurationLifetimeTests: XCTestCase {
     func paper(in view: UIView) -> WKWebView? {
       if let web = view as? WKWebView, let owner = web.navigationDelegate as? DocumentWebCoordinator,
         owner.payload?.source.message.documentID == documentID, owner.hasCanonicalPixels { return web }
-      return view.subviews.lazy.compactMap { paper(in: $0) }.first
+      for child in view.subviews {
+        if let found = paper(in: child) { return found }
+      }
+      return nil
     }
     let firstDeadline = ContinuousClock.now + .seconds(8)
     while model.compositionTiles.published?.isPaintInstalled != true || model.compositionTiles.isPreparing

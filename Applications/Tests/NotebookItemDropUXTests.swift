@@ -137,12 +137,18 @@ final class NotebookItemDropUXTests: XCTestCase {
 
   private func findFinger(in view: UIView) -> NotebookInteractionTouchView? {
     if let owner = view as? NotebookInteractionTouchView { return owner }
-    return view.subviews.lazy.compactMap { self.findFinger(in: $0) }.first
+    for child in view.subviews {
+      if let found = self.findFinger(in: child) { return found }
+    }
+    return nil
   }
 
   private func findControls(in view: UIView) -> NotebookSelectionControlsView? {
     if let controls = view as? NotebookSelectionControlsView, controls.window != nil, !controls.isHidden { return controls }
-    return view.subviews.lazy.compactMap { self.findControls(in: $0) }.first
+    for child in view.subviews {
+      if let found = self.findControls(in: child) { return found }
+    }
+    return nil
   }
 }
 

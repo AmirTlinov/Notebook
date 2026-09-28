@@ -687,7 +687,10 @@ import XCTest
     let snapshot = try controlWebView.snapshot()
     func find(_ node: XCUIElementSnapshot, type: XCUIElement.ElementType, name: String) -> XCUIElementSnapshot? {
       if node.elementType == type && (node.identifier == name || node.label == name) { return node }
-      return node.children.lazy.compactMap { find($0, type: type, name: name) }.first
+      for child in node.children {
+        if let found = find(child, type: type, name: name) { return found }
+      }
+      return nil
     }
     let frames = try [(XCUIElement.ElementType.button, "Acceptance increment"),
       (.slider, "Acceptance slider"), (.textField, "Acceptance text")].map { type, name in
