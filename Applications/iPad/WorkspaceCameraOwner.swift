@@ -258,13 +258,31 @@ final class WorkspaceCameraOwner {
       focusedItemID: item, openProgress: 0, documentPageIndex: target.documentPageIndex,
       selectedItemID: target.selectedItemID, notebookPageID: target.notebookPageID)
   }
+
+  /// Camera-only requests use the same paper constraints as every published
+  /// pose. An already fitted notebook must not lose input to an invisible move.
+  func moveCamera(to camera: SpatialCamera, duration: TimeInterval) -> Bool {
+    guard isIdle, let model, let current = model.presence else { return false }
+    let requested = current.replacingCamera(camera)
+    guard requested.isValid, duration.isFinite else { return false }
+    let destination = model.constrainedPaperPresence(requested)
+    if destination == current { return true }
+    settle(to: destination, duration: duration, bounce: 0, navigationID: nil,
+      portal: nil, handoff: nil, rollback: nil, completion: {})
+    return true
+  }
+
   func settle(to target: SessionPresence, duration: TimeInterval, bounce: Double, navigationID: UUID?,
     portal: (UUID, BoardPortalCamera)?, handoff: SessionPresence?, rollback: SessionPresence?, completion: @escaping () -> Void) {
     guard let model, let origin = model.presence else { return }
-    let destination: SessionPresence
+    let selectedDestination: SessionPresence
     if target.mode == .page, target.notebookPageID == nil, let item = target.focusedItemID, item == origin.selectedItemID {
-      destination = target.selecting(itemID: item, pageID: origin.notebookPageID)
-    } else { destination = target }
+      selectedDestination = target.selecting(itemID: item, pageID: origin.notebookPageID)
+    } else { selectedDestination = target }
+    // Notebook geometry is already canonical. Document destinations may still
+    // be preparing their page layout; they retain their existing admission path.
+    let destination = selectedDestination.mode == .page
+      ? model.constrainedPaperPresence(selectedDestination) : selectedDestination
     endCurrent(outcome: .superseded, settlesPose: false, notifyingIdle: false); panStart = nil; failure = nil
     let pending = WorkspaceSettlement(origin: rollback ?? origin, target: destination, handoff: handoff,
       approach: closedApproach(to: destination, from: origin), duration: duration, bounce: bounce,

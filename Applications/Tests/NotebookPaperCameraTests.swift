@@ -28,6 +28,73 @@ final class NotebookPaperCameraTests: XCTestCase {
     }
   }
 
+  func testClampedNotebookCameraRequestKeepsPaperInputAvailable() async throws {
+    let (model, window) = try await scene(document: false)
+    let start = try XCTUnwrap(model.presence), page = try XCTUnwrap(model.activePage)
+    XCTAssertEqual(start.mode, .page)
+    XCTAssertEqual(start.openProgress, 1)
+    XCTAssertEqual(start.notebookPageID, page.id)
+    XCTAssertTrue(try page.inkDrawing().activeActions.isEmpty)
+    model.selectDrawingTool(.pen)
+    let pencil = try XCTUnwrap(window.gestureRecognizers?.compactMap { $0 as? PaperPencilGestureRecognizer }
+      .first { $0.isEnabled && $0.input?.isUserInteractionEnabled == true && $0.input?.quickShapePageID == page.id })
+    let paper = try XCTUnwrap(pencil.input)
+    let moveCamera = try XCTUnwrap(model.presentationPlayer.moveCamera)
+    let target = SpatialCamera(center: start.camera.center, scale: start.camera.scale * 1.5)
+    let duration = 0.4
+    let originalDeadline = ContinuousClock.now + .seconds(duration + 0.05)
+    // A fully open notebook admits only its fitted pose. A presentation request
+    // must resolve that constraint before it owns a clock or disables paper.
+    for _ in 0..<2 {
+      XCTAssertTrue(moveCamera(target, duration), "A clamped no-op is a completed camera request")
+      XCTAssertEqual(model.presencePhase, .settled,
+        "A rejected geometric change must not leave a content settlement behind")
+      assertCamera(try XCTUnwrap(model.presence?.camera), equals: start.camera)
+      assertCamera(try XCTUnwrap(model.nativeCameraProjection.current(for: start.boardID)?.camera), equals: start.camera)
+      XCTAssertTrue(pencil.isEnabled)
+      XCTAssertTrue(paper.isUserInteractionEnabled)
+    }
+
+    // Freeze the actual mounted paper basis before down. The contact must pass
+    // window hit testing and the installed typed recognizer, not a gate shortcut.
+    let first = CGPoint(x: paper.bounds.width * 0.43, y: paper.bounds.height * 0.48)
+    let last = CGPoint(x: first.x + 48, y: first.y + 29)
+    let firstInWindow = paper.convert(first, to: window), lastInWindow = paper.convert(last, to: window)
+    XCTAssertTrue(window.bounds.contains(firstInWindow))
+    let touch = UXTouch(window: window, kind: .pencil), event = UIEvent()
+    touch.point = firstInWindow
+    touch.sourceView = try XCTUnwrap(window.hitTest(touch.point, with: event))
+    pencil.touchesBegan([touch], with: event)
+    XCTAssertTrue(model.inputGate.hasActivePencil)
+    XCTAssertTrue(paper.hasActiveAction)
+    assertCamera(try XCTUnwrap(model.presence?.camera), equals: start.camera)
+    touch.touchPhase = .moved; touch.sampleTime += 1.0 / 120; touch.point = lastInWindow
+    pencil.touchesMoved([touch], with: event)
+    touch.touchPhase = .ended
+    pencil.touchesEnded([touch], with: event)
+    XCTAssertFalse(model.inputGate.hasActivePencil)
+    let saved = await model.finishPendingPersistence()
+    XCTAssertTrue(saved)
+    let actions = try model.store.loadPage(page.id).inkDrawing().activeActions
+    XCTAssertEqual(actions.count, 1)
+    let stroke = try XCTUnwrap(actions.first)
+    let measuredFirst = try XCTUnwrap(stroke.samples.first).point
+    let measuredLast = try XCTUnwrap(stroke.samples.last).point
+    XCTAssertEqual(measuredFirst.x, Double(first.x), accuracy: 0.001)
+    XCTAssertEqual(measuredFirst.y, Double(first.y), accuracy: 0.001)
+    XCTAssertEqual(measuredLast.x, Double(last.x), accuracy: 0.001)
+    XCTAssertEqual(measuredLast.y, Double(last.y), accuracy: 0.001)
+    // Observe beyond the rejected request's original duration. This is a
+    // cancellation check, not a camera-latency or screenshot measurement.
+    while ContinuousClock.now < originalDeadline {
+      XCTAssertEqual(model.presencePhase, .settled)
+      assertCamera(try XCTUnwrap(model.nativeCameraProjection.current(for: start.boardID)?.camera), equals: start.camera)
+      try await Task.sleep(for: .milliseconds(10))
+    }
+    XCTAssertEqual(model.presence?.notebookPageID, page.id)
+    assertCamera(try XCTUnwrap(model.presence?.camera), equals: start.camera)
+  }
+
   func testLoadedDocumentPaperAdmitsSceneFingers() async throws {
     let (model,window)=try await scene(document:true)
     let item=try XCTUnwrap(model.presence?.focusedItemID)

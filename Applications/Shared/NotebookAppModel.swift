@@ -6577,7 +6577,7 @@ final class NotebookAppModel {
     constrainedPaperPresence(presence.adapted(to: viewport, geometry: itemGeometry(presence.focusedItemID)))
   }
 
-  private func constrainedPaperPresence(_ presence: SessionPresence) -> SessionPresence {
+  func constrainedPaperPresence(_ presence: SessionPresence) -> SessionPresence {
     #if os(iOS)
     guard (presence.mode == .page || presence.mode == .document), presence.openProgress == 1,
       let id = presence.focusedItemID,

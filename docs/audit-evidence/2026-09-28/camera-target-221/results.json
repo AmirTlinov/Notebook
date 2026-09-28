@@ -1,0 +1,80 @@
+{
+  "status": "physically verified; signed-pair delivery pending",
+  "baseCommit": "964624579556ca2d20a168656215d620ba24a210",
+  "branch": "codex/pencil-camera-handoff",
+  "build": {
+    "exitCode": 0,
+    "seconds": 70.37991799996234,
+    "unchangedSource": true,
+    "sourceSHA256": "db3abacb1b93d387bd50041f1c2a52a9deffe248c38c8be293a32917521a28e9",
+    "scope": "iPhoneOS compilation only; no installation/test execution"
+  },
+  "buildEvidence": "/private/tmp/notebook-camera-target-build-20260928T1739Z",
+  "change": "Camera owner constrains a camera-only target before admission. An unchanged target does not start preparation or a clock. Prepared equal-pose movements complete synchronously. General page navigation still requires preparation.",
+  "physicalVerification": {
+    "executed": true,
+    "reason": null,
+    "selectedTests": [
+      "NotebookTests/NotebookPaperCameraTests/testClampedNotebookCameraRequestKeepsPaperInputAvailable",
+      "NotebookTests/NotebookPaperCameraTests/testOpenNotebookKeepsItsFittedPageDuringZoomInAndTranslation",
+      "NotebookTests/NotebookPaperCameraTests/testNotebookZoomCanCloseAndReopenOnlyItsOwnSurface"
+    ],
+    "native": {
+      "evidence": "/private/tmp/notebook-camera-221-20260928T1821Z",
+      "passed": 3,
+      "failed": 0,
+      "skipped": 0,
+      "runtimeWarnings": 0,
+      "sourceSHA256": "f28e2ddaae310297313ced65fbd6b10a8e8e1d6bc2cc14d10366790d7607798d",
+      "inputBoundary": "Synthetic typed UITouch through the installed window Pencil recognizer; not hardware Pencil delivery latency."
+    },
+    "uiInitializationFailure": {
+      "evidence": "/private/tmp/notebook-camera-221-ui-20260928T1823Z",
+      "scenarioExecuted": false,
+      "failure": "Timed out while enabling automation mode",
+      "recovery": "Confirmed termination of automationmode-writer617 and testmanagerd603; device reboot not required."
+    },
+    "uiAfterRecovery": {
+      "evidence": "/private/tmp/notebook-camera-221-ui-20260928T1828Z",
+      "status": "passed",
+      "passed": 1,
+      "failed": 0,
+      "skipped": 0,
+      "runtimeWarnings": 0,
+      "sourceSHA256": "f44aebcb4de43df6d2324e25131e28bc5b060f79f979a81af1c04b21697aab09",
+      "scope": "System pinch close, further zoom-out without rebound, same-page reopen, forward/reverse turn; real physical iPad."
+    }
+  },
+  "installation": {
+    "changed": false,
+    "productionVersion": "0.3.150 (220)",
+    "pendingCleanupBundle": null,
+    "preservedProductionBundle": "com.amirtlinov.notebook.preview",
+    "cleanupReason": "Original220 native-test removed at18:20. Both completed selected runs removed their native-test and UI-runner identities."
+  },
+  "priorSourceProfiling": {
+    "sourceCommit": "964624579556ca2d20a168656215d620ba24a210",
+    "sourceSHA256": "87d7ea85c16550d111d0322c4ee6797808dc4bfd081ce5b72d6ad348b0a34b36",
+    "run1714": {
+      "evidence": "/private/tmp/notebook-221-profile-20260928T1714Z",
+      "result": "Native24 executed; reverse 458.791666 ms exceeded 450 ms. Profiling overhead makes this a diagnostic observation, not a new latency baseline.",
+      "trace": "/private/tmp/notebook-221-mainactor1714.trace",
+      "traceUsable": false,
+      "reason": "Recorder stalled in remote symbolication after the time limit; terminated partial trace has no template and cannot export CPU samples.",
+      "specificObservation": "A positive OS receipt was delivered 63.27 ms later; material preparation had already finished. CPU cause remains unidentified."
+    },
+    "run1718": {
+      "evidence": "/private/tmp/notebook-221-profile-20260928T1718Z",
+      "result": "Scenario did not start; runner interrupted. Targeted profiler returned Cannot find process despite CoreDevice inventory. Cleanup subsequently timed out."
+    }
+  },
+  "remaining": "Prior strict first-frame, Native24, cold-document/program targets and full physical acceptance remain open.",
+  "sourceDeltaAfterNative": {
+    "finalSourceSHA256": "f44aebcb4de43df6d2324e25131e28bc5b060f79f979a81af1c04b21697aab09",
+    "changedFiles": [
+      "Applications/UITests/DrawingResponsivenessTests.swift"
+    ],
+    "reason": "Removed obsolete duplicate requiring strong zoom-out to keep notebook open. Product and executed native test sources unchanged."
+  },
+  "version": "0.3.151 (221)"
+}

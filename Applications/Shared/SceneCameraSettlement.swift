@@ -42,7 +42,7 @@ final class SceneCameraSettlement {
     self.from = from; self.to = to; self.duration = duration
     self.navigationID = navigationID
     self.publish = publish; self.completion = completion
-    guard from.boardID == to.boardID, duration > 0 else { finish(.completed, pose: to); return true }
+    guard from != to, from.boardID == to.boardID, duration > 0 else { finish(.completed, pose: to); return true }
     spring = Spring(settlingDuration: duration, dampingRatio: Spring(duration: duration, bounce: bounce).dampingRatio)
     startedAt = CACurrentMediaTime()
     clockTarget.owner = self

@@ -337,11 +337,10 @@ struct SpatialWorkspaceView: View {
           }
         }
         model.presentationPlayer.moveCamera = { camera, duration in
-          guard let current = model.presence, !model.inputGate.isActive, cameraGesture == nil,
+          guard model.presence != nil, !model.inputGate.isActive, cameraGesture == nil,
             !pageTurnIsActive, !contentGestureActive, model.requestedReference == nil,
             model.requestedReturn == nil, model.loadState == .ready else { return false }
-          animateSettlement(to: current.replacingCamera(camera), duration: duration, bounce: 0)
-          return true
+          return cameraOwner.moveCamera(to: camera, duration: duration)
         }
         model.presentationPlayer.stopCamera = {
           interruptSettlementForInput(interruptPresentation:false)

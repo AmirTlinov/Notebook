@@ -3603,27 +3603,6 @@ final class DrawingResponsivenessTests: XCTestCase {
     let proof=XCTAttachment(screenshot:app.screenshot());proof.name="notebook-context-return";proof.lifetime = .keepAlways;add(proof)
   }
 
-  func testNotebookPinchesKeepTheSameFittedSheetAndPage() {
-    continueAfterFailure = false
-    let app = XCUIApplication()
-    app.launchArguments = ["--notebook-drawing-responsiveness-fixture", "--notebook-page-turn-content-fixture"]
-    app.launchArguments.append("--notebook-simulator-finger-gestures")
-    launchPortraitFixture(app)
-    let paper = app.otherElements["paper-input"], marker = app.otherElements["agent-element-page-marker-0"]
-    let turn = app.otherElements["page-turn-surface"]
-    XCTAssertTrue(marker.waitForExistence(timeout: 8))
-    let fitted = paper.frame, page = turn.value as? String
-    for scale in [1.6, 0.28, 1.2] {
-      marker.pinch(withScale: scale, velocity: scale > 1 ? 0.7 : -2)
-      XCTAssertTrue(paper.exists)
-      XCTAssertEqual(paper.frame, fitted)
-      XCTAssertEqual(turn.value as? String, page)
-      XCTAssertTrue(marker.exists)
-    }
-    let proof = XCTAttachment(screenshot: app.screenshot())
-    proof.name = "notebook-pinches-retain-fitted-page"; proof.lifetime = .keepAlways; add(proof)
-  }
-
   func testDocumentPinchesZoomTheOpenSheetInsteadOfItsCover() throws {
     continueAfterFailure = false
     let app = XCUIApplication()
