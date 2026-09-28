@@ -1,0 +1,148 @@
+{
+  "devices": [
+    {
+      "architecture": "arm64e",
+      "deviceId": "00008103-001E059934D9001E",
+      "deviceName": "iPad (Елизавета)",
+      "modelName": "iPad Pro (11-inch) (3rd generation)",
+      "osBuildNumber": "24A435",
+      "osVersion": "27.0",
+      "platform": "iOS"
+    }
+  ],
+  "testNodes": [
+    {
+      "children": [
+        {
+          "children": [
+            {
+              "children": [
+                {
+                  "duration": "0,43s",
+                  "durationInSeconds": 0.42648208141326904,
+                  "name": "testColdLiveProgramCapturesOnlyWhenItsMaterialIsRequested()",
+                  "nodeIdentifier": "AgentWebLeaseTests/testColdLiveProgramCapturesOnlyWhenItsMaterialIsRequested()",
+                  "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/AgentWebLeaseTests/testColdLiveProgramCapturesOnlyWhenItsMaterialIsRequested",
+                  "nodeType": "Test Case",
+                  "result": "Passed"
+                },
+                {
+                  "duration": "0,18s",
+                  "durationInSeconds": 0.17791199684143066,
+                  "name": "testCurrentFrameCapturesTheInstalledDOMAndRevokesProofOnDetachOrReplacement()",
+                  "nodeIdentifier": "AgentWebLeaseTests/testCurrentFrameCapturesTheInstalledDOMAndRevokesProofOnDetachOrReplacement()",
+                  "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/AgentWebLeaseTests/testCurrentFrameCapturesTheInstalledDOMAndRevokesProofOnDetachOrReplacement",
+                  "nodeType": "Test Case",
+                  "result": "Passed"
+                }
+              ],
+              "name": "AgentWebLeaseTests",
+              "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/AgentWebLeaseTests",
+              "nodeType": "Test Suite",
+              "result": "Passed"
+            },
+            {
+              "children": [
+                {
+                  "duration": "0,17s",
+                  "durationInSeconds": 0.17466199398040771,
+                  "name": "testCancellingAnAdmittedPairDrainsBothCapturesWithoutPublishing()",
+                  "nodeIdentifier": "NotebookPageCurlInteractionTests/testCancellingAnAdmittedPairDrainsBothCapturesWithoutPublishing()",
+                  "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/NotebookPageCurlInteractionTests/testCancellingAnAdmittedPairDrainsBothCapturesWithoutPublishing",
+                  "nodeType": "Test Case",
+                  "result": "Passed"
+                }
+              ],
+              "name": "NotebookPageCurlInteractionTests",
+              "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/NotebookPageCurlInteractionTests",
+              "nodeType": "Test Suite",
+              "result": "Passed"
+            },
+            {
+              "children": [
+                {
+                  "duration": "0,026s",
+                  "durationInSeconds": 0.02574598789215088,
+                  "name": "testNativeDetachRemountPublishesAvailabilityWithoutRevokingANewerRuntime()",
+                  "nodeIdentifier": "PageTurnMaterialOwnerTests/testNativeDetachRemountPublishesAvailabilityWithoutRevokingANewerRuntime()",
+                  "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/PageTurnMaterialOwnerTests/testNativeDetachRemountPublishesAvailabilityWithoutRevokingANewerRuntime",
+                  "nodeType": "Test Case",
+                  "result": "Passed"
+                },
+                {
+                  "duration": "0,038s",
+                  "durationInSeconds": 0.037904977798461914,
+                  "name": "testPassiveProgramFrameSurvivesNativeDetachmentAndReusesItsExactMaterial()",
+                  "nodeIdentifier": "PageTurnMaterialOwnerTests/testPassiveProgramFrameSurvivesNativeDetachmentAndReusesItsExactMaterial()",
+                  "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/PageTurnMaterialOwnerTests/testPassiveProgramFrameSurvivesNativeDetachmentAndReusesItsExactMaterial",
+                  "nodeType": "Test Case",
+                  "result": "Passed"
+                },
+                {
+                  "duration": "0,0092s",
+                  "durationInSeconds": 0.009212970733642578,
+                  "name": "testRuntimeNeverWarmsOrReusesAPreviousTurnAndRetirementRejectsPendingPixels()",
+                  "nodeIdentifier": "PageTurnMaterialOwnerTests/testRuntimeNeverWarmsOrReusesAPreviousTurnAndRetirementRejectsPendingPixels()",
+                  "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/PageTurnMaterialOwnerTests/testRuntimeNeverWarmsOrReusesAPreviousTurnAndRetirementRejectsPendingPixels",
+                  "nodeType": "Test Case",
+                  "result": "Passed"
+                },
+                {
+                  "duration": "0,00092s",
+                  "durationInSeconds": 0.0009249448776245117,
+                  "name": "testUnchangedProviderLayoutDoesNotWakeThePageButPixelsAndAvailabilityDo()",
+                  "nodeIdentifier": "PageTurnMaterialOwnerTests/testUnchangedProviderLayoutDoesNotWakeThePageButPixelsAndAvailabilityDo()",
+                  "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/PageTurnMaterialOwnerTests/testUnchangedProviderLayoutDoesNotWakeThePageButPixelsAndAvailabilityDo",
+                  "nodeType": "Test Case",
+                  "result": "Passed"
+                }
+              ],
+              "name": "PageTurnMaterialOwnerTests",
+              "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/PageTurnMaterialOwnerTests",
+              "nodeType": "Test Suite",
+              "result": "Passed"
+            }
+          ],
+          "name": "NotebookTests",
+          "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests",
+          "nodeType": "Unit test bundle",
+          "result": "Passed"
+        },
+        {
+          "children": [
+            {
+              "children": [
+                {
+                  "duration": "1 мин 27 с",
+                  "durationInSeconds": 87.30445396900177,
+                  "name": "testTwentyFourPageProgramsAcceptFirstTapAfterZoomAndKeepStateAcrossTurns()",
+                  "nodeIdentifier": "NotebookNavigationLoadUITests/testTwentyFourPageProgramsAcceptFirstTapAfterZoomAndKeepStateAcrossTurns()",
+                  "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookUITests/NotebookNavigationLoadUITests/testTwentyFourPageProgramsAcceptFirstTapAfterZoomAndKeepStateAcrossTurns",
+                  "nodeType": "Test Case",
+                  "result": "Passed"
+                }
+              ],
+              "name": "NotebookNavigationLoadUITests",
+              "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookUITests/NotebookNavigationLoadUITests",
+              "nodeType": "Test Suite",
+              "result": "Passed"
+            }
+          ],
+          "name": "NotebookUITests",
+          "nodeIdentifierURL": "test://com.apple.xcode/Notebook/NotebookUITests",
+          "nodeType": "UI test bundle",
+          "result": "Passed"
+        }
+      ],
+      "name": "Notebook",
+      "nodeType": "Test Plan",
+      "result": "Passed"
+    }
+  ],
+  "testPlanConfigurations": [
+    {
+      "configurationId": "1",
+      "configurationName": "Test Scheme Action"
+    }
+  ]
+}

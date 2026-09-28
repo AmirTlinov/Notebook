@@ -1,12 +1,10 @@
 {
   "format": 1,
-  "candidateVersion": "0.3.150 (220)",
   "baseCommit": "87c787d30f44df356817b50cc13b572d210124e8",
-  "status": "implemented-awaiting-final-physical-check-and-delivery",
-  "installedProduction": "0.3.149 (219)",
-  "installation220Attempted": false,
+  "status": "functional-repair-delivered",
+  "installedProduction": "0.3.150 (220)",
+  "installation220Attempted": true,
   "fullAcceptance": false,
-  "candidateSource": "87d7ea85c16550d111d0322c4ee6797808dc4bfd081ce5b72d6ad348b0a34b36",
   "changes": [
     "Actor-local immediate submission of the structured page pair and live snapshot cohort; preserved cancellation/resource fences.",
     "Initial accepted WebKit state publishes without an empty transfer task; later transfers remain coalesced and source-checked.",
@@ -133,11 +131,89 @@
       "skippedTests": 0,
       "runtimeWarnings": [],
       "scope": "Mac document read-set reuse/negative-probe invalidation and recovery from ten cancelled compilations. Final Rust/source-preparation product code unchanged; only iPad UIKit diagnostic additions subsequently removed."
+    },
+    {
+      "id": "1655",
+      "path": "/private/tmp/notebook-interaction-220-delivery-20260928T1655Z",
+      "sourceSHA256": "87d7ea85c16550d111d0322c4ee6797808dc4bfd081ce5b72d6ad348b0a34b36",
+      "sourceFileCount": 1552,
+      "status": "passed",
+      "passedTests": 8,
+      "failedTests": 0,
+      "skippedTests": 0,
+      "runtimeWarnings": [],
+      "scope": "All four material-owner cases, admitted-pair cancellation/drain, two WebKit frame/lifecycle cases, and physical system UI24 first taps after pinch and state across forward/reverse turns. Source is final220 after removal of UIKit probes.",
+      "summary": "1655-ipad-summary.json",
+      "tests": "1655-ipad-tests.json"
+    },
+    {
+      "id": "1700",
+      "path": "/private/tmp/notebook-interaction-220-latency-20260928T1700Z",
+      "sourceSHA256": "87d7ea85c16550d111d0322c4ee6797808dc4bfd081ce5b72d6ad348b0a34b36",
+      "sourceFileCount": 1552,
+      "status": "failed",
+      "passedTests": 0,
+      "failedTests": 3,
+      "skippedTests": 0,
+      "runtimeWarnings": [],
+      "scope": "Final-source strict cold dot,10curl turns and Native24, without the removed UIKit probes. Correct content and state do not waive latency budgets.",
+      "summary": "1700-ipad-summary.json",
+      "attachments": "/private/tmp/notebook-220-attachments1700",
+      "dotMS": {
+        "handler": 1.663,
+        "render": 3.409,
+        "commit": 3.549,
+        "gpuEnd": 4.21,
+        "actualOS": 20.044666667672573,
+        "targetPresentation": 20.044542,
+        "receiptDelivered": 20.508,
+        "budget": 20
+      },
+      "curl": {
+        "firstOSMSRange": [
+          21.56,
+          38.46479166713834
+        ],
+        "submissionCount": 390,
+        "cpuMedianMS": 0.132,
+        "cpuMaxMS": 0.343,
+        "gpuMedianMS": 0.546,
+        "gpuMaxMS": 1.176,
+        "positiveOSIntervals": 376,
+        "cadenceMedianMS": 8.33663,
+        "cadenceMaxMS": 8.34279,
+        "initialDroppedFrames": 4,
+        "boundary": "120Hz actual OS cadence after the first shown frame; first-show deadline remains16.67ms."
+      },
+      "native24": {
+        "forwardPairBeginMS": 32.558,
+        "forwardPairEndMS": 95.873,
+        "forwardEndpointOSMS": 464.583,
+        "forwardEndpointReceiptMS": 464.969,
+        "forwardOwnerLandingMS": 466.695042,
+        "reverseOwnerLandingMS": 443.433,
+        "budgetMS": 450,
+        "earlyCallbackGapsMS": [
+          93.406,
+          69.529
+        ],
+        "firstPositiveReceipt": {
+          "sequence": 4,
+          "actualOSMS": 260.334,
+          "deliveredMS": 303.171
+        },
+        "correctness": "All program state,markers,pixel probes and both directions passed.",
+        "uncertainty": "CPU stack unavailable: scheduling/delivery gaps are measured, their cause is not established."
+      },
+      "inputBoundary": "Native recognizer/scene input to actual OS timestamps; no hardware Pencil delivery/photons measurement."
     }
   ],
   "remaining": [
-    "Final system UI24 on the unlocked physical iPad and matched-pair installation.",
     "Stable450ms Native24 landing, strict cold document/SVG/program, Pencil/first-curl and inverse-window conditions remain open.",
     "System frame/CPU/GPU/memory acceptance and30-minute joint workload remain separate."
-  ]
+  ],
+  "delivery": "delivery.json",
+  "sourceCommit": "4a933b6502e9cfdd50b90faa8c713e51ae844062",
+  "version": "0.3.150 (220)",
+  "sourceSHA256": "87d7ea85c16550d111d0322c4ee6797808dc4bfd081ce5b72d6ad348b0a34b36"
 }
