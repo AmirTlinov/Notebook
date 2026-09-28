@@ -1,0 +1,103 @@
+{
+  "status": "functional repair installed on matched pair; strict latency budgets remain open",
+  "version": "0.3.152 (222)",
+  "baseCommit": "bc85d2e49924c393f081e7ccd514598957136632",
+  "runs": {
+    "2018": {
+      "evidence": "/private/tmp/notebook-222-functional-20260928T2018Z",
+      "sourceSHA256": "5e79b7816dd047bd8720071e15f2523f4123f958448ef1608e7414d938c5213c",
+      "passed": 7,
+      "failed": 1,
+      "skipped": 0,
+      "runtimeWarnings": [],
+      "failure": "UI24: both synthesized pinch contacts remained inside program6; that owner received its own pair and produced a click. Not a camera-pinch path or readiness failure.",
+      "passedScope": "Three state-admission regressions, reentrant/cancelled capture, source replacement, system raw-ink and composition undo/redo/move/delete/return/cold reopen."
+    },
+    "2031": {
+      "evidence": "/private/tmp/notebook-222-functional-20260928T2031Z",
+      "sourceSHA256": "398e22f5054bcb60cfc73d41d681cbf3710bc55a401523344bf2ad92672effb3",
+      "scenarioExecuted": false,
+      "failure": "Compile error in new regression: actor revision used inside synchronous XCTAssert autoclosure. Repaired by reading both revisions before assertions; product code unchanged."
+    },
+    "2032": {
+      "evidence": "/private/tmp/notebook-222-functional-20260928T2032Z",
+      "sourceSHA256": "65cc888d2408065d2126567fc3fd3e08c46db249086d82f1415024bf85787d45",
+      "status": "passed",
+      "passed": 10,
+      "failed": 0,
+      "skipped": 0,
+      "runtimeWarnings": 0,
+      "scope": "Physical iPad: two page-content invalidation regressions, three state-admission regressions, reentrant and cancelled capture, source replacement, system UI24 camera/first taps/state return, raw ink/composition undo-redo/move/delete/cold reopen."
+    },
+    "2036": {
+      "evidence": "/private/tmp/notebook-222-latency-20260928T2036Z",
+      "sourceSHA256": "65cc888d2408065d2126567fc3fd3e08c46db249086d82f1415024bf85787d45",
+      "summary": "2036-ipad-summary.json",
+      "passed": 0,
+      "failed": 3,
+      "skipped": 0,
+      "runtimeWarnings": 0,
+      "coldPrograms24": {
+        "firstExactNativeInstallationMs": 657.070875,
+        "firstBudgetMs": 150,
+        "allExactNativeInstallationsMs": 1042.508083,
+        "allBudgetMs": 1000,
+        "exactInstalledCount": 24,
+        "sourceToNavigationMedianMs": 0.085,
+        "comparison": "220/1132 median source-to-navigation was 45.659ms. Total cold latency is not a controlled regression comparison: 1132 ran SVG before programs; 2036 ran programs first. The next fixture in 2036 had first runtime ready at 397.550ms and all at 815.049ms."
+      },
+      "nativePrograms24": {
+        "forwardOwnerLandingMs": 552.241958,
+        "ownerBudgetMs": 450,
+        "pairReadyMs": 189.454,
+        "firstPositiveOSMs": 262.113958,
+        "endpointOSMs": 549.727208,
+        "remainingWait": "About 59ms from WebKit cuts to slots_ready and 39.896ms from GPU callback to owner continuation. CPU/GPU timestamps do not identify the occupied executor; a CPU stack is still missing.",
+        "reverseOwnerLandingMs": 444.062833,
+        "reverseOS": "Not recorded by this fixture; owner landing is not substituted for OS presentation."
+      },
+      "warmTurns10": {
+        "firstTurnOSMs": 41.0295,
+        "firstOSBudgetMs": 16.666667,
+        "observation": "First submitted drawable was dropped in the first turn in both 220 and 222. The approximately 2.565ms first-presentation difference matches the shifted first display callback; no new CPU/GPU work is established.",
+        "firstOSRangeMs": [
+          24.8035,
+          41.0295
+        ],
+        "afterFirstOSMaximumIntervalMs": 8.342375,
+        "unpresentedSubmissionCount": 11,
+        "unpresentedByTurn": [
+          1,
+          0,
+          2,
+          2,
+          1,
+          0,
+          2,
+          0,
+          1,
+          2
+        ],
+        "unpresentedScope": "Initial submissions only; no later interval gaps observed."
+      }
+    },
+    "2042": {
+      "evidence": "/private/tmp/notebook-222-profile-20260928T2042Z",
+      "sourceSHA256": "65cc888d2408065d2126567fc3fd3e08c46db249086d82f1415024bf85787d45",
+      "summary": "2042-ipad-summary.json",
+      "passed": 0,
+      "failed": 1,
+      "skipped": 0,
+      "runtimeWarnings": 0,
+      "forwardOwnerLandingMs": 517.182667,
+      "ownerBudgetMs": 450,
+      "profile": "App-only Time Profiler attachment failed with Cannot find process for provided pid: 1137 (exit 21). No CPU stack obtained. The test itself ran and failed the unchanged latency budget. Profiling orchestration is not a clean latency baseline.",
+      "endpointOSMs": 513.36675,
+      "reverseOwnerLandingMs": 430.787333
+    }
+  },
+  "remaining": "Strict first-frame/cold-content/Native24 budgets and sustained physical acceptance are not closed by these functional checks.",
+  "sourceSHA256": "65cc888d2408065d2126567fc3fd3e08c46db249086d82f1415024bf85787d45",
+  "sourceCommit": "13f422b21250a8779bf2e27f13ef9607426d2b3d",
+  "delivery": "delivery.json"
+}
