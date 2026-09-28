@@ -1,5 +1,5 @@
 {
-  "status": "physically verified; signed-pair delivery pending",
+  "status": "physically verified and delivered as matched pair",
   "baseCommit": "964624579556ca2d20a168656215d620ba24a210",
   "branch": "codex/pencil-camera-handoff",
   "build": {
@@ -46,11 +46,14 @@
     }
   },
   "installation": {
-    "changed": false,
-    "productionVersion": "0.3.150 (220)",
+    "changed": true,
+    "productionVersion": "0.3.151 (221)",
     "pendingCleanupBundle": null,
     "preservedProductionBundle": "com.amirtlinov.notebook.preview",
-    "cleanupReason": "Original220 native-test removed at18:20. Both completed selected runs removed their native-test and UI-runner identities."
+    "cleanupReason": "Original220 native-test removed at18:20. Both completed selected runs removed their native-test and UI-runner identities.",
+    "previousBuild": "220",
+    "status": "matched-pair-launched",
+    "qaOrTestAppsPresent": false
   },
   "priorSourceProfiling": {
     "sourceCommit": "964624579556ca2d20a168656215d620ba24a210",
@@ -76,5 +79,7 @@
     ],
     "reason": "Removed obsolete duplicate requiring strong zoom-out to keep notebook open. Product and executed native test sources unchanged."
   },
-  "version": "0.3.151 (221)"
+  "version": "0.3.151 (221)",
+  "productCommit": "ed275d0f1d2ed8de5363d031737e5dbb1a7a000c",
+  "delivery": "delivery.json"
 }

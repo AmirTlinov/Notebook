@@ -1,0 +1,65 @@
+{
+  "format": 1,
+  "status": "functional-repair-delivered",
+  "sourceCommit": "ed275d0f1d2ed8de5363d031737e5dbb1a7a000c",
+  "version": "0.3.151",
+  "build": "221",
+  "previousBuild": "220",
+  "sourceSHA256": "f44aebcb4de43df6d2324e25131e28bc5b060f79f979a81af1c04b21697aab09",
+  "fullAcceptance": false,
+  "scope": "Camera admission and pinch close/reopen repair: 3 native and 1 system UI physical checks passed. Native-source delta is only obsolete UI test removal; product and executed native test sources unchanged. Prior strict performance limits remain open.",
+  "verification": {
+    "path": "/private/tmp/notebook-camera-221-ui-20260928T1828Z/verification.json",
+    "sha256": "a1992f4188bbee32161262ef085cfbb31e64205065bf34d3e29b9f4ac5e996f3",
+    "status": "passed",
+    "route": "./verify.sh:selected",
+    "passed": 1,
+    "failed": 0,
+    "skipped": 0,
+    "runtimeWarnings": [],
+    "summary": "1828-ipad-summary.json",
+    "tests": "1828-ipad-tests.json",
+    "nativeCompanion": "results.json#physicalVerification.native"
+  },
+  "buildReceipt": {
+    "path": "/private/tmp/notebook-camera-pair-221-20260928T1831Z/build.json",
+    "sha256": "c07bb044dcf4c187746ee4ea64b168d24cc4913897240225fd8e25dd2e9c24bd",
+    "status": "verified-build"
+  },
+  "installationReceipt": {
+    "path": "/private/tmp/notebook-camera-install-221-20260928T1838Z/installation.json",
+    "sha256": "5f84290a477819055919bda493d71f87202fec618071b19dfcbf1ff316af4350",
+    "status": "matched-pair-launched",
+    "finishedAt": "2026-09-28T18:39:31.429315+00:00",
+    "macInstalledBuild": "221",
+    "ipadInstalledBuild": "221",
+    "inPlaceUpdate": true,
+    "dataAccess": "none",
+    "noStoreOrKeyAccess": true,
+    "identityRetention": "Bundle identities and signed rights preserved. Existing trusted iPad device identity reconnected. No equal container-filesystem-path claim."
+  },
+  "postLaunch": {
+    "path": "/private/tmp/notebook-camera-install-221-20260928T1838Z/post-launch-check.json",
+    "sha256": "cae45e813ea69205a228fb52673694caa37923dcb6449033d9ba5b8ac486d8ee",
+    "status": "ready",
+    "checkedAt": "2026-09-28T18:39:49Z",
+    "macInstalledHelperStatus": "ready",
+    "iPadPresentationStatus": "ready",
+    "iPadDeviceID": "29DC77FE-8777-41EC-BE98-704F4668A2F4",
+    "iPadSessionID": "AB6FF4B4-6BA2-48AC-8C07-5C091804192A",
+    "priorSessionID": "94AF8C5F-BB1C-4727-A0ED-D593D0FBDA09",
+    "scope": "Installed pair launch and connection. Physical interaction scope recorded separately.",
+    "macInstalledVersion": "0.3.151",
+    "macInstalledBuild": "221",
+    "iPadInstalledVersion": "0.3.151",
+    "iPadInstalledBuild": "221",
+    "iPadNotebookApps": [
+      {
+        "bundleID": "com.amirtlinov.notebook.preview",
+        "name": "Notebook Lab",
+        "build": "221"
+      }
+    ],
+    "qaOrTestAppsPresent": false
+  }
+}
