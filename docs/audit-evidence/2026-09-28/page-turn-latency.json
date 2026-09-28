@@ -1,10 +1,10 @@
 {
   "format": 1,
-  "recordedAt": "2026-09-28T02:13:21.876017+00:00",
+  "recordedAt": "2026-09-28T02:43:56.614777+00:00",
   "issue": "GUI-298",
   "baseCommit": "015180b3f21be81ad038b181731ce8cb7dfb092c",
   "candidateVersion": "0.3.148 (218)",
-  "status": "selected-verification-passed-build-pending",
+  "status": "selected-verification-passed-matched-pair-installed",
   "fullAcceptance": false,
   "device": {
     "id": "00008103-001E059934D9001E",
@@ -225,5 +225,35 @@
     "endpointOSMS": 429.609333,
     "evidence": "/private/tmp/notebook-latency-218-0233-attachments/B83A9596-75D8-4759-91FE-03C14666F8FB.txt",
     "scope": "Fresh DOM vs passive cache, passive producer/material replacement, native detach/remount and stale predecessor, cancellation, changed layers forward/reverse, first full-pair bend, rapid alternating arrows, source replacement, document subtree transfer, Native24 timing and system UI24 first taps/forward/reverse state. One selected execution, not repeated full acceptance."
+  },
+  "codeCommit": "8c13591a",
+  "delivery": {
+    "buildReceipt": "/private/tmp/notebook-page-turn-pair-218-20260928T0237Z/build.json",
+    "buildReceiptSHA256": "2ab7040f8f8cf2367a3f753ebd3d83e07439e58eb9cda306c71789ad77e63f87",
+    "installationReceipt": "/private/tmp/notebook-page-turn-install-218-20260928T0242Z/installation.json",
+    "installationReceiptSHA256": "cca032d8634a7c1b71ae70a35586bade5d71313bef8c797eb85712eae56c4365",
+    "status": "matched-pair-launched",
+    "sourceSHA256": "7f2f1afab0eb93122438b62faa69bbb9b25199508014f4b7476ff17d8ab29dc0",
+    "version": "0.3.148",
+    "build": "218",
+    "previousBuild": "217",
+    "containersIdentitiesAndKeysPreserved": true,
+    "ipadAppInventory": "/private/tmp/notebook-page-turn-install-218-20260928T0242Z/ipad-final-all-apps.json",
+    "ipadNotebookApps": [
+      {
+        "name": "Notebook Lab",
+        "bundle": "com.amirtlinov.notebook.preview",
+        "version": "0.3.148",
+        "build": "218"
+      }
+    ],
+    "macInstalledPath": "/Users/amir/Applications/Notebook.app",
+    "macPID": 59343,
+    "presentationReceipt": "/private/tmp/notebook-page-turn-install-218-20260928T0242Z/presentation.json",
+    "installedHelperStatus": "ready",
+    "ipadPresentationStatus": "ready",
+    "ipadPresentationSessionID": "2B27697D-C7DC-464E-804D-FCB8F3D8DF55",
+    "finishedAt": "2026-09-28T02:43:12.932775+00:00",
+    "scope": "Installed pair and admitted helper connectivity; physical scenario proof is finalRun, full acceptance remains open."
   }
 }
