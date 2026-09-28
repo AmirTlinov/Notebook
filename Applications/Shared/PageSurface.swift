@@ -216,6 +216,7 @@ struct PageSurface: View {
     .onChange(of: page.elementSourceIdentity) { _, _ in
       publishReadiness()
     }
+    .onChange(of: isCurrent) { _, _ in publishReadiness() }
   }
 
   private func publishReadiness() {
@@ -226,6 +227,7 @@ struct PageSurface: View {
       }, onFailure: onRenderReady.captureFailed)
     materialOwner.prepareStaticSlots(readiness: onRenderReady,
       onReady: { publishReadiness() }, onFailure: onRenderReady.captureFailed)
+    materialOwner.preparePassiveFrame(readiness: onRenderReady, enabled: !isCurrent)
     onRenderReady.setFrameProvider { [page, weak owner = materialOwner, weak receipt = onRenderReady] priority in
       guard let owner, let receipt else { throw SceneRenderError.snapshotPending("retired_page_material") }
       return try await owner.acquire(page: page, readiness: receipt, priority: priority)

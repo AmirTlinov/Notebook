@@ -68,51 +68,100 @@ final class PageTurnFrame {
       width: width, height: height, mipmapped: false)
     descriptor.storageMode = .private; descriptor.usage = [.shaderRead, .shaderWrite, .renderTarget]
     guard let texture = device.makeTexture(descriptor: descriptor) else { reservation.release(); throw SceneRenderError.resourceLimit }
-    let extent = CGRect(x: 0, y: 0, width: width, height: height)
+    // Extract immutable material on its owner actor. The worker neither reads
+    // page state nor releases the reservations backing these textures/images.
+    var inputs: [PageTurnComposition.Layer] = layers.map { layer in
+      switch layer {
+      case .image(let image, let frame):
+        return .image(image, frame)
+      case .frame(let frame, let destination):
+        return .texture(frame.texture, destination)
+      }
+    }
+    if let ink { inputs.append(.texture(ink.texture, ink.logicalBounds)) }
+    let composition = PageTurnComposition(layers: inputs, size: size, scale: scale,
+      context: context, texture: texture, command: command)
+    let borrow = MaterialBorrow(retaining)
+    let worker = Task.detached(priority: priority == .input ? .userInitiated : .utility) { [layers, ink, borrow] in
+      defer { withExtendedLifetime((layers, ink, borrow)) {} }
+      return try await composition.render()
+    }
+    do {
+      let succeeded = try await withTaskCancellationHandler {
+        try await worker.value
+      } onCancel: {
+        worker.cancel()
+      }
+      try Task.checkCancellation()
+      guard succeeded else { throw SceneRenderError.snapshotPending("page_compositor_gpu") }
+      return .init(texture: texture, size: size, reservation: reservation, priority: admittedPriority, onRelease: onRelease)
+    } catch {
+      reservation.release()
+      throw error
+    }
+  }
+
+  isolated deinit { onRelease?(); reservation.release() }
+}
+
+/// One worker exclusively encodes this command. CIContext supports concurrent
+/// renders; all input pixels are immutable and retained by the page borrower.
+/// Metal's Objective-C protocols do not declare that ownership as Sendable.
+private final class PageTurnComposition: @unchecked Sendable {
+  enum Layer {
+    case image(CGImage, CGRect)
+    case texture(any MTLTexture, CGRect)
+  }
+  private let layers: [Layer]
+  private let size: CGSize
+  private let scale: Double
+  private let context: CIContext
+  private let texture: any MTLTexture
+  private let command: any MTLCommandBuffer
+
+  init(layers: [Layer], size: CGSize, scale: Double, context: CIContext,
+    texture: any MTLTexture, command: any MTLCommandBuffer) {
+    self.layers = layers; self.size = size; self.scale = scale
+    self.context = context; self.texture = texture; self.command = command
+  }
+
+  nonisolated func render() async throws -> Bool {
+    try Task.checkCancellation()
+    let extent = CGRect(x: 0, y: 0, width: texture.width, height: texture.height)
+    let colorSpace = CGColorSpace(name: CGColorSpace.sRGB)!
     var output = CIImage(color: .clear).cropped(to: extent)
     for layer in layers {
+      try Task.checkCancellation()
       let pixels: CIImage, rect: CGRect, dimensions: CGSize
       switch layer {
       case .image(let image, let frame):
         pixels = CIImage(cgImage: image); rect = frame
         dimensions = .init(width: image.width, height: image.height)
-      case .frame(let frame, let destination):
-        guard let image = CIImage(mtlTexture: frame.texture, options: [.colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!])
-        else { reservation.release(); throw SceneRenderError.snapshotPending("page_material_texture") }
-        pixels = image.transformed(by: CGAffineTransform(translationX: 0, y: Double(frame.texture.height)).scaledBy(x: 1, y: -1))
-        rect = destination; dimensions = .init(width: frame.texture.width, height: frame.texture.height)
+      case .texture(let texture, let destination):
+        guard let image = CIImage(mtlTexture: texture, options: [.colorSpace: colorSpace])
+        else { throw SceneRenderError.snapshotPending("page_material_texture") }
+        // Owned page/ink textures use a top-left origin; CI uses bottom-left.
+        pixels = image.transformed(by: CGAffineTransform(translationX: 0, y: Double(texture.height)).scaledBy(x: 1, y: -1))
+        rect = destination; dimensions = .init(width: texture.width, height: texture.height)
       }
       let input = pixels.transformed(by: CGAffineTransform(
         translationX: rect.minX * scale, y: (size.height - rect.maxY) * scale)
         .scaledBy(x: rect.width * scale / dimensions.width, y: rect.height * scale / dimensions.height))
       output = input.composited(over: output)
     }
-    if let ink {
-      guard let pixels = CIImage(mtlTexture: ink.texture, options: [.colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!])
-      else { reservation.release(); throw SceneRenderError.snapshotPending("page_ink_texture") }
-      let rect = ink.logicalBounds
-      // Ink's Metal row zero is the physical page top. CI composition uses bottom-left.
-      let input = pixels.transformed(by: CGAffineTransform(translationX: 0, y: Double(ink.texture.height)).scaledBy(x: 1, y: -1))
-        .transformed(by: CGAffineTransform(translationX: rect.minX * scale, y: (size.height - rect.maxY) * scale)
-          .scaledBy(x: rect.width * scale / Double(ink.texture.width), y: rect.height * scale / Double(ink.texture.height)))
-      output = input.composited(over: output)
-    }
-    // The analytic page shader samples top-left page coordinates.
-    output = output.transformed(by: CGAffineTransform(translationX: 0, y: Double(height)).scaledBy(x: 1, y: -1))
-    context.render(output, to: texture, commandBuffer: command, bounds: extent,
-      colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!)
+    output = output.transformed(by: CGAffineTransform(translationX: 0, y: Double(texture.height)).scaledBy(x: 1, y: -1))
+    try Task.checkCancellation()
+    // Graph compilation and image upload are synchronous CPU work even when
+    // the resulting GPU command is awaited asynchronously.
+    context.render(output, to: texture, commandBuffer: command, bounds: extent, colorSpace: colorSpace)
     command.label = "PageTurn.composeAcceptedMaterials"
-    let borrow = MaterialBorrow(retaining)
-    let succeeded = await withCheckedContinuation { continuation in
-      command.addCompletedHandler { [layers, ink, borrow] command in
-        _ = (layers, ink, borrow)
+    return await withCheckedContinuation { continuation in
+      command.addCompletedHandler { command in
         continuation.resume(returning: command.status == .completed)
       }
+      // Once submitted, cancellation drains this fence before the main owner
+      // may release either the output allocation or any borrowed source.
       command.commit()
     }
-    guard succeeded else { reservation.release(); throw SceneRenderError.snapshotPending("page_compositor_gpu") }
-    return .init(texture: texture, size: size, reservation: reservation, priority: admittedPriority, onRelease: onRelease)
   }
-
-  isolated deinit { onRelease?(); reservation.release() }
 }

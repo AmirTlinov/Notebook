@@ -96,6 +96,6 @@ final class PhysicalWebViewport: UIView, NotebookSceneFingerInputOwner {
 
   override func didMoveToWindow() {
     super.didMoveToWindow()
-    if window != nil, webView?.superview === self { onInstalled?() }
+    if webView?.superview === self { onInstalled?() }
   }
 }

@@ -733,6 +733,8 @@ struct SpatialWorkspaceView: View {
     }
   }
 
+  // The native reader owns page-turn admission. Starting its motion changes
+  // neither these scene contents nor their camera projection.
   private struct ItemPlaneRevision: Equatable {
     let cohortID: UUID?
     let generation: UUID?
@@ -746,7 +748,6 @@ struct SpatialWorkspaceView: View {
     let lifted: [UUID]
     let editingText: EditableElementReference?
     let contentGesture: Bool
-    let pageTurn: Bool
     let navigationID:UUID?
     let isCameraGesture: Bool
     let settling: Bool
@@ -767,7 +768,7 @@ struct SpatialWorkspaceView: View {
       focused: presence.focusedItemID, open: presence.openProgress <= 0 ? 0 : presence.openProgress >= 0.999 ? 2 : 1,
       selected: selectedItemID, lifted: liftedItemIDs,
       editingText: editingSpatialText, contentGesture: contentGestureActive,
-      pageTurn: pageTurnIsActive, navigationID:navigationID, isCameraGesture: cameraGesture != nil, settling: settling,
+      navigationID:navigationID, isCameraGesture: cameraGesture != nil, settling: settling,
       pointing: model.isPointing, prepares: rendered.map { preparesContent($0.id, presence: presence) },
       page: presence.documentPageIndex, layout: documentPageLayouts,
       dependentCamera: rendered.contains { $0.stackID != nil || $0.item.kind == .board }

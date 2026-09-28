@@ -195,7 +195,7 @@ struct PreparedAgentElementView: View {
       installation.source.agentElement == element,
       showsLiveProgram || raster?.image(for: rasterSource, minimumScale: requiredScale) != nil {
       pageTurnActivity.installElementFrame(page: context.pageIndex, element: element.id, owner: pageFrameOwner,
-        source: element, installation: installation) { [installation, element, focus, needsLiveFrame = showsLiveProgram, raster] priority in
+        source: element, installation: installation, content: showsLiveProgram ? .runtime : .raster) { [installation, element, focus, needsLiveFrame = showsLiveProgram, raster] priority in
         guard installation.isInstalled else { throw PageTurnMaterialUnavailable.changed }
         if needsLiveFrame {
           if priority == .input {

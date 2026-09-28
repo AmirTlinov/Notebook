@@ -31,28 +31,46 @@ final class PageTurnActivity {
     let presentation: Presentation
   }
   #if os(iOS)
+  enum ElementFrameContent: Equatable { case raster, runtime }
+  struct ElementFrameVersion: Equatable {
+    let id: UUID
+    let content: ElementFrameContent
+  }
   // Native installation/layout replaces these borrows. They are an addressed
   // registry, not view state: readiness is delivered by the installed owner.
   private struct ElementFrameProvider {
     let owner: UUID
     let source: AgentElement
     let installation: SceneSourceInstallation
+    // Sample the native receipt when its owner publishes. The old wrapper
+    // reads today's hierarchy too, so it cannot remember a visibility edge.
+    let isInstalled: Bool
+    let version: ElementFrameVersion
     let acquire: @MainActor (SceneAllocationPriority) async throws -> PageTurnElementFrame
   }
   @ObservationIgnored private var elementFrames: [Int: [String: ElementFrameProvider]] = [:]
   func installElementFrame(page: Int, element: String, owner: UUID, source: AgentElement,
-    installation: SceneSourceInstallation,
+    installation: SceneSourceInstallation, content: ElementFrameContent,
     provider: @escaping @MainActor (SceneAllocationPriority) async throws -> PageTurnElementFrame) {
     let previous = elementFrames[page]?[element]
     // Installation wrappers are recreated by layout. Only a new accepted
     // source, native owner, raster or runtime replaces the borrowed material.
     let changed = previous?.owner != owner || previous?.source != source
+      || previous?.installation.source != installation.source
       || previous?.installation.ownerIdentity != installation.ownerIdentity
       || previous?.installation.entryID != installation.entryID
       || previous?.installation.runtimeToken != installation.runtimeToken
       || previous?.installation.requiresVisibility != installation.requiresVisibility
+      || previous?.version.content != content
+    let isInstalled = installation.isInstalled
+    // Loss can revoke only this exact native borrow. A detached predecessor
+    // must not replace the raster/runtime which has already taken its place.
+    guard isInstalled || (previous != nil && !changed) else { return }
     elementFrames[page, default: [:]][element] = .init(owner: owner, source: source,
-      installation: installation, acquire: provider)
+      installation: installation, isInstalled: isInstalled,
+      version: changed ? .init(id: UUID(), content: content) : previous!.version,
+      acquire: provider)
+    guard changed || previous?.isInstalled != isInstalled else { return }
     for observer in Array(preparationObservers.values) {
       observer(.elementFrames(pageIndex: page, materialChanged: changed))
     }
@@ -74,7 +92,14 @@ final class PageTurnActivity {
   func acquireElementFrame(page: Int, source: AgentElement, priority: SceneAllocationPriority) async throws -> PageTurnElementFrame {
     guard let provider = elementFrames[page]?[source.id], provider.source == source,
       provider.installation.isInstalled else { throw PageTurnMaterialUnavailable.changed }
-    return try await provider.acquire(priority)
+    let frame = try await provider.acquire(priority)
+    guard elementFrameVersion(page: page, source: source) == provider.version else { throw PageTurnMaterialUnavailable.changed }
+    return frame
+  }
+  func elementFrameVersion(page: Int, source: AgentElement) -> ElementFrameVersion? {
+    guard let provider = elementFrames[page]?[source.id], provider.source == source,
+      provider.installation.isInstalled else { return nil }
+    return provider.version
   }
   func hasElementFrame(page: Int, source: AgentElement) -> Bool {
     guard let provider = elementFrames[page]?[source.id], provider.source == source else { return false }

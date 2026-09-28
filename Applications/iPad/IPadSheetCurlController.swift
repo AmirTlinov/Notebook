@@ -22,6 +22,7 @@ final class IPadSheetCurlController: UIViewController, UIGestureRecognizerDelega
   var isSheetPresented: (UIViewController) -> Bool = { _ in true }
   var onStageLiveSheet: (UIViewController) -> Void = { _ in }
   struct FrameAcquisitionTiming {
+    let operationID: UUID
     let began, ended: TimeInterval
     let pixels: Int
   }
@@ -196,11 +197,11 @@ final class IPadSheetCurlController: UIViewController, UIGestureRecognizerDelega
         guard let reservation = SceneRenderResources.shared.reserveDerivedBytes(bytes * curl.drawableCount, priority: .input)
         else { throw SceneRenderError.resourceLimit }
         curl.frameLease = reservation
-        try curl.preparePages(leaf: leaf, base: base)
+        try curl.preparePages(leaf: leaf, base: base, operationID: id)
         current.frame = leaf; current.firstFrameSequence = curl.submittedFrameCount; self.motion = current
         curl.prepareDrawable(size: .init(width: width, height: height))
         curl.isHidden = false; view.bringSubviewToFront(curl)
-        onFramesAcquired?(.init(began: began, ended: CACurrentMediaTime(), pixels: width * height * 2))
+        onFramesAcquired?(.init(operationID: id, began: began, ended: CACurrentMediaTime(), pixels: width * height * 2))
         guard self.motion?.id == id else { return }
         render(current.progress); curl.animatesContinuously = current.animation != nil
       } catch is PageTurnMaterialUnavailable {

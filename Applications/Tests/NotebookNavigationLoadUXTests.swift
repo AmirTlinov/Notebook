@@ -344,7 +344,12 @@ import XCTest
     let receiveFailure=native.onFailure,receiveFrames=native.onFramesAcquired,acquire=native.acquireSheetFrame
     let receiveStage=native.onStageLiveSheet,receiveResolution=native.resolveOperation
     let curl=try XCTUnwrap(descendants(native.view).compactMap {$0 as? SheetCurlMetalView}.first)
-    let receiveFrame=curl.onPageFrameReady
+    let receiveFrame=curl.onPageFrameReady,receiveMeasurement=curl.onFrameMeasured
+    var submissions:[SheetCurlMetalView.FrameTiming]=[]
+    curl.onFrameMeasured = { timing in
+      if submissions.count < 6 { submissions.append(timing) }
+      receiveMeasurement?(timing)
+    }
     var arrowUptime:TimeInterval=0,pairEnded:TimeInterval?,stageUptime:TimeInterval?
     var sawFirstFrame=false,sawEndpoint=false
     var landing:(operation:UUID,at:ContinuousClock.Instant,uptime:TimeInterval,presented:Bool)?
@@ -402,8 +407,11 @@ import XCTest
     defer {
       native.onFailure=receiveFailure;native.onFramesAcquired=receiveFrames;native.acquireSheetFrame=acquire
       native.onStageLiveSheet=receiveStage;native.resolveOperation=receiveResolution;curl.onPageFrameReady=receiveFrame
+      curl.onFrameMeasured=receiveMeasurement
     }
     phases.append("before arrow: \(captureState(native.page)); \(owner.navigationStateDescription)")
+    let wallAnchor=Date().timeIntervalSince1970,uptimeAnchor=CACurrentMediaTime()
+    phases.append("clock anchor: unix=\(wallAnchor),uptime=\(uptimeAnchor)")
     let revision=try XCTUnwrap(model.notebookPageRoot(notebook)),start=ContinuousClock.now
     arrowUptime=CACurrentMediaTime()
     phases.append("arrow begin: uptime=\(arrowUptime)")
@@ -420,6 +428,11 @@ import XCTest
     let receipt=try XCTUnwrap(landing,
       "All accepted program states must permit the actual neighbouring page capture and owner-completed landing")
     let elapsed=start.duration(to:receipt.at)
+    // Timestamps originate in the clock/encoder/GPU, and are joined by the
+    // admitted operation. Formatting and image readback happen after landing.
+    for timing in submissions where timing.operationID == receipt.operation {
+      phases.append("curl submission: operation=\(receipt.operation),sequence=\(timing.sequence),clockRequest=\(String(describing:timing.clockRequested)),displayCallback=\(String(describing:timing.displayUpdateReceived)),encoding=\(timing.encodingBegan),submitted=\(timing.submitted),GPU=\(timing.gpuBegan)...\(timing.gpuEnded),targetOS=\(timing.targetPresentation)")
+    }
     phases.append("commandToOwnerLanding=\(elapsed),arrowToOwnerLanding=\(receipt.uptime-arrowUptime),operation=\(receipt.operation),presented=\(receipt.presented)")
     XCTAssertEqual(owner.displayedIndex,1)
     XCTAssertTrue(owner.currentPagePreparation.isReady)

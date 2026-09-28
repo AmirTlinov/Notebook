@@ -1,0 +1,229 @@
+{
+  "format": 1,
+  "recordedAt": "2026-09-28T02:13:21.876017+00:00",
+  "issue": "GUI-298",
+  "baseCommit": "015180b3f21be81ad038b181731ce8cb7dfb092c",
+  "candidateVersion": "0.3.148 (218)",
+  "status": "selected-verification-passed-build-pending",
+  "fullAcceptance": false,
+  "device": {
+    "id": "00008103-001E059934D9001E",
+    "name": "iPad (Елизавета)",
+    "platform": "physical-iPad"
+  },
+  "ownerChanges": [
+    {
+      "owner": "PageTurnMaterialOwner",
+      "files": [
+        "Applications/Shared/PageTurnMaterialOwner.swift",
+        "Applications/Shared/PageSurface.swift"
+      ],
+      "change": "Prepare passive neighbouring page frames from existing source/provider/ink events; join the exact pending producer or borrow its immutable frame.",
+      "basis": [
+        "page UUID",
+        "native material generation",
+        "accepted program source generation",
+        "installed provider versions",
+        "ink generation and texture identity"
+      ],
+      "lifetime": "Retained page window; source/provider/ink replacement and retirement cancel preparation. Reclamation releases the cached frame and suppresses speculation for the same basis. A temporary installation gap cancels only unfinished composition; completed immutable pixels survive until full-basis revalidation.",
+      "input": "The shared producer remains passive. One resourceLimit permits the accepted consumer to compose an ephemeral input cut after cancellation and basis checks. Mounted runtimes retain fresh direct capture.",
+      "fastPath": "Installed layers bypass awaiting the already completed preparation task."
+    },
+    {
+      "owner": "PageTurnActivity",
+      "files": [
+        "Applications/Shared/PageTurnSurface.swift",
+        "Applications/Shared/PreparedAgentElementView.swift"
+      ],
+      "change": "Publish actual raster/runtime provider versions and sampled native installation availability. Unchanged layout does not notify page-wide preparation observers.",
+      "validation": "Acquire still validates the actual native installation and accepted source before and after the asynchronous borrow.",
+      "availability": "Native window detach/remount publishes loss/recovery. Negative receipts only revoke the exact current owner/source/raster/runtime; obsolete predecessor loss cannot replace its successor."
+    },
+    {
+      "owner": "SheetCurlMetalView",
+      "files": [
+        "Applications/Shared/SheetCurlRenderer.swift",
+        "Applications/iPad/IPadSheetCurlController.swift"
+      ],
+      "change": "Identify submissions by admitted operation as well as frame and sequence, so reused passive pixels cannot let a retired operation acknowledge its successor. Record clock, encoding and GPU timestamps at their sources.",
+      "animationDurationChanged": false
+    },
+    {
+      "owner": "SpatialWorkspaceView.ItemPlaneRevision",
+      "files": [
+        "Applications/iPad/SpatialWorkspaceView.swift"
+      ],
+      "change": "Remove page-turn activity from the content revision. Native controller owns admission; curl begins without replacing SceneCameraPlane.host.rootView and synchronously laying out the whole unchanged scene."
+    },
+    {
+      "owner": "AgentWebCoordinator",
+      "files": [
+        "Applications/Shared/AgentWebElementView.swift"
+      ],
+      "change": "Accepted-turn snapshot completes synchronously in the WebKit MainActor callback; the redundant per-slot task hop is removed. Cache snapshots retain their asynchronous storage path.",
+      "basis": "Installed iPhoneOS27 SDK WKWebView.h441 explicitly marks completionHandler WK_SWIFT_UI_ACTOR."
+    },
+    {
+      "owner": "PageTurnFrame",
+      "files": [
+        "Applications/iPad/PageTurnFrame.swift"
+      ],
+      "change": "Immutable inputs go to one cancellable CoreImage worker for graph creation, image upload and GPU command encoding. MainActor owns reservations and result admission. Encoding started implies unconditional commit and GPU fence before borrowed pixels or output budget can be released.",
+      "basis": "Installed SDK CIContext.h47-51 permits concurrent context/image use; no mutable CIFilter is shared."
+    }
+  ],
+  "measurement": {
+    "selector": "NotebookTests/NotebookNavigationLoadUXTests/testTwentyFourProgramsCommitThroughTheirRuntimesBeforeTheNextPageCapture",
+    "budgetMS": 450,
+    "boundary": "Original command to the page owner terminal event; OS drawable presentation is recorded separately.",
+    "diagnostics": "Image capture, decoding and report formatting follow the event measurement. Acquisition elapsed includes actor scheduling, not only raster work.",
+    "thresholdChanged": false
+  },
+  "runs": [
+    {
+      "id": "0153",
+      "path": "/private/tmp/notebook-latency-218-20260928T0153Z",
+      "sourceSHA256": "64f219981821fbabd07e00f74fa4f0a2b8a56284bdf4fa8ef16b3e111a33b453",
+      "profiled": false,
+      "ipadPassed": 4,
+      "ipadFailed": 1,
+      "native24OwnerLandingMS": 465.23675,
+      "native24Passed": false,
+      "commandToPairReadyMS": 84.608667,
+      "sourceAcquireElapsedMS": 56.254042,
+      "targetAcquireElapsedMS": 48.823875,
+      "evidence": "/private/tmp/notebook-latency-218-0153-attachments/48EEB101-ED88-4988-8266-A206C9F2C5D4.txt",
+      "scope": "Passive producer reuse/replacement, fresh runtime capture/retirement, cancelled capture, and source replacement passed; Native24 exceeded 450ms."
+    },
+    {
+      "id": "0156",
+      "path": "/private/tmp/notebook-latency-218-20260928T0156Z",
+      "sourceSHA256": "64f219981821fbabd07e00f74fa4f0a2b8a56284bdf4fa8ef16b3e111a33b453",
+      "profiled": true,
+      "ipadPassed": 0,
+      "ipadFailed": 1,
+      "native24OwnerLandingMS": 592.161209,
+      "native24Passed": false,
+      "evidence": "/private/tmp/notebook-latency-218-0156-attachments/7979E53C-946C-435F-92E8-37F45216E332.txt",
+      "scope": "Time Profiler diagnostic execution; failing performance result retained. Profiler overhead is not subtracted or treated as release timing."
+    },
+    {
+      "id": "0211",
+      "path": "/private/tmp/notebook-latency-218-20260928T0211Z",
+      "sourceSHA256": "a9ace2582e86f4b34c770bbe3855e6fd12ca4c02e7edcc60e7ecbe8131934e92",
+      "status": "failed",
+      "profiled": false,
+      "ipadPassed": 8,
+      "ipadFailed": 1,
+      "skipped": 0,
+      "runtimeWarnings": 0,
+      "native24OwnerLandingMS": 481.478833,
+      "native24Passed": false,
+      "commandToPairReadyMS": 92.060208,
+      "sourceAcquireElapsedMS": 73.977708,
+      "targetAcquireElapsedMS": 30.303625,
+      "firstCurlOSMS": 208.353542,
+      "endpointOSMS": 479.296708,
+      "evidence": "/private/tmp/notebook-latency-218-0211-attachments/DA29A440-A9B7-4C70-AF8D-D9AB1ACB0170.txt",
+      "scope": "UI24 first taps/forward/reverse state, passive lifecycle, cancelled capture, first full-pair bend, rapid alternating arrows, and source replacement passed. Strict Native24 still exceeded450ms."
+    },
+    {
+      "id": "0220",
+      "path": "/private/tmp/notebook-latency-218-20260928T0220Z",
+      "sourceSHA256": "ff83a9f25bdcadc12e0ca787eb071d02d6df28f037e7c63fe006ba4e096813da",
+      "status": "failed",
+      "profiled": false,
+      "ipadPassed": 9,
+      "ipadFailed": 2,
+      "skipped": 0,
+      "runtimeWarnings": 0,
+      "native24OwnerLandingMS": 524.815958,
+      "native24Passed": false,
+      "commandToPairReadyMS": 155.736458,
+      "sourceAcquireElapsedMS": 105.261,
+      "targetAcquireElapsedMS": 0.577958,
+      "firstCurlOSMS": 237.171958,
+      "endpointOSMS": 520.619958,
+      "evidence": "/private/tmp/notebook-latency-218-0220-attachments/234999A1-1F82-40A9-8303-41CC66E63F98.txt",
+      "scope": "All9 correctness checks passed; Native24 latency failed. UI runner did not initialize: timed out enabling automation mode. No UI gesture result in this run."
+    },
+    {
+      "id": "0225",
+      "path": "/private/tmp/notebook-latency-218-20260928T0225Z",
+      "sourceSHA256": "0ab7f83a2d67894e83b69126a0f3e57e5628d6b1709ef0dbafc7255f55df4cc8",
+      "status": "failed",
+      "ipadPassed": 0,
+      "ipadFailed": 1,
+      "native24OwnerLandingMS": 464.720667,
+      "native24Passed": false,
+      "commandToPairReadyMS": 88.584792,
+      "sourceAcquireElapsedMS": 69.57925,
+      "targetAcquireElapsedMS": 0.306792,
+      "evidence": "/private/tmp/notebook-latency-218-0225-attachments/557CBFA6-95F4-4BA7-A5B6-F85766089B74.txt",
+      "trace": "/private/tmp/notebook-latency-218-live-cut.trace",
+      "traceContainsMeasuredAction": false,
+      "traceEndedUTC": "2026-09-28T02:26:53.015Z",
+      "arrowUTC": "2026-09-28T02:27:16.119812Z",
+      "scope": "Diagnostic profiling attempt ended before the measured action because startup took longer; no CPU attribution is drawn from this trace. Original450ms failure is retained."
+    }
+  ],
+  "diagnosis": {
+    "status": "mechanism-confirmed-by-source-and-sampled-stack",
+    "evidence": "/private/tmp/notebook-latency-218-main-thread-diagnosis.txt",
+    "trace": "/private/tmp/notebook-latency-218-main-thread.trace",
+    "pid": 21117,
+    "mainThread": "0x3b2f2a",
+    "mechanism": "Each unchanged provider layout notified the page; each page observer revalidated all providers and traversed their UIKit visibility ancestry, producing N-by-N work for 24 slots.",
+    "stack": [
+      "AgentElementSnapshotView.updateUIView",
+      "AgentSnapshotRasterView.installRaster",
+      "PreparedAgentElementView.recordInstalled",
+      "PageTurnActivity.installElementFrame",
+      "PageTurnMaterialOwner.prepareStaticSlots observer",
+      "refreshPassiveFrame/frameInput or isCapturable",
+      "elementFrameVersion or hasElementFrame",
+      "SceneSourceInstallation.isInstalled",
+      "SceneSourceVisibility.visibleRect"
+    ],
+    "exampleTraceSeconds": 58.966976541,
+    "samplesInSelectedWindowReported": 109,
+    "installElementFrameSamples": 34,
+    "visibleRectSamples": 29,
+    "sampleCountsAreExactCPUDurations": false,
+    "clockMapping": {
+      "traceWindowSeconds": [
+        58.957,
+        59.07
+      ],
+      "caUptimeWindow": [
+        431313.3992355001,
+        431313.51147983345
+      ],
+      "approximate": true,
+      "limitation": "No direct wall-to-CA anchor was captured. Mapping uses a same-boot prior clock offset checked against unique show/compose and post-landing readback stacks. Stack evidence establishes the mechanism, not an exact per-function share of the gap."
+    },
+    "additionalReadyPublicationChangeNeeded": false,
+    "reason": "AgentOverlayReadiness.record already suppresses identical ready values."
+  },
+  "finalRun": {
+    "id": "0233",
+    "path": "/private/tmp/notebook-latency-218-20260928T0233Z",
+    "sourceSHA256": "7f2f1afab0eb93122438b62faa69bbb9b25199508014f4b7476ff17d8ab29dc0",
+    "status": "passed",
+    "profiled": false,
+    "ipadPassed": 13,
+    "ipadFailed": 0,
+    "skipped": 0,
+    "runtimeWarnings": 0,
+    "native24OwnerLandingMS": 433.651125,
+    "native24Passed": true,
+    "commandToPairReadyMS": 79.213917,
+    "sourceAcquireElapsedMS": 57.414958,
+    "targetAcquireElapsedMS": 0.316833,
+    "firstCurlOSMS": 137.824292,
+    "endpointOSMS": 429.609333,
+    "evidence": "/private/tmp/notebook-latency-218-0233-attachments/B83A9596-75D8-4759-91FE-03C14666F8FB.txt",
+    "scope": "Fresh DOM vs passive cache, passive producer/material replacement, native detach/remount and stale predecessor, cancellation, changed layers forward/reverse, first full-pair bend, rapid alternating arrows, source replacement, document subtree transfer, Native24 timing and system UI24 first taps/forward/reverse state. One selected execution, not repeated full acceptance."
+  }
+}

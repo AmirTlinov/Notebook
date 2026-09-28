@@ -60,6 +60,27 @@ final class PageTurnMaterialOwner {
     private let owner: AnyObject
     init(image: CGImage, owner: AnyObject) { self.image = image; self.owner = owner }
   }
+  private struct FrameBasis: Equatable {
+    let pageID: UUID
+    let material: UInt64
+    let liveSource: UInt64
+    let providers: [String: PageTurnActivity.ElementFrameVersion]
+    let inkGeneration: UInt64?
+    let inkTexture: ObjectIdentifier?
+    var hasRuntime: Bool { providers.values.contains { $0.content == .runtime } }
+  }
+  private struct FrameInput {
+    let basis: FrameBasis
+    let key: Key
+    let layers: [Layer]
+    let sources: [String: AgentElement]
+    let ink: InkCanvasView.AcceptedFrameLease?
+  }
+  private struct FramePreparation {
+    let id: UUID
+    let basis: FrameBasis
+    let task: Task<PageTurnFrame, Error>
+  }
   private var key: Key?
   // Retain the current source behind its identity; a recycled object address
   // must not make a different page's elements reuse the previous artwork.
@@ -74,8 +95,16 @@ final class PageTurnMaterialOwner {
   private var layers: [Layer]?
   private var notifyReady: (@MainActor () -> Void)?
   private var notifySlotsReady: (@MainActor () -> Void)?
-  private var cachedFrame: (generation: UInt64?, frame: PageTurnFrame)?
+  private var materialGeneration: UInt64 = 0
+  private var cachedFrame: (basis: FrameBasis, frame: PageTurnFrame)?
+  // A texture address can be reused after its canvas retires. Do not retain
+  // the ink lease in the cache: that would force copying on the next stroke.
   private weak var cachedInkTexture: (any MTLTexture)?
+  private var framePreparation: FramePreparation?
+  private var preparesPassiveFrame = false
+  // Reclamation/refusal suppresses speculation for this exact material until
+  // it changes. An accepted turn may still acquire an ephemeral input cut.
+  private var deferredFrameBasis: FrameBasis?
   private weak var frameReadiness: PageTurnReadiness?
   private weak var slotActivity: PageTurnActivity?
   private weak var slotReadiness: PageTurnReadiness?
@@ -88,7 +117,9 @@ final class PageTurnMaterialOwner {
       return [.init(id: id, bytes: bytes, rasterCount: 1, value: .unused,
         distance: 1, restorationMilliseconds: 1, release: { [weak self] in
           guard self?.cachedFrame?.frame.id == id else { return nil }
-          self?.cachedFrame = nil; self?.cachedInkTexture = nil
+          self?.deferredFrameBasis = self?.cachedFrame?.basis
+          self?.cachedFrame = nil
+          self?.cachedInkTexture = nil
           return nil
         })]
     }
@@ -123,7 +154,7 @@ final class PageTurnMaterialOwner {
         ($0.id, agentElementSnapshotSource($0))
       })
       if liveSources != currentLiveSources {
-        liveSources = currentLiveSources; liveSourceGeneration &+= 1
+        liveSources = currentLiveSources; liveSourceGeneration &+= 1; invalidateFrame()
       }
       key = .init(native: page.elements.filter { $0.graphic != nil || $0.kind == .nativeText || $0.kind == .group },
         slots: Dictionary(uniqueKeysWithValues: slots.compactMap { element in
@@ -134,9 +165,10 @@ final class PageTurnMaterialOwner {
     sourcePage = page
     notifyReady = onReady
     guard self.key != key else { if layers != nil { notifyReady = nil }; return }
-    self.key = key; preparation?.cancel(); slotPreparation?.cancel(); slotPreparation = nil
+    self.key = key; materialGeneration &+= 1
+    invalidateFrame(); preparation?.cancel(); slotPreparation?.cancel(); slotPreparation = nil
     slotPreparationHasWake = false
-    notifySlotsReady = nil; layers = nil; cachedFrame = nil; cachedInkTexture = nil
+    notifySlotsReady = nil; layers = nil
     preparation = Task { @MainActor [weak self] in
       do {
         let result = try await Self.prepareLayers(page: page, erasures: erasures, ordered: ordered, scale: scale)
@@ -183,10 +215,12 @@ final class PageTurnMaterialOwner {
         guard case .elementFrames(let page, let materialChanged) = change, let self,
           let readiness = slotReadiness, readiness.pageIndex == page else { return }
         if isPrepared {
+          if materialChanged { invalidateFrame() }
+          refreshPassiveFrame()
           let capturable = isCapturable(readiness: readiness) && readiness.inkFrameIsReady?() == true
           if capturable != readiness.state.capturable {
             readiness(readiness.state.presented, capturable: capturable)
-          } else if materialChanged { readiness.materialDidChange() }
+          } else { readiness.materialDidChange() }
         } else if slotPreparation == nil { notifySlotsReady?() }
         else { slotPreparationHasWake = true }
       }
@@ -250,7 +284,95 @@ final class PageTurnMaterialOwner {
     slotObserver = nil; slotActivity = nil; slotReadiness = nil
     key = nil; sourcePage = nil; layers = nil
     liveSources = [:]; liveSourceGeneration &+= 1
-    cachedFrame = nil; cachedInkTexture = nil; frameReadiness = nil
+    invalidateFrame(); preparesPassiveFrame = false; frameReadiness = nil
+  }
+
+  /// The page's existing source, provider and ink readiness events prepare a
+  /// covered neighbour. The visible writing page never composes on every lift.
+  func preparePassiveFrame(readiness: PageTurnReadiness, enabled: Bool) {
+    if preparesPassiveFrame, !enabled, !readiness.isInActiveTurn() {
+      framePreparation?.task.cancel(); framePreparation = nil
+    }
+    frameReadiness = readiness; preparesPassiveFrame = enabled
+    refreshPassiveFrame()
+  }
+
+  private func invalidateFrame() {
+    framePreparation?.task.cancel(); framePreparation = nil
+    cachedFrame = nil; cachedInkTexture = nil; deferredFrameBasis = nil
+  }
+
+  private func frameInput(readiness: PageTurnReadiness) -> FrameInput? {
+    guard !readiness.isRetired, isPrepared, let key, let layers, let sourcePage,
+      readiness.inkFrameIsReady?() == true else { return nil }
+    let ink = readiness.inkFrame?()
+    guard ink != nil || readiness.inkFrameIsEmpty?() == true else { return nil }
+    var providers: [String: PageTurnActivity.ElementFrameVersion] = [:]
+    for layer in layers {
+      guard case .element(let element, _, _, _) = layer else { continue }
+      guard let source = element.requiresLiveRuntime ? liveSources[element.id] : element,
+        let version = readiness.activity?.elementFrameVersion(page: readiness.pageIndex, source: source) else { return nil }
+      providers[element.id] = version
+    }
+    return .init(basis: .init(pageID: sourcePage.id, material: materialGeneration,
+      liveSource: liveSourceGeneration, providers: providers,
+      inkGeneration: ink?.generation, inkTexture: ink.map { ObjectIdentifier($0.texture) }),
+      key: key, layers: layers, sources: liveSources, ink: ink)
+  }
+
+  private func refreshPassiveFrame() {
+    guard preparesPassiveFrame || cachedFrame != nil || framePreparation != nil else { return }
+    guard let readiness = frameReadiness else { return }
+    guard let input = frameInput(readiness: readiness) else {
+      // A temporary native detach or ink installation gap prevents borrowing,
+      // but does not change already accepted pixels. Revalidate their full
+      // source/provider/ink basis when installation returns.
+      framePreparation?.task.cancel(); framePreparation = nil
+      return
+    }
+    if cachedFrame?.basis != input.basis || cachedInkTexture !== input.ink?.texture {
+      cachedFrame = nil; cachedInkTexture = nil
+    }
+    if let pending = framePreparation, pending.basis != input.basis {
+      pending.task.cancel(); framePreparation = nil
+    }
+    guard preparesPassiveFrame, !input.basis.hasRuntime, cachedFrame == nil,
+      framePreparation == nil, deferredFrameBasis != input.basis else { return }
+    _ = prepareFrame(input, readiness: readiness)
+  }
+
+  /// A turn joins the exact producer already preparing its accepted basis.
+  /// Cancellation of one consumer does not cancel the page's material task.
+  private func prepareFrame(_ input: FrameInput, readiness: PageTurnReadiness) -> Task<PageTurnFrame, Error> {
+    if framePreparation?.basis == input.basis, let task = framePreparation?.task { return task }
+    framePreparation?.task.cancel()
+    let id = UUID()
+    let task = Task { @MainActor [weak self, weak readiness] in
+      do {
+        guard let readiness else { throw PageTurnMaterialUnavailable.changed }
+        let frame = try await Self.compose(input, readiness: readiness, priority: .passive)
+        try Task.checkCancellation()
+        guard let self, !readiness.isRetired, framePreparation?.id == id,
+          frameInput(readiness: readiness)?.basis == input.basis else { throw PageTurnMaterialUnavailable.changed }
+        framePreparation = nil
+        if frame.allocationPriority == .passive {
+          cachedFrame = (input.basis, frame)
+          cachedInkTexture = input.ink?.texture
+          SceneRenderResources.shared.reclamationOffersChanged()
+        }
+        return frame
+      } catch {
+        if let self, framePreparation?.id == id {
+          framePreparation = nil
+          // Optional preparation cannot block installed paper/input or spin on
+          // a refused allocation. The accepted turn reports its own failure.
+          deferredFrameBasis = input.basis
+        }
+        throw error
+      }
+    }
+    framePreparation = .init(id: id, basis: input.basis, task: task)
+    return task
   }
 
   func acquire(page: PageDocument, readiness: PageTurnReadiness,
@@ -258,31 +380,51 @@ final class PageTurnMaterialOwner {
     frameReadiness = readiness
     guard let preparation, let key,
       sourcePage?.elementSourceIdentity == page.elementSourceIdentity else { throw PageTurnMaterialUnavailable.changed }
-    let liveGeneration = liveSourceGeneration, capturedLiveSources = liveSources
-    do { _ = try await preparation.value }
-    catch {
-      guard self.key == key, liveSourceGeneration == liveGeneration else { throw PageTurnMaterialUnavailable.changed }
-      throw error
+    let liveGeneration = liveSourceGeneration
+    // Installed layers already belong to this owner. Await only an unfinished
+    // preparation; a completed task must not put a cache hit behind other work
+    // waiting for the main actor.
+    if layers == nil {
+      do { _ = try await preparation.value }
+      catch {
+        guard self.key == key, liveSourceGeneration == liveGeneration else { throw PageTurnMaterialUnavailable.changed }
+        throw error
+      }
     }
     try Task.checkCancellation()
     guard self.key == key, liveSourceGeneration == liveGeneration,
-      isPrepared, let layers else { throw PageTurnMaterialUnavailable.changed }
-    let ink = readiness.inkFrame?()
-    guard ink != nil || readiness.inkFrameIsEmpty?() == true else { throw PageTurnMaterialUnavailable.changed }
-    let hasLiveSlots = layers.contains { if case .element(let element, _, _, _) = $0 { return element.requiresLiveRuntime }; return false }
-    if !hasLiveSlots, let cachedFrame, cachedFrame.generation == ink?.generation,
-      cachedInkTexture === ink?.texture { return cachedFrame.frame }
-    // Superseded resident pixels are no longer this page's cache. Any older
-    // accepted GPU borrow retains its own frame until that submission ends.
-    cachedFrame = nil; cachedInkTexture = nil
+      let input = frameInput(readiness: readiness) else { throw PageTurnMaterialUnavailable.changed }
+    if !input.basis.hasRuntime, let cachedFrame, cachedFrame.basis == input.basis,
+      cachedInkTexture === input.ink?.texture { return cachedFrame.frame }
+    let frame: PageTurnFrame
+    if input.basis.hasRuntime {
+      // A mounted runtime may change without a durable state publication.
+      // Freeze it now; never reuse the preceding turn's live DOM/CSS pixels.
+      frame = try await Self.compose(input, readiness: readiness, priority: priority)
+    } else {
+      do { frame = try await prepareFrame(input, readiness: readiness).value }
+      catch SceneRenderError.resourceLimit where priority == .input {
+        // Optional page storage may be full while an accepted turn still has
+        // its input allowance. Only this cancellable consumer owns that cut;
+        // the shared passive producer never inherits input admission.
+        try Task.checkCancellation()
+        guard frameInput(readiness: readiness)?.basis == input.basis else { throw PageTurnMaterialUnavailable.changed }
+        frame = try await Self.compose(input, readiness: readiness, priority: .input)
+      }
+    }
+    try Task.checkCancellation()
+    guard frameInput(readiness: readiness)?.basis == input.basis else { throw PageTurnMaterialUnavailable.changed }
+    return frame
+  }
+
+  private static func compose(_ input: FrameInput, readiness: PageTurnReadiness,
+    priority: SceneAllocationPriority) async throws -> PageTurnFrame {
     var materials: [PageTurnFrame.Layer] = []
     var retained: [AnyObject] = []
-    // Existing direct-cut providers submit together. The final frame retains
-    // every cut, so serial display rounds cannot reduce their memory peak.
-    let slots = try await Self.acquireSlots(layers: layers, sources: capturedLiveSources,
-      scale: key.scale, readiness: readiness, priority: priority)
-    guard self.key == key, liveSourceGeneration == liveGeneration else { throw PageTurnMaterialUnavailable.changed }
-    for (index, layer) in layers.enumerated() {
+    let slots = try await acquireSlots(layers: input.layers, sources: input.sources,
+      scale: input.key.scale, readiness: readiness, priority: priority)
+    try Task.checkCancellation()
+    for (index, layer) in input.layers.enumerated() {
       switch layer {
       case .image(let pixels, let frame):
         materials.append(.frame(pixels, frame)); retained.append(pixels)
@@ -291,16 +433,10 @@ final class PageTurnMaterialOwner {
         materials.append(.image(pixels.image, frame)); retained.append(pixels)
       }
     }
-    let frame = try await PageTurnFrame.compose(size: .init(width: page.size.width, height: page.size.height),
-      scale: key.scale, layers: materials, priority: hasLiveSlots ? priority : .passive,
-      inputFallback: !hasLiveSlots && priority == .input,
-      ink: ink, retaining: retained)
-    guard self.key == key, liveSourceGeneration == liveGeneration else { throw PageTurnMaterialUnavailable.changed }
-    if !hasLiveSlots, frame.allocationPriority == .passive {
-      cachedFrame = (ink?.generation, frame); cachedInkTexture = ink?.texture
-      SceneRenderResources.shared.reclamationOffersChanged()
-    }
-    return frame
+    return try await PageTurnFrame.compose(size: .init(width: input.key.size.width, height: input.key.size.height),
+      scale: input.key.scale, layers: materials, priority: input.basis.hasRuntime ? priority : .passive,
+      inputFallback: !input.basis.hasRuntime && priority == .input,
+      ink: input.ink, retaining: retained)
   }
 
   private static func acquireSlots(layers: [Layer], sources: [String: AgentElement],
@@ -344,7 +480,9 @@ final class PageTurnMaterialOwner {
     cuts: [InkElementErasure], frame: CGRect, scale: Double, readiness: PageTurnReadiness,
     priority: SceneAllocationPriority) async throws -> SlotPixels {
     guard let activity = readiness.activity else { throw SceneRenderError.snapshotPending("page_material_slots") }
-    let cut = try await activity.acquireElementFrame(page: readiness.pageIndex, source: element, priority: priority)
+    let cut = try await activity.acquireElementFrame(page: readiness.pageIndex, source: element,
+      priority: priority)
+    try Task.checkCancellation()
     if cuts.isEmpty, !presentation.requiresRasterTransform, cut.source.captureRegion == nil {
       let image: CGImage?
       switch cut.pixels { case .cut(let pixels): image = pixels.image; case .raster(let raster): image = raster.image.cgImage }
@@ -354,7 +492,8 @@ final class PageTurnMaterialOwner {
       return .init(image: image, owner: cut)
     }
     // Keep the canonical transform/erasure painter and the installed slot owner.
-    let canvas = try await SceneRasterCompositor.create(size: frame.size, scale: scale, resources: .shared, priority: priority)
+    let canvas = try await SceneRasterCompositor.create(size: frame.size, scale: scale, resources: .shared,
+      priority: priority)
     let local = CGRect(origin: .zero, size: frame.size)
     let destination: CGRect
     if let crop = cut.source.captureRegion {
@@ -432,7 +571,7 @@ final class PageTurnMaterialOwner {
   }
 
   isolated deinit {
-    preparation?.cancel(); slotPreparation?.cancel()
+    preparation?.cancel(); slotPreparation?.cancel(); framePreparation?.task.cancel()
     if let slotObserver { slotActivity?.removePreparationObserver(slotObserver) }
     if let reclamationOwner { SceneRenderResources.shared.unregisterReclamationOwner(reclamationOwner) }
   }

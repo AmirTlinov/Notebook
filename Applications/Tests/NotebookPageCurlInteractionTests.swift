@@ -230,7 +230,7 @@ import XCTest
     curl.permitsFrameSubmission = { true }; curl.onDisplayUpdate = { _ in }
     curl.prepareDrawable(size: .init(width: 64, height: 96))
     try curl.preparePages(leaf: await PageTurnFrameFixture.frame(image(top: .red, bottom: .blue)),
-      base: await PageTurnFrameFixture.frame(image(top: .blue, bottom: .red)))
+      base: await PageTurnFrameFixture.frame(image(top: .blue, bottom: .red)), operationID: UUID())
     for progress in [0.0, 0.4, 1.0, 0.0] {
       var presented = false
       curl.onPageFrameReady = { _, shown, _, readiness in if shown == progress, readiness.isReady { presented = true } }

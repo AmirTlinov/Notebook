@@ -95,7 +95,7 @@ struct AgentWebSourceFailure: Equatable, Sendable {
       context.coordinator.use(onSourceInstalled: onInstalled)
       context.coordinator.bindPresentation(to: focus)
       view.onInstalled = { [weak coordinator = context.coordinator] in
-        guard let installation = coordinator?.installation(for: element), installation.isInstalled else { return }
+        guard let installation = coordinator?.installation(for: element) else { return }
         onInstalled(installation)
       }
       context.coordinator.use(onFailure: onFailure)
@@ -256,7 +256,7 @@ struct AgentWebSourceFailure: Equatable, Sendable {
     override func didMoveToWindow() {
       super.didMoveToWindow()
       updateSampling()
-      if window != nil, let retainedRaster { onRasterInstalled?(retainedRaster) }
+      if let retainedRaster { onRasterInstalled?(retainedRaster) }
     }
 
     /// Window transfer preserves this presenter's pixels. Actual dismantle or
@@ -1269,6 +1269,26 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
           result.finish(.failure(SceneRenderError.snapshotPending("live_capture_" + element.id)))
         }
         web.takeSnapshot(with: configuration) { [weak self, capture, installation] image, error in
+          // WebKit delivers this callback on MainActor. An accepted turn only
+          // transfers these pixels; queuing another task delays every slot's
+          // completion behind unrelated view and passive preparation work.
+          if destination == .acceptedTurn {
+            defer {
+              deadline.cancel(); capture.finish(); self?.submittedCaptures[capture.id] = nil
+            }
+            guard let self, accepts(token), !capture.isCancelled, installation.isInstalled,
+              hasLiveSource(element) else { result.finish(.success(nil)); return }
+            if let error { result.finish(.failure(error)); return }
+            guard let image else { result.finish(.failure(SceneRenderError.snapshotPending(element.id))); return }
+            publishFramePainted(element, token: token)
+            guard let cut = resources.currentWebCut(image, for: policy.rasterSource(for: element), reservation: reservation)
+            else { result.finish(.failure(SceneRenderError.resourceLimit)); return }
+            capture.transferReservationToCut()
+            guard cut.pixelScale + 0.000_001 >= policy.minimumScale(for: element) else {
+              result.finish(.failure(SceneRenderError.snapshotPending("live_capture_density_" + element.id))); return
+            }
+            result.finish(.success(.cut(cut))); return
+          }
           Task { @MainActor [weak self] in
             defer {
               deadline.cancel(); capture.finish(); self?.submittedCaptures[capture.id] = nil
@@ -1278,17 +1298,6 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
             if let error { result.finish(.failure(error)); return }
             guard let image else { result.finish(.failure(SceneRenderError.snapshotPending(element.id))); return }
             publishFramePainted(element, token: token)
-            if destination == .acceptedTurn {
-              guard let cut = resources.currentWebCut(image, for: policy.rasterSource(for: element), reservation: reservation)
-              else { result.finish(.failure(SceneRenderError.resourceLimit)); return }
-              // Construction and transfer are synchronous on the owner actor.
-              // No cancelled reader can expose an uncharged returned image.
-              capture.transferReservationToCut()
-              guard cut.pixelScale + 0.000_001 >= policy.minimumScale(for: element) else {
-                result.finish(.failure(SceneRenderError.snapshotPending("live_capture_density_" + element.id))); return
-              }
-              result.finish(.success(.cut(cut))); return
-            }
             let prepared = await resources.storeWebSnapshot(image, for: policy.rasterSource(for: element), reservation: reservation,
               semanticSelection: self.checkpointedSource == element ? self.checkpointSelection : nil,
               permitsPublication: { [weak self] in self?.accepts(token) == true && !capture.isCancelled
