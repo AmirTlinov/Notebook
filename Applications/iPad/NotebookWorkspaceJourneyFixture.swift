@@ -15,7 +15,8 @@ import NotebookCore
     }
     do {
       if FileManager.default.fileExists(atPath: root.path) { try FileManager.default.removeItem(at: root) }
-      let actor = UUID(), item = UUID(uuidString: "7E7A1000-0000-4000-8000-000000000002")!
+      let model = NotebookAppModel(store: store, startsNearbySync: false)
+      let actor = model.actorID, item = UUID(uuidString: "7E7A1000-0000-4000-8000-000000000002")!
       let initial = WorkspaceIndex.initial(actor: actor, pageSize: NotebookAppModel.defaultPageSize, itemID: item)
       var index = initial.index
       let first = initial.page.id
@@ -48,14 +49,16 @@ import NotebookCore
           .init(point: .init(x: x, y: 660 + Double(number) * 16), timeOffset: 0, width: 8,
             opacity: 1, force: 1, azimuth: 0, altitude: .pi / 2)
         })
-        let drawing = try PageInkDrawing(actions: [ink]).dataRepresentation()
-        precondition(page.replaceDrawing(drawing, actor: actor))
         if number == 0 { try store.savePage(page) }
         else { try store.saveWorkspaceSelection(index: index, createdPage: page) }
+        // Seed the ordinary durable contribution as well as its pixels. The
+        // real history gestures then restore the same owner's stored action.
+        let change = try page.prepareInkChange(.append(ink), stamp: page.drawingStamp.advanced(by: actor)!)
+        try store.commitPageInk(pageID: page.id, command: .init(change))
       }
       precondition(index.selectItem(item, pageID: first, actor: actor))
       try store.saveWorkspaceSelection(index: index, createdPage: nil)
-      return NotebookAppModel(store: store, startsNearbySync: false)
+      return model
     } catch { fatalError("Cannot seed isolated workspace journey: \(error)") }
   }
 }

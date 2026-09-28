@@ -19,13 +19,23 @@ import XCTest
   }
 
   func testTwentyFourPageProgramsAcceptFirstTapAfterZoomAndKeepStateAcrossTurns() throws {
-    launch(programs: true); try controls(leaf: 0, since: open())
+    launch(programs: true); let openedImage = try controls(leaf: 0, since: open())
     // A notebook remains fitted on zoom-in. Zoom-out deliberately closes it;
     // it is not the inverse of reading magnification as it is for a document.
-    surface.pinch(withScale: 1.4, velocity: 1)
+    // The sheet's AX hit point may belong to a child program. A pair wholly
+    // inside that runtime is correctly its input, not a camera gesture. Use
+    // the window, whose centre is in the fitted page's inter-column paper gap.
+    let initialControls = try visibleControlRects(image: openedImage)
+    let paperCentre = CGRect(x: app.frame.width / 2 - 6, y: app.frame.height / 2 - 6,
+      width: 12, height: 12)
+    XCTAssertTrue(initialControls.allSatisfy { !$0.intersects(paperCentre) },
+      "The scene pinch must start on paper rather than inside one program")
+    app.pinch(withScale: 1.4, velocity: 1)
+    // Inspect the first result before any explicit tap. A misrouted pinch
+    // cannot hide a changed program behind the following control action.
     let first = try XCTUnwrap(visibleControlRects().first)
     tapControl(first); try changedControl(first, index: 0)
-    surface.pinch(withScale: 1 / 1.4, velocity: -1)
+    app.pinch(withScale: 1 / 1.4, velocity: -1)
     let closedScale = min(app.frame.width / 834, app.frame.height / 1194) * 0.72
     // The sheet leaves AX when the pinch starts. Its absence alone cannot
     // acknowledge the closed endpoint; the native cover must reach its pose.
@@ -110,8 +120,9 @@ import XCTest
     }
   }
 
-  private func visibleControlRects(red: Bool = false, expectedCount: Int = 24) throws -> [CGRect] {
-    let pixels = try Pixels(image: XCTUnwrap(app.screenshot().image.cgImage), size: app.frame.size)
+  private func visibleControlRects(red: Bool = false, expectedCount: Int = 24,
+    image: UIImage? = nil) throws -> [CGRect] {
+    let pixels = try Pixels(image: XCTUnwrap((image ?? app.screenshot().image).cgImage), size: app.frame.size)
     var visited = [Bool](repeating: false, count: pixels.width * pixels.height), rectangles: [CGRect] = []
     // Connected colour regions survive CSS pulses and text. Only the controls
     // use this colour; no DOM or production-only inspection hook supplies pose.
@@ -175,7 +186,7 @@ import XCTest
     XCTAssertTrue(surface.waitForExistence(timeout: 2))
     return start
   }
-  private func controls(leaf: Int, since start: ContinuousClock.Instant) throws {
+  @discardableResult private func controls(leaf: Int, since start: ContinuousClock.Instant) throws -> UIImage {
     // This bounds the ENTIRE AX journey (24 remote queries + screenshots), not
     // application latency. Native tests separately enforce all 24 within 1 s.
     let deadline = start + .seconds(30)
@@ -186,9 +197,11 @@ import XCTest
     // One remote snapshot names all 24. Asking existence and hittability
     // separately 48 times serialized AX traffic (~35 s) and measured XCTest,
     // not the app. The following real first taps prove each control's input.
-    let image = XCTAttachment(screenshot: app.screenshot()); image.name = "24 live controls, leaf \(leaf)"; image.lifetime = .keepAlways; add(image)
+    let shot = app.screenshot()
+    let image = XCTAttachment(screenshot: shot); image.name = "24 live controls, leaf \(leaf)"; image.lifetime = .keepAlways; add(image)
     XCTAssertLessThanOrEqual(start.duration(to: .now), .seconds(30),
       "UI automation watchdog, including the action, every AX query and capture; NOT the 1 s product budget")
+    return shot.image
   }
   private func turn(to index: Int, action: () -> Void) throws {
     let start = ContinuousClock.now

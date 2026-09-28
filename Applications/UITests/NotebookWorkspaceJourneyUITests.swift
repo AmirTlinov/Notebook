@@ -26,6 +26,19 @@ import XCTest
 
   func testFirstSelectionMoveDeleteAndColdReopenPreserveTheWholeComposition() throws {
     try launch(); try open()
+    try turn("ink-history-away", to: 1) { surface.swipeLeft() }
+    try turn("ink-history-return", to: 0) { surface.swipeRight() }
+    // This is the system compositor oracle for the raw-ink inverse. The native
+    // rapid erase/undo check separately joins the exact source and OS receipt;
+    // neither a GPU texture nor screenshot duration stands in for this image.
+    let historyBody = app.images["Journey neighbor 1"]
+    try step("undo-raw-ink-keeps-authored-composition", { surface.twoFingerTap() }) {
+      try self.leaf(0, inkPresent: false)
+    }
+    try step("redo-raw-ink-restores-whole-composition", {
+      XCTAssertTrue(historyBody.isHittable)
+      historyBody.tap(withNumberOfTaps: 1, numberOfTouches: 3)
+    }) { try self.leaf(0) }
     let node = app.images["Journey movable 1"]
     try step("first-body-selection", { node.tap() }) {
       XCTAssertTrue(self.app.otherElements["resize-agent-element-topLeading"].isHittable)
@@ -52,7 +65,6 @@ import XCTest
     // The moving body can occlude the sheet's centre after the first redo.
     // This unchanged native body provides three real, unobstructed contacts
     // to the same window-level history recognizer, away from the root cue.
-    let historyBody = app.images["Journey neighbor 1"]
     try step("redo-move-restores-moved-body", {
       XCTAssertTrue(historyBody.isHittable)
       historyBody.tap(withNumberOfTaps: 1, numberOfTouches: 3)
@@ -186,13 +198,14 @@ import XCTest
     }
   }
   private var currentScreenshot: XCUIScreenshot?
-  private func leaf(_ index: Int, moved: Bool = false, deleted: Bool = false) throws {
+  private func leaf(_ index: Int, moved: Bool = false, deleted: Bool = false, inkPresent: Bool = true) throws {
     let folio = surface.value as? String
     XCTAssertTrue(folio?.hasPrefix("Страница \(index + 1) из ") == true,
       "Expected leaf \(index + 1), displayed folio: \(folio ?? "missing")")
-    try pixels(leafProbes(index, moved: moved, deleted: deleted))
+    try pixels(leafProbes(index, moved: moved, deleted: deleted, inkPresent: inkPresent))
   }
-  private func leafProbes(_ index: Int, moved: Bool = false, deleted: Bool = false) -> [(CGFloat, CGFloat, Color)] {
+  private func leafProbes(_ index: Int, moved: Bool = false, deleted: Bool = false,
+    inkPresent: Bool = true) -> [(CGFloat, CGFloat, Color)] {
     let dy: CGFloat = moved ? 200 : 0
     var probes: [(CGFloat, CGFloat, Color)] = []
     // Keep all four rows outside the graphic's label and the root's centred
@@ -206,7 +219,9 @@ import XCTest
     probes += [(560, 560, .blue), (620, 620, .blue)]
     for slot in 0..<6 {
       probes.append((130 + CGFloat(slot) * 100, 820, slot == index ? .blue : .paper))
-      probes.append((220, 660 + CGFloat(slot) * 16, slot == index ? .black : .paper))
+      for x: CGFloat in [220, 300, 440] {
+        probes.append((x, 660 + CGFloat(slot) * 16, slot == index && inkPresent ? .black : .paper))
+      }
     }
     return probes
   }

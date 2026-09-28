@@ -73,6 +73,13 @@ struct SceneCompositionLiveData: Sendable {
     self.nonemptyBoardIDs = nonemptyBoardIDs
     self.inkWindow = inkWindow
   }
+
+  func replacingPages(_ replacements: [UUID: PageDocument]) -> Self {
+    .init(documents: documents, states: states, pages: pages.merging(replacements) { _, next in next },
+      ink: ink, suppressedInkIDs: suppressedInkIDs, orderedInk: orderedInk,
+      referenceIdentities: referenceIdentities, referenceBasis: referenceBasis,
+      documentPaperSizes: documentPaperSizes, nonemptyBoardIDs: nonemptyBoardIDs, inkWindow: inkWindow)
+  }
 }
 
 /// One rendered scene owns its finite dependency witness. Validation repeats
@@ -155,6 +162,10 @@ struct ScenePixelDependencies: Sendable {
 /// receipt changes may cross the cut; changed material cancels the unpublished
 /// cohort rather than mixing its tiles.
 actor SceneCompositionSource {
+  struct PageContentRefresh: Sendable {
+    let revision: UInt64
+    let pages: [UUID: PageDocument]
+  }
   struct InkPaint: Sendable {
     let journal: SpatialInkJournal
     let plan: NotebookOrderedInkPlan
@@ -222,6 +233,40 @@ actor SceneCompositionSource {
   }
 
   func programStore() -> NotebookStore? { if case .sql(let store) = origin { store } else { nil } }
+
+  /// Open page bodies belong to their page presenters, not the spatial paint.
+  /// Check the entire interval in one bounded WAL cut before refreshing only
+  /// those bodies. Membership, spatial edits and unknown/large intervals keep
+  /// the ordinary composition path; the latest write's owner proves nothing
+  /// about other writes included in the same durable header.
+  func refreshPageContent(after previous: UInt64, previousPages: [UUID: PageDocument], liveItemIDs: Set<UUID>) throws -> PageContentRefresh? {
+    try Task.checkCancellation()
+    guard case .sql = origin, let reader, previous < revision, !previousPages.isEmpty else { return nil }
+    return try reader.read { store in
+      let header = try store.workspaceHeader()
+      guard header.workspaceID == workspaceID, header.cursor >= revision else { return nil }
+      let changes: NotebookChangedAddresses
+      do { changes = try store.readChangedAddresses(after: previous, through: header.cursor, limit: 64) }
+      catch let error as CollaborationError where error.code == "observation_cursor_expired" { return nil }
+      guard !changes.hasMore else { return nil }
+      var changedPages = Set<UUID>()
+      for record in changes.records where record.beforeHash != record.afterHash {
+        let file = String(record.address.split(separator: "#", maxSplits: 1)[0])
+        guard let id = Self.documentID(file, directory: "pages"), previousPages[id] != nil else { return nil }
+        changedPages.insert(id)
+      }
+      var pages: [UUID: PageDocument] = [:]
+      for id in changedPages.sorted() {
+        try Task.checkCancellation()
+        guard let owner = try store.ownerItemID(ofPage: id), liveItemIDs.contains(owner) else { return nil }
+        let page = try store.loadPage(id)
+        guard page.size == previousPages[id]?.size else { return nil }
+        pages[id] = page
+      }
+      try Task.checkCancellation()
+      return .init(revision: header.cursor, pages: pages)
+    }
+  }
 
   func validate() throws {
     try Task.checkCancellation()
@@ -524,7 +569,9 @@ actor SceneCompositionSource {
     if oldPlan.revision == revision { return true }
     guard case .sql(let store) = origin else { return false }
     return try checked(store) { store in
-      let changes = try store.readChangedAddresses(after: oldPlan.revision, through: revision)
+      let changes: NotebookChangedAddresses
+      do { changes = try store.readChangedAddresses(after: oldPlan.revision, through: revision) }
+      catch let error as CollaborationError where error.code == "observation_cursor_expired" { return false }
       guard !changes.hasMore else { return false }
       return Self.affectsOnlyExcludedOwners(changes.records, oldPlan: oldPlan, oldData: oldData, plan: plan, data: data)
     }

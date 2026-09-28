@@ -612,7 +612,11 @@ final class SceneCompositionCohort {
   let plan: SceneCompositionPlan
   let frame: WorkspaceSceneFrame
   let requestedSources: WorkspaceSceneFrame.SourceIdentity
-  let liveData: SceneCompositionLiveData
+  private(set) var liveData: SceneCompositionLiveData
+  /// The last SQL cut proved to differ only in this cohort's open page bodies.
+  /// plan.revision remains the cut that prepared its unchanged spatial pixels.
+  /// This witness belongs to this cohort and disappears with its physical paint.
+  private(set) var validatedContentRevision: UInt64
   let rasters: [SceneCompositionTileKey: RasterLease]
   let liveRasters: [SceneCompositionLiveOwner: RasterLease]
   let sourceReceipts: [SceneSourceAddress: SceneSourceReceipt]
@@ -624,6 +628,11 @@ final class SceneCompositionCohort {
   let tileSources: [SceneCompositionTileKey: Set<SceneSourceAddress>]
   let tilePresenters: SceneTilePresentationRegistry
   private var materials: [SceneSourceAddress:NotebookInkMaterialReadiness] = [:]
+  fileprivate func acceptPageContent(_ refresh: SceneCompositionSource.PageContentRefresh) {
+    precondition(refresh.revision >= validatedContentRevision && Set(refresh.pages.keys).isSubset(of: Set(liveData.pages.keys)))
+    liveData = liveData.replacingPages(refresh.pages)
+    validatedContentRevision = refresh.revision
+  }
   func recordMaterial(_ address:SceneSourceAddress,id:UUID,content:NotebookInkMaterialView.Content?,ready:Bool) {
     materials[address,default:.init()].record(id,content:content,ready:ready)
   }
@@ -758,6 +767,7 @@ final class SceneCompositionCohort {
       tilePresenters: SceneTilePresentationRegistry = .init()) {
       id = geometryID ?? UUID()
       self.plan = plan; self.frame = frame; self.liveData = liveData; self.rasters = rasters
+      validatedContentRevision = plan.revision
       self.requestedSources = requestedSources; self.liveRasters = liveRasters; self.nativeInk = nativeInk
       self.sourceReceipts = sourceReceipts; self.sourceRasters = sourceRasters; self.tileSources = tileSources
       self.runtimeOwners = runtimeOwners
@@ -774,6 +784,7 @@ final class SceneCompositionCohort {
     tilePresenters: SceneTilePresentationRegistry = .init()) {
     id = geometryID ?? UUID()
     self.plan = plan; self.frame = frame; self.liveData = liveData; self.rasters = rasters
+    validatedContentRevision = plan.revision
     self.requestedSources = requestedSources ?? frame.sourceIdentity
     self.liveRasters = liveRasters
     self.sourceReceipts = sourceReceipts; self.sourceRasters = sourceRasters; self.tileSources = tileSources
@@ -990,12 +1001,12 @@ final class SceneCompositionTiles {
       if published?.runtimeOwners.contains(address) == true { return false }
       return true
     } ?? false
-    let reusablePaint = published.flatMap { cohort -> SceneCompositionCohort? in
+    let coveredPaint = published.flatMap { cohort -> SceneCompositionCohort? in
       guard dirtySources.isEmpty, !needsSourceScheduling,
         cohort.containsInkWindows(presence: presence, frame: frame),
         cohort.containsSourceWindows(presence: presence, frame: frame, displayScale: displayScale,
           refinesDetails: request.refinesDetails), cohort.requestedSources == sources,
-        cohort.plan.revision == source.revision, cohort.plan.workspaceID == source.workspaceID,
+        cohort.plan.revision <= source.revision, cohort.plan.workspaceID == source.workspaceID,
         cohort.plan.groupPoses == source.groupPoses,
         // A runtime just mounted into this very plan is already excluded from
         // static paint. Reusing it performs no demotion; promoting its existing
@@ -1005,6 +1016,7 @@ final class SceneCompositionTiles {
       else { return nil }
       return cohort
     }
+    let reusablePaint = coveredPaint.flatMap { $0.validatedContentRevision >= source.revision ? $0 : nil }
     if reusablePaint != nil, containsNativeProjection(for: request) { return }
     cancelPreparation()
     let id = requestID
@@ -1030,6 +1042,26 @@ final class SceneCompositionTiles {
       do {
         try Task.checkCancellation()
         guard self?.requestID == id, permitsPreparation() else { throw CancellationError() }
+        if let coveredPaint, reusablePaint == nil, coveredPaint.isPaintInstalled,
+          self?.containsNativeProjection(for: request) == true {
+          let liveItems = Set(coveredPaint.plan.liveOwners.compactMap { owner -> UUID? in
+            if case .item(let item) = owner.id { return item }; return nil
+          })
+          self?.onPreparationPhase?(id, "page_content")
+          let refresh = try await source.refreshPageContent(after: coveredPaint.validatedContentRevision,
+            previousPages: coveredPaint.liveData.pages, liveItemIDs: liveItems)
+          try Task.checkCancellation()
+          guard self?.requestID == id, permitsPreparation() else { throw CancellationError() }
+          if let refresh, self?.published === coveredPaint, coveredPaint.isPaintInstalled,
+            self?.dirtySources.isEmpty == true, self?.containsNativeProjection(for: request) == true {
+            // Page metadata cannot revoke or reacknowledge the already mounted
+            // camera planes, ink and immutable tiles. Attention reads the fresh
+            // body but still requires its own exact page presentation receipt.
+            coveredPaint.acceptPageContent(refresh)
+            self?.onPreparationPhase?(id, "page_content_rebound")
+            return
+          }
+        }
         #if os(iOS)
           if let reusablePaint {
             // The finite ink backing can need a new basis while every element,

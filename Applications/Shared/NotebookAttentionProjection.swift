@@ -542,7 +542,8 @@ enum NotebookAttentionProjection {
       erasures: { model.elementErasures(on:$0,fallback:cohort.liveData.ink) },
       appearance: { model.elementErasureCache.appearance(surface:$0,id:$1,graphic:$2,layout:$3,size:$4,erasures:$5) })
     if let focused = presence.focusedItemID, cohort.plan.allowsLive(.item(focused), in: .board(presence.boardID)) {
-      if presence.mode == .page, let id = sources.selectedPageID, let page = model.pages[id] {
+      if presence.mode == .page {
+        guard let id = sources.selectedPageID, let page = model.pages[id] else { return nil }
         #if os(iOS)
         guard model.pagePresentations.isPresented(page) else { return nil }
         #endif

@@ -8,6 +8,59 @@ import XCTest
 
 final class AgentWebLeaseTests: XCTestCase {
   @MainActor
+  func testSmallProgramNavigatesInItsAcceptedSourceTurn() async throws {
+    let resources = SceneRenderResources()
+    let lease = try await resources.acquireWebSurface(priority: .input)
+    let owner = AgentWebCoordinator(lease: lease, resources: resources, onState: { _, _ in false })
+    let web = AgentWebCoordinator.makeWebView(coordinator: owner)
+    let previous = NotebookNavigationObservation.onWebPreparation
+    var stages: [String] = []
+    NotebookNavigationObservation.onWebPreparation = { stage, id, _, _ in
+      if id == lease.id { stages.append(stage) }
+    }
+    defer { NotebookNavigationObservation.onWebPreparation = previous; owner.invalidate(); lease.release() }
+    let source = element(source: "immediate initial state").updating(state: .object(["count": .number(0)]))
+    owner.load(source, in: web)
+    XCTAssertEqual(stages.filter { $0 == "source_accepted" || $0 == "navigation_requested" },
+      ["source_accepted", "navigation_requested"], "A tiny initial state must not queue navigation behind unrelated native constructions")
+    XCTAssertFalse(owner.hasLiveSource(source), "Starting navigation is not an installation receipt")
+  }
+
+  @MainActor
+  func testStateEncodingUsesOneCanonicalRepresentationAcrossBoundedAndDeferredAdmission() async throws {
+    let resources = SceneRenderResources(byteLimit: 1_048_576, profile: .headless)
+    let small: JSONValue = .object(["count": .number(0), "text": .string("</script>雪🌿")])
+    func inspectSmall() throws {
+      guard case .prepared(let encoded) = try NotebookProgramStateEncoding.prepareImmediately(small,
+        resources: resources, forHTML: true) else { XCTFail("Small admitted state should be ready without a task"); return }
+      XCTAssertEqual(encoded.json, "{\"count\":0,\"text\":\"</script>雪🌿\"}")
+      XCTAssertEqual(encoded.htmlJSON, "{\"count\":0,\"text\":\"\\u003c/script>雪🌿\"}")
+      XCTAssertGreaterThan(resources.reservedBytes, 0)
+    }
+    try inspectSmall()
+    XCTAssertEqual(resources.reservedBytes, 0)
+    let large: JSONValue = .object(["count": .number(0), "text": .string(String(repeating: "</script>雪🌿", count: 500))])
+    guard case .needsAsync = try NotebookProgramStateEncoding.prepareImmediately(large,
+      resources: resources, forHTML: true) else { XCTFail("Large state must leave the input actor before encoding"); return }
+    XCTAssertEqual(resources.reservedBytes, 0)
+    let encoded = try await NotebookProgramStateEncoding.prepare(large, resources: resources, forHTML: true)
+    XCTAssertEqual(try JSONDecoder().decode(JSONValue.self, from: Data(encoded.json.utf8)), large)
+    XCTAssertEqual(try JSONDecoder().decode(JSONValue.self, from: Data(encoded.htmlJSON.utf8)), large)
+  }
+
+  @MainActor
+  func testImmediateStateAdmissionDoesNotAllocateAfterRefusalOrEncodingFailure() throws {
+    let resources = SceneRenderResources(byteLimit: 4096, profile: .headless)
+    let occupied = try XCTUnwrap(resources.reserveDerivedBytes(4096, priority: .passive))
+    guard case .needsAsync = try NotebookProgramStateEncoding.prepareImmediately(.object(["count": .number(0)]),
+      resources: resources) else { XCTFail("Admission must preserve the existing byte budget"); occupied.release(); return }
+    XCTAssertEqual(resources.reservedBytes, 4096)
+    occupied.release()
+    XCTAssertThrowsError(try NotebookProgramStateEncoding.prepareImmediately(.number(.nan), resources: resources))
+    XCTAssertEqual(resources.reservedBytes, 0, "An encoder failure must release the same reservation as deferred work")
+  }
+
+  @MainActor
   func testShutdownJoinsARealCommitAcceptedBeforeAuthorReadiness() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)

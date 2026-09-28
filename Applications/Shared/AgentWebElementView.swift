@@ -1550,6 +1550,7 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
     self.snapshotOnly = snapshotOnly
     commitsClosedBeforeReady = false; restartsAfterBoundary = false
     programLoadTask?.cancel(); programLoadTask = nil
+    initialStateEncoding = nil
     resumeRetry?.removeFromSuperview(); resumeRetry = nil; resumeFailed = false; programAssets.revokeAll(); packageNavigationURL = nil
     checkpointTask?.cancel(); checkpointTask = nil; checkpointID = nil; checkpointedSource = nil; checkpointSelection = nil; checkpointWasCaptured = false; attentionPauseID = nil
     readinessGeneration &+= 1
@@ -1596,32 +1597,60 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
       }
       return
     }
+    // An inline program with a small initial state already has everything
+    // needed for navigation. Do not queue its first request behind the next
+    // native constructions merely to encode a bounded JSON value.
+    if element.programPackage == nil {
+      do {
+        if case .prepared(let encoded) = try NotebookProgramStateEncoding.prepareImmediately(element.state,
+          resources: resources, forHTML: true) {
+          installProgramNavigation(element, encoded: encoded, token: token, in: webView)
+          return
+        }
+      } catch {
+        guard !Task.isCancelled, accepts(token), attachedWebView === webView else { return }
+        record(error, kind: "program_asset_error", token: token, source: element)
+        return
+      }
+    }
     programLoadTask = Task { @MainActor [weak self, weak webView] in
       guard let self, let webView else { return }
+      defer { if accepts(token) { programLoadTask = nil } }
       do {
         let encoded = try await NotebookProgramStateEncoding.prepare(element.state, resources: resources, forHTML: true)
         guard !Task.isCancelled, accepts(token), attachedWebView === webView else { return }
-        initialStateEncoding = encoded
         if let hash = element.programPackage {
           guard let store = programStore ?? programOwner?.store else { throw SceneRenderError.snapshotPending("program_store") }
           let package = try await Task.detached(priority: .userInitiated) { try store.readProgramPackage(hash) }.value
-          guard !Task.isCancelled, accepts(token), attachedWebView === webView else { return }
-          let url = programAssets.register(store: store, package: package) { origin in
-            Self.document(for: element, stateJSON: encoded.htmlJSON, token: token, package: package, origin: origin, stateCredit: stateTransfer?.initialCredit ?? 0, commitsEnabled: !snapshotOnly && allowsStateCommits)
-          }
-          packageNavigationURL = url
-          NotebookNavigationObservation.webPreparation("navigation_requested", ownerID: lease.id, sourceID: element.id)
-          activeNavigation = webView.load(URLRequest(url: url))
+          installProgramNavigation(element, encoded: encoded, token: token, in: webView, assets: (store, package))
         } else {
-          let document = Self.document(for: element, stateJSON: encoded.htmlJSON, token: token, stateCredit: stateTransfer?.initialCredit ?? 0, commitsEnabled: !snapshotOnly && allowsStateCommits)
-          NotebookNavigationObservation.webPreparation("navigation_requested", ownerID: lease.id, sourceID: element.id)
-          activeNavigation = webView.loadHTMLString(document.before + element.html + document.after, baseURL: nil)
+          installProgramNavigation(element, encoded: encoded, token: token, in: webView)
         }
       } catch {
         guard !Task.isCancelled, accepts(token) else { return }
         initialStateEncoding = nil
         record(error, kind: "program_asset_error", token: token, source: element)
       }
+    }
+  }
+
+  private func installProgramNavigation(_ element: AgentElement, encoded: NotebookProgramStateEncoding,
+    token: String, in webView: WKWebView, assets: (store: NotebookStore, package: NotebookProgramPackage)? = nil) {
+    guard !Task.isCancelled, accepts(token), attachedWebView === webView else { return }
+    initialStateEncoding = encoded
+    if let assets {
+      let url = programAssets.register(store: assets.store, package: assets.package) { origin in
+        Self.document(for: element, stateJSON: encoded.htmlJSON, token: token, package: assets.package, origin: origin,
+          stateCredit: stateTransfer?.initialCredit ?? 0, commitsEnabled: !snapshotOnly && allowsStateCommits)
+      }
+      packageNavigationURL = url
+      NotebookNavigationObservation.webPreparation("navigation_requested", ownerID: lease.id, sourceID: element.id)
+      activeNavigation = webView.load(URLRequest(url: url))
+    } else {
+      let document = Self.document(for: element, stateJSON: encoded.htmlJSON, token: token,
+        stateCredit: stateTransfer?.initialCredit ?? 0, commitsEnabled: !snapshotOnly && allowsStateCommits)
+      NotebookNavigationObservation.webPreparation("navigation_requested", ownerID: lease.id, sourceID: element.id)
+      activeNavigation = webView.loadHTMLString(document.before + element.html + document.after, baseURL: nil)
     }
   }
 

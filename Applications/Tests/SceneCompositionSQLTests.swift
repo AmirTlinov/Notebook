@@ -5,6 +5,108 @@ import XCTest
 
 final class SceneCompositionSQLTests: XCTestCase {
   @MainActor
+  func testPageProgramStateRefreshKeepsInstalledPaintWithoutPlanningOrPreparingSpatialInk() async throws {
+    try await verifyPageContentRefresh(mixedSpatialChange: false)
+  }
+
+  @MainActor
+  func testPageProgramStateAndForeignSpatialWriteCannotReuseTheOldPaintCut() async throws {
+    try await verifyPageContentRefresh(mixedSpatialChange: true)
+  }
+
+  /// Installation is supplied by the existing plane receipt protocol. The SQL,
+  /// native ink preparation and compositor below are their production owners;
+  /// this regression checks invalidation, not OS display or frame latency.
+  @MainActor private final class PageContentInstallation: SceneCameraPlaneInstallationOwner {
+    func isShowing(_ installation: SceneCameraPlaneInstallation) -> Bool { true }
+  }
+
+  @MainActor
+  private func verifyPageContentRefresh(mixedSpatialChange: Bool) async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    addTeardownBlock { try? FileManager.default.removeItem(at: root) }
+    let store = NotebookStore(root: root), actor = UUID()
+    let initial = try store.initializeWorkspace(actor: actor, pageSize: .init(width: 834, height: 1194))
+    let workspace = try store.loadIndex(), pageID = try XCTUnwrap(workspace.selectedPageID)
+    let notebookID = workspace.selectedItemID, hierarchy = try store.loadBoard(items: workspace.items)
+    var page = try store.loadPage(pageID)
+    let element = AgentElement(id: "state-only", kind: .web, frame: .init(x: 20, y: 20, width: 100, height: 80),
+      source: "", html: "<button>Count</button>", state: .object(["count": .number(0)]))
+    page.replaceElements([element], actor: actor)
+    page = try store.savePage(page)
+    let center = try XCTUnwrap(hierarchy.focusedCenter(of: notebookID, in: initial.rootBoardID))
+    let presence = SessionPresence(boardID: initial.rootBoardID, mode: .page,
+      camera: .init(center: center, scale: 0.5), viewport: .init(x: 512, y: 512),
+      focusedItemID: notebookID, openProgress: 1, selectedItemID: notebookID, notebookPageID: pageID)
+    let index = WorkspaceSceneIndex(workspace: workspace, hierarchy: hierarchy, paperSizes: [:])
+    let frame = WorkspaceSceneFrame(index: index, presence: presence, portalCamera: { _ in nil }, pinned: [.item(notebookID)])
+    let resources = SceneRenderResources(), coordinator = SceneCompositionTiles(resources: resources)
+    addTeardownBlock { @MainActor in await coordinator.stop() }
+    func source() throws -> SceneCompositionSource {
+      let header = try store.workspaceHeader()
+      return .init(store: store, revision: header.cursor, workspaceID: header.workspaceID)
+    }
+    let before = try source()
+    let beforeRevision = await before.revision
+    coordinator.prepare(source: before, presence: presence, frame: frame, pinned: [.item(notebookID)], displayScale: 1)
+    try await waitForPublication(coordinator, revision: beforeRevision)
+    let original = try XCTUnwrap(coordinator.published)
+    let installation = PageContentInstallation()
+    original.installation(for: .elements).bind(installation)
+    original.installation(for: .covers).bind(installation)
+    XCTAssertTrue(original.isPaintInstalled)
+    XCTAssertEqual(original.liveData.pages[pageID]?.element(id: element.id)?.state["count"], .number(0))
+    let generations = original.nativeInk.owners.mapValues { $0.canvas.spatialSourceGeneration }
+    let paintID = original.paintID
+    var phases: [String] = []
+    coordinator.onPreparationPhase = { _, phase in phases.append(phase) }
+
+    var changed = page
+    changed.replaceElements([element.updating(state: .object(["count": .number(1)]))], actor: actor)
+    let command = try XCTUnwrap(NotebookPageProgramStateCommand(before: page, after: changed, elementID: element.id))
+    XCTAssertTrue(try store.commitPageProgramState(command).changed)
+    if mixedSpatialChange {
+      // A peer's spatial change can share the header read with the local page
+      // receipt. Checking only the latest write's owner would lose this ink.
+      var journal = try store.loadSpatialInk()
+      XCTAssertNotNil(journal.append(tool: .pen, spans: [.init(surface: .board(initial.rootBoardID), samples: [
+        .init(point: .zero, worldPoint: center, timeOffset: 0, width: 4, opacity: 1, force: 1, azimuth: 0, altitude: 1)
+      ])], actor: UUID()))
+      try store.saveSpatialInk(journal)
+    }
+    let after = try source()
+    let afterRevision = await after.revision
+    coordinator.prepare(source: after, presence: presence, frame: frame, pinned: [.item(notebookID)], displayScale: 1)
+    let deadline = ContinuousClock.now + .seconds(3)
+    while coordinator.isPreparing, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(5)) }
+    XCTAssertFalse(coordinator.isPreparing)
+    XCTAssertNil(coordinator.failure)
+    let current = try XCTUnwrap(coordinator.published)
+    XCTAssertEqual(current.liveData.pages[pageID]?.element(id: element.id)?.state["count"], .number(1))
+    if mixedSpatialChange {
+      XCTAssertFalse(current === original)
+      XCTAssertNotEqual(current.paintID, paintID)
+      XCTAssertEqual(current.plan.revision, afterRevision)
+      XCTAssertEqual(original.validatedContentRevision, beforeRevision, "Refused intervals cannot advance the old witness")
+      XCTAssertTrue(phases.contains("plan")); XCTAssertTrue(phases.contains("native_ink"))
+      XCTAssertFalse(phases.contains("page_content_rebound"))
+      XCTAssertEqual(current.liveData.ink.actions.count, 1)
+    } else {
+      XCTAssertTrue(current === original)
+      XCTAssertEqual(current.paintID, paintID)
+      XCTAssertEqual(current.plan.revision, beforeRevision, "The new durable header is not a new paint receipt")
+      XCTAssertEqual(current.validatedContentRevision, afterRevision)
+      XCTAssertEqual(current.nativeInk.owners.mapValues { $0.canvas.spatialSourceGeneration }, generations)
+      XCTAssertTrue(phases.contains("page_content_rebound"))
+      XCTAssertFalse(phases.contains("plan")); XCTAssertFalse(phases.contains("native_ink"))
+      XCTAssertFalse(phases.contains("published"))
+      coordinator.prepare(source: after, presence: presence, frame: frame, pinned: [.item(notebookID)], displayScale: 1)
+      XCTAssertFalse(coordinator.isPreparing, "A repeated validated header needs no second task")
+    }
+    XCTAssertTrue(installation.isShowing(original.installation(for: .elements)))
+  }
+
+  @MainActor
   func testPageOrderedExportPreservesRanksCapturedCutsAndSelectedLayerScope() async throws {
     let red=SpatialInkColor(red:1,green:0,blue:0),blue=SpatialInkColor(red:0,green:0,blue:1),green=SpatialInkColor(red:0,green:1,blue:0)
     func action(_ sequence:UInt64,_ tool:SpatialInkTool,_ color:SpatialInkColor,

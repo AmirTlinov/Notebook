@@ -429,10 +429,24 @@ extension NotebookProgramBridge {
 }
 
 /// One admitted immutable external state, shared by paper pages until their
-/// bounded transfer completes. Encoding and complexity measurement are off the
-/// input actor; the existing scene allocator, not a model-size limit, admits it.
+/// bounded transfer completes. Small initial values enter the same encoder
+/// directly; larger work leaves the input actor. The scene allocator admits both.
 @MainActor
 final class NotebookProgramStateEncoding {
+  enum Admission {
+    case prepared(NotebookProgramStateEncoding)
+    case needsAsync
+  }
+
+  private struct Encoded: Sendable {
+    let json: String
+    let htmlJSON: String
+    let windows: [String]
+    let units: Int
+  }
+
+  private enum WorkLimit: Error { case needsAsync }
+
   let json: String
   let htmlJSON: String
   private let windows: [String]
@@ -443,25 +457,46 @@ final class NotebookProgramStateEncoding {
     self.json = json; self.htmlJSON = htmlJSON; self.windows = windows; self.units = units; self.reservation = reservation
   }
 
+  /// Bound both traversal and encoding before doing any work on the input
+  /// actor. Refusal leaves no retained bytes; the ordinary cancellable producer
+  /// then waits in the allocator's existing FIFO. This is not a state-size limit.
+  static func prepareImmediately(_ value: JSONValue, resources: SceneRenderResources,
+    forHTML: Bool = false) throws -> Admission {
+    try Task.checkCancellation()
+    let bytes: Int
+    do { bytes = try allocationBytes(value, forHTML: forHTML, bounded: true) }
+    catch WorkLimit.needsAsync { return .needsAsync }
+    guard let reservation = resources.reserveDerivedBytes(bytes, priority: .passive) else { return .needsAsync }
+    do {
+      let encoded = try encode(value, forHTML: forHTML)
+      return .prepared(.init(json: encoded.json, htmlJSON: encoded.htmlJSON, windows: encoded.windows,
+        units: encoded.units, reservation: reservation))
+    } catch { reservation.release(); throw error }
+  }
+
   static func prepare(_ value: JSONValue, resources: SceneRenderResources, forHTML: Bool = false) async throws -> NotebookProgramStateEncoding {
+    if case .prepared(let encoding) = try prepareImmediately(value, resources: resources, forHTML: forHTML) { return encoding }
     let bytes = try await Task.detached(priority: .userInitiated) { try allocationBytes(value, forHTML: forHTML) }.value
     let reservation = try await resources.acquirePassiveDerivedBytes(bytes)
     do {
-      let encoded = try await Task.detached(priority: .userInitiated) {
-        let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
-        let data = try encoder.encode(value), json = String(decoding: data, as: UTF8.self)
-        var windows: [String] = [], start = 0
-        while start < data.count {
-          var end = min(data.count, start + 262_144)
-          // Every UTF-8 window is also <=262144 UTF-16 units; preserve a scalar.
-          while end < data.count, data[end] & 0xc0 == 0x80 { end -= 1 }
-          windows.append(String(decoding: data[start..<end], as: UTF8.self)); start = end
-        }
-        return (json, windows, json.utf16.count, forHTML ? json.replacingOccurrences(of: "<", with: "\\u003c") : json)
-      }.value
+      let encoded = try await Task.detached(priority: .userInitiated) { try encode(value, forHTML: forHTML) }.value
       try Task.checkCancellation()
-      return .init(json: encoded.0, htmlJSON: encoded.3, windows: encoded.1, units: encoded.2, reservation: reservation)
+      return .init(json: encoded.json, htmlJSON: encoded.htmlJSON, windows: encoded.windows, units: encoded.units, reservation: reservation)
     } catch { reservation.release(); throw error }
+  }
+
+  nonisolated private static func encode(_ value: JSONValue, forHTML: Bool) throws -> Encoded {
+    let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+    let data = try encoder.encode(value), json = String(decoding: data, as: UTF8.self)
+    var windows: [String] = [], start = 0
+    while start < data.count {
+      var end = min(data.count, start + 262_144)
+      // Every UTF-8 window is also <=262144 UTF-16 units; preserve a scalar.
+      while end < data.count, data[end] & 0xc0 == 0x80 { end -= 1 }
+      windows.append(String(decoding: data[start..<end], as: UTF8.self)); start = end
+    }
+    return .init(json: json, htmlJSON: forHTML ? json.replacingOccurrences(of: "<", with: "\\u003c") : json,
+      windows: windows, units: json.utf16.count)
   }
 
   func send(controller: String, revision: String = "", expectedToken: String? = nil, in web: WKWebView) async throws -> Bool {
@@ -486,11 +521,12 @@ final class NotebookProgramStateEncoding {
     }
   }
 
-  nonisolated private static func allocationBytes(_ value: JSONValue, forHTML: Bool) throws -> Int {
+  nonisolated private static func allocationBytes(_ value: JSONValue, forHTML: Bool, bounded: Bool = false) throws -> Int {
     var bytes = 0, nodes = 0, htmlEscapes = 0
     func add(_ count: Int) throws {
       guard count >= 0, bytes <= (Int.max - count) else { throw SceneRenderError.resourceLimit }
       bytes += count
+      if bounded, bytes > 4096 { throw WorkLimit.needsAsync }
     }
     func string(_ value: String) throws {
       try add(2)
@@ -501,6 +537,7 @@ final class NotebookProgramStateEncoding {
     }
     func visit(_ value: JSONValue) throws {
       guard nodes < Int.max / 64 else { throw SceneRenderError.resourceLimit }; nodes += 1
+      if bounded, nodes > 64 { throw WorkLimit.needsAsync }
       switch value {
       case .null: try add(4)
       case .bool: try add(5)

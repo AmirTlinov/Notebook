@@ -33,7 +33,20 @@ final class IPadSheetCurlController: UIViewController, UIGestureRecognizerDelega
   private let curl = SheetCurlMetalView(frame: .zero)
   private var panDirection: Direction?
   private var motion: Motion?
-  private var frameAcquisition: Task<Void, Never>?
+  /// Install this identity before running a borrower. An already prepared
+  /// pair may finish (or be cancelled by a callback) before Task.immediate
+  /// returns its handle; neither outcome may leave a task in the next turn.
+  @MainActor private final class FrameAcquisition {
+    private var task: Task<Void, Never>?
+    private var finished = false
+    private(set) var isCancelled = false
+    func attach(_ task: Task<Void, Never>) {
+      if finished { task.cancel() } else { self.task = task }
+    }
+    func finish() { finished = true; task = nil }
+    func cancel() { isCancelled = true; task?.cancel(); finish() }
+  }
+  private var frameAcquisition: FrameAcquisition?
   private var lastIntentTime: Double?
   private var inputCadence = Double.infinity
   private var continuedContact: Contact?
@@ -126,14 +139,15 @@ final class IPadSheetCurlController: UIViewController, UIGestureRecognizerDelega
     }
     let bends = animated && !UIAccessibility.isReduceMotionEnabled && SceneSourceVisibility.isVisible(view)
     do {
-      try begin(source: source, target: target, direction: direction, gesture: false,
+      let id = try begin(source: source, target: target, direction: direction, gesture: false,
         preparesFrames: bends, completion: completion)
+      guard motion?.id == id else { return }
       if bends { animate(to: 1) } else { finish(completed: true) }
     } catch { onFailure(error); completion?(false) }
   }
 
   private func begin(source: UIViewController, target: UIViewController, direction: Direction,
-    gesture: Bool, preparesFrames: Bool = true, completion: ((Bool) -> Void)?) throws {
+    gesture: Bool, preparesFrames: Bool = true, completion: ((Bool) -> Void)?) throws -> UUID {
     prepare(target)
     guard !preparesFrames || (view.bounds.width > 0 && view.bounds.height > 0) else {
       throw SceneRenderError.snapshotPending("page_bounds")
@@ -143,16 +157,17 @@ final class IPadSheetCurlController: UIViewController, UIGestureRecognizerDelega
     }
     motion = .init(id: id, source: source, target: target, size: view.bounds.size, direction: direction,
       gesture: gesture)
-    // Borrow accepted cuts outside input dispatch. Material owners certify
-    // their native pixels; a queue hop cannot manufacture readiness. Live paper
-    // stays in front while this same motion retains the finger progress.
+    // Material owners submit their accepted borrows in this admission event.
+    // Live paper stays in front while the same motion awaits their pixels and
+    // retains the finger progress; capture completion never manufactures readiness.
     if gesture {
       motion?.contact = continuedContact ?? .init(initial: 0, origin: 0, initialTilt: 0,
         began: CACurrentMediaTime(), direction: direction)
       continuedContact = nil
     }
-    guard preparesFrames, !UIAccessibility.isReduceMotionEnabled else { return }
+    guard preparesFrames, !UIAccessibility.isReduceMotionEnabled else { return id }
     acquireCurrentFrames(for: id)
+    return id
   }
 
   /// Readiness belongs to the mounted page. A dirty source retains this
@@ -173,9 +188,14 @@ final class IPadSheetCurlController: UIViewController, UIGestureRecognizerDelega
   private func acquireCurrentFrames(for id: UUID) {
     guard let motion, motion.id == id, motion.frame == nil, frameAcquisition == nil,
       isSheetReadyForCapture(motion.source), isSheetReadyForCapture(motion.target) else { return }
-    frameAcquisition = Task { @MainActor [weak self] in
+    let acquisition = FrameAcquisition()
+    frameAcquisition = acquisition
+    let task = Task.immediate { @MainActor [weak self] in
       guard let self else { return }
-      defer { if self.motion?.id == id { frameAcquisition = nil } }
+      defer {
+        acquisition.finish()
+        if frameAcquisition === acquisition { frameAcquisition = nil }
+      }
       do {
         let began = CACurrentMediaTime()
         // Both admitted owners live on this actor. Start their borrows here,
@@ -185,10 +205,12 @@ final class IPadSheetCurlController: UIViewController, UIGestureRecognizerDelega
         let acquire = acquireSheetFrame
         let sourcePage = motion.source, targetPage = motion.target
         let readSource: @MainActor @Sendable () async throws -> (isSource: Bool, frame: PageTurnFrame) = {
-          (true, try await acquire(sourcePage))
+          guard !acquisition.isCancelled else { throw CancellationError() }
+          return (true, try await acquire(sourcePage))
         }
         let readTarget: @MainActor @Sendable () async throws -> (isSource: Bool, frame: PageTurnFrame) = {
-          (false, try await acquire(targetPage))
+          guard !acquisition.isCancelled else { throw CancellationError() }
+          return (false, try await acquire(targetPage))
         }
         let (source, target) = try await withThrowingTaskGroup(of: (isSource: Bool, frame: PageTurnFrame).self) { group in
           group.addImmediateTask(operation: readSource)
@@ -201,7 +223,7 @@ final class IPadSheetCurlController: UIViewController, UIGestureRecognizerDelega
           return (source, target)
         }
         try Task.checkCancellation()
-        guard var current = self.motion, current.id == id else { return }
+        guard !acquisition.isCancelled, var current = self.motion, current.id == id else { return }
         // Each owner delivered an immutable accepted cut. Subsequent live
         // publications cannot invalidate this already admitted physical pair.
         let leaf = motion.direction == .forward ? source : target
@@ -237,9 +259,11 @@ final class IPadSheetCurlController: UIViewController, UIGestureRecognizerDelega
           DispatchQueue.main.async { [weak self] in self?.acquireCurrentFrames(for: id) }
           return
         }
-        onFailure(error); finish(completed: false, outcome: .failed)
+        onFailure(error)
+        if self.motion?.id == id { finish(completed: false, outcome: .failed) }
       }
     }
+    acquisition.attach(task)
   }
 
   private func awaitCurrentMaterial(id: UUID, attemptedGeneration: UInt64, currentGeneration: UInt64) {
@@ -423,8 +447,8 @@ final class IPadSheetCurlController: UIViewController, UIGestureRecognizerDelega
   func beginInteractiveTurn(direction: Direction, target: UIViewController? = nil) -> Bool {
     guard motion == nil, let page, let target = target ?? neighbor(page, direction), willTurn(target) else { return false }
     do {
-      try begin(source: page, target: target, direction: direction, gesture: true, completion: nil)
-      return true
+      let id = try begin(source: page, target: target, direction: direction, gesture: true, completion: nil)
+      return motion?.id == id
     } catch { onFailure(error); return false }
   }
 

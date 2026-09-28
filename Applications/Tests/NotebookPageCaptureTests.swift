@@ -4,6 +4,56 @@ import XCTest
 @testable import Notebook
 
 @MainActor final class NotebookPageCaptureTests: XCTestCase {
+  func testReentrantBorrowCancellationCannotOverwriteTheSuccessorAcquisition() async throws {
+    let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+    let previous = scene.windows.first(where: \.isKeyWindow), window = UIWindow(windowScene: scene)
+    let native = IPadSheetCurlController(), source = UIViewController(), target = UIViewController(), successor = UIViewController()
+    PageTurnFrameFixture.install(on: native)
+    window.rootViewController = native; window.makeKeyAndVisible()
+    defer { native.cancelMotion(); window.isHidden = true; window.rootViewController = nil; previous?.makeKey() }
+    native.install(source); native.prepare(target); native.prepare(successor); native.view.layoutIfNeeded()
+    let sourceFrame = try await PageTurnFrameFixture.solid(.blue, size: native.view.bounds.size)
+    let targetFrame = try await PageTurnFrameFixture.solid(.red, size: native.view.bounds.size)
+    let successorFrame = try await PageTurnFrameFixture.solid(.green, size: native.view.bounds.size)
+    var sourceCalls = 0, retiredTargetCalls = 0, successorCalls = 0, pairCount = 0
+    var oldCompletions: [Bool] = [], successorCompletions: [Bool] = []
+    var releaseSuccessor: CheckedContinuation<PageTurnFrame, Never>?
+    defer { releaseSuccessor?.resume(returning: successorFrame) }
+    let acquire = native.acquireSheetFrame
+    defer { native.acquireSheetFrame = acquire }
+    native.onFramesAcquired = { _ in pairCount += 1 }
+    native.acquireSheetFrame = { sheet in
+      if sheet === source {
+        sourceCalls += 1
+        if sourceCalls == 1 {
+          // Revoke during the borrow's synchronous prefix, before its task
+          // handle exists. The successor must retain its own pending borrower.
+          native.cancelMotion()
+          native.show(successor, direction: .forward, animated: true) { successorCompletions.append($0) }
+        }
+        return sourceFrame
+      }
+      if sheet === target { retiredTargetCalls += 1; return targetFrame }
+      successorCalls += 1
+      return await withCheckedContinuation { releaseSuccessor = $0 }
+    }
+    native.show(target, direction: .forward, animated: true) { oldCompletions.append($0) }
+    XCTAssertEqual(sourceCalls, 2, "Both operations submit in their admission event, without a queued start")
+    XCTAssertEqual(successorCalls, 1); XCTAssertEqual(retiredTargetCalls, 0)
+    XCTAssertEqual(oldCompletions, [false]); XCTAssertTrue(successorCompletions.isEmpty)
+    XCTAssertTrue(native.containsInActiveTurn(source)); XCTAssertTrue(native.containsInActiveTurn(successor))
+    // Let the retired task finish while the successor is still waiting.
+    await Task.yield()
+    native.sheetReadinessDidChange(successor)
+    XCTAssertEqual(successorCalls, 1, "An old defer must not clear the successor's acquisition identity")
+    let release = try XCTUnwrap(releaseSuccessor); releaseSuccessor = nil
+    release.resume(returning: successorFrame)
+    let deadline = ContinuousClock.now + .seconds(2)
+    while successorCompletions.isEmpty, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(2)) }
+    XCTAssertEqual(oldCompletions, [false]); XCTAssertEqual(successorCompletions, [true])
+    XCTAssertEqual(pairCount, 1); XCTAssertTrue(native.page === successor)
+  }
+
   func testCancelledPendingCaptureCannotRevealOrRetainTheRetiredLeaf() async throws {
     let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
     let previous = scene.windows.first(where: \.isKeyWindow), window = UIWindow(windowScene: scene)
@@ -18,8 +68,8 @@ import XCTest
     native.show(target, direction: .forward, animated: true)
     native.cancelMotion()
     native.show(replacement, direction: .forward, animated: false)
-    // Let the retired update's callback arrive. It cannot capture the
-    // old page, acquire backing, submit a frame, or cover the replacement.
+    // Submitted borrows may drain after retirement; none may publish a curl
+    // frame or cover the replacement.
     try await Task.sleep(for: .milliseconds(100))
     XCTAssertTrue(native.page === replacement)
     XCTAssertTrue(native.view.subviews.last === replacement.view)
