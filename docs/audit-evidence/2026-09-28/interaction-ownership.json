@@ -1,0 +1,144 @@
+{
+  "format": 1,
+  "recordedAt": "2026-09-28T01:38:41.570301+00:00",
+  "baseCommit": "dcab212ff801eebf929ffc25f003b83c9684c5a2",
+  "candidateVersion": "0.3.147 (217)",
+  "status": "selected-verification-passed-matched-pair-installed",
+  "fullAcceptance": false,
+  "issue": "GUI-306",
+  "runs": [
+    {
+      "path": "/private/tmp/notebook-ownership-217-20260928T0034Z",
+      "sourceSHA256": "b477e8aeb2bf6632f6fe8b8e7597a8f487a210447eae2f4ff978bfeabd02edc5",
+      "ipadPassed": 31,
+      "ipadFailed": 0,
+      "scope": "Native and system gestures passed; overall receipt rejected for one wrongly qualified test selector; Mac did not run."
+    },
+    {
+      "path": "/private/tmp/notebook-ownership-217-20260928T0055Z",
+      "sourceSHA256": "11b286b29a4292c6a17e7935a108ac1ed632cc6be47e3fc6068729bbb691c4ee",
+      "ipadPassed": 13,
+      "ipadFailed": 1,
+      "scope": "Deselect after cancellation remained blocked behind pending page readiness."
+    },
+    {
+      "path": "/private/tmp/notebook-ownership-217-20260928T0102Z",
+      "sourceSHA256": "bb2fabcb2128b4c8f715eea695ecec9f16c79e326c0f478b0a73b671a468f213",
+      "ipadPassed": 1,
+      "ipadFailed": 2,
+      "scope": "Mixed cancellation briefly separated raw ink from controls; Native24 owner landing 630.842542ms >450ms."
+    },
+    {
+      "path": "/private/tmp/notebook-ownership-217-20260928T0113Z",
+      "sourceSHA256": "c7ffa349d0083522590a392ae167de84cea06723909a6a17bf83ee404687665c",
+      "ipadPassed": 3,
+      "ipadFailed": 1,
+      "scope": "First reveal and mixed cancellation passed; raw return pixels correct but snapshot-inclusive 123.87975ms exceeded100ms while System Trace ran."
+    },
+    {
+      "path": "/private/tmp/notebook-ownership-217-20260928T0126Z",
+      "sourceSHA256": "3ad7e875addd4465284ce83603b59bca47d3171d19413cd8d812d42ec445a8ec",
+      "ipadPassed": 1,
+      "ipadFailed": 1,
+      "scope": "Document scenario2.406735s after correcting recursive observation; Native24 landing599.053375ms >450ms."
+    }
+  ],
+  "documentObservation": {
+    "cause": "Recursive lazy compactMap(...).first recomputed the matching child at each ancestor.",
+    "physicalTrace": "/private/tmp/notebook-document-217-recovered.trace",
+    "physicalPID": 20892,
+    "mainThreadSamples": 2583,
+    "intervalSeconds": [
+      30,
+      55
+    ],
+    "symbolicatedTestLines": [
+      175,
+      176,
+      185,
+      127
+    ],
+    "depth10VisitsBefore": 2047,
+    "depth10VisitsAfter": 11,
+    "scenarioBeforeSeconds": 130.956855,
+    "scenarioAfterSeconds": 2.406735,
+    "productWebKitChangedForThisSymptom": false
+  },
+  "native24": {
+    "source": "/private/tmp/notebook-ownership-217-20260928T0126Z",
+    "framePairMS": 142.643875,
+    "sourceCaptureMS": 118.36525,
+    "targetCaptureMS": 116.096792,
+    "capturesOverlap": true,
+    "firstCurlOSMS": 302.81325,
+    "endpointOSMS": 582.091375,
+    "ownerLandingMS": 599.053375,
+    "budgetMS": 450,
+    "passed": false
+  },
+  "mixedSelection": {
+    "source": "/private/tmp/notebook-ownership-217-20260928T0113Z",
+    "correct": true,
+    "incoherentFrames": 0,
+    "cancelImage": "/private/tmp/notebook-217-mixed-fixed/135B6373-B92E-4371-862F-C6367F00B1FB.png",
+    "deselectImage": "/private/tmp/notebook-217-mixed-fixed/8DBF71ED-B16E-4F89-B599-8033777E35E6.png",
+    "imagesReviewed": true,
+    "timingBoundary": "Images verify composition; capture/decode cost is diagnostic, not application or OS latency."
+  },
+  "productCommit": "2dbaafc710562a0c69b7e11ae5e057b53147f6d8",
+  "finalSourceSHA256": "5ac5fe76cf93cac54dba39bf170921580e3834e7d4e85c143065f65a81d25ea7",
+  "verification": {
+    "path": "/private/tmp/notebook-ownership-217-20260928T0129Z",
+    "receiptSHA256": "78189d01e250449ddba5eb137aaa80998b0a32e91d4c82bad2459cd5f33260f5",
+    "ipadPassed": 6,
+    "macPassed": 9,
+    "failed": 0,
+    "skipped": 0,
+    "runtimeWarnings": []
+  },
+  "build": {
+    "path": "/private/tmp/notebook-ownership-pair-217-20260928T0132Z/build.json",
+    "sha256": "9d94cfb8c214128fe8fbfb6799772cb183b1b48ca5c182225fdad7c36fd69ccd",
+    "status": "verified-build",
+    "version": "0.3.147",
+    "build": "217"
+  },
+  "installation": {
+    "path": "/private/tmp/notebook-ownership-install-217-20260928T0136Z/installation.json",
+    "sha256": "33bc81e39a7a0c3c1c6dc67a0ba256681535421104cb2f08d149decd7ddc0db4",
+    "build": "217",
+    "buildReceiptSHA256": "9d94cfb8c214128fe8fbfb6799772cb183b1b48ca5c182225fdad7c36fd69ccd",
+    "dataAccess": "none",
+    "finishedAt": "2026-09-28T01:37:47.646319+00:00",
+    "fullAcceptance": false,
+    "installationAttempted": true,
+    "ipadInstalledBuild": "217",
+    "macInstalledBuild": "217",
+    "macPID": 42157,
+    "previousBuild": "216",
+    "sourceSHA256": "5ac5fe76cf93cac54dba39bf170921580e3834e7d4e85c143065f65a81d25ea7",
+    "status": "matched-pair-launched",
+    "verificationSHA256": "78189d01e250449ddba5eb137aaa80998b0a32e91d4c82bad2459cd5f33260f5"
+  },
+  "installedPresentation": {
+    "path": "/private/tmp/notebook-ownership-install-217-20260928T0136Z/presentation.json",
+    "sha256": "9b920a322478fb1d5749cb77a90a25c78aeb24ebf9b2f696427172a832107369",
+    "helperStatus": "ready",
+    "presentationStatus": "ready",
+    "sessionID": "46BE814D-56F8-4BF4-9B08-D058D838AFD4",
+    "scope": "Launch and current device session readiness, not full physical acceptance."
+  },
+  "installedApps": {
+    "path": "/private/tmp/notebook-ownership-install-217-20260928T0136Z/ipad-final-apps.json",
+    "sha256": "382ef72a52c1b1a18c6438ca4cda9dc667b19b306fa0d2f240505bdc7958b956",
+    "notebookApps": [
+      {
+        "bundleID": "com.amirtlinov.notebook.preview",
+        "name": "Notebook Lab",
+        "version": "0.3.147",
+        "build": "217"
+      }
+    ],
+    "qaOrTestAppsPresent": false
+  }
+}
