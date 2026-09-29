@@ -1,13 +1,13 @@
 {
   "format": 1,
-  "status": "repair-installed-system-ui-acceptance-pending",
+  "status": "repair-installed-system-ui24-verified-performance-open",
   "sourceCommit": "f81b17c2",
   "version": "0.3.153",
   "build": "223",
   "previousBuild": "222",
   "sourceSHA256": "23fa7416e9b6eff5a9704b29e2a376463c3d353a2deac5b6672b42461960a175",
   "fullAcceptance": false,
-  "scope": "Native program session, direct GPU completion, accepted scene identity and addressed state projection reuse. Eight physical native cases, three Core and two Mac cases passed. System UI did not start without OS XCTest passcode authorization; strict latency goals remain open.",
+  "scope": "Native program session, direct GPU completion, accepted scene identity and addressed state projection reuse. Eight physical native cases, three Core and two Mac cases passed; physical system UI24 passed after XCTest OS authorization. Strict latency goals remain open.",
   "verification": {
     "path": "/private/tmp/notebook-223-mac-20260929T1246Z/verification.json",
     "sha256": "5ce93a26229e031e3d579426801418dbdbb9d4f6798d3beba32e3140d2485227",
@@ -59,5 +59,15 @@
       }
     ],
     "qaOrTestAppsPresent": false
+  },
+  "systemGestureVerification": {
+    "path": "/private/tmp/notebook-223-ui-20260929T1606Z/verification.json",
+    "sha256": "71bfc606d0a84a6976aba980bad093684a0407fb4ce58c890d00c01f837f634c",
+    "sourceSHA256": "23fa7416e9b6eff5a9704b29e2a376463c3d353a2deac5b6672b42461960a175",
+    "status": "passed",
+    "summary": "1606-ipad-summary.json",
+    "passed": 1,
+    "failed": 0,
+    "scope": "24 first taps, pinch close/reopen and forward/reverse state preservation on physical iPad. No speed or sustained-acceptance claim."
   }
 }

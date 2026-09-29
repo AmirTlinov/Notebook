@@ -1,5 +1,5 @@
 {
-  "status": "Build223 installed in place and pair ready; system UI authentication and strict performance acceptance pending",
+  "status": "Build223 installed in place; physical system UI24 passed; strict performance acceptance remains open",
   "version": "0.3.153 (223)",
   "baseCommit": "62599fc3e9f224fa7dac1961327d5b415a1db4e4",
   "runs": {
@@ -164,6 +164,18 @@
         "topInsights": [],
         "totalTestCount": 1
       }
+    },
+    "1606-ui": {
+      "evidence": "/private/tmp/notebook-223-ui-20260929T1606Z",
+      "sourceSHA256": "23fa7416e9b6eff5a9704b29e2a376463c3d353a2deac5b6672b42461960a175",
+      "sourceUnchanged": true,
+      "summary": "1606-ipad-summary.json",
+      "status": "passed",
+      "passed": 1,
+      "failed": 0,
+      "skipped": 0,
+      "runtimeWarnings": 0,
+      "scope": "Physical system gestures: 24 first taps, pinch close/reopen preserving state and geometry, forward/reverse preserving all 24 program states. XCTest OS authorization granted. Scenario duration includes AX/screenshots and is not application latency."
     }
   },
   "negativeBudgets1229": {
