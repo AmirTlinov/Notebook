@@ -112,18 +112,34 @@ struct NotebookGraphicVisibilityTests {
   }
 
   @Test func pageProjectionSharesImmutableSourceButNotChangedClaimsOrElements() async throws {
-    let actor=UUID(),a=AgentElement(id:"a",kind:.graphic,frame:.init(x:10,y:10,width:20,height:20),source:"",html:"",graphic:.init(shape:.ellipse))
-    var page=PageDocument(size:.init(width:400,height:400),actor:actor,elements:[a])
+    let actor=UUID(),frame=PageRect(x:10,y:10,width:20,height:20)
+    let measurements=InkMeasurements((0..<100_000).map { i in
+      SpatialInkSample(point:.init(x:15,y:Double(i%2)*10+10),timeOffset:Double(i)/240,
+        width:2,opacity:1,force:1,azimuth:0,altitude:1)
+    })
+    let mask=NotebookGraphicMask().capturing([.init(target:.init(elementID:"a",frame:frame),measurements:measurements)],transform:nil)
+    let a=AgentElement(id:"a",kind:.graphic,frame:frame,source:"",html:"",graphic:.init(shape:.ellipse,mask:mask))
+    let program=AgentElement(id:"program",kind:.web,frame:.init(x:100,y:100,width:100,height:100),source:"Program",html:"<button>Count</button>",state:.number(0))
+    var page=PageDocument(size:.init(width:400,height:400),actor:actor,elements:[a,program])
     let untouched=page,graph=page.graphicGraph(),encoder=JSONEncoder();encoder.outputFormatting=[.sortedKeys]
     let encoded=try encoder.encode(page)
     #expect(page.element(id:"a") == a)
     #expect(page.graphicGraph().sharesSource(with:graph))
     #expect(try encoder.encode(page) == encoded)
     #expect(try JSONDecoder().decode(PageDocument.self,from:encoded) == page)
+    let changedState=page.replaceProgramState(.number(1),elementID:program.id,actor:actor)
+    #expect(changedState)
+    #expect(page.elementSourceIdentity != untouched.elementSourceIdentity)
+    #expect(page.element(id:program.id)?.state == .number(1))
+    #expect(untouched.element(id:program.id)?.state == .number(0))
+    #expect(page.displayElements(graphicIDs:[a.id]).map(\.id) == [a.id,program.id])
+    #expect(page.graphicGraph().sharesSource(with:graph),"A program state must not rebuild foreign graphic geometry or its visibility index")
+    #expect(page.graphicPresentation == untouched.graphicPresentation)
+    #expect(mask.completePathBuildCount == 0)
     let ink=PageInkDrawing(actions:[.init(tool:.pen,samples:[.init(point:.init(x:5,y:5),timeOffset:0,width:2,opacity:1,force:1,azimuth:0,altitude:1)])])
     let drew=page.replaceDrawing(try ink.dataRepresentation(),actor:actor);#expect(drew)
     #expect(page.graphicGraph().sharesSource(with:graph))
-    let edited=page.replaceElements([a.updating(frame:.init(x:100,y:100,width:20,height:20))],actor:actor);#expect(edited)
+    let edited=page.replaceElements([a.updating(frame:.init(x:100,y:100,width:20,height:20)),try #require(page.element(id:program.id))],actor:actor);#expect(edited)
     #expect(!page.graphicGraph().sharesSource(with:graph))
     #expect(untouched.element(id:"a") == a)
     #expect(untouched.graphicGraph().sharesSource(with:graph))

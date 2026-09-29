@@ -2,6 +2,38 @@ import NotebookCore
 import SwiftUI
 import WebKit
 
+/// The accepted source owns its one native executor before SwiftUI mounts it.
+/// A representable borrows this exact session; mounting never constructs or
+/// navigates a replacement browser. Retirement keeps the coordinator's existing
+/// checkpoint/physical-capture tail rather than returning its grant early.
+@MainActor
+final class AgentWebNativeSession {
+  let lease: WebSurfaceLease
+  let coordinator: AgentWebCoordinator
+  let webView: WKWebView
+  private(set) var isRetired = false
+
+  init(lease: WebSurfaceLease, resources: SceneRenderResources = .shared,
+    snapshotPolicy: AgentSnapshotPolicy) {
+    self.lease = lease
+    coordinator = AgentWebCoordinator(lease: lease, resources: resources,
+      snapshotPolicy: snapshotPolicy, onState: { _, _ in false })
+    webView = AgentWebCoordinator.makeWebView(coordinator: coordinator)
+  }
+
+  func retire() {
+    guard !isRetired else { return }
+    isRetired = true
+    // Revoke this exact installation before retirement clears its callbacks.
+    // An already installed raster can then take over without another update.
+    webView.removeFromSuperview()
+    coordinator.didDetachPresentation()
+    coordinator.retireAfterCheckpoint()
+  }
+
+  isolated deinit { retire() }
+}
+
 /// Failure provenance is captured by the operation that failed, before a newer
 /// source, policy or native presenter can replace its callbacks.
 struct AgentWebSourceFailure: Equatable, Sendable {
@@ -43,7 +75,7 @@ struct AgentWebSourceFailure: Equatable, Sendable {
     var stateBasis: NotebookProgramStateBasis? = nil
     var programOwner: NotebookAppModel? = nil
     var allowsStateCommits = true
-    let lease: WebSurfaceLease
+    let session: AgentWebNativeSession
     let snapshotPolicy: AgentSnapshotPolicy
     var preparesPassiveSnapshot = true
     var showsContent = true
@@ -57,14 +89,7 @@ struct AgentWebSourceFailure: Equatable, Sendable {
     let onState: NotebookProgramStateWriter
 
     func makeCoordinator() -> AgentWebCoordinator {
-      AgentWebCoordinator(
-        lease: lease,
-        snapshotPolicy: snapshotPolicy,
-        onRenderReady: onRenderReady,
-        onInteractionReady: onInteractionReady,
-        onFailure: onFailure,
-        onState: onState
-      )
+      session.coordinator
     }
 
     private var physicalSize: CGSize {
@@ -73,7 +98,7 @@ struct AgentWebSourceFailure: Equatable, Sendable {
 
     func makeUIView(context: Context) -> PhysicalWebViewport {
       let view = PhysicalWebViewport(
-        webView: AgentWebCoordinator.makeWebView(coordinator: context.coordinator),
+        webView: session.webView,
         contentSize: physicalSize, holdsFingerInput: true)
       // The camera projects WebKit's existing backing. Rasterizing this outer
       // layer again can retain a minified copy across a camera refinement.
@@ -82,35 +107,51 @@ struct AgentWebSourceFailure: Equatable, Sendable {
     }
 
     static func dismantleUIView(_ view: PhysicalWebViewport, coordinator: AgentWebCoordinator) {
-      let web = view.webView
       view.retire()
-      withExtendedLifetime(web) { coordinator.retireAfterCheckpoint() }
+      coordinator.didDetachPresentation()
     }
 
     func updateUIView(_ view: PhysicalWebViewport, context: Context) {
-      guard let webView = view.webView else { return }
+      guard !session.isRetired, let webView = view.webView else { return }
       view.setContentSize(physicalSize)
       view.layoutIfNeeded()
-      context.coordinator.use(onRenderReady: onRenderReady)
-      context.coordinator.use(onInteractionReady: onInteractionReady)
-      context.coordinator.use(onInteraction: onInteraction)
-      context.coordinator.use(onFramePainted: onFramePainted)
-      context.coordinator.use(onSourceInstalled: onInstalled)
-      context.coordinator.bindPresentation(to: focus)
+      configure(context.coordinator, webView: webView)
       view.onInstalled = { [weak coordinator = context.coordinator] in
         guard let installation = coordinator?.installation(for: element) else { return }
         onInstalled(installation)
       }
-      context.coordinator.use(onFailure: onFailure)
-      context.coordinator.use(onState: onState, enabled: allowsStateCommits)
-      context.coordinator.programOwner = programOwner
-      context.coordinator.use(passiveSnapshot: preparesPassiveSnapshot)
-      context.coordinator.load(element, basis: stateBasis, policy: snapshotPolicy, in: webView)
       // The native owner reveals its output before it acknowledges installation.
       // An outer SwiftUI opacity may be applied after updateUIView and supplies
       // no subsequent mount/layout event to finish that same installation.
       UIView.performWithoutAnimation { view.alpha = showsContent ? 1 : 0 }
       view.onInstalled?()
+    }
+
+    /// Called by the accepted preparation request, before its @State update
+    /// schedules native mounting. The same configuration handles later edits.
+    func prepare() {
+      guard !session.isRetired else { return }
+      if session.webView.bounds.size != physicalSize {
+        session.webView.bounds = CGRect(origin: .zero, size: physicalSize)
+      }
+      configure(session.coordinator, webView: session.webView, mounted: session.webView.superview != nil)
+    }
+
+    private func configure(_ coordinator: AgentWebCoordinator, webView: WKWebView, mounted: Bool = true) {
+      guard !session.isRetired else { return }
+      coordinator.use(onRenderReady: onRenderReady)
+      coordinator.use(onInteractionReady: onInteractionReady)
+      coordinator.use(onInteraction: onInteraction)
+      coordinator.use(onFramePainted: onFramePainted)
+      coordinator.use(onSourceInstalled: onInstalled)
+      coordinator.bindPresentation(to: focus)
+      coordinator.use(onFailure: onFailure)
+      coordinator.use(onState: onState, enabled: allowsStateCommits)
+      coordinator.programOwner = programOwner
+      // An unmounted source can navigate, but cannot certify a physical image.
+      // The native handoff enables the same producer if a bridge needs pixels.
+      coordinator.use(passiveSnapshot: mounted && preparesPassiveSnapshot)
+      coordinator.load(element, basis: stateBasis, policy: snapshotPolicy, in: webView)
     }
   }
 
@@ -292,7 +333,7 @@ struct AgentWebSourceFailure: Equatable, Sendable {
     var stateBasis: NotebookProgramStateBasis? = nil
     var programOwner: NotebookAppModel? = nil
     var allowsStateCommits = true
-    let lease: WebSurfaceLease
+    let session: AgentWebNativeSession
     let snapshotPolicy: AgentSnapshotPolicy
     var preparesPassiveSnapshot = true
     var showsContent = true
@@ -306,40 +347,45 @@ struct AgentWebSourceFailure: Equatable, Sendable {
     let onState: NotebookProgramStateWriter
 
     func makeCoordinator() -> AgentWebCoordinator {
-      AgentWebCoordinator(
-        lease: lease,
-        snapshotPolicy: snapshotPolicy,
-        onRenderReady: onRenderReady,
-        onInteractionReady: onInteractionReady,
-        onFailure: onFailure,
-        onState: onState
-      )
+      session.coordinator
     }
 
     func makeNSView(context: Context) -> WKWebView {
-      AgentWebCoordinator.makeWebView(coordinator: context.coordinator)
+      session.webView
     }
 
     static func dismantleNSView(_ webView: WKWebView, coordinator: AgentWebCoordinator) {
       webView.removeFromSuperview()
       coordinator.didDetachPresentation()
-      coordinator.retireAfterCheckpoint()
     }
 
     func updateNSView(_ webView: WKWebView, context: Context) {
-      context.coordinator.use(onRenderReady: onRenderReady)
-      context.coordinator.use(onInteractionReady: onInteractionReady)
-      context.coordinator.use(onInteraction: onInteraction)
-      context.coordinator.use(onFramePainted: onFramePainted)
-      context.coordinator.use(onSourceInstalled: onInstalled)
-      context.coordinator.use(onFailure: onFailure)
-      context.coordinator.use(onState: onState, enabled: allowsStateCommits)
-      context.coordinator.programOwner = programOwner
-      context.coordinator.use(passiveSnapshot: preparesPassiveSnapshot)
-      context.coordinator.load(element, basis: stateBasis, policy: snapshotPolicy, in: webView)
-      context.coordinator.bindPresentation(to: focus)
+      guard !session.isRetired else { return }
+      configure(context.coordinator, webView: webView)
       webView.alphaValue = showsContent ? 1 : 0
       if let installation = context.coordinator.installation(for: element) { onInstalled(installation) }
+    }
+
+    func prepare() {
+      guard !session.isRetired else { return }
+      let size = CGSize(width: element.frame.width, height: element.frame.height)
+      if session.webView.frame.size != size { session.webView.setFrameSize(size) }
+      configure(session.coordinator, webView: session.webView, mounted: session.webView.superview != nil)
+    }
+
+    private func configure(_ coordinator: AgentWebCoordinator, webView: WKWebView, mounted: Bool = true) {
+      guard !session.isRetired else { return }
+      coordinator.use(onRenderReady: onRenderReady)
+      coordinator.use(onInteractionReady: onInteractionReady)
+      coordinator.use(onInteraction: onInteraction)
+      coordinator.use(onFramePainted: onFramePainted)
+      coordinator.use(onSourceInstalled: onInstalled)
+      coordinator.bindPresentation(to: focus)
+      coordinator.use(onFailure: onFailure)
+      coordinator.use(onState: onState, enabled: allowsStateCommits)
+      coordinator.programOwner = programOwner
+      coordinator.use(passiveSnapshot: mounted && preparesPassiveSnapshot)
+      coordinator.load(element, basis: stateBasis, policy: snapshotPolicy, in: webView)
     }
   }
 

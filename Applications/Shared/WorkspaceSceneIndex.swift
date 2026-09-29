@@ -12,7 +12,7 @@ struct WorkspaceSceneIndex: Sendable {
   static func preparationMargin(for presence: SessionPresence) -> Double {
     max(192, max(presence.viewport.x, presence.viewport.y) * 0.75)
   }
-  let generationID: UUID
+  private(set) var generationID: UUID
   // Value-shared sources of this exact projection, retained with a shown
   // cohort so a later model publication cannot redirect a pointing contact.
   let capturedWorkspace: WorkspaceIndex
@@ -66,12 +66,30 @@ struct WorkspaceSceneIndex: Sendable {
   /// parent window. Paper geometry travels unchanged with its existing owners.
   var documentPaperSizes: [UUID: WorkspaceItemGeometry] { paperSizes }
 
+  private func canReuse(workspace: WorkspaceIndex, hierarchy: BoardHierarchy,
+    paperSizes: [UUID: WorkspaceItemGeometry]) -> Bool {
+    capturedWorkspace.hasSameCatalogExceptPreparedPages(as: workspace)
+      && self.paperSizes == paperSizes && boards.count == hierarchy.boards.count
+      && hierarchy.boards.allSatisfy { boards[$0.id]?.source == $0.board }
+  }
+
+  /// Background reads can finish after another read has installed the same
+  /// source. Its accepted generation belongs to that source, not to the UUID
+  /// assigned by an independently completed builder. Keep this result's page
+  /// addresses while comparing the same complete inputs as construction reuse.
+  func retainingSourceGeneration(from accepted: Self?) -> Self {
+    guard let accepted, accepted.generationID != generationID,
+      accepted.canReuse(workspace: capturedWorkspace, hierarchy: capturedHierarchy,
+        paperSizes: paperSizes) else { return self }
+    var result = self
+    result.generationID = accepted.generationID
+    return result
+  }
+
   init(workspace: WorkspaceIndex, hierarchy: BoardHierarchy, paperSizes: [UUID: WorkspaceItemGeometry],
     reusing previous: Self? = nil) {
     let reusable = previous.flatMap { previous -> Self? in
-      guard previous.capturedWorkspace.hasSameCatalogExceptPreparedPages(as: workspace),
-        previous.paperSizes == paperSizes, previous.boards.count == hierarchy.boards.count,
-        hierarchy.boards.allSatisfy({ previous.boards[$0.id]?.source == $0.board }) else { return nil }
+      guard previous.canReuse(workspace: workspace, hierarchy: hierarchy, paperSizes: paperSizes) else { return nil }
       return previous
     }
     if let reusable, reusable.catalog == workspace.items { self = reusable; return }

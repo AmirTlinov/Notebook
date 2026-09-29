@@ -165,9 +165,12 @@ public struct PageDocument: Codable, Equatable, Identifiable, Sendable {
   private var storedDrawingStamp: VersionStamp
   public var drawingStamp: VersionStamp { inkDrawingCache.stamp(fallback:storedDrawingStamp) }
   public var drawingData: Data { (try? inkDrawingCache.data(fallback:storedDrawingData,stamp:drawingStamp)) ?? storedDrawingData }
-  public private(set) var elements: [AgentElement] { didSet { elementProjectionCache = .init() } }
+  public private(set) var elements: [AgentElement] { didSet { elementProjectionCache = .init(); hasCompleteElementVersions = false } }
   public private(set) var agentStamp: VersionStamp { didSet { elementProjectionCache = .init() } }
-  public private(set) var collaboration: CollaborativeContent? { didSet { elementProjectionCache = .init() } }
+  public private(set) var collaboration: CollaborativeContent? { didSet { elementProjectionCache = .init(); hasCompleteElementVersions = false } }
+  // Completeness belongs to this value, not its aggregate stamp. A decoded
+  // sparse frontier is sealed once before a local edit advances that stamp.
+  private var hasCompleteElementVersions = false
   private var elementProjectionCache = PageElementProjectionCache()
   private var inkDrawingCache = PageInkDrawingCache()
   /// Runtime identity of immutable element content; drawing and camera do not change it.
@@ -300,6 +303,7 @@ public struct PageDocument: Codable, Equatable, Identifiable, Sendable {
     let keys = ["elements/order"] + elements.flatMap { AgentElement.causalFieldKeys(id: $0.id, graphic: $0.graphic, textStyle: $0.textStyle, parentID: $0.parentID, basis: $0.basis) }
     collaboration = .init(fields: Dictionary(keys.map { ($0, ContentFieldVersion(stamp: agentStamp, human: true)) },
       uniquingKeysWith: { first, _ in first }))
+    hasCompleteElementVersions = true
     precondition(isValid)
   }
 
@@ -381,6 +385,7 @@ public struct PageDocument: Codable, Equatable, Identifiable, Sendable {
     var result = self, metadata = collaboration ?? CollaborativeContent()
     try metadata.materializeVersions(in: Self.elementContent(elements), fallback: agentStamp)
     result.collaboration = metadata
+    result.hasCompleteElementVersions = true
     guard result.isValid else { throw NotebookStorageError.invalidTransaction("page causal fields") }
     return result
   }
@@ -449,6 +454,44 @@ public struct PageDocument: Codable, Equatable, Identifiable, Sendable {
   }
 
   @discardableResult
+  public mutating func replaceProgramState(_ state: JSONValue, elementID: String, actor: UUID) -> Bool {
+    guard state.isValid,
+      let index = elements.firstIndex(where: { $0.id == elementID && $0.kind == .web }),
+      elements[index].state != state, let stamp = agentStamp.advanced(by: actor) else { return false }
+    var fields = collaboration?.fields ?? [:]
+    if !hasCompleteElementVersions {
+      let previous = ContentFieldVersion(stamp: agentStamp, human: true)
+      // These are the same typed fields as page creation. Sealing implicit
+      // clocks must neither encode unrelated payloads nor author their content.
+      func seal(_ key: String) -> Bool {
+        guard key.utf8.count <= 2_048 else { return false }
+        if fields[key] == nil { fields[key] = previous }
+        return fields.count <= CollaborativeContent.maximumFieldCount
+      }
+      guard seal("elements/order") else { return false }
+      for element in elements {
+        for key in AgentElement.causalFieldKeys(id: element.id, graphic: element.graphic,
+          textStyle: element.textStyle, parentID: element.parentID, basis: element.basis) {
+          guard seal(key) else { return false }
+        }
+      }
+    }
+    for field in ["state", "exists"] {
+      let key = fieldKey(["elements", collaborationIdentity(elementID), field])
+      let version = ContentFieldVersion(stamp: stamp, human: true, previous: fields[key])
+      guard version.isValid else { return false }
+      fields[key] = version
+    }
+    let previousProjection = elementProjectionCache
+    elements[index] = elements[index].updating(state: state)
+    agentStamp = stamp
+    collaboration = .init(fields: fields)
+    hasCompleteElementVersions = true
+    elementProjectionCache = previousProjection.replacingProgramState(with: elements)
+    return true
+  }
+
+  @discardableResult
   public mutating func replaceElements(
     _ elements: [AgentElement],
     actor: UUID
@@ -476,6 +519,7 @@ public struct PageDocument: Codable, Equatable, Identifiable, Sendable {
     metadata.record(before: before, after: after,
       beforeStamp: agentStamp, stamp: stamp, human: true)
     candidate.collaboration = metadata
+    candidate.hasCompleteElementVersions = true
     guard candidate.isValid else { return false }
     self = candidate
     return true
@@ -509,6 +553,7 @@ public struct PageDocument: Codable, Equatable, Identifiable, Sendable {
     guard let elements = merged.value["elements"] else { throw NotebookStorageError.transactionConflict }
     candidate.elements = try elements.decode([AgentElement].self)
     candidate.collaboration = merged.state
+    candidate.hasCompleteElementVersions = true
     candidate.agentStamp = mergedContentStamp(local: local, incoming: incoming, result: merged.value,
       localStamp: agentStamp, incomingStamp: other.agentStamp)
     guard candidate.isValid else { throw NotebookStorageError.transactionConflict }

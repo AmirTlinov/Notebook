@@ -11,19 +11,71 @@ final class AgentWebLeaseTests: XCTestCase {
   func testSmallProgramNavigatesInItsAcceptedSourceTurn() async throws {
     let resources = SceneRenderResources()
     let lease = try await resources.acquireWebSurface(priority: .input)
-    let owner = AgentWebCoordinator(lease: lease, resources: resources, onState: { _, _ in false })
-    let web = AgentWebCoordinator.makeWebView(coordinator: owner)
+    let session = AgentWebNativeSession(lease: lease, resources: resources, snapshotPolicy: .display(scale: 2))
+    let owner = session.coordinator, web = session.webView
     let previous = NotebookNavigationObservation.onWebPreparation
     var stages: [String] = []
     NotebookNavigationObservation.onWebPreparation = { stage, id, _, _ in
       if id == lease.id { stages.append(stage) }
     }
-    defer { NotebookNavigationObservation.onWebPreparation = previous; owner.invalidate(); lease.release() }
+    defer { NotebookNavigationObservation.onWebPreparation = previous; session.retire() }
     let source = element(source: "immediate initial state").updating(state: .object(["count": .number(0)]))
-    owner.load(source, in: web)
+    let presentation = AgentWebElementView(element: source, session: session,
+      snapshotPolicy: .display(scale: 2), onRenderReady: { _ in }, onState: { _, _ in false })
+    presentation.prepare()
     XCTAssertEqual(stages.filter { $0 == "source_accepted" || $0 == "navigation_requested" },
       ["source_accepted", "navigation_requested"], "A tiny initial state must not queue navigation behind unrelated native constructions")
     XCTAssertFalse(owner.hasLiveSource(source), "Starting navigation is not an installation receipt")
+    XCTAssertNil(web.superview)
+    XCTAssertEqual(web.bounds.size, CGSize(width: source.frame.width, height: source.frame.height))
+    XCTAssertTrue(presentation.makeCoordinator() === owner, "The native host borrows the prepared executor")
+    let token = owner.loadToken
+    presentation.prepare()
+    XCTAssertEqual(owner.loadToken, token, "Mount/update of the same source must not navigate again")
+    XCTAssertEqual(stages.filter { $0 == "navigation_requested" }.count, 1)
+    let replacement = AgentWebElementView(element: element(source: "replacement program"), session: session,
+      snapshotPolicy: .display(scale: 2), onRenderReady: { _ in }, onState: { _, _ in false })
+    replacement.prepare()
+    XCTAssertNotEqual(owner.loadToken, token, "A new accepted program revokes the prepared load identity")
+    session.retire()
+    let count = stages.count
+    replacement.prepare()
+    XCTAssertEqual(stages.count, count, "A late mounting update cannot restart a retired preparation")
+    XCTAssertTrue(lease.isReleased)
+  }
+
+  @MainActor
+  func testUnmountedSessionRetirementKeepsItsSubmittedPhysicalBorrow() async throws {
+    let resources = SceneRenderResources()
+    let lease = try await resources.acquireWebSurface(priority: .input)
+    let session = AgentWebNativeSession(lease: lease, resources: resources, snapshotPolicy: .display(scale: 2))
+    let reservation = try XCTUnwrap(resources.reserveWebSnapshot(pixelSize: .init(width: 32, height: 32)))
+    let capture = session.coordinator.holdSubmittedSnapshot(reservation)
+    session.retire()
+    XCTAssertTrue(lease.isReleased)
+    XCTAssertEqual(resources.activeWebSurfaceCount, 1, "Retirement revokes publication but preserves submitted work")
+    XCTAssertGreaterThan(resources.reservedBytes, 0)
+    capture.finish()
+    XCTAssertEqual(resources.activeWebSurfaceCount, 0)
+    XCTAssertEqual(resources.reservedBytes, 0)
+  }
+
+  @MainActor
+  func testUnmountedPreparedSessionReleasesWithoutAMountOrExplicitRetirement() async throws {
+    let resources = SceneRenderResources()
+    let lease = try await resources.acquireWebSurface(priority: .input)
+    weak var released: AgentWebNativeSession?
+    func prepare() {
+      let session = AgentWebNativeSession(lease: lease, resources: resources, snapshotPolicy: .display(scale: 2))
+      released = session
+      AgentWebElementView(element: element(source: "withdrawn before mount"), session: session,
+        snapshotPolicy: .display(scale: 2), onRenderReady: { _ in }, onState: { _, _ in false }).prepare()
+      XCTAssertNil(session.webView.superview)
+    }
+    prepare()
+    XCTAssertNil(released, "Preparing a source cannot retain its session through view callbacks")
+    XCTAssertTrue(lease.isReleased)
+    XCTAssertEqual(resources.activeWebSurfaceCount, 0)
   }
 
   @MainActor

@@ -136,12 +136,16 @@ program does not consume the passive quota that reserves input for it. Persisten
 programs leave preparation capacity. Physical source identity prevents duplicate
 execution until the final submitted borrower releases.
 
-At most two admitted live views await native construction. The constructor delivers
-its exact lease completion after the current native update returns; the allocator
-then resumes queued consumers for a later view update. Navigation commit and
-author readiness retain only their running leases, not construction admission.
-Cancellation or retirement releases an unconstructed grant. Each program retains
-its independent website data store and execution context.
+At most two admitted live requests await native construction. The accepted
+`PreparationOwner` constructs and starts its `AgentWebNativeSession` immediately
+after admission, before SwiftUI's next mounting update. The representable borrows
+that exact coordinator and WebKit; a changed source uses its existing token-checked
+load path. Constructor completion releases construction admission, independently
+of navigation commit or author readiness. Unmounted preparation neither captures
+passive pixels nor proves native installation. Withdrawing the request retires the
+session through its existing checkpoint and submitted-capture tail; detaching a
+representable alone does not replace the executor. Each program retains its
+independent website data store and execution context.
 
 Priority follows accepted contact, visible input programs, then visible paper of
 the current board, then optional labels/static images. Offscreen portals and labels

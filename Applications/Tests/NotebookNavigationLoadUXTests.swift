@@ -310,7 +310,13 @@ import XCTest
     let sourceIDs=try XCTUnwrap(model.activePage).elements.filter(\.requiresLiveRuntime).map(\.id)
     XCTAssertEqual(sourceIDs.count,24)
     var phases:[String]=[]
+    var scenePhases: [(UUID, String, TimeInterval)] = []
+    model.compositionTiles.onPreparationPhase = { id, phase in
+      if scenePhases.count < 512 { scenePhases.append((id, phase, CACurrentMediaTime())) }
+    }
     defer {
+      model.compositionTiles.onPreparationPhase = nil
+      phases.append(contentsOf: scenePhases.map { "scene: uptime=\($0.2),stage=\($0.1),id=\($0.0)" })
       let note=XCTAttachment(string:phases.joined(separator:"\n"))
       note.name="24-program-state-to-native-capture";note.lifetime = .keepAlways;add(note)
     }
@@ -450,13 +456,14 @@ import XCTest
       receiveStage(sheet)
     }
     curl.onPageFrameReady = { frame,progress,sequence,readiness in
-      if readiness.isReady, !sawFirstFrame || (progress == 1 && !sawEndpoint) {
+      let atEndpoint = progress == (expectedLanding == 0 ? 0 : 1)
+      if readiness.isReady, !sawFirstFrame || (atEndpoint && !sawEndpoint) {
         let time=CACurrentMediaTime()
         phases.append("curl frame: callbackUptime=\(time),arrowToCallback=\(time-arrowUptime),progress=\(progress),sequence=\(sequence),OS=\(String(describing:readiness.presentedTime)),arrowToOS=\(String(describing:readiness.presentedTime.map {$0-arrowUptime}))")
         sawFirstFrame=true
-        if progress == 1 {sawEndpoint=true}
+        if atEndpoint {sawEndpoint=true}
       }
-      let endpointForwardBegan=progress == 1 && readiness.isReady ? CACurrentMediaTime():nil
+      let endpointForwardBegan=atEndpoint && readiness.isReady ? CACurrentMediaTime():nil
       receiveFrame?(frame,progress,sequence,readiness)
       if let endpointForwardBegan {
         let ended=CACurrentMediaTime()

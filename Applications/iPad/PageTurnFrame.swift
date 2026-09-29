@@ -88,15 +88,31 @@ final class PageTurnFrame {
       context: context, texture: texture, command: command)
     let borrow = MaterialBorrow(retaining)
     let measuresComposition = onCompositionMeasured != nil
-    let worker = Task.detached(priority: priority == .input ? .userInitiated : .utility) { [layers, ink, borrow] in
-      defer { withExtendedLifetime((layers, ink, borrow)) {} }
-      return try await composition.render(measured: measuresComposition)
-    }
     do {
-      let result = try await withTaskCancellationHandler {
-        try await worker.value
-      } onCancel: {
-        worker.cancel()
+      let result = try await withTaskPriorityEscalationHandler {
+        try await withTaskCancellationHandler {
+          try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<PageTurnComposition.Output, Error>) in
+            // Only encoding belongs on the worker. A GPU fence has no remaining
+            // worker work: resume this owner directly instead of first scheduling
+            // an async worker continuation and then completing its Task.value.
+            let encodingPriority = max(Task.currentPriority, priority == .input ? .userInitiated : .utility)
+            let worker = Task.detached(priority: encodingPriority) { [layers, ink, borrow] in
+              defer { composition.finishEncoding() }
+              let finish: @Sendable (Result<PageTurnComposition.Output, Error>) -> Void = { [layers, ink, borrow] result in
+                withExtendedLifetime((layers, ink, borrow)) { continuation.resume(with: result) }
+              }
+              do { try composition.render(measured: measuresComposition, completed: finish) }
+              catch { finish(.failure(error)) }
+            }
+            composition.attachEncoding(worker, priority: encodingPriority)
+          }
+        } onCancel: {
+          composition.cancel()
+        }
+      } onPriorityEscalated: { _, newPriority in
+        // Joining an already-running passive producer must promote its CPU
+        // encoder too. Removing Task.value must not remove that donation.
+        composition.escalateEncoding(to: newPriority)
       }
       if let timing = result.timing { onCompositionMeasured?(timing, CACurrentMediaTime()) }
       try Task.checkCancellation()
@@ -115,6 +131,10 @@ final class PageTurnFrame {
 /// renders; all input pixels are immutable and retained by the page borrower.
 /// Metal's Objective-C protocols do not declare that ownership as Sendable.
 private final class PageTurnComposition: @unchecked Sendable {
+  struct Output: Sendable {
+    let succeeded: Bool
+    let timing: PageTurnFrame.CompositionTiming?
+  }
   enum Layer {
     case image(CGImage, CGRect)
     case texture(any MTLTexture, CGRect)
@@ -125,6 +145,11 @@ private final class PageTurnComposition: @unchecked Sendable {
   private let context: CIContext
   private let texture: any MTLTexture
   private let command: any MTLCommandBuffer
+  private let stateLock = NSLock()
+  private var isCancelled = false
+  private var encodingTask: Task<Void, Never>?
+  private var encodingFinished = false
+  private var encodingPriority = TaskPriority.background
 
   init(layers: [Layer], size: CGSize, scale: Double, context: CIContext,
     texture: any MTLTexture, command: any MTLCommandBuffer) {
@@ -132,14 +157,42 @@ private final class PageTurnComposition: @unchecked Sendable {
     self.context = context; self.texture = texture; self.command = command
   }
 
-  nonisolated func render(measured: Bool) async throws -> (succeeded: Bool, timing: PageTurnFrame.CompositionTiming?) {
+  func attachEncoding(_ task: Task<Void, Never>, priority: TaskPriority) {
+    let donated: TaskPriority? = stateLock.withLock {
+      guard !encodingFinished else { return nil }
+      encodingTask = task; encodingPriority = max(encodingPriority, priority)
+      return encodingPriority
+    }
+    if let donated { task.escalatePriority(to: donated) }
+  }
+
+  func escalateEncoding(to priority: TaskPriority) {
+    let task: Task<Void, Never>? = stateLock.withLock {
+      guard !encodingFinished else { return nil }
+      encodingPriority = max(encodingPriority, priority)
+      return encodingTask
+    }
+    task?.escalatePriority(to: priority)
+  }
+
+  func finishEncoding() {
+    stateLock.withLock { encodingFinished = true; encodingTask = nil }
+  }
+
+  func cancel() { stateLock.withLock { isCancelled = true } }
+
+  private func checkCancellation() throws {
+    if stateLock.withLock({ isCancelled }) { throw CancellationError() }
+  }
+
+  func render(measured: Bool, completed: @escaping @Sendable (Result<Output, Error>) -> Void) throws {
     let workerBegan = measured ? CACurrentMediaTime() : 0
-    try Task.checkCancellation()
+    try checkCancellation()
     let extent = CGRect(x: 0, y: 0, width: texture.width, height: texture.height)
     let colorSpace = CGColorSpace(name: CGColorSpace.sRGB)!
     var output = CIImage(color: .clear).cropped(to: extent)
     for layer in layers {
-      try Task.checkCancellation()
+      try checkCancellation()
       let pixels: CIImage, rect: CGRect, dimensions: CGSize
       switch layer {
       case .image(let image, let frame):
@@ -158,25 +211,24 @@ private final class PageTurnComposition: @unchecked Sendable {
       output = input.composited(over: output)
     }
     output = output.transformed(by: CGAffineTransform(translationX: 0, y: Double(texture.height)).scaledBy(x: 1, y: -1))
-    try Task.checkCancellation()
+    try checkCancellation()
     // Graph compilation and image upload are synchronous CPU work even when
     // the resulting GPU command is awaited asynchronously.
     let encodingBegan = measured ? CACurrentMediaTime() : 0
     context.render(output, to: texture, commandBuffer: command, bounds: extent, colorSpace: colorSpace)
     let encodingEnded = measured ? CACurrentMediaTime() : 0
     command.label = "PageTurn.composeAcceptedMaterials"
-    return await withCheckedContinuation { continuation in
-      let submitted = measured ? CACurrentMediaTime() : 0
-      command.addCompletedHandler { command in
-        let timing = measured ? PageTurnFrame.CompositionTiming(workerBegan: workerBegan,
-          encodingBegan: encodingBegan, encodingEnded: encodingEnded, submitted: submitted,
-          gpuBegan: command.gpuStartTime, gpuEnded: command.gpuEndTime,
-          completionReceived: CACurrentMediaTime()) : nil
-        continuation.resume(returning: (command.status == .completed, timing))
-      }
-      // Once submitted, cancellation drains this fence before the main owner
-      // may release either the output allocation or any borrowed source.
-      command.commit()
+    let submitted = measured ? CACurrentMediaTime() : 0
+    command.addCompletedHandler { command in
+      let timing = measured ? PageTurnFrame.CompositionTiming(workerBegan: workerBegan,
+        encodingBegan: encodingBegan, encodingEnded: encodingEnded, submitted: submitted,
+        gpuBegan: command.gpuStartTime, gpuEnded: command.gpuEndTime,
+        completionReceived: CACurrentMediaTime()) : nil
+      completed(.success(.init(succeeded: command.status == .completed, timing: timing)))
     }
+    // No throwing/cancellable operation follows handler registration. This
+    // command owns the only completion and retains all input leases. A racing
+    // cancellation therefore drains the GPU before its owner releases storage.
+    command.commit()
   }
 }

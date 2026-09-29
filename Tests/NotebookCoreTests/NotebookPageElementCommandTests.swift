@@ -44,11 +44,12 @@ struct NotebookPageElementCommandTests {
     try fixture { store, actor, page in
       var current = page
       let payload = String(repeating: "😀", count: 1_400_000) // More than 5 MiB UTF-8.
-      let values: [JSONValue] = [.string("1" + payload), .string("2" + payload), .number(3)]
+      let values: [JSONValue] = [.string("1" + payload), .string("2" + payload),
+        .array((0..<100_000).map { .number(Double($0)) }), .number(3)]
       var previousCost = 0
       for value in values {
         let before = current
-        let changed = current.replaceElements(current.elements.map { $0.id == elementID ? $0.updating(state: value) : $0 }, actor: actor)
+        let changed = current.replaceProgramState(value, elementID: elementID, actor: actor)
         #expect(changed)
         let command = try #require(NotebookPageProgramStateCommand(before: before, after: current, elementID: elementID))
         let cost = try JSONEncoder().encode(value).count * 8 + 64
@@ -62,6 +63,46 @@ struct NotebookPageElementCommandTests {
       let reopened = NotebookStore(root: store.root)
       #expect(try reopened.loadPage(page.id).element(id: elementID)?.state == .number(3))
       #expect(try reopened.loadPage(page.id).drawingData == page.drawingData)
+    }
+  }
+
+  @Test func localProgramStatePreservesForeignContentAndImplicitCausalVersions() throws {
+    try fixture(largeNeighbour: true) { _, actor, page in
+      let stateKey = fieldKey(["elements", collaborationIdentity(elementID), "state"])
+      let peer = UUID()
+      var observed = page
+      let peerChanged = observed.replaceElements(page.elements.map {
+        $0.id == elementID ? $0.updating(state: .number(7)) : $0
+      }, actor: peer)
+      #expect(peerChanged)
+      let sparse = CollaborativeContent(fields: [stateKey: try #require(observed.collaboration?.fields[stateKey])])
+      let encoded = try JSONValue.encode(observed)
+      let decoded = try encoded.decode(PageDocument.self)
+      let sparsePage = try encoded.setting("collaboration", .encode(sparse)).decode(PageDocument.self)
+      let implicitPage = try encoded.setting("collaboration", .null).decode(PageDocument.self)
+      for before in [observed, decoded, sparsePage, implicitPage] {
+        var actual = before, expected = before
+        let next: JSONValue = .object(["count": .number(8), "payload": .array([.string("accepted"), .null])])
+        let expectedChanged = expected.replaceElements(before.elements.map {
+          $0.id == elementID ? $0.updating(state: next) : $0
+        }, actor: actor)
+        let actualChanged = actual.replaceProgramState(next, elementID: elementID, actor: actor)
+        #expect(expectedChanged)
+        #expect(actualChanged)
+        #expect(actual == expected, "The addressed edit has exactly the same content and causal frontier")
+        let basis = try #require(actual.programStateBasis(elementID))
+        #expect(basis.hasNewerState(than: try #require(before.programStateBasis(elementID))))
+        let accepted = actual
+        let noOpChanged = actual.replaceProgramState(next, elementID: elementID, actor: actor)
+        let invalidChanged = actual.replaceProgramState(.number(.nan), elementID: elementID, actor: actor)
+        let missingChanged = actual.replaceProgramState(.number(9), elementID: "missing", actor: actor)
+        let nonProgramChanged = actual.replaceProgramState(.number(9), elementID: elementID + "/child", actor: actor)
+        #expect(!noOpChanged)
+        #expect(!invalidChanged)
+        #expect(!missingChanged)
+        #expect(!nonProgramChanged)
+        #expect(actual == accepted)
+      }
     }
   }
 

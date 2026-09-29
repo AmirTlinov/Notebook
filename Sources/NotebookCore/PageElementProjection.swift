@@ -6,10 +6,18 @@ import Foundation
 final class PageElementProjectionCache: @unchecked Sendable {
   private let lock=NSLock()
   private var prepared:PageElementProjection?
+  init() {}
+  private init(prepared:PageElementProjection?) { self.prepared=prepared }
   func value(for page:PageDocument) -> PageElementProjection {
     lock.lock();defer { lock.unlock() }
     if let prepared { return prepared }
     let value=PageElementProjection(page);prepared=value;return value
+  }
+  /// A program state changes its source value, but no placement or graphic
+  /// claim. Keep an already prepared projection without making a cold one.
+  func replacingProgramState(with source:[AgentElement]) -> PageElementProjectionCache {
+    lock.lock();defer { lock.unlock() }
+    return .init(prepared:prepared.map { $0.replacingProgramState(with:source) })
   }
 }
 
@@ -30,6 +38,14 @@ struct PageElementProjection: Sendable {
           ?? .init(stamp:page.agentStamp,human:true))
     })
     graph=page.makeGraphicGraph(shown:presentation.geometryIDs)
+  }
+  private init(source:[AgentElement], reusing prepared:Self) {
+    self.source=source
+    graph=prepared.graph;presentation=prepared.presentation
+    positions=prepared.positions;nonGraphics=prepared.nonGraphics
+  }
+  fileprivate func replacingProgramState(with source:[AgentElement]) -> Self {
+    .init(source:source,reusing:self)
   }
   func element(_ id:String) -> AgentElement? { positions[collaborationIdentity(id)].map { source[$0] } }
   func elements(graphicIDs:Set<String>) -> [AgentElement] {

@@ -398,7 +398,7 @@ final class NotebookAppModel {
   @ObservationIgnored private var compositionPreparationPresence: SessionPresence?
   @ObservationIgnored private var scenePinnedElements: [UUID: [String]] = [:]
   @ObservationIgnored private var scenePinnedItems: [UUID: [UUID]] = [:]
-  @ObservationIgnored private var preparedScene: (index: WorkspaceSceneIndex?, changed: Bool, portals: [UUID: BoardPortalCamera], request: UInt64, coverageOnly: Bool)?
+  @ObservationIgnored private var preparedScene: (index: WorkspaceSceneIndex?, portals: [UUID: BoardPortalCamera], request: UInt64, coverageOnly: Bool)?
   private var scenePortalCameras: [UUID: BoardPortalCamera] = [:]
   @ObservationIgnored private(set) var sceneQueryCount: UInt64 = 0
 
@@ -423,13 +423,12 @@ final class NotebookAppModel {
           let portals = Dictionary(uniqueKeysWithValues: boardHierarchy.boards.map { ($0.id, $0.portalCamera) })
           let index = WorkspaceSceneIndex(workspace: workspace, hierarchy: boardHierarchy,
             paperSizes: paperSizes, reusing: previous)
-          let changed = previous?.generationID != index.generationID
-          return (index, changed, portals)
+          return (index, portals)
         }.value
         // At most one builder exists. Obsolete work cannot publish or enqueue
         // a second expensive build in parallel with the latest publication.
         guard request == scenePreparationRequest else { continue }
-        preparedScene = (result.0, result.1, result.2, request, coverageOnly)
+        preparedScene = (result.0, result.1, request, coverageOnly)
         scenePreparationTask = nil
         publishPreparedSceneIfPossible()
         return
@@ -443,14 +442,19 @@ final class NotebookAppModel {
     // has not reached the same read cut yet. The addressed refresh retires this
     // command before preparing that whole cut.
     guard itemPlacementCommands.isEmpty,
-      let prepared = preparedScene, prepared.request == scenePreparationRequest,
-      !prepared.changed || (peerAllowsCurrentPublication && (!inputIsActive || historyContactPermitsPublication
+      let prepared = preparedScene, prepared.request == scenePreparationRequest else { return }
+    // A refresh can have captured its reuse basis before the initial builder
+    // published. Resolve identity against the accepted source now; a different
+    // background request is not a different scene or native ink preparation.
+    let index = prepared.index?.retainingSourceGeneration(from: sceneIndex)
+    let changed = sceneIndex?.generationID != index?.generationID
+    guard !changed || (peerAllowsCurrentPublication && (!inputIsActive || historyContactPermitsPublication
         || (prepared.coverageOnly && !inputGate.hasActivePencil))) else { return }
     scenePortalCameras = prepared.portals
     // A catalog-only rebind publishes current page owners without changing
     // the geometry/source identity borrowed by an already shown cohort.
-    sceneIndex = prepared.index
-    if prepared.changed { sceneIndexGeneration &+= 1 }
+    sceneIndex = index
+    if changed { sceneIndexGeneration &+= 1 }
     preparedScene = nil
     scenePreparationPending = false
     scenePublicationGeneration &+= 1
@@ -4402,11 +4406,12 @@ final class NotebookAppModel {
   @discardableResult
   func commitElementState(pageID: UUID, elementID: String, state: JSONValue,
     onCommitted: NotebookProgramStateCompletion) -> Bool {
-    guard !isStopped, !isPageBeingDeleted(pageID), state.isValid,
+    guard !isStopped, !isPageBeingDeleted(pageID),
       let captured = onCommitted.sourceBasis else { return false }
     // An accepted immutable state outlives the page's render window. Eviction
     // removes presentation, not its addressed writer or captured source basis.
     guard var page = pages[pageID] else {
+      guard state.isValid else { return false }
       // There is no published page value whose didSet could revoke an older
       // read. Admission still precedes its queued write, including a read's
       // final validation fence already in flight.
@@ -4424,9 +4429,9 @@ final class NotebookAppModel {
     guard let index = page.elements.firstIndex(where: { $0.id == elementID && $0.kind == .web }) else { return false }
     guard let current = page.programStateBasis(elementID), captured.hasSameSource(as: current) else { return false }
     let before = page
-    var elements = page.elements
-    elements[index] = elements[index].updating(state: state)
-    page.replaceElements(elements, actor: actorID)
+    if page.elements[index].state != state {
+      guard page.replaceProgramState(state, elementID: elementID, actor: actorID) else { return false }
+    }
     guard let command = NotebookPageProgramStateCommand(before: before, after: page, elementID: elementID) else { return false }
     if before.agentStamp != page.agentStamp { pages[pageID] = page }
     // Even a visible no-op crosses the addressed source/causal check after
@@ -6183,7 +6188,7 @@ final class NotebookAppModel {
         scenePreparationIsCoverageOnly = coverageOnly
         scenePreparationRequest &+= 1
         scenePreparationPending = true
-        preparedScene = (preparedIndex, sceneIndex?.generationID != preparedIndex.generationID,
+        preparedScene = (preparedIndex,
           Dictionary(uniqueKeysWithValues: state.hierarchy.boards.map { ($0.id, $0.portalCamera) }),
           scenePreparationRequest, coverageOnly)
         publishPreparedSceneIfPossible()

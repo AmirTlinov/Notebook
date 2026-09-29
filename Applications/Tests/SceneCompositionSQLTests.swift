@@ -5,6 +5,65 @@ import XCTest
 
 final class SceneCompositionSQLTests: XCTestCase {
   @MainActor
+  func testLateEquivalentSceneIndexKeepsAcceptedPaintAndInkButChangedPlacementRebuilds() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    addTeardownBlock { try? FileManager.default.removeItem(at: root) }
+    let store = NotebookStore(root: root), actor = UUID()
+    let initial = try store.initializeWorkspace(actor: actor, pageSize: .init(width: 834, height: 1194))
+    let workspace = try store.loadIndex(), notebookID = workspace.selectedItemID
+    var hierarchy = try store.loadBoard(items: workspace.items)
+    let center = try XCTUnwrap(hierarchy.focusedCenter(of: notebookID, in: initial.rootBoardID))
+    let presence = SessionPresence(boardID: initial.rootBoardID, mode: .page,
+      camera: .init(center: center, scale: 0.5), viewport: .init(x: 512, y: 512),
+      focusedItemID: notebookID, openProgress: 1, selectedItemID: notebookID,
+      notebookPageID: workspace.selectedPageID)
+    let accepted = WorkspaceSceneIndex(workspace: workspace, hierarchy: hierarchy, paperSizes: [:])
+    // Both workers began before either result was accepted. Their builder UUIDs
+    // differ even though their immutable source and prepared geometry agree.
+    let pending = WorkspaceSceneIndex(workspace: workspace, hierarchy: hierarchy, paperSizes: [:])
+    XCTAssertNotEqual(pending.generationID, accepted.generationID)
+    func frame(_ index: WorkspaceSceneIndex) -> WorkspaceSceneFrame {
+      .init(index: index, presence: presence, portalCamera: { _ in nil }, pinned: [.item(notebookID)])
+    }
+    func source() throws -> SceneCompositionSource {
+      let header = try store.workspaceHeader()
+      return .init(store: store, revision: header.cursor, workspaceID: header.workspaceID)
+    }
+    let resources = SceneRenderResources(), coordinator = SceneCompositionTiles(resources: resources)
+    addTeardownBlock { @MainActor in await coordinator.stop() }
+    let before = try source(), revision = await before.revision
+    coordinator.prepare(source: before, presence: presence, frame: frame(accepted), pinned: [.item(notebookID)], displayScale: 1)
+    try await waitForPublication(coordinator, revision: revision)
+    let original = try XCTUnwrap(coordinator.published)
+    let installation = PageContentInstallation()
+    original.installation(for: .elements).bind(installation)
+    original.installation(for: .covers).bind(installation)
+    let generations = original.nativeInk.owners.mapValues { $0.canvas.spatialSourceGeneration }
+    var phases: [String] = []
+    coordinator.onPreparationPhase = { _, phase in phases.append(phase) }
+    let late = pending.retainingSourceGeneration(from: accepted)
+    XCTAssertEqual(late.generationID, accepted.generationID)
+    coordinator.prepare(source: before, presence: presence, frame: frame(late), pinned: [.item(notebookID)], displayScale: 1)
+    XCTAssertFalse(coordinator.isPreparing)
+    XCTAssertTrue(coordinator.published === original)
+    XCTAssertEqual(coordinator.published?.paintID, original.paintID)
+    XCTAssertEqual(original.nativeInk.owners.mapValues { $0.canvas.spatialSourceGeneration }, generations)
+    XCTAssertTrue(phases.isEmpty, "An equivalent late read cannot plan or prepare native ink again")
+
+    XCTAssertTrue(hierarchy.moveItem(notebookID, in: initial.rootBoardID, to: center.offsetBy(x: 32, y: 0), actor: actor))
+    try store.saveBoard(hierarchy, items: workspace.items)
+    let changed = WorkspaceSceneIndex(workspace: workspace, hierarchy: hierarchy, paperSizes: [:])
+      .retainingSourceGeneration(from: late)
+    XCTAssertNotEqual(changed.generationID, late.generationID)
+    let after = try source(), nextRevision = await after.revision
+    coordinator.prepare(source: after, presence: presence, frame: frame(changed), pinned: [.item(notebookID)], displayScale: 1)
+    try await waitForPublication(coordinator, revision: nextRevision)
+    XCTAssertFalse(coordinator.published === original)
+    XCTAssertNotEqual(coordinator.published?.paintID, original.paintID)
+    XCTAssertTrue(phases.contains("plan")); XCTAssertTrue(phases.contains("native_ink"))
+  }
+
+  @MainActor
   func testPageProgramStateRefreshKeepsInstalledPaintWithoutPlanningOrPreparingSpatialInk() async throws {
     try await verifyPageContentRefresh(mixedSpatialChange: false)
   }

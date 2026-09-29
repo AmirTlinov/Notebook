@@ -212,6 +212,19 @@ import XCTest
     XCTAssertEqual(resources.reservedBytes, reserved)
     XCTAssertTrue(native.page === source)
     XCTAssertTrue(curl.isHidden); XCTAssertNil(curl.frameLease)
+    // Cancellation submitted no curl drawable, so there is no curl OS receipt
+    // to await. Finish the restored UIKit source's update before the one final
+    // window readback; GPU drain alone does not commit this new window's root.
+    let sourceUpdated = expectation(description: "Cancelled pair's source finished its UIKit update")
+    let publication = UIUpdateLink(view: window)
+    publication.addAction(to: .afterUpdateComplete) { link, _ in
+      link.isEnabled = false
+      sourceUpdated.fulfill()
+    }
+    publication.requiresContinuousUpdates = true
+    publication.isEnabled = true
+    defer { publication.isEnabled = false }
+    await fulfillment(of: [sourceUpdated], timeout: 2)
     let pixels = try NotebookUXObservation.Pixels(window: window)
     XCTAssertTrue(try pixels.matches([(.init(x: window.bounds.midX, y: window.bounds.midY), .blue)]),
       "Drained callbacks cannot expose target pixels after cancellation")

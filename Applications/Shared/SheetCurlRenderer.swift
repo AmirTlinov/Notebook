@@ -405,6 +405,9 @@ final class SheetCurlMetalView: MTKView, MTKViewDelegate {
         displayLink?.invalidate(); displayLink = nil
         pageUIUpdates?.isEnabled = false
       }
+      // Register the one paused clock with the mounted window, before input.
+      // This neither obtains a drawable nor asks UIKit for continuous updates.
+      if window != nil, onDisplayUpdate != nil { preparePageClock() }
       if window != nil, framePending { requestFrame() }
     }
   #elseif os(macOS)
