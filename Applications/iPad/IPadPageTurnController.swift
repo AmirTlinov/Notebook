@@ -189,7 +189,7 @@ final class IPadPageTurnController: UIViewController {
   private weak var inputGate: NotebookInputGate?
   private var notebookStatusRevision: UInt64 = 0
   private var lastNotebookStatus: String?
-  private var onWindowChange: @MainActor (Set<Int>, Int?, String) -> Void = { _, _, _ in }
+  private var onWindowChange: @MainActor (Set<Int>, Int?, String, UUID) -> Void = { _, _, _, _ in }
   private var anticipatedIndex: Int?
   private var lastTurnDirection: Int?
   /// One admitted physical pair. Indices are directory positions and may
@@ -256,7 +256,7 @@ final class IPadPageTurnController: UIViewController {
     preparationSourceStorage?.retire()
     documentNavigation?.unbind(documentControllerID)
     notebookNavigation?.unbind(documentControllerID)
-    onWindowChange([], nil, sequenceRevision)
+    onWindowChange([], nil, sequenceRevision, documentControllerID)
   }
 
   func uninstall() {
@@ -272,7 +272,7 @@ final class IPadPageTurnController: UIViewController {
     preparationSourceStorage?.retire()
     documentNavigation?.unbind(documentControllerID); documentNavigation = nil
     notebookNavigation?.unbind(documentControllerID); notebookNavigation = nil
-    onWindowChange([], nil, sequenceRevision); onWindowChange = { _, _, _ in }
+    onWindowChange([], nil, sequenceRevision, documentControllerID); onWindowChange = { _, _, _, _ in }
   }
 
   private func observe(_ stage: String, target: Int? = nil, reason: String? = nil) {
@@ -461,7 +461,7 @@ final class IPadPageTurnController: UIViewController {
     documentSelection: DocumentPageNavigationRequest? = nil,
     documentNavigation: DocumentPageNavigationCallbacks? = nil,
     notebookNavigation: NotebookPageNavigation? = nil,
-    onWindowChange: @escaping @MainActor (Set<Int>, Int?, String) -> Void = { _, _, _ in },
+    onWindowChange: @escaping @MainActor (Set<Int>, Int?, String, UUID) -> Void = { _, _, _, _ in },
     inputGate: NotebookInputGate? = nil,
     pageIdentities: [Int: UUID] = [:]
   ) {
@@ -477,7 +477,7 @@ final class IPadPageTurnController: UIViewController {
     self.pageIdentities = pageIdentities
     if ownerChanged {
       self.notebookNavigation?.unbind(documentControllerID)
-      self.onWindowChange([], nil, self.sequenceRevision)
+      self.onWindowChange([], nil, self.sequenceRevision, documentControllerID)
     }
     self.ownerID = ownerID
     self.sequenceRevision = sequenceRevision
@@ -831,7 +831,7 @@ final class IPadPageTurnController: UIViewController {
     defer { isUpdatingContents = false }
     let target = canPrepareFollowingStep ? (coldGestureTarget ?? requestedIndex)
       : (anticipatedIndex ?? coldGestureTarget ?? requestedIndex.map(clamped))
-    pageTurnActivity.rasters.prioritize(displayed: displayedIndex, target: target,
+    pageTurnActivity.prioritizeRasters(displayed: displayedIndex, target: target,
       displayedContentReady: pagePreparations[displayedIndex]?.initialContentInstalled == true)
     var required = PageTurnPrewarmWindow.indices(
       displayedIndex: displayedIndex,
@@ -847,7 +847,7 @@ final class IPadPageTurnController: UIViewController {
       // layout would delay the target's incoming pixels on the UI actor.
       required = required.filter { $0 == displayedIndex || $0 == target || controllers[$0] != nil }
     }
-    onWindowChange(required, target, sequenceRevision)
+    onWindowChange(required, target, sequenceRevision, documentControllerID)
     // Exactly the finite window owns mounted hosts. No hidden platform cache
     // retains shells or causes a second content lifetime on reverse turns.
     for index in Array(controllers.keys) where !required.contains(index) {
@@ -954,7 +954,7 @@ final class IPadPageTurnController: UIViewController {
     pagePreparations[index, default: .init()].readiness = state
     if state.presented { pagePreparations[index]?.initialContentInstalled = true }
     if index == displayedIndex {
-      pageTurnActivity.rasters.prioritize(displayed: displayedIndex,
+      pageTurnActivity.prioritizeRasters(displayed: displayedIndex,
         target: pageTurnActivity.preparationDemand?.pageIndex,
         displayedContentReady: pagePreparations[index]?.initialContentInstalled == true)
     }
@@ -1143,7 +1143,7 @@ final class IPadPageTurnController: UIViewController {
     let target = page.flatMap { $0 == displayedIndex ? nil : $0 }
     let live = documentNavigation != nil && target.map { abs($0 - displayedIndex) > 1 } == true
     pageTurnActivity.prepare(target, presentation: live ? .live : .snapshot)
-    pageTurnActivity.rasters.prioritize(displayed: displayedIndex, target: target,
+    pageTurnActivity.prioritizeRasters(displayed: displayedIndex, target: target,
       displayedContentReady: pagePreparations[displayedIndex]?.initialContentInstalled == true)
   }
 

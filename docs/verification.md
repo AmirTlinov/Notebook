@@ -16,13 +16,29 @@ Mac-помощник и новая authenticated session прежнего iPad �
 Проверены 24 первых нажатия, pinch-выход и повторное открытие, переходы
 вперёд/назад с сохранением состояния всех программ. Строгие бюджеты остаются открытыми.
 
+## Рабочий срез 224 — ещё не установлен
+
+`1752Z`, source `4a3def06…`: **19 iPad PASS / 2 Mac PASS**, без skip/runtime warnings.
+Подтверждены page-owned preparation, reader при pinch=0, замена native consumer,
+отмена очереди/публикации, UUID read/reorder, Metal output и retirement, first
+small bend, regrab, endpoints, быстрые повторения. Реальные UI-жесты проверили
+24 first taps, pinch-close/reopen и состояния forward/reverse.
+
+`1757Z`, тот же source: **3 latency FAIL**. SVG13: first550.951/all734.258мс;
+programs24: first396.182/all615.046мс. Источники и поздние пиксели верны.
+Warm10: first25.130–44.651мс; после первого кадра разрыв16.673–25.010мс,
+затем преимущественно8.337мс. Начальные drops сохраняются. Первый успешный
+CA-кадр безdrop следует системной оценке UIKit через два refresh.
+Открыты publication/pool lifetime и монтаж reader без board cohort.
+[Положительные и отрицательные результаты](audit-evidence/2026-09-29/first-presentation-224/results.json).
+
 ## Реализованный срез 223
 
 Изменения: существующий WebKit session начинает принятую загрузку до mount;
 GPU completion напрямую возобновляет владельца кадра с сохранением priority donation;
 локальный program state сохраняет геометрическую проекцию;
 публикация одинакового scene source сохраняет принятое поколение.
-[Точные владельцы, отмена и удалённые пути](interaction-ownership.md#передача-подготовленного-исполнения-и-публикации--223).
+[Точные владельцы, отмена и удалённые пути](interaction-ownership.md#программы-документы-и-локальные-изменения).
 
 ### Завершённые проверки
 

@@ -143,14 +143,114 @@ final class SheetCurlGPU: @unchecked Sendable {
   }
 }
 
-/// Optional timing storage shared only by Metal's scheduled/completed callbacks.
-/// This observes submission without adding a publication queue or actor hop.
+/// Metal records scheduling directly; the page's CA phase consumes this receipt
+/// without a worker-to-main task. Covers use it only for optional measurement.
 private final class SheetCurlScheduleTiming: @unchecked Sendable {
   private let lock = NSLock()
+  private let scheduled = DispatchSemaphore(value: 0)
   private var timestamp: TimeInterval?
-  func record() { lock.withLock { timestamp = CACurrentMediaTime() } }
+  func record() {
+    lock.withLock { timestamp = CACurrentMediaTime() }
+    scheduled.signal()
+  }
   var value: TimeInterval? { lock.withLock { timestamp } }
+
+  /// This is a scheduling fence, not a GPU-completion wait. UIKit's normal
+  /// phases run consecutively: polling once just after encoding would always
+  /// miss the same update. A late command may consume at most 1 ms, while
+  /// leaving at least 0.5 ms of the actual update deadline for CA publication.
+  func waitForScheduling(completionDeadline: TimeInterval) -> Bool {
+    if value != nil { return true }
+    let remaining = min(0.001, completionDeadline - CACurrentMediaTime() - 0.0005)
+    guard remaining > 0 else { return false }
+    _ = scheduled.wait(timeout: .now() + remaining)
+    return value != nil
+  }
 }
+
+#if os(iOS)
+/// One outstanding pool request, never a main-thread nextDrawable wait. The
+/// request retains admission until even a cancelled late drawable is drained.
+private final class SheetCurlDrawableRequest: @unchecked Sendable {
+  private let lock = NSLock()
+  private let layer: CAMetalLayer
+  private let reservation: RasterReservation?
+  private var cancelled = false
+  private var completed = false
+  private var drained = false
+  private var drawable: (any CAMetalDrawable)?
+  private var drainCallbacks: [@MainActor @Sendable () -> Void] = []
+
+  init(layer: CAMetalLayer, reservation: RasterReservation?) {
+    self.layer = layer; self.reservation = reservation
+  }
+  func start(completed callback: @escaping @MainActor @Sendable () -> Void) {
+    Task.detached(priority: .userInitiated) { [self] in
+      autoreleasepool {
+        let value = layer.nextDrawable()
+        lock.withLock {
+          completed = true
+          if !cancelled { drawable = value }
+        }
+        withExtendedLifetime(reservation) {}
+      }
+      let callbacks = lock.withLock {
+        drained = true
+        let callbacks = drainCallbacks; drainCallbacks.removeAll()
+        return callbacks
+      }
+      await MainActor.run { callbacks.forEach { $0() }; callback() }
+    }
+  }
+
+  var hasFailed: Bool { lock.withLock { completed && !cancelled && drawable == nil } }
+  var isCancelled: Bool { lock.withLock { cancelled } }
+  func take() -> (any CAMetalDrawable)? {
+    lock.withLock {
+      guard drained, !cancelled else { return nil }
+      let value = drawable; drawable = nil
+      return value
+    }
+  }
+  @discardableResult
+  func cancel() -> Bool {
+    lock.withLock { cancelled = true; drawable = nil; return drained }
+  }
+  @MainActor func holds(_ value: RasterReservation) -> Bool { reservation === value }
+  @MainActor func whenDrained(_ callback: @escaping @MainActor @Sendable () -> Void) {
+    let alreadyDrained = lock.withLock {
+      if drained { return true }
+      drainCallbacks.append(callback); return false
+    }
+    if alreadyDrained { callback() }
+  }
+}
+
+/// Terminal release depends on physical completion, not on how long Metal
+/// chooses to retain a completed callback or its captured reservation.
+@MainActor
+private final class SheetCurlPageRetirement {
+  private var reservation: RasterReservation?
+  private var output: CAMetalLayer?
+  private var gpuDrained = false
+  private var drawableDrained = false
+  init(_ reservation: RasterReservation?, output: CAMetalLayer?) {
+    self.reservation = reservation; self.output = output
+  }
+  func finishGPU() { gpuDrained = true; finish() }
+  func finishDrawable() { drawableDrained = true; finish() }
+  private func finish() {
+    guard gpuDrained, drawableDrained else { return }
+    // The layer owns its displayed IOSurface even after the command completes.
+    // Remove this exact retired output before returning its admission; a later
+    // operation may already own a different child of the same UIView.
+    CATransaction.begin(); CATransaction.setDisableActions(true)
+    output?.removeFromSuperlayer(); output = nil
+    CATransaction.commit()
+    reservation?.release(); reservation = nil
+  }
+}
+#endif
 
 /// One presentation owner: covers use their outside-sheet Core Image geometry;
 /// interior pages render a complete frozen pair with the analytic Metal kernel.
@@ -165,19 +265,80 @@ final class SheetCurlMetalView: MTKView, MTKViewDelegate {
   }
   var permitsFrameSubmission: @MainActor () -> Bool = { false }
   private(set) var submittedFrameCount = 0
-  let drawableCount = 2
+  var drawableCount: Int {
+    #if os(iOS)
+    // A displayed page and its CA-queued successor still need a render target.
+    // Cover rendering retains its existing two-drawable allocation.
+    return onDisplayUpdate == nil ? 2 : 3
+    #else
+    return 2
+    #endif
+  }
   var frameLease: RasterReservation?
   /// Display-only instrumentation; Simulator never sends this callback.
   var onFramePresented: ((CGImage, Double, TimeInterval) -> Void)?
   var onFrameReady: ((CGImage, Double, Int, NotebookMetalFrameReadiness) -> Void)?
   #if os(iOS)
+  struct PageUpdateTiming: Sendable {
+    enum Phase: String, Sendable { case prepared, exposed, beforePresent, afterPresent, beforeCommit, afterCommit }
+    let operationID: UUID
+    let generation: UInt64
+    let phase: Phase
+    let nextSequence: Int
+    let recorded: TimeInterval
+    let modelTime, completionDeadline, estimatedPresentation: TimeInterval?
+    let viewHidden, layerHidden, windowAttached: Bool
+    let layerOpacity: Float
+    let presentsWithTransaction: Bool
+    let drawableMatchesLayer: Bool?
+    let immediatePresentationExpected: Bool?
+  }
+  /// Opt-in observation of the layer-tree boundary, separate from the Metal/OS
+  /// receipt: first six CA phases and three present calls only.
+  var onPageUpdateMeasured: ((PageUpdateTiming) -> Void)?
   var onPageFrameReady: ((PageTurnFrame, Double, Int, NotebookMetalFrameReadiness) -> Void)?
+  var onPageFrameWillPresent: ((UUID) -> Void)?
+  var onPageRenderFailure: ((Error) -> Void)?
   var onCoverFrameReady: ((PageTurnFrame, Double, Int, NotebookMetalFrameReadiness) -> Void)?
   private var sourceCoverFrame: PageTurnFrame?
   private var pageFrames: (leaf: PageTurnFrame, base: PageTurnFrame)?
   private var pageOperationID: UUID?
   private var pageClockRequestedAt: TimeInterval?
   private var pagePresentationGeneration: UInt64 = 0
+  private var pageUpdateMeasurement: (generation: UInt64, remainingPhases: Int)?
+  private var pageMeasuredPublications = 0
+  /// Pages own their drawable pool directly. The inherited MTK backing and its
+  /// display/resize lifecycle belong exclusively to cover rendering.
+  private(set) var pageOutputLayer: CAMetalLayer?
+  private var pageHasPublishedFrame = false
+  private enum PagePresentationPhase {
+    case initial
+    case awaitingOS(sequence: Int, drawable: any CAMetalDrawable)
+    case motion
+  }
+  private var pagePresentationPhase = PagePresentationPhase.initial
+  private var pageAnimationTime: TimeInterval?
+  struct PagePose: Sendable {
+    let progress, anchor, tilt: Double
+  }
+  private var pagePose: PagePose?
+  private(set) var presentedPagePose: PagePose?
+  private var pagePresentedSequence = -1
+  private var pagePresentedTime: TimeInterval?
+  private var pageDrawableRequest: SheetCurlDrawableRequest?
+  private struct PagePublication {
+    let operationID: UUID
+    let generation: UInt64
+    let drawable: any CAMetalDrawable
+    let command: any MTLCommandBuffer
+    let schedule: SheetCurlScheduleTiming
+    let poseRevision: UInt64
+    let sequence: Int
+  }
+  private var pagePublication: PagePublication?
+  private var pagePoseRevision: UInt64 = 0
+  private var configuringPageDrawable = false
+  private var pendingPageDrawableSize: CGSize?
   #endif
   /// Source reveal and the flat-sheet boundary share their drawable's CA
   /// transaction. The native owner installs the paper beneath that exact frame.
@@ -185,29 +346,59 @@ final class SheetCurlMetalView: MTKView, MTKViewDelegate {
   // An opt-in, bounded diagnostic at the actual submission owner. It does not
   // alter admission, clock, command ordering or the presentation receipt.
   var onFrameMeasured: ((FrameTiming) -> Void)?
-  /// Page motion and its drawable share the system's Metal presentation clock.
+  /// Page motion and its drawable share UIKit's update and CA publication.
   /// Covers are event-driven and do not install a second animation clock.
   var onDisplayUpdate: ((TimeInterval) -> Void)?
   var animatesContinuously = false {
     didSet { if animatesContinuously { requestFrame() } }
   }
   #if os(iOS)
-    private var displayLink: CAMetalDisplayLink?
     private var pageUIUpdates: UIUpdateLink?
   #endif
 
   func releaseSource(presented: Bool = false) {
+    #if os(iOS)
+    let releasesPage = onDisplayUpdate != nil || pageOperationID != nil || pageDrawableRequest != nil
+    let retiringRequest = pageDrawableRequest
+    let retiringOutput = pageOutputLayer
+    // Visibility is revoked now, independently of asynchronous GPU/pool drain.
+    // A successor can reveal its parent before the old fence callback runs.
+    CATransaction.begin(); CATransaction.setDisableActions(true)
+    retiringOutput?.isHidden = true
+    CATransaction.commit()
+    pageOutputLayer = nil
+    retirePageExecution()
+    pendingPageDrawableSize = nil
+    #endif
     animatesContinuously = false
     sourceCover = nil; coverImage = nil; pageTextures = nil; framePending = false
     #if os(iOS)
     pagePresentationGeneration &+= 1
     pageFrames = nil; sourceCoverFrame = nil; pageOperationID = nil; pageClockRequestedAt = nil
+    pagePose = nil; presentedPagePose = nil; pagePresentedSequence = -1; pagePresentedTime = nil
+    pageUpdateMeasurement = nil
+    pageMeasuredPublications = 0
     #endif
     let lease = frameLease
     frameLease = nil
     #if os(iOS)
-    displayLink?.isPaused = true
     pageUIUpdates?.isEnabled = false
+    #endif
+    #if os(iOS)
+    if releasesPage {
+      guard lease != nil || retiringOutput != nil else { return }
+      let retirement = SheetCurlPageRetirement(lease, output: retiringOutput)
+      if let retiringRequest, retiringOutput != nil || lease.map({ retiringRequest.holds($0) }) == true {
+        retiringRequest.whenDrained { retirement.finishDrawable() }
+      } else { retirement.finishDrawable() }
+      // Cancellation does not await either tail on MainActor. Both receipts
+      // explicitly retire admission even if Metal retains the callback itself.
+      if let fence = commandQueue?.makeCommandBuffer() {
+        fence.addCompletedHandler { _ in Task { @MainActor in retirement.finishGPU() } }
+        fence.commit()
+      } else { retirement.finishGPU() }
+      return
+    }
     #endif
     releaseDrawables()
     guard let lease else { return }
@@ -244,7 +435,7 @@ final class SheetCurlMetalView: MTKView, MTKViewDelegate {
 
   func pageDrawableBytes(width: Int, height: Int) throws -> Int {
     guard let device else { throw SceneRenderError.snapshotPending("page_device") }
-    let descriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: colorPixelFormat,
+    let descriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .bgra8Unorm,
       width: width, height: height, mipmapped: false)
     descriptor.storageMode = .private; descriptor.usage = .renderTarget
     let allocation = device.heapTextureSizeAndAlign(descriptor: descriptor)
@@ -256,13 +447,69 @@ final class SheetCurlMetalView: MTKView, MTKViewDelegate {
   #if os(iOS)
   func preparePages(leaf: PageTurnFrame, base: PageTurnFrame, operationID: UUID) throws {
     guard SheetCurlGPU.shared.pagePipeline != nil else { throw SceneRenderError.snapshotPending("page_pipeline") }
+    retirePageExecution()
     sourceCover = nil; coverImage = nil; sourceCoverFrame = nil
     pagePresentationGeneration &+= 1
     pageFrames = (leaf, base)
     pageOperationID = operationID; pageClockRequestedAt = nil
+    pageUpdateMeasurement = nil
+    pageMeasuredPublications = 0
+    pageHasPublishedFrame = false
+    pageAnimationTime = nil
+    pagePose = nil; presentedPagePose = nil; pagePresentedSequence = -1; pagePresentedTime = nil
     pageTextures = (leaf.texture, base.texture)
     submittedProgress = nil
-    presentsWithTransaction = false
+    // Exposure belongs to the first drawable's CA transaction. Only its
+    // terminal OS receipt can admit subsequent asynchronous opaque frames.
+    if onPageUpdateMeasured != nil {
+      pageUpdateMeasurement = (pagePresentationGeneration, 6)
+      measurePageUpdate(.prepared, info: UIUpdateInfo.current(for: self))
+    }
+  }
+
+  /// Observes actual exposure, independently of GPU scheduling or OS receipts.
+  private func measurePageExposure() {
+    measurePageUpdate(.exposed, info: UIUpdateInfo.current(for: self))
+  }
+
+  private func measurePageUpdate(_ phase: PageUpdateTiming.Phase, info: UIUpdateInfo?,
+    drawable: (any CAMetalDrawable)? = nil) {
+    guard let measured = onPageUpdateMeasured, let operationID = pageOperationID,
+      var measurement = pageUpdateMeasurement, measurement.generation == pagePresentationGeneration else { return }
+    if phase == .beforeCommit || phase == .afterCommit {
+      guard measurement.remainingPhases > 0 else { return }
+      measurement.remainingPhases -= 1
+      pageUpdateMeasurement = measurement
+    }
+    measured(.init(operationID: operationID, generation: pagePresentationGeneration, phase: phase,
+      nextSequence: submittedFrameCount, recorded: CACurrentMediaTime(), modelTime: info?.modelTime,
+      completionDeadline: info?.completionDeadlineTime, estimatedPresentation: info?.estimatedPresentationTime,
+      viewHidden: isHidden, layerHidden: pageOutputLayer?.isHidden ?? true, windowAttached: window != nil,
+      layerOpacity: pageOutputLayer?.opacity ?? 0,
+      presentsWithTransaction: pageOutputLayer?.presentsWithTransaction ?? false,
+      drawableMatchesLayer: drawable.map { $0.layer === pageOutputLayer },
+      immediatePresentationExpected: info?.isImmediatePresentationExpected))
+  }
+
+  private func configurePageOutput(size: CGSize) {
+    precondition(pageDrawableRequest == nil)
+    CATransaction.begin(); CATransaction.setDisableActions(true)
+    defer { CATransaction.commit() }
+    let output: CAMetalLayer
+    if let installed = pageOutputLayer { output = installed }
+    else {
+      output = CAMetalLayer()
+      output.device = device
+      output.pixelFormat = .bgra8Unorm
+      output.framebufferOnly = true
+      output.isOpaque = true
+      output.maximumDrawableCount = drawableCount
+      layer.addSublayer(output)
+      pageOutputLayer = output
+    }
+    output.frame = bounds
+    if output.drawableSize != size { output.drawableSize = size }
+    output.presentsWithTransaction = true
   }
   #endif
 
@@ -280,6 +527,10 @@ final class SheetCurlMetalView: MTKView, MTKViewDelegate {
       if framePending { requestFrame() }; return
     }
     self.progress = p; pageFold = fold; curlLayout = layout
+    #if os(iOS)
+    pagePoseRevision &+= 1
+    pagePose = .init(progress: p, anchor: anchor, tilt: tilt)
+    #endif
     framePending = true; requestFrame()
   }
 
@@ -317,15 +568,25 @@ final class SheetCurlMetalView: MTKView, MTKViewDelegate {
   }
 
   func prepareDrawable(size: CGSize) {
-    autoResizeDrawable = false
     #if os(iOS)
-    displayLink?.isPaused = true
+    if onDisplayUpdate != nil {
+      configuringPageDrawable = true
+      defer { configuringPageDrawable = false }
+      retirePageExecution()
+      if pageDrawableRequest != nil {
+        // Every page-layer mutation waits for the old physical acquisition.
+        pendingPageDrawableSize = size
+        return
+      }
+      pendingPageDrawableSize = nil
+      configurePageOutput(size: size)
+      preparePageClock()
+      return
+    }
     #endif
+    autoResizeDrawable = false
     if drawableSize != size { drawableSize = size }
     if let layer = layer as? CAMetalLayer, layer.drawableSize != size { layer.drawableSize = size }
-    #if os(iOS)
-    if onDisplayUpdate != nil { preparePageClock() }
-    #endif
   }
 
   func update(
@@ -392,20 +653,28 @@ final class SheetCurlMetalView: MTKView, MTKViewDelegate {
     _ view: MTKView,
     drawableSizeWillChange size: CGSize
   ) {
+    guard onDisplayUpdate == nil else { return }
     framePending = true
     requestFrame()
   }
 
   #if os(iOS)
+    override func layoutSubviews() {
+      super.layoutSubviews()
+      guard let output = pageOutputLayer, output.frame != bounds else { return }
+      prepareDrawable(size: pendingPageDrawableSize ?? output.drawableSize)
+      if framePending || animatesContinuously { requestFrame() }
+    }
+
     override func didMoveToWindow() {
       super.didMoveToWindow()
       if window == nil {
         pagePresentationGeneration &+= 1
+        pageUpdateMeasurement = nil
         if pageFrames != nil { framePending = true }
-        displayLink?.invalidate(); displayLink = nil
-        pageUIUpdates?.isEnabled = false
+        retirePageExecution()
       }
-      // Register the one paused clock with the mounted window, before input.
+      // Register the one disabled clock with the mounted window, before input.
       // This neither obtains a drawable nor asks UIKit for continuous updates.
       if window != nil, onDisplayUpdate != nil { preparePageClock() }
       if window != nil, framePending { requestFrame() }
@@ -436,17 +705,24 @@ final class SheetCurlMetalView: MTKView, MTKViewDelegate {
       if mustSignal { inFlightSemaphore.signal() }
     }
 
-    guard drawableSize.width > 0,
-      drawableSize.height > 0,
+    let size = suppliedDrawable.map { CGSize(width: $0.texture.width, height: $0.texture.height) } ?? drawableSize
+    guard size.width > 0,
+      size.height > 0,
       let curlLayout,
       let commandQueue,
       let commandBuffer = commandQueue.makeCommandBuffer()
     else { return }
 
-    let size = suppliedDrawable.map { CGSize(width: $0.texture.width, height: $0.texture.height) } ?? drawableSize
     let canvasExtent = CGRect(origin: .zero, size: size)
     let sheetExtent = curlLayout.sheetExtent(inDrawableSize: size)
-    guard let drawable = suppliedDrawable ?? currentDrawable else { return }
+    let drawable: any CAMetalDrawable
+    if pageTextures != nil {
+      guard let suppliedDrawable else { return }
+      drawable = suppliedDrawable
+    } else {
+      guard let currentDrawable else { return }
+      drawable = currentDrawable
+    }
     commandBuffer.label = pageTextures == nil ? "CoverCurl.draw" : "PageCurl.draw"
     if let pageTextures {
       guard let pipeline = SheetCurlGPU.shared.pagePipeline else { return }
@@ -475,7 +751,7 @@ final class SheetCurlMetalView: MTKView, MTKViewDelegate {
     }
     let source = sourceCover, progress = progress
     #if os(iOS)
-    let frames = pageFrames, coverFrame = sourceCoverFrame, operationID = pageOperationID
+    let frames = pageFrames, coverFrame = sourceCoverFrame, operationID = pageOperationID, pose = pagePose
     let clockRequested = pageClockRequestedAt
     let presentationGeneration = pagePresentationGeneration
     #else
@@ -491,13 +767,31 @@ final class SheetCurlMetalView: MTKView, MTKViewDelegate {
         self.resumePendingFrame()
       }
     }
-    if let frames, onPageFrameReady != nil {
+    if let frames {
       NotebookMetalFrameReadiness.observe(drawable, commandBuffer: commandBuffer) { [weak self, frames] readiness in
         guard let self, self.pageOperationID == operationID,
           self.pagePresentationGeneration == presentationGeneration, self.pageFrames?.leaf === frames.leaf else { return }
+        if case .awaitingOS(let submittedSequence, _) = self.pagePresentationPhase, submittedSequence == sequence {
+          if readiness.isReady {
+            // No later page command/acquisition was admitted while this
+            // transaction awaited the OS. Changing modes cannot detach a
+            // pending transaction from its still-unpresented drawable.
+            self.pagePresentationPhase = .motion
+            self.pageOutputLayer?.presentsWithTransaction = false
+          } else {
+            self.pagePresentationPhase = .initial
+            self.framePending = true
+          }
+        }
+        if readiness.isReady, sequence > self.pagePresentedSequence,
+          readiness.presentedTime == nil || self.pagePresentedTime == nil || readiness.presentedTime! > self.pagePresentedTime! {
+          self.presentedPagePose = pose
+          self.pagePresentedSequence = sequence
+          self.pagePresentedTime = readiness.presentedTime
+        }
         if !readiness.isReady, self.progress == progress { self.framePending = true }
         self.onPageFrameReady?(frames.leaf, progress, sequence, readiness)
-        self.resumePendingFrame()
+        if self.animatesContinuously || self.framePending { self.requestFrame() }
       }
     }
     // Keep both immutable cuts charged through the final sampling command.
@@ -513,18 +807,27 @@ final class SheetCurlMetalView: MTKView, MTKViewDelegate {
         resumePendingFrame()
       }
     }
+    #if os(iOS)
+    let scheduleTiming = encodingBegan != nil || frames != nil ? SheetCurlScheduleTiming() : nil
+    #else
     let scheduleTiming = encodingBegan.map { _ in SheetCurlScheduleTiming() }
+    #endif
     if let scheduleTiming { commandBuffer.addScheduledHandler { _ in scheduleTiming.record() } }
     let needsCompletionDelivery = onFrameMeasured != nil || onDisplayUpdate == nil
     commandBuffer.addCompletedHandler { [weak self, inFlightSemaphore, frameLease] command in
       _ = frameLease // Keep the charged image/drawables through GPU completion.
-      // The page clock already owns presentation pacing. Holding an encoding
+      // The UIKit page clock owns presentation pacing. Holding an encoding
       // slot until the OS presentation callback double-throttles it and drops
       // admitted 120 Hz updates even after their GPU work has completed.
       inFlightSemaphore.signal()
       // An active page clock already retries pending frames. Only diagnostics
       // and event-driven covers need a second MainActor callback here.
-      guard needsCompletionDelivery else { return }
+      #if os(iOS)
+      let failedPage = frames != nil && command.status != .completed
+      #else
+      let failedPage = false
+      #endif
+      guard needsCompletionDelivery || failedPage else { return }
       let timing = encodingBegan.map { began in
         FrameTiming(operationID: operationID, sequence: sequence, clockRequested: clockRequested,
           displayUpdateReceived: displayUpdateReceived, encodingBegan: began, submitted: submitted!, gpuBegan: command.gpuStartTime,
@@ -541,6 +844,11 @@ final class SheetCurlMetalView: MTKView, MTKViewDelegate {
         let isCurrent = self?.sourceCover === source
         #endif
         if let timing, isCurrent { self?.onFrameMeasured?(timing) }
+        #if os(iOS)
+        if failedPage, isCurrent {
+          self?.failPageExecution(SceneRenderError.snapshotPending("page_gpu")); return
+        }
+        #endif
         self?.resumePendingFrame()
       }
     }
@@ -550,6 +858,18 @@ final class SheetCurlMetalView: MTKView, MTKViewDelegate {
     // Leaving the flat boundary restores the other leaf in the same transaction.
     let updatesUnderlay = onWillPresentFrame != nil && (submittedProgress == nil
       || (submittedProgress == 0) != (progress == 0))
+    #if os(iOS)
+    if frames != nil, let operationID, let scheduleTiming {
+      // A direct Metal callback marks scheduling. BeforeCommit consumes that
+      // receipt with a deadline-bounded fence, without a worker-to-main task.
+      pagePublication = .init(operationID: operationID, generation: presentationGeneration,
+        drawable: drawable, command: commandBuffer, schedule: scheduleTiming,
+        poseRevision: pagePoseRevision, sequence: sequence)
+      commandBuffer.commit()
+      submittedProgress = progress; framePending = false; submittedFrameCount += 1
+      return
+    }
+    #endif
     // Keep this mode for the whole source. A later display-link callback must
     // not detach presentation from an earlier, still-open UIKit transaction.
     if presentsWithTransaction {
@@ -571,7 +891,8 @@ final class SheetCurlMetalView: MTKView, MTKViewDelegate {
   }
 
   private func resumePendingFrame() {
-    guard framePending, window != nil, !isHidden, permitsFrameSubmission() else { return }
+    guard framePending, window != nil, permitsFrameSubmission() else { return }
+    guard onDisplayUpdate != nil || !isHidden else { return }
     requestFrame()
   }
 
@@ -579,10 +900,11 @@ final class SheetCurlMetalView: MTKView, MTKViewDelegate {
     #if os(iOS)
       if onDisplayUpdate != nil {
         if onFrameMeasured != nil, pageClockRequestedAt == nil { pageClockRequestedAt = CACurrentMediaTime() }
-        guard permitsFrameSubmission(), window != nil, !isHidden, drawableSize.width > 0, drawableSize.height > 0,
-          layer is CAMetalLayer else { return }
+        if case .awaitingOS = pagePresentationPhase { return }
+        guard !configuringPageDrawable, permitsFrameSubmission(), window != nil,
+          let output = pageOutputLayer, output.drawableSize.width > 0, output.drawableSize.height > 0 else { return }
         preparePageClock()
-        displayLink?.isPaused = false
+        requestPageDrawable()
         pageUIUpdates?.isEnabled = true
         return
       }
@@ -592,23 +914,159 @@ final class SheetCurlMetalView: MTKView, MTKViewDelegate {
 
   #if os(iOS)
   private func preparePageClock() {
-    guard displayLink == nil, let layer = layer as? CAMetalLayer else { return }
-    let link = CAMetalDisplayLink(metalLayer: layer)
-    link.delegate = self; link.preferredFrameLatency = 1
+    guard pageUIUpdates == nil else { return }
     let rate = Float(window?.windowScene?.screen.maximumFramesPerSecond ?? 120)
-    link.preferredFrameRateRange = .init(minimum: rate, maximum: rate, preferred: rate)
-    link.isPaused = true
-    displayLink = link
-    link.add(to: .main, forMode: .common)
-    if pageUIUpdates == nil {
-      let updates = UIUpdateLink(view: self)
-      updates.addAction(to: .afterUpdateComplete) { _, _ in }
-      updates.wantsImmediatePresentation = true
-      updates.isEnabled = false
-      pageUIUpdates = updates
+    let updates = UIUpdateLink(view: self)
+    // Released motion depends only on the update's time. Encode before UIKit
+    // waits for input, giving Metal the available scheduling interval. Contact
+    // changes still use afterEventDispatch and can supersede that early pose.
+    updates.addAction(to: .afterUpdateScheduled) { [weak self] _, info in
+      guard let self, self.animatesContinuously else { return }
+      self.preparePageUpdate(info)
+    }
+    updates.addAction(to: .afterEventDispatch) { [weak self] _, info in self?.preparePageUpdate(info) }
+    updates.addAction(to: .beforeCATransactionCommit) { [weak self] _, info in
+      self?.publishPageUpdate(info)
+      self?.measurePageUpdate(.beforeCommit, info: info)
+    }
+    updates.addAction(to: .afterCATransactionCommit) { [weak self] _, info in
+      self?.measurePageUpdate(.afterCommit, info: info)
+      self?.finishPageUpdate()
+    }
+    updates.requiresContinuousUpdates = true
+    updates.preferredFrameRateRange = .init(minimum: rate, maximum: rate, preferred: rate)
+    updates.wantsImmediatePresentation = true
+    updates.isEnabled = false
+    pageUIUpdates = updates
+  }
+
+  private func requestPageDrawable() {
+    if case .awaitingOS = pagePresentationPhase { return }
+    // Do not obtain or encode a successor before the first CA transaction
+    // has an OS outcome. Merely keeping its publication in order is not enough.
+    if case .initial = pagePresentationPhase, pagePublication != nil { return }
+    guard pageDrawableRequest == nil, pagePublication == nil || animatesContinuously || framePending,
+      pageOperationID != nil, window != nil, permitsFrameSubmission(), let layer = pageOutputLayer else { return }
+    let request = SheetCurlDrawableRequest(layer: layer, reservation: frameLease)
+    let generation = pagePresentationGeneration
+    pageDrawableRequest = request
+    request.start { [weak self, weak request] in
+      guard let self, let request, self.pageDrawableRequest === request else { return }
+      if request.isCancelled || self.pagePresentationGeneration != generation {
+        self.pageDrawableRequest = nil
+        if let size = self.pendingPageDrawableSize { self.prepareDrawable(size: size) }
+        if self.animatesContinuously || self.framePending { self.requestFrame() }
+        return
+      }
+      if request.hasFailed {
+        failPageExecution(SceneRenderError.snapshotPending("page_drawable"))
+      }
     }
   }
-  isolated deinit { displayLink?.invalidate(); pageUIUpdates?.isEnabled = false }
+
+  private func preparePageUpdate(_ info: UIUpdateInfo) {
+    guard window != nil, permitsFrameSubmission(), pageOperationID != nil else { retirePageExecution(); return }
+    if case .awaitingOS = pagePresentationPhase { return }
+    if let publication = pagePublication, publication.poseRevision != pagePoseRevision {
+      // Input accepted after the early animation phase owns the next visible
+      // pose. The obsolete command may finish on the GPU, but cannot publish
+      // over a regrab or a newer held-contact position in this same UI update.
+      pagePublication = nil
+    }
+    // A late scheduled command keeps its accepted pose until this clock can
+    // publish it. Never advance to a pose for which no drawable is available.
+    guard pagePublication == nil else { return }
+    guard let drawable = pageDrawableRequest?.take() else { requestPageDrawable(); return }
+    pageDrawableRequest = nil
+    guard let output = pageOutputLayer, drawable.layer === output,
+      drawable.texture.width == Int(output.drawableSize.width), drawable.texture.height == Int(output.drawableSize.height) else {
+      failPageExecution(SceneRenderError.snapshotPending("page_drawable_geometry")); return
+    }
+    // Immediate presentation can change UIKit's estimate between updates.
+    // That policy change cannot rewind an already accepted physical pose.
+    let animationTime = max(pageAnimationTime ?? info.estimatedPresentationTime, info.estimatedPresentationTime)
+    pageAnimationTime = animationTime
+    onDisplayUpdate?(animationTime)
+    guard window != nil, permitsFrameSubmission(), pageOperationID != nil else { return }
+    if framePending {
+      autoreleasepool { submitPendingFrame(drawable: drawable, targetPresentation: info.estimatedPresentationTime,
+        renderingDeadline: info.completionDeadlineTime,
+        displayUpdateReceived: onFrameMeasured == nil ? nil : CACurrentMediaTime()) }
+    }
+    if animatesContinuously || framePending { requestPageDrawable() }
+  }
+
+  private func publishPageUpdate(_ info: UIUpdateInfo) {
+    guard let publication = pagePublication else { return }
+    guard window != nil, permitsFrameSubmission(), pageOperationID == publication.operationID,
+      pagePresentationGeneration == publication.generation,
+      publication.drawable.layer === pageOutputLayer else { retirePageExecution(); return }
+    guard publication.poseRevision == pagePoseRevision else { pagePublication = nil; return }
+    if publication.command.status == .error {
+      failPageExecution(SceneRenderError.snapshotPending("page_gpu")); return
+    }
+    guard publication.schedule.waitForScheduling(completionDeadline: info.completionDeadlineTime) else { return }
+    let revealsPage: Bool
+    if case .initial = pagePresentationPhase { revealsPage = true } else { revealsPage = false }
+    if revealsPage {
+      pageOutputLayer?.presentsWithTransaction = true
+      CATransaction.begin(); CATransaction.setDisableActions(true)
+    }
+    defer { if revealsPage { CATransaction.commit() } }
+    if !pageHasPublishedFrame {
+      onPageFrameWillPresent?(publication.operationID)
+      guard pageOperationID == publication.operationID, pagePresentationGeneration == publication.generation else {
+        return
+      }
+      isHidden = false
+      measurePageExposure()
+      pageHasPublishedFrame = true
+    }
+    let measuresPublication = onPageUpdateMeasured != nil && pageMeasuredPublications < 3
+    if measuresPublication { measurePageUpdate(.beforePresent, info: info, drawable: publication.drawable) }
+    publication.drawable.present()
+    if revealsPage {
+      pagePresentationPhase = .awaitingOS(sequence: publication.sequence, drawable: publication.drawable)
+    }
+    if measuresPublication {
+      measurePageUpdate(.afterPresent, info: info, drawable: publication.drawable)
+      pageMeasuredPublications += 1
+    }
+    pagePublication = nil
+  }
+
+  private func finishPageUpdate() {
+    if case .awaitingOS = pagePresentationPhase {
+      pageUIUpdates?.isEnabled = false
+      return
+    }
+    if !animatesContinuously, !framePending, pagePublication == nil {
+      cancelPageDrawableRequest()
+      pageUIUpdates?.isEnabled = false
+    }
+  }
+
+  private func failPageExecution(_ error: Error) {
+    framePending = false
+    retirePageExecution()
+    onPageRenderFailure?(error)
+  }
+
+  private func retirePageExecution() {
+    cancelPageDrawableRequest()
+    pagePublication = nil
+    pagePresentationPhase = .initial
+    pageUIUpdates?.isEnabled = false
+  }
+
+  private func cancelPageDrawableRequest() {
+    // nextDrawable itself is not cancellable. Keep at most this one blocked
+    // worker for the physical layer; a successor demand starts when it drains,
+    // rather than accumulating a worker and two reservations per cancelled turn.
+    if pageDrawableRequest?.cancel() == true { pageDrawableRequest = nil }
+  }
+
+  isolated deinit { retirePageExecution() }
   #endif
 
   private func clear(
@@ -676,24 +1134,3 @@ final class SheetCurlMetalView: MTKView, MTKViewDelegate {
     max(curlLayout?.sheetSize.width ?? 0, 1)
   }
 }
-
-#if os(iOS)
-extension SheetCurlMetalView: @preconcurrency CAMetalDisplayLinkDelegate {
-  func metalDisplayLink(_ link: CAMetalDisplayLink, needsUpdate update: CAMetalDisplayLink.Update) {
-    let received = onFrameMeasured == nil ? nil : CACurrentMediaTime()
-    guard link === displayLink else { return }
-    guard window != nil, !isHidden, permitsFrameSubmission() else {
-      link.isPaused = true; pageUIUpdates?.isEnabled = false
-      return
-    }
-    onDisplayUpdate?(update.targetPresentationTimestamp)
-    if framePending {
-      autoreleasepool { submitPendingFrame(drawable: update.drawable, targetPresentation: update.targetPresentationTimestamp,
-        renderingDeadline: update.targetTimestamp, displayUpdateReceived: received) }
-    }
-    if !animatesContinuously && !framePending {
-      link.isPaused = true; pageUIUpdates?.isEnabled = false
-    }
-  }
-}
-#endif

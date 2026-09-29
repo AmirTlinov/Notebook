@@ -132,6 +132,14 @@ import XCTest
     NotebookNavigationObservation.onSourceInstalled = nil
     NotebookNavigationObservation.onWebPreparation = nil
     model.compositionTiles.onPreparationPhase = nil
+    if measuresOpening && !board {
+      let accepted = webPhases.first { $0.0 == "page_preparation_accepted" }?.3
+      let appeared = webPhases.first { $0.0 == "prepared_appeared" }?.3
+      XCTAssertNotNil(accepted, "The actual cold scene must accept the page before constructing its SwiftUI elements")
+      if let accepted, let appeared {
+        XCTAssertLessThan(accepted, appeared, "Bootstrap readiness cannot defer accepted-source preparation until onAppear")
+      }
+    }
     let first = measuresOpening ? NotebookUXObservation.Result(matched: firstInstalled != nil,
       elapsed: start.duration(to: firstInstalled ?? .now), budget: NotebookUXObservation.firstUsefulFrame) : nil
     let result = NotebookUXObservation.Result(matched: allInstalled != nil,

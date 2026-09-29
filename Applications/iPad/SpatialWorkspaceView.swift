@@ -180,14 +180,16 @@ struct SpatialWorkspaceView: View {
         publication: model.scenePublicationGeneration,
         revision:model.workspaceHeader?.cursor,pinned:scenePins(presence:preparing),
         itemOwners:sceneItemOwners(presence:preparing,cohort:cohort),
-        permitsPreparation: model.permitsScenePreparation, refinesDetails: model.presencePhase == .settled,groupPoses:model.compositionGroupPoses)
+        permitsPreparation: model.permitsScenePreparation, refinesDetails: model.presencePhase == .settled,groupPoses:model.compositionGroupPoses,
+        operationID: cameraOwner.id)
       let workset = cohort.map { model.presentedWorkset(cohort: $0, boardID: presence.boardID, presence: presence) } ?? .empty
       let rendered = workset.items
 
       ZStack {
         NotebookWorkspacePresentation(presence: presence, cohort: cohort, preparation: compositionRequest, prepare: {
           model.prepareComposition(presence:preparing,frame:requestedFrame,
-            pinned:compositionRequest.pinned,displayScale:displayScale,installedItemOwners:compositionRequest.itemOwners)
+            pinned:compositionRequest.pinned,displayScale:displayScale,installedItemOwners:compositionRequest.itemOwners,
+            preparationOperationID: compositionRequest.operationID)
         }) { [weak cohort] in
         ZStack {
         LiveSpatialBoardGrid(presence: presence)
@@ -1221,6 +1223,7 @@ struct SpatialWorkspaceView: View {
     if shown.boardID == model.presence?.boardID || cameraOwner.hasPreparedSurface(shown) {
       model.updatePresence(shown,settled:false)
     } else { model.updatePresence(snapshot.presence.replacingCamera(camera),settled:false) }
+    cameraOwner.gesturePreparationChanged()
   }
 
   private func settleMagnification() {
@@ -1561,6 +1564,7 @@ struct SpatialWorkspaceView: View {
 }
 
 private struct WorkspaceSceneItem: View {
+  @Environment(\.displayScale) private var displayScale
   @Environment(\.sceneComposition) private var composition
   @Environment(NotebookAppModel.self) private var model
   let rendered: RenderedWorkspaceItem
@@ -1673,8 +1677,8 @@ private struct WorkspaceSceneItem: View {
         onTransitioningChange: onPageTurnStateChange,
         onReadinessProbe:onPaperReadiness,
         notebookNavigation: model.notebookPageNavigation,
-        onWindowChange: { indices, target, root in
-          model.retainNotebookPageWindow(indices, in: rendered.id, root: root, target: target)
+        onWindowChange: { indices, target, root, controllerID in
+          model.retainNotebookPageWindow(indices, in: rendered.id, root: root, target: target, controllerID: controllerID)
         }, inputGate: model.inputGate, pageIdentities: model.notebookResidentPageIdentities(rendered.id)
       )
       .clipShape(
@@ -1778,10 +1782,23 @@ private struct WorkspaceSceneItem: View {
     isLive: Bool,
     onRenderReady: PageTurnReadiness
   ) -> AnyView {
-    AnyView(NotebookPageView(notebookID: notebookItem.id, index: index, isCurrent: isCurrent,
+    let page = model.notebookPage(at: index, in: notebookItem.id)
+    let visibleRegion: CGRect? = {
+      guard let page, !isLifted,
+        spatialInkSurfaces.pose(for: .cover(rendered.id))?.isEngaged != true,
+        let presence = model.presence, presence.boardID == boardID,
+        presence.camera.scale > 0 else { return nil }
+      return PageAgentPreparationOwner.visibleRegion(page: page, item: rendered, presence: presence)
+    }()
+    if page != nil, onRenderReady.activity != nil,
+      let root = model.notebookPageRoot(notebookItem.id),
+      let entry = model.notebookPagePreparation.entry(at: index, in: notebookItem.id, root: root) {
+      onRenderReady.borrowAgentPreparations(entry)
+    }
+    return AnyView(NotebookPageView(notebookID: notebookItem.id, index: index, isCurrent: isCurrent,
       isInteractive: isCurrent && contentIsInteractive, isVisible: isLive,
       onRenderReady: onRenderReady, displayProjection: rendered.geometry.fitScale(viewport: viewport),
-      refinesDetails: refinesPageDetails))
+      refinesDetails: refinesPageDetails, initialVisibleRegion: visibleRegion))
   }
 
   private func documentPage(

@@ -23,7 +23,19 @@ extension EnvironmentValues {
 /// Metal and WebKit report when their exact mounted page has presented once.
 @Observable @MainActor
 final class PageTurnActivity {
-  let rasters = PageRasterPreparation()
+  private(set) var rasters = PageRasterPreparation()
+  private var rasterPriority: (displayed: Int, target: Int?, ready: Bool)?
+  func prioritizeRasters(displayed: Int, target: Int?, displayedContentReady: Bool = true) {
+    rasterPriority = (displayed, target, displayedContentReady)
+    rasters.prioritize(displayed: displayed, target: target, displayedContentReady: displayedContentReady)
+  }
+  func bindRasters(_ owner: PageRasterPreparation) {
+    guard rasters !== owner else { return }; rasters = owner
+    if let rasterPriority {
+      owner.prioritize(displayed: rasterPriority.displayed, target: rasterPriority.target,
+        displayedContentReady: rasterPriority.ready)
+    }
+  }
   struct PreparationDemand: Equatable {
     enum Presentation { case snapshot, live }
     let id: UUID
@@ -272,6 +284,16 @@ final class PageTurnReadiness {
   private(set) var state = State.waiting
   private(set) var isRetired = false
   private(set) var materialRevision: UInt64 = 0
+  private var agentPreparationMount: NotebookPagePreparationWindow.Mount?
+  var agentPreparations: PageAgentPreparationOwner? { agentPreparationMount?.entry.preparations }
+  func borrowAgentPreparations(_ entry: NotebookPagePreparationWindow.Entry) {
+    guard !isRetired, let activity else { return }
+    if agentPreparationMount?.entry !== entry {
+      agentPreparationMount?.close(); agentPreparationMount = entry.borrow()
+    }
+    activity.bindRasters(entry.rasters)
+    entry.preparations.bindPresentation(activity: activity, pageIndex: pageIndex)
+  }
   let activity: PageTurnActivity?
   var pageIndex: Int
   var rasterContext: PageRasterPreparation.Context? {
@@ -316,6 +338,7 @@ final class PageTurnReadiness {
   func retire() {
     guard !isRetired else { return }
     isRetired = true; state = .waiting; materialRevision &+= 1
+    agentPreparationMount?.close(); agentPreparationMount = nil
     #if os(iOS)
     frameProvider = nil; inkFrame = nil; inkFrameIsEmpty = nil; inkFrameIsReady = nil
     #endif
@@ -476,7 +499,7 @@ struct PageTurnSurface: View {
   var documentSelection: DocumentPageNavigationRequest? = nil
   var documentNavigation: DocumentPageNavigationCallbacks? = nil
   var notebookNavigation: NotebookPageNavigation? = nil
-  var onWindowChange: @MainActor (Set<Int>, Int?, String) -> Void = { _, _, _ in }
+  var onWindowChange: @MainActor (Set<Int>, Int?, String, UUID) -> Void = { _, _, _, _ in }
   var inputGate: NotebookInputGate? = nil
   var pageIdentities: [Int: UUID] = [:]
 
@@ -555,7 +578,7 @@ struct PageTurnSurface: View {
     let documentSelection: DocumentPageNavigationRequest?
     let documentNavigation: DocumentPageNavigationCallbacks?
     let notebookNavigation: NotebookPageNavigation?
-    let onWindowChange: @MainActor (Set<Int>, Int?, String) -> Void
+    let onWindowChange: @MainActor (Set<Int>, Int?, String, UUID) -> Void
     let inputGate: NotebookInputGate?
     let pageIdentities: [Int: UUID]
 

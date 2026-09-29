@@ -18,6 +18,7 @@ struct AgentOverlayView: View {
   var visibleRegion: CGRect? = nil
   var pageTurnActivity: PageTurnActivity? = nil
   var rasterPreparation: PageRasterPreparation.Context? = nil
+  var preparations: PageAgentPreparationOwner? = nil
   var onFailure: (PageTurnPreparationFailure) -> Void = { _ in }
 
   @State private var readiness = AgentOverlayReadiness()
@@ -39,12 +40,8 @@ struct AgentOverlayView: View {
   }
 
   private func capturePolicy(for element: AgentElement, presentation:NotebookElementPresentation) -> AgentSnapshotPolicy {
-    let body=CGRect(origin:.zero,size:presentation.bodySize)
-    let region=CGRect(x:0,y:0,width:pageSize.width,height:pageSize.height)
-      .applying(presentation.placement.transform.inverted()).intersection(body)
-    let density=renderingScale * displayScale * presentation.maximumScale
-    if region == body { return .exact(scale:density) }
-    return .region(.init(x:region.minX,y:region.minY,width:region.width,height:region.height),scale:density)
+    PageAgentPreparationOwner.capturePolicy(for: element, presentation: presentation, pageSize: pageSize,
+      renderingScale: renderingScale, displayScale: displayScale)
   }
 
   var body: some View {
@@ -140,6 +137,7 @@ struct AgentOverlayView: View {
             capturePolicy: capturePolicy(for:element,presentation:presentation),
             focus: interactiveReference,
             pageTurnActivity: pageTurnActivity,
+            preparations: preparations,
             rasterPreparation: rasterPreparation,
             onFailure: onFailure,
             onRenderReady: { ready in

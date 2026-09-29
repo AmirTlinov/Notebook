@@ -236,7 +236,6 @@ final class IPadSheetCurlController: UIViewController, UIGestureRecognizerDelega
         try curl.preparePages(leaf: leaf, base: base, operationID: id)
         current.frame = leaf; current.firstFrameSequence = curl.submittedFrameCount; self.motion = current
         curl.prepareDrawable(size: .init(width: width, height: height))
-        curl.isHidden = false; view.bringSubviewToFront(curl)
         onFramesAcquired?(.init(operationID: id, began: began, ended: CACurrentMediaTime(), pixels: width * height * 2))
         guard self.motion?.id == id else { return }
         render(current.progress); curl.animatesContinuously = current.animation != nil
@@ -403,6 +402,13 @@ final class IPadSheetCurlController: UIViewController, UIGestureRecognizerDelega
   @discardableResult
   func grabSettlement(direction: Direction) -> Bool {
     guard var motion, motion.contact == nil, let origin = motion.animation?.to ?? motion.terminal else { return false }
+    // The update scheduler can already have encoded a future animation pose.
+    // Contact starts on the last OS-presented sheet, or the still-live source
+    // before any curl was shown. A merely prepared pose cannot move the finger.
+    if let pose = curl.presentedPagePose {
+      motion.progress = motion.direction == .forward ? pose.progress : 1-pose.progress
+      motion.anchor = pose.anchor; motion.tilt = pose.tilt
+    } else { motion.progress = 0; motion.tilt = 0 }
     motion.contact = .init(initial: motion.progress, origin: origin, initialTilt: motion.tilt,
       began: CACurrentMediaTime(), direction: direction)
     if motion.stagedLanding != nil {
@@ -410,6 +416,9 @@ final class IPadSheetCurlController: UIViewController, UIGestureRecognizerDelega
     }
     motion.animation = nil; motion.terminal = nil
     self.motion = motion; curl.animatesContinuously = false
+    // Replace an uncommitted early frame. An already published CA frame still
+    // earns its own receipt; rendering this held pose never claims to revoke it.
+    render(motion.progress)
     return true
   }
 
@@ -497,13 +506,22 @@ final class IPadSheetCurlController: UIViewController, UIGestureRecognizerDelega
   }
 
   private func configureCurl() {
-    // The layer stays mounted behind idle paper with a paused clock. No
-    // drawable is acquired until motion starts, and only motion reveals it.
+    // Prepared pixels do not expose a layer. Its first scheduled frame and
+    // exposure publish in the same UIKit update as every subsequent curl frame.
     curl.isHidden = true
     curl.isUserInteractionEnabled = false
     curl.enableSetNeedsDisplay = false
     curl.onDisplayUpdate = { [weak self] timestamp in self?.advanceAnimation(at: timestamp) }
     curl.permitsFrameSubmission = { [weak self] in self?.motion != nil }
+    curl.onPageFrameWillPresent = { [weak self] id in
+      guard let self, self.motion?.id == id else { return }
+      self.view.bringSubviewToFront(self.curl)
+    }
+    curl.onPageRenderFailure = { [weak self] error in
+      guard let self, let id = self.motion?.id else { return }
+      self.onFailure(error)
+      if self.motion?.id == id { self.finish(completed: false, outcome: .failed) }
+    }
     curl.onPageFrameReady = { [weak self] image, progress, sequence, readiness in
       self?.frameReady(image, progress: progress, sequence: sequence, readiness: readiness)
     }

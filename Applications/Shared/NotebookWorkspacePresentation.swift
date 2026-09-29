@@ -54,6 +54,7 @@ struct NotebookWorkspaceCompositionRequest: Equatable {
   let permitsPreparation: Bool
   let refinesDetails: Bool
   let groupPoses: [SceneCompositionPlane:[String:NotebookElementPlacement.Source]]
+  var operationID: UUID? = nil
 }
 
 @MainActor

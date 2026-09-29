@@ -1,0 +1,369 @@
+{
+  "format": 1,
+  "status": "functional-verified-first-presentation-and-reader-mount-open",
+  "installedBuild": "223",
+  "plannedBuild": "224",
+  "fullAcceptance": false,
+  "diagnostic1617": {
+    "path": "/private/tmp/notebook-first-presentation-20260929T1617Z",
+    "attachments": "/private/tmp/notebook-first-presentation-attachments1617/manifest.json",
+    "sourceSHA256": "5ae0d67c66a7784c0b65f6be736d95d68a6c0115f2c9a24751cc5c6a1d488d6a",
+    "sourceAfterAvailable": false,
+    "passed": 1,
+    "failed": 2,
+    "summary": "1617-ipad-summary.json",
+    "scope": "Direct WebKit-ready callback regression passed; cold24 and warm10 retained strict failing budgets. This is the intermediate diagnostic source before page-owned preparation and unified curl scheduling.",
+    "coldPrograms": {
+      "firstNativeInstallationMS": 739.393208,
+      "allNativeInstallationMS": 1121.21125,
+      "correctSources": 24,
+      "correctLatePixels": true,
+      "cohortPublishedMS": 273.281875,
+      "firstViewAppearedMS": 390.825833,
+      "firstNavigationRequestedMS": 398.140083,
+      "firstNavigationPolicyMS": 613.890833,
+      "firstNavigationStartedMS": 699.521666,
+      "firstNavigationCommittedMS": 699.909666,
+      "firstRuntimeReadyMS": 729.626041,
+      "loadHTMLCallUpperBoundMS": 0.212167,
+      "qualification": "Different cold startup and test order from1229; not a controlled performance delta. No screenshot cost included. The major pre-policy gap is not attributed to author JavaScript."
+    },
+    "curl": {
+      "completedTurns": 10,
+      "firstOSMS": [
+        22.919,
+        34.638
+      ],
+      "initialUnpresentedByTurn": [
+        0,
+        0,
+        2,
+        1,
+        0,
+        2,
+        0,
+        2,
+        2,
+        0
+      ],
+      "lateIntervalMaximumMS": 16.673,
+      "qualification": "Early CA-publication turns had no initial drops. Several drawables were rejected before layer exposure publication, before their future Metal target and despite timely GPU work. Even no-drop turns have late first system target."
+    }
+  },
+  "remaining": "Finish actual/pending reader lifecycle and first layer publication; verify the final source, deliver the pair. Cold first native installation and full physical acceptance remain open.",
+  "functional1649": {
+    "path": "/private/tmp/notebook-224-functional-20260929T1649Z",
+    "attachments": "/private/tmp/notebook-224-functional-attachments1649/manifest.json",
+    "sourceSHA256": "5178884610cbc7762db6b406ebc299fe877bd0bd651f39e1d7128ef185b39fad",
+    "verificationSHA256": "b2260e8e00fd996151d99971963f381c27f00885d1afb3e6e40f15b6611f3aea",
+    "ipad": {
+      "passed": 12,
+      "failed": 0,
+      "skipped": 0,
+      "runtimeWarnings": 0,
+      "summary": "1649-ipad-summary.json"
+    },
+    "mac": {
+      "passed": 2,
+      "failed": 0,
+      "skipped": 0,
+      "runtimeWarnings": 0,
+      "summary": "1649-mac-summary.json"
+    },
+    "scope": "Retained preparation before mount, state/density reuse, retirement checkpoint, queued admission cancellation, ready callback; curl exposure cancellation and resource drain, regrab, initial 2% bend pixels, held/lifted endpoints, rapid alternating swipes; actual system UI24 first taps, pinch exit/reopen and forward/reverse state. Mac focus/uncommitted input and writer-refusal checkpoint. Source before/after matches. No strict latency or full acceptance claim."
+  },
+  "buildAttempt1648": {
+    "path": "/private/tmp/notebook-224-functional-20260929T1648Z",
+    "status": "test-compilation-failed",
+    "cause": "New fixture assigned private model.pages setter. Corrected to savePage plus normal reloadExternalChanges. No physical tests executed in this attempt."
+  },
+  "latency1653": {
+    "path": "/private/tmp/notebook-224-latency-20260929T1653Z",
+    "attachments": "/private/tmp/notebook-224-latency-attachments1653/manifest.json",
+    "sourceSHA256": "5178884610cbc7762db6b406ebc299fe877bd0bd651f39e1d7128ef185b39fad",
+    "sourceAfter": "source-after-diagnostic.json, independently recorded after failed selected run; exact match",
+    "passed": 0,
+    "failed": 3,
+    "runtimeWarnings": 0,
+    "summary": "1653-ipad-summary.json",
+    "coldSVG": {
+      "firstNativeMS": 517.02625,
+      "allNativeMS": 624.320209,
+      "exactSources": 13,
+      "pixelsCorrect": true
+    },
+    "coldPrograms": {
+      "firstNativeMS": 451.764875,
+      "allNativeMS": 739.465458,
+      "exactSources": 24,
+      "pixelsCorrect": true,
+      "cohortPublishedMS": 142.644208,
+      "viewAppearedMS": 173.527958,
+      "firstAdmissionMS": 181.1355
+    },
+    "curl": "Regression: transaction publication misses same-update GPU scheduling; two-drawable pool sustains ~33.347ms OS intervals. First turn firstOS49.060ms with dropped sequences. Not delivered; whole scheduling protocol under repair."
+  },
+  "diagnostic1718": {
+    "path": "/private/tmp/notebook-224-diagnostic-20260929T1718Z",
+    "attachments": "/private/tmp/notebook-224-diagnostic-attachments1718/manifest.json",
+    "sourceSHA256": "8cc8e035b16e752810d64c548acad4e80e334b77fbb93c7f0e0cbc00b07a4852",
+    "sourceAfter": "source-after-diagnostic.json independently recorded, exact match",
+    "passed": 3,
+    "failed": 2,
+    "runtimeWarnings": 0,
+    "summary": "1718-ipad-summary.json",
+    "passedScope": "Page preparation before mount/borrow/close; regrab actual OS pose; cancellation before CA publication and resource drain",
+    "coldPrograms": {
+      "firstNativeMS": 668.751,
+      "allNativeMS": 1031.081875,
+      "exactSources": 24,
+      "pixelsCorrect": true,
+      "cohortPublishedMS": 212.952541,
+      "firstAppearedMS": 306.647916,
+      "firstAdmissionMS": 324.016416
+    },
+    "curl": {
+      "firstOSMS": [
+        38.734125,
+        46.817083,
+        32.52575,
+        49.796917,
+        49.426083,
+        17.471083,
+        49.62025,
+        45.725542,
+        49.122917,
+        32.011917
+      ],
+      "gapsMS": 25.01,
+      "droppedByTurn": [
+        2,
+        2,
+        1,
+        2,
+        2,
+        0,
+        2,
+        2,
+        2,
+        1
+      ],
+      "actualLayerPresentsWithTransaction": true,
+      "drawableMatchesLayer": true
+    },
+    "conclusion": "Scheduling forced tick removed but transaction/pool throughput regression persists. Cold path still starts after onAppear; discovered loading/accepted-source admission mismatch. Not delivered."
+  },
+  "diagnostic1729": {
+    "path": "/private/tmp/notebook-224-diagnostic-20260929T1729Z",
+    "attachments": "/private/tmp/notebook-224-diagnostic-attachments1729/manifest.json",
+    "sourceSHA256": "2b552de2a641140fa6c59735338a155ab3934125253e4730c913deda3c94903d",
+    "sourceAfter": "source-after-diagnostic.json independently recorded, exact match",
+    "passed": 2,
+    "failed": 2,
+    "runtimeWarnings": 0,
+    "summary": "1729-ipad-summary.json",
+    "passedScope": "Cancellation at CA publication/resource drain and first small bend pixels. Cold actual accepted-before-onAppear assertion passed within failing latency test.",
+    "coldPrograms": {
+      "firstNativeMS": 569.59225,
+      "allNativeMS": 877.908959,
+      "exactSources": 24,
+      "pixelsCorrect": true,
+      "acceptedPreparationMS": 101.676917,
+      "firstAdmissionMS": 104.129459,
+      "firstNavigationRequestMS": 131.518167,
+      "cohortPublishedMS": 477.693959
+    },
+    "curl": {
+      "firstOSMS": [
+        33.70875,
+        30.922042,
+        32.805292,
+        32.362375,
+        31.373125,
+        29.179917,
+        32.976083,
+        30.175333,
+        30.357875,
+        31.730375
+      ],
+      "steadyGapsMS": [
+        8.337,
+        16.673
+      ],
+      "initialMaximumGapMS": 25.010083,
+      "droppedByTurn": [
+        1,
+        1,
+        1,
+        1,
+        2,
+        1,
+        2,
+        1,
+        2,
+        1
+      ],
+      "immediatePresentationExpected": false,
+      "unexpectedMTKDrawEvents": 0
+    },
+    "conclusion": "Early page preparation now precedes composition/mount. Three charged drawables relieve pool starvation but all-frame CA publication still adds a two-frame pipeline; first reveal still discarded. Split first transactional reveal from asynchronous opaque steady publication under same UI clock."
+  },
+  "diagnostic1736": {
+    "path": "/private/tmp/notebook-224-curl-20260929T1736Z",
+    "attachments": "/private/tmp/notebook-224-curl-attachments1736/manifest.json",
+    "sourceSHA256": "2d34b60d5edd05fbed0b26abac894773f650095e01446e6b934f07010a24e73e",
+    "sourceAfter": "source-after-diagnostic.json independently recorded, exact match",
+    "passed": 1,
+    "failed": 1,
+    "runtimeWarnings": 0,
+    "summary": "1736-ipad-summary.json",
+    "passedScope": "Regrab adopts actual OS-presented pose and retains the accepted pair.",
+    "curl": {
+      "firstOSMS": [
+        34.617166666,
+        28.328833334,
+        32.233666667,
+        32.442291666,
+        30.875291666,
+        32.576374999,
+        33.655624999,
+        32.3455,
+        33.449166667,
+        32.299458333
+      ],
+      "steadyGapMS": 8.337,
+      "initialCAtoAsyncGapMS": 16.673,
+      "initialDroppedByTurn": [
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1
+      ],
+      "unexpectedMTKDrawEvents": 0
+    },
+    "conclusion": "First transactional reveal is held until its OS outcome, then opaque frames use async presentation under the same UI clock. Steady cadence restored to 120Hz. Initial drawable still discarded with no successor encoded; hidden-layer publication remains under investigation. Not delivered."
+  },
+  "functional1752": {
+    "path": "/private/tmp/notebook-224-functional-20260929T1752Z",
+    "sourceSHA256": "4a3def06c8baa382dc4d4ad11ab01e1ae913ff19c238d1d45ddc8ca314d4f717",
+    "sourceBeforeAfterMatch": true,
+    "ipad": {
+      "passed": 19,
+      "failed": 0,
+      "skipped": 0,
+      "runtimeWarnings": 0,
+      "summary": "1752-ipad-summary.json"
+    },
+    "mac": {
+      "passed": 2,
+      "failed": 0,
+      "skipped": 0,
+      "runtimeWarnings": 0,
+      "summary": "1752-mac-summary.json"
+    },
+    "scope": "Completed page-owned preparation and camera actual/pending reader lifetime; stale native callback ownership; exact page Metal output configuration/drain, first small bend, held/lifted endpoint, regrab, cancellation and rapid alternating swipe; address read/order/deletion regressions; actual UI24 first taps/pinch exit/reopen/forward/reverse; Mac focus/state checkpoint. Strict latency separate.",
+    "attachments": "/private/tmp/notebook-224-functional-attachments1752/manifest.json",
+    "visuallyReviewed": "B74AA29D-0FCF-4FDE-89E4-18A57E2314BB.png: 24 red controls each show 1 after their first physical tap."
+  },
+  "latency1757": {
+    "path": "/private/tmp/notebook-224-latency-20260929T1757Z",
+    "attachments": "/private/tmp/notebook-224-latency-attachments1757/manifest.json",
+    "sourceSHA256": "4a3def06c8baa382dc4d4ad11ab01e1ae913ff19c238d1d45ddc8ca314d4f717",
+    "sourceBeforeAfterMatch": true,
+    "passed": 0,
+    "failed": 3,
+    "runtimeWarnings": 0,
+    "summary": "1757-ipad-summary.json",
+    "coldSVG": {
+      "firstNativeMS": 550.950958,
+      "allNativeMS": 734.257916,
+      "exactSources": 13,
+      "pixelsCorrect": true
+    },
+    "coldPrograms": {
+      "firstNativeMS": 396.182209,
+      "allNativeMS": 615.045542,
+      "exactSources": 24,
+      "pixelsCorrect": true
+    },
+    "curl": {
+      "0": {
+        "firstOSMS": 25.129958332399838,
+        "landingMS": 334.42566666417406,
+        "firstGapMS": 16.673375001118984,
+        "maximumGapMS": 16.673375001118984,
+        "dropped": 0
+      },
+      "1": {
+        "firstOSMS": 25.849249999737367,
+        "landingMS": 339.3116250008461,
+        "firstGapMS": 20.841749999817694,
+        "maximumGapMS": 20.841749999817694,
+        "dropped": 0
+      },
+      "2": {
+        "firstOSMS": 41.348916667629965,
+        "landingMS": 342.24549999999,
+        "firstGapMS": 25.010041666973848,
+        "maximumGapMS": 25.010041666973848,
+        "dropped": 2
+      },
+      "3": {
+        "firstOSMS": 41.640041665232275,
+        "landingMS": 342.58258333284175,
+        "firstGapMS": 25.010125002154382,
+        "maximumGapMS": 25.010125002154382,
+        "dropped": 2
+      },
+      "4": {
+        "firstOSMS": 36.16316666739294,
+        "landingMS": 346.1477916680451,
+        "firstGapMS": 25.010041666973848,
+        "maximumGapMS": 25.010041666973848,
+        "dropped": 1
+      },
+      "5": {
+        "firstOSMS": 44.61316666493076,
+        "landingMS": 346.3905833341414,
+        "firstGapMS": 25.010083336383104,
+        "maximumGapMS": 25.010083336383104,
+        "dropped": 2
+      },
+      "6": {
+        "firstOSMS": 35.83908333166619,
+        "landingMS": 345.74974999850383,
+        "firstGapMS": 25.01000000120257,
+        "maximumGapMS": 25.01000000120257,
+        "dropped": 1
+      },
+      "7": {
+        "firstOSMS": 31.919458335323725,
+        "landingMS": 341.87004166597035,
+        "firstGapMS": 25.010124998516403,
+        "maximumGapMS": 25.010124998516403,
+        "dropped": 0
+      },
+      "8": {
+        "firstOSMS": 44.6505416657601,
+        "landingMS": 345.9110416661133,
+        "firstGapMS": 25.01016666792566,
+        "maximumGapMS": 25.01016666792566,
+        "dropped": 2
+      },
+      "9": {
+        "firstOSMS": 39.62912499991944,
+        "landingMS": 340.83891666523414,
+        "firstGapMS": 25.01016666428768,
+        "maximumGapMS": 25.01016666428768,
+        "dropped": 2
+      }
+    },
+    "conclusion": "Functional scenarios pass. Initial CA publication still has drops; OS-to-async handoff introduces a 16.67-25.01ms gap. The successful no-drop first frame itself follows UIKit estimated presentation at two refreshes. Cold page mounting still waits for the board cohort. These causes remain under repair; not delivered."
+  }
+}

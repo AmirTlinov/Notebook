@@ -20,8 +20,10 @@ final class AgentWebLeaseTests: XCTestCase {
     }
     defer { NotebookNavigationObservation.onWebPreparation = previous; session.retire() }
     let source = element(source: "immediate initial state").updating(state: .object(["count": .number(0)]))
+    var readyCount = 0
     let presentation = AgentWebElementView(element: source, session: session,
-      snapshotPolicy: .display(scale: 2), onRenderReady: { _ in }, onState: { _, _ in false })
+      snapshotPolicy: .display(scale: 2), onRenderReady: { _ in },
+      onInteractionReady: { if $0 { readyCount += 1 } }, onState: { _, _ in false })
     presentation.prepare()
     XCTAssertEqual(stages.filter { $0 == "source_accepted" || $0 == "navigation_requested" },
       ["source_accepted", "navigation_requested"], "A tiny initial state must not queue navigation behind unrelated native constructions")
@@ -33,10 +35,17 @@ final class AgentWebLeaseTests: XCTestCase {
     presentation.prepare()
     XCTAssertEqual(owner.loadToken, token, "Mount/update of the same source must not navigate again")
     XCTAssertEqual(stages.filter { $0 == "navigation_requested" }.count, 1)
+    owner.receive(["token": try XCTUnwrap(token), "kind": "runtimeReady"])
+    XCTAssertEqual(readyCount, 1, "The accepted WebKit event must reach its presenter in this actor turn")
+    XCTAssertNotEqual(owner.installation(for: source)?.isInstalled, true,
+      "Author readiness before mounting is not a physical installation")
     let replacement = AgentWebElementView(element: element(source: "replacement program"), session: session,
-      snapshotPolicy: .display(scale: 2), onRenderReady: { _ in }, onState: { _, _ in false })
+      snapshotPolicy: .display(scale: 2), onRenderReady: { _ in },
+      onInteractionReady: { if $0 { readyCount += 1 } }, onState: { _, _ in false })
     replacement.prepare()
     XCTAssertNotEqual(owner.loadToken, token, "A new accepted program revokes the prepared load identity")
+    owner.receive(["token": try XCTUnwrap(token), "kind": "runtimeReady"])
+    XCTAssertEqual(readyCount, 1, "A superseded program cannot publish into its replacement")
     session.retire()
     let count = stages.count
     replacement.prepare()

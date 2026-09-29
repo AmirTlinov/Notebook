@@ -1841,11 +1841,13 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
     #if os(iOS)
       NotebookInteractionDiagnostics.bind(web, elementID: element.id, token: token, ready: true)
     #endif
-    publishInteractionReadiness(true, token: token)
     // The initial HTML already owns the accepted state. Starting a transfer
     // task with an empty queue delays installation and the first passive image.
     if stateToApply == nil { finishCurrentState(token: token) }
     else { applyCurrentState() }
+    // WebKit delivers this event outside representable update. Complete the
+    // accepted state turn before notifying its presenter, without another hop.
+    if accepts(token), !resumeFailed { onInteractionReady(true) }
   }
 
   func webView(
@@ -1856,8 +1858,12 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
     let url = navigationAction.request.url, scheme = url?.scheme
     let packaged = packageNavigationURL != nil && packageNavigationURL == url && navigationAction.navigationType == .other
     if packaged { packageNavigationURL = nil }
-    decisionHandler(!isInvalidated && !lease.isReleased && attachedWebView === webView
-      && (packaged || scheme == nil || scheme == "about") ? .allow : .cancel)
+    let allowed = !isInvalidated && !lease.isReleased && attachedWebView === webView
+      && (packaged || scheme == nil || scheme == "about")
+    if allowed {
+      NotebookNavigationObservation.webPreparation("navigation_policy", ownerID: lease.id, sourceID: loadedElement?.id)
+    }
+    decisionHandler(allowed ? .allow : .cancel)
   }
 
   private func captureSnapshot(of webView: WKWebView, token: String) {
@@ -1953,6 +1959,12 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
 
   func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: any Error) {
     fail(navigation: navigation, in: webView, error: error)
+  }
+
+  func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+    guard !isInvalidated, attachedWebView === webView, let navigation,
+      navigation === activeNavigation else { return }
+    NotebookNavigationObservation.webPreparation("navigation_started", ownerID: lease.id, sourceID: loadedElement?.id)
   }
 
   func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {

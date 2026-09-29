@@ -35,7 +35,10 @@ final class NotebookPageNavigation {
     guard let binding = bindings[ownerID], binding.source == source else { return false }
     return binding.send(command)
   }
-  func isBound(ownerID: UUID, source: String) -> Bool { bindings[ownerID]?.source == source }
+  func isBound(ownerID: UUID, source: String, controllerID: UUID? = nil) -> Bool {
+    guard let binding = bindings[ownerID], binding.source == source else { return false }
+    return controllerID == nil || binding.id == controllerID
+  }
   func report(_ value: Status?, ownerID: UUID, controllerID: UUID, source: String) {
     guard let binding = bindings[ownerID], binding.id == controllerID, binding.source == source else { return }
     if let value { status = value }

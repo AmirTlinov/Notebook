@@ -32,17 +32,29 @@ import XCTest
     let curl = try XCTUnwrap(native.view.subviews.compactMap { $0 as? SheetCurlMetalView }.first)
     let resolve = curl.onPageFrameReady
     var captures = 0, poses: [Double] = [], regrabbed = false, completions: [Bool] = []
+    var presentedSequence = -1, grabbedPose: Double?
     native.onFramesAcquired = { _ in captures += 1 }
     native.didTurn = { _, completed in completions.append(completed) }
     curl.onPageFrameReady = { image, progress, sequence, readiness in
       resolve?(image, progress, sequence, readiness)
       guard readiness.isReady else { return }
       poses.append(progress)
-      if !regrabbed, progress > 0.25, progress < 0.8 {
+      presentedSequence = max(presentedSequence, sequence)
+    }
+    // Observe the actual input phase after the renderer's early animation
+    // encoding, with a submitted pose ahead of the most recent OS receipt.
+    // Grabbing only inside onPageFrameReady misses that ownership boundary.
+    let inputPhase = UIUpdateLink(view: native.view)
+    inputPhase.addAction(to: .beforeEventDispatch) { _, _ in
+      if !regrabbed, let visible = curl.presentedPagePose?.progress,
+        visible > 0.25, visible < 0.8, curl.submittedFrameCount > presentedSequence + 1 {
+        grabbedPose = visible
         regrabbed = native.grabSettlement(direction: .reverse)
         native.updateInteractiveTurn(translation: 0)
       }
     }
+    inputPhase.isEnabled = true
+    defer { inputPhase.isEnabled = false }
     XCTAssertTrue(native.beginInteractiveTurn(direction: .forward))
     native.updateInteractiveTurn(translation: -native.view.bounds.width * 0.3)
     native.endInteractiveTurn(completed: true)
@@ -51,6 +63,8 @@ import XCTest
     XCTAssertTrue(regrabbed)
     try await Task.sleep(for: .milliseconds(40)) // Drain frames already submitted before the grab.
     let held = try XCTUnwrap(poses.last), count = curl.submittedFrameCount
+    XCTAssertEqual(held, try XCTUnwrap(grabbedPose), accuracy: 0.000001,
+      "Contact must not inherit an encoded animation pose which was never shown")
     native.updateInteractiveTurn(translation: 0)
     try await Task.sleep(for: .milliseconds(40))
     XCTAssertEqual(curl.submittedFrameCount, count, "A stationary regrab is not a new frame or timer")
@@ -228,6 +242,49 @@ import XCTest
     let pixels = try NotebookUXObservation.Pixels(window: window)
     XCTAssertTrue(try pixels.matches([(.init(x: window.bounds.midX, y: window.bounds.midY), .blue)]),
       "Drained callbacks cannot expose target pixels after cancellation")
+  }
+
+  func testCancellationAtPagePublicationDiscardsScheduledPixelsAndStopsUpdates() async throws {
+    let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+    let previous = scene.windows.first(where: \.isKeyWindow), window = UIWindow(windowScene: scene)
+    let native = IPadSheetCurlController(), source = UIViewController(), target = UIViewController()
+    PageTurnFrameFixture.install(on: native)
+    source.view.backgroundColor = .blue; target.view.backgroundColor = .red
+    window.rootViewController = native; window.makeKeyAndVisible()
+    defer { native.cancelMotion(); window.isHidden = true; window.rootViewController = nil; previous?.makeKey() }
+    native.show(source, direction: .forward, animated: false); native.prepare(target)
+    native.view.layoutIfNeeded()
+    let curl = try XCTUnwrap(native.view.subviews.compactMap { $0 as? SheetCurlMetalView }.first)
+    let reservation = SceneRenderResources.shared.reservedBytes
+    let beforePublication = curl.onPageFrameWillPresent
+    defer { curl.onPageFrameWillPresent = beforePublication }
+    var completions: [Bool] = [], submittedAtCancellation: Int?
+    curl.onPageFrameWillPresent = { _ in
+      submittedAtCancellation = curl.submittedFrameCount
+      native.cancelMotion()
+    }
+    native.show(target, direction: .forward, animated: true) { completions.append($0) }
+    let deadline = ContinuousClock.now + .seconds(2)
+    while (completions.isEmpty || SceneRenderResources.shared.reservedBytes != reservation),
+      ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(2)) }
+    let submitted = try XCTUnwrap(submittedAtCancellation,
+      "Cancel after the actual GPU command is scheduled, immediately before CA publication")
+    XCTAssertGreaterThan(submitted, 0)
+    XCTAssertEqual(completions, [false]); XCTAssertTrue(native.page === source)
+    XCTAssertTrue(curl.isHidden); XCTAssertNil(curl.frameLease)
+    XCTAssertEqual(SceneRenderResources.shared.reservedBytes, reservation,
+      "Cancelled acquisition and submitted GPU work drain their own reservations")
+    let updated = expectation(description: "The cancelled exposure's UIKit update completes")
+    let publication = UIUpdateLink(view: window)
+    publication.addAction(to: .afterUpdateComplete) { link, _ in link.isEnabled = false; updated.fulfill() }
+    publication.requiresContinuousUpdates = true; publication.isEnabled = true
+    defer { publication.isEnabled = false }
+    await fulfillment(of: [updated], timeout: 2)
+    XCTAssertEqual(curl.submittedFrameCount, submitted, "Cancellation leaves no active curl update demand")
+    XCTAssertEqual(completions, [false])
+    let pixels = try NotebookUXObservation.Pixels(window: window)
+    XCTAssertTrue(try pixels.matches([(.init(x: window.bounds.midX, y: window.bounds.midY), .blue)]),
+      "A scheduled but cancelled drawable must never cover the surviving source")
   }
 
   func testPageShaderKeepsTextureOrientationAndExactFlatEndpoints() async throws {

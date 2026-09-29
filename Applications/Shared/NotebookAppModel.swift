@@ -66,6 +66,7 @@ final class NotebookAppModel {
   private(set) var pages: [UUID: PageDocument] = [:] {
     didSet {
       elementErasureCache.retain(pages: pages)
+      notebookPagePreparation.acceptedPages(pages, model: self)
       for id in oldValue.keys where pages[id] == nil { peerPublication.scopes[.init(kind: .page, id: id)] = nil }
       var changed = false
       for id in Set(oldValue.keys).union(pages.keys) {
@@ -79,28 +80,23 @@ final class NotebookAppModel {
       if changed { collaborationContentEpoch &+= 1 }
     }
   }
-  /// A prepared slot belongs to one immutable order. This finite view cache
-  /// is not the notebook's membership list; SQLite/vector remain its owner.
-  private struct PageAddress: Hashable { let itemID: UUID; let index: Int; let root: String }
-  @ObservationIgnored private var pageAddresses: [PageAddress: UUID] = [:]
-  @ObservationIgnored private var pagePreparationTasks: [PageAddress: Task<Void, Never>] = [:]
-  @ObservationIgnored private var pagePreparationWindows: [UUID: (root: String, indices: Set<Int>, target: Int?)] = [:]
+  let notebookPagePreparation = NotebookPagePreparationWindow()
+  private typealias PageAddress = NotebookPagePreparationWindow.Address
+  private var pageAddresses: [PageAddress: UUID] {
+    get { notebookPagePreparation.addresses }
+    set { notebookPagePreparation.addresses = newValue }
+  }
   let notebookPageNavigation = NotebookPageNavigation()
   let pageInkPublication = NotebookPageInkPublication()
 
-  func retainNotebookPageWindow(_ indices: Set<Int>, in itemID: UUID, root: String, target: Int? = nil) {
+  func retainNotebookPageWindow(_ indices: Set<Int>, in itemID: UUID, root: String, target: Int? = nil,
+    controllerID: UUID? = nil) {
     guard notebookPageRoot(itemID) == root else { return }
+    if let controllerID, !indices.isEmpty,
+      !notebookPageNavigation.isBound(ownerID: itemID, source: root, controllerID: controllerID) { return }
     let target = target.flatMap { indices.contains($0) && $0 < notebookPageCount(itemID) ? $0 : nil }
-    pagePreparationWindows[itemID] = indices.isEmpty ? nil : (root, indices, target)
-    let waitsForTarget = target.map { notebookPage(at: $0, in: itemID) == nil } ?? false
-    for (address, task) in pagePreparationTasks where address.itemID == itemID
-      && (address.root != root || !indices.contains(address.index)
-        || (waitsForTarget && address.index != target)) { task.cancel() }
-  }
-
-  private func permitsPagePreparation(_ address: PageAddress) -> Bool {
-    guard let window = pagePreparationWindows[address.itemID] else { return true }
-    return window.root == address.root && window.indices.contains(address.index)
+    notebookPagePreparation.retain(indices, in: itemID, root: root, target: target,
+      targetIsLoaded: target.map { notebookPage(at: $0, in: itemID) != nil } ?? true, controllerID: controllerID)
   }
 
   func notebookPageCount(_ itemID: UUID) -> Int {
@@ -140,83 +136,66 @@ final class NotebookAppModel {
   /// An unloaded existing sheet never certifies a blank page. The requested
   /// immutable slot must still exist before its bytes can become UIKit content.
   func prepareNotebookPage(at index: Int, in itemID: UUID) async {
-    guard !isStopped, index >= 0, index < notebookPageCount(itemID), !isItemBeingDeleted(itemID),
-      let root = notebookPageRoot(itemID) else { return }
-    let address = PageAddress(itemID: itemID, index: index, root: root)
-    guard !Task.isCancelled, permitsPagePreparation(address) else { return }
-    if notebookPage(at: index, in: itemID) != nil { return }
-    // A retained neighbour is still speculation. Its existing consumer resumes
-    // only after the latest demanded page has loaded through the shared reader.
-    while let window = pagePreparationWindows[itemID], window.root == root,
-      let target = window.target, target != index, notebookPage(at: target, in: itemID) == nil {
-      await prepareNotebookPage(at: target, in: itemID)
-      guard !Task.isCancelled, permitsPagePreparation(address), notebookPageRoot(itemID) == root else { return }
-      if pagePreparationWindows[itemID]?.target == target, notebookPage(at: target, in: itemID) == nil { return }
-    }
-    if let pending = pagePreparationTasks[address] {
-      await pending.value
-      // An immediate reversal can demand a slot again while its withdrawn read
-      // is draining. Its new consumer must prepare it, not inherit cancellation.
-      if pending.isCancelled, !Task.isCancelled, notebookPageRoot(itemID) == root,
-        pagePreparationWindows[itemID]?.indices.contains(index) == true {
-        await prepareNotebookPage(at: index, in: itemID)
-      }
-      return
-    }
-    let task = Task { [weak self] in
-      guard let self else { return }
-      defer { pagePreparationTasks[address] = nil }
-      var previous: NotebookPagePreparation?
-      while !Task.isCancelled, permitsPagePreparation(address), presence != nil,
-        !isItemBeingDeleted(itemID), notebookPageRoot(itemID) == root {
-        let admission = readAdmission.begin()
-        defer { readAdmission.end(admission) }
-        do {
-          // Only the accepted-write boundary belongs to the writer FIFO. The
-          // existing scene reader owns decoding, alongside other scene reads.
-          let _: Void = try await persistence.submit { _ in () }
-          try Task.checkCancellation()
-          let prepared = try await sceneReader.read { [actor = actorID, previous] store in
-            try NotebookPagePreparation.read(store: store, itemID: itemID, index: index,
-              root: root, actor: actor, reusing: previous)
-          }
-          previous = prepared
-          try await peerPublication.wait(to: .init(kind: .page, id: prepared.page.id), carrier: itemID, scope: prepared.inputScope)
-          try Task.checkCancellation()
-          let isCurrent = try await persistence.submit { [actor = actorID] store in
-            try prepared.isCurrent(store: store, actor: actor)
-          }
-          // A local admission may still await durability. Recheck its SQL cut,
-          // retaining this immutable body if the addressed identity is equal.
-          guard isCurrent, peerAllowsPublication(to: .init(kind: .page, id: prepared.page.id), carrier: itemID, scope: prepared.inputScope),
-            readAdmission.permits(admission, targets: prepared.inputScope.publicationTargets) else { continue }
-          guard !Task.isCancelled, permitsPagePreparation(address), !isItemBeingDeleted(itemID),
-            notebookPageRoot(itemID) == root, var workspace, let presence else { return }
-          if notebookPage(at: index, in: itemID) != nil { return }
-          let page = prepared.page
-          try workspace.includePageProjection(prepared.projection, pageID: page.id, in: itemID)
-          self.workspace = workspace
-          pageAddresses[address] = page.id
-          pages[page.id] = page
-          peerPublication.scopes[.init(kind: .page, id: page.id)] = prepared.inputScope
-          pencilUndoHistory.restore(prepared.undo, for: .page(page.id))
-          pencilUndoHistory.restoreRedo(prepared.redo, for: .page(page.id))
-          retainPreparedPages(near: address, selectedPageID: presence.notebookPageID)
-          return
-        } catch NotebookStorageError.transactionConflict {
-          guard !Task.isCancelled, permitsPagePreparation(address) else { return }
-          reloadExternalChanges()
-          return
-        } catch {
-          guard !Task.isCancelled, permitsPagePreparation(address) else { return }
-          publicationFailure = error.localizedDescription
-          persistenceFailure = error.localizedDescription
-          return
+    guard let root = notebookPageRoot(itemID) else { return }
+    await notebookPagePreparation.prepare(.init(itemID: itemID, index: index, root: root),
+      isLoaded: { [weak self] address in self?.notebookPage(at: address.index, in: address.itemID) != nil },
+      isCurrent: { [weak self] address in
+        guard let self else { return false }
+        return !isStopped && address.index >= 0 && address.index < notebookPageCount(address.itemID)
+          && !isItemBeingDeleted(address.itemID) && notebookPageRoot(address.itemID) == address.root
+      }, read: { [weak self] address in await self?.readNotebookPage(address) })
+  }
+
+  private func readNotebookPage(_ address: PageAddress) async {
+    let itemID = address.itemID, index = address.index, root = address.root
+    var previous: NotebookPagePreparation?
+    while !Task.isCancelled, notebookPagePreparation.permits(address), presence != nil,
+      !isItemBeingDeleted(itemID), notebookPageRoot(itemID) == root {
+      let admission = readAdmission.begin()
+      defer { readAdmission.end(admission) }
+      do {
+        // Only the accepted-write boundary belongs to the writer FIFO. The
+        // existing scene reader owns decoding, alongside other scene reads.
+        let _: Void = try await persistence.submit { _ in () }
+        try Task.checkCancellation()
+        let prepared = try await sceneReader.read { [actor = actorID, previous] store in
+          try NotebookPagePreparation.read(store: store, itemID: itemID, index: index,
+            root: root, actor: actor, reusing: previous)
         }
+        previous = prepared
+        try await peerPublication.wait(to: .init(kind: .page, id: prepared.page.id), carrier: itemID, scope: prepared.inputScope)
+        try Task.checkCancellation()
+        let isCurrent = try await persistence.submit { [actor = actorID] store in
+          try prepared.isCurrent(store: store, actor: actor)
+        }
+        // A local admission may still await durability. Recheck its SQL cut,
+        // retaining this immutable body if the addressed identity is equal.
+        guard isCurrent, peerAllowsPublication(to: .init(kind: .page, id: prepared.page.id), carrier: itemID, scope: prepared.inputScope),
+          readAdmission.permits(admission, targets: prepared.inputScope.publicationTargets) else { continue }
+        guard !Task.isCancelled, notebookPagePreparation.permits(address), !isItemBeingDeleted(itemID),
+          notebookPageRoot(itemID) == root, var workspace, let presence else { return }
+        if notebookPage(at: index, in: itemID) != nil { return }
+        let page = prepared.page
+        try workspace.includePageProjection(prepared.projection, pageID: page.id, in: itemID)
+        self.workspace = workspace
+        pageAddresses[address] = page.id
+        pages[page.id] = page
+        peerPublication.scopes[.init(kind: .page, id: page.id)] = prepared.inputScope
+        pencilUndoHistory.restore(prepared.undo, for: .page(page.id))
+        pencilUndoHistory.restoreRedo(prepared.redo, for: .page(page.id))
+        retainPreparedPages(near: address, selectedPageID: presence.notebookPageID)
+        return
+      } catch NotebookStorageError.transactionConflict {
+        guard !Task.isCancelled, notebookPagePreparation.permits(address) else { return }
+        reloadExternalChanges()
+        return
+      } catch {
+        guard !Task.isCancelled, notebookPagePreparation.permits(address) else { return }
+        publicationFailure = error.localizedDescription
+        persistenceFailure = error.localizedDescription
+        return
       }
     }
-    pagePreparationTasks[address] = task
-    await task.value
   }
 
   /// A reference is a UUID intent, not an old page number. Resolve it and the
@@ -276,7 +255,7 @@ final class NotebookAppModel {
   }
 
   private func retainPreparedPages(near address: PageAddress, selectedPageID: UUID?) {
-    let window = pagePreparationWindows[address.itemID].flatMap { $0.root == address.root ? $0.indices : nil }
+    let window = notebookPagePreparation.retainedIndices(in: address.itemID, root: address.root)
     let ordered = pages.keys.sorted { lhs, rhs in
       @MainActor func score(_ id: UUID) -> Int {
         if id == selectedPageID { return 0 }
@@ -490,7 +469,8 @@ final class NotebookAppModel {
   /// Called by scheduled scene preparation, never inline from a view body or native update.
   /// The camera can replace one pending coverage request without growing a queue.
   func prepareComposition(presence: SessionPresence, frame: WorkspaceSceneFrame?,
-    pinned: Set<WorkspaceSpatialID>, displayScale: Double, installedItemOwners: [UUID: UUID] = [:]) {
+    pinned: Set<WorkspaceSpatialID>, displayScale: Double, installedItemOwners: [UUID: UUID] = [:],
+    preparationOperationID: UUID? = nil) {
     compositionPreparationPresence = presence
     let elements = pinned.compactMap { id -> String? in
       if case .element(let value) = id { return value }; return nil
@@ -527,6 +507,10 @@ final class NotebookAppModel {
       return
     }
     guard let header = workspaceHeader, let frame else { return }
+    #if os(iOS)
+    notebookPagePreparation.prepareCurrent(model: self, presence: presence, frame: frame, displayScale: displayScale,
+      operationID: preparationOperationID)
+    #endif
     let source = SceneCompositionSource(store: store, revision: header.cursor, workspaceID: header.workspaceID, groupPoses: compositionGroupPoses, inkWindow: spatialInkWindow, documentGeometry: documentPaperSizes)
     compositionTiles.prepare(source: source, presence: presence, frame: frame, pinned: pinned,
       displayScale: displayScale, refinesDetails: presencePhase == .settled,
@@ -697,6 +681,7 @@ final class NotebookAppModel {
     let previous = presenceValue
     guard previous != value else { return }
     presenceValue = value
+    notebookPagePreparation.updatePresence(value)
     #if os(iOS)
     nativeCameraProjection.update(value)
     let opened = value.flatMap { presence -> UUID? in
@@ -1214,8 +1199,15 @@ final class NotebookAppModel {
   /// an active content edit. A focused program must not suspend immutable
   /// neighbours until the user dismisses its focus.
   var permitsPagePreparation: Bool {
-    loadState == .ready && preparationIsForeground && !isStopped
-      && !inputGate.hasActivePencil
+    // The accepted SQL source can prepare while bootstrap persists presence.
+    // Editing still waits for loadState.ready; immutable work must not lose its
+    // only scene-demand edge merely because that independent write is pending.
+    guard workspaceHeader != nil, workspace != nil, preparationIsForeground,
+      !isStopped, !inputGate.hasActivePencil else { return false }
+    switch loadState {
+    case .loading, .ready: return true
+    case .failed: return false
+    }
   }
 
   /// Moving the camera must not leave newly visible material waiting for lift.
@@ -6521,12 +6513,11 @@ final class NotebookAppModel {
       inputGate.onNewAcceptedContact = nil
       itemOwnerObserver = nil
       let readers = [scenePreparationTask, sceneWindowTask, diskRefreshTask, arrivalDrainTask, headerRefreshTask, documentOpening?.task]
-        .compactMap { $0 } + Array(pagePreparationTasks.values)
+        .compactMap { $0 } + notebookPagePreparation.stop()
       for task in readers { task.cancel() }
       for task in readers { await task.value }
       scenePreparationTask = nil; sceneWindowTask = nil; diskRefreshTask = nil; arrivalDrainTask = nil; headerRefreshTask = nil
       documentOpening = nil
-      pagePreparationTasks = [:]
       collaborationReadTask?.cancel()
       if let task = collaborationReadTask { _ = await task.result }
       collaborationReadTask = nil

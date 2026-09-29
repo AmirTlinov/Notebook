@@ -9,6 +9,155 @@ import XCTest
 
 final class PreparedAgentElementViewTests: XCTestCase {
   @MainActor
+  func testRetainedPagePreparationStartsBeforeMountAndSurvivesConsumerReplacement() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("retained-page-\(UUID())")
+    let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
+    retainNotebookUntilTeardown(model, removing: root)
+    await model.start(pageSize: .init(width: 834, height: 1194))
+    var page = try XCTUnwrap(model.activePage)
+    let source = AgentElement(id: "retained", kind: .web,
+      frame: .init(x: 20, y: 20, width: 160, height: 120), source: "Retained runtime",
+      html: "<button>Retained</button>", javaScript: "window.retainedRuntime = true;")
+    page.replaceElements([source], actor: model.actorID)
+    try model.store.savePage(page); await model.reloadExternalChanges()?.value
+    let resources = SceneRenderResources()
+    let window = NotebookPagePreparationWindow(resources: resources)
+    defer { _ = window.stop() }
+    let workspace = try XCTUnwrap(model.workspace), itemID = workspace.selectedItemID
+    let order = try XCTUnwrap(model.notebookPageRoot(itemID))
+    window.addresses[.init(itemID: itemID, index: 0, root: order)] = page.id
+    window.acceptedPages([page.id: page], model: model)
+    let presence = SessionPresence(boardID: workspace.rootBoardID, mode: .page,
+      camera: try XCTUnwrap(model.presence).camera, viewport: .init(x: 834, y: 1194),
+      focusedItemID: itemID, openProgress: 1, selectedItemID: itemID, notebookPageID: page.id)
+    try await waitUntil("The accepted scene index supplies canonical paper geometry") { model.sceneIndex != nil }
+    let frame = WorkspaceSceneFrame(index: try XCTUnwrap(model.sceneIndex), presence: presence, portalCamera: { _ in nil })
+    window.updatePresence(presence)
+    window.prepareCurrent(model: model, presence: presence, frame: frame, displayScale: 2)
+    let entry = try XCTUnwrap(window.entry(at: 0, in: itemID, root: order))
+    let preparations = entry.preparations
+    let owner = preparations.owner(for: source.id)
+    await owner.waitForPreparation()
+    let session = try XCTUnwrap(owner.session), token = try XCTUnwrap(owner.session?.coordinator.loadToken)
+    XCTAssertNil(session.webView.superview, "The accepted read slot starts navigation before a SwiftUI shell or composition cohort exists")
+    XCTAssertNotEqual(session.coordinator.installation(for: source)?.isInstalled, true)
+    let covered = SessionPresence(boardID: presence.boardID, mode: .cover, camera: presence.camera,
+      viewport: presence.viewport, focusedItemID: itemID, openProgress: 0,
+      selectedItemID: itemID, notebookPageID: page.id)
+    window.updatePresence(covered)
+    window.prepareCurrent(model: model, presence: covered, frame: frame, displayScale: 2)
+    XCTAssertTrue(window.entry(at: 0, in: itemID, root: order) === entry,
+      "A held pinch at zero cover progress keeps the same accepted reader")
+    XCTAssertTrue(owner.session === session); XCTAssertEqual(session.coordinator.loadToken, token)
+    window.updatePresence(presence)
+    let oldController = UUID(), newController = UUID()
+    window.retain([0], in: itemID, root: order, target: nil, targetIsLoaded: true, controllerID: oldController)
+    window.retain([0], in: itemID, root: order, target: nil, targetIsLoaded: true, controllerID: newController)
+    window.retain([], in: itemID, root: order, target: nil, targetIsLoaded: true, controllerID: oldController)
+    XCTAssertEqual(window.retainedIndices(in: itemID, root: order), Set([0]),
+      "Dismantling an old native host cannot revoke its replacement's window")
+    let activity = PageTurnActivity()
+    let receipt = PageTurnReadiness(activity: activity) { _ in }
+    receipt.borrowAgentPreparations(entry)
+    defer { receipt.retire() }
+    XCTAssertTrue(receipt.agentPreparations === preparations)
+    XCTAssertTrue(activity.rasters === entry.rasters)
+    func prepare(_ page: PageDocument, input: Bool = true, scale: Double = 1) {
+      preparations.prepare(page: page, model: model, renderingScale: scale, displayScale: 2,
+        allowsInteraction: true, inputEnabled: input,
+        visibleRegion: .init(x: 0, y: 0, width: page.size.width, height: page.size.height), activity: activity,
+        rasterPreparation: receipt.rasterContext, cohort: nil)
+    }
+    let first = PreparedAgentElementPreparationOwner.Consumer()
+    let replacement = PreparedAgentElementPreparationOwner.Consumer()
+    var firstRevoked = 0, replacementRevoked = 0
+    first.onRenderReady = { if !$0 { firstRevoked += 1 } }
+    replacement.onRenderReady = { if !$0 { replacementRevoked += 1 } }
+    owner.attach(first); owner.attach(replacement); owner.detach(first)
+    XCTAssertEqual(firstRevoked, 0, "A late old shell must not revoke the replacement's aggregate readiness")
+    XCTAssertEqual(replacementRevoked, 0)
+    XCTAssertTrue(preparations.owner(for: source.id) === owner)
+    prepare(page, input: false, scale: 2)
+    await owner.waitForPreparation()
+    XCTAssertTrue(owner.session === session)
+    XCTAssertEqual(session.coordinator.loadToken, token, "Input and density changes keep the accepted browser heap")
+    XCTAssertTrue(page.replaceProgramState(.object(["count": .number(1)]), elementID: source.id, actor: model.actorID))
+    try model.store.savePage(page); await model.reloadExternalChanges()?.value
+    prepare(page, input: false, scale: 2)
+    await owner.waitForPreparation()
+    XCTAssertTrue(owner.session === session)
+    XCTAssertEqual(session.coordinator.loadToken, token, "A newer state reconfigures the same source instead of navigating again")
+    let revocationsBeforeRetirement = replacementRevoked
+    receipt.retire()
+    XCTAssertFalse(owner.isRetired, "Unmounting does not retire the current accepted read slot")
+    let replacementReceipt = PageTurnReadiness(activity: activity) { _ in }
+    replacementReceipt.borrowAgentPreparations(entry)
+    defer { replacementReceipt.retire() }
+    window.updatePresence(.init(boardID: presence.boardID, mode: .board, camera: presence.camera,
+      viewport: presence.viewport, selectedItemID: itemID, notebookPageID: page.id))
+    await owner.waitForPreparation()
+    try await waitUntil("The addressed retirement must drain before releasing its lease") { session.lease.isReleased }
+    XCTAssertTrue(owner.isRetired)
+    XCTAssertNil(owner.session)
+    XCTAssertTrue(session.lease.isReleased)
+    XCTAssertEqual(replacementRevoked, revocationsBeforeRetirement + 1)
+    window.retain([0], in: itemID, root: order, target: nil, targetIsLoaded: true, controllerID: newController)
+    window.prepareCurrent(model: model, presence: presence, frame: frame, displayScale: 2)
+    XCTAssertNil(window.entry(at: 0, in: itemID, root: order),
+      "A late host or old composition callback cannot reopen a terminal reader")
+    prepare(page)
+    XCTAssertNil(owner.session, "A withdrawn read slot cannot accept another shell")
+    window.updatePresence(covered)
+    window.prepareCurrent(model: model, presence: covered, frame: frame, displayScale: 2)
+    XCTAssertNil(window.entry(at: 0, in: itemID, root: order), "A stationary closed cover does not admit execution")
+
+    let cancelledOpening = UUID(), replacementOpening = UUID()
+    window.acceptPreparation(presence, operationID: cancelledOpening)
+    window.acceptPreparation(presence, operationID: replacementOpening)
+    window.endPreparation(operationID: cancelledOpening)
+    let pendingEntry = try XCTUnwrap(window.entry(at: 0, in: itemID, root: order))
+    let pendingOwner = pendingEntry.preparations.owner(for: source.id)
+    window.prepareCurrent(model: model, presence: presence, frame: frame, displayScale: 2,
+      operationID: cancelledOpening)
+    XCTAssertNil(pendingOwner.demand, "An old camera callback cannot start the replacement's preparation")
+    window.prepareCurrent(model: model, presence: presence, frame: frame, displayScale: 2,
+      operationID: replacementOpening)
+    XCTAssertNotNil(pendingOwner.demand)
+    window.endPreparation(operationID: replacementOpening)
+    window.prepareCurrent(model: model, presence: presence, frame: frame, displayScale: 2,
+      operationID: replacementOpening)
+    XCTAssertNil(window.entry(at: 0, in: itemID, root: order), "Aborting before the first actual pose retires the prepared destination")
+    XCTAssertTrue(pendingEntry.preparations.isRetired)
+  }
+
+  @MainActor
+  func testRetiringRetainedPageCancelsItsQueuedWebAdmission() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("retained-page-cancel-\(UUID())")
+    let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
+    retainNotebookUntilTeardown(model, removing: root)
+    let resources = SceneRenderResources()
+    let first = try await resources.acquireWebSurface(priority: .liveProgram, constructsRuntime: true)
+    let second = try await resources.acquireWebSurface(priority: .liveProgram, constructsRuntime: true)
+    defer { first.release(); second.release() }
+    let preparations = PageAgentPreparationOwner(resources: resources)
+    let source = element(id: "queued-retained", source: "Queued")
+    let owner = preparations.owner(for: source.id)
+    owner.accept(.init(model: model,
+      demand: .init(source: source, basis: nil, active: true, inputEnabled: true, focused: true,
+        permitsPreparation: true, policy: .exact(scale: 1), capture: nil, fallbackEntryID: nil, runtimeFailure: nil),
+      focus: .page(pageID: UUID(), elementID: source.id), pageTurnActivity: nil,
+      rasterPreparation: nil, cohort: nil, onState: { _, _ in false }))
+    let deadline = ContinuousClock.now + .seconds(3)
+    while resources.pendingWebRequestCount == 0, ContinuousClock.now < deadline { await Task.yield() }
+    XCTAssertEqual(resources.pendingWebRequestCount, 1)
+    preparations.retire()
+    while resources.pendingWebRequestCount != 0, ContinuousClock.now < deadline { await Task.yield() }
+    XCTAssertEqual(resources.pendingWebRequestCount, 0)
+    XCTAssertNil(owner.session)
+    XCTAssertEqual(resources.activeWebSurfaceCount, 2, "Cancelling the page never takes an unrelated admission")
+  }
+
+  @MainActor
   func testUnchangedProgramCheckpointDoesNotInvalidateThePageReadWindow() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("checkpoint-window-\(UUID())")
     let store = NotebookStore(root: root)

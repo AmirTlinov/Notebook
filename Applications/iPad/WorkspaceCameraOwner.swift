@@ -96,7 +96,6 @@ final class WorkspaceCameraOwner {
 
   func attach(_ model: NotebookAppModel) { self.model = model }
   func detach() {
-    model = nil
     interrupt(outcome: .cancelled, settlesPose: false)
     panStart = nil; activePageTurns.removeAll(); model = nil
     finishWaiters(false)
@@ -108,14 +107,31 @@ final class WorkspaceCameraOwner {
     notifyIdle()
   }
   func beginGesture(_ snapshot: CameraGestureSnapshot) {
+    acceptPagePreparation(snapshot.preparation, operationID: snapshot.id)
     endCurrent(outcome: .superseded, settlesPose: false, notifyingIdle: false)
     failure = nil
     panStart = nil; state = .interacting(snapshot)
     observe(snapshot.paperReadiness)
   }
   func finishGesture() {
-    guard gesture != nil else { return }
-    clearReadiness(); state = .idle; notifyIdle()
+    guard let gesture else { return }
+    clearReadiness(); state = .idle
+    model?.notebookPagePreparation.endPreparation(operationID: gesture.id)
+    notifyIdle()
+  }
+  func gesturePreparationChanged() {
+    guard let gesture else { return }
+    acceptPagePreparation(gesture.preparation, operationID: gesture.id)
+  }
+  private func acceptPagePreparation(_ presence: SessionPresence?, operationID: UUID) {
+    guard let model else { return }
+    let target: SessionPresence?
+    if let presence, presence.notebookPageID == nil, let itemID = presence.focusedItemID {
+      let pageID = model.presence.flatMap { $0.selectedItemID == itemID ? $0.notebookPageID : nil }
+        ?? model.workspace?.item(id: itemID)?.pageIDs.first
+      target = presence.selecting(itemID: itemID, pageID: pageID)
+    } else { target = presence }
+    model.notebookPagePreparation.acceptPreparation(target, operationID: operationID)
   }
 
   func bindPaperReadiness(itemID: UUID, transitionID: UUID?, source: PageTurnPreparationSource) {
@@ -224,6 +240,7 @@ final class WorkspaceCameraOwner {
   @discardableResult
   private func endCurrent(outcome: SceneCameraSettlement.Outcome, settlesPose: Bool,
     notifyingIdle: Bool) -> SessionPresence? {
+    let operationID = id
     let pose: SessionPresence?
     switch state {
     case .idle: pose = nil
@@ -234,6 +251,7 @@ final class WorkspaceCameraOwner {
     state = .idle; clearReadiness()
     movement.cancel(outcome: outcome); pending?.resolve(outcome)
     if let pose, settlesPose { model?.updatePresence(pose, settled: true) }
+    if let operationID { model?.notebookPagePreparation.endPreparation(operationID: operationID) }
     if notifyingIdle { notifyIdle() }
     return pose
   }
@@ -243,6 +261,7 @@ final class WorkspaceCameraOwner {
   private func finish(_ pending: WorkspaceSettlement, _ outcome: SceneCameraSettlement.Outcome) {
     guard current(pending) else { return }
     state = .idle; clearReadiness(); movement.cancel(outcome: outcome)
+    model?.notebookPagePreparation.endPreparation(operationID: pending.id)
     pending.resolve(outcome); notifyIdle()
   }
   private func closedApproach(to target: SessionPresence, from origin: SessionPresence) -> SessionPresence? {
@@ -283,10 +302,11 @@ final class WorkspaceCameraOwner {
     // be preparing their page layout; they retain their existing admission path.
     let destination = selectedDestination.mode == .page
       ? model.constrainedPaperPresence(selectedDestination) : selectedDestination
-    endCurrent(outcome: .superseded, settlesPose: false, notifyingIdle: false); panStart = nil; failure = nil
     let pending = WorkspaceSettlement(origin: rollback ?? origin, target: destination, handoff: handoff,
       approach: closedApproach(to: destination, from: origin), duration: duration, bounce: bounce,
       navigationID: navigationID, portal: portal, completion: completion)
+    acceptPagePreparation(pending.preparation, operationID: pending.id)
+    endCurrent(outcome: .superseded, settlesPose: false, notifyingIdle: false); panStart = nil; failure = nil
     state = .settling(pending)
     model.updatePresence(origin, settled: false)
     if isPrepared(pending) { start(pending) }

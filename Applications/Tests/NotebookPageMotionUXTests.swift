@@ -558,7 +558,7 @@ import XCTest
       let limit = ContinuousClock.now + .seconds(2)
       while shown != 1 - progress, ContinuousClock.now < limit { try await Task.sleep(for: .milliseconds(2)) }
       XCTAssertEqual(shown, 1 - progress)
-      XCTAssertFalse(curl.presentsWithTransaction,
+      XCTAssertFalse(try XCTUnwrap(curl.pageOutputLayer).presentsWithTransaction,
         "A complete opaque pair does not require a blocking UIKit scheduling fence per frame")
       XCTAssertTrue(native.page === source, "Holding the endpoint does not accept the gesture")
       let layers = native.view.subviews
@@ -642,16 +642,27 @@ import XCTest
 
   func testCurlConfiguresTheActualDrawableLayerBeforeItsFirstDisplayUpdate() throws {
     let curl = SheetCurlMetalView(frame: .init(x: 0, y: 0, width: 300, height: 300))
-    let layer = try XCTUnwrap(curl.layer as? CAMetalLayer)
+    let backing = try XCTUnwrap(curl.layer as? CAMetalLayer)
+    let coverSize = backing.drawableSize
+    curl.onDisplayUpdate = { _ in }
     for side in [600.0, 1200.0, 600.0] {
       let size = CGSize(width: side, height: side)
       curl.prepareDrawable(size: size)
-      XCTAssertEqual(curl.drawableSize, size)
+      let layer = try XCTUnwrap(curl.pageOutputLayer)
+      XCTAssertFalse(layer === backing)
       XCTAssertEqual(layer.drawableSize, size,
-        "A paused MTKView must not leave its custom display clock acquiring old-sized drawables")
+        "Only the page output owner configures the pool used by its clock")
+      XCTAssertEqual(layer.frame, curl.bounds)
+      XCTAssertEqual(layer.maximumDrawableCount, 3)
+      XCTAssertTrue(layer.framebufferOnly)
+      XCTAssertTrue(layer.isOpaque)
+      XCTAssertEqual(backing.drawableSize, coverSize, "Page preparation cannot reconfigure the cover's MTK backing")
       XCTAssertEqual(curl.submittedFrameCount, 0, "Preparing size is not a fake presentation")
     }
+    let retired = try XCTUnwrap(curl.pageOutputLayer)
     curl.releaseSource()
+    XCTAssertNil(curl.pageOutputLayer)
+    XCTAssertTrue(retired.isHidden, "A new operation must not reveal the old layer while its GPU fence drains")
   }
 
   func testCurlHasIntermediatePixelsAndDoesNotLeaveABindingShadow() async throws {
@@ -844,9 +855,11 @@ import XCTest
       let target = turn.isMultiple(of: 2) ? 1 : 0
       let curl = try XCTUnwrap(controller.sheetController.view.subviews.compactMap { $0 as? SheetCurlMetalView }.first)
       let forwardReadiness = curl.onPageFrameReady
-      var frames: [(progress: Double, presented: TimeInterval, delivered: TimeInterval)] = []
+      var frames: [(sequence: Int, progress: Double, presented: TimeInterval, delivered: TimeInterval)] = []
       var submission: [SheetCurlMetalView.FrameTiming] = []
+      var pageUpdates: [SheetCurlMetalView.PageUpdateTiming] = []
       curl.onFrameMeasured = { submission.append($0) }
+      curl.onPageUpdateMeasured = { pageUpdates.append($0) }
       committedAt = nil
       curl.onPageFrameReady = { image, progress, sequence, readiness in
         // Keep dropped receipts in diagnostics. They cannot acknowledge a
@@ -856,10 +869,12 @@ import XCTest
         case .osPresentation(let time): presentedAt = time
         case .simulatorCommandCompletion: presentedAt = .nan
         }
-        frames.append((progress, presentedAt, CACurrentMediaTime()))
+        frames.append((sequence, progress, presentedAt, CACurrentMediaTime()))
         forwardReadiness?(image, progress, sequence, readiness)
       }
-      defer { curl.onPageFrameReady = forwardReadiness; curl.onFrameMeasured = nil }
+      defer {
+        curl.onPageFrameReady = forwardReadiness; curl.onFrameMeasured = nil; curl.onPageUpdateMeasured = nil
+      }
       let start = CACurrentMediaTime()
       XCTAssertTrue(commands.send(.step(target == 1 ? 1 : -1), ownerID: owner, source: "motion-timing"))
       let commandReturned = CACurrentMediaTime()
@@ -868,10 +883,17 @@ import XCTest
       }
       curl.onPageFrameReady = forwardReadiness
       curl.onFrameMeasured = nil
+      curl.onPageUpdateMeasured = nil
       let encoding = XCTAttachment(string: "Command execution=\((commandReturned-start)*1000) ms\n" + submission.map {
         "operation=\($0.operationID?.uuidString ?? "cover"); sequence=\($0.sequence); clockRequestMS=\($0.clockRequested.map { ($0-start)*1000 } ?? .nan); callbackMS=\($0.displayUpdateReceived.map { ($0-start)*1000 } ?? .nan); start=\(($0.encodingBegan-start)*1000)ms; CPU=\(($0.submitted-$0.encodingBegan)*1000)ms; GPU queue=\(($0.gpuBegan-$0.submitted)*1000)ms; GPU=\(($0.gpuEnded-$0.gpuBegan)*1000)ms; scheduledMS=\($0.scheduled.map { ($0-start)*1000 } ?? .nan); renderDeadlineMS=\($0.renderingDeadline > 0 ? ($0.renderingDeadline-start)*1000 : .nan); targetMS=\($0.targetPresentation > 0 ? ($0.targetPresentation-start)*1000 : .nan)"
       }.joined(separator: "\n"))
       encoding.name = "Curl submission timing \(turn)"; encoding.lifetime = .keepAlways; add(encoding)
+      let publication = XCTAttachment(string: pageUpdates.map {
+        "operation=\($0.operationID); generation=\($0.generation); phase=\($0.phase.rawValue); nextSequence=\($0.nextSequence); recordedMS=\(($0.recorded-start)*1000); modelMS=\($0.modelTime.map { ($0-start)*1000 } ?? .nan); deadlineMS=\($0.completionDeadline.map { ($0-start)*1000 } ?? .nan); estimatedOSMS=\($0.estimatedPresentation.map { ($0-start)*1000 } ?? .nan); viewHidden=\($0.viewHidden); layerHidden=\($0.layerHidden); layerOpacity=\($0.layerOpacity); attached=\($0.windowAttached); transactionPresentation=\($0.presentsWithTransaction); drawableMatchesLayer=\($0.drawableMatchesLayer.map(String.init) ?? "n/a"); immediatePresentationExpected=\($0.immediatePresentationExpected.map(String.init) ?? "n/a")"
+      }.joined(separator: "\n") + "\nOS receipts:\n" + frames.map {
+        "sequence=\($0.sequence); progress=\($0.progress); presentedMS=\($0.presented > 0 ? ($0.presented-start)*1000 : .nan); unpresented=\($0.presented == 0); deliveredMS=\(($0.delivered-start)*1000)"
+      }.joined(separator: "\n"))
+      publication.name = "Curl layer publication \(turn)"; publication.lifetime = .keepAlways; add(publication)
       XCTAssertFalse(frames.isEmpty, "No OS presentation evidence")
       XCTAssertTrue(frames.allSatisfy {
         $0.presented == 0 || ($0.presented.isFinite && $0.presented >= start && $0.presented <= $0.delivered)

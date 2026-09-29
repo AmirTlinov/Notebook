@@ -15,6 +15,7 @@ struct NotebookPageView: View {
   let onRenderReady: PageTurnReadiness
   let displayProjection: Double
   let refinesDetails: Bool
+  var initialVisibleRegion: CGRect? = nil
   @State private var blankRetry: UInt64 = 0
   #if os(iOS)
   @State private var blankFrame: PageTurnFrame?
@@ -49,7 +50,7 @@ struct NotebookPageView: View {
     } else if let page = model.notebookPage(at: index, in: notebookID) {
       PageSurface(page: page, isCurrent: isCurrent, isInteractive: isInteractive,
         isVisible: isVisible, onRenderReady: onRenderReady, displayProjection: displayProjection,
-        refinesDetails: refinesDetails)
+        refinesDetails: refinesDetails, initialVisibleRegion: initialVisibleRegion)
         #if os(iOS)
         .onAppear { blankFrame = nil }
         #endif
@@ -76,6 +77,7 @@ struct PageSurface: View {
   /// A standalone page/thumbnail is laid out directly and needs no outer scale.
   var displayProjection: Double = 1
   var refinesDetails = true
+  var initialVisibleRegion: CGRect? = nil
 
   @State private var visibleRegion: CGRect?
   #if os(iOS)
@@ -101,7 +103,7 @@ struct PageSurface: View {
         width: page.size.width * scale,
         height: page.size.height * scale
       )
-      let graphicDisplay=model.pageGraphicDisplay(page,in:visibleRegion)
+      let graphicDisplay=model.pageGraphicDisplay(page,in:visibleRegion ?? initialVisibleRegion)
       let orderedInput=model.pageOrderedInk(page,display:graphicDisplay)
       ZStack(alignment: .topLeading) {
         GridPaperView()
@@ -263,8 +265,9 @@ struct PageSurface: View {
         // Admission belongs to the live program; a turn cannot cancel a
         // snapshot already accepted before this page lost presentation.
         model.commitElementState(pageID:page.id,elementID:elementID,state:state,onCommitted:completion)
-      },visibleRegion:visibleRegion,pageTurnActivity:onRenderReady.activity,
+      },visibleRegion:visibleRegion ?? initialVisibleRegion,pageTurnActivity:onRenderReady.activity,
       rasterPreparation:onRenderReady.rasterContext ?? .init(owner:rasterPreparation,pageIndex:0),
+      preparations:onRenderReady.activity == nil ? nil : onRenderReady.agentPreparations,
       onFailure:onRenderReady.failed)
   }
 }

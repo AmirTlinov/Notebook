@@ -1,0 +1,70 @@
+{
+  "devicesAndConfigurations": [
+    {
+      "device": {
+        "architecture": "arm64",
+        "deviceId": "00008103-001E059934D9001E",
+        "deviceName": "iPad (\u0415\u043b\u0438\u0437\u0430\u0432\u0435\u0442\u0430)",
+        "modelName": "iPad Pro (11-inch) (3rd generation)",
+        "osBuildNumber": "24A435",
+        "osVersion": "27.0",
+        "platform": "iOS"
+      },
+      "expectedFailures": 0,
+      "failedTests": 2,
+      "passedTests": 2,
+      "skippedTests": 0,
+      "testPlanConfiguration": {
+        "configurationId": "1",
+        "configurationName": "Test Scheme Action"
+      }
+    }
+  ],
+  "environmentDescription": "Notebook \u00b7 Built with macOS 27.0",
+  "expectedFailures": 0,
+  "failedTests": 2,
+  "finishTime": 1790703079.734,
+  "passedTests": 2,
+  "result": "Failed",
+  "runtimeWarnings": [],
+  "skippedTests": 0,
+  "startTime": 1790702989.028,
+  "statistics": [],
+  "testFailures": [
+    {
+      "failureText": "XCTAssertTrue failed - First exact authored native installation: 569.59225 ms, matched=true, budget=150 ms; OS first-pixel time is unmeasured",
+      "targetName": "NotebookTests",
+      "testIdentifier": 1,
+      "testIdentifierString": "NotebookNavigationLoadUXTests/testColdNotebookWithTwentyFourProgramsShowsEveryControlWithinBudget()",
+      "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/NotebookNavigationLoadUXTests/testColdNotebookWithTwentyFourProgramsShowsEveryControlWithinBudget",
+      "testName": "testColdNotebookWithTwentyFourProgramsShowsEveryControlWithinBudget()"
+    },
+    {
+      "failureText": "XCTAssertLessThanOrEqual failed: (\"0.03370875000109663 seconds\") is greater than (\"0.016666666666666666 seconds\")",
+      "targetName": "NotebookTests",
+      "testIdentifier": 4,
+      "testIdentifierString": "NotebookPageMotionUXTests/testTenForwardReverseTurnsMeetFirstPresentationAndLandingDeadlines()",
+      "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/NotebookPageMotionUXTests/testTenForwardReverseTurnsMeetFirstPresentationAndLandingDeadlines",
+      "testName": "testTenForwardReverseTurnsMeetFirstPresentationAndLandingDeadlines()"
+    }
+  ],
+  "title": "Test - Notebook",
+  "topInsights": [
+    {
+      "category": "Common Failures",
+      "impact": "50% of failures",
+      "text": "3 runs of 1 test failed with XCTAssertLessThanOrEqual failed: (\"0.016673500000251806\") is greater than (\"0.008833333333333334\") - Changing displayed frames must meet 120 Hz; callback time and average FPS cannot hide a missed interval"
+    },
+    {
+      "category": "Common Failures",
+      "impact": "50% of failures",
+      "text": "2 runs of 1 test failed with XCTAssertLessThanOrEqual failed: (\"0.016673541666023084\") is greater than (\"0.008833333333333334\") - Changing displayed frames must meet 120 Hz; callback time and average FPS cannot hide a missed interval"
+    },
+    {
+      "category": "Common Failures",
+      "impact": "50% of failures",
+      "text": "2 runs of 1 test failed with XCTAssertLessThanOrEqual failed: (\"0.01667345833448053\") is greater than (\"0.008833333333333334\") - Changing displayed frames must meet 120 Hz; callback time and average FPS cannot hide a missed interval"
+    }
+  ],
+  "totalTestCount": 4
+}
