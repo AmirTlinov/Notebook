@@ -513,7 +513,7 @@ final class SceneRenderResources {
   }
   private struct WebWaiter {
     let id: UUID
-    let priority: WebPriority
+    var priority: WebPriority
     let source: WebExecutionSource?
     let constructsRuntime: Bool
     let order: UInt64
@@ -551,6 +551,7 @@ final class SceneRenderResources {
   @ObservationIgnored private var webConstructions: Set<UUID> = []
   var activeWebConstructionCount: Int { webConstructions.count }
   @ObservationIgnored private var waiters: [WebWaiter] = []
+  @ObservationIgnored private var webPriorityAdmission: Task<Void, Never>?
   @ObservationIgnored private var accessClock: UInt64 = 0
   @ObservationIgnored private var waiterClock: UInt64 = 0
 
@@ -1032,20 +1033,38 @@ final class SceneRenderResources {
   var diagnosticOwnerCount: Int { diagnosticEntries.count }
 
   func acquireWebSurface(priority: WebPriority, source: InteractiveElementReference? = nil, constructsRuntime: Bool = false,
-    deadline: ContinuousClock.Instant? = nil) async throws -> WebSurfaceLease {
-    try await acquireWebSurface(priority: priority, executionSource: source.map(WebExecutionSource.element), constructsRuntime: constructsRuntime, deadline: deadline)
+    deadline: ContinuousClock.Instant? = nil, requestID: UUID = UUID()) async throws -> WebSurfaceLease {
+    try await acquireWebSurface(priority: priority, executionSource: source.map(WebExecutionSource.element),
+      constructsRuntime: constructsRuntime, deadline: deadline, requestID: requestID)
+  }
+
+  /// Interaction changes the role of the accepted waiter, not its lifetime.
+  /// Its continuation, arrival order and original timeout remain the same.
+  func updatePendingWebPriority(_ requestID: UUID, priority: WebPriority) {
+    guard let index = waiters.firstIndex(where: { $0.id == requestID }), waiters[index].priority != priority else { return }
+    waiters[index].priority = priority
+    waiters.sort { $0.priority == $1.priority ? $0.order < $1.order : $0.priority < $1.priority }
+    // Accept may run during a native/SwiftUI update. Preserve the new queue
+    // order now, but retiring another owner's idle view belongs after it.
+    guard webPriorityAdmission == nil else { return }
+    webPriorityAdmission = Task { @MainActor [weak self] in
+      guard let self else { return }
+      self.webPriorityAdmission = nil
+      let availability = self.webAvailability
+      self.admitWaiters()
+      self.publishWebAvailability(after: availability)
+    }
   }
 
   func acquireDocumentProgramSurface(priority: WebPriority, documentID: UUID, blockID: String,
     deadline: ContinuousClock.Instant? = nil) async throws -> WebSurfaceLease {
-    try await acquireWebSurface(priority: priority, executionSource: .document(documentID, blockID), constructsRuntime: false, deadline: deadline)
+    try await acquireWebSurface(priority: priority, executionSource: .document(documentID, blockID), constructsRuntime: false, deadline: deadline, requestID: UUID())
   }
 
   private func acquireWebSurface(priority: WebPriority, executionSource source: WebExecutionSource?,
-    constructsRuntime: Bool, deadline: ContinuousClock.Instant?) async throws -> WebSurfaceLease {
+    constructsRuntime: Bool, deadline: ContinuousClock.Instant?, requestID id: UUID) async throws -> WebSurfaceLease {
     try Task.checkCancellation()
     guard !priority.preparesRaster || maximumBackgroundWebSurfaces > 0 else { throw SceneRenderError.resourceLimit }
-    let id = UUID()
     let timeout = deadline.map { deadline in
       Task { @MainActor [weak self] in
         do { try await Task.sleep(until: deadline, clock: .continuous) } catch { return }

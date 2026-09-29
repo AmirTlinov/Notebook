@@ -14,7 +14,7 @@ Mac helper и новая authenticated session прежнего iPad ответ�
 
 ## Завершённый срез владельцев224 — доставка подготовлена
 
-Source `f462f08f761145a8651a560b097fc43c9b5dae5be86093415d5841430b4ffe61`.
+Source `0a4be7f8f9205fe433877a9680d76cb1ed94615f7d0deb36ec06f1d1f808b14d`.
 Бумага монтируется независимо от board paint. Единственная подготовка страницы
 принимается существующим native shell после загрузки тела; native window допускается
 до фабрики представления. UUID/controller/address защищают от позднего callback.
@@ -24,7 +24,15 @@ Source `f462f08f761145a8651a560b097fc43c9b5dae5be86093415d5841430b4ffe61`.
 Curl сохраняет один учтённый pool, завершает GPU/OS retirement и держит successor
 до исхода первого transactional кадра. [Контракт и удалённые пути](interaction-ownership.md).
 
-Физические проверки:
+Последняя правка сохраняет задачу и очередь при смене ввода/фокуса; меняется
+приоритет прежнего requestID, а reclamation выполняется после native update.
+`1913Z`, текущий source: **5iPad+1MacPASS**, без skip/runtime warnings. Проверены
+очередь/приоритет, отключение ввода, отмена, смена состояния/плотности, реальные
+24 первых нажатия и pinch/forward/reverse, Mac focus/uncommitted input.
+`1919Z`: **2 cold latency FAIL**; SVG first496.130/all636.387мс,
+programs first409.023/all700.479мс. Точные источники/поздние пиксели PASS.
+
+Проверки предшествующего среза `f462f08f…` и его непосредственных исправлений:
 
 - `1822Z`: 15PASS/3FAIL. Найден реальный запуск дублирующих программ после late
   page load; исправлено принятие единого page owner. Два других FAIL — ошибочные

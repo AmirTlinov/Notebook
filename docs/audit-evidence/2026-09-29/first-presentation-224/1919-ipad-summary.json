@@ -1,0 +1,60 @@
+{
+  "devicesAndConfigurations" : [
+    {
+      "device" : {
+        "architecture" : "arm64",
+        "deviceId" : "00008103-001E059934D9001E",
+        "deviceName" : "iPad (Елизавета)",
+        "modelName" : "iPad Pro (11-inch) (3rd generation)",
+        "osBuildNumber" : "24A435",
+        "osVersion" : "27.0",
+        "platform" : "iOS"
+      },
+      "expectedFailures" : 0,
+      "failedTests" : 2,
+      "passedTests" : 0,
+      "skippedTests" : 0,
+      "testPlanConfiguration" : {
+        "configurationId" : "1",
+        "configurationName" : "Test Scheme Action"
+      }
+    }
+  ],
+  "environmentDescription" : "Notebook · Built with macOS 27.0",
+  "expectedFailures" : 0,
+  "failedTests" : 2,
+  "finishTime" : 1790709612.413,
+  "passedTests" : 0,
+  "result" : "Failed",
+  "runtimeWarnings" : [
+
+  ],
+  "skippedTests" : 0,
+  "startTime" : 1790709558.612,
+  "statistics" : [
+
+  ],
+  "testFailures" : [
+    {
+      "failureText" : "XCTAssertTrue failed - First exact authored native installation: 496.130333 ms, matched=true, budget=150 ms; OS first-pixel time is unmeasured",
+      "targetName" : "NotebookTests",
+      "testIdentifier" : 1,
+      "testIdentifierString" : "NotebookNavigationLoadUXTests/testColdNotebookWithThirteenDenseSVGsShowsEveryElementWithinBudget()",
+      "testIdentifierURL" : "test://com.apple.xcode/Notebook/NotebookTests/NotebookNavigationLoadUXTests/testColdNotebookWithThirteenDenseSVGsShowsEveryElementWithinBudget",
+      "testName" : "testColdNotebookWithThirteenDenseSVGsShowsEveryElementWithinBudget()"
+    },
+    {
+      "failureText" : "XCTAssertTrue failed - First exact authored native installation: 409.022959 ms, matched=true, budget=150 ms; OS first-pixel time is unmeasured",
+      "targetName" : "NotebookTests",
+      "testIdentifier" : 2,
+      "testIdentifierString" : "NotebookNavigationLoadUXTests/testColdNotebookWithTwentyFourProgramsShowsEveryControlWithinBudget()",
+      "testIdentifierURL" : "test://com.apple.xcode/Notebook/NotebookTests/NotebookNavigationLoadUXTests/testColdNotebookWithTwentyFourProgramsShowsEveryControlWithinBudget",
+      "testName" : "testColdNotebookWithTwentyFourProgramsShowsEveryControlWithinBudget()"
+    }
+  ],
+  "title" : "Test - Notebook",
+  "topInsights" : [
+
+  ],
+  "totalTestCount" : 2
+}

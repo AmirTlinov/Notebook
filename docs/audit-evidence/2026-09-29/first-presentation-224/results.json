@@ -1,6 +1,6 @@
 {
   "format": 1,
-  "status": "owner-slice-verified-delivery-pending",
+  "status": "verified-owner-slice-delivery-pending",
   "installedBuild": "223",
   "plannedBuild": "224",
   "fullAcceptance": false,
@@ -559,5 +559,50 @@
       }
     },
     "conclusion": "Functional repair passes; exact cold installations still exceed150ms and every first OS curl presentation exceeds16.667ms. Sources and independently checked late pixels are correct. No threshold, count, or timing scope weakened. Full acceptance remains open."
+  },
+  "functional1913": {
+    "path": "/private/tmp/notebook-224-admission-20260929T1913Z",
+    "sourceSHA256": "0a4be7f8f9205fe433877a9680d76cb1ed94615f7d0deb36ec06f1d1f808b14d",
+    "sourceBeforeAfterMatch": true,
+    "scope": "Input/focus updates retain exact queued request, deadline and lease; critical priority overtakes earlier unrelated preparation; disabling input preserves runtime/navigation. Source/state/density replacement and retirement still cancel correctly. Actual UI24 first taps/pinch exit/reopen/forward/reverse; Mac focus and uncommitted state retained.",
+    "attachments": "/private/tmp/notebook-224-admission-attachments1913/manifest.json",
+    "visuallyReviewed": "42A1036A-E63A-4CD3-A3AB-6D893273D6C4.png: all24 controls show1 after first tap; full page geometry and1/4 indicator present.",
+    "ipad": {
+      "passed": 5,
+      "failed": 0,
+      "skipped": 0,
+      "runtimeWarnings": 0,
+      "summary": "1913-ipad-summary.json"
+    },
+    "mac": {
+      "passed": 1,
+      "failed": 0,
+      "skipped": 0,
+      "runtimeWarnings": 0,
+      "summary": "1913-mac-summary.json"
+    }
+  },
+  "latency1919": {
+    "path": "/private/tmp/notebook-224-cold-20260929T1919Z",
+    "sourceSHA256": "0a4be7f8f9205fe433877a9680d76cb1ed94615f7d0deb36ec06f1d1f808b14d",
+    "sourceBeforeAfterMatch": true,
+    "attachments": "/private/tmp/notebook-224-cold-attachments1919/manifest.json",
+    "passed": 0,
+    "failed": 2,
+    "runtimeWarnings": 0,
+    "summary": "1919-ipad-summary.json",
+    "coldSVG": {
+      "firstNativeMS": 496.130333,
+      "allNativeMS": 636.387458,
+      "exactSources": 13,
+      "pixelsCorrect": true
+    },
+    "coldPrograms": {
+      "firstNativeMS": 409.022959,
+      "allNativeMS": 700.47925,
+      "exactSources": 24,
+      "pixelsCorrect": true
+    },
+    "conclusion": "Current source functional5iPad+1MacPASS. Both cold cases retain exact sources/pixels but miss150ms first installation. No OS cold first-pixel measurement or full-acceptance claim."
   }
 }

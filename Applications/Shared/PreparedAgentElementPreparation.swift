@@ -27,6 +27,14 @@ final class PreparedAgentElementPreparationOwner {
     let capture: SceneSourceDemand?
     let fallbackEntryID: UUID?
     let runtimeFailure: AgentWebSourceFailure?
+    var webPriority: WebPriority { active ? (inputEnabled && focused ? .input : .liveProgram) : .visible }
+    func hasSamePreparation(as other: Self) -> Bool {
+      source == other.source && basis == other.basis && active == other.active
+        && permitsPreparation == other.permitsPreparation && policy == other.policy
+        && capture == other.capture && fallbackEntryID == other.fallbackEntryID
+        && runtimeFailure == other.runtimeFailure
+        && (focused || permitsPreparation) == (other.focused || other.permitsPreparation)
+    }
   }
   struct Configuration {
     weak var model: NotebookAppModel?
@@ -48,6 +56,7 @@ final class PreparedAgentElementPreparationOwner {
   @ObservationIgnored private(set) var demand: Demand?
   @ObservationIgnored private var request: UUID?
   @ObservationIgnored private var task: Task<Void, Never>?
+  @ObservationIgnored private var interactionUpdate: Task<Void, Never>?
   @ObservationIgnored private var notifications: Set<AnyCancellable> = []
   @ObservationIgnored private weak var consumer: Consumer?
   @ObservationIgnored private var lastFailure: PageTurnPreparationFailure?
@@ -78,8 +87,28 @@ final class PreparedAgentElementPreparationOwner {
     guard !isRetired else { return }
     self.configuration = configuration
     guard demand != configuration.demand else { return }
+    let previous = demand
     demand = configuration.demand
-    restart()
+    if let previous, configuration.demand.hasSamePreparation(as: previous), !waitingForAdmission {
+      // Input/focus changes reconfigure this accepted job. They do not replace
+      // its queue position, timeout or in-flight passive WebKit capture.
+      if let request { resources.updatePendingWebPriority(request, priority: configuration.demand.webPriority) }
+      updateInteraction()
+    } else { restart() }
+  }
+  private func updateInteraction() {
+    guard interactionUpdate == nil else { return }
+    let request = request
+    interactionUpdate = Task { @MainActor [weak self] in
+      guard let self, !Task.isCancelled, !self.isRetired, self.request == request else { return }
+      defer { self.interactionUpdate = nil }
+      guard let model = self.configuration?.model, model.shutdownPhase != .stopped,
+        let demand = self.demand else { return }
+      if let web = self.web, let session = self.session {
+        web.updatePriority(demand.webPriority)
+        self.runtimeView(web, session: session, basis: demand.basis).prepare()
+      }
+    }
   }
   func acceptSource(_ source: AgentElement, policy: AgentSnapshotPolicy) {
     guard !isRetired, let previous = configuration, let model = previous.model, let old = demand else { return }
@@ -99,12 +128,13 @@ final class PreparedAgentElementPreparationOwner {
       pageTurnActivity: activity, rasterPreparation: context, cohort: previous.cohort, onState: previous.onState)
   }
   private func restart() {
-    guard !isRetired, let demand else { return }
+    guard !isRetired, demand != nil else { return }
+    interactionUpdate?.cancel(); interactionUpdate = nil
     task?.cancel(); let id = UUID(); request = id
     task = Task { @MainActor [weak self] in
       guard let self, self.request == id else { return }
       self.observeResourcesIfNeeded()
-      await self.prepare(demand)
+      await self.prepare()
       if self.request == id { self.task = nil }
     }
   }
@@ -162,6 +192,7 @@ final class PreparedAgentElementPreparationOwner {
   func retire(afterUpdate: Bool = false) {
     guard !isRetired else { return }
     isRetired = true; request = nil; task?.cancel(); task = nil
+    interactionUpdate?.cancel(); interactionUpdate = nil
     // Native ownership is revoked now. Observed presentation state may belong
     // to the SwiftUI update which removed this source, so its clearing waits
     // for that transaction while the existing checkpoint retains its writer.
@@ -448,9 +479,9 @@ final class PreparedAgentElementPreparationOwner {
   }
 
   @MainActor
-  private func prepare(_ demand: Demand) async {
-    guard !Task.isCancelled, !isRetired, configuration?.model != nil, model.shutdownPhase != .stopped else { return }
-    guard let request = request else { return }
+  private func prepare() async {
+    guard !Task.isCancelled, !isRetired, configuration?.model != nil, model.shutdownPhase != .stopped,
+      let request, let demand else { return }
     let model = model, focus = focus, rasterPreparation = rasterPreparation
     waitingForAdmission = false
     if !demand.active, runtimeWasPresented, let retiring = web,
@@ -492,7 +523,7 @@ final class PreparedAgentElementPreparationOwner {
     }
     if let web, let session = session {
       bindRuntime(web, demand: demand)
-      web.updatePriority(demand.active ? (demand.inputEnabled && demand.focused ? .input : .liveProgram) : .visible)
+      web.updatePriority(demand.webPriority)
       runtimeView(web, session: session, basis: demand.basis).prepare()
       return
     }
@@ -502,8 +533,8 @@ final class PreparedAgentElementPreparationOwner {
         let next = try await rasterPreparation.owner.prepare(demand.source, policy: demand.policy,
           pageIndex: rasterPreparation.pageIndex, store: model.store, permits: { model.permitsPagePreparation })
         guard !Task.isCancelled, self.request == request,
-          model.shutdownPhase != .stopped else { next.release(); return }
-        raster = next; preparedSource = demand.source
+          model.shutdownPhase != .stopped, let current = self.demand else { next.release(); return }
+        raster = next; preparedSource = current.source
       } catch is CancellationError { return }
       catch {
         guard !Task.isCancelled, self.request == request else { return }
@@ -525,18 +556,21 @@ final class PreparedAgentElementPreparationOwner {
     do {
       NotebookNavigationObservation.webPreparation("prepared_admission_requested", ownerID: request, sourceID: demand.source.id)
       let acquired = try await resources.acquireWebSurface(
-        priority: demand.active ? (demand.inputEnabled && demand.focused ? .input : .liveProgram) : .visible,
-        source: focus, constructsRuntime: demand.active, deadline: .now + .seconds(8))
+        priority: demand.webPriority, source: focus, constructsRuntime: demand.active,
+        deadline: .now + .seconds(8), requestID: request)
       NotebookNavigationObservation.webPreparation("prepared_admission_acquired", ownerID: request, sourceID: demand.source.id)
       guard !Task.isCancelled, self.request == request,
-        model.shutdownPhase != .stopped else { acquired.release(); return }
-      bindRuntime(acquired, demand: demand)
-      let session = AgentWebNativeSession(lease: acquired, resources: resources, snapshotPolicy: demand.policy)
+        model.shutdownPhase != .stopped, let current = self.demand else { acquired.release(); return }
+      // Input may have changed while this exact request waited. Apply its
+      // current role before constructing or exposing the admitted runtime.
+      acquired.updatePriority(current.webPriority)
+      bindRuntime(acquired, demand: current)
+      let session = AgentWebNativeSession(lease: acquired, resources: resources, snapshotPolicy: current.policy)
       install(session)
       web = acquired
       // The accepted grant starts the one browser immediately. SwiftUI mounts
       // its physical output later; it is no longer a navigation scheduler.
-      runtimeView(acquired, session: session, basis: demand.basis).prepare()
+      runtimeView(acquired, session: session, basis: current.basis).prepare()
     } catch is CancellationError {
       return
     } catch {

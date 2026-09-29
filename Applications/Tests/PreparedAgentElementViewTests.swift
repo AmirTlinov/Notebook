@@ -244,6 +244,66 @@ final class PreparedAgentElementViewTests: XCTestCase {
   }
 
   @MainActor
+  func testQueuedPagePreparationKeepsItsRequestWhenMountEnablesInput() async throws {
+    let model = makeModel()
+    await model.start(pageSize: NotebookAppModel.defaultPageSize)
+    let resources = SceneRenderResources()
+    let first = try await resources.acquireWebSurface(priority: .liveProgram, constructsRuntime: true)
+    let second = try await resources.acquireWebSurface(priority: .liveProgram, constructsRuntime: true)
+    defer { first.release(); second.release() }
+    var grantOrder: [String] = []
+    let earlier = Task { @MainActor in
+      let lease = try await resources.acquireWebSurface(priority: .liveProgram, constructsRuntime: true,
+        deadline: .now + .seconds(8))
+      grantOrder.append("earlier")
+      return lease
+    }
+    defer { earlier.cancel() }
+    try await waitUntil("The unrelated construction waiter is queued first") { resources.pendingWebRequestCount == 1 }
+    let source = AgentElement(id: UUID().uuidString, kind: .web,
+      frame: .init(x: 0, y: 0, width: 160, height: 120), source: "Accepted before native input",
+      html: "<button>Ready</button>", javaScript: "window.boots=(window.boots||0)+1;notebook.ready(Promise.resolve());")
+    let owner = PreparedAgentElementPreparationOwner(resources: resources)
+    defer { owner.retire() }
+    var requests: [UUID] = []
+    precondition(NotebookNavigationObservation.onWebPreparation == nil)
+    NotebookNavigationObservation.onWebPreparation = { stage, id, sourceID, _ in
+      guard sourceID == source.id else { return }
+      if stage == "prepared_admission_requested" { requests.append(id) }
+      if stage == "prepared_admission_acquired" { grantOrder.append("page") }
+    }
+    defer { NotebookNavigationObservation.onWebPreparation = nil }
+    let pageID = UUID()
+    func accept(input: Bool, focused: Bool) {
+      owner.accept(.init(model: model,
+        demand: .init(source: source, basis: nil, active: true, inputEnabled: input, focused: focused,
+          permitsPreparation: true, policy: .exact(scale: 1), capture: nil, fallbackEntryID: nil, runtimeFailure: nil),
+        focus: .page(pageID: pageID, elementID: source.id), pageTurnActivity: nil,
+        rasterPreparation: nil, cohort: nil, onState: { _, _ in false }))
+    }
+    accept(input: false, focused: false)
+    try await waitUntil("The accepted page waits for its first native construction") { resources.pendingWebRequestCount == 2 }
+    let acceptedRequest = try XCTUnwrap(requests.first)
+    accept(input: true, focused: true)
+    // This grants exactly one constructor. Input priority must update the
+    // existing waiter ahead of earlier unrelated work, without reacquisition.
+    first.finishConstruction()
+    await owner.waitForPreparation()
+    let session = try XCTUnwrap(owner.session), token = try XCTUnwrap(session.coordinator.loadToken)
+    XCTAssertEqual(requests, [acceptedRequest])
+    XCTAssertEqual(session.lease.id, acceptedRequest)
+    XCTAssertEqual(session.lease.priority, .input)
+    XCTAssertEqual(grantOrder.first, "page")
+    let earlierLease = try await earlier.value
+    defer { earlierLease.release() }
+    accept(input: false, focused: true)
+    try await waitUntil("Disabling input reclassifies the same accepted runtime") { session.lease.priority == .liveProgram }
+    XCTAssertTrue(owner.session === session)
+    XCTAssertEqual(session.coordinator.loadToken, token)
+    XCTAssertEqual(requests, [acceptedRequest])
+  }
+
+  @MainActor
   func testRetiringRetainedPageCancelsItsQueuedWebAdmission() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("retained-page-cancel-\(UUID())")
     let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
