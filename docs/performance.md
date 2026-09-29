@@ -1,5 +1,8 @@
 # Camera and input performance contracts
 
+[Current causal review](performance-review-2026-09-30.md) records the remaining
+executed paths on build224, repair dependencies and unresolved first-frame causes.
+
 ## Input stays with its admitted owner
 
 `SpatialInkCanvas` checks the actual native receiving view before admitting a new
