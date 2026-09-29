@@ -1,0 +1,62 @@
+{
+  "format": 1,
+  "status": "owner-repair-installed-physical-gestures-verified-latency-open",
+  "sourceCommit": "28f11aee",
+  "version": "0.3.154",
+  "build": "224",
+  "previousBuild": "223",
+  "sourceSHA256": "0a4be7f8f9205fe433877a9680d76cb1ed94615f7d0deb36ec06f1d1f808b14d",
+  "fullAcceptance": false,
+  "scope": "Page preparation/admission, native paper before spatial paint, exact camera/page cancellation, page-local attention/state, charged persistent curl pool and input handoff without preparation restart. Final physical5iPad+1MacPASS includes system UI24. Cold first installation and first OS curl deadlines remain open.",
+  "verification": {
+    "path": "/private/tmp/notebook-224-admission-20260929T1913Z/verification.json",
+    "sha256": "389b192beb98a831b4f863cd38f1b26afc5600a4be0ec8c5c7fc980a8a4cf2ef",
+    "status": "passed",
+    "route": "./verify.sh:selected",
+    "ipadPassed": 5,
+    "macPassed": 1,
+    "additionalChecks": "results.json"
+  },
+  "buildReceipt": {
+    "path": "/private/tmp/notebook-owner-pair-224-20260929T1921Z/build.json",
+    "sha256": "c2de6d612ac3a594e2fe5214b529ca709c82bb3050478d920e20c4d91405af40",
+    "status": "verified-build"
+  },
+  "installationReceipt": {
+    "path": "/private/tmp/notebook-owner-install-224-20260929T1927Z/installation.json",
+    "sha256": "218301f207ed90979a32da2469790b64454606a8c979fedd98b954cd7fe37954",
+    "status": "matched-pair-launched",
+    "finishedAt": "2026-09-29T19:28:14.842641+00:00",
+    "macInstalledBuild": "224",
+    "ipadInstalledBuild": "224",
+    "inPlaceUpdate": true,
+    "dataAccess": "none",
+    "identityRetention": "Bundle identities and signed rights preserved. Existing trusted iPad identity reconnected with a fresh session."
+  },
+  "postLaunch": {
+    "status": "ready",
+    "checkedAt": "2026-09-29T19:29:26.285Z",
+    "macInstalledHelperStatus": "ready",
+    "iPadPresentationStatus": "ready",
+    "iPadDeviceID": "29DC77FE-8777-41EC-BE98-704F4668A2F4",
+    "iPadSessionID": "DA9747C6-403B-4731-9884-D2557698F160",
+    "priorSessionID": "1AC78CE4-2154-43F3-A35B-284A472AB464",
+    "workspaceID": "54349F3B-9E0A-4DEA-B990-40CAE04EF45E",
+    "cursor": "51341",
+    "scope": "Installed pair launch and authenticated connection; affected physical gestures verified on the same source in1913.",
+    "macInstalledVersion": "0.3.154",
+    "macInstalledBuild": "224",
+    "iPadInstalledVersion": "0.3.154",
+    "iPadInstalledBuild": "224",
+    "iPadNotebookApps": [
+      {
+        "bundleID": "com.amirtlinov.notebook.preview",
+        "name": "Notebook Lab",
+        "build": "224"
+      }
+    ],
+    "qaOrTestAppsPresent": false,
+    "path": "/private/tmp/notebook-owner-install-224-20260929T1927Z/post-launch-check.json",
+    "sha256": "6191f4dd428fa93cc00b87009f8cc46643c45a0c5482edb12053cbc262715c06"
+  }
+}

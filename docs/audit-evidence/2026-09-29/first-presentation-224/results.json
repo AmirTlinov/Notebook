@@ -1,8 +1,7 @@
 {
   "format": 1,
-  "status": "verified-owner-slice-delivery-pending",
-  "installedBuild": "223",
-  "plannedBuild": "224",
+  "status": "owner-repair-installed-physical-gestures-verified-latency-open",
+  "installedBuild": "224",
   "fullAcceptance": false,
   "diagnostic1617": {
     "path": "/private/tmp/notebook-first-presentation-20260929T1617Z",
@@ -50,7 +49,7 @@
       "qualification": "Early CA-publication turns had no initial drops. Several drawables were rejected before layer exposure publication, before their future Metal target and despite timely GPU work. Even no-drop turns have late first system target."
     }
   },
-  "remaining": "Deliver224. Attribute remaining cold WebKit and first OS publication latency; cold document, native24 deadline, Pencil/eraser OS latency, mixed intermediate OS composition and full physical acceptance remain open.",
+  "remaining": "Cold WebKit first native installation and initial CA/OS curl presentation remain above goals; cold document, native24 deadline, Pencil/eraser OS latency, mixed intermediate OS composition and full physical acceptance stay open.",
   "functional1649": {
     "path": "/private/tmp/notebook-224-functional-20260929T1649Z",
     "attachments": "/private/tmp/notebook-224-functional-attachments1649/manifest.json",
@@ -603,6 +602,38 @@
       "exactSources": 24,
       "pixelsCorrect": true
     },
-    "conclusion": "Current source functional5iPad+1MacPASS. Both cold cases retain exact sources/pixels but miss150ms first installation. No OS cold first-pixel measurement or full-acceptance claim."
-  }
+    "conclusion": "Current source functional5iPad+1MacPASS. Both cold cases retain exact sources/pixels but miss150ms first installation. No OS cold first-pixel measurement or full-acceptance claim.",
+    "acceptedWorkCounts": {
+      "SVG": {
+        "source_accepted": 13,
+        "navigation_requested": 2,
+        "runtime_ready": 13
+      },
+      "programs": {
+        "prepared_admission_requested": 24,
+        "prepared_admission_acquired": 24,
+        "source_accepted": 24,
+        "navigation_requested": 24,
+        "runtime_ready": 24
+      }
+    },
+    "workContinuity": "Program requests dropped from46 to24 with24 actual runtimes. SVG retained both original executors:2 native owners instead of4; each of13 sources accepted once. First-time WebKit readiness still dominates the initial result.",
+    "ownerCounts": {
+      "SVG": {
+        "nativeInitialization": {
+          "native_init_started": 2,
+          "native_init_finished": 2
+        },
+        "sourceOwnerCount": 2
+      },
+      "programs": {
+        "nativeInitialization": {
+          "native_init_started": 24,
+          "native_init_finished": 24
+        },
+        "sourceOwnerCount": 24
+      }
+    }
+  },
+  "delivery": "delivery.json"
 }
