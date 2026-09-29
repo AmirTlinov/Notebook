@@ -1,0 +1,63 @@
+{
+  "format": 1,
+  "status": "repair-installed-system-ui-acceptance-pending",
+  "sourceCommit": "f81b17c2",
+  "version": "0.3.153",
+  "build": "223",
+  "previousBuild": "222",
+  "sourceSHA256": "23fa7416e9b6eff5a9704b29e2a376463c3d353a2deac5b6672b42461960a175",
+  "fullAcceptance": false,
+  "scope": "Native program session, direct GPU completion, accepted scene identity and addressed state projection reuse. Eight physical native cases, three Core and two Mac cases passed. System UI did not start without OS XCTest passcode authorization; strict latency goals remain open.",
+  "verification": {
+    "path": "/private/tmp/notebook-223-mac-20260929T1246Z/verification.json",
+    "sha256": "5ce93a26229e031e3d579426801418dbdbb9d4f6798d3beba32e3140d2485227",
+    "status": "passed",
+    "route": "./verify.sh:selected",
+    "platform": "Mac",
+    "passed": 2,
+    "failed": 0,
+    "summary": "1246-mac-summary.json",
+    "additionalChecks": "results.json"
+  },
+  "buildReceipt": {
+    "path": "/private/tmp/notebook-interaction-pair-223-20260929T1330Z/build.json",
+    "sha256": "6d808cf2cb6ce5048bd7de731fbd3add68fdbb7ca147e7c48da9e639a5140961",
+    "status": "verified-build"
+  },
+  "installationReceipt": {
+    "path": "/private/tmp/notebook-interaction-install-223-20260929T1335Z/installation.json",
+    "sha256": "9eadb546e3b7776a76c53931ae3e4cc79b89e2caa84f386f841758bd09f2ff9c",
+    "status": "matched-pair-launched",
+    "finishedAt": "2026-09-29T13:36:33.916712+00:00",
+    "macInstalledBuild": "223",
+    "ipadInstalledBuild": "223",
+    "inPlaceUpdate": true,
+    "dataAccess": "none",
+    "noStoreOrKeyAccess": true,
+    "identityRetention": "Bundle identities and signed rights preserved. Existing trusted iPad device identity reconnected. No equal container-filesystem-path claim."
+  },
+  "postLaunch": {
+    "path": "/private/tmp/notebook-interaction-install-223-20260929T1335Z/post-launch-check.json",
+    "sha256": "6de8d33d879c37bbd41ff9b538f94b660a96f60c0721d302ee3fb7a6d10deef6",
+    "status": "ready",
+    "checkedAt": "2026-09-29T13:37:19.035Z",
+    "macInstalledHelperStatus": "ready",
+    "iPadPresentationStatus": "ready",
+    "iPadDeviceID": "29DC77FE-8777-41EC-BE98-704F4668A2F4",
+    "iPadSessionID": "1AC78CE4-2154-43F3-A35B-284A472AB464",
+    "priorSessionID": "4C704FB1-250E-4CB6-9371-E6C20840C870",
+    "scope": "Installed pair launch and connection; system gesture acceptance still pending XCTest OS authentication.",
+    "macInstalledVersion": "0.3.153",
+    "macInstalledBuild": "223",
+    "iPadInstalledVersion": "0.3.153",
+    "iPadInstalledBuild": "223",
+    "iPadNotebookApps": [
+      {
+        "bundleID": "com.amirtlinov.notebook.preview",
+        "name": "Notebook Lab",
+        "build": "223"
+      }
+    ],
+    "qaOrTestAppsPresent": false
+  }
+}

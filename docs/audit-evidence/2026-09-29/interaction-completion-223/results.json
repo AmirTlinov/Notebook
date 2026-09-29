@@ -1,5 +1,5 @@
 {
-  "status": "code published on main; system UI and delivery await first device unlock after reboot; build223 not installed",
+  "status": "Build223 installed in place and pair ready; system UI authentication and strict performance acceptance pending",
   "version": "0.3.153 (223)",
   "baseCommit": "62599fc3e9f224fa7dac1961327d5b415a1db4e4",
   "runs": {
@@ -53,6 +53,117 @@
       "skipped": 0,
       "runtimeWarnings": 0,
       "scope": "One interactive owner before click; repeated zoom preserves original WKWebViews, unsaved input and static pixels."
+    },
+    "1327": {
+      "evidence": "/private/tmp/notebook-223-ui-20260929T1327Z",
+      "sourceSHA256": "23fa7416e9b6eff5a9704b29e2a376463c3d353a2deac5b6672b42461960a175",
+      "sourceUnchanged": null,
+      "passed": 0,
+      "failed": 1,
+      "skipped": 0,
+      "runtimeWarnings": 0,
+      "status": "infrastructure-failure-before-first-gesture",
+      "xcresultSummary": {
+        "devicesAndConfigurations": [
+          {
+            "device": {
+              "architecture": "arm64e",
+              "deviceId": "00008103-001E059934D9001E",
+              "deviceName": "iPad (Елизавета)",
+              "modelName": "iPad Pro (11-inch) (3rd generation)",
+              "osBuildNumber": "24A435",
+              "osVersion": "27.0",
+              "platform": "iOS"
+            },
+            "expectedFailures": 0,
+            "failedTests": 1,
+            "passedTests": 0,
+            "skippedTests": 0,
+            "testPlanConfiguration": {
+              "configurationId": "1",
+              "configurationName": "Test Scheme Action"
+            }
+          }
+        ],
+        "environmentDescription": "Notebook · Built with macOS 27.0",
+        "expectedFailures": 0,
+        "failedTests": 1,
+        "finishTime": 1790688575.7,
+        "passedTests": 0,
+        "result": "Failed",
+        "runtimeWarnings": [],
+        "skippedTests": 0,
+        "startTime": 1790688512.194,
+        "statistics": [],
+        "testFailures": [
+          {
+            "failureText": "The test runner failed to initialize for UI testing. (Underlying Error: Timed out while enabling automation mode.)",
+            "targetName": "NotebookUITests",
+            "testIdentifier": 1,
+            "testIdentifierString": "NotebookUITests-Runner (561) encountered an error",
+            "testName": "NotebookUITests-Runner (561) encountered an error"
+          }
+        ],
+        "title": "Test - Notebook",
+        "topInsights": [],
+        "totalTestCount": 1
+      },
+      "qualification": "Same final product source 23fa7416 as 1241/1246. After full device reboot and first unlock, XCTest runner connected and was authorized but timed out after 60 s enabling UI automation. No test gesture ran. No source-after inventory was produced by the failed verification."
+    },
+    "1337": {
+      "evidence": "/private/tmp/notebook-223-ui-20260929T1337Z",
+      "sourceSHA256": "23fa7416e9b6eff5a9704b29e2a376463c3d353a2deac5b6672b42461960a175",
+      "sourceUnchanged": null,
+      "passed": 0,
+      "failed": 1,
+      "skipped": 0,
+      "runtimeWarnings": 0,
+      "qualification": "After in-place delivery223. System screenshot at13:39:00 confirmed XCTest passcode authorization prompt again. No user authorization arrived before60s timeout. Scenario did not start. Repeats stopped pending OS authorization.",
+      "xcresultSummary": {
+        "devicesAndConfigurations": [
+          {
+            "device": {
+              "architecture": "arm64e",
+              "deviceId": "00008103-001E059934D9001E",
+              "deviceName": "iPad (Елизавета)",
+              "modelName": "iPad Pro (11-inch) (3rd generation)",
+              "osBuildNumber": "24A435",
+              "osVersion": "27.0",
+              "platform": "iOS"
+            },
+            "expectedFailures": 0,
+            "failedTests": 1,
+            "passedTests": 0,
+            "skippedTests": 0,
+            "testPlanConfiguration": {
+              "configurationId": "1",
+              "configurationName": "Test Scheme Action"
+            }
+          }
+        ],
+        "environmentDescription": "Notebook · Built with macOS 27.0",
+        "expectedFailures": 0,
+        "failedTests": 1,
+        "finishTime": 1790689183.853,
+        "passedTests": 0,
+        "result": "Failed",
+        "runtimeWarnings": [],
+        "skippedTests": 0,
+        "startTime": 1790689121.004,
+        "statistics": [],
+        "testFailures": [
+          {
+            "failureText": "The test runner failed to initialize for UI testing. (Underlying Error: Timed out while enabling automation mode.)",
+            "targetName": "NotebookUITests",
+            "testIdentifier": 1,
+            "testIdentifierString": "NotebookUITests-Runner (661) encountered an error",
+            "testName": "NotebookUITests-Runner (661) encountered an error"
+          }
+        ],
+        "title": "Test - Notebook",
+        "topInsights": [],
+        "totalTestCount": 1
+      }
     }
   },
   "negativeBudgets1229": {
@@ -87,9 +198,28 @@
   "diagnostics": {
     "cpu1209": "No process attachment; no CPU stack. Temporary rendezvous removed.",
     "cpu1222": "Scenario ran on1214binary; trace did not finalize before timeout and export failed Document Missing Template Error. No usable CPU stack.",
-    "tex1214": "Isolated Mac host diagnostic, no product changes. Cold compile627.954ms: ZIP entry index21.855ms; TeX passes289.327+262.882ms. Does not establish iPad timings."
+    "tex1214": "Isolated Mac host diagnostic, no product changes. Cold compile627.954ms: ZIP entry index21.855ms; TeX passes289.327+262.882ms. Does not establish iPad timings.",
+    "automation1327": {
+      "owner": "iPad XCTest/XCTAutomationSupport OS authorization",
+      "deviceStateBeforeRun": {
+        "timeUTC": "2026-09-29T13:27Z",
+        "locked": false,
+        "unlockedSinceBoot": true
+      },
+      "transport": "Remote testmanagerd connected, control session established, runner pid 561 authorized; daemon session initiation completed.",
+      "waitingUTC": "2026-09-29T13:28:35.347Z",
+      "timeoutUTC": "2026-09-29T13:29:35.402Z",
+      "error": "com.apple.dt.XCTest.XCTFuture Code 1000: Timed out while enabling automation mode.",
+      "physicalObservation": "After the run stopped, screenshot at 13:30 UTC showed the OS dialog: Введите код-пароль iPad для приложения XCTest — Enable UI Automation. Normal device unlock is not this authorization.",
+      "screenshotLocalOnly": "/private/tmp/notebook-automation-screen-20260929T1330Z.png",
+      "screenshotCopiedToRepository": false,
+      "diagnostics": "/private/tmp/notebook-223-ui1327-host-diagnostics",
+      "userPromptUTC": "2026-09-29T13:31Z",
+      "requestedAction": "Enter the passcode only on the physical iPad to authorize XCTest; no Mac service reset is indicated by this evidence."
+    }
   },
   "remaining": "First OS frame, cold first content and document, Native24 strict deadlines, physical Pencil delivery, every intermediate mixed OS frame and sustained full acceptance.",
   "sourceCommit": "f81b17c2",
-  "sourceSHA256": "23fa7416e9b6eff5a9704b29e2a376463c3d353a2deac5b6672b42461960a175"
+  "sourceSHA256": "23fa7416e9b6eff5a9704b29e2a376463c3d353a2deac5b6672b42461960a175",
+  "delivery": "delivery.json"
 }
