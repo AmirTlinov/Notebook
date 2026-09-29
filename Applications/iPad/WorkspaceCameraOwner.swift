@@ -20,6 +20,7 @@ final class CameraGestureSnapshot {
   @ObservationIgnored var magnification:CGFloat = 1
   @ObservationIgnored var centroid:CGPoint
   @ObservationIgnored var paperReadiness: PageTurnPreparationSource?
+  @ObservationIgnored var requestedPresentation: SessionPresence?
   var partialProgress: Double? {
     guard continuesPartialPassage, let passage else { return nil }
     let span = log(passage.openScale / passage.closedScale)
@@ -86,6 +87,7 @@ final class WorkspaceCameraOwner {
   @ObservationIgnored private weak var model: NotebookAppModel?
   @ObservationIgnored private let movement = SceneCameraSettlement()
   @ObservationIgnored private var readiness: (PageTurnPreparationSource, UUID)?
+  @ObservationIgnored private var paintReadiness: [(SceneCameraPlaneInstallation, UUID)] = []
   @ObservationIgnored private var idleWaiters: [UUID: CheckedContinuation<Bool, Never>] = [:]
   @ObservationIgnored private var advanceTask: Task<Void, Never>?
   var gesture: CameraGestureSnapshot? { if case .interacting(let value) = state { value } else { nil } }
@@ -112,16 +114,31 @@ final class WorkspaceCameraOwner {
     failure = nil
     panStart = nil; state = .interacting(snapshot)
     observe(snapshot.paperReadiness)
+    observePaint()
   }
   func finishGesture() {
     guard let gesture else { return }
-    clearReadiness(); state = .idle
+    clearReadiness(); clearPaintReadiness(); state = .idle
     model?.notebookPagePreparation.endPreparation(operationID: gesture.id)
     notifyIdle()
   }
   func gesturePreparationChanged() {
     guard let gesture else { return }
     acceptPagePreparation(gesture.preparation, operationID: gesture.id)
+  }
+  /// A contact retains its latest intention while the exact outgoing cover or
+  /// destination paper is being installed. An owner event resumes that sample;
+  /// the actual camera never jumps to an unprepared cover in the meantime.
+  func presentGesture(_ presence: SessionPresence) {
+    guard let gesture else { return }
+    gesture.requestedPresentation = presence
+    gesturePreparationChanged()
+    presentRequestedGesture()
+  }
+  private func presentRequestedGesture() {
+    guard let gesture, let requested = gesture.requestedPresentation,
+      hasPreparedSurface(requested), let model, model.presence != requested else { return }
+    model.updatePresence(requested, settled: false)
   }
   private func acceptPagePreparation(_ presence: SessionPresence?, operationID: UUID) {
     guard let model else { return }
@@ -138,8 +155,10 @@ final class WorkspaceCameraOwner {
     guard transitionID == id else { return }
     switch state {
     case .interacting(let snapshot):
+      guard snapshot.paperReadiness?.isRetired != true else { preparationChanged(); return }
       guard snapshot.passage?.itemID == itemID else { return }; snapshot.paperReadiness = source
     case .settling(let pending):
+      guard pending.paperReadiness?.isRetired != true else { preparationChanged(); return }
       guard pending.target.focusedItemID == itemID else { return }; pending.paperReadiness = source
     case .idle: return
     }
@@ -155,9 +174,26 @@ final class WorkspaceCameraOwner {
     if let (source, token) = readiness { source.removeObserver(token) }
     readiness = nil; advanceTask?.cancel(); advanceTask = nil
   }
+  private func clearPaintReadiness() {
+    for (installation, token) in paintReadiness { installation.removeObserver(token) }
+    paintReadiness.removeAll()
+  }
+  private func observePaint() {
+    guard id != nil, let cohort = model?.compositionTiles.published else {
+      clearPaintReadiness(); return
+    }
+    let installations = [cohort.installation(for: .elements), cohort.installation(for: .covers)]
+    guard paintReadiness.count != installations.count
+      || zip(paintReadiness, installations).contains(where: { $0.0.0 !== $0.1 }) else { return }
+    clearPaintReadiness()
+    paintReadiness = installations.map { installation in
+      (installation, installation.observe { [weak self] in self?.preparationChanged() })
+    }
+  }
   /// Coalesces actual owner events after native layout completes. This is not a
   /// retry clock: without a new source/cohort event there is no further work.
   func preparationChanged() {
+    observePaint()
     guard advanceTask == nil else { return }
     advanceTask = Task { @MainActor [weak self] in
       guard !Task.isCancelled, let self else { return }
@@ -165,21 +201,34 @@ final class WorkspaceCameraOwner {
     }
   }
   func hasPreparedSurface(_ target: SessionPresence, refinesDetails: Bool = false) -> Bool {
-    guard let model, let cohort = model.compositionTiles.published,
-      cohort.plan.presentations[.board(target.boardID)] != nil else { return false }
+    guard let model else { return false }
+    if target.mode == .page, let item = target.focusedItemID,
+      let reader = model.notebookPagePreparation.presentation(itemID: item, boardID: target.boardID),
+      target.notebookPageID == nil || target.notebookPageID == reader.pageID {
+      return paperIsReady(pageID: reader.pageID, refinesDetails: refinesDetails)
+    }
+    guard let cohort = model.compositionTiles.published,
+      cohort.plan.presentations[.board(target.boardID)] != nil, cohort.isPaintInstalled else { return false }
     if let item = target.focusedItemID {
       guard cohort.plan.allowsLive(.item(item), in: .board(target.boardID)) else { return false }
       if (model.workspace?.item(id: item)?.kind ?? cohort.frame.index.item(id: item)?.kind) == .board,
         target.openProgress > 0 { return cohort.plan.presentations[.board(item)] != nil }
       if target.mode == .page || target.mode == .document {
-        switch state {
-        case .settling(let pending): return pending.paperReadiness?.state(refinesDetails: refinesDetails).isReady == true
-        case .interacting(let snapshot): return snapshot.paperReadiness?.state(refinesDetails: false).isReady == true
-        case .idle: return false
-        }
+        return paperIsReady(pageID: target.mode == .page ? target.notebookPageID : nil, refinesDetails: refinesDetails)
       }
     }
     return true
+  }
+  private func paperIsReady(pageID: UUID?, refinesDetails: Bool) -> Bool {
+    let source: PageTurnPreparationSource?
+    let refine: Bool
+    switch state {
+    case .settling(let pending): source = pending.paperReadiness; refine = refinesDetails
+    case .interacting(let snapshot): source = snapshot.paperReadiness; refine = false
+    case .idle: return false
+    }
+    guard let source, pageID == nil || source.currentPageID == pageID else { return false }
+    return source.state(refinesDetails: refine).isReady
   }
   private func isPrepared(_ pending: WorkspaceSettlement) -> Bool {
     if pending.isApproaching { return hasPreparedSurface(pending.destination) }
@@ -190,15 +239,36 @@ final class WorkspaceCameraOwner {
   }
   func cancelUnavailable(_ pending: WorkspaceSettlement) {
     guard current(pending), let model else { return }
+    var rollback = pending.origin
+    if pending.paperReadiness?.isRetired == true, let item = rollback.focusedItemID,
+      let page = rollback.notebookPageID, model.notebookPageIndex(page, in: item) == nil {
+      // Native withdrawal is confirmed; the accepted replacement presence is
+      // safer than resurrecting the withdrawn UUID in the old camera origin.
+      rollback = survivingPresence(model.presence ?? rollback, model: model)
+    }
     finish(pending, .cancelled)
     model.cancelRequestedNavigation()
-    model.updatePresence(pending.origin, settled: true)
+    model.updatePresence(rollback, settled: true)
     model.showCue("Переход отменён: объект больше недоступен.")
+  }
+  private func survivingPresence(_ presence: SessionPresence, model: NotebookAppModel) -> SessionPresence {
+    guard presence.mode == .page, let item = presence.focusedItemID, let page = presence.notebookPageID,
+      model.notebookPageIndex(page, in: item) == nil else { return presence }
+    return .init(boardID: presence.boardID, mode: .board, camera: presence.camera, viewport: presence.viewport,
+      selectedItemID: model.isItemBeingDeleted(item) ? nil : item)
   }
   private func advance() {
     guard let model else { return }
+    if let snapshot = gesture, snapshot.paperReadiness?.isRetired == true {
+      interrupt(settlesPose: false)
+      model.cancelRequestedNavigation()
+      if let actual = model.presence { model.updatePresence(survivingPresence(actual, model: model), settled: true) }
+      return
+    }
+    if case .settling(let pending) = state, pending.paperReadiness?.isRetired == true {
+      cancelUnavailable(pending); return
+    }
     if case .settling(let pending) = state, !pending.started {
-      if pending.paperReadiness?.isRetired == true { cancelUnavailable(pending); return }
       if let item = pending.preparation.focusedItemID, model.isItemBeingDeleted(item) { cancelUnavailable(pending); return }
       if case .failed(let failure) = pending.paperReadiness?.state(refinesDetails: false) {
         let target = pending.target, duration = pending.duration, bounce = pending.bounce
@@ -226,11 +296,7 @@ final class WorkspaceCameraOwner {
         model.cancelRequestedNavigation()
         model.showCue("Не удалось подготовить переход. Исходное место сохранено; попробуйте ещё раз.")
       }
-    } else if let snapshot = gesture, let passage = snapshot.passage, let camera = snapshot.passageCamera,
-      passage.returningPortal != nil, passage.progress(camera: camera) < 1 {
-      let shown = passage.presentation(camera: camera, viewport: snapshot.presence.viewport)
-      if hasPreparedSurface(shown), model.presence?.boardID != shown.boardID { model.updatePresence(shown, settled: false) }
-    }
+    } else { presentRequestedGesture() }
   }
 
   @discardableResult
@@ -248,7 +314,7 @@ final class WorkspaceCameraOwner {
     case .settling(let pending): pose = pending.started || pending.approached ? model?.presence : pending.origin
     }
     let pending: WorkspaceSettlement? = if case .settling(let value) = state { value } else { nil }
-    state = .idle; clearReadiness()
+    state = .idle; clearReadiness(); clearPaintReadiness()
     movement.cancel(outcome: outcome); pending?.resolve(outcome)
     if let pose, settlesPose { model?.updatePresence(pose, settled: true) }
     if let operationID { model?.notebookPagePreparation.endPreparation(operationID: operationID) }
@@ -260,7 +326,7 @@ final class WorkspaceCameraOwner {
   }
   private func finish(_ pending: WorkspaceSettlement, _ outcome: SceneCameraSettlement.Outcome) {
     guard current(pending) else { return }
-    state = .idle; clearReadiness(); movement.cancel(outcome: outcome)
+    state = .idle; clearReadiness(); clearPaintReadiness(); movement.cancel(outcome: outcome)
     model?.notebookPagePreparation.endPreparation(operationID: pending.id)
     pending.resolve(outcome); notifyIdle()
   }
@@ -308,6 +374,7 @@ final class WorkspaceCameraOwner {
     acceptPagePreparation(pending.preparation, operationID: pending.id)
     endCurrent(outcome: .superseded, settlesPose: false, notifyingIdle: false); panStart = nil; failure = nil
     state = .settling(pending)
+    observePaint()
     model.updatePresence(origin, settled: false)
     if isPrepared(pending) { start(pending) }
   }
@@ -369,5 +436,5 @@ final class WorkspaceCameraOwner {
     let waiters = idleWaiters.values; idleWaiters.removeAll()
     for waiter in waiters { waiter.resume(returning: completed) }
   }
-  isolated deinit { movement.cancel(); clearReadiness(); finishWaiters(false) }
+  isolated deinit { movement.cancel(); clearReadiness(); clearPaintReadiness(); finishWaiters(false) }
 }

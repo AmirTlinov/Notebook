@@ -121,17 +121,18 @@ extension NotebookAppModel {
         throw CollaborationError("pointing_not_ready", "Изображение указки ещё не готово. Укажите фрагмент после завершения движения.")
       }
     }
-    guard let presence, let cohort = compositionTiles.published,
+    guard let presence,
       !contact.points.isEmpty,
-      let frame = NotebookAttentionProjection.laserFrame(contact.address,model:self,presence:presence) else {
+      let frame = NotebookAttentionProjection.laserFrame(contact.address,model:self,presence:presence),
+      let scale = NotebookAttentionProjection.laserScale(contact.address,model:self,presence:presence) else {
       unavailable(); return
     }
-    let origin = frame.origin, scale = presence.camera.scale
+    let origin = frame.origin
     let box = contact.contour.bounds.insetBy(dx:-24/scale,dy:-24/scale)
     let start = CGPoint(x:origin.x+box.minX*scale,y:origin.y+box.minY*scale)
     let end = CGPoint(x:origin.x+box.maxX*scale,y:origin.y+box.maxY*scale)
     guard let capture = NotebookAttentionProjection.capture(start:start,end:end,model:self,presence:presence,
-      cohort:cohort,installedInk:compositionTiles.surfaceRegistry.installedSources(),compositeRegion:true)?.freezingSubmissionVisuals() else {
+      cohort:compositionTiles.published,installedInk:compositionTiles.surfaceRegistry.installedSources(),compositeRegion:true)?.freezingSubmissionVisuals() else {
       unavailable(); return
     }
     var outlines: [UUID:NotebookLaserContext.Outline] = [:]

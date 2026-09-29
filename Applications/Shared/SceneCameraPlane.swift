@@ -106,8 +106,22 @@ protocol SceneCameraPlaneActivity: AnyObject {
 @MainActor
 final class SceneCameraPlaneInstallation {
   private weak var owner: (any SceneCameraPlaneInstallationOwner)?
+  private var observers: [UUID: @MainActor () -> Void] = [:]
+  private var lastInstalled = false
   var isInstalled: Bool { owner?.isShowing(self) == true }
   func bind(_ owner: any SceneCameraPlaneInstallationOwner) { self.owner = owner }
+  func observe(_ changed: @escaping @MainActor () -> Void) -> UUID {
+    let id = UUID(); observers[id] = changed; return id
+  }
+  func removeObserver(_ id: UUID) { observers[id] = nil }
+  /// Native layout and withdrawal publish edges of the actual installation,
+  /// not a promise made when a SwiftUI value first binds its controller.
+  func changed() {
+    let installed = isInstalled
+    guard installed != lastInstalled else { return }
+    lastInstalled = installed
+    for observer in Array(observers.values) { observer() }
+  }
 }
 
 @MainActor
@@ -338,7 +352,9 @@ final class SceneCameraPlaneController<Revision: Equatable>: UIViewController, S
     // native contact callback. It owns source publication, never a rollback
     // of the camera which the model has already accepted.
     let presence = cameraProjection?.current(for: presence.boardID) ?? presence
+    let previousInstallation = self.installation
     self.installation = installation
+    if previousInstallation !== installation { previousInstallation?.changed() }
     installation?.bind(self)
     hasInstalledLayout = false
     CATransaction.begin()
@@ -371,6 +387,7 @@ final class SceneCameraPlaneController<Revision: Equatable>: UIViewController, S
     }
     applyCamera(presence, countsProjection: true)
     hasInstalledLayout = true
+    installation?.changed()
     observe("plane_update_before_commit")
   }
 
@@ -394,6 +411,7 @@ final class SceneCameraPlaneController<Revision: Equatable>: UIViewController, S
   override func viewDidLayoutSubviews() {
     super.viewDidLayoutSubviews()
     if let host { host.view.layoutIfNeeded(); hasInstalledLayout = true }
+    installation?.changed()
     projection?.didProject()
     observe("plane_did_layout")
   }
@@ -422,6 +440,7 @@ final class SceneCameraPlaneController<Revision: Equatable>: UIViewController, S
     guard !isRetired else { return }
     observe("plane_retire")
     isRetired = true
+    installation?.changed()
     cameraProjection?.remove(self)
     cameraProjection = nil
     sceneModel?.unregisterScenePresentation(self)
@@ -517,7 +536,9 @@ final class SceneCameraPlaneView<Revision: Equatable>: NSView, SceneCameraPlaneA
     guard !isRetired else { return }
     CATransaction.begin(); CATransaction.setDisableActions(true)
     defer { CATransaction.commit() }
+    let previousInstallation = self.installation
     self.installation = installation
+    if previousInstallation !== installation { previousInstallation?.changed() }
     installation?.bind(self)
     hasInstalledLayout = false
     let needsRebase = anchor.map {
@@ -548,6 +569,7 @@ final class SceneCameraPlaneView<Revision: Equatable>: NSView, SceneCameraPlaneA
     applyCameraProjection()
     cameraProjectionCount += 1
     hasInstalledLayout = true
+    installation?.changed()
   }
 
   override func setFrameSize(_ newSize: NSSize) {
@@ -575,6 +597,7 @@ final class SceneCameraPlaneView<Revision: Equatable>: NSView, SceneCameraPlaneA
   override func viewDidMoveToWindow() {
     super.viewDidMoveToWindow()
     if host.window != nil { host.layoutSubtreeIfNeeded(); hasInstalledLayout = true }
+    installation?.changed()
   }
 
   func isShowing(_ installation: SceneCameraPlaneInstallation) -> Bool {
@@ -586,6 +609,7 @@ final class SceneCameraPlaneView<Revision: Equatable>: NSView, SceneCameraPlaneA
   func uninstall() {
     guard !isRetired else { return }
     isRetired = true
+    installation?.changed()
     sceneModel?.unregisterScenePresentation(self)
     sceneModel = nil
     host.rootView = AnyView(EmptyView())

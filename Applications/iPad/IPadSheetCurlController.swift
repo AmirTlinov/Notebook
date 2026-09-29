@@ -229,10 +229,6 @@ final class IPadSheetCurlController: UIViewController, UIGestureRecognizerDelega
         let leaf = motion.direction == .forward ? source : target
         let base = motion.direction == .forward ? target : source
         let width = leaf.texture.width, height = leaf.texture.height
-        let bytes = try curl.pageDrawableBytes(width: width, height: height)
-        guard let reservation = SceneRenderResources.shared.reserveDerivedBytes(bytes * curl.drawableCount, priority: .input)
-        else { throw SceneRenderError.resourceLimit }
-        curl.frameLease = reservation
         try curl.preparePages(leaf: leaf, base: base, operationID: id)
         current.frame = leaf; current.firstFrameSequence = curl.submittedFrameCount; self.motion = current
         curl.prepareDrawable(size: .init(width: width, height: height))
@@ -517,6 +513,7 @@ final class IPadSheetCurlController: UIViewController, UIGestureRecognizerDelega
       guard let self, self.motion?.id == id else { return }
       self.view.bringSubviewToFront(self.curl)
     }
+    curl.onPageDetached = { [weak self] in self?.cancelMotion() }
     curl.onPageRenderFailure = { [weak self] error in
       guard let self, let id = self.motion?.id else { return }
       self.onFailure(error)

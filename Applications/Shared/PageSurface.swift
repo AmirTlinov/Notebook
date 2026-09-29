@@ -48,9 +48,7 @@ struct NotebookPageView: View {
           #endif
         }
     } else if let page = model.notebookPage(at: index, in: notebookID) {
-      PageSurface(page: page, isCurrent: isCurrent, isInteractive: isInteractive,
-        isVisible: isVisible, onRenderReady: onRenderReady, displayProjection: displayProjection,
-        refinesDetails: refinesDetails, initialVisibleRegion: initialVisibleRegion)
+      acceptedPage(page)
         #if os(iOS)
         .onAppear { blankFrame = nil }
         #endif
@@ -59,6 +57,22 @@ struct NotebookPageView: View {
         .overlay { ProgressView().allowsHitTesting(false) }
         .onAppear { onRenderReady(false) }
         .task { await model.prepareNotebookPage(at: index, in: notebookID) }
+        .accessibilityLabel("Загружается лист \(index + 1)")
+    }
+  }
+
+  @ViewBuilder
+  private func acceptedPage(_ page: PageDocument) -> some View {
+    if onRenderReady.acceptNotebookPage(page.id, from: model.notebookPagePreparation) {
+      PageSurface(page: page, isCurrent: isCurrent, isInteractive: isInteractive,
+        isVisible: isVisible, onRenderReady: onRenderReady, displayProjection: displayProjection,
+        refinesDetails: refinesDetails, initialVisibleRegion: initialVisibleRegion)
+    } else {
+      // A native notebook leaf never creates an autonomous program. Its page
+      // owner publishes admission once the bound controller/address is ready.
+      BlankPageSurface(fallbackSize: page.size)
+        .overlay { ProgressView().allowsHitTesting(false) }
+        .onAppear { onRenderReady(false) }
         .accessibilityLabel("Загружается лист \(index + 1)")
     }
   }

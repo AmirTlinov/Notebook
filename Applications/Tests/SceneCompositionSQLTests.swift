@@ -114,7 +114,7 @@ final class SceneCompositionSQLTests: XCTestCase {
     original.installation(for: .elements).bind(installation)
     original.installation(for: .covers).bind(installation)
     XCTAssertTrue(original.isPaintInstalled)
-    XCTAssertEqual(original.liveData.pages[pageID]?.element(id: element.id)?.state["count"], .number(0))
+    XCTAssertEqual(original.liveData.pageOwners[pageID], notebookID)
     let generations = original.nativeInk.owners.mapValues { $0.canvas.spatialSourceGeneration }
     let paintID = original.paintID
     var phases: [String] = []
@@ -141,22 +141,22 @@ final class SceneCompositionSQLTests: XCTestCase {
     XCTAssertFalse(coordinator.isPreparing)
     XCTAssertNil(coordinator.failure)
     let current = try XCTUnwrap(coordinator.published)
-    XCTAssertEqual(current.liveData.pages[pageID]?.element(id: element.id)?.state["count"], .number(1))
+    XCTAssertEqual(current.liveData.pageOwners[pageID], notebookID)
     if mixedSpatialChange {
       XCTAssertFalse(current === original)
       XCTAssertNotEqual(current.paintID, paintID)
       XCTAssertEqual(current.plan.revision, afterRevision)
-      XCTAssertEqual(original.validatedContentRevision, beforeRevision, "Refused intervals cannot advance the old witness")
+      XCTAssertEqual(original.validatedSpatialRevision, beforeRevision, "Refused intervals cannot advance the old witness")
       XCTAssertTrue(phases.contains("plan")); XCTAssertTrue(phases.contains("native_ink"))
-      XCTAssertFalse(phases.contains("page_content_rebound"))
+      XCTAssertFalse(phases.contains("spatial_cut_validated"))
       XCTAssertEqual(current.liveData.ink.actions.count, 1)
     } else {
       XCTAssertTrue(current === original)
       XCTAssertEqual(current.paintID, paintID)
       XCTAssertEqual(current.plan.revision, beforeRevision, "The new durable header is not a new paint receipt")
-      XCTAssertEqual(current.validatedContentRevision, afterRevision)
+      XCTAssertEqual(current.validatedSpatialRevision, afterRevision)
       XCTAssertEqual(current.nativeInk.owners.mapValues { $0.canvas.spatialSourceGeneration }, generations)
-      XCTAssertTrue(phases.contains("page_content_rebound"))
+      XCTAssertTrue(phases.contains("spatial_cut_validated"))
       XCTAssertFalse(phases.contains("plan")); XCTAssertFalse(phases.contains("native_ink"))
       XCTAssertFalse(phases.contains("published"))
       coordinator.prepare(source: after, presence: presence, frame: frame, pinned: [.item(notebookID)], displayScale: 1)
@@ -1016,7 +1016,6 @@ final class SceneCompositionSQLTests: XCTestCase {
     XCTAssertTrue(oldData.documents.isEmpty, "A selected closed cover cannot load its document body")
     XCTAssertTrue(oldData.states.isEmpty, "Closed cover admission does not need program state")
     XCTAssertEqual(oldData.documentPaperSizes[documentID], .uncompiledDocument)
-    XCTAssertTrue(oldData.pages.isEmpty)
     let resources = SceneRenderResources(byteLimit: 128 * 1024 * 1024)
     let coordinator = SceneCompositionTiles(resources: resources)
     defer { coordinator.removePublishedCoverage() }

@@ -1,0 +1,52 @@
+{
+  "devicesAndConfigurations" : [
+    {
+      "device" : {
+        "architecture" : "arm64e",
+        "deviceId" : "00008103-001E059934D9001E",
+        "deviceName" : "iPad (Елизавета)",
+        "modelName" : "iPad Pro (11-inch) (3rd generation)",
+        "osBuildNumber" : "24A435",
+        "osVersion" : "27.0",
+        "platform" : "iOS"
+      },
+      "expectedFailures" : 0,
+      "failedTests" : 1,
+      "passedTests" : 2,
+      "skippedTests" : 0,
+      "testPlanConfiguration" : {
+        "configurationId" : "1",
+        "configurationName" : "Test Scheme Action"
+      }
+    }
+  ],
+  "environmentDescription" : "Notebook · Built with macOS 27.0",
+  "expectedFailures" : 0,
+  "failedTests" : 1,
+  "finishTime" : 1790707008.114,
+  "passedTests" : 2,
+  "result" : "Failed",
+  "runtimeWarnings" : [
+
+  ],
+  "skippedTests" : 0,
+  "startTime" : 1790706888.381,
+  "statistics" : [
+
+  ],
+  "testFailures" : [
+    {
+      "failureText" : "Testing was canceled",
+      "targetName" : "NotebookTests",
+      "testIdentifier" : 3,
+      "testIdentifierString" : "PreparedAgentElementViewTests/testLatePageReadBorrowsItsPreparationBeforeTheExistingShellMountsPrograms()",
+      "testIdentifierURL" : "test://com.apple.xcode/Notebook/NotebookTests/PreparedAgentElementViewTests/testLatePageReadBorrowsItsPreparationBeforeTheExistingShellMountsPrograms",
+      "testName" : "testLatePageReadBorrowsItsPreparationBeforeTheExistingShellMountsPrograms()"
+    }
+  ],
+  "title" : "Test - Notebook",
+  "topInsights" : [
+
+  ],
+  "totalTestCount" : 3
+}

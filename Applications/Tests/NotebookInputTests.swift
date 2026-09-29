@@ -724,7 +724,7 @@ final class NotebookInputTests: XCTestCase {
     }
     let echo = try await registry.prepareSceneInk(plan: cohort.plan, frame: cohort.frame,
       liveData: .init(documents: cohort.liveData.documents, states: cohort.liveData.states,
-        pages: cohort.liveData.pages, ink: journal), resources: resources, displayScale: 1)
+        pageOwners: cohort.liveData.pageOwners, ink: journal), resources: resources, displayScale: 1)
     try echo.install()
     XCTAssertTrue(registry.canvas(for: .board(board)) === installedCanvas)
     XCTAssertEqual(installedCanvas.spatialMeshInstallCount, installations,

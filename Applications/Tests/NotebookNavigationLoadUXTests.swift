@@ -9,6 +9,81 @@ import XCTest
 /// source/runtime receipts time that boundary; pixels and usable controls are
 /// checked independently afterward. These timestamps do not establish OS display.
 @MainActor final class NotebookNavigationLoadUXTests: XCTestCase {
+  func testCurrentPaperMountsWithoutBoardPaintAndRetainsItsHostWhenPaintArrives() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("reader-admission-\(UUID())")
+    let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
+    retainNotebookUntilTeardown(model, removing: root)
+    await model.start(pageSize: .init(width: 834, height: 1194))
+    let workspace = try XCTUnwrap(model.workspace), page = try XCTUnwrap(model.activePage)
+    let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+    let previous = scene.windows.first(where: \.isKeyWindow), window = UIWindow(windowScene: scene)
+    window.frame = .init(x: 0, y: 0, width: 834, height: 1194)
+    let center = try XCTUnwrap(model.boardHierarchy?.focusedCenter(of: workspace.selectedItemID, in: workspace.rootBoardID))
+    let presence = SessionPresence(boardID: workspace.rootBoardID, mode: .page,
+      camera: .init(center: center, scale: 1), viewport: .init(x: 834, y: 1194),
+      focusedItemID: workspace.selectedItemID, openProgress: 1,
+      selectedItemID: workspace.selectedItemID, notebookPageID: page.id)
+    model.updatePresence(presence, settled: true)
+    // Withdraw only the unrelated board job at its real scheduling boundary.
+    // Paper source/readiness must not depend on that job reaching publication.
+    model.compositionTiles.onPreparationPhase = { [weak model] _, stage in
+      if stage == "plan" { model?.compositionTiles.cancelPreparation() }
+    }
+    defer {
+      model.compositionTiles.onPreparationPhase = nil
+      window.isHidden = true; window.rootViewController = nil; previous?.makeKey()
+    }
+    let host = UIHostingController(rootView: SpatialWorkspaceView().environment(model).ignoresSafeArea())
+    window.rootViewController = host; window.makeKeyAndVisible()
+    func pageOwner(_ controller: UIViewController) -> IPadPageTurnController? {
+      if let owner = controller as? IPadPageTurnController { return owner }
+      for child in controller.children { if let owner = pageOwner(child) { return owner } }
+      return nil
+    }
+    try await NotebookPersistenceFenceContract.until {
+      pageOwner(host)?.currentPagePreparation.isReady == true
+    }
+    let owner = try XCTUnwrap(pageOwner(host)), identity = owner.visiblePageIdentity
+    XCTAssertNil(model.compositionTiles.published)
+    XCTAssertEqual(owner.preparationSource.currentPageID, page.id)
+    let camera = WorkspaceCameraOwner()
+    camera.attach(model)
+    let gesture = CameraGestureSnapshot(presence: presence,
+      trajectory: .init(startingCamera: presence.camera, startingCentroid: .zero, viewport: presence.viewport), entry: nil, exit: nil)
+    gesture.paperReadiness = owner.preparationSource
+    camera.beginGesture(gesture)
+    XCTAssertTrue(camera.hasPreparedSurface(presence), "Installed writable paper is independent of board paint")
+    XCTAssertFalse(camera.hasPreparedSurface(presence.selecting(itemID: workspace.selectedItemID, pageID: UUID())),
+      "A ready previous leaf cannot acknowledge a replacement page UUID")
+    camera.detach()
+    model.compositionTiles.onPreparationPhase = nil
+    let frame = WorkspaceSceneFrame(index: try XCTUnwrap(model.sceneIndex), presence: presence, portalCamera: { _ in nil })
+    model.prepareComposition(presence: presence, frame: frame, pinned: [.item(workspace.selectedItemID)], displayScale: 2)
+    try await NotebookPersistenceFenceContract.until { model.compositionTiles.published?.isPaintInstalled == true }
+    XCTAssertTrue(pageOwner(host) === owner)
+    XCTAssertEqual(owner.visiblePageIdentity, identity, "Board publication retains the already writable paper and its runtime")
+
+    let withdrawn = owner.preparationSource
+    let waitingCamera = WorkspaceCameraOwner()
+    waitingCamera.attach(model)
+    let held = CameraGestureSnapshot(presence: presence,
+      trajectory: .init(startingCamera: presence.camera, startingCentroid: .zero, viewport: presence.viewport), entry: nil, exit: nil)
+    held.paperReadiness = withdrawn; waitingCamera.beginGesture(held)
+    defer { waitingCamera.detach() }
+    // The native page directory withdraws the displayed UUID. Its same-index
+    // replacement may not replace a camera's unhandled terminal source event.
+    owner.update(ownerID: workspace.selectedItemID, sequenceRevision: "replacement-root", pageCount: 1,
+      selectedIndex: 0, navigationIsEnabled: true, pageIsInteractive: true, canBeginNavigation: { true },
+      page: { _, _, _ in AnyView(Color.white) }, onCommit: { _, _ in }, onTransitioningChange: { _ in },
+      pageIdentities: [0: UUID()])
+    let replacement = owner.preparationSource
+    XCTAssertTrue(withdrawn.isRetired); XCTAssertNil(withdrawn.currentPageID)
+    XCTAssertFalse(replacement === withdrawn)
+    waitingCamera.bindPaperReadiness(itemID: workspace.selectedItemID, transitionID: held.id, source: replacement)
+    XCTAssertTrue(held.paperReadiness === withdrawn)
+    try await NotebookPersistenceFenceContract.until { waitingCamera.isIdle }
+  }
+
   func testColdNotebookWithThirteenDenseSVGsShowsEveryElementWithinBudget() async throws {
     try await cold(programs: false, board: false)
   }

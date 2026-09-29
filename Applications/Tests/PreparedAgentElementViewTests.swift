@@ -9,6 +9,98 @@ import XCTest
 
 final class PreparedAgentElementViewTests: XCTestCase {
   @MainActor
+  func testLatePageReadBorrowsItsPreparationBeforeTheExistingShellMountsPrograms() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("late-page-owner-\(UUID())")
+    let store = NotebookStore(root: root), actor = UUID(), size = NotebookAppModel.defaultPageSize
+    _ = try store.initializeWorkspace(actor: actor, pageSize: size)
+    var workspace = try store.loadIndex()
+    let item = workspace.selectedItemID, first = try XCTUnwrap(workspace.selectedPageID)
+    let source = AgentElement(id: "late-program", kind: .web,
+      frame: .init(x: 20, y: 20, width: 160, height: 120), source: "Late accepted program",
+      html: "<button>Late</button>", javaScript: "window.lateBoots=(window.lateBoots||0)+1;notebook.ready(Promise.resolve());")
+    let presence = SessionPresence(boardID: workspace.rootBoardID, mode: .page, camera: .init(),
+      viewport: .init(x: 834, y: 1194), focusedItemID: item, openProgress: 1,
+      selectedItemID: item, notebookPageID: first)
+    try store.savePresence(presence)
+    var target: UUID?
+    for index in 1..<8 {
+      let appended = try XCTUnwrap(workspace.appendPage(in: item, actor: actor, pageSize: size))
+      var page = try XCTUnwrap(appended.createdPage)
+      if index == 6 { page.replaceElements([source], actor: actor); target = page.id }
+      _ = try store.saveWorkspaceSelection(index: workspace, createdPage: page)
+    }
+    try store.savePresence(presence)
+    let model = NotebookAppModel(store: store, startsNearbySync: false)
+    retainNotebookUntilTeardown(model, removing: root)
+    await model.start(pageSize: size)
+    let order = try XCTUnwrap(model.notebookPageRoot(item)), targetID = try XCTUnwrap(target)
+    // Match the actual reader to its native selected leaf without loading its
+    // body. Keeping presence on page 0 would add a fifth resident to this
+    // four-page native window and intentionally evict one of its neighbours.
+    model.updatePresence(presence.selecting(itemID: item, pageID: targetID), settled: true)
+    XCTAssertEqual(model.presence?.notebookPageID, targetID)
+    XCTAssertNil(model.notebookPage(at: 6, in: item))
+    func waitFor(_ condition: () -> Bool) async -> Bool {
+      let deadline = ContinuousClock.now + .seconds(8)
+      while !condition(), ContinuousClock.now < deadline { try? await Task.sleep(for: .milliseconds(20)) }
+      return condition()
+    }
+    let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+    let previous = scene.windows.first(where: \.isKeyWindow), window = UIWindow(windowScene: scene)
+    let controller = IPadPageTurnController()
+    var targetReadiness: PageTurnReadiness?, nativeControllerID: UUID?
+    var firstFactoryAdmitted = false
+    // The real native owner first creates a loading shell with no page UUID.
+    // Its receipt and addressed window must exist before that factory runs.
+    controller.update(ownerID: item, sequenceRevision: order, pageCount: 8, selectedIndex: 6,
+      navigationIsEnabled: true, pageIsInteractive: true, canBeginNavigation: { true },
+      page: { index, current, readiness in
+        if index == 6, targetReadiness == nil {
+          targetReadiness = readiness
+          firstFactoryAdmitted = model.notebookPagePreparation.retainedIndices(in: item, root: order)?.contains(6) == true
+          XCTAssertNil(model.notebookPage(at: 6, in: item))
+        }
+        return AnyView(NotebookPageView(notebookID: item, index: index,
+          isCurrent: current, isInteractive: current, isVisible: true, onRenderReady: readiness,
+          displayProjection: 1, refinesDetails: true).environment(model))
+      }, onCommit: { _, _ in }, onTransitioningChange: { _ in },
+      notebookNavigation: model.notebookPageNavigation,
+      onWindowChange: { indices, target, source, controllerID in
+        nativeControllerID = controllerID
+        model.retainNotebookPageWindow(indices, in: item, root: source, target: target, controllerID: controllerID)
+      }, pageIdentities: model.notebookResidentPageIdentities(item))
+    window.rootViewController = controller; window.makeKeyAndVisible()
+    defer { controller.uninstall(); window.isHidden = true; window.rootViewController = nil; previous?.makeKey() }
+    XCTAssertTrue(firstFactoryAdmitted)
+    let readiness = try XCTUnwrap(targetReadiness), controllerID = try XCTUnwrap(nativeControllerID)
+    guard await waitFor({
+      model.notebookPage(at: 6, in: item)?.id == targetID && readiness.agentPreparations != nil
+    }) else {
+      XCTFail("The existing loading shell must borrow the accepted read owner")
+      return
+    }
+    let entry = try XCTUnwrap(model.notebookPagePreparation.entry(at: 6, in: item, root: order))
+    XCTAssertTrue(readiness.agentPreparations === entry.preparations)
+    let owner = entry.preparations.owner(for: source.id)
+    guard await waitFor({ owner.session?.webView.superview != nil && owner.showsLiveProgram }) else {
+      XCTFail("The borrowed source must mount its one runtime; retired=\(owner.isRetired), active=\(owner.isActive), resident=\(model.pages[targetID] != nil), failure=\(owner.failure ?? "none")")
+      return
+    }
+    XCTAssertEqual(SceneRenderResources.shared.webActivity(for: .page(pageID: targetID, elementID: source.id)).activeLeaseCount, 1)
+    let board = SessionPresence(boardID: presence.boardID, mode: .board, camera: presence.camera,
+      viewport: presence.viewport, selectedItemID: item, notebookPageID: first)
+    model.updatePresence(board, settled: true)
+    model.retainNotebookPageWindow([6], in: item, root: order, controllerID: controllerID)
+    XCTAssertFalse(readiness.acceptNotebookPage(targetID, from: model.notebookPagePreparation),
+      "A still-mounted outgoing controller cannot reopen a terminal reader")
+    XCTAssertNil(model.notebookPagePreparation.retainedIndices(in: item, root: order))
+    XCTAssertTrue(entry.preparations.isRetired)
+    controller.uninstall()
+    XCTAssertFalse(readiness.acceptNotebookPage(targetID, from: model.notebookPagePreparation),
+      "Retiring the physical receipt also releases its source closure")
+  }
+
+  @MainActor
   func testRetainedPagePreparationStartsBeforeMountAndSurvivesConsumerReplacement() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("retained-page-\(UUID())")
     let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
@@ -34,6 +126,9 @@ final class PreparedAgentElementViewTests: XCTestCase {
     let frame = WorkspaceSceneFrame(index: try XCTUnwrap(model.sceneIndex), presence: presence, portalCamera: { _ in nil })
     window.updatePresence(presence)
     window.prepareCurrent(model: model, presence: presence, frame: frame, displayScale: 2)
+    XCTAssertEqual(window.presentation(itemID: itemID, boardID: presence.boardID)?.pageID, page.id,
+      "The accepted paper admits its existing native host before board paint")
+    XCTAssertNil(window.presentation(itemID: itemID, boardID: UUID()))
     let entry = try XCTUnwrap(window.entry(at: 0, in: itemID, root: order))
     let preparations = entry.preparations
     let owner = preparations.owner(for: source.id)
@@ -105,6 +200,7 @@ final class PreparedAgentElementViewTests: XCTestCase {
     window.prepareCurrent(model: model, presence: presence, frame: frame, displayScale: 2)
     XCTAssertNil(window.entry(at: 0, in: itemID, root: order),
       "A late host or old composition callback cannot reopen a terminal reader")
+    XCTAssertNil(window.presentation(itemID: itemID, boardID: presence.boardID))
     prepare(page)
     XCTAssertNil(owner.session, "A withdrawn read slot cannot accept another shell")
     window.updatePresence(covered)
@@ -120,14 +216,31 @@ final class PreparedAgentElementViewTests: XCTestCase {
     window.prepareCurrent(model: model, presence: presence, frame: frame, displayScale: 2,
       operationID: cancelledOpening)
     XCTAssertNil(pendingOwner.demand, "An old camera callback cannot start the replacement's preparation")
+    XCTAssertNil(window.presentation(itemID: itemID, boardID: presence.boardID))
     window.prepareCurrent(model: model, presence: presence, frame: frame, displayScale: 2,
       operationID: replacementOpening)
     XCTAssertNotNil(pendingOwner.demand)
+    XCTAssertEqual(window.presentation(itemID: itemID, boardID: presence.boardID)?.pageID, page.id)
     window.endPreparation(operationID: replacementOpening)
     window.prepareCurrent(model: model, presence: presence, frame: frame, displayScale: 2,
       operationID: replacementOpening)
     XCTAssertNil(window.entry(at: 0, in: itemID, root: order), "Aborting before the first actual pose retires the prepared destination")
     XCTAssertTrue(pendingEntry.preparations.isRetired)
+    XCTAssertNil(window.presentation(itemID: itemID, boardID: presence.boardID))
+
+    let unresolved = SessionPresence(boardID: presence.boardID, mode: .page, camera: presence.camera,
+      viewport: presence.viewport, focusedItemID: itemID, openProgress: 1, selectedItemID: itemID)
+    let unresolvedOpening = UUID()
+    window.acceptPreparation(unresolved, operationID: unresolvedOpening)
+    window.retain([0], in: itemID, root: order, target: 0, targetIsLoaded: true, controllerID: newController)
+    let native = NotebookPagePreparationWindow.NativeSource(address: .init(itemID: itemID, index: 0, root: order),
+      pageID: nil, controllerID: newController)
+    XCTAssertNotNil(window.entry(for: native, pageID: page.id),
+      "An accepted opening can admit its first physical factory before the page UUID resolves")
+    window.endPreparation(operationID: unresolvedOpening)
+    window.retain([0], in: itemID, root: order, target: 0, targetIsLoaded: true, controllerID: newController)
+    XCTAssertNil(window.entry(for: native, pageID: page.id),
+      "Cancellation withdraws unresolved item demand as well as a known page")
   }
 
   @MainActor
@@ -1642,7 +1755,7 @@ final class PreparedAgentElementViewTests: XCTestCase {
       inkBoardIDs: [], liveOwners: [], protectedOwners: [], bands: [], coverage: [:],
       presentations: [.board(boardID): presence], tiles: [])
     return SceneCompositionCohort(plan: plan, frame: frame, requestedSources: frame.sourceIdentity,
-      liveData: .init(documents: [:], states: [:], pages: [:], ink: .init(stamp: stamp)), rasters: [:], liveRasters: [:],
+      liveData: .init(documents: [:], states: [:], ink: .init(stamp: stamp)), rasters: [:], liveRasters: [:],
       nativeInk: .init(registry: .init(), rootBoardID: boardID, focusedCoverID: nil, owners: [:], updates: []),
       sourceReceipts: receipts, sourceRasters: rasters.compactMapValues { $0.retainedCopy() })
   }

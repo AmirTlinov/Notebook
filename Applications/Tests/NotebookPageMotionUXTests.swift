@@ -262,7 +262,7 @@ import XCTest
         XCTAssertTrue(completions.isEmpty, "A frozen endpoint cannot enable an unready live page")
         XCTAssertTrue(native.page === source)
         XCTAssertTrue(native.containsInActiveTurn(source)); XCTAssertTrue(native.containsInActiveTurn(target))
-        XCTAssertFalse(curl.isHidden); XCTAssertNotNil(curl.frameLease)
+        XCTAssertFalse(curl.isHidden); XCTAssertGreaterThan(curl.pageDrawableReservedBytes, 0)
         native.sheetReadinessDidChange(other)
         XCTAssertFalse(curl.animatesContinuously)
         let submitted = curl.submittedFrameCount
@@ -273,7 +273,7 @@ import XCTest
         XCTAssertEqual(staged, 1, "Unrelated readiness cannot restart the live presentation")
         ready = true; native.sheetReadinessDidChange(landing)
         XCTAssertEqual(completions, [completed]); XCTAssertTrue(native.page === landing)
-        XCTAssertTrue(curl.isHidden); XCTAssertNil(curl.frameLease)
+        XCTAssertTrue(curl.isHidden); XCTAssertTrue(try XCTUnwrap(curl.pageOutputLayer).isHidden)
         native.sheetReadinessDidChange(landing)
         XCTAssertEqual(completions, [completed]); XCTAssertEqual(captures, 1)
       }
@@ -712,8 +712,10 @@ import XCTest
       let note=XCTAttachment(string:"Turn \(turn), left-edge dark widths: \(shadowWidths)")
       note.lifetime = .keepAlways; add(note)
       XCTAssertLessThanOrEqual(shadowWidths.max() ?? 0,32,"Sheet lighting cannot become a wide dark curtain along the screen")
-      XCTAssertLessThanOrEqual(SceneRenderResources.shared.reservedBytes,reservedBefore,
-        "A completed turn must release its image and drawable backing before another turn")
+      let curl = try XCTUnwrap(controller.sheetController.view.subviews.compactMap { $0 as? SheetCurlMetalView }.first)
+      XCTAssertGreaterThan(curl.pageDrawableReservedBytes, 0)
+      XCTAssertLessThanOrEqual(SceneRenderResources.shared.reservedBytes, reservedBefore + curl.pageDrawableReservedBytes,
+        "Only the charged, reclaimable native drawable pool survives a completed turn")
     }
   }
 

@@ -1,6 +1,6 @@
 {
   "format": 1,
-  "status": "functional-verified-first-presentation-and-reader-mount-open",
+  "status": "owner-slice-verified-delivery-pending",
   "installedBuild": "223",
   "plannedBuild": "224",
   "fullAcceptance": false,
@@ -50,7 +50,7 @@
       "qualification": "Early CA-publication turns had no initial drops. Several drawables were rejected before layer exposure publication, before their future Metal target and despite timely GPU work. Even no-drop turns have late first system target."
     }
   },
-  "remaining": "Finish actual/pending reader lifecycle and first layer publication; verify the final source, deliver the pair. Cold first native installation and full physical acceptance remain open.",
+  "remaining": "Deliver224. Attribute remaining cold WebKit and first OS publication latency; cold document, native24 deadline, Pencil/eraser OS latency, mixed intermediate OS composition and full physical acceptance remain open.",
   "functional1649": {
     "path": "/private/tmp/notebook-224-functional-20260929T1649Z",
     "attachments": "/private/tmp/notebook-224-functional-attachments1649/manifest.json",
@@ -365,5 +365,199 @@
       }
     },
     "conclusion": "Functional scenarios pass. Initial CA publication still has drops; OS-to-async handoff introduces a 16.67-25.01ms gap. The successful no-drop first frame itself follows UIKit estimated presentation at two refreshes. Cold page mounting still waits for the board cohort. These causes remain under repair; not delivered."
+  },
+  "buildAttempt1821": {
+    "path": "/private/tmp/notebook-224-owners-20260929T1821Z",
+    "status": "test-compilation-failed",
+    "sourceSHA256": "5065647589cf0d62a10a649a54b96f49167161b83c44a278545ba7e1eca9ddec",
+    "cause": "Removed obsolete oldData.pages assertion after eliminating page payloads from spatial cohort. No physical scenarios executed."
+  },
+  "functional1822": {
+    "path": "/private/tmp/notebook-224-owners-20260929T1822Z",
+    "attachments": "/private/tmp/notebook-224-owners-attachments1822/manifest.json",
+    "sourceSHA256": "b327abb1402240ee3ef6bb179f8dfb380ac8b26a933fd4c91396d498061e7df5",
+    "sourceBeforeAfterMatch": true,
+    "ipad": {
+      "passed": 15,
+      "failed": 3,
+      "skipped": 0,
+      "runtimeWarnings": 0,
+      "summary": "1822-ipad-summary.json"
+    },
+    "mac": "Not executed after iPad failure",
+    "passedScope": "Early paper before board paint and same native host after cohort; page state SQL exclusion with spatial negative control; real native pinch close/reopen; retained drawable pool, detach/remount, regrab, first bend, endpoints, rapid alternating release, changed-layer captures and cold cancellation/lift.",
+    "failures": [
+      {
+        "scenario": "Page publication cancellation",
+        "observed": "reservedBytes 0 versus baseline 960000",
+        "cause": "Assertion incorrectly required unrelated idle resources to remain allocated; replaced with exact cancelled physical owner retirement and no additional retained bytes."
+      },
+      {
+        "scenario": "Reference after moving opened notebook",
+        "observed": "screen crop remains 100,100, old oracle expected 200,150",
+        "cause": "Accepted move also centers fitted camera on new notebook position. Oracle now checks persisted placement, accepted camera and independently mounted native paper coordinates."
+      },
+      {
+        "scenario": "UI24 first opening",
+        "observed": "0 accessible program controls; actual screen shows insufficient resources in program slots",
+        "cause": "Existing loading NotebookPageView accepted page after outer factory had run; it created standalone executors competing with early page-owned preparation. Borrow moved to accepted source branch before PageSurface construction.",
+        "visual": "ui-failure-final.png",
+        "activities": "/private/tmp/notebook-224-owners-activities1822.json"
+      }
+    ],
+    "conclusion": "New owner slice not delivered; targeted regressions are being repaired before the next physical verification."
+  },
+  "regression1833": {
+    "path": "/private/tmp/notebook-224-regressions-20260929T1833Z",
+    "sourceSHA256": "8a2baa65d8de3fad79d36f1014992b898f04171284b7adadaf4b547ebb298705",
+    "sourceBeforeAfterMatch": true,
+    "passed": 2,
+    "cancelled": 1,
+    "summary": "1833-ipad-summary.json",
+    "passedScope": "Early paper mounting/host preservation and exact curl cancellation resource retirement.",
+    "cause": "New late-read fixture attempted saveWorkspaceSelection before saving required device presence, causing dependency_missing during setup. XCTest stalled while reporting; root interrupted runner after119s. The targeted late-load UI path, subsequent tests and Mac were not executed. Fix prepares presence before appending pages, as existing addressed-read fixture does.",
+    "resultBundle": "Partial; Xcode reported incomplete staged action log after cancellation. No verification receipt."
+  },
+  "regression1846": {
+    "path": "/private/tmp/notebook-224-regressions-20260929T1846Z",
+    "sourceSHA256": "f08725595f1b210cee1e2650e3326337cd0444c1c2ebee378bd9f2ae0a116383",
+    "sourceBeforeAfterMatch": true,
+    "passed": 2,
+    "failed": 1,
+    "summary": "1846-ipad-summary.json",
+    "passedScope": "Early paper/host preservation, exact curl cancellation retirement; late-read first factory admission and shared entry identity assertions passed before runtime check failed.",
+    "cause": "Fixture model kept actual page0 while standalone native controller displayed6, contradicting the four-page resident window. Aligning presence removed this artificial mismatch. Eviction of page6 was not recorded; the missing notebook.ready completion signal later proved sufficient to release its runtime. This run does not establish a product defect.",
+    "execution": "Stopped after115s when XCTest stalled reporting the thrown failure. Remaining native tests, UI24 and Mac did not execute. No verification receipt."
+  },
+  "regression1851": {
+    "path": "/private/tmp/notebook-224-regressions-20260929T1851Z",
+    "attachments": "/private/tmp/notebook-224-regression-attachments1851/manifest.json",
+    "sourceSHA256": "c9ea7c56fd9b6fad293e533aeb149da5981c26f4089bec8b2b483ae829b1e594",
+    "sourceBeforeAfterMatch": true,
+    "passed": 5,
+    "failed": 1,
+    "runtimeWarnings": 0,
+    "summary": "1851-ipad-summary.json",
+    "passedScope": "Actual UI24 first taps, pinch exit/reopen, forward/reverse state; independent paper mounting; exact cancelled pool retirement; retained preparation and unresolved-opening cancellation; persisted movement and attention/native paper geometry.",
+    "failure": "Late-read fixture program used nonempty JavaScript without notebook.ready, rejected with program_completion_unknown. Fix adds the required completion signal; product sources unchanged.",
+    "mac": "Not executed because iPad suite contained the fixture failure.",
+    "visuallyReviewed": "896E3416-AD63-45B4-8617-1618E843B0B9.png: all24 program controls show1 after their first system tap; correct paper layout."
+  },
+  "functional1856": {
+    "path": "/private/tmp/notebook-224-final-20260929T1856Z",
+    "sourceSHA256": "f462f08f761145a8651a560b097fc43c9b5dae5be86093415d5841430b4ffe61",
+    "sourceBeforeAfterMatch": true,
+    "ipad": {
+      "passed": 1,
+      "failed": 0,
+      "skipped": 0,
+      "runtimeWarnings": 0,
+      "summary": "1856-ipad-summary.json"
+    },
+    "mac": {
+      "passed": 1,
+      "failed": 0,
+      "skipped": 0,
+      "runtimeWarnings": 0,
+      "summary": "1856-mac-summary.json"
+    },
+    "scope": "Late body load borrows exact page-owned preparation before native programs mount, with finite native window admitted before factory; first runtime completion, exact retirement and stale callback rejection. Mac passive measured material takes actual click/stationary drag without a board cohort.",
+    "productChangesSince1851": false,
+    "fixtureCorrection": "Added required notebook.ready(Promise.resolve()) to new test program."
+  },
+  "latency1900": {
+    "path": "/private/tmp/notebook-224-latency-20260929T1900Z",
+    "attachments": "/private/tmp/notebook-224-latency-attachments1900/manifest.json",
+    "sourceSHA256": "f462f08f761145a8651a560b097fc43c9b5dae5be86093415d5841430b4ffe61",
+    "sourceBeforeAfterMatch": true,
+    "passed": 0,
+    "failed": 3,
+    "runtimeWarnings": 0,
+    "summary": "1900-ipad-summary.json",
+    "coldSVG": {
+      "firstNativeMS": 485.105959,
+      "allNativeMS": 600.303792,
+      "exactSources": 13,
+      "pixelsCorrect": true
+    },
+    "coldPrograms": {
+      "firstNativeMS": 445.270125,
+      "allNativeMS": 726.313,
+      "exactSources": 24,
+      "pixelsCorrect": true
+    },
+    "curl": {
+      "0": {
+        "firstOSMS": 37.786958335345844,
+        "landingMS": 330.80279166824766,
+        "firstGapMS": 16.673333331709728,
+        "maximumGapMS": 16.673333331709728,
+        "dropped": 1
+      },
+      "1": {
+        "firstOSMS": 29.290374997799518,
+        "landingMS": 322.5269583344925,
+        "firstGapMS": 16.67341666689026,
+        "maximumGapMS": 16.67341666689026,
+        "dropped": 1
+      },
+      "2": {
+        "firstOSMS": 32.386458333348855,
+        "landingMS": 325.48795833281474,
+        "firstGapMS": 16.67345833266154,
+        "maximumGapMS": 16.67345833266154,
+        "dropped": 1
+      },
+      "3": {
+        "firstOSMS": 29.663666668056976,
+        "landingMS": 330.9389583337179,
+        "firstGapMS": 16.67341666689026,
+        "maximumGapMS": 16.67341666689026,
+        "dropped": 1
+      },
+      "4": {
+        "firstOSMS": 32.86133333313046,
+        "landingMS": 333.79512499959674,
+        "firstGapMS": 16.673375001118984,
+        "maximumGapMS": 16.673375001118984,
+        "dropped": 1
+      },
+      "5": {
+        "firstOSMS": 32.900541667913785,
+        "landingMS": 333.83983333260403,
+        "firstGapMS": 16.673499998432817,
+        "maximumGapMS": 16.673499998432817,
+        "dropped": 1
+      },
+      "6": {
+        "firstOSMS": 33.3515416677983,
+        "landingMS": 325.7848749999539,
+        "firstGapMS": 16.67341666689026,
+        "maximumGapMS": 16.67341666689026,
+        "dropped": 1
+      },
+      "7": {
+        "firstOSMS": 31.85283333368716,
+        "landingMS": 333.70883333554957,
+        "firstGapMS": 16.673375001118984,
+        "maximumGapMS": 16.673375001118984,
+        "dropped": 1
+      },
+      "8": {
+        "firstOSMS": 31.549958333926043,
+        "landingMS": 332.4275833329011,
+        "firstGapMS": 16.673500002070796,
+        "maximumGapMS": 16.673500002070796,
+        "dropped": 1
+      },
+      "9": {
+        "firstOSMS": 29.458791668730555,
+        "landingMS": 331.3267083358369,
+        "firstGapMS": 16.67341666689026,
+        "maximumGapMS": 16.67341666689026,
+        "dropped": 1
+      }
+    },
+    "conclusion": "Functional repair passes; exact cold installations still exceed150ms and every first OS curl presentation exceeds16.667ms. Sources and independently checked late pixels are correct. No threshold, count, or timing scope weakened. Full acceptance remains open."
   }
 }

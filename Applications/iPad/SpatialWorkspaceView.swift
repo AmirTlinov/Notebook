@@ -193,7 +193,9 @@ struct SpatialWorkspaceView: View {
         }) { [weak cohort] in
         ZStack {
         LiveSpatialBoardGrid(presence: presence)
-        if cohort == nil {
+        if cohort == nil && !(presence.mode == .page && presence.focusedItemID.flatMap {
+          model.notebookPagePreparation.presentation(itemID: $0, boardID: presence.boardID)
+        } != nil) {
           ProgressView(model.compositionTiles.failure == nil ? "Подготовка пространства" : "Ожидание ресурсов изображения")
             .padding(12).notebookPanel(radius:NotebookChrome.cardRadius)
             .zIndex(9_000)
@@ -369,8 +371,8 @@ struct SpatialWorkspaceView: View {
               camera: remaining.camera, viewport: remaining.viewport,
               selectedItemID: remaining.selectedItemID == id ? nil : remaining.selectedItemID), settled: true)
           }
-          guard let shown = owner?.compositionTiles.published, shown.plan.revision <= revision,
-            shown.frame.index.ownerBoard(itemID: id) == boardID else { return }
+          // The physical pose validates its board and accepted source revision.
+          // An independently mounted reader need not have board paint yet.
           registry?.retirePhysicalOwner(id, on: boardID, through: revision)
           if owner?.selectionSession.itemID(on: boardID) == id { owner?.clearSelection() }
         }
@@ -547,7 +549,7 @@ struct SpatialWorkspaceView: View {
   }
 
   private func selectionPoint(at end:CGPoint,tapCount:Int,presence:SessionPresence,cohort:SceneCompositionCohort?) {
-    guard cameraGesture == nil, !settling, let cohort else { return }
+    guard cameraGesture == nil, !settling else { return }
     let contactGeneration=model.inputGate.acceptedContactGeneration
     let hadSelection=model.selectionSession.target != nil
     if model.consumeNativeTextCanvasTap(at:end) { return }
@@ -558,7 +560,7 @@ struct SpatialWorkspaceView: View {
         let isText: Bool
         switch reference {
         case .page(let page,let id): isText = model.pages[page]?.element(id:id)?.kind == .nativeText
-        case .spatial: isText = model.presentedElement(reference,cohort:cohort)?.kind == .nativeText
+        case .spatial: isText = cohort.flatMap { model.presentedElement(reference,cohort:$0) }?.kind == .nativeText
         }
         if isText {
           model.selectElement(reference)
@@ -616,7 +618,7 @@ struct SpatialWorkspaceView: View {
   }
 
   private func selectionLift(at point:CGPoint,presence:SessionPresence,cohort:SceneCompositionCohort?) -> SceneSelectionLift? {
-    guard cameraGesture == nil, !settling, !model.selectionSession.isInteractive, let cohort else { return nil }
+    guard cameraGesture == nil, !settling, !model.selectionSession.isInteractive else { return nil }
     let raw=NotebookAttentionProjection.selectedInk(at:point,model:model,presence:presence,cohort:cohort)
     let selected = raw == nil ? selectedElement(at:point,presence:presence) : nil
     let hit=raw == nil && selected == nil ? NotebookAttentionProjection.pointContact(at:point,model:model,presence:presence,cohort:cohort) : nil
@@ -759,8 +761,17 @@ struct SpatialWorkspaceView: View {
     let dependentCamera: SpatialCamera?
   }
 
-  private func sceneItems(_ rendered: [RenderedWorkspaceItem], presence: SessionPresence,
+  private func sceneItems(_ admitted: [RenderedWorkspaceItem], presence: SessionPresence,
     viewport: SpatialPoint, frame: WorkspaceSceneFrame?, cohort: SceneCompositionCohort?) -> some View {
+    // The physical item keeps one ForEach identity before and after its board
+    // paint arrives. Its page owner can admit paper without admitting a cover,
+    // background ink or any other item from an unpublished scene candidate.
+    let readers = model.notebookPagePreparation.presentations.values.filter {
+      $0.boardID == presence.boardID && !model.isItemBeingDeleted($0.address.itemID)
+    }
+    let admittedIDs = Set(admitted.map(\.id))
+    let rendered = admitted + readers.filter { !admittedIDs.contains($0.address.itemID) }
+      .sorted { $0.address.itemID < $1.address.itemID }.map(\.rendered)
     let covers = Dictionary(uniqueKeysWithValues: rendered.map { item in
       (item.id, cohort.map { model.presentedCoverElements(cohort: $0, boardID: presence.boardID, itemID: item.id) } ?? [])
     })
@@ -770,7 +781,10 @@ struct SpatialWorkspaceView: View {
       selected: selectedItemID, lifted: liftedItemIDs,
       editingText: editingSpatialText, contentGesture: contentGestureActive,
       navigationID:navigationID, isCameraGesture: cameraGesture != nil, settling: settling,
-      pointing: model.isPointing, prepares: rendered.map { preparesContent($0.id, presence: presence) },
+      pointing: model.isPointing, prepares: rendered.map {
+        model.notebookPagePreparation.presentation(itemID: $0.id, boardID: presence.boardID) != nil
+          || preparesContent($0.id, presence: presence)
+      },
       page: presence.documentPageIndex, layout: documentPageLayouts,
       dependentCamera: rendered.contains { $0.stackID != nil || $0.item.kind == .board }
         || selectedItemID != nil ? presence.camera : nil)
@@ -793,7 +807,8 @@ struct SpatialWorkspaceView: View {
   private func sceneItemContents(_ rendered: [RenderedWorkspaceItem], presence: SessionPresence,
     viewport: SpatialPoint, anchorCamera: SpatialCamera, covers: [UUID: [SpatialElement]], frame: WorkspaceSceneFrame?, cohort: SceneCompositionCohort?) -> some View {
     ForEach(rendered.filter {
-          cohort?.plan.allowsLive(.item($0.id), in: .board(presence.boardID)) == true && (
+          (cohort?.plan.allowsLive(.item($0.id), in: .board(presence.boardID)) == true
+            || model.notebookPagePreparation.presentation(itemID: $0.id, boardID: presence.boardID) != nil) && (
           WorkspaceSceneProjection.mountsContent(of: $0, in: presence)
             || $0.id == preparationPresence?.focusedItemID
             || $0.id == selectedItemID || liftedItemIDs.contains($0.id))
@@ -810,12 +825,14 @@ struct SpatialWorkspaceView: View {
             projectedScale: presence.camera.scale,
             boardID: presence.boardID,
             coverElements: covers[rendered.id] ?? [],
+            coverIsAdmitted: cohort?.plan.allowsLive(.item(rendered.id), in: .board(presence.boardID)) == true,
+            readerIsVisible: presence.focusedItemID == rendered.id && presence.mode == .page,
             viewport: viewport,
             isFocused: presence.focusedItemID == rendered.id,
             preparesCoverMotion: presence.focusedItemID == rendered.id
               || selectedItemID == rendered.id
               || model.workspace?.selectedItemID == rendered.id,
-            preparesContent: preparesContent(
+            preparesContent: model.notebookPagePreparation.presentation(itemID: rendered.id, boardID: presence.boardID) != nil || preparesContent(
               rendered.id,
               presence: presence
             ),
@@ -886,8 +903,7 @@ struct SpatialWorkspaceView: View {
   }
 
   private func selectedElement(at point:CGPoint,presence:SessionPresence)->EditableElementReference? {
-    guard let cohort=model.compositionTiles.published else { return nil }
-    return NotebookAttentionProjection.selectedElement(at:point,model:model,presence:presence,cohort:cohort)
+    return NotebookAttentionProjection.selectedElement(at:point,model:model,presence:presence,cohort:model.compositionTiles.published)
   }
 
   private struct ElementPlaneRevision: Equatable {
@@ -1218,12 +1234,7 @@ struct SpatialWorkspaceView: View {
           documentPageIndex: projected.documentPageIndex, selectedItemID: snapshot.presence.selectedItemID,
           notebookPageID: snapshot.presence.notebookPageID)
       : projected
-    // The outgoing surface stays mounted until the bounded target cohort is
-    // available. Its camera still follows the same raw gesture while loading.
-    if shown.boardID == model.presence?.boardID || cameraOwner.hasPreparedSurface(shown) {
-      model.updatePresence(shown,settled:false)
-    } else { model.updatePresence(snapshot.presence.replacingCamera(camera),settled:false) }
-    cameraOwner.gesturePreparationChanged()
+    cameraOwner.presentGesture(shown)
   }
 
   private func settleMagnification() {
@@ -1580,6 +1591,8 @@ private struct WorkspaceSceneItem: View {
   let projectedScale: Double
   let boardID: UUID
   let coverElements: [SpatialElement]
+  let coverIsAdmitted: Bool
+  let readerIsVisible: Bool
   let viewport: SpatialPoint
   let isFocused: Bool
   let preparesCoverMotion: Bool
@@ -1615,10 +1628,10 @@ private struct WorkspaceSceneItem: View {
         onLiftChanged(rendered.id, lifted)
       }, onDrop: { onDrop(rendered.id, $0, $1) }) {
       ZStack {
-      SceneCoverMaterial(itemID: rendered.id, effect: .shadow) {
+      if coverIsAdmitted { SceneCoverMaterial(itemID: rendered.id, effect: .shadow) {
         WorkspaceItemShadow(geometry: rendered.geometry, kind: rendered.item.kind,
           hasContents: composition.cohort?.liveData.nonemptyBoardIDs.contains(rendered.id) == true, lifted: isLifted)
-      }.allowsHitTesting(false)
+      }.allowsHitTesting(false) }
       if rendered.item.kind == .board {
         itemCover
       } else if rendered.item.kind == .notebook {
@@ -1687,9 +1700,11 @@ private struct WorkspaceSceneItem: View {
           style: .continuous
         )
       )
+      .opacity(coverIsAdmitted || readerIsVisible ? 1 : 0)
+      .allowsHitTesting(coverIsAdmitted || readerIsVisible)
     }
 
-    CoverOpeningSurface(
+    if coverIsAdmitted { CoverOpeningSurface(
       ownerID: rendered.id,
       progress: openProgress,
       revision: coverRenderingRevision,
@@ -1697,7 +1712,7 @@ private struct WorkspaceSceneItem: View {
       preparesCoverMotion: preparesCoverMotion
     ) {
       itemCover
-    }
+    } }
   }
 
   @ViewBuilder
@@ -1790,11 +1805,6 @@ private struct WorkspaceSceneItem: View {
         presence.camera.scale > 0 else { return nil }
       return PageAgentPreparationOwner.visibleRegion(page: page, item: rendered, presence: presence)
     }()
-    if page != nil, onRenderReady.activity != nil,
-      let root = model.notebookPageRoot(notebookItem.id),
-      let entry = model.notebookPagePreparation.entry(at: index, in: notebookItem.id, root: root) {
-      onRenderReady.borrowAgentPreparations(entry)
-    }
     return AnyView(NotebookPageView(notebookID: notebookItem.id, index: index, isCurrent: isCurrent,
       isInteractive: isCurrent && contentIsInteractive, isVisible: isLive,
       onRenderReady: onRenderReady, displayProjection: rendered.geometry.fitScale(viewport: viewport),

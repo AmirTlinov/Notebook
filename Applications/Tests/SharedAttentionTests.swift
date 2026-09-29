@@ -1,5 +1,6 @@
 import NotebookCore
 import XCTest
+import UIKit
 @testable import Notebook
 
 final class SharedAttentionTests: XCTestCase {
@@ -51,17 +52,27 @@ final class SharedAttentionTests: XCTestCase {
     presence = presence.selecting(itemID: model.presence?.selectedItemID, pageID: model.presence?.notebookPageID)
     model.updatePresence(presence,settled:true)
     try await waitForScene(model)
-    try await mountNotebookScene(model)
+    XCTAssertNil(NotebookAttentionProjection.capture(start:.init(x:100,y:100),end:.init(x:220,y:200),
+      model:model,presence:presence,cohort:nil,installedInk:[:]),
+      "An accepted source without an installed paper cannot grant a capture")
+    let window = try await mountNotebookScene(model)
+    let boardPresence = SessionPresence(boardID:presence.boardID,mode:.board,camera:presence.camera,
+      viewport:presence.viewport)
+    XCTAssertNil(NotebookAttentionProjection.capture(start:.init(x:100,y:100),end:.init(x:220,y:200),
+      model:model,presence:boardPresence,cohort:nil,installedInk:[:]),
+      "Page readiness cannot admit an unpainted board")
+    XCTAssertEqual(NotebookAttentionProjection.pointContact(at:.init(x:100,y:100),model:model,
+      presence:presence,cohort:nil)?.target,.init(kind:.page,id:page.id))
     var declinedSource: NotebookAttentionSelection.Fragment?
     let beforeBytes = SceneRenderResources.shared.reservedBytes
     let declined = NotebookAttentionProjection.capture(start: .init(x: 100, y: 100), end: .init(x: 220, y: 200),
-      model: model, presence: presence, cohort: try XCTUnwrap(model.compositionTiles.published), installedInk: [:],
+      model: model, presence: presence, cohort: nil, installedInk: [:],
       acceptsFirstFragment: { declinedSource = $0; return false })
     XCTAssertNil(declined, "An ineligible contact must not construct a captured selection")
     XCTAssertEqual(declinedSource?.target, .init(kind: .page, id: page.id))
     XCTAssertEqual(SceneRenderResources.shared.reservedBytes, beforeBytes)
     let selection = try XCTUnwrap(NotebookAttentionProjection.capture(start:.init(x:100,y:100),end:.init(x:220,y:200),model:model,presence:presence,
-      cohort: XCTUnwrap(model.compositionTiles.published), installedInk: [:]))
+      cohort: nil, installedInk: [:]))
     let prepared = try await Task.detached { try selection.resolvedReferences() }.value
     let reference = try XCTUnwrap(prepared.first)
     XCTAssertEqual(reference.target,.init(kind:.page,id:page.id))
@@ -70,12 +81,42 @@ final class SharedAttentionTests: XCTestCase {
     model.publishHumanContext(selection)
     XCTAssertFalse(model.isPointing)
     XCTAssertFalse(model.referenceChanged(reference))
-    model.moveItem(workspace.selectedItemID,to:center.offsetBy(x:100,y:50))
+    let beforeMove = try XCTUnwrap(NotebookAttentionProjection.frame(reference,model:model,presence:presence))
+    let destination = center.offsetBy(x:100,y:50)
+    let movement = try XCTUnwrap(model.moveItem(workspace.selectedItemID,to:destination))
+    let moveResult = await movement.task.value
+    XCTAssertEqual(try XCTUnwrap(moveResult?.placements[workspace.selectedItemID]?.pose?.center),destination)
     try await waitForScene(model)
     XCTAssertFalse(model.referenceChanged(reference))
-    let moved = try XCTUnwrap(NotebookAttentionProjection.frame(reference,model:model,presence:presence))
-    XCTAssertEqual(moved.minX,200,accuracy:1)
-    XCTAssertEqual(moved.minY,150,accuracy:1)
+    XCTAssertEqual(model.boardHierarchy?.board(presence.boardID)?.focusedCenter(of:workspace.selectedItemID),destination)
+    let currentPresence = try XCTUnwrap(model.presence)
+    XCTAssertEqual(currentPresence.camera.center,destination,
+      "An open notebook follows its accepted item center and keeps the fitted paper in place")
+    // The old camera is no longer displayed. Attention follows the native
+    // endpoint, not a hypothetical projection using that retained camera.
+    let deadline = ContinuousClock.now + .seconds(5)
+    func currentFrame() -> CGRect? {
+      NotebookAttentionProjection.frame(reference,model:model,presence:currentPresence)
+    }
+    while currentFrame().map({ abs($0.minX-beforeMove.minX) >= 1 || abs($0.minY-beforeMove.minY) >= 1 }) ?? true,
+      .now < deadline {
+      window.layoutIfNeeded(); try await Task.sleep(for:.milliseconds(10))
+    }
+    let moved = try XCTUnwrap(currentFrame())
+    XCTAssertEqual(moved.minX,beforeMove.minX,accuracy:1)
+    XCTAssertEqual(moved.minY,beforeMove.minY,accuracy:1)
+    func paper(in view:UIView) -> PagePresentationNativeView? {
+      if let paper = view as? PagePresentationNativeView, paper.isPresenting(page) { return paper }
+      for child in view.subviews {
+        if let found = paper(in:child) { return found }
+      }
+      return nil
+    }
+    let native = try XCTUnwrap(paper(in:window))
+    let nativeFrame = native.convert(native.bounds,to:window), region = try XCTUnwrap(reference.region)
+    let scale = nativeFrame.width/page.size.width
+    XCTAssertEqual(moved.minX,nativeFrame.minX+region.x*scale,accuracy:1)
+    XCTAssertEqual(moved.minY,nativeFrame.minY+region.y*scale,accuracy:1)
     let action = CollaborationAction(summary:"Подпись",expected:[.init(target:reference.target,revision:page.agentStamp.revision)],operations:[
       .init(kind:.insertElement,target:reference.target,id:"caption",values:["kind":.string("markdown"),"source":.string("Мысль"),"frame":.object(["x":.number(300),"y":.number(80),"width":.number(200),"height":.number(80)])])])
     _ = try model.store.applyCollaborationAction(action,actor:UUID()); await model.reloadExternalChanges()?.value

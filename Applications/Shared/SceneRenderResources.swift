@@ -227,6 +227,7 @@ final class WebSurfaceBorrow {
 /// physical owners. Element IDs are local to their physical source plane.
 enum ScenePhysicalOwner: Hashable {
   case pageInk(UUID)
+  case pageCurl(UUID)
   case boardInk(UUID)
   case item(UUID)
   case element(boardID: UUID, coverID: UUID?, id: String)

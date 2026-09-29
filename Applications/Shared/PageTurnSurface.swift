@@ -252,8 +252,13 @@ enum PageTurnOutcome: Equatable { case completed, cancelled, superseded, failed 
 final class PageTurnPreparationSource {
   private(set) var isRetired = false
   private var probe: (@MainActor (Bool) -> PageTurnPreparationState)?
+  private var pageIdentity: (@MainActor () -> UUID?)?
+  var currentPageID: UUID? { pageIdentity?() }
   private var observers: [UUID: @MainActor () -> Void] = [:]
-  init(_ probe: @escaping @MainActor (Bool) -> PageTurnPreparationState) { self.probe = probe }
+  init(currentPageID: (@MainActor () -> UUID?)? = nil,
+    _ probe: @escaping @MainActor (Bool) -> PageTurnPreparationState) {
+    pageIdentity = currentPageID; self.probe = probe
+  }
   func state(refinesDetails: Bool) -> PageTurnPreparationState { probe?(refinesDetails) ?? .waiting }
   @discardableResult func observe(_ changed: @escaping @MainActor () -> Void) -> UUID {
     let id = UUID(); observers[id] = changed; return id
@@ -262,7 +267,7 @@ final class PageTurnPreparationSource {
   func changed() { for observer in Array(observers.values) { observer() } }
   func retire() {
     guard !isRetired else { return }
-    isRetired = true; probe = nil; changed(); observers.removeAll()
+    isRetired = true; probe = nil; pageIdentity = nil; changed(); observers.removeAll()
   }
 }
 
@@ -284,7 +289,23 @@ final class PageTurnReadiness {
   private(set) var state = State.waiting
   private(set) var isRetired = false
   private(set) var materialRevision: UInt64 = 0
+  enum AgentPreparationSource {
+    case autonomous
+    case notebook((@MainActor () -> NotebookPagePreparationWindow.NativeSource?)?)
+  }
+  private var agentPreparationSource: AgentPreparationSource
   private var agentPreparationMount: NotebookPagePreparationWindow.Mount?
+  func acceptNotebookPage(_ pageID: UUID, from window: NotebookPagePreparationWindow) -> Bool {
+    guard !isRetired else { return false }
+    switch agentPreparationSource {
+    case .autonomous: return true
+    case .notebook(let source):
+      _ = window.admissionRevision
+      guard let source = source?(), let entry = window.entry(for: source, pageID: pageID) else { return false }
+      borrowAgentPreparations(entry)
+      return agentPreparationMount?.entry === entry
+    }
+  }
   var agentPreparations: PageAgentPreparationOwner? { agentPreparationMount?.entry.preparations }
   func borrowAgentPreparations(_ entry: NotebookPagePreparationWindow.Entry) {
     guard !isRetired, let activity else { return }
@@ -306,11 +327,13 @@ final class PageTurnReadiness {
   private let materialChangedHandler: @MainActor () -> Void
 
   init(activity: PageTurnActivity? = nil, pageIndex: Int = 0,
+    agentPreparationSource: AgentPreparationSource = .autonomous,
     isInActiveTurn: @escaping @MainActor () -> Bool = { false },
     onFailure: @escaping @MainActor (PageTurnPreparationFailure) -> Void = { _ in },
     onMaterialChanged: @escaping @MainActor () -> Void = {},
     _ handler: @escaping @MainActor (Bool) -> Void) {
     self.activity = activity
+    self.agentPreparationSource = agentPreparationSource
     self.pageIndex = pageIndex
     self.isInActiveTurn = isInActiveTurn
     self.handler = handler
@@ -339,6 +362,7 @@ final class PageTurnReadiness {
     guard !isRetired else { return }
     isRetired = true; state = .waiting; materialRevision &+= 1
     agentPreparationMount?.close(); agentPreparationMount = nil
+    if case .notebook = agentPreparationSource { agentPreparationSource = .notebook(nil) }
     #if os(iOS)
     frameProvider = nil; inkFrame = nil; inkFrameIsEmpty = nil; inkFrameIsReady = nil
     #endif

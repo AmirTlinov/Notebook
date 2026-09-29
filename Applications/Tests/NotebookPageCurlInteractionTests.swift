@@ -134,6 +134,38 @@ import XCTest
     let deadline = ContinuousClock.now + .seconds(2)
     while !completed, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(2)) }
     XCTAssertTrue(completed); XCTAssertEqual(captures, 1)
+    let curl = try XCTUnwrap(native.view.subviews.compactMap { $0 as? SheetCurlMetalView }.first)
+    let firstPool = try XCTUnwrap(curl.pageOutputLayer)
+    let poolBytes = curl.pageDrawableReservedBytes
+    XCTAssertGreaterThan(poolBytes, 0)
+    XCTAssertTrue(firstPool.isHidden, "An idle retained pool cannot expose its old sheet")
+    completed = false
+    native.show(source, direction: .reverse, animated: true) { completed = $0 }
+    let returnDeadline = ContinuousClock.now + .seconds(2)
+    while !completed, ContinuousClock.now < returnDeadline { try await Task.sleep(for: .milliseconds(2)) }
+    XCTAssertTrue(completed); XCTAssertTrue(native.page === source)
+    XCTAssertTrue(curl.pageOutputLayer === firstPool, "An exact-size completed pair reuses the physical drawable pool")
+    XCTAssertEqual(curl.pageDrawableReservedBytes, poolBytes, "Reusing a pool must not reserve a second pool")
+    var prepared = false, detachedCompletions: [Bool] = []
+    native.onFramesAcquired = { _ in prepared = true }
+    native.show(target, direction: .forward, animated: true) { detachedCompletions.append($0) }
+    let preparedDeadline = ContinuousClock.now + .seconds(2)
+    while !prepared, ContinuousClock.now < preparedDeadline { try await Task.sleep(for: .milliseconds(2)) }
+    XCTAssertTrue(prepared)
+    curl.removeFromSuperview()
+    XCTAssertEqual(detachedCompletions, [false], "Detaching output resolves its owning motion before discarding the accepted pair")
+    XCTAssertFalse(native.containsInActiveTurn(source)); XCTAssertFalse(native.containsInActiveTurn(target))
+    XCTAssertNil(curl.pageOutputLayer)
+    native.view.addSubview(curl)
+    completed = false
+    native.show(target, direction: .forward, animated: true) { completed = $0 }
+    let attachedDeadline = ContinuousClock.now + .seconds(2)
+    while !completed, ContinuousClock.now < attachedDeadline { try await Task.sleep(for: .milliseconds(2)) }
+    XCTAssertTrue(completed); XCTAssertTrue(native.page === target)
+    XCTAssertEqual(detachedCompletions, [false], "Late GPU or pool receipts cannot resolve the detached operation twice")
+    window.rootViewController = nil
+    XCTAssertNil(curl.pageOutputLayer, "Detaching the native owner retires even an idle pool")
+    XCTAssertTrue(firstPool.isHidden)
   }
 
   func testPresentedEndpointWaitsForTheSameLiveLandingToBecomeReadyWithoutRecapture() async throws {
@@ -168,7 +200,7 @@ import XCTest
     ready = true; native.sheetReadinessDidChange(target)
     XCTAssertTrue(completed); XCTAssertTrue(native.page === target)
     XCTAssertEqual(captures, 1, "The already displayed pair remains immutable through handoff")
-    XCTAssertTrue(curl.isHidden); XCTAssertNil(curl.frameLease)
+    XCTAssertTrue(curl.isHidden); XCTAssertTrue(try XCTUnwrap(curl.pageOutputLayer).isHidden)
   }
 
   func testCancellingAnAdmittedPairDrainsBothCapturesWithoutPublishing() async throws {
@@ -225,7 +257,7 @@ import XCTest
     XCTAssertEqual(curl.submittedFrameCount, submitted)
     XCTAssertEqual(resources.reservedBytes, reserved)
     XCTAssertTrue(native.page === source)
-    XCTAssertTrue(curl.isHidden); XCTAssertNil(curl.frameLease)
+    XCTAssertTrue(curl.isHidden); XCTAssertNil(curl.pageOutputLayer); XCTAssertEqual(curl.pageDrawableReservedBytes, 0)
     // Cancellation submitted no curl drawable, so there is no curl OS receipt
     // to await. Finish the restored UIKit source's update before the one final
     // window readback; GPU drain alone does not commit this new window's root.
@@ -255,25 +287,35 @@ import XCTest
     native.show(source, direction: .forward, animated: false); native.prepare(target)
     native.view.layoutIfNeeded()
     let curl = try XCTUnwrap(native.view.subviews.compactMap { $0 as? SheetCurlMetalView }.first)
-    let reservation = SceneRenderResources.shared.reservedBytes
+    let resources = SceneRenderResources.shared
+    let reservation = resources.reservedBytes
+    let previousOwners = resources.retainedPhysicalOwners
+    var operationOwners = Set<ScenePhysicalOwner>()
     let beforePublication = curl.onPageFrameWillPresent
     defer { curl.onPageFrameWillPresent = beforePublication }
     var completions: [Bool] = [], submittedAtCancellation: Int?
     curl.onPageFrameWillPresent = { _ in
       submittedAtCancellation = curl.submittedFrameCount
+      operationOwners = Set(resources.retainedPhysicalOwners.subtracting(previousOwners).filter {
+        if case .pageCurl = $0 { return true }; return false
+      })
       native.cancelMotion()
     }
     native.show(target, direction: .forward, animated: true) { completions.append($0) }
     let deadline = ContinuousClock.now + .seconds(2)
-    while (completions.isEmpty || SceneRenderResources.shared.reservedBytes != reservation),
+    while (completions.isEmpty || resources.reservedBytes > reservation
+      || !resources.retainedPhysicalOwners.isDisjoint(with: operationOwners)),
       ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(2)) }
     let submitted = try XCTUnwrap(submittedAtCancellation,
       "Cancel after the actual GPU command is scheduled, immediately before CA publication")
     XCTAssertGreaterThan(submitted, 0)
     XCTAssertEqual(completions, [false]); XCTAssertTrue(native.page === source)
-    XCTAssertTrue(curl.isHidden); XCTAssertNil(curl.frameLease)
-    XCTAssertEqual(SceneRenderResources.shared.reservedBytes, reservation,
-      "Cancelled acquisition and submitted GPU work drain their own reservations")
+    XCTAssertTrue(curl.isHidden); XCTAssertNil(curl.pageOutputLayer); XCTAssertEqual(curl.pageDrawableReservedBytes, 0)
+    XCTAssertEqual(operationOwners.count, 1, "The scheduled turn owns one physical drawable pool")
+    XCTAssertTrue(resources.retainedPhysicalOwners.isDisjoint(with: operationOwners),
+      "The cancelled pool's own GPU and acquisition fences must release its physical owner")
+    XCTAssertLessThanOrEqual(resources.reservedBytes, reservation,
+      "Cancellation cannot retain extra bytes; unrelated idle pools may also retire during the drain")
     let updated = expectation(description: "The cancelled exposure's UIKit update completes")
     let publication = UIUpdateLink(view: window)
     publication.addAction(to: .afterUpdateComplete) { link, _ in link.isEnabled = false; updated.fulfill() }

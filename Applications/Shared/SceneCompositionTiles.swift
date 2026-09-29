@@ -612,11 +612,10 @@ final class SceneCompositionCohort {
   let plan: SceneCompositionPlan
   let frame: WorkspaceSceneFrame
   let requestedSources: WorkspaceSceneFrame.SourceIdentity
-  private(set) var liveData: SceneCompositionLiveData
-  /// The last SQL cut proved to differ only in this cohort's open page bodies.
-  /// plan.revision remains the cut that prepared its unchanged spatial pixels.
-  /// This witness belongs to this cohort and disappears with its physical paint.
-  private(set) var validatedContentRevision: UInt64
+  let liveData: SceneCompositionLiveData
+  /// The last SQL interval proved to leave these spatial pixels unchanged.
+  /// Page ownership is a small exclusion witness, never another page payload.
+  private(set) var validatedSpatialRevision: UInt64
   let rasters: [SceneCompositionTileKey: RasterLease]
   let liveRasters: [SceneCompositionLiveOwner: RasterLease]
   let sourceReceipts: [SceneSourceAddress: SceneSourceReceipt]
@@ -628,10 +627,9 @@ final class SceneCompositionCohort {
   let tileSources: [SceneCompositionTileKey: Set<SceneSourceAddress>]
   let tilePresenters: SceneTilePresentationRegistry
   private var materials: [SceneSourceAddress:NotebookInkMaterialReadiness] = [:]
-  fileprivate func acceptPageContent(_ refresh: SceneCompositionSource.PageContentRefresh) {
-    precondition(refresh.revision >= validatedContentRevision && Set(refresh.pages.keys).isSubset(of: Set(liveData.pages.keys)))
-    liveData = liveData.replacingPages(refresh.pages)
-    validatedContentRevision = refresh.revision
+  fileprivate func validateSpatialCut(_ revision: UInt64) {
+    precondition(revision >= validatedSpatialRevision)
+    validatedSpatialRevision = revision
   }
   func recordMaterial(_ address:SceneSourceAddress,id:UUID,content:NotebookInkMaterialView.Content?,ready:Bool) {
     materials[address,default:.init()].record(id,content:content,ready:ready)
@@ -767,7 +765,7 @@ final class SceneCompositionCohort {
       tilePresenters: SceneTilePresentationRegistry = .init()) {
       id = geometryID ?? UUID()
       self.plan = plan; self.frame = frame; self.liveData = liveData; self.rasters = rasters
-      validatedContentRevision = plan.revision
+      validatedSpatialRevision = plan.revision
       self.requestedSources = requestedSources; self.liveRasters = liveRasters; self.nativeInk = nativeInk
       self.sourceReceipts = sourceReceipts; self.sourceRasters = sourceRasters; self.tileSources = tileSources
       self.runtimeOwners = runtimeOwners
@@ -784,7 +782,7 @@ final class SceneCompositionCohort {
     tilePresenters: SceneTilePresentationRegistry = .init()) {
     id = geometryID ?? UUID()
     self.plan = plan; self.frame = frame; self.liveData = liveData; self.rasters = rasters
-    validatedContentRevision = plan.revision
+    validatedSpatialRevision = plan.revision
     self.requestedSources = requestedSources ?? frame.sourceIdentity
     self.liveRasters = liveRasters
     self.sourceReceipts = sourceReceipts; self.sourceRasters = sourceRasters; self.tileSources = tileSources
@@ -1016,7 +1014,7 @@ final class SceneCompositionTiles {
       else { return nil }
       return cohort
     }
-    let reusablePaint = coveredPaint.flatMap { $0.validatedContentRevision >= source.revision ? $0 : nil }
+    let reusablePaint = coveredPaint.flatMap { $0.validatedSpatialRevision >= source.revision ? $0 : nil }
     if reusablePaint != nil, containsNativeProjection(for: request) { return }
     cancelPreparation()
     let id = requestID
@@ -1047,18 +1045,17 @@ final class SceneCompositionTiles {
           let liveItems = Set(coveredPaint.plan.liveOwners.compactMap { owner -> UUID? in
             if case .item(let item) = owner.id { return item }; return nil
           })
-          self?.onPreparationPhase?(id, "page_content")
-          let refresh = try await source.refreshPageContent(after: coveredPaint.validatedContentRevision,
-            previousPages: coveredPaint.liveData.pages, liveItemIDs: liveItems)
+          self?.onPreparationPhase?(id, "excluded_page_changes")
+          let validated = try await source.validateExcludedPageChanges(after: coveredPaint.validatedSpatialRevision,
+            pageOwners: coveredPaint.liveData.pageOwners, liveItemIDs: liveItems)
           try Task.checkCancellation()
           guard self?.requestID == id, permitsPreparation() else { throw CancellationError() }
-          if let refresh, self?.published === coveredPaint, coveredPaint.isPaintInstalled,
+          if let validated, self?.published === coveredPaint, coveredPaint.isPaintInstalled,
             self?.dirtySources.isEmpty == true, self?.containsNativeProjection(for: request) == true {
-            // Page metadata cannot revoke or reacknowledge the already mounted
-            // camera planes, ink and immutable tiles. Attention reads the fresh
-            // body but still requires its own exact page presentation receipt.
-            coveredPaint.acceptPageContent(refresh)
-            self?.onPreparationPhase?(id, "page_content_rebound")
+            // The page owner installs its accepted source independently. No
+            // page body is read, copied or published through this spatial cut.
+            coveredPaint.validateSpatialCut(validated)
+            self?.onPreparationPhase?(id, "spatial_cut_validated")
             return
           }
         }

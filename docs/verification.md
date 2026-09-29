@@ -1,109 +1,64 @@
 # Текущее состояние проверки Notebook
 
-Срез: **29 сентября 2026**. Результат относится к исходникам своего receipt.
-Функциональная проверка, доставка и полная приёмка учитываются отдельно.
+Срез: **29 сентября 2026**. Функциональная проверка, доставка и полная приёмка
+учитываются отдельно; результат относится к исходникам своего receipt.
 
 ## Установленная пара — 223
 
-**0.3.153 (223)** установлена 29 сентября в 13:36 UTC поверх 222 на Mac и
-физическом iPad. Код выпуска `f81b17c2`; source SHA256:
+**0.3.153 (223)** установлена 29 сентября в 13:36 UTC поверх222 на Mac и
+физическом iPad. Код `f81b17c2`, source
 `23fa7416e9b6eff5a9704b29e2a376463c3d353a2deac5b6672b42461960a175`.
-Mac-помощник и новая authenticated session прежнего iPad отвечают `ready`.
-На iPad одна Notebook Lab, QA/native-test/runner удалены после проверки.
-Контейнеры, идентичности и ключи сохранены; исторические архивы не открывались.
-[Сборка, установка и подключение](audit-evidence/2026-09-29/interaction-completion-223/delivery.json).
-Системная проверка жестов `1606Z` прошла после разрешения XCTest на iPad.
-Проверены 24 первых нажатия, pinch-выход и повторное открытие, переходы
-вперёд/назад с сохранением состояния всех программ. Строгие бюджеты остаются открытыми.
+Mac helper и новая authenticated session прежнего iPad ответили ready.
+Одна Notebook Lab; тестовые приложения удалены. Контейнеры, идентичности и ключи
+сохранены. [Доставка223](audit-evidence/2026-09-29/interaction-completion-223/delivery.json).
 
-## Рабочий срез 224 — ещё не установлен
+## Завершённый срез владельцев224 — доставка подготовлена
 
-`1752Z`, source `4a3def06…`: **19 iPad PASS / 2 Mac PASS**, без skip/runtime warnings.
-Подтверждены page-owned preparation, reader при pinch=0, замена native consumer,
-отмена очереди/публикации, UUID read/reorder, Metal output и retirement, first
-small bend, regrab, endpoints, быстрые повторения. Реальные UI-жесты проверили
-24 first taps, pinch-close/reopen и состояния forward/reverse.
+Source `f462f08f761145a8651a560b097fc43c9b5dae5be86093415d5841430b4ffe61`.
+Бумага монтируется независимо от board paint. Единственная подготовка страницы
+принимается существующим native shell после загрузки тела; native window допускается
+до фабрики представления. UUID/controller/address защищают от позднего callback.
+Камера ждёт точную бумагу либо установленную обложку и завершает отмену вместе с
+ожиданиями. Spatial cohort больше не читает/копирует PageDocument при записи
+состояния программы. Page attention и ввод используют установленную бумагу.
+Curl сохраняет один учтённый pool, завершает GPU/OS retirement и держит successor
+до исхода первого transactional кадра. [Контракт и удалённые пути](interaction-ownership.md).
 
-`1757Z`, тот же source: **3 latency FAIL**. SVG13: first550.951/all734.258мс;
-programs24: first396.182/all615.046мс. Источники и поздние пиксели верны.
-Warm10: first25.130–44.651мс; после первого кадра разрыв16.673–25.010мс,
-затем преимущественно8.337мс. Начальные drops сохраняются. Первый успешный
-CA-кадр безdrop следует системной оценке UIKit через два refresh.
-Открыты publication/pool lifetime и монтаж reader без board cohort.
-[Положительные и отрицательные результаты](audit-evidence/2026-09-29/first-presentation-224/results.json).
+Физические проверки:
 
-## Реализованный срез 223
+- `1822Z`: 15PASS/3FAIL. Найден реальный запуск дублирующих программ после late
+  page load; исправлено принятие единого page owner. Два других FAIL — ошибочные
+  требования к чужим освобождённым ресурсам и старой позе камеры в тесте.
+- `1851Z`: 5PASS/1FAIL. Реальные24 первых нажатия, pinch-exit/reopen, страницы
+  вперёд/назад и сохранение состояний PASS; также ранняя бумага/тот же host,
+  точная отмена curl, подготовка и перенос attention. Единственный FAIL — новая
+  тестовая программа без обязательного notebook.ready; исправлен только fixture.
+- `1856Z`: 1iPad+1MacPASS. Late read/borrow/retirement и настоящий Mac click/drag
+  без board cohort. От1851 изменён только этот fixture. Runtime warnings/skip=0.
+- `1900Z`, тот же source: 3 latency FAIL. Все источники и независимые поздние
+  пиксели верны; cold OS first-pixel не измерен. Замер закончился до снимков/DOM.
 
-Изменения: существующий WebKit session начинает принятую загрузку до mount;
-GPU completion напрямую возобновляет владельца кадра с сохранением priority donation;
-локальный program state сохраняет геометрическую проекцию;
-публикация одинакового scene source сохраняет принятое поколение.
-[Точные владельцы, отмена и удалённые пути](interaction-ownership.md#программы-документы-и-локальные-изменения).
-
-### Завершённые проверки
-
-- Физический iPad `1229Z`: **8 PASS / 6 FAIL**, 0 skipped/runtime warnings.
-  Пять FAIL — строгие latency assertions; шестой — XCTest не включил automation
-  mode, поэтому системный UI-сценарий в этом запуске не исполнился.
-- Восемь PASS: accepted-source navigation; освобождение session без mount;
-  retirement с незавершённым physical borrow; отмена обеих сторон capture;
-  ориентация shader/flat endpoints; regrab той же пары; checkpoint уходящей
-  программы; late-equivalent scene index без нового plan/native ink, с обязательной
-  заменой при реальном перемещении предмета.
-- Core `1240Z`: **3 PASS**. Адресное program state сохраняет чужой контент и
-  причинные версии; крупное состояние удерживает admission через FIFO/checkpoint;
-  state projection сохраняет неизменную геометрию и заменяет изменённые claims.
-
-Source inventory физического `1229Z`:
-`3154dd099b359a2af66b5319fa08709a92539b5be98fa8d88d851fc872d61b08`.
-Локальное свидетельство: `/private/tmp/notebook-223-physical-20260929T1229Z/`
-(`source-before.json`, `ipad-summary.json`, `ipad-tests.json`, `ipad.xcresult`);
-attachments: `/private/tmp/notebook-223-attachments1229/manifest.json`.
-Core log: `/private/tmp/notebook-223-core-20260929T1240Z.log`.
-
-Итоговый код `f81b17c2`: `1241Z` — **8 native iPad PASS / 1 infrastructure FAIL**.
-XCTest снова не включил automation mode; сами системные жесты не исполнились.
-После обычного и принудительного перезапуска служб отказ сохранился.
-После полной перезагрузки iPad первое разблокирование выполнено: в 13:27 UTC
-`lockstate=false`, `unlockedSinceBoot=true`.
-Mac `1246Z`: **2 PASS**, 0 FAIL/skip/runtime warnings — один владелец до первого
-нажатия, сохранение WKWebView, несохранённого ввода и растров при повторном zoom.
-Source-before `1241Z` совпадает с before/after `1246Z` и установленной парой.
-Отказавший `1241Z` не создал отдельного source-after.
-
-UI `1327Z` и `1337Z` остановились до первого жеста: отдельный системный запрос
-«Введите код-пароль iPad для приложения XCTest — Enable UI Automation» не был
-подтверждён за 60 секунд. Обычное разблокирование iPad его не заменяет.
-После подтверждения UI `1606Z`: **1 PASS**, 0 FAIL/skip/runtime warnings.
-Before/after совпадают с установленным source `23fa7416…`. Сценарий выполнил
-настоящие жесты и нажатия; проверены первый tap каждой из 24 программ,
-выход pinch до обложки, повторное открытие с прежним состоянием и геометрией,
-переход вперёд/назад с сохранением всех 24 состояний. Длительность теста включает
-AX и снимки; это функциональное свидетельство, а не измерение задержки приложения.
-После проверки тестовые приложения удалены, установленная Notebook Lab запущена.
-[Результаты, source witnesses и отрицательные прогоны](audit-evidence/2026-09-29/interaction-completion-223/results.json).
-
-### Строгие бюджеты: отрицательный результат сохранён
-
-| Сценарий | `1229Z`, физический iPad | Граница измерения |
+| Сценарий | Результат1900 | Цель |
 |---|---|---|
-| Cold document ≤1000 мс | **1137,137 мс — FAIL**; native TeX 856,814 мс | Запрос → canonical native paper/input; не OS presentation |
-| Cold SVG13, первый ≤150 мс | **283,036 мс — FAIL**; все 449,817 мс | Первая точная native installation; 13/13 источников и поздние пиксели верны |
-| Cold programs24, первый ≤150 мс | **429,636 мс — FAIL**; все 758,518 мс | 24/24 точных live runtime; поздние пиксели верны |
-| Native24 command→owner landing ≤450 мс | **456,562 мс — FAIL** | Callback завершения владельца; верные состояния не снимают превышение |
-| Первый warm curl ≤16,667 мс | **24,670–36,800 мс — FAIL**, 10 поворотов | Первый OS receipt каждого поворота |
+| Cold SVG13 | first485.106/all600.304мс;13/13 | first≤150/all≤1000мс |
+| Cold programs24 | first445.270/all726.313мс;24/24live | first≤150/all≤1000мс |
+| Warm10 firstOS | 29.290–37.787мс;1initialdrop каждый | ≤16.667мс |
+| Warm10 landing | 322.527–333.840мс | ≤450мс |
 
-Полная cohort SVG/programs уложилась в 1000 мс; цель первого кадра не выполнена.
-Начало navigation, native installation, GPU completion и OS presentation — разные
-события. Capture/decode и DOM-проверки выполняются после cold-замера.
-Точный первый OS-пиксель cold SVG/programs пока не измерен.
-Пределы, анимации, число программ и проходы TeX не сокращены.
+Programs: accepted78.51→mounted113.79→cohort233.47мс — зависимости mount от
+cohort больше нет. Первый готовый source: navigation88.82→policy291.73→started431.53
+→runtime435.05мс. Основной остаток лежит до готовности WebKit; повторныхnavigation нет.
+Curl successor GPU готов до первогоOS и предъявляется сразу после receipt;
+первый CA→async OS-интервал16.673мс, далее8.337мс. Создание pool и повторный encode
+не объясняют этот остаток. Причина initialdrop/CA handoff ещё не доказана.
+[Точные результаты и отрицательные прогоны](audit-evidence/2026-09-29/first-presentation-224/results.json).
 
-Фазовый `1214Z` показал второй cohort во время запуска программ. Исправлена
-гонка independently prepared index → новый UUID того же принятого source;
-регрессия `1229Z` подтверждает сохранение paint/native ink. Фазы cold programs в `1229Z` содержат один полный cohort (публикация 123,204 мс).
-Первый native owner начинается на 155,535 мс, navigation — 161,225 мс.
-Оставшаяся задержка до 429,636 мс ещё не атрибутирована внутри WebKit.
+Срез223 ранее прошёл native8/Mac2/Core3 и системныйUI24 после разрешения XCTest.
+Его строгие cold-document1137.137мс, Native24 landing456.562мс и firstcurl24.670–36.800мс
+не уложились в1000/450/16.667мс. Это исторические измерения своегоsource.
+[Свидетельства223](audit-evidence/2026-09-29/interaction-completion-223/results.json).
+Полный прежний текст223 сохранён в
+[ревизииa43e8ae0](https://github.com/AmirTlinov/Notebook/blob/a43e8ae04c1bb2e845dc8c1fcc2cbab934554853/docs/verification.md).
 
 ## Подтверждённые границы предшествующих срезов
 
@@ -129,7 +84,7 @@ AX и снимки; это функциональное свидетельств
 
 ## Что остаётся открытым
 
-- Строгие cold document/SVG/programs, Native24 и first-curl бюджеты из таблицы.
+- Строгие cold document/SVG/programs, Native24 и first-curl бюджеты.
   Исторический 222 `2036` также дал 3 FAIL: programs first/all 657,071/1042,508 мс,
   Native24 552,242 мс, first curl до41,030 мс. Разный порядок cold-сценариев не
   позволяет приписать всю разницу текущему исправлению.

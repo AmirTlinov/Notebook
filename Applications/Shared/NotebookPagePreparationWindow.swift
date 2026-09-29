@@ -3,12 +3,35 @@ import SwiftUI
 
 /// The finite addressed read window owns accepted page preparation. A native
 /// host borrows its slot; creating or replacing SwiftUI is not a work request.
-@MainActor
+@MainActor @Observable
 final class NotebookPagePreparationWindow {
   struct Address: Hashable { let itemID: UUID; let index: Int; let root: String }
-  private struct Window { let root: String; let indices: Set<Int>; let target: Int?; let controllerID: UUID? }
+  /// Admission of one paper is independent of board/cover paint. The existing
+  /// item host borrows this accepted geometry; native camera projection still
+  /// owns its actual pose and the page registry proves installed content.
+  struct ReaderPresentation: Equatable {
+    let address: Address
+    let pageID: UUID
+    let boardID: UUID
+    let rendered: RenderedWorkspaceItem
+  }
+  private(set) var presentations: [UUID: ReaderPresentation] = [:]
+  struct NativeSource {
+    let address: Address
+    let pageID: UUID?
+    let controllerID: UUID
+  }
+  /// A loading native shell observes admission from this owner. It cannot
+  /// start an independent program while its finite read window is pending.
+  private(set) var admissionRevision: UInt64 = 0
+  private struct Window: Equatable { let root: String; let indices: Set<Int>; let target: Int?; let controllerID: UUID? }
   private struct Identity: Hashable { let itemID: UUID; let pageID: UUID }
-  private struct Preparation { let operationID: UUID; let reader: Identity? }
+  private struct Reader {
+    let itemID: UUID
+    let pageID: UUID?
+    var identity: Identity? { pageID.map { .init(itemID: itemID, pageID: $0) } }
+  }
+  private struct Preparation { let operationID: UUID; let reader: Reader? }
 
   @MainActor final class Entry {
     let pageID: UUID
@@ -38,7 +61,7 @@ final class NotebookPagePreparationWindow {
     isolated deinit { close() }
   }
 
-  var addresses: [Address: UUID] = [:] {
+  @ObservationIgnored var addresses: [Address: UUID] = [:] {
     didSet {
       for (identity, entry) in entries {
         guard let address = addresses.first(where: { $0.key.itemID == identity.itemID && $0.value == identity.pageID })?.key else {
@@ -46,18 +69,20 @@ final class NotebookPagePreparationWindow {
         }
         entry.address = address
       }
+      retirePresentations()
+      if oldValue != addresses { admissionRevision &+= 1 }
     }
   }
-  private let resources: SceneRenderResources
-  private var rasterOwners: [UUID: PageRasterPreparation] = [:]
-  private var windows: [UUID: Window] = [:]
-  private var tasks: [Address: Task<Void, Never>] = [:]
-  private var entries: [Identity: Entry] = [:]
-  private weak var model: NotebookAppModel?
-  private var pages: [UUID: PageDocument] = [:]
-  private var current: Identity?
-  private var preparation: Preparation?
-  private var stopped = false
+  @ObservationIgnored private let resources: SceneRenderResources
+  @ObservationIgnored private var rasterOwners: [UUID: PageRasterPreparation] = [:]
+  @ObservationIgnored private var windows: [UUID: Window] = [:]
+  @ObservationIgnored private var tasks: [Address: Task<Void, Never>] = [:]
+  @ObservationIgnored private var entries: [Identity: Entry] = [:]
+  @ObservationIgnored private weak var model: NotebookAppModel?
+  @ObservationIgnored private var pages: [UUID: PageDocument] = [:]
+  @ObservationIgnored private var current: Reader?
+  @ObservationIgnored private var preparation: Preparation?
+  @ObservationIgnored private var stopped = false
 
   init(resources: SceneRenderResources = .shared) {
     self.resources = resources
@@ -70,10 +95,12 @@ final class NotebookPagePreparationWindow {
       if indices.isEmpty {
         guard windows[itemID]?.controllerID == controllerID else { return }
       } else {
-        guard readers.contains(where: { $0.itemID == itemID }) else { return }
+        guard admittedItems.contains(itemID) else { return }
       }
     }
-    windows[itemID] = indices.isEmpty ? nil : .init(root: root, indices: indices, target: target, controllerID: controllerID)
+    let next: Window? = indices.isEmpty ? nil : .init(root: root, indices: indices, target: target, controllerID: controllerID)
+    let admissionChanged = windows[itemID] != next
+    windows[itemID] = next
     for (address, task) in tasks where address.itemID == itemID
       && (address.root != root || !indices.contains(address.index) || (!targetIsLoaded && target != nil && address.index != target)) {
       task.cancel()
@@ -82,7 +109,8 @@ final class NotebookPagePreparationWindow {
       && !readers.contains(identity) && (entry.address.root != root || !indices.contains(entry.address.index)) {
       entries.removeValue(forKey: identity)?.retire()
     }
-    if indices.isEmpty, !readers.contains(where: { $0.itemID == itemID }) { rasterOwners[itemID] = nil }
+    if indices.isEmpty, !admittedItems.contains(itemID) { rasterOwners[itemID] = nil }
+    if admissionChanged { admissionRevision &+= 1 }
   }
 
   func permits(_ address: Address) -> Bool {
@@ -124,57 +152,82 @@ final class NotebookPagePreparationWindow {
   }
 
   func acceptedPages(_ pages: [UUID: PageDocument], model: NotebookAppModel) {
+    let previous = readers, previousItems = admittedItems
     self.model = model; self.pages = pages
     for (identity, entry) in entries {
       if let page = pages[identity.pageID] { entry.preparations.reconcile(page: page, model: model) }
       else {
         entries.removeValue(forKey: identity); entry.retire()
-        if current == identity { current = nil }
+        if current?.identity == identity { current = nil }
+      }
+    }
+    retireReaders(previous, previousItems: previousItems)
+  }
+
+  func presentation(itemID: UUID, boardID: UUID) -> ReaderPresentation? {
+    guard let value = presentations[itemID], value.boardID == boardID,
+      model?.isItemBeingDeleted(itemID) != true else { return nil }
+    return value
+  }
+
+  private func retirePresentations() {
+    for (item, value) in presentations {
+      let reader = (current?.identity).flatMap { $0.itemID == item ? $0 : nil }
+        ?? (preparation?.reader?.identity).flatMap { $0.itemID == item ? $0 : nil }
+      guard !stopped, let reader, pages[reader.pageID] != nil,
+        let address = addresses.first(where: { $0.key.itemID == item && $0.value == reader.pageID })?.key else {
+        presentations[item] = nil; continue
+      }
+      if address != value.address || reader.pageID != value.pageID {
+        presentations[item] = .init(address: address, pageID: reader.pageID,
+          boardID: value.boardID, rendered: value.rendered)
       }
     }
   }
 
-  private static func reader(_ presence: SessionPresence?) -> Identity? {
+  private static func reader(_ presence: SessionPresence?) -> Reader? {
     guard let presence, presence.mode == .page || presence.mode == .cover,
-      let itemID = presence.focusedItemID, let pageID = presence.notebookPageID else { return nil }
-    return .init(itemID: itemID, pageID: pageID)
+      let itemID = presence.focusedItemID else { return nil }
+    return .init(itemID: itemID, pageID: presence.notebookPageID)
   }
-  private var readers: Set<Identity> { Set([current, preparation?.reader].compactMap { $0 }) }
+  private var readers: Set<Identity> { Set([current?.identity, preparation?.reader?.identity].compactMap { $0 }) }
+  private var admittedItems: Set<UUID> { Set([current?.itemID, preparation?.reader?.itemID].compactMap { $0 }) }
 
   /// A held or reversing pinch still owns its reader at the fully covered
   /// pose. Only an accepted board/other-owner pose ends that actual lifetime.
   func updatePresence(_ presence: SessionPresence?) {
     guard !stopped else { return }
-    let previous = readers
+    let previous = readers, previousItems = admittedItems
     let next = Self.reader(presence)
     // A stationary closed cover does not start execution. Zero progress can
     // retain a reader already admitted by the actual pose or camera operation.
-    if let next, presence?.mode == .cover, presence?.openProgress == 0, !previous.contains(next) {
+    if let next, presence?.mode == .cover, presence?.openProgress == 0, !previousItems.contains(next.itemID) {
       current = nil
     } else { current = next }
-    retireReaders(previous)
+    retireReaders(previous, previousItems: previousItems)
   }
 
   /// Camera operations admit their destination before its first actual pose.
   /// The existing camera ID, rather than a composition callback, owns its end.
   func acceptPreparation(_ presence: SessionPresence?, operationID: UUID) {
     guard !stopped else { return }
-    let previous = readers
+    let previous = readers, previousItems = admittedItems
     preparation = .init(operationID: operationID, reader: Self.reader(presence))
-    retireReaders(previous)
+    retireReaders(previous, previousItems: previousItems)
   }
   func endPreparation(operationID: UUID) {
     guard preparation?.operationID == operationID else { return }
-    let previous = readers
+    let previous = readers, previousItems = admittedItems
     preparation = nil
-    retireReaders(previous)
+    retireReaders(previous, previousItems: previousItems)
   }
-  private func retireReaders(_ previous: Set<Identity>) {
+  private func retireReaders(_ previous: Set<Identity>, previousItems: Set<UUID>) {
     let retained = readers
+    retirePresentations()
     for identity in previous.subtracting(retained) where entries[identity]?.mounts.isEmpty == true {
       entries.removeValue(forKey: identity)?.retire()
     }
-    for itemID in Set(previous.map(\.itemID)).subtracting(Set(retained.map(\.itemID))) {
+    for itemID in previousItems.subtracting(admittedItems) {
       // Terminal withdrawal wins over a still-mounted outgoing UIKit host.
       for (identity, entry) in entries where identity.itemID == itemID {
         entries.removeValue(forKey: identity); entry.retire()
@@ -182,6 +235,7 @@ final class NotebookPagePreparationWindow {
       for (address, task) in tasks where address.itemID == itemID { task.cancel() }
       windows[itemID] = nil; rasterOwners[itemID] = nil
     }
+    if previous != retained || previousItems != admittedItems { admissionRevision &+= 1 }
   }
 
   private func entry(at address: Address, pageID: UUID) -> Entry? {
@@ -209,6 +263,18 @@ final class NotebookPagePreparationWindow {
     return entry(at: address, pageID: pageID)
   }
 
+  func entry(for source: NativeSource, pageID: UUID) -> Entry? {
+    // Reading this revision subscribes the existing SwiftUI loading shell to
+    // actual window/address admission and terminal withdrawal, without a retry.
+    _ = admissionRevision
+    let address = source.address
+    guard !stopped, admittedItems.contains(address.itemID),
+      let window = windows[address.itemID], window.controllerID == source.controllerID,
+      window.root == address.root, window.indices.contains(address.index),
+      source.pageID == nil || source.pageID == pageID else { return nil }
+    return entry(at: address, pageID: pageID)
+  }
+
   /// Runs at accepted scene demand, before composition and before a native view
   /// factory. Only the current paper gets early execution; neighbours retain
   /// their existing, explicitly requested passive preparation.
@@ -216,15 +282,20 @@ final class NotebookPagePreparationWindow {
     operationID: UUID? = nil) {
     let pending = preparation.flatMap { $0.operationID == operationID ? $0.reader : nil }
     guard !stopped, model.permitsPagePreparation, presence.mode == .cover || presence.mode == .page,
+      frame.index.generationID == model.sceneIndex?.generationID,
       let itemID = presence.focusedItemID,
       let pageID = presence.notebookPageID ?? (pending?.itemID == itemID ? pending?.pageID : nil)
         ?? (current?.itemID == itemID ? current?.pageID : nil),
-      current == Identity(itemID: itemID, pageID: pageID) || pending == Identity(itemID: itemID, pageID: pageID),
+      current?.identity == Identity(itemID: itemID, pageID: pageID) || pending?.identity == Identity(itemID: itemID, pageID: pageID),
       let page = model.pages[pageID], let root = model.notebookPageRoot(itemID),
+      !model.isItemBeingDeleted(itemID), frame.index.ownerBoard(itemID: itemID) == presence.boardID,
       let address = addresses.first(where: { $0.key.itemID == itemID && $0.key.root == root && $0.value == pageID })?.key,
       let rendered = frame.workset(boardID: presence.boardID).items.first(where: { $0.id == itemID && $0.item.kind == .notebook }),
-      let entry = entry(at: address, pageID: pageID), entry.mounts.isEmpty,
+      let entry = entry(at: address, pageID: pageID),
       let visible = PageAgentPreparationOwner.visibleRegion(page: page, item: rendered, presence: presence) else { return }
+    let presentation = ReaderPresentation(address: address, pageID: pageID, boardID: presence.boardID, rendered: rendered)
+    if presentations[itemID] != presentation { presentations[itemID] = presentation }
+    guard entry.mounts.isEmpty else { return }
     let scale = min(rendered.geometry.width / page.size.width, rendered.geometry.height / page.size.height)
       * rendered.geometry.fitScale(viewport: presence.viewport)
     entry.rasters.prioritize(displayed: address.index, target: nil, displayedContentReady: false)
@@ -235,10 +306,12 @@ final class NotebookPagePreparationWindow {
 
   func stop() -> [Task<Void, Never>] {
     stopped = true
+    presentations.removeAll()
     let pending = Array(tasks.values)
     for task in pending { task.cancel() }
     for entry in entries.values { entry.retire() }
     entries.removeAll(); windows.removeAll(); rasterOwners.removeAll(); pages.removeAll(); model = nil; current = nil; preparation = nil
+    admissionRevision &+= 1
     return pending
   }
   isolated deinit { _ = stop() }

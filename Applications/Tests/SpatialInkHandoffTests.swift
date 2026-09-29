@@ -332,7 +332,7 @@ final class SpatialInkHandoffTests: XCTestCase {
     let count = fixture.resources.activePhysicalOwnerCount
     var changed = fixture.journal
     _ = changed.append(tool: .pen, spans: [Self.span(surface: .board(fixture.childID), y: 80)], actor: fixture.actor)
-    let data = SceneCompositionLiveData(documents: [:], states: [:], pages: [:], ink: changed)
+    let data = SceneCompositionLiveData(documents: [:], states: [:], ink: changed)
     let candidate = try await fixture.registry.prepareSceneInk(plan: old.plan, frame: old.frame,
       liveData: data, resources: fixture.resources, displayScale: 1)
     XCTAssertFalse(candidate.isInstalled)
@@ -358,7 +358,7 @@ final class SpatialInkHandoffTests: XCTestCase {
     let originalSource = try XCTUnwrap(canvas.installedSpatialSource)
     var journal = fixture.journal
     _ = journal.append(tool: .pen, spans: [Self.span(surface: .board(fixture.childID), y: 80)], actor: fixture.actor)
-    let data = SceneCompositionLiveData(documents: [:], states: [:], pages: [:], ink: journal)
+    let data = SceneCompositionLiveData(documents: [:], states: [:], ink: journal)
     let candidate = try await fixture.registry.prepareSceneInk(plan: fixture.cohort.plan, frame: fixture.cohort.frame,
       liveData: data, resources: fixture.resources, displayScale: 1)
     XCTAssertEqual(try canvas.installedSpatialSource?.referenceInk(), try originalSource.referenceInk())
@@ -374,7 +374,7 @@ final class SpatialInkHandoffTests: XCTestCase {
       "Installation uses the already completed pixels, not a promised future drawing callback")
 
     _ = journal.append(tool: .pen, spans: [Self.span(surface: .board(fixture.childID), y: -80)], actor: fixture.actor)
-    let nextData = SceneCompositionLiveData(documents: [:], states: [:], pages: [:], ink: journal)
+    let nextData = SceneCompositionLiveData(documents: [:], states: [:], ink: journal)
     let late = try await fixture.registry.prepareSceneInk(plan: fixture.cohort.plan, frame: fixture.cohort.frame,
       liveData: nextData, resources: fixture.resources, displayScale: 1)
     let before = try XCTUnwrap(canvas.installedSpatialSource)
@@ -404,7 +404,7 @@ final class SpatialInkHandoffTests: XCTestCase {
     }
     let empty = try await fixture.registry.prepareSceneInk(plan: fixture.cohort.plan,
       frame: fixture.cohort.frame,
-      liveData: .init(documents: [:], states: [:], pages: [:], ink: fixture.journal),
+      liveData: .init(documents: [:], states: [:], ink: fixture.journal),
       resources: fixture.resources, displayScale: 1)
     let committed = expectation(description: "the empty layer transaction commits")
     empty.afterPresentationTransaction { committed.fulfill() }
@@ -437,7 +437,7 @@ final class SpatialInkHandoffTests: XCTestCase {
     var changed = fixture.journal
     _ = changed.append(tool: .pen, spans: [Self.span(surface: .board(fixture.childID), y: 80)], actor: fixture.actor)
     let candidate = try await fixture.registry.prepareSceneInk(plan: fixture.cohort.plan, frame: fixture.cohort.frame,
-      liveData: .init(documents: [:], states: [:], pages: [:], ink: changed), resources: fixture.resources, displayScale: 1)
+      liveData: .init(documents: [:], states: [:], ink: changed), resources: fixture.resources, displayScale: 1)
     fixture.contact(tool: .pen, from: .init(x: 30, y: 40), to: .init(x: 50, y: 60))
     XCTAssertEqual(fixture.actions.count, 1)
     XCTAssertEqual(fixture.actions.first?.spans.first?.samples.first?.worldPoint,

@@ -5317,10 +5317,10 @@ final class NotebookAppModel {
       // camera can substitute pixels for the view at the Send gesture.
       let viewport: NotebookAttentionSelection?
       if question == nil, pointing.isEmpty, capturedFile == nil,
-        let presence = capturedPresence, let cohort = compositionTiles.published {
+        let presence = capturedPresence {
         viewport = NotebookAttentionProjection.capture(start:.zero,
           end:.init(x:presence.viewport.x,y:presence.viewport.y),model:self,presence:presence,
-          cohort:cohort,installedInk:compositionTiles.surfaceRegistry.installedSources(),compositeRegion:true)?.freezingSubmissionVisuals()
+          cohort:compositionTiles.published,installedInk:compositionTiles.surfaceRegistry.installedSources(),compositeRegion:true)?.freezingSubmissionVisuals()
       } else { viewport = nil }
       let persistence = self.persistence, actor = actorID, attachments = chat.attachments
       return .init(selectionID: selectionSession.id, attachments: attachments, pointing: pointing) {

@@ -1152,7 +1152,7 @@ import AppKit
       let owners=live.enumerated().map { i,id in SceneCompositionLiveOwner(plane:.board(boardID),id:.element(id),position:.init(layer:.elements,zIndex:Double(i),key:id)) }
       let plan=SceneCompositionPlan(revision:1,workspaceID:index.generationID,rootBoardID:boardID,inkBoardIDs:[],liveOwners:owners,protectedOwners:[],
         bands:[],coverage:[:],presentations:[.board(boardID):presence],tiles:[])
-      let data=SceneCompositionLiveData(documents:[:],states:[:],pages:[:],ink:.init(stamp:workspace.stamp))
+      let data=SceneCompositionLiveData(documents:[:],states:[:],ink:.init(stamp:workspace.stamp))
       #if os(iOS)
       return .init(plan:plan,frame:frame,requestedSources:frame.sourceIdentity,liveData:data,rasters:[:],liveRasters:[:],
         nativeInk:.init(registry:.init(),rootBoardID:boardID,focusedCoverID:nil,owners:[:],updates:[]))

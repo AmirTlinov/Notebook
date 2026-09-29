@@ -227,8 +227,8 @@ import XCTest
     }
     admission.touchesEnded([touch], with: UIEvent())
     let finish = ContinuousClock.now + .seconds(2)
-    while curl.frameLease != nil, ContinuousClock.now < finish { try await Task.sleep(for: .milliseconds(2)) }
-    XCTAssertNil(curl.frameLease)
+    while !curl.isHidden, ContinuousClock.now < finish { try await Task.sleep(for: .milliseconds(2)) }
+    XCTAssertTrue(curl.isHidden, "The original contact must resolve at its actual endpoint")
     XCTAssertEqual(commits, cancel ? [] : [1])
     XCTAssertEqual(controller.displayedIndex, cancel ? 0 : 1)
     XCTAssertEqual(readiness[1]?.activity?.installedPreparation, cancel ? nil : prepared,

@@ -73,7 +73,7 @@ import XCTest
     try await Task.sleep(for: .milliseconds(100))
     XCTAssertTrue(native.page === replacement)
     XCTAssertTrue(native.view.subviews.last === replacement.view)
-    XCTAssertTrue(curl.isHidden); XCTAssertNil(curl.frameLease)
+    XCTAssertTrue(curl.isHidden); XCTAssertNil(curl.pageOutputLayer); XCTAssertEqual(curl.pageDrawableReservedBytes, 0)
     XCTAssertEqual(curl.submittedFrameCount, submittedBefore)
   }
 
@@ -99,7 +99,7 @@ import XCTest
     XCTAssertTrue(native.page === source); XCTAssertTrue(native.view.subviews.last === source.view)
     ready = true; native.sheetReadinessDidChange(source)
     try await Task.sleep(for: .milliseconds(60))
-    XCTAssertEqual(captures, 0); XCTAssertNil(curl.frameLease); XCTAssertTrue(curl.isHidden)
+    XCTAssertEqual(captures, 0); XCTAssertNil(curl.pageOutputLayer); XCTAssertEqual(curl.pageDrawableReservedBytes, 0); XCTAssertTrue(curl.isHidden)
     XCTAssertEqual(curl.submittedFrameCount, 0, "Neither queued nor late readiness can revive the cancelled capture")
     XCTAssertTrue(native.beginInteractiveTurn(direction: .forward, target: target), "The next contact is not blocked")
     native.endInteractiveTurn(completed: false)
@@ -154,7 +154,7 @@ import XCTest
     while releaseFence == nil, ContinuousClock.now < waitingLimit { try await Task.sleep(for: .milliseconds(2)) }
     XCTAssertNotNil(releaseFence); XCTAssertEqual(resources.pendingReclamationCount, 1)
     XCTAssertEqual(captures, 0); XCTAssertTrue(errors.isEmpty); XCTAssertTrue(completions.isEmpty)
-    XCTAssertNil(curl.frameLease); XCTAssertTrue(native.page === source)
+    XCTAssertNil(curl.pageOutputLayer); XCTAssertEqual(curl.pageDrawableReservedBytes, 0); XCTAssertTrue(native.page === source)
     if cancelled {
       native.cancelMotion(); native.show(replacement, direction: .forward, animated: false)
       XCTAssertEqual(completions, [false])
@@ -164,7 +164,7 @@ import XCTest
     if cancelled {
       await Task.yield()
       XCTAssertTrue(native.page === replacement); XCTAssertEqual(captures, 0)
-      XCTAssertNil(curl.frameLease); XCTAssertTrue(curl.isHidden)
+      XCTAssertNil(curl.pageOutputLayer); XCTAssertEqual(curl.pageDrawableReservedBytes, 0); XCTAssertTrue(curl.isHidden)
       XCTAssertEqual(completions, [false])
     } else {
       let finishedLimit = ContinuousClock.now + .seconds(2)
@@ -213,14 +213,14 @@ import XCTest
         XCTAssertLessThan(rgba[2], 15, "Old blue source leaked into the curl: \(rgba)")
         XCTAssertEqual(image.bitsPerPixel, 32, "The page compositor publishes its declared Metal format")
         let textureBytes = ((image.width * 4 + 255) / 256) * 256 * image.height
-        XCTAssertGreaterThanOrEqual(try XCTUnwrap(curl.frameLease).byteCount,
+        XCTAssertGreaterThanOrEqual(curl.pageDrawableReservedBytes,
           textureBytes * curl.drawableCount,
           "The curl borrows the admitted owner textures and reserves only its drawables")
         native.cancelMotion()
         XCTAssertTrue(native.view.subviews.last === source.view)
         XCTAssertTrue(native.view.subviews.contains { $0 === curl }, "A turn must not rebuild the Metal view")
         XCTAssertTrue(curl.isHidden, "Retired pixels cannot show through the next notebook's loading shell")
-        XCTAssertNil(curl.frameLease)
+        XCTAssertNil(curl.pageOutputLayer); XCTAssertEqual(curl.pageDrawableReservedBytes, 0)
       }
     }
   }

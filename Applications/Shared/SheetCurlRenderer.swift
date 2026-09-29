@@ -226,28 +226,69 @@ private final class SheetCurlDrawableRequest: @unchecked Sendable {
   }
 }
 
-/// Terminal release depends on physical completion, not on how long Metal
-/// chooses to retain a completed callback or its captured reservation.
+/// The native page renderer owns one exact-size pool, including idle IOSurfaces.
+/// Only a drained, hidden pool can be offered to the existing resource planner.
+@MainActor
+private final class SheetCurlPageOutput {
+  let id: UUID
+  let layer: CAMetalLayer
+  let size: CGSize
+  let reservation: RasterReservation
+  private let physical: ScenePhysicalOwnerLease
+  private var released = false
+  var isIdle = false
+
+  init(device: any MTLDevice, size: CGSize, bytes: Int, count: Int) throws {
+    let resources = SceneRenderResources.shared
+    let id = UUID(); self.id = id
+    let physical = resources.reservePhysicalOwners([.pageCurl(id)], priority: .input)
+    guard let reservation = resources.reserveDerivedBytes(bytes, priority: .input, owner: physical) else {
+      physical.release(); throw SceneRenderError.resourceLimit
+    }
+    self.physical = physical; self.reservation = reservation; self.size = size
+    let output = CAMetalLayer()
+    output.device = device; output.pixelFormat = .bgra8Unorm
+    output.framebufferOnly = true; output.isOpaque = true
+    output.maximumDrawableCount = count; output.drawableSize = size
+    output.isHidden = true
+    layer = output
+  }
+
+  func activate() {
+    isIdle = false
+    SceneRenderResources.shared.updatePhysicalPriorities([.pageCurl(id): .input], reclassifyingExistingBacking: true)
+  }
+  func idle() {
+    guard !released else { return }
+    isIdle = true
+    SceneRenderResources.shared.updatePhysicalPriorities([.pageCurl(id): .passive], reclassifyingExistingBacking: true)
+    SceneRenderResources.shared.reclamationOffersChanged()
+  }
+  func release() {
+    guard !released else { return }
+    released = true; isIdle = false
+    CATransaction.begin(); CATransaction.setDisableActions(true)
+    layer.isHidden = true; layer.removeFromSuperlayer()
+    CATransaction.commit()
+    reservation.release(); physical.release()
+  }
+  isolated deinit { release() }
+}
+
+/// A terminal joins the physical pool request and ordered GPU fence. Completion
+/// releases admission explicitly, independent of Metal's callback retention.
 @MainActor
 private final class SheetCurlPageRetirement {
-  private var reservation: RasterReservation?
-  private var output: CAMetalLayer?
+  private var completion: (() -> Void)?
   private var gpuDrained = false
   private var drawableDrained = false
-  init(_ reservation: RasterReservation?, output: CAMetalLayer?) {
-    self.reservation = reservation; self.output = output
-  }
+  init(_ completion: @escaping () -> Void) { self.completion = completion }
   func finishGPU() { gpuDrained = true; finish() }
   func finishDrawable() { drawableDrained = true; finish() }
   private func finish() {
-    guard gpuDrained, drawableDrained else { return }
-    // The layer owns its displayed IOSurface even after the command completes.
-    // Remove this exact retired output before returning its admission; a later
-    // operation may already own a different child of the same UIView.
-    CATransaction.begin(); CATransaction.setDisableActions(true)
-    output?.removeFromSuperlayer(); output = nil
-    CATransaction.commit()
-    reservation?.release(); reservation = nil
+    guard gpuDrained, drawableDrained, let completion else { return }
+    self.completion = nil
+    completion()
   }
 }
 #endif
@@ -299,6 +340,7 @@ final class SheetCurlMetalView: MTKView, MTKViewDelegate {
   var onPageFrameReady: ((PageTurnFrame, Double, Int, NotebookMetalFrameReadiness) -> Void)?
   var onPageFrameWillPresent: ((UUID) -> Void)?
   var onPageRenderFailure: ((Error) -> Void)?
+  var onPageDetached: (() -> Void)?
   var onCoverFrameReady: ((PageTurnFrame, Double, Int, NotebookMetalFrameReadiness) -> Void)?
   private var sourceCoverFrame: PageTurnFrame?
   private var pageFrames: (leaf: PageTurnFrame, base: PageTurnFrame)?
@@ -309,7 +351,10 @@ final class SheetCurlMetalView: MTKView, MTKViewDelegate {
   private var pageMeasuredPublications = 0
   /// Pages own their drawable pool directly. The inherited MTK backing and its
   /// display/resize lifecycle belong exclusively to cover rendering.
-  private(set) var pageOutputLayer: CAMetalLayer?
+  private var pageOutput: SheetCurlPageOutput?
+  var pageOutputLayer: CAMetalLayer? { pageOutput?.layer }
+  var pageDrawableReservedBytes: Int { pageOutput?.reservation.byteCount ?? 0 }
+  private var pageReclamationOwner: UUID?
   private var pageHasPublishedFrame = false
   private enum PagePresentationPhase {
     case initial
@@ -360,13 +405,15 @@ final class SheetCurlMetalView: MTKView, MTKViewDelegate {
     #if os(iOS)
     let releasesPage = onDisplayUpdate != nil || pageOperationID != nil || pageDrawableRequest != nil
     let retiringRequest = pageDrawableRequest
-    let retiringOutput = pageOutputLayer
+    let retiringOutput = pageOutput
     // Visibility is revoked now, independently of asynchronous GPU/pool drain.
     // A successor can reveal its parent before the old fence callback runs.
     CATransaction.begin(); CATransaction.setDisableActions(true)
-    retiringOutput?.isHidden = true
+    retiringOutput?.layer.isHidden = true
     CATransaction.commit()
-    pageOutputLayer = nil
+    // Only an actual endpoint permits pool reuse. An interrupted asynchronous
+    // presentation can still be queued in CA; its layer must never reappear.
+    if !presented { pageOutput = nil }
     retirePageExecution()
     pendingPageDrawableSize = nil
     #endif
@@ -386,17 +433,17 @@ final class SheetCurlMetalView: MTKView, MTKViewDelegate {
     #endif
     #if os(iOS)
     if releasesPage {
-      guard lease != nil || retiringOutput != nil else { return }
-      let retirement = SheetCurlPageRetirement(lease, output: retiringOutput)
-      if let retiringRequest, retiringOutput != nil || lease.map({ retiringRequest.holds($0) }) == true {
-        retiringRequest.whenDrained { retirement.finishDrawable() }
-      } else { retirement.finishDrawable() }
-      // Cancellation does not await either tail on MainActor. Both receipts
-      // explicitly retire admission even if Metal retains the callback itself.
-      if let fence = commandQueue?.makeCommandBuffer() {
-        fence.addCompletedHandler { _ in Task { @MainActor in retirement.finishGPU() } }
-        fence.commit()
-      } else { retirement.finishGPU() }
+      guard let retiringOutput else { return }
+      let generation = pagePresentationGeneration
+      drainPageOutput(retiringOutput, request: retiringRequest) { [weak self] in
+        if presented {
+          // Replacement/detach owns its later fence. This older terminal
+          // must not release backing used by commands from a newer operation.
+          guard let self, self.pageOutput === retiringOutput else { return }
+          // A newer accepted operation may already have promoted this pool.
+          if self.pageOperationID == nil, self.pagePresentationGeneration == generation { retiringOutput.idle() }
+        } else { retiringOutput.release() }
+      }
       return
     }
     #endif
@@ -448,6 +495,9 @@ final class SheetCurlMetalView: MTKView, MTKViewDelegate {
   func preparePages(leaf: PageTurnFrame, base: PageTurnFrame, operationID: UUID) throws {
     guard SheetCurlGPU.shared.pagePipeline != nil else { throw SceneRenderError.snapshotPending("page_pipeline") }
     retirePageExecution()
+    if pageDrawableRequest == nil {
+      try configurePageOutput(size: .init(width: leaf.texture.width, height: leaf.texture.height))
+    }
     sourceCover = nil; coverImage = nil; sourceCoverFrame = nil
     pagePresentationGeneration &+= 1
     pageFrames = (leaf, base)
@@ -491,25 +541,56 @@ final class SheetCurlMetalView: MTKView, MTKViewDelegate {
       immediatePresentationExpected: info?.isImmediatePresentationExpected))
   }
 
-  private func configurePageOutput(size: CGSize) {
+  private func configurePageOutput(size: CGSize) throws {
     precondition(pageDrawableRequest == nil)
-    CATransaction.begin(); CATransaction.setDisableActions(true)
-    defer { CATransaction.commit() }
-    let output: CAMetalLayer
-    if let installed = pageOutputLayer { output = installed }
-    else {
-      output = CAMetalLayer()
-      output.device = device
-      output.pixelFormat = .bgra8Unorm
-      output.framebufferOnly = true
-      output.isOpaque = true
-      output.maximumDrawableCount = drawableCount
-      layer.addSublayer(output)
-      pageOutputLayer = output
+    if pageReclamationOwner == nil {
+      pageReclamationOwner = SceneRenderResources.shared.registerReclamationOwner { [weak self] in
+        self?.reclaimPageOutput() ?? []
+      }
     }
-    output.frame = bounds
-    if output.drawableSize != size { output.drawableSize = size }
-    output.presentsWithTransaction = true
+    if pageOutput?.size != size {
+      if let previous = pageOutput {
+        pageOutput = nil
+        CATransaction.begin(); CATransaction.setDisableActions(true)
+        previous.layer.isHidden = true
+        CATransaction.commit()
+        drainPageOutput(previous, request: nil) { previous.release() }
+      }
+      guard let device else { throw SceneRenderError.snapshotPending("page_device") }
+      let bytes = try pageDrawableBytes(width: Int(size.width), height: Int(size.height)) * drawableCount
+      pageOutput = try SheetCurlPageOutput(device: device, size: size, bytes: bytes, count: drawableCount)
+    }
+    guard let pool = pageOutput else { return }
+    pool.activate()
+    CATransaction.begin(); CATransaction.setDisableActions(true)
+    if pool.layer.superlayer == nil { layer.addSublayer(pool.layer) }
+    pool.layer.frame = bounds
+    pool.layer.isHidden = false
+    pool.layer.presentsWithTransaction = true
+    CATransaction.commit()
+  }
+
+  private func drainPageOutput(_ pool: SheetCurlPageOutput, request: SheetCurlDrawableRequest?,
+    completion: @escaping () -> Void) {
+    let retirement = SheetCurlPageRetirement(completion)
+    if let request, request.holds(pool.reservation) {
+      request.whenDrained { retirement.finishDrawable() }
+    } else { retirement.finishDrawable() }
+    if let fence = commandQueue?.makeCommandBuffer() {
+      fence.addCompletedHandler { _ in Task { @MainActor in retirement.finishGPU() } }
+      fence.commit()
+    } else { retirement.finishGPU() }
+  }
+
+  private func reclaimPageOutput() -> [SceneResourceReclamationCandidate] {
+    guard pageOperationID == nil, pageDrawableRequest == nil, let pool = pageOutput, pool.isIdle else { return [] }
+    return [.init(id: pool.id, bytes: pool.reservation.byteCount, rasterCount: 0,
+      value: .unused, distance: 0, restorationMilliseconds: 1, release: { [weak self, weak pool] in
+        guard let self, let pool, self.pageOutput === pool, pool.isIdle, self.pageOperationID == nil,
+          self.pageDrawableRequest == nil else { return nil }
+        self.pageOutput = nil; pool.release()
+        return nil
+      })]
   }
   #endif
 
@@ -579,7 +660,8 @@ final class SheetCurlMetalView: MTKView, MTKViewDelegate {
         return
       }
       pendingPageDrawableSize = nil
-      configurePageOutput(size: size)
+      do { try configurePageOutput(size: size) }
+      catch { failPageExecution(error); return }
       preparePageClock()
       return
     }
@@ -668,11 +750,11 @@ final class SheetCurlMetalView: MTKView, MTKViewDelegate {
 
     override func didMoveToWindow() {
       super.didMoveToWindow()
-      if window == nil {
-        pagePresentationGeneration &+= 1
-        pageUpdateMeasurement = nil
-        if pageFrames != nil { framePending = true }
-        retirePageExecution()
+      if window == nil, onDisplayUpdate != nil {
+        // The operation owner resolves cancellation before its accepted pair
+        // disappears. Reattaching cannot retain a motion with retired pixels.
+        onPageDetached?()
+        releaseSource()
       }
       // Register the one disabled clock with the mounted window, before input.
       // This neither obtains a drawable nor asks UIKit for continuous updates.
@@ -773,9 +855,8 @@ final class SheetCurlMetalView: MTKView, MTKViewDelegate {
           self.pagePresentationGeneration == presentationGeneration, self.pageFrames?.leaf === frames.leaf else { return }
         if case .awaitingOS(let submittedSequence, _) = self.pagePresentationPhase, submittedSequence == sequence {
           if readiness.isReady {
-            // No later page command/acquisition was admitted while this
-            // transaction awaited the OS. Changing modes cannot detach a
-            // pending transaction from its still-unpresented drawable.
+            // A successor may already be encoded, but only this real OS
+            // outcome permits its publication and the asynchronous mode.
             self.pagePresentationPhase = .motion
             self.pageOutputLayer?.presentsWithTransaction = false
           } else {
@@ -791,7 +872,7 @@ final class SheetCurlMetalView: MTKView, MTKViewDelegate {
         }
         if !readiness.isReady, self.progress == progress { self.framePending = true }
         self.onPageFrameReady?(frames.leaf, progress, sequence, readiness)
-        if self.animatesContinuously || self.framePending { self.requestFrame() }
+        if self.animatesContinuously || self.framePending || self.pagePublication != nil { self.requestFrame() }
       }
     }
     // Keep both immutable cuts charged through the final sampling command.
@@ -814,8 +895,13 @@ final class SheetCurlMetalView: MTKView, MTKViewDelegate {
     #endif
     if let scheduleTiming { commandBuffer.addScheduledHandler { _ in scheduleTiming.record() } }
     let needsCompletionDelivery = onFrameMeasured != nil || onDisplayUpdate == nil
-    commandBuffer.addCompletedHandler { [weak self, inFlightSemaphore, frameLease] command in
-      _ = frameLease // Keep the charged image/drawables through GPU completion.
+    #if os(iOS)
+    let outputLease = frames == nil ? frameLease : pageOutput?.reservation
+    #else
+    let outputLease = frameLease
+    #endif
+    commandBuffer.addCompletedHandler { [weak self, inFlightSemaphore, outputLease] command in
+      _ = outputLease // Keep the charged image/drawables through GPU completion.
       // The UIKit page clock owns presentation pacing. Holding an encoding
       // slot until the OS presentation callback double-throttles it and drops
       // admitted 120 Hz updates even after their GPU work has completed.
@@ -900,8 +986,7 @@ final class SheetCurlMetalView: MTKView, MTKViewDelegate {
     #if os(iOS)
       if onDisplayUpdate != nil {
         if onFrameMeasured != nil, pageClockRequestedAt == nil { pageClockRequestedAt = CACurrentMediaTime() }
-        if case .awaitingOS = pagePresentationPhase { return }
-        guard !configuringPageDrawable, permitsFrameSubmission(), window != nil,
+        guard !configuringPageDrawable, pendingPageDrawableSize == nil, permitsFrameSubmission(), window != nil,
           let output = pageOutputLayer, output.drawableSize.width > 0, output.drawableSize.height > 0 else { return }
         preparePageClock()
         requestPageDrawable()
@@ -941,13 +1026,15 @@ final class SheetCurlMetalView: MTKView, MTKViewDelegate {
   }
 
   private func requestPageDrawable() {
-    if case .awaitingOS = pagePresentationPhase { return }
-    // Do not obtain or encode a successor before the first CA transaction
-    // has an OS outcome. Merely keeping its publication in order is not enough.
-    if case .initial = pagePresentationPhase, pagePublication != nil { return }
+    // One prepared successor can overlap the first OS wait, but it cannot
+    // publish or acquire a third drawable until the exposure has an outcome.
+    switch pagePresentationPhase {
+    case .initial, .awaitingOS: if pagePublication != nil { return }
+    case .motion: break
+    }
     guard pageDrawableRequest == nil, pagePublication == nil || animatesContinuously || framePending,
       pageOperationID != nil, window != nil, permitsFrameSubmission(), let layer = pageOutputLayer else { return }
-    let request = SheetCurlDrawableRequest(layer: layer, reservation: frameLease)
+    let request = SheetCurlDrawableRequest(layer: layer, reservation: pageOutput?.reservation)
     let generation = pagePresentationGeneration
     pageDrawableRequest = request
     request.start { [weak self, weak request] in
@@ -966,7 +1053,6 @@ final class SheetCurlMetalView: MTKView, MTKViewDelegate {
 
   private func preparePageUpdate(_ info: UIUpdateInfo) {
     guard window != nil, permitsFrameSubmission(), pageOperationID != nil else { retirePageExecution(); return }
-    if case .awaitingOS = pagePresentationPhase { return }
     if let publication = pagePublication, publication.poseRevision != pagePoseRevision {
       // Input accepted after the early animation phase owns the next visible
       // pose. The obsolete command may finish on the GPU, but cannot publish
@@ -997,6 +1083,7 @@ final class SheetCurlMetalView: MTKView, MTKViewDelegate {
   }
 
   private func publishPageUpdate(_ info: UIUpdateInfo) {
+    if case .awaitingOS = pagePresentationPhase { return }
     guard let publication = pagePublication else { return }
     guard window != nil, permitsFrameSubmission(), pageOperationID == publication.operationID,
       pagePresentationGeneration == publication.generation,
@@ -1037,7 +1124,11 @@ final class SheetCurlMetalView: MTKView, MTKViewDelegate {
 
   private func finishPageUpdate() {
     if case .awaitingOS = pagePresentationPhase {
-      pageUIUpdates?.isEnabled = false
+      // Stop after exactly one successor. The OS receipt wakes publication;
+      // a contact change can wake preparation to replace an obsolete pose.
+      if pagePublication != nil || (!animatesContinuously && !framePending) {
+        pageUIUpdates?.isEnabled = false
+      } else { requestPageDrawable() }
       return
     }
     if !animatesContinuously, !framePending, pagePublication == nil {
@@ -1066,7 +1157,10 @@ final class SheetCurlMetalView: MTKView, MTKViewDelegate {
     if pageDrawableRequest?.cancel() == true { pageDrawableRequest = nil }
   }
 
-  isolated deinit { retirePageExecution() }
+  isolated deinit {
+    releaseSource()
+    if let pageReclamationOwner { SceneRenderResources.shared.unregisterReclamationOwner(pageReclamationOwner) }
+  }
   #endif
 
   private func clear(

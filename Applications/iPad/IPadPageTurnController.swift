@@ -166,7 +166,10 @@ final class IPadPageTurnController: UIViewController {
   private var preparationSourceStorage: PageTurnPreparationSource?
   var preparationSource: PageTurnPreparationSource {
     if let preparationSourceStorage { return preparationSourceStorage }
-    let source = PageTurnPreparationSource { [weak self] refine in
+    let source = PageTurnPreparationSource(currentPageID: { [weak self] in
+      guard let self, !isRetired else { return nil }
+      return controllers[displayedIndex]?.pageID
+    }) { [weak self] refine in
       guard let self, !isRetired else { return .waiting }
       return prepareCurrentPage(refinesDetails: refine)
     }
@@ -802,6 +805,11 @@ final class IPadPageTurnController: UIViewController {
     isUpdatingContents = true
     defer { isUpdatingContents = wasUpdating }
 
+    // Admit the physical leaf before its first factory can mount programs.
+    // installDisplayedPage and owner replacement reach this path before the
+    // normal neighbour-window pass, including an unresolved page UUID.
+    onWindowChange(Set(controllers.keys).union([index]),
+      anticipatedIndex ?? coldGestureTarget ?? requestedIndex.map(clamped), sequenceRevision, documentControllerID)
     pagePreparations[index] = .init()
     let controller = IPadIndexedPageController(pageIndex: index, rootView: AnyView(EmptyView()))
     controller.pageID = pageIdentities[index]
@@ -873,6 +881,11 @@ final class IPadPageTurnController: UIViewController {
   }
 
   private func retireContent(of controller: IPadIndexedPageController) {
+    if sheetController.page === controller {
+      // A camera waiting on this physical leaf receives a terminal outcome.
+      // Its replacement leaf gets a new source, even at the same directory index.
+      preparationSourceStorage?.retire(); preparationSourceStorage = nil
+    }
     observe("page_turn_content_retire", target: controller.pageIndex)
     controller.readiness?.retire(); controller.readiness = nil
     pageTurnActivity.retireElementFrames(at: controller.pageIndex)
@@ -925,7 +938,14 @@ final class IPadPageTurnController: UIViewController {
     func current(_ owner: IPadPageTurnController) -> IPadIndexedPageController? {
       owner.controllers.values.first { $0.hostID == hostID && $0.readinessID == receiptID }
     }
-    let readiness = PageTurnReadiness(activity: pageTurnActivity, pageIndex: index, isInActiveTurn: { [weak self] in
+    let preparationSource: PageTurnReadiness.AgentPreparationSource = notebookNavigation == nil ? .autonomous : .notebook({ [weak self] in
+      guard let self, !isRetired, let controller = current(self), let ownerID,
+        notebookNavigation?.isBound(ownerID: ownerID, source: sequenceRevision, controllerID: documentControllerID) == true else { return nil }
+      return .init(address: .init(itemID: ownerID, index: controller.pageIndex, root: sequenceRevision),
+        pageID: controller.pageID, controllerID: documentControllerID)
+    })
+    let readiness = PageTurnReadiness(activity: pageTurnActivity, pageIndex: index,
+      agentPreparationSource: preparationSource, isInActiveTurn: { [weak self] in
       guard let self, let controller = current(self) else { return false }
       return self.sheetController.containsInActiveTurn(controller)
     }, onFailure: { [weak self] failure in

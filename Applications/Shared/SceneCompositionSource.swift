@@ -51,7 +51,8 @@ enum SceneCompositionReadCursor: Sendable {
 struct SceneCompositionLiveData: Sendable {
   let documents: [UUID: DocumentDocument]
   let states: [UUID: DocumentStateJournal]
-  let pages: [UUID: PageDocument]
+  /// Only ownership participates in spatial invalidation; page bodies belong to their reader.
+  let pageOwners: [UUID: UUID]
   let ink: SpatialInkJournal
   let suppressedInkIDs: Set<UUID>
   let orderedInk: [SurfaceID: NotebookOrderedInkPlan]
@@ -60,11 +61,11 @@ struct SceneCompositionLiveData: Sendable {
   let documentPaperSizes: [UUID: WorkspaceItemGeometry]
   let nonemptyBoardIDs: Set<UUID>
   let inkWindow: NotebookSpatialInkWindow?
-  init(documents: [UUID: DocumentDocument], states: [UUID: DocumentStateJournal], pages: [UUID: PageDocument],
+  init(documents: [UUID: DocumentDocument], states: [UUID: DocumentStateJournal], pageOwners: [UUID: UUID] = [:],
     ink: SpatialInkJournal, suppressedInkIDs: Set<UUID> = [], orderedInk: [SurfaceID: NotebookOrderedInkPlan] = [:], referenceIdentities: [NotebookReferenceIdentity] = [],
     referenceBasis: NotebookReferenceBasis? = nil, documentPaperSizes: [UUID: WorkspaceItemGeometry] = [:],
     nonemptyBoardIDs: Set<UUID> = [], inkWindow: NotebookSpatialInkWindow? = nil) {
-    self.documents = documents; self.states = states; self.pages = pages; self.ink = ink
+    self.documents = documents; self.states = states; self.pageOwners = pageOwners; self.ink = ink
     self.suppressedInkIDs = suppressedInkIDs
     self.orderedInk = orderedInk
     self.referenceIdentities = referenceIdentities
@@ -72,13 +73,6 @@ struct SceneCompositionLiveData: Sendable {
     self.documentPaperSizes = documentPaperSizes
     self.nonemptyBoardIDs = nonemptyBoardIDs
     self.inkWindow = inkWindow
-  }
-
-  func replacingPages(_ replacements: [UUID: PageDocument]) -> Self {
-    .init(documents: documents, states: states, pages: pages.merging(replacements) { _, next in next },
-      ink: ink, suppressedInkIDs: suppressedInkIDs, orderedInk: orderedInk,
-      referenceIdentities: referenceIdentities, referenceBasis: referenceBasis,
-      documentPaperSizes: documentPaperSizes, nonemptyBoardIDs: nonemptyBoardIDs, inkWindow: inkWindow)
   }
 }
 
@@ -162,10 +156,6 @@ struct ScenePixelDependencies: Sendable {
 /// receipt changes may cross the cut; changed material cancels the unpublished
 /// cohort rather than mixing its tiles.
 actor SceneCompositionSource {
-  struct PageContentRefresh: Sendable {
-    let revision: UInt64
-    let pages: [UUID: PageDocument]
-  }
   struct InkPaint: Sendable {
     let journal: SpatialInkJournal
     let plan: NotebookOrderedInkPlan
@@ -234,14 +224,12 @@ actor SceneCompositionSource {
 
   func programStore() -> NotebookStore? { if case .sql(let store) = origin { store } else { nil } }
 
-  /// Open page bodies belong to their page presenters, not the spatial paint.
-  /// Check the entire interval in one bounded WAL cut before refreshing only
-  /// those bodies. Membership, spatial edits and unknown/large intervals keep
-  /// the ordinary composition path; the latest write's owner proves nothing
-  /// about other writes included in the same durable header.
-  func refreshPageContent(after previous: UInt64, previousPages: [UUID: PageDocument], liveItemIDs: Set<UUID>) throws -> PageContentRefresh? {
+  /// A page change cannot invalidate spatial pixels excluded for its reader.
+  /// Prove the whole durable interval and current ownership without reading or
+  /// retaining another PageDocument. Mixed/unknown changes keep normal paint.
+  func validateExcludedPageChanges(after previous: UInt64, pageOwners: [UUID: UUID], liveItemIDs: Set<UUID>) throws -> UInt64? {
     try Task.checkCancellation()
-    guard case .sql = origin, let reader, previous < revision, !previousPages.isEmpty else { return nil }
+    guard case .sql = origin, let reader, previous < revision, !pageOwners.isEmpty else { return nil }
     return try reader.read { store in
       let header = try store.workspaceHeader()
       guard header.workspaceID == workspaceID, header.cursor >= revision else { return nil }
@@ -249,22 +237,17 @@ actor SceneCompositionSource {
       do { changes = try store.readChangedAddresses(after: previous, through: header.cursor, limit: 64) }
       catch let error as CollaborationError where error.code == "observation_cursor_expired" { return nil }
       guard !changes.hasMore else { return nil }
-      var changedPages = Set<UUID>()
+      var checkedPages = Set<UUID>()
       for record in changes.records where record.beforeHash != record.afterHash {
         let file = String(record.address.split(separator: "#", maxSplits: 1)[0])
-        guard let id = Self.documentID(file, directory: "pages"), previousPages[id] != nil else { return nil }
-        changedPages.insert(id)
-      }
-      var pages: [UUID: PageDocument] = [:]
-      for id in changedPages.sorted() {
-        try Task.checkCancellation()
-        guard let owner = try store.ownerItemID(ofPage: id), liveItemIDs.contains(owner) else { return nil }
-        let page = try store.loadPage(id)
-        guard page.size == previousPages[id]?.size else { return nil }
-        pages[id] = page
+        guard let id = Self.documentID(file, directory: "pages"), let owner = pageOwners[id],
+          liveItemIDs.contains(owner) else { return nil }
+        if checkedPages.insert(id).inserted {
+          guard try store.ownerItemID(ofPage: id) == owner else { return nil }
+        }
       }
       try Task.checkCancellation()
-      return .init(revision: header.cursor, pages: pages)
+      return header.cursor
     }
   }
 
@@ -473,8 +456,9 @@ actor SceneCompositionSource {
           guard id == openedID else { return false }
           return try store.readItemHeader(id)?.kind == .document
         }
-        let pageIDs = opensPaper && presence.selectedItemID.map(itemIDs.contains) == true
-          ? (presence.notebookPageID.map { [$0] } ?? []) : []
+        var pageOwners: [UUID: UUID] = [:]
+        if let openedID, itemIDs.contains(openedID), let pageID = presence.notebookPageID,
+          try store.ownerItemID(ofPage: pageID) == openedID { pageOwners[pageID] = openedID }
         var inkCoverage: [SurfaceID: WorkspaceSpatialBounds] = [:]
         for surface in surfaces {
           if surface.kind == .board {
@@ -492,10 +476,9 @@ actor SceneCompositionSource {
         if let old = previous?.data.inkWindow, previous?.plan.revision == revision,
           old.covers(inkCoverage, elements: inkElements) { inkWindow = old }
         let inkSource = try window(store, coverage: inkCoverage, elements: inkElements)
-        let data = try store.readWorkingSet(itemIDs: documents, pageIDs: pageIDs, boardIDs: [], surfaces: [])
+        let data = try store.readWorkingSet(itemIDs: documents, pageIDs: [], boardIDs: [], surfaces: [])
         let ink = inkSource.journal
-        guard data.documents.count == documents.count, data.states.count == documents.count,
-          data.pages.count == pageIDs.count else { throw SceneRenderError.snapshotPending("live_owner_payload") }
+        guard data.documents.count == documents.count, data.states.count == documents.count else { throw SceneRenderError.snapshotPending("live_owner_payload") }
         var targets = Set(plan.presentations.keys.compactMap { plane -> CollaborationTarget? in
           guard case .board(let id) = plane else { return nil }
           return .init(kind: .board, id: id)
@@ -524,7 +507,7 @@ actor SceneCompositionSource {
           })
         let ordered = try liveOrderedInk(surfaces: surfaces, frame: frame, journal: ink)
         let suppressed = ordered.values.reduce(into: Set<UUID>()) { $0.formUnion($1.suppressedInkIDs) }
-        return .init(documents: data.documents, states: data.states, pages: data.pages, ink: ink, suppressedInkIDs: suppressed,
+        return .init(documents: data.documents, states: data.states, pageOwners: pageOwners, ink: ink, suppressedInkIDs: suppressed,
           orderedInk: ordered,
           referenceIdentities: basis.identities, referenceBasis: basis,
           documentPaperSizes: frame.index.documentPaperSizes.filter { itemIDs.contains($0.key) },
@@ -534,7 +517,7 @@ actor SceneCompositionSource {
       let wanted = Set(surfaces)
       let ink = SpatialInkJournal(actions: journal.orderedActions.filter { $0.spans.contains { wanted.contains($0.surface) } }, stamp: journal.stamp)
       let ordered = try liveOrderedInk(surfaces: surfaces, frame: frame, journal: ink)
-      return .init(documents: [:], states: [:], pages: [:], ink: ink,
+      return .init(documents: [:], states: [:], ink: ink,
         suppressedInkIDs: ordered.values.reduce(into: Set<UUID>()) { $0.formUnion($1.suppressedInkIDs) }, orderedInk: ordered,
         documentPaperSizes: frame.index.documentPaperSizes.filter { itemIDs.contains($0.key) },
         nonemptyBoardIDs: nonemptyBoardIDs)
@@ -623,7 +606,7 @@ actor SceneCompositionSource {
       if let id = documentID(file, directory: "documents"), liveItems.contains(id),
         let oldPaper = oldData.documentPaperSizes[id],
         let newPaper = data.documentPaperSizes[id], oldPaper == newPaper { continue }
-      if let id = documentID(file, directory: "pages"), oldData.pages[id] != nil, data.pages[id] != nil { continue }
+      if let id = documentID(file, directory: "pages"), let owner = oldData.pageOwners[id], data.pageOwners[id] == owner, liveItems.contains(owner) { continue }
       return false
     }
     return true
