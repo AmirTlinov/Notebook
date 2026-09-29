@@ -1,0 +1,95 @@
+{
+  "status": "code published on main; system UI and delivery await first device unlock after reboot; build223 not installed",
+  "version": "0.3.153 (223)",
+  "baseCommit": "62599fc3e9f224fa7dac1961327d5b415a1db4e4",
+  "runs": {
+    "1214": {
+      "evidence": "/private/tmp/notebook-223-physical-20260929T1214Z",
+      "sourceSHA256": "daefed93f7701e087e567a722a537a9bd6f4b7391ca18a416629676213ffd4b6",
+      "sourceUnchanged": null,
+      "summary": "1214-ipad-summary.json",
+      "passed": 6,
+      "failed": 7,
+      "skipped": 0,
+      "runtimeWarnings": 0,
+      "qualification": "Intermediate source; transactional-first-reveal experiment hung warm turn5 and was removed. Cancellation window readback lacked a UIKit update boundary and was repaired. UI automation did not initialize."
+    },
+    "1229": {
+      "evidence": "/private/tmp/notebook-223-physical-20260929T1229Z",
+      "sourceSHA256": "3154dd099b359a2af66b5319fa08709a92539b5be98fa8d88d851fc872d61b08",
+      "sourceUnchanged": null,
+      "summary": "1229-ipad-summary.json",
+      "passed": 8,
+      "failed": 6,
+      "skipped": 0,
+      "runtimeWarnings": 0,
+      "qualification": "Before the final typed state projection reuse. Eight ownership regressions passed, five unchanged latency budgets failed, UI automation did not initialize. Ten warm turns completed."
+    },
+    "1241": {
+      "evidence": "/private/tmp/notebook-223-functional-20260929T1241Z",
+      "sourceSHA256": "23fa7416e9b6eff5a9704b29e2a376463c3d353a2deac5b6672b42461960a175",
+      "sourceUnchanged": null,
+      "summary": "1241-ipad-summary.json",
+      "passed": 8,
+      "failed": 1,
+      "skipped": 0,
+      "runtimeWarnings": 0,
+      "qualification": "Final product source. Eight native ownership checks passed. UI automation again failed to initialize; full device reboot requested after service resets proved insufficient."
+    },
+    "1240-core": {
+      "evidence": "/private/tmp/notebook-223-core-20260929T1240Z.log",
+      "passed": 3,
+      "failed": 0,
+      "scope": "Addressed state FIFO/checkpoint, sparse causal metadata and foreign content, projection reuse with100000-point graphic mask."
+    },
+    "1246-mac": {
+      "evidence": "/private/tmp/notebook-223-mac-20260929T1246Z",
+      "sourceSHA256": "23fa7416e9b6eff5a9704b29e2a376463c3d353a2deac5b6672b42461960a175",
+      "sourceUnchanged": true,
+      "summary": "1246-mac-summary.json",
+      "status": "passed",
+      "passed": 2,
+      "failed": 0,
+      "skipped": 0,
+      "runtimeWarnings": 0,
+      "scope": "One interactive owner before click; repeated zoom preserves original WKWebViews, unsaved input and static pixels."
+    }
+  },
+  "negativeBudgets1229": {
+    "coldDocumentNativeInputMs": 1137.13725,
+    "coldSVGFirstNativeMs": 283.035542,
+    "coldSVGAllNativeMs": 449.817,
+    "coldProgramsFirstNativeMs": 429.635917,
+    "coldProgramsAllNativeMs": 758.518417,
+    "native24ForwardOwnerMs": 456.561708,
+    "warmTurnFirstOSRangeMs": [
+      24.67,
+      36.8
+    ],
+    "warmTurnLandingRangeMs": [
+      336.408,
+      347.189
+    ],
+    "warmTurnInitialUnpresented": [
+      1,
+      0,
+      2,
+      0,
+      2,
+      2,
+      0,
+      0,
+      2,
+      2
+    ],
+    "warmTurnMaxOSIntervalAfterFirstMs": 16.673
+  },
+  "diagnostics": {
+    "cpu1209": "No process attachment; no CPU stack. Temporary rendezvous removed.",
+    "cpu1222": "Scenario ran on1214binary; trace did not finalize before timeout and export failed Document Missing Template Error. No usable CPU stack.",
+    "tex1214": "Isolated Mac host diagnostic, no product changes. Cold compile627.954ms: ZIP entry index21.855ms; TeX passes289.327+262.882ms. Does not establish iPad timings."
+  },
+  "remaining": "First OS frame, cold first content and document, Native24 strict deadlines, physical Pencil delivery, every intermediate mixed OS frame and sustained full acceptance.",
+  "sourceCommit": "f81b17c2",
+  "sourceSHA256": "23fa7416e9b6eff5a9704b29e2a376463c3d353a2deac5b6672b42461960a175"
+}

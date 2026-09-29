@@ -1,0 +1,85 @@
+{
+  "devicesAndConfigurations": [
+    {
+      "device": {
+        "architecture": "arm64e",
+        "deviceId": "00008103-001E059934D9001E",
+        "deviceName": "iPad (Елизавета)",
+        "modelName": "iPad Pro (11-inch) (3rd generation)",
+        "osBuildNumber": "24A435",
+        "osVersion": "27.0",
+        "platform": "iOS"
+      },
+      "expectedFailures": 0,
+      "failedTests": 6,
+      "passedTests": 8,
+      "skippedTests": 0,
+      "testPlanConfiguration": {
+        "configurationId": "1",
+        "configurationName": "Test Scheme Action"
+      }
+    }
+  ],
+  "environmentDescription": "Notebook · Built with macOS 27.0",
+  "expectedFailures": 0,
+  "failedTests": 6,
+  "finishTime": 1790685178.869,
+  "passedTests": 8,
+  "result": "Failed",
+  "runtimeWarnings": [],
+  "skippedTests": 0,
+  "startTime": 1790685094.11,
+  "statistics": [],
+  "testFailures": [
+    {
+      "failureText": "XCTAssertTrue failed - First exact authored native installation: 283.035542 ms, matched=true, budget=150 ms; OS first-pixel time is unmeasured",
+      "targetName": "NotebookTests",
+      "testIdentifier": 5,
+      "testIdentifierString": "NotebookNavigationLoadUXTests/testColdNotebookWithThirteenDenseSVGsShowsEveryElementWithinBudget()",
+      "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/NotebookNavigationLoadUXTests/testColdNotebookWithThirteenDenseSVGsShowsEveryElementWithinBudget",
+      "testName": "testColdNotebookWithThirteenDenseSVGsShowsEveryElementWithinBudget()"
+    },
+    {
+      "failureText": "XCTAssertTrue failed - First exact authored native installation: 429.635917 ms, matched=true, budget=150 ms; OS first-pixel time is unmeasured",
+      "targetName": "NotebookTests",
+      "testIdentifier": 6,
+      "testIdentifierString": "NotebookNavigationLoadUXTests/testColdNotebookWithTwentyFourProgramsShowsEveryControlWithinBudget()",
+      "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/NotebookNavigationLoadUXTests/testColdNotebookWithTwentyFourProgramsShowsEveryControlWithinBudget",
+      "testName": "testColdNotebookWithTwentyFourProgramsShowsEveryControlWithinBudget()"
+    },
+    {
+      "failureText": "XCTAssertLessThanOrEqual failed: (\"1.137137249999796 seconds\") is greater than (\"1.0 seconds\") - History request → native paper accepting input retains the original 1 s budget; this is not camera settlement or OS presentation",
+      "targetName": "NotebookTests",
+      "testIdentifier": 4,
+      "testIdentifierString": "NotebookDocumentOpeningTests/testHistoryReferenceInstallsAnUnloadedDocumentOutsideTheCurrentCamera()",
+      "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/NotebookDocumentOpeningTests/testHistoryReferenceInstallsAnUnloadedDocumentOutsideTheCurrentCamera",
+      "testName": "testHistoryReferenceInstallsAnUnloadedDocumentOutsideTheCurrentCamera()"
+    },
+    {
+      "failureText": "XCTAssertLessThanOrEqual failed: (\"0.03680016666476149 seconds\") is greater than (\"0.016666666666666666 seconds\")",
+      "targetName": "NotebookTests",
+      "testIdentifier": 11,
+      "testIdentifierString": "NotebookPageMotionUXTests/testTenForwardReverseTurnsMeetFirstPresentationAndLandingDeadlines()",
+      "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/NotebookPageMotionUXTests/testTenForwardReverseTurnsMeetFirstPresentationAndLandingDeadlines",
+      "testName": "testTenForwardReverseTurnsMeetFirstPresentationAndLandingDeadlines()"
+    },
+    {
+      "failureText": "XCTAssertLessThanOrEqual failed: (\"0.456561708 seconds\") is greater than (\"0.45 seconds\") - The 450ms command-to-owner-landing budget is unchanged; 9s above is only the diagnostic watchdog",
+      "targetName": "NotebookTests",
+      "testIdentifier": 7,
+      "testIdentifierString": "NotebookNavigationLoadUXTests/testTwentyFourProgramsCommitThroughTheirRuntimesBeforeTheNextPageCapture()",
+      "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/NotebookNavigationLoadUXTests/testTwentyFourProgramsCommitThroughTheirRuntimesBeforeTheNextPageCapture",
+      "testName": "testTwentyFourProgramsCommitThroughTheirRuntimesBeforeTheNextPageCapture()"
+    },
+    {
+      "failureText": "The test runner failed to initialize for UI testing. (Underlying Error: Timed out while enabling automation mode.)",
+      "targetName": "NotebookUITests",
+      "testIdentifier": 14,
+      "testIdentifierString": "NotebookUITests-Runner (2102) encountered an error",
+      "testName": "NotebookUITests-Runner (2102) encountered an error"
+    }
+  ],
+  "title": "Test - Notebook",
+  "topInsights": [],
+  "totalTestCount": 14
+}

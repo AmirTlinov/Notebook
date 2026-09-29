@@ -1,0 +1,93 @@
+{
+  "devicesAndConfigurations": [
+    {
+      "device": {
+        "architecture": "arm64e",
+        "deviceId": "00008103-001E059934D9001E",
+        "deviceName": "iPad (Елизавета)",
+        "modelName": "iPad Pro (11-inch) (3rd generation)",
+        "osBuildNumber": "24A435",
+        "osVersion": "27.0",
+        "platform": "iOS"
+      },
+      "expectedFailures": 0,
+      "failedTests": 7,
+      "passedTests": 6,
+      "skippedTests": 0,
+      "testPlanConfiguration": {
+        "configurationId": "1",
+        "configurationName": "Test Scheme Action"
+      }
+    }
+  ],
+  "environmentDescription": "Notebook · Built with macOS 27.0",
+  "expectedFailures": 0,
+  "failedTests": 7,
+  "finishTime": 1790684332.658,
+  "passedTests": 6,
+  "result": "Failed",
+  "runtimeWarnings": [],
+  "skippedTests": 0,
+  "startTime": 1790684247.682,
+  "statistics": [],
+  "testFailures": [
+    {
+      "failureText": "failed: caught error: \"unavailable\"",
+      "targetName": "NotebookTests",
+      "testIdentifier": 8,
+      "testIdentifierString": "NotebookPageCurlInteractionTests/testCancellingAnAdmittedPairDrainsBothCapturesWithoutPublishing()",
+      "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/NotebookPageCurlInteractionTests/testCancellingAnAdmittedPairDrainsBothCapturesWithoutPublishing",
+      "testName": "testCancellingAnAdmittedPairDrainsBothCapturesWithoutPublishing()"
+    },
+    {
+      "failureText": "XCTAssertTrue failed - First exact authored native installation: 311.96525 ms, matched=true, budget=150 ms; OS first-pixel time is unmeasured",
+      "targetName": "NotebookTests",
+      "testIdentifier": 5,
+      "testIdentifierString": "NotebookNavigationLoadUXTests/testColdNotebookWithThirteenDenseSVGsShowsEveryElementWithinBudget()",
+      "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/NotebookNavigationLoadUXTests/testColdNotebookWithThirteenDenseSVGsShowsEveryElementWithinBudget",
+      "testName": "testColdNotebookWithThirteenDenseSVGsShowsEveryElementWithinBudget()"
+    },
+    {
+      "failureText": "XCTAssertTrue failed - First exact authored native installation: 510.174417 ms, matched=true, budget=150 ms; OS first-pixel time is unmeasured",
+      "targetName": "NotebookTests",
+      "testIdentifier": 6,
+      "testIdentifierString": "NotebookNavigationLoadUXTests/testColdNotebookWithTwentyFourProgramsShowsEveryControlWithinBudget()",
+      "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/NotebookNavigationLoadUXTests/testColdNotebookWithTwentyFourProgramsShowsEveryControlWithinBudget",
+      "testName": "testColdNotebookWithTwentyFourProgramsShowsEveryControlWithinBudget()"
+    },
+    {
+      "failureText": "XCTAssertLessThanOrEqual failed: (\"1.2435099166686996 seconds\") is greater than (\"1.0 seconds\") - History request → native paper accepting input retains the original 1 s budget; this is not camera settlement or OS presentation",
+      "targetName": "NotebookTests",
+      "testIdentifier": 4,
+      "testIdentifierString": "NotebookDocumentOpeningTests/testHistoryReferenceInstallsAnUnloadedDocumentOutsideTheCurrentCamera()",
+      "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/NotebookDocumentOpeningTests/testHistoryReferenceInstallsAnUnloadedDocumentOutsideTheCurrentCamera",
+      "testName": "testHistoryReferenceInstallsAnUnloadedDocumentOutsideTheCurrentCamera()"
+    },
+    {
+      "failureText": "XCTAssertLessThanOrEqual failed: (\"0.04063825000048382 seconds\") is greater than (\"0.016666666666666666 seconds\")",
+      "targetName": "NotebookTests",
+      "testIdentifier": 11,
+      "testIdentifierString": "NotebookPageMotionUXTests/testTenForwardReverseTurnsMeetFirstPresentationAndLandingDeadlines()",
+      "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/NotebookPageMotionUXTests/testTenForwardReverseTurnsMeetFirstPresentationAndLandingDeadlines",
+      "testName": "testTenForwardReverseTurnsMeetFirstPresentationAndLandingDeadlines()"
+    },
+    {
+      "failureText": "XCTAssertLessThanOrEqual failed: (\"0.46642125 seconds\") is greater than (\"0.45 seconds\")",
+      "targetName": "NotebookTests",
+      "testIdentifier": 7,
+      "testIdentifierString": "NotebookNavigationLoadUXTests/testTwentyFourProgramsCommitThroughTheirRuntimesBeforeTheNextPageCapture()",
+      "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookTests/NotebookNavigationLoadUXTests/testTwentyFourProgramsCommitThroughTheirRuntimesBeforeTheNextPageCapture",
+      "testName": "testTwentyFourProgramsCommitThroughTheirRuntimesBeforeTheNextPageCapture()"
+    },
+    {
+      "failureText": "The test runner failed to initialize for UI testing. (Underlying Error: Timed out while enabling automation mode.)",
+      "targetName": "NotebookUITests",
+      "testIdentifier": 13,
+      "testIdentifierString": "NotebookUITests-Runner (1867) encountered an error",
+      "testName": "NotebookUITests-Runner (1867) encountered an error"
+    }
+  ],
+  "title": "Test - Notebook",
+  "topInsights": [],
+  "totalTestCount": 13
+}
