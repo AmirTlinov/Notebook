@@ -7,6 +7,71 @@ import XCTest
 /// Observe real native curl images, independently of the run-loop latency
 /// check: screenshot work must not be credited as display frames or FPS.
 @MainActor final class NotebookPageMotionUXTests: XCTestCase {
+  func testHeldCurlPublishesCommittedMotionAfterInputBeforeCA() async throws {
+    #if targetEnvironment(simulator)
+    throw XCTSkip("This scenario requires actual OS presentation receipts")
+    #endif
+    let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+    let previous = scene.windows.first(where: \.isKeyWindow), window = UIWindow(windowScene: scene)
+    let native = IPadSheetCurlController(), source = UIViewController(), target = UIViewController()
+    PageTurnFrameFixture.install(on: native)
+    window.frame = .init(x: 0, y: 0, width: 300, height: 400)
+    source.view.backgroundColor = .red; target.view.backgroundColor = .green
+    window.rootViewController = native; window.makeKeyAndVisible()
+    defer { native.cancelMotion(); window.isHidden = true; window.rootViewController = nil; previous?.makeKey() }
+    native.show(source, direction: .forward, animated: false); native.prepare(target)
+    window.layoutIfNeeded()
+    native.willTurn = { $0 === target }
+    let curl = try XCTUnwrap(native.view.subviews.compactMap { $0 as? SheetCurlMetalView }.first)
+    let resolve = curl.onPageFrameReady
+    var updates: [SheetCurlMetalView.PageUpdateTiming] = []
+    var initialSequence: Int?, movedSequence: Int?
+    var movedPresentedTime: TimeInterval?, movedReceiptRecorded: TimeInterval?
+    curl.onPageUpdateMeasured = { updates.append($0) }
+    curl.onPageFrameReady = { image, progress, sequence, readiness in
+      if readiness.isReady {
+        if abs(progress - 0.35) < 0.001 { initialSequence = sequence }
+        if abs(progress - 0.55) < 0.001 {
+          movedSequence = sequence; movedPresentedTime = readiness.presentedTime
+          movedReceiptRecorded = CACurrentMediaTime()
+        }
+      }
+      resolve?(image, progress, sequence, readiness)
+    }
+    defer { curl.onPageFrameReady = resolve; curl.onPageUpdateMeasured = nil }
+    XCTAssertTrue(native.beginInteractiveTurn(direction: .forward, target: target))
+    native.updateInteractiveTurn(translation: -native.view.bounds.width * 0.35)
+    let initialDeadline = ContinuousClock.now + .seconds(2)
+    while initialSequence == nil, ContinuousClock.now < initialDeadline { try await Task.sleep(for: .milliseconds(2)) }
+    let initial = try XCTUnwrap(initialSequence)
+    native.updateInteractiveTurn(translation: -native.view.bounds.width * 0.55)
+    let movedDeadline = ContinuousClock.now + .seconds(2)
+    while movedSequence == nil, ContinuousClock.now < movedDeadline { try await Task.sleep(for: .milliseconds(2)) }
+    let moved = try XCTUnwrap(movedSequence)
+    let reveal = try XCTUnwrap(updates.first { $0.phase == .beforePresent && $0.nextSequence == initial + 1 })
+    XCTAssertTrue(reveal.presentsWithTransaction, "The first pixels must share the owner's exposure transaction")
+    let publication = try XCTUnwrap(updates.first { $0.phase == .beforePresent && $0.nextSequence == moved + 1 })
+    XCTAssertFalse(publication.presentsWithTransaction, "A held pose on the committed sheet needs only Metal publication")
+    let afterInput = try XCTUnwrap(updates.first { $0.phase == .afterEvents && $0.modelTime == publication.modelTime })
+    let beforeCA = try XCTUnwrap(updates.first { $0.phase == .beforeCommit && $0.modelTime == publication.modelTime })
+    let afterCA = try XCTUnwrap(updates.first { $0.phase == .afterCommit && $0.modelTime == publication.modelTime })
+    let phases: [[String: Any]] = try [publication, afterInput, beforeCA, afterCA].map {
+      ["phase": $0.phase.rawValue, "modelTime": try XCTUnwrap($0.modelTime), "recorded": $0.recorded]
+    }
+    let report: [String: Any] = [
+      "sequence": moved, "progress": 0.55, "phases": phases,
+      "publicationLeadBeforeCAMS": (beforeCA.recorded - publication.recorded) * 1000,
+      "osReceipt": ["modelTime": try XCTUnwrap(publication.modelTime),
+        "recorded": try XCTUnwrap(movedReceiptRecorded), "presentedTime": try XCTUnwrap(movedPresentedTime)]
+    ]
+    let attachment = XCTAttachment(data: try JSONSerialization.data(withJSONObject: report, options: [.sortedKeys]),
+      uniformTypeIdentifier: "public.json")
+    attachment.name = "Held curl publication opportunity"; attachment.lifetime = .keepAlways; add(attachment)
+    XCTAssertLessThanOrEqual(publication.recorded, afterInput.recorded)
+    XCTAssertLessThan(publication.recorded, beforeCA.recorded, "Accepted motion must publish before the later CA phase")
+    XCTAssertTrue(native.containsInActiveTurn(source)); XCTAssertTrue(native.containsInActiveTurn(target))
+  }
+
   func testSourceReplacementDuringBorrowKeepsTheAcceptedTurn() async throws {
     let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
     let previous = scene.windows.first(where: \.isKeyWindow)

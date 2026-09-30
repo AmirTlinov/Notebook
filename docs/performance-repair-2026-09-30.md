@@ -312,3 +312,35 @@ CIContext и cover pipeline готовятся одним producer при реа
 interior curl не запускает несвязанную подготовку обложки. Заменён eager path.
 [Проверки и оставшиеся интервалы](audit-evidence/2026-09-30/owned-demand-228/results.json):
 strict first OS budgets и единичный native terminal timeout пока не закрыты.
+
+
+## Публикация движения и независимая бумага — 229
+
+Подтверждённые цепочки и заменённые пути:
+
+- `SheetCurlMetalView` кодировал обычную `.motion` заранее, но всегда ждал
+  `beforeCATransactionCommit`. Теперь окончательная поза после input dispatch
+  публикуется в той же `afterEventDispatch`. Первый reveal, новая геометрия и
+  смена порядка листов остаются transactional: `IPadSheetCurlController`
+  сообщает ревизию иерархии, renderer признаёт её после фактического CA commit.
+  Regrab отзывает подготовленную будущую позу до публикации. Второй clock,
+  дополнительное ожидание GPU и повторный scheduling fence не добавлены.
+- `DocumentPagePresentationOwner → mount → acquireWebSurface → makeWK →
+  prepareNativePaper` связывал видимую печатную страницу с созданием браузера.
+  Подготовка теперь начинается у принятого source и mounted native host до WK
+  admission. Один source subscriber готовит PDF и передаёт тот же результат
+  interaction sender. Host устанавливает бумагу прямо, затем переносит её в
+  viewport; старый host теряет геометрию и size/window callbacks. Принятый контакт
+  сохраняет свой terminal маршрут до завершения native delivery.
+- Общий отказ браузера отменял native source demand и paper waiters. Каждый
+  вызов отказа теперь явно указывает native либо interaction. Ошибка interaction
+  отзывает JS/lease/canonical waiters, сохраняя native producer и paper waiters.
+  Native успех сохраняет доступный Retry браузера; Retry не повторяет компиляцию
+  PDF. Закрытие и замена source завершают оба пути. Ошибка TeX завершает waiters,
+  сохраняя последнюю успешную бумагу и здоровый WebKit для исправленного source.
+
+Риски проверяются на прежних границах: первый transactional reveal, regrab,
+отмена публикации, live landing, удаление UUID цели, очередь/отказ/закрытие
+документа, last-good PDF и canonical input. Скриншоты не входят в latency.
+Фазовое опережение измеряется у владельца публикации; оно само по себе не
+доказывает ускорения первого OS-показа. [Фактический scope](verification.md).

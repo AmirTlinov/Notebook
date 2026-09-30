@@ -599,7 +599,10 @@ final class DocumentPagePresentationOwner {
     let previousPaperToken = entries[id]?.input.paperToken
     let createsEntry = entries[id] == nil
     let entry: Entry
-    if let existing = entries[id] { entry = existing; entry.input = input; entry.host = host }
+    if let existing = entries[id] {
+      if existing.host !== host { existing.host?.releasePresentationCallbacks(for: id) }
+      entry = existing; entry.input = input; entry.host = host
+    }
     else { entry = Entry(id: id, input: input, host: host); entries[id] = entry }
     input.onRenderReady.setFrameProvider { [weak self, weak entry] priority in
       guard let self, let entry, self.entries[id] === entry else { throw CancellationError() }
@@ -621,6 +624,7 @@ final class DocumentPagePresentationOwner {
         self?.refreshPreparationDemand()
       }
     }
+    host.claimPresentationCallbacks(for: id)
     host.onContactChange = { [weak self] active in self?.contact("paper:\(id)", active: active) }
     host.programOverlay.onContactChange = { [weak self] block, active in self?.contact(block, active: active) }
     host.onSizeChange = { [weak self, weak entry] in
@@ -787,8 +791,7 @@ final class DocumentPagePresentationOwner {
     }
     if mountedID == id { mountedID = nil }
     entry.releaseTurnFrame()
-    entry.stopObserving(); entry.host?.onContactChange = { _ in }; entry.host?.onSizeChange = { }
-    entry.host?.onWindowChange = { }
+    entry.stopObserving(); entry.host?.releasePresentationCallbacks(for: id)
     // SwiftUI/UIKit can retain the departed host after its coordinator ends.
     // Native installation, including its raster pins, ends at this boundary.
     // The overlay defers any accepted contact before applying the empty set.
@@ -1220,7 +1223,8 @@ final class DocumentPagePresentationOwner {
       return
     }
     host.programOverlay.presentPending(pendingPlacements(on: entry))
-    paper.preservesFallback = false; host.removeFallback(); host.removeLoading(); host.removeFailure()
+    paper.preservesFallback = false; host.removeFallback(); host.removeLoading()
+    if paper.acquisitionError == nil { host.removeFailure() }
     refreshMountedInput()
     entry.publishReadiness(true, capturable: canCapture(entry))
     refreshResidentTurnFrames()

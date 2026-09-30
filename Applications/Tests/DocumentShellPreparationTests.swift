@@ -115,6 +115,114 @@ final class DocumentShellPreparationTests: XCTestCase {
     await waitUntil { resources.activeWebSurfaceCount == 0 }
   }
 
+  func testNativePaperInstallsWhileWebAdmissionWaitsAndKeepsItsSourceForInput() async throws {
+    let resources = SceneRenderResources(maximumWebSurfaces: 1)
+    let blocker = try await resources.acquireWebSurface(priority: .currentPage)
+    defer { blocker.release() }
+    let fixture = try PreparedShellPageFixture(resources: resources)
+    defer { fixture.close() }
+    await waitUntil { fixture.visiblePaper != nil || !fixture.errors.isEmpty }
+    let paper = try XCTUnwrap(fixture.visiblePaper)
+    XCTAssertTrue(fixture.errors.isEmpty)
+    XCTAssertTrue(fixture.ready, "The accepted native paper does not wait for the transparent interaction slot")
+    XCTAssertNil(fixture.paper)
+    XCTAssertEqual(resources.activeWebSurfaceCount, 1)
+    XCTAssertEqual(resources.pendingWebRequestCount, 1)
+
+    let previousHost = fixture.replaceHost()
+    await waitUntil { fixture.visiblePaper === paper }
+    previousHost.onSizeChange(); previousHost.onWindowChange()
+    previousHost.layoutIfNeeded(); previousHost.removeSurface(); previousHost.removeFromSuperview()
+    XCTAssertTrue(fixture.visiblePaper === paper, "The departed host cannot project or remove its successor's paper")
+
+    blocker.release()
+    await waitUntil { fixture.hasCanonicalInput || !fixture.errors.isEmpty }
+    let web = try XCTUnwrap(fixture.paper)
+    let renderer = try XCTUnwrap(web.navigationDelegate as? DocumentWebCoordinator)
+    XCTAssertTrue(fixture.hasCanonicalInput)
+    XCTAssertTrue(renderer.installedPaper === paper, "The sender borrows the already installed native source")
+    XCTAssertEqual(renderer.payload?.source.preparationCount, 1)
+    XCTAssertEqual(renderer.payload?.source.message.key, paper.sourceKey)
+    XCTAssertEqual(resources.pendingWebRequestCount, 0)
+    let activated = try await web.callAsyncJavaScript("document.querySelector('a[href]')?.click();return true;",
+      arguments: [:], in: nil, contentWorld: .page)
+    XCTAssertEqual(activated as? Bool, true)
+    await waitUntil { fixture.linkActivations == 1 }
+    XCTAssertTrue(fixture.errors.isEmpty)
+    fixture.close()
+    await waitUntil { resources.activeWebSurfaceCount == 0 }
+  }
+
+  func testClosingNativePaperBeforeWebAdmissionCannotMountItsQueuedExecutor() async throws {
+    let resources = SceneRenderResources(maximumWebSurfaces: 1)
+    let blocker = try await resources.acquireWebSurface(priority: .currentPage)
+    defer { blocker.release() }
+    let fixture = try PreparedShellPageFixture(resources: resources)
+    defer { fixture.close() }
+    await waitUntil { fixture.visiblePaper != nil || !fixture.errors.isEmpty }
+    XCTAssertNotNil(fixture.visiblePaper)
+    XCTAssertTrue(fixture.errors.isEmpty)
+    XCTAssertEqual(resources.pendingWebRequestCount, 1)
+    fixture.close()
+    await waitUntil { resources.pendingWebRequestCount == 0 }
+    XCTAssertNil(fixture.visiblePaper)
+    blocker.release()
+    await waitUntil { resources.activeWebSurfaceCount == 0 }
+    XCTAssertNil(fixture.paper)
+  }
+
+  func testWebAdmissionRefusalBeforeNativeCompletionKeepsPaperAndItsWaiter() async throws {
+    let resources = SceneRenderResources(maximumWebSurfaces: 1, maximumBackgroundWebSurfaces: 0)
+    let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+    let previousKeyWindow = scene.windows.first { $0.isKeyWindow }
+    let window = UIWindow(windowScene: scene), host = DocumentWebHost()
+    let controller = UIViewController(); window.rootViewController = controller
+    let geometry = WorkspaceItemGeometry.uncompiledDocument
+    host.frame = .init(x: 20, y: 20, width: 340, height: 340 * geometry.height / geometry.width)
+    controller.view.addSubview(host); window.makeKeyAndVisible()
+    let renderer = DocumentWebCoordinator(resources: resources, onRenderReady: .init { _ in },
+      onPageLayout: { _ in }, onStateChange: { _, _ in nil })
+    renderer.externallyHostedPrograms = true
+    defer {
+      renderer.invalidate(); window.isHidden = true; window.rootViewController = nil
+      previousKeyWindow?.makeKey()
+    }
+    let actor = UUID(), document = DocumentTestFiles.document(actor: actor,
+      contents: [.tex(id: "body", source: "Paper survives a refused transparent executor.")])
+    var refusedBeforePaper = false
+    renderer.update(document: document, state: .init(id: document.id, actor: actor), selectedPageIndex: 0,
+      capturesSnapshot: false, onRenderReady: .init { _ in }, onPageLayout: { _ in },
+      onStateChange: { _, _ in nil }, onPreparationFailure: { error in
+        if error as? SceneWebAdmissionError == .preparationDisabled { refusedBeforePaper = !renderer.paperIsReady }
+      })
+    let token = try XCTUnwrap(renderer.payload?.renderToken)
+    let nativeWait = Task { try await renderer.awaitPaperReady(token: token) }
+    defer { nativeWait.cancel() }
+    renderer.mount(in: host, physicalSize: .init(width: geometry.width, height: geometry.height),
+      isInteractive: false, priority: .visible)
+    await waitUntil { renderer.acquisitionError != nil }
+    XCTAssertEqual(renderer.acquisitionError as? SceneWebAdmissionError, .preparationDisabled)
+    XCTAssertTrue(refusedBeforePaper, "Admission must actually fail before the native producer completes")
+    try await nativeWait.value
+    let paper = try XCTUnwrap(renderer.installedPaper)
+    func descendants(_ view: UIView) -> [UIView] { [view] + view.subviews.flatMap(descendants) }
+    XCTAssertTrue(descendants(host).compactMap { $0 as? DocumentPaperView }.contains { $0.raster === paper })
+    XCTAssertTrue(descendants(host).contains { $0 is UIButton }, "Native success preserves the interaction Retry")
+    XCTAssertEqual(renderer.payload?.source.preparationCount, 1)
+    XCTAssertEqual(renderer.payload?.source.message.key, paper.sourceKey)
+    XCTAssertNil(renderer.webView)
+    XCTAssertFalse(renderer.hasCanonicalPixels)
+    do {
+      try await renderer.awaitPresentation(token: token)
+      XCTFail("Refused interaction cannot publish canonical input")
+    } catch { XCTAssertEqual(error as? SceneWebAdmissionError, .preparationDisabled) }
+    XCTAssertEqual(renderer.pendingPresentationRequestCount, 0)
+    renderer.invalidate()
+    XCTAssertFalse(descendants(host).contains { ($0 as? DocumentPaperView)?.raster != nil })
+    XCTAssertEqual(resources.activeWebSurfaceCount, 0)
+    XCTAssertEqual(resources.pendingWebRequestCount, 0)
+  }
+
   func testForegroundAdmissionReclaimsUnusedShellBeforeRefusingItsSlot() async throws {
     try await assertForegroundReclaim(waitForCommonRuntime: true)
   }
@@ -223,13 +331,19 @@ final class DocumentShellPreparationTests: XCTestCase {
 @MainActor
 private final class PreparedShellPageFixture {
   let document = DocumentTestFiles.document(actor: UUID(), contents: [.tex(id: "body",
-    source: "\\section{Adopted physical document}\\hypertarget{adopted-physical-document}{}\n\nA real canonical page with \\(x^2 + y^2\\).")])
+    source: "\\section{Adopted physical document}\\hypertarget{adopted-physical-document}{}\n\nA real canonical page with \\(x^2 + y^2\\). \\hyperlink{adopted-physical-document}{Jump to this page}.")])
   private let coordinator = DocumentPhysicalPageCoordinator()
-  private let host = DocumentWebHost()
+  private let resources: SceneRenderResources
+  private var host = DocumentWebHost()
   private let window: UIWindow
   private weak var previousKeyWindow: UIWindow?
   private(set) var ready = false
   private(set) var errors: [String] = []
+  private(set) var linkActivations = 0
+  var hasCanonicalInput: Bool {
+    guard let web = paper, let renderer = web.navigationDelegate as? DocumentWebCoordinator else { return false }
+    return renderer.nativeInputIsReady(in: host)
+  }
   var visiblePaper: DocumentPaperRaster? {
     func find(_ view: UIView) -> DocumentPaperRaster? {
       if let paper = view as? DocumentPaperView { return paper.raster }
@@ -245,6 +359,7 @@ private final class PreparedShellPageFixture {
     return descendants(host).first
   }
   init(resources: SceneRenderResources) throws {
+    self.resources = resources
     let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
     previousKeyWindow = scene.windows.first { $0.isKeyWindow }
     window = UIWindow(windowScene: scene)
@@ -252,11 +367,21 @@ private final class PreparedShellPageFixture {
     let geometry = WorkspaceItemGeometry.uncompiledDocument
     host.frame = .init(x: 20, y: 20, width: 340, height: 340 * geometry.height / geometry.width)
     controller.view.addSubview(host); window.makeKeyAndVisible()
+    update()
+  }
+  func replaceHost() -> DocumentWebHost {
+    let previous = host
+    host = DocumentWebHost(); host.frame = previous.frame
+    previous.superview?.addSubview(host)
+    update()
+    return previous
+  }
+  private func update() {
     coordinator.update(.init(document: document, state: .init(id: document.id, actor: UUID()), pageIndex: 0,
       isCurrent: true, isVisible: true, isInteractive: true, pageTurnActive: false,
       onRenderReady: .init { [weak self] in self?.ready = $0 }, onPageLayout: { _ in },
        onStateChange: { _, _ in nil },
-        onLinkActivation: { _ in },
+        onLinkActivation: { [weak self] _ in self?.linkActivations += 1 },
       snapshotPixelWidth: nil, onPreparationFailure: { [weak self] in self?.errors.append(String(describing: $0)) }),
       in: host, resources: resources)
   }

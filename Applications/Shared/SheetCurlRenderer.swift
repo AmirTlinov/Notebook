@@ -264,7 +264,7 @@ final class SheetCurlGPU: @unchecked Sendable {
   }
 }
 
-/// Metal records scheduling directly; the page's CA phase consumes this receipt
+/// Metal records scheduling directly; the page's publication phase consumes this receipt
 /// without a worker-to-main task. Covers use it only for optional measurement.
 private final class SheetCurlScheduleTiming: @unchecked Sendable {
   private let lock = NSLock()
@@ -442,7 +442,7 @@ final class SheetCurlMetalView: MTKView, MTKViewDelegate {
   var onFrameReady: ((CGImage, Double, Int, NotebookMetalFrameReadiness) -> Void)?
   #if os(iOS)
   struct PageUpdateTiming: Sendable {
-    enum Phase: String, Sendable { case prepared, exposed, geometryChanged, beforePresent, afterPresent, beforeCommit, afterCommit }
+    enum Phase: String, Sendable { case prepared, exposed, geometryChanged, afterEvents, beforePresent, afterPresent, beforeCommit, afterCommit }
     let operationID: UUID
     let generation: UInt64
     let phase: Phase
@@ -504,6 +504,9 @@ final class SheetCurlMetalView: MTKView, MTKViewDelegate {
   }
   private var pagePublication: PagePublication?
   private var pagePoseRevision: UInt64 = 0
+  private var pageCARevision: UInt64 = 0
+  private var pageCommittedCARevision: UInt64 = 0
+  private var pageCommittingCARevision: (generation: UInt64, revision: UInt64)?
   private var configuringPageDrawable = false
   private var pendingPageDrawableSize: CGSize?
   #endif
@@ -513,7 +516,7 @@ final class SheetCurlMetalView: MTKView, MTKViewDelegate {
   // An opt-in, bounded diagnostic at the actual submission owner. It does not
   // alter admission, clock, command ordering or the presentation receipt.
   var onFrameMeasured: ((FrameTiming) -> Void)?
-  /// Page motion and its drawable share UIKit's update and CA publication.
+  /// Page motion and its drawable share UIKit's update and input dispatch.
   /// Covers are event-driven and do not install a second animation clock.
   var onDisplayUpdate: ((TimeInterval) -> Void)?
   var animatesContinuously = false {
@@ -657,6 +660,7 @@ final class SheetCurlMetalView: MTKView, MTKViewDelegate {
     drawable: (any CAMetalDrawable)? = nil) {
     guard let measured = onPageUpdateMeasured, let operationID = pageOperationID,
       var measurement = pageUpdateMeasurement, measurement.generation == pagePresentationGeneration else { return }
+    if phase == .afterEvents { guard measurement.remainingPhases > 0 else { return } }
     if phase == .beforeCommit || phase == .afterCommit {
       guard measurement.remainingPhases > 0 else { return }
       measurement.remainingPhases -= 1
@@ -699,7 +703,15 @@ final class SheetCurlMetalView: MTKView, MTKViewDelegate {
     pool.layer.frame = bounds
     pool.layer.isHidden = false
     pool.layer.presentsWithTransaction = true
+    pageCARevision &+= 1
     CATransaction.commit()
+  }
+
+  /// The sheet owner reports its actual exposure/z-order mutations. Shader
+  /// motion can publish asynchronously only after this exact hierarchy cut
+  /// passed UIKit's CA commit, including a regrab of a staged live landing.
+  func pageHierarchyDidChange() {
+    pageCARevision &+= 1
   }
 
   private func drainPageOutput(_ pool: SheetCurlPageOutput, request: SheetCurlDrawableRequest?,
@@ -1124,8 +1136,8 @@ final class SheetCurlMetalView: MTKView, MTKViewDelegate {
       || (submittedProgress == 0) != (progress == 0))
     #if os(iOS)
     if frames != nil, let operationID, let scheduleTiming {
-      // A direct Metal callback marks scheduling. BeforeCommit consumes that
-      // receipt with a deadline-bounded fence, without a worker-to-main task.
+      // A direct Metal callback marks scheduling. The publication phase
+      // consumes that receipt without a worker-to-main task.
       pagePublication = .init(operationID: operationID, generation: presentationGeneration,
         drawable: drawable, command: commandBuffer, schedule: scheduleTiming,
         poseRevision: pagePoseRevision, sequence: sequence)
@@ -1183,15 +1195,22 @@ final class SheetCurlMetalView: MTKView, MTKViewDelegate {
     let updates = UIUpdateLink(view: self)
     // Released motion depends only on the update's time. Encode before UIKit
     // waits for input, giving Metal the available scheduling interval. Contact
-    // changes still use afterEventDispatch and can supersede that early pose.
+    // changes supersede that early pose before afterEventDispatch publishes.
     updates.addAction(to: .afterUpdateScheduled) { [weak self] _, info in
       guard let self, self.animatesContinuously else { return }
       self.preparePageUpdate(info)
     }
-    updates.addAction(to: .afterEventDispatch) { [weak self] _, info in self?.preparePageUpdate(info) }
+    updates.addAction(to: .afterEventDispatch) { [weak self] _, info in
+      guard let self else { return }
+      self.preparePageUpdate(info)
+      self.publishPageUpdate(info, afterEvents: true)
+      self.measurePageUpdate(.afterEvents, info: info)
+    }
     updates.addAction(to: .beforeCATransactionCommit) { [weak self] _, info in
-      self?.publishPageUpdate(info)
-      self?.measurePageUpdate(.beforeCommit, info: info)
+      guard let self else { return }
+      self.publishPageUpdate(info, afterEvents: false)
+      self.pageCommittingCARevision = (self.pagePresentationGeneration, self.pageCARevision)
+      self.measurePageUpdate(.beforeCommit, info: info)
     }
     updates.addAction(to: .afterCATransactionCommit) { [weak self] _, info in
       self?.measurePageUpdate(.afterCommit, info: info)
@@ -1258,7 +1277,7 @@ final class SheetCurlMetalView: MTKView, MTKViewDelegate {
     if animatesContinuously || framePending { requestPageDrawable() }
   }
 
-  private func publishPageUpdate(_ info: UIUpdateInfo) {
+  private func publishPageUpdate(_ info: UIUpdateInfo, afterEvents: Bool) {
     guard let publication = pagePublication else { return }
     guard window != nil, permitsFrameSubmission(), pageOperationID == publication.operationID,
       pagePresentationGeneration == publication.generation,
@@ -1267,20 +1286,35 @@ final class SheetCurlMetalView: MTKView, MTKViewDelegate {
     if publication.command.status == .error {
       failPageExecution(SceneRenderError.snapshotPending("page_gpu")); return
     }
-    guard publication.schedule.waitForScheduling(completionDeadline: info.completionDeadlineTime) else { return }
+    let needsCATransaction: Bool
+    if case .motion = pagePresentationPhase {
+      needsCATransaction = pageCARevision != pageCommittedCARevision
+    } else { needsCATransaction = true }
+    // Input dispatch owns the final pose. Once the exact visible layer cut
+    // committed, shader-only motion no longer waits for UIKit's later CA phase.
+    // Reveal, geometry and owner refront still publish with their transaction.
+    guard !afterEvents || !needsCATransaction else { return }
+    if afterEvents || needsCATransaction {
+      guard publication.schedule.waitForScheduling(completionDeadline: info.completionDeadlineTime) else { return }
+    } else {
+      // Motion already used its scheduling fence after input. A late receipt
+      // can publish here without spending a second main-thread wait.
+      guard publication.schedule.value != nil else { return }
+    }
     let revealsPage: Bool
     if case .initial = pagePresentationPhase { revealsPage = true } else { revealsPage = false }
-    if revealsPage {
-      pageOutputLayer?.presentsWithTransaction = true
+    pageOutputLayer?.presentsWithTransaction = needsCATransaction
+    if needsCATransaction {
       CATransaction.begin(); CATransaction.setDisableActions(true)
     }
-    defer { if revealsPage { CATransaction.commit() } }
+    defer { if needsCATransaction { CATransaction.commit() } }
     if !pageHasPublishedFrame {
       onPageFrameWillPresent?(publication.operationID)
       guard pageOperationID == publication.operationID, pagePresentationGeneration == publication.generation else {
         return
       }
       isHidden = false
+      pageCARevision &+= 1
       measurePageExposure()
       pageHasPublishedFrame = true
     }
@@ -1298,10 +1332,13 @@ final class SheetCurlMetalView: MTKView, MTKViewDelegate {
   }
 
   private func finishPageUpdate() {
-    if case .motion = pagePresentationPhase {
-      // The exact OS receipt permits asynchronous motion, but only this CA
-      // owner ends transactional mode after all publications in the current
-      // update committed. It cannot detach a queued successor's transaction.
+    if let committing = pageCommittingCARevision, committing.generation == pagePresentationGeneration {
+      pageCommittedCARevision = committing.revision
+    }
+    pageCommittingCARevision = nil
+    if case .motion = pagePresentationPhase, pageCARevision == pageCommittedCARevision {
+      // End transactional mode after this exact layer cut committed. An
+      // earlier OS receipt cannot detach a newer refront's queued transaction.
       pageOutputLayer?.presentsWithTransaction = false
     }
     if !animatesContinuously, !framePending, pagePublication == nil {
@@ -1319,6 +1356,7 @@ final class SheetCurlMetalView: MTKView, MTKViewDelegate {
   private func retirePageExecution() {
     cancelPageDrawableRequest()
     pagePublication = nil
+    pageCommittingCARevision = nil
     pagePresentationPhase = .initial
     pageUIUpdates?.isEnabled = false
   }

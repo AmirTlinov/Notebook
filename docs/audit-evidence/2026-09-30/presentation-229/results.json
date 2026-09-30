@@ -1,0 +1,68 @@
+{
+  "sourceSHA256": "f228f92a44c404b5af4ff72c4549e15d5b96449ec14fe8e6ecadd894048078d3",
+  "selection": {
+    "commands": [],
+    "core": [],
+    "ipad": [
+      "NotebookTests/DocumentShellPreparationTests/testClosingNativePaperBeforeWebAdmissionCannotMountItsQueuedExecutor",
+      "NotebookTests/DocumentShellPreparationTests/testCurrentPageCanAdoptBeforeTheCommonRuntimeHasFinishedLoading",
+      "NotebookTests/DocumentShellPreparationTests/testNativePaperInstallsBeforeHeldShellFrameAndSurvivesItsFailure",
+      "NotebookTests/DocumentShellPreparationTests/testNativePaperInstallsWhileWebAdmissionWaitsAndKeepsItsSourceForInput",
+      "NotebookTests/DocumentShellPreparationTests/testWebAdmissionRefusalBeforeNativeCompletionKeepsPaperAndItsWaiter",
+      "NotebookTests/NotebookFirstPresentationSchedulingTests/testFirstCurlAgainstUIAndOSBoundaries",
+      "NotebookTests/NotebookPageCurlInteractionTests/testCancellationAtPagePublicationDiscardsScheduledPixelsAndStopsUpdates",
+      "NotebookTests/NotebookPageCurlInteractionTests/testRegrabPreservesTheVisiblePoseAndReusesThePair",
+      "NotebookTests/NotebookPageLifecycleUXTests/testNativePageTurnsShowTheStoredLeafAfterEvictionReverseAndCancellation",
+      "NotebookTests/NotebookPageLifecycleUXTests/testPeerRemovedLeafCannotCommitAnOldCurlIntoItsReplacementSlot",
+      "NotebookTests/NotebookPageMotionUXTests/testFirstSmallBendCannotExposeTheOtherLeafBeforeItsCurlPixels",
+      "NotebookTests/NotebookPageMotionUXTests/testHeldCurlPublishesCommittedMotionAfterInputBeforeCA",
+      "NotebookTests/NotebookPageMotionUXTests/testPresentedEndpointWaitsForItsLiveHostWithoutRecaptureOrIdleFrames",
+      "NotebookTests/NotebookPageMotionUXTests/testRapidAlternatingReleasedSwipesKeepTheirLatestDestination",
+      "NotebookUITests/NotebookNavigationLoadUITests/testTwentyFourPageProgramsAcceptFirstTapAfterZoomAndKeepStateAcrossTurns",
+      "NotebookUITests/NotebookPrintSourceUITests/testDocumentZoomOutReturnsToBoardAndReopensTheSamePaper"
+    ],
+    "mac": [
+      "NotebookMacTests/DocumentRuntimeTests/testHiddenCurrentPaperKeepsLastGoodPDFThroughInvalidSourceAndRepair",
+      "NotebookMacTests/DocumentRuntimeTests/testMacDocumentHostKeepsCanonicalPaperWhenTheHelperWindowChangesSize"
+    ]
+  },
+  "verification": {
+    "path": "/private/tmp/notebook-229-final-1710/verification.json",
+    "sha256": "7333a5e3f9c333d7b00d8a8f8e60985c81c101ca40fa6656d9714be4756a5b1e",
+    "status": "passed"
+  },
+  "mode": "optimized native code with isolated DEBUG fixtures",
+  "results": {
+    "ipad": {
+      "result": "Passed",
+      "totalTestCount": 16,
+      "passedTests": 16,
+      "failedTests": 0,
+      "skippedTests": 0,
+      "testFailures": []
+    },
+    "mac": {
+      "result": "Passed",
+      "totalTestCount": 2,
+      "passedTests": 2,
+      "failedTests": 0,
+      "skippedTests": 0,
+      "testFailures": []
+    }
+  },
+  "observations": {
+    "heldPublicationLeadBeforeCAMS": 0.015875004464760423,
+    "firstCurlOSMS": 42.72504166874569,
+    "firstCurlGPUMS": 4.531333310296759,
+    "firstCurlDroppedFrames": 3,
+    "firstCurlLandingMS": 336.57054166542366,
+    "firstCurlScope": "programmatic native show in test window; not hardware contact-to-display",
+    "heldScope": "committed held motion after input dispatch; no screenshots/readback",
+    "coldDocumentScope": "accepted native source installs during queued/refused WK admission; one preparation; canonical input/link after grant; close/host handoff"
+  },
+  "fullAcceptance": false,
+  "raw": {
+    "held-curl-publication.json": "616a7d3ed85d984f5dad02576bcdd61971490449f44ee139a933e9ef6996971b",
+    "first-curl-scheduling.json": "92694699812ed12ef89f1f395298f0d0856271f4560532536bbd34b7fdf00b29"
+  }
+}

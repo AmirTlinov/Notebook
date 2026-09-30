@@ -1,0 +1,71 @@
+{
+  "build": "229",
+  "buildReceiptSHA256": "765b9e63b017139db0e86155dd95d116b0a9cf823a0dc31014ab8d127fbba906",
+  "dataAccess": "none",
+  "dataContainerPathChanged": true,
+  "finishedAt": "2026-09-30T17:26:08.377992+00:00",
+  "fullAcceptance": false,
+  "inPlaceUpdate": true,
+  "previousBuild": "228",
+  "sourceSHA256": "f228f92a44c404b5af4ff72c4549e15d5b96449ec14fe8e6ecadd894048078d3",
+  "status": "matched-pair-launched",
+  "version": "0.3.159",
+  "finishedAtMoscow": "2026-09-30T20:26:08.377992+03:00",
+  "installedMacVersion": "0.3.159",
+  "installedMacBuild": "229",
+  "installedIPadApps": [
+    {
+      "name": "Notebook Lab",
+      "bundleIdentifier": "com.amirtlinov.notebook.preview",
+      "version": "0.3.159",
+      "build": "229"
+    }
+  ],
+  "presentationStatus": "ready",
+  "workspaceID": "54349F3B-9E0A-4DEA-B990-40CAE04EF45E",
+  "trustedDeviceID": "29DC77FE-8777-41EC-BE98-704F4668A2F4",
+  "sessionID": "CFA3C282-1E3D-48C6-8700-EABA2F971F0F",
+  "presenceMatches228": true,
+  "presence": {
+    "documentPageIndex": 0,
+    "format": 5,
+    "notebookPageID": "C74869CD-CE04-4AC2-A12E-66B00996B8E6",
+    "openProgress": 1,
+    "selectedItemID": "AF947D51-7E74-4081-9194-3B5FE07A0F39",
+    "boardID": "7E7A0000-0000-4000-8000-000000000003",
+    "focusedItemID": "AF947D51-7E74-4081-9194-3B5FE07A0F39",
+    "viewport": {
+      "y": 1194,
+      "x": 834
+    },
+    "mode": "page",
+    "camera": {
+      "scale": 1,
+      "center": {
+        "tileY": 0,
+        "tileX": 0,
+        "localX": 3355.8232476298454,
+        "localY": 1516.4960114370574
+      }
+    }
+  },
+  "physicalScreen": {
+    "path": "/private/tmp/notebook-install-229-1724/ipad-visible.png",
+    "sha256": "3b43924cb36b911c2a727bf31c56ef68a365ee33bd9cace9ecb6e40a28cbcca3",
+    "inspected": true,
+    "description": "Saved handwritten paper with native toolbar; page 1 of 5",
+    "pixelsStoredInRepository": false
+  },
+  "installationReceipt": {
+    "path": "/private/tmp/notebook-install-229-1724/installation.json",
+    "sha256": "1b6fc4d46dafa36c042b771adbdbde1faf246c9e245fc17d471bb95f039f2ea9"
+  },
+  "presentationReceipt": {
+    "path": "/private/tmp/notebook-install-229-1724/post-launch-check.json",
+    "sha256": "46abc2aace2e8642fc66ff7869f04cd8c5280565e0250f805905650592910fe8"
+  },
+  "buildReceipt": {
+    "path": "/private/tmp/notebook-pair-229-1717/build.json",
+    "sha256": "765b9e63b017139db0e86155dd95d116b0a9cf823a0dc31014ab8d127fbba906"
+  }
+}

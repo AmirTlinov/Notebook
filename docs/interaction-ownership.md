@@ -136,8 +136,9 @@ pending/error — один учтённый `PageElementStatusPresentation`: nat
 
 Curl связывает GPU/OS callbacks с UUID операции, поколением и sequence.
 `SheetCurlMetalView` использует один `UIUpdateLink`: released motion кодируется
-после планирования update, контакт — после dispatch. Перед CA commit публикуется
-scheduled drawable; scheduling fence ограничен 1 мс и текущим deadline,
+после планирования update, контакт — после dispatch. Обычный motion публикует
+scheduled drawable после dispatch. Первый reveal, геометрия и смена порядка
+листов ждут CA commit своей ревизии; scheduling fence ограничен 1 мс и deadline,
 GPU completion на main не ожидается. Первый transactional reveal сохраняется
 до OS outcome; затем непрозрачные кадры публикуются асинхронно тем же clock.
 Новый контакт берёт OS-показанную позу и отзывает ещё не опубликованную будущую.
@@ -193,6 +194,14 @@ Checkpoint присоединяется к применению принятог
 Отозванный cut завершает своё ожидание; текущий preparation owner принимает
 адресное событие и переустанавливает актуальный runtime. I/O отказ сохраняет heap
 для явного retry. Закрытие never-admitted bootstrap использует terminal abort.
+
+Document source готовит PDF до admission браузера. Native host устанавливает
+его напрямую и передаёт те же pixels в viewport после создания WebKit. Native
+и canonical waiters имеют отдельные исходы в одном generation: interaction
+failure сохраняет producer/бумагу и доступный Retry, source failure завершает
+оба ожидания. Retry браузера не перекомпилирует успешный PDF. Last-good TeX error
+сохраняет прежний print и здоровый executor до исправления исходника. Смена host
+отзывает старые size/window callbacks; принятый contact заканчивает native delivery.
 
 Document program capture имеет отменяемую FIFO до четырёх readers и отдельный
 native result с deadline 8 секунд. Отмена queued reader не отзывает предшественника.

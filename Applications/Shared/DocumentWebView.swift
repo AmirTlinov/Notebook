@@ -322,6 +322,9 @@ final class DocumentWebCoordinator: NSObject,
   private weak var host: DocumentWebHost?
   private(set) var isInvalidated = false
   private(set) var acquisitionError: Error?
+  private enum PreparationFailure { case native, interaction }
+  private var preparationFailure: PreparationFailure?
+  private var retainsNativePreparation: Bool { !isInvalidated && preparationFailure == .interaction }
   private(set) var acceptsInput = false
   private var requestedInput = false
   private(set) var ownsEditing = false
@@ -473,7 +476,7 @@ final class DocumentWebCoordinator: NSObject,
       let result: Result<Void, Error>
       if isInvalidated || waiter.generation != generation || payload?.renderToken != waiter.token {
         result = .failure(CancellationError())
-      } else if let acquisitionError {
+      } else if let acquisitionError, waiter.requirement == .canonical || !retainsNativePreparation {
         result = .failure(acquisitionError)
       } else if (waiter.requirement == .nativePaper ? paperIsReady : hasCanonicalPixels) {
         result = .success(())
@@ -483,9 +486,11 @@ final class DocumentWebCoordinator: NSObject,
     }
   }
 
-  private func cancelPresentationWaiters() {
-    let pending = presentationWaiters; presentationWaiters.removeAll()
-    for waiter in pending.values { waiter.continuation.resume(throwing: acquisitionError ?? CancellationError()) }
+  private func cancelPresentationWaiters(keepingNativePreparation: Bool = false) {
+    for (id, waiter) in presentationWaiters {
+      if keepingNativePreparation, waiter.requirement == .nativePaper { continue }
+      presentationWaiters.removeValue(forKey: id)?.continuation.resume(throwing: acquisitionError ?? CancellationError())
+    }
   }
 
   var canAdoptEmptyShell: Bool {
@@ -505,7 +510,7 @@ final class DocumentWebCoordinator: NSObject,
       do { try await Task.sleep(for: .seconds(8)) } catch { return }
       guard !Task.isCancelled, let self, let web, self.webView === web,
         !isInvalidated, payload == nil, !commonRuntimeReady else { return }
-      failPreparation(SceneRenderError.snapshotPending("common_runtime_startup"))
+      failPreparation(SceneRenderError.snapshotPending("common_runtime_startup"), scope: .interaction)
     }
   }
 
@@ -696,14 +701,14 @@ final class DocumentWebCoordinator: NSObject,
     if let webView, previousHost !== host || !host.ownsSurface(webView) {
       host.install(webView, size: physicalSize); host.installPaper(printedView)
       if previousHost !== host { previousHost?.removeSurface(ownedBy: webView) }
-    }
+    } else if webView == nil, paperIsReady { host.installPaper(printedView) }
     DocumentRenderRegistry.shared.mountRenderer(self, hostID: hostID)
     self.physicalSize = physicalSize
     applyInputAdmission(isInteractive)
     if let snapshotPixelWidth, host.showFallback(source: fallbackSource, resources: resources,
       minimumScale: Self.snapshotMinimumScale(pixelWidth: snapshotPixelWidth, size: physicalSize)) {
       snapshotOnlyComplete = true
-      acquisitionError = nil
+      acquisitionError = nil; preparationFailure = nil
       releaseWebSurface()
       setRenderReady(true)
       onRenderReady(true)
@@ -739,7 +744,7 @@ final class DocumentWebCoordinator: NSObject,
           guard let self, !Task.isCancelled, !isInvalidated, acquisitionID == id else { return }
           acquisitionTask = nil
           if error is DocumentSnapshotWait { waitForCanonicalSnapshot(from: producer, after: attemptedEpoch) }
-          else { failPreparation(error) }
+          else { failPreparation(error, scope: .interaction) }
         }
       }
       return
@@ -749,10 +754,13 @@ final class DocumentWebCoordinator: NSObject,
     let id = UUID()
     acquisitionID = id
     requestedPriority = priority
-    acquisitionError = nil
+    acquisitionError = nil; preparationFailure = nil
     onRenderReady(false)
     let resources = resources
     recordPreparation(.admissionRequestedAt)
+    // The physical page already owns its accepted source and native host.
+    // Its PDF does not need the queued transparent interaction executor.
+    prepareNativePaper()
     acquisitionTask = Task { [weak self] in
       do {
         let lease = try await resources.acquireWebSurface(priority: priority, constructsView: true)
@@ -770,7 +778,7 @@ final class DocumentWebCoordinator: NSObject,
       } catch {
         guard let self, !isInvalidated, acquisitionID == id else { return }
         acquisitionTask = nil
-        failPreparation(error)
+        failPreparation(error, scope: .interaction)
       }
     }
   }
@@ -848,15 +856,19 @@ final class DocumentWebCoordinator: NSObject,
     if !preservesFallback { host?.removeFallback() }
   }
 
-  private func failPreparation(_ error: Error) {
+  private func failPreparation(_ error: Error, scope: PreparationFailure) {
     guard !isInvalidated else { return }
-    acquisitionError = error
+    acquisitionError = error; preparationFailure = scope
     preparationDeadlineTask?.cancel(); preparationDeadlineTask = nil
     setRenderReady(false)
     // A TeX error keeps the last installed page. A failed shell still retires
     // its admitted program state through the ordinary transfer owner.
-    let hasLastGoodPrint = error is NotebookTypesetterError && printedView.raster != nil
-    if !hasLastGoodPrint { finishProgramSurface() }
+    let hasLastGoodPrint = scope == .native && error is NotebookTypesetterError && printedView.raster != nil
+    if hasLastGoodPrint {
+      // A source typo ends this generation's requests, while the healthy
+      // interaction executor and previous pixels remain for source repair.
+      cancelPresentationWaiters()
+    } else { finishProgramSurface() }
     let message = hasLastGoodPrint
       ? "Ошибка LaTeX. Исходник сохранён; показана предыдущая сборка."
       : "Не удалось подготовить страницу. Исходник сохранён."
@@ -869,6 +881,11 @@ final class DocumentWebCoordinator: NSObject,
 
   func retryPreparation() {
     guard !isInvalidated, host != nil, requestedPriority != nil else { return }
+    if preparationFailure == .native, webView != nil,
+      acquisitionError.map({ $0 is NotebookTypesetterError }) == true {
+      restartPreparation()
+      return
+    }
     programPreparationRetryRequested = true
     retryAcceptedProgramTransfers()
     finishProgramSurface()
@@ -877,8 +894,12 @@ final class DocumentWebCoordinator: NSObject,
   private func restartPreparation() {
     guard !isInvalidated, let host, let priority = requestedPriority else { return }
     programPreparationRetryRequested = false
-    acquisitionError = nil; recoveryAttempts = 0
-    if let payload { payload.source.retryPagePreparation(payload.pageIndex) }
+    let retryNativePreparation = preparationFailure == .native
+    acquisitionError = nil; preparationFailure = nil; recoveryAttempts = 0
+    if retryNativePreparation, let payload {
+      sourcePreparationSubscriber?.cancel(); sourcePreparationSubscriber = nil; sourcePreparationGeneration = nil
+      payload.source.retryPagePreparation(payload.pageIndex)
+    }
     host.removeFailure()
     if webView != nil {
       prepareAndSendFrame()
@@ -901,7 +922,7 @@ final class DocumentWebCoordinator: NSObject,
     preparationDeadlineTask = Task { @MainActor [weak self] in
       do { try await Task.sleep(for: remaining) } catch { return }
       guard let self, !isInvalidated, generation == expected, preparationAdmissionGeneration != expected else { return }
-      failPreparation(SceneRenderError.snapshotPending("document_preparation_timeout"))
+      failPreparation(SceneRenderError.snapshotPending("document_preparation_timeout"), scope: .interaction)
     }
   }
 
@@ -1213,11 +1234,12 @@ final class DocumentWebCoordinator: NSObject,
   func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
     guard !isInvalidated, self.webView === webView else { return }
     setRenderReady(false)
+    preparationFailure = .interaction
     releaseWebSurface()
     guard recoveryAttempts < 2, let host, let priority = requestedPriority else {
-      failPreparation(SceneRenderError.snapshotPending("web_process_terminated")); return
+      failPreparation(SceneRenderError.snapshotPending("web_process_terminated"), scope: .interaction); return
     }
-    recoveryAttempts += 1; generation &+= 1
+    recoveryAttempts += 1; acquisitionError = nil; preparationFailure = nil
     runtimeID = UUID(); payload?.runtimeID = runtimeID
     onBeforeRuntimeRestart()
     mount(in: host, physicalSize: physicalSize, isInteractive: requestedInput, priority: priority)
@@ -1225,19 +1247,19 @@ final class DocumentWebCoordinator: NSObject,
 
   func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: any Error) {
     guard !isInvalidated, self.webView === webView else { return }
-    failPreparation(error)
+    failPreparation(error, scope: .interaction)
   }
 
   func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: any Error) {
     guard !isInvalidated, self.webView === webView else { return }
-    failPreparation(error)
+    failPreparation(error, scope: .interaction)
   }
 
   private func releaseWebSurface() {
     programAssets.revokeAll(); programURLs.removeAll(); installedPrograms.removeAll(); programIdentities.removeAll(); focusedProgramID = nil
     for entry in programStateTransfers.values { entry.owner.revoke() }
     programStateTransfers.removeAll(); programCheckpointWrites.removeAll(); programInitialStates.removeAll()
-    cancelPresentationWaiters()
+    cancelPresentationWaiters(keepingNativePreparation: retainsNativePreparation)
     let retiringWeb = webView
     if frameEvaluationID != nil, let retiringWeb, let borrow = try? surfaceLease?.borrow() {
       // End the renderer's logical program wait before returning its executor.
@@ -1249,7 +1271,7 @@ final class DocumentWebCoordinator: NSObject,
     emptyShellDeadline?.cancel(); emptyShellDeadline = nil
     commonRuntimeReady = false; preparesCommonRuntime = false
     admittedLinkOrigin = nil; lastLinkSequence = 0
-    payload?.source.releasePage(hostID: hostID, in: retiringWeb)
+    if !retainsNativePreparation { payload?.source.releasePage(hostID: hostID, in: retiringWeb) }
     revokeLiveReceipt()
     clearSnapshotWait(); wakeSnapshotWaiters(unavailable: true)
     cancelSnapshotPreparation()
@@ -1259,12 +1281,17 @@ final class DocumentWebCoordinator: NSObject,
     webView?.stopLoading()
     webView?.configuration.userContentController.removeScriptMessageHandler(forName: "notebook")
     webView?.navigationDelegate = nil
-    let preservesAcceptedPaper = acquisitionError != nil && paperIsReady && !isInvalidated
+    let preservesAcceptedPaper = retainsNativePreparation || (acquisitionError != nil && !isInvalidated
+      && (paperIsReady || (preparationFailure == .native && printedView.raster != nil
+        && acquisitionError.map { $0 is NotebookTypesetterError } == true)))
     if let retiringWeb { host?.removeSurface(ownedBy: retiringWeb, preservingPaper: preservesAcceptedPaper ? printedView : nil) }
+    else if !preservesAcceptedPaper { host?.removePaper(ownedBy: printedView) }
     if !preservesAcceptedPaper { printedView.clear(); paperGeneration = nil }
     webView = nil
     isReady = false
-    sourcePreparationSubscriber?.cancel(); sourcePreparationSubscriber = nil; sourcePreparationGeneration = nil
+    if !retainsNativePreparation {
+      sourcePreparationSubscriber?.cancel(); sourcePreparationSubscriber = nil; sourcePreparationGeneration = nil
+    } else if sourcePreparationSubscriber == nil { sourcePreparationGeneration = nil }
     frameTaskID = nil; frameTask?.cancel(); frameTask = nil
     finishShellWait(throwing: CancellationError())
     finishFrameEvaluation(throwing: CancellationError())
@@ -1421,7 +1448,7 @@ final class DocumentWebCoordinator: NSObject,
       sourcePreparationSubscriber?.cancel(); sourcePreparationSubscriber = nil; sourcePreparationGeneration = nil
       cancelSnapshotPreparation()
       snapshotOnlyComplete = false
-      acquisitionError = nil
+      acquisitionError = nil; preparationFailure = nil
       preparedSnapshotLease?.release(); preparedSnapshotLease = nil
       if !preservesFallback { host?.removeFallback() }
       setRenderReady(false)
@@ -1509,7 +1536,7 @@ final class DocumentWebCoordinator: NSObject,
       return
     }
     if kind == "commonRuntimeFailed", preparesCommonRuntime {
-      failPreparation(SceneRenderError.snapshotPending("common_runtime_startup"))
+      failPreparation(SceneRenderError.snapshotPending("common_runtime_startup"), scope: .interaction)
       return
     }
     guard let documentID = body["documentID"] as? String,
@@ -1603,7 +1630,7 @@ final class DocumentWebCoordinator: NSObject,
       if diagnostics.isEmpty { diagnostics = [.init(kind: "render_error", elementID: body["blockID"] as? String,
         message: body["message"] as? String ?? "Не удалось подготовить страницу.")] }
       failPreparation(DocumentRenderingFailure(diagnostics: diagnostics, buildID: payload.source.layout?.buildID,
-        programs: DocumentRenderRegistry.programChecks(in: body as NSDictionary, source: payload.source, pageIndex: payload.pageIndex)))
+        programs: DocumentRenderRegistry.programChecks(in: body as NSDictionary, source: payload.source, pageIndex: payload.pageIndex)), scope: .interaction)
       return
     }
     guard body["runtimeID"] as? String == runtimeID.uuidString,
@@ -1812,7 +1839,7 @@ final class DocumentWebCoordinator: NSObject,
   /// transparent interaction frame. Both jobs borrow the same immutable source
   /// preparation; only this generation may install its physical paper.
   private func prepareNativePaper() {
-    guard !isInvalidated, acquisitionError == nil, let request = payload, let web = webView,
+    guard !isInvalidated, acquisitionError == nil || retainsNativePreparation, let request = payload, host != nil,
       sourcePreparationGeneration != generation else { return }
     sourcePreparationSubscriber?.cancel()
     let expected = generation, trace = pagePreparationTrace
@@ -1821,7 +1848,8 @@ final class DocumentWebCoordinator: NSObject,
       guard let self else { throw CancellationError() }
       do {
         try Task.checkCancellation()
-        guard !isInvalidated, generation == expected, webView === web else { throw CancellationError() }
+        guard !isInvalidated, generation == expected, host != nil,
+          payload?.source === request.source else { throw CancellationError() }
         // Only hidden passive paper has transferred its pixels to a picture.
         // Current paper keeps its last good print through a failed replacement.
         if let retained = printedView.raster,
@@ -1846,7 +1874,7 @@ final class DocumentWebCoordinator: NSObject,
           })
         admissionChanged(false)
         try Task.checkCancellation()
-        guard !isInvalidated, generation == expected, webView === web,
+        guard !isInvalidated, generation == expected, host != nil,
           payload?.source === request.source else { throw CancellationError() }
         physicalSize = .init(width: prepared.fragment.width, height: prepared.fragment.height)
         host?.configure(size: physicalSize, interactive: acceptsInput)
@@ -1861,7 +1889,7 @@ final class DocumentWebCoordinator: NSObject,
         }
         recordPreparation(.preparedPageReadyAt, trace: trace)
         try Task.checkCancellation()
-        guard !isInvalidated, generation == expected, webView === web,
+        guard !isInvalidated, generation == expected, host != nil,
           payload?.source === request.source else { throw CancellationError() }
         pageCount = request.source.layout?.pageCount ?? pageCount
         printedView.install(paper, resources: resources)
@@ -1879,8 +1907,9 @@ final class DocumentWebCoordinator: NSObject,
         // A replaced/retired job cannot fail the current source or resume its
         // waiters. Current native failure must also finish readers while an old
         // shell call is still draining.
-        if !Task.isCancelled, !isInvalidated, generation == expected, webView === web {
-          failPreparation(error)
+        if !Task.isCancelled, !isInvalidated, generation == expected,
+          payload?.source === request.source {
+          failPreparation(error, scope: .native)
         }
         throw error
       }
@@ -1888,12 +1917,13 @@ final class DocumentWebCoordinator: NSObject,
   }
 
   private func prepareAndSendFrame() {
-    guard !isInvalidated, webView != nil, payload != nil,
+    guard !isInvalidated, host != nil, payload != nil,
       sentGeneration != generation else { return }
+    prepareNativePaper()
+    guard webView != nil else { return }
     // A latest frame needs its own deadline even while the single sender is
     // still encoding or evaluating its predecessor.
     beginPreparationDeadline()
-    prepareNativePaper()
     // A newer native demand must revoke an old pending image's publication
     // before the single sender can drain that decode and submit the next page.
     // The scalar fence never starts a source/render or releases its owned tail.
@@ -1978,7 +2008,7 @@ final class DocumentWebCoordinator: NSObject,
           guard !Task.isCancelled, !isInvalidated, frameTaskID == taskID, generation == expected else { continue }
           // The native job already publishes its own failure independently of
           // this sender. Only a failure from the remaining JS work is new here.
-          if acquisitionError == nil { failPreparation(error) }
+          if acquisitionError == nil { failPreparation(error, scope: .interaction) }
           return
         }
       }
@@ -2069,7 +2099,7 @@ final class DocumentWebCoordinator: NSObject,
               geometry: payload.paper.geometry)
             recordPreparation(.layoutReceiptAcceptedAt, trace: trace)
             layoutAccepted = true
-          } catch { failPreparation(error); return }
+          } catch { failPreparation(error, scope: .interaction); return }
         } else { layoutAccepted = false }
         appliedPageIndex = receiptPage
         if let presentation = try? presentation(in: receipt, for: payload, generation: expectedGeneration) {
@@ -2433,7 +2463,7 @@ final class DocumentWebCoordinator: NSObject,
           // retry this capture without treating intentional editing as failure.
           pendingSnapshotPayload = payload
           preparationDeadlineTask?.cancel(); preparationDeadlineTask = nil
-        } else { failPreparation(error) }
+        } else { failPreparation(error, scope: .interaction) }
       }
     }
   }
@@ -2548,11 +2578,29 @@ private enum DocumentWebViewFactory {
   final class DocumentWebHost: UIView {
     private weak var retainedPaper: DocumentPaperView?
     func installPaper(_ paper: DocumentPaperView) {
+      if let previous = paper.superview as? DocumentWebHost, previous !== self {
+        previous.removePaper(ownedBy: paper)
+      }
+      if let viewport {
+        retainedPaper = nil
+        viewport.installBackground(paper)
+      } else {
+        if retainedPaper !== paper { retainedPaper?.removeFromSuperview() }
+        paper.transform = .identity
+        if paper.superview !== self { insertSubview(paper, at: 0) }
+        retainedPaper = paper; projectRetainedPaper()
+      }
+      publishProjectionChange()
+    }
+    func removePaper(ownedBy paper: DocumentPaperView) {
+      guard retainedPaper === paper else { return }
+      if paper.superview === self { paper.removeFromSuperview() }
       retainedPaper = nil
-      viewport?.installBackground(paper)
+      publishProjectionChange()
     }
     private func projectRetainedPaper() {
-      guard let paper = retainedPaper, paperSize.width > 0, paperSize.height > 0 else { return }
+      guard let paper = retainedPaper, paper.superview === self,
+        paperSize.width > 0, paperSize.height > 0 else { return }
       let scale = min(bounds.width/paperSize.width, bounds.height/paperSize.height)
       paper.frame = CGRect(x: bounds.midX-paperSize.width*scale/2, y: bounds.midY-paperSize.height*scale/2,
         width: paperSize.width*scale, height: paperSize.height*scale)
@@ -2582,6 +2630,15 @@ private enum DocumentWebViewFactory {
     var onContactChange: (Bool) -> Void = { _ in }
     var onSizeChange: () -> Void = { }
     var onWindowChange: () -> Void = { }
+    private var presentationCallbackOwner: UUID?
+    func claimPresentationCallbacks(for owner: UUID) { presentationCallbackOwner = owner }
+    func releasePresentationCallbacks(for owner: UUID) {
+      guard presentationCallbackOwner == owner else { return }
+      presentationCallbackOwner = nil
+      // Accepted native contacts keep their terminal route. Size/window
+      // observations end with this presentation; delivery ends at touch-up.
+      onSizeChange = { }; onWindowChange = { }
+    }
     private var lastLaidOutSize = CGSize.zero
     private var lastCanonicalProjection = false
     func showFailure(_ message: String, retry: @escaping () -> Void) {
@@ -2626,18 +2683,20 @@ private enum DocumentWebViewFactory {
       let scaleY = hypot(vertical.x - origin.x, vertical.y - origin.y) / paperSize.height
       guard scaleX.isFinite, scaleY.isFinite, scaleX > 0, scaleY > 0 else { return false }
       guard abs(scaleX - scaleY) * max(paperSize.width, paperSize.height) <= 1 / window.screen.scale else { return false }
+      let frames: [CGRect]
       if let viewport, let web = viewport.webView {
         guard web.bounds.size == paperSize else { return false }
-        let tolerance = 1 / (window.screen.scale * max(scaleX, scaleY))
-        let frames = [web.convert(web.bounds, to: self)] + viewport.subviews.compactMap { view in
+        frames = [web.convert(web.bounds, to: self)] + viewport.subviews.compactMap { view in
           (view as? DocumentPaperView).map { $0.convert($0.bounds, to: self) }
         }
-        guard frames.allSatisfy({ frame in
-          abs(frame.minX - bounds.minX) <= tolerance && abs(frame.minY - bounds.minY) <= tolerance
-            && abs(frame.width - bounds.width) <= tolerance && abs(frame.height - bounds.height) <= tolerance
-        }) else { return false }
+      } else if let paper = retainedPaper, paper.superview === self, paper.raster != nil {
+        frames = [paper.convert(paper.bounds, to: self)]
+      } else { return false }
+      let tolerance = 1 / (window.screen.scale * max(scaleX, scaleY))
+      return frames.allSatisfy { frame in
+        abs(frame.minX - bounds.minX) <= tolerance && abs(frame.minY - bounds.minY) <= tolerance
+          && abs(frame.width - bounds.width) <= tolerance && abs(frame.height - bounds.height) <= tolerance
       }
-      return true
     }
     private func publishProjectionChange() {
       let installed = hasCanonicalPaperProjection
@@ -2730,6 +2789,7 @@ private enum DocumentWebViewFactory {
     func configure(size: CGSize, interactive: Bool) {
       paperSize = size
       viewport?.setContentSize(size)
+      projectRetainedPaper()
       inputEnabled = interactive
       projectInputPolicy()
     }
@@ -2751,7 +2811,8 @@ private enum DocumentWebViewFactory {
     }
     func removeSurface() {
       viewport?.retire(); viewport?.removeFromSuperview(); viewport = nil
-      retainedPaper?.removeFromSuperview(); retainedPaper = nil
+      if let paper = retainedPaper, paper.superview === self { paper.removeFromSuperview() }
+      retainedPaper = nil
     }
     func removeSurface(ownedBy web: WKWebView, preservingPaper paper: DocumentPaperView? = nil) {
       // A page handoff can replace this host before the old coordinator is
@@ -2850,7 +2911,7 @@ private enum DocumentWebViewFactory {
       projectionScale = scale; projectSurface()
     }
     private func projectSurface() {
-      guard web != nil else { return }
+      guard web != nil || paper != nil else { return }
       let size = CGSize(width: canonicalSize.width * projectionScale, height: canonicalSize.height * projectionScale)
       // The reading owner supplies a screen-point frame. Do not mutate this
       // representable's bounds from AppKit layout: SwiftUI owns that geometry.
@@ -2862,9 +2923,17 @@ private enum DocumentWebViewFactory {
     }
     private weak var paper: DocumentPaperView?
     func installPaper(_ paper: DocumentPaperView) {
+      if let previous = paper.superview as? DocumentWebHost, previous !== self {
+        previous.removePaper(ownedBy: paper)
+      }
       self.paper = paper
       if paper.superview !== self { addSubview(paper, positioned: .below, relativeTo: web) }
-      paper.frame = web?.frame ?? bounds; paper.refine()
+      projectSurface(); paper.refine()
+    }
+    func removePaper(ownedBy paper: DocumentPaperView) {
+      guard self.paper === paper else { return }
+      if paper.superview === self { paper.removeFromSuperview() }
+      self.paper = nil
     }
     private var web: WKWebView?
     private var inputEnabled = false

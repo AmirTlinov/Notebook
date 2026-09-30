@@ -286,6 +286,7 @@ final class IPadSheetCurlController: UIViewController, UIGestureRecognizerDelega
     motion.progress = min(max(0, progress), 1)
     if motion.stagedLanding != nil, motion.progress != motion.terminal {
       motion.stagedLanding = nil; view.bringSubviewToFront(curl)
+      curl.pageHierarchyDidChange()
     }
     self.motion = motion
     guard motion.frame != nil else { return }
@@ -321,6 +322,7 @@ final class IPadSheetCurlController: UIViewController, UIGestureRecognizerDelega
       // Keep the accepted pair and input gate until that receipt arrives.
       motion.stagedLanding = landing; self.motion = motion
       view.bringSubviewToFront(landing.view)
+      curl.pageHierarchyDidChange()
       onStageLiveSheet(landing)
       return
     }
@@ -338,6 +340,7 @@ final class IPadSheetCurlController: UIViewController, UIGestureRecognizerDelega
     guard var motion else { return }
     if motion.stagedLanding != nil, motion.terminal != target {
       motion.stagedLanding = nil; view.bringSubviewToFront(curl)
+      curl.pageHierarchyDidChange()
     }
     motion.contact = nil
     // Cancelling before capture changes no displayed pixels. Do not snapshot,
@@ -417,6 +420,7 @@ final class IPadSheetCurlController: UIViewController, UIGestureRecognizerDelega
       began: CACurrentMediaTime(), direction: direction)
     if motion.stagedLanding != nil {
       motion.stagedLanding = nil; view.bringSubviewToFront(curl)
+      curl.pageHierarchyDidChange()
     }
     motion.animation = nil; motion.terminal = nil
     self.motion = motion; curl.animatesContinuously = false
@@ -520,6 +524,7 @@ final class IPadSheetCurlController: UIViewController, UIGestureRecognizerDelega
     curl.onPageFrameWillPresent = { [weak self] id in
       guard let self, self.motion?.id == id else { return }
       self.view.bringSubviewToFront(self.curl)
+      self.curl.pageHierarchyDidChange()
     }
     curl.onPageDetached = { [weak self] in self?.cancelMotion() }
     curl.onPageRenderFailure = { [weak self] error in

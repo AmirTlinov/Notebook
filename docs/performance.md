@@ -596,20 +596,19 @@ Physical owners account for resident material, the borrowed pair and drawable
 backings. Resident page/document owners may reuse an unchanged completed frame;
 their bounded lifetime and reclamation rules own that memory. The curl retains
 its immutable pair through its last GPU submission and releases it at completion
-or cancellation. `CAMetalDisplayLink` owns progress and submission; a dropped
-or obsolete receipt cannot confirm a landing. Its paused link survives between
-turns while mounted, without acquiring drawables. During admitted motion,
-`UIUpdateLink.wantsImmediatePresentation` requests the lower-latency UIKit policy;
-it does not drive animation and is disabled when motion stops. The request is
-not evidence of actual latency: acceptance uses OS drawable timestamps.
-The first bent frame uses that same Metal clock and asynchronous command-buffer
-presentation as subsequent frames. There is no direct-drawable bootstrap, clock
-handoff, or page CA-publication queue. Operation identity and a presentation
-generation reject receipts from a replaced operation or detached view, including
-reuse of the same immutable frame. Optional timing records scheduling at its
-Metal callback; asynchronous presentation has no app-owned UIKit publication time.
-An OS receipt of zero is retained as a dropped drawable in diagnostics; first
-response and cadence are measured only from actually shown bent frames.
+or cancellation. One `UIUpdateLink` owns page motion and publication. Released
+motion encodes after update scheduling; input dispatch may replace that pose.
+After dispatch, ordinary motion publishes a scheduled drawable without waiting
+for the later CA phase. First reveal, geometry and owner z-order changes remain
+transactional until their exact hierarchy revision commits. An OS receipt of
+the first visible frame admits asynchronous motion; a GPU completion alone does
+not. A scheduling fence is bounded by 1 ms and the update deadline; no GPU
+completion wait runs on Main. Stopping motion parks the same link and output.
+The immediate-presentation request is policy, not proof of latency; acceptance
+uses OS drawable timestamps. Operation UUID, generation and pose revision reject
+replaced work. Timing records submission, scheduling, UIKit publication and actual
+OS presentation separately. A zero OS receipt denotes a dropped drawable;
+first response and cadence use only actually shown bent frames.
 Settlement follows remaining travel, release velocity, stroke duration and
 current input cadence, without a fixed minimum duration. A re-grab starts from
 the visible pose; cancelling a newer contact preserves the previously accepted
@@ -619,7 +618,7 @@ Simulator's typed GPU completion is readiness, not an OS presentation timestamp.
 The unchanged physical first-frame/cadence limits remain separate from geometry,
 endpoint, re-grab, colour and resource-lifetime regressions.
 
-Page projection installs frame, drawable size and layer size atomically before
+Ink page projection installs frame, drawable size and layer size atomically before
 requesting its sole CAMetalDisplayLink at 120 Hz. The synchronous MTK size callback
 cannot allocate an intermediate backing with old/new dimensions. Visible current
 input paper presents a real transparent frame during empty-page installation,
