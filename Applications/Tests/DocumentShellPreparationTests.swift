@@ -58,6 +58,28 @@ final class DocumentShellPreparationTests: XCTestCase {
     XCTAssertEqual(resources.pendingWebRequestCount, 0)
   }
 
+  func testOptionalShellWaitsForTheSameConstructorAllowanceAsVisibleContent() async throws {
+    let resources = SceneRenderResources(profile: .headless, maximumWebSurfaces: 4)
+    let first = try await resources.acquireWebSurface(priority: .liveProgram, constructsView: true)
+    let second = try await resources.acquireWebSurface(priority: .liveProgram, constructsView: true)
+    let preparation = DocumentShellPreparation(resources: resources)
+    defer { preparation.stop(); first.release(); second.release() }
+    XCTAssertEqual(resources.activeWebConstructionCount, 2)
+    preparation.prepareIfIdle()
+    XCTAssertNil(preparation.unusedCoordinator, "Optional work cannot create a third WebKit before the admitted constructors finish")
+    XCTAssertEqual(resources.activeWebSurfaceCount, 2)
+    XCTAssertEqual(resources.pendingWebRequestCount, 0, "An optional shell never queues ahead of accepted content")
+
+    first.finishConstruction()
+    await waitUntil { resources.activeWebConstructionCount == 1 }
+    XCTAssertEqual(resources.activeWebSurfaceCount, 2, "Constructor completion preserves both running leases")
+    preparation.prepareIfIdle()
+    XCTAssertNotNil(preparation.unusedCoordinator?.webView, "The real capacity edge admits the same optional preparation")
+    XCTAssertEqual(resources.activeWebConstructionCount, 2, "The shell reserves its constructor before the factory runs")
+    preparation.stop(); first.release(); second.release()
+    await waitUntil { resources.activeWebConstructionCount == 0 && resources.activeWebSurfaceCount == 0 }
+  }
+
   func testCurrentPageAdoptsTheSameReadyCoordinatorWebAndAdmission() async throws {
     try await assertActualAdoption(waitForCommonRuntime: true)
   }

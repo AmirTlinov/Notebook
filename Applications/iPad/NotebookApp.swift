@@ -42,6 +42,9 @@ struct NotebookApp: App {
       }
       .modifier(NotebookDocumentImport(model: launch.model))
       .background {
+        NotebookRenderSceneLifetime()
+          .frame(width: 1, height: 1)
+          .allowsHitTesting(false)
         NotebookSystemTraceIdentitySurface()
           .frame(width: 1, height: 1)
           .allowsHitTesting(false)

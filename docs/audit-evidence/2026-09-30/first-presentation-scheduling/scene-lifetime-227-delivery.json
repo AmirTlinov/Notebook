@@ -1,0 +1,81 @@
+{
+  "format": 1,
+  "status": "installed-connected-pair",
+  "version": "0.3.157",
+  "build": "227",
+  "previousBuild": "226",
+  "sourceSHA256": "9ddb013a9ce8b76643c8a474ad0248d58556f5bc903cfd6aa0938f94da05d2c5",
+  "fullAcceptance": false,
+  "scope": "Finished constructor scene lifetime, precise native root binding and optional-shell admission; focused physical/native/Mac verification.",
+  "verification": {
+    "path": "docs/audit-evidence/2026-09-30/first-presentation-scheduling/scene-lifetime-227-results.json",
+    "sha256": "7c54f92100fc911be79314107793958c2a5165a20d8a2e27a1f56a32497bd10b"
+  },
+  "buildReceipt": {
+    "path": "/private/tmp/notebook-227-pair-0721/build.json",
+    "sha256": "e28b310aa4997c6f0d142bf3b69685d03bef04a279542474e5ac0a70f09a1a95"
+  },
+  "installationReceipt": {
+    "path": "/private/tmp/notebook-install-227-0730/installation.json",
+    "sha256": "d0ebe33ea5e1149084f6123f3023b75182d4b68b5f4bef36c548bee389bcd039",
+    "finishedAt": "2026-09-30T07:32:47.801029+00:00"
+  },
+  "postLaunch": {
+    "status": "ready",
+    "checkedAt": "2026-09-30T07:36:27.679185+00:00",
+    "installedHelperStatus": "ready",
+    "iPadDeviceID": "29DC77FE-8777-41EC-BE98-704F4668A2F4",
+    "iPadSessionID": "B335CA7A-C250-4091-885D-2FBA27FA84A1",
+    "priorSessionID": "70EC7F22-5AC9-4F0A-9938-27093740B02D",
+    "workspaceID": "54349F3B-9E0A-4DEA-B990-40CAE04EF45E",
+    "cursor": "52401",
+    "presence": {
+      "documentPageIndex": 0,
+      "selectedItemID": "AF947D51-7E74-4081-9194-3B5FE07A0F39",
+      "focusedItemID": "AF947D51-7E74-4081-9194-3B5FE07A0F39",
+      "viewport": {
+        "x": 834,
+        "y": 1194
+      },
+      "format": 5,
+      "mode": "page",
+      "notebookPageID": "C74869CD-CE04-4AC2-A12E-66B00996B8E6",
+      "camera": {
+        "scale": 1,
+        "center": {
+          "localY": 1516.4960114370574,
+          "tileX": 0,
+          "localX": 3355.8232476298454,
+          "tileY": 0
+        }
+      },
+      "openProgress": 1,
+      "boardID": "7E7A0000-0000-4000-8000-000000000003"
+    },
+    "presenceUnchangedFrom226": true,
+    "macInstalledVersion": "0.3.157",
+    "macInstalledBuild": "227",
+    "iPadNotebookApps": [
+      {
+        "bundleID": "com.amirtlinov.notebook.preview",
+        "name": "Notebook Lab",
+        "version": "0.3.157",
+        "build": "227"
+      }
+    ],
+    "qaOrTestAppsPresent": false,
+    "inPlaceUpdate": true,
+    "dataContainerPathChanged": true,
+    "visibleMacCheck": {
+      "status": "unavailable",
+      "checkedAt": "2026-09-30T07:34:22Z",
+      "reason": "Fresh Computer Use getApp(\"Notebook\") failed with ScreenCaptureKit -3811."
+    },
+    "path": "/private/tmp/notebook-install-227-0730/post-launch-check.json",
+    "sha256": "a28a4d037528829353867539c3f1ad4740ec54137a3844508b4493912a6dab49"
+  },
+  "binaryUUIDs": {
+    "iPad": "UUID: 9512C24E-96C8-3B5E-95E8-BF51E33DFED4 (arm64)",
+    "mac": "UUID: 433E78C3-1418-3BA9-A101-EDC32CA1A62A (arm64)"
+  }
+}

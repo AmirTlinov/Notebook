@@ -1,0 +1,113 @@
+{
+  "format": 1,
+  "recordedAt": "2026-09-30T07:29:48.948982+00:00",
+  "version": "0.3.157",
+  "build": "227",
+  "baseCommit": "b09709bcf318f10429e358381979f2709208352f",
+  "sourceSHA256": "9ddb013a9ce8b76643c8a474ad0248d58556f5bc903cfd6aa0938f94da05d2c5",
+  "runs": [
+    {
+      "sourceSHA256": "9ddb013a9ce8b76643c8a474ad0248d58556f5bc903cfd6aa0938f94da05d2c5",
+      "tests": [
+        {
+          "nodeIdentifier": "DocumentShellPreparationTests/testOptionalShellWaitsForTheSameConstructorAllowanceAsVisibleContent()",
+          "result": "Passed",
+          "durationInSeconds": 0.07727909088134766
+        },
+        {
+          "nodeIdentifier": "NotebookFirstPresentationSchedulingTests/testColdProgramConstructorsAgainstUIOpportunities()",
+          "result": "Passed",
+          "durationInSeconds": 1.6420009136199951
+        },
+        {
+          "nodeIdentifier": "SceneRenderResourcesTests/testConstructorLifetimeEndsWithItsBoundSceneAndResumesOnActivation()",
+          "result": "Passed",
+          "durationInSeconds": 0.004022955894470215
+        },
+        {
+          "nodeIdentifier": "SceneRenderResourcesTests/testRuntimeConstructionAdmissionEndsBeforeNavigationAndPreservesRunningOwners()",
+          "result": "Passed",
+          "durationInSeconds": 0.012408018112182617
+        },
+        {
+          "nodeIdentifier": "NotebookNavigationLoadUITests/testTwentyFourPageProgramsAcceptFirstTapAfterZoomAndKeepStateAcrossTurns()",
+          "result": "Passed",
+          "durationInSeconds": 81.57634496688843
+        }
+      ],
+      "summary": {
+        "result": "Passed",
+        "passedTests": 5,
+        "failedTests": 0,
+        "skippedTests": 0,
+        "runtimeWarnings": [],
+        "startTime": 1790752464.052,
+        "finishTime": 1790752553.637
+      },
+      "evidence": [
+        {
+          "path": "/private/tmp/notebook-227-scene-lifetime-0713/verification.json",
+          "sha256": "8eeabc5545ab967daf67157053965970bccc82b3378d43d5702ced24008818ad"
+        },
+        {
+          "path": "/private/tmp/notebook-227-scene-lifetime-0713/ipad-summary.json",
+          "sha256": "cebfbc48271d4ac2abd1b2a0c77f35e78d97fe1cb46a7d6f4d732f2287fcbe85"
+        },
+        {
+          "path": "/private/tmp/notebook-227-scene-lifetime-0713/source-before.json",
+          "sha256": "950c8d9b7322f63f2a35a529f01924998dc43a5b9fc5ff3138a2a1960122ac48"
+        }
+      ]
+    },
+    {
+      "sourceSHA256": "9ddb013a9ce8b76643c8a474ad0248d58556f5bc903cfd6aa0938f94da05d2c5",
+      "tests": [
+        {
+          "nodeIdentifier": "DocumentRuntimeTests/testSpatialCheckpointKeepsItsOwnerOnWriterRefusalAndCapturesTheAcceptedState()",
+          "result": "Passed",
+          "durationInSeconds": 0.3347909450531006
+        },
+        {
+          "nodeIdentifier": "DocumentTargetSnapshotPreparationTests/testImpossibleCaptureDoesNotCreateAPermanentAdmissionWaiter()",
+          "result": "Passed",
+          "durationInSeconds": 0.914152979850769
+        }
+      ],
+      "summary": {
+        "result": "Passed",
+        "passedTests": 2,
+        "failedTests": 0,
+        "skippedTests": 0,
+        "runtimeWarnings": [],
+        "startTime": 1790752759.73,
+        "finishTime": 1790752762.365
+      },
+      "evidence": [
+        {
+          "path": "/private/tmp/notebook-227-mac-0718/verification.json",
+          "sha256": "e97d56bc3504c96b67bcfae3b551bbfab80c12e0b371b02f8e90203fb52fc857"
+        },
+        {
+          "path": "/private/tmp/notebook-227-mac-0718/mac-summary.json",
+          "sha256": "28c4343ef63b936e50b06e0667556b328acdd4e0e6400dcfc3b6691c81319a45"
+        },
+        {
+          "path": "/private/tmp/notebook-227-mac-0718/source-before.json",
+          "sha256": "950c8d9b7322f63f2a35a529f01924998dc43a5b9fc5ff3138a2a1960122ac48"
+        }
+      ]
+    }
+  ],
+  "scope": {
+    "physicalFunctional": "Three native regressions and real UI24 first-tap/close/reopen/forward/reverse/Home-activate with all exact states.",
+    "physicalScheduling": "One fresh page/source mount observation in a native process also running optional-shell/constructor checks; max two constructors per UI opportunity.",
+    "sceneLifecycle": "Private NotificationCenter drives owner deactivation/disconnect/activation semantics without changing OS scene state; the replacement lifetime receives an actual UI completion. OS background/foreground is exercised independently by public XCUI Home/activate.",
+    "mac": "Addressed writer refusal/checkpoint and terminal capture-admission wait; native Mac, unchanged iPad source inventory.",
+    "fullAcceptance": false,
+    "strictLatencyBudgets": "open"
+  },
+  "compileRepair": {
+    "path": "/private/tmp/notebook-227-scene-lifetime-0711",
+    "result": "Build rejected Swift 6 transfer of Notification. Extract typed scene before the synchronous MainActor closure; no tests ran on the rejected build."
+  }
+}

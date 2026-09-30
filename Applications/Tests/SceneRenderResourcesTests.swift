@@ -6,6 +6,44 @@ import XCTest
 
 final class SceneRenderResourcesTests: XCTestCase {
   @MainActor
+  func testConstructorLifetimeEndsWithItsBoundSceneAndResumesOnActivation() async throws {
+    let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+      .first(where: { $0.activationState == .foregroundActive }))
+    let notifications = NotificationCenter()
+    var edges: [Int] = []
+    let admission = SceneWebConstructionAdmission(interactive: true, notifications: notifications) { edges.append($0) }
+    admission.requireSceneLifetime()
+    XCTAssertFalse(admission.canConstruct, "A managed source waits for its actual root")
+    let root = UUID(), finished = UUID(), unconstructed = UUID()
+    admission.setSceneRoot(root, scene: scene)
+    admission.reserve(finished); admission.reserve(unconstructed)
+    admission.finish(finished)
+    notifications.post(name: UIScene.willDeactivateNotification, object: NSObject())
+    XCTAssertEqual(admission.count, 2, "An unrelated lifetime cannot release this scene's work")
+    notifications.post(name: UIScene.willDeactivateNotification, object: scene)
+    XCTAssertEqual(admission.count, 1, "Only finished construction ends with the UI lifetime")
+    XCTAssertFalse(admission.canConstruct, "An inactive root cannot drain the accepted queue")
+    admission.abandon(unconstructed)
+    XCTAssertFalse(admission.canConstruct)
+    notifications.post(name: UIScene.didActivateNotification, object: scene)
+    XCTAssertTrue(admission.canConstruct)
+    XCTAssertEqual(edges, [0, 0], "Attach and activation publish actual allowance")
+    let replacement = UUID()
+    admission.reserve(replacement); admission.finish(replacement)
+    notifications.post(name: UIScene.didDisconnectNotification, object: scene)
+    XCTAssertEqual(admission.count, 0)
+    XCTAssertFalse(admission.canConstruct)
+    admission.setSceneRoot(root, scene: nil)
+    admission.setSceneRoot(root, scene: scene)
+    let current = UUID()
+    admission.reserve(current); admission.finish(current)
+    try await waitUntil { admission.count == 0 }
+    XCTAssertTrue(admission.canConstruct, "The new mounted lifetime receives a real UI completion")
+    admission.setSceneRoot(root, scene: nil)
+    XCTAssertFalse(admission.canConstruct)
+  }
+
+  @MainActor
   func testRuntimeConstructionAdmissionEndsBeforeNavigationAndPreservesRunningOwners() async throws {
     let resources = SceneRenderResources()
     let first = try await resources.acquireWebSurface(priority: .liveProgram, constructsView: true)

@@ -257,3 +257,14 @@ Window pinch однажды доставил оба fingers около(442,417) 
 pinch и отвечают на первый tap, close/reopen/forward/reverse сохраняют состояние.
 Утверждения не ослаблены, новая AX поверхность и private injection не добавлены.
 Public XCTest pinch остаётся best effort; один frame centre не доказывает delivery.
+
+Последующее integration review226 нашло terminal lifetime constructor allowance
+и обход optional document shell. В227 постоянный native root передаёт точный
+`windowScene` до model load. Inactive/disconnect возвращает finished reservations,
+останавливает link и сохраняет queued/unconstructed работу до реальной активации;
+старые callbacks отвергаются по identity/generation. Каждый mounted root удерживает
+свою сцену в общем pool. Idle shell проверяет и резервирует тот же allowance,
+а его освобождение публикует actual availability независимо от live lease count.
+[Прицельный scope227](audit-evidence/2026-09-30/first-presentation-scheduling/scene-lifetime-227-results.json):
+3native + real UI24/Home→activate + scheduling observation и2Mac PASS.
+Notification regression проверяет owner semantics; OS disconnect им не заявляется.

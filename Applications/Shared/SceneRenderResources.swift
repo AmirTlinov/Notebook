@@ -331,7 +331,13 @@ final class SceneRenderResources {
   // still share at most two transient executors. Raster bytes remain separately
   // accounted: this is an execution ceiling, not a claim about process memory.
   nonisolated static let maximumVisiblePrograms = 32
-  static let shared = SceneRenderResources()
+  static let shared: SceneRenderResources = {
+    let resources = SceneRenderResources()
+    #if os(iOS)
+      resources.webConstruction.requireSceneLifetime()
+    #endif
+    return resources
+  }()
   static let didChange = Notification.Name("NotebookSceneRenderResourcesDidChange")
   static let didGainRasterAdmission = Notification.Name("NotebookSceneRenderResourcesDidGainRasterAdmission")
   let byteLimit: Int
@@ -420,8 +426,8 @@ final class SceneRenderResources {
   /// Optional work never occupies a pending position ahead of an actual source.
   /// Its live lease still consumes the ordinary background/passive allowances.
   func tryAcquireIdleWebSurface() -> WebSurfaceLease? {
-    guard waiters.isEmpty, canAdmit(.background) else { return nil }
-    return grantWebSurface(id: UUID(), priority: .background, source: nil)
+    guard waiters.isEmpty, canAdmit(.background, constructsView: true) else { return nil }
+    return grantWebSurface(id: UUID(), priority: .background, source: nil, constructsView: true)
   }
 
   private func reclaimUnusedWebIfNeeded(for priority: WebPriority) {
@@ -539,9 +545,11 @@ final class SceneRenderResources {
     let passive: Int
     let background: Int
     let queued: Int
+    let constructors: Int
     func improves(on previous: Self) -> Bool {
       critical > previous.critical || passive > previous.passive
         || background > previous.background || queued > previous.queued
+        || constructors > previous.constructors
     }
   }
   @ObservationIgnored private var entries: [UUID: RasterEntry] = [:]
@@ -563,12 +571,19 @@ final class SceneRenderResources {
   var pendingDerivedRequestCount: Int { derivedWaiters.count }
   @ObservationIgnored private var diagnosticEntries: [String: DiagnosticEntry] = [:]
   @ObservationIgnored private var activeWebSurfaces: [UUID: WebPriority] = [:]
-  @ObservationIgnored private lazy var webConstruction = SceneWebConstructionAdmission(interactive: profile == .interactive) { [weak self] in
+  @ObservationIgnored private lazy var webConstruction = SceneWebConstructionAdmission(interactive: profile == .interactive) { [weak self] previousConstructors in
     guard let self else { return }
-    let availability = webAvailability
+    let current = webAvailability
+    let availability = WebAvailability(critical: current.critical, passive: current.passive,
+      background: current.background, queued: current.queued, constructors: previousConstructors)
     admitWaiters(); publishWebAvailability(after: availability)
   }
   var activeWebConstructionCount: Int { webConstruction.count }
+  #if os(iOS)
+    func setWebConstructionScene(root: UUID, scene: UIWindowScene?) {
+      webConstruction.setSceneRoot(root, scene: scene)
+    }
+  #endif
   @ObservationIgnored private var waiters: [WebWaiter] = []
   @ObservationIgnored private var webPriorityAdmission: Task<Void, Never>?
   @ObservationIgnored private var accessClock: UInt64 = 0
@@ -1269,7 +1284,8 @@ final class SceneRenderResources {
     let passive = min(critical, max(0, maximumWebSurfaces - reservedInteractiveSlots - activePassiveWebSurfaceCount))
     return .init(critical: critical, passive: passive,
       background: min(passive, max(0, maximumBackgroundWebSurfaces - activeBackgroundWebSurfaceCount)),
-      queued: max(0, maximumPendingPreparationRequests - pendingBackgroundWebRequestCount))
+      queued: max(0, maximumPendingPreparationRequests - pendingBackgroundWebRequestCount),
+      constructors: webConstruction.availableCount)
   }
   private func publishWebAvailability(after previous: WebAvailability) {
     if webAvailability.improves(on: previous) { webAdmissionGeneration &+= 1 }

@@ -152,8 +152,14 @@ that exact coordinator and WebKit; a changed source uses its existing token-chec
 load path. Every WebKit factory, including document, chat, terminal, voice and
 presentation SVG, uses this allowance. On UIKit, constructor completion marks
 the allowance for release after a CA commit opportunity and `afterUpdateComplete`;
-the next pair cannot consume the same unfinished UI cycle. AppKit/headless work
-leaves the constructor stack before admitting successors. Navigation commit and
+the next pair cannot consume the same unfinished UI cycle. The permanent native
+root supplies its exact window scene before model load. Each mounted root retains
+that scene lifetime; deactivation/disconnection returns only finished reservations
+and stops its link. Queued/unconstructed requests retain their place until actual
+activation, while old link callbacks are rejected by generation. The optional
+empty document shell reserves the same constructor allowance and retries on its
+real availability edge. AppKit/standalone work leaves the constructor stack
+before admitting successors. Navigation commit and
 author readiness have their separate lifetimes. Unmounted preparation neither captures
 passive pixels nor proves native installation. Withdrawing the request retires the
 session through its existing checkpoint and submitted-capture tail; detaching a

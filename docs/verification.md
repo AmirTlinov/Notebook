@@ -3,6 +3,37 @@
 Срез: **30 сентября 2026**. Функциональная проверка, доставка и полная приёмка
 учитываются отдельно; результат относится к исходникам своего receipt.
 
+## Scene constructor lifetime — 227
+
+**0.3.157 (227)** установлена поверх226 на Mac и физическом iPad
+30сентября07:32UTC (10:32МСК). Source
+`9ddb013a9ce8b76643c8a474ad0248d58556f5bc903cfd6aa0938f94da05d2c5`.
+Installed helper/presentation ready; тот же доверенный device/workspace, новая
+сессия. Page/camera presence полностью совпадает с226. Одна Notebook Lab,
+QA/test apps отсутствуют. Mac завершён штатно; bundle/app-group identity
+сохранена при новом iOS container path. Свежий Mac capture снова вернул−3811.
+[Доставка](audit-evidence/2026-09-30/first-presentation-scheduling/scene-lifetime-227-delivery.json),
+[точные scopes](audit-evidence/2026-09-30/first-presentation-scheduling/scene-lifetime-227-results.json).
+
+Физический0713: **5PASS** —3native regressions, scheduling observation и
+real UI24. Проверены finished-only scene cleanup/activation/rebind, actual
+optional shell после constructor-only availability edge и прежний budget.
+UI24 сохранил состояния после pinch/close/reopen/forward/reverse и реального
+Home→activate. Native notification regression устанавливает owner semantics;
+OS disconnect им не измеряется. Mac0718: **2PASS** — writer refusal/checkpoint
+и terminal capture-admission wait. Fail/skip/runtime warnings=0.
+Оба receipt совпадают с установленным source.
+
+Постоянный native root передаёт точную сцену до model load; inactive/disconnect
+завершает finished reservations и оставляет queued/unconstructed работу до
+реальной activation. Idle shell включён в тот же allowance и availability edge.
+[Новый source mount](audit-evidence/2026-09-30/first-presentation-scheduling/cold24-scene-lifetime-227.json):
+first native479,284мс/all854,480мс, max CA40,436мс, constructors/UI≤2.
+Тот же native процесс выполнял optional-shell checks; это scheduling scope.
+Строгие latency budgets, системная причина initial curl discard и дальнейшее
+разделение WebKit launch/IPC остаются открытыми. GPU/Curl OS measurements226
+ниже сохраняют свой исходник. Полная приёмка здесь не выполнялась.
+
 ## Первый показ и объединённый admission repair — 226
 
 **0.3.156 (226)** установлена поверх225 на Mac и физическом iPad
@@ -25,7 +56,7 @@ ink/text export, tile seams и light-ink vision. Skip/runtime warnings=0.
 Отрицательный Window-pinch результат и его реальные pointer coordinates
 сохранены; публичный XCTest pinch остаётся best effort.
 
-[Продолжение31–33](performance-repair-2026-09-30.md#продолжение31–33--первый-полезный-показ)
+[Продолжение31–33](performance-repair-2026-09-30.md)
 установило пять GPU compiler waits на Main и вывело shared GPU producers в worker.
 Повторный CPU profile:0 Main compiler samples,6 worker stacks. Constructor
 allowance всех WK factories проходит через scene owner и освобождается после

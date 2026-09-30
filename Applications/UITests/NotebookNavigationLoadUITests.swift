@@ -69,6 +69,12 @@ import XCTest
     app.buttons["previous-page"].tap(); try controls(leaf: 0, since: previous)
     XCTAssertEqual(try visibleControlRects(red: true).count, 24,
       "Every program must retain its visibly changed state after returning")
+    let resumed = ContinuousClock.now
+    XCUIDevice.shared.press(.home)
+    app.activate()
+    let resumedImage = try controls(leaf: 0, since: resumed)
+    XCTAssertEqual(try visibleControlRects(red: true, image: resumedImage).count, 24,
+      "The actual scene must reactivate all exact program states after backgrounding")
   }
 
   func testTwentyFourBoardProgramsStayInteractiveAfterZoomOutAndBack() throws {
