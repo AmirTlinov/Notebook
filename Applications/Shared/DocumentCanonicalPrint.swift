@@ -79,38 +79,46 @@ final class DocumentPrintedPDF: @unchecked Sendable {
 }
 
 @MainActor
+final class DocumentPrintedAllocation {
+  let reservation: RasterReservation
+  init(_ reservation: RasterReservation) { self.reservation = reservation }
+  isolated deinit { reservation.release() }
+}
+
+@MainActor
 final class DocumentPrintedSource {
   let artifact: NotebookPrintedDocument
   let locations: [DocumentPrintLocation]
   let pdf: DocumentPrintedPDF
-  @MainActor private final class Allocation {
-    let reservation: RasterReservation
-    init(_ reservation: RasterReservation) { self.reservation = reservation }
-    isolated deinit { reservation.release() }
+  let lineIndices: [String: DocumentPrintLineIndex]
+  let slots: [Int: [DocumentPrintInteractiveRegion]]
+  let allocation: DocumentPrintedAllocation
+  init(artifact: NotebookPrintedDocument, locations: [DocumentPrintLocation] = [], pdf: DocumentPrintedPDF, reservation: RasterReservation,
+    lineIndices: [String: DocumentPrintLineIndex], slots: [Int: [DocumentPrintInteractiveRegion]]) {
+    self.artifact = artifact; self.locations = locations; self.pdf = pdf; allocation = DocumentPrintedAllocation(reservation)
+    self.lineIndices = lineIndices; self.slots = slots
   }
-  private let allocation: Allocation
-  init(artifact: NotebookPrintedDocument, locations: [DocumentPrintLocation] = [], pdf: DocumentPrintedPDF, reservation: RasterReservation) {
-    self.artifact = artifact; self.locations = locations; self.pdf = pdf; allocation = Allocation(reservation)
-  }
-  private init(artifact: NotebookPrintedDocument, locations: [DocumentPrintLocation], pdf: DocumentPrintedPDF, allocation: Allocation) {
+  private init(artifact: NotebookPrintedDocument, locations: [DocumentPrintLocation], pdf: DocumentPrintedPDF, allocation: DocumentPrintedAllocation, lineIndices: [String: DocumentPrintLineIndex], slots: [Int: [DocumentPrintInteractiveRegion]]) {
     self.artifact = artifact; self.locations = locations; self.pdf = pdf; self.allocation = allocation
+    self.lineIndices = lineIndices; self.slots = slots
   }
   func rebinding(_ artifact: NotebookPrintedDocument) -> DocumentPrintedSource {
     precondition(self.artifact.pixelIdentity == artifact.pixelIdentity && self.artifact.syncTeX == artifact.syncTeX)
-    return .init(artifact: artifact, locations: artifact.projection.locations, pdf: pdf, allocation: allocation)
+    return .init(artifact: artifact, locations: artifact.projection.locations, pdf: pdf, allocation: allocation, lineIndices: lineIndices, slots: slots)
   }
   func sourceOffset(fileID: String, pageIndex: Int, x: Double, y: Double) -> Int? {
     guard let location = DocumentPrintLocations.nearest(in: locations, fileID: fileID, pageIndex: pageIndex, x: x, y: y),
       let file = artifact.document.files.first(where: { $0.id == fileID && $0.resource == nil }) else { return nil }
-    return DocumentPrintLocations.sourceOffset(line: location.line, source: file.source)
+    return lineIndices[file.id]?.sourceOffset(line: location.line)
   }
   func reference(fileID: String, sourceOffset: Int) -> CollaborationReference? {
     let document = artifact.document
     guard let file = document.files.first(where: { $0.id == fileID && $0.resource == nil }) else { return nil }
-    let line = DocumentPrintLocations.line(sourceOffset: sourceOffset, source: file.source)
-    let authored = DocumentPrintLocations.sourceOffset(line: line, source: file.source)
+    guard let lines = lineIndices[file.id] else { return nil }
+    let line = lines.line(sourceOffset: sourceOffset)
+    let authored = lines.sourceOffset(line: line)
     func rank(_ location: DocumentPrintLocation) -> (Int, Int, Double, Int, Double) {
-      let offset = DocumentPrintLocations.sourceOffset(line: location.line, source: file.source)
+      let offset = lines.sourceOffset(line: location.line)
       return (abs(offset-authored), abs(location.line-line), location.width*location.height, location.pageIndex, location.y)
     }
     guard let location = locations.lazy.filter({ $0.fileID == fileID }).min(by: { rank($0) < rank($1) }) else { return nil }
@@ -134,7 +142,7 @@ struct DocumentPrintedPage {
   func image(width pixels: Int, overlay: CGImage? = nil) async throws -> CGImage {
     let pageIndex = pageIndex, aspect = height / width
     let geometry = artifact.pages[pageIndex]
-    let regions = artifact.interactiveRegions.filter { $0.pageIndex == pageIndex }
+    let regions = (source.slots[pageIndex] ?? [])
       .map { CGRect(x: $0.x, y: $0.y, width: $0.width, height: $0.height) }
     defer { withExtendedLifetime(source) {} }
     return try await source.pdf.perform { _, document in

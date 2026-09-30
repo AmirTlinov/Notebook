@@ -84,7 +84,9 @@ final class DocumentCanonicalPrintTests: XCTestCase {
     weak var observedPDF:DocumentPrintedPDF?
     func operation() async throws {
       let charge=try XCTUnwrap(resources.reserveDerivedBytes(artifact.pdf.count,priority:.passive))
-      let source=DocumentPrintedSource(artifact:artifact,pdf:.init(artifact.pdf),reservation:charge)
+      let source=DocumentPrintedSource(artifact:artifact,pdf:.init(artifact.pdf),reservation:charge,
+        lineIndices: Dictionary(uniqueKeysWithValues: artifact.document.files.filter { $0.resource == nil }.map { ($0.id, DocumentPrintLineIndex($0.source)) }),
+        slots: Dictionary(grouping: artifact.interactiveRegions, by: \.pageIndex))
       observedSource=source;observedPDF=source.pdf
       let page=DocumentPrintedPage(source:source,pageIndex:0,width:artifact.pages[0].width,height:artifact.pages[0].height)
       let entered=expectation(description:"The source Quartz executor is occupied"),release=DispatchSemaphore(value:0)
@@ -119,7 +121,9 @@ final class DocumentCanonicalPrintTests: XCTestCase {
     let artifact = try await DocumentCanonicalPrint.store.artifact(for: document)
     let resources = SceneRenderResources(profile: .interactive)
     let charge = try XCTUnwrap(resources.reserveDerivedBytes(artifact.pdf.count, priority: .passive))
-    let source = DocumentPrintedSource(artifact: artifact, pdf: .init(artifact.pdf), reservation: charge)
+    let source = DocumentPrintedSource(artifact: artifact, pdf: .init(artifact.pdf), reservation: charge,
+        lineIndices: Dictionary(uniqueKeysWithValues: artifact.document.files.filter { $0.resource == nil }.map { ($0.id, DocumentPrintLineIndex($0.source)) }),
+        slots: Dictionary(grouping: artifact.interactiveRegions, by: \.pageIndex))
     let page = DocumentPrintedPage(source: source, pageIndex: 0, width: artifact.pages[0].width, height: artifact.pages[0].height)
     let first = try XCTUnwrap(try artifact.locations().filter { $0.fileID == "main" && $0.width > 20 && $0.height > 5 }.min { $0.y < $1.y })
     for width in [320, 1668] {
@@ -154,7 +158,9 @@ final class DocumentCanonicalPrintTests: XCTestCase {
       let artifact = try await DocumentCanonicalPrint.store.artifact(for: document)
       let resources = SceneRenderResources(profile: .interactive)
       let source = DocumentPrintedSource(artifact: artifact, locations: try artifact.locations(), pdf: .init(artifact.pdf),
-        reservation: try XCTUnwrap(resources.reserveDerivedBytes(artifact.pdf.count, priority: .passive)))
+        reservation: try XCTUnwrap(resources.reserveDerivedBytes(artifact.pdf.count, priority: .passive)),
+        lineIndices: Dictionary(uniqueKeysWithValues: artifact.document.files.filter { $0.resource == nil }.map { ($0.id, DocumentPrintLineIndex($0.source)) }),
+        slots: Dictionary(grouping: artifact.interactiveRegions, by: \.pageIndex))
       let offset = (text as NSString).range(of: "Последняя строка").location
       let reference = try XCTUnwrap(source.reference(fileID: "main", sourceOffset: offset))
       XCTAssertEqual(reference.pageIndex, 1); XCTAssertNil(reference.elementID)
@@ -211,7 +217,9 @@ final class DocumentCanonicalPrintTests: XCTestCase {
     XCTAssertEqual(exact.y, region.y, accuracy: 0.001); XCTAssertEqual(exact.height, region.height, accuracy: 0.001)
     let resources = SceneRenderResources(profile: .interactive)
     let source = DocumentPrintedSource(artifact: artifact, locations: locations, pdf: .init(artifact.pdf),
-      reservation: try XCTUnwrap(resources.reserveDerivedBytes(artifact.pdf.count, priority: .passive)))
+      reservation: try XCTUnwrap(resources.reserveDerivedBytes(artifact.pdf.count, priority: .passive)),
+        lineIndices: Dictionary(uniqueKeysWithValues: artifact.document.files.filter { $0.resource == nil }.map { ($0.id, DocumentPrintLineIndex($0.source)) }),
+        slots: Dictionary(grouping: artifact.interactiveRegions, by: \.pageIndex))
     let after = (tex as NSString).range(of: "\\par\\color{black}After").location
     let reference = try XCTUnwrap(source.reference(fileID: "main", sourceOffset: after)), selection = try XCTUnwrap(reference.region)
     let scale = PhysicalPaper.pointsPerCentimeter*2.54/72
@@ -281,7 +289,8 @@ final class DocumentCanonicalPrintTests: XCTestCase {
     XCTAssertGreaterThan(layout.pageCount, 3)
     for segment in layout.reading.segments {
       let line = try XCTUnwrap(printed.locations.filter { $0.fileID == segment.fileID && $0.pageIndex == segment.pageIndex }.map(\.line).min())
-      XCTAssertEqual(segment.textOffset, DocumentPrintLocations.sourceOffset(line: line, source: text))
+      let expected = text.split(separator: "\n", omittingEmptySubsequences: false).prefix(line-1).reduce(0) { $0+$1.utf16.count+1 }
+      XCTAssertEqual(segment.textOffset, expected)
     }
     XCTAssertGreaterThan(Set(layout.reading.segments.map(\.textOffset)).count, 3)
   }

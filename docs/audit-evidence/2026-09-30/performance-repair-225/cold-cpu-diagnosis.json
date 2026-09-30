@@ -1,0 +1,347 @@
+{
+  "processID": 3189,
+  "threadID": 388461,
+  "binaryUUID": "5B2022E7-D159-3527-BFBF-D33F2D2E10A5",
+  "binaryLoadAddress": "0x1041e8000",
+  "binaryTextSize": "0x3610000",
+  "traceAbsoluteStartTicks": 1014410037973,
+  "timebaseNumerator": 125,
+  "timebaseDenominator": 3,
+  "coldAbsoluteAnchor": [
+    42323.41703858334,
+    42323.417038958345
+  ],
+  "coldTraceEpochSeconds": 56.33212304167682,
+  "intervals": [
+    {
+      "name": "load_call",
+      "relativeStart": 0.185515292,
+      "relativeEnd": 0.18689575,
+      "durationMS": 1.380458000000001,
+      "mainSamples": 1,
+      "mainWeightMS": 1.0,
+      "nearestAppCounts": [
+        [
+          "Notebook.AgentWebCoordinator.(installProgramNavigation in _70BA7CE3F1A6447B788C466767999B02)(_: NotebookCore.AgentElement, encoded: Notebook.NotebookProgramStateEncoding, token: Swift.String, in: __C.WKWebView, assets: (store: NotebookCore.NotebookStore, package: NotebookCore.NotebookProgramPackage)?) -> ()",
+          1
+        ]
+      ]
+    },
+    {
+      "name": "return_to_policy",
+      "relativeStart": 0.18689575,
+      "relativeEnd": 0.641850792,
+      "durationMS": 454.95504199999993,
+      "mainSamples": 200,
+      "mainWeightMS": 200.0,
+      "nearestAppCounts": [
+        [
+          "_main",
+          64
+        ],
+        [
+          "function signature specialization <Arg[1] = Dead> of static Notebook.AgentWebCoordinator.makeWebView(coordinator: Notebook.AgentWebCoordinator) -> __C.WKWebView",
+          41
+        ],
+        [
+          "Notebook.SheetCurlGPU.() -> Notebook.SheetCurlGPU(in _7BED204C8DE099B3D4FB4E864C6FC72F).init() -> Notebook.SheetCurlGPU",
+          36
+        ],
+        [
+          "closure #1 (__C.CGSize, (__C.CGContextRef) -> ()) -> () in Notebook.SceneRasterCompositor.drawView<A where A: SwiftUI.View>(_: A, size: __C.CGSize, in: __C.CGRect, clippingTo: __C.CGRect?) async throws -> ()",
+          7
+        ],
+        [
+          "NotebookCore.fieldKey([Swift.String]) -> Swift.String",
+          4
+        ],
+        [
+          "Notebook.AgentWebCoordinator.(installProgramNavigation in _70BA7CE3F1A6447B788C466767999B02)(_: NotebookCore.AgentElement, encoded: Notebook.NotebookProgramStateEncoding, token: Swift.String, in: __C.WKWebView, assets: (store: NotebookCore.NotebookStore, package: NotebookCore.NotebookProgramPackage)?) -> ()",
+          3
+        ],
+        [
+          "function signature specialization <Arg[1] = Owned To Guaranteed> of Notebook.InkCanvasView.init(frame: __C.CGRect, resources: Notebook.SceneRenderResources, isErasureMask: Swift.Bool) -> Notebook.InkCanvasView",
+          2
+        ],
+        [
+          "closure #1 (NotebookCore.AgentElement) -> <<opaque return type of (extension in SwiftUI):SwiftUI.View.allowsHitTesting(Swift.Bool) -> some>>.0 in closure #7 () -> SwiftUI.ForEach<[NotebookCore.AgentElement], Swift.String, <<opaque return type of (extension in SwiftUI):SwiftUI.View.allowsHitTesting(Swift.Bool) -> some>>.0> in Notebook.AgentOverlayView.body.getter : some",
+          2
+        ],
+        [
+          "<none>",
+          2
+        ],
+        [
+          "__ZN4core9panicking9panic_fmt17h56bb8b9e7e4a126eE",
+          2
+        ],
+        [
+          "function signature specialization <Arg[1] = Dead> of static Notebook.SceneSourceVisibility.visibleRect(__C.UIView) -> __C.CGRect",
+          2
+        ],
+        [
+          "(1) suspend resume partial function for Notebook.SceneRasterCompositor.drawView<A where A: SwiftUI.View>(_: A, size: __C.CGSize, in: __C.CGRect, clippingTo: __C.CGRect?) async throws -> ()",
+          2
+        ]
+      ]
+    },
+    {
+      "name": "policy_to_start",
+      "relativeStart": 0.641850792,
+      "relativeEnd": 0.7131455,
+      "durationMS": 71.29470800000004,
+      "mainSamples": 65,
+      "mainWeightMS": 65.0,
+      "nearestAppCounts": [
+        [
+          "_main",
+          23
+        ],
+        [
+          "Notebook.NotebookWorkspacePresentationController.update(model: Notebook.NotebookAppModel, presence: NotebookCore.SessionPresence, cohort: Notebook.SceneCompositionCohort?, preparation: Notebook.NotebookWorkspaceCompositionRequest, prepare: @Swift.MainActor @Sendable () -> (), content: SwiftUI.AnyView) -> ()",
+          19
+        ],
+        [
+          "function signature specialization <Arg[1] = Dead> of static Notebook.AgentWebCoordinator.makeWebView(coordinator: Notebook.AgentWebCoordinator) -> __C.WKWebView",
+          10
+        ],
+        [
+          "___swift_instantiateConcreteTypeFromMangledNameV2",
+          2
+        ],
+        [
+          "initializeWithCopy value witness for Notebook.SpatialWorkspaceView.(ItemPlaneRevision in _B2732F3DCA34C4D8BB43F92E235F6D9D)",
+          1
+        ],
+        [
+          "(1) suspend resume partial function for closure #1 @Swift.MainActor @Sendable () async -> () in closure #2 @Sendable () -> () in implicit closure #1 () -> @Sendable () -> () in Notebook.PreparedAgentElementPreparationOwner.(observeWebAdmission in _4CE232411EBEA128BCD94FE92EE27DE8)() -> ()",
+          1
+        ],
+        [
+          "function signature specialization <Arg[1] = Owned To Guaranteed> of Notebook.InkCanvasView.init(frame: __C.CGRect, resources: Notebook.SceneRenderResources, isErasureMask: Swift.Bool) -> Notebook.InkCanvasView",
+          1
+        ],
+        [
+          "partial apply forwarder for closure #4 (Notebook.PageInkPresentation?) -> () in closure #1 () -> SwiftUI.TupleContent<Pack{Notebook.GridPaperView, (<<opaque return type of (extension in SwiftUI):SwiftUI.View.allowsHitTesting(Swift.Bool) -> some>>.0)?, Notebook.PencilCanvasView}> in closure #1 (SwiftUI.GeometryProxy) -> <<opaque return type of (extension in SwiftUI):SwiftUI.View.onChange<A where A1: Swift.Equatable>(of: A1, initial: Swift.Bool, _: (A1, A1) -> ()) -> some>>.0 in Notebook.PageSurface.body.getter : some",
+          1
+        ],
+        [
+          "function signature specialization <Arg[0] = Owned To Guaranteed> of Notebook.PhysicalWebViewport.init(webView: __C.WKWebView, contentSize: __C.CGSize, holdsFingerInput: Swift.Bool) -> Notebook.PhysicalWebViewport",
+          1
+        ],
+        [
+          "NotebookCore.NotebookSQLConnection.deinit",
+          1
+        ],
+        [
+          "closure #1 (NotebookCore.SessionPresence, Notebook.ScenePlaneProjection) -> SwiftUI.AnyView in Notebook.(NativeSceneCameraPlane in _0BB3AF2CBAB4612A443351C6DCEAF7CB).updateUIViewController(_: Notebook.SceneCameraPlaneController<A>, context: SwiftUI.UIViewControllerRepresentableContext<Notebook.(NativeSceneCameraPlane in _0BB3AF2CBAB4612A443351C6DCEAF7CB)<A, B>>) -> ()",
+          1
+        ],
+        [
+          "Notebook.SheetCurlMetalView.init(frame: __C.CGRect, device: __C.MTLDevice?) -> Notebook.SheetCurlMetalView",
+          1
+        ]
+      ]
+    }
+  ],
+  "curlInitializerSamples": 36,
+  "curlSampleSpanMS": [
+    203.66837432317908,
+    347.66804132317475
+  ],
+  "representativeSHAStack": {
+    "relativeMS": 313.6682493231788,
+    "frames": [
+      "AccelerateCrypto_SHA256_compress",
+      "ccdigest_process",
+      "CC_SHA256_Update",
+      "MTLLibraryBuilder::newLibraryWithData(id<MTLDevice>, NSObject<OS_dispatch_data>*, NSString*, NSError**)",
+      "MTLArchiveLinkResolverImpl::newLibraryAtPos(unsigned long long, unsigned long long, NSString*)",
+      "-[_MTLBinaryArchive newLibraryInArchiveAtPos:atIndex:error:]",
+      "-[_MTLBinaryArchive preloadLibrariesInAirntObject:error:]",
+      "__75-[_MTLBinaryArchive loadAirntBlocksForSlice:sliceOffset:skipAIRValidation:]_block_invoke_2",
+      "+[MTLLoader(MTLLoaderAIRNT) deserializeObjectFromAIRNTHeaderAtSection:reader:errorHandler:handler:]",
+      "+[MTLLoader deserializeMachOContainerWithHandlerInternal:expectAIRNTFormat:objectHandler:pipelineHandler:errorHandler:reader:]",
+      "+[MTLLoader deserializeAirntMachOContainerWithHandler:objectHandler:pipelineHandler:errorHandler:reader:]",
+      "-[_MTLBinaryArchive loadAirntBlocksForSlice:sliceOffset:skipAIRValidation:]",
+      "-[_MTLBinaryArchive loadFromURL:error:]",
+      "-[_MTLBinaryArchive initWithOptions:device:url:error:]",
+      "+[CIKernelLibrary(Internal) internalBinaryArchiveWithName:device:]",
+      "CI::PrecompiledUberFunctions::PrecompiledUberFunctions(CI::MetalContext const*)",
+      "CI::new_uber_functions(CI::MetalContext const*)",
+      "CI::MetalContext::init(id<MTLCommandQueue>, char const*)",
+      "CI::MetalContext::MetalContext(id<MTLCommandQueue>, char const*, CGColorSpace*, CGColorSpace, CI::PixelFormat, bool, unsigned long, unsigned long, unsigned long long, __CVMetalTextureCache*, void const*, bool, bool)",
+      "+[CIContext(Internal) internalContextWithMTLCommandQueue:options:]",
+      "-[CIContext initWithMTLDevice:options:]",
+      "+[CIContext contextWithMTLDevice:options:]",
+      "Notebook.SheetCurlGPU.() -> Notebook.SheetCurlGPU(in _7BED204C8DE099B3D4FB4E864C6FC72F).init() -> Notebook.SheetCurlGPU",
+      "one-time initialization function for shared",
+      "_dispatch_client_callout",
+      "_dispatch_once_callout",
+      "Notebook.SheetCurlMetalView.init(frame: __C.CGRect, device: __C.MTLDevice?) -> Notebook.SheetCurlMetalView",
+      "@objc Notebook.SheetCurlMetalView.init(frame: __C.CGRect, device: __C.MTLDevice?) -> Notebook.SheetCurlMetalView",
+      "Notebook.IPadSheetCurlController.init(nibName: Swift.String?, bundle: __C.NSBundle?) -> Notebook.IPadSheetCurlController",
+      "@objc Notebook.IPadSheetCurlController.init(nibName: Swift.String?, bundle: __C.NSBundle?) -> Notebook.IPadSheetCurlController",
+      "Notebook.IPadPageTurnController.init(nibName: Swift.String?, bundle: __C.NSBundle?) -> Notebook.IPadPageTurnController",
+      "@objc Notebook.IPadPageTurnController.init(nibName: Swift.String?, bundle: __C.NSBundle?) -> Notebook.IPadPageTurnController",
+      "protocol witness for SwiftUI.UIViewControllerRepresentable.makeUIViewController(context: SwiftUI.UIViewControllerRepresentableContext<A>) -> A.UIViewControllerType in conformance Notebook.(PlatformPageTurnSurface in _E39B5B365AB6F5DF22EEB072CFAFD553) : SwiftUI.UIViewControllerRepresentable in Notebook",
+      "PlatformViewControllerRepresentableAdaptor.makeViewProvider(context:)",
+      "protocol witness for CoreViewRepresentable.makeViewProvider(context:) in conformance PlatformViewControllerRepresentableAdaptor<A>",
+      "closure #1 in closure #2 in closure #1 in closure #6 in closure #1 in PlatformViewChild.updateValue()",
+      "closure #2 in closure #1 in closure #6 in closure #1 in PlatformViewChild.updateValue()",
+      "partial apply for closure #2 in closure #1 in closure #6 in closure #1 in PlatformViewChild.updateValue()",
+      "RepresentableContextValues.asCurrent<A>(do:)",
+      "closure #1 in closure #6 in closure #1 in PlatformViewChild.updateValue()",
+      "closure #1 in PlatformViewChild.updateValue()",
+      "partial apply for implicit closure #1 in closure #1 in closure #1 in Attribute.init<A>(_:)",
+      "AG::Graph::UpdateStack::update()",
+      "AG::Graph::update_attribute(AG::data::ptr<AG::Node>, unsigned int)",
+      "AG::Graph::input_value_ref_slow(AG::data::ptr<AG::Node>, AG::AttributeID, unsigned int, unsigned int, AGSwiftMetadata const*, unsigned char&, long)",
+      "AGGraphGetValue",
+      "InvalidatableLeafLayoutComputer.view.getter",
+      "InvalidatableLeafLayoutComputer.updateValue()",
+      "partial apply for implicit closure #1 in closure #1 in closure #1 in Attribute.init<A>(_:)",
+      "AG::Graph::UpdateStack::update()",
+      "AG::Graph::update_attribute(AG::data::ptr<AG::Node>, unsigned int)",
+      "AG::Graph::input_value_ref_slow(AG::data::ptr<AG::Node>, AG::AttributeID, unsigned int, unsigned int, AGSwiftMetadata const*, unsigned char&, long)",
+      "AGGraphGetInputValue",
+      "LayoutProxy.layoutPriority.getter",
+      "_ZStackLayout.sizeThatFits(proposal:subviews:cache:)",
+      "closure #1 in ViewLayoutEngine.sizeThatFits(_:)",
+      "ViewLayoutEngine.sizeThatFits(_:)",
+      "LayoutEngineBox.sizeThatFits(_:)",
+      "LayoutProxy.dimensions(in:)",
+      "_FrameLayout.placement(of:in:)",
+      "UnaryLayoutEngine.childPlacement(at:)",
+      "LayoutEngineBox.childPlacement(at:)",
+      "specialized UnaryChildGeometry.value.getter",
+      "specialized implicit closure #1 in closure #1 in closure #1 in Attribute.init<A>(_:)",
+      "AG::Graph::UpdateStack::update()",
+      "AG::Graph::update_attribute(AG::data::ptr<AG::Node>, unsigned int)",
+      "AG::Graph::input_value_ref_slow(AG::data::ptr<AG::Node>, AG::AttributeID, unsigned int, unsigned int, AGSwiftMetadata const*, unsigned char&, long)",
+      "AGGraphGetValue",
+      "specialized implicit closure #1 in closure #1 in closure #1 in Attribute.init<A>(_:)",
+      "AG::Graph::UpdateStack::update()",
+      "AG::Graph::update_attribute(AG::data::ptr<AG::Node>, unsigned int)",
+      "AG::Graph::input_value_ref_slow(AG::data::ptr<AG::Node>, AG::AttributeID, unsigned int, unsigned int, AGSwiftMetadata const*, unsigned char&, long)",
+      "AGGraphGetValue",
+      "DynamicLayoutViewChildGeometry.updateValue()",
+      "specialized implicit closure #1 in closure #1 in closure #1 in Attribute.init<A>(_:)",
+      "AG::Graph::UpdateStack::update()",
+      "AG::Graph::update_attribute(AG::data::ptr<AG::Node>, unsigned int)",
+      "AG::Graph::input_value_ref_slow(AG::data::ptr<AG::Node>, AG::AttributeID, unsigned int, unsigned int, AGSwiftMetadata const*, unsigned char&, long)",
+      "AGGraphGetValue",
+      "AnimatableFrameAttribute.updateValue()",
+      "specialized implicit closure #1 in closure #1 in closure #1 in Attribute.init<A>(_:)",
+      "AG::Graph::UpdateStack::update()",
+      "AG::Subgraph::update(unsigned int)",
+      "GraphHost.runTransaction()",
+      "ViewGraph.updateOutputs(at:)",
+      "closure #1 in ViewGraphRootValueUpdater.render(interval:updateDisplayList:targetTimestamp:)",
+      "ViewGraphRootValueUpdater.render(interval:updateDisplayList:targetTimestamp:)",
+      "0x1a274c4c0",
+      "_UIHostingView.layoutSubviews()",
+      "@objc _UIHostingView.layoutSubviews()",
+      "0x1a2645364",
+      "0x1a2644e04",
+      "-[UIView(CALayerDelegate) layoutSublayersOfLayer:]",
+      "-[CALayer layoutSublayers]",
+      "CA::Layer::perform_update_(CA::Layer*, CALayer*, unsigned int, CA::LayerUpdateReason, CA::Transaction*)",
+      "CA::Layer::update_if_needed_(CA::Transaction*, CA::LayerUpdateReason)",
+      "CA::Layer::layout_and_display_if_needed(CA::Transaction*)",
+      "CA::Context::commit_transaction(CA::Transaction*, double, double*)",
+      "CA::Transaction::commit()",
+      "CA::Transaction::flush()",
+      "CA::Transaction::flush_as_runloop_observer(bool)",
+      "_UIApplicationFlushCATransaction",
+      "__setupUpdateSequence_block_invoke_2",
+      "_UIUpdateSequenceRunNext",
+      "schedulerStepScheduledMainSectionContinue",
+      "UC::DriverCore::continueProcessing()",
+      "__CFRUNLOOP_IS_CALLING_OUT_TO_A_SOURCE0_PERFORM_FUNCTION__",
+      "__CFRunLoopDoSource0",
+      "__CFRunLoopDoSources0",
+      "__CFRunLoopRun",
+      "_CFRunLoopRunSpecificWithOptions",
+      "+[XCTWaiter _synchronouslyWaitForTimeInterval:]",
+      "-[XCTWaiter _performWait:manager:completionHandler:]",
+      "-[XCTWaiter _waitForExpectations:timeout:enforceOrder:synchronously:completionHandler:]",
+      "-[XCTWaiter waitForExpectations:timeout:enforceOrder:]",
+      "+[XCTWaiter waitForExpectations:timeout:enforceOrder:]",
+      "__81+[XCTFailableInvocation invokeWithAsynchronousWait:lastObservedErrorIssue:block:]_block_invoke",
+      "__49+[XCTSwiftErrorObservation observeErrorsInBlock:]_block_invoke",
+      "specialized static XCTSwiftErrorObservation._observeErrors(in:)",
+      "@objc static XCTSwiftErrorObservation._observeErrors(in:)",
+      "+[XCTSwiftErrorObservation observeErrorsInBlock:]",
+      "+[XCTFailableInvocation invokeWithAsynchronousWait:lastObservedErrorIssue:block:]",
+      "+[XCTFailableInvocation invokeInvocation:withTestMethodConvention:lastObservedErrorIssue:]",
+      "+[XCTFailableInvocation invokeInvocation:lastObservedErrorIssue:]",
+      "-[XCTestCase invokeTestMethod:]",
+      "__24-[XCTestCase invokeTest]_block_invoke_4",
+      "-[XCTMemoryChecker _assertInvalidObjectsDeallocatedAfterScope:]",
+      "-[XCTestCase assertInvalidObjectsDeallocatedAfterScope:]",
+      "__24-[XCTestCase invokeTest]_block_invoke.124",
+      "-[XCTestCase(XCTIssueHandling) _caughtUnhandledDeveloperExceptionPermittingControlFlowInterruptions:caughtInterruptionException:whileExecutingBlock:]",
+      "-[XCTestCase invokeTest]",
+      "__45-[XCTestCase _invokeTestIfSupportedOSVersion]_block_invoke",
+      "-[XCTestCase(XCTIssueHandling) _caughtUnhandledDeveloperExceptionPermittingControlFlowInterruptions:caughtInterruptionException:whileExecutingBlock:]",
+      "-[XCTestCase _invokeTestIfSupportedOSVersion]",
+      "__26-[XCTestCase performTest:]_block_invoke.167",
+      "+[XCTContext _runInChildOfContext:forTestCase:markAsReportingBase:block:]",
+      "+[XCTContext runInContextForTestCase:markAsReportingBase:block:]",
+      "-[XCTestCase performTest:]",
+      "-[XCTest runTest]",
+      "-[XCTestSuite runTestBasedOnRepetitionPolicy:testRun:]",
+      "__27-[XCTestSuite performTest:]_block_invoke",
+      "__59-[XCTestSuite _performProtectedSectionForTest:testSection:]_block_invoke",
+      "+[XCTContext _runInChildOfContext:forTestCase:markAsReportingBase:block:]",
+      "+[XCTContext runInContextForTestCase:markAsReportingBase:block:]",
+      "-[XCTestSuite _performProtectedSectionForTest:testSection:]",
+      "-[XCTestSuite performTest:]",
+      "-[XCTest runTest]",
+      "-[XCTestSuite runTestBasedOnRepetitionPolicy:testRun:]",
+      "__27-[XCTestSuite performTest:]_block_invoke",
+      "__59-[XCTestSuite _performProtectedSectionForTest:testSection:]_block_invoke",
+      "+[XCTContext _runInChildOfContext:forTestCase:markAsReportingBase:block:]",
+      "+[XCTContext runInContextForTestCase:markAsReportingBase:block:]",
+      "-[XCTestSuite _performProtectedSectionForTest:testSection:]",
+      "-[XCTestSuite performTest:]",
+      "-[XCTest runTest]",
+      "-[XCTestSuite runTestBasedOnRepetitionPolicy:testRun:]",
+      "__27-[XCTestSuite performTest:]_block_invoke",
+      "__59-[XCTestSuite _performProtectedSectionForTest:testSection:]_block_invoke",
+      "+[XCTContext _runInChildOfContext:forTestCase:markAsReportingBase:block:]",
+      "+[XCTContext runInContextForTestCase:markAsReportingBase:block:]",
+      "-[XCTestSuite _performProtectedSectionForTest:testSection:]",
+      "-[XCTestSuite performTest:]",
+      "-[XCTest runTest]",
+      "__89-[XCTTestRunSession executeTestsWithIdentifiers:skippingTestsWithIdentifiers:completion:]_block_invoke",
+      "+[XCTContext _runInChildOfContext:forTestCase:markAsReportingBase:block:]",
+      "+[XCTContext runInContextForTestCase:markAsReportingBase:block:]",
+      "-[XCTTestRunSession executeTestsWithIdentifiers:skippingTestsWithIdentifiers:completion:]",
+      "__72-[XCTExecutionWorker enqueueTestIdentifiersToRun:testIdentifiersToSkip:]_block_invoke_2",
+      "__XCTAsyncEnumerateWithWaiter_block_invoke",
+      "__XCTAsyncEnumerate_block_invoke.116",
+      "XCTAsyncEnumerateWithWaiter",
+      "__72-[XCTExecutionWorker enqueueTestIdentifiersToRun:testIdentifiersToSkip:]_block_invoke",
+      "-[XCTExecutionWorker runWithError:]",
+      "__25-[XCTestDriver _runTests]_block_invoke.451",
+      "-[XCTestObservationCenter _observeTestExecutionForTestBundle:inBlock:]",
+      "-[XCTestDriver _runTests]",
+      "_XCTestMain",
+      "RunTestsFromRunLoop",
+      "__CFMachPortPerform",
+      "__CFRUNLOOP_IS_CALLING_OUT_TO_A_SOURCE1_PERFORM_FUNCTION__",
+      "__CFRunLoopDoSource1",
+      "__CFRunLoopRun",
+      "_CFRunLoopRunSpecificWithOptions",
+      "GSEventRunModal",
+      "UIApplicationMain",
+      "closure #1 in KitRendererCommon(_:)",
+      "runApp<A>(_:)",
+      "static App.main()",
+      "_main",
+      "start"
+    ]
+  }
+}

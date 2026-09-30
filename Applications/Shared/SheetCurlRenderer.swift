@@ -73,7 +73,11 @@ final class SheetCurlGPU: @unchecked Sendable {
 
   let device: (any MTLDevice)?
   let commandQueue: (any MTLCommandQueue)?
-  let imageContext: CIContext?
+  private let coverLock = NSLock()
+  private var contextResult: Result<CIContext, SceneRenderError>?
+  private var contextReaders: [UUID: CheckedContinuation<CIContext, any Error>] = [:]
+  private var coverResult: Result<CIContext, SceneRenderError>?
+  private var coverObservers: [UUID: @MainActor @Sendable (Result<CIContext, SceneRenderError>) -> Void] = [:]
   let pagePipeline: (any MTLRenderPipelineState)?
 
   private init() {
@@ -87,29 +91,87 @@ final class SheetCurlGPU: @unchecked Sendable {
       pagePipeline = try? device.makeRenderPipelineState(descriptor: descriptor)
     } else { pagePipeline = nil }
     commandQueue = device?.makeCommandQueue()
-    imageContext = device.map {
-      CIContext(
-        mtlDevice: $0,
-        options: [
-          .cacheIntermediates: false,
-          .workingColorSpace: NSNull(),
-        ]
-      )
-    }
-    let imageContext = imageContext, commandQueue = commandQueue
-    DispatchQueue.global(qos: .userInitiated).async {
-      Self.prepareCurlProgram(in: imageContext, queue: commandQueue)
+    // Start once with this GPU owner, before a cover gesture. Page captures
+    // borrow the context asynchronously; mounting never constructs Core Image.
+    let queue = commandQueue
+    Task.detached(priority: .userInitiated) { [self] in
+      let result: Result<CIContext, SceneRenderError>
+      do {
+        guard let device, let queue else { throw SceneRenderError.snapshotPending("image_context_device") }
+        let context = CIContext(mtlDevice: device,
+          options: [.cacheIntermediates: false, .workingColorSpace: NSNull()])
+        publishContext(.success(context))
+        try await Self.prepareCoverContext(context, queue: queue)
+        result = .success(context)
+      } catch {
+        let failure = (error as? SceneRenderError) ?? .snapshotPending("cover_program")
+        // A cover-only warmup failure cannot revoke a usable compositor.
+        publishContext(.failure(failure))
+        result = .failure(failure)
+      }
+      let observers = coverLock.withLock {
+        coverResult = result
+        let values = Array(coverObservers.values); coverObservers.removeAll()
+        return values
+      }
+      await MainActor.run { for observer in observers { observer(result) } }
     }
   }
 
-  private static func prepareCurlProgram(in context: CIContext?, queue: (any MTLCommandQueue)?) {
-    guard let context, let queue,
-      let bitmap = CGContext(data: nil, width: 64, height: 64, bitsPerComponent: 8,
-        bytesPerRow: 256, space: CGColorSpaceCreateDeviceRGB(),
-        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return }
+  /// A page borrows the common context as soon as it exists; cover program
+  /// compilation and its GPU warmup are a separate readiness boundary.
+  func imageContext() async throws -> CIContext {
+    let id = UUID()
+    let context: CIContext = try await withTaskCancellationHandler {
+      try Task.checkCancellation()
+      return try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<CIContext, any Error>) in
+        let ready: Result<CIContext, any Error>? = coverLock.withLock {
+          if Task.isCancelled { return .failure(CancellationError()) }
+          if let contextResult { return contextResult.mapError { $0 as any Error } }
+          contextReaders[id] = continuation
+          return nil
+        }
+        if let ready { continuation.resume(with: ready) }
+      }
+    } onCancel: {
+      let reader = self.coverLock.withLock { self.contextReaders.removeValue(forKey: id) }
+      reader?.resume(throwing: CancellationError())
+    }
+    try Task.checkCancellation()
+    return context
+  }
+
+  private func publishContext(_ result: Result<CIContext, SceneRenderError>) {
+    let readers: [CheckedContinuation<CIContext, any Error>] = coverLock.withLock {
+      guard contextResult == nil else { return [] }
+      contextResult = result
+      let values = Array(contextReaders.values); contextReaders.removeAll()
+      return values
+    }
+    for reader in readers { reader.resume(with: result.mapError { $0 as any Error }) }
+  }
+
+  var preparedCoverContext: Result<CIContext, SceneRenderError>? { coverLock.withLock { coverResult } }
+
+  @MainActor func observeCover(_ id: UUID,
+    _ completion: @escaping @MainActor @Sendable (Result<CIContext, SceneRenderError>) -> Void) {
+    let ready: Result<CIContext, SceneRenderError>? = coverLock.withLock {
+      if let coverResult { return coverResult }
+      coverObservers[id] = completion
+      return nil
+    }
+    if let ready { Task { @MainActor in completion(ready) } }
+  }
+
+  func removeCoverObserver(_ id: UUID) { _ = coverLock.withLock { coverObservers.removeValue(forKey: id) } }
+
+  private static func prepareCoverContext(_ context: CIContext, queue: any MTLCommandQueue) async throws {
+    guard let bitmap = CGContext(data: nil, width: 64, height: 64, bitsPerComponent: 8,
+      bytesPerRow: 256, space: CGColorSpaceCreateDeviceRGB(),
+      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { throw SceneRenderError.resourceLimit }
     let extent = CGRect(x: 0, y: 0, width: 64, height: 64)
     bitmap.setFillColor(CGColor(gray: 1, alpha: 1)); bitmap.fill(extent)
-    guard let pixels = bitmap.makeImage() else { return }
+    guard let pixels = bitmap.makeImage() else { throw SceneRenderError.resourceLimit }
     // Compile the path actually used by a turn: bitmap upload and BGRA Metal
     // output. A constant-colour graph rendered to CGImage omits those kernels
     // and leaves their compilation on the first input event.
@@ -120,10 +182,19 @@ final class SheetCurlGPU: @unchecked Sendable {
       let command = queue.makeCommandBuffer(),
       let output = curlImage(input: CIImage(cgImage: pixels),
         backside: CIImage(color: CoverBacksideColor.document.ciColor).cropped(to: extent),
-        sheetExtent: extent, canvasExtent: extent, progress: 0.1, radius: 2.24) else { return }
+        sheetExtent: extent, canvasExtent: extent, progress: 0.1, radius: 2.24) else { throw SceneRenderError.snapshotPending("cover_program") }
     context.render(output, to: texture, commandBuffer: command, bounds: extent,
       colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!)
-    command.commit()
+    // The suspended producer owns these resources until the GPU completion;
+    // the Metal callback only transfers the outcome, not mutable GPU objects.
+    defer { withExtendedLifetime((context, texture)) {} }
+    try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
+      command.addCompletedHandler { completed in
+        if completed.status == .completed { continuation.resume() }
+        else { continuation.resume(throwing: SceneRenderError.snapshotPending("cover_program_gpu")) }
+      }
+      command.commit()
+    }
   }
 
   static func curlImage(input: CIImage, backside: CIImage, sheetExtent: CGRect,
@@ -402,6 +473,8 @@ final class SheetCurlMetalView: MTKView, MTKViewDelegate {
   #endif
 
   func releaseSource(presented: Bool = false) {
+    cancelCoverContextSubscription()
+    coverContextRequested = false
     #if os(iOS)
     let releasesPage = onDisplayUpdate != nil || pageOperationID != nil || pageDrawableRequest != nil
     let retiringRequest = pageDrawableRequest
@@ -460,7 +533,12 @@ final class SheetCurlMetalView: MTKView, MTKViewDelegate {
 
   private var framePending = false
   private let commandQueue: (any MTLCommandQueue)?
-  private let imageContext: CIContext?
+  private var imageContext: CIContext?
+  private var coverContextSubscription: UUID?
+  private var coverContextRequested = false
+  private var coverContextFailure: SceneRenderError?
+  var onCoverRenderingReady: (() -> Void)?
+  var onCoverRenderFailure: ((Error) -> Void)?
   private let outputColorSpace = CGColorSpace(name: CGColorSpace.sRGB)!
   private let inFlightSemaphore = DispatchSemaphore(value: 2)
 
@@ -494,6 +572,8 @@ final class SheetCurlMetalView: MTKView, MTKViewDelegate {
   #if os(iOS)
   func preparePages(leaf: PageTurnFrame, base: PageTurnFrame, operationID: UUID) throws {
     guard SheetCurlGPU.shared.pagePipeline != nil else { throw SceneRenderError.snapshotPending("page_pipeline") }
+    cancelCoverContextSubscription()
+    coverContextRequested = false
     retirePageExecution()
     if pageDrawableRequest == nil {
       try configurePageOutput(size: .init(width: leaf.texture.width, height: leaf.texture.height))
@@ -619,7 +699,6 @@ final class SheetCurlMetalView: MTKView, MTKViewDelegate {
     let gpu = SheetCurlGPU.shared
     let metalDevice = device ?? gpu.device
     commandQueue = gpu.commandQueue
-    imageContext = gpu.imageContext
     super.init(frame: frameRect, device: metalDevice)
 
     delegate = self
@@ -731,6 +810,47 @@ final class SheetCurlMetalView: MTKView, MTKViewDelegate {
   }
   #endif
 
+  /// The cover owner keeps its real endpoint visible until this one shared
+  /// program has finished its bitmap-to-BGRA GPU warmup. A page never calls it.
+  @discardableResult func prepareCoverRendering() -> Bool {
+    coverContextRequested = true
+    if imageContext != nil { return true }
+    guard coverContextFailure == nil else { return false }
+    let gpu = SheetCurlGPU.shared
+    if let result = gpu.preparedCoverContext {
+      receiveCoverContext(result, notify: false)
+      return imageContext != nil
+    }
+    guard window != nil else { return false }
+    guard coverContextSubscription == nil else { return false }
+    let id = UUID(); coverContextSubscription = id
+    gpu.observeCover(id) { [weak self] result in
+      guard let self, self.coverContextSubscription == id else { return }
+      self.coverContextSubscription = nil
+      self.receiveCoverContext(result, notify: true)
+    }
+    return false
+  }
+
+  private func receiveCoverContext(_ result: Result<CIContext, SceneRenderError>, notify: Bool) {
+    switch result {
+    case .success(let context):
+      imageContext = context
+      guard notify, window != nil, coverContextRequested else { return }
+      onCoverRenderingReady?()
+      if framePending, pageTextures == nil { requestFrame() }
+    case .failure(let error):
+      coverContextFailure = error
+      framePending = false
+      onCoverRenderFailure?(error)
+    }
+  }
+
+  private func cancelCoverContextSubscription() {
+    if let id = coverContextSubscription { SheetCurlGPU.shared.removeCoverObserver(id) }
+    coverContextSubscription = nil
+  }
+
   func mtkView(
     _ view: MTKView,
     drawableSizeWillChange size: CGSize
@@ -750,6 +870,8 @@ final class SheetCurlMetalView: MTKView, MTKViewDelegate {
 
     override func didMoveToWindow() {
       super.didMoveToWindow()
+      if window == nil { cancelCoverContextSubscription() }
+      else if coverContextRequested, prepareCoverRendering() { onCoverRenderingReady?() }
       if window == nil, onDisplayUpdate != nil {
         // The operation owner resolves cancellation before its accepted pair
         // disappears. Reattaching cannot retain a motion with retired pixels.
@@ -764,6 +886,8 @@ final class SheetCurlMetalView: MTKView, MTKViewDelegate {
   #elseif os(macOS)
     override func viewDidMoveToWindow() {
       super.viewDidMoveToWindow()
+      if window == nil { cancelCoverContextSubscription() }
+      else if coverContextRequested, prepareCoverRendering() { onCoverRenderingReady?() }
       if window != nil, framePending { setNeedsDisplay(bounds) }
     }
   #endif
@@ -774,6 +898,7 @@ final class SheetCurlMetalView: MTKView, MTKViewDelegate {
     // UIKit also requests display during unrelated layer/layout transactions.
     // Those requests must not consume another drawable for the same cover.
     guard onDisplayUpdate == nil, framePending, window != nil, !isHidden, permitsFrameSubmission() else { return }
+    guard coverImage != nil, prepareCoverRendering() else { return }
     autoreleasepool { submitPendingFrame() }
   }
 
@@ -853,13 +978,13 @@ final class SheetCurlMetalView: MTKView, MTKViewDelegate {
       NotebookMetalFrameReadiness.observe(drawable, commandBuffer: commandBuffer) { [weak self, frames] readiness in
         guard let self, self.pageOperationID == operationID,
           self.pagePresentationGeneration == presentationGeneration, self.pageFrames?.leaf === frames.leaf else { return }
-        if case .awaitingOS(let submittedSequence, _) = self.pagePresentationPhase, submittedSequence == sequence {
+        if case .awaitingOS(let submittedSequence, _) = self.pagePresentationPhase {
           if readiness.isReady {
-            // A successor may already be encoded, but only this real OS
-            // outcome permits its publication and the asynchronous mode.
+            // Any exact-source successor can be the first shown drawable if
+            // the reveal itself was dropped. This receipt changes mode only;
+            // it never admits the next prepared frame.
             self.pagePresentationPhase = .motion
-            self.pageOutputLayer?.presentsWithTransaction = false
-          } else {
+          } else if submittedSequence == sequence {
             self.pagePresentationPhase = .initial
             self.framePending = true
           }
@@ -994,6 +1119,7 @@ final class SheetCurlMetalView: MTKView, MTKViewDelegate {
         return
       }
     #endif
+    guard coverImage != nil, prepareCoverRendering() else { return }
     setNeedsDisplay(bounds)
   }
 
@@ -1026,12 +1152,9 @@ final class SheetCurlMetalView: MTKView, MTKViewDelegate {
   }
 
   private func requestPageDrawable() {
-    // One prepared successor can overlap the first OS wait, but it cannot
-    // publish or acquire a third drawable until the exposure has an outcome.
-    switch pagePresentationPhase {
-    case .initial, .awaitingOS: if pagePublication != nil { return }
-    case .motion: break
-    }
+    // The charged three-drawable pool bounds all submitted pixels. Keep at
+    // most one physical acquisition and one prepared publication; a delayed
+    // OS callback cannot become a second, serial frame-admission clock.
     guard pageDrawableRequest == nil, pagePublication == nil || animatesContinuously || framePending,
       pageOperationID != nil, window != nil, permitsFrameSubmission(), let layer = pageOutputLayer else { return }
     let request = SheetCurlDrawableRequest(layer: layer, reservation: pageOutput?.reservation)
@@ -1083,7 +1206,6 @@ final class SheetCurlMetalView: MTKView, MTKViewDelegate {
   }
 
   private func publishPageUpdate(_ info: UIUpdateInfo) {
-    if case .awaitingOS = pagePresentationPhase { return }
     guard let publication = pagePublication else { return }
     guard window != nil, permitsFrameSubmission(), pageOperationID == publication.operationID,
       pagePresentationGeneration == publication.generation,
@@ -1123,13 +1245,11 @@ final class SheetCurlMetalView: MTKView, MTKViewDelegate {
   }
 
   private func finishPageUpdate() {
-    if case .awaitingOS = pagePresentationPhase {
-      // Stop after exactly one successor. The OS receipt wakes publication;
-      // a contact change can wake preparation to replace an obsolete pose.
-      if pagePublication != nil || (!animatesContinuously && !framePending) {
-        pageUIUpdates?.isEnabled = false
-      } else { requestPageDrawable() }
-      return
+    if case .motion = pagePresentationPhase {
+      // The exact OS receipt permits asynchronous motion, but only this CA
+      // owner ends transactional mode after all publications in the current
+      // update committed. It cannot detach a queued successor's transaction.
+      pageOutputLayer?.presentsWithTransaction = false
     }
     if !animatesContinuously, !framePending, pagePublication == nil {
       cancelPageDrawableRequest()
@@ -1161,6 +1281,10 @@ final class SheetCurlMetalView: MTKView, MTKViewDelegate {
     releaseSource()
     if let pageReclamationOwner { SceneRenderResources.shared.unregisterReclamationOwner(pageReclamationOwner) }
   }
+  #endif
+
+  #if os(macOS)
+  isolated deinit { cancelCoverContextSubscription() }
   #endif
 
   private func clear(

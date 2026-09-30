@@ -1,0 +1,286 @@
+{
+  "scope": "CPU-only join of existing physical Warm10 present-call brackets; instrumented diagnosis, not acceptance",
+  "sourceManifestSHA256": "e1a49f5dd7fc35ddc3e02648c0eabe35c78a8b389204e24dbb4c6eb3adc79eb2",
+  "rendererSHA256": "eed48c20e93989f6cb75488722f2a229f3d0eed675db70053f23abd5b23337fd",
+  "binaryUUID": "F98F6E0C-CE7E-3957-BA50-140938AB108E",
+  "processID": 3683,
+  "artifacts": {
+    "trace": "/private/tmp/notebook-225-warm-profile-0220/warm10.trace",
+    "timestamps": "/private/tmp/notebook-225-warm-profile-0220/attachments-index.jsonl",
+    "fullJoinedStacks": "/private/tmp/notebook-225-warm-profile-0220/present-stack-join.json",
+    "symbolNames": "/private/tmp/notebook-225-warm-profile-0220/app-symbols.json"
+  },
+  "clock": {
+    "originUptimeSeconds": 46839.86135691666,
+    "source": "trace form.template mach_time_info ticks * numerator / denominator; joined to attachment epochUptime",
+    "ticks": 1124156672566,
+    "numerator": 125,
+    "denominator": 3
+  },
+  "recording": {
+    "recordWaitingThreads": false,
+    "contextSwitchSampling": false,
+    "sampleFrequency": "default",
+    "nativeDevice": "iPad Pro 11-inch 3rd generation / iPadOS 27.0 (24A435)"
+  },
+  "counts": {
+    "turns": 10,
+    "presentCallWindows": 30,
+    "allMatchedCPUSamples": 20,
+    "mainThreadSamples": 2,
+    "concurrentNextDrawableSamples": 13,
+    "concurrentNextDrawableWindows": [
+      37,
+      73,
+      109,
+      145,
+      181,
+      216,
+      253,
+      289,
+      290,
+      326
+    ]
+  },
+  "presentCallMilliseconds": {
+    "first": [
+      5.283292,
+      5.611083,
+      5.224708,
+      8.825542,
+      9.097875,
+      9.034917,
+      7.935875,
+      9.080542,
+      8.009875,
+      3.155125
+    ],
+    "second": [
+      0.20775,
+      3.29825,
+      4.147125,
+      3.567417,
+      4.0605,
+      3.204458,
+      7.248458,
+      7.301,
+      8.559208,
+      4.2185
+    ],
+    "third": [
+      0.018125,
+      0.01175,
+      0.044833,
+      0.02375,
+      0.030583,
+      0.032042,
+      0.022375,
+      0.02225,
+      0.030333,
+      0.048958
+    ]
+  },
+  "turns": [
+    {
+      "turn": 0,
+      "firstOSMilliseconds": 32.932874994003214,
+      "landingMilliseconds": 335.25545833254
+    },
+    {
+      "turn": 1,
+      "firstOSMilliseconds": 29.1446666669799,
+      "landingMilliseconds": 330.34033333387924
+    },
+    {
+      "turn": 2,
+      "firstOSMilliseconds": 38.41470833867788,
+      "landingMilliseconds": 331.1871250043623
+    },
+    {
+      "turn": 3,
+      "firstOSMilliseconds": 29.029249999439344,
+      "landingMilliseconds": 321.8431666682591
+    },
+    {
+      "turn": 4,
+      "firstOSMilliseconds": 28.8524999996298,
+      "landingMilliseconds": 321.60966666560853
+    },
+    {
+      "turn": 5,
+      "firstOSMilliseconds": 37.94704166648444,
+      "landingMilliseconds": 322.30349999736063
+    },
+    {
+      "turn": 6,
+      "firstOSMilliseconds": 31.67112500523217,
+      "landingMilliseconds": 324.37645833852
+    },
+    {
+      "turn": 7,
+      "firstOSMilliseconds": 32.2921666665934,
+      "landingMilliseconds": 325.03658333735075
+    },
+    {
+      "turn": 8,
+      "firstOSMilliseconds": 36.24349999881815,
+      "landingMilliseconds": 324.7611666665762
+    },
+    {
+      "turn": 9,
+      "firstOSMilliseconds": 31.57462499802932,
+      "landingMilliseconds": 332.5749166615424
+    }
+  ],
+  "facts": [
+    "preparePageUpdate submits the current command and starts the next worker request before the beforeCATransactionCommit present callback (SheetCurlRenderer.swift:1200-1205,1236).",
+    "Thirteen concurrent worker samples in ten present windows are inside CAMetalLayer.nextDrawable, including IOSurface allocation/register_drawable while CAMetalLayerPrivateNextDrawableLocked is on the stack.",
+    "Only two main-thread CPU samples occur in all thirty brackets. The long sequence72 bracket samples callback cleanup near its end, including NotebookMetalFrameReadiness.observe spawning its MainActor callback.",
+    "Sequence289 worker __ulock_wake inside nextDrawable is sampled 0.093958 ms before present returns. This is temporal evidence of shared-layer synchronization, not identification of the main thread lock waiter.",
+    "One sequence109 nextDrawable sample includes CoreGraphics color-space decoding through swift_willThrow and XCTest error-observer backtrace collection. This is instrumented-test work; its total duration is not measured."
+  ],
+  "interpretation": {
+    "supported": "The app overlaps same-layer next-drawable allocation/registration with current drawable publication. The long API brackets contain little sampled main CPU; parallel pool work is the strongest remaining scheduling candidate.",
+    "notEstablished": [
+      "The CPU-only recording does not capture blocked main-thread stacks or identify its waited lock.",
+      "These samples do not establish the cause of every first OS drop.",
+      "The instrumented first-OS results do not replace uninstrumented acceptance or real hardware Pencil timing."
+    ],
+    "boundedOwnerCorrectionIfChosen": "Start successor acquisition after the current publication/CA boundary, retaining one worker and existing GPU/OS leases. This removes the established same-layer overlap without a timer, priming frame, main-thread nextDrawable or new clock; latency/drop benefit still requires the affected physical check."
+  },
+  "appSymbolication": {
+    "loadAddress": "0x102170000",
+    "provenance": "Inferred ASLR slide0x2170000 consistently maps exact binary worker async continuation, publication and readiness callbacks; system symbols are supplied by xctrace. No app load-map entry was exported.",
+    "selected": [
+      {
+        "address": "0x102f2fa5b",
+        "assumed_load_address": "0x102170000",
+        "unslid": "0x100dbfa5b",
+        "symbol": "(1) suspend resume partial function for closure #1 () async -> () in Notebook.(SheetCurlDrawableRequest in _7BED204C8DE099B3D4FB4E864C6FC72F).start(completed: @Swift.MainActor @Sendable () -> ()) -> ()",
+        "offset": 47
+      },
+      {
+        "address": "0x102f3d5e3",
+        "assumed_load_address": "0x102170000",
+        "unslid": "0x100dcd5e3",
+        "symbol": "Notebook.SheetCurlMetalView.(publishPageUpdate in _7BED204C8DE099B3D4FB4E864C6FC72F)(__C.UIUpdateInfo) -> ()",
+        "offset": 2595
+      },
+      {
+        "address": "0x102f43793",
+        "assumed_load_address": "0x102170000",
+        "unslid": "0x100dd3793",
+        "symbol": "partial apply forwarder for closure #3 (__C.UIUpdateLink, __C.UIUpdateInfo) -> () in Notebook.SheetCurlMetalView.(preparePageClock in _7BED204C8DE099B3D4FB4E864C6FC72F)() -> ()",
+        "offset": 167
+      },
+      {
+        "address": "0x102a5904b",
+        "assumed_load_address": "0x102170000",
+        "unslid": "0x1008e904b",
+        "symbol": "closure #1 @Sendable (__C.MTLDrawable) -> () in static Notebook.NotebookMetalFrameReadiness.observe(_: __C.CAMetalDrawable, commandBuffer: __C.MTLCommandBuffer?, ready: @Swift.MainActor @Sendable (Notebook.NotebookMetalFrameReadiness) -> ()) -> ()",
+        "offset": 439
+      }
+    ]
+  },
+  "sampleStacks": [
+    {
+      "sequence": 72,
+      "traceSeconds": 105.051665,
+      "thread": "Main Thread (0x6ab1a) (Notebook, pid: 3683)",
+      "stack": [
+        "_xzm_xzone_malloc_tiny",
+        "swift_task_create_commonImpl(unsigned long, swift::TaskOptionRecord*, swift::TargetMetadata<swift::InProcess> const*, void (swift::AsyncContext* swift_async_context) swiftasynccall*, void*, unsigned long)",
+        "closure #1 @Sendable (__C.MTLDrawable) -> () in static Notebook.NotebookMetalFrameReadiness.observe(_: __C.CAMetalDrawable, commandBuffer: __C.MTLCommandBuffer?, ready: @Swift.MainActor @Sendable (Notebook.NotebookMetalFrameReadiness) -> ()) -> ()",
+        "reabstraction thunk helper from @escaping @callee_guaranteed @Sendable (@guaranteed __C.MTLCommandBuffer) -> () to @escaping @callee_unowned @convention(block) @Sendable (@unowned __C.MTLCommandBuffer) -> ()",
+        "-[CAMetalDrawable didPresentAtTime:]",
+        "layer_private_cleanup_callbacks(_CAMetalLayerPrivate*)",
+        "layer_collectable_signal(_CAImageQueue*, void*) (.12069)",
+        "layer_private_present_impl(_CAMetalLayerPrivate*, CAMetalDrawable*, double, unsigned int)",
+        "-[CAMetalDrawable present]",
+        "Notebook.SheetCurlMetalView.(publishPageUpdate in _7BED204C8DE099B3D4FB4E864C6FC72F)(__C.UIUpdateInfo) -> ()",
+        "partial apply forwarder for closure #3 (__C.UIUpdateLink, __C.UIUpdateInfo) -> () in Notebook.SheetCurlMetalView.(preparePageClock in _7BED204C8DE099B3D4FB4E864C6FC72F)() -> ()",
+        "reabstraction thunk helper from @escaping @callee_guaranteed (@guaranteed __C.AVAudioPCMBuffer, @guaranteed __C.AVAudioTime) -> () to @escaping @callee_unowned @convention(block) (@unowned __C.AVAudioPCMBuffer, @unowned __C.AVAudioTime) -> ()",
+        "__activateActionListItem_block_invoke",
+        "_UIUpdateSequenceRunNext",
+        "schedulerStepScheduledMainSectionContinue",
+        "UC::DriverCore::continueProcessing()",
+        "__CFMachPortPerform",
+        "__CFRUNLOOP_IS_CALLING_OUT_TO_A_SOURCE1_PERFORM_FUNCTION__",
+        "__CFRunLoopDoSource1",
+        "__CFRunLoopRun",
+        "_CFRunLoopRunSpecificWithOptions",
+        "+[XCTWaiter _synchronouslyWaitForTimeInterval:]",
+        "-[XCTWaiter _performWait:manager:completionHandler:]",
+        "-[XCTWaiter _waitForExpectations:timeout:enforceOrder:synchronously:completionHandler:]"
+      ]
+    },
+    {
+      "sequence": 109,
+      "traceSeconds": 105.398665083,
+      "thread": "Notebook (0x6ab66) (Notebook, pid: 3683)",
+      "stack": [
+        "mach_msg2_trap",
+        "io_connect_method",
+        "IOConnectCallMethod",
+        "IOSurfaceClientCreateChild",
+        "-[IOSurface initWithProperties:]",
+        "IOSurfaceCreate",
+        "CA::SurfaceUtil::CAIOSurfaceCreate(unsigned int, unsigned int, unsigned int, unsigned int, unsigned int, unsigned int, unsigned long long, CA::SurfaceUtil::SurfaceAlignment, __CFString const*)",
+        "CA::Render::create_iosurface_with_pixel_format(unsigned int, unsigned int, unsigned int, unsigned int, unsigned long long, __CFString const*)",
+        "get_unused_drawable(_CAMetalLayerPrivate*, CAMetalLayerRotation, bool, bool)",
+        "CAMetalLayerPrivateNextDrawableLocked(CAMetalLayer*, CAMetalDrawable**, unsigned long*)",
+        "-[CAMetalLayer nextDrawable]",
+        "(1) suspend resume partial function for closure #1 () async -> () in Notebook.(SheetCurlDrawableRequest in _7BED204C8DE099B3D4FB4E864C6FC72F).start(completed: @Swift.MainActor @Sendable () -> ()) -> ()",
+        "(1) await resume partial function for reabstraction thunk helper from @escaping @callee_guaranteed @async () -> (@out ()) to @escaping @callee_guaranteed @async () -> ()",
+        "(1) await resume partial function for generic specialization <serialized, ()> of reabstraction thunk helper <A, B where A: Swift.Sendable, B == Swift.Never> from @escaping @isolated(any) @callee_guaranteed @async () -> (@out A) to @escaping @callee_guaranteed @async () -> (@out A, @error @owned Swift.Error)",
+        "(1) await resume partial function for reabstraction thunk helper from @escaping @callee_guaranteed @async () -> (@out ()) to @escaping @callee_guaranteed @async () -> ()",
+        "completeTaskWithClosure(swift::AsyncContext*, swift::SwiftError*)"
+      ]
+    },
+    {
+      "sequence": 109,
+      "traceSeconds": 105.399664666,
+      "thread": "Notebook (0x6ab66) (Notebook, pid: 3683)",
+      "stack": [
+        "initializeWithCopy for ClosedRange<>.Index",
+        "closure #1 in static XCTSwiftErrorObservation._installErrorObserver()",
+        "@objc closure #1 in static XCTSwiftErrorObservation._installErrorObserver()",
+        "__XCT_IS_CALLING_SWIFT_WILL_THROW_HANDLER__",
+        "closure #1 in closure #1 in closure #1 in variable initialization expression of static Backtrace.__SWIFT_TESTING_IS_CAPTURING_A_BACKTRACE_FOR_A_THROWN_ERROR__",
+        "swift_willThrow",
+        "0x1a1af3ac4",
+        "0x1a1af39d4",
+        "0x1a1af39bc",
+        "dispatch thunk of Decoder.container<A>(keyedBy:)",
+        "0x1a1af2ce8",
+        "CGColorSpaceCreateWithPropertyList",
+        "CA::Render::iosurface_load_attachments(CA::Render::Surface*, unsigned int)",
+        "CA::Render::Surface::Surface(__IOSurface*, unsigned int, unsigned int, unsigned int, CA::Render::YCbCrMatrix, CA::Render::ChromaLocation)",
+        "CAImageQueueRegisterIOSurfaceBuffer",
+        "register_drawable(_CAMetalDrawablePrivate*, _CAImageQueue*)",
+        "get_unused_drawable(_CAMetalLayerPrivate*, CAMetalLayerRotation, bool, bool)",
+        "CAMetalLayerPrivateNextDrawableLocked(CAMetalLayer*, CAMetalDrawable**, unsigned long*)",
+        "-[CAMetalLayer nextDrawable]",
+        "(1) suspend resume partial function for closure #1 () async -> () in Notebook.(SheetCurlDrawableRequest in _7BED204C8DE099B3D4FB4E864C6FC72F).start(completed: @Swift.MainActor @Sendable () -> ()) -> ()",
+        "(1) await resume partial function for reabstraction thunk helper from @escaping @callee_guaranteed @async () -> (@out ()) to @escaping @callee_guaranteed @async () -> ()",
+        "(1) await resume partial function for generic specialization <serialized, ()> of reabstraction thunk helper <A, B where A: Swift.Sendable, B == Swift.Never> from @escaping @isolated(any) @callee_guaranteed @async () -> (@out A) to @escaping @callee_guaranteed @async () -> (@out A, @error @owned Swift.Error)",
+        "(1) await resume partial function for reabstraction thunk helper from @escaping @callee_guaranteed @async () -> (@out ()) to @escaping @callee_guaranteed @async () -> ()",
+        "completeTaskWithClosure(swift::AsyncContext*, swift::SwiftError*)"
+      ]
+    },
+    {
+      "sequence": 289,
+      "traceSeconds": 107.058666375,
+      "thread": "Notebook (0x6ab60) (Notebook, pid: 3683)",
+      "stack": [
+        "__ulock_wake",
+        "-[CAMetalLayer nextDrawable]",
+        "(1) suspend resume partial function for closure #1 () async -> () in Notebook.(SheetCurlDrawableRequest in _7BED204C8DE099B3D4FB4E864C6FC72F).start(completed: @Swift.MainActor @Sendable () -> ()) -> ()",
+        "(1) await resume partial function for reabstraction thunk helper from @escaping @callee_guaranteed @async () -> (@out ()) to @escaping @callee_guaranteed @async () -> ()",
+        "(1) await resume partial function for generic specialization <serialized, ()> of reabstraction thunk helper <A, B where A: Swift.Sendable, B == Swift.Never> from @escaping @isolated(any) @callee_guaranteed @async () -> (@out A) to @escaping @callee_guaranteed @async () -> (@out A, @error @owned Swift.Error)",
+        "(1) await resume partial function for reabstraction thunk helper from @escaping @callee_guaranteed @async () -> (@out ()) to @escaping @callee_guaranteed @async () -> ()",
+        "completeTaskWithClosure(swift::AsyncContext*, swift::SwiftError*)"
+      ]
+    }
+  ]
+}

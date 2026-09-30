@@ -5,6 +5,35 @@ import XCTest
 @testable import Notebook
 
 @MainActor final class PageRasterPreparationTests: XCTestCase {
+  func testVisibleSourcesWinTheQueueAndAcceptedTurnStillPreparesTheWholeSheet() async throws {
+    let resources = SceneRenderResources(maximumBackgroundWebSurfaces: 1)
+    let preparation = PageRasterPreparation(resources: resources), page = UUID()
+    let sources = Array(NotebookNavigationLoadFixture.elements(leaf: 0, programs: false).prefix(3))
+      .map(agentElementSnapshotSource)
+    preparation.prioritize(displayed: -1, target: nil, displayedContentReady: false)
+    preparation.updateViewport(pageID: page, pageIndex: 0, sources: sources, visible: [sources[2].id])
+    var started: [String] = []
+    let jobs = sources.map { source in Task { @MainActor in
+      try await preparation.prepare(source, policy: .exact(scale: 1), pageIndex: 0, pageID: page,
+        permits: { if !started.contains(source.id) { started.append(source.id) }; return true })
+    } }
+    defer { jobs.forEach { $0.cancel() } }
+    for _ in 0..<8 { await Task.yield() }
+    XCTAssertTrue(started.isEmpty)
+    preparation.prioritize(displayed: 0, target: nil)
+    for job in jobs { let raster = try await job.value; raster.release() }
+    XCTAssertEqual(started.first, sources[2].id, "The first page source is not necessarily in the current viewport")
+    XCTAssertEqual(Set(started), Set(sources.map(\.id)), "Offscreen material remains available for a complete curl")
+    preparation.moveViewport(pageID: page, pageIndex: 4)
+    preparation.prioritize(displayed: 0, target: 4, displayedContentReady: false)
+    let successor = AgentElement(id: "landing-offscreen", kind: .web,
+      frame: .init(x: 0, y: 0, width: 20, height: 20), source: "",
+      html: "<svg xmlns='http://www.w3.org/2000/svg' width='20' height='20'><rect width='20' height='20' fill='red'/></svg>")
+    let raster = try await preparation.prepare(successor, policy: .exact(scale: 1), pageIndex: 0,
+      pageID: page, permits: { true })
+    XCTAssertEqual(raster.source, .agent(successor)); raster.release()
+  }
+
   func testColdPageDefersSpeculationUntilContentInstalledAndStillAdmitsRequestedLanding() async throws {
     try await WorkspaceInkFixture.waitForForegroundWindow()
     let controller = IPadPageTurnController(), navigation = NotebookPageNavigation(), owner = UUID()

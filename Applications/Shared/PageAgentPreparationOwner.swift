@@ -27,10 +27,12 @@ final class PageAgentPreparationOwner {
   private var pageID: UUID?
   private weak var boundActivity: PageTurnActivity?
   private var boundPageIndex: Int?
+  private weak var viewportOwner: PageRasterPreparation?
 
   func bindPresentation(activity: PageTurnActivity, pageIndex: Int) {
     guard !isRetired, boundActivity !== activity || boundPageIndex != pageIndex else { return }
     boundActivity = activity; boundPageIndex = pageIndex
+    if let pageID { viewportOwner?.moveViewport(pageID: pageID, pageIndex: pageIndex) }
     for owner in elements.values {
       owner.bindPresentation(activity: activity, context: .init(owner: activity.rasters, pageIndex: pageIndex))
     }
@@ -106,13 +108,18 @@ final class PageAgentPreparationOwner {
     guard accepted != next else { return }
     NotebookNavigationObservation.webPreparation("page_preparation_accepted", ownerID: page.id, sourceID: page.id.uuidString)
     accepted = next; acceptedPage = page
-    if let pageID, pageID != page.id { removeAll(afterUpdate: true) }
+    if let pageID, pageID != page.id { viewportOwner?.retireViewport(pageID: pageID); removeAll(afterUpdate: true) }
     pageID = page.id
     let display = model.pageGraphicDisplay(page, in: visibleRegion)
     let sources = display.elements.filter { $0.graphic == nil && $0.kind != .nativeText }
+    let visible = updateViewport(page: page, model: model, display: display,
+      visibleRegion: visibleRegion, context: rasterPreparation)
     let kept = Set(sources.map(\.id))
     for id in Array(elements.keys) where !kept.contains(id) { elements.removeValue(forKey: id)?.retire(afterUpdate: true) }
-    for source in sources {
+    // Enqueue visible demands first as well: the first executor can start
+    // before later preparation tasks have reached the queue.
+    let orderedSources = sources.filter { visible.contains($0.id) } + sources.filter { !visible.contains($0.id) }
+    for source in orderedSources {
       let focus = InteractiveElementReference.page(pageID: page.id, elementID: source.id)
       guard let presentation = model.elementPresentation(.page(pageID: page.id, elementID: source.id), graph: display.graph) else { continue }
       let element = agentElementSnapshotSource(source)
@@ -138,12 +145,33 @@ final class PageAgentPreparationOwner {
     }
   }
 
+  /// The native projection reports the current crop even during a camera
+  /// gesture, before the settled presence/read-window preparation changes.
+  @discardableResult
+  func updateViewport(page: PageDocument, model: NotebookAppModel, display: NotebookPageGraphicDisplay,
+    visibleRegion: CGRect?, context: PageRasterPreparation.Context?) -> Set<String> {
+    guard !isRetired else { return [] }
+    let sources = display.elements.filter { $0.graphic == nil && $0.kind != .nativeText }
+    let visible = Set(sources.compactMap { source -> String? in
+      guard let visibleRegion, let presentation = model.elementPresentation(.page(pageID: page.id, elementID: source.id), graph: display.graph),
+        visibleRegion.intersects(presentation.bounds) else { return nil }
+      return source.id
+    })
+    if let context {
+      if viewportOwner !== context.owner, let pageID { viewportOwner?.retireViewport(pageID: pageID) }
+      viewportOwner = context.owner
+      context.owner.updateViewport(pageID: page.id, pageIndex: context.pageIndex, sources: sources, visible: visible)
+    }
+    return visible
+  }
+
   private func removeAll(afterUpdate: Bool) {
     let previous = elements; elements.removeAll()
     for owner in previous.values { owner.retire(afterUpdate: afterUpdate) }
   }
   func retire(afterUpdate: Bool = false) {
     guard !isRetired else { return }; isRetired = true; removeAll(afterUpdate: afterUpdate)
+    if let pageID { viewportOwner?.retireViewport(pageID: pageID) }; viewportOwner = nil
     accepted = nil; acceptedPage = nil
   }
   isolated deinit { retire() }

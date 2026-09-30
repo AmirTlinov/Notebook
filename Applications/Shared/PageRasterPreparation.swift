@@ -14,12 +14,33 @@ final class PageRasterPreparation {
   private struct Request {
     let id: UUID
     let pageIndex: Int
+    let pageID: UUID?
     let element: AgentElement
     let policy: AgentSnapshotPolicy
     let store: NotebookStore?
     let permits: @MainActor () -> Bool
     let completion: CheckedContinuation<RasterLease, any Error>
   }
+  private struct ViewportDemand {
+    let pageIndex: Int
+    let sources: [String: AgentElement]
+    let visible: Set<String>
+  }
+  private var viewports: [UUID: ViewportDemand] = [:]
+  /// The read-window page owner publishes membership before enqueuing any
+  /// source. A reordered UUID keeps its demand; a replacement slot cannot.
+  func updateViewport(pageID: UUID, pageIndex: Int, sources: [AgentElement], visible: Set<String>) {
+    viewports[pageID] = .init(pageIndex: pageIndex,
+      sources: Dictionary(uniqueKeysWithValues: sources.map { ($0.id, agentElementSnapshotSource($0)) }), visible: visible)
+    startWorkers()
+  }
+  func moveViewport(pageID: UUID, pageIndex: Int) {
+    guard let old = viewports[pageID] else { return }
+    viewports[pageID] = .init(pageIndex: pageIndex, sources: old.sources, visible: old.visible)
+    startWorkers()
+  }
+  func retireViewport(pageID: UUID) { viewports[pageID] = nil }
+
   private let resources: SceneRenderResources
   private var pending: [Request] = []
   private var active: [UUID: (request: Request, workerID: UUID)] = [:]
@@ -47,7 +68,7 @@ final class PageRasterPreparation {
     page == displayedIndex || page == targetIndex || (targetIndex == nil && displayedContentReady)
   }
 
-  func prepare(_ element: AgentElement, policy: AgentSnapshotPolicy, pageIndex: Int, store: NotebookStore? = nil,
+  func prepare(_ element: AgentElement, policy: AgentSnapshotPolicy, pageIndex: Int, pageID: UUID? = nil, store: NotebookStore? = nil,
     permits: @escaping @MainActor () -> Bool) async throws -> RasterLease {
     try Task.checkCancellation()
     if let raster = resources.retainRaster(for: policy.rasterSource(for: element),
@@ -56,7 +77,7 @@ final class PageRasterPreparation {
     return try await withTaskCancellationHandler {
       try Task.checkCancellation()
       return try await withCheckedThrowingContinuation { completion in
-        pending.append(.init(id: id, pageIndex: pageIndex, element: element, policy: policy, store: store,
+        pending.append(.init(id: id, pageIndex: pageIndex, pageID: pageID, element: element, policy: policy, store: store,
           permits: permits, completion: completion))
         startWorkers()
       }
@@ -80,15 +101,27 @@ final class PageRasterPreparation {
     // WebKit navigation/snapshot round trips cannot prepare a dense neighbour
     // while one process also handles every element of the displayed page.
     let capacity = max(1, min(2, resources.maximumBackgroundWebSurfaces))
-    let admitted = pending.filter { canPrepare($0.pageIndex) }.count + active.count
+    let admitted = pending.filter { canPrepare(pageIndex(for: $0)) }.count + active.count
     while workers.count < capacity, workers.count < admitted {
       let id = UUID()
       workers[id] = Task { await run(workerID: id) }
     }
   }
 
-  private func priority(_ page: Int) -> Int {
-    page == displayedIndex ? 0 : page == targetIndex ? 1 : 2 + abs(page - displayedIndex)
+  private func pageIndex(for request: Request) -> Int {
+    request.pageID.flatMap { viewports[$0]?.pageIndex } ?? request.pageIndex
+  }
+  private func priority(_ request: Request) -> Int {
+    let page = pageIndex(for: request)
+    let viewport = request.pageID.flatMap { viewports[$0] }
+    let visible = viewport?.sources[request.element.id] == request.element
+      && viewport?.visible.contains(request.element.id) == true
+    if page == displayedIndex, visible { return 0 }
+    // An accepted turn requires the complete target, including its offscreen
+    // sources. Idle prefetch never displaces the displayed viewport.
+    if page == targetIndex { return 1 }
+    if page == displayedIndex { return 2 }
+    return 3 + abs(page - displayedIndex)
   }
 
   private func run(workerID: UUID) async {
@@ -104,8 +137,8 @@ final class PageRasterPreparation {
     while !Task.isCancelled {
       // Equal priority preserves arrival order. Newly requested landings move
       // ahead of speculation without interrupting a submitted image capture.
-      let eligible = pending.indices.filter { canPrepare(pending[$0].pageIndex) }
-      guard let index = eligible.min(by: { priority(pending[$0].pageIndex) < priority(pending[$1].pageIndex) }) else { return }
+      let eligible = pending.indices.filter { canPrepare(pageIndex(for: pending[$0])) }
+      guard let index = eligible.min(by: { priority(pending[$0]) < priority(pending[$1]) }) else { return }
       let request = pending.remove(at: index)
       guard request.permits() else {
         request.completion.resume(throwing: CancellationError()); continue

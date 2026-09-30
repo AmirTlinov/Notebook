@@ -6,6 +6,7 @@ struct AgentOverlayView: View {
   @Environment(\.displayScale) private var displayScale
 
   let page:PageDocument
+  let sourceIdentity: ObjectIdentifier
   let renderingScale: Double
   var preparedDisplay:NotebookPageGraphicDisplay? = nil
   private var pageID:UUID { page.id }
@@ -26,7 +27,7 @@ struct AgentOverlayView: View {
 
   private var display:NotebookPageGraphicDisplay { preparedDisplay ?? model.pageGraphicDisplay(page,in:visibleRegion) }
 
-  private var paintedErasures: [String: [InkElementErasure]] {
+  private var paintedErasures: InkElementErasureMap {
     #if os(iOS)
     model.pagePresentationErasures(page)
     #else
@@ -77,7 +78,8 @@ struct AgentOverlayView: View {
         || (erasures[element.id] ?? []).contains(where: { $0.target.wholeElement }) ? element.id : nil
     })
     let onReady = onRenderReady, onErasure = onErasurePresentation
-    let presentationID = readiness.prepare(elements: visible, materials: expected, erasedIDs: erasedIDs,
+    let presentationID = readiness.prepare(sourceIdentity: sourceIdentity,
+      elements: visible, materials: expected, erasedIDs: erasedIDs,
       pageSize: pageSize, erasure: .init(pageID: pageID,
         stamp: (model.pages[pageID] ?? page).drawingStamp, erasures: erasures),
       publish: { ready, receipt in
@@ -202,15 +204,16 @@ struct AgentOverlayView: View {
 @MainActor final class AgentOverlayReadiness {
   private struct Presentation {
     let id = UUID()
+    let sourceIdentity: ObjectIdentifier
     let elements: [String: AgentElement]
     let materials: [String: [NotebookInkMaterialView.Content]]
     let erasedIDs: Set<String>
     let pageSize: PageSize
     let erasure: PageElementErasurePresentation
 
-    func matches(elements: [String: AgentElement], materials: [String: [NotebookInkMaterialView.Content]],
+    func matches(sourceIdentity: ObjectIdentifier, elements: [String: AgentElement], materials: [String: [NotebookInkMaterialView.Content]],
       erasedIDs: Set<String>, pageSize: PageSize, erasure: PageElementErasurePresentation) -> Bool {
-      self.elements == elements && self.materials == materials && self.erasedIDs == erasedIDs
+      self.sourceIdentity == sourceIdentity && self.elements == elements && self.materials == materials && self.erasedIDs == erasedIDs
         && self.pageSize == pageSize && self.erasure.pageID == erasure.pageID
         && self.erasure.stamp == erasure.stamp && self.erasure.erasures == erasure.erasures
     }
@@ -222,14 +225,17 @@ struct AgentOverlayView: View {
 
   /// Called once by body. No callback below reads the model or rebuilds layout.
   /// The publisher captures only the parent's callbacks, never this ledger.
-  func prepare(elements: [AgentElement], materials: [String: [NotebookInkMaterialView.Content]] = [:],
+  func prepare(sourceIdentity: ObjectIdentifier, elements: [AgentElement], materials: [String: [NotebookInkMaterialView.Content]] = [:],
     erasedIDs: Set<String> = [], pageSize: PageSize, erasure: PageElementErasurePresentation,
     publish: @escaping (Bool, PageElementErasurePresentation) -> Void) -> UUID {
     let elements = Dictionary(elements.map { ($0.id, $0) }, uniquingKeysWith: { _, newest in newest })
     publisher = publish
-    if let presentation, presentation.matches(elements: elements, materials: materials, erasedIDs: erasedIDs,
+    if let presentation, presentation.matches(sourceIdentity: sourceIdentity, elements: elements, materials: materials, erasedIDs: erasedIDs,
       pageSize: pageSize, erasure: erasure) { return presentation.id }
-    let next = Presentation(elements: elements, materials: materials, erasedIDs: erasedIDs,
+    // A first durable read can replace a locally created page's immutable
+    // envelope without changing its artwork. Rebind that exact source receipt
+    // through the normal publication edge, retaining unchanged installed facts.
+    let next = Presentation(sourceIdentity: sourceIdentity, elements: elements, materials: materials, erasedIDs: erasedIDs,
       pageSize: pageSize, erasure: erasure)
     presentation = next
     sources = sources.filter { elements[$0.key] == $0.value }

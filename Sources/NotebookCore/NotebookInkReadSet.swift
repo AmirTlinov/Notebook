@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 
 /// A raw selection depends on its contact and later intersecting cuts. A new
@@ -41,17 +42,46 @@ private final class NotebookInkReadValidation:@unchecked Sendable {
   func record(_ value:Bool,for owner:AnyObject)->Bool {lock.withLock {self.owner=owner;self.value=value};return value}
 }
 
+/// The narrow phase borrows the canonical measured geometry used by native
+/// paint and semantic picking. Only intersecting virtual ranges disclose nodes;
+/// it neither flattens the contact nor constructs a second approximate capsule.
+/// Support is the original contact before later cuts. A further cut in an
+/// already erased part remains a conservative dependency: Undo can expose that
+/// part again. This is deliberately not a claim about final composited pixels.
+fileprivate final class NotebookInkPaintSupport:Sendable {
+  let origin:WorldPoint?
+  let area:CGRect
+  let geometry:NotebookFreehandGeometry
+  init(id:UUID,tool:SpatialInkTool,color:SpatialInkColor,samples:[InkMeasurements],bounds:WorkspaceSpatialBounds,world:Bool) {
+    let origin:WorldPoint?=world ? bounds.origin:nil
+    self.origin=origin
+    let minimum=origin?.delta(to:bounds.origin) ?? WorldPoint.zero.delta(to:bounds.origin)
+    let maximum=origin?.delta(to:bounds.maximum) ?? WorldPoint.zero.delta(to:bounds.maximum)
+    area=CGRect(x:minimum.x,y:minimum.y,width:maximum.x-minimum.x,height:maximum.y-minimum.y)
+    geometry=NotebookFreehand(layers:samples.enumerated().map { index,samples in
+      .init(tool:tool,color:color,measured:.init(sourceID:id,span:index,measurements:samples,
+        frame:.init(x:0,y:0,width:1,height:1),origin:origin))
+    }).geometry
+  }
+  func intersects(_ samples:InkMeasurements)->Bool {
+    let cut=NotebookFreehandGeometry.Cut(.init(target:.init(elementID:"selected-contact",
+      frame:.init(x:0,y:0,width:1,height:1),worldOrigin:origin),measurements:samples))
+    return cut.triangles(in:area) {geometry.intersects($0)}
+  }
+}
+
 public struct NotebookInkReadSet:Equatable,Sendable {
   public let surface:SurfaceID
   public let bounds:WorkspaceSpatialBounds
   public let contact:NotebookInkContactWitness
   public let erasers:[NotebookInkContactWitness]
   private let validation:NotebookInkReadValidation
+  fileprivate let support:NotebookInkPaintSupport
   public static func ==(lhs:Self,rhs:Self)->Bool {
     lhs.surface == rhs.surface && lhs.bounds == rhs.bounds && lhs.contact == rhs.contact && lhs.erasers == rhs.erasers
   }
-  init(surface:SurfaceID,bounds:WorkspaceSpatialBounds,contact:NotebookInkContactWitness,erasers:[NotebookInkContactWitness],owner:AnyObject) {
-    self.surface=surface;self.bounds=bounds;self.contact=contact;validation = .init(owner)
+  fileprivate init(surface:SurfaceID,bounds:WorkspaceSpatialBounds,contact:NotebookInkContactWitness,erasers:[NotebookInkContactWitness],support:NotebookInkPaintSupport,owner:AnyObject) {
+    self.surface=surface;self.bounds=bounds;self.contact=contact;self.support=support;validation = .init(owner)
     self.erasers=erasers.filter{$0.isActive && $0.tool == .eraser && contact.precedes($0)}.sorted{$0.id<$1.id}
   }
   public static func bounds(of samples:InkMeasurements)->WorkspaceSpatialBounds {
@@ -69,7 +99,8 @@ public struct NotebookInkReadSet:Equatable,Sendable {
     guard let prepared=source.preparedProjection else {return false}
     guard prepared.drawing.action(id:contact.id).map(NotebookInkContactWitness.init) == contact else {return validation.record(false,for:source.source)}
     let cuts=prepared.eraserIndex.candidates(on:nil,in:bounds).compactMap {prepared.drawing.action(id:$0)}
-      .map(NotebookInkContactWitness.init).filter{$0.isActive && contact.precedes($0)}.sorted{$0.id<$1.id}
+      .filter{$0.isActive && contact.precedes(.init($0)) && support.intersects($0.samples)}
+      .map(NotebookInkContactWitness.init).sorted{$0.id<$1.id}
     return validation.record(cuts == erasers,for:source.source)
   }
   public func matches(_ journal:SpatialInkJournal,suppressed:Set<UUID> = [])->Bool {
@@ -77,7 +108,8 @@ public struct NotebookInkReadSet:Equatable,Sendable {
     if let cached=validation.cached(journal.storage) {return cached}
     guard journal.action(id:contact.id).map(NotebookInkContactWitness.init) == contact else {return validation.record(false,for:journal.storage)}
     let cuts=journal.storage.eraserIndex.candidates(on:surface,in:bounds).compactMap{journal.action(id:$0)}
-      .map(NotebookInkContactWitness.init).filter{$0.isActive && contact.precedes($0)}.sorted{$0.id<$1.id}
+      .filter{$0.isActive && contact.precedes(.init($0)) && $0.spans.contains{$0.surface == surface && support.intersects($0.samples)}}
+      .map(NotebookInkContactWitness.init).sorted{$0.id<$1.id}
     return validation.record(cuts == erasers,for:journal.storage)
   }
 }
@@ -207,11 +239,20 @@ extension NotebookStore {
           .real(a.tileY == b.tileY ? b.localY:WorldPoint.tileSize),.real(a.tileY == b.tileY ? a.localY:0),
           .text(surface.kind.rawValue),.text(owner),.integer(b.tileX),.integer(b.tileX),.real(b.localX),.integer(a.tileX),.integer(a.tileX),.real(a.localX),
           .integer(b.tileY),.integer(b.tileY),.real(b.localY),.integer(a.tileY),.integer(a.tileY),.real(a.localY)]) {row in
-        guard next<set.erasers.count,
-          try inkContactWitness(header:row[1].blob!,body:row[2].blob!,address:row[0].text!,page:page) == set.erasers[next] else {
-          throw CollaborationError("revision_conflict","Стирание выбранного штриха изменилось.")
+        let witness=try inkContactWitness(header:row[1].blob!,body:row[2].blob!,address:row[0].text!,page:page)
+        // An unchanged addressed witness already carries the source's narrow
+        // phase proof. Only a new/changed broad-phase candidate needs geometry.
+        if next<set.erasers.count,witness == set.erasers[next] {next += 1;return}
+        let material=try currentSQL!.decodedStoredFragment(from:row[2].blob!)
+        let intersects:Bool
+        if page {
+          let samples=try material.value.decode(InkMeasurements.self,sharing:currentSQL!.inkDecoding)
+          intersects=set.support.intersects(samples)
+        } else {
+          let spans=try material.value.decode([SpatialInkSpan].self,sharing:currentSQL!.inkDecoding)
+          intersects=spans.contains{$0.surface == surface && set.support.intersects($0.samples)}
         }
-        next += 1
+        if intersects {throw CollaborationError("revision_conflict","Стирание выбранного штриха изменилось.")}
       }
       guard next == set.erasers.count else {throw CollaborationError("revision_conflict","Стирание выбранного штриха изменилось.")}
     }
@@ -222,8 +263,10 @@ extension PageInkSource {
   public func readSet(for id:UUID,on surface:SurfaceID)->NotebookInkReadSet? {
     guard surface.kind == .page,let prepared=preparedProjection,let action=prepared.drawing.action(id:id),action.isActive else {return nil}
     let bounds=NotebookInkReadSet.bounds(of:action.samples)
-    let cuts=prepared.eraserIndex.candidates(on:nil,in:bounds).compactMap{prepared.drawing.action(id:$0)}.map(NotebookInkContactWitness.init)
-    return .init(surface:surface,bounds:bounds,contact:.init(action),erasers:cuts,owner:source)
+    let contact=NotebookInkContactWitness(action),support=NotebookInkPaintSupport(id:id,tool:action.tool,color:action.color,samples:[action.samples],bounds:bounds,world:false)
+    let cuts=prepared.eraserIndex.candidates(on:nil,in:bounds).compactMap{prepared.drawing.action(id:$0)}
+      .filter{$0.isActive && contact.precedes(.init($0)) && support.intersects($0.samples)}.map(NotebookInkContactWitness.init)
+    return .init(surface:surface,bounds:bounds,contact:contact,erasers:cuts,support:support,owner:source)
   }
 }
 extension SpatialInkJournal {
@@ -232,7 +275,11 @@ extension SpatialInkJournal {
     let regions=action.spans.filter{$0.surface == surface}.map{NotebookInkReadSet.bounds(of:$0.samples)}
     guard let first=regions.first else {return nil}
     let bounds=regions.dropFirst().reduce(first){$0.union($1)}
-    let cuts=storage.eraserIndex.candidates(on:surface,in:bounds).compactMap{self.action(id:$0)}.map(NotebookInkContactWitness.init)
-    return .init(surface:surface,bounds:bounds,contact:.init(action),erasers:cuts,owner:storage)
+    let contact=NotebookInkContactWitness(action),support=NotebookInkPaintSupport(id:id,tool:action.tool,color:action.color,
+      samples:action.spans.filter{$0.surface == surface}.map(\.samples),bounds:bounds,world:surface.kind == .board)
+    let cuts=storage.eraserIndex.candidates(on:surface,in:bounds).compactMap{self.action(id:$0)}
+      .filter{$0.isActive && contact.precedes(.init($0)) && $0.spans.contains{$0.surface == surface && support.intersects($0.samples)}}
+      .map(NotebookInkContactWitness.init)
+    return .init(surface:surface,bounds:bounds,contact:contact,erasers:cuts,support:support,owner:storage)
   }
 }

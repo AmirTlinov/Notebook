@@ -69,7 +69,10 @@ import PDFKit
         let region = artifact.interactiveRegions.first(where: { $0.instanceID == instanceID }) else {
         throw CollaborationError("export_program_missing", "Программы нет в принятом печатном макете.")
       }
-      let program = try await Task.detached { try store.documentProgramSource(document: document, instanceID: instanceID, path: region.programPath) }.value
+      try await printSource.preparePrograms(on: [], retaining: [instanceID])
+      guard let program = printSource.program(instanceID) else {
+        throw CollaborationError("export_program_unavailable", printSource.programFailures[instanceID] ?? "Не удалось подготовить программу.")
+      }
       if options.format == .html {
         let html = try NotebookStandaloneExport.document(program: program, state: state.value(for: program.id) ?? program.initialState,
           height: region.viewportHeight, store: store)

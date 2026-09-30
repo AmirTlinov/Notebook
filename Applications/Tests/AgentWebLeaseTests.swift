@@ -799,7 +799,7 @@ final class AgentWebLeaseTests: XCTestCase {
     let readiness = AgentOverlayReadiness(), pageID = UUID(), actor = UUID()
     var ready = false
     func prepare(_ elements: [AgentElement]) {
-      _ = readiness.prepare(elements: elements, pageSize: .init(width: 32, height: 32),
+      _ = readiness.prepare(sourceIdentity: ObjectIdentifier(readiness), elements: elements, pageSize: .init(width: 32, height: 32),
         erasure: .init(pageID: pageID, stamp: .init(counter: 0, actor: actor), erasures: [:]),
         publish: { ready = $0; _ = $1 })
       readiness.publish()

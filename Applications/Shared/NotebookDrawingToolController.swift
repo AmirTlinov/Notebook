@@ -638,7 +638,7 @@ final class NotebookDrawingToolController {
 }
 
 extension NotebookRegionMaterialization {
-  static func prepare(_ region:NotebookRegionSelection,graph:NotebookGraphicGraph,snapshot:NotebookRegionSourceSnapshot,erasures:[String:[InkElementErasure]] = [:]) throws -> Self? {
+  static func prepare(_ region:NotebookRegionSelection,graph:NotebookGraphicGraph,snapshot:NotebookRegionSourceSnapshot,erasures:InkElementErasureMap = [:]) throws -> Self? {
     func normalized(_ polygon:[SpatialPoint],in frame:PageRect)->[SpatialPoint] {
       guard frame.width > 0,frame.height > 0 else { return [] }
       return polygon.map { .init(x:($0.x-frame.x)/frame.width,y:($0.y-frame.y)/frame.height) }
@@ -750,10 +750,10 @@ private struct NotebookLassoErasureSnapshot: Sendable {
   let spatialInk:SpatialInkJournal?
   let fallback:SpatialInkJournal?
   let loaded:Set<SurfaceID>
-  let working:[SurfaceID:[String:[InkElementErasure]]]
+  let working:[SurfaceID:InkElementErasureMap]
 
-  func masks(on surface:SurfaceID)throws ->[String:[InkElementErasure]] {
-    var result:[String:[InkElementErasure]]
+  func masks(on surface:SurfaceID)throws ->InkElementErasureMap {
+    var result:InkElementErasureMap
     if surface.kind == .page,let page,page.id == surface.ownerID {
       result=try page.ink.drawing().elementErasures
     } else {
@@ -853,7 +853,7 @@ enum NotebookLassoQuery {
 
   static func references(intersecting polygon:[SpatialPoint],at address:NotebookToolAddress,
     graph:NotebookGraphicGraph,spatial:NotebookDrawingToolController.SpatialSelectionSource?,
-    erasures:[String:[InkElementErasure]],inkCandidates:Set<UUID> = []) throws ->[EditableElementReference] {
+    erasures:InkElementErasureMap,inkCandidates:Set<UUID> = []) throws ->[EditableElementReference] {
     let origin=address.worldOrigin ?? .zero
     let candidateIDs:Set<String>
     if address.surface.kind == .page,let pageID=address.surface.ownerID,
@@ -1049,7 +1049,7 @@ extension NotebookAppModel {
   fileprivate func lassoErasureSnapshot(primary surface:SurfaceID)
     ->NotebookLassoErasureSnapshot {
     let fallback=compositionTiles.published?.liveData.ink
-    var working:[SurfaceID:[String:[InkElementErasure]]]=[:]
+    var working:[SurfaceID:InkElementErasureMap]=[:]
     for contacts in workingElementErasures.values {
       for contact in contacts {
         for (id,cuts) in contact.masks { working[contact.surface,default:[:]][id,default:[]] += cuts }

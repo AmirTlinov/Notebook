@@ -1329,7 +1329,7 @@ import XCTest
     let persisted = await model.finishPendingPersistence(); XCTAssertTrue(persisted)
     await model.reloadExternalChanges()?.value
     let reopened = NotebookStore(root: root)
-    let masks: [String: [InkElementErasure]]
+    let masks: InkElementErasureMap
     if onBoard {
       let element = try XCTUnwrap(reopened.readSpatialElement(boardID: target.id, elementID: "box"))
       XCTAssertEqual(element.graphic, graphic)

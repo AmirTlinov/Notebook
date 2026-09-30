@@ -6,7 +6,7 @@ import NotebookCore
 /// the selected inline author program in an opaque, network-closed iframe.
 enum NotebookStandaloneExport {
   static func document(program: DocumentProgramSource, state: JSONValue, height: Double, store: NotebookStore) throws -> Data {
-    let package = try store.readProgramPackage(program.programPackage)
+    let package = program.package
     let entrypoints = Set([package.html, package.css, package.javaScript, program.path + "/program.json"].compactMap { $0 })
     guard package.files.allSatisfy({ entrypoints.contains($0.path) }) else {
       throw CollaborationError("export_portable_required", "Программа с зависимостями переносится целиком в .notex.")

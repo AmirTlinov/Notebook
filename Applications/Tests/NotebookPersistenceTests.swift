@@ -349,6 +349,137 @@ final class NotebookPersistenceTests: XCTestCase {
   }
 
   @MainActor
+  func testRapidUndosRetainTheirHeadsAndWriterPositionsBeforeNewInk() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    let store = NotebookStore(root: root), queue = NotebookPersistenceQueue(store: store)
+    let model = NotebookAppModel(store: store, startsNearbySync: false, persistenceQueue: queue)
+    retainNotebookUntilTeardown(model, removing: root)
+    await model.start(pageSize: NotebookAppModel.defaultPageSize)
+    let started = await model.finishPendingPersistence(); XCTAssertTrue(started)
+    var page = try XCTUnwrap(model.activePage)
+    let original = PageRect(x: 20, y: 30, width: 100, height: 100)
+    XCTAssertTrue(page.replaceElements([.init(id: "rapid", kind: .graphic, frame: original, source: "", html: "",
+      graphic: .init(shape: .rectangle))], actor: model.actorID))
+    try store.savePage(page); await model.reloadExternalChanges()?.value
+    let blocker = try NotebookSQLWriteBlocker(store: store); defer { try? blocker.release() }
+    let reference = EditableElementReference.page(pageID: page.id, elementID: "rapid")
+    for x in [180.0, 280.0] {
+      XCTAssertTrue(model.performElementOperation(.updateElement, reference: reference,
+        values: ["frame": try .encode(PageRect(x: x, y: 30, width: 100, height: 100))], summary: "Ordered move"))
+    }
+    model.undoLastSurfaceAction(); model.undoLastSurfaceAction()
+    let saveCompleted = expectation(description: "Repeated retry cannot replace an unfinished history observer")
+    var saveResult: Bool?
+    let save = Task { saveResult = await model.finishPendingPersistence(); saveCompleted.fulfill() }
+    await Task.yield()
+    queue.retry(); queue.retry()
+    let reached = expectation(description: "Both accepted inverses precede the next contact")
+    let pageID = page.id
+    queue.enqueueCommand({ try $0.readPageElement(pageID: pageID, elementID: "rapid") }) { result in
+      switch result {
+      case .success(let element): XCTAssertEqual(element?.frame, original)
+      case .failure(let error): XCTFail("\(error)")
+      }
+      reached.fulfill()
+    }
+    let action = PageInkAction(tool: .pen, samples: [.init(point: .init(x: 400, y: 400), timeOffset: 0,
+      width: 3, opacity: 1, force: 1, azimuth: 0, altitude: 1)])
+    let stamp = try XCTUnwrap(model.reserveDrawingAction(pageID: page.id))
+    XCTAssertNotNil(model.acceptDrawingAction(action, pageID: page.id, stamp: stamp))
+    try blocker.release()
+    await fulfillment(of: [saveCompleted], timeout: 2)
+    XCTAssertEqual(saveResult, true)
+    await save.value
+    let saved = await model.finishPendingPersistence(); XCTAssertTrue(saved)
+    await fulfillment(of: [reached], timeout: 2)
+    let cold = NotebookStore(root: root)
+    XCTAssertEqual(try cold.loadPage(page.id).element(id: "rapid")?.frame, original)
+    XCTAssertEqual(try cold.nativeHistory(domain: .page(page.id), actor: model.actorID), [.ink([action.id])])
+    XCTAssertTrue(try cold.collaborationActions().allSatisfy { $0.undo != nil })
+  }
+
+  @MainActor
+  func testMixedPendingUndoKeepsTheImmediateInkRedoHead() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    let store = NotebookStore(root: root), model = NotebookAppModel(store: store, startsNearbySync: false)
+    retainNotebookUntilTeardown(model, removing: root)
+    await model.start(pageSize: NotebookAppModel.defaultPageSize)
+    let pageID = try XCTUnwrap(model.activePage?.id)
+    let action = PageInkAction(tool: .pen, samples: [.init(point: .init(x: 400, y: 400), timeOffset: 0,
+      width: 3, opacity: 1, force: 1, azimuth: 0, altitude: 1)])
+    let stamp = try XCTUnwrap(model.reserveDrawingAction(pageID: pageID))
+    XCTAssertNotNil(model.acceptDrawingAction(action, pageID: pageID, stamp: stamp))
+    let first = await model.finishPendingPersistence(); XCTAssertTrue(first)
+    let target = CollaborationTarget(kind: .page, id: pageID)
+    let figure = try store.applyNativeAction(.init(summary: "Mixed Undo", expected: [
+      .init(target: target, revision: store.targetContentRevision(target: target))], operations: [
+      .init(kind: .insertElement, target: target, id: "mixed", values: ["kind": .string("graphic"),
+        "source": .string(""), "frame": try .encode(PageRect(x: 20, y: 20, width: 100, height: 100)),
+        "graphic": try .encode(NotebookGraphic(shape: .rectangle))])]), actor: model.actorID)
+    await model.reloadExternalChanges()?.value
+    let blocker = try NotebookSQLWriteBlocker(store: store); defer { try? blocker.release() }
+    model.undoLastSurfaceAction(); model.undoLastSurfaceAction(); model.redoLastSurfaceAction()
+    XCTAssertEqual(model.pages[pageID]?.preparedInkDrawing?.action(id: action.id)?.visibility.isActive, true,
+      "The immediate Redo restores ink while the preceding authored inverse still awaits storage")
+    try blocker.release()
+    let saved = await model.finishPendingPersistence(); XCTAssertTrue(saved)
+    XCTAssertNotNil(try store.collaborationAction(figure.id).undo)
+    XCTAssertEqual(try store.loadPage(pageID).inkDrawing().action(id: action.id)?.isActive, true)
+    XCTAssertEqual(try store.nativeHistory(domain: .page(pageID), actor: model.actorID), [.ink([action.id])])
+  }
+
+  @MainActor
+  func testSourcePreparationCannotPutADependentInverseAheadOfItsCommit() async {
+    let owner = NotebookSurfaceHistoryOwner(), domain = PencilUndoHistory.Domain.document(UUID())
+    var history = PencilUndoHistory(); history.recordCommand(domain: domain, actionID: UUID())
+    let preparationStarted = expectation(description: "The source editor begins its commit before later inverse reservation")
+    var resume: CheckedContinuation<Bool, Never>?, calls = 0
+    let apply: @MainActor (Bool, PencilUndoHistory.Domain, PencilUndoHistory, UUID, Task<Bool, Never>?) -> Task<Bool, Never>? = { _, _, _, _, _ in
+      calls += 1; return Task { true }
+    }
+    owner.accept(redo: false, domain: domain, history: { history }, after: {
+      await withCheckedContinuation { resume = $0; preparationStarted.fulfill() }
+    }, apply: apply, onOverflow: { XCTFail("Unexpected overflow") })
+    owner.accept(redo: false, domain: domain, history: { history }, after: nil, apply: apply,
+      onOverflow: { XCTFail("Unexpected overflow") })
+    XCTAssertEqual(calls, 0)
+    await fulfillment(of: [preparationStarted], timeout: 2)
+    XCTAssertEqual(calls, 0, "A writer slot waiting for this preparation would prevent its own source commit")
+    resume?.resume(returning: true)
+    let result = await owner.pending?.value; XCTAssertEqual(result, true)
+    XCTAssertEqual(calls, 2)
+  }
+
+  @MainActor
+  func testUndoFinishesReleasedPencilEstimatesButCannotInterruptPhysicalContact() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
+    retainNotebookUntilTeardown(model, removing: root)
+    await model.start(pageSize: NotebookAppModel.defaultPageSize)
+    let pageID = try XCTUnwrap(model.activePage?.id), pencil = UUID()
+    let action = PageInkAction(tool: .pen, samples: [.init(point: .init(x: 80, y: 80), timeOffset: 0,
+      width: 3, opacity: 1, force: 1, azimuth: 0, altitude: 1)])
+    var finished = 0
+    model.inputGate.registerPageFinisher(source: pencil) { _, completion in
+      finished += 1
+      let stamp = model.reserveDrawingAction(pageID: pageID)!
+      XCTAssertNotNil(model.acceptDrawingAction(action, pageID: pageID, stamp: stamp))
+      model.inputGate.endPencilAction(source: pencil)
+      completion()
+    }
+    defer { model.inputGate.unregisterPageFinisher(source: pencil) }
+    XCTAssertTrue(model.inputGate.beginPencilAction(source: pencil))
+    model.undoLastSurfaceAction(); XCTAssertEqual(finished, 0)
+    model.inputGate.releasePencilContact(source: pencil)
+    XCTAssertTrue(model.inputGate.hasActivePencil); XCTAssertFalse(model.inputGate.hasPencilContact)
+    model.undoLastSurfaceAction()
+    XCTAssertEqual(finished, 1); XCTAssertFalse(model.inputGate.hasActivePencil)
+    XCTAssertEqual(model.pages[pageID]?.preparedInkDrawing?.action(id: action.id)?.visibility.isActive, false)
+    let saved = await model.finishPendingPersistence(); XCTAssertTrue(saved)
+    XCTAssertEqual(try model.store.loadPage(pageID).inkDrawing().action(id: action.id)?.isActive, false)
+  }
+
+  @MainActor
   func testAcceptedUndoSurvivesItsOwnStorageFailureAndReleasesTheSaveBoundary() async throws {
     for committed in [false, true] {
       let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -377,7 +508,7 @@ final class NotebookPersistenceTests: XCTestCase {
       let ready = await model.finishPendingPersistence(); XCTAssertTrue(ready)
       try Data().write(to: blocked)
       defer { try? FileManager.default.removeItem(at: blocked); queue.retry() }
-      model.undoCollaboration(figure.id)
+      model.undoLastSurfaceAction()
       var saved: Bool?
       let released = expectation(description: "Failed Undo storage releases Save, not the inverse")
       let waiting = Task { saved = await model.finishPendingPersistence(); released.fulfill() }

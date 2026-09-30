@@ -88,7 +88,7 @@ import AppKit
       #endif
       if handle == .trailingCenter {
         let projected=CGRect(x:shown.bounds.minX*0.75,y:shown.bounds.minY*0.75,width:shown.bounds.width*0.75,height:shown.bounds.height*0.75)
-        let material=AgentOverlayView(page:page,renderingScale:0.75,allowsInteraction:false,inputEnabled:false,
+        let material=AgentOverlayView(page:page,sourceIdentity:page.elementSourceIdentity,renderingScale:0.75,allowsInteraction:false,inputEnabled:false,
           onRenderReady:{ _ in },onState: { _, _, _ in false }).frame(width:834,height:1194)
           .scaleEffect(0.75,anchor:.topLeading).frame(width:760,height:760,alignment:.topLeading)
         #if os(iOS)
@@ -1205,7 +1205,7 @@ import AppKit
     XCTAssertLessThan(visible.resolvedGraphics,8);XCTAssertLessThan(visible.visitedIndexNodes,150)
     XCTAssertEqual(visible.elements.map(\.id),page.elements.filter { visible.layouts[$0.id] != nil }.map(\.id))
     func render(_ region:CGRect?) throws -> CGImage {
-      let painter=ImageRenderer(content:AgentOverlayView(page:page,renderingScale:1,allowsInteraction:false,inputEnabled:false,
+      let painter=ImageRenderer(content:AgentOverlayView(page:page,sourceIdentity:page.elementSourceIdentity,renderingScale:1,allowsInteraction:false,inputEnabled:false,
         onRenderReady:{ _ in },onState: { _, _, _ in false },visibleRegion:region).environment(model)
         .frame(width:1000,height:1000).background(Color.white))
       painter.scale=1
@@ -1298,7 +1298,7 @@ private struct MixedWholeProgramPage: View {
   let pageID:UUID
   var body: some View {
     if let page=model.pages[pageID] {
-      AgentOverlayView(page:page,renderingScale:1,allowsInteraction:true,inputEnabled:true,
+      AgentOverlayView(page:page,sourceIdentity:page.elementSourceIdentity,renderingScale:1,allowsInteraction:true,inputEnabled:true,
         onRenderReady:{ _ in },onState: { _, _, _ in false })
         .frame(width:page.size.width,height:page.size.height,alignment:.topLeading).background(.white)
     }

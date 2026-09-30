@@ -25,6 +25,22 @@ final class InkActionMapNode<Key: Comparable & Sendable, Value: Sendable>: @unch
     return node.balanced()
   }
 
+  func removing(_ key:Key)->InkActionMapNode? {
+    if key < self.key {
+      guard let left else {return self}
+      return InkActionMapNode(self.key,value,left:left.removing(key),right:right).balanced()
+    }
+    if key > self.key {
+      guard let right else {return self}
+      return InkActionMapNode(self.key,value,left:left,right:right.removing(key)).balanced()
+    }
+    guard let left else {return right}
+    guard let right else {return left}
+    var successor=right
+    while let next=successor.left {successor=next}
+    return InkActionMapNode(successor.key,successor.value,left:left,right:right.removing(successor.key)).balanced()
+  }
+
   private func balanced() -> InkActionMapNode {
     let balance=(left?.height ?? 0)-(right?.height ?? 0)
     if balance > 1,let left {

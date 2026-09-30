@@ -14,6 +14,11 @@ struct PageInkPresentation:Equatable {
   private var ink:PageInkPresentation?
   private var graphics:ObjectIdentifier?
   private var shownGraphics:(id:UUID,size:PageSize,stamp:VersionStamp)?
+  #if DEBUG
+  func diagnostic(_ page: PageDocument) -> String {
+    "paper=\(paperIsReady(page)),graphics=\(String(describing: graphics)),accepted=\(page.elementSourceIdentity),ink=\(String(describing: ink)),expectedInk=\(page.drawingStamp)"
+  }
+  #endif
   func recordInk(_ receipt:PageInkPresentation?) { ink=receipt }
   func recordGraphics(_ ready:Bool,page:PageDocument) {
     if ready {

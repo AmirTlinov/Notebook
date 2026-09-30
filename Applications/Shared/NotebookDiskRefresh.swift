@@ -8,6 +8,7 @@ struct NotebookPagePreparation: Sendable {
   let inputScope: NotebookInputScope
   let position: NotebookPagePosition
   let page: PageDocument
+  let source: NotebookPageSource
   let revision: String
   let projection: WorkspaceIndex
   let undo: [PencilUndoHistory.Entry]
@@ -21,21 +22,17 @@ struct NotebookPagePreparation: Sendable {
         limit: 1, expectedVisibleRoot: root)
       guard let position = directory.pages.first?.position else { throw NotebookStorageError.transactionConflict }
       let id = position.pageID
-      guard let revision = try store.pageSourceRevision(id) else { throw NotebookStorageError.transactionConflict }
-      let page: PageDocument
-      if let previous, previous.position.itemID == itemID, previous.position.index == index,
-        previous.position.visibleRoot == root, previous.revision == revision {
-        page = previous.page
-      } else {
-        page = try store.readNotebookPageWindow(itemID: itemID, pages: [.page(id)],
-          expectedVisibleRoot: root).pages[0].document
-      }
+      let retained = previous.map { [$0.page.id: $0.source] } ?? [:]
+      guard let source = try store.readNotebookPageWindow(itemID: itemID, pages: [.page(id)],
+        expectedVisibleRoot: root, reusing: retained).pages[0].source else { throw NotebookStorageError.transactionConflict }
+      let revision = source.revision
+      let page = source.document
       try page.prepareInkForPresentation()
       // Membership causal fields live in the catalog, not the page digest.
       // Re-read this one-page witness even when its immutable body is reused.
       let projection = try store.workspaceProjection(items: [.notebook(id: itemID,
         title: directory.header.item.title, pageIDs: [id])], selectedItemID: itemID, selectedPageID: id)
-      return try Self(inputScope: store.inputScopes(for: [.init(kind: .page, id: id)])[0], position: position, page: page, revision: revision, projection: projection,
+      return try Self(inputScope: store.inputScopes(for: [.init(kind: .page, id: id)])[0], position: position, page: page, source: source, revision: revision, projection: projection,
         undo: store.nativeHistory(domain: .page(id), actor: actor),
         redo: store.nativeRedoHistory(domain: .page(id), actor: actor))
     }
@@ -74,7 +71,7 @@ struct NotebookDiskRefresh: Sendable {
     pinnedElements: [UUID: [String]] = [:], pinnedItems: [UUID: [UUID]] = [:],
     preparedPages: [UUID] = [], feedbackKnown: Set<UUID>? = nil, feedbackTracked: Set<UUID> = [],
     attentionReferences: [CollaborationReference] = [], historyActor: UUID? = nil, pinnedInkActionIDs: Set<UUID> = [],
-    reusing previousIndex: WorkspaceSceneIndex? = nil, reusingPages: [UUID: PageDocument] = [:]) throws -> Self {
+    reusing previousIndex: WorkspaceSceneIndex? = nil, reusingPages: [UUID: NotebookPageSource] = [:]) throws -> Self {
     return try store.readTransaction { store in
       let actions = try store.recentActionPhases(limit: 64)
       let attention: [NotebookAgentFeedbackChange.Subject]?

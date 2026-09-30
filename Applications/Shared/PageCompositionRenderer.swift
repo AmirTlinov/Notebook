@@ -64,7 +64,7 @@ enum PageCompositionRenderer {
     // A selected element authorizes only that layer. Its transparent pixels do
     // not expose another element or the handwriting underneath it.
     if elementID == nil, !inkOnly {
-      try await canvas.drawView(GridPaperView().environment(\.displayScale, scale), size: size, in: frame)
+      try await canvas.drawPaper(size: size, in: frame)
     }
     let graph = page.graphicGraph()
     // One immutable accepted source serves ranks, target cuts and the raw mesh.

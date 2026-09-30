@@ -47,6 +47,15 @@ final class DocumentPhysicalPageCoordinator {
   isolated deinit { owner?.unregister(id) }
 }
 
+/// An accepted turn borrows exactly one print cut until its terminal outcome.
+/// Holding this value retains the source's layout allocation, never a new compiler.
+@MainActor
+final class DocumentTurnSourceLease {
+  let source: DocumentSourceSnapshot
+  let layout: DocumentLayoutRecord
+  init(source: DocumentSourceSnapshot, layout: DocumentLayoutRecord) { self.source = source; self.layout = layout }
+}
+
 /// Owns paper preparation, composition and native handoff. Program execution
 /// and checkpoint tasks belong to DocumentProgramOwner and cannot stall it.
 @MainActor
@@ -84,7 +93,12 @@ final class DocumentPagePresentationOwner {
     var turnFramePreparationIsRequired = false
     var turnFrameRefusal: SceneRasterAdmission?
     var acceptedTurnCaptures = 0
-    func releaseTurnFrame() {
+    func releaseTurnFrame(reason: String = #function, line: UInt = #line) {
+      if let observe = NotebookNavigationObservation.onPageMaterialPreparation,
+        turnFrame != nil || turnFramePreparation != nil {
+        observe("document_turn_release reason=\(reason):\(line) page=\(input.pageIndex) key=\(String(reflecting: turnFrameKey)) fallback=\(String(describing: host?.snapshotEntryID))",
+          id, nil, turnFrame?.id, turnFramePreparationID, CACurrentMediaTime())
+      }
       turnFramePreparation?.cancel(); turnFramePreparation = nil; turnFramePreparationID = nil
       turnFramePreparationIsRequired = false
       turnFrame = nil; turnFrameKey = nil; turnFrameRefusal = nil
@@ -230,6 +244,26 @@ final class DocumentPagePresentationOwner {
     let owner = DocumentPagePresentationOwner(documentID: documentID, resources: resources)
     owners[key] = WeakOwner(owner)
     return owner
+  }
+
+  static func retainTurnSource(documentID: UUID, resources: SceneRenderResources) -> DocumentTurnSourceLease? {
+    guard let owner = owners[Key(documentID: documentID, resources: ObjectIdentifier(resources))]?.value,
+      !owner.stopped, let source = owner.source, let layout = source.layout else { return nil }
+    return .init(source: source, layout: layout)
+  }
+
+  static func resolveTurnLanding(_ lease: DocumentTurnSourceLease, page: Int,
+    document: DocumentDocument, store: NotebookStore?, resources: SceneRenderResources) async throws -> Int {
+    guard lease.source.document.id == document.id else { throw CancellationError() }
+    let session = DocumentRenderRegistry.shared.session(documentID: document.id, resources: resources)
+    let successor = session.source(document, store: store), reader = UUID()
+    defer { successor.releasePage(hostID: reader, in: nil) }
+    try await successor.prepareOpening(pageIndex: page, hostID: reader, resources: resources)
+    try Task.checkCancellation()
+    guard let layout = successor.layout else { throw DocumentSessionError.invalidLayout }
+    let anchor = lease.layout.reading.anchor(page: page, fileOrder: lease.layout.readingFileOrder)
+    return anchor.flatMap { layout.reading.page(for: $0, survivingFileOrder: layout.readingFileOrder, regions: layout.regions) }
+      ?? min(max(0, page), layout.pageCount-1)
   }
 
   static func retryRetiringPrograms(resources: SceneRenderResources = .shared) {
@@ -483,6 +517,13 @@ final class DocumentPagePresentationOwner {
 
   private func bindPaper(_ renderer: DocumentWebCoordinator) {
     renderer.externallyHostedPrograms = true
+    renderer.onPaperReady = { [weak self, weak renderer] in
+      guard let self, let renderer, paper === renderer, let current,
+        current.id == mountedID, renderer.payload?.source.matches(current.input.document) == true,
+        renderer.payload?.pageIndex == current.input.pageIndex, renderer.paperIsReady else { return }
+      refreshProgramDemand()
+      installPrograms(on: current)
+    }
     renderer.onSurfaceRetirement = { [weak self, weak renderer] web in
       guard let self, let renderer, let transfer = paperTransfer,
         transfer.renderer === renderer, transfer.web === web else { return }
@@ -582,7 +623,7 @@ final class DocumentPagePresentationOwner {
       self.refreshMountedInput()
       // A canonical source may have become ready while its old A4 scene
       // rectangle was still installed. The real layout edge admits it now.
-      if entry.id == self.mountedID, self.paper.hasCanonicalPixels { self.installPrograms(on: entry) }
+      if entry.id == self.mountedID, self.paper.paperIsReady { self.installPrograms(on: entry) }
       self.schedule()
     }
     host.onWindowChange = { [weak self] in self?.hostAttachmentChanged(id) }
@@ -908,12 +949,12 @@ final class DocumentPagePresentationOwner {
         // same runtime. A replaced/failed renderer cannot keep a departed one.
         paperTransfer = nil
       }
-      try await paper.awaitPresentation(token: input.paperToken)
+      try await paper.awaitPaperReady(token: input.paperToken)
     } else if current == nil, source == nil {
       let renderer = passiveRenderer(in: host, input: input)
       configure(renderer, input: input, page: input.pageIndex)
       renderer.mount(in: passiveHost, physicalSize: physicalSize(input), isInteractive: false, priority: .visible)
-      try await renderer.awaitPresentation(token: input.paperToken)
+      try await renderer.awaitPaperReady(token: input.paperToken)
     }
     guard let layout = source?.layout else { return }
     try Task.checkCancellation()
@@ -980,8 +1021,9 @@ final class DocumentPagePresentationOwner {
         renderer.preservesFallback = true
         renderer.mount(in: preparationHost, physicalSize: physicalSize(candidate.input), isInteractive: false, priority: .visible)
         observe("passive_page_mounted", entryID: candidate.id, page: candidate.input.pageIndex, renderer: renderer)
-        try await renderer.awaitPresentation(token: candidate.input.paperToken)
-        observe("passive_page_canonical_ready", entryID: candidate.id, page: candidate.input.pageIndex, renderer: renderer)
+        if liveDemand != nil { try await renderer.awaitPresentation(token: candidate.input.paperToken) }
+        else { try await renderer.awaitPaperReady(token: candidate.input.paperToken) }
+        observe("passive_page_paper_ready", entryID: candidate.id, page: candidate.input.pageIndex, renderer: renderer)
         if let liveDemand {
           try Task.checkCancellation()
           guard preparationDemand == liveDemand, entries[candidate.id] === candidate, candidate.input.token == token,
@@ -1068,7 +1110,12 @@ final class DocumentPagePresentationOwner {
       preparationRequestID: input.measurements?.preparationRequestID(documentID: documentID, pageIndex: page, token: input.token))
     if source !== renderer.payload?.source {
       for entry in entries.values { source?.releasePage(hostID: entry.id, in: nil) }
+      source?.onProgramsChanged = {}
       source = renderer.payload?.source
+      source?.onProgramsChanged = { [weak self, weak source] in
+        guard let self, let source, self.source === source else { return }
+        refreshProgramDemand(); schedule()
+      }
     }
     for entry in entries.values where entry.requiresPreparation {
       source?.retainPage(entry.input.pageIndex, hostID: entry.id)
@@ -1136,8 +1183,6 @@ final class DocumentPagePresentationOwner {
           refreshProgramDemand(); schedule()
         }
       }
-      let resolved = Set(source.programs.map(\.id)).union(source.programFailures.keys)
-      guard retained.intersection(source.programIDs).isSubset(of: resolved) else { return }
     }
     var densities: [String: Double] = [:]
     for entry in entries.values where entry.requiresPreparation {
@@ -1147,12 +1192,13 @@ final class DocumentPagePresentationOwner {
     }
     programOwner.update(input: input, layout: layout, programs: source?.programs ?? [], pages: pages,
       currentPage: current?.input.pageIndex, visibleIDs: visiblePrograms(), preparationPage: preparationDemand?.pageIndex,
-      blocked: gestureLocked, contacts: contacts, densities: densities)
+      blocked: gestureLocked, contacts: contacts, densities: densities,
+      unresolvedProgramIDs: (source?.programIDs ?? []).subtracting(Set(source?.programs.map(\.id) ?? []).union(source?.programFailures.keys.map { $0 } ?? [])))
     if !hiddenOpenPaper { programOwner.resumeFromReturn() }
   }
 
   private func installPrograms(on entry: Entry) {
-    guard let host = entry.host, let layout = source?.layout, paper.renderIsReady,
+    guard let host = entry.host, let layout = source?.layout, paper.paperIsReady,
       paper.payload?.renderToken == entry.input.paperToken else { return }
     CATransaction.begin(); CATransaction.setDisableActions(true)
     defer { CATransaction.commit() }
@@ -1187,7 +1233,7 @@ final class DocumentPagePresentationOwner {
     DocumentRenderRegistry.shared.publishLive(documentID: documentID, token: installedToken,
       pageIndex: entry.input.pageIndex, hostID: installationID, generation: installationGeneration,
       paper: { [weak self] in self?.paper.installedPaper }, isAttached: isInstalled)
-    if let measurements = entry.input.measurements, measurements.enabled {
+    if paper.hasCanonicalPixels, let measurements = entry.input.measurements, measurements.enabled {
       if NotebookNavigationObservation.enabled {
         observe("document_content_published", entryID: entry.id, page: entry.input.pageIndex,
           reason: "installed=\(isInstalled(.page)), nativeInput=\(paper.nativeInputIsReady(in: host))")
@@ -1287,7 +1333,7 @@ final class DocumentPagePresentationOwner {
     if let picture = picture(for: entry), host.snapshotEntryID == picture.raster.entryID {
       return !picture.raster.isReleased
     }
-    guard mountedID == entry.id, !host.hasSnapshot, paper.hasCanonicalPixels,
+    guard mountedID == entry.id, !host.hasSnapshot, paper.paperIsReady, host.hasCanonicalPaperProjection,
       paper.payload?.renderToken == entry.input.paperToken, paper.installedPaper != nil,
       let web = paper.webView, host.ownsSurface(web) else { return false }
     let live = placements(on: entry), passive = passivePlacements(on: entry), pending = pendingPlacements(on: entry)
@@ -1363,9 +1409,11 @@ final class DocumentPagePresentationOwner {
     let hasPrograms = layout.regions(on: entry.input.pageIndex).contains { $0.kind == .program }
     let renderer = entry.id == mountedID ? paper : passive
     let currentPaperMatches = renderer?.payload?.renderToken == entry.input.paperToken
-      && renderer?.payload?.source.matches(entry.input.document) == true && renderer?.hasCanonicalPixels == true
+      && renderer?.payload?.source.matches(entry.input.document) == true && renderer?.paperIsReady == true
     // A passive picture is the actual installed cut. A plain page may continue
-    // borrowing it after landing when it covers the same print at full density.
+    // borrowing it after native paper landing when it covers the same print at
+    // full density. The transparent DOM's later input receipt does not change
+    // these pixels; canCapture owns admission of a new physical turn.
     // Live slots always take a new cut once this entry becomes current.
     if let picture = picture(for: entry), picture.source == source.message.key,
       let image = picture.raster.image.cgImage,
@@ -1381,6 +1429,26 @@ final class DocumentPagePresentationOwner {
       source: source.message.key, size: size, scale: scale), image: paper.image, owner: paper)
   }
 
+  /// Immutable observation of the existing owner; does not acquire material.
+  func turnFrameDiagnostic(page: Int) -> String {
+    entries.values.filter { $0.input.pageIndex == page }.sorted { $0.id.uuidString < $1.id.uuidString }
+      .map { turnFrameDiagnostic($0) }.joined(separator: "\n")
+  }
+
+  private func turnFrameDiagnostic(_ entry: Entry) -> String {
+    let renderer = entry.id == mountedID ? paper : passive
+    let picture = picture(for: entry)
+    let size = physicalSize(entry.input), scale = requiredScale(entry)
+    let paperID = (renderer?.installedPaper).map { ObjectIdentifier($0) }
+    return "entry=\(entry.id) page=\(entry.input.pageIndex) current=\(current?.id == entry.id) mounted=\(mountedID == entry.id) frame=\(String(describing: entry.turnFrame?.id)) cached=\(String(reflecting: entry.turnFrameKey)) actual=\(String(reflecting: staticTurnMaterial(entry)?.key)) size=\(size) scale=\(scale) token=\(entry.input.token) source=\(source?.message.key ?? "nil") fallback=\(String(describing: entry.host?.snapshotEntryID)) picture=\(String(describing: picture?.raster.entryID)) pixels=\(picture?.raster.image.cgImage?.width ?? 0)x\(picture?.raster.image.cgImage?.height ?? 0) paper=\(String(describing: paperID)) canonical=\(renderer?.hasCanonicalPixels == true) paperToken=\(renderer?.payload?.renderToken ?? "nil")"
+  }
+
+  private func observeTurnFrame(_ stage: String, entry: Entry) {
+    guard let observe = NotebookNavigationObservation.onPageMaterialPreparation else { return }
+    observe("\(stage) \(turnFrameDiagnostic(entry))", entry.id, nil,
+      entry.turnFrame?.id, entry.turnFramePreparationID, CACurrentMediaTime())
+  }
+
   private func refreshResidentTurnFrames() {
     guard !stopped else { return }
     let retained = residentTurnEntries, ids = Set(retained.map(\.id))
@@ -1391,8 +1459,14 @@ final class DocumentPagePresentationOwner {
       $0.requiresPreparation && $0.id != current?.id && needsPicture($0)
     }
     for entry in retained {
-      guard let material = staticTurnMaterial(entry) else { entry.releaseTurnFrame(); continue }
-      if entry.turnFrameKey != material.key { entry.releaseTurnFrame() }
+      guard let material = staticTurnMaterial(entry) else {
+        if entry.turnFrame != nil || entry.turnFramePreparation != nil { observeTurnFrame("document_turn_unavailable", entry: entry) }
+        entry.releaseTurnFrame(); continue
+      }
+      if entry.turnFrameKey != material.key {
+        if entry.turnFrame != nil || entry.turnFramePreparation != nil { observeTurnFrame("document_turn_key_changed", entry: entry) }
+        entry.releaseTurnFrame()
+      }
       guard mayPrewarm, entry.acceptedTurnCaptures == 0,
         entry.turnFrame == nil, entry.turnFramePreparation == nil else { continue }
       _ = prepareResidentTurnFrame(entry, material: material, opportunistic: true)
@@ -1627,10 +1701,16 @@ final class DocumentPagePresentationOwner {
       renderer.payload?.renderToken == input.paperToken else { throw CancellationError() }
     // Passive native hosts need a reusable UIImage. This composes the existing
     // paper image and local slots once, without a whole-page WebKit readback.
-    let format = UIGraphicsImageRendererFormat(); format.scale = Double(width)/physical.width; format.opaque = true
-    let image = UIGraphicsImageRenderer(size: physical, format: format).image { _ in
+    // Admission and the later full-density borrow use these integral extents.
+    // A fractional UIKit canvas can round one axis down, making the same plain
+    // picture ineligible as soon as landing removes its snapshot view.
+    let format = UIGraphicsImageRendererFormat(); format.scale = 1; format.opaque = true
+    let pixels = UIGraphicsImageRenderer(size: .init(width: width, height: height), format: format).image { context in
+      context.cgContext.scaleBy(x: Double(width)/physical.width, y: Double(height)/physical.height)
       for layer in layers.images { UIImage(cgImage: layer.image).draw(in: layer.frame) }
     }
+    guard let bitmap = pixels.cgImage else { throw SceneRenderError.resourceLimit }
+    let image = UIImage(cgImage: bitmap, scale: Double(width)/physical.width, orientation: .up)
     withExtendedLifetime(layers.retained) {}
     guard let raster = DocumentSnapshotCache.shared.storeAndRetain(image: image, documentID: documentID,
       token: token, layout: layout, reservation: reservation, resources: resources) else { throw SceneRenderError.resourceLimit }

@@ -25,7 +25,7 @@ public struct NotebookQuickShapeFit: Equatable, Sendable {
     return value
   }
   public func binding(in graph: NotebookGraphicGraph, surface: SurfaceID, origin: WorldPoint = .zero,
-    tolerance: Double, erasures: [String: [InkElementErasure]] = [:],
+    tolerance: Double, erasures: InkElementErasureMap = [:],
     appearance: (String, NotebookGraphic, NotebookGraphicLayout, CGSize, [InkElementErasure]) -> NotebookElementAppearance? = { _, graphic, layout, size, cuts in
       .init(graphic:graphic,layout:layout,size:size,erasures:cuts)
     }) -> Self {

@@ -103,7 +103,7 @@ final class PageInkGeometryTests: XCTestCase {
     }
     try await rendered()
     XCTAssertEqual(view.visibleCommittedChunkCount,2)
-    let queries=view.committedBatchQueryVisitCount
+    let queries=view.committedBatchQueryVisitCount,paints=view.acceptedPaintBatchVisits
     XCTAssertEqual(view.pageMeshBuildCount,100_000)
     let builds=view.pageMeshBuildCount,preparations=view.pageMeshPreparationCount
     let visits=view.pageAcceptedMutationActionVisits,actor=page.drawingStamp.actor
@@ -120,6 +120,7 @@ final class PageInkGeometryTests: XCTestCase {
     XCTAssertEqual(view.committedBatchQueryVisitCount-queries,2,
       "The actual next frames must not re-query the 99,998 off-crop actions")
     XCTAssertEqual(view.pageAcceptedMutationActionVisits-visits,2,"The accepted delta names one batch per inverse, not the 100k-action history")
+    XCTAssertLessThanOrEqual(view.acceptedPaintBatchVisits-paints,2,"Undo/Redo must recompose only damaged paint, without encoding the other visible contact")
     XCTAssertEqual(view.pageMeshPreparationCount,preparations)
     XCTAssertEqual(view.pageMeshBuildCount,builds)
     XCTAssertTrue(view.pageGeometryIsReady)
@@ -599,6 +600,8 @@ final class PageInkGeometryTests: XCTestCase {
     let committed=view.pageCommittedPassCount,composited=view.pageActivePassCount
     XCTAssertGreaterThan(committed,0)
 
+    let borrowed=try XCTUnwrap(view.acquireAcceptedFrameLease())
+    defer {borrowed.release()}
     let active=ActiveInkStroke(style:.standard)
     for index in 0..<24 {
       active.replaceMeasuredTail(from:active.measured.count,with:[point(x:CGFloat(20+index*10),y:200)])
@@ -609,6 +612,7 @@ final class PageInkGeometryTests: XCTestCase {
       "Pencil frames must sample one retained page instead of encoding every saved stroke")
     XCTAssertGreaterThan(view.pageActivePassCount,composited)
 
+    let paintVisits=view.acceptedPaintBatchVisits
     view.commitActiveStroke(active.measured.frozen().restoredAction())
     let deadline=ContinuousClock.now + .seconds(2)
     while view.pageCommittedPassCount == committed,ContinuousClock.now < deadline {
@@ -616,6 +620,12 @@ final class PageInkGeometryTests: XCTestCase {
     }
     XCTAssertEqual(view.pageCommittedPassCount,committed+1,
       "Only the accepted change invalidates the retained page")
+    XCTAssertLessThan(view.acceptedPaintBatchVisits-paintVisits,120,"Lift must encode only contacts intersecting the new stroke damage")
+    let shown=ContinuousClock.now + .seconds(2)
+    while !view.acceptedFrameIsReady,ContinuousClock.now<shown {try await Task.sleep(for:.milliseconds(10))}
+    let successor=try XCTUnwrap(view.acquireAcceptedFrameLease())
+    defer {successor.release()}
+    XCTAssertFalse(successor.texture === borrowed.texture,"A local repaint must COW an externally borrowed accepted cut")
   }
 
   func testReloadPreservesChronologicalPenErasePenGeometry() throws {

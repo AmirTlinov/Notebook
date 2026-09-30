@@ -167,10 +167,14 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     let bytes: RasterReservation
     let physical: ScenePhysicalOwnerLease?
     let drawableByteCeiling: Int
+    let accepted:any MTLTexture
+    var paintRevision:UInt64=1
+    var acceptedRevision:UInt64?
+    var visible:[(Int,Range<Int>)]=[]
     init(layer: CAMetalLayer, multisample: (any MTLTexture)?,
-      bytes: RasterReservation, physical: ScenePhysicalOwnerLease?, drawableByteCeiling: Int) {
+      bytes: RasterReservation, physical: ScenePhysicalOwnerLease?, drawableByteCeiling: Int,accepted:any MTLTexture) {
       self.layer = layer; self.multisample = multisample
-      self.bytes = bytes; self.physical = physical; self.drawableByteCeiling = drawableByteCeiling
+      self.bytes = bytes; self.physical = physical; self.drawableByteCeiling = drawableByteCeiling;self.accepted=accepted
     }
     isolated deinit { layer.removeFromSuperlayer() }
   }
@@ -243,8 +247,8 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
   }
   private struct TileSignature: Equatable {
     let tokens: [TileToken]
-    let baseline: ObjectIdentifier?
-    let orderedRevision:UInt64?
+    let acceptedRevision:UInt64
+    let liveRevision:UInt64?
   }
   private struct DrawnTile {
     let signature: TileSignature
@@ -298,10 +302,75 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     let pixels: CGSize
     let scale: Double?
   }
+  private struct PaintAddress:Hashable,Comparable {
+    let batch:Int
+    let range:Range<Int>
+    static func <(a:Self,b:Self)->Bool {a.batch == b.batch ? a.range.lowerBound<b.range.lowerBound:a.batch<b.batch}
+  }
+  private final class CommittedPaintDirectory {
+    let size:CGSize
+    private let columns:Int,rows:Int
+    private var entries:[PaintAddress:CGRect]=[:]
+    private var batches:[Int:Set<PaintAddress>]=[:]
+    private var buckets:[Set<PaintAddress>]
+    init(size:CGSize) {
+      self.size=size
+      columns=max(1,min(16,Int(ceil(size.width/128))))
+      rows=max(1,min(16,Int(ceil(size.height/128))))
+      buckets=Array(repeating:[],count:columns*rows)
+    }
+    private func cells(_ bounds:CGRect)->[Int] {
+      let box=bounds.intersection(CGRect(origin:.zero,size:size))
+      guard !box.isNull,!box.isEmpty else {return []}
+      let left=max(0,min(columns-1,Int(floor(box.minX/size.width*Double(columns)))))
+      let right=max(left,min(columns-1,Int(floor(box.maxX/size.width*Double(columns)))))
+      let top=max(0,min(rows-1,Int(floor(box.minY/size.height*Double(rows)))))
+      let bottom=max(top,min(rows-1,Int(floor(box.maxY/size.height*Double(rows)))))
+      return (top...bottom).flatMap{y in (left...right).map{y*columns+$0}}
+    }
+    func replace(batch:Int,with values:[(PaintAddress,CGRect)])->CGRect {
+      var damage=CGRect.null
+      for address in batches.removeValue(forKey:batch) ?? [] {
+        guard let bounds=entries.removeValue(forKey:address) else {continue}
+        damage=damage.union(bounds)
+        for cell in cells(bounds) {buckets[cell].remove(address)}
+      }
+      for (address,bounds) in values {
+        entries[address]=bounds;batches[batch,default:[]].insert(address);damage=damage.union(bounds)
+        for cell in cells(bounds) {buckets[cell].insert(address)}
+      }
+      return damage
+    }
+    func query(_ area:CGRect)->[(Int,Range<Int>)] {
+      guard !area.isNull,!area.isEmpty else {return []}
+      var candidates=Set<PaintAddress>()
+      for cell in cells(area) {candidates.formUnion(buckets[cell])}
+      return candidates.filter{entries[$0]?.intersects(area) == true}.sorted().map{($0.batch,$0.range)}
+    }
+  }
+  private var paintDirectory:(key:CommittedViewport,generation:UInt64,value:CommittedPaintDirectory)?
   private var committedViewport: (key: CommittedViewport, visible: [(Int,Range<Int>)])?
   private var committedGeneration: UInt64 = 0
+  private var acceptedPaintRevision:UInt64=0
+  // nil requires a complete crop; null means no accepted pixels changed.
+  private var acceptedPaintDamage:CGRect? = nil
+  private var tileDirectory:(target:ObjectIdentifier,key:CommittedViewport,generation:UInt64)?
+  private(set) var acceptedPaintBatchVisits=0
+  private(set) var spatialAcceptedPassCount=0
   private var committedBatches: [CommittedBatch] = [] {
     didSet { committedViewport = nil; committedGeneration &+= 1 }
+  }
+  private struct SelectionLifetime {weak var owner:NotebookSelectionPresentation?}
+  private var selectionLifetimes:[UUID:SelectionLifetime]=[:]
+  func retainSelectionLifetime(_ owner:NotebookSelectionPresentation) {selectionLifetimes[owner.id] = .init(owner:owner)}
+  func releaseSelectionLifetime(_ id:UUID) {selectionLifetimes[id]=nil}
+  private func retireSelectionLifetimes() {
+    let owners=selectionLifetimes.values.compactMap(\.owner);selectionLifetimes.removeAll()
+    for owner in owners {owner.selectionCanvasUnmounted(self)}
+  }
+  func presentsCanonicalPageSource(_ source:PageInkSource)->Bool {
+    guard let sourceDrawing=source.preparedDrawing,let pageDrawing else {return false}
+    return acceptedFrameIsReady && orderedFrameIsCanonical && sourceDrawing.actionCursor == pageDrawing.actionCursor
   }
   private var pageBatchIndex:[UUID:Int]=[:]
   private var spatialActionBase: [CommittedBatch]?
@@ -312,6 +381,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
   private var spatialTarget: SpatialTarget?
   var spatialMultisampleStorageMode: MTLStorageMode? { spatialTarget?.tiles.first?.multisample?.storageMode }
   var spatialMultisampleAllocatedBytes: Int { spatialTarget?.tiles.reduce(0) { $0 + ($1.multisample?.allocatedSize ?? 0) } ?? 0 }
+  var spatialAcceptedAllocatedBytes: Int { spatialTarget?.tiles.reduce(0) { $0 + $1.accepted.allocatedSize } ?? 0 }
   var spatialDrawableAccountedBytes: Int { spatialTarget?.tiles.reduce(0) { $0 + $1.bytes.byteCount } ?? 0 }
   var spatialDrawableByteCeiling: Int { spatialTarget?.tiles.reduce(0) { $0 + $1.drawableByteCeiling } ?? 0 }
   var spatialTilePoolIDs: [ObjectIdentifier] { spatialTarget?.tiles.map(ObjectIdentifier.init) ?? [] }
@@ -323,7 +393,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
   private var spatialHandoffIsStopping = false
   private var spatialStagingID: UUID?
   private weak var stagedSpatialFrame: PreparedFrame?
-  private var liveOrderedErasures:[UUID:[String:[InkElementErasure]]]=[:]
+  private var liveOrderedErasures:[UUID:InkElementErasureMap]=[:]
   private var orderedGeometry:InkOrderedGeometry?
   private var orderedPreparation:Task<Void,Never>?
   private var orderedPreparationID=UUID()
@@ -509,12 +579,11 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     let baseline: ObjectIdentifier?
     let region: CGRect
     let pixels: CGSize
-    let ordered:ObjectIdentifier?
   }
   private var currentPageRetainedKey:PageRetainedKey? {
     guard let region=pageRenderRegion,spatialTarget == nil,material == nil,pageRetainedTexture != nil else {return nil}
-    return .init(generation:committedGeneration,baseline:baselineTexture.map(ObjectIdentifier.init),
-      region:region,pixels:drawableSize,ordered:orderedGeometry.map(ObjectIdentifier.init))
+    return .init(generation:acceptedPaintRevision,baseline:baselineTexture.map(ObjectIdentifier.init),
+      region:region,pixels:drawableSize)
   }
   private var pageRetainedKey: PageRetainedKey?
   private(set) var pageCommittedPassCount = 0
@@ -733,7 +802,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     // attachments when installing its actual material, including transparency.
     sampleCount = 1
     clearColor = isErasureMask ? MTLClearColorMake(1, 1, 1, 1) : MTLClearColorMake(0, 0, 0, 0)
-    framebufferOnly = true
+    framebufferOnly = false
     enableSetNeedsDisplay = false
     // Mounting, not construction, admits a display loop. Derived offscreen
     // snapshots use InkRasterRenderer and never need a live drawable timer.
@@ -812,6 +881,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
       retirePageDisplayLink()
       cancelPendingPageMesh()
       if spatialHandoffRetains == 0 {
+        retireSelectionLifetimes()
         // A material remount needs a new drawable even when its content and
         // crop are identical. Revoke the retired layer's pending receipt.
         if material != nil || pageRenderRegion != nil { beginStableContentUpdate() }
@@ -1085,6 +1155,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
       await withCheckedContinuation { frameDrainWaiters.append($0) }
     }
     releaseDrawables()
+    retireSelectionLifetimes()
     // A dismantled UIKit configuration may still retain this Canvas. Terminal
     // drain must release its source and CPU mesh too. Temporary unmount and
     // parking never enter this terminal path.
@@ -1157,17 +1228,12 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     let drawableDescriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: colorPixelFormat,
       width: width, height: height, mipmapped: false)
     drawableDescriptor.storageMode = .private; drawableDescriptor.usage = .renderTarget
-    func allocationSize(_ descriptor: MTLTextureDescriptor) -> Int {
-      let allocation = device.heapTextureSizeAndAlign(descriptor: descriptor)
-      let alignment = max(1, allocation.align)
-      return ((allocation.size + alignment - 1) / alignment) * alignment
-    }
     // CAMetalLayer does not expose its IOSurface stride before nextDrawable.
     // Admit Metal's aligned footprint and an aligned-row floor, then validate
     // every actual drawable before encoding. This is bounded accounting, not
     // an assertion that the pool's driver-managed RSS is exactly this number.
     let row = ((width * 4 + 255) / 256) * 256
-    let drawableBytes = max(allocationSize(drawableDescriptor), row * height)
+    let drawableBytes = max(textureAllocationSize(drawableDescriptor, on: device), row * height)
     var descriptor: MTLTextureDescriptor?
     var attachmentBytes = 0
     if samples > 1 {
@@ -1176,21 +1242,25 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
       value.width = width; value.height = height; value.sampleCount = samples
       value.usage = .renderTarget; value.storageMode = memoryless ? .memoryless : .private
       descriptor = value
-      if !memoryless { attachmentBytes = allocationSize(value) }
+      if !memoryless { attachmentBytes = textureAllocationSize(value, on: device) }
     }
-    let bytes = drawableBytes * Self.spatialFramesInFlight + attachmentBytes
+    let acceptedDescriptor=drawableDescriptor.copy() as! MTLTextureDescriptor
+    acceptedDescriptor.usage=[.renderTarget,.shaderRead]
+    let acceptedBytes=max(textureAllocationSize(acceptedDescriptor,on:device),row*height)
+    let bytes = drawableBytes * Self.spatialFramesInFlight + attachmentBytes + acceptedBytes
     guard let reservation = resources.reserveDerivedBytes(bytes, priority: physicalAdmission?.allocationPriority ?? .input, owner: physicalAdmission)
     else { throw SceneRenderError.resourceLimit }
     let multisample = descriptor.flatMap { device.makeTexture(descriptor: $0) }
-    guard descriptor == nil || multisample != nil,
+    guard let accepted=device.makeTexture(descriptor:acceptedDescriptor),accepted.allocatedSize<=acceptedBytes,
+      descriptor == nil || multisample != nil,
       (multisample?.allocatedSize ?? 0) <= attachmentBytes else { throw SceneRenderError.resourceLimit }
     let layer = CAMetalLayer()
-    layer.device = device; layer.pixelFormat = colorPixelFormat; layer.framebufferOnly = true
+    layer.device = device; layer.pixelFormat = colorPixelFormat; layer.framebufferOnly = false
     layer.isOpaque = false; layer.colorspace = CGColorSpace(name: CGColorSpace.sRGB)
     layer.maximumDrawableCount = Self.spatialFramesInFlight; layer.presentsWithTransaction = false
     layer.drawableSize = .init(width: width, height: height)
     return .init(layer: layer, multisample: multisample, bytes: reservation,
-      physical: physicalAdmission, drawableByteCeiling: drawableBytes)
+      physical: physicalAdmission, drawableByteCeiling: drawableBytes,accepted:accepted)
   }
 
   private func installSpatialTarget(_ target: SpatialTarget?) {
@@ -1199,6 +1269,8 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
       tile.layer.removeFromSuperlayer()
     }
     spatialTarget = target
+    tileDirectory=nil
+    for tile in target?.tiles ?? [] {tile.paintRevision &+= 1;tile.acceptedRevision=nil}
     guard let target else { return }
     let pixels = target.layout.pixelSize
     for (index, tile) in target.tiles.enumerated() {
@@ -1251,6 +1323,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     orderedScratch.removeAll()
     installedPageRevision = nil; pendingPageRevision = nil
     committedBatches = mesh.batches.map(CommittedBatch.init)
+    invalidateAcceptedPaint()
     spatialActionRanges=mesh.actionRanges;spatialTailRanges=[:]
     pageBatchIndex.removeAll()
     discardActiveAction()
@@ -1270,7 +1343,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     }
     liveOrderedErasures[action.id]=nil
     if let geometry=orderedGeometry,let source=installedSpatialSource {
-      var cuts:[String:[InkElementErasure]]=[:]
+      var cuts:InkElementErasureMap=[:]
       for span in action.spans where span.surface == source.surface {
         for target in span.elementTargets ?? [] {
           guard let body=geometry.plan.bodies.first(where:{$0.elementID == target.elementID}) else {continue}
@@ -1280,7 +1353,11 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
           cuts[target.elementID]=values
         }
       }
-      if !cuts.isEmpty {orderedGeometry=geometry.replacingErasures(cuts);orderedInkPlan=orderedGeometry?.plan ?? .init();orderedRequest=orderedInkPlan}
+      if !cuts.isEmpty {
+        let old=orderedInkPlan
+        orderedGeometry=geometry.replacingErasures(cuts);orderedInkPlan=orderedGeometry?.plan ?? .init();orderedRequest=orderedInkPlan
+        invalidateOrderedPaint(from:old,to:orderedInkPlan,ids:Set(old.bodies.filter{cuts[$0.elementID] != nil}.map(\.sourceID)))
+      }
     }
     installedSpatialSource = installedSpatialSource?.appending(action)
     spatialSourceGeneration &+= 1
@@ -1339,6 +1416,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
       committedBatches[index].pageIsActive = pageDrawing?.action(id:id)?.isActive == true && !ids.contains(id)
       indices.insert(index)
     }
+    invalidateAcceptedPaint(in:paintBounds(of:indices))
     updateCommittedVisibility(of:indices,retaining:retained)
     requestFrame()
   }
@@ -1360,6 +1438,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
       if pageBatchIndex[action.id] == nil,action.isActive,!suppressedInkIDs.contains(action.id) {
         var batch=CommittedBatch(.init(source:InkSampleRelations(action),projection:.local))
         batch.pageAction=action;committedBatches.append(batch);pageBatchIndex[action.id]=committedBatches.count-1
+        invalidateAcceptedPaint(in:paintBounds(of:[committedBatches.count-1]))
       }
       if action.samples.count > InkRenderGeometry.maximumSegments { schedulePageActionMesh(action) }
     case .setActive(let ids,_): changedIDs.formUnion(ids)
@@ -1369,6 +1448,11 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
       let action=change.drawing.action(id:id),active=action?.isActive == true && !suppressedInkIDs.contains(id)
       guard let index=pageBatchIndex[id],committedBatches.indices.contains(index) else {
         needsRestoredGeometry = needsRestoredGeometry || active;continue
+      }
+      let previous=committedBatches[index]
+      if previous.pageIsActive != active || previous.pageAction?.samples.revision != action?.samples.revision
+        || previous.pageAction?.sequence != action?.sequence {
+        invalidateAcceptedPaint(in:paintBounds(of:[index]))
       }
       committedBatches[index].pageAction=action;committedBatches[index].pageIsActive=active
       indices.insert(index)
@@ -1396,6 +1480,8 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
   }
   func finishSpatialAction(keepingCommittedMesh: Bool) {
     if !keepingCommittedMesh, let base = spatialActionBase {
+      let removed=Set(base.count..<committedBatches.count)
+      invalidateAcceptedPaint(in:paintBounds(of:removed))
       committedBatches=base
       spatialTailRanges=spatialTailRanges.mapValues { $0.filter { $0.batch<base.count } }.filter { !$0.value.isEmpty }
       requestFrame()
@@ -1475,7 +1561,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
       batch.pageAction=action;committedBatches.append(batch)
     }
     pageBatchIndex=Dictionary(uniqueKeysWithValues:committedBatches.enumerated().compactMap { i,b in b.pageAction.map { ($0.id,i) } })
-    beginStableContentUpdate();requestFrame()
+    invalidateAcceptedPaint();beginStableContentUpdate();requestFrame()
   }
 
   func clearActiveAction() {
@@ -1579,14 +1665,15 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
       orderedRequest=orderedInkPlan;orderedFrameIsCanonical=orderedCut.canonical
       if let source=installedSpatialSource {installedSpatialSource=source.suppressing(orderedInkPlan.suppressedInkIDs)}
       else {setSuppressedPageActions(orderedInkPlan.suppressedInkIDs)}
-      beginStableContentUpdate();drawnTiles=nil;pageRetainedKey=nil
+      invalidateOrderedPaint(from:previousOrderedPlan,to:orderedInkPlan,ids:orderedCut.replacing)
+      beginStableContentUpdate()
     }
     defer {
       if let orderedCut,!orderedCutSubmitted {
         orderedGeometry=previousOrderedGeometry;orderedInkPlan=previousOrderedPlan;orderedRequest=previousOrderedPlan;orderedFrameIsCanonical=previousCanonical
         installedSpatialSource=previousSpatialSource
         if previousSpatialSource == nil {setSuppressedPageActions(previousOrderedPlan.suppressedInkIDs)}
-        drawnTiles=nil;pageRetainedKey=nil
+        invalidateOrderedPaint(from:orderedCut.plan,to:previousOrderedPlan,ids:orderedCut.replacing)
         if retriesOrderedCut,!orderedCut.cancelled,pendingOrderedCut == nil {pendingOrderedCut=orderedCut}
         else if orderedCut.cancelled {orderedCut.resolve(CancellationError())}
         else {orderedCut.resolve(orderedCutFailure)}
@@ -1600,40 +1687,66 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
       renderFailure = .resourceLimit; return
     }
     guard let commandQueue, let commandBuffer = commandQueue.makeCommandBuffer() else { return }
+    preparePaintDirectory(visible)
     let retainedPageKey = currentPageRetainedKey
     var encodedRetainedKey: PageRetainedKey?
     var materialReservations:[RasterReservation]=[]
     if let key=retainedPageKey,key != pageRetainedKey {
-      if pageRetainedExternalLeases>0,!admitPageRetainedTexture(replacing:true) {return}
+      let oldTexture=pageRetainedTexture,oldReservation=pageRetainedReservation,oldKey=pageRetainedKey
+      let localDamage: CGRect?
+      if pageDrawable != nil,let oldKey,oldKey.region == key.region,oldKey.pixels == key.pixels,oldKey.baseline == key.baseline {
+        localDamage=acceptedPaintDamage.map{$0.intersection(CGRect(origin:.zero,size:bounds.size))}
+      } else {localDamage=nil}
+      let copyingBorrowed=pageRetainedExternalLeases>0
+      if copyingBorrowed,!admitPageRetainedTexture(replacing:true) {return}
       guard let texture=pageRetainedTexture else {return}
-      let descriptor=pageRetainedRenderPass(texture:texture)
-      if let orderedGeometry {
-        do {
-          materialReservations += try encodeOrderedFrame(batches:committedBatches,visible:visible,active:nil,
-            geometry:orderedGeometry,camera:spatialCamera,viewport:spatialViewport,size:bounds.size,clip:nil,
-            descriptor:descriptor,metalViewport:nil,command:commandBuffer,includesLiveCuts:false,scratchSlot:frameSlot)
-        } catch {orderedCutFailure=error;renderFailure = .resourceLimit;return}
-      } else {
-        guard let encoder=commandBuffer.makeRenderCommandEncoder(descriptor:descriptor) else {return}
-        encodeTexture(baselineTexture,croppedTo:pageRenderRegion,label:"Imported Notebook Ink Baseline",with:encoder)
-        encodeSpatial(batches:committedBatches,visible:visible,active:nil,camera:spatialCamera,
-          viewport:spatialViewport,size:bounds.size,suppressedInkIDs:orderedInkPlan.suppressedInkIDs,encoder:encoder)
-        encoder.endEncoding()
+      if copyingBorrowed,localDamage != nil,let oldTexture {
+        guard copyTexture(oldTexture,to:texture,command:commandBuffer) else {return}
+        if let oldReservation {materialReservations.append(oldReservation)}
+      }
+      // The available drawable is bounded scratch until its final pass. A
+      // local accepted change resolves MSAA there, then blits only its damage
+      // into the owned backing. No borrowed backing is modified in place.
+      if localDamage?.isEmpty != true && localDamage?.isNull != true {
+        let patch=localDamage.flatMap{_ in pageDrawable?.texture}
+        let destination=patch ?? texture
+        let descriptor=pageRetainedRenderPass(texture:destination)
+        let affected=localDamage.map{paintDirectory?.value.query($0.insetBy(dx:-1,dy:-1)) ?? []} ?? visible
+        if let orderedGeometry {
+          do {
+            materialReservations += try encodeOrderedFrame(batches:committedBatches,visible:affected,active:nil,
+              geometry:orderedGeometry,camera:spatialCamera,viewport:spatialViewport,size:bounds.size,clip:localDamage,
+              descriptor:descriptor,metalViewport:nil,command:commandBuffer,includesLiveCuts:false,
+              damage:localDamage,scratchSlot:frameSlot)
+          } catch {orderedCutFailure=error;renderFailure = .resourceLimit;return}
+        } else {
+          guard let encoder=commandBuffer.makeRenderCommandEncoder(descriptor:descriptor) else {return}
+          if let localDamage {encoder.setScissorRect(scissor(localDamage,size:bounds.size,texture:destination))}
+          encodeTexture(baselineTexture,croppedTo:pageRenderRegion,label:"Imported Notebook Ink Baseline",with:encoder)
+          encodeSpatial(batches:committedBatches,visible:affected,active:nil,camera:spatialCamera,
+            viewport:spatialViewport,size:bounds.size,clip:localDamage,suppressedInkIDs:orderedInkPlan.suppressedInkIDs,encoder:encoder)
+          encoder.endEncoding()
+        }
+        if let patch,let localDamage,
+          !copyTexture(patch,to:texture,region:scissor(localDamage,size:bounds.size,texture:patch),command:commandBuffer) {return}
+        pageCommittedPassCount += 1
       }
       encodedRetainedKey=key;pageRetainedCompletedKey=nil
-      pageCommittedPassCount += 1
     }
     var passes:
-      [(MTLRenderPassDescriptor, any CAMetalDrawable, MTLViewport?, CGRect?, [(Int, Range<Int>)])] = []
+      [(MTLRenderPassDescriptor, any CAMetalDrawable, MTLViewport?, CGRect?, [(Int, Range<Int>)],SpatialTile?)] = []
     let submission = UUID()
     var tileStates: [DrawnTile] = [], submittedTiles: [Int] = []
+    var acceptedTiles:[(SpatialTile,UInt64)]=[]
+    preparePaintDirectory(visible)
+    prepareTileDirectory(visible)
     if let target = spatialTarget {
       let previous = drawnTiles?.target == ObjectIdentifier(target) ? drawnTiles?.tiles : nil
       let exposed = exposedCanvasRect
       for (index, tile) in target.tiles.enumerated() {
         let clip = target.logicalRect(index)
-        let tileVisible = visibleChunks(in: clip)
-        let signature = tileSignature(visible: tileVisible, clip: clip)
+        let tileVisible = tile.visible
+        let signature = tileSignature(tile:tile,clip:clip)
         if !needsRevealedFrame, let previous, index < previous.count, previous[index].signature == signature,
           previous[index].presented != false || !clip.intersects(exposed) {
           tileStates.append(previous[index]); continue
@@ -1645,11 +1758,27 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
         else {
           renderFailure = .resourceLimit; return
         }
-        passes.append(
-          (
-            spatialRenderPass(target: tile, drawable: drawable), drawable, target.viewport(index),
-            clip, tileVisible
-          ))
+        if tile.acceptedRevision != tile.paintRevision {
+          let descriptor=spatialRenderPass(target:tile,drawable:drawable)
+          if let orderedGeometry {
+            do {
+              materialReservations += try encodeOrderedFrame(batches:committedBatches,visible:tileVisible,active:nil,
+                geometry:orderedGeometry,camera:spatialCamera,viewport:spatialViewport,size:bounds.size,clip:clip,
+                descriptor:descriptor,metalViewport:target.viewport(index),command:commandBuffer,includesLiveCuts:false)
+            } catch {orderedCutFailure=error;renderFailure = .resourceLimit;return}
+          } else {
+            descriptor.colorAttachments[0].loadAction = .clear;descriptor.colorAttachments[0].clearColor=clearColor
+            guard let encoder=commandBuffer.makeRenderCommandEncoder(descriptor:descriptor) else {return}
+            encoder.setViewport(target.viewport(index))
+            encodeTexture(baselineTexture,croppedTo:pageRenderRegion,label:"Accepted Spatial Ink",with:encoder)
+            encodeSpatial(batches:committedBatches,visible:tileVisible,active:nil,camera:spatialCamera,
+              viewport:spatialViewport,size:bounds.size,clip:clip,suppressedInkIDs:orderedInkPlan.suppressedInkIDs,encoder:encoder)
+            encoder.endEncoding()
+          }
+          guard copyTexture(drawable.texture,to:tile.accepted,command:commandBuffer) else {return}
+          acceptedTiles.append((tile,tile.paintRevision));spatialAcceptedPassCount += 1
+        }
+        passes.append((spatialRenderPass(target:tile,drawable:drawable),drawable,target.viewport(index),clip,tileVisible,tile))
       }
     } else if usesPageDisplayLink {
       guard let drawable = pageDrawable,
@@ -1662,7 +1791,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
       pass.colorAttachments[0].texture = pageMultisample ?? drawable.texture
       pass.colorAttachments[0].resolveTexture = pageMultisample == nil ? nil : drawable.texture
       pass.colorAttachments[0].storeAction = pageMultisample == nil ? .store : .multisampleResolve
-      passes.append((pass, drawable, nil, nil, visible))
+      passes.append((pass, drawable, nil, nil, visible,nil))
     } else {
       guard let pass = currentRenderPassDescriptor, let drawable = currentDrawable else { return }
       if let pageMultisample {
@@ -1670,7 +1799,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
         pass.colorAttachments[0].resolveTexture = drawable.texture
         pass.colorAttachments[0].storeAction = .multisampleResolve
       }
-      passes.append((pass, drawable, nil, nil, visible))
+      passes.append((pass, drawable, nil, nil, visible,nil))
     }
     lastRenderedTileCount = passes.count
     guard !passes.isEmpty else {
@@ -1684,14 +1813,16 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     drawableRequestCount += 1
     submittedTileCount += passes.count
     needsRevealedFrame = false
-    for (descriptor, _, viewport, clip, tileVisible) in passes {
-      if let orderedGeometry,retainedPageKey == nil || activeEraserStroke != nil || !liveOrderedErasures.isEmpty {
+    for (descriptor, _, viewport, clip, tileVisible,tile) in passes {
+      let accepted=tile?.accepted ?? (retainedPageKey == nil ? nil:pageRetainedTexture)
+      if let orderedGeometry,accepted == nil || activeEraserStroke != nil || !liveOrderedErasures.isEmpty {
         do {
-          let damage=retainedPageKey == nil ? nil:orderedContactDamage()
-          materialReservations += try encodeOrderedFrame(batches:committedBatches,visible:tileVisible,active:active,
+          let damage=accepted == nil ? nil:orderedContactDamage().map {damage in clip.map{damage.intersection($0)} ?? damage}
+          let affected=damage.map{paintDirectory?.value.query($0.insetBy(dx:-1,dy:-1)) ?? []} ?? tileVisible
+          materialReservations += try encodeOrderedFrame(batches:committedBatches,visible:affected,active:active,
             geometry:orderedGeometry,camera:spatialCamera,viewport:spatialViewport,size:bounds.size,clip:damage ?? clip,
             descriptor:descriptor,metalViewport:viewport,command:commandBuffer,
-            accepted:damage == nil ? nil:pageRetainedTexture,damage:damage,scratchSlot:frameSlot)
+            accepted:accepted,damage:damage,scratchSlot:tile == nil ? frameSlot:nil)
         } catch {orderedCutFailure=error;renderFailure = .resourceLimit;return}
         continue
       }
@@ -1699,8 +1830,10 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
       descriptor.colorAttachments[0].clearColor = clearColor
       guard let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: descriptor) else { return }
       if let viewport { encoder.setViewport(viewport) }
-      if retainedPageKey != nil,let pageRetainedTexture {
-        encodeTexture(pageRetainedTexture,croppedTo:nil,label:"Retained Notebook Page Ink",with:encoder)
+      if let accepted {
+        if let tile {encoder.setViewport(.init(originX:0,originY:0,width:Double(tile.accepted.width),height:Double(tile.accepted.height),znear:0,zfar:1))}
+        encodeTexture(accepted,croppedTo:nil,label:"Retained Accepted Ink",with:encoder)
+        if let viewport {encoder.setViewport(viewport)}
         encodeSpatial(batches:[],visible:[],active:active,camera:spatialCamera,
           viewport:spatialViewport,size:bounds.size,clip:clip,encoder:encoder)
         pageActivePassCount += 1
@@ -1768,7 +1901,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     // Presentation follows scheduling of these writes, including drawables
     // supplied by CAMetalDisplayLink. Commit alone is not that boundary.
     if !transactionPresentation {
-      for (_, drawable, _, _, _) in passes { commandBuffer.present(drawable) }
+      for (_, drawable, _, _, _, _) in passes { commandBuffer.present(drawable) }
     }
     let presentedRevision: UInt64? =
       activeInkStroke == nil
@@ -1845,6 +1978,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     let flight=InkFrameFlight(inFlightSemaphore,transactional:transactionPresentation,
       retainedTexture:pageRetainedTexture,drawables:transactionPresentation ? passes.map {$0.1}:[])
     let retainedSubmission=encodedRetainedKey
+    let retainedTiles=acceptedTiles
     commandBuffer.addCompletedHandler { [weak self, heldGeometry, physical, target] buffer in
       flight.finished()
       let completed = buffer.status == .completed
@@ -1860,7 +1994,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
       let observationCompletion = observedSubmission.map { _ in
         (mach_absolute_time(), buffer.gpuStartTime, buffer.gpuEndTime)
       }
-      Task { @MainActor [weak self, heldGeometry, physical, target] in
+      Task { @MainActor [weak self, heldGeometry, physical, target,retainedTiles] in
         if var fields = observedSubmission, let timing = observationCompletion {
           fields["completionMach"] = .string(String(timing.0))
           fields["gpuStartTime"] = .number(timing.1); fields["gpuEndTime"] = .number(timing.2)
@@ -1888,6 +2022,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
           }
           if material != nil,stableContentRevision == submittedRevision { beginStableContentUpdate() }
           drawnTiles = nil; pageRetainedKey = nil
+          for (tile,revision) in retainedTiles where tile.acceptedRevision == revision {tile.acceptedRevision=nil}
           requestFrame()
         }
         guard completed, !spatialHandoffIsStopping, window != nil,
@@ -1919,7 +2054,8 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
         }
       }
     }
-    if let encodedRetainedKey { pageRetainedKey=encodedRetainedKey }
+    if let encodedRetainedKey {pageRetainedKey=encodedRetainedKey;acceptedPaintDamage = .null}
+    for (tile,revision) in acceptedTiles {tile.acceptedRevision=revision}
     if transactionPresentation {
       let sourceGeneration=spatialSourceGeneration
       submittedPresentationCount += 1
@@ -1939,6 +2075,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
               orderedGeometry=previousOrderedGeometry;orderedInkPlan=previousOrderedPlan;orderedRequest=previousOrderedPlan;orderedFrameIsCanonical=previousCanonical
               installedSpatialSource=previousSpatialSource
               if previousSpatialSource == nil {setSuppressedPageActions(previousOrderedPlan.suppressedInkIDs)}
+              invalidateOrderedPaint(from:orderedCut?.plan ?? .init(),to:previousOrderedPlan,ids:orderedCut?.replacing)
               beginStableContentUpdate();requestFrame()
             }
             return
@@ -2018,17 +2155,101 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     onRenderReadinessChange?(true)
   }
 
-  private func visibleChunks(in clip: CGRect) -> [(Int, Range<Int>)] {
-    // The viewport query already selected and prepared resident chunks. Tiles
-    // filter those descriptors; they must not repeat source-range disclosure.
-    committedBatches.enumerated().flatMap { b, batch in
-      guard batch.pageIsActive else { return [(Int, Range<Int>)]() }
-      var transform=batch.mesh.projection.transform(camera:spatialCamera,viewport:spatialViewport)
-      if spatialCamera == nil,let crop=pageRenderRegion { transform.z -= Float(crop.minX);transform.w -= Float(crop.minY) }
-      return batch.buffers.keys.sorted { $0.lowerBound < $1.lowerBound }.filter {
-        batch.buffers[$0]!.isVisible && batch.buffers[$0]!.geometry.chunk.descriptor.intersects(viewport:clip,transform:transform)
-      }.map { (b,$0) }
+  private func invalidateAcceptedPaint(in damage:CGRect? = nil) {
+    acceptedPaintRevision &+= 1
+    if let damage,let previous=acceptedPaintDamage {acceptedPaintDamage=previous.union(damage)}
+    else {acceptedPaintDamage=nil}
+    if let target=spatialTarget {
+      for (index,tile) in target.tiles.enumerated() where damage == nil || target.logicalRect(index).intersects(damage!.insetBy(dx:-2,dy:-2)) {
+        tile.paintRevision &+= 1
+      }
     }
+  }
+  private func paintBounds(of indices:Set<Int>)->CGRect {
+    var box=CGRect.null
+    for index in indices where committedBatches.indices.contains(index) {
+      let batch=committedBatches[index]
+      var transform=batch.mesh.projection.transform(camera:spatialCamera,viewport:spatialViewport)
+      if spatialCamera == nil,let crop=pageRenderRegion {transform.z -= Float(crop.minX);transform.w -= Float(crop.minY)}
+      for part in batch.mesh.parts {box=box.union(InkAffine(transform).bounds(part.bounds))}
+    }
+    return box.insetBy(dx:-2,dy:-2)
+  }
+  private func invalidateOrderedPaint(from old:NotebookOrderedInkPlan,to new:NotebookOrderedInkPlan,ids:Set<UUID>?) {
+    let changed=ids ?? Set(old.bodies.map(\.sourceID)).union(new.bodies.map(\.sourceID))
+    var box=CGRect.null
+    for body in old.bodies+new.bodies where changed.contains(body.sourceID) {
+      let position=spatialCamera.map{$0.worldToScreen(body.layout.origin.offsetBy(x:body.layout.frame.x,y:body.layout.frame.y),viewport:spatialViewport)}
+        ?? .init(x:body.layout.frame.x-(pageRenderRegion?.minX ?? 0),y:body.layout.frame.y-(pageRenderRegion?.minY ?? 0))
+      let scale=spatialCamera?.scale ?? 1
+      box=box.union(.init(x:position.x,y:position.y,width:body.layout.frame.width*scale,height:body.layout.frame.height*scale))
+    }
+    let raw=Set(changed.compactMap{pageBatchIndex[$0]})
+    box=box.union(paintBounds(of:raw))
+    if installedSpatialSource != nil {
+      let ranges=changed.flatMap{(spatialActionRanges[$0] ?? [])+(spatialTailRanges[$0] ?? [])}
+      box=box.union(paintBounds(of:Set(ranges.map(\.batch))))
+    }
+    invalidateAcceptedPaint(in:box.insetBy(dx:-2,dy:-2))
+  }
+  private func prepareTileDirectory(_ visible:[(Int,Range<Int>)]) {
+    guard let target=spatialTarget else {return}
+    let key=committedViewportKey,id=ObjectIdentifier(target)
+    if let directory=tileDirectory,directory.target == id,directory.key == key,directory.generation == committedGeneration {return}
+    let basisChanged=tileDirectory?.target != id || tileDirectory?.key != key
+    for (index,tile) in target.tiles.enumerated() {
+      let clip=target.logicalRect(index)
+      tile.visible=paintDirectory?.value.query(clip.insetBy(dx:-1,dy:-1)) ?? []
+      if basisChanged {tile.paintRevision &+= 1}
+    }
+    tileDirectory=(id,key,committedGeneration)
+  }
+  private func projectedPaintEntry(_ entry:(Int,Range<Int>))->(PaintAddress,CGRect)? {
+    let batch=committedBatches[entry.0]
+    guard let prepared=batch.buffers[entry.1] else {return nil}
+    var transform=batch.mesh.projection.transform(camera:spatialCamera,viewport:spatialViewport)
+    if spatialCamera == nil,let crop=pageRenderRegion {transform.z -= Float(crop.minX);transform.w -= Float(crop.minY)}
+    return (.init(batch:entry.0,range:entry.1),InkAffine(transform).bounds(prepared.geometry.chunk.descriptor.bounds).insetBy(dx:-1,dy:-1))
+  }
+  private func preparePaintDirectory(_ visible:[(Int,Range<Int>)]) {
+    let key=committedViewportKey
+    if let directory=paintDirectory,directory.key == key,directory.generation == committedGeneration {return}
+    let directory=CommittedPaintDirectory(size:bounds.size)
+    let grouped=Dictionary(grouping:visible,by:{$0.0})
+    for (batch,values) in grouped {_ = directory.replace(batch:batch,with:values.compactMap(projectedPaintEntry))}
+    paintDirectory=(key,committedGeneration,directory)
+  }
+  private func updateTileDirectory(of indices:Set<Int>,with changed:[(Int,Range<Int>)]) {
+    guard let directory=paintDirectory,directory.key == committedViewportKey else {return}
+    let grouped=Dictionary(grouping:changed,by:{$0.0})
+    var damage=CGRect.null
+    for index in indices {damage=damage.union(directory.value.replace(batch:index,with:(grouped[index] ?? []).compactMap(projectedPaintEntry)))}
+    paintDirectory=(directory.key,committedGeneration,directory.value)
+    guard let target=spatialTarget,let tiles=tileDirectory,
+      tiles.target == ObjectIdentifier(target),tiles.key == committedViewportKey else {return}
+    for (index,tile) in target.tiles.enumerated() where target.logicalRect(index).intersects(damage) {
+      tile.visible=directory.value.query(target.logicalRect(index).insetBy(dx:-1,dy:-1))
+    }
+    tileDirectory=(tiles.target,tiles.key,committedGeneration)
+  }
+
+  private func scissor(_ rect:CGRect,size:CGSize,texture:any MTLTexture,viewport:MTLViewport? = nil)->MTLScissorRect {
+    let width=viewport?.width ?? Double(texture.width),height=viewport?.height ?? Double(texture.height)
+    let x=max(0,min(texture.width,Int(floor(rect.minX/size.width*width+(viewport?.originX ?? 0)))))
+    let y=max(0,min(texture.height,Int(floor(rect.minY/size.height*height+(viewport?.originY ?? 0)))))
+    let right=max(x,min(texture.width,Int(ceil(rect.maxX/size.width*width+(viewport?.originX ?? 0)))))
+    let bottom=max(y,min(texture.height,Int(ceil(rect.maxY/size.height*height+(viewport?.originY ?? 0)))))
+    return .init(x:x,y:y,width:right-x,height:bottom-y)
+  }
+  private func copyTexture(_ source:any MTLTexture,to destination:any MTLTexture,
+    region:MTLScissorRect? = nil,command:any MTLCommandBuffer)->Bool {
+    let rect=region ?? .init(x:0,y:0,width:source.width,height:source.height)
+    guard rect.width>0,rect.height>0 else {return true}
+    guard let encoder=command.makeBlitCommandEncoder() else {return false}
+    let origin=MTLOrigin(x:rect.x,y:rect.y,z:0)
+    encoder.copy(from:source,sourceSlice:0,sourceLevel:0,sourceOrigin:origin,
+      sourceSize:.init(width:rect.width,height:rect.height,depth:1),to:destination,destinationSlice:0,destinationLevel:0,destinationOrigin:origin)
+    encoder.endEncoding();return true
   }
 
   private func pageRetainedRenderPass(texture:any MTLTexture) -> MTLRenderPassDescriptor {
@@ -2055,28 +2276,13 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     encoder.drawPrimitives(type:.triangle,vertexStart:0,vertexCount:6)
   }
 
-  private func tileSignature(visible: [(Int, Range<Int>)], clip: CGRect) -> TileSignature {
-    var tokens: [TileToken] = []
-    for (b, c) in visible {
-      let batch = committedBatches[b]
-      var transform = batch.mesh.projection.transform(camera:spatialCamera,viewport:spatialViewport)
-      if spatialCamera == nil,let crop=pageRenderRegion { transform.z -= Float(crop.minX);transform.w -= Float(crop.minY) }
-      guard let chunk=batch.buffers[c]?.geometry.chunk.descriptor,
-        chunk.intersects(viewport:clip,transform:transform) else { continue }
-      tokens.append(
-        .init(
-          source: batch.renderID, chunk: c, revision: 0, level: batch.buffers[c]?.level ?? -1,
-          transform: transform))
+  private func tileSignature(tile:SpatialTile,clip:CGRect)->TileSignature {
+    var tokens:[TileToken]=[]
+    let transform=SIMD4<Float>(1,1,-Float(pageRenderRegion?.minX ?? 0),-Float(pageRenderRegion?.minY ?? 0))
+    for (index,chunk) in activeMesh.chunks.enumerated() where chunk.intersects(viewport:clip,transform:transform) {
+      tokens.append(.init(source:activeRenderID,chunk:index..<(index+1),revision:activeMesh.chunkRevisions[index],level:-1,transform:transform))
     }
-    let activeTransform=SIMD4<Float>(1,1,-Float(pageRenderRegion?.minX ?? 0),-Float(pageRenderRegion?.minY ?? 0))
-    for (c, chunk) in activeMesh.chunks.enumerated()
-    where chunk.intersects(viewport: clip, transform: activeTransform) {
-      tokens.append(
-        .init(
-          source: activeRenderID, chunk: c..<(c+1), revision: activeMesh.chunkRevisions[c], level: -1,
-          transform: activeTransform))
-    }
-    return .init(tokens: tokens, baseline: baselineTexture.map { ObjectIdentifier($0) },orderedRevision:orderedGeometry == nil ? nil:stableContentRevision)
+    return .init(tokens:tokens,acceptedRevision:tile.paintRevision,liveRevision:liveOrderedErasures.isEmpty ? nil:stableContentRevision)
   }
 
   private func encodeSpatial(batches: [CommittedBatch], visible: [(Int, Range<Int>)],
@@ -2087,6 +2293,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     var viewportSize = SIMD2<Float>(Float(max(size.width, 1)), Float(max(size.height, 1)))
     encoder.setVertexBytes(&viewportSize, length: MemoryLayout<SIMD2<Float>>.stride, index: 1)
     for (batchIndex, chunkIndex) in visible {
+      acceptedPaintBatchVisits += 1
       let batch = batches[batchIndex]
       if !suppressedInkIDs.isEmpty {
         let id=batch.pageAction?.id ?? batch.spatialPaintKey?.actionID ?? batch.mesh.paintKey(for:chunkIndex)?.actionID
@@ -2140,6 +2347,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     let region=CGRect(origin:crop,size:size)
     var raw:[(NotebookInkPaintKey,InkRasterRenderer.Draw)]=[]
     for (index,range) in visible {
+      acceptedPaintBatchVisits += 1
       let batch=batches[index]
       let key=batch.pageAction.map{NotebookInkPaintKey.page(sequence:$0.sequence,id:$0.id)}
         ?? batch.spatialPaintKey ?? batch.mesh.paintKey(for:range)
@@ -2155,7 +2363,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     let prepared=try geometry.events(raw:raw,camera:camera,viewport:viewport,region:region,pixels:drawableSize,
       device:device,resources:resources,owner:physicalAdmission,liveCuts:includesLiveCuts ? liveOrderedErasures.values.reduce(into:[:]){result,cuts in
         for (id,values) in cuts {result[id,default:[]] += values}
-      }:[:],damage:damage.map{$0.offsetBy(dx:crop.x,dy:crop.y)})
+      }:[:],damage:(damage ?? clip).map{$0.offsetBy(dx:crop.x,dy:crop.y)})
     var events=prepared.events
     if let active {
       let affine=InkAffine(x:.init(1,0,-Float(crop.x),0),y:.init(0,1,-Float(crop.y),0))
@@ -2172,14 +2380,12 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     if let crop=pageRenderRegion,pageSourceSize.width>0,pageSourceSize.height>0 {
       textureRect = .init(Float(crop.minX/pageSourceSize.width),Float(crop.minY/pageSourceSize.height),Float(crop.width/pageSourceSize.width),Float(crop.height/pageSourceSize.height))
     }
-    let scissor:MTLScissorRect?=damage.map { rect in
-      let x=max(0,Int(floor(rect.minX/size.width*Double(texture.width))))
-      let y=max(0,Int(floor(rect.minY/size.height*Double(texture.height))))
-      let right=min(texture.width,Int(ceil(rect.maxX/size.width*Double(texture.width))))
-      let bottom=min(texture.height,Int(ceil(rect.maxY/size.height*Double(texture.height))))
-      return .init(x:x,y:y,width:max(1,right-x),height:max(1,bottom-y))
+    let cut=damage.map{ rect in
+      rect.isNull || rect.isEmpty ? MTLScissorRect(x:0,y:0,width:0,height:0):scissor(rect,size:size,texture:texture,viewport:metalViewport)
     }
-    try renderer.encodeOrdered(events,baseline:baselineTexture,textureRect:textureRect,accepted:accepted,damage:scissor,encoder:encoder)
+    try renderer.encodeOrdered(events,baseline:baselineTexture,textureRect:textureRect,accepted:accepted,
+      damage:cut,acceptedViewport:metalViewport.map{_ in .init(originX:0,originY:0,width:Double(texture.width),height:Double(texture.height),znear:0,zfar:1)},
+      geometryViewport:metalViewport,encoder:encoder)
     encoder.endEncoding()
     // Metal retains referenced attachments; geometry reservations are returned
     // to the sole command owner and remain charged through its completion.
@@ -2193,8 +2399,11 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     var damage=activeMesh.chunks.reduce(CGRect.null) {$0.union($1.bounds)}.offsetBy(dx:-crop.x,dy:-crop.y)
     let whole=Set(liveOrderedErasures.values.flatMap {$0.filter{$0.value.contains{$0.target.wholeElement}}.keys})
     for body in orderedInkPlan.bodies where whole.contains(body.elementID) {
-      damage=damage.union(CGRect(x:body.layout.frame.x-crop.x,y:body.layout.frame.y-crop.y,
-        width:body.layout.frame.width,height:body.layout.frame.height))
+      let position=spatialCamera.map{$0.worldToScreen(body.layout.origin.offsetBy(x:body.layout.frame.x,y:body.layout.frame.y),viewport:spatialViewport)}
+        ?? .init(x:body.layout.frame.x-crop.x,y:body.layout.frame.y-crop.y)
+      let scale=spatialCamera?.scale ?? 1
+      damage=damage.union(CGRect(x:position.x,y:position.y,
+        width:body.layout.frame.width*scale,height:body.layout.frame.height*scale))
     }
     damage=damage.insetBy(dx:-2,dy:-2).intersection(CGRect(origin:.zero,size:bounds.size))
     return damage.isNull || damage.isEmpty ? nil:damage
@@ -2202,7 +2411,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
 
   func updateOrderedErasing(_ contacts:[NotebookElementErasing],id:UUID) {
     guard orderedGeometry != nil else {return}
-    var cuts:[String:[InkElementErasure]]=[:]
+    var cuts:InkElementErasureMap=[:]
     for contact in contacts {for (element,values) in contact.masks {cuts[element,default:[]] += values}}
     liveOrderedErasures[id]=cuts.isEmpty ? nil:cuts
     beginStableContentUpdate();requestFrame()
@@ -2212,7 +2421,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     switch change.mutation {case .append(let action):ids=[action.id];case .setActive(let changed,_):ids=changed}
     for id in ids {liveOrderedErasures[id]=nil}
     guard let geometry=orderedGeometry else {return}
-    var cuts:[String:[InkElementErasure]]=[:]
+    var cuts:InkElementErasureMap=[:]
     for id in ids {
       guard let action=change.drawing.action(id:id),action.tool == .eraser else {continue}
       for target in action.elementTargets ?? [] {
@@ -2223,7 +2432,12 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
         cuts[target.elementID]=values
       }
     }
-    if !cuts.isEmpty {orderedGeometry=geometry.replacingErasures(cuts);orderedInkPlan=orderedGeometry?.plan ?? .init();orderedRequest=orderedInkPlan;beginStableContentUpdate();requestFrame()}
+    if !cuts.isEmpty {
+      let old=orderedInkPlan
+      orderedGeometry=geometry.replacingErasures(cuts);orderedInkPlan=orderedGeometry?.plan ?? .init();orderedRequest=orderedInkPlan
+      invalidateOrderedPaint(from:old,to:orderedInkPlan,ids:Set(old.bodies.filter{cuts[$0.elementID] != nil}.map(\.sourceID)))
+      beginStableContentUpdate();requestFrame()
+    }
   }
 
   /// Canonical page body changes share the existing prepared installation cut.
@@ -2553,7 +2767,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     installedSpatialSource=spatialSource
     if let index=frame.actionRanges {spatialActionRanges=index;spatialTailRanges=[:]}
     orderedGeometry=frame.ordered;orderedInkPlan=frame.orderedPlan;orderedRequest=frame.orderedPlan;orderedFrameIsCanonical=true
-    committedBatches=frame.batches;discardActiveAction()
+    committedBatches=frame.batches;invalidateAcceptedPaint();discardActiveAction()
     drawnTiles=nil;pageRetainedKey=nil
     let revision = stableContentRevision, generation = spatialSourceGeneration
     // Scheduling admits publication; only the drawable receipt below proves
@@ -2588,12 +2802,14 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     spatialCamera=frame.camera;spatialViewport=frame.viewport;spatialDrawableScale=frame.layout.displayScale
     installSpatialTarget(frame.target)
     committedViewport=(committedViewportKey,frame.visible)
+    preparePaintDirectory(frame.visible)
+    prepareTileDirectory(frame.visible)
     needsRevealedFrame = false
     if let target = frame.target {
       let submission = UUID()
       drawnTiles = (ObjectIdentifier(target), revision, target.tiles.indices.map { index in
         let clip = target.logicalRect(index)
-        return DrawnTile(signature: tileSignature(visible: visibleChunks(in: clip), clip: clip), submission: submission)
+        return DrawnTile(signature:tileSignature(tile:target.tiles[index],clip:clip),submission:submission)
       })
       for (index, drawable) in frame.drawables.enumerated() {
         observePresentation(of: drawable, tile: index, target: target, submission: submission)
@@ -2694,8 +2910,10 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
         var batch=CommittedBatch(entry.mesh);batch.pageAction=current
         batch.pageIsActive=current.isActive && !self.pageSuppressedIDs.contains(current.id)
         let retained=self.committedViewport
+        // This is another representation of the same accepted measured paint.
+        // Keep its current crop pixels; new damage/camera cuts use the virtual
+        // geometry without turning completion of compaction into a repaint.
         self.committedBatches[index]=batch;self.pageMeshBuildCount += mesh.builtActionCount
-        self.beginStableContentUpdate()
         self.updateCommittedVisibility(of:[index],retaining:retained);self.requestFrame()
       } catch is CancellationError {} catch { self?.renderFailure=(error as? SceneRenderError) ?? .snapshotPending("page_ink_action_geometry") }
     }
@@ -2736,6 +2954,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
         batches += committedBatches.filter { $0.pageCommit > commit && ($0.pageAction.map { !ids.contains($0.id) } ?? true) }
         baselineTexture=baseline.texture;baselinePNG=baseline.png;baselineReservation=baseline.reservation
         committedBatches = batches
+        invalidateAcceptedPaint()
         pageBatchIndex=Dictionary(uniqueKeysWithValues:batches.enumerated().compactMap { index,batch in batch.pageAction.map { ($0.id,index) } })
         pageMeshBuildCount += mesh.builtActionCount
         installedPageRevision = revision; pendingPageRevision = nil; pageMeshTask = nil
@@ -2989,6 +3208,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
   }
 
   private func releaseGeometryBuffers() {
+    paintDirectory=nil;tileDirectory=nil
     orderedScratch.removeAll()
     material?.releaseBuffers()
     drawnTiles = nil
@@ -3106,12 +3326,14 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
       viewport:spatialViewport,size:bounds.size) }
     batch=addition[0];let index=committedBatches.count
     committedBatches.append(batch)
+    invalidateAcceptedPaint(in:paintBounds(of:[index]))
     if installedSpatialSource != nil {
       spatialTailRanges[sourceID,default:[]].append(.init(batch:index,chunks:0..<batch.mesh.chunkCount))
     }
     if let retained,let localVisible {
       let appended=localVisible.map { (index,$0.1) }
       committedViewport=(key,retained.visible+appended)
+      updateTileDirectory(of:[index],with:appended)
       visibleCommittedVertexCount += appended.reduce(0) { result,value in
         result+InkRenderGeometry.vertexCount(nodes:committedBatches[value.0].buffers[value.1]!.nodeCount,
           flags:committedBatches[value.0].buffers[value.1]!.geometry.chunk.descriptor.flags)
@@ -3138,6 +3360,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
       }
       visibleCommittedChunkCount=merged.count
       committedViewport=(retained.key,merged)
+      updateTileDirectory(of:indices,with:changed)
     } catch { renderFailure = .resourceLimit }
   }
 

@@ -89,6 +89,8 @@ planes need no drawable. Ordered selection/cancel cuts use the same canvas clock
 and keep only the latest pending request; their immutable submitted resources remain
 owned by their flight slots. Page-turn frame leases pin the accepted texture/crop and
 physical admission; a canvas writes a successor backing while any such lease exists.
+The spatial pool also charges one accepted RGBA texture per admitted tile; active
+frames borrow it, and submitted commands retain the tile owner through completion.
 Capture readiness uses that exact completed GPU cut, independently of the live
 layer's OS receipt. A covered neighbor can supply a curl frame; endpoint staging
 requests a real live presentation before the curl releases its visible cover.

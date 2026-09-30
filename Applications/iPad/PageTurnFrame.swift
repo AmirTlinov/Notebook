@@ -58,8 +58,12 @@ final class PageTurnFrame {
     let gpu = SheetCurlGPU.shared
     guard size.width.isFinite, size.height.isFinite, size.width > 0, size.height > 0, scale.isFinite, scale > 0,
       size.width * scale <= 8192, size.height * scale <= 8192,
-      let device = gpu.device, let context = gpu.imageContext,
-      let command = gpu.commandQueue?.makeCommandBuffer() else { throw SceneRenderError.snapshotPending("page_compositor") }
+      let device = gpu.device else { throw SceneRenderError.snapshotPending("page_compositor") }
+    let context = try await gpu.imageContext()
+    // Reader cancellation never cancels shared initialization, and cannot
+    // admit storage or submit a late composition after the borrow returns.
+    try Task.checkCancellation()
+    guard let command = gpu.commandQueue?.makeCommandBuffer() else { throw SceneRenderError.snapshotPending("page_compositor") }
     let width = Int(ceil(size.width * scale)), height = Int(ceil(size.height * scale))
     guard width <= 8192, height <= 8192 else { throw SceneRenderError.resourceLimit }
     // A reusable static cut first asks for passive storage. An accepted turn

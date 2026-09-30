@@ -19,7 +19,7 @@ struct NotebookPageOrderedInkInput:Equatable,Sendable {
   /// Candidates are the caller's already admitted graphic window. Both live
   /// paper and exact export use this same winner/cut test before reading ranks.
   init(elements:[AgentElement],graph:NotebookGraphicGraph,layouts:[String:NotebookGraphicLayout],
-    erasures:[String:[InkElementErasure]],suppressedInkIDs:Set<UUID>) {
+    erasures:InkElementErasureMap,suppressedInkIDs:Set<UUID>) {
     candidates=elements.compactMap { element in
       guard let node=graph.node(element.id),node.shown,node.placement.parentID == nil,
         node.graphic.showsGeometry,node.graphic.sourceInkContactID != nil,

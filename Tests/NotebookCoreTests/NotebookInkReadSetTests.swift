@@ -142,3 +142,54 @@ func nativeSelectionWriterChecksTheSameAddressedContact(onBoard:Bool,sampleCount
     try store.readTransaction {_ in try store.validateInkReadSets([readSet],target:target)}
   }
 }
+
+
+@Test(arguments:[false,true])
+func sparseContactReadSetRejectsOnlyPaintIntersectingNewCuts(onBoard:Bool) throws {
+  let root=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+  defer {try? FileManager.default.removeItem(at:root)}
+  let store=NotebookStore(root:root),actor=UUID()
+  let (workspace,pages)=try store.loadOrCreate(actor:actor,pageSize:.init(width:834,height:1194))
+  _=try store.loadOrCreateSpatialInk(actor:actor)
+  var page=try #require(pages.values.first),journal=SpatialInkJournal(stamp:.init(counter:0,actor:actor))
+  let target=CollaborationTarget(kind:onBoard ? .board:.page,id:onBoard ? workspace.rootBoardID:page.id)
+  let surface=onBoard ? SurfaceID.board(target.id):.page(target.id)
+  func contact(_ points:[SpatialPoint],sequence:UInt64,tool:SpatialInkTool)->PageInkAction {
+    .init(tool:tool,color:.init(red:0.2,green:0.4,blue:0.8),samples:points.enumerated().map { i,p in
+      .init(point:p,timeOffset:Double(i)/60,width:8,opacity:0.5,force:1,azimuth:0,altitude:1)
+    },sequence:sequence)
+  }
+  func append(_ action:PageInkAction) throws {
+    let stamp=VersionStamp(counter:action.sequence,actor:actor)
+    if onBoard {
+      let samples=action.samples.map { sample in
+        SpatialInkSample(point:sample.point,worldPoint:.init(x:sample.point.x,y:sample.point.y),
+          timeOffset:sample.timeOffset,width:sample.width,opacity:sample.opacity,force:sample.force,
+          azimuth:sample.azimuth,altitude:sample.altitude)
+      }
+      let spatial=SpatialInkAction(id:action.id,tool:action.tool,color:action.color,
+        spans:[.init(surface:surface,samples:samples)],stamp:stamp)
+      _=try store.commitSpatialInk(.append(spatial,journalStamp:stamp))
+      journal=try store.readSpatialInk(surfaces:[surface])
+    } else {
+      try page.prepareInkForPresentation()
+      let change=try page.prepareLiveInkChange(.append(action),stamp:stamp)
+      _=try store.commitPageInk(pageID:page.id,command:.init(change))
+      let published=page.publishInkChange(change);#expect(published)
+    }
+  }
+  let first=contact([.init(x:20,y:20),.init(x:20,y:200),.init(x:200,y:200)],sequence:1,tool:.pen)
+  try append(first)
+  let proof=try #require(onBoard ? journal.readSet(for:first.id,on:surface):page.inkSource.readSet(for:first.id,on:surface))
+  // This cut is inside the L's broad bounds, but crosses no painted segment.
+  try append(contact([.init(x:95,y:90),.init(x:105,y:90)],sequence:2,tool:.eraser))
+  #expect(onBoard ? proof.matches(journal):proof.matches(page.inkSource))
+  try store.readTransaction {_ in try store.validateInkReadSets([proof],target:target)}
+  let emptyCorner=try #require(onBoard ? journal.readSet(for:first.id,on:surface):page.inkSource.readSet(for:first.id,on:surface))
+  #expect(emptyCorner.erasers.isEmpty)
+  try append(contact([.init(x:15,y:90),.init(x:25,y:90)],sequence:3,tool:.eraser))
+  #expect(!(onBoard ? proof.matches(journal):proof.matches(page.inkSource)))
+  #expect(throws:CollaborationError.self) {
+    try store.readTransaction {_ in try store.validateInkReadSets([proof],target:target)}
+  }
+}

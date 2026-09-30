@@ -63,4 +63,8 @@ struct DocumentPageNavigationCallbacks {
   let unbind: (UUID) -> Void
   let landed: (DocumentPageLanding) -> Void
   let status: (DocumentPageNavigationStatus) -> Void
+  #if os(iOS)
+  var retainSource: () -> DocumentTurnSourceLease? = { nil }
+  var resolveSourceLanding: (DocumentTurnSourceLease, Int) async throws -> Int = { _, page in page }
+  #endif
 }

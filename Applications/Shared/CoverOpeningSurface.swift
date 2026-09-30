@@ -348,6 +348,15 @@ struct CoverSnapshotState<Frame> {
         guard let self else { return false }
         return lifecycle.isTransitioning || (preparesCoverMotion && canPrepare())
       }
+      curlView.onCoverRenderingReady = { [weak self] in self?.renderCurrentState() }
+      curlView.onCoverRenderFailure = { [weak self] _ in
+        guard let self else { return }
+        failedMaterialDemand = materialDemand
+        awaitsDrawableAdmission = false
+        curlView.releaseSource()
+        showEndpointUntilSnapshotIsReady()
+        model?.showCue("Не удалось подготовить перелистывание обложки")
+      }
       view.addSubview(curlView)
       // Only passive material survives at rest; accepted input cuts end with
       // their motion and are still borrowed by any submitted GPU command.
@@ -561,6 +570,10 @@ struct CoverSnapshotState<Frame> {
         requestMaterial()
       }
       guard let capturedCover = lifecycle.capturedCover else {
+        showEndpointUntilSnapshotIsReady()
+        return
+      }
+      guard curlView.prepareCoverRendering() else {
         showEndpointUntilSnapshotIsReady()
         return
       }
@@ -820,6 +833,12 @@ struct CoverSnapshotState<Frame> {
         guard let self else { return false }
         return lifecycle.isTransitioning || (preparesCoverMotion && canPrepare())
       }
+      curlView.onCoverRenderingReady = { [weak self] in self?.renderCurrentState() }
+      curlView.onCoverRenderFailure = { [weak self] _ in
+        guard let self else { return }
+        curlView.releaseSource()
+        showEndpointUntilSnapshotIsReady()
+      }
       addSubview(curlView)
     }
 
@@ -864,6 +883,7 @@ struct CoverSnapshotState<Frame> {
         lifecycle.settleAtClosedEndpoint(
           keepingPreparedSnapshot: preparesCoverMotion
         )
+        curlView.releaseSource()
         resetCoverHostGeometry()
         coverHost.isHidden = false
         coverHost.alphaValue = 1
@@ -872,6 +892,7 @@ struct CoverSnapshotState<Frame> {
       }
       if CoverOpeningPhysics.isOpen(lifecycle.progress) {
         lifecycle.settleAtOpenEndpoint()
+        curlView.releaseSource()
         resetCoverHostGeometry()
         coverHost.isHidden = false
         coverHost.alphaValue = CoverOpeningPhysics.warmCoverOpacity
@@ -883,6 +904,10 @@ struct CoverSnapshotState<Frame> {
         lifecycle.storeCapturedCover(captureCover())
       }
       guard let capturedCover = lifecycle.capturedCover else {
+        showEndpointUntilSnapshotIsReady()
+        return
+      }
+      guard curlView.prepareCoverRendering() else {
         showEndpointUntilSnapshotIsReady()
         return
       }

@@ -43,7 +43,10 @@ final class PageTurnMaterialOwner {
     let ownerID = observationID, operationID = operationID ?? UUID()
     return { stage, time in receive(stage, ownerID, pageID, nil, operationID, time) }
   }
-  private struct PaperKey: Hashable { let width, height, scale: Double }
+  private struct PaperKey: Hashable {
+    let resources: ObjectIdentifier
+    let width, height, scale: Double
+  }
   private final class PaperReference {
     weak var frame: PageTurnFrame?
     init(_ frame: PageTurnFrame) { self.frame = frame }
@@ -52,15 +55,53 @@ final class PageTurnMaterialOwner {
   // directory never owns pixels: the last resident page releases them. A small
   // single-flight directory prevents adjacent pages uploading it concurrently.
   private static var paperFrames: [PaperKey: PaperReference] = [:]
-  private static var paperPreparations: [PaperKey: Task<PageTurnFrame, Error>] = [:]
+  private struct PaperPreparation {
+    let id = UUID()
+    let priority: SceneAllocationPriority
+    let task: Task<PageTurnFrame, Error>
+  }
+  private static var paperPreparations: [PaperKey: PaperPreparation] = [:]
   private struct Key: Equatable {
     let native: [AgentElement]
     let slots: [String: NotebookElementPresentation]
     let staticSources: [String: SceneRasterSource]
     let size: PageSize
-    let erasures: [String: [InkElementErasure]]
+    let erasures: InkElementErasureMap
     let ordered: Set<String>
     let scale: Double
+  }
+  private struct NativeKey: Equatable, Sendable {
+    let source: AgentElement
+    let layout: NotebookGraphicLayout?
+    let projection: NotebookGraphicLayout.Projection?
+    let size: CGSize
+    let bodySize: CGSize?
+    let transform: CGAffineTransform?
+    let cuts: [InkElementErasure]
+    let paintsBody: Bool
+    let scale: Double
+  }
+  private struct NativeMaterial: Sendable {
+    let key: NativeKey
+    let frame: PageTurnFrame
+  }
+  private struct SlotKey: Equatable {
+    let source: AgentElement
+    let size: CGSize
+    let bodySize: CGSize
+    let transform: CGAffineTransform
+    let cuts: [InkElementErasure]
+    let scale: Double
+    let provider: PageTurnActivity.ElementFrameVersion
+  }
+  private struct SlotMaterial { let key: SlotKey; let frame: PageTurnFrame }
+  private struct PreparedLayers: Sendable { let layers: [Layer]; let native: [String: NativeMaterial] }
+  // These records belong to this resident page. Order/translation changes
+  // rebuild the small directory, retaining unchanged local pixel owners.
+  private var nativeMaterials: [String: NativeMaterial] = [:]
+  private var slotMaterials: [String: SlotMaterial] = [:]
+  var preparedMaterialIDs: [String: UUID] {
+    nativeMaterials.mapValues { $0.frame.id }.merging(slotMaterials.mapValues { $0.frame.id }) { _, right in right }
   }
   private enum Layer: Sendable {
     case image(PageTurnFrame, CGRect)
@@ -131,7 +172,7 @@ final class PageTurnMaterialOwner {
   // prepared paper and native artwork. Capture freezes this separate basis.
   private var liveSources: [String: AgentElement] = [:]
   private var liveSourceGeneration: UInt64 = 0
-  private var preparation: Task<[Layer], Error>?
+  private var preparation: Task<PreparedLayers, Error>?
   private var slotPreparation: Task<Void, Never>?
   private var slotPreparationHasWake = false
   private var layers: [Layer]?
@@ -167,9 +208,19 @@ final class PageTurnMaterialOwner {
         })]
     }
   }
+  private func staticMaterial(for layer: Layer, provider: PageTurnActivity.ElementFrameVersion? = nil) -> SlotMaterial? {
+    guard case .element(let element, let presentation, let cuts, let frame) = layer,
+      let key, let material = slotMaterials[element.id] else { return nil }
+    let expected = SlotKey(source: element, size: frame.size, bodySize: presentation.bodySize,
+      transform: presentation.transform, cuts: cuts, scale: key.scale, provider: provider ?? material.key.provider)
+    return material.key == expected ? material : nil
+  }
   var isPrepared: Bool {
     guard let layers else { return false }
-    return !layers.contains { if case .element(let element, _, _, _) = $0 { return !element.requiresLiveRuntime }; return false }
+    return layers.allSatisfy { layer in
+      guard case .element(let element, _, _, _) = layer, !element.requiresLiveRuntime else { return true }
+      return staticMaterial(for: layer) != nil
+    }
   }
 
   func isCapturable(readiness: PageTurnReadiness) -> Bool {
@@ -177,12 +228,12 @@ final class PageTurnMaterialOwner {
     return layers.allSatisfy { layer in
       guard case .element(let element, _, _, _) = layer else { return true }
       let source = element.requiresLiveRuntime ? liveSources[element.id] : element
-      guard let source else { return false }
-      return readiness.activity?.hasElementFrame(page: readiness.pageIndex, source: source) == true
+      guard let source, let version = readiness.activity?.elementFrameVersion(page: readiness.pageIndex, source: source) else { return false }
+      return element.requiresLiveRuntime || staticMaterial(for: layer, provider: version) != nil
     }
   }
 
-  func prepare(page: PageDocument, erasures: [String: [InkElementErasure]], ordered: Set<String>, scale: Double,
+  func prepare(page: PageDocument, erasures: InkElementErasureMap, ordered: Set<String>, scale: Double,
     onReady: @escaping @MainActor () -> Void,
     onFailure: @escaping @MainActor (PageTurnPreparationFailure) -> Void) {
     let scale = min(scale, sqrt(4_000_000 / (page.size.width * page.size.height)))
@@ -212,12 +263,18 @@ final class PageTurnMaterialOwner {
     invalidateFrame(reason: "native_material"); preparation?.cancel(); slotPreparation?.cancel(); slotPreparation = nil
     slotPreparationHasWake = false
     notifySlotsReady = nil; layers = nil
+    let retainedNative = nativeMaterials
     preparation = Task { @MainActor [weak self] in
       do {
-        let result = try await Self.prepareLayers(page: page, erasures: erasures, ordered: ordered, scale: scale)
+        let result = try await Self.prepareLayers(page: page, erasures: erasures, ordered: ordered, scale: scale,
+          retained: retainedNative)
         try Task.checkCancellation()
         if let self, self.key == key {
-          self.layers = result
+          self.layers = result.layers; self.nativeMaterials = result.native
+          let slots = Set(result.layers.compactMap { layer -> String? in
+            if case .element(let element, _, _, _) = layer, !element.requiresLiveRuntime { return element.id }; return nil
+          })
+          self.slotMaterials = self.slotMaterials.filter { slots.contains($0.key) }
           let notify = self.notifyReady; self.notifyReady = nil; notify?()
         }
         return result
@@ -235,83 +292,71 @@ final class PageTurnMaterialOwner {
     }
   }
 
-  /// Static WebKit output is already owned by the installed element. Flatten its
-  /// transform and erasures once during readiness, not at the first sheet bend.
+  /// Keep slot identity in the directory after flattening. A pending/error cut
+  /// and its later real pixels update this one entry, not every static sibling.
   func prepareStaticSlots(readiness: PageTurnReadiness,
     onReady: @escaping @MainActor () -> Void,
     onFailure: @escaping @MainActor (PageTurnPreparationFailure) -> Void) {
-    guard let layers, let key,
-      layers.contains(where: { if case .element = $0 { return true }; return false }) else {
-      notifySlotsReady = nil
-      if let slotObserver { slotActivity?.removePreparationObserver(slotObserver) }
-      slotObserver = nil; slotActivity = nil; slotReadiness = nil
-      return
-    }
-    // Live slots keep one addressed observer after static preparation. Its
-    // weak receipt publishes capture readiness without retaining PageSurface.
-    notifySlotsReady = isPrepared ? nil : onReady
+    notifySlotsReady = onReady
+    guard let layers, let key else { return }
     slotReadiness = readiness
     if slotActivity !== readiness.activity {
       if let slotObserver { slotActivity?.removePreparationObserver(slotObserver) }
       slotActivity = readiness.activity
       slotObserver = slotActivity?.observePreparation { [weak self] change in
-        guard case .elementFrames(let page, let materialChanged) = change, let self,
-          let readiness = slotReadiness, readiness.pageIndex == page else { return }
-        if isPrepared {
-          if materialChanged { invalidateFrame(reason: "slot_material") }
-          refreshPassiveFrame()
-          let capturable = isCapturable(readiness: readiness) && readiness.inkFrameIsReady?() == true
-          if capturable != readiness.state.capturable {
-            readiness(readiness.state.presented, capturable: capturable, paperReady: readiness.state.paperReady)
-          } else { readiness.materialDidChange() }
-        } else if slotPreparation == nil { notifySlotsReady?() }
-        else { slotPreparationHasWake = true }
+        guard case .elementFrames(let page, let changed) = change, let self,
+          let readiness = self.slotReadiness, readiness.pageIndex == page else { return }
+        if changed { self.invalidateFrame(reason: "slot_material") }
+        self.slotPreparationHasWake = true
+        if self.slotPreparation == nil { self.notifySlotsReady?() }
+        self.refreshPassiveFrame()
+        let capturable = self.isCapturable(readiness: readiness) && readiness.inkFrameIsReady?() == true
+        if capturable != readiness.state.capturable {
+          readiness(readiness.state.presented, capturable: capturable, paperReady: readiness.state.paperReady)
+        } else if changed { readiness.materialDidChange() }
+        else { readiness.materialAvailabilityDidChange() }
       }
     }
-    guard !isPrepared, slotPreparation == nil else { return }
-    // The slot's own native installation certifies its exact pixels. The
-    // page-wide overlay also includes live masks whose OS display can wait
-    // until this covered leaf is exposed at the curl endpoint.
-    guard layers.allSatisfy({ layer in
-      guard case .element(let element, _, _, _) = layer, !element.requiresLiveRuntime else { return true }
-      return readiness.activity?.hasElementFrame(page: readiness.pageIndex, source: element) == true
-    }) else { return }
+    guard slotPreparation == nil else { return }
+    var missing: [(AgentElement, NotebookElementPresentation, [InkElementErasure], CGRect, SlotKey)] = []
+    for layer in layers {
+      guard case .element(let element, let presentation, let cuts, let frame) = layer,
+        !element.requiresLiveRuntime else { continue }
+      guard let version = readiness.activity?.elementFrameVersion(page: readiness.pageIndex, source: element) else { continue }
+      let next = SlotKey(source: element, size: frame.size, bodySize: presentation.bodySize,
+        transform: presentation.transform, cuts: cuts, scale: key.scale, provider: version)
+      if slotMaterials[element.id]?.key != next { missing.append((element, presentation, cuts, frame, next)) }
+    }
+    guard !missing.isEmpty else { return }
     slotPreparationHasWake = false
     slotPreparation = Task { @MainActor [weak self] in
       do {
-        var prepared: [Layer] = []
-        for layer in layers {
+        for (element, presentation, cuts, frame, next) in missing {
           try Task.checkCancellation()
-          if case .element(let element, let presentation, let cuts, let frame) = layer,
-            !element.requiresLiveRuntime {
-            let pixels = try await Self.slotPixels(element: element, presentation: presentation,
-              cuts: cuts, frame: frame, scale: key.scale, readiness: readiness, priority: .passive)
-            let image = try await PageTurnFrame.compose(size: frame.size, scale: key.scale,
-              images: [.init(image: pixels.image, frame: CGRect(origin: .zero, size: frame.size))], retaining: [pixels])
-            prepared.append(.image(image, frame))
-          } else { prepared.append(layer) }
+          let pixels = try await Self.slotPixels(element: element, presentation: presentation,
+            cuts: cuts, frame: frame, scale: next.scale, readiness: readiness, priority: .passive)
+          let image = try await PageTurnFrame.compose(size: frame.size, scale: next.scale,
+            images: [.init(image: pixels.image, frame: CGRect(origin: .zero, size: frame.size))], retaining: [pixels])
+          try Task.checkCancellation()
+          guard let self, self.key == key,
+            readiness.activity?.elementFrameVersion(page: readiness.pageIndex, source: element) == next.provider else {
+            throw PageTurnMaterialUnavailable.changed
+          }
+          self.slotMaterials[element.id] = .init(key: next, frame: image)
         }
-        try Task.checkCancellation()
         guard let self, self.key == key else { return }
-        self.layers = prepared; self.slotPreparation = nil
-        self.slotPreparationHasWake = false
-        let notify = self.notifySlotsReady; self.notifySlotsReady = nil; notify?()
+        self.slotPreparation = nil; self.slotPreparationHasWake = false
+        self.notifySlotsReady?()
       } catch {
         guard !(error is CancellationError), let self, self.key == key else { return }
+        self.slotPreparation = nil
         if error is PageTurnMaterialUnavailable {
-          // Consume an installation edge received during this borrow once.
-          // The admission guard still requires every static provider to be
-          // current. With no new edge, wait instead of retrying this task.
-          let needsWake = self.slotPreparationHasWake
-          self.slotPreparationHasWake = false
-          self.slotPreparation = nil
-          if needsWake { self.notifySlotsReady?() }
-          return
+          let wake = self.slotPreparationHasWake; self.slotPreparationHasWake = false
+          if wake { self.notifySlotsReady?() }; return
         }
-        self.slotPreparation = nil; self.notifySlotsReady = nil
         self.slotPreparationHasWake = false
         onFailure(.init(kind: error as? SceneRenderError == .resourceLimit ? .resourceLimit : .preparationFailed,
-          message: "Не удалось подготовить элементы листа для перелистывания", retry: { [weak self] in
+          message: "Не удалось подготовить элемент листа", retry: { [weak self] in
             self?.prepareStaticSlots(readiness: readiness, onReady: onReady, onFailure: onFailure)
           }))
       }
@@ -325,7 +370,7 @@ final class PageTurnMaterialOwner {
     notifyReady = nil; notifySlotsReady = nil
     if let slotObserver { slotActivity?.removePreparationObserver(slotObserver) }
     slotObserver = nil; slotActivity = nil; slotReadiness = nil
-    key = nil; sourcePage = nil; layers = nil
+    key = nil; sourcePage = nil; layers = nil; nativeMaterials.removeAll(); slotMaterials.removeAll()
     liveSources = [:]; liveSourceGeneration &+= 1
     invalidateFrame(reason: "retired"); preparesPassiveFrame = false; frameReadiness = nil
   }
@@ -353,16 +398,22 @@ final class PageTurnMaterialOwner {
     let ink = readiness.inkFrame?()
     guard ink != nil || readiness.inkFrameIsEmpty?() == true else { return nil }
     var providers: [String: PageTurnActivity.ElementFrameVersion] = [:]
+    var acceptedLayers: [Layer] = []
     for layer in layers {
-      guard case .element(let element, _, _, _) = layer else { continue }
+      guard case .element(let element, _, _, let rect) = layer else { acceptedLayers.append(layer); continue }
       guard let source = element.requiresLiveRuntime ? liveSources[element.id] : element,
         let version = readiness.activity?.elementFrameVersion(page: readiness.pageIndex, source: source) else { return nil }
       providers[element.id] = version
+      if element.requiresLiveRuntime { acceptedLayers.append(layer) }
+      else {
+        guard let material = staticMaterial(for: layer, provider: version) else { return nil }
+        acceptedLayers.append(.image(material.frame, rect))
+      }
     }
     return .init(basis: .init(pageID: sourcePage.id, material: materialGeneration,
       liveSource: liveSourceGeneration, providers: providers,
       inkGeneration: ink?.generation, inkTexture: ink.map { ObjectIdentifier($0.texture) }),
-      key: key, layers: layers, sources: liveSources, ink: ink)
+      key: key, layers: acceptedLayers, sources: liveSources, ink: ink)
   }
 
   private func refreshPassiveFrame() {
@@ -482,7 +533,10 @@ final class PageTurnMaterialOwner {
       }
     }
     try Task.checkCancellation()
-    guard frameInput(readiness: readiness)?.basis == input.basis else { throw PageTurnMaterialUnavailable.changed }
+    guard frameInput(readiness: readiness)?.basis == input.basis else {
+      observe("acquire_rejected_basis", frameID: frame.id)
+      throw PageTurnMaterialUnavailable.changed
+    }
     observe("acquire_completed", frameID: frame.id)
     return frame
   }
@@ -621,11 +675,12 @@ final class PageTurnMaterialOwner {
     return .init(image: image, owner: frame)
   }
 
-  private static func prepareLayers(page: PageDocument, erasures: [String: [InkElementErasure]],
-    ordered: Set<String>, scale: Double) async throws -> [Layer] {
+  private static func prepareLayers(page: PageDocument, erasures: InkElementErasureMap,
+    ordered: Set<String>, scale: Double, retained: [String: NativeMaterial]) async throws -> PreparedLayers {
     let size = CGSize(width: page.size.width, height: page.size.height)
     let paperFrame = try await preparedPaper(size: size, scale: scale)
     var result: [Layer] = [.image(paperFrame, CGRect(origin: .zero, size: size))]
+    var materials: [String: NativeMaterial] = [:]
     let graph = page.graphicGraph()
     let region = PageRect(x: 0, y: 0, width: page.size.width, height: page.size.height)
     for element in PageCompositionRenderer.elements(in: page, region: region, elementID: nil) {
@@ -639,6 +694,12 @@ final class PageTurnMaterialOwner {
       if !paintsBody, element.graphic?.label.isEmpty != false { continue }
       if element.graphic == nil, element.kind != .nativeText, let presentation {
         result.append(.element(agentElementSnapshotSource(element), presentation, cuts, frame)); continue
+      }
+      let nativeKey = NativeKey(source: agentElementSnapshotSource(element), layout: layout?.localLayout,
+        projection: layout?.projection, size: frame.size, bodySize: presentation?.bodySize,
+        transform: presentation?.transform, cuts: cuts, paintsBody: paintsBody, scale: scale)
+      if let previous = retained[element.id], previous.key == nativeKey {
+        materials[element.id] = previous; result.append(.image(previous.frame, frame)); continue
       }
       let appearance = try await NotebookElementErasureCache.Input(graphic: element.graphic,
         layout: layout, size: presentation?.bodySize ?? frame.size, erasures: cuts).prepared()
@@ -656,26 +717,42 @@ final class PageTurnMaterialOwner {
       let pixels = try await canvas.finishImage()
       let material = try await PageTurnFrame.compose(size: frame.size, scale: scale,
         images: [.init(image: pixels.image, frame: local)], retaining: [pixels])
+      materials[element.id] = .init(key: nativeKey, frame: material)
       result.append(.image(material, frame))
     }
-    return result
+    return .init(layers: result, native: materials)
   }
 
-  private static func preparedPaper(size: CGSize, scale: Double) async throws -> PageTurnFrame {
-    let key = PaperKey(width: size.width, height: size.height, scale: scale)
+  /// The trailing creation slot borrows precisely this grid, without the
+  /// neighbouring page's elements/ink or another full-page raster/upload.
+  static func preparedPaper(size: CGSize, scale: Double,
+    resources: SceneRenderResources = .shared,
+    priority: SceneAllocationPriority = .passive) async throws -> PageTurnFrame {
+    let key = PaperKey(resources: ObjectIdentifier(resources), width: size.width, height: size.height, scale: scale)
     paperFrames = paperFrames.filter { $0.value.frame != nil }
     if let frame = paperFrames[key]?.frame { return frame }
-    if let pending = paperPreparations[key] { return try await pending.value }
+    if let pending = paperPreparations[key] {
+      do { return try await pending.task.value }
+      catch SceneRenderError.resourceLimit where priority == .input && pending.priority == .passive {
+        // A real turn can join a speculative grid whose passive admission was
+        // refused. Promote that demand once; no availability polling/retry loop.
+        try Task.checkCancellation()
+        if paperPreparations[key]?.id == pending.id { paperPreparations[key] = nil }
+        return try await preparedPaper(size: size, scale: scale, resources: resources, priority: .input)
+      }
+    }
     guard paperPreparations.count < 8 else { throw SceneRenderError.resourceLimit }
     let task = Task { @MainActor in
-      let paper = try await SceneRasterCompositor.create(size: size, scale: scale, resources: .shared)
-      try await paper.drawView(GridPaperView(), size: size, in: CGRect(origin: .zero, size: size))
+      let paper = try await SceneRasterCompositor.create(size: size, scale: scale, resources: resources, priority: priority)
+      try await paper.drawPaper(size: size, in: CGRect(origin: .zero, size: size))
       let pixels = try await paper.finishImage()
       return try await PageTurnFrame.compose(size: size, scale: scale,
-        images: [.init(image: pixels.image, frame: CGRect(origin: .zero, size: size))], retaining: [pixels])
+        images: [.init(image: pixels.image, frame: CGRect(origin: .zero, size: size))], resources: resources,
+        priority: priority, retaining: [pixels])
     }
-    paperPreparations[key] = task
-    defer { paperPreparations[key] = nil }
+    let pending = PaperPreparation(priority: priority, task: task)
+    paperPreparations[key] = pending
+    defer { if paperPreparations[key]?.id == pending.id { paperPreparations[key] = nil } }
     let frame = try await task.value
     if paperFrames.count < 8 { paperFrames[key] = PaperReference(frame) }
     return frame

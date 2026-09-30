@@ -418,7 +418,7 @@ enum NotebookAttentionProjection {
     var pageFrame: CGRect? = nil
     var materialGraph: ((UUID)->NotebookGraphicGraph)? = nil
     var working: [SpatialElement] = []
-    let erasures: (SurfaceID) -> [String: [InkElementErasure]]
+    let erasures: (SurfaceID) -> InkElementErasureMap
     let appearance: (SurfaceID, String, NotebookGraphic?, NotebookGraphicLayout?, CGSize, [InkElementErasure]) -> NotebookElementAppearance?
   }
 
@@ -1006,7 +1006,7 @@ enum NotebookAttentionProjection {
 
   /// Paint wins over a hollow interior, then the smallest enclosing figure.
   /// The same pick serves tap, direct drag and the resulting shared reference.
-  static func pickElement<Element>(in elements: [Element], graph: NotebookGraphicGraph, erasures: [String: [InkElementErasure]] = [:],
+  static func pickElement<Element>(in elements: [Element], graph: NotebookGraphicGraph, erasures: InkElementErasureMap = [:],
     appearance: (String, NotebookGraphic?, NotebookGraphicLayout?, CGSize, [InkElementErasure]) -> NotebookElementAppearance? = { _,_,_,_,_ in nil }, scale: Double,
     viewport: SpatialPoint, pending: () -> Void = {}, presentation:(Element,NotebookElementPlacement) -> NotebookElementPresentation,
     project: (Element) -> (String, NotebookGraphic?, SpatialPoint)) -> Element? {

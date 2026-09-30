@@ -252,11 +252,11 @@ final class PageTurnSelectionTests: XCTestCase {
   }
 
   @MainActor
-  func testDocumentSourceReplacementRetainsHostsButRevokesTheirPendingCapture() async throws {
+  func testDocumentSourceReplacementWaitsForAcceptedTurnThenRebindsItsLanding() async throws {
     let controller = IPadPageTurnController(), documentID = UUID()
     let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
     let previous = scene.windows.first(where: \.isKeyWindow), window = UIWindow(windowScene: scene)
-    var source = "old-source", actual = 0, sourceReady = true
+    var source = "old-source", actual = 0
     var request: DocumentPageNavigationRequest?
     var readiness: [String: [Int: PageTurnReadiness]] = [:]
     var landings: [DocumentPageLanding] = []
@@ -266,7 +266,7 @@ final class PageTurnSelectionTests: XCTestCase {
         selectedIndex: actual, navigationIsEnabled: true, pageIsInteractive: true,
         canBeginNavigation: { true }, page: { index, _, ready in
           readiness[revision, default: [:]][index] = ready
-          ready.installTestFrame(); ready(index != 0 || sourceReady)
+          ready.installTestFrame(); ready(true)
           return AnyView(index == 0 ? Color.blue : Color.red)
         }, onCommit: { _, _ in XCTFail("A document landing uses its typed receipt") },
         onTransitioningChange: { _ in },
@@ -276,11 +276,10 @@ final class PageTurnSelectionTests: XCTestCase {
           if request?.id == receipt.requestID { request = nil }
         }, status: { _ in }))
     }
-    configure(); window.rootViewController = controller; window.makeKeyAndVisible()
-    defer { controller.sheetController.cancelMotion(); window.isHidden = true; window.rootViewController = nil; previous?.makeKey() }
-    window.layoutIfNeeded()
-    let native = controller.sheetController, original = try XCTUnwrap(controller.visiblePageIdentity)
-    let hosts = controller.cachedPageIdentities, acquireFrame = native.acquireSheetFrame
+    configure(); window.rootViewController = controller; window.makeKeyAndVisible(); window.layoutIfNeeded()
+    defer { controller.uninstall(); window.isHidden = true; window.rootViewController = nil; previous?.makeKey() }
+    let native = controller.sheetController, hosts = controller.cachedPageIdentities
+    let acquireFrame = native.acquireSheetFrame
     var captureRequests = 0, captures = 0
     var pendingCapture: CheckedContinuation<Void, Never>?
     defer { pendingCapture?.resume() }
@@ -295,39 +294,30 @@ final class PageTurnSelectionTests: XCTestCase {
     native.onFramesAcquired = { _ in captures += 1 }
     request = .init(id: UUID(), documentID: documentID, sourceRevision: source, pageIndex: 1)
     configure()
-    let refused = ContinuousClock.now + .seconds(2)
-    while captureRequests == 0, ContinuousClock.now < refused { try await Task.sleep(for: .milliseconds(2)) }
-    XCTAssertEqual(captureRequests, 1, "Exercise an admitted motion awaiting its actual source capture")
-    XCTAssertNotNil(native.settlingPage)
-    XCTAssertEqual(captures, 0)
-    let oldReceipt = try XCTUnwrap(readiness[source]?[0])
-    sourceReady = false
-    oldReceipt(false)
-
-    source = "new-source"; request = nil
-    configure()
-    XCTAssertEqual(controller.cachedPageIdentities, hosts, "Editing the document retains its native hosts")
-    XCTAssertNil(native.settlingPage, "The old source's motion must end before new readiness can arrive")
-    let retiredCapture = pendingCapture; pendingCapture = nil; retiredCapture?.resume()
-    oldReceipt(true)
-    XCTAssertFalse(controller.currentPagePreparation.isReady, "A retained host does not authorize an old source receipt")
-    sourceReady = true
-    try XCTUnwrap(readiness[source]?[0])(true)
-    await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-      DispatchQueue.main.async { continuation.resume() }
+    let accepted = ContinuousClock.now + .seconds(2)
+    while pendingCapture == nil, ContinuousClock.now < accepted { try await Task.sleep(for: .milliseconds(2)) }
+    XCTAssertNotNil(pendingCapture)
+    let target = try XCTUnwrap(native.settlingPage), oldReceipt = try XCTUnwrap(readiness[source]?[1])
+    source = "intermediate-source"; request = nil; configure()
+    source = "latest-source"; configure()
+    XCTAssertEqual(controller.cachedPageIdentities, hosts)
+    XCTAssertTrue(native.settlingPage === target, "A source successor cannot revoke an admitted physical pair")
+    XCTAssertNil(readiness[source], "The moving pair still renders its retained source and layout")
+    let release = pendingCapture; pendingCapture = nil; release?.resume()
+    let completed = ContinuousClock.now + .seconds(3)
+    while !landings.contains(where: { $0.sourceRevision == source && $0.pageIndex == 1 }), ContinuousClock.now < completed {
+      try await Task.sleep(for: .milliseconds(2))
     }
-    XCTAssertEqual(captures, 0, "New-source readiness cannot revive the retired capture")
-    XCTAssertEqual(controller.visiblePageIdentity, original)
-    XCTAssertEqual(controller.displayedIndex, 0); XCTAssertEqual(actual, 0)
-    XCTAssertFalse(landings.contains { $0.pageIndex == 1 })
-
-    request = .init(id: UUID(), documentID: documentID, sourceRevision: source, pageIndex: 1)
-    configure()
-    let completed = ContinuousClock.now + .seconds(2)
-    while actual != 1, ContinuousClock.now < completed { try await Task.sleep(for: .milliseconds(2)) }
     XCTAssertEqual(captures, 1)
     XCTAssertEqual(controller.displayedIndex, 1); XCTAssertEqual(actual, 1)
-    XCTAssertEqual(landings.filter { $0.pageIndex == 1 }.map(\.sourceRevision), [source])
+    XCTAssertTrue(landings.contains { $0.sourceRevision == "old-source" && $0.pageIndex == 1 })
+    XCTAssertNil(readiness["intermediate-source"], "Only the latest successor is installed")
+    XCTAssertEqual(controller.cachedPageIdentities, hosts)
+    let current = try XCTUnwrap(readiness[source]?[1])
+    XCTAssertFalse(current === oldReceipt); XCTAssertTrue(oldReceipt.isRetired)
+    current(false, capturable: false, paperReady: false); oldReceipt(true)
+    XCTAssertFalse(controller.currentPagePreparation.isReady, "The old cut cannot authorize its replacement")
+    current(true)
   }
 
   @MainActor
@@ -585,6 +575,40 @@ final class PageTurnSelectionTests: XCTestCase {
     XCTAssertEqual(commits.map(\.0), [1])
     XCTAssertEqual(commits.map(\.1), ["after"])
     XCTAssertLessThanOrEqual(controller.cachedPageIdentities.count, 4)
+  }
+
+  @MainActor
+  func testColdInitialCutDefersOnlyUndemandedNeighbors() throws {
+    let controller = IPadPageTurnController(), commands = NotebookPageNavigation()
+    var callbacks: [Int: PageTurnReadiness] = [:]
+    func configure(owner: UUID) {
+      controller.update(ownerID: owner, sequenceRevision: "initial-cut", pageCount: 6, selectedIndex: 2,
+        navigationIsEnabled: true, pageIsInteractive: true, canBeginNavigation: { true },
+        page: { index, _, ready in
+          callbacks[index] = ready; ready.installTestFrame()
+          return AnyView(Text("Page \(index)"))
+        }, onCommit: { _, _ in }, onTransitioningChange: { _ in }, notebookNavigation: commands)
+    }
+    let firstOwner = UUID()
+    configure(owner: firstOwner); controller.loadViewIfNeeded()
+    XCTAssertEqual(Set(controller.cachedPageIdentities.keys), [2],
+      "Cold current content must install before unrelated neighbours start native layout")
+    try XCTUnwrap(callbacks[2])(true, capturable: false)
+    XCTAssertEqual(Set(controller.cachedPageIdentities.keys), [1, 2, 3],
+      "An installed visible status cut releases speculation without awaiting author interactivity or capture")
+    let installed = controller.cachedPageIdentities
+    try XCTUnwrap(callbacks[2])(false)
+    configure(owner: firstOwner)
+    XCTAssertEqual(controller.cachedPageIdentities, installed,
+      "A local readiness change must preserve mounted paper for reverse navigation")
+
+    let nextOwner = UUID()
+    callbacks.removeAll(); configure(owner: nextOwner)
+    XCTAssertEqual(Set(controller.cachedPageIdentities.keys), [2])
+    XCTAssertTrue(commands.send(.step(1), ownerID: nextOwner, source: "initial-cut"))
+    XCTAssertEqual(Set(controller.cachedPageIdentities.keys), [2, 3],
+      "Explicit navigation prepares its target immediately while the source's initial cut is still cold")
+    controller.uninstall()
   }
 
   @MainActor

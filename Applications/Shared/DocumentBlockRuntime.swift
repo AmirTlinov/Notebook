@@ -27,6 +27,7 @@ final class DocumentBlockRuntime: NSObject, WKScriptMessageHandler, WKNavigation
   private var initialStateEncoding: NotebookProgramStateEncoding?
   private var startTask: Task<Void, Never>?
   private var startID: UUID?
+  var pendingAdmissionID: UUID? { webView == nil ? startID : nil }
   private var requestedPriority: WebPriority?
   private var refusedAdmission: UInt64?
   private var readinessDeadline: Task<Void, Never>?
@@ -120,20 +121,25 @@ final class DocumentBlockRuntime: NSObject, WKScriptMessageHandler, WKNavigation
     refusedAdmission = nil
     if startTask != nil {
       guard requestedPriority != priority else { return }
-      startTask?.cancel(); startTask = nil
+      requestedPriority = priority
+      if let startID { resources.updatePendingWebPriority(startID, priority: priority) }
+      return
     }
     let request = UUID(); startID = request; requestedPriority = priority
     observe("program_admission_requested")
     startTask = Task { @MainActor [weak self] in
       guard let self else { return }
       do {
-        let acquired = try await resources.acquireDocumentProgramSurface(priority: priority,
-          documentID: documentID, blockID: program.id)
-        guard !stopped, !Task.isCancelled, startID == request else { acquired.release(); return }
-        lease = acquired
-        stateTransfer = NotebookProgramStateTransfer(resources: resources)
-        initialStateEncoding = try await NotebookProgramStateEncoding.prepare(value, resources: resources, forHTML: true)
+        guard let store = programStore else { throw SceneRenderError.snapshotPending("program_store") }
+        let package = program.package
+        let encoding = try await NotebookProgramStateEncoding.prepare(value, resources: resources, forHTML: true)
         guard !stopped, !Task.isCancelled, startID == request else { return }
+        let acquired = try await resources.acquireDocumentProgramSurface(priority: requestedPriority ?? priority,
+          documentID: documentID, blockID: program.id, requestID: request)
+        guard !stopped, !Task.isCancelled, startID == request else { acquired.release(); return }
+        lease = acquired; acquired.updatePriority(requestedPriority ?? priority)
+        stateTransfer = NotebookProgramStateTransfer(resources: resources)
+        initialStateEncoding = encoding
         observe("program_admitted")
         let content = WKUserContentController(); content.add(self, name: "documentProgram")
         let configuration = WKWebViewConfiguration()
@@ -146,10 +152,9 @@ final class DocumentBlockRuntime: NSObject, WKScriptMessageHandler, WKNavigation
         web.scrollView.pinchGestureRecognizer?.isEnabled = false; web.scrollView.panGestureRecognizer.isEnabled = false
         web.navigationDelegate = self; webView = web; onMount(web, size)
         observe("program_mounted")
-        guard let store = programStore else { throw SceneRenderError.snapshotPending("program_store") }
-        let hash = program.programPackage
-        let package = try await Task.detached(priority: .userInitiated) { try store.readProgramPackage(hash) }.value
-        guard !stopped, !Task.isCancelled, startID == request, webView === web else { return }
+        // Only native construction holds the shared short allowance. Source,
+        // package and initial state were accepted before entering this section.
+        Task { @MainActor [weak acquired] in acquired?.finishConstruction() }
         let url = try programAssets.register(store: store, package: package) { try html(package: package, resourceOrigin: $0) }
         packageURL = url; initialNavigationPending = true
         web.load(URLRequest(url: url))

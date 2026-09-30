@@ -215,6 +215,11 @@ final class SpatialInkTilePoolTests: XCTestCase {
     let fixture = try await Fixture.make()
     addTeardownBlock { await fixture.close() }
     let canvas = fixture.canvas
+    XCTAssertEqual(canvas.spatialTilePoolIDs.count, 6)
+    XCTAssertGreaterThan(canvas.spatialAcceptedAllocatedBytes, 0)
+    XCTAssertGreaterThanOrEqual(canvas.spatialDrawableAccountedBytes,
+      canvas.spatialDrawableByteCeiling * 2 + canvas.spatialAcceptedAllocatedBytes + canvas.spatialMultisampleAllocatedBytes,
+      "The admitted tile owner covers both drawable slots and the actual allocated accepted/MSAA textures")
     // Establish cache signatures after the private initial presentation.
     canvas.project(camera: .init(scale: 1), viewport: .init(x: 512, y: 768))
     try await Task.sleep(for: .milliseconds(150))
@@ -234,11 +239,17 @@ final class SpatialInkTilePoolTests: XCTestCase {
       canvas.submittedTileCount - submitted, canvas.spatialTilePoolIDs.count,
       "A local contact cannot redraw all six retained tiles")
     XCTAssertNotEqual(try pixels(canvas), before)
-    let painted = canvas.submittedTileCount
+    let painted = canvas.submittedTileCount,acceptedPasses=canvas.spatialAcceptedPassCount,paintVisits=canvas.acceptedPaintBatchVisits
+    stroke.replaceMeasuredTail(from:stroke.measured.count,with:[point(112,82)])
+    canvas.displayActiveStroke(stroke)
+    try await Task.sleep(for:.milliseconds(80))
+    XCTAssertEqual(canvas.spatialAcceptedPassCount,acceptedPasses,"A new contact sample must reuse the accepted tile")
+    XCTAssertEqual(canvas.acceptedPaintBatchVisits,paintVisits,"Active pen movement must not encode historical tile contributors")
+    let beforeCancel=canvas.submittedTileCount
     canvas.clearActiveAction()
     try await Task.sleep(for: .milliseconds(150))
     XCTAssertGreaterThan(canvas.submittedTileCount, painted)
-    XCTAssertLessThan(canvas.submittedTileCount - painted, canvas.spatialTilePoolIDs.count)
+    XCTAssertLessThan(canvas.submittedTileCount - beforeCancel, canvas.spatialTilePoolIDs.count)
     XCTAssertEqual(
       try pixels(canvas), before,
       "Removed content invalidates its old tile even without a new contributor")

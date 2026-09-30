@@ -204,8 +204,12 @@ final class IPadPageTurnController: UIViewController {
     let target: IPadIndexedPageController
     let sourceID: UUID?, targetID: UUID?
     let gesture: Bool
+    let documentSource: DocumentTurnSourceLease?
     let preparation: PageTurnActivity.PreparationDemand?
-    var frames: [UUID: (revision: UInt64, frame: PageTurnFrame)] = [:]
+    var frames: [UUID: PageTurnFrame] = [:]
+    #if DEBUG
+    var reportedEndpointWait = false
+    #endif
     var completion: ((Bool) -> Void)?
     private(set) var outcome: PageTurnOutcome?
     func complete(_ outcome: PageTurnOutcome) {
@@ -216,14 +220,55 @@ final class IPadPageTurnController: UIViewController {
     }
     init(ownerID: UUID?, source: IPadIndexedPageController,
       target: IPadIndexedPageController, gesture: Bool,
-      preparation: PageTurnActivity.PreparationDemand?, completion: ((Bool) -> Void)?) {
+      documentSource: DocumentTurnSourceLease?, preparation: PageTurnActivity.PreparationDemand?, completion: ((Bool) -> Void)?) {
       self.ownerID = ownerID; self.source = source; self.target = target
       sourceID = source.pageID; targetID = target.pageID; self.gesture = gesture
-      self.preparation = preparation; self.completion = completion
+      self.documentSource = documentSource; self.preparation = preparation; self.completion = completion
     }
     func contains(_ host: IPadIndexedPageController) -> Bool { source === host || target === host }
   }
   private var operation: Operation?
+  private struct DeferredDocumentUpdate {
+    let revision: String
+    let callbacks: DocumentPageNavigationCallbacks
+    let resolve: (DocumentTurnSourceLease, Int) async throws -> Int
+    let apply: (Int) -> Void
+  }
+  private var deferredDocument: DeferredDocumentUpdate?
+  private var documentAdoption: Task<Void, Never>?
+  private var documentAdoptionID: UUID?
+  private var terminalDocumentSource: DocumentTurnSourceLease?
+  private var terminalDocumentPage = 0
+  private var documentAdoptionFailure: PageTurnPreparationFailure?
+  private var isAdoptingDocumentSource: Bool { deferredDocument != nil && operation == nil }
+
+  private func discardDeferredDocument() {
+    documentAdoption?.cancel(); documentAdoption = nil; documentAdoptionID = nil
+    deferredDocument = nil; terminalDocumentSource = nil; documentAdoptionFailure = nil
+  }
+  private func adoptDeferredDocument() {
+    guard !isRetired, operation == nil, documentAdoptionID == nil, let pending = deferredDocument else { return }
+    let id = UUID(), owner = ownerID, source = terminalDocumentSource, page = terminalDocumentPage
+    documentAdoptionID = id; documentAdoptionFailure = nil
+    refreshControllerState(); publishDocumentStatus(); preparationSourceStorage?.changed()
+    guard documentAdoptionID == id, deferredDocument?.revision == pending.revision else { return }
+    documentAdoption = Task { @MainActor [weak self] in
+      do {
+        let landing: Int
+        if let source { landing = try await pending.resolve(source, page) } else { landing = page }
+        try Task.checkCancellation()
+        guard let self, !isRetired, ownerID == owner, documentAdoptionID == id,
+          operation == nil, let latest = deferredDocument, latest.revision == pending.revision else { return }
+        documentAdoption = nil; documentAdoptionID = nil; deferredDocument = nil; terminalDocumentSource = nil
+        latest.apply(landing)
+      } catch {
+        guard !Task.isCancelled, let self, !isRetired, documentAdoptionID == id else { return }
+        documentAdoption = nil; documentAdoptionID = nil
+        documentAdoptionFailure = .init(message: "Не удалось подготовить обновлённый документ") { [weak self] in self?.adoptDeferredDocument() }
+        publishDocumentStatus(); preparationSourceStorage?.changed()
+      }
+    }
+  }
   private var transitionRevision: UInt64 = 0
   private var transitionNotificationRevision: UInt64 = 0
   private var transitionNotificationTask: Task<Void, Never>?
@@ -250,6 +295,7 @@ final class IPadPageTurnController: UIViewController {
   private var lastDocumentLanding: String?
 
   isolated deinit {
+    documentAdoption?.cancel()
     if let operation {
       sheetController.resolveMotion(operation.id, completed: false, presented: false)
       operation.complete(.cancelled)
@@ -265,6 +311,7 @@ final class IPadPageTurnController: UIViewController {
   func uninstall() {
     guard !isRetired else { return }
     isRetired = true; transitionRevision &+= 1
+    discardDeferredDocument()
     inputGate?.endNavigation(source: navigationClaimID)
     requestedIndex = nil; coldGestureTarget = nil; anticipatedIndex = nil
     transitionNotificationTask?.cancel(); transitionNotificationTask = nil
@@ -342,16 +389,24 @@ final class IPadPageTurnController: UIViewController {
         let operation = self.operation, operation.contains(sheet), let readiness = sheet.readiness else {
         throw PageTurnMaterialUnavailable.changed
       }
-      let revision = readiness.materialRevision
       let frame = try await readiness.acquireFrame(priority: .input)
       guard self.operation === operation, sheet.readiness === readiness,
-        !readiness.isRetired, readiness.materialRevision == revision else { throw PageTurnMaterialUnavailable.changed }
-      operation.frames[sheet.hostID] = (revision, frame)
+        !readiness.isRetired else {
+        NotebookNavigationObservation.onPageMaterialPreparation?("acquire_rejected_controller_owner", sheet.hostID, sheet.pageID, frame.id, nil, CACurrentMediaTime())
+        throw PageTurnMaterialUnavailable.changed
+      }
+      operation.frames[sheet.hostID] = frame
       return frame
     }
     sheetController.isSheetPresented = { [weak self] sheet in
       guard let self, let sheet = sheet as? IPadIndexedPageController else { return false }
-      return controllers[sheet.pageIndex] === sheet && pageIsPresented(at: sheet.pageIndex)
+      let ready = controllers[sheet.pageIndex] === sheet && pageIsPresented(at: sheet.pageIndex)
+      #if DEBUG
+      if !ready, operation?.reportedEndpointWait == false {
+        operation?.reportedEndpointWait = true; updatePageDiagnostic("endpoint_wait")
+      }
+      #endif
+      return ready
     }
     sheetController.isSheetReadyForCapture = { [weak self] sheet in
       guard let self, let sheet = sheet as? IPadIndexedPageController else { return false }
@@ -361,6 +416,9 @@ final class IPadPageTurnController: UIViewController {
       guard let self, let sheet = sheet as? IPadIndexedPageController,
         controllers[sheet.pageIndex] === sheet else { return }
       pageTurnActivity.stagePresentation(at: sheet.pageIndex)
+      #if DEBUG
+      updatePageDiagnostic("staged")
+      #endif
     }
     sheetController.onFailure = { [weak self] error in
       guard let self, let target = self.anticipatedIndex else { return }
@@ -379,7 +437,7 @@ final class IPadPageTurnController: UIViewController {
     }
     navigationAdmission.canBeginNavigation = { [weak self] in
       guard let self else { return false }
-      return navigationIsEnabled && canBeginNavigation()
+      return navigationIsEnabled && !isAdoptingDocumentSource && canBeginNavigation()
     }
     navigationAdmission.prepareDirection = { [weak self] direction in
       guard let self else { return true }
@@ -469,9 +527,35 @@ final class IPadPageTurnController: UIViewController {
     pageIdentities: [Int: UUID] = [:]
   ) {
     guard !isRetired else { return }
+    let ownerChanged = self.ownerID != ownerID
+    if ownerChanged || (self.sequenceRevision == sequenceRevision && deferredDocument != nil) { discardDeferredDocument() }
+    if !ownerChanged, let documentNavigation, self.sequenceRevision != sequenceRevision,
+      operation != nil || deferredDocument != nil {
+      // The admitted operation retains its paper, layout, hosts and render
+      // closure. A source successor is adopted only after its terminal pose.
+      let replaced = deferredDocument?.revision != sequenceRevision
+      deferredDocument = .init(revision: sequenceRevision, callbacks: documentNavigation, resolve: documentNavigation.resolveSourceLanding,
+        apply: { [weak self] landing in
+          self?.update(ownerID: ownerID, sequenceRevision: sequenceRevision, pageCount: max(pageCount, landing + 1),
+            selectedIndex: landing, allowsTrailingPageCreation: allowsTrailingPageCreation,
+            navigationIsEnabled: navigationIsEnabled, pageIsInteractive: pageIsInteractive,
+            canBeginNavigation: canBeginNavigation, page: page, onCommit: onCommit,
+            onTransitioningChange: onTransitioningChange, canonicalDocumentLayout: canonicalDocumentLayout,
+            documentSelection: documentSelection, documentNavigation: documentNavigation,
+            notebookNavigation: notebookNavigation, onWindowChange: onWindowChange, inputGate: inputGate,
+            pageIdentities: pageIdentities)
+        })
+      self.navigationIsEnabled = navigationIsEnabled; self.pageIsInteractive = pageIsInteractive
+      self.canBeginNavigation = canBeginNavigation
+      if replaced {
+        documentAdoption?.cancel(); documentAdoption = nil; documentAdoptionID = nil; documentAdoptionFailure = nil
+      }
+      refreshControllerState()
+      if operation == nil { adoptDeferredDocument() }
+      return
+    }
     let previousResolvedTarget = resolvedDocumentTarget
     self.canonicalDocumentLayout = canonicalDocumentLayout
-    let ownerChanged = self.ownerID != ownerID
     let sequenceChanged = self.sequenceRevision != sequenceRevision
     let documentSourceChanged = !ownerChanged && sequenceChanged && documentNavigation != nil
     if !ownerChanged, (sequenceChanged || self.pageIdentities != pageIdentities), documentNavigation == nil {
@@ -596,7 +680,7 @@ final class IPadPageTurnController: UIViewController {
 
   private func beginOperation(source: UIViewController, target: UIViewController,
     gesture: Bool, completion: ((Bool) -> Void)?) -> UUID? {
-    guard operation == nil, let source = source as? IPadIndexedPageController,
+    guard operation == nil, !isAdoptingDocumentSource, let source = source as? IPadIndexedPageController,
       let target = target as? IPadIndexedPageController,
       controllers[source.pageIndex] === source, controllers[target.pageIndex] === target,
       claimNavigation(contacts: gesture ? navigationAdmission.contactIDs : []) else { return nil }
@@ -606,7 +690,7 @@ final class IPadPageTurnController: UIViewController {
       retainNeededControllers(); setTransitioning(true); refreshControllerState()
     }
     let next = Operation(ownerID: ownerID, source: source, target: target,
-      gesture: gesture, preparation: pageTurnActivity.preparationDemand, completion: completion)
+      gesture: gesture, documentSource: documentNavigation?.retainSource(), preparation: pageTurnActivity.preparationDemand, completion: completion)
     operation = next
     return next.id
   }
@@ -615,14 +699,18 @@ final class IPadPageTurnController: UIViewController {
     guard let current = operation, current.id == id else { return }
     // Consume terminal ownership BEFORE callbacks: they may synchronously
     // replace an order, admit the next gesture or dismantle this controller.
-    operation = nil
-    inputGate?.endNavigation(source: navigationClaimID)
     let landingIsCurrent = current.ownerID == ownerID
       && controllers[current.source.pageIndex] === current.source
       && controllers[current.target.pageIndex] === current.target
       && current.source.pageID == current.sourceID && current.target.pageID == current.targetID
     let terminal = outcome == .completed && !landingIsCurrent ? .superseded : outcome
     let landed = terminal == .completed
+    operation = nil
+    if deferredDocument != nil {
+      terminalDocumentSource = current.documentSource
+      terminalDocumentPage = landed ? current.target.pageIndex : current.source.pageIndex
+    }
+    inputGate?.endNavigation(source: navigationClaimID)
     sheetController.resolveMotion(id, completed: landed, presented: presented && landingIsCurrent)
     if !notify {
       coldGestureIsTurning = false
@@ -635,13 +723,17 @@ final class IPadPageTurnController: UIViewController {
       sheetController.didTurn(current.source, landed)
     }
     current.complete(terminal)
+    #if DEBUG
+    updatePageDiagnostic("terminal_\(terminal)")
+    #endif
+    if deferredDocument != nil { adoptDeferredDocument() }
   }
 
   func sheetController(
     _ sheetController: IPadSheetCurlController,
     before viewController: UIViewController
   ) -> UIViewController? {
-    guard navigationIsEnabled,
+    guard navigationIsEnabled, !isAdoptingDocumentSource,
       let current = viewController as? IPadIndexedPageController,
       controllers[current.pageIndex] === current
     else { return nil }
@@ -652,7 +744,7 @@ final class IPadPageTurnController: UIViewController {
     _ sheetController: IPadSheetCurlController,
     after viewController: UIViewController
   ) -> UIViewController? {
-    guard navigationIsEnabled,
+    guard navigationIsEnabled, !isAdoptingDocumentSource,
       let current = viewController as? IPadIndexedPageController,
       controllers[current.pageIndex] === current
     else { return nil }
@@ -849,10 +941,11 @@ final class IPadPageTurnController: UIViewController {
       existingIndices: Set(controllers.keys),
       turningIndex: canPrepareFollowingStep ? anticipatedIndex : nil
     )
-    if let target, !pageIsReadyForNavigation(to: target) {
-      // A cold demanded sheet owns preparation before new speculation. Keep
-      // existing paper for reversals, but do not mount another neighbour whose
-      // layout would delay the target's incoming pixels on the UI actor.
+    let awaitingInitialCut = target == nil && pagePreparations[displayedIndex]?.initialContentInstalled != true
+    if awaitingInitialCut || target.map({ !pageIsReadyForNavigation(to: $0) }) == true {
+      // First install and an explicit cold target own preparation before new
+      // speculation. Existing paper stays available for reversals; a demanded
+      // target starts immediately even before the source's first visible cut.
       required = required.filter { $0 == displayedIndex || $0 == target || controllers[$0] != nil }
     }
     onWindowChange(required, target, sequenceRevision, documentControllerID)
@@ -917,7 +1010,7 @@ final class IPadPageTurnController: UIViewController {
       let isCurrent = index == displayedIndex
       controller.view.accessibilityElementsHidden = !isCurrent
       controller.view.isUserInteractionEnabled =
-        isCurrent && pageIsInteractive && !isTransitioning
+        isCurrent && pageIsInteractive && !isTransitioning && !isAdoptingDocumentSource
     }
   }
 
@@ -971,7 +1064,11 @@ final class IPadPageTurnController: UIViewController {
   private func setPage(state: PageTurnReadiness.State, at index: Int, hostID: UUID) {
     guard controllers[index]?.hostID == hostID else { return }
     guard pagePreparations[index]?.readiness != state else { return }
+    let installedInitialCut = state.presented && pagePreparations[index]?.initialContentInstalled != true
     pagePreparations[index, default: .init()].readiness = state
+    #if DEBUG
+    updatePageDiagnostic("readiness_\(index)")
+    #endif
     if state.presented { pagePreparations[index]?.initialContentInstalled = true }
     if index == displayedIndex {
       pageTurnActivity.prioritizeRasters(displayed: displayedIndex,
@@ -991,13 +1088,16 @@ final class IPadPageTurnController: UIViewController {
     publishDocumentStatus()
     beginPreparedColdTurn()
     runPendingExternalSelection()
+    // A mounted status/error cut is a real visible result too. Waiting for
+    // author interactivity or capturability here would starve its neighbours.
+    if installedInitialCut, index == displayedIndex { retainNeededControllers() }
   }
 
   private func beginPreparedColdTurn() {
     guard let target = coldGestureTarget, target != displayedIndex,
       pageIsCapturable(at: target), pageIsCapturable(at: displayedIndex),
       let controller = controllers[target],
-      !isTransitioning, !isUpdatingContents, navigationIsEnabled, canBeginNavigation() else { return }
+      !isTransitioning, !isUpdatingContents, !isAdoptingDocumentSource, navigationIsEnabled, canBeginNavigation() else { return }
     coldGestureIsTurning = sheetController.beginInteractiveTurn(
       direction: target > displayedIndex ? .forward : .reverse, target: controller)
     if coldGestureIsTurning { sheetController.updateInteractiveTurn(translation: coldGestureTranslation) }
@@ -1073,7 +1173,7 @@ final class IPadPageTurnController: UIViewController {
     // Explicit commands arrive after their caller's input fence. The gesture
     // predicate rejects native buttons and zoomed paper; it cannot govern the
     // very arrow that requested navigation or drop taps during a previous curl.
-    guard navigationIsEnabled else { return false }
+    guard navigationIsEnabled, !isAdoptingDocumentSource else { return false }
     switch command {
     case .cancel:
       requestedIndex = nil; requestIsStep = false; coldGestureTarget = nil
@@ -1141,7 +1241,7 @@ final class IPadPageTurnController: UIViewController {
   }
 
   private func runPendingExternalSelection() {
-    guard !isTransitioning, !isUpdatingContents, coldGestureTarget == nil else { return }
+    guard !isTransitioning, !isUpdatingContents, !isAdoptingDocumentSource, coldGestureTarget == nil else { return }
     let target: Int
     if documentNavigation != nil {
       guard let requested = requestedIndex ?? resolvedDocumentTarget else { return }
@@ -1193,13 +1293,25 @@ final class IPadPageTurnController: UIViewController {
   private func publishDocumentStatus() {
     publishNotebookStatus()
     guard let callbacks = documentNavigation, let ownerID else { return }
+    if isAdoptingDocumentSource, let pending = deferredDocument {
+      pending.callbacks.bind(documentControllerID, ownerID, pending.revision)
+      let phase: DocumentPageNavigationStatus.Phase = documentAdoptionFailure == nil ? .preparing : .failed
+      let key = DocumentStatusKey(source: pending.revision, request: nil, target: terminalDocumentPage,
+        phase: phase, failure: documentAdoptionFailure?.id)
+      guard lastDocumentStatus != key else { return }
+      lastDocumentStatus = key; documentStatusRevision &+= 1
+      pending.callbacks.status(.init(controllerID: documentControllerID, documentID: ownerID,
+        sourceRevision: pending.revision, revision: documentStatusRevision, requestID: nil,
+        target: terminalDocumentPage, phase: phase, failure: documentAdoptionFailure))
+      return
+    }
     let request = documentSelection
     let target = request.flatMap { request -> Int? in
       let target = resolvedDocumentTarget ?? request.pageIndex
       return resolvedDocumentTarget != nil && target == displayedIndex
         && !isTransitioning && pageIsPresented(at: target) ? nil : target
     } ?? (!pageIsPresented(at: displayedIndex) && presentationFailure(at: displayedIndex) != nil ? displayedIndex : nil)
-    let failure = target.flatMap { navigationPreparationFailure(to: $0) }
+    let failure = documentAdoptionFailure ?? target.flatMap { navigationPreparationFailure(to: $0) }
     let phase: DocumentPageNavigationStatus.Phase? = target == nil ? nil
       : failure != nil ? .failed : isTransitioning ? .transitioning : .preparing
     let key = DocumentStatusKey(source: sequenceRevision, request: request?.id,
@@ -1310,6 +1422,7 @@ final class IPadPageTurnController: UIViewController {
   }
 
   var currentPagePreparation: PageTurnPreparationState {
+    if isAdoptingDocumentSource { return documentAdoptionFailure.map { .failed($0) } ?? .waiting }
     // Opening exposes the installed writable paper. A neighbouring program's
     // boot or failure cannot hold that paper behind its closed cover. Complete
     // content and an immutable curl cut retain their independent requirements.
@@ -1321,6 +1434,14 @@ final class IPadPageTurnController: UIViewController {
   var presentedPageIndices: Set<Int> { Set(pagePreparations.compactMap { $0.value.readiness.presented ? $0.key : nil }) }
 
   #if DEBUG
+  private func updatePageDiagnostic(_ event: String) {
+    guard NotebookNavigationObservation.pageTurnDiagnosticsEnabled, isViewLoaded else { return }
+    let indices = Set([displayedIndex, operation?.target.pageIndex].compactMap { $0 })
+    let states = indices.sorted().map { index in
+      "\(index):\(String(describing: controllers[index]?.readiness?.state));entry=\(String(describing: controllers[index]?.readiness?.notebookPageSource?.sourceVersion.elements));\(controllers[index]?.readiness?.presentationDiagnostic?() ?? "no source")"
+    }
+    view.accessibilityValue = "\(event); \(navigationStateDescription); staged=\(String(describing: sheetController.diagnosticStagedSheet)); \(states.joined(separator: " | "))"
+  }
   var navigationStateDescription: String {
     "shown=\(displayedIndex),selected=\(selectedIndex),ack=\(selection.awaitsLocalAcknowledgement),pending=\(String(describing:requestedIndex)),step=\(requestIsStep),anticipated=\(String(describing:anticipatedIndex)),turning=\(isTransitioning),updating=\(isUpdatingContents),enabled=\(navigationIsEnabled)"
   }

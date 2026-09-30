@@ -49,7 +49,7 @@ final class DocumentProgramOwnerTests: XCTestCase {
         onStateCheckpoint: { id, value, source, basis in
           checkpointAttempts += 1
           if refusesCheckpoint { throw SceneRenderError.snapshotPending("geometry_writer_unavailable") }
-          guard source.sourceBasis == program.sourceBasis, state.records.first { $0.id == id }?.valueVersion == basis else { return nil }
+          guard source.sourceBasis == program.sourceBasis, state.records.first(where: { $0.id == id })?.valueVersion == basis else { return nil }
           _ = state.commit(instanceID: id, value: value, actor: actor); try store.saveDocumentState(state)
           return state.records.first { $0.id == id }?.valueVersion
         }, programStore: store)
@@ -727,9 +727,13 @@ final class DocumentProgramOwnerTests: XCTestCase {
     XCTAssertFalse(fixture.ready[0] == true)
     XCTAssertFalse(fixture.presents(.paper))
     XCTAssertFalse(renderer.nativeInputIsReady(in: host))
-    let prepared = try await fixture.turnFrame(in: 0, priority: .input)
-    XCTAssertGreaterThan(prepared.logicalSize.width, 0,
-      "The prepared canonical cut does not require the scene to have installed its new rectangle")
+    XCTAssertNotNil(renderer.installedPaper, "Native source preparation does not wait for its host rectangle")
+    do {
+      _ = try await fixture.turnFrame(in: 0, priority: .input)
+      XCTFail("An actual turn must not capture paper projected into a different physical rectangle")
+    } catch {
+      XCTAssertEqual(error as? SceneRenderError, .snapshotPending("document_installed_slots"))
+    }
     host.frame.size.height = host.bounds.width * paper.surfaceHeight / paper.surfaceWidth
     host.setNeedsLayout(); host.layoutIfNeeded()
     try await wait(message: { fixture.diagnostics }) {
@@ -738,6 +742,8 @@ final class DocumentProgramOwnerTests: XCTestCase {
     }
     XCTAssertTrue(fixture.paper(in: 0) === web, "Geometry installation preserves the accepted native runtime")
     XCTAssertTrue(renderer.payload?.source === source)
+    let prepared = try await fixture.turnFrame(in: 0, priority: .input)
+    XCTAssertGreaterThan(prepared.logicalSize.width, 0)
     XCTAssertEqual(source.measurementCount, 1)
     XCTAssertEqual(source.compiledPageCount, 1)
   }
@@ -773,25 +779,94 @@ final class DocumentProgramOwnerTests: XCTestCase {
     let document = DocumentTestFiles.document(contents: [.tex(id: "body", source: original)])
     let fixture = try ProgramFixture(document: document)
     defer { fixture.close() }
+    let owner = DocumentPagePresentationOwner.shared(documentID: document.id, resources: fixture.resources)
+    var materialEvents: [String] = []
+    XCTAssertNil(NotebookNavigationObservation.onPageMaterialPreparation)
+    NotebookNavigationObservation.onPageMaterialPreparation = { stage, entry, _, frame, operation, time in
+      guard materialEvents.count < 40 else { return }
+      materialEvents.append("\(time) \(stage) entry=\(entry) frame=\(String(describing: frame)) operation=\(String(describing: operation))")
+    }
+    defer {
+      NotebookNavigationObservation.onPageMaterialPreparation = nil
+      let attachment = XCTAttachment(string: materialEvents.joined(separator: "\n"))
+      attachment.name = "Document static turn material identity"
+      attachment.lifetime = .keepAlways
+      add(attachment)
+    }
     try await wait(message: { fixture.diagnostics }) {
       fixture.ready[0] == true && fixture.ready[1] == true && fixture.canonicalPaper(in: 0)
     }
     let first = try await fixture.turnFrame(in: 0), neighbour = try await fixture.turnFrame(in: 1)
+    let picture = try XCTUnwrap(fixture.resources.image(for: .document(id: document.id, token: fixture.token(page: 1)))?.cgImage)
+    let density = fixture.hosts[1].projectedPixelScale(for: neighbour.logicalSize)
+    XCTAssertGreaterThanOrEqual(picture.width, Int(ceil(neighbour.logicalSize.width * density)))
+    XCTAssertGreaterThanOrEqual(picture.height, Int(ceil(neighbour.logicalSize.height * density)),
+      "The passive picture must cover the same integral extent required after its native landing")
     let sameFirst = try await fixture.turnFrame(in: 0), sameNeighbour = try await fixture.turnFrame(in: 1)
     XCTAssertTrue(first === sameFirst)
     XCTAssertTrue(neighbour === sameNeighbour)
+    let web = try XCTUnwrap(fixture.paper(in: 0))
+    let renderer = try XCTUnwrap(web.navigationDelegate as? DocumentWebCoordinator)
+    // Hold the real transparent-shell publication, never its native flags.
+    // Native landing and a subsequent source edit must still produce exact
+    // physical cuts while the previous JS evaluation owns its pending reply.
+    _ = try await web.evaluateJavaScript("""
+      window.savedTurnPresentPage=window.notebookRenderer.presentPage;
+      window.heldTurnPage=new Promise(resolve=>{window.releaseTurnPage=resolve;});
+      window.turnPageEntered=new Promise(resolve=>{window.didEnterTurnPage=resolve;});
+      window.notebookRenderer.presentPage=async frame=>{
+        window.didEnterTurnPage();await window.heldTurnPage;
+        return window.savedTurnPresentPage(frame);
+      };true
+      """)
+    defer {
+      web.evaluateJavaScript("window.notebookRenderer.presentPage=window.savedTurnPresentPage;window.releaseTurnPage?.();true")
+    }
+    var shellIsHeld = false
+    web.callAsyncJavaScript("await window.turnPageEntered;return true;", arguments: [:], in: nil, in: .page) { result in
+      shellIsHeld = (try? result.get()) as? Bool == true
+    }
+    materialEvents.append("before landing \(owner.turnFrameDiagnostic(page: 1))")
     fixture.select(1)
-    try await wait(message: { fixture.diagnostics }) { fixture.ready[1] == true && fixture.canonicalPaper(in: 1) }
+    materialEvents.append("selected \(owner.turnFrameDiagnostic(page: 1))")
+    try await wait(message: { fixture.diagnostics }) {
+      shellIsHeld && renderer.paperIsReady && renderer.payload?.pageIndex == 1
+        && fixture.ready[1] == true && !fixture.hosts[1].hasSnapshot
+    }
+    XCTAssertFalse(renderer.hasCanonicalPixels)
+    XCTAssertFalse(renderer.nativeInputIsReady(in: fixture.hosts[1]))
+    XCTAssertFalse(fixture.presents(.paper), "A native turn cut cannot acknowledge transparent DOM links")
+    materialEvents.append("native landing before DOM \(owner.turnFrameDiagnostic(page: 1))")
     let landed = try await fixture.turnFrame(in: 1)
+    materialEvents.append("acquired landing \(owner.turnFrameDiagnostic(page: 1))")
     XCTAssertTrue(landed === neighbour, "Landing on unchanged plain paper keeps its resident GPU material")
     fixture.setInteractive(false); fixture.setInteractive(true)
     let afterInputPolicy = try await fixture.turnFrame(in: 1)
     XCTAssertTrue(afterInputPolicy === landed)
+    let oldSource = try XCTUnwrap(renderer.payload?.source)
     fixture.replaceSource(fileID: "body", source: original + " A changed printed sentence.")
-    try await wait(message: { fixture.diagnostics }) { fixture.ready[1] == true && fixture.canonicalPaper(in: 1) }
+    do {
+      _ = try await fixture.turnFrame(in: 1, priority: .input)
+      XCTFail("A previous native paper cannot supply a cut for the replacement source")
+    } catch {
+      XCTAssertEqual(error as? SceneRenderError, .snapshotPending("document_installed_slots"))
+    }
+    try await wait(message: { fixture.diagnostics }) {
+      renderer.paperIsReady && renderer.payload?.source !== oldSource && fixture.ready[1] == true
+        && renderer.payload?.source.matches(fixture.document) == true && !fixture.hosts[1].hasSnapshot
+    }
+    XCTAssertFalse(renderer.hasCanonicalPixels, "The earlier real shell call is still held")
     let edited = try await fixture.turnFrame(in: 1), sameEdited = try await fixture.turnFrame(in: 1)
     XCTAssertFalse(edited === landed, "A source binding cannot reuse the preceding page frame")
     XCTAssertTrue(edited === sameEdited)
+    let currentPaper = try XCTUnwrap(renderer.installedPaper)
+    let printedText = PDFDocument(data: currentPaper.page.artifact.pdf)?.page(at: currentPaper.page.pageIndex)?.string
+    XCTAssertTrue(printedText?.contains("changed printed sentence") == true)
+    _ = try await web.evaluateJavaScript("window.notebookRenderer.presentPage=window.savedTurnPresentPage;window.releaseTurnPage();true")
+    try await wait(message: { fixture.diagnostics }) {
+      fixture.canonicalPaper(in: 1) && renderer.nativeInputIsReady(in: fixture.hosts[1])
+    }
+    XCTAssertTrue(renderer.installedPaper === currentPaper, "The later DOM receipt must not replace accepted native paper")
   }
 
   func testLiveProgramTurnTakesANewLocalCutWithoutCheckpointOrRuntimeReplacement() async throws {

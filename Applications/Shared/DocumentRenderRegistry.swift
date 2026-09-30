@@ -23,7 +23,7 @@ struct DocumentRenderingFailure: Error, LocalizedError {
 
 enum DocumentRegionKind: String, Codable, Sendable { case file, program }
 
-struct DocumentBlockRegion: Equatable {
+struct DocumentBlockRegion: Equatable, Sendable {
   var kind: DocumentRegionKind = .file
   let id: String
   let pageIndex: Int

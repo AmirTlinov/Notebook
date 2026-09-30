@@ -66,6 +66,33 @@ final class DocumentShellPreparationTests: XCTestCase {
     try await assertActualAdoption(waitForCommonRuntime: false)
   }
 
+  func testNativePaperInstallsBeforeHeldShellFrameAndSurvivesItsFailure() async throws {
+    let resources = SceneRenderResources(maximumWebSurfaces: 1)
+    let preparation = DocumentShellPreparation(resources: resources)
+    defer { preparation.stop() }
+    preparation.prepareIfIdle()
+    await waitUntil { preparation.unusedCoordinator?.commonRuntimeReady == true }
+    let renderer = try XCTUnwrap(preparation.unusedCoordinator), web = try XCTUnwrap(renderer.webView)
+    _ = try await web.evaluateJavaScript("window.notebookRenderer.presentPage=async()=>await new Promise(resolve=>{window.releaseHeldFrame=resolve;});true")
+    let fixture = try PreparedShellPageFixture(resources: resources)
+    defer { fixture.close() }
+    await waitUntil { renderer.paperIsReady || !fixture.errors.isEmpty }
+    let paper = try XCTUnwrap(renderer.installedPaper)
+    XCTAssertTrue(fixture.visiblePaper === paper)
+    XCTAssertTrue(fixture.ready, "Native paper is published while its transparent shell still waits")
+    XCTAssertFalse(renderer.interactionIsReady)
+    XCTAssertFalse(renderer.hasCanonicalPixels, "Paper alone cannot authorize a composite capture or old DOM links")
+    renderer.webView(web, didFail: nil, withError: URLError(.cannotLoadFromNetwork))
+    XCTAssertNil(renderer.webView)
+    XCTAssertTrue(renderer.installedPaper === paper)
+    XCTAssertTrue(fixture.visiblePaper === paper, "The same physical page retains its single accepted raster")
+    XCTAssertFalse(renderer.interactionIsReady)
+    // Drain the deliberately held WebKit call through its real completion;
+    // failure revokes publication but cannot pretend that IPC has completed.
+    _ = try await web.evaluateJavaScript("window.releaseHeldFrame?.();true")
+    await waitUntil { resources.activeWebSurfaceCount == 0 }
+  }
+
   func testForegroundAdmissionReclaimsUnusedShellBeforeRefusingItsSlot() async throws {
     try await assertForegroundReclaim(waitForCommonRuntime: true)
   }
@@ -135,7 +162,7 @@ final class DocumentShellPreparationTests: XCTestCase {
     let fixture = try PreparedShellPageFixture(resources: resources)
     defer { fixture.close() }
     await waitUntil(message: { "ready=\(fixture.ready), errors=\(fixture.errors), web=\(resources.activeWebSurfaceCount)" }) {
-      fixture.ready || !fixture.errors.isEmpty
+      renderer.hasCanonicalPixels || !fixture.errors.isEmpty
     }
     let diagnostic = "ready=\(fixture.ready)\nerrors=\(fixture.errors)\nacquisitionError=\(String(describing: renderer.acquisitionError))\noriginalBounds=\(original.bounds)\noriginalFrame=\(original.frame)\noriginalAttached=\(original.window != nil)\ncurrentWeb=\(String(describing: renderer.webView))\ncommonReady=\(renderer.commonRuntimeReady)\npreparationCount=\(String(describing: renderer.payload?.source.preparationCount))\n"
     let attachment = XCTAttachment(string: diagnostic)
@@ -181,6 +208,14 @@ private final class PreparedShellPageFixture {
   private weak var previousKeyWindow: UIWindow?
   private(set) var ready = false
   private(set) var errors: [String] = []
+  var visiblePaper: DocumentPaperRaster? {
+    func find(_ view: UIView) -> DocumentPaperRaster? {
+      if let paper = view as? DocumentPaperView { return paper.raster }
+      for child in view.subviews { if let result = find(child) { return result } }
+      return nil
+    }
+    return find(host)
+  }
   var paper: WKWebView? {
     func descendants(_ view: UIView) -> [WKWebView] {
       (view as? WKWebView).map { [$0] } ?? view.subviews.flatMap(descendants)

@@ -255,7 +255,7 @@ final class NotebookPageEraserProjectionTests: XCTestCase {
       erasures: [graphic.id: [cut]])
     let ledger = AgentOverlayReadiness(), receiver = ledger, materialID = UUID()
     var oldCalls = 0, current: [(Bool, PageElementErasurePresentation)] = []
-    let previousID = ledger.prepare(elements: [source, graphic], materials: [graphic.id: [material]],
+    let previousID = ledger.prepare(sourceIdentity: ObjectIdentifier(ledger), elements: [source, graphic], materials: [graphic.id: [material]],
       pageSize: .init(width: 100, height: 100), erasure: receipt, publish: { _, _ in oldCalls += 1 })
     XCTAssertTrue(receiver.recordMaterial(graphic.id, id: materialID, content: material, ready: true))
     // These are the real receipt operations captured by the old rendered body.
@@ -263,7 +263,7 @@ final class NotebookPageEraserProjectionTests: XCTestCase {
     let lateTeardown = {
       if receiver.recordMaterial(graphic.id, id: materialID, content: nil, ready: false) { receiver.publish() }
     }
-    let currentID = ledger.prepare(elements: [source, graphic], erasedIDs: [graphic.id],
+    let currentID = ledger.prepare(sourceIdentity: ObjectIdentifier(ledger), elements: [source, graphic], erasedIDs: [graphic.id],
       pageSize: .init(width: 100, height: 100), erasure: receipt, publish: { current.append(($0, $1)) })
     XCTAssertNotEqual(previousID, currentID, "Async fully-erased appearance changes requirements without changing stamp")
     ledger.publish()
@@ -275,7 +275,7 @@ final class NotebookPageEraserProjectionTests: XCTestCase {
     XCTAssertEqual(oldCalls, 0, "Old callbacks cannot invoke an obsolete body's publisher")
     XCTAssertEqual(current.last?.1.stamp, receipt.stamp)
     XCTAssertEqual(current.last?.1.erasures, receipt.erasures)
-    XCTAssertEqual(ledger.prepare(elements: [source, graphic], erasedIDs: [graphic.id],
+    XCTAssertEqual(ledger.prepare(sourceIdentity: ObjectIdentifier(ledger), elements: [source, graphic], erasedIDs: [graphic.id],
       pageSize: .init(width: 100, height: 100), erasure: receipt, publish: { current.append(($0, $1)) }), currentID,
       "Identical requirements keep their readiness identity")
   }
@@ -297,12 +297,12 @@ final class NotebookPageEraserProjectionTests: XCTestCase {
     let oldReceipt = PageElementErasurePresentation(pageID: pageID, stamp: .init(counter: 1, actor: actor), erasures: [source.id: [oldCut]])
     let newReceipt = PageElementErasurePresentation(pageID: pageID, stamp: .init(counter: 3, actor: actor), erasures: [source.id: [newCut]])
     var published: [(Bool, PageElementErasurePresentation)] = []
-    _ = ledger.prepare(elements: [oldSource], materials: [source.id: [previous]], pageSize: .init(width: 100, height: 100),
+    _ = ledger.prepare(sourceIdentity: ObjectIdentifier(ledger), elements: [oldSource], materials: [source.id: [previous]], pageSize: .init(width: 100, height: 100),
       erasure: oldReceipt, publish: { published.append(($0, $1)) })
     let oldMaterialID = UUID(), newMaterialID = UUID()
     XCTAssertTrue(ledger.record(oldSource, ready: true))
     XCTAssertTrue(ledger.recordMaterial(source.id, id: oldMaterialID, content: previous, ready: true))
-    _ = ledger.prepare(elements: [source], materials: [source.id: [next]], pageSize: .init(width: 100, height: 100),
+    _ = ledger.prepare(sourceIdentity: ObjectIdentifier(ledger), elements: [source], materials: [source.id: [next]], pageSize: .init(width: 100, height: 100),
       erasure: newReceipt, publish: { published.append(($0, $1)) })
     ledger.publish(); XCTAssertEqual(published.last?.0, false)
     XCTAssertFalse(ledger.record(oldSource, ready: true), "A late foreign source cannot replace the current source fact")
@@ -322,7 +322,7 @@ final class NotebookPageEraserProjectionTests: XCTestCase {
     let readiness = AgentOverlayReadiness(), pageID = UUID(), actor = UUID()
     var ready = false
     func prepare(erased: Bool) {
-      _ = readiness.prepare(elements: [program], erasedIDs: erased ? [program.id] : [],
+      _ = readiness.prepare(sourceIdentity: ObjectIdentifier(readiness), elements: [program], erasedIDs: erased ? [program.id] : [],
         pageSize: .init(width: 100, height: 100), erasure: .init(pageID: pageID,
           stamp: .init(counter: 1, actor: actor), erasures: [:]), publish: { ready = $0; _ = $1 })
       readiness.publish()

@@ -158,7 +158,9 @@ import XCTest
         installations.values.allSatisfy({ $0.isInstalled }) { allInstalled = at }
     }
     defer { NotebookNavigationObservation.onSourceInstalled = nil }
+    let startUptimeBefore = CACurrentMediaTime()
     let start = ContinuousClock.now
+    let startUptimeAfter = CACurrentMediaTime()
     var webPhases: [(String, UUID, String?, ContinuousClock.Instant)] = []
     var compositionPhases: [(UUID, String, ContinuousClock.Instant)] = []
     precondition(NotebookNavigationObservation.onWebPreparation == nil)
@@ -175,7 +177,8 @@ import XCTest
       model.compositionTiles.onPreparationPhase = nil
       let composition = compositionPhases.map { "\(start.duration(to: $0.2)) \($0.1) owner=\($0.0)" }
       let web = webPhases.map { "\(start.duration(to: $0.3)) \($0.0) owner=\($0.1) source=\($0.2 ?? "unbound")" }
-      let phases = XCTAttachment(string: (composition + web).joined(separator: "\n"))
+      let anchor = "cold clock anchor: epochUptime=\(startUptimeBefore)...\(startUptimeAfter),pid=\(ProcessInfo.processInfo.processIdentifier)"
+      let phases = XCTAttachment(string: ([anchor] + composition + web).joined(separator: "\n"))
       phases.name = "Cold source preparation events"; phases.lifetime = .keepAlways; add(phases)
     }
     window.rootViewController = UIHostingController(rootView: SpatialWorkspaceView().environment(model).ignoresSafeArea())
@@ -393,45 +396,62 @@ import XCTest
     let sourceIDs=try XCTUnwrap(model.activePage).elements.filter(\.requiresLiveRuntime).map(\.id)
     XCTAssertEqual(sourceIDs.count,24)
     var phases:[String]=[]
+    var observesTurn = false
+    var observedTurn = "forward"
     var scenePhases: [(UUID, String, TimeInterval)] = []
-    model.compositionTiles.onPreparationPhase = { id, phase in
-      if scenePhases.count < 512 { scenePhases.append((id, phase, CACurrentMediaTime())) }
-    }
-    defer {
-      model.compositionTiles.onPreparationPhase = nil
-      phases.append(contentsOf: scenePhases.map { "scene: uptime=\($0.2),stage=\($0.1),id=\($0.0)" })
-      let note=XCTAttachment(string:phases.joined(separator:"\n"))
-      note.name="24-program-state-to-native-capture";note.lifetime = .keepAlways;add(note)
-    }
     var materialPhases: [(String, UUID, UUID?, UUID?, UUID?, TimeInterval)] = []
     var omittedMaterialPhases = 0
-    precondition(NotebookNavigationObservation.onPageMaterialPreparation == nil)
-    NotebookNavigationObservation.onPageMaterialPreparation = { stage, owner, page, frame, operation, time in
-      guard materialPhases.count < 128 else { omittedMaterialPhases += 1; return }
-      materialPhases.append((stage, owner, page, frame, operation, time))
+    var captureEpoch = ContinuousClock.now
+    var capturePhases: [(String, UUID, String?, ContinuousClock.Instant)] = []
+    var omittedCapturePhases = 0
+    // Source edits and camera setup precede the measured action. Their events
+    // must not exhaust its bounded records before the first accepted capture.
+    func beginTurnObservation(_ turn: String) {
+      observedTurn = turn
+      scenePhases.removeAll(keepingCapacity: true)
+      materialPhases.removeAll(keepingCapacity: true); omittedMaterialPhases = 0
+      capturePhases.removeAll(keepingCapacity: true); omittedCapturePhases = 0
+      let before = CACurrentMediaTime()
+      captureEpoch = .now
+      let after = CACurrentMediaTime()
+      phases.append("capture clock anchor: turn=\(turn),epochUptime=\(before)...\(after)")
+      observesTurn = true
     }
-    defer {
-      NotebookNavigationObservation.onPageMaterialPreparation = nil
-      phases.append("material events (omitted=\(omittedMaterialPhases)):")
+    func finishTurnObservation() {
+      guard observesTurn else { return }; observesTurn = false
+      phases.append("accepted capture events: turn=\(observedTurn),omitted=\(omittedCapturePhases)")
+      phases.append(contentsOf: capturePhases.map {
+        "capture: elapsed=\(captureEpoch.duration(to: $0.3)),stage=\($0.0),lease=\($0.1),source=\($0.2 ?? "nil")"
+      })
+      phases.append("material events: turn=\(observedTurn),omitted=\(omittedMaterialPhases)")
       phases.append(contentsOf: materialPhases.map {
         "material: uptime=\($0.5),stage=\($0.0),owner=\($0.1),page=\($0.2?.uuidString ?? "nil"),frame=\($0.3?.uuidString ?? "nil"),composition=\($0.4?.uuidString ?? "nil")"
       })
+      phases.append(contentsOf: scenePhases.map { "scene: uptime=\($0.2),stage=\($0.1),id=\($0.0)" })
     }
-    let captureEpoch = ContinuousClock.now
-    var capturePhases: [(String, UUID, String?, ContinuousClock.Instant)] = []
-    var omittedCapturePhases = 0
+    model.compositionTiles.onPreparationPhase = { id, phase in
+      guard observesTurn else { return }
+      if scenePhases.count < 512 { scenePhases.append((id, phase, CACurrentMediaTime())) }
+    }
+    precondition(NotebookNavigationObservation.onPageMaterialPreparation == nil)
+    NotebookNavigationObservation.onPageMaterialPreparation = { stage, owner, page, frame, operation, time in
+      guard observesTurn else { return }
+      guard materialPhases.count < 128 else { omittedMaterialPhases += 1; return }
+      materialPhases.append((stage, owner, page, frame, operation, time))
+    }
     precondition(NotebookNavigationObservation.onWebPreparation == nil)
     NotebookNavigationObservation.onWebPreparation = { stage, lease, source, time in
-      guard stage.hasPrefix("accepted_capture_") else { return }
+      guard observesTurn, stage.hasPrefix("accepted_capture_") else { return }
       guard capturePhases.count < 192 else { omittedCapturePhases += 1; return }
       capturePhases.append((stage, lease, source, time))
     }
     defer {
+      finishTurnObservation()
       NotebookNavigationObservation.onWebPreparation = nil
-      phases.append("accepted capture events (omitted=\(omittedCapturePhases)):")
-      phases.append(contentsOf: capturePhases.map {
-        "capture: elapsed=\(captureEpoch.duration(to: $0.3)),stage=\($0.0),lease=\($0.1),source=\($0.2 ?? "nil")"
-      })
+      NotebookNavigationObservation.onPageMaterialPreparation = nil
+      model.compositionTiles.onPreparationPhase = nil
+      let note=XCTAttachment(string:phases.joined(separator:"\n"))
+      note.name="24-program-state-to-native-capture";note.lifetime = .keepAlways;add(note)
     }
     func cameraGesture(_ scale:Double) async throws {
       let camera=try XCTUnwrap(window.gestureRecognizers?.compactMap {$0.delegate as? WorkspaceGestureLayer.Coordinator}.first)
@@ -490,7 +510,8 @@ import XCTest
         let owners=webs.compactMap {$0.navigationDelegate as? AgentWebCoordinator}.filter {$0.hasLiveSource(current)}
         let installations=owners.compactMap {$0.installation(for:current)}
         let available=index.map {owner.pageTurnActivity.hasElementFrame(page:$0,source:current)} ?? false
-        return "\(source.id):state=\(source.state),provider=\(available),live=\(owners.count),installations=\(installations.map { "\($0.runtimeToken ?? "none")/installed=\($0.isInstalled)" }),diagnostics=\(resources.diagnostics(for:[current]))"
+        let version=index.flatMap {owner.pageTurnActivity.elementFrameVersion(page:$0,source:current)}
+        return "\(source.id):state=\(source.state),provider=\(available),version=\(String(describing:version)),live=\(owners.count),installations=\(installations.map { "\($0.runtimeToken ?? "none")/installed=\($0.isInstalled)" }),diagnostics=\(resources.diagnostics(for:[current]))"
       } ?? []
       let preparation=index.map { "presented=\(owner.presentedPageIndices.contains($0)),capturable=\(owner.preparedPageIndices.contains($0))" } ?? "missing"
       let ink=sheet.map { descendants($0.view).compactMap {$0 as? InkCanvasView}.map {
@@ -571,6 +592,7 @@ import XCTest
       curl.onFrameMeasured=receiveMeasurement
     }
     phases.append("before arrow: \(owner.navigationStateDescription)")
+    beginTurnObservation("forward")
     let wallAnchor=Date().timeIntervalSince1970,uptimeAnchor=CACurrentMediaTime()
     phases.append("clock anchor: unix=\(wallAnchor),uptime=\(uptimeAnchor)")
     let revision=try XCTUnwrap(model.notebookPageRoot(notebook)),start=ContinuousClock.now
@@ -583,6 +605,7 @@ import XCTest
     while landing == nil,ContinuousClock.now<deadline {
       try await Task.sleep(for:.milliseconds(2))
     }
+    finishTurnObservation()
     // Full runtime diagnostics and pixel readback begin only after the event
     // measurement. No observation cost is subtracted from application time.
     phases.append("after arrow: ownerLanding=\(String(describing:landing)),stageToOwnerLanding=\(String(describing:landing.flatMap { receipt in stageUptime.map {receipt.uptime-$0} })); \(captureState(native.page)); \(owner.navigationStateDescription). Landing time comes from the owner's terminal event; OS presentation is the separate curl receipt above.")
@@ -603,8 +626,6 @@ import XCTest
       let frame=NotebookNavigationLoadFixture.frame(index,programs:true)
       return (.init(x:frame.x+155,y:frame.y+20),.blue)
     }
-    XCTAssertTrue(try NotebookUXObservation.Pixels(window:window).matches(probes+[(.init(x:190,y:1045),.blue)]))
-
     // The system UI regression occurs on the return after the target's full
     // live cohort has replaced its passive rasters. Exercise that same role
     // boundary here; a successful first landing cannot certify its inverse.
@@ -621,14 +642,20 @@ import XCTest
     while !targetRuntimesInstalled(),ContinuousClock.now<runtimeDeadline {try await Task.sleep(for:.milliseconds(2))}
     phases.append("before reverse: \(owner.navigationStateDescription)")
     XCTAssertTrue(targetRuntimesInstalled(),"Every target program must become a real installed runtime before the reverse command")
+    // A landing may show the exact pending cut while the independent program
+    // starts. Inspect authored control pixels after their real installation;
+    // the landing timestamps above remain the original terminal receipts.
+    XCTAssertTrue(try NotebookUXObservation.Pixels(window:window).matches(probes+[(.init(x:190,y:1045),.blue)]))
     expectedLanding=0;landing=nil;pairEnded=nil;stageUptime=nil;sawFirstFrame=false;sawEndpoint=false
     submissions.removeAll(keepingCapacity:true)
+    beginTurnObservation("reverse")
     let reverseStart=ContinuousClock.now
     arrowUptime=CACurrentMediaTime()
     phases.append("reverse begin: uptime=\(arrowUptime)")
     XCTAssertTrue(model.notebookPageNavigation.send(.step(-1),ownerID:notebook,source:revision))
     let reverseDeadline=reverseStart + .seconds(2)
     while landing == nil,ContinuousClock.now<reverseDeadline {try await Task.sleep(for:.milliseconds(2))}
+    finishTurnObservation()
     phases.append("after reverse: ownerLanding=\(String(describing:landing)); \(owner.navigationStateDescription)")
     for sheet in native.children { phases.append("reverse sheet: \(captureState(sheet))") }
     let reverseReceipt=try XCTUnwrap(landing,"Returning to the retained page must complete after its programs became passive")
@@ -640,7 +667,27 @@ import XCTest
     XCTAssertLessThanOrEqual(reverseStart.duration(to:reverseReceipt.at),NotebookUXObservation.pageLanding)
     let restoredProbes=probes.map { ($0.0,NotebookUXObservation.Color.red) }
     let restoredPixels=try NotebookUXObservation.Pixels(window:window)
-    XCTAssertTrue(try restoredPixels.matches(restoredProbes),
+    let restoredStatesMatch=try restoredPixels.matches(restoredProbes)
+    if !restoredStatesMatch {
+      // Reuse the post-terminal observation. Pixel decoding and attachment
+      // writing never enter the command-to-landing measurement above.
+      let image=XCTAttachment(image:restoredPixels.image)
+      image.name="Returned accepted program states";image.lifetime = .keepAlways;add(image)
+      var samples:[String]=[]
+      for (index,probe) in restoredProbes.enumerated() {
+        let crop=try XCTUnwrap(restoredPixels.image.cgImage?.cropping(to:.init(
+          x:probe.0.x.rounded(),y:probe.0.y.rounded(),width:1,height:1)))
+        var rgba=[UInt8](repeating:0,count:4)
+        try rgba.withUnsafeMutableBytes { bytes in
+          let context=try XCTUnwrap(CGContext(data:bytes.baseAddress,width:1,height:1,bitsPerComponent:8,
+            bytesPerRow:4,space:CGColorSpaceCreateDeviceRGB(),bitmapInfo:CGImageAlphaInfo.premultipliedLast.rawValue))
+          context.draw(crop,in:.init(x:0,y:0,width:1,height:1))
+        }
+        samples.append("\(index):\(rgba)")
+      }
+      phases.append("return authored probes: \(samples)")
+    }
+    XCTAssertTrue(restoredStatesMatch,
       "The return must show all 24 accepted states")
     XCTAssertTrue(try restoredPixels.matches([(.init(x:100,y:1045),.blue),(.init(x:190,y:1045),.paper)]),
       "The return must show the leaf 0 marker and clear the leaf 1 marker")

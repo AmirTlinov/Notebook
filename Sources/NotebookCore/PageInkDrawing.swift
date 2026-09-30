@@ -85,33 +85,33 @@ struct PageInkPreparedProjection:Sendable {
   let eraserIndex:InkReadSetBoundsIndex
 }
 struct PageInkErasureDirectory:Sendable {
-  private struct Entry:Sendable {let actionID:UUID;let value:InkElementErasure}
-  private var entries:[String:[Entry]] = [:]
-  private var targets:[UUID:Set<String>] = [:]
-  private(set) var values:[String:[InkElementErasure]] = [:]
+  private var targets:InkActionMapNode<String,[String]>?
+  private(set) var values=InkElementErasureMap()
   init() {}
   init(_ drawing:PageInkDrawing) {
     for action in drawing.actions where action.isActive && action.tool == .eraser {append(action)}
   }
   private mutating func append(_ action:PageInkAction) {
     guard action.isActive,action.tool == .eraser else {return}
-    for target in action.elementTargets ?? [] {
-      let value=InkElementErasure(target:target,measurements:action.samples)
-      entries[target.elementID,default:[]].append(.init(actionID:action.id,value:value))
-      values[target.elementID,default:[]].append(value);targets[action.id,default:[]].insert(target.elementID)
+    let targets=action.elementTargets ?? []
+    for target in targets {
+      values.insert(.init(target:target,measurements:action.samples),at:action.sequence,actionID:action.id,for:target.elementID)
+    }
+    if !targets.isEmpty {
+      let id=action.id.uuidString
+      self.targets=self.targets?.inserting(id,targets.map(\.elementID)) ?? .init(id,targets.map(\.elementID))
     }
   }
   func applying(_ mutation:PageInkMutation,drawing:PageInkDrawing)->Self {
     var next=self
     switch mutation {
-    case .append(let action): next.append(action)
+    case .append(let action):next.append(action)
     case .setActive(let ids,let active):
       for id in ids {
-        for target in next.targets.removeValue(forKey:id) ?? [] {
-          next.entries[target]?.removeAll {$0.actionID == id}
-          next.values[target]=next.entries[target]?.map(\.value)
-        }
-        if active,let action=drawing.action(id:id) {next.append(action)}
+        guard let action=drawing.action(id:id) else {continue}
+        for target in next.targets?.value(for:id.uuidString) ?? [] {next.values.remove(at:action.sequence,actionID:action.id,for:target)}
+        next.targets=next.targets?.removing(id.uuidString)
+        if active {next.append(action)}
       }
     }
     return next

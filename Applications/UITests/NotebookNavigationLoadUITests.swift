@@ -19,23 +19,30 @@ import XCTest
   }
 
   func testTwentyFourPageProgramsAcceptFirstTapAfterZoomAndKeepStateAcrossTurns() throws {
-    launch(programs: true); let openedImage = try controls(leaf: 0, since: open())
+    launch(programs: true, diagnostics: true); let openedImage = try controls(leaf: 0, since: open())
     // A notebook remains fitted on zoom-in. Zoom-out deliberately closes it;
     // it is not the inverse of reading magnification as it is for a document.
-    // The sheet's AX hit point may belong to a child program. A pair wholly
-    // inside that runtime is correctly its input, not a camera gesture. Use
-    // the window, whose centre is in the fitted page's inter-column paper gap.
+    // Application-level pinch selected a smaller AX hit region whose centre
+    // was inside a program. Target the physical window with its full bounds;
+    // a pair inside one runtime belongs to that runtime, not the scene camera.
+    let window = app.windows.firstMatch
+    XCTAssertTrue(window.exists)
     let initialControls = try visibleControlRects(image: openedImage)
-    let paperCentre = CGRect(x: app.frame.width / 2 - 6, y: app.frame.height / 2 - 6,
+    let paperCentre = CGRect(x: window.frame.midX - 6, y: window.frame.midY - 6,
       width: 12, height: 12)
     XCTAssertTrue(initialControls.allSatisfy { !$0.intersects(paperCentre) },
-      "The scene pinch must start on paper rather than inside one program")
-    app.pinch(withScale: 1.4, velocity: 1)
+      "The scene pinch target centre must be paper rather than one program")
+    func pinchWindow(scale: CGFloat, velocity: CGFloat) {
+      let target = XCTAttachment(string: "target=Window.firstMatch frame=\(window.frame) application=\(app.frame) scale=\(scale) velocity=\(velocity)")
+      target.name = "Scene pinch public AX target"; target.lifetime = .keepAlways; add(target)
+      window.pinch(withScale: scale, velocity: velocity)
+    }
+    pinchWindow(scale: 1.4, velocity: 1)
     // Inspect the first result before any explicit tap. A misrouted pinch
     // cannot hide a changed program behind the following control action.
     let first = try XCTUnwrap(visibleControlRects().first)
     tapControl(first); try changedControl(first, index: 0)
-    app.pinch(withScale: 1 / 1.4, velocity: -1)
+    pinchWindow(scale: 1 / 1.4, velocity: -1)
     let closedScale = min(app.frame.width / 834, app.frame.height / 1194) * 0.72
     // The sheet leaves AX when the pinch starts. Its absence alone cannot
     // acknowledge the closed endpoint; the native cover must reach its pose.
@@ -168,11 +175,12 @@ import XCTest
     }
   }
 
-  @discardableResult private func launch(programs: Bool, board: Bool = false) -> ContinuousClock.Instant {
+  @discardableResult private func launch(programs: Bool, board: Bool = false, diagnostics: Bool = false) -> ContinuousClock.Instant {
     continueAfterFailure = false; executionTimeAllowance = 240
     app = XCUIApplication()
     app.launchArguments = ["--notebook-drawing-responsiveness-fixture", "--notebook-navigation-load-fixture", "--notebook-simulator-finger-gestures"]
     if programs { app.launchArguments.append("--notebook-load-programs") }
+    if diagnostics { app.launchArguments.append("--notebook-page-turn-diagnostic") }
     if board { app.launchArguments.append("--notebook-load-board") }
     let start = ContinuousClock.now
     app.launch(); XCUIDevice.shared.orientation = .portrait
@@ -193,6 +201,12 @@ import XCTest
     let controls = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Load \(leaf) control "))
     var count = controls.count
     while count != 24, ContinuousClock.now < deadline { count = controls.count }
+    if count != 24 {
+      let state = XCTAttachment(string: String(describing: surface.value)); state.name = "Page endpoint source receipts"
+      state.lifetime = .keepAlways; add(state)
+      let image = XCTAttachment(screenshot: app.screenshot()); image.name = "Page endpoint failure"
+      image.lifetime = .keepAlways; add(image)
+    }
     XCTAssertEqual(count, 24, "Every control must exist in the real accessibility tree")
     // One remote snapshot names all 24. Asking existence and hittability
     // separately 48 times serialized AX traffic (~35 s) and measured XCTest,

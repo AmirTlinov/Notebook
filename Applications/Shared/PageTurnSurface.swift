@@ -43,16 +43,17 @@ final class PageTurnActivity {
     let presentation: Presentation
   }
   #if os(iOS)
-  enum ElementFrameContent: Equatable { case raster, runtime }
+  enum ElementFrameContent: Equatable { case raster, runtime, status }
   struct ElementFrameVersion: Equatable {
     let id: UUID
     let content: ElementFrameContent
   }
   enum ElementFrameAcquisition {
     case raster(RasterLease)
+    case status(SceneRasterCut)
     case runtime(@MainActor (SceneAllocationPriority) async throws -> PageTurnElementFrame)
     var content: ElementFrameContent {
-      switch self { case .raster: .raster; case .runtime: .runtime }
+      switch self { case .raster: .raster; case .runtime: .runtime; case .status: .status }
     }
   }
   // Native installation/layout replaces these borrows. They are an addressed
@@ -74,15 +75,17 @@ final class PageTurnActivity {
   }
   @MainActor private struct ElementFrameCandidates {
     var raster: ElementFrameProvider?
+    var status: ElementFrameProvider?
     var runtime: ElementFrameProvider?
     var published: ElementFrameProvider
     var installed: ElementFrameProvider? {
+      if let status, status.acquisition != nil, status.installation.isInstalled { return status }
       if let runtime, runtime.acquisition != nil, runtime.installation.isInstalled { return runtime }
       if let raster, raster.acquisition != nil, raster.installation.isInstalled { return raster }
       return nil
     }
     func candidate(_ content: ElementFrameContent) -> ElementFrameProvider? {
-      content == .runtime ? runtime : raster
+      switch content { case .runtime: runtime; case .raster: raster; case .status: status }
     }
   }
   @ObservationIgnored private var elementFrames: [Int: [String: ElementFrameCandidates]] = [:]
@@ -108,7 +111,12 @@ final class PageTurnActivity {
       version: changed ? .init(id: UUID(), content: content) : priorCandidate!.version,
       acquisition: isInstalled ? acquisition : nil)
     var candidates = sameOwner ? previous! : .init(published: candidate)
-    if content == .runtime { candidates.runtime = candidate } else { candidates.raster = candidate }
+    switch content {
+    case .runtime: candidates.runtime = candidate
+    case .raster: candidates.raster = candidate
+    case .status: candidates.status = candidate
+    }
+    candidates.status = candidates.status?.current
     candidates.runtime = candidates.runtime?.current
     candidates.raster = candidates.raster?.current
     // Keep both mounted owners through their handoff. A late bridge layout
@@ -144,6 +152,7 @@ final class PageTurnActivity {
     let frame: PageTurnElementFrame
     switch acquisition {
     case .raster(let raster): frame = try Self.borrow(raster)
+    case .status(let cut): frame = .init(cut: cut)
     case .runtime(let acquire): frame = try await acquire(priority)
     }
     guard elementFrameVersion(page: page, source: source) == provider.version else { throw PageTurnMaterialUnavailable.changed }
@@ -155,8 +164,11 @@ final class PageTurnActivity {
     try Task.checkCancellation()
     guard let provider = elementFrames[page]?[source.id]?.installed, provider.source == source,
       let acquisition = provider.acquisition else { throw PageTurnMaterialUnavailable.changed }
-    guard case .raster(let raster) = acquisition else { return nil }
-    return try Self.borrow(raster)
+    switch acquisition {
+    case .raster(let raster): return try Self.borrow(raster)
+    case .status(let cut): return .init(cut: cut)
+    case .runtime: return nil
+    }
   }
   private static func borrow(_ raster: RasterLease) throws -> PageTurnElementFrame {
     guard let retained = raster.retainedCopy() else { throw SceneRenderError.snapshotPending("page_element_pixels") }
@@ -289,6 +301,9 @@ final class PageTurnReadiness {
   private(set) var state = State.waiting
   private(set) var isRetired = false
   private(set) var materialRevision: UInt64 = 0
+  #if DEBUG
+  var presentationDiagnostic: (() -> String)?
+  #endif
   enum AgentPreparationSource {
     case autonomous
     case notebook((@MainActor () -> NotebookPagePreparationWindow.NativeSource?)?)
@@ -307,6 +322,7 @@ final class PageTurnReadiness {
     }
   }
   var agentPreparations: PageAgentPreparationOwner? { agentPreparationMount?.entry.preparations }
+  var notebookPageSource: NotebookPagePreparationWindow.Entry? { agentPreparationMount?.entry }
   func borrowAgentPreparations(_ entry: NotebookPagePreparationWindow.Entry) {
     guard !isRetired, let activity else { return }
     if agentPreparationMount?.entry !== entry {
@@ -351,9 +367,14 @@ final class PageTurnReadiness {
   }
   func acquireFrame(priority: SceneAllocationPriority = .passive) async throws -> PageTurnFrame {
     guard !isRetired, let frameProvider else { throw PageTurnMaterialUnavailable.changed }
-    let revision = materialRevision
+    // The material owner validates its exact source/provider/ink cut. A wake
+    // counter can change while that same cut remains installed or returns.
     let frame = try await frameProvider(priority)
-    guard !isRetired, materialRevision == revision else { throw PageTurnMaterialUnavailable.changed }
+    guard !isRetired else {
+      NotebookNavigationObservation.onPageMaterialPreparation?("acquire_rejected_readiness_retired",
+        frame.id, notebookPageSource?.pageID, frame.id, nil, CACurrentMediaTime())
+      throw PageTurnMaterialUnavailable.changed
+    }
     return frame
   }
   #endif
@@ -361,6 +382,9 @@ final class PageTurnReadiness {
   func retire() {
     guard !isRetired else { return }
     isRetired = true; state = .waiting; materialRevision &+= 1
+    #if DEBUG
+    presentationDiagnostic = nil
+    #endif
     agentPreparationMount?.close(); agentPreparationMount = nil
     if case .notebook = agentPreparationSource { agentPreparationSource = .notebook(nil) }
     #if os(iOS)
@@ -381,6 +405,11 @@ final class PageTurnReadiness {
   func materialDidChange() {
     guard !isRetired else { return }
     materialRevision &+= 1; materialChangedHandler()
+  }
+
+  /// Visibility can wake an accepted cut without replacing its pixels/source.
+  func materialAvailabilityDidChange() {
+    guard !isRetired else { return }; materialChangedHandler()
   }
 
   func captureFailed(_ failure: PageTurnPreparationFailure) {
@@ -529,6 +558,26 @@ struct PageTurnSurface: View {
 
   var body: some View {
     Group {
+      #if DEBUG && os(iOS)
+      if NotebookNavigationObservation.pageTurnDiagnosticsEnabled { surface }
+      else { surface.accessibilityValue(pageAccessibilityValue) }
+      #else
+      surface.accessibilityValue(pageAccessibilityValue)
+      #endif
+    }
+    .accessibilityIdentifier("page-turn-surface")
+    // Preparing paper behind the cover does not expose its controls to VoiceOver.
+    .accessibilityHidden(!pageIsInteractive)
+  }
+
+  private var pageAccessibilityValue: String {
+    documentNavigation != nil && canonicalDocumentLayout?.pageCount(for: sequenceRevision) == nil
+      ? "Страница \(selectedIndex + 1), число страниц уточняется"
+      : "Страница \(selectedIndex + 1) из \(max(1, pageCount))"
+  }
+
+  private var surface: some View {
+    Group {
       #if os(macOS)
         page(clampedSelectedIndex, true, PageTurnReadiness { _ in })
           .environment(\.rendersSettledPageSnapshot, true)
@@ -565,13 +614,6 @@ struct PageTurnSurface: View {
       }
       #endif
     }
-    .accessibilityIdentifier("page-turn-surface")
-    // Preparing paper behind the cover does not expose its controls to VoiceOver.
-    // Use the same physical interaction endpoint as native page input.
-    .accessibilityHidden(!pageIsInteractive)
-    .accessibilityValue(documentNavigation != nil && canonicalDocumentLayout?.pageCount(for: sequenceRevision) == nil
-      ? "Страница \(selectedIndex + 1), число страниц уточняется"
-      : "Страница \(selectedIndex + 1) из \(max(1, pageCount))")
   }
 
   private var clampedSelectedIndex: Int {

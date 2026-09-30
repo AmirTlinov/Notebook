@@ -480,7 +480,7 @@ public struct NotebookGraphicGraph: Sendable {
   /// The whole closed node is a binding target; empty bounding-box corners are
   /// not. Prefer the innermost target and retain it at its edge during a drag.
   public func binding(at point: SpatialPoint, origin: WorldPoint = .zero, surface: SurfaceID,
-    excluding id: String? = nil, tolerance: Double, retaining retainedID: String? = nil, erasures: [String: [InkElementErasure]] = [:],
+    excluding id: String? = nil, tolerance: Double, retaining retainedID: String? = nil, erasures: InkElementErasureMap = [:],
     appearance: (String, NotebookGraphic, NotebookGraphicLayout, CGSize, [InkElementErasure]) -> NotebookElementAppearance? = { _,graphic,layout,size,cuts in
       .init(graphic:graphic,layout:layout,size:size,erasures:cuts)
     }) -> NotebookGraphicConnection.Binding? {

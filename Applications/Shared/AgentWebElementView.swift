@@ -1638,8 +1638,10 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
             }
           }
       } else {
+        let document = Self.staticRasterDocument(element, token: token)
         NotebookNavigationObservation.webPreparation("navigation_requested", ownerID: lease.id, sourceID: element.id)
-        activeNavigation = webView.loadHTMLString(Self.staticRasterDocument(element, token: token), baseURL: nil)
+        activeNavigation = webView.loadHTMLString(document, baseURL: nil)
+        NotebookNavigationObservation.webPreparation("navigation_returned", ownerID: lease.id, sourceID: element.id)
       }
       return
     }
@@ -1690,13 +1692,17 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
           stateCredit: stateTransfer?.initialCredit ?? 0, commitsEnabled: !snapshotOnly && allowsStateCommits)
       }
       packageNavigationURL = url
+      let request = URLRequest(url: url)
       NotebookNavigationObservation.webPreparation("navigation_requested", ownerID: lease.id, sourceID: element.id)
-      activeNavigation = webView.load(URLRequest(url: url))
+      activeNavigation = webView.load(request)
+      NotebookNavigationObservation.webPreparation("navigation_returned", ownerID: lease.id, sourceID: element.id)
     } else {
       let document = Self.document(for: element, stateJSON: encoded.htmlJSON, token: token,
         stateCredit: stateTransfer?.initialCredit ?? 0, commitsEnabled: !snapshotOnly && allowsStateCommits)
+      let html = document.before + element.html + document.after
       NotebookNavigationObservation.webPreparation("navigation_requested", ownerID: lease.id, sourceID: element.id)
-      activeNavigation = webView.loadHTMLString(document.before + element.html + document.after, baseURL: nil)
+      activeNavigation = webView.loadHTMLString(html, baseURL: nil)
+      NotebookNavigationObservation.webPreparation("navigation_returned", ownerID: lease.id, sourceID: element.id)
     }
   }
 

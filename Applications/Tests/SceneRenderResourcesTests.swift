@@ -374,6 +374,7 @@ final class SceneRenderResourcesTests: XCTestCase {
     let resources = SceneRenderResources(), documentID = UUID()
     let old = try await resources.acquireDocumentProgramSurface(priority: .liveProgram,
       documentID: documentID, blockID: "same-local-id")
+    old.finishConstruction()
     let submitted = try old.borrow()
     old.release()
     var replacementStarted = false
@@ -388,6 +389,7 @@ final class SceneRenderResourcesTests: XCTestCase {
     XCTAssertEqual(resources.pendingWebRequestCount, 1)
     let otherDocument = try await resources.acquireDocumentProgramSurface(priority: .input,
       documentID: UUID(), blockID: "same-local-id")
+    otherDocument.finishConstruction()
     let board = try await resources.acquireWebSurface(priority: .input,
       source: .board(boardID: documentID, elementID: "same-local-id"))
     defer { otherDocument.release(); board.release() }

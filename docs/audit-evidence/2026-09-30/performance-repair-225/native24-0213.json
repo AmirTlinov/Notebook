@@ -1,0 +1,136 @@
+{
+  "receipt": "native24-0213",
+  "build": 225,
+  "source_manifest_sha256": "f2b18aa05569288faf56e122a4c1e508bff80c5f66bcc7ae3110437044de27c1",
+  "selection_base_commit": "c140b804960321db8a60cd415dcd6e5a7eb076a1",
+  "scope": "One physical iPad native24 forward/reverse scenario. Negative latency receipt with passing correctness assertions; not full or final-source acceptance.",
+  "evidence": {
+    "xcresult": "/private/tmp/notebook-225-return-0213/ipad.xcresult",
+    "activities": "/private/tmp/notebook-225-return-0213/activities.json",
+    "phases": "/private/tmp/notebook-225-return-0213/attachment-3",
+    "phases_attachment_uuid": "8A7F8883-EFD0-4A07-A22F-B1C2B8C35B0A"
+  },
+  "test": "NotebookNavigationLoadUXTests/testTwentyFourProgramsCommitThroughTheirRuntimesBeforeTheNextPageCapture()",
+  "result": "FAIL",
+  "assertion_failures": [
+    {
+      "time_unix": 1790734484.146,
+      "message": "XCTAssertLessThanOrEqual failed: (\"0.452745416 seconds\") is greater than (\"0.45 seconds\") - The 450ms command-to-owner-landing budget is unchanged; 9s above is only the diagnostic watchdog"
+    },
+    {
+      "time_unix": 1790734486.234,
+      "message": "XCTAssertLessThanOrEqual failed: (\"0.515296125 seconds\") is greater than (\"0.45 seconds\")"
+    }
+  ],
+  "budgets_ms": {
+    "owner_landing": 450,
+    "unchanged": true
+  },
+  "measurement": {
+    "profiler_attached": false,
+    "observer_cost_deducted": false,
+    "owner_landing_is_not_os_presentation": true,
+    "pixel_readback_after_timing": true
+  },
+  "forward_owner_landing_ms": 452.745416,
+  "reverse_owner_landing_ms": 515.296125,
+  "correctness": {
+    "accepted_count1_states": 24,
+    "initial_authored_pixels": true,
+    "forward_target_live24_pixels": true,
+    "reverse_returned24_count1_pixels": true,
+    "reverse_leaf0_marker_and_cleared_leaf1_marker": true,
+    "basis": "The full activity tree contains only the two latency assertions. Reverse owner completed and the unchanged red-probe/leaf-marker checks recorded no failure."
+  },
+  "reverse_owner": {
+    "shown": 0,
+    "selected": 0,
+    "pending": null,
+    "turning": false,
+    "presented": true
+  },
+  "reverse_sheets": [
+    {
+      "index": 0,
+      "page_id": "2386D776-5813-4381-950E-4B23117E97CF",
+      "source_stamp_counter": 25,
+      "presented": true,
+      "capturable": true,
+      "state_count1": 24,
+      "state_count0": 0,
+      "provider_true": 24,
+      "provider_false": 0,
+      "provider_content_counts": {
+        "raster": 24
+      },
+      "live_runtime_count": 0,
+      "installed_runtimes": 0,
+      "nonempty_diagnostics": 0
+    },
+    {
+      "index": 1,
+      "page_id": "9926FDAA-6FCF-4D00-B120-1DC1C93B0976",
+      "source_stamp_counter": 1,
+      "presented": true,
+      "capturable": true,
+      "state_count1": 0,
+      "state_count0": 24,
+      "provider_true": 24,
+      "provider_false": 0,
+      "provider_content_counts": {
+        "runtime": 24
+      },
+      "live_runtime_count": 24,
+      "installed_runtimes": 24,
+      "nonempty_diagnostics": 1
+    },
+    {
+      "index": 2,
+      "page_id": "FF735268-47BF-4FEB-AC82-487E00CD995B",
+      "source_stamp_counter": 1,
+      "presented": true,
+      "capturable": true,
+      "state_count1": 0,
+      "state_count0": 24,
+      "provider_true": 24,
+      "provider_false": 0,
+      "provider_content_counts": {
+        "status": 16,
+        "raster": 8
+      },
+      "live_runtime_count": 0,
+      "installed_runtimes": 0,
+      "nonempty_diagnostics": 0
+    },
+    {
+      "index": 3,
+      "page_id": "BBDFC35B-F67A-4FB4-8354-40BB732173D8",
+      "source_stamp_counter": 1,
+      "presented": false,
+      "capturable": false,
+      "state_count1": 0,
+      "state_count0": 24,
+      "provider_true": 22,
+      "provider_false": 2,
+      "provider_content_counts": {
+        "status": 22
+      },
+      "live_runtime_count": 0,
+      "installed_runtimes": 0,
+      "nonempty_diagnostics": 0
+    }
+  ],
+  "comparison_with_0146": {
+    "prior_receipt": "metrics-0146.json",
+    "prior_reverse_pixels_correct": false,
+    "current_reverse_pixels_correct": true,
+    "changed_manifest_paths": [
+      "Applications/Shared/DocumentPagePresentationOwner.swift",
+      "Applications/Shared/DocumentWebView.swift",
+      "Applications/Tests/DocumentProgramOwnerTests.swift",
+      "Applications/Tests/NotebookNavigationLoadUXTests.swift",
+      "Applications/Tests/NotebookPageMotionUXTests.swift"
+    ],
+    "interpretation": "The return-pixel failure did not reproduce here; 0146 remains a recorded correctness failure. This run does not establish its cause or permanent resolution."
+  }
+}

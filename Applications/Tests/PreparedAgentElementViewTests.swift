@@ -9,6 +9,60 @@ import XCTest
 
 final class PreparedAgentElementViewTests: XCTestCase {
   @MainActor
+  func testNeverReadyNotebookProgramShowsOneCapturableStatusAndAllowsRealTurn() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("pending-turn-\(UUID())")
+    let store = NotebookStore(root: root), actor = UUID(), size = NotebookAppModel.defaultPageSize
+    _ = try store.initializeWorkspace(actor: actor, pageSize: size)
+    var workspace = try store.loadIndex()
+    let item = workspace.selectedItemID, firstID = try XCTUnwrap(workspace.selectedPageID)
+    var first = try store.loadPage(firstID)
+    let source = AgentElement(id: "never-ready", kind: .web,
+      frame: .init(x: 20, y: 20, width: 160, height: 120), source: "Pending program",
+      html: "<button>Unready control</button>", javaScript: "notebook.ready(new Promise(()=>{}));")
+    XCTAssertTrue(first.replaceElements([source], actor: actor)); try store.savePage(first)
+    let presence = SessionPresence(boardID: workspace.rootBoardID, mode: .page, camera: .init(),
+      viewport: .init(x: 834, y: 1194), focusedItemID: item, openProgress: 1,
+      selectedItemID: item, notebookPageID: firstID)
+    try store.savePresence(presence)
+    let appended = try XCTUnwrap(workspace.appendPage(in: item, actor: actor, pageSize: size))
+    try store.saveWorkspaceSelection(index: workspace, createdPage: try XCTUnwrap(appended.createdPage))
+    try store.savePresence(presence)
+    let model = NotebookAppModel(store: store, startsNearbySync: false)
+    retainNotebookUntilTeardown(model, removing: root)
+    await model.start(pageSize: size)
+    let order = try XCTUnwrap(model.notebookPageRoot(item)), controller = IPadPageTurnController()
+    let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+    let previous = scene.windows.first(where: \.isKeyWindow), window = UIWindow(windowScene: scene)
+    var receipts: [Int: PageTurnReadiness] = [:]
+    controller.update(ownerID: item, sequenceRevision: order, pageCount: 2, selectedIndex: 0,
+      navigationIsEnabled: true, pageIsInteractive: true, canBeginNavigation: { true },
+      page: { index, current, ready in
+        receipts[index] = ready
+        return AnyView(NotebookPageView(notebookID: item, index: index,
+          isCurrent: current, isInteractive: current, isVisible: true, onRenderReady: ready,
+          displayProjection: 1, refinesDetails: true).environment(model))
+      }, onCommit: { _, _ in }, onTransitioningChange: { _ in }, notebookNavigation: model.notebookPageNavigation,
+      onWindowChange: { indices, target, source, id in
+        model.retainNotebookPageWindow(indices, in: item, root: source, target: target, controllerID: id)
+      }, pageIdentities: model.notebookResidentPageIdentities(item))
+    window.rootViewController = controller; window.makeKeyAndVisible(); window.layoutIfNeeded()
+    defer { controller.uninstall(); window.isHidden = true; window.rootViewController = nil; previous?.makeKey() }
+    try await waitUntil("The displayed pending/error cut certifies the physical page") {
+      controller.preparedPageIndices.contains(0) && controller.preparedPageIndices.contains(1)
+    }
+    let ready = try XCTUnwrap(receipts[0]), owner = try XCTUnwrap(ready.agentPreparations).owner(for: source.id)
+    XCTAssertFalse(owner.showsLiveProgram)
+    XCTAssertNotNil(owner.statusPresentation)
+    XCTAssertEqual(controller.pageTurnActivity.elementFrameVersion(page: 0, source: agentElementSnapshotSource(source))?.content, .status)
+    XCTAssertTrue(model.notebookPageNavigation.send(.step(1), ownerID: item, source: order))
+    try await waitUntil("A never-ready author cannot prohibit the real native page turn") { controller.displayedIndex == 1 }
+    XCTAssertFalse(owner.showsLiveProgram)
+    XCTAssertTrue(model.notebookPageNavigation.send(.step(-1), ownerID: item, source: order))
+    try await waitUntil("Returning keeps the installed status as the same readable page content") { controller.displayedIndex == 0 }
+    XCTAssertFalse(owner.showsLiveProgram)
+  }
+
+  @MainActor
   func testLatePageReadBorrowsItsPreparationBeforeTheExistingShellMountsPrograms() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("late-page-owner-\(UUID())")
     let store = NotebookStore(root: root), actor = UUID(), size = NotebookAppModel.defaultPageSize
@@ -262,9 +316,11 @@ final class PreparedAgentElementViewTests: XCTestCase {
     try await waitUntil("The unrelated construction waiter is queued first") { resources.pendingWebRequestCount == 1 }
     let source = AgentElement(id: UUID().uuidString, kind: .web,
       frame: .init(x: 0, y: 0, width: 160, height: 120), source: "Accepted before native input",
-      html: "<button>Ready</button>", javaScript: "window.boots=(window.boots||0)+1;notebook.ready(Promise.resolve());")
-    let owner = PreparedAgentElementPreparationOwner(resources: resources)
-    defer { owner.retire() }
+      html: "<button>Ready</button>", css: "html,body{margin:0;width:100%;height:100%;background:blue}", javaScript: "window.boots=(window.boots||0)+1;notebook.ready(new Promise(resolve=>window.releaseReady=resolve));")
+    let preparations = PageAgentPreparationOwner(resources: resources)
+    let owner = preparations.owner(for: source.id)
+    defer { preparations.retire() }
+    XCTAssertTrue(resources.store(fallbackImage(size: .init(width: 160, height: 120), scale: 1, color: .red), for: source))
     var requests: [UUID] = []
     precondition(NotebookNavigationObservation.onWebPreparation == nil)
     NotebookNavigationObservation.onWebPreparation = { stage, id, sourceID, _ in
@@ -283,6 +339,11 @@ final class PreparedAgentElementViewTests: XCTestCase {
     }
     accept(input: false, focused: false)
     try await waitUntil("The accepted page waits for its first native construction") { resources.pendingWebRequestCount == 2 }
+    owner.prepareStatus(owner.requestedStatus)
+    try await waitUntil("The pending program owns its one display and curl material") {
+      owner.statusPresentation?.key == owner.requestedStatus && owner.statusPresentation != nil
+    }
+    let pendingMaterial = try XCTUnwrap(owner.statusPresentation)
     let acceptedRequest = try XCTUnwrap(requests.first)
     accept(input: true, focused: true)
     // This grants exactly one constructor. Input priority must update the
@@ -294,6 +355,11 @@ final class PreparedAgentElementViewTests: XCTestCase {
     XCTAssertEqual(session.lease.id, acceptedRequest)
     XCTAssertEqual(session.lease.priority, .input)
     XCTAssertEqual(grantOrder.first, "page")
+    XCTAssertEqual(owner.requestedStatus, pendingMaterial.key,
+      "Granting a native executor does not change the pending program's displayed status")
+    owner.prepareStatus(owner.requestedStatus)
+    XCTAssertTrue(owner.statusPresentation === pendingMaterial,
+      "Mount and grant reuse the same immutable status cut instead of rendering a second image")
     let earlierLease = try await earlier.value
     defer { earlierLease.release() }
     accept(input: false, focused: true)
@@ -301,6 +367,78 @@ final class PreparedAgentElementViewTests: XCTestCase {
     XCTAssertTrue(owner.session === session)
     XCTAssertEqual(session.coordinator.loadToken, token)
     XCTAssertEqual(requests, [acceptedRequest])
+    XCTAssertTrue(owner.statusPresentation === pendingMaterial)
+
+    // The real source-ready edge must not remove the installed bridge before
+    // WebKit has delivered its first pixels. Hold only the existing owner
+    // callback; WebKit still renders and snapshots its normal visible surface.
+    var heldPaint: SceneSourceInstallation?
+    var deliverPaint: ((SceneSourceInstallation) -> Void)?
+    var holdsPaint = true
+    precondition(NotebookNavigationObservation.onSourceInstalled == nil)
+    NotebookNavigationObservation.onSourceInstalled = { installation, _ in
+      guard holdsPaint, installation.runtimeToken != nil,
+        installation.source.agentElement?.id == source.id,
+        installation.isInstalled, let web = owner.web, let current = owner.session else { return }
+      let delivery = owner.runtimeView(web, session: current, basis: nil).onFramePainted
+      current.coordinator.use(onFramePainted: { receipt in
+        if holdsPaint { heldPaint = receipt; deliverPaint = delivery }
+        else { delivery(receipt) }
+      })
+    }
+    defer {
+      holdsPaint = false
+      if let heldPaint { deliverPaint?(heldPaint) }
+      NotebookNavigationObservation.onSourceInstalled = nil
+    }
+    let host = try SurfaceHost(content: AnyView(PreparedAgentElementView(element: source,
+      allowsInteraction: true, inputEnabled: false, capturePolicy: .exact(scale: 1),
+      focus: .page(pageID: pageID, elementID: source.id), preparations: preparations,
+      onRenderReady: { _ in }, onState: { _, _ in false })
+      .frame(width: 160, height: 120).environment(model).environment(\.displayScale, 1)))
+    defer { host.close() }
+    try await waitUntil("The retained page cut is actually mounted before the native program becomes ready") {
+      self.statusViews(in: host.controller.view).contains { $0.isShowing(.init(
+        source: pendingMaterial.cut.source, entryID: pendingMaterial.id, owner: $0)) }
+        && session.webView.superview != nil
+    }
+    let scriptDeadline = ContinuousClock.now + .seconds(8)
+    while (try? await session.webView.evaluateJavaScript("typeof window.releaseReady==='function'")) as? Bool != true,
+      ContinuousClock.now < scriptDeadline { try await Task.sleep(for: .milliseconds(20)) }
+    _ = try await session.webView.evaluateJavaScript("window.releaseReady();true")
+    try await waitUntil("The visible native surface delivers a real first-paint receipt independently of its bridge") {
+      heldPaint != nil && owner.showsLiveProgram
+    }
+    XCTAssertTrue(SceneSourceVisibility.isVisible(session.webView), "The bridge must not hide the native producer")
+    XCTAssertTrue(owner.bridgesFirstLivePaint)
+    XCTAssertFalse(owner.hasPaintedLiveProgram)
+    XCTAssertNotNil(owner.requestedStatus, "JS readiness cannot withdraw the accepted pending cut before first paint")
+    let bridge = try XCTUnwrap(owner.statusPresentation)
+    let bridgeView = try XCTUnwrap(statusViews(in: host.controller.view).first { $0.isShowing(.init(
+      source: bridge.cut.source, entryID: bridge.id, owner: $0)) })
+    func path(_ view: UIView) -> [UIView] {
+      var result: [UIView] = [], current: UIView? = view
+      while let value = current { result.append(value); current = value.superview }
+      return Array(result.reversed())
+    }
+    let bridgePath = path(bridgeView), webPath = path(session.webView)
+    let common = zip(bridgePath, webPath).prefix { $0.0 === $0.1 }.count
+    XCTAssertGreaterThan(common, 0)
+    if common > 0, common < bridgePath.count, common < webPath.count {
+      let siblings = bridgePath[common - 1].subviews
+      XCTAssertGreaterThan(try XCTUnwrap(siblings.firstIndex(of: bridgePath[common])),
+        try XCTUnwrap(siblings.firstIndex(of: webPath[common])), "The accepted cut must remain above its preparing native successor")
+    } else { XCTFail("The bridge and native surface must have distinct painted branches") }
+    holdsPaint = false
+    let painted = try XCTUnwrap(heldPaint)
+    deliverPaint?(painted); heldPaint = nil
+    try await waitUntil("Only the exact first-paint receipt transfers the slot to its existing live runtime") {
+      owner.hasPaintedLiveProgram && !owner.bridgesFirstLivePaint && owner.statusPresentation == nil
+    }
+    XCTAssertTrue(owner.session === session)
+    XCTAssertEqual(session.coordinator.loadToken, token)
+    owner.retire()
+    XCTAssertNil(owner.statusPresentation, "The page withdraws its status with its source lifetime")
   }
 
   @MainActor
@@ -1908,6 +2046,11 @@ final class PreparedAgentElementViewTests: XCTestCase {
   }
 
   @MainActor
+  private func statusViews(in view: UIView) -> [PageElementStatusView.NativeView] {
+    (view as? PageElementStatusView.NativeView).map { [$0] } ?? view.subviews.flatMap { statusViews(in: $0) }
+  }
+
+  @MainActor
   private func rasterViews(in view: UIView) -> [AgentSnapshotRasterView] {
     (view as? AgentSnapshotRasterView).map { [$0] } ?? view.subviews.flatMap { rasterViews(in: $0) }
   }
@@ -2027,7 +2170,7 @@ private struct PageProgramViewportFixture: View {
   let onState: (String, JSONValue, NotebookProgramStateCompletion) -> Bool
   var body: some View {
     if let page = model.pages[pageID] {
-    AgentOverlayView(page:page,renderingScale:1,
+    AgentOverlayView(page:page,sourceIdentity:page.elementSourceIdentity,renderingScale:1,
       allowsInteraction: true, inputEnabled: true, onRenderReady: { _ in },
       onState: onState, visibleRegion: viewport.region)
       .frame(width: 400, height: 320)

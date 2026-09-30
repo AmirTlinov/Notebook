@@ -1,10 +1,100 @@
 import NotebookCore
+import Observation
 import UIKit
 import SwiftUI
 import XCTest
 @testable import Notebook
 
 final class PagePresentationTests: XCTestCase {
+  @MainActor
+  func testEquivalentDecodedPagePublishesItsExactSourceToTheExistingReader() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("page-source-publication-\(UUID())")
+    let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
+    retainNotebookUntilTeardown(model, removing: root)
+    let page = PageDocument(size: .init(width: 100, height: 100), actor: UUID())
+    let decoded = try JSONDecoder().decode(PageDocument.self, from: JSONEncoder().encode(page))
+    XCTAssertEqual(page, decoded, "A durable value comparison alone cannot notify this replacement")
+    let item = UUID(), controller = UUID(), address = NotebookPagePreparationWindow.Address(itemID: item, index: 0, root: "accepted")
+    let window = NotebookPagePreparationWindow()
+    defer { _ = window.stop() }
+    window.addresses[address] = page.id
+    window.acceptedPages([page.id: page], model: model)
+    window.updatePresence(.init(boardID: UUID(), mode: .page, camera: .init(),
+      viewport: .init(x: 100, y: 100), focusedItemID: item, openProgress: 1,
+      selectedItemID: item, notebookPageID: page.id))
+    window.retain([0], in: item, root: address.root, target: nil, targetIsLoaded: true, controllerID: controller)
+    let readiness = PageTurnReadiness(activity: .init(), agentPreparationSource: .notebook {
+      .init(address: address, pageID: page.id, controllerID: controller)
+    }) { _ in }
+    defer { readiness.retire() }
+    XCTAssertTrue(readiness.acceptNotebookPage(page.id, from: window))
+    let entry = try XCTUnwrap(readiness.notebookPageSource), preparations = entry.preparations
+    let previous = PageSurface(page: entry.document, isCurrent: true, isInteractive: true,
+      isVisible: true, onRenderReady: readiness, sourceVersion: entry.sourceVersion)
+    @MainActor final class Changes { var count = 0 }
+    let changes = Changes()
+    func observe() {
+      withObservationTracking { _ = entry.document } onChange: {
+        MainActor.assumeIsolated { changes.count += 1 }
+      }
+    }
+    observe()
+    window.acceptedPages([page.id: decoded], model: model)
+    XCTAssertEqual(changes.count, 1, "The mounted reader must observe exact accepted root replacement")
+    XCTAssertTrue(readiness.acceptNotebookPage(page.id, from: window))
+    XCTAssertTrue(readiness.notebookPageSource === entry)
+    XCTAssertTrue(entry.preparations === preparations, "Rebinding does not remount the host or replace its runtime owner")
+    let current = PageSurface(page: entry.document, isCurrent: true, isInteractive: true,
+      isVisible: true, onRenderReady: readiness, sourceVersion: entry.sourceVersion)
+    XCTAssertNotEqual(previous.sourceVersion, current.sourceVersion,
+      "Child view equality must not hide the accepted source behind equivalent PageDocument values")
+    XCTAssertEqual(current.page.inkSource.identity, decoded.inkSource.identity)
+    XCTAssertEqual(current.page.elementSourceIdentity, decoded.elementSourceIdentity)
+    XCTAssertEqual(previous.page.elementSourceIdentity, page.elementSourceIdentity,
+      "An old installation callback retains its original immutable source")
+    observe()
+    window.acceptedPages([page.id: decoded], model: model)
+    XCTAssertEqual(changes.count, 1, "Unchanged accepted roots do not invalidate the page")
+  }
+
+  @MainActor
+  func testEquivalentDecodedPageRebindsItsInstalledGraphicsReceipt() throws {
+    let actor = UUID()
+    let element = AgentElement(id: "program", kind: .web,
+      frame: .init(x: 0, y: 0, width: 32, height: 32), source: "installed", html: "installed")
+    for elements in [[], [element]] {
+      var page = PageDocument(size: .init(width: 100, height: 100), actor: actor)
+      if !elements.isEmpty { XCTAssertTrue(page.replaceElements(elements, actor: actor)) }
+      let decoded = try JSONDecoder().decode(PageDocument.self, from: JSONEncoder().encode(page))
+      XCTAssertEqual(decoded, page)
+      XCTAssertNotEqual(decoded.elementSourceIdentity, page.elementSourceIdentity)
+      let ledger = AgentOverlayReadiness(), surface = PageSurfaceReadiness()
+      surface.recordInk(.init(pageID: page.id, stamp: page.drawingStamp))
+      func prepare(_ value: PageDocument) -> UUID {
+        ledger.prepare(sourceIdentity: value.elementSourceIdentity, elements: value.elements,
+          pageSize: value.size, erasure: .init(pageID: value.id, stamp: value.drawingStamp, erasures: [:]),
+          publish: { ready, _ in surface.recordGraphics(ready, page: value) })
+      }
+      let previous = prepare(page)
+      for element in elements { XCTAssertTrue(ledger.record(element, ready: true)) }
+      ledger.publish()
+      XCTAssertTrue(surface.isReady(page))
+      let rebound = prepare(decoded)
+      XCTAssertNotEqual(previous, rebound, "A new source needs the existing view's publication edge")
+      XCTAssertFalse(surface.isReady(decoded), "The old envelope is not this source's receipt")
+      ledger.publish()
+      XCTAssertTrue(surface.isReady(decoded), "Unchanged installed facts rebind without repainting or another runtime callback")
+      XCTAssertEqual(prepare(decoded), rebound, "Ordinary layout must not republish a new source")
+      if !elements.isEmpty {
+        var changed = decoded
+        XCTAssertTrue(changed.replaceElements([.init(id: element.id, kind: .web,
+          frame: element.frame, source: "replacement", html: "replacement")], actor: actor))
+        _ = prepare(changed); ledger.publish()
+        XCTAssertFalse(surface.isReady(changed), "A changed program still needs its own installed pixels")
+      }
+    }
+  }
+
   @MainActor private func receipt(_ page:PageDocument,ink:Bool,graphics:Bool)->PageSurfaceReadiness {
     let result=PageSurfaceReadiness()
     result.recordInk(ink ? .init(pageID:page.id,stamp:page.drawingStamp) : nil)

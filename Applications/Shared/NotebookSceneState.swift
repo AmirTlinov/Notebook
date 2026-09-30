@@ -47,6 +47,7 @@ struct NotebookSceneState: Sendable {
   let header: NotebookWorkspaceHeader
   let workspace: WorkspaceIndex
   let pages: [UUID: PageDocument]
+  var pageSources: [UUID: NotebookPageSource] = [:]
   let pagePositions: [NotebookPagePosition]
   let documents: [UUID: DocumentDocument]
   let states: [UUID: DocumentStateJournal]
@@ -107,7 +108,7 @@ struct NotebookSceneState: Sendable {
       height: (presence.viewport.y + margin * 2) / presence.camera.scale)
   }
 
-  static func read(store: NotebookStore, presence requested: SessionPresence?, viewport: SpatialPoint, loadsLiveContent: Bool = true, pinnedElements: [UUID: [String]] = [:], pinnedItems: [UUID: [UUID]] = [:], preparedPages: [UUID] = [], historyActor: UUID? = nil, pinnedInkActionIDs: Set<UUID> = [], reusingPages: [UUID: PageDocument] = [:]) throws -> Self {
+  static func read(store: NotebookStore, presence requested: SessionPresence?, viewport: SpatialPoint, loadsLiveContent: Bool = true, pinnedElements: [UUID: [String]] = [:], pinnedItems: [UUID: [UUID]] = [:], preparedPages: [UUID] = [], historyActor: UUID? = nil, pinnedInkActionIDs: Set<UUID> = [], reusingPages: [UUID: NotebookPageSource] = [:]) throws -> Self {
     guard requested?.isValid ?? true else { throw NotebookStorageError.corruptRecord("scene presence") }
     guard preparedPages.count <= 4, Set(preparedPages).count == preparedPages.count else {
       throw NotebookStorageError.limitExceeded("scene_page_pins")
@@ -139,6 +140,7 @@ struct NotebookSceneState: Sendable {
       guard let selectedHeader else { throw NotebookStorageError.corruptRecord("empty workspace") }
       var selected = selectedHeader.item
       var pagePositions: [NotebookPagePosition] = [], pages: [UUID: PageDocument] = [:]
+      var pageSources: [UUID: NotebookPageSource] = [:]
       var pageID: UUID?
       var notebookRoot: String?
       if selected.kind == .notebook {
@@ -199,14 +201,11 @@ struct NotebookSceneState: Sendable {
         let demanded = Set(preparedPages).union([pageID])
         let window = try store.readNotebookPageWindow(itemID: selected.id,
           pages: pagePositions.filter { demanded.contains($0.pageID) }.map { .page($0.pageID) },
-          expectedVisibleRoot: notebookRoot)
+          expectedVisibleRoot: notebookRoot, reusing: reusingPages)
         pages = Dictionary(uniqueKeysWithValues: try window.pages.map { entry in
-          let incoming = entry.document
-          // Compare the complete immutable material on the read worker. A
-          // metadata-only refresh keeps its graph/index and installed identity;
-          // a changed source (even with the same stamp) must replace it.
-          let page = reusingPages[incoming.id].flatMap { $0 == incoming ? $0 : nil } ?? incoming
+          let page = entry.document
           try page.prepareInkForPresentation()
+          pageSources[page.id] = entry.source
           return (page.id, page)
         })
       }
@@ -340,7 +339,7 @@ struct NotebookSceneState: Sendable {
           guard let id = surface.ownerID else { return nil }
           return .init(kind: surface.kind == .cover ? .cover : .board, id: id)
         })
-      return try Self(inputScopes: store.inputScopes(for: Array(scopeTargets)), witness: store.readSourceWitness(itemIDs: Set(items.keys).union(requestedItems), pageIDs: Set(pages.keys), boardIDs: Set(nodes.keys), documentIDs: Set(live.documents.keys)), header: header, workspace: workspace, pages: pages, pagePositions: pagePositions,
+      return try Self(inputScopes: store.inputScopes(for: Array(scopeTargets)), witness: store.readSourceWitness(itemIDs: Set(items.keys).union(requestedItems), pageIDs: Set(pages.keys), boardIDs: Set(nodes.keys), documentIDs: Set(live.documents.keys)), header: header, workspace: workspace, pages: pages, pageSources: pageSources, pagePositions: pagePositions,
         documents: live.documents, states: live.states,
         drafts: needsSelectedContent && selected.kind == .document ? store.documentEditingSessions(documentID: selected.id) : [],
         reading: selected.kind == .document ? store.readDocumentReadingPosition(selected.id) : nil,

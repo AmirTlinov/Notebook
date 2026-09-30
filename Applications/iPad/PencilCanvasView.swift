@@ -175,6 +175,10 @@ struct PencilCanvasView: UIViewRepresentable {
       paper.touchView.onActionActivityChange = { [weak self] active in
         self?.setPencilActionActive(active)
       }
+      paper.touchView.onActionContactReleased = { [weak self] in
+        guard let self else { return }
+        inputGate.releasePencilContact(source: inputSourceID)
+      }
       paper.touchView.onDrawingMutation = { [weak self, weak paper] mutation in
         guard let self, let paper else { return }
         commit(mutation, on: paper, fit: paper.touchView.completedQuickShape)
@@ -324,6 +328,7 @@ struct PencilCanvasView: UIViewRepresentable {
       )
       if pencilActionIsActive {
         inputGate.beginPencilAction(source: inputSourceID)
+        if attachedPaper?.touchView.hasPhysicalContact != true { inputGate.releasePencilContact(source: inputSourceID) }
       }
     }
 
@@ -348,6 +353,7 @@ struct PencilCanvasView: UIViewRepresentable {
       paper.touchView.onActionWillBegin = nil
       paper.touchView.onActionCancelled = nil
       paper.touchView.onActionActivityChange = nil
+      paper.touchView.onActionContactReleased = nil
       paper.touchView.onDrawingMutation = nil
       inputGate.setCurrentPageSource(
         inputSourceID,
@@ -637,6 +643,7 @@ final class PaperInputView: UIView {
   var onActionCancelled: (() -> Void)?
   var onDrawingMutation: ((PageInkAction) -> Void)?
   var onActionActivityChange: ((Bool) -> Void)?
+  var onActionContactReleased: (() -> Void)?
   var presentActivePen: ((ActiveInkStroke) -> Void)?
   var commitActivePen: ((PageInkAction) -> Void)?
   var presentActiveEraser: ((ActiveEraserStroke) -> Void)?
@@ -677,6 +684,7 @@ final class PaperInputView: UIView {
   private var drawingTool = DrawingTool.pen
 
   private var activeTouch: UITouch?
+  var hasPhysicalContact: Bool { activeTouch != nil }
   private var actionTool: DrawingTool?
   private var guideConstraint: GuideConstraintSnapshot?
   private var actionPenStyle: PenStyle?
@@ -791,6 +799,7 @@ final class PaperInputView: UIView {
     activeTouch = nil
     actionHasEnded = true
     actionEndedNormally = true
+    if reportsPencilActivity { onActionContactReleased?() }
     predictedSamples = []
     showMeasuredActionWithoutPredictions()
 

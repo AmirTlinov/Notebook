@@ -48,5 +48,5 @@ final class NotebookPageInkPublication {
 struct PageElementErasurePresentation {
   let pageID: UUID
   let stamp: VersionStamp
-  let erasures: [String: [InkElementErasure]]
+  let erasures: InkElementErasureMap
 }

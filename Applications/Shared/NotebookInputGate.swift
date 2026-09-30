@@ -129,7 +129,7 @@ final class NotebookInputGate {
   }
 
   func claimHistoryContacts(_ contacts: Set<ObjectIdentifier>, nativeInput: ObjectIdentifier? = nil) {
-    guard contacts.count == 2, !hasActivePencil, contacts.allSatisfy({ contact in
+    guard contacts.count == 2, !hasPencilContact, contacts.allSatisfy({ contact in
       switch fingerContactOwners[contact] {
       case .scene?, .webLink?: nativeInput == nil
       case .nativeInput(let owner)?: owner == nativeInput
@@ -198,6 +198,7 @@ final class NotebookInputGate {
   private var pageFinishers: [UUID: NotebookInputFinisher] = [:]
   private var currentPageSource: UUID?
   private var activePencilSources: Set<UUID> = []
+  private var downPencilSources: Set<UUID> = []
   private(set) var pencilGeneration: UInt64 = 0
   private var fingerCancellations: [UUID: @MainActor () -> Void] = [:]
   private var commandsAfterPencil: [NotebookInputCompletion] = []
@@ -208,6 +209,7 @@ final class NotebookInputGate {
   private var activityGeneration: UInt64 = 0
   private(set) var isActive = false
   var hasActivePencil: Bool { !activePencilSources.isEmpty }
+  var hasPencilContact: Bool { !downPencilSources.isEmpty }
   private var newContactAdmission: @MainActor () -> Bool = { true }
   var permitsNewContact: Bool { newContactAdmission() }
   var onActivityChange: ((Bool) -> Void)?
@@ -374,6 +376,7 @@ final class NotebookInputGate {
     if activePencilSources.contains(source) { return true }
     guard permitsNewContact else { return false }
     activePencilSources.insert(source)
+    downPencilSources.insert(source)
     let navigation = navigationClaim; navigationClaim = nil; navigation?.cancel()
     pencilGeneration &+= 1
     notifyAcceptedContact()
@@ -393,6 +396,7 @@ final class NotebookInputGate {
   }
 
   func endPencilAction(source: UUID) {
+    downPencilSources.remove(source)
     activePencilSources.remove(source)
     updateActivity()
     guard activePencilSources.isEmpty, !commandsAfterPencil.isEmpty else { return }
@@ -402,10 +406,14 @@ final class NotebookInputGate {
   }
 
   func beginFingerSequence() -> UInt64? {
-    permitsNewContact && activePencilSources.isEmpty ? pencilGeneration : nil
+    permitsNewContact && downPencilSources.isEmpty ? pencilGeneration : nil
   }
 
   func acceptsFingerSequence(_ revision: UInt64) -> Bool {
-    activePencilSources.isEmpty && revision == pencilGeneration
+    downPencilSources.isEmpty && revision == pencilGeneration
   }
+
+  /// Estimates retain the released action's publication fence, while an
+  /// explicit following command may finish its latest measured contents.
+  func releasePencilContact(source: UUID) { downPencilSources.remove(source) }
 }

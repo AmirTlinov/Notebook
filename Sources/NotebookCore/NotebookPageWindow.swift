@@ -107,9 +107,43 @@ public struct NotebookPageWindowHeader: Codable, Equatable, Sendable {
   }
 }
 
+/// A source capability belongs to one WAL read, not a caller-supplied stamp.
+/// Live ink may advance the mounted page's journal; that makes this capability
+/// ineligible for reuse without copying or serializing the prior drawing.
+public struct NotebookPageSource: Sendable {
+  public let document: PageDocument
+  public let revision: String
+  private let ink: PageInkSource
+  private let storeKey: String
+  fileprivate init(document: PageDocument, revision: String, storeKey: String) {
+    self.document = document; self.revision = revision; ink = document.inkSource; self.storeKey = storeKey
+  }
+  fileprivate func matches(_ revision: String, storeKey: String) -> Bool {
+    self.storeKey == storeKey && self.revision == revision && document.inkSource.identity == ink.identity
+  }
+}
+
 public struct NotebookPageWindowEntry: Codable, Equatable, Sendable {
   public let position: NotebookPagePosition
   public let document: PageDocument
+  public let source: NotebookPageSource?
+  private enum CodingKeys: String, CodingKey { case position, document }
+  fileprivate init(position: NotebookPagePosition, source: NotebookPageSource) {
+    self.position = position; document = source.document; self.source = source
+  }
+  public init(from decoder: Decoder) throws {
+    let values = try decoder.container(keyedBy: CodingKeys.self)
+    position = try values.decode(NotebookPagePosition.self, forKey: .position)
+    document = try values.decode(PageDocument.self, forKey: .document)
+    source = nil // A decoded wire value cannot attest a WAL source capability.
+  }
+  public func encode(to encoder: Encoder) throws {
+    var values = encoder.container(keyedBy: CodingKeys.self)
+    try values.encode(position, forKey: .position); try values.encode(document, forKey: .document)
+  }
+  public static func == (lhs: Self, rhs: Self) -> Bool {
+    lhs.position == rhs.position && lhs.document == rhs.document
+  }
 }
 
 public struct NotebookPageWindow: Codable, Equatable, Sendable {
@@ -150,7 +184,7 @@ extension NotebookStore {
   /// Resolves every requested identity before reading any PageDocument. Missing
   /// requests and duplicate resolved UUIDs fail; no blank substitute is ready.
   public func readNotebookPageWindow(itemID: UUID, pages: [NotebookPageReadTarget],
-    expectedVisibleRoot: String? = nil) throws -> NotebookPageWindow {
+    expectedVisibleRoot: String? = nil, reusing sources: [UUID: NotebookPageSource] = [:]) throws -> NotebookPageWindow {
     guard pages.count <= 4 else { throw NotebookStorageError.limitExceeded("notebook_page_window") }
     return try readTransaction { _ in
       let snapshot = try NotebookPageReadSnapshot(store: self, itemID: itemID, expectedVisibleRoot: expectedVisibleRoot)
@@ -170,7 +204,11 @@ extension NotebookStore {
         positions.append(position)
       }
       let documents = try positions.map { position in
-        NotebookPageWindowEntry(position: position, document: try loadPage(position.pageID))
+        guard let revision = try pageSourceRevision(position.pageID) else { throw snapshot.missingPage() }
+        let source: NotebookPageSource
+        if let retained = sources[position.pageID], retained.matches(revision, storeKey: connectionKey) { source = retained }
+        else { source = .init(document: try loadPage(position.pageID), revision: revision, storeKey: connectionKey) }
+        return NotebookPageWindowEntry(position: position, source: source)
       }
       return .init(header: snapshot.header, pages: documents)
     }

@@ -36,6 +36,36 @@ public struct DocumentPrintProjection: Sendable {
   }
 }
 
+/// One UTF-16 address index per accepted source file. Line lookup never scans
+/// unrelated source text while installing or addressing a printed page.
+public struct DocumentPrintLineIndex: Sendable {
+  public let starts: [Int]
+  public let utf16Count: Int
+  public init(_ source: String) {
+    var starts = [0], offset = 0
+    for unit in source.utf16 {
+      offset += 1
+      if unit == 10 { starts.append(offset) }
+    }
+    self.starts = starts; utf16Count = offset
+  }
+  public func sourceOffset(line: Int) -> Int { starts[min(max(0, line-1), starts.count-1)] }
+  public func line(sourceOffset: Int) -> Int {
+    let offset = min(max(0, sourceOffset), utf16Count)
+    var low = 0, high = starts.count
+    while low < high {
+      let mid = (low+high)/2
+      if starts[mid] <= offset { low = mid+1 } else { high = mid }
+    }
+    return max(1, low)
+  }
+  public func range(line: Int) -> NSRange {
+    let index = min(max(0, line-1), starts.count-1), start = starts[index]
+    let end = index+1 < starts.count ? starts[index+1]-1 : utf16Count
+    return .init(location: start, length: end-start)
+  }
+}
+
 public enum DocumentPrintLocations {
   /// A single ordered shipout stream owns both source and program geometry.
   public static func decode(_ text: String, files: [DocumentPrintSourceFile], pages: [DocumentPrintPage]) throws -> DocumentPrintProjection {
@@ -190,14 +220,6 @@ public enum DocumentPrintLocations {
       return (dx*dx+dy*dy, value.width*value.height, value.line)
     }
     return locations.lazy.filter { $0.fileID == fileID && $0.pageIndex == pageIndex }.min { rank($0) < rank($1) }
-  }
-  public static func sourceOffset(line: Int, source: String) -> Int {
-    let lines = source.split(separator: "\n", omittingEmptySubsequences: false)
-    return lines.prefix(min(max(0, line-1), max(0, lines.count-1))).reduce(0) { $0+$1.utf16.count+1 }
-  }
-  public static func line(sourceOffset: Int, source: String) -> Int {
-    let prefix = (source as NSString).substring(to: min(max(0, sourceOffset), source.utf16.count))
-    return prefix.reduce(1) { $1 == "\n" ? $0+1 : $0 }
   }
   private static func invalid() -> CollaborationError {
     .init("invalid_print_locations", "Печатная карта не соответствует поддерживаемому формату или превышает предел адресов.")

@@ -1751,7 +1751,12 @@ private struct WorkspaceSceneItem: View {
           landed: { landing in
             if model.acceptDocumentPageLanding(landing) { announcePage(landing.pageIndex + 1) }
           },
-          status: model.acceptDocumentPageNavigationStatus), inputGate: model.inputGate
+          status: model.acceptDocumentPageNavigationStatus,
+          retainSource: { DocumentPagePresentationOwner.retainTurnSource(documentID: document.id, resources: .shared) },
+          resolveSourceLanding: { lease, page in
+            try await DocumentPagePresentationOwner.resolveTurnLanding(lease, page: page,
+              document: document, store: model.store, resources: .shared)
+          }), inputGate: model.inputGate
       )
       .background(Color(red: 0.985, green: 0.98, blue: 0.955))
       .clipShape(

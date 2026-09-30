@@ -17,9 +17,17 @@ final class DocumentPrintLocationsTests: XCTestCase {
   func testAuthoredUTF16OffsetsAreExactWithoutGeneratedParagraphs() {
     let source = "Title 😀\n\nFirst.\n\nSecond."
     let offset = (source as NSString).range(of: "Second.").location
-    XCTAssertEqual(DocumentPrintLocations.sourceOffset(line: 5, source: source), offset)
-    XCTAssertEqual(DocumentPrintLocations.line(sourceOffset: offset+3, source: source), 5)
-    XCTAssertEqual(DocumentPrintLocations.sourceOffset(line: 0, source: source), 0)
+    let index = DocumentPrintLineIndex(source)
+    XCTAssertEqual(index.sourceOffset(line: 5), offset)
+    XCTAssertEqual(index.line(sourceOffset: offset+3), 5)
+    XCTAssertEqual(index.range(line: 1), NSRange(location: 0, length: "Title 😀".utf16.count))
+    XCTAssertEqual(index.sourceOffset(line: 0), 0)
+    XCTAssertEqual(index.sourceOffset(line: 99), offset)
+    let trailing = DocumentPrintLineIndex("a😀\n\n")
+    XCTAssertEqual(trailing.starts, [0, 4, 5])
+    XCTAssertEqual(trailing.range(line: 3), NSRange(location: 5, length: 0))
+    XCTAssertEqual(trailing.line(sourceOffset: 50), 3)
+
   }
   func testImpossiblePagesAndNonFiniteScaleAreRejected() {
     XCTAssertThrowsError(try DocumentPrintLocations.decode("SyncTeX Version:1\nNotebook Shipout:1\n{9000\n", files: [], pages: [.init(width: 300, height: 400)]))

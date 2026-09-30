@@ -13,6 +13,29 @@ struct InkElementErasureTests {
     .init(elementID: "circle", frame: .init(x: 100, y: 100, width: 200, height: 120))
   }
 
+  @Test func hundredThousandAddressedMasksPreserveOldRootsAndPaintOrder() throws {
+    let cut=InkElementErasure(target:target,measurements:InkMeasurements([sample(100,160)]))
+    var targets=InkElementErasureMap(),dense=InkElementErasureMap()
+    for sequence in 0..<100_000 {
+      targets.insert(cut,at:UInt64(sequence),for:"target-\(sequence)")
+      dense.insert(cut,at:UInt64(sequence),for:"dense")
+    }
+    let oldTargets=targets,oldDense=dense
+    let replacement=InkElementErasure(target:.init(elementID:"replacement",frame:target.frame),
+      measurements:InkMeasurements([sample(200,160)]))
+    targets.insert(replacement,at:100_000,for:"target-50000")
+    dense.remove(at:50_000,for:"dense")
+    dense.insert(replacement,at:100_000,for:"dense")
+    #expect(oldTargets["target-50000"] == [cut])
+    #expect(targets["target-50000"] == [cut,replacement])
+    #expect(targets["target-49999"] == oldTargets["target-49999"])
+    let oldCuts=try #require(oldDense["dense"]),newCuts=try #require(dense["dense"])
+    #expect(oldCuts.count == 100_000 && newCuts.count == 100_000)
+    #expect(oldCuts.last == cut && newCuts.last == replacement)
+    targets.remove(at:100_000,for:"target-50000")
+    #expect(targets["target-50000"] == oldTargets["target-50000"])
+  }
+
   @Test func wholeObjectEraseIsImmediateUndoableAndSurvivesEncoding() throws {
     let object = InkElementTarget(elementID: "program", frame: target.frame, wholeElement: true)
     let action = PageInkAction(tool: .eraser, samples: [sample(100, 160)]).erasingElements([object])

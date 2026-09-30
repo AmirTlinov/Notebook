@@ -29,7 +29,9 @@ import XCTest
       let artifact = try await DocumentCanonicalPrint.store.artifact(for: document, input: input)
       XCTAssertTrue(artifact.dependencies.lookups.contains { $0.path == path })
       let resources = SceneRenderResources(), charge = try XCTUnwrap(resources.reserveDerivedBytes(artifact.pdf.count, priority: .passive))
-      let source = DocumentPrintedSource(artifact: artifact, pdf: .init(artifact.pdf), reservation: charge)
+      let source = DocumentPrintedSource(artifact: artifact, pdf: .init(artifact.pdf), reservation: charge,
+        lineIndices: Dictionary(uniqueKeysWithValues: artifact.document.files.filter { $0.resource == nil }.map { ($0.id, DocumentPrintLineIndex($0.source)) }),
+        slots: Dictionary(grouping: artifact.interactiveRegions, by: \.pageIndex))
       let page = DocumentPrintedPage(source: source, pageIndex: 0, width: artifact.pages[0].width, height: artifact.pages[0].height)
       let raster = try await page.image(width: 595), pixels = try XCTUnwrap(raster.dataProvider?.data) as Data
       let red = stride(from: 0, to: pixels.count, by: 4).filter { pixels[$0] > 200 && pixels[$0+1] < 60 && pixels[$0+2] < 60 }

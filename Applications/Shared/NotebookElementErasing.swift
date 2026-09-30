@@ -29,10 +29,10 @@ struct NotebookElementErasing {
     }
   }
 
-  var masks: [String: [InkElementErasure]] {
-    Dictionary(uniqueKeysWithValues: targets.map {
+  var masks: InkElementErasureMap {
+    .init(dictionary:Dictionary(uniqueKeysWithValues: targets.map {
       ($0.elementID, [InkElementErasure(target: $0, measurements: retainedCoverage[$0.elementID] ?? samples)])
-    })
+    }))
   }
 }
 
@@ -298,8 +298,8 @@ struct NotebookPageEraserSource {
     for task in tasks { await task.value }
   }
 
-  @ObservationIgnored private var spatial: [SurfaceID: [String: [InkElementErasure]]] = [:]
-  @ObservationIgnored private var projected: [SurfaceID:[String:[InkElementErasure]]] = [:]
+  @ObservationIgnored private var spatial: [SurfaceID: InkElementErasureMap] = [:]
+  @ObservationIgnored private var projected: [SurfaceID:InkElementErasureMap] = [:]
   @ObservationIgnored private var activeTargets: [SurfaceID:Set<String>]?
   @ObservationIgnored private(set) var projectionBuildCount = 0
 
@@ -318,8 +318,8 @@ struct NotebookPageEraserSource {
     return activeTargets?[surface]?.contains(id) == true
   }
 
-  func projection(on surface:SurfaceID,base:[String:[InkElementErasure]],
-    working:[UUID:[NotebookElementErasing]],retains:Bool = true) -> [String:[InkElementErasure]] {
+  func projection(on surface:SurfaceID,base:InkElementErasureMap,
+    working:[UUID:[NotebookElementErasing]],retains:Bool = true) -> InkElementErasureMap {
     if retains,let cached=projected[surface] { return cached }
     var result=base
     for contacts in working.values {
@@ -335,14 +335,14 @@ struct NotebookPageEraserSource {
   func record(_ change: PreparedPageInkChange) {
     projected[.page(change.pageID)]=nil
   }
-  func page(_ page: PageDocument) -> [String: [InkElementErasure]] {
+  func page(_ page: PageDocument) -> InkElementErasureMap {
     page.preparedElementErasures ?? [:]
   }
   /// Partial live cuts belong to the page-wide native mask, not another
   /// per-element material. Whole-element hits still retire the body immediately
   /// (without a mask), and accepted cuts keep the existing durable handoff.
   /// Interaction retains its active-contact projection; no second cache is needed.
-  func pagePresentation(_ page: PageDocument, working: [UUID: [NotebookElementErasing]]) -> [String: [InkElementErasure]] {
+  func pagePresentation(_ page: PageDocument, working: [UUID: [NotebookElementErasing]]) -> InkElementErasureMap {
     var result = self.page(page)
     for contacts in working.values {
       for contact in contacts where contact.surface == .page(page.id) {
@@ -357,7 +357,7 @@ struct NotebookPageEraserSource {
   func invalidateSpatial() {
     spatial.removeAll();projected=projected.filter { $0.key.kind == .page }
   }
-  func masks(on surface: SurfaceID, journal: SpatialInkJournal?) -> [String: [InkElementErasure]] {
+  func masks(on surface: SurfaceID, journal: SpatialInkJournal?) -> InkElementErasureMap {
     if let cached = spatial[surface] { return cached }
     let masks = journal?.elementErasures(on: surface) ?? [:]
     spatial[surface] = masks
@@ -370,7 +370,7 @@ extension NotebookAppModel {
     elementErasureCache.isErasing(id,on:surface,working:workingElementErasures)
   }
 
-  func pagePresentationErasures(_ page: PageDocument) -> [String: [InkElementErasure]] {
+  func pagePresentationErasures(_ page: PageDocument) -> InkElementErasureMap {
     elementErasureCache.pagePresentation(pages[page.id] ?? page, working: workingElementErasures)
   }
 
@@ -434,8 +434,8 @@ extension NotebookAppModel {
     } else { workingElementErasures[id] = visible }
   }
 
-  func elementErasures(on surface: SurfaceID, fallback: SpatialInkJournal? = nil) -> [String: [InkElementErasure]] {
-    var result: [String: [InkElementErasure]]
+  func elementErasures(on surface: SurfaceID, fallback: SpatialInkJournal? = nil) -> InkElementErasureMap {
+    var result: InkElementErasureMap
     if surface.kind == .page, let id = surface.ownerID, let page = pages[id] {
       result = elementErasureCache.page(page)
     } else if loadedInkSurfaces.contains(surface) || fallback == nil {

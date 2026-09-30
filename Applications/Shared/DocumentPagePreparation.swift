@@ -118,6 +118,94 @@ final class DocumentPreparedPage {
   isolated deinit { reservation.release() }
 }
 
+/// Immutable source-wide indices are built on the PDF worker, then installed
+/// by the MainActor owner without encoding and parsing a browser receipt.
+struct DocumentPreparedLayout: Sendable {
+  let pages: [DocumentPaperLayout]
+  let regions: [DocumentBlockRegion]
+  let browserRegions: [DocumentBrowserRegion]
+  let pageRanges: [Int: Range<Int>]
+  let reading: DocumentReadingIndex
+  let readingFileOrder: [String]
+  let anchors: [String: Int]
+  let lineIndices: [String: DocumentPrintLineIndex]
+  let slots: [Int: [DocumentPrintInteractiveRegion]]
+  var byteCount: Int {
+    regions.count*384 + reading.segments.count*128 + pages.count*128 + 4096
+      + lineIndices.values.reduce(0) { $0 + $1.starts.count*MemoryLayout<Int>.stride }
+      + slots.values.reduce(0) { $0 + $1.count*128 }
+  }
+  init(_ value: NotebookPrintedDocument, document: DocumentDocument, pageCount: Int,
+    locations: [DocumentPrintLocation], anchors: [String: Int]) throws {
+    let scale = DocumentPaperLayout.pointsToSurface
+    var regions: [DocumentBrowserRegion] = [], reading: [DocumentReadingIndex.Segment] = []
+    let byPage = Dictionary(grouping: locations, by: \.pageIndex)
+    let files = Dictionary(uniqueKeysWithValues: document.files.map { ($0.id, $0) })
+    let indexedFiles = Set(value.sourceMap.files.map(\.fileID))
+    let lineIndices = Dictionary(uniqueKeysWithValues: document.files.filter { $0.resource == nil && indexedFiles.contains($0.id) }.map { ($0.id, DocumentPrintLineIndex($0.source)) })
+    let slots = Dictionary(grouping: value.interactiveRegions, by: \.pageIndex)
+    guard (1...4096).contains(pageCount), value.pages.count == pageCount else { throw DocumentSessionError.invalidLayout }
+    let papers = try value.pages.map { page -> DocumentPaperLayout in
+      guard page.width.isFinite, page.height.isFinite, page.width > 0, page.height > 0,
+        page.width <= 14_400, page.height <= 14_400 else { throw DocumentSessionError.invalidLayout }
+      return .init(widthPoints: page.width, heightPoints: page.height)
+    }
+    for index in 0..<pageCount {
+      try Task.checkCancellation()
+      let paper = papers[index]
+      let groups = Dictionary(grouping: byPage[index] ?? [], by: \.fileID)
+      for id in groups.keys.sorted() {
+        guard let file = files[id], let entries = groups[id] else { continue }
+        var bounds = CGRect.null
+        for entry in entries { bounds = bounds.union(CGRect(x: entry.x, y: entry.y, width: entry.width, height: entry.height)) }
+        bounds = bounds.intersection(CGRect(x: 0, y: 0, width: paper.widthPoints, height: paper.heightPoints))
+        guard !bounds.isNull, bounds.width > 0, bounds.height > 0 else { continue }
+        let region = DocumentBrowserRegion(id: id, pageIndex: index, x: bounds.minX*scale, y: bounds.minY*scale,
+          width: bounds.width*scale, height: bounds.height*scale, sourceOffset: 0)
+        regions.append(region)
+        let line = entries.map(\.line).min() ?? 1
+        guard let lines = lineIndices[id] else { continue }
+        let range = lines.range(line: line), offset = range.location
+        let fragment = (file.source as NSString).substring(with: range)
+        let node = SHA256.hash(data: Data(fragment.utf8)).prefix(8).map { String(format: "%02x", $0) }.joined()
+        reading.append(.init(fileID: id, nodeID: node, textOffset: offset, start: 0, end: max(1, fragment.utf16.count), pageIndex: index, y: region.y))
+      }
+      for slot in slots[index] ?? [] {
+        regions.append(.init(kind: .program, id: slot.instanceID, pageIndex: index, x: slot.x*scale, y: slot.y*scale,
+          width: slot.width*scale, height: slot.height*scale, sourceOffset: slot.viewportY*scale))
+      }
+    }
+    if regions.isEmpty, let file = document.files.first(where: { $0.path == document.entrypoint }) {
+      regions = [.init(id: file.id, pageIndex: 0, x: 0, y: 0,
+        width: papers[0].surfaceWidth, height: papers[0].surfaceHeight, sourceOffset: 0)]
+    }
+    var anchors = anchors
+    for index in 0..<pageCount { anchors["notebook-print-page-\(index)"] = index }
+    guard anchors.count <= 16_384, anchors.reduce(0, { $0 + $1.key.utf8.count }) <= 1024*1024,
+      anchors.allSatisfy({ !$0.key.isEmpty && $0.key.utf8.count <= 4096 && (0..<pageCount).contains($0.value) })
+    else { throw DocumentSessionError.invalidLayout }
+    var pageRanges: [Int: Range<Int>] = [:]
+    let nativeRegions = try regions.enumerated().map { index, region -> DocumentBlockRegion in
+      let page = region.pageIndex
+      guard (0..<pageCount).contains(page), region.x.isFinite, region.x >= 0, region.y.isFinite, region.y >= 0,
+        region.width.isFinite, region.width > 0, region.height.isFinite, region.height > 0,
+        region.sourceOffset.isFinite, region.sourceOffset >= 0, (region.sourceOffset+region.height).isFinite,
+        region.x+region.width <= papers[page].surfaceWidth+0.03125,
+        region.y+region.height <= papers[page].surfaceHeight+0.03125 else { throw DocumentSessionError.invalidLayout }
+      pageRanges[page] = (pageRanges[page]?.lowerBound ?? index)..<(index+1)
+      return .init(kind: region.kind, id: region.id, pageIndex: page,
+        frame: .init(x: region.x, y: region.y, width: region.width, height: region.height), sourceOffset: region.sourceOffset)
+    }
+    var seen: Set<String> = []
+    readingFileOrder = nativeRegions.filter { $0.kind == .file }.sorted {
+      ($0.pageIndex, $0.frame.y, $0.frame.x) < ($1.pageIndex, $1.frame.y, $1.frame.x)
+    }.compactMap { seen.insert($0.id).inserted ? $0.id : nil }
+    self.pages = papers; self.regions = nativeRegions; browserRegions = regions; self.pageRanges = pageRanges
+    self.reading = try .init(segments: reading, fileIDs: Set(files.keys), pageCount: pageCount)
+    self.anchors = anchors; self.lineIndices = lineIndices; self.slots = slots
+  }
+}
+
 /// A mounted source may lend immutable geometry to a newer causal binding.
 /// This value contains material, never a chain of former source snapshots.
 @MainActor
@@ -163,8 +251,12 @@ final class DocumentPagePreparation {
   private var demand: [UUID: Int] = [:]
   private var readers: Set<UUID> = []
   private var error: Error?
-  private var locations: [DocumentPrintLocation] = []
-  private var programTasks: [String: Task<DocumentProgramSource, Error>] = [:]
+  // Keyed by program path within this immutable source, not by instance.
+  private var programTasks: [String: (id: UUID, task: Task<Void, Error>)] = [:]
+  private var programSources: [String: DocumentProgramSource] = [:]
+  private var programSourceFailures: [String: String] = [:]
+  private var programRequests: [String: Set<String>] = [:]
+  var onProgramsChanged: () -> Void = {}
   private var browserRegions: [DocumentBrowserRegion] = []
   private(set) var layout: DocumentLayoutRecord?
   private(set) var measurementCount = 0
@@ -194,8 +286,9 @@ final class DocumentPagePreparation {
     guard readers.isEmpty, demand.isEmpty else { return }
     preparation?.cancel(); preparation = nil; pages.removeAll(); printSource = nil; reuse = nil
     pageOperations.values.forEach { $0.task.cancel() }; pageOperations.removeAll()
-    locations.removeAll(); browserRegions.removeAll()
-    programTasks.values.forEach { $0.cancel() }; programTasks.removeAll(); programs.removeAll()
+    browserRegions.removeAll()
+    programTasks.values.forEach { $0.task.cancel() }; programTasks.removeAll(); programs.removeAll()
+    programSources.removeAll(); programSourceFailures.removeAll(); programRequests.removeAll(); programFailures.removeAll()
   }
   private func prepare(priority: NotebookTypesetter.Priority = .current, onAdmissionWait: @escaping (Bool) -> Void) async throws {
     if artifact != nil { return }
@@ -243,7 +336,7 @@ final class DocumentPagePreparation {
     try Task.checkCancellation()
     if let previous = reuse, previous.matches(value) {
       let rebound = DocumentLayoutRecord(rebinding: previous.layout, buildID: value.buildID)
-      printSource = previous.source.rebinding(value); locations = value.projection.locations
+      printSource = previous.source.rebinding(value)
       layout = rebound; browserRegions = previous.regions; reuse = nil
       try onLayoutAccepted(rebound)
       preparationPhasesMS["canonicalPrint"] = printPreparationMilliseconds(since: start)
@@ -255,7 +348,10 @@ final class DocumentPagePreparation {
     let bodyBytes = value.pdf.count + value.syncTeX.count + value.source.utf8.count
       + value.sourceMap.files.count * 512
     let admissionStart = ContinuousClock.now
-    let charge = try await resources.acquirePassiveDerivedBytes(bodyBytes + value.projection.locations.count*128 + 4*1024*1024) { onAdmissionWait(true) }
+    let readingBound = min(value.projection.locations.count, value.pages.count * value.sourceMap.files.count)
+    let layoutBound = readingBound*512 + value.pages.count*128 + value.interactiveRegions.count*512
+      + value.sourceMap.files.reduce(0) { $0 + $1.lineCount*MemoryLayout<Int>.stride }
+    let charge = try await resources.acquirePassiveDerivedBytes(bodyBytes + value.projection.locations.count*128 + layoutBound + 4*1024*1024) { onAdmissionWait(true) }
     preparationPhasesMS["admission"] = printPreparationMilliseconds(since: admissionStart)
     defer { onAdmissionWait(false) }
     do {
@@ -268,79 +364,26 @@ final class DocumentPagePreparation {
         let (pageCount, navigation) = try await pdf.perform { document, quartz in
           (quartz.numberOfPages, try DocumentPrintNavigation.namedDestinations(document))
         }
-        return (addresses, pageCount, navigation, locationsMS, printPreparationMilliseconds(since: pdfStart))
+        let pdfMS = printPreparationMilliseconds(since: pdfStart), layoutStart = ContinuousClock.now
+        let prepared = try DocumentPreparedLayout(value, document: document, pageCount: pageCount, locations: addresses, anchors: navigation)
+        return (addresses, prepared, locationsMS, pdfMS, printPreparationMilliseconds(since: layoutStart))
       }
-      let (addresses, pageCount, navigation, locationsMS, pdfMS) = try await withTaskCancellationHandler { try await worker.value } onCancel: { worker.cancel() }
+      let (addresses, prepared, locationsMS, pdfMS, layoutMS) = try await withTaskCancellationHandler { try await worker.value } onCancel: { worker.cancel() }
       preparationPhasesMS["locations"] = locationsMS
       preparationPhasesMS["pdfNavigation"] = pdfMS
       try Task.checkCancellation()
-      let layoutStart = ContinuousClock.now
-      try installLayout(value, pageCount: pageCount, locations: addresses, anchors: navigation)
-      preparationPhasesMS["layout"] = printPreparationMilliseconds(since: layoutStart)
-      let cost = bodyBytes + addresses.count*128
-        + navigation.reduce(0, { $0 + $1.key.utf8.count*2 + 128 })
+      preparationPhasesMS["layout"] = layoutMS
+      let cost = bodyBytes + addresses.count*128 + prepared.byteCount
+        + prepared.anchors.reduce(0, { $0 + $1.key.utf8.count*2 + 128 })
       guard resources.resizePassiveDerivedReservation(charge, to: max(1, cost)) else { throw SceneRenderError.resourceLimit }
-      printSource = DocumentPrintedSource(artifact: value, locations: addresses, pdf: pdf, reservation: charge)
-      locations = addresses
+      let printed = DocumentPrintedSource(artifact: value, locations: addresses, pdf: pdf, reservation: charge,
+        lineIndices: prepared.lineIndices, slots: prepared.slots)
+      let measured = DocumentLayoutRecord(prepared: prepared, buildID: value.buildID, source: printed)
+      printSource = printed; layout = measured; browserRegions = prepared.browserRegions
+      try onLayoutAccepted(measured)
       preparationPhasesMS["canonicalPrint"] = printPreparationMilliseconds(since: start)
       preparation = nil
     } catch { charge.release(); throw error }
-  }
-  private func installLayout(_ value: NotebookPrintedDocument, pageCount: Int, locations: [DocumentPrintLocation], anchors: [String: Int]) throws {
-    let scale = DocumentPaperLayout.pointsToSurface
-    var regions: [DocumentBrowserRegion] = [], reading: [[Any]] = []
-    let byPage = Dictionary(grouping: locations, by: \.pageIndex)
-    let files = Dictionary(uniqueKeysWithValues: document.files.map { ($0.id, $0) })
-    guard value.pages.count == pageCount else { throw DocumentSessionError.invalidLayout }
-    let papers = try value.pages.map { page -> DocumentPaperLayout in
-      guard page.width.isFinite, page.height.isFinite, page.width > 0, page.height > 0,
-        page.width <= 14_400, page.height <= 14_400 else { throw DocumentSessionError.invalidLayout }
-      return .init(widthPoints: page.width, heightPoints: page.height)
-    }
-    for index in 0..<pageCount {
-      let paper = papers[index]
-      let groups = Dictionary(grouping: byPage[index] ?? [], by: \.fileID)
-      for id in groups.keys.sorted() {
-        guard let file = files[id], let entries = groups[id] else { continue }
-        var bounds = CGRect.null
-        for entry in entries { bounds = bounds.union(CGRect(x: entry.x, y: entry.y, width: entry.width, height: entry.height)) }
-        bounds = bounds.intersection(CGRect(x: 0, y: 0, width: paper.widthPoints, height: paper.heightPoints))
-        guard !bounds.isNull, bounds.width > 0, bounds.height > 0 else { continue }
-        let region = DocumentBrowserRegion(id: id, pageIndex: index, x: bounds.minX*scale, y: bounds.minY*scale,
-          width: bounds.width*scale, height: bounds.height*scale, sourceOffset: 0)
-        regions.append(region)
-        let line = entries.map(\.line).min() ?? 1
-        let offset = DocumentPrintLocations.sourceOffset(line: line, source: file.source)
-        let text = file.source as NSString
-        let tail = NSRange(location: offset, length: text.length-offset)
-        let newline = text.range(of: "\n", range: tail)
-        let fragment = text.substring(with: NSRange(location: offset,
-          length: (newline.location == NSNotFound ? text.length : newline.location)-offset))
-        let node = SHA256.hash(data: Data(fragment.utf8)).prefix(8).map { String(format: "%02x", $0) }.joined()
-        reading.append([id, node, offset, 0, max(1, fragment.utf16.count), index, region.y])
-      }
-      for slot in value.interactiveRegions where slot.pageIndex == index {
-        regions.append(.init(kind: .program, id: slot.instanceID, pageIndex: index, x: slot.x*scale, y: slot.y*scale,
-          width: slot.width*scale, height: slot.height*scale, sourceOffset: slot.viewportY*scale))
-      }
-    }
-    if regions.isEmpty, let file = document.files.first(where: { $0.path == document.entrypoint }) {
-      regions = [.init(id: file.id, pageIndex: 0, x: 0, y: 0,
-        width: papers[0].surfaceWidth, height: papers[0].surfaceHeight, sourceOffset: 0)]
-    }
-    let first = papers[0]
-    var anchors = anchors
-    for index in 0..<pageCount { anchors["notebook-print-page-\(index)"] = index }
-    let receipt: NSDictionary = ["sourceKey": sourceKey, "layoutScope": "source", "layoutCanonical": true,
-      "buildID": value.buildID, "pageCount": pageCount, "width": first.surfaceWidth, "height": first.surfaceHeight,
-      "pages": papers.map { ["widthPoints": $0.widthPoints, "heightPoints": $0.heightPoints] },
-      "anchors": anchors.sorted { $0.key < $1.key }.map { ["name": $0.key, "pageIndex": $0.value] as [String: Any] }, "reading": reading,
-      "regions": regions.map { ["kind": $0.kind.rawValue, "id": $0.id, "pageIndex": $0.pageIndex, "x": $0.x, "y": $0.y,
-        "width": $0.width, "height": $0.height, "sourceOffset": $0.sourceOffset] as [String: Any] }]
-    guard let charge = resources.reserveDerivedBytes(regions.count*384 + reading.count*128 + papers.count*128 + 4096, priority: .passive) else { throw SceneRenderError.resourceLimit }
-    let measured = try DocumentLayoutRecord(receipt: receipt, sourceKey: sourceKey,
-      blockIDs: Set(document.files.map(\.id)).union(programIDs), geometry: first.geometry, reservation: charge)
-    layout = measured; browserRegions = regions; try onLayoutAccepted(measured)
   }
   func page(_ requested: Int, hostID: UUID, priority: NotebookTypesetter.Priority = .current,
     onAdmissionWait: @escaping (Bool) -> Void = { _ in }) async throws -> DocumentPreparedPage {
@@ -391,7 +434,7 @@ final class DocumentPagePreparation {
       try DocumentPrintNavigation.read(document, pages: artifact.pages, pageIndices: [index])
     }
     try Task.checkCancellation()
-    let regions = browserRegions.filter { $0.pageIndex == index }, ids = Set(regions.map(\.id))
+    let regions = Array(browserRegions[layout.range(on: index)]), ids = Set(regions.map(\.id))
     let files = document.files.filter { ids.contains($0.id) }
     func escape(_ value: String) -> String { value.replacingOccurrences(of: "&", with: "&amp;").replacingOccurrences(of: "\"", with: "&quot;").replacingOccurrences(of: "<", with: "&lt;") }
     var html = regions.map { region in
@@ -429,25 +472,52 @@ final class DocumentPagePreparation {
     guard let artifact else { return }
     let document = document, store = store
     let declared = Dictionary(artifact.interactiveRegions.map { ($0.instanceID, $0.programPath) }, uniquingKeysWith: { first, _ in first })
+    var paths: Set<String> = []
     for id in ids.sorted() where !programs.contains(where: { $0.id == id }) && programFailures[id] == nil {
       guard let path = declared[id] else { continue }
-      if programTasks[id] == nil {
-        programTasks[id] = Task.detached(priority: .userInitiated) {
+      if let accepted = programSources[path] {
+        programs.append(try accepted.forInstance(id)); onProgramsChanged(); continue
+      }
+      if let failure = programSourceFailures[path] {
+        programFailures[id] = failure; onProgramsChanged(); continue
+      }
+      programRequests[path, default: []].insert(id); paths.insert(path)
+      guard programTasks[path] == nil else { continue }
+      let operation = UUID()
+      let task = Task { @MainActor [weak self] in
+        let producer = Task.detached(priority: .userInitiated) {
           try Task.checkCancellation()
           guard let store else { throw SceneRenderError.snapshotPending("program_store") }
           return try store.documentProgramSource(document: document, instanceID: id, path: path)
         }
+        do {
+          let accepted = try await withTaskCancellationHandler { try await producer.value } onCancel: { producer.cancel() }
+          try Task.checkCancellation()
+          guard let self, programTasks[path]?.id == operation else { return }
+          programSources[path] = accepted
+          for instance in programRequests.removeValue(forKey: path) ?? [] {
+            programs.append(try accepted.forInstance(instance))
+          }
+          programTasks[path] = nil
+          onProgramsChanged()
+        } catch {
+          guard let self, programTasks[path]?.id == operation else { throw error }
+          programTasks[path] = nil
+          if error is CancellationError { throw error }
+          programSourceFailures[path] = error.localizedDescription
+          for instance in programRequests.removeValue(forKey: path) ?? [] { programFailures[instance] = error.localizedDescription }
+          onProgramsChanged()
+        }
       }
-      do {
-        let value = try await DocumentPreparationSubscriber.wait(for: programTasks[id]!)
-        if !programs.contains(where: { $0.id == id }) { programs.append(value) }
-        programTasks[id] = nil
-      } catch {
-        if error is CancellationError { throw error }
-        programFailures[id] = error.localizedDescription; programTasks[id] = nil
-      }
+      programTasks[path] = (operation, task)
+    }
+    // Each producer publishes independently. This wait is only the caller's
+    // requested set; it does not control native installation of earlier slots.
+    for path in paths.sorted() {
+      if let task = programTasks[path] { try await DocumentPreparationSubscriber.wait(for: task.task) }
     }
   }
+
   func printedSource(priority: NotebookTypesetter.Priority = .export) async throws -> DocumentPrintedSource {
     try await prepare(priority: priority, onAdmissionWait: { _ in })
     guard let printSource else { throw DocumentSessionError.invalidLayout }
@@ -459,7 +529,7 @@ final class DocumentPagePreparation {
   }
   isolated deinit {
     preparation?.cancel(); pageOperations.values.forEach { $0.task.cancel() }
-    programTasks.values.forEach { $0.cancel() }
+    programTasks.values.forEach { $0.task.cancel() }
   }
 }
 

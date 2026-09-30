@@ -77,6 +77,19 @@ final class SceneRasterCompositor {
     try checkPreparation()
   }
 
+  /// Plain paper needs no view graph or temporary raster. Paint into this
+  /// composition's admitted destination using the native paper geometry.
+  func drawPaper(size: CGSize, in frame: CGRect) async throws {
+    try checkPreparation()
+    guard size.width.isFinite, size.height.isFinite, size.width > 0, size.height > 0,
+      frame.minX.isFinite, frame.minY.isFinite, frame.width.isFinite, frame.height.isFinite,
+      frame.width > 0, frame.height > 0 else { throw SceneRenderError.resourceLimit }
+    let visible = frame.intersection(CGRect(origin: .zero, size: self.size))
+    guard !visible.isNull, !visible.isEmpty else { return }
+    try await buffer.drawPaper(size: size, in: frame)
+    try checkPreparation()
+  }
+
   /// Use the retained entry, not a cache lookup after an asynchronous boundary.
   /// A newer capture of the same program cannot replace the borrowed pixels.
   func draw(_ raster: RasterLease, in frame: CGRect, erasures: [InkElementErasure] = [], elementFrame: CGRect? = nil,
@@ -462,6 +475,32 @@ actor CompositionPixels {
     context.scaleBy(x: 1, y: -1)
     context.draw(image, in: CGRect(origin: .zero, size: frame.size))
     context.restoreGState()
+  }
+
+  func drawPaper(size: CGSize, in frame: CGRect) throws {
+    try Task.checkCancellation()
+    guard let context else { throw CancellationError() }
+    let projectedX = frame.width / size.width, projectedY = frame.height / size.height
+    let displayScale = scale * max(projectedX, projectedY)
+    guard displayScale.isFinite, displayScale > 0 else { throw SceneRenderError.resourceLimit }
+    context.saveGState()
+    defer { context.restoreGState() }
+    // The destination already uses top-left coordinates. Keep the paper origin
+    // when exporting a crop so grid lines have the same phase as the full page.
+    context.translateBy(x: frame.minX, y: frame.minY)
+    context.scaleBy(x: projectedX, y: projectedY)
+    let bounds = CGRect(origin: .zero, size: size)
+    context.clip(to: bounds)
+    let background = PaperAppearance.background, grid = PaperAppearance.grid
+    context.setFillColor(CGColor(srgbRed: background.red, green: background.green,
+      blue: background.blue, alpha: 1))
+    context.fill(bounds)
+    context.setStrokeColor(CGColor(srgbRed: grid.red, green: grid.green,
+      blue: grid.blue, alpha: PaperAppearance.gridOpacity))
+    context.setLineWidth(1 / displayScale)
+    context.addPath(PaperAppearance.gridPath(size: size))
+    context.strokePath()
+    try Task.checkCancellation()
   }
 
   func pushClip(_ path: sending CGPath) throws {

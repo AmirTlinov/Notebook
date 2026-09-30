@@ -20,7 +20,7 @@ struct DocumentReadingIndex: Equatable, Sendable {
 
   init(rows: [[Any]], fileIDs: Set<String>, pageCount: Int, scale: Double) throws {
     guard rows.count <= 524_288, scale.isFinite, scale > 0 else { throw DocumentSessionError.invalidLayout }
-    var segments: [Segment] = [], pages: [Int: [Int]] = [:], files: [String: [Int]] = [:]
+    var segments: [Segment] = []
     for row in rows {
       guard row.count == 7, let file = row[0] as? String, fileIDs.contains(file),
         let node = row[1] as? String, node.utf8.count == 16,
@@ -40,10 +40,24 @@ struct DocumentReadingIndex: Equatable, Sendable {
         number.doubleValue.isFinite, number.doubleValue >= 0, (number.doubleValue * scale).isFinite else {
         throw DocumentSessionError.invalidLayout
       }
-      pages[page, default: []].append(segments.count)
-      files[file, default: []].append(segments.count)
       segments.append(.init(fileID: file, nodeID: node, textOffset: offset,
         start: start, end: end, pageIndex: page, y: number.doubleValue * scale))
+    }
+    try self.init(segments: segments, fileIDs: fileIDs, pageCount: pageCount)
+  }
+
+  init(segments: [Segment], fileIDs: Set<String>, pageCount: Int) throws {
+    guard segments.count <= 524_288 else { throw DocumentSessionError.invalidLayout }
+    var pages: [Int: [Int]] = [:], files: [String: [Int]] = [:]
+    for (index, value) in segments.enumerated() {
+      guard fileIDs.contains(value.fileID), value.nodeID.utf8.count == 16,
+        value.nodeID.utf8.allSatisfy({ (48...57).contains($0) || (97...102).contains($0) }),
+        value.start >= 0, value.start < value.end, value.end <= Int(Int32.max),
+        value.textOffset >= 0, value.textOffset <= Int(Int32.max)-value.end,
+        (0..<pageCount).contains(value.pageIndex), value.y.isFinite, value.y >= 0
+      else { throw DocumentSessionError.invalidLayout }
+      pages[value.pageIndex, default: []].append(index)
+      files[value.fileID, default: []].append(index)
     }
     self.segments = segments; self.pages = pages; self.files = files
   }

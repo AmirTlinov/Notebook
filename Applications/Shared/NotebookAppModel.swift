@@ -63,8 +63,10 @@ final class NotebookAppModel {
       scheduleScenePreparation()
     }
   }
+  @ObservationIgnored private var acceptedPageSources: [UUID: NotebookPageSource] = [:]
   private(set) var pages: [UUID: PageDocument] = [:] {
     didSet {
+      acceptedPageSources = acceptedPageSources.filter { pages[$0.key] != nil }
       elementErasureCache.retain(pages: pages)
       notebookPagePreparation.acceptedPages(pages, model: self)
       for id in oldValue.keys where pages[id] == nil { peerPublication.scopes[.init(kind: .page, id: id)] = nil }
@@ -180,6 +182,7 @@ final class NotebookAppModel {
         self.workspace = workspace
         pageAddresses[address] = page.id
         pages[page.id] = page
+        acceptedPageSources[page.id] = prepared.source
         peerPublication.scopes[.init(kind: .page, id: page.id)] = prepared.inputScope
         pencilUndoHistory.restore(prepared.undo, for: .page(page.id))
         pencilUndoHistory.restoreRedo(prepared.redo, for: .page(page.id))
@@ -855,10 +858,9 @@ final class NotebookAppModel {
   var highlightedReference: CollaborationReference? { selectionSession.highlightedReference }
   let agentFeedback = NotebookAgentFeedback()
   private var referenceHighlightTask: Task<Void, Never>?
-  private var collaborationHistoryTask: Task<Void, Never>?
-  private var surfaceHistoryTask: Task<Bool, Never>?
-  private var surfaceHistoryRequestID: UUID?
-  private var surfaceHistoryRequestCount = 0
+  private var collaborationHistoryTask: Task<Bool, Never>?
+  private var collaborationHistoryRequest: UUID?
+  private let surfaceHistory = NotebookSurfaceHistoryOwner()
   private var contextPublicationTask: Task<Void, Never>?
   private var contextPublicationID: UUID?
   private var collaborationReadSnapshot: CollaborationReadSnapshot?
@@ -1038,6 +1040,7 @@ final class NotebookAppModel {
 
   let store: NotebookStore
   private let sceneReader: NotebookSceneReader
+  private let backgroundSceneReader: NotebookSceneReader
   let actorID: UUID
   let laserContext = NotebookLaserContext()
   let inputGate: NotebookInputGate
@@ -1252,10 +1255,12 @@ final class NotebookAppModel {
     acceptance: NotebookAcceptanceConfiguration? = nil,
     persistenceQueue: NotebookPersistenceQueue? = nil,
     sceneReader: NotebookSceneReader? = nil,
+    backgroundSceneReader: NotebookSceneReader? = nil,
     documentMeasurements: DocumentPresentationRecorder? = nil
   ) {
     self.store = store
     self.sceneReader = sceneReader ?? NotebookSceneReader(store: store)
+    self.backgroundSceneReader = backgroundSceneReader ?? NotebookSceneReader(store: store)
     self.allowsCodexRegistration = allowsCodexRegistration
     self.pairingActivationID = pairingActivationID
     self.preferences = preferences
@@ -1306,6 +1311,7 @@ final class NotebookAppModel {
     persistence.onFailureChange = { [weak self] message in
       guard let self else { return }
       persistenceFailure = message ?? arrivalFailure ?? publicationFailure
+      surfaceHistory.setWriterBlocked(message != nil)
     }
     persistence.onContentMerged = { [weak self] in self?.reloadExternalChanges() }
     persistence.onCommit = { [weak self] owner in self?.didCommitDurableChanges(owner: owner) }
@@ -2830,72 +2836,49 @@ final class NotebookAppModel {
   func redoLastSurfaceAction() { performSurfaceHistory(redo: true) }
 
   /// One entry for gesture, keyboard and menu history. Each accepted contact
-  /// retains its domain; its action is selected only after the preceding write.
+  /// retains its domain and inverse before the following contact can change it.
   func performSurfaceHistory(redo: Bool, documentID: UUID? = nil,
     after prepare: (@MainActor () async -> Bool)? = nil) {
-    guard shutdownPhase == .running, inputGate.permitsNewContact, !inputGate.hasActivePencil else { return }
+    guard shutdownPhase == .running, inputGate.permitsNewContact, !inputGate.hasPencilContact,
+      selectionSession.manipulation == nil else { return }
     #if os(iOS)
       if documentID == nil, let files = chat?.files, files.window.isOpen {
-        if redo { files.notes.redo() } else { files.notes.undo() }; return
+        let accepted: NotebookInputCompletion = {
+          if redo { files.notes.redo() } else { files.notes.undo() }
+        }
+        if inputGate.hasActivePencil { inputGate.performAfterPageContact(accepted) } else { accepted() }
+        return
       }
     #endif
     guard let domain = documentID.map(PencilUndoHistory.Domain.document) ?? activeHistoryDomain else { return }
-    guard surfaceHistoryRequestCount < 32 else { showCue("Дождитесь сохранения предыдущих действий"); return }
-    let previous = surfaceHistoryTask, requestID = UUID()
-    surfaceHistoryRequestID = requestID; surfaceHistoryRequestCount += 1
-    // Ordinary ink still changes synchronously in its actor segment. Only an
-    // unfinished source or an earlier accepted history command needs to wait.
-    let applied = previous == nil && prepare == nil
-    if applied {
-      applySurfaceHistory(redo: redo, domain: domain)
-      if collaborationHistoryTask == nil {
-        surfaceHistoryRequestCount -= 1; surfaceHistoryRequestID = nil
-        return // Synchronous ink already advanced its one retained journal.
-      }
+    let accepted: NotebookInputCompletion = { [self] in
+      surfaceHistory.accept(redo: redo, domain: domain, history: { [self] in pencilUndoHistory }, after: prepare,
+        apply: { [self] redo, domain, history, request, previous in
+          applySurfaceHistory(redo: redo, domain: domain, history: history,
+            request: request, previous: previous)
+        }, onOverflow: { [self] in showCue("Дождитесь сохранения предыдущих действий") })
     }
-    surfaceHistoryTask = Task { [self] in
-      defer {
-        surfaceHistoryRequestCount -= 1
-        if surfaceHistoryRequestID == requestID { surfaceHistoryTask = nil; surfaceHistoryRequestID = nil }
-      }
-      if let previous, !(await previous.value) { return false }
-      guard !Task.isCancelled else { return false }
-      if !applied {
-        // Closing preserves the draft, but does not admit a later history
-        // operation. An already accepted write below still drains normally.
-        guard shutdownPhase == .running else { return true }
-        if let prepare, !(await prepare()) { return true }
-        guard !Task.isCancelled, shutdownPhase == .running else { return true }
-        applySurfaceHistory(redo: redo, domain: domain)
-      }
-      guard await persistence.flush() else { return false }
-      if let task = collaborationHistoryTask { await task.value }
-      await reloadExternalChanges()?.value
-      return persistenceFailure == nil
+    if inputGate.hasActivePencil { inputGate.performAfterPageContact(accepted) }
+    else { accepted() }
+  }
+
+  private func applySurfaceHistory(redo: Bool, domain: PencilUndoHistory.Domain,
+    history: PencilUndoHistory, request: UUID, previous: Task<Bool, Never>?) -> Task<Bool, Never>? {
+    if let command = redo ? history.lastRedoCommand(for: domain) : history.lastCommand(for: domain) {
+      return acceptCollaborationHistory(command, redo: redo, actionID: request, after: previous)
     }
-  }
-
-  private func applySurfaceHistory(redo: Bool, domain: PencilUndoHistory.Domain) {
-    if redo { redoSurfaceAction(in: domain) } else { undoSurfaceAction(in: domain) }
-  }
-
-  private func undoSurfaceAction(in domain: PencilUndoHistory.Domain) {
-    if let command = pencilUndoHistory.lastCommand(for: domain) { undoCollaboration(command); return }
-    if case .target(.document, _) = domain { return }
-    if case .target(.page, let pageID) = domain { _ = acceptDrawingUndo(pageID: pageID); return }
-    guard let contribution = pencilUndoHistory.lastContribution(for: domain),
-      setSpatialInkContribution(contribution, domain: domain, active: false) else { return }
-    showCue("Отменено")
-  }
-
-  private func redoSurfaceAction(in domain: PencilUndoHistory.Domain) {
-    if let command = pencilUndoHistory.lastRedoCommand(for: domain) { redoCollaboration(command); return }
-    if case .target(.document, _) = domain { return }
-    if case .target(.page, let pageID) = domain { _ = acceptDrawingRedo(pageID: pageID); return }
-    guard let contribution = pencilUndoHistory.lastRedoContribution(for: domain),
-      let gate = pencilUndoHistory.lastRedoStateStamp(for: domain),
-      setSpatialInkContribution(contribution, domain: domain, active: true, redoGate: gate) else { return }
-    showCue("Повторено")
+    if case .target(.document, _) = domain { return nil }
+    guard let ids = redo ? history.lastRedoContribution(for: domain) : history.lastContribution(for: domain) else { return nil }
+    let gate = redo ? history.lastRedoStateStamp(for: domain) : nil
+    // The synchronous ink inverse must advance the same accepted order as the
+    // queued authored inverses; otherwise a mixed Undo loses its Redo head.
+    pencilUndoHistory = history
+    if case .target(.page, let pageID) = domain {
+      _ = acceptDrawingHistory(pageID: pageID, ids: ids, redo: redo, gate: gate)
+    } else if setSpatialInkContribution(ids, domain: domain, active: redo, redoGate: gate) {
+      showCue(redo ? "Повторено" : "Отменено")
+    }
+    return nil
   }
 
   /// The history directory owns cold inverses; a geometry window is never
@@ -3128,18 +3111,25 @@ final class NotebookAppModel {
   /// the button's actor segment; storage follows in the ordinary FIFO.
   func acceptDrawingUndo(pageID: UUID? = nil) -> PreparedPageInkChange? {
     guard inputGate.permitsNewContact, !inputGate.hasActivePencil,
-      let page=pageID == nil ? activePage : pages[pageID!],let ids=pencilUndoHistory.lastContribution(for:.page(page.id)),
-      let stamp=reserveDrawingAction(pageID:page.id) else { return nil }
-    return acceptInkMutation(.setActive(ids,false),pageID:page.id,stamp:stamp)
+      let page = pageID == nil ? activePage : pages[pageID!],
+      let ids = pencilUndoHistory.lastContribution(for: .page(page.id)) else { return nil }
+    return acceptDrawingHistory(pageID: page.id, ids: ids, redo: false, gate: nil)
   }
 
   func acceptDrawingRedo(pageID: UUID? = nil) -> PreparedPageInkChange? {
     guard inputGate.permitsNewContact, !inputGate.hasActivePencil,
-      let page=pageID == nil ? activePage : pages[pageID!],let ids=pencilUndoHistory.lastRedoContribution(for:.page(page.id)),
-      let gate=pencilUndoHistory.lastRedoStateStamp(for:.page(page.id)),
-      let drawing=page.preparedInkDrawing,ids.allSatisfy({ drawing.action(id:$0)?.visibility.stateStamp == gate }),
-      let stamp=reserveDrawingAction(pageID:page.id) else { return nil }
-    return acceptInkMutation(.setActive(ids,true),pageID:page.id,stamp:stamp,nativeRedo:true)
+      let page = pageID == nil ? activePage : pages[pageID!],
+      let ids = pencilUndoHistory.lastRedoContribution(for: .page(page.id)),
+      let gate = pencilUndoHistory.lastRedoStateStamp(for: .page(page.id)) else { return nil }
+    return acceptDrawingHistory(pageID: page.id, ids: ids, redo: true, gate: gate)
+  }
+
+  private func acceptDrawingHistory(pageID: UUID, ids: Set<UUID>, redo: Bool,
+    gate: VersionStamp?) -> PreparedPageInkChange? {
+    guard let page = pages[pageID], let drawing = page.preparedInkDrawing,
+      !redo || (gate != nil && ids.allSatisfy { drawing.action(id: $0)?.visibility.stateStamp == gate }),
+      let stamp = reserveDrawingAction(pageID: pageID) else { return nil }
+    return acceptInkMutation(.setActive(ids, redo), pageID: pageID, stamp: stamp, nativeRedo: redo)
   }
 
   // The toolbar projects the active tool’s stored color, never a second copy.
@@ -3467,7 +3457,6 @@ final class NotebookAppModel {
     let preparation=Task.detached(priority:.userInitiated) { try source.prepare(edits,deleting:deleting) }
     let pending=Task { [weak self] () throws -> NotebookElementCommandPlan in
       let prepared=try await preparation.value
-      if deleting {try await presentation.awaitFirstInstallation()}
       guard let self,let plan=prepareElementOperations(prepared.edits,summary:summary,
         readSources:Array(prepared.sources.keys),insertionTarget:source.address.target,
         expectedInkRevision:nil,inkReadSets:source.ink.compactMap(\.readSet),previews:false,frozenSources:prepared.sources,
@@ -4709,7 +4698,7 @@ final class NotebookAppModel {
         let draftEpoch = documentDraftEpoch
         let elementPins = scenePinnedElements, itemPins = scenePinnedItems
         let metadataGeneration = collaborationMetadataGeneration
-        let previousIndex = sceneIndex, previousPages = pages
+        let previousIndex = sceneIndex, previousPages = acceptedPageSources
         let readPresence = sceneReadPresence(for: presence)
         let preparedIDs = preparedNotebookPageIDs(in: readPresence.selectedItemID)
         let inkPins = drawingTools.pinnedSpatialInkActionIDs
@@ -4721,7 +4710,7 @@ final class NotebookAppModel {
         #endif
         do {
           let _: Void = try await persistence.submit { _ in () }
-          let prepared = try await sceneReader.read { [actor = actorID] store in
+          let prepared = try await backgroundSceneReader.read { [actor = actorID] store in
             try NotebookDiskRefresh.prepare(store: store, presence: readPresence,
               pinnedElements: elementPins, pinnedItems: itemPins, preparedPages: preparedIDs,
               feedbackKnown: feedbackKnown, feedbackTracked: feedbackTracked, attentionReferences: attentionReferences,
@@ -5814,62 +5803,59 @@ final class NotebookAppModel {
   }
 
   func undoCollaboration(_ id: UUID) {
-    guard collaborationHistoryTask == nil, inputGate.permitsNewContact,
-      !inputGate.hasActivePencil, selectionSession.manipulation == nil else { return }
-    admitHistoryChange(id)
-    let pending = pendingCollaborationCommands[id], actor = actorID
-    let operation = Task { () throws -> @Sendable (NotebookStore) throws -> CollaborationReceipt in
-      if let pending, !(await pending.value) {
-        throw CollaborationError("revision_conflict", "Отмена не применяется: исходное действие было отклонено.")
-      }
-      return { try $0.undoNativeAction(id, actor: actor) }
-    }
-    // Reserve before returning to the next contact, not after awaiting the
-    // preceding edit or a later global idle. Storage failures retain this same
-    // idempotent inverse; they cannot drop it and let dependent writes pass.
-    let saved = persistence.enqueuePreparedCommand(operation, publishesChanges: true)
-    collaborationReadEpoch &+= 1
-    collaborationHistoryTask = Task { [weak self] in
-      guard let self else { return }
-      let result: Result<CollaborationReceipt, Error>
-      do { result = .success(try await saved.value) }
-      catch { result = .failure(error) }
-      collaborationHistoryTask = nil
-      switch result {
-      case .success(let receipt):
-        for domain in receipt.action.nativeHistoryDomains {
-          pencilUndoHistory.didUndoCommand(domain: domain, actionID: id)
-        }
-        reloadExternalChanges()
-        showCue(receipt.undo?.preserved.isEmpty == false ? "Ход отменён. Ваши доработки сохранены" : "Ход отменён")
-      case .failure(let error): showCue(error.localizedDescription)
-      }
-    }
+    guard inputGate.permitsNewContact, !inputGate.hasActivePencil,
+      selectionSession.manipulation == nil else { return }
+    _ = acceptCollaborationHistory(id, redo: false, actionID: UUID(), after: collaborationHistoryTask)
   }
 
   func redoCollaboration(_ id: UUID) {
-    guard collaborationHistoryTask == nil, inputGate.permitsNewContact,
-      !inputGate.hasActivePencil, selectionSession.manipulation == nil else { return }
+    guard inputGate.permitsNewContact, !inputGate.hasActivePencil,
+      selectionSession.manipulation == nil else { return }
+    _ = acceptCollaborationHistory(id, redo: true, actionID: UUID(), after: collaborationHistoryTask)
+  }
+
+  /// Admission happened at the input owner. Reserve this exact inverse now;
+  /// its preparation joins only the preceding history receipt and source action.
+  private func acceptCollaborationHistory(_ id: UUID, redo: Bool, actionID: UUID,
+    after previous: Task<Bool, Never>?) -> Task<Bool, Never> {
     admitHistoryChange(id)
-    let actor = actorID, actionID = UUID()
-    let saved = persistence.enqueuePreparedCommand(Task {
-      { (store: NotebookStore) in try store.redoNativeAction(id, actionID: actionID, actor: actor) }
-    }, publishesChanges: true)
+    let pending = pendingCollaborationCommands[id], actor = actorID
+    let operation = Task { () throws -> @Sendable (NotebookStore) throws -> CollaborationReceipt in
+      if let previous, !(await previous.value) {
+        throw CollaborationError("revision_conflict", "История не продолжена: предыдущая отмена была отклонена.")
+      }
+      if let pending, !(await pending.value) {
+        throw CollaborationError("revision_conflict", "Отмена не применяется: исходное действие было отклонено.")
+      }
+      return { store in
+        if redo { return try store.redoNativeAction(id, actionID: actionID, actor: actor) }
+        return try store.undoNativeAction(id, actor: actor)
+      }
+    }
+    let saved = persistence.enqueuePreparedCommand(operation, publishesChanges: true)
     collaborationReadEpoch &+= 1
-    collaborationHistoryTask = Task { [weak self] in
-      guard let self else { return }
+    collaborationHistoryRequest = actionID
+    let completion = Task { [weak self] in
+      guard let self else { return false }
       let result = await saved.result
-      collaborationHistoryTask = nil
+      if collaborationHistoryRequest == actionID {
+        collaborationHistoryTask = nil; collaborationHistoryRequest = nil
+      }
       switch result {
       case .success(let receipt):
         for domain in receipt.action.nativeHistoryDomains {
-          _ = pencilUndoHistory.recordRepeatedCommand(domain: domain, originalID: id, actionID: actionID)
+          if redo { _ = pencilUndoHistory.recordRepeatedCommand(domain: domain, originalID: id, actionID: actionID) }
+          else { pencilUndoHistory.didUndoCommand(domain: domain, actionID: id) }
         }
         reloadExternalChanges()
-        showCue("Повторено")
-      case .failure(let error): showCue(error.localizedDescription)
+        showCue(redo ? "Повторено" : (receipt.undo?.preserved.isEmpty == false ? "Ход отменён. Ваши доработки сохранены" : "Ход отменён"))
+        return true
+      case .failure(let error):
+        reloadExternalChanges(); showCue(error.localizedDescription); return false
       }
     }
+    collaborationHistoryTask = completion
+    return completion
   }
 
   func collaborationRevision(_ target: CollaborationTarget) -> String? {
@@ -6210,6 +6196,7 @@ final class NotebookAppModel {
     spatialInkWindow = state.inkWindow
     spatialInkHistoryStates = state.inkHistoryStates
     pages = state.pages
+    acceptedPageSources = state.pageSources
     #if os(iOS)
     selectedGraphicHosts.retireAcceptedAuthored(upTo:state.header.cursor)
     #endif
@@ -6408,7 +6395,7 @@ final class NotebookAppModel {
     if boundary == .acceptedInput {
       // Capture only the accepted input tail. These commands already reserved
       // their FIFO positions; future chat/context/service work is not input.
-      let history = surfaceHistoryTask
+      let history = surfaceHistory.pending
       let commands = Array(pendingCollaborationCommands.values)
       guard await persistence.flush() else { return false }
       if let history, !(await history.value) { return false }
@@ -6425,7 +6412,7 @@ final class NotebookAppModel {
     #endif
     repeat {
       guard !Task.isCancelled, continuing() else { return false }
-      if let task = surfaceHistoryTask, !(await task.value) { return false }
+      if let task = surfaceHistory.pending, !(await task.value) { return false }
       let commands = Array(pendingCollaborationCommands.values)
       if !commands.isEmpty {
         // Positions were reserved at acceptance. A storage failure retains the
@@ -6436,7 +6423,7 @@ final class NotebookAppModel {
       if let task = contextPublicationTask { await task.value }
       if let task = collaborationHistoryTask {
         guard await persistence.flush() else { return false }
-        await task.value
+        _ = await task.value
       }
       guard !Task.isCancelled, continuing() else { return false }
       if boundary == .quiescent {
@@ -6455,7 +6442,7 @@ final class NotebookAppModel {
       observeNavigation("writer_flush_end", fields: trace)
       guard !Task.isCancelled, continuing() else { return false }
     } while boundary == .quiescent && (arrivalDrainTask != nil || diskRefreshTask != nil || headerRefreshTask != nil || documentOpening?.task != nil || persistence.pendingCount > 0
-      || !pendingCollaborationCommands.isEmpty || contextPublicationTask != nil || surfaceHistoryTask != nil)
+      || !pendingCollaborationCommands.isEmpty || contextPublicationTask != nil || surfaceHistory.pending != nil)
     return publicationFailure == nil && arrivalFailure == nil
   }
 
@@ -6523,10 +6510,11 @@ final class NotebookAppModel {
       collaborationReadTask = nil
       agentFeedback.stop()
       referenceHighlightTask?.cancel(); cueTask?.cancel()
-      if let task = collaborationHistoryTask { await task.value }
+      if let task = collaborationHistoryTask { _ = await task.value }
       await elementErasureCache.stop()
       await compositionTiles.stop()
       await sceneReader.close()
+      await backgroundSceneReader.close()
       await transportReader?.close()
       transportReader = nil
       let saved = await persistence.flush()

@@ -77,6 +77,70 @@ final class PreparedAgentElementPreparationOwner {
   private var failedCapturePolicy: AgentSnapshotPolicy?
   @ObservationIgnored private var failedCaptureAdmission: SceneRasterAdmission?
   private var waitingForAdmission = false
+  #if os(iOS)
+  private(set) var statusPresentation: PageElementStatusPresentation?
+  @ObservationIgnored private var statusKey: PageElementStatusPresentation.Key?
+  @ObservationIgnored private var statusTask: Task<Void, Never>?
+  @ObservationIgnored private var statusInstallation: SceneSourceInstallation?
+  var requestedStatus: PageElementStatusPresentation.Key? {
+    guard !isRetired, let demand, let focus = configuration?.focus, case .page = focus,
+      !showsLiveProgram || bridgesFirstLivePaint else { return nil }
+    let message: String, canRetry: Bool
+    if let failure = runtimeFailure.map({ failureMessage($0.diagnostic) }) ?? failure {
+      message = failure; canRetry = true
+    } else if awaitsRasterSource || isActive {
+      // Admission and native construction are stages of the same pending
+      // program. Keep its installed cut while the allocator grants the lease;
+      // neither event changes the image the user needs or the curl borrows.
+      message = isActive ? "Запуск программы…"
+        : (raster == nil ? "Подготовка…" : "Обновление…")
+      canRetry = false
+    } else { return nil }
+    return .init(source: demand.source, rasterSource: rasterSource, message: message, canRetry: canRetry,
+      scale: requiredScale, previousRaster: raster?.entryID)
+  }
+  func prepareStatus(_ key: PageElementStatusPresentation.Key?) {
+    guard statusKey != key else { return }
+    statusKey = key; statusTask?.cancel(); statusTask = nil
+    guard let key else { statusPresentation = nil; return }
+    let raster = raster, resources = resources
+    statusTask = Task { @MainActor [weak self] in
+      do {
+        let value = try await PageElementStatusPresentation.prepare(key, raster: raster, resources: resources)
+        guard !Task.isCancelled, let self, !self.isRetired, self.statusKey == key else { return }
+        self.statusPresentation = value; self.statusTask = nil
+      } catch {
+        guard !Task.isCancelled, let self, self.statusKey == key else { return }
+        self.statusTask = nil
+        self.publishFailure(.init(kind: .resourceLimit, requiresCapture: true,
+          message: "Не удалось показать состояние элемента") { [weak self] in
+          guard let self else { return }; self.statusKey = nil; self.prepareStatus(self.requestedStatus)
+        })
+      }
+    }
+  }
+  func statusInstalled(_ value: PageElementStatusPresentation, installation: SceneSourceInstallation) {
+    guard !isRetired, let context = rasterPreparation, let activity = pageTurnActivity else { return }
+    guard !installation.isInstalled || (statusPresentation === value && value.key.source == demand?.source) else { return }
+    activity.installElementFrame(page: context.pageIndex, element: value.key.source.id, owner: pageFrameOwner,
+      source: value.key.source, installation: installation, acquisition: .status(value.cut))
+    if installation.isInstalled { statusInstallation = installation }
+    else if statusInstallation?.entryID == value.id { statusInstallation = nil }
+    // Native installation and graphics readiness describe the same image.
+    // Runtime input readiness remains liveProgram/onInteractionReady.
+    if installation.isInstalled {
+      Task { @MainActor [weak self, weak value] in
+        guard let self, let value, self.statusPresentation === value, installation.isInstalled else { return }
+        self.publishReady(true)
+      }
+    } else {
+      Task { @MainActor [weak self] in
+        guard let self, !self.isRetired, let source = self.demand?.source else { return }
+        self.publishReady(activity.elementFrameVersion(page: context.pageIndex, source: source) != nil)
+      }
+    }
+  }
+  #endif
 
   init(resources: SceneRenderResources = .shared) { self.resources = resources }
 
@@ -89,6 +153,9 @@ final class PreparedAgentElementPreparationOwner {
     guard demand != configuration.demand else { return }
     let previous = demand
     demand = configuration.demand
+    #if os(iOS)
+    prepareStatus(requestedStatus)
+    #endif
     if let previous, configuration.demand.hasSamePreparation(as: previous), !waitingForAdmission {
       // Input/focus changes reconfigure this accepted job. They do not replace
       // its queue position, timeout or in-flight passive WebKit capture.
@@ -151,7 +218,15 @@ final class PreparedAgentElementPreparationOwner {
   private func publishReady(_ ready: Bool) {
     guard !isRetired else { return }
     if ready { lastFailure = nil }
-    if consumer?.owner === self { consumer?.onRenderReady(ready) }
+    #if os(iOS)
+    let displayed = ready || (statusInstallation?.isInstalled == true
+      && statusInstallation?.source == statusPresentation?.cut.source
+      && statusPresentation?.key.source == demand?.source
+      && statusInstallation?.entryID == statusPresentation?.id)
+    #else
+    let displayed = ready
+    #endif
+    if consumer?.owner === self { consumer?.onRenderReady(displayed) }
   }
   private func publishFailure(_ failure: PageTurnPreparationFailure) {
     guard !isRetired else { return }
@@ -192,6 +267,9 @@ final class PreparedAgentElementPreparationOwner {
   func retire(afterUpdate: Bool = false) {
     guard !isRetired else { return }
     isRetired = true; request = nil; task?.cancel(); task = nil
+    #if os(iOS)
+    statusTask?.cancel(); statusTask = nil; statusKey = nil; statusInstallation = nil
+    #endif
     interactionUpdate?.cancel(); interactionUpdate = nil
     // Native ownership is revoked now. Observed presentation state may belong
     // to the SwiftUI update which removed this source, so its clearing waits
@@ -208,6 +286,9 @@ final class PreparedAgentElementPreparationOwner {
     } else { finishRetirement() }
   }
   private func finishRetirement() {
+    #if os(iOS)
+    statusPresentation = nil
+    #endif
     if consumer?.owner === self { consumer?.onRenderReady(false); consumer?.owner = nil }; consumer = nil
     session = nil; web = nil; raster = nil; preparedSource = nil; liveProgram = nil
     nativeRuntimeToken = nil; paintedRuntime = nil; configuration = nil; demand = nil
@@ -401,7 +482,8 @@ final class PreparedAgentElementPreparationOwner {
       }, onFramePainted: { [weak owner] installation in
         guard let owner, !owner.isRetired, owner.web?.id == web.id, !web.isReleased, installation.isInstalled,
           let installed = installation.source.agentElement,
-          AgentProgramSource(installed) == AgentProgramSource(element) else { return }
+          owner.demand?.source == element,
+          SceneRasterSource.agent(installed) == .agent(element) else { return }
         let receipt = PaintedRuntime(leaseID: web.id,
           program: AgentProgramSource(installed), runtimeToken: installation.runtimeToken)
         guard owner.paintedRuntime != receipt || owner.failedPaintRuntime != nil else { return }
@@ -531,7 +613,8 @@ final class PreparedAgentElementPreparationOwner {
     if let rasterPreparation, !demand.active {
       do {
         let next = try await rasterPreparation.owner.prepare(demand.source, policy: demand.policy,
-          pageIndex: rasterPreparation.pageIndex, store: model.store, permits: { model.permitsPagePreparation })
+          pageIndex: rasterPreparation.pageIndex, pageID: { if case .page(let id, _) = focus { return id }; return nil }(),
+          store: model.store, permits: { model.permitsPagePreparation })
         guard !Task.isCancelled, self.request == request,
           model.shutdownPhase != .stopped, let current = self.demand else { next.release(); return }
         raster = next; preparedSource = current.source

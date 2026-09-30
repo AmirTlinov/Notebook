@@ -10,6 +10,7 @@ final class NotebookPageAddressTests: XCTestCase {
   private final class PageReadGate: @unchecked Sendable {
     let captured: XCTestExpectation
     private let bodyQuery: String
+    private let holdsRead: Bool
     private let lock = NSLock()
     private let releaseSignal = DispatchSemaphore(value: 0)
     private var reads = 0
@@ -19,7 +20,8 @@ final class NotebookPageAddressTests: XCTestCase {
     var didHold: Bool { lock.withLock { held } }
     var timedOut: Bool { lock.withLock { expired } }
 
-    init(pageID: UUID, captured: XCTestExpectation) {
+    init(pageID: UUID, captured: XCTestExpectation, holdsRead: Bool = true) {
+      self.holdsRead = holdsRead
       bodyQuery = "SELECT b.data FROM records r JOIN blobs b ON b.hash=r.hash WHERE r.file='pages/"
         + pageID.uuidString.lowercased() + ".json'"
       self.captured = captured
@@ -30,7 +32,7 @@ final class NotebookPageAddressTests: XCTestCase {
     private func visit(_ sql: String) {
       let shouldHold = lock.withLock { () -> Bool in
         if sql == bodyQuery { reads += 1 }
-        guard sql == "COMMIT", reads == 1, !held else { return false }
+        guard holdsRead, sql == "COMMIT", reads == 1, !held else { return false }
         held = true
         return true
       }
@@ -66,7 +68,7 @@ final class NotebookPageAddressTests: XCTestCase {
 
   @MainActor
   private func preparationFixture() async throws ->
-    (model: NotebookAppModel, reader: NotebookSceneReader, item: UUID, ids: [UUID], order: String) {
+    (model: NotebookAppModel, reader: NotebookSceneReader, backgroundReader: NotebookSceneReader, item: UUID, ids: [UUID], order: String) {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     let store = NotebookStore(root: root), actor = UUID(), size = NotebookAppModel.defaultPageSize
     _ = try store.initializeWorkspace(actor: actor, pageSize: size)
@@ -83,8 +85,8 @@ final class NotebookPageAddressTests: XCTestCase {
       ids.append(appended.pageID)
     }
     try store.savePresence(presence)
-    let reader = NotebookSceneReader(store: store)
-    let model = NotebookAppModel(store: store, startsNearbySync: false, sceneReader: reader)
+    let reader = NotebookSceneReader(store: store), background = NotebookSceneReader(store: store)
+    let model = NotebookAppModel(store: store, startsNearbySync: false, sceneReader: reader, backgroundSceneReader: background)
     retainNotebookUntilTeardown(model, removing: root)
     await model.start(pageSize: size)
     await model.prepareNotebookPage(at: 1, in: item)
@@ -93,7 +95,7 @@ final class NotebookPageAddressTests: XCTestCase {
     XCTAssertEqual(model.activePage?.id, first)
     XCTAssertNil(model.notebookPage(at: 6, in: item))
     model.retainNotebookPageWindow([0, 1, 6], in: item, root: order)
-    return (model, reader, item, ids, order)
+    return (model, reader, background, item, ids, order)
   }
 
   @MainActor
@@ -340,35 +342,48 @@ final class NotebookPageAddressTests: XCTestCase {
   }
 
   @MainActor
+  func testForegroundPageDoesNotWaitForAnUnrelatedActiveBackgroundRead() async throws {
+    let f = try await preparationFixture()
+    var changed = try XCTUnwrap(f.model.activePage)
+    XCTAssertTrue(changed.replaceElements([.init(id: "background-change", kind: .nativeText,
+      frame: .init(x: 20, y: 20, width: 200, height: 80), source: "Changed", html: "")], actor: f.model.actorID))
+    try f.model.store.savePage(changed)
+    let gate = try await installPageReadGate(f.backgroundReader, pageID: f.ids[0])
+    defer { gate.release() }
+    let refresh = f.model.reloadExternalChanges()
+    await fulfillment(of: [gate.captured], timeout: 2)
+    XCTAssertTrue(gate.didHold)
+    let prepared = expectation(description: "The foreground page owns an independent WAL reader")
+    let opening = Task { await f.model.prepareNotebookPage(at: 6, in: f.item); prepared.fulfill() }
+    await fulfillment(of: [prepared], timeout: 2)
+    XCTAssertNotNil(f.model.notebookPage(at: 6, in: f.item))
+    XCTAssertFalse(gate.timedOut)
+    gate.release(); await opening.value; await refresh?.value
+  }
+
+  @MainActor
   func testUnchangedReloadRetainsThePreparedPageSourceIdentity() async throws {
-    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-    let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
-    retainNotebookUntilTeardown(model, removing: root)
-    await model.start(pageSize: NotebookAppModel.defaultPageSize)
-    let saved = await model.finishPendingPersistence(); XCTAssertTrue(saved)
+    let f = try await preparationFixture(), model = f.model, background = f.backgroundReader
     let page = try XCTUnwrap(model.activePage)
     _ = page.graphicGraph()
+    let gate = PageReadGate(pageID: page.id, captured: XCTestExpectation(description: "Unused body read"), holdsRead: false)
+    addTeardownBlock { try await gate.uninstall(from: background) }
+    try await gate.install(on: background)
     await model.reloadExternalChanges()?.value
+    XCTAssertEqual(gate.bodyReads, 0, "Unchanged source capability reuses the body before SQL decode")
     let after = try XCTUnwrap(model.activePage)
     XCTAssertEqual(after, page)
     XCTAssertEqual(after.elementSourceIdentity, page.elementSourceIdentity,
       "An unchanged SQL read cannot invalidate the live page's graph, viewport and installed material receipt")
-    let changed = PageDocument(id: page.id, size: page.size, actor: page.agentStamp.actor,
-      elements: [.init(id: "new-source", kind: .nativeText,
-        frame: .init(x: 20, y: 20, width: 200, height: 80), source: "Changed material", html: "")])
-    XCTAssertEqual(changed.agentStamp, page.agentStamp, "Negative control: stamps alone are insufficient")
-    let read = try NotebookSceneState.read(store: model.store, presence: model.presence,
-      viewport: try XCTUnwrap(model.presence).viewport, reusingPages: [page.id: changed])
-    XCTAssertEqual(read.pages[page.id]?.elements, page.elements)
-    XCTAssertNotEqual(read.pages[page.id]?.elementSourceIdentity, changed.elementSourceIdentity,
-      "A different same-stamp candidate must not replace the accepted disk source")
-    var edited = page
-    XCTAssertTrue(edited.replaceElements(changed.elements, actor: model.actorID))
-    try model.store.savePage(edited)
+    var changed = page
+    XCTAssertTrue(changed.replaceElements([.init(id: "new-source", kind: .nativeText,
+      frame: .init(x: 20, y: 20, width: 200, height: 80), source: "Changed material", html: "")], actor: model.actorID))
+    let savedPage = try model.store.savePage(changed)
     await model.reloadExternalChanges()?.value
     let replaced = try XCTUnwrap(model.activePage)
-    XCTAssertEqual(replaced.elements, changed.elements)
+    XCTAssertEqual(replaced.elements, savedPage.elements)
     XCTAssertNotEqual(replaced.elementSourceIdentity, page.elementSourceIdentity)
+    XCTAssertEqual(gate.bodyReads, 1, "Only the changed page body is decoded")
   }
   @MainActor
   func testAWithdrawnNeighbourReadCannotEvictTheCurrentPageWindow() async throws {

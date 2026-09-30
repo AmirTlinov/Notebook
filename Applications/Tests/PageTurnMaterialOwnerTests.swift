@@ -6,6 +6,34 @@ import XCTest
 
 @MainActor
 final class PageTurnMaterialOwnerTests: XCTestCase {
+  func testBlankGridBorrowsResidentPaperWhenPassiveAdmissionIsExhausted() async throws {
+    let resources = SceneRenderResources(byteLimit: 1024 * 1024)
+    let size = CGSize(width: 32, height: 48)
+    let paper = try await PageTurnMaterialOwner.preparedPaper(size: size, scale: 2, resources: resources)
+    let admission = resources.rasterAdmission
+    let occupied = try XCTUnwrap(resources.reserveDerivedBytes(
+      admission.passiveByteLimit - admission.pinnedBytes - admission.passiveReservedBytes, priority: .passive))
+    defer { occupied.release() }
+    XCTAssertNil(resources.reserveRaster(pixelWidth: 64, pixelHeight: 96, priority: .passive),
+      "The control must refuse a duplicate blank raster")
+    let held = resources.rasterAdmission.heldBytes
+    let blank = try await PageTurnMaterialOwner.preparedPaper(size: size, scale: 2,
+      resources: resources, priority: .input)
+    XCTAssertTrue(blank === paper, "The creation slot borrows grid pixels, never its neighbour's composed content")
+    XCTAssertEqual(resources.rasterAdmission.heldBytes, held, "Borrowing needs no CPU raster or GPU upload")
+
+    let changedSize = CGSize(width: 40, height: 48)
+    do {
+      _ = try await PageTurnMaterialOwner.preparedPaper(size: changedSize, scale: 2, resources: resources)
+      XCTFail("Speculation must respect exhausted passive admission")
+    } catch SceneRenderError.resourceLimit { }
+    let demanded = try await PageTurnMaterialOwner.preparedPaper(size: changedSize, scale: 2,
+      resources: resources, priority: .input)
+    XCTAssertEqual(demanded.logicalSize, changedSize)
+    XCTAssertEqual(demanded.allocationPriority, .input,
+      "An accepted demand can prepare its own size after speculative refusal")
+  }
+
   func testNativeDetachRemountPublishesAvailabilityWithoutRevokingANewerRuntime() throws {
     let fixture = try Fixture()
     defer { fixture.owner.retire() }
@@ -180,6 +208,97 @@ final class PageTurnMaterialOwnerTests: XCTestCase {
     XCTAssertGreaterThan(rgba[2], 240); XCTAssertLessThan(rgba[0], 15)
   }
 
+  func testAvailabilityOnlyWakePreservesSuspendedCaptureButReplacementRejectsIt() async throws {
+    let fixture = try Fixture()
+    defer { fixture.owner.retire(); fixture.readiness.retire() }
+    try await fixture.prepare()
+    let provider = try fixture.install(.red, content: .runtime, suspended: true)
+    defer { provider.resume() }
+    let installation = SceneSourceInstallation(source: .agent(fixture.source), entryID: provider.raster.entryID,
+      runtimeToken: "same-runtime", requiresVisibility: false, owner: fixture.installedOwner)
+    func publishAvailability() {
+      fixture.activity.installElementFrame(page: 0, element: fixture.source.id, owner: fixture.providerID,
+        source: fixture.source, installation: installation, acquisition: .runtime { _ in try await provider.acquire() })
+    }
+    func publishReadiness() {
+      fixture.readiness(true, capturable: fixture.owner.isCapturable(readiness: fixture.readiness))
+    }
+    publishAvailability(); publishReadiness()
+    fixture.owner.prepareStaticSlots(readiness: fixture.readiness, onReady: publishReadiness, onFailure: { _ in })
+    fixture.readiness.setFrameProvider { priority in
+      try await fixture.owner.acquire(page: fixture.page, readiness: fixture.readiness, priority: priority)
+    }
+    fixture.activeTurn = true
+    let revision = fixture.readiness.materialRevision
+    let version = fixture.activity.elementFrameVersion(page: 0, source: fixture.source)
+    let accepted = Task { @MainActor in try await fixture.readiness.acquireFrame(priority: .input) }
+    try await waitUntil { provider.waiter != nil }
+    fixture.installedOwner.visible = false; publishAvailability()
+    fixture.installedOwner.visible = true; publishAvailability()
+    XCTAssertEqual(fixture.activity.elementFrameVersion(page: 0, source: fixture.source), version)
+    XCTAssertEqual(fixture.readiness.materialRevision, revision,
+      "Native availability wakes the owner without revoking unchanged source/pixels")
+    provider.resume()
+    let frame = try await accepted.value
+    XCTAssertEqual(frame.logicalSize, CGSize(width: 32, height: 32))
+    XCTAssertEqual(provider.calls, 1, "A transient installation edge must not recapture the same accepted runtime")
+
+    provider.suspended = true
+    let replaced = Task { @MainActor in try await fixture.readiness.acquireFrame(priority: .input) }
+    try await waitUntil { provider.waiter != nil }
+    _ = try fixture.install(.blue, content: .runtime)
+    provider.resume()
+    do { _ = try await replaced.value; XCTFail("A different installed source still revokes suspended pixels") }
+    catch is PageTurnMaterialUnavailable { }
+  }
+
+  func testRestoredExactProviderSurvivesHistoricalMaterialChangesButReplacementDoesNot() async throws {
+    let fixture = try Fixture()
+    defer { fixture.owner.retire(); fixture.readiness.retire() }
+    try await fixture.prepare()
+    let provider = try fixture.install(.red, content: .runtime, suspended: true)
+    defer { provider.resume() }
+    let runtime = SceneSourceInstallation(source: .agent(fixture.source), entryID: provider.raster.entryID,
+      runtimeToken: "accepted-runtime", requiresVisibility: false, owner: fixture.installedOwner)
+    func publishRuntime() {
+      fixture.activity.installElementFrame(page: 0, element: fixture.source.id, owner: fixture.providerID,
+        source: fixture.source, installation: runtime, acquisition: .runtime { _ in try await provider.acquire() })
+    }
+    publishRuntime()
+    let bridgeOwner = InstalledOwner()
+    let bridge = SceneSourceInstallation(source: .agent(fixture.source), entryID: provider.raster.entryID,
+      requiresVisibility: false, owner: bridgeOwner)
+    fixture.activity.installElementFrame(page: 0, element: fixture.source.id, owner: fixture.providerID,
+      source: fixture.source, installation: bridge, acquisition: .raster(provider.raster))
+    fixture.readiness(true)
+    fixture.readiness.setFrameProvider { priority in
+      try await fixture.owner.acquire(page: fixture.page, readiness: fixture.readiness, priority: priority)
+    }
+    fixture.activeTurn = true
+    let revision = fixture.readiness.materialRevision
+    let version = fixture.activity.elementFrameVersion(page: 0, source: fixture.source)
+    let accepted = Task { @MainActor in try await fixture.readiness.acquireFrame(priority: .input) }
+    try await waitUntil { provider.waiter != nil }
+    fixture.installedOwner.visible = false; publishRuntime()
+    XCTAssertEqual(fixture.activity.elementFrameVersion(page: 0, source: fixture.source)?.content, .raster)
+    fixture.installedOwner.visible = true; publishRuntime()
+    XCTAssertGreaterThan(fixture.readiness.materialRevision, revision,
+      "A native bridge can replace the selected presentation and then restore the same runtime")
+    XCTAssertEqual(fixture.activity.elementFrameVersion(page: 0, source: fixture.source), version)
+    provider.resume()
+    let frame = try await accepted.value
+    XCTAssertEqual(frame.logicalSize, CGSize(width: 32, height: 32))
+    XCTAssertEqual(provider.calls, 1, "The exact material owner accepted this cut; an outer history counter cannot demand another capture")
+
+    provider.suspended = true
+    let replaced = Task { @MainActor in try await fixture.readiness.acquireFrame(priority: .input) }
+    try await waitUntil { provider.waiter != nil }
+    _ = try fixture.install(.blue, content: .runtime)
+    provider.resume()
+    do { _ = try await replaced.value; XCTFail("Replacing the final exact provider must still revoke the capture") }
+    catch is PageTurnMaterialUnavailable { }
+  }
+
   func testRuntimeNeverWarmsOrReusesAPreviousTurnAndRetirementRejectsPendingPixels() async throws {
     let fixture = try Fixture()
     defer { fixture.owner.retire() }
@@ -206,6 +325,64 @@ final class PageTurnMaterialOwnerTests: XCTestCase {
     do { _ = try await turn.value; XCTFail("Retired preparation cannot return or cache its late pixels") }
     catch is CancellationError { }
     catch is PageTurnMaterialUnavailable { }
+  }
+
+  func testLocalNativeEditAndMoveReuseEveryUnaffectedMaterial() async throws {
+    let actor = UUID(), owner = PageTurnMaterialOwner()
+    defer { owner.retire() }
+    var elements = (0..<3).map { index in
+      AgentElement(id: "text-\(index)", kind: .nativeText,
+        frame: .init(x: 8, y: 8 + Double(index) * 35, width: 100, height: 24),
+        source: "Initial \(index)", html: "", textStyle: .init(fontSize: 16))
+    }
+    var page = PageDocument(size: .init(width: 160, height: 160), actor: actor, elements: elements)
+    func prepare() async throws {
+      var ready = false, failure: String?
+      owner.prepare(page: page, erasures: [:], ordered: [], scale: 1,
+        onReady: { ready = true }, onFailure: { failure = $0.message })
+      try await waitUntil { ready || failure != nil }
+      XCTAssertNil(failure); XCTAssertTrue(ready)
+    }
+    try await prepare()
+    let original = owner.preparedMaterialIDs
+    XCTAssertEqual(original.count, 3)
+    elements[1] = AgentElement(id: elements[1].id, kind: .nativeText, frame: elements[1].frame,
+      source: "Changed text", html: "", textStyle: elements[1].textStyle)
+    XCTAssertTrue(page.replaceElements(elements, actor: actor)); try await prepare()
+    let edited = owner.preparedMaterialIDs
+    XCTAssertEqual(edited["text-0"], original["text-0"])
+    XCTAssertNotEqual(edited["text-1"], original["text-1"])
+    XCTAssertEqual(edited["text-2"], original["text-2"])
+    let moved = elements[1].frame
+    elements[1] = elements[1].updating(frame: .init(x: moved.x + 12, y: moved.y, width: moved.width, height: moved.height))
+    XCTAssertTrue(page.replaceElements(elements, actor: actor)); try await prepare()
+    XCTAssertEqual(owner.preparedMaterialIDs, edited, "Placement changes retain unchanged local pixels")
+  }
+
+  func testInstalledPendingCutCanTurnAndRetryHandsOffToExactRuntimePixels() async throws {
+    let fixture = try Fixture()
+    defer { fixture.owner.retire() }
+    try await fixture.prepare()
+    let runtime = try fixture.install(.red, content: .runtime)
+    let status = try await PageElementStatusPresentation.prepare(.init(source: fixture.source,
+      rasterSource: .agent(fixture.source), message: "Не удалось запустить программу", canRetry: true,
+      scale: 1, previousRaster: nil), raster: nil, resources: fixture.resources)
+    let statusOwner = InstalledOwner()
+    let installed = SceneSourceInstallation(source: .agent(fixture.source), entryID: status.id,
+      requiresVisibility: false, owner: statusOwner)
+    fixture.activity.installElementFrame(page: 0, element: fixture.source.id, owner: fixture.providerID,
+      source: fixture.source, installation: installed, acquisition: .status(status.cut))
+    XCTAssertEqual(fixture.activity.elementFrameVersion(page: 0, source: fixture.source)?.content, .status)
+    XCTAssertTrue(fixture.owner.isCapturable(readiness: fixture.readiness))
+    fixture.activeTurn = true
+    _ = try await fixture.owner.acquire(page: fixture.page, readiness: fixture.readiness, priority: .input)
+    XCTAssertEqual(runtime.calls, 0, "A displayed error is the accepted cut; the failed program cannot block navigation")
+    statusOwner.visible = false
+    fixture.activity.installElementFrame(page: 0, element: fixture.source.id, owner: fixture.providerID,
+      source: fixture.source, installation: installed, acquisition: .status(status.cut))
+    XCTAssertEqual(fixture.activity.elementFrameVersion(page: 0, source: fixture.source)?.content, .runtime)
+    _ = try await fixture.owner.acquire(page: fixture.page, readiness: fixture.readiness, priority: .input)
+    XCTAssertEqual(runtime.calls, 1, "An installed retry replaces the status cut with its own current pixels")
   }
 
   private func waitUntil(_ predicate: () -> Bool) async throws {

@@ -179,7 +179,7 @@ struct NotebookGraphicBatchView: View {
     let kind:Kind
     var objects:[Object]
   }
-  private func paintRuns(_ objects:[Object],erasures:[String:[InkElementErasure]],selected:[String:UUID]) -> [PaintRun] {
+  private func paintRuns(_ objects:[Object],erasures:InkElementErasureMap,selected:[String:UUID]) -> [PaintRun] {
     var runs:[PaintRun]=[]
     for object in objects {
       let graphic=object.graphic

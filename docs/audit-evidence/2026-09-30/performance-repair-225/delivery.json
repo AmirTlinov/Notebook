@@ -1,0 +1,71 @@
+{
+  "format": 1,
+  "status": "causal-repair-installed-focused-physical-checks-passed-performance-open",
+  "baseCommit": "c140b804960321db8a60cd415dcd6e5a7eb076a1",
+  "version": "0.3.155",
+  "build": "225",
+  "previousBuild": "224",
+  "sourceSHA256": "1df1f16cc235857fee8a06b63dad3d4257a36a36e24d42964ff9ddeb279998a6",
+  "fullAcceptance": false,
+  "scope": "D01–D16 owner/local-work repair and confirmed document/material/startup causes. Remaining strict first-presentation budgets remain open.",
+  "verification": {
+    "path": "/private/tmp/notebook-225-final-0251/verification.json",
+    "sha256": "ee84a0081b5ee187369bc0c6f84b30f6cc5e64232f0fb50a944bee65ee9adfab",
+    "status": "passed",
+    "route": "./verify.sh:selected",
+    "ipadPassed": 3,
+    "macPassed": 1,
+    "additionalChecks": "results.json"
+  },
+  "buildReceipt": {
+    "path": "/private/tmp/notebook-225-final-pair-0302/build.json",
+    "sha256": "95d527093f006c91bb9ea7603926395e01d95b29b232b397e47676d9e5d40874",
+    "status": "verified-build"
+  },
+  "installationReceipt": {
+    "path": "/private/tmp/notebook-owner-install-225-0307/installation.json",
+    "sha256": "1cf7059abfefdf7830acc76076ec50f2ecbe6754122799fc45b9486621cc3f49",
+    "status": "matched-pair-launched",
+    "finishedAt": "2026-09-30T03:11:07.327687+00:00",
+    "macInstalledBuild": "225",
+    "ipadInstalledBuild": "225",
+    "inPlaceUpdate": true,
+    "dataAccess": "none",
+    "dataContainerPathChanged": true,
+    "identityRetention": "The previously admitted device authenticated with its existing identity and new session in the same workspace; page/camera presence restored. No uninstall/data reset/archive restore.",
+    "resume": "Initial path-equality check stopped after successful iPad installation. Resume validated unchanged bundle/groups/signed artifact, completed Mac replacement without another iPad install, then checked admitted identity/workspace."
+  },
+  "postLaunch": {
+    "status": "ready",
+    "checkedAt": "2026-09-30T03:12:51Z",
+    "macInstalledHelperStatus": "ready",
+    "iPadPresentationStatus": "ready",
+    "iPadDeviceID": "29DC77FE-8777-41EC-BE98-704F4668A2F4",
+    "iPadSessionID": "5EA2C847-EA93-4C9E-9534-956A7F5E0B13",
+    "priorSessionID": "DA9747C6-403B-4731-9884-D2557698F160",
+    "workspaceID": "54349F3B-9E0A-4DEA-B990-40CAE04EF45E",
+    "cursor": "52165",
+    "macInstalledVersion": "0.3.155",
+    "macInstalledBuild": "225",
+    "iPadInstalledVersion": "0.3.155",
+    "iPadInstalledBuild": "225",
+    "iPadNotebookApps": [
+      {
+        "bundleID": "com.amirtlinov.notebook.preview",
+        "name": "Notebook Lab",
+        "build": "225"
+      }
+    ],
+    "qaOrTestAppsPresent": false,
+    "inPlaceUpdate": true,
+    "dataContainerPathChanged": true,
+    "identityRetention": "The previously admitted device authenticated with its existing identity and new session in the same workspace; page/camera presence restored. No uninstall/data reset/archive restore.",
+    "visibleMacCheck": {
+      "status": "unavailable",
+      "reason": "Computer Use ScreenCaptureKit SCStreamErrorDomain -3811; fresh binding/reset did not restore capture."
+    },
+    "scope": "Installed Release pair launch, same admitted device/workspace/session rollover and application inventory. Physical gesture and held-paint checks retain their source-specific scopes; no new performance acceptance.",
+    "path": "/private/tmp/notebook-owner-install-225-0307/post-launch-check.json",
+    "sha256": "2122a8c3e11f92adba4105f580bdf4e01e753ff50aa89d37d3360ecc5ae0694f"
+  }
+}

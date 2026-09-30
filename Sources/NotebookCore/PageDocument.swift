@@ -188,7 +188,7 @@ public struct PageDocument: Codable, Equatable, Identifiable, Sendable {
   /// The read owner prepares both projections before publishing an input-ready page.
   public func prepareInkForPresentation() throws { _ = try inkSource.prepare() }
   public var preparedInkDrawing:PageInkDrawing? { inkSource.preparedProjection?.drawing }
-  public var preparedElementErasures:[String:[InkElementErasure]]? { inkSource.preparedProjection?.erasures.values }
+  public var preparedElementErasures:InkElementErasureMap? { inkSource.preparedProjection?.erasures.values }
   private enum CodingKeys: String,CodingKey {
     case format,id,size,drawingData,drawingStamp,elements,agentStamp,collaboration,computations
   }

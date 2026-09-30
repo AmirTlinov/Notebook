@@ -3,10 +3,16 @@ import SwiftUI
 
 /// Both native readers demand the same addressed material. A directory slot
 /// is not a blank sheet; only the deliberate trailing creation slot is blank.
-private struct BlankFrameDemand: Hashable { let owner: ObjectIdentifier; let retry: UInt64 }
+private struct BlankFrameDemand: Hashable {
+  let owner: ObjectIdentifier
+  let width, height, scale: Double
+  let demanded: Bool
+  let retry: UInt64
+}
 
 struct NotebookPageView: View {
   @Environment(NotebookAppModel.self) private var model
+  @Environment(\.displayScale) private var displayScale
   let notebookID: UUID
   let index: Int
   let isCurrent: Bool
@@ -23,30 +29,37 @@ struct NotebookPageView: View {
 
   var body: some View {
     if index < 0 || index >= model.notebookPageCount(notebookID) {
-      BlankPageSurface(fallbackSize: model.notebookPageSize)
-        .task(id: BlankFrameDemand(owner: ObjectIdentifier(onRenderReady), retry: blankRetry)) {
+      GeometryReader { geometry in
+        let size = model.notebookPageSize
+        let scale = max(0.1, min(geometry.size.width / size.width, geometry.size.height / size.height)
+          * displayProjection * displayScale)
+        let demanded = isCurrent || onRenderReady.activity?.preparationDemand?.pageIndex == index
+        BlankPageSurface(fallbackSize: size)
+        .task(id: BlankFrameDemand(owner: ObjectIdentifier(onRenderReady), width: size.width,
+          height: size.height, scale: scale, demanded: demanded, retry: blankRetry)) {
           #if os(iOS)
           do {
-            let frame: PageTurnFrame
-            if let blankFrame { frame = blankFrame }
-            else {
-              let size = CGSize(width: model.notebookPageSize.width, height: model.notebookPageSize.height)
-              let canvas = try await SceneRasterCompositor.create(size: size, scale: 2, resources: .shared)
-              try await canvas.drawView(GridPaperView(), size: size, in: CGRect(origin: .zero, size: size))
-              let pixels = try await canvas.finishImage()
-              frame = try await PageTurnFrame.compose(size: size, scale: 2,
-                images: [.init(image: pixels.image, frame: CGRect(origin: .zero, size: size))], retaining: [pixels])
-              blankFrame = frame
+            let logicalSize = CGSize(width: size.width, height: size.height)
+            if let blankFrame, blankFrame.logicalSize != logicalSize
+              || blankFrame.texture.width != Int(ceil(size.width * scale))
+              || blankFrame.texture.height != Int(ceil(size.height * scale)) {
+              onRenderReady(false); onRenderReady.materialDidChange()
             }
+            let frame = try await PageTurnMaterialOwner.preparedPaper(
+              size: logicalSize, scale: scale,
+              priority: demanded ? .input : .passive)
             try Task.checkCancellation()
+            blankFrame = frame
             onRenderReady.setFrameProvider { _ in frame }
             onRenderReady(index == model.notebookPageCount(notebookID))
           } catch is CancellationError { }
-          catch { onRenderReady.failed(.init(message: "Не удалось подготовить чистый лист", retry: { blankFrame = nil; blankRetry &+= 1 })) }
+          catch { onRenderReady.failed(.init(kind: error as? SceneRenderError == .resourceLimit ? .resourceLimit : .preparationFailed,
+            message: "Не удалось подготовить чистый лист", retry: { blankRetry &+= 1 })) }
           #else
           onRenderReady(index == model.notebookPageCount(notebookID))
           #endif
         }
+      }
     } else if let page = model.notebookPage(at: index, in: notebookID) {
       acceptedPage(page)
         #if os(iOS)
@@ -64,9 +77,11 @@ struct NotebookPageView: View {
   @ViewBuilder
   private func acceptedPage(_ page: PageDocument) -> some View {
     if onRenderReady.acceptNotebookPage(page.id, from: model.notebookPagePreparation) {
-      PageSurface(page: page, isCurrent: isCurrent, isInteractive: isInteractive,
+      let source = onRenderReady.notebookPageSource
+      PageSurface(page: source?.document ?? page, isCurrent: isCurrent, isInteractive: isInteractive,
         isVisible: isVisible, onRenderReady: onRenderReady, displayProjection: displayProjection,
-        refinesDetails: refinesDetails, initialVisibleRegion: initialVisibleRegion)
+        refinesDetails: refinesDetails, initialVisibleRegion: initialVisibleRegion,
+        sourceVersion: source?.sourceVersion)
     } else {
       // A native notebook leaf never creates an autonomous program. Its page
       // owner publishes admission once the bound controller/address is ready.
@@ -92,6 +107,9 @@ struct PageSurface: View {
   var displayProjection: Double = 1
   var refinesDetails = true
   var initialVisibleRegion: CGRect? = nil
+  /// Keep the accepted roots in the child input: PageDocument's durable
+  /// equality cannot suppress installation of an equivalent decoded source.
+  var sourceVersion: NotebookPagePreparationWindow.SourceVersion? = nil
 
   @State private var visibleRegion: CGRect?
   #if os(iOS)
@@ -185,7 +203,11 @@ struct PageSurface: View {
       .frame(width: page.size.width, height: page.size.height)
       .background(PagePresentationView(page: page, isCurrent: isCurrent,
         isVisible: isVisible, readiness:readiness,
-        activity: onRenderReady.activity, onVisibleRegion: { visibleRegion = $0 }).allowsHitTesting(false))
+        activity: onRenderReady.activity, onVisibleRegion: { region in
+          onRenderReady.agentPreparations?.updateViewport(page: page, model: model, display: graphicDisplay,
+            visibleRegion: region, context: onRenderReady.rasterContext)
+          visibleRegion = region
+        }).allowsHitTesting(false))
       .clipShape(
         RoundedRectangle(
           cornerRadius: WorkspaceItemGeometry.notebook.cornerRadius,
@@ -230,12 +252,24 @@ struct PageSurface: View {
       publishReadiness()
     }
     .onChange(of: page.elementSourceIdentity) { _, _ in
+      onRenderReady.agentPreparations?.updateViewport(page: page, model: model,
+        display: model.pageGraphicDisplay(page, in: visibleRegion ?? initialVisibleRegion),
+        visibleRegion: visibleRegion ?? initialVisibleRegion, context: onRenderReady.rasterContext)
       publishReadiness()
     }
     .onChange(of: isCurrent) { _, _ in publishReadiness() }
   }
 
   private func publishReadiness() {
+    #if DEBUG && os(iOS)
+    if NotebookNavigationObservation.pageTurnDiagnosticsEnabled {
+      onRenderReady.presentationDiagnostic = { [weak readiness, weak receipt = onRenderReady, page] in
+        let sources = page.elements.filter { $0.graphic == nil && $0.kind != .nativeText && $0.kind != .group }
+        let installed = sources.filter { receipt?.activity?.hasElementFrame(page: receipt?.pageIndex ?? -1, source: agentElementSnapshotSource($0)) == true }.count
+        return "\(readiness?.diagnostic(page) ?? "retired");installedSlots=\(installed)/\(sources.count)"
+      }
+    }
+    #endif
     #if os(iOS)
     materialOwner.prepare(page: page, erasures: model.pagePresentationErasures(page),
       ordered: orderedMaterialIDs, scale: materialScale, onReady: {
@@ -267,7 +301,7 @@ struct PageSurface: View {
   #endif
 
   private func agentOverlay(renderingScale:Double,display:NotebookPageGraphicDisplay) -> some View {
-    AgentOverlayView(page:page,renderingScale:renderingScale,preparedDisplay:display,
+    AgentOverlayView(page:page,sourceIdentity:page.elementSourceIdentity,renderingScale:renderingScale,preparedDisplay:display,
       allowsInteraction:isVisible && isCurrent,inputEnabled:isVisible && isInteractive,
       onRenderReady:{ ready in
         readiness.recordGraphics(ready,page:page);publishReadiness()

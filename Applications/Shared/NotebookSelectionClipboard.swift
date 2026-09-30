@@ -244,13 +244,13 @@ struct NotebookSelectionExport: Sendable {
   let sources:[AgentElement]
   let graph:NotebookGraphicGraph
   let rootOrigin:WorldPoint
-  let erasures:[String:[InkElementErasure]]
+  let erasures:InkElementErasureMap
   let inkKeys:[String:NotebookInkPaintKey]
   let pageInkSource:PageInkSource?
 
   init(selectionID:UUID,surface:SurfaceID,inkRevision:String?,
     sourceChecks:[EditableElementReference:NotebookNativeElementSource],sources:[AgentElement],
-    graph:NotebookGraphicGraph,rootOrigin:WorldPoint,erasures:[String:[InkElementErasure]],
+    graph:NotebookGraphicGraph,rootOrigin:WorldPoint,erasures:InkElementErasureMap,
     inkKeys:[String:NotebookInkPaintKey]=[:],pageInkSource:PageInkSource?=nil) {
     self.selectionID=selectionID;self.surface=surface;self.inkRevision=inkRevision
     self.sourceChecks=sourceChecks;self.sources=sources;self.graph=graph;self.rootOrigin=rootOrigin

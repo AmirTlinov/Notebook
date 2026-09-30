@@ -132,7 +132,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
     var resolveEraserSource: ((SceneCompositionCohort, UUID) -> NotebookSpatialEraserSource?)?
     var onEraserFailure: (Error) -> Void = { _ in }
     var onElementErasing: ([NotebookElementErasing], UUID) -> Void = { _, _ in }
-    var resolveGraphicErasures: ((SceneCompositionCohort, UUID) -> [String: [InkElementErasure]])?
+    var resolveGraphicErasures: ((SceneCompositionCohort, UUID) -> InkElementErasureMap)?
     var resolveGraphicGraph: ((SceneCompositionCohort, UUID) -> NotebookGraphicGraph)?
     weak var toolController: NotebookDrawingToolController?
     weak var model: NotebookAppModel?
@@ -178,7 +178,7 @@ struct SpatialInkCanvas: UIViewRepresentable {
       let cohort: SceneCompositionCohort?
       let leases: [SpatialInkSurfaceRegistry.ContactLease]
       let graphics: NotebookGraphicGraph
-      let graphicErasures: [String: [InkElementErasure]]
+      let graphicErasures: InkElementErasureMap
       let eraserSource: NotebookSpatialEraserSource?
     }
     private var actionGeometry: ContactGeometry?

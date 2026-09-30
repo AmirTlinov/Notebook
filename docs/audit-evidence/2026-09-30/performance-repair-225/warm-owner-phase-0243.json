@@ -1,0 +1,629 @@
+{
+  "scope": "One unchanged-source physical Warm10 rerun without Time Profiler; budgets unchanged and strict performance still FAIL",
+  "sourceManifestSHA256": "242c6b59b9d54d7e36741d34124fd2b723b05186959e54127dbfcc446f4ee210",
+  "sourceRendererSHA256": "a80f631a44d8c64b0b30860992cd2e217a23f0a31cba2bbfcb542d41291d3485",
+  "artifacts": {
+    "result": "/private/tmp/notebook-225-warm-0243/ipad.xcresult",
+    "attachmentIndex": "/private/tmp/notebook-225-warm-0243/attachments-index.jsonl",
+    "fullParsedComparison": "/private/tmp/notebook-225-warm-0243-comparison.json"
+  },
+  "comparison": {
+    "beforeUnprofiled0146": {
+      "first": {
+        "min": 25.7345,
+        "median": 33.859521,
+        "max": 39.448917,
+        "count": 10
+      },
+      "landing": {
+        "min": 321.753292,
+        "median": 325.276708,
+        "max": 335.141958,
+        "count": 10
+      },
+      "presentFirst": {
+        "min": 4.379208,
+        "median": 8.974146,
+        "max": 9.193292,
+        "count": 10
+      },
+      "presentThird": {
+        "min": 0.015167,
+        "median": 0.026646,
+        "max": 0.482583,
+        "count": 10
+      },
+      "changingGaps": {
+        "min": 8.33175,
+        "median": 8.336667,
+        "max": 20.841667,
+        "count": 338
+      },
+      "changingGapBuckets": {
+        "1": 327,
+        "2": 11
+      },
+      "callbackGaps": {
+        "min": 3.046583,
+        "median": 8.337583,
+        "max": 23.997417,
+        "count": 353
+      },
+      "callbackGapBuckets": {
+        "1": 333,
+        "2": 16,
+        "3": 3,
+        "0": 1
+      },
+      "drops": 15,
+      "renders": 363,
+      "positiveOS": 348
+    },
+    "afterUnprofiled0243": {
+      "first": {
+        "min": 29.541667,
+        "median": 40.218125,
+        "max": 48.917083,
+        "count": 10
+      },
+      "landing": {
+        "min": 322.348792,
+        "median": 332.783437,
+        "max": 350.380708,
+        "count": 10
+      },
+      "presentFirst": {
+        "min": 0.013625,
+        "median": 0.041688,
+        "max": 0.058208,
+        "count": 10
+      },
+      "presentThird": {
+        "min": 0.006625,
+        "median": 0.032687,
+        "max": 0.046125,
+        "count": 10
+      },
+      "changingGaps": {
+        "min": 8.330583,
+        "median": 8.336708,
+        "max": 25.010167,
+        "count": 328
+      },
+      "changingGapBuckets": {
+        "3": 2,
+        "1": 309,
+        "2": 17
+      },
+      "callbackGaps": {
+        "min": 2.9905,
+        "median": 8.3375,
+        "max": 25.105542,
+        "count": 345
+      },
+      "callbackGapBuckets": {
+        "1": 308,
+        "0": 5,
+        "2": 29,
+        "3": 3
+      },
+      "drops": 17,
+      "renders": 355,
+      "positiveOS": 338
+    },
+    "earlierCPUProfile0220ContextOnly": {
+      "first": {
+        "min": 28.8525,
+        "median": 31.981646,
+        "max": 38.414708,
+        "count": 10
+      },
+      "landing": {
+        "min": 321.609667,
+        "median": 324.898875,
+        "max": 335.255458,
+        "count": 10
+      },
+      "presentFirst": {
+        "min": 3.155125,
+        "median": 7.972875,
+        "max": 9.097875,
+        "count": 10
+      },
+      "presentThird": {
+        "min": 0.01175,
+        "median": 0.027042,
+        "max": 0.048958,
+        "count": 10
+      },
+      "changingGaps": {
+        "min": 8.336292,
+        "median": 8.336708,
+        "max": 16.6735,
+        "count": 338
+      },
+      "changingGapBuckets": {
+        "2": 13,
+        "1": 325
+      },
+      "callbackGaps": {
+        "min": 1.130833,
+        "median": 8.341583,
+        "max": 24.99875,
+        "count": 352
+      },
+      "callbackGapBuckets": {
+        "1": 330,
+        "0": 2,
+        "3": 3,
+        "2": 17
+      },
+      "drops": 14,
+      "renders": 362,
+      "positiveOS": 348
+    }
+  },
+  "observations": [
+    "First present-call median falls from 8.9741 to 0.0417 ms; its former 4–9 ms blocking is absent in all 10 turns.",
+    "Actual first-OS median rises from 33.8595 to 40.2181 ms and maximum from 39.4489 to 48.9171 ms; landing median rises from 325.2767 to 332.7834 ms.",
+    "Single-vsync changing gaps fall from 327/338 to 309/328; longer gaps rise from 11 to 19, including two 25.010 ms gaps. Three new turns have only 8.337 ms gaps; this is not a universal 60 Hz or 40 Hz regression.",
+    "All 10 first submissions still drop; total drops rise from 15 to 17. The first three publications in every new turn precede its first actual OS receipt, so the removed previous-OS-to-successor barrier has not returned.",
+    "Turn 0 is the worst cadence outlier: 27 submissions, 25 OS receipts, 350.381 ms landing; most other turns submit 36–37 frames."
+  ],
+  "sourceMechanism": {
+    "file": "Applications/Shared/SheetCurlRenderer.swift",
+    "lines": [
+      1160,
+      1190,
+      1194,
+      1258
+    ],
+    "established": "Successor acquisition now starts afterCAcommit. preparePageUpdate requires the worker request to be drained before it can advance animation/encode. This avoids same-layer present/nextDrawable overlap but reduces successor preparation lead time.",
+    "measuredExample": {
+      "turn3": {
+        "newFirstTwoCallbacksMS": [
+          0.87,
+          14.36
+        ],
+        "oldFirstTwoCallbacksMS": [
+          0.84,
+          9.86
+        ],
+        "newFirstOSMS": 48.647,
+        "oldFirstOSMS": 37.497
+      },
+      "turn6": {
+        "newFirstTwoCallbacksMS": [
+          0.88,
+          14.47
+        ],
+        "oldFirstTwoCallbacksMS": [
+          0.79,
+          10.72
+        ]
+      }
+    },
+    "remainingUncertainty": "No acquisition-start/completion receipt exists in these attachments, so delayed worker readiness versus a missed UIKit phase cannot be separated exactly. Separate ten-turn runs establish the negative sample result, not a controlled statistical estimate for every device condition."
+  },
+  "releaseAssessment": "This change removes measured main-thread blocking but has not improved end-to-end interaction; preserve FAIL. Do not present it as a latency repair. Reconsider or revert this scheduling change before release unless an addressed successor-preparation correction is verified.",
+  "turns": [
+    {
+      "turn": 0,
+      "firstOSMilliseconds": 32.559375,
+      "landingMilliseconds": 350.380708,
+      "submissions": 27,
+      "droppedSubmissions": 2,
+      "firstSubmissionDropped": true,
+      "firstPresentedRelativeSequence": 2,
+      "firstPresentedGPUEndMilliseconds": 18.743958,
+      "firstPresentedGPUToOSMilliseconds": 13.815417,
+      "requestMilliseconds": 3.040958,
+      "firstThreeRenderCallbacksMilliseconds": [
+        6.604458,
+        14.940125,
+        18.005333
+      ],
+      "firstThreePresentBracketsMilliseconds": [
+        0.038542,
+        0.016667,
+        0.014125
+      ],
+      "firstThreePublicationTimesMilliseconds": [
+        8.1615,
+        15.215792,
+        23.348542
+      ],
+      "firstThreeAfterCommitTimesMilliseconds": [
+        9.239042,
+        16.963583,
+        25.384208
+      ],
+      "firstThreePublishedBeforeFirstOS": true,
+      "changingOSGaps": {
+        "count": 24,
+        "medianMS": 16.673333,
+        "maxMS": 25.010167,
+        "multiplesOf120HzVsync": {
+          "3": 1,
+          "1": 11,
+          "2": 12
+        }
+      }
+    },
+    {
+      "turn": 1,
+      "firstOSMilliseconds": 37.503583,
+      "landingMilliseconds": 330.193083,
+      "submissions": 36,
+      "droppedSubmissions": 2,
+      "firstSubmissionDropped": true,
+      "firstPresentedRelativeSequence": 2,
+      "firstPresentedGPUEndMilliseconds": 20.402208,
+      "firstPresentedGPUToOSMilliseconds": 17.101375,
+      "requestMilliseconds": 0.325458,
+      "firstThreeRenderCallbacksMilliseconds": [
+        3.2725,
+        11.526625,
+        19.9485
+      ],
+      "firstThreePresentBracketsMilliseconds": [
+        0.013625,
+        0.011375,
+        0.006625
+      ],
+      "firstThreePublicationTimesMilliseconds": [
+        3.492375,
+        11.622792,
+        20.03875
+      ],
+      "firstThreeAfterCommitTimesMilliseconds": [
+        5.264625,
+        13.646167,
+        null
+      ],
+      "firstThreePublishedBeforeFirstOS": true,
+      "changingOSGaps": {
+        "count": 33,
+        "medianMS": 8.33675,
+        "maxMS": 25.010083,
+        "multiplesOf120HzVsync": {
+          "1": 32,
+          "3": 1
+        }
+      }
+    },
+    {
+      "turn": 2,
+      "firstOSMilliseconds": 32.109292,
+      "landingMilliseconds": 324.829667,
+      "submissions": 37,
+      "droppedSubmissions": 1,
+      "firstSubmissionDropped": true,
+      "firstPresentedRelativeSequence": 1,
+      "firstPresentedGPUEndMilliseconds": 11.411958,
+      "firstPresentedGPUToOSMilliseconds": 20.697333,
+      "requestMilliseconds": 0.661583,
+      "firstThreeRenderCallbacksMilliseconds": [
+        0.765083,
+        9.3205,
+        17.602292
+      ],
+      "firstThreePresentBracketsMilliseconds": [
+        0.03875,
+        0.046708,
+        0.041917
+      ],
+      "firstThreePublicationTimesMilliseconds": [
+        1.205083,
+        14.493042,
+        22.821792
+      ],
+      "firstThreeAfterCommitTimesMilliseconds": [
+        6.204708,
+        16.67075,
+        null
+      ],
+      "firstThreePublishedBeforeFirstOS": true,
+      "changingOSGaps": {
+        "count": 35,
+        "medianMS": 8.336708,
+        "maxMS": 8.336833,
+        "multiplesOf120HzVsync": {
+          "1": 35
+        }
+      }
+    },
+    {
+      "turn": 3,
+      "firstOSMilliseconds": 48.647083,
+      "landingMilliseconds": 333.162,
+      "submissions": 36,
+      "droppedSubmissions": 2,
+      "firstSubmissionDropped": true,
+      "firstPresentedRelativeSequence": 2,
+      "firstPresentedGPUEndMilliseconds": 18.358375,
+      "firstPresentedGPUToOSMilliseconds": 30.288708,
+      "requestMilliseconds": 0.748208,
+      "firstThreeRenderCallbacksMilliseconds": [
+        0.873667,
+        14.359208,
+        17.447208
+      ],
+      "firstThreePresentBracketsMilliseconds": [
+        0.056792,
+        0.046542,
+        0.046125
+      ],
+      "firstThreePublicationTimesMilliseconds": [
+        6.218583,
+        14.902833,
+        22.706208
+      ],
+      "firstThreeAfterCommitTimesMilliseconds": [
+        8.123625,
+        16.435708,
+        null
+      ],
+      "firstThreePublishedBeforeFirstOS": true,
+      "changingOSGaps": {
+        "count": 33,
+        "medianMS": 8.336708,
+        "maxMS": 16.673333,
+        "multiplesOf120HzVsync": {
+          "2": 1,
+          "1": 32
+        }
+      }
+    },
+    {
+      "turn": 4,
+      "firstOSMilliseconds": 29.541667,
+      "landingMilliseconds": 322.348792,
+      "submissions": 37,
+      "droppedSubmissions": 1,
+      "firstSubmissionDropped": true,
+      "firstPresentedRelativeSequence": 1,
+      "firstPresentedGPUEndMilliseconds": 8.195667,
+      "firstPresentedGPUToOSMilliseconds": 21.346,
+      "requestMilliseconds": 0.776167,
+      "firstThreeRenderCallbacksMilliseconds": [
+        0.865125,
+        6.748583,
+        14.998667
+      ],
+      "firstThreePresentBracketsMilliseconds": [
+        0.03775,
+        0.042042,
+        0.020167
+      ],
+      "firstThreePublicationTimesMilliseconds": [
+        1.192375,
+        11.923208,
+        20.249542
+      ],
+      "firstThreeAfterCommitTimesMilliseconds": [
+        3.763042,
+        14.0655,
+        null
+      ],
+      "firstThreePublishedBeforeFirstOS": true,
+      "changingOSGaps": {
+        "count": 35,
+        "medianMS": 8.336708,
+        "maxMS": 8.336833,
+        "multiplesOf120HzVsync": {
+          "1": 35
+        }
+      }
+    },
+    {
+      "turn": 5,
+      "firstOSMilliseconds": 48.005417,
+      "landingMilliseconds": 332.404875,
+      "submissions": 36,
+      "droppedSubmissions": 2,
+      "firstSubmissionDropped": true,
+      "firstPresentedRelativeSequence": 2,
+      "firstPresentedGPUEndMilliseconds": 17.83575,
+      "firstPresentedGPUToOSMilliseconds": 30.169667,
+      "requestMilliseconds": 0.716583,
+      "firstThreeRenderCallbacksMilliseconds": [
+        5.507917,
+        13.715042,
+        16.811
+      ],
+      "firstThreePresentBracketsMilliseconds": [
+        0.045792,
+        0.046208,
+        0.032708
+      ],
+      "firstThreePublicationTimesMilliseconds": [
+        6.064375,
+        14.196208,
+        22.074208
+      ],
+      "firstThreeAfterCommitTimesMilliseconds": [
+        7.453958,
+        15.802917,
+        null
+      ],
+      "firstThreePublishedBeforeFirstOS": true,
+      "changingOSGaps": {
+        "count": 33,
+        "medianMS": 8.336708,
+        "maxMS": 16.669208,
+        "multiplesOf120HzVsync": {
+          "2": 1,
+          "1": 32
+        }
+      }
+    },
+    {
+      "turn": 6,
+      "firstOSMilliseconds": 48.743875,
+      "landingMilliseconds": 333.17525,
+      "submissions": 36,
+      "droppedSubmissions": 2,
+      "firstSubmissionDropped": true,
+      "firstPresentedRelativeSequence": 2,
+      "firstPresentedGPUEndMilliseconds": 18.527792,
+      "firstPresentedGPUToOSMilliseconds": 30.216083,
+      "requestMilliseconds": 0.677583,
+      "firstThreeRenderCallbacksMilliseconds": [
+        0.884125,
+        14.471375,
+        17.555417
+      ],
+      "firstThreePresentBracketsMilliseconds": [
+        0.056125,
+        0.049833,
+        0.037125
+      ],
+      "firstThreePublicationTimesMilliseconds": [
+        6.309542,
+        14.937,
+        22.873708
+      ],
+      "firstThreeAfterCommitTimesMilliseconds": [
+        8.259333,
+        16.610125,
+        null
+      ],
+      "firstThreePublishedBeforeFirstOS": true,
+      "changingOSGaps": {
+        "count": 33,
+        "medianMS": 8.336708,
+        "maxMS": 16.673458,
+        "multiplesOf120HzVsync": {
+          "2": 1,
+          "1": 32
+        }
+      }
+    },
+    {
+      "turn": 7,
+      "firstOSMilliseconds": 31.824792,
+      "landingMilliseconds": 324.361792,
+      "submissions": 37,
+      "droppedSubmissions": 1,
+      "firstSubmissionDropped": true,
+      "firstPresentedRelativeSequence": 1,
+      "firstPresentedGPUEndMilliseconds": 10.014125,
+      "firstPresentedGPUToOSMilliseconds": 21.810667,
+      "requestMilliseconds": 0.638958,
+      "firstThreeRenderCallbacksMilliseconds": [
+        0.749625,
+        8.97825,
+        17.281708
+      ],
+      "firstThreePresentBracketsMilliseconds": [
+        0.058208,
+        0.040667,
+        0.032625
+      ],
+      "firstThreePublicationTimesMilliseconds": [
+        1.302583,
+        14.245292,
+        22.620417
+      ],
+      "firstThreeAfterCommitTimesMilliseconds": [
+        5.942583,
+        16.301542,
+        null
+      ],
+      "firstThreePublishedBeforeFirstOS": true,
+      "changingOSGaps": {
+        "count": 35,
+        "medianMS": 8.336708,
+        "maxMS": 8.336833,
+        "multiplesOf120HzVsync": {
+          "1": 35
+        }
+      }
+    },
+    {
+      "turn": 8,
+      "firstOSMilliseconds": 42.932667,
+      "landingMilliseconds": 335.585625,
+      "submissions": 37,
+      "droppedSubmissions": 2,
+      "firstSubmissionDropped": true,
+      "firstPresentedRelativeSequence": 2,
+      "firstPresentedGPUEndMilliseconds": 26.440875,
+      "firstPresentedGPUToOSMilliseconds": 16.491792,
+      "requestMilliseconds": 0.706417,
+      "firstThreeRenderCallbacksMilliseconds": [
+        3.408375,
+        11.7565,
+        25.32725
+      ],
+      "firstThreePresentBracketsMilliseconds": [
+        0.029,
+        0.067333,
+        0.037042
+      ],
+      "firstThreePublicationTimesMilliseconds": [
+        8.853667,
+        16.975333,
+        25.834208
+      ],
+      "firstThreeAfterCommitTimesMilliseconds": [
+        10.817125,
+        19.614417,
+        null
+      ],
+      "firstThreePublishedBeforeFirstOS": true,
+      "changingOSGaps": {
+        "count": 34,
+        "medianMS": 8.336708,
+        "maxMS": 16.673375,
+        "multiplesOf120HzVsync": {
+          "2": 1,
+          "1": 33
+        }
+      }
+    },
+    {
+      "turn": 9,
+      "firstOSMilliseconds": 48.917083,
+      "landingMilliseconds": 333.177083,
+      "submissions": 36,
+      "droppedSubmissions": 2,
+      "firstSubmissionDropped": true,
+      "firstPresentedRelativeSequence": 2,
+      "firstPresentedGPUEndMilliseconds": 23.811292,
+      "firstPresentedGPUToOSMilliseconds": 25.105792,
+      "requestMilliseconds": 0.69575,
+      "firstThreeRenderCallbacksMilliseconds": [
+        1.029958,
+        14.691708,
+        22.962917
+      ],
+      "firstThreePresentBracketsMilliseconds": [
+        0.044625,
+        0.047708,
+        0.032667
+      ],
+      "firstThreePublicationTimesMilliseconds": [
+        6.435583,
+        15.176458,
+        23.372833
+      ],
+      "firstThreeAfterCommitTimesMilliseconds": [
+        8.400792,
+        16.692458,
+        null
+      ],
+      "firstThreePublishedBeforeFirstOS": true,
+      "changingOSGaps": {
+        "count": 33,
+        "medianMS": 8.336708,
+        "maxMS": 16.673417,
+        "multiplesOf120HzVsync": {
+          "2": 1,
+          "1": 32
+        }
+      }
+    }
+  ]
+}

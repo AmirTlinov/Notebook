@@ -124,6 +124,28 @@ struct PageWindowFixture {
 
 @Suite("Notebook read windows follow one immutable page order")
 struct NotebookPageWindowTests {
+  @Test func reusablePageBodyRequiresItsStoredDigestBeyondAggregateStamps() throws {
+    let fixture = try PageWindowFixture(count: 1); defer { fixture.clean() }
+    let store = fixture.store, id = fixture.pages[0]
+    let original = try #require(try store.readNotebookPageWindow(itemID: fixture.itemID, pages: [.page(id)]).pages[0].source)
+    _ = original.document.graphicGraph()
+    let retained = try #require(try store.readNotebookPageWindow(itemID: fixture.itemID,
+      pages: [.page(id)], reusing: [id: original]).pages[0].source)
+    #expect(retained.document.elementSourceIdentity == original.document.elementSourceIdentity)
+    let changed = PageDocument(id: id, size: fixture.size, actor: fixture.actor,
+      elements: [.init(id: "changed", kind: .nativeText,
+        frame: .init(x: 20, y: 20, width: 200, height: 80), source: "Changed", html: "")])
+    #expect(changed.agentStamp == original.document.agentStamp)
+    // An atomic source fixture bypasses author merge; savePage must reject two
+    // values at one authored dot. The read capability still has to attest bytes.
+    try store.publishRecords(writes: [pageFile(id): .encode(changed)])
+    let successor = try #require(try store.readNotebookPageWindow(itemID: fixture.itemID,
+      pages: [.page(id)], reusing: [id: original]).pages[0].source)
+    #expect(successor.revision != original.revision)
+    #expect(successor.document.elements == changed.elements)
+    #expect(successor.document.elementSourceIdentity != original.document.elementSourceIdentity)
+  }
+
   @Test func pageSourceRevisionIncludesCausalOnlyABAAndIgnoresOtherPages() throws {
     let fixture = try PageWindowFixture(count: 2); defer { fixture.clean() }
     let store = fixture.store, pageID = fixture.pages[0], otherID = fixture.pages[1]

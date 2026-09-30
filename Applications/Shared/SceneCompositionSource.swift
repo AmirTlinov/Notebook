@@ -187,7 +187,7 @@ actor SceneCompositionSource {
   private var paintIdentities: [SceneCompositionPlane: String] = [:]
   private var posePaint: [SceneCompositionPlane:(identity:String,damage:[WorkspaceSpatialBounds])] = [:]
   private var nestedPoseIdentity: String?
-  private var erasureProjection: [SurfaceID: [String: [InkElementErasure]]] = [:]
+  private var erasureProjection: [SurfaceID: InkElementErasureMap] = [:]
   private var folderContents: [UUID: Bool] = [:]
   // Geometry belongs to this immutable, validated source cut. Planning, source
   // admission and drawing reuse the same bounded projection, not one SQL read

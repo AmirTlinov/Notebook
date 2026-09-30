@@ -1,0 +1,96 @@
+{
+  "run": "notebook-225-final-gate-0228",
+  "source_sha256": "e1a49f5dd7fc35ddc3e02648c0eabe35c78a8b389204e24dbb4c6eb3adc79eb2",
+  "test": "NotebookNavigationLoadUITests/testTwentyFourPageProgramsAcceptFirstTapAfterZoomAndKeepStateAcrossTurns",
+  "test_source_sha256": "8bdab9bde72879e0a2fda8191147722050c0ca8d1ef312dab91c437e78219464",
+  "result": "FAIL: 23 blue controls after app.pinch, before any explicit control tap",
+  "window_frame": [
+    0,
+    0,
+    834,
+    1194
+  ],
+  "checked_paper_centre": [
+    417,
+    597
+  ],
+  "xctest_pinch_rect": [
+    50,
+    50,
+    784,
+    734
+  ],
+  "actual_contacts": [
+    {
+      "eventType": 1,
+      "offset": 0.0,
+      "coordinate.x": 444.07756039469365,
+      "coordinate.y": 419.2688195311666
+    },
+    {
+      "eventType": 2,
+      "offset": 0.1,
+      "coordinate.x": 447.0,
+      "coordinate.y": 422.0
+    },
+    {
+      "eventType": 2,
+      "offset": 1.5,
+      "coordinate.x": 449.06647686252023,
+      "coordinate.y": 423.93123623015634
+    },
+    {
+      "eventType": 3,
+      "offset": 1.5,
+      "coordinate.x": 449.06647686252023,
+      "coordinate.y": 423.93123623015634
+    },
+    {
+      "eventType": 1,
+      "offset": 0.0,
+      "coordinate.x": 439.92243960530635,
+      "coordinate.y": 414.7311804688334
+    },
+    {
+      "eventType": 2,
+      "offset": 0.1,
+      "coordinate.x": 437.0,
+      "coordinate.y": 412.0
+    },
+    {
+      "eventType": 2,
+      "offset": 1.5,
+      "coordinate.x": 434.93352313747977,
+      "coordinate.y": 410.06876376984366
+    },
+    {
+      "eventType": 3,
+      "offset": 1.5,
+      "coordinate.x": 434.93352313747977,
+      "coordinate.y": 410.06876376984366
+    }
+  ],
+  "control_6_frame": [
+    425,
+    320,
+    170,
+    110
+  ],
+  "observed_video": "Control6 becomes red/count1; other23 stay blue/count0; page pose unchanged",
+  "cause": "Both complete contact paths lie inside control6. NotebookInputGate leaves a same-runtime pair with WebKit; the test checked a different centre than app.pinch used.",
+  "artifacts": {
+    "ui-event-00": {
+      "path": "/private/tmp/notebook-225-final-gate-0228/ui-event-00",
+      "sha256": "564ef79c0dce89300e5c5b5b103ff3d2286b879d3e1772a094a24ed9a61b6f17"
+    },
+    "ui-event-06": {
+      "path": "/private/tmp/notebook-225-final-gate-0228/ui-event-06",
+      "sha256": "34e487359b3a4e0f65896a0f28a63041ef96392d0e789e4594cf787dd76fb232"
+    },
+    "postpinch.png": {
+      "path": "/private/tmp/notebook-225-final-gate-0228/postpinch.png",
+      "sha256": "be241ab16687e35bef3588fc48c89911b488242e8db3c9351c828c23e1d04ad5"
+    }
+  },
+  "change": "Only this UI scenario targets app.windows.firstMatch and logs its exact AX frame. All 24-control assertions unchanged. Window target still requires physical verification; no claimed gesture-centre guarantee."
+}

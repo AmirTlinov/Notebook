@@ -18,6 +18,7 @@ final class DocumentProgramOwner {
     let input: DocumentPagePresentation
     let layout: DocumentLayoutRecord
     let programs: [DocumentProgramSource]
+    let unresolvedProgramIDs: Set<String>
     let pages: Set<Int>
     let currentPage: Int?
     let visibleIDs: Set<String>
@@ -62,7 +63,7 @@ final class DocumentProgramOwner {
   var visibleIDs: Set<String> { context?.visibleIDs ?? [] }
   var retainedIDs: Set<String> {
     guard let context else { return [] }
-    let ids = Set(context.programs.map(\.id))
+    let ids = Set(context.programs.map(\.id)).union(context.unresolvedProgramIDs)
     return context.layout.blockIDs(on: context.pages, kind: .program).intersection(ids)
   }
 
@@ -110,9 +111,9 @@ final class DocumentProgramOwner {
   }
 
   func update(input: DocumentPagePresentation, layout: DocumentLayoutRecord, programs: [DocumentProgramSource], pages: Set<Int>,
-    currentPage: Int?, visibleIDs: Set<String>, preparationPage: Int?, blocked: Bool, contacts: Set<String>, densities: [String: Double]) {
+    currentPage: Int?, visibleIDs: Set<String>, preparationPage: Int?, blocked: Bool, contacts: Set<String>, densities: [String: Double], unresolvedProgramIDs: Set<String> = []) {
     guard !stopped else { return }
-    context = .init(input: input, layout: layout, programs: programs, pages: pages, currentPage: currentPage,
+    context = .init(input: input, layout: layout, programs: programs, unresolvedProgramIDs: unresolvedProgramIDs, pages: pages, currentPage: currentPage,
       visibleIDs: visibleIDs, preparationPage: preparationPage, blocked: blocked, contacts: contacts, densities: densities)
     reconcile()
   }
@@ -160,7 +161,7 @@ final class DocumentProgramOwner {
   private func reconcile() {
     guard !stopped, !parkedForReturn, !boundarySuspendsPrograms, let context else { return }
     let input = context.input, retained = retainedIDs
-    pausedPrograms = pausedPrograms.filter { retained.contains($0.key) && paused($0.key) != nil }
+    pausedPrograms = pausedPrograms.filter { retained.contains($0.key) && (context.unresolvedProgramIDs.contains($0.key) || paused($0.key) != nil) }
     pauseFailures = pauseFailures.filter { retained.contains($0.key) }
     let currentIDs = context.layout.blockIDs(on: [context.currentPage ?? input.pageIndex], kind: .program)
     let blocks = context.programs.filter { retained.contains($0.id) }
@@ -225,6 +226,9 @@ final class DocumentProgramOwner {
       }
     }
     for (id, runtime) in runtimes {
+      // An unresolved successor descriptor cannot revoke or reconfigure an
+      // accepted runtime. Other resolved slots can progress independently.
+      if context.unresolvedProgramIDs.contains(id) { continue }
       let outside = !retained.contains(id)
       // A queued acquisition has no author yet. A created WebKit may already
       // have accepted state before ready, so it leaves through the same drain.

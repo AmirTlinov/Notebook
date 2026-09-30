@@ -8,7 +8,7 @@ public struct DocumentProgramSource: Equatable, Sendable {
   public let programPackage: String
   public let initialState: JSONValue
   public let sourceBasis: String
-  let package: NotebookProgramPackage
+  public let package: NotebookProgramPackage
   fileprivate var stagedText: [String: Data]
 
   public static func == (lhs: Self, rhs: Self) -> Bool {
@@ -65,6 +65,21 @@ public struct DocumentProgramSource: Equatable, Sendable {
     let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
     sourceBasis = NotebookProgramPackage.hash(try encoder.encode(JSONValue.object([
       "path": .string(path), "package": .string(programPackage), "files": .array(versions)])))
+  }
+
+  /// Instances share the immutable accepted package and file basis; their
+  /// state/runtime identity remains the authored instance ID.
+  public func forInstance(_ instanceID: String) throws -> Self {
+    guard !instanceID.isEmpty, instanceID.utf16.count <= 120 else {
+      throw CollaborationError("invalid_program", "Программа требует ID экземпляра.")
+    }
+    return .init(id: instanceID, path: path, programPackage: programPackage,
+      initialState: initialState, sourceBasis: sourceBasis, package: package, stagedText: stagedText)
+  }
+  private init(id: String, path: String, programPackage: String, initialState: JSONValue,
+    sourceBasis: String, package: NotebookProgramPackage, stagedText: [String: Data]) {
+    self.id = id; self.path = path; self.programPackage = programPackage; self.initialState = initialState
+    self.sourceBasis = sourceBasis; self.package = package; self.stagedText = stagedText
   }
 
   static func configuration(_ file: DocumentFile?) throws -> (JSONValue, [String]) {

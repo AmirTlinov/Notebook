@@ -886,7 +886,7 @@ import XCTest
       curl.onPageFrameReady = forwardReadiness
       curl.onFrameMeasured = nil
       curl.onPageUpdateMeasured = nil
-      let encoding = XCTAttachment(string: "Command execution=\((commandReturned-start)*1000) ms\n" + submission.map {
+      let encoding = XCTAttachment(string: "processID=\(ProcessInfo.processInfo.processIdentifier); epochUptime=\(start)\nCommand execution=\((commandReturned-start)*1000) ms\n" + submission.map {
         "operation=\($0.operationID?.uuidString ?? "cover"); sequence=\($0.sequence); clockRequestMS=\($0.clockRequested.map { ($0-start)*1000 } ?? .nan); callbackMS=\($0.displayUpdateReceived.map { ($0-start)*1000 } ?? .nan); start=\(($0.encodingBegan-start)*1000)ms; CPU=\(($0.submitted-$0.encodingBegan)*1000)ms; GPU queue=\(($0.gpuBegan-$0.submitted)*1000)ms; GPU=\(($0.gpuEnded-$0.gpuBegan)*1000)ms; scheduledMS=\($0.scheduled.map { ($0-start)*1000 } ?? .nan); renderDeadlineMS=\($0.renderingDeadline > 0 ? ($0.renderingDeadline-start)*1000 : .nan); targetMS=\($0.targetPresentation > 0 ? ($0.targetPresentation-start)*1000 : .nan)"
       }.joined(separator: "\n"))
       encoding.name = "Curl submission timing \(turn)"; encoding.lifetime = .keepAlways; add(encoding)
@@ -908,6 +908,20 @@ import XCTest
         .sorted { $0.presented < $1.presented }
       let first = try XCTUnwrap(ordered.first { $0.progress > 0 && $0.progress < 1 },
         "An unchanged initial image or a source→target jump is not visible animation feedback")
+      // A scheduled successor has everything needed for this CA publication.
+      // The first drawable's delayed OS callback must not park that successor.
+      // Use only phases already recorded by this scenario; this adds no wait.
+      for frame in submission {
+        guard let scheduled = frame.scheduled,
+          let eligible = pageUpdates.first(where: {
+            $0.phase == .beforeCommit && $0.nextSequence == frame.sequence + 1
+              && $0.recorded >= scheduled && $0.recorded < first.presented
+          }) else { continue }
+        XCTAssertTrue(pageUpdates.contains {
+          $0.phase == .beforePresent && $0.nextSequence == frame.sequence + 1
+            && $0.recorded <= eligible.recorded
+        }, "An encoded successor must publish in its eligible update before the preceding OS receipt")
+      }
       XCTAssertLessThanOrEqual(Duration.seconds(first.presented - start), NotebookUXObservation.pageFirstResponse)
       let landed = try XCTUnwrap(committedAt, "The requested target never completed presentation")
       XCTAssertLessThanOrEqual(Duration.seconds(landed - start), NotebookUXObservation.pageLanding)

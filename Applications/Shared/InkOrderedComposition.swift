@@ -135,7 +135,8 @@ extension InkRasterRenderer {
   /// pixels. The caller has already selected visible geometry and admitted all
   /// buffers. No await, source query, allocation or presentation occurs here.
   func encodeOrdered(_ events:[OrderedEvent],baseline:(any MTLTexture)?,textureRect:SIMD4<Float>,
-    accepted:(any MTLTexture)? = nil,damage:MTLScissorRect? = nil,encoder:any MTLRenderCommandEncoder) throws {
+    accepted:(any MTLTexture)? = nil,damage:MTLScissorRect? = nil,
+    acceptedViewport:MTLViewport? = nil,geometryViewport:MTLViewport? = nil,encoder:any MTLRenderCommandEncoder) throws {
     guard let p=ordered else { throw SceneRenderError.resourceLimit }
     func quad(_ pipeline:any MTLRenderPipelineState) {
       var rect=textureRect
@@ -144,13 +145,18 @@ extension InkRasterRenderer {
       encoder.drawPrimitives(type:.triangle,vertexStart:0,vertexCount:6)
     }
     if let accepted {
+      if let acceptedViewport {encoder.setViewport(acceptedViewport)}
       var full=SIMD4<Float>(0,0,1,1)
       encoder.setDepthStencilState(nil);encoder.setRenderPipelineState(p.accepted)
       encoder.setVertexBytes(&full,length:MemoryLayout<SIMD4<Float>>.stride,index:0)
       encoder.setFragmentTexture(accepted,index:0)
       encoder.drawPrimitives(type:.triangle,vertexStart:0,vertexCount:6)
     }
-    if let damage {encoder.setScissorRect(damage)}
+    if let geometryViewport {encoder.setViewport(geometryViewport)}
+    if let damage {
+      guard damage.width>0,damage.height>0 else {return}
+      encoder.setScissorRect(damage)
+    }
     for event in events.reversed() {
       switch event {
       case .raw(let draw):

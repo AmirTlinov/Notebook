@@ -1057,8 +1057,8 @@ final class SceneRenderResources {
   }
 
   func acquireDocumentProgramSurface(priority: WebPriority, documentID: UUID, blockID: String,
-    deadline: ContinuousClock.Instant? = nil) async throws -> WebSurfaceLease {
-    try await acquireWebSurface(priority: priority, executionSource: .document(documentID, blockID), constructsRuntime: false, deadline: deadline, requestID: UUID())
+    deadline: ContinuousClock.Instant? = nil, requestID: UUID = UUID()) async throws -> WebSurfaceLease {
+    try await acquireWebSurface(priority: priority, executionSource: .document(documentID, blockID), constructsRuntime: true, deadline: deadline, requestID: requestID)
   }
 
   private func acquireWebSurface(priority: WebPriority, executionSource source: WebExecutionSource?,

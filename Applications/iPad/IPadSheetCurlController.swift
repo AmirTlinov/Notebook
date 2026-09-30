@@ -21,6 +21,9 @@ final class IPadSheetCurlController: UIViewController, UIGestureRecognizerDelega
   var isSheetReadyForCapture: (UIViewController) -> Bool = { _ in true }
   var isSheetPresented: (UIViewController) -> Bool = { _ in true }
   var onStageLiveSheet: (UIViewController) -> Void = { _ in }
+  #if DEBUG
+  var diagnosticStagedSheet: String? { motion?.stagedLanding?.view.accessibilityIdentifier }
+  #endif
   struct FrameAcquisitionTiming {
     let operationID: UUID
     let began, ended: TimeInterval

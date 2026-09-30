@@ -23,7 +23,7 @@ final class DocumentPagePreparationTrace {
   enum Stage: String, CaseIterable, Hashable {
     case payloadConfiguredAt, mountAt, admissionRequestedAt, admittedAt, admissionReusedAt
     case shellNavigationFinishedAt, shellReadyMessageAt, shellReusedAt, frameTaskAt
-    case preparedPageStartAt, preparedPageReadyAt, pageSourceEncodedAt, stateEncodedAt
+    case preparedPageStartAt, preparedPageReadyAt, paperInstalledAt, pageSourceEncodedAt, stateEncodedAt
     case frameEncodedAt, frameEvaluationStartAt, frameEvaluationReturnedAt
     case renderStartedAt, renderedAt, pageReceiptRequestedAt, pageReceiptReturnedAt, layoutReceiptAcceptedAt
     case canonicalReadyAt, canonicalReusedAt

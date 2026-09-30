@@ -135,17 +135,39 @@ struct PreparedAgentElementView: View {
 
   var body: some View {
     let owner = owner, configuration = configuration
+    #if os(iOS)
+    let status = owner.statusPresentation
+    #endif
     ZStack {
-      if let raster = owner.raster, !owner.showsLiveProgram || owner.bridgesFirstLivePaint {
-        AgentElementSnapshotView(raster: raster, onSourceInstalled: { [weak owner] installation, installed in
-          owner?.rasterInstalled(installation, raster: installed)
-        })
-      }
       if let web = owner.web, let session = owner.session, session.lease === web {
         owner.runtimeView(web, session: session, basis: configuration.demand.basis)
           .id(web.id)
           .allowsHitTesting(isActive && inputEnabled && owner.liveProgram == AgentProgramSource(element))
       }
+      // Keep the accepted pixels above the new native surface until its
+      // exact first paint. WebKit stays visible underneath, so installation
+      // and its real snapshot can finish without a visibility dependency.
+      if let raster = owner.raster, !owner.showsLiveProgram || owner.bridgesFirstLivePaint {
+        #if os(iOS)
+        if status == nil {
+          AgentElementSnapshotView(raster: raster, onSourceInstalled: { [weak owner] installation, installed in
+            owner?.rasterInstalled(installation, raster: installed)
+          })
+        }
+        #else
+        AgentElementSnapshotView(raster: raster, onSourceInstalled: { [weak owner] installation, installed in
+          owner?.rasterInstalled(installation, raster: installed)
+        })
+        #endif
+      }
+      #if os(iOS)
+      if case .page = focus {
+        if let presentation = owner.statusPresentation {
+          PageElementStatusView(presentation: presentation,
+            onInstallation: { [weak owner] value, installation in owner?.statusInstalled(value, installation: installation) },
+            retry: { [weak owner] in owner?.retryPreparation() })
+        }
+      } else {
       if let failure = owner.runtimeFailure.map({ owner.failureMessage($0.diagnostic) }) ?? owner.failure, !owner.showsLiveProgram {
         VStack(spacing: 4) {
           Text(failure).font(.caption)
@@ -157,7 +179,24 @@ struct PreparedAgentElementView: View {
           .padding(6).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 6))
           .allowsHitTesting(false)
       }
+      }
+      #else
+      if let failure = owner.runtimeFailure.map({ owner.failureMessage($0.diagnostic) }) ?? owner.failure, !owner.showsLiveProgram {
+        VStack(spacing: 4) {
+          Text(failure).font(.caption)
+          Button("Повторить") { owner.retryPreparation() }.frame(minWidth: 44, minHeight: 44)
+        }.padding(8).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
+      } else if (owner.awaitsRasterSource || isActive) && !owner.showsLiveProgram {
+        Text(isActive ? (owner.web == nil ? "Ожидаем свободные ресурсы…" : "Запуск программы…") : (owner.raster == nil ? "Подготовка…" : "Обновление…"))
+          .font(.caption).foregroundStyle(.secondary)
+          .padding(6).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 6))
+          .allowsHitTesting(false)
+      }
+      #endif
     }
+    #if os(iOS)
+    .onChange(of: owner.requestedStatus, initial: true) { _, key in owner.prepareStatus(key) }
+    #endif
     .onAppear {
       NotebookNavigationObservation.webPreparation("prepared_appeared", ownerID: owner.pageFrameOwner, sourceID: element.id)
       consumer.onRenderReady = onRenderReady; consumer.onFailure = onFailure

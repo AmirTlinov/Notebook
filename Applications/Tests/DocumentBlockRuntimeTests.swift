@@ -321,12 +321,34 @@ final class DocumentBlockRuntimeTests: XCTestCase {
     defer { fixture.close() }
     try await wait { resources.pendingWebRequestCount == 1 }
     XCTAssertNil(fixture.runtime.webView)
+    let request = try XCTUnwrap(fixture.runtime.pendingAdmissionID)
     fixture.runtime.start(priority: .input)
+    XCTAssertEqual(fixture.runtime.pendingAdmissionID, request, "Priority preserves the admitted demand and queue arrival")
     try await fixture.waitUntilReady()
     XCTAssertNotNil(fixture.runtime.webView)
     XCTAssertEqual(resources.activeWebSurfaceCount, 2)
     XCTAssertEqual(resources.pendingWebRequestCount, 0)
     XCTAssertFalse(background.isReleased, "Foreground navigation uses its reserved slot instead of waiting for an unrelated neighbor")
+  }
+
+  func testDocumentConstructionSharesTheShortAllowanceWithNotebookPrograms() async throws {
+    let resources = SceneRenderResources(maximumWebSurfaces: 4)
+    let first = try await resources.acquireWebSurface(priority: .input, constructsRuntime: true)
+    let second = try await resources.acquireWebSurface(priority: .input, constructsRuntime: true)
+    defer { first.release(); second.release() }
+    let fixture = try RuntimeFixture(program: .program(id: "construction", html: "<button>Ready</button>", height: 100),
+      resources: resources, priority: .liveProgram)
+    defer { fixture.close() }
+    try await wait { resources.pendingWebRequestCount == 1 }
+    XCTAssertNil(fixture.runtime.webView)
+    let request = try XCTUnwrap(fixture.runtime.pendingAdmissionID)
+    fixture.runtime.start(priority: .input)
+    XCTAssertEqual(fixture.runtime.pendingAdmissionID, request)
+    XCTAssertEqual(resources.activeWebConstructionCount, 2)
+    first.finishConstruction()
+    try await fixture.waitUntilReady()
+    XCTAssertEqual(resources.activeWebConstructionCount, 1,
+      "Only the unrelated second constructor remains; JS readiness does not retain the runtime's constructor allowance")
   }
 
   func testAFullAdmissionQueueResumesTheVisibleRuntimeOnActualCapacityRelease() async throws {

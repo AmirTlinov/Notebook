@@ -118,20 +118,12 @@ public struct InkElementErasure: Codable, Equatable, Sendable {
 }
 
 extension PageInkDrawing {
-  public var elementErasures: [String: [InkElementErasure]] {
-    var result: [String: [InkElementErasure]] = [:]
-    for action in actions where action.isActive && action.tool == .eraser {
-      for target in action.elementTargets ?? [] {
-        result[target.elementID, default: []].append(.init(target: target, measurements: action.samples))
-      }
-    }
-    return result
-  }
+  public var elementErasures:InkElementErasureMap {PageInkErasureDirectory(self).values}
 }
 
 extension SpatialInkJournal {
-  public func elementErasures(on surface: SurfaceID) -> [String: [InkElementErasure]] {
-    var result: [String: [InkElementErasure]] = [:]
+  public func elementErasures(on surface: SurfaceID) -> InkElementErasureMap {
+    var result:[String:[InkElementErasure]]=[:]
     for action in orderedActions where action.isActive && action.tool == .eraser {
       for span in action.spans where span.surface == surface {
         for target in span.elementTargets ?? [] {
@@ -139,6 +131,6 @@ extension SpatialInkJournal {
         }
       }
     }
-    return result
+    return .init(dictionary:result)
   }
 }

@@ -44,6 +44,9 @@ FIFO перед lookup ancestry сохранён: уже принятый пер
 при принятии загруженного исходника, до создания программ. Однократный borrow
 во внешней factory удалён: существующая loading-оболочка получает того же
 исполнителя после адресного read и не конкурирует с ранней подготовкой.
+`Entry` публикует документ и версию точных runtime roots вместе. Равенство
+сохранённого содержимого не скрывает замену источника от установленного reader;
+неизменные roots не инвалидируют его. Старый callback удерживает свой snapshot.
 Native controller публикует конечное окно до первой factory. Receipt проверяет
 controller/host, порядок и UUID; shell ждёт событие admission, не создаёт запасной
 executor. Pending opening допускает адрес до разрешения UUID и отзывает его
@@ -81,11 +84,24 @@ admission и native installation; coordinator завершает приняты�
 Соседняя пустая бумага готова логически без drawable. Перелистывание требует
 полного материала; открытие бумаги не ждёт соседнюю программу.
 
-`PageTurnActivity` хранит адресные native providers по source/owner. Runtime и
-временный растр сосуществуют при передаче; установленный runtime приоритетен.
-Его уход выбирает установленный растр. Поздний loss прежнего token не отзывает
+`PageTurnActivity` хранит адресные native providers по source/owner. Notebook
+pending/error — один учтённый `PageElementStatusPresentation`: native view и curl
+заимствуют одинаковый crop. Установленный status приоритетен, пока он виден;
+его уход выбирает установленный runtime, затем растр. Это готовность показанного
+содержимого, а не интерактивность программы. Поздний loss прежнего token не отзывает
 новый. Неизменный layout не инвалидирует страницу; получение материала повторно
 проверяет фактическую установку. Состояние curl исключено из `ItemPlaneRevision`.
+
+`PageAgentPreparationOwner` публикует viewport demand по UUID и точному source;
+нативная проекция обновляет его во время камеры. Очередь выбирает visible current,
+принятый полный target, затем остальное. Уже отправленный capture сохраняет fence.
+`PageTurnMaterialOwner` хранит адресные локальные слои: source/геометрия/маска/scale
+и provider определяют замену элемента, порядок и перенос сохраняют его пиксели.
+
+Принятый документный turn удерживает source/layout и render closure до исхода.
+Последний successor сопоставляет фактическую landing через reading anchor; его
+ошибка имеет Retry, отмена/смена владельца отзывает ожидание. Новый input разрешён
+после установки successor, а общий contentStamp не отменяет поднятый лист.
 
 `PageTurnMaterialOwner.FramePreparation` — один производитель пассивного соседнего
 кадра с ключом page/material/source/provider/ink. Письмо на текущей странице его

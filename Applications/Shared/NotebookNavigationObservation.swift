@@ -5,6 +5,9 @@ import Darwin
 /// Private acceptance observation only. No contact, navigation, persistence,
 /// camera, source content or completion is created or changed by this recorder.
 @MainActor enum NotebookNavigationObservation {
+  #if DEBUG
+  static let pageTurnDiagnosticsEnabled = ProcessInfo.processInfo.arguments.contains("--notebook-page-turn-diagnostic")
+  #endif
   /// Optional native acceptance witnesses. Normal rendering keeps these nil;
   /// the observing test owns any retained samples. Canvas/draw completion is
   /// an exact paint-installation boundary, not an OS presentation timestamp.

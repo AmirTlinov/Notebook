@@ -43,6 +43,9 @@ final class NotebookCodeInkPresenter {
     overlay.paper.touchView.canBeginAction = { [weak self] in self?.canBegin == true }
     overlay.paper.touchView.onActionWillBegin = { [weak self] in self?.begin() == true }
     overlay.paper.touchView.onActionCancelled = { [weak self] in self?.end() }
+    overlay.paper.touchView.onActionContactReleased = { [weak self] in
+      guard let self else { return }; gate.releasePencilContact(source: source)
+    }
     overlay.paper.touchView.onDrawingMutation = { [weak self] action in self?.accept(action) }
     gate.registerPageFinisher(source: source) { [weak self] waits, completion in
       guard let self else { completion(); return }
@@ -126,7 +129,7 @@ final class NotebookCodeInkPresenter {
     overlay.paper.retireInput()
     overlay.paper.touchView.canBeginAction = { false }
     overlay.paper.touchView.onActionWillBegin = nil; overlay.paper.touchView.onDrawingMutation = nil
-    overlay.paper.touchView.onActionCancelled = nil
+    overlay.paper.touchView.onActionCancelled = nil; overlay.paper.touchView.onActionContactReleased = nil
     gate.unregisterPageFinisher(source: source); gate.unregisterFingerCancellation(source: source)
     let canvas = overlay.paper.inkView
     overlay.removeFromSuperview(); markers.values.forEach { $0.removeFromSuperview() }; markers = [:]

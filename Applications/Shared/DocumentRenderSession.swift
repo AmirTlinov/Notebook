@@ -117,6 +117,7 @@ final class DocumentSourceSnapshot {
   private var reuse: DocumentPrintReuse?
   var printReuse: DocumentPrintReuse? { preparation?.printReuse }
   private var layoutObservers: [UUID: (DocumentLayoutRecord) -> Void] = [:]
+  var onProgramsChanged: () -> Void = {}
   private(set) var preparationCount = 0
   private var receiptLayoutMismatch: String?
 
@@ -159,6 +160,7 @@ final class DocumentSourceSnapshot {
       preparationCount += 1
       preparation = DocumentPagePreparation(document: document, sourceKey: key, store: store, resources: resources, reuse: reuse)
       reuse = nil
+      preparation?.onProgramsChanged = { [weak self] in self?.onProgramsChanged() }
       preparation?.onLayoutAccepted = { [weak self] record in
         guard let self else { return }
         if let layout, layout !== record { guard layout.matches(record) else { throw DocumentSessionError.inconsistentLayout } }
@@ -309,6 +311,7 @@ final class DocumentLayoutRecord {
   // A raster or an address reader can outlive the source preparation. The
   // shared layout, not a temporary task or registry cache, owns this allocation.
   private var reservation: RasterReservation?
+  private var printAllocation: DocumentPrintedAllocation?
   private var releaseObservers: [ObjectIdentifier: @MainActor () -> Void] = [:]
 
   init(receipt: NSDictionary, sourceKey: String, blockIDs: Set<String>, geometry: WorkspaceItemGeometry,
@@ -394,11 +397,18 @@ final class DocumentLayoutRecord {
     self.reservation = reservation
   }
 
+  init(prepared: DocumentPreparedLayout, buildID: String, source: DocumentPrintedSource) {
+    pageCount = prepared.pages.count; isComplete = true; regions = prepared.regions
+    self.buildID = buildID; pages = prepared.pages; readingFileOrder = prepared.readingFileOrder
+    anchorPages = prepared.anchors; reading = prepared.reading; pageRanges = prepared.pageRanges
+    printAllocation = source.allocation
+  }
+
   init(rebinding original: DocumentLayoutRecord, buildID: String) {
     pageCount = original.pageCount; isComplete = original.isComplete; regions = original.regions
     self.buildID = buildID; pages = original.pages; readingFileOrder = original.readingFileOrder
     anchorPages = original.anchorPages; reading = original.reading; pageRanges = original.pageRanges
-    reservation = original.reservation
+    reservation = original.reservation; printAllocation = original.printAllocation
   }
 
   func matches(_ other: DocumentLayoutRecord, pageIndex: Int? = nil) -> Bool {
@@ -417,6 +427,8 @@ final class DocumentLayoutRecord {
         && abs(left.sourceOffset - right.sourceOffset) <= tolerance
     }
   }
+
+  func range(on page: Int) -> Range<Int> { pageRanges[page] ?? 0..<0 }
 
   func regions(on page: Int) -> ArraySlice<DocumentBlockRegion> {
     regions[pageRanges[page] ?? 0..<0]

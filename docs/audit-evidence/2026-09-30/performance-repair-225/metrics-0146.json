@@ -1,0 +1,369 @@
+{
+  "receipt": "metrics-0146",
+  "build": 225,
+  "source_manifest_sha256": "4343b4fea2e5473458e2691af4ac61106889d06d861be9ac666ad10684c34b9b",
+  "scope": "Physical iPad targeted negative timing/correctness receipt; not final-source or full acceptance. Subsequent document changes are outside this receipt.",
+  "run": {
+    "started_utc": "2026-09-30T01:46:14.568000+00:00",
+    "finished_utc": "2026-09-30T01:47:18.301000+00:00",
+    "xcresult": "/private/tmp/notebook-225-metrics-0146/ipad.xcresult",
+    "text_attachments_directory": "/private/tmp/notebook-225-metrics-0146",
+    "device": "iPad Pro (11-inch) (3rd generation)",
+    "os": "27.0",
+    "process_id": 3403,
+    "profiler_attached": false,
+    "result": "FAIL",
+    "tests": 5,
+    "passed": 0,
+    "failed": 5
+  },
+  "measurement_contract": {
+    "budgets_unchanged": true,
+    "observer_cost_deducted": false,
+    "readback_and_dom_checks_after_timing": true,
+    "cold_metric": "Exact native installation; first OS pixels are unmeasured.",
+    "warm_metric": "OS presentation timestamps and owner landing; callback delivery is separate.",
+    "independent_intervals_are_not_summed": true,
+    "dropped_frame_cause": "unknown"
+  },
+  "budgets_ms": {
+    "first_contact_os": 20,
+    "cold_first_native": 150,
+    "cold_all_native": 1000,
+    "warm_first_os": 16.666667,
+    "owner_landing": 450,
+    "changing_os_frame_gap_120hz_with_0_5ms_tolerance": 8.833333
+  },
+  "failed_tests": [
+    "NotebookColdInputUXTests/testBlankPageReportsItsFirstContactFrameWithoutSnapshotPolling()",
+    "NotebookNavigationLoadUXTests/testColdNotebookWithThirteenDenseSVGsShowsEveryElementWithinBudget()",
+    "NotebookNavigationLoadUXTests/testColdNotebookWithTwentyFourProgramsShowsEveryControlWithinBudget()",
+    "NotebookPageMotionUXTests/testTenForwardReverseTurnsMeetFirstPresentationAndLandingDeadlines()",
+    "NotebookNavigationLoadUXTests/testTwentyFourProgramsCommitThroughTheirRuntimesBeforeTheNextPageCapture()"
+  ],
+  "first_contact": {
+    "first_os_ms": 24.323917,
+    "handler_ms": 1.307625,
+    "gpu_start_ms": 8.201167,
+    "gpu_end_ms": 8.526083,
+    "dropped_submissions": 0,
+    "first_displayed_frame_is_first_submission": false
+  },
+  "cold": {
+    "svg13": {
+      "result": "FAIL_first_native_budget",
+      "first_native_ms": 314.917917,
+      "all_native_ms": 504.116208,
+      "exact_sources": 13,
+      "late_independent_pixels_correct": true,
+      "first_owner": "44E54CED-61FD-4B96-B879-6BC1D28BB8A0",
+      "first_owner_stages_ms": {
+        "native_init_started": 93.93275,
+        "native_init_finished": 120.351833,
+        "source_accepted": 139.912708,
+        "navigation_requested": 139.964625,
+        "navigation_returned": 140.117,
+        "navigation_policy": 252.1535,
+        "navigation_started": 259.559625,
+        "navigation_committed": 260.053708,
+        "runtime_ready": 290.583042
+      },
+      "return_to_policy_ms": 112.0365,
+      "policy_to_navigation_start_ms": 7.406125,
+      "constructors_before_first_policy": 2,
+      "constructors_before_first_native": 2,
+      "board_stages_ms": {
+        "plan": 89.0585,
+        "source_requests": 157.564708,
+        "live_source": 164.849792,
+        "discover_sources": 178.296583,
+        "native_ink": 183.817917,
+        "tiles": 185.641208,
+        "published": 187.532417
+      }
+    },
+    "program24": {
+      "result": "FAIL_first_native_budget",
+      "first_native_ms": 396.155958,
+      "all_native_ms": 688.353125,
+      "exact_sources": 24,
+      "late_independent_pixels_correct": true,
+      "first_owner": "47C637F2-433F-4282-A581-1583B38F9E6A",
+      "first_owner_stages_ms": {
+        "native_init_started": 81.458333,
+        "native_init_finished": 86.050708,
+        "source_accepted": 86.183083,
+        "navigation_requested": 86.556625,
+        "navigation_returned": 86.680417,
+        "navigation_policy": 290.697458,
+        "navigation_started": 381.454958,
+        "navigation_committed": 381.751833,
+        "runtime_ready": 392.65175
+      },
+      "return_to_policy_ms": 204.017041,
+      "policy_to_navigation_start_ms": 90.7575,
+      "constructors_before_first_policy": 14,
+      "constructors_before_first_native": 18,
+      "board_stages_ms": {
+        "plan": 91.434542,
+        "source_requests": 125.857083,
+        "live_source": 138.271917,
+        "discover_sources": 170.1695,
+        "native_ink": 207.059,
+        "tiles": 235.934917,
+        "published": 263.473417
+      }
+    }
+  },
+  "constructor_interpretation": {
+    "current_programs_are_independent_visible_sources": true,
+    "program24_before_policy_source_indices": [
+      0,
+      13
+    ],
+    "program24_before_native_source_indices": [
+      0,
+      17
+    ],
+    "program24_total_requests_and_grants": [
+      24,
+      24
+    ],
+    "program24_first_neighbor_constructor_ms": 567.493917,
+    "proven": "The short allowance bounds two unfinished constructors, not constructor count per run-loop opportunity; first installation does not wait for all 24.",
+    "not_proven": "Main-run-loop starvation by constructor batches. SVG retains 112.036ms return-to-policy with only two executors.",
+    "missing_check": "Join constructor batches to run-loop source-service/wait boundaries; do not hold construction allowance until author JS readiness."
+  },
+  "warm_turns": {
+    "count": 10,
+    "columns": [
+      "turn",
+      "first_os_ms",
+      "owner_landing_ms",
+      "maximum_changing_os_gap_ms",
+      "unpresented_receipts",
+      "first_beforePresent_to_afterPresent_ms"
+    ],
+    "rows": [
+      [
+        0,
+        25.7345,
+        335.141958,
+        16.673333,
+        1,
+        4.953042
+      ],
+      [
+        1,
+        34.937667,
+        327.615375,
+        16.673333,
+        2,
+        9.193292
+      ],
+      [
+        2,
+        39.448917,
+        332.311542,
+        16.67325,
+        1,
+        4.379208
+      ],
+      [
+        3,
+        37.496542,
+        330.218625,
+        16.673333,
+        1,
+        6.002958
+      ],
+      [
+        4,
+        29.046417,
+        321.753292,
+        16.673292,
+        1,
+        9.156708
+      ],
+      [
+        5,
+        30.189875,
+        322.938042,
+        16.673375,
+        2,
+        9.123833
+      ],
+      [
+        6,
+        33.63075,
+        322.183417,
+        16.673292,
+        2,
+        9.030125
+      ],
+      [
+        7,
+        34.088292,
+        322.659333,
+        20.841667,
+        2,
+        9.138875
+      ],
+      [
+        8,
+        33.621542,
+        322.161417,
+        16.67325,
+        2,
+        8.918167
+      ],
+      [
+        9,
+        38.124667,
+        330.886708,
+        16.673292,
+        1,
+        5.445083
+      ]
+    ],
+    "first_os_range_ms": [
+      25.7345,
+      39.448917
+    ],
+    "owner_landing_range_ms": [
+      321.753292,
+      335.141958
+    ],
+    "all_changing_os_gap_range_ms": [
+      8.33175,
+      20.841667
+    ],
+    "per_turn_maximum_gap_range_ms": [
+      16.67325,
+      20.841667
+    ],
+    "unpresented_receipts_total": 15,
+    "first_present_call_bracket_range_ms": [
+      4.379208,
+      9.193292
+    ],
+    "interpretation": "All ten first-response and cadence checks fail; all ten owner landings stay below 450ms. The measured roughly 4–9ms present-call brackets are not a proven cause of dropped frames."
+  },
+  "native24": {
+    "accepted_states_count": 24,
+    "accepted_state_count_value": 1,
+    "target_forward_pixels_correct": true,
+    "reverse_restored24_pixels_correct": false,
+    "additional_correctness_failure": "XCTAssertTrue failed - The return must show all 24 accepted states",
+    "source_of_additional_failure": "testTwentyFourProgramsCommitThroughTheirRuntimesBeforeTheNextPageCapture-activities.json (the summary records only the first failure of this test)",
+    "late_source_correctness_is_not_implied_by_landing": true,
+    "turns": {
+      "forward": {
+        "owner_landing_ms": 497.909875,
+        "pair_acquisition_begin_ms": 24.091833,
+        "pair_acquisition_end_ms": 144.350833,
+        "first_reported_intermediate_os_ms": 177.644875,
+        "endpoint_os_ms": 494.439083,
+        "capture": {
+          "accepted_capture_submitted": {
+            "count": 24,
+            "range_from_capture_anchor_ms": [
+              25.272417,
+              27.606542
+            ]
+          },
+          "accepted_capture_callback": {
+            "count": 24,
+            "range_from_capture_anchor_ms": [
+              53.100833,
+              69.168833
+            ]
+          }
+        },
+        "rejection_events": 0,
+        "material_resume_intervals": [
+          {
+            "composition": "A3708E22-C1D8-4E75-B3C9-6D37DEEE4D44",
+            "page": "5F7CEBE9-94BB-4BCD-BF18-8FC07AF6534B",
+            "gpu_callback_to_owner_resume_ms": 27.2855,
+            "gpu_execution_ms": 9.721875
+          },
+          {
+            "composition": "8A0B09CD-2422-41D3-84A6-15B339BCABD5",
+            "page": "1595C805-ED7B-4282-A7BA-A7CFD5FD8E87",
+            "gpu_callback_to_owner_resume_ms": 0.017708,
+            "gpu_execution_ms": 12.833
+          }
+        ]
+      },
+      "reverse": {
+        "owner_landing_ms": 484.675375,
+        "pair_acquisition_begin_ms": 14.75025,
+        "pair_acquisition_end_ms": 133.042292,
+        "first_reported_intermediate_os_ms": 203.698042,
+        "endpoint_os_ms": 482.976958,
+        "capture": {
+          "accepted_capture_submitted": {
+            "count": 24,
+            "range_from_capture_anchor_ms": [
+              15.690416,
+              17.456625
+            ]
+          },
+          "accepted_capture_callback": {
+            "count": 24,
+            "range_from_capture_anchor_ms": [
+              71.376375,
+              89.054791
+            ]
+          }
+        },
+        "rejection_events": 0,
+        "material_resume_intervals": [
+          {
+            "composition": "48557E21-D051-4AB9-8BA9-4574CF758C21",
+            "page": "E1AC8ED7-689A-426C-ACBA-877A43C50C28",
+            "gpu_callback_to_owner_resume_ms": 4.55875,
+            "gpu_execution_ms": 13.21675
+          },
+          {
+            "composition": "C354FF02-D638-4D57-B713-919D633F6818",
+            "page": "5F7CEBE9-94BB-4BCD-BF18-8FC07AF6534B",
+            "gpu_callback_to_owner_resume_ms": 8.866542,
+            "gpu_execution_ms": 8.966375
+          }
+        ]
+      }
+    },
+    "interpretation": "Both owner landing budgets fail. Exact capture rejection events are absent; GPU completion to owner resumption is separately visible (forward source 27.2855ms). These observations do not establish the cause of reverse pixel mismatch.",
+    "reverse_failure_observation": {
+      "predicate": "NotebookNavigationLoadUXTests.swift:669: 24 probes at (frame.x+155, frame.y+20) must be red (r>180,g<110,b<110).",
+      "fixture_state_color": "count=1 -> #ef2218; count=0 -> #086fff",
+      "capture": "drawHierarchy(afterScreenUpdates:false), once after owner landing; no per-probe RGBA or failure image attached by this predicate.",
+      "returned_page0": {
+        "stamp_counter": 25,
+        "presented": true,
+        "capturable": true,
+        "count1_sources": 24,
+        "provider_true": 24,
+        "live_runtime_count": 0,
+        "runtime_installations": 0,
+        "diagnostics": []
+      },
+      "outgoing_page1": {
+        "count0_sources": 24,
+        "provider_true": 24,
+        "live_runtime_count": 24,
+        "installed_runtimes": 24
+      },
+      "owner": {
+        "shown": 0,
+        "selected": 0,
+        "pending": null,
+        "turning": false
+      },
+      "leaf0_marker_and_cleared_leaf1_marker_predicate_passed": true,
+      "unknown": "Which probes failed and their actual color. Neither stale OS pixels nor blue controls are established by this attachment."
+    }
+  }
+}

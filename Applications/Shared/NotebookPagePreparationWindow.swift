@@ -33,16 +33,39 @@ final class NotebookPagePreparationWindow {
   }
   private struct Preparation { let operationID: UUID; let reader: Reader? }
 
-  @MainActor final class Entry {
+  /// Durable value equality deliberately ignores these in-process roots. A
+  /// mounted paper must observe their replacement even when its bytes agree.
+  struct SourceVersion: Equatable {
+    let ink: ObjectIdentifier
+    let elements: ObjectIdentifier
+    let size: PageSize
+    let drawing: VersionStamp
+    let graphics: VersionStamp
+    init(_ page: PageDocument) {
+      ink = page.inkSource.identity; elements = page.elementSourceIdentity
+      size = page.size; drawing = page.drawingStamp; graphics = page.agentStamp
+    }
+  }
+
+  @MainActor @Observable final class Entry {
     let pageID: UUID
     let preparations: PageAgentPreparationOwner
     let rasters: PageRasterPreparation
-    fileprivate var address: Address
-    fileprivate var mounts: Set<UUID> = []
-    fileprivate var onLastMountReleased: ((Entry) -> Void)?
-    fileprivate init(address: Address, pageID: UUID, resources: SceneRenderResources, rasters: PageRasterPreparation) {
-      self.address = address; self.pageID = pageID; self.rasters = rasters
+    private(set) var sourceVersion: SourceVersion
+    @ObservationIgnored private var acceptedDocument: PageDocument
+    var document: PageDocument { _ = sourceVersion; return acceptedDocument }
+    @ObservationIgnored fileprivate var address: Address
+    @ObservationIgnored fileprivate var mounts: Set<UUID> = []
+    @ObservationIgnored fileprivate var onLastMountReleased: ((Entry) -> Void)?
+    fileprivate init(address: Address, page: PageDocument, resources: SceneRenderResources, rasters: PageRasterPreparation) {
+      self.address = address; pageID = page.id; self.rasters = rasters
+      acceptedDocument = page; sourceVersion = .init(page)
       preparations = .init(resources: resources)
+    }
+    fileprivate func accept(_ page: PageDocument, model: NotebookAppModel) {
+      acceptedDocument = page
+      sourceVersion = .init(page)
+      preparations.reconcile(page: page, model: model)
     }
     func borrow() -> Mount {
       let id = UUID(); mounts.insert(id)
@@ -155,7 +178,7 @@ final class NotebookPagePreparationWindow {
     let previous = readers, previousItems = admittedItems
     self.model = model; self.pages = pages
     for (identity, entry) in entries {
-      if let page = pages[identity.pageID] { entry.preparations.reconcile(page: page, model: model) }
+      if let page = pages[identity.pageID] { entry.accept(page, model: model) }
       else {
         entries.removeValue(forKey: identity); entry.retire()
         if current?.identity == identity { current = nil }
@@ -239,19 +262,19 @@ final class NotebookPagePreparationWindow {
   }
 
   private func entry(at address: Address, pageID: UUID) -> Entry? {
-    guard permits(address), addresses[address] == pageID else { return nil }
+    guard permits(address), addresses[address] == pageID, let page = pages[pageID] else { return nil }
     let key = Identity(itemID: address.itemID, pageID: pageID)
     if let existing = entries[key] { return existing }
     let rasters: PageRasterPreparation
     if let existing = rasterOwners[address.itemID] { rasters = existing }
     else { rasters = .init(resources: resources); rasterOwners[address.itemID] = rasters }
-    let entry = Entry(address: address, pageID: pageID, resources: resources, rasters: rasters)
+    let entry = Entry(address: address, page: page, resources: resources, rasters: rasters)
     entry.onLastMountReleased = { [weak self] released in
       guard let self, self.entries[key] === released, !self.readers.contains(key) else { return }
       self.entries.removeValue(forKey: key)?.retire()
     }
     entries[key] = entry
-    if let page = pages[pageID], let model { entry.preparations.reconcile(page: page, model: model) }
+    if let model { entry.preparations.reconcile(page: page, model: model) }
     return entry
   }
 

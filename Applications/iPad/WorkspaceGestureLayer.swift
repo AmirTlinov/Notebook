@@ -319,7 +319,7 @@ struct WorkspaceGestureLayer: UIViewRepresentable {
       guard sceneReceives(touch, inside: sceneView) else { return false }
       let history = NotebookSceneFingerRouting.historyTarget(of: touch.view) != nil
       guard history
-        ? inputGate.permitsNewContact && !inputGate.hasActivePencil
+        ? inputGate.permitsNewContact && !inputGate.hasPencilContact
         : inputGate.permitsSceneContact(at: touch.location(in: sceneView.window), kind: .finger) else { return false }
       let owner = NotebookSceneFingerRouting.owner(of: touch, gate: inputGate)
       // Observe a program contact without taking its tap. Only the gate can
@@ -409,7 +409,7 @@ final class NotebookContactObserver: UIGestureRecognizer {
     gate.endContact(source: source)
     gate = next
     observePencil()
-    if gate.hasActivePencil { restSceneContacts() }
+    if gate.hasPencilContact { restSceneContacts() }
     else { updateActivity() }
   }
 
@@ -442,7 +442,7 @@ final class NotebookContactObserver: UIGestureRecognizer {
       NotebookInteractionDiagnostics.contact(touch, phase: "began")
     }
     gate.notifyAcceptedContact()
-    if gate.hasActivePencil { restSceneContacts() }
+    if gate.hasPencilContact { restSceneContacts() }
     else { updateActivity() }
   }
   override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent) {

@@ -3,7 +3,50 @@
 Срез: **30 сентября 2026**. Функциональная проверка, доставка и полная приёмка
 учитываются отдельно; результат относится к исходникам своего receipt.
 
-## Причинное ревью — 30 сентября
+## Ремонт D01–D16 — 225
+
+[Изменения и удалённые пути](performance-repair-2026-09-30.md) реализованы от
+`c140b804`; **0.3.155 (225)** установлена поверх224 на Mac и физическом iPad
+30сентября03:11UTC (06:11МСК). Source
+`1df1f16cc235857fee8a06b63dad3d4257a36a36e24d42964ff9ddeb279998a6`.
+Одна Notebook Lab, QA/test apps отсутствуют. Helper ready, прежний доверенный
+iPad подключён к тому же workspace с новой сессией; страница/камера восстановлены.
+iOS изменил путь data container при обновлении: буквальная проверка пути остановила
+installer после успешной установки. Завершение Mac выполнено отдельно без повторной
+установки iPad, удаления данных или восстановления архива. Идентичность и доверенная
+связь проверены после запуска. Повторный визуальный просмотр окна Mac после
+установки не выполнен: захват возвращает ScreenCaptureKit−3811.
+[Доставка](audit-evidence/2026-09-30/performance-repair-225/delivery.json),
+[точные области проверки](audit-evidence/2026-09-30/performance-repair-225/results.json).
+Core100k/sparse/UTF-16/source digest PASS:1 XCTest и3 Swift Testing метода
+(4cases) в2258, digest отдельно в2333.
+Physical0035:16native+UI mixed PASS,
+UI24 FAIL;0142:10iPad+3Mac PASS;0159:6iPad+4Mac PASS (native PDF до held DOM,
+new source при старом held sender, cancellation/local program cut).
+Точный scope и source каждого результата сохраняются в receipts.
+0240:5iPad+1Mac PASS — held first-paint bridge, never-ready статус, mixed cut,
+held DOM и UI24. Эксперимент curl этого прогона затем удалён.
+Финальный0251:3iPad+1Mac PASS, source
+`1df1f16cc235857fee8a06b63dad3d4257a36a36e24d42964ff9ddeb279998a6`;
+первый изгиб, отмена capture, UI24 с сохранением состояний и Mac repeated zoom.
+
+[0146](audit-evidence/2026-09-30/performance-repair-225/metrics-0146.json): строгие
+5 сценариев FAIL. Dot24,324мс при цели20; SVGfirst314,918/programsfirst396,156мс
+при цели150; Native24 landing497,910/484,675мс при цели450; Warm firstOS25,735–39,449мс
+при цели16,667. Reverse24 authored pixels тоже FAIL.
+[0213](audit-evidence/2026-09-30/performance-repair-225/native24-0213.json):
+24states/pixels PASS, landing452,745/515,296мс FAIL. Это невоспроизведение прежнего
+pixel failure, а не снятие его свидетельства.
+
+Удалены установленные CPU-причины CIContext/grid raster MainActor, повторная
+plain-paper подготовка и successor OS barrier. Первый transactional present/drop
+и часть WebKit launch/IPC задержки остаются открытыми. CPU0220 установил перекрытие
+present и worker nextDrawable/IOSurface; lock waiter ещё не установлен. Эксперимент
+0243 сократил present, но ухудшил firstOS и gaps; полностью удалён из выпуска.
+Финальная граница slot bridge
+удерживает сохранённые pixels над новым WebKit до exact first-paint receipt.
+
+## Исходное причинное ревью — 30 сентября
 
 [Глубокое ревью](performance-review-2026-09-30.md) выполнено на чистом
 `e4948f8e`; source inventory совпадает с224. Подтверждены оставшиеся полные
@@ -11,7 +54,7 @@
 Продукт не изменялся, новых прогонов/измерений нет; результаты ниже сохраняют
 свой scope. План продолжен в существующей GUI-306 и профильных задачах.
 
-## Установленная пара — 224
+## Предыдущая установленная пара — 224
 
 **0.3.154 (224)** установлена поверх223 на Mac и физическом iPad
 29 сентября в19:28UTC (22:28МСК). Код `28f11aee`, source

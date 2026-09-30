@@ -1,0 +1,141 @@
+{
+  "format": 1,
+  "version": "0.3.155",
+  "build": "225",
+  "sourceSHA256": "1df1f16cc235857fee8a06b63dad3d4257a36a36e24d42964ff9ddeb279998a6",
+  "fullAcceptance": false,
+  "checks": [
+    {
+      "path": "/private/tmp/notebook-225-functional-0035",
+      "sourceSHA256": "4c335458e70d1c512fd186f2275c18c901387db27048c13fa25f8806c32c0a8c",
+      "status": "failed",
+      "scope": "Ink/history/selection owner and scenario sources unchanged; this whole route failed UI24.",
+      "ipad": {
+        "passedTests": 17,
+        "failedTests": 1,
+        "scope": "16 native plus mixed-selection UI pass; UI24 fail. Activity export, no whole-route verification.json."
+      }
+    },
+    {
+      "path": "/private/tmp/notebook-225-functional-0142",
+      "sourceSHA256": "4343b4fea2e5473458e2691af4ac61106889d06d861be9ac666ad10684c34b9b",
+      "status": "passed",
+      "scope": "Resources/paper/provider/cover/capture/UI24; later document and bridge changes checked separately.",
+      "receiptSHA256": "ca2ad0162387c8a7cec751c351f7caaa0bebd9ccf2e8ddeb6d9513a1d2bc67fd",
+      "ipad": {
+        "passedTests": 10,
+        "failedTests": 0,
+        "skippedTests": 0,
+        "result": "Passed"
+      },
+      "mac": {
+        "passedTests": 3,
+        "failedTests": 0,
+        "skippedTests": 0,
+        "result": "Passed"
+      }
+    },
+    {
+      "path": "/private/tmp/notebook-225-document-0159",
+      "sourceSHA256": "958ad168ce30893b7b55c9a550ec97ed88926b602f4f31ee6ada2156f702c195",
+      "status": "passed",
+      "scope": "Native PDF before held shell/new source/retirement/local live cut; document production owners unchanged.",
+      "receiptSHA256": "33ec7c03d07818453cb84c9be8228f3a6b1f833c98c5e25bdc99a865dfc5f89c",
+      "ipad": {
+        "passedTests": 6,
+        "failedTests": 0,
+        "skippedTests": 0,
+        "result": "Passed"
+      },
+      "mac": {
+        "passedTests": 4,
+        "failedTests": 0,
+        "skippedTests": 0,
+        "result": "Passed"
+      }
+    },
+    {
+      "path": "/private/tmp/notebook-225-gate-0240",
+      "sourceSHA256": "242c6b59b9d54d7e36741d34124fd2b723b05186959e54127dbfcc446f4ee210",
+      "status": "passed",
+      "scope": "Held real WK paint, never-ready status, mixed cut, held DOM, UI24, Mac zoom; only curl differs: experiment reverted.",
+      "receiptSHA256": "c710634690ad685e11edcd9bc8ee119ad9e7e7bc741f2b42d2388aae799ebd68",
+      "ipad": {
+        "passedTests": 5,
+        "failedTests": 0,
+        "skippedTests": 0,
+        "result": "Passed"
+      },
+      "mac": {
+        "passedTests": 1,
+        "failedTests": 0,
+        "skippedTests": 0,
+        "result": "Passed"
+      }
+    },
+    {
+      "path": "/private/tmp/notebook-225-final-0251",
+      "sourceSHA256": "1df1f16cc235857fee8a06b63dad3d4257a36a36e24d42964ff9ddeb279998a6",
+      "status": "passed",
+      "scope": "Exact release input: first bend, cancelled capture, system UI24 first taps/pinch/forward/reverse/state, Mac repeated zoom.",
+      "receiptSHA256": "ee84a0081b5ee187369bc0c6f84b30f6cc5e64232f0fb50a944bee65ee9adfab",
+      "ipad": {
+        "passedTests": 3,
+        "failedTests": 0,
+        "skippedTests": 0,
+        "result": "Passed"
+      },
+      "mac": {
+        "passedTests": 1,
+        "failedTests": 0,
+        "skippedTests": 0,
+        "result": "Passed"
+      }
+    }
+  ],
+  "core": {
+    "path": "/private/tmp/notebook-225-core-20260929T2258Z",
+    "sourceSHA256": "d17772374a7bd297756300e3d4dfa4be4f669325a158668d85bf4ef670f31155",
+    "status": "passed",
+    "xctest": {
+      "authoredUTF16OffsetsSeconds": 0.001
+    },
+    "swiftTesting": {
+      "methods": 3,
+      "cases": 4,
+      "persistent100kMasksSeconds": 0.558,
+      "sparsePaintSupportSeconds": 0.088,
+      "writer100kCutsSeconds": 85.856
+    },
+    "scope": "NotebookCore production inputs and these tests unchanged at delivery."
+  },
+  "additionalCore": {
+    "path": "/private/tmp/notebook-225-digest-core-2333.log",
+    "test": "reusablePageBodyRequiresItsStoredDigestBeyondAggregateStamps",
+    "status": "passed",
+    "seconds": 0.048,
+    "scope": "Separate log; no before/after source manifest."
+  },
+  "negativeMeasurements": [
+    "metrics-0146.json",
+    "native24-0213.json",
+    "warm-owner-phase-0243.json"
+  ],
+  "diagnostics": [
+    "cold-cpu-diagnosis.json",
+    "warm-present-cpu-0220.json",
+    "ui24-0228-pinch-target.json"
+  ],
+  "decisions": {
+    "retainedProgramBridge": "Same preparation owner retains native cut/status above WebKit until exact first-paint receipt.",
+    "pinchTest": "Recorded Application.pinch hit program6; Window.pinch uses the frame checked by the paper-centre guard. All24 assertions retained.",
+    "curlExperiment": "After-CA serialization reduced present cost but worsened first OS/gaps; all experimental hunks removed before0251 and release."
+  },
+  "open": [
+    "Strict dot/cold SVG/cold24/Native24/first OS curl deadlines failed on measured revisions.",
+    "CPU establishes nextDrawable/present overlap, not the precise lock waiter.",
+    "Reverse24 pixel failure0146 retained;0213 did not reproduce it; held-paint and systemUI now exercise the retained-WK handoff.",
+    "Hardware Pencil delivery, independent intermediate mixed displayed frames and full system CPU/GPU/memory acceptance not established.",
+    "Remaining first-presentation causes31–33 continue in a separate coordinated checkout."
+  ]
+}

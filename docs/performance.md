@@ -128,14 +128,16 @@ waits for accepted-action delivery before admitting the next contact; the model'
 existing ordered write queue owns persistence. Native text extents are bounded
 and cached by content, formatting and line width, never by camera/position.
 
-The page canvas retains its ordered raw/authored composite for the accepted root,
-crop, pixel density and prepared paint plan. Pen frames draw the current contact
+The page canvas retains its ordered raw/authored composite for accepted paint,
+crop and pixel density. A derived mesh replacement preserves that paint identity. Pen frames draw the current contact
 over that backing. Erasing recomposes only contact damage with the same ordered
 algebra, including addressed body cuts; it never destination-erases all authored
-bodies from a flattened image. A source, pose or crop change rebuilds the backing.
+bodies from a flattened image. Accepted edits and pose changes query a resident
+paint directory, redraw their old/new damage in the provided drawable, then copy
+that region into the backing. Crop or full source replacement rebuilds it.
 Ordered scratch attachments belong to bounded frame slots, not individual bodies.
-A page-turn lease borrows a completed, presented canonical cut; while leased, the
-next write obtains a separately charged texture. An empty accepted cut needs no
+A page-turn lease borrows a completed canonical GPU cut; while leased, the next
+write obtains a separately charged texture and copies the unchanged backing. An empty accepted cut needs no
 retained-content texture; current visible paper warms its admitted drawable pool
 as described under the current-page lifecycle below.
 Unmount/reclamation releases canvas backing; submitted work and external leases
@@ -214,13 +216,13 @@ triangles are not simplified. Visibility queries precede GPU uploads; only the
 selected level is uploaded. The existing pool may retain its last nonempty
 view during a sample-free overview, without allocating hidden source geometry.
 
-The retained spatial canvas compares ordered tile contributors, selected levels,
-source revisions and projections. A changed whole invalidates both its former
-and current coverage, including a tile whose last contributor disappeared. Only
-changed 512-pixel tiles obtain drawables; unchanged tiles retain their presented
-layers. There is no second complete retained bitmap. Imported baselines, painter
-order, in-flight allocation lifetimes and first-visible-frame readiness remain
-part of the same owner. Page MTKView drawing and disposable export raster jobs
+The retained spatial canvas indexes resident paint once per camera cut and updates
+addressed contributors on acceptance. Each admitted 512-pixel tile owns a charged
+accepted RGBA backing. Pen frames composite it with the active tail; erasers
+recompose their damage in painter order. Accepted edits refresh affected tiles,
+including former coverage whose last contributor disappeared. Frame signatures
+inspect only active chunks and accepted tile revisions. Imported baselines,
+painter order, GPU lifetimes and first-visible readiness retain the same owner. Page MTKView drawing and disposable export raster jobs
 are not the spatial retained-tile cache.
 
 An isolated state-update ratio is not a frame-rate claim. Benchmarks must report

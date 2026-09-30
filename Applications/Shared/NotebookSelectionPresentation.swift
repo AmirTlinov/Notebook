@@ -31,8 +31,6 @@ import QuartzCore
   @ObservationIgnored private var canonicalCommitScheduled=false
   @ObservationIgnored private var preparationFailed=false
   @ObservationIgnored private var deleting=false
-  @ObservationIgnored private var installWaiter:CheckedContinuation<Void,Error>?
-  @ObservationIgnored private var installTimeout:Task<Void,Never>?
   #if os(iOS)
   @ObservationIgnored private var installedHostGenerations:[String:UUID]=[:]
   @ObservationIgnored private var installedDisplayGenerations:[String:UUID]=[:]
@@ -68,7 +66,8 @@ import QuartzCore
   }
   /// A failed private stage may yield source preparation to the accepted
   /// canonical owner, but controls still describe the last installed picture.
-  var needsCanonicalSource:Bool {!disposed && preparationFailed && accepted}
+  var acceptedAwaitingPresentation:Bool {!disposed && accepted && !installed}
+  var needsCanonicalSource:Bool {!disposed && accepted && (preparationFailed || !installed)}
   var awaitsAcceptedDeleteCut:Bool {!disposed && accepted && deleting && canvas != nil}
   func acceptsCanonicalCut(_ cursor:UInt64)->Bool {
     awaitsAcceptedDeleteCut && acceptedCursor.map({cursor >= $0}) == true
@@ -86,32 +85,6 @@ import QuartzCore
   }
 
   func stageDeletion() { deleting=true }
-  func awaitFirstInstallation() async throws {
-    if installed { return }
-    guard !disposed,!preparationFailed else {throw CancellationError()}
-    try await withTaskCancellationHandler {
-      try await withCheckedThrowingContinuation { continuation in
-        guard !installed,!disposed,!preparationFailed else {
-          if installed {continuation.resume(returning:())} else {continuation.resume(throwing:CancellationError())}
-          return
-        }
-        precondition(installWaiter == nil)
-        installWaiter=continuation
-        installTimeout=Task { [weak self] in
-          do {try await Task.sleep(for:.seconds(2))} catch {return}
-          // A required host may never mount (for example after admission
-          // failure), so no unregister event can terminate this wait. Expiry
-          // rejects the whole preparation, not only its writer continuation.
-          self?.fail(CollaborationError("material_unavailable","Не удалось показать всё выделение."))
-        }
-      }
-    } onCancel: {Task { @MainActor [weak self] in self?.fail(CancellationError()) }}
-  }
-  private func completeInstallWaiter(_ failure:Error? = nil) {
-    installTimeout?.cancel();installTimeout=nil
-    let waiter=installWaiter;installWaiter=nil
-    if let failure {waiter?.resume(throwing:failure)} else {waiter?.resume(returning:())}
-  }
 
   init?(id:UUID,source:NotebookSelectionEditSource,model:NotebookAppModel) {
     let raw:InkCanvasView?
@@ -161,6 +134,7 @@ import QuartzCore
     requiredTextHostIDs=model.selectedGraphicHosts.requiredTextHostIDs(source,model:model)
     model.selectedGraphicHosts.bind(self)
     #endif
+    raw?.retainSelectionLifetime(self)
   }
 
   #if os(iOS)
@@ -204,7 +178,6 @@ import QuartzCore
       if deleting {model?.publishSelectionDrafts(source:source,edits:edits,deleting:true)}
       model?.selectedInkPresentationInstalled(self)
       if let model {model.selectedGraphicHosts.installControls(model:model,selectionID:source.selectionID)}
-      completeInstallWaiter()
       CATransaction.commit()
       #endif
       return
@@ -214,7 +187,7 @@ import QuartzCore
       do {
         try Task.checkCancellation()
         let ids=Set(source.ink.map(\.actionID)).union(originals.values.map(\.sourceID))
-        var bodies=canvas.orderedInkPlan.bodies.filter{!ids.contains($0.sourceID)}
+        var bodies:[NotebookOrderedInkPlan.Body]=[]
         for value in values {
           guard let layout=NotebookGraphicGraph([value.node]).resolve(value.id).layout else {throw CancellationError()}
           let key:NotebookInkPaintKey,erasures:[InkElementErasure]
@@ -230,7 +203,7 @@ import QuartzCore
           }
           bodies.append(.init(elementID:value.id,key:key,graphic:value.graphic,layout:layout,erasures:erasures))
         }
-        let plan=NotebookOrderedInkPlan(bodies:bodies,suppressedInkIDs:canvas.orderedInkPlan.suppressedInkIDs.union(ids))
+        let plan=NotebookOrderedInkPlan(bodies:bodies,suppressedInkIDs:ids)
         let geometry=try await canvas.prepareOrderedPlan(plan)
         try Task.checkCancellation()
         guard self.generation == generation,!disposed,!retiring,
@@ -273,7 +246,6 @@ import QuartzCore
           if deleting {for host in nativeCut.textHosts {host.hide()}}
           if let model {model.selectedGraphicHosts.installControls(model:model,selectionID:source.selectionID)}
           #endif
-          completeInstallWaiter()
         }
         preparation=nil
         if accepted && presented == desired {releasePhysicalLease()}
@@ -330,11 +302,38 @@ import QuartzCore
   }
   func didAcceptSource(cursor:UInt64? = nil) {
     accepted=true
-    acceptedCursor=cursor
+    acceptedCursor=cursor ?? acceptedCursor
     // The atomic writer receipt ends rollback authority. Keep only the current
     // native picture/controls, not the captured pre-command body geometry.
     restoration=nil
     if installed || preparationFailed { releasePhysicalLease() }
+    if !installed {
+      // Durable acceptance is terminal for rollback. The latest canonical
+      // source may publish before a private host or drawable ever installs.
+      generation=UUID();preparation?.cancel();preparation=nil
+      preparationFailed=true
+      releasePhysicalLease()
+      model?.selectedInkPresentationNeedsCanonical(self)
+    }
+    if let canvas,canvas.window == nil {selectionCanvasUnmounted(canvas)}
+    if let model {
+      canonicalAuthoredSourceLoaded(upTo:model.sceneContentCursor)
+      if let cursor=acceptedCursor,model.sceneContentCursor>=cursor,
+        let canvas,source.address.surface.kind == .page,let pageID=source.address.surface.ownerID,
+        let page=model.pages[pageID],canvas.presentsCanonicalPageSource(page.inkSource) {
+        canonicalInstalled(canvas.orderedInkPlan,on:canvas,surface:source.address.surface)
+      }
+    }
+    authoredHostUnmounted()
+  }
+  func selectionCanvasUnmounted(_ departing:InkCanvasView) {
+    guard canvas === departing else {return}
+    departing.releaseSelectionLifetime(id)
+    guard accepted else {return}
+    canvas=nil
+    generation=UUID();preparation?.cancel();preparation=nil
+    releasePhysicalLease()
+    if let model {canonicalAuthoredSourceLoaded(upTo:model.sceneContentCursor)}
     authoredHostUnmounted()
   }
   func authoredHostUnmounted(_ memberID:String? = nil) {
@@ -344,16 +343,14 @@ import QuartzCore
     let requiredHostLost=memberID.map {
       requiredAuthoredHostIDs.contains($0) || requiredTextHostIDs.contains($0)
     } ?? false
-    if !disposed,(!accepted && requiredHostLost) || (deleting && !installed) {
+    if !disposed,!accepted,requiredHostLost {
       fail(CancellationError())
       return
     }
-    if accepted,deleting,canvas != nil,!requiredTextHostIDs.isEmpty,let model,
-      model.selectedGraphicHosts.textHosts(source,requiredIDs:requiredTextHostIDs) == nil {
-      finishRetirement();return
-    }
     guard accepted,canvas == nil,!disposed,let model,
-      model.selectedGraphicHosts.mountedHosts(source,ownerID:id).isEmpty else {return}
+      acceptedCursor.map({model.sceneContentCursor >= $0}) == true,
+      model.selectedGraphicHosts.mountedHosts(source,ownerID:id).isEmpty,
+      requiredTextHostIDs.isEmpty else {return}
     finishRetirement()
     #endif
     if canonicalAuthoredCutReady {canonicalHostStaged()}
@@ -362,7 +359,15 @@ import QuartzCore
     guard accepted,canvas == nil,!disposed,!canonicalAuthoredCutReady,
       acceptedCursor.map({cursor >= $0}) == true,let model else {return}
     #if os(iOS)
-    if model.selectedGraphicHosts.mountedHosts(source,ownerID:id).isEmpty {finishRetirement();return}
+    if deleting {
+      CATransaction.begin();CATransaction.setDisableActions(true)
+      for host in model.selectedGraphicHosts.mountedHosts(source,ownerID:id).values {host.hide()}
+      for host in model.selectedGraphicHosts.textHosts(source,requiredIDs:requiredTextHostIDs) ?? [] {host.hide()}
+      finishRetirement();CATransaction.commit();return
+    }
+    if model.selectedGraphicHosts.mountedHosts(source,ownerID:id).isEmpty,requiredTextHostIDs.isEmpty {finishRetirement();return}
+    #else
+    finishRetirement();return
     #endif
     canonicalAuthoredCutReady=true
     // A later queued edit or peer action may already have superseded this
@@ -447,7 +452,6 @@ import QuartzCore
     guard !disposed,!preparationFailed else { return }
     preparationFailed=true
     generation=UUID();preparation?.cancel();preparation=nil
-    completeInstallWaiter(error)
     if claimed {
       // Enqueued is not installed. Keep the last complete picture/controls
       // through the writer outcome, then let the existing canonical source
@@ -458,12 +462,12 @@ import QuartzCore
       model?.cancelElementManipulation(id)
       if !disposed && !retiring { cancel() }
     }
-    if !(error is CancellationError) {model?.showCue("Не удалось подготовить всё выделение. Повторите действие.")}
+    if !accepted,!(error is CancellationError) {model?.showCue("Не удалось подготовить всё выделение. Повторите действие.")}
   }
   private func finishRetirement() {
     guard !disposed else { return }
     disposed=true
-    completeInstallWaiter(CancellationError())
+    canvas?.releaseSelectionLifetime(id)
     #if os(iOS)
     model?.selectedGraphicHosts.unbind(self)
     #endif
@@ -478,6 +482,7 @@ import QuartzCore
   }
   isolated deinit {
     preparation?.cancel()
+    canvas?.releaseSelectionLifetime(id)
     #if os(iOS)
     model?.selectedGraphicHosts.unbind(self)
     #endif

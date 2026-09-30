@@ -50,17 +50,21 @@ and exact visible ranges for addressed Redo. It does not rescan or clear the
 resident history; normal unmount and resource reclamation still release it.
 Before a page becomes input-ready, its read owner prepares the immutable drawing,
 targeted erasure directory and eraser bounds index. Live mutation cannot lazily
-prepare an archive. Accepted changes update those projections by action identity;
-archive encoding has no lock in common with prepared-source reads.
+prepare an archive. Accepted changes update those projections by action identity. The erasure map
+shares immutable target and (paint order, action ID) search paths; only a material
+consumer discloses an addressed target's cut array. Archive encoding has no lock in common with prepared-source reads.
 
 A raw contact selection keeps its immutable measurement revisions, visibility gate
 and later intersecting erasers. Both the mounted model and SQL writer validate that
 read set. The existing `ink_ranges` directory also indexes page erasers (schema 27);
 visibility changes update one row. The indexed paint clock excludes earlier erasers
 before a bounded row cursor compares later header/body-reference witnesses. It does
-not materialize a second result array or decode measurement bodies; command allowance
-accounts for the already captured dependency set. Unrelated pen appends do not
-invalidate a move.
+not materialize a second result array. Unchanged witnesses reuse their narrow-phase
+proof; new or changed candidates disclose measured geometry and test the canonical
+contact support. An empty corner of its bounds is not a dependency. Support is
+the original measured contact, before later cuts: another cut within an already
+erased part remains conservatively relevant to Undo. Command allowance accounts
+for the captured dependency set. Unrelated pen appends do not invalidate a move.
 
 `NotebookAppModel` publishes every accepted append and inverse to the mounted
 page consumers through `NotebookPageInkPublication` in that same actor segment.
