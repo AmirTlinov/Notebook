@@ -1,7 +1,7 @@
 # Ремонт причинных задержек — 30 сентября 2026
 
 Реализация [ревью D01–D16](performance-review-2026-09-30.md) от `c140b804`.
-**0.3.155 (225)** установлена на Mac и физическом iPad; точный source, установка
+**0.3.157 (227)** установлена на Mac и физическом iPad; точный source, установка
 и области проверки сохранены в [verification](verification.md). Строгие задержки
 первого показа и полная приёмка остаются открытыми.
 
@@ -268,3 +268,19 @@ Public XCTest pinch остаётся best effort; один frame centre не д�
 [Прицельный scope227](audit-evidence/2026-09-30/first-presentation-scheduling/scene-lifetime-227-results.json):
 3native + real UI24/Home→activate + scheduling observation и2Mac PASS.
 Notification regression проверяет owner semantics; OS disconnect им не заявляется.
+
+Адресное ревью холодного WebKit не установило нового app-owned ожидания между
+accepted source и navigation. Для первого native owner227: navigation requested
+144,609 → policy377,229 → started444,355 → ready477,429 → native479,284мс.
+Минимумы отдельных стадий отчёта принадлежат разным владельцам; их нельзя
+вычитать для диагноза одной программы. Navigation→policy включает WebKit/IPC
+и доставку на Main, а не измеренную отдельно стоимость запуска процесса.
+
+Общий `WKWebsiteDataStore` для inline-программ отклонён: текущий контракт сохраняет
+независимые stores и execution contexts. Синхронный авторский JS не прерывается
+JS-таймером, а process recovery принадлежит конкретной программе; объединение
+stores расширило бы область зависания. Existing session также переживает смену
+inline→package, поэтому выбор store только в factory не соблюдает эту границу.
+Отдельный store сам по себе не объявляется дефектом. Следующая проверка должна
+разделить WebKit/IPC и Main delivery для одного owner; ускорение должно сохранять
+изоляцию программ и не добавлять новую зависимость первого показа.
