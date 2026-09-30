@@ -11,9 +11,17 @@ final class InkRasterRenderer: @unchecked Sendable {
   static let shared = InkRasterRenderer()
   let device: (any MTLDevice)?
   let queue: (any MTLCommandQueue)?
-  let ink: (any MTLRenderPipelineState)?
-  let eraser: (any MTLRenderPipelineState)?
-  let baseline: (any MTLRenderPipelineState)?
+  private struct RenderPrograms: @unchecked Sendable {
+    let ink: any MTLRenderPipelineState
+    let eraser: any MTLRenderPipelineState
+    let baseline: any MTLRenderPipelineState
+  }
+  private let renderLock = NSLock()
+  private var renderPrograms: RenderPrograms?
+  private let renderPreparation: Task<RenderPrograms, any Error>
+  var ink: (any MTLRenderPipelineState)? { renderLock.withLock { renderPrograms?.ink } }
+  var eraser: (any MTLRenderPipelineState)? { renderLock.withLock { renderPrograms?.eraser } }
+  var baseline: (any MTLRenderPipelineState)? { renderLock.withLock { renderPrograms?.baseline } }
   let connectivity: InkConnectivity?
   private let orderedLock=NSLock()
   private var orderedResult:Result<OrderedPipelines,Error>?
@@ -51,6 +59,15 @@ final class InkRasterRenderer: @unchecked Sendable {
   }
   private let samplePositions: [SIMD2<Float>]
 
+  /// Compilation is a shared capability, independent of a page/source request.
+  /// A native mount and an export await the same immutable programs; encoding
+  /// only reads an installed result and never enters the Metal compiler.
+  func prepareInk() async throws {
+    let programs = try await renderPreparation.value
+    renderLock.withLock { renderPrograms = programs }
+    try Task.checkCancellation()
+  }
+
   private init() {
     let device = MTLCreateSystemDefaultDevice()
     self.device = device
@@ -60,28 +77,27 @@ final class InkRasterRenderer: @unchecked Sendable {
     } ?? []
     queue = device?.makeCommandQueue()
     connectivity = device.flatMap(InkConnectivity.init(device:))
-    func pipeline(erase: Bool = false, raster: Bool = false) -> (any MTLRenderPipelineState)? {
-      guard let device, let library = try? device.makeDefaultLibrary(bundle: .main) else {
-        return nil
+    renderPreparation = Task.detached(priority: .userInitiated) {
+      guard let device else { throw SceneRenderError.snapshotPending("ink_device") }
+      let library = try device.makeDefaultLibrary(bundle: .main)
+      func pipeline(erase: Bool = false, raster: Bool = false) throws -> any MTLRenderPipelineState {
+        let descriptor = MTLRenderPipelineDescriptor()
+        descriptor.vertexFunction = library.makeFunction(
+          name: raster ? "stableInkVertex" : "compactInkVertex")
+        descriptor.fragmentFunction = library.makeFunction(
+          name: raster ? "stableInkFragment" : "paperInkFragment")
+        descriptor.rasterSampleCount = device.supportsTextureSampleCount(4) ? 4 : 1
+        let color = descriptor.colorAttachments[0]!
+        color.pixelFormat = .bgra8Unorm
+        color.isBlendingEnabled = true
+        color.sourceRGBBlendFactor = erase ? .zero : .one
+        color.sourceAlphaBlendFactor = erase ? .zero : .one
+        color.destinationRGBBlendFactor = .oneMinusSourceAlpha
+        color.destinationAlphaBlendFactor = .oneMinusSourceAlpha
+        return try device.makeRenderPipelineState(descriptor: descriptor)
       }
-      let descriptor = MTLRenderPipelineDescriptor()
-      descriptor.vertexFunction = library.makeFunction(
-        name: raster ? "stableInkVertex" : "compactInkVertex")
-      descriptor.fragmentFunction = library.makeFunction(
-        name: raster ? "stableInkFragment" : "paperInkFragment")
-      descriptor.rasterSampleCount = device.supportsTextureSampleCount(4) ? 4 : 1
-      let color = descriptor.colorAttachments[0]!
-      color.pixelFormat = .bgra8Unorm
-      color.isBlendingEnabled = true
-      color.sourceRGBBlendFactor = erase ? .zero : .one
-      color.sourceAlphaBlendFactor = erase ? .zero : .one
-      color.destinationRGBBlendFactor = .oneMinusSourceAlpha
-      color.destinationAlphaBlendFactor = .oneMinusSourceAlpha
-      return try? device.makeRenderPipelineState(descriptor: descriptor)
+      return try .init(ink: pipeline(), eraser: pipeline(erase: true), baseline: pipeline(raster: true))
     }
-    ink = pipeline()
-    eraser = pipeline(erase: true)
-    baseline = pipeline(raster: true)
   }
 
   func sampleGrid(viewport: CGSize,pixels: CGSize) -> InkRasterGrid? {

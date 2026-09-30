@@ -4,6 +4,8 @@ import XCTest
 @testable import Notebook
 
 @MainActor final class NotebookGraphicRenderingTests: XCTestCase {
+  override func setUp() async throws { try await InkRasterRenderer.shared.prepareInk() }
+
   func testDetachedLassoConnectorKeepsTheActuallyRenderedContour() async throws {
     for routing in [NotebookGraphicConnection.Routing.curved,.elbow] {
       let actor=UUID(),size=PageSize(width:640,height:600)

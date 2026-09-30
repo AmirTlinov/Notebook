@@ -1,0 +1,86 @@
+{
+  "format": 1,
+  "physicalDevice": "00008103-001E059934D9001E",
+  "failedAttempt": {
+    "evidenceDirectory": "/private/tmp/notebook-226-final-0610",
+    "sourceSHA256": "806aa5f19def02ca4183154c43b834cf7f80788a55eaad90688b49b8abd2d722",
+    "nativePassed": 22,
+    "uiFailure": "23 unchanged controls after Window pinch; video shows control 6 changed to 1",
+    "declaredTarget": "Window.firstMatch",
+    "declaredFrame": [
+      0,
+      0,
+      834,
+      1194
+    ],
+    "expectedPaperCentre": [
+      417,
+      597
+    ],
+    "actualDeliveredPointers": [
+      {
+        "type": 1,
+        "x": 444.07756039469365,
+        "y": 419.2688195311666,
+        "offset": 0.0
+      },
+      {
+        "type": 2,
+        "x": 447.0,
+        "y": 422.0,
+        "offset": 0.1
+      },
+      {
+        "type": 2,
+        "x": 449.06647686252023,
+        "y": 423.93123623015634,
+        "offset": 1.5
+      },
+      {
+        "type": 3,
+        "x": 449.06647686252023,
+        "y": 423.93123623015634,
+        "offset": 1.5
+      },
+      {
+        "type": 1,
+        "x": 439.92243960530635,
+        "y": 414.7311804688334,
+        "offset": 0.0
+      },
+      {
+        "type": 2,
+        "x": 437.0,
+        "y": 412.0,
+        "offset": 0.1
+      },
+      {
+        "type": 2,
+        "x": 434.93352313747977,
+        "y": 410.06876376984366,
+        "offset": 1.5
+      },
+      {
+        "type": 3,
+        "x": 434.93352313747977,
+        "y": 410.06876376984366,
+        "offset": 1.5
+      }
+    ],
+    "sourceEventSHA256": "bdcf8b2943034c89fe459ecab874e79c417f4f396b21869547558952924aa743"
+  },
+  "repair": "Use the existing installed page-turn-surface AX target instead of the Window hit point; retain exact blue/red counts and every first-tap assertion. No reset, retry or synthetic input hook.",
+  "passedAttempt": {
+    "evidenceDirectory": "/private/tmp/notebook-226-pinch-target-0622",
+    "verificationSHA256": "48d9512eeeb0699ee5adc5b45529745f8c3a5434338289c26ffd3550f3f5b1b5",
+    "sourceSHA256": "18a5cbf03740f12d40127809f4674ea89404cd317348f09b669eab6a636c4e47",
+    "declaredTarget": "page-turn-surface",
+    "passed": 1,
+    "scope": "All 24 unchanged after pinch, every first tap, closing/reopening and forward/reverse state restoration; public XCTest pinch remains best effort. Passed gesture archive is not retained by XCTest."
+  },
+  "changedInputsBetweenAttempts": [
+    "Applications/UITests/NotebookNavigationLoadUITests.swift"
+  ],
+  "nativeImplementationAndTestsUnchanged": true,
+  "latencyAcceptance": false
+}

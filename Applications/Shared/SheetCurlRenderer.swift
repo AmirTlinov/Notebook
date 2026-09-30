@@ -78,19 +78,31 @@ final class SheetCurlGPU: @unchecked Sendable {
   private var contextReaders: [UUID: CheckedContinuation<CIContext, any Error>] = [:]
   private var coverResult: Result<CIContext, SceneRenderError>?
   private var coverObservers: [UUID: @MainActor @Sendable (Result<CIContext, SceneRenderError>) -> Void] = [:]
-  let pagePipeline: (any MTLRenderPipelineState)?
+  private let pageLock = NSLock()
+  private var pageResult: Result<any MTLRenderPipelineState, SceneRenderError>?
+  private var pagePreparation: Task<Void, Never>?
+  var pagePipeline: (any MTLRenderPipelineState)? { pageLock.withLock { try? pageResult?.get() } }
 
   private init() {
     let device = MTLCreateSystemDefaultDevice()
     self.device = device
-    if let device, let library = try? device.makeDefaultLibrary(bundle: .main) {
-      let descriptor = MTLRenderPipelineDescriptor()
-      descriptor.vertexFunction = library.makeFunction(name: "pageCurlVertex")
-      descriptor.fragmentFunction = library.makeFunction(name: "pageCurlFragment")
-      descriptor.colorAttachments[0].pixelFormat = .bgra8Unorm
-      pagePipeline = try? device.makeRenderPipelineState(descriptor: descriptor)
-    } else { pagePipeline = nil }
     commandQueue = device?.makeCommandQueue()
+    // A mounted paper needs the device, not a synchronous Metal compiler.
+    // Start the page capability once here; an accepted turn awaits this same
+    // preparation while its real source paper remains installed.
+    pagePreparation = Task.detached(priority: .userInitiated) { [self] in
+      let result: Result<any MTLRenderPipelineState, SceneRenderError>
+      do {
+        guard let device else { throw SceneRenderError.snapshotPending("page_device") }
+        let library = try device.makeDefaultLibrary(bundle: .main)
+        let descriptor = MTLRenderPipelineDescriptor()
+        descriptor.vertexFunction = library.makeFunction(name: "pageCurlVertex")
+        descriptor.fragmentFunction = library.makeFunction(name: "pageCurlFragment")
+        descriptor.colorAttachments[0].pixelFormat = .bgra8Unorm
+        result = .success(try device.makeRenderPipelineState(descriptor: descriptor))
+      } catch { result = .failure((error as? SceneRenderError) ?? .snapshotPending("page_pipeline")) }
+      pageLock.withLock { pageResult = result }
+    }
     // Start once with this GPU owner, before a cover gesture. Page captures
     // borrow the context asynchronously; mounting never constructs Core Image.
     let queue = commandQueue
@@ -116,6 +128,14 @@ final class SheetCurlGPU: @unchecked Sendable {
       }
       await MainActor.run { for observer in observers { observer(result) } }
     }
+  }
+
+  func preparePage() async throws {
+    await pagePreparation?.value
+    try Task.checkCancellation()
+    let result = pageLock.withLock { pageResult }
+    guard let result else { throw SceneRenderError.snapshotPending("page_pipeline") }
+    _ = try result.get()
   }
 
   /// A page borrows the common context as soon as it exists; cover program
@@ -392,7 +412,7 @@ final class SheetCurlMetalView: MTKView, MTKViewDelegate {
   var onFrameReady: ((CGImage, Double, Int, NotebookMetalFrameReadiness) -> Void)?
   #if os(iOS)
   struct PageUpdateTiming: Sendable {
-    enum Phase: String, Sendable { case prepared, exposed, beforePresent, afterPresent, beforeCommit, afterCommit }
+    enum Phase: String, Sendable { case prepared, exposed, geometryChanged, beforePresent, afterPresent, beforeCommit, afterCommit }
     let operationID: UUID
     let generation: UInt64
     let phase: Phase
@@ -589,8 +609,8 @@ final class SheetCurlMetalView: MTKView, MTKViewDelegate {
     pagePose = nil; presentedPagePose = nil; pagePresentedSequence = -1; pagePresentedTime = nil
     pageTextures = (leaf.texture, base.texture)
     submittedProgress = nil
-    // Exposure belongs to the first drawable's CA transaction. Only its
-    // terminal OS receipt can admit subsequent asynchronous opaque frames.
+    // Exposure belongs to the first drawable's CA transaction. Its exact OS
+    // receipt permits asynchronous mode; successors can publish before it.
     if onPageUpdateMeasured != nil {
       pageUpdateMeasurement = (pagePresentationGeneration, 6)
       measurePageUpdate(.prepared, info: UIUpdateInfo.current(for: self))
@@ -864,6 +884,7 @@ final class SheetCurlMetalView: MTKView, MTKViewDelegate {
     override func layoutSubviews() {
       super.layoutSubviews()
       guard let output = pageOutputLayer, output.frame != bounds else { return }
+      measurePageUpdate(.geometryChanged, info: UIUpdateInfo.current(for: self))
       prepareDrawable(size: pendingPageDrawableSize ?? output.drawableSize)
       if framePending || animatesContinuously { requestFrame() }
     }

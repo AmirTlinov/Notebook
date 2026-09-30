@@ -6,6 +6,8 @@ import XCTest
 @testable import Notebook
 
 final class InkVisibleRangeTests: XCTestCase {
+  override func setUp() async throws { try await InkRasterRenderer.shared.prepareInk() }
+
   func testEarlyCurveDetailAgainstFullRasterAtContourSamplePhases() throws {
     let count=100_000,size=CGSize(width:128,height:128),renderer=InkRasterRenderer.shared
     var samples:[SpatialInkSample]=[]

@@ -1,0 +1,1008 @@
+{
+  "droppedEvents" : 0,
+  "events" : [
+    {
+      "deliveryRunLoopPass" : 0,
+      "deliveryUICycle" : 0,
+      "stage" : "contact_handler_enter",
+      "uptime" : 54417.66316587501
+    },
+    {
+      "deliveryRunLoopPass" : 0,
+      "deliveryUICycle" : 0,
+      "stage" : "contact_handler_return",
+      "uptime" : 54417.66476829168
+    },
+    {
+      "deliveryRunLoopPass" : 0,
+      "deliveryUICycle" : 0,
+      "stage" : "runloop_exit",
+      "uptime" : 54417.66553083334
+    },
+    {
+      "deliveryRunLoopPass" : 0,
+      "deliveryUICycle" : 0,
+      "stage" : "runloop_entry",
+      "uptime" : 54417.66554108335
+    },
+    {
+      "deliveryRunLoopPass" : 1,
+      "deliveryUICycle" : 0,
+      "stage" : "runloop_before_sources",
+      "uptime" : 54417.665550208345
+    },
+    {
+      "deadline" : 54417.668809125,
+      "deliveryRunLoopPass" : 1,
+      "deliveryUICycle" : 1,
+      "modelTime" : 54417.660475875,
+      "stage" : "ui_before_event",
+      "targetPresentation" : 54417.677142375,
+      "uptime" : 54417.66556008335
+    },
+    {
+      "deadline" : 54417.668809125,
+      "deliveryRunLoopPass" : 1,
+      "deliveryUICycle" : 1,
+      "modelTime" : 54417.660475875,
+      "stage" : "ui_after_event",
+      "targetPresentation" : 54417.677142375,
+      "uptime" : 54417.66556195835
+    },
+    {
+      "deadline" : 54417.668809125,
+      "deliveryRunLoopPass" : 1,
+      "deliveryUICycle" : 1,
+      "modelTime" : 54417.660475875,
+      "stage" : "ui_before_display_link",
+      "targetPresentation" : 54417.677142375,
+      "uptime" : 54417.66556241668
+    },
+    {
+      "deadline" : 54417.668809125,
+      "deliveryRunLoopPass" : 1,
+      "deliveryUICycle" : 1,
+      "modelTime" : 54417.660475875,
+      "stage" : "ui_after_display_link",
+      "targetPresentation" : 54417.677142375,
+      "uptime" : 54417.66556329168
+    },
+    {
+      "deadline" : 54417.668809125,
+      "deliveryRunLoopPass" : 1,
+      "deliveryUICycle" : 1,
+      "modelTime" : 54417.660475875,
+      "stage" : "ui_before_ca_commit",
+      "targetPresentation" : 54417.677142375,
+      "uptime" : 54417.66556887501
+    },
+    {
+      "deadline" : 54417.668809125,
+      "deliveryRunLoopPass" : 1,
+      "deliveryUICycle" : 1,
+      "modelTime" : 54417.660475875,
+      "stage" : "ui_after_ca_commit",
+      "targetPresentation" : 54417.677142375,
+      "uptime" : 54417.66597912501
+    },
+    {
+      "deadline" : 54417.668809125,
+      "deliveryRunLoopPass" : 1,
+      "deliveryUICycle" : 1,
+      "modelTime" : 54417.660475875,
+      "stage" : "ui_complete",
+      "targetPresentation" : 54417.677142375,
+      "uptime" : 54417.665982041675
+    },
+    {
+      "deliveryRunLoopPass" : 1,
+      "deliveryUICycle" : 1,
+      "stage" : "runloop_exit",
+      "uptime" : 54417.66601491668
+    },
+    {
+      "deliveryRunLoopPass" : 1,
+      "deliveryUICycle" : 1,
+      "stage" : "runloop_entry",
+      "uptime" : 54417.666020333345
+    },
+    {
+      "deliveryRunLoopPass" : 2,
+      "deliveryUICycle" : 1,
+      "stage" : "runloop_before_sources",
+      "uptime" : 54417.666024333346
+    },
+    {
+      "deliveryRunLoopPass" : 2,
+      "deliveryUICycle" : 1,
+      "stage" : "runloop_before_wait",
+      "uptime" : 54417.666025125014
+    },
+    {
+      "deliveryRunLoopPass" : 2,
+      "deliveryUICycle" : 1,
+      "stage" : "runloop_after_wait",
+      "uptime" : 54417.666072000015
+    },
+    {
+      "deliveryRunLoopPass" : 2,
+      "deliveryUICycle" : 1,
+      "stage" : "runloop_exit",
+      "uptime" : 54417.66608087501
+    },
+    {
+      "deliveryRunLoopPass" : 2,
+      "deliveryUICycle" : 1,
+      "stage" : "runloop_entry",
+      "uptime" : 54417.66608500001
+    },
+    {
+      "deliveryRunLoopPass" : 3,
+      "deliveryUICycle" : 1,
+      "stage" : "runloop_before_sources",
+      "uptime" : 54417.666088333346
+    },
+    {
+      "deliveryRunLoopPass" : 3,
+      "deliveryUICycle" : 1,
+      "stage" : "runloop_before_wait",
+      "uptime" : 54417.666089041675
+    },
+    {
+      "deliveryRunLoopPass" : 3,
+      "deliveryUICycle" : 1,
+      "stage" : "runloop_after_wait",
+      "uptime" : 54417.668135083346
+    },
+    {
+      "deliveryRunLoopPass" : 3,
+      "deliveryUICycle" : 1,
+      "stage" : "runloop_exit",
+      "uptime" : 54417.66814329168
+    },
+    {
+      "deliveryRunLoopPass" : 3,
+      "deliveryUICycle" : 1,
+      "stage" : "runloop_entry",
+      "uptime" : 54417.66814904168
+    },
+    {
+      "deliveryRunLoopPass" : 4,
+      "deliveryUICycle" : 1,
+      "stage" : "runloop_before_sources",
+      "uptime" : 54417.66815250001
+    },
+    {
+      "deliveryRunLoopPass" : 4,
+      "deliveryUICycle" : 1,
+      "stage" : "runloop_before_wait",
+      "uptime" : 54417.66815329168
+    },
+    {
+      "deliveryRunLoopPass" : 4,
+      "deliveryUICycle" : 1,
+      "stage" : "runloop_after_wait",
+      "uptime" : 54417.66882912501
+    },
+    {
+      "deliveryRunLoopPass" : 4,
+      "deliveryUICycle" : 1,
+      "stage" : "runloop_exit",
+      "uptime" : 54417.66926116668
+    },
+    {
+      "deliveryRunLoopPass" : 4,
+      "deliveryUICycle" : 1,
+      "stage" : "runloop_entry",
+      "uptime" : 54417.669270083345
+    },
+    {
+      "deliveryRunLoopPass" : 5,
+      "deliveryUICycle" : 1,
+      "stage" : "runloop_before_sources",
+      "uptime" : 54417.66927575001
+    },
+    {
+      "deadline" : 54417.67714579167,
+      "deliveryRunLoopPass" : 5,
+      "deliveryUICycle" : 2,
+      "modelTime" : 54417.66881254167,
+      "stage" : "ui_before_event",
+      "targetPresentation" : 54417.68547904167,
+      "uptime" : 54417.66928141668
+    },
+    {
+      "deadline" : 54417.67714579167,
+      "deliveryRunLoopPass" : 5,
+      "deliveryUICycle" : 2,
+      "modelTime" : 54417.66881254167,
+      "stage" : "ui_after_event",
+      "targetPresentation" : 54417.68547904167,
+      "uptime" : 54417.669283541676
+    },
+    {
+      "deadline" : 54417.67714579167,
+      "deliveryRunLoopPass" : 5,
+      "deliveryUICycle" : 2,
+      "modelTime" : 54417.66881254167,
+      "stage" : "ui_before_display_link",
+      "targetPresentation" : 54417.68547904167,
+      "uptime" : 54417.66928391668
+    },
+    {
+      "deadline" : 54417.67714579167,
+      "deliveryRunLoopPass" : 5,
+      "deliveryUICycle" : 2,
+      "modelTime" : 54417.66881254167,
+      "stage" : "ui_after_display_link",
+      "targetPresentation" : 54417.68547904167,
+      "uptime" : 54417.66928475001
+    },
+    {
+      "deadline" : 54417.67714579167,
+      "deliveryRunLoopPass" : 5,
+      "deliveryUICycle" : 2,
+      "modelTime" : 54417.66881254167,
+      "stage" : "ui_before_ca_commit",
+      "targetPresentation" : 54417.68547904167,
+      "uptime" : 54417.669289375015
+    },
+    {
+      "deadline" : 54417.67714579167,
+      "deliveryRunLoopPass" : 5,
+      "deliveryUICycle" : 2,
+      "modelTime" : 54417.66881254167,
+      "stage" : "ui_after_ca_commit",
+      "targetPresentation" : 54417.68547904167,
+      "uptime" : 54417.66937462501
+    },
+    {
+      "deadline" : 54417.67714579167,
+      "deliveryRunLoopPass" : 5,
+      "deliveryUICycle" : 2,
+      "modelTime" : 54417.66881254167,
+      "stage" : "ui_complete",
+      "targetPresentation" : 54417.68547904167,
+      "uptime" : 54417.66937845835
+    },
+    {
+      "deliveryRunLoopPass" : 5,
+      "deliveryUICycle" : 2,
+      "stage" : "runloop_exit",
+      "uptime" : 54417.66939170835
+    },
+    {
+      "deliveryRunLoopPass" : 5,
+      "deliveryUICycle" : 2,
+      "stage" : "runloop_entry",
+      "uptime" : 54417.66939683334
+    },
+    {
+      "deliveryRunLoopPass" : 6,
+      "deliveryUICycle" : 2,
+      "stage" : "runloop_before_sources",
+      "uptime" : 54417.66939929168
+    },
+    {
+      "deliveryRunLoopPass" : 6,
+      "deliveryUICycle" : 2,
+      "stage" : "runloop_before_wait",
+      "uptime" : 54417.669400083345
+    },
+    {
+      "deliveryRunLoopPass" : 6,
+      "deliveryUICycle" : 2,
+      "stage" : "runloop_after_wait",
+      "uptime" : 54417.669878708344
+    },
+    {
+      "deliveryRunLoopPass" : 6,
+      "deliveryUICycle" : 2,
+      "stage" : "runloop_exit",
+      "uptime" : 54417.669890208344
+    },
+    {
+      "deliveryRunLoopPass" : 6,
+      "deliveryUICycle" : 2,
+      "stage" : "runloop_entry",
+      "uptime" : 54417.66989587501
+    },
+    {
+      "deliveryRunLoopPass" : 7,
+      "deliveryUICycle" : 2,
+      "stage" : "runloop_before_sources",
+      "uptime" : 54417.669898000015
+    },
+    {
+      "deliveryRunLoopPass" : 7,
+      "deliveryUICycle" : 2,
+      "stage" : "runloop_before_wait",
+      "uptime" : 54417.669898833345
+    },
+    {
+      "deliveryRunLoopPass" : 7,
+      "deliveryUICycle" : 2,
+      "stage" : "runloop_after_wait",
+      "uptime" : 54417.67054320835
+    },
+    {
+      "deliveryRunLoopPass" : 7,
+      "deliveryUICycle" : 2,
+      "stage" : "runloop_exit",
+      "uptime" : 54417.67055195835
+    },
+    {
+      "deliveryRunLoopPass" : 7,
+      "deliveryUICycle" : 2,
+      "stage" : "runloop_entry",
+      "uptime" : 54417.670556458346
+    },
+    {
+      "deliveryRunLoopPass" : 8,
+      "deliveryUICycle" : 2,
+      "stage" : "runloop_before_sources",
+      "uptime" : 54417.670560166676
+    },
+    {
+      "deliveryRunLoopPass" : 8,
+      "deliveryUICycle" : 2,
+      "stage" : "runloop_before_wait",
+      "uptime" : 54417.67056087501
+    },
+    {
+      "deliveryRunLoopPass" : 8,
+      "deliveryUICycle" : 2,
+      "stage" : "runloop_after_wait",
+      "uptime" : 54417.670574500014
+    },
+    {
+      "deliveryRunLoopPass" : 8,
+      "deliveryUICycle" : 2,
+      "stage" : "runloop_exit",
+      "uptime" : 54417.67057958335
+    },
+    {
+      "deliveryRunLoopPass" : 8,
+      "deliveryUICycle" : 2,
+      "stage" : "runloop_entry",
+      "uptime" : 54417.67058354168
+    },
+    {
+      "deliveryRunLoopPass" : 9,
+      "deliveryUICycle" : 2,
+      "stage" : "runloop_before_sources",
+      "uptime" : 54417.670589708345
+    },
+    {
+      "deliveryRunLoopPass" : 9,
+      "deliveryUICycle" : 2,
+      "stage" : "runloop_before_wait",
+      "uptime" : 54417.67059041668
+    },
+    {
+      "deliveryRunLoopPass" : 9,
+      "deliveryUICycle" : 2,
+      "stage" : "runloop_after_wait",
+      "uptime" : 54417.67093583335
+    },
+    {
+      "deliveryRunLoopPass" : 9,
+      "deliveryUICycle" : 2,
+      "stage" : "runloop_exit",
+      "uptime" : 54417.670945250014
+    },
+    {
+      "deliveryRunLoopPass" : 9,
+      "deliveryUICycle" : 2,
+      "stage" : "runloop_entry",
+      "uptime" : 54417.67095133335
+    },
+    {
+      "deliveryRunLoopPass" : 10,
+      "deliveryUICycle" : 2,
+      "stage" : "runloop_before_sources",
+      "uptime" : 54417.670954875015
+    },
+    {
+      "deliveryRunLoopPass" : 10,
+      "deliveryUICycle" : 2,
+      "stage" : "runloop_before_wait",
+      "uptime" : 54417.67095633334
+    },
+    {
+      "deliveryRunLoopPass" : 10,
+      "deliveryUICycle" : 2,
+      "stage" : "runloop_after_wait",
+      "uptime" : 54417.67277295834
+    },
+    {
+      "deliveryRunLoopPass" : 10,
+      "deliveryUICycle" : 2,
+      "stage" : "runloop_exit",
+      "uptime" : 54417.67278108335
+    },
+    {
+      "deliveryRunLoopPass" : 10,
+      "deliveryUICycle" : 2,
+      "stage" : "runloop_entry",
+      "uptime" : 54417.67278820834
+    },
+    {
+      "deliveryRunLoopPass" : 11,
+      "deliveryUICycle" : 2,
+      "stage" : "runloop_before_sources",
+      "uptime" : 54417.67279195834
+    },
+    {
+      "deliveryRunLoopPass" : 11,
+      "deliveryUICycle" : 2,
+      "stage" : "runloop_before_wait",
+      "uptime" : 54417.67279287501
+    },
+    {
+      "deliveryRunLoopPass" : 11,
+      "deliveryUICycle" : 2,
+      "stage" : "runloop_after_wait",
+      "uptime" : 54417.674845666676
+    },
+    {
+      "deliveryRunLoopPass" : 11,
+      "deliveryUICycle" : 2,
+      "stage" : "runloop_exit",
+      "uptime" : 54417.674857208345
+    },
+    {
+      "deliveryRunLoopPass" : 11,
+      "deliveryUICycle" : 2,
+      "stage" : "runloop_entry",
+      "uptime" : 54417.67486912501
+    },
+    {
+      "deliveryRunLoopPass" : 12,
+      "deliveryUICycle" : 2,
+      "stage" : "runloop_before_sources",
+      "uptime" : 54417.67487308334
+    },
+    {
+      "deliveryRunLoopPass" : 12,
+      "deliveryUICycle" : 2,
+      "stage" : "runloop_before_wait",
+      "uptime" : 54417.67487412501
+    },
+    {
+      "deliveryRunLoopPass" : 12,
+      "deliveryUICycle" : 2,
+      "stage" : "runloop_after_wait",
+      "uptime" : 54417.67622033334
+    },
+    {
+      "deliveryRunLoopPass" : 12,
+      "deliveryUICycle" : 2,
+      "stage" : "runloop_exit",
+      "uptime" : 54417.67623295834
+    },
+    {
+      "deliveryRunLoopPass" : 12,
+      "deliveryUICycle" : 2,
+      "stage" : "runloop_entry",
+      "uptime" : 54417.67624216668
+    },
+    {
+      "deliveryRunLoopPass" : 13,
+      "deliveryUICycle" : 2,
+      "stage" : "runloop_before_sources",
+      "uptime" : 54417.676246625015
+    },
+    {
+      "deliveryRunLoopPass" : 13,
+      "deliveryUICycle" : 2,
+      "stage" : "runloop_exit",
+      "uptime" : 54417.67625820835
+    },
+    {
+      "deliveryRunLoopPass" : 13,
+      "deliveryUICycle" : 2,
+      "stage" : "runloop_entry",
+      "uptime" : 54417.676262750014
+    },
+    {
+      "deliveryRunLoopPass" : 14,
+      "deliveryUICycle" : 2,
+      "stage" : "runloop_before_sources",
+      "uptime" : 54417.676265708345
+    },
+    {
+      "deliveryRunLoopPass" : 14,
+      "deliveryUICycle" : 2,
+      "stage" : "runloop_before_wait",
+      "uptime" : 54417.676266458344
+    },
+    {
+      "deliveryRunLoopPass" : 14,
+      "deliveryUICycle" : 2,
+      "stage" : "runloop_after_wait",
+      "uptime" : 54417.67722666668
+    },
+    {
+      "deliveryRunLoopPass" : 14,
+      "deliveryUICycle" : 2,
+      "stage" : "runloop_exit",
+      "uptime" : 54417.678575083344
+    },
+    {
+      "deliveryRunLoopPass" : 14,
+      "deliveryUICycle" : 2,
+      "stage" : "runloop_entry",
+      "uptime" : 54417.67858291668
+    },
+    {
+      "deliveryRunLoopPass" : 15,
+      "deliveryUICycle" : 2,
+      "stage" : "runloop_before_sources",
+      "uptime" : 54417.67858912501
+    },
+    {
+      "deadline" : 54417.685482458335,
+      "deliveryRunLoopPass" : 15,
+      "deliveryUICycle" : 3,
+      "modelTime" : 54417.677149208335,
+      "stage" : "ui_before_event",
+      "targetPresentation" : 54417.693815708335,
+      "uptime" : 54417.67859658335
+    },
+    {
+      "deadline" : 54417.685482458335,
+      "deliveryRunLoopPass" : 15,
+      "deliveryUICycle" : 3,
+      "modelTime" : 54417.677149208335,
+      "stage" : "ui_after_event",
+      "targetPresentation" : 54417.693815708335,
+      "uptime" : 54417.67859866668
+    },
+    {
+      "deadline" : 54417.685482458335,
+      "deliveryRunLoopPass" : 15,
+      "deliveryUICycle" : 3,
+      "modelTime" : 54417.677149208335,
+      "stage" : "ui_before_display_link",
+      "targetPresentation" : 54417.693815708335,
+      "uptime" : 54417.678599250015
+    },
+    {
+      "deadline" : 54417.685482458335,
+      "deliveryRunLoopPass" : 15,
+      "deliveryUICycle" : 3,
+      "modelTime" : 54417.677149208335,
+      "stage" : "ui_after_display_link",
+      "targetPresentation" : 54417.693815708335,
+      "uptime" : 54417.67865000001
+    },
+    {
+      "deadline" : 54417.685482458335,
+      "deliveryRunLoopPass" : 15,
+      "deliveryUICycle" : 3,
+      "modelTime" : 54417.677149208335,
+      "stage" : "ui_before_ca_commit",
+      "targetPresentation" : 54417.693815708335,
+      "uptime" : 54417.67865470835
+    },
+    {
+      "deadline" : 54417.685482458335,
+      "deliveryRunLoopPass" : 15,
+      "deliveryUICycle" : 3,
+      "modelTime" : 54417.677149208335,
+      "stage" : "ui_after_ca_commit",
+      "targetPresentation" : 54417.693815708335,
+      "uptime" : 54417.67878412501
+    },
+    {
+      "deadline" : 54417.685482458335,
+      "deliveryRunLoopPass" : 15,
+      "deliveryUICycle" : 3,
+      "modelTime" : 54417.677149208335,
+      "stage" : "ui_complete",
+      "targetPresentation" : 54417.693815708335,
+      "uptime" : 54417.67878845835
+    },
+    {
+      "deliveryRunLoopPass" : 15,
+      "deliveryUICycle" : 3,
+      "stage" : "runloop_exit",
+      "uptime" : 54417.678804583345
+    },
+    {
+      "deliveryRunLoopPass" : 15,
+      "deliveryUICycle" : 3,
+      "stage" : "runloop_entry",
+      "uptime" : 54417.67880912501
+    },
+    {
+      "deliveryRunLoopPass" : 16,
+      "deliveryUICycle" : 3,
+      "stage" : "runloop_before_sources",
+      "uptime" : 54417.678815833344
+    },
+    {
+      "deliveryRunLoopPass" : 16,
+      "deliveryUICycle" : 3,
+      "stage" : "runloop_before_wait",
+      "uptime" : 54417.67881662501
+    },
+    {
+      "deliveryRunLoopPass" : 16,
+      "deliveryUICycle" : 3,
+      "stage" : "runloop_after_wait",
+      "uptime" : 54417.67918266668
+    },
+    {
+      "deliveryRunLoopPass" : 16,
+      "deliveryUICycle" : 3,
+      "stage" : "runloop_exit",
+      "uptime" : 54417.67919091668
+    },
+    {
+      "deliveryRunLoopPass" : 16,
+      "deliveryUICycle" : 3,
+      "stage" : "runloop_entry",
+      "uptime" : 54417.67919483335
+    },
+    {
+      "deliveryRunLoopPass" : 17,
+      "deliveryUICycle" : 3,
+      "stage" : "runloop_before_sources",
+      "uptime" : 54417.67919770835
+    },
+    {
+      "deliveryRunLoopPass" : 17,
+      "deliveryUICycle" : 3,
+      "stage" : "runloop_before_wait",
+      "uptime" : 54417.67919858335
+    },
+    {
+      "deliveryRunLoopPass" : 17,
+      "deliveryUICycle" : 3,
+      "stage" : "runloop_after_wait",
+      "uptime" : 54417.67925787501
+    },
+    {
+      "deliveryRunLoopPass" : 17,
+      "deliveryUICycle" : 3,
+      "stage" : "runloop_exit",
+      "uptime" : 54417.67926720835
+    },
+    {
+      "deliveryRunLoopPass" : 17,
+      "deliveryUICycle" : 3,
+      "stage" : "runloop_entry",
+      "uptime" : 54417.679274708345
+    },
+    {
+      "deliveryRunLoopPass" : 18,
+      "deliveryUICycle" : 3,
+      "stage" : "runloop_before_sources",
+      "uptime" : 54417.67927912501
+    },
+    {
+      "deliveryRunLoopPass" : 18,
+      "deliveryUICycle" : 3,
+      "stage" : "runloop_before_wait",
+      "uptime" : 54417.67928054168
+    },
+    {
+      "deliveryRunLoopPass" : 18,
+      "deliveryUICycle" : 3,
+      "stage" : "runloop_after_wait",
+      "uptime" : 54417.68092129168
+    },
+    {
+      "deliveryRunLoopPass" : 18,
+      "deliveryUICycle" : 3,
+      "stage" : "runloop_exit",
+      "uptime" : 54417.68092816668
+    },
+    {
+      "deliveryRunLoopPass" : 18,
+      "deliveryUICycle" : 3,
+      "stage" : "runloop_entry",
+      "uptime" : 54417.68093366668
+    },
+    {
+      "deliveryRunLoopPass" : 19,
+      "deliveryUICycle" : 3,
+      "stage" : "runloop_before_sources",
+      "uptime" : 54417.68093741668
+    },
+    {
+      "deliveryRunLoopPass" : 19,
+      "deliveryUICycle" : 3,
+      "stage" : "runloop_before_wait",
+      "uptime" : 54417.680938166675
+    },
+    {
+      "deliveryRunLoopPass" : 19,
+      "deliveryUICycle" : 3,
+      "stage" : "runloop_after_wait",
+      "uptime" : 54417.68298637501
+    },
+    {
+      "deliveryRunLoopPass" : 19,
+      "deliveryUICycle" : 3,
+      "stage" : "runloop_exit",
+      "uptime" : 54417.682998416676
+    },
+    {
+      "deliveryRunLoopPass" : 19,
+      "deliveryUICycle" : 3,
+      "stage" : "runloop_entry",
+      "uptime" : 54417.68301054168
+    },
+    {
+      "deliveryRunLoopPass" : 20,
+      "deliveryUICycle" : 3,
+      "stage" : "runloop_before_sources",
+      "uptime" : 54417.68301508335
+    },
+    {
+      "deliveryRunLoopPass" : 20,
+      "deliveryUICycle" : 3,
+      "stage" : "runloop_before_wait",
+      "uptime" : 54417.68301612501
+    },
+    {
+      "deliveryRunLoopPass" : 20,
+      "deliveryUICycle" : 3,
+      "stage" : "runloop_after_wait",
+      "uptime" : 54417.685092000014
+    },
+    {
+      "deliveryRunLoopPass" : 20,
+      "deliveryUICycle" : 3,
+      "stage" : "runloop_exit",
+      "uptime" : 54417.685098625014
+    },
+    {
+      "deliveryRunLoopPass" : 20,
+      "deliveryUICycle" : 3,
+      "stage" : "runloop_entry",
+      "uptime" : 54417.68510366668
+    },
+    {
+      "deliveryRunLoopPass" : 21,
+      "deliveryUICycle" : 3,
+      "stage" : "runloop_before_sources",
+      "uptime" : 54417.68510695834
+    },
+    {
+      "deliveryRunLoopPass" : 21,
+      "deliveryUICycle" : 3,
+      "stage" : "runloop_before_wait",
+      "uptime" : 54417.68510762501
+    },
+    {
+      "deliveryRunLoopPass" : 21,
+      "deliveryUICycle" : 3,
+      "stage" : "runloop_after_wait",
+      "uptime" : 54417.68556337501
+    },
+    {
+      "deliveryRunLoopPass" : 21,
+      "deliveryUICycle" : 3,
+      "stage" : "runloop_exit",
+      "uptime" : 54417.68557325001
+    },
+    {
+      "deliveryRunLoopPass" : 21,
+      "deliveryUICycle" : 3,
+      "stage" : "runloop_entry",
+      "uptime" : 54417.68557879168
+    },
+    {
+      "deliveryRunLoopPass" : 22,
+      "deliveryUICycle" : 3,
+      "stage" : "runloop_before_sources",
+      "uptime" : 54417.68558058335
+    },
+    {
+      "deliveryRunLoopPass" : 22,
+      "deliveryUICycle" : 3,
+      "stage" : "runloop_before_wait",
+      "uptime" : 54417.68558187501
+    },
+    {
+      "deliveryRunLoopPass" : 22,
+      "deliveryUICycle" : 3,
+      "stage" : "runloop_after_wait",
+      "uptime" : 54417.68624425001
+    },
+    {
+      "deliveryRunLoopPass" : 22,
+      "deliveryUICycle" : 3,
+      "stage" : "runloop_exit",
+      "uptime" : 54417.68624991668
+    },
+    {
+      "deliveryRunLoopPass" : 22,
+      "deliveryUICycle" : 3,
+      "stage" : "runloop_entry",
+      "uptime" : 54417.68625458334
+    },
+    {
+      "deliveryRunLoopPass" : 23,
+      "deliveryUICycle" : 3,
+      "stage" : "runloop_before_sources",
+      "uptime" : 54417.68625825001
+    },
+    {
+      "deliveryRunLoopPass" : 23,
+      "deliveryUICycle" : 3,
+      "stage" : "runloop_before_wait",
+      "uptime" : 54417.68625891668
+    },
+    {
+      "deliveryRunLoopPass" : 23,
+      "deliveryUICycle" : 3,
+      "stage" : "runloop_after_wait",
+      "uptime" : 54417.688378125014
+    },
+    {
+      "deliveryRunLoopPass" : 23,
+      "deliveryUICycle" : 3,
+      "stage" : "runloop_exit",
+      "uptime" : 54417.68838712501
+    },
+    {
+      "deliveryRunLoopPass" : 23,
+      "deliveryUICycle" : 3,
+      "stage" : "runloop_entry",
+      "uptime" : 54417.68839554168
+    },
+    {
+      "deliveryRunLoopPass" : 24,
+      "deliveryUICycle" : 3,
+      "stage" : "runloop_before_sources",
+      "uptime" : 54417.68839950001
+    },
+    {
+      "deliveryRunLoopPass" : 24,
+      "deliveryUICycle" : 3,
+      "stage" : "runloop_before_wait",
+      "uptime" : 54417.68840037501
+    },
+    {
+      "deliveryRunLoopPass" : 24,
+      "deliveryUICycle" : 3,
+      "stage" : "runloop_after_wait",
+      "uptime" : 54417.690066625015
+    },
+    {
+      "deliveryRunLoopPass" : 25,
+      "deliveryUICycle" : 3,
+      "stage" : "runloop_before_sources",
+      "uptime" : 54417.690070500015
+    },
+    {
+      "deliveryRunLoopPass" : 25,
+      "deliveryUICycle" : 3,
+      "stage" : "runloop_before_wait",
+      "uptime" : 54417.69007187501
+    },
+    {
+      "deliveryRunLoopPass" : 25,
+      "deliveryUICycle" : 3,
+      "stage" : "runloop_after_wait",
+      "uptime" : 54417.69008229168
+    },
+    {
+      "deliveryRunLoopPass" : 25,
+      "deliveryUICycle" : 3,
+      "owner" : "52048B58-7865-46B6-AFD6-B986406117D8",
+      "stage" : "ink_os_callback",
+      "uptime" : 54417.69010404168
+    },
+    {
+      "deliveryRunLoopPass" : 25,
+      "deliveryUICycle" : 3,
+      "owner" : "52048B58-7865-46B6-AFD6-B986406117D8",
+      "stage" : "ink_os_presented",
+      "uptime" : 54417.689650958346
+    },
+    {
+      "deadline" : 54417.67714508335,
+      "deliveryRunLoopPass" : 25,
+      "deliveryUICycle" : 3,
+      "owner" : "52048B58-7865-46B6-AFD6-B986406117D8",
+      "stage" : "ink_render",
+      "targetPresentation" : 54417.68548175001,
+      "uptime" : 54417.66884520835
+    },
+    {
+      "deadline" : 54417.67714508335,
+      "deliveryRunLoopPass" : 25,
+      "deliveryUICycle" : 3,
+      "owner" : "52048B58-7865-46B6-AFD6-B986406117D8",
+      "stage" : "ink_commit",
+      "targetPresentation" : 54417.68548175001,
+      "uptime" : 54417.66901937501
+    },
+    {
+      "deadline" : 54417.67714508335,
+      "deliveryRunLoopPass" : 25,
+      "deliveryUICycle" : 3,
+      "owner" : "52048B58-7865-46B6-AFD6-B986406117D8",
+      "stage" : "ink_commit_returned",
+      "targetPresentation" : 54417.68548175001,
+      "uptime" : 54417.66903179168
+    },
+    {
+      "deadline" : 54417.67714508335,
+      "deliveryRunLoopPass" : 25,
+      "deliveryUICycle" : 3,
+      "owner" : "52048B58-7865-46B6-AFD6-B986406117D8",
+      "stage" : "ink_scheduled",
+      "targetPresentation" : 54417.68548175001,
+      "uptime" : 54417.669161333346
+    },
+    {
+      "deadline" : 54417.67714508335,
+      "deliveryRunLoopPass" : 25,
+      "deliveryUICycle" : 3,
+      "owner" : "52048B58-7865-46B6-AFD6-B986406117D8",
+      "stage" : "ink_gpu_start",
+      "targetPresentation" : 54417.68548175001,
+      "uptime" : 54417.669325
+    },
+    {
+      "deadline" : 54417.67714508335,
+      "deliveryRunLoopPass" : 25,
+      "deliveryUICycle" : 3,
+      "owner" : "52048B58-7865-46B6-AFD6-B986406117D8",
+      "stage" : "ink_gpu_end",
+      "targetPresentation" : 54417.68548175001,
+      "uptime" : 54417.669689250004
+    },
+    {
+      "deadline" : 54417.67714508335,
+      "deliveryRunLoopPass" : 25,
+      "deliveryUICycle" : 3,
+      "owner" : "52048B58-7865-46B6-AFD6-B986406117D8",
+      "stage" : "ink_gpu_callback",
+      "targetPresentation" : 54417.68548175001,
+      "uptime" : 54417.669860625014
+    },
+    {
+      "deliveryRunLoopPass" : 25,
+      "deliveryUICycle" : 3,
+      "stage" : "runloop_exit",
+      "uptime" : 54417.69011262501
+    },
+    {
+      "deliveryRunLoopPass" : 25,
+      "deliveryUICycle" : 3,
+      "stage" : "runloop_entry",
+      "uptime" : 54417.69011700001
+    },
+    {
+      "deliveryRunLoopPass" : 26,
+      "deliveryUICycle" : 3,
+      "stage" : "runloop_before_sources",
+      "uptime" : 54417.690120083345
+    },
+    {
+      "deliveryRunLoopPass" : 26,
+      "deliveryUICycle" : 3,
+      "stage" : "runloop_before_wait",
+      "uptime" : 54417.69012079168
+    },
+    {
+      "deliveryRunLoopPass" : 26,
+      "deliveryUICycle" : 3,
+      "stage" : "runloop_after_wait",
+      "uptime" : 54417.69012850001
+    }
+  ],
+  "format" : 1,
+  "measurementEndedUptime" : 54417.690129708346,
+  "originUptime" : 54417.66313908334,
+  "processID" : 4232,
+  "scenario" : "first-held-dot"
+}

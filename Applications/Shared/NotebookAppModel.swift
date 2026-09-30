@@ -1806,12 +1806,24 @@ final class NotebookAppModel {
       }
       let actor = actorID
       let notebookID = Self.initialNotebookID, pageID = Self.initialPageID
-      let stored = try await persistence.submit { store in
-        try NotebookSceneState.start(store: store, actor: actor, pageSize: pageSize,
+      let observesStartup = NotebookNavigationObservation.onWebPreparation != nil
+      NotebookNavigationObservation.webPreparation("startup_store_requested", ownerID: actor)
+      let preparation = try await persistence.submit { store in
+        let began: ContinuousClock.Instant? = observesStartup ? .now : nil
+        let state = try NotebookSceneState.start(store: store, actor: actor, pageSize: pageSize,
           notebookID: notebookID, pageID: pageID, viewport: viewport)
+        let ended: ContinuousClock.Instant? = observesStartup ? .now : nil
+        return (state, began, ended)
       }
+      if let began = preparation.1, let ended = preparation.2 {
+        NotebookNavigationObservation.webPreparation("startup_store_began", ownerID: actor, at: began)
+        NotebookNavigationObservation.webPreparation("startup_store_ended", ownerID: actor, at: ended)
+      }
+      let stored = preparation.0
+      NotebookNavigationObservation.webPreparation("startup_store_resumed", ownerID: actor)
       acceptSceneState(stored)
       presence = settledPresence(from: stored.presence, viewport: viewport)
+      NotebookNavigationObservation.webPreparation("startup_state_installed", ownerID: actor)
       if let presence {
         let selection = presence.selectedItemID.flatMap { workspace?.item(id: $0) }
           ?? stored.workspace.selectedItem
@@ -1820,7 +1832,9 @@ final class NotebookAppModel {
         let presence = presence.selecting(itemID: selection.id, pageID: pageID)
         self.presence = presence
         alignWorkspaceSelection()
+        NotebookNavigationObservation.webPreparation("startup_presence_requested", ownerID: actor)
         try await persistence.submit { try $0.savePresence(presence) }
+        NotebookNavigationObservation.webPreparation("startup_presence_installed", ownerID: actor)
         lastSettledPresenceEnvelope = makePresenceEnvelope(
           presence,
           phase: .settled
@@ -1832,6 +1846,7 @@ final class NotebookAppModel {
         initialAccountWorkspaceCursor = try await persistence.submit { try $0.currentChangeCursor() }
       }
       loadState = .ready
+      NotebookNavigationObservation.webPreparation("startup_load_ready", ownerID: actor)
       requestActionArrivalDrain()
       publishSelection()
       awaitingAccountContent = false

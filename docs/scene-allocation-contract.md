@@ -131,19 +131,30 @@ does not cause an infinite failure/retry loop.
 ## Pool and input priority
 
 The shared allocator admits up to 32 visible program owners and two transient
-preparation surfaces, with 32 pending requests and two reserved interactive slots.
+preparation surfaces, with 32 pending background preparations and two reserved
+interactive slots. Accepted visible/current-page/input requests retain their FIFO
+arrival until grant or source withdrawal; their source owners bound the workset.
+Pending admission owns no WebKit or bitmap backing. Background queue refusal and
+an explicit caller's admission timeout have separate causes from allocation failure.
+Program load/capture deadlines begin after admission. Promoting a pending request
+returns its background queue capacity and publishes that actual availability change.
 The board planner keeps its eight native paper/ink owners independent of this
 small-program quota; visible controls do not compete for seven paper positions. A live input
 program does not consume the passive quota that reserves input for it. Persistent
 programs leave preparation capacity. Physical source identity prevents duplicate
 execution until the final submitted borrower releases.
 
-At most two admitted live requests await native construction. The accepted
+At most two admitted requests occupy native construction and its next UI
+commit opportunity. The accepted
 `PreparationOwner` constructs and starts its `AgentWebNativeSession` immediately
 after admission, before SwiftUI's next mounting update. The representable borrows
 that exact coordinator and WebKit; a changed source uses its existing token-checked
-load path. Constructor completion releases construction admission, independently
-of navigation commit or author readiness. Unmounted preparation neither captures
+load path. Every WebKit factory, including document, chat, terminal, voice and
+presentation SVG, uses this allowance. On UIKit, constructor completion marks
+the allowance for release after a CA commit opportunity and `afterUpdateComplete`;
+the next pair cannot consume the same unfinished UI cycle. AppKit/headless work
+leaves the constructor stack before admitting successors. Navigation commit and
+author readiness have their separate lifetimes. Unmounted preparation neither captures
 passive pixels nor proves native installation. Withdrawing the request retires the
 session through its existing checkpoint and submitted-capture tail; detaching a
 representable alone does not replace the executor. Each program retains its

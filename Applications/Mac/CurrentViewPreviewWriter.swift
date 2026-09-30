@@ -179,7 +179,10 @@ enum CurrentViewPreviewWriter {
           try NotebookStore.pageVisionSourceRevision(page) == request.sourceRevision else {
           throw PreviewError.sourceChanged
         }
-        if !store.hasCurrentPageVision(page) { try PagePreviewWriter.write(page, store: store) }
+        if !store.hasCurrentPageVision(page) {
+          if !page.drawingData.isEmpty { try await InkRasterRenderer.shared.prepareInk() }
+          try PagePreviewWriter.write(page, store: store)
+        }
         try Task.checkCancellation()
         guard try NotebookStore.pageVisionSourceRevision(store.loadPage(page.id)) == request.sourceRevision,
           store.hasCurrentPageVision(page) else { throw PreviewError.sourceChanged }

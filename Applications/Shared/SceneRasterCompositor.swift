@@ -310,6 +310,7 @@ final class SceneRasterCompositor {
                 camera:$0,viewport:.init(x:region.width,y:region.height)) }
                 ?? SpatialInkComposer.localLayers(for:surface,journal:rawJournal,origin:.init(x:region.minX,y:region.minY))
               guard !layers.isEmpty else {return nil as CGImage?}
+              try await InkRasterRenderer.shared.prepareInk()
               guard let image=InkRasterRenderer.shared.render(layers:layers,size:region.size,scale:2) else {
                 throw SceneRenderError.snapshotPending("ink_pixels")
               }

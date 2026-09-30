@@ -15,7 +15,8 @@ struct PenStrokePreview: View {
     .padding(.horizontal, 10)
     .task(id: "\(style.color.rawValue)|\(style.width)|\(style.minimumOpacity)") {
       let style = style
-      let raster = await Task.detached(priority: .utility) {
+      let raster = await Task.detached(priority: .utility) { () -> CGImage? in
+        guard (try? await InkRasterRenderer.shared.prepareInk()) != nil else { return nil }
         let points: [PKStrokePoint] = (0..<80).map { index in
           let t = Double(index) / 79
           return PKStrokePoint(

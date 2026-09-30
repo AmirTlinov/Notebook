@@ -8,12 +8,12 @@ final class SceneRenderResourcesTests: XCTestCase {
   @MainActor
   func testRuntimeConstructionAdmissionEndsBeforeNavigationAndPreservesRunningOwners() async throws {
     let resources = SceneRenderResources()
-    let first = try await resources.acquireWebSurface(priority: .liveProgram, constructsRuntime: true)
-    let second = try await resources.acquireWebSurface(priority: .liveProgram, constructsRuntime: true)
+    let first = try await resources.acquireWebSurface(priority: .liveProgram, constructsView: true)
+    let second = try await resources.acquireWebSurface(priority: .liveProgram, constructsView: true)
     defer { first.release(); second.release() }
-    let cancelled = Task { try await resources.acquireWebSurface(priority: .liveProgram, constructsRuntime: true) }
+    let cancelled = Task { try await resources.acquireWebSurface(priority: .liveProgram, constructsView: true) }
     try await waitUntil { resources.pendingWebRequestCount == 1 }
-    let next = Task { try await resources.acquireWebSurface(priority: .liveProgram, constructsRuntime: true) }
+    let next = Task { try await resources.acquireWebSurface(priority: .liveProgram, constructsView: true) }
     defer { cancelled.cancel(); next.cancel() }
     try await waitUntil { resources.pendingWebRequestCount == 2 }
     cancelled.cancel()
@@ -31,7 +31,7 @@ final class SceneRenderResourcesTests: XCTestCase {
     XCTAssertEqual(resources.activeWebConstructionCount, 2)
     first.finishConstruction()
     XCTAssertEqual(resources.activeWebConstructionCount, 2, "An old completion cannot release another owner's construction")
-    let waiting = Task { try await resources.acquireWebSurface(priority: .liveProgram, constructsRuntime: true) }
+    let waiting = Task { try await resources.acquireWebSurface(priority: .liveProgram, constructsView: true) }
     defer { waiting.cancel() }
     try await waitUntil { resources.pendingWebRequestCount == 1 }
     second.release()
@@ -206,7 +206,7 @@ final class SceneRenderResourcesTests: XCTestCase {
   @MainActor
   func testIdleExecutorReclamationTargetsOneOwnerAndWaitsForItsPhysicalBorrow() async throws {
     let resources = SceneRenderResources(maximumWebSurfaces: 2, maximumBackgroundWebSurfaces: 2,
-      maximumPendingWebRequests: 2, reservedInteractiveSlots: 0)
+      maximumPendingPreparationRequests: 2, reservedInteractiveSlots: 0)
     let first = try await resources.acquireWebSurface(priority: .visible)
     let second = try await resources.acquireWebSurface(priority: .visible)
     let physicalCall = try first.borrow()
@@ -354,7 +354,7 @@ final class SceneRenderResourcesTests: XCTestCase {
 
   @MainActor
   func testImpossibleDerivedSizeAndFullAdmissionQueueFailExplicitly() async throws {
-    let resources = SceneRenderResources(byteLimit: 1_000, profile: .interactive, maximumPendingWebRequests: 1)
+    let resources = SceneRenderResources(byteLimit: 1_000, profile: .interactive, maximumPendingPreparationRequests: 1)
     do { _ = try await resources.acquirePassiveDerivedBytes(501); XCTFail("A request larger than its whole budget must fail") }
     catch { XCTAssertEqual(error as? SceneRenderError, .resourceLimit) }
     XCTAssertEqual(resources.pendingDerivedRequestCount, 0)
@@ -793,7 +793,7 @@ final class SceneRenderResourcesTests: XCTestCase {
 
   @MainActor
   func testFullPassiveQueueLeavesTwoSlotsForTheCurrentPageAndInput() async throws {
-    let resources = SceneRenderResources(maximumWebSurfaces:6, maximumPendingWebRequests:1)
+    let resources = SceneRenderResources(maximumWebSurfaces:6, maximumPendingPreparationRequests:1)
     var passive: [WebSurfaceLease] = []
     for _ in 0..<4 { passive.append(try await resources.acquireWebSurface(priority: .neighbor)) }
     let waiting = Task { try await resources.acquireWebSurface(priority: .visible) }
@@ -937,17 +937,60 @@ final class SceneRenderResourcesTests: XCTestCase {
   }
 
   @MainActor
-  func testQueueRefusesBeyondItsPendingBudget() async throws {
-    let resources = SceneRenderResources(maximumWebSurfaces: 1, maximumPendingWebRequests: 1)
+  func testBackgroundQueueRefusesBeyondItsPreparationBudget() async throws {
+    let resources = SceneRenderResources(maximumWebSurfaces: 1, maximumPendingPreparationRequests: 1)
     let active = try await resources.acquireWebSurface(priority: .input)
-    let waiting = Task { try await resources.acquireWebSurface(priority: .visible) }
+    let waiting = Task { try await resources.acquireWebSurface(priority: .background) }
     try await waitUntil { resources.pendingWebRequestCount == 1 }
     do { _ = try await resources.acquireWebSurface(priority: .background); XCTFail("Queue exceeded its capacity") }
-    catch { XCTAssertEqual(error as? SceneRenderError, .resourceLimit) }
+    catch { XCTAssertEqual(error as? SceneWebAdmissionError, .backgroundQueueFull) }
     waiting.cancel()
     _ = try? await waiting.value
     active.release()
     XCTAssertEqual(resources.activeWebSurfaceCount, 0)
+  }
+
+  @MainActor
+  func testFullBackgroundQueueDoesNotRejectTheAcceptedTwentyFourProgramPage() async throws {
+    let resources = SceneRenderResources(maximumPendingPreparationRequests: 1)
+    let first = try await resources.acquireWebSurface(priority: .liveProgram, constructsView: true)
+    let second = try await resources.acquireWebSurface(priority: .liveProgram, constructsView: true)
+    defer { first.release(); second.release() }
+    let background = Task { try await resources.acquireWebSurface(priority: .background, constructsView: true) }
+    defer { background.cancel() }
+    try await waitUntil { resources.pendingWebRequestCount == 1 }
+    let requests = (0..<24).map { index in Task { @MainActor in
+      let source = InteractiveElementReference.page(pageID: UUID(), elementID: "accepted-\(index)")
+      let lease = try await resources.acquireWebSurface(priority: .liveProgram,
+        source: source, constructsView: true)
+      lease.finishConstruction()
+      return lease
+    } }
+    defer { requests.forEach { $0.cancel() } }
+    try await waitUntil { resources.pendingWebRequestCount == 25 }
+    XCTAssertEqual(resources.activeWebSurfaceCount, 2)
+    XCTAssertEqual(resources.reservedBytes, 0, "Waiting owns neither a new browser nor bitmap backing")
+    first.finishConstruction(); second.finishConstruction()
+    var admitted: [WebSurfaceLease] = []
+    defer { admitted.forEach { $0.release() } }
+    for request in requests { admitted.append(try await request.value) }
+    XCTAssertEqual(admitted.count, 24, "All visible programs retain admission behind the same constructor allowance")
+    let passive = try await background.value
+    passive.release()
+    XCTAssertEqual(resources.pendingWebRequestCount, 0)
+  }
+
+  @MainActor
+  func testWebAdmissionDeadlineReportsWaitingInsteadOfAllocationFailure() async throws {
+    let resources = SceneRenderResources(maximumWebSurfaces: 1)
+    let held = try await resources.acquireWebSurface(priority: .input)
+    defer { held.release() }
+    do {
+      _ = try await resources.acquireWebSurface(priority: .input, deadline: .now + .milliseconds(50))
+      XCTFail("The explicit caller deadline must end its wait")
+    } catch { XCTAssertEqual(error as? SceneWebAdmissionError, .timedOut) }
+    XCTAssertEqual(resources.pendingWebRequestCount, 0)
+    XCTAssertEqual(resources.activeWebSurfaceCount, 1)
   }
 
   @MainActor
@@ -961,14 +1004,38 @@ final class SceneRenderResourcesTests: XCTestCase {
   }
 
   @MainActor
-  func testWebRetryEpochChangesOnlyWhenAdmissionActuallyBecomesAvailable() async throws {
-    let resources = SceneRenderResources(maximumWebSurfaces: 1, maximumPendingWebRequests: 1)
+  func testPromotionReturnsBackgroundQueueCapacityWithoutReplacingTheRequest() async throws {
+    let resources = SceneRenderResources(maximumWebSurfaces: 1, maximumPendingPreparationRequests: 1)
     let held = try await resources.acquireWebSurface(priority: .input)
-    let waiting = Task { try await resources.acquireWebSurface(priority: .visible) }
+    defer { held.release() }
+    let id = UUID()
+    let accepted = Task { try await resources.acquireWebSurface(priority: .background, requestID: id) }
+    defer { accepted.cancel() }
     try await waitUntil { resources.pendingWebRequestCount == 1 }
     let fullEpoch = resources.webAdmissionGeneration
-    do { _ = try await resources.acquireWebSurface(priority: .visible); XCTFail("Full queue admitted another request") }
-    catch { XCTAssertEqual(error as? SceneRenderError, .resourceLimit) }
+    resources.updatePendingWebPriority(id, priority: .input)
+    try await waitUntil { resources.webAdmissionGeneration > fullEpoch }
+    let background = Task { try await resources.acquireWebSurface(priority: .background) }
+    defer { background.cancel() }
+    try await waitUntil { resources.pendingWebRequestCount == 2 }
+    held.release()
+    let promoted = try await accepted.value
+    XCTAssertEqual(promoted.priority, .input)
+    XCTAssertEqual(resources.pendingWebRequestCount, 1)
+    promoted.release()
+    let passive = try await background.value
+    passive.release()
+  }
+
+  @MainActor
+  func testWebRetryEpochChangesOnlyWhenAdmissionActuallyBecomesAvailable() async throws {
+    let resources = SceneRenderResources(maximumWebSurfaces: 1, maximumPendingPreparationRequests: 1)
+    let held = try await resources.acquireWebSurface(priority: .input)
+    let waiting = Task { try await resources.acquireWebSurface(priority: .background) }
+    try await waitUntil { resources.pendingWebRequestCount == 1 }
+    let fullEpoch = resources.webAdmissionGeneration
+    do { _ = try await resources.acquireWebSurface(priority: .background); XCTFail("Full queue admitted another request") }
+    catch { XCTAssertEqual(error as? SceneWebAdmissionError, .backgroundQueueFull) }
     XCTAssertEqual(resources.webAdmissionGeneration, fullEpoch)
     XCTAssertTrue(resources.store(image(), for: element("not-a-web-capacity-event")))
     XCTAssertEqual(resources.webAdmissionGeneration, fullEpoch,

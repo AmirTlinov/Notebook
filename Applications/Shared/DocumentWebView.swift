@@ -755,7 +755,7 @@ final class DocumentWebCoordinator: NSObject,
     recordPreparation(.admissionRequestedAt)
     acquisitionTask = Task { [weak self] in
       do {
-        let lease = try await resources.acquireWebSurface(priority: priority)
+        let lease = try await resources.acquireWebSurface(priority: priority, constructsView: true)
         guard let self, !Task.isCancelled, !isInvalidated, acquisitionID == id, let host = self.host else {
           lease.release(); return
         }
@@ -2498,6 +2498,7 @@ private enum DocumentWebViewFactory {
         baseURL: nil
       )
     }
+    lease.finishConstruction()
     return webView
   }
 }

@@ -21,6 +21,9 @@ struct AgentOverlayView: View {
   var rasterPreparation: PageRasterPreparation.Context? = nil
   var preparations: PageAgentPreparationOwner? = nil
   var onFailure: (PageTurnPreparationFailure) -> Void = { _ in }
+  #if DEBUG
+  var onReadinessDiagnostic: (@escaping () -> String) -> Void = { _ in }
+  #endif
 
   @State private var readiness = AgentOverlayReadiness()
   @State private var readinessID = UUID()
@@ -193,7 +196,12 @@ struct AgentOverlayView: View {
     }
     .coordinateSpace(name: NotebookManipulationSpace.material)
     .frame(width:pageSize.width,height:pageSize.height,alignment:.topLeading)
-    .onChange(of: presentationID, initial: true) { _, _ in readiness.publish() }
+    .onChange(of: presentationID, initial: true) { [readiness] _, _ in
+      #if DEBUG
+      onReadinessDiagnostic { [weak readiness] in readiness?.diagnostic() ?? "retired" }
+      #endif
+      readiness.publish()
+    }
   }
 }
 
@@ -222,6 +230,18 @@ struct AgentOverlayView: View {
   private var publisher: ((Bool, PageElementErasurePresentation) -> Void)?
   private var sources: [String: AgentElement] = [:]
   private var materials: [String: NotebookInkMaterialReadiness] = [:]
+  #if DEBUG
+  func diagnostic() -> String {
+    guard let presentation else { return "unprepared" }
+    let waiting = presentation.elements.values.compactMap { element -> String? in
+      let sourceReady = presentation.erasedIDs.contains(element.id) || [.graphic,.nativeText].contains(element.kind)
+        || sources[element.id] == element
+      let materialReady = (materials[element.id] ?? .init()).isReady(for: presentation.materials[element.id] ?? [])
+      return sourceReady && materialReady ? nil : "\(element.id):source=\(sourceReady),material=\(materialReady)"
+    }.sorted()
+    return "waiting=\(waiting)"
+  }
+  #endif
 
   /// Called once by body. No callback below reads the model or rebuilds layout.
   /// The publisher captures only the parent's callbacks, never this ledger.

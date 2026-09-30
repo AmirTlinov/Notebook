@@ -302,6 +302,7 @@ enum NotebookPinnedImageRenderer {
         layout: layout, size: presentation?.bodySize ?? frame.size, erasures: erasures).prepared()
       if let graphic = element.graphic {
         guard graphic.connection == nil || layout != nil else { throw SceneRenderError.snapshotPending("historical_graphic_dependencies") }
+        if graphic.freehand != nil { try await InkRasterRenderer.shared.prepareInk() }
         try await canvas.drawView(NotebookGraphicView(graphic: graphic,layout:layout,erasures:erasures,appearance:appearance,live:false), size: frame.size, in: frame)
       } else if element.kind == .nativeText {
         try await canvas.drawView(NotebookPlacedElement(presentation:presentation) {

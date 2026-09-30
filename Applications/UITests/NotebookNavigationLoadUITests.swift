@@ -22,27 +22,26 @@ import XCTest
     launch(programs: true, diagnostics: true); let openedImage = try controls(leaf: 0, since: open())
     // A notebook remains fitted on zoom-in. Zoom-out deliberately closes it;
     // it is not the inverse of reading magnification as it is for a document.
-    // Application-level pinch selected a smaller AX hit region whose centre
-    // was inside a program. Target the physical window with its full bounds;
-    // a pair inside one runtime belongs to that runtime, not the scene camera.
+    // The installed page owns this gesture. A Window AX hit point can select
+    // a child program even when its reported frame is the whole screen.
     let window = app.windows.firstMatch
     XCTAssertTrue(window.exists)
     let initialControls = try visibleControlRects(image: openedImage)
-    let paperCentre = CGRect(x: window.frame.midX - 6, y: window.frame.midY - 6,
+    let paperCentre = CGRect(x: surface.frame.midX - 6, y: surface.frame.midY - 6,
       width: 12, height: 12)
     XCTAssertTrue(initialControls.allSatisfy { !$0.intersects(paperCentre) },
       "The scene pinch target centre must be paper rather than one program")
-    func pinchWindow(scale: CGFloat, velocity: CGFloat) {
-      let target = XCTAttachment(string: "target=Window.firstMatch frame=\(window.frame) application=\(app.frame) scale=\(scale) velocity=\(velocity)")
+    func pinchPage(scale: CGFloat, velocity: CGFloat) {
+      let target = XCTAttachment(string: "target=page-turn-surface frame=\(surface.frame) application=\(app.frame) scale=\(scale) velocity=\(velocity)")
       target.name = "Scene pinch public AX target"; target.lifetime = .keepAlways; add(target)
-      window.pinch(withScale: scale, velocity: velocity)
+      surface.pinch(withScale: scale, velocity: velocity)
     }
-    pinchWindow(scale: 1.4, velocity: 1)
+    pinchPage(scale: 1.4, velocity: 1)
     // Inspect the first result before any explicit tap. A misrouted pinch
     // cannot hide a changed program behind the following control action.
     let first = try XCTUnwrap(visibleControlRects().first)
     tapControl(first); try changedControl(first, index: 0)
-    pinchWindow(scale: 1 / 1.4, velocity: -1)
+    pinchPage(scale: 1 / 1.4, velocity: -1)
     let closedScale = min(app.frame.width / 834, app.frame.height / 1194) * 0.72
     // The sheet leaves AX when the pinch starts. Its absence alone cannot
     // acknowledge the closed endpoint; the native cover must reach its pose.

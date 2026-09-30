@@ -266,7 +266,10 @@ struct PageSurface: View {
       onRenderReady.presentationDiagnostic = { [weak readiness, weak receipt = onRenderReady, page] in
         let sources = page.elements.filter { $0.graphic == nil && $0.kind != .nativeText && $0.kind != .group }
         let installed = sources.filter { receipt?.activity?.hasElementFrame(page: receipt?.pageIndex ?? -1, source: agentElementSnapshotSource($0)) == true }.count
-        return "\(readiness?.diagnostic(page) ?? "retired");installedSlots=\(installed)/\(sources.count)"
+        let owners = sources.map { source in
+          "\(source.id):\(receipt?.agentPreparations?.diagnostic(for: source.id) ?? "unowned")"
+        }
+        return "\(readiness?.diagnostic(page) ?? "retired");installedSlots=\(installed)/\(sources.count);owners=\(owners)"
       }
     }
     #endif
@@ -301,7 +304,7 @@ struct PageSurface: View {
   #endif
 
   private func agentOverlay(renderingScale:Double,display:NotebookPageGraphicDisplay) -> some View {
-    AgentOverlayView(page:page,sourceIdentity:page.elementSourceIdentity,renderingScale:renderingScale,preparedDisplay:display,
+    let overlay = AgentOverlayView(page:page,sourceIdentity:page.elementSourceIdentity,renderingScale:renderingScale,preparedDisplay:display,
       allowsInteraction:isVisible && isCurrent,inputEnabled:isVisible && isInteractive,
       onRenderReady:{ ready in
         readiness.recordGraphics(ready,page:page);publishReadiness()
@@ -317,6 +320,13 @@ struct PageSurface: View {
       rasterPreparation:onRenderReady.rasterContext ?? .init(owner:rasterPreparation,pageIndex:0),
       preparations:onRenderReady.activity == nil ? nil : onRenderReady.agentPreparations,
       onFailure:onRenderReady.failed)
+    #if DEBUG
+    var observed = overlay
+    observed.onReadinessDiagnostic = { readiness.graphicsDiagnostic = $0 }
+    return observed
+    #else
+    return overlay
+    #endif
   }
 }
 

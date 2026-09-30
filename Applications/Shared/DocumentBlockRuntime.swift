@@ -154,7 +154,7 @@ final class DocumentBlockRuntime: NSObject, WKScriptMessageHandler, WKNavigation
         observe("program_mounted")
         // Only native construction holds the shared short allowance. Source,
         // package and initial state were accepted before entering this section.
-        Task { @MainActor [weak acquired] in acquired?.finishConstruction() }
+        acquired.finishConstruction()
         let url = try programAssets.register(store: store, package: package) { try html(package: package, resourceOrigin: $0) }
         packageURL = url; initialNavigationPending = true
         web.load(URLRequest(url: url))
@@ -167,7 +167,7 @@ final class DocumentBlockRuntime: NSObject, WKScriptMessageHandler, WKNavigation
       } catch {
         guard startID == request else { return }
         startID = nil; startTask = nil
-        if error as? SceneRenderError == .resourceLimit {
+        if error as? SceneWebAdmissionError == .backgroundQueueFull {
           refusedAdmission = resources.webAdmissionGeneration
           withObservationTracking { _ = resources.webAdmissionGeneration } onChange: { [weak self] in
             Task { @MainActor [weak self] in

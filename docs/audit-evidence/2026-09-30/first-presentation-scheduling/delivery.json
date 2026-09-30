@@ -1,0 +1,85 @@
+{
+  "format": 1,
+  "status": "installed-connected-pair",
+  "baseCommit": "9437b32fe4571cce1dce5d4648991bc9b2658c8a",
+  "version": "0.3.156",
+  "build": "226",
+  "previousBuild": "225",
+  "sourceSHA256": "18a5cbf03740f12d40127809f4674ea89404cd317348f09b669eab6a636c4e47",
+  "fullAcceptance": false,
+  "scope": "Focused first-presentation repair 31–33 and consolidated web-admission/checkpoint repair.",
+  "verification": {
+    "path": "docs/audit-evidence/2026-09-30/first-presentation-scheduling/results.json",
+    "sha256": "3b9b88b0e70b921ad75bedbc8bb3d4cdcd795150b1fb8bbe7feb39166bfb1a1d"
+  },
+  "buildReceipt": {
+    "path": "/private/tmp/notebook-226-pair-0629/build.json",
+    "sha256": "7a12950832e773626728433134d6b4936b047bae91cf493c7c983117fa9e8a08"
+  },
+  "installationReceipt": {
+    "path": "/private/tmp/notebook-install-226-0634/installation.json",
+    "sha256": "301a63228ebef81e7b96bfaea618e125e7acb2496addf8f11e6b74b94aa5b812",
+    "finishedAt": "2026-09-30T06:36:36.446071+00:00"
+  },
+  "binaryUUIDs": {
+    "iPad": "UUID: D0DDD63C-B549-32B4-A0CF-9861287EC1C5 (arm64)",
+    "mac": "UUID: CFCA8399-0876-395A-9060-BAB9642A7C86 (arm64)"
+  },
+  "postLaunch": {
+    "status": "ready",
+    "checkedAt": "2026-09-30T06:40:33.560478+00:00",
+    "macInstalledHelperStatus": "ready",
+    "iPadPresentationStatus": "ready",
+    "iPadDeviceID": "29DC77FE-8777-41EC-BE98-704F4668A2F4",
+    "iPadSessionID": "70EC7F22-5AC9-4F0A-9938-27093740B02D",
+    "priorSessionID": "5EA2C847-EA93-4C9E-9534-956A7F5E0B13",
+    "workspaceID": "54349F3B-9E0A-4DEA-B990-40CAE04EF45E",
+    "cursor": "52243",
+    "presence": {
+      "boardID": "7E7A0000-0000-4000-8000-000000000003",
+      "camera": {
+        "scale": 1,
+        "center": {
+          "tileY": 0,
+          "localY": 1516.4960114370574,
+          "tileX": 0,
+          "localX": 3355.8232476298454
+        }
+      },
+      "documentPageIndex": 0,
+      "format": 5,
+      "selectedItemID": "AF947D51-7E74-4081-9194-3B5FE07A0F39",
+      "viewport": {
+        "x": 834,
+        "y": 1194
+      },
+      "mode": "page",
+      "openProgress": 1,
+      "focusedItemID": "AF947D51-7E74-4081-9194-3B5FE07A0F39",
+      "notebookPageID": "C74869CD-CE04-4AC2-A12E-66B00996B8E6"
+    },
+    "macInstalledVersion": "0.3.156",
+    "macInstalledBuild": "226",
+    "iPadInstalledVersion": "0.3.156",
+    "iPadInstalledBuild": "226",
+    "iPadNotebookApps": [
+      {
+        "bundleID": "com.amirtlinov.notebook.preview",
+        "name": "Notebook Lab",
+        "build": "226"
+      }
+    ],
+    "qaOrTestAppsPresent": false,
+    "inPlaceUpdate": true,
+    "dataContainerPathChanged": true,
+    "identityRetention": "Previously trusted device authenticated with its existing identity and a new session in the same workspace; page/camera presence restored. No data reset or archive restore.",
+    "visibleMacCheck": {
+      "status": "unavailable",
+      "checkedAt": "2026-09-30T06:38:22Z",
+      "reason": "Fresh Computer Use getApp(\"Notebook\") failed with ScreenCaptureKit SCStreamErrorDomain -3811."
+    },
+    "scope": "Installed Release pair launch, existing admitted device/workspace/session rollover, native presence and app inventory. Gesture, pixel and scheduling receipts retain their own source scopes.",
+    "path": "/private/tmp/notebook-install-226-0634/post-launch-check.json",
+    "sha256": "3f4074fb415b610256326b5437851cef2f548c56ccd2854302f7e5dd95fb3f7d"
+  }
+}

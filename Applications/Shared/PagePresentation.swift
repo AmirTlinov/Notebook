@@ -15,8 +15,9 @@ struct PageInkPresentation:Equatable {
   private var graphics:ObjectIdentifier?
   private var shownGraphics:(id:UUID,size:PageSize,stamp:VersionStamp)?
   #if DEBUG
+  var graphicsDiagnostic: (() -> String)?
   func diagnostic(_ page: PageDocument) -> String {
-    "paper=\(paperIsReady(page)),graphics=\(String(describing: graphics)),accepted=\(page.elementSourceIdentity),ink=\(String(describing: ink)),expectedInk=\(page.drawingStamp)"
+    "paper=\(paperIsReady(page)),graphics=\(String(describing: graphics)),accepted=\(page.elementSourceIdentity),ink=\(String(describing: ink)),expectedInk=\(page.drawingStamp);\(graphicsDiagnostic?() ?? "no_graphics_diagnostic")"
   }
   #endif
   func recordInk(_ receipt:PageInkPresentation?) { ink=receipt }

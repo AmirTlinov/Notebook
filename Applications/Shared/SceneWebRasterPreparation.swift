@@ -48,7 +48,7 @@ final class SceneWebRasterPreparation {
     permitsPreparation: @MainActor () -> Bool) async throws -> SceneWebRasterPreparation {
     try Task.checkCancellation()
     guard permitsPreparation() else { throw CancellationError() }
-    let lease = try await resources.acquireWebSurface(priority: priority, source: executionSource)
+    let lease = try await resources.acquireWebSurface(priority: priority, source: executionSource, constructsView: true)
     do {
       try Task.checkCancellation()
       guard permitsPreparation() else { throw CancellationError() }

@@ -4,6 +4,8 @@ import XCTest
 @testable import Notebook
 
 final class InkNormalizationTests: XCTestCase {
+  override func setUp() async throws { try await InkRasterRenderer.shared.prepareInk() }
+
   typealias Source=InkSampleRelations
   typealias Node=InkSampleRelations.Sequence
   private let step=InkRepeatStep(x:InkDyadic(32)!,y:.zero,time:.one)

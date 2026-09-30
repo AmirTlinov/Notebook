@@ -20,7 +20,7 @@ final class DrawingOwnershipTests: XCTestCase {
     let first = ActiveInkStroke(style: .standard)
     first.replaceMeasuredTail(from: 0, with: [point(x: 20, y: 20), point(x: 120, y: 80)])
     canvas.displayActiveStroke(first)
-    XCTAssertFalse(canvas.isPaused)
+    XCTAssertNotNil(canvas.activeContactFrame, "Contact is accepted while the shared renderer prepares")
     canvas.commitActiveSpatialAction()
     for _ in 0..<200 where !canvas.isStableFramePresented {
       canvas.draw()

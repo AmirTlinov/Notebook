@@ -6,6 +6,8 @@ import XCTest
 @testable import Notebook
 
 final class InkSourceIntegrationTests: XCTestCase {
+  override func setUp() async throws { try await InkRasterRenderer.shared.prepareInk() }
+
   func testReopenedCopiesShareOneBodyThroughEditAndRaster() throws {
     let root=FileManager.default.temporaryDirectory.appendingPathComponent("native-shared-ink-\(UUID())")
     defer { try? FileManager.default.removeItem(at:root) }

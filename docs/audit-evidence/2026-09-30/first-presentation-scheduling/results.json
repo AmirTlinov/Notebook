@@ -1,0 +1,389 @@
+{
+  "format": 1,
+  "recordedAt": "2026-09-30T06:37:37.007334+00:00",
+  "baseCommit": "9437b32fe4571cce1dce5d4648991bc9b2658c8a",
+  "version": "0.3.156",
+  "build": "226",
+  "releaseSourceSHA256": "18a5cbf03740f12d40127809f4674ea89404cd317348f09b669eab6a636c4e47",
+  "physicalDevice": {
+    "udid": "00008103-001E059934D9001E",
+    "model": "iPad Pro (11-inch) (3rd generation)",
+    "os": "27.0 (24A435)",
+    "nominalDisplayHz": 120
+  },
+  "runs": [
+    {
+      "label": "native-and-original-ui",
+      "sourceSHA256": "806aa5f19def02ca4183154c43b834cf7f80788a55eaad90688b49b8abd2d722",
+      "sourceChangesToRelease": [
+        "Applications/UITests/NotebookNavigationLoadUITests.swift"
+      ],
+      "summary": {
+        "result": "Failed",
+        "passedTests": 22,
+        "failedTests": 1,
+        "skippedTests": 0,
+        "runtimeWarnings": [],
+        "startTime": 1790748704.893,
+        "finishTime": 1790748730.301,
+        "testFailures": [
+          {
+            "failureText": "XCTAssertEqual failed: (\"23\") is not equal to (\"24\") - Expected 24 visibly unchanged controls",
+            "targetName": "NotebookUITests",
+            "testIdentifier": 23,
+            "testIdentifierString": "NotebookNavigationLoadUITests/testTwentyFourPageProgramsAcceptFirstTapAfterZoomAndKeepStateAcrossTurns()",
+            "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookUITests/NotebookNavigationLoadUITests/testTwentyFourPageProgramsAcceptFirstTapAfterZoomAndKeepStateAcrossTurns",
+            "testName": "testTwentyFourPageProgramsAcceptFirstTapAfterZoomAndKeepStateAcrossTurns()"
+          }
+        ]
+      },
+      "tests": [
+        {
+          "nodeIdentifier": "DocumentBlockRuntimeTests/testAFullAdmissionQueueResumesTheVisibleRuntimeOnActualCapacityRelease()",
+          "result": "Passed",
+          "durationInSeconds": 0.24612092971801758
+        },
+        {
+          "nodeIdentifier": "DocumentBlockRuntimeTests/testCheckpointFreezesTheActualAnimatedMomentBeforeAcceptingStateAndPixels()",
+          "result": "Passed",
+          "durationInSeconds": 0.49171197414398193
+        },
+        {
+          "nodeIdentifier": "DrawingOwnershipTests/testEmptyMountedCoverIsReadyWithoutDrawableAndItsFirstStrokeStillRenders()",
+          "result": "Passed",
+          "durationInSeconds": 0.11517095565795898
+        },
+        {
+          "nodeIdentifier": "NotebookPageCurlInteractionTests/testCancellationAtPagePublicationDiscardsScheduledPixelsAndStopsUpdates()",
+          "result": "Passed",
+          "durationInSeconds": 0.07787108421325684
+        },
+        {
+          "nodeIdentifier": "NotebookPageCurlInteractionTests/testCancellingAnAdmittedPairDrainsBothCapturesWithoutPublishing()",
+          "result": "Passed",
+          "durationInSeconds": 0.033161044120788574
+        },
+        {
+          "nodeIdentifier": "NotebookPageCurlInteractionTests/testExpiredBurstCadenceDoesNotSnapAStationaryCancelledContact()",
+          "result": "Passed",
+          "durationInSeconds": 0.05806601047515869
+        },
+        {
+          "nodeIdentifier": "NotebookPageCurlInteractionTests/testLiveHostReadinessCycleDoesNotDiscardAnAcceptedImmutablePair()",
+          "result": "Passed",
+          "durationInSeconds": 1.0329079627990723
+        },
+        {
+          "nodeIdentifier": "NotebookPageCurlInteractionTests/testPageShaderKeepsTextureOrientationAndExactFlatEndpoints()",
+          "result": "Passed",
+          "durationInSeconds": 0.24660992622375488
+        },
+        {
+          "nodeIdentifier": "NotebookPageCurlInteractionTests/testPresentedEndpointWaitsForTheSameLiveLandingToBecomeReadyWithoutRecapture()",
+          "result": "Passed",
+          "durationInSeconds": 0.3904160261154175
+        },
+        {
+          "nodeIdentifier": "NotebookPageCurlInteractionTests/testRegrabPreservesTheVisiblePoseAndReusesThePair()",
+          "result": "Passed",
+          "durationInSeconds": 0.23241496086120605
+        },
+        {
+          "nodeIdentifier": "NotebookPageCurlInteractionTests/testSettlementTracksVelocityStrokeDurationAndCadenceWithoutAMinimum()",
+          "result": "Passed",
+          "durationInSeconds": 0.0011199712753295898
+        },
+        {
+          "nodeIdentifier": "PreparedAgentElementViewTests/testBackgroundCheckpointsIndependentProgramsWithoutRestartingFailedHiddenModels()",
+          "result": "Passed",
+          "durationInSeconds": 4.323725938796997
+        },
+        {
+          "nodeIdentifier": "PreparedAgentElementViewTests/testRetiringPageProgramWritesItsFrozenModelAndRestoresThatMoment()",
+          "result": "Passed",
+          "durationInSeconds": 0.5992510318756104
+        },
+        {
+          "nodeIdentifier": "PreparedAgentElementViewTests/testRetiringRetainedPageCancelsItsQueuedWebAdmission()",
+          "result": "Passed",
+          "durationInSeconds": 0.002024054527282715
+        },
+        {
+          "nodeIdentifier": "PreparedAgentElementViewTests/testUnchangedProgramCheckpointDoesNotInvalidateThePageReadWindow()",
+          "result": "Passed",
+          "durationInSeconds": 0.5456880331039429
+        },
+        {
+          "nodeIdentifier": "SceneRenderResourcesTests/testBackgroundQueueRefusesBeyondItsPreparationBudget()",
+          "result": "Passed",
+          "durationInSeconds": 0.003086090087890625
+        },
+        {
+          "nodeIdentifier": "SceneRenderResourcesTests/testFullBackgroundQueueDoesNotRejectTheAcceptedTwentyFourProgramPage()",
+          "result": "Passed",
+          "durationInSeconds": 0.10665392875671387
+        },
+        {
+          "nodeIdentifier": "SceneRenderResourcesTests/testPromotionReturnsBackgroundQueueCapacityWithoutReplacingTheRequest()",
+          "result": "Passed",
+          "durationInSeconds": 0.008008956909179688
+        },
+        {
+          "nodeIdentifier": "SceneRenderResourcesTests/testRuntimeConstructionAdmissionEndsBeforeNavigationAndPreservesRunningOwners()",
+          "result": "Passed",
+          "durationInSeconds": 0.019104957580566406
+        },
+        {
+          "nodeIdentifier": "SceneRenderResourcesTests/testWebAdmissionDeadlineReportsWaitingInsteadOfAllocationFailure()",
+          "result": "Passed",
+          "durationInSeconds": 0.05159103870391846
+        },
+        {
+          "nodeIdentifier": "SceneRenderResourcesTests/testWebRetryEpochChangesOnlyWhenAdmissionActuallyBecomesAvailable()",
+          "result": "Passed",
+          "durationInSeconds": 0.002176046371459961
+        },
+        {
+          "nodeIdentifier": "VectorInkRenderingTests/testIndexedCroppedRasterMatchesWholeVectorSourceAfterShear()",
+          "result": "Passed",
+          "durationInSeconds": 0.009328007698059082
+        },
+        {
+          "nodeIdentifier": "NotebookNavigationLoadUITests/testTwentyFourPageProgramsAcceptFirstTapAfterZoomAndKeepStateAcrossTurns()",
+          "result": "Failed",
+          "durationInSeconds": 10.651185035705566
+        }
+      ],
+      "evidence": [
+        {
+          "path": "/private/tmp/notebook-226-final-0610/ipad-summary.json",
+          "sha256": "2e5d1dbafbc45737dbd1cbc162466f97f7e9863a1351ea5881f25860e781374c"
+        },
+        {
+          "path": "/private/tmp/notebook-226-final-0610/ipad-tests.json",
+          "sha256": "f363160f2cdb5a22138683152389bc2e3ec1e171b00e63b24602bfb6db3c7579"
+        },
+        {
+          "path": "/private/tmp/notebook-226-final-0610/source-before.json",
+          "sha256": "7ac3ad854f9435a11133ad25619b010d2eef3d21e942bf7370400afd01f4a31e"
+        }
+      ],
+      "interpretation": "22 native tests passed on unchanged product/native-test sources. One Window-pinch UI failure is retained; changed only the existing page-turn-surface gesture target for the following UI run."
+    },
+    {
+      "label": "corrected-ui24",
+      "sourceSHA256": "18a5cbf03740f12d40127809f4674ea89404cd317348f09b669eab6a636c4e47",
+      "sourceChangesToRelease": [],
+      "summary": {
+        "result": "Passed",
+        "passedTests": 1,
+        "failedTests": 0,
+        "skippedTests": 0,
+        "runtimeWarnings": [],
+        "startTime": 1790749406.739,
+        "finishTime": 1790749490.23,
+        "testFailures": []
+      },
+      "tests": [
+        {
+          "nodeIdentifier": "NotebookNavigationLoadUITests/testTwentyFourPageProgramsAcceptFirstTapAfterZoomAndKeepStateAcrossTurns()",
+          "result": "Passed",
+          "durationInSeconds": 80.07061493396759
+        }
+      ],
+      "evidence": [
+        {
+          "path": "/private/tmp/notebook-226-pinch-target-0622/ipad-summary.json",
+          "sha256": "ffe3e2cee6ee8ca2fd9dea84d95477e83e8b09e51a63073ce1efeee34f0fbd74"
+        },
+        {
+          "path": "/private/tmp/notebook-226-pinch-target-0622/ipad-tests.json",
+          "sha256": "6bd95c336606b88016b0395dbc0fa93f4ffece3aee64cc1e3e009134ed45b4ee"
+        },
+        {
+          "path": "/private/tmp/notebook-226-pinch-target-0622/source-before.json",
+          "sha256": "ce84d7654831c74710836e871e822378ee8869837e5ba35dcf62fd4ef4b2c3d2"
+        },
+        {
+          "path": "/private/tmp/notebook-226-pinch-target-0622/verification.json",
+          "sha256": "48d9512eeeb0699ee5adc5b45529745f8c3a5434338289c26ffd3550f3f5b1b5"
+        }
+      ]
+    },
+    {
+      "label": "mac-render-and-checkpoint",
+      "sourceSHA256": "18a5cbf03740f12d40127809f4674ea89404cd317348f09b669eab6a636c4e47",
+      "sourceChangesToRelease": [],
+      "summary": {
+        "result": "Passed",
+        "passedTests": 4,
+        "failedTests": 0,
+        "skippedTests": 0,
+        "runtimeWarnings": [],
+        "startTime": 1790749647.436,
+        "finishTime": 1790749649.489,
+        "testFailures": []
+      },
+      "tests": [
+        {
+          "nodeIdentifier": "DocumentRuntimeTests/testSpatialCheckpointKeepsItsOwnerOnWriterRefusalAndCapturesTheAcceptedState()",
+          "result": "Passed",
+          "durationInSeconds": 0.35822808742523193
+        },
+        {
+          "nodeIdentifier": "NotebookGraphicRenderingTests/testRetainedPressureInkAndNativePageTextUseTheNativeExportPlane()",
+          "result": "Passed",
+          "durationInSeconds": 0.16352593898773193
+        },
+        {
+          "nodeIdentifier": "PageVisionPreviewTests/testReadingContrastMakesLightNativeInkVisibleAndKeepsTheMap()",
+          "result": "Passed",
+          "durationInSeconds": 0.012040019035339355
+        },
+        {
+          "nodeIdentifier": "SceneRasterCompositionTests/testInkTilesKeepTheWholeMetalRasterAtFractionalProjectionAndEraserSeams()",
+          "result": "Passed",
+          "durationInSeconds": 0.13056302070617676
+        }
+      ],
+      "evidence": [
+        {
+          "path": "/private/tmp/notebook-226-mac-final-0625/mac-summary.json",
+          "sha256": "c642460d2c130280eab90b4ad2af0a1d567846513907bcd0bd1b6f4f24361ff3"
+        },
+        {
+          "path": "/private/tmp/notebook-226-mac-final-0625/mac-tests.json",
+          "sha256": "bce27b7efc453e2daa7151251f034cb191c81c411146b526b680de10f9a58ce4"
+        },
+        {
+          "path": "/private/tmp/notebook-226-mac-final-0625/source-before.json",
+          "sha256": "ce84d7654831c74710836e871e822378ee8869837e5ba35dcf62fd4ef4b2c3d2"
+        },
+        {
+          "path": "/private/tmp/notebook-226-mac-final-0625/verification.json",
+          "sha256": "e7355ff924042dab002770a151fda529b9c0b44c597e10d9f4eb073a82c89ff1"
+        }
+      ]
+    },
+    {
+      "label": "final-scheduling-observations",
+      "sourceSHA256": "806aa5f19def02ca4183154c43b834cf7f80788a55eaad90688b49b8abd2d722",
+      "sourceChangesToRelease": [
+        "Applications/UITests/NotebookNavigationLoadUITests.swift"
+      ],
+      "summary": {
+        "result": "Passed",
+        "passedTests": 3,
+        "failedTests": 0,
+        "skippedTests": 0,
+        "runtimeWarnings": [],
+        "startTime": 1790748454.536,
+        "finishTime": 1790748511.218,
+        "testFailures": []
+      },
+      "tests": [
+        {
+          "nodeIdentifier": "NotebookFirstPresentationSchedulingTests/testColdProgramConstructorsAgainstUIOpportunities()",
+          "result": "Passed",
+          "durationInSeconds": 1.620906949043274
+        },
+        {
+          "nodeIdentifier": "NotebookFirstPresentationSchedulingTests/testFirstCurlAgainstUIAndOSBoundaries()",
+          "result": "Passed",
+          "durationInSeconds": 0.3753160238265991
+        },
+        {
+          "nodeIdentifier": "NotebookFirstPresentationSchedulingTests/testFirstHeldDotAgainstUIAndOSBoundaries()",
+          "result": "Passed",
+          "durationInSeconds": 0.23695802688598633
+        }
+      ],
+      "evidence": [
+        {
+          "path": "/private/tmp/notebook-226-cold-final-0606/ipad-summary.json",
+          "sha256": "c4d32831d83a6b1a23d7f39f90e80e40cb4a4eb838b3a8e892ad975a7f5585a5"
+        },
+        {
+          "path": "/private/tmp/notebook-226-cold-final-0606/ipad-tests.json",
+          "sha256": "912dec230ad279fda76208216b036a79ab09ff182b1702e2374db526f2aac93f"
+        },
+        {
+          "path": "/private/tmp/notebook-226-cold-final-0606/source-before.json",
+          "sha256": "7ac3ad854f9435a11133ad25619b010d2eef3d21e942bf7370400afd01f4a31e"
+        },
+        {
+          "path": "/private/tmp/notebook-226-cold-final-0606/verification.json",
+          "sha256": "7fd187b544df61ed9b9668a1fce180b2b80bb407f604a2014d6c9a36edcaa629"
+        }
+      ],
+      "interpretation": "Three source-clock coverage observations; not strict latency acceptance. Dot/curl are later warm operations in the cold24 process."
+    },
+    {
+      "label": "checkpoint-source-regression",
+      "sourceSHA256": "806aa5f19def02ca4183154c43b834cf7f80788a55eaad90688b49b8abd2d722",
+      "sourceChangesToRelease": [
+        "Applications/UITests/NotebookNavigationLoadUITests.swift"
+      ],
+      "summary": {
+        "result": "Passed",
+        "passedTests": 2,
+        "failedTests": 0,
+        "skippedTests": 0,
+        "runtimeWarnings": [],
+        "startTime": 1790748101.78,
+        "finishTime": 1790748205.026,
+        "testFailures": []
+      },
+      "tests": [
+        {
+          "nodeIdentifier": "PreparedAgentElementViewTests/testPassivePageWithMatchingFocusDoesNotExecuteInteractiveContent()",
+          "result": "Passed",
+          "durationInSeconds": 0.25204408168792725
+        },
+        {
+          "nodeIdentifier": "PreparedAgentElementViewTests/testRetiringPageProgramWritesItsFrozenModelAndRestoresThatMoment()",
+          "result": "Passed",
+          "durationInSeconds": 0.6530259847640991
+        }
+      ],
+      "evidence": [
+        {
+          "path": "/private/tmp/notebook-226-checkpoint-source-0601/ipad-summary.json",
+          "sha256": "b708074e71445201a5ad3d3a570a14f6837abbdf3d13eafaafe2fff3bd34ec3f"
+        },
+        {
+          "path": "/private/tmp/notebook-226-checkpoint-source-0601/ipad-tests.json",
+          "sha256": "6476aa317a0d6fec3bf02cebbd7200315d1de744af472905a41499f6bc6f6caf"
+        },
+        {
+          "path": "/private/tmp/notebook-226-checkpoint-source-0601/source-before.json",
+          "sha256": "7ac3ad854f9435a11133ad25619b010d2eef3d21e942bf7370400afd01f4a31e"
+        },
+        {
+          "path": "/private/tmp/notebook-226-checkpoint-source-0601/verification.json",
+          "sha256": "a74fff05d967942cf120c5924f84eb9a11311490c6ed4e8eb85bce784af516cd"
+        }
+      ]
+    }
+  ],
+  "functionalScope": {
+    "unchangedNativeTestsPassed": 22,
+    "releaseUI24Passed": 1,
+    "releaseMacTestsPassed": 4,
+    "skip": 0,
+    "runtimeWarnings": 0,
+    "fullAcceptance": false
+  },
+  "preservedNegativeEvidence": [
+    "pinch-harness-target.json",
+    "admission-return-before.json",
+    "rejected-visible-container-experiment.json"
+  ],
+  "remaining": {
+    "strictLatencyBudgets": "open",
+    "firstCurlInitialSystemDiscardReason": "open; exact GPU, CA and display-swap boundaries established, no confirmed additional application wait",
+    "coldWebKitLaunchIPC": "combined interval remains to be separated; constructor and UI stages are measured independently",
+    "hardwarePencilInputDelivery": "not measured by native injected contact",
+    "fullAcceptance": "10 repetitions plus CPU/GPU/memory and 30-minute joint scenario not performed"
+  }
+}

@@ -6,6 +6,8 @@ import XCTest
 @testable import Notebook
 
 final class InkRepeatTests: XCTestCase {
+  override func setUp() async throws { try await InkRasterRenderer.shared.prepareInk() }
+
   private func sample(_ i: Int) -> SpatialInkSample {
     .init(point:.init(x:20+Double(i)/4,y:40+Double(i%13)/2),timeOffset:Double(i)/128,
       width:4,opacity:0.5,force:Double(i%7)/8,azimuth:Double(i%9)/8,altitude:0.5)

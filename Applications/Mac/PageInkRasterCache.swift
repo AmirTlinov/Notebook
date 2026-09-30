@@ -29,6 +29,7 @@ final class PageInkRasterCache {
     let task = Task { [weak self] in
       let image = await Task.detached(priority: .utility) { () -> CGImage? in
         guard let drawing = try? PageInkDrawing.decode(page.drawingData) else { return nil }
+        guard (try? await InkRasterRenderer.shared.prepareInk()) != nil else { return nil }
         return InkRasterRenderer.shared.page(drawing.presenting(excluding: key.suppressed), size: .init(width: page.size.width, height: page.size.height))
       }.value
       guard let self else { return }

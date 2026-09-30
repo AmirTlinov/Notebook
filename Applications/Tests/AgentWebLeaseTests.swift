@@ -450,7 +450,7 @@ final class AgentWebLeaseTests: XCTestCase {
 
   @MainActor
   func testColdLiveProgramCapturesOnlyWhenItsMaterialIsRequested() async throws {
-    let resources = SceneRenderResources(), lease = try await resources.acquireWebSurface(priority: .input, constructsRuntime: true)
+    let resources = SceneRenderResources(), lease = try await resources.acquireWebSurface(priority: .input, constructsView: true)
     let owner = AgentWebCoordinator(lease: lease, resources: resources, onState: { _, _ in false })
     owner.use(passiveSnapshot: false)
     let web = AgentWebCoordinator.makeWebView(coordinator: owner)

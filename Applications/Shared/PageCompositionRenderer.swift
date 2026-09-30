@@ -104,6 +104,7 @@ enum PageCompositionRenderer {
       let appearance = try await NotebookElementErasureCache.Input(graphic: element.graphic,
         layout: layout, size: presentation?.bodySize ?? frame.size, erasures: cuts).prepared()
       if let graphic = element.graphic {
+        if graphic.freehand != nil, paintsMeasuredBody { try await InkRasterRenderer.shared.prepareInk() }
         try await canvas.drawView(NotebookGraphicView(graphic: graphic, layout:layout, erasures:cuts,appearance:appearance,live:false,paintsMeasuredBody:paintsMeasuredBody), size: frame.size, in: frame)
         continue
       }
@@ -178,6 +179,7 @@ enum PageCompositionRenderer {
       // No extracted body: preserve the existing forward page specialization.
       let worker=Task.detached(priority:.utility) {
         try Task.checkCancellation()
+        try await InkRasterRenderer.shared.prepareInk()
         guard let image=InkRasterRenderer.shared.page(drawing.presenting(excluding:plan.suppressedInkIDs),size:size) else {
           throw SceneRenderError.snapshotPending("ink_pixels")
         }

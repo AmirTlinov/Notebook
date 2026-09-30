@@ -6,6 +6,8 @@ import XCTest
 @testable import Notebook
 
 final class PageVisionPreviewTests: XCTestCase {
+  override func setUp() async throws { try await InkRasterRenderer.shared.prepareInk() }
+
   @MainActor
   func testReadingContrastMakesLightNativeInkVisibleAndKeepsTheMap() throws {
     let samples = [30.0, 220.0].map { x in

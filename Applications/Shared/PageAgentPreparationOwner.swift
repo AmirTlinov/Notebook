@@ -58,6 +58,10 @@ final class PageAgentPreparationOwner {
     return owner
   }
 
+  #if DEBUG
+  func diagnostic(for id: String) -> String { elements[id]?.diagnostic() ?? "unowned" }
+  #endif
+
   /// Source publication is independent of a mounted shell. Preserve each
   /// runtime's role and heap while replacing its exact source/state and crop.
   func reconcile(page: PageDocument, model: NotebookAppModel) {

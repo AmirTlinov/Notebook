@@ -117,12 +117,13 @@ struct NotebookTerminalView: UIViewRepresentable {
     func mount(_ view: UIView) {
       preparation = Task { [weak self, weak view] in
         do {
-          let lease = try await SceneRenderResources.shared.acquireWebSurface(priority: .input)
+          let lease = try await SceneRenderResources.shared.acquireWebSurface(priority: .input, constructsView: true)
           guard let self, let view, !closed, !Task.isCancelled else { lease.release(); return }
           self.lease = lease
           let configuration = WKWebViewConfiguration(); configuration.websiteDataStore = .nonPersistent()
           configuration.userContentController.add(self, name: "notebookTerminal")
           let web = WKWebView(frame: view.bounds, configuration: configuration)
+          lease.finishConstruction()
           web.autoresizingMask = [.flexibleWidth, .flexibleHeight]; web.navigationDelegate = self
           web.scrollView.isScrollEnabled = false; web.isOpaque = true
           self.web = web; view.addSubview(web)

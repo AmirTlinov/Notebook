@@ -28,6 +28,11 @@ final class PreparedAgentElementPreparationOwner {
     let fallbackEntryID: UUID?
     let runtimeFailure: AgentWebSourceFailure?
     var webPriority: WebPriority { active ? (inputEnabled && focused ? .input : .liveProgram) : .visible }
+    func accepting(source: AgentElement, basis: NotebookProgramStateBasis?) -> Self {
+      .init(source: source, basis: basis, active: active, inputEnabled: inputEnabled,
+        focused: focused, permitsPreparation: permitsPreparation, policy: policy,
+        capture: capture, fallbackEntryID: fallbackEntryID, runtimeFailure: runtimeFailure)
+    }
     func hasSamePreparation(as other: Self) -> Bool {
       source == other.source && basis == other.basis && active == other.active
         && permitsPreparation == other.permitsPreparation && policy == other.policy
@@ -77,6 +82,12 @@ final class PreparedAgentElementPreparationOwner {
   private var failedCapturePolicy: AgentSnapshotPolicy?
   @ObservationIgnored private var failedCaptureAdmission: SceneRasterAdmission?
   private var waitingForAdmission = false
+  #if DEBUG
+  @ObservationIgnored private var rejectedWebAdmission: String?
+  func diagnostic() -> String {
+    "active=\(demand?.active == true),web=\(web != nil),live=\(showsLiveProgram),waiting=\(waitingForAdmission),failure=\(failure ?? "none"),rejection=\(rejectedWebAdmission ?? "none")"
+  }
+  #endif
   #if os(iOS)
   private(set) var statusPresentation: PageElementStatusPresentation?
   @ObservationIgnored private var statusKey: PageElementStatusPresentation.Key?
@@ -149,6 +160,18 @@ final class PreparedAgentElementPreparationOwner {
   /// work remains charged until its existing physical completion fence.
   func accept(_ configuration: Configuration) {
     guard !isRetired else { return }
+    var configuration = configuration
+    if let current = demand, let basis = current.basis,
+      AgentProgramSource(current.source) == AgentProgramSource(configuration.demand.source),
+      configuration.demand.basis == nil || configuration.demand.basis.map({ basis.hasNewerState(than: $0) }) == true {
+      // A durable checkpoint can precede the writer's SwiftUI echo. The source
+      // owner keeps that exact state/basis while accepting geometry and role
+      // changes from a preceding projection. A newer writer basis wins normally.
+      configuration = .init(model: configuration.model,
+        demand: configuration.demand.accepting(source: configuration.demand.source.updating(state: current.source.state), basis: basis),
+        focus: configuration.focus, pageTurnActivity: configuration.pageTurnActivity,
+        rasterPreparation: configuration.rasterPreparation, cohort: configuration.cohort, onState: configuration.onState)
+    }
     self.configuration = configuration
     guard demand != configuration.demand else { return }
     let previous = demand
@@ -568,19 +591,28 @@ final class PreparedAgentElementPreparationOwner {
     waitingForAdmission = false
     if !demand.active, runtimeWasPresented, let retiring = web,
       liveProgram == AgentProgramSource(demand.source) {
-      // Input has ended, but the same native pixels stay visible until their
-      // current program frame is retained. No source job boots a second copy;
-      // its keyed admission waits for this owner's final submitted borrow.
+      // The departing page first saves its frozen model. Its already accepted
+      // turn keeps the displayed cut; passive image admission cannot retain a
+      // browser after the addressed writer has accepted that model.
       do {
-        let (accepted, captured) = try await AgentWebCoordinator.checkpointCurrent(focus: focus, element: demand.source) { value, basis, admittedBytes in
+        let accepted = try await AgentWebCoordinator.checkpointStateCurrent(focus: focus, element: demand.source, persist: { value, basis, admittedBytes in
           return try await model.checkpointProgramState(focus: focus, rendered: demand.source, value: value, basis: basis, admittedStateBytes: admittedBytes)
-        }
+        }, resources: resources)
         guard !Task.isCancelled, self.request == request,
           self.web?.id == retiring.id, self.demand?.active == false else {
-          captured.release(); await AgentWebCoordinator.resumeCurrent(focus: focus); return
+          await AgentWebCoordinator.resumeCurrent(focus: focus); return
         }
-        raster = captured; preparedSource = accepted
+        if let captured = resources.retainRaster(for: demand.policy.rasterSource(for: accepted.source),
+          minimumScale: demand.policy.minimumScale(for: accepted.source)) {
+          raster = captured; preparedSource = accepted.source
+        }
         failure = nil; failedSource = nil
+        if let configuration = self.configuration {
+          accept(.init(model: configuration.model,
+            demand: configuration.demand.accepting(source: accepted.source, basis: accepted.basis),
+            focus: configuration.focus, pageTurnActivity: configuration.pageTurnActivity,
+            rasterPreparation: configuration.rasterPreparation, cohort: configuration.cohort, onState: configuration.onState))
+        }
       } catch {
         guard !Task.isCancelled, self.request == request,
           self.web?.id == retiring.id, self.demand?.active == false else { return }
@@ -589,7 +621,11 @@ final class PreparedAgentElementPreparationOwner {
         return
       }
       runtimeWasPresented = false; retireRuntime(); releaseWeb(); liveProgram = nil
-      if failure != nil || preparedSource != demand.source { publishReady(false) }
+      if failure != nil || preparedSource != self.demand?.source { publishReady(false) }
+      if self.request == request,
+        preparedSource != self.demand?.source || raster?.image(for: rasterSource, minimumScale: requiredScale) == nil {
+        restart()
+      }
       return
     }
     if preparedSource != demand.source || raster?.source != rasterSource || (raster?.pixelScale ?? 0) + 0.000_001 < requiredScale {
@@ -639,8 +675,8 @@ final class PreparedAgentElementPreparationOwner {
     do {
       NotebookNavigationObservation.webPreparation("prepared_admission_requested", ownerID: request, sourceID: demand.source.id)
       let acquired = try await resources.acquireWebSurface(
-        priority: demand.webPriority, source: focus, constructsRuntime: demand.active,
-        deadline: .now + .seconds(8), requestID: request)
+        priority: demand.webPriority, source: focus, constructsView: true,
+        requestID: request)
       NotebookNavigationObservation.webPreparation("prepared_admission_acquired", ownerID: request, sourceID: demand.source.id)
       guard !Task.isCancelled, self.request == request,
         model.shutdownPhase != .stopped, let current = self.demand else { acquired.release(); return }
@@ -658,8 +694,19 @@ final class PreparedAgentElementPreparationOwner {
       return
     } catch {
       guard !Task.isCancelled, self.request == request else { return }
-      failure = "Недостаточно ресурсов для программы"
-      waitingForAdmission = true
+      #if DEBUG
+      rejectedWebAdmission = "\(String(describing: error));leases=\(resources.activeWebSurfaceCount),queued=\(resources.pendingWebRequestCount),constructors=\(resources.activeWebConstructionCount)"
+      #endif
+      switch error {
+      case SceneWebAdmissionError.backgroundQueueFull:
+        failure = nil; waitingForAdmission = true
+      case SceneWebAdmissionError.timedOut:
+        failure = "Не удалось дождаться запуска программы"; waitingForAdmission = false
+      case SceneWebAdmissionError.preparationDisabled:
+        failure = "Не удалось подготовить программу"; waitingForAdmission = false
+      default:
+        failure = "Не удалось запустить программу"; waitingForAdmission = false
+      }
       publishReady(false)
     }
   }

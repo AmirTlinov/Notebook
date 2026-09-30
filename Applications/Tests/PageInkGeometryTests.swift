@@ -6,6 +6,8 @@ import XCTest
 @testable import Notebook
 
 final class PageInkGeometryTests: XCTestCase {
+  override func setUp() async throws { try await InkRasterRenderer.shared.prepareInk() }
+
   @MainActor
   func testCorrectedActiveTailKeepsTheSameBoundaryForBothRenderers() {
     let stroke=ActiveEraserStroke()

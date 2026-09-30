@@ -3,6 +3,48 @@
 Срез: **30 сентября 2026**. Функциональная проверка, доставка и полная приёмка
 учитываются отдельно; результат относится к исходникам своего receipt.
 
+## Первый показ и объединённый admission repair — 226
+
+**0.3.156 (226)** установлена поверх225 на Mac и физическом iPad
+30сентября06:36UTC (09:36МСК). Source
+`18a5cbf03740f12d40127809f4674ea89404cd317348f09b669eab6a636c4e47`.
+Одна Notebook Lab, QA/test apps отсутствуют. Installed helper ready; прежний
+доверенный iPad подключён к тому же workspace с новой сессией, page/camera
+presence восстановлены. Mac завершён штатно перед заменой бинарника. Обновление
+сохранило bundle/app-group identity; iOS заменил путь data container.
+Визуальный просмотр Mac после установки недоступен: свежий Computer Use binding
+вернул ScreenCaptureKit−3811. [Доставка](audit-evidence/2026-09-30/first-presentation-scheduling/delivery.json),
+[точные исходники и результаты](audit-evidence/2026-09-30/first-presentation-scheduling/results.json).
+
+Физический0610: **22native PASS**, один UI24 FAIL при Window-pinch, доставившем
+контакты внутрь control6. Изменён только target существующего жеста на
+`page-turn-surface`; product/native-test sources сохранены. Финальный0622:
+**UI24 PASS** — первые taps после pinch, close/reopen, forward/reverse и точные
+состояния. Финальный0625: **4Mac PASS** — writer refusal/checkpoint, native
+ink/text export, tile seams и light-ink vision. Skip/runtime warnings=0.
+Отрицательный Window-pinch результат и его реальные pointer coordinates
+сохранены; публичный XCTest pinch остаётся best effort.
+
+[Продолжение31–33](performance-repair-2026-09-30.md#продолжение31–33--первый-полезный-показ)
+установило пять GPU compiler waits на Main и вывело shared GPU producers в worker.
+Повторный CPU profile:0 Main compiler samples,6 worker stacks. Constructor
+allowance всех WK factories проходит через scene owner и освобождается после
+UI completion; navigation/JS не держат его. Очередь фоновой подготовки отделена
+от принятых visible/input запросов. Уход программы принимает immutable
+checkpoint source/basis и возвращает browser независимо от optional picture.
+Pressure regression0601: точный сохранённый момент на возврате PASS.
+
+Финальный0606: **3 scheduling observations PASS**. Cold24 first native418,636мс,
+all937,754мс, largest CA commit31,124мс; максимум2 constructors и UI completion
+между допусками. Последующие warm dot18,675мс/curl34,600мс в том же процессе.
+Эти observations проверяют event coverage и owner handoffs; строгие latency
+budgets остаются открытыми. [Системная граница curl](audit-evidence/2026-09-30/first-presentation-scheduling/curl-system-boundary.json)
+связывает GPU, CA и display-swap одного процесса: successor публикуется до
+predecessor OS, первый discard происходит до следующего present. Его системная
+причина и дальнейшее разделение WebKit launch/IPC пока не установлены.
+Эксперимент с постоянно раскрытым container полностью удалён после ухудшения
+regrab/cancel. Hardware Pencil delivery и полная приёмка здесь не выполнялись.
+
 ## Ремонт D01–D16 — 225
 
 [Изменения и удалённые пути](performance-repair-2026-09-30.md) реализованы от

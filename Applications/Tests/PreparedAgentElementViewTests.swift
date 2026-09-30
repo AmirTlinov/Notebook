@@ -302,12 +302,12 @@ final class PreparedAgentElementViewTests: XCTestCase {
     let model = makeModel()
     await model.start(pageSize: NotebookAppModel.defaultPageSize)
     let resources = SceneRenderResources()
-    let first = try await resources.acquireWebSurface(priority: .liveProgram, constructsRuntime: true)
-    let second = try await resources.acquireWebSurface(priority: .liveProgram, constructsRuntime: true)
+    let first = try await resources.acquireWebSurface(priority: .liveProgram, constructsView: true)
+    let second = try await resources.acquireWebSurface(priority: .liveProgram, constructsView: true)
     defer { first.release(); second.release() }
     var grantOrder: [String] = []
     let earlier = Task { @MainActor in
-      let lease = try await resources.acquireWebSurface(priority: .liveProgram, constructsRuntime: true,
+      let lease = try await resources.acquireWebSurface(priority: .liveProgram, constructsView: true,
         deadline: .now + .seconds(8))
       grantOrder.append("earlier")
       return lease
@@ -447,8 +447,8 @@ final class PreparedAgentElementViewTests: XCTestCase {
     let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
     retainNotebookUntilTeardown(model, removing: root)
     let resources = SceneRenderResources()
-    let first = try await resources.acquireWebSurface(priority: .liveProgram, constructsRuntime: true)
-    let second = try await resources.acquireWebSurface(priority: .liveProgram, constructsRuntime: true)
+    let first = try await resources.acquireWebSurface(priority: .liveProgram, constructsView: true)
+    let second = try await resources.acquireWebSurface(priority: .liveProgram, constructsView: true)
     defer { first.release(); second.release() }
     let preparations = PageAgentPreparationOwner(resources: resources)
     let source = element(id: "queued-retained", source: "Queued")
@@ -1877,17 +1877,25 @@ final class PreparedAgentElementViewTests: XCTestCase {
     XCTAssertEqual(shownAfterForeground, stoppedPhase)
     _ = try await running.evaluateJavaScript("document.querySelector('button').click();true")
     try await Task.sleep(for: .milliseconds(100))
+    let resources = SceneRenderResources.shared, admission = resources.rasterAdmission
+    let pressure = try XCTUnwrap(resources.reserveDerivedBytes(
+      admission.passiveByteLimit - admission.pinnedBytes - admission.passiveReservedBytes - 4_096,
+      priority: .passive))
+    defer { pressure.release() }
+    XCTAssertNil(resources.reserveWebSnapshot(pixelSize: .init(width: 480, height: 240)),
+      "This departure has no admission for an optional passive picture")
     host.controller.rootView = content(current: false)
-    try await waitUntil("A durable checkpoint precedes release of this actual program") {
+    try await waitUntil("The accepted model releases its browser even while its passive picture has no admission") {
       self.webViews(in: host.controller.view).isEmpty
     }
     let saved = try XCTUnwrap(try model.store.loadPage(page.id).elements.first { $0.id == source.id })
     guard case .number(let phase) = saved.state["phase"] else { return XCTFail("The model phase must be explicit") }
     XCTAssertGreaterThan(phase, 0)
+    pressure.release()
     host.controller.rootView = content(current: true)
     try await waitUntil("Return installs the saved model without inventing a newer moment", diagnostic: {
       let webs = self.webViews(in: host.controller.view)
-      return "webs=\(webs.count) delegates=\(webs.map { String(describing: $0.navigationDelegate) }) oldDelegate=\(String(describing: running.navigationDelegate)) active=\(SceneRenderResources.shared.activeWebSurfaceCount) pending=\(SceneRenderResources.shared.pendingWebRequestCount) model=\(String(describing: model.pages[page.id]?.elements.first { $0.id == source.id }?.state)) saved=\(saved.state)"
+      return "webs=\(webs.count) delegates=\(webs.map { ($0.navigationDelegate as? AgentWebCoordinator)?.preparationDiagnostic() ?? "none" }) oldDelegate=\(String(describing: running.navigationDelegate)) active=\(SceneRenderResources.shared.activeWebSurfaceCount) pending=\(SceneRenderResources.shared.pendingWebRequestCount) model=\(String(describing: model.pages[page.id]?.elements.first { $0.id == source.id }?.state)) saved=\(saved.state)"
     }) {
       guard let web = self.webViews(in: host.controller.view).first,
         let owner = web.navigationDelegate as? AgentWebCoordinator else { return false }

@@ -784,7 +784,11 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
   }
   private static var presentations: [ObjectIdentifier: Presentation] = [:]
   weak var programOwner: NotebookAppModel?
-  private var checkpointTask: Task<AgentElement, Error>?
+  struct ModelCheckpoint {
+    let source: AgentElement
+    let basis: NotebookProgramStateBasis
+  }
+  private var checkpointTask: Task<ModelCheckpoint, Error>?
   private var stateTransfer: NotebookProgramStateTransfer?
   private var allowsStateCommits = true
   private var commitsClosedBeforeReady = false
@@ -954,6 +958,12 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
     guard !isInvalidated, !lease.isReleased, runtimeLoaded, let loadedElement else { return false }
     return appliedState == loadedElement.state && SceneRasterSource.agent(loadedElement) == .agent(element)
   }
+
+  #if DEBUG
+  func preparationDiagnostic() -> String {
+    "invalidated=\(isInvalidated),released=\(lease.isReleased),runtimeLoaded=\(runtimeLoaded),loadFailed=\(loadFailed),token=\(loadToken ?? "none"),url=\(attachedWebView?.url?.absoluteString ?? "none"),loading=\(attachedWebView?.isLoading == true),programLoad=\(programLoadTask != nil),checkpoint=\(checkpointTask != nil),retirement=\(retirementTask != nil),loadedState=\(String(describing: loadedElement?.state)),appliedState=\(String(describing: appliedState)),failure=\(String(describing: snapshotFailure))"
+  }
+  #endif
 
   func bindPresentation(to focus: InteractiveElementReference?) {
     guard !isInvalidated else { return }
@@ -1216,9 +1226,11 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
   /// One in-flight checkpoint owns the stopped model for navigation, native
   /// dismantle and pixel capture alike. The writer remains the model's writer.
   private func checkpointModel(element: AgentElement,
-    persist: @escaping @MainActor (AgentElement, JSONValue, NotebookProgramStateBasis, Int) async throws -> NotebookProgramStateBasis?) async throws -> AgentElement {
+    persist: @escaping @MainActor (AgentElement, JSONValue, NotebookProgramStateBasis, Int) async throws -> NotebookProgramStateBasis?) async throws -> ModelCheckpoint {
     if let checkpointTask { return try await checkpointTask.value }
-    if let checkpointedSource, checkpointedSource == loadedElement { return checkpointedSource }
+    if let checkpointedSource, checkpointedSource == loadedElement, let programBasis {
+      return .init(source: checkpointedSource, basis: programBasis)
+    }
     guard let web = attachedWebView, let token = loadToken, hasLiveSource(element) else {
       throw SceneRenderError.snapshotPending("program_checkpoint_owner")
     }
@@ -1252,18 +1264,25 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
       checkpointSelection = selection; checkpointWasCaptured = false
       loadedElement = accepted; appliedState = value; stateToApply = nil; programBasis = acceptedBasis; checkpointedSource = accepted
       frozen.snapshot.release(); frozenCheckpoint = nil
-      return accepted
+      return ModelCheckpoint(source: accepted, basis: acceptedBasis)
     }
     checkpointTask = task
     defer { if checkpointID == id { checkpointTask = nil; checkpointID = nil } }
     return try await task.value
   }
 
-  /// The same spatial checkpoint additionally captures pixels for a passive
-  /// replacement; a close/background fence does not allocate an unused raster.
-  static func checkpointCurrent(focus: InteractiveElementReference, element: AgentElement,
+  /// An accepted model checkpoint does not depend on passive image admission.
+  static func checkpointStateCurrent(focus: InteractiveElementReference, element: AgentElement,
     persist: @escaping @MainActor (JSONValue, NotebookProgramStateBasis, Int) async throws -> NotebookProgramStateBasis?,
-    resources: SceneRenderResources = .shared) async throws -> (AgentElement, RasterLease) {
+    resources: SceneRenderResources = .shared) async throws -> ModelCheckpoint {
+    let owner = try checkpointOwner(focus: focus, element: element, resources: resources)
+    return try await owner.checkpointModel(element: element) { _, value, basis, admittedBytes in
+      try await persist(value, basis, admittedBytes)
+    }
+  }
+
+  private static func checkpointOwner(focus: InteractiveElementReference, element: AgentElement,
+    resources: SceneRenderResources) throws -> AgentWebCoordinator {
     presentations = presentations.filter { $0.value.owner != nil }
     let owners = presentations.values.compactMap(\.owner).filter {
       $0.resources === resources && $0.presentationFocus == focus && $0.hasLiveSource(element)
@@ -1271,17 +1290,24 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
     guard owners.count == 1, let owner = owners.first, owner.programBasis != nil else {
       throw SceneRenderError.snapshotPending("program_checkpoint_owner")
     }
+    return owner
+  }
+
+  static func checkpointCurrent(focus: InteractiveElementReference, element: AgentElement,
+    persist: @escaping @MainActor (JSONValue, NotebookProgramStateBasis, Int) async throws -> NotebookProgramStateBasis?,
+    resources: SceneRenderResources = .shared) async throws -> (AgentElement, RasterLease) {
+    let owner = try checkpointOwner(focus: focus, element: element, resources: resources)
     do {
       // The executing context owns the source/state it actually observed. A
       // scene read window may already have evicted this body during retirement.
       let accepted = try await owner.checkpointModel(element: element) { _, value, basis, admittedBytes in try await persist(value, basis, admittedBytes) }
       try Task.checkCancellation()
-      guard let pixels = try await owner.captureCurrent(element: accepted) else {
+      guard let pixels = try await owner.captureCurrent(element: accepted.source) else {
         throw SceneRenderError.snapshotPending("program_checkpoint_picture")
       }
       if Task.isCancelled { pixels.release(); throw CancellationError() }
       owner.checkpointWasCaptured = true
-      return (accepted, pixels)
+      return (accepted.source, pixels)
     } catch { await owner.resumeProgram(); throw error }
   }
 
@@ -2113,10 +2139,11 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
       webView.allowsMagnification = false
     #endif
     NotebookNavigationObservation.webPreparation("native_init_finished", ownerID: coordinator.lease.id)
-    // Leave this native update before admitting the next bounded pair. The
+    // The admission owner waits for a native commit opportunity before the
+    // next bounded pair. The
     // allocator resumes async consumers; it never constructs views recursively
     // or waits for this independent browser's remote navigation to commit.
-    Task { @MainActor [weak lease = coordinator.lease] in lease?.finishConstruction() }
+    coordinator.lease.finishConstruction()
     return webView
   }
 

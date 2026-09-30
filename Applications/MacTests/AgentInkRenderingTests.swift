@@ -4,6 +4,8 @@ import XCTest
 @testable import Notebook
 
 final class AgentInkRenderingTests: XCTestCase {
+  override func setUp() async throws { try await InkRasterRenderer.shared.prepareInk() }
+
   @MainActor
   func testAgentPenReachesNativeCompositeAndUndoWithoutMovingCamera() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("agent-ink-render-\(UUID())")

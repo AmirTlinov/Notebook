@@ -176,3 +176,82 @@ Native installation, GPU completion, OS presentation и diagnostic readback из
 отдельно. Стоимость наблюдения не вычитается. Hardware Pencil delivery, каждый
 промежуточный mixed OS frame и полная CPU/GPU/memory приёмка остаются открытыми.
 Итоговая доставка и выбранная проверка фиксируются в [verification](verification.md).
+
+
+## Продолжение31–33 — первый полезный показ
+
+Два изменения следуют из физической причинной проверки. До исправления лимит
+«два конструктора» заканчивался внутри фабрики: в одном незавершённом UI cycle
+успевали четыре WK-конструктора. `SceneWebConstructionAdmission` удерживает их
+допуск до CA commit opportunity и `afterUpdateComplete`; очередная пара оставляет
+время native installation и обработке событий. Навигация/JS имеют собственные
+границы. Все фабрики документов, программ, SVG, чата, терминала и voice проходят
+этого владельца. Отмена до конструктора возвращает допуск сразу; созданный view
+сохраняет его до UI completion. Проверенный cold24 даёт максимум2 между completed
+UI updates. Это ограничение CPU burst, а не доказательство бюджета firstOS.
+
+CPU-профиль обнаружил пять полных Main-thread compiler wait stacks при монтаже:
+два page curl shaders и три ink pipelines. Общие `SheetCurlGPU` и
+`InkRasterRenderer` теперь готовят immutable GPU programs один раз в worker;
+view и export заимствуют результат. Cold contact принимается до готовности,
+пустая бумага сохраняет свою readiness. [Повторный профиль](audit-evidence/2026-09-30/first-presentation-scheduling/post-repair-cpu.json)
+показал0 Main compiler samples и6 worker compiler stacks тех же владельцев.
+В отдельном cold SVG largest CA commit уменьшился99,534→26,195мс. Стоимость
+компиляции сохранилась в worker; оставшиеся UIKit/SwiftUI и WebKit стадии всё ещё
+определяют первый вывод. Профиль и отдельные cold runs не устанавливают строгую
+latency acceptance.
+
+При проверке обратного перелистывания дополнительно установлен source handoff:
+accepted model checkpoint ожидал необязательный passive picture. Отказ снимка
+оставлял ушедшие browsers до достижения32 live owners. Уход теперь принимает
+`ModelCheckpoint(source,basis)` и возвращает browser независимо от cache admission;
+операция удерживает свой immutable cut. Принятый source/basis сразу переходят
+в preparation owner и переживают запоздалую SwiftUI projection. Физический pressure
+regression выявил старое значение в новом runtime при уже новом значении в SQLite;
+после этого изменения уход и возврат показывают точный сохранённый момент.
+Writer refusal сохраняет живое несохранённое состояние для retry.
+
+Очередь из соседнего resource repair объединена в том же владельце:
+32 ограничивает pending background preparation. Принятая current/visible/input
+команда удерживает FIFO до grant либо source withdrawal и не выделяет backing,
+пока ждёт. Background queue refusal, caller timeout и действительная allocation
+failure имеют разные причины. Promotion сохраняет request и публикует реальную
+смену доступности. Пять admission regressions и UI24 с первым нажатием, pinch,
+forward/reverse и сохранённым состоянием прошли физически.
+
+Оставшиеся интервалы измеряются у источников событий; JSON и screenshot/readback
+создаются после остановки измерения. [Исходные часы и результаты](audit-evidence/2026-09-30/first-presentation-scheduling/diagnostic-runs.json)
+сохраняют точные source и область каждого прогона.
+
+| Интервал | Владелец и установленная граница |
+|---|---|
+| Cold store requested→began→ended→resumed | Startup store producer: в post-repair profile очередь0,174мс, работа40,726мс; возврат actor около0,03мс. Source installation и presence write имеют отдельные часы. |
+| Первые CA commits | UIKit/SwiftUI mount/layout/AttributeGraph; compiler waits выведены из Main. Profiled commit30,334мс содержит generic metadata и display-list work. В другом commit есть synchronous dyld notification от Instruments: эту цену наблюдения нельзя приписывать приложению. |
+| WK native constructor | Фабрика и WebKit: первый constructor в post-profile33,952мс. Последующие допуски чередуются с UI completion. |
+| Navigation requested→policy→started→runtime ready | WebKit launch/IPC и delivery на Main; дальнейшее разложение этого совместного интервала остаётся открытым. Он не доказывает отдельную длительность WebKit process launch. |
+| Dot GPU-ready→OS | В исходном native cut GPU4,677мс, OS20,395мс совпадает с UIKit predicted target20,394мс. Дополнительная app-clock парковка не обнаружена. Hardware Pencil delivery этим harness не измеряется. |
+| Curl GPU→CA→OS | [Metal System Trace](audit-evidence/2026-09-30/first-presentation-scheduling/curl-system-boundary.json): первый GPU5,887мс, present5,518→11,740мс, CA-after12,169мс. Seq0 discarded до следующего present; seq2 shown30,065мс совпадает с точным display-swap30,065мс. Successor уже публикуется до predecessor OS. Причина initial discard внутри системного пути пока не установлена. |
+
+Эксперимент с постоянно раскрытым curl container не исправил first discard и
+нарушил regrab/cancel. Его изменения полностью удалены;
+[отрицательный результат](audit-evidence/2026-09-30/first-presentation-scheduling/rejected-visible-container-experiment.json)
+сохранён. Нет подтверждённого основания добавлять новый layer/present barrier.
+Строгие бюджеты первого штриха, cold source и curl остаются открытыми; final
+receipt и доставка226 фиксируются в [verification](verification.md).
+
+
+Финальный unprofiled cold24: first native418,636мс, все программы937,754мс,
+largest CA commit31,124мс, максимум2 constructors/UI completion. В том же процессе
+последующий dot показан18,675мс, curl34,600мс; эти warm observations сохраняют
+свой scope и не заменяют серию cold/hardware повторений. Source reports лежат
+рядом с исходными измерениями. Корреляция CPU trace с CA source clocks в
+`post-repair-cpu.json` выведена из25 constructor samples; её uncertainty0,250мс
+указана явно, поскольку Instruments не экспортировал clock table.
+
+[UI target repair](audit-evidence/2026-09-30/first-presentation-scheduling/pinch-harness-target.json):
+Window pinch однажды доставил оба fingers около(442,417) внутрь control6,
+хотя frame centre был(417,597). Видео подтвердило1 после жеста. Проверка теперь
+обращается к существующему `page-turn-surface`; все24 остаются неизменёнными после
+pinch и отвечают на первый tap, close/reopen/forward/reverse сохраняют состояние.
+Утверждения не ослаблены, новая AX поверхность и private injection не добавлены.
+Public XCTest pinch остаётся best effort; один frame centre не доказывает delivery.

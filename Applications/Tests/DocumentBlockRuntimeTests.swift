@@ -333,8 +333,8 @@ final class DocumentBlockRuntimeTests: XCTestCase {
 
   func testDocumentConstructionSharesTheShortAllowanceWithNotebookPrograms() async throws {
     let resources = SceneRenderResources(maximumWebSurfaces: 4)
-    let first = try await resources.acquireWebSurface(priority: .input, constructsRuntime: true)
-    let second = try await resources.acquireWebSurface(priority: .input, constructsRuntime: true)
+    let first = try await resources.acquireWebSurface(priority: .input, constructsView: true)
+    let second = try await resources.acquireWebSurface(priority: .input, constructsView: true)
     defer { first.release(); second.release() }
     let fixture = try RuntimeFixture(program: .program(id: "construction", html: "<button>Ready</button>", height: 100),
       resources: resources, priority: .liveProgram)
@@ -352,7 +352,7 @@ final class DocumentBlockRuntimeTests: XCTestCase {
   }
 
   func testAFullAdmissionQueueResumesTheVisibleRuntimeOnActualCapacityRelease() async throws {
-    let resources = SceneRenderResources(maximumWebSurfaces: 1, maximumPendingWebRequests: 0)
+    let resources = SceneRenderResources(maximumWebSurfaces: 1, maximumPendingPreparationRequests: 0)
     let held = try await resources.acquireWebSurface(priority: .input)
     defer { held.release() }
     let fixture = try RuntimeFixture(program: .program(id: "waiting", html: "<button>First touch</button>", height: 100),

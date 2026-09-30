@@ -1,0 +1,168 @@
+{
+  "format": 1,
+  "scope": "Physical UI24 regressions before accepted-state handoff and typed pending admission repair; negative evidence retained without weakening checks",
+  "runs": [
+    {
+      "evidenceDirectory": "/private/tmp/notebook-226-final-0455",
+      "sourceSHA256": "834bef2c24b7a7b6d2c217fb37b971a065145a35bebac5502992ff871ea02bb6",
+      "physicalSummary": {
+        "devicesAndConfigurations": [
+          {
+            "device": {
+              "architecture": "arm64e",
+              "deviceId": "00008103-001E059934D9001E",
+              "deviceName": "iPad (Елизавета)",
+              "modelName": "iPad Pro (11-inch) (3rd generation)",
+              "osBuildNumber": "24A435",
+              "osVersion": "27.0",
+              "platform": "iOS"
+            },
+            "expectedFailures": 0,
+            "failedTests": 1,
+            "passedTests": 13,
+            "skippedTests": 0,
+            "testPlanConfiguration": {
+              "configurationId": "1",
+              "configurationName": "Test Scheme Action"
+            }
+          }
+        ],
+        "environmentDescription": "Notebook · Built with macOS 27.0",
+        "expectedFailures": 0,
+        "failedTests": 1,
+        "finishTime": 1790744287.538,
+        "passedTests": 13,
+        "result": "Failed",
+        "runtimeWarnings": [],
+        "skippedTests": 0,
+        "startTime": 1790744172.577,
+        "statistics": [],
+        "testFailures": [
+          {
+            "failureText": "XCTAssertEqual failed: (\"0\") is not equal to (\"24\") - Every control must exist in the real accessibility tree",
+            "targetName": "NotebookUITests",
+            "testIdentifier": 14,
+            "testIdentifierString": "NotebookNavigationLoadUITests/testTwentyFourPageProgramsAcceptFirstTapAfterZoomAndKeepStateAcrossTurns()",
+            "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookUITests/NotebookNavigationLoadUITests/testTwentyFourPageProgramsAcceptFirstTapAfterZoomAndKeepStateAcrossTurns",
+            "testName": "testTwentyFourPageProgramsAcceptFirstTapAfterZoomAndKeepStateAcrossTurns()"
+          }
+        ],
+        "title": "Test - Notebook",
+        "topInsights": [
+          {
+            "category": "Longest Test Runs",
+            "impact": "45% of duration",
+            "text": "1 longest test run with outlier durations exceeding 2.01s (three standard deviations)"
+          }
+        ],
+        "totalTestCount": 14
+      },
+      "sourceEndpointReceipt": "Optional(staged; shown=1,selected=1,ack=false,pending=Optional(0),step=true,anticipated=Optional(0),turning=true,updating=false,enabled=true; staged=Optional(\"page-turn-page-0\"); 0:Optional(Notebook.PageTurnReadiness.State(presented: false, capturable: true, paperReady: true));entry=Optional(ObjectIdentifier(0x00000001448548a0));paper=true,graphics=nil,accepted=ObjectIdentifier(0x00000001448548a0),ink=Optional(Notebook.PageInkPresentation(pageID: B88249A8-D81A-4876-BD5D-DE0DB9757810, stamp: NotebookCore.VersionStamp(counter: 0, actor: 60265AE9-DA73-4E60-8F34-FA73DFF30334))),expectedInk=VersionStamp(counter: 0, actor: 60265AE9-DA73-4E60-8F34-FA73DFF30334);installedSlots=24/24 | 1:Optional(Notebook.PageTurnReadiness.State(presented: true, capturable: true, paperReady: true));entry=Optional(ObjectIdentifier(0x00000001168ddbc0));paper=true,graphics=Optional(ObjectIdentifier(0x00000001168ddbc0)),accepted=ObjectIdentifier(0x00000001168ddbc0),ink=Optional(Notebook.PageInkPresentation(pageID: 5A6881DD-1C13-4B3F-9AB0-6E6B0B655694, stamp: NotebookCore.VersionStamp(counter: 0, actor: 60265AE9-DA73-4E60-8F34-FA73DFF30334))),expectedInk=VersionStamp(counter: 0, actor: 60265AE9-DA73-4E60-8F34-FA73DFF30334);installedSlots=24/24)",
+      "sourceEndpointSHA256": "cb67bcf3d9f7840a1788e34f0c7e1f36f014ef2263dd5c477540b03fe838c1c7"
+    },
+    {
+      "evidenceDirectory": "/private/tmp/notebook-226-return-diagnostic-0512",
+      "sourceSHA256": "3681bdc82fb53e42863caab81c1592f63c08a395eca072d2c2bb431b404788b0",
+      "physicalSummary": {
+        "devicesAndConfigurations": [
+          {
+            "device": {
+              "architecture": "arm64e",
+              "deviceId": "00008103-001E059934D9001E",
+              "deviceName": "iPad (Елизавета)",
+              "modelName": "iPad Pro (11-inch) (3rd generation)",
+              "osBuildNumber": "24A435",
+              "osVersion": "27.0",
+              "platform": "iOS"
+            },
+            "expectedFailures": 0,
+            "failedTests": 1,
+            "passedTests": 0,
+            "skippedTests": 0,
+            "testPlanConfiguration": {
+              "configurationId": "1",
+              "configurationName": "Test Scheme Action"
+            }
+          }
+        ],
+        "environmentDescription": "Notebook · Built with macOS 27.0",
+        "expectedFailures": 0,
+        "failedTests": 1,
+        "finishTime": 1790745334.237,
+        "passedTests": 0,
+        "result": "Failed",
+        "runtimeWarnings": [],
+        "skippedTests": 0,
+        "startTime": 1790745226.017,
+        "statistics": [],
+        "testFailures": [
+          {
+            "failureText": "XCTAssertEqual failed: (\"14\") is not equal to (\"24\") - Every control must exist in the real accessibility tree",
+            "targetName": "NotebookUITests",
+            "testIdentifier": 1,
+            "testIdentifierString": "NotebookNavigationLoadUITests/testTwentyFourPageProgramsAcceptFirstTapAfterZoomAndKeepStateAcrossTurns()",
+            "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookUITests/NotebookNavigationLoadUITests/testTwentyFourPageProgramsAcceptFirstTapAfterZoomAndKeepStateAcrossTurns",
+            "testName": "testTwentyFourPageProgramsAcceptFirstTapAfterZoomAndKeepStateAcrossTurns()"
+          }
+        ],
+        "title": "Test - Notebook",
+        "topInsights": [],
+        "totalTestCount": 1
+      },
+      "sourceEndpointReceipt": "Optional(readiness_2; shown=0,selected=0,ack=false,pending=nil,step=false,anticipated=nil,turning=false,updating=false,enabled=true; staged=nil; 0:Optional(Notebook.PageTurnReadiness.State(presented: true, capturable: true, paperReady: true));entry=Optional(ObjectIdentifier(0x000000012feb0de0));paper=true,graphics=Optional(ObjectIdentifier(0x000000012feb0de0)),accepted=ObjectIdentifier(0x000000012feb0de0),ink=Optional(Notebook.PageInkPresentation(pageID: FBD4D9C5-6E6B-4E87-A2BE-746CE0BAC4BE, stamp: NotebookCore.VersionStamp(counter: 0, actor: A3B65CDD-6EB0-42F9-A6EF-FE6DA4E59129))),expectedInk=VersionStamp(counter: 0, actor: A3B65CDD-6EB0-42F9-A6EF-FE6DA4E59129);waiting=[];installedSlots=24/24)",
+      "sourceEndpointSHA256": "e70a3c3fbd6a4137b157a9fc480c77de801bc36fb5dc81feee1d868454d4be69"
+    },
+    {
+      "evidenceDirectory": "/private/tmp/notebook-226-admission-return-0521",
+      "sourceSHA256": "64b2712e6bd686cf4c61afd5a58fba489042d2edb8d0987b8fca39a839096398",
+      "physicalSummary": {
+        "devicesAndConfigurations": [
+          {
+            "device": {
+              "architecture": "arm64e",
+              "deviceId": "00008103-001E059934D9001E",
+              "deviceName": "iPad (Елизавета)",
+              "modelName": "iPad Pro (11-inch) (3rd generation)",
+              "osBuildNumber": "24A435",
+              "osVersion": "27.0",
+              "platform": "iOS"
+            },
+            "expectedFailures": 0,
+            "failedTests": 1,
+            "passedTests": 0,
+            "skippedTests": 0,
+            "testPlanConfiguration": {
+              "configurationId": "1",
+              "configurationName": "Test Scheme Action"
+            }
+          }
+        ],
+        "environmentDescription": "Notebook · Built with macOS 27.0",
+        "expectedFailures": 0,
+        "failedTests": 1,
+        "finishTime": 1790745884.411,
+        "passedTests": 0,
+        "result": "Failed",
+        "runtimeWarnings": [],
+        "skippedTests": 0,
+        "startTime": 1790745775.444,
+        "statistics": [],
+        "testFailures": [
+          {
+            "failureText": "XCTAssertEqual failed: (\"16\") is not equal to (\"24\") - Every control must exist in the real accessibility tree",
+            "targetName": "NotebookUITests",
+            "testIdentifier": 1,
+            "testIdentifierString": "NotebookNavigationLoadUITests/testTwentyFourPageProgramsAcceptFirstTapAfterZoomAndKeepStateAcrossTurns()",
+            "testIdentifierURL": "test://com.apple.xcode/Notebook/NotebookUITests/NotebookNavigationLoadUITests/testTwentyFourPageProgramsAcceptFirstTapAfterZoomAndKeepStateAcrossTurns",
+            "testName": "testTwentyFourPageProgramsAcceptFirstTapAfterZoomAndKeepStateAcrossTurns()"
+          }
+        ],
+        "title": "Test - Notebook",
+        "topInsights": [],
+        "totalTestCount": 1
+      },
+      "sourceEndpointReceipt": "Optional(readiness_2; shown=0,selected=0,ack=false,pending=nil,step=false,anticipated=nil,turning=false,updating=false,enabled=true; staged=nil; 0:Optional(Notebook.PageTurnReadiness.State(presented: true, capturable: true, paperReady: true));entry=Optional(ObjectIdentifier(0x00000001406e5560));paper=true,graphics=Optional(ObjectIdentifier(0x00000001406e5560)),accepted=ObjectIdentifier(0x00000001406e5560),ink=Optional(Notebook.PageInkPresentation(pageID: E8BBD438-73EA-4DBD-ACA8-3136D354D8B4, stamp: NotebookCore.VersionStamp(counter: 0, actor: 69F980AD-5D34-47EE-B4D0-ECE95941E0D3))),expectedInk=VersionStamp(counter: 0, actor: 69F980AD-5D34-47EE-B4D0-ECE95941E0D3);waiting=[];installedSlots=24/24;owners=[\"666B7761-88DA-4D1B-B52B-3EDFA2178F21-0-0:active=true,web=false,live=false,waiting=true,failure=Недостаточно ресурсов для программы,rejection=resource_limit;leases=32,queued=0,constructors=0\", \"666B7761-88DA-4D1B-B52B-3EDFA2178F21-0-1:active=true,web=false,live=false,waiting=false,failure=none,rejection=resource_limit;leases=32,queued=0,constructors=0\", \"666B7761-88DA-4D1B-B52B-3EDFA2178F21-0-2:active=true,web=false,live=false,waiting=true,failure=Недостаточно ресурсов для программы,rejection=resource_limit;leases=32,queued=0,constructors=0\", \"666B7761-88DA-4D1B-B52B-3EDFA2178F21-0-3:active=true,web=false,live=false,waiting=true,failure=Недостаточно ресурсов для программы,rejection=resource_limit;leases=32,queued=0,constructors=0\", \"666B7761-88DA-4D1B-B52B-3EDFA2178F21-0-4:active=true,web=false,live=false,waiting=true,failure=Недостаточно ресурсов для программы,rejection=resource_limit;leases=32,queued=0,constructors=0\", \"666B7761-88DA-4D1B-B52B-3EDFA2178F21-0-5:active=true,web=false,live=false,waiting=true,failure=Недостаточно ресурсов для программы,rejection=resource_limit;leases=32,queued=0,constructors=0\", \"666B7761-88DA-4D1B-B52B-3EDFA2178F21-0-6:active=true,web=false,live=false,waiting=true,failure=Недостаточно ресурсов для программы,rejection=resource_limit;leases=32,queued=0,constructors=0\", \"666B7761-88DA-4D1B-B52B-3EDFA2178F21-0-7:active=true,web=false,live=false,waiting=true,failure=Недостаточно ресурсов для программы,rejection=resource_limit;leases=32,queued=0,constructors=0\", \"666B7761-88DA-4D1B-B52B-3EDFA2178F21-0-8:active=true,web=true,live=true,waiting=false,failure=none,rejection=none\", \"666B7761-88DA-4D1B-B52B-3EDFA2178F21-0-9:active=true,web=true,live=true,waiting=false,failure=none,rejection=none\", \"666B7761-88DA-4D1B-B52B-3EDFA2178F21-0-10:active=true,web=true,live=true,waiting=false,failure=none,rejection=none\", \"666B7761-88DA-4D1B-B52B-3EDFA2178F21-0-11:active=true,web=true,live=true,waiting=false,failure=none,rejection=none\", \"666B7761-88DA-4D1B-B52B-3EDFA2178F21-0-12:active=true,web=true,live=true,waiting=false,failure=none,rejection=none\", \"666B7761-88DA-4D1B-B52B-3EDFA2178F21-0-13:active=true,web=true,live=true,waiting=false,failure=none,rejection=none\", \"666B7761-88DA-4D1B-B52B-3EDFA2178F21-0-14:active=true,web=true,live=true,waiting=false,failure=none,rejection=none\", \"666B7761-88DA-4D1B-B52B-3EDFA2178F21-0-15:active=true,web=true,live=true,waiting=false,failure=Недостаточно ресурсов для изображения,rejection=none\", \"666B7761-88DA-4D1B-B52B-3EDFA2178F21-0-16:active=true,web=true,live=true,waiting=false,failure=none,rejection=none\", \"666B7761-88DA-4D1B-B52B-3EDFA2178F21-0-17:active=true,web=true,live=true,waiting=false,failure=Недостаточно ресурсов для изображения,rejection=none\", \"666B7761-88DA-4D1B-B52B-3EDFA2178F21-0-18:active=true,web=true,live=true,waiting=false,failure=Недостаточно ресурсов для изображения,rejection=none\", \"666B7761-88DA-4D1B-B52B-3EDFA2178F21-0-19:active=true,web=true,live=true,waiting=false,failure=Недостаточно ресурсов для изображения,rejection=none\", \"666B7761-88DA-4D1B-B52B-3EDFA2178F21-0-20:active=true,web=true,live=true,waiting=false,failure=Недостаточно ресурсов для изображения,rejection=none\", \"666B7761-88DA-4D1B-B52B-3EDFA2178F21-0-21:active=true,web=true,live=true,waiting=false,failure=none,rejection=none\", \"666B7761-88DA-4D1B-B52B-3EDFA2178F21-0-22:active=true,web=true,live=true,waiting=false,failure=Недостаточно ресурсов для изображения,rejection=none\", \"666B7761-88DA-4D1B-B52B-3EDFA2178F21-0-23:active=true,web=true,live=true,waiting=false,failure=Недостаточно ресурсов для изображения,rejection=none\"])",
+      "sourceEndpointSHA256": "ae3e9359d75f7b1d6a2dff6a5123a725576b2d74ad293dcbe4efc29ebbc2a651"
+    }
+  ]
+}

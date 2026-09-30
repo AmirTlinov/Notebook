@@ -280,9 +280,10 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
   nonisolated static let spatialFramesInFlight = 2
 
   private let commandQueue: (any MTLCommandQueue)?
-  private let baselinePipelineState: (any MTLRenderPipelineState)?
-  private let inkPipelineState: (any MTLRenderPipelineState)?
-  private let eraserPipelineState: (any MTLRenderPipelineState)?
+  private var baselinePipelineState: (any MTLRenderPipelineState)?
+  private var inkPipelineState: (any MTLRenderPipelineState)?
+  private var eraserPipelineState: (any MTLRenderPipelineState)?
+  private var pipelinePreparation: Task<Void, Never>?
   private let textureLoader: MTKTextureLoader?
   private let resources: SceneRenderResources
   private let inFlightSemaphore = DispatchSemaphore(
@@ -827,6 +828,22 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     metalLayer?.colorspace = CGColorSpace(name: CGColorSpace.sRGB)
     metalLayer?.maximumDrawableCount = Self.framesInFlight
     delegate = self
+    if baselinePipelineState == nil || inkPipelineState == nil || eraserPipelineState == nil {
+      pipelinePreparation = Task { @MainActor [weak self] in
+        do {
+          try await gpu.prepareInk()
+          guard let self else { return }
+          baselinePipelineState = gpu.baseline; inkPipelineState = gpu.ink; eraserPipelineState = gpu.eraser
+          pipelinePreparation = nil
+          requestFrame()
+        } catch {
+          guard let self, !(error is CancellationError) else { return }
+          pipelinePreparation = nil
+          renderFailure = (error as? SceneRenderError) ?? .snapshotPending("ink_pipeline")
+          failPendingOrderedCut(renderFailure!)
+        }
+      }
+    }
   }
 
   @available(*, unavailable)
@@ -837,6 +854,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
   isolated deinit {
     if let pageReclamationOwner { resources.unregisterReclamationOwner(pageReclamationOwner) }
     pageMeshTask?.cancel()
+    pipelinePreparation?.cancel()
     pageDisplayLink?.invalidate()
     #if os(iOS)
     pageUIUpdates?.isEnabled = false
@@ -1621,6 +1639,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     if material != nil,submittedTransactionalRevision == stableContentRevision,
       isStableFramePrepared || isStableFramePresented { return }
     if presentEmptyContentIfReady() { return }
+    guard baselinePipelineState != nil, inkPipelineState != nil, eraserPipelineState != nil else { return }
     // A rejected page frame has no work whose completion could drain its
     // clocks. Only a busy slot or a superseded drawable is a frame retry;
     // allocation/encoding failure waits for the owner's next real request.
@@ -3059,6 +3078,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     defer {publishAcceptedMaterialReadiness()}
     startOrderedPreparationIfNeeded()
     if presentEmptyContentIfReady() { return }
+    guard baselinePipelineState != nil, inkPipelineState != nil, eraserPipelineState != nil else { return }
     guard pendingTransaction == nil else { pauseFrameLoop(); return }
     // Layout, mesh and old GPU callbacks cannot reacquire a reclaimed neighbour.
     // Its existing page-role promotion is the only route back to pixel demand.

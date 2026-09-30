@@ -6,6 +6,8 @@ import XCTest
 @testable import Notebook
 
 final class PortalInkTests: XCTestCase {
+  override func setUp() async throws { try await InkRasterRenderer.shared.prepareInk() }
+
   @MainActor
   func testPortalCompositionPreservesTheSharedMetalPenAndEraserPixels() async throws {
     let id = UUID(), actor = UUID()

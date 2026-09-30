@@ -8,6 +8,8 @@ import SwiftUI
 @testable import Notebook
 
 final class SceneRasterCompositionTests: XCTestCase {
+  override func setUp() async throws { try await InkRasterRenderer.shared.prepareInk() }
+
   @MainActor
   func testWholeLargeBoardStreamsItsBackgroundAndInkWithinTheSameBudget() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)

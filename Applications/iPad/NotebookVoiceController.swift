@@ -109,13 +109,14 @@ import NotebookCore
     guard captureID == id, !ending else { return }
     startDeadline(id)
     do {
-      let acquired = try await SceneRenderResources.shared.acquireWebSurface(priority: .input)
+      let acquired = try await SceneRenderResources.shared.acquireWebSurface(priority: .input, constructsView: true)
       guard captureID == id, !ending, let host else { acquired.release(); return }
       lease = acquired
       let configuration = WKWebViewConfiguration(); configuration.websiteDataStore = .nonPersistent()
       configuration.allowsInlineMediaPlayback = true; configuration.mediaTypesRequiringUserActionForPlayback = []
       configuration.userContentController.add(self, name: "notebookVoice")
       let web = WKWebView(frame: host.bounds, configuration: configuration)
+      acquired.finishConstruction()
       web.isOpaque = false; web.backgroundColor = .clear; web.scrollView.backgroundColor = .clear
       web.autoresizingMask = [.flexibleWidth,.flexibleHeight]; web.navigationDelegate = self; web.uiDelegate = self
       self.web = web; host.addSubview(web)

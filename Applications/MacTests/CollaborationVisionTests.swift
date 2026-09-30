@@ -5,6 +5,8 @@ import XCTest
 @testable import Notebook
 
 final class CollaborationVisionTests: XCTestCase {
+  override func setUp() async throws { try await InkRasterRenderer.shared.prepareInk() }
+
   @MainActor
   func testSharedMetalGeometryErasesFinalPixels() async throws {
     let points = [20.0,180.0].map { x in PKStrokePoint(location: .init(x:x,y:80), timeOffset:x/1000,

@@ -400,12 +400,13 @@ struct NotebookChatTranscript: UIViewRepresentable {
       container.backgroundColor = UIColor(NotebookChrome.surface)
       preparation = Task { [weak self, weak container] in
         do {
-          let lease = try await SceneRenderResources.shared.acquireWebSurface(priority: .input)
+          let lease = try await SceneRenderResources.shared.acquireWebSurface(priority: .input, constructsView: true)
           guard let self, let container, !closed, !Task.isCancelled else { lease.release(); return }
           self.lease = lease
           let configuration = WKWebViewConfiguration(); configuration.websiteDataStore = .nonPersistent()
           configuration.userContentController.add(self, name: "notebookChat")
           let web = WKWebView(frame: container.bounds, configuration: configuration)
+          lease.finishConstruction()
           web.autoresizingMask = [.flexibleWidth, .flexibleHeight]
           web.isOpaque = true; web.backgroundColor = UIColor(NotebookChrome.surface); web.scrollView.backgroundColor = UIColor(NotebookChrome.surface)
           web.navigationDelegate = self; web.scrollView.delegate = self; self.web = web; container.addSubview(web)

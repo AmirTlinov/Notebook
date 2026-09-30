@@ -4,6 +4,8 @@ import XCTest
 @testable import Notebook
 
 @MainActor final class InkRelativeDisplayTests: XCTestCase {
+  override func setUp() async throws { try await InkRasterRenderer.shared.prepareInk() }
+
   private func sample(_ i:Int,x:Double,y:Double,origin:WorldPoint? = nil) -> SpatialInkSample {
     .init(point:.init(x:x,y:y),worldPoint:origin?.offsetBy(x:x,y:y),timeOffset:Double(i)/128,
       width:2+Double(i%7)/4,opacity:0.25+Double(i%5)/10,force:0.5,azimuth:0,altitude:1)

@@ -25,7 +25,7 @@ struct NotebookPresentationOverlay: View {
         .task(id: stage.requestID) {
           guard lease == nil else { return }
           do {
-            let acquired = try await SceneRenderResources.shared.acquireWebSurface(priority: .visible)
+            let acquired = try await SceneRenderResources.shared.acquireWebSurface(priority: .visible, constructsView: true)
             guard !Task.isCancelled, player.stage?.requestID == stage.requestID else { acquired.release(); return }
             lease = acquired
           } catch { if !Task.isCancelled { player.failed(stage.id) } }
@@ -51,6 +51,7 @@ struct NotebookPresentationSVGView: UIViewRepresentable {
     configuration.websiteDataStore = .nonPersistent()
     configuration.defaultWebpagePreferences.allowsContentJavaScript = false
     let web = WKWebView(frame: .zero, configuration: configuration)
+    lease.finishConstruction()
     web.navigationDelegate = context.coordinator
     web.isOpaque = false; web.backgroundColor = .clear
     web.scrollView.backgroundColor = .clear; web.scrollView.isScrollEnabled = false

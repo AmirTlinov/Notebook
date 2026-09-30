@@ -6,6 +6,8 @@ import XCTest
 @testable import Notebook
 
 final class VectorInkRenderingTests: XCTestCase {
+  override func setUp() async throws { try await InkRasterRenderer.shared.prepareInk() }
+
   private func source() -> NotebookFreehand {
     let vertices = (0..<20_000).flatMap { i -> [NotebookFreehand.Vertex] in
       let x = Double(i%200)/200, y = Double(i/200)/100

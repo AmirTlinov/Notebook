@@ -27,8 +27,9 @@ import Darwin
   /// allocate records or read a clock when this hook is absent.
   // Stage, page owner, page UUID, output frame, composition operation, source time.
   static var onPageMaterialPreparation: (@MainActor (String, UUID, UUID?, UUID?, UUID?, TimeInterval) -> Void)?
-  static func webPreparation(_ stage: String, ownerID: UUID, sourceID: String? = nil) {
-    onWebPreparation?(stage, ownerID, sourceID, .now)
+  static func webPreparation(_ stage: String, ownerID: UUID, sourceID: String? = nil,
+    at: ContinuousClock.Instant? = nil) {
+    onWebPreparation?(stage, ownerID, sourceID, at ?? .now)
   }
   private static let recorder = Recorder.configured()
   static var enabled: Bool { recorder?.sink.accepting == true }

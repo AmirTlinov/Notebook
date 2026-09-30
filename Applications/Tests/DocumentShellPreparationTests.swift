@@ -102,7 +102,7 @@ final class DocumentShellPreparationTests: XCTestCase {
   }
 
   private func assertForegroundReclaim(waitForCommonRuntime: Bool) async throws {
-    let resources = SceneRenderResources(maximumWebSurfaces: 1, maximumPendingWebRequests: 0)
+    let resources = SceneRenderResources(maximumWebSurfaces: 1, maximumPendingPreparationRequests: 0)
     let preparation = DocumentShellPreparation(resources: resources)
     defer { preparation.stop() }
     preparation.prepareIfIdle()

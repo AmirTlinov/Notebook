@@ -225,6 +225,7 @@ final class IPadSheetCurlController: UIViewController, UIGestureRecognizerDelega
           guard let source, let target else { throw PageTurnMaterialUnavailable.changed }
           return (source, target)
         }
+        try await SheetCurlGPU.shared.preparePage()
         try Task.checkCancellation()
         guard !acquisition.isCancelled, var current = self.motion, current.id == id else { return }
         // Each owner delivered an immutable accepted cut. Subsequent live

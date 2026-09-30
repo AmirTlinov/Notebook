@@ -1,0 +1,11 @@
+{
+  "format": 1,
+  "evidenceDirectory": "/private/tmp/notebook-curl-visible-container-0447",
+  "status": "reverted-all-four-hunks",
+  "PID": 4291,
+  "change": "Keep transparent native container visible; reveal the page output instead",
+  "firstOSMs": 33.38383333175443,
+  "droppedFrames": 2,
+  "attachmentSHA256": "d1c244843a7e94eb94b8dda6762e5ea5782efd55963b2179af2850a752a8dac7",
+  "result": "Did not eliminate first drops. New container visibility was rejected; original first-reveal transaction and hide/retirement remain. Existing gesture checks were not weakened."
+}

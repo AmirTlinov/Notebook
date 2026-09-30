@@ -706,6 +706,7 @@ final class PageTurnMaterialOwner {
       let canvas = try await SceneRasterCompositor.create(size: frame.size, scale: scale, resources: .shared)
       let local = CGRect(origin: .zero, size: frame.size)
       if let graphic = element.graphic {
+        if graphic.freehand != nil, paintsBody { try await InkRasterRenderer.shared.prepareInk() }
         try await canvas.drawView(NotebookGraphicView(graphic: graphic, layout: layout, erasures: cuts,
           appearance: appearance, live: false, paintsMeasuredBody: paintsBody), size: frame.size, in: local)
       } else {

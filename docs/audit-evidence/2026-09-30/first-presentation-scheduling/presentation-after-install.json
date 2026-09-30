@@ -1,0 +1,46 @@
+{
+  "status": "ready",
+  "value": {
+    "cursor": "52243",
+    "coverage": {
+      "complete": true
+    },
+    "data": {
+      "active": null,
+      "view": {
+        "sequence": 1,
+        "nonce": "79560DC6-DA8E-4ED5-A1C9-D388C54A6172",
+        "sessionID": "70EC7F22-5AC9-4F0A-9938-27093740B02D",
+        "deviceID": "29DC77FE-8777-41EC-BE98-704F4668A2F4"
+      },
+      "status": "ready",
+      "presence": {
+        "boardID": "7E7A0000-0000-4000-8000-000000000003",
+        "camera": {
+          "scale": 1,
+          "center": {
+            "tileY": 0,
+            "localY": 1516.4960114370574,
+            "tileX": 0,
+            "localX": 3355.8232476298454
+          }
+        },
+        "documentPageIndex": 0,
+        "format": 5,
+        "selectedItemID": "AF947D51-7E74-4081-9194-3B5FE07A0F39",
+        "viewport": {
+          "x": 834,
+          "y": 1194
+        },
+        "mode": "page",
+        "openProgress": 1,
+        "focusedItemID": "AF947D51-7E74-4081-9194-3B5FE07A0F39",
+        "notebookPageID": "C74869CD-CE04-4AC2-A12E-66B00996B8E6"
+      }
+    },
+    "basis": {
+      "owners": [],
+      "workspaceID": "54349F3B-9E0A-4DEA-B990-40CAE04EF45E"
+    }
+  }
+}
