@@ -319,6 +319,31 @@ final class PreparedAgentElementPreparationOwner {
   isolated deinit { retire() }
   private func install(_ session: AgentWebNativeSession) {
     precondition(self.session == nil); self.session = session
+    session.coordinator.onSessionSuperseded = { [weak self, weak session] in
+      guard let self, let session else { return }
+      self.replaceSupersededSession(session)
+    }
+  }
+  private func replaceSupersededSession(_ previous: AgentWebNativeSession) {
+    guard !isRetired, session === previous, !previous.isRetired else { return }
+    task?.cancel(); task = nil; request = nil
+    interactionUpdate?.cancel(); interactionUpdate = nil
+    releaseWeb(); retireRuntime()
+    liveProgram = nil; preparedSource = nil; nativeRuntimeToken = nil; paintedRuntime = nil
+    runtimeWasPresented = false
+    failedSource = nil; failedCapturePolicy = nil; failedCaptureAdmission = nil
+    failure = nil; lastFailure = nil; waitingForAdmission = false
+    #if os(iOS)
+      statusTask?.cancel(); statusTask = nil; statusKey = nil; statusPresentation = nil; statusInstallation = nil
+      if let context = rasterPreparation {
+        pageTurnActivity?.removeElementFrame(page: context.pageIndex, element: element.id, owner: pageFrameOwner)
+      }
+    #endif
+    publishReady(false)
+    guard let configuration, let model = configuration.model, model.shutdownPhase == .running,
+      let current = model.programModelCut(focus: configuration.focus) else { return }
+    acceptSource(current.source, policy: configuration.demand.policy)
+    if task == nil { restart() }
   }
   private func retireSession() {
     let previous = session; session = nil; previous?.retire()
@@ -596,7 +621,10 @@ final class PreparedAgentElementPreparationOwner {
       // browser after the addressed writer has accepted that model.
       do {
         let accepted = try await AgentWebCoordinator.checkpointStateCurrent(focus: focus, element: demand.source, persist: { value, basis, admittedBytes in
-          return try await model.checkpointProgramState(focus: focus, rendered: demand.source, value: value, basis: basis, admittedStateBytes: admittedBytes)
+          guard let accepted = try await model.checkpointProgramState(focus: focus, rendered: demand.source, value: value, basis: basis, admittedStateBytes: admittedBytes) else {
+            throw NotebookProgramCheckpointError.superseded
+          }
+          return accepted
         }, resources: resources)
         guard !Task.isCancelled, self.request == request,
           self.web?.id == retiring.id, self.demand?.active == false else {

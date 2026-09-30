@@ -1,0 +1,248 @@
+{
+  "format": 1,
+  "date": "2026-09-30",
+  "repair": "owned-demand-228",
+  "baseCommit": "3a03c88b2198fc26a2ba8987959fe02b83c814a4",
+  "physicalDevice": "00008103-001E059934D9001E",
+  "runs": [
+    {
+      "directory": "/private/tmp/notebook-228-final-1440",
+      "sourceSHA256": "507c4e0ae14887c7c09be882652f245b227d8e9ddc5f9199da0d5a0fba4b073e",
+      "sourceAfterSHA256": null,
+      "startUTC": "2026-09-30T14:41:44.995000+00:00",
+      "finishUTC": "2026-09-30T14:42:27.776000+00:00",
+      "passed": 14,
+      "failed": 3,
+      "skipped": 0,
+      "runtimeWarnings": [],
+      "tests": [
+        {
+          "test": "CoverOpeningPhysicsTests/testRestingSnapshotsDoNotConsumeScreenDrawablesBeforeTheRealCurl()",
+          "result": "Passed"
+        },
+        {
+          "test": "DocumentBlockRuntimeTests/testCancelledReadersCannotAccumulateMoreThanFourNativeSnapshots()",
+          "result": "Passed"
+        },
+        {
+          "test": "DocumentBlockRuntimeTests/testConcurrentPhysicalCutsKeepTheReadyControlAndViewportInstalled()",
+          "result": "Passed"
+        },
+        {
+          "test": "DocumentBlockRuntimeTests/testSnapshotDeadlineEndsItsReaderWithoutReleasingOutstandingNativeWork()",
+          "result": "Passed"
+        },
+        {
+          "test": "DocumentBlockRuntimeTests/testSnapshotStopCompletesRunningAndQueuedReadersBeforeTheNativeCallback()",
+          "result": "Passed"
+        },
+        {
+          "test": "DocumentBlockRuntimeTests/testUnreadyProgramCheckpointJoinsAcceptedStateBeforeRetirement()",
+          "result": "Passed"
+        },
+        {
+          "test": "DocumentProgramOwnerTests/testClosingDocumentRetainsAnUnacceptedModelUntilExplicitRetry()",
+          "result": "Passed"
+        },
+        {
+          "test": "NotebookBootstrapPresentationTests/testAcceptedRootPreparesWhileProgramWritesAndContactsWaitForBootstrapOutcome()",
+          "result": "Passed"
+        },
+        {
+          "test": "NotebookBootstrapPresentationTests/testSupersededForegroundProgramReplacesItsSessionBeforeFurtherInput()",
+          "result": "Passed"
+        },
+        {
+          "test": "NotebookFirstPresentationSchedulingTests/testColdProgramConstructorsAgainstUIOpportunities()",
+          "result": "Passed"
+        },
+        {
+          "test": "NotebookFirstPresentationSchedulingTests/testColdSVGExecutorsAgainstUIOpportunities()",
+          "result": "Passed"
+        },
+        {
+          "test": "NotebookFirstPresentationSchedulingTests/testFirstCurlAgainstUIAndOSBoundaries()",
+          "result": "Passed"
+        },
+        {
+          "test": "NotebookFirstPresentationSchedulingTests/testFirstHeldDotAgainstUIAndOSBoundaries()",
+          "result": "Passed"
+        },
+        {
+          "test": "NotebookFirstPresentationSchedulingTests/testImmediatePresentationPolicyInTheActualScene()",
+          "result": "Passed"
+        },
+        {
+          "test": "NotebookPageLifecycleUXTests/testNativePageTurnsShowTheStoredLeafAfterEvictionReverseAndCancellation()",
+          "result": "Failed"
+        },
+        {
+          "test": "NotebookPageMotionUXTests/testFirstPresentedCurlBendsTheCompletePairWithoutAFlatPrimingFrame()",
+          "result": "Failed"
+        },
+        {
+          "test": "NotebookNavigationLoadUITests/testTwentyFourPageProgramsAcceptFirstTapAfterZoomAndKeepStateAcrossTurns()",
+          "result": "Failed"
+        }
+      ],
+      "failures": [
+        {
+          "test": "NotebookPageMotionUXTests/testFirstPresentedCurlBendsTheCompletePairWithoutAFlatPrimingFrame()",
+          "message": "XCTAssertLessThanOrEqual failed: (\"0.020222791674314067 seconds\") is greater than (\"0.016666666666666666 seconds\")"
+        },
+        {
+          "test": "NotebookPageLifecycleUXTests/testNativePageTurnsShowTheStoredLeafAfterEvictionReverseAndCancellation()",
+          "message": "XCTUnwrap failed: expected non-nil value of type \"Bool\" - The native owner must finish within the original one-second opening budget"
+        },
+        {
+          "test": "NotebookNavigationLoadUITests/testTwentyFourPageProgramsAcceptFirstTapAfterZoomAndKeepStateAcrossTurns()",
+          "message": "XCTAssertEqual failed: (\"23\") is not equal to (\"24\") - Expected 24 visibly unchanged controls"
+        }
+      ],
+      "summarySHA256": "eb7f31041a7c252d5aa5f671bb82cd31550f52dcc0906e14f99d1cd99a6341f6"
+    },
+    {
+      "directory": "/private/tmp/notebook-228-boundaries-1450",
+      "sourceSHA256": "957d4b62a74ef9d4fb0610fb2bdab0c6ae4364416711dd536e38a4c18669a6bf",
+      "sourceAfterSHA256": "957d4b62a74ef9d4fb0610fb2bdab0c6ae4364416711dd536e38a4c18669a6bf",
+      "startUTC": "2026-09-30T14:51:35.171000+00:00",
+      "finishUTC": "2026-09-30T14:53:04.642000+00:00",
+      "passed": 3,
+      "failed": 0,
+      "skipped": 0,
+      "runtimeWarnings": [],
+      "tests": [
+        {
+          "test": "NotebookFirstPresentationSchedulingTests/testImmediatePresentationPolicyInTheActualScene()",
+          "result": "Passed"
+        },
+        {
+          "test": "NotebookPageLifecycleUXTests/testNativePageTurnsShowTheStoredLeafAfterEvictionReverseAndCancellation()",
+          "result": "Passed"
+        },
+        {
+          "test": "NotebookNavigationLoadUITests/testTwentyFourPageProgramsAcceptFirstTapAfterZoomAndKeepStateAcrossTurns()",
+          "result": "Passed"
+        }
+      ],
+      "failures": [],
+      "summarySHA256": "42d09641822d456be9a9b4da61770976dfc6747b1485f9ce58e475cd16975410"
+    },
+    {
+      "directory": "/private/tmp/notebook-228-mac-1313",
+      "sourceSHA256": "507c4e0ae14887c7c09be882652f245b227d8e9ddc5f9199da0d5a0fba4b073e",
+      "sourceAfterSHA256": "507c4e0ae14887c7c09be882652f245b227d8e9ddc5f9199da0d5a0fba4b073e",
+      "startUTC": "2026-09-30T13:14:54.021000+00:00",
+      "finishUTC": "2026-09-30T13:14:56.563000+00:00",
+      "passed": 2,
+      "failed": 0,
+      "skipped": 0,
+      "runtimeWarnings": [],
+      "tests": [
+        {
+          "test": "DocumentRuntimeTests/testSpatialCheckpointKeepsItsOwnerOnWriterRefusalAndCapturesTheAcceptedState()",
+          "result": "Passed"
+        },
+        {
+          "test": "MacModelLifecycleTests/testCommandServiceStartupFailureKeepsTheAcceptedWorkspaceWritable()",
+          "result": "Passed"
+        }
+      ],
+      "failures": [],
+      "summarySHA256": "431adab8ad35e24b9012e4fe5770d00ea4adfa0cd66b028c043521895af98b11"
+    }
+  ],
+  "changedPathsBetweenReceipts": [
+    "Applications/Shared/PageTurnSurface.swift",
+    "Applications/Tests/NotebookFirstPresentationSchedulingTests.swift",
+    "Applications/Tests/NotebookPageLifecycleUXTests.swift",
+    "Applications/iPad/IPadSheetCurlController.swift"
+  ],
+  "scope": {
+    "heldContact": "Physical first-held-dot observation PASS: unchanged contact adds zero pageActivePassCount over50ms; next measured revision resumes and receives OS presentation. This is demand correctness, not a hardware Pencil latency gate.",
+    "snapshots": "Five DocumentBlockRuntime regressions PASS: cancel/stop/deadline finish readers, retain outstanding native work accounting until callback, bound physical backlog to4, preserve concurrent viewport/control and accepted unready checkpoint. Delayed callback ownership uses the actual runtime with a controlled native submission boundary.",
+    "bootstrap": "Two physical tests PASS: root preparation admission while program writes/contacts await bootstrap outcome; superseded foreground runtime replaces its session before input.",
+    "nativeLeaf": "Original final1440 one-second terminal completion failed with acquired source/target and no callback. The unchanged deadline and behavior pass on boundaries1450 with added diagnostic callbacks; transient failure mechanism remains unresolved.",
+    "ui24": "page-turn-surface previously inherited a child hit point inside program6. Explicit accessibilityActivationPoint(.center) now passes all24 unchanged-after-pinch, first taps, close/reopen, forward/reverse and Home/reactivate exact state assertions. Same-runtime native contact policy and assertions preserved.",
+    "mac": "Two functional Mac checks PASS on older507c4e source; writer refusal/checkpoint and command-service startup refusal. Four later changed paths listed above do not alter these Mac owners; no current-tree Mac full acceptance claimed."
+  },
+  "pinchFailure": {
+    "declaredTarget": "page-turn-surface",
+    "declaredFrame": [
+      0,
+      0,
+      834,
+      1194
+    ],
+    "checkedPaperCentre": [
+      417,
+      597
+    ],
+    "deliveredCentroid": [
+      442,
+      417
+    ],
+    "program6Rect": [
+      425,
+      320,
+      170,
+      110
+    ],
+    "eventPath": "/private/tmp/notebook-228-final-1440/attachments/F6060816-067B-4F88-A0CA-9FE4B90F2E86",
+    "eventSHA256": "2969107e58f9aeb55ac24e9d0b4233af205a839e91fb1578bfff5934e355bd6e",
+    "allContactsInsideSameRuntime": true
+  },
+  "immediatePresentationDiagnostic": {
+    "controls": [
+      {
+        "binding": "view",
+        "context": "activation=0,scene=(0.0, 0.0, 834.0, 1194.0),window=(0.0, 0.0, 834.0, 1194.0),screen=(0.0, 0.0, 834.0, 1194.0),key=true,visibleWindows=2,lowPower=false,thermal=0,requestBeforeEnabling=false,requestAfterEnabling=false,requestAfterEnabledAssignment=false,requestBeforeDisabling=false,requestedDuringUpdates=[false, false, false, false, false, false, false, false, false, false, false, false]",
+        "contextPath": "/private/tmp/notebook-228-boundaries-1450-attachments/AEFE531C-BA19-4E72-AE86-8205D5FA36FD.txt",
+        "contextSHA256": "00a3b3b26e43c170d1e85529f68d2e71589042a6630514617dc515b4398165ad",
+        "tracePath": "/private/tmp/notebook-228-boundaries-1450-attachments/C8A7FF36-51D1-48E0-88B7-3464F83FAC22.json",
+        "traceSHA256": "924ee7fc62b63d3b0f753e7a3efbea72d049051b66b7cd5f2bac70a2caca39cb",
+        "updates": 12,
+        "immediateExpected": [
+          false
+        ],
+        "droppedEvents": 0
+      },
+      {
+        "binding": "scene",
+        "context": "activation=0,scene=(0.0, 0.0, 834.0, 1194.0),window=(0.0, 0.0, 834.0, 1194.0),screen=(0.0, 0.0, 834.0, 1194.0),key=true,visibleWindows=2,lowPower=false,thermal=0,requestBeforeEnabling=false,requestAfterEnabling=false,requestAfterEnabledAssignment=false,requestBeforeDisabling=false,requestedDuringUpdates=[false, false, false, false, false, false, false, false, false, false, false, false]",
+        "contextPath": "/private/tmp/notebook-228-boundaries-1450-attachments/125E5B0C-206B-4363-BF00-3865474BBBD5.txt",
+        "contextSHA256": "00a3b3b26e43c170d1e85529f68d2e71589042a6630514617dc515b4398165ad",
+        "tracePath": "/private/tmp/notebook-228-boundaries-1450-attachments/7F88C18E-F7F2-438F-90E1-EC61D9AA6D7D.json",
+        "traceSHA256": "c165c8371168466c41e1faf7a510b4c1c78055247a127d90f2790b906b88c804",
+        "updates": 12,
+        "immediateExpected": [
+          false
+        ],
+        "droppedEvents": 0
+      }
+    ],
+    "interpretation": "Both view- and scene-bound link getters returnfalse before enabling, after enabling, after assigningtrue again whileenabled and during all12 updates; UIUpdateInfo immediatePresentationExpected also false. Assignment does not establish an admitted immediate opportunity. This diagnoses current OS/framework policy, not its cause or a measured speedup."
+  },
+  "latencyStatus": {
+    "accepted": false,
+    "firstHeldDotOSFromHandlerMs": 22.274583,
+    "firstCurlOSFromCommandMs": 39.49275,
+    "firstCurlDroppedCallbacks": 2,
+    "strictCurlFirstFrameGateMs": 16.666667,
+    "strictCurlFirstFrameObservedFailureMs": 20.222792,
+    "measurement": "Event timestamps at source; screenshots and report decoding excluded. Scheduling observations assert event coverage/ownership, not latency budgets.",
+    "open": [
+      "First OS dot and curl budgets remain unaccepted; no system-policy cause established.",
+      "Native leaf terminal completion failed once within1s then passed unchanged; no proven causal repair for that transient.",
+      "Hardware Pencil delivery, system CPU/GPU/memory joint workload and full acceptance not performed in this slice."
+    ]
+  },
+  "installation": {
+    "status": "matched-pair-launched",
+    "version": "0.3.158",
+    "build": "228",
+    "sourceSHA256": "957d4b62a74ef9d4fb0610fb2bdab0c6ae4364416711dd536e38a4c18669a6bf",
+    "delivery": "delivery.json"
+  },
+  "fullAcceptance": false
+}

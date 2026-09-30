@@ -566,6 +566,9 @@ struct PageTurnSurface: View {
       #endif
     }
     .accessibilityIdentifier("page-turn-surface")
+    // The page's activation point belongs to paper navigation. A container's
+    // inferred child hit point can instead activate an embedded program.
+    .accessibilityActivationPoint(.center)
     // Preparing paper behind the cover does not expose its controls to VoiceOver.
     .accessibilityHidden(!pageIsInteractive)
   }

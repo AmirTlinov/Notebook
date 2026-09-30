@@ -5,6 +5,23 @@ import XCTest
 
 final class MacModelLifecycleTests: XCTestCase {
   @MainActor
+  func testCommandServiceStartupFailureKeepsTheAcceptedWorkspaceWritable() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    let unavailableParent = root.appendingPathComponent("socket-parent")
+    try Data().write(to: unavailableParent)
+    let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false,
+      commandSocketURL: unavailableParent.appendingPathComponent("owner.sock"))
+    retainNotebookUntilTeardown(model, removing: root)
+    await model.start(pageSize: NotebookAppModel.defaultPageSize)
+    XCTAssertEqual(model.loadState, .ready, "IPC service startup cannot withdraw accepted paper")
+    XCTAssertNotNil(model.agentStartupError)
+    XCTAssertNotNil(model.activePage)
+    XCTAssertTrue(model.inputGate.permitsNewContact)
+    XCTAssertNil(model.persistenceFailure, "A service endpoint failure is separate from durable input")
+  }
+
+  @MainActor
   func testCoherentIPCReadsDoNotCreateDurableChanges() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     let fixture = MacCommandFixture(root: root)

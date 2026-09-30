@@ -155,6 +155,11 @@ final class DocumentPagePresentationOwner {
     fileprivate init(_ owner: DocumentPagePresentationOwner) {
       documentID = owner.documentID; self.owner = owner; owner.openDocuments += 1
     }
+    func abortBootstrapPreparation() {
+      guard let owner else { return }
+      owner.abortBootstrapPreparation()
+      close()
+    }
     func close() {
       guard let owner else { return }; self.owner = nil
       owner.openDocuments -= 1
@@ -1858,6 +1863,7 @@ final class DocumentPagePresentationOwner {
     closingPrograms = Task { @MainActor [self] in
       let saved = await programOwner.checkpointAll(resume: false)
       closingPrograms = nil
+      guard !stopped, !Task.isCancelled else { return }
       if entries.isEmpty && openDocuments == 0 {
         if saved { finishStop() }
         // Failed persistence retains the same owner and admits explicit retry.
@@ -1867,6 +1873,12 @@ final class DocumentPagePresentationOwner {
         schedule()
       }
     }
+  }
+
+  private func abortBootstrapPreparation() {
+    guard !stopped else { return }
+    closingPrograms?.cancel(); closingPrograms = nil
+    finishStop()
   }
 
   private func finishStop() {

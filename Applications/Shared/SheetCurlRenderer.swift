@@ -74,8 +74,10 @@ final class SheetCurlGPU: @unchecked Sendable {
   let device: (any MTLDevice)?
   let commandQueue: (any MTLCommandQueue)?
   private let coverLock = NSLock()
+  private var contextRequested = false
   private var contextResult: Result<CIContext, SceneRenderError>?
   private var contextReaders: [UUID: CheckedContinuation<CIContext, any Error>] = [:]
+  private var coverRequested = false
   private var coverResult: Result<CIContext, SceneRenderError>?
   private var coverObservers: [UUID: @MainActor @Sendable (Result<CIContext, SceneRenderError>) -> Void] = [:]
   private let pageLock = NSLock()
@@ -103,23 +105,48 @@ final class SheetCurlGPU: @unchecked Sendable {
       } catch { result = .failure((error as? SceneRenderError) ?? .snapshotPending("page_pipeline")) }
       pageLock.withLock { pageResult = result }
     }
-    // Start once with this GPU owner, before a cover gesture. Page captures
-    // borrow the context asynchronously; mounting never constructs Core Image.
-    let queue = commandQueue
+  }
+
+  /// Interior paper needs neither the Core Image compositor nor its cover
+  /// program. One accepted compositor borrow starts the shared context; a
+  /// cancelled reader never cancels preparation needed by another borrower.
+  private func requestImageContext() {
+    let starts = coverLock.withLock {
+      guard !contextRequested else { return false }
+      contextRequested = true
+      return true
+    }
+    guard starts else { return }
+    Task.detached(priority: .userInitiated) { [self] in
+      guard let device else {
+        publishContext(.failure(.snapshotPending("image_context_device")))
+        return
+      }
+      let context = CIContext(mtlDevice: device,
+        options: [.cacheIntermediates: false, .workingColorSpace: NSNull()])
+      publishContext(.success(context))
+    }
+  }
+
+  /// A real mounted cover material demand, or its first moving frame, owns
+  /// this capability. It shares the compositor but adds no cover compilation
+  /// to an interior page's capture or GPU pipeline preparation.
+  func requestCoverPreparation() {
+    let starts = coverLock.withLock {
+      guard !coverRequested else { return false }
+      coverRequested = true
+      return true
+    }
+    guard starts else { return }
     Task.detached(priority: .userInitiated) { [self] in
       let result: Result<CIContext, SceneRenderError>
       do {
-        guard let device, let queue else { throw SceneRenderError.snapshotPending("image_context_device") }
-        let context = CIContext(mtlDevice: device,
-          options: [.cacheIntermediates: false, .workingColorSpace: NSNull()])
-        publishContext(.success(context))
+        guard let queue = commandQueue else { throw SceneRenderError.snapshotPending("image_context_device") }
+        let context = try await imageContext()
         try await Self.prepareCoverContext(context, queue: queue)
         result = .success(context)
       } catch {
-        let failure = (error as? SceneRenderError) ?? .snapshotPending("cover_program")
-        // A cover-only warmup failure cannot revoke a usable compositor.
-        publishContext(.failure(failure))
-        result = .failure(failure)
+        result = .failure((error as? SceneRenderError) ?? .snapshotPending("cover_program"))
       }
       let observers = coverLock.withLock {
         coverResult = result
@@ -141,6 +168,8 @@ final class SheetCurlGPU: @unchecked Sendable {
   /// A page borrows the common context as soon as it exists; cover program
   /// compilation and its GPU warmup are a separate readiness boundary.
   func imageContext() async throws -> CIContext {
+    try Task.checkCancellation()
+    requestImageContext()
     let id = UUID()
     let context: CIContext = try await withTaskCancellationHandler {
       try Task.checkCancellation()
@@ -175,6 +204,7 @@ final class SheetCurlGPU: @unchecked Sendable {
 
   @MainActor func observeCover(_ id: UUID,
     _ completion: @escaping @MainActor @Sendable (Result<CIContext, SceneRenderError>) -> Void) {
+    requestCoverPreparation()
     let ready: Result<CIContext, SceneRenderError>? = coverLock.withLock {
       if let coverResult { return coverResult }
       coverObservers[id] = completion
@@ -424,6 +454,7 @@ final class SheetCurlMetalView: MTKView, MTKViewDelegate {
     let presentsWithTransaction: Bool
     let drawableMatchesLayer: Bool?
     let immediatePresentationExpected: Bool?
+    let performingLowLatencyPhases: Bool?
   }
   /// Opt-in observation of the layer-tree boundary, separate from the Metal/OS
   /// receipt: first six CA phases and three present calls only.
@@ -638,7 +669,8 @@ final class SheetCurlMetalView: MTKView, MTKViewDelegate {
       layerOpacity: pageOutputLayer?.opacity ?? 0,
       presentsWithTransaction: pageOutputLayer?.presentsWithTransaction ?? false,
       drawableMatchesLayer: drawable.map { $0.layer === pageOutputLayer },
-      immediatePresentationExpected: info?.isImmediatePresentationExpected))
+      immediatePresentationExpected: info?.isImmediatePresentationExpected,
+      performingLowLatencyPhases: info?.isPerformingLowLatencyPhases))
   }
 
   private func configurePageOutput(size: CGSize) throws {

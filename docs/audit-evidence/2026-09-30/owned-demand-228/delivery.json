@@ -1,0 +1,91 @@
+{
+  "format": 1,
+  "installation": {
+    "build": "228",
+    "buildReceiptSHA256": "cbb75dfedeff4c666f5cd6dc9db5f8d3765c4f504b947216fc494dc4a1a59f89",
+    "dataAccess": "none",
+    "dataContainerPathChanged": true,
+    "finishedAt": "2026-09-30T15:00:28.828258+00:00",
+    "fullAcceptance": false,
+    "inPlaceUpdate": true,
+    "previousBuild": "227",
+    "sourceSHA256": "957d4b62a74ef9d4fb0610fb2bdab0c6ae4364416711dd536e38a4c18669a6bf",
+    "status": "matched-pair-launched",
+    "version": "0.3.158"
+  },
+  "postLaunch": {
+    "status": "ready",
+    "checkedAt": "2026-09-30T15:00:55Z",
+    "sourceSHA256": "957d4b62a74ef9d4fb0610fb2bdab0c6ae4364416711dd536e38a4c18669a6bf",
+    "installedHelperStatus": "ready",
+    "workspaceID": "54349F3B-9E0A-4DEA-B990-40CAE04EF45E",
+    "iPadDeviceID": "29DC77FE-8777-41EC-BE98-704F4668A2F4",
+    "iPadSessionID": "A84CDF98-BB77-424D-990A-762AC5A437DC",
+    "presence": {
+      "selectedItemID": "AF947D51-7E74-4081-9194-3B5FE07A0F39",
+      "format": 5,
+      "viewport": {
+        "y": 1194,
+        "x": 834
+      },
+      "openProgress": 1,
+      "boardID": "7E7A0000-0000-4000-8000-000000000003",
+      "camera": {
+        "scale": 1,
+        "center": {
+          "tileX": 0,
+          "localX": 3355.8232476298454,
+          "localY": 1516.4960114370574,
+          "tileY": 0
+        }
+      },
+      "focusedItemID": "AF947D51-7E74-4081-9194-3B5FE07A0F39",
+      "notebookPageID": "C74869CD-CE04-4AC2-A12E-66B00996B8E6",
+      "mode": "page",
+      "documentPageIndex": 0
+    },
+    "priorSessionID": "B335CA7A-C250-4091-885D-2FBA27FA84A1",
+    "trustedDeviceMatches227": true,
+    "workspaceMatches227": true,
+    "version": "0.3.158",
+    "build": "228",
+    "iPadNotebookApps": [
+      {
+        "bundleID": "com.amirtlinov.notebook.preview",
+        "name": "Notebook Lab",
+        "version": "0.3.158",
+        "build": "228"
+      }
+    ],
+    "qaOrTestAppsPresent": false,
+    "inPlaceUpdate": true,
+    "visibleIPadCheck": {
+      "status": "observed",
+      "path": "ipad-visible.png",
+      "dimensions": [
+        1668,
+        2388
+      ],
+      "content": "Restored handwritten notebook page, ink, paper and toolbar visible; leaf 1 of 4."
+    },
+    "fullAcceptance": false
+  },
+  "artifacts": {
+    "build": {
+      "path": "/private/tmp/notebook-pair-228-1454/build.json",
+      "sha256": "cbb75dfedeff4c666f5cd6dc9db5f8d3765c4f504b947216fc494dc4a1a59f89"
+    },
+    "installation": {
+      "path": "/private/tmp/notebook-install-228-1459/installation.json",
+      "sha256": "9cf1079ba65d945132f3fc5ffb9da1bc33497f6f3699317e55741a608775badf"
+    },
+    "postLaunch": {
+      "path": "/private/tmp/notebook-install-228-1459/post-launch-check.json",
+      "sha256": "2a50c2129d4cd5aae6d8e8db3a14d7a4db7b7858d4b09f9348cf05aa1b3d38ad"
+    },
+    "visibleIPad": {
+      "path": "/private/tmp/notebook-install-228-1459/ipad-visible.png",
+      "sha256": "31c61a3638157ed1c99b5cc2869d5354b50908c0a50e2d0b448b0e064ef168b4"
+    }
+  }
+}

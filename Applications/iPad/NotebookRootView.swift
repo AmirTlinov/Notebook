@@ -15,14 +15,27 @@ struct NotebookRootView: View {
       || model.chat?.voice.error != nil || model.chat?.dictation.notice != nil
   }
 
+  /// Accepted immutable content can prepare while bootstrap saves its settled
+  /// presence. The same subtree stays mounted when durable input becomes ready.
+  private var hasAcceptedWorkspace: Bool {
+    guard model.workspaceHeader != nil, model.presence != nil else { return false }
+    switch model.loadState {
+    case .loading, .ready: return true
+    case .failed: return false
+    }
+  }
+
   var body: some View {
     ZStack {
     GeometryReader { geometry in
       ZStack {
         Color(red: 0.965, green: 0.957, blue: 0.925)
 
-        switch model.loadState {
-        case .loading:
+        if hasAcceptedWorkspace {
+          DocumentSourceWorkspace(mode: $documentMode, topInset: 18,
+            allowsBeside: geometry.size.width > geometry.size.height) { SpatialWorkspaceView(chromeHidden:$chromeHidden) }
+            .allowsHitTesting(model.loadState == .ready)
+        } else if case .loading = model.loadState {
           if model.awaitingAccountContent {
             VStack(spacing: 14) {
               ProgressView("Открываем ваши материалы…")
@@ -31,10 +44,7 @@ struct NotebookRootView: View {
               if let open = model.openWorkspaceLibrary { Button("Выбрать пространство") { open(.spaces) } }
             }.padding(24)
           } else { Color.clear }
-        case .ready:
-          DocumentSourceWorkspace(mode: $documentMode, topInset: 18,
-            allowsBeside: geometry.size.width > geometry.size.height) { SpatialWorkspaceView(chromeHidden:$chromeHidden) }
-        case .failed(let message):
+        } else if case .failed(let message) = model.loadState {
           Text(message)
             .font(.footnote)
             .foregroundStyle(.secondary)
@@ -68,7 +78,7 @@ struct NotebookRootView: View {
           .accessibilityIdentifier("persistence-failure")
         }
 
-        if model.presence != nil, model.activeDocument == nil || documentMode != .code {
+        if model.loadState == .ready, model.presence != nil, model.activeDocument == nil || documentMode != .code {
           NotebookTopBar()
             .background(NotebookControlRegion(gate:model.inputGate))
             .opacity(chromeHidden ? 0 : 1).allowsHitTesting(!chromeHidden)

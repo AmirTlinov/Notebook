@@ -16,6 +16,8 @@ import XCTest
     let modelTime: TimeInterval?
     let deadline: TimeInterval?
     let targetPresentation: TimeInterval?
+    let immediatePresentationExpected: Bool?
+    let performingLowLatencyPhases: Bool?
   }
   struct Report: Codable {
     let format: Int
@@ -43,14 +45,20 @@ import XCTest
       ("ui_before_display_link", .beforeCADisplayLinkDispatch),
       ("ui_after_display_link", .afterCADisplayLinkDispatch),
       ("ui_before_ca_commit", .beforeCATransactionCommit),
-      ("ui_after_ca_commit", .afterCATransactionCommit), ("ui_complete", .afterUpdateComplete)
+      ("ui_after_ca_commit", .afterCATransactionCommit),
+      ("ui_before_low_latency_event", .beforeLowLatencyEventDispatch),
+      ("ui_after_low_latency_event", .afterLowLatencyEventDispatch),
+      ("ui_before_low_latency_commit", .beforeLowLatencyCATransactionCommit),
+      ("ui_after_low_latency_commit", .afterLowLatencyCATransactionCommit),
+      ("ui_complete", .afterUpdateComplete)
     ]
     for (stage, phase) in phases {
       link.addAction(to: phase) { [weak self] _, info in
         guard let self else { return }
         if stage == "ui_before_event" { cycle += 1 }
         record(stage, modelTime: info.modelTime, deadline: info.completionDeadlineTime,
-          target: info.estimatedPresentationTime)
+          target: info.estimatedPresentationTime,
+          immediate: info.isImmediatePresentationExpected, lowLatency: info.isPerformingLowLatencyPhases)
       }
     }
     // Default passive policy remains intact, including low-latency input.
@@ -76,12 +84,14 @@ import XCTest
 
   func record(_ stage: String, at uptime: TimeInterval = CACurrentMediaTime(),
     owner: String? = nil, source: String? = nil, modelTime: TimeInterval? = nil,
-    deadline: TimeInterval? = nil, target: TimeInterval? = nil) {
+    deadline: TimeInterval? = nil, target: TimeInterval? = nil,
+    immediate: Bool? = nil, lowLatency: Bool? = nil) {
     guard ended == nil else { return }
     guard events.count < 4096 else { droppedEvents += 1; return }
     events.append(.init(stage: stage, uptime: uptime, deliveryUICycle: cycle,
       deliveryRunLoopPass: runLoopPass, owner: owner, source: source,
-      modelTime: modelTime, deadline: deadline, targetPresentation: target))
+      modelTime: modelTime, deadline: deadline, targetPresentation: target,
+      immediatePresentationExpected: immediate, performingLowLatencyPhases: lowLatency))
   }
 
   func stop() {

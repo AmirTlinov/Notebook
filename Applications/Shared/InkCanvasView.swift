@@ -21,6 +21,10 @@ struct InkContactFrameTiming: Sendable {
   var lastBlankRevision: UInt64?
   var submittedRevision: UInt64?
   var opacityBeforePublication: Float?
+  var lowLatencyDeferred: TimeInterval?
+  var lowLatencyDispatched: TimeInterval?
+  var lowLatencyUIDeadline: TimeInterval?
+  var lowLatencyUITarget: TimeInterval?
   var gpuStarted: TimeInterval?
   var gpuEnded: TimeInterval?
   var gpuCompletion: TimeInterval?
@@ -591,15 +595,57 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
   private(set) var pageActivePassCount = 0
 
   private var pageDisplayLink: CAMetalDisplayLink?
+  /// One submitted cut covers this measured contact, its predictions and the
+  /// page projection. Clock ticks do not change any member of this identity.
+  private struct PageContactFrameKey: Equatable, Sendable {
+    let contact: ContactFrame
+    let renderID: UUID
+    let sourceGeneration: UInt64
+    let stableRevision: UInt64
+    let paintRevision: UInt64
+    let region: CGRect
+    let pixels: CGSize
+    let camera: SpatialCamera?
+    let viewport: SpatialPoint
+    let windowID: ObjectIdentifier
+  }
+  private var submittedPageContact: (key: PageContactFrameKey, submission: UUID)?
+  private var pageContactFrameKey: PageContactFrameKey? {
+    guard usesPageDisplayLink, let contact = activeContactFrame,
+      let region = pageRenderRegion, let window else { return nil }
+    return .init(contact: contact, renderID: activeRenderID,
+      sourceGeneration: spatialSourceGeneration, stableRevision: stableContentRevision,
+      paintRevision: acceptedPaintRevision, region: region, pixels: drawableSize,
+      camera: spatialCamera, viewport: spatialViewport, windowID: ObjectIdentifier(window))
+  }
+  private var currentPageContactIsSubmitted: Bool {
+    guard pendingOrderedCut == nil, !needsRevealedFrame, hasRevealedFirstFrame,
+      renderFailure == nil, let key = pageContactFrameKey else { return false }
+    return submittedPageContact?.key == key
+  }
   #if os(iOS)
   private var pageUIUpdates: UIUpdateLink?
+  /// A confirmed late Pencil dispatch belongs to this contact and this pair
+  /// of clocks. Retain the system's drawable for that one update; never acquire
+  /// another drawable or render the pre-dispatch samples as well.
+  private struct DeferredContactUpdate {
+    let metalLink: CAMetalDisplayLink
+    let updateLink: UIUpdateLink
+    let update: CAMetalDisplayLink.Update
+    let sourceID: UUID
+    let sourceGeneration: UInt64
+    let windowID: ObjectIdentifier
+    let deferredAt: TimeInterval
+  }
+  private var deferredContactUpdate: DeferredContactUpdate?
   #endif
   private var usesPageDisplayLink: Bool {
     pageRenderRegion != nil && spatialDrawableScale == nil && material == nil
   }
   var isFrameLoopPaused: Bool {
     #if os(iOS)
-    isPaused && (pageDisplayLink?.isPaused ?? true) && pageUIUpdates?.isEnabled != true
+    isPaused && (pageDisplayLink?.isPaused ?? true)
+      && !(pageUIUpdates?.isEnabled == true && pageUIUpdates?.requiresContinuousUpdates == true)
     #else
     isPaused && (pageDisplayLink?.isPaused ?? true)
     #endif
@@ -687,7 +733,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     if !ready,pending.firstPage {hasRevealedFirstFrame=false}
     if window != nil {requestFrame()}
     #if os(iOS)
-    if pageDisplayLink?.isPaused != false {pageUIUpdates?.isEnabled=false}
+    updatePageUIParticipation()
     #endif
   }
   private(set) var drawableRequestCount = 0
@@ -935,6 +981,9 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     if drawableSize != pixels { pageDrawableResizeCount += 1 }
     // The system must not allocate a resized pool before its bytes are admitted.
     pageDisplayLink?.isPaused = true
+    #if os(iOS)
+    deferredContactUpdate = nil
+    #endif
     // CAMetalDisplayLink forbids this setter, even with the same value. Fix the
     // two-slot page pool before its first clock; resizing only changes its size.
     if pageRenderRegion == nil { (layer as? CAMetalLayer)?.maximumDrawableCount = Self.pageDrawableCount }
@@ -978,6 +1027,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
       guard usesPageDisplayLink,acceptedMaterialIsReady else {return}
     }
     pendingTransaction=nil
+    submittedPageContact=nil
     requestFrame()
   }
 
@@ -1512,6 +1562,9 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
   /// clock, never inside the touch callback.
   func displayActiveStroke(_ stroke: ActiveInkStroke) {
     if activeInkStroke !== stroke {
+      #if os(iOS)
+      deferredContactUpdate = nil
+      #endif
       supersedePendingEmptyReveal()
       beginStableContentUpdate()
       activeInkStroke = stroke
@@ -1526,6 +1579,9 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
   /// Composites the measured destination-out brush over the stable page.
   func displayActiveEraser(_ stroke: ActiveEraserStroke) {
     if activeEraserStroke !== stroke {
+      #if os(iOS)
+      deferredContactUpdate = nil
+      #endif
       supersedePendingEmptyReveal()
       beginStableContentUpdate()
       activeEraserStroke = stroke
@@ -1615,12 +1671,54 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
         "targetTimestamp": .number(update.targetTimestamp),
         "targetPresentationTimestamp": .number(update.targetPresentationTimestamp)])
     }
+    #if os(iOS)
+    if let contact = activeContactFrame, let updates = pageUIUpdates, updates.isEnabled,
+      let window, let info = updates.currentUpdateInfo(),
+      !info.isPerformingLowLatencyPhases, info.isLowLatencyEventDispatchConfirmed {
+      deferredContactUpdate = .init(metalLink: link, updateLink: updates, update: update,
+        sourceID: contact.sourceID, sourceGeneration: spatialSourceGeneration,
+        windowID: ObjectIdentifier(window), deferredAt: CACurrentMediaTime())
+      return
+    }
+    // An immediate callback replaces an older unsubmitted late opportunity.
+    // Its own drawable and the current measured contact are the only demand.
+    deferredContactUpdate = nil
+    #endif
+    renderPageUpdate(update)
+  }
+
+  private func renderPageUpdate(_ update: CAMetalDisplayLink.Update,
+    deferredAt: TimeInterval? = nil, dispatchedAt: TimeInterval? = nil,
+    uiDeadline: TimeInterval? = nil, uiTarget: TimeInterval? = nil) {
     let timing = onContactFrameResolved.map { _ in
-      InkContactFrameTiming(renderBegan: CACurrentMediaTime(), targetDeadline: update.targetTimestamp,
+      var timing = InkContactFrameTiming(renderBegan: CACurrentMediaTime(), targetDeadline: update.targetTimestamp,
         targetPresentation: update.targetPresentationTimestamp)
+      timing.lowLatencyDeferred = deferredAt; timing.lowLatencyDispatched = dispatchedAt
+      timing.lowLatencyUIDeadline = uiDeadline; timing.lowLatencyUITarget = uiTarget
+      return timing
     }
     autoreleasepool { renderFrame(pageDrawable: update.drawable, contactTiming: timing) }
   }
+
+  #if os(iOS)
+  private func renderDeferredContactUpdate(on link: UIUpdateLink, info: UIUpdateInfo) {
+    guard let deferred = deferredContactUpdate else { return }
+    // Consuming ownership comes before encoding. Reentrant source/layer work
+    // cannot encode this drawable twice or retain it after cancellation.
+    deferredContactUpdate = nil
+    guard link === pageUIUpdates, link === deferred.updateLink,
+      deferred.metalLink === pageDisplayLink, usesPageDisplayLink,
+      spatialSourceGeneration == deferred.sourceGeneration,
+      let window, ObjectIdentifier(window) == deferred.windowID,
+      activeContactFrame?.sourceID == deferred.sourceID,
+      !spatialHandoffIsStopping, !pageBackingIsReclaimed else { return }
+    // Late events may have advanced this contact's revision. Encoding reads
+    // that latest measured tail; predictions never become the receipt source.
+    renderPageUpdate(deferred.update, deferredAt: deferred.deferredAt,
+      dispatchedAt: CACurrentMediaTime(), uiDeadline: info.completionDeadlineTime,
+      uiTarget: info.estimatedPresentationTime)
+  }
+  #endif
 
   private func renderFrame(pageDrawable: (any CAMetalDrawable)? = nil,
     contactTiming: InkContactFrameTiming? = nil) {
@@ -1631,6 +1729,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     guard window != nil, !spatialHandoffIsStopping, spatialStagingID == nil,
       !pageBackingIsReclaimed else { pauseFrameLoop(); return }
     guard pendingTransaction == nil else { pauseFrameLoop(); return }
+    if currentPageContactIsSubmitted { pauseFrameLoop(); return }
     isRenderingFrame = true
     defer { isRenderingFrame = false }
     // MetalKit may request the same static material more than once during
@@ -1928,6 +2027,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
         && pageGeometryIsReady
       ? stableContentRevision : nil
     let submittedRevision = stableContentRevision
+    let submittedContactKey = pageContactFrameKey
     let observedSubmission: [String: JSONValue]?
     let observedCanvasID: String?
     if usesPageDisplayLink, NotebookNavigationObservation.enabled {
@@ -1949,7 +2049,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
       for (pass, index) in zip(passes, submittedTiles) {
         observePresentation(of: pass.1, tile: index, target: target, submission: submission, commandBuffer: commandBuffer)
       }
-    } else if visibleSubmission, presentedRevision != nil || onVisibleFrame != nil || pendingTransaction?.id == submission {
+    } else if visibleSubmission, presentedRevision != nil || onVisibleFrame != nil || pendingTransaction?.id == submission || submittedContactKey != nil {
       NotebookMetalFrameReadiness.observe(passes[0].1,commandBuffer:commandBuffer) { [weak self] readiness in
         if emptyPublication, self?.pendingTransaction?.id != submission
           || self?.presentsCurrentEmptyPage != true {
@@ -1973,6 +2073,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
         guard let self,!spatialHandoffIsStopping,window != nil,
           stableContentRevision == submittedRevision else { return }
         guard readiness.isReady else {
+          if submittedPageContact?.submission == submission { submittedPageContact = nil }
           if material != nil { beginStableContentUpdate() }
           if !exposedCanvasRect.isEmpty { requestFrame() }
           return
@@ -2035,6 +2136,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
         // revision, not another frame of this older submission.
         if transactionPresentation, submittedTransactionalRevision != stableContentRevision { requestFrame() }
         if !completed {
+          if submittedPageContact?.submission == submission { submittedPageContact = nil }
           if pendingTransaction?.id == submission {
             if pendingTransaction?.firstPage == true {hasRevealedFirstFrame=false}
             pendingTransaction = nil
@@ -2085,6 +2187,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
           guard let self,!spatialHandoffIsStopping,window != nil,spatialSourceGeneration == sourceGeneration,
             !emptyPublication || (pendingTransaction?.id == submission && presentsCurrentEmptyPage),
             orderedCut?.cancelled != true,orderedCut?.validate() != false,stableContentRevision == submittedRevision else {
+            if self?.submittedPageContact?.submission == submission { self?.submittedPageContact = nil }
             if let self,pendingTransaction?.id == submission {
               pendingTransaction = nil
               if window != nil { requestFrame() }
@@ -2122,6 +2225,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     }
     contactObservation?.update { $0.commitBegan = CACurrentMediaTime() }
     commandBuffer.commit();orderedCutSubmitted=true
+    if let submittedContactKey { submittedPageContact = (submittedContactKey, submission) }
     contactObservation?.update { $0.commitReturned = CACurrentMediaTime() }
     if let fields = observedSubmission {
       NotebookNavigationObservation.recordInk("ink_submitted", canvasID: observedCanvasID, fields: fields)
@@ -2130,7 +2234,9 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     frameSlot = (frameSlot + 1) % Self.framesInFlight
     continuesPageFrames = true
 
-    if pendingTransaction != nil || (activeInkStroke == nil && activeEraserStroke == nil) { pauseFrameLoop() }
+    // Each measured/predicted change asks for one cut. The contact keeps its
+    // passive late-input participation while its unchanged pixels remain held.
+    if usesPageDisplayLink || pendingTransaction != nil || (activeInkStroke == nil && activeEraserStroke == nil) { pauseFrameLoop() }
   }
 
   private var exposedCanvasRect: CGRect {
@@ -3016,17 +3122,37 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
   private func pauseFrameLoop() {
     isPaused = true
     pageDisplayLink?.isPaused = true
+    #if os(iOS)
+    deferredContactUpdate = nil
+    updatePageUIParticipation()
+    #endif
     // A live contact's final UIKit update drains in afterUpdateComplete.
     // Unmount/terminal teardown retire both links immediately below.
   }
 
   private func retirePageDisplayLink() {
+    submittedPageContact = nil
     pageDisplayLink?.invalidate()
     pageDisplayLink = nil
     #if os(iOS)
+    deferredContactUpdate = nil
     pageUIUpdates?.isEnabled = false; pageUIUpdates = nil
     #endif
   }
+
+  #if os(iOS)
+  private func updatePageUIParticipation() {
+    guard let updates = pageUIUpdates else { return }
+    let contact = activeContactFrame != nil
+    let transaction = pendingTransaction != nil
+    // Held ink keeps requesting eligible late events without generating idle
+    // UI frames. New samples restart Metal; a reveal retains continuous demand
+    // only through its actual OS presentation outcome.
+    updates.requiresContinuousUpdates = transaction || (contact && pageDisplayLink?.isPaused == false)
+    updates.wantsLowLatencyEventDispatch = contact
+    updates.isEnabled = contact || transaction
+  }
+  #endif
 
   private func requestPageFrame() {
     // Admit the same two drawable slots and tile-local MSAA before the system
@@ -3057,20 +3183,26 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     let active = activeInkStroke != nil || activeEraserStroke != nil
     if active, pageUIUpdates == nil {
       let updates = UIUpdateLink(view: self)
+      updates.addAction(to: .afterLowLatencyEventDispatch) { [weak self] link, info in
+        self?.renderDeferredContactUpdate(on: link, info: info)
+      }
       // Continuous participation requires an action before it is enabled.
       updates.addAction(to: .afterUpdateComplete) { [weak self] link, _ in
+        guard let self, link === pageUIUpdates else { return }
+        // A retired contact/window cannot leave a drawable parked indefinitely.
+        // The next actual demand, rather than a timeout, resumes its own clock.
+        deferredContactUpdate = nil
         // The first submission parks Metal, but its actual reveal still owns
         // this policy until the OS acknowledges the presentation.
-        if self?.pageDisplayLink?.isPaused != false && self?.pendingTransaction == nil {
-          link.isEnabled = false
-        }
+        updatePageUIParticipation()
       }
       updates.requiresContinuousUpdates = true
+      updates.wantsLowLatencyEventDispatch = true
       updates.wantsImmediatePresentation = true
       updates.preferredFrameRateRange = .init(minimum: rate, maximum: rate, preferred: rate)
       pageUIUpdates = updates
     }
-    if active { pageUIUpdates?.isEnabled = true }
+    updatePageUIParticipation()
     #endif
   }
 
@@ -3080,6 +3212,7 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
     if presentEmptyContentIfReady() { return }
     guard baselinePipelineState != nil, inkPipelineState != nil, eraserPipelineState != nil else { return }
     guard pendingTransaction == nil else { pauseFrameLoop(); return }
+    if currentPageContactIsSubmitted { pauseFrameLoop(); return }
     // Layout, mesh and old GPU callbacks cannot reacquire a reclaimed neighbour.
     // Its existing page-role promotion is the only route back to pixel demand.
     guard !pageBackingIsReclaimed else { pauseFrameLoop(); return }
@@ -3210,8 +3343,15 @@ final class InkCanvasView: MTKView, MTKViewDelegate, @preconcurrency CAMetalDisp
   }
 
   private func discardActiveAction() {
+    submittedPageContact = nil
+    #if os(iOS)
+    deferredContactUpdate = nil
+    #endif
     activeInkStroke = nil
     activeEraserStroke = nil
+    #if os(iOS)
+    updatePageUIParticipation()
+    #endif
     builtActiveIdentity = nil
     builtActiveRevision = nil
     activeMesh = IncrementalInkMesh()

@@ -675,6 +675,10 @@ struct CoverSnapshotState<Frame> {
           // The task boundary admits later owner cancellation before work.
           try Task.checkCancellation()
           guard needsMaterialNow else { throw CancellationError() }
+          // This accepted cover cut needs the curl program on its next
+          // moving frame. Prepare it alongside the cut, without adding it
+          // to unrelated interior-page GPU initialization or borrowing.
+          SheetCurlGPU.shared.requestCoverPreparation()
           let material: PageTurnFrame
           if let prepareMaterial { material = try await prepareMaterial(ownerID, revision, scale) }
           else { material = try await prepareCoverMaterial(ownerID: ownerID, revision: revision, scale: scale, priority: priority) }
@@ -940,6 +944,7 @@ struct CoverSnapshotState<Frame> {
       curlView.isHidden = true
       guard preparesCoverMotion, canPrepare() else { return }
       if lifecycle.needsCurrentSnapshot {
+        SheetCurlGPU.shared.requestCoverPreparation()
         lifecycle.storeCapturedCover(captureCover())
       }
     }

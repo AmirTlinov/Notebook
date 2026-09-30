@@ -47,7 +47,14 @@ final class NotebookAppModel {
   )
 
   @ObservationIgnored let readAdmission = NotebookReadAdmission()
-  private(set) var loadState: LoadState = .loading
+  @ObservationIgnored private let bootstrapAdmission = NotebookBootstrapAdmission()
+  private(set) var loadState: LoadState = .loading {
+    didSet {
+      if loadState != .loading {
+        bootstrapAdmission.resolve(acceptsWrites: loadState == .ready && !isClosing)
+      }
+    }
+  }
   private(set) var workspace: WorkspaceIndex? {
     didSet {
       for id in Set(oldValue?.items.map(\.id) ?? []).union(workspace?.items.map(\.id) ?? []) {
@@ -1176,7 +1183,11 @@ final class NotebookAppModel {
   @ObservationIgnored private var headerRefreshRequested = false
   @ObservationIgnored private var diskRefreshRequested = false
   @ObservationIgnored private var externalReloadPending = false
-  private(set) var shutdownPhase = ShutdownPhase.running
+  private(set) var shutdownPhase = ShutdownPhase.running {
+    didSet {
+      if shutdownPhase != .running { bootstrapAdmission.resolve(acceptsWrites: false) }
+    }
+  }
   private var isStopped: Bool { shutdownPhase == .draining || shutdownPhase == .stopped }
   private var isClosing: Bool { shutdownPhase != .running }
   private struct WeakScenePresentationOwner {
@@ -1295,7 +1306,9 @@ final class NotebookAppModel {
     #if os(macOS)
       self.commandSocketURL = commandSocketURL ?? (startsNearbySync ? NotebookIPC.defaultSocketURL : nil)
     #endif
-    inputGate.bindNewContactAdmission { [weak self] in self?.shutdownPhase == .running }
+    inputGate.bindNewContactAdmission { [weak self] in
+      self?.loadState == .ready && self?.shutdownPhase == .running
+    }
     peerPublication.onFailure = { [weak self] error in
       self?.publicationFailure = error.localizedDescription
       self?.persistenceFailure = error.localizedDescription
@@ -1853,16 +1866,21 @@ final class NotebookAppModel {
       reloadCollaborationMetadata()
       reloadExternalChanges()
       #if os(macOS)
-        try await scripts().start()
-        try startCommandServer()
+        do { try await scripts().start() }
+        catch { agentStartupError = error.localizedDescription }
+        do { try startCommandServer() }
+        catch { agentStartupError = error.localizedDescription }
         startPreviewPublication()
       #endif
       #if os(iOS)
         #if DEBUG
-        let approvalFixture = try await NotebookApprovalFixture.make(persistence: persistence, author: actorID, directory: store.root)
-        let syncFixture = try await NotebookChatFixture.make(persistence:persistence,author:actorID)
-        let terminalFixture = try await NotebookTerminalFixture.make(persistence: persistence, author: actorID, directory: store.root)
-        let fixtureChat = approvalFixture ?? syncFixture ?? terminalFixture
+        let fixtureChat: NotebookChatController?
+        do {
+          let approvalFixture = try await NotebookApprovalFixture.make(persistence: persistence, author: actorID, directory: store.root)
+          let syncFixture = try await NotebookChatFixture.make(persistence:persistence,author:actorID)
+          let terminalFixture = try await NotebookTerminalFixture.make(persistence: persistence, author: actorID, directory: store.root)
+          fixtureChat = approvalFixture ?? syncFixture ?? terminalFixture
+        } catch { fixtureChat = nil; showCue(error.localizedDescription) }
         #else
         let fixtureChat: NotebookChatController? = nil
         #endif
@@ -1889,14 +1907,44 @@ final class NotebookAppModel {
       #endif
       if startsNearbySync {
         await prepareCloudSync()
-        try await startTrustedSync()
+        do { try await startTrustedSync() }
+        catch { connectionState = .failed(error.localizedDescription) }
         #if os(macOS)
           await startCodexSidecar()
         #endif
       }
     } catch {
+      NotebookNavigationObservation.webPreparation("startup_failure_enter", ownerID: actorID)
       loadState = .failed(error.localizedDescription)
+      NotebookNavigationObservation.webPreparation("startup_failure_admission_rejected", ownerID: actorID)
+      // Accepted immutable source may already own native preparation. Failure
+      // withdraws that whole lifetime, not just the root view which borrowed it.
+      let openingRead = documentOpening?.task
+      abortBootstrapPreparations()
+      NotebookNavigationObservation.webPreparation("startup_failure_executors_aborted", ownerID: actorID)
+      cancelDocumentOpening()
+      documentShellPreparation?.stop(); documentShellPreparation = nil
+      let owners = scenePresentationOwners.values.compactMap(\.value)
+      scenePresentationOwners.removeAll()
+      for owner in owners { owner.uninstall() }
+      let reads = [scenePreparationTask, sceneWindowTask, openingRead].compactMap { $0 }
+        + notebookPagePreparation.stop()
+      for read in reads { read.cancel() }
+      NotebookNavigationObservation.webPreparation("startup_failure_composition_stop", ownerID: actorID)
+      await compositionTiles.stop()
+      NotebookNavigationObservation.webPreparation("startup_failure_readers_join", ownerID: actorID)
+      for read in reads { await read.value }
+      NotebookNavigationObservation.webPreparation("startup_failure_complete", ownerID: actorID)
+      scenePreparationTask = nil; sceneWindowTask = nil; documentOpening = nil
     }
+  }
+
+  private func abortBootstrapPreparations() {
+    AgentWebCoordinator.abortBootstrapPreparations(ownedBy: self)
+    #if os(iOS)
+      openDocumentPresentation?.abortBootstrapPreparation(); openDocumentPresentation = nil
+      returnDocumentPresentation?.abortBootstrapPreparation(); returnDocumentPresentation = nil
+    #endif
   }
 
   @discardableResult
@@ -2993,7 +3041,16 @@ final class NotebookAppModel {
   @discardableResult
   func commitSpatialElementState(boardID: UUID, rendered: SpatialElement, state: JSONValue,
     onCommitted: NotebookProgramStateCompletion) -> Bool {
-    guard surfaceAcceptsChanges(rendered.surface), let sourceBasis = onCommitted.sourceBasis else { return false }
+    guard !isStopped, surfaceAcceptsChanges(rendered.surface),
+      let sourceBasis = onCommitted.sourceBasis else { return false }
+    if loadState == .loading, !isClosing, workspaceHeader != nil {
+      return bootstrapAdmission.deferProgramWrite(accept: { [weak self] in
+        guard let self,
+          self.commitSpatialElementState(boardID: boardID, rendered: rendered, state: state, onCommitted: onCommitted)
+        else { onCommitted(nil); return }
+      }, reject: { onCommitted(nil) })
+    }
+    guard loadState == .ready else { return false }
     // Admission changes the input frontier before its addressed write can
     // finish. A read queued before this contact must not overwrite the live
     // program with an earlier saved value while that write is still pending.
@@ -4359,24 +4416,28 @@ final class NotebookAppModel {
   }
 
   func programStateBasis(focus: InteractiveElementReference, rendered: AgentElement) -> NotebookProgramStateBasis? {
+    guard let current = programModelCut(focus: focus), current.source.id == rendered.id,
+      AgentProgramSource(current.source) == AgentProgramSource(rendered), current.source.state == rendered.state else { return nil }
+    return current.basis
+  }
+
+  func programModelCut(focus: InteractiveElementReference) -> (source: AgentElement, basis: NotebookProgramStateBasis)? {
     switch focus {
     case .page(let pageID, let elementID):
-      guard elementID == rendered.id, let page = pages[pageID],
-        let source=page.element(id:elementID),
-        AgentProgramSource(source) == AgentProgramSource(rendered),source.state == rendered.state else { return nil }
-      return page.programStateBasis(elementID)
+      guard !isPageBeingDeleted(pageID), let page = pages[pageID],
+        let source = page.element(id: elementID), source.kind == .web,
+        let basis = page.programStateBasis(elementID) else { return nil }
+      return (source, basis)
     case .board(let boardID, let elementID):
-      guard elementID == rendered.id, let board = boardHierarchy?.board(boardID),
-        let source = board.element(id:elementID),
-        AgentProgramSource(agentElementSnapshotSource(source)) == AgentProgramSource(rendered),
-        source.state == rendered.state else { return nil }
-      return board.programStateBasis(elementID)
+      guard let board = boardHierarchy?.board(boardID), let source = board.element(id: elementID),
+        source.kind == .web, let basis = board.programStateBasis(elementID) else { return nil }
+      return (agentElementSnapshotSource(source), basis)
     }
   }
 
   func checkpointProgramState(focus: InteractiveElementReference, rendered: AgentElement, value: JSONValue, basis: NotebookProgramStateBasis,
     admittedStateBytes: Int? = nil) async throws -> NotebookProgramStateBasis? {
-    guard !isStopped else { return nil }
+    guard bootstrapAdmission.wasAccepted, !isStopped else { return nil }
     let target: CollaborationTarget
     switch focus {
     case .page(let pageID, let elementID):
@@ -4404,6 +4465,14 @@ final class NotebookAppModel {
     onCommitted: NotebookProgramStateCompletion) -> Bool {
     guard !isStopped, !isPageBeingDeleted(pageID),
       let captured = onCommitted.sourceBasis else { return false }
+    if loadState == .loading, !isClosing, workspaceHeader != nil {
+      return bootstrapAdmission.deferProgramWrite(accept: { [weak self] in
+        guard let self,
+          self.commitElementState(pageID: pageID, elementID: elementID, state: state, onCommitted: onCommitted)
+        else { onCommitted(nil); return }
+      }, reject: { onCommitted(nil) })
+    }
+    guard loadState == .ready else { return false }
     // An accepted immutable state outlives the page's render window. Eviction
     // removes presentation, not its addressed writer or captured source basis.
     guard var page = pages[pageID] else {
@@ -4577,9 +4646,16 @@ final class NotebookAppModel {
 
   @discardableResult
   func commitDocumentState(documentID: UUID, program: DocumentProgramSource, value: JSONValue) async throws -> ContentFieldVersion? {
-    readAdmission.changed(.init(kind: .document, id: documentID))
     guard value.isValid else { throw NotebookStorageError.invalidTransaction("document state value") }
     guard !isStopped, !isItemBeingDeleted(documentID) else { return nil }
+    if loadState == .loading {
+      guard !isClosing, workspaceHeader != nil, let document = documents[documentID],
+        (try? DocumentProgramSource(document: document, instanceID: program.id, path: program.path).sourceBasis) == program.sourceBasis,
+        await bootstrapAdmission.waitForProgramWrites() else { return nil }
+      try Task.checkCancellation()
+    }
+    guard loadState == .ready, !isStopped, !isItemBeingDeleted(documentID) else { return nil }
+    readAdmission.changed(.init(kind: .document, id: documentID))
     if documents[documentID] == nil || documentStates[documentID] == nil {
       // A retiring heap keeps its admitted value and writer position even after
       // the document leaves the working set. Eviction does not revoke source.
@@ -4622,7 +4698,7 @@ final class NotebookAppModel {
   func checkpointDocumentState(documentID: UUID, blockID: String, value: JSONValue,
     program: DocumentProgramSource, stateVersion: ContentFieldVersion?) async throws -> ContentFieldVersion? {
     guard value.isValid, program.id == blockID else { throw NotebookStorageError.invalidTransaction("document checkpoint value") }
-    guard !isStopped, !isItemBeingDeleted(documentID) else { return nil }
+    guard bootstrapAdmission.wasAccepted, !isStopped, !isItemBeingDeleted(documentID) else { return nil }
     if let document = documents[documentID],
       (try? DocumentProgramSource(document: document, instanceID: program.id, path: program.path).sourceBasis) != program.sourceBasis { return nil }
     let observesLocalState = documentStates[documentID] != nil
@@ -6475,7 +6551,10 @@ final class NotebookAppModel {
       cancelDocumentOpening()
       documentShellPreparation?.stop(); documentShellPreparation = nil
       presentationPlayer.interrupt("closing")
+      NotebookNavigationObservation.webPreparation("shutdown_startup_join", ownerID: actorID)
       if let startupTask { await startupTask.value }
+      NotebookNavigationObservation.webPreparation("shutdown_services_stop", ownerID: actorID)
+      if !bootstrapAdmission.wasAccepted { abortBootstrapPreparations() }
       accountContentTask?.cancel()
       await accountContentTask?.value
       accountContentTask = nil
@@ -6497,8 +6576,11 @@ final class NotebookAppModel {
       #if os(macOS)
         programImporter?.stop()
       #endif
+      NotebookNavigationObservation.webPreparation("shutdown_programs_checkpoint", ownerID: actorID)
       let programsSaved = await checkpointPrograms(resume: false)
+      NotebookNavigationObservation.webPreparation("shutdown_input_finish", ownerID: actorID)
       let inputSaved = await finishPendingInteraction()
+      NotebookNavigationObservation.webPreparation("shutdown_saved_boundary", ownerID: actorID)
       // A failed quit keeps admission closed but leaves the same writer and
       // refresh owner available to the explicit repair/retry action. Terminal
       // teardown would otherwise make publicationFailure impossible to clear.

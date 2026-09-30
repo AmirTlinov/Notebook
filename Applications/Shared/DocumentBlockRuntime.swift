@@ -33,9 +33,37 @@ final class DocumentBlockRuntime: NSObject, WKScriptMessageHandler, WKNavigation
   private var readinessDeadline: Task<Void, Never>?
   private enum CaptureDestination: Equatable, Sendable { case cache, acceptedTurn }
   private enum CapturedFrame: Sendable { case raster(RasterLease), cut(SceneRasterCut) }
-  private var captureTask: Task<CapturedFrame, Error>?
-  private var captureID: UUID?
-  private var queuedCaptures = 0
+  private var captureReaders: [UUID: Task<CapturedFrame, Error>] = [:]
+  private var captureQueue: [UUID] = []
+  private var captureWaiters: [UUID: CheckedContinuation<Void, Error>] = [:]
+  /// Reader cancellation and physical snapshot completion have distinct lives.
+  /// The existing capture retains its admitted bytes and surface borrow until
+  /// WebKit calls back, even when this result has already ended.
+  @MainActor private final class SnapshotRequest {
+    let capture: AgentSnapshotCapture
+    var continuation: CheckedContinuation<UIImage, Error>?
+    var deadline: Task<Void, Never>?
+    var submitted = false
+    init(reservation: RasterReservation, lease: WebSurfaceLease) {
+      capture = AgentSnapshotCapture(reservation: reservation, lease: lease)
+    }
+    @discardableResult
+    func finish(_ result: Result<UIImage, Error>) -> Bool {
+      guard let continuation else { return false }
+      self.continuation = nil; deadline?.cancel(); deadline = nil
+      continuation.resume(with: result)
+      return true
+    }
+    func cancel(_ error: Error = CancellationError()) {
+      capture.cancel(); finish(.failure(error))
+      if !submitted { capture.finish() }
+    }
+  }
+  private var snapshotRequests: [UUID: SnapshotRequest] = [:]
+  var snapshotSubmission: @MainActor (WKWebView, WKSnapshotConfiguration,
+    @escaping @MainActor (UIImage?, Error?) -> Void) -> Void = { web, configuration, completion in
+      web.takeSnapshot(with: configuration, completionHandler: completion)
+    }
   private var stopped = false
   // A separate nonpersistent data store isolates every program. This base URL
   // supplies a secure browser origin without performing a network navigation.
@@ -98,7 +126,7 @@ final class DocumentBlockRuntime: NSObject, WKScriptMessageHandler, WKNavigation
     guard width.isFinite, height.isFinite, width > 0, height > 0,
       abs(viewportSize.width - width) > 1 / 32 || abs(viewportSize.height - height) > 1 / 32 else { return }
     viewportSize = .init(width: width, height: height); viewportRevision &+= 1
-    captureTask?.cancel(); checkpointWasCaptured = false
+    cancelCaptures(); checkpointWasCaptured = false
     if let webView {
       webView.bounds.size = viewportSize
       webView.frame.size = viewportSize
@@ -222,6 +250,8 @@ final class DocumentBlockRuntime: NSObject, WKScriptMessageHandler, WKNavigation
     if let checkpointTask { return checkpointTask }
     let task = Task { @MainActor [self] in
       defer { checkpointTask = nil }
+      try Task.checkCancellation()
+      guard !stopped else { throw CancellationError() }
       if stateTransferFailure { try await stateTransfer?.drain() }
       if !ready {
         try await finishAcceptedBeforeReady()
@@ -270,6 +300,8 @@ final class DocumentBlockRuntime: NSObject, WKScriptMessageHandler, WKNavigation
     let borrow = try lease.borrow(); defer { borrow.release() }
     guard let stateTransfer else { throw CancellationError() }
     try await stateTransfer.drain()
+    try Task.checkCancellation()
+    guard !stopped, self.webView === webView else { throw CancellationError() }
     if frozenCheckpoint == nil {
       let descriptor = try await NotebookProgramBridge.lifecycle("checkpoint", controller: "documentProgram",
         argument: .object(["retry": .bool(true), "serialized": .bool(true)]), in: webView)
@@ -343,13 +375,15 @@ final class DocumentBlockRuntime: NSObject, WKScriptMessageHandler, WKNavigation
 
   private func captureFrame(sourceOffset: Double, height: Double, pixelWidth: Int,
     destination: CaptureDestination, reservation granted: RasterReservation? = nil) async throws -> CapturedFrame {
-    guard queuedCaptures < 4 else { throw SceneRenderError.resourceLimit }
-    queuedCaptures += 1
-    let preceding = captureTask, operation = UUID()
+    try Task.checkCancellation()
+    guard !stopped else { throw CancellationError() }
+    guard captureQueue.count < 4 else { throw SceneRenderError.resourceLimit }
+    let operation = UUID(); captureQueue.append(operation)
     let task = Task { @MainActor [weak self] () throws -> CapturedFrame in
-      if let preceding { _ = try? await preceding.value }
+      guard let self else { throw CancellationError() }
+      try await waitForCaptureTurn(operation)
       try Task.checkCancellation()
-      guard let self, ready, !stopped, let web = webView, let lease else {
+      guard ready, !stopped, let web = webView, let lease else {
         throw SceneRenderError.snapshotPending("document_program")
       }
       let expectedRevision = revision, expectedViewport = viewportRevision
@@ -363,13 +397,14 @@ final class DocumentBlockRuntime: NSObject, WKScriptMessageHandler, WKNavigation
         : resources.reserveRaster(pixelWidth: pixelWidth, pixelHeight: pixelHeight))
       guard let reservation,
         resources.ownsRasterReservation(reservation, pixelWidth: pixelWidth, pixelHeight: pixelHeight) else { throw SceneRenderError.resourceLimit }
-      var transferred = false
-      defer { if !transferred { reservation.release() } }
-      let borrow = try lease.borrow()
-      defer { borrow.release() }
       let configuration = WKSnapshotConfiguration(); configuration.rect = rect; configuration.afterScreenUpdates = true
       configuration.snapshotWidth = NSNumber(value: Double(pixelWidth) / (web.window?.screen.scale ?? 2))
-      let image = try await web.takeSnapshot(configuration: configuration)
+      let image = try await takeSnapshot(web, configuration: configuration,
+        reservation: reservation, lease: lease, operation: operation)
+      // The callback transferred these bytes to this reader. A cancelled or
+      // timed-out reader never releases a still-submitted WebKit backing.
+      var transferred = false
+      defer { if !transferred { reservation.release() } }
       try Task.checkCancellation()
       guard !stopped, self.webView === web, revision == expectedRevision, viewportRevision == expectedViewport,
         let cg = image.cgImage else { throw CancellationError() }
@@ -387,16 +422,87 @@ final class DocumentBlockRuntime: NSObject, WKScriptMessageHandler, WKNavigation
       if checkpointFrozen { checkpointWasCaptured = true }
       return .raster(raster)
     }
-    captureTask = task; captureID = operation
-    defer {
-      queuedCaptures -= 1
-      if captureID == operation { captureTask = nil; captureID = nil }
-    }
+    captureReaders[operation] = task
+    defer { finishCaptureReader(operation) }
     return try await withTaskCancellationHandler {
       let frame = try await task.value
       try Task.checkCancellation()
       return frame
     } onCancel: { task.cancel() }
+  }
+
+  private func waitForCaptureTurn(_ operation: UUID) async throws {
+    try Task.checkCancellation()
+    guard !stopped, captureQueue.contains(operation) else { throw CancellationError() }
+    if captureQueue.first == operation { return }
+    try await withTaskCancellationHandler {
+      try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+        guard !Task.isCancelled, !stopped else { continuation.resume(throwing: CancellationError()); return }
+        captureWaiters[operation] = continuation
+      }
+    } onCancel: {
+      Task { @MainActor [weak self] in
+        self?.captureWaiters.removeValue(forKey: operation)?.resume(throwing: CancellationError())
+      }
+    }
+  }
+
+  private func finishCaptureReader(_ operation: UUID) {
+    captureReaders[operation] = nil
+    captureWaiters.removeValue(forKey: operation)?.resume(throwing: CancellationError())
+    let wasFirst = captureQueue.first == operation
+    captureQueue.removeAll { $0 == operation }
+    // Cancelling a queued reader removes only that reader. Its successor still
+    // waits for the actual first operation, rather than bypassing its snapshot.
+    if wasFirst, let next = captureQueue.first {
+      captureWaiters.removeValue(forKey: next)?.resume()
+    }
+  }
+
+  private func takeSnapshot(_ web: WKWebView, configuration: WKSnapshotConfiguration,
+    reservation: RasterReservation, lease: WebSurfaceLease, operation: UUID) async throws -> UIImage {
+    // A cancelled reader leaves its submitted native request alive. Repeated
+    // cancelled turns must respect that separate, bounded physical backlog.
+    guard snapshotRequests.count < 4 else {
+      reservation.release(); throw SceneRenderError.resourceLimit
+    }
+    let request = SnapshotRequest(reservation: reservation, lease: lease)
+    snapshotRequests[operation] = request
+    defer { if !request.submitted { snapshotRequests[operation] = nil } }
+    return try await withTaskCancellationHandler {
+      try await withCheckedThrowingContinuation { continuation in
+        request.continuation = continuation
+        guard !Task.isCancelled, !stopped else { request.cancel(); return }
+        request.deadline = Task { @MainActor [weak request] in
+          do { try await Task.sleep(for: .seconds(8)) } catch { return }
+          request?.cancel(SceneRenderError.snapshotPending("document_program_snapshot_deadline"))
+        }
+        request.submitted = true
+        snapshotSubmission(web, configuration) { [weak self, request] image, error in
+          defer { request.capture.finish(); self?.snapshotRequests[operation] = nil }
+          guard !request.capture.isCancelled else { request.finish(.failure(CancellationError())); return }
+          if let error { request.finish(.failure(error)); return }
+          guard let image else {
+            request.finish(.failure(SceneRenderError.snapshotPending("document_program_snapshot_empty"))); return
+          }
+          // MainActor resumes the reader after this callback. Transfer the
+          // grant before ending the physical borrow; its reader validates the
+          // exact runtime, state revision and viewport before publication.
+          guard request.continuation != nil else { return }
+          request.capture.transferReservationToCut()
+          request.finish(.success(image))
+        }
+      }
+    } onCancel: {
+      Task { @MainActor in request.cancel() }
+    }
+  }
+
+  private func cancelCaptures() {
+    for reader in captureReaders.values { reader.cancel() }
+    let waiting = captureWaiters; captureWaiters.removeAll()
+    for continuation in waiting.values { continuation.resume(throwing: CancellationError()) }
+    for request in snapshotRequests.values { request.cancel() }
   }
 
   func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
@@ -503,6 +609,7 @@ final class DocumentBlockRuntime: NSObject, WKScriptMessageHandler, WKNavigation
     onFocus(false); onChange()
   }
   private func releaseSurface() {
+    cancelCaptures()
     stateTransfer?.revoke()
     frozenCheckpoint = nil
     stateTransferFailure = false

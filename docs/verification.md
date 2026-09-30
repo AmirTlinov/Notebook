@@ -3,6 +3,35 @@
 Срез: **30 сентября 2026**. Функциональная проверка, доставка и полная приёмка
 учитываются отдельно; результат относится к исходникам своего receipt.
 
+## Владение запросом кадра и завершением работы — 228
+
+**0.3.158 (228)** установлена поверх 227 на Mac и физическом iPad
+30 сентября 15:00 UTC (18:00 МСК). Source `957d4b62…`. Helper/presentation ready;
+прежние trusted device/workspace, новая сессия. На реальном экране видна сохранённая
+рукописная страница. Одна Notebook Lab; QA/test apps отсутствуют. Mac завершён
+штатно, bundle/app-group identity сохранена при новом iOS container path.
+[Доставка и видимый экран](audit-evidence/2026-09-30/owned-demand-228/delivery.json).
+
+Физический1440: **14PASS/3FAIL**, source `507c4e0a…`. Пройдены неподвижный
+контакт без повторных GPU-проходов и следующий sample, пять snapshot lifetime
+regressions, два bootstrap regressions и scheduling observations. Snapshot
+cancel/deadline завершает reader; физический запрос и его ресурсы живут до
+native callback, outstanding backlog ограничен4.
+
+Физический1450: **3PASS**, source `957d4b62…`: native forward/reverse/eviction/
+cancellation, diagnostic control и UI24. Явная точка активации бумаги устранила
+pinch, который XCTest доставлял внутрь program6; все24 first taps и состояния
+после close/reopen/turns/Home→activate проверены с прежними assertions.
+Единичный1440 native terminal timeout1с на повторе не возник; причина не установлена.
+Mac1313: **2functional PASS** на `507c4e0a…`, затронутые Mac owners сохранены.
+
+View/scene UIUpdateLink getters возвращаютfalse даже после повторного задания
+immediate policy во включённом link; все12 UI opportunities также сообщаютfalse.
+Scheduling observation: dot OS22,275мс, curl OS39,493мс с двумя discard; strict
+curl gate16,667мс остаётся FAIL (20,223мс в motion test). Это разные measurements.
+First OS budgets и полная приёмка остаются открытыми.
+[Точные исходники, scopes и diagnostic getters](audit-evidence/2026-09-30/owned-demand-228/results.json).
+
 ## Scene constructor lifetime — 227
 
 **0.3.157 (227)** установлена поверх226 на Mac и физическом iPad

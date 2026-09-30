@@ -826,6 +826,7 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
   private var onSourceInstalled: (SceneSourceInstallation) -> Void = { _ in }
   private var publishedInstallation: SceneSourceInstallation?
   private var onFailure: (AgentWebSourceFailure) -> Void
+  var onSessionSuperseded: () -> Void = {}
   private var renderIsReady = false
   private var isInvalidated = false
   private var activeNavigation: WKNavigation?
@@ -961,7 +962,10 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
 
   #if DEBUG
   func preparationDiagnostic() -> String {
-    "invalidated=\(isInvalidated),released=\(lease.isReleased),runtimeLoaded=\(runtimeLoaded),loadFailed=\(loadFailed),token=\(loadToken ?? "none"),url=\(attachedWebView?.url?.absoluteString ?? "none"),loading=\(attachedWebView?.isLoading == true),programLoad=\(programLoadTask != nil),checkpoint=\(checkpointTask != nil),retirement=\(retirementTask != nil),loadedState=\(String(describing: loadedElement?.state)),appliedState=\(String(describing: appliedState)),failure=\(String(describing: snapshotFailure))"
+    "invalidated=\(isInvalidated),released=\(lease.isReleased),runtimeLoaded=\(runtimeLoaded),loadFailed=\(loadFailed),token=\(loadToken ?? "none"),url=\(attachedWebView?.url?.absoluteString ?? "none"),loading=\(attachedWebView?.isLoading == true),programLoad=\(programLoadTask != nil),checkpoint=\(checkpointTask != nil),retirement=\(retirementTask != nil),stateApplication=\(stateApplication != nil),loadedState=\(String(describing: loadedElement?.state)),appliedState=\(String(describing: appliedState)),stateToApply=\(String(describing: stateToApply)),basis=\(String(describing: programBasis)),failure=\(String(describing: snapshotFailure))"
+  }
+  static func checkpointDiagnostics(ownedBy model: NotebookAppModel) -> [String] {
+    presentations.values.compactMap(\.owner).filter { $0.programOwner === model }.map { $0.preparationDiagnostic() }
   }
   #endif
 
@@ -1148,13 +1152,17 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
     onInteraction = {}; onFramePainted = { _ in }; onSourceInstalled = { _ in }; onFailure = { _ in }
     retirementTask = Task { @MainActor [self, model, web] in
       defer { retirementTask = nil }
-      var superseded = false
       do {
+        try Task.checkCancellation()
+        guard !isInvalidated else { return }
         if !runtimeLoaded { try await finishAcceptedBeforeReady() }
+        try Task.checkCancellation()
+        guard !isInvalidated else { return }
         if runtimeLoaded {
           _ = try await checkpointModel(element: loadedElement ?? element) { rendered, value, basis, admittedBytes in
-            let accepted = try await model.checkpointProgramState(focus: focus, rendered: rendered, value: value, basis: basis, admittedStateBytes: admittedBytes)
-            superseded = accepted == nil
+            guard let accepted = try await model.checkpointProgramState(focus: focus, rendered: rendered, value: value, basis: basis, admittedStateBytes: admittedBytes) else {
+              throw NotebookProgramCheckpointError.superseded
+            }
             return accepted
           }
         }
@@ -1163,13 +1171,31 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
         // Only the addressed writer can distinguish removal/replacement from
         // a page merely leaving the UI working set. A stale heap is disposable;
         // an I/O failure is not permission to discard unsaved model state.
-        if superseded { invalidate(); lease.release() }
+        if error is NotebookProgramCheckpointError { discardSupersededSession() }
         else if !isInvalidated {
           model.showCue("Не удалось сохранить состояние программы. Повторите сохранение.")
           // Keep both the browser and its real ledger lease for explicit retry.
           _ = web
         }
       }
+    }
+  }
+
+  private func discardSupersededSession() {
+    let notify = onSessionSuperseded
+    onSessionSuperseded = {}
+    invalidate(); lease.release()
+    notify()
+  }
+
+  /// No author state belongs to a workspace whose bootstrap was rejected.
+  /// This terminal boundary also withdraws an executor already held for retry.
+  static func abortBootstrapPreparations(ownedBy model: NotebookAppModel) {
+    let owners = presentations.values.compactMap(\.owner).filter { $0.programOwner === model }
+    for owner in owners {
+      owner.retirementTask?.cancel()
+      owner.invalidate()
+      owner.lease.release()
     }
   }
 
@@ -1198,12 +1224,20 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
           }
         }
         _ = try await owner.checkpointModel(element: owner.loadedElement ?? element) { rendered, value, basis, admittedBytes in
-          try await model.checkpointProgramState(focus: focus, rendered: rendered, value: value, basis: basis, admittedStateBytes: admittedBytes)
+          guard let accepted = try await model.checkpointProgramState(focus: focus, rendered: rendered, value: value, basis: basis, admittedStateBytes: admittedBytes) else {
+            throw NotebookProgramCheckpointError.superseded
+          }
+          return accepted
         }
         if presentations[ObjectIdentifier(owner)]?.retiringOwner != nil { owner.invalidate(); owner.lease.release() }
         else if resume { return await owner.resumeProgram() }
         return true
       } catch {
+        if error is NotebookProgramCheckpointError {
+          owner.discardSupersededSession(); return true
+        }
+        owner.resources.record(.init(kind: "program_checkpoint_error", elementID: element.id,
+          message: String(error.localizedDescription.prefix(2000))), for: owner.loadedElement ?? element)
         if resume { await owner.resumeProgram() }
         return false
       }
@@ -1231,7 +1265,8 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
     if let checkpointedSource, checkpointedSource == loadedElement, let programBasis {
       return .init(source: checkpointedSource, basis: programBasis)
     }
-    guard let web = attachedWebView, let token = loadToken, hasLiveSource(element) else {
+    guard let web = attachedWebView, let token = loadToken, runtimeLoaded,
+      let initialSource = loadedElement, AgentProgramSource(initialSource) == AgentProgramSource(element) else {
       throw SceneRenderError.snapshotPending("program_checkpoint_owner")
     }
     let id = UUID()
@@ -1239,20 +1274,45 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
     let task = Task { @MainActor [self, web] in
       let borrow = try lease.borrow(); defer { borrow.release() }
       guard let stateTransfer else { throw CancellationError() }
+      NotebookNavigationObservation.webPreparation("checkpoint_state_drain", ownerID: lease.id, sourceID: element.id)
       try await stateTransfer.drain()
+      NotebookNavigationObservation.webPreparation("checkpoint_state_drained", ownerID: lease.id, sourceID: element.id)
+      try Task.checkCancellation()
+      guard accepts(token), attachedWebView === web else { throw CancellationError() }
       if frozenCheckpoint == nil {
+        NotebookNavigationObservation.webPreparation("checkpoint_model_apply", ownerID: lease.id, sourceID: element.id)
+        // An agent/local writer can have installed a newer model cut while its
+        // existing browser is still applying that state. Freeze only after this
+        // executor has received the accepted cut; later queued values survive.
+        while stateToApply != nil || stateApplication != nil {
+          applyCurrentState()
+          guard let application = stateApplication else { break }
+          await application.value
+          try Task.checkCancellation()
+          guard accepts(token), attachedWebView === web,
+            loadedElement.map({ AgentProgramSource($0) == AgentProgramSource(element) }) == true else { throw CancellationError() }
+        }
+        guard let rendered = loadedElement, let basis = programBasis,
+          appliedState == rendered.state else {
+          throw SceneRenderError.snapshotPending("program_state_application")
+        }
+        let revision = localStateRevision
+        NotebookNavigationObservation.webPreparation("checkpoint_browser_freeze", ownerID: lease.id, sourceID: element.id)
         let descriptor = try await NotebookProgramBridge.lifecycle("checkpoint", controller: "notebookProgram",
           argument: .object(["retry": .bool(true), "serialized": .bool(true)]), expectedToken: token, in: web)
         let snapshot = try await stateTransfer.checkpoint(NotebookProgramBridge.stateSnapshot(descriptor)) { revision, offset in
           try await NotebookProgramBridge.readState(revision, offset: offset, controller: "notebookProgram", expectedToken: token, in: web)
         }
-        guard accepts(token), let basis = programBasis, let rendered = loadedElement,
-          AgentProgramSource(rendered) == AgentProgramSource(element) else { snapshot.release(); throw CancellationError() }
-        frozenCheckpoint = (snapshot, basis, rendered, localStateRevision)
+        guard accepts(token), attachedWebView === web,
+          loadedElement.map({ AgentProgramSource($0) == AgentProgramSource(rendered) }) == true else { snapshot.release(); throw CancellationError() }
+        // The writer validates the model cut which supplied this browser
+        // state. A newer accepted basis cannot authorize an older snapshot.
+        frozenCheckpoint = (snapshot, basis, rendered, revision)
       }
       let frozen = frozenCheckpoint!, value = frozen.snapshot.value
       let basis = frozen.basis, rendered = frozen.rendered, revision = frozen.revision
       try Task.checkCancellation()
+      NotebookNavigationObservation.webPreparation("checkpoint_model_persist", ownerID: lease.id, sourceID: element.id)
       guard let acceptedBasis = try await persist(rendered, value, basis, frozen.snapshot.admittedBytes) else { throw SceneRenderError.snapshotPending("program_checkpoint_not_accepted") }
       try Task.checkCancellation()
       guard accepts(token), localStateRevision == revision, let current = loadedElement,
@@ -1268,7 +1328,11 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
     }
     checkpointTask = task
     defer { if checkpointID == id { checkpointTask = nil; checkpointID = nil } }
-    return try await task.value
+    do { return try await task.value }
+    catch {
+      if error is NotebookProgramCheckpointError { discardSupersededSession() }
+      throw error
+    }
   }
 
   /// An accepted model checkpoint does not depend on passive image admission.
@@ -1320,7 +1384,10 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
       let token = owner.loadToken else { throw SceneRenderError.snapshotPending("program_attention_owner") }
     let attentionID = UUID(); owner.attentionPauseID = attentionID
     let (accepted, pixels) = try await checkpointCurrent(focus: focus, element: element, persist: { value, basis, admittedBytes in
-      try await model.checkpointProgramState(focus: focus, rendered: element, value: value, basis: basis, admittedStateBytes: admittedBytes)
+      guard let accepted = try await model.checkpointProgramState(focus: focus, rendered: element, value: value, basis: basis, admittedStateBytes: admittedBytes) else {
+        throw NotebookProgramCheckpointError.superseded
+      }
+      return accepted
     })
     pixels.release()
     return .init(value: accepted.state, isCurrent: { [weak owner] in
@@ -1465,6 +1532,7 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
     onFramePainted = { _ in }
     onSourceInstalled = { _ in }; publishedInstallation = nil
     onFailure = { _ in }
+    onSessionSuperseded = {}
     onState = { _, _ in false }
     attachedWebView?.evaluateJavaScript("void notebookProgram.dispose().catch(()=>{})", completionHandler: nil)
     attachedWebView?.stopLoading()
@@ -1833,7 +1901,9 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
         acknowledge: { try await NotebookProgramBridge.acknowledgeState($0, controller: "notebookProgram", expectedToken: token, in: web) },
         accept: { [self] value, sequence in
           let (admitted, receipt) = await withCheckedContinuation { continuation in
-            if !writer(value, .init(admittedBytes: descriptor.cost, sourceBasis: sourceBasis) { continuation.resume(returning: (true, $0)) }) {
+            if writer(value, .init(admittedBytes: descriptor.cost, sourceBasis: sourceBasis) { continuation.resume(returning: (true, $0)) }) {
+              NotebookNavigationObservation.webPreparation("state_write_admitted", ownerID: lease.id, sourceID: element.id)
+            } else {
               continuation.resume(returning: (false, nil as NotebookProgramStateBasis?))
             }
           }

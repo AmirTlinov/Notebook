@@ -155,8 +155,15 @@ Page shader заполняет каждый пиксель. Три drawable ра
 ожидающий и подготавливаемый кадр; все учитываются в reservation. GPU in-flight
 ограничен двумя. Один фоновый `nextDrawable` удерживает допуск до возврата:
 отмена не позволяет менять pool или начать следующий запрос раньше drain.
-Во время первого OS-ожидания допускается один подготовленный следующий кадр;
-публиковать его можно только после исхода первого. Cover сохраняет отдельный путь.
+До первого положительного OS receipt последовательные кадры сохраняют
+transactional режим. Scheduled successor не ждёт callback предшественника;
+CA-владелец переводит дальнейшее движение в async. Cover сохраняет отдельный путь.
+
+Страничный ink clock отправляет один cut для contact/prediction revision,
+source, paint, камеры, crop и окна. Неподвижный контакт сохраняет пассивный
+UIKit observer и паркует Metal. Новый sample или проекция возобновляют demand;
+drop отзывает только свой submission. Подтверждённая поздняя Pencil dispatch
+использует уже полученный drawable после своих событий; отмена отзывает этот borrow.
 
 При отмене смешанного выделения `SourceRestoration` устанавливает исходные
 чернила, объекты и рамку одним cut. Общая проекция до установки сохраняет последний
@@ -168,12 +175,29 @@ Page shader заполняет каждый пиксель. Три drawable ра
 
 ## Программы, документы и локальные изменения
 
+Принятый bootstrap source разрешает подготовку постоянного root до durable
+presence/account cut. `NotebookBootstrapAdmission` удерживает ранние state writers
+и их credit/completion; input gate открывается после успешного cut. Отказ и shutdown
+завершают ожидания и адресно отзывают never-admitted WebKit, включая retiring owners.
+Ошибка внешней службы после готовности не отзывает принятое содержимое.
+
 Программа сообщает готовность после fonts/images, author readiness, input regions
 и принятого состояния. Native owner проверяет token/error и раскрывает слой до
 сообщения установки. Ready до mount не означает показ. Дублирующие запуск из
 `didFinish`, передача первого готового state через пустую MainActor-задачу и
 внешняя SwiftUI opacity удалены. Последующие state-публикации объединяются с
 проверкой актуальности. Turn и checkpoint получают независимые свежие captures.
+
+Checkpoint присоединяется к применению принятого state и фиксирует source/basis
+перед браузерным freeze. Новая запись не выдаёт старому snapshot новую basis.
+Отозванный cut завершает своё ожидание; текущий preparation owner принимает
+адресное событие и переустанавливает актуальный runtime. I/O отказ сохраняет heap
+для явного retry. Закрытие never-admitted bootstrap использует terminal abort.
+
+Document program capture имеет отменяемую FIFO до четырёх readers и отдельный
+native result с deadline 8 секунд. Отмена queued reader не отзывает предшественника.
+Stop/resize завершают readers; каждый отправленный snapshot удерживает reservation
+и WebKit borrow до физического callback, а поздний результат не публикуется.
 
 Allocator ограничивает две ожидающие native-конструкции WebKit. Конструкция или
 retirement освобождает grant; navigation/author readiness не блокируют соседей.

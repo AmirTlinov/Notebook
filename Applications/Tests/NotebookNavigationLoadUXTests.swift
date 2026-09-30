@@ -181,7 +181,7 @@ import XCTest
       let phases = XCTAttachment(string: ([anchor] + composition + web).joined(separator: "\n"))
       phases.name = "Cold source preparation events"; phases.lifetime = .keepAlways; add(phases)
     }
-    window.rootViewController = UIHostingController(rootView: SpatialWorkspaceView().environment(model).ignoresSafeArea())
+    window.rootViewController = UIHostingController(rootView: NotebookRootView().environment(model))
     window.makeKeyAndVisible()
     // Observe while bootstrap runs. start() also awaits nonvisual services:
     // measuring only after it returns can miss an already displayed first

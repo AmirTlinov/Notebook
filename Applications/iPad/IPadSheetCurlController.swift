@@ -23,6 +23,10 @@ final class IPadSheetCurlController: UIViewController, UIGestureRecognizerDelega
   var onStageLiveSheet: (UIViewController) -> Void = { _ in }
   #if DEBUG
   var diagnosticStagedSheet: String? { motion?.stagedLanding?.view.accessibilityIdentifier }
+  var diagnosticMotionDescription: String {
+    guard let motion else { return "motion=nil,submitted=\(curl.submittedFrameCount)" }
+    return "operation=\(motion.id),frame=\(motion.frame != nil),progress=\(motion.progress),terminal=\(String(describing: motion.terminal)),presentation=\(String(describing: motion.presentation)),animation=\(String(describing: motion.animation)),contact=\(motion.contact != nil),staged=\(motion.stagedLanding?.view.accessibilityIdentifier ?? "nil"),submitted=\(curl.submittedFrameCount),continuous=\(curl.animatesContinuously),curlHidden=\(curl.isHidden),window=\(curl.window != nil)"
+  }
   #endif
   struct FrameAcquisitionTiming {
     let operationID: UUID

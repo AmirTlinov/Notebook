@@ -1461,6 +1461,21 @@ import XCTest
       return "\(ObjectIdentifier(controller))/\(String(describing:controller.view.accessibilityIdentifier))"
     }
     var phases=["initial: displayed=\(sourceIndex), now=\(owner.displayedIndex), native=\(identity(native.page)), source=\(identity(previous)), target=\(identity(target)), expectedTarget=\(targetIndex), completes=\(completes)"]
+    let curl=try XCTUnwrap(native.view.subviews.compactMap { $0 as? SheetCurlMetalView }.first)
+    let receiveFrameReady=curl.onPageFrameReady,receivePageUpdate=curl.onPageUpdateMeasured
+    var frameEvents:[String]=[],frameCallbackCount=0,pageUpdateEvents:[String]=[]
+    curl.onPageFrameReady = { frame,progress,sequence,readiness in
+      frameCallbackCount += 1
+      receiveFrameReady?(frame,progress,sequence,readiness)
+      frameEvents.append("frame #\(frameCallbackCount): sequence=\(sequence),progress=\(progress),receipt=\(readiness),time=\(CACurrentMediaTime()),motion=\(native.diagnosticMotionDescription)")
+      if frameEvents.count > 16 { frameEvents.removeFirst() }
+    }
+    curl.onPageUpdateMeasured = { timing in
+      receivePageUpdate?(timing)
+      if pageUpdateEvents.count < 16 {
+        pageUpdateEvents.append("update: \(timing.phase.rawValue),sequence=\(timing.nextSequence),time=\(timing.recorded),hidden=\(timing.viewHidden)/\(timing.layerHidden),opacity=\(timing.layerOpacity),transactional=\(timing.presentsWithTransaction),motion=\(native.diagnosticMotionDescription)")
+      }
+    }
     native.onFailure = { error in
       failures.append(String(reflecting:error))
       receiveFailure(error)
@@ -1480,8 +1495,11 @@ import XCTest
     }
     defer {
       native.onFailure=receiveFailure;native.didTurn=receiveTurn;native.onFramesAcquired=receiveFrames
+      curl.onPageFrameReady=receiveFrameReady;curl.onPageUpdateMeasured=receivePageUpdate
       if !verified || !failures.isEmpty {
         phases.append("final: finished=\(String(describing:finished)), callbacks=\(completionCount), displayed=\(owner.displayedIndex), native=\(identity(native.page)); sourceCapturable=\(native.isSheetReadyForCapture(previous)), targetCapturable=\(native.isSheetReadyForCapture(target)); failures=\(failures)")
+        phases.append("motion: \(native.diagnosticMotionDescription); sourcePresented=\(native.isSheetPresented(previous)),targetPresented=\(native.isSheetPresented(target)); owner=\(owner.view.accessibilityValue ?? "nil")")
+        phases += pageUpdateEvents + frameEvents
         let note=XCTAttachment(string:phases.joined(separator:"\n"))
         note.name="native-turn-primary-failure";note.lifetime = .keepAlways;add(note)
       }
@@ -1504,6 +1522,7 @@ import XCTest
     }
     _ = try XCTUnwrap(acquired ? target:nil,"The real gesture's immutable frame pair must arrive within the opening budget")
     native.endInteractiveTurn(completed:completes,travel:translation)
+    phases.append("released: \(native.diagnosticMotionDescription)")
     while finished == nil,ContinuousClock.now<deadline {try await Task.sleep(for:.milliseconds(2))}
     _ = try XCTUnwrap(finished,"The native owner must finish within the original one-second opening budget")
     _ = try XCTUnwrap(completionCount == 1 && completionSource === previous && finished == completes ? target:nil,

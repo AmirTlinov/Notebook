@@ -8,6 +8,58 @@ import XCTest
 /// Diagnoses owner/UI opportunities. These runs retain exact sources and OS
 /// receipts, but their extra observation is separate from latency acceptance.
 @MainActor final class NotebookFirstPresentationSchedulingTests: XCTestCase {
+  func testImmediatePresentationPolicyInTheActualScene() async throws {
+    let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+    let visible = scene.windows.filter { !$0.isHidden }
+    let previousKey = visible.first(where: \.isKeyWindow)
+    visible.forEach { $0.isHidden = true }
+    let window = UIWindow(windowScene: scene)
+    window.frame = scene.coordinateSpace.bounds
+    let controller = UIViewController()
+    controller.view.backgroundColor = .white
+    window.rootViewController = controller; window.makeKeyAndVisible()
+    defer {
+      window.isHidden = true; window.rootViewController = nil
+      visible.forEach { $0.isHidden = false }; previousKey?.makeKey()
+    }
+    let dot = UIView(frame: .init(x: 80, y: 80, width: 20, height: 20))
+    dot.backgroundColor = .black; controller.view.addSubview(dot)
+    window.layoutIfNeeded()
+    for sceneBound in [false, true] {
+      let trace = NotebookSchedulingObservation(scene: scene)
+      let policy = sceneBound ? UIUpdateLink(windowScene: scene) : UIUpdateLink(view: dot)
+      var updates = 0
+      var requestedDuringUpdates: [Bool] = []
+      policy.addAction(to: .beforeCATransactionCommit) { link, info in
+        updates += 1
+        requestedDuringUpdates.append(link.wantsImmediatePresentation)
+        dot.frame.origin.x = 80 + CGFloat(updates % 2)
+        trace.record("control_commit", modelTime: info.modelTime,
+          deadline: info.completionDeadlineTime, target: info.estimatedPresentationTime,
+          immediate: info.isImmediatePresentationExpected, lowLatency: info.isPerformingLowLatencyPhases)
+      }
+      policy.requiresContinuousUpdates = true
+      policy.wantsImmediatePresentation = true
+      let requestBeforeEnabling = policy.wantsImmediatePresentation
+      let rate = Float(scene.screen.maximumFramesPerSecond)
+      policy.preferredFrameRateRange = .init(minimum: rate, maximum: rate, preferred: rate)
+      policy.isEnabled = true
+      let requestAfterEnabling = policy.wantsImmediatePresentation
+      policy.wantsImmediatePresentation = true
+      let requestAfterEnabledAssignment = policy.wantsImmediatePresentation
+      let deadline = ContinuousClock.now + .seconds(2)
+      while updates < 12, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(1)) }
+      let requestBeforeDisabling = policy.wantsImmediatePresentation
+      policy.isEnabled = false; trace.stop()
+      add(try trace.attachment(scenario: sceneBound ? "immediate-scene-control" : "immediate-view-control"))
+      let context = "activation=\(scene.activationState.rawValue),scene=\(scene.coordinateSpace.bounds),window=\(window.frame),screen=\(scene.screen.bounds),key=\(window.isKeyWindow),visibleWindows=\(scene.windows.filter { !$0.isHidden }.count),lowPower=\(ProcessInfo.processInfo.isLowPowerModeEnabled),thermal=\(ProcessInfo.processInfo.thermalState.rawValue),requestBeforeEnabling=\(requestBeforeEnabling),requestAfterEnabling=\(requestAfterEnabling),requestAfterEnabledAssignment=\(requestAfterEnabledAssignment),requestBeforeDisabling=\(requestBeforeDisabling),requestedDuringUpdates=\(requestedDuringUpdates)"
+      let attachment = XCTAttachment(string: context)
+      attachment.name = sceneBound ? "immediate-scene-context" : "immediate-view-context"
+      attachment.lifetime = .keepAlways; add(attachment)
+      XCTAssertGreaterThanOrEqual(updates, 12, context)
+    }
+  }
+
   func testColdProgramConstructorsAgainstUIOpportunities() async throws { try await cold(programs: true) }
   func testColdSVGExecutorsAgainstUIOpportunities() async throws { try await cold(programs: false) }
 
@@ -59,7 +111,7 @@ import XCTest
       model.compositionTiles.onPreparationPhase = nil
     }
     trace.record("root_mount_requested")
-    window.rootViewController = UIHostingController(rootView: SpatialWorkspaceView().environment(model).ignoresSafeArea())
+    window.rootViewController = UIHostingController(rootView: NotebookRootView().environment(model))
     window.makeKeyAndVisible()
     let startup = Task { await model.start(pageSize: .init(width: 834, height: 1194)) }
     defer { startup.cancel() }
@@ -117,10 +169,16 @@ import XCTest
           ("ink_render", timing.renderBegan), ("ink_commit", timing.commitBegan),
           ("ink_commit_returned", timing.commitReturned), ("ink_scheduled", timing.scheduled),
           ("ink_transaction_present", timing.transactionPresented), ("ink_gpu_start", timing.gpuStarted),
-          ("ink_gpu_end", timing.gpuEnded), ("ink_gpu_callback", timing.gpuCompletion)
+          ("ink_gpu_end", timing.gpuEnded), ("ink_gpu_callback", timing.gpuCompletion),
+          ("ink_low_latency_deferred", timing.lowLatencyDeferred),
+          ("ink_low_latency_dispatched", timing.lowLatencyDispatched)
         ]
         for (stage, time) in phases {
           if let time { trace.record(stage, at: time, owner: frame, deadline: timing.targetDeadline, target: timing.targetPresentation) }
+        }
+        if let dispatched = timing.lowLatencyDispatched {
+          trace.record("ink_low_latency_ui", at: dispatched, owner: frame,
+            deadline: timing.lowLatencyUIDeadline, target: timing.lowLatencyUITarget, lowLatency: true)
         }
       }
       if receipt.completion.isReady { shown = true }
@@ -137,6 +195,20 @@ import XCTest
     XCTAssertTrue(shown); XCTAssertEqual(trace.droppedEvents, 0)
     XCTAssertTrue(trace.events.contains { $0.stage == "ink_os_presented" })
     XCTAssertTrue(scene.paper.hasActiveAction)
+    // Correctness of continued input is separate from the stopped first-frame
+    // clock. A stationary contact must not keep encoding identical page pixels.
+    let passes = canvas.pageActivePassCount
+    try await Task.sleep(for: .milliseconds(50))
+    XCTAssertEqual(canvas.pageActivePassCount, passes)
+    let initial = try XCTUnwrap(contact)
+    shown = false
+    scene.movePencil(.init(x: 220, y: 800))
+    contact = try XCTUnwrap(canvas.activeContactFrame)
+    XCTAssertEqual(contact?.sourceID, initial.sourceID)
+    XCTAssertGreaterThan(try XCTUnwrap(contact).revision, initial.revision)
+    let nextDeadline = ContinuousClock.now + .seconds(1)
+    while !shown, ContinuousClock.now < nextDeadline { try await Task.sleep(for: .milliseconds(1)) }
+    XCTAssertTrue(shown, "The next measured sample must resume the parked page clock")
   }
 
   func testFirstCurlAgainstUIAndOSBoundaries() async throws {
@@ -172,7 +244,8 @@ import XCTest
     curl.onPageUpdateMeasured = { timing in
       trace.record("curl_\(timing.phase.rawValue)", at: timing.recorded,
         owner: timing.operationID.uuidString, source: String(timing.nextSequence), modelTime: timing.modelTime,
-        deadline: timing.completionDeadline, target: timing.estimatedPresentation)
+        deadline: timing.completionDeadline, target: timing.estimatedPresentation,
+        immediate: timing.immediatePresentationExpected, lowLatency: timing.performingLowLatencyPhases)
     }
     curl.onFrameMeasured = { timing in
       let phases: [(String, TimeInterval?)] = [

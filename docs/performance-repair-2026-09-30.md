@@ -251,12 +251,12 @@ largest CA commit31,124мс, максимум2 constructors/UI completion. В т
 указана явно, поскольку Instruments не экспортировал clock table.
 
 [UI target repair](audit-evidence/2026-09-30/first-presentation-scheduling/pinch-harness-target.json):
-Window pinch однажды доставил оба fingers около(442,417) внутрь control6,
-хотя frame centre был(417,597). Видео подтвердило1 после жеста. Проверка теперь
-обращается к существующему `page-turn-surface`; все24 остаются неизменёнными после
-pinch и отвечают на первый tap, close/reopen/forward/reverse сохраняют состояние.
-Утверждения не ослаблены, новая AX поверхность и private injection не добавлены.
-Public XCTest pinch остаётся best effort; один frame centre не доказывает delivery.
+Window и full-screen `page-turn-surface` доставляли оба fingers около(442,417)
+внутрь control6, хотя проверяемый frame centre был(417,597). В228 существующая
+поверхность явно задаёт `accessibilityActivationPoint(.center)`. Физический UI24
+проверяет неизменность всех контролов после pinch, первые taps, закрытие/повторное
+открытие, forward/reverse и Home→activate. Политика пары внутри одного runtime и
+assertions сохранены; новая AX поверхность и private injection не добавлены.
 
 Последующее integration review226 нашло terminal lifetime constructor allowance
 и обход optional document shell. В227 постоянный native root передаёт точный
@@ -284,3 +284,31 @@ inline→package, поэтому выбор store только в factory не �
 Отдельный store сам по себе не объявляется дефектом. Следующая проверка должна
 разделить WebKit/IPC и Main delivery для одного owner; ускорение должно сохранять
 изоляцию программ и не добавлять новую зависимость первого показа.
+
+## Завершение владения запросами — 228
+
+`NotebookBootstrapAdmission` удерживает ранние program writes до единственного
+исхода bootstrap. Принятый source уже готовится в постоянном root; физический
+ввод допускается после durable cut. Ошибка/закрытие отвергает ожидающих writers
+и завершает принадлежащие модели page/document/program preparations.
+
+Checkpoint ждёт принятую state application, фиксирует source/basis и сохраняет
+тот же frozen cut при I/O retry. Только адресный writer объявляет superseded;
+владелец отзывает точную сессию и устанавливает актуальный source. Общий nil
+сохраняет несохранённый heap для retry.
+
+Ink frame demand принадлежит конкретному contact revision/source/projection.
+Неподвижное перо больше не кодирует одинаковый кадр каждый tick. Подтверждённая
+late Pencil phase использует один уже выданный drawable после dispatch; отмена
+и смена owner освобождают его. Reveal имеет собственный OS outcome.
+
+Document snapshot отделяет reader от physical WebKit request. Отмена/stop/8s
+deadline завершает reader; borrow/reservation удерживаются до native callback.
+Четыре outstanding native requests ограничивают backlog даже после отмен.
+Очередь reader ждёт фактическую голову, удаляет отменённых ожидающих и не
+публикует устаревший source/viewport.
+
+CIContext и cover pipeline готовятся одним producer при реальном cover demand;
+interior curl не запускает несвязанную подготовку обложки. Заменён eager path.
+[Проверки и оставшиеся интервалы](audit-evidence/2026-09-30/owned-demand-228/results.json):
+strict first OS budgets и единичный native terminal timeout пока не закрыты.

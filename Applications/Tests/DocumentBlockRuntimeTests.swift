@@ -312,6 +312,148 @@ final class DocumentBlockRuntimeTests: XCTestCase {
     XCTAssertEqual(fixture.resources.activeWebSurfaceCount, 1)
   }
 
+  func testSnapshotStopCompletesRunningAndQueuedReadersBeforeTheNativeCallback() async throws {
+    let fixture = try RuntimeFixture(program: .program(id: "snapshot-stop", html: "<output>Ready</output>", height: 100))
+    defer { fixture.close() }
+    try await fixture.waitUntilReady()
+    let reservation = try XCTUnwrap(fixture.resources.reserveRaster(pixelWidth: 360, pixelHeight: 100))
+    var nativeCompletion: (@MainActor (UIImage?, Error?) -> Void)?
+    var nativeSubmissions = 0
+    fixture.runtime.snapshotSubmission = { _, _, completion in
+      nativeSubmissions += 1; nativeCompletion = completion
+    }
+    var firstFinished = false, queuedEntered = false, queuedFinished = false
+    let running = Task { @MainActor in
+      defer { firstFinished = true }
+      do {
+        let raster = try await fixture.runtime.capture(sourceOffset: 0, height: 100, pixelWidth: 360,
+          reservation: reservation)
+        raster.release(); return false
+      } catch is CancellationError { return true }
+      catch { return false }
+    }
+    try await wait { nativeCompletion != nil }
+    let queued = Task { @MainActor in
+      queuedEntered = true
+      defer { queuedFinished = true }
+      do {
+        _ = try await fixture.runtime.captureCurrentCut(sourceOffset: 0, height: 100, pixelWidth: 360)
+        return false
+      } catch is CancellationError { return true }
+      catch { return false }
+    }
+    try await wait { queuedEntered }
+    queued.cancel()
+    try await wait(seconds: 1) { queuedFinished }
+    XCTAssertFalse(firstFinished, "Cancelling a queued turn cannot cancel the running snapshot")
+    XCTAssertFalse(reservation.isReleased)
+    XCTAssertEqual(nativeSubmissions, 1)
+    var successorEntered = false, successorFinished = false
+    let successor = Task { @MainActor in
+      successorEntered = true
+      defer { successorFinished = true }
+      do {
+        _ = try await fixture.runtime.captureCurrentCut(sourceOffset: 0, height: 100, pixelWidth: 360)
+        return false
+      } catch is CancellationError { return true }
+      catch { return false }
+    }
+    try await wait { successorEntered }
+    try await Task.sleep(for: .milliseconds(20))
+    XCTAssertEqual(nativeSubmissions, 1, "Removing a cancelled reader must preserve its successor's wait for the running operation")
+    fixture.runtime.stop()
+    try await wait(seconds: 1) { firstFinished && successorFinished }
+    XCTAssertNil(fixture.runtime.webView)
+    XCTAssertFalse(reservation.isReleased, "A completed reader cannot uncharge a still-submitted native snapshot")
+    XCTAssertEqual(fixture.resources.activeWebSurfaceCount, 1, "The physical callback still owns its executor borrow")
+    let complete = try XCTUnwrap(nativeCompletion)
+    nativeCompletion = nil; complete(nil, CancellationError())
+    XCTAssertTrue(reservation.isReleased)
+    XCTAssertEqual(fixture.resources.activeWebSurfaceCount, 0)
+    let firstCancelled = await running.value, queuedCancelled = await queued.value
+    let successorCancelled = await successor.value
+    XCTAssertTrue(firstCancelled); XCTAssertTrue(queuedCancelled); XCTAssertTrue(successorCancelled)
+  }
+
+  func testSnapshotDeadlineEndsItsReaderWithoutReleasingOutstandingNativeWork() async throws {
+    let fixture = try RuntimeFixture(program: .program(id: "snapshot-deadline", html: "<output>Ready</output>", height: 100))
+    defer { fixture.close() }
+    try await fixture.waitUntilReady()
+    let reservation = try XCTUnwrap(fixture.resources.reserveRaster(pixelWidth: 360, pixelHeight: 100))
+    var nativeCompletion: (@MainActor (UIImage?, Error?) -> Void)?
+    fixture.runtime.snapshotSubmission = { _, _, completion in nativeCompletion = completion }
+    var finished = false
+    let reader = Task { @MainActor in
+      defer { finished = true }
+      do {
+        let raster = try await fixture.runtime.capture(sourceOffset: 0, height: 100, pixelWidth: 360,
+          reservation: reservation)
+        raster.release(); return false
+      } catch {
+        return (error as? SceneRenderError) == .snapshotPending("document_program_snapshot_deadline")
+      }
+    }
+    try await wait { nativeCompletion != nil }
+    try await wait(seconds: 9) { finished }
+    XCTAssertFalse(reservation.isReleased)
+    XCTAssertNotNil(fixture.runtime.webView, "A snapshot deadline does not restart the executing program")
+    let complete = try XCTUnwrap(nativeCompletion)
+    nativeCompletion = nil; complete(nil, CancellationError())
+    XCTAssertTrue(reservation.isReleased)
+    let timedOut = await reader.value
+    XCTAssertTrue(timedOut)
+    XCTAssertEqual(fixture.resources.activeWebSurfaceCount, 1)
+  }
+
+  func testCancelledReadersCannotAccumulateMoreThanFourNativeSnapshots() async throws {
+    let fixture = try RuntimeFixture(program: .program(id: "snapshot-backlog", html: "<output>Ready</output>", height: 100))
+    defer { fixture.close() }
+    try await fixture.waitUntilReady()
+    var callbacks: [@MainActor (UIImage?, Error?) -> Void] = []
+    var reservations: [RasterReservation] = []
+    fixture.runtime.snapshotSubmission = { _, _, completion in callbacks.append(completion) }
+    for index in 0..<4 {
+      let reservation = try XCTUnwrap(fixture.resources.reserveRaster(pixelWidth: 360, pixelHeight: 100))
+      reservations.append(reservation)
+      var finished = false
+      let reader = Task { @MainActor in
+        defer { finished = true }
+        do {
+          let raster = try await fixture.runtime.capture(sourceOffset: 0, height: 100, pixelWidth: 360,
+            reservation: reservation)
+          raster.release(); return false
+        } catch is CancellationError { return true }
+        catch { return false }
+      }
+      try await wait { callbacks.count == index + 1 }
+      reader.cancel()
+      try await wait(seconds: 1) { finished }
+      let cancelled = await reader.value
+      XCTAssertTrue(cancelled); XCTAssertFalse(reservation.isReleased)
+    }
+    let refusedReservation = try XCTUnwrap(fixture.resources.reserveRaster(pixelWidth: 360, pixelHeight: 100))
+    var refused = false
+    let fifth = Task { @MainActor in
+      defer { refused = true }
+      do {
+        let raster = try await fixture.runtime.capture(sourceOffset: 0, height: 100, pixelWidth: 360,
+          reservation: refusedReservation)
+        raster.release(); return false
+      } catch { return (error as? SceneRenderError) == .resourceLimit }
+    }
+    try await wait(seconds: 1) { refused }
+    XCTAssertEqual(callbacks.count, 4, "Reader cancellation cannot create unbounded outstanding WebKit work")
+    XCTAssertTrue(refusedReservation.isReleased, "Physical admission refusal returns the unused raster grant")
+    fixture.runtime.stop()
+    XCTAssertEqual(fixture.resources.activeWebSurfaceCount, 1)
+    for callback in callbacks { callback(nil, CancellationError()) }
+    callbacks.removeAll()
+    let wasRefused = await fifth.value
+    XCTAssertTrue(wasRefused)
+    XCTAssertTrue(reservations.allSatisfy(\.isReleased))
+    XCTAssertEqual(fixture.resources.activeWebSurfaceCount, 0)
+  }
+
   func testAQueuedNeighborReceivesTheInputSlotWhenItBecomesCurrent() async throws {
     let resources = SceneRenderResources(maximumWebSurfaces: 2, maximumBackgroundWebSurfaces: 1, reservedInteractiveSlots: 1)
     let background = try await resources.acquireWebSurface(priority: .visible)
