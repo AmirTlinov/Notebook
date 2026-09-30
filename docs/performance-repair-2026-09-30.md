@@ -222,6 +222,8 @@ forward/reverse и сохранённым состоянием прошли фи
 Оставшиеся интервалы измеряются у источников событий; JSON и screenshot/readback
 создаются после остановки измерения. [Исходные часы и результаты](audit-evidence/2026-09-30/first-presentation-scheduling/diagnostic-runs.json)
 сохраняют точные source и область каждого прогона.
+В git оставлены стадии, причинные edges и выбранные стеки; полные event reports
+сохранены в исходных receipt directories по `rawReport.path/sha256`.
 
 | Интервал | Владелец и установленная граница |
 |---|---|

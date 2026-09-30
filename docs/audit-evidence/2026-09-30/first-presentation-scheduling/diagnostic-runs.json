@@ -5,7 +5,7 @@
   "runs": [
     {
       "attachment": "cold24-before.json",
-      "attachmentSHA256": "6147e480f5eb1c53ae08d3ca51c725b33660537393a9515532d52c1792f42a6a",
+      "attachmentSHA256": "8a32deba8e12c2fe8744957f353cb0f5ec8abac8ed2308bdddd3264236f0dc3a",
       "evidenceDirectory": "/private/tmp/notebook-scheduling-cold24-0321",
       "scenario": "cold24",
       "PID": 4050,
@@ -51,11 +51,16 @@
       "latencyAcceptance": false,
       "verificationSHA256": "49fd512cdb6eda1eadd40d0fc1ac1fcd0bf4745e7996c5d6d4021bd1555d3ed6",
       "verificationStatus": "passed",
-      "verificationSourceSHA256": "5c7acf17738c14c7f3e52ae92a51f3a825c7e70b316b36931f972b76da52df00"
+      "verificationSourceSHA256": "5c7acf17738c14c7f3e52ae92a51f3a825c7e70b316b36931f972b76da52df00",
+      "rawAttachment": {
+        "path": "/private/tmp/notebook-scheduling-cold24-0321/source-clock-attachments/cold24-before.json",
+        "sha256": "6147e480f5eb1c53ae08d3ca51c725b33660537393a9515532d52c1792f42a6a",
+        "bytes": 215874
+      }
     },
     {
       "attachment": "cold-svg-before.json",
-      "attachmentSHA256": "84a8ae1e930b410d35463e684f0adb3a17dce859f3e0623327d10a32537c4f92",
+      "attachmentSHA256": "4db9bae435e46fb546ec1977150139c68370c842fb02af8db5dd9028c93468e5",
       "evidenceDirectory": "/private/tmp/notebook-scheduling-svg-ink-curl-0326",
       "scenario": "coldSVG13",
       "PID": 4087,
@@ -99,11 +104,16 @@
       "latencyAcceptance": false,
       "verificationSHA256": "4b4b9c0196861e0dca67f7eeddddd413b5a038c807386fa160f4f9e3bb0ee983",
       "verificationStatus": "passed",
-      "verificationSourceSHA256": "5c7acf17738c14c7f3e52ae92a51f3a825c7e70b316b36931f972b76da52df00"
+      "verificationSourceSHA256": "5c7acf17738c14c7f3e52ae92a51f3a825c7e70b316b36931f972b76da52df00",
+      "rawAttachment": {
+        "path": "/private/tmp/notebook-scheduling-svg-ink-curl-0326/source-clock-attachments/cold-svg-before.json",
+        "sha256": "84a8ae1e930b410d35463e684f0adb3a17dce859f3e0623327d10a32537c4f92",
+        "bytes": 352006
+      }
     },
     {
       "attachment": "first-curl-before.json",
-      "attachmentSHA256": "8ac4a3053854717f7e21224bf32ea63834cda4533ec8cbbe7c77959e6d749700",
+      "attachmentSHA256": "099b2c6df4cef4dbb60e44691b1b5e3c09ffc2bf68d0e2c16d3282cbf112de55",
       "evidenceDirectory": "/private/tmp/notebook-scheduling-svg-ink-curl-0326",
       "scenario": "first-curl",
       "PID": 4087,
@@ -134,11 +144,16 @@
       "latencyAcceptance": false,
       "verificationSHA256": "4b4b9c0196861e0dca67f7eeddddd413b5a038c807386fa160f4f9e3bb0ee983",
       "verificationStatus": "passed",
-      "verificationSourceSHA256": "5c7acf17738c14c7f3e52ae92a51f3a825c7e70b316b36931f972b76da52df00"
+      "verificationSourceSHA256": "5c7acf17738c14c7f3e52ae92a51f3a825c7e70b316b36931f972b76da52df00",
+      "rawAttachment": {
+        "path": "/private/tmp/notebook-scheduling-svg-ink-curl-0326/source-clock-attachments/first-curl-before.json",
+        "sha256": "8ac4a3053854717f7e21224bf32ea63834cda4533ec8cbbe7c77959e6d749700",
+        "bytes": 448337
+      }
     },
     {
       "attachment": "first-dot-before.json",
-      "attachmentSHA256": "752ba79eb71fb518b6de12f64462f0adf1346ed794ca509c20308ef977f7af5f",
+      "attachmentSHA256": "d3eca76695284ef44565e4c2e8e91343e4c32521cc8d64fbff984622524915da",
       "evidenceDirectory": "/private/tmp/notebook-scheduling-svg-ink-curl-0326",
       "scenario": "first-held-dot",
       "PID": 4087,
@@ -161,11 +176,16 @@
       "latencyAcceptance": false,
       "verificationSHA256": "4b4b9c0196861e0dca67f7eeddddd413b5a038c807386fa160f4f9e3bb0ee983",
       "verificationStatus": "passed",
-      "verificationSourceSHA256": "5c7acf17738c14c7f3e52ae92a51f3a825c7e70b316b36931f972b76da52df00"
+      "verificationSourceSHA256": "5c7acf17738c14c7f3e52ae92a51f3a825c7e70b316b36931f972b76da52df00",
+      "rawAttachment": {
+        "path": "/private/tmp/notebook-scheduling-svg-ink-curl-0326/source-clock-attachments/first-dot-before.json",
+        "sha256": "752ba79eb71fb518b6de12f64462f0adf1346ed794ca509c20308ef977f7af5f",
+        "bytes": 22939
+      }
     },
     {
       "attachment": "cold-svg-gpu-worker.json",
-      "attachmentSHA256": "28f73e4a72e017360ea1630e3f19ebf8c2da48832f8fc2cef7db8a52bc2f0d0f",
+      "attachmentSHA256": "ac9d1e6c94c0cade00652700e8b0eee53266cd08bf292c8e30013a33c6926847",
       "evidenceDirectory": "/private/tmp/notebook-scheduling-cold-svg-after-programs-0402",
       "scenario": "coldSVG13",
       "PID": 4189,
@@ -209,11 +229,16 @@
       "latencyAcceptance": false,
       "verificationSHA256": "0076ca52d90463c4a7e70d664352315491fe1f4a69d0e59a46b88663939b9da5",
       "verificationStatus": "passed",
-      "verificationSourceSHA256": "bd6990972d4cc7ac13fca942c525e6d1f677a1552cd105da3f7fd74a22295f81"
+      "verificationSourceSHA256": "bd6990972d4cc7ac13fca942c525e6d1f677a1552cd105da3f7fd74a22295f81",
+      "rawAttachment": {
+        "path": "/private/tmp/notebook-scheduling-cold-svg-after-programs-0402/source-clock-attachments/cold-svg-gpu-worker.json",
+        "sha256": "28f73e4a72e017360ea1630e3f19ebf8c2da48832f8fc2cef7db8a52bc2f0d0f",
+        "bytes": 391128
+      }
     },
     {
       "attachment": "cold24-ui-opportunities.json",
-      "attachmentSHA256": "ea8f750f8834cb12bab32c3fe4d29c137b3de4fff649e5b94cdb552c86f1d350",
+      "attachmentSHA256": "c513c20beb575e935703d0968f9cf533a55edd9c93f9f9ee61ddc0a28c6096dc",
       "evidenceDirectory": "/private/tmp/notebook-scheduling-construction-cold24-0429",
       "scenario": "cold24",
       "PID": 4232,
@@ -259,11 +284,16 @@
       "latencyAcceptance": false,
       "verificationSourceSHA256": "8576c51fd1a3c1b0b31de4a42da08b0265fd2170b833463df04035ce8c2dc418",
       "verificationSHA256": "035c532a0b18ee957f905b6fb9cbb7868c267351315d43c51d9342b66282cb46",
-      "verificationStatus": "passed"
+      "verificationStatus": "passed",
+      "rawAttachment": {
+        "path": "/private/tmp/notebook-scheduling-construction-cold24-0429/source-clock-attachments/cold24-ui-opportunities.json",
+        "sha256": "ea8f750f8834cb12bab32c3fe4d29c137b3de4fff649e5b94cdb552c86f1d350",
+        "bytes": 262835
+      }
     },
     {
       "attachment": "first-curl-ui-opportunities.json",
-      "attachmentSHA256": "c04cb3da1f7face2bb2c4e427a6ca77c20afbb70b398b17fa43c8b90de442453",
+      "attachmentSHA256": "a73ea9aa0d47873b0e02374116c015e2e7358a57c22c45f6ef2665d066f21d1b",
       "evidenceDirectory": "/private/tmp/notebook-scheduling-construction-cold24-0429",
       "scenario": "first-curl",
       "PID": 4232,
@@ -294,11 +324,16 @@
       "latencyAcceptance": false,
       "verificationSourceSHA256": "8576c51fd1a3c1b0b31de4a42da08b0265fd2170b833463df04035ce8c2dc418",
       "verificationSHA256": "035c532a0b18ee957f905b6fb9cbb7868c267351315d43c51d9342b66282cb46",
-      "verificationStatus": "passed"
+      "verificationStatus": "passed",
+      "rawAttachment": {
+        "path": "/private/tmp/notebook-scheduling-construction-cold24-0429/source-clock-attachments/first-curl-ui-opportunities.json",
+        "sha256": "c04cb3da1f7face2bb2c4e427a6ca77c20afbb70b398b17fa43c8b90de442453",
+        "bytes": 449724
+      }
     },
     {
       "attachment": "first-dot-ui-opportunities.json",
-      "attachmentSHA256": "fbe03b2aea1ae81b41077d210cf25dee2b46bd9e23ad7735ceee74404214f9b1",
+      "attachmentSHA256": "bb307d42447340154dba8f4704d166db4a90640910d021a5fa136782970f291e",
       "evidenceDirectory": "/private/tmp/notebook-scheduling-construction-cold24-0429",
       "scenario": "first-held-dot",
       "PID": 4232,
@@ -321,11 +356,16 @@
       "latencyAcceptance": false,
       "verificationSourceSHA256": "8576c51fd1a3c1b0b31de4a42da08b0265fd2170b833463df04035ce8c2dc418",
       "verificationSHA256": "035c532a0b18ee957f905b6fb9cbb7868c267351315d43c51d9342b66282cb46",
-      "verificationStatus": "passed"
+      "verificationStatus": "passed",
+      "rawAttachment": {
+        "path": "/private/tmp/notebook-scheduling-construction-cold24-0429/source-clock-attachments/first-dot-ui-opportunities.json",
+        "sha256": "fbe03b2aea1ae81b41077d210cf25dee2b46bd9e23ad7735ceee74404214f9b1",
+        "bytes": 26343
+      }
     },
     {
       "attachment": "cold24-final.json",
-      "attachmentSHA256": "9043d112382231369ca257732d9dcd1481391a98b577176232d084c6b38daf01",
+      "attachmentSHA256": "35d12e0f6597cb7269db736ebd45c4e53bc08cf4e62009213f3859afe9020a50",
       "evidenceDirectory": "/private/tmp/notebook-226-cold-final-0606",
       "scenario": "cold24",
       "PID": 4882,
@@ -384,11 +424,16 @@
       "verificationSHA256": "7fd187b544df61ed9b9668a1fce180b2b80bb407f604a2014d6c9a36edcaa629",
       "verificationStatus": "passed",
       "verificationSourceSHA256": "806aa5f19def02ca4183154c43b834cf7f80788a55eaad90688b49b8abd2d722",
-      "processCold": true
+      "processCold": true,
+      "rawAttachment": {
+        "path": "/private/tmp/notebook-226-cold-final-0606/source-clock-attachments/cold24-final.json",
+        "sha256": "9043d112382231369ca257732d9dcd1481391a98b577176232d084c6b38daf01",
+        "bytes": 318589
+      }
     },
     {
       "attachment": "first-curl-final.json",
-      "attachmentSHA256": "2c10aae165d02fee8734743e7654cf19eb55e941f7c53d3b1d1f4ed15dc13bd0",
+      "attachmentSHA256": "91bef5e0fd37d9fd73dff1997dedc63c94d0f4ec4621927818e9a511b3748c67",
       "evidenceDirectory": "/private/tmp/notebook-226-cold-final-0606",
       "scenario": "first-curl",
       "PID": 4882,
@@ -432,11 +477,16 @@
       "verificationSHA256": "7fd187b544df61ed9b9668a1fce180b2b80bb407f604a2014d6c9a36edcaa629",
       "verificationStatus": "passed",
       "verificationSourceSHA256": "806aa5f19def02ca4183154c43b834cf7f80788a55eaad90688b49b8abd2d722",
-      "processCold": false
+      "processCold": false,
+      "rawAttachment": {
+        "path": "/private/tmp/notebook-226-cold-final-0606/source-clock-attachments/first-curl-final.json",
+        "sha256": "2c10aae165d02fee8734743e7654cf19eb55e941f7c53d3b1d1f4ed15dc13bd0",
+        "bytes": 469456
+      }
     },
     {
       "attachment": "first-dot-final.json",
-      "attachmentSHA256": "f1eaf10d6a486c33b1f91b7beb5681db3cbcacba6103170a6312ab4133530fc9",
+      "attachmentSHA256": "9abf25ef5fdf5e6b390d5845bb3a11d9416786c2147838b12fccfebf6a61f0f2",
       "evidenceDirectory": "/private/tmp/notebook-226-cold-final-0606",
       "scenario": "first-held-dot",
       "PID": 4882,
@@ -472,7 +522,12 @@
       "verificationSHA256": "7fd187b544df61ed9b9668a1fce180b2b80bb407f604a2014d6c9a36edcaa629",
       "verificationStatus": "passed",
       "verificationSourceSHA256": "806aa5f19def02ca4183154c43b834cf7f80788a55eaad90688b49b8abd2d722",
-      "processCold": false
+      "processCold": false,
+      "rawAttachment": {
+        "path": "/private/tmp/notebook-226-cold-final-0606/source-clock-attachments/first-dot-final.json",
+        "sha256": "f1eaf10d6a486c33b1f91b7beb5681db3cbcacba6103170a6312ab4133530fc9",
+        "bytes": 25330
+      }
     }
   ]
 }
