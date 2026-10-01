@@ -175,6 +175,10 @@ final class NotebookWorkspacePresentationController: UIViewController, NotebookS
     guard preparationRequest != request else { return }
     preparationRequest = request
     pendingPreparation = perform
+    if let model, NotebookNavigationObservation.onWebPreparation != nil {
+      NotebookNavigationObservation.webPreparation("native_preparation_enqueued", ownerID: model.actorID,
+        sourceID: request.generation?.uuidString)
+    }
     guard preparationTask == nil else { return }
     // Native updates replace one pending request. Unlike a SwiftUI task-id
     // callback, publishing its result cannot suppress the next update this frame.
@@ -183,6 +187,10 @@ final class NotebookWorkspacePresentationController: UIViewController, NotebookS
       preparationTask = nil
       let perform = pendingPreparation
       pendingPreparation = nil
+      if let model, NotebookNavigationObservation.onWebPreparation != nil {
+        NotebookNavigationObservation.webPreparation("native_preparation_accepted", ownerID: model.actorID,
+          sourceID: preparationRequest?.generation?.uuidString)
+      }
       perform?()
     }
   }

@@ -1815,10 +1815,20 @@ final class DocumentWebCoordinator: NSObject,
   // payload before registration so a newer projection cannot seed an old heap.
   private func registerPrograms(_ packages: [String: NotebookProgramPackage], payload: DocumentRuntimePayload) async throws -> [String: String] {
     if let store = programStore {
+      var prepared: [(block: DocumentProgramSource, package: NotebookProgramPackage,
+        token: String, state: NotebookProgramStateEncoding)] = []
       for block in payload.programs {
         guard let package = packages[block.id], let token = blockTokens[block.id], programURLs[block.id] == nil else { continue }
         let state = try await NotebookProgramStateEncoding.prepare(payload.states[block.id] ?? block.initialState, resources: resources, forHTML: true)
         guard !Task.isCancelled, self.payload?.state === payload.state, blockTokens[block.id] == token else { throw CancellationError() }
+        prepared.append((block, package, token, state))
+      }
+      // Initial buffers must all fit before future commits reserve the free
+      // capacity. Otherwise the first iframe's unused credit can block the
+      // next encoding before presentPage has mounted either program.
+      guard !Task.isCancelled, self.payload?.state === payload.state,
+        prepared.allSatisfy({ blockTokens[$0.block.id] == $0.token }) else { throw CancellationError() }
+      for (block, package, token, state) in prepared {
         let url = try programAssets.register(store: store, package: package) { origin in
           try NotebookProgramBridge.document(program: block, stateJSON: state.htmlJSON,
             token: token, package: package, origin: origin, stateCredit: programStateTransfer(block.id, token: token).initialCredit)

@@ -1248,12 +1248,21 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
   }
 
   private func finishAcceptedBeforeReady() async throws {
+    guard let web = attachedWebView, let token = loadToken else { return }
     programLoadTask?.cancel()
     if let programLoadTask { await programLoadTask.value }
-    guard let web = attachedWebView, let token = loadToken, let stateTransfer else { return }
-    let borrow = try lease.borrow(); defer { borrow.release() }
+    guard accepts(token), attachedWebView === web else { throw CancellationError() }
     commitsClosedBeforeReady = true
+    guard let stateTransfer else {
+      // This source has no heap yet. Cancelling its initial-state preparation
+      // closes that attempt; foreground resumes through a fresh navigation.
+      restartsAfterBoundary = true
+      web.stopLoading()
+      return
+    }
+    let borrow = try lease.borrow(); defer { borrow.release() }
     let hasHeap = try await stateTransfer.finishAccepted(controller: "notebookProgram", expectedToken: token, in: web)
+    guard accepts(token), attachedWebView === web else { throw CancellationError() }
     restartsAfterBoundary = !hasHeap
   }
 
@@ -1699,6 +1708,7 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
     loadFailed = false
     frozenCheckpoint = nil
     stateTransfer?.revoke()
+    stateTransfer = nil
     self.snapshotOnly = snapshotOnly
     commitsClosedBeforeReady = false; restartsAfterBoundary = false
     programLoadTask?.cancel(); programLoadTask = nil
@@ -1717,8 +1727,6 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
     }
     let token = "\(lease.id.uuidString)/\(UUID().uuidString)"
     loadToken = token
-    stateTransfer = staticRaster ? nil : NotebookProgramStateTransfer(resources: resources,
-      grantsInitialCredit: !snapshotOnly && (lease.priority == .input || lease.priority == .liveProgram))
     #if os(iOS)
       NotebookInteractionDiagnostics.bind(webView, elementID: element.id, token: token, ready: false)
     #endif
@@ -1792,6 +1800,11 @@ final class AgentWebCoordinator: NSObject, WKScriptMessageHandler, WKNavigationD
     token: String, in webView: WKWebView, assets: (store: NotebookStore, package: NotebookProgramPackage)? = nil) {
     guard !Task.isCancelled, accepts(token), attachedWebView === webView else { return }
     initialStateEncoding = encoded
+    // Initial state owns its admission before the program can reserve commit
+    // credit. Reserving all remaining capacity before encoding would make this
+    // not-yet-navigated source wait for bytes held by its own unused credit.
+    stateTransfer = NotebookProgramStateTransfer(resources: resources,
+      grantsInitialCredit: !snapshotOnly && (lease.priority == .input || lease.priority == .liveProgram))
     if let assets {
       let url = programAssets.register(store: assets.store, package: assets.package) { origin in
         Self.document(for: element, stateJSON: encoded.htmlJSON, token: token, package: assets.package, origin: origin,

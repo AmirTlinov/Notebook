@@ -1,0 +1,27 @@
+{
+  "status": "installed-pair-and-native-continuity-verified",
+  "build": "239",
+  "version": "0.3.169",
+  "previousBuild": "238",
+  "sourceSHA256": "f454748d064ee7887a1476a5e71a43ac981cae4782477b68109206defe9b0719",
+  "buildReceiptSHA256": "9dc4ff660912892f0d3fc09afc2c5ede239025359e3efd737372d7f5898f122b",
+  "inPlaceUpdate": true,
+  "dataAccess": "none",
+  "dataContainerPathChanged": true,
+  "finishedAt": "2026-10-01T16:41:58.508601+00:00",
+  "fullAcceptance": false,
+  "checks": {
+    "actualSigned239SocketPeerCodeBeforeAndAfter": true,
+    "workspaceRetained": true,
+    "trustedPhysicalDeviceRetained": true,
+    "presencePageCameraSelectedItemRetained": true,
+    "typedSelectionChoiceRetained": true,
+    "runtimeConnected": true,
+    "singleInstalledMacOwner": true
+  },
+  "actualOwnerCDHash": "9b85c75d71495ed47c060bea2b3e89ad0c7adcc5",
+  "actualOwnerPID": 91389,
+  "previousSessionID": "4F534322-E930-46BD-B71A-7BAE505ACEB3",
+  "newSessionID": "3E8F30CA-44A6-4B1E-8DA9-4579E9BD0F6F",
+  "physicalUIAcceptance": "not performed by installer; browser/native appearance acceptance follows separately"
+}

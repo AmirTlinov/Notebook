@@ -61,12 +61,24 @@ import XCTest
   }
 
   func testColdProgramConstructorsAgainstUIOpportunities() async throws { try await cold(programs: true) }
+  func testColdSingleProgramAgainstUIOpportunities() async throws { try await cold(programs: true, singleProgram: true) }
   func testColdSVGExecutorsAgainstUIOpportunities() async throws { try await cold(programs: false) }
 
-  private func cold(programs: Bool) async throws {
+  private func cold(programs: Bool, singleProgram: Bool = false) async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("scheduling-cold-\(UUID())")
     let store = NotebookStore(root: root)
     try NotebookNavigationLoadFixture.seed(store, programs: programs)
+    if singleProgram {
+      let actor = UUID(), index = try store.loadIndex()
+      let pageIDs = try XCTUnwrap(index.items.first { $0.id == NotebookNavigationLoadFixture.notebookID }).pageIDs
+      XCTAssertEqual(pageIDs.count, 4)
+      for id in pageIDs {
+        var page = try store.loadPage(id)
+        let firstProgram = try XCTUnwrap(page.elements.first { $0.kind == .web })
+        XCTAssertTrue(page.replaceElements([firstProgram] + page.elements.filter { $0.kind != .web }, actor: actor))
+        try store.savePage(page)
+      }
+    }
     let index = try store.loadIndex(), hierarchy = try store.loadBoard(items: index.items)
     let center = try XCTUnwrap(hierarchy.focusedCenter(of: NotebookNavigationLoadFixture.notebookID, in: index.rootBoardID))
     let page = try store.loadPage(XCTUnwrap(index.selectedPageID))
@@ -121,7 +133,7 @@ import XCTest
     }
     trace.record("measurement_completed")
     trace.stop()
-    add(try trace.attachment(scenario: programs ? "cold24" : "coldSVG13"))
+    add(try trace.attachment(scenario: programs ? (singleProgram ? "cold1" : "cold24") : "coldSVG13"))
     XCTAssertEqual(trace.droppedEvents, 0)
     XCTAssertEqual(installed.count, sources.count)
     XCTAssertTrue(first)

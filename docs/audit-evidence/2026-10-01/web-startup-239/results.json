@@ -1,0 +1,115 @@
+{
+  "baseCommit": "bf4cf595567735701836a6e2e243cbd6966722c4",
+  "initialSourceSHA256": "aa6927a7ef554e7cfa42bcdfe9e1efb4acc34ab5436acb7380e7bb3eb022f66f",
+  "initialVerification": "/private/tmp/notebook-web-startup-239-verify",
+  "initialNativePassed": 6,
+  "failures": 0,
+  "skips": 0,
+  "curlParentControl": [
+    {
+      "scenario": "first-curl-parent-metal-order-0",
+      "geometryValid": true,
+      "parent": "mtkBacking",
+      "firstSequence": "2",
+      "actionToOSms": "80.50529166939668",
+      "initialHandlerCount": "1",
+      "initialZeroCount": "1"
+    },
+    {
+      "scenario": "first-curl-parent-plain-order-1",
+      "geometryValid": true,
+      "parent": "plainUIView",
+      "firstSequence": "2",
+      "actionToOSms": "31.510291679296643",
+      "initialHandlerCount": "1",
+      "initialZeroCount": "1"
+    },
+    {
+      "scenario": "first-curl-parent-plain-order-2",
+      "geometryValid": true,
+      "parent": "plainUIView",
+      "firstSequence": "2",
+      "actionToOSms": "29.682250024052337",
+      "initialHandlerCount": "1",
+      "initialZeroCount": "1"
+    },
+    {
+      "scenario": "first-curl-parent-metal-order-3",
+      "geometryValid": true,
+      "parent": "mtkBacking",
+      "firstSequence": "2",
+      "actionToOSms": "28.550333343446255",
+      "initialHandlerCount": "1",
+      "initialZeroCount": "1"
+    }
+  ],
+  "curlConclusion": "Different parent preserves first zero handler in all four valid trials; control removed, product not changed. Strict latency remains open.",
+  "beforeImmediateDispatch": [
+    {
+      "scenario": "cold1",
+      "pid": 8333,
+      "droppedEvents": 0,
+      "requestToWorkerMs": 66.54974998673424,
+      "indexWorkMs": 0.2498330140952021,
+      "firstNativeInstalledMs": 352.2927919984795,
+      "allSourcesInstalledMs": 352.2927919984795,
+      "navigationRequestToUIPolicyMs": 133.7933750182856
+    },
+    {
+      "scenario": "cold24",
+      "pid": 8342,
+      "droppedEvents": 0,
+      "requestToWorkerMs": 61.26770901028067,
+      "indexWorkMs": 0.262040994130075,
+      "firstNativeInstalledMs": 422.81212567468174,
+      "allSourcesInstalledMs": 1087.9195006855298,
+      "navigationRequestToUIPolicyMs": 165.20550000132062
+    }
+  ],
+  "coldScope": "Separate fresh isolated native hosts, unchanged sources and binaries. Source observations; no screenshots or profiler; not a paired broad speed claim.",
+  "finalSourceSHA256": "f454748d064ee7887a1476a5e71a43ac981cae4782477b68109206defe9b0719",
+  "finalVerification": "/private/tmp/notebook-web-startup-239-final-verify",
+  "finalNativePassed": {
+    "physicalIPad": 5,
+    "mac": 2
+  },
+  "finalRuntimeWarnings": 0,
+  "afterImmediateDispatch": [
+    {
+      "scenario": "cold1",
+      "pid": 8401,
+      "droppedEvents": 0,
+      "requestToDispatchMs": 0.01491699367761612,
+      "dispatchToWorkerMs": 0.06995801231823862,
+      "requestToWorkerMs": 0.08487500599585474,
+      "indexWorkMs": 0.6572079728357494,
+      "workerToMainDeliveryMs": 19.13950001471676,
+      "firstNativeInstalledMs": 335.36004097550176,
+      "allSourcesInstalledMs": 335.36004097550176,
+      "navigationRequestToUIPolicyMs": 125.01158300437964
+    },
+    {
+      "scenario": "cold24",
+      "pid": 8411,
+      "droppedEvents": 0,
+      "requestToDispatchMs": 0.01491600414738059,
+      "dispatchToWorkerMs": 0.26116700610145926,
+      "requestToWorkerMs": 0.27608301024883986,
+      "indexWorkMs": 0.7289169880095869,
+      "workerToMainDeliveryMs": 34.74529102095403,
+      "firstNativeInstalledMs": 368.62191633554175,
+      "allSourcesInstalledMs": 1077.2709163429681,
+      "navigationRequestToUIPolicyMs": 184.30225001065992
+    }
+  ],
+  "finalColdReference": "/private/tmp/notebook-web-startup-239-final-cold",
+  "coldConclusion": "First worker dispatch no longer waits for Main driver. Remaining worker-to-Main and WebKit policy intervals are separately observed; total latency is not a paired or strict acceptance claim.",
+  "openConditions": [
+    "WebKit pre-policy source-ready and Main delivery not separated",
+    "First drawable zero at source; server discard cause unresolved",
+    "Full system frame/CPU/GPU/memory and joint-work acceptance not performed"
+  ],
+  "delivery": "delivery.json",
+  "installedVersion": "0.3.169 (239)",
+  "fullAcceptance": false
+}

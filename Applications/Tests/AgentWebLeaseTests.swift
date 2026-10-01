@@ -54,6 +54,127 @@ final class AgentWebLeaseTests: XCTestCase {
   }
 
   @MainActor
+  func testInitialStateAdmissionPrecedesCommitCreditUnderRealRuntimePressure() async throws {
+    let previous = NotebookNavigationObservation.onWebPreparation
+    defer { NotebookNavigationObservation.onWebPreparation = previous }
+    // The same small source either has room now or waits for one external
+    // release. Its own future commit window must not create a third wait.
+    for initiallyBlocked in [false, true] {
+      let resources = SceneRenderResources(byteLimit: 2 * 1024 * 1024, profile: .headless)
+      let pressure = try XCTUnwrap(resources.reserveDerivedBytes(resources.passiveByteLimit - 64 * 1024, priority: .passive))
+      let blocker = initiallyBlocked ? try XCTUnwrap(resources.reserveDerivedBytes(64 * 1024, priority: .passive)) : nil
+      defer { pressure.release(); blocker?.release() }
+      let lease = try await resources.acquireWebSurface(priority: .input)
+      let session = AgentWebNativeSession(lease: lease, resources: resources, snapshotPolicy: .display(scale: 2))
+      defer { session.retire() }
+      var stages: [String] = [], accepted: [JSONValue] = [], ready = false
+      NotebookNavigationObservation.onWebPreparation = { stage, id, _, _ in
+        if id == lease.id { stages.append(stage) }
+      }
+      let source = AgentElement(id: UUID().uuidString, kind: .web,
+        frame: .init(x: 0, y: 0, width: 32, height: 32), source: "Credit follows initial state",
+        html: "<output>1</output>", javaScript: """
+          notebook.ready(new Promise(resolve=>window.releaseReady=resolve));
+          window.earlyAccepted=notebook.commit({count:1});
+          """, state: .object(["count": .number(0)]))
+      let presentation = AgentWebElementView(element: source, session: session,
+        snapshotPolicy: .display(scale: 2), onRenderReady: { _ in },
+        onInteractionReady: { ready = $0 }, onState: { value, completion in
+          accepted.append(value); completion(nil); return true
+        })
+      func waitFor(_ message: String, _ condition: () -> Bool) async throws {
+        let deadline = ContinuousClock.now + .seconds(3)
+        while !condition(), ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(10)) }
+        guard condition() else { XCTFail(message); throw NSError(domain: "AgentWebLeaseTests", code: 1) }
+      }
+      presentation.prepare()
+      if initiallyBlocked {
+        try await waitFor("Only external pressure defers initial state") { resources.pendingDerivedRequestCount == 1 }
+        XCTAssertFalse(stages.contains("navigation_requested"))
+        XCTAssertEqual(resources.reservedBytes, pressure.byteCount + (blocker?.byteCount ?? 0),
+          "A source waiting for its initial packet cannot reserve its future commit credit")
+        blocker?.release()
+        try await waitFor("The actual external release admits this exact source navigation") { stages.contains("navigation_requested") }
+      } else {
+        XCTAssertEqual(stages.filter { $0 == "source_accepted" || $0 == "navigation_requested" },
+          ["source_accepted", "navigation_requested"], "64KiB free admits a tiny initial packet in its accepted turn")
+        _ = try XCTUnwrap(stages.first { $0 == "navigation_requested" })
+      }
+      let token = try XCTUnwrap(session.coordinator.loadToken)
+      try await waitFor("The real author commits through the admitted credit before readiness") { accepted.count == 1 }
+      XCTAssertEqual(accepted, [.object(["count": .number(1)])])
+      XCTAssertFalse(ready)
+      let earlyAccepted = try await session.webView.evaluateJavaScript("window.earlyAccepted") as? Bool
+      XCTAssertEqual(earlyAccepted, true)
+      _ = try await session.webView.evaluateJavaScript("window.releaseReady();true")
+      try await waitFor("The same authored source becomes ready without an allocator retry") { ready }
+      XCTAssertEqual(stages.filter { $0 == "navigation_requested" }.count, 1)
+      XCTAssertEqual(session.coordinator.loadToken, token, "State admission and early commit preserve the accepted navigation")
+      session.retire()
+      try await waitFor("Retirement releases the actual initial-state and credit ownership") {
+        resources.activeWebSurfaceCount == 0 && resources.reservedBytes == pressure.byteCount
+          && resources.pendingDerivedRequestCount == 0
+      }
+      XCTAssertTrue(lease.isReleased)
+    }
+  }
+
+  @MainActor
+  func testForegroundRestartsInitialStatePreparationCancelledByModelCheckpoint() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    let model = NotebookAppModel(store: .init(root: root), startsNearbySync: false)
+    retainNotebookUntilTeardown(model, removing: root)
+    await model.start(pageSize: NotebookAppModel.defaultPageSize)
+    var page = try XCTUnwrap(model.activePage)
+    let source = AgentElement(id: "pre-navigation", kind: .web,
+      frame: .init(x: 0, y: 0, width: 32, height: 32), source: "Background during initial admission",
+      html: "<output>Ready</output>", javaScript: "window.boots=(window.boots||0)+1;notebook.ready(Promise.resolve())",
+      state: .object(["count": .number(0)]))
+    page.replaceElements([source], actor: model.actorID)
+    try model.store.savePage(page); await model.reloadExternalChanges()?.value
+    let basis = try XCTUnwrap(model.pages[page.id]?.programStateBasis(source.id))
+    let resources = SceneRenderResources(byteLimit: 2 * 1024 * 1024, profile: .headless)
+    let pressure = try XCTUnwrap(resources.reserveDerivedBytes(resources.passiveByteLimit, priority: .passive))
+    let lease = try await resources.acquireWebSurface(priority: .input)
+    var ready = false, stages: [String] = []
+    let owner = AgentWebCoordinator(lease: lease, resources: resources, onInteractionReady: { ready = $0 },
+      onState: { value, completion in model.commitElementState(pageID: page.id, elementID: source.id,
+        state: value, onCommitted: completion) })
+    owner.programOwner = model; owner.use(passiveSnapshot: false)
+    let web = AgentWebCoordinator.makeWebView(coordinator: owner)
+    owner.bindPresentation(to: .page(pageID: page.id, elementID: source.id))
+    let previous = NotebookNavigationObservation.onWebPreparation
+    NotebookNavigationObservation.onWebPreparation = { stage, id, _, _ in if id == lease.id { stages.append(stage) } }
+    defer {
+      NotebookNavigationObservation.onWebPreparation = previous
+      owner.invalidate(); lease.release(); pressure.release()
+    }
+    func waitFor(_ message: String, _ condition: () -> Bool) async throws {
+      let deadline = ContinuousClock.now + .seconds(3)
+      while !condition(), ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(10)) }
+      guard condition() else { XCTFail(message); throw NSError(domain: "AgentWebLeaseTests", code: 2) }
+    }
+    owner.load(source, basis: basis, in: web)
+    let cancelledToken = try XCTUnwrap(owner.loadToken)
+    try await waitFor("Initial state waits for actual external capacity") { resources.pendingDerivedRequestCount == 1 }
+    XCTAssertFalse(stages.contains("navigation_requested"))
+    model.setPreparationForeground(false)
+    let checkpointed = await model.finishProgramBoundary()
+    XCTAssertTrue(checkpointed)
+    XCTAssertEqual(resources.pendingDerivedRequestCount, 0, "The background boundary finishes the cancelled allocator continuation")
+    XCTAssertEqual(owner.loadToken, cancelledToken); XCTAssertFalse(ready)
+    pressure.release()
+    model.setPreparationForeground(true)
+    let resumed = await model.finishProgramBoundary()
+    XCTAssertTrue(resumed, "Foreground restarts a source without a heap instead of invoking resume on an absent program")
+    XCTAssertNotEqual(owner.loadToken, cancelledToken)
+    try await waitFor("The same model-owned source runs its first actual navigation") { ready }
+    XCTAssertEqual(stages.filter { $0 == "navigation_requested" }.count, 1)
+    let boots = try await web.evaluateJavaScript("window.boots") as? Int
+    XCTAssertEqual(boots, 1)
+  }
+
+  @MainActor
   func testUnmountedSessionRetirementKeepsItsSubmittedPhysicalBorrow() async throws {
     let resources = SceneRenderResources()
     let lease = try await resources.acquireWebSurface(priority: .input)

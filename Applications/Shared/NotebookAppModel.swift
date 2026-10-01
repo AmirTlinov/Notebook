@@ -388,6 +388,17 @@ final class NotebookAppModel {
   private(set) var scenePreparationPending = false
   private(set) var sceneIndexGeneration: UInt64 = 0
   private(set) var scenePublicationGeneration: UInt64 = 0
+  private struct ScenePreparationResult: Sendable {
+    let index: WorkspaceSceneIndex
+    let portals: [UUID: BoardPortalCamera]
+    let began: ContinuousClock.Instant?
+    let ended: ContinuousClock.Instant?
+  }
+  private struct ScenePreparationJob {
+    let request: UInt64
+    let coverageOnly: Bool
+    let task: Task<ScenePreparationResult, Never>
+  }
   @ObservationIgnored private var scenePreparationTask: Task<Void, Never>?
   @ObservationIgnored private var scenePreparationRequest: UInt64 = 0
   @ObservationIgnored private var scenePreparationIsCoverageOnly = false
@@ -401,39 +412,84 @@ final class NotebookAppModel {
   private var scenePortalCameras: [UUID: BoardPortalCamera] = [:]
   @ObservationIgnored private(set) var sceneQueryCount: UInt64 = 0
 
-  /// Coalesce a completed content publication before deriving the spatial
-  /// read model. The old generation remains visible until the next is whole.
+  /// Bootstrap dispatches the accepted immutable cut immediately. With a shown
+  /// index, synchronous local edits coalesce before its one next builder starts.
   private func scheduleScenePreparation(coverageOnly: Bool = false) {
     guard !isStopped, !acceptingSceneState else { return }
     scenePreparationIsCoverageOnly = coverageOnly
     scenePreparationRequest &+= 1
     scenePreparationPending = true
     preparedScene = nil
+    if NotebookNavigationObservation.onWebPreparation != nil {
+      NotebookNavigationObservation.webPreparation("scene_index_requested", ownerID: actorID,
+        sourceID: String(scenePreparationRequest))
+    }
     guard scenePreparationTask == nil else { return }
+    let first = sceneIndex == nil ? makeScenePreparationJob() : nil
     scenePreparationTask = Task { [weak self] in
-      await Task.yield()
-      guard let self else { return }
-      while !Task.isCancelled, scenePreparationPending, let workspace, let boardHierarchy {
-        let request = scenePreparationRequest
-        let coverageOnly = scenePreparationIsCoverageOnly
-        let paperSizes = documentPaperSizes
-        let previous = sceneIndex
-        let result = await Task.detached(priority: .utility) {
-          let portals = Dictionary(uniqueKeysWithValues: boardHierarchy.boards.map { ($0.id, $0.portalCamera) })
-          let index = WorkspaceSceneIndex(workspace: workspace, hierarchy: boardHierarchy,
-            paperSizes: paperSizes, reusing: previous)
-          return (index, portals)
-        }.value
-        // At most one builder exists. Obsolete work cannot publish or enqueue
-        // a second expensive build in parallel with the latest publication.
-        guard request == scenePreparationRequest else { continue }
-        preparedScene = (result.0, result.1, request, coverageOnly)
-        scenePreparationTask = nil
-        publishPreparedSceneIfPossible()
+      var pending = first
+      if pending == nil {
+        guard let self else { return }
+        guard !Task.isCancelled, !isStopped else { scenePreparationTask = nil; return }
+        pending = makeScenePreparationJob()
+      }
+      guard var job = pending else {
+        self?.scenePreparationTask = nil
+        self?.publishPreparedSceneIfPossible()
         return
       }
-      scenePreparationTask = nil
+      while true {
+        // This join is unconditional: shutdown may cancel the delivery driver
+        // before its first MainActor entry, after dispatch already owns a worker.
+        let result = await job.task.value
+        guard let self else { return }
+        if let began = result.began, let ended = result.ended {
+          NotebookNavigationObservation.webPreparation("scene_index_began", ownerID: actorID,
+            sourceID: String(job.request), at: began)
+          NotebookNavigationObservation.webPreparation("scene_index_ended", ownerID: actorID,
+            sourceID: String(job.request), at: ended)
+          NotebookNavigationObservation.webPreparation("scene_index_delivered", ownerID: actorID,
+            sourceID: String(job.request))
+        }
+        guard !Task.isCancelled, !isStopped else { scenePreparationTask = nil; return }
+        if job.request == scenePreparationRequest {
+          preparedScene = (result.index, result.portals, job.request, job.coverageOnly)
+          scenePreparationTask = nil
+          publishPreparedSceneIfPossible()
+          return
+        }
+        // A newer SQL cut may already be built, published or waiting for input
+        // admission. Preserve it instead of rebuilding over its accepted result.
+        guard let next = makeScenePreparationJob() else {
+          scenePreparationTask = nil
+          publishPreparedSceneIfPossible()
+          return
+        }
+        job = next
+      }
     }
+  }
+
+  private func makeScenePreparationJob() -> ScenePreparationJob? {
+    guard !isStopped, scenePreparationPending, preparedScene?.request != scenePreparationRequest,
+      let workspace, let boardHierarchy else { return nil }
+    let request = scenePreparationRequest, coverageOnly = scenePreparationIsCoverageOnly
+    let paperSizes = documentPaperSizes, previous = sceneIndex
+    let observesPreparation = NotebookNavigationObservation.onWebPreparation != nil
+    let dispatched: ContinuousClock.Instant? = observesPreparation ? .now : nil
+    let task = Task.detached(priority: .utility) {
+      let began: ContinuousClock.Instant? = observesPreparation ? .now : nil
+      let portals = Dictionary(uniqueKeysWithValues: boardHierarchy.boards.map { ($0.id, $0.portalCamera) })
+      let index = WorkspaceSceneIndex(workspace: workspace, hierarchy: boardHierarchy,
+        paperSizes: paperSizes, reusing: previous)
+      let ended: ContinuousClock.Instant? = observesPreparation ? .now : nil
+      return ScenePreparationResult(index: index, portals: portals, began: began, ended: ended)
+    }
+    if let dispatched {
+      NotebookNavigationObservation.webPreparation("scene_index_dispatched", ownerID: actorID,
+        sourceID: String(request), at: dispatched)
+    }
+    return .init(request: request, coverageOnly: coverageOnly, task: task)
   }
 
   private func publishPreparedSceneIfPossible() {
@@ -457,6 +513,10 @@ final class NotebookAppModel {
     preparedScene = nil
     scenePreparationPending = false
     scenePublicationGeneration &+= 1
+    if NotebookNavigationObservation.onWebPreparation != nil {
+      NotebookNavigationObservation.webPreparation("scene_index_published", ownerID: actorID,
+        sourceID: String(prepared.request))
+    }
   }
 
   /// Pages are read from their current catalog owner, independently of the

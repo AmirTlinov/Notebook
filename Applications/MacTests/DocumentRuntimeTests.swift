@@ -139,6 +139,87 @@ final class DocumentRuntimeTests: XCTestCase {
     XCTAssertTrue(mounted.coordinator.hasCanonicalPixels)
   }
 
+  func testInitialProgramBuffersPrecedeBootCommitCreditUnderPressure() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("document-startup-credit-" + UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = NotebookStore(root: root), actor = UUID()
+    let header = try store.initializeWorkspace(actor: actor, pageSize: .init(width: 834, height: 1194))
+    var index = try store.loadIndex(), board = try store.loadBoard(items: index.items)
+    let item = try XCTUnwrap(index.createDocument(title: "Two cold programs", actor: actor))
+    XCTAssertTrue(board.addItem(item.id, to: header.rootBoardID, near: .zero, actor: actor))
+    let program = """
+      let bootCalls=0;
+      notebook.commit({seed:notebook.state.seed,bootCalls:++bootCalls});
+      notebook.ready(Promise.resolve());
+      """
+    let document = DocumentTestFiles.document(id: item.id, actor: actor, contents: [
+      .program(id: "first", html: "<output>First program</output>", javaScript: program,
+        initialState: .object(["seed": .number(1)]), height: 100),
+      .program(id: "second", html: "<output>Second program</output>", javaScript: program,
+        initialState: .object(["seed": .number(2)]), height: 100)])
+    try store.saveDocumentWorkspaceBundle(index: index, document: document,
+      state: .init(id: item.id, actor: actor), board: board)
+    let resources = SceneRenderResources(maximumWebSurfaces: 2), queue = NotebookPersistenceQueue(store: store)
+    var commits: [(id: String, value: JSONValue)] = []
+    let mounted = surface(document: document, state: try store.loadDocumentState(document.id),
+      resources: resources, programStore: store, commit: { id, value in
+        let receipt = try await queue.submit { store in
+          let source = try store.documentProgramSource(document: document, instanceID: id, path: "programs/" + id)
+          return try store.commitDocumentState(documentID: document.id, programID: id, programPath: source.path,
+            value: value, sourceBasis: source.sourceBasis, actor: actor)?.record.valueVersion
+        }
+        if receipt != nil { commits.append((id, value)) }
+        return receipt
+      })
+    var pressure: RasterReservation?
+    defer { mounted.close(); pressure?.release() }
+    mounted.coordinator.onPaperReady = {
+      guard pressure == nil else { return }
+      let admission = resources.rasterAdmission
+      let available = min(admission.byteLimit - admission.heldBytes,
+        admission.passiveByteLimit - admission.pinnedBytes - admission.passiveReservedBytes)
+      let remaining = 512 * 1024
+      XCTAssertGreaterThan(available, remaining)
+      pressure = resources.reserveDerivedBytes(available - remaining, priority: .passive)
+      XCTAssertNotNil(pressure)
+    }
+    // Native paper is already installed. This remainder fits the required
+    // source/state buffers and both small initial models, but not an extra
+    // 1 MiB credit window between their encodings. Neither program retries its
+    // one boot commit, so the first actual credit must remain usable.
+    await waitUntil { (mounted.coordinator.renderIsReady && !commits.isEmpty) || mounted.coordinator.acquisitionError != nil }
+    XCTAssertTrue(mounted.coordinator.renderIsReady)
+    XCTAssertNil(mounted.coordinator.acquisitionError)
+    guard mounted.coordinator.renderIsReady else {
+      mounted.close(); pressure?.release(); pressure = nil
+      await waitUntil { resources.activeWebSurfaceCount == 0 && resources.pendingDerivedRequestCount == 0 }
+      return
+    }
+    XCTAssertNotNil(pressure)
+    XCTAssertTrue(mounted.coordinator.hasCanonicalPixels)
+    let web = try XCTUnwrap(mounted.coordinator.webView)
+    for id in ["first", "second"] {
+      let readiness = try await js("notebookRenderer.pageReceipt().programs.find(p=>p.blockID==='\(id)').readiness", web)
+      XCTAssertEqual(readiness, "declared")
+    }
+    let drained = try await NotebookProgramBridge.lifecycle("finishAcceptedPrograms", controller: "notebookRenderer", in: web)
+    guard case .array(let receipts) = drained else { return XCTFail("Missing accepted-state ACK receipts") }
+    XCTAssertEqual(receipts.count, 2)
+    XCTAssertTrue(receipts.allSatisfy { $0["acceptedOnly"] == .bool(true) })
+    XCTAssertEqual(commits.count, 1, "The credit-bearing program must persist its one boot call without replay")
+    let first = try XCTUnwrap(commits.first)
+    XCTAssertTrue(["first", "second"].contains(first.id))
+    let expected: JSONValue = .object(["seed": .number(first.id == "first" ? 1 : 2), "bootCalls": .number(1)])
+    XCTAssertEqual(first.value, expected)
+    XCTAssertEqual(try store.loadDocumentState(document.id).value(for: first.id), expected)
+    mounted.close(); pressure?.release(); pressure = nil
+    await waitUntil { resources.activeWebSurfaceCount == 0 && resources.pendingDerivedRequestCount == 0 }
+    XCTAssertEqual(mounted.coordinator.programAssets.scopeCount, 0)
+    let reclaimed = try XCTUnwrap(resources.reserveDerivedBytes(resources.passiveByteLimit, priority: .passive))
+    reclaimed.release()
+    XCTAssertEqual(resources.reservedBytes, 0)
+  }
+
   func testFittedDocumentKeepsWebKitInScreenPointsWithoutChangingItsCSSViewport() async throws {
     let document = DocumentTestFiles.document(actor: UUID(), contents: [.program(id: "control",
       html: "<label>Parameter<input type='range' style='width:600px' aria-label='Parameter'></label>", height: 100)])
