@@ -1,0 +1,481 @@
+{
+  "format": 1,
+  "sourceSnapshotSHA256": "a6b4f458ef39e6cdfaecb4627baed9511432a37a4e5138bf49c3ef7624936d87",
+  "PID": 7630,
+  "MainThreadTID": "0x11c8fc",
+  "appUUID": "4BCFB356-9998-3376-8DF1-F738B73D3DB2",
+  "appLoad": "0x104c88000",
+  "appMapEvidence": "Recorded raw DBG_DYLD_UUID_MAP_A exact UUID, Main TID matches profile, executable SHA matches binary.json.",
+  "clock": {
+    "timeInfo": "time-info.xml",
+    "mabsEpochTicks": 3185211542638,
+    "timebaseNumerator": 125,
+    "timebaseDenominator": 3,
+    "CAEpochSeconds": 132717.14760991666,
+    "sourceOriginTraceSeconds": 4.830955583369359,
+    "independentCrosscheck": "Both first native_init samples lie in source native_init interval and resolve to AgentWebCoordinator.makeWebView→AgentWebNativeSession→PreparedAgentElementPreparationOwner.prepare."
+  },
+  "coverage": {
+    "CPUExportRows": 5188,
+    "CPUCoverageSeconds": [
+      0.009629375,
+      35.999631416
+    ],
+    "MainSamples": 206,
+    "mainStateRows": 24214,
+    "mainSyscallRows": 41689
+  },
+  "interpretation": [
+    "First returned→policy:198.939ms MainRunning of248.432ms wall;2.390msRunnable. Mainactive work dominates this path.",
+    "Six other native constructors overlap returned→policy:43.499ms wall,29.970ms MainRunning;168.969ms MainRunning remains outside constructor intervals.",
+    "Observed outside-constructor stacks include SwiftUICore viewgraph/layout/dynamic lists/genericmetadata and UIKit native mount/traits/safearea work;1SheetCurl creation sample,1program-state basis lookup,1inkprojection refresh.",
+    "These observations do not prove firstpolicy IPC was already queued: exact callback readiness/message identity remains unmeasured."
+  ],
+  "limitations": [
+    "Raw import reported a tagged-backtrace model type error; selectedtables nevertheless cover the full source interval with no Unknown Main states and state durations exactly matching wall.",
+    "os_signpost/os_log exported0rows; correlation uses real time-info mabs epoch and preserved sourceCA clocks.",
+    "Function attribution uses exact-UUID/load matched nm TEXTsymbols, Swift-demangled nearestfunction; inlineframes/source lines notrecovered.",
+    "10ms statisticalsample weights are not exact per-functionCPUduration. State durations are authoritative for Running/Blocked/Runnable partition.",
+    "Syscall durations are inclusive and overlap thread-state time; do not add them to state totals.",
+    "Profile changes timing; this is causal evidence, not unprofiled latency acceptance."
+  ],
+  "fullArtifact": {
+    "path": "/private/tmp/notebook-cold-boundaries-profile-0213/main-cold-phase-report.json",
+    "bytes": 926932,
+    "sha256": "3b2cd89edf78a43f0bdb22b23c9cb2ca01a42afb4c5fc39a223ae98857b7587e"
+  },
+  "phases": [
+    {
+      "name": "native_init",
+      "traceStart": 4.972342375695007,
+      "traceEnd": 5.0025744587183,
+      "wallMS": 30.232083023292944,
+      "mainStateMS": {
+        "Running": 14.321078023296074,
+        "Interrupted": 0.01962700000035511,
+        "Blocked": 15.570290999998626,
+        "Runnable": 0.32108699998989465
+      },
+      "constructors": [
+        {
+          "owner": "9239F69D-2D3B-4AB7-8104-364C46978FF5",
+          "start": 4.972342375695007,
+          "end": 5.0025744587183,
+          "wallMS": 30.232083023292944,
+          "mainStateMS": {
+            "Running": 14.321078023296074,
+            "Interrupted": 0.01962700000035511,
+            "Blocked": 15.570290999998626,
+            "Runnable": 0.32108699998989465
+          }
+        }
+      ],
+      "selectedStatisticalSamples": [
+        {
+          "time": 4.979644666,
+          "statisticalWeightMS": 10.0,
+          "frames": [
+            {
+              "binary": "Notebook",
+              "name": "function signature specialization <Arg[1] = Dead> of static Notebook.AgentWebCoordinator.makeWebView(coordinator: Notebook.AgentWebCoordinator) -> __C.WKWebView + 759",
+              "addr": "0x104cdd643"
+            }
+          ]
+        },
+        {
+          "time": 4.999629416,
+          "statisticalWeightMS": 10.0,
+          "frames": [
+            {
+              "binary": "Notebook",
+              "name": "function signature specialization <Arg[1] = Dead> of static Notebook.AgentWebCoordinator.makeWebView(coordinator: Notebook.AgentWebCoordinator) -> __C.WKWebView + 759",
+              "addr": "0x104cdd643"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "request_return",
+      "traceStart": 5.00323450070573,
+      "traceEnd": 5.005961375718471,
+      "wallMS": 2.726875012740493,
+      "mainStateMS": {
+        "Running": 0.41212501274134894,
+        "Blocked": 2.3127499999997525,
+        "Runnable": 0.002000000000279556
+      },
+      "constructors": [],
+      "selectedStatisticalSamples": []
+    },
+    {
+      "name": "returned_policy",
+      "traceStart": 5.005961375718471,
+      "traceEnd": 5.254393333714688,
+      "wallMS": 248.43195799621753,
+      "mainStateMS": {
+        "Running": 198.93923299621983,
+        "Interrupted": 0.3874600000033368,
+        "Blocked": 46.29663400000439,
+        "Runnable": 2.390379999979153,
+        "Preempted": 0.4182509999983708
+      },
+      "constructors": [
+        {
+          "owner": "02A9A781-40C7-4C39-92D7-C48A2CE9DD2A",
+          "start": 5.076516416709637,
+          "end": 5.084446458698949,
+          "wallMS": 7.930041989311576,
+          "mainStateMS": {
+            "Running": 5.267412989310216,
+            "Blocked": 2.4740019999986984,
+            "Runnable": 0.18329499997715715,
+            "Interrupted": 0.005331999999746984
+          }
+        },
+        {
+          "owner": "4DBE3D4F-E957-42F3-9312-006356DD2FA5",
+          "start": 5.116591625701403,
+          "end": 5.1222008337208536,
+          "wallMS": 5.609208019450307,
+          "mainStateMS": {
+            "Running": 4.013084019452329,
+            "Interrupted": 0.00604300000084379,
+            "Blocked": 1.3359180000005466,
+            "Runnable": 0.24782899999387098,
+            "Preempted": 0.006334000000052242
+          }
+        },
+        {
+          "owner": "B0B45C83-4C85-4ED0-BC78-373909023A99",
+          "start": 5.13377408371889,
+          "end": 5.139820791722741,
+          "wallMS": 6.046708003850654,
+          "mainStateMS": {
+            "Running": 4.16099000385195,
+            "Blocked": 1.6307120000007558,
+            "Runnable": 0.2510039999998881,
+            "Interrupted": 0.004001999999836414
+          }
+        },
+        {
+          "owner": "B69070C9-F1EB-49DD-BC86-A712C8F02B1B",
+          "start": 5.148061750718625,
+          "end": 5.154337583720917,
+          "wallMS": 6.27583300229162,
+          "mainStateMS": {
+            "Running": 4.087794002291645,
+            "Interrupted": 0.0038749999990983497,
+            "Blocked": 1.857623000002917,
+            "Runnable": 0.3265410000032887
+          }
+        },
+        {
+          "owner": "0408FF4A-7029-481B-9E7E-3B7DC6E37666",
+          "start": 5.188921416702215,
+          "end": 5.197273875703104,
+          "wallMS": 8.352459000889212,
+          "mainStateMS": {
+            "Running": 5.388538000886456,
+            "Blocked": 2.2965450000009824,
+            "Runnable": 0.6186260000013988,
+            "Interrupted": 0.033417000000923736,
+            "Preempted": 0.015332999999451147
+          }
+        },
+        {
+          "owner": "BB67153A-B59A-4454-AA27-88CD0D985B63",
+          "start": 5.204031333705643,
+          "end": 5.2133162507088855,
+          "wallMS": 9.284917003242299,
+          "mainStateMS": {
+            "Running": 7.052670003248274,
+            "Interrupted": 0.023292000001617907,
+            "Blocked": 1.7803689999986716,
+            "Runnable": 0.4104200000014657,
+            "Preempted": 0.018165999999375515
+          }
+        }
+      ],
+      "selectedStatisticalSamples": [
+        {
+          "time": 5.019629958,
+          "statisticalWeightMS": 10.0,
+          "frames": [
+            {
+              "binary": "Notebook",
+              "name": "Notebook.SheetCurlMetalView.init(frame: __C.CGRect, device: __C.MTLDevice?) -> Notebook.SheetCurlMetalView + 1239",
+              "addr": "0x105a7d7f3"
+            },
+            {
+              "binary": "Notebook",
+              "name": "@objc Notebook.SheetCurlMetalView.init(frame: __C.CGRect, device: __C.MTLDevice?) -> Notebook.SheetCurlMetalView + 175",
+              "addr": "0x105a7da0f"
+            },
+            {
+              "binary": "SwiftUICore",
+              "name": "SwiftUI.GraphHost.runTransaction() -> () + 207",
+              "addr": "0x18f53ee27"
+            },
+            {
+              "binary": "SwiftUICore",
+              "name": "SwiftUI.ViewGraph.updateOutputs(at: SwiftUI.Time) -> () + 151",
+              "addr": "0x18f53ebf3"
+            }
+          ]
+        },
+        {
+          "time": 5.029629416,
+          "statisticalWeightMS": 10.0,
+          "frames": [
+            {
+              "binary": "SwiftUICore",
+              "name": "function signature specialization <Arg[3] = Owned To Guaranteed, Arg[5] = Owned To Guaranteed, Arg[6] = Owned To Guaranteed> of SwiftUI.(DynamicViewList in _3FB6ABB0477B815AB3C89DD5EDC9F0F0).Item.init(type: Any.Type, owner: __C.AGAttribute, list: AttributeGraph.Attribute<SwiftUI.ViewList>, id: A.ID, isUnary: Swift.Bool, subgraph: __C.AGSubgraphRef, allItems: SwiftUI.MutableBox<[Swift.Unmanaged<SwiftUI.(DynamicViewList in _3FB6ABB0477B815AB3C89DD5EDC9F0F0)<A>.Item>]>) -> SwiftUI.(DynamicViewList in _3FB6ABB0477B815AB3C89DD5EDC9F0F0)<A>.Item + 467",
+              "addr": "0x18f5e1d5b"
+            },
+            {
+              "binary": "SwiftUICore",
+              "name": "SwiftUI.(DynamicViewList in _3FB6ABB0477B815AB3C89DD5EDC9F0F0).updateValue() -> () + 2075",
+              "addr": "0x18f55e4bf"
+            },
+            {
+              "binary": "SwiftUICore",
+              "name": "SwiftUI.(DynamicViewList in _3FB6ABB0477B815AB3C89DD5EDC9F0F0).Item.list.getter : SwiftUI.ViewList + 67",
+              "addr": "0x18f55d943"
+            },
+            {
+              "binary": "SwiftUICore",
+              "name": "SwiftUI.(DynamicViewList in _3FB6ABB0477B815AB3C89DD5EDC9F0F0).updateValue() -> () + 2167",
+              "addr": "0x18f55e51b"
+            },
+            {
+              "binary": "SwiftUICore",
+              "name": "SwiftUI.(DynamicViewList in _3FB6ABB0477B815AB3C89DD5EDC9F0F0).Item.list.getter : SwiftUI.ViewList + 67",
+              "addr": "0x18f55d943"
+            }
+          ]
+        },
+        {
+          "time": 5.0396295,
+          "statisticalWeightMS": 10.0,
+          "frames": [
+            {
+              "binary": "SwiftUICore",
+              "name": "SwiftUI.GraphHost.runTransaction() -> () + 207",
+              "addr": "0x18f53ee27"
+            },
+            {
+              "binary": "SwiftUICore",
+              "name": "SwiftUI.ViewGraph.updateOutputs(at: SwiftUI.Time) -> () + 151",
+              "addr": "0x18f53ebf3"
+            }
+          ]
+        },
+        {
+          "time": 5.059629625,
+          "statisticalWeightMS": 10.0,
+          "frames": [
+            {
+              "binary": "UIKitCore",
+              "name": "-[UIView(Internal) _didMoveFromWindow:toWindow:] + 1879",
+              "addr": "0x18b9d2b8f"
+            },
+            {
+              "binary": "UIKitCore",
+              "name": "-[UIView(Internal) _didMoveFromWindow:toWindow:] + 703",
+              "addr": "0x18b9d26f7"
+            },
+            {
+              "binary": "UIKitCore",
+              "name": "-[UIView(Internal) _didMoveFromWindow:toWindow:] + 703",
+              "addr": "0x18b9d26f7"
+            },
+            {
+              "binary": "UIKitCore",
+              "name": "___45-[UIView(Hierarchy) _postMovedFromSuperview:]_block_invoke + 127",
+              "addr": "0x18b97efe7"
+            },
+            {
+              "binary": "UIKitCore",
+              "name": "-[UIView _postMovedFromSuperview:] + 491",
+              "addr": "0x18b97eef7"
+            }
+          ]
+        },
+        {
+          "time": 5.079629625,
+          "statisticalWeightMS": 10.0,
+          "frames": [
+            {
+              "binary": "Notebook",
+              "name": "function signature specialization <Arg[1] = Dead> of static Notebook.AgentWebCoordinator.makeWebView(coordinator: Notebook.AgentWebCoordinator) -> __C.WKWebView + 759",
+              "addr": "0x104cdd643"
+            }
+          ]
+        },
+        {
+          "time": 5.089630833,
+          "statisticalWeightMS": 10.0,
+          "frames": [
+            {
+              "binary": "SwiftUICore",
+              "name": "SwiftUI.(DynamicViewList in _3FB6ABB0477B815AB3C89DD5EDC9F0F0).Item.list.getter : SwiftUI.ViewList + 67",
+              "addr": "0x18f55d943"
+            },
+            {
+              "binary": "SwiftUICore",
+              "name": "SwiftUI.(DynamicViewList in _3FB6ABB0477B815AB3C89DD5EDC9F0F0).updateValue() -> () + 2167",
+              "addr": "0x18f55e51b"
+            }
+          ]
+        },
+        {
+          "time": 5.099629416,
+          "statisticalWeightMS": 10.0,
+          "frames": [
+            {
+              "binary": "UIKitCore",
+              "name": "-[UIView(Internal) _didMoveFromWindow:toWindow:] + 159",
+              "addr": "0x18b9d24d7"
+            },
+            {
+              "binary": "UIKitCore",
+              "name": "-[UIControl _didMoveFromWindow:toWindow:] + 55",
+              "addr": "0x18bc2e6e7"
+            },
+            {
+              "binary": "UIKitCore",
+              "name": "-[UIView(Internal) _didMoveFromWindow:toWindow:] + 703",
+              "addr": "0x18b9d26f7"
+            },
+            {
+              "binary": "UIKitCore",
+              "name": "___45-[UIView(Hierarchy) _postMovedFromSuperview:]_block_invoke + 127",
+              "addr": "0x18b97efe7"
+            },
+            {
+              "binary": "UIKitCore",
+              "name": "-[UIView _postMovedFromSuperview:] + 491",
+              "addr": "0x18b97eef7"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "policy_started",
+      "traceStart": 5.254393333714688,
+      "traceEnd": 5.301170875696698,
+      "wallMS": 46.77754198201001,
+      "mainStateMS": {
+        "Running": 37.894871982003586,
+        "Interrupted": 0.14433099999511256,
+        "Blocked": 5.458499000004835,
+        "Runnable": 2.679215000002344,
+        "Preempted": 0.6006250000023527
+      },
+      "constructors": [
+        {
+          "owner": "4BF41E9E-EC8B-44EB-B943-670D75451A21",
+          "start": 5.255642958712997,
+          "end": 5.2615377507172525,
+          "wallMS": 5.894792004255578,
+          "mainStateMS": {
+            "Running": 4.169294004253921,
+            "Blocked": 1.4161230000020453,
+            "Runnable": 0.27612600000281873,
+            "Interrupted": 0.007456999999710945,
+            "Preempted": 0.025792000001523263
+          }
+        },
+        {
+          "owner": "0FC26DC0-E01C-4CA8-8C9A-B173D8480161",
+          "start": 5.280026375694433,
+          "end": 5.294940416701138,
+          "wallMS": 14.914041006704792,
+          "mainStateMS": {
+            "Running": 8.255743006700733,
+            "Interrupted": 0.09403999999690882,
+            "Preempted": 0.5497910000009654,
+            "Blocked": 3.6433330000029684,
+            "Runnable": 2.371133999999664
+          }
+        }
+      ],
+      "selectedStatisticalSamples": [
+        {
+          "time": 5.269629583,
+          "statisticalWeightMS": 10.0,
+          "frames": [
+            {
+              "binary": "SwiftUICore",
+              "name": "SwiftUI.(DynamicViewList in _3FB6ABB0477B815AB3C89DD5EDC9F0F0).updateValue() -> () + 2383",
+              "addr": "0x18f55e5f3"
+            },
+            {
+              "binary": "SwiftUICore",
+              "name": "SwiftUI.GraphHost.runTransaction() -> () + 207",
+              "addr": "0x18f53ee27"
+            },
+            {
+              "binary": "SwiftUICore",
+              "name": "SwiftUI.ViewGraph.updateOutputs(at: SwiftUI.Time) -> () + 151",
+              "addr": "0x18f53ebf3"
+            },
+            {
+              "binary": "SwiftUICore",
+              "name": "SwiftUI.GraphHost.runTransaction() -> () + 207",
+              "addr": "0x18f53ee27"
+            },
+            {
+              "binary": "SwiftUICore",
+              "name": "SwiftUI.ViewGraph.updateOutputs(at: SwiftUI.Time) -> () + 151",
+              "addr": "0x18f53ebf3"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "started_runtime",
+      "traceStart": 5.301170875696698,
+      "traceEnd": 5.323691958707059,
+      "wallMS": 22.5210830103606,
+      "mainStateMS": {
+        "Running": 17.233380010359234,
+        "Blocked": 3.422494000002274,
+        "Interrupted": 0.13445399999678642,
+        "Preempted": 0.7288739999999905,
+        "Runnable": 1.0018810000005374
+      },
+      "constructors": [
+        {
+          "owner": "613917D8-4287-46D4-BFF0-1EFE5F75AE6B",
+          "start": 5.3107452086987905,
+          "end": 5.321129041694803,
+          "wallMS": 10.383832996012643,
+          "mainStateMS": {
+            "Running": 5.684211996011435,
+            "Blocked": 3.02107900000248,
+            "Runnable": 0.9535039999990502,
+            "Interrupted": 0.03741399999945827,
+            "Preempted": 0.687624000001108
+          }
+        }
+      ],
+      "selectedStatisticalSamples": [
+        {
+          "time": 5.319629583,
+          "statisticalWeightMS": 10.0,
+          "frames": [
+            {
+              "binary": "Notebook",
+              "name": "function signature specialization <Arg[1] = Dead> of static Notebook.AgentWebCoordinator.makeWebView(coordinator: Notebook.AgentWebCoordinator) -> __C.WKWebView + 759",
+              "addr": "0x104cdd643"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -462,6 +462,7 @@ final class SheetCurlMetalView: MTKView, MTKViewDelegate {
     }
     let operationID: UUID?
     let sequence: Int
+    let drawableID: UInt64
     let clockRequested, displayUpdateReceived: TimeInterval?
     let encodingBegan, submitted, gpuBegan, gpuEnded, renderingDeadline, targetPresentation: TimeInterval
     let scheduled: TimeInterval?
@@ -489,6 +490,10 @@ final class SheetCurlMetalView: MTKView, MTKViewDelegate {
     let generation: UInt64
     let phase: Phase
     let nextSequence: Int
+    let publicationSequence: Int?
+    let drawableID: UInt64?
+    let outputID: UUID?
+    let caRevision, committedCARevision: UInt64
     let recorded: TimeInterval
     let modelTime, completionDeadline, estimatedPresentation: TimeInterval?
     let viewHidden, layerHidden, windowAttached: Bool
@@ -712,7 +717,10 @@ final class SheetCurlMetalView: MTKView, MTKViewDelegate {
       pageUpdateMeasurement = measurement
     }
     measured(.init(operationID: operationID, generation: pagePresentationGeneration, phase: phase,
-      nextSequence: submittedFrameCount, recorded: CACurrentMediaTime(), modelTime: info?.modelTime,
+      nextSequence: submittedFrameCount, publicationSequence: pagePublication?.sequence,
+      drawableID: drawable.map { UInt64($0.drawableID) }, outputID: pageOutput?.id,
+      caRevision: pageCARevision, committedCARevision: pageCommittedCARevision,
+      recorded: CACurrentMediaTime(), modelTime: info?.modelTime,
       completionDeadline: info?.completionDeadlineTime, estimatedPresentation: info?.estimatedPresentationTime,
       viewHidden: isHidden, layerHidden: pageOutputLayer?.isHidden ?? true, windowAttached: window != nil,
       layerOpacity: pageOutputLayer?.opacity ?? 0,
@@ -1096,6 +1104,7 @@ final class SheetCurlMetalView: MTKView, MTKViewDelegate {
     let operationID: UUID? = nil, clockRequested: TimeInterval? = nil
     #endif
     let sequence = submittedFrameCount
+    let measuredDrawableID = encodingBegan.map { _ in UInt64(drawable.drawableID) }
     #if os(iOS)
     if let coverFrame, onCoverFrameReady != nil {
       NotebookMetalFrameReadiness.observe(drawable, commandBuffer: commandBuffer) { [weak self, coverFrame] readiness in
@@ -1160,7 +1169,7 @@ final class SheetCurlMetalView: MTKView, MTKViewDelegate {
       #endif
       guard needsCompletionDelivery || failedPage else { return }
       let timing = encodingBegan.map { began in
-        FrameTiming(operationID: operationID, sequence: sequence, clockRequested: clockRequested,
+        FrameTiming(operationID: operationID, sequence: sequence, drawableID: measuredDrawableID!, clockRequested: clockRequested,
           displayUpdateReceived: displayUpdateReceived, encodingBegan: began, submitted: submitted!, gpuBegan: command.gpuStartTime,
           gpuEnded: command.gpuEndTime, renderingDeadline: renderingDeadline,
           targetPresentation: targetPresentation, scheduled: scheduleTiming?.value,

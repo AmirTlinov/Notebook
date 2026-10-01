@@ -246,8 +246,16 @@ import XCTest
         owner: timing.operationID.uuidString, source: String(timing.nextSequence), modelTime: timing.modelTime,
         deadline: timing.completionDeadline, target: timing.estimatedPresentation,
         immediate: timing.immediatePresentationExpected, lowLatency: timing.performingLowLatencyPhases)
+      if timing.phase == .beforePresent || timing.phase == .afterPresent {
+        let sequence = timing.publicationSequence.map { String($0) } ?? "none"
+        let drawable = timing.drawableID.map { String($0) } ?? "none"
+        trace.record("curl_publication_identity", at: timing.recorded, owner: timing.operationID.uuidString,
+          source: "phase=\(timing.phase.rawValue),sequence=\(sequence),drawableID=\(drawable),outputID=\(timing.outputID?.uuidString ?? "none"),caRevision=\(timing.caRevision),committedCARevision=\(timing.committedCARevision)")
+      }
     }
     curl.onFrameMeasured = { timing in
+      trace.record("curl_drawable_identity", at: timing.encodingBegan, owner: timing.operationID?.uuidString,
+        source: "sequence=\(timing.sequence),drawableID=\(timing.drawableID)")
       var phases: [(String, TimeInterval?)] = [
         ("curl_clock_request", timing.clockRequested), ("curl_update_received", timing.displayUpdateReceived),
         ("curl_encode", timing.encodingBegan), ("curl_submit", timing.submitted),

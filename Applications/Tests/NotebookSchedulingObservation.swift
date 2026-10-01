@@ -1,4 +1,5 @@
 import CoreFoundation
+import os
 import QuartzCore
 import UIKit
 import XCTest
@@ -36,6 +37,7 @@ import XCTest
   private var ended: TimeInterval?
   private let link: UIUpdateLink
   private var observer: CFRunLoopObserver?
+  private let sourceSignposter = OSSignposter(subsystem: "com.amirtlinov.notebook", category: .pointsOfInterest)
 
   init(scene: UIWindowScene) {
     link = UIUpdateLink(windowScene: scene)
@@ -92,6 +94,23 @@ import XCTest
       deliveryRunLoopPass: runLoopPass, owner: owner, source: source,
       modelTime: modelTime, deadline: deadline, targetPresentation: target,
       immediatePresentationExpected: immediate, performingLowLatencyPhases: lowLatency))
+    switch stage {
+    case "root_mount_requested", "navigation_requested", "navigation_returned", "navigation_policy",
+      "navigation_started", "navigation_committed", "runtime_ready", "native_init_started",
+      "native_init_finished", "first_native_installed", "measurement_completed",
+      "curl_command_enter", "curl_before_present", "curl_after_present",
+      "curl_beforePresent", "curl_afterPresent", "curl_os_callback", "curl_dropped_callback",
+      "curl_drawable_identity", "curl_publication_identity":
+      guard sourceSignposter.isEnabled else { return }
+      // Source time retains the original receipt; the immediate CA clock anchors
+      // this callback in the system trace without logging every UI/run-loop pass.
+      let caUptime = CACurrentMediaTime()
+      let signpostStage = stage == "curl_beforePresent" ? "curl_before_present"
+        : stage == "curl_afterPresent" ? "curl_after_present" : stage
+      sourceSignposter.emitEvent("NotebookSource",
+        "stage=\(signpostStage, privacy: .public) owner=\(owner ?? "", privacy: .public) source=\(source ?? "", privacy: .public) sourceUptime=\(uptime, format: .fixed(precision: 9), privacy: .public) caUptime=\(caUptime, format: .fixed(precision: 9), privacy: .public)")
+    default: break
+    }
   }
 
   func stop() {

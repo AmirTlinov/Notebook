@@ -413,6 +413,7 @@ final class IPadPageTurnController: UIViewController {
 
   override func viewDidLoad() {
     super.viewDidLoad()
+    let existingHosts = Set(controllers.values.map(\.hostID))
     observeMountedSceneLifetime()
     view.backgroundColor = .clear
     view.isOpaque = false
@@ -561,6 +562,10 @@ final class IPadPageTurnController: UIViewController {
     sheetController.view.addGestureRecognizer(navigationAdmission)
 
     installDisplayedPage()
+    retainNeededControllers()
+    if refreshRenderedPages(only: existingHosts) { retainNeededControllers() }
+    refreshControllerState()
+    runPendingExternalSelection()
     configureSystemGestures()
   }
 
@@ -598,6 +603,7 @@ final class IPadPageTurnController: UIViewController {
     pageIdentities: [Int: UUID] = [:]
   ) {
     guard !isRetired else { return }
+    let existingHosts = Set(controllers.values.map(\.hostID))
     let ownerChanged = self.ownerID != ownerID
     if ownerChanged || (self.sequenceRevision == sequenceRevision && deferredDocument != nil) { discardDeferredDocument() }
     if !ownerChanged, let documentNavigation, self.sequenceRevision != sequenceRevision,
@@ -697,7 +703,6 @@ final class IPadPageTurnController: UIViewController {
           for controller in controllers.values {
             controller.readiness?.retire(); controller.readiness = nil; controller.readinessID = UUID()
           }
-          refreshRenderedPages()
         }
       }
     } else { selection.acknowledge(self.selectedIndex) }
@@ -721,7 +726,7 @@ final class IPadPageTurnController: UIViewController {
     guard isViewLoaded else { return }
     installDisplayedPage()
     retainNeededControllers()
-    refreshRenderedPages()
+    if refreshRenderedPages(only: existingHosts) { retainNeededControllers() }
     refreshControllerState()
     configureSystemGestures()
     beginPreparedColdTurn()
@@ -864,10 +869,6 @@ final class IPadPageTurnController: UIViewController {
     guard let controller = controllerForPage(at: displayedIndex) else { isUpdatingContents = false; return }
     sheetController.install(controller)
     isUpdatingContents = false
-    retainNeededControllers()
-    refreshRenderedPages()
-    refreshControllerState()
-    runPendingExternalSelection()
   }
 
   /// Order is a directory of stable bodies, not their hosting lifetime. The
@@ -944,9 +945,6 @@ final class IPadPageTurnController: UIViewController {
     guard let controller = controllerForPage(at: displayedIndex) else { isUpdatingContents = false; return }
     sheetController.install(controller)
     isUpdatingContents = false
-    retainNeededControllers()
-    refreshRenderedPages()
-    refreshControllerState()
   }
 
   private func preparedController(
@@ -1062,12 +1060,17 @@ final class IPadPageTurnController: UIViewController {
     sheetController.prepare(controller)
   }
 
-  private func refreshRenderedPages() {
-    guard !isTransitioning else { return }
+  @discardableResult
+  private func refreshRenderedPages(only hosts: Set<UUID>? = nil) -> Bool {
+    guard !isTransitioning else { return false }
+    let hadInitialCut = pagePreparations[displayedIndex]?.initialContentInstalled == true
     let wasUpdating = isUpdatingContents
     isUpdatingContents = true
     defer { isUpdatingContents = wasUpdating }
     for (index, controller) in controllers {
+      // Creation already installed this accepted closure's body. Existing
+      // hosts still take every update, including unchanged sequence revisions.
+      guard hosts?.contains(controller.hostID) != false else { continue }
       controller.pageID = pageIdentities[index] ?? controller.pageID
       controller.rootView = hostedPage(
         at: index,
@@ -1075,6 +1078,9 @@ final class IPadPageTurnController: UIViewController {
         hostID: controller.hostID
       )
     }
+    // A synchronous readiness callback cannot expand the window while this
+    // pass owns its contents. An accepted update completes it afterwards.
+    return !hadInitialCut && pagePreparations[displayedIndex]?.initialContentInstalled == true
   }
 
   private func refreshControllerState() {

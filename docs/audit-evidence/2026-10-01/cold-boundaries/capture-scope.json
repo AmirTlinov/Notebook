@@ -1,0 +1,202 @@
+{
+  "format": 1,
+  "date": "2026-10-01",
+  "scope": "One physical diagnostic capture of cold24 and first-curl. Recorder overhead is included; this is not latency or full acceptance.",
+  "identity": {
+    "baseGitRevision": "42ce1a01d32b0c8185b31c7cc89778105a968b20",
+    "sourceSnapshotSHA256": "a6b4f458ef39e6cdfaecb4627baed9511432a37a4e5138bf49c3ef7624936d87",
+    "sourceFiles": 1566,
+    "beforeAndAfterBuildMatch": true,
+    "PID": 7630,
+    "bundleID": "com.amirtlinov.notebook.native-test",
+    "appBinarySHA256RecordedAtCapture": "e97b2931fe3e9dd20afe6190abde2dc6db0874355cc372fb55c3a0a43cf76a59",
+    "appUUID": "4BCFB356-9998-3376-8DF1-F738B73D3DB2",
+    "rawMainUUIDMap": {
+      "loadAddress": "0x104c88000",
+      "threadID": "0x11c8fc"
+    },
+    "recordedBuildProductPath": "/var/folders/yx/hdyh02ls1dd_x8fztvp2j1j00000gn/T/notebook-selected-builds/c62c2e9ab2fd3efe/ipad/Build/Products/Debug-iphoneos/Notebook.app/Notebook",
+    "recordedProductPathWasReused": true,
+    "laterPathSHA256Observed": "4d00fa8068dc2b2560cdec37863c031594ccf537e8825a23bba7a3959e2c2f09",
+    "binaryLimit": "Capture hash is recorded in binary.json and its UUID matches the raw Main image mapping; the reusable build path now contains a later binary."
+  },
+  "testResult": {
+    "result": "Passed",
+    "passed": 2,
+    "failed": 0,
+    "skipped": 0,
+    "tests": [
+      "NotebookFirstPresentationSchedulingTests/testColdProgramConstructorsAgainstUIOpportunities",
+      "NotebookFirstPresentationSchedulingTests/testFirstCurlAgainstUIAndOSBoundaries"
+    ],
+    "device": {
+      "architecture": "arm64e",
+      "deviceId": "00008103-001E059934D9001E",
+      "deviceName": "iPad (Елизавета)",
+      "modelName": "iPad Pro (11-inch) (3rd generation)",
+      "osBuildNumber": "24A435",
+      "osVersion": "27.0",
+      "platform": "iOS"
+    },
+    "startUnix": 1790820970.584,
+    "finishUnix": 1790820975.994,
+    "meaning": "These two scenario fixtures completed on the captured source. They do not establish a latency budget, full acceptance, or the cause of WebKit waits."
+  },
+  "recorder": {
+    "requestedSeconds": 35,
+    "allProcesses": true,
+    "instruments": [
+      "System Trace",
+      "Metal Application",
+      "Core Animation Commits",
+      "Core Animation Server",
+      "os_log",
+      "os_signpost"
+    ],
+    "startConfirmed": true,
+    "exitCode": 1,
+    "hostElapsedSeconds": 55.12894137506373,
+    "rawBytes": 2208696496,
+    "recoveredTrace": "/private/tmp/notebook-cold-boundaries-profile-0213/recovered.trace",
+    "importError": "set-column: Argument 2 should be of type 'backtrace' but was passed on object of type 'tagged-backtrace'.",
+    "importLimit": "Recovered exports are usable only where actual rows were inspected. Successful save after the fatal import error does not establish complete data coverage."
+  },
+  "clock": {
+    "source": "CACurrentMediaTime",
+    "rawSchema": "time-info",
+    "updateTraceNanoseconds": 0,
+    "machAbsoluteEpochTicks": 3185211542638,
+    "timebaseNumerator": 125,
+    "timebaseDenominator": 3,
+    "CAEpochSeconds": 132717.14760991666,
+    "formula": "traceSeconds = sourceCACurrentMediaTime - machAbsoluteEpochTicks * 125 / 3 / 1e9",
+    "continuousEpochNotUsed": 3239977090853,
+    "coldOriginUptime": 132721.97856550003,
+    "coldOriginTraceSeconds": 4.830955583369359
+  },
+  "firstColdOwner": {
+    "owner": "9239F69D-2D3B-4AB7-8104-364C46978FF5",
+    "source": "A75A1988-02FC-4889-8F8F-5E346DD2AA31-0-0",
+    "traceSeconds": {
+      "prepared_admission_requested": 4.972136666707229,
+      "prepared_admission_acquired": 4.972289500699844,
+      "native_init_started": 4.972342375695007,
+      "native_init_finished": 5.0025744587183,
+      "source_accepted": 5.002827041695127,
+      "navigation_requested": 5.00323450070573,
+      "navigation_returned": 5.005961375718471,
+      "navigation_policy": 5.254393333714688,
+      "navigation_started": 5.301170875696698,
+      "navigation_committed": 5.301943416707218,
+      "runtime_ready": 5.323691958707059
+    },
+    "wallMilliseconds": {
+      "constructor": 30.232,
+      "loadHTMLString": 2.727,
+      "returnedToPolicy": 248.432,
+      "policyToStarted": 46.778,
+      "startedToRuntimeReady": 22.521
+    }
+  },
+  "loggingCoverage": {
+    "exports": "First unfiltered ALL table for each schema; empty is an observed export result, not proof that the app emitted no events.",
+    "rows": {
+      "os-log": 0,
+      "process-info": 622,
+      "os-signpost": 0,
+      "os-log-arg": 0,
+      "os-signpost-arg": 0
+    },
+    "processInfoLimit": "All 622 name metadata rows have time=0; 27 WebContent PIDs are named but process birth, owner/store association, prewarm use and launch completion are not established.",
+    "configuredOSActivityMode": "enable",
+    "testingEnvironmentOverridesOSActivityMode": false,
+    "configuredWebKitArguments": [
+      "-WebKit2Logging",
+      "Process,Loading,ProcessSwapping,Storage"
+    ],
+    "rawCheck": "Structural walk covered all 79 chunks. No readable NotebookSource/navigation_requested/ProcessLauncher/WebProcessProxy strings were found; this does not exclude binary or compressed logging payloads.",
+    "known": "Kernel time-info independently establishes source-to-system clock correlation.",
+    "unresolved": [
+      "No WebKit PID/sessionID/pageProxy event join in recovered tables.",
+      "No policy IPC arrival/enqueue timestamp; callback time alone cannot distinguish WebContent cold launch from Main delivery delay.",
+      "The empty logging tables cannot be attributed to the configured EnvironmentVariables versus TestingEnvironmentVariables: no OS_ACTIVITY_MODE override exists there."
+    ]
+  },
+  "webKitSemantics": {
+    "SDK": {
+      "WKProcessPoolHeader": "/Applications/Xcode.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS.sdk/System/Library/Frameworks/WebKit.framework/Headers/WKProcessPool.h",
+      "WKProcessPoolHeaderSHA256": "193d71399f402f269b8e70490a9a3a6b0bd41cb96cf1452105654b1d2394f7c2",
+      "configurationHeaderSHA256": "ad689fa5f7fba5830111dd6d953b5fb69eedec3275ae51b8f2672597f23ec766",
+      "contract": "iOS 15+ declares creating and using multiple WKProcessPool instances has no effect."
+    },
+    "upstreamCommit": "afc5c2a4647ccacf4755d91a618f042609142768",
+    "upstreamLimit": "Source confirms available mechanisms; it is not a disassembly or runtime proof for iOS 27 build24A435.",
+    "store": "createNonPersistent generates a distinct ephemeral session. Independent Notebook stores remain intentional session/fault isolation.",
+    "prewarm": "tryTakePrewarmedProcess may bind an unbound prewarmed process to the requested store; setWebsiteDataStore asserts no previous store. A fresh nonpersistent store does not by itself prove a fresh OS process launch.",
+    "network": "On Cocoa, networkProcessForSession uses ensureDefaultNetworkProcess and networkProcess adds the store session. A separate store does not imply a separate networking process.",
+    "decision": "No shared-process-pool or shared-store change is justified by this capture.",
+    "references": [
+      {
+        "url": "https://raw.githubusercontent.com/WebKit/WebKit/afc5c2a4647ccacf4755d91a618f042609142768/Source/WebKit/UIProcess/WebsiteData/WebsiteDataStore.cpp",
+        "sha256": "6f79633b2c879434467278b217c8b2e281850755485751ac53c3493809f2f071"
+      },
+      {
+        "url": "https://raw.githubusercontent.com/WebKit/WebKit/afc5c2a4647ccacf4755d91a618f042609142768/Source/WebKit/UIProcess/WebProcessPool.cpp",
+        "sha256": "4a98058ff8bc9b151ea524b4aa58294c1d5b46894d77795f147bcce64cc6c49f"
+      },
+      {
+        "url": "https://raw.githubusercontent.com/WebKit/WebKit/afc5c2a4647ccacf4755d91a618f042609142768/Source/WebKit/UIProcess/WebProcessProxy.cpp",
+        "sha256": "cfb74bd6a9f97be2f129315869973bb9d6698dcc5ca87116e8166e50af29e087"
+      }
+    ],
+    "codeLines": {
+      "WebsiteDataStore.cpp": [
+        "150-155 createNonPersistent",
+        "319-348 networkProcessForSession/networkProcess"
+      ],
+      "WebProcessPool.cpp": [
+        "866-924 tryTakePrewarmedProcess",
+        "1334 prewarm before fresh allocation"
+      ],
+      "WebProcessProxy.cpp": [
+        "653-668 setWebsiteDataStore"
+      ]
+    }
+  },
+  "artifacts": {
+    "root": "/private/tmp/notebook-cold-boundaries-profile-0213",
+    "fileSHA256": {
+      "boundaries.trace/Trace1.run/Attachments/trace-data.atrc": "544256bbfbe980df093ebab595a9930d7282086014d3545b5b2f0c7d93110ced",
+      "source-before.json": "c956558cdcc9827669ff8eb4513ec0276beeeaf30df42e2f0d14d5fc24a0ac8c",
+      "source-after-build.json": "c956558cdcc9827669ff8eb4513ec0276beeeaf30df42e2f0d14d5fc24a0ac8c",
+      "binary.json": "90c0cd400fdf253e51e30ae40972f0c711e3a2b03573c9a5354d0cc3c3b660f3",
+      "test-results-summary.json": "6bfa2c35cd722e8b87b0f897bc444e7667c11002eba6695c257c49392df926b5",
+      "attachments/83DD47BE-C6FC-4F91-8E24-8C842EEE113A.json": "2208b4068935fd525827edd38619949f4e4b46798e2f17265b0df17721d8b1a3",
+      "attachments/8F2CBC02-9F1E-4429-B234-FAE91A825848.json": "113e9df3348f434c44036305a190c89b5535123b72b9a4f8faab26f3d4005cbd",
+      "observed.xctestrun": "a06d5fc7f60255caf5e0df99d528537b42a99a609c3955123427559ae99032ce",
+      "recording-options.json": "8d4159c4ffea1e8916628c04a18512985b4c3c5981ca4cfa37534a775f1eb76f",
+      "recording-start.json": "54794114fbe778d864e09296e9c1d3d81af2a0f23eefc5b279e4ea69616f2dcc",
+      "recording-end.json": "a18f875f1b4fca36b9178e724b5f9c92ed131980ed5ee940035852154ef1d57d",
+      "import.log": "f3758a7f4d3b349d0ec1857096b7ce43a0512c71406ac5ecd4c7486a131351ff",
+      "time-info.xml": "d12c833cd3f7dd8222d83272063cf3143c5f9db2b9c365adfdc0f5b28a5b7f2a",
+      "webkit-os-log.xml": "505bbae9d12128c0cc5dd5599084e81fb02b6bfac052be4157af8a6dddcf2bf7",
+      "webkit-os-signpost.xml": "4788a38fdb438c03a6624df7ee295a89f02887981c852d068b399c7d522c64b0",
+      "webkit-os-log-arg.xml": "d7c20e20294ac3bda8da63bcced3e8be39dfd7759ac36ea0c9fbe76a7eca21c8",
+      "webkit-os-signpost-arg.xml": "5e4f20ea875c8f6b2650319bda08ac76e3f6a5670ab6000b6ba53fd3b4ae69ef",
+      "webkit-process-info.xml": "7aba28cd96b0175f3b1d718c8dfde6847980e2f1c8255d29516d6ce594b94b4c",
+      "webkit-export-coverage.json": "93ddce76f7c5f9689ca07d19e1435ed615f089c9ac4eb4a4f6d1d69c2ab707bb",
+      "webkit-upstream-references.json": "06449332d5aa98448b78385f6a6ea6bb3b48129556cfcada33e1e1922365e6f7"
+    },
+    "xcresultTree": {
+      "path": "/private/tmp/notebook-cold-boundaries-profile-0213/ipad.xcresult",
+      "sha256": "1ed1c865026b2a4472ed4e7cf4c439f0dc454afe4b4c6eea2e681a95c0f6fff8",
+      "hashKind": "sha256 of UTF-8 canonical JSON [{bytes,path,sha256}], keys sorted, compact separators, files sorted by full path",
+      "files": 34,
+      "bytes": 343220
+    },
+    "xcresultFileManifest": {
+      "path": "/private/tmp/notebook-cold-boundaries-profile-0213/xcresult-file-hashes.json",
+      "sha256": "709f3a6cb7aa99667e9ebec38eb4d1e927c483e4b789961cffe1046287838ced"
+    }
+  }
+}

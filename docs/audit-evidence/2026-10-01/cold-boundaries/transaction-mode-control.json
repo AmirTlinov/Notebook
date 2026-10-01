@@ -1,0 +1,592 @@
+{
+  "format": 1,
+  "scope": "Physical iPad diagnostic A/B/A/B, four fresh output pools. One accepted held0.35 pose before firstOS, then0.55 and actual endpoint completion. No primer, premount, forced CA flush, OS admission gate or timer gate. Not latency acceptance.",
+  "baseCommit": "42ce1a01d32b0c8185b31c7cc89778105a968b20",
+  "sourceBeforeSHA256": "c4e0aed14c11f04394f3256c29a0ddbd62a3107f2558ff05f01d3215af21df0f",
+  "sourceAfterSHA256": "c4e0aed14c11f04394f3256c29a0ddbd62a3107f2558ff05f01d3215af21df0f",
+  "sourcesUnchangedDuringRun": true,
+  "test": "NotebookPageMotionUXTests/testColdHeldCurlComparesOnlyFinishTransactionModeReset",
+  "optimized": true,
+  "rawAttachment": "070DC87A-0533-4130-87A3-E714AF93C1DE.json",
+  "rawAttachmentSHA256": "6f25590fe221e0d775b0ab9f4c0f787aedfc18876dc617a4b1239b0063fbf8ed",
+  "variant": "B skipped only finishPageUpdate presentsWithTransaction=false. Subsequent publish retained its original mode decision. Post-finish mode observed at passive UIUpdateLink.afterUpdateComplete.",
+  "turns": [
+    {
+      "turn": 0,
+      "skipFinishReset": false,
+      "actionBegan": 134119.88119545835,
+      "outputID": "62CCD4B7-3660-46BD-BA5A-5092E9C97C26",
+      "firstOSMS": 286.9616666866932,
+      "firstPresentedTime": 134120.16815712504,
+      "firstSequence": 13,
+      "firstProgress": 0.35,
+      "initialDiscardedSequences": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12
+      ],
+      "modeAfterFirstCommit": false,
+      "modeAfterFirstCommitRecorded": 134119.9364486667,
+      "firstEncodingMS": 52.67279167310335,
+      "phases": [
+        {
+          "caRevision": 4,
+          "committedCARevision": 0,
+          "drawableID": 0,
+          "phase": "beforePresent",
+          "recorded": 134119.9348199167,
+          "sequence": 0,
+          "transactional": true,
+          "actionMS": 53.62445834907703
+        },
+        {
+          "caRevision": 4,
+          "committedCARevision": 0,
+          "drawableID": 0,
+          "phase": "afterPresent",
+          "recorded": 134119.93484287502,
+          "sequence": 0,
+          "transactional": true,
+          "actionMS": 53.64741667290218
+        },
+        {
+          "caRevision": 4,
+          "committedCARevision": 0,
+          "drawableID": null,
+          "phase": "afterCommit",
+          "recorded": 134119.9364246667,
+          "sequence": null,
+          "transactional": true,
+          "actionMS": 55.229208344826475
+        },
+        {
+          "caRevision": 4,
+          "committedCARevision": 4,
+          "drawableID": 1,
+          "phase": "beforePresent",
+          "recorded": 134119.94231475002,
+          "sequence": 1,
+          "transactional": false,
+          "actionMS": 61.11929166945629
+        },
+        {
+          "caRevision": 4,
+          "committedCARevision": 4,
+          "drawableID": 1,
+          "phase": "afterPresent",
+          "recorded": 134119.94233225004,
+          "sequence": 1,
+          "transactional": false,
+          "actionMS": 61.1367916862946
+        },
+        {
+          "caRevision": 4,
+          "committedCARevision": 4,
+          "drawableID": null,
+          "phase": "afterCommit",
+          "recorded": 134119.94236270836,
+          "sequence": null,
+          "transactional": false,
+          "actionMS": 61.16725000902079
+        },
+        {
+          "caRevision": 4,
+          "committedCARevision": 4,
+          "drawableID": 2,
+          "phase": "beforePresent",
+          "recorded": 134119.95756945838,
+          "sequence": 2,
+          "transactional": false,
+          "actionMS": 76.37400002568029
+        },
+        {
+          "caRevision": 4,
+          "committedCARevision": 4,
+          "drawableID": 2,
+          "phase": "afterPresent",
+          "recorded": 134119.9575822917,
+          "sequence": 2,
+          "transactional": false,
+          "actionMS": 76.38683335972019
+        },
+        {
+          "caRevision": 4,
+          "committedCARevision": 4,
+          "drawableID": null,
+          "phase": "afterCommit",
+          "recorded": 134119.95758654168,
+          "sequence": null,
+          "transactional": false,
+          "actionMS": 76.39108333387412
+        }
+      ],
+      "firstThreeGPUCommands": [
+        {
+          "drawableID": 0,
+          "encodingBegan": 134119.93386825002,
+          "gpuBegan": 134119.93480800002,
+          "gpuEnded": 134119.93517675,
+          "scheduled": 134119.9347447917,
+          "sequence": 0,
+          "submitted": 134119.93426850002
+        },
+        {
+          "drawableID": 1,
+          "encodingBegan": 134119.94211070836,
+          "gpuBegan": 134119.942355,
+          "gpuEnded": 134119.943062125,
+          "scheduled": 134119.9423071667,
+          "sequence": 1,
+          "submitted": 134119.9421692917
+        },
+        {
+          "drawableID": 2,
+          "encodingBegan": 134119.95746816669,
+          "gpuBegan": 134119.9576750417,
+          "gpuEnded": 134119.9585455,
+          "scheduled": 134119.9575614167,
+          "sequence": 2,
+          "submitted": 134119.95749183337
+        }
+      ],
+      "anomalous": true
+    },
+    {
+      "turn": 1,
+      "skipFinishReset": true,
+      "actionBegan": 134120.4421330417,
+      "outputID": "8E591CE2-81FD-495B-8007-6D4B940CD575",
+      "firstOSMS": 34.4829999958165,
+      "firstPresentedTime": 134120.4766160417,
+      "firstSequence": 1,
+      "firstProgress": 0.35,
+      "initialDiscardedSequences": [
+        0
+      ],
+      "modeAfterFirstCommit": true,
+      "modeAfterFirstCommitRecorded": 134120.4533600417,
+      "firstEncodingMS": 8.599249995313585,
+      "phases": [
+        {
+          "caRevision": 4,
+          "committedCARevision": 0,
+          "drawableID": 0,
+          "phase": "beforePresent",
+          "recorded": 134120.45139508336,
+          "sequence": 0,
+          "transactional": true,
+          "actionMS": 9.26204165443778
+        },
+        {
+          "caRevision": 4,
+          "committedCARevision": 0,
+          "drawableID": 0,
+          "phase": "afterPresent",
+          "recorded": 134120.45143254168,
+          "sequence": 0,
+          "transactional": true,
+          "actionMS": 9.299499972257763
+        },
+        {
+          "caRevision": 4,
+          "committedCARevision": 0,
+          "drawableID": null,
+          "phase": "afterCommit",
+          "recorded": 134120.45332841668,
+          "sequence": null,
+          "transactional": true,
+          "actionMS": 11.195374972885475
+        },
+        {
+          "caRevision": 4,
+          "committedCARevision": 4,
+          "drawableID": 1,
+          "phase": "beforePresent",
+          "recorded": 134120.4598724167,
+          "sequence": 1,
+          "transactional": false,
+          "actionMS": 17.739374976372346
+        },
+        {
+          "caRevision": 4,
+          "committedCARevision": 4,
+          "drawableID": 1,
+          "phase": "afterPresent",
+          "recorded": 134120.45993112502,
+          "sequence": 1,
+          "transactional": false,
+          "actionMS": 17.79808331048116
+        },
+        {
+          "caRevision": 4,
+          "committedCARevision": 4,
+          "drawableID": null,
+          "phase": "afterCommit",
+          "recorded": 134120.46015175004,
+          "sequence": null,
+          "transactional": false,
+          "actionMS": 18.018708331510425
+        },
+        {
+          "caRevision": 4,
+          "committedCARevision": 4,
+          "drawableID": 2,
+          "phase": "beforePresent",
+          "recorded": 134120.4844812917,
+          "sequence": 2,
+          "transactional": false,
+          "actionMS": 42.3482499900274
+        },
+        {
+          "caRevision": 4,
+          "committedCARevision": 4,
+          "drawableID": 2,
+          "phase": "afterPresent",
+          "recorded": 134120.48452212504,
+          "sequence": 2,
+          "transactional": false,
+          "actionMS": 42.389083333546296
+        },
+        {
+          "caRevision": 4,
+          "committedCARevision": 4,
+          "drawableID": null,
+          "phase": "afterCommit",
+          "recorded": 134120.48453470838,
+          "sequence": null,
+          "transactional": false,
+          "actionMS": 42.40166666568257
+        }
+      ],
+      "firstThreeGPUCommands": [
+        {
+          "drawableID": 0,
+          "encodingBegan": 134120.4507322917,
+          "gpuBegan": 134120.45132525,
+          "gpuEnded": 134120.451739375,
+          "scheduled": 134120.45128587502,
+          "sequence": 0,
+          "submitted": 134120.45087137504
+        },
+        {
+          "drawableID": 1,
+          "encodingBegan": 134120.45913908337,
+          "gpuBegan": 134120.459876625,
+          "gpuEnded": 134120.46027941667,
+          "scheduled": 134120.45983258335,
+          "sequence": 1,
+          "submitted": 134120.45931416668
+        },
+        {
+          "drawableID": 2,
+          "encodingBegan": 134120.48400433335,
+          "gpuBegan": 134120.48448479167,
+          "gpuEnded": 134120.4847615,
+          "scheduled": 134120.48446187502,
+          "sequence": 2,
+          "submitted": 134120.48410750003
+        }
+      ],
+      "anomalous": false
+    },
+    {
+      "turn": 2,
+      "skipFinishReset": false,
+      "actionBegan": 134120.7441935417,
+      "outputID": "AB616052-C4EF-4510-BB0F-63FB0A70FAF6",
+      "firstOSMS": 24.20799998799339,
+      "firstPresentedTime": 134120.7684015417,
+      "firstSequence": 1,
+      "firstProgress": 0.35,
+      "initialDiscardedSequences": [
+        0
+      ],
+      "modeAfterFirstCommit": false,
+      "modeAfterFirstCommitRecorded": 134120.75344183337,
+      "firstEncodingMS": 6.713708338793367,
+      "phases": [
+        {
+          "caRevision": 4,
+          "committedCARevision": 0,
+          "drawableID": 0,
+          "phase": "beforePresent",
+          "recorded": 134120.75143995837,
+          "sequence": 0,
+          "transactional": true,
+          "actionMS": 7.2464166732970625
+        },
+        {
+          "caRevision": 4,
+          "committedCARevision": 0,
+          "drawableID": 0,
+          "phase": "afterPresent",
+          "recorded": 134120.7514792917,
+          "sequence": 0,
+          "transactional": true,
+          "actionMS": 7.28575000539422
+        },
+        {
+          "caRevision": 4,
+          "committedCARevision": 0,
+          "drawableID": null,
+          "phase": "afterCommit",
+          "recorded": 134120.75341037504,
+          "sequence": null,
+          "transactional": true,
+          "actionMS": 9.216833335813135
+        },
+        {
+          "caRevision": 4,
+          "committedCARevision": 4,
+          "drawableID": 1,
+          "phase": "beforePresent",
+          "recorded": 134120.75986033338,
+          "sequence": 1,
+          "transactional": false,
+          "actionMS": 15.666791674448177
+        },
+        {
+          "caRevision": 4,
+          "committedCARevision": 4,
+          "drawableID": 1,
+          "phase": "afterPresent",
+          "recorded": 134120.75990370836,
+          "sequence": 1,
+          "transactional": false,
+          "actionMS": 15.710166655480862
+        },
+        {
+          "caRevision": 4,
+          "committedCARevision": 4,
+          "drawableID": null,
+          "phase": "afterCommit",
+          "recorded": 134120.75999600004,
+          "sequence": null,
+          "transactional": false,
+          "actionMS": 15.802458336111158
+        },
+        {
+          "caRevision": 4,
+          "committedCARevision": 4,
+          "drawableID": 2,
+          "phase": "beforePresent",
+          "recorded": 134120.77664800003,
+          "sequence": 2,
+          "transactional": false,
+          "actionMS": 32.454458327265456
+        },
+        {
+          "caRevision": 4,
+          "committedCARevision": 4,
+          "drawableID": 2,
+          "phase": "afterPresent",
+          "recorded": 134120.7766976667,
+          "sequence": 2,
+          "transactional": false,
+          "actionMS": 32.50412500347011
+        },
+        {
+          "caRevision": 4,
+          "committedCARevision": 4,
+          "drawableID": null,
+          "phase": "afterCommit",
+          "recorded": 134120.77672058335,
+          "sequence": null,
+          "transactional": false,
+          "actionMS": 32.527041650610045
+        }
+      ],
+      "firstThreeGPUCommands": [
+        {
+          "drawableID": 0,
+          "encodingBegan": 134120.75090725004,
+          "gpuBegan": 134120.75137450002,
+          "gpuEnded": 134120.751915,
+          "scheduled": 134120.7513205417,
+          "sequence": 0,
+          "submitted": 134120.75099500004
+        },
+        {
+          "drawableID": 1,
+          "encodingBegan": 134120.75923287502,
+          "gpuBegan": 134120.759922,
+          "gpuEnded": 134120.760468875,
+          "scheduled": 134120.7598381667,
+          "sequence": 1,
+          "submitted": 134120.75937662504
+        },
+        {
+          "drawableID": 2,
+          "encodingBegan": 134120.77593320835,
+          "gpuBegan": 134120.77669375,
+          "gpuEnded": 134120.7771844167,
+          "scheduled": 134120.77662050002,
+          "sequence": 2,
+          "submitted": 134120.77613512502
+        }
+      ],
+      "anomalous": false
+    },
+    {
+      "turn": 3,
+      "skipFinishReset": true,
+      "actionBegan": 134121.03556604168,
+      "outputID": "56CAE876-2EA1-4938-AC08-9953EAD3AD81",
+      "firstOSMS": 41.29445835133083,
+      "firstPresentedTime": 134121.07686050003,
+      "firstSequence": 2,
+      "firstProgress": 0.35,
+      "initialDiscardedSequences": [
+        0,
+        1
+      ],
+      "modeAfterFirstCommit": true,
+      "modeAfterFirstCommitRecorded": 134121.05312895836,
+      "firstEncodingMS": 15.458958339877427,
+      "phases": [
+        {
+          "caRevision": 2,
+          "committedCARevision": 0,
+          "drawableID": null,
+          "phase": "afterCommit",
+          "recorded": 134121.04291337501,
+          "sequence": null,
+          "transactional": true,
+          "actionMS": 7.347333332290873
+        },
+        {
+          "caRevision": 4,
+          "committedCARevision": 2,
+          "drawableID": 0,
+          "phase": "beforePresent",
+          "recorded": 134121.05151358337,
+          "sequence": 0,
+          "transactional": true,
+          "actionMS": 15.947541687637568
+        },
+        {
+          "caRevision": 4,
+          "committedCARevision": 2,
+          "drawableID": 0,
+          "phase": "afterPresent",
+          "recorded": 134121.05154025002,
+          "sequence": 0,
+          "transactional": true,
+          "actionMS": 15.974208334228024
+        },
+        {
+          "caRevision": 4,
+          "committedCARevision": 2,
+          "drawableID": null,
+          "phase": "afterCommit",
+          "recorded": 134121.0531091667,
+          "sequence": null,
+          "transactional": true,
+          "actionMS": 17.543125024531037
+        },
+        {
+          "caRevision": 4,
+          "committedCARevision": 4,
+          "drawableID": 1,
+          "phase": "beforePresent",
+          "recorded": 134121.0599676667,
+          "sequence": 1,
+          "transactional": false,
+          "actionMS": 24.401625007158145
+        },
+        {
+          "caRevision": 4,
+          "committedCARevision": 4,
+          "drawableID": 1,
+          "phase": "afterPresent",
+          "recorded": 134121.0600219167,
+          "sequence": 1,
+          "transactional": false,
+          "actionMS": 24.455875012790784
+        },
+        {
+          "caRevision": 4,
+          "committedCARevision": 4,
+          "drawableID": null,
+          "phase": "afterCommit",
+          "recorded": 134121.06012362504,
+          "sequence": null,
+          "transactional": false,
+          "actionMS": 24.55758335418068
+        },
+        {
+          "caRevision": 4,
+          "committedCARevision": 4,
+          "drawableID": 2,
+          "phase": "beforePresent",
+          "recorded": 134121.06835345837,
+          "sequence": 2,
+          "transactional": false,
+          "actionMS": 32.787416683277115
+        },
+        {
+          "caRevision": 4,
+          "committedCARevision": 4,
+          "drawableID": 2,
+          "phase": "afterPresent",
+          "recorded": 134121.06841016668,
+          "sequence": 2,
+          "transactional": false,
+          "actionMS": 32.84412500215694
+        }
+      ],
+      "firstThreeGPUCommands": [
+        {
+          "drawableID": 0,
+          "encodingBegan": 134121.05102500002,
+          "gpuBegan": 134121.051506875,
+          "gpuEnded": 134121.052032875,
+          "scheduled": 134121.05140170836,
+          "sequence": 0,
+          "submitted": 134121.05110895837
+        },
+        {
+          "drawableID": 1,
+          "encodingBegan": 134121.05934325003,
+          "gpuBegan": 134121.06001204168,
+          "gpuEnded": 134121.060515875,
+          "scheduled": 134121.05993245836,
+          "sequence": 1,
+          "submitted": 134121.0594925417
+        },
+        {
+          "drawableID": 2,
+          "encodingBegan": 134121.0677010417,
+          "gpuBegan": 134121.06842029167,
+          "gpuEnded": 134121.06897700002,
+          "scheduled": 134121.06832887503,
+          "sequence": 2,
+          "submitted": 134121.0678552917
+        }
+      ],
+      "anomalous": false
+    }
+  ],
+  "result": "negative",
+  "conclusion": "Skipping the post-CA finish reset did not eliminate initial discarded drawables or establish consistent firstOS improvement; original product setter retained.",
+  "anomaly": {
+    "turn": 0,
+    "firstOSMS": 286.9616666866932,
+    "firstEncodingMS": 52.67279167310335,
+    "initialDiscards": 13,
+    "cause": "unknown",
+    "interpretation": "Anomalous diagnostic sample. Material preparation, changing window/device conditions and transaction mode contributions were not separated."
+  },
+  "temporaryPathsRemoved": true,
+  "finalSource": "Temporary DEBUG flag, conditional and entire control test removed. Permanent drawableID and CA observations retained."
+}

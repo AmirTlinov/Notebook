@@ -3,6 +3,32 @@
 Срез: **1 октября 2026**. Функциональная проверка, доставка и полная приёмка
 учитываются отдельно; результат относится к исходникам своего receipt.
 
+## Первый холодный кадр и доставка WebKit — адресный срез
+
+1 октября05:54 МСК: **4 physical-iPad PASS**, fail/skip0, source `0ba84467…`.
+Убран повтор root/body factory при установке/замене страницы; существующие
+hosts обновляются на каждом принятом update. Проверены cold24, writable paper
+до board paint и сохранение host после него, reverse/eviction/cancel/новый лист
+с первым письмом, document source после принятого turn.
+[Scope/source](audit-evidence/2026-10-01/cold-boundaries/page-install-result.json).
+
+Отдельный source-matched System Trace (`a6b4f458…`,2 scenarios PASS) показывает
+Main Running198,939мс из248,432мс return→policy; другие constructors занимают
+29,970мс Running. CPU queue2,390мс. Сэмплы содержат SwiftUI/UIKit installation,
+layout и metadata. Точное ready-time первого IPC отсутствует. Профиль изменяет
+скорость; его цифры не являются обычной задержкой приложения.
+
+Empty initial CA mount и сохранение transactional mode после первого commit
+дали отрицательные физические controls; временные paths удалены. Первый surface
+достиг server resource path, причина его discard всё ещё неизвестна. После
+ремонта owner return→policy191,500мс в отдельном обычном run; ускорение не
+установлено. First cold/strict/hardware latency и full acceptance остаются открыты.
+[Причины и пределы выводов](cold-first-publication-2026-10-01.md).
+
+Ремонт проверен в изолированном native test host, который удалён после прогона.
+Текущая production pair обновлена параллельной работой до231; этот срез её
+не заменял. Release delivery данного patch отдельно не выполнена.
+
 ## Локальная работа и установленный output — 230
 
 **0.3.160 (230)** установлена поверх 229 на Mac и физическом iPad

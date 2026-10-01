@@ -1,0 +1,144 @@
+{
+  "format": 1,
+  "scope": "Optimized source-matched physical iPad native tests. Functional/scenario proof and ordinary source clocks; not matched A/B attribution, hardware contact-to-display, production delivery or full acceptance.",
+  "baseCommit": "42ce1a01d32b0c8185b31c7cc89778105a968b20",
+  "sourceSHA256": "0ba8446704c0d5b84cc3313ce296d68202d0f60777b8b190af595048bb953822",
+  "sourceUnchanged": true,
+  "result": "Passed",
+  "passed": 4,
+  "failed": 0,
+  "skipped": 0,
+  "startUTC": "2026-10-01T02:53:12.347000+00:00",
+  "finishUTC": "2026-10-01T02:54:50.481000+00:00",
+  "tests": [
+    "NotebookTests/NotebookFirstPresentationSchedulingTests/testColdProgramConstructorsAgainstUIOpportunities",
+    "NotebookTests/NotebookNavigationLoadUXTests/testCurrentPaperMountsWithoutBoardPaintAndRetainsItsHostWhenPaintArrives",
+    "NotebookTests/NotebookPageLifecycleUXTests/testNativePageTurnsShowTheStoredLeafAfterEvictionReverseAndCancellation",
+    "NotebookTests/PageTurnSelectionTests/testDocumentSourceReplacementWaitsForAcceptedTurnThenRebindsItsLanding"
+  ],
+  "device": {
+    "architecture": "arm64",
+    "deviceId": "00008103-001E059934D9001E",
+    "deviceName": "iPad (Елизавета)",
+    "modelName": "iPad Pro (11-inch) (3rd generation)",
+    "osBuildNumber": "24A435",
+    "osVersion": "27.0",
+    "platform": "iOS"
+  },
+  "evidencePath": "/private/tmp/notebook-cold-page-install-0253",
+  "cold24FirstOwner": "64E2B84D-D3BE-49CB-9306-45F674796268",
+  "cold24FirstOwnerPhaseMS": {
+    "native_init_started": 145.4264170024544,
+    "native_init_finished": 170.01045800861903,
+    "navigation_requested": 170.6087079946883,
+    "navigation_returned": 174.00237498804927,
+    "navigation_policy": 365.5020830046851,
+    "navigation_started": 389.31999998749234,
+    "navigation_committed": 389.5802079932764,
+    "runtime_ready": 392.9718750005122
+  },
+  "cold24FirstOwnerGapMS": {
+    "constructorMS": 24.584041006164625,
+    "loadReturnMS": 3.3936669933609664,
+    "returnToPolicyMS": 191.49970801663585,
+    "policyToStartedMS": 23.81791698280722,
+    "startedToReadyMS": 3.6518750130198896
+  },
+  "events": [
+    {
+      "deliveryRunLoopPass": 54,
+      "deliveryUICycle": 6,
+      "owner": "64E2B84D-D3BE-49CB-9306-45F674796268",
+      "stage": "native_init_started",
+      "uptime": 135033.05877575037
+    },
+    {
+      "deliveryRunLoopPass": 54,
+      "deliveryUICycle": 6,
+      "owner": "64E2B84D-D3BE-49CB-9306-45F674796268",
+      "stage": "native_init_finished",
+      "uptime": 135033.08335979137
+    },
+    {
+      "deliveryRunLoopPass": 54,
+      "deliveryUICycle": 6,
+      "owner": "64E2B84D-D3BE-49CB-9306-45F674796268",
+      "source": "0E40E9AF-26A5-42C3-AA1C-D5A5C50ECBAB-0-0",
+      "stage": "navigation_requested",
+      "uptime": 135033.08395804136
+    },
+    {
+      "deliveryRunLoopPass": 54,
+      "deliveryUICycle": 6,
+      "owner": "64E2B84D-D3BE-49CB-9306-45F674796268",
+      "source": "0E40E9AF-26A5-42C3-AA1C-D5A5C50ECBAB-0-0",
+      "stage": "navigation_returned",
+      "uptime": 135033.08735170835
+    },
+    {
+      "deliveryRunLoopPass": 115,
+      "deliveryUICycle": 10,
+      "owner": "64E2B84D-D3BE-49CB-9306-45F674796268",
+      "source": "0E40E9AF-26A5-42C3-AA1C-D5A5C50ECBAB-0-0",
+      "stage": "navigation_policy",
+      "uptime": 135033.27885141637
+    },
+    {
+      "deliveryRunLoopPass": 123,
+      "deliveryUICycle": 11,
+      "owner": "64E2B84D-D3BE-49CB-9306-45F674796268",
+      "source": "0E40E9AF-26A5-42C3-AA1C-D5A5C50ECBAB-0-0",
+      "stage": "navigation_started",
+      "uptime": 135033.30266933335
+    },
+    {
+      "deliveryRunLoopPass": 123,
+      "deliveryUICycle": 11,
+      "owner": "64E2B84D-D3BE-49CB-9306-45F674796268",
+      "source": "0E40E9AF-26A5-42C3-AA1C-D5A5C50ECBAB-0-0",
+      "stage": "navigation_committed",
+      "uptime": 135033.30292954136
+    },
+    {
+      "deliveryRunLoopPass": 125,
+      "deliveryUICycle": 12,
+      "owner": "64E2B84D-D3BE-49CB-9306-45F674796268",
+      "source": "0E40E9AF-26A5-42C3-AA1C-D5A5C50ECBAB-0-0",
+      "stage": "runtime_ready",
+      "uptime": 135033.30632120837
+    }
+  ],
+  "firstNativeInstallMS": 393.8191249668598,
+  "productionSnapshotDuringRun": {
+    "version": "0.3.161",
+    "build": "231",
+    "bundle": "com.amirtlinov.notebook.preview",
+    "meaning": "Concurrent user-owned plugin work installed231. Our isolated test did not overwrite its product pair."
+  },
+  "externalArtifacts": [
+    {
+      "path": "/private/tmp/notebook-cold-page-install-0253/source-before.json",
+      "sha256": "7da8125cb7c2c233745c0c8394cdab7e069bc18e2d4bb8707ebc83e9be217461"
+    },
+    {
+      "path": "/private/tmp/notebook-cold-page-install-0253/source-after.json",
+      "sha256": "7da8125cb7c2c233745c0c8394cdab7e069bc18e2d4bb8707ebc83e9be217461"
+    },
+    {
+      "path": "/private/tmp/notebook-cold-page-install-0253/verification.json",
+      "sha256": "36874b013e257802b07d3832a50e88f91691f8898b857b2b591eff8ff6ca3368"
+    },
+    {
+      "path": "/private/tmp/notebook-cold-page-install-0253/ipad-summary.json",
+      "sha256": "8a9cd5d636e244ed01dd8f88910d9c2bcc6a5e09626854af9bcd5c3982b3f96a"
+    },
+    {
+      "path": "/private/tmp/notebook-cold-page-install-0253/commands.json",
+      "sha256": "c423cf96da9f658909434334a741f37cecae1f1452057c2dd45226ecd8344757"
+    },
+    {
+      "path": "/private/tmp/notebook-cold-page-install-0253-attachments/8DA75F5A-808D-4501-A83C-C82DE3A73E90.json",
+      "sha256": "a00a3a6b4ff86bdcc4f2ff7dd38dfcc9848138ba0edd72c5a85b2fc9b35a3f8b"
+    }
+  ]
+}

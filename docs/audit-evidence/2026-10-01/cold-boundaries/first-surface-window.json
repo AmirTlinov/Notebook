@@ -1,0 +1,433 @@
+{
+  "format": 1,
+  "scope": "Physical iPad; programmatic native first-curl scheduling diagnostic. Not hardware touch-to-photon or latency acceptance.",
+  "baseCommit": "42ce1a01d32b0c8185b31c7cc89778105a968b20",
+  "sourceSHA256": "a6b4f458ef39e6cdfaecb4627baed9511432a37a4e5138bf49c3ef7624936d87",
+  "binarySHA256": "e97b2931fe3e9dd20afe6190abde2dc6db0874355cc372fb55c3a0a43cf76a59",
+  "processID": 7630,
+  "operationID": "03704879-7478-4C54-9C03-A22DF0E3287D",
+  "outputID": "821EB3ED-8A6D-44D3-A228-9713B3484177",
+  "rawAttachment": "8F2CBC02-9F1E-4429-B234-FAE91A825848.json",
+  "rawReceiptSHA256": "5a55734550366abeab4ec7e189ad3047f84b3b9e8416e6b97d02ea4f0a1cd7a1",
+  "clock": {
+    "rawFile": "/private/tmp/notebook-cold-boundaries-profile-0213/time-info.xml",
+    "mabsEpochTicks": 3185211542638,
+    "numerator": 125,
+    "denominator": 3,
+    "caEpochSeconds": 132717.14760991666,
+    "sourceOriginCAUptime": 132723.4759042917,
+    "sourceOriginTraceSeconds": 6.32829437503824
+  },
+  "sourcePhases": [
+    {
+      "stage": "curl_beforePresent",
+      "source": "1",
+      "traceSeconds": 6.331797000020742,
+      "actionMilliseconds": 3.5026249825023115,
+      "uptime": 132723.47940691668
+    },
+    {
+      "stage": "curl_afterPresent",
+      "source": "1",
+      "traceSeconds": 6.338483250030549,
+      "actionMilliseconds": 10.188874992309138,
+      "uptime": 132723.4860931667
+    },
+    {
+      "stage": "curl_afterCommit",
+      "source": "1",
+      "traceSeconds": 6.339055250020465,
+      "actionMilliseconds": 10.760874982224777,
+      "uptime": 132723.48666516668
+    },
+    {
+      "stage": "curl_dropped_callback",
+      "source": "0",
+      "traceSeconds": 6.339327750029042,
+      "actionMilliseconds": 11.033374990802258,
+      "uptime": 132723.4869376667
+    },
+    {
+      "stage": "curl_beforePresent",
+      "source": "2",
+      "traceSeconds": 6.339489500038326,
+      "actionMilliseconds": 11.195125000085682,
+      "uptime": 132723.4870994167
+    },
+    {
+      "stage": "curl_afterPresent",
+      "source": "2",
+      "traceSeconds": 6.3395842917088885,
+      "actionMilliseconds": 11.289916670648381,
+      "uptime": 132723.48719420837
+    },
+    {
+      "stage": "curl_afterCommit",
+      "source": "2",
+      "traceSeconds": 6.339636125048855,
+      "actionMilliseconds": 11.341750010615215,
+      "uptime": 132723.4872460417
+    },
+    {
+      "stage": "curl_beforePresent",
+      "source": "3",
+      "traceSeconds": 6.347617875027936,
+      "actionMilliseconds": 19.323499989695847,
+      "uptime": 132723.4952277917
+    },
+    {
+      "stage": "curl_afterPresent",
+      "source": "3",
+      "traceSeconds": 6.347655791701982,
+      "actionMilliseconds": 19.361416663741693,
+      "uptime": 132723.49526570836
+    },
+    {
+      "stage": "curl_afterCommit",
+      "source": "3",
+      "traceSeconds": 6.34768270837958,
+      "actionMilliseconds": 19.388333341339603,
+      "uptime": 132723.49529262504
+    },
+    {
+      "stage": "curl_os_presented",
+      "source": "1",
+      "traceSeconds": 6.3484902917116415,
+      "actionMilliseconds": 20.19591667340137,
+      "uptime": 132723.49610020837
+    },
+    {
+      "stage": "curl_os_presented",
+      "source": "2",
+      "traceSeconds": 6.356827083363896,
+      "actionMilliseconds": 28.53270832565613,
+      "uptime": 132723.50443700003
+    }
+  ],
+  "kernelCommands": [
+    {
+      "sourceSequence": 0,
+      "sourceEncodeTraceSeconds": 6.330931333359331,
+      "kernelEncodeTraceSeconds": 6.330937083,
+      "durationNS": 268125,
+      "label": "PageCurl.draw (Frame 5, Presents Surface 169) (Notebook (7630))",
+      "commandBufferID": "0x101e279b3"
+    },
+    {
+      "sourceSequence": 1,
+      "sourceEncodeTraceSeconds": 6.339092041715048,
+      "kernelEncodeTraceSeconds": 6.339097833,
+      "durationNS": 136458,
+      "label": "PageCurl.draw (Frame 6, Presents Surface 170) (Notebook (7630))",
+      "commandBufferID": "0x101e279b5"
+    },
+    {
+      "sourceSequence": 2,
+      "sourceEncodeTraceSeconds": 6.342325375037035,
+      "kernelEncodeTraceSeconds": 6.342333041,
+      "durationNS": 103000,
+      "label": "PageCurl.draw (Frame 7, Presents Surface 173) (Notebook (7630))",
+      "commandBufferID": "0x101e279b7"
+    },
+    {
+      "sourceSequence": 3,
+      "sourceEncodeTraceSeconds": 6.359042333380785,
+      "kernelEncodeTraceSeconds": 6.359055125,
+      "durationNS": 106166,
+      "label": "PageCurl.draw (Frame 8, Presents Surface 176) (Notebook (7630))",
+      "commandBufferID": "0x101e279b9"
+    }
+  ],
+  "kernelSurfaceAccessGroups": [
+    {
+      "commandBufferID": "0x101e279b3",
+      "surfaceID": 169,
+      "pid": 7630,
+      "accessTypeNumeric": 1,
+      "size": [
+        834,
+        1194
+      ],
+      "firstTraceSeconds": 6.331709,
+      "lastTraceSeconds": 6.331709,
+      "rows": 1
+    },
+    {
+      "commandBufferID": "0x101e279b5",
+      "surfaceID": 170,
+      "pid": 7630,
+      "accessTypeNumeric": 1,
+      "size": [
+        834,
+        1194
+      ],
+      "firstTraceSeconds": 6.33939175,
+      "lastTraceSeconds": 6.33939175,
+      "rows": 1
+    },
+    {
+      "commandBufferID": "0xd6ca92cc",
+      "surfaceID": 169,
+      "pid": 5727,
+      "accessTypeNumeric": 0,
+      "size": [
+        834,
+        1194
+      ],
+      "firstTraceSeconds": 6.341532958,
+      "lastTraceSeconds": 6.341638375,
+      "rows": 5
+    },
+    {
+      "commandBufferID": "0x101e279b7",
+      "surfaceID": 173,
+      "pid": 7630,
+      "accessTypeNumeric": 1,
+      "size": [
+        834,
+        1194
+      ],
+      "firstTraceSeconds": 6.34252675,
+      "lastTraceSeconds": 6.34252675,
+      "rows": 1
+    },
+    {
+      "commandBufferID": "0xd6ca92da",
+      "surfaceID": 170,
+      "pid": 5727,
+      "accessTypeNumeric": 0,
+      "size": [
+        834,
+        1194
+      ],
+      "firstTraceSeconds": 6.350099583,
+      "lastTraceSeconds": 6.350202708,
+      "rows": 5
+    },
+    {
+      "commandBufferID": "0xd6ca92e8",
+      "surfaceID": 173,
+      "pid": 5727,
+      "accessTypeNumeric": 0,
+      "size": [
+        834,
+        1194
+      ],
+      "firstTraceSeconds": 6.358405666,
+      "lastTraceSeconds": 6.358498791,
+      "rows": 5
+    },
+    {
+      "commandBufferID": "0x101e279b9",
+      "surfaceID": 176,
+      "pid": 7630,
+      "accessTypeNumeric": 1,
+      "size": [
+        1194,
+        834
+      ],
+      "firstTraceSeconds": 6.35927125,
+      "lastTraceSeconds": 6.35927125,
+      "rows": 1
+    },
+    {
+      "commandBufferID": "0xd6ca92f6",
+      "surfaceID": 176,
+      "pid": 5727,
+      "accessTypeNumeric": 0,
+      "size": [
+        1194,
+        834
+      ],
+      "firstTraceSeconds": 6.366026708,
+      "lastTraceSeconds": 6.3661175,
+      "rows": 5
+    },
+    {
+      "commandBufferID": "0x101e279bb",
+      "surfaceID": 169,
+      "pid": 7630,
+      "accessTypeNumeric": 1,
+      "size": [
+        1194,
+        834
+      ],
+      "firstTraceSeconds": 6.367595666,
+      "lastTraceSeconds": 6.367595666,
+      "rows": 1
+    },
+    {
+      "commandBufferID": "0xd6ca9304",
+      "surfaceID": 169,
+      "pid": 5727,
+      "accessTypeNumeric": 0,
+      "size": [
+        1194,
+        834
+      ],
+      "firstTraceSeconds": 6.374261666,
+      "lastTraceSeconds": 6.374350833,
+      "rows": 5
+    },
+    {
+      "commandBufferID": "0x101e279bd",
+      "surfaceID": 170,
+      "pid": 7630,
+      "accessTypeNumeric": 1,
+      "size": [
+        1194,
+        834
+      ],
+      "firstTraceSeconds": 6.375899541,
+      "lastTraceSeconds": 6.375899541,
+      "rows": 1
+    },
+    {
+      "commandBufferID": "0xd6ca9312",
+      "surfaceID": 170,
+      "pid": 5727,
+      "accessTypeNumeric": 0,
+      "size": [
+        1194,
+        834
+      ],
+      "firstTraceSeconds": 6.382593208,
+      "lastTraceSeconds": 6.382680791,
+      "rows": 5
+    },
+    {
+      "commandBufferID": "0x101e279bf",
+      "surfaceID": 176,
+      "pid": 7630,
+      "accessTypeNumeric": 1,
+      "size": [
+        1194,
+        834
+      ],
+      "firstTraceSeconds": 6.384173666,
+      "lastTraceSeconds": 6.384173666,
+      "rows": 1
+    }
+  ],
+  "kernelDrawableWaits": [
+    {
+      "traceSeconds": 6.342329166,
+      "durationNS": 14261875,
+      "thread": "Notebook (0x11c94c) (Notebook, pid: 7630)"
+    },
+    {
+      "traceSeconds": 6.359051041,
+      "durationNS": 5876042,
+      "thread": "Notebook (0x11c92c) (Notebook, pid: 7630)"
+    },
+    {
+      "traceSeconds": 6.367373291,
+      "durationNS": 5821709,
+      "thread": "Notebook (0x11c91a) (Notebook, pid: 7630)"
+    },
+    {
+      "traceSeconds": 6.375690458,
+      "durationNS": 5918792,
+      "thread": "Notebook (0x11c92a) (Notebook, pid: 7630)"
+    },
+    {
+      "traceSeconds": 6.384016708,
+      "durationNS": 5905750,
+      "thread": "Notebook (0x11c91b) (Notebook, pid: 7630)"
+    }
+  ],
+  "caClient": [
+    {
+      "traceSeconds": 6.316599708,
+      "durationNS": 47458,
+      "process": "Notebook (7630)"
+    },
+    {
+      "traceSeconds": 6.328566,
+      "durationNS": 187833,
+      "process": "Notebook (7630)"
+    },
+    {
+      "traceSeconds": 6.338541,
+      "durationNS": 265333,
+      "process": "Notebook (7630)"
+    },
+    {
+      "traceSeconds": 6.338892041,
+      "durationNS": 161250,
+      "process": "Notebook (7630)"
+    },
+    {
+      "traceSeconds": 6.339602916,
+      "durationNS": 31959,
+      "process": "Notebook (7630)"
+    }
+  ],
+  "caServer": [
+    {
+      "traceSeconds": 6.331393833,
+      "durationNS": 1296125,
+      "swapID": 461530,
+      "frameSeed": 96926,
+      "renderPasses": 1
+    },
+    {
+      "traceSeconds": 6.339697541,
+      "durationNS": 2540709,
+      "swapID": 461531,
+      "frameSeed": 96927,
+      "renderPasses": 11
+    },
+    {
+      "traceSeconds": 6.348054166,
+      "durationNS": 2739167,
+      "swapID": 461532,
+      "frameSeed": 96928,
+      "renderPasses": 11
+    },
+    {
+      "traceSeconds": 6.356415166,
+      "durationNS": 2687834,
+      "swapID": 461533,
+      "frameSeed": 96929,
+      "renderPasses": 11
+    },
+    {
+      "traceSeconds": 6.364751625,
+      "durationNS": 1978583,
+      "swapID": 461534,
+      "frameSeed": 96930,
+      "renderPasses": 11
+    },
+    {
+      "traceSeconds": 6.373037291,
+      "durationNS": 1947584,
+      "swapID": 461535,
+      "frameSeed": 96931,
+      "renderPasses": 11
+    },
+    {
+      "traceSeconds": 6.381428958,
+      "durationNS": 1870125,
+      "swapID": 461536,
+      "frameSeed": 96932,
+      "renderPasses": 11
+    },
+    {
+      "traceSeconds": 6.3897715,
+      "durationNS": 1617500,
+      "swapID": 461537,
+      "frameSeed": 96933,
+      "renderPasses": 11
+    }
+  ],
+  "conclusion": "Surface169 from the first curl command is referenced by backboardd submissions after the source discard callback. First material reached the CA server resource path; drawable discard cause remains unresolved.",
+  "limits": [
+    "Surface-access rows describe submission resource references, not registration, cancellation or onscreen presentation. Numeric access types are retained without inferred enum semantics.",
+    "Command/source sequence association uses unique PageCurl.draw command order and matching source encode clocks; source does not directly expose command-buffer ID.",
+    "Discard timestamp is MainActor callback delivery; successful presentedTime is an OS source clock.",
+    "Surface IDs are not inferred drawable pool slots. Size changes after sequence2 do not establish a geometry defect.",
+    "Recovered import reported backtrace/tagged-backtrace failures; os-signpost and os-log tables were empty.",
+    "Clock uses mabs-epoch and timebase125/3, not mct-epoch."
+  ]
+}
