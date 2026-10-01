@@ -14,8 +14,8 @@ tools remain available. This slice does not retire the native iPad editor.
 `Sources/NotebookCore/NotebookPanel.swift` admits each completed human action
 against its exact captured native subjects; the installed Mac supplies authorship.
 One UUID and immutable request survive response-loss retries. Read polling uses
-the native cursor shortcut while unchanged. A panel pins its workspace socket,
-so switching a native window cannot redirect a human write.
+the native cursor shortcut while unchanged. A panel pins its workspace socket
+and target; later model results and old polls cannot redirect a draft or gesture.
 
 `MCP/plugin` is the `notebook-local` marketplace; `notebook/` contains the plugin.
 Its `.codex-plugin/plugin.json` manifest references `mcp.json`, as supported by
@@ -41,6 +41,8 @@ content and the installed app remain available.
 After install, connect the plugin in a Codex conversation and call
 `notebook_open`. Verify editing, agent changes, undo, and reopening on that
 surface. Native tests and package validation do not establish host rendering.
+Current delivery and exact check scopes are recorded in
+[plugin verification](audit-evidence/2026-10-01/codex-plugin/results.json).
 
 This package runs locally on macOS. Public directory submission and remote
 hosting are separate distribution work. Plugin manifests follow the

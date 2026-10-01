@@ -1,0 +1,123 @@
+{
+  "format": 1,
+  "implementationCommit": "7ef1d946",
+  "plugin": "notebook@notebook-local",
+  "pluginVersion": "0.1.1",
+  "workspaceOwner": "signed Notebook Mac runtime; one canonical-root FIFO",
+  "core": {
+    "status": "passed",
+    "command": "swift test --filter 'notebookPanelHumanEdit|notebookPanelBoardAppearance'",
+    "testFunctions": 2,
+    "argumentCases": 4,
+    "scope": "human authorship, page/board CAS, identical retry/reopen, undo preserving later agent text; partial/full board erasures preserve canonical source",
+    "panelSourceSHA256": "640f62b7fdfcd8284e2ce87213171a275afbaace01b2d443e7f80ae53b9ec005",
+    "testSourceSHA256": "971f48d3a96c370aae636dd9632f8034d6485cff63f86652d86feec1f2f2167f"
+  },
+  "mcp": {
+    "status": "passed",
+    "typecheck": "npm run check",
+    "command": "tsx --test test/panel.test.ts test/sidecar-bundle.test.ts",
+    "passed": 4,
+    "failed": 0,
+    "scope": "app/tool registration, pinned endpoint, exact native sources/cursor, conflict detail and caller field rejection; standalone sidecar and valid inline module"
+  },
+  "browser": {
+    "status": "passed",
+    "surface": "Chrome CUA; ext-apps 2.0.3 AppBridge/PostMessageTransport",
+    "storage": "isolated in-memory native-shaped fixture",
+    "checks": "ui-checks.md",
+    "mountedCodexUI": false
+  },
+  "release233": {
+    "status": "installed-pair-and-physical-presentation-verified",
+    "version": "0.3.163",
+    "build": "233",
+    "sourceSHA256": "12f31745e3a7ea52b2c2bafad6946d798a9258d5ca1b4197fd9ee9a1c876400d",
+    "buildReceiptSHA256": "e15b23ad80339d81dd246c775f90b1d528f70fc3f2cfbc67fbf69fc6e1b58457",
+    "inPlaceUpdate": true,
+    "workspaceUnchanged": true,
+    "trustedDeviceUnchanged": true,
+    "presenceUnchanged": true,
+    "fullAcceptance": false,
+    "owner": "coordinated cold-path repair thread",
+    "verificationSHA256": "d04f44a0b9a58213a5847f69aeef3a3c6f3b3fdde8affd8f48947cfb91f9e989",
+    "physicalView": "preserved native board and camera; separate from plugin board acceptance",
+    "helperPresentation": "ready",
+    "scope": "final plugin source plus current performance repair; signed pair installed in place on Mac and physical iPad",
+    "commit": "8ab2f69b"
+  },
+  "openChecks": [
+    "canonical Notebook appearance and gestures on the actual Codex surface"
+  ],
+  "fullAcceptance": false,
+  "coldStartup233": {
+    "status": "cold-launch-verified",
+    "pluginVersion": "0.1.1",
+    "build": "233",
+    "sourceSHA256": "12f31745e3a7ea52b2c2bafad6946d798a9258d5ca1b4197fd9ee9a1c876400d",
+    "cachedMcpSHA256": "c052eb1bfa385c73111895a767946de9909136b20dc865e7da1f21eaede67ff4",
+    "activationPolicy": "accessory",
+    "nativeWorkspaceOrChooserWindows": 0,
+    "workspaceUnchanged": true,
+    "trustedDeviceUnchanged": true,
+    "presenceUnchanged": true,
+    "ownerLeftRunning": true,
+    "ordinaryQuitDrained": true,
+    "backgroundArgument": true,
+    "auxiliaryWindow": "one unnamed offscreen 500x500 window; no workspace/chooser",
+    "toolCount": 9,
+    "threadsCreated": 0,
+    "modelCalls": 0,
+    "profileMutation": false
+  },
+  "installedDiscovery233": {
+    "status": "passed",
+    "codexVersion": "0.159.3",
+    "pluginVersion": "0.1.1",
+    "runtimeBuild": "233",
+    "tools": 9,
+    "resourceURI": "ui://notebook/workspace.html",
+    "mimeType": "text/html;profile=mcp-app",
+    "resourceBytes": 610397,
+    "resourceSHA256": "2efd8606142b3ca1f2f70c1e063a5e64fe7d6cc3fe91e12571920f8bf0f47fbf",
+    "resourceEqualsFrozenSource": true,
+    "installedSidecarSHA256": "70844b0639c8a3ba3a3df9ae7a372a4ab604577ade25efa82f02ee9ab90b7e65",
+    "nativeRead": "root board and addressed page; pinned cursor returns unchanged",
+    "threadsCreated": 0,
+    "modelCalls": 0,
+    "nativeWrites": 0
+  },
+  "host": {
+    "mounted": true,
+    "evidence": "user opened Notebook and supplied a Codex screenshot on 2026-10-01",
+    "automatedCodexInteraction": false,
+    "supportedMCPAppsTabs": "empty in this task"
+  },
+  "liveNative233": {
+    "status": "passed",
+    "resourceSHA256": "2efd8606142b3ca1f2f70c1e063a5e64fe7d6cc3fe91e12571920f8bf0f47fbf",
+    "scope": "real signed installed233 MCP resource in Chrome AppBridge SDK2.0.3; canonical native owner passthrough, no mirrored business store",
+    "cases": {
+      "humanTextCreate": true,
+      "humanMoveDelta": {
+        "x": 100,
+        "y": 80
+      },
+      "humanTextEdit": true,
+      "nativeAgentEditSameID": true,
+      "humanUndoEditPreservedAgentText": true,
+      "humanUndoMoveRestoredOriginPreservedAgentText": true,
+      "closeTeardownReopenSameSavedElement": true,
+      "consoleErrorsOrWarnings": 0
+    },
+    "physicalSameObjectShown": true,
+    "temporaryTransferUndone": true,
+    "baselineRestored": true,
+    "fixtureDeletedAndReceivedByIPad": true
+  },
+  "productAcceptance": {
+    "status": "rejected",
+    "reason": "generic 220x144 cards replaced native 834x1194 covers; initial auto-fit33% replaced native camera; ink and native composition missing",
+    "requiredRepair": "canonical existing native appearance, geometry and initial projection in the panel"
+  }
+}

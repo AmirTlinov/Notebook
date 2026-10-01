@@ -3,6 +3,26 @@
 Срез: **1 октября 2026**. Функциональная проверка, доставка и полная приёмка
 учитываются отдельно; результат относится к исходникам своего receipt.
 
+## Notebook plugin — функциональный срез 233
+
+Локальный `notebook@notebook-local` 0.1.1 установлен; прежний глобальный MCP
+заменён одним provider. Actual Codex app-server обнаружил 9 tools и прочитал
+MCP App HTML, совпадающий с signed233. Cold launch через cached plugin: accessory,
+рабочее окно/chooser отсутствуют; identities и исходное представление сохранены.
+
+Core: **2 функции/4 случая PASS**; MCP: **4 PASS + typecheck**. Browser AppBridge
+проверил жесты, immutable response-loss retry и защиту target от поздних results.
+Installed233: human create/move/edit → agent same-ID edit → human undo сохраняет
+вклад агента → close/reopen PASS. Тот же authored объект показан на физическом
+233; временный перенос отменён, тестовая доска удалена и receipt iPad получен.
+Camera/page/selection/workspace/trust сохранены.
+[Точные scopes](audit-evidence/2026-10-01/codex-plugin/results.json).
+
+Пользователь открыл панель в Codex и **отклонил продуктовую приёмку**: generic
+карточки 220×144, auto-fit33% и отсутствующая рукопись сильно расходятся с iPad.
+GUI-388 продолжается: вернуть canonical обложки 834×1194, рукопись, содержимое
+и исходную проекцию через существующего native appearance owner.
+
 ## Адресная публикация и завершение переходов — 233
 
 **0.3.163 (233)** установлена поверх231 на Mac и физическом iPad
