@@ -25,7 +25,10 @@ exchange. CDHashpeer доказал отличия от signed234; validator м�
 Full-wire regression2 PASS. Ordinary restart дал новыйpeer81818 с exact signed234
 in-memoryCDHash;7continuity PASS. До/после первого13layerpresentation: accessory,
 visiblewindows0. Real handwritten leaf/native pages/covers через SDKbrowser PASS;
-fixture gestures и refreshed Codex acceptance ещё проверяются. GUI-388 продолжается.
+Native PNG humanmove/width/edit → agentsameID → humanundo preservingagent →
+reopen PASS. Cleanup14 PASS: testboard отсутствует,7исходныхitems, deletion
+receivedByIPad confirmed; полноеtypedselection/presence/workspace/trust сохранены.
+Refreshed Codex0.1.2 user check pending; GUI-388 продолжается.
 
 Installer-only repair: merged `mcp get` исключает plugin servers через временный
 `--disable plugins`. Actual upgrade0.1.2 и isolated global enabled/disabled PASS.

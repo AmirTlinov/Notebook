@@ -32,4 +32,7 @@ handwritten page, grid and native subjects. Native pages1/5→2/5→1/5, readonl
 context, parent Back, seven true834×1194 covers, card entry and local pan/zoom
 passed through the actual0.1.2 resource. Personal pixels stay in external local
 artifacts; no existing material or native camera was changed. Own fixture
-persistence/gesture/undo checks are recorded separately when complete.
+create/move/width/edit → agent sameID → preserving human undo → reopen passed.
+Native width240→289.6701 retained height90 despite vertical drag; PNG letters
+stayed unscaled. The fixture was deleted and receivedByIPad confirmed; independent
+cleanup14 checks retained all baseline choices and7 original items. Errors:0.

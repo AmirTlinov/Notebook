@@ -22,8 +22,7 @@
     "commit": "8ab2f69b"
   },
   "openChecks": [
-    "own native fixture gestures/agent/undo/reopen cleanup",
-    "canonical appearance and gestures on refreshed Codex surface"
+    "refreshed Codex0.1.2 appearance and gestures; user check pending"
   ],
   "fullAcceptance": false,
   "coldStartup233": {
@@ -123,9 +122,9 @@
     },
     "implementationCommit": "7ef1d946"
   },
-  "status": "installed-native-content-passed-gestures-in-progress",
+  "status": "installed-live-native-browser-passed",
   "canonical234": {
-    "status": "installed-native-content-passed-gestures-in-progress",
+    "status": "installed-live-native-browser-passed",
     "sourceSHA256": "839a6636c64f055e20b0d6216a74bf4cef4a1bbe91d33d8f9fb4e8ac657ddb0d",
     "verificationSHA256": "4bacbe8fc19e4afdb41cba916383f9008918ee4906480a664b1592800ac12ce0",
     "verificationRoute": "./verify.sh:selected",
@@ -382,12 +381,33 @@
         "viewport": "800x600",
         "pixelScale": 1
       }
+    },
+    "liveBrowser": {
+      "status": "passed",
+      "scope": "actualinstalled0.1.2resource/native234 in ChromeMCPAppsSDK2.0.3; refreshedCodexmanualseparate",
+      "receipt": "/tmp/notebook-live-panel-234/acceptance.json",
+      "receiptSHA256": "122aa121ede2e3b6d302db2d409ecbc38c821b1db494c0666eed49ab178eed40",
+      "realContent": "handwriting/grid/paper;7physicalcovers834x1194; nativepage1/5->2/5->1/5; readonlycontext; parent/cardentry; independentpanzoom",
+      "gestureCases": "humancreate/move100x80CSS; width240->289.6701height90unchanged; pixelsnotstretched; humantext->agentsameID->humanundo preservesagent->close/reopen sameID/source",
+      "consoleAndNativeErrors": 0,
+      "resourceSHA256": "dcd136fc933cf68b99f27c84c0ec79d39e41c2df462041795839d9ca4c14894f",
+      "cleanup": {
+        "receipt": "/tmp/notebook-live-panel-234/cleanup-native.json",
+        "receiptSHA256": "5a0a44f1a9610f9aa0e3934249e5b92c73551c413262db05b0a8dc981dc08367",
+        "checks": 14,
+        "passed": 14,
+        "fixtureHeaderAbsent": true,
+        "originalItems": 7,
+        "receivedByIPad": "confirmed",
+        "shownOnIPad": "awaiting_display",
+        "baselinePreserved": true
+      }
     }
   },
   "productAcceptance": {
     "status": "pending-refreshed-Codex-panel",
     "scope": "real native content shown through installed0.1.2 SDK browser host; manual Codex acceptance pending",
-    "remaining": "own fixture gesture/agent/undo/reopen and refreshed Codex surface",
+    "remaining": "fresh actual Codex0.1.2 mount/gestures",
     "previousVersion": "0.1.1 rejected by user"
   },
   "installerRepair": {
@@ -400,5 +420,6 @@
     ],
     "status": "passed",
     "nativeSourceDelta": false
-  }
+  },
+  "implementationCommit": "a599d9ce"
 }
