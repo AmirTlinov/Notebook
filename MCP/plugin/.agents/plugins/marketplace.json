@@ -1,0 +1,12 @@
+{
+  "name": "notebook-local",
+  "interface": { "displayName": "Notebook" },
+  "plugins": [
+    {
+      "name": "notebook",
+      "source": { "source": "local", "path": "./notebook" },
+      "policy": { "installation": "AVAILABLE", "authentication": "ON_INSTALL" },
+      "category": "Productivity"
+    }
+  ]
+}

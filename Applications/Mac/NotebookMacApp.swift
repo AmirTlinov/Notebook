@@ -15,9 +15,9 @@ struct NotebookMacApp: App {
     .defaultLaunchBehavior(lifecycle.presentsWorkspaceAtLaunch ? .presented : .suppressed)
     .commands {
       CommandGroup(after: .newItem) {
-        Button("Открыть Notebook") { openWindow(id: "workspace"); NSApp.activate() }
+        Button("Открыть Notebook") { openWindow(id: "workspace"); lifecycle.activateApplication() }
           .keyboardShortcut("0", modifiers: .command)
-        Button("Задачи Codex…") { openWindow(id: "codex-tasks"); NSApp.activate() }
+        Button("Задачи Codex…") { openWindow(id: "codex-tasks"); lifecycle.activateApplication() }
           .keyboardShortcut("1", modifiers: .command)
       }
     }
@@ -32,7 +32,7 @@ struct NotebookMacApp: App {
       } else { Text(lifecycle.launch.message).padding() }
     }.defaultSize(width: 480, height: 280)
     MenuBarExtra {
-      Button("Открыть Notebook") { openWindow(id: "workspace"); NSApp.activate() }
+      Button("Открыть Notebook") { openWindow(id: "workspace"); lifecycle.activateApplication() }
       Divider()
       if let model = lifecycle.launch.model {
         Text(model.deviceStatusMessage)
@@ -47,8 +47,8 @@ struct NotebookMacApp: App {
           .accessibilityIdentifier("clipboard-paste-open")
           .disabled(model.pasteDestinations.isEmpty)
         Menu("Codex") {
-          Button("Задачи Codex…") { openWindow(id: "codex-tasks"); NSApp.activate() }
-          Button("Подключение внешнего Codex…") { openWindow(id: "codex-integration"); NSApp.activate() }
+          Button("Задачи Codex…") { openWindow(id: "codex-tasks"); lifecycle.activateApplication() }
+          Button("Подключение внешнего Codex…") { openWindow(id: "codex-integration"); lifecycle.activateApplication() }
           if let error = model.agentStartupError { Text(error) }
           Text("Разговор, модель и разрешения принадлежат Codex")
         }
@@ -106,6 +106,7 @@ final class NotebookMacLifecycle: NSObject, NSApplicationDelegate {
   private let isRunningTests: Bool
   private let isFixture: Bool
   private let isAcceptance: Bool
+  private let launchesInBackground: Bool
 
   override init() {
     isRunningTests = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
@@ -118,6 +119,7 @@ final class NotebookMacLifecycle: NSObject, NSApplicationDelegate {
     // acceptance manifest or the installed workspace. These are distinct launches.
     let isolated = isFixture ? nil : NotebookAcceptanceConfiguration.requestedLaunch()
     isAcceptance = isolated != nil
+    launchesInBackground = ProcessInfo.processInfo.arguments.contains("--background")
     #if DEBUG
       launch = isFixture ? NotebookApplicationLaunch(fixture: MacDocumentLaunchFixture.makeModel())
         : isolated ?? (isRunningTests ? NotebookApplicationLaunch(fixture: nil) : NotebookApplicationLaunch())
@@ -128,10 +130,12 @@ final class NotebookMacLifecycle: NSObject, NSApplicationDelegate {
     if !isRunningTests || isAcceptance { start() }
   }
 
-  var presentsWorkspaceAtLaunch: Bool { !isRunningTests || isFixture || isAcceptance }
+  var presentsWorkspaceAtLaunch: Bool {
+    !launchesInBackground && (!isRunningTests || isFixture || isAcceptance)
+  }
 
   func applicationDidFinishLaunching(_ notification: Notification) {
-    NSApplication.shared.setActivationPolicy(.regular)
+    NSApplication.shared.setActivationPolicy(launchesInBackground ? .accessory : .regular)
     #if DEBUG
       if isFixture, let model = launch.model { Task { await MacDocumentLaunchFixture.writeProof(model: model) } }
     #endif
@@ -146,7 +150,10 @@ final class NotebookMacLifecycle: NSObject, NSApplicationDelegate {
       defer { launchTask = nil }
       await launch.waitForAdmission()
       guard !Task.isCancelled else { return }
-      guard let model = launch.model else { if launch.hasNoWorkspace { showWorkspaces() }; return }
+      guard let model = launch.model else {
+        if launch.hasNoWorkspace, !launchesInBackground { showWorkspaces() }
+        return
+      }
       await model.start(pageSize: NotebookAppModel.defaultPageSize)
     }
   }
@@ -155,19 +162,26 @@ final class NotebookMacLifecycle: NSObject, NSApplicationDelegate {
   func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 
   func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-    if let openWorkspace { openWorkspace(); sender.activate(); return false }
+    if let openWorkspace { openWorkspace(); activateApplication(); return false }
     return true
   }
 
   func installWorkspacePresenter(_ present: @escaping () -> Void) {
     openWorkspace = present
-    guard !requestedInitialWorkspace,!isRunningTests,!isFixture,!isAcceptance else { return }
+    guard !launchesInBackground,!requestedInitialWorkspace,!isRunningTests,!isFixture,!isAcceptance else { return }
     requestedInitialWorkspace = true
     Task { @MainActor [weak self] in
       await Task.yield()
       guard self?.requestedInitialWorkspace == true else { return }
       present();NSApplication.shared.activate()
     }
+  }
+
+  /// The plugin's background launch is transient. An explicit native open
+  /// returns the existing process to normal Dock and window behavior.
+  func activateApplication() {
+    NSApplication.shared.setActivationPolicy(.regular)
+    NSApplication.shared.activate()
   }
 
   func showCodexAccount() {
@@ -182,6 +196,7 @@ final class NotebookMacLifecycle: NSObject, NSApplicationDelegate {
       window.center(); accountWindow = window
     }
     accountWindow?.makeKeyAndOrderFront(nil)
+    activateApplication()
   }
 
   func showWorkspaces() {
@@ -201,7 +216,7 @@ final class NotebookMacLifecycle: NSObject, NSApplicationDelegate {
       window.setContentSize(.init(width: 560, height: 500))
       window.center(); workspacesWindow = window
     }
-    workspacesWindow?.makeKeyAndOrderFront(nil); NSApplication.shared.activate()
+    workspacesWindow?.makeKeyAndOrderFront(nil); activateApplication()
     Task { await launch.refreshWorkspaces() }
   }
 
@@ -211,6 +226,7 @@ final class NotebookMacLifecycle: NSObject, NSApplicationDelegate {
     pasteWindow?.close()
     pasteWindow=NotebookMacPasteWindow(model:model)
     pasteWindow?.present()
+    activateApplication()
   }
 
   func showDevices() {

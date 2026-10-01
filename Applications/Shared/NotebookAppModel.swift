@@ -4913,7 +4913,7 @@ final class NotebookAppModel {
         }
         let host = codexHost ?? NotebookCodexHost()
         codexHost = host
-        let sidecar = try await host.workspace(store: store, persistence: persistence, installation: installation,
+        let sidecar = try await host.workspace(persistence: persistence, installation: installation,
           workspaceID: workspaceID, computerID: actorID, directory: directory, scope: scope, entry: entry, socket: commandSocketURL,
           authorizePeer: { [weak self] peer in
             guard let self else { return false }
@@ -4988,8 +4988,13 @@ final class NotebookAppModel {
         // affected surface waits outside the FIFO so its release can commit.
         do {
           guard !isClosing else { throw CollaborationError("owner_unavailable", "Notebook завершает работу.") }
-          let result = try await persistence.submit(owner: .command(command.command)) {
-            try NotebookCommandDispatcher(store: $0).handle(command)
+          let nativeActor = actorID
+          var result = try await persistence.submit(owner: .command(command.command)) {
+            try NotebookCommandDispatcher(store: $0, nativeActor: nativeActor).handle(command)
+          }
+          if command.command == .panelRead, let socket = commandSocketURL, case .object(var fields) = result {
+            fields["socketKey"] = .string(socket.deletingPathExtension().lastPathComponent)
+            result = .object(fields)
           }
           if command.changesStore { reloadExternalChanges() }
           return result

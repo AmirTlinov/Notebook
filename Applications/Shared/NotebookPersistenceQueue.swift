@@ -23,11 +23,11 @@ final class NotebookPersistenceQueue {
         .fileDraft, .fileWindow, .chatPanel, .runCommand, .peerSession: false
       case .command(let kind):
         switch kind {
-        case .apply, .commitAction, .undo, .point: true
+        case .apply, .commitAction, .undo, .point, .panelEdit, .panelUndo: true
         case .admitAction, .prepareAction, .action, .actions, .continuations, .search, .contexts,
           .delivery, .referenceStatus, .referenceStatuses, .actionDetails, .reference,
           .placement, .render, .pageVision, .read, .artifact, .presentation,
-          .script, .scriptContext, .scriptArtifact, .importProgram, .importDocument, .importDocumentResource: false
+          .script, .scriptContext, .scriptArtifact, .importProgram, .importDocument, .importDocumentResource, .panelRead: false
         }
       }
     }

@@ -4,6 +4,7 @@ import { BridgeError, defaultSocketPath, runBridge } from "./bridge.js";
 import { readFile } from "node:fs/promises";
 import { operationSchema, targetSchema, documentPathSchema, documentResourceSchema } from "./actions.js";
 import { worldPointSchema } from "./spatial.js";
+import { registerNotebookPanel } from "./panel-tools.js";
 
 const {version} = JSON.parse(await readFile(new URL("../package.json",import.meta.url),"utf8")) as {version:string};
 const operationDiagnostic=z.object({index:z.number().int().min(0).max(511),
@@ -66,8 +67,9 @@ async function response(operation:(deadline:number)=>Promise<{value:Value;images
 
 /** Transport and formatting only. Every read, program, effect and image is
  * owned by the installed Mac coordinator; no JS eval or store exists here. */
-export function createServer(socketPath=defaultSocketPath()):McpServer {
+export function createServer(socketPath=defaultSocketPath(),options:{panelHtml?:string}={}):McpServer {
   const server=new McpServer({name:"notebook",version});
+  registerNotebookPanel(server,socketPath,options.panelHtml);
   server.registerTool("notebook_import_program",{
     title:"Stage an immutable program package from local Mac files",
     description:"Trusted Mac file import, outside QuickJS. Prepare a descriptor with the installed program-package.mjs tooling; pass its SHA-256 packageHash and absolute manifestPath. Returns staging/ready/error/cancelled and byte progress; poll status with the same hash. Cancel stops before the next bounded part; retry reuses accepted SHA blobs. A ready import only stages bytes; it does not publish or show a scene. No source bytes or Base64 belong in tool arguments. Files are never exposed to the browser, and this operation cannot select a Notebook store.",

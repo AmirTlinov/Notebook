@@ -1,0 +1,29 @@
+{
+  "name": "notebook",
+  "version": "0.1.1",
+  "description": "Work with your agent on shared Notebook boards and pages inside Codex.",
+  "author": {
+    "name": "Amir Tlinov"
+  },
+  "mcpServers": "./mcp.json",
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Notebook",
+    "shortDescription": "Think and draw together",
+    "longDescription": "Open your saved Notebook material beside a Codex conversation. Continue the same board or page with your agent and your iPad.",
+    "developerName": "Amir Tlinov",
+    "category": "Productivity",
+    "capabilities": [
+      "Interactive",
+      "Read",
+      "Write"
+    ],
+    "logo": "./assets/notebook.png",
+    "composerIcon": "./assets/notebook.png",
+    "defaultPrompt": [
+      "Open my Notebook",
+      "Help me develop this drawing",
+      "Continue the material I selected"
+    ]
+  }
+}

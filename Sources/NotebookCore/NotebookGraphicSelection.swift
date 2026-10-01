@@ -16,11 +16,11 @@ extension NotebookNativeCommand where Source == NotebookNativeElementSource {
   public convenience init(_ operations: [CollaborationOperation], summary: String,
     sources: [NotebookNativeElementSource], layerMove: NotebookElementLayerMove? = nil,
     copiedFrom: [String:String] = [:], expectedInkRevision: String? = nil, inkReadSets:[NotebookInkReadSet] = [],
-    actionID: UUID = UUID(), actor: UUID) {
+    actionID: UUID = UUID(), actor: UUID, requestFingerprint: String? = nil) {
     self.init { store, didPrepare in
       try store.commitNativeElementEdits(operations, summary: summary, sources: sources,
         layerMove: layerMove, copiedFrom: copiedFrom, expectedInkRevision: expectedInkRevision, inkReadSets:inkReadSets,
-        actionID: actionID, actor: actor, didPrepare: didPrepare)
+        actionID: actionID, actor: actor, requestFingerprint: requestFingerprint, didPrepare: didPrepare)
     }
   }
 }
@@ -66,16 +66,17 @@ public enum NotebookElementLayerMove: String, CaseIterable, Sendable {
 extension NotebookStore {
   public func applyNativeElementEdits(_ operations: [CollaborationOperation], summary: String,
     sources: [NotebookNativeElementSource], layerMove: NotebookElementLayerMove? = nil, copiedFrom: [String:String] = [:], expectedInkRevision: String? = nil, inkReadSets:[NotebookInkReadSet] = [],
-    actionID:UUID=UUID(),actor: UUID
+    actionID:UUID=UUID(),actor: UUID, requestFingerprint: String? = nil
   ) throws -> (receipt: CollaborationReceipt, sources: [NotebookNativeElementSource]) {
     try NotebookNativeCommand(operations, summary: summary, sources: sources,
       layerMove: layerMove, copiedFrom: copiedFrom, expectedInkRevision: expectedInkRevision, inkReadSets:inkReadSets,
-      actionID: actionID, actor: actor).apply(to: self)
+      actionID: actionID, actor: actor, requestFingerprint: requestFingerprint).apply(to: self)
   }
 
   fileprivate func commitNativeElementEdits(_ operations: [CollaborationOperation], summary: String,
     sources: [NotebookNativeElementSource], layerMove: NotebookElementLayerMove?, copiedFrom: [String:String],
     expectedInkRevision: String?, inkReadSets:[NotebookInkReadSet], actionID: UUID, actor: UUID,
+    requestFingerprint: String?,
     didPrepare: (NotebookNativeCommand<NotebookNativeElementSource>.Output) -> Void
   ) throws -> NotebookNativeCommand<NotebookNativeElementSource>.Output {
     try commandTransaction(readAllowance: Self.inkSelectionReadAllowance(inkReadSets)) {
@@ -163,7 +164,7 @@ extension NotebookStore {
       let ink = operations.contains { $0.kind == .convertInkToElement } ? try inkRevision(on: target) : nil
       let receipt = try applyNativeAction(.init(id:actionID,summary: summary,
         references: admitted.map { .init(target:target,elementID:$0.kind == .reorderElements ? nil : $0.id,revision:revision) },
-        expected: [.init(target: target, revision: revision, inkRevision: ink)], operations: admitted), actor: actor)
+        expected: [.init(target: target, revision: revision, inkRevision: ink)], operations: admitted), actor: actor, requestFingerprint: requestFingerprint)
       let result = (receipt, try sources.map { source in
         NotebookNativeElementSource(target: target, id: source.id,
           page: target.kind == .page ? try readPageElement(pageID: target.id, elementID: source.id) : nil,

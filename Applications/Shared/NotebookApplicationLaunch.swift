@@ -36,7 +36,8 @@ final class NotebookApplicationLaunch {
   var selectedWorkspaceID: UUID? { try? model?.store.storedWorkspaceID() }
 
   #if os(macOS)
-    let codexHost = NotebookCodexHost()
+    private let workspaceWriters = NotebookWorkspaceWriters()
+    @ObservationIgnored private(set) lazy var codexHost = NotebookCodexHost(workspaceWriters: workspaceWriters)
     private var retainedModels: [UUID: NotebookAppModel] = [:]
     private var defaultCommandServer: NotebookIPCServer?
 
@@ -144,7 +145,7 @@ final class NotebookApplicationLaunch {
     requiresExistingAccountContent: Bool = false) throws -> NotebookAppModel {
     if let makeModel { return try makeModel(store, pairingActivationID) }
     #if os(macOS)
-      let writer: NotebookPersistenceQueue? = codexHost.persistence(for: store)
+      let writer: NotebookPersistenceQueue? = workspaceWriters.persistence(for: store)
       let socketID = SHA256.hash(data: Data(store.root.standardizedFileURL.path.utf8)).prefix(12).map { String(format: "%02x", $0) }.joined()
       let socket = NotebookIPC.defaultSocketURL.deletingLastPathComponent().appendingPathComponent(socketID + ".sock")
       if allowsCodexRegistration, defaultCommandServer == nil {
@@ -180,6 +181,7 @@ final class NotebookApplicationLaunch {
       retainedModels.removeAll()
       await codexHost.shutdown()
       await defaultCommandServer?.stopAndDrain(); defaultCommandServer = nil
+      guard await workspaceWriters.shutdown() else { return false }
     #endif
     return true
   }
@@ -238,6 +240,7 @@ final class NotebookApplicationLaunch {
           for (candidate, retained) in retainedModels where !(await codexHost.hasActiveWork(workspace: candidate)) {
             guard await retained.shutdown() else { throw NotebookTransportError.storageUnavailable }
             try await codexHost.removeWorkspace(candidate)
+            try await workspaceWriters.remove(root: retained.store.root)
             retainedModels.removeValue(forKey: candidate); evicted = true; break
           }
           guard evicted else { throw NotebookTransportError.resourceLimit }
@@ -443,6 +446,7 @@ final class NotebookApplicationLaunch {
       }
       #if os(macOS)
         try await codexHost.removeWorkspace(id)
+        try await workspaceWriters.remove(root: library.root(for: id))
       #endif
       if everywhere, let account { try await catalogCloud.deleteSpace(id, account: account) }
       try library.remove(id)

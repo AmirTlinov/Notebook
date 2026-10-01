@@ -3,9 +3,23 @@ import Foundation
 extension NotebookGraphicResolution {
   /// Agent reads expose this same projection without substituting it for the
   /// authored frame or bindings. Hidden intent remains addressable and editable.
-  public func readProjection() throws -> JSONValue {
+  public func readProjection(includeGeometry: Bool = false) throws -> JSONValue {
     switch self {
-    case .geometry(let layout): return .object(["state":.string("geometry"),"frame":try .encode(layout.frame)])
+    case .geometry(let layout):
+      guard includeGeometry else { return .object(["state": .string("geometry"), "frame": try .encode(layout.frame)]) }
+      var value: [String: JSONValue] = ["state": .string("geometry"), "frame": try .encode(layout.frame),
+        "worldOrigin": try .encode(layout.origin), "label": try .encode(layout.label),
+        "curves": .array(try layout.curves.map { curve in .object([
+          "start": try .encode(curve.start), "control1": try .encode(curve.control1),
+          "control2": try .encode(curve.control2), "end": try .encode(curve.end)]) }),
+        "heads": .array(try layout.heads.map { head in .object([
+          "points": try .encode(head.points), "filled": .bool(head.filled), "closed": .bool(head.closed)]) })]
+      if let projection = layout.projection {
+        let t = projection.transform
+        value["projection"] = .object(["size": .object(["width": .number(projection.size.width), "height": .number(projection.size.height)]),
+          "transform": .object(["a": .number(t.a), "b": .number(t.b), "c": .number(t.c), "d": .number(t.d), "tx": .number(t.tx), "ty": .number(t.ty)])])
+      }
+      return .object(value)
     case .hidden: return .object(["state":.string("hidden")])
     case .pending(let ids): return .object(["state":.string("pending"),"dependencies":.array(ids.sorted().map(JSONValue.string))])
     }

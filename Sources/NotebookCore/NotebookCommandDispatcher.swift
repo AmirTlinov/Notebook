@@ -8,6 +8,7 @@ public struct NotebookCommand: Codable, Sendable {
     case apply, admitAction, prepareAction, commitAction, undo, action, actions, continuations, search, contexts, point, delivery
     case referenceStatus, referenceStatuses, actionDetails, reference, placement, render, pageVision, read, artifact, presentation
     case script, scriptContext, scriptArtifact, importProgram, importDocument, importDocumentResource
+    case panelRead, panelEdit, panelUndo
   }
   public var command: Kind
   public var query: String?
@@ -41,11 +42,14 @@ public struct NotebookCommand: Codable, Sendable {
   public var programImport: NotebookProgramImportRequest?
   public var documentImport: NotebookDocumentImportRequest?
   public var documentResourceImport: NotebookDocumentResourceImportRequest?
+  public var panelRead: NotebookPanelReadRequest?
+  public var panelEdit: NotebookPanelEditRequest?
+  public var panelUndo: NotebookPanelUndoRequest?
 
   enum CodingKeys: String, CodingKey, CaseIterable {
     case command, query, filters, next, limit, action, actionID, target, elementID, reference
     case expectedRevision, region, worldOrigin, pageIndex, placement, contextID
-    case replyTo, references, queries, expectedCursor, artifact, presentation, cancel, fingerprint, script, scriptContext, actionPage, scriptEffect, readSnapshots, programImport, documentImport, documentResourceImport
+    case replyTo, references, queries, expectedCursor, artifact, presentation, cancel, fingerprint, script, scriptContext, actionPage, scriptEffect, readSnapshots, programImport, documentImport, documentResourceImport, panelRead, panelEdit, panelUndo
   }
 
   public init(command: Kind) { self.command = command }
@@ -53,7 +57,7 @@ public struct NotebookCommand: Codable, Sendable {
   /// These commands can commit or enqueue work; the Mac owner orders them with native intents.
   public var changesStore: Bool {
     switch command {
-    case .apply, .admitAction, .commitAction, .undo, .point, .placement, .render, .pageVision: true
+    case .apply, .admitAction, .commitAction, .undo, .point, .placement, .render, .pageVision, .panelEdit, .panelUndo: true
     default: false
     }
   }
@@ -119,7 +123,8 @@ public struct NotebookReadQuery: Codable, Sendable {
 /// A synchronous read batch owns one SQLite snapshot; its cursor also fences staged MCP reads.
 public struct NotebookCommandDispatcher: Sendable {
   public let store: NotebookStore
-  public init(store: NotebookStore) { self.store = store }
+  private let nativeActor: UUID?
+  public init(store: NotebookStore, nativeActor: UUID? = nil) { self.store = store; self.nativeActor = nativeActor }
 
   public func handle(_ request: NotebookCommand) throws -> JSONValue {
     do {
@@ -128,7 +133,7 @@ public struct NotebookCommandDispatcher: Sendable {
       }
       return try store.readTransaction { snapshot in
         try snapshot.currentSQL!.limitReads(.agentCommand)
-        return try NotebookCommandDispatcher(store: snapshot).execute(request)
+        return try NotebookCommandDispatcher(store: snapshot, nativeActor: nativeActor).execute(request)
       }
     }
     catch let error as NotebookStorageError {
@@ -147,6 +152,15 @@ public struct NotebookCommandDispatcher: Sendable {
 
   private func execute(_ request: NotebookCommand) throws -> JSONValue {
     switch request.command {
+    case .panelRead:
+      guard let nativeActor, let panel = request.panelRead else { throw invalid("panel_owner_unavailable", "Панель обслуживает владелец установленного Notebook.") }
+      return try store.readPanel(panel, actor: nativeActor)
+    case .panelEdit:
+      guard let nativeActor, let panel = request.panelEdit else { throw invalid("panel_owner_unavailable", "Правку панели принимает владелец Notebook.") }
+      return try store.editPanel(panel, actor: nativeActor)
+    case .panelUndo:
+      guard let nativeActor, let panel = request.panelUndo else { throw invalid("panel_owner_unavailable", "Отмену панели принимает владелец Notebook.") }
+      return try store.undoPanel(panel, actor: nativeActor)
     case .script, .scriptContext, .importProgram, .importDocument, .importDocumentResource:
       throw invalid("script_owner_unavailable", "Программы обслуживает координатор установленного Mac-помощника.")
     case .scriptArtifact:

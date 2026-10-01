@@ -106,12 +106,12 @@ extension NotebookStore {
   /// activity release can follow it in the FIFO; that release (or a subsequent
   /// local contact) cannot veto accepted content. Peer contacts still hold it.
   @discardableResult
-  public func applyNativeAction(_ action: CollaborationAction, actor: UUID) throws -> CollaborationReceipt {
+  public func applyNativeAction(_ action: CollaborationAction, actor: UUID, requestFingerprint: String? = nil) throws -> CollaborationReceipt {
     guard action.operations.allSatisfy({ [.insertElement, .updateElement, .removeElement,
       .convertInkToElement, .reorderElements, .moveItem, .stackItems, .deleteItem].contains($0.kind) }) else {
       throw invalid("Нативная правка содержит операции элементов, расположения или удаления предметов.")
     }
-    return try applyCollaborationActionImmediately(action, actor: actor, requestFingerprint: nil, human: true, nativeInputOwner: actor)
+    return try applyCollaborationActionImmediately(action, actor: actor, requestFingerprint: requestFingerprint, human: true, nativeInputOwner: actor)
   }
 
   /// The next native edit is admitted against the exact element saved by its
