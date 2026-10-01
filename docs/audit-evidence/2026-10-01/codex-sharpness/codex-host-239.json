@@ -1,0 +1,57 @@
+{
+  "checkedAt": "2026-10-01T16:49:22.605Z",
+  "host": "Codex MCP Apps",
+  "tab": "4",
+  "script": [
+    {
+      "bytes": 620075,
+      "sha256": "9632238606640b5eaae45e2844ddd0bb33e036234e9d772082ef9a84a5dbd7ed"
+    }
+  ],
+  "cases": [
+    "Exact saved notes page opened through notebook_open",
+    "Next 1/5 to2/5",
+    "Previous2/5 to1/5",
+    "Three rapid zoom button clicks110%to190%",
+    "Settled handwriting visually crisp in actual Codex screenshot"
+  ],
+  "dom": {
+    "devicePixelRatio": 1,
+    "nativeLayers": 29,
+    "viewBox": "21.179909314348492 251.51388888888886 791.6401813713028 690.9722222222223",
+    "viewport": {
+      "height": 1355,
+      "width": 1502
+    },
+    "workspace": {
+      "height": 1311,
+      "width": 1502
+    },
+    "zoom": "190%"
+  },
+  "screenshot": "/Users/amir/.codex/visualizations/2026/09/29/01a0ee86-4b0d-7580-8067-c7b7dcd3552b/notebook-codex-239-190-percent.png",
+  "screenshotSHA256": "a4accc30c27f4b3c74fcb5cad4eafb62cf2e085bcc5c7bab24d19dc2bf0b05ad",
+  "limitation": "MCP Apps controller exposes synthetic clicks only; native doubleclick remains covered by the source-matched real-pointer SDK scenario.",
+  "nativeVersion": "0.3.169",
+  "nativeBuild": "239",
+  "nativeSourceSHA256": "f454748d064ee7887a1476a5e71a43ac981cae4782477b68109206defe9b0719",
+  "pluginVersion": "0.1.5",
+  "continuity": {
+    "passed": 6,
+    "receipt": {
+      "path": "/tmp/notebook-panel-239-post-codex/receipt.json",
+      "sha256": "59ddd51795ec80cfa9d6fcba71f3acf8ad4105d893d70880ba3cab6a533be26a"
+    }
+  },
+  "installationReceipt": {
+    "path": "/private/tmp/notebook-web-startup-239-delivery/installation.json",
+    "sha256": "64392cbdd25384d6b4734ed8ab0e5e3cbebc4a9f22814363c52dece8b7ca974e"
+  },
+  "installedFrontendProof": {
+    "path": "/tmp/notebook-installed-239-frontend-proof.json",
+    "sha256": "c6ca954d33fb62a634d4ecbf6a9d93842973104fb5e290e4ba5c7f1432514d05",
+    "frontendInputsUnchanged": 12,
+    "htmlBytes": 626714,
+    "htmlSHA256": "cb72e096cfa904f58314dd4557ff57192806f3920061359a69b39510f3dfb65e"
+  }
+}

@@ -1,7 +1,7 @@
 {
   "date": "2026-10-01",
   "issue": "GUI-388",
-  "status": "Installed238/plugin0.1.5; registered HTML navigation and sharpness verified through SDK. Mounted Codex still has old frontend.",
+  "status": "Installed repair; source-matched SDK pointer/navigation/sharpness checks and actual Codex mounted-page navigation/zoom checks passed. Monitor transition and full performance acceptance remain open.",
   "reportedDefects": [
     "Notebook card cannot be opened by double-click",
     "Covers and handwriting remain blurry during and after zoom"
@@ -71,9 +71,9 @@
     "scope": "Real Chrome mouse down/up double clicks through MCP Apps SDK with RAM fixtures; no native writes. Exact per-case bundle hashes remain in the receipt."
   },
   "limitations": [
-    "Mounted Codex is still executing the previous frontend; registered updated HTML was checked separately through the SDK.",
     "A same-size CDP DPR1-to-DPR2 change did not request new density without a gesture; physical monitor transfer remains unaccepted. Ordinary zoom at DPR2 requested and displayed sharp native pixels.",
-    "Full board/performance acceptance is not established by this repair slice."
+    "Full board/performance acceptance is not established by this repair slice.",
+    "Actual Codex automation exposes synthetic clicks only; native doubleclick is verified through the SDK with the same frontend script."
   ],
   "delivery": {
     "version": "0.3.168",
@@ -226,5 +226,14 @@
       "sha256": "ddeebb0b01951aebb0ffe929a1b43af53f219239a71cfaecd6ccc23f5f76cdfd"
     },
     "passed": 6
+  },
+  "mountedCodex239": {
+    "status": "Updated frontend, actual Codex page navigation and settled190% handwriting clarity passed",
+    "receipt": {
+      "path": "docs/audit-evidence/2026-10-01/codex-sharpness/codex-host-239.json",
+      "sha256": "c02006d36fd2d71a524df1fbf87796aa3b8ae8072c63167fdcdbbf8e16ac237a"
+    },
+    "scriptSHA256": "9632238606640b5eaae45e2844ddd0bb33e036234e9d772082ef9a84a5dbd7ed",
+    "postGestureContinuityPassed": 6
   }
 }
