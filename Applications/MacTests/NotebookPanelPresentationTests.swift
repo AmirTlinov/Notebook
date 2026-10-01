@@ -36,7 +36,7 @@ final class NotebookPanelPresentationTests: XCTestCase {
       let encoded = try layer.encoded
       XCTAssertEqual(encoded["repeatSize"]?["width"], .number(expectedStep))
       XCTAssertNil(encoded["repeating"], "One explicit period owns repeat placement")
-      let cell = try XCTUnwrap(NSBitmapImageRep(data: layer.png))
+      let cell = try XCTUnwrap(NSBitmapImageRep(data: try XCTUnwrap(layer.png)))
       let referenceCanvas = try await SceneRasterCompositor.create(size: size, scale: pixelScale, resources: .shared)
       try await referenceCanvas.drawBoardGrid(camera: camera, size: size, in: .init(origin: .zero, size: size))
       let referencePNG = try await referenceCanvas.finishPNG()
@@ -113,15 +113,17 @@ final class NotebookPanelPresentationTests: XCTestCase {
     var command = NotebookCommand(command: .panelPresentation)
     command.panelPresentation = .init(workspaceID: header.workspaceID, target: target, appearance: projection)
     let accepted = command
+    let durableBefore = Set(try fixture.store.targetRenderRequests().map(\.id))
     async let first = fixture.send(accepted)
     async let simultaneous = fixture.send(accepted)
     let (reply, joined) = try await (first, simultaneous)
     let appearance = try XCTUnwrap(reply["appearance"])
     XCTAssertEqual(appearance["status"], .string("ready"))
-    XCTAssertEqual(joined["appearance"], appearance, "Concurrent readers join one immutable source cut")
+    XCTAssertEqual(joined["appearance"]?["requestID"], appearance["requestID"])
+    XCTAssertEqual(joined["appearance"]?["layers"], appearance["layers"], "Concurrent readers borrow the same immutable pixels")
     let layers = try XCTUnwrap(appearance["layers"]?.arrayValues)
     XCTAssertTrue(layers.contains { $0["id"] == .string("board-grid") })
-    XCTAssertTrue(layers.contains { $0["id"] == .string("covers") })
+    let cover = try XCTUnwrap(layers.first { $0["itemID"]?.stringValue?.lowercased() == item.id.uuidString.lowercased() })
     let subject = try XCTUnwrap(layers.first { $0["elementID"] == .string("plain-caption") })
     let authored = try XCTUnwrap(fixture.store.readSpatialElement(boardID: target.id, elementID: "plain-caption"))
     let placement = try XCTUnwrap(fixture.store.readElementPlacement(target: target, elementID: authored.id))
@@ -135,22 +137,75 @@ final class NotebookPanelPresentationTests: XCTestCase {
     let card = try XCTUnwrap(reply["cards"]?.arrayValues.first { $0["item"]?["id"]?.stringValue?.lowercased() == item.id.uuidString.lowercased() })
     XCTAssertEqual(card["geometry"]?["width"], .number(834))
     XCTAssertEqual(card["geometry"]?["height"], .number(1194))
-    let ink = try bitmap(layers.first { $0["id"] == .string("board-ink") })
-    XCTAssertGreaterThan(try XCTUnwrap(ink.colorAt(x: 625, y: 512)).alphaComponent, 0.1,
-      "The ordered native stroke must reach real pixels, not just metadata")
-    let cover = try bitmap(layers.first { $0["id"] == .string("covers") })
-    XCTAssertGreaterThan(try XCTUnwrap(cover.colorAt(x: 225, y: 350)).alphaComponent, 0.9)
-    let cached = try await fixture.send(accepted)
-    XCTAssertEqual(cached["appearance"], appearance, "Already-ready completion cannot race waiter registration")
+    XCTAssertEqual(card["editable"], .bool(true))
+    XCTAssertNotNil(card["source"]?["placements"]?.arrayValues.first,
+      "The movable native cover carries its exact placement source")
+    let inkPixels = try layers.filter { $0["order"] == .number(1000) }.map { try alpha($0, at: .init(x: 250, y: 325)) }
+    XCTAssertGreaterThan(inkPixels.max() ?? 0, 0.1, "The ordered native stroke reaches world-addressed pixels")
+    XCTAssertGreaterThan(try alpha(cover, at: .init(x: -550, y: 0)), 0.9)
+    let staticCoverPixels = try layers.filter { layer in
+      if case .number(let rank) = layer["order"] { return rank >= 2000 && layer["itemID"] == nil }
+      return false
+    }
+      .map { try alpha($0, at: .init(x: -550, y: 0)) }
+    XCTAssertEqual(staticCoverPixels.max() ?? 0, 0, "The independently movable cover leaves no baked duplicate")
+    let held = try layers.map { try XCTUnwrap($0["assetID"]?.stringValue.flatMap(UUID.init(uuidString:))) }
+    command.panelPresentation = .init(workspaceID: header.workspaceID, target: target, appearance: projection, knownAssets: held)
+    let cached = try await fixture.send(command)
+    let cachedLayers = try XCTUnwrap(cached["appearance"]?["layers"]?.arrayValues)
+    XCTAssertEqual(cachedLayers.map { $0["assetID"] }, layers.map { $0["assetID"] })
+    XCTAssertTrue(cachedLayers.allSatisfy { $0["pngBase64"] == nil }, "Held pixels need no repeated PNG encoding")
     command.panelPresentation = .init(workspaceID: header.workspaceID, target: target, appearance: projection,
       knownCursor: cached["cursor"]?.stringValue, knownRequestID: appearance["requestID"]?.stringValue.flatMap(UUID.init(uuidString:)))
     let unchanged = try await fixture.send(command)
     XCTAssertEqual(unchanged["unchanged"], .bool(true))
     XCTAssertNil(unchanged["appearance"], "Idle polling performs no image or graph serialization")
+    command.panelPresentation = .init(workspaceID: header.workspaceID, target: target,
+      appearance: .init(viewport: projection.viewport, pixelScale: projection.pixelScale,
+        camera: .init(center: .init(x: 10, y: 0), scale: 0.5)), knownAssets: held)
+    let moved = try await fixture.send(command)
+    let movedLayers = try XCTUnwrap(moved["appearance"]?["layers"]?.arrayValues)
+    for original in [subject, cover] {
+      let reused = try XCTUnwrap(movedLayers.first { $0["id"] == original["id"] })
+      XCTAssertEqual(reused["assetID"], original["assetID"])
+      XCTAssertNil(reused["pngBase64"], "Camera translation reuses the native body")
+    }
+    XCTAssertEqual(Set(try fixture.store.targetRenderRequests().map(\.id)), durableBefore,
+      "Panel camera reads never enter the durable render queue")
     command.panelPresentation = .init(workspaceID: UUID(), target: target, appearance: projection)
     do { _ = try await fixture.send(command); XCTFail("A panel cannot cross its pinned workspace") }
     catch let error as CollaborationError { XCTAssertEqual(error.code, "basis_workspace_mismatch") }
     XCTAssertEqual(fixture.model.presence, physicalPresence, "An addressed projection never moves the native camera")
+
+    let siblingID = UUID()
+    try await fixture.apply([.init(kind: .createNotebook, target: target, id: siblingID.uuidString,
+      values: ["center": try .encode(WorldPoint(x: -550, y: 0)), "pageID": try .encode(UUID())])])
+    let actor = fixture.model.actorID
+    try await fixture.model.performStoreCommand { store in
+      let sources = try [item.id, siblingID].map { id in
+        try XCTUnwrap(store.readBoardItem(id)?.board.placements.first { $0.id == id })
+      }
+      _ = try store.applyNativePlacementEdits([.init(kind: .stackItems, target: target,
+        values: ["itemIDs": try .encode([item.id, siblingID])])], summary: "Prepare native stack",
+        sources: sources, actor: actor)
+    }
+    let stacked = try await fixture.send(accepted)
+    let stackedCard = try XCTUnwrap(stacked["cards"]?.arrayValues.first {
+      $0["item"]?["id"]?.stringValue?.lowercased() == item.id.uuidString.lowercased()
+    })
+    let visibleCenter = try XCTUnwrap(stackedCard["center"]).decode(WorldPoint.self)
+    let stack = try XCTUnwrap(fixture.store.readBoardItem(item.id)?.board.stack(containing: item.id))
+    XCTAssertEqual(visibleCenter, WorkspaceItemStackPresentation.focusedCenter(of: item.id, in: stack))
+    XCTAssertNotEqual(visibleCenter, stack.center, "The drag begins at the visible fan member")
+    let destination = visibleCenter.offsetBy(x: 40, y: 20)
+    var drop = NotebookCommand(command: .panelEdit)
+    drop.panelEdit = .init(workspaceID: header.workspaceID, actionID: UUID(), target: target,
+      summary: "Pull a visible card from its stack", operations: [.init(kind: .moveItem, target: target,
+        id: item.id.uuidString, values: ["center": try .encode(destination)])],
+      sources: [try XCTUnwrap(stackedCard["source"]).decode(NotebookPanelEditSource.self)])
+    _ = try await fixture.send(drop)
+    XCTAssertEqual(try fixture.store.readBoardItem(item.id)?.board.freeItems.first { $0.itemID == item.id }?.center,
+      destination, "The native saved drop matches the visible drag without subtracting the fan offset")
   }
 
   @MainActor
@@ -177,6 +232,7 @@ final class NotebookPanelPresentationTests: XCTestCase {
     command.panelPresentation = .init(workspaceID: header.workspaceID, target: target,
       appearance: .init(viewport: .init(x: 600, y: 800), pixelScale: 1))
     let accepted = command
+    let durableBefore = Set(try fixture.store.targetRenderRequests().map(\.id))
     let replyCompleted = expectation(description: "The accepted IPC request completes before admission returns")
     let ownerStopped = expectation(description: "The owner drains despite unavailable renderer capacity")
     var completions = 0
@@ -187,7 +243,7 @@ final class NotebookPanelPresentationTests: XCTestCase {
     }
     defer { reader.cancel() }
     try await fixture.waitUntil(seconds: 5) {
-      resources.pendingWebRequestCount > 0 && (try? fixture.store.targetRenderRequests().contains { $0.panelProjection != nil }) == true
+      resources.pendingWebRequestCount > 0
     }
     XCTAssertEqual(completions, 0)
     let stopping = Task { @MainActor in
@@ -202,13 +258,26 @@ final class NotebookPanelPresentationTests: XCTestCase {
     await reader.value; await stopping.value
     let stoppedAgain = await fixture.model.shutdown()
     XCTAssertTrue(stoppedAgain)
-    let requests = try fixture.store.targetRenderRequests().filter { $0.panelProjection != nil }
-    for request in requests { XCTAssertNotEqual(try fixture.store.loadTargetRenderReceipt(request.id)?.status, "ready") }
+    XCTAssertEqual(Set(try fixture.store.targetRenderRequests().map(\.id)), durableBefore,
+      "Stopping a queued panel read leaves no durable camera request")
   }
 
   @MainActor
   private func bitmap(_ layer: JSONValue?) throws -> NSBitmapImageRep {
     let base64 = try XCTUnwrap(layer?["pngBase64"]?.stringValue)
     return try XCTUnwrap(NSBitmapImageRep(data: try XCTUnwrap(Data(base64Encoded: base64))))
+  }
+
+  @MainActor
+  private func alpha(_ layer: JSONValue, at point: WorldPoint) throws -> CGFloat {
+    let frame = try XCTUnwrap(layer["frame"]).decode(PageRect.self)
+    let origin = try XCTUnwrap(layer["worldOrigin"]).decode(WorldPoint.self)
+    let local = origin.delta(to: point)
+    guard local.x >= frame.x, local.y >= frame.y,
+      local.x < frame.x + frame.width, local.y < frame.y + frame.height else { return 0 }
+    let image = try bitmap(layer)
+    let x = Int((local.x - frame.x) / frame.width * Double(image.pixelsWide))
+    let y = Int((local.y - frame.y) / frame.height * Double(image.pixelsHigh))
+    return try XCTUnwrap(image.colorAt(x: x, y: y)).alphaComponent
   }
 }

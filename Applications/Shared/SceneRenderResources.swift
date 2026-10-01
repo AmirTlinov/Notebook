@@ -1,14 +1,30 @@
 import Foundation
+import CryptoKit
 import NotebookCore
 import Observation
 import SwiftUI
 import WebKit
+
+/// A completed local material shares the composition pixel pool. Physical
+/// placement and the requesting camera are absent from its content identity.
+struct SceneMaterialKey: Hashable, Codable, Sendable {
+  let workspaceID: UUID
+  let fingerprint: String
+  init(workspaceID: UUID, target: CollaborationTarget, revision: String, role: String, frame: PageRect, density: Double) throws {
+    self.workspaceID = workspaceID
+    let value = JSONValue.object(["target": try .encode(target), "revision": .string(revision),
+      "role": .string(role), "frame": try .encode(frame), "density": .number(density)])
+    let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
+    fingerprint = SHA256.hash(data: try encoder.encode(value)).map { String(format: "%02x", $0) }.joined()
+  }
+}
 
 enum SceneRasterSource: Equatable, Sendable {
   case agent(AgentElement)
   case agentRegion(AgentElement, PageRect)
   case document(id: UUID, token: String)
   case composition(SceneCompositionTileKey)
+  case material(SceneMaterialKey)
 
   /// A raster belongs to the element's local pixels. Moving those pixels in the
   /// scene does not change their source; size, program and state still do.
@@ -24,6 +40,7 @@ enum SceneRasterSource: Equatable, Sendable {
     case (.document(let leftID, let leftToken), .document(let rightID, let rightToken)):
       leftID == rightID && leftToken == rightToken
     case (.composition(let left), .composition(let right)): left.pixelIdentity == right.pixelIdentity
+    case (.material(let left), .material(let right)): left == right
     default: false
     }
   }
@@ -39,11 +56,12 @@ enum SceneRasterSource: Equatable, Sendable {
     case .agentRegion(let element, _): .agent(element.id)
     case .document(let id, _): .document(id)
     case .composition(let key): .composition(key.pixelIdentity)
+    case .material(let key): .material(key)
     }
   }
 }
 
-fileprivate enum RasterOwner: Hashable { case agent(String), document(UUID), composition(SceneCompositionTileKey) }
+fileprivate enum RasterOwner: Hashable { case agent(String), document(UUID), composition(SceneCompositionTileKey), material(SceneMaterialKey) }
 
 enum WebPriority: Int, Comparable, Sendable {
   case currentPage, input, liveProgram, neighbor, visible, background
@@ -657,10 +675,15 @@ final class SceneRenderResources {
     return retainRasterEntry(id)
   }
 
+  func retainMaterial(_ key: SceneMaterialKey) -> RasterLease? {
+    guard let id = matchingRaster(.material(key), minimumScale: 0), entries[id]?.compositionReceipts != nil else { return nil }
+    return retainRasterEntry(id)
+  }
+
   func cacheComposition(_ raster: RasterLease, receipts: [SceneSourceAddress: SceneSourceReceipt],
     sources: [SceneSourceAddress: RasterLease]) {
-    guard !raster.isReleased, case .composition = raster.source,
-      receipts.values.allSatisfy(\.hasCurrentPixels) else { return }
+    guard !raster.isReleased, receipts.values.allSatisfy(\.hasCurrentPixels) else { return }
+    switch raster.source { case .composition, .material: break; default: return }
     for (address, receipt) in receipts {
       // Capture may finish during an awaited paint. Do not register the old
       // output as reusable after that newer source already invalidated caches.
@@ -940,6 +963,7 @@ final class SceneRenderResources {
         case .agent: kind = "agent"; documentID = nil; renderToken = nil
         case .agentRegion: kind = "agent_region"; documentID = nil; renderToken = nil
         case .composition: kind = "composition"; documentID = nil; renderToken = nil
+        case .material: kind = "material"; documentID = nil; renderToken = nil
         }
         return .object(["id": .string(id.uuidString), "kind": .string(kind),
           "documentID": documentID.map { .string($0.uuidString) } ?? .null,
@@ -1373,6 +1397,7 @@ final class SceneRenderResources {
     case .agent(let element): id = element
     case .document(let document): id = document
     case .composition(let tile): id = tile
+    case .material(let material): id = material
     }
     NotificationCenter.default.post(name: Self.didChange, object: id)
   }
@@ -1416,7 +1441,7 @@ final class SceneRenderResources {
     switch source {
     case .agent(let element): size = .init(width: element.frame.width, height: element.frame.height)
     case .agentRegion(_, let region): size = .init(width: region.width, height: region.height)
-    case .document, .composition: size = image.size
+    case .document, .composition, .material: size = image.size
     }
     guard size.width > 0, size.height > 0 else { return nil }
     let horizontal = Double(cgImage.width) / size.width

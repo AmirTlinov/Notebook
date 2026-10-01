@@ -53,13 +53,14 @@ struct SceneCompositionTileKey: Hashable, Codable, Sendable {
     focusedItemID: UUID?, mode: String, pixelSize: Int = CompositionTile.pixelSize, contentRevision: String? = nil) {
     self.workspaceID = workspaceID; self.revision = revision; self.contentRevision = contentRevision
     self.plane = plane; self.tile = tile; self.range = range
-    // Only cover/portal painting uses the external camera to choose its content.
-    // World-space elements and ink are rasterized in the tile's own basis.
-    self.presentationScale = range.layer == .covers ? presentationScale : 1
-    self.viewportWidth = range.layer == .covers ? viewportWidth : 0
-    self.viewportHeight = range.layer == .covers ? viewportHeight : 0
-    self.focusedItemID = range.layer == .covers ? focusedItemID : nil
-    self.mode = range.layer == .covers ? mode : ""; self.pixelSize = pixelSize
+    // An opened portal follows its external presentation. Closed covers,
+    // world elements and ink are painted entirely in the tile's own basis.
+    let followsPresentation = range.layer == .covers && (focusedItemID != nil || mode != WorkspaceSemanticMode.board.rawValue)
+    self.presentationScale = followsPresentation ? presentationScale : 1
+    self.viewportWidth = followsPresentation ? viewportWidth : 0
+    self.viewportHeight = followsPresentation ? viewportHeight : 0
+    self.focusedItemID = followsPresentation ? focusedItemID : nil
+    self.mode = followsPresentation ? mode : ""; self.pixelSize = pixelSize
   }
   func atRevision(_ revision: UInt64) -> Self {
     .init(workspaceID: workspaceID, revision: revision, plane: plane, tile: tile, range: range,

@@ -99,11 +99,13 @@ test('Notebook exposes one HTML app resource, a model opener and app-only gestur
 });
 
 test('native presentation stays pinned, bounds pixels and avoids duplicating PNG bytes in text', async () => {
+  const heldAsset=randomUUID(),newAsset=randomUUID();
   const appearance={status:'ready',requestID:randomUUID(),sourceRevision:'native-cut',
     camera:{center:origin,scale:.22},viewport:{x:834,y:1194},
-    layers:[{id:'native-ink',order:1,pngBase64:'iVBORw0KGgo-native-png-fixture'}]};
+    layers:[{id:'held-tile',order:0,assetID:heldAsset},
+      {id:'native-ink',order:1,assetID:newAsset,pngBase64:'iVBORw0KGgo-native-png-fixture'}]};
   const view={viewport:{x:834,y:1194},pixelScale:1.5,camera:{center:origin,scale:.22}};
-  const known={knownCursor:'42',knownRequestID:randomUUID()};
+  const known={knownCursor:'42',knownRequestID:randomUUID(),knownAssets:[heldAsset],includeFitBounds:true};
   const value={...address,cursor:'43',elements:[],cards:[],appearance};
   const panel=await nativeFixture(()=>({result:value}));
   try {
@@ -111,13 +113,16 @@ test('native presentation stays pinned, bounds pixels and avoids duplicating PNG
     assert.notEqual(result.isError,true);
     assert.deepEqual(result.structuredContent,value);
     const text=(result.content[0] as {text:string}).text;
-    assert.equal(text.includes(appearance.layers[0]!.pngBase64),false);
+    assert.equal(text.includes(appearance.layers[1]!.pngBase64!),false);
     assert.deepEqual(JSON.parse(text),{workspaceID,target,cursor:'43',status:'ready'});
     assert.deepEqual(panel.requests,[{endpoint:'pinned',request:{command:'panelPresentation',
       panelPresentation:{workspaceID,target,appearance:view,...known}}}]);
     const oversized=await panel.client.callTool({name:'notebook_panel_presentation',arguments:{...address,
       appearance:{viewport:{x:2048,y:2048},pixelScale:2}}});
     assert.equal(oversized.isError,true);
+    const excessiveAssets=await panel.client.callTool({name:'notebook_panel_presentation',arguments:{...address,
+      appearance:view,knownAssets:Array.from({length:97},()=>randomUUID())}});
+    assert.equal(excessiveAssets.isError,true);
     assert.equal(panel.requests.length,1,'Over-budget projection does not enter native preparation');
   } finally {await panel.close();}
 });
@@ -158,6 +163,19 @@ test('panel gestures keep the admitted endpoint and exact native sources', async
     const retried = await panel.client.callTool({name: 'notebook_panel_edit', arguments: {...edit, socketKey}});
     assert.deepEqual(retried.structuredContent, saved);
     assert.deepEqual(panel.requests.at(-1), panel.requests.at(-2), 'An uncertain response can reuse the same action and sources');
+
+    const itemID=randomUUID(),stackID=randomUUID();
+    const placements=[itemID,randomUUID()].map((id,index)=>({itemID:id,heads:[{
+      pose:{stackID,center:origin,zIndex:2,stackOrder:index},
+      version:{stamp:{counter:9,actor:randomUUID()},human:true,observed:{'remote-actor':8}},
+    }]}));
+    const move={workspaceID,target,actionID:randomUUID(),summary:'Move cover',
+      operations:[{kind:'moveItem',target,id:itemID,values:{center:{...origin,localX:origin.localX+80}}}],
+      sources:[{id:itemID,placements}]};
+    const moved=await panel.client.callTool({name:'notebook_panel_edit',arguments:{...move,socketKey}});
+    assert.notEqual(moved.isError,true);
+    assert.deepEqual(panel.requests.at(-1),{endpoint:'pinned',request:{command:'panelEdit',panelEdit:move}},
+      'The whole captured stack frontier reaches the native placement owner without rewriting');
 
     const undo = {workspaceID, target, actionID};
     const result = await panel.client.callTool({name: 'notebook_panel_undo', arguments: {...undo, socketKey}});

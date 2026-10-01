@@ -2,3 +2,7 @@
 
 #coverage{position:absolute;bottom:82px;left:16px;right:16px;text-align:center;font-size:11px;color:#86877e;pointer-events:none}
 #page-navigation{display:inline-flex;align-items:center;gap:4px}#page-position{font-size:12px;font-variant-numeric:tabular-nums;white-space:nowrap}#page-navigation button{min-width:28px;font-size:20px}#surface-name{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:30vw}
+
+#zoom-level{font-size:11px;min-width:34px;text-align:center;font-variant-numeric:tabular-nums}#zoom-fit{font-size:11px;white-space:nowrap;padding:0 7px}#workspace[data-tool="select"] #paper{cursor:grab}#workspace[data-tool="hand"] #paper,#workspace[data-pan="true"] #paper{cursor:grab}#workspace[data-pan="true"]:active #paper{cursor:grabbing}#workspace[data-tool="text"] #paper{cursor:text}#workspace[data-tool="rectangle"] #paper,#workspace[data-tool="ellipse"] #paper,#workspace[data-tool="connector"] #paper{cursor:crosshair}#workspace[data-tool="hand"] #paper .editable,#workspace[data-tool="hand"] #paper .readonly,#workspace[data-pan="true"] #paper .editable,#workspace[data-pan="true"] #paper .readonly{cursor:grab}
+
+nav{flex-wrap:wrap;justify-content:center;width:max-content;max-width:calc(100vw - 24px)}@media(max-width:540px){nav{max-width:calc(100vw - 16px)}#coverage{bottom:104px}.divider{display:none}#status{max-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}header{gap:7px}#surface-name{max-width:24vw}}

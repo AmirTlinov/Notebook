@@ -67,6 +67,9 @@ public struct NotebookCommand: Codable, Sendable {
 public struct NotebookReadBounds: Codable, Sendable {
   public var anchor: WorldPoint
   public var region: PageRect
+  public init(anchor: WorldPoint, region: PageRect) {
+    self.anchor = anchor; self.region = region
+  }
   func validated() throws -> WorkspaceSpatialBounds {
     guard anchor.isValid, region.x.isFinite, region.y.isFinite,
       region.width.isFinite, region.height.isFinite, region.width > 0, region.height > 0,

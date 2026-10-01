@@ -788,6 +788,13 @@ actor SceneCompositionSource {
       }
     }
   }
+
+  func materialRevision(_ target: CollaborationTarget) throws -> String {
+    switch origin {
+    case .sql(let store): return try checked(store) { try $0.scenePaintRevision(target: target) }
+    case .values: return String(revision)
+    }
+  }
   func readPaintOrder(boardID: UUID, coverID: UUID? = nil, bounds: WorkspaceSpatialBounds,
     after: SceneCompositionReadCursor? = nil) throws -> SceneCompositionReadPage {
     switch origin {

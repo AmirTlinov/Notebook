@@ -23,14 +23,19 @@ public struct NotebookPanelPresentationRequest: Codable, Sendable {
   public let appearance: NotebookPanelAppearanceProjection
   public let knownCursor: String?
   public let knownRequestID: UUID?
+  public let knownAssets: [UUID]?
+  public let includeFitBounds: Bool?
   public init(workspaceID: UUID? = nil, target: CollaborationTarget? = nil,
-    appearance: NotebookPanelAppearanceProjection, knownCursor: String? = nil, knownRequestID: UUID? = nil) {
+    appearance: NotebookPanelAppearanceProjection, knownCursor: String? = nil, knownRequestID: UUID? = nil,
+    knownAssets: [UUID]? = nil, includeFitBounds: Bool? = nil) {
     self.workspaceID = workspaceID; self.target = target; self.appearance = appearance; self.knownCursor = knownCursor
     self.knownRequestID = knownRequestID
+    self.knownAssets = knownAssets
+    self.includeFitBounds = includeFitBounds
   }
 }
 
-/// The existing addressed render queue owns this immutable, workspace-pinned recipe.
+/// One admitted presentation borrows native material from the shared pixel owner.
 public struct NotebookPanelRenderProjection: Codable, Equatable, Sendable {
   public static let maximumSubjects = 16
   public static let maximumEncodedBytes = 16 * 1024 * 1024
@@ -48,6 +53,28 @@ public struct NotebookPanelRenderProjection: Codable, Equatable, Sendable {
   public var worldOrigin: WorldPoint { camera.screenToWorld(.zero, viewport: viewport) }
   public var readBounds: NotebookReadBounds {
     .init(anchor: worldOrigin, region: .init(x: 0, y: 0, width: viewport.x / camera.scale, height: viewport.y / camera.scale))
+  }
+}
+
+public struct NotebookPanelPresentationCut: Sendable {
+  public let id: UUID
+  public let target: CollaborationTarget
+  public let sourceRevision: String
+  public let cursor: UInt64
+  public let projection: NotebookPanelRenderProjection
+  public let includeFitBounds: Bool
+
+  init(target: CollaborationTarget, sourceRevision: String, cursor: UInt64,
+    projection: NotebookPanelRenderProjection, includeFitBounds: Bool = false) throws {
+    let hash = try collaborationHash(JSONValue.object(["renderer": .string("NotebookPanelMaterials/2"),
+      "target": try .encode(target), "source": .string(sourceRevision), "projection": try .encode(projection),
+      "fit": .bool(includeFitBounds)]))
+    let hex = Array(hash)
+    let first = String(hex[0..<8]) + "-" + String(hex[8..<12]) + "-4" + String(hex[13..<16])
+    let second = "-8" + String(hex[17..<20]) + "-" + String(hex[20..<32])
+    id = UUID(uuidString: first + second)!
+    self.target = target; self.sourceRevision = sourceRevision; self.cursor = cursor; self.projection = projection
+    self.includeFitBounds = includeFitBounds
   }
 }
 
@@ -81,17 +108,21 @@ public struct NotebookPanelReadRequest: Codable, Sendable {
   public var target: CollaborationTarget?
   public var bounds: NotebookReadBounds?
   public var knownCursor: String?
-  public init(workspaceID: UUID? = nil, target: CollaborationTarget? = nil, bounds: NotebookReadBounds? = nil, knownCursor: String? = nil) {
+  public var includeFitBounds: Bool?
+  public init(workspaceID: UUID? = nil, target: CollaborationTarget? = nil, bounds: NotebookReadBounds? = nil,
+    knownCursor: String? = nil, includeFitBounds: Bool? = nil) {
     self.workspaceID = workspaceID; self.target = target; self.bounds = bounds; self.knownCursor = knownCursor
+    self.includeFitBounds = includeFitBounds
   }
 }
 
-public struct NotebookPanelElementSource: Codable, Sendable {
+public struct NotebookPanelEditSource: Codable, Sendable {
   public let id: String
   public let page: AgentElement?
   public let spatial: SpatialElement?
-  public init(id: String, page: AgentElement? = nil, spatial: SpatialElement? = nil) {
-    self.id = id; self.page = page; self.spatial = spatial
+  public let placements: [WorkspacePlacement]?
+  public init(id: String, page: AgentElement? = nil, spatial: SpatialElement? = nil, placements: [WorkspacePlacement]? = nil) {
+    self.id = id; self.page = page; self.spatial = spatial; self.placements = placements
   }
 }
 
@@ -101,9 +132,9 @@ public struct NotebookPanelEditRequest: Codable, Sendable {
   public let target: CollaborationTarget
   public let summary: String
   public let operations: [CollaborationOperation]
-  public let sources: [NotebookPanelElementSource]
+  public let sources: [NotebookPanelEditSource]
   public init(workspaceID: UUID, actionID: UUID, target: CollaborationTarget, summary: String,
-    operations: [CollaborationOperation], sources: [NotebookPanelElementSource]) {
+    operations: [CollaborationOperation], sources: [NotebookPanelEditSource]) {
     self.workspaceID = workspaceID; self.actionID = actionID; self.target = target
     self.summary = summary; self.operations = operations; self.sources = sources
   }
@@ -119,20 +150,6 @@ public struct NotebookPanelUndoRequest: Codable, Sendable {
 }
 
 extension NotebookStore {
-  public func unchangedPanelPresentation(_ request: NotebookPanelPresentationRequest, rendering: TargetRenderRequest) throws -> JSONValue? {
-    guard request.knownRequestID == rendering.id, let cursor = request.knownCursor,
-      let projection = rendering.panelProjection else { return nil }
-    return try readTransaction { _ in
-      guard try requirePanelWorkspace(request.workspaceID) == projection.workspaceID,
-        cursor == String(try currentReadCursor()),
-        try !currentSQL!.rows("SELECT 1 FROM metadata_index WHERE kind='renderRequest' AND address=? AND status='ready' LIMIT 1",
-          [.text("collaboration/render-requests/" + rendering.id.uuidString.lowercased() + ".json#")]).isEmpty,
-        FileManager.default.fileExists(atPath: targetReceiptURL(rendering.id).path) else { return nil }
-      return .object(["workspaceID": try .encode(projection.workspaceID), "target": try .encode(rendering.target),
-        "cursor": .string(cursor), "unchanged": .bool(true)])
-    }
-  }
-
   private func panelTarget(_ supplied: CollaborationTarget?, presence: SessionPresence?) throws -> CollaborationTarget {
     if let supplied { return supplied }
     if let presence {
@@ -142,9 +159,12 @@ extension NotebookStore {
     return try .init(kind: .board, id: workspaceHeader().rootBoardID)
   }
 
-  public func requestPanelPresentation(_ request: NotebookPanelPresentationRequest) throws -> TargetRenderRequest {
+  public func requestPanelPresentation(_ request: NotebookPanelPresentationRequest) throws -> NotebookPanelPresentationCut {
     try request.appearance.validated()
-    return try commandTransaction {
+    guard (request.knownAssets?.count ?? 0) <= 96 else {
+      throw CollaborationError("resource_limit", "Панель удерживает не больше 96 native материалов.")
+    }
+    return try readTransaction { _ in
       let workspaceID = try requirePanelWorkspace(request.workspaceID)
       let presence = try readObservedPresenceIfAvailable()
       let target = try panelTarget(request.target, presence: presence)
@@ -155,13 +175,16 @@ extension NotebookStore {
         if presence?.boardID == target.id, presence?.mode == .board { camera = presence!.camera }
         else { camera = BoardPortalProjection.entryCamera(portalCamera: try readBoardNodeHeader(target.id)?.portalCamera ?? .init(), viewport: request.appearance.viewport) }
       } else {
-        let page = try loadPage(target.id)
-        camera = .init(center: .init(x: page.size.width / 2, y: page.size.height / 2),
-          scale: min(request.appearance.viewport.x / page.size.width, request.appearance.viewport.y / page.size.height))
+        guard let size = try readContentHeader(target: target).size else {
+          throw NotebookStorageError.corruptRecord("panel page size")
+        }
+        camera = .init(center: .init(x: size.width / 2, y: size.height / 2),
+          scale: min(request.appearance.viewport.x / size.width, request.appearance.viewport.y / size.height))
       }
       let projection = NotebookPanelRenderProjection(workspaceID: workspaceID, camera: camera,
         viewport: request.appearance.viewport, pixelScale: request.appearance.pixelScale)
-      return try enqueuePanelRender(target: target, projection: projection)
+      return try .init(target: target, sourceRevision: referenceRevision(target: target),
+        cursor: currentReadCursor(), projection: projection, includeFitBounds: request.includeFitBounds == true)
     }
   }
   private func requirePanelWorkspace(_ id: UUID?) throws -> UUID {
@@ -187,7 +210,7 @@ extension NotebookStore {
       if target.kind == .board { try requireLiveBoard(target.id) }
       else { _ = try readContentHeader(target: target) }
       let cursor = String(try currentReadCursor())
-      if request.knownCursor == cursor {
+      if request.knownCursor == cursor && request.includeFitBounds != true {
         return .object(["workspaceID": try .encode(workspaceID), "target": try .encode(target),
           "cursor": .string(cursor), "unchanged": .bool(true)])
       }
@@ -225,15 +248,24 @@ extension NotebookStore {
         size = .object(["width": .number(bounds.width), "height": .number(bounds.height)])
         truncated = scene.truncated
         let board = scene.boards.first(where: { $0.id == target.id })?.board
+        func cardSource(_ id: UUID) throws -> JSONValue {
+          guard let owner = try readBoardItem(id), owner.id == target.id else {
+            throw CollaborationError("revision_conflict", "Предмет больше не принадлежит доске панели.")
+          }
+          return try .encode(NotebookPanelEditSource(id: id.uuidString,
+            placements: owner.board.placements.sorted { $0.id.uuidString < $1.id.uuidString }))
+        }
         for placement in board?.freeItems ?? [] {
           if let item = try readItemHeader(placement.itemID) {
-            cards.append(.object(["item": try .encode(item), "center": try .encode(placement.center)]))
+            cards.append(.object(["item": try .encode(item), "center": try .encode(placement.center),
+              "source": try cardSource(placement.itemID)]))
           }
         }
         for stack in board?.stacks ?? [] {
           for id in stack.itemIDs {
             if let item = try readItemHeader(id) {
-              cards.append(.object(["item": try .encode(item), "center": try .encode(stack.center), "stackID": try .encode(stack.id)]))
+              cards.append(.object(["item": try .encode(item), "center": try .encode(stack.center),
+                "stackID": try .encode(stack.id), "source": try cardSource(id)]))
             }
           }
         }
@@ -271,10 +303,42 @@ extension NotebookStore {
         else { reason = nil }
         return reason.map { .object(["id": .string(id), "kind": .string(kind), "reason": .string($0)]) }
       }
-      return .object(["workspaceID": try .encode(workspaceID), "target": try .encode(target),
+      let snapshot = JSONValue.object(["workspaceID": try .encode(workspaceID), "target": try .encode(target),
         "elements": .array(elements), "size": size, "worldOrigin": worldOrigin, "basis": try .encode(readBasis(targets: [target], includeSource: true)),
         "cards": .array(cards), "rawInkPresent": .bool(rawInkPresent), "unsupportedElements": .array(unsupported),
         "cursor": .string(cursor), "history": .object(history), "truncated": .bool(truncated), "navigation": navigation])
+      guard request.includeFitBounds == true else { return snapshot }
+      return snapshot.setting("fitBounds", try panelMaterialBounds(target: target).map { try .encode($0) } ?? .null)
+    }
+  }
+
+  /// Explicit overview reads authored material metadata beyond the current view.
+  /// Pen bounds retain eraser padding; this is not a scan of visible pixels.
+  public func panelMaterialBounds(target: CollaborationTarget) throws -> NotebookReadBounds? {
+    try readTransaction { _ in
+      try requirePanelTarget(target)
+      if target.kind == .page {
+        let size = try readContentHeader(target: target).size!
+        return .init(anchor: .zero, region: .init(x: 0, y: 0, width: size.width, height: size.height))
+      }
+      try requireLiveBoard(target.id)
+      let owner = NotebookSQLValue.text(target.id.uuidString.lowercased())
+      func extent(table: String, predicate: String) throws -> WorkspaceSpatialBounds? {
+        func endpoint(_ columns: String, descending: Bool = false) throws -> [NotebookSQLValue]? {
+          let order = columns.split(separator: ",").map { String($0) + (descending ? " DESC" : "") }.joined(separator: ",")
+          return try currentSQL!.rows("SELECT " + columns + " FROM " + table + " WHERE " + predicate
+            + " ORDER BY " + order + " LIMIT 1", [owner]).first
+        }
+        guard let x0 = try endpoint("min_tx,min_x"), let y0 = try endpoint("min_ty,min_y"),
+          let x1 = try endpoint("max_tx,max_x", descending: true), let y1 = try endpoint("max_ty,max_y", descending: true) else { return nil }
+        return .init(origin: .init(tileX: x0[0].integer!, tileY: y0[0].integer!, localX: x0[1].spatialNumber, localY: y0[1].spatialNumber),
+          maximum: .init(tileX: x1[0].integer!, tileY: y1[0].integer!, localX: x1[1].spatialNumber, localY: y1[1].spatialNumber))
+      }
+      let spatial = try extent(table: "spatial_entries", predicate: "board_id=? AND parent_id IS NULL AND has_paint=1 AND kind<>'coverElement'")
+      let ink = try extent(table: "ink_surfaces", predicate: "kind='board' AND owner_id=? AND active=1 AND tool='pen' AND has_ink=1")
+      guard let bounds = spatial.map({ ink.map($0.union) ?? $0 }) ?? ink else { return nil }
+      let size = bounds.origin.delta(to: bounds.maximum)
+      return .init(anchor: bounds.origin, region: .init(x: 0, y: 0, width: max(1, size.x), height: max(1, size.y)))
     }
   }
 
@@ -294,6 +358,20 @@ extension NotebookStore {
         guard let original = try savedActionResult(saved.id) else { throw CollaborationError("action_version_unavailable", "Исходный результат действия недоступен.") }
         return original
       }
+      if request.operations.contains(where: { $0.kind == .moveItem }) {
+        guard request.target.kind == .board, request.operations.count == 1, request.sources.count == 1,
+          let operation = request.operations.first, operation.target == request.target,
+          let itemID = operation.id.flatMap(UUID.init(uuidString:)),
+          let source = request.sources.first, UUID(uuidString: source.id) == itemID,
+          source.page == nil, source.spatial == nil, let placements = source.placements,
+          (1...10).contains(placements.count), placements.contains(where: { $0.id == itemID }) else {
+          throw CollaborationError("invalid_panel_edit", "Перенос панели называет один предмет и полный исходник его стопки.")
+        }
+        let result = try applyNativePlacementEdits(request.operations, summary: request.summary, sources: placements,
+          actionID: request.actionID, actor: actor, requestFingerprint: fingerprint)
+        guard let original = try savedActionResult(result.receipt.id) else { throw CollaborationError("action_version_unavailable", "Исходный результат действия недоступен.") }
+        return original
+      }
       guard !request.operations.isEmpty, request.operations.count <= 32,
         !request.sources.isEmpty, request.sources.count <= 64,
         request.operations.allSatisfy({ operation in
@@ -301,6 +379,7 @@ extension NotebookStore {
           if operation.kind == .insertElement { return ["nativeText", "graphic"].contains(operation.values["kind"]?.string ?? "") }
           return true
         }), request.sources.allSatisfy({ source in
+          guard source.placements == nil else { return false }
           if request.target.kind == .page { return source.spatial == nil && source.page.map { $0.id == source.id && [.nativeText, .graphic].contains($0.kind) } != false }
           return source.page == nil && source.spatial.map { $0.id == source.id && $0.surface == .board(request.target.id) && [.nativeText, .graphic].contains($0.kind) } != false
         }) else {

@@ -47,23 +47,34 @@ enum PageCompositionRenderer {
       }
   }
 
-  /// A painter run excludes the independently movable panel subjects while
-  /// retaining the existing native text/graphic/web preparation and erasures.
-  static func renderAuthoredLayer(_ page: PageDocument, ids: Set<String>, region: PageRect,
-    scale: Double, resources: SceneRenderResources = .shared,
+  /// Stable panel material transfers the existing painter's admitted pixels
+  /// directly to the pool. PNG encoding belongs only to missing transport assets.
+  static func renderMaterial(_ page: PageDocument, ids: Set<String>?, region: PageRect,
+    scale: Double, key: SceneMaterialKey, resources: SceneRenderResources,
     permitsPreparation: @escaping @MainActor () -> Bool,
     raster: @escaping @MainActor (AgentElement) async throws -> RasterLease
-  ) async throws -> SceneCompositionRenderer.Result {
-    try await render(page, region: region, elementID: nil, scale: scale, resources: resources,
-      permitsPreparation: permitsPreparation, inkOnly: false, authoredIDs: ids, includesPaper: false,
-      includesInk: false, raster: raster)
+  ) async throws -> RasterLease {
+    let canvas = try await renderCanvas(page, region: region, elementID: nil, scale: scale, resources: resources,
+      permitsPreparation: permitsPreparation, inkOnly: ids == nil, authoredIDs: ids, includesPaper: false,
+      includesInk: ids == nil, raster: raster)
+    return try await canvas.finishRaster(for: .material(key))
   }
 
   private static func render(_ page: PageDocument, region: PageRect?, elementID: String?, scale: Double,
     resources: SceneRenderResources, permitsPreparation: @escaping @MainActor () -> Bool,
+    inkOnly: Bool, raster: @escaping @MainActor (AgentElement) async throws -> RasterLease
+  ) async throws -> SceneCompositionRenderer.Result {
+    let canvas = try await renderCanvas(page, region: region, elementID: elementID, scale: scale,
+      resources: resources, permitsPreparation: permitsPreparation, inkOnly: inkOnly, raster: raster)
+    let png = try await canvas.finishPNG()
+    return .init(png: png, diagnostics: canvas.diagnostics)
+  }
+
+  private static func renderCanvas(_ page: PageDocument, region: PageRect?, elementID: String?, scale: Double,
+    resources: SceneRenderResources, permitsPreparation: @escaping @MainActor () -> Bool,
     inkOnly: Bool, authoredIDs: Set<String>? = nil, includesPaper: Bool = true, includesInk: Bool = true,
     raster: @escaping @MainActor (AgentElement) async throws -> RasterLease
-  ) async throws -> SceneCompositionRenderer.Result {
+  ) async throws -> SceneRasterCompositor {
     let region = region ?? .init(x: 0, y: 0, width: page.size.width, height: page.size.height)
     guard region.x >= 0, region.y >= 0,
       region.x + region.width <= page.size.width, region.y + region.height <= page.size.height,
@@ -154,8 +165,7 @@ enum PageCompositionRenderer {
       try await drawInk(elementID == nil ? drawing : .init(), plan:plan,
         size:size,frame:frame,resources:resources,canvas:canvas)
     }
-    let png = try await canvas.finishPNG()
-    return .init(png: png, diagnostics: canvas.diagnostics)
+    return canvas
   }
 
   private static func drawInk(_ drawing:PageInkDrawing,plan:NotebookOrderedInkPlan,size:CGSize,frame:CGRect,

@@ -1,0 +1,250 @@
+{
+  "date": "2026-10-01",
+  "issue": "GUI-388",
+  "status": "Installed237/plugin0.1.4 with native, focused Core, MCP, isolated interaction and actual-board SDK checks passed. Refreshed Codex mounted acceptance remains open.",
+  "reportedDefects": [
+    "Board interaction rejected after236/plugin0.1.3",
+    "Camera coverage/latency and card manipulation",
+    "This old Codex conversation cannot open the panel"
+  ],
+  "repair": [
+    "Reuse existing native world tiles and raster pool; send only missing immutable assets.",
+    "Ephemeral camera readers join the existing scheduler; old derived camera jobs retired.",
+    "Canonical native cover and ordinary subject layers move without baked duplicates.",
+    "Captured native placement heads and stack membership govern card drops and human undo.",
+    "Hand/blank-area pan, Escape, draft/readable text, selection focus, camera Back and on-demand full-material fit.",
+    "Coalesced local camera context updates independently of native pixel refresh."
+  ],
+  "nativeVerification": {
+    "receipt": {
+      "path": "/tmp/notebook-board-237-final-verified/verification.json",
+      "sha256": "931bba6f0d071d022f04f24ef12232083e6f58ffeb50e7aabb97d16654a1f146"
+    },
+    "sourceSHA256": "c9eee73e709424d5a57224b3d241dcfc3c0aa13546c523693208c3ef2e2e5621",
+    "macPassed": 3,
+    "physicalIPadPassed": 2,
+    "mcpPassed": 168,
+    "failed": 0,
+    "skipped": 0,
+    "runtimeWarnings": 0,
+    "checks": {
+      "commands": [
+        "mcp"
+      ],
+      "core": [],
+      "ipad": [
+        "NotebookTests/SceneCompositionSQLTests/testPageOrderedExportPreservesRanksCapturedCutsAndSelectedLayerScope",
+        "NotebookTests/SceneCompositionSQLTests/testSQLRenderKeepsTheSameCoverPixelsAtEveryWorldCorner"
+      ],
+      "mac": [
+        "NotebookMacTests/NotebookPanelPresentationTests"
+      ]
+    }
+  },
+  "finalVerification": {
+    "receipt": {
+      "path": "/tmp/notebook-board-237-release-verified/verification.json",
+      "sha256": "d583425903718ff5ee81d3a6fbfd42c54ee47308cc1f6bff5f067634ce554468"
+    },
+    "sourceSHA256": "fcecde385e230a6dafa945db5c77b9aab60dcf04e25004336f56ed2ce357c63f",
+    "mcpPassed": 168,
+    "typecheck": "passed",
+    "nativeDelta": [
+      "MCP/panel/session.ts"
+    ],
+    "nativeInputsUnchanged": true
+  },
+  "coreVerification": {
+    "receipt": {
+      "path": "/tmp/notebook-panel-card-core-20261001-final-receipt.json",
+      "sha256": "f56a87f1f05082175cdc834f280af2542d63e2c78387a2d2a9071350ebf82904"
+    },
+    "definitions": 9,
+    "cases": 12,
+    "failures": 0,
+    "fit100K": {
+      "elapsedMilliseconds": 64.3545,
+      "sqliteVMSteps": 6700000,
+      "readRowBudget": 20,
+      "readBytesBudget": 4000
+    },
+    "scope": [
+      "canonical card CAS and own-stack membership",
+      "exact retry and cold reopen",
+      "human undo preserves later agent content",
+      "ephemeral read-only source cut",
+      "full typed IPC request",
+      "obsolete camera job retirement",
+      "on-demand conservative authored fit bounds including offscreen ink and rooted groups",
+      "100K canonical metadata workload"
+    ],
+    "sourceDelta": "The later NotebookReadBounds public memberwise initializer is covered by final native compilation; all seven focused source/test hashes still match."
+  },
+  "browserInteractions": {
+    "receipt": {
+      "path": "/tmp/notebook-panel-interaction-browser/receipt.json",
+      "sha256": "e83fbe5a191435d6b64d4b158d2ca572c68e92381a31cdfd02e6f0f79b7565b7"
+    },
+    "scope": "Isolated MCP Apps SDK RAM interactions; per-case source scopes in receipt. No live native writes or Codex mounted proof.",
+    "maximumInflight": 1,
+    "consoleErrors": 0
+  },
+  "openingFailure": {
+    "scope": "Old current conversation MCP process",
+    "errors": [
+      "Tool notebook_open not found (-32602)",
+      "resources/read: Method not found (-32601)"
+    ],
+    "resourceURI": "ui://notebook/workspace.html",
+    "recovery": "Restart Codex to reconnect the existing chat, or connect Notebook in a new chat. No supported in-place reconnect was available.",
+    "currentMCPPanelInventory": "empty"
+  },
+  "limitations": [
+    "Actual refreshed Codex panel gestures remain unverified; user currently cannot open it.",
+    "This selected scope does not claim full performance acceptance or hardware contact-to-display latency."
+  ],
+  "finalCameraContext": {
+    "receipt": {
+      "path": "/tmp/notebook-panel-interaction-browser/context-receipt.json",
+      "sha256": "3b93571471b3f97e3ed43a1c3db72d2d8ee4d29934e9386c69bda3a9cd4732f2"
+    },
+    "sourceSHA256": "a288c3a13cb072c855f9848d14b1cfcfcc2098df6e61b9f72a6819b09612687b",
+    "scope": "Final session.ts SDK fixture:12 in-coverage pointer moves, one settled context update, exact displayed bounds; terminal failure restoration and message retention."
+  },
+  "delivery": {
+    "build": "237",
+    "version": "0.3.167",
+    "pluginVersion": "0.1.4",
+    "finishedAt": "2026-10-01T11:07:14.825589+00:00",
+    "buildReceipt": {
+      "path": "/tmp/notebook-board-pair-237/build.json",
+      "sha256": "9bc59ca7b96ba72e9e5e8d5f0df376bb9a9c3927557df5200ecdf0978b060270"
+    },
+    "installationReceipt": {
+      "path": "/tmp/notebook-board-delivery-237/installation.json",
+      "sha256": "1a24c3605b8f0fa6caafc26fc2a980ea055b0b39194fbf480eed826fd1032c10"
+    },
+    "plugin": {
+      "path": "/tmp/notebook-live-panel-237/plugin.json",
+      "sha256": "361c38b6fd9001254c2ccb4cecd24de6dae18166f14ccac6fcc4292e9d29ed03"
+    },
+    "checks": {
+      "actualSigned237SocketPeerCodeBeforeAndAfter": true,
+      "workspaceRetained": true,
+      "trustedPhysicalDeviceRetained": true,
+      "presencePageCameraSelectedItemRetained": true,
+      "typedSelectionChoiceRetained": true,
+      "runtimeConnected": true,
+      "singleInstalledMacOwner": true
+    },
+    "actualOwnerPID": 47858,
+    "actualOwnerCDHash": "8b0e80b309f910046a02ea63618253f9eef9765b",
+    "inPlaceUpdate": true
+  },
+  "installedResource": {
+    "receipt": {
+      "path": "/tmp/notebook-live-panel-237/resource-proof.json",
+      "sha256": "c67d2a2b67698f9b01a11f294d7fe0f2a915e6f533350f4cf3a31b85af1ed730"
+    },
+    "toolCount": 9,
+    "bytes": 625748,
+    "sha256": "6761ddd002e5fc59b5978b305f6264fd9f9655d423f814575c1030bfe613df11",
+    "matchesFrozenPanelSource": true
+  },
+  "actualBoardCamera": {
+    "receipt": {
+      "path": "/tmp/notebook-live-panel-237/acceptance.json",
+      "sha256": "3e46cd4fb352c99958ab5eb2ee90ed1d617378e8fe5e727ee564c6e5ad925f46"
+    },
+    "scope": "Actual installed native237 and plugin0.1.4 resource through MCP Apps AppBridge in Chrome; native content unchanged. Codex mounted UI acceptance remains open.",
+    "checks": {
+      "smallPanContextMatchesSVG": true,
+      "reverseCameraErrorBelowNanopoint": true,
+      "fitContextMatchesSVG": true,
+      "fitContainsWholeAuthoredBounds": true,
+      "singleFlight": true,
+      "noToolErrors": true,
+      "noConsoleErrors": true,
+      "readsOnly": true
+    },
+    "cameraReverseMaxWorldError": 1.0913936421275139e-11,
+    "firstReadyToolMs": 155.14920800000073,
+    "idleMedianMs": 4.344457999992301,
+    "projections": [
+      {
+        "nativeMs": 155.149,
+        "layers": 23,
+        "newPNGAssets": 23,
+        "reusedAssets": 0
+      },
+      {
+        "nativeMs": 38.668,
+        "layers": 23,
+        "newPNGAssets": 0,
+        "reusedAssets": 23
+      },
+      {
+        "nativeMs": 44.29,
+        "layers": 19,
+        "newPNGAssets": 4,
+        "reusedAssets": 15
+      },
+      {
+        "nativeMs": 23.397,
+        "layers": 19,
+        "newPNGAssets": 0,
+        "reusedAssets": 19
+      },
+      {
+        "nativeMs": 43.778,
+        "layers": 20,
+        "newPNGAssets": 4,
+        "reusedAssets": 16
+      },
+      {
+        "nativeMs": 44.123,
+        "layers": 23,
+        "newPNGAssets": 3,
+        "reusedAssets": 20
+      },
+      {
+        "nativeMs": 40.65,
+        "layers": 23,
+        "newPNGAssets": 0,
+        "reusedAssets": 23
+      },
+      {
+        "nativeMs": 197.579,
+        "layers": 38,
+        "newPNGAssets": 38,
+        "reusedAssets": 0
+      },
+      {
+        "nativeMs": 45.263,
+        "layers": 38,
+        "newPNGAssets": 0,
+        "reusedAssets": 38
+      }
+    ],
+    "teardown": {
+      "SDK": true,
+      "tab": true,
+      "server": true,
+      "viewportOverrideUsed": false
+    }
+  },
+  "nativeAfterCamera": {
+    "receipt": {
+      "path": "/tmp/notebook-board-post-camera-237/receipt.json",
+      "sha256": "03cd3c9e2fe1d2b62b5fcfbe96c3468bd343950434fa9cf647d757e8d8ff0c18"
+    },
+    "checks": {
+      "sameSignedInstalled237Owner": true,
+      "workspaceRetained": true,
+      "trustedDeviceRetained": true,
+      "nativePageCameraSelectedItemRetained": true,
+      "typedSelectionRetained": true,
+      "nativeRuntimeConnected": true
+    }
+  }
+}

@@ -21,6 +21,7 @@ export const panelViewSchema=z.object({
   "The panel view exceeds its native pixel budget.");
 const panelSourceSchema=z.object({id:z.string().min(1).max(120),
   page:z.record(z.string(),z.json()).optional(),spatial:z.record(z.string(),z.json()).optional(),
+  placements:z.array(z.record(z.string(),z.json())).optional(),
 }).strict();
 export const panelEditSchema=panelAddressSchema.extend({
   actionID:z.uuid(),summary:z.string().min(1).max(1000),
@@ -58,7 +59,7 @@ export function registerNotebookPanel(server:McpServer,socketPath:string,html?:s
       "openai/ui":{availableDisplayModes:["fullscreen"],preferredDisplayMode:"fullscreen"}},
   }]}));
   registerAppTool(server,"notebook_open",{
-    title:"Open Notebook beside this conversation",
+    title:"Notebook",
     description:"Open the real Notebook workspace for human and agent collaboration. Uses the installed Mac runtime and existing saved material. Pass an exact board/page target when known; omitted target follows the admitted Notebook focus. The panel keeps its own camera and selection and never changes the iPad camera. Other Notebook tools remain usable without opening the panel.",
     inputSchema:z.object({target:panelTargetSchema.optional(),bounds:sceneBoundsSchema.optional()}).strict(),
     annotations:{readOnlyHint:true,destructiveHint:false,openWorldHint:false},
@@ -66,8 +67,9 @@ export function registerNotebookPanel(server:McpServer,socketPath:string,html?:s
   },input=>result(()=>runBridge<Value>(socketPath,{command:"panelRead",panelRead:input})));
   registerAppTool(server,"notebook_panel_presentation",{
     title:"Prepare this Notebook view",
-    description:"Read exact native composed appearance and source geometry for the panel's bounded viewport. This preserves Notebook ink, physical covers and painter order without changing any device camera.",
-    inputSchema:panelAddressSchema.extend({appearance:panelViewSchema,knownCursor:z.string().optional(),knownRequestID:z.uuid().optional()}).strict(),
+    description:"Read native world tiles and captured source geometry for this panel. Reuse immutable assets already held by the panel; Notebook preserves ink, physical covers and painter order without changing any device camera.",
+    inputSchema:panelAddressSchema.extend({appearance:panelViewSchema,knownCursor:z.string().optional(),knownRequestID:z.uuid().optional(),
+      knownAssets:z.array(z.uuid()).max(96).optional(),includeFitBounds:z.boolean().optional()}).strict(),
     annotations:{readOnlyHint:true,destructiveHint:false,openWorldHint:false},_meta:appMetadata,
   },({socketKey,...request})=>result(()=>runBridge<Value>(panelSocket({...request,socketKey},socketPath),
     {command:"panelPresentation",panelPresentation:request}),true));

@@ -135,7 +135,7 @@ struct NotebookIPCTests {
     let panel = NotebookPanelPresentationRequest(workspaceID: workspaceID, target: target,
       appearance: .init(viewport: .init(x: 1100, y: 780), pixelScale: 1,
         camera: .init(center: .init(x: 417, y: 597), scale: 0.6)),
-      knownCursor: "42", knownRequestID: requestID)
+      knownCursor: "42", knownRequestID: requestID, knownAssets: [UUID(), UUID()], includeFitBounds: true)
     // The MCP bridge sends a plain JSON object, before Swift command decoding.
     let wire = JSONValue.object(["command": .string("panelPresentation"), "panelPresentation": try .encode(panel)])
     let command = try NotebookIPC.decodeCommand(JSONEncoder().encode(wire))
@@ -145,6 +145,8 @@ struct NotebookIPCTests {
     #expect(command.panelPresentation?.appearance == panel.appearance)
     #expect(command.panelPresentation?.knownCursor == "42")
     #expect(command.panelPresentation?.knownRequestID == requestID)
+    #expect(command.panelPresentation?.knownAssets == panel.knownAssets)
+    #expect(command.panelPresentation?.includeFitBounds == true)
     #expect(throws: CollaborationError.self) {
       try NotebookIPC.decodeCommand(JSONEncoder().encode(wire.setting("root", .string("/tmp/another-owner"))))
     }

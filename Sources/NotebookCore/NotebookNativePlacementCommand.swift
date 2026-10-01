@@ -4,17 +4,24 @@ extension NotebookNativeCommand where Source == WorkspacePlacement {
   /// One drop may move out of a stack and into another. Both operations share
   /// one accepted source cut, action identity and mixed Undo/Redo entry.
   public convenience init(_ operations: [CollaborationOperation], summary: String,
-    placements: [WorkspacePlacement], actionID: UUID = UUID(), actor: UUID) {
+    placements: [WorkspacePlacement], actionID: UUID = UUID(), actor: UUID, requestFingerprint: String? = nil) {
     self.init { store, didPrepare in
       try store.commitNativePlacements(operations, summary: summary, sources: placements,
-        actionID: actionID, actor: actor, didPrepare: didPrepare)
+        actionID: actionID, actor: actor, requestFingerprint: requestFingerprint, didPrepare: didPrepare)
     }
   }
 }
 
 extension NotebookStore {
+  public func applyNativePlacementEdits(_ operations: [CollaborationOperation], summary: String,
+    sources: [WorkspacePlacement], actionID: UUID = UUID(), actor: UUID, requestFingerprint: String? = nil
+  ) throws -> NotebookNativeCommand<WorkspacePlacement>.Output {
+    try NotebookNativeCommand(operations, summary: summary, placements: sources,
+      actionID: actionID, actor: actor, requestFingerprint: requestFingerprint).apply(to: self)
+  }
+
   fileprivate func commitNativePlacements(_ operations: [CollaborationOperation], summary: String,
-    sources: [WorkspacePlacement], actionID: UUID, actor: UUID,
+    sources: [WorkspacePlacement], actionID: UUID, actor: UUID, requestFingerprint: String?,
     didPrepare: (NotebookNativeCommand<WorkspacePlacement>.Output) -> Void
   ) throws -> NotebookNativeCommand<WorkspacePlacement>.Output {
     try commandTransaction(readAllowance: .agentCommand) {
@@ -54,7 +61,8 @@ extension NotebookStore {
       let revision = try targetContentRevision(target: target)
       let receipt = try applyNativeAction(.init(id: actionID,
         additionalOwners: sources.map { .init(kind: .cover, id: $0.id, boardID: target.id) },
-        summary: summary, expected: [.init(target: target, revision: revision)], operations: operations), actor: actor)
+        summary: summary, expected: [.init(target: target, revision: revision)], operations: operations),
+        actor: actor, requestFingerprint: requestFingerprint)
       let accepted = try sources.map { source in
         guard let node = try readBoardItem(source.id), node.id == target.id,
           let placement = node.board.placements.first(where: { $0.id == source.id }) else {

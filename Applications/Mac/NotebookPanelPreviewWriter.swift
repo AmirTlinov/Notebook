@@ -2,159 +2,217 @@ import AppKit
 import Foundation
 import NotebookCore
 
-/// An addressed recipe executed exclusively by MacPreviewPublisher's existing
-/// target queue. Output contains derived pixels, never a retained business model.
+/// Ephemeral app presentation executes in the publisher's existing target queue.
+/// Native world material is borrowed from its shared pool; no camera receipt is written.
 extension CurrentViewPreviewWriter {
   @MainActor
-  static func writePanel(_ request: TargetRenderRequest, model: NotebookAppModel) async throws {
-    guard let projection = request.panelProjection, model.permitsBackgroundPreparation else {
-      throw CancellationError()
-    }
+  static func panelMaterial(_ cut: NotebookPanelPresentationCut, model: NotebookAppModel,
+    knownAssets: Set<UUID>) async throws -> JSONValue {
+    let projection = cut.projection, target = cut.target, actor = model.actorID
     try projection.validated()
-    let target = request.target, actor = model.actorID
+    guard model.permitsBackgroundPreparation else { throw CancellationError() }
+    let viewBounds = WorkspaceSpatialBounds(origin: projection.worldOrigin,
+      width: projection.viewport.x / projection.camera.scale, height: projection.viewport.y / projection.camera.scale)
+    let initialCoverage = try CompositionTileCoverage(bounds: viewBounds,
+      pixelsPerWorldPoint: projection.camera.scale * projection.pixelScale)
+    let initialBounds = WorkspaceSpatialBounds(origin: initialCoverage.tiles.first!.origin,
+      maximum: initialCoverage.tiles.last!.bounds.maximum)
     let captured = try await model.performStoreCommand { store in
       try store.readTransaction { _ in
         let header = try store.workspaceHeader()
         guard header.workspaceID == projection.workspaceID,
-          try store.referenceRevision(target: target) == request.sourceRevision else {
-          throw NotebookStorageError.transactionConflict
-        }
-        let snapshot = try store.readPanel(.init(workspaceID: projection.workspaceID,
-          target: target, bounds: target.kind == .board ? projection.readBounds : nil), actor: actor)
-        let page = target.kind == .page ? try store.loadPage(target.id) : nil
-        return (header, snapshot, page)
+          try store.referenceRevision(target: target) == cut.sourceRevision else { throw NotebookStorageError.transactionConflict }
+        let snapshot = try store.readPanel(.init(workspaceID: projection.workspaceID, target: target,
+          bounds: target.kind == .board ? .init(anchor: initialBounds.origin,
+            region: .init(x: 0, y: 0, width: initialBounds.width, height: initialBounds.height)) : nil), actor: actor)
+        return (header, snapshot, target.kind == .page ? try store.loadPage(target.id) : nil)
       }
     }
-    let (header, snapshot, page) = captured
+    let (header, capturedSnapshot, page) = captured
     let source = SceneCompositionSource(store: model.store, revision: header.cursor,
       workspaceID: projection.workspaceID, recordPixelDependencies: true, documentGeometry: model.documentPaperSizes)
-    let candidates = snapshot["elements"]?.arrayValues.filter(NotebookPanelEditableSubject.allows) ?? []
-    let ids = try await panelSubjects(candidates, page: page, source: source, projection: projection, target: target)
-    let layers: [NotebookPanelRasterLayer]
+    let candidates = Array((capturedSnapshot["elements"]?.arrayValues ?? []).filter(NotebookPanelEditableSubject.allows)
+      .prefix(NotebookPanelRenderProjection.maximumSubjects))
+    let ids = Set(candidates.compactMap { $0["source"]?["id"]?.stringValue })
+    let layers: [NotebookPanelRasterLayer], coverage: CompositionTileCoverage
     if let page {
-      layers = try await pagePanelLayers(page, projection: projection, editableIDs: ids, model: model)
+      (layers, coverage) = try await pagePanelMaterials(page, projection: projection, editableIDs: ids,
+        knownAssets: knownAssets, sourceRevision: cut.sourceRevision, model: model)
     } else {
       let presence = SessionPresence(boardID: target.id, mode: .board, camera: projection.camera, viewport: projection.viewport)
       let renderer = SceneCompositionRenderer(source: source, permitsPreparation: { model.permitsBackgroundPreparation })
-      layers = try await renderer.renderPanel(presence: presence, projection: projection, editableIDs: ids)
+      let movable = Set((capturedSnapshot["cards"]?.arrayValues ?? []).prefix(NotebookPanelRenderProjection.maximumSubjects)
+        .compactMap { $0["item"]?["id"]?.stringValue.flatMap(UUID.init(uuidString:)) })
+      let result = try await renderer.renderPanel(presence: presence, projection: projection,
+        editableIDs: ids, movableItemIDs: movable, knownAssets: knownAssets)
+      layers = result.layers; coverage = result.coverage
     }
-    var cardGeometry: [JSONValue] = []
-    if target.kind == .board {
-      let presence = SessionPresence(boardID: target.id, mode: .board, camera: projection.camera, viewport: projection.viewport)
-      for card in snapshot["cards"]?.arrayValues ?? [] {
-        guard let id = card["item"]?["id"]?.stringValue.flatMap(UUID.init(uuidString:)),
-          let item = try await source.item(id, presence: presence) else { continue }
-        let delta = projection.worldOrigin.delta(to: item.center)
-        cardGeometry.append(.object(["id": try .encode(id), "geometry": try .encode(item.geometry),
-          "center": try .encode(item.center), "worldOrigin": try .encode(projection.worldOrigin),
-          "frame": try .encode(PageRect(x: delta.x - item.geometry.width / 2, y: delta.y - item.geometry.height / 2,
-            width: item.geometry.width, height: item.geometry.height))]))
-      }
-    }
-    let appearance = JSONValue.object(["status": .string("ready"), "requestID": try .encode(request.id),
-      "sourceRevision": .string(request.sourceRevision), "cursor": .string(String(header.cursor)),
-      "camera": try .encode(projection.camera), "viewport": try .encode(projection.viewport),
-      "layers": .array(try layers.map { try $0.encoded }), "cardGeometry": .array(cardGeometry), "diagnostics": .array([])])
-    guard try JSONEncoder().encode(appearance).count <= NotebookPanelRenderProjection.maximumEncodedBytes else {
-      throw SceneRenderError.resourceLimit
-    }
+    let materialBounds = WorkspaceSpatialBounds(origin: coverage.tiles.first!.origin,
+      maximum: coverage.tiles.last!.bounds.maximum)
     let dependencies = try await source.pixelDependencies()
     try Task.checkCancellation()
     guard model.permitsBackgroundPreparation else { throw CancellationError() }
-    try await model.performStoreCommand { store in
-      try Task.checkCancellation()
-      let latest = try store.workspaceHeader()
-      guard latest.workspaceID == projection.workspaceID,
-        try store.referenceRevision(target: target) == request.sourceRevision,
-        try dependencies?.isCurrent(store) != false else { throw NotebookStorageError.transactionConflict }
-      try store.saveTargetRender(.init(request: request, status: "ready", camera: projection.camera,
-        panelPresentation: appearance))
+    return try await model.performStoreCommand { store in
+      try store.readTransaction { _ in
+        try Task.checkCancellation()
+        guard try store.storedWorkspaceID() == projection.workspaceID,
+          try store.referenceRevision(target: target) == cut.sourceRevision,
+          try dependencies?.isCurrent(store) != false else { throw NotebookStorageError.transactionConflict }
+        var snapshot = try store.readPanel(.init(workspaceID: projection.workspaceID, target: target,
+          bounds: target.kind == .board ? .init(anchor: materialBounds.origin,
+            region: .init(x: 0, y: 0, width: materialBounds.width, height: materialBounds.height)) : nil,
+          includeFitBounds: cut.includeFitBounds), actor: actor)
+        let editable = Set(layers.compactMap(\.elementID)), movable = Set(layers.compactMap(\.itemID))
+        snapshot = snapshot.setting("elements", .array((snapshot["elements"]?.arrayValues ?? []).map { entry in
+          entry.setting("editable", .bool(entry["source"]?["id"]?.stringValue.map(editable.contains) == true))
+        }))
+        snapshot = snapshot.setting("cards", .array((snapshot["cards"]?.arrayValues ?? []).map { card in
+          guard let id = card["item"]?["id"]?.stringValue.flatMap(UUID.init(uuidString:)) else { return card }
+          let layer = layers.first { $0.itemID == id }
+          var value = card.setting("editable", .bool(movable.contains(id)))
+          if let layer, let frame = layer.subjectFrame {
+            value = value.setting("frame", try? .encode(frame)).setting("worldOrigin", try? .encode(layer.worldOrigin))
+              .setting("center", try? .encode(layer.worldOrigin))
+            value = value.setting("geometry", .object(["width": .number(frame.width), "height": .number(frame.height)]))
+          }
+          return value
+        }))
+        if target.kind == .page { snapshot = snapshot.setting("worldOrigin", try .encode(WorldPoint.zero)) }
+        let appearance = JSONValue.object(["status": .string("ready"), "requestID": try .encode(cut.id),
+          "sourceRevision": .string(cut.sourceRevision), "cursor": snapshot["cursor"] ?? .string(String(header.cursor)),
+          "camera": try .encode(projection.camera), "viewport": try .encode(projection.viewport),
+          "coverage": .object(["anchor": try .encode(materialBounds.origin),
+            "region": try .encode(PageRect(x: 0, y: 0, width: materialBounds.width, height: materialBounds.height)),
+            "level": .number(Double(coverage.level)),
+            "pixelDensity": .number(Double(CompositionTile.pixelSize) / coverage.tiles[0].worldSize)]),
+          "layers": .array(try layers.map { try $0.encoded }), "diagnostics": .array([])])
+        snapshot = snapshot.setting("appearance", appearance)
+        guard try JSONEncoder().encode(snapshot).count <= NotebookPanelRenderProjection.maximumEncodedBytes else {
+          throw SceneRenderError.resourceLimit
+        }
+        return snapshot
+      }
     }
   }
 
-  /// Static painter ranges grow around granted subjects. Budget that native
-  /// partition before painting; remaining bodies stay visible and read-only.
+  /// Finite pages use the same world grid and native paper/ordered ink owners.
+  /// Their body pixels are stable across a pan just like board materials.
   @MainActor
-  private static func panelSubjects(_ entries: [JSONValue], page: PageDocument?, source: SceneCompositionSource,
-    projection: NotebookPanelRenderProjection, target: CollaborationTarget) async throws -> Set<String> {
-    let density = projection.camera.scale * projection.pixelScale
-    let viewportPixels = Int(ceil(projection.viewport.x * projection.pixelScale)) * Int(ceil(projection.viewport.y * projection.pixelScale))
-    var available = NotebookPanelRenderProjection.maximumDecodedPixels - viewportPixels * (page == nil ? 4 : 3)
-    var ids = Set<String>()
-    let graph = page?.graphicGraph()
-    for entry in entries {
-      guard ids.count < NotebookPanelRenderProjection.maximumSubjects, let id = entry["source"]?["id"]?.stringValue else { continue }
-      let frame: PageRect?
-      if let page, let element = page.elements.first(where: { $0.id == id }), let graph {
-        frame = graph.resolve(id).layout?.frame ?? graph.placement(id).map { NotebookElementPresentation(element, placement: $0).frame }
-      } else if let read = try await source.readElementForPaint(id, boardID: target.id) {
-        frame = read.layout?.frame ?? read.placement.map { NotebookElementPresentation(read.element, placement: $0).frame }
-      } else { frame = nil }
-      guard let frame, frame.width > 0, frame.height > 0,
-        frame.width * density <= 2048, frame.height * density <= 2048 else { continue }
-      let pixels = Int(ceil(frame.width * density)) * Int(ceil(frame.height * density))
-      let cost = viewportPixels + pixels
-      guard cost <= available else { continue }
-      available -= cost; ids.insert(id)
-    }
-    return ids
-  }
-
-  @MainActor
-  private static func pagePanelLayers(_ page: PageDocument, projection: NotebookPanelRenderProjection,
-    editableIDs: Set<String>, model: NotebookAppModel) async throws -> [NotebookPanelRasterLayer] {
-    let resources = SceneRenderResources.shared
-    let graph = page.graphicGraph()
+  private static func pagePanelMaterials(_ page: PageDocument, projection: NotebookPanelRenderProjection,
+    editableIDs: Set<String>, knownAssets: Set<UUID>, sourceRevision: String, model: NotebookAppModel)
+    async throws -> ([NotebookPanelRasterLayer], CompositionTileCoverage) {
+    let resources = SceneRenderResources.shared, graph = page.graphicGraph()
+    let requested = WorkspaceSpatialBounds(origin: projection.worldOrigin,
+      width: projection.viewport.x / projection.camera.scale, height: projection.viewport.y / projection.camera.scale)
+    var coverage = try CompositionTileCoverage(bounds: requested,
+      pixelsPerWorldPoint: projection.camera.scale * projection.pixelScale, maximumTiles: 8)
+    let target = CollaborationTarget(kind: .page, id: page.id)
+    let density = Double(CompositionTile.pixelSize) / coverage.tiles[0].worldSize
     let physical = CGRect(x: 0, y: 0, width: page.size.width, height: page.size.height)
-    let origin = WorldPoint.zero.delta(to: projection.worldOrigin)
-    let visible = physical.intersection(CGRect(x: origin.x, y: origin.y,
-      width: projection.viewport.x / projection.camera.scale, height: projection.viewport.y / projection.camera.scale))
-    guard !visible.isNull, !visible.isEmpty else { return [] }
-    let region = PageRect(x: visible.minX, y: visible.minY, width: visible.width, height: visible.height)
-    let density = projection.camera.scale * projection.pixelScale
     var borrowed: RasterLease?, preparation: SceneWebRasterPreparation?
-    defer { borrowed?.release(); preparation?.close() }
+    var sourceRasters: [SceneSourceAddress: RasterLease] = [:], receipts: [SceneSourceAddress: SceneSourceReceipt] = [:]
+    defer { borrowed?.release(); preparation?.close(); sourceRasters.values.forEach { $0.release() } }
     func raster(_ element: AgentElement) async throws -> RasterLease {
       borrowed?.release(); borrowed = nil
       let scale = density * (graph.placement(element.id).map { NotebookElementPresentation.maximumScale($0.transform) } ?? 1)
-      if let cached = resources.retainRaster(for: element, minimumScale: scale) { borrowed = cached; return cached }
-      if preparation == nil { preparation = try await SceneWebRasterPreparation.create(resources: resources,
-        permitsPreparation: { model.permitsBackgroundPreparation }) }
-      guard let preparation else { throw SceneRenderError.snapshotPending("panel_page_source") }
-      let image = try await preparation.prepare(element, requestedScale: scale, programStore: model.store,
-        permitsPreparation: { model.permitsBackgroundPreparation })
-      borrowed = image; return image
+      let value: RasterLease
+      if let cached = resources.retainRaster(for: element, minimumScale: scale) { value = cached }
+      else {
+        if preparation == nil { preparation = try await SceneWebRasterPreparation.create(resources: resources,
+          permitsPreparation: { model.permitsBackgroundPreparation }) }
+        value = try await preparation!.prepare(element, requestedScale: scale, programStore: model.store,
+          permitsPreparation: { model.permitsBackgroundPreparation })
+      }
+      borrowed = value
+      let address = SceneSourceAddress(plane: .board(page.id), elementID: element.id)
+      let demand = SceneSourceDemand(source: element, minimumScale: scale)
+      receipts[address] = .init(demand: demand, installedSource: value.source.agentElement, installedScale: value.pixelScale,
+        status: .ready, installedRegion: value.source.captureRegion)
+      sourceRasters[address]?.release(); sourceRasters[address] = value.retainedCopy()
+      return value
     }
-    var output = NotebookPanelRasterSet()
-    let paper = try await SceneRasterCompositor.create(size: visible.size, scale: density, resources: resources,
-      permitsPreparation: { model.permitsBackgroundPreparation })
-    try await paper.drawPaper(size: physical.size, in: physical.offsetBy(dx: -visible.minX, dy: -visible.minY))
-    try output.append(.init(id: "page-paper", order: -1, worldOrigin: .zero, frame: region, png: await paper.finishPNG()))
-    let elements = PageCompositionRenderer.elements(in: page, region: region, elementID: nil)
-    var pending = Set<String>(), rank = 0
-    func staticLayer(_ ids: Set<String>, rank: Int) async throws -> NotebookPanelRasterLayer {
-      let result = try await PageCompositionRenderer.renderAuthoredLayer(page, ids: ids, region: region,
-        scale: density, resources: resources, permitsPreparation: { model.permitsBackgroundPreparation }, raster: raster)
-      return try .init(id: "page-elements-\(rank)", order: rank, worldOrigin: .zero, frame: region, png: result.png)
-    }
-    for element in elements {
-      let layout = graph.resolve(element.id).layout
-      let presentation = graph.placement(element.id).map { NotebookElementPresentation(element, placement: $0) }
-      let frame = layout?.frame ?? presentation?.frame
-      guard editableIDs.contains(element.id), let frame, element.graphic?.sourceInkContactID == nil,
+    var output = NotebookPanelRasterSet(), subjects: [String: PageRect] = [:]
+    var available = NotebookPanelRenderProjection.maximumDecodedPixels - SceneCompositionPlan.maximumTiles * CompositionTile.pixelSize * CompositionTile.pixelSize
+    for element in page.elements where editableIDs.contains(element.id) && element.graphic?.sourceInkContactID == nil {
+      let frame = graph.resolve(element.id).layout?.frame
+        ?? graph.placement(element.id).map { NotebookElementPresentation(element, placement: $0).frame }
+      guard let frame, frame.width > 0, frame.height > 0,
         frame.width * density <= 2048, frame.height * density <= 2048,
-        frame.x >= 0, frame.y >= 0, frame.x + frame.width <= page.size.width,
-        frame.y + frame.height <= page.size.height else { pending.insert(element.id); continue }
-      if !pending.isEmpty { try output.append(await staticLayer(pending, rank: rank)); pending.removeAll(); rank += 1 }
-      let result = try await PageCompositionRenderer.renderAuthoredLayer(page, ids: [element.id], region: frame,
-        scale: density, resources: resources, permitsPreparation: { model.permitsBackgroundPreparation }, raster: raster)
-      try output.append(.init(id: "subject-\(element.id)", order: rank, worldOrigin: .zero,
-        frame: frame, png: result.png, elementID: element.id)); rank += 1
+        physical.contains(CGRect(x: frame.x, y: frame.y, width: frame.width, height: frame.height)) else { continue }
+      let pixels = Int(ceil(frame.width * density)) * Int(ceil(frame.height * density))
+      guard pixels <= available else { continue }; available -= pixels
+      subjects[element.id] = frame
     }
-    if !pending.isEmpty { try output.append(await staticLayer(pending, rank: rank)) }
-    let ink = try await PageCompositionRenderer.renderInk(page, region: region, scale: density,
-      resources: resources, permitsPreparation: { model.permitsBackgroundPreparation })
-    try output.append(.init(id: "page-ink", order: 1000, worldOrigin: .zero, frame: region, png: ink.png))
-    return output.layers
+    let elements = PageCompositionRenderer.elements(in: page,
+      region: .init(x: 0, y: 0, width: page.size.width, height: page.size.height), elementID: nil)
+    func painterRuns() -> (bands: [(ids: Set<String>, rank: Int)], subjects: [String: Int]) {
+      var bands: [(Set<String>, Int)] = [], pending = Set<String>(), ranks: [String: Int] = [:], rank = 0
+      for element in elements {
+        if subjects[element.id] != nil {
+          if !pending.isEmpty { bands.append((pending, rank)); pending.removeAll(); rank += 1 }
+          ranks[element.id] = rank; rank += 1
+        } else { pending.insert(element.id) }
+      }
+      if !pending.isEmpty { bands.append((pending, rank)) }
+      return (bands, ranks)
+    }
+    var runs = painterRuns()
+    while coverage.tiles.count * (runs.bands.count + 2) > SceneCompositionPlan.maximumTiles {
+      let coarser = try CompositionTileCoverage(bounds: requested,
+        pixelsPerWorldPoint: Double(CompositionTile.pixelSize) / (coverage.tiles[0].worldSize * 2), maximumTiles: 8)
+      if coarser.level > coverage.level { coverage = coarser }
+      else if let optional = elements.last(where: { subjects[$0.id] != nil }) {
+        subjects.removeValue(forKey: optional.id); runs = painterRuns()
+      } else { throw SceneRenderError.resourceLimit }
+    }
+    let bands = runs.bands
+    for element in elements {
+      guard let frame = subjects[element.id], let rank = runs.subjects[element.id] else { continue }
+      let key = try SceneMaterialKey(workspaceID: projection.workspaceID, target: target, revision: sourceRevision,
+        role: "element:" + element.id, frame: frame, density: density)
+      let body: RasterLease
+      if let cached = resources.retainMaterial(key) { body = cached }
+      else {
+        body = try await PageCompositionRenderer.renderMaterial(page, ids: [element.id], region: frame,
+          scale: density, key: key, resources: resources,
+          permitsPreparation: { model.permitsBackgroundPreparation }, raster: raster)
+        resources.cacheComposition(body, receipts: receipts, sources: sourceRasters)
+      }
+      defer { body.release() }
+      try output.append(await .completed(id: "subject-" + element.id, order: rank, worldOrigin: .zero,
+        frame: frame, raster: body, knownAssets: knownAssets, elementID: element.id, subjectFrame: frame))
+    }
+    let tileDensity = Double(CompositionTile.pixelSize) / coverage.tiles[0].worldSize
+    for tile in coverage.tiles {
+      let delta = WorldPoint.zero.delta(to: tile.origin)
+      let visible = physical.intersection(.init(x: delta.x, y: delta.y, width: tile.worldSize, height: tile.worldSize))
+      guard !visible.isEmpty, !visible.isNull else { continue }
+      let region = PageRect(x: visible.minX, y: visible.minY, width: visible.width, height: visible.height)
+      for index in -1...bands.count {
+        let role = index == -1 ? "page-paper" : index == bands.count ? "page-ink" : "page-elements:" + bands[index].ids.sorted().joined(separator: ",")
+        let order = index == -1 ? -1 : index == bands.count ? 1000 : bands[index].rank
+        let key = try SceneMaterialKey(workspaceID: projection.workspaceID, target: target, revision: sourceRevision,
+          role: role, frame: region, density: tileDensity)
+        let body: RasterLease
+        if let cached = resources.retainMaterial(key) { body = cached }
+        else if index == -1 {
+          let canvas = try await SceneRasterCompositor.create(size: visible.size, scale: tileDensity, resources: resources,
+            permitsPreparation: { model.permitsBackgroundPreparation })
+          try await canvas.drawPaper(size: physical.size, in: physical.offsetBy(dx: -visible.minX, dy: -visible.minY))
+          body = try await canvas.finishRaster(for: .material(key))
+          resources.cacheComposition(body, receipts: [:], sources: [:])
+        } else {
+          body = try await PageCompositionRenderer.renderMaterial(page,
+            ids: index == bands.count ? nil : bands[index].ids, region: region, scale: tileDensity,
+            key: key, resources: resources, permitsPreparation: { model.permitsBackgroundPreparation }, raster: raster)
+          resources.cacheComposition(body, receipts: receipts, sources: sourceRasters)
+        }
+        defer { body.release() }
+        try output.append(await .completed(id: role + ":\(tile.column):\(tile.row):\(tile.localColumn):\(tile.localRow)",
+          order: order, worldOrigin: .zero, frame: region, raster: body, knownAssets: knownAssets))
+      }
+    }
+    return (output.layers, coverage)
   }
+
 }

@@ -12,7 +12,7 @@ func notebookPanelHumanEdit(onBoard: Bool) throws {
   let workspaceID = try store.storedWorkspaceID()
   let target = CollaborationTarget(kind: onBoard ? .board : .page, id: onBoard ? workspace.rootBoardID : workspace.selectedPageID!)
   let dispatcher = NotebookCommandDispatcher(store: store, nativeActor: actor)
-  func source() throws -> NotebookPanelElementSource {
+  func source() throws -> NotebookPanelEditSource {
     .init(id: "caption", page: onBoard ? nil : try store.readPageElement(pageID: target.id, elementID: "caption"),
       spatial: onBoard ? try store.readSpatialElement(boardID: target.id, elementID: "caption") : nil)
   }
@@ -134,10 +134,16 @@ func notebookPanelPresentationRecipe(onBoard: Bool) throws {
     let board = CollaborationTarget(kind: .board, id: workspace.rootBoardID)
     #expect(try store.readPanel(.init(workspaceID: workspaceID, target: board), actor: actor)["target"] == .encode(board))
   }
+  let cursor = try store.currentChangeCursor()
+  let queued = try store.targetRenderRequests()
   let first = try store.requestPanelPresentation(request)
-  try first.requireCurrentRenderingRecipe()
   #expect(try store.requestPanelPresentation(request).id == first.id)
-  let recipe = try #require(first.panelProjection)
+  let fit = try store.requestPanelPresentation(.init(workspaceID: workspaceID, target: target,
+    appearance: projection, includeFitBounds: true))
+  #expect(fit.includeFitBounds && fit.id != first.id)
+  #expect(try store.currentChangeCursor() == cursor)
+  #expect(try store.targetRenderRequests() == queued)
+  let recipe = first.projection
   #expect(recipe.workspaceID == workspaceID)
   if !onBoard {
     #expect(recipe.camera.center == WorldPoint(x: 417, y: 597))
@@ -147,10 +153,6 @@ func notebookPanelPresentationRecipe(onBoard: Bool) throws {
     appearance: .init(viewport: projection.viewport, pixelScale: 1,
       camera: .init(center: recipe.camera.center.offsetBy(x: 50, y: 0), scale: recipe.camera.scale))))
   #expect(other.id != first.id)
-  let spoofed = TargetRenderRequest(id: first.id, target: target, sourceRevision: first.sourceRevision,
-    region: nil, worldOrigin: nil, pageIndex: 0, pageVisionRevision: nil, createdAt: first.createdAt,
-    panelProjection: other.panelProjection)
-  #expect(throws: CollaborationError.self) { try spoofed.requireCurrentRenderingRecipe() }
   #expect(throws: CollaborationError.self) {
     try store.requestPanelPresentation(.init(workspaceID: UUID(), target: target, appearance: projection))
   }
@@ -171,31 +173,4 @@ func notebookPanelAppearanceSubjectOwnership() {
     "graphic": .object(["representation": .string("geometry"), "sourceInkContactID": .string(UUID().uuidString)])]),
     "graphicResolution": .object(["state": .string("geometry")])])
   #expect(!NotebookPanelEditableSubject.allows(contact))
-}
-
-@Test("Addressed panel receipts load their bounded pixels without enlarging other artifact readers")
-func notebookPanelReceiptBudget() throws {
-  let root = FileManager.default.temporaryDirectory.appendingPathComponent("notebook-panel-receipt-\(UUID())")
-  defer { try? FileManager.default.removeItem(at: root) }
-  let actor = UUID(), store = NotebookStore(root: root)
-  let (workspace, _) = try store.loadOrCreate(actor: actor, pageSize: .init(width: 834, height: 1194))
-  _ = try store.loadOrCreateSpatialInk(actor: actor)
-  let target = CollaborationTarget(kind: .board, id: workspace.rootBoardID)
-  let request = try store.requestPanelPresentation(.init(workspaceID: store.storedWorkspaceID(), target: target,
-    appearance: .init(viewport: .init(x: 800, y: 600), pixelScale: 1)))
-  let appearance = JSONValue.object(["pngBase64": .string(String(repeating: "a", count: 9 * 1024 * 1024))])
-  try store.saveTargetRender(.init(request: request, status: "ready", panelPresentation: appearance))
-  #expect(try store.loadTargetRenderReceipt(request.id)?.panelPresentation == appearance)
-  let cursor = String(try store.currentReadCursor())
-  let unchanged = try store.unchangedPanelPresentation(.init(workspaceID: store.storedWorkspaceID(), target: target,
-    appearance: .init(viewport: .init(x: 800, y: 600), pixelScale: 1), knownCursor: cursor,
-    knownRequestID: request.id), rendering: request)
-  #expect(unchanged?["unchanged"] == .bool(true))
-  #expect(unchanged?["appearance"] == nil)
-  #expect(try store.unchangedPanelPresentation(.init(workspaceID: store.storedWorkspaceID(), target: target,
-    appearance: .init(viewport: .init(x: 800, y: 600), pixelScale: 1), knownCursor: cursor,
-    knownRequestID: UUID()), rendering: request) == nil)
-  try Data(repeating: 97, count: NotebookPanelRenderProjection.maximumEncodedBytes + 1)
-    .write(to: store.targetReceiptURL(request.id))
-  #expect(throws: CollaborationError.self) { try store.loadTargetRenderReceipt(request.id) }
 }

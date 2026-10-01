@@ -90,6 +90,8 @@ if (action === 'check') {
   if (sameName) assert.equal(await realpath(sameName.root), await realpath(source), 'This marketplace name already belongs to another source.');
   console.log(run(['plugin', 'marketplace', 'add', source, '--json']).stdout.trim());
   console.log(run(['plugin', 'add', selector, '--json']).stdout.trim());
+  console.error('Notebook installed. Existing Codex chats can retain their previous MCP connection. '
+    + 'If notebook_open or resources/read is missing, restart Codex to reconnect the existing chat, or open Notebook in a new chat.');
 } else {
   console.log(run(['plugin', 'remove', selector, '--json']).stdout.trim());
   const configured = JSON.parse(run(['plugin', 'marketplace', 'list', '--json']).stdout).marketplaces;

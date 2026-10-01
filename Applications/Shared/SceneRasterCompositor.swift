@@ -416,6 +416,16 @@ final class SceneRasterCut {
 /// Pixel allocation, blending and PNG encoding run outside the UI actor. This
 /// actor serializes one composition; it is neither a source cache nor a writer.
 actor CompositionPixels {
+  static func encodePNG(_ image: CGImage) async throws -> Data {
+    try Task.checkCancellation()
+    let data = NSMutableData()
+    guard let destination = CGImageDestinationCreateWithData(data, UTType.png.identifier as CFString, 1, nil)
+    else { throw SceneRenderError.snapshotPending("png_encoding") }
+    CGImageDestinationAddImage(destination, image, nil)
+    guard CGImageDestinationFinalize(destination) else { throw SceneRenderError.snapshotPending("png_encoding") }
+    return data as Data
+  }
+
   /// Pure, cancellable pixel work uses the same non-UI execution boundary as
   /// composition. The caller owns the charged source and destination lifetime.
   static func makeMipmaps(_ original: CGImage, sizes: [(width: Int, height: Int)]) async throws -> [CGImage] {

@@ -218,8 +218,7 @@ extension NotebookStore {
   }
 
   public func loadTargetRenderReceipt(_ id: UUID) throws -> TargetRenderReceipt? {
-    guard let receipt: TargetRenderReceipt = try readDerivative(targetReceiptURL(id),
-      maximum: NotebookPanelRenderProjection.maximumEncodedBytes) else { return nil }
+    guard let receipt: TargetRenderReceipt = try readDerivative(targetReceiptURL(id)) else { return nil }
     guard receipt.request.id == id, ["ready", "error"].contains(receipt.status) else {
       throw CollaborationError("invalid_artifact", "Квитанция целевого снимка повреждена.")
     }

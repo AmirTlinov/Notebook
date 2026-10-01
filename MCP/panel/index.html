@@ -12,8 +12,9 @@
     <div id="message" role="alert" hidden><span></span><button id="retry">Повторить</button></div>
   </main>
   <nav aria-label="Инструменты Notebook">
-    <button data-tool="select" aria-label="Выделение" aria-pressed="true">↖</button>
-    <button data-tool="text" aria-label="Текст" aria-pressed="false">T</button>
+    <button data-tool="select" aria-label="Выделение (V)" title="Выделение (V). Перетаскивание пустого места двигает доску" aria-pressed="true">↖</button>
+    <button data-tool="hand" aria-label="Перемещение доски (H)" title="Перемещение доски (H), пробел или средняя кнопка" aria-pressed="false">✋</button>
+    <button data-tool="text" aria-label="Текст (T)" title="Текст (T). ⌘Enter — сохранить, Escape — отменить" aria-pressed="false">T</button>
     <button data-tool="rectangle" aria-label="Прямоугольник" aria-pressed="false">□</button>
     <button data-tool="ellipse" aria-label="Эллипс" aria-pressed="false">○</button>
     <button data-tool="connector" aria-label="Стрелка" aria-pressed="false">↗</button>
@@ -21,7 +22,7 @@
     <button id="undo" aria-label="Отменить свою правку" disabled>↶</button>
     <button id="delete" aria-label="Удалить выделенное" disabled>⌫</button>
     <span class="divider"></span>
-    <button id="zoom-out" aria-label="Уменьшить масштаб">−</button><button id="zoom-fit" aria-label="Показать материал целиком">100%</button><button id="zoom-in" aria-label="Увеличить масштаб">+</button>
+    <button id="zoom-out" aria-label="Уменьшить масштаб">−</button><span id="zoom-level" aria-label="Текущий масштаб">100%</span><button id="zoom-in" aria-label="Увеличить масштаб">+</button><button id="zoom-fit" aria-label="Общий вид" title="Показать весь материал">Общий вид</button>
   </nav>
   <script type="module">/* NOTEBOOK_SCRIPT */</script>
 </body></html>

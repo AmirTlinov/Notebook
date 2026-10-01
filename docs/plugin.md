@@ -11,15 +11,21 @@ pixel layers keep painter order and refresh together after their source fence
 and image decoding complete.
 
 The board background repeats one cell painted by the native grid owner. Camera
-motion requests bounded nearby material through one coalesced render at a time;
-the panel keeps one world camera across changes of raster origin. A late response
-cannot replace better current coverage, and idle polling does not force another raster.
+motion reuses native world tiles and requests missing coverage through one
+coalesced render at a time. The panel keeps one world camera across raster origins;
+late responses cannot replace better current coverage. Held immutable assets are
+identified by their native raster lease; unchanged polling returns no pixels.
+The agent's visible bounds follow the local camera even when no new pixels are
+needed; camera context is coalesced after movement.
 
 Plain native text, basic geometry and unbound arrows can be moved, resized,
 edited, deleted and undone through human history. Independently editable bodies
 receive separate native layers before the gesture starts. Ink and complex
 subjects keep their canonical appearance; drawing with Pencil remains available
-on iPad. All existing agent tools remain available for the same material.
+on iPad. Cards move through the existing native placement command, using the
+captured placement heads and stack membership. A blank-area drag pans; Escape
+cancels a gesture, and double-clicking a card opens its contents. All existing
+agent tools remain available for the same material.
 
 `MCP/panel` owns disposable camera, selection, draft and gesture presentation.
 `Sources/NotebookCore/NotebookPanel.swift` admits each completed human action
@@ -28,8 +34,9 @@ One UUID and immutable request survive response-loss retries. Read polling uses
 the native cursor shortcut while unchanged. A panel pins its workspace socket
 and target; later model results and old polls cannot redirect a draft or gesture.
 
-`notebook_panel_presentation` joins the existing native addressed-render queue.
-Its bounded output contains derived PNG layers and canonical hit geometry.
+`notebook_panel_presentation` joins the existing native addressed-render scheduler
+as an ephemeral reader. Camera requests create no durable render jobs or receipts.
+Its bounded output contains missing PNG tiles and canonical hit geometry.
 Business subjects are read again at the completed source revision; PNG bytes
 remain in the app-only response and never enter model context. The installed
 runtime and the iPad keep one saved workspace and the same delivery path.
@@ -58,9 +65,15 @@ content and the installed app remain available.
 After install, connect the plugin in a Codex conversation and call
 `notebook_open`. Verify editing, agent changes, undo, and reopening on that
 surface. Native tests and package validation do not establish host rendering.
+An existing chat can retain its previous MCP process after installation. If it
+reports `Tool notebook_open not found` or `resources/read: Method not found`,
+restart Codex to reconnect that chat, or use a new chat. Reinstalling the same
+package does not replace a connection already held by a running chat.
 Current delivery and exact check scopes are recorded in
-[camera verification](audit-evidence/2026-10-01/codex-camera/results.json) and the
-[initial plugin verification](audit-evidence/2026-10-01/codex-plugin/results.json).
+[board verification](audit-evidence/2026-10-01/codex-board/results.json). Previous
+[camera](audit-evidence/2026-10-01/codex-camera/results.json) and
+[initial plugin](audit-evidence/2026-10-01/codex-plugin/results.json) receipts retain
+their original scope.
 
 This package runs locally on macOS. Public directory submission and remote
 hosting are separate distribution work. Plugin manifests follow the
